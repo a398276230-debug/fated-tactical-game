@@ -83,7 +83,7 @@ export function buildScenario(request = 'ruins') {
     const stance = shield ? 'sword_shield' : offHandTemplate === 'potion' ? 'attunement' : offHand ? 'dual_wield' : state.equipment[weapon]?.weaponClass === 'greatsword' ? 'greatsword' : 'light_blade';
     state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp, maxHp: hp,
       mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM: 1.7, mc: 1,
-      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, moraleType: 'standard',
+      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, moraleType: 'standard',
       mp: 14, maxMp: 14, sp: 10, maxSp: 10, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
       weapon: equip(weaponId, weapon), gear: gear.map(templateId => equip(`${id}-${templateId}`, templateId)), skills };

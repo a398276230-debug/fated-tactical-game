@@ -43,6 +43,12 @@ export const STATUSES = Object.freeze(Object.fromEntries(Object.entries({
   stealth: def('隐身', '👤', 'buff', 2, '无法被敌方远距直接锁定；发动进攻或遭攻击伤害时现形。', { hidden: true, advantage: 1 }),
   haste: def('疾走', '💨', 'buff', 2, '移动距离增加 1。', { movement: 1 }),
   chill: def('寒冷', '❄️', 'debuff', 2, '移动距离和命中降低。', { movement: -1, accuracy: -2 }),
+  charge: def('蓄力', '⚡', 'buff', 1, '本回合下一次攻击增伤。', { damageBonus: .15 }),
+  lock_on: def('定位', '⌖', 'buff', 1, '本回合对锁定目标命中提高。', { accuracy: 1 }),
+  weakness: def('弱点识别', '◉', 'buff', 3, '每层使意图难度降低 2。', { intentDifficulty: -2 }, { stackRule: 'stack', maxStacks: 3 }),
+  grappled: def('擒抱', '⛓', 'control', 1, '无法移动，仍可进行近身攻击。', { rooted: true }),
+  prone: def('倒地', '▽', 'debuff', 1, '闪避降低。', { incomingAccuracy: 2 }),
+  disarmed: def('缴械', '⚔', 'debuff', 1, '无法使用主手武器。', { disarmed: true }),
 }).map(([id, status]) => [id, Object.freeze({ id, ...status })])));
 
 function randomUnit(state) {
@@ -120,7 +126,7 @@ export function grantStatus(state, unit, statusId, options = {}) {
 
 export function refreshOutcome(state) {
   let blue = false, red = false;
-  for (const unit of values(state.units)) if (alive(unit)) {
+  for (const unit of values(state.units)) if (alive(unit) && !unit.fled) {
     blue ||= unit.team === 'blue';
     red ||= unit.team === 'red';
   }
@@ -202,6 +208,18 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     recipient = guardFor(state, target) ?? target;
     if (recipient !== target) record(state, recipient, 'guard', `${recipient.name}替${target.name}承受打击`, { targetId: target.id });
   }
+  let parry = null;
+  if (hit && melee && !reaction && recipient !== attacker && recipient?.stance === 'greatsword'
+    && recipient.greatswordMode === 'defensive' && (recipient.parryQuota ?? 0) > 0) {
+    const defenderRoll = randomDie(state, 20), attackerRoll = randomDie(state, 20);
+    const defenderTotal = stat(recipient, 'str') + defenderRoll;
+    const attackerTotal = stat(attacker, 'str') + attackerRoll;
+    const success = defenderTotal >= attackerTotal;
+    recipient.parryQuota--;
+    parry = { success, defenderRoll, attackerRoll, defenderTotal, attackerTotal, reduction: success ? .6 : 0, quota: recipient.parryQuota };
+    record(state, recipient, 'parry', `${recipient.name}${success ? '弹反成功' : '弹反失败'}`, { targetId: attacker?.id ?? null, ...parry });
+    if (success) amount *= .4;
+  }
   const formula = mitigation(state, recipient, type, hit, armorPierce);
   const modified = Math.max(0, hit
     ? Math.floor(amount * formula.multiplier * formula.armorMultiplier)
@@ -225,7 +243,7 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     }
   }
   const dealt = loseHP(state, recipient, modified - absorbed, sourceUnitId, type, label,
-    { ...details, ...formula, raw: amount, absorbed, intendedTargetId: target.id });
+    { ...details, ...formula, ...(parry ? { parry } : {}), raw: amount, absorbed, intendedTargetId: target.id });
   if (hit && melee && !reaction && alive(attacker) && attacker.id !== recipient.id) {
     const reflect = changes(recipient, 'reflect');
     if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, 'true', '棘甲反伤', { reaction: true });
@@ -574,7 +592,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const critChance = automatic ? 0 : criticalOdds(advantages, disadvantages);
   const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
   const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
-  const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * intentSpec.multiplier * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
+  const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * intentSpec.multiplier * (1 + changes(actor, 'damageBonus')) * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
     * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const damageType = template.damage?.type ?? 'physical';
   const armorPierce = { flat: weapon?.ammo?.armorPierce ?? template.armorPierce ?? 0, percent: rules.armorPenetration ?? 0 };
@@ -608,11 +626,13 @@ const ACTIONS = Object.freeze({
   move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
   attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 },
-  interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
+  charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
+  grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
+  flee: { ap: 1, slot: 'action' }, detour: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
 });
 const movementNames = Object.freeze({ move: '移动', sprint: '疾跑', disengage: '撤离' });
 const isMovement = type => Object.hasOwn(movementNames, type);
-const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact'].includes(type);
+const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push'].includes(type);
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 const healMultiplier = (state, actor) => 1 + gearEffects(state, actor, 'healing_shield').reduce((sum, effect) => sum + (effect.healBonus ?? .25), 0);
 const healShieldRatio = (state, actor) => gearEffects(state, actor, 'healing_shield').reduce((sum, effect) => sum + (effect.shieldRatio ?? .5), 0);
@@ -645,6 +665,7 @@ export function preview(state, action) {
   if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
   const skill = type === 'skill' ? tableEntry(state.skills, skillId) : null;
   if (type === 'skill' && (!skill || !unit.skills.includes(skillId))) return fail('单位没有此技能');
+  if (type === 'skill' && skill?.formation && unit.swarm && unit.swarm.count < skill.formation.minimum) return fail(`战阵人数不足，需要${skill.formation.minimum}人`);
   const cost = skill ?? tableEntry(ACTIONS, type);
   if (!cost) return fail('未知动作');
   const aimed = needsTarget(type);
@@ -673,6 +694,21 @@ export function preview(state, action) {
     const [nearbyCover] = nearbyCovers(state, unit);
     return { ...common, name: '架势防御', coverId: nearbyCover?.id ?? null, reduction: STATUSES.guarded.modifiers.reduction,
       turns: nearbyCover ? 2 : 1 };
+  }
+  if (type === 'charge') return { ...common, name: '蓄力', maneuver: 'charge' };
+  if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
+  if (type === 'flee') return { ...common, name: '逃跑', maneuver: 'flee' };
+  if (type === 'detour') return { ...common, name: '绕行', maneuver: 'detour' };
+  if (type === 'lock_on') {
+    const target = locateUnit(state, center);
+    if (!target || target.team === unit.team) return fail('定位必须指定敌方单位');
+    return { ...common, name: '定位', maneuver: 'lock_on', targetId: target.id };
+  }
+  if (['grapple','disarm','trip','push'].includes(type)) {
+    const target = locateUnit(state, center);
+    if (!target || target.team === unit.team) return fail('战术对抗必须指定敌方单位');
+    if (near(unit, target) > 1 || !clearSight(state, unit, target)) return fail('战术对抗需要贴身且视线畅通');
+    return { ...common, name: ({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[type], maneuver: type, targetId: target.id };
   }
   if (isMovement(type)) {
     if (changes(unit, 'rooted')) return fail('定身时不能移动');
@@ -762,6 +798,17 @@ export function preview(state, action) {
     dXYZ: geometry.distance, cells, targets, center, ...(blink ? { teleport: blink } : {}), hostile };
 }
 
+function maneuverContest(state, actor, target, maneuver) {
+  const attackStat = maneuver === 'grapple' ? 'str' : 'agi';
+  const defenseStat = maneuver === 'trip' ? 'agi' : 'str';
+  const attackerRoll = randomDie(state, 20), defenderRoll = randomDie(state, 20);
+  const attackerTotal = stat(actor, attackStat) + attackerRoll;
+  const defenderTotal = stat(target, defenseStat) + defenderRoll;
+  const success = attackerTotal >= defenderTotal;
+  record(state, actor, 'contest', `${actor.name}${success ? '成功' : '未能'}${({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[maneuver]}`, {
+    maneuver, targetId: target.id, attackerRoll, defenderRoll, attackerTotal, defenderTotal, success });
+  return success;
+}
 function changeCounter(state, actor, weapon, effect, fallback, after) {
   const counterKey = resourceKey(effect, fallback);
   const before = counter(weapon, effect, fallback, fallback === 'ammo' ? effect.capacity : 0);
@@ -794,7 +841,9 @@ function resolveCheck(state, actor, profile) {
   const defender = state.units[profile.id];
   if (hit && defender && profile.intent && profile.intent !== 'normal') {
     const defenderD20 = randomDie(state, 20);
-    intent = intentCheck(profile.intent, actor.tier ?? 1, defender.tier ?? 1, selected, defenderD20, rating.min ?? 0);
+    const weakness = changes(defender, 'intentDifficulty');
+    const intentSpec = { ...(INTENTS[profile.intent] ?? INTENTS.normal), difficulty: Math.max(0, (INTENTS[profile.intent]?.difficulty ?? 0) + weakness) };
+    intent = intentCheck(intentSpec, actor.tier ?? 1, defender.tier ?? 1, selected, defenderD20, rating.min ?? 0);
     record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, { targetId: profile.id, intent: profile.intent, attackerD20: selected, defenderD20, ...intent });
   }
   // Failed intent falls back to an ordinary landed hit; it does not erase the attack.
@@ -909,10 +958,12 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
       const sizeScale = meleeMultiplier(actor);
       const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
       const intentScale = intent?.success ? intent.multiplier ?? 1 : 1;
+      const swarmCount = actor.swarm?.count ?? 1;
+      const swarmAttackCount = action.type === 'attack' && actor.swarm ? (actor.hp / actor.maxHp >= .8 ? 3 : actor.hp / actor.maxHp >= .5 ? 2 : 1) : 1;
       const stanceScale = profile.stance === 'greatsword' ? (actor.greatswordMode === 'defensive' ? 1.5 : 1.3) : 1;
       const offHandScale = profile.stance === 'dual_wield' && profile.offHand ? .5 : 1;
-          const scaled = Math.floor(dice.value * profile.multiplier * sizeScale * ratingScale * intentScale * stanceScale * offHandScale * (saved ? .5 : 1));
-        const details = { dice, critical, saved, rating: rating?.name ?? '有效', ratingMultiplier: ratingScale, intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale, offHandScale };
+          const scaled = Math.floor(dice.value * profile.multiplier * sizeScale * ratingScale * intentScale * stanceScale * offHandScale * swarmAttackCount * (saved ? .5 : 1));
+        const details = { dice, critical, saved, rating: rating?.name ?? '有效', ratingMultiplier: ratingScale, intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale, offHandScale, swarmCount, swarmAttackCount };
       if (profile.kind === 'cover') { coverDamage(state, actor, target, scaled, details); continue; }
       const hpBefore = target.hp;
       ({ recipient } = damageTarget(state, target, actor.id, scaled, profile.damageType, template.name,
@@ -1027,6 +1078,28 @@ export function applyAction(state, action) {
   switch (type) {
     case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
     case 'attack': case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
+    case 'charge': grantStatus(state, actor, 'charge', { sourceUnitId: actor.id }); break;
+    case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, 'lock_on', { sourceUnitId: actor.id }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
+    case 'scan': grantStatus(state, actor, 'weakness', { sourceUnitId: actor.id, stacks: 3 }); break;
+    case 'flee': {
+      const enemies = living(state).filter(u => u.team !== actor.team).sort((a,b) => stat(b,'agi') - stat(a,'agi') || byId(a,b));
+      const target = enemies[0]; const attackerRoll = randomDie(state,20), defenderRoll = randomDie(state,20);
+      const success = target ? stat(actor,'agi') + attackerRoll >= stat(target,'agi') + defenderRoll : true;
+      record(state, actor, 'flee', `${actor.name}${success ? '逃跑成功' : '逃跑失败'}`, { targetId: target?.id ?? null, attackerRoll, defenderRoll, success });
+      if (success) { actor.fled = true; state.outcome = actor.team === 'blue' ? 'red' : 'blue'; }
+      break;
+    }
+    case 'detour': record(state, actor, 'maneuver', `${actor.name}选择绕行`, { maneuver: 'detour' }); break;
+    case 'grapple': case 'disarm': case 'trip': case 'push': {
+      const target = state.units[plan.targetId];
+      if (target && maneuverContest(state, actor, target, type)) {
+        if (type === 'grapple') grantStatus(state, target, 'grappled', { sourceUnitId: actor.id });
+        if (type === 'disarm') { const held = target.mainHand ?? target.weapon; target.disarmedItem = held ?? null; target.mainHand = null; target.weapon = null; grantStatus(state, target, 'disarmed', { sourceUnitId: actor.id }); }
+        if (type === 'trip') grantStatus(state, target, 'prone', { sourceUnitId: actor.id });
+        if (type === 'push') knockback(state, actor, target, { distance: 1, collisionDamage: 3 });
+      }
+      break;
+    }
     case 'block':
       actor.blockMode = action.maneuver === 'heavy' ? 'heavy' : 'normal';
       grantStatus(state, actor, 'guarded', { sourceUnitId: actor.id, turns: 1, modifiers: { reduction: actor.blockMode === 'heavy' ? .45 : .25 } });
