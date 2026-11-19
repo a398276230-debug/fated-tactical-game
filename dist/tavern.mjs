@@ -3739,7 +3739,6 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
   };
   const draw = () => {
     view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, error: message });
-    layoutTargetCard();
   };
   const drawPreview = draw;
   const measurement = [$("measure-origin"), $("measure-target")];
@@ -3937,6 +3936,7 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
     $("confirm-action").hidden = true;
     if (options.length) action = options[0].command;
     draw();
+    layoutTargetCard();
     if (input.detail === 0) (toolbar.querySelector("button") ?? $("close-target")).focus({ preventScroll: true });
   }
   function handleAction(button) {
@@ -6217,7 +6217,7 @@ function style(doc) {
   const css = `
 [data-fated-tavern-overlay]{position:fixed;z-index:2147483000;color:#e8edf5;font:14px/1.4 system-ui,sans-serif;pointer-events:none}
 [data-fated-tavern-overlay] *{box-sizing:border-box}[data-fated-tavern-overlay] button{cursor:pointer;color:inherit;background:#263348;border:1px solid #52627d;border-radius:4px;padding:5px 9px}[data-fated-tavern-overlay] button:hover{background:#354968}
-.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}.fated-battle-entry{margin:8px 0;padding:8px;border:1px solid #52627d;border-radius:6px;background:#141a25;color:#e8edf5}.fated-battle-entry>summary{cursor:pointer;color:#cbd5ff;font-weight:600}.fated-battle-source{max-height:220px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;color:#b9c4d8}.fated-battle-enter{margin-top:6px}`;
+.fated-tavern-launcher{pointer-events:auto;position:fixed;right:20px;bottom:20px;border-radius:14px!important;width:52px;height:52px;background:linear-gradient(145deg,#b89a58,#6f4d2a)!important;border:1px solid #e7c878!important;box-shadow:0 5px 18px #0009, inset 0 1px #fff5!important;font-size:22px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:84px;bottom:20px;width:min(920px,calc(100vw - 32px));height:min(720px,calc(100vh - 32px));min-width:360px;min-height:280px;resize:both;overflow:hidden;background:linear-gradient(145deg,#17151d,#0d1018);border:1px solid #8c7044;border-radius:12px;box-shadow:0 18px 60px #000d, inset 0 1px #fff2;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:10px;padding:12px 15px;background:linear-gradient(90deg,#2a2024,#191b29);border-bottom:1px solid #6c5638;cursor:move}.fated-tavern-header strong{flex:1;color:#f3d989;letter-spacing:.06em}.fated-tavern-header button{padding:3px 10px;background:#2c2932}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:6px;padding:8px 12px;background:#151821;border-bottom:1px solid #34313a}.fated-tavern-tabs button,.fated-tavern-subtabs button{background:#211f29;border-color:#51445a}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:linear-gradient(145deg,#9c743b,#5a3e29);border-color:#d1a956;color:#fff1ba}.fated-tavern-content{overflow:auto;flex:1;padding:16px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:4px;color:#c8bdad}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0c0e15;color:#eee6d5;border:1px solid #554b4b;border-radius:6px;padding:8px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt,.fated-instance,.fated-battle-card{border:1px solid #514553;padding:12px;margin:8px 0;border-radius:8px;background:linear-gradient(145deg,#211c28,#161722);box-shadow:inset 0 1px #fff1}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{white-space:pre-wrap}.fated-status{padding:9px;background:#0b0e15;border:1px solid #373541;border-radius:6px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.fated-chat{display:flex;gap:7px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px;color:#b6ac9f}.fated-card-kicker{color:#e6bd66;font:700 11px/1.2 ui-monospace,monospace;letter-spacing:.12em}.fated-battle-card h4{margin:7px 0;color:#f4e4b1;font-size:20px}.fated-primary{background:linear-gradient(145deg,#a5793c,#5e4028)!important;border-color:#d3a957!important;color:#fff1bd!important}.fated-battle-entry{margin:10px 0;padding:10px;border:1px solid #80633f;border-radius:8px;background:linear-gradient(145deg,#201a20,#11131a);color:#e8edf5;box-shadow:0 4px 14px #0005}.fated-battle-entry>summary,.fated-battle-source-box>summary{cursor:pointer;color:#e8c879;font-weight:700}.fated-battle-meta{margin:6px 0;color:#a99f9a;font-size:12px}.fated-battle-source,.fated-battle-source-box pre{max-height:220px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;color:#c8c0af}.fated-battle-enter{margin-top:6px}`;
   (doc.head || doc.documentElement)?.append(el(doc, "style", { "data-fated-tavern-overlay": "" }, css));
 }
 function mountTavernOverlay(options = {}) {
@@ -6334,47 +6334,68 @@ function mountTavernOverlay(options = {}) {
     on(surface, "lostpointercapture", stop);
   }
   draggable(panel, header);
+  function battleEntry(raw) {
+    const details = el(doc, "details", { class: "fated-battle-entry" });
+    const summary = el(doc, "summary", {}, "\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3");
+    const meta = el(doc, "div", { class: "fated-battle-meta" }, "\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40");
+    const pre = el(doc, "pre", { class: "fated-battle-source" }, raw);
+    const enter = el(doc, "button", { type: "button", class: "fated-battle-enter" }, "\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0");
+    details.append(summary, meta, pre, enter);
+    on(enter, "click", () => open());
+    return details;
+  }
   function foldBattleEntries() {
-    const contentNodes = [...doc.querySelectorAll(".mes_text, .message, [data-content]")];
-    for (const content2 of contentNodes) {
-      if (content2.closest("[data-fated-tavern-overlay]") || content2.dataset.fatedBattleFolded === "true") continue;
-      for (const tag of [...content2.querySelectorAll?.("battle_init") || []]) {
-        const details = el(doc, "details", { class: "fated-battle-entry" });
-        const summary = el(doc, "summary", {}, "\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u6218\u573A\u5165\u53E3");
-        const pre = el(doc, "pre", { class: "fated-battle-source" }, `<battle_init>${tag.textContent || ""}</battle_init>`);
-        const enter = el(doc, "button", { type: "button", class: "fated-battle-enter" }, "\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0");
-        details.append(summary, pre, enter);
-        on(enter, "click", () => open());
-        tag.replaceWith(details);
-        content2.dataset.fatedBattleFolded = "true";
+    const candidates = [...doc.querySelectorAll(".mes_text, .mes_text_wrap, .mes, .chat-msg, .message, [data-content], [data-message-id], [data-mesid]")];
+    const seen = /* @__PURE__ */ new Set();
+    for (const content2 of candidates) {
+      const rootNode = content2.matches?.(".mes, .chat-msg, [data-message-id], [data-mesid]") ? content2.querySelector(".mes_text, .mes_text_wrap, .message, [data-content]") || content2 : content2;
+      if (!rootNode || seen.has(rootNode) || rootNode.closest("[data-fated-tavern-overlay]") || rootNode.dataset.fatedBattleFolded === "true") continue;
+      seen.add(rootNode);
+      const tag = rootNode.querySelector?.("battle_init");
+      if (tag) {
+        tag.replaceWith(battleEntry(`<battle_init>
+${tag.textContent || ""}
+</battle_init>`));
+        rootNode.dataset.fatedBattleFolded = "true";
+        continue;
       }
-      const walker = doc.createTreeWalker?.(content2, 4);
+      const walker = doc.createTreeWalker?.(rootNode, 4);
       if (!walker) continue;
       const textNodes = [];
       while (walker.nextNode()) textNodes.push(walker.currentNode);
       for (const node of textNodes) {
         const raw = node.nodeValue || "";
-        const match = raw.match(/<battle_init(?:\s[^>]*)?>[\s\S]*?<\/battle_init>/i);
+        const match = raw.match(/(?:<|&lt;)battle_init(?:\s[^>]*?)?(?:>|&gt;)[\s\S]*?(?:<|&lt;)\/battle_init(?:>|&gt;)/i);
         if (!match) continue;
-        const details = el(doc, "details", { class: "fated-battle-entry" });
-        const summary = el(doc, "summary", {}, "\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u6218\u573A\u5165\u53E3");
-        const pre = el(doc, "pre", { class: "fated-battle-source" }, match[0]);
-        const enter = el(doc, "button", { type: "button", class: "fated-battle-enter" }, "\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0");
-        details.append(summary, pre, enter);
-        on(enter, "click", () => open());
         const replacement = doc.createDocumentFragment();
         if (match.index) replacement.append(doc.createTextNode(raw.slice(0, match.index)));
-        replacement.append(details);
+        replacement.append(battleEntry(match[0].replaceAll("&lt;", "<").replaceAll("&gt;", ">")));
         if (match.index + match[0].length < raw.length) replacement.append(doc.createTextNode(raw.slice(match.index + match[0].length)));
         node.parentNode?.replaceChild(replacement, node);
-        content2.dataset.fatedBattleFolded = "true";
+        rootNode.dataset.fatedBattleFolded = "true";
         break;
       }
     }
   }
   function renderInstances() {
     const page = pages.instances;
-    page.replaceChildren(el(doc, "h3", {}, "\u5DF2\u7EF4\u62A4\u7684\u5B9E\u4F8B"));
+    page.replaceChildren(el(doc, "h3", {}, "\u6218\u573A\u5165\u53E3"));
+    const battleCard = el(doc, "article", { class: "fated-battle-card" });
+    const battle = sources.battleInit;
+    battleCard.append(el(doc, "div", { class: "fated-card-kicker" }, battle ? "BATTLE INIT \xB7 \u5DF2\u8BC6\u522B" : "BATTLE INIT \xB7 \u7B49\u5F85\u626B\u63CF"));
+    battleCard.append(el(doc, "h4", {}, battle?.sceneTitle || "\u5C1A\u672A\u53D1\u73B0\u6B63\u6587\u6218\u573A"));
+    battleCard.append(el(doc, "p", { class: "fated-mini" }, battle ? `${battle.battleType || "\u6807\u51C6\u6218\u6597"} \xB7 ${battle.participants?.length || 0} \u540D\u53C2\u4E0E\u8005 \xB7 ${battle.covers?.length || 0} \u4E2A\u63A9\u4F53` : "\u70B9\u51FB\u626B\u63CF\u5F53\u524D\u804A\u5929\uFF0C\u8BFB\u53D6\u6700\u65B0\u6B63\u6587\u4E2D\u7684 battle_init\u3002"));
+    const battleActions = el(doc, "div", { class: "fated-actions" });
+    const loadBattle = el(doc, "button", { type: "button", class: "fated-primary" }, battle ? "\u52A0\u8F7D\u6218\u573A" : "\u626B\u63CF\u5E76\u52A0\u8F7D");
+    const showSource = el(doc, "details", { class: "fated-battle-source-box" });
+    showSource.append(el(doc, "summary", {}, "\u67E5\u770B\u539F\u59CB battle_init"), el(doc, "pre", { class: "fated-battle-source" }, sources.battleRaw || "\u6682\u65E0\u539F\u59CB\u6570\u636E"));
+    battleActions.append(loadBattle);
+    battleCard.append(battleActions, showSource);
+    page.append(battleCard);
+    on(loadBattle, "click", async () => {
+      await scan(true);
+      switchTab("sandbox");
+    });
     const toolbar = el(doc, "div", { class: "fated-actions" });
     const refresh = el(doc, "button", { type: "button" }, "\u4ECE\u5F53\u524D\u804A\u5929\u91CD\u65B0\u6C34\u5408");
     toolbar.append(refresh);
@@ -6409,6 +6430,10 @@ function mountTavernOverlay(options = {}) {
       });
     }
     on(refresh, "click", () => scan(true).catch(showError));
+  }
+  function switchTab(key3) {
+    const button = tabs.querySelector(`[data-tab="${key3}"]`);
+    button?.click();
   }
   function field(label, value, type = "text") {
     const labelNode = el(doc, "label", {}, label);

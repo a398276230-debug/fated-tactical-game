@@ -16,8 +16,9 @@ let menuButtons = new Map();
 const active = () => state.units[state.order[state.turn]];
 const error = value => { message = value; $('action-error').hidden = !value; $('action-error').textContent = value ?? ''; };
 const draw = () => {
+  // Rendering hover feedback must not move an already-open action card. The
+  // card is positioned when opened and only re-laid out on viewport changes.
   view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, error: message });
-  layoutTargetCard();
 };
 const drawPreview = draw;
 const measurement = [$('measure-origin'), $('measure-target')];
@@ -170,6 +171,7 @@ function handlePoint(at, input = {}) {
   $('confirm-action').hidden = true;
   if (options.length) action = options[0].command;
   draw();
+  layoutTargetCard();
   if (input.detail === 0) (toolbar.querySelector('button') ?? $('close-target')).focus({ preventScroll:true });
 }
 function handleAction(button) {
