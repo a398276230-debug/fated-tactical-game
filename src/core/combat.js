@@ -3,7 +3,7 @@ import { aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D 
   isFlanked as flank, isGround as ground, movementOptions, passableEdge as fitsHeight, unitAt } from './spatial.js';
 import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, moraleResult, damagePipeline, initiative as protocolInitiative } from './combat_protocol.js';
+import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, moraleResult, damagePipeline, initiative as protocolInitiative } from './combat_protocol.js';
 
 // Pure tactical rules. Templates hold static data; mutable counters live in state.items.
 // Damage/heal: {count,sides,bonus?,stat?,multiplier?,type?}.
@@ -573,7 +573,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const hitChance = automatic ? 1 : hitOdds(defense, accuracy, advantages, disadvantages);
   const critChance = automatic ? 0 : criticalOdds(advantages, disadvantages);
   const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
-  const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
+  const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
+  const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * intentSpec.multiplier * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
     * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const damageType = template.damage?.type ?? 'physical';
   const armorPierce = { flat: weapon?.ammo?.armorPierce ?? template.armorPierce ?? 0, percent: rules.armorPenetration ?? 0 };
@@ -582,7 +583,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const shield = cover ? null : statusOf(recipient, 'shield');
   const absorb = shield ? statusAmount(shield) : 0;
   const dice = template.damage == null ? null : diceFormula(template.damage, actor);
-  const shown = (raw, factor = 1) => Math.max(0, Math.floor(Math.floor(raw * multiplier * factor) * reduction.multiplier) - reduction.armor - absorb);
+  const shown = (raw, factor = 1) => Math.max(0, Math.floor(Math.floor(raw * multiplier * factor) * reduction.multiplier * reduction.armorMultiplier) - absorb);
   const damage = dice ? diceBounds(dice).map(n => shown(n)) : [0, 0];
   const criticalDamage = dice && critChance > 0 ? diceBounds(dice, true).map(n => shown(n)) : null;
   const savedDamage = dice && saveStat ? diceBounds(dice).map(n => shown(n, .5)) : null;
@@ -595,6 +596,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   return { id: target.id, targetId: target.id, name: target.name, x: at.x, y: at.y, ...geometry,
     recipientId: recipient.id, arc, backstab: Boolean(backstab), flanked, accuracy, defense, highGround: high,
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
+    intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
     automatic: Boolean(automatic), saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce,
     stance, offHand: Boolean(weapon?.offHand?.template), armor: reduction.armor, damagePipeline: reduction.armorMultiplier,
@@ -736,11 +738,11 @@ export function preview(state, action) {
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
   const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template);
-  const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack ? weapon : null, origin, teleport: effect }),
+  const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, teleport: effect, intent: action.intent ?? unit.intent ?? 'normal' }),
     bonusDice: action.bonusDice ?? 0, intent: action.intent ?? unit.intent ?? 'normal', nonLethal: action.nonLethal ?? unit.nonLethal ?? false }));
   if (template.damage != null) {
     for (const c of values(state.covers).filter(c => c.hp > 0 && cells.some(at => sameCell(at, c))).sort(byId)) {
-      targets.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack ? weapon : null, origin, cover: true }), kind: 'cover' });
+      targets.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, cover: true, intent: action.intent ?? unit.intent ?? 'normal' }), kind: 'cover' });
     }
   }
   if (template.heal != null) {

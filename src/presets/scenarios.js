@@ -124,7 +124,7 @@ export function buildScenario(request = 'ruins') {
     interact('I1', 5, 4, 'altar'); interact('I2', 8, 4, 'barrel'); interact('I3', 4, 6, 'barrel'); interact('I4', 2, 2, 'altar');
   } else {
     heroes(1, 4);
-    unit('colossus', '铜棺守门巨像', 'red', 6, 4, 'pike', ['surge', 'challenge', 'armor'], { hp: 90, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, deathrattle: { kind: 'zone', name: '墓火余烬', radius: 1, remainingTurns: 2, amount: 2, damageType: 'energy', team: 'all' } });
+    unit('colossus', '铜棺守门巨像', 'red', 6, 4, 'pike', ['surge', 'challenge', 'armor'], { hp: 140, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, deathrattle: { kind: 'zone', name: '墓火余烬', radius: 1, remainingTurns: 2, amount: 2, damageType: 'energy', team: 'all' } });
     unit('acolyte', '棺庭祭司', 'red', 8, 5, 'staff', ['ward', 'hymn', 'curse'], { hp: 32, spi: 7 });
     unit('knife', '墓道刺客', 'red', 5, 7, 'bloodfang', ['blink', 'fan'], { hp: 29, agi: 8 });
     unit('rifle', '重弩侍从', 'red', 8, 2, 'crossbow', ['shift'], { hp: 28 });
