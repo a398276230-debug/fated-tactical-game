@@ -299,7 +299,9 @@ function sourceBundle(variables, messages, chat = 'default') {
   });
   const mvuData = variables?.stat_data ?? variables?.message?.stat_data ?? variables ?? {};
   const battleSource = list.findLast?.(message => extractTag(messageContent(message), ['battle_init', 'battle_in', '战术沙盘'])) ?? latestMessage;
-  const battleKey = battleInit ? battleKeyFor(chat, battleSource, battleRaw, battleInit) : null;
+  const battleKey = battleInit
+    ? `${battleKeyFor(chat, battleSource, battleRaw, battleInit)}__mvu_${fnv1a(JSON.stringify(mvuData ?? {}))}`
+    : null;
   return { mvuData, latestFloor, battleInit, charInfo, battleRaw, charRaw, messages: list, roster: '', battleKey,
     source: battleSource ? { ...messageMeta(battleSource, list.length - 1), chatId: chat } : null };
 }
@@ -562,7 +564,15 @@ export function mountTavernOverlay(options = {}) {
     const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
-    for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) { const key = item.id || item.uid || item.name || `unit-${Object.keys(config.instances).length + 1}`; config.instances[key] = { ...clone(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? 'MVU 主角' : '正文 <char_info>') }; }
+    // Instances are a projection of the latest scan, not an append-only log.
+    // Keeping old entries here made a previous narrative_char_info enemy appear
+    // twice and could hide the current MVU protagonist in the maintenance page.
+    const nextInstances = {};
+    for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
+      const key = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
+      nextInstances[key] = { ...clone(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? 'MVU 主角' : '正文 <char_info>') };
+    }
+    config.instances = nextInstances;
     save(); return hydrated;
   }
   async function mountState(state) {

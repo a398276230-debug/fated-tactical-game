@@ -6156,7 +6156,7 @@ function sourceBundle(variables, messages, chat = "default") {
   });
   const mvuData = variables?.stat_data ?? variables?.message?.stat_data ?? variables ?? {};
   const battleSource = list2.findLast?.((message) => extractTag(messageContent(message), ["battle_init", "battle_in", "\u6218\u672F\u6C99\u76D8"])) ?? latestMessage;
-  const battleKey = battleInit ? battleKeyFor(chat, battleSource, battleRaw, battleInit) : null;
+  const battleKey = battleInit ? `${battleKeyFor(chat, battleSource, battleRaw, battleInit)}__mvu_${fnv1a(JSON.stringify(mvuData ?? {}))}` : null;
   return {
     mvuData,
     latestFloor,
@@ -6644,10 +6644,12 @@ ${tag.textContent || ""}
     const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
+    const nextInstances = {};
     for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
-      const key3 = item.id || item.uid || item.name || `unit-${Object.keys(config.instances).length + 1}`;
-      config.instances[key3] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
+      const key3 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
+      nextInstances[key3] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
     }
+    config.instances = nextInstances;
     save();
     return hydrated;
   }
