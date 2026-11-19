@@ -597,7 +597,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const critChance = automatic ? 0 : criticalOdds(advantages, disadvantages);
   const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
   const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
-  const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * intentSpec.multiplier * (1 + changes(actor, 'damageBonus')) * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
+  // Intent is applied once in applyStrike after the intent contest; do not fold it into this preview multiplier.
+  const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * (1 + changes(actor, 'damageBonus')) * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
     * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const damageType = template.damage?.type ?? 'physical';
   const tierPower = ({1:2, 2:2.8, 3:4, 4:8, 5:15, 6:35, 7:80})[actor.tier ?? 1] ?? 2;
