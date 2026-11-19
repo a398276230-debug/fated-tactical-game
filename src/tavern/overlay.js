@@ -1,6 +1,8 @@
-import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseCharInfo, parseSimpleYaml } from './converter.js';
+import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseSimpleYaml } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
+import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
+import { tavernTheme } from './theme.js';
 
 /*
  * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
@@ -10,6 +12,7 @@ import { validateState as defaultValidateState } from '../api/validation.js';
 
 const own = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
 const isObject = v => v && typeof v === 'object' && !Array.isArray(v);
+const safeProperty = key => !['__proto__', 'prototype', 'constructor'].includes(key);
 const clone = value => {
   try { return structuredClone(value); } catch (_) {
     try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
@@ -46,10 +49,34 @@ function parseJSON(value, fallback = null) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value)); } catch (_) { return fallback; }
 }
+function balancedJSONObjects(source) {
+  const value = text(source).replaceAll('&quot;', '"').replaceAll('&#34;', '"');
+  const results = [];
+  for (let start = 0; start < value.length; start++) {
+    if (value[start] !== '{') continue;
+    let depth = 0, quoted = false, escaped = false;
+    for (let i = start; i < value.length; i++) {
+      const ch = value[i];
+      if (quoted) { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') quoted = false; continue; }
+      if (ch === '"') { quoted = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}' && --depth === 0) {
+        const parsed = parseJSON(value.slice(start, i + 1), null);
+        if (parsed) results.push(parsed);
+        break;
+      }
+    }
+  }
+  return results;
+}
+function findBattleJSON(source) {
+  return balancedJSONObjects(source).reverse().find(value => isObject(value) && (Array.isArray(value.units) || Array.isArray(value.participants) || value.battleId || value.title || value.sceneTitle)) || null;
+}
 function deepMerge(base, extra) {
   const result = isObject(base) ? clone(base) : {};
   if (!isObject(extra)) return result;
   for (const [key, value] of Object.entries(extra)) {
+    if (!safeProperty(key)) continue;
     if (isObject(value) && isObject(result[key])) result[key] = deepMerge(result[key], value);
     else result[key] = clone(value);
   }
@@ -58,7 +85,7 @@ function deepMerge(base, extra) {
 function deletePath(object, path) {
   if (!path) return;
   const parts = String(path).trim().replace(/^\$\.?/, '').split('.').filter(Boolean);
-  if (!parts.length) return;
+  if (!parts.length || !parts.every(safeProperty)) return;
   let cursor = object;
   for (let i = 0; i < parts.length - 1; i++) {
     if (!cursor || typeof cursor !== 'object') return;
@@ -84,15 +111,16 @@ export function buildAIRequest(config = {}, messages = []) {
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
   let url = text(config.baseUrl || config.url || '').trim();
   if (!url) url = '/v1/chat/completions';
-  url = url.replace(/\/$/, '');
-  if (!/\/chat\/completions(?:\?.*)?$/.test(url)) url += '/chat/completions';
+  const [endpoint, query] = url.split(/\?(.*)/s, 2);
+  const path = endpoint.replace(/\/+$/, '');
+  url = (/\/chat\/completions$/.test(path) ? path : `${path}/chat/completions`) + (query ? `?${query}` : '');
   return { url, body, headers };
 }
-export async function requestAI(config, messages, fetchImpl) {
+export async function requestAI(config, messages, fetchImpl, signal) {
   const request = buildAIRequest(config, messages);
   const fetcher = fetchImpl || (typeof fetch === 'function' ? fetch : null);
   if (!fetcher) throw new Error('当前浏览器没有 fetch');
-  const response = await fetcher(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body) });
+  const response = await fetcher(request.url, { method: 'POST', headers: request.headers, body: JSON.stringify(request.body), signal });
   const raw = await response.text();
   const data = parseJSON(raw, { content: raw });
   if (!response.ok) throw new Error(`API ${response.status}: ${data?.error?.message || raw || response.statusText}`);
@@ -191,6 +219,27 @@ export function parseAIResponse(value) {
     (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
   return { data: parsed, patch, text: source };
 }
+export async function requestTavernAI(host, config, messages, fetchImpl, signal) {
+  if (config.apiMode === 'direct') {
+    if (!config.baseUrl?.trim() || !config.model?.trim()) throw new Error('请在配置中填写独立 API 地址和模型');
+    const response = await requestAI(config, messages, fetchImpl, signal);
+    const content = response?.choices?.[0]?.message?.content ?? response?.content;
+    if (typeof content !== 'string' || !content.trim()) throw new Error('独立 API 未返回有效文本');
+    return content;
+  }
+  const generateRaw = hostMethod(host, 'generateRaw');
+  if (!generateRaw) throw new Error('找不到酒馆助手 generateRaw，请检查脚本是否在酒馆助手中运行');
+  const generationId = `fated-tactical-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const stop = () => { try { Promise.resolve(hostMethod(host, 'stopGenerationById')?.(generationId)).catch(() => {}); } catch { /* optional */ } };
+  signal?.throwIfAborted();
+  signal?.addEventListener('abort', stop, { once: true });
+  try {
+    const content = await generateRaw({ generation_id: generationId, should_stream: false, ordered_prompts: messages });
+    if (typeof content !== 'string' || !content.trim()) throw new Error('酒馆模型没有返回文本，请检查当前主接口');
+    return content;
+  } finally { signal?.removeEventListener('abort', stop); }
+}
+
 export function parseJSONPatch(value) {
   const parsed = parseAIResponse(value).data;
   if (Array.isArray(parsed)) return parsed;
@@ -206,59 +255,53 @@ export function parseJSONPatch(value) {
 export { deepMerge, applyPatch };
 
 const DEFAULT_PROMPTS = [
-  { title: '属性与战局标准化校验', role: 'system', enabled: true, content: '请校验 {{mvu_data}}、{{latest_floor}} 与 {{standardized_roster}} 的数值和结构，返回 JSON patch。' },
+  { title: '属性与战局标准化校验', role: 'system', enabled: true, content: '依据警告和参战者资料为沙盘转换效果。仅返回 RFC 6902 JSON 对象 {"patch":[...],"unresolved":["无法等价转换的效果及原因"]}。不要改阵营、资源、位置、先攻及日志；不要创造引擎不支持的类型。无法忠实表达时保留在 unresolved 中。' },
   { title: '地形/参数微调指令输出', role: 'user', enabled: true, content: '依据战场 {{battle_init}} 和当前状态 {{battle_state}}，处理玩家指令：{{user_instruction}}。只输出 battle_patch 或 unit_patch JSON。' },
 ];
+export const TAVERN_VERSION = '0.1.5';
+
 const DEFAULT_CONFIG = {
-  baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 1200,
+  apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true,
   prompts: DEFAULT_PROMPTS,
 };
 function configFor(storage, key) {
-  try { return deepMerge(DEFAULT_CONFIG, parseJSON(storage?.getItem(key), {})); } catch (_) { return clone(DEFAULT_CONFIG); }
+  try {
+    const saved = parseJSON(storage?.getItem(key), {});
+    const mode = saved?.apiMode ?? (saved?.baseUrl ? 'direct' : 'tavern');
+    return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode });
+  } catch { return clone(DEFAULT_CONFIG); }
 }
 function putConfig(storage, key, value) { try { storage?.setItem(key, JSON.stringify(value)); } catch (_) { /* private browsing */ } }
 function chatId(host) {
-  const helper = getGlobal(host, 'TavernHelper');
-  for (const fn of [helper?.getChatId, getGlobal(host, 'getChatId')]) {
-    try { if (typeof fn === 'function') { const id = fn.call(helper); if (id != null) return String(id); } } catch (_) { /* fallback */ }
-  }
+  try {
+    const id = hostMethod(host, 'getChatId')?.() ?? getGlobal(host, 'SillyTavern')?.getContext?.()?.chatId;
+    if (id != null) return String(id);
+  } catch { /* fallback */ }
   return text(host?.location?.pathname || 'default').replace(/[^\w.-]+/g, '_') || 'default';
 }
-function tavernVariables(host) {
+function tavernIdentity(host) {
   const helper = getGlobal(host, 'TavernHelper');
-  const funcs = [helper?.getVariables, getGlobal(host, 'getVariables')].filter(fn => typeof fn === 'function');
-  for (const fn of funcs) {
-    for (const arg of [{ type: 'message' }, undefined]) {
-      try {
-        const result = fn.call(helper, arg);
-        if (result && typeof result.then === 'function') continue;
-        if (result != null) return result;
-      } catch (_) { /* API variants */ }
-    }
+  const st = getGlobal(host, 'SillyTavern');
+  const context = (() => { try { return st?.getContext?.() || {}; } catch (_) { return {}; } })();
+  const candidates = [
+    context.name1, context.personaName, context.persona_name, context.persona?.name,
+    getGlobal(host, 'personaName'),
+  ];
+  for (const value of candidates) if (typeof value === 'string' && value.trim()) return value.trim();
+  for (const fn of [hostMethod(host, 'getPersonaName')]) {
+    try { const value = typeof fn === 'function' ? fn.call(helper) : ''; if (typeof value === 'string' && value.trim()) return value.trim(); } catch (_) {}
   }
-  try { return getGlobal(host, 'SillyTavern')?.getContext?.()?.chatMetadata?.stat_data || {}; } catch (_) { return {}; }
+  return '';
 }
-async function tavernVariablesAsync(host) {
-  const helper = getGlobal(host, 'TavernHelper');
-  const funcs = [helper?.getVariables, getGlobal(host, 'getVariables')].filter(fn => typeof fn === 'function');
-  for (const fn of funcs) for (const arg of [{ type: 'message' }, undefined]) {
-    try { const result = await fn.call(helper, arg); if (result != null) return result; } catch (_) { /* variant */ }
-  }
-  return tavernVariables(host);
-}
+
 async function tavernMessages(host) {
-  const helper = getGlobal(host, 'TavernHelper');
-  const funcs = [helper?.getChatMessages, getGlobal(host, 'getChatMessages')].filter(fn => typeof fn === 'function');
-  for (const fn of funcs) {
-    for (const arg of [-1, '0-999']) {
-      try { const result = await fn.call(helper, arg, { include_swipes: false }); if (result != null) return Array.isArray(result) ? result : [result]; } catch (_) { /* variant */ }
-    }
-  }
-  const doc = hostDocument();
+  const messages = await readChatMessages(host);
+  if (messages.length) return messages;
+  const doc = hostDocument(host);
   const nodes = doc ? [...doc.querySelectorAll('.mes, .chat-msg, [data-message-id], [data-mesid]')] : [];
   return nodes.map((node, index) => ({
-    message_id: node.dataset.messageId ?? node.dataset.mesid ?? node.dataset.id ?? `floor-${index}`,
+    message_id: node.getAttribute('mesid') ?? node.dataset.messageId ?? node.dataset.mesid ?? node.dataset.id ?? `floor-${index}`,
     swipe_id: node.dataset.swipeId ?? node.dataset.swipe ?? '0',
     content: node.querySelector('.mes_text, .message, [data-content]')?.textContent || node.textContent,
   })).filter(item => item.content);
@@ -269,16 +312,23 @@ function fillTemplate(value, sources, instruction = '') {
     battle_init: sources.battleRaw || JSON.stringify(sources.battleInit ?? {}, null, 2), standardized_roster: sources.roster || '',
     mvu_data: JSON.stringify(sources.mvuData ?? {}, null, 2), latest_floor: sources.latestFloor || '',
     battle_state: JSON.stringify(sources.state ?? {}, null, 2), user_instruction: instruction,
+    warnings: JSON.stringify(sources.warnings ?? []),
   };
   return text(value).replace(/\{\{([\w]+)\}\}/g, (_, key) => values[key] ?? '');
 }
-function sourceBundle(variables, messages, chat = 'default') {
+export function sourceBundle(variables, messages, chat = 'default', preferredMessageId) {
   const list = Array.isArray(messages) ? messages : [];
   const latestMessage = list.at(-1);
   const latestFloor = messageContent(latestMessage ?? variables?.latest_floor ?? variables?.latestFloor ?? '');
-  const joined = list.map(messageContent).join('\n');
-  const allText = joined || latestFloor;
-  let battleRaw = extractTag(allText, ['battle_init', 'battle_in', '战术沙盘']);
+  const eligible = list.filter(message => message?.role !== 'user' && !message?.is_user && message?.role !== 'system' && !message?.is_system &&
+    (preferredMessageId == null || messageMeta(message).messageId === String(preferredMessageId)));
+  const tags = ['battle_init', 'battle_in', '战术沙盘'];
+  const decodeTags = value => value.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"');
+  const battleSource = eligible.findLast(message => extractTag(decodeTags(messageContent(message)), tags));
+  const sourceIndex = battleSource ? list.indexOf(battleSource) : list.length - 1;
+  const joined = list.slice(0, sourceIndex + 1).map(messageContent).join('\n');
+  const allText = decodeTags(messageContent(battleSource ?? eligible.at(-1)));
+  let battleRaw = extractTag(allText, tags);
   // Some older prompt routes emit a marker without a closing marker, e.g.
   // `{battle_in}: {"participants": [...]}`. Keep this compatibility path
   // bounded to the known marker names and let JSON/YAML parsing reject noise.
@@ -290,20 +340,25 @@ function sourceBundle(variables, messages, chat = 'default') {
       if (wrapped) battleRaw = wrapped[1].trim();
     }
   }
-  const battleInit = parseJSON(battleRaw, battleRaw ? parseLooseYaml(battleRaw) : null);
+  let battleInit = battleRaw ? parseBattleInit(battleRaw) : null;
+  // Tavern may strip XML tags, escape them, or wrap the JSON in markdown.
+  // Recover the canonical battle object by shape instead of treating it as a
+  // char_info block.
+  if (!isObject(battleInit) || (!Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants))) {
+    const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
+    if (recovered) { battleInit = recovered; battleRaw = JSON.stringify(recovered, null, 2); }
+  }
   const charBlocks = extractTags(joined, 'char_info');
   const charRaw = charBlocks[0] || '';
   const charInfo = charBlocks.flatMap(raw => {
     const value = parseJSON(raw, null);
     return value ? [value] : [parseLooseYaml(raw)];
   });
-  const mvuData = variables?.stat_data ?? variables?.message?.stat_data ?? variables ?? {};
-  const battleSource = list.findLast?.(message => extractTag(messageContent(message), ['battle_init', 'battle_in', '战术沙盘'])) ?? latestMessage;
-  const battleKey = battleInit
-    ? `${battleKeyFor(chat, battleSource, battleRaw, battleInit)}__mvu_${fnv1a(JSON.stringify(mvuData ?? {}))}`
-    : null;
-  return { mvuData, latestFloor, battleInit, charInfo, battleRaw, charRaw, messages: list, roster: '', battleKey,
-    source: battleSource ? { ...messageMeta(battleSource, list.length - 1), chatId: chat } : null };
+  const mvuData = statData(variables) ?? variables ?? {};
+  const sourceMessage = battleSource ?? eligible.at(-1);
+  const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleRaw, battleInit) : null;
+  return { mvuData, latestFloor: battleSource ? messageContent(battleSource) : latestFloor, battleInit, charInfo, battleRaw, charRaw, roster: '', protagonistName: '', battleKey,
+    source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null };
 }
 
 function patchValue(value, table) {
@@ -346,10 +401,15 @@ function applyPatch(target, patch) {
   const pointer = path => String(path || '').split('/').slice(1).map(x => x.replaceAll('~1', '/').replaceAll('~0', '~'));
   for (const operation of list) {
     if (!operation || !operation.op) continue;
-    const keys = pointer(operation.path), last = keys.pop();
+    const keys = pointer(operation.path);
+    if (!keys.length || !keys.every(safeProperty)) throw new Error('AI 返回了不支持的补丁路径');
+    const last = keys.pop();
     let parent = result;
-    for (const key of keys) { if (parent == null) break; parent = parent[key]; }
-    if (parent == null) continue;
+    for (const key of keys) {
+      if (!own(parent, key)) throw new Error(`补丁路径不存在：${operation.path}`);
+      parent = parent[key];
+    }
+    if (parent == null || typeof parent !== 'object') throw new Error(`补丁路径不可写：${operation.path}`);
     if (operation.op === 'remove') { if (Array.isArray(parent)) parent.splice(Number(last), 1); else delete parent[last]; }
     else if (operation.op === 'add' || operation.op === 'replace') { if (Array.isArray(parent) && last === '-') parent.push(clone(operation.value)); else parent[last] = clone(operation.value); }
   }
@@ -357,12 +417,12 @@ function applyPatch(target, patch) {
 }
 
 function style(doc) {
-  if (doc.querySelector('style[data-fated-tavern-overlay]')) return;
-  const css = `
-[data-fated-tavern-overlay]{position:fixed;z-index:2147483000;color:#e8edf5;font:14px/1.4 system-ui,sans-serif;pointer-events:none}
-[data-fated-tavern-overlay] *{box-sizing:border-box}[data-fated-tavern-overlay] button{cursor:pointer;color:inherit;background:#263348;border:1px solid #52627d;border-radius:4px;padding:5px 9px}[data-fated-tavern-overlay] button:hover{background:#354968}
-.fated-tavern-launcher{pointer-events:auto;position:fixed;right:20px;bottom:20px;border-radius:14px!important;width:52px;height:52px;background:linear-gradient(145deg,#b89a58,#6f4d2a)!important;border:1px solid #e7c878!important;box-shadow:0 5px 18px #0009, inset 0 1px #fff5!important;font-size:22px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:84px;bottom:20px;width:min(920px,calc(100vw - 32px));height:min(720px,calc(100vh - 32px));min-width:360px;min-height:280px;resize:both;overflow:hidden;background:linear-gradient(145deg,#17151d,#0d1018);border:1px solid #8c7044;border-radius:12px;box-shadow:0 18px 60px #000d, inset 0 1px #fff2;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:10px;padding:12px 15px;background:linear-gradient(90deg,#2a2024,#191b29);border-bottom:1px solid #6c5638;cursor:move}.fated-tavern-header strong{flex:1;color:#f3d989;letter-spacing:.06em}.fated-tavern-header button{padding:3px 10px;background:#2c2932}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:6px;padding:8px 12px;background:#151821;border-bottom:1px solid #34313a}.fated-tavern-tabs button,.fated-tavern-subtabs button{background:#211f29;border-color:#51445a}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:linear-gradient(145deg,#9c743b,#5a3e29);border-color:#d1a956;color:#fff1ba}.fated-tavern-content{overflow:auto;flex:1;padding:16px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:4px;color:#c8bdad}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0c0e15;color:#eee6d5;border:1px solid #554b4b;border-radius:6px;padding:8px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt,.fated-instance,.fated-battle-card{border:1px solid #514553;padding:12px;margin:8px 0;border-radius:8px;background:linear-gradient(145deg,#211c28,#161722);box-shadow:inset 0 1px #fff1}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{white-space:pre-wrap}.fated-status{padding:9px;background:#0b0e15;border:1px solid #373541;border-radius:6px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.fated-chat{display:flex;gap:7px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px;color:#b6ac9f}.fated-card-kicker{color:#e6bd66;font:700 11px/1.2 ui-monospace,monospace;letter-spacing:.12em}.fated-battle-card h4{margin:7px 0;color:#f4e4b1;font-size:20px}.fated-primary{background:linear-gradient(145deg,#a5793c,#5e4028)!important;border-color:#d3a957!important;color:#fff1bd!important}.fated-battle-entry{margin:10px 0;padding:10px;border:1px solid #80633f;border-radius:8px;background:linear-gradient(145deg,#201a20,#11131a);color:#e8edf5;box-shadow:0 4px 14px #0005}.fated-battle-entry>summary,.fated-battle-source-box>summary{cursor:pointer;color:#e8c879;font-weight:700}.fated-battle-meta{margin:6px 0;color:#a99f9a;font-size:12px}.fated-battle-source,.fated-battle-source-box pre{max-height:220px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;color:#c8c0af}.fated-battle-enter{margin-top:6px}`;
-  (doc.head || doc.documentElement)?.append(el(doc, 'style', { 'data-fated-tavern-overlay': '' }, css));
+  const installed = doc.querySelector('style[data-fated-tavern-overlay]');
+  if (installed) {
+    installed.textContent = tavernTheme;
+    return;
+  }
+  (doc.head || doc.documentElement)?.append(el(doc, 'style', { 'data-fated-tavern-overlay': '' }, tavernTheme));
 }
 
 /** Mount the Tavern console. Calling it repeatedly disposes the previous console. */
@@ -378,14 +438,16 @@ export function mountTavernOverlay(options = {}) {
   const stateKey = `fated-tactical/instances/${id}`;
   let config = configFor(storage, configKey);
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
+  let selectedMessageId = null, aiController = null, askAI, retryAI = null;
+  const attemptedBattles = new Set(), normalizedBattles = new Map();
   let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: 'created' };
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
   const root = el(doc, 'div', { 'data-fated-tavern-overlay': '' });
-  const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: '打开命定战术控制台', 'aria-label': '打开命定战术控制台', type: 'button' }, '🪄');
+  const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打开命定战术控制台 · v${TAVERN_VERSION}`, 'aria-label': `打开命定战术控制台 · v${TAVERN_VERSION}`, type: 'button' }, '🪄');
   const panel = el(doc, 'section', { class: 'fated-tavern-panel', role: 'dialog', 'aria-label': '命定战术酒馆控制台', hidden: '' });
   const header = el(doc, 'header', { class: 'fated-tavern-header' });
-  const title = el(doc, 'strong', {}, '命定战术控制台');
+  const title = el(doc, 'strong', {}, `命定战术控制台 v${TAVERN_VERSION}`);
   const minimize = el(doc, 'button', { type: 'button', title: '最小化', 'aria-label': '最小化' }, '−');
   const close = el(doc, 'button', { type: 'button', title: '关闭', 'aria-label': '关闭' }, '×');
   header.append(title, minimize, close);
@@ -396,22 +458,42 @@ export function mountTavernOverlay(options = {}) {
     const button = el(doc, 'button', { type: 'button', role: 'tab', 'aria-selected': key === 'instances' ? 'true' : 'false', 'data-tab': key }, label);
     const page = el(doc, 'div', { class: `fated-tab ${key === 'instances' ? 'active' : ''}`, 'data-page': key });
     tabs.append(button); content.append(page); pages[key] = page;
-    on(button, 'click', () => { Object.entries(pages).forEach(([name, node]) => { node.classList.toggle('active', name === key); }); [...tabs.children].forEach(x => x.setAttribute('aria-selected', String(x === button))); if (key === 'sandbox') scan(); });
+    on(button, 'click', () => { Object.entries(pages).forEach(([name, node]) => { node.classList.toggle('active', name === key); }); [...tabs.children].forEach(x => x.setAttribute('aria-selected', String(x === button))); });
   }
-  panel.append(header, tabs, content); root.append(launcher, panel); (doc.body || doc.documentElement)?.append(root);
+  const toast = el(doc, 'aside', { class: 'fated-toast', hidden: '', role: 'status', 'aria-live': 'polite' });
+  const noticeTitle = el(doc, 'strong'), noticeBody = el(doc, 'p');
+  const retry = el(doc, 'button', { type: 'button' }, '重试');
+  const dismiss = el(doc, 'button', { type: 'button' }, '关闭');
+  toast.append(noticeTitle, noticeBody, retry, dismiss);
+  on(retry, 'click', () => retryAI?.());
+  on(dismiss, 'click', () => { toast.hidden = true; });
+  function notify(title, detail = '', onRetry = null, busy = false) {
+    retryAI = onRetry;
+    noticeTitle.textContent = title;
+    noticeBody.textContent = detail;
+    noticeBody.hidden = !detail;
+    retry.hidden = !onRetry;
+    dismiss.hidden = busy;
+    toast.hidden = false;
+  }
+  panel.append(header, tabs, content); root.append(launcher, panel, toast); (doc.body || doc.documentElement)?.append(root);
   const instances = config.instances || (() => { try { return parseJSON(storage?.getItem(stateKey), {}) || {}; } catch (_) { return {}; } })();
   config.instances = isObject(instances) ? instances : {};
 
   function save() { putConfig(storage, configKey, config); putConfig(storage, stateKey, config.instances); }
-  async function open() { if (disposed) return; panel.hidden = false; launcher.hidden = true; if (config.autoScan !== false) await scan(); }
+  async function open() {
+    if (disposed) return;
+    panel.hidden = false;
+    launcher.hidden = true;
+    if (config.autoScan !== false) { selectedMessageId = null; await scan(); }
+  }
   function hide() { panel.hidden = true; launcher.hidden = Boolean(config.hideLauncher); }
   function bindEventBus() {
-    const helper = getGlobal(host, 'TavernHelper');
-    const eventOn = getGlobal(host, 'eventOn') || helper?.eventOn;
+    const eventOn = hostMethod(host, 'eventOn');
     if (typeof eventOn !== 'function') return;
     const handler = () => { open().catch(showError); };
     try {
-      const result = eventOn.call(helper || host, 'fated_tactical:open_ui', handler);
+      const result = eventOn('fated_tactical:open_ui', handler);
       if (typeof result === 'function') removeOpenEvent = result;
       else if (result?.off && typeof result.off === 'function') removeOpenEvent = () => result.off();
     } catch (_) { /* event bus is optional outside JS-Slash-Runner */ }
@@ -424,7 +506,14 @@ export function mountTavernOverlay(options = {}) {
   on(doc, 'click', event => {
     const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
     const trigger = path.find(node => node?.matches?.('[data-fated-battle-open], .fated-battle-enter'));
-    if (trigger) { event.preventDefault(); event.stopPropagation(); open(); }
+    if (trigger) {
+      event.preventDefault(); event.stopPropagation();
+      const floor = trigger.closest('[mesid], [data-message-id], [data-mesid]');
+      selectedMessageId = floor?.getAttribute('mesid') ?? floor?.dataset.messageId ?? floor?.dataset.mesid ?? null;
+      panel.hidden = false; launcher.hidden = true;
+      switchTab('sandbox');
+      void scan();
+    }
   }, { capture: true });
 
   // Dragging works for both the launcher and the large window. Coordinates are
@@ -464,7 +553,6 @@ export function mountTavernOverlay(options = {}) {
     const pre = el(doc, 'pre', { class: 'fated-battle-source' }, raw);
     const enter = el(doc, 'button', { type: 'button', class: 'fated-battle-enter' }, '打开战场控制台');
     details.append(summary, meta, pre, enter);
-    on(enter, 'click', () => open());
     return details;
   }
   function foldBattleEntries() {
@@ -503,9 +591,9 @@ export function mountTavernOverlay(options = {}) {
     const page = pages.instances; page.replaceChildren(el(doc, 'h3', {}, '战场入口'));
     const battleCard = el(doc, 'article', { class: 'fated-battle-card' });
     const battle = sources.battleInit;
-    battleCard.append(el(doc, 'div', { class: 'fated-card-kicker' }, battle ? 'BATTLE INIT · 已识别' : 'BATTLE INIT · 等待扫描'));
-    battleCard.append(el(doc, 'h4', {}, battle?.sceneTitle || '尚未发现正文战场'));
-    battleCard.append(el(doc, 'p', { class: 'fated-mini' }, battle ? `${battle.battleType || '标准战斗'} · ${battle.participants?.length || 0} 名参与者 · ${battle.covers?.length || 0} 个掩体` : '点击扫描当前聊天，读取最新正文中的 battle_init。'));
+    battleCard.append(el(doc, 'div', { class: 'fated-card-kicker' }, `命定战术控制台 v${TAVERN_VERSION} · ${battle ? 'BATTLE INIT · 已识别' : 'BATTLE INIT · 等待扫描'}`));
+    battleCard.append(el(doc, 'h4', {}, battle?.sceneTitle || battle?.title || '尚未发现正文战场'));
+    battleCard.append(el(doc, 'p', { class: 'fated-mini' }, battle ? `${battle.battleType || '标准战斗'} · ${battle.units?.length || battle.participants?.length || 0} 名参与者 · ${battle.covers?.length || 0} 个掩体` : '点击扫描当前聊天，读取最新正文中的 battle_init。'));
     const battleActions = el(doc, 'div', { class: 'fated-actions' });
     const loadBattle = el(doc, 'button', { type: 'button', class: 'fated-primary' }, battle ? '加载战场' : '扫描并加载');
     const showSource = el(doc, 'details', { class: 'fated-battle-source-box' });
@@ -515,7 +603,7 @@ export function mountTavernOverlay(options = {}) {
     diag.append(el(doc, 'summary', {}, '诊断日志（扫描来源 / 去重）'));
     diag.append(el(doc, 'pre', { class: 'fated-status', 'data-diagnostics': '' }, JSON.stringify(diagnostics, null, 2)));
     page.append(diag);
-    on(loadBattle, 'click', async () => { await scan(true); renderInstances(); switchTab('sandbox'); });
+    on(loadBattle, 'click', async () => { switchTab('sandbox'); await scan(); });
     const toolbar = el(doc, 'div', { class: 'fated-actions' });
     const refresh = el(doc, 'button', { type: 'button' }, '从当前聊天重新水合'); toolbar.append(refresh); page.append(toolbar);
     const list = el(doc, 'div'); page.append(list);
@@ -530,7 +618,7 @@ export function mountTavernOverlay(options = {}) {
       on(remove, 'click', () => { delete config.instances[key]; save(); renderInstances(); });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (parsed) { config.instances[key] = parsed; save(); renderInstances(); } });
     }
-    on(refresh, 'click', () => scan(true).catch(showError));
+    on(refresh, 'click', () => { selectedMessageId = null; void scan(true); });
   }
   function switchTab(key) {
     const button = tabs.querySelector(`[data-tab="${key}"]`);
@@ -543,42 +631,57 @@ export function mountTavernOverlay(options = {}) {
     const subtabs = el(doc, 'nav', { class: 'fated-tavern-subtabs' }); const apiPage = el(doc, 'div'); const promptPage = el(doc, 'div');
     for (const [name, label, target] of [['api', 'API 与界面', apiPage], ['prompts', '提示词', promptPage]]) { const b = el(doc, 'button', { type: 'button', 'aria-selected': name === 'api' ? 'true' : 'false' }, label); subtabs.append(b); on(b, 'click', () => { apiPage.hidden = name !== 'api'; promptPage.hidden = name !== 'prompts'; [...subtabs.children].forEach(x => x.setAttribute('aria-selected', String(x === b))); }); }
     apiPage.className = 'fated-tavern-grid'; promptPage.className = 'fated-tavern-prompts'; page.append(subtabs, apiPage, promptPage); promptPage.hidden = true;
+    const apiMode = el(doc, 'select', { 'aria-label': '请求方式' });
+    apiMode.append(el(doc, 'option', { value: 'tavern' }, '酒馆当前主接口'), el(doc, 'option', { value: 'direct' }, '独立 OpenAI 兼容 API'));
+    apiMode.value = config.apiMode;
+    const apiModeLabel = el(doc, 'label', {}, '请求方式');
+    apiModeLabel.append(apiMode); apiPage.append(apiModeLabel);
+    on(apiMode, 'change', () => { config.apiMode = apiMode.value; save(); });
     const fields = [['baseUrl', 'API 地址'], ['apiKey', 'API Key', 'password'], ['model', '模型名称'], ['temperature', 'temperature', 'number'], ['max_tokens', 'max_tokens', 'number'], ['excludeParams', '排除主体参数（逗号分隔）'], ['extraBody', '附加主体参数 JSON', 'textarea'], ['headers', '附加请求标头 JSON', 'textarea']];
     for (const [key, label, type] of fields) { const f = field(label, config[key], type); apiPage.append(f.labelNode); on(f.input, 'change', () => { config[key] = f.input.value; save(); }); }
     const hide = el(doc, 'label', {}); const checkbox = el(doc, 'input', { type: 'checkbox' }); checkbox.checked = Boolean(config.hideLauncher); hide.append(checkbox, ' 隐藏悬浮按钮到魔术棒菜单'); apiPage.append(hide);
     const auto = el(doc, 'label', {}); const autoCheck = el(doc, 'input', { type: 'checkbox' }); autoCheck.checked = config.autoScan !== false; auto.append(autoCheck, ' 打开沙盘时自动扫描'); apiPage.append(auto);
     on(checkbox, 'change', () => { config.hideLauncher = checkbox.checked; updateMagic(); save(); }); on(autoCheck, 'change', () => { config.autoScan = autoCheck.checked; save(); });
     const test = el(doc, 'button', { type: 'button' }, '测试连通性'); const models = el(doc, 'button', { type: 'button' }, '拉取模型'); const result = el(doc, 'div', { class: 'fated-status' }); apiPage.append(test, models, result);
-    on(test, 'click', async () => { result.textContent = '请求中…'; try { const response = await requestAI(config, [{ role: 'user', content: '请只回复 OK' }]); result.textContent = JSON.stringify(response).slice(0, 1000); } catch (e) { result.textContent = `失败：${e.message}`; } });
+    on(test, 'click', async () => { result.textContent = '请求中…'; try { const response = await requestTavernAI(host, config, [{ role: 'user', content: '请只回复 OK' }], options.fetch); result.textContent = response.slice(0, 1000); } catch (e) { result.textContent = `失败：${e.message}`; } });
     on(models, 'click', async () => { try { const fetcher = options.fetch || (typeof fetch === 'function' ? fetch : null); if (!fetcher) throw new Error('当前浏览器没有 fetch'); const url = text(config.baseUrl).replace(/\/$/, '').replace(/\/chat\/completions$/, '') + '/models'; const r = await fetcher(url, { headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {} }); result.textContent = await r.text(); } catch (e) { result.textContent = `失败：${e.message}`; } });
     const promptList = el(doc, 'div'); promptPage.append(promptList); const add = el(doc, 'button', { type: 'button' }, '新建提示词'); const reset = el(doc, 'button', { type: 'button' }, '重置默认模板'); promptPage.append(add, reset);
     const renderPrompts = () => { promptList.replaceChildren(); (config.prompts || []).forEach((prompt, index) => { const box = el(doc, 'article', { class: 'fated-prompt' }); const titleF = field('标题', prompt.title); const role = el(doc, 'select'); for (const r of ['system', 'user', 'assistant']) role.append(el(doc, 'option', { value: r, text: r })); role.value = prompt.role; const contentF = field('内容', prompt.content, 'textarea'); const enabled = el(doc, 'input', { type: 'checkbox' }); enabled.checked = prompt.enabled !== false; box.append(titleF.labelNode, role, contentF.labelNode, enabled, ' 启用 '); const up = el(doc, 'button', { type: 'button' }, '上移'); const down = el(doc, 'button', { type: 'button' }, '下移'); const del = el(doc, 'button', { type: 'button' }, '删除'); box.append(up, down, del); promptList.append(box); const changed = () => { prompt.title = titleF.input.value; prompt.role = role.value; prompt.content = contentF.input.value; prompt.enabled = enabled.checked; save(); }; on(titleF.input, 'change', changed); on(role, 'change', changed); on(contentF.input, 'change', changed); on(enabled, 'change', changed); on(up, 'click', () => { if (index) [config.prompts[index - 1], config.prompts[index]] = [config.prompts[index], config.prompts[index - 1]]; save(); renderPrompts(); }); on(down, 'click', () => { if (index < config.prompts.length - 1) [config.prompts[index + 1], config.prompts[index]] = [config.prompts[index], config.prompts[index + 1]]; save(); renderPrompts(); }); on(del, 'click', () => { config.prompts.splice(index, 1); save(); renderPrompts(); }); }); };
     on(add, 'click', () => { config.prompts.push({ title: '新提示词', role: 'user', enabled: true, content: '{{user_instruction}}' }); save(); renderPrompts(); }); on(reset, 'click', () => { config.prompts = clone(DEFAULT_PROMPTS); save(); renderPrompts(); }); renderPrompts();
   }
 
-  async function hydrate() {
-    const variables = await tavernVariablesAsync(host), messages = await tavernMessages(host); sources = sourceBundle(variables, messages, id);
+  async function hydrate(epoch) {
+    const messages = await tavernMessages(host);
+    const nextSources = sourceBundle({}, messages, chatId(host), selectedMessageId);
+    const messageId = Number(nextSources.source?.messageId);
+    // MVU may return objects created in the parent window. Clone them into
+    // the script realm before passing them to the converter's plain-object checks.
+    nextSources.mvuData = clone(await readBattleVariables(host, messageId));
+    nextSources.protagonistName = tavernIdentity(host);
+    if (epoch !== scanEpoch || disposed) return null;
+    sources = nextSources;
     foldBattleEntries();
+    if (!sources.battleInit) { diagnostics = { phase: 'no-battle' }; config.instances = {}; return null; }
     const converter = options.converter || getGlobal(host, 'FatedTactical')?.hydrateBattleState || getGlobal(host, 'hydrateBattleState') || hydrateBattleState;
     let hydrated = null;
     let conversionError = null;
     if (typeof converter === 'function') {
-      const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleRaw || sources.battleInit };
+      const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, protagonistName: sources.protagonistName };
       try { hydrated = await converter(input); }
-      catch (error) {
-        conversionError = error;
-        try { hydrated = await converter(sources.mvuData, sources.charInfo, sources.battleInit); }
-        catch (fallbackError) { conversionError = fallbackError; }
-      }
+      catch (error) { conversionError = error; }
     }
+    if (epoch !== scanEpoch || disposed) return null;
     if (conversionError) {
-      diagnostics = { phase: 'conversion-error', error: conversionError?.stack || conversionError?.message || String(conversionError), mvuKeys: Object.keys(sources.mvuData || {}), charCount: sources.charInfo?.length || 0, participantCount: sources.battleInit?.participants?.length || 0 };
+      diagnostics = { phase: 'conversion-error', error: conversionError?.stack || conversionError?.message || String(conversionError), mvuKeys: Object.keys(sources.mvuData || {}), charCount: sources.charInfo?.length || 0, participantCount: sources.battleInit?.units?.length || sources.battleInit?.participants?.length || 0 };
       try { console.error('[fated-tactical] hydrate failed', diagnostics); } catch (_) {}
       const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
       if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
       throw conversionError;
     }
-    const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
+    sources.warnings = hydrated?.warnings ?? [];
+    sources.sourceMap = hydrated?.sourceMap ?? {};
+    sources.seed = hydrated?.seed ?? hydrated?.state?.rng;
+    sources.input = { mvu: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, protagonistName: sources.protagonistName };
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
     // Instances are a projection of the latest scan, not an append-only log.
@@ -592,55 +695,70 @@ export function mountTavernOverlay(options = {}) {
     config.instances = nextInstances;
     diagnostics = {
       phase: 'hydrated',
+      version: TAVERN_VERSION,
       mvuKeys: Object.keys(sources.mvuData || {}),
+      protagonistName: sources.protagonistName || '',
       charCount: sources.charInfo?.length || 0,
-      participantCount: sources.battleInit?.participants?.length || 0,
+      participantCount: sources.battleInit?.units?.length || sources.battleInit?.participants?.length || 0,
       rosterCount: Array.isArray(roster) ? roster.length : Object.keys(roster || {}).length,
       rosterIds: (Array.isArray(roster) ? roster : Object.values(roster || {})).map(item => `${item.id || item.name}:${item.source || 'unknown'}`),
+      fieldSources: (Array.isArray(roster) ? roster : Object.values(roster || {})).map(item => ({ id: item.id, name: item.name, source: item.source, fieldSources: item.fieldSources })),
       instanceCount: Object.keys(config.instances).length,
       unitIds: Object.values(hydrated?.state?.units || {}).map(unit => `${unit.id}:${unit.name}:${unit.team}`),
       warnings: hydrated?.warnings || [],
     };
-    try { console.info('[fated-tactical] hydrate', diagnostics); } catch (_) {}
     save();
     const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
     if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
     return hydrated;
   }
-  async function mountState(state) {
+  function mountState(state, restoreSaved = false) {
+    gameMount?.unmount?.();
+    gameMount = null;
     if (!state) return;
     const battleInstanceId = sources.battleKey || id;
-    const mount = options.mount || defaultMount || getGlobal(host, 'FatedTactical')?.mount || getGlobal(host, 'mount');
-    if (typeof mount !== 'function') return;
+    const battleInput = sources.input;
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
-    try {
-      gameMount?.unmount?.();
-      gameMount = await mount(target, { instanceId: battleInstanceId, storage, state });
-      // mount() receives the complete hydrated/custom state; its initialState path
-      // must not replace it with the default scenario.
-    } catch (e) { showError(e); }
+    const restart = ({ seed, mode }) => {
+      const next = hydrateBattleState(battleInput, { seed, mode, throwOnValidation: true }).state;
+      return applyNormalization(next, normalizedBattles.get(battleInstanceId));
+    };
+    gameMount = (options.mount || defaultMount)(target, {
+      instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
+    });
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
+  function liveState() { return gameMount?.getState?.() ?? currentState; }
+  function applyNormalization(state, patch) {
+    return patch ? applyPatch(state, patch) : state;
+  }
   async function scan(force = false) {
     const epoch = ++scanEpoch;
-    if (force) {
-      currentState = null; activeBattleKey = null;
-      try { gameMount?.unmount?.(); } catch (_) {}
-      gameMount = null; config.instances = {};
-    }
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
     try {
-      const hydrated = await hydrate();
-      diagnostics.scan = { ...diagnostics, phase: 'scanned' };
-      if (epoch !== scanEpoch) return;
-      const nextState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
-      // Always replace the mounted state with the latest source bundle. Keeping
-      // the old state whenever the key looked equal masked changed MVU data and
-      // was the reason stale duplicate enemies survived a rescan.
-      currentState = nextState;
-      activeBattleKey = sources.battleKey;
-      await mountState(currentState);
+      const hydrated = await hydrate(epoch);
+      if (epoch !== scanEpoch || disposed) return;
+      const nextState = hydrated?.state ?? null;
+      if (force || !gameMount || activeBattleKey !== sources.battleKey) {
+        if (aiController) {
+          aiController.abort();
+          aiController = null;
+          attemptedBattles.delete(activeBattleKey);
+        }
+        if (force) {
+          attemptedBattles.delete(sources.battleKey);
+          normalizedBattles.delete(sources.battleKey);
+        }
+        toast.hidden = true;
+        currentState = nextState ? applyNormalization(nextState, normalizedBattles.get(sources.battleKey)) : null;
+        activeBattleKey = sources.battleKey;
+        mountState(currentState, !force);
+      }
       renderInstances();
+      if (currentState && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
+        attemptedBattles.add(activeBattleKey);
+        void askAI('validate');
+      }
       if (node) node.textContent = currentState
         ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')}`
         : '扫描完成（未找到可挂载的战局）。';
@@ -650,40 +768,102 @@ export function mountTavernOverlay(options = {}) {
       const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
       if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
       showError(e);
+      notify('战局加载失败', e.message, () => scan(force));
     }
   }
   function renderSandbox() {
     const page = pages.sandbox; page.replaceChildren(el(doc, 'h3', {}, '沙盘'));
     const status = el(doc, 'div', { class: 'fated-status', 'data-status': '' }, '打开此页会自动侦测当前聊天。'); page.append(status);
-    const mountTarget = el(doc, 'div', { 'data-sandbox-mount': '', style: 'min-height:90px;margin:8px 0;border:1px dashed #465675;padding:8px' }, '战棋界面挂载区'); page.append(mountTarget);
+    const mountTarget = el(doc, 'div', { 'data-sandbox-mount': '' }); page.append(mountTarget);
     const actions = el(doc, 'div', { class: 'fated-actions' }); const check = el(doc, 'button', { type: 'button' }, '校验'); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(check, report, refresh); page.append(actions);
     const instruction = el(doc, 'textarea', { placeholder: '让辅助 AI 调整地形、站位或角色参数…' }); instruction.style.width = '100%'; page.append(instruction);
     const chat = el(doc, 'div', { class: 'fated-chat' }); const send = el(doc, 'button', { type: 'button' }, '发送'); chat.append(instruction, send); page.append(chat);
     const output = el(doc, 'pre', { class: 'fated-status', 'data-ai-output': '' }); page.append(output);
     on(refresh, 'click', () => scan(true).catch(showError));
-    on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = currentState ? buildMvuJsonPatch(currentState) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
-    async function ask(kind) {
-      const prompts = (config.prompts || []).filter(x => x.enabled !== false && (kind === 'validate' ? /校验|标准化/i.test(x.title || '') : !/校验|标准化/i.test(x.title || ''))).map(x => ({ role: x.role || 'user', content: fillTemplate(x.content, { ...sources, state: currentState }) }));
-      if (kind === 'chat' && instruction.value.trim()) prompts.push({ role: 'user', content: instruction.value.trim() });
-      if (!prompts.length) { output.textContent = '没有可发送的提示词。'; return; }
+    on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = liveState() ? buildMvuJsonPatch(liveState(), sources.sourceMap) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
+    askAI = async (kind, requestText = instruction.value.trim()) => {
+      const state = liveState();
+      if (!state || aiController || (kind === 'chat' && !requestText)) return;
+      const normalize = kind === 'validate';
+      const key = activeBattleKey;
+      const controller = new AbortController();
+      aiController = controller;
+      const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), 60000);
+      const prompts = (config.prompts || []).filter(x => x.enabled !== false && normalize === /校验|标准化/i.test(x.title || ''))
+        .map(x => ({ role: x.role || 'user', content: fillTemplate(x.content, { ...sources, state }, requestText) }));
+      if (normalize) {
+        // Give the model stable patch paths and only the data for this battle.
+        const roster = Object.values(config.instances);
+        const templates = new Set(Object.values(state.items).map(item => item.templateId));
+        const skills = new Set(Object.values(state.units).flatMap(unit => unit.skills));
+        const usedEntries = (table, ids) => Object.fromEntries(Object.entries(table).filter(([id]) => ids.has(id)));
+        const equipment = usedEntries(state.equipment, templates);
+        const patchExamples = Object.entries(equipment).filter(([, item]) => Number.isFinite(item.attack))
+          .map(([id, item]) => ({ op: 'replace', path: `/equipment/${id}/attack`, value: item.attack }));
+        prompts.push({ role: 'user', content: JSON.stringify({
+          task: '只输出一个 JSON 对象，格式为 {"patch":[],"unresolved":[]}。patch 中的每项必须是 RFC 6902 的 add、replace 或 remove。path 必须以 / 开头，使用下方引擎 ID，不使用显示名、数组下标或 stat_data 路径。可修改装备、技能、道具、状态模板、单位的 statuses 或 armor。不能等价转换的警告写入 unresolved。patchExamples 只演示写法，只有警告要求改动时才替换对应的 value。',
+          warnings: sources.warnings, roster, equipment, skills: usedEntries(state.skills, skills), items: state.items, patchExamples,
+        }) });
+      } else prompts.push({ role: 'user', content: requestText });
+      const label = normalize ? '标准化' : 'AI 调整';
+      notify(normalize ? '正在标准化中…' : '正在请求 AI…', '', null, true);
       try {
-        const response = await requestAI(config, prompts, options.fetch || undefined);
-        const content = response?.choices?.[0]?.message?.content || response?.content || JSON.stringify(response); output.textContent = content;
-        const parsed = parseAIResponse(content);
-        if (parsed.patch && currentState) {
-          scanEpoch++;
-          const nextState = applyPatch(currentState, parsed.patch);
-          (options.validateState || defaultValidateState)(nextState);
+        const cancelled = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
+        const validate = options.validateState || defaultValidateState;
+        let patch, unresolved, nextState, combined;
+        for (let attempt = 0; ; attempt++) {
+          const reply = await Promise.race([
+            requestTavernAI(host, config, prompts, options.fetch, controller.signal), cancelled,
+          ]);
+          if (disposed || aiController !== controller || key !== activeBattleKey) return;
+          try {
+            const parsed = parseAIResponse(reply);
+            patch = parseJSONPatch(reply) ?? parsed.patch;
+            if (!patch) throw new Error('模型未返回有效的战局补丁');
+            if (normalize) {
+              if (!Array.isArray(patch)) throw new Error('patch 必须是 JSON 数组');
+              for (const [index, operation] of patch.entries()) {
+                if (!['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
+                    !/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:statuses|armor)(?:\/|$)/.test(operation.path)) {
+                  throw new Error(`第 ${index + 1} 项路径或操作无效（${text(operation?.path).slice(0, 120) || '缺少 path'}）`);
+                }
+              }
+            }
+            unresolved = Array.isArray(parsed.data?.unresolved) ? parsed.data.unresolved.map(text).filter(Boolean) : [];
+            if (normalize && patch.length === 0 && !unresolved.length && sources.warnings?.length) throw new Error('空补丁需要说明哪些警告无法转换');
+            nextState = applyPatch(liveState(), patch);
+            validate(nextState);
+            if (normalize && patch.length) {
+              combined = [...(normalizedBattles.get(key) ?? []), ...patch];
+              const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+              validate(applyNormalization(baseline, combined));
+            }
+            break;
+          } catch (error) {
+            if (!normalize || attempt > 0) throw error;
+            notify('正在标准化中…', '模型正在修正补丁格式', null, true);
+            prompts.push({ role: 'user', content: `上一条输出校验失败（${error.message}）。按上面的例子使用精确 ID 和路径，重新输出完整 JSON 对象。\n上一条输出：${reply.slice(0, 3500)}` });
+          }
+        }
+        if (combined) normalizedBattles.set(key, combined);
+        if (!Array.isArray(patch) || patch.length) {
+          gameMount?.loadState?.(nextState);
           currentState = nextState;
-          activeBattleKey = sources.battleKey;
-          await mountState(currentState);
-          const roster = Object.values(currentState.units || {}).map(unit => ({ ...unit, source: '手动或 AI 编辑' }));
-          for (const unit of roster) config.instances[unit.id] = unit;
+          for (const unit of Object.values(nextState.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
           save(); renderInstances();
         }
-      } catch (e) { output.textContent = `AI 失败：${e.message}`; showError(e); }
-    }
-    on(check, 'click', () => ask('validate')); on(send, 'click', () => ask('chat'));
+        output.textContent = unresolved.length ? `待处理：\n${unresolved.join('\n')}` : `${label}完成`;
+        notify(unresolved.length ? `${label}完成，部分效果待处理` : `${label}完成`, unresolved.join('\n'), unresolved.length ? () => askAI(kind, requestText) : null);
+      } catch (e) {
+        if (disposed || aiController !== controller) return;
+        output.textContent = `${label}失败：${e.message}`;
+        notify(`${label}失败`, e.message, () => askAI(kind, requestText));
+      } finally {
+        clearTimeout(timeout);
+        if (aiController === controller) aiController = null;
+      }
+    };
+    on(check, 'click', () => askAI('validate')); on(send, 'click', () => askAI('chat'));
   }
   function updateMagic() {
     launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;
@@ -702,9 +882,9 @@ export function mountTavernOverlay(options = {}) {
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(currentState) };
+  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(liveState()) };
   function dispose() {
-    if (disposed) return; disposed = true; battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
+    if (disposed) return; disposed = true; aiController?.abort(); battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
   try { host.__fatedTacticalTavern = api; } catch (_) {}
   if (options.open) open();
   return api;

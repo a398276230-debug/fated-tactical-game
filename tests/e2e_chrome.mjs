@@ -88,6 +88,76 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const state = () => run('window.FatedTacticalGame.getBattleState()');
   const actor = async () => { const s = await state(); return s.units[s.order[s.turn]]; };
   const cell = (x, y) => `#board [data-x="${x}"][data-y="${y}"]`;
+  await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/tavern.html` });
+  await until(() => run('!!window.__fatedTacticalTavern'), '酒馆控制台加载');
+  await run(`(async () => {
+    const iframe = document.createElement('iframe');
+    iframe.hidden = true;
+    document.body.append(iframe);
+    const bundle = await (await fetch('/dist/tavern.iife.js')).text();
+    iframe.contentWindow.eval(bundle);
+    const battle = '<battle_init>\\nbattle|1|chrome-host|酒馆联调|terrain|12\\nunit|p1|blue|mvu:主角|玩家|2,2\\nunit|e1|red|char_info|对手|7,7\\n</battle_init>';
+    const messages = [
+      {message_id:0, role:'assistant', message:'<char_info>{"name":"对手","stats":{"agi":-20}}</char_info>' + battle},
+      {message_id:1, role:'assistant', message:'后续叙事'},
+    ];
+    window.hostCalls = [];
+    window.getLastMessageId = () => 1;
+    window.getChatMessages = (range) => { window.hostRange = range; return range === '0-1' ? messages : [messages.at(-1)]; };
+    window.Mvu = {getMvuData({message_id}) {
+      hostCalls.push(message_id);
+      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:321,上限:321},装备:{旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10'}}}}}};
+    }};
+    window.generateRaw = async config => new Promise((resolve,reject) => {
+      window.hostRequests ||= [];
+      hostRequests.push(config);
+      window.completeHostAI = () => {
+        if (hostRequests.length === 1) return reject(new Error('联调模拟网络错误'));
+        if (hostRequests.length === 2) return resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/stat_data/主角/attack', value: 999 }] }));
+        const {equipment} = JSON.parse(config.ordered_prompts.at(-2).content);
+        const id = Object.keys(equipment).find(id => equipment[id].name === '旧弩');
+        resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10}]}));
+      };
+    });
+  })()`);
+  await click('.fated-tavern-launcher');
+  await until(() => run('window.hostRequests?.length === 1'), '有警告自动调用酒馆助手');
+  assert.equal(await run('window.hostRange'), '0-1');
+  assert.deepEqual(await run('window.hostCalls'), [0]);
+  assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
+  assert.equal(await run('hostRequests[0].should_stream'), false);
+  await run('window.__fatedTacticalTavern.scan()');
+  assert.equal(await run('window.hostRequests.length'), 1);
+  assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
+  await run('window.completeHostAI()');
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化失败'`), '错误提示');
+  assert.match(await run(`document.querySelector('.fated-toast p').textContent`), /联调模拟网络错误/);
+  await click('.fated-toast button');
+  await until(() => run('hostRequests.length === 2'), '重试请求');
+  await run('window.completeHostAI()');
+  await until(() => run('hostRequests.length === 3'), '自动纠正模型补丁');
+  assert.match(await run('hostRequests[2].ordered_prompts.at(-1).content'), /stat_data/);
+  await run('window.completeHostAI()');
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化完成'`), '应用校验补丁');
+  await click('.fated-toast button:nth-of-type(2)');
+  await click('[data-tab="sandbox"]');
+  const tavernState = () => run('window.__fatedTacticalTavern.getState()');
+  let imported = await tavernState();
+  assert.equal(imported.title, '酒馆联调');
+  assert.equal(imported.order[0], 'p1');
+  assert.equal(imported.units.p1.ap, 2);
+  assert.equal(imported.units.p1.hp, 321);
+  assert.equal(imported.equipment[imported.items[imported.units.p1.mainHand].templateId].attack, 10);
+  assert.equal(await run(`document.querySelector('#scenario-select').options.length`), 0);
+  assert.equal(await run(`document.querySelectorAll('#seed-input').length`), 1);
+  assert.equal(await run(`document.querySelector('#seed-input').value`), '12');
+  await select('#seed-input', '13');
+  await click('#reset-button');
+  const restarted = await tavernState();
+  assert.equal(restarted.title, imported.title);
+  assert.notDeepEqual(restarted.grid, imported.grid);
+  assert.equal(restarted.units.p1.ap, 2);
+  assert.equal(restarted.equipment[restarted.items[restarted.units.p1.mainHand].templateId].attack, 10);
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '100 格棋盘加载');
   await click('#auto-ai');

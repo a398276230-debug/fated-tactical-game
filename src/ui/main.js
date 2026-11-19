@@ -4,7 +4,7 @@ import { createRenderer } from './render.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 
-export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, storage: storageArea } = {}) {
+export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, storage: storageArea } = {}) {
 const document = root.ownerDocument, window = document.defaultView;
 const localStorage = storageArea ?? window?.localStorage;
 const $ = id => root.querySelector(`[id=\"${id}\"]`);
@@ -18,7 +18,7 @@ const error = value => { message = value; $('action-error').hidden = !value; $('
 const draw = () => {
   // Rendering hover feedback must not move an already-open action card. The
   // card is positioned when opened and only re-laid out on viewport changes.
-  view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, error: message });
+  view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, error: message, scenarioOptions: customBattle ? {} : undefined });
 };
 const drawPreview = draw;
 const measurement = [$('measure-origin'), $('measure-target')];
@@ -44,18 +44,30 @@ function refreshMeasurement() {
 }
 function safely(fn) { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } }
 
-for (const [id, { title }] of Object.entries(SCENARIOS)) scenario.add(new window.Option(title, id));
+if (customBattle) scenario.closest('label').hidden = true;
+else for (const [id, { title }] of Object.entries(SCENARIOS)) scenario.add(new window.Option(title, id));
 function scenarioDescription() {
-  $('scenario-preview').textContent = SCENARIOS[scenario.value].description + (carry ? ' · 已载入跨战装备与状态' : '');
-  $('clear-persistent').hidden = !carry;
+  $('scenario-preview').textContent = customBattle ? '来自当前聊天 · 10×10' : SCENARIOS[scenario.value].description + (carry ? ' · 已载入跨战装备与状态' : '');
+  $('clear-persistent').hidden = !!customBattle || !carry;
 }
 function configure(id) {
-  scenario.value = Object.hasOwn(SCENARIOS, id) ? id : 'ruins';
-  seed.value = SCENARIOS[scenario.value].seed;
+  if (customBattle) seed.value = customBattle.seed ?? 0;
+  else {
+    scenario.value = Object.hasOwn(SCENARIOS, id) ? id : 'ruins';
+    seed.value = SCENARIOS[scenario.value].seed;
+  }
   scenarioDescription();
 }
 function restart() {
   if (!seed.value || !seed.checkValidity()) throw new Error('种子须为 0–4294967295 的整数');
+  if (customBattle) {
+    const value = Number(seed.value);
+    const state = customBattle.restart({ seed: value, mode: mode.value });
+    game.createBattle({ kind: 'custom_state', state });
+    customBattle.seed = value;
+    storage.setItem(`${storageKey}/seed`, String(value));
+    return;
+  }
   game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
 }
 function schedule() {
@@ -352,7 +364,11 @@ function bindControls() {
 configure('ruins');
 let snapshot;
 try {
-  snapshot = initialState ?? JSON.parse(storage.getItem(storageKey));
+  snapshot = initialState;
+  if (!initialState || customBattle?.restoreSaved) {
+    const saved = JSON.parse(storage.getItem(storageKey));
+    if (saved?.state?.scenarioId === initialState?.scenarioId || !initialState) snapshot = saved ?? initialState;
+  }
   carry = JSON.parse(storage.getItem(crossedKey));
   $('auto-ai').checked = storage.getItem('fated-tactical/auto') !== 'false';
   const theme = storage.getItem('fated-tactical/theme');
@@ -369,7 +385,21 @@ try {
     if (restored.migratedFrom) error('已续接旧战局；借机规则从现在生效，旧撤销记录未迁移。');
   } else game.createBattle({ scenarioId:'ruins', ruleset:'protocol' });
 }
-catch { game.createBattle({ scenarioId:'ruins', ruleset:'protocol' }); error('存档格式不兼容，已打开默认战局。'); }
+catch (cause) {
+  if (customBattle) {
+    if (snapshot === initialState) throw cause;
+    game.createBattle({ kind: 'custom_state', state: initialState });
+    error('存档格式不兼容，已重新加载正文战局。');
+  } else {
+    game.createBattle({ scenarioId:'ruins', ruleset:'protocol' });
+    error('存档格式不兼容，已打开默认战局。');
+  }
+}
+if (customBattle) {
+  const savedSeed = storage.getItem(`${storageKey}/seed`);
+  if (snapshot?.kind === 'battle' && savedSeed != null && /^\d+$/.test(savedSeed)) customBattle.seed = Number(savedSeed);
+  else storage.setItem(`${storageKey}/seed`, String(customBattle.seed ?? 0));
+}
 const initial = game.getStateSummary();
 configure(initial.scenarioId); mode.value = initial.mode;
 bindControls();
@@ -381,5 +411,5 @@ game.subscribe(() => {
   if (before && state.logs.length > before.logs.length) view.feedback(before, state);
 });
 update({ resetAction:true, save:true });
-return { loadState(snapshot) { const result = snapshot?.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind:'custom_state', state:snapshot }); configure(result.scenarioId); mode.value = result.mode; error(''); update({ resetAction:true, save:false }); return result; }, getState: () => game.getBattleState(), exportBattleReportText: () => game.exportBattleReportText(), exportMvuPatch: () => ({ kind:'battle', state:game.getBattleState() }), api: game, destroy() { clearTimeout(timer); } };
+return { loadState(snapshot) { const result = snapshot?.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind:'custom_state', state:snapshot }); if (!customBattle) configure(result.scenarioId); mode.value = result.mode; error(''); update({ resetAction:true, save:true }); return result; }, getState: () => game.getBattleState(), exportBattleReportText: () => game.exportBattleReportText(), exportMvuPatch: () => ({ kind:'battle', state:game.getBattleState() }), api: game, destroy() { clearTimeout(timer); } };
 }
