@@ -387,8 +387,11 @@ export function hydrateFromSources(input = {}, options = {}) {
   const merged = mergeRecords(records);
   const participants = participantList(battle);
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = {};
-  const units = {}, roster = [], sourceMap = {};
+  const units = {}, roster = [], sourceMap = {}, participantKeys = new Set();
   for (const [i, participant] of participants.entries()) {
+    const participantKey = `${text(participant?.source || participant?.id || participant?.uid || participant?.name).toLowerCase()}|${text(participant?.name).toLowerCase()}|${teamOf(participant?.faction ?? participant?.team, 'red')}`;
+    if (participantKeys.has(participantKey)) continue;
+    participantKeys.add(participantKey);
     const aliases = sourceAliases(participant);
     const byName = [...merged.values()].find(r => sourceName(r).toLowerCase() === text(participant?.name).toLowerCase());
     const bySource = [...merged.values()].find(r => {
@@ -397,10 +400,18 @@ export function hydrateFromSources(input = {}, options = {}) {
     });
     // Explicit participant source wins over display-name collisions. This is
     // what keeps mvu_protagonist -> 主角 from falling back to char_info.
-    const record = bySource ?? byName ?? [...merged.values()][i] ?? { name: participant?.name ?? `单位${i + 1}` };
+    const hasExplicitSource = Boolean(text(participant?.source || participant?.id || participant?.uid));
+    // Never assign an unrelated MVU record by array position when the battle
+    // participant names an explicit source. That old fallback turned a missing
+    // narrative record into a duplicate copy of the protagonist.
+    const record = bySource ?? byName ?? (!hasExplicitSource ? [...merged.values()][i] : null) ?? { name: participant?.name ?? `单位${i + 1}` };
     const made = unitFrom(record, participant, i, equipment, skills, items, warnings);
     // Two records with the same display name still get deterministic distinct IDs.
     if (units[made.unit.id]) { made.unit.id = deterministicId(`${made.unit.id}-${i}`, 'unit'); made.profile.id = made.unit.id; }
+    // A second defensive guard catches duplicates that differ only in source
+    // spelling but refer to the same displayed combatant.
+    const duplicate = Object.values(units).find(unit => unit.name === made.unit.name && unit.team === made.unit.team);
+    if (duplicate) continue;
     units[made.unit.id] = made.unit;
     roster.push({ ...made.profile, ...clone(made.unit), name: made.unit.name, team: made.unit.team, source: record.__sourcePath ? 'MVU' : 'char_info' });
     sourceMap[made.unit.id] = { path: record.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };

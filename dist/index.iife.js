@@ -5788,20 +5788,26 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const merged = mergeRecords(records);
     const participants = participantList(battle);
     const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = {};
-    const units = {}, roster = [], sourceMap = {};
+    const units = {}, roster = [], sourceMap = {}, participantKeys = /* @__PURE__ */ new Set();
     for (const [i, participant] of participants.entries()) {
+      const participantKey = `${text2(participant?.source || participant?.id || participant?.uid || participant?.name).toLowerCase()}|${text2(participant?.name).toLowerCase()}|${teamOf(participant?.faction ?? participant?.team, "red")}`;
+      if (participantKeys.has(participantKey)) continue;
+      participantKeys.add(participantKey);
       const aliases = sourceAliases(participant);
       const byName = [...merged.values()].find((r) => sourceName(r).toLowerCase() === text2(participant?.name).toLowerCase());
       const bySource = [...merged.values()].find((r) => {
         const key3 = text2(r.__sourceKey).toLowerCase();
         return aliases.has(key3) || aliases.has(sourceId(r).toLowerCase()) || aliases.has(sourceName(r).toLowerCase());
       });
-      const record2 = bySource ?? byName ?? [...merged.values()][i] ?? { name: participant?.name ?? `\u5355\u4F4D${i + 1}` };
+      const hasExplicitSource = Boolean(text2(participant?.source || participant?.id || participant?.uid));
+      const record2 = bySource ?? byName ?? (!hasExplicitSource ? [...merged.values()][i] : null) ?? { name: participant?.name ?? `\u5355\u4F4D${i + 1}` };
       const made = unitFrom(record2, participant, i, equipment, skills, items, warnings);
       if (units[made.unit.id]) {
         made.unit.id = deterministicId(`${made.unit.id}-${i}`, "unit");
         made.profile.id = made.unit.id;
       }
+      const duplicate = Object.values(units).find((unit) => unit.name === made.unit.name && unit.team === made.unit.team);
+      if (duplicate) continue;
       units[made.unit.id] = made.unit;
       roster.push({ ...made.profile, ...clone(made.unit), name: made.unit.name, team: made.unit.team, source: record2.__sourcePath ? "MVU" : "char_info" });
       sourceMap[made.unit.id] = { path: record2.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2) };
@@ -6309,7 +6315,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const stateKey = `fated-tactical/instances/${id2}`;
     let config = configFor(storage, configKey);
     let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
-    let battleObserver = null, removeOpenEvent = null;
+    let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: "created" };
     const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
     const on = (node, event, fn, opts = {}) => {
       if (!node) return;
@@ -6486,8 +6492,13 @@ ${tag.textContent || ""}
       battleActions.append(loadBattle);
       battleCard.append(battleActions, showSource);
       page.append(battleCard);
+      const diag = el(doc, "details", { class: "fated-diagnostics" });
+      diag.append(el(doc, "summary", {}, "\u8BCA\u65AD\u65E5\u5FD7\uFF08\u626B\u63CF\u6765\u6E90 / \u53BB\u91CD\uFF09"));
+      diag.append(el(doc, "pre", { class: "fated-status", "data-diagnostics": "" }, JSON.stringify(diagnostics, null, 2)));
+      page.append(diag);
       on(loadBattle, "click", async () => {
         await scan(true);
+        renderInstances();
         switchTab("sandbox");
       });
       const toolbar = el(doc, "div", { class: "fated-actions" });
@@ -6675,16 +6686,29 @@ ${tag.textContent || ""}
       foldBattleEntries();
       const converter = options.converter || getGlobal(host, "FatedTactical")?.hydrateBattleState || getGlobal(host, "hydrateBattleState") || hydrateFromSources;
       let hydrated = null;
+      let conversionError = null;
       if (typeof converter === "function") {
         const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleRaw || sources.battleInit };
         try {
           hydrated = await converter(input);
-        } catch (_) {
+        } catch (error2) {
+          conversionError = error2;
           try {
             hydrated = await converter(sources.mvuData, sources.charInfo, sources.battleInit);
-          } catch (_2) {
+          } catch (fallbackError) {
+            conversionError = fallbackError;
           }
         }
+      }
+      if (conversionError) {
+        diagnostics = { phase: "conversion-error", error: conversionError?.stack || conversionError?.message || String(conversionError), mvuKeys: Object.keys(sources.mvuData || {}), charCount: sources.charInfo?.length || 0, participantCount: sources.battleInit?.participants?.length || 0 };
+        try {
+          console.error("[fated-tactical] hydrate failed", diagnostics);
+        } catch (_) {
+        }
+        const diagnosticNode2 = pages.instances.querySelector("[data-diagnostics]");
+        if (diagnosticNode2) diagnosticNode2.textContent = JSON.stringify(diagnostics, null, 2);
+        throw conversionError;
       }
       const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
       if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
@@ -6695,7 +6719,24 @@ ${tag.textContent || ""}
         nextInstances[key3] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
       }
       config.instances = nextInstances;
+      diagnostics = {
+        phase: "hydrated",
+        mvuKeys: Object.keys(sources.mvuData || {}),
+        charCount: sources.charInfo?.length || 0,
+        participantCount: sources.battleInit?.participants?.length || 0,
+        rosterCount: Array.isArray(roster) ? roster.length : Object.keys(roster || {}).length,
+        rosterIds: (Array.isArray(roster) ? roster : Object.values(roster || {})).map((item) => `${item.id || item.name}:${item.source || "unknown"}`),
+        instanceCount: Object.keys(config.instances).length,
+        unitIds: Object.values(hydrated?.state?.units || {}).map((unit) => `${unit.id}:${unit.name}:${unit.team}`),
+        warnings: hydrated?.warnings || []
+      };
+      try {
+        console.info("[fated-tactical] hydrate", diagnostics);
+      } catch (_) {
+      }
       save();
+      const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
+      if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
       return hydrated;
     }
     async function mountState(state) {
@@ -6717,23 +6758,36 @@ ${tag.textContent || ""}
     }
     async function scan(force = false) {
       const epoch = ++scanEpoch;
+      if (force) {
+        currentState = null;
+        activeBattleKey = null;
+        try {
+          gameMount?.unmount?.();
+        } catch (_) {
+        }
+        gameMount = null;
+        config.instances = {};
+      }
       const node = pages.sandbox.querySelector("[data-status]");
       if (node) node.textContent = "\u6B63\u5728\u8BFB\u53D6 MVU\u3001\u6700\u65B0\u697C\u5C42\u5E76\u8F6C\u6362\u2026";
       try {
         const hydrated = await hydrate();
+        diagnostics.scan = { ...diagnostics, phase: "scanned" };
         if (epoch !== scanEpoch) return;
         const nextState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
-        if (!force && currentState && sources.battleKey && sources.battleKey === activeBattleKey) {
-          renderInstances();
-          if (node) node.textContent = "\u626B\u63CF\u5B8C\u6210\uFF0C\u4FDD\u7559\u5F53\u524D\u6218\u5C40\u72B6\u6001\u3002";
-          return;
-        }
         currentState = nextState;
         activeBattleKey = sources.battleKey;
         await mountState(currentState);
         renderInstances();
-        if (node) node.textContent = currentState ? "\u626B\u63CF\u5B8C\u6210\uFF0C\u5DF2\u52A0\u8F7D\u6807\u51C6\u5316\u72B6\u6001\u3002" : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
+        if (node) node.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
+        diagnostics = { ...diagnostics, phase: "scan-error", error: e?.stack || e?.message || String(e) };
+        try {
+          console.error("[fated-tactical] scan failed", diagnostics);
+        } catch (_) {
+        }
+        const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
+        if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
         showError(e);
       }
     }
@@ -6832,7 +6886,7 @@ ${tag.textContent || ""}
       battleObserver = new MutationObserver(() => foldBattleEntries());
       battleObserver.observe(doc.body, { childList: true, subtree: true });
     }
-    const api = { open, close: closePanel, dispose, scan, getConfig: () => clone2(config), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone2(sources), getState: () => clone2(currentState) };
+    const api = { open, close: closePanel, dispose, scan, getConfig: () => clone2(config), getDiagnostics: () => clone2(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone2(sources), getState: () => clone2(currentState) };
     function dispose() {
       if (disposed) return;
       disposed = true;

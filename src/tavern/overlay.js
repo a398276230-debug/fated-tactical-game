@@ -378,7 +378,7 @@ export function mountTavernOverlay(options = {}) {
   const stateKey = `fated-tactical/instances/${id}`;
   let config = configFor(storage, configKey);
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
-  let battleObserver = null, removeOpenEvent = null;
+  let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: 'created' };
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
   const root = el(doc, 'div', { 'data-fated-tavern-overlay': '' });
@@ -511,7 +511,11 @@ export function mountTavernOverlay(options = {}) {
     const showSource = el(doc, 'details', { class: 'fated-battle-source-box' });
     showSource.append(el(doc, 'summary', {}, '查看原始 battle_init'), el(doc, 'pre', { class: 'fated-battle-source' }, sources.battleRaw || '暂无原始数据'));
     battleActions.append(loadBattle); battleCard.append(battleActions, showSource); page.append(battleCard);
-    on(loadBattle, 'click', async () => { await scan(true); switchTab('sandbox'); });
+    const diag = el(doc, 'details', { class: 'fated-diagnostics' });
+    diag.append(el(doc, 'summary', {}, '诊断日志（扫描来源 / 去重）'));
+    diag.append(el(doc, 'pre', { class: 'fated-status', 'data-diagnostics': '' }, JSON.stringify(diagnostics, null, 2)));
+    page.append(diag);
+    on(loadBattle, 'click', async () => { await scan(true); renderInstances(); switchTab('sandbox'); });
     const toolbar = el(doc, 'div', { class: 'fated-actions' });
     const refresh = el(doc, 'button', { type: 'button' }, '从当前聊天重新水合'); toolbar.append(refresh); page.append(toolbar);
     const list = el(doc, 'div'); page.append(list);
@@ -557,9 +561,22 @@ export function mountTavernOverlay(options = {}) {
     foldBattleEntries();
     const converter = options.converter || getGlobal(host, 'FatedTactical')?.hydrateBattleState || getGlobal(host, 'hydrateBattleState') || hydrateBattleState;
     let hydrated = null;
+    let conversionError = null;
     if (typeof converter === 'function') {
       const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleRaw || sources.battleInit };
-      try { hydrated = await converter(input); } catch (_) { try { hydrated = await converter(sources.mvuData, sources.charInfo, sources.battleInit); } catch (_) { /* fallback view */ } }
+      try { hydrated = await converter(input); }
+      catch (error) {
+        conversionError = error;
+        try { hydrated = await converter(sources.mvuData, sources.charInfo, sources.battleInit); }
+        catch (fallbackError) { conversionError = fallbackError; }
+      }
+    }
+    if (conversionError) {
+      diagnostics = { phase: 'conversion-error', error: conversionError?.stack || conversionError?.message || String(conversionError), mvuKeys: Object.keys(sources.mvuData || {}), charCount: sources.charInfo?.length || 0, participantCount: sources.battleInit?.participants?.length || 0 };
+      try { console.error('[fated-tactical] hydrate failed', diagnostics); } catch (_) {}
+      const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
+      if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
+      throw conversionError;
     }
     const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
@@ -573,7 +590,22 @@ export function mountTavernOverlay(options = {}) {
       nextInstances[key] = { ...clone(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? 'MVU 主角' : '正文 <char_info>') };
     }
     config.instances = nextInstances;
-    save(); return hydrated;
+    diagnostics = {
+      phase: 'hydrated',
+      mvuKeys: Object.keys(sources.mvuData || {}),
+      charCount: sources.charInfo?.length || 0,
+      participantCount: sources.battleInit?.participants?.length || 0,
+      rosterCount: Array.isArray(roster) ? roster.length : Object.keys(roster || {}).length,
+      rosterIds: (Array.isArray(roster) ? roster : Object.values(roster || {})).map(item => `${item.id || item.name}:${item.source || 'unknown'}`),
+      instanceCount: Object.keys(config.instances).length,
+      unitIds: Object.values(hydrated?.state?.units || {}).map(unit => `${unit.id}:${unit.name}:${unit.team}`),
+      warnings: hydrated?.warnings || [],
+    };
+    try { console.info('[fated-tactical] hydrate', diagnostics); } catch (_) {}
+    save();
+    const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
+    if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
+    return hydrated;
   }
   async function mountState(state) {
     if (!state) return;
@@ -591,21 +623,34 @@ export function mountTavernOverlay(options = {}) {
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
   async function scan(force = false) {
     const epoch = ++scanEpoch;
+    if (force) {
+      currentState = null; activeBattleKey = null;
+      try { gameMount?.unmount?.(); } catch (_) {}
+      gameMount = null; config.instances = {};
+    }
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
     try {
       const hydrated = await hydrate();
+      diagnostics.scan = { ...diagnostics, phase: 'scanned' };
       if (epoch !== scanEpoch) return;
       const nextState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
-      if (!force && currentState && sources.battleKey && sources.battleKey === activeBattleKey) {
-        renderInstances();
-        if (node) node.textContent = '扫描完成，保留当前战局状态。';
-        return;
-      }
+      // Always replace the mounted state with the latest source bundle. Keeping
+      // the old state whenever the key looked equal masked changed MVU data and
+      // was the reason stale duplicate enemies survived a rescan.
       currentState = nextState;
       activeBattleKey = sources.battleKey;
       await mountState(currentState);
-      renderInstances(); if (node) node.textContent = currentState ? '扫描完成，已加载标准化状态。' : '扫描完成（未找到可挂载的战局）。';
-    } catch (e) { showError(e); }
+      renderInstances();
+      if (node) node.textContent = currentState
+        ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')}`
+        : '扫描完成（未找到可挂载的战局）。';
+    } catch (e) {
+      diagnostics = { ...diagnostics, phase: 'scan-error', error: e?.stack || e?.message || String(e) };
+      try { console.error('[fated-tactical] scan failed', diagnostics); } catch (_) {}
+      const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
+      if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
+      showError(e);
+    }
   }
   function renderSandbox() {
     const page = pages.sandbox; page.replaceChildren(el(doc, 'h3', {}, '沙盘'));
@@ -657,7 +702,7 @@ export function mountTavernOverlay(options = {}) {
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { open, close: closePanel, dispose, scan, getConfig: () => clone(config), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(currentState) };
+  const api = { open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(currentState) };
   function dispose() {
     if (disposed) return; disposed = true; battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
   try { host.__fatedTacticalTavern = api; } catch (_) {}
