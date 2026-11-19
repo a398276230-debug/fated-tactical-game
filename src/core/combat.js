@@ -215,10 +215,13 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     const defenderTotal = stat(recipient, 'str') + defenderRoll;
     const attackerTotal = stat(attacker, 'str') + attackerRoll;
     const success = defenderTotal >= attackerTotal;
+    const perfect = success && (details.ratingMultiplier ?? 0) >= 1.3 && !recipient.parryRefunded;
     recipient.parryQuota--;
-    parry = { success, defenderRoll, attackerRoll, defenderTotal, attackerTotal, reduction: success ? .6 : 0, quota: recipient.parryQuota };
-    record(state, recipient, 'parry', `${recipient.name}${success ? '弹反成功' : '弹反失败'}`, { targetId: attacker?.id ?? null, ...parry });
-    if (success) amount *= .4;
+    if (perfect) { recipient.parryQuota = Math.min(2, recipient.parryQuota + 1); recipient.parryRefunded = true; }
+    parry = { success, perfect, defenderRoll, attackerRoll, defenderTotal, attackerTotal, reduction: perfect ? 1 : success ? .6 : 0, quota: recipient.parryQuota };
+    record(state, recipient, 'parry', `${recipient.name}${perfect ? '完美弹反' : success ? '弹反成功' : '弹反失败'}`, { targetId: attacker?.id ?? null, ...parry });
+    if (perfect) amount = 0;
+    else if (success) amount *= .4;
   }
   const formula = mitigation(state, recipient, type, hit, armorPierce);
   const modified = Math.max(0, hit
@@ -625,7 +628,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
 const ACTIONS = Object.freeze({
   move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
   attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
-  brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 },
+  brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
   flee: { ap: 1, slot: 'action' }, detour: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
@@ -694,6 +697,12 @@ export function preview(state, action) {
     const [nearbyCover] = nearbyCovers(state, unit);
     return { ...common, name: '架势防御', coverId: nearbyCover?.id ?? null, reduction: STATUSES.guarded.modifiers.reduction,
       turns: nearbyCover ? 2 : 1 };
+  }
+  if (type === 'use_item') {
+    const item = equipmentFor(state, unit.offHand);
+    if (unit.stance !== 'attunement' || item.template?.kind !== 'consumable') return fail('只有同调姿态可以免费使用副手道具');
+    if ((unit.attunementCharges ?? 0) <= 0) return fail('同调道具次数已用尽');
+    return { ...common, name: `使用${item.template.name}`, maneuver: 'use_item', itemId: unit.offHand };
   }
   if (type === 'charge') return { ...common, name: '蓄力', maneuver: 'charge' };
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
@@ -1078,6 +1087,13 @@ export function applyAction(state, action) {
   switch (type) {
     case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
     case 'attack': case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
+    case 'use_item': {
+      actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
+      record(state, actor, 'item', `${actor.name}使用同调副手道具`, { itemId: plan.itemId, remaining: actor.attunementCharges });
+      grantStatus(state, actor, 'haste', { sourceUnitId: actor.id });
+      if (!actor.attunementCharges) actor.stance = 'light_blade';
+      break;
+    }
     case 'charge': grantStatus(state, actor, 'charge', { sourceUnitId: actor.id }); break;
     case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, 'lock_on', { sourceUnitId: actor.id }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
     case 'scan': grantStatus(state, actor, 'weakness', { sourceUnitId: actor.id, stacks: 3 }); break;
@@ -1118,6 +1134,8 @@ export function applyAction(state, action) {
     case 'interact': applyInteraction(state, actor, plan); break;
   }
   if (moving && alive(actor)) {
+    const stance = actor.stance ?? 'unarmed';
+    if (type === 'move' && stance === 'light_blade') actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
     const coverIds = nearbyCovers(state, actor).filter(c => !initialCover.has(c.id)).map(c => c.id);
     if (coverIds.length) record(state, actor, 'cover_approach', `${actor.name}移至掩体 ${coverIds.join('、')} 旁`, { coverIds });
   }

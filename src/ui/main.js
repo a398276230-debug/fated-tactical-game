@@ -116,7 +116,7 @@ function closeTarget(restoreFocus = false) {
   draw();
   if (restoreFocus && at) cellFor(at)?.focus({ preventScroll:true });
 }
-const labelByType = { move:'移动', sprint:'疾跑至此', disengage:'撤离', attack:'普攻', interact:'互动', brace:'架势防御', block:'格挡', shield_bash:'盾击', charge:'蓄力', lock_on:'定位', scan:'探察', grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞', flee:'逃跑', detour:'绕行', reload:'装填', end:'结束回合' };
+const labelByType = { use_item:'使用副手道具', move:'移动', sprint:'疾跑至此', disengage:'撤离', attack:'普攻', interact:'互动', brace:'架势防御', block:'格挡', shield_bash:'盾击', charge:'蓄力', lock_on:'定位', scan:'探察', grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞', flee:'逃跑', detour:'绕行', reload:'装填', end:'结束回合' };
 function handlePoint(at, input = {}) {
   error('');
   const unit = Object.values(state.units).find(u => u.hp > 0 && u.x === at.x && u.y === at.y);
@@ -135,7 +135,7 @@ function handlePoint(at, input = {}) {
   const options = [];
   $('bonus-dice-select').value = String(Math.min(Number($('bonus-dice-select').value), actor?.bonusDice ?? 0));
   const add = (type, skill) => {
-    const targetless = ['brace','block','charge','scan','flee','detour','reload','end'].includes(type);
+    const targetless = ['brace','block','charge','scan','flee','use_item','detour','reload','end'].includes(type);
     const command = { type, ...(targetless ? {} : at), ...(skill ? { skillId:skill } : {}),
       ...(type === 'attack' || type === 'skill' ? { intent:$('intent-select').value, nonLethal:$('nonlethal-toggle').checked,
         bonusDice:Number($('bonus-dice-select').value) } : {}) };
@@ -143,7 +143,7 @@ function handlePoint(at, input = {}) {
     if (plan.ok) options.push({ command, plan, label: skill ? state.skills[skill].name : labelByType[type] });
   };
   if (canAct) {
-    if (self) { add('brace'); add('block'); add('charge'); add('scan'); add('flee'); add('reload'); }
+    if (self) { add('brace'); add('block'); add('charge'); add('scan'); add('flee'); add('use_item'); add('reload'); }
     else { add(sprint ? 'sprint' : 'move'); add('disengage'); add('attack'); add('lock_on'); add('grapple'); add('disarm'); add('trip'); add('push'); }
     add('interact');
     for (const skill of actor.skills) add('skill', skill);
