@@ -29,8 +29,8 @@ export function table(v, test, max = 200) {
 export function list(v, max, check, key) { requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key); }
 function dice(v) {
   fields(v, ['count', 'sides'], ['bonus', 'stat', 'multiplier', 'type']);
-  requireThat(int(v.count, 1, 12) && int(v.sides, 2, 100), '伤害骰');
-  checkOptional(v, 'bonus', x => int(x, -50, 100)); checkOptional(v, 'stat', x => attrs.includes(x));
+  requireThat(int(v.count, 0, 1000000) && int(v.sides, 0, 1000000) && (v.count === 0 || v.sides >= 1), '伤害骰');
+  checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
   checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
 }
 // Only modifiers the existing tactical engine can apply without ID-specific lifecycle logic.
@@ -90,8 +90,8 @@ export function equipmentTemplate(v, state) {
   fields(v, ['name', 'effects'], ['quality','kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense']);
   requireThat(text(v.name), 'name');
   checkOptional(v, 'quality', x => ['唯一','普通','优良','稀有','史诗','传说','神话'].includes(x));
-  checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'attack', x => int(x, 0, 100000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
-  checkOptional(v, 'armor', x => int(x, 0, 40)); checkOptional(v, 'defense', x => int(x, 0, 1000));
+  checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
+  checkOptional(v, 'armor', x => int(x, 0, 1000000)); checkOptional(v, 'defense', x => int(x, 0, 1000000));
   checkOptional(v, 'kind', x => ['weapon','shield','armor','accessory','consumable'].includes(x));
   checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
   checkOptional(v, 'hand', x => ['one_handed','two_handed','off_hand'].includes(x)); checkOptional(v, 'rangeType', x => ['melee','ranged'].includes(x));
@@ -105,7 +105,7 @@ export function skillTemplate(v, state) {
   fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal']);
   requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)
     && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any'].includes(v.target), '技能');
-  checkOptional(v, 'power', x => int(x, 0, 100000));
+  checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   for (const k of ['radius', 'width']) checkOptional(v, k, x => int(x, 0, 6));
   checkOptional(v, 'accuracy', x => int(x, -20, 30)); checkOptional(v, 'save', x => attrs.includes(x));
@@ -125,7 +125,7 @@ export function statusValue(v, key, state) {
   for (const [k, def] of Object.entries(t.modifiers)) requireThat(v.modifiers[k] === def
     || (key === 'guarded' && k === 'reduction' && [.25,.35,.45,.5].includes(v.modifiers[k])), `状态参数 ${k}`);
   checkOptional(v, 'appliedRound', x => int(x, 1, 1000000)); checkOptional(v, 'appliedTurn', x => int(x, 0, 199));
-  requireThat(key === 'shield' ? int(v.amount, 1, 10000) : !own(v, 'amount'), '护盾池');
+  requireThat(key === 'shield' ? int(v.amount, 1, 1000000000) : !own(v, 'amount'), '护盾池');
 }
 export function validateCell(v) {
   fields(v, ['kind', 'z']);
@@ -139,10 +139,10 @@ export function unitValue(v, key, state) {
   requireThat(v.id === key && text(v.name) && team(v.team) && coord(v.x) && coord(v.y), '棋子');
   list(v.facing, 2, x => int(x, -1, 1), '朝向');
   requireThat(v.facing.length === 2 && v.facing.some(Boolean), '朝向');
-  for (const [r, max] of [['hp','maxHp'], ['mp','maxMp'], ['sp','maxSp']]) requireThat(int(v[max], r === 'hp' ? 1 : 0, 10000) && int(v[r], 0, v[max]), r);
+  for (const [r, max] of [['hp','maxHp'], ['mp','maxMp'], ['sp','maxSp']]) requireThat(int(v[max], r === 'hp' ? 1 : 0, 1000000000) && int(v[r], 0, v[max]), r);
   fields(v.used, ['action', 'attack']); fields(v.stats, attrs);
   requireThat(attrs.every(k => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2)
-    && int(v.armor, 0, 50) && int(v.size, 1, 5) && int(v.move, 1, 10), '单位数值');
+    && int(v.armor, 0, 1000000) && int(v.size, 1, 5) && int(v.move, 1, 10), '单位数值');
   requireThat(v.weapon === null || id(v.weapon), 'weapon');
   for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
@@ -186,12 +186,12 @@ export function validateState(s) {
   table(s.covers, (v, k) => {
     fields(v, ['id','name','x','y','material','hp','maxHp','cover']);
     requireThat(v.id === k && text(v.name) && text(v.material) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== 'wall'
-      && int(v.maxHp, 1, 1000) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), '掩体');
+      && int(v.maxHp, 1, 1000000000) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), '掩体');
   });
   table(s.zones ?? {}, (v, k) => {
     fields(v, ['id','name','x','y','radius','remainingTurns','damage','damageType','team']);
     requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && int(v.radius,0,10) && int(v.remainingTurns,1,100)
-      && int(v.damage,0,10000) && ['physical','energy','mental','true'].includes(v.damageType) && ['blue','red','all'].includes(v.team), '持续区域');
+      && int(v.damage,0,1000000000) && ['physical','energy','mental','true'].includes(v.damageType) && ['blue','red','all'].includes(v.team), '持续区域');
   }, 64);
   table(s.interactives, (v, k) => {
     fields(v, ['id','name','x','y','kind','spent']);

@@ -60,6 +60,7 @@ function importCarry(state, value) {
 }
 
 export function buildScenario(request = 'ruins') {
+  if (request?.kind === 'custom_state' && object(request.state)) return structuredClone(request.state);
   if (typeof request === 'string') request = { scenarioId: request };
   if (!object(request) || !Object.keys(request).every(key => ['scenarioId', 'seed', 'mode', 'ruleset', 'persistentSnapshot'].includes(key))) throw new Error('无效的开局参数');
   const { scenarioId = 'ruins', mode = 'free', ruleset = 'protocol', persistentSnapshot } = request;

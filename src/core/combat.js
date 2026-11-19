@@ -227,7 +227,7 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
   }
   const formula = mitigation(state, recipient, type, hit, armorPierce);
   const modified = Math.max(0, hit
-    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier)
+    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction))
     : Math.floor(amount * formula.multiplier) - Math.floor(formula.armor));
   if (formula.shatter) {
     delete recipient.statuses.freeze;
@@ -273,7 +273,18 @@ function mitigation(state, unit, type, hit, pierce) {
   const reduction = clamp(changes(unit, 'reduction'), 0, 1);
   const defense = armorOf(state, unit, type, pierce);
   const armorMultiplier = type === 'true' ? 1 : 2000 / (defense + 2000);
-  return { shatter, vulnerability, reduction, multiplier: (1 + shatter) * (1 + vulnerability) * (1 - reduction),
+  const attributes = unit.stats ?? {};
+  const attributeReduction = state.ruleset === 'protocol'
+    ? type === 'physical'
+      ? (Number(attributes.con ?? 0) + Number(attributes.str ?? 0) + Number(attributes.agi ?? 0)) * .0025
+      : type === 'energy'
+        ? (Number(attributes.spi ?? 0) + Number(attributes.int ?? 0)) * .004
+        : type === 'mental'
+          ? Number(attributes.spi ?? 0) * .008
+          : 0
+    : 0;
+  return { shatter, vulnerability, reduction, attributeReduction,
+    multiplier: (1 + shatter) * (1 + vulnerability) * (1 - reduction),
     armor: defense, armorMultiplier };
 }
 
@@ -582,9 +593,18 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const rules = stanceRules(stance);
   const rangedDistance = weapon && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
-  const accuracy = (template.accuracy ?? 0) + stat(actor, geometry.melee ? 'str' : 'agi') + high + size + closeRange + changes(actor, 'accuracy')
+  // The protocol does not grant an implicit STR/AGI-to-hit bonus. Associated attributes
+  // belong in the damage formula; hit comes from explicit weapon/skill and combat modifiers.
+  const accuracy = (template.accuracy ?? 0) + (state.ruleset === 'sandbox' ? stat(actor, geometry.melee ? 'str' : 'agi') : 0)
+    + high + size + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + changes(actor, 'accuracy')
     + (cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty;
-  const defense = cover ? 8 : 10 + Math.floor(stat(target, 'agi') / 2) + gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0);
+  const explicitEvasion = changes(target, 'evasion') + changes(target, 'incomingAccuracy');
+  const equipmentDefense = gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0)
+    + (target.shield ? equipmentFor(state, target.shield).template?.defense ?? 0 : 0);
+  // Protocol mode has no implicit AGI-to-defense; sandbox keeps its legacy balance only for regression fixtures.
+  const defense = cover ? 8 : state.ruleset === 'sandbox'
+    ? 10 + Math.floor(stat(target, 'agi') / 2) + equipmentDefense
+    : 10 + explicitEvasion + equipmentDefense;
   const advantages = changes(actor, 'advantage') + Number(Boolean(backstab || teleport)) + (template.advantage ?? 0);
   const disadvantages = changes(actor, 'disadvantage') + (template.disadvantage ?? 0);
   const advantage = Math.sign(advantages - disadvantages);
@@ -625,6 +645,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   return { id: target.id, targetId: target.id, name: target.name, x: at.x, y: at.y, ...geometry,
     recipientId: recipient.id, arc, backstab: Boolean(backstab), flanked, accuracy, defense, highGround: high,
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
+    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: size + sizeModifier, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, 'accuracy') },
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
     automatic: Boolean(automatic), saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
@@ -859,8 +880,16 @@ function resolveCheck(state, actor, profile) {
     const defenderD20 = randomDie(state, 20);
     const weakness = changes(defender, 'intentDifficulty');
     const intentSpec = { ...(INTENTS[profile.intent] ?? INTENTS.normal), difficulty: Math.max(0, (INTENTS[profile.intent]?.difficulty ?? 0) + weakness) };
-    intent = intentCheck(intentSpec, actor.tier ?? 1, defender.tier ?? 1, selected, defenderD20, rating.min ?? 0);
-    record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, { targetId: profile.id, intent: profile.intent, attackerD20: selected, defenderD20, ...intent });
+    const ratingBonus = { 平暴击: 10, 强暴击: 20, 超暴击: 30 }[rating.name] ?? 0;
+    const attackerTier = actor.tier ?? 1, defenderTier = defender.tier ?? 1;
+    const attackerBase = attackerTier * 5, defenderBase = defenderTier * 5;
+    const attackerTotal = attackerBase + selected + ratingBonus;
+    const defenderTotal = defenderBase + defenderD20 + intentSpec.difficulty;
+    intent = intentCheck(intentSpec, attackerTier, defenderTier, selected, defenderD20, ratingBonus);
+    record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, {
+      targetId: profile.id, intent: profile.intent, attackerTier, defenderTier, attackerBase, attackerD20: selected,
+      rating: rating.name, ratingBonus, attackerTotal, defenderBase, defenderD20, intentDifficulty: intentSpec.difficulty,
+      defenderTotal, ...intent });
   }
   // Failed intent falls back to an ordinary landed hit; it does not erase the attack.
   const effectiveHit = hit;
