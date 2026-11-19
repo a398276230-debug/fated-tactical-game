@@ -44,6 +44,9 @@ export function formatBattleReportText(report, unitNames = {}) {
         case 'save':
           if (detail.saved) add(`${name(detail.targetId)}通过豁免`);
           break;
+        case 'intent':
+          add(detail.success ? '意图成立' : '意图未成立，按常规攻击结算');
+          break;
         case 'status':
           if (detail.statusId === 'guarded' && turn?.parts.some(p => p.includes('架势防御'))) break;
           add(text.replace(/ ×1$/, '')); break;

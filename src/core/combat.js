@@ -738,8 +738,11 @@ export function preview(state, action) {
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
   const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template);
-  const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, teleport: effect, intent: action.intent ?? unit.intent ?? 'normal' }),
-    bonusDice: action.bonusDice ?? 0, intent: action.intent ?? unit.intent ?? 'normal', nonLethal: action.nonLethal ?? unit.nonLethal ?? false }));
+  const areaAttack = (template.shape ?? 'single') !== 'single';
+  const declaredIntent = action.intent ?? unit.intent ?? 'normal';
+  const resolvedIntent = areaAttack ? 'normal' : declaredIntent;
+  const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, teleport: effect, intent: resolvedIntent }),
+    bonusDice: action.bonusDice ?? 0, intent: resolvedIntent, nonLethal: action.nonLethal ?? unit.nonLethal ?? false }));
   if (template.damage != null) {
     for (const c of values(state.covers).filter(c => c.hp > 0 && cells.some(at => sameCell(at, c))).sort(byId)) {
       targets.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, cover: true, intent: action.intent ?? unit.intent ?? 'normal' }), kind: 'cover' });
@@ -794,7 +797,8 @@ function resolveCheck(state, actor, profile) {
     intent = intentCheck(profile.intent, actor.tier ?? 1, defender.tier ?? 1, selected, defenderD20, rating.min ?? 0);
     record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, { targetId: profile.id, intent: profile.intent, attackerD20: selected, defenderD20, ...intent });
   }
-  const effectiveHit = hit && intent.success;
+  // Failed intent falls back to an ordinary landed hit; it does not erase the attack.
+  const effectiveHit = hit;
   record(state, actor, 'roll', `${profile.name}：${critical ? '暴击' : hit ? '命中' : '未命中'} (${total}/${profile.defense})`, {
     targetId: profile.id, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
     advantages: profile.advantages, disadvantages: profile.disadvantages, highGround: profile.highGround, cover: profile.cover,
@@ -1009,8 +1013,15 @@ export function applyAction(state, action) {
     actor.sp -= plan.sp;
     if (plan.ap === 2 && state.mode === 'split') { actor.used.attack++; actor.used.action++; }
     else if (plan.slot) actor.used[plan.slot]++;
-    record(state, actor, 'action', `${actor.name}：${plan.name ?? (movementNames[type] ?? ({ reload: '装填', brace: '依托防御', interact: '互动' })[type])}`,
-      { action: { type, ...(x === undefined ? {} : { x, y }), ...(skillId === undefined ? {} : { skillId }) },
+    const actionIntent = ['attack', 'skill'].includes(type) && plan.intent && plan.intent !== 'normal' && plan.shape === 'single' ? plan.intent : 'normal';
+    const targetId = plan.targets?.find(target => target.kind !== 'cover')?.id ?? null;
+    const intentNames = { function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
+    const actionLabel = plan.name ?? (movementNames[type] ?? ({ reload: '装填', brace: '依托防御', interact: '互动' })[type]);
+    const actionText = actionIntent !== 'normal'
+      ? `${actor.name}：${actionLabel}以意图：${intentNames[actionIntent]}攻击${state.units[targetId]?.name ?? '目标'}`
+      : `${actor.name}：${actionLabel}`;
+    record(state, actor, 'action', actionText,
+      { action: { type, ...(x === undefined ? {} : { x, y }), ...(skillId === undefined ? {} : { skillId }) }, intent: actionIntent, targetId,
         ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
   }
   switch (type) {
