@@ -158,7 +158,7 @@ export function createGameAPI() {
     },
     getStateSummary() {
       const s = current();
-      return { revision, scenarioId: s.scenarioId, title: s.title, mode: s.mode, round: s.round,
+      return { revision, scenarioId: s.scenarioId, title: s.title, mode: s.mode, ruleset: s.ruleset, round: s.round,
         currentUnitId: s.order[s.turn] ?? null, order: [...s.order], outcome: s.outcome,
         units: api.listUnits() };
     },

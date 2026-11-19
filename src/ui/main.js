@@ -52,7 +52,7 @@ function configure(id) {
 }
 function restart() {
   if (!seed.value || !seed.checkValidity()) throw new Error('种子须为 0–4294967295 的整数');
-  game.createBattle({ scenarioId: scenario.value, mode: mode.value, seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
+  game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
 }
 function schedule() {
   clearTimeout(timer);
@@ -360,9 +360,9 @@ try {
   if (snapshot) {
     const restored = game.restoreBattleSnapshot(snapshot);
     if (restored.migratedFrom) error('已续接旧战局；借机规则从现在生效，旧撤销记录未迁移。');
-  } else game.createBattle('ruins');
+  } else game.createBattle({ scenarioId:'ruins', ruleset:'protocol' });
 }
-catch { game.createBattle('ruins'); error('存档格式不兼容，已打开默认战局。'); }
+catch { game.createBattle({ scenarioId:'ruins', ruleset:'protocol' }); error('存档格式不兼容，已打开默认战局。'); }
 const initial = game.getStateSummary();
 configure(initial.scenarioId); mode.value = initial.mode;
 bindControls();

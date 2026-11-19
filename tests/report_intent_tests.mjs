@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
 
-const boot = () => { const a = createGameAPI(); a.createBattle('ruins'); return a; };
+const boot = () => { const a = createGameAPI(); a.createBattle({scenarioId:'ruins', ruleset:'sandbox'}); return a; };
 
 test('单体攻击战报明确显示意图，范围攻击不显示部位意图', () => {
   const a = boot();

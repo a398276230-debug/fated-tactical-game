@@ -1,29 +1,29 @@
 const dice = (count, sides, stat, type, bonus = 0) => ({ count, sides, stat, type, bonus });
 const status = (statusId, extra = {}) => ({ kind: 'status', statusId, ...extra });
-const skill = (name, range, target, specs = {}) => ({ name, ap: 1, slot: target === 'enemy' ? 'attack' : 'action', mp: 2,
+const skill = (name, range, target, specs = {}) => ({ name, quality:'普通', power:50, ap: 1, slot: target === 'enemy' ? 'attack' : 'action', mp: 2,
   range, shape: 'single', target, effects: [], ...specs });
 
 export const EQUIPMENT = {
-  soulblade: { name: '噬魂太刀', kind:'weapon', weaponClass:'light_blade', hand:'one_handed', rangeType:'melee', range: 1, accuracy: 5, damage: dice(2, 6, 'str', 'physical'), effects: [
+  soulblade: { name: '噬魂太刀', kind:'weapon', weaponClass:'light_blade', hand:'one_handed', rangeType:'melee', attack:120, defense:0, range: 1, accuracy: 5, damage: dice(2, 6, 'str', 'physical'), effects: [
     { kind: 'kill_charge_weapon', counterKey: 'souls', bonusPerStack: .5, maxStacks: 10 },
   ] },
-  frostplate: { name: '霜纹荆棘重甲', kind:'armor', armor: 2, effects: [{ kind: 'frost_thorns', damage: 3, chance: .4, statusId: 'chill' }] },
-  bloodfang: { name: '双生血牙匕首', kind:'weapon', weaponClass:'light_blade', hand:'one_handed', rangeType:'melee', range: 1, accuracy: 3, damage: dice(2, 4, 'agi', 'physical'), effects: [
+  frostplate: { name: '霜纹荆棘重甲', quality:'普通', kind:'armor', armor: 2, defense:25, effects: [{ kind: 'frost_thorns', damage: 3, chance: .4, statusId: 'chill' }] },
+  bloodfang: { name: '双生血牙匕首', kind:'weapon', weaponClass:'light_blade', hand:'one_handed', rangeType:'melee', attack:80, defense:0, range: 1, accuracy: 3, damage: dice(2, 4, 'agi', 'physical'), effects: [
     { kind: 'backstab', bonusMultiplier: .4, bleedStacks: 2, comboDamage: 4 },
   ] },
-  revolver: { name: '猎魔左轮', kind:'weapon', weaponClass:'ranged', hand:'one_handed', ranged:true, rangeType:'ranged', range: 5, accuracy: 3, damage: dice(2, 6, 'agi', 'physical'), effects: [
+  revolver: { name: '猎魔左轮', kind:'weapon', weaponClass:'ranged', hand:'one_handed', ranged:true, rangeType:'ranged', attack:100, defense:0, range: 5, accuracy: 3, damage: dice(2, 6, 'agi', 'physical'), effects: [
     { kind: 'ammo', counterKey: 'ammo', capacity: 6, armorPierce: 3, highGroundRange: 1, highGroundAccuracy: 2 },
   ] },
-  crossbow: { name: '破甲重弩', kind:'weapon', weaponClass:'ranged', hand:'one_handed', ranged:true, rangeType:'ranged', range: 6, accuracy: 1, damage: dice(2, 8, 'agi', 'physical'), effects: [
+  crossbow: { name: '破甲重弩', kind:'weapon', weaponClass:'ranged', hand:'one_handed', ranged:true, attack:150, defense:0, rangeType:'ranged', range: 6, accuracy: 1, damage: dice(2, 8, 'agi', 'physical'), effects: [
     { kind: 'ammo', counterKey: 'ammo', capacity: 3, armorPierce: 5, highGroundRange: 2, highGroundAccuracy: 2 },
   ] },
-  hymnal: { name: '圣咏庇护徽记', kind:'accessory', effects: [{ kind: 'healing_shield', healBonus: .25, shieldRatio: .5 }] },
-  shortblade: { name:'副手短刃', kind:'weapon', weaponClass:'light_blade', hand:'one_handed', rangeType:'melee', range:1, accuracy:1, damage:dice(1,4,'agi','physical'), effects:[] },
+  hymnal: { name: '圣咏庇护徽记', quality:'普通', kind:'accessory', effects: [{ kind: 'healing_shield', healBonus: .25, shieldRatio: .5 }] },
+  shortblade: { name:'副手短刃', kind:'weapon', weaponClass:'light_blade', hand:'one_handed', rangeType:'melee', attack:50, defense:0, range:1, accuracy:1, damage:dice(1,4,'agi','physical'), effects:[] },
   potion: { name:'调和药剂', kind:'consumable', weaponClass:'auxiliary', hand:'off_hand', effects:[] },
-  greatsword: { name:'玄铁重剑', kind:'weapon', weaponClass:'greatsword', hand:'two_handed', heavy:true, twoHanded:true, rangeType:'melee', range:1, accuracy:1, damage:dice(2,8,'str','physical'), effects:[] },
+  greatsword: { name:'玄铁重剑', kind:'weapon', weaponClass:'greatsword', hand:'two_handed', heavy:true, twoHanded:true, attack:260, defense:0, rangeType:'melee', range:1, accuracy:1, damage:dice(2,8,'str','physical'), effects:[] },
   towerShield: { name:'塔盾', kind:'shield', weaponClass:'shield', hand:'off_hand', shield:true, defense:8, effects:[] },
-  pike: { name: '巡卫长戟', kind:'weapon', weaponClass:'greatsword', hand:'two_handed', heavy:true, twoHanded:true, rangeType:'melee', range: 2, accuracy: 2, damage: dice(1, 8, 'str', 'physical'), effects: [{ kind: 'opportunity_root' }] },
-  staff: { name: '灵纹法杖', kind:'weapon', weaponClass:'staff', hand:'one_handed', rangeType:'ranged', range: 4, accuracy: 2, damage: dice(1, 6, 'int', 'energy'), effects: [] },
+  pike: { name: '巡卫长戟', kind:'weapon', weaponClass:'greatsword', hand:'two_handed', heavy:true, twoHanded:true, attack:180, defense:0, rangeType:'melee', range: 2, accuracy: 2, damage: dice(1, 8, 'str', 'physical'), effects: [{ kind: 'opportunity_root' }] },
+  staff: { name: '灵纹法杖', kind:'weapon', weaponClass:'staff', hand:'one_handed', attack:90, defense:0, rangeType:'ranged', range: 4, accuracy: 2, damage: dice(1, 6, 'int', 'energy'), effects: [] },
 };
 
 export const SKILLS = {

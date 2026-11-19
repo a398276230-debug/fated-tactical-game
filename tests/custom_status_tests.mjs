@@ -12,7 +12,7 @@ const upsert = (unitId, statusId, options = {}) => ({ type: 'upsert_status', uni
 const effect = (overrides = {}) => ({ kind: 'status', statusId: 'slow-venom', ...overrides });
 const skill = (...effects) => ({ type: 'patch_skill_template', templateId: 'challenge', patch: { effects } });
 const gear = (...effects) => ({ type: 'patch_equipment_template', templateId: 'frostplate', patch: { effects } });
-const boot = (request) => { const a = createGameAPI(); a.createBattle(request); return a; };
+const boot = (request = { scenarioId:'ruins', ruleset:'sandbox' }) => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? { scenarioId:request, ruleset:'sandbox' } : request); return a; };
 const propose = (a, ...commands) => a.proposeCommands(commands,
   { baseRevision: a.getStateSummary().revision, reason: 'custom status test' });
 function commit(a, ...commands) {

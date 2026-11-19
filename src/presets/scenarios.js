@@ -1,4 +1,5 @@
 import { beginBattle } from '../core/combat.js';
+import { calculatePrebattleResources } from '../core/prebattle_resources.js';
 import { EQUIPMENT, SKILLS } from './catalog.js';
 import { fields, validateState, statusTemplateTable, statusValue } from '../api/validation.js';
 
@@ -60,13 +61,13 @@ function importCarry(state, value) {
 
 export function buildScenario(request = 'ruins') {
   if (typeof request === 'string') request = { scenarioId: request };
-  if (!object(request) || !Object.keys(request).every(key => ['scenarioId', 'seed', 'mode', 'persistentSnapshot'].includes(key))) throw new Error('无效的开局参数');
-  const { scenarioId = 'ruins', mode = 'free', persistentSnapshot } = request;
+  if (!object(request) || !Object.keys(request).every(key => ['scenarioId', 'seed', 'mode', 'ruleset', 'persistentSnapshot'].includes(key))) throw new Error('无效的开局参数');
+  const { scenarioId = 'ruins', mode = 'free', ruleset = 'protocol', persistentSnapshot } = request;
   if (typeof scenarioId !== 'string' || !own(SCENARIOS, scenarioId)) throw new Error('未知预设关卡');
   const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
   const seed = request.seed ?? defaultSeed;
-  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !['free', 'split'].includes(mode)) throw new Error('无效的种子或行动规则');
-  const state = { scenarioId, title, mode, round: 1, turn: 0, order: [], units: {}, items: {},
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !['free', 'split'].includes(mode) || !['protocol','sandbox'].includes(ruleset)) throw new Error('无效的种子或行动规则');
+  const state = { scenarioId, title, mode, ruleset, round: 1, turn: 0, order: [], units: {}, items: {},
     equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS),
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
     covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
@@ -81,10 +82,12 @@ export function buildScenario(request = 'ruins') {
     const offHand = offHandTemplate ? equip(`${id}-offhand`, offHandTemplate) : null;
     const shield = shieldTemplate ? equip(`${id}-shield`, shieldTemplate) : null;
     const stance = shield ? 'sword_shield' : offHandTemplate === 'potion' ? 'attunement' : offHand ? 'dual_wield' : state.equipment[weapon]?.weaponClass === 'greatsword' ? 'greatsword' : 'light_blade';
-    state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp, maxHp: hp,
+    const resources = ruleset === 'protocol' ? calculatePrebattleResources({ stats:{str, agi, con, int, spi}, tier:1, bodyLengthM:1.7 }).resources : null;
+    const hpValue = resources?.hp.current ?? hp, mpValue = resources?.mp.current ?? 14, spValue = resources?.sp.current ?? 10;
+    state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp:hpValue, maxHp:resources?.hp.max ?? hpValue,
       mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM: 1.7, mc: 1,
       bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, moraleType: 'standard',
-      mp: 14, maxMp: 14, sp: 10, maxSp: 10, ap: 0, used: { attack: 0, action: 0 },
+      mp: mpValue, maxMp:resources?.mp.max ?? mpValue, sp: spValue, maxSp:resources?.sp.max ?? spValue, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
       weapon: equip(weaponId, weapon), gear: gear.map(templateId => equip(`${id}-${templateId}`, templateId)), skills };
   }

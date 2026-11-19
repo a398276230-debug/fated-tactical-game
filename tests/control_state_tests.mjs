@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
-const boot=()=>{const a=createGameAPI();a.createBattle('altar');return a;};
+const boot=()=>{const a=createGameAPI();a.createBattle({scenarioId:'altar', ruleset:'sandbox'});return a;};
 const commit=(a,command)=>{const p=a.proposeCommands([command],{baseRevision:a.getStateSummary().revision,reason:'control'});assert.equal(p.ok,true,p.error);a.commitProposal(p.proposalId);};
 test('倒地状态阻止移动但不阻止攻击',()=>{
  const a=boot(); for(let i=0;i<20&&a.getStateSummary().currentUnitId!=='sentinel';i++)a.playAction({type:'end'}); commit(a,{type:'upsert_status',unitId:'sentinel',statusId:'prone'});

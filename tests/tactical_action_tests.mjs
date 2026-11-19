@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
-const boot=()=>{const a=createGameAPI();a.createBattle('ruins');return a;};
+const boot=()=>{const a=createGameAPI();a.createBattle({scenarioId:'ruins', ruleset:'sandbox'});return a;};
 const endTo=(a,id)=>{for(let i=0;i<20&&a.getStateSummary().currentUnitId!==id;i++)a.playAction({type:'end'});assert.equal(a.getStateSummary().currentUnitId,id);};
 const commit=(a,command)=>{const p=a.proposeCommands([command],{baseRevision:a.getStateSummary().revision,reason:'tactical'});assert.equal(p.ok,true,p.error);a.commitProposal(p.proposalId);};
 test('蓄力与探察是可执行动作并影响后续意图',()=>{

@@ -194,7 +194,9 @@ function restoreHP(state, target, raw, sourceUnitId, label, detail = {}) {
 }
 
 function armorOf(state, unit, damageType, pierce = 0) {
-  const base = Math.max(0, unit.armor + changes(unit, 'armor') + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0));
+  const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0)
+    + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
+  const base = Math.max(0, unit.armor + equipmentDefense + changes(unit, 'armor') + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0));
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
   const percent = typeof pierce === 'object' ? (pierce.percent ?? 0) : 0;
   const effective = Math.max(0, base * (1 - percent) - flat);
@@ -598,6 +600,11 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const multiplier = (weapon?.soulMultiplier ?? 1) * offHandMultiplier * intentSpec.multiplier * (1 + changes(actor, 'damageBonus')) * (backstab ? 1 + (weapon.backstab.bonusMultiplier ?? .25) : 1)
     * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const damageType = template.damage?.type ?? 'physical';
+  const tierPower = ({1:2, 2:2.8, 3:4, 4:8, 5:15, 6:35, 7:80})[actor.tier ?? 1] ?? 2;
+  const protocolInitial = state.ruleset === 'protocol' && template.damage
+    ? stat(actor, template.damage.stat ?? (geometry.melee ? 'str' : 'int')) * 10 * tierPower
+      + Number(template.power ?? 20) + Number(weapon?.template?.attack ?? 0)
+    : null;
   const armorPierce = { flat: weapon?.ammo?.armorPierce ?? template.armorPierce ?? 0, percent: rules.armorPenetration ?? 0 };
   const recipient = cover || template.damage == null ? target : guardFor(state, target) ?? target;
   const reduction = cover ? { multiplier: 1, armor: target.armor ?? 0 } : mitigation(state, recipient, damageType, true, armorPierce);
@@ -605,7 +612,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const absorb = shield ? statusAmount(shield) : 0;
   const dice = template.damage == null ? null : diceFormula(template.damage, actor);
   const shown = (raw, factor = 1) => Math.max(0, Math.floor(Math.floor(raw * multiplier * factor) * reduction.multiplier * reduction.armorMultiplier) - absorb);
-  const damage = dice ? diceBounds(dice).map(n => shown(n)) : [0, 0];
+  const damage = dice ? (protocolInitial == null ? diceBounds(dice).map(n => shown(n)) : [shown(protocolInitial), shown(protocolInitial)]) : [0, 0];
   const criticalDamage = dice && critChance > 0 ? diceBounds(dice, true).map(n => shown(n)) : null;
   const savedDamage = dice && saveStat ? diceBounds(dice).map(n => shown(n, .5)) : null;
   const expectedDamage = !dice ? 0 : (hitChance - critChance - saveChance) * diceAverage(dice, shown)
@@ -619,9 +626,9 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
-    automatic: Boolean(automatic), saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce,
+    automatic: Boolean(automatic), saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
     stance, offHand: Boolean(weapon?.offHand?.template), armor: reduction.armor, damagePipeline: reduction.armorMultiplier,
-    shield: absorb, damage, damageMin: damage[0], damageMax: damage[1], criticalDamage,
+    shield: absorb, damage, damageMin: damage[0], damageMax: damage[1], protocolInitial, criticalDamage,
     savedDamage, expectedDamage, dice, combo };
 }
 
@@ -961,7 +968,9 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     if (!hit) continue;
     let recipient = target;
     if (profile.dice) {
-      const dice = diceRoll(state, profile.dice, critical);
+      const dice = state.ruleset === 'protocol' && profile.protocolInitial != null
+        ? { rolls: [], count: 0, sides: 0, bonus: profile.protocolInitial, value: profile.protocolInitial }
+        : diceRoll(state, profile.dice, critical);
       const stance = actor.stance ?? stanceLabel[stanceFor({ mainHand: actor.mainHand ?? actor.weapon, offHand: actor.offHand, shield: actor.shield })];
       const sizeScale = meleeMultiplier(actor);
       const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);

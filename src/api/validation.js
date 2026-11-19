@@ -87,9 +87,10 @@ function effects(v, kinds, state) {
   }
 }
 export function equipmentTemplate(v, state) {
-  fields(v, ['name', 'effects'], ['kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'damage', 'armor', 'defense']);
+  fields(v, ['name', 'effects'], ['quality','kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense']);
   requireThat(text(v.name), 'name');
-  checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
+  checkOptional(v, 'quality', x => ['唯一','普通','优良','稀有','史诗','传说','神话'].includes(x));
+  checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'attack', x => int(x, 0, 100000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
   checkOptional(v, 'armor', x => int(x, 0, 40)); checkOptional(v, 'defense', x => int(x, 0, 1000));
   checkOptional(v, 'kind', x => ['weapon','shield','armor','accessory','consumable'].includes(x));
   checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
@@ -101,10 +102,11 @@ export function equipmentTemplate(v, state) {
   requireThat(v.effects.every(e => ['kill_charge_weapon', 'ammo', 'backstab', 'opportunity_root'].includes(e.kind) === own(v, 'damage')), '装备特效不匹配');
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal']);
   requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)
     && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any'].includes(v.target), '技能');
-  for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 100));
+  checkOptional(v, 'power', x => int(x, 0, 100000));
+  for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   for (const k of ['radius', 'width']) checkOptional(v, k, x => int(x, 0, 6));
   checkOptional(v, 'accuracy', x => int(x, -20, 30)); checkOptional(v, 'save', x => attrs.includes(x));
   checkOptional(v, 'saveDC', x => int(x, 1, 50));
@@ -164,9 +166,9 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key, x]) => !own(Object.prototype, key) && jsonTree(x, depth + 1));
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones']);
   if (own(s, 'statusTemplates')) statusTemplateTable(s.statusTemplates);
-  requireThat(id(s.scenarioId) && text(s.title) && ['free','split'].includes(s.mode) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
+  requireThat(id(s.scenarioId) && text(s.title) && ['free','split'].includes(s.mode) && ['protocol','sandbox'].includes(s.ruleset) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
     && [null,'blue','red','draw'].includes(s.outcome), '战局');
   requireThat(Array.isArray(s.grid) && s.grid.length === 10, '棋盘');
   for (const row of s.grid) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
-const api = () => { const a=createGameAPI(); a.createBattle('ruins'); return a; };
+const api = () => { const a=createGameAPI(); a.createBattle({scenarioId:'ruins', ruleset:'sandbox'}); return a; };
 const stat=(unitId,patch)=>({type:'set_unit_stat',unitId,patch});
 test('单位三槽可编辑并在 v2 快照重放与撤销中保持一致',()=>{
  const a=api(), state=a.getBattleState(); const item=state.items['ranger-weapon'];

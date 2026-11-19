@@ -14,7 +14,7 @@ import './tactical_action_tests.mjs';
 import './control_state_tests.mjs';
 
 
-const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(request); return a; };
+const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };
 const act = (a, type, x, y, skillId) => a.playAction({ type, ...(x === undefined ? {} : { x, y }), ...(skillId ? { skillId } : {}) });
 const probe = (a, type, x, y, skillId) => a.previewAction({ type, x, y, ...(skillId ? { skillId } : {}) });
 const stats = (unitId, patch) => ({ type:'set_unit_stat', unitId, patch });
