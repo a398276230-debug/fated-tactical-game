@@ -133,6 +133,7 @@ function handlePoint(at, input = {}) {
   inspectedId = unit ? null : feature?.id;
   target = at; hover = at; action = null;
   const options = [];
+  $('bonus-dice-select').value = String(Math.min(Number($('bonus-dice-select').value), actor?.bonusDice ?? 0));
   const add = (type, skill) => {
     const command = { type, ...(['brace','reload','end'].includes(type) ? {} : at), ...(skill ? { skillId:skill } : {}),
       ...(type === 'attack' || type === 'skill' ? { intent:$('intent-select').value, nonLethal:$('nonlethal-toggle').checked,
@@ -147,7 +148,6 @@ function handlePoint(at, input = {}) {
     for (const skill of actor.skills) add('skill', skill);
     if (self) add('end');
   }
-  $('bonus-dice-select').value = String(Math.min(Number($('bonus-dice-select').value), actor?.bonusDice ?? 0));
   $('target-title').textContent = `${unit?.name ?? feature?.name ?? '地块'} · (${at.x}, ${at.y})${self ? sprint ? ' · 疾跑已启用' : ' · 普通移动' : ''}`;
   const toolbar = $('action-toolbar'); toolbar.replaceChildren(); menuButtons = new Map();
   for (const { command, plan, label } of options) {

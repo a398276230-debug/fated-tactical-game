@@ -87,10 +87,15 @@ function effects(v, kinds, state) {
   }
 }
 export function equipmentTemplate(v, state) {
-  fields(v, ['name', 'effects'], ['range', 'accuracy', 'damage', 'armor']);
+  fields(v, ['name', 'effects'], ['kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'damage', 'armor', 'defense']);
   requireThat(text(v.name), 'name');
   checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
-  checkOptional(v, 'armor', x => int(x, 0, 40)); if (own(v, 'damage')) dice(v.damage);
+  checkOptional(v, 'armor', x => int(x, 0, 40)); checkOptional(v, 'defense', x => int(x, 0, 1000));
+  checkOptional(v, 'kind', x => ['weapon','shield','armor','accessory','consumable'].includes(x));
+  checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
+  checkOptional(v, 'hand', x => ['one_handed','two_handed','off_hand'].includes(x)); checkOptional(v, 'rangeType', x => ['melee','ranged'].includes(x));
+  for (const field of ['ranged','heavy','twoHanded','shield']) checkOptional(v, field, x => typeof x === 'boolean');
+  if (own(v, 'damage')) dice(v.damage);
   requireThat(own(v, 'range') === own(v, 'damage'), '武器 range/damage');
   effects(v.effects, ['kill_charge_weapon', 'ammo', 'frost_thorns', 'backstab', 'healing_shield', 'opportunity_root'], state);
   requireThat(v.effects.every(e => ['kill_charge_weapon', 'ammo', 'backstab', 'opportunity_root'].includes(e.kind) === own(v, 'damage')), '装备特效不匹配');
@@ -116,7 +121,7 @@ export function statusValue(v, key, state) {
     && (v.sourceUnitId === null || id(v.sourceUnitId)), '状态实例');
   fields(v.modifiers, Object.keys(t.modifiers));
   for (const [k, def] of Object.entries(t.modifiers)) requireThat(v.modifiers[k] === def
-    || (key === 'guarded' && k === 'reduction' && v.modifiers[k] === .5), `状态参数 ${k}`);
+    || (key === 'guarded' && k === 'reduction' && [.25,.35,.45,.5].includes(v.modifiers[k])), `状态参数 ${k}`);
   checkOptional(v, 'appliedRound', x => int(x, 1, 1000000)); checkOptional(v, 'appliedTurn', x => int(x, 0, 199));
   requireThat(key === 'shield' ? int(v.amount, 1, 10000) : !own(v, 'amount'), '护盾池');
 }
@@ -125,7 +130,7 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
-const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId'];
+const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','swarm','formation','maneuvers'];
 export function unitValue(v, key, state) {
   fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys]);
   checkOptional(v, 'reactionAvailable', x => typeof x === 'boolean');
@@ -140,12 +145,17 @@ export function unitValue(v, key, state) {
   for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
   checkOptional(v, 'mc', x => int(x, 1, 64)); checkOptional(v, 'nonLethal', x => typeof x === 'boolean');
+  checkOptional(v, 'deathrattle', x => plain(x) && typeof x.kind === 'string'); checkOptional(v, 'deathrattleTriggered', x => typeof x === 'boolean'); checkOptional(v, 'moraleCheckedRound', x => int(x, 1, 1000000));
+  checkOptional(v, 'swarm', x => plain(x) && int(x.count, 1, 10000) && int(x.minimum, 1, x.count));
+  checkOptional(v, 'formation', x => plain(x) && int(x.members, 0, 10000) && int(x.minimum, 1, 10000) && x.members >= x.minimum);
+  checkOptional(v, 'maneuvers', x => Array.isArray(x) && x.length <= 32 && x.every(id));
   checkOptional(v, 'initiativePercent', x => num(x, -1, 10)); checkOptional(v, 'flatInitiative', x => int(x, -1000, 1000));
   for (const field of ['attackInit','actionInit']) checkOptional(v, field, x => Array.isArray(x) && x.length <= 16 && x.every(n => int(n, -1000, 1000)));
   checkOptional(v, 'lockedTargetId', x => x === null || id(x));
   checkOptional(v, 'intent', x => typeof x === 'string' && ['normal','function','core','kill','concept'].includes(x));
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
-  checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'moraleType', x => typeof x === 'string');
+  checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'moraleType', x => typeof x === 'string'); checkOptional(v, 'moraleState', x => typeof x === 'string');
+  checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'blockMode', x => ['normal','heavy'].includes(x));
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
   table(v.statuses, (status, statusId) => statusValue(status, statusId, state), maxStatusTemplates + Object.keys(STATUSES).length);
 }
@@ -199,8 +209,11 @@ export function validateState(s) {
     }
     const slots = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
     for (const i of new Set(slots)) {
+      const template = has(s.items, i) ? s.equipment[s.items[i].templateId] : null;
       const weaponSlot = i === v.weapon || i === v.mainHand || i === v.offHand;
-      requireThat(has(s.items, i) && !equipped.has(i) && (weaponSlot || i === v.shield ? own(s.equipment[s.items[i].templateId], 'damage') === weaponSlot : true), '装备引用或归属');
+      const isShieldSlot = i === v.shield;
+      const isDamageItem = Boolean(template && own(template, 'damage'));
+      requireThat(has(s.items, i) && !equipped.has(i) && (weaponSlot ? (isDamageItem || template?.kind === 'consumable') : isShieldSlot ? template?.kind === 'shield' : true), '装备引用或归属');
       equipped.add(i);
     }
     requireThat(v.skills.every(i => has(s.skills, i)) && new Set(v.skills).size === v.skills.length, '技能引用');

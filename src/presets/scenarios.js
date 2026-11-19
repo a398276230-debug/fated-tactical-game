@@ -71,16 +71,19 @@ export function buildScenario(request = 'ruins') {
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
     covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
   function unit(id, name, team, x, y, weapon, skills, options = {}) {
-    const { hp = 32, agi = 5, str = 4, con = 4, int = 4, spi = 4, armor = 1, size = 1, gear = [], weaponId = `${id}-weapon` } = options;
+    const { hp = 32, agi = 5, str = 4, con = 4, int = 4, spi = 4, armor = 1, size = 1, gear = [], weaponId = `${id}-weapon`, offHandTemplate = null, shieldTemplate = null } = options;
     const equip = (id, templateId) => {
       const counters = Object.fromEntries(state.equipment[templateId].effects.flatMap(effect => effect.kind === 'ammo'
         ? [[effect.counterKey, effect.capacity]] : effect.kind === 'kill_charge_weapon' ? [[effect.counterKey, 0]] : []));
       state.items[id] = { id, templateId, counters };
       return id;
     };
+    const offHand = offHandTemplate ? equip(`${id}-offhand`, offHandTemplate) : null;
+    const shield = shieldTemplate ? equip(`${id}-shield`, shieldTemplate) : null;
+    const stance = shield ? 'sword_shield' : offHandTemplate === 'potion' ? 'attunement' : offHand ? 'dual_wield' : state.equipment[weapon]?.weaponClass === 'greatsword' ? 'greatsword' : 'light_blade';
     state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp, maxHp: hp,
-      mainHand: weaponId, offHand: null, shield: null, tier: 1, bodyLengthM: 1.7, mc: 1,
-      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance: 'light_blade', moraleType: 'standard',
+      mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM: 1.7, mc: 1,
+      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, moraleType: 'standard',
       mp: 14, maxMp: 14, sp: 10, maxSp: 10, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
       weapon: equip(weaponId, weapon), gear: gear.map(templateId => equip(`${id}-${templateId}`, templateId)), skills };
@@ -95,9 +98,10 @@ export function buildScenario(request = 'ruins') {
   function heroes(x, y) {
     unit('swordsman', '岚 · 噬魂剑客', 'blue', x, y, 'soulblade', ['brand', 'surge', 'challenge', 'armor'],
       { hp: 44, agi: 21, str: 7, con: 6, gear: ['frostplate'], weaponId: 'soulblade-lan' });
-    unit('ranger', '栖 · 游侠', 'blue', x, y + 2, 'revolver', ['shift', 'fan', 'blink'], { hp: 35, agi: 9 });
+    unit('ranger', '栖 · 游侠', 'blue', x, y + 2, 'revolver', ['shift', 'fan', 'blink'], { hp: 35, agi: 9, offHandTemplate:'shortblade' });
     unit('oracle', '绮 · 圣咏术师', 'blue', x - 1, y + 1, 'staff', ['hymn', 'cleanse', 'frost', 'ward', 'beam'],
-      { hp: 34, int: 7, spi: 7, gear: ['hymnal'] });
+      { hp: 34, int: 7, spi: 7, gear: ['hymnal'], offHandTemplate:'potion' });
+    /* The explicit slot configuration demonstrates attunement. */
   }
   if (scenarioId === 'ruins') {
     heroes(1, 2);
@@ -120,7 +124,7 @@ export function buildScenario(request = 'ruins') {
     interact('I1', 5, 4, 'altar'); interact('I2', 8, 4, 'barrel'); interact('I3', 4, 6, 'barrel'); interact('I4', 2, 2, 'altar');
   } else {
     heroes(1, 4);
-    unit('colossus', '铜棺守门巨像', 'red', 6, 4, 'pike', ['surge', 'challenge', 'armor'], { hp: 75, armor: 5, size: 3, str: 9, con: 8 });
+    unit('colossus', '铜棺守门巨像', 'red', 6, 4, 'pike', ['surge', 'challenge', 'armor'], { hp: 90, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, deathrattle: { kind: 'zone', name: '墓火余烬', radius: 1, remainingTurns: 2, amount: 2, damageType: 'energy', team: 'all' } });
     unit('acolyte', '棺庭祭司', 'red', 8, 5, 'staff', ['ward', 'hymn', 'curse'], { hp: 32, spi: 7 });
     unit('knife', '墓道刺客', 'red', 5, 7, 'bloodfang', ['blink', 'fan'], { hp: 29, agi: 8 });
     unit('rifle', '重弩侍从', 'red', 8, 2, 'crossbow', ['shift'], { hp: 28 });
