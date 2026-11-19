@@ -1,0 +1,9 @@
+/roming/
+/pi_exec.log
+/pi_exec.status
+node_modules/
+.DS_Store
+Thumbs.db
+coverage/
+test-results/
+playwright-report/

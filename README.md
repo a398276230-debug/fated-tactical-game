@@ -1,0 +1,98 @@
+# 命定之诗 · 战术箱庭
+
+独立可玩的第 1 层。纯 ES Modules，没有打包依赖、外部请求、宿主插件或 LLM 调用。
+
+**当前阶段：第 1 层独立版已完成验收；第 2 层酒馆接入尚未开始。** 交付范围、已知差异和宿主接入门禁见 [阶段性报告](STAGE_REPORT.md)。
+
+## 开战
+
+在 `roming/fated-tactical-game/` 运行：
+
+```sh
+python -m http.server 8080 --bind 127.0.0.1
+```
+
+打开 <http://127.0.0.1:8080/>。不要直接双击 `index.html`，浏览器通常不允许通过 `file://` 加载 ES Modules。Node 运行测试不需要 `npm install`。
+
+- 选「废墟伏击战」「高台祭坛夺取战」或「BOSS 与杂兵混编战」，读上方简介，设种子或行动规则，按「重开」。选项只更改开局设置，不修改正在打的战局。
+- **先点地块，再选动作**：空地列移动／撤离，敌人或设施列能用的攻击／技能／互动，点自己的当前兵牌切换疾跑范围，也会列自身可用动作。移动等直接执行；攻击、技能和有借机风险的移动先看预览再确认。蓝方行动时常显绿可达格、蓝普攻范围（重叠为蓝点），已选技能显示紫色影响区。动作卡片贴着目标格浮出，空间不够时自动换边，不推挤棋盘或拉动页面；支持触屏，点卡片外或按 `Esc` 关闭，也可从先攻条查看其它棋子情报。
+- 2 AP 用完自动交棒，可手动提前结束。敌方由本地 AI 行动，可以调速、自动或逐动作单步。撤销按钮会暂停自动敌方，避免 AI 马上重走。常规胜负条件是清空对手；祭坛是可争夺的一次性增益点，不是占点即胜。
+- 页面按浏览器来源自动续档。导出「快照」保存整局和撤销记录；「战报」打开按轮与行动单位分组的精简文本，可复制到 AI 输入框或下载 TXT，不会自动发送；完整公式仍在战况日志和结构化 API 中。「跨战数据」保存装备实例及 `persistent` 状态。选好下一关再导入跨战 JSON，会直接建立新战局；「清除下场继承」只解除后续开局绑定，不改正在打的战局。跨战导入不带本场 HP/AP、短期状态或热改模板。已导入的档案是基准；想保留本场新获得的魂数，战后重新导出再导入。
+
+## 原协议数值对账
+
+内置关卡仍按小游戏独立平衡。例如岚的五维 `7/21/6/4/4`，实际开局资源 `44/14/10`，按原协议一层计算上限为 `642/400/1400`。直接替换上限而不迁移伤害、消耗和恢复会改变对局节奏。点「原协议资源推演」可按所选单位填入五维和当前资源比例核算，不改棋盘。也可导入 `calculatePrebattleResources({stats,tier,bodyLengthM?,count?,summonCount?,previous?})`：`count` 是本编组数量，`summonCount` 是该次召唤的初始总数，两个不同；`previous` 按 `hp/mp/sp: {current,max}` 传入，不传的资源按满值处理。返回 `rawMax` 保留原始精度，整数输出以四舍五入为明确约定。测距并列显示战棋欧氏距离和原协议 `max(|ΔX|,|ΔY|)+ceil(|ΔZ|/2)`；实际射程、掩体与借机规则没有切换为旧协议。
+
+## 规则口径
+
+- **行动与先攻**：敏捷 + d20 先攻，同分按敏捷再按稳定 ID；每个单位回合开始补到 2 AP。普通移动、普攻、轻技、装填、架势防御、撤离和场景互动 1 AP，疾跑、重技 2 AP。双槽模式各允许一次动作、一次攻击，重动作消耗两槽。敌方 AI 使用同一合法性预览，评分考虑寻路、攻击、技能、掩体和高程，不消耗战斗 RNG。
+- **位置与地形**：`dXYZ` 是三维欧氏距离，X/Y 为棋格，Z 来自地形；可走八方向但不能切角。一般只能跨 1 高差，坡道允许跨 2；墙挡路，也阻断直射与 AOE。圆形从落点扩散；扇/锥/直线从施法者出发。高差、夹击、体型、掩体与侧背面进公式；完整掩体阻挡移动、对射线提供减命中，可被打塌。祭坛回复 HP/MP/SP 并附护盾与疾走；爆桶能伤及双方和掩体。
+- **架势与掩体**：空地也能花 1 AP 架势防御，减伤 35% 持续 1 个自身回合；邻接且看得见完整掩体、高差 ≤1 时延至 2 回合。效果施加后不绑定站位。掩体占据的格子不能站；移动到旁边时战报写「移至掩体 C1 旁」，不等于已有遮蔽。按下架势才写「借 C1 架势防御」，攻击被遮蔽减命中时才单独记 C1 的遮蔽。
+- **借机与撤离**：移动和疾跑逐格检查，离开敌人可合法近战的格子（途中擦过再离开也算），先在原格挨反应攻击再走。每人初始有一次反应，自己回合开始重置，出手不耗 AP、打空也消耗；同一步多人可按 ID 依次反应。命中后倒下、眩晕、冰冻、定身都会停步。巡卫长戟借机命中能定身；强迫位移、瞬移、主动「撤离」均不触发。撤离 1 AP、和普通移动同距离，只豁免这一段路。系统先找步数预算内安全路线，否则预览标出危险离开格。大型棋子目前仍按单格计算。
+- **检定**：d20 + 修正对防御，优势取高、劣势取低，两者抵消后只掷一骰。自然 1 必失、自然 20 暴击并翻倍伤害骰数。指定豁免技能由受击方掷 d20 + 属性对 DC，成功半伤并免追加效果。预览不掷实际骰；详细日志记录实际骰、修正与伤害分步。
+- **伤害与状态**：先算伤害骰和属性，再乘武器／背刺／豁免倍率、伤害增减与碎冰，扣护甲，再由护盾吸收，最后扣 HP。物理吃全护甲、能量吃半护甲、精神和真实忽略护甲。邻近未被控制的援护者可以拦截一次，不递归。灼烧／中毒／再生在单位回合初，流血在回合末；短期状态按持有者回合计时，施加当回合不扣时长。另有护盾、坚壁、嘲讽、反伤、眩晕、冰冻、定身、致盲、易伤、破甲、标记、隐身、疾走和寒冷。`until_removed` 与 `persistent` 不自然到期，只有后者跨战；净化不移除常驻状态。
+- **装备与技能**：噬魂太刀直接用刀击杀敌人，每次给该 `instanceId` 加 1 魂，最多 10；按出手前计数每魂 `+50%`，燃烧、流血、反伤和场景击杀不算。左轮／重弩的弹药也绑定实例，有穿甲和高台加成；装填补满。另有霜纹重甲反伤与寒冷、双生血牙侧背击和暴击触发流血及连击、圣咏徽记强化治疗附盾。技能有轻技、重斩击退撞障、瞬移背刺、四种 AOE、队伍治疗、净化和荆壁药剂。装备转手不改实例计数；热改规则不回写运行中已有计数。若降低计数上限，保留原始数值供审核，超出上限的部分不会继续增加噬魂倍率。
+
+## 视觉来源
+
+`styles/battle-theme.css` 提取自 `ruaji_r7_part0.html` 的 r7 样式及 `ruaji_r7_part1.html` 的主题 token，对应美化正则的 `xyz10x10-r7` 载荷。三个显式主题（紫晶／夜金／霜银）均可切换。`styles/tactical-ui.css` 负责独立页面布局、可达格／AOE／路线反馈、状态与 AP 晶石、窄屏棋盘内滚动。沿用 `battle-axis`、XYZ 轴轨、墙／坡／陡崖、阵营卡片、Z 角标、朝向、掩体和互动牌、测距、日志折叠等原结构；不执行参考页的 jQuery、酒馆配色同步、头像查询或正则协议解析。伤害、治疗和状态反馈遵守减少动态效果偏好。
+
+## GameAPI 契约
+
+`src/api/game_api.js` 可在 Node 独立导入 `createGameAPI()` 创建隔离实例；默认命名实例 `GameAPI` 同时挂载至 `window.FatedTacticalGame`。以下接口只接收数据，不执行源码、表达式或任意 JSON Patch。
+
+| 接口 | 含义 |
+|---|---|
+| `createBattle('ruins')` | 支持 `ruins/altar/boss`，或 `{scenarioId,seed,mode,persistentSnapshot}`；也接受完整 `kind:'battle'` 快照。 |
+| `exportBattleSnapshot()` / `restoreBattleSnapshot(snapshot)` | v2 格式 `{kind:'battle',version,origin,state,journal}`。恢复时校验状态并逐笔重放，不符则拒绝。v1 旧档按最终棋盘续打，不反算借机规则、不迁移旧撤销历史。 |
+| `exportPersistentCarryOver()` | `{kind:'persistent',version,units,items,statusTemplates?}`。常驻状态以单位 ID 匹配；装备实例和计数保留，无对应单位的装备进入库存。它不是整局存档或酒馆正式结算包。 |
+| `exportBattleReport()` / `exportBattleReportText()` | 前者保留分轮事件、公式、命令和修正理由；后者返回供 AI 扩写的纯文本，只保留战况事实。 |
+| `getStateSummary()` / `listUnits()` / `inspectUnit(id)` / `listStatusTemplates()` / `listActionLogs(limit)` | 轻量查询；克隆输出。日志 `limit` 为 0–200，缺省 10。UI 可用 `getBattleState()` 获取完整数据。 |
+| `previewAction(action)` / `playAction(action)` | 共用同一判定；攻击和技能动作以 `{type,x,y,skillId?}` 描述，去掉坐标时只查范围；普通即时动作如 `{type:'end'}` 不带坐标。 |
+| `proposeCommands(commands,{baseRevision,reason})` | 1–32 条原子试算。成功返回 `{ok:true,dryRun:true,proposalId,baseRevision,reason,diff}`；失败返回错误，不改状态、RNG 或日志。`diff` 的 `path` 为键／数组下标列表，增删省略一侧。 |
+| `commitProposal(proposalId)` / `undoLastCommit()` | 只提交基准 revision 仍有效的提案，提交后即失效。撤销还原完整事务（含 RNG、日志、装备和规则），但 API revision 继续递增，旧提案不能复活。 |
+
+命令白名单（未列出的键拒绝；`patch` 不可为空；模板数组整体替换，模板内仍有独立字段校验）：
+
+| `type` | 附加字段 |
+|---|---|
+| `set_unit_stat` | `unitId, patch`；可设 `hp/mp/sp/ap/x/y/team` 和 `stats:{str,agi,con,int,spi}` 的子集。 |
+| `define_status_template` | `template`（新 ID，不覆盖内置或已登记模板）；登记后可在同一批里挂到单位或引用到已有模板。 |
+| `upsert_status` / `remove_status` | `unitId,statusId`；前者可选 `options:{remainingTurns,durationType,stacks,stackRule,tickTiming,amount,sourceUnitId}`。`amount` 仅用于护盾，嘲讽需要敌对来源。 |
+| `adjust_item_counter` | `instanceId,counterKey,operation:'add'|'set',value`。 |
+| `patch_equipment_template` / `patch_skill_template` | `templateId,patch`；字段见 `src/presets/catalog.js`，不能更换装备槽类型或计数器定义。 |
+| `spawn_unit` / `remove_unit` | `unit`（完整战斗实例，可从 `getBattleState().units` 中参考）／`unitId`。增援进入队列末尾。 |
+| `equip_item` | `instanceId,unitId`，`unitId:null` 表示卸下到库存。 |
+| `set_terrain_cell` / `set_interactive_status` | `{x,y,patch:{kind?,z?}}`／掩体 `{id,hp}` 或互动点 `{id,spent}`。 |
+| `replay_or_undo` | 唯一命令 `{operation:'undo'}`，先试算再撤销；全局重放由快照恢复完成。 |
+
+例如在右侧沙盒选择「装备计数」，或粘以下 JSON，点「试算 Diff 预览」再「确认提交」，之后可点「撤销」：
+
+```json
+[{"type":"adjust_item_counter","instanceId":"soulblade-lan","counterKey":"souls","operation":"add","value":1}]
+```
+
+沙盒「自定义状态」会填入一批 `define_status_template` + `upsert_status`，定义「蚀骨寒霜」（回合初 3 点能量伤害＋移动 −1）并施加到选中单位。自定义模板可以组合持续伤害／治疗、移动、护甲、命中、优势／劣势、增减伤和反伤等现有算子；不接收脚本、新触发器或任意公式。已有技能通过 `effects:[{kind:'status',statusId:'bone_frost'}]` 引用；例如反伤装备可把既有 `frost_thorns` 的 `statusId` 改为该 ID。定义与实例都参与试算、快照和撤销；跨战携带定义以及标记为 `persistent` 的状态实例。
+
+第 2 层接入应通过 `GameAPI` 读写，不绕过校验修改引擎内部状态。先在目标酒馆的测试聊天验证扩展载入、聊天/分支/消息定位、独立存取和战报填入输入框（不自动发送）；再验证世界书与 MVU 的读写、消息继承和幂等写回。具体门禁见 [阶段性报告](STAGE_REPORT.md#第-2-层开工门禁)。第 3 层辅助 AI 继续走轻量查询与命令试算，不应直接改内部对象。当前没有宿主写回、持久战役库或辅助模型。
+
+## 实测
+
+Windows / Node v26.12.1，真实 Chrome 无头 CDP：
+
+```text
+$ node tests/unit_tests.mjs
+Spatial and RNG tests passed.
+ℹ tests 37
+ℹ pass 37
+ℹ fail 0
+
+$ node tests/e2e_chrome.mjs
+✔ 真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒、下载/导入、窄屏与刷新
+ℹ 实测 100 格、4 掩体、4 互动点；1440px 无重叠，390px 仅棋盘内部横滚；0 pageerror / 0 console.error
+ℹ tests 1
+ℹ pass 1
+ℹ fail 0
+```
+
+核心测试包括三个预设双边 AI 打到终局，再 JSON 往返核对完整战报；这不是三个关卡全部人工通关。浏览器测试用真实鼠标落子、噬魂击杀、祭坛与挂状态，走单步／自动 AI、沙盒、快照下载与文件导入、刷新恢复、切关跨战继承、自定义状态的试算／提交／撤销，以及借机风险预览和撤离；另在 390 px 使用 CDP 触屏事件核对浮卡贴近目标、不遮挡目标格、动作可点。Chrome 路径默认 `C:/Program Files/Google/Chrome/Application/chrome.exe`，可用 `CHROME_PATH` 更改。
