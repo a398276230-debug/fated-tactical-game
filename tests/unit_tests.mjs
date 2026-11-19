@@ -11,7 +11,8 @@ import './zone_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';
-import './parry_swarm_tests.mjs';
+import './control_state_tests.mjs';
+
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(request); return a; };
 const act = (a, type, x, y, skillId) => a.playAction({ type, ...(x === undefined ? {} : { x, y }), ...(skillId ? { skillId } : {}) });

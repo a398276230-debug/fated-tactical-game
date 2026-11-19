@@ -167,9 +167,9 @@ export function createGameAPI() {
       return copy({ ...STATUSES, ...s.statusTemplates });
     },
     listUnits() {
-      return Object.values(current().units).map(({ id, name, team, x, y, hp, maxHp, ap, statuses, mainHand, offHand, shield, stance, moraleState, swarm, mc, deathrattle }) => ({
+      return Object.values(current().units).map(({ id, name, team, x, y, hp, maxHp, ap, statuses, mainHand, offHand, shield, stance, moraleState, mc, deathrattle }) => ({
         id, name, team, x, y, hp, maxHp, ap, mainHand, offHand, shield, stance, moraleState: moraleState ?? 'steady',
-        swarm: swarm ? { count: swarm.count, minimum: swarm.minimum } : null, mc: mc ?? 1, deathrattle: Boolean(deathrattle), statuses: Object.keys(statuses),
+        mc: mc ?? 1, deathrattle: Boolean(deathrattle), statuses: Object.keys(statuses),
       }));
     },
     inspectWeaponSlots(unitId) {

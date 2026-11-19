@@ -130,7 +130,7 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
-const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','swarm','formation','maneuvers'];
+const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
   fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys]);
   checkOptional(v, 'reactionAvailable', x => typeof x === 'boolean');
@@ -146,8 +146,6 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
   checkOptional(v, 'mc', x => int(x, 1, 64)); checkOptional(v, 'nonLethal', x => typeof x === 'boolean');
   checkOptional(v, 'deathrattle', x => plain(x) && typeof x.kind === 'string'); checkOptional(v, 'deathrattleTriggered', x => typeof x === 'boolean'); checkOptional(v, 'moraleCheckedRound', x => int(x, 1, 1000000));
-  checkOptional(v, 'swarm', x => plain(x) && int(x.count, 1, 10000) && int(x.minimum, 1, x.count));
-  checkOptional(v, 'formation', x => plain(x) && int(x.members, 0, 10000) && int(x.minimum, 1, 10000) && x.members >= x.minimum);
   checkOptional(v, 'maneuvers', x => Array.isArray(x) && x.length <= 32 && x.every(id));
   checkOptional(v, 'initiativePercent', x => num(x, -1, 10)); checkOptional(v, 'flatInitiative', x => int(x, -1000, 1000));
   for (const field of ['attackInit','actionInit']) checkOptional(v, field, x => Array.isArray(x) && x.length <= 16 && x.every(n => int(n, -1000, 1000)));

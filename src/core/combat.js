@@ -47,7 +47,7 @@ export const STATUSES = Object.freeze(Object.fromEntries(Object.entries({
   lock_on: def('定位', '⌖', 'buff', 1, '本回合对锁定目标命中提高。', { accuracy: 1 }),
   weakness: def('弱点识别', '◉', 'buff', 3, '每层使意图难度降低 2。', { intentDifficulty: -2 }, { stackRule: 'stack', maxStacks: 3 }),
   grappled: def('擒抱', '⛓', 'control', 1, '无法移动，仍可进行近身攻击。', { rooted: true }),
-  prone: def('倒地', '▽', 'debuff', 1, '闪避降低。', { incomingAccuracy: 2 }),
+  prone: def('倒地', '▽', 'debuff', 1, '无法移动，闪避降低。', { incomingAccuracy: 2, rooted: true }),
   disarmed: def('缴械', '⚔', 'debuff', 1, '无法使用主手武器。', { disarmed: true }),
 }).map(([id, status]) => [id, Object.freeze({ id, ...status })])));
 
@@ -668,7 +668,6 @@ export function preview(state, action) {
   if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
   const skill = type === 'skill' ? tableEntry(state.skills, skillId) : null;
   if (type === 'skill' && (!skill || !unit.skills.includes(skillId))) return fail('单位没有此技能');
-  if (type === 'skill' && skill?.formation && unit.swarm && unit.swarm.count < skill.formation.minimum) return fail(`战阵人数不足，需要${skill.formation.minimum}人`);
   const cost = skill ?? tableEntry(ACTIONS, type);
   if (!cost) return fail('未知动作');
   const aimed = needsTarget(type);
@@ -967,12 +966,11 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
       const sizeScale = meleeMultiplier(actor);
       const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
       const intentScale = intent?.success ? intent.multiplier ?? 1 : 1;
-      const swarmCount = actor.swarm?.count ?? 1;
-      const swarmAttackCount = action.type === 'attack' && actor.swarm ? (actor.hp / actor.maxHp >= .8 ? 3 : actor.hp / actor.maxHp >= .5 ? 2 : 1) : 1;
+
       const stanceScale = profile.stance === 'greatsword' ? (actor.greatswordMode === 'defensive' ? 1.5 : 1.3) : 1;
       const offHandScale = profile.stance === 'dual_wield' && profile.offHand ? .5 : 1;
-          const scaled = Math.floor(dice.value * profile.multiplier * sizeScale * ratingScale * intentScale * stanceScale * offHandScale * swarmAttackCount * (saved ? .5 : 1));
-        const details = { dice, critical, saved, rating: rating?.name ?? '有效', ratingMultiplier: ratingScale, intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale, offHandScale, swarmCount, swarmAttackCount };
+          const scaled = Math.floor(dice.value * profile.multiplier * sizeScale * ratingScale * intentScale * stanceScale * offHandScale * (saved ? .5 : 1));
+        const details = { dice, critical, saved, rating: rating?.name ?? '有效', ratingMultiplier: ratingScale, intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale, offHandScale };
       if (profile.kind === 'cover') { coverDamage(state, actor, target, scaled, details); continue; }
       const hpBefore = target.hp;
       ({ recipient } = damageTarget(state, target, actor.id, scaled, profile.damageType, template.name,
