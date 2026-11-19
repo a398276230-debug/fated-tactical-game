@@ -1,8 +1,9 @@
 import { aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D as distance,
   elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS as clearSight,
   isFlanked as flank, isGround as ground, movementOptions, passableEdge as fitsHeight, unitAt } from './spatial.js';
-import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rollDice, rollDie,
+import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
+import { stanceFor, stanceLabel, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, damagePipeline } from './combat_protocol.js';
 
 // Pure tactical rules. Templates hold static data; mutable counters live in state.items.
 // Damage/heal: {count,sides,bonus?,stat?,multiplier?,type?}.
@@ -553,7 +554,9 @@ export function preview(state, action) {
   if (!alive(unit) && action?.type !== 'end') return fail('当前单位不能行动');
   if (!action || typeof action !== 'object' || Array.isArray(action)) return fail('动作格式错误');
   const { type, x, y, skillId } = action;
-  if (!Object.keys(action).every(field => ['type', 'x', 'y', 'skillId'].includes(field))) return fail('动作含未知字段');
+  if (!Object.keys(action).every(field => ['type', 'x', 'y', 'skillId', 'bonusDice', 'intent', 'nonLethal'].includes(field))) return fail('动作含未知字段');
+  if (action.bonusDice !== undefined && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail('奖励骰储备不足');
+  if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
   const skill = type === 'skill' ? tableEntry(state.skills, skillId) : null;
   if (type === 'skill' && (!skill || !unit.skills.includes(skillId))) return fail('单位没有此技能');
   const cost = skill ?? tableEntry(ACTIONS, type);
@@ -657,8 +660,9 @@ export function preview(state, action) {
     }
   }
   const first = targets.find(t => sameCell(t, center)) ?? targets[0];
-  return { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.multiplier } : {}), dXYZ: geometry.distance,
-    cells, targets, center, ...(blink ? { teleport: blink } : {}), hostile };
+  return { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.multiplier } : {}),
+    bonusDice: action.bonusDice ?? 0, intent: action.intent ?? unit.intent ?? 'normal', nonLethal: action.nonLethal ?? unit.nonLethal ?? false,
+    dXYZ: geometry.distance, cells, targets, center, ...(blink ? { teleport: blink } : {}), hostile };
 }
 
 function changeCounter(state, actor, weapon, effect, fallback, after) {
@@ -679,7 +683,11 @@ function resolveCheck(state, actor, profile) {
     return { hit: true, critical: false, saved };
   }
   if (profile.automatic) return { hit: true, critical: false, saved: false };
-  const { rng, rolls: dice, value: selected } = rollD20(state.rng, profile.advantages, profile.disadvantages);
+  const requestedBonus = profile.bonusDice ?? 0;
+  const { rng, rolls: dice, value: selected } = requestedBonus || actor.penaltyDice
+    ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 })
+    : rollD20(state.rng, profile.advantages, profile.disadvantages);
+  actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus); actor.penaltyDice = 0;
   state.rng = rng;
   const total = selected + profile.accuracy;
   const critical = selected === 20, hit = critical || (selected !== 1 && total >= profile.defense);
@@ -687,6 +695,7 @@ function resolveCheck(state, actor, profile) {
     targetId: profile.id, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
     advantages: profile.advantages, disadvantages: profile.disadvantages, highGround: profile.highGround, cover: profile.cover,
     ...(profile.coverId ? { coverId: profile.coverId } : {}),
+    rating: ratingFor(total), distanceTier: distanceTier(profile.distance), bonusDice: requestedBonus,
     distance: profile.distance, dz: profile.dz, flanked: profile.flanked, arc: profile.arc, hit, critical,
   });
   return { hit, critical, saved: false };

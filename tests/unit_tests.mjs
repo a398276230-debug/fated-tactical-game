@@ -5,6 +5,7 @@ import { chooseAction } from '../src/core/ai.js';
 import './spatial_tests.mjs';
 import './opportunity_tests.mjs';
 import './custom_status_tests.mjs';
+import './combat_protocol_tests.mjs';
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(request); return a; };
 const act = (a, type, x, y, skillId) => a.playAction({ type, ...(x === undefined ? {} : { x, y }), ...(skillId ? { skillId } : {}) });

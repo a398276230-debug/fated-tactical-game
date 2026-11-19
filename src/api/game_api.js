@@ -175,7 +175,7 @@ export function createGameAPI() {
       const s = current();
       if (!own(s.units, unitId)) return null;
       const unit = s.units[unitId];
-      return copy({ ...unit, equipment: [unit.weapon, ...unit.gear].filter(Boolean).map(id => ({
+      return copy({ ...unit, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id, i, all) => all.indexOf(id) === i).map(id => ({
         ...s.items[id], template: s.equipment[s.items[id].templateId],
       })) });
     },

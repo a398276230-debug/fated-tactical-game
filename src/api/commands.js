@@ -10,13 +10,17 @@ const commands = {
     fields(c, ['type','unitId','patch']);
     const u = get(s.units, c.unitId, 'unitId');
     nonempty(c.patch);
-    fields(c.patch, [], ['hp','mp','sp','ap','x','y','team','stats']);
-    for (const k of ['hp','mp','sp','ap','x','y','team']) if (own(c.patch, k)) u[k] = c.patch[k];
+    fields(c.patch, [], ['hp','mp','sp','ap','x','y','team','stats','weapon','mainHand','offHand','shield','bodyLengthM','tier','mc','bonusDice','penaltyDice','intent','nonLethal','stance','moraleType']);
+    for (const k of ['hp','mp','sp','ap','x','y','team','mainHand','offHand','shield','bodyLengthM','tier','mc','bonusDice','penaltyDice','intent','nonLethal','stance','moraleType']) if (own(c.patch, k)) u[k] = c.patch[k];
     if (own(c.patch, 'stats')) {
       nonempty(c.patch.stats);
       fields(c.patch.stats, [], attrs);
       Object.assign(u.stats, c.patch.stats);
     }
+    if (own(c.patch, 'mainHand')) u.weapon = c.patch.mainHand;
+    if (own(c.patch, 'weapon')) u.mainHand = c.patch.weapon;
+    if (own(c.patch, 'bonusDice')) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
+    if (own(c.patch, 'penaltyDice')) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
     unitValue(u, u.id, s);
   },
   define_status_template(s, c) {
@@ -81,6 +85,9 @@ const commands = {
     check(plain(v) && id(v.id) && !own(s.units, v.id), 'unit.id');
     unitValue(v, v.id, s);
     check(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0, '增援须存活且行动未开始');
+    v.mainHand = v.weapon;
+    if (v.offHand === undefined) v.offHand = null;
+    if (v.shield === undefined) v.shield = null;
     s.units[v.id] = v;
     s.order.push(v.id);
   },
@@ -100,11 +107,11 @@ const commands = {
     const instance = get(s.items, c.instanceId, 'instanceId');
     const u = c.unitId === null ? null : get(s.units, c.unitId, 'unitId');
     for (const v of Object.values(s.units)) {
-      if (v.weapon === instance.id) v.weapon = null;
+      for (const slot of ['weapon', 'mainHand', 'offHand', 'shield']) if (v[slot] === instance.id) v[slot] = null;
       v.gear = v.gear.filter(i => i !== instance.id);
     }
     if (u) {
-      if (own(s.equipment[instance.templateId], 'damage')) u.weapon = instance.id;
+      if (own(s.equipment[instance.templateId], 'damage')) { u.weapon = instance.id; u.mainHand = instance.id; }
       else u.gear.push(instance.id);
     }
   },

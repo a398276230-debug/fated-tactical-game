@@ -125,8 +125,9 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
+const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['reactionAvailable']);
+  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys]);
   checkOptional(v, 'reactionAvailable', x => typeof x === 'boolean');
   requireThat(v.id === key && text(v.name) && team(v.team) && coord(v.x) && coord(v.y), '棋子');
   list(v.facing, 2, x => int(x, -1, 1), '朝向');
@@ -136,6 +137,12 @@ export function unitValue(v, key, state) {
   requireThat(attrs.every(k => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2)
     && int(v.armor, 0, 50) && int(v.size, 1, 5) && int(v.move, 1, 10), '单位数值');
   requireThat(v.weapon === null || id(v.weapon), 'weapon');
+  for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
+  checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
+  checkOptional(v, 'mc', x => int(x, 1, 64)); checkOptional(v, 'nonLethal', x => typeof x === 'boolean');
+  checkOptional(v, 'intent', x => typeof x === 'string' && ['normal','function','core','kill','concept'].includes(x));
+  checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
+  checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'moraleType', x => typeof x === 'string');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
   table(v.statuses, (status, statusId) => statusValue(status, statusId, state), maxStatusTemplates + Object.keys(STATUSES).length);
 }
@@ -182,8 +189,10 @@ export function validateState(s) {
         && !Object.values(s.covers).some(c => c.hp > 0 && c.x === v.x && c.y === v.y), '棋子位置重叠或阻挡');
       occupied.add(point);
     }
-    for (const i of [v.weapon, ...v.gear].filter(Boolean)) {
-      requireThat(has(s.items, i) && !equipped.has(i) && own(s.equipment[s.items[i].templateId], 'damage') === (i === v.weapon), '装备引用或归属');
+    const slots = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
+    for (const i of new Set(slots)) {
+      const weaponSlot = i === v.weapon || i === v.mainHand || i === v.offHand;
+      requireThat(has(s.items, i) && !equipped.has(i) && (weaponSlot || i === v.shield ? own(s.equipment[s.items[i].templateId], 'damage') === weaponSlot : true), '装备引用或归属');
       equipped.add(i);
     }
     requireThat(v.skills.every(i => has(s.skills, i)) && new Set(v.skills).size === v.skills.length, '技能引用');

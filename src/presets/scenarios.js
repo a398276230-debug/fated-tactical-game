@@ -18,6 +18,7 @@ const entries = record => {
 };
 const gearSlots = ['weapon', 'gear'];
 function importCarry(state, value) {
+  // v1 carry records only had weapon; normalize them into mainHand without changing replay data.
   fields(value, ['kind', 'version', 'items', 'units'], ['statusTemplates']);
   if (value.version !== 1 || value.kind !== 'persistent') throw new Error('无效的跨战档案');
   const carry = structuredClone(value);
@@ -33,24 +34,25 @@ function importCarry(state, value) {
   const assigned = new Set();
   const imported = [];
   for (const [id, unit] of entries(carry.units)) {
-    if (!object(unit) || Object.keys(unit).length !== 3 || !gearSlots.every(slot => own(unit, slot)) || !Array.isArray(unit.gear)) throw new Error(`无效的跨战单位：${id}`);
+    if (!object(unit) || !['weapon','gear','statuses'].every(slot => own(unit, slot)) || !Array.isArray(unit.gear)
+      || Object.keys(unit).some(key => !['weapon','gear','statuses','mainHand','offHand','shield'].includes(key))) throw new Error(`无效的跨战单位：${id}`);
     const statuses = Object.fromEntries(entries(unit.statuses).map(([key, status]) => {
       if (!object(status) || status.durationType !== 'persistent') throw new Error(`跨战状态必须常驻：${key}`);
       statusValue(status, key, state);
       return [key, status];
     }));
-    for (const [instanceId, isWeapon] of [[unit.weapon, true], ...unit.gear.map(i => [i, false])]) {
+    for (const [instanceId, isWeapon] of [[unit.weapon, true], ...[unit.mainHand, unit.offHand].filter(Boolean).map(i => [i, true]), ...[unit.shield].filter(Boolean).map(i => [i, true]), ...unit.gear.map(i => [i, false])]) {
       if (instanceId === null && isWeapon) continue;
       if (!safeId(instanceId) || !own(carry.items, instanceId) || assigned.has(instanceId)
         || own(state.equipment[state.items[instanceId].templateId], 'damage') !== isWeapon) throw new Error(`跨战装备归属无效：${instanceId}`);
       assigned.add(instanceId);
     }
-    if (own(state.units, id)) imported.push([id, { statuses, weapon: unit.weapon, gear: unit.gear }]);
+    if (own(state.units, id)) imported.push([id, { statuses, weapon: unit.weapon, mainHand: unit.mainHand ?? unit.weapon, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
   }
   // Carried ownership is authoritative. An absent unit's slot becomes inventory,
   // and a different scenario's default slot must not duplicate that instance.
   for (const u of Object.values(state.units)) {
-    if (assigned.has(u.weapon)) u.weapon = null;
+    for (const slot of ['weapon', 'mainHand', 'offHand', 'shield']) if (assigned.has(u[slot])) u[slot] = null;
     u.gear = u.gear.filter(i => !assigned.has(i));
   }
   for (const [id, patch] of imported) Object.assign(state.units[id], patch);
@@ -77,6 +79,8 @@ export function buildScenario(request = 'ruins') {
       return id;
     };
     state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp, maxHp: hp,
+      mainHand: weaponId, offHand: null, shield: null, tier: 1, bodyLengthM: 1.7, mc: 1,
+      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance: 'light_blade', moraleType: 'standard',
       mp: 14, maxMp: 14, sp: 10, maxSp: 10, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
       weapon: equip(weaponId, weapon), gear: gear.map(templateId => equip(`${id}-${templateId}`, templateId)), skills };

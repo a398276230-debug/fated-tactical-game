@@ -56,6 +56,17 @@ export function rollD20(rng, advantage = 0, disadvantage = 0) {
   };
 }
 
+/** Protocol dice: one bonus die is advantage, two bonus dice use 3d20 middle. */
+export function rollProtocolD20(rng, { bonus = 0, penalty = 0, tierAdvantage = 0 } = {}) {
+  const b = Math.max(0, Math.min(2, bonus)), p = Math.max(0, Math.min(1, penalty));
+  const sign = b > p ? 1 : p > b ? -1 : 0;
+  const count = sign === 0 ? 1 : (b === 2 && sign > 0) || (tierAdvantage && sign < 0) ? 3 : 2;
+  const result = rollDice(rng, count, 20);
+  const sorted = [...result.rolls].sort((a, z) => a - z);
+  const value = count === 3 ? sorted[1] : sign > 0 ? Math.max(...result.rolls) : sign < 0 ? Math.min(...result.rolls) : result.rolls[0];
+  return { rng: result.rng, rolls: result.rolls, value, mode: count === 3 ? 'middle' : sign > 0 ? 'bonus' : sign < 0 ? 'penalty' : 'normal' };
+}
+
 function probability(successes, advantage, disadvantage) {
   const sign = edge(advantage, disadvantage);
   if (sign > 0) return (400 - (20 - successes) ** 2) / 400;
