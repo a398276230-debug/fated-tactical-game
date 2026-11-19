@@ -6119,7 +6119,7 @@ function sourceBundle(variables, messages, chat = "default") {
   const allText = joined || latestFloor;
   let battleRaw = extractTag(allText, ["battle_init", "battle_in", "\u6218\u672F\u6C99\u76D8"]);
   if (!battleRaw) {
-    const legacy = allText.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*[:：]?\s*([\\s\\S]+)/i);
+    const legacy = allText.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*[:：]?\s*([\s\S]+)/i);
     if (legacy) battleRaw = legacy[1].trim();
     else {
       const wrapped = allText.match(/\{\s*"?(?:battle_in|战术沙盘)"?\s*:\s*([\\s\\S]+)\}/i);
@@ -6222,7 +6222,7 @@ function style(doc) {
   const css = `
 [data-fated-tavern-overlay]{position:fixed;z-index:2147483000;color:#e8edf5;font:14px/1.4 system-ui,sans-serif;pointer-events:none}
 [data-fated-tavern-overlay] *{box-sizing:border-box}[data-fated-tavern-overlay] button{cursor:pointer;color:inherit;background:#263348;border:1px solid #52627d;border-radius:4px;padding:5px 9px}[data-fated-tavern-overlay] button:hover{background:#354968}
-.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}`;
+.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}.fated-battle-entry{margin:8px 0;padding:8px;border:1px solid #52627d;border-radius:6px;background:#141a25;color:#e8edf5}.fated-battle-entry>summary{cursor:pointer;color:#cbd5ff;font-weight:600}.fated-battle-source{max-height:220px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;color:#b9c4d8}.fated-battle-enter{margin-top:6px}`;
   (doc.head || doc.documentElement)?.append(el(doc, "style", { "data-fated-tavern-overlay": "" }, css));
 }
 function mountTavernOverlay(options = {}) {
@@ -6243,6 +6243,7 @@ function mountTavernOverlay(options = {}) {
   const stateKey = `fated-tactical/instances/${id2}`;
   let config = configFor(storage, configKey);
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
+  let battleObserver = null;
   const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => {
     if (!node) return;
@@ -6307,31 +6308,75 @@ function mountTavernOverlay(options = {}) {
   on(close, "click", closePanel);
   on(minimize, "click", hide);
   function draggable(node, handle) {
+    const surface = handle || node;
     let drag = null;
-    on(handle || node, "pointerdown", (event) => {
-      if (event.target.closest("button") && handle) return;
+    on(surface, "pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest("button")) return;
       const rect = node.getBoundingClientRect();
-      drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
-      node.style.right = "auto";
-      node.style.bottom = "auto";
-      node.style.left = `${rect.left}px`;
-      node.style.top = `${rect.top}px`;
-      node.setPointerCapture?.(event.pointerId);
+      drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
     });
-    on(handle || node, "pointermove", (event) => {
-      if (!drag) return;
-      node.style.left = `${Math.max(0, drag.left + event.clientX - drag.x)}px`;
-      node.style.top = `${Math.max(0, drag.top + event.clientY - drag.y)}px`;
+    on(surface, "pointermove", (event) => {
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        node.style.right = "auto";
+        node.style.bottom = "auto";
+        node.style.left = `${drag.left}px`;
+        node.style.top = `${drag.top}px`;
+        surface.setPointerCapture?.(event.pointerId);
+      }
+      node.style.left = `${Math.max(0, drag.left + dx)}px`;
+      node.style.top = `${Math.max(0, drag.top + dy)}px`;
+      event.preventDefault();
     });
-    on(handle || node, "pointerup", () => {
-      drag = null;
-    });
-    on(handle || node, "pointercancel", () => {
-      drag = null;
-    });
+    const stop = (event) => {
+      if (drag?.pointerId === event.pointerId) drag = null;
+    };
+    on(surface, "pointerup", stop);
+    on(surface, "pointercancel", stop);
+    on(surface, "lostpointercapture", stop);
   }
-  draggable(launcher);
   draggable(panel, header);
+  function foldBattleEntries() {
+    const contentNodes = [...doc.querySelectorAll(".mes_text, .message, [data-content]")];
+    for (const content2 of contentNodes) {
+      if (content2.closest("[data-fated-tavern-overlay]") || content2.dataset.fatedBattleFolded === "true") continue;
+      for (const tag of [...content2.querySelectorAll?.("battle_init") || []]) {
+        const details = el(doc, "details", { class: "fated-battle-entry" });
+        const summary = el(doc, "summary", {}, "\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u6218\u573A\u5165\u53E3");
+        const pre = el(doc, "pre", { class: "fated-battle-source" }, `<battle_init>${tag.textContent || ""}</battle_init>`);
+        const enter = el(doc, "button", { type: "button", class: "fated-battle-enter" }, "\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0");
+        details.append(summary, pre, enter);
+        on(enter, "click", () => open());
+        tag.replaceWith(details);
+        content2.dataset.fatedBattleFolded = "true";
+      }
+      const walker = doc.createTreeWalker?.(content2, 4);
+      if (!walker) continue;
+      const textNodes = [];
+      while (walker.nextNode()) textNodes.push(walker.currentNode);
+      for (const node of textNodes) {
+        const raw = node.nodeValue || "";
+        const match = raw.match(/<battle_init(?:\s[^>]*)?>[\s\S]*?<\/battle_init>/i);
+        if (!match) continue;
+        const details = el(doc, "details", { class: "fated-battle-entry" });
+        const summary = el(doc, "summary", {}, "\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u6218\u573A\u5165\u53E3");
+        const pre = el(doc, "pre", { class: "fated-battle-source" }, match[0]);
+        const enter = el(doc, "button", { type: "button", class: "fated-battle-enter" }, "\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0");
+        details.append(summary, pre, enter);
+        on(enter, "click", () => open());
+        const replacement = doc.createDocumentFragment();
+        if (match.index) replacement.append(doc.createTextNode(raw.slice(0, match.index)));
+        replacement.append(details);
+        if (match.index + match[0].length < raw.length) replacement.append(doc.createTextNode(raw.slice(match.index + match[0].length)));
+        node.parentNode?.replaceChild(replacement, node);
+        content2.dataset.fatedBattleFolded = "true";
+        break;
+      }
+    }
+  }
   function renderInstances() {
     const page = pages.instances;
     page.replaceChildren(el(doc, "h3", {}, "\u5DF2\u7EF4\u62A4\u7684\u5B9E\u4F8B"));
@@ -6513,6 +6558,7 @@ function mountTavernOverlay(options = {}) {
   async function hydrate() {
     const variables = await tavernVariablesAsync(host), messages = await tavernMessages(host);
     sources = sourceBundle(variables, messages, id2);
+    foldBattleEntries();
     const converter = options.converter || getGlobal(host, "FatedTactical")?.hydrateBattleState || getGlobal(host, "hydrateBattleState") || hydrateFromSources;
     let hydrated = null;
     if (typeof converter === "function") {
@@ -6659,19 +6705,21 @@ function mountTavernOverlay(options = {}) {
         on(entry, "click", open);
       }
     } else entry?.remove();
-    try {
-      getGlobal(host, "replaceScriptButtons")?.();
-    } catch (_) {
-    }
   }
   renderInstances();
   renderConfig();
   renderSandbox();
   updateMagic();
+  foldBattleEntries();
+  if (typeof MutationObserver === "function" && doc.body) {
+    battleObserver = new MutationObserver(() => foldBattleEntries());
+    battleObserver.observe(doc.body, { childList: true, subtree: true });
+  }
   const api = { open, close: closePanel, dispose, scan, getConfig: () => clone2(config), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone2(sources), getState: () => clone2(currentState) };
   function dispose() {
     if (disposed) return;
     disposed = true;
+    battleObserver?.disconnect();
     try {
       controller?.abort();
     } catch (_) {
