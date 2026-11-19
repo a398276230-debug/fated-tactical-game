@@ -1,13 +1,16 @@
-import { GameAPI as game } from '../api/game_api.js';
+import { createGameAPI } from '../api/game_api.js';
 import { SCENARIOS } from '../presets/scenarios.js';
-import * as view from './render.js';
+import { createRenderer } from './render.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 
-const $ = id => document.getElementById(id);
-const storageKey = 'fated-tactical/battle-v1';
-const crossedKey = 'fated-tactical/carry-v1';
+export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, storage: storageArea } = {}) {
+const document = root.ownerDocument, window = document.defaultView;
+const localStorage = storageArea ?? window?.localStorage;
+const $ = id => root.querySelector(`[id=\"${id}\"]`);
+const view = createRenderer(root);
 const scenario = $('scenario-select'), mode = $('mode-select'), seed = $('seed-input');
+const storage = { getItem: key => { try { return localStorage?.getItem(key) ?? null; } catch { return null; } }, setItem: (key, value) => { try { localStorage?.setItem(key, value); } catch {} }, removeItem: key => { try { localStorage?.removeItem(key); } catch {} } };
 let state, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, message = '';
 let menuButtons = new Map();
 const active = () => state.units[state.order[state.turn]];
@@ -29,7 +32,7 @@ function refreshMeasurement() {
   for (const [i, input] of measurement.entries()) {
     const old = input.value;
     input.replaceChildren(...living.map(u => {
-      const option = new Option(`${u.name} (${u.x},${u.y},Z${elevation(state,u)})`,u.id);
+      const option = new window.Option(`${u.name} (${u.x},${u.y},Z${elevation(state,u)})`,u.id);
       option.dataset.faction = u.team;
       return option;
     }));
@@ -40,7 +43,7 @@ function refreshMeasurement() {
 }
 function safely(fn) { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } }
 
-for (const [id, { title }] of Object.entries(SCENARIOS)) scenario.add(new Option(title, id));
+for (const [id, { title }] of Object.entries(SCENARIOS)) scenario.add(new window.Option(title, id));
 function scenarioDescription() {
   $('scenario-preview').textContent = SCENARIOS[scenario.value].description + (carry ? ' · 已载入跨战装备与状态' : '');
   $('clear-persistent').hidden = !carry;
@@ -83,7 +86,7 @@ function update({ resetAction = false, save = false } = {}) {
   draw();
   refreshMeasurement();
   if (save) {
-    try { localStorage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
+    try { storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
     catch { error('浏览器存储空间不足或已关闭；请下载快照保存战局。'); }
     schedule();
   }
@@ -91,7 +94,7 @@ function update({ resetAction = false, save = false } = {}) {
 }
 function execute(next) { return safely(() => game.playAction(next)); }
 function pointFrom(el) {
-  const cell = el.closest('#board [data-x][data-y]');
+  const cell = el.closest('[data-x][data-y]');
   return cell ? { x: Number(cell.dataset.x), y: Number(cell.dataset.y) } : null;
 }
 const cellFor = at => $('board').querySelector(`[data-x="${at.x}"][data-y="${at.y}"]`);
@@ -100,10 +103,10 @@ function layoutTargetCard() {
   const anchor = cellFor(target);
   if (!anchor) return;
   const r = anchor.getBoundingClientRect(), clip = anchor.closest('.axis-scroll').getBoundingClientRect();
-  const viewport = window.visualViewport;
+  const viewport = window?.visualViewport;
   if (r.right <= Math.max(clip.left, viewport?.offsetLeft ?? 0)
-    || r.left >= Math.min(clip.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? innerWidth))
-    || r.bottom <= (viewport?.offsetTop ?? 0) || r.top >= (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight)) {
+    || r.left >= Math.min(clip.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth))
+    || r.bottom <= (viewport?.offsetTop ?? 0) || r.top >= (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)) {
     closeTarget();
     return;
   }
@@ -186,27 +189,27 @@ function hoverPoint(point) { hover = point; if (!target) drawPreview(); }
 function download(kind, value, format = 'json') {
   const link = document.createElement('a');
   const isText = format === 'txt';
-  const url = URL.createObjectURL(new Blob([isText ? value : JSON.stringify(value, null, 2)], { type:isText ? 'text/plain;charset=utf-8' : 'application/json' }));
+  const url = window.URL.createObjectURL(new window.Blob([isText ? value : JSON.stringify(value, null, 2)], { type:isText ? 'text/plain;charset=utf-8' : 'application/json' }));
   link.href = url;
   link.download = `fated-${state.scenarioId}-${kind}.${format}`;
   link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
 }
 
 function bindControls() {
   for (const input of measurement) input.onchange = () => { input.dataset.faction = state.units[input.value]?.team ?? ''; measure(); };
-  scenario.addEventListener('change', () => configure(scenario.value));
+  scenario.addEventListener('change', () => configure(scenario.value), {signal});
   $('intent-select').onchange = () => { if (target) handlePoint(target); };
   $('nonlethal-toggle').onchange = () => { if (target) handlePoint(target); };
   $('bonus-dice-select').onchange = () => { if (target) handlePoint(target); };
   $('theme-select').onchange = () => {
     const theme = $('theme-select').value;
-    document.documentElement.dataset.dlcTheme = theme;
-    try { localStorage.setItem('fated-tactical/theme', theme); } catch { /* optional preference */ }
+    root.dataset.dlcTheme = theme;
+    try { storage.setItem('fated-tactical/theme', theme); } catch { /* optional preference */ }
   };
   $('clear-persistent').onclick = () => {
     carry = null;
-    try { localStorage.removeItem(crossedKey); } catch { /* optional preference */ }
+    try { storage.removeItem(crossedKey); } catch { /* optional preference */ }
     scenarioDescription();
   };
   $('reset-button').onclick = () => safely(restart);
@@ -218,7 +221,7 @@ function bindControls() {
   });
   $('ai-step').onclick = () => safely(() => { clearTimeout(timer); game.stepEnemy(); });
   $('auto-ai').onchange = () => {
-    try { localStorage.setItem('fated-tactical/auto', String($('auto-ai').checked)); } catch { /* optional preference */ }
+    try { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); } catch { /* optional preference */ }
     schedule();
   };
   $('ai-speed').onchange = schedule;
@@ -230,7 +233,7 @@ function bindControls() {
   };
   $('copy-report').onclick = async () => {
     try {
-      await navigator.clipboard.writeText(report.value);
+      await window.navigator.clipboard.writeText(report.value);
       reportMessage.textContent = '已复制。';
     } catch {
       report.focus(); report.select();
@@ -252,7 +255,7 @@ function bindControls() {
         const previous = carry;
         carry = data;
         try { restart(); } catch (e) { carry = previous; throw e; }
-        try { localStorage.setItem(crossedKey, JSON.stringify(carry)); } catch { /* downloaded file remains the source */ }
+        try { storage.setItem(crossedKey, JSON.stringify(carry)); } catch { /* downloaded file remains the source */ }
         scenarioDescription();
       } else {
         const restored = game.restoreBattleSnapshot(data);
@@ -264,7 +267,7 @@ function bindControls() {
     } catch (e) { error(`导入失败：${e.message}`); }
   };
   const editor = $('sandbox-editor'), reason = $('sandbox-reason');
-  for (const input of [editor, reason]) input.addEventListener('input', clearProposal);
+  for (const input of [editor, reason]) input.addEventListener('input', clearProposal, {signal});
   $('api-sandbox').addEventListener('click', event => {
     const kind = event.target.closest('[data-example]')?.dataset.example;
     if (!kind) return;
@@ -284,7 +287,7 @@ function bindControls() {
     const example = commands[kind]();
     editor.value = JSON.stringify(Array.isArray(example) ? example : [example], null, 2);
     clearProposal();
-  });
+  }, {signal});
   $('sandbox-preview').onclick = () => {
     clearProposal();
     try {
@@ -313,16 +316,16 @@ function bindControls() {
     } catch(e) { $('resource-output').textContent = e.message; }
   };
   $('close-target').onclick = () => closeTarget(true);
-  $('target-preview').addEventListener('toggle', layoutTargetCard);
+  $('target-preview').addEventListener('toggle', layoutTargetCard, {signal});
   document.addEventListener('pointerdown', e => {
     if (target && !$('target-actions').contains(e.target) && !pointFrom(e.target)) closeTarget();
-  });
-  window.addEventListener('scroll', layoutTargetCard, {capture:true,passive:true});
-  window.addEventListener('resize', layoutTargetCard);
-  window.visualViewport?.addEventListener('resize', layoutTargetCard);
-  window.visualViewport?.addEventListener('scroll', layoutTargetCard);
+  }, {signal});
+  window.addEventListener('scroll', layoutTargetCard, {capture:true,passive:true,signal});
+  window.addEventListener('resize', layoutTargetCard, {signal});
+  window.visualViewport?.addEventListener('resize', layoutTargetCard, {signal});
+  window.visualViewport?.addEventListener('scroll', layoutTargetCard, {signal});
   $('confirm-action').onclick = () => { if (target && action) execute(action); };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && target && !document.querySelector('dialog[open]')) closeTarget(true); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && target && !root.querySelector('dialog[open]')) closeTarget(true); }, {signal});
   $('action-toolbar').onclick = e => {
     const button = e.target.closest('[data-action]');
     if (button) handleAction(button);
@@ -347,12 +350,12 @@ function bindControls() {
 configure('ruins');
 let snapshot;
 try {
-  snapshot = JSON.parse(localStorage.getItem(storageKey));
-  carry = JSON.parse(localStorage.getItem(crossedKey));
-  $('auto-ai').checked = localStorage.getItem('fated-tactical/auto') !== 'false';
-  const theme = localStorage.getItem('fated-tactical/theme');
+  snapshot = initialState ?? JSON.parse(storage.getItem(storageKey));
+  carry = JSON.parse(storage.getItem(crossedKey));
+  $('auto-ai').checked = storage.getItem('fated-tactical/auto') !== 'false';
+  const theme = storage.getItem('fated-tactical/theme');
   if (['amethyst','night-gold','frost-silver'].includes(theme)) {
-    document.documentElement.dataset.dlcTheme = theme;
+    root.dataset.dlcTheme = theme;
     $('theme-select').value = theme;
   }
 } catch { /* unavailable local storage does not block play */ }
@@ -374,3 +377,5 @@ game.subscribe(() => {
   if (before && state.logs.length > before.logs.length) view.feedback(before, state);
 });
 update({ resetAction:true, save:true });
+return { loadState(snapshot) { const result = snapshot?.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind:'custom_state', state:snapshot }); configure(result.scenarioId); mode.value = result.mode; error(''); update({ resetAction:true, save:false }); return result; }, getState: () => game.getBattleState(), exportBattleReportText: () => game.exportBattleReportText(), exportMvuPatch: () => ({ kind:'battle', state:game.getBattleState() }), api: game, destroy() { clearTimeout(timer); } };
+}
