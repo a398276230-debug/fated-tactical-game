@@ -12,7 +12,7 @@ export const RATING_TABLE = Object.freeze([
   { min: 30, name: '超暴击', multiplier: 2 }, { min: 25, name: '强暴击', multiplier: 1.6 },
   { min: 20, name: '平暴击', multiplier: 1.3 }, { min: 11, name: '有效', multiplier: 1 },
   { min: 8, name: '勉强', multiplier: .8 }, { min: 4, name: '擦伤', multiplier: .3 },
-  { min: -Infinity, name: '失手', multiplier: 0 },
+  { min: null, name: '失手', multiplier: 0 },
 ]);
 export const DISTANCE_TABLE = Object.freeze([
   { name: '贴身', min: 0, max: 0, hit: 4, range: 6 }, { name: '近程', min: 1, max: 2, hit: 0, range: 2 },
@@ -37,7 +37,7 @@ export const stanceLabel = Object.freeze({ light_blade: '轻剑', dual_wield: '�
 export function sizeFor(bodyLengthM) { return BL_SIZE_TABLE.find(x => Number.isFinite(bodyLengthM) && bodyLengthM < x.max) ?? BL_SIZE_TABLE[2]; }
 export function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
 export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
-export function ratingFor(total) { return RATING_TABLE.find(x => total >= x.min); }
+export function ratingFor(total) { return RATING_TABLE.find(x => x.min === null || total >= x.min); }
 export function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) { return agility * (1 + percent) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat; }
 export function sizeHitModifier(attacker, defender) { const a = sizeForUnit(attacker), d = sizeForUnit(defender); return (defender.mc ?? 1) >= 2 ? a.value + 2 * ((defender.mc ?? 1) - 1) : a.value - d.value; }
 export function martialContest(attacker, defender, attackerRoll, defenderRoll) { return attackerRoll + (attacker.martial ?? sizeForUnit(attacker).martial) >= defenderRoll + (defender.martial ?? sizeForUnit(defender).martial); }

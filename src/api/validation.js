@@ -125,7 +125,7 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
-const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType'];
+const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId'];
 export function unitValue(v, key, state) {
   fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys]);
   checkOptional(v, 'reactionAvailable', x => typeof x === 'boolean');
@@ -140,6 +140,9 @@ export function unitValue(v, key, state) {
   for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
   checkOptional(v, 'mc', x => int(x, 1, 64)); checkOptional(v, 'nonLethal', x => typeof x === 'boolean');
+  checkOptional(v, 'initiativePercent', x => num(x, -1, 10)); checkOptional(v, 'flatInitiative', x => int(x, -1000, 1000));
+  for (const field of ['attackInit','actionInit']) checkOptional(v, field, x => Array.isArray(x) && x.length <= 16 && x.every(n => int(n, -1000, 1000)));
+  checkOptional(v, 'lockedTargetId', x => x === null || id(x));
   checkOptional(v, 'intent', x => typeof x === 'string' && ['normal','function','core','kill','concept'].includes(x));
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
   checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'moraleType', x => typeof x === 'string');
@@ -153,7 +156,7 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key, x]) => !own(Object.prototype, key) && jsonTree(x, depth + 1));
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates']);
+  fields(s, ['scenarioId','title','mode','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones']);
   if (own(s, 'statusTemplates')) statusTemplateTable(s.statusTemplates);
   requireThat(id(s.scenarioId) && text(s.title) && ['free','split'].includes(s.mode) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
     && [null,'blue','red','draw'].includes(s.outcome), '战局');
@@ -175,6 +178,11 @@ export function validateState(s) {
     requireThat(v.id === k && text(v.name) && text(v.material) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== 'wall'
       && int(v.maxHp, 1, 1000) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), '掩体');
   });
+  table(s.zones ?? {}, (v, k) => {
+    fields(v, ['id','name','x','y','radius','remainingTurns','damage','damageType','team']);
+    requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && int(v.radius,0,10) && int(v.remainingTurns,1,100)
+      && int(v.damage,0,10000) && ['physical','energy','mental','true'].includes(v.damageType) && ['blue','red','all'].includes(v.team), '持续区域');
+  }, 64);
   table(s.interactives, (v, k) => {
     fields(v, ['id','name','x','y','kind','spent']);
     requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== 'wall'

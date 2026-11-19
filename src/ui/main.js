@@ -134,7 +134,9 @@ function handlePoint(at, input = {}) {
   target = at; hover = at; action = null;
   const options = [];
   const add = (type, skill) => {
-    const command = { type, ...(['brace','reload','end'].includes(type) ? {} : at), ...(skill ? { skillId:skill } : {}) };
+    const command = { type, ...(['brace','reload','end'].includes(type) ? {} : at), ...(skill ? { skillId:skill } : {}),
+      ...(type === 'attack' || type === 'skill' ? { intent:$('intent-select').value, nonLethal:$('nonlethal-toggle').checked,
+        bonusDice:Number($('bonus-dice-select').value) } : {}) };
     const plan = game.previewAction(command);
     if (plan.ok) options.push({ command, plan, label: skill ? state.skills[skill].name : labelByType[type] });
   };
@@ -145,6 +147,7 @@ function handlePoint(at, input = {}) {
     for (const skill of actor.skills) add('skill', skill);
     if (self) add('end');
   }
+  $('bonus-dice-select').value = String(Math.min(Number($('bonus-dice-select').value), actor?.bonusDice ?? 0));
   $('target-title').textContent = `${unit?.name ?? feature?.name ?? '地块'} · (${at.x}, ${at.y})${self ? sprint ? ' · 疾跑已启用' : ' · 普通移动' : ''}`;
   const toolbar = $('action-toolbar'); toolbar.replaceChildren(); menuButtons = new Map();
   for (const { command, plan, label } of options) {
@@ -192,6 +195,9 @@ function download(kind, value, format = 'json') {
 function bindControls() {
   for (const input of measurement) input.onchange = () => { input.dataset.faction = state.units[input.value]?.team ?? ''; measure(); };
   scenario.addEventListener('change', () => configure(scenario.value));
+  $('intent-select').onchange = () => { if (target) handlePoint(target); };
+  $('nonlethal-toggle').onchange = () => { if (target) handlePoint(target); };
+  $('bonus-dice-select').onchange = () => { if (target) handlePoint(target); };
   $('theme-select').onchange = () => {
     const theme = $('theme-select').value;
     document.documentElement.dataset.dlcTheme = theme;

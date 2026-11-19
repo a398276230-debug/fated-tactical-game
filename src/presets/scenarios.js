@@ -69,7 +69,7 @@ export function buildScenario(request = 'ruins') {
   const state = { scenarioId, title, mode, round: 1, turn: 0, order: [], units: {}, items: {},
     equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS),
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
-    covers: {}, interactives: {}, rng: seed, logs: [], outcome: null };
+    covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
   function unit(id, name, team, x, y, weapon, skills, options = {}) {
     const { hp = 32, agi = 5, str = 4, con = 4, int = 4, spi = 4, armor = 1, size = 1, gear = [], weaponId = `${id}-weapon` } = options;
     const equip = (id, templateId) => {
@@ -126,6 +126,7 @@ export function buildScenario(request = 'ruins') {
     unit('rifle', '重弩侍从', 'red', 8, 2, 'crossbow', ['shift'], { hp: 28 });
     [[4, 3], [4, 5], [4, 6], [7, 3], [7, 6], [1, 1]].forEach(([x, y]) => wall(x, y));
     cover('C1', 3, 4, '棺石', 20, 3); cover('C2', 5, 2, '钢板', 18, 3); cover('C3', 5, 5, '木箱', 10, 2); cover('C4', 8, 6, '棺石', 20, 3);
+    state.zones['Z1'] = { id:'Z1', name:'墓火领域', x:7, y:4, radius:1, remainingTurns:99, damage:2, damageType:'energy', team:'all' };
     interact('I1', 6, 5, 'barrel'); interact('I2', 4, 7, 'altar'); interact('I3', 7, 2, 'barrel'); interact('I4', 2, 4, 'altar');
   }
   // A spare of the same template stays in the inventory, not in a unit slot.

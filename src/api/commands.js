@@ -115,6 +115,18 @@ const commands = {
       else u.gear.push(instance.id);
     }
   },
+  set_zone(s, c) {
+    fields(c, ['type','zone']);
+    const z = structuredClone(c.zone);
+    check(plain(z) && id(z.id), '区域 ID');
+    const table = s.zones ??= {};
+    table[z.id] = z;
+  },
+  remove_zone(s, c) {
+    fields(c, ['type','zoneId']);
+    check(has(s.zones ?? {}, c.zoneId), '区域 ID');
+    delete s.zones[c.zoneId];
+  },
   set_terrain_cell(s, c) {
     fields(c, ['type','x','y','patch']);
     check(coord(c.x) && coord(c.y), '坐标');

@@ -3,7 +3,7 @@ import { aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D 
   isFlanked as flank, isGround as ground, movementOptions, passableEdge as fitsHeight, unitAt } from './spatial.js';
 import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { stanceFor, stanceLabel, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, damagePipeline } from './combat_protocol.js';
+import { stanceFor, stanceLabel, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, initiative as protocolInitiative } from './combat_protocol.js';
 
 // Pure tactical rules. Templates hold static data; mutable counters live in state.items.
 // Damage/heal: {count,sides,bonus?,stat?,multiplier?,type?}.
@@ -134,7 +134,7 @@ export function refreshOutcome(state) {
 
 function loseHP(state, target, raw, sourceUnitId, type, label, detail = {}) {
   const hpBefore = target.hp;
-  target.hp = Math.max(0, hpBefore - raw);
+  target.hp = target.nonLethal ? Math.max(1, hpBefore - raw) : Math.max(0, hpBefore - raw);
   const amount = hpBefore - target.hp;
   record(state, sourceUnitId, 'damage', `${target.name}受到${amount}点${label}伤害`,
     { ...detail, targetId: target.id, damageType: type, amount, hpBefore, hpAfter: target.hp });
@@ -228,6 +228,18 @@ function tick(state, unit, timing) {
   }
 }
 
+function tickZones(state, unit) {
+  for (const zone of values(state.zones)) {
+    if (zone.remainingTurns <= 0 || distance(state, unit, zone) > zone.radius) continue;
+    if (zone.team !== 'all' && zone.team !== unit.team) continue;
+    if (zone.damage > 0) damageTarget(state, unit, zone.sourceUnitId ?? null, zone.damage, zone.damageType, zone.name);
+    record(state, zone.sourceUnitId ?? null, 'zone', `${unit.name}受到${zone.name}区域影响`, { zoneId: zone.id, targetId: unit.id, damage: zone.damage });
+  }
+}
+function decayZones(state) {
+  for (const zone of values(state.zones)) if (--zone.remainingTurns <= 0) { delete state.zones[zone.id]; record(state, null, 'zone_expire', `${zone.name}区域消散`, { zoneId: zone.id }); }
+}
+
 function endTurn(state, unit) {
   if (!unit) return;
   unit.ap = 0;
@@ -240,6 +252,7 @@ function endTurn(state, unit) {
     record(state, unit, 'expire', `${unit.name}的${status.name}结束`, { targetId: unit.id, statusId: status.id });
   }
   record(state, unit, 'end', `${unit.name}结束回合`);
+  if (unit === state.units[state.order.at(-1)]) decayZones(state);
 }
 
 // Automatic skips are bounded even if sandbox commands make every living unit permanently stunned.
@@ -252,6 +265,7 @@ export function settleTurn(state) {
       unit.ap = 2;
       record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
       tick(state, unit, 'onTurnStart');
+      tickZones(state, unit);
       if (refreshOutcome(state)) { unit.ap = 0; return; }
       if (alive(unit) && !changes(unit, 'skip')) return;
       if (alive(unit)) record(state, unit, 'skip', `${unit.name}因控制跳过行动`);
@@ -264,9 +278,15 @@ export function settleTurn(state) {
   if (stalled) stalled.ap = 0;
 }
 
+function resetFacing(state) {
+  for (const unit of living(state)) {
+    const target = unit.lockedTargetId ? state.units[unit.lockedTargetId] : null;
+    if (target && alive(target)) unit.facing = signFacing(unit, target);
+  }
+}
 function advanceCursor(state) {
   state.turn++;
-  if (state.turn >= state.order.length) { state.turn = 0; state.round++; }
+  if (state.turn >= state.order.length) { state.turn = 0; state.round++; resetFacing(state); }
 }
 
 export function beginBattle(state) {
@@ -276,7 +296,12 @@ export function beginBattle(state) {
   state.outcome = null;
   const initiative = living(state).map(unit => {
     const roll = randomDie(state, 20), agility = stat(unit, 'agi');
-    return { unitId: unit.id, roll, agility, total: roll + agility };
+    const agilityPercent = Number(unit.initiativePercent ?? 0);
+    const attackInit = Array.isArray(unit.attackInit) ? unit.attackInit : [];
+    const actionInit = Array.isArray(unit.actionInit) ? unit.actionInit : [];
+    const flatInit = Number(unit.flatInitiative ?? 0);
+    const total = protocolInitiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
+    return { unitId: unit.id, roll, agility, agilityPercent, attackInit:Math.max(0,...attackInit,0), actionInit:Math.max(0,...actionInit,0), flatInit, total };
   }).sort((a, b) => b.total - a.total || b.agility - a.agility ||
     (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
   state.order = initiative.map(entry => entry.unitId);
@@ -479,6 +504,9 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const protectedBy = target && !cover && !geometry.melee ? coverBetween(state, origin, target) : null;
   const penalty = protectedBy?.cover ?? 0;
   const size = cover ? 0 : typeof target?.size === 'number' ? Math.max(0, target.size - 1) : target?.size === 'large' ? 2 : target?.size === 'small' ? -1 : 0;
+  const sizeModifier = cover || !target ? 0 : sizeHitModifier(actor, target);
+  const distanceModifier = distanceTier(geometry.distance).hit;
+  const weaponRangeModifier = distanceTier(Math.max(geometry.distance, geometry.range)).range;
   const accuracy = (template.accuracy ?? 0) + stat(actor, geometry.melee ? 'str' : 'agi') + high + size + changes(actor, 'accuracy')
     + (cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty;
   const defense = cover ? 8 : 10 + Math.floor(stat(target, 'agi') / 2) + gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0);
@@ -513,6 +541,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     bonusDamage: weapon.backstab.comboDamage ?? 0, on: backstab ? 'hit' : 'critical' } : null;
   return { id: target.id, targetId: target.id, name: target.name, x: at.x, y: at.y, ...geometry,
     recipientId: recipient.id, arc, backstab: Boolean(backstab), flanked, accuracy, defense, highGround: high,
+    sizeModifier, distanceModifier, weaponRangeModifier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
     automatic: Boolean(automatic), saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce,
     armor: reduction.armor, shield: absorb, damage, damageMin: damage[0], damageMax: damage[1], criticalDamage,
@@ -615,7 +644,8 @@ export function preview(state, action) {
   if (effect && changes(unit, 'rooted')) return fail('定身时不能瞬移');
   if (attack && weapon.ammo && weapon.ammoCount <= 0) return fail('弹仓已空，请装填');
   const triggers = attack ? weapon.effects.map(e => ({ ...e })) : (template.effects ?? []).map(e => ({ ...e }));
-  const tuning = { name: template.name, shape: template.shape ?? 'single', effects: triggers,
+  const stance = unit.stance ?? (unit.offHand ? (unit.offHand.kind === 'consumable' ? 'attunement' : 'dual_wield') : unit.shield ? 'sword_shield' : 'light_blade');
+  const tuning = { name: template.name, shape: template.shape ?? 'single', stance, effects: triggers,
     ...(attack ? { souls: weapon.souls, multiplier: weapon.soulMultiplier, ammo: weapon.ammoCount,
       instanceId: weapon.instance?.id ?? null } : {}) };
   if (unplaced) {
@@ -645,7 +675,8 @@ export function preview(state, action) {
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
   const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template);
-  const targets = targetUnits.map(t => targetProfile(state, unit, t, t, templateForHit, { weapon: attack ? weapon : null, origin, teleport: effect }));
+  const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack ? weapon : null, origin, teleport: effect }),
+    bonusDice: action.bonusDice ?? 0, intent: action.intent ?? unit.intent ?? 'normal', nonLethal: action.nonLethal ?? unit.nonLethal ?? false }));
   if (template.damage != null) {
     for (const c of values(state.covers).filter(c => c.hp > 0 && cells.some(at => sameCell(at, c))).sort(byId)) {
       targets.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack ? weapon : null, origin, cover: true }), kind: 'cover' });
@@ -690,12 +721,13 @@ function resolveCheck(state, actor, profile) {
   actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus); actor.penaltyDice = 0;
   state.rng = rng;
   const total = selected + profile.accuracy;
+  const rating = ratingFor(total);
   const critical = selected === 20, hit = critical || (selected !== 1 && total >= profile.defense);
   record(state, actor, 'roll', `${profile.name}：${critical ? '暴击' : hit ? '命中' : '未命中'} (${total}/${profile.defense})`, {
     targetId: profile.id, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
     advantages: profile.advantages, disadvantages: profile.disadvantages, highGround: profile.highGround, cover: profile.cover,
     ...(profile.coverId ? { coverId: profile.coverId } : {}),
-    rating: ratingFor(total), distanceTier: distanceTier(profile.distance), bonusDice: requestedBonus,
+    rating, distanceTier: distanceTier(profile.distance), bonusDice: requestedBonus,
     distance: profile.distance, dz: profile.dz, flanked: profile.flanked, arc: profile.arc, hit, critical,
   });
   return { hit, critical, saved: false };
@@ -772,11 +804,20 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     let recipient = target;
     if (profile.dice) {
       const dice = diceRoll(state, profile.dice, critical);
-      const scaled = Math.floor(dice.value * profile.multiplier * (saved ? .5 : 1));
+      const stance = actor.stance ?? stanceLabel[stanceFor({ mainHand: actor.mainHand ?? actor.weapon, offHand: actor.offHand, shield: actor.shield })];
+      const sizeScale = meleeMultiplier(actor);
+      const ratingScale = critical ? 2 : 1;
+      const intent = profile.intent ?? 'normal';
+      const scaled = Math.floor(dice.value * profile.multiplier * sizeScale * ratingScale * (saved ? .5 : 1));
       const details = { dice, critical, saved, attackMultiplier: profile.multiplier };
       if (profile.kind === 'cover') { coverDamage(state, actor, target, scaled, details); continue; }
+      const hpBefore = target.hp;
       ({ recipient } = damageTarget(state, target, actor.id, scaled, profile.damageType, template.name,
         { attacker: actor, hit: true, melee: profile.melee, armorPierce: profile.armorPierce, details }));
+      if (profile.nonLethal && target === recipient && target.hp === 0) {
+        target.hp = 1;
+        record(state, actor, 'nonlethal', `${target.name}被非致死攻击留有 1 HP`, { targetId: target.id, hpBefore, hpAfter: 1 });
+      }
       if (weapon?.backstab && alive(recipient) && (critical || profile.backstab)) {
         grantStatus(state, recipient, 'bleed', { stacks: weapon.backstab.bleedStacks ?? 1, sourceUnitId: actor.id });
         if ((weapon.backstab.comboDamage ?? 0) > 0 && alive(actor)) {

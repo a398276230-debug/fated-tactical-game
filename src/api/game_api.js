@@ -42,7 +42,7 @@ function simulate(base, transaction) {
   if (transaction.kind === 'actions') {
     for (const action of transaction.entries) {
       if (!action || Object.getPrototypeOf(action) !== Object.prototype
-        || Object.values(action).some(v => typeof v !== 'string' && !Number.isInteger(v))) fail('动作必须由 JSON 字段组成');
+        || Object.values(action).some(v => typeof v !== 'string' && typeof v !== 'boolean' && !Number.isInteger(v))) fail('动作必须由 JSON 字段组成');
       applyAction(next, action);
     }
   } else if (transaction.kind === 'commands') {

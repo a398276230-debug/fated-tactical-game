@@ -291,15 +291,17 @@ function renderCard(state, u, inspected) {
     if (melee) head.append(el('span', 'tag', u.reactionAvailable === false ? '借机已用' : '借机就绪'));
   }
   const bars = row(null, ...['hp', 'mp', 'sp'].map(stat => resource(null, u, stat, true)), el('span', 'tag tone-gold', `${u.ap} AP`));
+  const stanceNames = { light_blade:'轻剑', dual_wield:'双持', attunement:'同调', greatsword:'重剑', sword_shield:'剑盾' };
   const cardStats = row(null, ...Object.entries({ str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神' }).map(([id, label]) =>
-    el('span', `stat stat-${id}`, `${label} ${u.stats[id]}`)), el('span', 'tag', `护甲 ${u.armor} · 移动 ${u.move} · 体型 ${u.size}`));
+    el('span', `stat stat-${id}`, `${label} ${u.stats[id]}`)), el('span', 'tag', `护甲 ${u.armor} · 移动 ${u.move} · 体型 ${u.size}`),
+    el('span', 'tag tone-violet', `持械[${stanceNames[u.stance] ?? '轻剑'}] · 奖励骰 ${u.bonusDice ?? 0}/2 · 惩罚骰 ${u.penaltyDice ?? 0}/1`));
   const marks = row('状态', ...(statuses(u).length ? statuses(u).map(s => {
     const badge = el('span', 'status-effect', statusText(s));
     badge.title = [s.name, s.category, s.tickTiming, s.description, s.amount !== undefined ? `当前池 ${s.amount}` : '',
       s.modifiers ? JSON.stringify(s.modifiers) : ''].filter(Boolean).join(' · ');
     return badge;
   }) : [el('span', 'muted', '无')]));
-  const equipment = [...new Set([u.weapon, ...u.gear])].filter(Boolean).map(id => {
+  const equipment = [...new Set([u.mainHand, u.offHand, u.shield, u.weapon, ...u.gear])].filter(Boolean).map(id => {
     const instance = value(state.items, id), template = value(state.equipment, instance?.templateId);
     if (!instance || !template) return el('span', 'tag', id);
     const counters = Object.entries(instance.counters ?? {}).map(([k, n]) => `${({ souls: '魂数 souls', ammo: '弹药 ammo' })[k] ?? k} ${n}`);
@@ -313,7 +315,8 @@ function renderCard(state, u, inspected) {
     badge.title = `${id}${template.description ? ` · ${template.description}` : ''}`;
     return badge;
   });
-  node.replaceChildren(head, bars, cardStats, marks, row('装备实例', ...(equipment.length ? equipment : [el('span', 'muted', '徒手')])));
+  const zones = values(state.zones).filter(z => Math.max(Math.abs(z.x-u.x), Math.abs(z.y-u.y)) <= z.radius).map(z => el('span','status-effect',`区域 ${z.name} · ${z.damage} ${z.damageType}`));
+  node.replaceChildren(head, bars, cardStats, marks, row('装备实例', ...(equipment.length ? equipment : [el('span', 'muted', '徒手')])), row('区域', ...(zones.length ? zones : [el('span','muted','无')])));
 }
 
 function renderFeatures(state) {
