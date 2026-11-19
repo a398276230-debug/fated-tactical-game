@@ -34,6 +34,15 @@ export const stanceFor = (slots = {}) => {
   return main ? 'light_blade' : 'unarmed';
 };
 export const stanceLabel = Object.freeze({ light_blade: '轻剑', dual_wield: '双持', attunement: '同调', greatsword: '重剑', sword_shield: '剑盾', unarmed: '无械' });
+export const STANCE_RULES = Object.freeze({
+  light_blade: Object.freeze({ armorPenetration: .08, closeRange: true, rangedDistancePenalty: 0 }),
+  dual_wield: Object.freeze({ offHandDamage: .5, comboOffHandDamage: .75, followUp: true }),
+  attunement: Object.freeze({ itemCharges: 2 }),
+  greatsword: Object.freeze({ offensiveDamage: 1.3, defensiveDamage: 1.5, armorPenetration: .05, parryQuota: 2, parryReduction: .6, perfectParryReduction: 1 }),
+  sword_shield: Object.freeze({ blockReduction: .25, heavyBlockReduction: .45, shieldDamageFactor: .3 }),
+  unarmed: Object.freeze({}),
+});
+export function stanceRules(stance) { return STANCE_RULES[stance] ?? STANCE_RULES.unarmed; }
 export function sizeFor(bodyLengthM) { return BL_SIZE_TABLE.find(x => Number.isFinite(bodyLengthM) && bodyLengthM < x.max) ?? BL_SIZE_TABLE[2]; }
 export function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
 export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
@@ -42,7 +51,7 @@ export function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], act
 export function sizeHitModifier(attacker, defender) { const a = sizeForUnit(attacker), d = sizeForUnit(defender); return (defender.mc ?? 1) >= 2 ? a.value + 2 * ((defender.mc ?? 1) - 1) : a.value - d.value; }
 export function martialContest(attacker, defender, attackerRoll, defenderRoll) { return attackerRoll + (attacker.martial ?? sizeForUnit(attacker).martial) >= defenderRoll + (defender.martial ?? sizeForUnit(defender).martial); }
 export function meleeMultiplier(unit = {}) { const s = sizeForUnit(unit); return (unit.mc ?? 1) >= 2 ? 1 : s.melee; }
-export function intentCheck(intent = 'normal', attackerTier, defenderTier, attackerD20, defenderD20, ratingBonus = 0) {
+export function intentCheck(intent = 'normal', attackerTier = 1, defenderTier = 1, attackerD20 = 10, defenderD20 = 10, ratingBonus = 0) {
   const spec = typeof intent === 'string' ? INTENTS[intent] ?? INTENTS.normal : intent;
   if (!spec.difficulty) return { required: false, success: true, ...spec };
   if (attackerTier < defenderTier - 1) return { required: true, success: false, forced: true, ...spec };

@@ -167,9 +167,34 @@ export function createGameAPI() {
       return copy({ ...STATUSES, ...s.statusTemplates });
     },
     listUnits() {
-      return Object.values(current().units).map(({ id, name, team, x, y, hp, maxHp, ap, statuses }) => ({
-        id, name, team, x, y, hp, maxHp, ap, statuses: Object.keys(statuses),
+      return Object.values(current().units).map(({ id, name, team, x, y, hp, maxHp, ap, statuses, mainHand, offHand, shield, stance, moraleState, swarm, mc, deathrattle }) => ({
+        id, name, team, x, y, hp, maxHp, ap, mainHand, offHand, shield, stance, moraleState: moraleState ?? 'steady',
+        swarm: swarm ? { count: swarm.count, minimum: swarm.minimum } : null, mc: mc ?? 1, deathrattle: Boolean(deathrattle), statuses: Object.keys(statuses),
       }));
+    },
+    inspectWeaponSlots(unitId) {
+      const s = current();
+      if (!own(s.units, unitId)) return null;
+      const u = s.units[unitId];
+      const item = id => id ? ({ id, ...s.items[id], template: s.equipment[s.items[id]?.templateId] }) : null;
+      return copy({ unitId, stance: u.stance, mainHand: item(u.mainHand ?? u.weapon), offHand: item(u.offHand), shield: item(u.shield),
+        greatswordMode: u.greatswordMode ?? 'offensive', blockMode: u.blockMode ?? 'normal' });
+    },
+    setWeaponStance(unitId, stance, options = {}) {
+      const s = current();
+      if (!own(s.units, unitId)) return { ok: false, error: '未知单位' };
+      if (!['light_blade','dual_wield','attunement','greatsword','sword_shield'].includes(stance)) return { ok: false, error: '未知持械姿态' };
+      const patch = { stance };
+      if (options.greatswordMode !== undefined) patch.greatswordMode = options.greatswordMode;
+      if (options.blockMode !== undefined) patch.blockMode = options.blockMode;
+      const transaction = { kind: 'commands', entries: [{ type: 'set_unit_stat', unitId, patch }], reason: '切换持械姿态' };
+      return commit(simulate(s, transaction), transaction);
+    },
+    listManeuvers(unitId) {
+      const s = current();
+      const u = s.units[unitId];
+      if (!u) return null;
+      return copy(u.maneuvers ?? ['charge','lock_on','scan','cover','guard','interrupt','push','knockback','grapple','disarm','trip','flee','detour']);
     },
     inspectUnit(unitId) {
       const s = current();
