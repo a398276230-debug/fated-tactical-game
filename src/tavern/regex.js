@@ -12,6 +12,7 @@ export const BATTLE_INIT_DISPLAY_REPLACEMENT =
   '<div class="fated-battle-meta">已识别 battle_init · 可在控制台加载战局</div>' +
   '<pre class="fated-battle-source">$1</pre>' +
   '<button type="button" class="fated-battle-enter" data-fated-battle-open="true">打开战场控制台</button>' +
+  '<script>(function(){var b=document.currentScript.previousElementSibling;if(!b)return;b.addEventListener("click",function(){if(typeof eventEmit==="function")eventEmit("fated_tactical:open_ui",{source:"battle_init"});});})();</script>' +
   '</details>';
 
 export const BATTLE_INIT_DISPLAY_RULE = Object.freeze({

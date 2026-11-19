@@ -5507,6 +5507,15 @@ function tierNumber(value, fallback = 1) {
 function sourceId(record2, key3 = "") {
   return text2(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key3));
 }
+function sourceAliases(participant) {
+  const raw = text2(participant?.source ?? participant?.id ?? participant?.uid ?? "").toLowerCase();
+  const name = text2(participant?.name);
+  const aliases = /* @__PURE__ */ new Set([raw, name.toLowerCase()]);
+  if (raw.includes("mvu") || raw.includes("protagonist") || raw.includes("player") || teamOf(participant?.faction ?? participant?.team, "red") === "blue") {
+    for (const value of ["\u4E3B\u89D2", "\u73A9\u5BB6", "\u4E3B\u63A7", "protagonist", "player", "mvu_protagonist"]) aliases.add(value.toLowerCase());
+  }
+  return aliases;
+}
 function collectMvu(value) {
   const root = asObject(value?.stat_data ?? value?.statData ?? value);
   const found = [];
@@ -5624,7 +5633,14 @@ function mergeRecords(records) {
 }
 function participantList(battle) {
   const value = battle.participants ?? battle.units ?? battle.roster ?? [];
-  return Array.isArray(value) ? value : Object.entries(asObject(value)).map(([id2, participant]) => ({ ...asObject(participant), id: participant?.id ?? id2 }));
+  const list2 = Array.isArray(value) ? value : Object.entries(asObject(value)).map(([id2, participant]) => ({ ...asObject(participant), id: participant?.id ?? id2 }));
+  const seen = /* @__PURE__ */ new Set();
+  return list2.filter((participant, index) => {
+    const key3 = text2(participant?.source || participant?.id || participant?.uid || participant?.name) || `participant-${index}`;
+    if (seen.has(key3)) return false;
+    seen.add(key3);
+    return true;
+  });
 }
 function teamOf(value, fallback = "red") {
   const t = text2(value).toLowerCase();
@@ -5636,8 +5652,9 @@ function xyzOf(value) {
   return { x: Math.max(0, Math.min(9, integer2(xyz[0], 0))), y: Math.max(0, Math.min(9, integer2(xyz[1], 0))), z: integer2(xyz[2], 0) };
 }
 function unitFrom(record2, participant, index, equipment, skills, items, warnings) {
-  const name = sourceName(record2, participant?.name ?? participant?.id ?? `unit-${index}`) || `\u5355\u4F4D ${index + 1}`;
-  const id2 = deterministicId(`${name}-${index}`, "unit");
+  const p = participant ?? {};
+  const name = sourceName(record2, p.name ?? p.id ?? `unit-${index}`) || `\u5355\u4F4D ${index + 1}`;
+  const id2 = deterministicId(p.source || `${name}-${index}`, "unit");
   const stats = statsOf(record2), level = Math.max(1, integer2(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
   const tier = Math.max(1, Math.min(7, tierNumber(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
   const bodyLengthM = Math.max(0.01, Math.min(1e9, number(findValue(record2, ["bodyLengthM", "bodyLength", "bl", "\u4F53\u957F"], 1.7), 1.7)));
@@ -5667,7 +5684,6 @@ function unitFrom(record2, participant, index, equipment, skills, items, warning
     skills[sid] ??= { name: text2(r.name ?? r.\u540D\u79F0) || `\u6280\u80FD${i + 1}`, quality: "\u666E\u901A", ap: Math.max(1, Math.min(2, integer2(r.ap, 1))), slot: "attack", range: Math.max(0, Math.min(15, integer2(r.range, 1))), shape: "single", target: "enemy", effects: mapEffects(r.effects, "skill", warnings), ...r.damage && object2(r.damage) ? { damage: { count: 1, sides: 4, stat: "str", type: "physical", bonus: 0, ...r.damage } } : {} };
     return sid;
   });
-  const p = participant ?? {};
   const pos2 = xyzOf(p.xyz ?? p);
   const sourceStatuses = record2.statuses ?? record2.effects ?? record2.\u72B6\u6001 ?? {};
   const statuses = {};
@@ -5682,7 +5698,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, warning
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
   const unit = { id: id2, name, team: teamOf(p.faction ?? p.team, "red"), x: pos2.x, y: pos2.y, facing: [teamOf(p.faction ?? p.team, "red") === "blue" ? 1 : -1, 0], hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer2(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer2(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.map(put), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: false, moraleType: "standard" };
-  return { unit, profile: { id: id2, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, sourcePath: record2.__sourcePath ?? null }, participant: p };
+  return { unit, profile: { id: id2, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record2.__sourcePath ?? null }, participant: p };
 }
 function terrainState(battle, state, warnings) {
   const terrain = battle.terrain ?? battle.grid;
@@ -5729,8 +5745,13 @@ function hydrateFromSources(input = {}, options = {}) {
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = {};
   const units = {}, roster = [], sourceMap = {};
   for (const [i, participant] of participants.entries()) {
-    const ref = text2(participant?.source ?? participant?.id ?? participant?.uid ?? participant?.name);
-    const record2 = [...merged.values()].find((r) => sourceName(r) === text2(participant?.name)) ?? [...merged.values()].find((r) => sourceId(r) && sourceId(r) === ref) ?? [...merged.values()][i] ?? { name: participant?.name ?? `\u5355\u4F4D${i + 1}` };
+    const aliases = sourceAliases(participant);
+    const byName = [...merged.values()].find((r) => sourceName(r).toLowerCase() === text2(participant?.name).toLowerCase());
+    const bySource = [...merged.values()].find((r) => {
+      const key3 = text2(r.__sourceKey).toLowerCase();
+      return aliases.has(key3) || aliases.has(sourceId(r).toLowerCase()) || aliases.has(sourceName(r).toLowerCase());
+    });
+    const record2 = bySource ?? byName ?? [...merged.values()][i] ?? { name: participant?.name ?? `\u5355\u4F4D${i + 1}` };
     const made = unitFrom(record2, participant, i, equipment, skills, items, warnings);
     if (units[made.unit.id]) {
       made.unit.id = deterministicId(`${made.unit.id}-${i}`, "unit");
@@ -6243,7 +6264,7 @@ function mountTavernOverlay(options = {}) {
   const stateKey = `fated-tactical/instances/${id2}`;
   let config = configFor(storage, configKey);
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
-  let battleObserver = null;
+  let battleObserver = null, removeOpenEvent = null;
   const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => {
     if (!node) return;
@@ -6301,6 +6322,20 @@ function mountTavernOverlay(options = {}) {
     panel.hidden = true;
     launcher.hidden = Boolean(config.hideLauncher);
   }
+  function bindEventBus() {
+    const helper = getGlobal(host, "TavernHelper");
+    const eventOn = getGlobal(host, "eventOn") || helper?.eventOn;
+    if (typeof eventOn !== "function") return;
+    const handler = () => {
+      open().catch(showError);
+    };
+    try {
+      const result = eventOn.call(helper || host, "fated_tactical:open_ui", handler);
+      if (typeof result === "function") removeOpenEvent = result;
+      else if (result?.off && typeof result.off === "function") removeOpenEvent = () => result.off();
+    } catch (_) {
+    }
+  }
   function closePanel() {
     hide();
   }
@@ -6308,8 +6343,14 @@ function mountTavernOverlay(options = {}) {
   on(close, "click", closePanel);
   on(minimize, "click", hide);
   on(doc, "click", (event) => {
-    if (event.target.closest?.("[data-fated-battle-open], .fated-battle-enter")) open();
-  });
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+    const trigger = path.find((node) => node?.matches?.("[data-fated-battle-open], .fated-battle-enter"));
+    if (trigger) {
+      event.preventDefault();
+      event.stopPropagation();
+      open();
+    }
+  }, { capture: true });
   function draggable(node, handle) {
     const surface = handle || node;
     let drag = null;
@@ -6738,6 +6779,7 @@ ${tag.textContent || ""}
   renderConfig();
   renderSandbox();
   updateMagic();
+  bindEventBus();
   foldBattleEntries();
   if (typeof MutationObserver === "function" && doc.body) {
     battleObserver = new MutationObserver(() => foldBattleEntries());
@@ -6748,6 +6790,7 @@ ${tag.textContent || ""}
     if (disposed) return;
     disposed = true;
     battleObserver?.disconnect();
+    removeOpenEvent?.();
     try {
       controller?.abort();
     } catch (_) {
@@ -6773,7 +6816,7 @@ ${tag.textContent || ""}
 
 // src/tavern/regex.js
 var BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>([\s\S]*?)<\/battle_init>/gi;
-var BATTLE_INIT_DISPLAY_REPLACEMENT = '<details class="fated-battle-entry" data-fated-battle-entry="true"><summary>\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3</summary><div class="fated-battle-meta">\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40</div><pre class="fated-battle-source">$1</pre><button type="button" class="fated-battle-enter" data-fated-battle-open="true">\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0</button></details>';
+var BATTLE_INIT_DISPLAY_REPLACEMENT = '<details class="fated-battle-entry" data-fated-battle-entry="true"><summary>\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3</summary><div class="fated-battle-meta">\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40</div><pre class="fated-battle-source">$1</pre><button type="button" class="fated-battle-enter" data-fated-battle-open="true">\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0</button><script>(function(){var b=document.currentScript.previousElementSibling;if(!b)return;b.addEventListener("click",function(){if(typeof eventEmit==="function")eventEmit("fated_tactical:open_ui",{source:"battle_init"});});})();<\/script></details>';
 var BATTLE_INIT_DISPLAY_RULE = Object.freeze({
   id: "fated-tactical-battle-init-display",
   name: "\u547D\u5B9A\u6218\u672F\uFF1Abattle_init \u6218\u573A\u5165\u53E3",

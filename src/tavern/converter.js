@@ -176,6 +176,15 @@ function tierNumber(value, fallback = 1) {
   return match ? '一二三四五六七'.indexOf(match[0][0]) + 1 : fallback;
 }
 function sourceId(record, key = '') { return text(findValue(record, ['id', 'uid', 'characterId', 'instanceId', 'ID'], key)); }
+function sourceAliases(participant) {
+  const raw = text(participant?.source ?? participant?.id ?? participant?.uid ?? '').toLowerCase();
+  const name = text(participant?.name);
+  const aliases = new Set([raw, name.toLowerCase()]);
+  if (raw.includes('mvu') || raw.includes('protagonist') || raw.includes('player') || teamOf(participant?.faction ?? participant?.team, 'red') === 'blue') {
+    for (const value of ['主角', '玩家', '主控', 'protagonist', 'player', 'mvu_protagonist']) aliases.add(value.toLowerCase());
+  }
+  return aliases;
+}
 
 export function collectMvu(value) {
   const root = asObject(value?.stat_data ?? value?.statData ?? value);
@@ -282,14 +291,23 @@ export function mergeRecords(records) {
 
 function participantList(battle) {
   const value = battle.participants ?? battle.units ?? battle.roster ?? [];
-  return Array.isArray(value) ? value : Object.entries(asObject(value)).map(([id, participant]) => ({ ...(asObject(participant)), id: participant?.id ?? id }));
+  const list = Array.isArray(value) ? value : Object.entries(asObject(value)).map(([id, participant]) => ({ ...(asObject(participant)), id: participant?.id ?? id }));
+  const seen = new Set();
+  return list.filter((participant, index) => {
+    const key = text(participant?.source || participant?.id || participant?.uid || participant?.name) || `participant-${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
 }
 function teamOf(value, fallback = 'red') { const t = text(value).toLowerCase(); return ['blue','player','ally','友方','我方'].includes(t) ? 'blue' : ['red','enemy','foe','敌方'].includes(t) ? 'red' : fallback; }
 function xyzOf(value) { const p = asObject(value); const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z]; return { x: Math.max(0, Math.min(9, integer(xyz[0], 0))), y: Math.max(0, Math.min(9, integer(xyz[1], 0))), z: integer(xyz[2], 0) }; }
 
 function unitFrom(record, participant, index, equipment, skills, items, warnings) {
-  const name = sourceName(record, participant?.name ?? participant?.id ?? `unit-${index}`) || `单位 ${index + 1}`;
-  const id = deterministicId(`${name}-${index}`, 'unit');
+  const p = participant ?? {};
+  const name = sourceName(record, p.name ?? p.id ?? `unit-${index}`) || `单位 ${index + 1}`;
+  // Prefer the explicit battle participant source for stable cross-scan IDs.
+  // This prevents an MVU protagonist from becoming a second char_info unit.
+  const id = deterministicId(p.source || `${name}-${index}`, 'unit');
   const stats = statsOf(record), level = Math.max(1, integer(findValue(record, ['level','等级'], 1), 1));
   const tier = Math.max(1, Math.min(7, tierNumber(findValue(record, ['tier','levelTier','层级','生命层级'], level), level)));
   const bodyLengthM = Math.max(.01, Math.min(1e9, number(findValue(record, ['bodyLengthM','bodyLength','bl','体长'], 1.7), 1.7)));
@@ -314,7 +332,6 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
     skills[sid] ??= { name: text(r.name ?? r.名称) || `技能${i + 1}`, quality: '普通', ap: Math.max(1, Math.min(2, integer(r.ap, 1))), slot: 'attack', range: Math.max(0, Math.min(15, integer(r.range, 1))), shape: 'single', target: 'enemy', effects: mapEffects(r.effects, 'skill', warnings), ...(r.damage && object(r.damage) ? { damage: { count: 1, sides: 4, stat: 'str', type: 'physical', bonus: 0, ...r.damage } } : {}) };
     return sid;
   });
-  const p = participant ?? {};
   const pos = xyzOf(p.xyz ?? p);
   const sourceStatuses = record.statuses ?? record.effects ?? record.状态 ?? {};
   const statuses = {};
@@ -326,7 +343,7 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
   const unit = { id, name, team: teamOf(p.faction ?? p.team, 'red'), x: pos.x, y: pos.y, facing: [teamOf(p.faction ?? p.team, 'red') === 'blue' ? 1 : -1, 0], hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.map(put), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, moraleType: 'standard' };
-  return { unit, profile: { id, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, sourcePath: record.__sourcePath ?? null }, participant: p };
+  return { unit, profile: { id, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null }, participant: p };
 }
 
 function terrainState(battle, state, warnings) {
@@ -372,10 +389,15 @@ export function hydrateFromSources(input = {}, options = {}) {
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = {};
   const units = {}, roster = [], sourceMap = {};
   for (const [i, participant] of participants.entries()) {
-    const ref = text(participant?.source ?? participant?.id ?? participant?.uid ?? participant?.name);
-    const record = [...merged.values()].find(r => sourceName(r) === text(participant?.name))
-      ?? [...merged.values()].find(r => sourceId(r) && sourceId(r) === ref)
-      ?? [...merged.values()][i] ?? { name: participant?.name ?? `单位${i + 1}` };
+    const aliases = sourceAliases(participant);
+    const byName = [...merged.values()].find(r => sourceName(r).toLowerCase() === text(participant?.name).toLowerCase());
+    const bySource = [...merged.values()].find(r => {
+      const key = text(r.__sourceKey).toLowerCase();
+      return aliases.has(key) || aliases.has(sourceId(r).toLowerCase()) || aliases.has(sourceName(r).toLowerCase());
+    });
+    // Explicit participant source wins over display-name collisions. This is
+    // what keeps mvu_protagonist -> 主角 from falling back to char_info.
+    const record = bySource ?? byName ?? [...merged.values()][i] ?? { name: participant?.name ?? `单位${i + 1}` };
     const made = unitFrom(record, participant, i, equipment, skills, items, warnings);
     // Two records with the same display name still get deterministic distinct IDs.
     if (units[made.unit.id]) { made.unit.id = deterministicId(`${made.unit.id}-${i}`, 'unit'); made.profile.id = made.unit.id; }

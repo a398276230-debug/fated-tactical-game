@@ -12,6 +12,7 @@ import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';
 import './control_state_tests.mjs';
+import './tavern_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };

@@ -376,7 +376,7 @@ export function mountTavernOverlay(options = {}) {
   const stateKey = `fated-tactical/instances/${id}`;
   let config = configFor(storage, configKey);
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
-  let battleObserver = null;
+  let battleObserver = null, removeOpenEvent = null;
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
   const root = el(doc, 'div', { 'data-fated-tavern-overlay': '' });
@@ -403,14 +403,27 @@ export function mountTavernOverlay(options = {}) {
   function save() { putConfig(storage, configKey, config); putConfig(storage, stateKey, config.instances); }
   async function open() { if (disposed) return; panel.hidden = false; launcher.hidden = true; if (config.autoScan !== false) await scan(); }
   function hide() { panel.hidden = true; launcher.hidden = Boolean(config.hideLauncher); }
+  function bindEventBus() {
+    const helper = getGlobal(host, 'TavernHelper');
+    const eventOn = getGlobal(host, 'eventOn') || helper?.eventOn;
+    if (typeof eventOn !== 'function') return;
+    const handler = () => { open().catch(showError); };
+    try {
+      const result = eventOn.call(helper || host, 'fated_tactical:open_ui', handler);
+      if (typeof result === 'function') removeOpenEvent = result;
+      else if (result?.off && typeof result.off === 'function') removeOpenEvent = () => result.off();
+    } catch (_) { /* event bus is optional outside JS-Slash-Runner */ }
+  }
   function closePanel() { hide(); }
   on(launcher, 'click', open); on(close, 'click', closePanel); on(minimize, 'click', hide);
   // The Tavern regex processor may inject the entry after this overlay mounts,
   // so bind the generated button through delegation instead of only binding
   // buttons created by our own DOM renderer.
   on(doc, 'click', event => {
-    if (event.target.closest?.('[data-fated-battle-open], .fated-battle-enter')) open();
-  });
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+    const trigger = path.find(node => node?.matches?.('[data-fated-battle-open], .fated-battle-enter'));
+    if (trigger) { event.preventDefault(); event.stopPropagation(); open(); }
+  }, { capture: true });
 
   // Dragging works for both the launcher and the large window. Coordinates are
   // clamped only by CSS; no browser-specific pointer API is required.
@@ -628,6 +641,7 @@ export function mountTavernOverlay(options = {}) {
     // deliberately managed as a normal DOM button.
   }
   renderInstances(); renderConfig(); renderSandbox(); updateMagic();
+  bindEventBus();
   foldBattleEntries();
   if (typeof MutationObserver === 'function' && doc.body) {
     battleObserver = new MutationObserver(() => foldBattleEntries());
@@ -635,7 +649,7 @@ export function mountTavernOverlay(options = {}) {
   }
   const api = { open, close: closePanel, dispose, scan, getConfig: () => clone(config), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(currentState) };
   function dispose() {
-    if (disposed) return; disposed = true; battleObserver?.disconnect(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
+    if (disposed) return; disposed = true; battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
   try { host.__fatedTacticalTavern = api; } catch (_) {}
   if (options.open) open();
   return api;
