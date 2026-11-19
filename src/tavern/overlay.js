@@ -405,6 +405,12 @@ export function mountTavernOverlay(options = {}) {
   function hide() { panel.hidden = true; launcher.hidden = Boolean(config.hideLauncher); }
   function closePanel() { hide(); }
   on(launcher, 'click', open); on(close, 'click', closePanel); on(minimize, 'click', hide);
+  // The Tavern regex processor may inject the entry after this overlay mounts,
+  // so bind the generated button through delegation instead of only binding
+  // buttons created by our own DOM renderer.
+  on(doc, 'click', event => {
+    if (event.target.closest?.('[data-fated-battle-open], .fated-battle-enter')) open();
+  });
 
   // Dragging works for both the launcher and the large window. Coordinates are
   // clamped only by CSS; no browser-specific pointer API is required.

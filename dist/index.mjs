@@ -6307,6 +6307,9 @@ function mountTavernOverlay(options = {}) {
   on(launcher, "click", open);
   on(close, "click", closePanel);
   on(minimize, "click", hide);
+  on(doc, "click", (event) => {
+    if (event.target.closest?.("[data-fated-battle-open], .fated-battle-enter")) open();
+  });
   function draggable(node, handle) {
     const surface = handle || node;
     let drag = null;
@@ -6767,7 +6770,26 @@ ${tag.textContent || ""}
   if (options.open) open();
   return api;
 }
+
+// src/tavern/regex.js
+var BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>([\s\S]*?)<\/battle_init>/gi;
+var BATTLE_INIT_DISPLAY_REPLACEMENT = '<details class="fated-battle-entry" data-fated-battle-entry="true"><summary>\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3</summary><div class="fated-battle-meta">\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40</div><pre class="fated-battle-source">$1</pre><button type="button" class="fated-battle-enter" data-fated-battle-open="true">\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0</button></details>';
+var BATTLE_INIT_DISPLAY_RULE = Object.freeze({
+  id: "fated-tactical-battle-init-display",
+  name: "\u547D\u5B9A\u6218\u672F\uFF1Abattle_init \u6218\u573A\u5165\u53E3",
+  find: BATTLE_INIT_DISPLAY_REGEX.source,
+  replace: BATTLE_INIT_DISPLAY_REPLACEMENT,
+  flags: "gmi",
+  placement: "ai",
+  disabled: false
+});
+function renderBattleInitEntry(source) {
+  return String(source ?? "").replace(BATTLE_INIT_DISPLAY_REGEX, BATTLE_INIT_DISPLAY_REPLACEMENT);
+}
 export {
+  BATTLE_INIT_DISPLAY_REGEX,
+  BATTLE_INIT_DISPLAY_REPLACEMENT,
+  BATTLE_INIT_DISPLAY_RULE,
   GameAPI,
   SCENARIOS,
   battleReportToMvuPatch,
@@ -6784,5 +6806,6 @@ export {
   parseBattleInit,
   parseCharInfo,
   parseSimpleYaml,
+  renderBattleInitEntry,
   validateState
 };
