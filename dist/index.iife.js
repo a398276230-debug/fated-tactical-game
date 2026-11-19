@@ -4248,7 +4248,7 @@ var FatedTactical = (() => {
     }
     try {
       if (snapshot) {
-        const restored = game.restoreBattleSnapshot(snapshot);
+        const restored = snapshot.kind === "battle" ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: "custom_state", state: snapshot });
         if (restored.migratedFrom) error2("\u5DF2\u7EED\u63A5\u65E7\u6218\u5C40\uFF1B\u501F\u673A\u89C4\u5219\u4ECE\u73B0\u5728\u751F\u6548\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
       } else game.createBattle({ scenarioId: "ruins", ruleset: "protocol" });
     } catch {
@@ -5393,6 +5393,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (v === "true" || v === "false") return v === "true";
     if (v === "null" || v === "~") return null;
     if (/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(v)) return Number(v);
+    const equation = v.match(/=\s*(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*$/i);
+    if (equation) return Number(equation[1]);
     if (v.startsWith("{") && v.endsWith("}") || v.startsWith("[") && v.endsWith("]")) {
       try {
         return JSON.parse(v);
@@ -5439,6 +5441,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       if (colon < 1 || !object2(parent)) continue;
       const key3 = line.value.slice(0, colon).trim();
       const tail = line.value.slice(colon + 1).trim();
+      if (tail === "|" || tail === ">") {
+        const chunks = [];
+        for (let j = i + 1; j < lines.length && lines[j].indent > line.indent; j++) {
+          chunks.push(lines[j].value);
+          i = j;
+        }
+        parent[key3] = chunks.join(tail === ">" ? " " : "\n");
+        continue;
+      }
       if (tail) {
         parent[key3] = scalar(tail);
         continue;
@@ -5491,7 +5502,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return fallback;
   }
   function statsOf(record2) {
-    const r = asObject(record2), nested = asObject(r.stats ?? r.attributes ?? r.\u5C5E\u6027);
+    const r = asObject(record2), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
     const result = {};
     for (const key3 of attrNames) {
       const aliases = [key3, ...Object.entries(statAliases).filter(([, v]) => v === key3).map(([k]) => k)];
@@ -5505,7 +5516,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function resource(record2, key3, fallback) {
     const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
     const aliases = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key3] ?? [];
-    const value = own4(r, key3) ? r[key3] : own4(r, key3.toUpperCase()) ? r[key3.toUpperCase()] : own4(r, aliases[1]) ? r[aliases[1]] : own4(nested, key3) ? nested[key3] : own4(nested, aliases[1]) ? nested[aliases[1]] : void 0;
+    const value = own4(r, key3) ? r[key3] : own4(r, key3.toUpperCase()) ? r[key3.toUpperCase()] : own4(r, aliases[1]) ? r[aliases[1]] : own4(nested, key3) ? nested[key3] : own4(nested, aliases[0]) ? nested[aliases[0]] : own4(nested, aliases[1]) ? nested[aliases[1]] : void 0;
     if (object2(value)) {
       const current2 = integer2(value.current ?? value.\u5F53\u524D ?? value.now ?? value.value, fallback);
       const upper = value.max ?? value.maximum ?? value.\u4E0A\u9650;
@@ -5527,7 +5538,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return { current, max };
   }
   function sourceName(record2, key3 = "") {
-    return text2(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u540D\u79F0"], key3));
+    return text2(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key3));
+  }
+  function tierNumber(value, fallback = 1) {
+    if (Number.isFinite(Number(value))) return Number(value);
+    const match = text2(value).match(/[一二三四五六七]层级?/);
+    return match ? "\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03".indexOf(match[0][0]) + 1 : fallback;
   }
   function sourceId(record2, key3 = "") {
     return text2(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key3));
@@ -5538,10 +5554,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const visit = (node, key3 = "", path = []) => {
       if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path, i]));
       if (!object2(node)) return;
-      const name = sourceName(node, key3), hasStats = node.stats || node.attributes || attrNames.some((k) => own4(node, k));
-      const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills"].some((k) => own4(node, k));
+      const name = sourceName(node, key3), hasStats = node.stats || node.attributes || node.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own4(node, k));
+      const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own4(node, k));
       if (name && (hasStats || hasResource)) found.push({ ...clone(node), __sourceKey: key3, __sourcePath: path });
-      for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "resources", "equipment", "skills", "statuses"].includes(k)) visit(v, k, [...path, k]);
+      for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path, k]);
     };
     visit(root);
     return found;
@@ -5609,8 +5625,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function normalizeEquipment(raw, slot, owner, index, warnings) {
     const r = asObject(raw), name = text2(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot || "\u88C5\u5907"}${index + 1}`;
     const isShield = slot === "shield" || r.shield === true || /盾/.test(name);
-    const isWeapon = !isShield && (slot === "mainHand" || slot === "offHand" || r.damage || r.attack != null || r.weaponClass || r.kind === "weapon");
-    const kind = isShield ? "shield" : isWeapon ? "weapon" : ["armor", "accessory", "consumable"].includes(r.kind) ? r.kind : "accessory";
+    const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text2(r.tags ?? r.\u6807\u7B7E);
+    const isWeapon = !isShield && (slot === "mainHand" || slot === "offHand" || r.damage || r.attack != null || r.weaponClass || r.kind === "weapon" || r.\u7C7B\u578B === "\u6B66\u5668" || /攻击|双手|巨剑|长戟|弓|弩|法杖/.test(`${name} ${labels}`));
+    const kind = isShield ? "shield" : isWeapon ? "weapon" : ["armor", "accessory", "consumable"].includes(r.kind) ? r.kind : r.\u7C7B\u578B === "\u9632\u5177" ? "armor" : r.\u7C7B\u578B === "\u9970\u54C1" ? "accessory" : "accessory";
     const idBase = deterministicId(`${owner}-${slot || "gear"}-${name}-${index}`, "item");
     const templateId = deterministicId(`template-${name}-${kind}-${index}`, "equipment");
     const effects2 = mapEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", warnings);
@@ -5618,8 +5635,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (kind === "shield") Object.assign(template, { weaponClass: "shield", hand: "off_hand", shield: true, defense: Math.max(0, integer2(r.defense ?? r.\u9632\u5FA1, 1)) });
     else if (isWeapon) {
       const ranged = r.ranged === true || r.rangeType === "ranged" || r.weaponClass === "ranged" || /弓|弩|枪|法杖|远程/.test(name);
-      const twoHanded = r.twoHanded === true || r.hand === "two_handed" || r.weaponClass === "greatsword" || /双手|巨剑|重剑/.test(name);
-      Object.assign(template, { weaponClass: text2(r.weaponClass) || (twoHanded ? "greatsword" : ranged ? "ranged" : "light_blade"), hand: twoHanded ? "two_handed" : slot === "offHand" ? "off_hand" : "one_handed", ranged, rangeType: ranged ? "ranged" : "melee", range: Math.max(1, Math.min(15, integer2(r.range ?? r.\u6709\u6548\u8DDD\u79BB, ranged ? 4 : 1))), attack: Math.max(0, Math.min(1e9, integer2(r.attack ?? r.\u653B\u51FB, 0))), accuracy: Math.max(-20, Math.min(30, integer2(r.accuracy ?? r.\u547D\u4E2D, 0))), damage: r.damage && object2(r.damage) ? { count: Math.max(0, Math.min(1e6, integer2(r.damage.count, 1))), sides: Math.max(1, Math.min(1e6, integer2(r.damage.sides, 6))), ...r.damage.stat ? { stat: r.damage.stat } : {}, type: ["physical", "energy", "mental", "true"].includes(r.damage.type) ? r.damage.type : "physical", bonus: integer2(r.damage.bonus, 0) } : { count: 1, sides: 4, stat: "str", type: "physical", bonus: 0 } });
+      const twoHanded = r.twoHanded === true || r.hand === "two_handed" || r.weaponClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${slot} ${labels}`);
+      const attackTag = labels.match(/攻击\s*:\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
+      Object.assign(template, { weaponClass: text2(r.weaponClass) || (twoHanded ? "greatsword" : ranged ? "ranged" : "light_blade"), hand: twoHanded ? "two_handed" : slot === "offHand" ? "off_hand" : "one_handed", ranged, rangeType: ranged ? "ranged" : "melee", range: Math.max(1, Math.min(15, integer2(r.range ?? r.\u6709\u6548\u8DDD\u79BB ?? rangeTag?.[1], ranged ? 4 : 1))), attack: Math.max(0, Math.min(1e9, integer2(r.attack ?? r.\u653B\u51FB ?? attackTag?.[1], 0))), accuracy: Math.max(-20, Math.min(30, integer2(r.accuracy ?? r.\u547D\u4E2D, 0))), damage: r.damage && object2(r.damage) ? { count: Math.max(0, Math.min(1e6, integer2(r.damage.count, 1))), sides: Math.max(1, Math.min(1e6, integer2(r.damage.sides, 6))), ...r.damage.stat ? { stat: r.damage.stat } : {}, type: ["physical", "energy", "mental", "true"].includes(r.damage.type) ? r.damage.type : "physical", bonus: integer2(r.damage.bonus, 0) } : { count: 1, sides: 4, stat: "str", type: "physical", bonus: 0 } });
       if (twoHanded) template.heavy = r.heavy !== false, template.twoHanded = true;
     } else Object.assign(template, { armor: Math.max(0, Math.min(1e6, integer2(r.armor ?? r.\u9632\u5FA1, 0))), defense: Math.max(0, Math.min(1e6, integer2(r.defense ?? r.\u9632\u5FA1, 0))) });
     const counters = Object.fromEntries(effects2.flatMap((e) => e.kind === "ammo" ? [[e.counterKey || "ammo", integer2(e.capacity, 1)]] : e.kind === "kill_charge_weapon" ? [[e.counterKey || "souls", 0]] : []));
@@ -5627,12 +5645,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function sourceEquipment(record2) {
     const value = record2.equipment ?? record2.equipments ?? record2.items ?? record2.\u88C5\u5907 ?? [];
-    if (Array.isArray(value)) return value.map((v, i) => [text2(v?.slot ?? v?.position ?? v?.\u4F4D\u7F6E), v, i]);
-    return Object.entries(asObject(value)).map(([slot, v], i) => [slot, v, i]);
+    if (Array.isArray(value)) return value.map((v, i) => [text2(v?.slot ?? v?.position ?? v?.\u4F4D\u7F6E ?? v?.\u4F4D\u7F6E), v, i]);
+    return Object.entries(asObject(value)).map(([slot, v], i) => [slot, { ...asObject(v), name: v?.name ?? v?.\u540D\u79F0 ?? slot }, i]);
   }
   function sourceSkills(record2) {
     const value = record2.skills ?? record2.abilities ?? record2.\u6280\u80FD ?? [];
-    return (Array.isArray(value) ? value : Object.values(asObject(value))).map((v, i) => [v, i]);
+    if (Array.isArray(value)) return value.map((v, i) => [v, i]);
+    return Object.entries(asObject(value)).map(([name, v], i) => [{ ...asObject(v), name: v?.name ?? v?.\u540D\u79F0 ?? name }, i]);
   }
   function mergeRecords(records) {
     const result = /* @__PURE__ */ new Map();
@@ -5659,9 +5678,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function unitFrom(record2, participant, index, equipment, skills, items, warnings) {
     const name = sourceName(record2, participant?.name ?? participant?.id ?? `unit-${index}`) || `\u5355\u4F4D ${index + 1}`;
-    const id2 = deterministicId(sourceId(record2) || participant?.id || participant?.source || name);
+    const id2 = deterministicId(`${name}-${index}`, "unit");
     const stats = statsOf(record2), level = Math.max(1, integer2(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
-    const tier = Math.max(1, Math.min(7, integer2(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7"], level), level)));
+    const tier = Math.max(1, Math.min(7, tierNumber(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
     const bodyLengthM = Math.max(0.01, Math.min(1e9, number(findValue(record2, ["bodyLengthM", "bodyLength", "bl", "\u4F53\u957F"], 1.7), 1.7)));
     const size = Math.max(1, Math.min(5, sizeFor(bodyLengthM).value === 2 ? 1 : sizeFor(bodyLengthM).value === 1 ? 2 : sizeFor(bodyLengthM).value === 0 ? 3 : sizeFor(bodyLengthM).value === -1 ? 4 : 5));
     const mc = Math.max(1, Math.min(64, integer2(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
@@ -5752,20 +5771,20 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const units = {}, roster = [], sourceMap = {};
     for (const [i, participant] of participants.entries()) {
       const ref = text2(participant?.source ?? participant?.id ?? participant?.uid ?? participant?.name);
-      const record2 = [...merged.values()].find((r) => sourceId(r) && sourceId(r) === ref || sourceName(r) === text2(participant?.name)) ?? [...merged.values()][i] ?? { name: participant?.name ?? `\u5355\u4F4D${i + 1}` };
+      const record2 = [...merged.values()].find((r) => sourceName(r) === text2(participant?.name)) ?? [...merged.values()].find((r) => sourceId(r) && sourceId(r) === ref) ?? [...merged.values()][i] ?? { name: participant?.name ?? `\u5355\u4F4D${i + 1}` };
       const made = unitFrom(record2, participant, i, equipment, skills, items, warnings);
       if (units[made.unit.id]) {
         made.unit.id = deterministicId(`${made.unit.id}-${i}`, "unit");
         made.profile.id = made.unit.id;
       }
       units[made.unit.id] = made.unit;
-      roster.push({ ...made.profile, name: made.unit.name, team: made.unit.team, source: record2.__sourcePath ? "MVU" : "char_info" });
+      roster.push({ ...made.profile, ...clone(made.unit), name: made.unit.name, team: made.unit.team, source: record2.__sourcePath ? "MVU" : "char_info" });
       sourceMap[made.unit.id] = { path: record2.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2) };
     }
     if (!participants.length) for (const [i, record2] of merged.values().entries()) {
       const made = unitFrom(record2, { name: sourceName(record2), source: sourceId(record2), faction: i ? "red" : "blue", x: i, y: 0 }, i, equipment, skills, items, warnings);
       units[made.unit.id] = made.unit;
-      roster.push({ ...made.profile, name: made.unit.name, team: made.unit.team, source: "MVU" });
+      roster.push({ ...made.profile, ...clone(made.unit), name: made.unit.name, team: made.unit.team, source: "MVU" });
       sourceMap[made.unit.id] = { path: record2.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2) };
     }
     delete skills.__items;
@@ -6124,7 +6143,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function fillTemplate(value, sources, instruction = "") {
     const values2 = {
-      battle_init: sources.battleInit || "",
+      battle_init: sources.battleRaw || JSON.stringify(sources.battleInit ?? {}, null, 2),
       standardized_roster: sources.roster || "",
       mvu_data: JSON.stringify(sources.mvuData ?? {}, null, 2),
       latest_floor: sources.latestFloor || "",
@@ -6171,10 +6190,51 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       source: battleSource ? { ...messageMeta(battleSource, list2.length - 1), chatId: chat } : null
     };
   }
+  function patchValue(value, table3) {
+    if (!Array.isArray(value)) return value;
+    return Object.fromEntries(value.filter((item) => item && (item.id || item.name)).map((item, index) => {
+      const normalized = clone2(item);
+      if (table3 === "covers" || table3 === "interactives" || table3 === "zones") {
+        const xyz = normalized.xyz;
+        if (Array.isArray(xyz)) {
+          normalized.x = Number(xyz[0] ?? 0);
+          normalized.y = Number(xyz[1] ?? 0);
+          delete normalized.xyz;
+        }
+      }
+      if (table3 === "covers") {
+        normalized.name ??= `\u63A9\u4F53${index + 1}`;
+        normalized.material ??= "\u672A\u77E5\u6750\u6599";
+        normalized.maxHp ??= normalized.hp ?? 1;
+        normalized.hp ??= normalized.maxHp;
+        normalized.cover ??= normalized.shielding ?? 2;
+        for (const key4 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key4)) delete normalized[key4];
+      }
+      if (table3 === "interactives") {
+        normalized.name ??= "\u4E92\u52A8\u70B9";
+        normalized.kind ??= "barrel";
+        normalized.spent ??= false;
+        for (const key4 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key4)) delete normalized[key4];
+      }
+      const key3 = String(normalized.id || normalized.name || index);
+      return [key3, normalized];
+    }));
+  }
+  function normalizeSemanticPatch(patch) {
+    if (!isObject(patch)) return patch;
+    const result = clone2(patch);
+    for (const key3 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key3])) result[key3] = patchValue(result[key3], key3);
+    if (isObject(result.unit_patch)) {
+      const unitPatch = result.unit_patch;
+      const id2 = unitPatch.unitId || unitPatch.id;
+      if (id2 && isObject(unitPatch.patch)) result.units = { [id2]: unitPatch.patch };
+    }
+    return result;
+  }
   function applyPatch(target, patch) {
     let result = clone2(target);
     if (isObject(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
-      return deepMerge(result, patch);
+      return deepMerge(result, normalizeSemanticPatch(patch.battle_patch || patch));
     }
     const list2 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
     if (!Array.isArray(list2)) return result;
@@ -6203,7 +6263,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const css = `
 [data-fated-tavern-overlay]{position:fixed;z-index:2147483000;color:#e8edf5;font:14px/1.4 system-ui,sans-serif;pointer-events:none}
 [data-fated-tavern-overlay] *{box-sizing:border-box}[data-fated-tavern-overlay] button{cursor:pointer;color:inherit;background:#263348;border:1px solid #52627d;border-radius:4px;padding:5px 9px}[data-fated-tavern-overlay] button:hover{background:#354968}
-.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}`;
+.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}`;
     (doc.head || doc.documentElement)?.append(el(doc, "style", { "data-fated-tavern-overlay": "" }, css));
   }
   function mountTavernOverlay(options = {}) {
@@ -6223,7 +6283,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const configKey = `fated-tactical/tavern/${id2}`;
     const stateKey = `fated-tactical/instances/${id2}`;
     let config = configFor(storage, configKey);
-    let disposed = false, gameMount = null, sources = {}, currentState = null;
+    let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
     const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
     const on = (node, event, fn, opts = {}) => {
       if (!node) return;
@@ -6271,10 +6331,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       putConfig(storage, configKey, config);
       putConfig(storage, stateKey, config.instances);
     }
-    function open() {
+    async function open() {
       if (disposed) return;
       panel.hidden = false;
       launcher.hidden = true;
+      if (config.autoScan !== false) await scan();
     }
     function hide() {
       panel.hidden = true;
@@ -6348,7 +6409,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           }
         });
       }
-      on(refresh, "click", () => scan().catch(showError));
+      on(refresh, "click", () => scan(true).catch(showError));
     }
     function field(label, value, type = "text") {
       const labelNode = el(doc, "label", {}, label);
@@ -6372,7 +6433,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           [...subtabs.children].forEach((x) => x.setAttribute("aria-selected", String(x === b)));
         });
       }
-      apiPage.className = promptPage.className = "fated-tavern-grid";
+      apiPage.className = "fated-tavern-grid";
+      promptPage.className = "fated-tavern-prompts";
       page.append(subtabs, apiPage, promptPage);
       promptPage.hidden = true;
       const fields2 = [["baseUrl", "API \u5730\u5740"], ["apiKey", "API Key", "password"], ["model", "\u6A21\u578B\u540D\u79F0"], ["temperature", "temperature", "number"], ["max_tokens", "max_tokens", "number"], ["excludeParams", "\u6392\u9664\u4E3B\u4F53\u53C2\u6570\uFF08\u9017\u53F7\u5206\u9694\uFF09"], ["extraBody", "\u9644\u52A0\u4E3B\u4F53\u53C2\u6570 JSON", "textarea"], ["headers", "\u9644\u52A0\u8BF7\u6C42\u6807\u5934 JSON", "textarea"]];
@@ -6495,7 +6557,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const converter = options.converter || getGlobal(host, "FatedTactical")?.hydrateBattleState || getGlobal(host, "hydrateBattleState") || hydrateFromSources;
       let hydrated = null;
       if (typeof converter === "function") {
-        const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit };
+        const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleRaw || sources.battleInit };
         try {
           hydrated = await converter(input);
         } catch (_) {
@@ -6505,8 +6567,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           }
         }
       }
-      if (hydrated?.state) currentState = hydrated.state;
-      else if (hydrated && (hydrated.units || hydrated.grid)) currentState = hydrated;
+      const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
       if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
       const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
       for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
@@ -6519,13 +6580,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     async function mountState(state) {
       if (!state) return;
       const battleInstanceId = sources.battleKey || id2;
-      const mount2 = options.mount || getGlobal(host, "FatedTactical")?.mount || getGlobal(host, "mount");
+      const mount2 = options.mount || mount || getGlobal(host, "FatedTactical")?.mount || getGlobal(host, "mount");
       if (typeof mount2 !== "function") return;
       const target = pages.sandbox.querySelector("[data-sandbox-mount]");
       try {
         gameMount?.unmount?.();
         gameMount = await mount2(target, { instanceId: battleInstanceId, storage, state });
-        gameMount?.loadState?.(state);
       } catch (e) {
         showError(e);
       }
@@ -6534,12 +6594,22 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const node = pages.sandbox.querySelector("[data-status]");
       if (node) node.textContent = `\u9519\u8BEF\uFF1A${error2?.message || error2}`;
     }
-    async function scan() {
+    async function scan(force = false) {
+      const epoch = ++scanEpoch;
       const node = pages.sandbox.querySelector("[data-status]");
       if (node) node.textContent = "\u6B63\u5728\u8BFB\u53D6 MVU\u3001\u6700\u65B0\u697C\u5C42\u5E76\u8F6C\u6362\u2026";
       try {
         const hydrated = await hydrate();
-        await mountState(currentState || hydrated?.state);
+        if (epoch !== scanEpoch) return;
+        const nextState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
+        if (!force && currentState && sources.battleKey && sources.battleKey === activeBattleKey) {
+          renderInstances();
+          if (node) node.textContent = "\u626B\u63CF\u5B8C\u6210\uFF0C\u4FDD\u7559\u5F53\u524D\u6218\u5C40\u72B6\u6001\u3002";
+          return;
+        }
+        currentState = nextState;
+        activeBattleKey = sources.battleKey;
+        await mountState(currentState);
         renderInstances();
         if (node) node.textContent = currentState ? "\u626B\u63CF\u5B8C\u6210\uFF0C\u5DF2\u52A0\u8F7D\u6807\u51C6\u5316\u72B6\u6001\u3002" : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
@@ -6568,11 +6638,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       page.append(chat);
       const output = el(doc, "pre", { class: "fated-status", "data-ai-output": "" });
       page.append(output);
-      on(refresh, "click", () => scan().catch(showError));
+      on(refresh, "click", () => scan(true).catch(showError));
       on(report, "click", () => {
         try {
-          const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || "";
-          const patch = gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || "";
+          const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `\u5F53\u524D\u6218\u5C40\uFF1A${currentState.title} \xB7 \u56DE\u5408 ${currentState.round} \xB7 ${Object.values(currentState.units || {}).length} \u4E2A\u5355\u4F4D` : "");
+          const patch = currentState ? buildMvuJsonPatch(currentState) : gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || "";
           const result = [reportText, patch].filter(Boolean).join("\n\n");
           const textarea = doc.querySelector("#send_textarea");
           if (textarea) {
@@ -6586,24 +6656,37 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           showError(e);
         }
       });
-      async function ask() {
-        const prompts = (config.prompts || []).filter((x) => x.enabled !== false).map((x) => ({ role: x.role || "user", content: fillTemplate(x.content, { ...sources, state: currentState }) }));
-        prompts.push({ role: "user", content: instruction.value });
+      async function ask(kind) {
+        const prompts = (config.prompts || []).filter((x) => x.enabled !== false && (kind === "validate" ? /校验|标准化/i.test(x.title || "") : !/校验|标准化/i.test(x.title || ""))).map((x) => ({ role: x.role || "user", content: fillTemplate(x.content, { ...sources, state: currentState }) }));
+        if (kind === "chat" && instruction.value.trim()) prompts.push({ role: "user", content: instruction.value.trim() });
+        if (!prompts.length) {
+          output.textContent = "\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u63D0\u793A\u8BCD\u3002";
+          return;
+        }
         try {
           const response = await requestAI(config, prompts, options.fetch || void 0);
           const content2 = response?.choices?.[0]?.message?.content || response?.content || JSON.stringify(response);
           output.textContent = content2;
           const parsed = parseAIResponse(content2);
           if (parsed.patch && currentState) {
-            currentState = applyPatch(currentState, parsed.patch);
+            scanEpoch++;
+            const nextState = applyPatch(currentState, parsed.patch);
+            (options.validateState || validateState)(nextState);
+            currentState = nextState;
+            activeBattleKey = sources.battleKey;
             await mountState(currentState);
+            const roster = Object.values(currentState.units || {}).map((unit) => ({ ...unit, source: "\u624B\u52A8\u6216 AI \u7F16\u8F91" }));
+            for (const unit of roster) config.instances[unit.id] = unit;
+            save();
+            renderInstances();
           }
         } catch (e) {
           output.textContent = `AI \u5931\u8D25\uFF1A${e.message}`;
+          showError(e);
         }
       }
-      on(check, "click", ask);
-      on(send, "click", ask);
+      on(check, "click", () => ask("validate"));
+      on(send, "click", () => ask("chat"));
     }
     function updateMagic() {
       launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;

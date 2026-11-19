@@ -49,6 +49,8 @@ function scalar(value) {
   if (v === 'true' || v === 'false') return v === 'true';
   if (v === 'null' || v === '~') return null;
   if (/^-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(v)) return Number(v);
+  const equation = v.match(/=\s*(-?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*$/i);
+  if (equation) return Number(equation[1]);
   if ((v.startsWith('{') && v.endsWith('}')) || (v.startsWith('[') && v.endsWith(']'))) {
     try { return JSON.parse(v); } catch { /* simple YAML fallback below */ }
   }
@@ -86,6 +88,12 @@ export function parseSimpleYaml(input) {
     if (colon < 1 || !object(parent)) continue;
     const key = line.value.slice(0, colon).trim();
     const tail = line.value.slice(colon + 1).trim();
+    if (tail === '|' || tail === '>') {
+      const chunks = [];
+      for (let j = i + 1; j < lines.length && lines[j].indent > line.indent; j++) { chunks.push(lines[j].value); i = j; }
+      parent[key] = chunks.join(tail === '>' ? ' ' : '\n');
+      continue;
+    }
     if (tail) { parent[key] = scalar(tail); continue; }
     const next = lines[i + 1];
     const child = next && next.indent > line.indent && next.value.startsWith('- ') ? [] : {};
@@ -131,8 +139,8 @@ function findValue(record, names, fallback) {
   for (const name of names) if (own(r, name)) return r[name];
   return fallback;
 }
-function statsOf(record) {
-  const r = asObject(record), nested = asObject(r.stats ?? r.attributes ?? r.属性);
+export function statsOf(record) {
+  const r = asObject(record), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.属性);
   const result = {};
   for (const key of attrNames) {
     const aliases = [key, ...Object.entries(statAliases).filter(([, v]) => v === key).map(([k]) => k)];
@@ -144,7 +152,7 @@ function statsOf(record) {
 function resource(record, key, fallback) {
   const r = asObject(record), nested = asObject(r.resources ?? r.resource ?? r.资源);
   const aliases = { hp: ['HP', '生命值'], mp: ['MP', '法力值'], sp: ['SP', '体力值'] }[key] ?? [];
-  const value = own(r, key) ? r[key] : own(r, key.toUpperCase()) ? r[key.toUpperCase()] : own(r, aliases[1]) ? r[aliases[1]] : own(nested, key) ? nested[key] : own(nested, aliases[1]) ? nested[aliases[1]] : undefined;
+  const value = own(r, key) ? r[key] : own(r, key.toUpperCase()) ? r[key.toUpperCase()] : own(r, aliases[1]) ? r[aliases[1]] : own(nested, key) ? nested[key] : own(nested, aliases[0]) ? nested[aliases[0]] : own(nested, aliases[1]) ? nested[aliases[1]] : undefined;
   if (object(value)) {
     const current = integer(value.current ?? value.当前 ?? value.now ?? value.value, fallback);
     const upper = value.max ?? value.maximum ?? value.上限;
@@ -161,19 +169,24 @@ function safeResource(pair, key, warnings) {
   if (max > 1000000000 || pair.current > 1000000000) { warnings.push(`${key} 超出引擎上限，已截到 1e9`); max = Math.min(max, 1000000000); current = Math.min(current, max); }
   return { current, max };
 }
-function sourceName(record, key = '') { return text(findValue(record, ['name', 'displayName', 'characterName', '角色名', '名称'], key)); }
+function sourceName(record, key = '') { return text(findValue(record, ['name', 'displayName', 'characterName', '角色名', '姓名', '名称'], key)); }
+function tierNumber(value, fallback = 1) {
+  if (Number.isFinite(Number(value))) return Number(value);
+  const match = text(value).match(/[一二三四五六七]层级?/);
+  return match ? '一二三四五六七'.indexOf(match[0][0]) + 1 : fallback;
+}
 function sourceId(record, key = '') { return text(findValue(record, ['id', 'uid', 'characterId', 'instanceId', 'ID'], key)); }
 
-function collectMvu(value) {
+export function collectMvu(value) {
   const root = asObject(value?.stat_data ?? value?.statData ?? value);
   const found = [];
   const visit = (node, key = '', path = []) => {
     if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path, i]));
     if (!object(node)) return;
-    const name = sourceName(node, key), hasStats = node.stats || node.attributes || attrNames.some(k => own(node, k));
-    const hasResource = ['hp', 'maxHp', 'mp', 'sp', 'tier', 'level', 'equipment', 'skills'].some(k => own(node, k));
+    const name = sourceName(node, key), hasStats = node.stats || node.attributes || node.属性 || ['力量','敏捷','体质','智力','精神'].some(k => own(node, k));
+    const hasResource = ['hp', 'maxHp', 'mp', 'sp', 'tier', 'level', 'equipment', 'skills', '生命值', '法力值', '体力值', '装备', '技能', '资源'].some(k => own(node, k));
     if (name && (hasStats || hasResource)) found.push({ ...clone(node), __sourceKey: key, __sourcePath: path });
-    for (const [k, v] of Object.entries(node)) if (!['stats', 'attributes', 'resources', 'equipment', 'skills', 'statuses'].includes(k)) visit(v, k, [...path, k]);
+    for (const [k, v] of Object.entries(node)) if (!['stats', 'attributes', '属性', 'resources', '资源', 'equipment', '装备', 'skills', '技能', 'statuses', '状态效果'].includes(k)) visit(v, k, [...path, k]);
   };
   visit(root);
   return found;
@@ -227,8 +240,9 @@ export function mapEffects(effects, context = 'skill', warnings = []) {
 function normalizeEquipment(raw, slot, owner, index, warnings) {
   const r = asObject(raw), name = text(r.name ?? r.名称 ?? r.itemName) || `${slot || '装备'}${index + 1}`;
   const isShield = slot === 'shield' || r.shield === true || /盾/.test(name);
-  const isWeapon = !isShield && (slot === 'mainHand' || slot === 'offHand' || r.damage || r.attack != null || r.weaponClass || r.kind === 'weapon');
-  const kind = isShield ? 'shield' : isWeapon ? 'weapon' : (['armor', 'accessory', 'consumable'].includes(r.kind) ? r.kind : 'accessory');
+  const labels = Array.isArray(r.tags ?? r.标签) ? (r.tags ?? r.标签).join(' ') : text(r.tags ?? r.标签);
+  const isWeapon = !isShield && (slot === 'mainHand' || slot === 'offHand' || r.damage || r.attack != null || r.weaponClass || r.kind === 'weapon' || r.类型 === '武器' || /攻击|双手|巨剑|长戟|弓|弩|法杖/.test(`${name} ${labels}`));
+  const kind = isShield ? 'shield' : isWeapon ? 'weapon' : (['armor', 'accessory', 'consumable'].includes(r.kind) ? r.kind : r.类型 === '防具' ? 'armor' : r.类型 === '饰品' ? 'accessory' : 'accessory');
   const idBase = deterministicId(`${owner}-${slot || 'gear'}-${name}-${index}`, 'item');
   const templateId = deterministicId(`template-${name}-${kind}-${index}`, 'equipment');
   const effects = mapEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', warnings);
@@ -236,8 +250,9 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
   if (kind === 'shield') Object.assign(template, { weaponClass: 'shield', hand: 'off_hand', shield: true, defense: Math.max(0, integer(r.defense ?? r.防御, 1)) });
   else if (isWeapon) {
     const ranged = r.ranged === true || r.rangeType === 'ranged' || r.weaponClass === 'ranged' || /弓|弩|枪|法杖|远程/.test(name);
-    const twoHanded = r.twoHanded === true || r.hand === 'two_handed' || r.weaponClass === 'greatsword' || /双手|巨剑|重剑/.test(name);
-    Object.assign(template, { weaponClass: text(r.weaponClass) || (twoHanded ? 'greatsword' : ranged ? 'ranged' : 'light_blade'), hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed', ranged, rangeType: ranged ? 'ranged' : 'melee', range: Math.max(1, Math.min(15, integer(r.range ?? r.有效距离, ranged ? 4 : 1))), attack: Math.max(0, Math.min(1000000000, integer(r.attack ?? r.攻击, 0))), accuracy: Math.max(-20, Math.min(30, integer(r.accuracy ?? r.命中, 0))), damage: r.damage && object(r.damage) ? { count: Math.max(0, Math.min(1000000, integer(r.damage.count, 1))), sides: Math.max(1, Math.min(1000000, integer(r.damage.sides, 6))), ...(r.damage.stat ? { stat: r.damage.stat } : {}), type: ['physical','energy','mental','true'].includes(r.damage.type) ? r.damage.type : 'physical', bonus: integer(r.damage.bonus, 0) } : { count: 1, sides: 4, stat: 'str', type: 'physical', bonus: 0 } });
+    const twoHanded = r.twoHanded === true || r.hand === 'two_handed' || r.weaponClass === 'greatsword' || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${slot} ${labels}`);
+    const attackTag = labels.match(/攻击\s*:\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
+    Object.assign(template, { weaponClass: text(r.weaponClass) || (twoHanded ? 'greatsword' : ranged ? 'ranged' : 'light_blade'), hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed', ranged, rangeType: ranged ? 'ranged' : 'melee', range: Math.max(1, Math.min(15, integer(r.range ?? r.有效距离 ?? rangeTag?.[1], ranged ? 4 : 1))), attack: Math.max(0, Math.min(1000000000, integer(r.attack ?? r.攻击 ?? attackTag?.[1], 0))), accuracy: Math.max(-20, Math.min(30, integer(r.accuracy ?? r.命中, 0))), damage: r.damage && object(r.damage) ? { count: Math.max(0, Math.min(1000000, integer(r.damage.count, 1))), sides: Math.max(1, Math.min(1000000, integer(r.damage.sides, 6))), ...(r.damage.stat ? { stat: r.damage.stat } : {}), type: ['physical','energy','mental','true'].includes(r.damage.type) ? r.damage.type : 'physical', bonus: integer(r.damage.bonus, 0) } : { count: 1, sides: 4, stat: 'str', type: 'physical', bonus: 0 } });
     if (twoHanded) template.heavy = r.heavy !== false, template.twoHanded = true;
   } else Object.assign(template, { armor: Math.max(0, Math.min(1000000, integer(r.armor ?? r.防御, 0))), defense: Math.max(0, Math.min(1000000, integer(r.defense ?? r.防御, 0))) });
   const counters = Object.fromEntries(effects.flatMap(e => e.kind === 'ammo' ? [[e.counterKey || 'ammo', integer(e.capacity, 1)]] : e.kind === 'kill_charge_weapon' ? [[e.counterKey || 'souls', 0]] : []));
@@ -246,14 +261,15 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
 
 function sourceEquipment(record) {
   const value = record.equipment ?? record.equipments ?? record.items ?? record.装备 ?? [];
-  if (Array.isArray(value)) return value.map((v, i) => [text(v?.slot ?? v?.position ?? v?.位置), v, i]);
-  return Object.entries(asObject(value)).map(([slot, v], i) => [slot, v, i]);
+  if (Array.isArray(value)) return value.map((v, i) => [text(v?.slot ?? v?.position ?? v?.位置 ?? v?.位置), v, i]);
+  return Object.entries(asObject(value)).map(([slot, v], i) => [slot, { ...asObject(v), name: v?.name ?? v?.名称 ?? slot }, i]);
 }
 function sourceSkills(record) {
   const value = record.skills ?? record.abilities ?? record.技能 ?? [];
-  return (Array.isArray(value) ? value : Object.values(asObject(value))).map((v, i) => [v, i]);
+  if (Array.isArray(value)) return value.map((v, i) => [v, i]);
+  return Object.entries(asObject(value)).map(([name, v], i) => [({ ...asObject(v), name: v?.name ?? v?.名称 ?? name }), i]);
 }
-function mergeRecords(records) {
+export function mergeRecords(records) {
   const result = new Map();
   for (const record of records) {
     const key = sourceId(record) || sourceName(record) || record.__sourceKey;
@@ -273,9 +289,9 @@ function xyzOf(value) { const p = asObject(value); const xyz = Array.isArray(val
 
 function unitFrom(record, participant, index, equipment, skills, items, warnings) {
   const name = sourceName(record, participant?.name ?? participant?.id ?? `unit-${index}`) || `单位 ${index + 1}`;
-  const id = deterministicId(sourceId(record) || participant?.id || participant?.source || name);
+  const id = deterministicId(`${name}-${index}`, 'unit');
   const stats = statsOf(record), level = Math.max(1, integer(findValue(record, ['level','等级'], 1), 1));
-  const tier = Math.max(1, Math.min(7, integer(findValue(record, ['tier','levelTier','层级'], level), level)));
+  const tier = Math.max(1, Math.min(7, tierNumber(findValue(record, ['tier','levelTier','层级','生命层级'], level), level)));
   const bodyLengthM = Math.max(.01, Math.min(1e9, number(findValue(record, ['bodyLengthM','bodyLength','bl','体长'], 1.7), 1.7)));
   const size = Math.max(1, Math.min(5, sizeFor(bodyLengthM).value === 2 ? 1 : sizeFor(bodyLengthM).value === 1 ? 2 : sizeFor(bodyLengthM).value === 0 ? 3 : sizeFor(bodyLengthM).value === -1 ? 4 : 5));
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
@@ -357,19 +373,21 @@ export function hydrateFromSources(input = {}, options = {}) {
   const units = {}, roster = [], sourceMap = {};
   for (const [i, participant] of participants.entries()) {
     const ref = text(participant?.source ?? participant?.id ?? participant?.uid ?? participant?.name);
-    const record = [...merged.values()].find(r => (sourceId(r) && sourceId(r) === ref) || sourceName(r) === text(participant?.name))
+    const record = [...merged.values()].find(r => sourceName(r) === text(participant?.name))
+      ?? [...merged.values()].find(r => sourceId(r) && sourceId(r) === ref)
       ?? [...merged.values()][i] ?? { name: participant?.name ?? `单位${i + 1}` };
     const made = unitFrom(record, participant, i, equipment, skills, items, warnings);
     // Two records with the same display name still get deterministic distinct IDs.
     if (units[made.unit.id]) { made.unit.id = deterministicId(`${made.unit.id}-${i}`, 'unit'); made.profile.id = made.unit.id; }
-    units[made.unit.id] = made.unit; roster.push({ ...made.profile, name: made.unit.name, team: made.unit.team, source: record.__sourcePath ? 'MVU' : 'char_info' });
+    units[made.unit.id] = made.unit;
+    roster.push({ ...made.profile, ...clone(made.unit), name: made.unit.name, team: made.unit.team, source: record.__sourcePath ? 'MVU' : 'char_info' });
     sourceMap[made.unit.id] = { path: record.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };
   }
   // A battle_init is allowed to omit participants; retaining discovered MVU
   // characters makes the converter useful with older prompt formats.
   if (!participants.length) for (const [i, record] of merged.values().entries()) {
     const made = unitFrom(record, { name: sourceName(record), source: sourceId(record), faction: i ? 'red' : 'blue', x: i, y: 0 }, i, equipment, skills, items, warnings);
-    units[made.unit.id] = made.unit; roster.push({ ...made.profile, name: made.unit.name, team: made.unit.team, source: 'MVU' }); sourceMap[made.unit.id] = { path: record.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };
+    units[made.unit.id] = made.unit; roster.push({ ...made.profile, ...clone(made.unit), name: made.unit.name, team: made.unit.team, source: 'MVU' }); sourceMap[made.unit.id] = { path: record.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };
   }
   delete skills.__items;
   const title = text(battle.sceneTitle ?? battle.title) || options.title || '酒馆战术战局';

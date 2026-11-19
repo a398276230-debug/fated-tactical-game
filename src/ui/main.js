@@ -361,7 +361,9 @@ try {
 } catch { /* unavailable local storage does not block play */ }
 try {
   if (snapshot) {
-    const restored = game.restoreBattleSnapshot(snapshot);
+    const restored = snapshot.kind === 'battle'
+      ? game.restoreBattleSnapshot(snapshot)
+      : game.createBattle({ kind:'custom_state', state:snapshot });
     if (restored.migratedFrom) error('已续接旧战局；借机规则从现在生效，旧撤销记录未迁移。');
   } else game.createBattle({ scenarioId:'ruins', ruleset:'protocol' });
 }

@@ -1,4 +1,6 @@
-import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseCharInfo, parseSimpleYaml } from './converter.js';
+import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseCharInfo, parseSimpleYaml } from './converter.js';
+import { mount as defaultMount } from '../ui/mount.js';
+import { validateState as defaultValidateState } from '../api/validation.js';
 
 /*
  * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
@@ -264,7 +266,7 @@ async function tavernMessages(host) {
 
 function fillTemplate(value, sources, instruction = '') {
   const values = {
-    battle_init: sources.battleInit || '', standardized_roster: sources.roster || '',
+    battle_init: sources.battleRaw || JSON.stringify(sources.battleInit ?? {}, null, 2), standardized_roster: sources.roster || '',
     mvu_data: JSON.stringify(sources.mvuData ?? {}, null, 2), latest_floor: sources.latestFloor || '',
     battle_state: JSON.stringify(sources.state ?? {}, null, 2), user_instruction: instruction,
   };
@@ -302,12 +304,40 @@ function sourceBundle(variables, messages, chat = 'default') {
     source: battleSource ? { ...messageMeta(battleSource, list.length - 1), chatId: chat } : null };
 }
 
+function patchValue(value, table) {
+  if (!Array.isArray(value)) return value;
+  return Object.fromEntries(value.filter(item => item && (item.id || item.name)).map((item, index) => {
+    const normalized = clone(item);
+    if (table === 'covers' || table === 'interactives' || table === 'zones') {
+      const xyz = normalized.xyz;
+      if (Array.isArray(xyz)) { normalized.x = Number(xyz[0] ?? 0); normalized.y = Number(xyz[1] ?? 0); delete normalized.xyz; }
+    }
+    if (table === 'covers') {
+      normalized.name ??= `掩体${index + 1}`; normalized.material ??= '未知材料'; normalized.maxHp ??= normalized.hp ?? 1; normalized.hp ??= normalized.maxHp; normalized.cover ??= normalized.shielding ?? 2;
+      for (const key of Object.keys(normalized)) if (!['id','name','x','y','material','hp','maxHp','cover'].includes(key)) delete normalized[key];
+    }
+    if (table === 'interactives') { normalized.name ??= '互动点'; normalized.kind ??= 'barrel'; normalized.spent ??= false; for (const key of Object.keys(normalized)) if (!['id','name','x','y','kind','spent'].includes(key)) delete normalized[key]; }
+    const key = String(normalized.id || normalized.name || index);
+    return [key, normalized];
+  }));
+}
+function normalizeSemanticPatch(patch) {
+  if (!isObject(patch)) return patch;
+  const result = clone(patch);
+  for (const key of ['units', 'covers', 'interactives', 'zones', 'items', 'equipment', 'skills']) if (Array.isArray(result[key])) result[key] = patchValue(result[key], key);
+  if (isObject(result.unit_patch)) {
+    const unitPatch = result.unit_patch;
+    const id = unitPatch.unitId || unitPatch.id;
+    if (id && isObject(unitPatch.patch)) result.units = { [id]: unitPatch.patch };
+  }
+  return result;
+}
 function applyPatch(target, patch) {
   let result = clone(target);
   // AI assistants commonly return a semantic battle_patch/unit_patch object
-  // rather than RFC 6902 operations. Treat it as a safe deep merge.
+  // rather than RFC 6902 operations. Normalize array tables to engine maps first.
   if (isObject(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
-    return deepMerge(result, patch);
+    return deepMerge(result, normalizeSemanticPatch(patch.battle_patch || patch));
   }
   const list = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
   if (!Array.isArray(list)) return result;
@@ -329,7 +359,7 @@ function style(doc) {
   const css = `
 [data-fated-tavern-overlay]{position:fixed;z-index:2147483000;color:#e8edf5;font:14px/1.4 system-ui,sans-serif;pointer-events:none}
 [data-fated-tavern-overlay] *{box-sizing:border-box}[data-fated-tavern-overlay] button{cursor:pointer;color:inherit;background:#263348;border:1px solid #52627d;border-radius:4px;padding:5px 9px}[data-fated-tavern-overlay] button:hover{background:#354968}
-.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}`;
+.fated-tavern-launcher{pointer-events:auto;position:fixed;right:18px;bottom:18px;border-radius:50%!important;width:44px;height:44px;background:#566bea!important;border:0!important;font-size:20px}.fated-tavern-launcher[hidden]{display:none!important}.fated-tavern-panel{pointer-events:auto;position:fixed;right:64px;bottom:50px;width:min(860px,calc(100vw - 30px));height:min(700px,calc(100vh - 50px));min-width:360px;min-height:260px;resize:both;overflow:hidden;background:#141a25;border:1px solid #56627a;border-radius:8px;box-shadow:0 12px 44px #000b;display:flex;flex-direction:column}.fated-tavern-panel[hidden]{display:none}.fated-tavern-header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202a3c;cursor:move}.fated-tavern-header strong{flex:1}.fated-tavern-header button{padding:2px 8px}.fated-tavern-tabs,.fated-tavern-subtabs{display:flex;gap:4px;padding:7px;background:#1a2231;border-bottom:1px solid #39465b}.fated-tavern-tabs button[aria-selected=true],.fated-tavern-subtabs button[aria-selected=true]{background:#566bea}.fated-tavern-content{overflow:auto;flex:1;padding:12px}.fated-tab{display:none}.fated-tab.active{display:block}.fated-tavern-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}.fated-tavern-grid label{display:flex;flex-direction:column;gap:3px}.fated-tavern-grid input,.fated-tavern-grid textarea,.fated-tavern-grid select,[data-fated-tavern-overlay] textarea{background:#0d121b;color:#e8edf5;border:1px solid #4a5870;border-radius:4px;padding:6px}.fated-tavern-grid textarea{min-height:66px}.fated-tavern-prompts{display:flex;flex-direction:column;gap:8px}.fated-prompt{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px}.fated-prompt textarea{width:100%;min-height:70px}.fated-instance{border:1px solid #3c4a61;padding:8px;margin:7px 0;border-radius:5px;white-space:pre-wrap}.fated-status{padding:7px;background:#0d121b;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow:auto}.fated-actions{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.fated-chat{display:flex;gap:6px}.fated-chat textarea{flex:1;min-height:54px}.fated-mini{opacity:.75;font-size:12px}`;
   (doc.head || doc.documentElement)?.append(el(doc, 'style', { 'data-fated-tavern-overlay': '' }, css));
 }
 
@@ -345,7 +375,7 @@ export function mountTavernOverlay(options = {}) {
   const configKey = `fated-tactical/tavern/${id}`;
   const stateKey = `fated-tactical/instances/${id}`;
   let config = configFor(storage, configKey);
-  let disposed = false, gameMount = null, sources = {}, currentState = null;
+  let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
   const root = el(doc, 'div', { 'data-fated-tavern-overlay': '' });
@@ -370,7 +400,7 @@ export function mountTavernOverlay(options = {}) {
   config.instances = isObject(instances) ? instances : {};
 
   function save() { putConfig(storage, configKey, config); putConfig(storage, stateKey, config.instances); }
-  function open() { if (disposed) return; panel.hidden = false; launcher.hidden = true; }
+  async function open() { if (disposed) return; panel.hidden = false; launcher.hidden = true; if (config.autoScan !== false) await scan(); }
   function hide() { panel.hidden = true; launcher.hidden = Boolean(config.hideLauncher); }
   function closePanel() { hide(); }
   on(launcher, 'click', open); on(close, 'click', closePanel); on(minimize, 'click', hide);
@@ -402,7 +432,7 @@ export function mountTavernOverlay(options = {}) {
       on(remove, 'click', () => { delete config.instances[key]; save(); renderInstances(); });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (parsed) { config.instances[key] = parsed; save(); renderInstances(); } });
     }
-    on(refresh, 'click', () => scan().catch(showError));
+    on(refresh, 'click', () => scan(true).catch(showError));
   }
 
   function field(label, value, type = 'text') { const labelNode = el(doc, 'label', {}, label); const input = el(doc, type === 'textarea' ? 'textarea' : 'input', { type: type === 'textarea' ? undefined : type }); input.value = value ?? ''; labelNode.append(input); return { labelNode, input }; }
@@ -410,7 +440,7 @@ export function mountTavernOverlay(options = {}) {
     const page = pages.config; page.replaceChildren();
     const subtabs = el(doc, 'nav', { class: 'fated-tavern-subtabs' }); const apiPage = el(doc, 'div'); const promptPage = el(doc, 'div');
     for (const [name, label, target] of [['api', 'API 与界面', apiPage], ['prompts', '提示词', promptPage]]) { const b = el(doc, 'button', { type: 'button', 'aria-selected': name === 'api' ? 'true' : 'false' }, label); subtabs.append(b); on(b, 'click', () => { apiPage.hidden = name !== 'api'; promptPage.hidden = name !== 'prompts'; [...subtabs.children].forEach(x => x.setAttribute('aria-selected', String(x === b))); }); }
-    apiPage.className = promptPage.className = 'fated-tavern-grid'; page.append(subtabs, apiPage, promptPage); promptPage.hidden = true;
+    apiPage.className = 'fated-tavern-grid'; promptPage.className = 'fated-tavern-prompts'; page.append(subtabs, apiPage, promptPage); promptPage.hidden = true;
     const fields = [['baseUrl', 'API 地址'], ['apiKey', 'API Key', 'password'], ['model', '模型名称'], ['temperature', 'temperature', 'number'], ['max_tokens', 'max_tokens', 'number'], ['excludeParams', '排除主体参数（逗号分隔）'], ['extraBody', '附加主体参数 JSON', 'textarea'], ['headers', '附加请求标头 JSON', 'textarea']];
     for (const [key, label, type] of fields) { const f = field(label, config[key], type); apiPage.append(f.labelNode); on(f.input, 'change', () => { config[key] = f.input.value; save(); }); }
     const hide = el(doc, 'label', {}); const checkbox = el(doc, 'input', { type: 'checkbox' }); checkbox.checked = Boolean(config.hideLauncher); hide.append(checkbox, ' 隐藏悬浮按钮到魔术棒菜单'); apiPage.append(hide);
@@ -429,10 +459,10 @@ export function mountTavernOverlay(options = {}) {
     const converter = options.converter || getGlobal(host, 'FatedTactical')?.hydrateBattleState || getGlobal(host, 'hydrateBattleState') || hydrateBattleState;
     let hydrated = null;
     if (typeof converter === 'function') {
-      const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit };
+      const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleRaw || sources.battleInit };
       try { hydrated = await converter(input); } catch (_) { try { hydrated = await converter(sources.mvuData, sources.charInfo, sources.battleInit); } catch (_) { /* fallback view */ } }
     }
-    if (hydrated?.state) currentState = hydrated.state; else if (hydrated && (hydrated.units || hydrated.grid)) currentState = hydrated;
+    const hydratedState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
     for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) { const key = item.id || item.uid || item.name || `unit-${Object.keys(config.instances).length + 1}`; config.instances[key] = { ...clone(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? 'MVU 主角' : '正文 <char_info>') }; }
@@ -441,15 +471,34 @@ export function mountTavernOverlay(options = {}) {
   async function mountState(state) {
     if (!state) return;
     const battleInstanceId = sources.battleKey || id;
-    const mount = options.mount || getGlobal(host, 'FatedTactical')?.mount || getGlobal(host, 'mount');
+    const mount = options.mount || defaultMount || getGlobal(host, 'FatedTactical')?.mount || getGlobal(host, 'mount');
     if (typeof mount !== 'function') return;
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
-    try { gameMount?.unmount?.(); gameMount = await mount(target, { instanceId: battleInstanceId, storage, state }); gameMount?.loadState?.(state); } catch (e) { showError(e); }
+    try {
+      gameMount?.unmount?.();
+      gameMount = await mount(target, { instanceId: battleInstanceId, storage, state });
+      // mount() receives the complete hydrated/custom state; its initialState path
+      // must not replace it with the default scenario.
+    } catch (e) { showError(e); }
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
-  async function scan() {
+  async function scan(force = false) {
+    const epoch = ++scanEpoch;
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
-    try { const hydrated = await hydrate(); await mountState(currentState || hydrated?.state); renderInstances(); if (node) node.textContent = currentState ? '扫描完成，已加载标准化状态。' : '扫描完成（未找到可挂载的战局）。'; } catch (e) { showError(e); }
+    try {
+      const hydrated = await hydrate();
+      if (epoch !== scanEpoch) return;
+      const nextState = hydrated?.state || (hydrated && (hydrated.units || hydrated.grid) ? hydrated : null);
+      if (!force && currentState && sources.battleKey && sources.battleKey === activeBattleKey) {
+        renderInstances();
+        if (node) node.textContent = '扫描完成，保留当前战局状态。';
+        return;
+      }
+      currentState = nextState;
+      activeBattleKey = sources.battleKey;
+      await mountState(currentState);
+      renderInstances(); if (node) node.textContent = currentState ? '扫描完成，已加载标准化状态。' : '扫描完成（未找到可挂载的战局）。';
+    } catch (e) { showError(e); }
   }
   function renderSandbox() {
     const page = pages.sandbox; page.replaceChildren(el(doc, 'h3', {}, '沙盘'));
@@ -459,10 +508,30 @@ export function mountTavernOverlay(options = {}) {
     const instruction = el(doc, 'textarea', { placeholder: '让辅助 AI 调整地形、站位或角色参数…' }); instruction.style.width = '100%'; page.append(instruction);
     const chat = el(doc, 'div', { class: 'fated-chat' }); const send = el(doc, 'button', { type: 'button' }, '发送'); chat.append(instruction, send); page.append(chat);
     const output = el(doc, 'pre', { class: 'fated-status', 'data-ai-output': '' }); page.append(output);
-    on(refresh, 'click', () => scan().catch(showError));
-    on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || ''; const patch = gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''; const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
-    async function ask() { const prompts = (config.prompts || []).filter(x => x.enabled !== false).map(x => ({ role: x.role || 'user', content: fillTemplate(x.content, { ...sources, state: currentState }) })); prompts.push({ role: 'user', content: instruction.value }); try { const response = await requestAI(config, prompts, options.fetch || undefined); const content = response?.choices?.[0]?.message?.content || response?.content || JSON.stringify(response); output.textContent = content; const parsed = parseAIResponse(content); if (parsed.patch && currentState) { currentState = applyPatch(currentState, parsed.patch); await mountState(currentState); } } catch (e) { output.textContent = `AI 失败：${e.message}`; } }
-    on(check, 'click', ask); on(send, 'click', ask);
+    on(refresh, 'click', () => scan(true).catch(showError));
+    on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = currentState ? buildMvuJsonPatch(currentState) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
+    async function ask(kind) {
+      const prompts = (config.prompts || []).filter(x => x.enabled !== false && (kind === 'validate' ? /校验|标准化/i.test(x.title || '') : !/校验|标准化/i.test(x.title || ''))).map(x => ({ role: x.role || 'user', content: fillTemplate(x.content, { ...sources, state: currentState }) }));
+      if (kind === 'chat' && instruction.value.trim()) prompts.push({ role: 'user', content: instruction.value.trim() });
+      if (!prompts.length) { output.textContent = '没有可发送的提示词。'; return; }
+      try {
+        const response = await requestAI(config, prompts, options.fetch || undefined);
+        const content = response?.choices?.[0]?.message?.content || response?.content || JSON.stringify(response); output.textContent = content;
+        const parsed = parseAIResponse(content);
+        if (parsed.patch && currentState) {
+          scanEpoch++;
+          const nextState = applyPatch(currentState, parsed.patch);
+          (options.validateState || defaultValidateState)(nextState);
+          currentState = nextState;
+          activeBattleKey = sources.battleKey;
+          await mountState(currentState);
+          const roster = Object.values(currentState.units || {}).map(unit => ({ ...unit, source: '手动或 AI 编辑' }));
+          for (const unit of roster) config.instances[unit.id] = unit;
+          save(); renderInstances();
+        }
+      } catch (e) { output.textContent = `AI 失败：${e.message}`; showError(e); }
+    }
+    on(check, 'click', () => ask('validate')); on(send, 'click', () => ask('chat'));
   }
   function updateMagic() {
     launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;
