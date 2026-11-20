@@ -1,6 +1,6 @@
 // 全屏战旗：棋盘铺满舞台，其余面板以右侧抽屉拉出。
 // 带 id 的节点被 main.js / 测试引用，改名前先全局搜索。
-export const TEMPLATE = `<div class="ft-app" data-busy="false">
+export const TEMPLATE = `<div class="ft-app" data-busy="false" data-zoom="fit">
   <section class="ft-stage" aria-label="战场">
     <div class="axis-scroll ft-scroll" id="board-scroll">
       <div class="ft-board battle-axis" id="board-frame">
@@ -18,6 +18,8 @@ export const TEMPLATE = `<div class="ft-app" data-busy="false">
       </div>
       <div id="turn-order" class="ft-initiative" aria-label="先攻序列"></div>
       <nav class="ft-hud-menu" aria-label="面板">
+        <button type="button" id="zoom-toggle" class="ft-icon-button ft-zoom-only" aria-pressed="false" aria-label="放大棋盘" title="放大棋盘（可拖动）">🔍</button>
+        <button type="button" id="fullscreen-toggle" class="ft-icon-button" aria-pressed="false" aria-label="全屏" title="全屏">⛶</button>
         <button type="button" class="ft-icon-button" data-open-drawer="log" aria-label="战况日志" title="战况日志">📜<span id="log-unread" class="ft-dot" hidden></span></button>
         <button type="button" class="ft-icon-button" data-open-drawer="unit" aria-label="单位情报" title="单位情报">◈</button>
         <button type="button" class="ft-icon-button" data-open-drawer="tools" aria-label="工具" title="工具">⚒</button>

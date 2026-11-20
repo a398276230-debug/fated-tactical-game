@@ -3,10 +3,12 @@
 body { margin: 0; background: var(--ink-2); }
 
 .ft-app {
-  --hud-top: 58px; --hud-bottom: 118px; --drawer-w: min(400px, 92vw);
+  /* --hud-top / --hud-bottom / --hud-right 由 main.js 按 HUD 实测尺寸写入；这里是首帧默认值 */
+  --hud-top: 58px; --hud-bottom: 118px; --hud-right: 0px; --cell-min: 50px; --drawer-w: min(400px, 92vw);
+  --safe-t: env(safe-area-inset-top, 0px); --safe-r: env(safe-area-inset-right, 0px); --safe-b: env(safe-area-inset-bottom, 0px); --safe-l: env(safe-area-inset-left, 0px);
   --tone-hit: #f2d58b; --tone-crit: #ffd700; --tone-miss: #a9b0c2; --tone-damage: #ff9a90;
   --tone-heal: #96e6b3; --tone-status: #c6aef2; --tone-move: #a6e3c8; --tone-turn: #dfc080; --tone-defeat: #e07a7a;
-  position: relative; box-sizing: border-box; width: 100%; height: min(84vh, 860px); min-height: 540px; overflow: hidden;
+  position: relative; box-sizing: border-box; width: 100%; height: min(84vh, 860px); height: min(84dvh, 860px); min-height: min(540px, 80vh); min-height: min(540px, 80dvh); overflow: hidden;
   color: var(--text); font-family: var(--font-body); font-size: 14px; line-height: 1.5;
   background:
     radial-gradient(ellipse 70% 60% at 50% 42%, rgb(var(--glow-rgb) / .16), transparent 70%),
@@ -14,7 +16,9 @@ body { margin: 0; background: var(--ink-2); }
     var(--ink-2);
   border-radius: 10px;
 }
-.ft-app.ft-fullscreen { position: fixed; inset: 0; height: auto; min-height: 0; border-radius: 0; }
+.ft-app.ft-fullscreen, .ft-app.is-expanded { position: fixed; z-index: 30; inset: 0; width: auto; height: auto; min-height: 0; border-radius: 0; }
+.ft-app.is-expanded { z-index: 2147483000; }
+.ft-app:fullscreen { width: 100%; height: 100%; min-height: 0; border-radius: 0; }
 .ft-app *, .ft-app *::before, .ft-app *::after { box-sizing: border-box; }
 .ft-app [hidden] { display: none !important; }
 .ft-app :is(button, select, input, summary, textarea, [tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -23,11 +27,12 @@ body { margin: 0; background: var(--ink-2); }
 .ft-stage { position: absolute; inset: 0; container-type: size; }
 .ft-scroll {
   position: absolute; inset: 0; display: grid; place-items: center; overflow: auto;
-  padding: calc(var(--hud-top) + 10px) 16px calc(var(--hud-bottom) + 10px);
+  padding: calc(var(--hud-top) + 10px) calc(var(--hud-right) + 16px) calc(var(--hud-bottom) + 10px) calc(var(--safe-l) + 16px);
   overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
 }
 .ft-board.battle-axis {
-  --cell: max(50px, min(calc((100cqw - 40px) / var(--cols, 10)), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 28px) / var(--rows, 10))));
+  /* 默认让整盘放进可视区；--cell-min 是下限，放大模式把它调大后棋盘可拖动 */
+  --cell: max(var(--cell-min), min(calc((100cqw - 44px - var(--hud-right) - var(--safe-l)) / var(--cols, 10) - 2px), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 32px) / var(--rows, 10) - 2px)));
   position: relative; width: max-content; margin: 0; padding: 0; border: 0; background: none; box-shadow: none;
 }
 .ft-board.battle-axis .tactical-grid {
@@ -93,7 +98,8 @@ body { margin: 0; background: var(--ink-2); }
 
 /* ---------- HUD ---------- */
 .ft-hud-top {
-  position: absolute; inset: 0 0 auto; z-index: 50; display: flex; align-items: center; gap: 14px; height: var(--hud-top); padding: 8px 14px;
+  position: absolute; inset: 0 0 auto; z-index: 50; display: flex; align-items: center; gap: 14px; min-height: 58px;
+  padding: max(8px, var(--safe-t)) max(14px, var(--safe-r)) 8px max(14px, var(--safe-l));
   background: linear-gradient(180deg, rgb(var(--shade-rgb) / .92), rgb(var(--shade-rgb) / .55) 70%, transparent);
 }
 .ft-hud-title { display: grid; flex: none; line-height: 1.2; }
@@ -132,7 +138,8 @@ body { margin: 0; background: var(--ink-2); }
 .ft-inspector:empty { display: none; }
 
 .ft-dock {
-  position: absolute; inset: auto 0 0; z-index: 50; display: flex; align-items: flex-end; gap: 14px; min-height: var(--hud-bottom); padding: 12px 14px;
+  position: absolute; inset: auto 0 0; z-index: 50; display: flex; align-items: flex-end; gap: 14px;
+  padding: 12px max(14px, var(--safe-r)) max(12px, var(--safe-b)) max(14px, var(--safe-l));
   background: linear-gradient(0deg, rgb(var(--shade-rgb) / .95), rgb(var(--shade-rgb) / .6) 72%, transparent); pointer-events: none;
 }
 .ft-dock > * { pointer-events: auto; }
@@ -292,7 +299,7 @@ body { margin: 0; background: var(--ink-2); }
   animation: ft-drawer-in .28s var(--ease-out);
 }
 @keyframes ft-drawer-in { from { transform: translateX(100%); } }
-.ft-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line-mid); background: var(--header-bg); }
+.ft-drawer-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line-mid); background: var(--header-bg); }
 .ft-drawer-head h2 { margin: 0; color: var(--heading); font: 700 16px var(--font-display); }
 .ft-drawer > :not(.ft-drawer-head) { padding-inline: 14px; }
 .ft-drawer > :last-child { flex: 1; overflow: auto; padding-bottom: 16px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
@@ -343,24 +350,87 @@ body { margin: 0; background: var(--ink-2); }
 .ft-dialog .ft-row { justify-content: flex-start; }
 #report-message:not(:empty) { margin-top: 8px; }
 
+/* ---------- 棋盘缩放 ---------- */
+.ft-app[data-zoom="near"] { --cell-min: 50px; }
+.ft-app[data-zoom="near"] .ft-scroll { place-items: start; }
+.ft-app[data-zoom="near"] .ft-board.battle-axis { margin: auto; }
+.ft-board.battle-axis[data-compact="true"] .axis-unit-name { display: none; }
+.ft-board.battle-axis[data-compact="true"] .tactical-cell-coord { display: none; }
+.ft-zoom-only { display: none; }
+
+/* ---------- 窄屏（竖屏手机） ---------- */
 @media (max-width: 760px) {
-  .ft-app { --hud-top: 96px; --hud-bottom: 150px; }
-  .ft-hud-top { flex-wrap: wrap; height: auto; gap: 6px 10px; }
+  .ft-app { --cell-min: 30px; }
+  .ft-zoom-only { display: grid; }
+  .ft-hud-top { flex-wrap: wrap; gap: 6px 8px; padding-bottom: 6px; }
+  .ft-hud-title { flex: 1; min-width: 0; }
+  .ft-title { overflow: hidden; text-overflow: ellipsis; }
+  .ft-eyebrow { display: none; }
   .ft-initiative { order: 3; flex-basis: 100%; }
-  .ft-hud-menu { margin-left: auto; }
-  .ft-dock { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; }
-  .ft-actor { width: 100%; }
+  .ft-hud-menu { gap: 4px; }
+  .ft-dock { flex-direction: column; align-items: stretch; gap: 6px; padding-top: 8px; padding-inline: max(8px, var(--safe-l)) max(8px, var(--safe-r)); }
+  .ft-actor { width: 100%; grid-template-columns: auto 1fr; padding: 6px 9px; }
+  .ft-actor-face { width: 38px; height: 38px; font-size: 17px; }
   .ft-dock-actions { justify-items: stretch; }
-  .ft-row { justify-content: flex-start; }
+  .ft-status { text-align: left; }
+  .ft-row { justify-content: flex-start; gap: 5px; }
   .ft-dice-card { min-width: 0; width: min(360px, 92vw); padding: 10px 12px; }
   .ft-die { width: 50px; height: 50px; font-size: 20px; }
-  #target-actions.ft-target-card { width: 250px; }
+  .ft-chance { width: min(260px, 70vw); }
+  #target-actions.ft-target-card { width: min(270px, calc(100vw - 16px)); }
   #target-actions button { min-height: 44px; }
+  .ft-caption { left: max(8px, var(--safe-l)); width: calc(100% - 16px); }
+  .ft-skip { right: max(8px, var(--safe-r)); }
+  .ft-banner b { font-size: 24px; }
+  /* 竖屏抽屉从底部弹出，单手好够 */
+  .ft-drawer { top: auto; left: 0; width: auto; height: min(78%, 640px); border-left: 0; border-top: 1px solid rgb(var(--gold-rgb) / .35); border-radius: 14px 14px 0 0;
+    padding-bottom: var(--safe-b); box-shadow: 0 -18px 40px rgb(0 0 0 / .5); animation-name: ft-sheet-in; }
+}
+@keyframes ft-sheet-in { from { transform: translateY(100%); } }
+
+/* ---------- 矮屏（横屏手机）：顶栏压扁，动作区改为右侧竖栏 ---------- */
+@media (orientation: landscape) and (max-height: 520px) {
+  .ft-app { --cell-min: 28px; --drawer-w: min(380px, 60vw); }
+  .ft-zoom-only { display: grid; }
+  .ft-hud-top { z-index: 52; flex-wrap: nowrap; min-height: 0; gap: 8px; padding-block: max(4px, var(--safe-t)) 4px; padding-right: calc(var(--hud-right) + 8px); }
+  .ft-eyebrow, .ft-round { display: none; }
+  .ft-title { font-size: 14px; }
+  .ft-initiative { order: 0; flex-basis: auto; }
+  .ft-dock {
+    inset: 0 0 0 auto; width: min(270px, 34vw); flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 6px; overflow-y: auto;
+    padding: calc(var(--hud-top) + 4px) max(8px, var(--safe-r)) max(8px, var(--safe-b)) 8px;
+    background: linear-gradient(270deg, rgb(var(--shade-rgb) / .95), rgb(var(--shade-rgb) / .75) 80%, transparent);
+  }
+  .ft-actor { width: 100%; padding: 6px 8px; }
+  .ft-actor-face { width: 34px; height: 34px; font-size: 15px; }
+  .ft-dock-actions { justify-items: stretch; }
+  .ft-status { text-align: left; font-size: 12px; }
+  .ft-row { justify-content: flex-start; gap: 5px; }
+  .ft-row > .game-button { flex: 1 1 calc(50% - 5px); }
+  .ft-inspector, .ft-ribbon { left: calc(50% - var(--hud-right) / 2); }
+  .ft-dice-stage { top: calc(var(--hud-top) + 8px); left: calc(50% - var(--hud-right) / 2); }
+  .ft-dice-card { min-width: 0; gap: 4px; padding: 8px 12px; }
+  .ft-die { width: 44px; height: 44px; font-size: 18px; }
+  .ft-verdict { font-size: 19px; }
+  .ft-caption { left: max(8px, var(--safe-l)); bottom: max(8px, var(--safe-b)); width: calc(100% - var(--hud-right) - 24px); }
+  .ft-skip { right: calc(var(--hud-right) + 8px); bottom: max(8px, var(--safe-b)); }
+  .ft-banner b { font-size: 22px; }
+}
+
+/* ---------- 触屏：触控目标不小于 44px ---------- */
+@media (pointer: coarse) {
+  .ft-icon-button { width: 44px; height: 44px; }
+  .ft-app .game-button, .ft-app .turn-chip, .ft-skip, .ft-dev > summary { min-height: 44px; }
+  .ft-app select, .ft-app input:not([type="checkbox"]):not([type="file"]) { min-height: 44px; font-size: 16px; }
+  .ft-switch, .ft-mini-select, .ft-target-options label { min-height: 44px; }
+  .ft-app input[type="checkbox"] { width: 22px; height: 22px; }
+  .ft-close { width: 44px; height: 44px; }
+  .ft-log-entry > summary { min-height: 32px; }
   .ft-board button { touch-action: manipulation; }
-  .ft-caption { width: calc(100% - 28px); }
 }
 @media (prefers-reduced-motion: reduce) {
   .ft-drawer { animation: none; }
+  .ft-app[data-zoom] .ft-scroll { scroll-behavior: auto; }
   .ft-board .axis-unit.is-active { animation: none; }
   .ft-die.is-rolling { animation: none; }
 }

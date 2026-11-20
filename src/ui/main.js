@@ -44,6 +44,44 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
   const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy });
 
+  // ---------- 屏幕适配 ----------
+  // HUD 高度随换行、横竖屏变化，实测后写回 CSS 变量，棋盘据此留白并计算格子尺寸。
+  const app = root.querySelector('.ft-app');
+  function fitLayout() {
+    if (!app) return;
+    const box = app.getBoundingClientRect();
+    if (!box.width) return;
+    const hud = root.querySelector('.ft-hud-top').getBoundingClientRect(), dock = root.querySelector('.ft-dock').getBoundingClientRect();
+    const side = dock.height > box.height * .7; // 横屏时动作区是右侧竖栏
+    app.style.setProperty('--hud-top', `${Math.round(hud.height)}px`);
+    app.style.setProperty('--hud-bottom', side ? '0px' : `${Math.round(dock.height)}px`);
+    app.style.setProperty('--hud-right', side ? `${Math.round(dock.width)}px` : '0px');
+    const cell = $('board').querySelector('.tactical-cell')?.offsetWidth || 50;
+    $('board-frame').dataset.compact = String(cell < 44);
+  }
+  function setZoom(near) {
+    app.dataset.zoom = near ? 'near' : 'fit';
+    $('zoom-toggle').setAttribute('aria-pressed', String(near));
+    $('zoom-toggle').title = near ? '适应屏幕' : '放大棋盘（可拖动）';
+    storage.setItem('fated-tactical/zoom', app.dataset.zoom);
+    fitLayout();
+    const unit = active(state);
+    if (near && unit) cellFor(unit)?.scrollIntoView({ block: 'center', inline: 'center' });
+  }
+  // 优先用浏览器原生全屏（手机上能藏掉地址栏）；不支持时退回为铺满视口的 is-expanded。
+  async function toggleFullscreen() {
+    if (document.fullscreenElement) { await document.exitFullscreen().catch(() => {}); return; }
+    if (app.classList.contains('is-expanded')) { app.classList.remove('is-expanded'); return; }
+    try { await app.requestFullscreen({ navigationUI: 'hide' }); }
+    catch { app.classList.add('is-expanded'); }
+  }
+  function syncFullscreen() {
+    const pressed = document.fullscreenElement === app || app.classList.contains('is-expanded');
+    $('fullscreen-toggle').setAttribute('aria-pressed', String(pressed));
+    $('fullscreen-toggle').title = pressed ? '退出全屏' : '全屏';
+    window.requestAnimationFrame(fitLayout);
+  }
+
   const playback = createPlayback(root, {
     show(next, opts) { busy = !!opts?.busy; show(next); },
     onIdle() { busy = false; show(live); schedule(); },
@@ -301,6 +339,15 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     on('auto-ai', 'change', () => { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); schedule(); });
     on('ai-speed', 'change', () => { storage.setItem('fated-tactical/ai-speed', $('ai-speed').value); schedule(); });
     on('skip-playback', 'click', () => playback.skip());
+    on('zoom-toggle', 'click', () => setZoom(app.dataset.zoom !== 'near'));
+    on('fullscreen-toggle', 'click', () => { toggleFullscreen().then(syncFullscreen); });
+    document.addEventListener('fullscreenchange', syncFullscreen, { signal });
+    if (window.ResizeObserver) {
+      let frame = 0; // 延后一帧，避免在观察回调里改尺寸触发 ResizeObserver 循环警告
+      const observer = new window.ResizeObserver(() => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(fitLayout); });
+      for (const node of [app, root.querySelector('.ft-hud-top'), root.querySelector('.ft-dock')]) if (node) observer.observe(node);
+      signal?.addEventListener('abort', () => observer.disconnect());
+    } else window.addEventListener('resize', fitLayout, { signal });
 
     const report = $('report-text'), reportMessage = $('report-message');
     on('export-report', 'click', () => { report.value = game.exportBattleReportText(); reportMessage.textContent = ''; $('report-dialog').showModal(); });
@@ -456,6 +503,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (value != null && [...$(id).options].some(o => o.value === value)) $(id).value = value;
   }
   playback.setSpeed(Number($('anim-speed').value));
+  if (storage.getItem('fated-tactical/zoom') === 'near') app.dataset.zoom = 'near';
+  $('zoom-toggle').setAttribute('aria-pressed', String(app.dataset.zoom === 'near'));
   try {
     if (snapshot) {
       const restored = snapshot.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: 'custom_state', state: snapshot });
@@ -484,6 +533,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     onChange();
   });
   onChange();
+  fitLayout();
   seenLogs = live.logs.length;
   $('log-unread').hidden = seenLogs <= 2;
 
