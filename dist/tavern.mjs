@@ -520,9 +520,9 @@ function migrateStateEffects(state) {
 function createEffectEngine(io) {
   const expressions = (state, actor) => io.equipped(state, actor).flatMap(({ template, instance }) => {
     if (template?.boundTo && template.boundTo !== actor.id) return [];
-    return (template?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: equippedKey(instance, expr), instance }));
+    return (template?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: equippedKey(instance, expr), instance, sourceName: template.name }));
   });
-  const skillExpressions2 = (skill2, id3) => (skill2?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: `skill-${id3}:${expr.id}` }));
+  const skillExpressions2 = (skill2, id3) => (skill2?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: `skill-${id3}:${expr.id}`, sourceName: skill2.name }));
   const activeId = (key4) => `effect:${key4}`;
   function activeSkills(state, actor) {
     if (!actor) return [];
@@ -663,7 +663,8 @@ function createEffectEngine(io) {
     const after = drain ? before - Math.min(amount2, Math.max(0, before - (node3.minimumRemaining ?? 0))) : Math.min(cap, before + amount2);
     if (after === before) return 0;
     if (name === "hp") return drain ? io.loseHP(state, target2, before - after, actor.id, "true", label, {}, false) : io.heal(state, target2, after - before, actor.id, label);
-    if (["mp", "sp", "ap"].includes(name)) target2[name] = after;
+    if (name === "mp" || name === "sp") io.setResourceTotal(state, target2, name, after, actor.id, label);
+    else if (name === "ap") target2.ap = after;
     else if (name === "action" || name === "attack") target2.used[name] = 1 - after;
     else if (pool?.effect) io.counter(state, target2, pool.item, pool.effect, name, after);
     else (target2.resources ??= {})[name] = after;
@@ -677,7 +678,7 @@ function createEffectEngine(io) {
       const recipients = node3.target && node3.target !== exprTarget ? targets(state, actor, node3.target, ctx, p.radius ?? 1) : [inherited];
       for (const target2 of recipients) {
         if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
-        const label = node3.label ?? entry.expr.label ?? entry.expr.id;
+        const label = node3.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
         const amount2 = Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target2, p, ctx) + (["heal", "shield", "damage"].includes(node3.kind) ? (p.percent ?? 0) * target2.maxHp : 0)) * (ctx.skillScale ?? 1))));
         let result;
         switch (node3.kind) {
@@ -1677,12 +1678,32 @@ function restoreHP(state, target2, raw, sourceUnitId, label, detail = {}) {
   if (!alive(target2) || target2.fled) return 0;
   const healer = tableEntry(state.units, sourceUnitId);
   const healing = Math.max(0, Math.floor(healer ? dsl.stat(state, healer, "healing", raw, { target: target2, ...detail }) : raw));
-  const amount2 = Math.min(healing, target2.maxHp - target2.hp);
+  const hpBefore = target2.hp;
+  const amount2 = Math.min(healing, target2.maxHp - hpBefore);
   target2.hp += amount2;
-  record(state, sourceUnitId, "heal", `${target2.name}\u56E0${label}\u6062\u590D${amount2}\u70B9\u751F\u547D`, { ...detail, targetId: target2.id, amount: amount2 });
+  record(
+    state,
+    sourceUnitId,
+    "heal",
+    `${target2.name}\u56E0${label}\u6062\u590D${amount2}\u70B9\u751F\u547D`,
+    { ...detail, targetId: target2.id, amount: amount2, hpBefore, hpAfter: target2.hp }
+  );
   if (amount2 > 0) expireStatuses(state, target2, "on_heal", { sourceUnitId });
   if (healer && healing) dsl.dispatch(state, healer, "on_heal", { target: target2, healing, actionType: detail.actionType });
   return amount2;
+}
+function setResourceTotal(state, target2, resource3, after, sourceUnitId, label) {
+  const before = target2[resource3];
+  if (before === after) return;
+  target2[resource3] = after;
+  const amount2 = Math.abs(after - before);
+  record(
+    state,
+    sourceUnitId,
+    "resource",
+    `${target2.name}\u56E0${label}${after > before ? "\u6062\u590D" : "\u6D88\u8017"}${amount2}\u70B9 ${resource3.toUpperCase()}`,
+    { targetId: target2.id, resource: resource3, amount: amount2, before, after }
+  );
 }
 function armorOf(state, unit, damageType2, pierce = 0, context = {}) {
   const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0) + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
@@ -2052,6 +2073,7 @@ var dsl = createEffectEngine({
   damage: damageTarget,
   loseHP,
   heal: restoreHP,
+  setResourceTotal,
   grant: grantStatus,
   record,
   saved: effectSaved,
@@ -2742,6 +2764,7 @@ function resolveCheck(state, actor, profile) {
   const critical = profile.guaranteeCrit || selected === 20;
   const hit = Boolean(profile.guaranteeHit || selected !== 1 && rating.multiplier > 0);
   let intent = { required: false, success: true, multiplier: 1 };
+  let intentDetail;
   const defender = state.units[profile.id];
   if (hit && defender && profile.intent && profile.intent !== "normal") {
     const defenderD20 = randomDie(state, 20);
@@ -2754,7 +2777,7 @@ function resolveCheck(state, actor, profile) {
     const attackerTotal = attackerBase + selected + ratingBonus + coreBonus;
     const defenderTotal = defenderBase + defenderD20 + intentSpec.difficulty;
     intent = intentCheck(intentSpec, attackerTier, defenderTier, selected, defenderD20, ratingBonus + coreBonus);
-    record(state, actor, "intent", `${profile.name}${intent.success ? "\u610F\u56FE\u6210\u7ACB" : "\u610F\u56FE\u53D7\u963B"}`, {
+    intentDetail = {
       targetId: profile.id,
       intent: profile.intent,
       attackerTier,
@@ -2770,7 +2793,7 @@ function resolveCheck(state, actor, profile) {
       intentDifficulty: intentSpec.difficulty,
       defenderTotal,
       ...intent
-    });
+    };
   }
   const effectiveHit = hit;
   record(state, actor, "roll", `${profile.name}\uFF1A${critical ? "\u66B4\u51FB" : hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D"} (${total}/${profile.defense})`, {
@@ -2797,6 +2820,7 @@ function resolveCheck(state, actor, profile) {
     critical,
     intent
   });
+  if (intent.required) record(state, actor, "intent", `${profile.name}${intent.success ? "\u610F\u56FE\u6210\u7ACB" : "\u610F\u56FE\u53D7\u963B"}`, intentDetail);
   return { hit: effectiveHit, critical, rating, intent, saved: false };
 }
 function coverDamage(state, actor, cover, amount2, details) {
@@ -2835,12 +2859,12 @@ function offHandFollowup(state, actor, target2, primaryProfile, primaryRating) {
   if (weapon.stance !== "dual_wield" || !weapon.offHand.template?.damage || !alive(target2)) return;
   const cost = (actor.tier ?? 1) * 10;
   if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < 0.8) return;
-  actor.sp -= cost;
   const offTemplate = weapon.offHand.template;
   const profile = targetProfile(state, actor, target2, target2, offTemplate, { weapon: { ...weapon.offHand, stance: "dual_wield" } });
   profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
   profile.bonusDice = 0;
   record(state, actor, "followup", `${actor.name}\u53D1\u52A8\u526F\u624B\u8FFD\u51FB`, { targetId: target2.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
+  setResourceTotal(state, actor, "sp", actor.sp - cost, actor.id, "\u526F\u624B\u8FFD\u51FB");
   const result = resolveCheck(state, actor, profile);
   if (!result.hit) return;
   const dice3 = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, result.critical);
@@ -3041,8 +3065,8 @@ function applyInteraction(state, actor, plan) {
     const amount2 = item.damage ?? 8;
     restoreHP(state, actor, amount2, actor.id, item.name);
     if (effect === "restore") {
-      actor.mp = Math.min(actor.maxMp, actor.mp + amount2);
-      actor.sp = Math.min(actor.maxSp, actor.sp + amount2);
+      setResourceTotal(state, actor, "mp", Math.min(actor.maxMp, actor.mp + amount2), actor.id, item.name);
+      setResourceTotal(state, actor, "sp", Math.min(actor.maxSp, actor.sp + amount2), actor.id, item.name);
     }
   } else if (Object.hasOwn(item, "effect") && effect === "shield") {
     grantStatus(state, actor, "shield", { amount: item.damage ?? 10, sourceUnitId: actor.id });
@@ -3070,13 +3094,21 @@ function applyAction(state, action) {
   const initialCover = moving ? new Set(nearbyCovers(state, actor).map((c) => c.id)) : null;
   if (type !== "end") {
     actor.ap -= plan.ap;
-    actor.mp -= plan.mp;
-    actor.sp -= plan.sp;
+    const costSource = plan.name ?? movementNames[type] ?? type;
+    if (plan.mp) setResourceTotal(state, actor, "mp", actor.mp - plan.mp, actor.id, costSource);
+    if (plan.sp) setResourceTotal(state, actor, "sp", actor.sp - plan.sp, actor.id, costSource);
     if (type === "skill") {
       const skill2 = tableEntry(state.skills, skillId);
       if (plan.hp) {
+        const hpBefore = actor.hp;
         actor.hp -= plan.hp;
-        record(state, actor, "skill_cost", `\u65BD\u653E ${skill2.name} \u6D88\u8017 ${plan.hp} HP`, { skillId, hp: plan.hp, remainingHP: actor.hp });
+        record(
+          state,
+          actor,
+          "skill_cost",
+          `\u65BD\u653E ${skill2.name} \u6D88\u8017 ${plan.hp} HP`,
+          { skillId, hp: plan.hp, remainingHP: actor.hp, hpBefore, hpAfter: actor.hp }
+        );
       }
       if (skill2?.resourceCost?.resource) {
         const { resource: resource3, amount: cost } = skill2.resourceCost;
@@ -4326,6 +4358,7 @@ function formatBattleReportText(report, unitNames = {}) {
     }
     return result;
   };
+  const change = (resource3, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource3} ${before} \u2192 ${after}\uFF09` : "";
   for (const { round, events: events2 } of report.rounds) {
     const rows = [];
     let turn = null;
@@ -4362,6 +4395,7 @@ function formatBattleReportText(report, unitNames = {}) {
           if (detail.cover > 0) add(`${name(event, detail.targetId)}\u53D7\u5230${detail.coverId ? ` ${detail.coverId} ` : ""}\u63A9\u4F53\u906E\u853D`);
           if (!detail.hit) add(`${name(event, detail.targetId)}\u672A\u88AB\u51FB\u4E2D`);
           else if (detail.critical) add(`\u5BF9${name(event, detail.targetId)}\u6253\u51FA\u66B4\u51FB`);
+          else if (detail.intent?.required) add(`\u51FB\u4E2D${name(event, detail.targetId)}`);
           break;
         case "save":
           if (detail.saved) add(`${name(event, detail.targetId)}\u901A\u8FC7\u8C41\u514D`);
@@ -4376,6 +4410,16 @@ function formatBattleReportText(report, unitNames = {}) {
         case "proc":
         case "expire":
           break;
+        case "damage":
+        case "heal":
+          if (detail.amount !== 0) add(replaceUnitNames(event, text4) + change("HP", detail.hpBefore, detail.hpAfter));
+          break;
+        case "skill_cost":
+          add(replaceUnitNames(event, text4) + change("HP", detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
+          break;
+        case "resource":
+          add(replaceUnitNames(event, text4) + change(detail.resource?.toUpperCase(), detail.before, detail.after));
+          break;
         case "counter":
           add(replaceUnitNames(event, text4).replace(/\bsouls\b/g, "\u9B42\u6570").replace(/\bammo\b/g, "\u5F39\u836F"));
           break;
@@ -4384,7 +4428,7 @@ function formatBattleReportText(report, unitNames = {}) {
           rows.push(replaceUnitNames(event, text4));
           break;
         default: {
-          if (["damage", "heal", "cover_damage"].includes(type) && detail.amount === 0) break;
+          if (type === "cover_damage" && detail.amount === 0) break;
           const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "altitude", "interact", "skip", "brace", "cover_approach"].includes(type);
           let label = replaceUnitNames(event, text4);
           const actorRaw = names.get(actor) ?? actor;
@@ -4411,7 +4455,7 @@ var fail3 = (message) => {
   throw new Error(message);
 };
 var version = 1;
-var battleVersion = 4;
+var battleVersion = 5;
 var maxHistory = 2e3;
 var maxBatch = 32;
 var own4 = (obj, key4) => Object.hasOwn(obj, key4);
@@ -4487,7 +4531,7 @@ function createGameAPI() {
     return { ok: true, revision };
   }
   function restore(snapshot) {
-    if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, 3, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
+    if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, 3, 4, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
     const needsMigration = snapshot.version < battleVersion;
     if (needsMigration) {
       const migrate = (data) => ({ ...migrateStateEffects(copy(data)), mode: "split" });
@@ -4741,7 +4785,7 @@ var GameAPI = createGameAPI();
 if (typeof window !== "undefined") window.FatedTacticalGame = GameAPI;
 
 // src/ui/template.js
-var TEMPLATE = `<div class="ft-app" data-busy="false" data-zoom="fit">
+var TEMPLATE = `<div class="ft-app" data-busy="false">
   <section class="ft-stage" aria-label="\u6218\u573A">
     <div class="axis-scroll ft-scroll" id="board-scroll">
       <div class="ft-board battle-axis" id="board-frame">
@@ -4759,7 +4803,6 @@ var TEMPLATE = `<div class="ft-app" data-busy="false" data-zoom="fit">
       </div>
       <div id="turn-order" class="ft-initiative" aria-label="\u5148\u653B\u5E8F\u5217"></div>
       <nav class="ft-hud-menu" aria-label="\u9762\u677F">
-        <button type="button" id="zoom-toggle" class="ft-icon-button ft-zoom-only" aria-pressed="false" aria-label="\u653E\u5927\u68CB\u76D8" title="\u653E\u5927\u68CB\u76D8\uFF08\u53EF\u62D6\u52A8\uFF09">\u{1F50D}</button>
         <button type="button" id="fullscreen-toggle" class="ft-icon-button" aria-pressed="false" aria-label="\u5168\u5C4F" title="\u5168\u5C4F">\u26F6</button>
         <button type="button" class="ft-icon-button" data-open-drawer="log" aria-label="\u6218\u51B5\u65E5\u5FD7" title="\u6218\u51B5\u65E5\u5FD7">\u{1F4DC}<span id="log-unread" class="ft-dot" hidden></span></button>
         <button type="button" class="ft-icon-button" data-open-drawer="unit" aria-label="\u5355\u4F4D\u60C5\u62A5" title="\u5355\u4F4D\u60C5\u62A5">\u25C8</button>
@@ -4769,6 +4812,11 @@ var TEMPLATE = `<div class="ft-app" data-busy="false" data-zoom="fit">
     </header>
 
     <p id="terrain-inspector" class="ft-inspector" aria-live="polite"></p>
+    <div class="ft-zoom" role="group" aria-label="\u68CB\u76D8\u7F29\u653E\uFF08\u6EDA\u8F6E\u6216\u53CC\u6307\u4E5F\u53EF\u7F29\u653E\uFF09">
+      <button type="button" id="zoom-out" aria-label="\u7F29\u5C0F" title="\u7F29\u5C0F\uFF08\u2212\uFF09">\u2212</button>
+      <button type="button" id="zoom-reset" aria-label="\u6062\u590D\u6574\u76D8\u53EF\u89C1" title="\u6062\u590D\u6574\u76D8\u53EF\u89C1\uFF080\uFF09">100%</button>
+      <button type="button" id="zoom-in" aria-label="\u653E\u5927" title="\u653E\u5927\uFF08+\uFF09">+</button>
+    </div>
 
     <div class="ft-overlay" aria-live="polite">
       <div id="turn-banner" class="ft-banner" hidden></div>
@@ -6295,7 +6343,7 @@ function describeProposal(result) {
   });
   return [`\u8BD5\u7B97\u901A\u8FC7\uFF0C\u786E\u8BA4\u540E\u4F1A\u6539\u53D8 ${lines.length} \u5904\uFF1A`, ...lines].join("\n");
 }
-function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, storage: storageArea } = {}) {
+function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, onVictory, storage: storageArea } = {}) {
   const document2 = root.ownerDocument, window2 = document2.defaultView;
   const localStorage2 = storageArea ?? window2?.localStorage;
   const $ = (id3) => root.querySelector(`[id="${id3}"]`);
@@ -6353,14 +6401,93 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
     const cell = $("board").querySelector(".tactical-cell")?.offsetWidth || 50;
     $("board-frame").dataset.compact = String(cell < 44);
   }
-  function setZoom(near) {
-    app.dataset.zoom = near ? "near" : "fit";
-    $("zoom-toggle").setAttribute("aria-pressed", String(near));
-    $("zoom-toggle").title = near ? "\u9002\u5E94\u5C4F\u5E55" : "\u653E\u5927\u68CB\u76D8\uFF08\u53EF\u62D6\u52A8\uFF09";
-    storage.setItem("fated-tactical/zoom", app.dataset.zoom);
+  const ZOOM_MIN = 0.5, ZOOM_MAX = 3;
+  let zoom = 1;
+  function setZoom(next, anchor2) {
+    const value = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 100) / 100;
+    const scroller = $("board-scroll"), frame = $("board-frame");
+    const view2 = scroller.getBoundingClientRect();
+    const at = anchor2 ?? { x: view2.left + view2.width / 2, y: view2.top + view2.height / 2 };
+    const before = frame.getBoundingClientRect();
+    const rx = (at.x - before.left) / (before.width || 1), ry = (at.y - before.top) / (before.height || 1);
+    zoom = value;
+    app.style.setProperty("--zoom", String(zoom));
+    $("zoom-reset").textContent = `${Math.round(zoom * 100)}%`;
+    $("zoom-out").disabled = zoom <= ZOOM_MIN;
+    $("zoom-in").disabled = zoom >= ZOOM_MAX;
+    const after = frame.getBoundingClientRect();
+    scroller.scrollLeft += after.left + rx * after.width - at.x;
+    scroller.scrollTop += after.top + ry * after.height - at.y;
+    storage.setItem("fated-tactical/zoom", String(zoom));
     fitLayout();
-    const unit = active(state);
-    if (near && unit) cellFor(unit)?.scrollIntoView({ block: "center", inline: "center" });
+    layoutTargetCard();
+  }
+  const ZOOM_STEP = 1.25;
+  function bindZoom() {
+    const scroller = $("board-scroll");
+    on("zoom-in", "click", () => setZoom(zoom * ZOOM_STEP));
+    on("zoom-out", "click", () => setZoom(zoom / ZOOM_STEP));
+    on("zoom-reset", "click", () => setZoom(1));
+    scroller.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      setZoom(zoom * Math.exp(-delta * (e.ctrlKey ? 0.01 : 15e-4)), { x: e.clientX, y: e.clientY });
+    }, { passive: false, signal });
+    let pan = null, dragged = false;
+    scroller.addEventListener("pointerdown", (e) => {
+      dragged = false;
+      if (e.pointerType === "mouse" && e.button === 0) pan = { id: e.pointerId, x: e.clientX, y: e.clientY, left: scroller.scrollLeft, top: scroller.scrollTop };
+    }, { signal });
+    scroller.addEventListener("pointermove", (e) => {
+      if (!pan || e.pointerId !== pan.id) return;
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      if (!dragged && Math.hypot(dx, dy) <= 5) return;
+      if (!dragged) {
+        dragged = true;
+        app.classList.add("is-panning");
+        scroller.setPointerCapture?.(e.pointerId);
+      }
+      scroller.scrollLeft = pan.left - dx;
+      scroller.scrollTop = pan.top - dy;
+    }, { signal });
+    for (const type of ["pointerup", "pointercancel"]) scroller.addEventListener(type, () => {
+      pan = null;
+      app.classList.remove("is-panning");
+    }, { signal });
+    scroller.addEventListener("click", (e) => {
+      if (dragged) {
+        e.stopPropagation();
+        e.preventDefault();
+        dragged = false;
+      }
+    }, { capture: true, signal });
+    let pinch = null;
+    const span = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2, d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) });
+    scroller.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 2) {
+        pinch = { d: span(e.touches).d, zoom };
+        dragged = true;
+      }
+    }, { passive: true, signal });
+    scroller.addEventListener("touchmove", (e) => {
+      if (e.touches.length < 2 || !pinch) return;
+      e.preventDefault();
+      const m = span(e.touches);
+      if (pinch.d > 0) setZoom(pinch.zoom * m.d / pinch.d, m);
+    }, { passive: false, signal });
+    scroller.addEventListener("touchend", (e) => {
+      if (e.touches.length < 2) pinch = null;
+    }, { passive: true, signal });
+    scroller.addEventListener("gesturestart", (e) => e.preventDefault(), { signal });
+    document2.addEventListener("keydown", (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.("input, textarea, select, [contenteditable]") || root.querySelector("dialog[open]")) return;
+      if (!root.contains(e.target) && e.target !== document2.body) return;
+      if (e.key === "+" || e.key === "=") setZoom(zoom * ZOOM_STEP);
+      else if (e.key === "-" || e.key === "_") setZoom(zoom / ZOOM_STEP);
+      else if (e.key === "0") setZoom(1);
+      else return;
+      e.preventDefault();
+    }, { signal });
   }
   async function toggleFullscreen() {
     if (document2.fullscreenElement) {
@@ -6384,16 +6511,22 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
     $("fullscreen-toggle").title = pressed ? "\u9000\u51FA\u5168\u5C4F" : "\u5168\u5C4F";
     window2.requestAnimationFrame(fitLayout);
   }
+  let victoryPending = false;
+  function finishPlayback() {
+    busy = false;
+    show(live);
+    schedule();
+    if (victoryPending) {
+      victoryPending = false;
+      onVictory?.();
+    }
+  }
   const playback = createPlayback(root, {
     show(next, opts) {
       busy = !!opts?.busy;
       show(next);
     },
-    onIdle() {
-      busy = false;
-      show(live);
-      schedule();
-    }
+    onIdle: finishPlayback
   });
   function show(next) {
     const changed = state !== next;
@@ -6501,6 +6634,8 @@ ${height2}\uFF0C${sight}`;
   function onChange() {
     const before = live;
     live = game.getBattleState();
+    if (!["blue", "red"].includes(live.outcome)) victoryPending = false;
+    else if (before && !before.outcome) victoryPending = true;
     try {
       storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
     } catch {
@@ -6513,9 +6648,7 @@ ${height2}\uFF0C${sight}`;
       return;
     }
     playback.reset();
-    busy = false;
-    show(live);
-    schedule();
+    finishPlayback();
   }
   const execute = (command) => safely(() => {
     const result = game.playAction(command);
@@ -6693,7 +6826,7 @@ ${height2}\uFF0C${sight}`;
       schedule();
     });
     on("skip-playback", "click", () => playback.skip());
-    on("zoom-toggle", "click", () => setZoom(app.dataset.zoom !== "near"));
+    bindZoom();
     on("fullscreen-toggle", "click", () => {
       toggleFullscreen().then(syncFullscreen);
     });
@@ -6750,7 +6883,7 @@ ${height2}\uFF0C${sight}`;
           configure(restored.scenarioId);
           closeDrawer();
           if (restored.migratedFrom) {
-            error2("\u5DF2\u6062\u590D\u65E7\u6218\u5C40\uFF1B\u501F\u673A\u89C4\u5219\u4ECE\u73B0\u5728\u751F\u6548\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
+            error2("\u5DF2\u6062\u590D\u65E7\u6218\u5C40\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
             return;
           }
         }
@@ -6918,12 +7051,10 @@ ${height2}\uFF0C${sight}`;
     if (value != null && [...$(id3).options].some((o) => o.value === value)) $(id3).value = value;
   }
   playback.setSpeed(Number($("anim-speed").value));
-  if (storage.getItem("fated-tactical/zoom") === "near") app.dataset.zoom = "near";
-  $("zoom-toggle").setAttribute("aria-pressed", String(app.dataset.zoom === "near"));
   try {
     if (snapshot) {
       const restored = snapshot.kind === "battle" ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: "custom_state", state: snapshot });
-      if (restored.migratedFrom) error2("\u5DF2\u7EED\u63A5\u65E7\u6218\u5C40\uFF1B\u501F\u673A\u89C4\u5219\u4ECE\u73B0\u5728\u751F\u6548\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
+      if (restored.migratedFrom) error2("\u5DF2\u7EED\u63A5\u65E7\u6218\u5C40\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
     } else game.createBattle({ scenarioId: "ruins", ruleset: "protocol" });
   } catch (cause) {
     if (customBattle) {
@@ -6952,6 +7083,7 @@ ${height2}\uFF0C${sight}`;
   });
   onChange();
   fitLayout();
+  setZoom(Number(storage.getItem("fated-tactical/zoom")) || 1);
   seenLogs = live.logs.length;
   $("log-unread").hidden = seenLogs <= 2;
   return {
@@ -7847,7 +7979,7 @@ body { margin: 0; background: var(--ink-2); }
 
 .ft-app {
   /* --hud-top / --hud-bottom / --hud-right \u7531 main.js \u6309 HUD \u5B9E\u6D4B\u5C3A\u5BF8\u5199\u5165\uFF1B\u8FD9\u91CC\u662F\u9996\u5E27\u9ED8\u8BA4\u503C */
-  --hud-top: 58px; --hud-bottom: 118px; --hud-right: 0px; --cell-min: 50px; --drawer-w: min(400px, 92vw);
+  --hud-top: 58px; --hud-bottom: 118px; --hud-right: 0px; --zoom: 1; --drawer-w: min(400px, 92vw);
   --safe-t: env(safe-area-inset-top, 0px); --safe-r: env(safe-area-inset-right, 0px); --safe-b: env(safe-area-inset-bottom, 0px); --safe-l: env(safe-area-inset-left, 0px);
   --tone-hit: #f2d58b; --tone-crit: #ffd700; --tone-miss: #a9b0c2; --tone-damage: #ff9a90;
   --tone-heal: #96e6b3; --tone-status: #c6aef2; --tone-move: #a6e3c8; --tone-turn: #dfc080; --tone-defeat: #e07a7a;
@@ -7869,14 +8001,15 @@ body { margin: 0; background: var(--ink-2); }
 /* ---------- \u821E\u53F0\u4E0E\u68CB\u76D8 ---------- */
 .ft-stage { position: absolute; inset: 0; container-type: size; }
 .ft-scroll {
-  position: absolute; inset: 0; display: grid; place-items: center; overflow: auto;
+  position: absolute; inset: 0; display: grid; place-items: start; overflow: auto; touch-action: pan-x pan-y;
   padding: calc(var(--hud-top) + 10px) calc(var(--hud-right) + 16px) calc(var(--hud-bottom) + 10px) calc(var(--safe-l) + 16px);
   overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
 }
 .ft-board.battle-axis {
-  /* \u9ED8\u8BA4\u8BA9\u6574\u76D8\u653E\u8FDB\u53EF\u89C6\u533A\uFF1B--cell-min \u662F\u4E0B\u9650\uFF0C\u653E\u5927\u6A21\u5F0F\u628A\u5B83\u8C03\u5927\u540E\u68CB\u76D8\u53EF\u62D6\u52A8 */
-  --cell: max(var(--cell-min), min(calc((100cqw - 44px - var(--hud-right) - var(--safe-l)) / var(--cols, 10) - 2px), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 32px) / var(--rows, 10) - 2px)));
-  position: relative; width: max-content; margin: 0; padding: 0; border: 0; background: none; box-shadow: none;
+  /* --cell-fit \u8BA9\u6574\u76D8\u521A\u597D\u653E\u8FDB\u53EF\u89C6\u533A\uFF08\u5373 100%\uFF09\uFF1B--zoom \u7531\u7F29\u653E\u63A7\u4EF6\u5199\u5165\uFF0C\u653E\u5927\u540E\u68CB\u76D8\u53EF\u62D6\u52A8 */
+  --cell-fit: min(calc((100cqw - 44px - var(--hud-right) - var(--safe-l)) / var(--cols, 10) - 2px), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 32px) / var(--rows, 10) - 2px));
+  --cell: max(14px, calc(var(--cell-fit) * var(--zoom, 1)));
+  position: relative; width: max-content; margin: auto; padding: 0; border: 0; background: none; box-shadow: none;
 }
 .ft-board.battle-axis .tactical-grid {
   grid-template-columns: repeat(var(--cols, 10), var(--cell));
@@ -8194,17 +8327,25 @@ body { margin: 0; background: var(--ink-2); }
 #report-message:not(:empty) { margin-top: 8px; }
 
 /* ---------- \u68CB\u76D8\u7F29\u653E ---------- */
-.ft-app[data-zoom="near"] { --cell-min: 50px; }
-.ft-app[data-zoom="near"] .ft-scroll { place-items: start; }
-.ft-app[data-zoom="near"] .ft-board.battle-axis { margin: auto; }
 .ft-board.battle-axis[data-compact="true"] .axis-unit-name { display: none; }
 .ft-board.battle-axis[data-compact="true"] .tactical-cell-coord { display: none; }
-.ft-zoom-only { display: none; }
+.ft-app.is-panning .ft-scroll { cursor: grabbing; user-select: none; }
+.ft-zoom {
+  position: absolute; z-index: 52; top: calc(var(--hud-top) + 8px); right: calc(var(--hud-right) + max(12px, var(--safe-r)));
+  display: flex; align-items: center; padding: 2px; border: 1px solid var(--line-mid); border-radius: 18px;
+  background: rgb(var(--shade-rgb) / .82); box-shadow: 0 4px 14px rgb(0 0 0 / .35);
+}
+.ft-zoom button {
+  display: grid; place-items: center; min-width: 32px; height: 30px; padding: 0 6px; border: 0; border-radius: 15px; background: none;
+  color: var(--accent-text); font: inherit; font-size: 17px; line-height: 1; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.ft-zoom #zoom-reset { min-width: 52px; font-size: 12px; color: var(--text-soft); }
+.ft-zoom button:disabled { opacity: .35; cursor: default; }
+.ft-zoom button:active:not(:disabled) { background: rgb(var(--gold-rgb) / .18); }
+@media (hover: hover) and (pointer: fine) { .ft-zoom button:not(:disabled):hover { background: rgb(var(--gold-rgb) / .14); color: var(--gold-bright); } }
 
 /* ---------- \u7A84\u5C4F\uFF08\u7AD6\u5C4F\u624B\u673A\uFF09 ---------- */
 @media (max-width: 760px) {
-  .ft-app { --cell-min: 30px; }
-  .ft-zoom-only { display: grid; }
   .ft-hud-top { flex-wrap: wrap; gap: 6px 8px; padding-bottom: 6px; }
   .ft-hud-title { flex: 1; min-width: 0; }
   .ft-title { overflow: hidden; text-overflow: ellipsis; }
@@ -8233,8 +8374,8 @@ body { margin: 0; background: var(--ink-2); }
 
 /* ---------- \u77EE\u5C4F\uFF08\u6A2A\u5C4F\u624B\u673A\uFF09\uFF1A\u9876\u680F\u538B\u6241\uFF0C\u52A8\u4F5C\u533A\u6539\u4E3A\u53F3\u4FA7\u7AD6\u680F ---------- */
 @media (orientation: landscape) and (max-height: 520px) {
-  .ft-app { --cell-min: 28px; --drawer-w: min(380px, 60vw); }
-  .ft-zoom-only { display: grid; }
+  .ft-app { --drawer-w: min(380px, 60vw); }
+  .ft-zoom { top: calc(var(--hud-top) + 4px); }
   .ft-hud-top { z-index: 52; flex-wrap: nowrap; min-height: 0; gap: 8px; padding-block: max(4px, var(--safe-t)) 4px; padding-right: calc(var(--hud-right) + 8px); }
   .ft-eyebrow, .ft-round { display: none; }
   .ft-title { font-size: 14px; }
@@ -8268,12 +8409,12 @@ body { margin: 0; background: var(--ink-2); }
   .ft-switch, .ft-mini-select, .ft-target-options label { min-height: 44px; }
   .ft-app input[type="checkbox"] { width: 22px; height: 22px; }
   .ft-close { width: 44px; height: 44px; }
+  .ft-zoom button { min-width: 44px; height: 40px; }
   .ft-log-entry > summary { min-height: 32px; }
   .ft-board button { touch-action: manipulation; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ft-drawer { animation: none; }
-  .ft-app[data-zoom] .ft-scroll { scroll-behavior: auto; }
   .ft-board .axis-unit.is-active { animation: none; }
   .ft-die.is-rolling { animation: none; }
 }
@@ -8445,7 +8586,7 @@ var list2 = (value) => Array.isArray(value) ? value : [];
 function createBattleGrid(battle, seed, units, warnings) {
   const grid = Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: "floor", z: 0 })));
   const anchors = battle.version === 1 ? [...list2(battle.units), ...list2(battle.covers), ...list2(battle.interactives)].filter((unit) => Number.isInteger(unit.z)) : [];
-  if (anchors.length) {
+  if (anchors.some((anchor2) => anchor2.z !== 0)) {
     const reserved = new Set([...battle.units ?? [], ...list2(battle.covers), ...list2(battle.interactives)].map((at) => `${at.x},${at.y}`));
     const painted = /* @__PURE__ */ new Set();
     for (const { x, y, z } of anchors) {
@@ -10080,7 +10221,7 @@ function deltas(source, event) {
 }
 async function requestViaCustomApi(settings, messages, options = {}) {
   const { root, source, model, key: key4, headers } = connection(settings, true);
-  const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.2), max_tokens = Number(settings.max_tokens || 2400);
+  const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 2400);
   const wireMessages = messages.map(({ role, content }) => ({ role, content }));
   let url, body;
   if (source === "openai") {
@@ -10474,7 +10615,7 @@ function renderApiTab(page, ctx) {
     return "\u6D4B\u8BD5\u8FDE\u63A5\u6210\u529F";
   });
   const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
-  field(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.2);
+  field(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.8);
   field(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 2400);
   const streamField = make("div", "field switch-field");
   const streamSwitch = make("label", "switch");
@@ -11091,13 +11232,14 @@ var DEFAULT_CONFIG = {
   baseUrl: "",
   apiKey: "",
   model: "",
-  temperature: 0.2,
+  temperature: 0.8,
   max_tokens: 2400,
   extraBody: "{}",
   excludeParams: "",
   headers: "{}",
   hideLauncher: false,
   autoScan: true,
+  autoDeliverBattleReport: true,
   charSnapshots: {},
   rosterSelection: null,
   normalizationBatches: {},
@@ -11923,7 +12065,11 @@ ${tag.textContent || ""}
       instanceId: battleInstanceId,
       storage,
       state,
-      customBattle: { seed: sources.seed, restart, restoreSaved }
+      customBattle: { seed: sources.seed, restart, restoreSaved },
+      onVictory() {
+        syncSettings();
+        if (config.autoDeliverBattleReport !== false) void deliverBattleReport();
+      }
     });
     const game = gameMount?.api;
     if (game?.subscribe) {
@@ -12017,6 +12163,29 @@ ${tag.textContent || ""}
       notify("\u6218\u5C40\u52A0\u8F7D\u5931\u8D25", e.message, () => scan(force));
     }
   }
+  async function deliverBattleReport() {
+    const mount3 = gameMount;
+    try {
+      const result = mount3?.exportBattleReportText?.() || options.game?.exportBattleReportText?.();
+      if (!result?.trim()) throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u4EA4\u4ED8\u7684\u6218\u62A5\u3002");
+      const textarea = doc.querySelector("#send_textarea");
+      const clipboard = doc.defaultView?.navigator?.clipboard;
+      if (textarea) {
+        textarea.value = result;
+        textarea.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
+        clipboard?.writeText(result).catch(() => {
+        });
+      } else {
+        if (!clipboard) throw new Error("\u627E\u4E0D\u5230\u804A\u5929\u8F93\u5165\u6846\uFF0C\u4E5F\u65E0\u6CD5\u5199\u5165\u526A\u8D34\u677F\u3002");
+        await clipboard.writeText(result);
+      }
+      if (disposed || gameMount !== mount3) return;
+      pages.sandbox.querySelector("[data-status]").textContent = result;
+      closePanel();
+    } catch (error2) {
+      showError(error2);
+    }
+  }
   function renderSandbox() {
     const page = pages.sandbox;
     page.replaceChildren(el(doc, "h3", {}, "\u6C99\u76D8"));
@@ -12029,23 +12198,14 @@ ${tag.textContent || ""}
     const refresh = el(doc, "button", { type: "button" }, "\u91CD\u65B0\u626B\u63CF");
     actions2.append(report, refresh);
     page.append(actions2);
-    const output = status2;
+    const autoDeliver = el(doc, "input", { type: "checkbox", "data-auto-deliver-report": "" });
+    autoDeliver.checked = config.autoDeliverBattleReport !== false;
+    const deliveryLabel = el(doc, "label");
+    deliveryLabel.append(autoDeliver, " \u80DC\u8D1F\u5DF2\u5B9A\u65F6\u81EA\u52A8\u4EA4\u4ED8\u6218\u62A5");
+    actions2.append(deliveryLabel);
+    on(autoDeliver, "change", () => persistSettings({ autoDeliverBattleReport: autoDeliver.checked }));
     on(refresh, "click", () => scan(true).catch(showError));
-    on(report, "click", () => {
-      try {
-        const result = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `\u5F53\u524D\u6218\u5C40\uFF1A${currentState.title} \xB7 \u56DE\u5408 ${currentState.round} \xB7 ${Object.values(currentState.units || {}).length} \u4E2A\u5355\u4F4D` : "");
-        const textarea = doc.querySelector("#send_textarea");
-        if (textarea) {
-          textarea.value = result;
-          textarea.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        if (typeof navigator !== "undefined" && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {
-        });
-        output.textContent = result || "\u5F53\u524D\u6CA1\u6709\u53EF\u4EA4\u4ED8\u7684\u6218\u62A5\u3002";
-      } catch (e) {
-        showError(e);
-      }
-    });
+    on(report, "click", deliverBattleReport);
   }
   askAI = async (kind, requestText = "", sessionId = kind === "chat" ? aiSessions.active().id : void 0, records) => {
     if (aiController || kind === "chat" && !requestText) return;

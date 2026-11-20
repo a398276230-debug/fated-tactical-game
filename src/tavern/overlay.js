@@ -249,8 +249,8 @@ export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\
 export const TAVERN_VERSION = '0.2.4';
 
 const DEFAULT_CONFIG = {
-  apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
-  extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true,
+  apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
+  extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
   charSnapshots: {}, rosterSelection: null, normalizationBatches: {},
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
 };
@@ -881,6 +881,10 @@ export function mountTavernOverlay(options = {}) {
     };
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
+      onVictory() {
+        syncSettings();
+        if (config.autoDeliverBattleReport !== false) void deliverBattleReport();
+      },
     });
     const game = gameMount?.api;
     if (game?.subscribe) {
@@ -967,14 +971,41 @@ export function mountTavernOverlay(options = {}) {
       notify('战局加载失败', e.message, () => scan(force));
     }
   }
+  async function deliverBattleReport() {
+    const mount = gameMount;
+    try {
+      const result = mount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.();
+      if (!result?.trim()) throw new Error('当前没有可交付的战报。');
+      const textarea = doc.querySelector('#send_textarea');
+      const clipboard = doc.defaultView?.navigator?.clipboard;
+      if (textarea) {
+        textarea.value = result;
+        textarea.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+        clipboard?.writeText(result).catch(() => {});
+      } else {
+        if (!clipboard) throw new Error('找不到聊天输入框，也无法写入剪贴板。');
+        await clipboard.writeText(result);
+      }
+      if (disposed || gameMount !== mount) return;
+      pages.sandbox.querySelector('[data-status]').textContent = result;
+      closePanel();
+    } catch (error) {
+      showError(error);
+    }
+  }
   function renderSandbox() {
     const page = pages.sandbox; page.replaceChildren(el(doc, 'h3', {}, '沙盘'));
     const status = el(doc, 'div', { class: 'fated-status', 'data-status': '' }, '打开此页会自动侦测当前聊天。'); page.append(status);
     const mountTarget = el(doc, 'div', { 'data-sandbox-mount': '' }); page.append(mountTarget);
     const actions = el(doc, 'div', { class: 'fated-actions' }); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(report, refresh); page.append(actions);
-    const output = status;
+    const autoDeliver = el(doc, 'input', { type: 'checkbox', 'data-auto-deliver-report': '' });
+    autoDeliver.checked = config.autoDeliverBattleReport !== false;
+    const deliveryLabel = el(doc, 'label');
+    deliveryLabel.append(autoDeliver, ' 胜负已定时自动交付战报');
+    actions.append(deliveryLabel);
+    on(autoDeliver, 'change', () => persistSettings({ autoDeliverBattleReport: autoDeliver.checked }));
     on(refresh, 'click', () => scan(true).catch(showError));
-    on(report, 'click', () => { try { const result = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
+    on(report, 'click', deliverBattleReport);
   }
   askAI = async (kind, requestText = '', sessionId = kind === 'chat' ? aiSessions.active().id : undefined, records) => {
       if (aiController || (kind === 'chat' && !requestText)) return;

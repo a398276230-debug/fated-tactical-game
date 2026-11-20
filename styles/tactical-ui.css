@@ -4,7 +4,7 @@ body { margin: 0; background: var(--ink-2); }
 
 .ft-app {
   /* --hud-top / --hud-bottom / --hud-right 由 main.js 按 HUD 实测尺寸写入；这里是首帧默认值 */
-  --hud-top: 58px; --hud-bottom: 118px; --hud-right: 0px; --cell-min: 50px; --drawer-w: min(400px, 92vw);
+  --hud-top: 58px; --hud-bottom: 118px; --hud-right: 0px; --zoom: 1; --drawer-w: min(400px, 92vw);
   --safe-t: env(safe-area-inset-top, 0px); --safe-r: env(safe-area-inset-right, 0px); --safe-b: env(safe-area-inset-bottom, 0px); --safe-l: env(safe-area-inset-left, 0px);
   --tone-hit: #f2d58b; --tone-crit: #ffd700; --tone-miss: #a9b0c2; --tone-damage: #ff9a90;
   --tone-heal: #96e6b3; --tone-status: #c6aef2; --tone-move: #a6e3c8; --tone-turn: #dfc080; --tone-defeat: #e07a7a;
@@ -26,14 +26,15 @@ body { margin: 0; background: var(--ink-2); }
 /* ---------- 舞台与棋盘 ---------- */
 .ft-stage { position: absolute; inset: 0; container-type: size; }
 .ft-scroll {
-  position: absolute; inset: 0; display: grid; place-items: center; overflow: auto;
+  position: absolute; inset: 0; display: grid; place-items: start; overflow: auto; touch-action: pan-x pan-y;
   padding: calc(var(--hud-top) + 10px) calc(var(--hud-right) + 16px) calc(var(--hud-bottom) + 10px) calc(var(--safe-l) + 16px);
   overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
 }
 .ft-board.battle-axis {
-  /* 默认让整盘放进可视区；--cell-min 是下限，放大模式把它调大后棋盘可拖动 */
-  --cell: max(var(--cell-min), min(calc((100cqw - 44px - var(--hud-right) - var(--safe-l)) / var(--cols, 10) - 2px), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 32px) / var(--rows, 10) - 2px)));
-  position: relative; width: max-content; margin: 0; padding: 0; border: 0; background: none; box-shadow: none;
+  /* --cell-fit 让整盘刚好放进可视区（即 100%）；--zoom 由缩放控件写入，放大后棋盘可拖动 */
+  --cell-fit: min(calc((100cqw - 44px - var(--hud-right) - var(--safe-l)) / var(--cols, 10) - 2px), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 32px) / var(--rows, 10) - 2px));
+  --cell: max(14px, calc(var(--cell-fit) * var(--zoom, 1)));
+  position: relative; width: max-content; margin: auto; padding: 0; border: 0; background: none; box-shadow: none;
 }
 .ft-board.battle-axis .tactical-grid {
   grid-template-columns: repeat(var(--cols, 10), var(--cell));
@@ -351,17 +352,25 @@ body { margin: 0; background: var(--ink-2); }
 #report-message:not(:empty) { margin-top: 8px; }
 
 /* ---------- 棋盘缩放 ---------- */
-.ft-app[data-zoom="near"] { --cell-min: 50px; }
-.ft-app[data-zoom="near"] .ft-scroll { place-items: start; }
-.ft-app[data-zoom="near"] .ft-board.battle-axis { margin: auto; }
 .ft-board.battle-axis[data-compact="true"] .axis-unit-name { display: none; }
 .ft-board.battle-axis[data-compact="true"] .tactical-cell-coord { display: none; }
-.ft-zoom-only { display: none; }
+.ft-app.is-panning .ft-scroll { cursor: grabbing; user-select: none; }
+.ft-zoom {
+  position: absolute; z-index: 52; top: calc(var(--hud-top) + 8px); right: calc(var(--hud-right) + max(12px, var(--safe-r)));
+  display: flex; align-items: center; padding: 2px; border: 1px solid var(--line-mid); border-radius: 18px;
+  background: rgb(var(--shade-rgb) / .82); box-shadow: 0 4px 14px rgb(0 0 0 / .35);
+}
+.ft-zoom button {
+  display: grid; place-items: center; min-width: 32px; height: 30px; padding: 0 6px; border: 0; border-radius: 15px; background: none;
+  color: var(--accent-text); font: inherit; font-size: 17px; line-height: 1; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.ft-zoom #zoom-reset { min-width: 52px; font-size: 12px; color: var(--text-soft); }
+.ft-zoom button:disabled { opacity: .35; cursor: default; }
+.ft-zoom button:active:not(:disabled) { background: rgb(var(--gold-rgb) / .18); }
+@media (hover: hover) and (pointer: fine) { .ft-zoom button:not(:disabled):hover { background: rgb(var(--gold-rgb) / .14); color: var(--gold-bright); } }
 
 /* ---------- 窄屏（竖屏手机） ---------- */
 @media (max-width: 760px) {
-  .ft-app { --cell-min: 30px; }
-  .ft-zoom-only { display: grid; }
   .ft-hud-top { flex-wrap: wrap; gap: 6px 8px; padding-bottom: 6px; }
   .ft-hud-title { flex: 1; min-width: 0; }
   .ft-title { overflow: hidden; text-overflow: ellipsis; }
@@ -390,8 +399,8 @@ body { margin: 0; background: var(--ink-2); }
 
 /* ---------- 矮屏（横屏手机）：顶栏压扁，动作区改为右侧竖栏 ---------- */
 @media (orientation: landscape) and (max-height: 520px) {
-  .ft-app { --cell-min: 28px; --drawer-w: min(380px, 60vw); }
-  .ft-zoom-only { display: grid; }
+  .ft-app { --drawer-w: min(380px, 60vw); }
+  .ft-zoom { top: calc(var(--hud-top) + 4px); }
   .ft-hud-top { z-index: 52; flex-wrap: nowrap; min-height: 0; gap: 8px; padding-block: max(4px, var(--safe-t)) 4px; padding-right: calc(var(--hud-right) + 8px); }
   .ft-eyebrow, .ft-round { display: none; }
   .ft-title { font-size: 14px; }
@@ -425,12 +434,12 @@ body { margin: 0; background: var(--ink-2); }
   .ft-switch, .ft-mini-select, .ft-target-options label { min-height: 44px; }
   .ft-app input[type="checkbox"] { width: 22px; height: 22px; }
   .ft-close { width: 44px; height: 44px; }
+  .ft-zoom button { min-width: 44px; height: 40px; }
   .ft-log-entry > summary { min-height: 32px; }
   .ft-board button { touch-action: manipulation; }
 }
 @media (prefers-reduced-motion: reduce) {
   .ft-drawer { animation: none; }
-  .ft-app[data-zoom] .ft-scroll { scroll-behavior: auto; }
   .ft-board .axis-unit.is-active { animation: none; }
   .ft-die.is-rolling { animation: none; }
 }

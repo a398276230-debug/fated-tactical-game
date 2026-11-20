@@ -24,7 +24,7 @@ function describeProposal(result) {
   return [`试算通过，确认后会改变 ${lines.length} 处：`, ...lines].join('\n');
 }
 
-export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, storage: storageArea } = {}) {
+export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, onVictory, storage: storageArea } = {}) {
   const document = root.ownerDocument, window = document.defaultView;
   const localStorage = storageArea ?? window?.localStorage;
   const $ = id => root.querySelector(`[id="${id}"]`);
@@ -59,14 +59,78 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const cell = $('board').querySelector('.tactical-cell')?.offsetWidth || 50;
     $('board-frame').dataset.compact = String(cell < 44);
   }
-  function setZoom(near) {
-    app.dataset.zoom = near ? 'near' : 'fit';
-    $('zoom-toggle').setAttribute('aria-pressed', String(near));
-    $('zoom-toggle').title = near ? '适应屏幕' : '放大棋盘（可拖动）';
-    storage.setItem('fated-tactical/zoom', app.dataset.zoom);
+  // 缩放：100% = 整盘刚好放进可视区。以指针（或屏幕中心）为锚点缩放，锚点下的格子保持不动。
+  const ZOOM_MIN = .5, ZOOM_MAX = 3;
+  let zoom = 1;
+  function setZoom(next, anchor) {
+    const value = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 100) / 100;
+    const scroller = $('board-scroll'), frame = $('board-frame');
+    const view = scroller.getBoundingClientRect();
+    const at = anchor ?? { x: view.left + view.width / 2, y: view.top + view.height / 2 };
+    const before = frame.getBoundingClientRect();
+    const rx = (at.x - before.left) / (before.width || 1), ry = (at.y - before.top) / (before.height || 1);
+    zoom = value;
+    app.style.setProperty('--zoom', String(zoom));
+    $('zoom-reset').textContent = `${Math.round(zoom * 100)}%`;
+    $('zoom-out').disabled = zoom <= ZOOM_MIN;
+    $('zoom-in').disabled = zoom >= ZOOM_MAX;
+    const after = frame.getBoundingClientRect();
+    scroller.scrollLeft += after.left + rx * after.width - at.x;
+    scroller.scrollTop += after.top + ry * after.height - at.y;
+    storage.setItem('fated-tactical/zoom', String(zoom));
     fitLayout();
-    const unit = active(state);
-    if (near && unit) cellFor(unit)?.scrollIntoView({ block: 'center', inline: 'center' });
+    layoutTargetCard();
+  }
+  const ZOOM_STEP = 1.25;
+  function bindZoom() {
+    const scroller = $('board-scroll');
+    on('zoom-in', 'click', () => setZoom(zoom * ZOOM_STEP));
+    on('zoom-out', 'click', () => setZoom(zoom / ZOOM_STEP));
+    on('zoom-reset', 'click', () => setZoom(1));
+    // 滚轮 / 触控板捏合（浏览器以 ctrl+wheel 上报）
+    scroller.addEventListener('wheel', e => {
+      e.preventDefault();
+      const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      setZoom(zoom * Math.exp(-delta * (e.ctrlKey ? .01 : .0015)), { x: e.clientX, y: e.clientY });
+    }, { passive: false, signal });
+    // 鼠标拖拽平移（单指拖动由浏览器原生滚动处理）。移动超过 5px 视为拖动，并吞掉随后那次点击。
+    let pan = null, dragged = false;
+    scroller.addEventListener('pointerdown', e => {
+      dragged = false;
+      if (e.pointerType === 'mouse' && e.button === 0) pan = { id: e.pointerId, x: e.clientX, y: e.clientY, left: scroller.scrollLeft, top: scroller.scrollTop };
+    }, { signal });
+    scroller.addEventListener('pointermove', e => {
+      if (!pan || e.pointerId !== pan.id) return;
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      if (!dragged && Math.hypot(dx, dy) <= 5) return;
+      if (!dragged) { dragged = true; app.classList.add('is-panning'); scroller.setPointerCapture?.(e.pointerId); }
+      scroller.scrollLeft = pan.left - dx; scroller.scrollTop = pan.top - dy;
+    }, { signal });
+    for (const type of ['pointerup', 'pointercancel']) scroller.addEventListener(type, () => { pan = null; app.classList.remove('is-panning'); }, { signal });
+    scroller.addEventListener('click', e => { if (dragged) { e.stopPropagation(); e.preventDefault(); dragged = false; } }, { capture: true, signal });
+    // 双指缩放：用 touch 事件而非 pointer 事件，因为浏览器一旦开始原生平移就会取消 pointer。
+    // preventDefault 同时阻止浏览器把整页缩放。
+    let pinch = null;
+    const span = t => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2, d: Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY) });
+    scroller.addEventListener('touchstart', e => { if (e.touches.length === 2) { pinch = { d: span(e.touches).d, zoom }; dragged = true; } }, { passive: true, signal });
+    scroller.addEventListener('touchmove', e => {
+      if (e.touches.length < 2 || !pinch) return;
+      e.preventDefault();
+      const m = span(e.touches);
+      if (pinch.d > 0) setZoom(pinch.zoom * m.d / pinch.d, m);
+    }, { passive: false, signal });
+    scroller.addEventListener('touchend', e => { if (e.touches.length < 2) pinch = null; }, { passive: true, signal });
+    // iOS Safari 的整页捏合手势
+    scroller.addEventListener('gesturestart', e => e.preventDefault(), { signal });
+    document.addEventListener('keydown', e => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input, textarea, select, [contenteditable]') || root.querySelector('dialog[open]')) return;
+      if (!root.contains(e.target) && e.target !== document.body) return;
+      if (e.key === '+' || e.key === '=') setZoom(zoom * ZOOM_STEP);
+      else if (e.key === '-' || e.key === '_') setZoom(zoom / ZOOM_STEP);
+      else if (e.key === '0') setZoom(1);
+      else return;
+      e.preventDefault();
+    }, { signal });
   }
   // 优先用浏览器原生全屏（手机上能藏掉地址栏）；不支持时退回为铺满视口的 is-expanded。
   async function toggleFullscreen() {
@@ -82,9 +146,19 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     window.requestAnimationFrame(fitLayout);
   }
 
+  let victoryPending = false;
+  function finishPlayback() {
+    busy = false;
+    show(live);
+    schedule();
+    if (victoryPending) {
+      victoryPending = false;
+      onVictory?.();
+    }
+  }
   const playback = createPlayback(root, {
     show(next, opts) { busy = !!opts?.busy; show(next); },
-    onIdle() { busy = false; show(live); schedule(); },
+    onIdle: finishPlayback,
   });
 
   function show(next) {
@@ -192,15 +266,15 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function onChange() {
     const before = live;
     live = game.getBattleState();
+    if (!['blue', 'red'].includes(live.outcome)) victoryPending = false;
+    else if (before && !before.outcome) victoryPending = true;
     try { storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
     catch { error('浏览器存储空间不足或已关闭；请下载快照保存战局。'); }
     view.renderControls(live);
     resetSelection();
     if (continues(before, live) && playback.enqueue(before, live)) { window.clearTimeout(timer); return; }
     playback.reset();
-    busy = false;
-    show(live);
-    schedule();
+    finishPlayback();
   }
   const execute = command => safely(() => {
     const result = game.playAction(command);
@@ -339,7 +413,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     on('auto-ai', 'change', () => { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); schedule(); });
     on('ai-speed', 'change', () => { storage.setItem('fated-tactical/ai-speed', $('ai-speed').value); schedule(); });
     on('skip-playback', 'click', () => playback.skip());
-    on('zoom-toggle', 'click', () => setZoom(app.dataset.zoom !== 'near'));
+    bindZoom();
     on('fullscreen-toggle', 'click', () => { toggleFullscreen().then(syncFullscreen); });
     document.addEventListener('fullscreenchange', syncFullscreen, { signal });
     if (window.ResizeObserver) {
@@ -376,7 +450,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
           const restored = game.restoreBattleSnapshot(data);
           configure(restored.scenarioId);
           closeDrawer();
-          if (restored.migratedFrom) { error('已恢复旧战局；借机规则从现在生效，旧撤销记录未迁移。'); return; }
+          if (restored.migratedFrom) { error('已恢复旧战局，旧撤销记录未迁移。'); return; }
         }
         error('');
       } catch (e) { error(`导入失败：${e.message}`); }
@@ -503,12 +577,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (value != null && [...$(id).options].some(o => o.value === value)) $(id).value = value;
   }
   playback.setSpeed(Number($('anim-speed').value));
-  if (storage.getItem('fated-tactical/zoom') === 'near') app.dataset.zoom = 'near';
-  $('zoom-toggle').setAttribute('aria-pressed', String(app.dataset.zoom === 'near'));
   try {
     if (snapshot) {
       const restored = snapshot.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: 'custom_state', state: snapshot });
-      if (restored.migratedFrom) error('已续接旧战局；借机规则从现在生效，旧撤销记录未迁移。');
+      if (restored.migratedFrom) error('已续接旧战局，旧撤销记录未迁移。');
     } else game.createBattle({ scenarioId: 'ruins', ruleset: 'protocol' });
   } catch (cause) {
     if (customBattle) {
@@ -534,6 +606,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   });
   onChange();
   fitLayout();
+  setZoom(Number(storage.getItem('fated-tactical/zoom')) || 1);
   seenLogs = live.logs.length;
   $('log-unread').hidden = seenLogs <= 2;
 

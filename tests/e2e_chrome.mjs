@@ -308,6 +308,45 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run(`aiButton('删除').click()`);
   assert.deepEqual((await aiData()).sessions.map(s => s.id), [sessions[0], sessions[2]]);
   await selectSession(sessions[0]);
+  await click('[data-tab="sandbox"]');
+  const reportToggle = '[data-auto-deliver-report]';
+  const panelHidden = () => run(`${get('.fated-tavern-panel')}.hidden`);
+  assert.equal(await run(`${get(reportToggle)}.checked`), true);
+  await run(`(() => {
+    const input = document.createElement('textarea');
+    input.id = 'send_textarea';
+    input.hidden = true;
+    document.body.append(input);
+    window.deliveredReports = [];
+    input.addEventListener('input', () => deliveredReports.push(input.value));
+  })()`);
+  const winBattle = () => run(`(() => {
+    document.querySelector('#sandbox-editor').value = JSON.stringify([
+      {type:'set_unit_stat', unitId:'e1', patch:{hp:0}}
+    ]);
+    document.querySelector('#sandbox-preview').click();
+    document.querySelector('#sandbox-commit').click();
+    return { outcome: window.__fatedTacticalTavern.getState().outcome, deliveries: deliveredReports.length };
+  })()`);
+  await select('#anim-speed', '1');
+  assert.deepEqual(await winBattle(), { outcome: 'blue', deliveries: 0 });
+  await until(panelHidden, '胜利演出后自动交付并关闭');
+  const reports = () => run('window.deliveredReports');
+  assert.equal((await reports()).length, 1);
+  assert.match((await reports())[0], /蓝方/);
+  assert.doesNotMatch((await reports())[0], /<UpdateVariable>/);
+  await run('window.__fatedTacticalTavern.open()');
+  assert.equal(await panelHidden(), false);
+  assert.equal((await reports()).length, 1);
+  await click(reportToggle);
+  await select('#anim-speed', '0');
+  await run(`${get('#sandbox-undo')}.click()`);
+  assert.deepEqual(await winBattle(), { outcome: 'blue', deliveries: 1 });
+  assert.equal(await panelHidden(), false);
+  await click('[data-page="sandbox"] > .fated-actions button:first-child');
+  assert.equal(await panelHidden(), true);
+  assert.equal((await reports()).length, 2);
+  assert.equal((await reports())[1], (await reports())[0]);
   await run(`(() => {
     const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/'));
     const config = JSON.parse(localStorage.getItem(key));
@@ -316,6 +355,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   })()`);
   await send('Page.reload');
   await until(() => run(`window.__fatedTacticalTavern?.getConfig().aiSessions.activeId === ${JSON.stringify(sessions[0])}`), '刷新恢复会话');
+  assert.equal(await run(`${get(reportToggle)}.checked`), false);
   await click('.fated-tavern-launcher');
   await click('[data-tab="ai"]');
   assert.deepEqual((await aiData()).sessions[0].messages.map(m => m.role), ['user', 'assistant', 'tool']);
@@ -328,6 +368,17 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('#auto-ai');
   // 逐格断言 DOM 的步骤关闭演出；演出本身在自动敌方回合处单独验证
   await select('#anim-speed', '0');
+  // 桌面：100% 时整盘放满舞台；滚轮以指针为锚点缩放
+  const wheelAt = async (deltaY) => { const b = await run(`(() => { const r=${get('#board')}.getBoundingClientRect(); return {x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2)}; })()`);
+    await send('Input.dispatchMouseEvent', { type:'mouseWheel', x:b.x, y:b.y, deltaX:0, deltaY }); await pause(120); };
+  const cellSize = () => run(`Math.round(${get('#board .tactical-cell')}.getBoundingClientRect().width)`);
+  const fitted = await cellSize();
+  assert.ok(fitted > 60, `1440×920 下 100% 应放大填满舞台，实际每格 ${fitted}px`);
+  await wheelAt(-300);
+  assert.ok(await cellSize() > fitted, '滚轮向上放大');
+  assert.notEqual(await run(`${get('#zoom-reset')}.textContent`), '100%');
+  await click('#zoom-reset');
+  assert.equal(await cellSize(), fitted);
   await select('#scenario-select', 'altar');
   assert.match(await run(`${get('#scenario-preview')}.textContent`), /坡道/);
   await click('#reset-button');
@@ -482,10 +533,20 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await send('Emulation.setDeviceMetricsOverride', { width:390, height:844, deviceScaleFactor:1, mobile:true });
   let fit = await boardFit();
   assert.deepEqual({ ...fit, cell: fit.cell >= 30 }, { pageFits:true, scrollable:false, clear:true, side:false, compact:'true', cell:true }, '竖屏手机整盘可见');
-  await click('#zoom-toggle');
+  await click('#zoom-in'); await click('#zoom-in'); await click('#zoom-in');
   fit = await boardFit();
-  assert.deepEqual([fit.scrollable, fit.cell >= 50, fit.compact], [true, true, 'false'], '放大后可拖动');
-  await click('#zoom-toggle');
+  assert.deepEqual([fit.scrollable, fit.cell >= 50, fit.compact, await run(`${get('#zoom-reset')}.textContent`)], [true, true, 'false', '195%'], '放大后可拖动');
+  await click('#zoom-reset');
+  assert.equal(await run(`${get('#zoom-reset')}.textContent`), '100%');
+  await send('Emulation.setTouchEmulationEnabled', { enabled:true, maxTouchPoints:2 });
+  { const c = await run(`(() => { const r=${get('#board')}.getBoundingClientRect(); return {x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2)}; })()`);
+    const at = d => [{ x:c.x-d, y:c.y, id:1 }, { x:c.x+d, y:c.y, id:2 }];
+    await send('Input.dispatchTouchEvent', { type:'touchStart', touchPoints:at(40) });
+    for (const d of [60, 80, 100]) await send('Input.dispatchTouchEvent', { type:'touchMove', touchPoints:at(d) });
+    await send('Input.dispatchTouchEvent', { type:'touchEnd', touchPoints:[] }); }
+  assert.equal(await run(`${get('#zoom-reset')}.textContent`), '250%', '双指张开放大');
+  assert.equal(await run('visualViewport.scale'), 1, '双指不缩放整页');
+  await click('#zoom-reset');
   await send('Emulation.setDeviceMetricsOverride', { width:844, height:390, deviceScaleFactor:1, mobile:true });
   fit = await boardFit();
   assert.deepEqual({ ...fit, cell: fit.cell >= 28 }, { pageFits:true, scrollable:false, clear:true, side:true, compact:'true', cell:true }, '横屏手机：动作区在右侧，棋盘不被遮挡');

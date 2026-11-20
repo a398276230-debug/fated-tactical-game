@@ -354,7 +354,7 @@ export function renderApiTab(page, ctx) {
     return '测试连接成功';
   });
   const sampling = card('⚙ 采样参数');
-  field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.2);
+  field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.8);
   field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 2400);
   const streamField = make('div', 'field switch-field');
   const streamSwitch = make('label', 'switch');
