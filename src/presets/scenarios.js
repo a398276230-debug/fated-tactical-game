@@ -64,12 +64,12 @@ export function buildScenario(request = 'ruins') {
   if (request?.kind === 'custom_state' && object(request.state)) return migrateStateEffects(structuredClone(request.state));
   if (typeof request === 'string') request = { scenarioId: request };
   if (!object(request) || !Object.keys(request).every(key => ['scenarioId', 'seed', 'mode', 'ruleset', 'persistentSnapshot'].includes(key))) throw new Error('无效的开局参数');
-  const { scenarioId = 'ruins', mode = 'free', ruleset = 'protocol', persistentSnapshot } = request;
+  const { scenarioId = 'ruins', ruleset = 'protocol', persistentSnapshot } = request;
   if (typeof scenarioId !== 'string' || !own(SCENARIOS, scenarioId)) throw new Error('未知预设关卡');
   const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
   const seed = request.seed ?? defaultSeed;
-  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !['free', 'split'].includes(mode) || !['protocol','sandbox'].includes(ruleset)) throw new Error('无效的种子或行动规则');
-  const state = { scenarioId, title, mode, ruleset, round: 1, turn: 0, order: [], units: {}, items: {},
+  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !['protocol','sandbox'].includes(ruleset)) throw new Error('无效的种子或行动规则');
+  const state = { scenarioId, title, mode:'split', ruleset, round: 1, turn: 0, order: [], units: {}, items: {},
     equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS),
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
     covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };

@@ -65,6 +65,8 @@ test('reactor charge is spent even on a miss; starts ready and refills on its ow
   assert.equal(logs.find(e => e.type === 'roll').detail.selected, 1);
   assert.equal(s.units.mover.hp, 50);
   assert.equal(s.units.sentry.reactionAvailable, false);
+  assert.equal(preview(s, {type:'move',x:0,y:0}).ok,false);
+  s.units.mover.used.action=0; // isolate reaction availability from the mover's slot
   assert.deepEqual(preview(s, { type: 'move', x: 0, y: 0 }).opportunities, []);
   assert.equal(reactions(applyAction(s, { type: 'move', x: 0, y: 0 })).length, 0);
   assert.equal(s.units.sentry.reactionAvailable, true);
@@ -126,7 +128,7 @@ test('disengage is a 1 AP move that neither provokes nor consumes a reaction', (
   assert.notEqual(s.units.sentry.reactionAvailable, false);
   assert.equal(s.rng, 0);
   assert.equal(preview(s, action).ok, false);
-  s.mode = 'free';
+  s.units.mover.used.action=0;
   assert.equal(preview(s, { type: 'move', x: 0, y: 0 }).opportunities.length, 1, 'immunity does not carry to another move');
 });
 

@@ -29,7 +29,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   const localStorage = storageArea ?? window?.localStorage;
   const $ = id => root.querySelector(`[id="${id}"]`);
   const view = createRenderer(root);
-  const scenario = $('scenario-select'), mode = $('mode-select'), seed = $('seed-input');
+  const scenario = $('scenario-select'), seed = $('seed-input');
   const storage = {
     getItem: key => { try { return localStorage?.getItem(key) ?? null; } catch { return null; } },
     setItem: (key, value) => { try { localStorage?.setItem(key, value); } catch { /* optional */ } },
@@ -133,10 +133,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (!seed.value || !seed.checkValidity()) throw new Error('种子须为 0–4294967295 的整数');
     if (customBattle) {
       const value = Number(seed.value);
-      game.createBattle({ kind: 'custom_state', state: customBattle.restart({ seed: value, mode: mode.value }) });
+      game.createBattle({ kind: 'custom_state', state: customBattle.restart({ seed: value }) });
       customBattle.seed = value;
       storage.setItem(`${storageKey}/seed`, String(value));
-    } else game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
+    } else game.createBattle({ scenarioId: scenario.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
     closeDrawer();
   }
 
@@ -216,7 +216,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
-      if (plan.ok) options.push({ command, plan, label: skill ? plan.name : ACTION_LABELS[type] });
+      if (plan.ok && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
     };
     if (canAct) {
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
@@ -328,7 +328,6 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
         } else {
           const restored = game.restoreBattleSnapshot(data);
           configure(restored.scenarioId);
-          mode.value = restored.mode;
           closeDrawer();
           if (restored.migratedFrom) { error('已恢复旧战局；借机规则从现在生效，旧撤销记录未迁移。'); return; }
         }
@@ -479,7 +478,6 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
   const initial = game.getStateSummary();
   configure(initial.scenarioId);
-  mode.value = initial.mode;
   bindControls();
   const unsubscribe = game.subscribe(() => {
     if (pending) { pending = null; $('sandbox-commit').disabled = true; }
@@ -493,7 +491,6 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     loadState(next) {
       const result = next?.kind === 'battle' ? game.restoreBattleSnapshot(next) : game.createBattle({ kind: 'custom_state', state: next });
       if (!customBattle) configure(result.scenarioId);
-      mode.value = result.mode;
       error('');
       return result;
     },

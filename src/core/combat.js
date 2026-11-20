@@ -327,9 +327,7 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
   }
   if (!alive(recipient) || recipient.fled) return { recipient, dealt: 0 };
   const formula = mitigation(state, recipient, type, hit, armorPierce, { attacker, intercepting: recipient !== target, ignoreArmor: options.ignoreArmor });
-  const modified = Math.max(0, hit
-    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker) : 1))
-    : Math.floor(amount * formula.multiplier) - Math.floor(formula.armor));
+  const modified = mitigatedDamage(amount, formula, hit, attacker);
   if (formula.shatter) {
     delete recipient.statuses.freeze;
     record(state, sourceUnitId, 'shatter', `${recipient.name}的冰层碎裂`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
@@ -358,6 +356,12 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, 'true', '棘甲反伤', { reaction: true });
   }
   return { recipient, dealt };
+}
+
+function mitigatedDamage(amount, formula, hit, attacker) {
+  return Math.max(0, hit
+    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker) : 1))
+    : Math.floor(amount * formula.multiplier) - Math.floor(formula.armor));
 }
 
 function mitigation(state, unit, type, hit, pierce, ctx = {}) {
@@ -683,7 +687,7 @@ const insufficientHP = 'HP 不足，无法施放';
 // Split mode assigns an AP to each slot. Two-AP actions occupy both slots.
 function paymentError(state, unit, ap, slot, template = {}) {
   if (unit.ap < ap) return `需要 ${ap} AP`;
-  if (state.mode === 'split' && (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot])) {
+  if (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot]) {
     return '本回合对应的行动槽已使用';
   }
   const {hp,mp,sp} = actorCost(template);
@@ -1000,7 +1004,13 @@ export function preview(state, action) {
   const unplaced = x === undefined && y === undefined;
   if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed)) return fail('动作带有不适用的参数');
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !tileAt(state, x, y))) return fail('目标坐标超出棋盘');
-  const { ap, slot } = cost;
+  if (type === 'interact' && unplaced) {
+    const cells = values(state.interactives).filter(v => !v.spent && preview(state, {type, x:v.x, y:v.y}).ok).sort(byId).map(v => pos(v.x,v.y));
+    return cells.length ? {ok:true, ap:1, cost:1, cells} : fail('没有可用的互动点', {cells});
+  }
+  const item = !unplaced && (type === 'interact' || type === 'attack') ? values(state.interactives).find(v => !v.spent && v.x === x && v.y === y) : null;
+  const detonate = item?.kind === 'barrel';
+  const { ap } = cost, slot = detonate ? 'attack' : cost.slot;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === 'end') return common;
   if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
@@ -1053,22 +1063,25 @@ export function preview(state, action) {
     return { ...common, cells, path: choice.path, steps: choice.steps, opportunities: choice.opportunities,
       dz: elevation(state, center) - elevation(state, unit) };
   }
-  if (type === 'interact') {
-    const objects = values(state.interactives).filter(v => !v.spent && inInteractionRange(state, unit, v)).sort(byId);
-    if (unplaced) return { ...common, cells: objects.map(v => pos(v.x, v.y)) };
-    const item = objects.find(v => sameCell(v, center));
-    if (!item) return fail('没有可用的邻近互动点');
-    const cells = item.kind === 'barrel' ? area(state, unit, center, { shape: 'circle', range: 2, radius: 1.5 }) : [center];
+  if (type === 'interact' || detonate) {
+    if (!item) return fail('没有可用的互动点');
+    if (detonate) {
+      if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail('弹仓已空，请装填');
+      if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail('爆桶超出武器射程或被墙体阻挡');
+    } else if (distance(state,unit,item) > 1.5 || !clearSight(state,unit,item)) return fail('需要靠近互动点');
+    const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: 1.5 }) : [center];
     const keyset = new Set(cells.map(at => key(at.x, at.y)));
     const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }]
       : living(state).filter(u => keyset.has(key(u.x, u.y))).map(u => {
         const guard = guardFor(state, u) ?? u;
-        const hit = mitigation(state, guard, 'energy', true, 0);
+        const formula = mitigation(state, guard, 'energy', true, 0, { attacker:unit, intercepting:guard !== u });
         const shield = statusOf(guard, 'shield');
-        const damage = Math.max(0, Math.floor(12 * hit.multiplier) - hit.armor - (shield ? statusAmount(shield) : 0));
-        return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y, damage: [damage, damage], expectedDamage: damage, hitChance: 1 };
+        const damage = Math.max(0, mitigatedDamage(12, formula, true, unit) - (shield ? statusAmount(shield) : 0));
+        return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y,
+          damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
       });
-    return { ...common, interactiveId: item.id, kind: item.kind, cells, targets, center };
+    return { ...common, ...(detonate ? reaches(state, unit, item, weapon.template, weapon.ammo) : {}),
+      name: `${detonate ? '引爆' : '激活'}${item.name}`, interactiveId: item.id, kind: item.kind, cells, targets, center };
   }
   const attack = type === 'attack' || type === 'shield_bash';
   const shieldBash = type === 'shield_bash';
@@ -1419,6 +1432,8 @@ function applyInteraction(state, actor, plan) {
   if (!sameCell(actor, item)) actor.facing = signFacing(actor, item);
   record(state, actor, 'interact', `${actor.name}${item.kind === 'barrel' ? '引爆' : '激活'}${item.name}`, { interactiveId: item.id });
   if (item.kind === 'barrel') {
+    const weapon = weaponInfo(state, actor);
+    if (weapon.ammo && !weapon.infiniteAmmo) dsl.changeResource(state, actor, actor, {kind:'drainResource',resource:weapon.ammo.resource,local:true}, 1, '引爆', {instance:weapon.instance});
     for (const profile of plan.targets) {
       const target = state.units[profile.id];
       if (alive(target)) damageTarget(state, target, actor.id, 12, 'energy', '爆桶', { attacker: actor, hit: true, direct: false });
@@ -1467,7 +1482,7 @@ export function applyAction(state, action) {
         changeCounter(state, actor, item, effect, resource, amount - cost);
       }
     }
-    if (plan.ap === 2 && state.mode === 'split') { actor.used.attack++; actor.used.action++; }
+    if (plan.ap === 2) { actor.used.attack++; actor.used.action++; }
     else if (plan.slot) actor.used[plan.slot]++;
     const actionIntent = ['attack', 'skill'].includes(type) && plan.intent && plan.intent !== 'normal' && plan.shape === 'single' ? plan.intent : 'normal';
     const targetId = plan.targets?.find(target => target.kind !== 'cover')?.id ?? null;
@@ -1482,7 +1497,8 @@ export function applyAction(state, action) {
   }
   switch (type) {
     case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
-    case 'attack': case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
+    case 'attack': if (plan.interactiveId) { applyInteraction(state, actor, plan); break; }
+    case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
     case 'use_item': {
       actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
       record(state, actor, 'item', `${actor.name}使用同调副手道具`, { itemId: plan.itemId, remaining: actor.attunementCharges });

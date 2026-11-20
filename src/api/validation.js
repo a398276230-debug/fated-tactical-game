@@ -230,7 +230,7 @@ export function validateState(s) {
   if (own(s, 'effectTemplates')) table(s.effectTemplates, (e, key) => { requireThat(isExpression(e) && e.id === key, 'effectTemplates'); validateEffect(e, s); });
   if (own(s, 'summonTemplates')) table(s.summonTemplates, (u, key) => { unitValue(u, key, s); requireThat(u.skills.every(skill => has(s.skills, skill)), 'summon skills'); });
   if (own(s, 'statusTemplates')) statusTemplateTable(s.statusTemplates);
-  requireThat(id(s.scenarioId) && text(s.title) && ['free','split'].includes(s.mode) && ['protocol','sandbox'].includes(s.ruleset) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
+  requireThat(id(s.scenarioId) && text(s.title) && s.mode === 'split' && ['protocol','sandbox'].includes(s.ruleset) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
     && [null,'blue','red','draw'].includes(s.outcome), '战局');
   requireThat(Array.isArray(s.grid) && s.grid.length === 10, '棋盘');
   for (const row of s.grid) {

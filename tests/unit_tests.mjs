@@ -84,7 +84,7 @@ test('三个预设独立开局，种子 0 可用、读模型不泄漏引用', ()
   }
 });
 
-test('自由 2 AP：移动→普攻，RNG/动作日志与击杀计数可撤销并精确重放', () => {
+test('固定双槽：移动→普攻，RNG/动作日志与击杀计数可撤销并精确重放', () => {
   const a = boot();
   assert.equal(u(a,'swordsman').ap,2);
   act(a,'move',2,2);
@@ -106,6 +106,7 @@ test('架势防御区分空地与借掩体，战报不把站位当成遮蔽', ()
   assert.equal(a.previewAction({type:'brace'}).turns,1);
   commit(a, stats('scout',{x:3,y:0}));
   act(a,'move',3,2);
+  assert.equal(a.previewAction({type:'brace'}).ok,false); end(a); turn(a,'swordsman');
   const p=a.previewAction({type:'brace'});
   assert.equal(p.coverId,'C1'); assert.equal(p.turns,2); assert.equal(p.reduction,.35);
   act(a,'brace');
@@ -215,12 +216,13 @@ test('眩晕跳过一轮行动；定身仍可施法；嘲讽迫使选择来源',
   assert.ok(events(a).some(e=>e.type==='skip'&&e.actor==='oracle'));
 });
 
-test('弩弹、1AP 装填、同一槽内复用；祭坛给予可见护盾疾走', () => {
+test('弩弹、1AP 装填、同一槽不能复用；祭坛给予可见护盾疾走', () => {
   const a=boot(); turn(a,'ranger');
   commit(a,counter('ranger-weapon',0,'ammo'));
   assert.match(a.previewAction({type:'attack'}).error,/弹仓/);
   act(a,'reload'); assert.equal(u(a,'ranger').ap,1);
   assert.equal(a.getBattleState().items['ranger-weapon'].counters.ammo,6);
+  assert.equal(probe(a,'interact',2,3).ok,false); end(a);turn(a,'ranger');
   act(a,'interact',2,3); assert.ok(u(a,'ranger').statuses.haste); assert.equal(u(a,'ranger').statuses.shield.amount,10);
 });
 
@@ -261,10 +263,36 @@ test('重斩击退撞墙并晕眩；爆桶不是刀的直杀来源', () => {
   assert.ok(events(a).some(e=>e.type==='damage'&&e.text.includes('撞击')));
   assert.ok(u(a,'colossus').statuses.stun);
   const b=boot();
-  commit(b,stats('swordsman',{x:6,y:7}),stats('scout',{x:7,y:7}));
+  commit(b,stats('swordsman',{x:8,y:6}),stats('scout',{x:7,y:7}));
   act(b,'interact',7,6);
   assert.equal(u(b,'scout').hp,0);
   assert.equal(b.getBattleState().items['soulblade-lan'].counters.souls,0);
+});
+
+test('爆桶按武器射程与视线引爆，祭坛独立消耗动作槽', () => {
+  const a=boot({mode:'free'});
+  assert.equal(a.getStateSummary().mode,'split');
+  const barrel={x:7,y:6}, altar={x:2,y:3};
+  commit(a,stats('swordsman',{x:7,y:9}),stats('scout',{x:7,y:7}));
+  assert.equal(probe(a,'attack',barrel.x,barrel.y).ok,false);
+  assert.equal(probe(a,'interact',barrel.x,barrel.y).ok,false);
+  turn(a,'ranger');
+  commit(a,stats('ranger',{x:7,y:9}),stats('swordsman',{x:1,y:2}),cell(7,8,{kind:'wall'}));
+  assert.equal(probe(a,'attack',barrel.x,barrel.y).ok,false);
+  commit(a,cell(7,8,{kind:'floor'}));
+  assert.equal(probe(a,'interact',altar.x,altar.y).ok,false);
+  const plan=probe(a,'attack',barrel.x,barrel.y);
+  assert.equal(plan.distance,3);
+  assert.equal(plan.slot,'attack');
+  assert.deepEqual(probe(a,'interact',barrel.x,barrel.y),plan);
+  assert.ok(plan.targets.some(target=>target.id==='scout'));
+  assert.ok(a.previewAction({type:'interact'}).cells.some(at=>at.x===7&&at.y===6));
+  act(a,'interact',barrel.x,barrel.y);
+  assert.equal(a.getBattleState().interactives.I2.spent,true);
+  assert.equal(u(a,'scout').hp,0);
+  assert.equal(a.getBattleState().items['ranger-weapon'].counters.ammo,5);
+  assert.equal(a.previewAction({type:'attack'}).ok,false);
+  assert.equal(a.previewAction({type:'brace'}).ok,true);
 });
 
 test('白名单拒绝畸形值；事务原子；幂等检查、真实 diff 和 revision 失效', () => {
@@ -318,7 +346,7 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
 });
 
 test('三个预设均可打到胜负；完整战报和 JSON 日志可重放', () => {
-  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','red']]) {
+  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','blue']]) {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {
       a.playAction(chooseAction(a.getBattleState()));

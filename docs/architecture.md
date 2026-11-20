@@ -124,7 +124,7 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 | --- | --- | --- |
 | `scenarioId` | ID ≤64 | `buildScenario` / `hydrateFromSources` |
 | `title` | 文本 ≤100 | 同上 |
-| `mode` | `free` / `split` | 开局参数；`split` 下动作按 `attack`/`action` 槽计费 |
+| `mode` | 固定 `split` | 每回合 1 动作 + 1 攻击；2 AP 行动同时占两槽。祭坛相邻激活耗动作槽；爆桶按当前武器射程及视线引爆，耗攻击槽 |
 | `ruleset` | `protocol` / `sandbox` | 开局参数；`sandbox` 仅测试夹具使用 |
 | `round` | 1…1e6 | `advanceCursor` |
 | `turn` | 0…order.length-1 | `advanceCursor` / `remove_unit` |
@@ -152,7 +152,7 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 可选：`reactionAvailable,fled,diedAt,corpseOf,corpseConsumed,creatureType,tags,resources,inventory,effectUsage,effectModifiers`，以及协议字段 `mainHand,offHand,shield,bodyLengthM,tier,mc,nonLethal,intent,bonusDice,penaltyDice,stance,moraleType,moraleState,greatswordMode,parryQuota,parryRefunded,attunementCharges,blockMode,initiativePercent,attackInit,actionInit,flatInitiative,lockedTargetId,deathrattle,deathrattleTriggered,moraleCheckedRound,maneuvers`。
 
 - `facing` 是 `[-1|0|1, -1|0|1]`，至少一个非零。
-- `used: {action, attack}` 只在 `split` 模式计费，`ap` 每回合补到 2。
+- `used: {action, attack}` 记录本回合两个槽的使用情况，`ap` 每回合补到 2。
 - `gear` ≤12、`skills` ≤32、`statuses` 条数上限 `64 + 26`。
 - `resources`/`inventory` 是整数表；`effectUsage` 记录 `{count, round}`；`effectModifiers` 记录临时属性修正 `{stat, flat, percent, turns, round, turn, damageType?}`。
 - 同一格不能有多个 `hp > 0` 的单位，也不能压墙或压存活掩体。

@@ -7,6 +7,7 @@ const commit=(a,command)=>{const p=a.proposeCommands([command],{baseRevision:a.g
 test('蓄力与探察是可执行动作并影响后续意图',()=>{
  const a=boot(); endTo(a,'swordsman');
  a.playAction({type:'charge'}); assert.ok(a.inspectUnit('swordsman').statuses.charge);
+ assert.equal(a.previewAction({type:'scan'}).ok,false);a.playAction({type:'end'});endTo(a,'swordsman');
  a.playAction({type:'scan'}); assert.equal(a.inspectUnit('swordsman').statuses.weakness.stacks,3);
 });
 test('定位、擒抱、缴械、绊摔、推撞都写入可重放日志',()=>{

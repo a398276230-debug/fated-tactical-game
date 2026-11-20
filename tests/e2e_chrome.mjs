@@ -340,7 +340,27 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     items:document.querySelectorAll('#board .tactical-interact').length, fit:board.width>350&&board.left>=box.left&&board.right<=box.right+1&&box.right<=innerWidth,
     spill:document.documentElement.scrollWidth>innerWidth }; })()`);
   assert.deepEqual(layout, { cells:100, covers:4, items:4, fit:true, spill:false });
+  assert.equal(await run('document.querySelector("#mode-select")'), null);
+  assert.equal((await state()).mode, 'split');
   const actions = type => `#action-toolbar [data-action="${type}"]`;
+  await run(`(() => {
+    const game = window.FatedTacticalGame;
+    const fixture = game.getBattleState();
+    Object.assign(fixture.units.swordsman, {x:7,y:9,weapon:'ranger-weapon',mainHand:'ranger-weapon'});
+    Object.assign(fixture.units.ranger, {weapon:null,mainHand:null});
+    Object.assign(fixture.units.scout, {x:7,y:7,hp:1,armor:0});
+    game.createBattle({kind:'custom_state',state:fixture});
+  })()`);
+  assert.ok(await run(`${get(cell(7,6))}.classList.contains('is-in-range')`));
+  await click(cell(7,6));
+  assert.match(await run(`${get(actions('attack'))}.textContent`), /引爆/);
+  await click(actions('attack'));
+  assert.match(await run(`${get('#tactical-preview')}.textContent`), /爆炸波及/);
+  assert.ok(await run(`${get(cell(7,7))}.classList.contains('axis-covered')`));
+  await click('#confirm-action');
+  assert.equal((await state()).interactives.I2.spent, true);
+  assert.equal((await state()).units.scout.hp, 0);
+  await click('#reset-button');
   assert.equal((await actor()).id, 'swordsman');
   assert.ok(await run(`${get(cell(2, 2))}.classList.contains('is-reachable')`));
   await click(cell(1, 2));
@@ -366,16 +386,23 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.deepEqual(corpse, { filter: 'grayscale(1)', pointer: 'none', unit: null, selected: 'false' });
   t.diagnostic(`G57 ${JSON.stringify(corpse)}`);
   assert.equal((await state()).items['soulblade-lan'].counters.souls, 1);
-  for (let step = 0; (await actor()).id !== 'swordsman'; step++) {
+  const returnToSwordsman = async () => {
+    for (let step = 0; (await actor()).id !== 'swordsman'; step++) {
     assert.ok(step < 20, '先攻队列应回到剑客');
     if ((await actor()).team === 'red') {
       const n = (await state()).logs.length;
       await click('#ai-step'); assert.ok((await state()).logs.length > n);
     } else await click('#end-turn');
-  }
+    }
+  };
+  await returnToSwordsman();
   await click(cell(2, 3)); await click(actions('interact'));
   assert.equal((await state()).interactives.I1.spent, true);
   assert.ok((await state()).units.swordsman.statuses.haste);
+  await click(cell(2, 2));
+  assert.equal(await run('document.querySelector(\'#action-toolbar [data-skill-id="armor"]\')'), null);
+  await click('#end-turn');
+  await returnToSwordsman();
   await click(cell(2, 2)); await click('#action-toolbar [data-skill-id="armor"]'); await click('#confirm-action');
   assert.ok((await state()).units.swordsman.statuses.thorns);
   await click('#api-sandbox summary'); await click('[data-example="counter"]'); await click('#sandbox-preview');
@@ -459,6 +486,12 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     const separation=Math.max(a.left-c.right,c.left-a.right,a.top-c.bottom,c.top-a.bottom);
     return separation>=4 && separation<=10 && c.left>=0 && c.right<=innerWidth && c.top>=0 && c.bottom<=innerHeight && c.width<innerWidth*.8;
   })()`), '触屏浮卡紧贴目标且不盖住目标格');
+  assert.equal(await run(`Boolean(${get(actions('brace'))})`), false);
+  await click('#end-turn');
+  await returnToSwordsman();
+  const rested = (await state()).units.swordsman;
+  await tap(cell(rested.x, rested.y));
+  await until(() => run(`Boolean(${get(actions('brace'))})`), '下一回合恢复动作槽');
   assert.ok(await run(`${get(actions('brace'))}.getBoundingClientRect().height>=44`));
   await tap(actions('brace'));
   await until(async () => (await state()).units.swordsman.statuses.guarded, '触屏施放架势');

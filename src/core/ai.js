@@ -78,7 +78,11 @@ function aimedOptions(state, actor, attacksOnly = false) {
     }
     for (const { x, y } of candidates) consider({ type: 'skill', skillId, x, y });
   }
-  if (!attacksOnly) for (const { x, y } of preview(state, { type: 'interact' }).cells ?? []) consider({ type: 'interact', x, y });
+  for (const { x, y, kind, spent } of Object.values(state.interactives).sort(byId)) {
+    if (spent) continue;
+    if (kind === 'barrel') consider({ type: 'attack', x, y });
+    else if (!attacksOnly) consider({ type: 'interact', x, y });
+  }
   return choices;
 }
 

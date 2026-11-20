@@ -39,7 +39,7 @@ export function createRenderer(root) {
     return n;
   };
   const cells = new Map();
-  let dims = '', last = null, baseline = { move: new Set(), attack: new Set() }, logCount = -1;
+  let dims = '', last = null, baseline = { move: new Set(), attack: new Set(), interact: new Set() }, logCount = -1;
 
   function initBoard(state) {
     const h = state.grid.length, w = state.grid[0].length;
@@ -101,7 +101,7 @@ export function createRenderer(root) {
   }
 
   const coverText = c => `${c.name}：${c.material}掩体，耐久 ${c.hp}/${c.maxHp}，躲在后面命中 −${c.cover}${c.hp ? '' : '（已坍塌）'}`;
-  const interactiveText = i => `${i.name}：${i.kind === 'barrel' ? '可引爆，波及周围' : '祭坛，激活获得增益'}${i.spent ? '（已用过）' : ''}`;
+  const interactiveText = i => `${i.name}：${i.kind === 'barrel' ? '武器射程内可引爆（攻击槽），波及周围' : '相邻激活（动作槽）'}${i.spent ? '（已用过）' : ''}`;
 
   function cliffs(state, x, y, tile) {
     if (tile.kind !== 'floor') return [];
@@ -136,7 +136,7 @@ export function createRenderer(root) {
       const reach = baseline.move.has(xy);
       cell.className = ['tactical-cell', tile.kind !== 'floor' ? `terrain-${tile.kind}` : tile.z ? 'terrain-plateau' : '', ...edges.map(c => `cliff-${c}`),
         chosen ? 'is-selected' : '', isHover ? 'is-hovered' : '', isHover && preview?.ok === false ? 'is-invalid' : '',
-        reach ? 'is-reachable' : '', baseline.attack.has(xy) ? 'is-in-range' : '',
+        reach ? 'is-reachable' : '', (action?.type === 'interact' ? baseline.interact : baseline.attack).has(xy) || (item && baseline.interact.has(xy)) ? 'is-in-range' : '',
         reach && (tile.kind === 'slope' || tile.z !== originZ) ? 'is-elevated-reach' : '',
         affected.has(xy) ? 'axis-covered' : '', path.has(xy) ? 'is-path' : '', risks.has(xy) ? 'is-opportunity' : ''].filter(Boolean).join(' ');
       cell.dataset.terrainType = tile.kind;
@@ -210,7 +210,7 @@ export function createRenderer(root) {
     crystals.append(el('span', '', '行动力 '), ...[0, 1].map(i => el('span', `ap-crystal${i >= ap ? ' is-used' : ''}`, i < ap ? '◆' : '◇')));
     crystals.setAttribute('aria-label', `剩余 ${ap} / 2 AP`);
     meta.append(crystals);
-    if (state.mode === 'split') meta.append(el('span', 'ft-chip', `动作${u.used?.action ? '已用' : '可用'} · 攻击${u.used?.attack ? '已用' : '可用'}`));
+    meta.append(el('span', 'ft-chip', `动作${u.used?.action ? '已用' : '可用'} · 攻击${u.used?.attack ? '已用' : '可用'}`));
     for (const s of values(u.statuses)) meta.append(el('span', 'ft-chip', statusText(s)));
     node.replaceChildren(el('span', 'ft-actor-face', Array.from(u.name)[0]), name, bars, meta);
   }
@@ -307,12 +307,13 @@ export function createRenderer(root) {
     const lines = [];
     const line = (text, cls) => { const d = el('div', `preview-line${cls ? ` ${cls}` : ''}`); if (typeof text === 'string') d.textContent = text; else d.append(...text); lines.push(d); return d; };
     if (!actor || !action) { node.replaceChildren(); return; }
-    const label = range?.name ?? ACTION_LABELS[action.type] ?? '动作';
+    const label = p?.name ?? range?.name ?? ACTION_LABELS[action.type] ?? '动作';
     const cost = [range?.ap ? `${range.ap} AP` : '', range?.mp ? `${range.mp} MP` : '', range?.sp ? `${range.sp} SP` : ''].filter(Boolean).join(' + ');
     const head = [el('b', '', label)];
     if (cost) head.push(document_text(`，消耗 ${cost}`));
     if (range?.shape && range.shape !== 'single') head.push(document_text(`，${SHAPES[range.shape] ?? range.shape}`));
     line(head);
+    if (p?.kind === 'barrel') line(`爆炸波及 ${p.cells.length} 格，可能伤及友方。`);
     if (range?.effects?.length) line(`效果：${range.effects.map(effectLabel).join('；')}`);
     if (action.type === 'brace' && range?.ok) line(`${range.coverId ? `借助${get(state.covers, range.coverId)?.name ?? '掩体'}` : '原地'}防御：受到伤害减少 ${pct(range.reduction)}，持续 ${range.turns} 回合`);
     if (range?.ammo != null) line(`弹药 ${range.ammo}${range.capacity ? ` / ${range.capacity}` : ''}`);
@@ -365,9 +366,9 @@ export function createRenderer(root) {
     const canAct = !ui.busy && current?.team === 'blue' && !state.outcome;
     const run = cmd => (canAct ? rulesPreview(state, cmd) : null);
     const fresh = last?.state !== state;
-    if (fresh || last?.sprint !== ui.sprint) {
+    if (fresh || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
       const cells = p => new Set((p?.ok ? p.cells : []).map(c => key(c.x, c.y)));
-      baseline = { move: cells(run({ type: ui.sprint ? 'sprint' : 'move' })), attack: cells(run({ type: 'attack' })) };
+      baseline = { move: cells(run({ type: ui.sprint ? 'sprint' : 'move' })), attack: cells(run({ type: 'attack' })), interact: cells(run({ type: 'interact' })) };
     }
     const range = action ? run({ type: action.type, ...(action.skillId ? { skillId: action.skillId } : {}) }) : null;
     const aimed = ['move', 'sprint', 'disengage', 'attack', 'skill', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push', 'shield_bash'].includes(action?.type);
@@ -389,7 +390,7 @@ export function createRenderer(root) {
     $('battle-status').textContent = state.outcome
       ? (state.outcome === 'draw' ? '战斗结束：平局' : `战斗结束：${state.outcome === 'blue' ? '我方胜利' : '敌方胜利'}`)
       : canAct ? '点击格子选择目标，再选要做的事' : current ? `${current.name} 正在行动……` : '';
-    last = { state, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
+    last = { state, canAct, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
   }
 
   /** 按钮可用性不等动画，总是立刻跟随真实战局。 */

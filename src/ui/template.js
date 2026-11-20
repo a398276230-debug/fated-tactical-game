@@ -86,7 +86,7 @@ export const TEMPLATE = `<div class="ft-app" data-busy="false">
     <div class="ft-form">
       <label data-scenario-only>预设战局 <select id="scenario-select"></select></label>
       <p id="scenario-preview" class="muted"></p>
-      <label>行动规则 <select id="mode-select"><option value="free">自由 2 AP</option><option value="split">1 动作 + 1 攻击</option></select></label>
+      <span>每回合：1 动作 + 1 攻击</span>
       <label>随机种子 <input id="seed-input" type="number" min="0" max="4294967295" step="1" required></label>
       <div class="ft-row">
         <button type="button" id="reset-button" class="game-button primary">重开战局</button>

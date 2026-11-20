@@ -72,6 +72,7 @@ test('空仓箭矢命中施加补丁注册的灵魂损伤，叠层刷新并实�
   assert.equal(next.items[b.actor.weapon].counters.ammo, 0);
   const injured = next.units[b.target.id];
   assert.equal(injured.statuses.soul_wound.stacks, 1);
+  next.units[b.actor.id].used.attack=0; // isolate a fresh attack slot for the stacking check
   assert.equal(preview(next, attack).accuracy, original.accuracy + 2);
   applyAction(next, attack);
   assert.equal(injured.statuses.soul_wound.stacks, 2);
@@ -130,7 +131,7 @@ test('渎神支付十魂、保底命中暴击并乘终伤，回合末续接虚�
   assert.equal(b.actor.statuses.god, undefined);
   assert.equal(b.actor.statuses.weak.remainingTurns, 5);
   b.state.turn = b.state.order.indexOf(b.actor.id);
-  b.actor.ap = 2;
+  b.actor.ap = 2; b.actor.used={attack:0,action:0};
   assert.match(preview(b.state, heal).error, /禁止/);
   assert.equal(counters.soul, 4);
   delete b.actor.statuses.weak;
@@ -159,6 +160,7 @@ test('先攻、潜行和成长读取装备，命中升阶保留自然 1 失手',
   b.state.rng = shotSeed(1);
   applyAction(b.state, attack);
   assert.equal(b.state.logs.find(log => log.type === 'roll').detail.hit, false);
+  b.actor.used.attack=0;
   b.state.rng = shotSeed(10);
   applyAction(b.state, attack);
   const hit = b.state.logs.filter(log => log.type === 'roll').at(-1).detail;

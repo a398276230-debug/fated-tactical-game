@@ -1704,7 +1704,7 @@ function damageTarget(state, target2, sourceUnitId, amount2, type, label, option
   }
   if (!alive(recipient) || recipient.fled) return { recipient, dealt: 0 };
   const formula = mitigation(state, recipient, type, hit, armorPierce, { attacker, intercepting: recipient !== target2, ignoreArmor: options.ignoreArmor });
-  const modified = Math.max(0, hit ? Math.floor(amount2 * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker) : 1)) : Math.floor(amount2 * formula.multiplier) - Math.floor(formula.armor));
+  const modified = mitigatedDamage(amount2, formula, hit, attacker);
   if (formula.shatter) {
     delete recipient.statuses.freeze;
     record(state, sourceUnitId, "shatter", `${recipient.name}\u7684\u51B0\u5C42\u788E\u88C2`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
@@ -1741,6 +1741,9 @@ function damageTarget(state, target2, sourceUnitId, amount2, type, label, option
     if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, "true", "\u68D8\u7532\u53CD\u4F24", { reaction: true });
   }
   return { recipient, dealt };
+}
+function mitigatedDamage(amount2, formula, hit, attacker) {
+  return Math.max(0, hit ? Math.floor(amount2 * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker) : 1)) : Math.floor(amount2 * formula.multiplier) - Math.floor(formula.armor));
 }
 function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const shatter = hit ? changes(unit, "shatter") : 0;
@@ -2101,7 +2104,7 @@ function actorCost(template) {
 var insufficientHP = "HP \u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u65BD\u653E";
 function paymentError(state, unit, ap, slot, template = {}) {
   if (unit.ap < ap) return `\u9700\u8981 ${ap} AP`;
-  if (state.mode === "split" && (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot])) {
+  if (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot]) {
     return "\u672C\u56DE\u5408\u5BF9\u5E94\u7684\u884C\u52A8\u69FD\u5DF2\u4F7F\u7528";
   }
   const { hp, mp, sp } = actorCost(template);
@@ -2453,7 +2456,13 @@ function preview(state, action) {
   const unplaced = x === void 0 && y === void 0;
   if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
-  const { ap, slot } = cost;
+  if (type === "interact" && unplaced) {
+    const cells2 = values2(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
+    return cells2.length ? { ok: true, ap: 1, cost: 1, cells: cells2 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells2 });
+  }
+  const item = !unplaced && (type === "interact" || type === "attack") ? values2(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
+  const detonate = item?.kind === "barrel";
+  const { ap } = cost, slot = detonate ? "attack" : cost.slot;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === "end") return common;
   if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
@@ -2482,10 +2491,10 @@ function preview(state, action) {
     };
   }
   if (type === "use_item") {
-    const item = equipmentFor(state, unit.offHand);
-    if (unit.stance !== "attunement" || item.template?.kind !== "consumable") return fail2("\u53EA\u6709\u540C\u8C03\u59FF\u6001\u53EF\u4EE5\u514D\u8D39\u4F7F\u7528\u526F\u624B\u9053\u5177");
+    const item2 = equipmentFor(state, unit.offHand);
+    if (unit.stance !== "attunement" || item2.template?.kind !== "consumable") return fail2("\u53EA\u6709\u540C\u8C03\u59FF\u6001\u53EF\u4EE5\u514D\u8D39\u4F7F\u7528\u526F\u624B\u9053\u5177");
     if ((unit.attunementCharges ?? 0) <= 0) return fail2("\u540C\u8C03\u9053\u5177\u6B21\u6570\u5DF2\u7528\u5C3D");
-    return { ...common, name: `\u4F7F\u7528${item.template.name}`, maneuver: "use_item", itemId: unit.offHand };
+    return { ...common, name: `\u4F7F\u7528${item2.template.name}`, maneuver: "use_item", itemId: unit.offHand };
   }
   if (type === "charge") return { ...common, name: "\u84C4\u529B", maneuver: "charge" };
   if (type === "scan") return { ...common, name: "\u63A2\u5BDF", maneuver: "scan" };
@@ -2517,21 +2526,43 @@ function preview(state, action) {
       dz: elevation(state, center) - elevation(state, unit)
     };
   }
-  if (type === "interact") {
-    const objects = values2(state.interactives).filter((v) => !v.spent && inInteractionRange(state, unit, v)).sort(byId2);
-    if (unplaced) return { ...common, cells: objects.map((v) => pos(v.x, v.y)) };
-    const item = objects.find((v) => sameCell(v, center));
-    if (!item) return fail2("\u6CA1\u6709\u53EF\u7528\u7684\u90BB\u8FD1\u4E92\u52A8\u70B9");
-    const cells2 = item.kind === "barrel" ? area(state, unit, center, { shape: "circle", range: 2, radius: 1.5 }) : [center];
+  if (type === "interact" || detonate) {
+    if (!item) return fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9");
+    if (detonate) {
+      if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail2("\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B");
+      if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail2("\u7206\u6876\u8D85\u51FA\u6B66\u5668\u5C04\u7A0B\u6216\u88AB\u5899\u4F53\u963B\u6321");
+    } else if (distance3D(state, unit, item) > 1.5 || !hasLOS(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
+    const cells2 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: 1.5 }) : [center];
     const keyset = new Set(cells2.map((at) => key2(at.x, at.y)));
     const targets2 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y))).map((u) => {
       const guard = guardFor(state, u) ?? u;
-      const hit = mitigation(state, guard, "energy", true, 0);
+      const formula = mitigation(state, guard, "energy", true, 0, { attacker: unit, intercepting: guard !== u });
       const shield = statusOf(guard, "shield");
-      const damage = Math.max(0, Math.floor(12 * hit.multiplier) - hit.armor - (shield ? statusAmount(shield) : 0));
-      return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y, damage: [damage, damage], expectedDamage: damage, hitChance: 1 };
+      const damage = Math.max(0, mitigatedDamage(12, formula, true, unit) - (shield ? statusAmount(shield) : 0));
+      return {
+        id: u.id,
+        targetId: u.id,
+        recipientId: guard.id,
+        name: u.name,
+        x: u.x,
+        y: u.y,
+        damage: [damage, damage],
+        expectedDamage: damage,
+        damageMax: damage,
+        hitChance: 1,
+        automatic: true
+      };
     });
-    return { ...common, interactiveId: item.id, kind: item.kind, cells: cells2, targets: targets2, center };
+    return {
+      ...common,
+      ...detonate ? reaches(state, unit, item, weapon.template, weapon.ammo) : {},
+      name: `${detonate ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`,
+      interactiveId: item.id,
+      kind: item.kind,
+      cells: cells2,
+      targets: targets2,
+      center
+    };
   }
   const attack = type === "attack" || type === "shield_bash";
   const shieldBash = type === "shield_bash";
@@ -2973,6 +3004,8 @@ function applyInteraction(state, actor, plan) {
   if (!sameCell(actor, item)) actor.facing = facingToward(actor, item);
   record(state, actor, "interact", `${actor.name}${item.kind === "barrel" ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`, { interactiveId: item.id });
   if (item.kind === "barrel") {
+    const weapon = weaponInfo(state, actor);
+    if (weapon.ammo && !weapon.infiniteAmmo) dsl.changeResource(state, actor, actor, { kind: "drainResource", resource: weapon.ammo.resource, local: true }, 1, "\u5F15\u7206", { instance: weapon.instance });
     for (const profile of plan.targets) {
       const target2 = state.units[profile.id];
       if (alive(target2)) damageTarget(state, target2, actor.id, 12, "energy", "\u7206\u6876", { attacker: actor, hit: true, direct: false });
@@ -3019,7 +3052,7 @@ function applyAction(state, action) {
         changeCounter(state, actor, item, effect, resource3, amount2 - cost);
       }
     }
-    if (plan.ap === 2 && state.mode === "split") {
+    if (plan.ap === 2) {
       actor.used.attack++;
       actor.used.action++;
     } else if (plan.slot) actor.used[plan.slot]++;
@@ -3051,6 +3084,10 @@ function applyAction(state, action) {
       applyMovement(state, actor, type, plan);
       break;
     case "attack":
+      if (plan.interactiveId) {
+        applyInteraction(state, actor, plan);
+        break;
+      }
     case "skill":
     case "shield_bash":
       applyStrike(state, actor, { type, skillId }, plan);
@@ -3558,7 +3595,7 @@ function validateState(s) {
     requireThat(u.skills.every((skill2) => has(s.skills, skill2)), "summon skills");
   });
   if (own2(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
-  requireThat(id2(s.scenarioId) && text(s.title) && ["free", "split"].includes(s.mode) && ["protocol", "sandbox"].includes(s.ruleset) && int(s.round, 1, 1e6) && int(s.rng, 0, 4294967295) && [null, "blue", "red", "draw"].includes(s.outcome), "\u6218\u5C40");
+  requireThat(id2(s.scenarioId) && text(s.title) && s.mode === "split" && ["protocol", "sandbox"].includes(s.ruleset) && int(s.round, 1, 1e6) && int(s.rng, 0, 4294967295) && [null, "blue", "red", "draw"].includes(s.outcome), "\u6218\u5C40");
   requireThat(Array.isArray(s.grid) && s.grid.length === 10, "\u68CB\u76D8");
   for (const row of s.grid) {
     requireThat(Array.isArray(row) && row.length === 10, "\u68CB\u76D8\u884C");
@@ -3713,15 +3750,15 @@ function buildScenario(request = "ruins") {
   if (request?.kind === "custom_state" && object2(request.state)) return migrateStateEffects(structuredClone(request.state));
   if (typeof request === "string") request = { scenarioId: request };
   if (!object2(request) || !Object.keys(request).every((key4) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key4))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
-  const { scenarioId = "ruins", mode = "free", ruleset = "protocol", persistentSnapshot } = request;
+  const { scenarioId = "ruins", ruleset = "protocol", persistentSnapshot } = request;
   if (typeof scenarioId !== "string" || !own3(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
   const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
   const seed = request.seed ?? defaultSeed;
-  if (!Number.isInteger(seed) || seed < 0 || seed > 4294967295 || !["free", "split"].includes(mode) || !["protocol", "sandbox"].includes(ruleset)) throw new Error("\u65E0\u6548\u7684\u79CD\u5B50\u6216\u884C\u52A8\u89C4\u5219");
+  if (!Number.isInteger(seed) || seed < 0 || seed > 4294967295 || !["protocol", "sandbox"].includes(ruleset)) throw new Error("\u65E0\u6548\u7684\u79CD\u5B50\u6216\u884C\u52A8\u89C4\u5219");
   const state = {
     scenarioId,
     title,
-    mode,
+    mode: "split",
     ruleset,
     round: 1,
     turn: 0,
@@ -3974,7 +4011,11 @@ function aimedOptions(state, actor, attacksOnly = false) {
     }
     for (const { x, y } of candidates) consider({ type: "skill", skillId, x, y });
   }
-  if (!attacksOnly) for (const { x, y } of preview(state, { type: "interact" }).cells ?? []) consider({ type: "interact", x, y });
+  for (const { x, y, kind, spent } of Object.values(state.interactives).sort(byId3)) {
+    if (spent) continue;
+    if (kind === "barrel") consider({ type: "attack", x, y });
+    else if (!attacksOnly) consider({ type: "interact", x, y });
+  }
   return choices;
 }
 function approach(state, actor, enemies) {
@@ -4745,7 +4786,7 @@ var TEMPLATE = `<div class="ft-app" data-busy="false">
     <div class="ft-form">
       <label data-scenario-only>\u9884\u8BBE\u6218\u5C40 <select id="scenario-select"></select></label>
       <p id="scenario-preview" class="muted"></p>
-      <label>\u884C\u52A8\u89C4\u5219 <select id="mode-select"><option value="free">\u81EA\u7531 2 AP</option><option value="split">1 \u52A8\u4F5C + 1 \u653B\u51FB</option></select></label>
+      <span>\u6BCF\u56DE\u5408\uFF1A1 \u52A8\u4F5C + 1 \u653B\u51FB</span>
       <label>\u968F\u673A\u79CD\u5B50 <input id="seed-input" type="number" min="0" max="4294967295" step="1" required></label>
       <div class="ft-row">
         <button type="button" id="reset-button" class="game-button primary">\u91CD\u5F00\u6218\u5C40</button>
@@ -5259,7 +5300,7 @@ function createRenderer(root) {
     return n;
   };
   const cells = /* @__PURE__ */ new Map();
-  let dims = "", last = null, baseline = { move: /* @__PURE__ */ new Set(), attack: /* @__PURE__ */ new Set() }, logCount = -1;
+  let dims = "", last = null, baseline = { move: /* @__PURE__ */ new Set(), attack: /* @__PURE__ */ new Set(), interact: /* @__PURE__ */ new Set() }, logCount = -1;
   function initBoard(state) {
     const h = state.grid.length, w = state.grid[0].length;
     if (dims === key3(w, h)) return;
@@ -5320,7 +5361,7 @@ function createRenderer(root) {
     return node3;
   }
   const coverText = (c) => `${c.name}\uFF1A${c.material}\u63A9\u4F53\uFF0C\u8010\u4E45 ${c.hp}/${c.maxHp}\uFF0C\u8EB2\u5728\u540E\u9762\u547D\u4E2D \u2212${c.cover}${c.hp ? "" : "\uFF08\u5DF2\u574D\u584C\uFF09"}`;
-  const interactiveText = (i) => `${i.name}\uFF1A${i.kind === "barrel" ? "\u53EF\u5F15\u7206\uFF0C\u6CE2\u53CA\u5468\u56F4" : "\u796D\u575B\uFF0C\u6FC0\u6D3B\u83B7\u5F97\u589E\u76CA"}${i.spent ? "\uFF08\u5DF2\u7528\u8FC7\uFF09" : ""}`;
+  const interactiveText = (i) => `${i.name}\uFF1A${i.kind === "barrel" ? "\u6B66\u5668\u5C04\u7A0B\u5185\u53EF\u5F15\u7206\uFF08\u653B\u51FB\u69FD\uFF09\uFF0C\u6CE2\u53CA\u5468\u56F4" : "\u76F8\u90BB\u6FC0\u6D3B\uFF08\u52A8\u4F5C\u69FD\uFF09"}${i.spent ? "\uFF08\u5DF2\u7528\u8FC7\uFF09" : ""}`;
   function cliffs(state, x, y, tile) {
     if (tile.kind !== "floor") return [];
     return [["top", x, y + 1], ["bottom", x, y - 1], ["left", x - 1, y], ["right", x + 1, y]].filter(([, nx, ny]) => {
@@ -5363,7 +5404,7 @@ function createRenderer(root) {
         isHover ? "is-hovered" : "",
         isHover && preview2?.ok === false ? "is-invalid" : "",
         reach ? "is-reachable" : "",
-        baseline.attack.has(xy) ? "is-in-range" : "",
+        (action?.type === "interact" ? baseline.interact : baseline.attack).has(xy) || item && baseline.interact.has(xy) ? "is-in-range" : "",
         reach && (tile.kind === "slope" || tile.z !== originZ) ? "is-elevated-reach" : "",
         affected.has(xy) ? "axis-covered" : "",
         path.has(xy) ? "is-path" : "",
@@ -5451,7 +5492,7 @@ function createRenderer(root) {
     crystals.append(el2("span", "", "\u884C\u52A8\u529B "), ...[0, 1].map((i) => el2("span", `ap-crystal${i >= ap ? " is-used" : ""}`, i < ap ? "\u25C6" : "\u25C7")));
     crystals.setAttribute("aria-label", `\u5269\u4F59 ${ap} / 2 AP`);
     meta.append(crystals);
-    if (state.mode === "split") meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
+    meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
     for (const s of values3(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
     node3.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
   }
@@ -5578,12 +5619,13 @@ function createRenderer(root) {
       node3.replaceChildren();
       return;
     }
-    const label = range?.name ?? ACTION_LABELS[action.type] ?? "\u52A8\u4F5C";
+    const label = p?.name ?? range?.name ?? ACTION_LABELS[action.type] ?? "\u52A8\u4F5C";
     const cost = [range?.ap ? `${range.ap} AP` : "", range?.mp ? `${range.mp} MP` : "", range?.sp ? `${range.sp} SP` : ""].filter(Boolean).join(" + ");
     const head = [el2("b", "", label)];
     if (cost) head.push(document_text(`\uFF0C\u6D88\u8017 ${cost}`));
     if (range?.shape && range.shape !== "single") head.push(document_text(`\uFF0C${SHAPES[range.shape] ?? range.shape}`));
     line(head);
+    if (p?.kind === "barrel") line(`\u7206\u70B8\u6CE2\u53CA ${p.cells.length} \u683C\uFF0C\u53EF\u80FD\u4F24\u53CA\u53CB\u65B9\u3002`);
     if (range?.effects?.length) line(`\u6548\u679C\uFF1A${range.effects.map(effectLabel).join("\uFF1B")}`);
     if (action.type === "brace" && range?.ok) line(`${range.coverId ? `\u501F\u52A9${get2(state.covers, range.coverId)?.name ?? "\u63A9\u4F53"}` : "\u539F\u5730"}\u9632\u5FA1\uFF1A\u53D7\u5230\u4F24\u5BB3\u51CF\u5C11 ${pct2(range.reduction)}\uFF0C\u6301\u7EED ${range.turns} \u56DE\u5408`);
     if (range?.ammo != null) line(`\u5F39\u836F ${range.ammo}${range.capacity ? ` / ${range.capacity}` : ""}`);
@@ -5642,9 +5684,9 @@ function createRenderer(root) {
     const canAct = !ui.busy && current?.team === "blue" && !state.outcome;
     const run = (cmd) => canAct ? preview(state, cmd) : null;
     const fresh = last?.state !== state;
-    if (fresh || last?.sprint !== ui.sprint) {
+    if (fresh || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
       const cells2 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
-      baseline = { move: cells2(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells2(run({ type: "attack" })) };
+      baseline = { move: cells2(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells2(run({ type: "attack" })), interact: cells2(run({ type: "interact" })) };
     }
     const range = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
     const aimed = ["move", "sprint", "disengage", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
@@ -5664,7 +5706,7 @@ function createRenderer(root) {
       renderUnitCard(state, feature ? null : get2(state.units, selected), feature);
     }
     $("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F\uFF1A\u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F\uFF1A${state.outcome === "blue" ? "\u6211\u65B9\u80DC\u5229" : "\u654C\u65B9\u80DC\u5229"}` : canAct ? "\u70B9\u51FB\u683C\u5B50\u9009\u62E9\u76EE\u6807\uFF0C\u518D\u9009\u8981\u505A\u7684\u4E8B" : current ? `${current.name} \u6B63\u5728\u884C\u52A8\u2026\u2026` : "";
-    last = { state, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
+    last = { state, canAct, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
   }
   function renderControls(state) {
     const current = get2(state.units, state.order[state.turn]);
@@ -6214,7 +6256,7 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
   const localStorage2 = storageArea ?? window2?.localStorage;
   const $ = (id3) => root.querySelector(`[id="${id3}"]`);
   const view = createRenderer(root);
-  const scenario = $("scenario-select"), mode = $("mode-select"), seed = $("seed-input");
+  const scenario = $("scenario-select"), seed = $("seed-input");
   const storage = {
     getItem: (key4) => {
       try {
@@ -6351,10 +6393,10 @@ ${height2}\uFF0C${sight}`;
     if (!seed.value || !seed.checkValidity()) throw new Error("\u79CD\u5B50\u987B\u4E3A 0\u20134294967295 \u7684\u6574\u6570");
     if (customBattle) {
       const value = Number(seed.value);
-      game.createBattle({ kind: "custom_state", state: customBattle.restart({ seed: value, mode: mode.value }) });
+      game.createBattle({ kind: "custom_state", state: customBattle.restart({ seed: value }) });
       customBattle.seed = value;
       storage.setItem(`${storageKey}/seed`, String(value));
-    } else game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: "protocol", seed: Number(seed.value), ...carry ? { persistentSnapshot: carry } : {} });
+    } else game.createBattle({ scenarioId: scenario.value, ruleset: "protocol", seed: Number(seed.value), ...carry ? { persistentSnapshot: carry } : {} });
     closeDrawer();
   }
   function schedule() {
@@ -6445,7 +6487,7 @@ ${height2}\uFF0C${sight}`;
         ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
       };
       const plan = game.previewAction(command);
-      if (plan.ok) options.push({ command, plan, label: skill2 ? plan.name : ACTION_LABELS[type] });
+      if (plan.ok && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill2 || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
     };
     if (canAct) {
       if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
@@ -6604,7 +6646,6 @@ ${height2}\uFF0C${sight}`;
         } else {
           const restored = game.restoreBattleSnapshot(data);
           configure(restored.scenarioId);
-          mode.value = restored.mode;
           closeDrawer();
           if (restored.migratedFrom) {
             error2("\u5DF2\u6062\u590D\u65E7\u6218\u5C40\uFF1B\u501F\u673A\u89C4\u5219\u4ECE\u73B0\u5728\u751F\u6548\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
@@ -6797,7 +6838,6 @@ ${height2}\uFF0C${sight}`;
   }
   const initial = game.getStateSummary();
   configure(initial.scenarioId);
-  mode.value = initial.mode;
   bindControls();
   const unsubscribe = game.subscribe(() => {
     if (pending) {
@@ -6813,7 +6853,6 @@ ${height2}\uFF0C${sight}`;
     loadState(next) {
       const result = next?.kind === "battle" ? game.restoreBattleSnapshot(next) : game.createBattle({ kind: "custom_state", state: next });
       if (!customBattle) configure(result.scenarioId);
-      mode.value = result.mode;
       error2("");
       return result;
     },
@@ -8975,8 +9014,7 @@ function hydrateFromSources(input = {}, options = {}) {
   }
   const title = text2(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
   const seed = integer3(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-  const mode = options.mode ?? battle.mode;
-  const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: ["free", "split"].includes(mode) ? mode : "free", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+  const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
   terrainState(battle, state, sink(null, "terrain", "terrain"));
@@ -9389,6 +9427,7 @@ DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BC
 
 // src/tavern/engine-summary.js
 var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
+\u884C\u52A8\u89C4\u5219\u56FA\u5B9A\u4E3A\u6BCF\u56DE\u5408 1 \u52A8\u4F5C\u69FD + 1 \u653B\u51FB\u69FD\uFF1B2 AP \u884C\u52A8\u540C\u65F6\u7528\u4E24\u69FD\u3002\u796D\u575B\u76F8\u90BB\u6FC0\u6D3B\u8017\u52A8\u4F5C\u69FD\uFF1B\u7206\u6876\u5728\u6B66\u5668\u5C04\u7A0B\u53CA\u89C6\u7EBF\u5185\u5F15\u7206\u8017\u653B\u51FB\u69FD\uFF0C\u7206\u70B8\u53EF\u4F24\u53CA\u53CB\u65B9\u3002
 \u5148\u653B\uFF1Dagi\xD7(1+initiativePercent)+d20+max(0,...attackInit)+max(0,...actionInit)+flatInitiative\uFF1B\u603B\u5206\u964D\u5E8F\uFF0C\u540C\u5206\u5148\u6BD4\u654F\u6377\uFF0C\u518D\u6309 ID \u5347\u5E8F\u3002
 \u666E\u901A\u653B\u51FB\u6309\u6240\u53D6 d20+accuracy \u5206\u6863\uFF08\u4E0B\u9650\u542B\u7B49\u53F7\uFF09\uFF1A<4 \u5931\u624B\xD70\uFF0C4 \u64E6\u4F24\xD70.3\uFF0C8 \u52C9\u5F3A\xD70.8\uFF0C11 \u6709\u6548\xD71\uFF0C20 \u5E73\u66B4\u51FB\xD71.3\uFF0C25 \u5F3A\u66B4\u51FB\xD71.6\uFF0C30 \u8D85\u66B4\u51FB\xD72\u3002\u81EA\u71361\u5FC5\u5931\uFF1B\u81EA\u713620\u6807\u8BB0 critical\uFF0C\u4F46\u4ECD\u987B\u603B\u5206\u22654\u3002\u5B9E\u6218\u4E0D\u4EE5\u9884\u89C8 defense \u4E3A\u547D\u4E2D\u95E8\u69DB\uFF1Battack \u662F\u4F24\u5BB3\uFF0C\u4E0D\u662F accuracy\u3002\u65E0\u9ED8\u8BA4\u529B/\u654F\u547D\u4E2D\u6216\u654F\u6377\u9632\u5FA1\u3002\u901A\u5E38\u51C0\u4F18\u52BF/\u52A3\u52BF\u63B72\u53D6\u9AD8/\u4F4E\uFF1B\u534F\u8BAE\u5956\u52B1\u9AB00~2\u3001\u60E9\u7F5A\u9AB00~1\uFF0C\u76F8\u7B49\u53D61\u9AB0\uFF0C\u5956\u52B1\u5360\u4F18\u4E14\u67092\u5956\u52B1\u53D63\u9AB0\u4E2D\u4F4D\u3002
 \u5C04\u7A0B\u53D6\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB\uFF1B\u547D\u4E2D\u8BA1\u4F53\u578B\u3001\u9AD8\u5DEE\u3001\u8DDD\u79BB\u3001\u5C04\u7A0B\u3001\u72B6\u6001\u3001\u5939\u51FB\u3001\u63A9\u4F53\u3002\u4F53\u578B\u547D\u4E2D\u52A0\u503C\uFF1D\u76EE\u6807\u57FA\u7840\u9879\uFF0B\u653B\u5B88\u6863\u5DEE\uFF0C\u5408\u8BA1\u53EA\u52A0\u4E00\u6B21\uFF1B\u6253\u63A9\u4F53\u4E3A0\u3002\u57FA\u7840\u9879=max(0,\u76EE\u6807size\u22121)\uFF08\u65E7\u5B57\u7B26\u4E32large\u4E3A+2\u3001small\u4E3A\u22121\uFF0C\u5176\u4F590\uFF09\u3002\u6309\u4F53\u957F\u4F9D\u6B21\u5206\u5FAE/\u5C0F/\u4E2D/\u5927/\u5DE8/\u8D85\u5DE8\uFF0C\u5206\u754C\u4E3A0.6/1.3/2.6/5.5/10\u7C73\uFF08\u7B49\u4E8E\u5206\u754C\u8FDB\u4E0B\u4E00\u6863\uFF09\uFF0C\u6863\u503C\u4F9D\u6B21\u4E3A2/1/0/\u22121/\u22122/\u22124\u3002\u76EE\u6807MC<2\u65F6\u6863\u5DEE=\u653B\u51FB\u8005\u6863\u503C\u2212\u76EE\u6807\u6863\u503C\uFF1B\u76EE\u6807MC\u22652\u65F6\u6539\u7528\u653B\u51FB\u8005\u6863\u503C\uFF0B2\xD7(\u76EE\u6807MC\u22121)\u3002
@@ -11628,8 +11667,8 @@ ${tag.textContent || ""}
     const battleInstanceId = sources.battleKey || id3;
     const battleInput = sources.input;
     const target2 = pages.sandbox.querySelector("[data-sandbox-mount]");
-    const restart = ({ seed, mode }) => {
-      const next = hydrateFromSources(battleInput, { seed, mode, throwOnValidation: true }).state;
+    const restart = ({ seed }) => {
+      const next = hydrateFromSources(battleInput, { seed, throwOnValidation: true }).state;
       return applyNormalization(next, operations(battleInstanceId));
     };
     gameMount = (options.mount || mount)(target2, {

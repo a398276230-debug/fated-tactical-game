@@ -1,6 +1,7 @@
 // Static prompt reference, not executable combat logic. Keep the table helpers
 // distinct from the paths actually taken by combat.js during a strike.
 export const PROTOCOL_RULES = `【判定｜protocol 实战】
+行动规则固定为每回合 1 动作槽 + 1 攻击槽；2 AP 行动同时用两槽。祭坛相邻激活耗动作槽；爆桶在武器射程及视线内引爆耗攻击槽，爆炸可伤及友方。
 先攻＝agi×(1+initiativePercent)+d20+max(0,...attackInit)+max(0,...actionInit)+flatInitiative；总分降序，同分先比敏捷，再按 ID 升序。
 普通攻击按所取 d20+accuracy 分档（下限含等号）：<4 失手×0，4 擦伤×0.3，8 勉强×0.8，11 有效×1，20 平暴击×1.3，25 强暴击×1.6，30 超暴击×2。自然1必失；自然20标记 critical，但仍须总分≥4。实战不以预览 defense 为命中门槛；attack 是伤害，不是 accuracy。无默认力/敏命中或敏捷防御。通常净优势/劣势掷2取高/低；协议奖励骰0~2、惩罚骰0~1，相等取1骰，奖励占优且有2奖励取3骰中位。
 射程取三维欧氏距离；命中计体型、高差、距离、射程、状态、夹击、掩体。体型命中加值＝目标基础项＋攻守档差，合计只加一次；打掩体为0。基础项=max(0,目标size−1)（旧字符串large为+2、small为−1，其余0）。按体长依次分微/小/中/大/巨/超巨，分界为0.6/1.3/2.6/5.5/10米（等于分界进下一档），档值依次为2/1/0/−1/−2/−4。目标MC<2时档差=攻击者档值−目标档值；目标MC≥2时改用攻击者档值＋2×(目标MC−1)。

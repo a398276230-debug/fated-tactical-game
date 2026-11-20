@@ -875,8 +875,8 @@ export function mountTavernOverlay(options = {}) {
     const battleInstanceId = sources.battleKey || id;
     const battleInput = sources.input;
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
-    const restart = ({ seed, mode }) => {
-      const next = hydrateBattleState(battleInput, { seed, mode, throwOnValidation: true }).state;
+    const restart = ({ seed }) => {
+      const next = hydrateBattleState(battleInput, { seed, throwOnValidation: true }).state;
       return applyNormalization(next, operations(battleInstanceId));
     };
     gameMount = (options.mount || defaultMount)(target, {
