@@ -2,7 +2,7 @@ import { getStatusTemplate, STATUSES } from '../core/combat.js';
 import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.js';
 import { resourceDefinitions } from '../core/effects.js';
 
-import { effectNodes, isExpression, validExpireOn, validExpression, validSaveDC } from '../core/effect_schema.js';
+import { effectNodes, isExpression, validExpireOn, validExpression, validSaveDC, validTerrainNode } from '../core/effect_schema.js';
 import { timeOfDay } from '../core/battle_time.js';
 
 export const own = Object.hasOwn;
@@ -126,7 +126,7 @@ export function skillTemplate(v, state) {
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);
   requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)
-    && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse'].includes(v.target), '技能');
+    && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(v.target), '技能');
   checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   for (const k of ['radius', 'width']) checkOptional(v, k, x => int(x, 0, 6));
@@ -208,7 +208,7 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key, x]) => !own(Object.prototype, key) && jsonTree(x, depth + 1));
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','effectTemplates','summonTemplates']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','effectTemplates','summonTemplates','terrainPatches']);
   if (own(s, 'time')) {
     fields(s.time, ['raw','hour','minute','timeOfDay','calendar']);
     requireThat(text(s.time.raw, 500) && typeof s.time.calendar === 'string' && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23)
@@ -257,6 +257,26 @@ export function validateState(s) {
     fields(v, ['id','name','x','y','radius','remainingTurns','damage','damageType','team']);
     requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && int(v.radius,0,10) && int(v.remainingTurns,1,100)
       && int(v.damage,0,1000000000) && ['physical','energy','mental','true'].includes(v.damageType) && ['blue','red','all'].includes(v.team), '持续区域');
+  }, 64);
+  table(s.terrainPatches ?? {}, (v, k) => {
+    fields(v, ['id','name','node','remainingTurns','persistent','patch','covers'], ['anchorUnitId','center']);
+    requireThat(v.id === k && text(v.name) && validTerrainNode(v.node) && int(v.remainingTurns,0,100)
+      && typeof v.persistent === 'boolean', '地形效果');
+    const point = p => coord(p.x) && coord(p.y);
+    if (v.node.area.follow) {
+      requireThat(id(v.anchorUnitId), '地形锚点');
+      fields(v.center, ['x','y']);
+      requireThat(point(v.center), '地形圆心');
+    } else requireThat(!own(v,'anchorUnitId') && !own(v,'center'), '地形锚点');
+    list(v.patch, 100, p => {
+      fields(p, ['x','y','before','after']);
+      validateCell(p.before); validateCell(p.after);
+      return point(p);
+    }, '地形变更');
+    list(v.covers, 100, p => {
+      fields(p, ['id','x','y','before']);
+      return id(p.id) && p.id === `${k}-${p.x}-${p.y}` && point(p) && p.before === null;
+    }, '临时掩体');
   }, 64);
   table(s.interactives, (v, k) => {
     fields(v, ['id','name','x','y','kind','spent']);

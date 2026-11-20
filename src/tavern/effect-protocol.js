@@ -19,6 +19,8 @@ function fields(rule, skip = []) {
 }
 
 export const EFFECT_PROTOCOL = `【统一效果 DSL】
+地形节点 modifyTerrain（terrain: raise/lower/set，整数 amount；z 限 −4…8）、setTerrainKind（terrainKind: floor/wall/slope）、addCover（hp）均必填 area。area 四种写法：{"cells":[{"x":3,"y":4}]}、{"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}、{"center":"hitTarget","radius":1}（也可 self 或 {x,y}）、{"center":"self","radius":1,"follow":true}。圆以棋盘平面欧氏距离计算。主动地形技能用技能模板 target: cell 选择地面格，表达式 target: self，area.center: hitTarget 取瞄准格。follow 必须有真实单位锚点，回合结束更新，死亡或离场消散。
+remainingTurns 以单位回合结束递减，省略为 1，persistent:true 在本场持续（跟随区域仍受锚点生存限制）。到期或消散时立即还原原高度、类型并移除临时掩体，不因占用延迟。施加或还原地形时，坡的等效高度固定为 1，其他格按 z；等效高度下降时，格上的存活且未离场单位按每 1 高度差受到 50 点固定坠落伤害。抬高时单位随脚下地形升高。新造墙跳过占用格，全部因单位占用时记录未解决。已有掩体或互动点也会阻止造墙。
 装备与技能 effects 都是表达式数组（0…24 项）。每条表达式使用战局内唯一 id，label 是界面显示名。外层没有 kind，内层节点必须有 kind。五段写法：WHEN(trigger) → IF(condition，可省) → ROLL(可省) → TARGET(target) → DO(effects)，WITH 以节点字段或共享 params 表达。节点同名字段覆盖 params。除表中声明字段外不允许额外字段，? 表示可省。
 表达式字段：${fields(expression)}。
 

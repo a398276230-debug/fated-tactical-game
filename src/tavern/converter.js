@@ -538,7 +538,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
       name: text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`,
       quality: '普通', ap: bound(r.ap ?? costs.ap, 1, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(r.range ?? taggedRange, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
-      target: ['enemy', 'ally', 'self', 'any', 'corpse'].includes(r.target) ? r.target : 'enemy',
+      target: ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(r.target) ? r.target : 'enemy',
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       effects: convertEffects(r.effects ?? r.效果, 'skill', effects, `fx-${hash(sid).toString(36)}`),
     };

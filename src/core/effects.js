@@ -227,6 +227,9 @@ export function createEffectEngine(io) {
             break;
           }
           case 'chainEffect': result = executeNodes(state, actor, source, p.effects, target, ctx, entry, seen, depth, node.target ?? exprTarget, p.stopOnFailure); break;
+          case 'modifyTerrain': case 'setTerrainKind': case 'addCover':
+            result = io.terrain(state, actor, { ...node, label }, ctx);
+            break;
           case 'raiseDead': result = io.raise(state, actor, target, p.statScale ?? .5); break;
           case 'summon': if (livingUnit(actor)) result = io.summon(state, actor, p.templateId, ctx.center ?? target, p.statScale ?? 1, p.count ?? 1); break;
           case 'addItem': {

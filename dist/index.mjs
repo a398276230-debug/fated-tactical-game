@@ -26,6 +26,10 @@ var comparison = (type, value) => condition(type, { op: compare, value });
 var tags = ["targetHasCategory", "targetCreatureType", "selfHasStatus", "targetHasStatus", "weaponType", "skillSchool", "actionType", "damageType", "hitRating", "selfHasTag", "targetHasTag"];
 var bool = { type: "boolean" };
 var node = (kind, properties, required = []) => object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref("condition"), radius: number(0, 15), ...properties }, ["kind", ...required]);
+var coord = integer(0, 9);
+var point = object({ x: coord, y: coord }, ["x", "y"]);
+var anchor = enumOf("self", "hitTarget");
+var terrainDuration = { area: ref("terrainArea"), remainingTurns: turns, persistent: bool };
 var resource = { resource: id, ...magnitudes, ...scaling };
 var attribute = enumOf("str", "agi", "con", "int", "spi");
 var events = ["on_attack", "on_hit", "on_damaged", "on_kill", "on_death", "on_turn_start", "on_turn_end", "on_skill_cast", "on_equip", "on_heal", "on_ally_death"];
@@ -40,6 +44,12 @@ var effectSchema = {
   title: "Fated Tactical Game effect expression",
   $ref: "#/$defs/expression",
   $defs: {
+    terrainArea: union(
+      object({ cells: array(point, 100) }, ["cells"]),
+      object({ rect: object({ x1: coord, y1: coord, x2: coord, y2: coord }, ["x1", "y1", "x2", "y2"]) }, ["rect"]),
+      object({ center: union(point, anchor), radius: number(0, 15), follow: { const: false } }, ["center", "radius"]),
+      object({ center: anchor, radius: number(0, 15), follow: { const: true } }, ["center", "radius", "follow"])
+    ),
     saveDC: union(integer(1, 50), object({
       base: number(-1e9, 1e9),
       scaleBy: object({ stat: attribute, perUnit: number(-1e9, 1e9) }, ["stat", "perUnit"]),
@@ -91,6 +101,10 @@ var effectSchema = {
     }, ["id", "trigger", "target", "effects"]),
     node: union(
       node("damage", { ...magnitudes, ...scaling, lethal: { ...bool, default: true }, resourceMultiplier: id, percentOfTargetMaxHp: fraction, percentOfSelfMaxHp: fraction, percentOfPower: number(0, 10), damageType, ignoreArmor: { type: "boolean" }, excludeHitTarget: bool, flat: amount, strikeBonus: bool, inheritDamageType: bool }),
+      node("modifyTerrain", { ...terrainDuration, terrain: enumOf("raise", "lower"), amount: integer(0, 12) }, ["area", "terrain", "amount"]),
+      node("modifyTerrain", { ...terrainDuration, terrain: enumOf("set"), amount: integer(-4, 8) }, ["area", "terrain", "amount"]),
+      node("setTerrainKind", { ...terrainDuration, terrainKind: enumOf("floor", "wall", "slope") }, ["area", "terrainKind"]),
+      node("addCover", { ...terrainDuration, hp: integer(1, 1e9) }, ["area", "hp"]),
       node("heal", { ...magnitudes, ...scaling, percentOfMaxHp: fraction }),
       ...["restoreResource", "drainResource", "produceResource"].map((kind) => node(kind, { ...resource, minimumRemaining: amount, requireFull: bool, local: bool, ...kind === "produceResource" ? { cap: integer(1, 1e9), initial: integer(0, 1e9), reloadable: bool, targetTierBase: integer(1, 8) } : {}, percentPerCost: fraction }, ["resource"])),
       node("grantStatus", { statusId: id, turns, stacks: integer(1, 10), modifiers, amount, expireOn: ref("expireOn"), durationType: enumOf("battle_turns", "until_removed", "persistent") }, ["statusId"]),
@@ -142,6 +156,8 @@ var isExpression = (effect) => effect != null && Object.hasOwn(effect, "trigger"
 var orderedDC = (dc) => (dc?.min ?? 1) <= (dc?.max ?? 50);
 var validSaveDC = (dc) => matches(dc, effectSchema.$defs.saveDC) && orderedDC(dc);
 var validExpireOn = (value) => matches(value, effectSchema.$defs.expireOn);
+var terrainKinds = ["modifyTerrain", "setTerrainKind", "addCover"];
+var validTerrainNode = (node3) => terrainKinds.includes(node3?.kind) && matches(node3, effectSchema.$defs.node);
 var validExpression = (effect) => matches(effect, effectSchema.$defs.expression) && orderedDC(effect.roll?.contest?.dc ?? effect.roll?.dc);
 var effectNodes = function* (nodes, enabledOnly = false) {
   for (const node3 of nodes) {
@@ -462,6 +478,11 @@ function createEffectEngine(io) {
           }
           case "chainEffect":
             result = executeNodes(state, actor, source, p.effects, target2, ctx, entry, seen, depth, node3.target ?? exprTarget, p.stopOnFailure);
+            break;
+          case "modifyTerrain":
+          case "setTerrainKind":
+          case "addCover":
+            result = io.terrain(state, actor, { ...node3, label }, ctx);
             break;
           case "raiseDead":
             result = io.raise(state, actor, target2, p.statScale ?? 0.5);
@@ -1016,6 +1037,168 @@ function validateStatusModifiers(template, modifiers2) {
   }
 }
 
+// src/core/terrain-effects.js
+var unitsAt = (state, x, y) => Object.values(state.units).filter((u) => u.x === x && u.y === y);
+var present = (unit) => unit && unit.hp > 0 && !unit.fled;
+var same2 = (a, b) => a.x === b.x && a.y === b.y;
+var occupiedByUnit = (state, point2) => unitsAt(state, point2.x, point2.y).some((unit) => unit.hp > 0);
+var blocked = (state, point2) => occupiedByUnit(state, point2) || [...Object.values(state.covers), ...Object.values(state.interactives)].some((other) => same2(other, point2));
+var maxPatches = 64;
+function cellsIn(state, area2, center) {
+  const { rect } = area2;
+  const points = area2.cells ?? state.grid.flatMap((row, y) => row.flatMap((_, x) => {
+    const inside = rect ? x >= Math.min(rect.x1, rect.x2) && x <= Math.max(rect.x1, rect.x2) && y >= Math.min(rect.y1, rect.y2) && y <= Math.max(rect.y1, rect.y2) : center && Math.hypot(x - center.x, y - center.y) <= area2.radius;
+    return inside ? [{ x, y }] : [];
+  }));
+  return [...new Map(points.filter((p) => cellAt(state, p.x, p.y)).map((p) => [`${p.x},${p.y}`, p])).values()];
+}
+function changeCell(cell, node3) {
+  if (node3.kind === "setTerrainKind") return { ...cell, kind: node3.terrainKind };
+  const z = node3.terrain === "set" ? node3.amount : cell.z + (node3.terrain === "raise" ? node3.amount : -node3.amount);
+  return { ...cell, z: Math.min(8, Math.max(-4, z)) };
+}
+var effectiveHeight = (cell) => cell.kind === "slope" ? 1 : cell.z;
+function writeCell(state, { x, y }, after, changes2, restored = false) {
+  const before = state.grid[y][x];
+  state.grid[y][x] = after;
+  changes2.push({ x, y, before, after, restored, units: unitsAt(state, x, y) });
+}
+function settleChanges(state, changes2, record2, damage) {
+  for (const change of changes2) {
+    const { x, y } = change;
+    const cell = state.grid[y][x];
+    if (cell.kind !== "wall") continue;
+    for (const table3 of [state.covers, state.interactives]) {
+      for (const [id3, item] of Object.entries(table3)) if (same2(item, change)) delete table3[id3];
+    }
+    for (const unit of unitsAt(state, x, y).filter((unit2) => unit2.hp > 0)) {
+      const free = state.grid.flatMap((row, y2) => row.flatMap((tile, x2) => tile.kind !== "wall" && !unitAt(state, x2, y2) && !coverAt(state, x2, y2) ? [{ x: x2, y: y2 }] : []));
+      const distance = (p) => (p.x - x) ** 2 + (p.y - y) ** 2;
+      const landing = free.sort((a, b) => distance(a) - distance(b))[0];
+      if (landing) {
+        Object.assign(unit, landing);
+        if (Object.hasOwn(unit, "z")) unit.z = cellAt(state, landing.x, landing.y).z;
+        record2(state, unit, "terrain_displace", `${unit.name}\u56E0\u5899\u4F53\u8FD8\u539F\u79FB\u81F3 (${landing.x},${landing.y})`, { x: landing.x, y: landing.y });
+      } else damage(state, unit, unit.hp, "\u5899\u4F53\u8FD8\u539F\uFF0C\u65E0\u53EF\u7AD9\u7ACB\u683C", { forcedDisplacement: true });
+    }
+  }
+  for (const { before, after, restored, units } of changes2) {
+    const drop = effectiveHeight(before) - effectiveHeight(after);
+    for (const unit of units.filter(present)) {
+      if (Object.hasOwn(unit, "z")) unit.z = cellAt(state, unit.x, unit.y).z;
+      if (drop > 0) damage(state, unit, drop * 50, `\u5730\u5F62${restored ? "\u8FD8\u539F" : "\u53D8\u5316"}\u9AD8\u5EA6\u843D\u5DEE ${drop}\uFF0C`, { drop });
+    }
+  }
+}
+function applyTerrainEffect(state, actor, node3, context, record2, damage) {
+  const area2 = node3.area;
+  const center = area2.center === "self" ? actor : area2.center === "hitTarget" ? context.terrainTarget ?? context.target ?? context.center : area2.center;
+  const name = node3.label ?? node3.kind;
+  const unresolved = (reason) => {
+    record2(state, actor, "terrain_unresolved", `\u5730\u5F62\u6548\u679C\u672A\u751F\u6548\uFF1A${reason}`, { unresolved: true, name });
+    return false;
+  };
+  if (area2.follow && !present(center)) return unresolved("\u533A\u57DF\u6CA1\u6709\u5B58\u6D3B\u7684\u951A\u70B9\u5355\u4F4D");
+  if (Object.keys(state.terrainPatches ?? {}).length >= maxPatches) return unresolved("\u5730\u5F62\u6548\u679C\u6570\u91CF\u8FBE\u5230\u4E0A\u9650");
+  let n = 1;
+  while (Object.hasOwn(state.terrainPatches ?? {}, `terrain-${n}`) || Object.keys(state.covers).some((id3) => id3.startsWith(`terrain-${n}-`))) n++;
+  const entry = {
+    id: `terrain-${n}`,
+    name,
+    node: node3,
+    ...area2.follow ? { anchorUnitId: center.id, center: { x: center.x, y: center.y } } : {},
+    remainingTurns: node3.remainingTurns ?? 1,
+    persistent: node3.persistent === true,
+    patch: [],
+    covers: []
+  };
+  const points = cellsIn(state, area2, center);
+  const changes2 = [];
+  const count = place(state, entry, points, record2, actor, changes2);
+  if (!count) {
+    const occupied = points.length && points.every((p) => occupiedByUnit(state, p));
+    return unresolved(occupied ? "\u76EE\u6807\u533A\u57DF\u5168\u90E8\u88AB\u5355\u4F4D\u5360\u7528" : "\u76EE\u6807\u533A\u57DF\u6CA1\u6709\u53EF\u7528\u683C\u5B50");
+  }
+  (state.terrainPatches ??= {})[entry.id] = entry;
+  record2(state, actor, "terrain", `${name}\u5F71\u54CD\u4E86 ${count} \u683C`, { terrainId: entry.id, count });
+  settleChanges(state, changes2, record2, damage);
+  return true;
+}
+function place(state, entry, points, record2, actor, changes2) {
+  const { node: node3 } = entry;
+  let occupied = 0;
+  for (const { x, y } of points) {
+    const cell = cellAt(state, x, y);
+    const point2 = { x, y };
+    if (node3.terrainKind === "wall" || node3.kind === "addCover") {
+      if (occupiedByUnit(state, point2)) occupied++;
+      if (blocked(state, point2) || node3.kind === "addCover" && (cell.kind === "wall" || Object.keys(state.covers).length >= 200)) continue;
+    }
+    if (node3.kind === "addCover") {
+      const id3 = `${entry.id}-${x}-${y}`;
+      state.covers[id3] = { id: id3, name: entry.name, x, y, material: "\u5730\u5F62\u6548\u679C", hp: node3.hp, maxHp: node3.hp, cover: 2 };
+      entry.covers.push({ id: id3, x, y, before: null });
+    } else {
+      const after = changeCell(cell, node3);
+      entry.patch.push({ x, y, before: { ...cell }, after });
+      writeCell(state, point2, after, changes2);
+    }
+  }
+  if (occupied) record2(state, actor, "terrain_skip", `${occupied} \u683C\u56E0\u5355\u4F4D\u5360\u7528\u88AB\u8DF3\u8FC7`, { count: occupied });
+  return entry.patch.length + entry.covers.length;
+}
+function remove(state, entry, entries2, changes2) {
+  for (const { id: id3 } of entry.covers) delete state.covers[id3];
+  for (const patch of entry.patch) {
+    let cell = patch.before;
+    const replay = [];
+    for (const other of entries2.slice(entries2.indexOf(entry) + 1)) {
+      const layer = other.patch.find((p) => same2(p, patch));
+      if (!layer) continue;
+      const after = changeCell(cell, other.node);
+      replay.push({ layer, before: cell, after });
+      cell = after;
+    }
+    for (const { layer, before, after } of replay) Object.assign(layer, { before, after });
+    writeCell(state, patch, cell, changes2, true);
+  }
+  entry.patch = [];
+  entry.covers = [];
+}
+function updateTerrainPatches(state, record2, damage, advance2 = false) {
+  const entries2 = Object.values(state.terrainPatches ?? {});
+  const moved = [], changes2 = [], movingChanges = [];
+  for (const entry of entries2.slice().reverse()) {
+    const anchor2 = state.units[entry.anchorUnitId];
+    const lost = entry.anchorUnitId && !present(anchor2);
+    if (advance2 && !entry.persistent && entry.remainingTurns > 0) entry.remainingTurns--;
+    if (lost || !entry.persistent && entry.remainingTurns === 0) {
+      entry.remainingTurns = 0;
+      entry.persistent = false;
+      remove(state, entry, entries2, changes2);
+      delete state.terrainPatches[entry.id];
+      record2(state, anchor2, "terrain_expire", `${entry.name}${lost ? "\u56E0\u951A\u70B9\u79BB\u573A\u800C\u6D88\u6563" : "\u5230\u671F\u8FD8\u539F"}`, { terrainId: entry.id });
+    } else if (advance2 && anchor2 && !same2(anchor2, entry.center)) {
+      remove(state, entry, entries2, movingChanges);
+      entry.center = { x: anchor2.x, y: anchor2.y };
+      moved.unshift(entry);
+    }
+  }
+  for (const entry of moved) {
+    delete state.terrainPatches[entry.id];
+    state.terrainPatches[entry.id] = entry;
+    place(state, entry, cellsIn(state, entry.node.area, entry.center), record2, state.units[entry.anchorUnitId], movingChanges);
+  }
+  const movedCells = /* @__PURE__ */ new Map();
+  for (const change of movingChanges) {
+    const key3 = `${change.x},${change.y}`;
+    const first = movedCells.get(key3);
+    if (first) first.after = change.after;
+    else movedCells.set(key3, change);
+  }
+  settleChanges(state, [...changes2, ...movedCells.values()], record2, damage);
+}
+
 // src/core/combat.js
 var def = (name, icon, category, remainingTurns, description, modifiers2 = {}, options = {}) => Object.freeze({
   name,
@@ -1203,6 +1386,7 @@ function grantStatus(state, unit, statusId2, options = {}) {
   return applied;
 }
 function refreshOutcome(state) {
+  updateTerrainPatches(state, record, terrainDamage);
   let blue = false, red = false;
   for (const unit of values2(state.units)) if (alive(unit) && !unit.fled) {
     blue ||= unit.team === "blue";
@@ -1250,17 +1434,17 @@ function dispatchEffect(state, actor, trigger, context = {}, extra = []) {
   dsl.dispatch(state, actor, trigger, context, extra);
 }
 function loseHP(state, target2, raw, sourceUnitId, type, label, detail = {}, triggerDamage = true, effectContext = {}) {
-  if (!alive(target2) || target2.fled) return 0;
+  if (!alive(target2) || target2.fled && !effectContext.forcedDisplacement) return 0;
   const hpBefore = target2.hp;
   const source = tableEntry(state.units, sourceUnitId);
-  const preserveLife = effectContext.preserveLife || target2.nonLethal || changes(target2, "preserveLife");
+  const preserveLife = !effectContext.forcedDisplacement && (effectContext.preserveLife || target2.nonLethal || changes(target2, "preserveLife"));
   target2.hp = Math.max(preserveLife ? 1 : 0, hpBefore - Math.max(0, Math.floor(raw)));
   const amount2 = hpBefore - target2.hp;
   record(
     state,
     sourceUnitId,
     "damage",
-    `${target2.name}\u53D7\u5230${amount2}\u70B9${label}\u4F24\u5BB3`,
+    `${effectContext.damagePrefix ?? ""}${target2.name}\u53D7\u5230${amount2}\u70B9${label}\u4F24\u5BB3`,
     { ...detail, targetId: target2.id, damageType: type, amount: amount2, hpBefore, hpAfter: target2.hp }
   );
   if (amount2 > 0) expireStatuses(state, target2, "on_damaged", { sourceUnitId, direct: effectContext.direct });
@@ -1269,6 +1453,7 @@ function loseHP(state, target2, raw, sourceUnitId, type, label, detail = {}, tri
     target2.diedAt = { round: state.round, turn: state.turn };
     target2.corpseOf ??= target2.id;
     record(state, sourceUnitId, "defeat", `${target2.name}\u5012\u4E0B`, { targetId: target2.id });
+    updateTerrainPatches(state, record, terrainDamage);
     triggerDeathrattle(state, target2, sourceUnitId);
     dispatchEffect(state, target2, "on_death", { target: source, attacker: source, killed: target2, dealt: amount2, damageType: type, weaponId: detail.weaponId, sourceUnitId });
     for (const ally of allies) if (alive(ally)) dispatchEffect(state, ally, "on_ally_death", { target: target2, killed: target2, attacker: source, sourceUnitId: target2.id });
@@ -1277,6 +1462,20 @@ function loseHP(state, target2, raw, sourceUnitId, type, label, detail = {}, tri
     dsl.dispatch(state, target2, "on_damaged", { target: source, attacker: source, dealt: amount2, damageType: type, ...effectContext });
   }
   return amount2;
+}
+function terrainDamage(state, target2, raw, prefix, detail) {
+  const { forcedDisplacement } = detail;
+  return loseHP(
+    state,
+    target2,
+    raw,
+    null,
+    "true",
+    forcedDisplacement ? "\u574D\u584C" : "\u5760\u843D",
+    { ...detail, raw },
+    true,
+    { direct: false, forcedDisplacement, damagePrefix: prefix }
+  );
 }
 function triggerDeathrattle(state, target2, sourceUnitId) {
   const effect = target2.deathrattle;
@@ -1480,6 +1679,7 @@ function endTurn(state, unit) {
   }
   record(state, unit, "end", `${unit.name}\u7ED3\u675F\u56DE\u5408`);
   if (unit === state.units[state.order.at(-1)]) decayZones(state);
+  updateTerrainPatches(state, record, terrainDamage, true);
 }
 function settleTurn(state) {
   for (let checked = 0; checked < state.order.length; checked++) {
@@ -1638,6 +1838,7 @@ function spawnEffectUnit(state, actor, original, center, scale, corpse) {
   return true;
 }
 var dsl = createEffectEngine({
+  terrain: (state, actor, node3, ctx) => applyTerrainEffect(state, actor, node3, ctx, record, terrainDamage),
   equipped,
   living,
   resourcePool,
@@ -2464,6 +2665,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const effectContext = {
     target: mainTarget,
     center: plan.center,
+    terrainTarget: template.target === "cell" ? locateUnit(state, plan.center) ?? plan.center : null,
     actionType: action.type,
     school: template.school,
     multipliers,
@@ -2950,7 +3152,7 @@ var int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
 var num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
 var text = (v, max = 100) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
 var team = (v) => v === "blue" || v === "red";
-var coord = (v) => int(v, 0, 9);
+var coord2 = (v) => int(v, 0, 9);
 var attrs = ["str", "agi", "con", "int", "spi"];
 var statusDurations = ["battle_turns", "until_removed", "persistent"];
 var statusTickTimings = ["onTurnStart", "onTurnEnd"];
@@ -3087,7 +3289,7 @@ function skillTemplate(v, state) {
   checkOptional(v, "damageType", (type) => damageTypes.includes(type));
   checkOptional(v, "school", text);
   checkOptional(v, "resourceCost", resourceCost);
-  requireThat(text(v.name) && int(v.ap, 1, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 15) && ["single", "circle", "fan", "cone", "line"].includes(v.shape) && ["enemy", "ally", "self", "any", "corpse"].includes(v.target), "\u6280\u80FD");
+  requireThat(text(v.name) && int(v.ap, 1, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 15) && ["single", "circle", "fan", "cone", "line"].includes(v.shape) && ["enemy", "ally", "self", "any", "corpse", "cell"].includes(v.target), "\u6280\u80FD");
   checkOptional(v, "power", (x) => int(x, 0, 1e9));
   for (const k of ["mp", "sp"]) checkOptional(v, k, (x) => int(x, 0, 25e3));
   for (const k of ["radius", "width"]) checkOptional(v, k, (x) => int(x, 0, 6));
@@ -3140,7 +3342,7 @@ function unitValue(v, key3, state) {
     }
   }
   checkOptional(v, "reactionAvailable", (x) => typeof x === "boolean");
-  requireThat(v.id === key3 && text(v.name) && team(v.team) && coord(v.x) && coord(v.y), "\u68CB\u5B50");
+  requireThat(v.id === key3 && text(v.name) && team(v.team) && coord2(v.x) && coord2(v.y), "\u68CB\u5B50");
   list(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
   requireThat(v.facing.length === 2 && v.facing.some(Boolean), "\u671D\u5411");
   for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat(int(v[max], r === "hp" ? 1 : 0, 1e9) && int(v[r], 0, v[max]), r);
@@ -3183,7 +3385,7 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key3, x]) => !own2(Object.prototype, key3) && jsonTree(x, depth + 1));
 }
 function validateState(s) {
-  fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "effectTemplates", "summonTemplates"]);
+  fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "effectTemplates", "summonTemplates", "terrainPatches"]);
   if (own2(s, "time")) {
     fields(s.time, ["raw", "hour", "minute", "timeOfDay", "calendar"]);
     requireThat(text(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
@@ -3230,23 +3432,43 @@ function validateState(s) {
   });
   table2(s.covers, (v, k) => {
     fields(v, ["id", "name", "x", "y", "material", "hp", "maxHp", "cover"]);
-    requireThat(v.id === k && text(v.name) && text(v.material) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== "wall" && int(v.maxHp, 1, 1e9) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), "\u63A9\u4F53");
+    requireThat(v.id === k && text(v.name) && text(v.material) && coord2(v.x) && coord2(v.y) && s.grid[v.y][v.x].kind !== "wall" && int(v.maxHp, 1, 1e9) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), "\u63A9\u4F53");
   });
   table2(s.zones ?? {}, (v, k) => {
     fields(v, ["id", "name", "x", "y", "radius", "remainingTurns", "damage", "damageType", "team"]);
-    requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && int(v.radius, 0, 10) && int(v.remainingTurns, 1, 100) && int(v.damage, 0, 1e9) && ["physical", "energy", "mental", "true"].includes(v.damageType) && ["blue", "red", "all"].includes(v.team), "\u6301\u7EED\u533A\u57DF");
+    requireThat(v.id === k && text(v.name) && coord2(v.x) && coord2(v.y) && int(v.radius, 0, 10) && int(v.remainingTurns, 1, 100) && int(v.damage, 0, 1e9) && ["physical", "energy", "mental", "true"].includes(v.damageType) && ["blue", "red", "all"].includes(v.team), "\u6301\u7EED\u533A\u57DF");
+  }, 64);
+  table2(s.terrainPatches ?? {}, (v, k) => {
+    fields(v, ["id", "name", "node", "remainingTurns", "persistent", "patch", "covers"], ["anchorUnitId", "center"]);
+    requireThat(v.id === k && text(v.name) && validTerrainNode(v.node) && int(v.remainingTurns, 0, 100) && typeof v.persistent === "boolean", "\u5730\u5F62\u6548\u679C");
+    const point2 = (p) => coord2(p.x) && coord2(p.y);
+    if (v.node.area.follow) {
+      requireThat(id2(v.anchorUnitId), "\u5730\u5F62\u951A\u70B9");
+      fields(v.center, ["x", "y"]);
+      requireThat(point2(v.center), "\u5730\u5F62\u5706\u5FC3");
+    } else requireThat(!own2(v, "anchorUnitId") && !own2(v, "center"), "\u5730\u5F62\u951A\u70B9");
+    list(v.patch, 100, (p) => {
+      fields(p, ["x", "y", "before", "after"]);
+      validateCell(p.before);
+      validateCell(p.after);
+      return point2(p);
+    }, "\u5730\u5F62\u53D8\u66F4");
+    list(v.covers, 100, (p) => {
+      fields(p, ["id", "x", "y", "before"]);
+      return id2(p.id) && p.id === `${k}-${p.x}-${p.y}` && point2(p) && p.before === null;
+    }, "\u4E34\u65F6\u63A9\u4F53");
   }, 64);
   table2(s.interactives, (v, k) => {
     fields(v, ["id", "name", "x", "y", "kind", "spent"]);
-    requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
+    requireThat(v.id === k && text(v.name) && coord2(v.x) && coord2(v.y) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
   });
   const occupied = /* @__PURE__ */ new Set(), equipped2 = /* @__PURE__ */ new Set();
   table2(s.units, (v, k) => {
     unitValue(v, k, s);
-    const point = `${v.x},${v.y}`;
+    const point2 = `${v.x},${v.y}`;
     if (v.hp > 0) {
-      requireThat(!occupied.has(point) && s.grid[v.y][v.x].kind !== "wall" && !Object.values(s.covers).some((c) => c.hp > 0 && c.x === v.x && c.y === v.y), "\u68CB\u5B50\u4F4D\u7F6E\u91CD\u53E0\u6216\u963B\u6321");
-      occupied.add(point);
+      requireThat(!occupied.has(point2) && s.grid[v.y][v.x].kind !== "wall" && !Object.values(s.covers).some((c) => c.hp > 0 && c.x === v.x && c.y === v.y), "\u68CB\u5B50\u4F4D\u7F6E\u91CD\u53E0\u6216\u963B\u6321");
+      occupied.add(point2);
     }
     const slots = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
     for (const i of new Set(slots)) {
@@ -3641,7 +3863,7 @@ function chooseAction(state) {
     if (!options.ok) continue;
     for (const cell of options.cells) {
       if (type === "disengage" && !riskyDestinations.has(`${cell.x},${cell.y}`)) continue;
-      const projectedDepth = plannedPath.findIndex((point) => samePosition(point, cell)) + 1;
+      const projectedDepth = plannedPath.findIndex((point2) => samePosition(point2, cell)) + 1;
       const distance = Math.min(...objectives.map((u) => dist(cell, u)));
       const progress = baseline - distance;
       const high = elevation(state, cell) - z0;
@@ -3812,7 +4034,7 @@ var commands = {
   },
   set_terrain_cell(s, c) {
     fields(c, ["type", "x", "y", "patch"]);
-    requireThat(coord(c.x) && coord(c.y), "\u5750\u6807");
+    requireThat(coord2(c.x) && coord2(c.y), "\u5750\u6807");
     nonempty(c.patch);
     const next = { ...s.grid[c.y][c.x], ...c.patch };
     validateCell(next);
@@ -4430,12 +4652,12 @@ function createRenderer(root) {
       for (let x = 0; x < width; x++) {
         const cell = createButton("tactical-cell");
         Object.assign(cell.dataset, { x, y, gx: x, gy: y });
-        const coord2 = el2("span", "tactical-cell-coord", key3(x, y));
+        const coord3 = el2("span", "tactical-cell-coord", key3(x, y));
         const z = el2("span", "tactical-cell-tz");
         const units = el2("span", "tactical-cell-units");
         const features = el2("span", "tactical-cell-features");
         const cost = el2("span", "cell-cost");
-        cell.append(coord2, z, units, features, cost);
+        cell.append(coord3, z, units, features, cost);
         boardCells.set(key3(x, y), { cell, z, units, features, cost });
         board.append(cell);
       }
@@ -4866,7 +5088,7 @@ function createRenderer(root) {
 }
 
 // src/ui/target_card.js
-function placeTargetCard(card, anchor, viewport = window.visualViewport) {
+function placeTargetCard(card, anchor2, viewport = window.visualViewport) {
   const gutter = 8, gap = 6;
   const left = (viewport?.offsetLeft ?? 0) + gutter;
   const top = (viewport?.offsetTop ?? 0) + gutter;
@@ -4874,7 +5096,7 @@ function placeTargetCard(card, anchor, viewport = window.visualViewport) {
   const bottom = top + (viewport?.height ?? window.innerHeight) - 2 * gutter;
   card.style.maxWidth = `${Math.max(0, right - left)}px`;
   card.style.maxHeight = `${Math.max(0, bottom - top)}px`;
-  const a = anchor.getBoundingClientRect();
+  const a = anchor2.getBoundingClientRect();
   const { width, height: height2 } = card.getBoundingClientRect();
   const room = {
     right: right - a.right - gap,
@@ -5046,15 +5268,15 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
   const cellFor = (at) => $("board").querySelector(`[data-x="${at.x}"][data-y="${at.y}"]`);
   function layoutTargetCard() {
     if (!target2 || $("target-actions").hidden) return;
-    const anchor = cellFor(target2);
-    if (!anchor) return;
-    const r = anchor.getBoundingClientRect(), clip = anchor.closest(".axis-scroll").getBoundingClientRect();
+    const anchor2 = cellFor(target2);
+    if (!anchor2) return;
+    const r = anchor2.getBoundingClientRect(), clip = anchor2.closest(".axis-scroll").getBoundingClientRect();
     const viewport = window2?.visualViewport;
     if (r.right <= Math.max(clip.left, viewport?.offsetLeft ?? 0) || r.left >= Math.min(clip.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window2.innerWidth)) || r.bottom <= (viewport?.offsetTop ?? 0) || r.top >= (viewport?.offsetTop ?? 0) + (viewport?.height ?? window2.innerHeight)) {
       closeTarget();
       return;
     }
-    placeTargetCard($("target-actions"), anchor, viewport);
+    placeTargetCard($("target-actions"), anchor2, viewport);
   }
   function closeTarget(restoreFocus = false) {
     const at = target2;
@@ -5165,8 +5387,8 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
     $("target-preview").open = true;
     draw();
   }
-  function hoverPoint(point) {
-    hover = point;
+  function hoverPoint(point2) {
+    hover = point2;
     if (!target2) drawPreview();
   }
   function download(kind, value, format = "json") {
@@ -6557,15 +6779,15 @@ function parseBattleDescriptor(value) {
   const ids = /* @__PURE__ */ new Set();
   const occupied = /* @__PURE__ */ new Set();
   const units = lines.slice(1).map((line, i) => {
-    const [row, id3, team2, source, name, point, ...tail] = line.split("|").map((x2) => x2.trim());
-    if (row !== "unit" || tail.length || !identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase()) || !["blue", "red"].includes(team2) || !name || name.length > 100 || !/^\d\s*,\s*\d$/.test(point ?? "")) {
+    const [row, id3, team2, source, name, point2, ...tail] = line.split("|").map((x2) => x2.trim());
+    if (row !== "unit" || tail.length || !identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase()) || !["blue", "red"].includes(team2) || !name || name.length > 100 || !/^\d\s*,\s*\d$/.test(point2 ?? "")) {
       fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID\u3001\u9635\u8425\u3001\u6765\u6E90\u3001\u663E\u793A\u540D\u53CA 0\u20139 \u8303\u56F4\u5185\u7684 x,y`);
     }
     const path = source?.startsWith("mvu:") ? source.slice(4).split("/") : [];
     if (source !== "char_info" && (!path.length || path.some((key3) => !key3 || key3 !== key3.trim() || unsafeKey(key3)))) {
       fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u6765\u6E90\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
     }
-    const [x, y] = point.split(",").map(Number);
+    const [x, y] = point2.split(",").map(Number);
     if (occupied.has(`${x},${y}`)) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u8D77\u70B9\u91CD\u590D`);
     occupied.add(`${x},${y}`);
     ids.add(id3.toLowerCase());
@@ -6602,7 +6824,7 @@ function createBattleGrid(battle, seed, units, warnings) {
     return grid;
   }
   const terrain = legacyTerrain;
-  const place = (raw, kind, label) => {
+  const place2 = (raw, kind, label) => {
     const [x, y, z] = Array.isArray(raw) ? raw : Array.isArray(raw?.xyz) ? raw.xyz : [raw?.x, raw?.y, raw?.z];
     if (!inBounds(x) || !inBounds(y)) {
       warnings.push(`\u5FFD\u7565\u65E0\u6548\u5730\u5F62\u5750\u6807\uFF1A${label}`);
@@ -6612,8 +6834,8 @@ function createBattleGrid(battle, seed, units, warnings) {
   };
   if (Array.isArray(terrain)) {
     if (terrain.length === 10 && terrain.every((row) => Array.isArray(row) && row.length === 10)) {
-      terrain.forEach((row, y) => row.forEach((cell, x) => place([x, y, cell?.z], cellKind(cell), "grid")));
-    } else terrain.forEach((cell) => place(cell, cellKind(cell), "terrain"));
+      terrain.forEach((row, y) => row.forEach((cell, x) => place2([x, y, cell?.z], cellKind(cell), "grid")));
+    } else terrain.forEach((cell) => place2(cell, cellKind(cell), "terrain"));
   } else {
     for (const region of list2(terrain?.elevation)) {
       const { x1, y1, x2, y2, z } = region ?? {};
@@ -6623,8 +6845,8 @@ function createBattleGrid(battle, seed, units, warnings) {
       }
       for (let y = y1; y <= y2; y++) for (let x = x1; x <= x2; x++) grid[y][x].z = height(z);
     }
-    for (const slope of list2(terrain?.slopes)) place(slope, "slope", "grid.slopes");
-    for (const wall of list2(terrain?.walls)) place(wall, "wall", "grid.walls");
+    for (const slope of list2(terrain?.slopes)) place2(slope, "slope", "grid.slopes");
+    for (const wall of list2(terrain?.walls)) place2(wall, "wall", "grid.walls");
   }
   return grid;
 }
@@ -7186,7 +7408,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink) {
       slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
       range: bound(r.range ?? taggedRange, 0, 15, 1),
       shape: ["single", "circle", "fan", "cone", "line"].includes(r.shape) ? r.shape : "single",
-      target: ["enemy", "ally", "self", "any", "corpse"].includes(r.target) ? r.target : "enemy",
+      target: ["enemy", "ally", "self", "any", "corpse", "cell"].includes(r.target) ? r.target : "enemy",
       ...text2(r.school) ? { school: text2(r.school).slice(0, 100) } : {},
       effects: convertEffects(r.effects ?? r.\u6548\u679C, "skill", effects2, `fx-${hash(sid).toString(36)}`)
     };
@@ -7685,6 +7907,8 @@ function fields2(rule, skip = []) {
   return Object.entries(rule.properties).filter(([key3]) => !skip.includes(key3)).map(([key3, value]) => `${key3}${rule.required.includes(key3) ? "" : "?"}=${describe(value)}`).join("\uFF0C");
 }
 var EFFECT_PROTOCOL = `\u3010\u7EDF\u4E00\u6548\u679C DSL\u3011
+\u5730\u5F62\u8282\u70B9 modifyTerrain\uFF08terrain: raise/lower/set\uFF0C\u6574\u6570 amount\uFF1Bz \u9650 \u22124\u20268\uFF09\u3001setTerrainKind\uFF08terrainKind: floor/wall/slope\uFF09\u3001addCover\uFF08hp\uFF09\u5747\u5FC5\u586B area\u3002area \u56DB\u79CD\u5199\u6CD5\uFF1A{"cells":[{"x":3,"y":4}]}\u3001{"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}\u3001{"center":"hitTarget","radius":1}\uFF08\u4E5F\u53EF self \u6216 {x,y}\uFF09\u3001{"center":"self","radius":1,"follow":true}\u3002\u5706\u4EE5\u68CB\u76D8\u5E73\u9762\u6B27\u6C0F\u8DDD\u79BB\u8BA1\u7B97\u3002\u4E3B\u52A8\u5730\u5F62\u6280\u80FD\u7528\u6280\u80FD\u6A21\u677F target: cell \u9009\u62E9\u5730\u9762\u683C\uFF0C\u8868\u8FBE\u5F0F target: self\uFF0Carea.center: hitTarget \u53D6\u7784\u51C6\u683C\u3002follow \u5FC5\u987B\u6709\u771F\u5B9E\u5355\u4F4D\u951A\u70B9\uFF0C\u56DE\u5408\u7ED3\u675F\u66F4\u65B0\uFF0C\u6B7B\u4EA1\u6216\u79BB\u573A\u6D88\u6563\u3002
+remainingTurns \u4EE5\u5355\u4F4D\u56DE\u5408\u7ED3\u675F\u9012\u51CF\uFF0C\u7701\u7565\u4E3A 1\uFF0Cpersistent:true \u5728\u672C\u573A\u6301\u7EED\uFF08\u8DDF\u968F\u533A\u57DF\u4ECD\u53D7\u951A\u70B9\u751F\u5B58\u9650\u5236\uFF09\u3002\u5230\u671F\u6216\u6D88\u6563\u65F6\u7ACB\u5373\u8FD8\u539F\u539F\u9AD8\u5EA6\u3001\u7C7B\u578B\u5E76\u79FB\u9664\u4E34\u65F6\u63A9\u4F53\uFF0C\u4E0D\u56E0\u5360\u7528\u5EF6\u8FDF\u3002\u65BD\u52A0\u6216\u8FD8\u539F\u5730\u5F62\u65F6\uFF0C\u5761\u7684\u7B49\u6548\u9AD8\u5EA6\u56FA\u5B9A\u4E3A 1\uFF0C\u5176\u4ED6\u683C\u6309 z\uFF1B\u7B49\u6548\u9AD8\u5EA6\u4E0B\u964D\u65F6\uFF0C\u683C\u4E0A\u7684\u5B58\u6D3B\u4E14\u672A\u79BB\u573A\u5355\u4F4D\u6309\u6BCF 1 \u9AD8\u5EA6\u5DEE\u53D7\u5230 50 \u70B9\u56FA\u5B9A\u5760\u843D\u4F24\u5BB3\u3002\u62AC\u9AD8\u65F6\u5355\u4F4D\u968F\u811A\u4E0B\u5730\u5F62\u5347\u9AD8\u3002\u65B0\u9020\u5899\u8DF3\u8FC7\u5360\u7528\u683C\uFF0C\u5168\u90E8\u56E0\u5355\u4F4D\u5360\u7528\u65F6\u8BB0\u5F55\u672A\u89E3\u51B3\u3002\u5DF2\u6709\u63A9\u4F53\u6216\u4E92\u52A8\u70B9\u4E5F\u4F1A\u963B\u6B62\u9020\u5899\u3002
 \u88C5\u5907\u4E0E\u6280\u80FD effects \u90FD\u662F\u8868\u8FBE\u5F0F\u6570\u7EC4\uFF080\u202624 \u9879\uFF09\u3002\u6BCF\u6761\u8868\u8FBE\u5F0F\u4F7F\u7528\u6218\u5C40\u5185\u552F\u4E00 id\uFF0Clabel \u662F\u754C\u9762\u663E\u793A\u540D\u3002\u5916\u5C42\u6CA1\u6709 kind\uFF0C\u5185\u5C42\u8282\u70B9\u5FC5\u987B\u6709 kind\u3002\u4E94\u6BB5\u5199\u6CD5\uFF1AWHEN(trigger) \u2192 IF(condition\uFF0C\u53EF\u7701) \u2192 ROLL(\u53EF\u7701) \u2192 TARGET(target) \u2192 DO(effects)\uFF0CWITH \u4EE5\u8282\u70B9\u5B57\u6BB5\u6216\u5171\u4EAB params \u8868\u8FBE\u3002\u8282\u70B9\u540C\u540D\u5B57\u6BB5\u8986\u76D6 params\u3002\u9664\u8868\u4E2D\u58F0\u660E\u5B57\u6BB5\u5916\u4E0D\u5141\u8BB8\u989D\u5916\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\u3002
 \u8868\u8FBE\u5F0F\u5B57\u6BB5\uFF1A${fields2(expression2)}\u3002
 
@@ -7831,6 +8055,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 • 链式支付与回复：{"id":"blood_mana","trigger":"active","target":"self","effects":[{"kind":"chainEffect","stopOnFailure":true,"effects":[{"kind":"drainResource","resource":"hp","amount":12,"minimumRemaining":1,"requireFull":true},{"kind":"restoreResource","resource":"mp","percentOfPrevious":0.5}]}]}
 • 叠加装备资源：{"id":"charge_pool","trigger":"passive","target":"self","effects":[{"kind":"produceResource","resource":"charge","cap":10000,"initial":0},{"kind":"multiplyDamage","resourceScale":{"resource":"charge","perUnit":0.02}}]}。同批在实例 counters 加入 charge:0，再写 on_kill/self 的 produceResource(amount:1) 增加存量。
 • 捧腹失能：先添加 /statusTemplates/laugh_disabled，value 为 {"id":"laugh_disabled","name":"狂笑失能","icon":"😆","category":"control","description":"跳过行动，实际受到直接伤害时解除。","remainingTurns":1,"durationType":"battle_turns","tickTiming":"onTurnStart","stackRule":"refresh","maxStacks":1,"modifiers":{"skip":true},"expireOn":{"trigger":"on_damaged","damageType":"direct"}}。随后引用 {"id":"laugh_on_hit","trigger":"on_hit","target":"hitTarget","roll":{"save":"spi","dc":{"base":6,"scaleBy":{"stat":"spi","perUnit":0.5}}},"effects":[{"kind":"grantStatus","statusId":"laugh_disabled"}]}。
+• 临时土墙（指定格周围半径 1，持续 3 回合）：技能模板 target 为 cell，effects 包含 {"id":"temporary_wall","trigger":"active","target":"self","effects":[{"kind":"setTerrainKind","terrainKind":"wall","area":{"center":"hitTarget","radius":1},"remainingTurns":3}]}。固定矩形则将 area 换为 {"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}。
 • 低伤校准（仅保留最低冲击力、避免致命）：用独立主动技能，不叠加普通武器主击；省略模板 damage，将全部冲击放入 {"id":"calibrated_impact","trigger":"active","target":"hitTarget","effects":[{"kind":"damage","amount":1,"damageType":"physical","lethal":false}]}。不可用减半倍率代替保命。
 • 骑士誓言：{"id":"knight_oath","label":"骑士誓言","trigger":"passive","target":"self","condition":{"type":"intercepting"},"effects":[{"kind":"modifyStat","stat":"defense","percent":0.12,"enabled":true}]}。替队友承伤时防御提高 12%。若根据战局上下文判断誓言已破，使用现有 replace 操作将对应节点的 enabled 改为 false。例如 {"op":"replace","path":"/equipment/oath_armor/effects/0/effects/0/enabled","value":false}。若节点省略了 enabled，则 replace 整个节点并保留原字段，补上 enabled:false。
 【实用组合】在角色已有装备上添加效果，替换整段 effects 时保留旧条目并追加新表达式。写完新技能后把其 ID 追加到持有者的 skills。对同一道具提供多条效果时，每条表达式使用不同 ID。description 是自定义状态模板必填字段。技能和装备模板省略 description。
@@ -7952,7 +8177,7 @@ function lookup(host, localWin, key3) {
 }
 function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
   const get2 = (key3) => lookup(host, localWin, key3);
-  const on = get2("eventOn"), remove = get2("eventRemoveListener");
+  const on = get2("eventOn"), remove2 = get2("eventRemoveListener");
   const cleanups = [];
   const stop = () => {
     for (const fn of cleanups.splice(0)) {
@@ -7977,7 +8202,7 @@ function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
           if (typeof sub === "function") sub();
           else sub?.stop?.();
         } finally {
-          remove?.(name, handler);
+          remove2?.(name, handler);
         }
       });
     }
@@ -8312,10 +8537,10 @@ function renderPromptTab(page, ctx) {
       up.title = "\u4E0A\u79FB";
       const down = button("\u25BC");
       down.title = "\u4E0B\u79FB";
-      const remove = button("\u2715", "pill-btn danger");
-      remove.disabled = slot.id === "identity";
-      remove.title = remove.disabled ? "\u53EF\u4F7F\u7528\u5F00\u5173\u505C\u7528\u8EAB\u4EFD\u58F0\u660E" : slot.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
-      actions.append(edit, up, down, remove);
+      const remove2 = button("\u2715", "pill-btn danger");
+      remove2.disabled = slot.id === "identity";
+      remove2.title = remove2.disabled ? "\u53EF\u4F7F\u7528\u5F00\u5173\u505C\u7528\u8EAB\u4EFD\u58F0\u660E" : slot.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
+      actions.append(edit, up, down, remove2);
       head.append(title, badge, actions, switchWrap);
       const setTitle = (value) => {
         title.textContent = value.trim() || "\u672A\u547D\u540D\u69FD\u4F4D";
@@ -8387,7 +8612,7 @@ function renderPromptTab(page, ctx) {
       down.disabled = i === slots.length - 1;
       up.onclick = () => move(i - 1);
       down.onclick = () => move(i + 1);
-      remove.onclick = () => {
+      remove2.onclick = () => {
         if (editing === slot.id) editing = null;
         saveSlots(slots.filter((_, j) => j !== i));
         drawCards();
@@ -8730,8 +8955,8 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
   const button = (label) => make("button", { type: "button" }, label);
   const toolbar = make("div", { class: "fated-actions" });
   const select = make("select", { "aria-label": "\u5207\u6362\u4F1A\u8BDD" });
-  const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove = button("\u5220\u9664"), clear = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
-  toolbar.append(select, create, rename, remove, clear);
+  const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove2 = button("\u5220\u9664"), clear = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
+  toolbar.append(select, create, rename, remove2, clear);
   const edit = make("form", { class: "fated-actions", hidden: "" });
   const title = make("input", { "aria-label": "\u4F1A\u8BDD\u540D\u79F0", maxlength: "80", required: "" });
   const cancel = button("\u53D6\u6D88");
@@ -8789,7 +9014,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
     const session = sessions.active();
     info.textContent = `${session.messages.length} \u6761\u6D88\u606F \xB7 \u521B\u5EFA\u4E8E ${formatTime(session.createdAt)}`;
     submit.disabled = busy || !input.value.trim();
-    remove.disabled = clear.disabled = busy;
+    remove2.disabled = clear.disabled = busy;
     abort.hidden = !busy;
     status2.textContent = busy ? "AI \u6B63\u5728\u56DE\u590D\u2026" : "";
     scrollToEnd();
@@ -8831,7 +9056,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
     edit.hidden = true;
     render();
   });
-  on(remove, "click", () => {
+  on(remove2, "click", () => {
     drafts.delete(shownId);
     sessions.remove(shownId);
     render();
@@ -9116,7 +9341,7 @@ function parseJSONPatch(value) {
   return null;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.1.8";
+var TAVERN_VERSION = "0.1.9";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
@@ -9665,11 +9890,11 @@ ${tag.textContent || ""}
       }
       const actions2 = el(doc, "div", { class: "fated-actions" });
       const edit = el(doc, "button", { type: "button" }, "\u7F16\u8F91 JSON");
-      const remove = el(doc, "button", { type: "button" }, "\u5220\u9664");
-      actions2.append(edit, remove);
+      const remove2 = el(doc, "button", { type: "button" }, "\u5220\u9664");
+      actions2.append(edit, remove2);
       box.append(actions2);
       list3.append(box);
-      on(remove, "click", () => {
+      on(remove2, "click", () => {
         delete config.instances[key3];
         save();
         choose(selectedIds());
@@ -9803,7 +10028,10 @@ ${tag.textContent || ""}
     if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
     return hydrated;
   }
+  let stopTerrainNotices;
   function mountState(state, restoreSaved = false) {
+    stopTerrainNotices?.();
+    stopTerrainNotices = void 0;
     gameMount?.unmount?.();
     gameMount = null;
     if (!state) return;
@@ -9820,6 +10048,16 @@ ${tag.textContent || ""}
       state,
       customBattle: { seed: sources.seed, restart, restoreSaved }
     });
+    const game = gameMount?.api;
+    if (game?.subscribe) {
+      let seen = game.getBattleState().logs.length;
+      stopTerrainNotices = game.subscribe(() => {
+        const logs = game.getBattleState().logs;
+        const unresolved = logs.slice(seen).filter((log) => log.type === "terrain_unresolved").map((log) => log.text);
+        seen = logs.length;
+        if (unresolved.length) notify("\u5730\u5F62\u6548\u679C", "", null, false, { tone: "error", unresolved });
+      });
+    }
   }
   function showError(error2) {
     const node3 = pages.sandbox.querySelector("[data-status]");
@@ -10149,6 +10387,7 @@ ${tag.textContent || ""}
   function dispose() {
     if (disposed) return;
     disposed = true;
+    stopTerrainNotices?.();
     aiController?.abort();
     battleObserver?.disconnect();
     removeOpenEvent?.();
@@ -10156,7 +10395,7 @@ ${tag.textContent || ""}
       controller?.abort();
     } catch (_) {
     }
-    for (const remove of listeners.splice(0)) remove();
+    for (const remove2 of listeners.splice(0)) remove2();
     try {
       gameMount?.unmount?.();
     } catch (_) {

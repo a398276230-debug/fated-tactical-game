@@ -244,7 +244,7 @@ export function parseJSONPatch(value) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.1.8';
+export const TAVERN_VERSION = '0.1.9';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
@@ -777,7 +777,10 @@ export function mountTavernOverlay(options = {}) {
     if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
     return hydrated;
   }
+  let stopTerrainNotices;
   function mountState(state, restoreSaved = false) {
+    stopTerrainNotices?.();
+    stopTerrainNotices = undefined;
     gameMount?.unmount?.();
     gameMount = null;
     if (!state) return;
@@ -791,6 +794,16 @@ export function mountTavernOverlay(options = {}) {
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
     });
+    const game = gameMount?.api;
+    if (game?.subscribe) {
+      let seen = game.getBattleState().logs.length;
+      stopTerrainNotices = game.subscribe(() => {
+        const logs = game.getBattleState().logs;
+        const unresolved = logs.slice(seen).filter(log => log.type === 'terrain_unresolved').map(log => log.text);
+        seen = logs.length;
+        if (unresolved.length) notify('地形效果', '', null, false, { tone: 'error', unresolved });
+      });
+    }
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
@@ -1048,7 +1061,7 @@ export function mountTavernOverlay(options = {}) {
   }
   const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(liveState()) };
   function dispose() {
-    if (disposed) return; disposed = true; aiController?.abort(); battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
+    if (disposed) return; disposed = true; stopTerrainNotices?.(); aiController?.abort(); battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
   try { host.__fatedTacticalTavern = api; } catch (_) {}
   if (options.open) open();
   return api;

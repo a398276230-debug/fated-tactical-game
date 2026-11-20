@@ -6,6 +6,7 @@ import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rol
 import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, moraleResult, initiative as protocolInitiative } from './combat_protocol.js';
 
 import { validateStatusModifiers } from './status_modifiers.js';
+import { applyTerrainEffect, updateTerrainPatches } from './terrain-effects.js';
 import { createEffectEngine, corpses, expression, resourceDefinitions } from './effects.js';
 import { effectNodes, isExpression, validExpireOn } from './effect_schema.js';
 export { corpses };
@@ -169,6 +170,7 @@ export function grantStatus(state, unit, statusId, options = {}) {
 }
 
 export function refreshOutcome(state) {
+  updateTerrainPatches(state, record, terrainDamage);
   let blue = false, red = false;
   for (const unit of values(state.units)) if (alive(unit) && !unit.fled) {
     blue ||= unit.team === 'blue';
@@ -207,13 +209,13 @@ function dispatchEffect(state, actor, trigger, context = {}, extra = []) {
 }
 
 function loseHP(state, target, raw, sourceUnitId, type, label, detail = {}, triggerDamage = true, effectContext = {}) {
-  if (!alive(target) || target.fled) return 0;
+  if (!alive(target) || (target.fled && !effectContext.forcedDisplacement)) return 0;
   const hpBefore = target.hp;
   const source = tableEntry(state.units, sourceUnitId);
-  const preserveLife = effectContext.preserveLife || target.nonLethal || changes(target, 'preserveLife');
+  const preserveLife = !effectContext.forcedDisplacement && (effectContext.preserveLife || target.nonLethal || changes(target, 'preserveLife'));
   target.hp = Math.max(preserveLife ? 1 : 0, hpBefore - Math.max(0, Math.floor(raw)));
   const amount = hpBefore - target.hp;
-  record(state, sourceUnitId, 'damage', `${target.name}受到${amount}点${label}伤害`,
+  record(state, sourceUnitId, 'damage', `${effectContext.damagePrefix ?? ''}${target.name}受到${amount}点${label}伤害`,
     { ...detail, targetId: target.id, damageType: type, amount, hpBefore, hpAfter: target.hp });
   if (amount > 0) expireStatuses(state, target, 'on_damaged', { sourceUnitId, direct: effectContext.direct });
   if (!alive(target)) {
@@ -221,6 +223,7 @@ function loseHP(state, target, raw, sourceUnitId, type, label, detail = {}, trig
     target.diedAt = { round: state.round, turn: state.turn };
     target.corpseOf ??= target.id;
     record(state, sourceUnitId, 'defeat', `${target.name}倒下`, { targetId: target.id });
+    updateTerrainPatches(state, record, terrainDamage);
     triggerDeathrattle(state, target, sourceUnitId);
     dispatchEffect(state, target, 'on_death', { target: source, attacker: source, killed: target, dealt: amount, damageType: type, weaponId: detail.weaponId, sourceUnitId });
     for (const ally of allies) if (alive(ally)) dispatchEffect(state, ally, 'on_ally_death', { target, killed: target, attacker: source, sourceUnitId: target.id });
@@ -229,6 +232,12 @@ function loseHP(state, target, raw, sourceUnitId, type, label, detail = {}, trig
     dsl.dispatch(state, target, 'on_damaged', { target: source, attacker: source, dealt: amount, damageType: type, ...effectContext });
   }
   return amount;
+}
+
+function terrainDamage(state, target, raw, prefix, detail) {
+  const { forcedDisplacement } = detail;
+  return loseHP(state, target, raw, null, 'true', forcedDisplacement ? '坍塌' : '坠落',
+    { ...detail, raw }, true, { direct: false, forcedDisplacement, damagePrefix: prefix });
 }
 
 function triggerDeathrattle(state, target, sourceUnitId) {
@@ -421,6 +430,7 @@ function endTurn(state, unit) {
   }
   record(state, unit, 'end', `${unit.name}结束回合`);
   if (unit === state.units[state.order.at(-1)]) decayZones(state);
+  updateTerrainPatches(state, record, terrainDamage, true);
 }
 
 // Automatic skips are bounded even if sandbox commands make every living unit permanently stunned.
@@ -567,7 +577,7 @@ function spawnEffectUnit(state, actor, original, center, scale, corpse) {
   return true;
 }
 
-const dsl = createEffectEngine({ equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
+const dsl = createEffectEngine({ terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
   counter: changeCounter, damage: damageTarget, loseHP, heal: restoreHP, grant: grantStatus, record, saved: effectSaved, removeStatus, knockback, teleport: teleportBehind, statusModifier: changes, blockRestore: unit => changes(unit, 'blockResourceRestore'),
   weaponType: (state, actor) => { const weapon = weaponInfo(state, actor).template; return weapon.weaponType ?? weapon.weaponClass ?? weapon.rangeType; },
   findExpression: (state, ref) => [...values(state.equipment), ...values(state.skills)].flatMap(t => t.effects).find(e => isExpression(e) && e.id === ref),
@@ -1267,7 +1277,8 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const mainTarget = state.units[plan.corpseId ?? plan.targets.find(t => t.kind !== 'cover')?.id];
   const multipliers = [];
   const skillScale = action.type === 'skill' ? Math.max(0, dsl.stat(state, actor, 'skillPower', 1, { target: mainTarget, school: template.school, actionType: 'skill' })) : 1;
-  const effectContext = { target: mainTarget, center: plan.center, actionType: action.type, school: template.school, multipliers, skillScale, entries: skillEntries, weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
+  const effectContext = { target: mainTarget, center: plan.center, terrainTarget: template.target === 'cell' ? locateUnit(state, plan.center) ?? plan.center : null,
+    actionType: action.type, school: template.school, multipliers, skillScale, entries: skillEntries, weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
     resourceCost: template.resourceCost?.amount, opportunityAttack: Boolean(opportunityWeapon),
     melee: plan.targets[0]?.melee, arrow: Boolean(weapon?.ammo),
     ...(action.type === 'skill' && template.shape !== 'single' ? { skillArea: new Set(plan.targets.map(target => target.id)) } : {}),

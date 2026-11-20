@@ -20,6 +20,10 @@ const comparison = (type, value) => condition(type, { op: compare, value });
 const tags = ['targetHasCategory','targetCreatureType','selfHasStatus','targetHasStatus','weaponType','skillSchool','actionType','damageType','hitRating','selfHasTag','targetHasTag'];
 const bool = { type: 'boolean' };
 const node = (kind, properties, required = []) => object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref('condition'), radius: number(0, 15), ...properties }, ['kind', ...required]);
+const coord = integer(0, 9);
+const point = object({x: coord, y: coord}, ['x','y']);
+const anchor = enumOf('self','hitTarget');
+const terrainDuration = {area: ref('terrainArea'), remainingTurns: turns, persistent: bool};
 const resource = { resource: id, ...magnitudes, ...scaling };
 const attribute = enumOf('str','agi','con','int','spi');
 const events = ['on_attack','on_hit','on_damaged','on_kill','on_death','on_turn_start','on_turn_end','on_skill_cast','on_equip','on_heal','on_ally_death'];
@@ -33,6 +37,10 @@ export const effectSchema = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   title: 'Fated Tactical Game effect expression', $ref: '#/$defs/expression',
   $defs: {
+    terrainArea: union(object({cells:array(point,100)}, ['cells']),
+      object({rect:object({x1:coord,y1:coord,x2:coord,y2:coord}, ['x1','y1','x2','y2'])}, ['rect']),
+      object({center:union(point,anchor),radius:number(0,15),follow:{const:false}}, ['center','radius']),
+      object({center:anchor,radius:number(0,15),follow:{const:true}}, ['center','radius','follow'])),
     saveDC: union(integer(1, 50), object({ base: number(-1e9, 1e9),
       scaleBy: object({ stat: attribute, perUnit: number(-1e9, 1e9) }, ['stat','perUnit']),
       min: number(1, 1e9), max: number(1, 1e9) }, ['base','scaleBy'])),
@@ -52,6 +60,10 @@ export const effectSchema = {
         slot: enumOf('attack','action'), range: integer(0, 15), source: enumOf('weapon') }) }, ['id','trigger','target','effects']),
     node: union(
       node('damage', { ...magnitudes, ...scaling, lethal: { ...bool, default: true }, resourceMultiplier: id, percentOfTargetMaxHp: fraction, percentOfSelfMaxHp: fraction, percentOfPower: number(0, 10), damageType, ignoreArmor: { type: 'boolean' }, excludeHitTarget: bool, flat: amount, strikeBonus: bool, inheritDamageType: bool }),
+      node('modifyTerrain', { ...terrainDuration, terrain:enumOf('raise','lower'), amount:integer(0,12) }, ['area','terrain','amount']),
+      node('modifyTerrain', { ...terrainDuration, terrain:enumOf('set'), amount:integer(-4,8) }, ['area','terrain','amount']),
+      node('setTerrainKind', { ...terrainDuration, terrainKind:enumOf('floor','wall','slope') }, ['area','terrainKind']),
+      node('addCover', { ...terrainDuration, hp:integer(1,1e9) }, ['area','hp']),
       node('heal', { ...magnitudes, ...scaling, percentOfMaxHp: fraction }),
       ...['restoreResource','drainResource','produceResource'].map(kind => node(kind, { ...resource, minimumRemaining: amount, requireFull: bool, local: bool, ...(kind === 'produceResource' ? { cap: integer(1, 1000000000), initial: integer(0, 1000000000), reloadable: bool, targetTierBase: integer(1, 8) } : {}), percentPerCost: fraction }, ['resource'])),
       node('grantStatus', { statusId: id, turns, stacks: integer(1, 10), modifiers, amount, expireOn: ref('expireOn'), durationType: enumOf('battle_turns','until_removed','persistent') }, ['statusId']), node('removeStatus', { statusId: id, category: enumOf('all_negative','buff','debuff','control','dot','hot') }),
@@ -99,6 +111,8 @@ export const isExpression = effect => effect != null && Object.hasOwn(effect, 't
 const orderedDC = dc => (dc?.min ?? 1) <= (dc?.max ?? 50);
 export const validSaveDC = dc => matches(dc, effectSchema.$defs.saveDC) && orderedDC(dc);
 export const validExpireOn = value => matches(value, effectSchema.$defs.expireOn);
+export const terrainKinds = ['modifyTerrain','setTerrainKind','addCover'];
+export const validTerrainNode = node => terrainKinds.includes(node?.kind) && matches(node, effectSchema.$defs.node);
 export const validExpression = effect => matches(effect, effectSchema.$defs.expression)
   && orderedDC(effect.roll?.contest?.dc ?? effect.roll?.dc);
 export const effectNodes = function* (nodes, enabledOnly = false) {

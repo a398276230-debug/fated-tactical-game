@@ -44,7 +44,8 @@ gate('G44', '旧内置 user 一次迁移，自定义 role 保留', () => {
 
 gate('G45', '任务拆解、自查与 DSL 示例', () => {
   const task = resolveSlotContent({ id: 'task' });
-  assert.equal(task.split('\n').filter(line => line.startsWith('• ') && line.includes('"trigger"')).length, 8);
+  assert.equal(task.split('\n').filter(line => line.startsWith('• ') && line.includes('"trigger"')).length, 9);
+  assert.match(task, /临时土墙[^\n]+"remainingTurns":3/);
   assert.match(task, /低伤校准[^\n]+"lethal":false/);
   for (const text of ['先尝试拆解，再考虑放弃', '多状态 + 手动触发技能', '简述尝试过的方向', '参数写全了吗？statusId 存在吗？数值在范围内吗？']) assert.ok(task.includes(text));
   assert.doesNotMatch(task, /卡在哪一步/);
