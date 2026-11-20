@@ -138,6 +138,16 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.match(await run(`${get('article.fated-instance')}.textContent`), /体型 中型 \(1\.7m\)/);
   const cardWarnings = '.fated-instance[data-unit-id="p1"] .fated-char-diagnostics';
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*恒定拉距/);
+  // 实例卡：三色资源条、折叠后只剩卡头，状态刷新后保留
+  const card = '.fated-instance[data-unit-id="p1"]';
+  assert.deepEqual(await run(`[...document.querySelectorAll('${card} .fated-char-bar')].map(b => b.className.split(' ').pop())`), ['is-hp', 'is-mp', 'is-sp']);
+  await run(`document.querySelector('${card} .fated-char-toggle').click()`);
+  assert.deepEqual(await run(`({ hidden: document.querySelector('${card} .fated-char-body').hidden, mini: getComputedStyle(document.querySelector('${card} .fated-char-mini')).display !== 'none' })`), { hidden: true, mini: true });
+  await run(`document.querySelector('[data-fold-all="false"]').click()`);
+  assert.equal(await run(`document.querySelector('${card} .fated-char-body').hidden`), false);
+  await run(`document.querySelector('[data-fold-all="true"]').click()`);
+  assert.equal(await run(`[...document.querySelectorAll('.fated-instance .fated-char-body')].every(b => b.hidden)`), true);
+  await run(`document.querySelector('[data-fold-all="false"]').click()`);
   assert.equal(await run('window.hostRange'), '0-1');
   assert.deepEqual(await run('window.hostCalls'), [0]);
   assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
@@ -312,6 +322,13 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const reportToggle = '[data-auto-deliver-report]';
   const panelHidden = () => run(`${get('.fated-tavern-panel')}.hidden`);
   assert.equal(await run(`${get(reportToggle)}.checked`), true);
+  // 悬浮按钮可收进魔术棒菜单，取消勾选后恢复
+  await run(`document.body.append(Object.assign(document.createElement('div'), { id: 'extensionsMenu' }))`);
+  await run(`${get('[data-hide-launcher]')}.click()`);
+  assert.deepEqual(await run(`({ launcher: document.querySelector('.fated-tavern-launcher').hidden, entry: Boolean(document.querySelector('#extensionsMenu [data-fated-tavern-entry]')),
+    saved: Object.values(localStorage).some(v => v.includes('"hideLauncher":true')) })`), { launcher: true, entry: true, saved: true });
+  await run(`${get('[data-hide-launcher]')}.click()`);
+  assert.equal(await run(`Boolean(document.querySelector('#extensionsMenu [data-fated-tavern-entry]'))`), false);
   await run(`(() => {
     const input = document.createElement('textarea');
     input.id = 'send_textarea';

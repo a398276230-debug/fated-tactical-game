@@ -744,6 +744,10 @@ export function mountTavernOverlay(options = {}) {
     const refresh = el(doc, 'button', { type: 'button' }, '从当前聊天重新水合'); toolbar.append(refresh); page.append(toolbar);
     const choose = ids => { persistSettings({rosterSelection:ids}); renderInstances(); };
     for (const [label,all] of [['全选',true],['取消全选',false]]) { const b=el(doc,'button',{type:'button'},label); on(b,'click',()=>choose(all?Object.keys(config.instances):[])); toolbar.append(b); }
+    // 折叠状态按实例 ID 保存，人多时可以只展开正在看的那几张
+    const collapsed = () => isObject(config.collapsedInstances) ? config.collapsedInstances : {};
+    const setFolded = (ids, value) => { const next = { ...collapsed() }; for (const id of ids) { if (value) next[id] = true; else delete next[id]; } persistSettings({ collapsedInstances: next }); };
+    for (const [label,value] of [['全部折叠',true],['全部展开',false]]) { const b=el(doc,'button',{type:'button','data-fold-all':String(value)},label); on(b,'click',()=>{ setFolded(Object.keys(config.instances),value); renderInstances(); }); toolbar.append(b); }
     const list = el(doc, 'div'); page.append(list);
     const entries = Object.entries(config.instances);
     if (!entries.length) list.append(el(doc, 'p', { class: 'fated-mini' }, '暂无实例。打开沙盘会自动读取当前 MVU、char_info 和 battle_init。'));
@@ -753,16 +757,17 @@ export function mountTavernOverlay(options = {}) {
       const select = el(doc,'input',{type:'checkbox','aria-label':`选择 ${instance.name || key}`});
       select.checked = selectedIds().includes(key);
       on(select,'change',()=>choose(select.checked?[...new Set([...selectedIds(),key])]:selectedIds().filter(k=>k!==key)));
-      fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select);
       const messages = warningsForUnit(sources.warnings, [key], false);
+      const { body } = fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select,
+        { collapsed: Boolean(collapsed()[key]), warnings: messages.length, onToggle: value => setFolded([key], value) });
       if (messages.length) {
         const details = el(doc,'details',{class:'fated-char-diagnostics'}), list = el(doc,'ul');
         for (const { message } of messages) list.append(el(doc,'li',{},message));
         details.append(el(doc,'summary',{},`⚠ ${messages.length} 条诊断`),list);
-        box.append(details);
+        body.append(details);
       }
       const actions = el(doc, 'div', { class: 'fated-actions' }); const edit = el(doc, 'button', { type: 'button' }, '编辑 JSON'); const remove = el(doc, 'button', { type: 'button' }, '删除');
-      actions.append(edit, remove); box.append(actions); list.append(box);
+      actions.append(edit, remove); body.append(actions); list.append(box);
       on(remove, 'click', () => { delete config.instances[key]; save(); choose(selectedIds()); });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
@@ -1004,6 +1009,12 @@ export function mountTavernOverlay(options = {}) {
     deliveryLabel.append(autoDeliver, ' 胜负已定时自动交付战报');
     actions.append(deliveryLabel);
     on(autoDeliver, 'change', () => persistSettings({ autoDeliverBattleReport: autoDeliver.checked }));
+    const hideLauncher = el(doc, 'input', { type: 'checkbox', 'data-hide-launcher': '' });
+    hideLauncher.checked = Boolean(config.hideLauncher);
+    const hideLabel = el(doc, 'label');
+    hideLabel.append(hideLauncher, ' 隐藏悬浮按钮到魔术棒菜单');
+    actions.append(hideLabel);
+    on(hideLauncher, 'change', () => { persistSettings({ hideLauncher: hideLauncher.checked }); updateMagic(); });
     on(refresh, 'click', () => scan(true).catch(showError));
     on(report, 'click', deliverBattleReport);
   }

@@ -1321,8 +1321,8 @@ var FatedTacticalTavern = (() => {
     for (const [key4, value] of Object.entries(raw)) {
       const old = previous[key4];
       if (Object.hasOwn(previous, key4) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail(`\u65E7 ${key4.toUpperCase()} `);
-      const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
-      resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio3), ratio: ratio3 };
+      const ratio4 = old ? old.max ? old.current / old.max : 0 : 1;
+      resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio4), ratio: ratio4 };
     }
     return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
   }
@@ -9735,12 +9735,58 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 @media(prefers-color-scheme:light) { [data-fated-tavern-overlay] { ${ciLight} } }
 .fated-ci-dark,.fated-ci-dark [data-fated-tavern-overlay] { ${ciDark} }
 .fated-ci-light,.fated-ci-light [data-fated-tavern-overlay] { ${ciLight} }
-[data-fated-tavern-overlay] article.fated-instance.fated-instance { padding:14px 16px; margin-block:8px; color:var(--ci-text); border:1px solid var(--ci-border); border-radius:10px; background:var(--ci-surface); box-shadow:none }
+[data-fated-tavern-overlay] article.fated-instance.fated-instance { position:relative; padding:0; margin-block:8px; overflow:hidden; color:var(--ci-text); border:1px solid var(--ci-border); border-radius:10px; background:var(--ci-surface); box-shadow:0 2px 10px var(--ci-shadow) }
 [data-fated-tavern-overlay] article.fated-instance::before { display:none }
-.fated-char-heading { display:flex;align-items:center;justify-content:space-between;gap:12px }.fated-char-heading input { flex:none; accent-color:var(--ci-primary) }.fated-char-name { color:var(--ci-text) }.fated-source-label { margin-inline-start:8px;color:var(--ci-text-muted) }
-.fated-char-stats,.fated-char-resources { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:10px 0 }.fated-char-stats div {padding:4px 6px;border-radius:4px;background:var(--ci-primary-soft)}.fated-char-stats dt {font-size:.8em;color:var(--ci-text-secondary)}.fated-char-stats dd {margin:0;font-weight:bold;color:var(--ci-primary)}
-.fated-char-resources {grid-template-columns:repeat(3,minmax(0,1fr));color:var(--ci-text-secondary)}.fated-char-resources span {padding-block-end:5px;background:linear-gradient(to right,var(--ci-primary-soft) var(--fill),var(--ci-surface-soft) var(--fill)) left bottom / 100% 4px no-repeat}
-.fated-instance h5 { margin:8px 0 2px;color:var(--ci-primary) }.fated-char-row { padding-block:3px }.fated-instance .fated-mini {color:var(--ci-text-muted)}.fated-instance summary { cursor:pointer }.fated-char-raw { border-top:1px solid var(--ci-border-strong); margin-block:8px; padding:6px 8px;background:var(--ci-input);color:var(--ci-text-secondary) }.fated-char-raw pre { max-height:12rem; overflow:auto;color:inherit }
+.fated-char-card { --team:var(--ci-primary); --hp:#d9575a; --mp:#4f8fd8; --sp:#4fae6d }
+.fated-char-card[data-team=blue] { --team:#6a9fd6 }.fated-char-card[data-team=red] { --team:#d6737b }
+.fated-char-card::after { content:""; position:absolute; inset:0 auto 0 0; width:3px; background:var(--team); pointer-events:none }
+.fated-char-heading { display:flex; align-items:center; gap:10px; padding:10px 12px 10px 15px; cursor:pointer; user-select:none }
+.fated-char-card[data-collapsed=false] .fated-char-heading { border-bottom:1px solid var(--ci-border) }
+.fated-char-heading:hover { background:var(--ci-surface-raised) }
+.fated-char-heading input { flex:none; width:18px; height:18px; margin:0; accent-color:var(--ci-primary); cursor:pointer }
+.fated-char-avatar { flex:none; display:grid; place-items:center; width:38px; height:38px; border-radius:9px; border:1px solid color-mix(in srgb,var(--team) 60%,transparent);
+  background:color-mix(in srgb,var(--team) 22%,var(--ci-surface-soft)); color:var(--ci-text); font-weight:700; font-size:1.05em }
+.fated-char-title { flex:1; min-width:0; display:grid; gap:3px }
+.fated-char-name-row { display:flex; align-items:baseline; gap:8px; min-width:0 }
+.fated-char-name { overflow:hidden; color:var(--ci-text); font-size:1.02em; white-space:nowrap; text-overflow:ellipsis }
+.fated-char-warn { flex:none; padding:0 6px; border-radius:8px; background:rgb(210 173 113 / 18%); color:var(--ci-warning); font-size:.75em }
+.fated-char-tags { display:flex; flex-wrap:wrap; gap:4px }
+.fated-char-tag { padding:0 7px; border:1px solid var(--ci-border); border-radius:9px; color:var(--ci-text-muted); font-size:.74em; line-height:1.6 }
+.fated-char-tag:first-child { border-color:color-mix(in srgb,var(--team) 55%,transparent); color:var(--team) }
+.fated-char-mini { flex:none; display:grid; gap:3px; width:72px }
+.fated-char-mini-bar { position:relative; display:block; height:5px; overflow:hidden; border-radius:3px; background:var(--ci-input) }
+.fated-char-mini-bar::after { content:""; position:absolute; inset:0 auto 0 0; width:calc(100% * var(--ratio,0)); border-radius:3px; background:var(--bar) }
+.fated-char-card[data-collapsed=false] .fated-char-mini { display:none }
+[data-fated-tavern-overlay] .fated-char-card .fated-char-toggle { font-size:1.15em !important;  flex:none; display:grid; place-items:center; width:30px; min-width:0; height:30px; padding:0; border-radius:7px; line-height:1; transition:transform .2s ease }
+.fated-char-card[data-collapsed=true] .fated-char-toggle { transform:rotate(-90deg) }
+.fated-char-toggle::before { content:""; width:8px; height:8px; margin-top:-4px; border:solid currentColor; border-width:0 2px 2px 0; transform:rotate(45deg) }
+.fated-char-body { display:grid; gap:10px; padding:12px 14px 12px 17px }
+.fated-char-body[hidden] { display:none }
+.is-hp { --bar:linear-gradient(90deg,#a83a3e,var(--hp)) }.is-mp { --bar:linear-gradient(90deg,#2f63a3,var(--mp)) }.is-sp { --bar:linear-gradient(90deg,#327a4a,var(--sp)) }
+.fated-char-resources { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin:0 }
+.fated-char-bar { position:relative; display:flex; align-items:center; justify-content:space-between; gap:6px; height:22px; padding:0 8px; overflow:hidden; border-radius:6px; background:var(--ci-input); font-size:.8em; font-variant-numeric:tabular-nums }
+.fated-char-bar > i { position:absolute; inset:0 auto 0 0; width:calc(100% * var(--ratio,0)); background:var(--bar); opacity:.9; transition:width .4s ease }
+.fated-char-bar > b, .fated-char-bar > span { position:relative; color:#fff; text-shadow:0 1px 2px rgb(0 0 0 / 70%); white-space:nowrap }
+.fated-char-bar > span { overflow:hidden; text-overflow:ellipsis }
+.fated-char-stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:5px; margin:0 }
+.fated-char-stats div { display:grid; justify-items:center; padding:5px 2px; border:1px solid var(--ci-border); border-radius:7px; background:var(--ci-surface-raised) }
+.fated-char-stats dt { color:var(--ci-text-muted); font-size:.74em }.fated-char-stats dd { margin:0; color:var(--ci-primary); font-size:1.08em; font-weight:700; font-variant-numeric:tabular-nums }
+.fated-char-section { display:grid; gap:4px }
+.fated-instance h5 { margin:0; color:var(--ci-primary); font-size:.82em; letter-spacing:.06em }
+.fated-char-row { padding:6px 9px; border:1px solid var(--ci-border); border-radius:7px; background:var(--ci-surface-raised) }
+.fated-char-row > summary { list-style:none }.fated-char-row > summary::-webkit-details-marker { display:none }
+.fated-char-row-head { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px }
+.fated-char-row-name { color:var(--ci-text); font-weight:600; margin-inline-end:2px }
+.fated-char-chip { padding:0 6px; border-radius:8px; background:var(--ci-surface-soft); color:var(--ci-text-secondary); font-size:.75em; line-height:1.6 }
+.fated-char-fx { margin-inline-start:auto; color:var(--ci-primary); font-size:.75em }
+.fated-char-fx::after { content:" \u25BE" }.fated-char-row[open] .fated-char-fx::after { content:" \u25B4" }
+.fated-char-row > p { margin:5px 0 0; padding-top:5px; border-top:1px dashed var(--ci-border) }
+.fated-instance .fated-mini { color:var(--ci-text-muted); font-size:.82em }.fated-instance summary { cursor:pointer }
+.fated-char-diagnostics { padding:6px 9px; border:1px solid rgb(210 173 113 / 45%); border-radius:7px; background:rgb(210 173 113 / 8%); color:var(--ci-warning) }
+.fated-char-diagnostics ul { margin:5px 0 0; padding-inline-start:18px; color:var(--ci-text-secondary) }
+.fated-char-raw { padding:6px 9px; border:1px dashed var(--ci-border); border-radius:7px; background:var(--ci-input); color:var(--ci-text-secondary); font-size:.85em }.fated-char-raw pre { max-height:12rem; overflow:auto; color:inherit }
+.fated-char-body > .fated-actions { justify-content:flex-end; margin:0 }
+@media (max-width:520px) { .fated-char-stats { grid-template-columns:repeat(5,minmax(0,1fr)); gap:3px } .fated-char-resources { grid-template-columns:1fr } .fated-char-mini { width:52px } }
 [data-fated-tavern-overlay] .fated-instance button:not([data-sandbox-mount] *) {background:var(--ci-surface-raised);border-color:var(--ci-border);color:var(--ci-text-secondary)}
 [data-fated-tavern-overlay] .fated-instance button:not([data-sandbox-mount] *):hover {background:var(--ci-primary-soft);border-color:var(--ci-primary);color:var(--ci-primary)}
 .fated-toast {
@@ -10792,54 +10838,101 @@ ${variables.warnings()}` : "");
     const roll = expr.roll;
     return `${when[expr.trigger] ?? "\u89E6\u53D1"}${roll?.dice ? ` ${roll.dice}\u2265${roll.gte}` : roll?.save ? " \u8C41\u514D\u5931\u8D25" : roll?.chance != null ? ` ${Math.round(roll.chance * 100)}%` : ""} \u2192 ${(expr.effects ?? []).map(node3).join("\uFF1B")}`;
   }
-  function fillInstance(box, make, unit, state, raw, select) {
+  var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
+  var TEAMS = { blue: "\u6211\u65B9", red: "\u654C\u65B9" };
+  var ratio3 = (v, max) => max ? Math.min(1, Math.max(0, (Number(v) || 0) / max)) : 0;
+  function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0 } = {}) {
     const line = (tag, cls, value) => make(tag, { class: cls }, value);
-    const header = line("div", "fated-char-heading"), title = make("div");
-    title.append(line("strong", "fated-char-name", unit.name ?? unit.id), line("small", "fated-source-label", unit.source ?? "AI \u7F16\u8F91"));
-    header.append(title, select);
+    const name = unit.name ?? unit.id;
+    box.classList.add("fated-char-card");
+    if (unit.team) box.dataset.team = unit.team;
+    const header = line("div", "fated-char-heading");
+    const avatar = line("span", "fated-char-avatar", [...String(name)][0] ?? "?");
+    const title = line("div", "fated-char-title");
+    const nameRow = line("div", "fated-char-name-row");
+    nameRow.append(line("strong", "fated-char-name", name));
+    if (warnings) nameRow.append(make("span", { class: "fated-char-warn", title: `${warnings} \u6761\u8BCA\u65AD` }, `\u26A0 ${warnings}`));
+    const tags2 = line("div", "fated-char-tags");
+    for (const text4 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text4) tags2.append(line("span", "fated-char-tag", text4));
+    title.append(nameRow, tags2);
+    const mini = line("div", "fated-char-mini");
+    for (const [key4, label, maxKey] of RESOURCES) {
+      const bar = make("span", { class: `fated-char-mini-bar is-${key4}`, title: `${label} ${unit[key4] ?? "\u2014"} / ${unit[maxKey] ?? "\u2014"}` });
+      bar.style.setProperty("--ratio", ratio3(unit[key4], unit[maxKey]));
+      mini.append(bar);
+    }
+    const toggle = make("button", { type: "button", class: "fated-char-toggle", "aria-expanded": String(!collapsed), "aria-label": `${collapsed ? "\u5C55\u5F00" : "\u6298\u53E0"} ${name}`, title: collapsed ? "\u5C55\u5F00" : "\u6298\u53E0" }, "");
+    header.append(avatar, title, mini, select, toggle);
     box.append(header);
-    box.append(line("p", "fated-mini", `\u4F53\u578B ${bodySizeLabel(unit)}`));
+    const body = line("div", "fated-char-body");
+    body.hidden = collapsed;
+    box.dataset.collapsed = String(collapsed);
+    const setCollapsed = (next) => {
+      body.hidden = next;
+      box.dataset.collapsed = String(next);
+      toggle.setAttribute("aria-expanded", String(!next));
+      toggle.title = next ? "\u5C55\u5F00" : "\u6298\u53E0";
+      toggle.setAttribute("aria-label", `${next ? "\u5C55\u5F00" : "\u6298\u53E0"} ${name}`);
+      onToggle?.(next);
+    };
+    toggle.addEventListener("click", () => setCollapsed(!body.hidden));
+    header.addEventListener("click", (e) => {
+      if (e.target === header || e.target === avatar || title.contains(e.target) || mini.contains(e.target)) setCollapsed(!body.hidden);
+    });
+    const resources = line("div", "fated-char-resources");
+    for (const [key4, label, maxKey] of RESOURCES) {
+      const max = unit[maxKey], v = unit[key4];
+      const bar = line("div", `fated-char-bar is-${key4}`);
+      bar.style.setProperty("--ratio", ratio3(v, max));
+      bar.style.setProperty("--fill", `${Math.round(ratio3(v, max) * 100)}%`);
+      bar.append(make("i"), line("b", "", label), line("span", "", `${v ?? "\u2014"} / ${max ?? "\u2014"}`));
+      resources.append(bar);
+    }
+    body.append(resources);
     const stats2 = line("dl", "fated-char-stats");
-    for (const [key4, name] of Object.entries(attributes2)) {
+    for (const [key4, label] of Object.entries(attributes2)) {
       const pair = make("div");
-      pair.append(make("dt", {}, name), make("dd", {}, unit.stats?.[key4] ?? "\u2014"));
+      pair.append(make("dt", {}, label), make("dd", {}, unit.stats?.[key4] ?? "\u2014"));
       stats2.append(pair);
     }
-    box.append(stats2);
-    const resources = line("p", "fated-char-resources");
-    for (const key4 of ["hp", "mp", "sp"]) {
-      const max = unit["max" + key4[0].toUpperCase() + key4.slice(1)], v = unit[key4];
-      const cell = make("span", {}, `${key4.toUpperCase()} ${v ?? "\u2014"} / ${max ?? "\u2014"}`);
-      cell.style.setProperty("--fill", `${max ? Math.min(100, Math.max(0, v / max * 100)) : 0}%`);
-      resources.append(cell);
-    }
-    box.append(resources);
-    const section = (title2, rows) => {
-      box.append(make("h5", {}, title2));
-      if (!rows.length) box.append(line("p", "fated-mini", `\u6682\u65E0${title2}`));
-      for (const [title3, template] of rows) {
-        const row = make(template?.effects?.length ? "details" : "div", { class: "fated-char-row" });
-        row.append(make(template?.effects?.length ? "summary" : "span", {}, title3));
-        for (const fx of template?.effects ?? []) row.append(line("p", "fated-mini", effectSummary(fx, state)));
-        box.append(row);
+    body.append(stats2);
+    const section = (heading, rows) => {
+      const block = line("section", "fated-char-section");
+      block.append(make("h5", {}, `${heading}${rows.length ? ` \xB7 ${rows.length}` : ""}`));
+      if (!rows.length) block.append(line("p", "fated-mini", `\u6682\u65E0${heading}`));
+      for (const { label, meta, template } of rows) {
+        const fx = template?.effects ?? [];
+        const row = make(fx.length ? "details" : "div", { class: "fated-char-row" });
+        const head = make(fx.length ? "summary" : "div", { class: "fated-char-row-head" });
+        head.append(line("span", "fated-char-row-name", label));
+        for (const m of meta) head.append(line("span", "fated-char-chip", m));
+        if (fx.length) head.append(line("span", "fated-char-fx", `${fx.length} \u4E2A\u6548\u679C`));
+        row.append(head);
+        for (const e of fx) row.append(line("p", "fated-mini", effectSummary(e, state)));
+        block.append(row);
       }
+      body.append(block);
     };
     const wear = [["\u4E3B\u624B", unit.mainHand ?? unit.weapon], ["\u526F\u624B", unit.offHand], ["\u76FE\u724C", unit.shield], ...(unit.gear ?? []).map((id3) => ["\u7A7F\u6234", id3])];
     const gear = wear.filter(([, id3]) => id3).map(([slot, id3]) => {
       const item = state?.items?.[id3], t = state?.equipment?.[item?.templateId] ?? unit.equipment?.find((e) => e.id === id3)?.template;
       const d = t?.damage;
-      return [`[${slot}] ${t?.name ?? id3} \xB7 \u653B\u51FB ${t?.attack ?? "\u2014"} \xB7 \u8DDD\u79BB ${t?.range ?? "\u2014"}${d ? ` \xB7 ${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}` : ""}`, t];
+      const dice3 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}`.trim() : null;
+      return { label: `[${slot}] ${t?.name ?? id3}`, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice3].filter(Boolean), template: t };
     });
     section("\u88C5\u5907", gear);
     const skills = (unit.skills ?? []).map((id3) => {
       const t = state?.skills?.[id3];
       const damage = [...new Set([t?.damage?.type, t?.damageType, ...(t?.effects ?? []).flatMap((e) => e.effects.filter((n) => n.kind === "damage").map((n) => n.damageType)), unit.skillInfo?.[id3]?.damageType].filter(Boolean))].map((type) => types[type]).join("/");
-      return [`${t?.name ?? id3} \xB7 \u6D88\u8017 ${t?.resourceCost?.sp ?? t?.sp ?? 0} SP${t?.resourceCost?.mp ?? t?.mp ? ` / ${t.resourceCost?.mp ?? t.mp} MP` : ""}${t?.resourceCost?.hp ? ` / ${t.resourceCost.hp} HP` : ""} \xB7 \u5A01\u529B ${t?.power ?? "\u2014"} \xB7 ${damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B"} \xB7 \u8DDD\u79BB ${t?.range ?? "\u2014"}`, t];
+      const cost = [`${t?.resourceCost?.sp ?? t?.sp ?? 0} SP`, t?.resourceCost?.mp ?? t?.mp ? `${t.resourceCost?.mp ?? t.mp} MP` : null, t?.resourceCost?.hp ? `${t.resourceCost.hp} HP` : null].filter(Boolean).join(" / ");
+      return { label: t?.name ?? id3, meta: [`\u6D88\u8017 ${cost}`, `\u5A01\u529B ${t?.power ?? "\u2014"}`, damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B", `\u8DDD\u79BB ${t?.range ?? "\u2014"}`], template: t };
     });
     section("\u6280\u80FD", skills);
     const details = make("details", { class: "fated-char-raw" });
-    details.append(make("summary", {}, "\u539F\u59CB\u6570\u636E"), make("pre", {}, JSON.stringify({ instance: unit, source: raw, equipment: gear.map((r) => r[1]), skills: skills.map((r) => r[1]) }, null, 2)));
-    box.append(details);
+    details.append(make("summary", {}, "\u539F\u59CB\u6570\u636E"), make("pre", {}, JSON.stringify({ instance: unit, source: raw, equipment: gear.map((r) => r.template), skills: skills.map((r) => r.template) }, null, 2)));
+    body.append(details);
+    box.append(body);
+    return { body, setCollapsed };
   }
 
   // src/tavern/ai-page.js
@@ -11918,6 +12011,23 @@ ${tag.textContent || ""}
         on(b, "click", () => choose(all ? Object.keys(config.instances) : []));
         toolbar.append(b);
       }
+      const collapsed = () => isObject(config.collapsedInstances) ? config.collapsedInstances : {};
+      const setFolded = (ids, value) => {
+        const next = { ...collapsed() };
+        for (const id4 of ids) {
+          if (value) next[id4] = true;
+          else delete next[id4];
+        }
+        persistSettings({ collapsedInstances: next });
+      };
+      for (const [label, value] of [["\u5168\u90E8\u6298\u53E0", true], ["\u5168\u90E8\u5C55\u5F00", false]]) {
+        const b = el(doc, "button", { type: "button", "data-fold-all": String(value) }, label);
+        on(b, "click", () => {
+          setFolded(Object.keys(config.instances), value);
+          renderInstances();
+        });
+        toolbar.append(b);
+      }
       const list3 = el(doc, "div");
       page.append(list3);
       const entries2 = Object.entries(config.instances);
@@ -11928,19 +12038,27 @@ ${tag.textContent || ""}
         const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
         select.checked = selectedIds().includes(key4);
         on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key4])] : selectedIds().filter((k) => k !== key4)));
-        fillInstance(box, (tag, attrs3, value) => el(doc, tag, attrs3, value), instance, liveState(), characters[key4]?.raw, select);
         const messages = warningsForUnit(sources.warnings, [key4], false);
+        const { body } = fillInstance(
+          box,
+          (tag, attrs3, value) => el(doc, tag, attrs3, value),
+          instance,
+          liveState(),
+          characters[key4]?.raw,
+          select,
+          { collapsed: Boolean(collapsed()[key4]), warnings: messages.length, onToggle: (value) => setFolded([key4], value) }
+        );
         if (messages.length) {
           const details = el(doc, "details", { class: "fated-char-diagnostics" }), list4 = el(doc, "ul");
           for (const { message } of messages) list4.append(el(doc, "li", {}, message));
           details.append(el(doc, "summary", {}, `\u26A0 ${messages.length} \u6761\u8BCA\u65AD`), list4);
-          box.append(details);
+          body.append(details);
         }
         const actions2 = el(doc, "div", { class: "fated-actions" });
         const edit = el(doc, "button", { type: "button" }, "\u7F16\u8F91 JSON");
         const remove2 = el(doc, "button", { type: "button" }, "\u5220\u9664");
         actions2.append(edit, remove2);
-        box.append(actions2);
+        body.append(actions2);
         list3.append(box);
         on(remove2, "click", () => {
           delete config.instances[key4];
@@ -12233,6 +12351,15 @@ ${tag.textContent || ""}
       deliveryLabel.append(autoDeliver, " \u80DC\u8D1F\u5DF2\u5B9A\u65F6\u81EA\u52A8\u4EA4\u4ED8\u6218\u62A5");
       actions2.append(deliveryLabel);
       on(autoDeliver, "change", () => persistSettings({ autoDeliverBattleReport: autoDeliver.checked }));
+      const hideLauncher = el(doc, "input", { type: "checkbox", "data-hide-launcher": "" });
+      hideLauncher.checked = Boolean(config.hideLauncher);
+      const hideLabel = el(doc, "label");
+      hideLabel.append(hideLauncher, " \u9690\u85CF\u60AC\u6D6E\u6309\u94AE\u5230\u9B54\u672F\u68D2\u83DC\u5355");
+      actions2.append(hideLabel);
+      on(hideLauncher, "change", () => {
+        persistSettings({ hideLauncher: hideLauncher.checked });
+        updateMagic();
+      });
       on(refresh, "click", () => scan(true).catch(showError));
       on(report, "click", deliverBattleReport);
     }
