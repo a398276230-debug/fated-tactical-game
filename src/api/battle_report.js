@@ -21,6 +21,8 @@ export function formatBattleReportText(report, unitNames = {}) {
     }
     return result;
   };
+  const change = (resource, before, after) => Number.isFinite(before) && Number.isFinite(after)
+    ? `（${resource} ${before} → ${after}）` : '';
   for (const { round, events } of report.rounds) {
     const rows = [];
     let turn = null;
@@ -54,6 +56,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           if (detail.cover > 0) add(`${name(event, detail.targetId)}受到${detail.coverId ? ` ${detail.coverId} ` : ''}掩体遮蔽`);
           if (!detail.hit) add(`${name(event, detail.targetId)}未被击中`);
           else if (detail.critical) add(`对${name(event, detail.targetId)}打出暴击`);
+          else if (detail.intent?.required) add(`击中${name(event, detail.targetId)}`);
           break;
         case 'save':
           if (detail.saved) add(`${name(event, detail.targetId)}通过豁免`);
@@ -66,6 +69,15 @@ export function formatBattleReportText(report, unitNames = {}) {
           add(replaceUnitNames(event, text).replace(/ ×1$/, '')); break;
         case 'proc': case 'expire':
           break;
+        case 'damage': case 'heal':
+          if (detail.amount !== 0) add(replaceUnitNames(event, text) + change('HP', detail.hpBefore, detail.hpAfter));
+          break;
+        case 'skill_cost':
+          add(replaceUnitNames(event, text) + change('HP', detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
+          break;
+        case 'resource':
+          add(replaceUnitNames(event, text) + change(detail.resource?.toUpperCase(), detail.before, detail.after));
+          break;
         case 'counter':
           add(replaceUnitNames(event, text).replace(/\bsouls\b/g, '魂数').replace(/\bammo\b/g, '弹药'));
           break;
@@ -73,7 +85,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           turn = null; rows.push(replaceUnitNames(event, text));
           break;
         default: {
-          if (['damage', 'heal', 'cover_damage'].includes(type) && detail.amount === 0) break;
+          if (type === 'cover_damage' && detail.amount === 0) break;
           const ownAction = turn?.actor === actor && ['move', 'sprint', 'disengage', 'teleport', 'altitude', 'interact', 'skip', 'brace', 'cover_approach'].includes(type);
           let label = replaceUnitNames(event, text);
           const actorRaw = names.get(actor) ?? actor;

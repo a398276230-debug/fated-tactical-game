@@ -7,7 +7,7 @@ export function createBattleGrid(battle, seed, units, warnings) {
   const anchors = battle.version === 1
     ? [...list(battle.units), ...list(battle.covers), ...list(battle.interactives)].filter(unit => Number.isInteger(unit.z))
     : [];
-  if (anchors.length) {
+  if (anchors.some(anchor => anchor.z !== 0)) {
     const reserved = new Set([...(battle.units ?? []), ...list(battle.covers), ...list(battle.interactives)].map(at => `${at.x},${at.y}`));
     const painted = new Set();
     for (const { x, y, z } of anchors) {

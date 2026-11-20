@@ -292,12 +292,23 @@ function restoreHP(state, target, raw, sourceUnitId, label, detail = {}) {
   if (!alive(target) || target.fled) return 0;
   const healer = tableEntry(state.units, sourceUnitId);
   const healing = Math.max(0, Math.floor(healer ? dsl.stat(state, healer, 'healing', raw, { target, ...detail }) : raw));
-  const amount = Math.min(healing, target.maxHp - target.hp);
+  const hpBefore = target.hp;
+  const amount = Math.min(healing, target.maxHp - hpBefore);
   target.hp += amount;
-  record(state, sourceUnitId, 'heal', `${target.name}因${label}恢复${amount}点生命`, { ...detail, targetId: target.id, amount });
+  record(state, sourceUnitId, 'heal', `${target.name}因${label}恢复${amount}点生命`,
+    { ...detail, targetId: target.id, amount, hpBefore, hpAfter: target.hp });
   if (amount > 0) expireStatuses(state, target, 'on_heal', { sourceUnitId });
   if (healer && healing) dsl.dispatch(state, healer, 'on_heal', { target, healing, actionType: detail.actionType });
   return amount;
+}
+
+function setResourceTotal(state, target, resource, after, sourceUnitId, label) {
+  const before = target[resource];
+  if (before === after) return;
+  target[resource] = after;
+  const amount = Math.abs(after - before);
+  record(state, sourceUnitId, 'resource', `${target.name}因${label}${after > before ? '恢复' : '消耗'}${amount}点 ${resource.toUpperCase()}`,
+    { targetId: target.id, resource, amount, before, after });
 }
 
 function armorOf(state, unit, damageType, pierce = 0, context = {}) {
@@ -630,7 +641,7 @@ function spawnUnitEffect(state, actor, spec, center) {
 }
 
 const dsl = createEffectEngine({ changeAltitude, spawn: spawnUnitEffect, terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
-  counter: changeCounter, damage: damageTarget, loseHP, heal: restoreHP, grant: grantStatus, record, saved: effectSaved, removeStatus, knockback, teleport: teleportBehind, statusModifier: changes, blockRestore: unit => changes(unit, 'blockResourceRestore'),
+  counter: changeCounter, damage: damageTarget, loseHP, heal: restoreHP, setResourceTotal, grant: grantStatus, record, saved: effectSaved, removeStatus, knockback, teleport: teleportBehind, statusModifier: changes, blockRestore: unit => changes(unit, 'blockResourceRestore'),
   weaponType: (state, actor) => { const weapon = weaponInfo(state, actor).template; return weapon.weaponType ?? weapon.weaponClass ?? weapon.rangeType; },
   findExpression: (state, ref) => [...values(state.equipment), ...values(state.skills)].flatMap(t => t.effects).find(e => isExpression(e) && e.id === ref),
   raise: (state, actor, target, scale) => corpses(state).includes(target) && spawnEffectUnit(state, actor, target, target, scale, true),
@@ -1212,6 +1223,7 @@ function resolveCheck(state, actor, profile) {
   const critical = profile.guaranteeCrit || selected === 20;
   const hit = Boolean(profile.guaranteeHit || selected !== 1 && rating.multiplier > 0);
   let intent = { required: false, success: true, multiplier: 1 };
+  let intentDetail;
   const defender = state.units[profile.id];
   if (hit && defender && profile.intent && profile.intent !== 'normal') {
     const defenderD20 = randomDie(state, 20);
@@ -1224,10 +1236,10 @@ function resolveCheck(state, actor, profile) {
     const attackerTotal = attackerBase + selected + ratingBonus + coreBonus;
     const defenderTotal = defenderBase + defenderD20 + intentSpec.difficulty;
     intent = intentCheck(intentSpec, attackerTier, defenderTier, selected, defenderD20, ratingBonus + coreBonus);
-    record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, {
+    intentDetail = {
       targetId: profile.id, intent: profile.intent, attackerTier, defenderTier, attackerBase, attackerD20: selected,
       rating: rating.name, ratingBonus, ...(coreBonus ? { coreBonus } : {}), attackerTotal, defenderBase, defenderD20, intentDifficulty: intentSpec.difficulty,
-      defenderTotal, ...intent });
+      defenderTotal, ...intent };
   }
   // Failed intent falls back to an ordinary landed hit; it does not erase the attack.
   const effectiveHit = hit;
@@ -1239,6 +1251,7 @@ function resolveCheck(state, actor, profile) {
     distance: profile.distance, dz: profile.dz, flanked: profile.flanked, arc: profile.arc, hit: effectiveHit, critical,
     intent,
   });
+  if (intent.required) record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, intentDetail);
   return { hit: effectiveHit, critical, rating, intent, saved: false };
 }
 
@@ -1276,12 +1289,12 @@ function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
   if (weapon.stance !== 'dual_wield' || !weapon.offHand.template?.damage || !alive(target)) return;
   const cost = (actor.tier ?? 1) * 10;
   if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < .8) return;
-  actor.sp -= cost;
   const offTemplate = weapon.offHand.template;
   const profile = targetProfile(state, actor, target, target, offTemplate, { weapon: { ...weapon.offHand, stance: 'dual_wield' } });
   profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
   profile.bonusDice = 0;
   record(state, actor, 'followup', `${actor.name}发动副手追击`, { targetId: target.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
+  setResourceTotal(state, actor, 'sp', actor.sp - cost, actor.id, '副手追击');
   const result = resolveCheck(state, actor, profile);
   if (!result.hit) return;
   const dice = profile.protocolInitial != null
@@ -1461,7 +1474,10 @@ function applyInteraction(state, actor, plan) {
   } else if (Object.hasOwn(item, 'effect') && (effect === 'restore' || effect === 'heal')) {
     const amount = item.damage ?? 8;
     restoreHP(state, actor, amount, actor.id, item.name);
-    if (effect === 'restore') { actor.mp = Math.min(actor.maxMp, actor.mp + amount); actor.sp = Math.min(actor.maxSp, actor.sp + amount); }
+    if (effect === 'restore') {
+      setResourceTotal(state, actor, 'mp', Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
+      setResourceTotal(state, actor, 'sp', Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
+    }
   } else if (Object.hasOwn(item, 'effect') && effect === 'shield') {
     grantStatus(state, actor, 'shield', { amount: item.damage ?? 10, sourceUnitId: actor.id });
   } else {
@@ -1490,13 +1506,16 @@ export function applyAction(state, action) {
   const initialCover = moving ? new Set(nearbyCovers(state, actor).map(c => c.id)) : null;
   if (type !== 'end') {
     actor.ap -= plan.ap;
-    actor.mp -= plan.mp;
-    actor.sp -= plan.sp;
+    const costSource = plan.name ?? movementNames[type] ?? type;
+    if (plan.mp) setResourceTotal(state, actor, 'mp', actor.mp - plan.mp, actor.id, costSource);
+    if (plan.sp) setResourceTotal(state, actor, 'sp', actor.sp - plan.sp, actor.id, costSource);
     if (type === 'skill') {
       const skill = tableEntry(state.skills, skillId);
       if (plan.hp) {
+        const hpBefore = actor.hp;
         actor.hp -= plan.hp;
-        record(state, actor, 'skill_cost', `施放 ${skill.name} 消耗 ${plan.hp} HP`, {skillId, hp:plan.hp, remainingHP:actor.hp});
+        record(state, actor, 'skill_cost', `施放 ${skill.name} 消耗 ${plan.hp} HP`,
+          { skillId, hp: plan.hp, remainingHP: actor.hp, hpBefore, hpAfter: actor.hp });
       }
       if (skill?.resourceCost?.resource) {
         const { resource, amount: cost } = skill.resourceCost;

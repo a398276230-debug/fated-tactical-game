@@ -101,9 +101,9 @@ export function migrateStateEffects(state) {
 export function createEffectEngine(io) {
   const expressions = (state, actor) => io.equipped(state, actor).flatMap(({ template, instance }) => {
     if (template?.boundTo && template.boundTo !== actor.id) return [];
-    return (template?.effects ?? []).filter(isExpression).map(expr => ({ expr, key: equippedKey(instance, expr), instance }));
+    return (template?.effects ?? []).filter(isExpression).map(expr => ({ expr, key: equippedKey(instance, expr), instance, sourceName: template.name }));
   });
-  const skillExpressions = (skill, id) => (skill?.effects ?? []).filter(isExpression).map(expr => ({ expr, key: `skill-${id}:${expr.id}` }));
+  const skillExpressions = (skill, id) => (skill?.effects ?? []).filter(isExpression).map(expr => ({ expr, key: `skill-${id}:${expr.id}`, sourceName: skill.name }));
   const activeId = key => `effect:${key}`;
   function activeSkills(state, actor) {
     if (!actor) return [];
@@ -202,7 +202,8 @@ export function createEffectEngine(io) {
     const after = drain ? before - Math.min(amount, Math.max(0, before - (node.minimumRemaining ?? 0))) : Math.min(cap, before + amount);
     if (after === before) return 0;
     if (name === 'hp') return drain ? io.loseHP(state, target, before - after, actor.id, 'true', label, {}, false) : io.heal(state, target, after - before, actor.id, label);
-    if (['mp','sp','ap'].includes(name)) target[name] = after;
+    if (name === 'mp' || name === 'sp') io.setResourceTotal(state, target, name, after, actor.id, label);
+    else if (name === 'ap') target.ap = after;
     else if (name === 'action' || name === 'attack') target.used[name] = 1 - after;
     else if (pool?.effect) io.counter(state, target, pool.item, pool.effect, name, after);
     else (target.resources ??= {})[name] = after;
@@ -217,7 +218,7 @@ export function createEffectEngine(io) {
         ? targets(state, actor, node.target, ctx, p.radius ?? 1) : [inherited];
       for (const target of recipients) {
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
-        const label = node.label ?? entry.expr.label ?? entry.expr.id;
+        const label = node.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
         const amount = Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target, p, ctx) + (['heal','shield','damage'].includes(node.kind) ? (p.percent ?? 0) * target.maxHp : 0)) * (ctx.skillScale ?? 1))));
         let result;
         switch (node.kind) {

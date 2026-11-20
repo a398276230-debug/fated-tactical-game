@@ -19,6 +19,7 @@ import './zone_tests.mjs';
 import './terrain_effects_tests.mjs';
 import './spawn_unit_tests.mjs';
 import './z_interaction_tests.mjs';
+import './terrain_descriptor_regression_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';
@@ -123,7 +124,7 @@ test('旧战局按末态续接，不将新规则反算到旧撤销记录', () =>
   const b=createGameAPI(); assert.equal(b.restoreBattleSnapshot(saved).migratedFrom,1);
   assert.deepEqual(b.getBattleState(),saved.state);
   assert.equal(b.undoLastCommit().ok,false);
-  assert.equal(b.exportBattleSnapshot().version,4);
+  assert.equal(b.exportBattleSnapshot().version,5);
 });
 
 test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移动', () => {
