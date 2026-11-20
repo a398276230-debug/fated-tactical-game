@@ -1,4 +1,4 @@
-import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
+import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -244,7 +244,7 @@ export function parseJSONPatch(value) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.1.10';
+export const TAVERN_VERSION = '0.2.0';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
@@ -443,9 +443,11 @@ export function mountTavernOverlay(options = {}) {
   const panel = el(doc, 'section', { class: 'fated-tavern-panel', role: 'dialog', 'aria-label': '命定战术酒馆控制台', hidden: '' });
   const header = el(doc, 'header', { class: 'fated-tavern-header' });
   const title = el(doc, 'strong', {}, `命定战术控制台 v${TAVERN_VERSION}`);
+  const fullscreen = el(doc, 'button', { type: 'button', class: 'fated-tavern-fullscreen', title: '全屏', 'aria-label': '全屏' }, '□');
   const minimize = el(doc, 'button', { type: 'button', title: '最小化', 'aria-label': '最小化' }, '−');
   const close = el(doc, 'button', { type: 'button', title: '关闭', 'aria-label': '关闭' }, '×');
-  header.append(title, minimize, close);
+  const resizeHandle = el(doc, 'span', { class: 'fated-tavern-resize', 'aria-hidden': 'true' });
+  header.append(title, fullscreen, minimize, close);
   const tabs = el(doc, 'nav', { class: 'fated-tavern-tabs', role: 'tablist' });
   const content = el(doc, 'div', { class: 'fated-tavern-content' });
   const pages = {};
@@ -495,7 +497,7 @@ export function mountTavernOverlay(options = {}) {
     dismiss.hidden = busy;
     toast.hidden = false;
   }
-  panel.append(header, tabs, content); root.append(launcher, panel, toast); (doc.body || doc.documentElement)?.append(root);
+  panel.append(header, tabs, content, resizeHandle); root.append(launcher, panel, toast); (doc.body || doc.documentElement)?.append(root);
   const instances = (() => { try { return parseJSON(storage?.getItem(stateKey)) ?? config.instances; } catch { return config.instances; } })();
   config.instances = isObject(instances) ? instances : {};
 
@@ -530,6 +532,29 @@ export function mountTavernOverlay(options = {}) {
     launcher.hidden = true;
     if (config.autoScan !== false) { selectedMessageId = null; await scan(); }
   }
+  let panelFullscreen = false;
+  let panelRestore = null;
+  function setFullscreen(value) {
+    panelFullscreen = Boolean(value);
+    if (panelFullscreen) {
+      const rect = panel.getBoundingClientRect();
+      panelRestore = { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: panel.style.right, bottom: panel.style.bottom };
+      panel.classList.add('is-fullscreen');
+      panel.style.left = '0px'; panel.style.top = '0px'; panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      panel.style.width = '100vw'; panel.style.height = '100dvh';
+      fullscreen.textContent = '❐'; fullscreen.title = '还原'; fullscreen.setAttribute('aria-label', '还原');
+    } else {
+      panel.classList.remove('is-fullscreen');
+      const restore = panelRestore;
+      panelRestore = null;
+      panel.style.right = restore?.right || '16px'; panel.style.bottom = restore?.bottom || '16px';
+      panel.style.left = restore ? `${restore.left}px` : '';
+      panel.style.top = restore ? `${restore.top}px` : '';
+      panel.style.width = restore ? `${restore.width}px` : '';
+      panel.style.height = restore ? `${restore.height}px` : '';
+      fullscreen.textContent = '□'; fullscreen.title = '全屏'; fullscreen.setAttribute('aria-label', '全屏');
+    }
+  }
   function hide() { panel.hidden = true; launcher.hidden = Boolean(config.hideLauncher); }
   function bindEventBus() {
     const eventOn = hostMethod(host, 'eventOn');
@@ -542,7 +567,9 @@ export function mountTavernOverlay(options = {}) {
     } catch (_) { /* event bus is optional outside JS-Slash-Runner */ }
   }
   function closePanel() { hide(); }
-  on(launcher, 'click', open); on(close, 'click', closePanel); on(minimize, 'click', hide);
+  on(launcher, 'click', event => { if (launcher.dataset.dragged === 'true') { delete launcher.dataset.dragged; event.preventDefault(); return; } open(); });
+  on(fullscreen, 'click', () => setFullscreen(!panelFullscreen));
+  on(close, 'click', closePanel); on(minimize, 'click', hide);
   // The Tavern regex processor may inject the entry after this overlay mounts,
   // so bind the generated button through delegation instead of only binding
   // buttons created by our own DOM renderer.
@@ -577,7 +604,7 @@ export function mountTavernOverlay(options = {}) {
         drag.moved = true;
         node.style.right = 'auto'; node.style.bottom = 'auto';
         node.style.left = `${drag.left}px`; node.style.top = `${drag.top}px`;
-        surface.setPointerCapture?.(event.pointerId);
+        try { surface.setPointerCapture?.(event.pointerId); } catch (_) {}
       }
       node.style.left = `${Math.max(0, drag.left + dx)}px`;
       node.style.top = `${Math.max(0, drag.top + dy)}px`;
@@ -586,8 +613,67 @@ export function mountTavernOverlay(options = {}) {
     const stop = event => { if (drag?.pointerId === event.pointerId) drag = null; };
     on(surface, 'pointerup', stop); on(surface, 'pointercancel', stop); on(surface, 'lostpointercapture', stop);
   }
-  // The launcher is a button, not a draggable surface. Only the panel title bar moves.
+  function draggableLauncher() {
+    let drag = null;
+    const start = event => {
+      if (event.button !== 0) return;
+      const rect = launcher.getBoundingClientRect();
+      drag = { pointerId: event.pointerId ?? null, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+    };
+    on(launcher, 'pointerdown', start);
+    on(launcher, 'mousedown', event => { if (!drag) start(event); });
+    const move = event => {
+      if (!drag || (drag.pointerId != null && event.pointerId != null && event.pointerId !== drag.pointerId)) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) <= 5) return;
+      if (!drag.moved) {
+        drag.moved = true; launcher.dataset.dragged = 'true';
+        launcher.style.right = 'auto'; launcher.style.bottom = 'auto';
+        launcher.style.left = `${drag.left}px`; launcher.style.top = `${drag.top}px`;
+        try { launcher.setPointerCapture?.(event.pointerId); } catch (_) {}
+      }
+      const maxX = Math.max(0, (host.innerWidth || doc.documentElement.clientWidth || 0) - launcher.offsetWidth);
+      const maxY = Math.max(0, (host.innerHeight || doc.documentElement.clientHeight || 0) - launcher.offsetHeight);
+      launcher.style.left = `${Math.min(maxX, Math.max(0, drag.left + dx))}px`;
+      launcher.style.top = `${Math.min(maxY, Math.max(0, drag.top + dy))}px`;
+      event.preventDefault();
+    };
+    on(doc, 'pointermove', move); on(launcher, 'pointermove', move);
+    on(doc, 'mousemove', event => {
+      if (!drag) return;
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) <= 5) return;
+      drag.moved = true; launcher.dataset.dragged = 'true'; launcher.style.right = 'auto'; launcher.style.bottom = 'auto';
+      const maxX = Math.max(0, (host.innerWidth || doc.documentElement.clientWidth || 0) - launcher.offsetWidth);
+      const maxY = Math.max(0, (host.innerHeight || doc.documentElement.clientHeight || 0) - launcher.offsetHeight);
+      launcher.style.left = `${Math.min(maxX, Math.max(0, drag.left + dx))}px`; launcher.style.top = `${Math.min(maxY, Math.max(0, drag.top + dy))}px`;
+      event.preventDefault();
+    });
+    const stop = event => { if (drag && (drag.pointerId == null || event.pointerId == null || drag.pointerId === event.pointerId)) drag = null; };
+    on(doc, 'pointerup', stop); on(doc, 'pointercancel', stop); on(doc, 'mouseup', stop); on(launcher, 'lostpointercapture', stop);
+  }
+  draggableLauncher();
   draggable(panel, header);
+  function resizable() {
+    let resize = null;
+    on(resizeHandle, 'pointerdown', event => {
+      if (panelFullscreen || event.button !== 0) return;
+      const rect = panel.getBoundingClientRect();
+      resize = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height };
+      try { resizeHandle.setPointerCapture?.(event.pointerId); } catch (_) {} event.preventDefault();
+    });
+    on(resizeHandle, 'pointermove', event => {
+      if (!resize || event.pointerId !== resize.pointerId) return;
+      const vw = host.innerWidth || doc.documentElement.clientWidth || resize.width;
+      const vh = host.innerHeight || doc.documentElement.clientHeight || resize.height;
+      const width = Math.min(vw - 16, Math.max(480, resize.width + event.clientX - resize.x));
+      const height = Math.min(vh - 16, Math.max(360, resize.height + event.clientY - resize.y));
+      panel.style.width = `${width}px`; panel.style.height = `${height}px`; event.preventDefault();
+    });
+    const stop = event => { if (resize?.pointerId === event.pointerId) resize = null; };
+    on(resizeHandle, 'pointerup', stop); on(resizeHandle, 'pointercancel', stop); on(resizeHandle, 'lostpointercapture', stop);
+  }
+  resizable();
 
   function battleEntry(raw) {
     const details = el(doc, 'details', { class: 'fated-battle-entry' });
@@ -879,7 +965,7 @@ export function mountTavernOverlay(options = {}) {
     const actions = el(doc, 'div', { class: 'fated-actions' }); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(report, refresh); page.append(actions);
     const output = status;
     on(refresh, 'click', () => scan(true).catch(showError));
-    on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = liveState() ? buildMvuJsonPatch(liveState(), sources.sourceMap) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
+    on(report, 'click', () => { try { const result = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
   }
   askAI = async (kind, requestText = '', sessionId = kind === 'chat' ? aiSessions.active().id : undefined, records) => {
       if (aiController || (kind === 'chat' && !requestText)) return;

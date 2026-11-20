@@ -582,8 +582,8 @@ var FatedTacticalTavern = (() => {
                   }
                   break;
                 case "modifyStat": {
-                  const modifiers2 = target2.effectModifiers ??= {};
-                  modifiers2[`${source.id}:${entry.key}:${p.stat}`] = {
+                  const modifiers3 = target2.effectModifiers ??= {};
+                  modifiers3[`${source.id}:${entry.key}:${p.stat}`] = {
                     stat: p.stat,
                     flat: (p.flat ?? 0) * levelScale(p.levelScaling, actor.tier ?? 1),
                     percent: (p.percent ?? 0) * levelScale(p.levelScaling, actor.tier ?? 1),
@@ -673,10 +673,10 @@ var FatedTacticalTavern = (() => {
       });
     }
     function stat2(state, actor, name, base, ctx = {}, temporaryOnly = false) {
-      const modifiers2 = values(actor.effectModifiers);
-      if (!temporaryOnly) modifiers2.push(...passiveNodes(state, actor, ctx, ctx.entries).filter((n) => n.kind === "modifyStat"));
+      const modifiers3 = values(actor.effectModifiers);
+      if (!temporaryOnly) modifiers3.push(...passiveNodes(state, actor, ctx, ctx.entries).filter((n) => n.kind === "modifyStat"));
       let flat = 0, percent = 0;
-      for (const m of modifiers2) if (m.stat === name && (!m.damageType || m.damageType === ctx.damageType)) {
+      for (const m of modifiers3) if (m.stat === name && (!m.damageType || m.damageType === ctx.damageType)) {
         const scale = levelScale(m.levelScaling, actor.tier ?? 1);
         flat += (m.flat ?? 0) * scale;
         percent += (m.percent ?? 0) * scale;
@@ -999,6 +999,10 @@ var FatedTacticalTavern = (() => {
   function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) {
     return agility * (1 + percent) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat;
   }
+  function bodySizeLabel(unit) {
+    const meters2 = unit.bodyLengthM ?? 1.7;
+    return `${sizeFor(meters2).name} (${meters2}m${unit.mc >= 2 ? ` \xB7 MC ${unit.mc}` : ""})`;
+  }
   function sizeHitModifier(attacker, defender) {
     const a = sizeForUnit(attacker), d = sizeForUnit(defender);
     return (defender.mc ?? 1) >= 2 ? a.value + 2 * ((defender.mc ?? 1) - 1) : a.value - d.value;
@@ -1056,9 +1060,9 @@ var FatedTacticalTavern = (() => {
     if (flags.includes(key4)) return "true/false";
     throw new Error(`\u672A\u77E5\u72B6\u6001\u53C2\u6570\uFF1A${key4}`);
   }
-  function validateStatusModifiers(template, modifiers2) {
-    if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
-    for (const [key4, value] of Object.entries(modifiers2)) {
+  function validateStatusModifiers(template, modifiers3) {
+    if (!modifiers3 || Object.getPrototypeOf(modifiers3) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
+    for (const [key4, value] of Object.entries(modifiers3)) {
       if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
       const range = rangeFor(key4, template);
       const valid = range ? (ratios.includes(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range[0] && value <= range[1] : key4 === "damageType" ? damageTypes.includes(value) : flags.includes(key4) && typeof value === "boolean";
@@ -1229,7 +1233,7 @@ var FatedTacticalTavern = (() => {
   }
 
   // src/core/combat.js
-  var def = (name, icon, category, remainingTurns, description, modifiers2 = {}, options = {}) => Object.freeze({
+  var def = (name, icon, category, remainingTurns, description, modifiers3 = {}, options = {}) => Object.freeze({
     name,
     icon,
     category,
@@ -1239,7 +1243,7 @@ var FatedTacticalTavern = (() => {
     tickTiming: "onTurnStart",
     stackRule: "refresh",
     maxStacks: 1,
-    modifiers: Object.freeze(modifiers2),
+    modifiers: Object.freeze(modifiers3),
     ...options
   });
   var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
@@ -1309,7 +1313,9 @@ var FatedTacticalTavern = (() => {
   var statusOf = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
   var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
   function record(state, unit, type, text4, detail = {}) {
-    const event = { round: state.round, actor: typeof unit === "string" ? unit : unit?.id ?? null, type, text: text4, detail };
+    const actor = typeof unit === "string" ? unit : unit?.id ?? null;
+    const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, { x: current.x, y: current.y }]));
+    const event = { round: state.round, actor, text: text4, type, detail, positions };
     state.logs.push(event);
     return event;
   }
@@ -1352,19 +1358,19 @@ var FatedTacticalTavern = (() => {
     const template = getStatusTemplate(state, statusId2);
     if (!status2 || !template) throw new Error(`\u627E\u4E0D\u5230\u72B6\u6001\u5B9E\u4F8B\uFF1A${unitId}/${statusId2}`);
     if (!patch || Object.getPrototypeOf(patch) !== Object.prototype || !Object.keys(patch).length) throw new Error("\u72B6\u6001\u53C2\u6570\u8865\u4E01\u987B\u4E3A\u975E\u7A7A\u5BF9\u8C61");
-    const { expireOn: expireOn2, ...modifiers2 } = patch;
+    const { expireOn: expireOn2, ...modifiers3 } = patch;
     const patchExpiry = Object.hasOwn(patch, "expireOn");
-    validateStatusModifiers(template, modifiers2);
+    validateStatusModifiers(template, modifiers3);
     if (patchExpiry && expireOn2 !== null && !validExpireOn(expireOn2)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
-    status2.modifiers = { ...status2.modifiers, ...modifiers2 };
+    status2.modifiers = { ...status2.modifiers, ...modifiers3 };
     if (patchExpiry) status2.expireOn = structuredClone(expireOn2);
-    if (statusId2 === "shield" && Object.hasOwn(modifiers2, "amount")) status2.amount = clamp(modifiers2.amount, 1, 1e5);
+    if (statusId2 === "shield" && Object.hasOwn(modifiers3, "amount")) status2.amount = clamp(modifiers3.amount, 1, 1e5);
     record(
       state,
       unit,
       "status_patch",
       `${unit.name}\u7684${status2.name}\u53C2\u6570\u5DF2\u66F4\u65B0`,
-      { targetId: unitId, statusId: statusId2, modifiers: modifiers2, ...patchExpiry ? { expireOn: status2.expireOn } : {} }
+      { targetId: unitId, statusId: statusId2, modifiers: modifiers3, ...patchExpiry ? { expireOn: status2.expireOn } : {} }
     );
     return status2;
   }
@@ -2117,13 +2123,14 @@ var FatedTacticalTavern = (() => {
     const penalty = protectedBy?.cover ?? 0;
     const size = cover ? 0 : typeof target2?.size === "number" ? Math.max(0, target2.size - 1) : target2?.size === "large" ? 2 : target2?.size === "small" ? -1 : 0;
     const sizeModifier = cover || !target2 ? 0 : sizeHitModifier(actor, target2);
+    const sizeAccuracy = size + sizeModifier;
     const distanceModifier = distanceTier(geometry.distance).hit;
     const weaponRangeModifier = distanceTier(Math.max(geometry.distance, geometry.range)).range;
     const stance = weapon?.stance ?? actor.stance ?? "unarmed";
     const rules = stanceRules(stance);
     const rangedDistance = weapon && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
     const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
-    const accuracy = dsl.stat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + size + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + dsl.check(state, actor, "accuracyBonus", strike), strike) - dodge;
+    const accuracy = dsl.stat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + dsl.check(state, actor, "accuracyBonus", strike), strike) - dodge;
     const explicitEvasion = changes(target2, "evasion") + changes(target2, "incomingAccuracy");
     const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
     const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 10 + explicitEvasion + equipmentDefense;
@@ -2183,7 +2190,7 @@ var FatedTacticalTavern = (() => {
       weaponRangeModifier,
       stance,
       stanceRules: rules,
-      accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: size + sizeModifier, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, "accuracy") },
+      accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, "accuracy") },
       intent: context.intent ?? "normal",
       intentDifficulty: intentSpec.difficulty,
       intentMultiplier: intentSpec.multiplier,
@@ -3514,8 +3521,8 @@ var FatedTacticalTavern = (() => {
     requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1)) && Object.values(s.units).every((u) => u.hp <= 0 || s.order.includes(u.id)), "\u5148\u653B\u7D22\u5F15");
     requireThat(Array.isArray(s.logs) && s.logs.length <= 1e5, "\u65E5\u5FD7");
     for (const log of s.logs) {
-      fields(log, ["round", "actor", "type", "text", "detail"]);
-      requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text(log.type, 64) && text(log.text, 1e3) && jsonTree(log.detail), "\u65E5\u5FD7\u4E8B\u4EF6");
+      fields(log, ["round", "actor", "type", "text", "detail"], ["positions"]);
+      requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text(log.type, 64) && text(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point2) => plain(point2) && coord2(point2.x) && coord2(point2.y))), "\u65E5\u5FD7\u4E8B\u4EF6");
     }
     return s;
   }
@@ -4093,9 +4100,23 @@ var FatedTacticalTavern = (() => {
     const lines = [report.title];
     const names = new Map(Object.entries(unitNames));
     for (const unit of report.units) names.set(unit.id, unit.name);
-    const name = (id3) => names.get(id3) ?? id3;
     const digits = "\u96F6\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D";
     const roundLabel = (n) => n < 10 ? digits[n] : n < 100 ? `${n >= 20 ? digits[Math.floor(n / 10)] : ""}\u5341${n % 10 ? digits[n % 10] : ""}` : n;
+    const position = (event, id3) => {
+      const point2 = event.positions?.[id3] ?? report.units.find((unit) => unit.id === id3);
+      return point2 && Number.isInteger(point2.x) && Number.isInteger(point2.y) ? `(${point2.x}, ${point2.y})` : "";
+    };
+    const name = (event, id3) => `${names.get(id3) ?? id3}${position(event, id3)}`;
+    const replaceUnitNames = (event, text4) => {
+      let result = text4;
+      const ordered2 = [...names.entries()].sort((a, b) => b[1].length - a[1].length);
+      for (const [id3, unitName] of ordered2) {
+        if (!unitName || !result.includes(unitName)) continue;
+        const replacement = `${unitName}${position(event, id3)}`;
+        result = result.split(unitName).join(replacement);
+      }
+      return result;
+    };
     for (const { round, events: events2 } of report.rounds) {
       const rows = [];
       let turn = null;
@@ -4108,10 +4129,10 @@ var FatedTacticalTavern = (() => {
         const detail = event.detail ?? {};
         switch (type) {
           case "initiative":
-            rows.push(`\u786E\u5B9A\u5148\u653B\u6B21\u5E8F\uFF1A${detail.initiative.map((u) => name(u.unitId)).join(" \u2192 ")}`);
+            rows.push(`\u786E\u5B9A\u5148\u653B\u6B21\u5E8F\uFF1A${detail.initiative.map((u) => name(event, u.unitId)).join(" \u2192 ")}`);
             break;
           case "turn":
-            turn = { text: text4, actor, parts: [] };
+            turn = { text: replaceUnitNames(event, text4), actor, parts: [] };
             rows.push(turn);
             break;
           case "end":
@@ -4121,52 +4142,51 @@ var FatedTacticalTavern = (() => {
           case "action": {
             const action = detail.action?.type;
             if (["move", "sprint", "disengage", "interact"].includes(action) || action === "brace" && events2[i + 1]?.type === "brace") break;
-            const prefix = `${name(actor)}\uFF1A`;
-            const label = text4.startsWith(prefix) ? text4.slice(prefix.length) : text4;
-            add(action === "attack" || action === "skill" ? `\u4F7F\u7528${label}` : label);
+            const actorName = name(event, actor);
+            const prefix = `${actorName}\uFF1A`;
+            const rawPrefix = `${names.get(actor) ?? actor}\uFF1A`;
+            const label = text4.startsWith(prefix) ? text4.slice(prefix.length) : text4.startsWith(rawPrefix) ? text4.slice(rawPrefix.length) : text4;
+            add(action === "attack" || action === "skill" ? `\u4F7F\u7528${label}` : replaceUnitNames(event, label));
             break;
           }
           case "roll":
-            if (detail.cover > 0) {
-              const cover = detail.coverId;
-              add(`${name(detail.targetId)}\u53D7\u5230${cover ? ` ${cover} ` : ""}\u63A9\u4F53\u906E\u853D`);
-            }
-            if (!detail.hit) add(`${name(detail.targetId)}\u672A\u88AB\u51FB\u4E2D`);
-            else if (detail.critical) add(`\u5BF9${name(detail.targetId)}\u6253\u51FA\u66B4\u51FB`);
+            if (detail.cover > 0) add(`${name(event, detail.targetId)}\u53D7\u5230${detail.coverId ? ` ${detail.coverId} ` : ""}\u63A9\u4F53\u906E\u853D`);
+            if (!detail.hit) add(`${name(event, detail.targetId)}\u672A\u88AB\u51FB\u4E2D`);
+            else if (detail.critical) add(`\u5BF9${name(event, detail.targetId)}\u6253\u51FA\u66B4\u51FB`);
             break;
           case "save":
-            if (detail.saved) add(`${name(detail.targetId)}\u901A\u8FC7\u8C41\u514D`);
+            if (detail.saved) add(`${name(event, detail.targetId)}\u901A\u8FC7\u8C41\u514D`);
             break;
           case "intent":
             add(detail.success ? "\u610F\u56FE\u6210\u7ACB" : "\u610F\u56FE\u672A\u6210\u7ACB\uFF0C\u6309\u5E38\u89C4\u653B\u51FB\u7ED3\u7B97");
             break;
           case "status":
             if (detail.statusId === "guarded" && turn?.parts.some((p) => p.includes("\u67B6\u52BF\u9632\u5FA1"))) break;
-            add(text4.replace(/ ×1$/, ""));
+            add(replaceUnitNames(event, text4).replace(/ ×1$/, ""));
             break;
           case "proc":
           case "expire":
             break;
           case "counter":
-            add(text4.replace(/\bsouls\b/g, "\u9B42\u6570").replace(/\bammo\b/g, "\u5F39\u836F"));
+            add(replaceUnitNames(event, text4).replace(/\bsouls\b/g, "\u9B42\u6570").replace(/\bammo\b/g, "\u5F39\u836F"));
             break;
           case "outcome":
             turn = null;
-            rows.push(text4);
+            rows.push(replaceUnitNames(event, text4));
             break;
           default: {
             if (["damage", "heal", "cover_damage"].includes(type) && detail.amount === 0) break;
             const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "interact", "skip", "brace", "cover_approach"].includes(type);
-            const label = ownAction && text4.startsWith(name(actor)) ? text4.slice(name(actor).length) : text4;
+            let label = replaceUnitNames(event, text4);
+            const actorRaw = names.get(actor) ?? actor;
+            if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
             add(label.replace(/ ×1$/, ""));
           }
         }
       }
       if (!rows.length) continue;
       lines.push("", `- \u56DE\u5408${roundLabel(round)}`);
-      for (const row of rows) {
-        lines.push(`  - ${typeof row === "string" ? row : row.text + (row.parts.length ? `\uFF1A${row.parts.join("\uFF1B")}` : "")}`);
-      }
+      for (const row of rows) lines.push(`  - ${typeof row === "string" ? row : row.text + (row.parts.length ? `\uFF1A${row.parts.join("\uFF1B")}` : "")}`);
     }
     if (!report.outcome) lines.push("", "\u6218\u6597\u5C1A\u672A\u7ED3\u675F\u3002");
     return `${lines.join("\n")}
@@ -5335,7 +5355,7 @@ var FatedTacticalTavern = (() => {
       const facts = el2("p", "muted", [
         `\u62A4\u7532 ${u.armor}`,
         `\u79FB\u52A8 ${u.move} \u683C`,
-        `\u4F53\u578B ${u.size}`,
+        `\u4F53\u578B ${bodySizeLabel(u)}`,
         `\u6301\u68B0\uFF1A${STANCES[u.stance] ?? "\u8F7B\u5251"}`,
         `\u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2`,
         u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
@@ -5456,6 +5476,7 @@ var FatedTacticalTavern = (() => {
             chance = t.hitChance;
             const dice3 = t.advantage > 0 ? "\u4F18\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u9AD8\uFF09" : t.advantage < 0 ? "\u52A3\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u4F4E\uFF09" : "d20";
             bits.push(`\u547D\u4E2D\u7387 ${pct2(t.hitChance)}\uFF1A${dice3} + \u547D\u4E2D ${t.accuracy}\uFF0C\u5BF9\u6297\u9632\u5FA1 ${t.defense}`);
+            if (t.accuracySources) bits.push(`\u547D\u4E2D\u4E2D\u7684\u4F53\u578B\u4FEE\u6B63 ${sign2(t.accuracySources.size)}`);
           }
           const mods = [
             t.coverId ? `\u88AB${get2(state.covers, t.coverId)?.name ?? "\u63A9\u4F53"}\u906E\u6321 \u2212${t.cover}` : "",
@@ -8549,6 +8570,35 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     for (const id3 of Array.isArray(participant?.skills) ? participant.skills : []) if (object3(definitions[id3])) result[id3] = clone(definitions[id3]);
     return Object.keys(result).length ? result : null;
   }
+  var lengthKeys = ["bodyLengthM", "bodyLength", "BL", "bl", "\u4F53\u957F", "\u8EAB\u9AD8"];
+  var lengthToken = /(\d+(?:\.\d+)?|\.\d+)\s*(厘米|cm|米|m)?/i;
+  var modifiers2 = "(?:\u5927\u7EA6|\u7EA6|[~\uFF5E])?\\s*";
+  var explicitLength = new RegExp(`^${modifiers2}${lengthToken.source}$`, "i");
+  var describedLength = new RegExp(`(?:\u8EAB\u9AD8|\u4F53\u957F|\u9AD8\u5EA6|\u9AD8\u7EA6|\u957F\u7EA6)\\s*[:\uFF1A]?\\s*${modifiers2}${lengthToken.source}(?![\\d.a-z])`, "gi");
+  function meters(match) {
+    if (!match) return null;
+    const n = Number(match[1]) / (/^(cm|厘米)$/i.test(match[2]) ? 100 : 1);
+    return Number.isFinite(n) && n > 0 ? Math.max(0.01, Math.min(1e9, n)) : null;
+  }
+  function readBodyLength(record2, warnings) {
+    const keys = lengthKeys.filter((key4) => own5(record2, key4));
+    for (const key4 of keys) {
+      const raw = record2[key4];
+      const length = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.max(0.01, Math.min(1e9, raw)) : typeof raw === "string" ? meters(explicitLength.exec(raw.replace(/\([^()]*\)|（[^（）]*）/g, "").trim())) : null;
+      if (length !== null) return length;
+    }
+    for (const field of ["\u5916\u8C8C\u7279\u8D28", "\u5916\u8C8C", "\u63CF\u8FF0", "appearance", "description"]) {
+      const value = record2[field];
+      const prose = Array.isArray(value) ? value.filter((s) => typeof s === "string").join("\n") : object3(value) ? Object.entries(value).filter(([, v]) => typeof v === "string" || typeof v === "number").map(([k, v]) => `${k}: ${v}`).join("\n") : value;
+      if (typeof prose !== "string") continue;
+      for (const match of prose.matchAll(describedLength)) {
+        const length = meters(match);
+        if (length !== null) return length;
+      }
+    }
+    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text2(record2[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`);
+    return 1.7;
+  }
   function mergeBattleParticipant(record2, participant, battle) {
     const fallback = asObject(record2), inline = asObject(participant);
     const battleEquipment = battleEquipmentRecord(participant, battle), battleSkills = battleSkillsRecord(participant, battle);
@@ -8556,7 +8606,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (!(merged.equipment ?? merged.equipments ?? merged.items ?? merged.\u88C5\u5907) && battleEquipment) merged.equipment = battleEquipment;
     if (!(merged.skills ?? merged.abilities ?? merged.\u6280\u80FD) && battleSkills) merged.skills = battleSkills;
     const fields3 = {
-      bodyLengthM: ["bodyLengthM", "bodyLength", "bl", "\u4F53\u957F"],
+      bodyLengthM: lengthKeys,
       mc: ["mc", "MC", "massClass"],
       tier: ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"],
       armor: ["armor", "defense", "\u62A4\u7532"],
@@ -8606,8 +8656,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const id3 = p.id;
     const stats2 = statsOf(record2), level = Math.max(1, integer3(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
     const tier = Math.max(1, Math.min(7, tierNumber(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
-    const bodyLengthM = Math.max(0.01, Math.min(1e9, number2(findValue(record2, ["bodyLengthM", "bodyLength", "bl", "\u4F53\u957F"], 1.7), 1.7)));
-    const size = Math.max(1, Math.min(5, sizeFor(bodyLengthM).value === 2 ? 1 : sizeFor(bodyLengthM).value === 1 ? 2 : sizeFor(bodyLengthM).value === 0 ? 3 : sizeFor(bodyLengthM).value === -1 ? 4 : 5));
+    const bodyLengthM = readBodyLength(record2, sink("state"));
+    const size = Math.min(5, 3 - sizeFor(bodyLengthM).value);
     const mc = Math.max(1, Math.min(64, integer3(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
     const resources = { hp: safeResource(resource2(record2, "hp", Math.max(1, stats2.con * 100)), "hp", resourcesSink), mp: safeResource(resource2(record2, "mp", Math.max(0, (stats2.int + stats2.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource2(record2, "sp", Math.max(0, (stats2.str + stats2.agi) * 10)), "sp", resourcesSink) };
     const slotItems = sourceEquipment(record2).map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, effects2));
@@ -8675,11 +8725,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const template = STATUSES[sid];
       const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.\u5269\u4F59\u56DE\u5408 ?? rawStatus?.\u5269\u4F59\u65F6\u95F4, template.remainingTurns);
       const stacks = bound(rawStatus?.stacks ?? rawStatus?.\u5C42\u6570, 1, template.maxStacks);
-      const modifiers2 = { ...template.modifiers };
+      const modifiers3 = { ...template.modifiers };
       if (rawStatus && own5(rawStatus, "modifiers") && !emptyEntry(rawStatus.modifiers)) {
         try {
           validateStatusModifiers(template, rawStatus.modifiers);
-          Object.assign(modifiers2, rawStatus.modifiers);
+          Object.assign(modifiers3, rawStatus.modifiers);
         } catch (error2) {
           warnings.push(`\u72B6\u6001 ${sid} \u5DF2\u62D2\u7EDD\uFF1A${error2.message}`);
           continue;
@@ -8692,8 +8742,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         remainingTurns,
         stacks,
         sourceUnitId: null,
-        modifiers: modifiers2,
-        ...sid === "shield" ? { amount: bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, modifiers2.amount) } : {}
+        modifiers: modifiers3,
+        ...sid === "shield" ? { amount: bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, modifiers3.amount) } : {}
       };
     }
     const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
@@ -8997,13 +9047,19 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 [data-fated-tavern-overlay] .fated-tavern-launcher {
   position:fixed; right:18px; bottom:18px; width:52px; height:52px; border-radius:50%;
   border-color:var(--gold); font-size:22px; box-shadow:0 8px 24px rgb(var(--accent-rgb) / .25); pointer-events:auto;
+  touch-action:none; user-select:none; cursor:grab;
 }
+[data-fated-tavern-overlay] .fated-tavern-launcher[data-dragged="true"] { cursor:grabbing }
 .fated-tavern-panel {
   position:fixed; right:16px; bottom:16px; width:min(1100px,calc(100vw - 32px));
   height:min(820px,calc(100dvh - 32px)); display:flex; flex-direction:column;
   border:var(--panel-border); border-radius:10px; background:var(--panel-bg);
-  box-shadow:0 18px 54px rgba(0,0,0,.55); pointer-events:auto; overflow:hidden;
+  box-shadow:0 18px 54px rgba(0,0,0,.55); pointer-events:auto; overflow:hidden; min-width:480px; min-height:360px;
 }
+.fated-tavern-panel.is-fullscreen { border-radius:0; max-width:none; max-height:none }
+.fated-tavern-resize { position:absolute; z-index:5; right:0; bottom:0; width:20px; height:20px; cursor:nwse-resize; touch-action:none }
+.fated-tavern-resize::after { content:'\u25E2'; position:absolute; right:2px; bottom:0; color:var(--gold-dim); font-size:14px; opacity:.85 }
+.fated-tavern-panel.is-fullscreen .fated-tavern-resize { display:none }
 [data-fated-tavern-overlay] .fated-tavern-panel::before {
   content:""; position:absolute; z-index:2; top:0; left:var(--topline-left); width:var(--topline-width);
   height:var(--topline-height); background:var(--topline); pointer-events:none;
@@ -9111,7 +9167,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 [data-fated-tavern-overlay] .battle-main,[data-fated-tavern-overlay] .battle-sidebar { min-width:0 }
 @container fated-board (max-width:850px) { [data-fated-tavern-overlay] .game-columns { grid-template-columns:minmax(0,1fr) } }
 @media (max-width:660px),(max-height:460px) {
-  .fated-tavern-panel { inset:6px !important; width:auto; height:auto }
+  .fated-tavern-panel { inset:6px !important; width:auto; height:auto; min-width:0; min-height:0 }
   .fated-tavern-header { cursor:default; touch-action:auto }
   [data-fated-tavern-overlay] button:not([data-sandbox-mount] *) { min-height:36px }
 }
@@ -9165,7 +9221,7 @@ DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BC
   var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
 \u5148\u653B\uFF1Dagi\xD7(1+initiativePercent)+d20+max(0,...attackInit)+max(0,...actionInit)+flatInitiative\uFF1B\u603B\u5206\u964D\u5E8F\uFF0C\u540C\u5206\u5148\u6BD4\u654F\u6377\uFF0C\u518D\u6309 ID \u5347\u5E8F\u3002
 \u666E\u901A\u653B\u51FB\u6309\u6240\u53D6 d20+accuracy \u5206\u6863\uFF08\u4E0B\u9650\u542B\u7B49\u53F7\uFF09\uFF1A<4 \u5931\u624B\xD70\uFF0C4 \u64E6\u4F24\xD70.3\uFF0C8 \u52C9\u5F3A\xD70.8\uFF0C11 \u6709\u6548\xD71\uFF0C20 \u5E73\u66B4\u51FB\xD71.3\uFF0C25 \u5F3A\u66B4\u51FB\xD71.6\uFF0C30 \u8D85\u66B4\u51FB\xD72\u3002\u81EA\u71361\u5FC5\u5931\uFF1B\u81EA\u713620\u6807\u8BB0 critical\uFF0C\u4F46\u4ECD\u987B\u603B\u5206\u22654\u3002\u5B9E\u6218\u4E0D\u4EE5\u9884\u89C8 defense \u4E3A\u547D\u4E2D\u95E8\u69DB\uFF1Battack \u662F\u4F24\u5BB3\uFF0C\u4E0D\u662F accuracy\u3002\u65E0\u9ED8\u8BA4\u529B/\u654F\u547D\u4E2D\u6216\u654F\u6377\u9632\u5FA1\u3002\u901A\u5E38\u51C0\u4F18\u52BF/\u52A3\u52BF\u63B72\u53D6\u9AD8/\u4F4E\uFF1B\u534F\u8BAE\u5956\u52B1\u9AB00~2\u3001\u60E9\u7F5A\u9AB00~1\uFF0C\u76F8\u7B49\u53D61\u9AB0\uFF0C\u5956\u52B1\u5360\u4F18\u4E14\u67092\u5956\u52B1\u53D63\u9AB0\u4E2D\u4F4D\u3002
-\u5C04\u7A0B\u53D6\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB\uFF1B\u547D\u4E2D\u8BA1\u4F53\u578B(max(0,size\u22121)\uFF0Clarge+2\uFF0Csmall\u22121)\u3001\u9AD8\u5DEE\u3001\u8DDD\u79BB\u3001\u5C04\u7A0B\u3001\u72B6\u6001\u3001\u5939\u51FB\u3001\u63A9\u4F53\u3002
+\u5C04\u7A0B\u53D6\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB\uFF1B\u547D\u4E2D\u8BA1\u4F53\u578B\u3001\u9AD8\u5DEE\u3001\u8DDD\u79BB\u3001\u5C04\u7A0B\u3001\u72B6\u6001\u3001\u5939\u51FB\u3001\u63A9\u4F53\u3002\u4F53\u578B\u547D\u4E2D\u52A0\u503C\uFF1D\u76EE\u6807\u57FA\u7840\u9879\uFF0B\u653B\u5B88\u6863\u5DEE\uFF0C\u5408\u8BA1\u53EA\u52A0\u4E00\u6B21\uFF1B\u6253\u63A9\u4F53\u4E3A0\u3002\u57FA\u7840\u9879=max(0,\u76EE\u6807size\u22121)\uFF08\u65E7\u5B57\u7B26\u4E32large\u4E3A+2\u3001small\u4E3A\u22121\uFF0C\u5176\u4F590\uFF09\u3002\u6309\u4F53\u957F\u4F9D\u6B21\u5206\u5FAE/\u5C0F/\u4E2D/\u5927/\u5DE8/\u8D85\u5DE8\uFF0C\u5206\u754C\u4E3A0.6/1.3/2.6/5.5/10\u7C73\uFF08\u7B49\u4E8E\u5206\u754C\u8FDB\u4E0B\u4E00\u6863\uFF09\uFF0C\u6863\u503C\u4F9D\u6B21\u4E3A2/1/0/\u22121/\u22122/\u22124\u3002\u76EE\u6807MC<2\u65F6\u6863\u5DEE=\u653B\u51FB\u8005\u6863\u503C\u2212\u76EE\u6807\u6863\u503C\uFF1B\u76EE\u6807MC\u22652\u65F6\u6539\u7528\u653B\u51FB\u8005\u6863\u503C\uFF0B2\xD7(\u76EE\u6807MC\u22121)\u3002
 
 \u3010\u610F\u56FE\uFF5C\u96BE\u5EA6/\u6210\u529F\u500D\u7387\u3011normal \u5E38\u89C40/1\uFF0Cfunction \u673A\u80FD\u9650\u52365/1.1\uFF0Ccore \u6838\u5FC3\u8981\u5BB310/1.4\uFF0Ckill \u62B9\u674015/1.7\uFF0Cconcept \u6982\u5FF5\u7834\u788E20/2\u3002\u8303\u56F4\u653B\u51FB\u5BF9\u5355\u4F4D\u56FA\u5B9A\u5E38\u89C4\u3002\u547D\u4E2D\u540E\uFF0C\u96BE\u5EA6\u53D6max(0,\u57FA\u7840+\u5B88\u65B9intentDifficulty)\uFF0C\u4E3A0\u76F4\u63A5\u6210\u7ACB\uFF1B\u5426\u5219\u653B\u6BD4\u5B88\u4F4E\u22652\u7EA7\u5FC5\u8D25\u3002\u653B\u9636\xD75+\u539F\u653B\u51FB\u9AB0+\u8BC4\u7EA7\u5956\uFF08\u5E73/\u5F3A/\u8D85\u66B4\u51FB+10/20/30\uFF09\u2265\u5B88\u9636\xD75+\u5B88d20+\u96BE\u5EA6\u624D\u6210\u7ACB\uFF1B\u5931\u8D25\u4FDD\u7559\u539F\u547D\u4E2D\uFF0C\u610F\u56FE\u500D\u7387\u56DE\u52301\u3002\u81EA\u52A8\u547D\u4E2D\u53CA\u8C41\u514D\u5206\u652F\u4E0D\u4F5C\u8BE5\u5BF9\u6297\u3002
 
@@ -10114,6 +10170,7 @@ ${variables.warnings()}` : "");
     title.append(line("strong", "fated-char-name", unit.name ?? unit.id), line("small", "fated-source-label", unit.source ?? "AI \u7F16\u8F91"));
     header.append(title, select);
     box.append(header);
+    box.append(line("p", "fated-mini", `\u4F53\u578B ${bodySizeLabel(unit)}`));
     const stats2 = line("dl", "fated-char-stats");
     for (const [key4, name] of Object.entries(attributes2)) {
       const pair = make("div");
@@ -10569,7 +10626,7 @@ ${variables.warnings()}` : "");
     return null;
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.1.10";
+  var TAVERN_VERSION = "0.2.0";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
@@ -10833,9 +10890,11 @@ ${variables.warnings()}` : "");
     const panel = el(doc, "section", { class: "fated-tavern-panel", role: "dialog", "aria-label": "\u547D\u5B9A\u6218\u672F\u9152\u9986\u63A7\u5236\u53F0", hidden: "" });
     const header = el(doc, "header", { class: "fated-tavern-header" });
     const title = el(doc, "strong", {}, `\u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0 v${TAVERN_VERSION}`);
+    const fullscreen = el(doc, "button", { type: "button", class: "fated-tavern-fullscreen", title: "\u5168\u5C4F", "aria-label": "\u5168\u5C4F" }, "\u25A1");
     const minimize = el(doc, "button", { type: "button", title: "\u6700\u5C0F\u5316", "aria-label": "\u6700\u5C0F\u5316" }, "\u2212");
     const close = el(doc, "button", { type: "button", title: "\u5173\u95ED", "aria-label": "\u5173\u95ED" }, "\xD7");
-    header.append(title, minimize, close);
+    const resizeHandle = el(doc, "span", { class: "fated-tavern-resize", "aria-hidden": "true" });
+    header.append(title, fullscreen, minimize, close);
     const tabs = el(doc, "nav", { class: "fated-tavern-tabs", role: "tablist" });
     const content = el(doc, "div", { class: "fated-tavern-content" });
     const pages = {};
@@ -10898,7 +10957,7 @@ ${variables.warnings()}` : "");
       dismiss.hidden = busy;
       toast.hidden = false;
     }
-    panel.append(header, tabs, content);
+    panel.append(header, tabs, content, resizeHandle);
     root.append(launcher, panel, toast);
     (doc.body || doc.documentElement)?.append(root);
     const instances = (() => {
@@ -10946,6 +11005,38 @@ ${variables.warnings()}` : "");
         await scan();
       }
     }
+    let panelFullscreen = false;
+    let panelRestore = null;
+    function setFullscreen(value) {
+      panelFullscreen = Boolean(value);
+      if (panelFullscreen) {
+        const rect = panel.getBoundingClientRect();
+        panelRestore = { left: rect.left, top: rect.top, width: rect.width, height: rect.height, right: panel.style.right, bottom: panel.style.bottom };
+        panel.classList.add("is-fullscreen");
+        panel.style.left = "0px";
+        panel.style.top = "0px";
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+        panel.style.width = "100vw";
+        panel.style.height = "100dvh";
+        fullscreen.textContent = "\u2750";
+        fullscreen.title = "\u8FD8\u539F";
+        fullscreen.setAttribute("aria-label", "\u8FD8\u539F");
+      } else {
+        panel.classList.remove("is-fullscreen");
+        const restore = panelRestore;
+        panelRestore = null;
+        panel.style.right = restore?.right || "16px";
+        panel.style.bottom = restore?.bottom || "16px";
+        panel.style.left = restore ? `${restore.left}px` : "";
+        panel.style.top = restore ? `${restore.top}px` : "";
+        panel.style.width = restore ? `${restore.width}px` : "";
+        panel.style.height = restore ? `${restore.height}px` : "";
+        fullscreen.textContent = "\u25A1";
+        fullscreen.title = "\u5168\u5C4F";
+        fullscreen.setAttribute("aria-label", "\u5168\u5C4F");
+      }
+    }
     function hide() {
       panel.hidden = true;
       launcher.hidden = Boolean(config.hideLauncher);
@@ -10966,7 +11057,15 @@ ${variables.warnings()}` : "");
     function closePanel() {
       hide();
     }
-    on(launcher, "click", open);
+    on(launcher, "click", (event) => {
+      if (launcher.dataset.dragged === "true") {
+        delete launcher.dataset.dragged;
+        event.preventDefault();
+        return;
+      }
+      open();
+    });
+    on(fullscreen, "click", () => setFullscreen(!panelFullscreen));
     on(close, "click", closePanel);
     on(minimize, "click", hide);
     on(doc, "click", (event) => {
@@ -11001,7 +11100,10 @@ ${variables.warnings()}` : "");
           node3.style.bottom = "auto";
           node3.style.left = `${drag.left}px`;
           node3.style.top = `${drag.top}px`;
-          surface.setPointerCapture?.(event.pointerId);
+          try {
+            surface.setPointerCapture?.(event.pointerId);
+          } catch (_) {
+          }
         }
         node3.style.left = `${Math.max(0, drag.left + dx)}px`;
         node3.style.top = `${Math.max(0, drag.top + dy)}px`;
@@ -11014,7 +11116,95 @@ ${variables.warnings()}` : "");
       on(surface, "pointercancel", stop);
       on(surface, "lostpointercapture", stop);
     }
+    function draggableLauncher() {
+      let drag = null;
+      const start = (event) => {
+        if (event.button !== 0) return;
+        const rect = launcher.getBoundingClientRect();
+        drag = { pointerId: event.pointerId ?? null, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
+      };
+      on(launcher, "pointerdown", start);
+      on(launcher, "mousedown", (event) => {
+        if (!drag) start(event);
+      });
+      const move = (event) => {
+        if (!drag || drag.pointerId != null && event.pointerId != null && event.pointerId !== drag.pointerId) return;
+        const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+        if (!drag.moved && Math.hypot(dx, dy) <= 5) return;
+        if (!drag.moved) {
+          drag.moved = true;
+          launcher.dataset.dragged = "true";
+          launcher.style.right = "auto";
+          launcher.style.bottom = "auto";
+          launcher.style.left = `${drag.left}px`;
+          launcher.style.top = `${drag.top}px`;
+          try {
+            launcher.setPointerCapture?.(event.pointerId);
+          } catch (_) {
+          }
+        }
+        const maxX = Math.max(0, (host.innerWidth || doc.documentElement.clientWidth || 0) - launcher.offsetWidth);
+        const maxY = Math.max(0, (host.innerHeight || doc.documentElement.clientHeight || 0) - launcher.offsetHeight);
+        launcher.style.left = `${Math.min(maxX, Math.max(0, drag.left + dx))}px`;
+        launcher.style.top = `${Math.min(maxY, Math.max(0, drag.top + dy))}px`;
+        event.preventDefault();
+      };
+      on(doc, "pointermove", move);
+      on(launcher, "pointermove", move);
+      on(doc, "mousemove", (event) => {
+        if (!drag) return;
+        const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+        if (!drag.moved && Math.hypot(dx, dy) <= 5) return;
+        drag.moved = true;
+        launcher.dataset.dragged = "true";
+        launcher.style.right = "auto";
+        launcher.style.bottom = "auto";
+        const maxX = Math.max(0, (host.innerWidth || doc.documentElement.clientWidth || 0) - launcher.offsetWidth);
+        const maxY = Math.max(0, (host.innerHeight || doc.documentElement.clientHeight || 0) - launcher.offsetHeight);
+        launcher.style.left = `${Math.min(maxX, Math.max(0, drag.left + dx))}px`;
+        launcher.style.top = `${Math.min(maxY, Math.max(0, drag.top + dy))}px`;
+        event.preventDefault();
+      });
+      const stop = (event) => {
+        if (drag && (drag.pointerId == null || event.pointerId == null || drag.pointerId === event.pointerId)) drag = null;
+      };
+      on(doc, "pointerup", stop);
+      on(doc, "pointercancel", stop);
+      on(doc, "mouseup", stop);
+      on(launcher, "lostpointercapture", stop);
+    }
+    draggableLauncher();
     draggable(panel, header);
+    function resizable() {
+      let resize = null;
+      on(resizeHandle, "pointerdown", (event) => {
+        if (panelFullscreen || event.button !== 0) return;
+        const rect = panel.getBoundingClientRect();
+        resize = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, width: rect.width, height: rect.height };
+        try {
+          resizeHandle.setPointerCapture?.(event.pointerId);
+        } catch (_) {
+        }
+        event.preventDefault();
+      });
+      on(resizeHandle, "pointermove", (event) => {
+        if (!resize || event.pointerId !== resize.pointerId) return;
+        const vw = host.innerWidth || doc.documentElement.clientWidth || resize.width;
+        const vh = host.innerHeight || doc.documentElement.clientHeight || resize.height;
+        const width = Math.min(vw - 16, Math.max(480, resize.width + event.clientX - resize.x));
+        const height2 = Math.min(vh - 16, Math.max(360, resize.height + event.clientY - resize.y));
+        panel.style.width = `${width}px`;
+        panel.style.height = `${height2}px`;
+        event.preventDefault();
+      });
+      const stop = (event) => {
+        if (resize?.pointerId === event.pointerId) resize = null;
+      };
+      on(resizeHandle, "pointerup", stop);
+      on(resizeHandle, "pointercancel", stop);
+      on(resizeHandle, "lostpointercapture", stop);
+    }
+    resizable();
     function battleEntry(raw) {
       const details = el(doc, "details", { class: "fated-battle-entry" });
       const summary2 = el(doc, "summary", {}, "\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3");
@@ -11377,9 +11567,7 @@ ${tag.textContent || ""}
       on(refresh, "click", () => scan(true).catch(showError));
       on(report, "click", () => {
         try {
-          const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `\u5F53\u524D\u6218\u5C40\uFF1A${currentState.title} \xB7 \u56DE\u5408 ${currentState.round} \xB7 ${Object.values(currentState.units || {}).length} \u4E2A\u5355\u4F4D` : "");
-          const patch = liveState() ? buildMvuJsonPatch(liveState(), sources.sourceMap) : gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || "";
-          const result = [reportText, patch].filter(Boolean).join("\n\n");
+          const result = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `\u5F53\u524D\u6218\u5C40\uFF1A${currentState.title} \xB7 \u56DE\u5408 ${currentState.round} \xB7 ${Object.values(currentState.units || {}).length} \u4E2A\u5355\u4F4D` : "");
           const textarea = doc.querySelector("#send_textarea");
           if (textarea) {
             textarea.value = result;

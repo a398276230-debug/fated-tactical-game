@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI, calculatePrebattleResources, protocolDistance } from '../src/api/game_api.js';
+import { bodySizeLabel } from '../src/core/combat_protocol.js';
+import { preview } from '../src/core/combat.js';
 import { chooseAction } from '../src/core/ai.js';
 import './spatial_tests.mjs';
 import './opportunity_tests.mjs';
@@ -42,6 +44,21 @@ function turn(a, unitId) {
   for (let i = 0; i < 25 && a.getStateSummary().currentUnitId !== unitId; i++) end(a);
   assert.equal(a.getStateSummary().currentUnitId, unitId);
 }
+
+test('UI 体型标签按真实体长显示六档与 MC，不混淆巨型和超巨型',()=>{
+  for(const [meters,name] of [[.5,'微型'],[.6,'小型'],[1.3,'中型'],[2.6,'大型'],[5.5,'巨型'],[10,'超巨型']]) {
+    assert.equal(bodySizeLabel({bodyLengthM:meters,mc:meters>=10?2:1}),`${name} (${meters}m${meters>=10?' · MC 2':''})`);
+  }
+});
+test('命中与来源使用同一体型加值：目标基础项、攻守档差及 MC 分支各计一次',()=>{
+  const a=boot();act(a,'move',2,2);const s=a.getBattleState();s.ruleset='protocol';
+  const target=s.units.scout, attacker=s.units.swordsman;attacker.bodyLengthM=1.7;
+  const plan=()=>preview(s,{type:'attack',x:target.x,y:target.y}).targets[0];
+  Object.assign(target,{size:3,bodyLengthM:1.7,mc:1});const base=plan();assert.equal(base.accuracySources.size,2);
+  for(const [size,bodyLengthM,mc,expected] of [[4,3.2,1,4],[5,12,3,8],[1,.5,1,-2]]) {
+    Object.assign(target,{size,bodyLengthM,mc});const result=plan();assert.equal(result.accuracySources.size,expected);assert.equal(result.accuracy-base.accuracy,expected-2);
+  }
+});
 
 test('原协议资源：层级、巨兽、集群与固定召唤总数独立计算，保留受伤百分比', () => {
   const stats={str:7,agi:21,con:6,int:4,spi:4};
@@ -112,12 +129,13 @@ test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移
   const before=a.exportBattleSnapshot();
   const text=a.exportBattleReportText();
   assert.match(text,/^- 回合一$/m);
-  assert.match(text,/确定先攻次序：岚 · 噬魂剑客 → /);
-  assert.match(text,/岚 · 噬魂剑客开始回合：移动至 \(2, 2\)；使用噬魂太刀/);
-  assert.match(text,/受伤斥候倒下；噬魂太刀 · 魂数 0 → 1/);
+  assert.match(text,/确定先攻次序：岚 · 噬魂剑客\(1, 2\) → /);
+  assert.match(text,/岚 · 噬魂剑客\(1, 2\)开始回合：移动至 \(2, 2\)；使用噬魂太刀/);
+  assert.match(text,/受伤斥候\(3, 2\)倒下；噬魂太刀 · 魂数 0 → 1/);
   assert.doesNotMatch(text,/d20|swordsman|\bjournal\b|26\/12/);
   assert.deepEqual(a.exportBattleSnapshot(),before);
-  assert.ok(a.exportBattleReport().rounds[0].events.some(e=>e.type==='roll'));
+  assert.ok(a.exportBattleReport().rounds[0].events.some(e=>e.type==='roll' && e.positions?.swordsman));
+  assert.doesNotMatch(text, /<UpdateVariable>/);
 });
 
 test('双槽禁止两次移动；重技占 2 AP；轻技消耗 MP、施加状态', () => {

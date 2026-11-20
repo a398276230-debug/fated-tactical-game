@@ -85,13 +85,19 @@ export const tavernTheme = `
 [data-fated-tavern-overlay] .fated-tavern-launcher {
   position:fixed; right:18px; bottom:18px; width:52px; height:52px; border-radius:50%;
   border-color:var(--gold); font-size:22px; box-shadow:0 8px 24px rgb(var(--accent-rgb) / .25); pointer-events:auto;
+  touch-action:none; user-select:none; cursor:grab;
 }
+[data-fated-tavern-overlay] .fated-tavern-launcher[data-dragged="true"] { cursor:grabbing }
 .fated-tavern-panel {
   position:fixed; right:16px; bottom:16px; width:min(1100px,calc(100vw - 32px));
   height:min(820px,calc(100dvh - 32px)); display:flex; flex-direction:column;
   border:var(--panel-border); border-radius:10px; background:var(--panel-bg);
-  box-shadow:0 18px 54px rgba(0,0,0,.55); pointer-events:auto; overflow:hidden;
+  box-shadow:0 18px 54px rgba(0,0,0,.55); pointer-events:auto; overflow:hidden; min-width:480px; min-height:360px;
 }
+.fated-tavern-panel.is-fullscreen { border-radius:0; max-width:none; max-height:none }
+.fated-tavern-resize { position:absolute; z-index:5; right:0; bottom:0; width:20px; height:20px; cursor:nwse-resize; touch-action:none }
+.fated-tavern-resize::after { content:'◢'; position:absolute; right:2px; bottom:0; color:var(--gold-dim); font-size:14px; opacity:.85 }
+.fated-tavern-panel.is-fullscreen .fated-tavern-resize { display:none }
 [data-fated-tavern-overlay] .fated-tavern-panel::before {
   content:""; position:absolute; z-index:2; top:0; left:var(--topline-left); width:var(--topline-width);
   height:var(--topline-height); background:var(--topline); pointer-events:none;
@@ -199,7 +205,7 @@ export const tavernTheme = `
 [data-fated-tavern-overlay] .battle-main,[data-fated-tavern-overlay] .battle-sidebar { min-width:0 }
 @container fated-board (max-width:850px) { [data-fated-tavern-overlay] .game-columns { grid-template-columns:minmax(0,1fr) } }
 @media (max-width:660px),(max-height:460px) {
-  .fated-tavern-panel { inset:6px !important; width:auto; height:auto }
+  .fated-tavern-panel { inset:6px !important; width:auto; height:auto; min-width:0; min-height:0 }
   .fated-tavern-header { cursor:default; touch-action:auto }
   [data-fated-tavern-overlay] button:not([data-sandbox-mount] *) { min-height:36px }
 }

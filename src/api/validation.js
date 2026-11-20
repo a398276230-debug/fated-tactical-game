@@ -308,8 +308,9 @@ export function validateState(s) {
     && Object.values(s.units).every(u => u.hp <= 0 || s.order.includes(u.id)), '先攻索引');
   requireThat(Array.isArray(s.logs) && s.logs.length <= 100000, '日志');
   for (const log of s.logs) {
-    fields(log, ['round','actor','type','text','detail']);
-    requireThat(int(log.round, 1, s.round) && (log.actor === null || id(log.actor)) && text(log.type, 64) && text(log.text, 1000) && jsonTree(log.detail), '日志事件');
+    fields(log, ['round','actor','type','text','detail'], ['positions']);
+    requireThat(int(log.round, 1, s.round) && (log.actor === null || id(log.actor)) && text(log.type, 64) && text(log.text, 1000) && jsonTree(log.detail)
+      && (!log.positions || plain(log.positions) && Object.values(log.positions).every(point => plain(point) && coord(point.x) && coord(point.y))), '日志事件');
   }
   return s;
 }

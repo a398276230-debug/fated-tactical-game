@@ -1,3 +1,4 @@
+import { bodySizeLabel } from '../core/combat_protocol.js';
 import { STATUSES } from '../core/combat.js';
 const attributes = {str:'力量',agi:'敏捷',con:'体质',int:'智力',spi:'精神'};
 const types = {physical:'物理',energy:'能量',mental:'精神',true:'真实'};
@@ -13,6 +14,7 @@ export function fillInstance(box,make,unit,state,raw,select) {
   const line=(tag,cls,value)=>make(tag,{class:cls},value);
   const header=line('div','fated-char-heading'), title=make('div');
   title.append(line('strong','fated-char-name',unit.name??unit.id),line('small','fated-source-label',unit.source??'AI 编辑'));header.append(title,select);box.append(header);
+  box.append(line('p','fated-mini',`体型 ${bodySizeLabel(unit)}`));
   const stats=line('dl','fated-char-stats');
   for(const [key,name] of Object.entries(attributes)){const pair=make('div');pair.append(make('dt',{},name),make('dd',{},unit.stats?.[key]??'—'));stats.append(pair);}box.append(stats);
   const resources=line('p','fated-char-resources');for(const key of ['hp','mp','sp']){const max=unit['max'+key[0].toUpperCase()+key.slice(1)],v=unit[key];const cell=make('span',{},`${key.toUpperCase()} ${v??'—'} / ${max??'—'}`);cell.style.setProperty('--fill',`${max?Math.min(100,Math.max(0,v/max*100)):0}%`);resources.append(cell);}box.append(resources);

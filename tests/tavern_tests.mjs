@@ -171,6 +171,25 @@ const hydrateDummy = charInfo => hydrateFromSources({ battle: { participants: [
   { id: 'e1', source: 'char_info', name: '靶偶', team: 'red' }, { id: 'p1', name: '玩家', team: 'blue', x: 2 },
 ] }, charInfo: typeof charInfo === 'string' ? `名称: 靶偶\n${charInfo}` : { 名称: '靶偶', ...charInfo } }, { throwOnValidation: true });
 
+test('体长：显式单位、别名与外貌兜底均换算为米，再派生 size/MC', () => {
+  for (const [fields, expected] of [
+    [{体长:'1.75米'},[1.75,3,1]], [{体长:'约165厘米'},[1.65,3,1]], [{体长:'180cm'},[1.8,3,1]],
+    [{身高:'大约 0.5 m（不计翼展）'},[.5,1,1]], [{BL:'～12m'},[12,5,2]],
+    [{外貌特质:'高度约3.2米'},[3.2,4,1]], [{外貌:'身高168cm'},[1.68,3,1]],
+    [{体长:'未知',描述:'四足，体长约 4.2 米。'},[4.2,4,1]], [{bl:1,外貌:'长约 6 米'},[1,2,1]],
+  ]) {
+    const {state,warnings}=hydrateDummy(fields), u=state.units.e1;
+    assert.deepEqual([u.bodyLengthM,u.size,u.mc],expected); assert.deepEqual(warnings,[]);
+  }
+});
+test('体长：非法值单独归属该单位；没有填写则静默默认，不把武器长度当身高', () => {
+  for (const bad of ['未知','0米','-2m',null]) {
+    const {state,warnings}=hydrateDummy({体长:bad}); assert.equal(state.units.e1.bodyLengthM,1.7);
+    assert.equal(warnings.length,1); assert.equal(warnings[0].unitId,'e1'); assert.equal(warnings[0].source,'char_info'); assert.match(warnings[0].message,/体长.*1\.7/);
+  }
+  const {state,warnings}=hydrateDummy({描述:'携带一把2米重剑'}); assert.equal(state.units.e1.bodyLengthM,1.7);assert.deepEqual(warnings,[]);
+});
+
 test('G98/G99 empty YAML scalars and objects emit neither effects nor warnings', () => {
   for (const context of ['skill','equipment']) for (const value of ['|','>','|-','|+','>-','>+','|2','>2','  |  ','','{}',{},null,undefined]) {
     const warnings = [];

@@ -446,6 +446,39 @@ function battleSkillsRecord(participant, battle) {
   for (const id of Array.isArray(participant?.skills) ? participant.skills : []) if (object(definitions[id])) result[id] = clone(definitions[id]);
   return Object.keys(result).length ? result : null;
 }
+const lengthKeys = ['bodyLengthM', 'bodyLength', 'BL', 'bl', '体长', '身高'];
+const lengthToken = /(\d+(?:\.\d+)?|\.\d+)\s*(厘米|cm|米|m)?/i;
+const modifiers = '(?:大约|约|[~～])?\\s*';
+const explicitLength = new RegExp(`^${modifiers}${lengthToken.source}$`, 'i');
+const describedLength = new RegExp(`(?:身高|体长|高度|高约|长约)\\s*[:：]?\\s*${modifiers}${lengthToken.source}(?![\\d.a-z])`, 'gi');
+function meters(match) {
+  if (!match) return null;
+  const n = Number(match[1]) / (/^(cm|厘米)$/i.test(match[2]) ? 100 : 1);
+  return Number.isFinite(n) && n > 0 ? Math.max(.01, Math.min(1e9, n)) : null;
+}
+function readBodyLength(record, warnings) {
+  const keys = lengthKeys.filter(key => own(record, key));
+  for (const key of keys) {
+    const raw = record[key];
+    const length = typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+      ? Math.max(.01, Math.min(1e9, raw))
+      : typeof raw === 'string' ? meters(explicitLength.exec(raw.replace(/\([^()]*\)|（[^（）]*）/g, '').trim())) : null;
+    if (length !== null) return length;
+  }
+  for (const field of ['外貌特质','外貌','描述','appearance','description']) {
+    const value = record[field];
+    // YAML appearance blocks can be lists or labelled fields such as 身高: 168cm.
+    const prose = Array.isArray(value) ? value.filter(s => typeof s === 'string').join('\n')
+      : object(value) ? Object.entries(value).filter(([,v]) => typeof v === 'string' || typeof v === 'number').map(([k,v]) => `${k}: ${v}`).join('\n') : value;
+    if (typeof prose !== 'string') continue;
+    for (const match of prose.matchAll(describedLength)) {
+      const length = meters(match);
+      if (length !== null) return length;
+    }
+  }
+  if (keys.length) warnings.push(`体长「${text(record[keys[0]])}」无法解析，已按默认 1.7 米处理`);
+  return 1.7;
+}
 function mergeBattleParticipant(record, participant, battle) {
   const fallback = asObject(record), inline = asObject(participant);
   const battleEquipment = battleEquipmentRecord(participant, battle), battleSkills = battleSkillsRecord(participant, battle);
@@ -455,7 +488,7 @@ function mergeBattleParticipant(record, participant, battle) {
   if (!(merged.equipment ?? merged.equipments ?? merged.items ?? merged.装备) && battleEquipment) merged.equipment = battleEquipment;
   if (!(merged.skills ?? merged.abilities ?? merged.技能) && battleSkills) merged.skills = battleSkills;
   const fields = {
-    bodyLengthM: ['bodyLengthM', 'bodyLength', 'bl', '体长'], mc: ['mc', 'MC', 'massClass'],
+    bodyLengthM: lengthKeys, mc: ['mc', 'MC', 'massClass'],
     tier: ['tier', 'levelTier', '层级', '生命层级'], armor: ['armor', 'defense', '护甲'],
     stats: ['stats', 'attributes', '属性', ...attrNames, ...Object.keys(statAliases)],
     statuses: ['statuses', '状态效果', '状态', 'effects'],
@@ -508,8 +541,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
   const id = p.id;
   const stats = statsOf(record), level = Math.max(1, integer(findValue(record, ['level','等级'], 1), 1));
   const tier = Math.max(1, Math.min(7, tierNumber(findValue(record, ['tier','levelTier','层级','生命层级'], level), level)));
-  const bodyLengthM = Math.max(.01, Math.min(1e9, number(findValue(record, ['bodyLengthM','bodyLength','bl','体长'], 1.7), 1.7)));
-  const size = Math.max(1, Math.min(5, sizeFor(bodyLengthM).value === 2 ? 1 : sizeFor(bodyLengthM).value === 1 ? 2 : sizeFor(bodyLengthM).value === 0 ? 3 : sizeFor(bodyLengthM).value === -1 ? 4 : 5));
+  const bodyLengthM = readBodyLength(record, sink('state'));
+  const size = Math.min(5, 3 - sizeFor(bodyLengthM).value);
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
   const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, effects));

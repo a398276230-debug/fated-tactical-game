@@ -1,6 +1,7 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
 import { effectLabel, resourceDefinitions } from '../core/effects.js';
 import { preview as rulesPreview, corpses } from '../core/combat.js';
+import { bodySizeLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES, DAMAGE_TYPES } from './narrate.js';
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
@@ -236,7 +237,7 @@ export function createRenderer(root) {
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some(n => n.reloadable);
-    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${u.size}`, `持械：${STANCES[u.stance] ?? '轻剑'}`,
+    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `持械：${STANCES[u.stance] ?? '轻剑'}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
     for (const s of values(u.statuses)) {
@@ -338,6 +339,7 @@ export function createRenderer(root) {
           chance = t.hitChance;
           const dice = t.advantage > 0 ? '优势（掷两颗取高）' : t.advantage < 0 ? '劣势（掷两颗取低）' : 'd20';
           bits.push(`命中率 ${pct(t.hitChance)}：${dice} + 命中 ${t.accuracy}，对抗防御 ${t.defense}`);
+          if (t.accuracySources) bits.push(`命中中的体型修正 ${sign(t.accuracySources.size)}`);
         }
         const mods = [t.coverId ? `被${get(state.covers, t.coverId)?.name ?? '掩体'}遮挡 −${t.cover}` : '', t.highGround ? (t.highGround > 0 ? `居高临下 ${sign(t.highGround)}` : `仰攻 ${t.highGround}`) : '',
           t.flanked ? '夹击' : '', t.backstab ? '背刺' : '', t.recipientId && t.recipientId !== t.id ? `${get(state.units, t.recipientId)?.name ?? t.recipientId}会替它挡下` : '',

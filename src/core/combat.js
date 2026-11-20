@@ -74,7 +74,9 @@ const statusOf = (unit, id) => Object.hasOwn(unit.statuses ?? {}, id) ? unit.sta
 export const currentUnit = state => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : undefined;
 
 function record(state, unit, type, text, detail = {}) {
-  const event = { round: state.round, actor: typeof unit === 'string' ? unit : unit?.id ?? null, type, text, detail };
+  const actor = typeof unit === 'string' ? unit : unit?.id ?? null;
+  const positions = Object.fromEntries(values(state.units).map(current => [current.id, { x: current.x, y: current.y }]));
+  const event = { round: state.round, actor, text, type, detail, positions };
   state.logs.push(event);
   return event;
 }
@@ -813,6 +815,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const penalty = protectedBy?.cover ?? 0;
   const size = cover ? 0 : typeof target?.size === 'number' ? Math.max(0, target.size - 1) : target?.size === 'large' ? 2 : target?.size === 'small' ? -1 : 0;
   const sizeModifier = cover || !target ? 0 : sizeHitModifier(actor, target);
+  const sizeAccuracy = size + sizeModifier;
   const distanceModifier = distanceTier(geometry.distance).hit;
   const weaponRangeModifier = distanceTier(Math.max(geometry.distance, geometry.range)).range;
   const stance = weapon?.stance ?? actor.stance ?? 'unarmed';
@@ -822,7 +825,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   // The protocol does not grant an implicit STR/AGI-to-hit bonus. Associated attributes
   // belong in the damage formula; hit comes from explicit weapon/skill and combat modifiers.
   const accuracy = dsl.stat(state, actor, 'accuracy', (template.accuracy ?? 0) + (state.ruleset === 'sandbox' ? effectiveStat(state, actor, geometry.melee ? 'str' : 'agi') : 0)
-    + high + size + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + changes(actor, 'accuracy')
+    + high + sizeAccuracy + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + changes(actor, 'accuracy')
     + (cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty
     + dsl.check(state, actor, 'accuracyBonus', strike), strike) - dodge;
   const explicitEvasion = changes(target, 'evasion') + changes(target, 'incomingAccuracy');
@@ -884,7 +887,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   return { id: target.id, targetId: target.id, name: target.name, x: at.x, y: at.y, ...geometry,
     recipientId: recipient.id, arc, backstab: Boolean(backstab), flanked, accuracy, defense, highGround: high,
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
-    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: size + sizeModifier, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, 'accuracy') },
+    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, 'accuracy') },
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
     automatic: Boolean(automatic), guaranteeHit, guaranteeCrit, tierUp, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,

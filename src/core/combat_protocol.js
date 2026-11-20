@@ -48,6 +48,10 @@ export function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_S
 export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
 export function ratingFor(total) { return RATING_TABLE.find(x => x.min === null || total >= x.min); }
 export function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) { return agility * (1 + percent) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat; }
+export function bodySizeLabel(unit) {
+  const meters = unit.bodyLengthM ?? 1.7;
+  return `${sizeFor(meters).name} (${meters}m${unit.mc >= 2 ? ` · MC ${unit.mc}` : ''})`;
+}
 export function sizeHitModifier(attacker, defender) { const a = sizeForUnit(attacker), d = sizeForUnit(defender); return (defender.mc ?? 1) >= 2 ? a.value + 2 * ((defender.mc ?? 1) - 1) : a.value - d.value; }
 export function martialContest(attacker, defender, attackerRoll, defenderRoll) { return attackerRoll + (attacker.martial ?? sizeForUnit(attacker).martial) >= defenderRoll + (defender.martial ?? sizeForUnit(defender).martial); }
 export function meleeMultiplier(unit = {}) { const s = sizeForUnit(unit); return (unit.mc ?? 1) >= 2 ? 1 : s.melee; }
