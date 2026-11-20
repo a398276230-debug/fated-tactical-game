@@ -8450,7 +8450,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           if (parts.length !== 5 || !name3 || !["\u534A", "\u5168"].includes(kind3) || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point4 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u63A9\u4F53\u683C\u5F0F\u65E0\u6548`);
           const [x3, y3, z3] = point4.split(",").map(Number);
           claim(id5, x3, y3, i);
-          covers.push({ id: id5, name: name3, x: x3, y: y3, z: z3, cover: kind3 === "\u5168" ? 5 : 2, material: `${kind3}\u63A9\u4F53` });
+          covers.push({ id: id5, name: name3, x: x3, y: y3, z: z3, cover: kind3 === "\u5168" ? 5 : 2, material: kind3 });
           continue;
         }
         const [row2, id4, kind2, effect, radiusText, damageText, name2, point3] = parts;

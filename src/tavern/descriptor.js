@@ -30,7 +30,7 @@ export function parseBattleDescriptor(value) {
         const [row,id,kind,name,point] = parts;
         if (parts.length !== 5 || !name || !['半','全'].includes(kind) || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point ?? '')) fail(`第 ${i + 2} 条记录的掩体格式无效`);
         const [x,y,z] = point.split(',').map(Number); claim(id,x,y,i);
-        covers.push({id,name,x,y,z,cover:kind === '全' ? 5 : 2,material:`${kind}掩体`});
+        covers.push({id,name,x,y,z,cover:kind === '全' ? 5 : 2,material: kind});
         continue;
       }
       const [row,id,kind,effect,radiusText,damageText,name,point] = parts;
