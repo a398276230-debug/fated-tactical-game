@@ -4,4 +4,7 @@ export { mount, mountStyles } from './ui/mount.js';
 export { hydrateFromSources, convertSources, buildState, parseSimpleYaml, parseBattleInit, parseCharInfo, mapEffects, battleReportToMvuPatch, buildMvuJsonPatch } from './tavern/converter.js';
 export { mountTavernOverlay } from './tavern/overlay.js';
 export { BATTLE_INIT_DISPLAY_REGEX, BATTLE_INIT_DISPLAY_REPLACEMENT, BATTLE_INIT_DISPLAY_RULE, renderBattleInitEntry } from './tavern/regex.js';
-export { validateState } from './api/validation.js';
+export { validateState, defineStatus } from './api/validation.js';
+export { corpses, living, patchStatus, statusModifierKeys } from './core/combat.js';
+export { parseBattleTime } from './core/battle_time.js';
+export { effectSchema } from './core/effect_schema.js';

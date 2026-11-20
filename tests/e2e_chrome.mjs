@@ -116,7 +116,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         if (hostRequests.length === 2) return resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/stat_data/主角/attack', value: 999 }] }));
         const state = window.__fatedTacticalTavern.getState();
         const id = state.items[state.units.p1.mainHand].templateId;
-        if (!config.ordered_prompts.some(m => m.role === 'user' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('用户槽位缺少战局装备快照'));
+        if (!config.ordered_prompts.some(m => m.role === 'system' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('系统槽位缺少战局装备快照'));
         resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10}]}));
       };
     });
@@ -143,11 +143,13 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('.fated-toast button:nth-of-type(2)');
   await click('[data-tab="prompt"]');
   const preview = () => run(`JSON.parse(document.querySelector('[data-page="prompt"] .preview-panel pre').textContent)`);
-  const toggle = '[data-page="prompt"] .toggle-switch';
+  const toggle = '[data-page="prompt"] .wf-card:nth-child(2) .toggle-switch';
   const enabledMessages = await preview();
-  assert.deepEqual(enabledMessages.map(m => m.role), ['system', 'user']);
+  assert.deepEqual(enabledMessages.map(m => m.role), ['system']);
+  assert.match(enabledMessages[0].slotId, /^identity\+protocol\+/);
   await click(toggle);
-  assert.deepEqual((await preview()).map(m => m.role), ['user']);
+  assert.deepEqual((await preview()).map(m => m.role), ['system']);
+  assert.ok(!(await preview())[0].slotId.split('+').includes('protocol'));
   assert.equal(await run(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/')))).slots.find(s => s.id === 'protocol').enabled`), false);
   await click('[data-tab="api"]');
   assert.equal(await run(`document.querySelector('[name="apiSource"]').disabled`), true);
@@ -173,6 +175,112 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.notDeepEqual(restarted.grid, imported.grid);
   assert.equal(restarted.units.p1.ap, 2);
   assert.equal(restarted.equipment[restarted.items[restarted.units.p1.mainHand].templateId].attack, 10);
+  assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-tab]'), b => b.dataset.tab)`), ['instances', 'prompt', 'api', 'ai', 'sandbox']);
+  assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-page="sandbox"] > .fated-actions button'), b => b.textContent)`), ['标准化', '战报交付', '重新扫描']);
+  assert.equal(await run(`!!document.querySelector('[data-page="sandbox"] > .fated-chat')`), false);
+  await run(`
+    window.aiListeners = new Map();
+    window.eventOn = (name, fn) => { aiListeners.set(name, fn); return () => aiListeners.delete(name); };
+    window.stopGenerationById = id => { window.stoppedId = id; };
+    window.generateRaw = args => new Promise((resolve, reject) => {
+      window.aiProbe = { args, resolve, reject, chunk: text => aiListeners.get('js_stream_token_received_fully')(text, args.generation_id) };
+    });
+    window.aiButton = name => [...document.querySelectorAll('[data-page="ai"] button')].find(b => b.textContent === name);
+    window.aiInput = document.querySelector('[data-page="ai"] textarea');
+    window.aiSend = value => {
+      aiProbe = null;
+      aiInput.value = value;
+      aiInput.dispatchEvent(new Event('input'));
+      aiInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+    };
+    window.aiProbe = null;
+  `);
+  await click('[data-tab="ai"]');
+  const selectSession = id => select('[aria-label="切换会话"]', id);
+  const aiData = () => run(`window.__fatedTacticalTavern.getConfig().aiSessions`);
+  const bubble = () => run(`(() => { const b = [...document.querySelectorAll('.fated-ai-message[data-role="assistant"]')].at(-1); return b && {status:b.dataset.status, body:b.querySelector('.fated-ai-body').textContent}; })()`);
+  const sessions = [];
+  for (let i = 1; i <= 3; i++) {
+    if (i > 1) await run(`aiButton('新建').click()`);
+    await run(`aiButton('重命名').click(); document.querySelector('[aria-label="会话名称"]').value = '会话 ${i}'; aiButton('保存名称').click()`);
+    sessions.push((await aiData()).activeId);
+    await run(`aiSend('问题 ${i}')`);
+    assert.deepEqual(await run(`aiProbe.args.ordered_prompts.filter(m => m.role !== 'system').map(m => m.content)`), [`问题 ${i}`]);
+    assert.equal(await run(`aiButton('发送').disabled && !aiButton('停止').hidden`), true);
+    if (i === 1) {
+      const snapshots = [];
+      for (const word of ['答', '回答', '回答 1']) {
+        await run(`aiProbe.chunk(${JSON.stringify(word)})`);
+        snapshots.push((await bubble()).body);
+      }
+      assert.deepEqual(snapshots, ['答', '回答', '回答 1']);
+      t.diagnostic('G54 流式 DOM 答 → 回答 → 回答 1');
+    }
+    await run(`aiProbe.resolve('回答 ${i}')`);
+    await until(async () => (await bubble())?.status === 'ok', '会话回复完成');
+    assert.equal((await aiData()).sessions.find(s => s.id === sessions[i - 1]).messages.length, 2);
+  }
+  for (const [index, id] of sessions.entries()) {
+    await selectSession(id);
+    assert.equal((await bubble()).body, `回答 ${index + 1}`);
+  }
+  t.diagnostic('G49/G50 三会话切换分别恢复 问题 1/回答 1、问题 2/回答 2、问题 3/回答 3');
+  await run(`aiSend('中止测试'); aiProbe.chunk('已收到的片段')`);
+  const generation = await run(`aiProbe.args.generation_id`);
+  await selectSession(sessions[0]);
+  await run(`aiButton('停止').click()`);
+  await until(() => run(`aiButton('停止').hidden`), '停止后恢复输入');
+  assert.equal(await run('stoppedId'), generation);
+  assert.equal((await bubble()).body, '回答 1');
+  await selectSession(sessions[2]);
+  assert.deepEqual(await bubble(), { status: 'aborted', body: '已收到的片段' });
+  t.diagnostic(`G51 ${JSON.stringify(await bubble())}`);
+  await run(`aiSend('失败测试'); aiProbe.reject(new Error('模拟网络断开'))`);
+  await until(async () => (await bubble())?.status === 'error', '气泡显示失败');
+  assert.deepEqual(await bubble(), { status: 'error', body: '错误：模拟网络断开' });
+  t.diagnostic(`G52 ${JSON.stringify(await bubble())}`);
+  await run(`aiSend('调整护甲'); aiProbe.resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/units/p1/armor', value: 6 }] }))`);
+  await until(async () => (await bubble())?.status === 'ok', '会话补丁应用');
+  assert.equal((await tavernState()).units.p1.armor, 6);
+  assert.match((await aiData()).sessions.at(-1).messages.at(-1).content, /补丁已应用/);
+  await run(`aiSend('调整错误路径'); aiProbe.resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/units/missing/armor', value: 6 }] }))`);
+  await until(async () => (await bubble())?.status === 'error', '会话补丁错误');
+  assert.match((await aiData()).sessions.at(-1).messages.at(-1).content, /失败/);
+  await run(`aiButton('标准化').click(); aiProbe.resolve(JSON.stringify({ patch: [{op:'replace',path:'/units/p1/armor',value:7}], unresolved: ['模拟待处理项'] }))`);
+  await until(async () => (await bubble())?.status === 'ok', 'AI 页调用标准化');
+  assert.match((await aiData()).sessions.at(-1).messages.at(-1).content, /模拟待处理项/);
+  await run(`aiSend('Markdown 测试'); aiProbe.resolve(${JSON.stringify('一段 `行内代码`。\n\n```js\nconst n = 1;\n```\n\n下一段。')})`);
+  await until(async () => (await bubble())?.status === 'ok', 'Markdown 回复完成');
+  assert.equal(await run(`[...document.querySelectorAll('.fated-ai-message[data-role="assistant"]')].at(-1).querySelector('p code').textContent`), '行内代码');
+  assert.equal(await run(`[...document.querySelectorAll('.fated-ai-message[data-role="assistant"]')].at(-1).querySelector('pre code').textContent`), 'const n = 1;');
+  await run(`aiSend('滚动测试'); aiProbe.chunk('长回复\\n\\n'.repeat(60))`);
+  const scroll = () => run(`(() => { const log = document.querySelector('.fated-ai-log'); return {top:log.scrollTop, bottom:log.scrollHeight-log.clientHeight-log.scrollTop}; })()`);
+  assert.ok((await scroll()).bottom <= 2, '跟随时滚到底部');
+  await run(`(() => { const log = document.querySelector('.fated-ai-log'); log.scrollTop = 0; log.dispatchEvent(new Event('scroll')); aiProbe.chunk('长回复\\n\\n'.repeat(80)); })()`);
+  assert.ok((await scroll()).top <= 2, '回看时保持滚动位置');
+  await run(`aiButton('停止').click()`);
+  await until(() => run(`aiButton('停止').hidden`), '滚动测试结束');
+  await selectSession(sessions[1]);
+  await run(`aiButton('清空当前会话').click()`);
+  assert.deepEqual((await aiData()).sessions[1].messages, []);
+  await run(`aiButton('删除').click()`);
+  assert.deepEqual((await aiData()).sessions.map(s => s.id), [sessions[0], sessions[2]]);
+  await selectSession(sessions[0]);
+  await run(`(() => {
+    const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/'));
+    const config = JSON.parse(localStorage.getItem(key));
+    config.aiSessions.sessions[0].messages.push({role:'tool', content:'占位', ts:Date.now(), toolName:'test', toolResult:{ok:true}});
+    localStorage.setItem(key, JSON.stringify(config));
+  })()`);
+  await send('Page.reload');
+  await until(() => run(`window.__fatedTacticalTavern?.getConfig().aiSessions.activeId === ${JSON.stringify(sessions[0])}`), '刷新恢复会话');
+  await click('.fated-tavern-launcher');
+  await click('[data-tab="ai"]');
+  assert.deepEqual((await aiData()).sessions[0].messages.map(m => m.role), ['user', 'assistant', 'tool']);
+  assert.equal((await bubble()).body, '回答 1');
+  assert.match(await run(`document.querySelector('.fated-ai-message[data-role="tool"]').textContent`), /test[\s\S]*占位/);
+  assert.equal(await run(`getComputedStyle(document.querySelector('.fated-ai-message[data-role="tool"]')).borderTopStyle`), 'dashed');
+  t.diagnostic('G47–G54 通过，刷新后恢复会话与工具占位');
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '100 格棋盘加载');
   await click('#auto-ai');
@@ -204,6 +312,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.match(await run(`${get('#tactical-preview')}.textContent`), /dXYZ|命中/);
   await click('#confirm-action');
   assert.equal((await state()).units.scout.hp, 0);
+  const corpse = await run(`(() => {
+    const token = document.querySelector('[data-corpse-id="scout"]');
+    const tile = token?.closest('.tactical-cell');
+    return token && { filter: getComputedStyle(token).filter, pointer: getComputedStyle(token).pointerEvents,
+      unit: tile.dataset.unitId ?? null, selected: tile.getAttribute('aria-pressed') };
+  })()`);
+  assert.deepEqual(corpse, { filter: 'grayscale(1)', pointer: 'none', unit: null, selected: 'false' });
+  t.diagnostic(`G57 ${JSON.stringify(corpse)}`);
   assert.equal((await state()).items['soulblade-lan'].counters.souls, 1);
   for (let step = 0; (await actor()).id !== 'swordsman'; step++) {
     assert.ok(step < 20, '先攻队列应回到剑客');

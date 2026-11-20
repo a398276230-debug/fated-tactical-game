@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { hydrateFromSources, parseBattleInit } from '../src/tavern/converter.js';
+import { hydrateFromSources, parseBattleInit, mapEffects } from '../src/tavern/converter.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
 
 const mvu = {
@@ -150,8 +150,60 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   assert.equal(state.equipment[state.items[p.shield].templateId].name, '木盾');
   assert.equal(state.equipment[state.items[p.gear[0]].templateId].armor, 6);
   assert.equal(p.statuses.root.remainingTurns, 3);
-  assert.deepEqual(state.skills[p.skills[0]].effects, [{ kind: 'status', statusId: 'freeze' }]);
+  assert.deepEqual(state.skills[p.skills[0]].effects.map(e => e.effects), [[{ kind: 'grantStatus', statusId: 'freeze' }]]);
   for (const label of ['场地弹药补给', '轻便', '不存在']) assert.ok(warnings.some(w => w.includes(label)));
+});
+
+const shooterYaml = `技能:
+  - 名称: 制式轻矢点射
+    品质: 普通
+    类型: 主动
+    消耗: 攻击: 20 SP
+    标签: [敏捷][单体][有效距离: 中程(5)][伤害][威力: 50][伤害: 物理]
+    效果: |
+    描述: 艾瑟嘉德演武场最基础的机械靶偶动作模块，只会在固定间隔内朝前方校准发射木矢。`;
+const hydrateDummy = charInfo => hydrateFromSources({ battle: { participants: [
+  { id: 'e1', source: 'char_info', name: '靶偶', team: 'red' }, { id: 'p1', name: '玩家', team: 'blue', x: 2 },
+] }, charInfo: typeof charInfo === 'string' ? `名称: 靶偶\n${charInfo}` : { 名称: '靶偶', ...charInfo } }, { throwOnValidation: true });
+
+test('G98/G99 empty YAML scalars and objects emit neither effects nor warnings', () => {
+  for (const context of ['skill','equipment']) for (const value of ['|','>','|-','|+','>-','>+','|2','>2','  |  ','','{}',{},null,undefined]) {
+    const warnings = [];
+    assert.deepEqual(mapEffects([value], context, warnings), []);
+    assert.deepEqual(warnings, [], `${context}: ${JSON.stringify(value)}`);
+  }
+});
+test('G100 populated YAML block keeps executable content and diagnoses unknown content', () => {
+  const warnings = [];
+  const block = '| \n 平直射击: knockback';
+  assert.equal(mapEffects(block, 'skill', warnings)[0]?.effects[0]?.kind, 'knockback');
+  for (const header of ['|','>-','|2']) {
+    const {state, warnings: actual} = hydrateDummy(shooterYaml.replace('效果: |', `效果: ${header}\n      平直射击: knockback`));
+    assert.equal(state.skills[state.units.e1.skills[0]].effects[0]?.effects[0]?.kind, 'knockback');
+    assert.deepEqual(actual, []);
+  }
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(mapEffects('|\n 平直射击: 尚未定义的动作', 'skill', warnings), []);
+  assert.ok(warnings.some(w => w.includes('尚未定义的动作')));
+});
+test('G101 status placeholders are silent without hiding invalid modifier overrides', () => {
+  const {state,warnings} = hydrateDummy({ 状态: ['|', '>-', {}, null, {id:'stun',modifiers:'|'}] });
+  assert.deepEqual(warnings, []);
+  assert.equal(state.units.e1.statuses.stun.modifiers.skip, true);
+  const bad = hydrateDummy({ 状态: [{id:'stun',modifiers:{badKey:2}}] });
+  assert.ok(bad.warnings.some(w => w.includes('状态 stun 已拒绝')));
+});
+test('G102/G103 original YAML and rejected effects retain the referenced skill template', () => {
+  const {state,warnings} = hydrateDummy(shooterYaml);
+  const [id] = state.units.e1.skills;
+  assert.equal(id, 'skill-e1-10nk26b-0');
+  assert.deepEqual(warnings, []);
+  const skill = state.skills[id];
+  assert.deepEqual([skill.name,skill.effects,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
+  const rejected = hydrateDummy(shooterYaml.replace('效果: |','效果: 不认识的动作'));
+  assert.deepEqual(rejected.state.skills[id], skill);
+  assert.ok(rejected.warnings.some(w => w.includes('不认识的动作')));
+  console.log('G103 skill', id, JSON.stringify(skill), 'warnings=[]');
 });
 
 test('battle_init 配套正则输出可点击入口', () => {

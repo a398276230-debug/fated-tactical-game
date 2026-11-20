@@ -1,7 +1,8 @@
+import { migrateStateEffects } from '../core/effects.js';
 import { buildScenario } from '../presets/scenarios.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
-import { applyAction, currentUnit, preview, refreshOutcome, settleTurn, STATUSES } from '../core/combat.js';
+import { applyAction, currentUnit, preview, refreshOutcome, settleTurn, STATUSES, statusModifierKeys, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
 import { chooseAction } from '../core/ai.js';
 import { applyCommand } from './commands.js';
 import { validateState } from './validation.js';
@@ -10,7 +11,7 @@ import { formatBattleReportText } from './battle_report.js';
 const copy = value => structuredClone(value);
 const fail = message => { throw new Error(message); };
 const version = 1;
-const battleVersion = 2;
+const battleVersion = 3;
 const maxHistory = 2000;
 const maxBatch = 32;
 const own = (obj, key) => Object.hasOwn(obj, key);
@@ -47,6 +48,8 @@ function simulate(base, transaction) {
     }
   } else if (transaction.kind === 'commands') {
     for (const command of transaction.entries) applyCommand(next, command);
+    validateState(next);
+    syncEquipmentEffects(next);
     const outcome = refreshOutcome(next);
     validateState(next);
     if (!outcome && (base.outcome || currentUnit(base)?.id !== currentUnit(next)?.id || currentUnit(next)?.hp === 0)) {
@@ -84,17 +87,21 @@ export function createGameAPI() {
   }
   function restore(snapshot) {
     if (!shape(snapshot, ['kind', 'version', 'origin', 'state', 'journal'])
-      || snapshot.kind !== 'battle' || ![1, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
+      || snapshot.kind !== 'battle' || ![1, 2, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
       || snapshot.journal.length > maxHistory) fail('不支持的战局快照格式');
+    const needsMigration = snapshot.version < battleVersion;
+    if (needsMigration) snapshot = { ...snapshot, origin: migrateStateEffects(copy(snapshot.origin)), state: migrateStateEffects(copy(snapshot.state)) };
     validateState(snapshot.origin);
     validateState(snapshot.state);
-    // Old moves may now invite reactions. Resume the actual v1 board rather than
-    // retroactively applying the new movement rules to the old history.
-    if (snapshot.version === 1) {
-      origin = state = copy(snapshot.state);
+    // Changes to the resolver can change the old journal's outcomes and logs.
+    if (needsMigration) {
+      const resumed = copy(snapshot.state);
+      syncEquipmentEffects(resumed);
+      validateState(resumed);
+      origin = state = resumed;
       frames = [];
       publish();
-      return { ...api.getStateSummary(), migratedFrom: 1 };
+      return { ...api.getStateSummary(), migratedFrom: snapshot.version };
     }
     const start = copy(snapshot.origin), history = [];
     let next = start;
@@ -111,6 +118,10 @@ export function createGameAPI() {
     publish();
     return api.getStateSummary();
   }
+  function commitStatusCommand(command, reason) {
+    const proposal = api.proposeCommands([command], { baseRevision: revision, reason });
+    return proposal.ok ? api.commitProposal(proposal.proposalId) : proposal;
+  }
   const api = {
     calculatePrebattleResources,
     protocolDistance,
@@ -118,6 +129,10 @@ export function createGameAPI() {
       if (scenarioOrImportSnapshot?.kind === 'battle') return restore(scenarioOrImportSnapshot);
       const next = buildScenario(scenarioOrImportSnapshot);
       validateState(next);
+      if (scenarioOrImportSnapshot?.kind === 'custom_state') {
+        syncEquipmentEffects(next);
+        validateState(next);
+      }
       origin = state = next;
       frames = [];
       publish();
@@ -165,6 +180,21 @@ export function createGameAPI() {
     listStatusTemplates() {
       const s = current();
       return copy({ ...STATUSES, ...s.statusTemplates });
+    },
+    statusModifierKeys(statusId) { return statusModifierKeys(statusId, state); },
+    checkStealth(unitId, d20, dc) {
+      const s = current();
+      if (!own(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail('无效的潜行检定参数');
+      return stealthCheck(s, s.units[unitId], d20, dc);
+    },
+    defineStatus(id, template) {
+      if (!template || Object.getPrototypeOf(template) !== Object.prototype || (own(template, 'id') && template.id !== id)) {
+        return { ok: false, error: '无效状态模板或 ID 不一致' };
+      }
+      return commitStatusCommand({ type: 'define_status_template', template: { ...template, id } }, '注册状态模板');
+    },
+    patchStatus(unitId, statusId, patch) {
+      return commitStatusCommand({ type: 'patch_status', unitId, statusId, patch }, '更新状态参数');
     },
     listUnits() {
       return Object.values(current().units).map(({ id, name, team, x, y, hp, maxHp, ap, statuses, mainHand, offHand, shield, stance, moraleState, mc, deathrattle }) => ({

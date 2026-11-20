@@ -1,6 +1,7 @@
-import { getStatusTemplate, grantStatus } from '../core/combat.js';
-import { attrs, checkOptional, coord, equipmentTemplate, fields, has, id, int, maxStatusTemplates, own,
-  plain, requireThat as check, skillTemplate, statusTemplate, unitValue, validateCell } from './validation.js';
+import { adaptLegacyEffects, resourceDefinitions } from '../core/effects.js';
+import { getStatusTemplate, grantStatus, patchStatus } from '../core/combat.js';
+import { attrs, checkOptional, coord, defineStatus, equipmentTemplate, fields, has, id, int, own,
+  plain, requireThat as check, skillTemplate, unitValue, validateCell } from './validation.js';
 
 const get = (table, key, label) => { check(has(table, key), label); return table[key]; };
 const nonempty = patch => check(plain(patch) && Object.keys(patch).length > 0, 'patch');
@@ -25,17 +26,18 @@ const commands = {
   },
   define_status_template(s, c) {
     fields(c, ['type','template']);
-    statusTemplate(c.template);
-    check(!getStatusTemplate(s, c.template.id), '状态模板 ID 已存在');
-    check(Object.keys(s.statusTemplates ?? {}).length < maxStatusTemplates, '自定义状态模板数量');
-    (s.statusTemplates ??= {})[c.template.id] = c.template;
+    defineStatus(s, c.template?.id, c.template);
+  },
+  patch_status(s, c) {
+    fields(c, ['type','unitId','statusId','patch']);
+    patchStatus(s, c.unitId, c.statusId, c.patch);
   },
   upsert_status(s, c) {
     fields(c, ['type','unitId','statusId'], ['options']);
     const u = get(s.units, c.unitId, 'unitId'), status = getStatusTemplate(s, c.statusId);
     check(status, 'statusId');
     const options = own(c, 'options') ? c.options : {};
-    fields(options, [], ['remainingTurns','durationType','stacks','stackRule','tickTiming','amount','sourceUnitId']);
+    fields(options, [], ['remainingTurns','durationType','stacks','stackRule','tickTiming','amount','sourceUnitId','modifiers','expireOn']);
     checkOptional(options, 'remainingTurns', x => int(x, 1, 100));
     checkOptional(options, 'durationType', x => ['battle_turns','until_removed','persistent'].includes(x));
     checkOptional(options, 'stacks', x => int(x, 1, status.maxStacks));
@@ -55,10 +57,12 @@ const commands = {
   adjust_item_counter(s, c) {
     fields(c, ['type','instanceId','counterKey','operation','value']);
     const item = get(s.items, c.instanceId, 'instanceId');
-    check(has(item.counters, c.counterKey) && ['set','add'].includes(c.operation) && int(c.value, -50, 50), '计数器命令');
-    const effect = s.equipment[item.templateId].effects.find(e => e.counterKey === c.counterKey);
+    check(has(item.counters, c.counterKey) && ['set','add'].includes(c.operation), '计数器命令');
+    const effect = resourceDefinitions(s.equipment[item.templateId]).find(e => e.resource === c.counterKey);
+    const limit = effect.cap;
+    check(int(c.value, -limit, limit), '计数器命令');
     const next = c.operation === 'set' ? c.value : item.counters[c.counterKey] + c.value;
-    const cap = Math.max(effect.capacity ?? effect.maxStacks, item.counters[c.counterKey]);
+    const cap = Math.max(effect.cap, item.counters[c.counterKey]);
     check(int(next, 0, cap), `计数结果须在 0–${cap}`);
     item.counters[c.counterKey] = next;
   },
@@ -67,8 +71,9 @@ const commands = {
     const old = get(s.equipment, c.templateId, 'templateId');
     nonempty(c.patch);
     const next = { ...old, ...c.patch };
+    if (Array.isArray(c.patch.effects)) next.effects = adaptLegacyEffects(next.effects, 'equipment', `legacy-equipment-${c.templateId}`);
     equipmentTemplate(next, s);
-    const counters = t => t.effects.filter(e => e.counterKey).map(e => `${e.kind}:${e.counterKey}`).sort().join('|');
+    const counters = t => resourceDefinitions(t).map(e => e.resource).sort().join('|');
     check(counters(next) === counters(old) && own(old, 'damage') === own(next, 'damage'), '不能热改装备槽类型或实例计数器定义');
     s.equipment[c.templateId] = next;
   },
@@ -76,6 +81,7 @@ const commands = {
     fields(c, ['type','templateId','patch']);
     nonempty(c.patch);
     const next = { ...get(s.skills, c.templateId, 'templateId'), ...c.patch };
+    if (Array.isArray(c.patch.effects)) next.effects = adaptLegacyEffects(next.effects, 'skill', `legacy-skills-${c.templateId}`);
     skillTemplate(next, s);
     s.skills[c.templateId] = next;
   },

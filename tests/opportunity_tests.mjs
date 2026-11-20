@@ -1,3 +1,4 @@
+import { expression as fx } from '../src/core/effects.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { applyAction, beginBattle, grantStatus, preview } from '../src/core/combat.js';
@@ -86,7 +87,7 @@ test('simultaneous exits react by stable unit ID without spending AP or action s
 test('lethal or rooting reaction interrupts before entering the next square', () => {
   for (const lethal of [true, false]) {
     const s = hall({ hp: lethal ? 1 : 50 });
-    if (!lethal) s.equipment.spear.effects = [{ kind: 'opportunity_root' }];
+    if (!lethal) s.equipment.spear.effects = [fx('root-reaction', 'on_hit', 'hitTarget', [{ kind: 'grantStatus', statusId: 'root', turns: 1 }], { condition: { type: 'opportunityAttack' } })];
     const logs = applyAction(s, { type: 'move', x: 4, y: 0 });
     assert.deepEqual(xy(s.units.mover), { x: 2, y: 0 });
     const move = logs.find(e => e.type === 'move').detail;
@@ -104,7 +105,7 @@ test('lethal or rooting reaction interrupts before entering the next square', ()
 
 test('an interrupt cancels the attempted step without spending later reactors', () => {
   const s = state(['##.##', '.....', '##.##'], [mover(0, 1), enemy('a', 2, 0), enemy('z', 2, 2)]);
-  s.equipment.spear.effects = [{ kind: 'opportunity_root' }];
+  s.equipment.spear.effects = [fx('root-reaction', 'on_hit', 'hitTarget', [{ kind: 'grantStatus', statusId: 'root', turns: 1 }], { condition: { type: 'opportunityAttack' } })];
   const action = { type: 'move', x: 4, y: 1 };
   assert.deepEqual(preview(s, action).opportunities.map(o => o.unitId), ['a', 'z']);
   assert.deepEqual(reactions(applyAction(s, action)).map(e => e.actor), ['a']);
@@ -133,7 +134,7 @@ test('threat requires hostile ready melee, line of sight, and 3D weapon reach, b
   const action = { type: 'move', x: 4, y: 0 };
   const checks = [
     [s => { s.units.sentry.weapon = 'bow'; }, false],
-    [s => { s.equipment.spear.effects = [{ kind: 'ammo', capacity: 1 }]; }, false],
+    [s => { s.equipment.spear.effects = [fx('ammo-pool', 'passive', 'self', [{ kind: 'produceResource', resource: 'ammo', cap: 1, reloadable: true }])]; }, false],
     [s => { s.units.sentry.team = 'blue'; }, false],
     [s => { s.units.sentry.hp = 0; }, false],
     [s => { s.units.sentry.reactionAvailable = false; }, false],
@@ -155,14 +156,14 @@ test('threat requires hostile ready melee, line of sight, and 3D weapon reach, b
 test('knockback and teleport bypass reactions even when leaving melee threat', () => {
   const s = state(['......', '......', '......'], [enemy('caster', 0, 1, { ap: 2, skills: ['push'] }),
     mover(1, 1), unit('watch', 'red', 1, 2)]);
-  s.skills.push = { name: 'push', ap: 1, slot: 'attack', range: 1, target: 'enemy', effects: [{ kind: 'knockback', distance: 3 }] };
+  s.skills.push = { name: 'push', ap: 1, slot: 'attack', range: 1, target: 'enemy', effects: [fx('push', 'on_hit', 'hitTarget', [{ kind: 'knockback', distance: 3 }])] };
   const push = applyAction(s, { type: 'skill', skillId: 'push', x: 1, y: 1 });
   assert.equal(s.units.mover.x, 4);
   assert.equal(reactions(push).length, 0);
   assert.notEqual(s.units.watch.reactionAvailable, false);
 
   const t = state(['......', '......', '......'], [mover(0, 1, { skills: ['blink'] }), enemy('target', 4, 1), enemy('watch', 0, 2)]);
-  t.skills.blink = { name: 'blink', ap: 1, slot: 'attack', range: 5, target: 'enemy', effects: [{ kind: 'teleport_backstab' }] };
+  t.skills.blink = { name: 'blink', ap: 1, slot: 'attack', range: 5, target: 'enemy', effects: [fx('blink', 'active', 'hitTarget', [{ kind: 'teleportBackstab' }])] };
   const blink = applyAction(t, { type: 'skill', skillId: 'blink', x: 4, y: 1 });
   assert.equal(t.units.mover.x, 3);
   assert.equal(reactions(blink).length, 0);

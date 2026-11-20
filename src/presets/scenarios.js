@@ -1,3 +1,4 @@
+import { initialCounters, migrateStateEffects } from '../core/effects.js';
 import { beginBattle } from '../core/combat.js';
 import { calculatePrebattleResources } from '../core/prebattle_resources.js';
 import { EQUIPMENT, SKILLS } from './catalog.js';
@@ -60,7 +61,7 @@ function importCarry(state, value) {
 }
 
 export function buildScenario(request = 'ruins') {
-  if (request?.kind === 'custom_state' && object(request.state)) return structuredClone(request.state);
+  if (request?.kind === 'custom_state' && object(request.state)) return migrateStateEffects(structuredClone(request.state));
   if (typeof request === 'string') request = { scenarioId: request };
   if (!object(request) || !Object.keys(request).every(key => ['scenarioId', 'seed', 'mode', 'ruleset', 'persistentSnapshot'].includes(key))) throw new Error('无效的开局参数');
   const { scenarioId = 'ruins', mode = 'free', ruleset = 'protocol', persistentSnapshot } = request;
@@ -75,8 +76,7 @@ export function buildScenario(request = 'ruins') {
   function unit(id, name, team, x, y, weapon, skills, options = {}) {
     const { hp = 32, agi = 5, str = 4, con = 4, int = 4, spi = 4, armor = 1, size = 1, gear = [], weaponId = `${id}-weapon`, offHandTemplate = null, shieldTemplate = null } = options;
     const equip = (id, templateId) => {
-      const counters = Object.fromEntries(state.equipment[templateId].effects.flatMap(effect => effect.kind === 'ammo'
-        ? [[effect.counterKey, effect.capacity]] : effect.kind === 'kill_charge_weapon' ? [[effect.counterKey, 0]] : []));
+      const counters = initialCounters(state.equipment[templateId]);
       state.items[id] = { id, templateId, counters };
       return id;
     };

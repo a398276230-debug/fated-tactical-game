@@ -1,0 +1,44 @@
+import { effectSchema } from '../core/effect_schema.js';
+
+const { expression, condition, node, expireOn } = effectSchema.$defs;
+function describe(rule) {
+  if (rule.$ref) return rule.$ref.split('/').at(-1);
+  if (rule.oneOf) return rule.oneOf.map(describe).join(' 或 ');
+  if (rule.enum) return rule.enum.join(' / ');
+  if (Object.hasOwn(rule, 'const')) return JSON.stringify(rule.const);
+  if (rule.type === 'array') return `${rule.minItems}…${rule.maxItems} 项 ${describe(rule.items)} 数组`;
+  if (rule.type === 'object') return rule.additionalProperties ? `键→${describe(rule.additionalProperties)}` : `{${fields(rule)}}`;
+  if (rule.type === 'integer' || rule.type === 'number') return `${rule.type === 'integer' ? '整数' : '数值'} ${rule.minimum}…${rule.maximum}`;
+  if (rule.pattern) return `ID (${rule.pattern})`;
+  if (rule.type === 'string') return `非空字符串，字段长度 ${rule.minLength}…${rule.maxLength}`;
+  return rule.type;
+}
+function fields(rule, skip = []) {
+  return Object.entries(rule.properties).filter(([key]) => !skip.includes(key))
+    .map(([key, value]) => `${key}${rule.required.includes(key) ? '' : '?'}=${describe(value)}`).join('，');
+}
+
+export const EFFECT_PROTOCOL = `【统一效果 DSL】
+装备与技能 effects 都是表达式数组（0…24 项）。每条表达式使用战局内唯一 id，label 是界面显示名。外层没有 kind，内层节点必须有 kind。五段写法：WHEN(trigger) → IF(condition，可省) → ROLL(可省) → TARGET(target) → DO(effects)，WITH 以节点字段或共享 params 表达。节点同名字段覆盖 params。除表中声明字段外不允许额外字段，? 表示可省。
+表达式字段：${fields(expression)}。
+
+WHEN：passive 持续读取，常驻修正用 self 且省略 roll。on_attack 为武器出手、命中前。on_hit 为判定命中后，对实际承伤者触发，若不希望豁免成功时触发则加 saved=false。on_damaged 为实际扣血后，可读 attacker、伤害量和 melee 等标签。on_kill 为击倒敌人，on_death 为自身死亡，on_ally_death 为队友死亡（事件目标为倒下的队友）。on_turn_start / on_turn_end 对应自身回合。on_skill_cast 为技能释放，结算主击前。on_equip 装备同步时触发，默认每战一次。on_heal 为发出治疗后，可读治疗量。active 为技能主动发动，写在装备上时独立生成按钮，默认 1AP 和 action 槽。usesPerBattle 可用 null 表示无显式上限，cooldown 以战斗轮计。params.source=weapon 表示只在本次使用该装备实例时生效。
+
+IF：数组等价于 AND，or 任一成立、not 取反。self 为受益者时，目标条件优先检查当前攻击或技能对象。targetHasCategory 的 negative 指 debuff/dot/control，none 指无三类负面状态。timeOfDay 来自 <tp>，targetLevel 与自身比较。布尔条件省略 value 等同 true。weaponType、skillSchool、标签及物种字符串与快照一致。
+• ${condition.oneOf.map(rule => rule.type === 'array' ? describe(rule) : `${rule.properties.type.const} ${fields(rule, ['type'])}`).join('\n• ')}
+
+ROLL：无 roll 时一定尝试。chance 直接用 0…1 比例，d20 比较 >= gte。save 取目标 d20+属性，达到 dc 则通过并跳过节点。save 数组必须提供 mode，成员唯一，每项独立掷骰。contest 的攻方 d20+attacker 减守方 d20+defender 达到 dc 时执行节点。豁免或对抗可同时提供 chance 作为前置概率门。dc 与技能 saveDC 均支持公式，见上节数值协议。
+
+生命周期：状态模板和 grantStatus 节点均可声明 expireOn = ${describe(expireOn)}。任一规则匹配就立即移除并记录原因。on_damaged 只在实际扣 HP 时匹配；缺省或 any 匹配全部，direct 匹配主击或主动命中的伤害，indirect 匹配周期、反伤及环境等非直接伤害。on_heal 在持有者实际恢复 HP 时匹配；回合事件在周期结算前打断。exceptSource:self 排除来源为状态持有者的事件。授予节点的规则优先，其次保留实例规则，最后使用模板规则。patchStatus 可覆盖实例 expireOn，传 null 关闭。
+效果开关：每个节点可写 enabled:true 或 enabled:false，缺省视为 true。false 跳过该节点（如果是 chainEffect，也跳过其子节点），其他节点照常结算。剧情/语义判断由模型自行决定，通过 enabled 开关表达，引擎不做条件求值。已结算的结果按各自的规则继续处理。防御节点 modifyStat(stat:defense) 修正护甲结算，condition:intercepting 将其限制在替队友承伤时。
+
+TARGET：self 自身，hitTarget 当前命中或选中的单位，attacker 攻击者，killedUnit 被击倒单位，corpse 未被消耗的尸体。enemiesInRadius / alliesInRadius 使用 params.radius 或节点 radius（默认1格），施法范围内从覆盖格筛选。节点可覆写目标。尸体不会阻挡移动，raiseDead 会消耗尸体。
+
+DO / WITH：节点按数组顺序执行，每个节点均可加 label、target、condition 和 radius（0…15）。
+• ${node.oneOf.map(rule => `${rule.properties.kind.const} ${fields(rule, ['kind','enabled','label','target','condition','radius'])}`).join('\n• ')}
+
+非致命：damage 节点 lethal 默认为 true。lethal:false 只保护该节点的实际承伤者，允许组合 resourceMultiplier、strikeBonus；抵扣结算后最低留 1 HP。承伤单位 nonLethal:true 或其状态 modifiers.preserveLife:true 也保命，lethal:true 不能绕开。倍率不能保证不致死。独立的主击和其他伤害节点不自动继承此开关。
+数值与结算：amount/flat 是绝对量。百分比以小数表示。percentOfPrevious 读取链内上一数值节点的实际结果，percentOfDamageDealt 读取本次实际扣血，percentOfPower 乘技能基础威力，percentOfHealing 读取治疗经加成后的量。levelScaling.perLevel 从 1 阶基准每阶增长，min/max 则在 1…7 阶线性插值。resourceScale 读取存量，可用 unitSize 向下取整分组。multiplyDamage 的 factor 是总系数（+12% 写 1.12），additive=true 合并各系数相对 1 的增量。主击乘区使用 passive/on_attack/on_skill_cast。modifyDamageBase 替换起伤，ignoreAttributes 缺省为 true，unscaled 跳过评级和姿态等攻击倍率。forceOutcome 保障命中或暴击，upgradeHitTier 提高已命中的评级。modifyCheck 的各项分别服务于先攻、闪避、潜行、命中、核心意图、高地和优势。teleportBackstab 校验背后空格再移动，提供优势和伤害倍率。knockback 碰撞默认伤害 5 并眩晕。
+资源：hp/mp/sp/ap 和 attack/action 为内置资源。其他资源可存于单位，或由 passive/self 的 produceResource(cap,initial) 声明为装备实例计数，items.counters 必须与资源声明相符。local=true 只访问该装备自己的池。reloadable 声明可装填资源，配 on_attack 的 drainResource 消耗。无限弹药是状态 infinite_ammo，消耗条件可用 selfStatusModifier(key=infiniteAmmo,value=false)。requireFull 余额不足时停止当前节点列表，minimumRemaining 设置最低保留量。技能 resourceCost 在施放前扣除，percentPerCost 按花费恢复。execute 的 strict 选择严格低于阈值，requiresPool 检查指定装备池。stopOnFailure 链会在首个未产生效果的节点停止。
+资源方案：先在持有装备 effects 加一条 passive/self 表达式，节点 produceResource 写 resource、cap 和 initial；同批向对应实例 /items/<id>/counters/<resource> 添加初值。只写实例计数会被拒绝。斩杀技能先 execute，成功后在同链对 self 使用 produceResource(targetTierBase)，该数值按目标阶级计算。自用技能设 target=self、range=0，通过模板 resourceCost 扣装备资源，恢复各项用 restoreResource 的 percentPerCost。装备成长可分别放五个基础属性节点，或对伤害用 modifyStat(stat=damage)，用 percent=1 与 levelScaling:{min,max} 表示成长比例范围。检定加值用 modifyCheck，箭矢与一般远程分别用 arrow=true 与 melee=false。
+状态：grantStatus 使用已有 ID，若需自定义先定义 statusTemplates。modifiers 只可覆盖模板已有键。amount 仅用于 shield 状态，范围 1…10000。removeStatus 必须选 statusId 或 category 之一，all_negative 清除非永久 debuff/dot/control。procEffect 通过 ref 查找已定义表达式并执行，其自身门槛仍有效，禁止循环引用。addItem 按物品 ID 增加单位库存。`;

@@ -1,6 +1,7 @@
 import { createGameAPI } from '../api/game_api.js';
 import { SCENARIOS } from '../presets/scenarios.js';
 import { createRenderer } from './render.js';
+import { equippedActiveSkills } from '../core/combat.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 
@@ -156,13 +157,14 @@ function handlePoint(at, input = {}) {
       ...(type === 'attack' || type === 'skill' ? { intent:$('intent-select').value, nonLethal:$('nonlethal-toggle').checked,
         bonusDice:Number($('bonus-dice-select').value) } : {}) };
     const plan = game.previewAction(command);
-    if (plan.ok) options.push({ command, plan, label: skill ? state.skills[skill].name : labelByType[type] });
+    if (plan.ok) options.push({ command, plan, label: skill ? plan.name : labelByType[type] });
   };
   if (canAct) {
     if (self) { add('brace'); add('block'); add('charge'); add('scan'); add('flee'); add('use_item'); add('reload'); }
     else { add(sprint ? 'sprint' : 'move'); add('disengage'); add('attack'); add('lock_on'); add('grapple'); add('disarm'); add('trip'); add('push'); }
     add('interact');
     for (const skill of actor.skills) add('skill', skill);
+    for (const [skill] of equippedActiveSkills(state, actor)) add('skill', skill);
     if (self) add('end');
   }
   $('target-title').textContent = `${unit?.name ?? feature?.name ?? '地块'} · (${at.x}, ${at.y})${self ? sprint ? ' · 疾跑已启用' : ' · 普通移动' : ''}`;

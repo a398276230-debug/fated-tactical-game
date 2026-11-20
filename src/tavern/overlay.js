@@ -1,11 +1,14 @@
 import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseSimpleYaml } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
+import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
 import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
 import { tavernTheme } from './theme.js';
 import { assembleMessages, describeSlots } from './prompts.js';
 import { requestViaTavern, requestViaCustomApi } from './api.js';
 import { renderSettings } from './settings.js';
+import { createAiSessions } from './ai-sessions.js';
+import { mountAiPage } from './ai-page.js';
 
 /*
  * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
@@ -242,13 +245,14 @@ export function parseJSONPatch(value) {
 }
 
 export { deepMerge, applyPatch };
+export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
 export const TAVERN_VERSION = '0.1.5';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true,
-  slots: describeSlots(), extraText: '', debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
+  slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
 };
 function configFor(storage, key) {
   try {
@@ -368,7 +372,7 @@ function normalizeSemanticPatch(patch) {
   }
   return result;
 }
-function applyPatch(target, patch) {
+function applyPatch(target, patch, strict = false) {
   let result = clone(target);
   // AI assistants commonly return a semantic battle_patch/unit_patch object
   // rather than RFC 6902 operations. Normalize array tables to engine maps first.
@@ -389,6 +393,14 @@ function applyPatch(target, patch) {
       parent = parent[key];
     }
     if (parent == null || typeof parent !== 'object') throw new Error(`补丁路径不可写：${operation.path}`);
+    if (strict) {
+      if (Array.isArray(parent)) {
+        const append = last === '-' && operation.op === 'add';
+        if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`数组索引无效：${operation.path}`);
+      }
+      if (operation.op !== 'add' && !own(parent, last)) throw new Error(`补丁路径不存在：${operation.path}`);
+      if (operation.op === 'add' && Array.isArray(parent) && last !== '-') { parent.splice(Number(last), 0, clone(operation.value)); continue; }
+    }
     if (operation.op === 'remove') { if (Array.isArray(parent)) parent.splice(Number(last), 1); else delete parent[last]; }
     else if (operation.op === 'add' || operation.op === 'replace') { if (Array.isArray(parent) && last === '-') parent.push(clone(operation.value)); else parent[last] = clone(operation.value); }
   }
@@ -416,8 +428,10 @@ export function mountTavernOverlay(options = {}) {
   const configKey = `fated-tactical/tavern/${id}`;
   const stateKey = `fated-tactical/instances/${id}`;
   let config = configFor(storage, configKey);
+  const aiSessions = createAiSessions(config.aiSessions, value => persistSettings({ aiSessions: value }));
+
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
-  let selectedMessageId = null, aiController = null, askAI, retryAI = null;
+  let selectedMessageId = null, aiController = null, aiFinished, askAI, retryAI = null, aiPage = null;
   const attemptedBattles = new Set(), normalizedBattles = new Map();
   let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: 'created' };
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -433,21 +447,45 @@ export function mountTavernOverlay(options = {}) {
   const tabs = el(doc, 'nav', { class: 'fated-tavern-tabs', role: 'tablist' });
   const content = el(doc, 'div', { class: 'fated-tavern-content' });
   const pages = {};
-  for (const [key, label] of [['instances', '📦 实例维护'], ['prompt', '🧩 提示词组装'], ['api', '🔌 API 设置'], ['sandbox', '⚔️ 沙盘']]) {
+  for (const [key, label] of [['instances', '📦 实例维护'], ['prompt', '🧩 提示词组装'], ['api', '🔌 API 设置'], ['ai', '🤖 辅助 AI'], ['sandbox', '⚔️ 沙盘']]) {
     const button = el(doc, 'button', { type: 'button', role: 'tab', 'aria-selected': key === 'instances' ? 'true' : 'false', 'data-tab': key }, label);
     const page = el(doc, 'div', { class: `fated-tab ${key === 'instances' ? 'active' : ''}`, 'data-page': key });
     tabs.append(button); content.append(page); pages[key] = page;
-    on(button, 'click', () => { Object.entries(pages).forEach(([name, node]) => { node.classList.toggle('active', name === key); }); [...tabs.children].forEach(x => x.setAttribute('aria-selected', String(x === button))); if (key === 'prompt' || key === 'api') renderSettings(page, key, settingsContext()); });
+    on(button, 'click', () => { Object.entries(pages).forEach(([name, node]) => { node.classList.toggle('active', name === key); }); [...tabs.children].forEach(x => x.setAttribute('aria-selected', String(x === button))); if (key === 'prompt' || key === 'api') renderSettings(page, key, settingsContext()); if (key === 'ai') aiPage?.show(); });
   }
   const toast = el(doc, 'aside', { class: 'fated-toast', hidden: '', role: 'status', 'aria-live': 'polite' });
   const noticeTitle = el(doc, 'strong'), noticeBody = el(doc, 'p');
   const retry = el(doc, 'button', { type: 'button' }, '重试');
   const dismiss = el(doc, 'button', { type: 'button' }, '关闭');
-  toast.append(noticeTitle, noticeBody, retry, dismiss);
+  const icon = el(doc, 'span', { 'aria-hidden': 'true' });
+  const heading = el(doc, 'header'); heading.append(icon, noticeTitle);
+  const issues = el(doc, 'section', { class: 'fated-toast-issues' });
+  const summary = el(doc, 'p', { class: 'fated-toast-summary' });
+  const actions = el(doc, 'footer'); actions.append(retry, dismiss);
+  toast.append(heading, noticeBody, summary, actions);
   on(retry, 'click', () => retryAI?.());
   on(dismiss, 'click', () => { toast.hidden = true; });
-  function notify(title, detail = '', onRetry = null, busy = false) {
+  let rawDetails;
+  function notify(title, detail = '', onRetry = null, busy = false, { tone = 'neutral', applied, unresolved = [], raw = '' } = {}) {
     retryAI = onRetry;
+    toast.dataset.tone = tone;
+    icon.textContent = busy ? '…' : tone === 'success' ? '✓' : tone === 'error' ? '!' : 'ⓘ';
+    summary.hidden = applied == null;
+    summary.textContent = applied == null ? '' : `已应用 ${applied} 项补丁 · 剩余 ${unresolved.length} 项未解决`;
+    rawDetails?.remove();
+    rawDetails = null;
+    issues.remove();
+    if (unresolved.length) {
+      const list = el(doc, 'ul');
+      for (const issue of unresolved) list.append(el(doc, 'li', {}, issue));
+      issues.replaceChildren(el(doc, 'h4', {}, `未解决（${unresolved.length} 项）`), list);
+      toast.insertBefore(issues, actions);
+    }
+    if (raw) {
+      rawDetails = el(doc, 'details', { class: 'fated-toast-raw' });
+      rawDetails.append(el(doc, 'summary', {}, `模型返回结果（已应用 ${applied ?? 0} 项）`), el(doc, 'pre', {}, raw));
+      toast.insertBefore(rawDetails, actions);
+    }
     noticeTitle.textContent = title;
     noticeBody.textContent = detail;
     noticeBody.hidden = !detail;
@@ -464,7 +502,7 @@ export function mountTavernOverlay(options = {}) {
   let localOnly = false;
   function syncSettings() {
     if (localOnly || !storage) return;
-    const { instances: _legacyInstances, ...latest } = configFor(storage, configKey);
+    const { instances: _legacyInstances, aiSessions: _savedSessions, ...latest } = configFor(storage, configKey);
     Object.assign(config, latest);
   }
   function persistSettings(patch, previousSlots = config.slots) {
@@ -481,6 +519,9 @@ export function mountTavernOverlay(options = {}) {
     localOnly = !putConfig(storage, configKey, settings);
     if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储；重载后可能丢失。');
   }
+  if (!config.aiSessions?.sessions?.length || config.aiSessions.activeId !== aiSessions.data.activeId) {
+    persistSettings({ aiSessions: aiSessions.data });
+  } else config.aiSessions = aiSessions.data;
   async function open() {
     if (disposed) return;
     panel.hidden = false;
@@ -647,7 +688,7 @@ export function mountTavernOverlay(options = {}) {
     return { host, settings: config, slots: config.slots, assemblyContext, prepareMessages, lastSent: () => lastSent,
       onPreview(fn) { previewSink = fn; }, fetchImpl: options.fetch, save: persistSettings };
   }
-  function runNormalize() { return askAI('validate', ''); }
+  function runNormalize(sessionId) { return askAI('validate', '', sessionId); }
 
   async function hydrate(epoch) {
     const messages = await tavernMessages(host);
@@ -680,7 +721,7 @@ export function mountTavernOverlay(options = {}) {
     sources.warnings = hydrated?.warnings ?? [];
     sources.sourceMap = hydrated?.sourceMap ?? {};
     sources.seed = hydrated?.seed ?? hydrated?.state?.rng;
-    sources.input = { mvu: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, protagonistName: sources.protagonistName };
+    sources.input = { mvu: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, latestFloor: sources.latestFloor, battleText: sources.battleRaw, protagonistName: sources.protagonistName };
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
     // Instances are a projection of the latest scan, not an append-only log.
@@ -729,7 +770,13 @@ export function mountTavernOverlay(options = {}) {
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
   function applyNormalization(state, patch) {
-    return patch ? applyPatch(state, patch) : state;
+    if (!patch?.length) return state;
+    const next = applyPatch(state, patch, true);
+    (options.validateState || defaultValidateState)(next);
+    refreshOpeningInitiative(next);
+    syncEquipmentEffects(next);
+    refreshOutcome(next);
+    return next;
   }
   async function scan(force = false) {
     const epoch = ++scanEpoch;
@@ -740,9 +787,11 @@ export function mountTavernOverlay(options = {}) {
       const nextState = hydrated?.state ?? null;
       if (force || !gameMount || activeBattleKey !== sources.battleKey) {
         if (aiController) {
+          const finished = aiFinished;
           aiController.abort();
-          aiController = null;
           attemptedBattles.delete(activeBattleKey);
+          await finished;
+          if (epoch !== scanEpoch || disposed) return;
         }
         if (force) {
           attemptedBattles.delete(sources.battleKey);
@@ -754,7 +803,7 @@ export function mountTavernOverlay(options = {}) {
         mountState(currentState, !force);
       }
       renderInstances();
-      if (currentState && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
+      if (currentState && !aiController && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
         attemptedBattles.add(activeBattleKey);
         void runNormalize();
       }
@@ -775,65 +824,108 @@ export function mountTavernOverlay(options = {}) {
     const status = el(doc, 'div', { class: 'fated-status', 'data-status': '' }, '打开此页会自动侦测当前聊天。'); page.append(status);
     const mountTarget = el(doc, 'div', { 'data-sandbox-mount': '' }); page.append(mountTarget);
     const actions = el(doc, 'div', { class: 'fated-actions' }); const check = el(doc, 'button', { type: 'button' }, '标准化'); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(check, report, refresh); page.append(actions);
-    const instruction = el(doc, 'textarea', { placeholder: '让辅助 AI 调整地形、站位或角色参数…' }); instruction.style.width = '100%'; page.append(instruction);
-    const chat = el(doc, 'div', { class: 'fated-chat' }); const send = el(doc, 'button', { type: 'button' }, '发送'); chat.append(instruction, send); page.append(chat);
-    const output = el(doc, 'pre', { class: 'fated-status', 'data-ai-output': '' }); page.append(output);
+    const output = status;
     on(refresh, 'click', () => scan(true).catch(showError));
     on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = liveState() ? buildMvuJsonPatch(liveState(), sources.sourceMap) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
-    on(instruction, 'input', () => {
-      promptInstruction = instruction.value.trim(); promptKind = promptInstruction ? 'chat' : 'validate';
-    });
-    askAI = async (kind, requestText = instruction.value.trim()) => {
-      const state = liveState();
-      if (!state || aiController || (kind === 'chat' && !requestText)) return;
+    on(check, 'click', () => runNormalize());
+  }
+  askAI = async (kind, requestText = '', sessionId = kind === 'chat' ? aiSessions.active().id : undefined) => {
+      if (aiController || (kind === 'chat' && !requestText)) return;
       syncSettings();
       promptKind = kind; promptInstruction = requestText;
       const normalize = kind === 'validate';
+      const session = aiSessions.get(sessionId);
+      if (sessionId && !session) return;
+      const history = !normalize && session ? session.messages.filter(m =>
+        (m.role === 'user' || m.role === 'assistant') && m.content?.trim() && m.status !== 'error' && m.status !== 'aborted'
+      ).map(({ role, content }) => ({ role, content })) : [];
+      const entries = session ? aiSessions.append(session.id,
+        { role: 'user', content: normalize ? '标准化' : requestText, status: 'ok' }, { role: 'assistant', content: '' }) : [];
+      const assistantMessage = entries[1];
+      const feed = (...messages) => { if (session) aiPage?.feed(session.id, ...messages); };
+      const updateReply = (fields, persist = true) => {
+        if (!assistantMessage) return;
+        if (persist) aiSessions.update(session.id, assistantMessage, fields);
+        else Object.assign(assistantMessage, fields);
+        feed(assistantMessage);
+      };
+      const postStatus = (content, status) => {
+        if (session) feed(...aiSessions.append(session.id, { role: 'system', content, status }));
+      };
+      feed(...entries);
       const key = activeBattleKey;
       const controller = new AbortController();
       aiController = controller;
+      let finish;
+      aiFinished = new Promise(resolve => { finish = resolve; });
+      aiPage?.setBusy(true);
       const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), config.timeoutMs ?? 60000);
       const label = normalize ? '标准化' : 'AI 调整';
-      notify(normalize ? '正在标准化中…' : '正在请求 AI…', '', null, true);
+      const retryRequest = () => askAI(kind, requestText, sessionId);
+      if (normalize) notify('正在标准化中…', '', null, true);
+      else toast.hidden = true;
+      let receivedPatch = normalize, replyText = '', unresolved = [], appliedCount = 0;
       try {
+        if (normalize && !liveState()) {
+          if (!session) { toast.hidden = true; return; }
+          throw new Error('没有可标准化的战局，请先扫描沙盘');
+        }
         let prompts = prepareMessages(kind, requestText, true);
+        if (!normalize) {
+          prompts = [...prompts, ...history, { role: 'user', content: requestText }];
+          lastSent = prompts;
+          publishMessages(prompts, kind);
+        }
         if (!prompts.length) throw new Error('没有可发送的提示词，请在提示词组装页启用有内容的槽位');
         const streamUpdate = (snapshot, done, info) => {
           if (disposed || controller.signal.aborted || aiController !== controller || activeBattleKey !== key) return;
-          if (info?.isHeartbeat) noticeBody.textContent = `已等待 ${info.elapsedSec} 秒，连接仍在保持…`;
-          else if (snapshot) { output.textContent = snapshot; noticeBody.textContent = done ? '已收到完整响应，正在校验…' : `已收到 ${snapshot.length} 字符…`; }
+          if (snapshot) updateReply({ content: snapshot }, false);
+          if (!normalize) return;
+          noticeBody.textContent = info?.isHeartbeat ? `已等待 ${info.elapsedSec} 秒，连接仍在保持…` :
+            done ? '已收到完整响应，正在校验…' : `已收到 ${snapshot.length} 字符…`;
           noticeBody.hidden = false;
         };
         const cancelled = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
         const validate = options.validateState || defaultValidateState;
-        let patch, unresolved, nextState, combined;
+        let patch, nextState, combined;
         for (let attempt = 0; ; attempt++) {
           const reply = await Promise.race([
             requestTavernAI(host, config, prompts, options.fetch, controller.signal, streamUpdate), cancelled,
           ]);
+          controller.signal.throwIfAborted();
           if (disposed || aiController !== controller || key !== activeBattleKey) return;
+          replyText = reply;
           try {
             const parsed = parseAIResponse(reply);
-            patch = parseJSONPatch(reply) ?? parsed.patch;
+            patch = parseJSONPatch(reply) ?? (normalize ? null : parsed.patch);
+            const pending = parsed.data?.unresolved ?? [];
+            if (!Array.isArray(pending) && normalize) throw new Error('unresolved 必须是 JSON 数组');
+            unresolved = Array.isArray(pending) ? pending.map(item => typeof item === 'string' ? item : JSON.stringify(item)) : [];
+            receivedPatch = normalize || patch != null || ['patch', 'battle_patch', 'unit_patch'].some(field => Object.hasOwn(parsed.data ?? {}, field));
+            if (!receivedPatch) { updateReply({ content: reply, status: 'ok' }); return; }
             if (!patch) throw new Error('模型未返回有效的战局补丁');
+            if (!liveState()) throw new Error('没有可应用补丁的战局，请先扫描沙盘');
             if (normalize) {
               if (!Array.isArray(patch)) throw new Error('patch 必须是 JSON 数组');
               for (const [index, operation] of patch.entries()) {
                 if (!['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
-                    !/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:statuses|armor)(?:\/|$)/.test(operation.path)) {
+                    !normalizationPath.test(operation.path) || (operation.op !== 'remove' && !own(operation, 'value'))) {
                   throw new Error(`第 ${index + 1} 项路径或操作无效（${text(operation?.path).slice(0, 120) || '缺少 path'}）`);
                 }
               }
             }
-            unresolved = Array.isArray(parsed.data?.unresolved) ? parsed.data.unresolved.map(text).filter(Boolean) : [];
-            if (normalize && patch.length === 0 && !unresolved.length && sources.warnings?.length) throw new Error('空补丁需要说明哪些警告无法转换');
-            nextState = applyPatch(liveState(), patch);
+            if (normalize && !patch.length) throw new Error('模型返回空补丁，没有可注入的变更');
+            nextState = (options.applyPatch ?? applyPatch)(liveState(), patch, normalize);
             validate(nextState);
             if (normalize && patch.length) {
+              refreshOpeningInitiative(nextState);
               combined = [...(normalizedBattles.get(key) ?? []), ...patch];
               const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
               validate(applyNormalization(baseline, combined));
             }
+            syncEquipmentEffects(nextState);
+            refreshOutcome(nextState);
+            validate(nextState);
             break;
           } catch (error) {
             if (!normalize || attempt > 0) throw error;
@@ -843,26 +935,37 @@ export function mountTavernOverlay(options = {}) {
             publishMessages(prompts, kind);
           }
         }
-        if (combined) normalizedBattles.set(key, combined);
         if (!Array.isArray(patch) || patch.length) {
-          gameMount?.loadState?.(nextState);
+          if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
+          gameMount.loadState(nextState);
+          appliedCount = Array.isArray(patch) ? patch.length : 1;
           currentState = nextState;
           for (const unit of Object.values(nextState.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
           save(); renderInstances();
         }
-        output.textContent = unresolved.length ? `待处理：\n${unresolved.join('\n')}` : `${label}完成`;
-        notify(unresolved.length ? `${label}完成，部分效果待处理` : `${label}完成`, unresolved.join('\n'), unresolved.length ? () => askAI(kind, requestText) : null);
+        if (combined) normalizedBattles.set(key, combined);
+        updateReply({ content: replyText, status: 'ok' });
+        const result = Array.isArray(patch) && !patch.length ? '无补丁变更' : '补丁已应用';
+        postStatus(`${label}：${result}${unresolved.length ? `，待处理：${unresolved.join('；')}` : ''}`, 'ok');
+        if (normalize) notify('标准化完成', '', unresolved.length ? retryRequest : null, false,
+          { tone: 'success', applied: appliedCount, unresolved, raw: replyText });
       } catch (e) {
-        if (disposed || aiController !== controller) return;
-        output.textContent = `${label}失败：${e.message}`;
-        notify(`${label}失败`, e.message, () => askAI(kind, requestText));
+        if (aiController !== controller) return;
+        const aborted = e?.name === 'AbortError';
+        const status = aborted ? 'aborted' : 'error';
+        const detail = e?.message || String(e);
+        const partial = assistantMessage?.content || replyText;
+        updateReply({ status, content: aborted ? partial ?? '' : [partial, `错误：${detail}`].filter(Boolean).join('\n\n') });
+        if (receivedPatch) postStatus(`${label}${aborted ? '已中止' : '失败'}：${detail}${unresolved.length ? `；未解决：${unresolved.join('；')}` : ''}`, status);
+        if (normalize && !disposed) notify(`${label}${aborted ? '已中止' : '失败'}`, detail, aborted ? null : retryRequest, false,
+          aborted ? { raw: replyText } : { tone: 'error', applied: appliedCount, unresolved, raw: replyText });
       } finally {
         clearTimeout(timeout);
         if (aiController === controller) aiController = null;
+        if (!disposed) aiPage?.setBusy(false);
+        finish();
       }
-    };
-    on(check, 'click', () => runNormalize()); on(send, 'click', () => askAI('chat'));
-  }
+  };
   function updateMagic() {
     launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;
     const wand = doc.querySelector('#extensionsMenu, #data_bank_wand_container'); if (!wand) return;
@@ -873,7 +976,10 @@ export function mountTavernOverlay(options = {}) {
     // native launcher is already mounted; the optional magic-wand entry above is
     // deliberately managed as a normal DOM button.
   }
-  renderInstances(); renderSandbox(); updateMagic();
+  renderInstances(); renderSandbox();
+  aiPage = mountAiPage(pages.ai, { make: (tag, attrs, content) => el(doc, tag, attrs, content), on, sessions: aiSessions,
+    send: message => askAI('chat', message), normalize: () => runNormalize(aiSessions.active().id), stop: () => aiController?.abort(new DOMException('已取消', 'AbortError')) });
+  updateMagic();
   bindEventBus();
   foldBattleEntries();
   if (typeof MutationObserver === 'function' && doc.body) {

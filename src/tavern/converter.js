@@ -1,9 +1,14 @@
 import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
-import { validateState } from '../api/validation.js';
+import { validateEffect, validateState } from '../api/validation.js';
+import { validSaveDC } from '../core/effect_schema.js';
+import { validateStatusModifiers } from '../core/status_modifiers.js';
 import { sizeFor, stanceFor } from '../core/combat_protocol.js';
+import { adaptLegacyEffects, initialCounters } from '../core/effects.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
+import { isExpression, validExpression } from '../core/effect_schema.js';
+import { parseBattleTime } from '../core/battle_time.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -42,6 +47,14 @@ export function deterministicId(value, prefix = 'unit') {
   // The validator rejects these Object.prototype names.
   if (['constructor', 'prototype', '__proto__'].includes(id)) id = `${prefix}-${hash(raw).toString(36)}`;
   return id || `${prefix}-${hash(raw).toString(36)}`;
+}
+
+const blockHeaders = new Set(['|', '>', '|-', '|+', '>-', '>+', '|2', '>2']);
+function emptyEntry(value) {
+  if (value == null || (object(value) && !Object.keys(value).length)) return true;
+  if (typeof value !== 'string') return false;
+  const s = value.trim();
+  return !s || blockHeaders.has(s) || /^\{\s*\}$/.test(s);
 }
 
 function scalar(value) {
@@ -90,10 +103,10 @@ export function parseSimpleYaml(input) {
     if (colon < 1 || !object(parent)) continue;
     const key = line.value.slice(0, colon).trim();
     const tail = line.value.slice(colon + 1).trim();
-    if (tail === '|' || tail === '>') {
+    if (blockHeaders.has(tail)) {
       const chunks = [];
       for (let j = i + 1; j < lines.length && lines[j].indent > line.indent; j++) { chunks.push(lines[j].value); i = j; }
-      parent[key] = chunks.join(tail === '>' ? ' ' : '\n');
+      parent[key] = chunks.join(tail.startsWith('>') ? ' ' : '\n');
       continue;
     }
     if (tail) { parent[key] = scalar(tail); continue; }
@@ -242,8 +255,6 @@ const effectAliases = {
   killcharge: 'kill_charge_weapon', kill_charge: 'kill_charge_weapon', ammo_charge: 'ammo', bleed: 'backstab',
   knock_back: 'knockback', teleport_backstab: 'teleport_backstab', cleanse_status: 'cleanse', root: 'opportunity_root',
 };
-const equipmentEffects = new Set(['kill_charge_weapon', 'ammo', 'frost_thorns', 'backstab', 'healing_shield', 'opportunity_root']);
-const skillEffects = new Set(['status', 'knockback', 'teleport_backstab', 'cleanse']);
 const statusAliases = { burning: 'burn', fire: 'burn', bleeding: 'bleed', frozen: 'freeze', immobilize: 'root', 燃烧: 'burn', 冻结: 'freeze', 晕眩: 'stun', 加速: 'haste' };
 const statusNames = new Map(Object.values(STATUSES).map(status => [status.name, status.id]));
 function statusId(value) {
@@ -258,67 +269,68 @@ function statusTurns(value, fallback) {
 
 /** Map only effects understood by validation/engine. Unknown effects are
  * intentionally dropped (level 3 safety downgrade), never executed. */
-export function mapEffect(raw, context = 'skill', warnings = []) {
-  const input = typeof raw === 'string' ? { kind: raw } : asObject(raw);
-  let kind = text(input.kind ?? input.type ?? input.effect ?? input.name ?? input.类型).toLowerCase().replace(/[ -]/g, '_');
-  if (own(effectAliases, kind)) kind = effectAliases[kind];
-  const allowed = context === 'equipment' ? equipmentEffects : skillEffects;
-  if (allowed.has(kind)) {
-    if (kind === 'status') {
-      const rawId = input.statusId ?? input.status ?? input.value ?? input.状态;
-      const id = statusId(rawId);
-      if (!id) { warnings.push(`效果引用未知状态，已忽略：${text(rawId) || 'unknown'}`); return null; }
-      const turns = input.turns ?? input.剩余回合 ?? input.持续回合;
-      const stacks = input.stacks ?? input.层数;
-      return { kind, statusId: id,
-        ...(turns != null ? { turns: statusTurns(turns, STATUSES[id].remainingTurns) } : {}),
-        ...(stacks != null ? { stacks: bound(stacks, 1, STATUSES[id].maxStacks) } : {}),
-        ...(id === 'shield' && input.amount != null ? { amount: bound(input.amount, 1, 500) } : {}),
-      };
-    }
-    // Construct a narrow, validator-compatible shape rather than copying
-    // arbitrary source keys into an engine template.
-    if (kind === 'cleanse' || kind === 'opportunity_root') return { kind };
-    if (kind === 'knockback') return { kind, distance: Math.max(1, Math.min(5, integer(input.distance ?? input.amount, 1))), collisionDamage: Math.max(0, Math.min(80, integer(input.collisionDamage, 0))) };
-    if (kind === 'teleport_backstab') return { kind, bonusMultiplier: Math.max(0, Math.min(4, number(input.bonusMultiplier, .5))) };
-    if (kind === 'kill_charge_weapon') return { kind, counterKey: deterministicId(input.counterKey ?? 'souls', 'counter'), bonusPerStack: Math.max(0, Math.min(2, number(input.bonusPerStack, .5))), maxStacks: Math.max(1, Math.min(50, integer(input.maxStacks, 10))) };
-    if (kind === 'ammo') return { kind, counterKey: deterministicId(input.counterKey ?? 'ammo', 'counter'), capacity: Math.max(1, Math.min(50, integer(input.capacity, 6))), armorPierce: Math.max(0, Math.min(50, integer(input.armorPierce, 0))), highGroundRange: Math.max(0, Math.min(6, integer(input.highGroundRange, 0))), highGroundAccuracy: Math.max(0, Math.min(12, integer(input.highGroundAccuracy, 0))) };
-    if (kind === 'frost_thorns') {
-      const id = statusId(input.statusId ?? 'chill');
-      if (!id) { warnings.push(`效果引用未知状态，已忽略：${text(input.statusId)}`); return null; }
-      return { kind, damage: bound(input.damage, 0, 50, 3), chance: Math.max(0, Math.min(1, number(input.chance, .4))), statusId: id };
-    }
-    if (kind === 'backstab') return { kind, bonusMultiplier: Math.max(0, Math.min(4, number(input.bonusMultiplier, .4))), bleedStacks: Math.max(1, Math.min(5, integer(input.bleedStacks, 1))), comboDamage: Math.max(0, Math.min(50, integer(input.comboDamage, 0))) };
-    if (kind === 'healing_shield') return { kind, healBonus: Math.max(0, Math.min(4, number(input.healBonus, .25))), shieldRatio: Math.max(0, Math.min(4, number(input.shieldRatio, .5))) };
-  }
-  const id = statusId(input.statusId ?? input.status ?? kind);
-  if (context === 'skill' && id) { warnings.push(`效果 ${kind} 按状态别名降级为 ${id}`); return { kind: 'status', statusId: id }; }
-  warnings.push(`不支持的效果已忽略：${kind || 'unknown'}`);
-  return null;
-}
-export function mapEffects(effects, context = 'skill', warnings = []) {
+export function mapEffects(effects, context = 'skill', warnings = [], prefix = 'imported') {
   let input = Array.isArray(effects) ? effects : effects == null ? [] : [effects];
-  if (object(effects) && !['kind', 'type', 'effect', 'name', '类型'].some(key => own(effects, key))) {
-    input = [];
-    for (const [name, value] of Object.entries(effects)) {
-      if (object(value)) input.push({ kind: name, ...value });
-      else warnings.push(`不支持的描述性效果已忽略：${name}${text(value) ? `：${text(value)}` : ''}`);
-    }
+  if (object(effects) && !['trigger','kind','type','effect','name','类型'].some(key => own(effects, key))) {
+    input = Object.entries(effects).flatMap(([kind, value]) => {
+      if (!object(value) && emptyEntry(value)) return [];
+      if (object(value)) return [{ kind, ...value }];
+      warnings.push(`不支持的描述性效果已忽略：${kind}${text(value) ? `：${text(value)}` : ''}`);
+      return [];
+    });
   }
   const result = [], seen = new Set();
-  for (const raw of input) {
-    const effect = mapEffect(raw, context, warnings);
-    if (!effect) continue;
-    const key = effect.counterKey ?? effect.kind;
-    if (result.length >= 12 || (seen.has(key) && effect.kind !== 'status')) {
-      warnings.push(`重复或超量效果已忽略：${effect.kind}`);
+  for (const [index, raw] of input.entries()) {
+    if (emptyEntry(raw)) continue;
+    let entry = raw;
+    if (typeof raw === 'string') {
+      // char_info has already unwrapped the block; MVU may still include its header.
+      const body = raw.trim().replace(/^[|>](?:[-+2])?[^\S\r\n]*\r?\n/, '').trim();
+      // Decode a structured expression or a labelled effect, never invent a kind from prose.
+      const labelled = body.match(/^[^\n:{}]+[:：]\s*([^\n]+)$/);
+      const payload = labelled ? labelled[1].trim() : body;
+      entry = payload;
+      if (payload.startsWith('{')) {
+        try { entry = JSON.parse(payload); } catch { /* keep unsupported text for the warning */ }
+      }
+      if (emptyEntry(entry)) continue;
+    }
+    const source = typeof entry === 'string' ? { kind: entry } : asObject(entry);
+    let expressions;
+    if (isExpression(source)) {
+      // Custom status references are validated against the assembled state.
+      expressions = validExpression(source) ? [clone(source)] : [];
+    } else {
+      const name = text(source.kind ?? source.type ?? source.effect ?? source.name ?? source.类型).toLowerCase().replace(/[ -]/g, '_');
+      const kind = own(effectAliases, name) ? effectAliases[name] : name;
+      const legacy = { ...source, kind };
+      const id = statusId(source.statusId ?? source.status ?? source.value ?? source.状态 ?? name);
+      if (kind === 'status' && !id && !source.statusId) {
+        warnings.push(`效果引用未知状态，已忽略：${source.status ?? source.value ?? source.状态 ?? name}`);
+        continue;
+      }
+      if (id) {
+        legacy.statusId = id;
+        if (kind === 'status' || name === id && context === 'skill' && kind !== 'infinite_ammo') legacy.kind = 'status';
+        const turns = source.turns ?? source.剩余回合 ?? source.持续回合;
+        const stacks = source.stacks ?? source.层数;
+        if (turns != null) legacy.turns = statusTurns(turns, STATUSES[id].remainingTurns);
+        if (stacks != null) legacy.stacks = bound(stacks, 1, STATUSES[id].maxStacks);
+      }
+      expressions = adaptLegacyEffects([legacy], context, `${prefix.slice(0, 36)}-${index}`);
+      try { for (const expr of expressions) validateEffect(expr); }
+      catch (error) { warnings.push(`效果 ${typeof raw === 'string' ? raw.trim() : name || 'unknown'} 已拒绝：${error.message}`); continue; }
+    }
+    if (!expressions.length || result.length + expressions.length > 24 || expressions.some(expr => seen.has(expr.id))) {
+      warnings.push(`无效、重复或超量效果已忽略：${source.id ?? source.kind ?? 'unknown'}`);
       continue;
     }
-    result.push(effect);
-    seen.add(key);
+    result.push(...expressions);
+    for (const expr of expressions) seen.add(expr.id);
   }
   return result;
 }
+export const mapEffect = (raw, context, warnings) => mapEffects([raw], context, warnings)[0] ?? null;
 
 const damageAliases = new Map(Object.entries({ 物理: 'physical', 能量: 'energy', 精神: 'mental', 真实: 'true' }));
 const damageTypes = ['physical', 'energy', 'mental', 'true'];
@@ -347,12 +359,7 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
   const isWeapon = kind === 'weapon';
   const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
   const templateId = `template-${idBase}`;
-  const effects = mapEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', warnings).filter(effect => {
-    const weaponEffect = !['frost_thorns', 'healing_shield'].includes(effect.kind);
-    if (weaponEffect === isWeapon) return true;
-    warnings.push(`装备特效与装备类型不匹配，已忽略：${name}/${effect.kind}`);
-    return false;
-  });
+  const effects = mapEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', warnings, `fx-${hash(templateId).toString(36)}`);
   const template = { name: name.slice(0, 100), kind, effects };
   const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
   const defense = bound(r.defense ?? r.防御 ?? defenseTag?.[1], 0, 1000000, kind === 'shield' ? 1 : 0);
@@ -375,7 +382,7 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
     });
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
   } else Object.assign(template, { armor: bound(r.armor, 0, 1000000, defense), defense });
-  const counters = Object.fromEntries(effects.flatMap(e => e.kind === 'ammo' ? [[e.counterKey || 'ammo', integer(e.capacity, 1)]] : e.kind === 'kill_charge_weapon' ? [[e.counterKey || 'souls', 0]] : []));
+  const counters = initialCounters(template);
   return { id: idBase, templateId, template, counters, slot, name };
 }
 
@@ -493,17 +500,26 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
   const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
   const normalizedSkills = sourceSkills(record).slice(0, 32).map(([raw, i]) => {
     const r = asObject(raw), sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${i}`;
+    const labels = [].concat(r.tags ?? r.标签 ?? []).join(' ');
+    const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
+    const taggedRange = labels.match(/有效距离\s*[:：][^\d\]]*(\d+)/)?.[1];
     skills[sid] = {
       name: text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`,
       quality: '普通', ap: bound(r.ap, 1, 2), slot: r.slot === 'action' ? 'action' : 'attack',
-      range: bound(r.range, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
-      target: ['enemy', 'ally', 'self', 'any'].includes(r.target) ? r.target : 'enemy',
-      effects: mapEffects(r.effects ?? r.效果, 'skill', warnings),
+      range: bound(r.range ?? taggedRange, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
+      target: ['enemy', 'ally', 'self', 'any', 'corpse'].includes(r.target) ? r.target : 'enemy',
+      ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
+      effects: mapEffects(r.effects ?? r.效果, 'skill', warnings, `fx-${hash(sid).toString(36)}`),
     };
     for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['radius', 0, 6], ['width', 0, 6], ['accuracy', -20, 30], ['power', 0, 1e9]]) {
-      if (r[key] != null) skills[sid][key] = bound(r[key], min, max);
+      const value = r[key] ?? (key === 'power' ? taggedPower : undefined);
+      if (value != null) skills[sid][key] = bound(value, min, max);
     }
-    if (attrNames.includes(r.save) && r.saveDC != null) Object.assign(skills[sid], { save: r.save, saveDC: bound(r.saveDC, 1, 50) });
+    if (attrNames.includes(r.save) && r.saveDC != null) {
+      const saveDC = typeof r.saveDC === 'object' ? r.saveDC : bound(r.saveDC, 1, 50);
+      if (validSaveDC(saveDC)) Object.assign(skills[sid], { save: r.save, saveDC: structuredClone(saveDC) });
+    }
+    if (object(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
     for (const key of ['damage', 'heal']) if (object(r[key])) skills[sid][key] = normalizeDice(r[key]);
     return sid;
   });
@@ -514,6 +530,7 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
     ? sourceStatuses.map(s => [typeof s === 'string' ? s : s?.id ?? s?.statusId ?? s?.name ?? s?.名称, s])
     : Object.entries(asObject(sourceStatuses));
   for (const [rawId, rawStatus] of statusEntries) {
+    if ((Array.isArray(sourceStatuses) && emptyEntry(rawStatus)) || (typeof rawId === 'string' && emptyEntry(rawId))) continue;
     const sid = statusId(rawId) || statusId(rawStatus?.id ?? rawStatus?.name ?? rawStatus?.名称);
     if (!sid) {
       const description = text(rawStatus?.效果 ?? rawStatus?.description);
@@ -523,8 +540,20 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
     const template = STATUSES[sid];
     const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.剩余回合 ?? rawStatus?.剩余时间, template.remainingTurns);
     const stacks = bound(rawStatus?.stacks ?? rawStatus?.层数, 1, template.maxStacks);
-    statuses[sid] = { ...template, remainingTurns, stacks, sourceUnitId: null, modifiers: { ...template.modifiers },
-      ...(sid === 'shield' ? { amount: bound(rawStatus?.amount ?? rawStatus?.护盾值, 1, 1e9, template.modifiers.amount) } : {}),
+    const modifiers = { ...template.modifiers };
+    if (rawStatus && own(rawStatus, 'modifiers') && !emptyEntry(rawStatus.modifiers)) {
+      try {
+        validateStatusModifiers(template, rawStatus.modifiers);
+        Object.assign(modifiers, rawStatus.modifiers);
+      } catch (error) {
+        warnings.push(`状态 ${sid} 已拒绝：${error.message}`);
+        continue;
+      }
+    }
+    const durationType = ['battle_turns', 'until_removed', 'persistent'].includes(rawStatus?.durationType)
+      ? rawStatus.durationType : template.durationType;
+    statuses[sid] = { ...template, durationType, remainingTurns, stacks, sourceUnitId: null, modifiers,
+      ...(sid === 'shield' ? { amount: bound(rawStatus?.amount ?? rawStatus?.护盾值, 1, 1e9, modifiers.amount) } : {}),
     };
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
@@ -533,6 +562,11 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
   const facing = rawFacing.slice(0, 2).map(n => Math.sign(integer(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
   const unit = { id, name, team, x: pos.x, y: pos.y, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: text(p.moraleType) || 'standard' };
+  const creatureType = p.creatureType ?? record.creatureType;
+  if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text).filter(Boolean).slice(0, 12);
+  else if (text(creatureType)) unit.creatureType = text(creatureType).slice(0, 100);
+  const tags = p.tags ?? record.tags;
+  if (Array.isArray(tags)) unit.tags = tags.map(tag => text(tag).slice(0, 100)).filter(Boolean).slice(0, 32);
   return { unit, profile: { id, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
 }
 
@@ -620,7 +654,9 @@ export function hydrateFromSources(input = {}, options = {}) {
   const title = text(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || '酒馆战术战局';
   const seed = integer(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
   const mode = options.mode ?? battle.mode;
-  const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: ['free','split'].includes(mode) ? mode : 'free', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+  const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: ['free','split'].includes(mode) ? mode : 'free', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+  const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
+  if (time) state.time = time;
   terrainState(battle, state, warnings);
   uniquePositions(state.units, state);
   let valid = true;

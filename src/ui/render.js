@@ -1,4 +1,5 @@
-import { preview as rulesPreview, STATUSES } from '../core/combat.js';
+import { effectLabel, resourceDefinitions } from '../core/effects.js';
+import { preview as rulesPreview, STATUSES, corpses } from '../core/combat.js';
 import { SCENARIOS } from '../presets/scenarios.js';
 
 export function createRenderer(root) {
@@ -20,7 +21,6 @@ export function createRenderer(root) {
   const arrow = facing => ({ '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' })[facing?.join(',')] ?? '·';
   const terrainLabel = tile => tile.kind === 'wall' ? '# 墙体（阻断移动及视线）' : tile.kind === 'slope' ? '坡道' : tile.z ? '高低台' : '平地';
   const actions = { move: ['移动', 1], sprint: ['疾跑', 2], attack: ['普通攻击', 1], reload: ['装填', 1], brace: ['架势防御', 1], disengage: ['撤离', 1], interact: ['互动', 1] };
-  const effectNames = { ammo: '消耗弹药', kill_charge_weapon: '直杀收魂', backstab: '背击优势／流血', teleport_backstab: '瞬移背刺', knockback: '击退', status: '施加状态', apply_status: '施加状态', cleanse: '净化', healing_shield: '治疗强化／护盾', thorns: '荆棘反伤', frost_thorns: '霜纹荆棘反伤', opportunity_root: '借机命中时定身' };
   const statusIcon = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
   const statuses = u => values(u.statuses);
   const statusText = s => `${statusIcon[s.category] ?? '◆'} ${s.name ?? s.id}${s.stacks > 1 ? ` ×${s.stacks}` : ''}${Number.isInteger(s.remainingTurns) ? ` · ${s.remainingTurns}回合` : s.durationType === 'persistent' ? ' · 常驻' : ''}`;
@@ -137,6 +137,7 @@ export function createRenderer(root) {
     initializeBoard(state);
     const move = ['move', 'sprint', 'disengage'].includes(action?.type);
     const unitLocations = atMap(values(state.units).filter(u => u.hp > 0));
+    const corpseLocations = atMap(corpses(state));
     const coverLocations = atMap(values(state.covers));
     const interactions = atMap(values(state.interactives));
     const available = baseline.move;
@@ -175,11 +176,21 @@ export function createRenderer(root) {
         available.has(xy) ? `可达，${baseline.ap} AP` : ''].filter(Boolean).join(' · ');
       cell.setAttribute('aria-label', description);
       if (isHover) inspection = description;
-      const signature = JSON.stringify([tile, unit, cover, interactive, chosen]);
+      const bodies = corpseLocations.get(xy) ?? [];
+      const signature = JSON.stringify([tile, unit, cover, interactive, chosen, bodies.map(body => body.id)]);
       if (slot.signature !== signature) {
         slot.signature = signature;
         z.textContent = tile.kind !== 'wall' && tile.z !== 0 ? `z${sign(tile.z)}` : '';
-        units.replaceChildren(...[unit ? unitToken(unit, tile.z, chosen) : null, cover ? featureToken(cover, tile.z, true) : null,
+        const bodyTokens = bodies.map(body => {
+          const { node } = token(body.name, '†', tile.z, 'tactical-corpse', body.team);
+          node.dataset.corpseId = body.id;
+          node.style.filter = 'grayscale(1)';
+          node.style.opacity = '.55';
+          node.style.pointerEvents = 'none';
+          node.setAttribute('aria-label', `${body.name}的尸体`);
+          return node;
+        });
+        units.replaceChildren(...[...bodyTokens, unit ? unitToken(unit, tile.z, chosen) : null, cover ? featureToken(cover, tile.z, true) : null,
           interactive ? featureToken(interactive, tile.z, false) : null].filter(Boolean));
         features.replaceChildren(...(tile.kind !== 'floor' ? [el('span', 'tactical-cell-tag', tile.kind === 'wall' ? '#' : '坡')] : []));
       }
@@ -197,9 +208,8 @@ export function createRenderer(root) {
       const summary = [label, range?.ap !== undefined ? `${range.ap} AP` : '', range?.mp ? `${range.mp} MP` : '', range?.sp ? `${range.sp} SP` : ''];
       if (action?.type === 'brace' && range?.ok) summary.push(`${range.coverId ? `借 ${range.coverId}` : '空地'}：减伤 ${percent(range.reduction)}／${range.turns} 回合`);
       if (range?.shape && range.shape !== 'single') summary.push(`范围：${({ circle: '圆形', cone: '锥形', fan: '扇形', line: '直线' })[range.shape] ?? range.shape}`);
-      if ((range?.effects ?? []).some(e => e.kind === 'kill_charge_weapon')) summary.push(`魂 ${range.souls} / ×${range.multiplier} · 直杀 +1 魂`);
       if (range?.ammo != null) summary.push(`弹药 ${range.ammo}${range.capacity ? `/${range.capacity}` : '（命令结算消耗）'}`);
-      if (range?.effects?.length) summary.push(`特效：${range.effects.map(e => e.statusId && ['status', 'apply_status'].includes(e.kind) ? `施加${value(state.statusTemplates ?? {}, e.statusId)?.name ?? value(STATUSES, e.statusId)?.name ?? e.statusId}` : effectNames[e.kind] ?? e.kind).join('、')}`);
+      if (range?.effects?.length) summary.push(`特效：${range.effects.map(effectLabel).join('、')}`);
       lines.push(summary.filter(Boolean).join(' · '));
       if (hover) {
         const source = selectedUnit ?? current;
@@ -289,7 +299,7 @@ export function createRenderer(root) {
     if (!u.hp) head.append(el('span', 'tag tone-red', '已倒下'));
     else {
       const template = value(state.equipment, value(state.items, u.weapon)?.templateId);
-      const melee = (template?.range ?? 1.5) <= 2 && !template?.effects?.some(e => e.kind === 'ammo');
+      const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some(node => node.reloadable);
       if (melee) head.append(el('span', 'tag', u.reactionAvailable === false ? '借机已用' : '借机就绪'));
     }
     const bars = row(null, ...['hp', 'mp', 'sp'].map(stat => resource(null, u, stat, true)), el('span', 'tag tone-gold', `${u.ap} AP`));
@@ -307,14 +317,9 @@ export function createRenderer(root) {
       const instance = value(state.items, id), template = value(state.equipment, instance?.templateId);
       if (!instance || !template) return el('span', 'tag', id);
       const counters = Object.entries(instance.counters ?? {}).map(([k, n]) => `${({ souls: '魂数 souls', ammo: '弹药 ammo' })[k] ?? k} ${n}`);
-      const soul = template.effects?.find(effect => effect.kind === 'kill_charge_weapon');
-      if (soul) {
-        const souls = Math.max(0, Math.min(soul.maxStacks ?? 10, value(instance.counters, soul.counterKey ?? 'souls') ?? 0));
-        counters.push(`伤害 ×${1 + souls * (soul.bonusPerStack ?? .5)}`);
-      }
       const badge = el('span', 'tag tone-gold card-item', [template.name, ...counters].join(' · '));
       badge.dataset.instanceId = id;
-      badge.title = `${id}${template.description ? ` · ${template.description}` : ''}`;
+      badge.title = [id, template.description, ...(template.effects ?? []).map(effectLabel)].filter(Boolean).join(' · ');
       return badge;
     });
     const zones = values(state.zones).filter(z => Math.max(Math.abs(z.x-u.x), Math.abs(z.y-u.y)) <= z.radius).map(z => el('span','status-effect',`区域 ${z.name} · ${z.damage} ${z.damageType}`));

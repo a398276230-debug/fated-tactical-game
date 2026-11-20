@@ -163,6 +163,8 @@ export async function requestViaCustomApi(settings, messages, options = {}) {
   } else {
     const system = messages.filter(m => m.role === 'system').map(m => m.content).join('\n\n');
     const chat = wireMessages.filter(m => m.role !== 'system');
+    // Claude and Gemini require a conversation turn even for a system-only task.
+    if (!chat.length && system) chat.push({ role: 'user', content: '请执行上述任务。' });
     if (source === 'claude') {
       url = `${root}/messages`;
       body = { model, system, messages: chat, temperature, max_tokens, stream };

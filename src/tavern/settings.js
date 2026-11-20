@@ -164,7 +164,8 @@ export function renderPromptTab(page, ctx) {
       const down = button('▼');
       down.title = '下移';
       const remove = button('✕', 'pill-btn danger');
-      remove.title = slot.custom ? '删除此槽位' : '隐藏此内置槽位（可从「恢复默认」找回）';
+      remove.disabled = slot.id === 'identity';
+      remove.title = remove.disabled ? '可使用开关停用身份声明' : slot.custom ? '删除此槽位' : '隐藏此内置槽位（可从「恢复默认」找回）';
       actions.append(edit, up, down, remove);
       head.append(title, badge, actions, switchWrap);
 

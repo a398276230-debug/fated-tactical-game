@@ -126,13 +126,34 @@ export const tavernTheme = `
 .fated-instance > .fated-status { max-height:8lh; scrollbar-width:thin; scrollbar-color:var(--scrollbar) transparent }
 .fated-chat { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:8px 0 }
 .fated-chat textarea { flex:1 1 230px }
+.fated-ai-log { display:flex; flex-direction:column; gap:8px; max-height:380px; min-height:180px; overflow:auto; padding:4px; border:1px solid var(--line); border-radius:8px; background:rgb(0 0 0/.12); }
+.fated-ai-message { flex:none; max-width:92%; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:rgb(255 255 255/.04); white-space:pre-wrap; overflow-wrap:anywhere; }
+.fated-ai-message[data-role=user] { align-self:flex-end; background:rgb(95 147 200/.12); }
+.fated-ai-message[data-role=assistant] { align-self:flex-start; border-color:rgb(var(--gold-rgb)/.35); }
+.fated-ai-message[data-role=system] { align-self:center; opacity:.78; font-size:.86em; }
+.fated-ai-message[data-role=tool] { align-self:flex-start; border-style:dashed; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.84em; }
+.fated-ai-message[data-status=error] { border-color:#d66; }.fated-ai-message[data-status=aborted] { opacity:.7; }
+.fated-ai-message header { display:flex; justify-content:space-between; gap:12px; color:var(--gold); font-size:.72em; margin-bottom:4px; }
+.fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }
+.fated-ai-info { color:var(--text-muted, var(--blue-text)); font-size:.78em; margin:5px 0; }
 .fated-toast {
   position:fixed; z-index:2; top:max(16px,env(safe-area-inset-top)); right:16px; width:min(380px,calc(100vw - 32px));
-  padding:12px 14px; border:1px solid var(--header-line); border-inline-start:3px solid var(--gold); border-radius:8px;
+  padding:12px 14px; border:1px solid var(--header-line); border-inline-start:3px solid var(--notice-color,var(--blue-text)); border-radius:8px;
   background:var(--panel-bg); color:var(--text); box-shadow:0 12px 40px rgba(0,0,0,.5);
   pointer-events:auto; overflow-wrap:anywhere; max-height:calc(100dvh - 32px); overflow:auto;
 }
-.fated-toast strong { color:var(--gold-bright) }.fated-toast p { margin:5px 0 8px; white-space:pre-wrap; color:var(--text-soft) }.fated-toast button { margin:4px 6px 0 0 }
+.fated-toast[data-tone="success"] { --notice-color:var(--accent-text) }
+.fated-toast[data-tone="error"] { --notice-color:var(--red-text) }
+.fated-toast header { display:flex; align-items:center; gap:8px; color:var(--notice-color,var(--blue-text)) }
+.fated-toast header span { display:grid; place-items:center; width:1.4em; height:1.4em; border:1px solid currentColor; border-radius:50%; font-weight:bold }
+.fated-toast p { margin:6px 0; white-space:pre-wrap; color:var(--text-soft) }
+.fated-toast-issues { border-top:1px solid var(--line); margin-top:8px; padding-top:8px }
+.fated-toast-issues h4 { margin:0; color:var(--text-key) }.fated-toast-issues ul { margin:4px 0; padding-inline-start:1.5em }
+.fated-toast-raw { margin-top:8px; border-top:1px solid var(--line); padding-top:8px }
+.fated-toast-raw summary { display:list-item; cursor:pointer; color:var(--text-key) }
+.fated-toast-raw summary:focus-visible { outline:2px solid var(--focus); outline-offset:2px }
+.fated-toast-raw pre { margin:6px 0 0; padding:8px; max-height:min(12rem,35dvh); overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--text); background:var(--surface); border-radius:4px }
+.fated-toast footer { display:flex; justify-content:flex-end; gap:6px; margin-top:8px }.fated-toast footer:has(button:not([hidden])) { border-top:1px solid var(--line); padding-top:8px }
 
 /* ---------- switch ---------- */
 [data-fated-tavern-overlay] .switch { position:relative; flex:none; display:inline-flex; align-items:center; width:42px; height:22px; margin-left:auto; cursor:pointer }

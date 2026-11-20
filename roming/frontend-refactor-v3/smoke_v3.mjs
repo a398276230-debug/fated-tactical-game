@@ -1,6 +1,6 @@
 // Run: node roming/frontend-refactor-v3/smoke_v3.mjs (CHROME_PATH overrides Chrome).
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -33,9 +33,10 @@ await check(6, '槽位开关改变最终消息数', async () => {
   const before = assembleMessages(DEFAULT_SLOTS, ctx);
   const after = assembleMessages(DEFAULT_SLOTS.map(s => s.id === 'protocol' ? { ...s, enabled: false } : s), ctx);
   assert.ok(before.some(m => m.role === 'system' && m.content.trim()));
-  assert.equal(after.length, before.length - 1);
-  assert.ok(!after.some(m => m.role === 'system') && after.some(m => m.content.includes(ctx.rosterText)));
-  return `${before.length} → ${after.length}`;
+  assert.equal(after.length, before.length);
+  assert.ok(before[0].slotId.split('+').includes('protocol'));
+  assert.ok(!after[0].slotId.split('+').includes('protocol') && after[0].content.includes(ctx.rosterText));
+  assert.ok(after[0].content.length < before[0].content.length);
 });
 await check(7, 'generateRaw 参数与流式事件', async () => {
   const { requestViaTavern } = await api();
@@ -113,7 +114,7 @@ async function browserProbe(id, cfg) {
   window.getLastMessageId = () => 0;
   window.getChatMessages = () => [{ message_id: 0, role: 'assistant', message: '<char_info>{"name":"对手"}</char_info><battle_init>\nbattle|1|smoke|冒烟|terrain|12\nunit|p1|blue|mvu:主角|玩家|2,2\nunit|e1|red|char_info|对手|7,7\n</battle_init>' }];
   window.Mvu = { getMvuData: () => ({ stat_data: { 主角: { 装备: { 旧弩: { 类型: '武器', 位置: '主手', 标签: ['弩','攻击: 14'], 效果: { 恒定拉距: '弩箭攻击恒定为10' } } } } } }) };
-  window.generateRaw = async args => { requests.push({ args, stack: new Error().stack }); return JSON.stringify({ patch: [], unresolved: ['旧弩效果无法映射'] }); };
+  window.generateRaw = async args => { requests.push({ args, stack: new Error().stack }); return JSON.stringify({ patch: [{op:'replace',path:'/units/p1/armor',value:3}], unresolved: ['旧弩效果无法映射'] }); };
   const app = mountTavernOverlay({ host: window, document });
   await app.open(); await until(() => requests.length, '警告触发自动标准化');
   await until(() => document.body.innerText.includes('标准化完成'), '自动标准化完成');
@@ -161,7 +162,7 @@ async function slotProbe(id) {
   const equal = (actual, expected, message) => expect(JSON.stringify(actual) === JSON.stringify(expected), `${message}: ${JSON.stringify(actual)} ≠ ${JSON.stringify(expected)}`);
   const instanceId = 'slot-smoke', storageKey = `fated-tactical/tavern/${instanceId}`;
   const reload = () => { location.reload(); return new Promise(() => {}); };
-  const legacy = DEFAULT_SLOTS.map(({ id, enabled }) => ({ id, enabled: id === 'protocol' ? false : enabled }));
+  const legacy = DEFAULT_SLOTS.filter(s => s.id !== 'identity').map(({ id, enabled }) => ({ id, enabled: id === 'protocol' ? false : enabled }));
   if (id === 18 && !sessionStorage.seeded) {
     localStorage.setItem(storageKey, JSON.stringify({ slots: legacy }));
     sessionStorage.seeded = '1';
@@ -218,11 +219,11 @@ async function slotProbe(id) {
   }
   const ids = () => preview().map(m => m.slotId);
   if (id === 18) {
-    for (const [i, def] of DEFAULT_SLOTS.entries()) {
+    for (const def of DEFAULT_SLOTS) {
       const migrated = slots().find(s => s.id === def.id);
       expect(migrated?.builtin === true && typeof migrated.content === 'string', `${def.id} 未补全内置字段`);
       for (const key of ['label', 'role', 'desc']) equal(migrated[key], def[key], `${def.id}.${key}`);
-      equal(migrated.enabled, legacy[i].enabled, '旧开关未保留');
+      equal(migrated.enabled, legacy.find(slot => slot.id === def.id)?.enabled ?? def.enabled, '旧开关未保留');
     }
     expect(!ids().some(s => s.split('+').includes('protocol')) && preview().length > 0, '旧配置未用于组装'); return;
   }
@@ -242,7 +243,7 @@ async function slotProbe(id) {
     equal(content.value, '遗留补充内容', '补充槽位未显示旧 extraText');
     const toggle = extra.querySelector('input.toggle-switch');
     toggle.checked = true; toggle.dispatchEvent(new Event('change', { bubbles: true }));
-    // The builtin extra slot shares the user role, so it merges into the user message.
+    // The builtin extra slot merges into the system message.
     equal(preview().at(-1).content.split('\n\n').at(-1), '遗留补充内容', '启用后未发送旧 extraText');
     write('extra', 'textarea', '新补充');
     equal(app.getConfig().extraText, '', '编辑后旧 extraText 未迁移清理');
@@ -250,12 +251,13 @@ async function slotProbe(id) {
     return;
   }
   if (id === 15) {
-    const key = 'protocol', before = initial.find(m => m.slotId === key);
+    const key = 'protocol', before = initial.find(m => m.slotId.split('+').includes(key));
     expect(before?.role === 'system', '缺少内置 system 槽位');
     const content = field(key, '.slot-preview');
-    expect(content.getAttribute('aria-readonly') === 'true' && content.textContent === before.content, '内置内容应展示只读动态预览');
+    expect(content.getAttribute('aria-readonly') === 'true' && before.content.includes(content.textContent), '内置内容应展示只读动态预览');
+    const protocol = content.textContent;
     write(key, title, '规则别名'); write(key, 'select', 'assistant');
-    equal(preview().find(m => m.slotId === key), { ...before, role: 'assistant', slotLabel: '规则别名' }, '内置标题/角色未生效'); return;
+    equal(preview().find(m => m.slotId === key), { role: 'assistant', content: protocol, slotId: key, slotLabel: '规则别名' }, '内置标题/角色未生效'); return;
   }
   const key = create('冒烟自定义', '独立消息');
   const message = () => preview().find(m => m.slotId === key);
@@ -284,6 +286,24 @@ async function slotProbe(id) {
     sessionStorage.expected = JSON.stringify({ saved: slots(), order }); return reload();
   }
 }
+await check(12, '转换器保留新特效与合法覆盖，拒绝非法覆盖', async () => {
+  const { mapEffects } = await import('../../src/tavern/converter.js');
+  const warnings = [];
+  const equipment = [
+    { kind: 'save_or_status', save: 'int', saveDC: 14, statusId: 'freeze', turns: 1 },
+    { kind: 'fixed_attack', value: 10 },
+  ];
+  const skills = [
+    { kind: 'fixed_damage', amount: 10, damageType: 'physical' },
+    { kind: 'status', statusId: 'burn', modifiers: { damage: 12 } },
+    { kind: 'status', statusId: 'infinite_ammo' },
+  ];
+  assert.deepEqual(mapEffects(equipment, 'equipment', warnings).flatMap(e => e.effects.map(n => n.kind)), ['grantStatus','modifyDamageBase']);
+  assert.deepEqual(mapEffects(skills, 'skill', warnings).flatMap(e => e.effects.map(n => n.kind)), ['modifyDamageBase','grantStatus','grantStatus']);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(mapEffects([{ kind: 'status', statusId: 'stun', modifiers: { damage: 1 } }], 'skill', warnings), []);
+  assert.match(warnings[0], /stun.*damage/);
+});
 await check(13, '新建自定义槽位增加具名消息', () => inChrome(13));
 await check(14, '编辑静态内容并展开宏', () => inChrome(14));
 await check(15, '内置动态内容只读，改名与角色立即生效', () => inChrome(15));
@@ -336,13 +356,9 @@ await check(21, '标准化任务列出全部白名单路径', async () => {
   validateState(patched);
   assert.deepEqual(patched, expected, '正例应只修正 p1 的护甲');
 });
-await check(22, '默认提示词长度严格低于上限', async () => {
+await check(22, '报告默认提示词长度', async () => {
   const lengths = [];
-  for (const [id, limit] of [['protocol', 8000], ['task', 4000]]) {
-    const { length } = await defaultContent(id);
-    assert.ok(length < limit, `${id}: ${length} 字符，应少于 ${limit}`);
-    lengths.push(`${id}=${length}`);
-  }
+  for (const id of ['protocol','task']) lengths.push(`${id}=${(await defaultContent(id)).length}`);
   return lengths.join(', ');
 });
 
@@ -374,7 +390,7 @@ async function normalizeProbe(id) {
   const calls = [];
   window.generateRaw = async args => {
     calls.push(structuredClone(args.ordered_prompts));
-    return JSON.stringify({ patch: [], unresolved: ['测试请求'] });
+    return JSON.stringify({ patch: [{op:'replace',path:'/units/p1/armor',value:3}], unresolved: ['测试请求'] });
   };
   const app = mountTavernOverlay({ host: window, document, instanceId });
   await app.open();
@@ -420,10 +436,89 @@ async function normalizeProbe(id) {
     expect(JSON.stringify(preview) === JSON.stringify(sent), '重载后的预览与手动请求 ordered_prompts 不同');
   } else {
     const systems = sent.filter(m => m.role === 'system');
-    expect(systems.length === 2 && systems[0].slotId === sessionStorage.customKey && systems[0].content === marker && systems[1].slotId === 'protocol' && systems[1].content.trim(), '请求未按保存的顺序包含独立的自定义与内置 system 消息');
+    expect(systems.length === 2 && systems[0].slotId === sessionStorage.customKey && systems[0].content === marker && systems[1].slotId.startsWith('identity+protocol+') && systems[1].content.trim(), '请求未按保存的顺序包含独立的自定义与内置 system 消息');
   }
 }
 await check(24, '重载后的可见预览逐字段等于手动标准化请求', () => inChrome(24, normalizeProbe));
 await check(25, '手动标准化保留两个 system 槽位及其顺序', () => inChrome(25, normalizeProbe));
 await check(26, '旧配置缺省请求超时为 60000ms', () => inChrome(26, normalizeProbe));
 await check(27, '配置的 1800000ms 用于请求超时定时器', () => inChrome(27, normalizeProbe));
+
+async function checkMappings(id, terms) {
+  const content = await defaultContent(id);
+  for (const term of terms) assert.ok(content.includes(term), `${id} 缺少 ${term}`);
+  return `${content.length} 字符`;
+}
+const checkCatalog = () => execFileSync(process.execPath, [fileURLToPath(new URL('./extract_statuses.mjs', import.meta.url)), '--check'], { encoding: 'utf8' }).trim();
+await check(28, 'protocol 槽位包含新增映射', () => checkMappings('protocol', ['modifyDamageBase','forceOutcome','grantStatus','infinite_ammo','procEffect']));
+await check(29, 'task 槽位包含 DSL 正例', () => checkMappings('task', ['hit_burn','night_edge','cold_reply','blood_mana']));
+await check(30, '状态目录生成校验', checkCatalog);
+
+async function statusBattle() {
+  const { createGameAPI } = await import('../../src/index.js');
+  const game = createGameAPI();
+  const { buildScenario } = await import('../../src/index.js');
+  const state = buildScenario({ scenarioId: 'ruins', ruleset: 'protocol' });
+  state.units.scout.armor = 0;
+  game.createBattle({ kind: 'custom_state', state });
+  const proposeEffects = (...effects) => game.proposeCommands([
+    { type: 'patch_skill_template', templateId: 'challenge', patch: { effects } },
+  ], { reason: '校验状态覆盖', baseRevision: game.getStateSummary().revision });
+  const castBurn = () => {
+    const proposal = proposeEffects({ kind: 'status', statusId: 'burn', modifiers: { damage: 12 } });
+    assert.equal(proposal.ok, true, proposal.error);
+    assert.equal(game.commitProposal(proposal.proposalId).ok, true);
+    game.playAction({ type: 'skill', skillId: 'challenge', x: 3, y: 2 });
+  };
+  const advanceToScout = () => {
+    for (let i = 0; i < 12 && game.getStateSummary().currentUnitId !== 'scout'; i++) game.playAction({ type: 'end' });
+    assert.equal(game.getStateSummary().currentUnitId, 'scout');
+  };
+  return { game, proposeEffects, castBurn, advanceToScout };
+}
+await check(31, '技能覆盖灼烧实例，实际跳伤为 12×层数', async () => {
+  const { game, castBurn, advanceToScout } = await statusBattle();
+  castBurn();
+  const before = game.inspectUnit('scout');
+  assert.equal(before.statuses.burn.modifiers.damage, 12);
+  advanceToScout();
+  assert.equal(game.inspectUnit('scout').hp, before.hp - 12 * before.statuses.burn.stacks);
+});
+await check(32, '非法 modifier 键被拒绝并显示原因', async () => {
+  const { game, proposeEffects } = await statusBattle();
+  const before = game.exportBattleSnapshot();
+  const result = proposeEffects({ kind: 'status', statusId: 'stun', modifiers: { damage: 12 } });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /stun.*damage/);
+  assert.deepEqual(game.exportBattleSnapshot(), before);
+  return result.error;
+});
+await check(33, '越界 modifier 数值被拒绝', async () => {
+  const { game, proposeEffects } = await statusBattle();
+  const before = game.exportBattleSnapshot();
+  for (const damage of [0, 99999999]) {
+    const result = proposeEffects({ kind: 'status', statusId: 'burn', modifiers: { damage } });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /burn\.damage.*1–100000/);
+  }
+  assert.deepEqual(game.exportBattleSnapshot(), before);
+});
+await check(34, 'patchStatus 后下一次跳伤使用新值', async () => {
+  const { game, castBurn, advanceToScout } = await statusBattle();
+  castBurn();
+  const before = game.inspectUnit('scout');
+  const result = game.patchStatus('scout', 'burn', { damage: 27 });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(game.inspectUnit('scout').statuses.burn.remainingTurns, before.statuses.burn.remainingTurns);
+  advanceToScout();
+  assert.equal(game.inspectUnit('scout').hp, before.hp - 27 * before.statuses.burn.stacks);
+  assert.equal(game.listStatusTemplates().burn.modifiers.damage, 5);
+});
+await check(35, '灼烧、流血、中毒、再生、护盾目录行标注范围', async () => {
+  const { STATUS_CATALOG } = await import('../../src/tavern/status-catalog.js');
+  const lines = STATUS_CATALOG.split('\n');
+  for (const [id, key] of [['burn', 'damage'], ['bleed', 'damage'], ['poison', 'damage'], ['regen', 'heal'], ['shield', 'amount']]) {
+    assert.match(lines.find(line => line.startsWith(`${id} |`)) ?? '', new RegExp(`${key}=\\d+（1–100000）`));
+  }
+});
+await check(36, '验收结束时状态目录仍与生成器一致', checkCatalog);

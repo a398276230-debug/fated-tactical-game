@@ -1,4 +1,9 @@
 import { getStatusTemplate, STATUSES } from '../core/combat.js';
+import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.js';
+import { resourceDefinitions } from '../core/effects.js';
+
+import { effectNodes, isExpression, validExpireOn, validExpression, validSaveDC } from '../core/effect_schema.js';
+import { timeOfDay } from '../core/battle_time.js';
 
 export const own = Object.hasOwn;
 export const error = message => { throw new Error(message); };
@@ -11,7 +16,6 @@ export const text = (v, max = 100) => typeof v === 'string' && v.trim().length >
 export const team = v => v === 'blue' || v === 'red';
 export const coord = v => int(v, 0, 9);
 export const attrs = ['str', 'agi', 'con', 'int', 'spi'];
-const damageTypes = ['physical', 'energy', 'mental', 'true'];
 const statusDurations = ['battle_turns', 'until_removed', 'persistent'];
 const statusTickTimings = ['onTurnStart', 'onTurnEnd'];
 const statusStackRules = ['refresh', 'stack', 'replace'];
@@ -33,61 +37,74 @@ function dice(v) {
   checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
   checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
 }
-// Only modifiers the existing tactical engine can apply without ID-specific lifecycle logic.
-const customModifiers = {
-  damage: x => int(x, 1, 50), damageType: x => damageTypes.includes(x), heal: x => int(x, 1, 50),
-  movement: x => int(x, -3, 3), armor: x => int(x, -10, 10),
-  accuracy: x => int(x, -10, 10), incomingAccuracy: x => int(x, -10, 10),
-  advantage: x => int(x, 1, 3), disadvantage: x => int(x, 1, 3),
-  reduction: x => num(x, 0, 1), vulnerability: x => num(x, 0, 1), reflect: x => int(x, 1, 30),
-};
+// 自定义模板只使用不依赖内置状态 ID 的结算参数。
+const customModifierKeys = ['damage', 'damageType', 'heal', 'movement', 'armor', 'accuracy', 'incomingAccuracy',
+  'advantage', 'disadvantage', 'reduction', 'vulnerability', 'reflect', 'dodgeBonus', 'attackPercent',
+  'attributePercent', 'finalDamageMultiplier', 'guaranteed_hit', 'guaranteed_crit', 'blockResourceRestore', 'preserveLife', 'skip'];
 function statusLifetime(v) {
   return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType)
     && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
 }
 export function statusTemplate(v, key = v?.id) {
-  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers']);
+  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers'], ['expireInto', 'expireOn']);
+  checkOptional(v, 'expireInto', id);
+  checkOptional(v, 'expireOn', validExpireOn);
   requireThat(id(key) && !own(STATUSES, key) && v.id === key, '自定义状态 ID');
   requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300)
     && ['buff', 'debuff', 'control', 'dot', 'hot'].includes(v.category), '状态名/图标/描述/类别');
   requireThat(statusLifetime(v) && int(v.maxStacks, 1, 10), '状态时长/层数');
-  fields(v.modifiers, [], Object.keys(customModifiers));
+  fields(v.modifiers, [], customModifierKeys);
   requireThat(Object.keys(v.modifiers).length > 0 && (!own(v.modifiers, 'damageType') || own(v.modifiers, 'damage')), '状态特效');
-  for (const [key, check] of Object.entries(customModifiers)) checkOptional(v.modifiers, key, check);
+  validateStatusModifiers(v, v.modifiers);
 }
-export function statusTemplateTable(v) { table(v, statusTemplate, maxStatusTemplates); }
+export function statusTemplateTable(v) {
+  table(v, statusTemplate, maxStatusTemplates);
+  for (const t of Object.values(v)) if (t.expireInto) {
+    requireThat(t.durationType === 'battle_turns' && t.remainingTurns === 1 && t.expireInto !== t.id
+      && (has(STATUSES, t.expireInto) || has(v, t.expireInto) && !v[t.expireInto].expireInto), '状态到期目标');
+  }
+}
 
-const effectSpecs = {
-  kill_charge_weapon: { counterKey: id, bonusPerStack: x => num(x, 0, 2), maxStacks: x => int(x, 1, 50) },
-  ammo: { counterKey: id, capacity: x => int(x, 1, 50), armorPierce: x => int(x, 0, 50), highGroundRange: x => int(x, 0, 6), highGroundAccuracy: x => int(x, 0, 12) },
-  frost_thorns: { damage: x => int(x, 0, 50), chance: x => num(x, 0, 1), statusId: (x, s) => id(x) && !!getStatusTemplate(s, x) },
-  backstab: { bonusMultiplier: x => num(x, 0, 4), bleedStacks: x => int(x, 1, 5), comboDamage: x => int(x, 0, 50) },
-  healing_shield: { healBonus: x => num(x, 0, 4), shieldRatio: x => num(x, 0, 4) },
-  status: { statusId: (x, s) => id(x) && !!getStatusTemplate(s, x), turns: x => int(x, 1, 100), stacks: x => int(x, 1, 10), amount: x => int(x, 1, 500) },
-  knockback: { distance: x => int(x, 1, 5), collisionDamage: x => int(x, 0, 80) },
-  teleport_backstab: { bonusMultiplier: x => num(x, 0, 4) },
-  cleanse: {},
-  opportunity_root: {},
-};
-function effects(v, kinds, state) {
-  requireThat(Array.isArray(v) && v.length <= 12, 'effects');
+export function defineStatus(state, key, template) {
+  requireThat(plain(template) && (!own(template, 'id') || template.id === key), '自定义状态 ID');
+  const definition = { ...template, id: key };
+  statusTemplate(definition, key);
+  requireThat(!getStatusTemplate(state, key), '状态模板 ID 已存在');
+  requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, '自定义状态模板数量');
+  (state.statusTemplates ??= {})[key] = structuredClone(definition);
+  return structuredClone(definition);
+}
+
+const resourceCost = x => plain(x) && Object.keys(x).length === 2 && id(x.resource) && int(x.amount, 1, 1000000);
+export function validateEffect(e, state) {
+  requireThat(isExpression(e) && validExpression(e), 'DSL expression');
+  if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, 'DSL save mode');
+  else requireThat(!e.roll?.mode, 'DSL save mode');
+  for (const node of effectNodes(e.effects)) {
+    if (node.kind === 'removeStatus') requireThat(Boolean(node.statusId) !== Boolean(node.category), 'DSL removeStatus selector');
+    if (node.statusId) {
+      const template = getStatusTemplate(state, node.statusId);
+      requireThat(template, `DSL status ${node.statusId}`);
+      if (node.modifiers) validateStatusModifiers(template, node.modifiers);
+      if (node.stacks && !has(STATUSES, node.statusId)) requireThat(node.stacks <= template.maxStacks, 'DSL status stacks');
+      if (node.amount != null) requireThat(node.statusId === 'shield' && int(node.amount, 1, 10000), 'DSL status amount');
+    }
+    if (node.initial != null) requireThat(node.cap != null && node.initial <= node.cap, 'DSL resource initial');
+  }
+}
+
+function effects(v, state) {
+  requireThat(Array.isArray(v) && v.length <= 24, 'effects');
   const seen = new Set();
   for (const e of v) {
-    requireThat(plain(e) && kinds.includes(e.kind), 'effect kind');
-    const spec = effectSpecs[e.kind], keys = Object.keys(spec);
-    const required = e.kind === 'status' ? ['statusId'] : keys;
-    fields(e, ['kind', ...required], keys.filter(k => !required.includes(k)));
-    for (const [key, check] of Object.entries(spec)) checkOptional(e, key, x => check(x, state));
-    if (e.kind === 'status' && !has(STATUSES, e.statusId)) {
-      requireThat(!own(e, 'amount'), 'amount 仅用于护盾');
-      checkOptional(e, 'stacks', x => int(x, 1, getStatusTemplate(state, e.statusId).maxStacks));
-    }
-    requireThat(!seen.has(e.counterKey ?? e.kind) || e.kind === 'status', '重复特效');
-    seen.add(e.counterKey ?? e.kind);
+    validateEffect(e, state);
+    requireThat(!seen.has(e.id), '重复特效');
+    seen.add(e.id);
   }
 }
 export function equipmentTemplate(v, state) {
-  fields(v, ['name', 'effects'], ['quality','kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense']);
+  fields(v, ['name', 'effects'], ['quality','kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense', 'boundTo', 'weaponType']);
+  checkOptional(v, 'boundTo', id); checkOptional(v, 'weaponType', text);
   requireThat(text(v.name), 'name');
   checkOptional(v, 'quality', x => ['唯一','普通','优良','稀有','史诗','传说','神话'].includes(x));
   checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
@@ -98,32 +115,36 @@ export function equipmentTemplate(v, state) {
   for (const field of ['ranged','heavy','twoHanded','shield']) checkOptional(v, field, x => typeof x === 'boolean');
   if (own(v, 'damage')) dice(v.damage);
   requireThat(own(v, 'range') === own(v, 'damage'), '武器 range/damage');
-  effects(v.effects, ['kill_charge_weapon', 'ammo', 'frost_thorns', 'backstab', 'healing_shield', 'opportunity_root'], state);
-  requireThat(v.effects.every(e => ['kill_charge_weapon', 'ammo', 'backstab', 'opportunity_root'].includes(e.kind) === own(v, 'damage')), '装备特效不匹配');
+  effects(v.effects, state);
+  const pools = resourceDefinitions(v);
+  requireThat(new Set(pools.map(pool => pool.resource)).size === pools.length, 'DSL 重复资源池');
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school']);
+  checkOptional(v, 'school', text);
+  checkOptional(v, 'resourceCost', resourceCost);
   requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)
-    && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any'].includes(v.target), '技能');
+    && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse'].includes(v.target), '技能');
   checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   for (const k of ['radius', 'width']) checkOptional(v, k, x => int(x, 0, 6));
   checkOptional(v, 'accuracy', x => int(x, -20, 30)); checkOptional(v, 'save', x => attrs.includes(x));
-  checkOptional(v, 'saveDC', x => int(x, 1, 50));
+  checkOptional(v, 'saveDC', validSaveDC);
   requireThat(own(v, 'save') === own(v, 'saveDC'), 'save/saveDC');
   for (const k of ['damage', 'heal']) if (own(v, k)) dice(v[k]);
-  effects(v.effects, ['status', 'knockback', 'teleport_backstab', 'cleanse'], state);
+  effects(v.effects, state);
 }
 export function statusValue(v, key, state) {
   const t = getStatusTemplate(state, key);
   requireThat(id(key) && t, '状态 ID');
-  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers', 'stacks', 'sourceUnitId'], ['appliedRound', 'appliedTurn', 'amount']);
+  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers', 'stacks', 'sourceUnitId'], ['appliedRound', 'appliedTurn', 'amount', 'expireInto', 'expireOn']);
+  checkOptional(v, 'expireOn', x => x === null || validExpireOn(x));
+  requireThat(v.expireInto === t.expireInto, '状态到期目标');
   requireThat(v.id === key && statusLabels.every(k => v[k] === t[k]) && statusLifetime(v)
     && int(v.maxStacks, 1, t.maxStacks) && int(v.stacks, 1, v.maxStacks)
     && (v.sourceUnitId === null || id(v.sourceUnitId)), '状态实例');
   fields(v.modifiers, Object.keys(t.modifiers));
-  for (const [k, def] of Object.entries(t.modifiers)) requireThat(v.modifiers[k] === def
-    || (key === 'guarded' && k === 'reduction' && [.25,.35,.45,.5].includes(v.modifiers[k])), `状态参数 ${k}`);
+  validateStatusModifiers(t, v.modifiers);
   checkOptional(v, 'appliedRound', x => int(x, 1, 1000000)); checkOptional(v, 'appliedTurn', x => int(x, 0, 199));
   requireThat(key === 'shield' ? int(v.amount, 1, 1000000000) : !own(v, 'amount'), '护盾池');
 }
@@ -134,7 +155,26 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys]);
+  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'tags', 'resources', 'inventory', 'effectUsage', 'effectModifiers']);
+  for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
+  checkOptional(v, 'corpseOf', id);
+  checkOptional(v, 'diedAt', x => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
+  checkOptional(v, 'creatureType', x => text(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every(t => text(t)));
+  if (own(v, 'tags')) list(v.tags, 32, x => text(x), 'tags');
+  for (const k of ['resources','inventory']) if (own(v, k)) table(v[k], x => requireThat(int(x, 0, 1e9), k));
+  for (const k of ['effectUsage','effectModifiers']) if (own(v, k)) {
+    requireThat(plain(v[k]) && Object.keys(v[k]).length <= 1000 && jsonTree(v[k]), k);
+    for (const entry of Object.values(v[k])) {
+      if (k === 'effectUsage') {
+        fields(entry, ['count','round']); requireThat(int(entry.count, 1, 1000000) && int(entry.round, 1, state.round), k);
+      } else {
+        fields(entry, ['stat','flat','percent','turns','round','turn'], ['damageType']);
+        checkOptional(entry, 'damageType', x => damageTypes.includes(x));
+        requireThat(int(entry.round, 1, state.round) && int(entry.turn, 0, 199), k);
+        requireThat(text(entry.stat) && num(entry.flat, -1e9, 1e9) && num(entry.percent, -1, 10) && int(entry.turns, 1, 100), k);
+      }
+    }
+  }
   checkOptional(v, 'reactionAvailable', x => typeof x === 'boolean');
   requireThat(v.id === key && text(v.name) && team(v.team) && coord(v.x) && coord(v.y), '棋子');
   list(v.facing, 2, x => int(x, -1, 1), '朝向');
@@ -166,7 +206,14 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key, x]) => !own(Object.prototype, key) && jsonTree(x, depth + 1));
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','effectTemplates','summonTemplates']);
+  if (own(s, 'time')) {
+    fields(s.time, ['raw','hour','minute','timeOfDay','calendar']);
+    requireThat(text(s.time.raw, 500) && typeof s.time.calendar === 'string' && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23)
+      && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), 'time');
+  }
+  if (own(s, 'effectTemplates')) table(s.effectTemplates, (e, key) => { requireThat(isExpression(e) && e.id === key, 'effectTemplates'); validateEffect(e, s); });
+  if (own(s, 'summonTemplates')) table(s.summonTemplates, (u, key) => { unitValue(u, key, s); requireThat(u.skills.every(skill => has(s.skills, skill)), 'summon skills'); });
   if (own(s, 'statusTemplates')) statusTemplateTable(s.statusTemplates);
   requireThat(id(s.scenarioId) && text(s.title) && ['free','split'].includes(s.mode) && ['protocol','sandbox'].includes(s.ruleset) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
     && [null,'blue','red','draw'].includes(s.outcome), '战局');
@@ -176,12 +223,28 @@ export function validateState(s) {
     for (const c of row) validateCell(c);
   }
   table(s.equipment, v => equipmentTemplate(v, s)); table(s.skills, v => skillTemplate(v, s));
+  const expressions = [...Object.values(s.effectTemplates ?? {}), ...[...Object.values(s.equipment), ...Object.values(s.skills)].flatMap(t => t.effects.filter(isExpression))];
+  const byId = new Map(expressions.map(expr => [expr.id, expr]));
+  requireThat(byId.size === expressions.length, 'DSL 全局效果 ID 重复');
+  const checked = new Set();
+  function checkReferences(expr, path = new Set()) {
+    requireThat(!path.has(expr.id), `DSL 循环引用 ${expr.id}`);
+    if (checked.has(expr.id)) return;
+    path.add(expr.id);
+    for (const node of effectNodes(expr.effects)) if (node.kind === 'procEffect') {
+      requireThat(byId.has(node.ref), `DSL 未知引用 ${node.ref}`);
+      checkReferences(byId.get(node.ref), path);
+    }
+    path.delete(expr.id);
+    checked.add(expr.id);
+  }
+  expressions.forEach(expr => checkReferences(expr));
   table(s.items, (v, k) => {
     fields(v, ['id','templateId','counters']);
     requireThat(v.id === k && has(s.equipment, v.templateId), '装备实例');
-    const counterKeys = s.equipment[v.templateId].effects.filter(e => e.counterKey).map(e => e.counterKey);
-    fields(v.counters, counterKeys);
-    for (const n of Object.values(v.counters)) requireThat(int(n, 0, 50), '计数器');
+    const counters = resourceDefinitions(s.equipment[v.templateId]);
+    fields(v.counters, counters.map(e => e.resource));
+    for (const e of counters) requireThat(int(v.counters[e.resource], 0, e.cap), '计数器');
   });
   table(s.covers, (v, k) => {
     fields(v, ['id','name','x','y','material','hp','maxHp','cover']);

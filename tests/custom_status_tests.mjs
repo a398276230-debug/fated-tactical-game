@@ -1,3 +1,4 @@
+import { expression as fx } from '../src/core/effects.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
@@ -9,7 +10,7 @@ const brew = (patch = {}) => ({ id: 'slow-venom', name: '迟滞毒素', icon: '�
   modifiers: { damage: 1, damageType: 'true', movement: -1 }, ...patch });
 const define = (patch) => ({ type: 'define_status_template', template: brew(patch) });
 const upsert = (unitId, statusId, options = {}) => ({ type: 'upsert_status', unitId, statusId, options });
-const effect = (overrides = {}) => ({ kind: 'status', statusId: 'slow-venom', ...overrides });
+const effect = (overrides = {}) => fx('venom-hit', 'on_hit', 'hitTarget', [{ kind: 'grantStatus', statusId: 'slow-venom', ...overrides }]);
 const skill = (...effects) => ({ type: 'patch_skill_template', templateId: 'challenge', patch: { effects } });
 const gear = (...effects) => ({ type: 'patch_equipment_template', templateId: 'frostplate', patch: { effects } });
 const boot = (request = { scenarioId:'ruins', ruleset:'sandbox' }) => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? { scenarioId:request, ruleset:'sandbox' } : request); return a; };
@@ -30,7 +31,7 @@ test('a skill applies composed DoT and movement modifiers with bounded stacks an
   const before = a.getBattleState();
   const originalReach = reachable(before, 'move', before.units.scout).length;
   const cmd = define();
-  const p = propose(a, cmd, skill(effect({ turns: 1, stacks: 2 }), effect({ turns: 1 })));
+  const p = propose(a, cmd, skill(effect({ turns: 1, stacks: 2 }), { ...effect({ turns: 1 }), id: 'venom-hit-second' }));
   assert.equal(p.ok, true, p.error);
   assert.deepEqual(a.getBattleState(), before);
   cmd.template.modifiers.damage = 50;
@@ -50,7 +51,7 @@ test('a skill applies composed DoT and movement modifiers with bounded stacks an
 
 test('existing frost_thorns equipment hook resolves a custom status on melee hit', () => {
   const a = boot();
-  commit(a, define(), gear({ kind: 'frost_thorns', damage: 0, chance: 1, statusId: 'slow-venom' }),
+  commit(a, define(), gear(fx('venom-reaction', 'on_damaged', 'attacker', [{ kind: 'grantStatus', statusId: 'slow-venom' }], { condition: { type: 'melee' }, roll: { chance: 1 } })),
     { type: 'set_unit_stat', unitId: 'scout', patch: { x: 2, y: 2, stats: { str: 50 } } });
   turn(a, 'scout');
   a.playAction({ type: 'attack', x: 1, y: 2 });
@@ -106,15 +107,15 @@ test('only bounded modifier data and trusted effect kinds may enter the battle',
     define({ id: 'burn' }), define({ id: '__proto__' }), define({ id: 'constructor' }),
     define({ script: 'arbitrary code' }), define({ maxStacks: 11 }), define({ remainingTurns: 0 }),
     define({ modifiers: {} }), define({ modifiers: { damageType: 'true' } }),
-    define({ modifiers: { move: -1 } }), define({ modifiers: { damage: 500 } }),
+    define({ modifiers: { move: -1 } }), define({ modifiers: { damage: 100001 } }),
     define({ modifiers: { damage: 1, damageType: 'unrecognized' } }),
     define({ modifiers: { heal: Infinity } }), define({ modifiers: { movement: {} } }),
     define({ modifiers: { movement: () => 1 } }), define({ modifiers: JSON.parse('{"__proto__":1}') }),
-    skill(effect()), gear({ kind: 'frost_thorns', chance: 1, damage: 0, statusId: 'missing' }),
+    skill(effect()), gear(effect({ statusId: 'missing' })),
     upsert('scout', 'slow-venom'),
   ]) assert.equal(propose(a, cmd).ok, false, JSON.stringify(cmd));
   for (const cmd of [skill({ kind: 'eval' }), skill(effect({ amount: 1 })), skill(effect({ stacks: 4 })),
-    skill(effect({ modifiers: { damage: 50 } })), gear(effect()), define()]) {
+    skill(effect({ modifiers: { damage: 0 } })), gear({ ...effect(), trigger: 'unknown' }), define()]) {
     assert.equal(propose(a, define(), cmd).ok, false, JSON.stringify(cmd));
   }
   assert.deepEqual(a.exportBattleSnapshot(), start);

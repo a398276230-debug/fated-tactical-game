@@ -5,6 +5,12 @@ import { chooseAction } from '../src/core/ai.js';
 import './spatial_tests.mjs';
 import './opportunity_tests.mjs';
 import './custom_status_tests.mjs';
+import './api_expansion_tests.mjs';
+import './custom_rules_tests.mjs';
+import './dsl_tests.mjs';
+import './dsl_v12_tests.mjs';
+import './dsl_v13_tests.mjs';
+import './dsl_migration_tests.mjs';
 import './combat_protocol_tests.mjs';
 import './live_protocol_tests.mjs';
 import './zone_tests.mjs';
@@ -13,6 +19,7 @@ import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';
 import './control_state_tests.mjs';
 import './tavern_tests.mjs';
+import './ai_session_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };
@@ -95,7 +102,7 @@ test('旧战局按末态续接，不将新规则反算到旧撤销记录', () =>
   const b=createGameAPI(); assert.equal(b.restoreBattleSnapshot(saved).migratedFrom,1);
   assert.deepEqual(b.getBattleState(),saved.state);
   assert.equal(b.undoLastCommit().ok,false);
-  assert.equal(b.exportBattleSnapshot().version,2);
+  assert.equal(b.exportBattleSnapshot().version,3);
 });
 
 test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移动', () => {
@@ -141,7 +148,7 @@ test('优势/劣势抵消；自然 1/20 门槛与命中概率可审计', () => {
 test('装备转手/热改/跨战：同名两刀不串值，常驻状态跟随 ID', () => {
   const a = boot();
   commit(a,counter('soulblade-lan',3),counter('soulblade-spare',2), status('swordsman','haste',{durationType:'persistent'}), status('swordsman','blind'));
-  commit(a,{type:'patch_equipment_template',templateId:'soulblade',patch:{effects:[{kind:'kill_charge_weapon',counterKey:'souls',bonusPerStack:.75,maxStacks:8}]}},
+  commit(a,{type:'patch_equipment_template',templateId:'soulblade',patch:{effects: a.getBattleState().equipment.soulblade.effects.map(e => ({ ...e, effects: e.effects.map(n => n.resourceScale ? { ...n, resourceScale: { ...n.resourceScale, perUnit: .75 } } : n.cap ? { ...n, cap: 8 } : n) }))}},
     {type:'equip_item',instanceId:'soulblade-lan',unitId:'ranger'},{type:'equip_item',instanceId:'soulblade-spare',unitId:'swordsman'});
   assert.equal(u(a,'ranger').equipment[0].counters.souls,3);
   assert.equal(u(a,'swordsman').equipment[0].counters.souls,2);
