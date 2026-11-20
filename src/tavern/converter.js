@@ -238,13 +238,23 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist) {
 
 export function collectMvu(value) {
   const root = asObject(value?.stat_data ?? value?.statData ?? value);
+  const lengths = asObject(root.事件?.战术扩展?.体长);
+  const companionLengths = asObject(lengths.伙伴);
   const found = [];
   const visit = (node, key = '', path = []) => {
     if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path, i]));
     if (!object(node)) return;
     const name = sourceName(node, key), hasStats = node.stats || node.attributes || node.属性 || ['力量','敏捷','体质','智力','精神'].some(k => own(node, k));
     const hasResource = ['hp', 'maxHp', 'mp', 'sp', 'tier', 'level', 'equipment', 'skills', '生命值', '法力值', '体力值', '装备', '技能', '资源'].some(k => own(node, k));
-    if (name && (hasStats || hasResource)) found.push({ ...clone(node), __sourceKey: key, __sourcePath: path, __sourceKind: 'MVU' });
+    if (name && (hasStats || hasResource)) {
+      // Resolve by MVU path, not the battle display name. Include the value in
+      // the character record so snapshot hashes also track form changes.
+      const length = path.length === 1 && protagonistAliases.includes(path[0]) ? lengths.主角
+        : path.length === 2 && path[0] === '关系列表' && own(companionLengths, key) ? companionLengths[key] : undefined;
+      const record = clone(node);
+      if (Number.isFinite(length) && length > 0) record.bodyLengthM = length;
+      found.push({ ...record, __sourceKey: key, __sourcePath: path, __sourceKind: 'MVU' });
+    }
     for (const [k, v] of Object.entries(node)) if (!['stats', 'attributes', '属性', 'resources', '资源', 'equipment', '装备', 'skills', '技能', 'statuses', '状态效果'].includes(k)) visit(v, k, [...path, k]);
   };
   visit(root);

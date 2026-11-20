@@ -183,6 +183,37 @@ test('体长：显式单位、别名与外貌兜底均换算为米，再派生 s
     assert.deepEqual([u.bodyLengthM,u.size,u.mc],expected); assert.deepEqual(warnings,[]);
   }
 });
+test('MVU 战术扩展体长优先，伙伴按关系键匹配，快照跟踪形态变化', async () => {
+  const stat_data = {
+    主角: { ...mvu.主角, bodyLengthM: 4.2 },
+    关系列表: { 艾莉亚: { ...mvu.主角, 体长: '180cm' } },
+    事件: { 战术扩展: { 体长: { 主角: 1.7, 伙伴: { 艾莉亚: 1.7 } } } },
+  };
+  const battleInit = `<battle_init>
+battle|1|size-test|演武场|flat
+unit|p1|blue|mvu:主角|瑞吉|2,2
+unit|a1|blue|mvu:关系列表/艾莉亚|艾莉亚·化身|3,2
+unit|e1|red|char_info|木偶|7,7
+</battle_init>`;
+  const charInfo = [{ name: '木偶', 体长: '2米', 属性: mvu.主角.属性 }];
+  const read = () => hydrateFromSources({ mvu: { stat_data }, battleInit, charInfo }, { throwOnValidation: true });
+  const snapshot = result => characterRecords({ mvuData: stat_data, battleInit: result.battleInit, charInfo }, result);
+  const first = read();
+  assert.deepEqual(['p1', 'a1', 'e1'].map(id => first.state.units[id].bodyLengthM), [1.7, 1.7, 2]);
+  assert.equal(stat_data.主角.bodyLengthM, 4.2);
+  assert.equal(stat_data.关系列表.艾莉亚.体长, '180cm');
+  const firstSnapshot = await snapshot(first);
+  stat_data.事件.战术扩展.体长.伙伴.艾莉亚 = 3.2;
+  const changed = read();
+  assert.equal(changed.state.units.a1.bodyLengthM, 3.2);
+  assert.equal(changed.state.units.a1.size, 4);
+  const changedSnapshot = await snapshot(changed);
+  assert.notEqual(changedSnapshot.a1.hash, firstSnapshot.a1.hash);
+  assert.equal(changedSnapshot.p1.hash, firstSnapshot.p1.hash);
+  stat_data.事件.战术扩展.体长.伙伴.艾莉亚 = -1;
+  assert.equal(read().state.units.a1.bodyLengthM, 1.8);
+});
+
 test('体长：非法值单独归属该单位；没有填写则静默默认，不把武器长度当身高', () => {
   for (const bad of ['未知','0米','-2m',null]) {
     const {state,warnings}=hydrateDummy({体长:bad}); assert.equal(state.units.e1.bodyLengthM,1.7);

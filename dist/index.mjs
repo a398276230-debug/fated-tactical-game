@@ -8894,13 +8894,20 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist) {
 }
 function collectMvu(value) {
   const root = asObject(value?.stat_data ?? value?.statData ?? value);
+  const lengths = asObject(root.\u4E8B\u4EF6?.\u6218\u672F\u6269\u5C55?.\u4F53\u957F);
+  const companionLengths = asObject(lengths.\u4F19\u4F34);
   const found = [];
   const visit = (node3, key4 = "", path = []) => {
     if (Array.isArray(node3)) return node3.forEach((v, i) => visit(v, String(i), [...path, i]));
     if (!object3(node3)) return;
     const name = sourceName(node3, key4), hasStats = node3.stats || node3.attributes || node3.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own5(node3, k));
     const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own5(node3, k));
-    if (name && (hasStats || hasResource)) found.push({ ...clone(node3), __sourceKey: key4, __sourcePath: path, __sourceKind: "MVU" });
+    if (name && (hasStats || hasResource)) {
+      const length = path.length === 1 && protagonistAliases.includes(path[0]) ? lengths.\u4E3B\u89D2 : path.length === 2 && path[0] === "\u5173\u7CFB\u5217\u8868" && own5(companionLengths, key4) ? companionLengths[key4] : void 0;
+      const record2 = clone(node3);
+      if (Number.isFinite(length) && length > 0) record2.bodyLengthM = length;
+      found.push({ ...record2, __sourceKey: key4, __sourcePath: path, __sourceKind: "MVU" });
+    }
     for (const [k, v] of Object.entries(node3)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path, k]);
   };
   visit(root);
