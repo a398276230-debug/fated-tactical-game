@@ -342,9 +342,9 @@ function createEffectEngine(io) {
     const p = expr.params ?? {};
     return (usage?.count ?? 0) < (p.usesPerBattle ?? (expr.trigger === "on_equip" ? 1 : Infinity)) && (usage == null || state.round - usage.round >= (p.cooldown ?? 0));
   }
-  function condition3(state, actor, subject2, rule, ctx, entry) {
+  function condition3(state, actor, subject3, rule, ctx, entry) {
     if (!rule) return true;
-    const check2 = (child) => condition3(state, actor, subject2, child, ctx, entry);
+    const check2 = (child) => condition3(state, actor, subject3, child, ctx, entry);
     if (Array.isArray(rule)) return rule.every(check2);
     const { type, value, op } = rule;
     switch (type) {
@@ -357,17 +357,17 @@ function createEffectEngine(io) {
       case "selfHp":
         return compare2(ratio(actor), op, value);
       case "targetHp":
-        return compare2(ratio(subject2), op, value);
+        return compare2(ratio(subject3), op, value);
       case "targetLevel":
-        return !!subject2 && compare2(subject2.tier ?? 1, op, actor.tier ?? 1);
+        return !!subject3 && compare2(subject3.tier ?? 1, op, actor.tier ?? 1);
       case "targetHasCategory": {
-        if (!subject2) return false;
-        const categories = values(subject2.statuses).map((s) => s.category);
+        if (!subject3) return false;
+        const categories = values(subject3.statuses).map((s) => s.category);
         const negative = categories.some((x) => ["debuff", "dot", "control"].includes(x));
         return value === "none" ? !negative : value === "negative" ? negative : categories.includes(value);
       }
       case "targetCreatureType":
-        return [].concat(subject2?.creatureType ?? []).includes(value);
+        return [].concat(subject3?.creatureType ?? []).includes(value);
       case "timeOfDay":
         return state.time?.timeOfDay === value;
       case "selfHasStatus":
@@ -375,11 +375,11 @@ function createEffectEngine(io) {
       case "selfStatusModifier":
         return Boolean(io.statusModifier(actor, rule.key)) === value;
       case "targetHasStatus":
-        return !!own(subject2?.statuses, value);
+        return !!own(subject3?.statuses, value);
       case "selfHasTag":
         return actor.tags?.includes(value) ?? false;
       case "targetHasTag":
-        return subject2?.tags?.includes(value) ?? false;
+        return subject3?.tags?.includes(value) ?? false;
       case "duel":
         return io.living(state).length === 2 === (value ?? true);
       case "resourceAtLeast":
@@ -395,7 +395,7 @@ function createEffectEngine(io) {
       case "hitRating":
         return ctx.hitRating === value;
       case "enemy":
-        return Boolean(subject2 && subject2.team !== actor.team) === (value ?? true);
+        return Boolean(subject3 && subject3.team !== actor.team) === (value ?? true);
       case "intercepting":
       case "melee":
       case "arrow":
@@ -407,7 +407,7 @@ function createEffectEngine(io) {
       case "highGround":
         return Boolean(ctx[type]) === (value ?? true);
       case "distance":
-        return !!subject2 && compare2(io.distance(state, actor, subject2), op, value);
+        return !!subject3 && compare2(io.distance(state, actor, subject3), op, value);
       case "usesLeft":
         return available(state, actor, entry) === (value ?? true);
       default:
@@ -431,7 +431,7 @@ function createEffectEngine(io) {
         return io.living(state).filter((u) => u.team === actor.team === (name === "alliesInRadius") && (ctx.skillArea ? ctx.skillArea.has(u.id) : io.distance(state, center, u) <= radius));
     }
   }
-  const subject = (actor, target2, ctx) => target2 === actor ? ctx.target ?? actor : target2;
+  const subject2 = (actor, target2, ctx) => target2 === actor ? ctx.target ?? actor : target2;
   function magnitude(state, actor, target2, p, ctx) {
     const tier = actor.tier ?? 1;
     const ls = p.levelScaling;
@@ -466,7 +466,7 @@ function createEffectEngine(io) {
       const p = { ...entry.expr.params, ...node3 };
       const recipients = node3.target && node3.target !== exprTarget ? targets(state, actor, node3.target, ctx, p.radius ?? 1) : [inherited];
       for (const target2 of recipients) {
-        if (!condition3(state, actor, subject(actor, target2, ctx), p.condition, ctx, entry)) continue;
+        if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
         const label = node3.label ?? entry.expr.label ?? entry.expr.id;
         const amount2 = Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target2, p, ctx) + (["heal", "shield", "damage"].includes(node3.kind) ? (p.percent ?? 0) * target2.maxHp : 0)) * (ctx.skillScale ?? 1))));
         let result;
@@ -580,7 +580,7 @@ function createEffectEngine(io) {
     if (depth > 8 || seen.has(entry.expr.id) || !available(state, actor, entry) || !sourceApplies(entry, ctx)) return false;
     const { expr, key: key4 } = entry;
     if (![...effectNodes(expr.effects, true)].some((node3) => node3.kind !== "chainEffect")) return false;
-    const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((target2) => condition3(state, actor, subject(actor, target2, ctx), expr.condition, ctx, entry));
+    const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((target2) => condition3(state, actor, subject2(actor, target2, ctx), expr.condition, ctx, entry));
     if (!eligible.length) return false;
     const roll = expr.roll;
     if (roll?.dice && io.die(state, 20) < roll.gte) return false;
@@ -8325,11 +8325,11 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist) {
   if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
   const char = chars.find((record2) => sourceName(record2) === name);
   if (charSources.includes(source.toLowerCase())) return char;
-  const matches2 = (record2, key4) => [sourceId(record2), sourceName(record2), record2.__sourceKey].includes(key4);
-  if (source) return [...mvuRecords, ...chars].find((record2) => matches2(record2, source));
+  const matches3 = (record2, key4) => [sourceId(record2), sourceName(record2), record2.__sourceKey].includes(key4);
+  if (source) return [...mvuRecords, ...chars].find((record2) => matches3(record2, source));
   const exact = [text2(participant.id ?? participant.uid), name].filter(Boolean);
   for (const key4 of exact) {
-    const record2 = mvuRecords.find((record3) => matches2(record3, key4));
+    const record2 = mvuRecords.find((record3) => matches3(record3, key4));
     if (record2) return record2;
   }
   return char;
@@ -8369,8 +8369,8 @@ function statusTurns(value, fallback) {
   const turns2 = typeof value === "string" ? value.match(/^\s*(\d+)\s*(?:回合|轮)\s*$/)?.[1] ?? value : value;
   return bound(turns2, 1, 100, fallback);
 }
-function warningSink(warnings, unitId, source, scope) {
-  return { push: (message) => warnings.push({ message, unitId, source, scope }) };
+function warningSink(warnings, unitId, source, scope, originPath) {
+  return { push: (message) => warnings.push({ message, unitId, source, scope, ...originPath && { originPath } }) };
 }
 function mapEffects(effects2, context = "skill", warnings = [], prefix = "imported") {
   return convertEffects(effects2, context, warningSink(warnings, null, null, "effect"), prefix);
@@ -8473,7 +8473,7 @@ function normalizeDice(raw) {
     type: damageTypes2.includes(type) ? type : "physical"
   };
 }
-function normalizeEquipment(raw, slot, owner, index, warnings) {
+function normalizeEquipment(raw, slot, owner, index, sink) {
   const r = asObject(raw), name = text2(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot || "\u88C5\u5907"}${index + 1}`;
   const isShield = slot === "shield" || r.kind === "shield" || r.shield === true || r.weaponClass === "shield" || /盾/.test(name);
   const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text2(r.tags ?? r.\u6807\u7B7E);
@@ -8483,7 +8483,7 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
   const isWeapon = kind === "weapon";
   const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
   const templateId = `template-${idBase}`;
-  const effects2 = convertEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", warnings, `fx-${hash(templateId).toString(36)}`);
+  const effects2 = convertEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", sink("effect", `/equipment/${templateId}`), `fx-${hash(templateId).toString(36)}`);
   const template = { name: name.slice(0, 100), kind, effects: effects2 };
   const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
   const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? defenseTag?.[1], 0, 1e6, kind === "shield" ? 1 : 0);
@@ -8627,7 +8627,7 @@ function xyzOf(value) {
   return { x: Math.max(0, Math.min(9, integer3(xyz[0], 0))), y: Math.max(0, Math.min(9, integer3(xyz[1], 0))), z: integer3(xyz[2], 0) };
 }
 function unitFrom(record2, participant, index, equipment, skills, items, sink) {
-  const effects2 = sink("effect"), resourcesSink = sink("resource"), warnings = sink("status");
+  const resourcesSink = sink("resource"), warnings = sink("status");
   const p = participant ?? {};
   const name = text2(p.protagonistName || p.name) || sourceName(record2, p.id) || `\u5355\u4F4D ${index + 1}`;
   const id3 = p.id;
@@ -8637,7 +8637,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink) {
   const size = Math.min(5, 3 - sizeFor(bodyLengthM).value);
   const mc = Math.max(1, Math.min(64, integer3(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource2(record2, "hp", Math.max(1, stats2.con * 100)), "hp", resourcesSink), mp: safeResource(resource2(record2, "mp", Math.max(0, (stats2.int + stats2.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource2(record2, "sp", Math.max(0, (stats2.str + stats2.agi) * 10)), "sp", resourcesSink) };
-  const slotItems = sourceEquipment(record2).map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, effects2));
+  const slotItems = sourceEquipment(record2).map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, sink));
   for (const item of slotItems) {
     equipment[item.templateId] ??= item.template;
     items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
@@ -8667,7 +8667,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink) {
       shape: ["single", "circle", "fan", "cone", "line"].includes(r.shape) ? r.shape : "single",
       target: ["enemy", "ally", "self", "any", "corpse", "cell"].includes(r.target) ? r.target : "enemy",
       ...text2(r.school) ? { school: text2(r.school).slice(0, 100) } : {},
-      effects: convertEffects(r.effects ?? r.\u6548\u679C, "skill", effects2, `fx-${hash(sid).toString(36)}`)
+      effects: convertEffects(r.effects ?? r.\u6548\u679C, "skill", sink("effect", `/skills/${sid}`), `fx-${hash(sid).toString(36)}`)
     };
     if (!r.damage && (r.power != null || taggedPower) && nodes.length && (Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects))) {
       skills[sid].effects.push({ id: `fx-${hash(sid).toString(36)}-damage`, trigger: "active", target: "hitTarget", effects: nodes });
@@ -8776,7 +8776,7 @@ function uniquePositions(units, state) {
 }
 function hydrateFromSources(input = {}, options = {}) {
   const source = asObject(input), warnings = [];
-  const sink = (unitId, source2, scope) => warningSink(warnings, unitId, source2, scope);
+  const sink = (unitId, source2, scope, path) => warningSink(warnings, unitId, source2, scope, path);
   const protagonistName = text2(source.protagonistName ?? options.protagonistName);
   const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
   const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
@@ -8801,7 +8801,7 @@ function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
     if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
-    const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope) => sink(id3, origin, scope));
+    const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path));
     units[id3] = made.unit;
     profiles[id3] = made.profile;
     sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2) };
@@ -8862,6 +8862,42 @@ function battleReportToMvuPatch(report, sourceMap = {}, options = {}) {
 function buildMvuJsonPatch(report, sourceMap = {}, options = {}) {
   const patch = battleReportToMvuPatch(report, sourceMap, options);
   return `<UpdateVariable><JSONPatch>${JSON.stringify(patch)}</JSONPatch></UpdateVariable>`;
+}
+
+// src/tavern/resolved-warnings.js
+var warningKey = (w) => JSON.stringify([w.source, w.scope, w.originPath ?? "", w.message]);
+var strings = (v) => (Array.isArray(v) ? v : [v]).filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
+var matches2 = (message, s) => message.includes(s) || s.includes(message);
+var subject = (message) => message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim() ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
+function resolvedDiagnostics(sent, records, patch, reply) {
+  const top = [...strings(reply.resolved), ...strings(reply.resolvedWarnings)];
+  const declared = top.length || patch.some((op) => strings(op.resolves).length);
+  const pending = strings(reply.unresolved);
+  const isPending = (w) => pending.some((s) => matches2(w.message, s) || subject(w.message) && s.includes(subject(w.message)));
+  return sent.filter((w) => {
+    if (w.unitId == null || !Object.hasOwn(records, w.unitId) || isPending(w)) return false;
+    const label = subject(w.message);
+    if (top.some((s) => w.message.includes(s))) return true;
+    return patch.some((op) => {
+      const owner = op.path.match(/^\/units\/([^/]+)/)?.[1];
+      if (owner && owner !== w.unitId) return false;
+      const path = op.path.split("/").slice(0, 3).join("/");
+      if (w.originPath && path.split("/")[1] === w.originPath.split("/")[1] && path !== w.originPath) return false;
+      if (declared) return strings(op.resolves).some((s) => w.message.includes(s));
+      if (!w.originPath) {
+        const [, , , field, statusId2] = op.path.split("/");
+        return owner === w.unitId && field === "statuses" && w.scope === "status" && !!statusId2 && w.message.includes(statusId2);
+      }
+      if (path !== w.originPath) return false;
+      return sent.filter((other) => other.unitId === w.unitId && other.originPath === path && !isPending(other)).length === 1 || label && JSON.stringify(op.value ?? "").includes(label);
+    });
+  });
+}
+function remainingDiagnostics(warnings, snapshots, characters) {
+  return warnings.filter((w) => {
+    const snapshot = snapshots[w.unitId];
+    return !snapshot || snapshot.hash !== characters[w.unitId]?.hash || !snapshot.resolvedWarnings?.includes(warningKey(w));
+  });
 }
 
 // src/tavern/host.js
@@ -9285,8 +9321,9 @@ var TAG_MAPPING = `\u3010\u4E16\u754C\u4E66\u6807\u7B7E \u2192 DSL / API \u6620\
 \u2022 [\u5173\u8054\u5C5E\u6027: \u654F\u6377] \u2192 \u6280\u80FD\u7684\u5173\u8054\u68C0\u5B9A\u5C5E\u6027\u4E3A agi\uFF1B\u4E0D\u8981\u628A\u65BD\u672F\u8005\u7684\u5173\u8054\u5C5E\u6027\u8BEF\u4F5C\u76EE\u6807\u7684\u8C41\u514D\u5C5E\u6027\u3002[\u6709\u6548\u8DDD\u79BB: \u4E2D\u7A0B(5)] \u2192 range:5\u3002
 \u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 range:4\u3001shape:fan\u3001target:enemy\uFF0Cradius \u6309\u5B9E\u9645\u8986\u76D6\u534A\u5F84\u586B\u5199\uFF0C\u4E0D\u628A\u5C04\u7A0B\u5F53\u534A\u5F84\u3002
 \u2022 \u7A7A\u6548\u679C\uFF1A\u76EE\u6807\u5BF9\u8C61\u7684\u6548\u679C\u5B57\u6BB5\u4E3A {} \u6216\u7F3A\u5931\u65F6\uFF0C\u8868\u793A\u8BE5\u5B57\u6BB5\u6CA1\u6709\u53EF\u6267\u884C\u6548\u679C\uFF0C\u4E0D\u4EA7\u751F\u4EFB\u4F55\u8865\u4E01\u64CD\u4F5C\uFF0C\u4E5F\u4E0D\u8BA1\u5165 unresolved\u3002\u7EAF\u4F4D\u79FB\u3001\u7EAF\u72B6\u6001\u6388\u4E88\u7B49\u6280\u80FD\u4ECD\u6709\u53EF\u6267\u884C\u8282\u70B9\uFF0C\u4E0D\u5C5E\u4E8E\u7A7A\u6548\u679C\u3002`;
-var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, EFFECT_PROTOCOL, STATUS_CATALOG].join("\n\n");
-var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组；不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1Apatch \u64CD\u4F5C\u7684\u53EF\u9009 resolves\uFF08\u5B57\u7B26\u4E32\u6216\u5B57\u7B26\u4E32\u6570\u7EC4\uFF09\u8BF4\u660E\u8BE5\u64CD\u4F5C\u89E3\u51B3\u7684\u539F\u8BCA\u65AD\uFF1B\u4E5F\u53EF\u5728\u54CD\u5E94\u9876\u5C42\u4F7F\u7528 resolved \u6216 resolvedWarnings \u5B57\u7B26\u4E32\u6570\u7EC4\u3002\u8FD9\u4E9B\u5B57\u6BB5\u4E0D\u662F DSL \u8282\u70B9\u6216\u6218\u5C40\u5B57\u6BB5\u3002";
+var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
+var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，优先在操作上填写 resolves，复制已解决诊断原文或足以唯一定位的效果名；也可用顶层 resolved 或 resolvedWarnings 数组。只声明本次已修复的诊断；未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
@@ -9310,7 +9347,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 【拆解原则】先尝试拆解，再考虑放弃。可用多状态 + 手动触发技能组合表达复杂效果。仅当引擎没有 kind 或组合可表达时才放入 unresolved，写明原效果并简述尝试过的方向（一句话）。部分可解时提交可解部分。
 拆解后先在内部列出拟用的 kind / status，逐个自查：参数写全了吗？statusId 存在吗？数值在范围内吗？然后只输出最终 {"patch":[],"unresolved":[]}。
 正例（仅当快照确有 p1，且警告明确其护甲应为 6）：
-{"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]}
+{"patch":[{"op":"replace","path":"/units/p1/armor","value":6,"resolves":["基础护甲缺失"]}],"unresolved":[]}
 【DSL 正例】先找事件、筛选条件及概率，再确定目标、节点字段与数值。下面每行是一条可放入 effects 的表达式，换成全局唯一 ID。
 • 简单命中附状态：{"id":"hit_burn","label":"灼印","trigger":"on_hit","target":"hitTarget","effects":[{"kind":"grantStatus","statusId":"burn","turns":2}]}
 • 条件加成：{"id":"night_edge","trigger":"passive","target":"self","condition":{"type":"timeOfDay","value":"night"},"effects":[{"kind":"multiplyDamage","factor":1.2}]}
@@ -10112,11 +10149,11 @@ async function characterRecords(sources, hydrated) {
     const mapping = hydrated.sourceMap?.[unit.id] ?? {};
     const p = participants.find?.((p2) => p2.id === unit.id) ?? participants[unit.id] ?? participants[i];
     const names = new Set([unit.id, unit.name, p?.name, mapping.sourceId, mapping.sourceName].filter(Boolean));
-    const matches2 = (r) => aliases(r).some((x) => names.has(x));
+    const matches3 = (r) => aliases(r).some((x) => names.has(x));
     const samePath2 = mvu.find((r) => mapping.path && JSON.stringify(r.__sourcePath) === JSON.stringify(mapping.path));
-    const mv = samePath2 ?? mvu.find(matches2);
+    const mv = samePath2 ?? mvu.find(matches3);
     if (mv) aliases(mv).forEach((name) => names.add(name));
-    const char = sources.charInfo?.find(matches2);
+    const char = sources.charInfo?.find(matches3);
     const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
     const defs = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
     const raw = {
@@ -10597,6 +10634,7 @@ function parseJSONPatch(value) {
   const parsed = parseAIResponse(value).data;
   if (Array.isArray(parsed)) return parsed;
   if (Array.isArray(parsed?.patch)) return parsed.patch;
+  if (Array.isArray(parsed?.patches)) return parsed.patches;
   if (Array.isArray(parsed?.jsonPatch)) return parsed.jsonPatch;
   if (Array.isArray(parsed?.battle_patch)) return parsed.battle_patch;
   if (Array.isArray(parsed?.unit_patch)) return parsed.unit_patch;
@@ -10605,7 +10643,7 @@ function parseJSONPatch(value) {
   return null;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.2.0";
+var TAVERN_VERSION = "0.2.1";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
@@ -11460,6 +11498,12 @@ ${tag.textContent || ""}
     const node3 = pages.sandbox.querySelector("[data-status]");
     if (node3) node3.textContent = `\u9519\u8BEF\uFF1A${error2?.message || error2}`;
   }
+  function filterResolved(stored, records) {
+    const warnings = sources.warnings ??= [];
+    const remaining = remainingDiagnostics(warnings, stored, records);
+    warnings.splice(0, warnings.length, ...remaining);
+    diagnostics.warnings = warnings;
+  }
   function liveState() {
     return gameMount?.getState?.() ?? currentState;
   }
@@ -11512,6 +11556,7 @@ ${tag.textContent || ""}
       for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
       if (key4 && (changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
       if (config.rosterSelection === null && ids.length) persistSettings({ rosterSelection: ids });
+      filterResolved(stored, fresh);
       const live = liveState();
       for (const unit of Object.values(live?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
       scanStatus = changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u65E0\u53D8\u5316\uFF0C\u8DF3\u8FC7\u81EA\u52A8\u6807\u51C6\u5316";
@@ -11615,6 +11660,7 @@ ${tag.textContent || ""}
         throw new Error("\u6CA1\u6709\u53EF\u6807\u51C6\u5316\u7684\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6C99\u76D8");
       }
       let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
+      const sentWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)).filter((w) => prompts.some((m) => m.content.includes(JSON.stringify(w.message)))) : [];
       if (!normalize) {
         prompts = [...prompts, ...history, { role: "user", content: requestText }];
         lastSent = prompts;
@@ -11630,7 +11676,7 @@ ${tag.textContent || ""}
       };
       const cancelled = new Promise((_, reject) => controller2.signal.addEventListener("abort", () => reject(controller2.signal.reason), { once: true }));
       const validate = options.validateState || validateState;
-      let patch, nextState, combined;
+      let patch, nextState, combined, solved;
       for (let attempt = 0; ; attempt++) {
         const reply = await Promise.race([
           requestTavernAI(host, config, prompts, options.fetch, controller2.signal, streamUpdate),
@@ -11661,6 +11707,10 @@ ${tag.textContent || ""}
             }
           }
           if (normalize && !patch.length) throw new Error("\u6A21\u578B\u8FD4\u56DE\u7A7A\u8865\u4E01\uFF0C\u6CA1\u6709\u53EF\u6CE8\u5165\u7684\u53D8\u66F4");
+          if (normalize) {
+            solved = resolvedDiagnostics(sentWarnings, records, patch, { ...parsed.data, unresolved });
+            patch = patch.map(({ resolves, ...operation }) => operation);
+          }
           nextState = (options.applyPatch ?? applyPatch)(liveState(), patch, normalize);
           validate(nextState);
           if (normalize && patch.length) {
@@ -11694,7 +11744,9 @@ ${tag.textContent || ""}
       if (combined) {
         const stored = { ...config.charSnapshots[key4] }, hashes = {};
         for (const [id4, rec] of Object.entries(records)) {
-          stored[id4] = { ...rec, at: Date.now(), normalized: true };
+          const previous = stored[id4]?.hash === rec.hash ? stored[id4].resolvedWarnings ?? [] : [];
+          const resolvedWarnings = [.../* @__PURE__ */ new Set([...previous, ...solved.filter((w) => w.unitId === id4).map(warningKey)])];
+          stored[id4] = { ...rec, at: Date.now(), normalized: true, resolvedWarnings };
           hashes[id4] = rec.hash;
         }
         const additions = patch.map((op) => {
@@ -11711,8 +11763,10 @@ ${tag.textContent || ""}
           return { patch: [op], hashes: owners.length ? Object.fromEntries(owners.map((id4) => [id4, hashes[id4]])) : hashes };
         });
         persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored }, normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] } });
+        filterResolved(stored, characters);
         scanStatus = `\u5DF2\u6807\u51C6\u5316 ${Object.keys(records).length} \u4E2A\u89D2\u8272`;
         renderInstances();
+        prepareMessages();
       }
       updateReply({ content: replyText, status: "ok" });
       const result = Array.isArray(patch) && !patch.length ? "\u65E0\u8865\u4E01\u53D8\u66F4" : "\u8865\u4E01\u5DF2\u5E94\u7528";
@@ -11778,7 +11832,11 @@ ${tag.textContent || ""}
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone2(config), getDiagnostics: () => clone2(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone2(sources), getState: () => clone2(liveState()) };
+  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone2(config), getDiagnostics: () => clone2(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone2(sources), getState: () => {
+    const state = clone2(liveState());
+    if (state) Object.defineProperty(state, "warnings", { value: clone2(sources.warnings ?? []) });
+    return state;
+  } };
   function dispose() {
     if (disposed) return;
     disposed = true;

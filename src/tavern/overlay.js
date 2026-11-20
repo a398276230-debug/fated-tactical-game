@@ -1,3 +1,4 @@
+import { resolvedDiagnostics, remainingDiagnostics, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
@@ -233,6 +234,7 @@ export function parseJSONPatch(value) {
   const parsed = parseAIResponse(value).data;
   if (Array.isArray(parsed)) return parsed;
   if (Array.isArray(parsed?.patch)) return parsed.patch;
+  if (Array.isArray(parsed?.patches)) return parsed.patches;
   if (Array.isArray(parsed?.jsonPatch)) return parsed.jsonPatch;
   if (Array.isArray(parsed?.battle_patch)) return parsed.battle_patch;
   if (Array.isArray(parsed?.unit_patch)) return parsed.unit_patch;
@@ -244,7 +246,7 @@ export function parseJSONPatch(value) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.2.0';
+export const TAVERN_VERSION = '0.2.1';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
@@ -892,6 +894,12 @@ export function mountTavernOverlay(options = {}) {
     }
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
+  function filterResolved(stored, records) {
+    const warnings = sources.warnings ??= [];
+    const remaining = remainingDiagnostics(warnings, stored, records);
+    warnings.splice(0, warnings.length, ...remaining);
+    diagnostics.warnings = warnings;
+  }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
   function applyNormalization(state, patch) {
     if (!patch?.length) return state;
@@ -941,6 +949,7 @@ export function mountTavernOverlay(options = {}) {
       for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
       if(key && (changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
       if(config.rosterSelection===null && ids.length) persistSettings({rosterSelection:ids});
+      filterResolved(stored, fresh);
       const live=liveState();
       for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
       scanStatus=changed.length?`待标准化 ${changed.length} 个角色`:'无变化，跳过自动标准化';
@@ -1011,6 +1020,8 @@ export function mountTavernOverlay(options = {}) {
           throw new Error('没有可标准化的战局，请先扫描沙盘');
         }
         let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
+        const sentWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)).filter(w =>
+          prompts.some(m => m.content.includes(JSON.stringify(w.message)))) : [];
         if (!normalize) {
           prompts = [...prompts, ...history, { role: 'user', content: requestText }];
           lastSent = prompts;
@@ -1027,7 +1038,7 @@ export function mountTavernOverlay(options = {}) {
         };
         const cancelled = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
         const validate = options.validateState || defaultValidateState;
-        let patch, nextState, combined;
+        let patch, nextState, combined, solved;
         for (let attempt = 0; ; attempt++) {
           const reply = await Promise.race([
             requestTavernAI(host, config, prompts, options.fetch, controller.signal, streamUpdate), cancelled,
@@ -1055,6 +1066,10 @@ export function mountTavernOverlay(options = {}) {
               }
             }
             if (normalize && !patch.length) throw new Error('模型返回空补丁，没有可注入的变更');
+            if (normalize) {
+              solved = resolvedDiagnostics(sentWarnings, records, patch, {...parsed.data, unresolved});
+              patch = patch.map(({resolves, ...operation}) => operation);
+            }
             nextState = (options.applyPatch ?? applyPatch)(liveState(), patch, normalize);
             validate(nextState);
             if (normalize && patch.length) {
@@ -1085,7 +1100,11 @@ export function mountTavernOverlay(options = {}) {
         }
         if (combined) {
           const stored={...config.charSnapshots[key]}, hashes={};
-          for(const [id,rec] of Object.entries(records)) {stored[id]={...rec,at:Date.now(),normalized:true};hashes[id]=rec.hash;}
+          for(const [id,rec] of Object.entries(records)) {
+            const previous = stored[id]?.hash === rec.hash ? stored[id].resolvedWarnings ?? [] : [];
+            const resolvedWarnings = [...new Set([...previous, ...solved.filter(w=>w.unitId===id).map(warningKey)])];
+            stored[id]={...rec,at:Date.now(),normalized:true,resolvedWarnings};hashes[id]=rec.hash;
+          }
           // Keep operation order, tagging each operation with the units that actually use its target.
           // Shared template definitions remain available while any dependent unit is unchanged.
           const additions=patch.map(op=>{
@@ -1101,7 +1120,8 @@ export function mountTavernOverlay(options = {}) {
             return {patch:[op],hashes:owners.length?Object.fromEntries(owners.map(id=>[id,hashes[id]])):hashes};
           });
           persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored},normalizationBatches:{...config.normalizationBatches,[key]:[...batches(key),...additions]}});
-          scanStatus=`已标准化 ${Object.keys(records).length} 个角色`; renderInstances();
+          filterResolved(stored, characters);
+          scanStatus=`已标准化 ${Object.keys(records).length} 个角色`; renderInstances(); prepareMessages();
         }
         updateReply({ content: replyText, status: 'ok' });
         const result = Array.isArray(patch) && !patch.length ? '无补丁变更' : '补丁已应用';
@@ -1145,7 +1165,7 @@ export function mountTavernOverlay(options = {}) {
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => clone(liveState()) };
+  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => { const state = clone(liveState()); if (state) Object.defineProperty(state,'warnings',{value:clone(sources.warnings ?? [])}); return state; } };
   function dispose() {
     if (disposed) return; disposed = true; stopTerrainNotices?.(); aiController?.abort(); battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
   try { host.__fatedTacticalTavern = api; } catch (_) {}

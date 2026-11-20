@@ -267,8 +267,8 @@ function statusTurns(value, fallback) {
   return bound(turns, 1, 100, fallback);
 }
 
-function warningSink(warnings, unitId, source, scope) {
-  return { push: message => warnings.push({ message, unitId, source, scope }) };
+function warningSink(warnings, unitId, source, scope, originPath) {
+  return { push: message => warnings.push({ message, unitId, source, scope, ...(originPath && {originPath}) }) };
 }
 
 /** Map only effects understood by validation/engine. Unknown effects are dropped. */
@@ -372,7 +372,7 @@ function normalizeDice(raw) {
   };
 }
 
-function normalizeEquipment(raw, slot, owner, index, warnings) {
+function normalizeEquipment(raw, slot, owner, index, sink) {
   const r = asObject(raw), name = text(r.name ?? r.名称 ?? r.itemName) || `${slot || '装备'}${index + 1}`;
   const isShield = slot === 'shield' || r.kind === 'shield' || r.shield === true || r.weaponClass === 'shield' || /盾/.test(name);
   const labels = Array.isArray(r.tags ?? r.标签) ? (r.tags ?? r.标签).join(' ') : text(r.tags ?? r.标签);
@@ -383,7 +383,7 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
   const isWeapon = kind === 'weapon';
   const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
   const templateId = `template-${idBase}`;
-  const effects = convertEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', warnings, `fx-${hash(templateId).toString(36)}`);
+  const effects = convertEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', sink('effect', `/equipment/${templateId}`), `fx-${hash(templateId).toString(36)}`);
   const template = { name: name.slice(0, 100), kind, effects };
   const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
   const defense = bound(r.defense ?? r.防御 ?? defenseTag?.[1], 0, 1000000, kind === 'shield' ? 1 : 0);
@@ -535,7 +535,7 @@ function teamOf(value, fallback = 'red') { const t = text(value).toLowerCase(); 
 function xyzOf(value) { const p = asObject(value); const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z]; return { x: Math.max(0, Math.min(9, integer(xyz[0], 0))), y: Math.max(0, Math.min(9, integer(xyz[1], 0))), z: integer(xyz[2], 0) }; }
 
 function unitFrom(record, participant, index, equipment, skills, items, sink) {
-  const effects = sink('effect'), resourcesSink = sink('resource'), warnings = sink('status');
+  const resourcesSink = sink('resource'), warnings = sink('status');
   const p = participant ?? {};
   const name = text(p.protagonistName || p.name) || sourceName(record, p.id) || `单位 ${index + 1}`;
   const id = p.id;
@@ -545,7 +545,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
   const size = Math.min(5, 3 - sizeFor(bodyLengthM).value);
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
-  const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, effects));
+  const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, sink));
   for (const item of slotItems) {
     equipment[item.templateId] ??= item.template;
     items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
@@ -573,7 +573,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
       range: bound(r.range ?? taggedRange, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
       target: ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(r.target) ? r.target : 'enemy',
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
-      effects: convertEffects(r.effects ?? r.效果, 'skill', effects, `fx-${hash(sid).toString(36)}`),
+      effects: convertEffects(r.effects ?? r.效果, 'skill', sink('effect', `/skills/${sid}`), `fx-${hash(sid).toString(36)}`),
     };
     if (!r.damage && (r.power != null || taggedPower) && nodes.length && (Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects))) {
       skills[sid].effects.push({id:`fx-${hash(sid).toString(36)}-damage`,trigger:'active',target:'hitTarget',effects:nodes});
@@ -680,7 +680,7 @@ function uniquePositions(units, state) {
  * which the engine unit schema intentionally does not store. */
 export function hydrateFromSources(input = {}, options = {}) {
   const source = asObject(input), warnings = [];
-  const sink = (unitId, source, scope) => warningSink(warnings, unitId, source, scope);
+  const sink = (unitId, source, scope, path) => warningSink(warnings, unitId, source, scope, path);
   const protagonistName = text(source.protagonistName ?? options.protagonistName);
   const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
   const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
@@ -707,7 +707,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record.__sourceKind?.toLowerCase() ?? 'battle_init';
     if (index < participants.length && !resolved[index] && participant.source) sink(id, 'battle_init', 'state').push(`未找到参战来源：${participant.source}（${participant.name ?? participant.id}）`);
-    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, scope => sink(id, origin, scope));
+    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path));
     units[id] = made.unit;
     profiles[id] = made.profile;
     sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };

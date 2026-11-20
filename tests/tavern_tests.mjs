@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateState } from '../src/api/validation.js';
 import { applyAction, preview } from '../src/core/combat.js';
+import { resolvedDiagnostics, remainingDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
 import { effectSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
@@ -282,13 +283,28 @@ test('G127 混合伤害区分绝对值和百分比；动作、MP 和双槽消耗
 test('G134/G137/G141 结构化诊断保留角色归属和全局地形',()=>{
   const input={mvu:{主角:{name:'主角',hp:100,skills:[{name:'例一',效果:'主角被动'}]}},charInfo:{name:'怪物',skills:[{name:'例二',效果:'低伤校准'}]},battleInit:{units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'monster-1',source:'char_info',name:'怪物',team:'red',x:4,y:4}],grid:{walls:[[-1,5]]}}};
   const result=hydrateFromSources(input,{throwOnValidation:true}),{warnings}=result.state;
-  assert.deepEqual(warnings.map(({message,...meta})=>meta),[{unitId:'p',source:'mvu',scope:'effect'},{unitId:'monster-1',source:'char_info',scope:'effect'},{unitId:null,source:'terrain',scope:'terrain'}]);
+  assert.deepEqual(warnings.map(({unitId,source,scope})=>({unitId,source,scope})),[{unitId:'p',source:'mvu',scope:'effect'},{unitId:'monster-1',source:'char_info',scope:'effect'},{unitId:null,source:'terrain',scope:'terrain'}]);
   assert.ok(warnings.every(w => typeof w.message === 'string'));
   assert.strictEqual(warnings, result.warnings);
   assert.strictEqual(warningsForUnit(warnings, []), warnings);
   assert.deepEqual(warningsForUnit(warnings, ['monster-1']), warnings.slice(1));
   assert.deepEqual(warningsForUnit(warnings, ['monster-1'], false), [warnings[1]]);
   for(const slot of [{id:'warnings'},{id:'custom',custom:true,content:'{{warnings}}'}]){const msg=resolveSlotContent(slot,{sources:result,onlyUnitIds:['monster-1']});assert.ok(msg.includes('低伤校准')&&msg.includes('grid.walls')&&!msg.includes('主角被动'));}
+});
+
+test('诊断收据：操作声明和顶层别名只消除已发送、已解决的目标角色诊断',()=>{
+  const mk=(name,id='p')=>({message:`不支持的描述性效果已忽略：${name}：原描述`,unitId:id,originPath:'/skills/ice',source:'mvu',scope:'effect'});
+  const ice=mk('冰冻箭'),fire=mk('火矢'),enemy=mk('冰冻箭','e'), warnings=[ice,fire,enemy];
+  const records={p:{hash:'h'}};const op={op:'replace',path:'/skills/ice/effects',value:[]};
+  for(const [patch,reply] of [[[ {...op,resolves:'冰冻箭'} ],{}],[[op],{resolved:[ice.message]}],[[op],{resolvedWarnings:['冰冻箭']}],[[{...op,resolves:['冰冻箭','火矢']}],{unresolved:['火矢：尚不能转换']}]]) {
+    assert.deepEqual(resolvedDiagnostics(warnings,records,patch,reply),[ice]);
+  }
+  assert.deepEqual(resolvedDiagnostics(warnings,records,[op],{}),[]);
+  assert.deepEqual(resolvedDiagnostics([ice],records,[op],{}),[ice]);
+  assert.deepEqual(resolvedDiagnostics([ice],records,[{...op,path:'/skills/other/effects'}],{}),[]);
+  const snapshots={p:{hash:'h',resolvedWarnings:[warningKey(ice)]}};
+  assert.deepEqual(remainingDiagnostics(warnings,snapshots,records),[fire,enemy]);
+  assert.deepEqual(remainingDiagnostics(warnings,snapshots,{p:{hash:'changed'}}),warnings);
 });
 
 test('char fingerprint merges raw sources without hashing placement or actor AP', async () => {

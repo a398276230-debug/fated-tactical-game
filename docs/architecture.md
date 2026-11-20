@@ -1,6 +1,6 @@
 # 架构与文件归属（现状记录）
 
-记录口径：仓库当前代码（`package.json` 0.2.0，快照 `battleVersion = 3`，跨战档案 `version = 1`）。
+记录口径：仓库当前代码（`package.json` 0.2.1，快照 `battleVersion = 3`，跨战档案 `version = 1`）。
 本文只描述已存在的结构、边界和字段，不含规划项。效果 DSL 见 [dsl.md](dsl.md)，状态系统见 [status.md](status.md)。
 
 ---

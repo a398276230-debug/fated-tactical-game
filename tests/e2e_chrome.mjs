@@ -111,7 +111,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.getChatMessages = (range) => { window.hostRange = range; return range === '0-1' ? messages : [messages.at(-1)]; };
     window.Mvu = {getMvuData({message_id}) {
       hostCalls.push(message_id);
-      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:321,上限:321},装备:{旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10'}}}}}};
+      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:321,上限:321},装备:{旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...window.extraBowEffects}}}}}};
     }};
     window.generateRaw = async config => new Promise((resolve,reject) => {
       window.hostRequests ||= [];
@@ -122,7 +122,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         const state = window.__fatedTacticalTavern.getState();
         const id = state.items[state.units.p1.mainHand].templateId;
         if (!config.ordered_prompts.some(m => m.role === 'system' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('系统槽位缺少战局装备快照'));
-        resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10}]}));
+        resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10,resolves:'恒定拉距'}],unresolved:window.extraBowEffects ? ['冰冻箭：控制效果尚未实现'] : []}));
       };
     });
   })()`);
@@ -136,6 +136,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('.fated-tavern-launcher');
   await until(() => run('window.hostRequests?.length === 1'), '有警告自动调用酒馆助手');
   assert.match(await run(`${get('article.fated-instance')}.textContent`), /体型 中型 \(1\.7m\)/);
+  const cardWarnings = '.fated-instance[data-unit-id="p1"] .fated-char-diagnostics';
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*恒定拉距/);
   assert.equal(await run('window.hostRange'), '0-1');
   assert.deepEqual(await run('window.hostCalls'), [0]);
   assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
@@ -154,6 +156,22 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化完成'`), '应用校验补丁');
   await click('.fated-toast button:nth-of-type(2)');
+  for (const rescan of [false,true]) {
+    if(rescan) await run('window.__fatedTacticalTavern.scan()');
+    assert.equal(await run(`!!${get(cardWarnings)}`),false);
+    assert.deepEqual(await run(`window.__fatedTacticalTavern.getState().warnings.filter(w=>w.unitId==='p1')`),[]);
+    assert.equal(await run('hostRequests.length'),3);
+  }
+  await run(`window.extraBowEffects={冰冻箭:'命中后冰冻目标'}; window.__fatedTacticalTavern.scan()`);
+  await until(()=>run('hostRequests.length === 4'),'原文变更重新计算诊断');
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 2 条诊断/);
+  await run('window.completeHostAI()');
+  await until(()=>run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`),'部分诊断解决');
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
+  assert.doesNotMatch(await run(`${get(cardWarnings)}.textContent`), /恒定拉距/);
+  await click('.fated-toast button:nth-of-type(2)');
+  await run('window.__fatedTacticalTavern.scan()');
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
   const panelBefore = await run(`(() => { const r=document.querySelector('.fated-tavern-panel').getBoundingClientRect(); return {left:r.left,top:r.top,width:r.width,height:r.height}; })()`);
   await click('.fated-tavern-fullscreen');
   assert.equal(await run('document.querySelector(".fated-tavern-panel").classList.contains("is-fullscreen")'), true);
