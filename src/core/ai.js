@@ -1,16 +1,13 @@
-import { currentUnit, preview, reachable } from './combat.js';
-import { coverBetween, distance3D, elevation, facingToward, gridDistance, hasLOS } from './spatial.js';
+import { currentUnit, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
 const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const healthGap = unit => unit.maxHp - unit.hp;
 const samePosition = (a, b) => a.x === b.x && a.y === b.y;
-const canSee = (state, actor, target) => !target.statuses.stealth ||
-  (gridDistance(actor, target) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target)) <= 1);
 
 function tactics(state, actor, action, plan) {
-  const skill = action.type === 'skill' ? state.skills[action.skillId] : undefined;
   if (action.type === 'interact' && plan.kind === 'altar') return 4 + Math.min(8, healthGap(actor)) * .95 + Math.min(5, actor.maxMp - actor.mp) * .55;
   let score = 0;
   for (const profile of plan.targets ?? []) {
@@ -29,25 +26,7 @@ function tactics(state, actor, action, plan) {
     score += sign * (Math.min(target.hp, damage) + kill * 6);
     if (profile.heal) {
       const healing = (profile.heal[0] + profile.heal[1]) / 2;
-      score -= sign * (Math.min(healthGap(target), healing) * .9 + (profile.healingShield?.[0] ?? 0) * (target.statuses.shield ? .14 : .34));
-    }
-    for (const effect of skill?.effects ?? []) {
-      const applied = effect.target === 'self' || (enemy && effect.statusId === 'stealth') ? actor : target;
-      const existing = applied.statuses[effect.statusId];
-      const useful = !existing || existing.stackRule === 'stack' && existing.stacks < existing.maxStacks;
-      const chance = (profile.hitChance ?? 1) * (1 - (profile.saveChance ?? 0));
-      const nearbyEnemy = Object.values(state.units).some(u => u.hp > 0 && u.team !== applied.team && dist(u, applied) < 4.5);
-      if (effect.kind === 'cleanse') {
-        const bad = Object.values(applied.statuses).filter(s => s.durationType !== 'persistent' && ['dot', 'control', 'debuff'].includes(s.category));
-        score += bad.reduce((total, s) => total + (s.category === 'control' ? 6 : 3), 0);
-      } else if (effect.kind === 'knockback') score += enemy ? 2 * chance : -2;
-      else if (effect.kind === 'status' && useful) {
-        const weights = { stun: 8, freeze: 8, burn: 4, bleed: 3, poison: 4, chill: 2, blind: 2.5, root: 3, mark: 2,
-          sunder: 3, vulnerable: 3, taunt: 1, regen: Math.min(healthGap(applied) * .2, 4), shield: nearbyEnemy ? 3 : .25,
-          haste: nearbyEnemy ? 2 : .5, guarded: nearbyEnemy ? 3 : .25, guard: nearbyEnemy ? 2 : .25, thorns: nearbyEnemy ? 3 : .25,
-          stealth: nearbyEnemy ? 2.5 : .5 };
-        score += (weights[effect.statusId] ?? 1) * chance * (applied.team !== actor.team && !enemy ? -1 : 1);
-      }
+      score -= sign * (Math.min(healthGap(target), healing) * .9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target) ? .14 : .34));
     }
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
@@ -61,7 +40,7 @@ function aimedOptions(state, actor, attacksOnly = false) {
     const plan = preview(state, action);
     if (plan.ok) choices.push({ action, score: tactics(state, actor, action, plan) });
   }
-  const enemies = units.filter(u => u.team !== actor.team && canSee(state, actor, u));
+  const enemies = units.filter(u => visibleEnemy(state, actor, u));
   for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y });
   for (const skillId of [...actor.skills].sort()) {
     const skill = state.skills[skillId];
@@ -124,7 +103,7 @@ export function chooseAction(state) {
   if (!actor || !actor.hp || !actor.ap) return { ...END };
   const enemies = Object.values(state.units).filter(u => u.hp > 0 && u.team !== actor.team).sort(byId);
   if (!enemies.length) return { ...END };
-  const visible = enemies.filter(u => canSee(state, actor, u));
+  const visible = enemies.filter(u => visibleEnemy(state, actor, u));
   const objectives = visible.length ? visible : enemies;
   let best = { action: END, score: .6 };
   function consider(choice) { if (choice.score > best.score + 1e-8) best = choice; }
@@ -169,6 +148,6 @@ export function chooseAction(state) {
     }
   }
   const bracing = preview(state, { type: 'brace' });
-  if (bracing.ok && !actor.statuses.guarded && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
+  if (bracing.ok && !statusModifier(actor, 'reduction') && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
   return { ...best.action };
 }

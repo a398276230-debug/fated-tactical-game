@@ -21,14 +21,14 @@ export const PROTOCOL_RULES = `【判定｜protocol 实战】
 export const ENGINE_API_SUMMARY = `${PROTOCOL_RULES}
 
 【API 映射】
-状态先查 STATUSES，再查 statusTemplates；拒绝未知 ID。自定义控制状态可用 modifiers:{skip:true} 跳过行动。
+状态先查战局 statusTemplates，再查默认模板；拒绝未知 ID。自定义状态使用同一套修饰键，见下方状态目录。
 技能 saveDC、DSL roll.dc 和 roll.contest.dc 使用同一规则。可传 1…50 的整数，或 {base:6,scaleBy:{stat:'spi',perUnit:0.5},min:1,max:50}。stat 只能为 str/con/agi/int/spi。base 与 perUnit 可为小数或负数，范围 −1e9…1e9。计算为 base + perUnit × 施术者当前生效属性，保留小数并 clamp 到 min/max，缺省 1/50。显式上下限为 1…1e9 的数值，min 不得高于 max。
 装备模板 equipment 与实例 items 用 templateId 关联；计数在实例 counters。
 
 装备与技能统一使用效果 DSL。外层声明触发、条件、检定、目标与节点列表。实例计数由装备的资源声明决定。完整 DSL 协议见下节。
-自定义 statusTemplates 额外支持 dodgeBonus(−30…30)、attackPercent / attributePercent(−1…4)、finalDamageMultiplier(0…8，减伤后护盾前独立乘区)、guaranteed_hit / guaranteed_crit / blockResourceRestore / preserveLife(布尔)。一回合 battle_turns 模板可加 expireInto 指已定义状态，自己施加时本回合末到期，战斗未结束才续接。先定义续接状态，再定义前置状态。
+一回合 battle_turns 模板可加 expireInto 指已定义状态，自己施加时本回合末到期，战斗未结束才续接。先定义续接状态，再定义前置状态。
 
 【状态数值覆盖】
 模板数值是默认值。grantStatus 节点可用 modifiers 覆盖模板已有键，按状态目录范围校验。DoT/HoT 每次结算取实例值乘层数。
-公开 API：defineStatus(state,id,template) 注册战局自定义模板，不能覆盖已有 ID。patchStatus(state,unitId,statusId,{damage:12}) 更新已附加实例并写入日志。statusModifierKeys(statusId,state?) 查询合法键。GameAPI 对应的无 state 方法支持运行中的战局。
-自定义 modifiers 基础键：整数 damage/heal/reflect(1…100000)、armor(−100000…100000，覆盖须保持方向)、movement(−3…3)、accuracy/incomingAccuracy(−10…10)、advantage/disadvantage(1…3)；reduction/vulnerability(0…1)。damageType 随 damage，取 physical/energy/mental/true。`;
+公开 API：defineStatus(state,id,template) 注册战局模板，可覆盖同名默认模板，但不能重复注册战局已有定义。patchStatus(state,unitId,statusId,{damage:12}) 更新已附加实例并写入日志。statusModifierKeys(statusId,state?) 查询合法键。GameAPI 对应的无 state 方法支持运行中的战局。
+damageType 随 damage；受击碎裂用 shatter 配合 expireOn:on_struck（规则写为 {trigger:'on_struck'}）。`;

@@ -1,4 +1,5 @@
-import { getStatusTemplate, STATUSES } from '../core/combat.js';
+import { getStatusTemplate } from '../core/combat.js';
+import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.js';
 import { spawnStatsAllowed } from '../core/spawn-unit.js';
 import { resourceDefinitions } from '../core/effects.js';
@@ -38,10 +39,6 @@ function dice(v) {
   checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
   checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
 }
-// 自定义模板只使用不依赖内置状态 ID 的结算参数。
-const customModifierKeys = ['damage', 'damageType', 'heal', 'movement', 'armor', 'accuracy', 'incomingAccuracy',
-  'advantage', 'disadvantage', 'reduction', 'vulnerability', 'reflect', 'dodgeBonus', 'attackPercent',
-  'attributePercent', 'finalDamageMultiplier', 'guaranteed_hit', 'guaranteed_crit', 'blockResourceRestore', 'preserveLife', 'skip'];
 function statusLifetime(v) {
   return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType)
     && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
@@ -50,19 +47,20 @@ export function statusTemplate(v, key = v?.id) {
   fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers'], ['expireInto', 'expireOn']);
   checkOptional(v, 'expireInto', id);
   checkOptional(v, 'expireOn', validExpireOn);
-  requireThat(id(key) && !own(STATUSES, key) && v.id === key, '自定义状态 ID');
+  requireThat(id(key) && v.id === key, '自定义状态 ID');
   requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300)
-    && ['buff', 'debuff', 'control', 'dot', 'hot'].includes(v.category), '状态名/图标/描述/类别');
+    && ['buff', 'debuff', 'control', 'dot', 'hot', 'shield'].includes(v.category), '状态名/图标/描述/类别');
   requireThat(statusLifetime(v) && int(v.maxStacks, 1, 10), '状态时长/层数');
-  fields(v.modifiers, [], customModifierKeys);
-  requireThat(Object.keys(v.modifiers).length > 0 && (!own(v.modifiers, 'damageType') || own(v.modifiers, 'damage')), '状态特效');
+  requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own(v.modifiers, 'damageType') || own(v.modifiers, 'damage')), '状态特效');
   validateStatusModifiers(v, v.modifiers);
+  requireThat(key !== actionStatuses.shield || own(v.modifiers, 'amount'), '默认护盾模板需要 amount');
 }
 export function statusTemplateTable(v) {
   table(v, statusTemplate, maxStatusTemplates);
   for (const t of Object.values(v)) if (t.expireInto) {
+    const next = getStatusTemplate({ statusTemplates: v }, t.expireInto);
     requireThat(t.durationType === 'battle_turns' && t.remainingTurns === 1 && t.expireInto !== t.id
-      && (has(STATUSES, t.expireInto) || has(v, t.expireInto) && !v[t.expireInto].expireInto), '状态到期目标');
+      && next && !next.expireInto, '状态到期目标');
   }
 }
 
@@ -70,7 +68,7 @@ export function defineStatus(state, key, template) {
   requireThat(plain(template) && (!own(template, 'id') || template.id === key), '自定义状态 ID');
   const definition = { ...template, id: key };
   statusTemplate(definition, key);
-  requireThat(!getStatusTemplate(state, key), '状态模板 ID 已存在');
+  requireThat(!own(state.statusTemplates ?? {}, key), '自定义状态 ID 已存在');
   requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, '自定义状态模板数量');
   (state.statusTemplates ??= {})[key] = structuredClone(definition);
   return structuredClone(definition);
@@ -100,8 +98,8 @@ export function validateEffect(e, state) {
       const template = getStatusTemplate(state, node.statusId);
       requireThat(template, `DSL status ${node.statusId}`);
       if (node.modifiers) validateStatusModifiers(template, node.modifiers);
-      if (node.stacks && !has(STATUSES, node.statusId)) requireThat(node.stacks <= template.maxStacks, 'DSL status stacks');
-      if (node.amount != null) requireThat(node.statusId === 'shield' && int(node.amount, 1, 10000), 'DSL status amount');
+      if (node.stacks && (!has(STATUSES, node.statusId) || has(state?.statusTemplates ?? {}, node.statusId))) requireThat(node.stacks <= template.maxStacks, 'DSL status stacks');
+      if (node.amount != null) requireThat(own(template.modifiers, 'amount') && int(node.amount, 1, 10000), 'DSL status amount');
     }
     if (node.initial != null) requireThat(node.cap != null && node.initial <= node.cap, 'DSL resource initial');
   }
@@ -161,7 +159,7 @@ export function statusValue(v, key, state) {
   fields(v.modifiers, Object.keys(t.modifiers));
   validateStatusModifiers(t, v.modifiers);
   checkOptional(v, 'appliedRound', x => int(x, 1, 1000000)); checkOptional(v, 'appliedTurn', x => int(x, 0, 199));
-  requireThat(key === 'shield' ? int(v.amount, 1, 1000000000) : !own(v, 'amount'), '护盾池');
+  requireThat(own(t.modifiers, 'amount') ? int(v.amount, 1, 1000000000) : !own(v, 'amount'), '护盾池');
 }
 export function validateCell(v) {
   fields(v, ['kind', 'z']);

@@ -135,7 +135,7 @@
 | `restoreResource` | `resource, amount, percent, minimumRemaining, requireFull, local, percentPerCost, ...` | exec | 受 `blockResourceRestore` 阻断 |
 | `drainResource` | 同上 | exec | `requireFull` 且余额不足时返回 `false`，链会中断 |
 | `produceResource` | 同上 + `cap, initial, reloadable, targetTierBase` | exec | `cap/initial/reloadable` 只在 `passive` 读取时被 `resourceDefinitions` 采集 |
-| `grantStatus` | `statusId, turns, stacks, modifiers, amount, durationType, expireOn` | exec | `amount` 仅 `shield` 合法；`turns` 会被 `skillScale` 缩放并 clamp 1…100 |
+| `grantStatus` | `statusId, turns, stacks, modifiers, amount, durationType, expireOn` | exec | `amount` 仅模板声明了 `modifiers.amount` 时合法；`turns` 会被 `skillScale` 缩放并 clamp 1…100 |
 | `removeStatus` | `statusId` 或 `category`（二选一） | exec | `all_negative` = `debuff/dot/control`；`persistent` 不受清理 |
 | `modifyStat` | `stat, flat, percent, duration, damageType, levelScaling` | exec + passive | passive 读取为常驻修正；exec 写入 `unit.effectModifiers`（按回合递减） |
 | `modifyDamageBase` | `value, ignoreAttributes, unscaled, damageType` | passive | 替换起伤：`unscaled` 跳过评级/姿态倍率，`ignoreAttributes` 默认 true |
@@ -145,7 +145,7 @@
 | `multiplyDamage` | `factor, damageType, additive, resourceScale, local` | exec + passive | exec 时把节点推入 `ctx.multipliers`（主击统一再算）；passive 时参与 `damageFactor` |
 | `knockback` | `distance 1…5, collisionDamage` | exec | 逐格推；受阻时结算碰撞伤害（默认 5，`effect.collisionDamage ?? 5`）并施加 `stun` |
 | `teleportBackstab` | `bonusMultiplier` | exec | 目标背后空格校验；预览阶段同时改写命中上下文 |
-| `shield` | `amount, percent, percentOfHealing, turns, stack` | exec | 直接 `grantStatus('shield')`；`stack` 时叠加现有池 |
+| `shield` | `amount, percent, percentOfHealing, turns, stack` | exec | 授予默认护盾模板；`stack` 时叠加该模板对应的现有池 |
 | `execute` | `threshold, strict, requiresPool` | exec | 直接清空 HP；`nonLethal`/`preserveLife` 可阻断；`requiresPool` 要求该资源池存在 |
 | `spawnUnit` | 必填 `name`；可选 `count`（1–10）、`tier, attribute, stats, maxHp/maxMp/maxSp, armor, size, bodyLengthM, mc, move, skills, mainHand/offHand/shield, gear` | exec | 无需单位原型。层级取施术者与节点较低者；默认关联属性取智力、精神较高者。最终五维均分 `max(5T,5A−30)`，余数依力量、敏捷、体质、智力、精神分配，各项不超过关联属性及层级上限。按召唤总数推算每只的资源。技能引用现有技能 ID；装备引用模板 ID，各单位独立铸造实例。无足够空格或预算时整批不生成。 |
 | `summon` | `templateId, statScale, count` | exec | 从 `state.summonTemplates` 或现有单位取原型；落点取距 `ctx.center` 最近空格；ID `summon-N` |
@@ -243,7 +243,7 @@ amount   = max(0, min(1e9, floor((magnitude + (heal|shield|damage 时 percent ×
 ## 13. 校验链
 
 1. `validExpression(e)`：手写 `matches()` 对 `effectSchema` 求值；`additionalProperties:false`，未知字段直接不合法。
-2. `validateEffect(e)`：`removeStatus` 必须二选一；`statusId` 必须已注册；`modifiers` 按模板校验；`stacks` 不超过模板上限；`amount` 仅 `shield`；`initial ≤ cap`；`save` 数组必须有 `mode` 且无重复。
+2. `validateEffect(e)`：`removeStatus` 必须二选一；`statusId` 必须已注册；`modifiers` 按模板校验；`stacks` 不超过模板上限；`amount` 仅限声明了护盾池的模板；`initial ≤ cap`；`save` 数组必须有 `mode` 且无重复。
 3. `effects(v)`：≤24 条、id 不重复。
 4. `validateState`：`effectTemplates ∪ equipment.effects ∪ skills.effects` 的 id 全局唯一；`procEffect.ref` 必须能解析；递归检测循环引用。
 
@@ -312,6 +312,6 @@ amount   = max(0, min(1e9, floor((magnitude + (heal|shield|damage 时 percent ×
 - `node.radius` 只影响 `enemiesInRadius`/`alliesInRadius`/`corpse`。
 - `params.source='weapon'` 只在本次使用的装备实例匹配时生效。
 - `addItem` 写 `unit.inventory`，不创建 `state.items` 条目。
-- `shield.amount` 之外的 `amount` 字段被校验拒绝（仅 `shield` 状态允许）。
+- 状态实例仅在模板声明 `modifiers.amount` 时拥有 `amount`（剩余护盾池）。
 - `enabled:false` 会跳过整个节点；`chainEffect` 被关闭时子节点一并跳过。
 - `label` 只影响日志与界面文案。

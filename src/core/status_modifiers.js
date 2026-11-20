@@ -9,10 +9,11 @@ const ranges = {
 };
 Object.assign(ranges, { dodgeBonus: [-30, 30], attackPercent: [-1, 4], attributePercent: [-1, 4], finalDamageMultiplier: [0, 8] });
 const ratios = ['reduction', 'vulnerability', 'shatter', 'damageBonus', 'attackPercent', 'attributePercent', 'finalDamageMultiplier'];
-const flags = ['taunted', 'intercept', 'skip', 'rooted', 'hidden', 'disarmed', 'infiniteAmmo', 'guaranteed_hit', 'guaranteed_crit', 'blockResourceRestore', 'preserveLife'];
+const flags = ['taunted', 'intercept', 'skip', 'rooted', 'hidden', 'infiniteAmmo', 'guaranteed_hit', 'guaranteed_crit', 'blockResourceRestore', 'preserveLife'];
 function rangeFor(key, template) {
   if (key === 'armor') {
     const base = template?.modifiers.armor;
+    if (base == null) return [-100000, 100000];
     if (base < 0) return [-100000, -1];
     if (base === 0) return [0, 100000];
   }
@@ -26,6 +27,8 @@ export function statusModifierRange(key, template) {
   if (flags.includes(key)) return 'true/false';
   throw new Error(`未知状态参数：${key}`);
 }
+
+export const modifierKeys = Object.freeze([...Object.keys(ranges), 'damageType', ...flags]);
 
 export function validateStatusModifiers(template, modifiers) {
   if (!modifiers || Object.getPrototypeOf(modifiers) !== Object.prototype) throw new Error('modifiers 必须为对象');

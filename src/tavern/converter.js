@@ -623,7 +623,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
     const durationType = ['battle_turns', 'until_removed', 'persistent'].includes(rawStatus?.durationType)
       ? rawStatus.durationType : template.durationType;
     statuses[sid] = { ...template, durationType, remainingTurns, stacks, sourceUnitId: null, modifiers,
-      ...(sid === 'shield' ? { amount: bound(rawStatus?.amount ?? rawStatus?.护盾值, 1, 1e9, modifiers.amount) } : {}),
+      ...(own(modifiers, 'amount') ? { amount: bound(rawStatus?.amount ?? rawStatus?.护盾值, 1, 1e9, modifiers.amount) } : {}),
     };
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });

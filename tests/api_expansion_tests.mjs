@@ -119,6 +119,8 @@ test('自定义状态、武器状态覆盖及实例补丁可以随快照重放',
   const state = api.getBattleState();
   defineStatus(state, 'custom_regen', template);
   assert.deepEqual(statusModifierKeys('custom_regen', state), ['heal']);
+  defineStatus(state, id, { ...template, modifiers: { heal: 9 } });
+  assert.equal(state.statusTemplates[id].modifiers.heal, 9);
   assert.throws(() => defineStatus(state, id, template), /自定义状态 ID/);
   assert.equal(api.defineStatus('custom_regen', template).ok, true);
   assert.deepEqual(api.statusModifierKeys('custom_regen'), ['heal']);

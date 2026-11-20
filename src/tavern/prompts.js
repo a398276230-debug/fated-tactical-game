@@ -37,7 +37,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
 • /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。
 • /items/<id>：道具实例（如 /items/item_01），不是模板属性。
-• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），不能覆盖内置 ID。
+• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），同名定义覆盖默认模板；已有实例须同时与新模板对齐。普通新增状态使用新 ID。
 • /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
 • /units/<unitId>/armor：单位护甲整数 0…1000000（如 /units/p1/armor）。
 • /units/<unitId>/skills：完整技能 ID 数组，保留原有技能并加入新增技能 ID。

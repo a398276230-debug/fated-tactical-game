@@ -12,7 +12,7 @@ import { formatBattleReportText } from './battle_report.js';
 const copy = value => structuredClone(value);
 const fail = message => { throw new Error(message); };
 const version = 1;
-const battleVersion = 5;
+const battleVersion = 6;
 const maxHistory = 2000;
 const maxBatch = 32;
 const own = (obj, key) => Object.hasOwn(obj, key);
@@ -88,11 +88,19 @@ export function createGameAPI() {
   }
   function restore(snapshot) {
     if (!shape(snapshot, ['kind', 'version', 'origin', 'state', 'journal'])
-      || snapshot.kind !== 'battle' || ![1, 2, 3, 4, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
+      || snapshot.kind !== 'battle' || ![1, 2, 3, 4, 5, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
       || snapshot.journal.length > maxHistory) fail('不支持的战局快照格式');
     const needsMigration = snapshot.version < battleVersion;
     if (needsMigration) {
-      const migrate = data => ({ ...migrateStateEffects(copy(data)), mode: 'split' });
+      const migrate = data => {
+        const next = migrateStateEffects(copy(data));
+        next.mode = 'split';
+        for (const unit of Object.values(next.units ?? {})) {
+          delete unit.statuses?.disarmed;
+          delete unit.disarmedItem;
+        }
+        return next;
+      };
       snapshot = { ...snapshot, origin: migrate(snapshot.origin), state: migrate(snapshot.state) };
     }
     validateState(snapshot.origin);

@@ -226,7 +226,7 @@ var attribute = enumOf("str", "agi", "con", "int", "spi");
 var events = ["on_attack", "on_hit", "on_damaged", "on_kill", "on_death", "on_turn_start", "on_turn_end", "on_skill_cast", "on_equip", "on_heal", "on_ally_death"];
 var expireRule = union(
   object({ trigger: enumOf("on_damaged"), damageType: enumOf("any", "direct", "indirect"), exceptSource: enumOf("self") }, ["trigger"]),
-  object({ trigger: enumOf(...events.filter((event) => event !== "on_damaged")), exceptSource: enumOf("self") }, ["trigger"])
+  object({ trigger: enumOf("on_struck", ...events.filter((event) => event !== "on_damaged")), exceptSource: enumOf("self") }, ["trigger"])
 );
 var checkKeys = ["iniBonus", "dodgeBonus", "stealthBonus", "accuracyBonus", "initiativeAgility", "dodgeAgility", "coreBonus", "highGroundRange", "highGroundAccuracy", "advantage"];
 var modifiers = { type: "object", additionalProperties: union(number(-1e9, 1e9), string, { type: "boolean" }) };
@@ -299,7 +299,7 @@ var effectSchema = {
       node("heal", { ...magnitudes, ...scaling, percentOfMaxHp: fraction }),
       ...["restoreResource", "drainResource", "produceResource"].map((kind) => node(kind, { ...resource, minimumRemaining: amount, requireFull: bool, local: bool, ...kind === "produceResource" ? { cap: integer(1, 1e9), initial: integer(0, 1e9), reloadable: bool, targetTierBase: integer(1, 8) } : {}, percentPerCost: fraction }, ["resource"])),
       node("grantStatus", { statusId: id, turns, stacks: integer(1, 10), modifiers, amount, expireOn: ref("expireOn"), durationType: enumOf("battle_turns", "until_removed", "persistent") }, ["statusId"]),
-      node("removeStatus", { statusId: id, category: enumOf("all_negative", "buff", "debuff", "control", "dot", "hot") }),
+      node("removeStatus", { statusId: id, category: enumOf("all_negative", "buff", "debuff", "control", "dot", "hot", "shield") }),
       node("modifyStat", { stat: stats, flat: number(-1e9, 1e9), percent: number(-1, 10), duration: turns, damageType, levelScaling: scaling.levelScaling }, ["stat"]),
       node("modifyDamageBase", { value: amount, ignoreAttributes: bool, unscaled: bool, damageType }, ["value"]),
       node("modifyCheck", Object.fromEntries(checkKeys.map((key4) => [key4, number(-30, 30)]))),
@@ -756,7 +756,7 @@ function createEffectEngine(io) {
                 result = io.teleport(state, actor, target2);
                 break;
               case "shield":
-                if (amount2 > 0) result = io.grant(state, target2, "shield", { sourceUnitId: actor.id, turns: p.turns, amount: amount2 + (p.stack ? target2.statuses.shield?.amount ?? 0 : 0) });
+                if (amount2 > 0) result = io.grantShield(state, target2, amount2, { sourceUnitId: actor.id, turns: p.turns, stack: p.stack });
                 break;
               case "execute":
                 if (!ctx.nonLethal && !target2.nonLethal && !io.statusModifier(target2, "preserveLife") && compare2(ratio(target2), p.strict ? "<" : "<=", p.threshold) && (!p.requiresPool || io.resourcePool(state, actor, p.requiresPool))) {
@@ -1077,10 +1077,11 @@ var ranges = {
 };
 Object.assign(ranges, { dodgeBonus: [-30, 30], attackPercent: [-1, 4], attributePercent: [-1, 4], finalDamageMultiplier: [0, 8] });
 var ratios = ["reduction", "vulnerability", "shatter", "damageBonus", "attackPercent", "attributePercent", "finalDamageMultiplier"];
-var flags = ["taunted", "intercept", "skip", "rooted", "hidden", "disarmed", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"];
+var flags = ["taunted", "intercept", "skip", "rooted", "hidden", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"];
 function rangeFor(key4, template) {
   if (key4 === "armor") {
     const base = template?.modifiers.armor;
+    if (base == null) return [-1e5, 1e5];
     if (base < 0) return [-1e5, -1];
     if (base === 0) return [0, 1e5];
   }
@@ -1093,6 +1094,7 @@ function statusModifierRange(key4, template) {
   if (flags.includes(key4)) return "true/false";
   throw new Error(`\u672A\u77E5\u72B6\u6001\u53C2\u6570\uFF1A${key4}`);
 }
+var modifierKeys = Object.freeze([...Object.keys(ranges), "damageType", ...flags]);
 function validateStatusModifiers(template, modifiers3) {
   if (!modifiers3 || Object.getPrototypeOf(modifiers3) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
   for (const [key4, value] of Object.entries(modifiers3)) {
@@ -1334,7 +1336,21 @@ function spawnPanel(actor, spec) {
   };
 }
 
-// src/core/combat.js
+// src/presets/status-defaults.js
+var actionStatuses = Object.freeze({
+  brace: "guarded",
+  block: "guarded",
+  charge: "charge",
+  lock_on: "lock_on",
+  scan: "weakness",
+  grapple: "grappled",
+  trip: "prone",
+  use_item: "haste",
+  altar: "haste",
+  shield: "shield",
+  collision: "stun",
+  shield_bash: "stun"
+});
 var def = (name, icon, category, remainingTurns, description, modifiers3 = {}, options = {}) => Object.freeze({
   name,
   icon,
@@ -1375,13 +1391,13 @@ var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
   guard: def("\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", { intercept: true }),
   thorns: def("\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", { reflect: 5 }),
   stun: def("\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", { skip: true }),
-  freeze: def("\u51B0\u51BB", "\u{1F9CA}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002", { skip: true, shatter: 0.5 }),
+  freeze: def("\u51B0\u51BB", "\u{1F9CA}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002", { skip: true, shatter: 0.5 }, { expireOn: Object.freeze({ trigger: "on_struck" }) }),
   root: def("\u5B9A\u8EAB", "\u26D3\uFE0F", "control", 2, "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002", { rooted: true }),
   blind: def("\u81F4\u76F2", "\u{1F311}", "debuff", 2, "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002", { disadvantage: 1 }),
   vulnerable: def("\u6613\u4F24", "\u{1F4A2}", "debuff", 2, "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002", { vulnerability: 0.35 }),
   sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", { armor: -4 }),
   mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
-  stealth: def("\u9690\u8EAB", "\u{1F464}", "buff", 2, "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002", { hidden: true, advantage: 1 }),
+  stealth: def("\u9690\u8EAB", "\u{1F464}", "buff", 2, "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002", { hidden: true, advantage: 1 }, { expireOn: Object.freeze([Object.freeze({ trigger: "on_attack" }), Object.freeze({ trigger: "on_struck" })]) }),
   haste: def("\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002", { movement: 1 }),
   chill: def("\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", { movement: -1, accuracy: -2 }),
   charge: def("\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", { damageBonus: 0.15 }),
@@ -1389,9 +1405,10 @@ var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
   weakness: def("\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", { intentDifficulty: -2 }, { stackRule: "stack", maxStacks: 3 }),
   grappled: def("\u64D2\u62B1", "\u26D3", "control", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002", { rooted: true }),
   prone: def("\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", { incomingAccuracy: 2, rooted: true }),
-  disarmed: def("\u7F34\u68B0", "\u2694", "debuff", 1, "\u65E0\u6CD5\u4F7F\u7528\u4E3B\u624B\u6B66\u5668\u3002", { disarmed: true }),
   infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
 }).map(([id3, status2]) => [id3, Object.freeze({ id: id3, ...status2 })])));
+
+// src/core/combat.js
 function randomUnit(state) {
   const { rng, value } = nextRng(state.rng);
   state.rng = rng;
@@ -1421,7 +1438,8 @@ function changeAltitude(state, actor, node3) {
 var key2 = (x, y) => `${x},${y}`;
 var stat = (unit, id3) => Number(unit.stats?.[id3] ?? 0) * Math.max(0, 1 + changes(unit, "attributePercent"));
 var clamp = (number3, min, max) => Math.max(min, Math.min(max, number3));
-var changes = (unit, name) => values2(unit.statuses).reduce((sum, s) => sum + Number(s.modifiers?.[name] ?? STATUSES[s.id]?.modifiers?.[name] ?? 0) * (s.stacks ?? 1), 0);
+var statusModifier = (unit, name) => values2(unit.statuses).reduce((sum, s) => sum + Number(s.modifiers?.[name] ?? 0) * (s.stacks ?? 1), 0);
+var changes = statusModifier;
 var statusOf = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
 function record(state, unit, type, text4, detail = {}) {
@@ -1436,7 +1454,7 @@ function tableEntry(table4, id3) {
 }
 function getStatusTemplate(state, statusId2) {
   if (typeof statusId2 !== "string") return void 0;
-  return tableEntry(STATUSES, statusId2) ?? tableEntry(state?.statusTemplates, statusId2);
+  return tableEntry(state?.statusTemplates, statusId2) ?? tableEntry(STATUSES, statusId2);
 }
 function equipmentFor(state, instanceId) {
   const instance = tableEntry(state.items, instanceId);
@@ -1460,7 +1478,7 @@ function stealthCheck(state, unit, d20, dc) {
   const bonus = dsl.check(state, unit, "stealthBonus");
   return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
 }
-var statusAmount = (status2) => status2.amount ?? status2.modifiers?.amount ?? STATUSES[status2.id]?.modifiers.amount ?? 0;
+var shieldTotal = (unit) => values2(unit.statuses).reduce((total, status2) => total + (status2.amount ?? 0), 0);
 function statusModifierKeys(statusId2, state) {
   return Object.keys(getStatusTemplate(state, statusId2)?.modifiers ?? {});
 }
@@ -1476,7 +1494,7 @@ function patchStatus(state, unitId, statusId2, patch) {
   if (patchExpiry && expireOn2 !== null && !validExpireOn(expireOn2)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
   status2.modifiers = { ...status2.modifiers, ...modifiers3 };
   if (patchExpiry) status2.expireOn = structuredClone(expireOn2);
-  if (statusId2 === "shield" && Object.hasOwn(modifiers3, "amount")) status2.amount = clamp(modifiers3.amount, 1, 1e5);
+  if (Object.hasOwn(modifiers3, "amount")) status2.amount = clamp(modifiers3.amount, 1, 1e5);
   record(
     state,
     unit,
@@ -1515,7 +1533,7 @@ function grantStatus(state, unit, statusId2, options = {}) {
     if (!validExpireOn(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
     applied.expireOn = structuredClone(options.expireOn);
   } else if (Object.hasOwn(previous ?? {}, "expireOn")) applied.expireOn = previous.expireOn;
-  if (statusId2 === "shield") applied.amount = options.amount == null ? applied.modifiers.amount : clamp(options.amount, 1, 1e4);
+  if (Object.hasOwn(applied.modifiers, "amount")) applied.amount = options.amount == null ? applied.modifiers.amount : clamp(options.amount, 1, 1e4);
   unit.statuses[statusId2] = applied;
   record(
     state,
@@ -1527,10 +1545,15 @@ function grantStatus(state, unit, statusId2, options = {}) {
       statusId: statusId2,
       stacks,
       remainingTurns: applied.remainingTurns,
-      ...statusId2 === "shield" ? { amount: applied.amount } : {}
+      ...applied.amount == null ? {} : { amount: applied.amount }
     }
   );
   return applied;
+}
+function grantShield(state, unit, amount2, { stack, ...options } = {}) {
+  const statusId2 = actionStatuses.shield;
+  const previous = stack ? statusOf(unit, statusId2)?.amount ?? 0 : 0;
+  return grantStatus(state, unit, statusId2, { ...options, amount: amount2 + previous });
 }
 function refreshOutcome(state) {
   updateTerrainPatches(state, record, terrainDamage);
@@ -1549,6 +1572,7 @@ function refreshOutcome(state) {
 var eventLabels = {
   on_attack: "\u53D1\u52A8\u653B\u51FB",
   on_hit: "\u653B\u51FB\u547D\u4E2D",
+  on_struck: "\u53D7\u5230\u547D\u4E2D",
   on_damaged: "\u53D7\u5230\u4F24\u5BB3",
   on_kill: "\u51FB\u6740",
   on_death: "\u5012\u4E0B",
@@ -1561,8 +1585,9 @@ var eventLabels = {
 };
 function expireStatuses(state, unit, trigger, { sourceUnitId = null, direct = false } = {}) {
   for (const status2 of values2(unit.statuses)) {
-    if (!status2.expireOn) continue;
-    const rule = [].concat(status2.expireOn).find((rule2) => rule2.trigger === trigger && (rule2.damageType == null || rule2.damageType === "any" || rule2.damageType === (direct ? "direct" : "indirect")) && (rule2.exceptSource !== "self" || sourceUnitId !== unit.id));
+    const expiry = Object.hasOwn(status2, "expireOn") ? status2.expireOn : getStatusTemplate(state, status2.id)?.expireOn;
+    if (!expiry) continue;
+    const rule = [].concat(expiry).find((rule2) => rule2.trigger === trigger && (rule2.damageType == null || rule2.damageType === "any" || rule2.damageType === (direct ? "direct" : "indirect")) && (rule2.exceptSource !== "self" || sourceUnitId !== unit.id));
     if (!rule) continue;
     delete unit.statuses[status2.id];
     record(
@@ -1743,25 +1768,23 @@ function damageTarget(state, target2, sourceUnitId, amount2, type, label, option
   const formula = mitigation(state, recipient, type, hit, armorPierce, { attacker, intercepting: recipient !== target2, ignoreArmor: options.ignoreArmor });
   const modified = mitigatedDamage(amount2, formula, hit, attacker);
   if (formula.shatter) {
-    delete recipient.statuses.freeze;
-    record(state, sourceUnitId, "shatter", `${recipient.name}\u7684\u51B0\u5C42\u788E\u88C2`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
+    record(state, sourceUnitId, "shatter", `${recipient.name}\u53D7\u5230\u788E\u88C2\u589E\u4F24`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
   }
-  if (hit && statusOf(recipient, "stealth")) {
-    delete recipient.statuses.stealth;
-    record(state, recipient, "reveal", `${recipient.name}\u73B0\u5F62`, { targetId: recipient.id });
-  }
+  if (hit) expireStatuses(state, recipient, "on_struck", { sourceUnitId });
   const net = Math.max(0, Math.floor(modified - dsl.stat(state, recipient, "damageReductionFlat", 0, { target: attacker, damageType: type, intercepting: recipient !== target2 })));
-  const shield = statusOf(recipient, "shield");
-  const absorbed = Math.min(shield ? statusAmount(shield) : 0, net);
-  if (absorbed > 0) {
-    shield.amount = statusAmount(shield) - absorbed;
-    record(state, recipient, "shield", `${recipient.name}\u7684\u62A4\u76FE\u5438\u6536${absorbed}\u70B9\u4F24\u5BB3`, { absorbed, remaining: shield.amount });
-    if (shield.amount <= 0) {
-      delete recipient.statuses.shield;
-      record(state, recipient, "shield_break", `${recipient.name}\u7684\u62A4\u76FE\u7834\u88C2`, { targetId: recipient.id });
+  let pending = net;
+  for (const shield of values2(recipient.statuses).filter((status2) => status2.amount > 0).sort(byId2)) {
+    if (!pending) break;
+    const absorbed2 = Math.min(pending, shield.amount);
+    pending -= absorbed2;
+    shield.amount -= absorbed2;
+    record(state, recipient, "shield", `${recipient.name}\u7684${shield.name}\u5438\u6536${absorbed2}\u70B9\u4F24\u5BB3`, { absorbed: absorbed2, remaining: shield.amount, statusId: shield.id });
+    if (!shield.amount) {
+      delete recipient.statuses[shield.id];
+      record(state, recipient, "shield_break", `${recipient.name}\u7684${shield.name}\u7834\u88C2`, { targetId: recipient.id, statusId: shield.id });
     }
   }
-  const pending = net - absorbed;
+  const absorbed = net - pending;
   const dealt = loseHP(
     state,
     recipient,
@@ -2075,6 +2098,7 @@ var dsl = createEffectEngine({
   heal: restoreHP,
   setResourceTotal,
   grant: grantStatus,
+  grantShield,
   record,
   saved: effectSaved,
   removeStatus,
@@ -2158,7 +2182,7 @@ var normalAttack = Object.freeze({ name: "\u5F92\u624B", range: 1.5, accuracy: 0
 var findNode = (template, kind, predicate = () => true) => (template?.effects ?? []).flatMap((expr) => [...effectNodes(expr.effects, true)]).find((node3) => node3.kind === kind && predicate(node3));
 var shieldBashEffects = [expression("shield-bash-hit", "on_hit", "hitTarget", [
   { kind: "knockback", distance: 1 },
-  { kind: "grantStatus", statusId: "stun", turns: 1 }
+  { kind: "grantStatus", statusId: actionStatuses.shield_bash, turns: 1 }
 ])];
 var isMelee = (template) => template.rangeType !== "ranged" && !template.ranged && template.weaponClass !== "ranged" && (template.range ?? 1.5) <= 2;
 function weaponInfo(state, unit) {
@@ -2199,12 +2223,13 @@ function visibleEnemy(state, actor, target2) {
   return target2.team !== actor.team && (!changes(target2, "hidden") || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1);
 }
 function tauntFor(state, actor, template, ammo) {
-  const id3 = changes(actor, "taunted") ? statusOf(actor, "taunt")?.sourceUnitId : null;
-  const taunter = tableEntry(state.units, id3);
   const teleport = findNode(template, "teleportBackstab");
-  if (!alive(taunter) || !visibleEnemy(state, actor, taunter) || !validReach(state, actor, taunter, template, ammo)) return null;
-  if (teleport && (!backCell(state, taunter) || changes(actor, "rooted"))) return null;
-  return taunter;
+  if (teleport && changes(actor, "rooted")) return null;
+  for (const status2 of values2(actor.statuses).filter((status3) => status3.modifiers.taunted).sort(byId2)) {
+    const source = tableEntry(state.units, status2.sourceUnitId);
+    if (alive(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo) && (!teleport || backCell(state, source))) return source;
+  }
+  return null;
 }
 function opportunitySources(state, mover) {
   return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !changes(unit, "skip")).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon }) => !weapon.ammo && isMelee(weapon.template) && weapon.template.damage != null);
@@ -2321,7 +2346,7 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
   const rangedDistance = weapon && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
   const accuracy = dsl.stat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + dsl.check(state, actor, "accuracyBonus", strike), strike) - dodge;
-  const explicitEvasion = changes(target2, "evasion") + changes(target2, "incomingAccuracy");
+  const explicitEvasion = changes(target2, "incomingAccuracy");
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
   const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 10 + explicitEvasion + equipmentDefense;
   const advantages = changes(actor, "advantage") + dsl.check(state, actor, "advantage", strike) + Number(Boolean(teleport)) + (template.advantage ?? 0);
@@ -2348,8 +2373,7 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
   const armorPierce = { flat: dsl.stat(state, actor, "armorPierce", template.armorPierce ?? 0, { ...strike, damageType: damageType2 }), percent: rules.armorPenetration ?? 0 };
   const recipient = cover || !hasStrikeDamage(template) ? target2 : guardFor(state, target2) ?? target2;
   const reduction = cover ? { multiplier: 1, armorMultiplier: fixedDamage || fixedAttack ? 1 : void 0, armor: target2.armor ?? 0 } : mitigation(state, recipient, damageType2, true, armorPierce, { attacker: actor, intercepting: recipient !== target2 });
-  const shield = cover ? null : statusOf(recipient, "shield");
-  const absorb = shield ? statusAmount(shield) : 0;
+  const absorb = cover ? 0 : shieldTotal(recipient);
   const dice3 = fixedDamage ? flatDice(fixedDamage.value) : template.damage == null ? null : diceFormula(state, template.damage, actor);
   const shown = (raw, factor = 1) => Math.max(0, Math.floor(Math.floor(dsl.stat(state, actor, "damage", raw * (fixedDamage ? 1 : multiplier) * factor * dsl.damageFactor(state, actor, { ...strike, damageType: damageType2 }), { ...strike, damageType: damageType2 })) * reduction.multiplier * reduction.armorMultiplier * finalDamageMultiplier(actor) * (fixedDamage ? 1 - (reduction.attributeReduction ?? 0) : 1)) - absorb);
   const flat = fixedAttack || fixedDamage;
@@ -2360,7 +2384,6 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
   const savedDamage = dice3 && saveStat ? bounds(false, 0.5) : null;
   const expectedDamage = !dice3 ? 0 : Math.max(0, hitChance2 - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
   const expectedD20 = saveStat ? 10.5 : automatic ? null : advantage > 0 ? 13.825 : advantage < 0 ? 7.175 : 10.5;
-  const combo = !cover && weapon && (template.effects ?? []).find((expr) => expr.trigger === "on_hit" && [...effectNodes(expr.effects, true)].some((node3) => node3.kind === "grantStatus" && node3.statusId === "bleed"));
   return {
     id: target2.id,
     targetId: target2.id,
@@ -2419,12 +2442,7 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
     criticalDamage,
     savedDamage,
     expectedDamage,
-    dice: dice3,
-    combo: combo ? {
-      bleedStacks: [...effectNodes(combo.effects, true)].find((n) => n.statusId === "bleed").stacks ?? 1,
-      bonusDamage: [...effectNodes(combo.effects, true)].find((n) => n.kind === "damage")?.amount ?? 0,
-      on: backstab ? "hit" : "critical"
-    } : null
+    dice: dice3
   };
 }
 var ACTIONS = Object.freeze({
@@ -2522,7 +2540,8 @@ function preview(state, action) {
   }
   if (type === "block") {
     if (stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
-    return { ...common, name: "\u683C\u6321", reduction: unit.blockMode === "heavy" ? 0.45 : 0.25, turns: 1 };
+    const modifiers3 = getStatusTemplate(state, actionStatuses.block).modifiers;
+    return { ...common, name: "\u683C\u6321", reduction: Object.hasOwn(modifiers3, "reduction") ? action.maneuver === "heavy" ? 0.45 : 0.25 : 0, turns: 1 };
   }
   if (type === "brace") {
     const [nearbyCover] = nearbyCovers(state, unit);
@@ -2530,7 +2549,7 @@ function preview(state, action) {
       ...common,
       name: "\u67B6\u52BF\u9632\u5FA1",
       coverId: nearbyCover?.id ?? null,
-      reduction: STATUSES.guarded.modifiers.reduction,
+      reduction: getStatusTemplate(state, actionStatuses.brace).modifiers.reduction ?? 0,
       turns: nearbyCover ? 2 : 1
     };
   }
@@ -2581,8 +2600,7 @@ function preview(state, action) {
     const targets2 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) <= 1.5 + 1e-9).map((u) => {
       const guard = guardFor(state, u) ?? u;
       const formula = mitigation(state, guard, "energy", true, 0, { attacker: unit, intercepting: guard !== u });
-      const shield = statusOf(guard, "shield");
-      const damage = Math.max(0, mitigatedDamage(12, formula, true, unit) - (shield ? statusAmount(shield) : 0));
+      const damage = Math.max(0, mitigatedDamage(item.damage ?? 12, formula, true, unit) - shieldTotal(guard));
       return {
         id: u.id,
         targetId: u.id,
@@ -2843,7 +2861,7 @@ function knockback(state, actor, target2, effect) {
     const at = pos(target2.x + dx, target2.y + dy);
     if (!canStep(state, target2, at)) {
       damageTarget(state, target2, actor.id, effect.collisionDamage ?? 5, "true", "\u649E\u51FB");
-      if (alive(target2)) grantStatus(state, target2, effect.statusId ?? "stun", { sourceUnitId: actor.id });
+      if (alive(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceUnitId: actor.id });
       break;
     }
     Object.assign(target2, at);
@@ -2952,10 +2970,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     } else dsl.dispatch(state, actor, "active", effectContext, skillEntries);
     if (!alive(actor)) return;
   }
-  if (plan.hostile && statusOf(actor, "stealth")) {
-    delete actor.statuses.stealth;
-    record(state, actor, "reveal", `${actor.name}\u53D1\u52A8\u8FDB\u653B\uFF0C\u89E3\u9664\u9690\u8EAB`);
-  }
+  if (plan.hostile && !weapon && action.type !== "shield_bash") expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
   if (!sameCell(actor, plan.center)) actor.facing = facingToward(actor, plan.center);
   if (weapon || action.type === "shield_bash") dispatchEffect(state, actor, "on_attack", effectContext);
   for (const preview2 of plan.targets) {
@@ -3052,6 +3067,7 @@ function applyInteraction(state, actor, plan) {
   record(state, actor, "interact", `${actor.name}${item.kind === "barrel" ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`, { interactiveId: item.id });
   const effect = item.effect ?? (item.kind === "barrel" ? "explode" : "heal");
   if (effect === "explode") {
+    expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
     const weapon = weaponInfo(state, actor);
     if (weapon.ammo && !weapon.infiniteAmmo) dsl.changeResource(state, actor, actor, { kind: "drainResource", resource: weapon.ammo.resource, local: true }, 1, "\u5F15\u7206", { instance: weapon.instance });
     for (const profile of plan.targets) {
@@ -3069,12 +3085,12 @@ function applyInteraction(state, actor, plan) {
       setResourceTotal(state, actor, "sp", Math.min(actor.maxSp, actor.sp + amount2), actor.id, item.name);
     }
   } else if (Object.hasOwn(item, "effect") && effect === "shield") {
-    grantStatus(state, actor, "shield", { amount: item.damage ?? 10, sourceUnitId: actor.id });
+    grantShield(state, actor, item.damage ?? 10, { sourceUnitId: actor.id });
   } else {
     const amount2 = item.damage ?? 8;
     restoreHP(state, actor, amount2, actor.id, item.name);
-    grantStatus(state, actor, "shield", { amount: 10, sourceUnitId: actor.id });
-    grantStatus(state, actor, "haste", { sourceUnitId: actor.id });
+    grantShield(state, actor, 10, { sourceUnitId: actor.id });
+    grantStatus(state, actor, actionStatuses.altar, { sourceUnitId: actor.id });
   }
 }
 function applyAction(state, action) {
@@ -3159,20 +3175,20 @@ function applyAction(state, action) {
     case "use_item": {
       actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
       record(state, actor, "item", `${actor.name}\u4F7F\u7528\u540C\u8C03\u526F\u624B\u9053\u5177`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-      grantStatus(state, actor, "haste", { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.use_item, { sourceUnitId: actor.id });
       if (!actor.attunementCharges) actor.stance = "light_blade";
       break;
     }
     case "charge":
-      grantStatus(state, actor, "charge", { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.charge, { sourceUnitId: actor.id });
       break;
     case "lock_on":
       actor.lockedTargetId = plan.targetId;
-      grantStatus(state, actor, "lock_on", { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.lock_on, { sourceUnitId: actor.id });
       record(state, actor, "maneuver", `${actor.name}\u9501\u5B9A${state.units[plan.targetId].name}`, { targetId: plan.targetId });
       break;
     case "scan":
-      grantStatus(state, actor, "weakness", { sourceUnitId: actor.id, stacks: 3 });
+      grantStatus(state, actor, actionStatuses.scan, { sourceUnitId: actor.id, stacks: 3 });
       break;
     case "flee": {
       const enemies = living(state).filter((u) => u.team !== actor.team).sort((a, b) => effectiveStat(state, b, "agi") - effectiveStat(state, a, "agi") || byId2(a, b));
@@ -3195,23 +3211,24 @@ function applyAction(state, action) {
     case "push": {
       const target2 = state.units[plan.targetId];
       if (target2 && maneuverContest(state, actor, target2, type)) {
-        if (type === "grapple") grantStatus(state, target2, "grappled", { sourceUnitId: actor.id });
+        if (type === "grapple") grantStatus(state, target2, actionStatuses.grapple, { sourceUnitId: actor.id });
         if (type === "disarm") {
-          const held = target2.mainHand ?? target2.weapon;
-          target2.disarmedItem = held ?? null;
           target2.mainHand = null;
           target2.weapon = null;
-          grantStatus(state, target2, "disarmed", { sourceUnitId: actor.id });
         }
-        if (type === "trip") grantStatus(state, target2, "prone", { sourceUnitId: actor.id });
+        if (type === "trip") grantStatus(state, target2, actionStatuses.trip, { sourceUnitId: actor.id });
         if (type === "push") knockback(state, actor, target2, { distance: 1, collisionDamage: 3 });
       }
       break;
     }
     case "block":
       actor.blockMode = action.maneuver === "heavy" ? "heavy" : "normal";
-      grantStatus(state, actor, "guarded", { sourceUnitId: actor.id, turns: 1, modifiers: { reduction: actor.blockMode === "heavy" ? 0.45 : 0.25 } });
-      record(state, actor, "block", `${actor.name}${actor.blockMode === "heavy" ? "\u91CD" : ""}\u683C\u6321`, { reduction: actor.blockMode === "heavy" ? 0.45 : 0.25 });
+      grantStatus(state, actor, actionStatuses.block, {
+        sourceUnitId: actor.id,
+        turns: 1,
+        ...Object.hasOwn(getStatusTemplate(state, actionStatuses.block).modifiers, "reduction") && { modifiers: { reduction: plan.reduction } }
+      });
+      record(state, actor, "block", `${actor.name}${actor.blockMode === "heavy" ? "\u91CD" : ""}\u683C\u6321`, { reduction: plan.reduction });
       break;
     case "reload": {
       const weapon = weaponInfo(state, actor);
@@ -3223,10 +3240,10 @@ function applyAction(state, action) {
         state,
         actor,
         "brace",
-        `${actor.name}${plan.coverId ? `\u501F ${plan.coverId} ` : "\u539F\u5730"}\u67B6\u52BF\u9632\u5FA1\uFF08\u51CF\u4F24 35%\uFF0C${plan.turns} \u56DE\u5408\uFF09`,
+        `${actor.name}${plan.coverId ? `\u501F ${plan.coverId} ` : "\u539F\u5730"}\u67B6\u52BF\u9632\u5FA1\uFF08\u51CF\u4F24 ${Math.round(plan.reduction * 100)}%\uFF0C${plan.turns} \u56DE\u5408\uFF09`,
         { coverId: plan.coverId, reduction: plan.reduction, turns: plan.turns }
       );
-      grantStatus(state, actor, "guarded", { sourceUnitId: actor.id, turns: plan.turns });
+      grantStatus(state, actor, actionStatuses.brace, { sourceUnitId: actor.id, turns: plan.turns });
       break;
     case "interact":
       applyInteraction(state, actor, plan);
@@ -3433,29 +3450,6 @@ function dice2(v) {
   checkOptional(v, "multiplier", (x) => num(x, 0, 8));
   checkOptional(v, "type", (x) => damageTypes.includes(x));
 }
-var customModifierKeys = [
-  "damage",
-  "damageType",
-  "heal",
-  "movement",
-  "armor",
-  "accuracy",
-  "incomingAccuracy",
-  "advantage",
-  "disadvantage",
-  "reduction",
-  "vulnerability",
-  "reflect",
-  "dodgeBonus",
-  "attackPercent",
-  "attributePercent",
-  "finalDamageMultiplier",
-  "guaranteed_hit",
-  "guaranteed_crit",
-  "blockResourceRestore",
-  "preserveLife",
-  "skip"
-];
 function statusLifetime(v) {
   return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
 }
@@ -3463,24 +3457,25 @@ function statusTemplate(v, key4 = v?.id) {
   fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers"], ["expireInto", "expireOn"]);
   checkOptional(v, "expireInto", id2);
   checkOptional(v, "expireOn", validExpireOn);
-  requireThat(id2(key4) && !own2(STATUSES, key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
-  requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300) && ["buff", "debuff", "control", "dot", "hot"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
+  requireThat(id2(key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
+  requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
   requireThat(statusLifetime(v) && int(v.maxStacks, 1, 10), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
-  fields(v.modifiers, [], customModifierKeys);
-  requireThat(Object.keys(v.modifiers).length > 0 && (!own2(v.modifiers, "damageType") || own2(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
+  requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own2(v.modifiers, "damageType") || own2(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
   validateStatusModifiers(v, v.modifiers);
+  requireThat(key4 !== actionStatuses.shield || own2(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
 }
 function statusTemplateTable(v) {
   table2(v, statusTemplate, maxStatusTemplates);
   for (const t of Object.values(v)) if (t.expireInto) {
-    requireThat(t.durationType === "battle_turns" && t.remainingTurns === 1 && t.expireInto !== t.id && (has(STATUSES, t.expireInto) || has(v, t.expireInto) && !v[t.expireInto].expireInto), "\u72B6\u6001\u5230\u671F\u76EE\u6807");
+    const next = getStatusTemplate({ statusTemplates: v }, t.expireInto);
+    requireThat(t.durationType === "battle_turns" && t.remainingTurns === 1 && t.expireInto !== t.id && next && !next.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
   }
 }
 function defineStatus(state, key4, template) {
   requireThat(plain(template) && (!own2(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
   const definition = { ...template, id: key4 };
   statusTemplate(definition, key4);
-  requireThat(!getStatusTemplate(state, key4), "\u72B6\u6001\u6A21\u677F ID \u5DF2\u5B58\u5728");
+  requireThat(!own2(state.statusTemplates ?? {}, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
   requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, "\u81EA\u5B9A\u4E49\u72B6\u6001\u6A21\u677F\u6570\u91CF");
   (state.statusTemplates ??= {})[key4] = structuredClone(definition);
   return structuredClone(definition);
@@ -3507,8 +3502,8 @@ function validateEffect(e, state) {
       const template = getStatusTemplate(state, node3.statusId);
       requireThat(template, `DSL status ${node3.statusId}`);
       if (node3.modifiers) validateStatusModifiers(template, node3.modifiers);
-      if (node3.stacks && !has(STATUSES, node3.statusId)) requireThat(node3.stacks <= template.maxStacks, "DSL status stacks");
-      if (node3.amount != null) requireThat(node3.statusId === "shield" && int(node3.amount, 1, 1e4), "DSL status amount");
+      if (node3.stacks && (!has(STATUSES, node3.statusId) || has(state?.statusTemplates ?? {}, node3.statusId))) requireThat(node3.stacks <= template.maxStacks, "DSL status stacks");
+      if (node3.amount != null) requireThat(own2(template.modifiers, "amount") && int(node3.amount, 1, 1e4), "DSL status amount");
     }
     if (node3.initial != null) requireThat(node3.cap != null && node3.initial <= node3.cap, "DSL resource initial");
   }
@@ -3571,7 +3566,7 @@ function statusValue(v, key4, state) {
   validateStatusModifiers(t, v.modifiers);
   checkOptional(v, "appliedRound", (x) => int(x, 1, 1e6));
   checkOptional(v, "appliedTurn", (x) => int(x, 0, 199));
-  requireThat(key4 === "shield" ? int(v.amount, 1, 1e9) : !own2(v, "amount"), "\u62A4\u76FE\u6C60");
+  requireThat(own2(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own2(v, "amount"), "\u62A4\u76FE\u6C60");
 }
 function validateCell(v) {
   fields(v, ["kind", "z"]);
@@ -3992,9 +3987,7 @@ var byId3 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 var dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 var healthGap = (unit) => unit.maxHp - unit.hp;
 var samePosition = (a, b) => a.x === b.x && a.y === b.y;
-var canSee = (state, actor, target2) => !target2.statuses.stealth || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1;
 function tactics(state, actor, action, plan) {
-  const skill2 = action.type === "skill" ? state.skills[action.skillId] : void 0;
   if (action.type === "interact" && plan.kind === "altar") return 4 + Math.min(8, healthGap(actor)) * 0.95 + Math.min(5, actor.maxMp - actor.mp) * 0.55;
   let score = 0;
   for (const profile of plan.targets ?? []) {
@@ -4012,42 +4005,7 @@ function tactics(state, actor, action, plan) {
     score += sign3 * (Math.min(target2.hp, damage) + kill * 6);
     if (profile.heal) {
       const healing = (profile.heal[0] + profile.heal[1]) / 2;
-      score -= sign3 * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (target2.statuses.shield ? 0.14 : 0.34));
-    }
-    for (const effect of skill2?.effects ?? []) {
-      const applied = effect.target === "self" || enemy && effect.statusId === "stealth" ? actor : target2;
-      const existing = applied.statuses[effect.statusId];
-      const useful = !existing || existing.stackRule === "stack" && existing.stacks < existing.maxStacks;
-      const chance = (profile.hitChance ?? 1) * (1 - (profile.saveChance ?? 0));
-      const nearbyEnemy = Object.values(state.units).some((u) => u.hp > 0 && u.team !== applied.team && dist(u, applied) < 4.5);
-      if (effect.kind === "cleanse") {
-        const bad = Object.values(applied.statuses).filter((s) => s.durationType !== "persistent" && ["dot", "control", "debuff"].includes(s.category));
-        score += bad.reduce((total, s) => total + (s.category === "control" ? 6 : 3), 0);
-      } else if (effect.kind === "knockback") score += enemy ? 2 * chance : -2;
-      else if (effect.kind === "status" && useful) {
-        const weights = {
-          stun: 8,
-          freeze: 8,
-          burn: 4,
-          bleed: 3,
-          poison: 4,
-          chill: 2,
-          blind: 2.5,
-          root: 3,
-          mark: 2,
-          sunder: 3,
-          vulnerable: 3,
-          taunt: 1,
-          regen: Math.min(healthGap(applied) * 0.2, 4),
-          shield: nearbyEnemy ? 3 : 0.25,
-          haste: nearbyEnemy ? 2 : 0.5,
-          guarded: nearbyEnemy ? 3 : 0.25,
-          guard: nearbyEnemy ? 2 : 0.25,
-          thorns: nearbyEnemy ? 3 : 0.25,
-          stealth: nearbyEnemy ? 2.5 : 0.5
-        };
-        score += (weights[effect.statusId] ?? 1) * chance * (applied.team !== actor.team && !enemy ? -1 : 1);
-      }
+      score -= sign3 * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target2) ? 0.14 : 0.34));
     }
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * 0.35 - plan.sp * 0.25;
@@ -4060,7 +4018,7 @@ function aimedOptions(state, actor, attacksOnly = false) {
     const plan = preview(state, action);
     if (plan.ok) choices.push({ action, score: tactics(state, actor, action, plan) });
   }
-  const enemies = units.filter((u) => u.team !== actor.team && canSee(state, actor, u));
+  const enemies = units.filter((u) => visibleEnemy(state, actor, u));
   for (const target2 of [...enemies, ...attacksOnly ? [] : covers]) consider({ type: "attack", x: target2.x, y: target2.y });
   for (const skillId of [...actor.skills].sort()) {
     const skill2 = state.skills[skillId];
@@ -4119,7 +4077,7 @@ function chooseAction(state) {
   if (!actor || !actor.hp || !actor.ap) return { ...END };
   const enemies = Object.values(state.units).filter((u) => u.hp > 0 && u.team !== actor.team).sort(byId3);
   if (!enemies.length) return { ...END };
-  const visible = enemies.filter((u) => canSee(state, actor, u));
+  const visible = enemies.filter((u) => visibleEnemy(state, actor, u));
   const objectives = visible.length ? visible : enemies;
   let best = { action: END, score: 0.6 };
   function consider(choice) {
@@ -4168,7 +4126,7 @@ function chooseAction(state) {
     }
   }
   const bracing = preview(state, { type: "brace" });
-  if (bracing.ok && !actor.statuses.guarded && baseline <= 5) consider({ action: { type: "brace" }, score: bracing.coverId ? 2.5 : 1.4 });
+  if (bracing.ok && !statusModifier(actor, "reduction") && baseline <= 5) consider({ action: { type: "brace" }, score: bracing.coverId ? 2.5 : 1.4 });
   return { ...best.action };
 }
 
@@ -4215,9 +4173,12 @@ var commands = {
     checkOptional(options, "stacks", (x) => int(x, 1, status2.maxStacks));
     checkOptional(options, "stackRule", (x) => ["refresh", "stack", "replace"].includes(x));
     checkOptional(options, "tickTiming", (x) => ["onTurnStart", "onTurnEnd"].includes(x));
-    checkOptional(options, "amount", (x) => c.statusId === "shield" && int(x, 1, 1e4));
+    checkOptional(options, "amount", (x) => own2(status2.modifiers, "amount") && int(x, 1, 1e4));
     checkOptional(options, "sourceUnitId", (x) => has(s.units, x));
-    if (c.statusId === "taunt") requireThat(has(s.units, options.sourceUnitId ?? u.statuses.taunt?.sourceUnitId) && s.units[options.sourceUnitId ?? u.statuses.taunt?.sourceUnitId].team !== u.team, "\u5632\u8BBD\u9700\u8981\u654C\u5BF9\u6765\u6E90");
+    if (options.modifiers?.taunted ?? status2.modifiers.taunted) {
+      const sourceId2 = options.sourceUnitId ?? u.statuses[c.statusId]?.sourceUnitId;
+      requireThat(has(s.units, sourceId2) && s.units[sourceId2].team !== u.team, "\u5632\u8BBD\u9700\u8981\u654C\u5BF9\u6765\u6E90");
+    }
     grantStatus(s, u, c.statusId, options);
   },
   remove_status(s, c) {
@@ -4360,22 +4321,22 @@ function formatBattleReportText(report, unitNames = {}) {
   };
   const change = (resource3, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource3} ${before} \u2192 ${after}\uFF09` : "";
   for (const { round, events: events2 } of report.rounds) {
-    const rows = [];
+    const rows2 = [];
     let turn = null;
     const add = (text4) => {
       if (turn) turn.parts.push(text4);
-      else rows.push(text4);
+      else rows2.push(text4);
     };
     for (const [i, event] of events2.entries()) {
       const { type, text: text4, actor } = event;
       const detail = event.detail ?? {};
       switch (type) {
         case "initiative":
-          rows.push(`\u786E\u5B9A\u5148\u653B\u6B21\u5E8F\uFF1A${detail.initiative.map((u) => name(event, u.unitId)).join(" \u2192 ")}`);
+          rows2.push(`\u786E\u5B9A\u5148\u653B\u6B21\u5E8F\uFF1A${detail.initiative.map((u) => name(event, u.unitId)).join(" \u2192 ")}`);
           break;
         case "turn":
           turn = { text: replaceUnitNames(event, text4), actor, parts: [] };
-          rows.push(turn);
+          rows2.push(turn);
           break;
         case "end":
           if (turn && !turn.parts.length) turn.parts.push("\u672A\u884C\u52A8\uFF0C\u7ED3\u675F\u56DE\u5408");
@@ -4425,7 +4386,7 @@ function formatBattleReportText(report, unitNames = {}) {
           break;
         case "outcome":
           turn = null;
-          rows.push(replaceUnitNames(event, text4));
+          rows2.push(replaceUnitNames(event, text4));
           break;
         default: {
           if (type === "cover_damage" && detail.amount === 0) break;
@@ -4440,9 +4401,9 @@ function formatBattleReportText(report, unitNames = {}) {
         }
       }
     }
-    if (!rows.length) continue;
+    if (!rows2.length) continue;
     lines.push("", `- \u56DE\u5408${roundLabel(round)}`);
-    for (const row of rows) lines.push(`  - ${typeof row === "string" ? row : row.text + (row.parts.length ? `\uFF1A${row.parts.join("\uFF1B")}` : "")}`);
+    for (const row of rows2) lines.push(`  - ${typeof row === "string" ? row : row.text + (row.parts.length ? `\uFF1A${row.parts.join("\uFF1B")}` : "")}`);
   }
   if (!report.outcome) lines.push("", "\u6218\u6597\u5C1A\u672A\u7ED3\u675F\u3002");
   return `${lines.join("\n")}
@@ -4455,7 +4416,7 @@ var fail3 = (message) => {
   throw new Error(message);
 };
 var version = 1;
-var battleVersion = 5;
+var battleVersion = 6;
 var maxHistory = 2e3;
 var maxBatch = 32;
 var own4 = (obj, key4) => Object.hasOwn(obj, key4);
@@ -4531,10 +4492,18 @@ function createGameAPI() {
     return { ok: true, revision };
   }
   function restore(snapshot) {
-    if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, 3, 4, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
+    if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, 3, 4, 5, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
     const needsMigration = snapshot.version < battleVersion;
     if (needsMigration) {
-      const migrate = (data) => ({ ...migrateStateEffects(copy(data)), mode: "split" });
+      const migrate = (data) => {
+        const next2 = migrateStateEffects(copy(data));
+        next2.mode = "split";
+        for (const unit of Object.values(next2.units ?? {})) {
+          delete unit.statuses?.disarmed;
+          delete unit.disarmedItem;
+        }
+        return next2;
+      };
       snapshot = { ...snapshot, origin: migrate(snapshot.origin), state: migrate(snapshot.state) };
     }
     validateState(snapshot.origin);
@@ -4968,7 +4937,7 @@ function nameOf(state, id3) {
   return table3(state?.units, id3)?.name ?? table3(state?.covers, id3)?.name ?? table3(state?.interactives, id3)?.name ?? String(id3);
 }
 function statusInfo(state, id3) {
-  return table3(STATUSES, id3) ?? table3(state?.statusTemplates, id3) ?? { name: id3 };
+  return table3(state?.statusTemplates, id3) ?? table3(STATUSES, id3) ?? { name: id3 };
 }
 function diceMode(dice3, kept, { advantages = 0, disadvantages = 0, bonusDice = 0 } = {}) {
   if (!Array.isArray(dice3) || dice3.length <= 1) return "normal";
@@ -5153,12 +5122,12 @@ function narrate(log, state) {
   const out = (extra) => ({ ...base, ...extra });
   switch (log?.type) {
     case "initiative": {
-      const rows = [...d.initiative ?? []].sort((a, b) => b.total - a.total);
+      const rows2 = [...d.initiative ?? []].sort((a, b) => b.total - a.total);
       return out({
         icon: "\u{1F3B2}",
         tone: "turn",
         title: "\u6295\u63B7\u5148\u653B\uFF0C\u51B3\u5B9A\u884C\u52A8\u987A\u5E8F",
-        lines: rows.map((r, i) => `${i + 1}. ${nameOf(state, r.unitId)}\uFF1Ad20 \u5F97 ${r.roll} + \u654F\u6377 ${r.agility}${r.flatInit ? ` ${sign(r.flatInit)}` : ""} = ${num2(r.total)}`)
+        lines: rows2.map((r, i) => `${i + 1}. ${nameOf(state, r.unitId)}\uFF1Ad20 \u5F97 ${r.roll} + \u654F\u6377 ${r.agility}${r.flatInit ? ` ${sign(r.flatInit)}` : ""} = ${num2(r.total)}`)
       });
     }
     case "initiative_order":
@@ -9309,7 +9278,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink) {
       stacks,
       sourceUnitId: null,
       modifiers: modifiers3,
-      ...sid === "shield" ? { amount: bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, modifiers3.amount) } : {}
+      ...own5(modifiers3, "amount") ? { amount: bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, modifiers3.amount) } : {}
     };
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
@@ -9854,7 +9823,7 @@ IF\uFF1A\u6570\u7EC4\u7B49\u4EF7\u4E8E AND\uFF0Cor \u4EFB\u4E00\u6210\u7ACB\u300
 
 ROLL\uFF1A\u65E0 roll \u65F6\u4E00\u5B9A\u5C1D\u8BD5\u3002chance \u76F4\u63A5\u7528 0\u20261 \u6BD4\u4F8B\uFF0Cd20 \u6BD4\u8F83 >= gte\u3002save \u53D6\u76EE\u6807 d20+\u5C5E\u6027\uFF0C\u8FBE\u5230 dc \u5219\u901A\u8FC7\u5E76\u8DF3\u8FC7\u8282\u70B9\u3002save \u6570\u7EC4\u5FC5\u987B\u63D0\u4F9B mode\uFF0C\u6210\u5458\u552F\u4E00\uFF0C\u6BCF\u9879\u72EC\u7ACB\u63B7\u9AB0\u3002contest \u7684\u653B\u65B9 d20+attacker \u51CF\u5B88\u65B9 d20+defender \u8FBE\u5230 dc \u65F6\u6267\u884C\u8282\u70B9\u3002\u8C41\u514D\u6216\u5BF9\u6297\u53EF\u540C\u65F6\u63D0\u4F9B chance \u4F5C\u4E3A\u524D\u7F6E\u6982\u7387\u95E8\u3002dc \u4E0E\u6280\u80FD saveDC \u5747\u652F\u6301\u516C\u5F0F\uFF0C\u89C1\u4E0A\u8282\u6570\u503C\u534F\u8BAE\u3002
 
-\u751F\u547D\u5468\u671F\uFF1A\u72B6\u6001\u6A21\u677F\u548C grantStatus \u8282\u70B9\u5747\u53EF\u58F0\u660E expireOn = ${describe(expireOn)}\u3002\u4EFB\u4E00\u89C4\u5219\u5339\u914D\u5C31\u7ACB\u5373\u79FB\u9664\u5E76\u8BB0\u5F55\u539F\u56E0\u3002on_damaged \u53EA\u5728\u5B9E\u9645\u6263 HP \u65F6\u5339\u914D\uFF1B\u7F3A\u7701\u6216 any \u5339\u914D\u5168\u90E8\uFF0Cdirect \u5339\u914D\u4E3B\u51FB\u6216\u4E3B\u52A8\u547D\u4E2D\u7684\u4F24\u5BB3\uFF0Cindirect \u5339\u914D\u5468\u671F\u3001\u53CD\u4F24\u53CA\u73AF\u5883\u7B49\u975E\u76F4\u63A5\u4F24\u5BB3\u3002on_heal \u5728\u6301\u6709\u8005\u5B9E\u9645\u6062\u590D HP \u65F6\u5339\u914D\uFF1B\u56DE\u5408\u4E8B\u4EF6\u5728\u5468\u671F\u7ED3\u7B97\u524D\u6253\u65AD\u3002exceptSource:self \u6392\u9664\u6765\u6E90\u4E3A\u72B6\u6001\u6301\u6709\u8005\u7684\u4E8B\u4EF6\u3002\u6388\u4E88\u8282\u70B9\u7684\u89C4\u5219\u4F18\u5148\uFF0C\u5176\u6B21\u4FDD\u7559\u5B9E\u4F8B\u89C4\u5219\uFF0C\u6700\u540E\u4F7F\u7528\u6A21\u677F\u89C4\u5219\u3002patchStatus \u53EF\u8986\u76D6\u5B9E\u4F8B expireOn\uFF0C\u4F20 null \u5173\u95ED\u3002
+\u751F\u547D\u5468\u671F\uFF1A\u72B6\u6001\u6A21\u677F\u548C grantStatus \u8282\u70B9\u5747\u53EF\u58F0\u660E expireOn = ${describe(expireOn)}\u3002\u4EFB\u4E00\u89C4\u5219\u5339\u914D\u5C31\u7ACB\u5373\u79FB\u9664\u5E76\u8BB0\u5F55\u539F\u56E0\u3002on_struck \u5728\u547D\u4E2D\u7ED3\u7B97\u4E2D\u3001\u8BA1\u7B97\u788E\u88C2\u589E\u4F24\u4E4B\u540E\u4E14\u6263\u51CF\u62A4\u76FE\u4E4B\u524D\u5339\u914D\uFF0C\u5373\u4F7F\u62A4\u76FE\u5B8C\u5168\u5438\u6536\u4E5F\u89E6\u53D1\uFF1Bon_attack \u5728\u53D1\u52A8\u653B\u51FB\u6216\u654C\u5BF9\u6280\u80FD\u65F6\u5339\u914D\u3002on_damaged \u53EA\u5728\u5B9E\u9645\u6263 HP \u65F6\u5339\u914D\uFF1B\u7F3A\u7701\u6216 any \u5339\u914D\u5168\u90E8\uFF0Cdirect \u5339\u914D\u4E3B\u51FB\u6216\u4E3B\u52A8\u547D\u4E2D\u7684\u4F24\u5BB3\uFF0Cindirect \u5339\u914D\u5468\u671F\u3001\u53CD\u4F24\u53CA\u73AF\u5883\u7B49\u975E\u76F4\u63A5\u4F24\u5BB3\u3002on_heal \u5728\u6301\u6709\u8005\u5B9E\u9645\u6062\u590D HP \u65F6\u5339\u914D\uFF1B\u56DE\u5408\u4E8B\u4EF6\u5728\u5468\u671F\u7ED3\u7B97\u524D\u6253\u65AD\u3002exceptSource:self \u6392\u9664\u6765\u6E90\u4E3A\u72B6\u6001\u6301\u6709\u8005\u7684\u4E8B\u4EF6\u3002\u6388\u4E88\u8282\u70B9\u7684\u89C4\u5219\u4F18\u5148\uFF0C\u5176\u6B21\u4FDD\u7559\u5B9E\u4F8B\u89C4\u5219\uFF0C\u6700\u540E\u4F7F\u7528\u6A21\u677F\u89C4\u5219\u3002patchStatus \u53EF\u8986\u76D6\u5B9E\u4F8B expireOn\uFF0C\u4F20 null \u5173\u95ED\u3002
 \u6548\u679C\u5F00\u5173\uFF1A\u6BCF\u4E2A\u8282\u70B9\u53EF\u5199 enabled:true \u6216 enabled:false\uFF0C\u7F3A\u7701\u89C6\u4E3A true\u3002false \u8DF3\u8FC7\u8BE5\u8282\u70B9\uFF08\u5982\u679C\u662F chainEffect\uFF0C\u4E5F\u8DF3\u8FC7\u5176\u5B50\u8282\u70B9\uFF09\uFF0C\u5176\u4ED6\u8282\u70B9\u7167\u5E38\u7ED3\u7B97\u3002\u5267\u60C5/\u8BED\u4E49\u5224\u65AD\u7531\u6A21\u578B\u81EA\u884C\u51B3\u5B9A\uFF0C\u901A\u8FC7 enabled \u5F00\u5173\u8868\u8FBE\uFF0C\u5F15\u64CE\u4E0D\u505A\u6761\u4EF6\u6C42\u503C\u3002\u5DF2\u7ED3\u7B97\u7684\u7ED3\u679C\u6309\u5404\u81EA\u7684\u89C4\u5219\u7EE7\u7EED\u5904\u7406\u3002\u9632\u5FA1\u8282\u70B9 modifyStat(stat:defense) \u4FEE\u6B63\u62A4\u7532\u7ED3\u7B97\uFF0Ccondition:intercepting \u5C06\u5176\u9650\u5236\u5728\u66FF\u961F\u53CB\u627F\u4F24\u65F6\u3002
 
 TARGET\uFF1Aself \u81EA\u8EAB\uFF0ChitTarget \u5F53\u524D\u547D\u4E2D\u6216\u9009\u4E2D\u7684\u5355\u4F4D\uFF0Cattacker \u653B\u51FB\u8005\uFF0CkilledUnit \u88AB\u51FB\u5012\u5355\u4F4D\uFF0Ccorpse \u672A\u88AB\u6D88\u8017\u7684\u5C38\u4F53\u3002enemiesInRadius / alliesInRadius \u4F7F\u7528 params.radius \u6216\u8282\u70B9 radius\uFF08\u9ED8\u8BA41\u683C\uFF09\uFF0C\u65BD\u6CD5\u8303\u56F4\u5185\u4ECE\u8986\u76D6\u683C\u7B5B\u9009\u3002\u8282\u70B9\u53EF\u8986\u5199\u76EE\u6807\u3002\u5C38\u4F53\u4E0D\u4F1A\u963B\u6321\u79FB\u52A8\uFF0CraiseDead \u4F1A\u6D88\u8017\u5C38\u4F53\u3002
@@ -9866,7 +9835,7 @@ DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BC
 \u6570\u503C\u4E0E\u7ED3\u7B97\uFF1Aamount/flat \u662F\u7EDD\u5BF9\u91CF\u3002\u767E\u5206\u6BD4\u4EE5\u5C0F\u6570\u8868\u793A\u3002percentOfPrevious \u8BFB\u53D6\u94FE\u5185\u4E0A\u4E00\u6570\u503C\u8282\u70B9\u7684\u5B9E\u9645\u7ED3\u679C\uFF0CpercentOfDamageDealt \u8BFB\u53D6\u672C\u6B21\u5B9E\u9645\u6263\u8840\uFF0CpercentOfPower \u4E58\u6280\u80FD\u57FA\u7840\u5A01\u529B\uFF0CpercentOfHealing \u8BFB\u53D6\u6CBB\u7597\u7ECF\u52A0\u6210\u540E\u7684\u91CF\u3002levelScaling.perLevel \u4ECE 1 \u9636\u57FA\u51C6\u6BCF\u9636\u589E\u957F\uFF0Cmin/max \u5219\u5728 1\u20267 \u9636\u7EBF\u6027\u63D2\u503C\u3002resourceScale \u8BFB\u53D6\u5B58\u91CF\uFF0C\u53EF\u7528 unitSize \u5411\u4E0B\u53D6\u6574\u5206\u7EC4\u3002multiplyDamage \u7684 factor \u662F\u603B\u7CFB\u6570\uFF08+12% \u5199 1.12\uFF09\uFF0Cadditive=true \u5408\u5E76\u5404\u7CFB\u6570\u76F8\u5BF9 1 \u7684\u589E\u91CF\u3002\u4E3B\u51FB\u4E58\u533A\u4F7F\u7528 passive/on_attack/on_skill_cast\u3002modifyDamageBase \u66FF\u6362\u8D77\u4F24\uFF0CignoreAttributes \u7F3A\u7701\u4E3A true\uFF0Cunscaled \u8DF3\u8FC7\u8BC4\u7EA7\u548C\u59FF\u6001\u7B49\u653B\u51FB\u500D\u7387\u3002forceOutcome \u4FDD\u969C\u547D\u4E2D\u6216\u66B4\u51FB\uFF0CupgradeHitTier \u63D0\u9AD8\u5DF2\u547D\u4E2D\u7684\u8BC4\u7EA7\u3002modifyCheck \u7684\u5404\u9879\u5206\u522B\u670D\u52A1\u4E8E\u5148\u653B\u3001\u95EA\u907F\u3001\u6F5C\u884C\u3001\u547D\u4E2D\u3001\u6838\u5FC3\u610F\u56FE\u3001\u9AD8\u5730\u548C\u4F18\u52BF\u3002teleportBackstab \u6821\u9A8C\u80CC\u540E\u7A7A\u683C\u518D\u79FB\u52A8\uFF0C\u63D0\u4F9B\u4F18\u52BF\u548C\u4F24\u5BB3\u500D\u7387\u3002knockback \u78B0\u649E\u9ED8\u8BA4\u4F24\u5BB3 5 \u5E76\u7729\u6655\u3002
 \u8D44\u6E90\uFF1Ahp/mp/sp/ap \u548C attack/action \u4E3A\u5185\u7F6E\u8D44\u6E90\u3002\u5176\u4ED6\u8D44\u6E90\u53EF\u5B58\u4E8E\u5355\u4F4D\uFF0C\u6216\u7531 passive/self \u7684 produceResource(cap,initial) \u58F0\u660E\u4E3A\u88C5\u5907\u5B9E\u4F8B\u8BA1\u6570\uFF0Citems.counters \u5FC5\u987B\u4E0E\u8D44\u6E90\u58F0\u660E\u76F8\u7B26\u3002local=true \u53EA\u8BBF\u95EE\u8BE5\u88C5\u5907\u81EA\u5DF1\u7684\u6C60\u3002reloadable \u58F0\u660E\u53EF\u88C5\u586B\u8D44\u6E90\uFF0C\u914D on_attack \u7684 drainResource \u6D88\u8017\u3002\u65E0\u9650\u5F39\u836F\u662F\u72B6\u6001 infinite_ammo\uFF0C\u6D88\u8017\u6761\u4EF6\u53EF\u7528 selfStatusModifier(key=infiniteAmmo,value=false)\u3002requireFull \u4F59\u989D\u4E0D\u8DB3\u65F6\u505C\u6B62\u5F53\u524D\u8282\u70B9\u5217\u8868\uFF0CminimumRemaining \u8BBE\u7F6E\u6700\u4F4E\u4FDD\u7559\u91CF\u3002\u6280\u80FD resourceCost \u5728\u65BD\u653E\u524D\u6263\u9664\uFF0CpercentPerCost \u6309\u82B1\u8D39\u6062\u590D\u3002execute \u7684 strict \u9009\u62E9\u4E25\u683C\u4F4E\u4E8E\u9608\u503C\uFF0CrequiresPool \u68C0\u67E5\u6307\u5B9A\u88C5\u5907\u6C60\u3002stopOnFailure \u94FE\u4F1A\u5728\u9996\u4E2A\u672A\u4EA7\u751F\u6548\u679C\u7684\u8282\u70B9\u505C\u6B62\u3002
 \u8D44\u6E90\u65B9\u6848\uFF1A\u5148\u5728\u6301\u6709\u88C5\u5907 effects \u52A0\u4E00\u6761 passive/self \u8868\u8FBE\u5F0F\uFF0C\u8282\u70B9 produceResource \u5199 resource\u3001cap \u548C initial\uFF1B\u540C\u6279\u5411\u5BF9\u5E94\u5B9E\u4F8B /items/<id>/counters/<resource> \u6DFB\u52A0\u521D\u503C\u3002\u53EA\u5199\u5B9E\u4F8B\u8BA1\u6570\u4F1A\u88AB\u62D2\u7EDD\u3002\u65A9\u6740\u6280\u80FD\u5148 execute\uFF0C\u6210\u529F\u540E\u5728\u540C\u94FE\u5BF9 self \u4F7F\u7528 produceResource(targetTierBase)\uFF0C\u8BE5\u6570\u503C\u6309\u76EE\u6807\u9636\u7EA7\u8BA1\u7B97\u3002\u81EA\u7528\u6280\u80FD\u8BBE target=self\u3001range=0\uFF0C\u901A\u8FC7\u6A21\u677F resourceCost \u6263\u88C5\u5907\u8D44\u6E90\uFF0C\u6062\u590D\u5404\u9879\u7528 restoreResource \u7684 percentPerCost\u3002\u88C5\u5907\u6210\u957F\u53EF\u5206\u522B\u653E\u4E94\u4E2A\u57FA\u7840\u5C5E\u6027\u8282\u70B9\uFF0C\u6216\u5BF9\u4F24\u5BB3\u7528 modifyStat(stat=damage)\uFF0C\u7528 percent=1 \u4E0E levelScaling:{min,max} \u8868\u793A\u6210\u957F\u6BD4\u4F8B\u8303\u56F4\u3002\u68C0\u5B9A\u52A0\u503C\u7528 modifyCheck\uFF0C\u7BAD\u77E2\u4E0E\u4E00\u822C\u8FDC\u7A0B\u5206\u522B\u7528 arrow=true \u4E0E melee=false\u3002
-\u72B6\u6001\uFF1AgrantStatus \u4F7F\u7528\u5DF2\u6709 ID\uFF0C\u82E5\u9700\u81EA\u5B9A\u4E49\u5148\u5B9A\u4E49 statusTemplates\u3002modifiers \u53EA\u53EF\u8986\u76D6\u6A21\u677F\u5DF2\u6709\u952E\u3002amount \u4EC5\u7528\u4E8E shield \u72B6\u6001\uFF0C\u8303\u56F4 1\u202610000\u3002removeStatus \u5FC5\u987B\u9009 statusId \u6216 category \u4E4B\u4E00\uFF0Call_negative \u6E05\u9664\u975E\u6C38\u4E45 debuff/dot/control\u3002procEffect \u901A\u8FC7 ref \u67E5\u627E\u5DF2\u5B9A\u4E49\u8868\u8FBE\u5F0F\u5E76\u6267\u884C\uFF0C\u5176\u81EA\u8EAB\u95E8\u69DB\u4ECD\u6709\u6548\uFF0C\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002addItem \u6309\u7269\u54C1 ID \u589E\u52A0\u5355\u4F4D\u5E93\u5B58\u3002`;
+\u72B6\u6001\uFF1AgrantStatus \u4F7F\u7528\u5DF2\u6709 ID\uFF0C\u82E5\u9700\u81EA\u5B9A\u4E49\u5148\u5B9A\u4E49 statusTemplates\u3002modifiers \u53EA\u53EF\u8986\u76D6\u6A21\u677F\u5DF2\u6709\u952E\u3002amount \u4EC5\u7528\u4E8E\u6A21\u677F\u58F0\u660E\u4E86 modifiers.amount \u7684\u72B6\u6001\uFF0C\u8303\u56F4 1\u202610000\u3002removeStatus \u5FC5\u987B\u9009 statusId \u6216 category \u4E4B\u4E00\uFF0Call_negative \u6E05\u9664\u975E\u6C38\u4E45 debuff/dot/control\u3002procEffect \u901A\u8FC7 ref \u67E5\u627E\u5DF2\u5B9A\u4E49\u8868\u8FBE\u5F0F\u5E76\u6267\u884C\uFF0C\u5176\u81EA\u8EAB\u95E8\u69DB\u4ECD\u6709\u6548\uFF0C\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002addItem \u6309\u7269\u54C1 ID \u589E\u52A0\u5355\u4F4D\u5E93\u5B58\u3002`;
 
 // src/tavern/engine-summary.js
 var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
@@ -9889,53 +9858,42 @@ var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
 var ENGINE_API_SUMMARY = `${PROTOCOL_RULES}
 
 \u3010API \u6620\u5C04\u3011
-\u72B6\u6001\u5148\u67E5 STATUSES\uFF0C\u518D\u67E5 statusTemplates\uFF1B\u62D2\u7EDD\u672A\u77E5 ID\u3002\u81EA\u5B9A\u4E49\u63A7\u5236\u72B6\u6001\u53EF\u7528 modifiers:{skip:true} \u8DF3\u8FC7\u884C\u52A8\u3002
+\u72B6\u6001\u5148\u67E5\u6218\u5C40 statusTemplates\uFF0C\u518D\u67E5\u9ED8\u8BA4\u6A21\u677F\uFF1B\u62D2\u7EDD\u672A\u77E5 ID\u3002\u81EA\u5B9A\u4E49\u72B6\u6001\u4F7F\u7528\u540C\u4E00\u5957\u4FEE\u9970\u952E\uFF0C\u89C1\u4E0B\u65B9\u72B6\u6001\u76EE\u5F55\u3002
 \u6280\u80FD saveDC\u3001DSL roll.dc \u548C roll.contest.dc \u4F7F\u7528\u540C\u4E00\u89C4\u5219\u3002\u53EF\u4F20 1\u202650 \u7684\u6574\u6570\uFF0C\u6216 {base:6,scaleBy:{stat:'spi',perUnit:0.5},min:1,max:50}\u3002stat \u53EA\u80FD\u4E3A str/con/agi/int/spi\u3002base \u4E0E perUnit \u53EF\u4E3A\u5C0F\u6570\u6216\u8D1F\u6570\uFF0C\u8303\u56F4 \u22121e9\u20261e9\u3002\u8BA1\u7B97\u4E3A base + perUnit \xD7 \u65BD\u672F\u8005\u5F53\u524D\u751F\u6548\u5C5E\u6027\uFF0C\u4FDD\u7559\u5C0F\u6570\u5E76 clamp \u5230 min/max\uFF0C\u7F3A\u7701 1/50\u3002\u663E\u5F0F\u4E0A\u4E0B\u9650\u4E3A 1\u20261e9 \u7684\u6570\u503C\uFF0Cmin \u4E0D\u5F97\u9AD8\u4E8E max\u3002
 \u88C5\u5907\u6A21\u677F equipment \u4E0E\u5B9E\u4F8B items \u7528 templateId \u5173\u8054\uFF1B\u8BA1\u6570\u5728\u5B9E\u4F8B counters\u3002
 
 \u88C5\u5907\u4E0E\u6280\u80FD\u7EDF\u4E00\u4F7F\u7528\u6548\u679C DSL\u3002\u5916\u5C42\u58F0\u660E\u89E6\u53D1\u3001\u6761\u4EF6\u3001\u68C0\u5B9A\u3001\u76EE\u6807\u4E0E\u8282\u70B9\u5217\u8868\u3002\u5B9E\u4F8B\u8BA1\u6570\u7531\u88C5\u5907\u7684\u8D44\u6E90\u58F0\u660E\u51B3\u5B9A\u3002\u5B8C\u6574 DSL \u534F\u8BAE\u89C1\u4E0B\u8282\u3002
-\u81EA\u5B9A\u4E49 statusTemplates \u989D\u5916\u652F\u6301 dodgeBonus(\u221230\u202630)\u3001attackPercent / attributePercent(\u22121\u20264)\u3001finalDamageMultiplier(0\u20268\uFF0C\u51CF\u4F24\u540E\u62A4\u76FE\u524D\u72EC\u7ACB\u4E58\u533A)\u3001guaranteed_hit / guaranteed_crit / blockResourceRestore / preserveLife(\u5E03\u5C14)\u3002\u4E00\u56DE\u5408 battle_turns \u6A21\u677F\u53EF\u52A0 expireInto \u6307\u5DF2\u5B9A\u4E49\u72B6\u6001\uFF0C\u81EA\u5DF1\u65BD\u52A0\u65F6\u672C\u56DE\u5408\u672B\u5230\u671F\uFF0C\u6218\u6597\u672A\u7ED3\u675F\u624D\u7EED\u63A5\u3002\u5148\u5B9A\u4E49\u7EED\u63A5\u72B6\u6001\uFF0C\u518D\u5B9A\u4E49\u524D\u7F6E\u72B6\u6001\u3002
+\u4E00\u56DE\u5408 battle_turns \u6A21\u677F\u53EF\u52A0 expireInto \u6307\u5DF2\u5B9A\u4E49\u72B6\u6001\uFF0C\u81EA\u5DF1\u65BD\u52A0\u65F6\u672C\u56DE\u5408\u672B\u5230\u671F\uFF0C\u6218\u6597\u672A\u7ED3\u675F\u624D\u7EED\u63A5\u3002\u5148\u5B9A\u4E49\u7EED\u63A5\u72B6\u6001\uFF0C\u518D\u5B9A\u4E49\u524D\u7F6E\u72B6\u6001\u3002
 
 \u3010\u72B6\u6001\u6570\u503C\u8986\u76D6\u3011
 \u6A21\u677F\u6570\u503C\u662F\u9ED8\u8BA4\u503C\u3002grantStatus \u8282\u70B9\u53EF\u7528 modifiers \u8986\u76D6\u6A21\u677F\u5DF2\u6709\u952E\uFF0C\u6309\u72B6\u6001\u76EE\u5F55\u8303\u56F4\u6821\u9A8C\u3002DoT/HoT \u6BCF\u6B21\u7ED3\u7B97\u53D6\u5B9E\u4F8B\u503C\u4E58\u5C42\u6570\u3002
-\u516C\u5F00 API\uFF1AdefineStatus(state,id,template) \u6CE8\u518C\u6218\u5C40\u81EA\u5B9A\u4E49\u6A21\u677F\uFF0C\u4E0D\u80FD\u8986\u76D6\u5DF2\u6709 ID\u3002patchStatus(state,unitId,statusId,{damage:12}) \u66F4\u65B0\u5DF2\u9644\u52A0\u5B9E\u4F8B\u5E76\u5199\u5165\u65E5\u5FD7\u3002statusModifierKeys(statusId,state?) \u67E5\u8BE2\u5408\u6CD5\u952E\u3002GameAPI \u5BF9\u5E94\u7684\u65E0 state \u65B9\u6CD5\u652F\u6301\u8FD0\u884C\u4E2D\u7684\u6218\u5C40\u3002
-\u81EA\u5B9A\u4E49 modifiers \u57FA\u7840\u952E\uFF1A\u6574\u6570 damage/heal/reflect(1\u2026100000)\u3001armor(\u2212100000\u2026100000\uFF0C\u8986\u76D6\u987B\u4FDD\u6301\u65B9\u5411)\u3001movement(\u22123\u20263)\u3001accuracy/incomingAccuracy(\u221210\u202610)\u3001advantage/disadvantage(1\u20263)\uFF1Breduction/vulnerability(0\u20261)\u3002damageType \u968F damage\uFF0C\u53D6 physical/energy/mental/true\u3002`;
+\u516C\u5F00 API\uFF1AdefineStatus(state,id,template) \u6CE8\u518C\u6218\u5C40\u6A21\u677F\uFF0C\u53EF\u8986\u76D6\u540C\u540D\u9ED8\u8BA4\u6A21\u677F\uFF0C\u4F46\u4E0D\u80FD\u91CD\u590D\u6CE8\u518C\u6218\u5C40\u5DF2\u6709\u5B9A\u4E49\u3002patchStatus(state,unitId,statusId,{damage:12}) \u66F4\u65B0\u5DF2\u9644\u52A0\u5B9E\u4F8B\u5E76\u5199\u5165\u65E5\u5FD7\u3002statusModifierKeys(statusId,state?) \u67E5\u8BE2\u5408\u6CD5\u952E\u3002GameAPI \u5BF9\u5E94\u7684\u65E0 state \u65B9\u6CD5\u652F\u6301\u8FD0\u884C\u4E2D\u7684\u6218\u5C40\u3002
+damageType \u968F damage\uFF1B\u53D7\u51FB\u788E\u88C2\u7528 shatter \u914D\u5408 expireOn:on_struck\uFF08\u89C4\u5219\u5199\u4E3A {trigger:'on_struck'}\uFF09\u3002`;
 
 // src/tavern/status-catalog.js
-var STATUS_CATALOG = `\u72B6\u6001 ID\uFF1A\u5185\u7F6E\u4EC5\u4EE5\u4E0B\u5404\u884C\uFF1B\u5176\u4ED6 ID \u5FC5\u987B\u5148\u5728 statusTemplates \u6CE8\u518C\u5E76\u901A\u8FC7\u6821\u9A8C\uFF0C\u4E0D\u53EF\u8986\u76D6\u5185\u7F6E\u3002
-ID | \u56FE\u6807\u4E2D\u6587\u540D | \u7C7B\u522B | \u9ED8\u8BA4\u6301\u7EED\uFF08battle_turns\uFF0C\u81EA\u8EAB\u56DE\u5408\u6570\uFF09 | \u9ED8\u8BA4\u6570\u503C\uFF08\u53EF\u88AB\u6280\u80FD/\u88C5\u5907/API \u8986\u76D6\uFF0C\u62EC\u53F7\u5185\u4E3A\u5408\u6CD5\u8303\u56F4\uFF09 | \u91CD\u590D\u65BD\u52A0\u89C4\u5219/\u6A21\u677F\u5C42\u6570\u4E0A\u9650
-\u4EE5\u4E0B\u6570\u503C\u5747\u4E3A\u6A21\u677F\u9ED8\u8BA4\u503C\u3002\u6280\u80FD\u3001\u88C5\u5907\u4E0E API \u53EF\u5728\u65BD\u52A0\u65F6\u8986\u76D6\uFF08\u89C1 modifiers \u53C2\u6570\uFF09\uFF0C\u4E0D\u5F71\u54CD\u6A21\u677F\u672C\u8EAB\u3002\u8BBE\u8BA1\u6280\u80FD\u65F6\u5E94\u6309\u6280\u80FD\u81EA\u5DF1\u7684\u5F3A\u5EA6\u8BBE\u5B9A\u6570\u503C\u3002
-burn | \u{1F525}\u707C\u70E7 | dot | 2 | \u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002 \u9ED8\u8BA4 damage=5\uFF081\u2013100000\uFF09\uFF0CdamageType=energy\uFF08physical/energy/mental/true\uFF09 | refresh/1
-bleed | \u{1FA78}\u6D41\u8840 | dot | 3 | \u56DE\u5408\u672B\u6BCF\u5C42\u7ED3\u7B97\u4E00\u6B21\u4F24\u5BB3\u3002 \u9ED8\u8BA4 damage=3\uFF081\u2013100000\uFF09\uFF0CdamageType=true\uFF08physical/energy/mental/true\uFF09 | stack/5
-poison | \u2620\uFE0F\u4E2D\u6BD2 | dot | 3 | \u56DE\u5408\u521D\u6BCF\u5C42\u7ED3\u7B97\u4E00\u6B21\u4F24\u5BB3\u3002 \u9ED8\u8BA4 damage=3\uFF081\u2013100000\uFF09\uFF0CdamageType=true\uFF08physical/energy/mental/true\uFF09 | stack/4
-regen | \u{1F49A}\u518D\u751F | hot | 3 | \u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002 \u9ED8\u8BA4 heal=5\uFF081\u2013100000\uFF09 | refresh/1
-shield | \u{1F6E1}\uFE0F\u62A4\u76FE | shield | 2 | \u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002 \u9ED8\u8BA4 amount=8\uFF081\u2013100000\uFF09 | replace/1
-guarded | \u{1F9F1}\u575A\u58C1 | buff | 1 | \u53D7\u5230\u7684\u4F24\u5BB3\u964D\u4F4E\u3002 \u9ED8\u8BA4 reduction=0.35\uFF080\u20131\uFF09 | refresh/1
-taunt | \u{1F4E3}\u5632\u8BBD | control | 1 | \u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002 \u9ED8\u8BA4 taunted=true\uFF08true/false\uFF09 | refresh/1
-guard | \u{1F91D}\u63F4\u62A4 | buff | 2 | \u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002\u4EC5\u975E\u53CD\u5E94\u6253\u51FB\uFF1B\u987B\u672A\u8DF3\u8FC7\u884C\u52A8\u3001\u9AD8\u5DEE\u22641\u4E14\u89C6\u7EBF\u901A\u7545\u3002 \u9ED8\u8BA4 intercept=true\uFF08true/false\uFF09 | refresh/1
-thorns | \u{1F335}\u53CD\u4F24\u68D8\u7532 | buff | 2 | \u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002\u4E0D\u5BF9\u53CD\u5E94\u4F24\u5BB3\u8FDE\u9501\u3002 \u9ED8\u8BA4 reflect=5\uFF081\u2013100000\uFF09 | refresh/1
-stun | \u{1F4AB}\u7729\u6655 | control | 1 | \u8DF3\u8FC7\u884C\u52A8\u3002 \u9ED8\u8BA4 skip=true\uFF08true/false\uFF09 | refresh/1
-freeze | \u{1F9CA}\u51B0\u51BB | control | 1 | \u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002 \u9ED8\u8BA4 skip=true\uFF08true/false\uFF09\uFF0Cshatter=0.5\uFF080\u20131\uFF09 | refresh/1
-root | \u26D3\uFE0F\u5B9A\u8EAB | control | 2 | \u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002 \u9ED8\u8BA4 rooted=true\uFF08true/false\uFF09 | refresh/1
-blind | \u{1F311}\u81F4\u76F2 | debuff | 2 | \u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002 \u9ED8\u8BA4 disadvantage=1\uFF081\u20133\uFF09 | refresh/1
-vulnerable | \u{1F4A2}\u6613\u4F24 | debuff | 2 | \u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0\u3002 \u9ED8\u8BA4 vulnerability=0.35\uFF080\u20131\uFF09 | refresh/1
-sunder | \u{1F528}\u7834\u7532 | debuff | 2 | \u62A4\u7532\u964D\u4F4E\u3002 \u9ED8\u8BA4 armor=-4\uFF08-100000\u2013-1\uFF09 | refresh/1
-mark | \u{1F3AF}\u6807\u8BB0 | debuff | 2 | \u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u63D0\u9AD8\u3002 \u9ED8\u8BA4 incomingAccuracy=2\uFF08-10\u201310\uFF09 | refresh/1
-stealth | \u{1F464}\u9690\u8EAB | buff | 2 | \u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002 \u9ED8\u8BA4 hidden=true\uFF08true/false\uFF09\uFF0Cadvantage=1\uFF081\u20133\uFF09 | refresh/1
-haste | \u{1F4A8}\u75BE\u8D70 | buff | 2 | \u79FB\u52A8\u8DDD\u79BB\u589E\u52A0\u3002 \u9ED8\u8BA4 movement=1\uFF08-3\u20133\uFF09 | refresh/1
-chill | \u2744\uFE0F\u5BD2\u51B7 | debuff | 2 | \u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002 \u9ED8\u8BA4 movement=-1\uFF08-3\u20133\uFF09\uFF0Caccuracy=-2\uFF08-10\u201310\uFF09 | refresh/1
-charge | \u26A1\u84C4\u529B | buff | 1 | \u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002\u5B9E\u9645\u6301\u7EED\u671F\u95F4\u751F\u6548\uFF0C\u653B\u51FB\u4E0D\u6D88\u8017\u3002 \u9ED8\u8BA4 damageBonus=0.15\uFF080\u20131\uFF09 | refresh/1
-lock_on | \u2316\u5B9A\u4F4D | buff | 1 | \u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002\u5B9E\u9645\u547D\u4E2D\u52A0\u503C\u4E0D\u9650\u76EE\u6807\uFF1B\u5B9A\u4F4D\u52A8\u4F5C\u53E6\u8BB0\u671D\u5411\u76EE\u6807\u3002 \u9ED8\u8BA4 accuracy=1\uFF08-10\u201310\uFF09 | refresh/1
-weakness | \u25C9\u5F31\u70B9\u8BC6\u522B | buff | 3 | \u6BCF\u5C42\u964D\u4F4E\u610F\u56FE\u96BE\u5EA6\u3002\u8BFB\u53D6\u9632\u5B88\u8005\u5C42\u6570\uFF0C\u96BE\u5EA6\u6700\u4F4E0\uFF1B\u626B\u63CF\u52A8\u4F5C\u7ED9\u81EA\u8EAB3\u5C42\u3002 \u9ED8\u8BA4 intentDifficulty=-2\uFF08-10\u201310\uFF09 | stack/3
-grappled | \u26D3\u64D2\u62B1 | control | 1 | \u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002 \u9ED8\u8BA4 rooted=true\uFF08true/false\uFF09 | refresh/1
-prone | \u25BD\u5012\u5730 | debuff | 1 | \u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002\u653B\u51FB\u6B64\u5355\u4F4D\u83B7\u5F97 incomingAccuracy\u3002 \u9ED8\u8BA4 incomingAccuracy=2\uFF08-10\u201310\uFF09\uFF0Crooted=true\uFF08true/false\uFF09 | refresh/1
-disarmed | \u2694\u7F34\u68B0 | debuff | 1 | \u65E0\u6CD5\u4F7F\u7528\u4E3B\u624B\u6B66\u5668\u3002\u4EC5\u8D34\u72B6\u6001\u4E0D\u4F1A\u5378\u6B66\u5668\uFF1B\u7F34\u68B0\u52A8\u4F5C\u53E6\u6E05\u4E3B\u624B\u548Cweapon\uFF0C\u5230\u671F\u4E0D\u81EA\u52A8\u5F52\u8FD8\u3002 \u9ED8\u8BA4 disarmed=true\uFF08true/false\uFF09 | refresh/1
-infinite_ammo | \u{1F3F9}\u65E0\u9650\u5F39\u836F | buff | 1 | \u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002 \u9ED8\u8BA4 infiniteAmmo=true\uFF08true/false\uFF09 | refresh/1
-\u9ED8\u8BA4 tickTiming\uFF1AonTurnStart\uFF1B\u4F8B\u5916\uFF1Ableed=onTurnEnd\u3002\u65BD\u52A0\u5F53\u56DE\u5408\u4E0D\u8DF3\u4F24/\u6CBB\u7597\u3001\u4E0D\u6263\u65F6\u957F\u3002
-grantStatus\uFF1Arefresh \u91CD\u8BBE\u65F6\u957F\uFF0Creplace \u66FF\u6362\u4E0D\u7D2F\u52A0\uFF08\u62A4\u76FE\u91CD\u8BBE\u6C60\uFF09\uFF1Bstack \u7D2F\u52A0\u81F3\u4E0A\u9650\uFF0C\u672A\u6307\u5B9A\u65F6\u957F\u65F6\u53D6\u65E7\u5269\u4F59\u4E0E\u6A21\u677F\u9ED8\u8BA4\u7684\u8F83\u5927\u503C\uFF0C\u6307\u5B9A\u5219\u91CD\u8BBE\u3002
-\u6821\u9A8C\u2260\u9ED8\u8BA4\uFF1AremainingTurns \u6574\u65701\u2013100\uFF1BdurationType \u53EF\u4E3A battle_turns\uFF08\u81EA\u8EAB\u56DE\u5408\u672B\u9012\u51CF\uFF09\u3001until_removed \u6216 persistent\uFF08\u540E\u4E24\u8005\u4E0D\u9012\u51CF\uFF0Cpersistent \u4E0D\u53D7 cleanse\uFF09\u3002
-\u5B9E\u4F8B stacks\u3001maxStacks \u5747\u4E3A\u6574\u6570\uFF0C1\u2264stacks\u2264maxStacks\u2264\u6A21\u677F\u4E0A\u9650\uFF1B\u6280\u80FD status \u6548\u679C turns 1\u2013100\u3001stacks 1\u201310\uFF0C\u5185\u7F6E\u65BD\u52A0\u65F6\u4ECD\u622A\u81F3\u5B9E\u4F8B\u4E0A\u9650\uFF0C\u81EA\u5B9A\u4E49\u4E0D\u53EF\u8D85\u6A21\u677F\u4E0A\u9650\uFF08\u81EA\u5B9A\u4E49\u6A21\u677F maxStacks 1\u201310\uFF09\u3002
-\u5B9E\u4F8B\u5C55\u793A\u5B57\u6BB5\u4E0E\u6A21\u677F\u4E00\u81F4\uFF0Cmodifiers \u952E\u96C6\u4E0E\u6A21\u677F\u4E00\u81F4\uFF0C\u503C\u53EF\u5728\u5408\u6CD5\u8303\u56F4\u5185\u53D8\u5316\u3002\u4EC5 shield \u5B9E\u4F8B\u6709 amount\uFF08\u5269\u4F59\u62A4\u76FE\u6C60\uFF09\uFF1B\u65BD\u52A0\u6216 patchStatus \u8986\u76D6 modifiers.amount \u4F1A\u8BBE\u7F6E\u62A4\u76FE\u6C60\uFF0C\u65BD\u52A0\u65F6\u65E7\u5F0F amount \u53C2\u6570\u4F18\u5148\u3002`;
+var rows = Object.values(STATUSES).map((status2) => {
+  const modifiers3 = Object.entries(status2.modifiers).map(([key4, value]) => `${key4}=${value}\uFF08${statusModifierRange(key4, status2)}\uFF09`).join("\uFF0C");
+  const expiry = [].concat(status2.expireOn ?? []).map((rule) => rule.trigger).join("/");
+  return [
+    status2.id,
+    `${status2.icon}${status2.name}`,
+    status2.category,
+    status2.remainingTurns,
+    status2.tickTiming,
+    `${status2.stackRule}/${status2.maxStacks}`,
+    modifiers3,
+    expiry || "\u2014",
+    status2.description
+  ].join(" | ");
+});
+var STATUS_CATALOG = [
+  "\u9ED8\u8BA4\u72B6\u6001\u6A21\u677F\uFF1A\u6218\u5C40 statusTemplates \u4F18\u5148\uFF0C\u65E0\u540C\u540D\u5B9A\u4E49\u65F6\u4F7F\u7528\u4EE5\u4E0B\u6A21\u677F\u3002\u672A\u77E5 ID \u5FC5\u987B\u5148\u6CE8\u518C\u3002",
+  "ID | \u540D\u79F0 | \u7C7B\u522B | \u9ED8\u8BA4\u56DE\u5408\u6570 | \u5468\u671F\u65F6\u70B9 | \u53E0\u5C42\u89C4\u5219/\u4E0A\u9650 | \u9ED8\u8BA4\u4FEE\u9970\u952E | \u63D0\u524D\u89E3\u9664\u4E8B\u4EF6 | \u8BF4\u660E",
+  ...rows,
+  `\u6240\u6709\u6A21\u677F\u5171\u7528\u7684\u5408\u6CD5\u4FEE\u9970\u952E\uFF1A${modifierKeys.map((key4) => `${key4}\uFF08${statusModifierRange(key4)}\uFF09`).join("\u3001")}\u3002\u62A4\u7532\u5B9E\u4F8B\u8986\u76D6\u4FDD\u6301\u6A21\u677F\u7684\u6B63\u8D1F\u65B9\u5411\u3002`,
+  "\u6388\u4E88\u548C patchStatus \u53EA\u8986\u76D6\u6A21\u677F\u5DF2\u58F0\u660E\u7684\u4FEE\u9970\u952E\u3002\u58F0\u660E modifiers.amount \u5373\u62E5\u6709\u62A4\u76FE\u6C60\uFF08\u4E0E\u7C7B\u522B\u65E0\u5173\uFF09\uFF1B\u5B9E\u4F8B amount \u662F\u5269\u4F59\u91CF\u3002\u591A\u6C60\u6309\u72B6\u6001 ID \u987A\u5E8F\u6263\u51CF\u3002taunted \u9700\u8981\u654C\u5BF9\u6765\u6E90\u3002",
+  "\u6A21\u677F\u7C7B\u522B\uFF1Abuff/debuff/control/dot/hot/shield\u3002\u6301\u7EED\u7C7B\u578B\uFF1Abattle_turns\uFF08\u81EA\u8EAB\u56DE\u5408\u672B\u9012\u51CF\uFF09/until_removed/persistent\uFF1B\u540E\u4E24\u8005\u4E0D\u9012\u51CF\u3002"
+].join("\n");
 
 // src/tavern/prompts.js
 var IDENTITY = `\u4F60\u662F\u547D\u5B9A\u6218\u6597\u52A9\u624B\u3002\u4F60\u9700\u8981\u6839\u636E\u7528\u6237\u8F93\u5165\u5BF9\u6218\u5C40\u6570\u503C\u8FDB\u884C\u64CD\u4F5C\uFF0C\u4EE5\u5F53\u524D\u6218\u5C40\u3001\u53C2\u6218\u8005\u4E0E\u88C5\u5907\u5FEB\u7167\u3001\u6218\u6597\u534F\u8BAE\u4E3A\u4F9D\u636E\uFF0C\u6838\u5BF9\u64CD\u4F5C\u5BF9\u8C61\u3001\u5B57\u6BB5\u548C\u53D6\u503C\uFF0C\u4F7F\u7528\u5F15\u64CE\u8BA4\u53EF\u7684\u6807\u8BC6\u7B26\u3002
@@ -9967,7 +9925,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
 • /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。
 • /items/<id>：道具实例（如 /items/item_01），不是模板属性。
-• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），不能覆盖内置 ID。
+• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），同名定义覆盖默认模板；已有实例须同时与新模板对齐。普通新增状态使用新 ID。
 • /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
 • /units/<unitId>/armor：单位护甲整数 0…1000000（如 /units/p1/armor）。
 • /units/<unitId>/skills：完整技能 ID 数组，保留原有技能并加入新增技能 ID。
@@ -10039,9 +9997,9 @@ function resolveSlotContent(slot, ctx = {}) {
   function rosterText() {
     if (ctx.onlyUnitIds && state) {
       const pick = (table4, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
-      const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
-      const items = pick(state.items, rows.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? []]));
-      return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows.flatMap((u) => u.skills ?? [])), statusTemplates: state.statusTemplates });
+      const units = pick(state.units, ctx.onlyUnitIds), rows2 = Object.values(units);
+      const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? []]));
+      return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows2.flatMap((u) => u.skills ?? [])), statusTemplates: state.statusTemplates });
     }
     if (ctx.rosterText != null) return ctx.rosterText;
     if (!state) return sources.roster || "";
@@ -10782,7 +10740,7 @@ var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.na
 async function characterRecords(sources, hydrated) {
   const mvu = collectMvu(sources.mvuData), battle = sources.battleInit;
   const participants = battle.units ?? battle.participants ?? [];
-  const rows = await Promise.all((hydrated?.roster ?? []).map(async (unit, i) => {
+  const rows2 = await Promise.all((hydrated?.roster ?? []).map(async (unit, i) => {
     const mapping = hydrated.sourceMap?.[unit.id] ?? {};
     const p = participants.find?.((p2) => p2.id === unit.id) ?? participants[unit.id] ?? participants[i];
     const names = new Set([unit.id, unit.name, p?.name, mapping.sourceId, mapping.sourceName].filter(Boolean));
@@ -10803,7 +10761,7 @@ async function characterRecords(sources, hydrated) {
     const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordered(raw))));
     return [unit.id, { raw, sourceKind, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
   }));
-  return Object.fromEntries(rows);
+  return Object.fromEntries(rows2);
 }
 
 // src/tavern/instance-card.js
@@ -10875,11 +10833,11 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
     stats2.append(pair);
   }
   body.append(stats2);
-  const section = (heading, rows) => {
+  const section = (heading, rows2) => {
     const block = line("section", "fated-char-section");
-    block.append(make("h5", {}, `${heading}${rows.length ? ` \xB7 ${rows.length}` : ""}`));
-    if (!rows.length) block.append(line("p", "fated-mini", `\u6682\u65E0${heading}`));
-    for (const { label, meta, template } of rows) {
+    block.append(make("h5", {}, `${heading}${rows2.length ? ` \xB7 ${rows2.length}` : ""}`));
+    if (!rows2.length) block.append(line("p", "fated-mini", `\u6682\u65E0${heading}`));
+    for (const { label, meta, template } of rows2) {
       const fx = template?.effects ?? [];
       const row = make(fx.length ? "details" : "div", { class: "fated-char-row" });
       const head = make(fx.length ? "summary" : "div", { class: "fated-char-row-head" });
@@ -10956,12 +10914,12 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
   composer.append(input, submit, abort, status2);
   page.append(make("h3", {}, "\u8F85\u52A9 AI"), toolbar, edit, info, log, composer);
   let shownId, busy = false, pinned = true;
-  const rows = /* @__PURE__ */ new Map(), drafts = /* @__PURE__ */ new Map();
+  const rows2 = /* @__PURE__ */ new Map(), drafts = /* @__PURE__ */ new Map();
   function scrollToEnd() {
     if (pinned && log.clientHeight) log.scrollTop = log.scrollHeight;
   }
   function updateMessage(message) {
-    let row = rows.get(message);
+    let row = rows2.get(message);
     if (!row) {
       const bubble = make("article", { class: "fated-ai-message", "data-role": message.role });
       const heading = make("header", {}, roleLabels[message.role] ?? message.role);
@@ -10972,7 +10930,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
       bubble.append(heading, body);
       log.append(bubble);
       row = { bubble, badge, body };
-      rows.set(message, row);
+      rows2.set(message, row);
     }
     row.bubble.dataset.status = message.status ?? "";
     row.badge.textContent = statusLabels2[message.status] ?? "";
@@ -10990,7 +10948,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
       input.value = drafts.get(shownId) ?? "";
       pinned = true;
     }
-    rows.clear();
+    rows2.clear();
     log.replaceChildren();
     for (const message of session.messages) updateMessage(message);
     refresh();

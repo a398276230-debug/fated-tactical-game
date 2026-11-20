@@ -62,7 +62,7 @@ const attribute = enumOf('str','agi','con','int','spi');
 const events = ['on_attack','on_hit','on_damaged','on_kill','on_death','on_turn_start','on_turn_end','on_skill_cast','on_equip','on_heal','on_ally_death'];
 const expireRule = union(
   object({ trigger: enumOf('on_damaged'), damageType: enumOf('any','direct','indirect'), exceptSource: enumOf('self') }, ['trigger']),
-  object({ trigger: enumOf(...events.filter(event => event !== 'on_damaged')), exceptSource: enumOf('self') }, ['trigger']),
+  object({ trigger: enumOf('on_struck', ...events.filter(event => event !== 'on_damaged')), exceptSource: enumOf('self') }, ['trigger']),
 );
 const checkKeys = ['iniBonus','dodgeBonus','stealthBonus','accuracyBonus','initiativeAgility','dodgeAgility','coreBonus','highGroundRange','highGroundAccuracy','advantage'];
 const modifiers = { type: 'object', additionalProperties: union(number(-1e9, 1e9), string, { type: 'boolean' }) };
@@ -99,7 +99,7 @@ export const effectSchema = {
       node('addCover', { ...terrainDuration, hp:integer(1,1e9) }, ['area','hp']),
       node('heal', { ...magnitudes, ...scaling, percentOfMaxHp: fraction }),
       ...['restoreResource','drainResource','produceResource'].map(kind => node(kind, { ...resource, minimumRemaining: amount, requireFull: bool, local: bool, ...(kind === 'produceResource' ? { cap: integer(1, 1000000000), initial: integer(0, 1000000000), reloadable: bool, targetTierBase: integer(1, 8) } : {}), percentPerCost: fraction }, ['resource'])),
-      node('grantStatus', { statusId: id, turns, stacks: integer(1, 10), modifiers, amount, expireOn: ref('expireOn'), durationType: enumOf('battle_turns','until_removed','persistent') }, ['statusId']), node('removeStatus', { statusId: id, category: enumOf('all_negative','buff','debuff','control','dot','hot') }),
+      node('grantStatus', { statusId: id, turns, stacks: integer(1, 10), modifiers, amount, expireOn: ref('expireOn'), durationType: enumOf('battle_turns','until_removed','persistent') }, ['statusId']), node('removeStatus', { statusId: id, category: enumOf('all_negative','buff','debuff','control','dot','hot','shield') }),
       node('modifyStat', { stat: stats, flat: number(-1e9, 1e9), percent: number(-1, 10), duration: turns, damageType, levelScaling: scaling.levelScaling }, ['stat']),
       node('modifyDamageBase', { value: amount, ignoreAttributes: bool, unscaled: bool, damageType }, ['value']),
       node('modifyCheck', Object.fromEntries(checkKeys.map(key => [key, number(-30, 30)]))),

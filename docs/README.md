@@ -6,15 +6,14 @@
 | --- | --- |
 | [architecture.md](architecture.md) | 入口与产物、五层依赖方向、45 个源文件归属、战局状态模型、事务/撤销/快照、动作与命令、预览结构、日志事件、结算顺序、酒馆数据流、容量上限 |
 | [dsl.md](dsl.md) | 效果 DSL 的三级结构、表达式字段、13 触发器、4 种检定、33 种条件、7 种目标、25 个节点 kind、passive/exec 两条路径、数值与资源语义、地形节点、校验链、旧 kind 迁移表 |
-| [status.md](status.md) | 26 条内置状态、实例字段、修饰键三层空间、施加/结算/到期/净化/持久化、7 条引擎专用分支、内建来源、AI 权重、未接线字段 |
+| [status.md](status.md) | 25 条默认模板、实例与修饰键、护盾池、生命周期及覆盖规则 |
 
 ## 速查
 
 | 项 | 数量 | 权威位置 |
 | --- | --- | --- |
-| 内置状态 | 26 | `src/core/combat.js` 的 `STATUSES` |
-| 状态修饰键（引擎可读） | 19 数值键 + 11 布尔标志 + 1 枚举（`damageType`） | `src/core/status_modifiers.js` |
-| 自定义模板可设修饰键 | 21 | `src/api/validation.js` 的 `customModifierKeys` |
+| 默认状态 | 25 | `src/presets/status-defaults.js` 的 `STATUSES` |
+| 默认与自定义模板的修饰键 | 19 数值键 + 10 布尔标志 + 1 枚举（`damageType`） | `src/core/status_modifiers.js` |
 | DSL 节点 kind | 25（26 个 schema 分支） | `src/core/effect_schema.js` 的 `$defs.node` |
 | DSL 触发器 | 13 | 同上 `$defs.expression` |
 | DSL 条件 | 33 个具名 type（数组形式等价 AND） | 同上 `$defs.condition` |
@@ -50,6 +49,6 @@ node tests/api_expansion_tests.mjs && node tests/control_state_tests.mjs
 ## 维护约定
 
 - 改 `effect_schema.js`：同步 `dsl.md` 第 2/3/5/6/7 节；`EFFECT_PROTOCOL` 会自动跟随 schema，无需改 `effect-protocol.js`。
-- 改 `STATUSES` 或 `status_modifiers.js`：同步 `status.md` 第 1/3 节；`status-catalog.js` 是手写文本，需要同时改。
+- 改 `STATUSES` 或 `status_modifiers.js`：状态目录自动更新；语义变化同步到 `status.md`。
 - 改 `ACTIONS`、命令表或 `state` 字段：同步 `architecture.md` 第 4/6 节。
 - 改日志 `record()` 的 type：同步 `architecture.md` 第 8 节与 `src/ui/narrate.js` 的投影。

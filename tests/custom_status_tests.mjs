@@ -101,10 +101,71 @@ test('carry import validates and retains referenced custom definitions before th
   ]) assert.throws(() => boot({ persistentSnapshot: bad }));
 });
 
+test('arbitrary status IDs share shield, hit expiry, and actual HP damage rules', () => {
+  const a = boot();
+  commit(a,
+    define({ id: 'a-ward', category: 'shield', modifiers: { amount: 2 } }),
+    define({ id: 'b-ward', category: 'buff', modifiers: { amount: 100 } }),
+    define({ id: 'brittle', modifiers: { shatter: .5 }, expireOn: { trigger: 'on_struck' } }),
+    define({ id: 'injured-only', modifiers: { armor: 1 }, expireOn: { trigger: 'on_damaged' } }),
+    { type: 'set_unit_stat', unitId: 'scout', patch: { x: 2 } },
+    upsert('scout', 'a-ward'), upsert('scout', 'b-ward', { amount: 1000 }),
+    upsert('scout', 'brittle'), upsert('scout', 'injured-only'));
+  const action = { type: 'attack', x: 2, y: 2 };
+  const before = a.inspectUnit('scout');
+  a.playAction(action);
+  const after = a.inspectUnit('scout');
+  assert.equal(after.hp, before.hp);
+  assert.equal(after.statuses['a-ward'], undefined);
+  assert.equal(after.statuses.brittle, undefined);
+  assert.ok(after.statuses['injured-only']);
+  assert.ok(after.statuses['b-ward'].amount < 1000);
+  assert.equal(after.statuses['b-ward'].modifiers.amount, 100);
+  const snapshot = a.exportBattleSnapshot();
+  const loaded = createGameAPI();
+  loaded.restoreBattleSnapshot(snapshot);
+  assert.deepEqual(loaded.inspectUnit('scout').statuses, after.statuses);
+});
+
+test('DSL can grant a custom shield and expire a renamed hidden status on attack', () => {
+  const a = boot();
+  commit(a,
+    define({ id: 'ward', modifiers: { amount: 2 } }),
+    define({ id: 'veil', modifiers: { hidden: true }, expireOn: { trigger: 'on_attack' } }),
+    gear(fx('ward-on-atk', 'on_attack', 'self', [{ kind: 'grantStatus', statusId: 'ward', amount: 17 }])),
+    { type: 'set_unit_stat', unitId: 'scout', patch: { x: 2 } },
+    upsert('swordsman', 'veil'));
+  a.playAction({ type: 'attack', x: 2, y: 2 });
+  assert.equal(a.inspectUnit('swordsman').statuses.veil, undefined);
+  assert.equal(a.inspectUnit('swordsman').statuses.ward?.amount, 17);
+});
+
+test('custom control modifiers drive movement and taunt preview regardless of ID', () => {
+  const a = boot();
+  commit(a,
+    define({ id: 'binding', modifiers: { rooted: true, taunted: true } }),
+    { type: 'set_unit_stat', unitId: 'scout', patch: { x: 2 } },
+    { type: 'set_unit_stat', unitId: 'raider', patch: { x: 1, y: 1 } },
+    upsert('swordsman', 'binding', { sourceUnitId: 'raider' }));
+  const state = a.getBattleState();
+  assert.equal(reachable(state, 'move', state.units.swordsman).length, 0);
+  assert.match(a.previewAction({ type: 'attack', x: 2, y: 2 }).error, /嘲讽/);
+});
+
+test('a battle-local default override drives both brace preview and its applied status', () => {
+  const a = boot();
+  const template = a.listStatusTemplates().guarded;
+  assert.equal(a.defineStatus('guarded', { ...template, modifiers: { reduction: .6 } }).ok, true);
+  assert.equal(a.previewAction({ type: 'brace' }).reduction, .6);
+  a.playAction({ type: 'brace' });
+  assert.equal(a.inspectUnit('swordsman').statuses.guarded.modifiers.reduction, .6);
+  assert.equal(boot().listStatusTemplates().guarded.modifiers.reduction, .35);
+});
+
 test('only bounded modifier data and trusted effect kinds may enter the battle', () => {
   const a = boot(), start = a.exportBattleSnapshot();
   for (const cmd of [
-    define({ id: 'burn' }), define({ id: '__proto__' }), define({ id: 'constructor' }),
+    define({ id: 'shield' }), define({ id: '__proto__' }), define({ id: 'constructor' }),
     define({ script: 'arbitrary code' }), define({ maxStacks: 11 }), define({ remainingTurns: 0 }),
     define({ modifiers: {} }), define({ modifiers: { damageType: 'true' } }),
     define({ modifiers: { move: -1 } }), define({ modifiers: { damage: 100001 } }),

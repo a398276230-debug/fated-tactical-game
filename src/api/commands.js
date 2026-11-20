@@ -43,10 +43,12 @@ const commands = {
     checkOptional(options, 'stacks', x => int(x, 1, status.maxStacks));
     checkOptional(options, 'stackRule', x => ['refresh','stack','replace'].includes(x));
     checkOptional(options, 'tickTiming', x => ['onTurnStart','onTurnEnd'].includes(x));
-    checkOptional(options, 'amount', x => c.statusId === 'shield' && int(x, 1, 10000));
+    checkOptional(options, 'amount', x => own(status.modifiers, 'amount') && int(x, 1, 10000));
     checkOptional(options, 'sourceUnitId', x => has(s.units, x));
-    if (c.statusId === 'taunt') check(has(s.units, options.sourceUnitId ?? u.statuses.taunt?.sourceUnitId)
-      && s.units[options.sourceUnitId ?? u.statuses.taunt?.sourceUnitId].team !== u.team, '嘲讽需要敌对来源');
+    if (options.modifiers?.taunted ?? status.modifiers.taunted) {
+      const sourceId = options.sourceUnitId ?? u.statuses[c.statusId]?.sourceUnitId;
+      check(has(s.units, sourceId) && s.units[sourceId].team !== u.team, '嘲讽需要敌对来源');
+    }
     grantStatus(s, u, c.statusId, options);
   },
   remove_status(s, c) {

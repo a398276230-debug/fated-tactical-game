@@ -1,6 +1,6 @@
 # 架构与文件归属（现状记录）
 
-记录口径：仓库当前代码（`package.json` 0.2.4，快照 `battleVersion = 4`）。
+记录口径：仓库当前代码（`package.json` 0.2.4，快照 `battleVersion = 6`）。
 本文只描述已存在的结构、边界和字段，不含规划项。效果 DSL 见 [dsl.md](dsl.md)，状态系统见 [status.md](status.md)。
 
 ---
@@ -53,13 +53,13 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 | `status_modifiers.js` | 40 | 状态修饰键的合法区间表、类型判别与报错文案 | `damageTypes`, `statusModifierRange`, `validateStatusModifiers` |
 | `effect_schema.js` | 124 | 效果 DSL 的 JSON Schema（draft 2020-12）与手写匹配器 | `effectSchema`, `isExpression`, `validExpression`, `validSaveDC`, `validExpireOn`, `validTerrainNode`, `terrainKinds`, `effectNodes` |
 | `effects.js` | 378 | DSL 解释器 + 旧效果适配器：表达式查找、条件求值、目标解析、数值组装、节点执行、passive 节点读取 | `expression`, `adaptLegacyEffects`, `migrateStateEffects`, `createEffectEngine`, `resourceDefinitions`, `initialCounters`, `effectLabel`, `corpses` |
-| `combat.js` | 1505 | 战斗运行时：`STATUSES` 表、日志、状态生命周期、伤害管线、回合推进、`preview`/`targetProfile`、`applyAction` 与全部动作分支、DSL 的 IO 注入 | `STATUSES`, `getStatusTemplate`, `grantStatus`, `patchStatus`, `statusModifierKeys`, `living`, `corpses`, `currentUnit`, `preview`, `applyAction`, `settleTurn`, `beginBattle`, `refreshOutcome`, `refreshOpeningInitiative`, `reachable`, `equippedActiveSkills`, `syncEquipmentEffects`, `stealthCheck` |
+| `combat.js` | 1505 | 战斗运行时：日志、状态生命周期、伤害管线、回合推进、`preview`/`targetProfile`、`applyAction` 与全部动作分支、DSL 的 IO 注入 | `STATUSES`, `getStatusTemplate`, `grantStatus`, `patchStatus`, `statusModifierKeys`, `living`, `corpses`, `currentUnit`, `preview`, `applyAction`, `settleTurn`, `beginBattle`, `refreshOutcome`, `refreshOpeningInitiative`, `reachable`, `equippedActiveSkills`, `syncEquipmentEffects`, `stealthCheck` |
 | `terrain-effects.js` | 175 | 地形 DSL 节点落地、层次化还原、跟随锚点、落差伤害、墙还原位移 | `applyTerrainEffect`, `updateTerrainPatches` |
 | `ai.js` | 170 | 本地敌方 AI：动作枚举 + 评分，不消耗 RNG、不产生战局变更 | `chooseAction` |
 
 `combat.js` 内部按段落组织，没有拆子模块：
 
-1. `STATUSES` 冻结表（26 条，见 status.md）
+1. 读取战局状态模板，缺省使用 `src/presets/status-defaults.js` 的 25 条默认模板（见 status.md）
 2. `record()` 日志写入与 `randomUnit`/`randomDie`
 3. 状态生命周期：`grantStatus`、`patchStatus`、`expireStatuses`、`tick`、`endTurn` 中的时长递减
 4. 伤害管线：`loseHP`、`armorOf`、`damageTarget`、`mitigation`、`guardFor`、`coverDamage`
@@ -153,7 +153,7 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 
 - `facing` 是 `[-1|0|1, -1|0|1]`，至少一个非零。
 - `used: {action, attack}` 记录本回合两个槽的使用情况，`ap` 每回合补到 2。
-- `gear` ≤12、`skills` ≤32、`statuses` 条数上限 `64 + 26`。
+- `gear` ≤12、`skills` ≤32、`statuses` 条数上限 `64 + 25`。
 - `resources`/`inventory` 是整数表；`effectUsage` 记录 `{count, round}`；`effectModifiers` 记录临时属性修正 `{stat, flat, percent, turns, round, turn, damageType?}`。
 - 同一格不能有多个 `hp > 0` 的单位，也不能压墙或压存活掩体。
 
@@ -177,8 +177,8 @@ undoLastCommit()            → state = frames.pop().before
 
 | 导出 | 形状 | 说明 |
 | --- | --- | --- |
-| `exportBattleSnapshot()` | `{kind:'battle', version:4, origin, state, journal}` | `origin` 是开局态，`journal` 是事务序列；恢复时逐条重放，并与 `state` 做差异比对，有任何差异即报错 |
-| `restoreBattleSnapshot()` | 同上，接受 version 1/2/3/4 | 低版本先 `migrateStateEffects`；迁移分支不重放日志，直接采用 `state` 并清空 journal |
+| `exportBattleSnapshot()` | `{kind:'battle', version:6, origin, state, journal}` | `origin` 是开局态，`journal` 是事务序列；恢复时逐条重放，并与 `state` 做差异比对，有任何差异即报错 |
+| `restoreBattleSnapshot()` | 同上，接受 version 1–6 | 低版本先 `migrateStateEffects`；迁移分支不重放日志，直接采用 `state` 并清空 journal |
 | `exportPersistentCarryOver()` | `{kind:'persistent', version:1, units, items, statusTemplates?}` | 单位只带 `durationType==='persistent'` 的状态、`weapon`、`gear`；不带 HP/AP/短期状态 |
 | `createBattle({kind:'custom_state', state})` | — | 直通 `buildScenario`，`migrateStateEffects` 后校验 |
 
@@ -218,9 +218,9 @@ undoLastCommit()            → state = frames.pop().before
 | 命令 | 作用 | 校验要点 |
 | --- | --- | --- |
 | `set_unit_stat` | 改单位字段/五维 | 字段白名单；`mainHand↔weapon`、`bonusDice≤2`、`penaltyDice≤1` |
-| `define_status_template` | 注册自定义状态 | 不可覆盖内置；≤64 条 |
-| `patch_status` | 改状态实例的 modifiers / `expireOn` | 键必须是模板已有键；`shield.amount` 同步护盾池 |
-| `upsert_status` | 施加/覆盖状态实例 | 时长/层数/规则/时机白名单；`taunt` 必须指向敌对来源 |
+| `define_status_template` | 注册自定义状态 | 覆盖同名默认模板；≤64 条战局模板 |
+| `patch_status` | 改状态实例的 modifiers / `expireOn` | 键必须是模板已有键；覆盖 `modifiers.amount` 时同步护盾池 |
+| `upsert_status` | 施加/覆盖状态实例 | 时长/层数/规则/时机白名单；`taunted` 必须指向敌对来源 |
 | `remove_status` | 删除状态实例 | — |
 | `adjust_item_counter` | `set`/`add` 装备计数器 | 上限取模板 `cap` 与当前值较大者 |
 | `patch_equipment_template` | 热改装备模板 | 不可改变资源池集合、不可改变是否带 `damage` |
@@ -331,7 +331,7 @@ state → exportBattleReport() → battleReportToMvuPatch() → <UpdateVariable>
 | 每条表达式的节点 | 12 | `effectSchema` |
 | 条件数组 | 12 | `effectSchema` |
 | 自定义状态模板 | 64 | `validation.maxStatusTemplates` |
-| 状态实例/单位 | 64 + 26 | `unitValue` |
+| 状态实例/单位 | 64 + 25 | `unitValue` |
 | 持续区域 | 64 | `validateState`、`set_zone` |
 | 地形效果层 | 64 | `terrain-effects.maxPatches` |
 | 临时掩体 | 200 | `terrain-effects.place` |

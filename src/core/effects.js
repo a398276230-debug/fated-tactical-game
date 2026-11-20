@@ -263,7 +263,7 @@ export function createEffectEngine(io) {
               case 'removeStatus': result = io.removeStatus(state, actor, target, p); break;
               case 'knockback': io.knockback(state, actor, target, p); result = true; break;
               case 'teleportBackstab': result = io.teleport(state, actor, target); break;
-              case 'shield': if (amount > 0) result = io.grant(state, target, 'shield', { sourceUnitId: actor.id, turns: p.turns, amount: amount + (p.stack ? target.statuses.shield?.amount ?? 0 : 0) }); break;
+              case 'shield': if (amount > 0) result = io.grantShield(state, target, amount, { sourceUnitId: actor.id, turns: p.turns, stack: p.stack }); break;
               case 'execute':
                 if (!ctx.nonLethal && !target.nonLethal && !io.statusModifier(target, 'preserveLife') && compare(ratio(target), p.strict ? '<' : '<=', p.threshold)
                   && (!p.requiresPool || io.resourcePool(state, actor, p.requiresPool))) {

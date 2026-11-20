@@ -124,7 +124,7 @@ test('旧战局按末态续接，不将新规则反算到旧撤销记录', () =>
   const b=createGameAPI(); assert.equal(b.restoreBattleSnapshot(saved).migratedFrom,1);
   assert.deepEqual(b.getBattleState(),saved.state);
   assert.equal(b.undoLastCommit().ok,false);
-  assert.equal(b.exportBattleSnapshot().version,5);
+  assert.equal(b.exportBattleSnapshot().version,6);
 });
 
 test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移动', () => {

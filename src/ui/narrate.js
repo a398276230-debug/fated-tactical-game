@@ -26,7 +26,7 @@ export function nameOf(state, id) {
 export function teamOf(state, id) { return table(state?.units, id)?.team ?? null; }
 
 export function statusInfo(state, id) {
-  return table(STATUSES, id) ?? table(state?.statusTemplates, id) ?? { name: id };
+  return table(state?.statusTemplates, id) ?? table(STATUSES, id) ?? { name: id };
 }
 
 /** 判断一组 d20 的取法。 */
