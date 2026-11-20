@@ -1,4 +1,9 @@
-/roming/
+/roming/*
+!/roming/frontend-refactor-v3/
+/roming/frontend-refactor-v3/*
+!/roming/frontend-refactor-v3/smoke_v3.mjs
+!/roming/frontend-refactor-v3/extract_statuses.mjs
+!/roming/frontend-refactor-v3/repro_slots.mjs
 /pi_exec.log
 /pi_exec.status
 node_modules/

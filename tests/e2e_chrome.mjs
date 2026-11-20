@@ -114,8 +114,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
       window.completeHostAI = () => {
         if (hostRequests.length === 1) return reject(new Error('联调模拟网络错误'));
         if (hostRequests.length === 2) return resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/stat_data/主角/attack', value: 999 }] }));
-        const {equipment} = JSON.parse(config.ordered_prompts.at(-2).content);
-        const id = Object.keys(equipment).find(id => equipment[id].name === '旧弩');
+        const state = window.__fatedTacticalTavern.getState();
+        const id = state.items[state.units.p1.mainHand].templateId;
+        if (!config.ordered_prompts.some(m => m.role === 'user' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('用户槽位缺少战局装备快照'));
         resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10}]}));
       };
     });
@@ -125,7 +126,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run('window.hostRange'), '0-1');
   assert.deepEqual(await run('window.hostCalls'), [0]);
   assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
-  assert.equal(await run('hostRequests[0].should_stream'), false);
+  assert.equal(await run('hostRequests[0].should_stream'), true);
   await run('window.__fatedTacticalTavern.scan()');
   assert.equal(await run('window.hostRequests.length'), 1);
   assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
@@ -140,6 +141,20 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化完成'`), '应用校验补丁');
   await click('.fated-toast button:nth-of-type(2)');
+  await click('[data-tab="prompt"]');
+  const preview = () => run(`JSON.parse(document.querySelector('[data-page="prompt"] .preview-panel pre').textContent)`);
+  const toggle = '[data-page="prompt"] .toggle-switch';
+  const enabledMessages = await preview();
+  assert.deepEqual(enabledMessages.map(m => m.role), ['system', 'user']);
+  await click(toggle);
+  assert.deepEqual((await preview()).map(m => m.role), ['user']);
+  assert.equal(await run(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/')))).slots.find(s => s.id === 'protocol').enabled`), false);
+  await click('[data-tab="api"]');
+  assert.equal(await run(`document.querySelector('[name="apiSource"]').disabled`), true);
+  await click('[data-tab="prompt"]');
+  assert.equal(await run(`${get(toggle)}.checked`), false);
+  await click(toggle);
+  assert.deepEqual(await preview(), enabledMessages);
   await click('[data-tab="sandbox"]');
   const tavernState = () => run('window.__fatedTacticalTavern.getState()');
   let imported = await tavernState();

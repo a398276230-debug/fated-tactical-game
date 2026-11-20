@@ -3,6 +3,9 @@ import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
 import { tavernTheme } from './theme.js';
+import { assembleMessages, describeSlots } from './prompts.js';
+import { requestViaTavern, requestViaCustomApi } from './api.js';
+import { renderSettings } from './settings.js';
 
 /*
  * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
@@ -219,25 +222,11 @@ export function parseAIResponse(value) {
     (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
   return { data: parsed, patch, text: source };
 }
-export async function requestTavernAI(host, config, messages, fetchImpl, signal) {
-  if (config.apiMode === 'direct') {
-    if (!config.baseUrl?.trim() || !config.model?.trim()) throw new Error('请在配置中填写独立 API 地址和模型');
-    const response = await requestAI(config, messages, fetchImpl, signal);
-    const content = response?.choices?.[0]?.message?.content ?? response?.content;
-    if (typeof content !== 'string' || !content.trim()) throw new Error('独立 API 未返回有效文本');
-    return content;
-  }
-  const generateRaw = hostMethod(host, 'generateRaw');
-  if (!generateRaw) throw new Error('找不到酒馆助手 generateRaw，请检查脚本是否在酒馆助手中运行');
-  const generationId = `fated-tactical-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const stop = () => { try { Promise.resolve(hostMethod(host, 'stopGenerationById')?.(generationId)).catch(() => {}); } catch { /* optional */ } };
-  signal?.throwIfAborted();
-  signal?.addEventListener('abort', stop, { once: true });
-  try {
-    const content = await generateRaw({ generation_id: generationId, should_stream: false, ordered_prompts: messages });
-    if (typeof content !== 'string' || !content.trim()) throw new Error('酒馆模型没有返回文本，请检查当前主接口');
-    return content;
-  } finally { signal?.removeEventListener('abort', stop); }
+export function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChunk) {
+  const options = { fetchImpl, signal, onStreamChunk };
+  return config.apiMode === 'custom' || config.apiMode === 'direct'
+    ? requestViaCustomApi(config, messages, options)
+    : requestViaTavern(host, config, messages, options);
 }
 
 export function parseJSONPatch(value) {
@@ -254,25 +243,24 @@ export function parseJSONPatch(value) {
 
 export { deepMerge, applyPatch };
 
-const DEFAULT_PROMPTS = [
-  { title: '属性与战局标准化校验', role: 'system', enabled: true, content: '依据警告和参战者资料为沙盘转换效果。仅返回 RFC 6902 JSON 对象 {"patch":[...],"unresolved":["无法等价转换的效果及原因"]}。不要改阵营、资源、位置、先攻及日志；不要创造引擎不支持的类型。无法忠实表达时保留在 unresolved 中。' },
-  { title: '地形/参数微调指令输出', role: 'user', enabled: true, content: '依据战场 {{battle_init}} 和当前状态 {{battle_state}}，处理玩家指令：{{user_instruction}}。只输出 battle_patch 或 unit_patch JSON。' },
-];
 export const TAVERN_VERSION = '0.1.5';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true,
-  prompts: DEFAULT_PROMPTS,
+  slots: describeSlots(), extraText: '', debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
 };
 function configFor(storage, key) {
   try {
     const saved = parseJSON(storage?.getItem(key), {});
     const mode = saved?.apiMode ?? (saved?.baseUrl ? 'direct' : 'tavern');
-    return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode });
+    return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode === 'direct' ? 'custom' : mode, slots: describeSlots(saved?.slots) });
   } catch { return clone(DEFAULT_CONFIG); }
 }
-function putConfig(storage, key, value) { try { storage?.setItem(key, JSON.stringify(value)); } catch (_) { /* private browsing */ } }
+function putConfig(storage, key, value) {
+  try { if (!storage) return false; storage.setItem(key, JSON.stringify(value)); return true; }
+  catch { return false; }
+}
 function chatId(host) {
   try {
     const id = hostMethod(host, 'getChatId')?.() ?? getGlobal(host, 'SillyTavern')?.getContext?.()?.chatId;
@@ -307,15 +295,6 @@ async function tavernMessages(host) {
   })).filter(item => item.content);
 }
 
-function fillTemplate(value, sources, instruction = '') {
-  const values = {
-    battle_init: sources.battleRaw || JSON.stringify(sources.battleInit ?? {}, null, 2), standardized_roster: sources.roster || '',
-    mvu_data: JSON.stringify(sources.mvuData ?? {}, null, 2), latest_floor: sources.latestFloor || '',
-    battle_state: JSON.stringify(sources.state ?? {}, null, 2), user_instruction: instruction,
-    warnings: JSON.stringify(sources.warnings ?? []),
-  };
-  return text(value).replace(/\{\{([\w]+)\}\}/g, (_, key) => values[key] ?? '');
-}
 export function sourceBundle(variables, messages, chat = 'default', preferredMessageId) {
   const list = Array.isArray(messages) ? messages : [];
   const latestMessage = list.at(-1);
@@ -454,11 +433,11 @@ export function mountTavernOverlay(options = {}) {
   const tabs = el(doc, 'nav', { class: 'fated-tavern-tabs', role: 'tablist' });
   const content = el(doc, 'div', { class: 'fated-tavern-content' });
   const pages = {};
-  for (const [key, label] of [['instances', '维护实例'], ['config', '配置 / API + prompts'], ['sandbox', '沙盘']]) {
+  for (const [key, label] of [['instances', '📦 实例维护'], ['prompt', '🧩 提示词组装'], ['api', '🔌 API 设置'], ['sandbox', '⚔️ 沙盘']]) {
     const button = el(doc, 'button', { type: 'button', role: 'tab', 'aria-selected': key === 'instances' ? 'true' : 'false', 'data-tab': key }, label);
     const page = el(doc, 'div', { class: `fated-tab ${key === 'instances' ? 'active' : ''}`, 'data-page': key });
     tabs.append(button); content.append(page); pages[key] = page;
-    on(button, 'click', () => { Object.entries(pages).forEach(([name, node]) => { node.classList.toggle('active', name === key); }); [...tabs.children].forEach(x => x.setAttribute('aria-selected', String(x === button))); });
+    on(button, 'click', () => { Object.entries(pages).forEach(([name, node]) => { node.classList.toggle('active', name === key); }); [...tabs.children].forEach(x => x.setAttribute('aria-selected', String(x === button))); if (key === 'prompt' || key === 'api') renderSettings(page, key, settingsContext()); });
   }
   const toast = el(doc, 'aside', { class: 'fated-toast', hidden: '', role: 'status', 'aria-live': 'polite' });
   const noticeTitle = el(doc, 'strong'), noticeBody = el(doc, 'p');
@@ -477,10 +456,31 @@ export function mountTavernOverlay(options = {}) {
     toast.hidden = false;
   }
   panel.append(header, tabs, content); root.append(launcher, panel, toast); (doc.body || doc.documentElement)?.append(root);
-  const instances = config.instances || (() => { try { return parseJSON(storage?.getItem(stateKey), {}) || {}; } catch (_) { return {}; } })();
+  const instances = (() => { try { return parseJSON(storage?.getItem(stateKey)) ?? config.instances; } catch { return config.instances; } })();
   config.instances = isObject(instances) ? instances : {};
 
-  function save() { putConfig(storage, configKey, config); putConfig(storage, stateKey, config.instances); }
+  // Battle scans/normalization must never write an old copy of the settings.
+  function save() { putConfig(storage, stateKey, config.instances); }
+  let localOnly = false;
+  function syncSettings() {
+    if (localOnly || !storage) return;
+    const { instances: _legacyInstances, ...latest } = configFor(storage, configKey);
+    Object.assign(config, latest);
+  }
+  function persistSettings(patch, previousSlots = config.slots) {
+    syncSettings();
+    if (patch.slots && JSON.stringify(previousSlots) !== JSON.stringify(config.slots)) {
+      renderSettings(pages.prompt, 'prompt', settingsContext());
+      notify('槽位已在其他窗口更新', '已载入最新列表，请重新执行刚才的编辑。');
+      return;
+    }
+    Object.assign(config, patch);
+    const { instances, ...settings } = config;
+    // Older configs embedded the instance table. Preserve it before splitting the keys.
+    try { if (storage && storage.getItem(stateKey) == null) putConfig(storage, stateKey, instances); } catch { /* unavailable */ }
+    localOnly = !putConfig(storage, configKey, settings);
+    if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储；重载后可能丢失。');
+  }
   async function open() {
     if (disposed) return;
     panel.hidden = false;
@@ -625,30 +625,29 @@ export function mountTavernOverlay(options = {}) {
     button?.click();
   }
 
-  function field(label, value, type = 'text') { const labelNode = el(doc, 'label', {}, label); const input = el(doc, type === 'textarea' ? 'textarea' : 'input', { type: type === 'textarea' ? undefined : type }); input.value = value ?? ''; labelNode.append(input); return { labelNode, input }; }
-  function renderConfig() {
-    const page = pages.config; page.replaceChildren();
-    const subtabs = el(doc, 'nav', { class: 'fated-tavern-subtabs' }); const apiPage = el(doc, 'div'); const promptPage = el(doc, 'div');
-    for (const [name, label, target] of [['api', 'API 与界面', apiPage], ['prompts', '提示词', promptPage]]) { const b = el(doc, 'button', { type: 'button', 'aria-selected': name === 'api' ? 'true' : 'false' }, label); subtabs.append(b); on(b, 'click', () => { apiPage.hidden = name !== 'api'; promptPage.hidden = name !== 'prompts'; [...subtabs.children].forEach(x => x.setAttribute('aria-selected', String(x === b))); }); }
-    apiPage.className = 'fated-tavern-grid'; promptPage.className = 'fated-tavern-prompts'; page.append(subtabs, apiPage, promptPage); promptPage.hidden = true;
-    const apiMode = el(doc, 'select', { 'aria-label': '请求方式' });
-    apiMode.append(el(doc, 'option', { value: 'tavern' }, '酒馆当前主接口'), el(doc, 'option', { value: 'direct' }, '独立 OpenAI 兼容 API'));
-    apiMode.value = config.apiMode;
-    const apiModeLabel = el(doc, 'label', {}, '请求方式');
-    apiModeLabel.append(apiMode); apiPage.append(apiModeLabel);
-    on(apiMode, 'change', () => { config.apiMode = apiMode.value; save(); });
-    const fields = [['baseUrl', 'API 地址'], ['apiKey', 'API Key', 'password'], ['model', '模型名称'], ['temperature', 'temperature', 'number'], ['max_tokens', 'max_tokens', 'number'], ['excludeParams', '排除主体参数（逗号分隔）'], ['extraBody', '附加主体参数 JSON', 'textarea'], ['headers', '附加请求标头 JSON', 'textarea']];
-    for (const [key, label, type] of fields) { const f = field(label, config[key], type); apiPage.append(f.labelNode); on(f.input, 'change', () => { config[key] = f.input.value; save(); }); }
-    const hide = el(doc, 'label', {}); const checkbox = el(doc, 'input', { type: 'checkbox' }); checkbox.checked = Boolean(config.hideLauncher); hide.append(checkbox, ' 隐藏悬浮按钮到魔术棒菜单'); apiPage.append(hide);
-    const auto = el(doc, 'label', {}); const autoCheck = el(doc, 'input', { type: 'checkbox' }); autoCheck.checked = config.autoScan !== false; auto.append(autoCheck, ' 打开沙盘时自动扫描'); apiPage.append(auto);
-    on(checkbox, 'change', () => { config.hideLauncher = checkbox.checked; updateMagic(); save(); }); on(autoCheck, 'change', () => { config.autoScan = autoCheck.checked; save(); });
-    const test = el(doc, 'button', { type: 'button' }, '测试连通性'); const models = el(doc, 'button', { type: 'button' }, '拉取模型'); const result = el(doc, 'div', { class: 'fated-status' }); apiPage.append(test, models, result);
-    on(test, 'click', async () => { result.textContent = '请求中…'; try { const response = await requestTavernAI(host, config, [{ role: 'user', content: '请只回复 OK' }], options.fetch); result.textContent = response.slice(0, 1000); } catch (e) { result.textContent = `失败：${e.message}`; } });
-    on(models, 'click', async () => { try { const fetcher = options.fetch || (typeof fetch === 'function' ? fetch : null); if (!fetcher) throw new Error('当前浏览器没有 fetch'); const url = text(config.baseUrl).replace(/\/$/, '').replace(/\/chat\/completions$/, '') + '/models'; const r = await fetcher(url, { headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {} }); result.textContent = await r.text(); } catch (e) { result.textContent = `失败：${e.message}`; } });
-    const promptList = el(doc, 'div'); promptPage.append(promptList); const add = el(doc, 'button', { type: 'button' }, '新建提示词'); const reset = el(doc, 'button', { type: 'button' }, '重置默认模板'); promptPage.append(add, reset);
-    const renderPrompts = () => { promptList.replaceChildren(); (config.prompts || []).forEach((prompt, index) => { const box = el(doc, 'article', { class: 'fated-prompt' }); const titleF = field('标题', prompt.title); const role = el(doc, 'select'); for (const r of ['system', 'user', 'assistant']) role.append(el(doc, 'option', { value: r, text: r })); role.value = prompt.role; const contentF = field('内容', prompt.content, 'textarea'); const enabled = el(doc, 'input', { type: 'checkbox' }); enabled.checked = prompt.enabled !== false; box.append(titleF.labelNode, role, contentF.labelNode, enabled, ' 启用 '); const up = el(doc, 'button', { type: 'button' }, '上移'); const down = el(doc, 'button', { type: 'button' }, '下移'); const del = el(doc, 'button', { type: 'button' }, '删除'); box.append(up, down, del); promptList.append(box); const changed = () => { prompt.title = titleF.input.value; prompt.role = role.value; prompt.content = contentF.input.value; prompt.enabled = enabled.checked; save(); }; on(titleF.input, 'change', changed); on(role, 'change', changed); on(contentF.input, 'change', changed); on(enabled, 'change', changed); on(up, 'click', () => { if (index) [config.prompts[index - 1], config.prompts[index]] = [config.prompts[index], config.prompts[index - 1]]; save(); renderPrompts(); }); on(down, 'click', () => { if (index < config.prompts.length - 1) [config.prompts[index + 1], config.prompts[index]] = [config.prompts[index], config.prompts[index + 1]]; save(); renderPrompts(); }); on(del, 'click', () => { config.prompts.splice(index, 1); save(); renderPrompts(); }); }); };
-    on(add, 'click', () => { config.prompts.push({ title: '新提示词', role: 'user', enabled: true, content: '{{user_instruction}}' }); save(); renderPrompts(); }); on(reset, 'click', () => { config.prompts = clone(DEFAULT_PROMPTS); save(); renderPrompts(); }); renderPrompts();
+  let promptKind = 'validate', promptInstruction = '';
+  let previewSink, lastSent = null;
+  function assemblyContext(kind = promptKind, instruction = promptInstruction) {
+    return { kind, instruction, state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
   }
+  function publishMessages(messages, kind = promptKind) {
+    previewSink?.(messages, kind);
+    return messages;
+  }
+  function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false) {
+    const slots = config.slots;
+    const messages = assembleMessages(slots, assemblyContext(kind, instruction));
+    if (config.debugPrompts) console.debug('[fated:prompts]', { kind, slots: slots.map(s => ({ id: s.id, enabled: s.enabled })),
+      messages: messages.map(({ slotId, role, content }) => ({ slotId, role, chars: content.length })) });
+    if (sending && messages.length) lastSent = messages;
+    return publishMessages(messages, kind);
+  }
+  function settingsContext() {
+    syncSettings();
+    return { host, settings: config, slots: config.slots, assemblyContext, prepareMessages, lastSent: () => lastSent,
+      onPreview(fn) { previewSink = fn; }, fetchImpl: options.fetch, save: persistSettings };
+  }
+  function runNormalize() { return askAI('validate', ''); }
 
   async function hydrate(epoch) {
     const messages = await tavernMessages(host);
@@ -757,7 +756,7 @@ export function mountTavernOverlay(options = {}) {
       renderInstances();
       if (currentState && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
         attemptedBattles.add(activeBattleKey);
-        void askAI('validate');
+        void runNormalize();
       }
       if (node) node.textContent = currentState
         ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')}`
@@ -775,45 +774,42 @@ export function mountTavernOverlay(options = {}) {
     const page = pages.sandbox; page.replaceChildren(el(doc, 'h3', {}, '沙盘'));
     const status = el(doc, 'div', { class: 'fated-status', 'data-status': '' }, '打开此页会自动侦测当前聊天。'); page.append(status);
     const mountTarget = el(doc, 'div', { 'data-sandbox-mount': '' }); page.append(mountTarget);
-    const actions = el(doc, 'div', { class: 'fated-actions' }); const check = el(doc, 'button', { type: 'button' }, '校验'); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(check, report, refresh); page.append(actions);
+    const actions = el(doc, 'div', { class: 'fated-actions' }); const check = el(doc, 'button', { type: 'button' }, '标准化'); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(check, report, refresh); page.append(actions);
     const instruction = el(doc, 'textarea', { placeholder: '让辅助 AI 调整地形、站位或角色参数…' }); instruction.style.width = '100%'; page.append(instruction);
     const chat = el(doc, 'div', { class: 'fated-chat' }); const send = el(doc, 'button', { type: 'button' }, '发送'); chat.append(instruction, send); page.append(chat);
     const output = el(doc, 'pre', { class: 'fated-status', 'data-ai-output': '' }); page.append(output);
     on(refresh, 'click', () => scan(true).catch(showError));
     on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = liveState() ? buildMvuJsonPatch(liveState(), sources.sourceMap) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
+    on(instruction, 'input', () => {
+      promptInstruction = instruction.value.trim(); promptKind = promptInstruction ? 'chat' : 'validate';
+    });
     askAI = async (kind, requestText = instruction.value.trim()) => {
       const state = liveState();
       if (!state || aiController || (kind === 'chat' && !requestText)) return;
+      syncSettings();
+      promptKind = kind; promptInstruction = requestText;
       const normalize = kind === 'validate';
       const key = activeBattleKey;
       const controller = new AbortController();
       aiController = controller;
-      const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), 60000);
-      const prompts = (config.prompts || []).filter(x => x.enabled !== false && normalize === /校验|标准化/i.test(x.title || ''))
-        .map(x => ({ role: x.role || 'user', content: fillTemplate(x.content, { ...sources, state }, requestText) }));
-      if (normalize) {
-        // Give the model stable patch paths and only the data for this battle.
-        const roster = Object.values(config.instances);
-        const templates = new Set(Object.values(state.items).map(item => item.templateId));
-        const skills = new Set(Object.values(state.units).flatMap(unit => unit.skills));
-        const usedEntries = (table, ids) => Object.fromEntries(Object.entries(table).filter(([id]) => ids.has(id)));
-        const equipment = usedEntries(state.equipment, templates);
-        const patchExamples = Object.entries(equipment).filter(([, item]) => Number.isFinite(item.attack))
-          .map(([id, item]) => ({ op: 'replace', path: `/equipment/${id}/attack`, value: item.attack }));
-        prompts.push({ role: 'user', content: JSON.stringify({
-          task: '只输出一个 JSON 对象，格式为 {"patch":[],"unresolved":[]}。patch 中的每项必须是 RFC 6902 的 add、replace 或 remove。path 必须以 / 开头，使用下方引擎 ID，不使用显示名、数组下标或 stat_data 路径。可修改装备、技能、道具、状态模板、单位的 statuses 或 armor。不能等价转换的警告写入 unresolved。patchExamples 只演示写法，只有警告要求改动时才替换对应的 value。',
-          warnings: sources.warnings, roster, equipment, skills: usedEntries(state.skills, skills), items: state.items, patchExamples,
-        }) });
-      } else prompts.push({ role: 'user', content: requestText });
+      const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), config.timeoutMs ?? 60000);
       const label = normalize ? '标准化' : 'AI 调整';
       notify(normalize ? '正在标准化中…' : '正在请求 AI…', '', null, true);
       try {
+        let prompts = prepareMessages(kind, requestText, true);
+        if (!prompts.length) throw new Error('没有可发送的提示词，请在提示词组装页启用有内容的槽位');
+        const streamUpdate = (snapshot, done, info) => {
+          if (disposed || controller.signal.aborted || aiController !== controller || activeBattleKey !== key) return;
+          if (info?.isHeartbeat) noticeBody.textContent = `已等待 ${info.elapsedSec} 秒，连接仍在保持…`;
+          else if (snapshot) { output.textContent = snapshot; noticeBody.textContent = done ? '已收到完整响应，正在校验…' : `已收到 ${snapshot.length} 字符…`; }
+          noticeBody.hidden = false;
+        };
         const cancelled = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
         const validate = options.validateState || defaultValidateState;
         let patch, unresolved, nextState, combined;
         for (let attempt = 0; ; attempt++) {
           const reply = await Promise.race([
-            requestTavernAI(host, config, prompts, options.fetch, controller.signal), cancelled,
+            requestTavernAI(host, config, prompts, options.fetch, controller.signal, streamUpdate), cancelled,
           ]);
           if (disposed || aiController !== controller || key !== activeBattleKey) return;
           try {
@@ -842,7 +838,9 @@ export function mountTavernOverlay(options = {}) {
           } catch (error) {
             if (!normalize || attempt > 0) throw error;
             notify('正在标准化中…', '模型正在修正补丁格式', null, true);
-            prompts.push({ role: 'user', content: `上一条输出校验失败（${error.message}）。按上面的例子使用精确 ID 和路径，重新输出完整 JSON 对象。\n上一条输出：${reply.slice(0, 3500)}` });
+            prompts = [...prompts, { role: 'user', content: `上一条输出校验失败（${error.message}）。按上面的例子使用精确 ID 和路径，重新输出完整 JSON 对象。\n上一条输出：${reply.slice(0, 3500)}` }];
+            lastSent = prompts;
+            publishMessages(prompts, kind);
           }
         }
         if (combined) normalizedBattles.set(key, combined);
@@ -863,7 +861,7 @@ export function mountTavernOverlay(options = {}) {
         if (aiController === controller) aiController = null;
       }
     };
-    on(check, 'click', () => askAI('validate')); on(send, 'click', () => askAI('chat'));
+    on(check, 'click', () => runNormalize()); on(send, 'click', () => askAI('chat'));
   }
   function updateMagic() {
     launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;
@@ -875,7 +873,7 @@ export function mountTavernOverlay(options = {}) {
     // native launcher is already mounted; the optional magic-wand entry above is
     // deliberately managed as a normal DOM button.
   }
-  renderInstances(); renderConfig(); renderSandbox(); updateMagic();
+  renderInstances(); renderSandbox(); updateMagic();
   bindEventBus();
   foldBattleEntries();
   if (typeof MutationObserver === 'function' && doc.body) {

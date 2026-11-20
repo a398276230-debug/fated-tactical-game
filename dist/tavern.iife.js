@@ -5319,9 +5319,9 @@ body { min-height: 100vh; background: radial-gradient(ellipse at 12% 0, rgb(var(
     if (doc.querySelector(`style[${STYLE_ID}]`)) return;
     const style2 = doc.createElement("style");
     style2.setAttribute(STYLE_ID, "");
-    const css = `${battleTheme}
+    const css2 = `${battleTheme}
 ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, lead, theme) => `${lead}.fated-tactical-root${theme ? `[data-dlc-theme="${theme}"]` : ""}`).replace(/(^|\})\s*(body|html)\b/g, "$1.fated-tactical-root").replace(/(^|\})\s*#output-container/g, "$1.fated-tactical-root #output-container");
-    style2.textContent = css;
+    style2.textContent = css2;
     (doc.head || doc.documentElement).append(style2);
   }
   function mount(container, options = {}) {
@@ -6222,84 +6222,152 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   // src/tavern/theme.js
   var tavernTheme = `
 :where([data-fated-tavern-overlay], .fated-battle-entry) {
-  --base:#0b1120; --raised:#0f172a; --card:#131c2e; --hover:#18243a;
-  --line:#2c3d58; --ink:#e5edf8; --muted:#a7b8cf; --gold:#d4af37; --sky:#38bdf8;
-  color-scheme:dark; color:var(--ink); text-align:start;
-  font:14px/1.55 'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  --ink-0:#141423; --ink-1:#1e1e32; --ink-2:#11111d;
+  --surface:#252035; --surface-hover:#2f2a42; --raised-a:#393045; --raised-b:#292536;
+  --field:#252035; --accent-rgb:176 142 92; --gold:#dfc080; --gold-rgb:223 192 128;
+  --gold-bright:#ffd700; --gold-soft:#d7bb7c; --gold-dim:#8b7355;
+  --frame-rgb:139 115 85; --glow-rgb:120 100 190; --sheen-rgb:255 240 220;
+  --accent-text:#f0dfb9; --accent-label:#e0cb9d; --selected-bg:#3a3045;
+  --btn-a:#776044; --btn-b:#5b4b3e; --btn-hover-a:#856d4f; --btn-hover-b:#665342;
+  --btn-text:#fff0ca; --btn-line-rgb:209 179 118; --focus:#ffe2a0;
+  --text:#e8d5b7; --text-soft:#d2c3ab; --text-key:#c7b4e2; --text-muted:#c9c0d0;
+  --neutral-rgb:200 188 208; --scrollbar:#927753;
+  --panel-bg:linear-gradient(180deg, rgba(30, 30, 50, .95) 0%, rgba(20, 20, 35, .98) 100%);
+  --panel-border:2px solid #8b7355;
+  --topline:linear-gradient(90deg, transparent, #ffd700, transparent);
+  --topline-left:0px; --topline-width:100%; --topline-height:3px;
+  --header-bg:linear-gradient(90deg, #2d2d44 0%, #3d3d5c 50%, #2d2d44 100%);
+  --header-hover:linear-gradient(90deg, #3d3d5c 0%, #4d4d6c 50%, #3d3d5c 100%);
+  --header-line:#8b7355; --title-shadow:0 0 10px rgba(255, 215, 0, .3);
+  --row-bg:rgba(0, 0, 0, .3); --row-border:rgba(139, 115, 85, .3);
+  --heading:#dfc080; --entry-text:#d2cbdc; --entry-current:#f4d98d;
+  --icon-glow:0 0 10px rgba(255, 215, 0, .5);
+  --font-display:"Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", serif;
+  --font-body:"Noto Serif SC", "Source Han Serif SC", "Source Han Serif CN", serif;
+  --line:rgb(var(--accent-rgb) / .13); --line-mid:rgb(var(--accent-rgb) / .26); --line-strong:rgb(var(--accent-rgb) / .46);
+  --blue-line:#5f93c8; --blue-text:#cfe3f7; --red-line:#c0727a; --red-text:#f6d3d6;
+  color-scheme:dark; color:var(--text); text-align:start;
+  font:14px/1.55 var(--font-body);
 }
 [data-fated-tavern-overlay] { position:fixed; z-index:2147483000; pointer-events:none }
 [data-fated-tavern-overlay] *, .fated-battle-entry { box-sizing:border-box }
 [data-fated-tavern-overlay] [hidden] { display:none !important }
-[data-fated-tavern-overlay] button:not([data-sandbox-mount] *), .fated-battle-entry button {
-  cursor:pointer; min-height:34px; padding:6px 12px; background:var(--card);
-  border:1px solid var(--line); border-radius:8px; color:var(--ink); font:inherit;
+
+/* ---------- panels ---------- */
+[data-fated-tavern-overlay] :is(.action-panel,.form-card,.wf-card,.fated-battle-card,.fated-instance,.fated-prompt):not([data-sandbox-mount] *) {
+  position:relative; overflow:hidden; margin:0 0 12px;
+  color:var(--text); background:var(--panel-bg); border:var(--panel-border); border-radius:10px;
+  box-shadow:0 6px 20px rgba(0,0,0,.26), inset 0 1px 0 rgb(var(--sheen-rgb) / .035);
+  overflow-wrap:anywhere;
 }
-[data-fated-tavern-overlay] button:not([data-sandbox-mount] *):hover, .fated-battle-entry button:hover { background:var(--hover); border-color:var(--sky) }
-[data-fated-tavern-overlay] :focus-visible, .fated-battle-entry :focus-visible { outline:2px solid var(--sky); outline-offset:2px }
+[data-fated-tavern-overlay] :is(.action-panel,.form-card,.wf-card,.fated-battle-card,.fated-instance,.fated-prompt):not([data-sandbox-mount] *)::before {
+  content:""; position:absolute; z-index:1; top:0; left:var(--topline-left); width:var(--topline-width);
+  height:var(--topline-height); background:var(--topline); pointer-events:none;
+}
+.panel-header-bar { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 12px; background:var(--header-bg); border-bottom:1px solid var(--header-line) }
+.panel-title { flex:1; min-width:0; color:var(--gold-bright); font-family:var(--font-display); font-size:1.02em; font-weight:700; line-height:1.45; letter-spacing:.06em; text-shadow:var(--title-shadow); overflow-wrap:anywhere }
+.panel-content { padding:10px 12px 12px }
+
+/* ---------- buttons ---------- */
+[data-fated-tavern-overlay] button:not([data-sandbox-mount] *), .fated-battle-entry button {
+  display:inline-flex; align-items:center; justify-content:center; gap:5px; cursor:pointer;
+  min-height:30px; padding:4px 10px; border:1px solid var(--line-mid); border-radius:6px;
+  background:linear-gradient(160deg, var(--raised-a), var(--raised-b)); color:var(--text);
+  font:inherit; font-size:.88em; overflow-wrap:anywhere;
+}
+[data-fated-tavern-overlay] .game-button.primary, [data-fated-tavern-overlay] button:not([data-sandbox-mount] *)[data-tone=primary] {
+  background:linear-gradient(160deg, var(--btn-a), var(--btn-b)); border-color:rgb(var(--btn-line-rgb) / .75); color:var(--btn-text); font-weight:600;
+}
+@media (hover:hover) and (pointer:fine) {
+  [data-fated-tavern-overlay] button:not([data-sandbox-mount] *):not(:disabled):hover, .fated-battle-entry button:hover { border-color:var(--gold); background:linear-gradient(160deg, var(--btn-hover-a), var(--btn-hover-b)); }
+}
+[data-fated-tavern-overlay] button:disabled { opacity:.45; cursor:not-allowed }
+[data-fated-tavern-overlay] :focus-visible, .fated-battle-entry :focus-visible { outline:2px solid var(--focus); outline-offset:2px }
+
+/* ---------- fields ---------- */
+[data-fated-tavern-overlay] :is(input:not([type=checkbox]),textarea,select):not([data-sandbox-mount] *) {
+  width:100%; min-width:0; min-height:32px; padding:5px 8px; border:1px solid var(--line-mid); border-radius:6px;
+  background:var(--field); color:var(--text); font:inherit; font-size:.9em;
+}
+[data-fated-tavern-overlay] :is(input,textarea,select):not([data-sandbox-mount] *):focus { border-color:var(--gold); box-shadow:0 0 0 2px rgb(var(--gold-rgb) / .22); outline:none }
+[data-fated-tavern-overlay] textarea:not([data-sandbox-mount] *) { min-height:56px; resize:vertical; font:.86em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace }
+[data-fated-tavern-overlay] .masked-key-input { -webkit-text-security:disc }
+[data-fated-tavern-overlay] .field { display:grid; gap:3px; min-width:0 }
+[data-fated-tavern-overlay] .field > label, [data-fated-tavern-overlay] label.field { display:grid; gap:3px; min-width:0; color:var(--text-soft); font-size:.84em }
+[data-fated-tavern-overlay] .form-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(210px,100%),1fr)); gap:8px 10px; padding:10px 12px 12px }
+[data-fated-tavern-overlay] .row-inline { display:flex; flex-wrap:wrap; align-items:center; gap:6px; min-width:0 }
+[data-fated-tavern-overlay] .row-inline input:not([type=checkbox]) { flex:1 1 10rem }
+[data-fated-tavern-overlay] .pill-btn { border-radius:999px; padding-inline:12px }
+
+/* ---------- console shell ---------- */
 [data-fated-tavern-overlay] .fated-tavern-launcher {
-  position:fixed; right:18px; bottom:18px; width:52px; height:52px;
-  border-radius:50%; border-color:var(--gold); font-size:22px;
-  box-shadow:0 8px 24px #020611aa; pointer-events:auto;
+  position:fixed; right:18px; bottom:18px; width:52px; height:52px; border-radius:50%;
+  border-color:var(--gold); font-size:22px; box-shadow:0 8px 24px rgb(var(--accent-rgb) / .25); pointer-events:auto;
 }
 .fated-tavern-panel {
   position:fixed; right:16px; bottom:16px; width:min(1100px,calc(100vw - 32px));
   height:min(820px,calc(100dvh - 32px)); display:flex; flex-direction:column;
-  border:1px solid var(--line); border-radius:16px; background:var(--base);
-  box-shadow:0 18px 54px #020611b0; pointer-events:auto; overflow:hidden;
+  border:var(--panel-border); border-radius:10px; background:var(--panel-bg);
+  box-shadow:0 18px 54px rgba(0,0,0,.55); pointer-events:auto; overflow:hidden;
 }
-.fated-tavern-header {
-  display:flex; align-items:center; padding:11px 18px; gap:8px; cursor:move;
-  touch-action:none; user-select:none; background:linear-gradient(105deg,var(--hover),var(--raised) 75%);
-  border-bottom:1px solid var(--line);
+[data-fated-tavern-overlay] .fated-tavern-panel::before {
+  content:""; position:absolute; z-index:2; top:0; left:var(--topline-left); width:var(--topline-width);
+  height:var(--topline-height); background:var(--topline); pointer-events:none;
 }
-.fated-tavern-header strong { flex:1; color:var(--gold); font-size:1.08rem; letter-spacing:.035em }
-.fated-tavern-tabs,.fated-tavern-subtabs { display:flex; flex-wrap:wrap; gap:6px; padding:8px 14px; border-bottom:1px solid var(--line); background:var(--raised) }
-.fated-tavern-subtabs { margin-bottom:14px; border:1px solid var(--line); border-radius:12px }
-[data-fated-tavern-overlay] :is(.fated-tavern-tabs,.fated-tavern-subtabs) button { border-radius:999px; border-color:transparent; color:var(--muted); background:transparent }
-[data-fated-tavern-overlay] :is(.fated-tavern-tabs,.fated-tavern-subtabs) button[aria-selected=true] { background:#132a43; border-color:#276184; color:#a6e3ff }
-.fated-tavern-content { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:clamp(10px,2vw,20px); scrollbar-color:#465c7d var(--base); scrollbar-width:thin }
+.fated-tavern-header { display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:move; touch-action:none; user-select:none; background:var(--header-bg); border-bottom:1px solid var(--header-line) }
+.fated-tavern-header strong { flex:1; color:var(--gold); font-family:var(--font-display); font-size:1.02rem; font-weight:700; letter-spacing:.07em; text-shadow:var(--title-shadow) }
+.fated-tavern-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:6px 10px; background:var(--row-bg); border-bottom:1px solid var(--header-line) }
+[data-fated-tavern-overlay] .fated-tavern-tabs button {
+  min-height:28px; border-radius:5px; border-color:transparent; background:transparent; color:var(--text-soft); font-size:.85em; letter-spacing:.04em;
+}
+[data-fated-tavern-overlay] .fated-tavern-tabs button[aria-selected=true] {
+  background:linear-gradient(160deg, var(--btn-a), var(--btn-b)); border-color:rgb(var(--btn-line-rgb) / .75); color:var(--btn-text); font-weight:600;
+}
+.fated-tavern-content { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:10px 12px 14px; scrollbar-color:var(--scrollbar) transparent; scrollbar-width:thin }
 .fated-tab { display:none }.fated-tab.active { display:block }
-.fated-tab > h3 { margin:0 0 12px; color:var(--ink); font-size:1.1rem }
-.fated-tavern-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr)); gap:12px }
-.fated-tavern-grid > .fated-status { grid-column:1/-1 }
-:is(.fated-tavern-grid,.fated-prompt) label { display:grid; color:var(--muted); gap:5px }
-.fated-tavern-grid label:has(input[type=checkbox]) { display:flex; align-items:center }
-[data-fated-tavern-overlay] :is(input:not([type=checkbox]),textarea,select):not([data-sandbox-mount] *) {
-  width:100%; min-width:0; min-height:36px; padding:7px 10px; background:var(--base);
-  border:1px solid #415471; border-radius:8px; color:var(--ink); font:inherit;
-}
-[data-fated-tavern-overlay] textarea:not([data-sandbox-mount] *) { resize:vertical; min-height:56px }
-.fated-prompt > :is(label,select) { margin-bottom:6px }
-.fated-prompt button,.fated-tavern-prompts > button { margin-right:6px }
-.fated-battle-card,.fated-instance,.fated-prompt,.fated-battle-entry {
-  margin:0 0 12px; padding:clamp(12px,2vw,18px); border:1px solid var(--line);
-  border-radius:12px; background:linear-gradient(145deg,var(--card),var(--raised)); overflow-wrap:anywhere;
-}
-.fated-battle-card,.fated-battle-entry { border-inline-start:3px solid var(--gold) }
-.fated-battle-card h4 { margin:4px 0; color:var(--ink); font-size:clamp(1.2rem,3vw,1.55rem) }
-.fated-card-kicker { color:var(--gold); font:700 .75rem/1.5 ui-monospace,monospace; letter-spacing:.06em }
-.fated-mini,.fated-battle-meta { margin:5px 0; color:var(--muted); font-size:.85rem }
+.fated-tab > h3 { margin:0 0 10px; color:var(--gold); font-family:var(--font-display); font-size:1rem; font-weight:700; letter-spacing:.08em }
+
+/* ---------- instances / sandbox chrome ---------- */
+.fated-battle-card h4 { margin:2px 0 4px; padding:0 12px; color:var(--accent-text); font-family:var(--font-display); font-size:1.1rem }
+.fated-card-kicker { padding:8px 12px 0; color:var(--gold-dim); font:600 .72em/1.5 ui-monospace,monospace; letter-spacing:.08em }
+.fated-instance { padding:10px 12px 12px; overflow-wrap:anywhere }
+.fated-instance > * { margin-inline:0 }
+.fated-battle-card > :is(p,details,.fated-actions,.fated-status) { margin-inline:12px }
+.fated-mini,.fated-battle-meta { margin:5px 0; color:var(--text-muted); font-size:.82em }
 .fated-status,.fated-battle-source {
-  margin:6px 0; padding:9px 12px; border:1px solid var(--line); border-radius:8px;
-  background:var(--base); color:var(--muted); max-height:14rem; overflow:auto;
-  overflow-wrap:anywhere; white-space:pre-wrap; font:.8rem/1.55 ui-monospace,monospace;
+  margin:6px 0; padding:7px 10px; border:1px solid var(--row-border); border-radius:6px;
+  background:var(--row-bg); color:var(--text-soft); max-height:10lh; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--scrollbar) transparent;
+  overflow-wrap:anywhere; white-space:pre-wrap; font:.78em/1.5 ui-monospace,monospace;
 }
 .fated-status:empty { display:none }
-:is(.fated-battle-entry,.fated-battle-source-box,.fated-diagnostics) > summary { cursor:pointer; color:#a6e3ff; font-weight:650 }
-.fated-actions,.fated-chat { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:10px 0 }
+:is(.fated-battle-source-box,.fated-diagnostics) > summary { cursor:pointer; color:var(--accent-label); padding-block:4px }
+.fated-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:8px 0 }
+.fated-instance > strong { display:block; color:var(--accent-text) }
+.fated-instance > .fated-status { max-height:8lh; scrollbar-width:thin; scrollbar-color:var(--scrollbar) transparent }
+.fated-chat { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:8px 0 }
 .fated-chat textarea { flex:1 1 230px }
-[data-fated-tavern-overlay] .fated-primary { background:var(--gold); color:#0b1120; font-weight:750; border-color:#f1cd59 }
-[data-fated-tavern-overlay] .fated-primary:hover { background:#f1cd59; border-color:#f1cd59 }
 .fated-toast {
   position:fixed; z-index:2; top:max(16px,env(safe-area-inset-top)); right:16px; width:min(380px,calc(100vw - 32px));
-  padding:14px; border:1px solid var(--line); border-inline-start:3px solid var(--sky); border-radius:12px;
-  background:var(--raised); box-shadow:0 12px 40px #020611aa; pointer-events:auto; overflow-wrap:anywhere;
-  max-height:calc(100dvh - 32px); overflow:auto;
+  padding:12px 14px; border:1px solid var(--header-line); border-inline-start:3px solid var(--gold); border-radius:8px;
+  background:var(--panel-bg); color:var(--text); box-shadow:0 12px 40px rgba(0,0,0,.5);
+  pointer-events:auto; overflow-wrap:anywhere; max-height:calc(100dvh - 32px); overflow:auto;
 }
-.fated-toast strong { color:#a6e3ff }.fated-toast p { margin:5px 0 8px; white-space:pre-wrap }.fated-toast button { margin:4px 6px 0 0 }
+.fated-toast strong { color:var(--gold-bright) }.fated-toast p { margin:5px 0 8px; white-space:pre-wrap; color:var(--text-soft) }.fated-toast button { margin:4px 6px 0 0 }
+
+/* ---------- switch ---------- */
+[data-fated-tavern-overlay] .switch { position:relative; flex:none; display:inline-flex; align-items:center; width:42px; height:22px; margin-left:auto; cursor:pointer }
+[data-fated-tavern-overlay] .switch input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:pointer }
+[data-fated-tavern-overlay] .switch-track { position:absolute; inset:0; border:1px solid var(--line-mid); border-radius:999px; background:var(--row-bg); box-shadow:inset 0 1px 3px rgba(0,0,0,.45); transition:background-color .18s ease, border-color .18s ease; pointer-events:none }
+[data-fated-tavern-overlay] .switch-track::after { content:""; position:absolute; top:1px; left:1px; width:18px; height:18px; border-radius:50%; background:var(--text-muted); box-shadow:0 1px 3px rgba(0,0,0,.55); transition:transform .18s cubic-bezier(.23,1,.32,1), background-color .18s ease }
+[data-fated-tavern-overlay] .switch input:checked + .switch-track { background:rgb(var(--gold-rgb) / .22); border-color:var(--gold) }
+[data-fated-tavern-overlay] .switch input:checked + .switch-track::after { transform:translateX(20px); background:var(--gold) }
+[data-fated-tavern-overlay] .switch input:focus-visible + .switch-track { outline:2px solid var(--focus); outline-offset:2px }
+@media (prefers-reduced-motion:reduce) { [data-fated-tavern-overlay] .switch-track, [data-fated-tavern-overlay] .switch-track::after { transition:none } }
+
+/* ---------- sandbox game root keeps its own layout variables ---------- */
 [data-fated-tavern-overlay] [data-sandbox-mount]:not(:empty) { min-width:0; margin:8px 0 }
 [data-fated-tavern-overlay] .fated-tactical-root {
-  --font-display:'Noto Sans SC','PingFang SC','Microsoft YaHei',system-ui,sans-serif;
+  --font-display:"Noto Sans SC",'PingFang SC','Microsoft YaHei',system-ui,sans-serif;
   --font-body:var(--font-display); min-height:0;
 }
 [data-fated-tavern-overlay] .fated-tactical-root[data-dlc-theme=amethyst] {
@@ -6313,15 +6381,800 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 }
 [data-fated-tavern-overlay] .fated-tactical-root > .game-layout { container:fated-board / inline-size; padding:0 }
 [data-fated-tavern-overlay] .game-header { border-inline-start:3px solid var(--gold) }
-[data-fated-tavern-overlay] .action-panel { border-radius:12px }
 [data-fated-tavern-overlay] .battle-main,[data-fated-tavern-overlay] .battle-sidebar { min-width:0 }
 @container fated-board (max-width:850px) { [data-fated-tavern-overlay] .game-columns { grid-template-columns:minmax(0,1fr) } }
 @media (max-width:660px),(max-height:460px) {
   .fated-tavern-panel { inset:6px !important; width:auto; height:auto }
   .fated-tavern-header { cursor:default; touch-action:auto }
-  [data-fated-tavern-overlay] button:not([data-sandbox-mount] *) { min-height:42px }
+  [data-fated-tavern-overlay] button:not([data-sandbox-mount] *) { min-height:36px }
 }
 `;
+
+  // src/tavern/engine-summary.js
+  var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
+\u5148\u653B\uFF1Dagi\xD7(1+initiativePercent)+d20+max(0,...attackInit)+max(0,...actionInit)+flatInitiative\uFF1B\u603B\u5206\u964D\u5E8F\uFF0C\u540C\u5206\u5148\u6BD4\u654F\u6377\uFF0C\u518D\u6309 ID \u5347\u5E8F\u3002
+\u666E\u901A\u653B\u51FB\u6309\u6240\u53D6 d20+accuracy \u5206\u6863\uFF08\u4E0B\u9650\u542B\u7B49\u53F7\uFF09\uFF1A<4 \u5931\u624B\xD70\uFF0C4 \u64E6\u4F24\xD70.3\uFF0C8 \u52C9\u5F3A\xD70.8\uFF0C11 \u6709\u6548\xD71\uFF0C20 \u5E73\u66B4\u51FB\xD71.3\uFF0C25 \u5F3A\u66B4\u51FB\xD71.6\uFF0C30 \u8D85\u66B4\u51FB\xD72\u3002\u81EA\u71361\u5FC5\u5931\uFF1B\u81EA\u713620\u6807\u8BB0 critical\uFF0C\u4F46\u4ECD\u987B\u603B\u5206\u22654\u3002\u5B9E\u6218\u4E0D\u4EE5\u9884\u89C8 defense \u4E3A\u547D\u4E2D\u95E8\u69DB\uFF1Battack \u662F\u4F24\u5BB3\uFF0C\u4E0D\u662F accuracy\u3002\u65E0\u9ED8\u8BA4\u529B/\u654F\u547D\u4E2D\u6216\u654F\u6377\u9632\u5FA1\u3002\u901A\u5E38\u51C0\u4F18\u52BF/\u52A3\u52BF\u63B72\u53D6\u9AD8/\u4F4E\uFF1B\u534F\u8BAE\u5956\u52B1\u9AB00~2\u3001\u60E9\u7F5A\u9AB00~1\uFF0C\u76F8\u7B49\u53D61\u9AB0\uFF0C\u5956\u52B1\u5360\u4F18\u4E14\u67092\u5956\u52B1\u53D63\u9AB0\u4E2D\u4F4D\u3002
+\u4F53\u957F(m)\u6309 <0.6/<1.3/<2.6/<5.5/<10/\u5176\u4F59\u5206\u5FAE/\u5C0F/\u4E2D/\u5927/\u5DE8/\u8D85\u5DE8\u3002\u4F9D\u6B21\uFF1A\u4F53\u578B\u503C 2/1/0/\u22121/\u22122/\u22124\uFF0C\u6B66\u6280 \u22128/\u22124/0/4/8/12\uFF0C\u8FD1\u6218\u500D\u7387 0.7/0.85/1/1.2/1.4/1\uFF08\u653B\u51FB\u8005mc\u22652\u56FA\u5B9A1\uFF09\u3002\u4F53\u578B\u547D\u4E2D\u4FEE\u6B63\u51FD\u6570\uFF1D\u653B\u503C\u2212\u5B88\u503C\uFF0C\u5B88mc\u22652\u6539\u4E3A\u653B\u503C+2\xD7(\u5B88mc\u22121)\uFF1B\u8BE5\u51FD\u6570\u503C\u5217\u5165\u9884\u89C8\u660E\u7EC6\uFF0C\u4E0D\u76F4\u63A5\u52A0\u5230\u5B9E\u63B7accuracy\u3002\u5B9E\u63B7\u4F53\u578B\u52A0\u503C\u53D6\u76EE\u6807size\uFF1A\u6570\u503C\u7528max(0,size\u22121)\uFF0Clarge +2\uFF0Csmall \u22121\u3002\u6B66\u6280\u5BF9\u6297\uFF1D\u653B\u9AB0+\u6B66\u6280\u2265\u5B88\u9AB0+\u6B66\u6280\uFF1B\u5B9E\u6218\u64D2\u62B1/\u7F34\u68B0/\u7ECA\u6454/\u63A8\u649E\u5219\u7528\u53CC\u65B9d20\u5206\u522B\u52A0 \u529B\u5BF9\u529B/\u654F\u5BF9\u529B/\u654F\u5BF9\u654F/\u654F\u5BF9\u529B\u3002
+\u8DDD\u79BB\u6863\uFF08\u5B9E\u9645\u8DDD\u79BB:\u547D\u4E2D/\u5C04\u7A0B\u52A0\u503C\uFF09\uFF1A0\u8D34\u8EAB:+4/+6\uFF0C1~2\u8FD1\u7A0B:0/+2\uFF0C3~5\u4E2D\u7A0B:\u22122/0\uFF0C6~10\u8FDC\u7A0B:\u22124/0\uFF0C\u5176\u4F59\u8D85\u8DDD:\u22126/0\u3002protocolDistance\uFF1Dmax(|\u0394x|,|\u0394y|)+ceil(|\u0394z|/2)\uFF1B\u5B9E\u6218\u5C04\u7A0B\u7528\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB\uFF0C\u4E0D\u53D6\u6574\uFF0C\u6863\u95F4\u5C0F\u6570\u56DE\u843D\u8D85\u8DDD\u3002\u547D\u4E2D\u5408\u8BA1\u663E\u5F0Faccuracy\u3001\u9AD8\u4F4E\u5730(\xB12\u53CA\u5F39\u836F\u9AD8\u5730\u52A0\u503C)\u3001\u76EE\u6807size\u3001\u8DDD\u79BB\u3001\u6309max(\u8DDD\u79BB,\u5C04\u7A0B)\u67E5\u5F97\u7684\u5C04\u7A0B\u52A0\u503C\u3001\u72B6\u6001\u3001\u5939\u51FB(+2)\uFF0C\u51CF\u63A9\u4F53\u3002
+
+\u3010\u610F\u56FE\uFF5C\u96BE\u5EA6/\u6210\u529F\u500D\u7387\u3011normal \u5E38\u89C40/1\uFF0Cfunction \u673A\u80FD\u9650\u52365/1.1\uFF0Ccore \u6838\u5FC3\u8981\u5BB310/1.4\uFF0Ckill \u62B9\u674015/1.7\uFF0Cconcept \u6982\u5FF5\u7834\u788E20/2\u3002\u8303\u56F4\u653B\u51FB\u5BF9\u5355\u4F4D\u56FA\u5B9A\u5E38\u89C4\u3002\u547D\u4E2D\u540E\uFF0C\u96BE\u5EA6\u53D6max(0,\u57FA\u7840+\u5B88\u65B9intentDifficulty)\uFF0C\u4E3A0\u76F4\u63A5\u6210\u7ACB\uFF1B\u5426\u5219\u653B\u6BD4\u5B88\u4F4E\u22652\u7EA7\u5FC5\u8D25\u3002\u653B\u9636\xD75+\u539F\u653B\u51FB\u9AB0+\u8BC4\u7EA7\u5956\uFF08\u5E73/\u5F3A/\u8D85\u66B4\u51FB+10/20/30\uFF09\u2265\u5B88\u9636\xD75+\u5B88d20+\u96BE\u5EA6\u624D\u6210\u7ACB\uFF1B\u5931\u8D25\u4FDD\u7559\u539F\u547D\u4E2D\uFF0C\u610F\u56FE\u500D\u7387\u56DE\u52301\u3002\u81EA\u52A8\u547D\u4E2D\u53CA\u8C41\u514D\u5206\u652F\u4E0D\u4F5C\u8BE5\u5BF9\u6297\u3002
+
+\u3010\u4F24\u5BB3\uFF5C\u8BA1\u7B97\u51FD\u6570\u4E0E\u5B9E\u6218\u4E0D\u53EF\u6DF7\u7528\u3011
+\u534F\u8BAE\u8D77\u4F24\uFF1D\u5173\u8054\u5C5E\u6027\uFF08damage.stat\uFF0C\u7F3A\u7701\u8FD1\u6218str\u3001\u5426\u5219int\uFF09\xD710\xD7\u5C42\u7EA7\u7CFB\u6570(1~7\u9636:2/2.8/4/8/15/35/80)+power(\u9ED8\u8BA420)+\u6B66\u5668attack(\u9ED8\u8BA40)\u3002\u5B9E\u6218\u4E3B\u51FB\u4E58\u653B\u51FB\u589E\u76CA\u3001\u4F53\u578B\u500D\u7387\uFF08\u6B64\u5904\u4E0D\u9650\u8FD1\u6218\uFF09\u3001\u8BC4\u7EA7\u3001\u6210\u529F\u610F\u56FE\u3001\u59FF\u6001/\u526F\u624B\u7CFB\u6570\u3001\u8C41\u514D\u6210\u529F\xD70.5\uFF0C\u518D\u5411\u4E0B\u53D6\u6574\u3002\u8C41\u514D\u4E3A\u5B88d20+\u6307\u5B9A\u5C5E\u6027\u2265saveDC\uFF08\u9ED8\u8BA412+floor(\u653Bint/2)\uFF09\uFF0C\u6210\u529F\u514D\u9664\u8BE5\u6B21\u9644\u5E26\u6548\u679C\u3002
+damagePipeline \u7EAF\u51FD\u6570\uFF1A(initial+bonus)\xD7damageMultiplier\xD7(1\u2212min(1,\u6700\u9AD8\u4E09\u9879\u51CF\u4F24\u4E4B\u548C))\uFF1B\u6709\u6548\u9632\u5FA1=max(0,defense\xD7(1\u2212penetration))\uFF0C\u62A4\u7532\u500D\u7387=2000/(2000+\u6709\u6548\u9632\u5FA1)\u3002\u518D\u4E58\u62A4\u7532\u500D\u7387\u548C(1\u2212\u5C5E\u6027\u51CF\u4F24)\uFF0C\u51CFflatReduction\uFF0C\u4FDD\u5E950\uFF0C\u518D\u4E58(1\u2212clamp(dr,0,1))\u3002\u5C5E\u6027\u51CF\u4F24\uFF1Aphysical=(con+str+agi)\xD70.0025\uFF0Cenergy=(spi+int)\xD70.004\uFF0Cmental=spi\xD70.008\uFF1Btrue \u8DF3\u8FC7\u62A4\u7532\u3001\u5C5E\u6027\u51CF\u4F24\u548C\u56FA\u5B9A\u51CF\u4F24\uFF0C\u4E0D\u8DF3\u8FC7DR\u3002
+\u5B9E\u6218\u547D\u4E2D\u8D70\u53E6\u4E00\u7BA1\u7EBF\uFF1A\u53EF\u63F4\u62A4\u66FF\u4F24\u3001\u8FD1\u6218\u91CD\u5251\u5F39\u53CD\uFF1B\u6709\u6548\u7532=max(0,\u603B\u7532\xD7(1\u2212\u767E\u5206\u6BD4\u7A7F\u900F)\u2212\u56FA\u5B9A\u7A7F\u900F)\uFF0C\u7269\u7406\u5168\u7532\u3001\u80FD\u91CF\u534A\u7532\u3001\u5176\u4F590\u3002\u4E58(1+\u788E\u51B0\u52A0\u6210)(1+\u6613\u4F24)(1\u2212\u72B6\u6001\u603B\u51CF\u4F24[0,1])\u3001\u62A4\u7532\u500D\u7387\u548C(1\u2212\u5C5E\u6027\u51CF\u4F24)\uFF0C\u5411\u4E0B\u53D6\u6574\u4E14\u4E0D\u4F4E\u4E8E0\uFF1B\u62A4\u76FE\u5148\u5438\u6536\uFF0C\u4F59\u91CF\u6263HP\u3002\u4E0D\u81EA\u52A8\u5957\u7528\u7EAF\u51FD\u6570\u7684\u6700\u9AD8\u4E09\u9879\u3001\u56FA\u5B9A\u51CF\u4F24\u6216DR\u3002\u975E\u547D\u4E2D\u7C7B\u4F24\u5BB3\u5982\u6301\u7EED\u4F24\u53E6\u6309\u500D\u7387\u540E\u53D6\u6574\u51CFfloor(\u6709\u6548\u7532)\u3002\u76EE\u6807\u81EA\u8EABnonLethal\u4FDD\u5E951 HP\uFF1B\u975E\u81F4\u6B7B\u653B\u51FB\u53EA\u5728\u539F\u76EE\u6807\u672A\u88AB\u66FF\u4F24\u4E14\u6263\u52300\u65F6\u56DE\u7F6E1\uFF0C\u4E0D\u4FDD\u8BC1\u963B\u6B62\u5DF2\u89E6\u53D1\u7684\u4EA1\u8BED\u3002
+areaResolution \u7EAF\u51FD\u6570\uFF1A\u547D\u4E2D\u6570=max(1,min(members,ceil(members\xD7min(rangeTier,10)/10\xD7coverage)))\uFF1B\u6BCF\u76EE\u6807baseDamage\uFF0Ccolossus\u65F6\u53E6\u4E58mc\xD7coverage\uFF0C\u603B\u4F24\u4E58\u547D\u4E2D\u6570\u3002\u5B9E\u6218\u8303\u56F4\u6280\u80FD\u6309\u8986\u76D6\u683C\u9010\u76EE\u6807\u7ED3\u7B97\u3002
+
+\u3010\u59FF\u6001\uFF5C\u81EA\u52A8\u8BC6\u522B\u4F18\u5148\u7EA7\u3011\u76FE\u2192\u5251\u76FE\uFF1B\u6D88\u8017/\u8F85\u52A9\u526F\u624B\u2192\u540C\u8C03\uFF1B\u91CD\u578B/\u53CC\u624B\u4E3B\u624B\u2192\u91CD\u5251\uFF1B\u5176\u4ED6\u526F\u624B\u2192\u53CC\u6301\uFF1B\u4EC5\u4E3B\u624B\u2192\u8F7B\u5251\uFF1B\u7A7A\u624B\u2192\u65E0\u68B0\u3002
+light_blade \u8F7B\u5251\uFF1A\u7A7F\u75328%\uFF0C\u8FD1\u6218\u8DDD\u79BB\u22642\u7684\u8DDD\u79BB\u9879+4\uFF0C\u8FDC\u7A0B\u6B66\u5668\u8D1F\u8DDD\u79BB\u9879\u5F52\u96F6\uFF1Bmove\u540E\u5956\u52B1\u9AB0+1\uFF0C\u4E0A\u96502\u3002
+dual_wield \u53CC\u6301\uFF1A\u6709\u4F24\u5BB3\u526F\u624B\u65F6\u4E3B\u51FB\xD71.5\u518D\xD70.5\uFF1B\u4E3B\u51FB\u2265\u52C9\u5F3A\u4E14\u654C\u5B58\u6D3B\uFF0C\u53EF\u82B1\u9636\xD710 SP\u8FFD\u51FB\uFF0C\u53E6\u63B7\u526F\u624B\u4F24\u5BB3\u9AB0\xD7\u8BC4\u7EA7\u7B49\u500D\u7387\xD70.5\uFF1B\u4E3B\u51FB\u2265\u5E73\u66B4\u51FB\u514D\u8FFD\u51FB\u52A3\u52BF\u3002
+attunement \u540C\u8C03\uFF1A\u514D\u8D39\u7528\u6D88\u8017\u54C1\u526F\u624B\uFF0C\u9ED8\u8BA42\u6B21\uFF1B\u5B9E\u6218\u7ED9\u4E88haste\uFF0C\u7528\u5C3D\u8F6C\u8F7B\u5251\u3002
+greatsword \u91CD\u5251\uFF1A\u653B/\u5B88\u6A21\u5F0F\u4F24\u5BB3\xD71.3/1.5\uFF0C\u7A7F\u75325%\uFF1B\u9632\u5B88\u6709\u4F59\u6B21\u624D\u5BF9\u8FD1\u6218\u5F39\u53CD\uFF08\u914D\u989D2\uFF09\uFF0C\u53CC\u65B9\u529B+d20\uFF0C\u5B88\u2265\u653B\u51CF60%\uFF1B\u5BF9\u2265\u5E73\u66B4\u51FB\u9996\u6B21\u6210\u529F\u5168\u514D\u5E76\u8FD41\u6B21\u3002
+sword_shield \u5251\u76FE\uFF1A\u666E\u901A/\u91CD\u683C\u6321\u51CF\u4F2425%/45%\uFF0C\u53EF\u76FE\u51FB\u51FB\u9000\u3001\u7729\u6655\uFF1B\u8868\u4E2DshieldDamageFactor=0.3\u4E0D\u7B49\u4E8E\u76FE\u51FB\u5B9E\u7B97\u500D\u7387\u3002unarmed \u65E0\u68B0\uFF1A\u65E0\u59FF\u6001\u52A0\u6210\u3002
+
+\u3010\u58EB\u6C14\u4E0E\u9003\u8DD1\u3011\u6362\u8F6E\u65F6\uFF0C\u5B58\u6D3B\u5355\u4F4DHP/maxHP\u4E25\u683C\u4F4E\u4E8E\u9608\u503C\u624D\u89E6\u53D1\uFF0C\u6BCF\u8F6E\u81F3\u591A\u4E00\u6B21\u3002spar 40%\u3001arena 30%\u3001suppress 50%\u76F4\u63A5shaken\uFF1Bdeathmatch 10%\u3001standard 30%\u3001guard 35%\u68C0\u5B9A\uFF1A\u5F53\u524D\u5B9E\u88C5d20<12\u4E3Ashaken\uFF0C\u5426\u5219routed\u3002\u6807\u8BB0\u4E0D\u7B49\u4E8E\u79BB\u573A\u3002\u4E3B\u52A8flee\u53E6\u4EE5\u81EA\u8EAB\u654F+d20\u2265\u5B58\u6D3B\u654C\u65B9\u6700\u9AD8\u654F+d20\u5224\u6210\u529F\uFF0C\u5E73\u624B\u53EF\u9003\uFF0C\u6210\u529F\u5BF9\u65B9\u83B7\u80DC\u3002`;
+  var ENGINE_API_SUMMARY = `${PROTOCOL_RULES}
+
+\u3010\u5F15\u64CE API \u7D22\u5F15\uFF5C\u4EC5\u4F9B\u6620\u5C04\uFF0C\u4E0D\u8F93\u51FA\u8C03\u7528\u4EE3\u7801\u3011
+combat_protocol.js\uFF1ABL_SIZE_TABLE/sizeFor/sizeForUnit\u3001RATING_TABLE/ratingFor\u3001DISTANCE_TABLE/distanceTier\u3001INTENTS/intentCheck\u3001MORALE/moraleResult\u3001STANCE_RULES/stanceFor/stanceLabel/stanceRules\uFF1Binitiative\u3001sizeHitModifier\u3001martialContest\u3001meleeMultiplier\u3001damagePipeline\u3001areaResolution\u3001nonLethalHp\u3001normalizeEquipment\u3002
+combat.js\uFF1AbeginBattle \u6392\u5148\u653B\uFF0CcurrentUnit \u5F53\u524D\u5355\u4F4D\uFF0CsettleTurn \u5F00\u56DE\u5408\uFF0Creachable \u53EF\u8FBE\u683C\uFF0Cpreview(state,action) \u68C0\u67E5\u5408\u6CD5\u6027\u4E0E\u9884\u4F30\uFF0CapplyAction(state,action) \u5B9E\u9645\u7ED3\u7B97\u5E76\u8FD4\u56DE\u65B0\u589E\u65E5\u5FD7\uFF0CrefreshOutcome \u5224\u80DC\u8D1F\u3002getStatusTemplate \u5148\u67E5 STATUSES \u518D\u67E5\u672C\u5C40 statusTemplates\uFF1BgrantStatus \u62D2\u7EDD\u672A\u5B9A\u4E49 ID\u3002
+\u88C5\u5907\u6A21\u677F equipment \u4E0E\u7269\u54C1\u5B9E\u4F8B items \u5206\u5F00\uFF1B\u5B9E\u4F8B\u7528templateId\u5173\u8054\uFF0C\u8BA1\u6570\u5728\u5B9E\u4F8Bcounters\u3002\u88C5\u5907\u7279\u6548kind\uFF1Akill_charge_weapon\u3001ammo\u3001frost_thorns\u3001backstab\u3001healing_shield\u3001opportunity_root\uFF1B\u6280\u80FD\u7279\u6548\uFF1Astatus\u3001knockback\u3001teleport_backstab\u3001cleanse\u3002\u4E0D\u80FD\u7528\u663E\u793A\u540D\u6216\u4EFB\u610F\u63CF\u8FF0\u4EE3\u66FF\u7C7B\u578B\u3002
+prebattle_resources.js\uFF1AcalculatePrebattleResources \u63A8\u6F14\u6218\u524DHP/MP/SP\uFF08\u975E\u6218\u6597\u4F24\u5BB3\u516C\u5F0F\uFF09\uFF1BprotocolDistance \u8BA1\u7B97\u534F\u8BAE\u8DDD\u79BB\u3002
+rng.js\uFF1AseedRng/nextRng\u3001rollDie/rollDice/rollD20/rollProtocolD20\uFF1BhitChance/critChance/saveChance \u4E3A\u6982\u7387\u9884\u4F30\u3002
+spatial.js\uFF1AcellAt/elevation/isGround/unitAt/coverAt \u67E5\u683C\uFF0CgridDistance/distance3D \u6D4B\u8DDD\uFF0CpassableEdge/canStep/reachableCells/movementOptions/findPath \u901A\u884C\u5BFB\u8DEF\uFF0CsupercoverLine/hasLOS/aoeCells/coverBetween \u89C6\u7EBF\u8303\u56F4\u4E0E\u63A9\u4F53\uFF0CfacingToward/facingArc/flankPosition/isFlanked \u671D\u5411\u5939\u51FB\u3002\u4EA4\u4E92\u7531 combat \u7684 interact \u52A8\u4F5C\u5904\u7406\u3002ai.js\uFF1AchooseAction(state) \u9009\u62E9\u884C\u52A8\uFF0C\u4E0D\u6267\u884C\u3002`;
+
+  // src/tavern/status-catalog.js
+  var STATUS_CATALOG = `\u72B6\u6001 ID\uFF1A\u5185\u7F6E\u4EC5\u4EE5\u4E0B\u5404\u884C\uFF1B\u5176\u4ED6 ID \u5FC5\u987B\u5148\u5728 statusTemplates \u6CE8\u518C\u5E76\u901A\u8FC7\u6821\u9A8C\uFF0C\u4E0D\u53EF\u8986\u76D6\u5185\u7F6E\u3002
+ID | \u56FE\u6807\u4E2D\u6587\u540D | \u7C7B\u522B | \u9ED8\u8BA4\u6301\u7EED\uFF08battle_turns\uFF0C\u81EA\u8EAB\u56DE\u5408\u6570\uFF09 | \u6A21\u677F\u63CF\u8FF0\uFF0B\u7ED3\u7B97\u8BF4\u660E\u53CA\u9ED8\u8BA4 modifiers | \u91CD\u590D\u65BD\u52A0\u89C4\u5219/\u6A21\u677F\u5C42\u6570\u4E0A\u9650
+burn | \u{1F525}\u707C\u70E7 | dot | 2 | \u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002 damage=5,damageType=energy | refresh/1
+bleed | \u{1FA78}\u6D41\u8840 | dot | 3 | \u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002 damage=3,damageType=true | stack/5
+poison | \u2620\uFE0F\u4E2D\u6BD2 | dot | 3 | \u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002 damage=3,damageType=true | stack/4
+regen | \u{1F49A}\u518D\u751F | hot | 3 | \u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002 heal=5 | refresh/1
+shield | \u{1F6E1}\uFE0F\u62A4\u76FE | shield | 2 | \u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002 amount=8 | replace/1
+guarded | \u{1F9F1}\u575A\u58C1 | buff | 1 | \u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002 reduction=0.35 | refresh/1
+taunt | \u{1F4E3}\u5632\u8BBD | control | 1 | \u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002 taunted=true | refresh/1
+guard | \u{1F91D}\u63F4\u62A4 | buff | 2 | \u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002\u4EC5\u975E\u53CD\u5E94\u6253\u51FB\uFF1B\u987B\u672A\u8DF3\u8FC7\u884C\u52A8\u3001\u9AD8\u5DEE\u22641\u4E14\u89C6\u7EBF\u901A\u7545\u3002 intercept=true | refresh/1
+thorns | \u{1F335}\u53CD\u4F24\u68D8\u7532 | buff | 2 | \u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002\u4E0D\u5BF9\u53CD\u5E94\u4F24\u5BB3\u8FDE\u9501\u3002 reflect=5 | refresh/1
+stun | \u{1F4AB}\u7729\u6655 | control | 1 | \u8DF3\u8FC7\u884C\u52A8\u3002 skip=true | refresh/1
+freeze | \u{1F9CA}\u51B0\u51BB | control | 1 | \u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002 skip=true,shatter=0.5 | refresh/1
+root | \u26D3\uFE0F\u5B9A\u8EAB | control | 2 | \u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002 rooted=true | refresh/1
+blind | \u{1F311}\u81F4\u76F2 | debuff | 2 | \u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002 disadvantage=1 | refresh/1
+vulnerable | \u{1F4A2}\u6613\u4F24 | debuff | 2 | \u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002 vulnerability=0.35 | refresh/1
+sunder | \u{1F528}\u7834\u7532 | debuff | 2 | \u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002 armor=-4 | refresh/1
+mark | \u{1F3AF}\u6807\u8BB0 | debuff | 2 | \u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002 incomingAccuracy=2 | refresh/1
+stealth | \u{1F464}\u9690\u8EAB | buff | 2 | \u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002 hidden=true,advantage=1 | refresh/1
+haste | \u{1F4A8}\u75BE\u8D70 | buff | 2 | \u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002 movement=1 | refresh/1
+chill | \u2744\uFE0F\u5BD2\u51B7 | debuff | 2 | \u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002 movement=-1,accuracy=-2 | refresh/1
+charge | \u26A1\u84C4\u529B | buff | 1 | \u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002\u5B9E\u9645\u6301\u7EED\u671F\u95F4\u751F\u6548\uFF0C\u653B\u51FB\u4E0D\u6D88\u8017\u3002 damageBonus=0.15 | refresh/1
+lock_on | \u2316\u5B9A\u4F4D | buff | 1 | \u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002\u5B9E\u9645\u547D\u4E2D\u52A0\u503C\u4E0D\u9650\u76EE\u6807\uFF1B\u5B9A\u4F4D\u52A8\u4F5C\u53E6\u8BB0\u671D\u5411\u76EE\u6807\u3002 accuracy=1 | refresh/1
+weakness | \u25C9\u5F31\u70B9\u8BC6\u522B | buff | 3 | \u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002\u8BFB\u53D6\u9632\u5B88\u8005\u5C42\u6570\uFF0C\u96BE\u5EA6\u6700\u4F4E0\uFF1B\u626B\u63CF\u52A8\u4F5C\u7ED9\u81EA\u8EAB3\u5C42\u3002 intentDifficulty=-2 | stack/3
+grappled | \u26D3\u64D2\u62B1 | control | 1 | \u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002 rooted=true | refresh/1
+prone | \u25BD\u5012\u5730 | debuff | 1 | \u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002\u5B9E\u9645\u4E3A\u653B\u51FB\u6B64\u5355\u4F4D\u547D\u4E2D+2\u3002 incomingAccuracy=2,rooted=true | refresh/1
+disarmed | \u2694\u7F34\u68B0 | debuff | 1 | \u65E0\u6CD5\u4F7F\u7528\u4E3B\u624B\u6B66\u5668\u3002\u4EC5\u8D34\u72B6\u6001\u4E0D\u4F1A\u5378\u6B66\u5668\uFF1B\u7F34\u68B0\u52A8\u4F5C\u53E6\u6E05\u4E3B\u624B\u548Cweapon\uFF0C\u5230\u671F\u4E0D\u81EA\u52A8\u5F52\u8FD8\u3002 disarmed=true | refresh/1
+\u9ED8\u8BA4 tickTiming\uFF1AonTurnStart\uFF1B\u4F8B\u5916\uFF1Ableed=onTurnEnd\u3002\u65BD\u52A0\u5F53\u56DE\u5408\u4E0D\u8DF3\u4F24/\u6CBB\u7597\u3001\u4E0D\u6263\u65F6\u957F\u3002
+grantStatus\uFF1Arefresh \u91CD\u8BBE\u65F6\u957F\uFF0Creplace \u66FF\u6362\u4E0D\u7D2F\u52A0\uFF08\u62A4\u76FE\u91CD\u8BBE\u6C60\uFF09\uFF1Bstack \u7D2F\u52A0\u81F3\u4E0A\u9650\uFF0C\u672A\u6307\u5B9A\u65F6\u957F\u65F6\u53D6\u65E7\u5269\u4F59\u4E0E\u6A21\u677F\u9ED8\u8BA4\u7684\u8F83\u5927\u503C\uFF0C\u6307\u5B9A\u5219\u91CD\u8BBE\u3002
+\u6821\u9A8C\u2260\u9ED8\u8BA4\uFF1AremainingTurns \u6574\u65701\u2013100\uFF1BdurationType \u53EF\u4E3A battle_turns\uFF08\u81EA\u8EAB\u56DE\u5408\u672B\u9012\u51CF\uFF09\u3001until_removed \u6216 persistent\uFF08\u540E\u4E24\u8005\u4E0D\u9012\u51CF\uFF0Cpersistent \u4E0D\u53D7 cleanse\uFF09\u3002
+\u5B9E\u4F8B stacks\u3001maxStacks \u5747\u4E3A\u6574\u6570\uFF0C1\u2264stacks\u2264maxStacks\u2264\u6A21\u677F\u4E0A\u9650\uFF1B\u6280\u80FD status \u6548\u679C turns 1\u2013100\u3001stacks 1\u201310\uFF0C\u5185\u7F6E\u65BD\u52A0\u65F6\u4ECD\u622A\u81F3\u5B9E\u4F8B\u4E0A\u9650\uFF0C\u81EA\u5B9A\u4E49\u4E0D\u53EF\u8D85\u6A21\u677F\u4E0A\u9650\uFF08\u81EA\u5B9A\u4E49\u6A21\u677F maxStacks 1\u201310\uFF09\u3002
+\u5B9E\u4F8B name/icon/category/description \u53CA modifiers \u987B\u5339\u914D\u6A21\u677F\uFF08\u575A\u58C1 reduction \u53EF\u4E3A0.25/0.35/0.45/0.5\uFF09\u3002\u4EC5 shield \u5B9E\u4F8B\u6709 amount\uFF1A\u5B9E\u4F8B\u6821\u9A8C1\u20131000000000\uFF0C\u6388\u4E88\u65F61\u201310000\uFF0C\u6280\u80FD\u6548\u679C\u53C2\u65701\u2013500\u3002`;
+
+  // src/tavern/prompts.js
+  var DEFAULT_SLOTS = [
+    { id: "protocol", label: "\u6218\u6597\u534F\u8BAE\u4E0E\u89C4\u5219\u8BF4\u660E", role: "system", enabled: true, desc: "\u771F\u5B9E\u6218\u6597\u534F\u8BAE\u7684\u6570\u503C\u53E3\u5F84\u3001\u5224\u5B9A\u65B9\u5F0F\u3001\u8F93\u51FA\u7EA6\u675F" },
+    { id: "roster", label: "\u53C2\u6218\u8005\u4E0E\u88C5\u5907\u5FEB\u7167", role: "user", enabled: true, desc: "\u5F53\u524D\u6218\u5C40\u7684\u5355\u4F4D\u3001\u88C5\u5907\u3001\u6280\u80FD\u3001\u72B6\u6001\uFF08\u542B MVU \u6765\u6E90\uFF09" },
+    { id: "battle", label: "\u6218\u5C40\u4E0E\u5730\u5F62", role: "user", enabled: true, desc: "battle_init \u63CF\u8FF0\u7B26\u89E3\u6790\u540E\u7684\u68CB\u76D8\u3001\u5730\u5F62\u3001\u63A9\u4F53\u3001\u4E92\u52A8\u70B9" },
+    { id: "warnings", label: "\u5F85\u5904\u7406\u8B66\u544A\u6E05\u5355", role: "user", enabled: true, desc: "\u6C99\u76D8\u8F6C\u6362\u65F6\u65E0\u6CD5\u7B49\u4EF7\u6620\u5C04\u7684\u88C5\u5907/\u6280\u80FD/\u6548\u679C\u53CA\u539F\u56E0" },
+    { id: "task", label: "\u6807\u51C6\u5316\u4EFB\u52A1\u6307\u4EE4", role: "user", enabled: true, desc: "RFC 6902 \u8865\u4E01\u683C\u5F0F\u7EA6\u675F\u3001\u5141\u8BB8\u8DEF\u5F84\u767D\u540D\u5355\u3001\u7981\u6B62\u9879" },
+    { id: "extra", label: "\u81EA\u5B9A\u4E49\u8865\u5145\uFF08\u53EF\u7A7A\uFF09", role: "user", enabled: false, desc: "\u7528\u6237\u81EA\u5DF1\u586B\u7684\u989D\u5916\u63D0\u793A\u8BCD" }
+  ].map((slot) => ({ ...slot, builtin: true, content: "" }));
+  var protocol = [ENGINE_API_SUMMARY, STATUS_CATALOG].join("\n\n");
+  var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组；不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+
+【patch：有序的 RFC 6902 操作】
+add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:statuses|armor)(?:\/|$)/
+• /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
+• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。
+• /items/<id>：道具实例（如 /items/item_01），不是模板属性。
+• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），不能覆盖内置 ID。
+• /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
+• /units/<unitId>/armor：单位护甲整数 0…1000000（如 /units/p1/armor）。
+上述对象可寻址其合法子字段，数值等标量没有子路径。使用快照里的精确 ID，不用角色/装备显示名、数组下标、stat_data 路径。新定义的 ID 只用合法唯一键（首字符英数，后续英数、_、-，总长≤64），必须有原始资料依据。父对象必须已存在；不能靠深路径自动创建 /statusTemplates 根表。修改 effects 时提供完整数组，保留无关特效，不得误删。
+
+【值的形状：只用各表已定义的字段】
+装备必有 name、effects；attack 为整数 0…1000000000，accuracy 为 −20…30。武器 range(1…15) 与 damage 骰子必须成对。攻击值不是命中修正。
+技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/fan/cone/line)、target(enemy/ally/self/any)、effects。save(str/agi/con/int/spi) 与 saveDC(1…50) 必须成对；damage/heal 用 {count,sides}，可加 bonus、stat、multiplier、type。
+装备特效仅限：武器 kill_charge_weapon(counterKey,bonusPerStack,maxStacks)、ammo(counterKey,capacity,armorPierce,highGroundRange,highGroundAccuracy)、backstab(bonusMultiplier,bleedStacks,comboDamage)、opportunity_root()；非武器 frost_thorns(damage,chance,statusId)、healing_shield(healBonus,shieldRatio)。括号内均为必填字段；每项另有 kind，chance 为 0…1。
+技能特效仅限 status(statusId，选填 turns/stacks；amount 仅用于 shield)、knockback(distance,collisionDamage)、teleport_backstab(bonusMultiplier)、cleanse()。两类 effects 不混用；每表项最多 12 个特效。同一 counterKey（无则按 kind）不重复，status 例外。
+物品仅 {id,templateId,counters}：id 等于表键，templateId 必须指向 equipment，counters 与模板特效的 counterKey 一一对应，值为 0…50 的整数。移除被引用的模板会破坏校验。
+内置状态只认协议表 ID；另可引用当前已合法定义的自定义模板。自定义模板最多 64 个，必有 id,name,icon,category,description,remainingTurns,durationType,tickTiming,stackRule,maxStacks,modifiers。category 为 buff/debuff/control/dot/hot；remainingTurns 整数1…100；durationType=battle_turns/until_removed/persistent；tickTiming=onTurnStart/onTurnEnd；stackRule=refresh/stack/replace；maxStacks 整数1…10。
+自定义 modifiers 非空，仅可用整数 damage/heal(1…50)、movement(−3…3)、armor/accuracy/incomingAccuracy(−10…10)、advantage/disadvantage(1…3)、reflect(1…30)，或比例 reduction/vulnerability(0…1)。damageType 只能随 damage，取 physical/energy/mental/true。没有事件钩子或脚本字段。
+单位 statuses 是以状态 ID 为键的对象，不是字符串列表。实例还须有 stacks(1…maxStacks)、sourceUnitId(ID 或 null)；id、展示信息及 modifiers 与模板匹配。只有 shield 实例带正整数 amount；不要将技能的 {kind:"status",statusId:…} 当作单位状态实例。
+
+【整批生效条件】每条操作必须能按序由 applyPatch 应用；新状态还需通过 validateState，标准化补丁也要能在原始战局重新应用。任何一条失败，整批不落地。只改警告指出且有可靠数值依据的部分。禁止改 team、hp/ap/mp/sp 及上限、x/y、order、日志 logs，禁止间接绕过白名单。
+【unresolved】每项是一句话“原效果 + 无法等价转换的原因”。缺模板、超上限、触发时机或机制不同、缺少必要数值时，说明原因，不编造类型、不截断数值冒充等价。部分可解可同时输出两个非空数组；有警告但无合法改动时，patch 为 [] 并填写 unresolved。
+正例（仅当快照确有 p1，且警告明确其护甲应为 6）：
+{"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]}
+反例：不能把“命中后冻结时间并倒转整轮”冒充 prone，更不能 replace /units/p1/ap；应返回：
+{"patch":[],"unresolved":["命中后倒转整轮：引擎没有回滚回合和行动序列的状态或特效。"]}`;
+  var json = (value) => JSON.stringify(value, null, 2);
+  var lastCustomId = 0;
+  function makeCustomSlot() {
+    lastCustomId = Math.max(Date.now(), lastCustomId + 1);
+    return { id: `custom_${lastCustomId}`, label: "\u81EA\u5B9A\u4E49\u69FD\u4F4D", role: "user", enabled: true, desc: "", content: "", custom: true };
+  }
+  function describeSlots(saved) {
+    if (!Array.isArray(saved)) return DEFAULT_SLOTS.map((slot) => ({ ...slot }));
+    const defaults = new Map(DEFAULT_SLOTS.map((slot) => [slot.id, slot]));
+    const entries2 = saved.filter((slot) => typeof slot?.id === "string");
+    const legacy = entries2.length > 0 && entries2.every((slot) => defaults.has(slot.id) && Object.keys(slot).every((key3) => key3 === "id" || key3 === "enabled"));
+    if (legacy) {
+      const overrides = new Map(entries2.map((slot) => [slot.id, slot]));
+      return DEFAULT_SLOTS.map((slot) => ({ ...slot, ...overrides.get(slot.id) }));
+    }
+    return entries2.map((slot) => ({ ...defaults.get(slot.id), ...slot }));
+  }
+  function resolveSlotContent(slot, ctx = {}) {
+    const { sources = {}, state, instruction = "" } = ctx;
+    const variables = {
+      battle_init: () => sources.battleRaw || json(sources.battleInit ?? {}),
+      battle_state: () => json(state ?? {}),
+      warnings: () => json(sources.warnings ?? []),
+      user_instruction: () => instruction,
+      standardized_roster: () => sources.roster || "",
+      roster: rosterText,
+      battle: battleText,
+      mvu_data: () => json(sources.mvuData ?? {}),
+      latest_floor: () => sources.latestFloor || ""
+    };
+    const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key3) => Object.hasOwn(variables, key3) ? variables[key3]() : "");
+    function rosterText() {
+      if (ctx.rosterText != null) return ctx.rosterText;
+      if (!state) return sources.roster || "";
+      const templates = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
+      const skillIds = new Set(Object.values(state.units ?? {}).flatMap((unit) => unit.skills ?? []));
+      const used = (table3, ids) => Object.fromEntries(Object.entries(table3 ?? {}).filter(([id2]) => ids.has(id2)));
+      return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment: used(state.equipment, templates), skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
+    }
+    function battleText() {
+      if (ctx.battleText != null) return ctx.battleText;
+      if (!sources.battleInit && !state) return "";
+      const { units, equipment, items, skills, statusTemplates, ...board } = state ?? {};
+      return `battle_init\uFF1A
+${variables.battle_init()}
+\u5F53\u524D\u6218\u5C40\uFF1A
+${json(board)}`;
+    }
+    if (slot.custom === true || slot.content) return expand(slot.content ?? "");
+    switch (slot.id) {
+      case "protocol":
+        return protocol;
+      case "roster":
+        return rosterText();
+      case "battle":
+        return battleText();
+      case "warnings":
+        return ctx.warningsText ?? (sources.warnings?.length ? `\u5F85\u5904\u7406\u8B66\u544A\uFF1A
+${variables.warnings()}` : "");
+      case "task":
+        return expand(ctx.taskText ?? (ctx.kind === "chat" ? "\u5904\u7406\u73A9\u5BB6\u6307\u4EE4\uFF1A{{user_instruction}}\u3002\u53EA\u8F93\u51FA battle_patch \u6216 unit_patch JSON\u3002" : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
+      case "extra":
+        return expand(ctx.extraText || "");
+      case "assistant":
+        return ctx.assistantText || "";
+      default:
+        return "";
+    }
+  }
+  function assembleMessages(slots = DEFAULT_SLOTS, ctx = {}) {
+    const messages = [];
+    let previousMergeable = false;
+    for (const slot of slots) {
+      if (!slot || slot.enabled === false) continue;
+      const content = resolveSlotContent(slot, ctx);
+      if (!content?.trim()) continue;
+      const role = ["system", "assistant"].includes(slot.role) ? slot.role : "user";
+      const previous = messages.at(-1);
+      const mergeable = !slot.custom && slot.id !== "assistant";
+      if (previous?.role === role && previousMergeable && mergeable) {
+        previous.content += "\n\n" + content;
+        previous.slotId += "+" + slot.id;
+        previous.slotLabel += " / " + slot.label;
+      } else messages.push({ role, content, slotId: slot.id, slotLabel: slot.label });
+      previousMergeable = mergeable;
+    }
+    return messages;
+  }
+
+  // src/tavern/api.js
+  function lookup(host, localWin, key3) {
+    for (const scope of [localWin, host, localWin?.parent, localWin?.top, globalThis]) {
+      try {
+        for (const owner of [scope, scope?.TavernHelper]) {
+          const value = owner?.[key3];
+          if (value != null) return typeof value === "function" ? value.bind(owner) : value;
+        }
+      } catch {
+      }
+    }
+  }
+  function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
+    const get2 = (key3) => lookup(host, localWin, key3);
+    const on = get2("eventOn"), remove = get2("eventRemoveListener");
+    const cleanups = [];
+    const stop = () => {
+      for (const fn of cleanups.splice(0)) {
+        try {
+          fn();
+        } catch {
+        }
+      }
+    };
+    if (typeof on !== "function") return stop;
+    try {
+      for (const name of /* @__PURE__ */ new Set([
+        get2("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
+        get2("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
+      ])) {
+        const handler = (text4, id2) => {
+          if (typeof text4 === "string" && text4 && (!id2 || id2 === genId)) onStreamChunk?.(text4, false);
+        };
+        const sub = on(name, handler);
+        cleanups.push(() => {
+          try {
+            if (typeof sub === "function") sub();
+            else sub?.stop?.();
+          } finally {
+            remove?.(name, handler);
+          }
+        });
+      }
+    } catch (error2) {
+      stop();
+      throw error2;
+    }
+    return stop;
+  }
+  var sequence = 0;
+  async function requestViaTavern(host, settings, messages, { onStreamChunk, signal } = {}) {
+    signal?.throwIfAborted();
+    const win = globalThis.window || globalThis;
+    const generate = lookup(host, win, "generateRaw");
+    if (!generate) throw new Error("\u672A\u68C0\u6D4B\u5230 generateRaw\uFF0C\u8BF7\u5728 API \u8BBE\u7F6E\u9875\u9009\u62E9\u4E3B\u63A5\u53E3\u6A21\u5F0F\u5E76\u786E\u8BA4\u9152\u9986\u52A9\u624B\u5DF2\u542F\u7528");
+    const id2 = `fated-${Date.now()}-${++sequence}`;
+    const stream = settings.stream ?? true;
+    const cleanup = stream ? bindTavernStreamEvents(host, win, id2, onStreamChunk) : null;
+    let abort;
+    const cancelled = new Promise((_, reject) => {
+      abort = () => {
+        try {
+          Promise.resolve(lookup(host, win, "stopGenerationById")?.(id2)).catch(() => {
+          });
+        } catch {
+        }
+        reject(signal.reason || new DOMException("\u5DF2\u53D6\u6D88", "AbortError"));
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+    });
+    try {
+      const text4 = await Promise.race([generate({ generation_id: id2, should_stream: stream, ordered_prompts: messages }), cancelled]);
+      if (typeof text4 !== "string" || !text4.trim()) throw new Error("\u9152\u9986\u6A21\u578B\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u5F53\u524D\u4E3B\u63A5\u53E3");
+      onStreamChunk?.(text4, true);
+      return text4;
+    } finally {
+      cleanup?.();
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+  function diagnoseApiError(rawText, status2) {
+    let detail = String(rawText || "").trim();
+    try {
+      detail = JSON.parse(detail)?.error?.message || detail;
+    } catch {
+    }
+    const hint = /mixed content/i.test(detail) ? "HTTPS \u9875\u9762\u4E0D\u80FD\u8BF7\u6C42 HTTP \u63A5\u53E3\uFF0C\u8BF7\u4F7F\u7528 HTTPS \u5730\u5740" : { 401: "\u5BC6\u94A5\u65E0\u6548", 403: "\u65E0\u8BBF\u95EE\u6743\u9650", 404: "\u6A21\u578B\u6216\u63A5\u53E3\u5730\u5740\u9519\u8BEF", 429: "\u8BF7\u6C42\u9650\u6D41\u6216\u989D\u5EA6\u4E0D\u8DB3" }[status2] || (status2 >= 500 ? "\u4E0A\u6E38\u670D\u52A1\u6545\u969C" : "API \u8BF7\u6C42\u5931\u8D25");
+    return `${status2 ? `HTTP ${status2}\uFF1A` : ""}${hint}${detail ? `\uFF08${detail.slice(0, 500)}\uFF09` : ""}`;
+  }
+  async function readSseStream(readableStream, extractDelta, onStreamChunk) {
+    const reader = readableStream.getReader(), decoder = new TextDecoder();
+    const start = Date.now();
+    let buffer = "", content = "", reasoning = "", args = "", heartbeatCount = 0;
+    function line(raw) {
+      const s = raw.trim();
+      if (s.startsWith(":")) {
+        onStreamChunk?.("", false, { isHeartbeat: true, heartbeatCount: ++heartbeatCount, elapsedSec: Math.floor((Date.now() - start) / 1e3) });
+      } else if (s.startsWith("data:")) {
+        const data = s.slice(5).trim();
+        if (data === "[DONE]") return true;
+        if (!data) return false;
+        const event = JSON.parse(data);
+        if (event.error) throw new Error(diagnoseApiError(event.error.message));
+        const d = extractDelta(event) || {};
+        const c = typeof d === "string" ? d : d.contentDelta;
+        if (c || d.reasoningDelta || d.toolArgsDelta) {
+          content += c || "";
+          reasoning += d.reasoningDelta || "";
+          args += d.toolArgsDelta || "";
+          onStreamChunk?.(content || args || reasoning, false);
+        }
+      }
+      return false;
+    }
+    let ended = false;
+    try {
+      while (!ended) {
+        const { value, done } = await reader.read();
+        ended = done;
+        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = done ? "" : lines.pop();
+        if (lines.some(line)) break;
+      }
+      return content || args || reasoning;
+    } finally {
+      if (!ended) reader.cancel().catch(() => {
+      });
+      reader.releaseLock();
+    }
+  }
+  function connection(settings, needModel) {
+    const base = settings.baseUrl?.trim().replace(/\/+$/, ""), key3 = settings.apiKey?.trim(), model = settings.model?.trim();
+    if (!base || !key3 || needModel && !model) throw new Error(`\u8BF7\u5728 API \u8BBE\u7F6E\u4E2D\u586B\u5199${!base ? "\u63A5\u53E3\u5730\u5740\uFF08baseUrl\uFF09" : !key3 ? "\u5BC6\u94A5\uFF08apiKey\uFF09" : "\u6A21\u578B\uFF08model\uFF09"}`);
+    if (globalThis.location?.protocol === "https:" && /^http:/i.test(base)) throw new Error(diagnoseApiError("Mixed Content"));
+    const source = settings.apiSource || "openai";
+    const headers = { "Content-Type": "application/json" };
+    let root;
+    if (source === "gemini") root = base.replace(/\/v1beta(?:\/.*)?$/i, "") + "/v1beta";
+    else if (source === "claude") {
+      root = base.replace(/\/messages$/i, "").replace(/\/v1$/i, "") + "/v1";
+      Object.assign(headers, { "x-api-key": key3, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
+    } else if (source === "openai") {
+      root = base.replace(/\/chat\/completions$/i, "");
+      headers.Authorization = `Bearer ${key3}`;
+    } else throw new Error(`\u672A\u77E5 API \u7C7B\u578B\uFF1A${source}`);
+    return { root, source, headers, model, key: encodeURIComponent(key3) };
+  }
+  async function send(url, init, { fetchImpl = globalThis.fetch, signal }) {
+    const res = await fetchImpl(url, { ...init, signal });
+    if (!res.ok) throw new Error(diagnoseApiError(await res.text(), res.status));
+    return res;
+  }
+  var json2 = (res) => res.json ? res.json() : res.text().then(JSON.parse);
+  async function fetchModels(settings, options = {}) {
+    const { root, source, key: key3, headers } = connection(settings, false);
+    const res = await send(`${root}/models${source === "gemini" ? `?key=${key3}` : ""}`, { method: "GET", headers }, options);
+    const data = await json2(res);
+    return (source === "gemini" ? data.models : data.data)?.map((m) => source === "gemini" ? m.name?.replace(/^models\//, "") : m.id).filter((id2) => typeof id2 === "string" && id2) || [];
+  }
+  function deltas(source, event) {
+    if (source === "gemini") {
+      const parts = event.candidates?.[0]?.content?.parts || [];
+      return { contentDelta: parts.filter((p) => !p.thought).map((p) => p.text).join(""), reasoningDelta: parts.filter((p) => p.thought).map((p) => p.text).join("") };
+    }
+    if (source === "claude") {
+      const d2 = event.delta || event.content_block || {};
+      return { contentDelta: d2.text, reasoningDelta: d2.thinking, toolArgsDelta: d2.partial_json };
+    }
+    const choice = event.choices?.[0];
+    const d = choice?.delta || choice?.message || {};
+    return { contentDelta: d.content, reasoningDelta: d.reasoning_content, toolArgsDelta: d.tool_calls?.map((t) => t.function?.arguments).join("") || d.function_call?.arguments };
+  }
+  async function requestViaCustomApi(settings, messages, options = {}) {
+    const { root, source, model, key: key3, headers } = connection(settings, true);
+    const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.2), max_tokens = Number(settings.max_tokens || 2400);
+    const wireMessages = messages.map(({ role, content }) => ({ role, content }));
+    let url, body;
+    if (source === "openai") {
+      url = `${root}/chat/completions`;
+      body = { model, messages: wireMessages, temperature, max_tokens, stream };
+    } else {
+      const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+      const chat = wireMessages.filter((m) => m.role !== "system");
+      if (source === "claude") {
+        url = `${root}/messages`;
+        body = { model, system, messages: chat, temperature, max_tokens, stream };
+      } else {
+        url = `${root}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key3}`;
+        body = {
+          ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
+          contents: chat.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+          generationConfig: { temperature, maxOutputTokens: max_tokens },
+          safetySettings: ["HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT", "DANGEROUS_CONTENT", "CIVIC_INTEGRITY"].map((name) => ({ category: `HARM_CATEGORY_${name}`, threshold: "BLOCK_NONE" }))
+        };
+      }
+    }
+    const res = await send(url, { method: "POST", headers, body: JSON.stringify(body) }, options);
+    let text4;
+    if (stream && res.body?.getReader && !/application\/json/i.test(res.headers?.get?.("content-type") || "")) {
+      text4 = await readSseStream(res.body, (event) => deltas(source, event), options.onStreamChunk);
+    } else {
+      const data = await json2(res);
+      if (data.error) throw new Error(diagnoseApiError(data.error.message));
+      const d = deltas(source, data);
+      text4 = source === "claude" ? (data.content || []).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || d.reasoningDelta || "";
+    }
+    if (typeof text4 !== "string" || !text4.trim()) throw new Error("\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u6A21\u578B\u548C\u534F\u8BAE\u7C7B\u578B");
+    options.onStreamChunk?.(text4, true);
+    return text4;
+  }
+
+  // src/tavern/settings.js
+  var css = `
+.fated-settings {display:grid;gap:10px;min-width:0}
+.fated-settings .wf-dashboard {margin:0}
+.fated-settings .wf-dashboard .wf-hero {flex:none;color:var(--gold-soft);font-size:.8em;letter-spacing:.05em;font-family:var(--font-display)}
+.fated-settings .wf-toolbar {display:flex;flex-wrap:wrap;gap:6px;padding:9px 12px}
+.fated-settings .slot-pipeline {display:grid;gap:0;min-width:0}
+.fated-settings .wf-card {display:block;margin:0 0 8px}
+.fated-settings .slot-head {display:flex;align-items:center;gap:8px;min-width:0;padding:7px 10px 7px 12px;background:var(--header-bg);border-bottom:1px solid var(--header-line)}
+.fated-settings .slot-head:last-child {border-bottom:0}
+.fated-settings .slot-title {flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gold);font-family:var(--font-display);font-size:1em;font-weight:700;letter-spacing:.05em;text-shadow:var(--title-shadow)}
+.fated-settings .wf-card:has(> .slot-head input.toggle-switch:not(:checked)) .slot-desc {opacity:.55}
+.fated-settings .wf-card:has(> .slot-head input.toggle-switch:not(:checked)) .role-badge {opacity:.65}
+.fated-settings .role-badge {flex:none;padding:0 7px;border:1px solid;border-radius:999px;background:transparent;font:600 .7em/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.06em;text-transform:lowercase}
+.fated-settings .role-badge[data-role=system] {border-color:rgb(var(--gold-rgb)/.6);background:rgb(var(--gold-rgb)/.1);color:var(--gold)}
+.fated-settings .role-badge[data-role=user] {border-color:var(--blue-line);background:rgb(95 147 200/.12);background:color-mix(in srgb, var(--blue-line) 14%, transparent);color:var(--blue-text)}
+.fated-settings .role-badge[data-role=assistant] {border-color:rgb(var(--glow-rgb)/.6);background:rgb(var(--glow-rgb)/.16);color:var(--text-key)}
+.fated-settings .slot-actions {display:flex;flex:none;gap:1px;margin-left:auto}
+.fated-settings .slot-actions button {min-height:24px;padding:0 7px;border-color:transparent;background:transparent;color:var(--gold-soft);font-size:.8em;opacity:.85}
+.fated-settings .slot-actions button:hover,.fated-settings .slot-actions button:focus-visible {border-color:var(--line-mid);background:var(--row-bg);opacity:1}
+.fated-settings .slot-actions button:disabled {opacity:.22;border-color:transparent;background:transparent}
+.fated-settings .slot-actions .danger:hover {border-color:var(--red-line);color:var(--red-text)}
+.fated-settings .wf-card .switch {margin-left:6px}
+.fated-settings .slot-desc {margin:0;padding:6px 12px 8px;color:var(--text-muted);font-size:.78em;line-height:1.5;overflow-wrap:anywhere}
+.fated-settings .slot-editor {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr));gap:8px 10px;padding:9px 12px 12px;border-top:1px solid var(--row-border);background:var(--row-bg)}
+.fated-settings .slot-editor .wide {grid-column:1/-1}
+.fated-settings .slot-editor .hint {color:var(--gold-dim);font-size:.74em;line-height:1.5;overflow-wrap:anywhere}
+.fated-settings .slot-editor textarea {min-height:8.5em}
+.fated-settings .slot-preview {margin:0;padding:7px 9px;border:1px solid var(--line-mid);border-radius:6px;background:var(--field);color:var(--text-soft);max-height:16em;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--scrollbar) transparent;font:.8em/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}
+.fated-settings .wf-empty {padding:14px 12px;color:var(--text-muted);text-align:center}
+.fated-settings .fated-settings pre {margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:.78em/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.fated-settings .preview-panel pre {max-height:22em;overflow:auto;padding:9px 12px 12px;color:var(--text-soft);background:var(--row-bg)}
+.fated-settings .preview-panel summary {display:flex;align-items:center;gap:8px;padding:0;cursor:pointer;list-style:none}
+.fated-settings .preview-panel summary::-webkit-details-marker {display:none}
+.fated-settings .preview-panel summary::after {content:'\u25BE';flex:none;padding-right:12px;color:var(--gold-dim);font-size:.8em}
+.fated-settings .preview-panel[open] summary {border-bottom:1px solid var(--header-line)}
+.fated-settings .preview-panel summary .panel-title {padding:8px 12px}
+.fated-settings .api-card .form-grid {grid-template-columns:repeat(2,minmax(0,1fr));padding-bottom:12px}
+.fated-settings .field.wide {grid-column:1/-1}
+.fated-settings .switch-field {display:flex;align-items:center;justify-content:flex-start;gap:14px;min-height:32px}
+.fated-settings .switch-field > span {color:var(--text-soft);font-size:.84em}
+.fated-settings .cmd-row {display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.fated-settings .api-card .api-status {margin:6px 0 0}
+.fated-settings .api-status {margin:0 12px 12px;padding:7px 10px;border:1px solid var(--row-border);border-radius:6px;background:var(--row-bg);color:var(--text-soft);font-size:.82em;white-space:pre-wrap;overflow-wrap:anywhere}
+.fated-settings .api-status:empty {display:none}
+.fated-settings .api-status[data-error=true] {border-color:var(--red-line);color:var(--red-text);background:rgb(192 114 122/.1);background:color-mix(in srgb, var(--red-line) 12%, transparent)}
+/* Narrow windows: keep the switch and target sizes usable without scaling the layout. */
+@media (max-width:560px) {
+  .fated-settings .slot-head {flex-wrap:wrap;row-gap:6px}
+  .fated-settings .slot-title {flex:1 1 auto}
+  .fated-settings .slot-head .switch {order:2}
+  .fated-settings .slot-actions {order:3;flex-basis:100%;margin-left:0}
+  .fated-settings .slot-actions button {min-height:32px;padding:0 10px;font-size:.85em}
+  .fated-settings .slot-editor {grid-template-columns:1fr}
+  .fated-settings .api-card .form-grid {grid-template-columns:1fr}
+  .fated-settings .wf-toolbar button {min-height:34px}
+  [data-fated-tavern-overlay] .fated-tavern-tabs {gap:2px;padding:5px 6px}
+  [data-fated-tavern-overlay] .fated-tavern-tabs button {padding:4px 6px;font-size:.8em}
+}
+`;
+  function mount2(page) {
+    const doc = page.ownerDocument;
+    const make = (tag, cls, text4) => {
+      const node = doc.createElement(tag);
+      if (cls) node.className = cls;
+      if (text4 != null) node.textContent = text4;
+      return node;
+    };
+    const root = make("div", "fated-settings");
+    page.replaceChildren(make("style", "", css), root);
+    const button = (text4, cls = "pill-btn") => Object.assign(make("button", cls, text4), { type: "button" });
+    const panel = (title) => {
+      const section = make("section", "action-panel form-card");
+      const bar = make("div", "panel-header-bar");
+      bar.append(make("h3", "panel-title", title));
+      section.append(bar);
+      return { section, bar };
+    };
+    return { make, root, button, panel };
+  }
+  function renderPromptTab(page, ctx) {
+    const { make, root, button, panel } = mount2(page);
+    let slots = describeSlots(ctx.slots ?? ctx.settings.slots);
+    let editing = null;
+    const editors = /* @__PURE__ */ new Map();
+    const field = (title, control, wide = false) => {
+      const label = make("label", wide ? "field wide" : "field", title);
+      label.append(control);
+      return label;
+    };
+    const dashboard = make("section", "action-panel form-card wf-dashboard");
+    const dashBar = make("div", "panel-header-bar");
+    const hero = make("strong", "wf-hero");
+    dashBar.append(make("h3", "panel-title", "\u{1F9E9} \u63D0\u793A\u8BCD\u69FD\u4F4D"), hero);
+    const toolbar = make("div", "wf-toolbar");
+    const add = button("+ \u65B0\u5EFA\u69FD\u4F4D");
+    const reset = button("\u6062\u590D\u9ED8\u8BA4");
+    toolbar.append(add, reset);
+    dashboard.append(dashBar, toolbar);
+    const pipeline = make("div", "slot-pipeline");
+    const preview2 = make("details", "action-panel form-card preview-panel");
+    const summary = make("summary", "panel-header-bar");
+    summary.append(make("span", "panel-title", "\u6700\u7EC8 messages \u9884\u89C8\uFF08JSON\uFF09"));
+    const json3 = make("pre");
+    preview2.append(summary, json3);
+    root.append(dashboard, pipeline, preview2);
+    const extraText = () => ctx.settings.extraText ?? "";
+    const assembly = ctx.assemblyContext;
+    const last = make("details", "action-panel form-card preview-panel");
+    const lastSummary = make("summary", "panel-header-bar");
+    lastSummary.append(make("span", "panel-title", "\u4E0A\u6B21\u5B9E\u9645\u53D1\u9001\u7684 messages\uFF08\u7EC4\u88C5\u5FEB\u7167\uFF09"));
+    const lastJson = make("pre");
+    last.append(lastSummary, lastJson);
+    root.append(last);
+    const showLast = () => {
+      const messages = ctx.lastSent();
+      last.hidden = !messages;
+      if (messages) lastJson.textContent = JSON.stringify(messages, null, 2);
+    };
+    ctx.onPreview((messages, kind) => {
+      summary.firstChild.textContent = `\u6700\u7EC8 messages \u9884\u89C8\uFF08${kind === "chat" ? "AI \u8C03\u6574" : "\u6807\u51C6\u5316"}\uFF09`;
+      json3.textContent = JSON.stringify(messages, null, 2);
+      showLast();
+    });
+    const refresh = () => {
+      hero.textContent = `\u5DF2\u542F\u7528 ${slots.filter((s) => s.enabled !== false).length} / ${slots.length}`;
+      ctx.prepareMessages();
+    };
+    function saveSlots(next, fields2 = {}) {
+      const previous = slots;
+      slots = next;
+      ctx.save({ ...fields2, slots }, previous);
+      refresh();
+    }
+    const blank = () => {
+      pipeline.replaceChildren(make("p", "wf-empty", "\u6CA1\u6709\u69FD\u4F4D\u4E86\u3002\u70B9\u300C\u65B0\u5EFA\u69FD\u4F4D\u300D\u6DFB\u52A0\u81EA\u5B9A\u4E49\u63D0\u793A\u8BCD\uFF0C\u6216\u70B9\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u3002"));
+    };
+    function drawCards() {
+      pipeline.replaceChildren();
+      editors.clear();
+      if (!slots.length) {
+        refresh();
+        return blank();
+      }
+      slots.forEach((slot, i) => {
+        const card = make("article", "action-panel wf-card");
+        const head = make("div", "slot-head");
+        const switchWrap = make("label", "switch");
+        const toggle = make("input", "toggle-switch");
+        toggle.type = "checkbox";
+        toggle.checked = slot.enabled !== false;
+        switchWrap.append(toggle, make("span", "switch-track"));
+        const title = make("strong", "slot-title");
+        const badge = make("span", "role-badge", slot.role);
+        badge.dataset.role = slot.role;
+        const actions = make("div", "slot-actions");
+        const edit = button("\u7F16\u8F91");
+        const up = button("\u25B2");
+        up.title = "\u4E0A\u79FB";
+        const down = button("\u25BC");
+        down.title = "\u4E0B\u79FB";
+        const remove = button("\u2715", "pill-btn danger");
+        remove.title = slot.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
+        actions.append(edit, up, down, remove);
+        head.append(title, badge, actions, switchWrap);
+        const setTitle = (value) => {
+          title.textContent = value.trim() || "\u672A\u547D\u540D\u69FD\u4F4D";
+          title.title = title.textContent;
+          toggle.setAttribute("aria-label", `\u542F\u7528\uFF1A${title.textContent}`);
+          for (const action of actions.children) action.setAttribute("aria-label", `${action.title}\uFF1A${title.textContent}`);
+        };
+        setTitle(slot.label);
+        const desc = slot.desc || (slot.custom ? "\u81EA\u5B9A\u4E49\u69FD\u4F4D" : "");
+        const body = make("p", "slot-desc", desc);
+        const editable = slot.custom === true || slot.id === "extra";
+        const form = make("div", "slot-editor");
+        form.hidden = editing !== slot.id;
+        const labelInput = make("input");
+        labelInput.value = slot.label;
+        labelInput.setAttribute("aria-label", "\u69FD\u4F4D\u6807\u9898");
+        const role = make("select");
+        role.setAttribute("aria-label", "\u6D88\u606F\u89D2\u8272");
+        for (const value of ["system", "user", "assistant"]) role.append(Object.assign(make("option", "", value), { value }));
+        role.value = slot.role;
+        const staticContent = slot.content || (slot.id === "extra" ? extraText() : "");
+        const content = editable ? make("textarea") : make("pre", "slot-preview");
+        content.setAttribute("aria-label", "\u69FD\u4F4D\u5185\u5BB9");
+        if (editable) content.value = staticContent;
+        else {
+          content.textContent = resolveSlotContent(slot, assembly());
+          content.setAttribute("aria-readonly", "true");
+          content.tabIndex = 0;
+        }
+        form.append(field("\u6807\u9898", labelInput), field("\u89D2\u8272", role), field(editable ? "\u5185\u5BB9" : "\u5185\u5BB9\uFF08\u52A8\u6001\u751F\u6210\uFF0C\u53EA\u8BFB\uFF09", content, true));
+        if (editable) form.append(make("p", "hint wide", "\u53EF\u7528\u5360\u4F4D\u7B26\uFF1A{{battle_init}}\u3001{{battle_state}}\u3001{{warnings}}\u3001{{user_instruction}}\u3001{{roster}}\u3001{{battle}}\u3002\u7559\u7A7A\u5219\u4E0D\u53D1\u9001\u3002"));
+        const expand = (open) => {
+          form.hidden = !open;
+          edit.setAttribute("aria-expanded", String(open));
+        };
+        expand(editing === slot.id);
+        editors.set(slot.id, { edit, label: labelInput, content, expand });
+        edit.onclick = () => {
+          const open = form.hidden;
+          editors.get(editing)?.expand(false);
+          editing = open ? slot.id : null;
+          expand(open);
+          if (open) labelInput.focus();
+        };
+        const patch = (changes2) => saveSlots(slots.map((s, j) => j === i ? { ...s, ...changes2 } : s));
+        toggle.onchange = () => patch({ enabled: toggle.checked });
+        labelInput.oninput = () => {
+          setTitle(labelInput.value);
+          patch({ label: labelInput.value });
+        };
+        role.onchange = () => {
+          badge.textContent = badge.dataset.role = role.value;
+          patch({ role: role.value });
+        };
+        if (editable) {
+          content.oninput = () => {
+            if (slot.id === "extra") saveSlots(slots.map((s, j) => j === i ? { ...s, content: content.value } : s), { extraText: "" });
+            else patch({ content: content.value });
+          };
+        }
+        const move = (to) => {
+          const next = slots.slice();
+          [next[i], next[to]] = [next[to], next[i]];
+          saveSlots(next);
+          drawCards();
+          editors.get(slot.id)?.edit.focus();
+        };
+        up.disabled = i === 0;
+        down.disabled = i === slots.length - 1;
+        up.onclick = () => move(i - 1);
+        down.onclick = () => move(i + 1);
+        remove.onclick = () => {
+          if (editing === slot.id) editing = null;
+          saveSlots(slots.filter((_, j) => j !== i));
+          drawCards();
+          (editors.get(slots[i]?.id ?? slots[i - 1]?.id)?.edit ?? add).focus();
+        };
+        card.append(head, body, form);
+        pipeline.append(card);
+      });
+      refresh();
+    }
+    add.onclick = () => {
+      const slot = makeCustomSlot();
+      editing = slot.id;
+      saveSlots([...slots, slot]);
+      drawCards();
+      editors.get(slot.id)?.label.focus();
+    };
+    reset.onclick = () => {
+      editing = null;
+      saveSlots(describeSlots(DEFAULT_SLOTS), { extraText: "" });
+      drawCards();
+    };
+    drawCards();
+  }
+  function renderApiTab(page, ctx) {
+    const { make, root, button, panel } = mount2(page);
+    const settings = ctx.settings;
+    const tavern = (settings.apiMode ?? "tavern") === "tavern";
+    function card(title) {
+      const { section } = panel(title);
+      const grid = make("div", "form-grid");
+      section.className = "action-panel form-card api-card";
+      section.append(grid);
+      root.append(section);
+      return grid;
+    }
+    function field(grid, key3, title, input2, fallback, disabled = false, wide = false) {
+      const wrap = make("div", wide ? "field wide" : "field");
+      const label = make("label", "", title);
+      input2.name = key3;
+      input2.disabled = disabled;
+      const checkbox = input2.type === "checkbox";
+      if (checkbox) input2.checked = settings[key3] ?? fallback;
+      else input2.value = settings[key3] ?? fallback;
+      input2.onchange = () => {
+        if (input2.type === "number" && (!input2.reportValidity() || !Number.isFinite(input2.valueAsNumber))) return;
+        ctx.save({ [key3]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
+        if (key3 === "apiMode") renderApiTab(page, ctx);
+      };
+      label.append(input2);
+      wrap.append(label);
+      grid.append(wrap);
+      return wrap;
+    }
+    const select = (options) => {
+      const input2 = make("select");
+      for (const [value, text4] of options) input2.append(Object.assign(make("option", "", text4), { value }));
+      return input2;
+    };
+    const input = (type, props = {}) => Object.assign(make("input"), { type }, props);
+    const api = card("\u{1F50C} \u72EC\u7ACB API \u63A5\u53E3\u914D\u7F6E\uFF08\u4E0E\u4E3B\u804A\u5929\u5B8C\u5168\u89E3\u8026\uFF09");
+    field(api, "apiMode", "\u63A5\u53E3\u8C03\u7528\u65B9\u5F0F", select([
+      ["custom", "\u{1F680} \u72EC\u7ACB\u81EA\u5B9A\u4E49 API \u76F4\u8FDE\uFF08\u63A8\u8350\uFF0C\u4E0D\u5360\u4E3BAPI\u989D\u5EA6\uFF09"],
+      ["tavern", "\u{1F37A} \u9152\u9986\u5F53\u524D\u8FDE\u63A5 API (TavernHelper.generateRaw)"]
+    ]), "tavern");
+    field(api, "apiSource", "\u72EC\u7ACB API \u534F\u8BAE\u7C7B\u578B", select([
+      ["openai", "OpenAI \u517C\u5BB9\u63A5\u53E3 (\u53CD\u4EE3/DeepSeek/\u7845\u57FA/OneAPI\u7B49)"],
+      ["gemini", "Google Gemini \u539F\u751F\u63A5\u53E3 (/v1beta/models)"],
+      ["claude", "Anthropic Claude \u539F\u751F\u63A5\u53E3 (/v1/messages)"]
+    ]), "openai", tavern);
+    field(api, "baseUrl", "API \u5730\u5740 (Base URL)", input("text", { placeholder: "\u4F8B\u5982 https://api.deepseek.com \u6216 https://\u4F60\u7684\u53CD\u4EE3\u57DF\u540D/v1" }), "", tavern);
+    field(api, "apiKey", "API \u5BC6\u94A5 (API Key)", input("password", { className: "masked-key-input", autocomplete: "off" }), "", tavern);
+    const model = input("text");
+    const modelField = field(api, "model", "\u6A21\u578B\u540D\u79F0", model, "", tavern, true);
+    const commands2 = make("div", "cmd-row");
+    const load = button("\u{1F504} \u62C9\u53D6\u6A21\u578B");
+    const test = button("\u26A1 \u6D4B\u8BD5\u8FDE\u63A5");
+    commands2.append(load, test);
+    const status2 = make("div", "api-status");
+    status2.setAttribute("role", "status");
+    modelField.append(commands2, status2);
+    load.disabled = tavern;
+    async function run(pending, action) {
+      load.disabled = test.disabled = true;
+      status2.dataset.error = "false";
+      status2.textContent = pending;
+      try {
+        status2.textContent = await action();
+      } catch (err) {
+        status2.dataset.error = "true";
+        status2.textContent = `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || String(err)}`;
+      } finally {
+        load.disabled = tavern;
+        test.disabled = false;
+      }
+    }
+    let picker;
+    load.onclick = () => run("\u6B63\u5728\u62C9\u53D6\u6A21\u578B\u2026", async () => {
+      picker?.remove();
+      const names = await fetchModels({ ...ctx.settings }, { fetchImpl: ctx.fetchImpl });
+      if (!names.length) throw new Error("\u63A5\u53E3\u672A\u8FD4\u56DE\u53EF\u7528\u6A21\u578B");
+      picker = select([["", "\u8BF7\u9009\u62E9\u6A21\u578B"], ...names.map((name) => [name, name])]);
+      picker.setAttribute("aria-label", "\u53EF\u7528\u6A21\u578B");
+      picker.onchange = () => {
+        if (!picker.value) return;
+        model.value = picker.value;
+        ctx.save({ model: model.value });
+      };
+      modelField.append(picker);
+      return `\u5DF2\u62C9\u53D6 ${names.length} \u4E2A\u6A21\u578B`;
+    });
+    test.onclick = () => run("\u6B63\u5728\u6D4B\u8BD5\u8FDE\u63A5\u2026", async () => {
+      const probe = { ...ctx.settings, max_tokens: 8 };
+      const messages = [{ role: "user", content: "\u53EA\u56DE\u590D OK" }];
+      if (tavern) await requestViaTavern(ctx.host, probe, messages, {});
+      else await requestViaCustomApi(probe, messages, { fetchImpl: ctx.fetchImpl });
+      return "\u6D4B\u8BD5\u8FDE\u63A5\u6210\u529F";
+    });
+    const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
+    field(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.2);
+    field(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 2400);
+    const streamField = make("div", "field switch-field");
+    const streamSwitch = make("label", "switch");
+    const streamInput = Object.assign(make("input"), { type: "checkbox", name: "stream", checked: settings.stream ?? true });
+    streamSwitch.append(streamInput, make("span", "switch-track"));
+    streamInput.onchange = () => ctx.save({ stream: streamInput.checked });
+    streamField.append(make("span", "", "\u6D41\u5F0F\u54CD\u5E94 (stream)"), streamSwitch);
+    sampling.append(streamField);
+    const timeoutField = make("div", "field");
+    const timeoutLabel = make("label", "", "\u8BF7\u6C42\u8D85\u65F6\uFF08\u79D2\uFF09");
+    const timeout = input("number", { name: "timeoutMs", min: "5", max: "3600", step: "5", required: true, value: (settings.timeoutMs ?? 6e4) / 1e3 });
+    timeout.onchange = () => {
+      if (Number.isFinite(timeout.valueAsNumber)) timeout.value = Math.min(3600, Math.max(5, timeout.valueAsNumber));
+      if (timeout.reportValidity()) ctx.save({ timeoutMs: timeout.valueAsNumber * 1e3 });
+    };
+    timeoutLabel.append(timeout);
+    timeoutField.append(timeoutLabel);
+    sampling.append(timeoutField);
+  }
+  function renderSettings(page, key3, ctx) {
+    if (key3 === "prompt") return renderPromptTab(page, ctx);
+    if (key3 === "api") return renderApiTab(page, ctx);
+  }
 
   // src/tavern/overlay.js
   var own5 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
@@ -6562,33 +7415,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch || (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
     return { data: parsed, patch, text: source };
   }
-  async function requestTavernAI(host, config, messages, fetchImpl, signal) {
-    if (config.apiMode === "direct") {
-      if (!config.baseUrl?.trim() || !config.model?.trim()) throw new Error("\u8BF7\u5728\u914D\u7F6E\u4E2D\u586B\u5199\u72EC\u7ACB API \u5730\u5740\u548C\u6A21\u578B");
-      const response = await requestAI(config, messages, fetchImpl, signal);
-      const content = response?.choices?.[0]?.message?.content ?? response?.content;
-      if (typeof content !== "string" || !content.trim()) throw new Error("\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C");
-      return content;
-    }
-    const generateRaw = hostMethod(host, "generateRaw");
-    if (!generateRaw) throw new Error("\u627E\u4E0D\u5230\u9152\u9986\u52A9\u624B generateRaw\uFF0C\u8BF7\u68C0\u67E5\u811A\u672C\u662F\u5426\u5728\u9152\u9986\u52A9\u624B\u4E2D\u8FD0\u884C");
-    const generationId = `fated-tactical-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const stop = () => {
-      try {
-        Promise.resolve(hostMethod(host, "stopGenerationById")?.(generationId)).catch(() => {
-        });
-      } catch {
-      }
-    };
-    signal?.throwIfAborted();
-    signal?.addEventListener("abort", stop, { once: true });
-    try {
-      const content = await generateRaw({ generation_id: generationId, should_stream: false, ordered_prompts: messages });
-      if (typeof content !== "string" || !content.trim()) throw new Error("\u9152\u9986\u6A21\u578B\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u5F53\u524D\u4E3B\u63A5\u53E3");
-      return content;
-    } finally {
-      signal?.removeEventListener("abort", stop);
-    }
+  function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChunk) {
+    const options = { fetchImpl, signal, onStreamChunk };
+    return config.apiMode === "custom" || config.apiMode === "direct" ? requestViaCustomApi(config, messages, options) : requestViaTavern(host, config, messages, options);
   }
   function parseJSONPatch(value) {
     const parsed = parseAIResponse(value).data;
@@ -6601,10 +7430,6 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (Array.isArray(parsed?.unitPatch)) return parsed.unitPatch;
     return null;
   }
-  var DEFAULT_PROMPTS = [
-    { title: "\u5C5E\u6027\u4E0E\u6218\u5C40\u6807\u51C6\u5316\u6821\u9A8C", role: "system", enabled: true, content: '\u4F9D\u636E\u8B66\u544A\u548C\u53C2\u6218\u8005\u8D44\u6599\u4E3A\u6C99\u76D8\u8F6C\u6362\u6548\u679C\u3002\u4EC5\u8FD4\u56DE RFC 6902 JSON \u5BF9\u8C61 {"patch":[...],"unresolved":["\u65E0\u6CD5\u7B49\u4EF7\u8F6C\u6362\u7684\u6548\u679C\u53CA\u539F\u56E0"]}\u3002\u4E0D\u8981\u6539\u9635\u8425\u3001\u8D44\u6E90\u3001\u4F4D\u7F6E\u3001\u5148\u653B\u53CA\u65E5\u5FD7\uFF1B\u4E0D\u8981\u521B\u9020\u5F15\u64CE\u4E0D\u652F\u6301\u7684\u7C7B\u578B\u3002\u65E0\u6CD5\u5FE0\u5B9E\u8868\u8FBE\u65F6\u4FDD\u7559\u5728 unresolved \u4E2D\u3002' },
-    { title: "\u5730\u5F62/\u53C2\u6570\u5FAE\u8C03\u6307\u4EE4\u8F93\u51FA", role: "user", enabled: true, content: "\u4F9D\u636E\u6218\u573A {{battle_init}} \u548C\u5F53\u524D\u72B6\u6001 {{battle_state}}\uFF0C\u5904\u7406\u73A9\u5BB6\u6307\u4EE4\uFF1A{{user_instruction}}\u3002\u53EA\u8F93\u51FA battle_patch \u6216 unit_patch JSON\u3002" }
-  ];
   var TAVERN_VERSION = "0.1.5";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
@@ -6618,21 +7443,29 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     headers: "{}",
     hideLauncher: false,
     autoScan: true,
-    prompts: DEFAULT_PROMPTS
+    slots: describeSlots(),
+    extraText: "",
+    debugPrompts: false,
+    apiSource: "openai",
+    stream: true,
+    timeoutMs: 6e4
   };
   function configFor(storage, key3) {
     try {
       const saved = parseJSON(storage?.getItem(key3), {});
       const mode = saved?.apiMode ?? (saved?.baseUrl ? "direct" : "tavern");
-      return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode });
+      return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode === "direct" ? "custom" : mode, slots: describeSlots(saved?.slots) });
     } catch {
       return clone2(DEFAULT_CONFIG);
     }
   }
   function putConfig(storage, key3, value) {
     try {
-      storage?.setItem(key3, JSON.stringify(value));
-    } catch (_) {
+      if (!storage) return false;
+      storage.setItem(key3, JSON.stringify(value));
+      return true;
+    } catch {
+      return false;
     }
   }
   function chatId(host) {
@@ -6680,18 +7513,6 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       swipe_id: node.dataset.swipeId ?? node.dataset.swipe ?? "0",
       content: node.querySelector(".mes_text, .message, [data-content]")?.textContent || node.textContent
     })).filter((item) => item.content);
-  }
-  function fillTemplate(value, sources, instruction = "") {
-    const values2 = {
-      battle_init: sources.battleRaw || JSON.stringify(sources.battleInit ?? {}, null, 2),
-      standardized_roster: sources.roster || "",
-      mvu_data: JSON.stringify(sources.mvuData ?? {}, null, 2),
-      latest_floor: sources.latestFloor || "",
-      battle_state: JSON.stringify(sources.state ?? {}, null, 2),
-      user_instruction: instruction,
-      warnings: JSON.stringify(sources.warnings ?? [])
-    };
-    return text3(value).replace(/\{\{([\w]+)\}\}/g, (_, key3) => values2[key3] ?? "");
   }
   function sourceBundle(variables, messages, chat = "default", preferredMessageId) {
     const list3 = Array.isArray(messages) ? messages : [];
@@ -6860,7 +7681,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const tabs = el(doc, "nav", { class: "fated-tavern-tabs", role: "tablist" });
     const content = el(doc, "div", { class: "fated-tavern-content" });
     const pages = {};
-    for (const [key3, label] of [["instances", "\u7EF4\u62A4\u5B9E\u4F8B"], ["config", "\u914D\u7F6E / API + prompts"], ["sandbox", "\u6C99\u76D8"]]) {
+    for (const [key3, label] of [["instances", "\u{1F4E6} \u5B9E\u4F8B\u7EF4\u62A4"], ["prompt", "\u{1F9E9} \u63D0\u793A\u8BCD\u7EC4\u88C5"], ["api", "\u{1F50C} API \u8BBE\u7F6E"], ["sandbox", "\u2694\uFE0F \u6C99\u76D8"]]) {
       const button = el(doc, "button", { type: "button", role: "tab", "aria-selected": key3 === "instances" ? "true" : "false", "data-tab": key3 }, label);
       const page = el(doc, "div", { class: `fated-tab ${key3 === "instances" ? "active" : ""}`, "data-page": key3 });
       tabs.append(button);
@@ -6871,6 +7692,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           node.classList.toggle("active", name === key3);
         });
         [...tabs.children].forEach((x) => x.setAttribute("aria-selected", String(x === button)));
+        if (key3 === "prompt" || key3 === "api") renderSettings(page, key3, settingsContext());
       });
     }
     const toast = el(doc, "aside", { class: "fated-toast", hidden: "", role: "status", "aria-live": "polite" });
@@ -6894,17 +7716,38 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     panel.append(header, tabs, content);
     root.append(launcher, panel, toast);
     (doc.body || doc.documentElement)?.append(root);
-    const instances = config.instances || (() => {
+    const instances = (() => {
       try {
-        return parseJSON(storage?.getItem(stateKey), {}) || {};
-      } catch (_) {
-        return {};
+        return parseJSON(storage?.getItem(stateKey)) ?? config.instances;
+      } catch {
+        return config.instances;
       }
     })();
     config.instances = isObject(instances) ? instances : {};
     function save() {
-      putConfig(storage, configKey, config);
       putConfig(storage, stateKey, config.instances);
+    }
+    let localOnly = false;
+    function syncSettings() {
+      if (localOnly || !storage) return;
+      const { instances: _legacyInstances, ...latest } = configFor(storage, configKey);
+      Object.assign(config, latest);
+    }
+    function persistSettings(patch, previousSlots = config.slots) {
+      syncSettings();
+      if (patch.slots && JSON.stringify(previousSlots) !== JSON.stringify(config.slots)) {
+        renderSettings(pages.prompt, "prompt", settingsContext());
+        notify("\u69FD\u4F4D\u5DF2\u5728\u5176\u4ED6\u7A97\u53E3\u66F4\u65B0", "\u5DF2\u8F7D\u5165\u6700\u65B0\u5217\u8868\uFF0C\u8BF7\u91CD\u65B0\u6267\u884C\u521A\u624D\u7684\u7F16\u8F91\u3002");
+        return;
+      }
+      Object.assign(config, patch);
+      const { instances: instances2, ...settings } = config;
+      try {
+        if (storage && storage.getItem(stateKey) == null) putConfig(storage, stateKey, instances2);
+      } catch {
+      }
+      localOnly = !putConfig(storage, configKey, settings);
+      if (localOnly) notify("\u8BBE\u7F6E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\uFF1B\u91CD\u8F7D\u540E\u53EF\u80FD\u4E22\u5931\u3002");
     }
     async function open() {
       if (disposed) return;
@@ -7091,155 +7934,44 @@ ${tag.textContent || ""}
       const button = tabs.querySelector(`[data-tab="${key3}"]`);
       button?.click();
     }
-    function field(label, value, type = "text") {
-      const labelNode = el(doc, "label", {}, label);
-      const input = el(doc, type === "textarea" ? "textarea" : "input", { type: type === "textarea" ? void 0 : type });
-      input.value = value ?? "";
-      labelNode.append(input);
-      return { labelNode, input };
+    let promptKind = "validate", promptInstruction = "";
+    let previewSink, lastSent = null;
+    function assemblyContext(kind = promptKind, instruction = promptInstruction) {
+      return { kind, instruction, state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
     }
-    function renderConfig() {
-      const page = pages.config;
-      page.replaceChildren();
-      const subtabs = el(doc, "nav", { class: "fated-tavern-subtabs" });
-      const apiPage = el(doc, "div");
-      const promptPage = el(doc, "div");
-      for (const [name, label, target] of [["api", "API \u4E0E\u754C\u9762", apiPage], ["prompts", "\u63D0\u793A\u8BCD", promptPage]]) {
-        const b = el(doc, "button", { type: "button", "aria-selected": name === "api" ? "true" : "false" }, label);
-        subtabs.append(b);
-        on(b, "click", () => {
-          apiPage.hidden = name !== "api";
-          promptPage.hidden = name !== "prompts";
-          [...subtabs.children].forEach((x) => x.setAttribute("aria-selected", String(x === b)));
-        });
-      }
-      apiPage.className = "fated-tavern-grid";
-      promptPage.className = "fated-tavern-prompts";
-      page.append(subtabs, apiPage, promptPage);
-      promptPage.hidden = true;
-      const apiMode = el(doc, "select", { "aria-label": "\u8BF7\u6C42\u65B9\u5F0F" });
-      apiMode.append(el(doc, "option", { value: "tavern" }, "\u9152\u9986\u5F53\u524D\u4E3B\u63A5\u53E3"), el(doc, "option", { value: "direct" }, "\u72EC\u7ACB OpenAI \u517C\u5BB9 API"));
-      apiMode.value = config.apiMode;
-      const apiModeLabel = el(doc, "label", {}, "\u8BF7\u6C42\u65B9\u5F0F");
-      apiModeLabel.append(apiMode);
-      apiPage.append(apiModeLabel);
-      on(apiMode, "change", () => {
-        config.apiMode = apiMode.value;
-        save();
+    function publishMessages(messages, kind = promptKind) {
+      previewSink?.(messages, kind);
+      return messages;
+    }
+    function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false) {
+      const slots = config.slots;
+      const messages = assembleMessages(slots, assemblyContext(kind, instruction));
+      if (config.debugPrompts) console.debug("[fated:prompts]", {
+        kind,
+        slots: slots.map((s) => ({ id: s.id, enabled: s.enabled })),
+        messages: messages.map(({ slotId, role, content: content2 }) => ({ slotId, role, chars: content2.length }))
       });
-      const fields2 = [["baseUrl", "API \u5730\u5740"], ["apiKey", "API Key", "password"], ["model", "\u6A21\u578B\u540D\u79F0"], ["temperature", "temperature", "number"], ["max_tokens", "max_tokens", "number"], ["excludeParams", "\u6392\u9664\u4E3B\u4F53\u53C2\u6570\uFF08\u9017\u53F7\u5206\u9694\uFF09"], ["extraBody", "\u9644\u52A0\u4E3B\u4F53\u53C2\u6570 JSON", "textarea"], ["headers", "\u9644\u52A0\u8BF7\u6C42\u6807\u5934 JSON", "textarea"]];
-      for (const [key3, label, type] of fields2) {
-        const f = field(label, config[key3], type);
-        apiPage.append(f.labelNode);
-        on(f.input, "change", () => {
-          config[key3] = f.input.value;
-          save();
-        });
-      }
-      const hide2 = el(doc, "label", {});
-      const checkbox = el(doc, "input", { type: "checkbox" });
-      checkbox.checked = Boolean(config.hideLauncher);
-      hide2.append(checkbox, " \u9690\u85CF\u60AC\u6D6E\u6309\u94AE\u5230\u9B54\u672F\u68D2\u83DC\u5355");
-      apiPage.append(hide2);
-      const auto = el(doc, "label", {});
-      const autoCheck = el(doc, "input", { type: "checkbox" });
-      autoCheck.checked = config.autoScan !== false;
-      auto.append(autoCheck, " \u6253\u5F00\u6C99\u76D8\u65F6\u81EA\u52A8\u626B\u63CF");
-      apiPage.append(auto);
-      on(checkbox, "change", () => {
-        config.hideLauncher = checkbox.checked;
-        updateMagic();
-        save();
-      });
-      on(autoCheck, "change", () => {
-        config.autoScan = autoCheck.checked;
-        save();
-      });
-      const test = el(doc, "button", { type: "button" }, "\u6D4B\u8BD5\u8FDE\u901A\u6027");
-      const models = el(doc, "button", { type: "button" }, "\u62C9\u53D6\u6A21\u578B");
-      const result = el(doc, "div", { class: "fated-status" });
-      apiPage.append(test, models, result);
-      on(test, "click", async () => {
-        result.textContent = "\u8BF7\u6C42\u4E2D\u2026";
-        try {
-          const response = await requestTavernAI(host, config, [{ role: "user", content: "\u8BF7\u53EA\u56DE\u590D OK" }], options.fetch);
-          result.textContent = response.slice(0, 1e3);
-        } catch (e) {
-          result.textContent = `\u5931\u8D25\uFF1A${e.message}`;
-        }
-      });
-      on(models, "click", async () => {
-        try {
-          const fetcher = options.fetch || (typeof fetch === "function" ? fetch : null);
-          if (!fetcher) throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u6CA1\u6709 fetch");
-          const url = text3(config.baseUrl).replace(/\/$/, "").replace(/\/chat\/completions$/, "") + "/models";
-          const r = await fetcher(url, { headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {} });
-          result.textContent = await r.text();
-        } catch (e) {
-          result.textContent = `\u5931\u8D25\uFF1A${e.message}`;
-        }
-      });
-      const promptList = el(doc, "div");
-      promptPage.append(promptList);
-      const add = el(doc, "button", { type: "button" }, "\u65B0\u5EFA\u63D0\u793A\u8BCD");
-      const reset = el(doc, "button", { type: "button" }, "\u91CD\u7F6E\u9ED8\u8BA4\u6A21\u677F");
-      promptPage.append(add, reset);
-      const renderPrompts = () => {
-        promptList.replaceChildren();
-        (config.prompts || []).forEach((prompt2, index) => {
-          const box = el(doc, "article", { class: "fated-prompt" });
-          const titleF = field("\u6807\u9898", prompt2.title);
-          const role = el(doc, "select");
-          for (const r of ["system", "user", "assistant"]) role.append(el(doc, "option", { value: r, text: r }));
-          role.value = prompt2.role;
-          const contentF = field("\u5185\u5BB9", prompt2.content, "textarea");
-          const enabled = el(doc, "input", { type: "checkbox" });
-          enabled.checked = prompt2.enabled !== false;
-          box.append(titleF.labelNode, role, contentF.labelNode, enabled, " \u542F\u7528 ");
-          const up = el(doc, "button", { type: "button" }, "\u4E0A\u79FB");
-          const down = el(doc, "button", { type: "button" }, "\u4E0B\u79FB");
-          const del = el(doc, "button", { type: "button" }, "\u5220\u9664");
-          box.append(up, down, del);
-          promptList.append(box);
-          const changed = () => {
-            prompt2.title = titleF.input.value;
-            prompt2.role = role.value;
-            prompt2.content = contentF.input.value;
-            prompt2.enabled = enabled.checked;
-            save();
-          };
-          on(titleF.input, "change", changed);
-          on(role, "change", changed);
-          on(contentF.input, "change", changed);
-          on(enabled, "change", changed);
-          on(up, "click", () => {
-            if (index) [config.prompts[index - 1], config.prompts[index]] = [config.prompts[index], config.prompts[index - 1]];
-            save();
-            renderPrompts();
-          });
-          on(down, "click", () => {
-            if (index < config.prompts.length - 1) [config.prompts[index + 1], config.prompts[index]] = [config.prompts[index], config.prompts[index + 1]];
-            save();
-            renderPrompts();
-          });
-          on(del, "click", () => {
-            config.prompts.splice(index, 1);
-            save();
-            renderPrompts();
-          });
-        });
+      if (sending && messages.length) lastSent = messages;
+      return publishMessages(messages, kind);
+    }
+    function settingsContext() {
+      syncSettings();
+      return {
+        host,
+        settings: config,
+        slots: config.slots,
+        assemblyContext,
+        prepareMessages,
+        lastSent: () => lastSent,
+        onPreview(fn) {
+          previewSink = fn;
+        },
+        fetchImpl: options.fetch,
+        save: persistSettings
       };
-      on(add, "click", () => {
-        config.prompts.push({ title: "\u65B0\u63D0\u793A\u8BCD", role: "user", enabled: true, content: "{{user_instruction}}" });
-        save();
-        renderPrompts();
-      });
-      on(reset, "click", () => {
-        config.prompts = clone2(DEFAULT_PROMPTS);
-        save();
-        renderPrompts();
-      });
-      renderPrompts();
+    }
+    function runNormalize() {
+      return askAI("validate", "");
     }
     async function hydrate(epoch) {
       const messages = await tavernMessages(host);
@@ -7362,7 +8094,7 @@ ${tag.textContent || ""}
         renderInstances();
         if (currentState && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
           attemptedBattles.add(activeBattleKey);
-          void askAI("validate");
+          void runNormalize();
         }
         if (node) node.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
@@ -7385,7 +8117,7 @@ ${tag.textContent || ""}
       const mountTarget = el(doc, "div", { "data-sandbox-mount": "" });
       page.append(mountTarget);
       const actions = el(doc, "div", { class: "fated-actions" });
-      const check = el(doc, "button", { type: "button" }, "\u6821\u9A8C");
+      const check = el(doc, "button", { type: "button" }, "\u6807\u51C6\u5316");
       const report = el(doc, "button", { type: "button" }, "\u6218\u62A5\u4EA4\u4ED8");
       const refresh = el(doc, "button", { type: "button" }, "\u91CD\u65B0\u626B\u63CF");
       actions.append(check, report, refresh);
@@ -7394,8 +8126,8 @@ ${tag.textContent || ""}
       instruction.style.width = "100%";
       page.append(instruction);
       const chat = el(doc, "div", { class: "fated-chat" });
-      const send = el(doc, "button", { type: "button" }, "\u53D1\u9001");
-      chat.append(instruction, send);
+      const send2 = el(doc, "button", { type: "button" }, "\u53D1\u9001");
+      chat.append(instruction, send2);
       page.append(chat);
       const output = el(doc, "pre", { class: "fated-status", "data-ai-output": "" });
       page.append(output);
@@ -7417,41 +8149,41 @@ ${tag.textContent || ""}
           showError(e);
         }
       });
+      on(instruction, "input", () => {
+        promptInstruction = instruction.value.trim();
+        promptKind = promptInstruction ? "chat" : "validate";
+      });
       askAI = async (kind, requestText = instruction.value.trim()) => {
         const state = liveState();
         if (!state || aiController || kind === "chat" && !requestText) return;
+        syncSettings();
+        promptKind = kind;
+        promptInstruction = requestText;
         const normalize = kind === "validate";
         const key3 = activeBattleKey;
         const controller2 = new AbortController();
         aiController = controller2;
-        const timeout = setTimeout(() => controller2.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), 6e4);
-        const prompts = (config.prompts || []).filter((x) => x.enabled !== false && normalize === /校验|标准化/i.test(x.title || "")).map((x) => ({ role: x.role || "user", content: fillTemplate(x.content, { ...sources, state }, requestText) }));
-        if (normalize) {
-          const roster = Object.values(config.instances);
-          const templates = new Set(Object.values(state.items).map((item) => item.templateId));
-          const skills = new Set(Object.values(state.units).flatMap((unit) => unit.skills));
-          const usedEntries = (table3, ids) => Object.fromEntries(Object.entries(table3).filter(([id3]) => ids.has(id3)));
-          const equipment = usedEntries(state.equipment, templates);
-          const patchExamples = Object.entries(equipment).filter(([, item]) => Number.isFinite(item.attack)).map(([id3, item]) => ({ op: "replace", path: `/equipment/${id3}/attack`, value: item.attack }));
-          prompts.push({ role: "user", content: JSON.stringify({
-            task: '\u53EA\u8F93\u51FA\u4E00\u4E2A JSON \u5BF9\u8C61\uFF0C\u683C\u5F0F\u4E3A {"patch":[],"unresolved":[]}\u3002patch \u4E2D\u7684\u6BCF\u9879\u5FC5\u987B\u662F RFC 6902 \u7684 add\u3001replace \u6216 remove\u3002path \u5FC5\u987B\u4EE5 / \u5F00\u5934\uFF0C\u4F7F\u7528\u4E0B\u65B9\u5F15\u64CE ID\uFF0C\u4E0D\u4F7F\u7528\u663E\u793A\u540D\u3001\u6570\u7EC4\u4E0B\u6807\u6216 stat_data \u8DEF\u5F84\u3002\u53EF\u4FEE\u6539\u88C5\u5907\u3001\u6280\u80FD\u3001\u9053\u5177\u3001\u72B6\u6001\u6A21\u677F\u3001\u5355\u4F4D\u7684 statuses \u6216 armor\u3002\u4E0D\u80FD\u7B49\u4EF7\u8F6C\u6362\u7684\u8B66\u544A\u5199\u5165 unresolved\u3002patchExamples \u53EA\u6F14\u793A\u5199\u6CD5\uFF0C\u53EA\u6709\u8B66\u544A\u8981\u6C42\u6539\u52A8\u65F6\u624D\u66FF\u6362\u5BF9\u5E94\u7684 value\u3002',
-            warnings: sources.warnings,
-            roster,
-            equipment,
-            skills: usedEntries(state.skills, skills),
-            items: state.items,
-            patchExamples
-          }) });
-        } else prompts.push({ role: "user", content: requestText });
+        const timeout = setTimeout(() => controller2.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), config.timeoutMs ?? 6e4);
         const label = normalize ? "\u6807\u51C6\u5316" : "AI \u8C03\u6574";
         notify(normalize ? "\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026" : "\u6B63\u5728\u8BF7\u6C42 AI\u2026", "", null, true);
         try {
+          let prompts = prepareMessages(kind, requestText, true);
+          if (!prompts.length) throw new Error("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u63D0\u793A\u8BCD\uFF0C\u8BF7\u5728\u63D0\u793A\u8BCD\u7EC4\u88C5\u9875\u542F\u7528\u6709\u5185\u5BB9\u7684\u69FD\u4F4D");
+          const streamUpdate = (snapshot, done, info) => {
+            if (disposed || controller2.signal.aborted || aiController !== controller2 || activeBattleKey !== key3) return;
+            if (info?.isHeartbeat) noticeBody.textContent = `\u5DF2\u7B49\u5F85 ${info.elapsedSec} \u79D2\uFF0C\u8FDE\u63A5\u4ECD\u5728\u4FDD\u6301\u2026`;
+            else if (snapshot) {
+              output.textContent = snapshot;
+              noticeBody.textContent = done ? "\u5DF2\u6536\u5230\u5B8C\u6574\u54CD\u5E94\uFF0C\u6B63\u5728\u6821\u9A8C\u2026" : `\u5DF2\u6536\u5230 ${snapshot.length} \u5B57\u7B26\u2026`;
+            }
+            noticeBody.hidden = false;
+          };
           const cancelled = new Promise((_, reject) => controller2.signal.addEventListener("abort", () => reject(controller2.signal.reason), { once: true }));
           const validate = options.validateState || validateState;
           let patch, unresolved, nextState, combined;
           for (let attempt = 0; ; attempt++) {
             const reply = await Promise.race([
-              requestTavernAI(host, config, prompts, options.fetch, controller2.signal),
+              requestTavernAI(host, config, prompts, options.fetch, controller2.signal, streamUpdate),
               cancelled
             ]);
             if (disposed || aiController !== controller2 || key3 !== activeBattleKey) return;
@@ -7480,8 +8212,10 @@ ${tag.textContent || ""}
             } catch (error2) {
               if (!normalize || attempt > 0) throw error2;
               notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", "\u6A21\u578B\u6B63\u5728\u4FEE\u6B63\u8865\u4E01\u683C\u5F0F", null, true);
-              prompts.push({ role: "user", content: `\u4E0A\u4E00\u6761\u8F93\u51FA\u6821\u9A8C\u5931\u8D25\uFF08${error2.message}\uFF09\u3002\u6309\u4E0A\u9762\u7684\u4F8B\u5B50\u4F7F\u7528\u7CBE\u786E ID \u548C\u8DEF\u5F84\uFF0C\u91CD\u65B0\u8F93\u51FA\u5B8C\u6574 JSON \u5BF9\u8C61\u3002
-\u4E0A\u4E00\u6761\u8F93\u51FA\uFF1A${reply.slice(0, 3500)}` });
+              prompts = [...prompts, { role: "user", content: `\u4E0A\u4E00\u6761\u8F93\u51FA\u6821\u9A8C\u5931\u8D25\uFF08${error2.message}\uFF09\u3002\u6309\u4E0A\u9762\u7684\u4F8B\u5B50\u4F7F\u7528\u7CBE\u786E ID \u548C\u8DEF\u5F84\uFF0C\u91CD\u65B0\u8F93\u51FA\u5B8C\u6574 JSON \u5BF9\u8C61\u3002
+\u4E0A\u4E00\u6761\u8F93\u51FA\uFF1A${reply.slice(0, 3500)}` }];
+              lastSent = prompts;
+              publishMessages(prompts, kind);
             }
           }
           if (combined) normalizedBattles.set(key3, combined);
@@ -7504,8 +8238,8 @@ ${unresolved.join("\n")}` : `${label}\u5B8C\u6210`;
           if (aiController === controller2) aiController = null;
         }
       };
-      on(check, "click", () => askAI("validate"));
-      on(send, "click", () => askAI("chat"));
+      on(check, "click", () => runNormalize());
+      on(send2, "click", () => askAI("chat"));
     }
     function updateMagic() {
       launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;
@@ -7521,7 +8255,6 @@ ${unresolved.join("\n")}` : `${label}\u5B8C\u6210`;
       } else entry?.remove();
     }
     renderInstances();
-    renderConfig();
     renderSandbox();
     updateMagic();
     bindEventBus();
