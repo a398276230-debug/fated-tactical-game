@@ -4,6 +4,41 @@ const list = value => Array.isArray(value) ? value : [];
 
 export function createBattleGrid(battle, seed, units, warnings) {
   const grid = Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 })));
+  const anchors = battle.version === 1
+    ? [...list(battle.units), ...list(battle.covers), ...list(battle.interactives)].filter(unit => Number.isInteger(unit.z))
+    : [];
+  if (anchors.length) {
+    const reserved = new Set([...(battle.units ?? []), ...list(battle.covers), ...list(battle.interactives)].map(at => `${at.x},${at.y}`));
+    const painted = new Set();
+    for (const { x, y, z } of anchors) {
+      grid[y][x] = { kind:'floor', z };
+      if (!z) continue;
+      const offsets = [[1,0],[0,1],[-1,0],[0,-1]];
+      const start = ((seed + x * 13 + y * 7) >>> 0) % offsets.length;
+      for (let i = 0; i < offsets.length; i++) {
+        const [dx,dy] = offsets[(start+i)%offsets.length];
+        const points = [[x+dx,y+dy,z],[x+2*dx,y+2*dy,Math.abs(z)>1 ? z-Math.sign(z) : 0]];
+        if (!points.every(([a,b]) => inBounds(a) && inBounds(b) && !reserved.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
+        for (const [a,b,h] of points) {
+          grid[b][a] = { kind:h === z ? 'floor' : 'slope', z:h };
+          painted.add(`${a},${b}`);
+        }
+        break;
+      }
+    }
+    // Keep a height transition usable even for the highest explicit starts.
+    for (let pass=0; pass<4; pass++) {
+      const previous=grid.map(row=>row.map(cell=>cell.z));
+      grid.forEach((row,y)=>row.forEach((cell,x)=>{
+        if (reserved.has(`${x},${y}`) || painted.has(`${x},${y}`)) return;
+        for (const [a,b] of [[x-1,y],[x+1,y],[x,y-1],[x,y+1]]) {
+          const h=previous[b]?.[a];
+          if (h !== undefined && Math.abs(h)>Math.abs(cell.z)+2) Object.assign(cell,{kind:'slope',z:h-2*Math.sign(h)});
+        }
+      }));
+    }
+    return grid;
+  }
   if (battle.terrainMode === 'flat') return grid;
   const legacyTerrain = battle.terrain ?? battle.grid;
   if (battle.terrainMode === 'terrain' || (battle.terrainMode == null && legacyTerrain == null)) {
@@ -11,7 +46,7 @@ export function createBattleGrid(battle, seed, units, warnings) {
     // Rotate or reflect the layout using the initial seed without consuming combat RNG.
     const layout = seed % 8;
     const transform = (x, y) => [layout & 1 ? 9 - x : x, layout & 2 ? 9 - y : y];
-    const occupied = new Set(units.map(u => `${u.x},${u.y}`));
+    const occupied = new Set([...units,...list(battle.covers),...list(battle.interactives)].map(u => `${u.x},${u.y}`));
     const paint = (x, y, kind, z) => {
       const [a, b] = transform(x, y);
       const [px, py] = layout & 4 ? [b, a] : [a, b];

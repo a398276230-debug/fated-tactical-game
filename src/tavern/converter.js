@@ -631,7 +631,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
   const rawFacing = Array.isArray(p.facing) ? p.facing : [team === 'blue' ? 1 : -1, 0];
   const facing = rawFacing.slice(0, 2).map(n => Math.sign(integer(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
-  const unit = { id, name, team, x: pos.x, y: pos.y, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: text(p.moraleType) || 'standard' };
+  const unit = { id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: text(p.moraleType) || 'standard' };
   const creatureType = p.creatureType ?? record.creatureType;
   if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text).filter(Boolean).slice(0, 12);
   else if (text(creatureType)) unit.creatureType = text(creatureType).slice(0, 100);
@@ -649,7 +649,7 @@ function terrainState(battle, state, warnings) {
       warnings.push(`忽略位于墙体内的掩体：${id}`);
       continue;
     }
-    state.covers[id] = { id, name: text(raw.name) || `掩体${i + 1}`, x: p.x, y: p.y, material: text(raw.material) || '未知材料', hp: Math.max(0, Math.min(1000000000, integer(raw.hp ?? raw.maxHp, 10))), maxHp: Math.max(1, Math.min(1000000000, integer(raw.maxHp ?? raw.hp, 10))), cover: Math.max(0, Math.min(12, integer(raw.cover ?? raw.shielding, 2))) };
+    state.covers[id] = { id, name: text(raw.name) || `掩体${i + 1}`, x: p.x, y: p.y, z: p.z, material: text(raw.material) || '未知材料', hp: Math.max(0, Math.min(1000000000, integer(raw.hp ?? raw.maxHp ?? 10, 10))), maxHp: Math.max(1, Math.min(1000000000, integer(raw.maxHp ?? raw.hp ?? 10, 10))), cover: Math.max(0, Math.min(12, integer(raw.cover ?? raw.shielding, 2))) };
     state.covers[id].hp = Math.min(state.covers[id].hp, state.covers[id].maxHp);
   }
   const interactives = battle.interacts ?? battle.interactives;
@@ -660,8 +660,9 @@ function terrainState(battle, state, warnings) {
       warnings.push(`忽略位于墙体内的互动点：${id}`);
       continue;
     }
-    const kind = text(raw.kind ?? raw.type).toLowerCase() === 'altar' || /祭坛|altar/.test(text(raw.name)) ? 'altar' : 'barrel';
-    state.interactives[id] = { id, name: text(raw.name) || (kind === 'altar' ? '星辉祭坛' : '余烬爆桶'), x: p.x, y: p.y, kind, spent: Boolean(raw.spent) };
+    const declared = text(raw.kind ?? raw.type).toLowerCase();
+    const kind = ['altar', 'barrel'].includes(declared) ? declared : /祭坛|altar/.test(text(raw.name)) ? 'altar' : 'barrel';
+    state.interactives[id] = { id, name: text(raw.name) || (kind === 'altar' ? '星辉祭坛' : '余烬爆桶'), x: p.x, y: p.y, z: p.z, kind, effect: text(raw.effect) || (kind === 'barrel' ? 'explode' : 'heal'), radius: integer(raw.radius, 2), damage: integer(raw.damage, kind === 'barrel' ? 12 : 0), spent: Boolean(raw.spent) };
   }
   return state;
 }

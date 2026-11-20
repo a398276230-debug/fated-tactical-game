@@ -1,3 +1,4 @@
+import { elevation } from '../core/spatial.js';
 import { migrateStateEffects } from '../core/effects.js';
 import { buildScenario } from '../presets/scenarios.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
@@ -11,7 +12,7 @@ import { formatBattleReportText } from './battle_report.js';
 const copy = value => structuredClone(value);
 const fail = message => { throw new Error(message); };
 const version = 1;
-const battleVersion = 3;
+const battleVersion = 4;
 const maxHistory = 2000;
 const maxBatch = 32;
 const own = (obj, key) => Object.hasOwn(obj, key);
@@ -87,10 +88,13 @@ export function createGameAPI() {
   }
   function restore(snapshot) {
     if (!shape(snapshot, ['kind', 'version', 'origin', 'state', 'journal'])
-      || snapshot.kind !== 'battle' || ![1, 2, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
+      || snapshot.kind !== 'battle' || ![1, 2, 3, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
       || snapshot.journal.length > maxHistory) fail('不支持的战局快照格式');
     const needsMigration = snapshot.version < battleVersion;
-    if (needsMigration) snapshot = { ...snapshot, origin: migrateStateEffects(copy(snapshot.origin)), state: migrateStateEffects(copy(snapshot.state)) };
+    if (needsMigration) {
+      const migrate = data => ({ ...migrateStateEffects(copy(data)), mode: 'split' });
+      snapshot = { ...snapshot, origin: migrate(snapshot.origin), state: migrate(snapshot.state) };
+    }
     validateState(snapshot.origin);
     validateState(snapshot.state);
     // Changes to the resolver can change the old journal's outcomes and logs.
@@ -198,7 +202,7 @@ export function createGameAPI() {
     },
     listUnits() {
       return Object.values(current().units).map(({ id, name, team, x, y, hp, maxHp, ap, statuses, mainHand, offHand, shield, stance, moraleState, mc, deathrattle }) => ({
-        id, name, team, x, y, hp, maxHp, ap, mainHand, offHand, shield, stance, moraleState: moraleState ?? 'steady',
+        id, name, team, x, y, z: elevation(current(), current().units[id]), hp, maxHp, ap, mainHand, offHand, shield, stance, moraleState: moraleState ?? 'steady',
         mc: mc ?? 1, deathrattle: Boolean(deathrattle), statuses: Object.keys(statuses),
       }));
     },

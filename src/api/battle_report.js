@@ -8,7 +8,7 @@ export function formatBattleReportText(report, unitNames = {}) {
     ? `${n >= 20 ? digits[Math.floor(n / 10)] : ''}十${n % 10 ? digits[n % 10] : ''}` : n;
   const position = (event, id) => {
     const point = event.positions?.[id] ?? report.units.find(unit => unit.id === id);
-    return point && Number.isInteger(point.x) && Number.isInteger(point.y) ? `(${point.x}, ${point.y})` : '';
+    return point && Number.isInteger(point.x) && Number.isInteger(point.y) ? `(${point.x}, ${point.y}${Number.isInteger(point.z) ? `, z=${point.z}` : ''})` : '';
   };
   const name = (event, id) => `${names.get(id) ?? id}${position(event, id)}`;
   const replaceUnitNames = (event, text) => {
@@ -47,7 +47,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           const rawPrefix = `${names.get(actor) ?? actor}：`;
           const label = text.startsWith(prefix) ? text.slice(prefix.length)
             : text.startsWith(rawPrefix) ? text.slice(rawPrefix.length) : text;
-          add(action === 'attack' || action === 'skill' ? `使用${label}` : replaceUnitNames(event, label));
+          add(action === 'attack' || action === 'skill' ? `使用${replaceUnitNames(event, label)}` : replaceUnitNames(event, label));
           break;
         }
         case 'roll':
@@ -74,10 +74,13 @@ export function formatBattleReportText(report, unitNames = {}) {
           break;
         default: {
           if (['damage', 'heal', 'cover_damage'].includes(type) && detail.amount === 0) break;
-          const ownAction = turn?.actor === actor && ['move', 'sprint', 'disengage', 'teleport', 'interact', 'skip', 'brace', 'cover_approach'].includes(type);
+          const ownAction = turn?.actor === actor && ['move', 'sprint', 'disengage', 'teleport', 'altitude', 'interact', 'skip', 'brace', 'cover_approach'].includes(type);
           let label = replaceUnitNames(event, text);
           const actorRaw = names.get(actor) ?? actor;
           if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
+          if (['teleport','knockback'].includes(type) && Number.isInteger(detail.to?.z)) {
+            label += `，至 (${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
+          }
           add(label.replace(/ ×1$/, ''));
         }
       }

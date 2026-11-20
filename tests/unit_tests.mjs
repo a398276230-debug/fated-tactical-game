@@ -18,6 +18,7 @@ import './live_protocol_tests.mjs';
 import './zone_tests.mjs';
 import './terrain_effects_tests.mjs';
 import './spawn_unit_tests.mjs';
+import './z_interaction_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';
@@ -122,7 +123,7 @@ test('旧战局按末态续接，不将新规则反算到旧撤销记录', () =>
   const b=createGameAPI(); assert.equal(b.restoreBattleSnapshot(saved).migratedFrom,1);
   assert.deepEqual(b.getBattleState(),saved.state);
   assert.equal(b.undoLastCommit().ok,false);
-  assert.equal(b.exportBattleSnapshot().version,3);
+  assert.equal(b.exportBattleSnapshot().version,4);
 });
 
 test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移动', () => {
@@ -131,9 +132,9 @@ test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移
   const before=a.exportBattleSnapshot();
   const text=a.exportBattleReportText();
   assert.match(text,/^- 回合一$/m);
-  assert.match(text,/确定先攻次序：岚 · 噬魂剑客\(1, 2\) → /);
-  assert.match(text,/岚 · 噬魂剑客\(1, 2\)开始回合：移动至 \(2, 2\)；使用噬魂太刀/);
-  assert.match(text,/受伤斥候\(3, 2\)倒下；噬魂太刀 · 魂数 0 → 1/);
+  assert.match(text,/确定先攻次序：岚 · 噬魂剑客\(1, 2, z=0\) → /);
+  assert.match(text,/岚 · 噬魂剑客\(1, 2, z=0\)开始回合：移动至 \(2, 2, z=0\)；使用噬魂太刀/);
+  assert.match(text,/受伤斥候\(3, 2, z=0\)倒下；噬魂太刀 · 魂数 0 → 1/);
   assert.doesNotMatch(text,/d20|swordsman|\bjournal\b|26\/12/);
   assert.deepEqual(a.exportBattleSnapshot(),before);
   assert.ok(a.exportBattleReport().rounds[0].events.some(e=>e.type==='roll' && e.positions?.swordsman));

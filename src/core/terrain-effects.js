@@ -1,4 +1,4 @@
-import { cellAt, coverAt, unitAt } from './spatial.js';
+import { cellAt, coverAt, elevation, unitAt } from './spatial.js';
 
 const unitsAt = (state, x, y) => Object.values(state.units).filter(u => u.x === x && u.y === y);
 const present = unit => unit && unit.hp > 0 && !unit.fled;
@@ -48,17 +48,17 @@ function settleChanges(state, changes, record, damage) {
       const distance = p => (p.x - x) ** 2 + (p.y - y) ** 2;
       const landing = free.sort((a, b) => distance(a) - distance(b))[0];
       if (landing) {
+        const from = {x:unit.x,y:unit.y,z:change.before.z + (unit.altitude ?? 0)};
         Object.assign(unit, landing);
-        if (Object.hasOwn(unit, 'z')) unit.z = cellAt(state, landing.x, landing.y).z;
-        record(state, unit, 'terrain_displace', `${unit.name}因墙体还原移至 (${landing.x},${landing.y})`, { x: landing.x, y: landing.y });
+        const to = {...landing,z:elevation(state,unit)};
+        record(state, unit, 'terrain_displace', `${unit.name}因墙体还原移至 (${to.x}, ${to.y}, z=${to.z})`, { x:to.x, y:to.y, from, to });
       } else damage(state, unit, unit.hp, '墙体还原，无可站立格', { forcedDisplacement: true });
     }
   }
   for (const { before, after, restored, units } of changes) {
     const drop = effectiveHeight(before) - effectiveHeight(after);
     for (const unit of units.filter(present)) {
-      if (Object.hasOwn(unit, 'z')) unit.z = cellAt(state, unit.x, unit.y).z;
-      if (drop > 0) damage(state, unit, drop * 50, `地形${restored ? '还原' : '变化'}高度落差 ${drop}，`, { drop });
+      if (drop > 0 && !unit.altitude) damage(state, unit, drop * 50, `地形${restored ? '还原' : '变化'}高度落差 ${drop}，`, { drop });
     }
   }
 }

@@ -170,7 +170,8 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'tags', 'resources', 'inventory', 'effectUsage', 'effectModifiers']);
+  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'tags', 'resources', 'inventory', 'effectUsage', 'effectModifiers', 'altitude']);
+  if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
   for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
   checkOptional(v, 'corpseOf', id);
   checkOptional(v, 'diedAt', x => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
@@ -262,7 +263,8 @@ export function validateState(s) {
     for (const e of counters) requireThat(int(v.counters[e.resource], 0, e.cap), '计数器');
   });
   table(s.covers, (v, k) => {
-    fields(v, ['id','name','x','y','material','hp','maxHp','cover']);
+    fields(v, ['id','name','x','y','material','hp','maxHp','cover'], ['z']);
+    requireThat(!own(v,'z') || int(v.z,-4,8), '掩体高度');
     requireThat(v.id === k && text(v.name) && text(v.material) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== 'wall'
       && int(v.maxHp, 1, 1000000000) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), '掩体');
   });
@@ -292,9 +294,10 @@ export function validateState(s) {
     }, '临时掩体');
   }, 64);
   table(s.interactives, (v, k) => {
-    fields(v, ['id','name','x','y','kind','spent']);
-    requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== 'wall'
-      && ['barrel','altar'].includes(v.kind) && typeof v.spent === 'boolean', '互动点');
+    fields(v, ['id','name','x','y','kind','spent'], ['z','effect','radius','damage']);
+    requireThat(v.id === k && text(v.name) && coord(v.x) && coord(v.y) && (!own(v,'z') || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== 'wall'
+      && ['barrel','altar'].includes(v.kind) && (!own(v,'effect') || ['explode','heal','shield','restore'].includes(v.effect))
+      && (!own(v,'radius') || int(v.radius, 0, 10)) && (!own(v,'damage') || int(v.damage, 0, 100000)) && typeof v.spent === 'boolean', '互动点');
   });
   const occupied = new Set(), equipped = new Set();
   table(s.units, (v, k) => {
@@ -335,7 +338,7 @@ export function validateState(s) {
   for (const log of s.logs) {
     fields(log, ['round','actor','type','text','detail'], ['positions']);
     requireThat(int(log.round, 1, s.round) && (log.actor === null || id(log.actor)) && text(log.type, 64) && text(log.text, 1000) && jsonTree(log.detail)
-      && (!log.positions || plain(log.positions) && Object.values(log.positions).every(point => plain(point) && coord(point.x) && coord(point.y))), '日志事件');
+      && (!log.positions || plain(log.positions) && Object.values(log.positions).every(point => plain(point) && coord(point.x) && coord(point.y) && (!own(point,'z') || int(point.z,-4,20)))), '日志事件');
   }
   return s;
 }

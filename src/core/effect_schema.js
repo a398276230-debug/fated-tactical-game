@@ -23,6 +23,7 @@ const bool = { type: 'boolean' };
 const nodeNotes = {
   damage: '对目标造成一次伤害；仅此段不能致死时写 lethal:false，不要用降低伤害倍率代替。',
   heal: '恢复目标生命并触发治疗事件；要恢复法力或体力请用 restoreResource。',
+  changeAltitude: '改变施术者离地高度，默认升高 3。delta 为有符号高度差，0 离地高度表示落地；land:true 可直接落地。保持到再次改变高度，适用于飞行和悬浮。',
   modifyTerrain: '改变区域内格子的高度：raise/lower 是相对变化，set 是绝对高度；不改变地面类型。',
   setTerrainKind: '把区域改为地面、墙或坡；造墙跳过已占用格，临时墙用 remainingTurns 设置时限。',
   addCover: '在可用格生成有耐久的掩体；要彻底阻断视线请改用墙。',
@@ -103,6 +104,7 @@ export const effectSchema = {
       node('modifyDamageBase', { value: amount, ignoreAttributes: bool, unscaled: bool, damageType }, ['value']),
       node('modifyCheck', Object.fromEntries(checkKeys.map(key => [key, number(-30, 30)]))),
       node('forceOutcome', { mode: enumOf('hit','crit') }, ['mode']), node('upgradeHitTier', {}),
+      node('changeAltitude', { delta: integer(-12,12), land: {type:'boolean'} }),
       node('knockback', { distance: integer(1, 5), collisionDamage: integer(0, 80) }),
       node('teleportBackstab', { bonusMultiplier: number(0, 4) }),
       node('shield', { ...magnitudes, ...scaling, turns, stack: bool, percentOfHealing: number(0, 4) }),

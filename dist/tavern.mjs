@@ -1,3 +1,162 @@
+// src/core/spatial.js
+var EPSILON = 1e-9;
+var CARDINAL = [[0, -1], [-1, 0], [1, 0], [0, 1]];
+var DIAGONAL = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+var NEIGHBORS = [...CARDINAL, ...DIAGONAL];
+var key = ({ x, y }) => `${x},${y}`;
+var same = (a, b) => a.x === b.x && a.y === b.y;
+var byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+var table = (collection) => Object.values(collection ?? {});
+function cellAt(state, x, y) {
+  if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return void 0;
+  return state.grid[y]?.[x];
+}
+var elevation = (state, at) => (cellAt(state, at.x, at.y)?.z ?? 0) + (at.altitude ?? 0);
+var isGround = (state, at) => {
+  const cell = cellAt(state, at.x, at.y);
+  return Boolean(cell && cell.kind !== "wall");
+};
+var unitAt = (state, x, y, exceptId) => table(state.units).filter((unit) => unit.hp > 0 && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
+var coverAt = (state, x, y) => table(state.covers).filter((cover) => cover.hp > 0 && cover.x === x && cover.y === y).sort(byId)[0];
+var gridDistance = (a, b) => Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+var distance3D = (state, a, b) => Math.hypot(b.x - a.x, b.y - a.y, elevation(state, b) - elevation(state, a));
+function passableEdge(state, from, to) {
+  if (!isGround(state, from) || !isGround(state, to)) return false;
+  const slope = cellAt(state, from.x, from.y).kind === "slope" || cellAt(state, to.x, to.y).kind === "slope";
+  return Math.abs(elevation(state, from) - elevation(state, to)) <= (slope ? 2 : 1);
+}
+function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = true } = {}) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const passable = (at) => from.altitude > 0 ? isGround(state, at) : passableEdge(state, from, at);
+  if (gridDistance(from, to) !== 1 || !passable(to)) return false;
+  const vacant = (at) => !unitAt(state, at.x, at.y, ignoreUnitId) && !coverAt(state, at.x, at.y);
+  if (!vacant(to)) return false;
+  if (!dx || !dy) return true;
+  return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every((at) => vacant(at) && passable(at) && passableEdge(state, at, to));
+}
+function search(state, unit, limit, options, target2) {
+  if (!isGround(state, unit) || !(limit >= 0)) return [];
+  const start = { x: unit.x, y: unit.y, altitude: unit.altitude, z: elevation(state, unit), cost: 0, previous: null };
+  const visited = /* @__PURE__ */ new Set([key(start)]), queue = [start];
+  const stepOptions = { ignoreUnitId: unit.id, ...options };
+  for (let i = 0; i < queue.length; i++) {
+    const from = queue[i];
+    if (target2 && same(from, target2)) return [from];
+    if (from.cost + 1 > limit) continue;
+    for (const [dx, dy] of stepOptions.diagonal === false ? CARDINAL : NEIGHBORS) {
+      const to = { x: from.x + dx, y: from.y + dy, altitude: unit.altitude };
+      const id3 = key(to);
+      if (visited.has(id3) || !canStep(state, from, to, stepOptions) || options?.allowsStep && !options.allowsStep(from, to)) continue;
+      visited.add(id3);
+      queue.push({ ...to, z: elevation(state, to), cost: from.cost + 1, previous: from });
+    }
+  }
+  return target2 ? [] : queue.slice(1);
+}
+var coords = ({ x, y, z }) => ({ x, y, z });
+function unwind(last) {
+  const path = [];
+  for (let step = last; step.previous; step = step.previous) path.push(coords(step));
+  return path.reverse();
+}
+function movementOptions(state, unit, maxSteps = Infinity, options) {
+  return search(state, unit, maxSteps, options).map((cell) => ({ ...coords(cell), cost: cell.cost, path: unwind(cell) }));
+}
+function supercoverLine(from, to) {
+  if (![from.x, from.y, to.x, to.y].every(Number.isSafeInteger)) return [];
+  let { x, y } = from;
+  const dx = Math.abs(to.x - x), dy = Math.abs(to.y - y);
+  const sx = Math.sign(to.x - x), sy = Math.sign(to.y - y);
+  const cells = [{ x, y }];
+  for (let ix = 0, iy = 0; ix < dx || iy < dy; ) {
+    const nextX = (2 * ix + 1) * dy, nextY = (2 * iy + 1) * dx;
+    if (nextX === nextY) {
+      cells.push({ x: x + sx, y }, { x, y: y + sy });
+      x += sx;
+      y += sy;
+      ix++;
+      iy++;
+    } else if (nextX < nextY) {
+      x += sx;
+      ix++;
+    } else {
+      y += sy;
+      iy++;
+    }
+    cells.push({ x, y });
+  }
+  return cells;
+}
+function hasLOS(state, from, to) {
+  if (!isGround(state, from) || !isGround(state, to)) return false;
+  return supercoverLine(from, to).every((at) => isGround(state, at));
+}
+function aoeCells(state, origin, target2, options = {}) {
+  const {
+    shape: shape2 = "single",
+    radius = 1.5,
+    width = 0.6,
+    angle = shape2 === "fan" ? 100 : 60,
+    range = distance3D(state, origin, target2)
+  } = options;
+  const limitAt = typeof range === "function" ? range : () => range;
+  const inRange = (at) => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
+  if (!hasLOS(state, origin, target2) || !inRange(target2)) return [];
+  if (shape2 === "single") return [{ x: target2.x, y: target2.y, z: elevation(state, target2) }];
+  const dx = target2.x - origin.x, dy = target2.y - origin.y, aimLength = Math.hypot(dx, dy);
+  if (shape2 !== "circle" && (!aimLength || !["line", "fan", "cone"].includes(shape2))) return [];
+  const minCosine = Math.cos(Math.max(0, Math.min(360, angle)) * Math.PI / 360);
+  const result = [];
+  state.grid.forEach((row, y) => row.forEach((cell, x) => {
+    const at = { x, y, z: cell.z };
+    if (shape2 === "circle") {
+      if (distance3D(state, target2, at) <= radius + EPSILON && hasLOS(state, target2, at)) result.push(at);
+      return;
+    }
+    if (same(origin, at) || !inRange(at)) return;
+    const vx = x - origin.x, vy = y - origin.y;
+    const forward = (vx * dx + vy * dy) / aimLength;
+    const inside = shape2 === "line" ? forward > 0 && Math.abs(vx * dy - vy * dx) / aimLength <= width + EPSILON : forward / Math.hypot(vx, vy) >= minCosine - EPSILON;
+    if (inside && hasLOS(state, origin, at)) result.push(at);
+  }));
+  return result;
+}
+function coverBetween(state, from, to) {
+  if (same(from, to) || !hasLOS(state, from, to)) return null;
+  const ray = new Set(supercoverLine(from, to).slice(1, -1).map(key));
+  const targetZ = elevation(state, to), sourceZ = elevation(state, from);
+  const dx = from.x - to.x, dy = from.y - to.y, squaredLength = dx * dx + dy * dy;
+  const covers = table(state.covers).filter((cover) => {
+    if (cover.hp <= 0 || !(cover.cover > 0) || same(cover, from) || same(cover, to) || !isGround(state, cover)) return false;
+    const cx = cover.x - to.x, cy = cover.y - to.y;
+    const fraction2 = (cx * dx + cy * dy) / squaredLength;
+    if (fraction2 <= 0 || fraction2 >= 1) return false;
+    const z = elevation(state, cover);
+    if (sourceZ - z >= 2 || targetZ - z >= 2 || targetZ + (sourceZ - targetZ) * fraction2 - z >= 2) return false;
+    const adjacentIncoming = gridDistance(cover, to) === 1 && (!cx || Math.sign(cx) === Math.sign(dx)) && (!cy || Math.sign(cy) === Math.sign(dy));
+    return ray.has(key(cover)) || adjacentIncoming && hasLOS(state, cover, to);
+  });
+  return covers.sort((a, b) => b.cover - a.cover || distance3D(state, a, to) - distance3D(state, b, to) || byId(a, b))[0] ?? null;
+}
+function facingToward(from, to) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  return [dx === 0 ? 0 : Math.sign(dx), dy === 0 ? 0 : Math.sign(dy)];
+}
+function facingArc(defender, attacker) {
+  const [fx, fy] = defender.facing ?? [1, 0];
+  const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
+  const length = Math.hypot(dx, dy) * Math.hypot(fx, fy);
+  if (!length) return "front";
+  const cosine = (dx * fx + dy * fy) / length;
+  return cosine < -0.5 ? "back" : cosine < 0.5 ? "side" : "front";
+}
+function isFlanked(state, attacker, defender) {
+  const adjacent = (unit) => !same(unit, defender) && gridDistance(unit, defender) === 1 && Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender);
+  if (!adjacent(attacker)) return false;
+  const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
+  return table(state.units).some((ally) => ally.hp > 0 && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
+}
+
 // src/core/effect_schema.js
 var enumOf = (...values4) => ({ enum: values4 });
 var number = (minimum, maximum, type = "number") => ({ type, minimum, maximum });
@@ -28,6 +187,7 @@ var bool = { type: "boolean" };
 var nodeNotes = {
   damage: "\u5BF9\u76EE\u6807\u9020\u6210\u4E00\u6B21\u4F24\u5BB3\uFF1B\u4EC5\u6B64\u6BB5\u4E0D\u80FD\u81F4\u6B7B\u65F6\u5199 lethal:false\uFF0C\u4E0D\u8981\u7528\u964D\u4F4E\u4F24\u5BB3\u500D\u7387\u4EE3\u66FF\u3002",
   heal: "\u6062\u590D\u76EE\u6807\u751F\u547D\u5E76\u89E6\u53D1\u6CBB\u7597\u4E8B\u4EF6\uFF1B\u8981\u6062\u590D\u6CD5\u529B\u6216\u4F53\u529B\u8BF7\u7528 restoreResource\u3002",
+  changeAltitude: "\u6539\u53D8\u65BD\u672F\u8005\u79BB\u5730\u9AD8\u5EA6\uFF0C\u9ED8\u8BA4\u5347\u9AD8 3\u3002delta \u4E3A\u6709\u7B26\u53F7\u9AD8\u5EA6\u5DEE\uFF0C0 \u79BB\u5730\u9AD8\u5EA6\u8868\u793A\u843D\u5730\uFF1Bland:true \u53EF\u76F4\u63A5\u843D\u5730\u3002\u4FDD\u6301\u5230\u518D\u6B21\u6539\u53D8\u9AD8\u5EA6\uFF0C\u9002\u7528\u4E8E\u98DE\u884C\u548C\u60AC\u6D6E\u3002",
   modifyTerrain: "\u6539\u53D8\u533A\u57DF\u5185\u683C\u5B50\u7684\u9AD8\u5EA6\uFF1Araise/lower \u662F\u76F8\u5BF9\u53D8\u5316\uFF0Cset \u662F\u7EDD\u5BF9\u9AD8\u5EA6\uFF1B\u4E0D\u6539\u53D8\u5730\u9762\u7C7B\u578B\u3002",
   setTerrainKind: "\u628A\u533A\u57DF\u6539\u4E3A\u5730\u9762\u3001\u5899\u6216\u5761\uFF1B\u9020\u5899\u8DF3\u8FC7\u5DF2\u5360\u7528\u683C\uFF0C\u4E34\u65F6\u5899\u7528 remainingTurns \u8BBE\u7F6E\u65F6\u9650\u3002",
   addCover: "\u5728\u53EF\u7528\u683C\u751F\u6210\u6709\u8010\u4E45\u7684\u63A9\u4F53\uFF1B\u8981\u5F7B\u5E95\u963B\u65AD\u89C6\u7EBF\u8BF7\u6539\u7528\u5899\u3002",
@@ -145,6 +305,7 @@ var effectSchema = {
       node("modifyCheck", Object.fromEntries(checkKeys.map((key4) => [key4, number(-30, 30)]))),
       node("forceOutcome", { mode: enumOf("hit", "crit") }, ["mode"]),
       node("upgradeHitTier", {}),
+      node("changeAltitude", { delta: integer(-12, 12), land: { type: "boolean" } }),
       node("knockback", { distance: integer(1, 5), collisionDamage: integer(0, 80) }),
       node("teleportBackstab", { bonusMultiplier: number(0, 4) }),
       node("shield", { ...magnitudes, ...scaling, turns, stack: bool, percentOfHealing: number(0, 4) }),
@@ -528,6 +689,9 @@ function createEffectEngine(io) {
           case "chainEffect":
             result = executeNodes(state, actor, source, p.effects, target2, ctx, entry, seen, depth, node3.target ?? exprTarget, p.stopOnFailure);
             break;
+          case "changeAltitude":
+            if (livingUnit(actor)) result = io.changeAltitude(state, actor, p);
+            break;
           case "modifyTerrain":
           case "setTerrainKind":
           case "addCover":
@@ -717,164 +881,6 @@ function createEffectEngine(io) {
   }
   const check = (state, actor, key4, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key4] ?? 0 : 0), 0);
   return { dispatch, stat: stat2, check, passiveNodes, damageFactor, activeSkills, skillExpressions: skillExpressions2, available, condition: condition3, changeResource };
-}
-
-// src/core/spatial.js
-var EPSILON = 1e-9;
-var CARDINAL = [[0, -1], [-1, 0], [1, 0], [0, 1]];
-var DIAGONAL = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
-var NEIGHBORS = [...CARDINAL, ...DIAGONAL];
-var key = ({ x, y }) => `${x},${y}`;
-var same = (a, b) => a.x === b.x && a.y === b.y;
-var byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-var table = (collection) => Object.values(collection ?? {});
-function cellAt(state, x, y) {
-  if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return void 0;
-  return state.grid[y]?.[x];
-}
-var elevation = (state, at) => cellAt(state, at.x, at.y)?.z ?? 0;
-var isGround = (state, at) => {
-  const cell = cellAt(state, at.x, at.y);
-  return Boolean(cell && cell.kind !== "wall");
-};
-var unitAt = (state, x, y, exceptId) => table(state.units).filter((unit) => unit.hp > 0 && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
-var coverAt = (state, x, y) => table(state.covers).filter((cover) => cover.hp > 0 && cover.x === x && cover.y === y).sort(byId)[0];
-var gridDistance = (a, b) => Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-var distance3D = (state, a, b) => Math.hypot(b.x - a.x, b.y - a.y, elevation(state, b) - elevation(state, a));
-function passableEdge(state, from, to) {
-  if (!isGround(state, from) || !isGround(state, to)) return false;
-  const slope = cellAt(state, from.x, from.y).kind === "slope" || cellAt(state, to.x, to.y).kind === "slope";
-  return Math.abs(elevation(state, from) - elevation(state, to)) <= (slope ? 2 : 1);
-}
-function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = true } = {}) {
-  const dx = to.x - from.x, dy = to.y - from.y;
-  if (gridDistance(from, to) !== 1 || !passableEdge(state, from, to)) return false;
-  const vacant = (at) => !unitAt(state, at.x, at.y, ignoreUnitId) && !coverAt(state, at.x, at.y);
-  if (!vacant(to)) return false;
-  if (!dx || !dy) return true;
-  return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every((at) => vacant(at) && passableEdge(state, from, at) && passableEdge(state, at, to));
-}
-function search(state, unit, limit, options, target2) {
-  if (!isGround(state, unit) || !(limit >= 0)) return [];
-  const start = { x: unit.x, y: unit.y, z: elevation(state, unit), cost: 0, previous: null };
-  const visited = /* @__PURE__ */ new Set([key(start)]), queue = [start];
-  const stepOptions = { ignoreUnitId: unit.id, ...options };
-  for (let i = 0; i < queue.length; i++) {
-    const from = queue[i];
-    if (target2 && same(from, target2)) return [from];
-    if (from.cost + 1 > limit) continue;
-    for (const [dx, dy] of stepOptions.diagonal === false ? CARDINAL : NEIGHBORS) {
-      const to = { x: from.x + dx, y: from.y + dy };
-      const id3 = key(to);
-      if (visited.has(id3) || !canStep(state, from, to, stepOptions) || options?.allowsStep && !options.allowsStep(from, to)) continue;
-      visited.add(id3);
-      queue.push({ ...to, z: elevation(state, to), cost: from.cost + 1, previous: from });
-    }
-  }
-  return target2 ? [] : queue.slice(1);
-}
-var coords = ({ x, y, z }) => ({ x, y, z });
-function unwind(last) {
-  const path = [];
-  for (let step = last; step.previous; step = step.previous) path.push(coords(step));
-  return path.reverse();
-}
-function movementOptions(state, unit, maxSteps = Infinity, options) {
-  return search(state, unit, maxSteps, options).map((cell) => ({ ...coords(cell), cost: cell.cost, path: unwind(cell) }));
-}
-function supercoverLine(from, to) {
-  if (![from.x, from.y, to.x, to.y].every(Number.isSafeInteger)) return [];
-  let { x, y } = from;
-  const dx = Math.abs(to.x - x), dy = Math.abs(to.y - y);
-  const sx = Math.sign(to.x - x), sy = Math.sign(to.y - y);
-  const cells = [{ x, y }];
-  for (let ix = 0, iy = 0; ix < dx || iy < dy; ) {
-    const nextX = (2 * ix + 1) * dy, nextY = (2 * iy + 1) * dx;
-    if (nextX === nextY) {
-      cells.push({ x: x + sx, y }, { x, y: y + sy });
-      x += sx;
-      y += sy;
-      ix++;
-      iy++;
-    } else if (nextX < nextY) {
-      x += sx;
-      ix++;
-    } else {
-      y += sy;
-      iy++;
-    }
-    cells.push({ x, y });
-  }
-  return cells;
-}
-function hasLOS(state, from, to) {
-  if (!isGround(state, from) || !isGround(state, to)) return false;
-  return supercoverLine(from, to).every((at) => isGround(state, at));
-}
-function aoeCells(state, origin, target2, options = {}) {
-  const {
-    shape: shape2 = "single",
-    radius = 1.5,
-    width = 0.6,
-    angle = shape2 === "fan" ? 100 : 60,
-    range = distance3D(state, origin, target2)
-  } = options;
-  const limitAt = typeof range === "function" ? range : () => range;
-  const inRange = (at) => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
-  if (!hasLOS(state, origin, target2) || !inRange(target2)) return [];
-  if (shape2 === "single") return [{ x: target2.x, y: target2.y, z: elevation(state, target2) }];
-  const dx = target2.x - origin.x, dy = target2.y - origin.y, aimLength = Math.hypot(dx, dy);
-  if (shape2 !== "circle" && (!aimLength || !["line", "fan", "cone"].includes(shape2))) return [];
-  const minCosine = Math.cos(Math.max(0, Math.min(360, angle)) * Math.PI / 360);
-  const result = [];
-  state.grid.forEach((row, y) => row.forEach((cell, x) => {
-    const at = { x, y, z: cell.z };
-    if (shape2 === "circle") {
-      if (distance3D(state, target2, at) <= radius + EPSILON && hasLOS(state, target2, at)) result.push(at);
-      return;
-    }
-    if (same(origin, at) || !inRange(at)) return;
-    const vx = x - origin.x, vy = y - origin.y;
-    const forward = (vx * dx + vy * dy) / aimLength;
-    const inside = shape2 === "line" ? forward > 0 && Math.abs(vx * dy - vy * dx) / aimLength <= width + EPSILON : forward / Math.hypot(vx, vy) >= minCosine - EPSILON;
-    if (inside && hasLOS(state, origin, at)) result.push(at);
-  }));
-  return result;
-}
-function coverBetween(state, from, to) {
-  if (same(from, to) || !hasLOS(state, from, to)) return null;
-  const ray = new Set(supercoverLine(from, to).slice(1, -1).map(key));
-  const targetZ = elevation(state, to), sourceZ = elevation(state, from);
-  const dx = from.x - to.x, dy = from.y - to.y, squaredLength = dx * dx + dy * dy;
-  const covers = table(state.covers).filter((cover) => {
-    if (cover.hp <= 0 || !(cover.cover > 0) || same(cover, from) || same(cover, to) || !isGround(state, cover)) return false;
-    const cx = cover.x - to.x, cy = cover.y - to.y;
-    const fraction2 = (cx * dx + cy * dy) / squaredLength;
-    if (fraction2 <= 0 || fraction2 >= 1) return false;
-    const z = elevation(state, cover);
-    if (sourceZ - z >= 2 || targetZ - z >= 2 || targetZ + (sourceZ - targetZ) * fraction2 - z >= 2) return false;
-    const adjacentIncoming = gridDistance(cover, to) === 1 && (!cx || Math.sign(cx) === Math.sign(dx)) && (!cy || Math.sign(cy) === Math.sign(dy));
-    return ray.has(key(cover)) || adjacentIncoming && hasLOS(state, cover, to);
-  });
-  return covers.sort((a, b) => b.cover - a.cover || distance3D(state, a, to) - distance3D(state, b, to) || byId(a, b))[0] ?? null;
-}
-function facingToward(from, to) {
-  const dx = to.x - from.x, dy = to.y - from.y;
-  return [dx === 0 ? 0 : Math.sign(dx), dy === 0 ? 0 : Math.sign(dy)];
-}
-function facingArc(defender, attacker) {
-  const [fx, fy] = defender.facing ?? [1, 0];
-  const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
-  const length = Math.hypot(dx, dy) * Math.hypot(fx, fy);
-  if (!length) return "front";
-  const cosine = (dx * fx + dy * fy) / length;
-  return cosine < -0.5 ? "back" : cosine < 0.5 ? "side" : "front";
-}
-function isFlanked(state, attacker, defender) {
-  const adjacent = (unit) => !same(unit, defender) && gridDistance(unit, defender) === 1 && Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender);
-  if (!adjacent(attacker)) return false;
-  const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
-  return table(state.units).some((ally) => ally.hp > 0 && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
 }
 
 // src/core/rng.js
@@ -1135,17 +1141,17 @@ function settleChanges(state, changes2, record2, damage) {
       const distance = (p) => (p.x - x) ** 2 + (p.y - y) ** 2;
       const landing = free.sort((a, b) => distance(a) - distance(b))[0];
       if (landing) {
+        const from = { x: unit.x, y: unit.y, z: change.before.z + (unit.altitude ?? 0) };
         Object.assign(unit, landing);
-        if (Object.hasOwn(unit, "z")) unit.z = cellAt(state, landing.x, landing.y).z;
-        record2(state, unit, "terrain_displace", `${unit.name}\u56E0\u5899\u4F53\u8FD8\u539F\u79FB\u81F3 (${landing.x},${landing.y})`, { x: landing.x, y: landing.y });
+        const to = { ...landing, z: elevation(state, unit) };
+        record2(state, unit, "terrain_displace", `${unit.name}\u56E0\u5899\u4F53\u8FD8\u539F\u79FB\u81F3 (${to.x}, ${to.y}, z=${to.z})`, { x: to.x, y: to.y, from, to });
       } else damage(state, unit, unit.hp, "\u5899\u4F53\u8FD8\u539F\uFF0C\u65E0\u53EF\u7AD9\u7ACB\u683C", { forcedDisplacement: true });
     }
   }
   for (const { before, after, restored, units } of changes2) {
     const drop = effectiveHeight(before) - effectiveHeight(after);
     for (const unit of units.filter(present)) {
-      if (Object.hasOwn(unit, "z")) unit.z = cellAt(state, unit.x, unit.y).z;
-      if (drop > 0) damage(state, unit, drop * 50, `\u5730\u5F62${restored ? "\u8FD8\u539F" : "\u53D8\u5316"}\u9AD8\u5EA6\u843D\u5DEE ${drop}\uFF0C`, { drop });
+      if (drop > 0 && !unit.altitude) damage(state, unit, drop * 50, `\u5730\u5F62${restored ? "\u8FD8\u539F" : "\u53D8\u5316"}\u9AD8\u5EA6\u843D\u5DEE ${drop}\uFF0C`, { drop });
     }
   }
 }
@@ -1401,6 +1407,16 @@ var byId2 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 var living = (state) => values2(state.units).filter((unit) => alive(unit) && !unit.fled).sort(byId2);
 var sameCell = (a, b) => a.x === b.x && a.y === b.y;
 var pos = (x, y) => ({ x, y });
+var pointAt = (state, at) => ({ x: at.x, y: at.y, z: elevation(state, at) });
+function changeAltitude(state, actor, node3) {
+  const from = pointAt(state, actor);
+  const altitude = node3.land ? 0 : Math.max(0, Math.min(12, (actor.altitude ?? 0) + (node3.delta ?? 3)));
+  if (altitude === (actor.altitude ?? 0)) return false;
+  actor.altitude = altitude;
+  const to = pointAt(state, actor);
+  record(state, actor, "altitude", `${actor.name}\u9AD8\u5EA6\u4ECE z=${from.z} \u53D8\u4E3A z=${to.z}`, { from, to });
+  return true;
+}
 var key2 = (x, y) => `${x},${y}`;
 var stat = (unit, id3) => Number(unit.stats?.[id3] ?? 0) * Math.max(0, 1 + changes(unit, "attributePercent"));
 var clamp = (number3, min, max) => Math.max(min, Math.min(max, number3));
@@ -1409,7 +1425,7 @@ var statusOf = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.sta
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
 function record(state, unit, type, text4, detail = {}) {
   const actor = typeof unit === "string" ? unit : unit?.id ?? null;
-  const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, { x: current.x, y: current.y }]));
+  const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, pointAt(state, current)]));
   const event = { round: state.round, actor, text: text4, type, detail, positions };
   state.logs.push(event);
   return event;
@@ -2023,6 +2039,7 @@ function spawnUnitEffect(state, actor, spec, center) {
   return true;
 }
 var dsl = createEffectEngine({
+  changeAltitude,
   spawn: spawnUnitEffect,
   terrain: (state, actor, node3, ctx) => applyTerrainEffect(state, actor, node3, ctx, record, terrainDamage),
   equipped,
@@ -2176,7 +2193,7 @@ function canReact(state, { unit, weapon }, mover) {
   return !taunter || taunter.id === mover.id;
 }
 function threatens(state, source, mover, at) {
-  return visibleEnemy(state, source.unit, { ...mover, x: at.x, y: at.y }) && validReach(state, source.unit, at, source.weapon.template);
+  return visibleEnemy(state, source.unit, { ...mover, x: at.x, y: at.y }) && validReach(state, source.unit, { ...at, altitude: mover.altitude }, source.weapon.template);
 }
 var opportunityDetail = (source, from, to) => ({
   unitId: source.id,
@@ -2427,11 +2444,16 @@ function canExecute(state, actor, target2, effect, nonLethal) {
 }
 function usableTiles(state, actor, template, weapon, nonLethal) {
   const execute = findNode(template, "execute", (node3) => node3.requiresPool);
-  return allCells(state).filter((at) => validReach(state, actor, at, template, weapon?.ammo) && (!execute || canExecute(state, actor, locateUnit(state, at), execute, nonLethal)) && !((template.shape === "line" || template.shape === "cone" || template.shape === "fan") && sameCell(actor, at)));
+  return allCells(state).filter((at) => validReach(state, actor, template.target === "cell" ? at : locateUnit(state, at) ?? at, template, weapon?.ammo) && (!execute || canExecute(state, actor, locateUnit(state, at), execute, nonLethal)) && !((template.shape === "line" || template.shape === "cone" || template.shape === "fan") && sameCell(actor, at)));
 }
-function shapeTargets(state, actor, cells, template) {
+function shapeTargets(state, actor, cells, template, aim) {
   const keys = new Set(cells.map((at) => key2(at.x, at.y)));
-  return living(state).filter((unit) => keys.has(key2(unit.x, unit.y)) && selectionAllows(template, actor, unit));
+  return living(state).filter((unit) => {
+    if (!selectionAllows(template, actor, unit)) return false;
+    if ((template.shape ?? "single") === "single") return sameCell(unit, aim);
+    if (template.shape === "circle") return distance3D(state, aim, unit) <= (template.radius ?? 1.5) + 1e-9 && hasLOS(state, aim, unit);
+    return keys.has(key2(unit.x, unit.y)) && validReach(state, actor, unit, template);
+  });
 }
 function preview(state, action) {
   if (state.outcome) return fail2("\u6218\u6597\u5DF2\u7ECF\u7ED3\u675F");
@@ -2532,9 +2554,9 @@ function preview(state, action) {
       if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail2("\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B");
       if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail2("\u7206\u6876\u8D85\u51FA\u6B66\u5668\u5C04\u7A0B\u6216\u88AB\u5899\u4F53\u963B\u6321");
     } else if (distance3D(state, unit, item) > 1.5 || !hasLOS(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
-    const cells2 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: 1.5 }) : [center];
+    const cells2 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: item.radius ?? 1.5 }) : [center];
     const keyset = new Set(cells2.map((at) => key2(at.x, at.y)));
-    const targets2 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y))).map((u) => {
+    const targets2 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) <= 1.5 + 1e-9).map((u) => {
       const guard = guardFor(state, u) ?? u;
       const formula = mitigation(state, guard, "energy", true, 0, { attacker: unit, intercepting: guard !== u });
       const shield = statusOf(guard, "shield");
@@ -2592,11 +2614,12 @@ function preview(state, action) {
   if (unplaced) {
     return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, action.nonLethal ?? unit.nonLethal) };
   }
-  const geometry = reaches(state, unit, center, template, attack && !shieldBash ? weapon.ammo : null);
+  const aimedUnit = locateUnit(state, center);
+  const aim = template.target === "cell" ? center : aimedUnit ?? center;
+  const geometry = reaches(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
   if (!isGround(state, center)) return fail2("\u5899\u4F53\u65E0\u6CD5\u6307\u5B9A", geometry);
   if (geometry.distance > geometry.range + 1e-9) return fail2("\u76EE\u6807\u8D85\u51FA\u5C04\u7A0B", geometry);
   if (!hasLOS(state, unit, center)) return fail2("\u5899\u4F53\u963B\u65AD\u89C6\u7EBF", geometry);
-  const aimedUnit = locateUnit(state, center);
   if (corpseSkill) {
     const corpse = corpses(state).find((c) => sameCell(c, center));
     return corpse ? { ...common, ...geometry, ...tuning, cells: [center], targets: [], center, corpseId: corpse.id } : fail2("\u76EE\u6807\u683C\u6CA1\u6709\u53EF\u7528\u5C38\u4F53");
@@ -2605,7 +2628,7 @@ function preview(state, action) {
   if (execute && !canExecute(state, unit, aimedUnit, execute, action.nonLethal ?? unit.nonLethal)) return fail2("\u76EE\u6807\u6216\u88C5\u5907\u8D44\u6E90\u4E0D\u6EE1\u8DB3\u65A9\u6740\u6761\u4EF6");
   const solid = locateCover(state, center);
   const coverTarget = Boolean(solid && (attack || hasStrikeDamage(template)));
-  const cells = area(state, unit, center, template, attack && !shieldBash ? weapon.ammo : null);
+  const cells = area(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
   const aoe = (template.shape ?? "single") !== "single";
   if (!cells.length) return fail2("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", geometry);
   if (!aoe) {
@@ -2621,7 +2644,7 @@ function preview(state, action) {
   if (effect && !blink) return fail2("\u76EE\u6807\u80CC\u540E\u7684\u77AC\u79FB\u843D\u70B9\u88AB\u963B\u6321", geometry);
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
-  const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template);
+  const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template, aim);
   const areaAttack = (template.shape ?? "single") !== "single";
   const declaredIntent = action.intent ?? unit.intent ?? "normal";
   const resolvedIntent = areaAttack ? "normal" : declaredIntent;
@@ -2791,7 +2814,7 @@ function coverDamage(state, actor, cover, amount2, details) {
 function knockback(state, actor, target2, effect) {
   const [dx, dy] = facingToward(actor, target2);
   if (!dx && !dy) return;
-  const from = pos(target2.x, target2.y);
+  const from = pointAt(state, target2);
   for (let i = 0; i < (effect.distance ?? 1); i++) {
     const at = pos(target2.x + dx, target2.y + dy);
     if (!canStep(state, target2, at)) {
@@ -2801,7 +2824,7 @@ function knockback(state, actor, target2, effect) {
     }
     Object.assign(target2, at);
   }
-  record(state, actor, "knockback", `${target2.name}\u906D\u5230\u51FB\u9000`, { targetId: target2.id, from, to: pos(target2.x, target2.y) });
+  record(state, actor, "knockback", `${target2.name}\u906D\u5230\u51FB\u9000`, { targetId: target2.id, from, to: pointAt(state, target2) });
 }
 function healWithGear(state, actor, target2, spec, name, skillScale = 1) {
   const dice3 = diceRoll(state, diceFormula(state, spec, actor));
@@ -2865,9 +2888,9 @@ function removeStatus(state, actor, target2, effect) {
 function teleportBehind(state, actor, target2) {
   const to = backCell(state, target2);
   if (!to || changes(actor, "rooted")) return false;
-  const from = pos(actor.x, actor.y);
+  const from = pointAt(state, actor);
   Object.assign(actor, to);
-  record(state, actor, "teleport", `${actor.name}\u77AC\u79FB\u81F3\u76EE\u6807\u80CC\u540E`, { from, to });
+  record(state, actor, "teleport", `${actor.name}\u77AC\u79FB\u81F3\u76EE\u6807\u80CC\u540E`, { from, to: pointAt(state, actor) });
   return true;
 }
 function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
@@ -2962,7 +2985,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   }
 }
 function applyMovement(state, actor, type, plan) {
-  const from = pos(actor.x, actor.y), path = [];
+  const from = pointAt(state, actor), path = [];
   const canContinue = () => alive(actor) && !changes(actor, "skip") && !changes(actor, "rooted");
   for (const to2 of plan.path) {
     if (type !== "disengage") {
@@ -2979,7 +3002,7 @@ function applyMovement(state, actor, type, plan) {
           `${unit.name}\u5BF9${actor.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB`,
           { ...opportunityDetail(unit, center, to2), targetId: actor.id }
         );
-        const profile = targetProfile(state, unit, actor, center, weapon.template, { weapon });
+        const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
         applyStrike(state, unit, { type: "attack" }, { center, targets: [profile], hostile: true }, weapon);
         if (!canContinue()) break;
       }
@@ -2989,12 +3012,12 @@ function applyMovement(state, actor, type, plan) {
     Object.assign(actor, pos(to2.x, to2.y));
     path.push(to2);
   }
-  const to = pos(actor.x, actor.y), interrupted = path.length !== plan.path.length;
+  const to = pointAt(state, actor), interrupted = path.length !== plan.path.length;
   record(
     state,
     actor,
     type,
-    `${actor.name}${movementNames[type]}${interrupted ? "\u53D7\u963B\uFF0C\u505C\u5728" : "\u81F3"} (${to.x}, ${to.y})`,
+    `${actor.name}${movementNames[type]}${interrupted ? "\u53D7\u963B\uFF0C\u505C\u5728" : "\u81F3"} (${to.x}, ${to.y}, z=${to.z})`,
     { from, to, path, steps: path.length, interrupted }
   );
 }
@@ -3003,20 +3026,29 @@ function applyInteraction(state, actor, plan) {
   item.spent = true;
   if (!sameCell(actor, item)) actor.facing = facingToward(actor, item);
   record(state, actor, "interact", `${actor.name}${item.kind === "barrel" ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`, { interactiveId: item.id });
-  if (item.kind === "barrel") {
+  const effect = item.effect ?? (item.kind === "barrel" ? "explode" : "heal");
+  if (effect === "explode") {
     const weapon = weaponInfo(state, actor);
     if (weapon.ammo && !weapon.infiniteAmmo) dsl.changeResource(state, actor, actor, { kind: "drainResource", resource: weapon.ammo.resource, local: true }, 1, "\u5F15\u7206", { instance: weapon.instance });
     for (const profile of plan.targets) {
       const target2 = state.units[profile.id];
-      if (alive(target2)) damageTarget(state, target2, actor.id, 12, "energy", "\u7206\u6876", { attacker: actor, hit: true, direct: false });
+      if (alive(target2)) damageTarget(state, target2, actor.id, item.damage ?? 12, "energy", item.name, { attacker: actor, hit: true, direct: false });
     }
     for (const cover of values2(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at) => sameCell(at, c))).sort(byId2)) {
-      coverDamage(state, actor, cover, 12, { interactiveId: item.id });
+      coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
+  } else if (Object.hasOwn(item, "effect") && (effect === "restore" || effect === "heal")) {
+    const amount2 = item.damage ?? 8;
+    restoreHP(state, actor, amount2, actor.id, item.name);
+    if (effect === "restore") {
+      actor.mp = Math.min(actor.maxMp, actor.mp + amount2);
+      actor.sp = Math.min(actor.maxSp, actor.sp + amount2);
+    }
+  } else if (Object.hasOwn(item, "effect") && effect === "shield") {
+    grantStatus(state, actor, "shield", { amount: item.damage ?? 10, sourceUnitId: actor.id });
   } else {
-    restoreHP(state, actor, 8, actor.id, "\u661F\u8F89\u796D\u575B");
-    actor.mp = Math.min(actor.maxMp, actor.mp + 5);
-    actor.sp = Math.min(actor.maxSp, actor.sp + 3);
+    const amount2 = item.damage ?? 8;
+    restoreHP(state, actor, amount2, actor.id, item.name);
     grantStatus(state, actor, "shield", { amount: 10, sourceUnitId: actor.id });
     grantStatus(state, actor, "haste", { sourceUnitId: actor.id });
   }
@@ -3516,7 +3548,8 @@ function validateCell(v) {
 var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
 var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "deathrattle", "deathrattleTriggered", "moraleCheckedRound", "maneuvers"];
 function unitValue(v, key4, state) {
-  fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "effectUsage", "effectModifiers"]);
+  fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "effectUsage", "effectModifiers", "altitude"]);
+  if (own2(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
   for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
   checkOptional(v, "corpseOf", id2);
   checkOptional(v, "diedAt", (x) => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
@@ -3627,7 +3660,8 @@ function validateState(s) {
     for (const e of counters) requireThat(int(v.counters[e.resource], 0, e.cap), "\u8BA1\u6570\u5668");
   });
   table2(s.covers, (v, k) => {
-    fields(v, ["id", "name", "x", "y", "material", "hp", "maxHp", "cover"]);
+    fields(v, ["id", "name", "x", "y", "material", "hp", "maxHp", "cover"], ["z"]);
+    requireThat(!own2(v, "z") || int(v.z, -4, 8), "\u63A9\u4F53\u9AD8\u5EA6");
     requireThat(v.id === k && text(v.name) && text(v.material) && coord2(v.x) && coord2(v.y) && s.grid[v.y][v.x].kind !== "wall" && int(v.maxHp, 1, 1e9) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), "\u63A9\u4F53");
   });
   table2(s.zones ?? {}, (v, k) => {
@@ -3655,8 +3689,8 @@ function validateState(s) {
     }, "\u4E34\u65F6\u63A9\u4F53");
   }, 64);
   table2(s.interactives, (v, k) => {
-    fields(v, ["id", "name", "x", "y", "kind", "spent"]);
-    requireThat(v.id === k && text(v.name) && coord2(v.x) && coord2(v.y) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
+    fields(v, ["id", "name", "x", "y", "kind", "spent"], ["z", "effect", "radius", "damage"]);
+    requireThat(v.id === k && text(v.name) && coord2(v.x) && coord2(v.y) && (!own2(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own2(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own2(v, "radius") || int(v.radius, 0, 10)) && (!own2(v, "damage") || int(v.damage, 0, 1e5)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
   });
   const occupied = /* @__PURE__ */ new Set(), equipped2 = /* @__PURE__ */ new Set();
   table2(s.units, (v, k) => {
@@ -3693,7 +3727,7 @@ function validateState(s) {
   requireThat(Array.isArray(s.logs) && s.logs.length <= 1e5, "\u65E5\u5FD7");
   for (const log of s.logs) {
     fields(log, ["round", "actor", "type", "text", "detail"], ["positions"]);
-    requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text(log.type, 64) && text(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point2) => plain(point2) && coord2(point2.x) && coord2(point2.y))), "\u65E5\u5FD7\u4E8B\u4EF6");
+    requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text(log.type, 64) && text(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point2) => plain(point2) && coord2(point2.x) && coord2(point2.y) && (!own2(point2, "z") || int(point2.z, -4, 20)))), "\u65E5\u5FD7\u4E8B\u4EF6");
   }
   return s;
 }
@@ -4279,7 +4313,7 @@ function formatBattleReportText(report, unitNames = {}) {
   const roundLabel = (n) => n < 10 ? digits[n] : n < 100 ? `${n >= 20 ? digits[Math.floor(n / 10)] : ""}\u5341${n % 10 ? digits[n % 10] : ""}` : n;
   const position = (event, id3) => {
     const point2 = event.positions?.[id3] ?? report.units.find((unit) => unit.id === id3);
-    return point2 && Number.isInteger(point2.x) && Number.isInteger(point2.y) ? `(${point2.x}, ${point2.y})` : "";
+    return point2 && Number.isInteger(point2.x) && Number.isInteger(point2.y) ? `(${point2.x}, ${point2.y}${Number.isInteger(point2.z) ? `, z=${point2.z}` : ""})` : "";
   };
   const name = (event, id3) => `${names.get(id3) ?? id3}${position(event, id3)}`;
   const replaceUnitNames = (event, text4) => {
@@ -4321,7 +4355,7 @@ function formatBattleReportText(report, unitNames = {}) {
           const prefix = `${actorName}\uFF1A`;
           const rawPrefix = `${names.get(actor) ?? actor}\uFF1A`;
           const label = text4.startsWith(prefix) ? text4.slice(prefix.length) : text4.startsWith(rawPrefix) ? text4.slice(rawPrefix.length) : text4;
-          add(action === "attack" || action === "skill" ? `\u4F7F\u7528${label}` : replaceUnitNames(event, label));
+          add(action === "attack" || action === "skill" ? `\u4F7F\u7528${replaceUnitNames(event, label)}` : replaceUnitNames(event, label));
           break;
         }
         case "roll":
@@ -4351,10 +4385,13 @@ function formatBattleReportText(report, unitNames = {}) {
           break;
         default: {
           if (["damage", "heal", "cover_damage"].includes(type) && detail.amount === 0) break;
-          const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "interact", "skip", "brace", "cover_approach"].includes(type);
+          const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "altitude", "interact", "skip", "brace", "cover_approach"].includes(type);
           let label = replaceUnitNames(event, text4);
           const actorRaw = names.get(actor) ?? actor;
           if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
+          if (["teleport", "knockback"].includes(type) && Number.isInteger(detail.to?.z)) {
+            label += `\uFF0C\u81F3 (${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
+          }
           add(label.replace(/ ×1$/, ""));
         }
       }
@@ -4374,7 +4411,7 @@ var fail3 = (message) => {
   throw new Error(message);
 };
 var version = 1;
-var battleVersion = 3;
+var battleVersion = 4;
 var maxHistory = 2e3;
 var maxBatch = 32;
 var own4 = (obj, key4) => Object.hasOwn(obj, key4);
@@ -4450,9 +4487,12 @@ function createGameAPI() {
     return { ok: true, revision };
   }
   function restore(snapshot) {
-    if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
+    if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, 3, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
     const needsMigration = snapshot.version < battleVersion;
-    if (needsMigration) snapshot = { ...snapshot, origin: migrateStateEffects(copy(snapshot.origin)), state: migrateStateEffects(copy(snapshot.state)) };
+    if (needsMigration) {
+      const migrate = (data) => ({ ...migrateStateEffects(copy(data)), mode: "split" });
+      snapshot = { ...snapshot, origin: migrate(snapshot.origin), state: migrate(snapshot.state) };
+    }
     validateState(snapshot.origin);
     validateState(snapshot.state);
     if (needsMigration) {
@@ -4586,6 +4626,7 @@ function createGameAPI() {
         team: team2,
         x,
         y,
+        z: elevation(current(), current().units[id3]),
         hp,
         maxHp,
         ap,
@@ -4700,7 +4741,7 @@ var GameAPI = createGameAPI();
 if (typeof window !== "undefined") window.FatedTacticalGame = GameAPI;
 
 // src/ui/template.js
-var TEMPLATE = `<div class="ft-app" data-busy="false">
+var TEMPLATE = `<div class="ft-app" data-busy="false" data-zoom="fit">
   <section class="ft-stage" aria-label="\u6218\u573A">
     <div class="axis-scroll ft-scroll" id="board-scroll">
       <div class="ft-board battle-axis" id="board-frame">
@@ -4718,6 +4759,8 @@ var TEMPLATE = `<div class="ft-app" data-busy="false">
       </div>
       <div id="turn-order" class="ft-initiative" aria-label="\u5148\u653B\u5E8F\u5217"></div>
       <nav class="ft-hud-menu" aria-label="\u9762\u677F">
+        <button type="button" id="zoom-toggle" class="ft-icon-button ft-zoom-only" aria-pressed="false" aria-label="\u653E\u5927\u68CB\u76D8" title="\u653E\u5927\u68CB\u76D8\uFF08\u53EF\u62D6\u52A8\uFF09">\u{1F50D}</button>
+        <button type="button" id="fullscreen-toggle" class="ft-icon-button" aria-pressed="false" aria-label="\u5168\u5C4F" title="\u5168\u5C4F">\u26F6</button>
         <button type="button" class="ft-icon-button" data-open-drawer="log" aria-label="\u6218\u51B5\u65E5\u5FD7" title="\u6218\u51B5\u65E5\u5FD7">\u{1F4DC}<span id="log-unread" class="ft-dot" hidden></span></button>
         <button type="button" class="ft-icon-button" data-open-drawer="unit" aria-label="\u5355\u4F4D\u60C5\u62A5" title="\u5355\u4F4D\u60C5\u62A5">\u25C8</button>
         <button type="button" class="ft-icon-button" data-open-drawer="tools" aria-label="\u5DE5\u5177" title="\u5DE5\u5177">\u2692</button>
@@ -5388,7 +5431,7 @@ function createRenderer(root) {
     const risks = new Set((moving && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
     const hoverKey = hover ? key3(hover.x, hover.y) : null;
     const origin = state.units[selected] ?? current;
-    const originZ = origin ? state.grid[origin.y]?.[origin.x]?.z : 0;
+    const originZ = origin ? elevation(state, origin) : 0;
     let inspection = "";
     for (const [xy, slot] of cells) {
       const { cell } = slot;
@@ -5531,6 +5574,7 @@ function createRenderer(root) {
       `\u62A4\u7532 ${u.armor}`,
       `\u79FB\u52A8 ${u.move} \u683C`,
       `\u4F53\u578B ${bodySizeLabel(u)}`,
+      `\u9AD8\u5EA6 z=${elevation(state, u)}${u.altitude ? `\uFF08\u79BB\u5730 ${u.altitude}\uFF09` : ""}`,
       `\u6301\u68B0\uFF1A${STANCES[u.stance] ?? "\u8F7B\u5251"}`,
       `\u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2`,
       u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
@@ -6296,6 +6340,50 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
     }
   };
   const draw = () => view.render(state, { selectedId, action, hover: target2 ?? hover, sprint, target: target2, inspectedId, busy });
+  const app = root.querySelector(".ft-app");
+  function fitLayout() {
+    if (!app) return;
+    const box = app.getBoundingClientRect();
+    if (!box.width) return;
+    const hud = root.querySelector(".ft-hud-top").getBoundingClientRect(), dock = root.querySelector(".ft-dock").getBoundingClientRect();
+    const side2 = dock.height > box.height * 0.7;
+    app.style.setProperty("--hud-top", `${Math.round(hud.height)}px`);
+    app.style.setProperty("--hud-bottom", side2 ? "0px" : `${Math.round(dock.height)}px`);
+    app.style.setProperty("--hud-right", side2 ? `${Math.round(dock.width)}px` : "0px");
+    const cell = $("board").querySelector(".tactical-cell")?.offsetWidth || 50;
+    $("board-frame").dataset.compact = String(cell < 44);
+  }
+  function setZoom(near) {
+    app.dataset.zoom = near ? "near" : "fit";
+    $("zoom-toggle").setAttribute("aria-pressed", String(near));
+    $("zoom-toggle").title = near ? "\u9002\u5E94\u5C4F\u5E55" : "\u653E\u5927\u68CB\u76D8\uFF08\u53EF\u62D6\u52A8\uFF09";
+    storage.setItem("fated-tactical/zoom", app.dataset.zoom);
+    fitLayout();
+    const unit = active(state);
+    if (near && unit) cellFor(unit)?.scrollIntoView({ block: "center", inline: "center" });
+  }
+  async function toggleFullscreen() {
+    if (document2.fullscreenElement) {
+      await document2.exitFullscreen().catch(() => {
+      });
+      return;
+    }
+    if (app.classList.contains("is-expanded")) {
+      app.classList.remove("is-expanded");
+      return;
+    }
+    try {
+      await app.requestFullscreen({ navigationUI: "hide" });
+    } catch {
+      app.classList.add("is-expanded");
+    }
+  }
+  function syncFullscreen() {
+    const pressed = document2.fullscreenElement === app || app.classList.contains("is-expanded");
+    $("fullscreen-toggle").setAttribute("aria-pressed", String(pressed));
+    $("fullscreen-toggle").title = pressed ? "\u9000\u51FA\u5168\u5C4F" : "\u5168\u5C4F";
+    window2.requestAnimationFrame(fitLayout);
+  }
   const playback = createPlayback(root, {
     show(next, opts) {
       busy = !!opts?.busy;
@@ -6605,6 +6693,20 @@ ${height2}\uFF0C${sight}`;
       schedule();
     });
     on("skip-playback", "click", () => playback.skip());
+    on("zoom-toggle", "click", () => setZoom(app.dataset.zoom !== "near"));
+    on("fullscreen-toggle", "click", () => {
+      toggleFullscreen().then(syncFullscreen);
+    });
+    document2.addEventListener("fullscreenchange", syncFullscreen, { signal });
+    if (window2.ResizeObserver) {
+      let frame = 0;
+      const observer = new window2.ResizeObserver(() => {
+        window2.cancelAnimationFrame(frame);
+        frame = window2.requestAnimationFrame(fitLayout);
+      });
+      for (const node3 of [app, root.querySelector(".ft-hud-top"), root.querySelector(".ft-dock")]) if (node3) observer.observe(node3);
+      signal?.addEventListener("abort", () => observer.disconnect());
+    } else window2.addEventListener("resize", fitLayout, { signal });
     const report = $("report-text"), reportMessage = $("report-message");
     on("export-report", "click", () => {
       report.value = game.exportBattleReportText();
@@ -6816,6 +6918,8 @@ ${height2}\uFF0C${sight}`;
     if (value != null && [...$(id3).options].some((o) => o.value === value)) $(id3).value = value;
   }
   playback.setSpeed(Number($("anim-speed").value));
+  if (storage.getItem("fated-tactical/zoom") === "near") app.dataset.zoom = "near";
+  $("zoom-toggle").setAttribute("aria-pressed", String(app.dataset.zoom === "near"));
   try {
     if (snapshot) {
       const restored = snapshot.kind === "battle" ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: "custom_state", state: snapshot });
@@ -6847,6 +6951,7 @@ ${height2}\uFF0C${sight}`;
     onChange();
   });
   onChange();
+  fitLayout();
   seenLogs = live.logs.length;
   $("log-unread").hidden = seenLogs <= 2;
   return {
@@ -7741,10 +7846,12 @@ var tacticalUI = `/* \u5168\u5C4F\u6218\u65D7\u5E03\u5C40\u3002\u5730\u5F62\u300
 body { margin: 0; background: var(--ink-2); }
 
 .ft-app {
-  --hud-top: 58px; --hud-bottom: 118px; --drawer-w: min(400px, 92vw);
+  /* --hud-top / --hud-bottom / --hud-right \u7531 main.js \u6309 HUD \u5B9E\u6D4B\u5C3A\u5BF8\u5199\u5165\uFF1B\u8FD9\u91CC\u662F\u9996\u5E27\u9ED8\u8BA4\u503C */
+  --hud-top: 58px; --hud-bottom: 118px; --hud-right: 0px; --cell-min: 50px; --drawer-w: min(400px, 92vw);
+  --safe-t: env(safe-area-inset-top, 0px); --safe-r: env(safe-area-inset-right, 0px); --safe-b: env(safe-area-inset-bottom, 0px); --safe-l: env(safe-area-inset-left, 0px);
   --tone-hit: #f2d58b; --tone-crit: #ffd700; --tone-miss: #a9b0c2; --tone-damage: #ff9a90;
   --tone-heal: #96e6b3; --tone-status: #c6aef2; --tone-move: #a6e3c8; --tone-turn: #dfc080; --tone-defeat: #e07a7a;
-  position: relative; box-sizing: border-box; width: 100%; height: min(84vh, 860px); min-height: 540px; overflow: hidden;
+  position: relative; box-sizing: border-box; width: 100%; height: min(84vh, 860px); height: min(84dvh, 860px); min-height: min(540px, 80vh); min-height: min(540px, 80dvh); overflow: hidden;
   color: var(--text); font-family: var(--font-body); font-size: 14px; line-height: 1.5;
   background:
     radial-gradient(ellipse 70% 60% at 50% 42%, rgb(var(--glow-rgb) / .16), transparent 70%),
@@ -7752,7 +7859,9 @@ body { margin: 0; background: var(--ink-2); }
     var(--ink-2);
   border-radius: 10px;
 }
-.ft-app.ft-fullscreen { position: fixed; inset: 0; height: auto; min-height: 0; border-radius: 0; }
+.ft-app.ft-fullscreen, .ft-app.is-expanded { position: fixed; z-index: 30; inset: 0; width: auto; height: auto; min-height: 0; border-radius: 0; }
+.ft-app.is-expanded { z-index: 2147483000; }
+.ft-app:fullscreen { width: 100%; height: 100%; min-height: 0; border-radius: 0; }
 .ft-app *, .ft-app *::before, .ft-app *::after { box-sizing: border-box; }
 .ft-app [hidden] { display: none !important; }
 .ft-app :is(button, select, input, summary, textarea, [tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -7761,11 +7870,12 @@ body { margin: 0; background: var(--ink-2); }
 .ft-stage { position: absolute; inset: 0; container-type: size; }
 .ft-scroll {
   position: absolute; inset: 0; display: grid; place-items: center; overflow: auto;
-  padding: calc(var(--hud-top) + 10px) 16px calc(var(--hud-bottom) + 10px);
+  padding: calc(var(--hud-top) + 10px) calc(var(--hud-right) + 16px) calc(var(--hud-bottom) + 10px) calc(var(--safe-l) + 16px);
   overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
 }
 .ft-board.battle-axis {
-  --cell: max(50px, min(calc((100cqw - 40px) / var(--cols, 10)), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 28px) / var(--rows, 10))));
+  /* \u9ED8\u8BA4\u8BA9\u6574\u76D8\u653E\u8FDB\u53EF\u89C6\u533A\uFF1B--cell-min \u662F\u4E0B\u9650\uFF0C\u653E\u5927\u6A21\u5F0F\u628A\u5B83\u8C03\u5927\u540E\u68CB\u76D8\u53EF\u62D6\u52A8 */
+  --cell: max(var(--cell-min), min(calc((100cqw - 44px - var(--hud-right) - var(--safe-l)) / var(--cols, 10) - 2px), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 32px) / var(--rows, 10) - 2px)));
   position: relative; width: max-content; margin: 0; padding: 0; border: 0; background: none; box-shadow: none;
 }
 .ft-board.battle-axis .tactical-grid {
@@ -7831,7 +7941,8 @@ body { margin: 0; background: var(--ink-2); }
 
 /* ---------- HUD ---------- */
 .ft-hud-top {
-  position: absolute; inset: 0 0 auto; z-index: 50; display: flex; align-items: center; gap: 14px; height: var(--hud-top); padding: 8px 14px;
+  position: absolute; inset: 0 0 auto; z-index: 50; display: flex; align-items: center; gap: 14px; min-height: 58px;
+  padding: max(8px, var(--safe-t)) max(14px, var(--safe-r)) 8px max(14px, var(--safe-l));
   background: linear-gradient(180deg, rgb(var(--shade-rgb) / .92), rgb(var(--shade-rgb) / .55) 70%, transparent);
 }
 .ft-hud-title { display: grid; flex: none; line-height: 1.2; }
@@ -7870,7 +7981,8 @@ body { margin: 0; background: var(--ink-2); }
 .ft-inspector:empty { display: none; }
 
 .ft-dock {
-  position: absolute; inset: auto 0 0; z-index: 50; display: flex; align-items: flex-end; gap: 14px; min-height: var(--hud-bottom); padding: 12px 14px;
+  position: absolute; inset: auto 0 0; z-index: 50; display: flex; align-items: flex-end; gap: 14px;
+  padding: 12px max(14px, var(--safe-r)) max(12px, var(--safe-b)) max(14px, var(--safe-l));
   background: linear-gradient(0deg, rgb(var(--shade-rgb) / .95), rgb(var(--shade-rgb) / .6) 72%, transparent); pointer-events: none;
 }
 .ft-dock > * { pointer-events: auto; }
@@ -8030,7 +8142,7 @@ body { margin: 0; background: var(--ink-2); }
   animation: ft-drawer-in .28s var(--ease-out);
 }
 @keyframes ft-drawer-in { from { transform: translateX(100%); } }
-.ft-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line-mid); background: var(--header-bg); }
+.ft-drawer-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line-mid); background: var(--header-bg); }
 .ft-drawer-head h2 { margin: 0; color: var(--heading); font: 700 16px var(--font-display); }
 .ft-drawer > :not(.ft-drawer-head) { padding-inline: 14px; }
 .ft-drawer > :last-child { flex: 1; overflow: auto; padding-bottom: 16px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
@@ -8081,24 +8193,87 @@ body { margin: 0; background: var(--ink-2); }
 .ft-dialog .ft-row { justify-content: flex-start; }
 #report-message:not(:empty) { margin-top: 8px; }
 
+/* ---------- \u68CB\u76D8\u7F29\u653E ---------- */
+.ft-app[data-zoom="near"] { --cell-min: 50px; }
+.ft-app[data-zoom="near"] .ft-scroll { place-items: start; }
+.ft-app[data-zoom="near"] .ft-board.battle-axis { margin: auto; }
+.ft-board.battle-axis[data-compact="true"] .axis-unit-name { display: none; }
+.ft-board.battle-axis[data-compact="true"] .tactical-cell-coord { display: none; }
+.ft-zoom-only { display: none; }
+
+/* ---------- \u7A84\u5C4F\uFF08\u7AD6\u5C4F\u624B\u673A\uFF09 ---------- */
 @media (max-width: 760px) {
-  .ft-app { --hud-top: 96px; --hud-bottom: 150px; }
-  .ft-hud-top { flex-wrap: wrap; height: auto; gap: 6px 10px; }
+  .ft-app { --cell-min: 30px; }
+  .ft-zoom-only { display: grid; }
+  .ft-hud-top { flex-wrap: wrap; gap: 6px 8px; padding-bottom: 6px; }
+  .ft-hud-title { flex: 1; min-width: 0; }
+  .ft-title { overflow: hidden; text-overflow: ellipsis; }
+  .ft-eyebrow { display: none; }
   .ft-initiative { order: 3; flex-basis: 100%; }
-  .ft-hud-menu { margin-left: auto; }
-  .ft-dock { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; }
-  .ft-actor { width: 100%; }
+  .ft-hud-menu { gap: 4px; }
+  .ft-dock { flex-direction: column; align-items: stretch; gap: 6px; padding-top: 8px; padding-inline: max(8px, var(--safe-l)) max(8px, var(--safe-r)); }
+  .ft-actor { width: 100%; grid-template-columns: auto 1fr; padding: 6px 9px; }
+  .ft-actor-face { width: 38px; height: 38px; font-size: 17px; }
   .ft-dock-actions { justify-items: stretch; }
-  .ft-row { justify-content: flex-start; }
+  .ft-status { text-align: left; }
+  .ft-row { justify-content: flex-start; gap: 5px; }
   .ft-dice-card { min-width: 0; width: min(360px, 92vw); padding: 10px 12px; }
   .ft-die { width: 50px; height: 50px; font-size: 20px; }
-  #target-actions.ft-target-card { width: 250px; }
+  .ft-chance { width: min(260px, 70vw); }
+  #target-actions.ft-target-card { width: min(270px, calc(100vw - 16px)); }
   #target-actions button { min-height: 44px; }
+  .ft-caption { left: max(8px, var(--safe-l)); width: calc(100% - 16px); }
+  .ft-skip { right: max(8px, var(--safe-r)); }
+  .ft-banner b { font-size: 24px; }
+  /* \u7AD6\u5C4F\u62BD\u5C49\u4ECE\u5E95\u90E8\u5F39\u51FA\uFF0C\u5355\u624B\u597D\u591F */
+  .ft-drawer { top: auto; left: 0; width: auto; height: min(78%, 640px); border-left: 0; border-top: 1px solid rgb(var(--gold-rgb) / .35); border-radius: 14px 14px 0 0;
+    padding-bottom: var(--safe-b); box-shadow: 0 -18px 40px rgb(0 0 0 / .5); animation-name: ft-sheet-in; }
+}
+@keyframes ft-sheet-in { from { transform: translateY(100%); } }
+
+/* ---------- \u77EE\u5C4F\uFF08\u6A2A\u5C4F\u624B\u673A\uFF09\uFF1A\u9876\u680F\u538B\u6241\uFF0C\u52A8\u4F5C\u533A\u6539\u4E3A\u53F3\u4FA7\u7AD6\u680F ---------- */
+@media (orientation: landscape) and (max-height: 520px) {
+  .ft-app { --cell-min: 28px; --drawer-w: min(380px, 60vw); }
+  .ft-zoom-only { display: grid; }
+  .ft-hud-top { z-index: 52; flex-wrap: nowrap; min-height: 0; gap: 8px; padding-block: max(4px, var(--safe-t)) 4px; padding-right: calc(var(--hud-right) + 8px); }
+  .ft-eyebrow, .ft-round { display: none; }
+  .ft-title { font-size: 14px; }
+  .ft-initiative { order: 0; flex-basis: auto; }
+  .ft-dock {
+    inset: 0 0 0 auto; width: min(270px, 34vw); flex-direction: column; align-items: stretch; justify-content: flex-end; gap: 6px; overflow-y: auto;
+    padding: calc(var(--hud-top) + 4px) max(8px, var(--safe-r)) max(8px, var(--safe-b)) 8px;
+    background: linear-gradient(270deg, rgb(var(--shade-rgb) / .95), rgb(var(--shade-rgb) / .75) 80%, transparent);
+  }
+  .ft-actor { width: 100%; padding: 6px 8px; }
+  .ft-actor-face { width: 34px; height: 34px; font-size: 15px; }
+  .ft-dock-actions { justify-items: stretch; }
+  .ft-status { text-align: left; font-size: 12px; }
+  .ft-row { justify-content: flex-start; gap: 5px; }
+  .ft-row > .game-button { flex: 1 1 calc(50% - 5px); }
+  .ft-inspector, .ft-ribbon { left: calc(50% - var(--hud-right) / 2); }
+  .ft-dice-stage { top: calc(var(--hud-top) + 8px); left: calc(50% - var(--hud-right) / 2); }
+  .ft-dice-card { min-width: 0; gap: 4px; padding: 8px 12px; }
+  .ft-die { width: 44px; height: 44px; font-size: 18px; }
+  .ft-verdict { font-size: 19px; }
+  .ft-caption { left: max(8px, var(--safe-l)); bottom: max(8px, var(--safe-b)); width: calc(100% - var(--hud-right) - 24px); }
+  .ft-skip { right: calc(var(--hud-right) + 8px); bottom: max(8px, var(--safe-b)); }
+  .ft-banner b { font-size: 22px; }
+}
+
+/* ---------- \u89E6\u5C4F\uFF1A\u89E6\u63A7\u76EE\u6807\u4E0D\u5C0F\u4E8E 44px ---------- */
+@media (pointer: coarse) {
+  .ft-icon-button { width: 44px; height: 44px; }
+  .ft-app .game-button, .ft-app .turn-chip, .ft-skip, .ft-dev > summary { min-height: 44px; }
+  .ft-app select, .ft-app input:not([type="checkbox"]):not([type="file"]) { min-height: 44px; font-size: 16px; }
+  .ft-switch, .ft-mini-select, .ft-target-options label { min-height: 44px; }
+  .ft-app input[type="checkbox"] { width: 22px; height: 22px; }
+  .ft-close { width: 44px; height: 44px; }
+  .ft-log-entry > summary { min-height: 32px; }
   .ft-board button { touch-action: manipulation; }
-  .ft-caption { width: calc(100% - 28px); }
 }
 @media (prefers-reduced-motion: reduce) {
   .ft-drawer { animation: none; }
+  .ft-app[data-zoom] .ft-scroll { scroll-behavior: auto; }
   .ft-board .axis-unit.is-active { animation: none; }
   .ft-die.is-rolling { animation: none; }
 }
@@ -8205,23 +8380,62 @@ function parseBattleDescriptor(value) {
   if (seedText !== void 0 && (!/^\d+$/.test(seedText) || Number(seedText) > 4294967295)) fail4("seed \u5FC5\u987B\u662F 0\u20134294967295 \u7684\u6574\u6570");
   const ids = /* @__PURE__ */ new Set();
   const occupied = /* @__PURE__ */ new Set();
-  const units = lines.slice(1).map((line, i) => {
+  const units = [], covers = [], interactives = [];
+  const claim = (id3, x, y, i) => {
+    if (!identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase())) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID`);
+    if (occupied.has(`${x},${y}`)) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u4F4D\u7F6E\u91CD\u590D`);
+    occupied.add(`${x},${y}`);
+    ids.add(id3.toLowerCase());
+  };
+  for (const [i, line] of lines.slice(1).entries()) {
+    const parts = line.split("|").map((x2) => x2.trim());
+    if (parts[0] === "cover" || parts[0] === "interact") {
+      if (parts[0] === "cover") {
+        const [row3, id5, kind3, name3, point4] = parts;
+        if (parts.length !== 5 || !name3 || !["\u534A", "\u5168"].includes(kind3) || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point4 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u63A9\u4F53\u683C\u5F0F\u65E0\u6548`);
+        const [x3, y3, z3] = point4.split(",").map(Number);
+        claim(id5, x3, y3, i);
+        covers.push({ id: id5, name: name3, x: x3, y: y3, z: z3, cover: kind3 === "\u5168" ? 5 : 2, material: `${kind3}\u63A9\u4F53` });
+        continue;
+      }
+      const [row2, id4, kind2, effect, radiusText, damageText, name2, point3] = parts;
+      const radius = Number(radiusText), damage = Number(damageText);
+      if (parts.length !== 8 || !name2 || !["altar", "barrel"].includes(kind2) || !["explode", "heal", "shield", "restore"].includes(effect) || !Number.isInteger(radius) || radius < 0 || radius > 10 || !Number.isInteger(damage) || damage < 0 || damage > 1e5 || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point3 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u4E92\u52A8\u683C\u5F0F\u65E0\u6548`);
+      const [x2, y2, z2] = point3.split(",").map(Number);
+      claim(id4, x2, y2, i);
+      if (interactives.length === 2) fail4("\u6700\u591A\u4E24\u6761 interact \u8BB0\u5F55");
+      interactives.push({ id: id4, name: name2, x: x2, y: y2, z: z2, kind: kind2, effect, radius, damage });
+      continue;
+    }
     const [row, id3, team2, source, name, point2, ...tail] = line.split("|").map((x2) => x2.trim());
-    if (row !== "unit" || tail.length || !identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase()) || !["blue", "red"].includes(team2) || !name || name.length > 100 || !/^\d\s*,\s*\d$/.test(point2 ?? "")) {
+    const coordinates = point2?.split(",").map((x2) => x2.trim()) ?? [];
+    const altitudeToken = coordinates[2];
+    const altitudeMatch = altitudeToken?.match(/^(?:飞行|悬浮)=(-?\d+)$/);
+    const validPoint = /^\d\s*,\s*\d(?:\s*,\s*(?:-?\d+|(?:飞行|悬浮)=-?\d+))?$/.test(point2 ?? "");
+    if (row !== "unit" || tail.length || !identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase()) || !["blue", "red"].includes(team2) || !name || name.length > 100 || !validPoint) {
       fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID\u3001\u9635\u8425\u3001\u6765\u6E90\u3001\u663E\u793A\u540D\u53CA 0\u20139 \u8303\u56F4\u5185\u7684 x,y`);
     }
     const path = source?.startsWith("mvu:") ? source.slice(4).split("/") : [];
     if (source !== "char_info" && (!path.length || path.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4)))) {
       fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u6765\u6E90\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
     }
-    const [x, y] = point2.split(",").map(Number);
-    if (occupied.has(`${x},${y}`)) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u8D77\u70B9\u91CD\u590D`);
-    occupied.add(`${x},${y}`);
-    ids.add(id3.toLowerCase());
-    return { id: id3, team: team2, source, name, x, y };
-  });
+    const x = Number(coordinates[0]), y = Number(coordinates[1]);
+    const z = altitudeMatch ? 0 : coordinates[2] === void 0 ? 0 : Number(coordinates[2]);
+    const altitude = altitudeMatch ? Number(altitudeMatch[1]) : 0;
+    if (z < -4 || z > 8 || altitude < 0 || altitude > 12) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u9AD8\u5EA6\u5FC5\u987B\u5728 z -4 \u81F3 8\u3001\u79BB\u5730 0 \u81F3 12 \u8303\u56F4\u5185`);
+    claim(id3, x, y, i);
+    units.push({
+      id: id3,
+      team: team2,
+      source,
+      name,
+      x,
+      y,
+      ...altitudeMatch ? { altitude } : coordinates[2] !== void 0 ? { z } : {}
+    });
+  }
   if (!units.length) fail4("\u81F3\u5C11\u9700\u8981\u4E00\u6761 unit \u8BB0\u5F55");
-  return { version: 1, battleId, sceneTitle, terrainMode, ...seedText === void 0 ? {} : { seed: Number(seedText) }, units };
+  return { version: 1, battleId, sceneTitle, terrainMode, ...seedText === void 0 ? {} : { seed: Number(seedText) }, units, ...covers.length && { covers }, ...interactives.length && { interactives } };
 }
 
 // src/tavern/terrain.js
@@ -8230,12 +8444,44 @@ var height = (n) => Math.max(-4, Math.min(8, Math.round(Number(n) || 0)));
 var list2 = (value) => Array.isArray(value) ? value : [];
 function createBattleGrid(battle, seed, units, warnings) {
   const grid = Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: "floor", z: 0 })));
+  const anchors = battle.version === 1 ? [...list2(battle.units), ...list2(battle.covers), ...list2(battle.interactives)].filter((unit) => Number.isInteger(unit.z)) : [];
+  if (anchors.length) {
+    const reserved = new Set([...battle.units ?? [], ...list2(battle.covers), ...list2(battle.interactives)].map((at) => `${at.x},${at.y}`));
+    const painted = /* @__PURE__ */ new Set();
+    for (const { x, y, z } of anchors) {
+      grid[y][x] = { kind: "floor", z };
+      if (!z) continue;
+      const offsets = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+      const start = (seed + x * 13 + y * 7 >>> 0) % offsets.length;
+      for (let i = 0; i < offsets.length; i++) {
+        const [dx, dy] = offsets[(start + i) % offsets.length];
+        const points = [[x + dx, y + dy, z], [x + 2 * dx, y + 2 * dy, Math.abs(z) > 1 ? z - Math.sign(z) : 0]];
+        if (!points.every(([a, b]) => inBounds(a) && inBounds(b) && !reserved.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
+        for (const [a, b, h] of points) {
+          grid[b][a] = { kind: h === z ? "floor" : "slope", z: h };
+          painted.add(`${a},${b}`);
+        }
+        break;
+      }
+    }
+    for (let pass = 0; pass < 4; pass++) {
+      const previous = grid.map((row) => row.map((cell) => cell.z));
+      grid.forEach((row, y) => row.forEach((cell, x) => {
+        if (reserved.has(`${x},${y}`) || painted.has(`${x},${y}`)) return;
+        for (const [a, b] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+          const h = previous[b]?.[a];
+          if (h !== void 0 && Math.abs(h) > Math.abs(cell.z) + 2) Object.assign(cell, { kind: "slope", z: h - 2 * Math.sign(h) });
+        }
+      }));
+    }
+    return grid;
+  }
   if (battle.terrainMode === "flat") return grid;
   const legacyTerrain = battle.terrain ?? battle.grid;
   if (battle.terrainMode === "terrain" || battle.terrainMode == null && legacyTerrain == null) {
     const layout = seed % 8;
     const transform = (x, y) => [layout & 1 ? 9 - x : x, layout & 2 ? 9 - y : y];
-    const occupied = new Set(units.map((u) => `${u.x},${u.y}`));
+    const occupied = new Set([...units, ...list2(battle.covers), ...list2(battle.interactives)].map((u) => `${u.x},${u.y}`));
     const paint = (x, y, kind, z) => {
       const [a, b] = transform(x, y);
       const [px, py] = layout & 4 ? [b, a] : [a, b];
@@ -8924,7 +9170,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink) {
   const rawFacing = Array.isArray(p.facing) ? p.facing : [team2 === "blue" ? 1 : -1, 0];
   const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
-  const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: text2(p.moraleType) || "standard" };
+  const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: text2(p.moraleType) || "standard" };
   const creatureType = p.creatureType ?? record2.creatureType;
   if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text2).filter(Boolean).slice(0, 12);
   else if (text2(creatureType)) unit.creatureType = text2(creatureType).slice(0, 100);
@@ -8941,7 +9187,7 @@ function terrainState(battle, state, warnings) {
       warnings.push(`\u5FFD\u7565\u4F4D\u4E8E\u5899\u4F53\u5185\u7684\u63A9\u4F53\uFF1A${id3}`);
       continue;
     }
-    state.covers[id3] = { id: id3, name: text2(raw.name) || `\u63A9\u4F53${i + 1}`, x: p.x, y: p.y, material: text2(raw.material) || "\u672A\u77E5\u6750\u6599", hp: Math.max(0, Math.min(1e9, integer3(raw.hp ?? raw.maxHp, 10))), maxHp: Math.max(1, Math.min(1e9, integer3(raw.maxHp ?? raw.hp, 10))), cover: Math.max(0, Math.min(12, integer3(raw.cover ?? raw.shielding, 2))) };
+    state.covers[id3] = { id: id3, name: text2(raw.name) || `\u63A9\u4F53${i + 1}`, x: p.x, y: p.y, z: p.z, material: text2(raw.material) || "\u672A\u77E5\u6750\u6599", hp: Math.max(0, Math.min(1e9, integer3(raw.hp ?? raw.maxHp ?? 10, 10))), maxHp: Math.max(1, Math.min(1e9, integer3(raw.maxHp ?? raw.hp ?? 10, 10))), cover: Math.max(0, Math.min(12, integer3(raw.cover ?? raw.shielding, 2))) };
     state.covers[id3].hp = Math.min(state.covers[id3].hp, state.covers[id3].maxHp);
   }
   const interactives = battle.interacts ?? battle.interactives;
@@ -8952,8 +9198,9 @@ function terrainState(battle, state, warnings) {
       warnings.push(`\u5FFD\u7565\u4F4D\u4E8E\u5899\u4F53\u5185\u7684\u4E92\u52A8\u70B9\uFF1A${id3}`);
       continue;
     }
-    const kind = text2(raw.kind ?? raw.type).toLowerCase() === "altar" || /祭坛|altar/.test(text2(raw.name)) ? "altar" : "barrel";
-    state.interactives[id3] = { id: id3, name: text2(raw.name) || (kind === "altar" ? "\u661F\u8F89\u796D\u575B" : "\u4F59\u70EC\u7206\u6876"), x: p.x, y: p.y, kind, spent: Boolean(raw.spent) };
+    const declared = text2(raw.kind ?? raw.type).toLowerCase();
+    const kind = ["altar", "barrel"].includes(declared) ? declared : /祭坛|altar/.test(text2(raw.name)) ? "altar" : "barrel";
+    state.interactives[id3] = { id: id3, name: text2(raw.name) || (kind === "altar" ? "\u661F\u8F89\u796D\u575B" : "\u4F59\u70EC\u7206\u6876"), x: p.x, y: p.y, z: p.z, kind, effect: text2(raw.effect) || (kind === "barrel" ? "explode" : "heal"), radius: integer3(raw.radius, 2), damage: integer3(raw.damage, kind === "barrel" ? 12 : 0), spent: Boolean(raw.spent) };
   }
   return state;
 }
@@ -9399,7 +9646,8 @@ function fields2(rule, skip = []) {
   return Object.entries(rule.properties).filter(([key4]) => !skip.includes(key4)).map(([key4, value]) => `${key4}${rule.required.includes(key4) ? "" : "?"}=${describe(value)}`).join("\uFF0C");
 }
 var EFFECT_PROTOCOL = `\u3010\u7EDF\u4E00\u6548\u679C DSL\u3011
-\u5730\u5F62\u8282\u70B9 modifyTerrain\uFF08terrain: raise/lower/set\uFF0C\u6574\u6570 amount\uFF1Bz \u9650 \u22124\u20268\uFF09\u3001setTerrainKind\uFF08terrainKind: floor/wall/slope\uFF09\u3001addCover\uFF08hp\uFF09\u5747\u5FC5\u586B area\u3002area \u56DB\u79CD\u5199\u6CD5\uFF1A{"cells":[{"x":3,"y":4}]}\u3001{"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}\u3001{"center":"hitTarget","radius":1}\uFF08\u4E5F\u53EF self \u6216 {x,y}\uFF09\u3001{"center":"self","radius":1,"follow":true}\u3002\u5706\u4EE5\u68CB\u76D8\u5E73\u9762\u6B27\u6C0F\u8DDD\u79BB\u8BA1\u7B97\u3002\u4E3B\u52A8\u5730\u5F62\u6280\u80FD\u7528\u6280\u80FD\u6A21\u677F target: cell \u9009\u62E9\u5730\u9762\u683C\uFF0C\u8868\u8FBE\u5F0F target: self\uFF0Carea.center: hitTarget \u53D6\u7784\u51C6\u683C\u3002follow \u5FC5\u987B\u6709\u771F\u5B9E\u5355\u4F4D\u951A\u70B9\uFF0C\u56DE\u5408\u7ED3\u675F\u66F4\u65B0\uFF0C\u6B7B\u4EA1\u6216\u79BB\u573A\u6D88\u6563\u3002
+\u573A\u666F\u58F0\u660E\u89C4\u5219\uFF1Abattle_init \u7684 unit \u884C\u53EF\u5199 x,y,z\uFF0Cz \u4E3A\u521D\u59CB\u5730\u5F62\u9AD8\u5EA6\uFF08-4\u20268\uFF09\uFF1B\u7701\u7565 z \u4E3A 0\u3002terrain \u6A21\u5F0F\u4F1A\u56F4\u7ED5\u663E\u5F0F\u9AD8\u7A0B\u5408\u7406\u751F\u6210\u9AD8\u53F0\u548C\u5761\u9053\uFF0Cflat \u6A21\u5F0F\u4ECD\u5168\u4E3A z=0\u3002\u521D\u59CB\u98DE\u884C\u6216\u60AC\u6D6E\u7531 unit \u5750\u6807\u672B\u5C3E\u7684 \u98DE\u884C=n \u6216 \u60AC\u6D6E=n \u58F0\u660E\uFF0C\u8868\u793A\u79BB\u5F00\u811A\u4E0B\u5730\u5F62\u7684\u9AD8\u5EA6\uFF0C\u672A\u6CE8\u660E\u9AD8\u5EA6\u65F6\u6309 3 \u5904\u7406\u3002\u53EF\u9009 0\u20132 \u6761 cover \u884C\uFF0C\u683C\u5F0F\u4E3A cover|\u63A9\u4F53ID|\u534A\u6216\u5168|\u63A9\u4F53\u540D\u79F0|x,y,z\uFF0C\u534A\u63A9\u4F53 cover=2\u3001\u5168\u63A9\u4F53 cover=5\uFF1B\u53EF\u9009 0\u20132 \u6761 interact \u884C\uFF0C\u683C\u5F0F\u4E3A interact|\u4E92\u52A8ID|altar\u6216barrel|\u6548\u679C|\u8303\u56F4|\u4F24\u5BB3\u6570\u503C|\u4E92\u52A8\u540D\u79F0|x,y,z\u3002\u6548\u679C\u679A\u4E3E\u4E3A explode\u3001heal\u3001shield\u3001restore\u3002explode \u7528\u653B\u51FB\u69FD\u5E76\u6309\u6B66\u5668\u5C04\u7A0B\u548C\u89C6\u7EBF\u89E6\u53D1\uFF0C\u8303\u56F4\u4E3A\u534A\u5F84\u3001\u4F24\u5BB3\u6570\u503C\u4E3A\u7206\u70B8\u4F24\u5BB3\uFF1Bheal \u7528\u52A8\u4F5C\u69FD\u76F8\u90BB\u6FC0\u6D3B\u5E76\u56DE\u590D\u4F24\u5BB3\u6570\u503C\u7684 HP\uFF1Bshield \u7528\u52A8\u4F5C\u69FD\u76F8\u90BB\u6FC0\u6D3B\u5E76\u7ED9\u4E88\u4F24\u5BB3\u6570\u503C\u7684\u62A4\u76FE\uFF1Brestore \u7528\u52A8\u4F5C\u69FD\u76F8\u90BB\u6FC0\u6D3B\u5E76\u540C\u65F6\u56DE\u590D\u4F24\u5BB3\u6570\u503C\u7684 HP\u3001MP\u3001SP\u3002
+changeAltitude \u662F\u8F85\u52A9\u6A21\u578B\u7528\u4E8E\u628A\u6280\u80FD\u3001\u88C5\u5907\u6216\u72B6\u6001\u6548\u679C\u6807\u51C6\u5316\u4E3A\u98DE\u884C/\u60AC\u6D6E\u7684 DSL \u8282\u70B9\u3002\u5B83\u4E0D\u5C5E\u4E8E battle_init\u3002\u8282\u70B9\u9ED8\u8BA4 delta \u4E3A 3\uFF0C\u53EF\u7528\u8D1F\u503C\u4E0B\u964D\uFF0Cland:true \u76F4\u63A5\u843D\u5730\u3002\u5355\u4F4D\u79BB\u5730\u9AD8\u5EA6\u4F1A\u8FDB\u5165\u4E09\u7EF4\u8DDD\u79BB\u3001\u79FB\u52A8\u3001\u89C6\u7EBF\u548C\u6218\u62A5 z \u5FEB\u7167\u3002\u5730\u5F62\u8282\u70B9 modifyTerrain\uFF08terrain: raise/lower/set\uFF0C\u6574\u6570 amount\uFF1Bz \u9650 \u22124\u20268\uFF09\u3001setTerrainKind\uFF08terrainKind: floor/wall/slope\uFF09\u3001addCover\uFF08hp\uFF09\u5747\u5FC5\u586B area\u3002area \u56DB\u79CD\u5199\u6CD5\uFF1A{"cells":[{"x":3,"y":4}]}\u3001{"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}\u3001{"center":"hitTarget","radius":1}\uFF08\u4E5F\u53EF self \u6216 {x,y}\uFF09\u3001{"center":"self","radius":1,"follow":true}\u3002\u5706\u4EE5\u68CB\u76D8\u5E73\u9762\u6B27\u6C0F\u8DDD\u79BB\u8BA1\u7B97\u3002\u4E3B\u52A8\u5730\u5F62\u6280\u80FD\u7528\u6280\u80FD\u6A21\u677F target: cell \u9009\u62E9\u5730\u9762\u683C\uFF0C\u8868\u8FBE\u5F0F target: self\uFF0Carea.center: hitTarget \u53D6\u7784\u51C6\u683C\u3002follow \u5FC5\u987B\u6709\u771F\u5B9E\u5355\u4F4D\u951A\u70B9\uFF0C\u56DE\u5408\u7ED3\u675F\u66F4\u65B0\uFF0C\u6B7B\u4EA1\u6216\u79BB\u573A\u6D88\u6563\u3002
 remainingTurns \u4EE5\u5355\u4F4D\u56DE\u5408\u7ED3\u675F\u9012\u51CF\uFF0C\u7701\u7565\u4E3A 1\uFF0Cpersistent:true \u5728\u672C\u573A\u6301\u7EED\uFF08\u8DDF\u968F\u533A\u57DF\u4ECD\u53D7\u951A\u70B9\u751F\u5B58\u9650\u5236\uFF09\u3002\u5230\u671F\u6216\u6D88\u6563\u65F6\u7ACB\u5373\u8FD8\u539F\u539F\u9AD8\u5EA6\u3001\u7C7B\u578B\u5E76\u79FB\u9664\u4E34\u65F6\u63A9\u4F53\uFF0C\u4E0D\u56E0\u5360\u7528\u5EF6\u8FDF\u3002\u65BD\u52A0\u6216\u8FD8\u539F\u5730\u5F62\u65F6\uFF0C\u5761\u7684\u7B49\u6548\u9AD8\u5EA6\u56FA\u5B9A\u4E3A 1\uFF0C\u5176\u4ED6\u683C\u6309 z\uFF1B\u7B49\u6548\u9AD8\u5EA6\u4E0B\u964D\u65F6\uFF0C\u683C\u4E0A\u7684\u5B58\u6D3B\u4E14\u672A\u79BB\u573A\u5355\u4F4D\u6309\u6BCF 1 \u9AD8\u5EA6\u5DEE\u53D7\u5230 50 \u70B9\u56FA\u5B9A\u5760\u843D\u4F24\u5BB3\u3002\u62AC\u9AD8\u65F6\u5355\u4F4D\u968F\u811A\u4E0B\u5730\u5F62\u5347\u9AD8\u3002\u65B0\u9020\u5899\u8DF3\u8FC7\u5360\u7528\u683C\uFF0C\u5168\u90E8\u56E0\u5355\u4F4D\u5360\u7528\u65F6\u8BB0\u5F55\u672A\u89E3\u51B3\u3002\u5DF2\u6709\u63A9\u4F53\u6216\u4E92\u52A8\u70B9\u4E5F\u4F1A\u963B\u6B62\u9020\u5899\u3002
 \u88C5\u5907\u4E0E\u6280\u80FD effects \u90FD\u662F\u8868\u8FBE\u5F0F\u6570\u7EC4\uFF080\u202624 \u9879\uFF09\u3002\u6BCF\u6761\u8868\u8FBE\u5F0F\u4F7F\u7528\u6218\u5C40\u5185\u552F\u4E00 id\uFF0Clabel \u662F\u754C\u9762\u663E\u793A\u540D\u3002\u5916\u5C42\u6CA1\u6709 kind\uFF0C\u5185\u5C42\u8282\u70B9\u5FC5\u987B\u6709 kind\u3002\u4E94\u6BB5\u5199\u6CD5\uFF1AWHEN(trigger) \u2192 IF(condition\uFF0C\u53EF\u7701) \u2192 ROLL(\u53EF\u7701) \u2192 TARGET(target) \u2192 DO(effects)\uFF0CWITH \u4EE5\u8282\u70B9\u5B57\u6BB5\u6216\u5171\u4EAB params \u8868\u8FBE\u3002\u8282\u70B9\u540C\u540D\u5B57\u6BB5\u8986\u76D6 params\u3002\u9664\u8868\u4E2D\u58F0\u660E\u5B57\u6BB5\u5916\u4E0D\u5141\u8BB8\u989D\u5916\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\u3002
 \u8868\u8FBE\u5F0F\u5B57\u6BB5\uFF1A${fields2(expression2)}\u3002
@@ -10837,7 +11085,7 @@ function parseJSONPatch(value) {
   return null;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.2.2";
+var TAVERN_VERSION = "0.2.4";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",

@@ -227,6 +227,7 @@ export function createEffectEngine(io) {
             break;
           }
           case 'chainEffect': result = executeNodes(state, actor, source, p.effects, target, ctx, entry, seen, depth, node.target ?? exprTarget, p.stopOnFailure); break;
+          case 'changeAltitude': if (livingUnit(actor)) result = io.changeAltitude(state, actor, p); break;
           case 'modifyTerrain': case 'setTerrainKind': case 'addCover':
             result = io.terrain(state, actor, { ...node, label }, ctx);
             break;

@@ -1,6 +1,7 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
 import { effectLabel, resourceDefinitions } from '../core/effects.js';
 import { preview as rulesPreview, corpses } from '../core/combat.js';
+import { elevation } from '../core/spatial.js';
 import { bodySizeLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES, DAMAGE_TYPES } from './narrate.js';
 
@@ -126,7 +127,7 @@ export function createRenderer(root) {
     const risks = new Set((moving && preview?.opportunities || []).map(o => key(o.from.x, o.from.y)));
     const hoverKey = hover ? key(hover.x, hover.y) : null;
     const origin = state.units[selected] ?? current;
-    const originZ = origin ? state.grid[origin.y]?.[origin.x]?.z : 0;
+    const originZ = origin ? elevation(state, origin) : 0;
     let inspection = '';
     for (const [xy, slot] of cells) {
       const { cell } = slot;
@@ -237,7 +238,7 @@ export function createRenderer(root) {
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some(n => n.reloadable);
-    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `持械：${STANCES[u.stance] ?? '轻剑'}`,
+    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${STANCES[u.stance] ?? '轻剑'}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
     for (const s of values(u.statuses)) {

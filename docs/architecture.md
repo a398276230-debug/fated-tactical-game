@@ -1,6 +1,6 @@
 # 架构与文件归属（现状记录）
 
-记录口径：仓库当前代码（`package.json` 0.2.2，快照 `battleVersion = 3`，跨战档案 `version = 1`）。
+记录口径：仓库当前代码（`package.json` 0.2.4，快照 `battleVersion = 4`）。
 本文只描述已存在的结构、边界和字段，不含规划项。效果 DSL 见 [dsl.md](dsl.md)，状态系统见 [status.md](status.md)。
 
 ---
@@ -177,8 +177,8 @@ undoLastCommit()            → state = frames.pop().before
 
 | 导出 | 形状 | 说明 |
 | --- | --- | --- |
-| `exportBattleSnapshot()` | `{kind:'battle', version:3, origin, state, journal}` | `origin` 是开局态，`journal` 是事务序列；恢复时逐条重放，并与 `state` 做差异比对，有任何差异即报错 |
-| `restoreBattleSnapshot()` | 同上，接受 version 1/2/3 | 低版本先 `migrateStateEffects`；迁移分支不重放日志，直接采用 `state` 并清空 journal |
+| `exportBattleSnapshot()` | `{kind:'battle', version:4, origin, state, journal}` | `origin` 是开局态，`journal` 是事务序列；恢复时逐条重放，并与 `state` 做差异比对，有任何差异即报错 |
+| `restoreBattleSnapshot()` | 同上，接受 version 1/2/3/4 | 低版本先 `migrateStateEffects`；迁移分支不重放日志，直接采用 `state` 并清空 journal |
 | `exportPersistentCarryOver()` | `{kind:'persistent', version:1, units, items, statusTemplates?}` | 单位只带 `durationType==='persistent'` 的状态、`weapon`、`gear`；不带 HP/AP/短期状态 |
 | `createBattle({kind:'custom_state', state})` | — | 直通 `buildScenario`，`migrateStateEffects` 后校验 |
 

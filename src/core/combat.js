@@ -66,6 +66,16 @@ const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 export const living = state => values(state.units).filter(unit => alive(unit) && !unit.fled).sort(byId);
 const sameCell = (a, b) => a.x === b.x && a.y === b.y;
 const pos = (x, y) => ({ x, y });
+const pointAt = (state, at) => ({ x:at.x, y:at.y, z:elevation(state, at) });
+function changeAltitude(state, actor, node) {
+  const from = pointAt(state, actor);
+  const altitude = node.land ? 0 : Math.max(0, Math.min(12, (actor.altitude ?? 0) + (node.delta ?? 3)));
+  if (altitude === (actor.altitude ?? 0)) return false;
+  actor.altitude = altitude;
+  const to = pointAt(state, actor);
+  record(state, actor, 'altitude', `${actor.name}高度从 z=${from.z} 变为 z=${to.z}`, { from, to });
+  return true;
+}
 const key = (x, y) => `${x},${y}`;
 const stat = (unit, id) => Number(unit.stats?.[id] ?? 0) * Math.max(0, 1 + changes(unit, 'attributePercent'));
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
@@ -76,7 +86,7 @@ export const currentUnit = state => Object.hasOwn(state.units, state.order[state
 
 function record(state, unit, type, text, detail = {}) {
   const actor = typeof unit === 'string' ? unit : unit?.id ?? null;
-  const positions = Object.fromEntries(values(state.units).map(current => [current.id, { x: current.x, y: current.y }]));
+  const positions = Object.fromEntries(values(state.units).map(current => [current.id, pointAt(state, current)]));
   const event = { round: state.round, actor, text, type, detail, positions };
   state.logs.push(event);
   return event;
@@ -619,7 +629,7 @@ function spawnUnitEffect(state, actor, spec, center) {
   return true;
 }
 
-const dsl = createEffectEngine({ spawn: spawnUnitEffect, terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
+const dsl = createEffectEngine({ changeAltitude, spawn: spawnUnitEffect, terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
   counter: changeCounter, damage: damageTarget, loseHP, heal: restoreHP, grant: grantStatus, record, saved: effectSaved, removeStatus, knockback, teleport: teleportBehind, statusModifier: changes, blockRestore: unit => changes(unit, 'blockResourceRestore'),
   weaponType: (state, actor) => { const weapon = weaponInfo(state, actor).template; return weapon.weaponType ?? weapon.weaponClass ?? weapon.rangeType; },
   findExpression: (state, ref) => [...values(state.equipment), ...values(state.skills)].flatMap(t => t.effects).find(e => isExpression(e) && e.id === ref),
@@ -765,7 +775,7 @@ function canReact(state, { unit, weapon }, mover) {
 
 function threatens(state, source, mover, at) {
   return visibleEnemy(state, source.unit, { ...mover, x: at.x, y: at.y }) &&
-    validReach(state, source.unit, at, source.weapon.template);
+    validReach(state, source.unit, { ...at, altitude:mover.altitude }, source.weapon.template);
 }
 
 const opportunityDetail = (source, from, to) => ({ unitId: source.id, name: source.name,
@@ -970,13 +980,18 @@ function canExecute(state, actor, target, effect, nonLethal) {
 
 function usableTiles(state, actor, template, weapon, nonLethal) {
   const execute = findNode(template, 'execute', node => node.requiresPool);
-  return allCells(state).filter(at => validReach(state, actor, at, template, weapon?.ammo) &&
+  return allCells(state).filter(at => validReach(state, actor, template.target === 'cell' ? at : locateUnit(state, at) ?? at, template, weapon?.ammo) &&
     (!execute || canExecute(state, actor, locateUnit(state, at), execute, nonLethal)) &&
     !((template.shape === 'line' || template.shape === 'cone' || template.shape === 'fan') && sameCell(actor, at)));
 }
-function shapeTargets(state, actor, cells, template) {
+function shapeTargets(state, actor, cells, template, aim) {
   const keys = new Set(cells.map(at => key(at.x, at.y)));
-  return living(state).filter(unit => keys.has(key(unit.x, unit.y)) && selectionAllows(template, actor, unit));
+  return living(state).filter(unit => {
+    if (!selectionAllows(template, actor, unit)) return false;
+    if ((template.shape ?? 'single') === 'single') return sameCell(unit, aim);
+    if (template.shape === 'circle') return distance(state, aim, unit) <= (template.radius ?? 1.5) + 1e-9 && clearSight(state, aim, unit);
+    return keys.has(key(unit.x, unit.y)) && validReach(state, actor, unit, template);
+  });
 }
 
 /** With no x/y, queries highlighting. With both coordinates, validates one executable action. */
@@ -1069,10 +1084,10 @@ export function preview(state, action) {
       if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail('弹仓已空，请装填');
       if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail('爆桶超出武器射程或被墙体阻挡');
     } else if (distance(state,unit,item) > 1.5 || !clearSight(state,unit,item)) return fail('需要靠近互动点');
-    const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: 1.5 }) : [center];
+    const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: item.radius ?? 1.5 }) : [center];
     const keyset = new Set(cells.map(at => key(at.x, at.y)));
     const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }]
-      : living(state).filter(u => keyset.has(key(u.x, u.y))).map(u => {
+      : living(state).filter(u => keyset.has(key(u.x, u.y)) && distance(state, center, u) <= 1.5 + 1e-9).map(u => {
         const guard = guardFor(state, u) ?? u;
         const formula = mitigation(state, guard, 'energy', true, 0, { attacker:unit, intercepting:guard !== u });
         const shield = statusOf(guard, 'shield');
@@ -1101,11 +1116,12 @@ export function preview(state, action) {
   if (unplaced) {
     return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, action.nonLethal ?? unit.nonLethal) };
   }
-  const geometry = reaches(state, unit, center, template, attack && !shieldBash ? weapon.ammo : null);
+  const aimedUnit = locateUnit(state, center);
+  const aim = template.target === 'cell' ? center : aimedUnit ?? center;
+  const geometry = reaches(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
   if (!ground(state, center)) return fail('墙体无法指定', geometry);
   if (geometry.distance > geometry.range + 1e-9) return fail('目标超出射程', geometry);
   if (!clearSight(state, unit, center)) return fail('墙体阻断视线', geometry);
-  const aimedUnit = locateUnit(state, center);
   if (corpseSkill) {
     const corpse = corpses(state).find(c => sameCell(c, center));
     return corpse ? { ...common, ...geometry, ...tuning, cells: [center], targets: [], center, corpseId: corpse.id } : fail('目标格没有可用尸体');
@@ -1114,7 +1130,7 @@ export function preview(state, action) {
   if (execute && !canExecute(state, unit, aimedUnit, execute, action.nonLethal ?? unit.nonLethal)) return fail('目标或装备资源不满足斩杀条件');
   const solid = locateCover(state, center);
   const coverTarget = Boolean(solid && (attack || hasStrikeDamage(template)));
-  const cells = area(state, unit, center, template, attack && !shieldBash ? weapon.ammo : null);
+  const cells = area(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
   const aoe = (template.shape ?? 'single') !== 'single';
   if (!cells.length) return fail('请选择一个方向', geometry);
   if (!aoe) {
@@ -1130,7 +1146,7 @@ export function preview(state, action) {
   if (effect && !blink) return fail('目标背后的瞬移落点被阻挡', geometry);
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
-  const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template);
+  const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template, aim);
   const areaAttack = (template.shape ?? 'single') !== 'single';
   const declaredIntent = action.intent ?? unit.intent ?? 'normal';
   const resolvedIntent = areaAttack ? 'normal' : declaredIntent;
@@ -1237,7 +1253,7 @@ function coverDamage(state, actor, cover, amount, details) {
 function knockback(state, actor, target, effect) {
   const [dx, dy] = signFacing(actor, target);
   if (!dx && !dy) return;
-  const from = pos(target.x, target.y);
+  const from = pointAt(state, target);
   for (let i = 0; i < (effect.distance ?? 1); i++) {
     const at = pos(target.x + dx, target.y + dy);
     if (!canStep(state, target, at)) {
@@ -1247,7 +1263,7 @@ function knockback(state, actor, target, effect) {
     }
     Object.assign(target, at);
   }
-  record(state, actor, 'knockback', `${target.name}遭到击退`, { targetId: target.id, from, to: pos(target.x, target.y) });
+  record(state, actor, 'knockback', `${target.name}遭到击退`, { targetId: target.id, from, to: pointAt(state, target) });
 }
 
 function healWithGear(state, actor, target, spec, name, skillScale = 1) {
@@ -1314,9 +1330,9 @@ function removeStatus(state, actor, target, effect) {
 function teleportBehind(state, actor, target) {
   const to = backCell(state, target);
   if (!to || changes(actor, 'rooted')) return false;
-  const from = pos(actor.x, actor.y);
+  const from = pointAt(state, actor);
   Object.assign(actor, to);
-  record(state, actor, 'teleport', `${actor.name}瞬移至目标背后`, { from, to });
+  record(state, actor, 'teleport', `${actor.name}瞬移至目标背后`, { from, to:pointAt(state, actor) });
   return true;
 }
 
@@ -1396,7 +1412,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
 }
 
 function applyMovement(state, actor, type, plan) {
-  const from = pos(actor.x, actor.y), path = [];
+  const from = pointAt(state, actor), path = [];
   const canContinue = () => alive(actor) && !changes(actor, 'skip') && !changes(actor, 'rooted');
   for (const to of plan.path) {
     if (type !== 'disengage') {
@@ -1411,7 +1427,7 @@ function applyMovement(state, actor, type, plan) {
         const center = pos(actor.x, actor.y);
         record(state, unit, 'opportunity', `${unit.name}对${actor.name}发动借机攻击`,
           { ...opportunityDetail(unit, center, to), targetId: actor.id });
-        const profile = targetProfile(state, unit, actor, center, weapon.template, { weapon });
+        const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
         applyStrike(state, unit, { type: 'attack' }, { center, targets: [profile], hostile: true }, weapon);
         if (!canContinue()) break;
       }
@@ -1421,8 +1437,8 @@ function applyMovement(state, actor, type, plan) {
     Object.assign(actor, pos(to.x, to.y));
     path.push(to);
   }
-  const to = pos(actor.x, actor.y), interrupted = path.length !== plan.path.length;
-  record(state, actor, type, `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${to.x}, ${to.y})`,
+  const to = pointAt(state, actor), interrupted = path.length !== plan.path.length;
+  record(state, actor, type, `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${to.x}, ${to.y}, z=${to.z})`,
     { from, to, path, steps: path.length, interrupted });
 }
 
@@ -1431,20 +1447,26 @@ function applyInteraction(state, actor, plan) {
   item.spent = true;
   if (!sameCell(actor, item)) actor.facing = signFacing(actor, item);
   record(state, actor, 'interact', `${actor.name}${item.kind === 'barrel' ? '引爆' : '激活'}${item.name}`, { interactiveId: item.id });
-  if (item.kind === 'barrel') {
+  const effect = item.effect ?? (item.kind === 'barrel' ? 'explode' : 'heal');
+  if (effect === 'explode') {
     const weapon = weaponInfo(state, actor);
     if (weapon.ammo && !weapon.infiniteAmmo) dsl.changeResource(state, actor, actor, {kind:'drainResource',resource:weapon.ammo.resource,local:true}, 1, '引爆', {instance:weapon.instance});
     for (const profile of plan.targets) {
       const target = state.units[profile.id];
-      if (alive(target)) damageTarget(state, target, actor.id, 12, 'energy', '爆桶', { attacker: actor, hit: true, direct: false });
+      if (alive(target)) damageTarget(state, target, actor.id, item.damage ?? 12, 'energy', item.name, { attacker: actor, hit: true, direct: false });
     }
     for (const cover of values(state.covers).filter(c => c.hp > 0 && plan.cells.some(at => sameCell(at, c))).sort(byId)) {
-      coverDamage(state, actor, cover, 12, { interactiveId: item.id });
+      coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
+  } else if (Object.hasOwn(item, 'effect') && (effect === 'restore' || effect === 'heal')) {
+    const amount = item.damage ?? 8;
+    restoreHP(state, actor, amount, actor.id, item.name);
+    if (effect === 'restore') { actor.mp = Math.min(actor.maxMp, actor.mp + amount); actor.sp = Math.min(actor.maxSp, actor.sp + amount); }
+  } else if (Object.hasOwn(item, 'effect') && effect === 'shield') {
+    grantStatus(state, actor, 'shield', { amount: item.damage ?? 10, sourceUnitId: actor.id });
   } else {
-    restoreHP(state, actor, 8, actor.id, '星辉祭坛');
-    actor.mp = Math.min(actor.maxMp, actor.mp + 5);
-    actor.sp = Math.min(actor.maxSp, actor.sp + 3);
+    const amount = item.damage ?? 8;
+    restoreHP(state, actor, amount, actor.id, item.name);
     grantStatus(state, actor, 'shield', { amount: 10, sourceUnitId: actor.id });
     grantStatus(state, actor, 'haste', { sourceUnitId: actor.id });
   }

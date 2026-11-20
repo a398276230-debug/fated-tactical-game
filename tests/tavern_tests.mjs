@@ -106,7 +106,7 @@ unit|e2|red|char_info|木偶|8,7`;
 
 test('battle_init 描述符拒绝重复起点与模糊 MVU 来源', () => {
   assert.throws(() => parseBattleInit('battle|1|x|场景|flat\nunit|p1|blue|mvu:主角|主角|1,1\nunit|e1|red|mvu|敌人|1,1'), /battle_init 描述符/);
-  assert.throws(() => parseBattleInit('battle|1|x|场景|flat\nunit|p1|blue|mvu:主角|主角|1,1\nunit|e1|red|char_info|敌人|1,1'), /起点重复/);
+  assert.throws(() => parseBattleInit('battle|1|x|场景|flat\nunit|p1|blue|mvu:主角|主角|1,1\nunit|e1|red|char_info|敌人|1,1'), /位置重复/);
   assert.throws(() => parseBattleInit('battle|1|x|场景|flat|4294967296'), /seed/);
 });
 

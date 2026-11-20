@@ -13,7 +13,7 @@ export function cellAt(state, x, y) {
   if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return undefined;
   return state.grid[y]?.[x];
 }
-export const elevation = (state, at) => cellAt(state, at.x, at.y)?.z ?? 0;
+export const elevation = (state, at) => (cellAt(state, at.x, at.y)?.z ?? 0) + (at.altitude ?? 0);
 export const isGround = (state, at) => {
   const cell = cellAt(state, at.x, at.y);
   return Boolean(cell && cell.kind !== 'wall');
@@ -34,18 +34,19 @@ export function passableEdge(state, from, to) {
 
 export function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = true } = {}) {
   const dx = to.x - from.x, dy = to.y - from.y;
-  if (gridDistance(from, to) !== 1 || !passableEdge(state, from, to)) return false;
+  const passable = at => from.altitude > 0 ? isGround(state, at) : passableEdge(state, from, at);
+  if (gridDistance(from, to) !== 1 || !passable(to)) return false;
   const vacant = at => !unitAt(state, at.x, at.y, ignoreUnitId) && !coverAt(state, at.x, at.y);
   if (!vacant(to)) return false;
   if (!dx || !dy) return true;
   // A diagonal must not cut a corner made by a wall, cover, unit or cliff.
   return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every(at =>
-    vacant(at) && passableEdge(state, from, at) && passableEdge(state, at, to));
+    vacant(at) && passable(at) && passableEdge(state, at, to));
 }
 
 function search(state, unit, limit, options, target) {
   if (!isGround(state, unit) || !(limit >= 0)) return [];
-  const start = { x: unit.x, y: unit.y, z: elevation(state, unit), cost: 0, previous: null };
+  const start = { x: unit.x, y: unit.y, altitude:unit.altitude, z: elevation(state, unit), cost: 0, previous: null };
   const visited = new Set([key(start)]), queue = [start];
   const stepOptions = { ignoreUnitId: unit.id, ...options };
   for (let i = 0; i < queue.length; i++) {
@@ -53,7 +54,7 @@ function search(state, unit, limit, options, target) {
     if (target && same(from, target)) return [from];
     if (from.cost + 1 > limit) continue;
     for (const [dx, dy] of stepOptions.diagonal === false ? CARDINAL : NEIGHBORS) {
-      const to = { x: from.x + dx, y: from.y + dy };
+      const to = { x: from.x + dx, y: from.y + dy, altitude:unit.altitude };
       const id = key(to);
       if (visited.has(id) || !canStep(state, from, to, stepOptions) ||
         (options?.allowsStep && !options.allowsStep(from, to))) continue;

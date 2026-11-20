@@ -421,7 +421,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('#export-report');
   assert.equal(await run(`${get('#report-dialog')}.open`), true);
   const deliveredReport = await run(`${get('#report-text')}.value`);
-  assert.match(deliveredReport, /回合一[\s\S]*确定先攻次序[\s\S]*受伤斥候\(\d+, \d+\)倒下/);
+  assert.match(deliveredReport, /回合一[\s\S]*确定先攻次序[\s\S]*受伤斥候\(\d+, \d+, z=-?\d+\)倒下/);
   assert.doesNotMatch(deliveredReport, /<UpdateVariable>/);
   await click('#download-report');
   const reportFile = join(profile, 'fated-ruins-report.txt');
@@ -471,8 +471,26 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.match(await run(`${get('#tactical-preview')}.textContent`), /借机风险.*守门巨像/);
   await click(actions('disengage')); assert.equal((await state()).units.swordsman.x,0);
   assert.equal((await state()).logs.some(e=>e.type==='opportunity'),false);
-  await send('Emulation.setDeviceMetricsOverride', { width:390, height:850, deviceScaleFactor:1, mobile:false });
-  assert.deepEqual(await run('({pageFits:document.documentElement.scrollWidth<=innerWidth, gridScrollable:document.querySelector(".axis-scroll").scrollWidth>document.querySelector(".axis-scroll").clientWidth})'), {pageFits:true,gridScrollable:true});
+  // 手机：默认整盘可见且不被 HUD 遮挡；放大后棋盘可拖动
+  const boardFit = () => run(`new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => {
+    const g=document.querySelector('#board').getBoundingClientRect(), s=document.querySelector('.axis-scroll'), hud=document.querySelector('.ft-hud-top').getBoundingClientRect(), dock=document.querySelector('.ft-dock').getBoundingClientRect();
+    const side = dock.height > innerHeight*.7;
+    done({ pageFits: document.documentElement.scrollWidth<=innerWidth, scrollable: s.scrollWidth>s.clientWidth+1 || s.scrollHeight>s.clientHeight+1,
+      clear: g.top>=hud.bottom-1 && g.left>=0 && (side ? g.right<=dock.left+1 : g.bottom<=dock.top+1 && g.right<=innerWidth),
+      side, compact: document.querySelector('#board-frame').dataset.compact, cell: Math.round(document.querySelector('#board .tactical-cell').getBoundingClientRect().width) });
+  })))`);
+  await send('Emulation.setDeviceMetricsOverride', { width:390, height:844, deviceScaleFactor:1, mobile:true });
+  let fit = await boardFit();
+  assert.deepEqual({ ...fit, cell: fit.cell >= 30 }, { pageFits:true, scrollable:false, clear:true, side:false, compact:'true', cell:true }, '竖屏手机整盘可见');
+  await click('#zoom-toggle');
+  fit = await boardFit();
+  assert.deepEqual([fit.scrollable, fit.cell >= 50, fit.compact], [true, true, 'false'], '放大后可拖动');
+  await click('#zoom-toggle');
+  await send('Emulation.setDeviceMetricsOverride', { width:844, height:390, deviceScaleFactor:1, mobile:true });
+  fit = await boardFit();
+  assert.deepEqual({ ...fit, cell: fit.cell >= 28 }, { pageFits:true, scrollable:false, clear:true, side:true, compact:'true', cell:true }, '横屏手机：动作区在右侧，棋盘不被遮挡');
+  await send('Emulation.setDeviceMetricsOverride', { width:390, height:850, deviceScaleFactor:1, mobile:true });
+  await boardFit();
   await send('Emulation.setTouchEmulationEnabled', { enabled:true, maxTouchPoints:1 });
   const tap = async selector => {
     const box = await run(`(() => { const e=${get(selector)}; e.scrollIntoView({block:'center',inline:'center'}); const r=e.getBoundingClientRect(); return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}; })()`);
@@ -501,5 +519,5 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.match(await run(`${get('#resource-output')}.textContent`), /HP 321\/642/);
   await click('#resource-dialog form button');
   assert.deepEqual({ pageErrors, consoleErrors }, { pageErrors:[], consoleErrors:[] });
-  t.diagnostic('实测 100 格、4 掩体、4 互动点；1440px 无重叠，390px 仅棋盘内部横滚；0 pageerror / 0 console.error');
+  t.diagnostic('实测 100 格、4 掩体、4 互动点；1440px 无重叠，390 竖屏与 844×390 横屏整盘可见；0 pageerror / 0 console.error');
 });
