@@ -1,417 +1,506 @@
 import { createGameAPI } from '../api/game_api.js';
 import { SCENARIOS } from '../presets/scenarios.js';
-import { createRenderer } from './render.js';
+import { createRenderer, ACTION_LABELS, ACTION_HINTS } from './render.js';
+import { createPlayback } from './animation.js';
 import { equippedActiveSkills } from '../core/combat.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 
-export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, storage: storageArea } = {}) {
-const document = root.ownerDocument, window = document.defaultView;
-const localStorage = storageArea ?? window?.localStorage;
-const $ = id => root.querySelector(`[id=\"${id}\"]`);
-const view = createRenderer(root);
-const scenario = $('scenario-select'), mode = $('mode-select'), seed = $('seed-input');
-const storage = { getItem: key => { try { return localStorage?.getItem(key) ?? null; } catch { return null; } }, setItem: (key, value) => { try { localStorage?.setItem(key, value); } catch {} }, removeItem: key => { try { localStorage?.removeItem(key); } catch {} } };
-let state, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, message = '';
-let menuButtons = new Map();
-const active = () => state.units[state.order[state.turn]];
-const error = value => { message = value; $('action-error').hidden = !value; $('action-error').textContent = value ?? ''; };
-const draw = () => {
-  // Rendering hover feedback must not move an already-open action card. The
-  // card is positioned when opened and only re-laid out on viewport changes.
-  view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, error: message, scenarioOptions: customBattle ? {} : undefined });
-};
-const drawPreview = draw;
-const measurement = [$('measure-origin'), $('measure-target')];
-function measure() {
-  const [from, to] = measurement.map(input => state.units[input.value]);
-  if (!from || !to) { $('measure-readout').textContent = '没有可测距的单位。'; return; }
-  const dz = elevation(state, from) - elevation(state, to), cover = coverBetween(state, from, to);
-  $('measure-readout').textContent = `${from.name} → ${to.name} · 战棋 ${distance3D(state,from,to).toFixed(2)}／原协议 ${game.protocolDistance({ ...from, z:elevation(state,from) }, { ...to, z:elevation(state,to) })} · ΔZ ${dz > 0 ? '+' : ''}${dz} · ${!hasLOS(state,from,to) ? '# 墙体阻断' : cover ? `${cover.id} 遮蔽 −${cover.cover}` : '视线通畅'}`;
-}
-function refreshMeasurement() {
-  const living = Object.values(state.units).filter(u => u.hp > 0);
-  for (const [i, input] of measurement.entries()) {
-    const old = input.value;
-    input.replaceChildren(...living.map(u => {
-      const option = new window.Option(`${u.name} (${u.x},${u.y},Z${elevation(state,u)})`,u.id);
-      option.dataset.faction = u.team;
-      return option;
-    }));
-    input.value = living.some(u => u.id === old) ? old : (i ? living.find(u => u.team === 'red') : active())?.id ?? living.at(-1)?.id ?? '';
-    input.dataset.faction = state.units[input.value]?.team ?? '';
-  }
-  measure();
-}
-function safely(fn) { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } }
+const THEMES = ['amethyst', 'night-gold', 'frost-silver'];
+const TARGETLESS = ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
+const PATH_NAMES = { units: '单位', items: '物品', grid: '地形', statuses: '状态', counters: '计数', statusTemplates: '状态模板', covers: '掩体', interactives: '互动点' };
 
-if (customBattle) scenario.closest('label').hidden = true;
-else for (const [id, { title }] of Object.entries(SCENARIOS)) scenario.add(new window.Option(title, id));
-function scenarioDescription() {
-  $('scenario-preview').textContent = customBattle ? '来自当前聊天 · 10×10' : SCENARIOS[scenario.value].description + (carry ? ' · 已载入跨战装备与状态' : '');
-  $('clear-persistent').hidden = !!customBattle || !carry;
+/** 把沙盒试算结果写成人能读的句子（保留原始键名，便于对照命令）。 */
+function describeProposal(result) {
+  if (!result?.ok) return `✖ 无法执行：${result?.error ?? '未知错误'}`;
+  if (result.revision != null && !result.diff) return `✔ 已写入战局（版本 ${result.revision}）。`;
+  const short = v => (v == null ? '无' : typeof v === 'object' ? (v.name ? `「${v.name}」` : '一组数据') : String(v));
+  const lines = (result.diff ?? []).filter(d => d.path[0] !== 'logs').map(d => {
+    const path = d.path.map(p => PATH_NAMES[p] ?? p).join(' › ');
+    if (!('before' in d)) return `＋ 新增 ${path}：${short(d.after)}`;
+    if (!('after' in d)) return `－ 移除 ${path}`;
+    return `• ${path}：${short(d.before)} → ${short(d.after)}`;
+  });
+  return [`试算通过，确认后会改变 ${lines.length} 处：`, ...lines].join('\n');
 }
-function configure(id) {
-  if (customBattle) seed.value = customBattle.seed ?? 0;
-  else {
-    scenario.value = Object.hasOwn(SCENARIOS, id) ? id : 'ruins';
-    seed.value = SCENARIOS[scenario.value].seed;
+
+export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, storage: storageArea } = {}) {
+  const document = root.ownerDocument, window = document.defaultView;
+  const localStorage = storageArea ?? window?.localStorage;
+  const $ = id => root.querySelector(`[id="${id}"]`);
+  const view = createRenderer(root);
+  const scenario = $('scenario-select'), mode = $('mode-select'), seed = $('seed-input');
+  const storage = {
+    getItem: key => { try { return localStorage?.getItem(key) ?? null; } catch { return null; } },
+    setItem: (key, value) => { try { localStorage?.setItem(key, value); } catch { /* optional */ } },
+    removeItem: key => { try { localStorage?.removeItem(key); } catch { /* optional */ } },
+  };
+  // state：屏幕上正在展示的战局（演出时会落后于真实战局）；live：规则层的真实战局。
+  let state, live, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, busy = false;
+  let menuButtons = new Map(), openDrawer = null, seenLogs = 0;
+
+  const active = (s = state) => s?.units[s.order[s.turn]];
+  const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
+  const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
+  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy });
+
+  const playback = createPlayback(root, {
+    show(next, opts) { busy = !!opts?.busy; show(next); },
+    onIdle() { busy = false; show(live); schedule(); },
+  });
+
+  function show(next) {
+    const changed = state !== next;
+    state = next;
+    if (changed && !target) selectedId = state.units[selectedId]?.hp > 0 ? selectedId : active()?.id;
+    draw();
+    if (view.renderLog(state) && openDrawer !== 'log') $('log-unread').hidden = false;
+    refreshMeasurement();
   }
-  scenarioDescription();
-}
-function restart() {
-  if (!seed.value || !seed.checkValidity()) throw new Error('种子须为 0–4294967295 的整数');
-  if (customBattle) {
-    const value = Number(seed.value);
-    const state = customBattle.restart({ seed: value, mode: mode.value });
-    game.createBattle({ kind: 'custom_state', state });
-    customBattle.seed = value;
-    storage.setItem(`${storageKey}/seed`, String(value));
-    return;
-  }
-  game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
-}
-function schedule() {
-  clearTimeout(timer);
-  if (!state?.outcome && active()?.team === 'red' && $('auto-ai').checked) {
-    timer = setTimeout(() => safely(() => game.stepEnemy()), Number($('ai-speed').value));
-  }
-}
-function pauseAI() {
-  $('auto-ai').checked = false;
-  $('auto-ai').onchange();
-}
-function clearProposal() {
-  pending = null;
-  $('sandbox-commit').disabled = true;
-}
-function sandboxOutput(value) { $('sandbox-output').textContent = typeof value === 'string' ? value : JSON.stringify(value, null, 2); }
-function update({ resetAction = false, save = false } = {}) {
-  const previous = state;
-  state = game.getBattleState();
-  if (resetAction || !state.units[selectedId]) {
-    selectedId = active()?.id;
-    action = null;
-    hover = target = null;
-    sprint = false;
-    inspectedId = null;
+  function resetSelection() {
+    selectedId = active(live ?? state)?.id;
+    action = null; hover = target = null; sprint = false; inspectedId = null;
     $('target-actions').hidden = true;
   }
-  draw();
-  refreshMeasurement();
-  if (save) {
+
+  // ---------- 测距 ----------
+  const measurement = [$('measure-origin'), $('measure-target')];
+  function measure() {
+    const [from, to] = measurement.map(input => state.units[input.value]);
+    if (!from || !to) { $('measure-readout').textContent = '没有可测距的单位。'; return; }
+    const dz = elevation(state, from) - elevation(state, to), cover = coverBetween(state, from, to);
+    const height = dz > 0 ? `${from.name}高出 ${dz}` : dz < 0 ? `${from.name}低 ${-dz}` : '两者同高';
+    const sight = !hasLOS(state, from, to) ? '视线被墙体挡住' : cover ? `视线经过${cover.name ?? cover.id}，命中 −${cover.cover}` : '视线通畅';
+    $('measure-readout').textContent = `${from.name} → ${to.name}\n棋盘距离 ${distance3D(state, from, to).toFixed(1)} 格（协议距离 ${game.protocolDistance({ ...from, z: elevation(state, from) }, { ...to, z: elevation(state, to) })}）\n${height}，${sight}`;
+  }
+  function refreshMeasurement() {
+    const living = Object.values(state.units).filter(u => u.hp > 0);
+    for (const [i, input] of measurement.entries()) {
+      const old = input.value;
+      input.replaceChildren(...living.map(u => {
+        const option = new window.Option(`${u.name}（${u.x}, ${u.y}）`, u.id);
+        option.dataset.faction = u.team;
+        return option;
+      }));
+      input.value = living.some(u => u.id === old) ? old : (i ? living.find(u => u.team === 'red') : active())?.id ?? living.at(-1)?.id ?? '';
+      input.dataset.faction = state.units[input.value]?.team ?? '';
+    }
+    measure();
+  }
+
+  // ---------- 抽屉 ----------
+  function setDrawer(name) {
+    const same = openDrawer === name;
+    closeDrawer();
+    if (same || !name) return;
+    const panel = root.querySelector(`aside[data-drawer="${name}"]`);
+    if (!panel) return;
+    closeTarget();
+    panel.hidden = false;
+    openDrawer = name;
+    $('drawer-scrim').hidden = false;
+    root.querySelector(`[data-open-drawer="${name}"]`)?.setAttribute('aria-pressed', 'true');
+    if (name === 'log') {
+      $('log-unread').hidden = true;
+      const scroller = $('combat-log').parentElement;
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+  }
+  function closeDrawer() {
+    if (!openDrawer) return;
+    root.querySelector(`aside[data-drawer="${openDrawer}"]`).hidden = true;
+    root.querySelector(`[data-open-drawer="${openDrawer}"]`)?.setAttribute('aria-pressed', 'false');
+    $('drawer-scrim').hidden = true;
+    openDrawer = null;
+  }
+
+  // ---------- 战局配置 ----------
+  if (customBattle) for (const node of root.querySelectorAll('[data-scenario-only]')) node.hidden = true;
+  else for (const [id, { title }] of Object.entries(SCENARIOS)) scenario.add(new window.Option(title, id));
+  function scenarioDescription() {
+    $('scenario-preview').textContent = customBattle ? '来自当前聊天 · 10×10' : SCENARIOS[scenario.value].description + (carry ? ' · 已载入跨战装备与状态' : '');
+    $('clear-persistent').hidden = !!customBattle || !carry;
+  }
+  function configure(id) {
+    if (customBattle) seed.value = customBattle.seed ?? 0;
+    else {
+      scenario.value = Object.hasOwn(SCENARIOS, id) ? id : 'ruins';
+      seed.value = SCENARIOS[scenario.value].seed;
+    }
+    scenarioDescription();
+  }
+  function restart() {
+    if (!seed.value || !seed.checkValidity()) throw new Error('种子须为 0–4294967295 的整数');
+    if (customBattle) {
+      const value = Number(seed.value);
+      game.createBattle({ kind: 'custom_state', state: customBattle.restart({ seed: value, mode: mode.value }) });
+      customBattle.seed = value;
+      storage.setItem(`${storageKey}/seed`, String(value));
+    } else game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
+    closeDrawer();
+  }
+
+  // ---------- 敌方自动 ----------
+  function schedule() {
+    window.clearTimeout(timer);
+    if (busy || playback.busy || live?.outcome || active(live)?.team !== 'red' || !$('auto-ai').checked) return;
+    timer = window.setTimeout(() => safely(() => game.stepEnemy()), Number($('ai-speed').value) || 350);
+  }
+  function pauseAI() { $('auto-ai').checked = false; storage.setItem('fated-tactical/auto', 'false'); window.clearTimeout(timer); }
+
+  // ---------- 战局变化 ----------
+  const continues = (a, b) => a && b && b.logs.length > a.logs.length && a.scenarioId === b.scenarioId
+    && JSON.stringify(a.logs.at(-1)) === JSON.stringify(b.logs[a.logs.length - 1]);
+  function onChange() {
+    const before = live;
+    live = game.getBattleState();
     try { storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
     catch { error('浏览器存储空间不足或已关闭；请下载快照保存战局。'); }
+    view.renderControls(live);
+    resetSelection();
+    if (continues(before, live) && playback.enqueue(before, live)) { window.clearTimeout(timer); return; }
+    playback.reset();
+    busy = false;
+    show(live);
     schedule();
   }
-  return previous;
-}
-function execute(next) { return safely(() => game.playAction(next)); }
-function pointFrom(el) {
-  const cell = el.closest('[data-x][data-y]');
-  return cell ? { x: Number(cell.dataset.x), y: Number(cell.dataset.y) } : null;
-}
-const cellFor = at => $('board').querySelector(`[data-x="${at.x}"][data-y="${at.y}"]`);
-function layoutTargetCard() {
-  if (!target || $('target-actions').hidden) return;
-  const anchor = cellFor(target);
-  if (!anchor) return;
-  const r = anchor.getBoundingClientRect(), clip = anchor.closest('.axis-scroll').getBoundingClientRect();
-  const viewport = window?.visualViewport;
-  if (r.right <= Math.max(clip.left, viewport?.offsetLeft ?? 0)
-    || r.left >= Math.min(clip.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth))
-    || r.bottom <= (viewport?.offsetTop ?? 0) || r.top >= (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)) {
-    closeTarget();
-    return;
-  }
-  placeTargetCard($('target-actions'), anchor, viewport);
-}
-function closeTarget(restoreFocus = false) {
-  const at = target;
-  target = action = null;
-  $('target-actions').hidden = true;
-  draw();
-  if (restoreFocus && at) cellFor(at)?.focus({ preventScroll:true });
-}
-const labelByType = { use_item:'使用副手道具', move:'移动', sprint:'疾跑至此', disengage:'撤离', attack:'普攻', interact:'互动', brace:'架势防御', block:'格挡', shield_bash:'盾击', charge:'蓄力', lock_on:'定位', scan:'探察', grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞', flee:'逃跑', detour:'绕行', reload:'装填', end:'结束回合' };
-function handlePoint(at, input = {}) {
-  error('');
-  const unit = Object.values(state.units).find(u => u.hp > 0 && u.x === at.x && u.y === at.y);
-  const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find(v => v.x === at.x && v.y === at.y);
-  const actor = active();
-  const canAct = actor?.team === 'blue' && !state.outcome;
-  const self = canAct && unit?.id === actor.id;
-  if (self) {
-    const check = game.previewAction({type:'sprint'});
-    sprint = !sprint && check.ok;
-    if (!check.ok) error(check.error);
-  }
-  selectedId = unit?.id ?? actor?.id;
-  inspectedId = unit ? null : feature?.id;
-  target = at; hover = at; action = null;
-  const options = [];
-  $('bonus-dice-select').value = String(Math.min(Number($('bonus-dice-select').value), actor?.bonusDice ?? 0));
-  const add = (type, skill) => {
-    const targetless = ['brace','block','charge','scan','flee','use_item','detour','reload','end'].includes(type);
-    const command = { type, ...(targetless ? {} : at), ...(skill ? { skillId:skill } : {}),
-      ...(type === 'attack' || type === 'skill' ? { intent:$('intent-select').value, nonLethal:$('nonlethal-toggle').checked,
-        bonusDice:Number($('bonus-dice-select').value) } : {}) };
-    const plan = game.previewAction(command);
-    if (plan.ok) options.push({ command, plan, label: skill ? plan.name : labelByType[type] });
-  };
-  if (canAct) {
-    if (self) { add('brace'); add('block'); add('charge'); add('scan'); add('flee'); add('use_item'); add('reload'); }
-    else { add(sprint ? 'sprint' : 'move'); add('disengage'); add('attack'); add('lock_on'); add('grapple'); add('disarm'); add('trip'); add('push'); }
-    add('interact');
-    for (const skill of actor.skills) add('skill', skill);
-    for (const [skill] of equippedActiveSkills(state, actor)) add('skill', skill);
-    if (self) add('end');
-  }
-  $('target-title').textContent = `${unit?.name ?? feature?.name ?? '地块'} · (${at.x}, ${at.y})${self ? sprint ? ' · 疾跑已启用' : ' · 普通移动' : ''}`;
-  const toolbar = $('action-toolbar'); toolbar.replaceChildren(); menuButtons = new Map();
-  for (const { command, plan, label } of options) {
-    const button = document.createElement('button');
-    button.type = 'button'; button.className = 'game-button'; button.dataset.action = command.type;
-    if (command.skillId) button.dataset.skillId = command.skillId;
-    const risky = plan.opportunities?.length;
-    button.textContent = [label, plan.ap ? `${plan.ap} AP` : '', plan.mp ? `${plan.mp} MP` : '', plan.sp ? `${plan.sp} SP` : '', risky ? '⚠' : ''].filter(Boolean).join(' · ');
-    button.setAttribute('aria-pressed','false');
-    menuButtons.set(button, { command, plan, label }); toolbar.append(button);
-  }
-  if (!options.length) toolbar.textContent = canAct ? '当前没有适用于这一格的动作。' : '当前不能行动，仅查看地块。';
-  $('target-preview').open = Boolean(options[0]?.plan.opportunities?.length);
-  $('target-actions').hidden = false;
-  $('target-actions').scrollTop = 0;
-  $('confirm-action').hidden = true;
-  if (options.length) action = options[0].command;
-  draw();
-  layoutTargetCard();
-  if (input.detail === 0) (toolbar.querySelector('button') ?? $('close-target')).focus({ preventScroll:true });
-}
-function handleAction(button) {
-  const choice = menuButtons.get(button);
-  if (!choice) return;
-  const { command, plan, label } = choice;
-  error('');
-  if (!(['skill','attack'].includes(command.type) || plan.opportunities?.length)) { execute(command); return; }
-  action = command;
-  for (const btn of menuButtons.keys()) btn.setAttribute('aria-pressed', String(btn === button));
-  const confirm = $('confirm-action');
-  confirm.hidden = false; confirm.textContent = `确认${label}`;
-  $('target-preview').open = true;
-  draw();
-}
-function hoverPoint(point) { hover = point; if (!target) drawPreview(); }
-function download(kind, value, format = 'json') {
-  const link = document.createElement('a');
-  const isText = format === 'txt';
-  const url = window.URL.createObjectURL(new window.Blob([isText ? value : JSON.stringify(value, null, 2)], { type:isText ? 'text/plain;charset=utf-8' : 'application/json' }));
-  link.href = url;
-  link.download = `fated-${state.scenarioId}-${kind}.${format}`;
-  link.click();
-  setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-}
-
-function bindControls() {
-  for (const input of measurement) input.onchange = () => { input.dataset.faction = state.units[input.value]?.team ?? ''; measure(); };
-  scenario.addEventListener('change', () => configure(scenario.value), {signal});
-  $('intent-select').onchange = () => { if (target) handlePoint(target); };
-  $('nonlethal-toggle').onchange = () => { if (target) handlePoint(target); };
-  $('bonus-dice-select').onchange = () => { if (target) handlePoint(target); };
-  $('theme-select').onchange = () => {
-    const theme = $('theme-select').value;
-    root.dataset.dlcTheme = theme;
-    try { storage.setItem('fated-tactical/theme', theme); } catch { /* optional preference */ }
-  };
-  $('clear-persistent').onclick = () => {
-    carry = null;
-    try { storage.removeItem(crossedKey); } catch { /* optional preference */ }
-    scenarioDescription();
-  };
-  $('reset-button').onclick = () => safely(restart);
-  $('end-turn').onclick = () => { if (active()?.team === 'blue') execute({ type:'end' }); };
-  $('undo-button').onclick = () => safely(() => {
-    // Pause so the just-undone red decision is not immediately applied again.
-    pauseAI();
-    const result = game.undoLastCommit(); if (!result.ok) error(result.error);
+  const execute = command => safely(() => {
+    const result = game.playAction(command);
+    if (result && result.ok === false) error(result.error);
+    return result;
   });
-  $('ai-step').onclick = () => safely(() => { clearTimeout(timer); game.stepEnemy(); });
-  $('auto-ai').onchange = () => {
-    try { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); } catch { /* optional preference */ }
-    schedule();
-  };
-  $('ai-speed').onchange = schedule;
-  const report = $('report-text'), reportMessage = $('report-message');
-  $('export-report').onclick = () => {
-    report.value = game.exportBattleReportText();
-    reportMessage.textContent = '';
-    $('report-dialog').showModal();
-  };
-  $('copy-report').onclick = async () => {
-    try {
-      await window.navigator.clipboard.writeText(report.value);
-      reportMessage.textContent = '已复制。';
-    } catch {
-      report.focus(); report.select();
-      reportMessage.textContent = '浏览器不允许自动复制，请按 Ctrl+C 或下载 TXT。';
-    }
-  };
-  $('download-report').onclick = () => download('report', report.value, 'txt');
-  $('export-snapshot').onclick = () => download('battle', game.exportBattleSnapshot());
-  $('export-persistent').onclick = () => download('persistent', game.exportPersistentCarryOver());
-  $('import-button').onclick = () => $('import-snapshot').click();
-  $('import-snapshot').onchange = async event => {
-    const file = event.target.files[0];
-    event.target.value = '';
-    if (!file) return;
-    try {
-      if (file.size > 8 * 1024 * 1024) throw new Error('JSON 文件大于 8 MiB');
-      const data = JSON.parse(await file.text());
-      if (data.kind === 'persistent') {
-        const previous = carry;
-        carry = data;
-        try { restart(); } catch (e) { carry = previous; throw e; }
-        try { storage.setItem(crossedKey, JSON.stringify(carry)); } catch { /* downloaded file remains the source */ }
-        scenarioDescription();
-      } else {
-        const restored = game.restoreBattleSnapshot(data);
-        configure(restored.scenarioId);
-        mode.value = restored.mode;
-        if (restored.migratedFrom) { error('已恢复旧战局；借机规则从现在生效，旧撤销记录未迁移。'); return; }
-      }
-      error('');
-    } catch (e) { error(`导入失败：${e.message}`); }
-  };
-  const editor = $('sandbox-editor'), reason = $('sandbox-reason');
-  for (const input of [editor, reason]) input.addEventListener('input', clearProposal, {signal});
-  $('api-sandbox').addEventListener('click', event => {
-    const kind = event.target.closest('[data-example]')?.dataset.example;
-    if (!kind) return;
-    const commands = {
-      counter: () => ({ type:'adjust_item_counter', instanceId:'soulblade-lan', counterKey:'souls', operation:'add', value:1 }),
-      status: () => ({ type:'upsert_status', unitId:selectedId ?? active()?.id, statusId:'haste', options:{durationType:'persistent'} }),
-      'custom-status': () => {
-        const id = 'bone_frost';
-        const apply = { type:'upsert_status', unitId:selectedId ?? active()?.id, statusId:id };
-        if (Object.hasOwn(game.listStatusTemplates(), id)) return [apply];
-        return [{ type:'define_status_template', template:{ id, name:'蚀骨寒霜', icon:'❄️', description:'回合初受到 3 点能量伤害，移动距离 −1。',
-          category:'dot', remainingTurns:2, durationType:'battle_turns', tickTiming:'onTurnStart', stackRule:'refresh', maxStacks:1,
-          modifiers:{ damage:3, damageType:'energy', movement:-1 } } }, apply];
-      },
-      terrain: () => ({ type:'set_terrain_cell', x:0, y:0, patch:{kind:'slope',z:1} }),
-    };
-    const example = commands[kind]();
-    editor.value = JSON.stringify(Array.isArray(example) ? example : [example], null, 2);
-    clearProposal();
-  }, {signal});
-  $('sandbox-preview').onclick = () => {
-    clearProposal();
-    try {
-      const result = game.proposeCommands(JSON.parse(editor.value), { baseRevision: game.getStateSummary().revision, reason: reason.value });
-      sandboxOutput(result);
-      if (result.ok) { pending = result.proposalId; $('sandbox-commit').disabled = false; }
-    } catch (e) { sandboxOutput(`JSON 无效：${e.message}`); }
-  };
-  $('sandbox-commit').onclick = () => { const result = game.commitProposal(pending); clearProposal(); sandboxOutput(result); };
-  $('sandbox-undo').onclick = () => {
-    pauseAI();
-    sandboxOutput(game.undoLastCommit()); clearProposal();
-  };
-  $('resource-button').onclick = () => {
-    const unit = state.units[selectedId] ?? active();
-    const previous = unit ? { hp:{current:unit.hp,max:unit.maxHp}, mp:{current:unit.mp,max:unit.maxMp}, sp:{current:unit.sp,max:unit.maxSp} } : undefined;
-    $('resource-input').value = JSON.stringify({ stats:unit?.stats ?? {str:4,agi:4,con:4,int:4,spi:4}, tier:1, previous }, null, 2);
-    $('calculate-resources').click();
-    $('resource-dialog').showModal();
-  };
-  $('calculate-resources').onclick = () => {
-    try {
-      const result = game.calculatePrebattleResources(JSON.parse($('resource-input').value));
-      $('resource-output').textContent = [`五维合计 ${result.statSum} · MC ${result.mc} · 集群 ${result.count} · 召唤初始总数 ${result.summonCount}`,
-        ...Object.entries(result.resources).map(([k,v]) => `${k.toUpperCase()} ${v.current}/${v.max}（乘数 ${result.multipliers[k]}，未取整上限 ${v.rawMax}）`)].join('\n');
-    } catch(e) { $('resource-output').textContent = e.message; }
-  };
-  $('close-target').onclick = () => closeTarget(true);
-  $('target-preview').addEventListener('toggle', layoutTargetCard, {signal});
-  document.addEventListener('pointerdown', e => {
-    if (target && !$('target-actions').contains(e.target) && !pointFrom(e.target)) closeTarget();
-  }, {signal});
-  window.addEventListener('scroll', layoutTargetCard, {capture:true,passive:true,signal});
-  window.addEventListener('resize', layoutTargetCard, {signal});
-  window.visualViewport?.addEventListener('resize', layoutTargetCard, {signal});
-  window.visualViewport?.addEventListener('scroll', layoutTargetCard, {signal});
-  $('confirm-action').onclick = () => { if (target && action) execute(action); };
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && target && !root.querySelector('dialog[open]')) closeTarget(true); }, {signal});
-  $('action-toolbar').onclick = e => {
-    const button = e.target.closest('[data-action]');
-    if (button) handleAction(button);
-  };
-  $('turn-order').onclick = e => {
-    const button = e.target.closest('[data-unit-id]');
-    if (!button) return;
-    selectedId = button.dataset.unitId;
-    inspectedId = null;
-    closeTarget();
-  };
-  $('board').onclick = e => { const at = pointFrom(e.target); if (at) handlePoint(at, e); };
-  $('board').onpointerover = e => {
-    const at = pointFrom(e.target), before = e.relatedTarget instanceof Element && pointFrom(e.relatedTarget);
-    if (at && (!before || at.x !== before.x || at.y !== before.y)) hoverPoint(at);
-  };
-  $('board').onpointerleave = () => hoverPoint(null);
-  $('board').onfocusin = e => { const at = pointFrom(e.target); if (at) hoverPoint(at); };
-  $('board').onfocusout = e => { if (!$('board').contains(e.relatedTarget)) hoverPoint(null); };
-}
 
-configure('ruins');
-let snapshot;
-try {
-  snapshot = initialState;
-  if (!initialState || customBattle?.restoreSaved) {
-    const saved = JSON.parse(storage.getItem(storageKey));
-    if (saved?.state?.scenarioId === initialState?.scenarioId || !initialState) snapshot = saved ?? initialState;
+  // ---------- 目标浮卡 ----------
+  const pointFrom = node => {
+    const cell = node?.closest?.('[data-x][data-y]');
+    return cell && $('board').contains(cell) ? { x: Number(cell.dataset.x), y: Number(cell.dataset.y) } : null;
+  };
+  const cellFor = at => $('board').querySelector(`[data-x="${at.x}"][data-y="${at.y}"]`);
+  function layoutTargetCard() {
+    const card = $('target-actions');
+    if (!target || card.hidden) return;
+    const anchor = cellFor(target);
+    if (!anchor) return;
+    const r = anchor.getBoundingClientRect(), clip = $('board-scroll').getBoundingClientRect();
+    if (r.right <= clip.left || r.left >= clip.right || r.bottom <= clip.top || r.top >= clip.bottom) { closeTarget(); return; }
+    placeTargetCard(card, anchor, window.visualViewport);
   }
-  carry = JSON.parse(storage.getItem(crossedKey));
+  function closeTarget(restoreFocus = false) {
+    const at = target;
+    if (!at && $('target-actions').hidden) return;
+    target = action = null;
+    $('target-actions').hidden = true;
+    draw();
+    if (restoreFocus && at) cellFor(at)?.focus({ preventScroll: true });
+  }
+
+  function handlePoint(at, input = {}) {
+    error('');
+    const unit = Object.values(state.units).find(u => u.hp > 0 && u.x === at.x && u.y === at.y);
+    const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find(v => v.x === at.x && v.y === at.y);
+    const actor = active();
+    const canAct = actor?.team === 'blue' && !state.outcome;
+    const self = canAct && unit?.id === actor.id;
+    if (self) {
+      const check = game.previewAction({ type: 'sprint' });
+      sprint = !sprint && check.ok;
+      if (!check.ok) error(`不能疾跑：${check.error}`);
+    }
+    selectedId = unit?.id ?? actor?.id;
+    inspectedId = unit ? null : feature?.id;
+    target = at; hover = at; action = null;
+    const bonus = $('bonus-dice-select');
+    bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
+    const options = [];
+    const add = (type, skill) => {
+      const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}),
+        ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
+      const plan = game.previewAction(command);
+      if (plan.ok) options.push({ command, plan, label: skill ? plan.name : ACTION_LABELS[type] });
+    };
+    if (canAct) {
+      if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
+      else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      add('interact');
+      for (const skill of actor.skills) add('skill', skill);
+      for (const [skill] of equippedActiveSkills(state, actor)) add('skill', skill);
+      if (self) add('end');
+    }
+    const who = unit ? `${unit.team === 'blue' ? '我方' : '敌方'} ${unit.name}` : feature?.name ?? '空地';
+    $('target-title').textContent = `${who} · (${at.x}, ${at.y})${self ? (sprint ? ' · 疾跑范围' : '') : ''}`;
+    $('target-options').hidden = !options.some(o => ['attack', 'skill'].includes(o.command.type));
+    const toolbar = $('action-toolbar');
+    toolbar.replaceChildren();
+    menuButtons = new Map();
+    for (const choice of options) {
+      const { command, plan, label } = choice;
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'game-button'; button.dataset.action = command.type;
+      if (command.skillId) button.dataset.skillId = command.skillId;
+      const cost = [plan.ap ? `${plan.ap} AP` : '', plan.mp ? `${plan.mp} MP` : '', plan.sp ? `${plan.sp} SP` : ''].filter(Boolean).join(' · ');
+      const odds = plan.targets?.[0]?.hitChance;
+      const note = [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `命中 ${Math.round(odds * 100)}%` : '', plan.opportunities?.length ? '⚠ 会被借机' : ''].filter(Boolean).join(' · ');
+      button.append(label);
+      const small = document.createElement('small');
+      small.textContent = note || ACTION_HINTS[command.type] || '';
+      if (small.textContent) button.append(small);
+      button.title = ACTION_HINTS[command.type] ?? label;
+      button.setAttribute('aria-pressed', 'false');
+      menuButtons.set(button, choice);
+      toolbar.append(button);
+    }
+    if (!options.length) toolbar.textContent = canAct ? '这一格没有能做的事。' : '现在不是你的回合，只能查看。';
+    const card = $('target-actions');
+    card.hidden = false;
+    card.scrollTop = 0;
+    $('confirm-action').hidden = true;
+    if (options.length) action = options[0].command;
+    draw();
+    layoutTargetCard();
+    if (input.detail === 0) (toolbar.querySelector('button') || $('close-target')).focus({ preventScroll: true });
+  }
+  function handleAction(button) {
+    const choice = menuButtons.get(button);
+    if (!choice) return;
+    const { command, plan, label } = choice;
+    error('');
+    // 攻击、技能和有借机风险的移动要二次确认，其余直接执行
+    if (!(['skill', 'attack'].includes(command.type) || plan.opportunities?.length)) { execute(command); return; }
+    action = command;
+    for (const btn of menuButtons.keys()) btn.setAttribute('aria-pressed', String(btn === button));
+    const confirm = $('confirm-action');
+    confirm.hidden = false;
+    confirm.textContent = `确认${label}`;
+    draw();
+    layoutTargetCard();
+  }
+
+  function download(kind, value, format = 'json') {
+    const link = document.createElement('a');
+    const text = format === 'txt';
+    const url = window.URL.createObjectURL(new window.Blob([text ? value : JSON.stringify(value, null, 2)], { type: text ? 'text/plain;charset=utf-8' : 'application/json' }));
+    link.href = url;
+    link.download = `fated-${live.scenarioId}-${kind}.${format}`;
+    link.click();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+  }
+
+  const on = (id, event, fn) => $(id)?.addEventListener(event, fn, { signal });
+
+  function bindControls() {
+    for (const input of measurement) input.addEventListener('change', () => { input.dataset.faction = state.units[input.value]?.team ?? ''; measure(); }, { signal });
+    on('scenario-select', 'change', () => configure(scenario.value));
+    for (const id of ['intent-select', 'nonlethal-toggle', 'bonus-dice-select']) on(id, 'change', () => { if (target) handlePoint(target); });
+    on('theme-select', 'change', () => { root.dataset.dlcTheme = $('theme-select').value; storage.setItem('fated-tactical/theme', root.dataset.dlcTheme); });
+    on('anim-speed', 'change', () => { playback.setSpeed(Number($('anim-speed').value)); storage.setItem('fated-tactical/anim', $('anim-speed').value); });
+    on('clear-persistent', 'click', () => { carry = null; storage.removeItem(crossedKey); scenarioDescription(); });
+    on('reset-button', 'click', () => safely(restart));
+    on('end-turn', 'click', () => { playback.skip(); if (active(live)?.team === 'blue') execute({ type: 'end' }); });
+    on('undo-button', 'click', () => safely(() => { pauseAI(); const r = game.undoLastCommit(); if (!r.ok) error(r.error); }));
+    on('ai-step', 'click', () => safely(() => { window.clearTimeout(timer); playback.skip(); game.stepEnemy(); }));
+    on('auto-ai', 'change', () => { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); schedule(); });
+    on('ai-speed', 'change', () => { storage.setItem('fated-tactical/ai-speed', $('ai-speed').value); schedule(); });
+    on('skip-playback', 'click', () => playback.skip());
+
+    const report = $('report-text'), reportMessage = $('report-message');
+    on('export-report', 'click', () => { report.value = game.exportBattleReportText(); reportMessage.textContent = ''; $('report-dialog').showModal(); });
+    on('copy-report', 'click', async () => {
+      try { await window.navigator.clipboard.writeText(report.value); reportMessage.textContent = '已复制。'; }
+      catch { report.focus(); report.select(); reportMessage.textContent = '浏览器不允许自动复制，请按 Ctrl+C 或下载 TXT。'; }
+    });
+    on('download-report', 'click', () => download('report', report.value, 'txt'));
+    on('export-snapshot', 'click', () => download('battle', game.exportBattleSnapshot()));
+    on('export-persistent', 'click', () => download('persistent', game.exportPersistentCarryOver()));
+    on('import-button', 'click', () => $('import-snapshot').click());
+    on('import-snapshot', 'change', async event => {
+      const file = event.target.files[0];
+      event.target.value = '';
+      if (!file) return;
+      try {
+        if (file.size > 8 * 1024 * 1024) throw new Error('文件大于 8 MiB');
+        const data = JSON.parse(await file.text());
+        if (data.kind === 'persistent') {
+          const previous = carry;
+          carry = data;
+          try { restart(); } catch (e) { carry = previous; throw e; }
+          storage.setItem(crossedKey, JSON.stringify(carry));
+          scenarioDescription();
+        } else {
+          const restored = game.restoreBattleSnapshot(data);
+          configure(restored.scenarioId);
+          mode.value = restored.mode;
+          closeDrawer();
+          if (restored.migratedFrom) { error('已恢复旧战局；借机规则从现在生效，旧撤销记录未迁移。'); return; }
+        }
+        error('');
+      } catch (e) { error(`导入失败：${e.message}`); }
+    });
+
+    // 开发者沙盒
+    const editor = $('sandbox-editor'), reason = $('sandbox-reason');
+    const clearProposal = () => { pending = null; $('sandbox-commit').disabled = true; };
+    for (const input of [editor, reason]) input.addEventListener('input', clearProposal, { signal });
+    on('api-sandbox', 'click', event => {
+      const kind = event.target.closest('[data-example]')?.dataset.example;
+      if (!kind) return;
+      const unitId = selectedId ?? active(live)?.id;
+      const examples = {
+        counter: () => ({ type: 'adjust_item_counter', instanceId: 'soulblade-lan', counterKey: 'souls', operation: 'add', value: 1 }),
+        status: () => ({ type: 'upsert_status', unitId, statusId: 'haste', options: { durationType: 'persistent' } }),
+        'custom-status': () => {
+          const id = 'bone_frost', apply = { type: 'upsert_status', unitId, statusId: id };
+          if (Object.hasOwn(game.listStatusTemplates(), id)) return [apply];
+          return [{ type: 'define_status_template', template: { id, name: '蚀骨寒霜', icon: '❄️', description: '回合初受到 3 点能量伤害，移动距离 −1。',
+            category: 'dot', remainingTurns: 2, durationType: 'battle_turns', tickTiming: 'onTurnStart', stackRule: 'refresh', maxStacks: 1,
+            modifiers: { damage: 3, damageType: 'energy', movement: -1 } } }, apply];
+        },
+        terrain: () => ({ type: 'set_terrain_cell', x: 0, y: 0, patch: { kind: 'slope', z: 1 } }),
+      };
+      const example = examples[kind]?.();
+      if (example) editor.value = JSON.stringify([example].flat(), null, 2);
+      clearProposal();
+    });
+    on('sandbox-preview', 'click', () => {
+      clearProposal();
+      let commands;
+      try { commands = JSON.parse(editor.value); } catch (e) { $('sandbox-output').textContent = `命令不是合法 JSON：${e.message}`; return; }
+      const result = game.proposeCommands(commands, { baseRevision: game.getStateSummary().revision, reason: reason.value });
+      $('sandbox-output').textContent = describeProposal(result);
+      if (result.ok) { pending = result.proposalId; $('sandbox-commit').disabled = false; }
+    });
+    on('sandbox-commit', 'click', () => { const result = game.commitProposal(pending); clearProposal(); $('sandbox-output').textContent = describeProposal(result); });
+    on('sandbox-undo', 'click', () => {
+      pauseAI();
+      const result = game.undoLastCommit();
+      clearProposal();
+      $('sandbox-output').textContent = result.ok ? `↶ 已撤销上一次改动（版本 ${result.revision}）。` : `✖ ${result.error}`;
+    });
+
+    on('resource-button', 'click', () => {
+      const unit = state.units[selectedId] ?? active();
+      const previous = unit ? { hp: { current: unit.hp, max: unit.maxHp }, mp: { current: unit.mp, max: unit.maxMp }, sp: { current: unit.sp, max: unit.maxSp } } : undefined;
+      $('resource-input').value = JSON.stringify({ stats: unit?.stats ?? { str: 4, agi: 4, con: 4, int: 4, spi: 4 }, tier: 1, previous }, null, 2);
+      $('calculate-resources').click();
+      $('resource-dialog').showModal();
+    });
+    on('calculate-resources', 'click', () => {
+      try {
+        const r = game.calculatePrebattleResources(JSON.parse($('resource-input').value));
+        $('resource-output').textContent = [`五维合计 ${r.statSum} · MC ${r.mc} · 集群 ${r.count} · 召唤初始总数 ${r.summonCount}`,
+          ...Object.entries(r.resources).map(([k, v]) => `${k.toUpperCase()} ${v.current}/${v.max}（乘数 ${r.multipliers[k]}，未取整上限 ${v.rawMax}）`)].join('\n');
+      } catch (e) { $('resource-output').textContent = e.message; }
+    });
+
+    on('close-target', 'click', () => closeTarget(true));
+    on('confirm-action', 'click', () => { if (target && action) execute(action); });
+    on('action-toolbar', 'click', e => { const button = e.target.closest('[data-action]'); if (button) handleAction(button); });
+    on('turn-order', 'click', e => {
+      const button = e.target.closest('[data-unit-id]');
+      if (!button) return;
+      selectedId = button.dataset.unitId;
+      inspectedId = null;
+      closeTarget();
+      draw();
+      setDrawer(openDrawer === 'unit' ? null : 'unit');
+    });
+    document.addEventListener('pointerdown', e => {
+      if (target && !$('target-actions').contains(e.target) && !pointFrom(e.target)) closeTarget();
+    }, { signal });
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape' || root.querySelector('dialog[open]')) return;
+      if (target) closeTarget(true);
+      else if (openDrawer) closeDrawer();
+      else playback.skip();
+    }, { signal });
+    for (const [node, event] of [[window, 'resize'], [window.visualViewport, 'resize'], [window.visualViewport, 'scroll']]) node?.addEventListener(event, layoutTargetCard, { signal });
+    window.addEventListener('scroll', layoutTargetCard, { capture: true, passive: true, signal });
+
+    const board = $('board');
+    board.addEventListener('click', e => {
+      const at = pointFrom(e.target);
+      if (!at) return;
+      if (playback.busy) playback.skip(); // 演出中点棋盘 = 跳过演出
+      handlePoint(at, e);
+    }, { signal });
+    const hoverPoint = point => { hover = point; if (!target) draw(); };
+    board.addEventListener('pointerover', e => {
+      const at = pointFrom(e.target), before = pointFrom(e.relatedTarget);
+      if (at && (!before || at.x !== before.x || at.y !== before.y)) hoverPoint(at);
+    }, { signal });
+    board.addEventListener('pointerleave', () => hoverPoint(null), { signal });
+    board.addEventListener('focusin', e => { const at = pointFrom(e.target); if (at) hoverPoint(at); }, { signal });
+    board.addEventListener('focusout', e => { if (!board.contains(e.relatedTarget)) hoverPoint(null); }, { signal });
+
+    root.addEventListener('click', e => {
+      const opener = e.target.closest('[data-open-drawer]');
+      if (opener) setDrawer(opener.dataset.openDrawer);
+      else if (e.target.closest('[data-close-drawer]') || e.target === $('drawer-scrim')) closeDrawer();
+    }, { signal });
+  }
+
+  // ---------- 启动 ----------
+  configure('ruins');
+  let snapshot = initialState;
+  try {
+    if (!initialState || customBattle?.restoreSaved) {
+      const saved = JSON.parse(storage.getItem(storageKey));
+      if (saved?.state?.scenarioId === initialState?.scenarioId || !initialState) snapshot = saved ?? initialState;
+    }
+    carry = JSON.parse(storage.getItem(crossedKey));
+  } catch { /* 存储不可用不影响游戏 */ }
   $('auto-ai').checked = storage.getItem('fated-tactical/auto') !== 'false';
   const theme = storage.getItem('fated-tactical/theme');
-  if (['amethyst','night-gold','frost-silver'].includes(theme)) {
-    root.dataset.dlcTheme = theme;
-    $('theme-select').value = theme;
+  if (THEMES.includes(theme)) { root.dataset.dlcTheme = theme; $('theme-select').value = theme; }
+  else if (THEMES.includes(root.dataset.dlcTheme)) $('theme-select').value = root.dataset.dlcTheme;
+  for (const [id, key] of [['anim-speed', 'fated-tactical/anim'], ['ai-speed', 'fated-tactical/ai-speed']]) {
+    const value = storage.getItem(key);
+    if (value != null && [...$(id).options].some(o => o.value === value)) $(id).value = value;
   }
-} catch { /* unavailable local storage does not block play */ }
-try {
-  if (snapshot) {
-    const restored = snapshot.kind === 'battle'
-      ? game.restoreBattleSnapshot(snapshot)
-      : game.createBattle({ kind:'custom_state', state:snapshot });
-    if (restored.migratedFrom) error('已续接旧战局；借机规则从现在生效，旧撤销记录未迁移。');
-  } else game.createBattle({ scenarioId:'ruins', ruleset:'protocol' });
-}
-catch (cause) {
+  playback.setSpeed(Number($('anim-speed').value));
+  try {
+    if (snapshot) {
+      const restored = snapshot.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: 'custom_state', state: snapshot });
+      if (restored.migratedFrom) error('已续接旧战局；借机规则从现在生效，旧撤销记录未迁移。');
+    } else game.createBattle({ scenarioId: 'ruins', ruleset: 'protocol' });
+  } catch (cause) {
+    if (customBattle) {
+      if (snapshot === initialState) throw cause;
+      game.createBattle({ kind: 'custom_state', state: initialState });
+      error('存档格式不兼容，已重新加载正文战局。');
+    } else {
+      game.createBattle({ scenarioId: 'ruins', ruleset: 'protocol' });
+      error('存档格式不兼容，已打开默认战局。');
+    }
+  }
   if (customBattle) {
-    if (snapshot === initialState) throw cause;
-    game.createBattle({ kind: 'custom_state', state: initialState });
-    error('存档格式不兼容，已重新加载正文战局。');
-  } else {
-    game.createBattle({ scenarioId:'ruins', ruleset:'protocol' });
-    error('存档格式不兼容，已打开默认战局。');
+    const savedSeed = storage.getItem(`${storageKey}/seed`);
+    if (snapshot?.kind === 'battle' && savedSeed != null && /^\d+$/.test(savedSeed)) customBattle.seed = Number(savedSeed);
+    else storage.setItem(`${storageKey}/seed`, String(customBattle.seed ?? 0));
   }
-}
-if (customBattle) {
-  const savedSeed = storage.getItem(`${storageKey}/seed`);
-  if (snapshot?.kind === 'battle' && savedSeed != null && /^\d+$/.test(savedSeed)) customBattle.seed = Number(savedSeed);
-  else storage.setItem(`${storageKey}/seed`, String(customBattle.seed ?? 0));
-}
-const initial = game.getStateSummary();
-configure(initial.scenarioId); mode.value = initial.mode;
-bindControls();
-game.subscribe(() => {
-  const hadProposal = Boolean(pending);
-  clearProposal();
-  if (hadProposal) sandboxOutput('战局已变化，需重新试算。');
-  const before = update({ resetAction:true, save:true });
-  if (before && state.logs.length > before.logs.length) view.feedback(before, state);
-});
-update({ resetAction:true, save:true });
-return { loadState(snapshot) { const result = snapshot?.kind === 'battle' ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind:'custom_state', state:snapshot }); if (!customBattle) configure(result.scenarioId); mode.value = result.mode; error(''); update({ resetAction:true, save:true }); return result; }, getState: () => game.getBattleState(), exportBattleReportText: () => game.exportBattleReportText(), exportMvuPatch: () => ({ kind:'battle', state:game.getBattleState() }), api: game, destroy() { clearTimeout(timer); } };
+  const initial = game.getStateSummary();
+  configure(initial.scenarioId);
+  mode.value = initial.mode;
+  bindControls();
+  const unsubscribe = game.subscribe(() => {
+    if (pending) { pending = null; $('sandbox-commit').disabled = true; }
+    onChange();
+  });
+  onChange();
+  seenLogs = live.logs.length;
+  $('log-unread').hidden = seenLogs <= 2;
+
+  return {
+    loadState(next) {
+      const result = next?.kind === 'battle' ? game.restoreBattleSnapshot(next) : game.createBattle({ kind: 'custom_state', state: next });
+      if (!customBattle) configure(result.scenarioId);
+      mode.value = result.mode;
+      error('');
+      return result;
+    },
+    getState: () => game.getBattleState(),
+    exportBattleReportText: () => game.exportBattleReportText(),
+    exportMvuPatch: () => ({ kind: 'battle', state: game.getBattleState() }),
+    api: game,
+    destroy() { window.clearTimeout(timer); playback.reset(); closeDrawer(); if (typeof unsubscribe === 'function') unsubscribe(); },
+  };
 }

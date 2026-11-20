@@ -9,9 +9,9 @@ var FatedTactical = (() => {
   };
   var __copyProps = (to, from, except, desc) => {
     if (from && typeof from === "object" || typeof from === "function") {
-      for (let key3 of __getOwnPropNames(from))
-        if (!__hasOwnProp.call(to, key3) && key3 !== except)
-          __defProp(to, key3, { get: () => from[key3], enumerable: !(desc = __getOwnPropDesc(from, key3)) || desc.enumerable });
+      for (let key4 of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key4) && key4 !== except)
+          __defProp(to, key4, { get: () => from[key4], enumerable: !(desc = __getOwnPropDesc(from, key4)) || desc.enumerable });
     }
     return to;
   };
@@ -51,7 +51,7 @@ var FatedTactical = (() => {
   });
 
   // src/core/effect_schema.js
-  var enumOf = (...values3) => ({ enum: values3 });
+  var enumOf = (...values4) => ({ enum: values4 });
   var number = (minimum, maximum, type = "number") => ({ type, minimum, maximum });
   var integer = (min, max) => number(min, max, "integer");
   var object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
@@ -163,7 +163,7 @@ var FatedTactical = (() => {
         node("removeStatus", { statusId: id, category: enumOf("all_negative", "buff", "debuff", "control", "dot", "hot") }),
         node("modifyStat", { stat: stats, flat: number(-1e9, 1e9), percent: number(-1, 10), duration: turns, damageType, levelScaling: scaling.levelScaling }, ["stat"]),
         node("modifyDamageBase", { value: amount, ignoreAttributes: bool, unscaled: bool, damageType }, ["value"]),
-        node("modifyCheck", Object.fromEntries(checkKeys.map((key3) => [key3, number(-30, 30)]))),
+        node("modifyCheck", Object.fromEntries(checkKeys.map((key4) => [key4, number(-30, 30)]))),
         node("forceOutcome", { mode: enumOf("hit", "crit") }, ["mode"]),
         node("upgradeHitTier", {}),
         node("knockback", { distance: integer(1, 5), collisionDamage: integer(0, 80) }),
@@ -188,7 +188,7 @@ var FatedTactical = (() => {
     if (schema.enum) return schema.enum.includes(value);
     switch (schema.type) {
       case "object":
-        return value && Object.getPrototypeOf(value) === Object.prototype && schema.required?.every((key3) => Object.hasOwn(value, key3)) !== false && Object.entries(value).every(([key3, item]) => !Object.hasOwn(Object.prototype, key3) && key3 !== "prototype" && (Object.hasOwn(schema.properties ?? {}, key3) ? next(item, schema.properties[key3]) : schema.additionalProperties && next(item, schema.additionalProperties)));
+        return value && Object.getPrototypeOf(value) === Object.prototype && schema.required?.every((key4) => Object.hasOwn(value, key4)) !== false && Object.entries(value).every(([key4, item]) => !Object.hasOwn(Object.prototype, key4) && key4 !== "prototype" && (Object.hasOwn(schema.properties ?? {}, key4) ? next(item, schema.properties[key4]) : schema.additionalProperties && next(item, schema.additionalProperties)));
       case "array":
         return Array.isArray(value) && value.length >= schema.minItems && value.length <= schema.maxItems && Array.from(value).every((item) => next(item, schema.items));
       case "string":
@@ -222,8 +222,8 @@ var FatedTactical = (() => {
   // src/core/effects.js
   var levelScale = (ls, tier) => ls?.perLevel != null ? 1 + ls.perLevel * (tier - 1) : ls ? ls.min + (ls.max - ls.min) * (tier - 1) / 6 : 1;
   var livingUnit = (unit) => unit && unit.hp > 0 && !unit.fled;
-  var own = (table3, key3) => Object.hasOwn(table3 ?? {}, key3) ? table3[key3] : void 0;
-  var values = (table3) => Object.values(table3 ?? {});
+  var own = (table4, key4) => Object.hasOwn(table4 ?? {}, key4) ? table4[key4] : void 0;
+  var values = (table4) => Object.values(table4 ?? {});
   function legacyId(prefix, index) {
     if (prefix.length <= 45) return `${prefix}-${index}`;
     const hash2 = Array.from(prefix).reduce((sum, char) => Math.imul(sum ^ char.charCodeAt(0), 16777619), 2166136261);
@@ -350,10 +350,10 @@ var FatedTactical = (() => {
     });
   }
   function migrateStateEffects(state) {
-    for (const [table3, context] of [["equipment", "equipment"], ["skills", "skill"]]) {
-      for (const [id3, template] of Object.entries(state[table3] ?? {})) {
+    for (const [table4, context] of [["equipment", "equipment"], ["skills", "skill"]]) {
+      for (const [id3, template] of Object.entries(state[table4] ?? {})) {
         if (Array.isArray(template?.effects) && template.effects.some((e) => !isExpression(e))) {
-          template.effects = adaptLegacyEffects(template.effects, context, `legacy-${table3}-${id3}`);
+          template.effects = adaptLegacyEffects(template.effects, context, `legacy-${table4}-${id3}`);
         }
       }
     }
@@ -365,12 +365,12 @@ var FatedTactical = (() => {
       return (template?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: equippedKey(instance, expr), instance }));
     });
     const skillExpressions2 = (skill2, id3) => (skill2?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: `skill-${id3}:${expr.id}` }));
-    const activeId = (key3) => `effect:${key3}`;
+    const activeId = (key4) => `effect:${key4}`;
     function activeSkills(state, actor) {
       if (!actor) return [];
       return expressions(state, actor).filter(({ expr }) => expr.trigger === "active" && [...effectNodes(expr.effects, true)].some((node3) => node3.kind !== "chainEffect")).map((entry) => {
-        const { expr, key: key3 } = entry, p = expr.params ?? {};
-        return [activeId(key3), {
+        const { expr, key: key4 } = entry, p = expr.params ?? {};
+        return [activeId(key4), {
           name: expr.label ?? expr.id,
           ap: p.ap ?? 1,
           mp: p.mp ?? 0,
@@ -389,8 +389,8 @@ var FatedTactical = (() => {
       if (name === "action" || name === "attack") return unit.used[name] ? 0 : 1;
       return own(unit.resources, name) ?? io.resourcePool(state, unit, name)?.amount ?? 0;
     }
-    function available(state, actor, { expr, key: key3 }) {
-      const usage = own(actor.effectUsage, key3);
+    function available(state, actor, { expr, key: key4 }) {
+      const usage = own(actor.effectUsage, key4);
       const p = expr.params ?? {};
       return (usage?.count ?? 0) < (p.usesPerBattle ?? (expr.trigger === "on_equip" ? 1 : Infinity)) && (usage == null || state.round - usage.round >= (p.cooldown ?? 0));
     }
@@ -630,7 +630,7 @@ var FatedTactical = (() => {
     }
     function run(state, actor, entry, ctx, seen = /* @__PURE__ */ new Set(), depth = 0) {
       if (depth > 8 || seen.has(entry.expr.id) || !available(state, actor, entry) || !sourceApplies(entry, ctx)) return false;
-      const { expr, key: key3 } = entry;
+      const { expr, key: key4 } = entry;
       if (![...effectNodes(expr.effects, true)].some((node3) => node3.kind !== "chainEffect")) return false;
       const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((target2) => condition3(state, actor, subject(actor, target2, ctx), expr.condition, ctx, entry));
       if (!eligible.length) return false;
@@ -651,7 +651,7 @@ var FatedTactical = (() => {
       seen.delete(expr.id);
       if (applied && (expr.params?.usesPerBattle != null || expr.params?.cooldown || expr.trigger === "on_equip")) {
         const usage = actor.effectUsage ??= {};
-        usage[key3] = { count: (usage[key3]?.count ?? 0) + 1, round: state.round };
+        usage[key4] = { count: (usage[key4]?.count ?? 0) + 1, round: state.round };
       }
       return applied;
     }
@@ -715,7 +715,7 @@ var FatedTactical = (() => {
       };
       return factors.filter((n) => !n.additive).reduce((factor, n) => factor * factorOf(n), 1) * Math.max(0, 1 + factors.filter((n) => n.additive).reduce((sum, n) => sum + factorOf(n) - 1, 0));
     }
-    const check = (state, actor, key3, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key3] ?? 0 : 0), 0);
+    const check = (state, actor, key4, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key4] ?? 0 : 0), 0);
     return { dispatch, stat: stat2, check, passiveNodes, damageFactor, activeSkills, skillExpressions: skillExpressions2, available, condition: condition3, changeResource };
   }
 
@@ -909,29 +909,29 @@ var FatedTactical = (() => {
   }
   var edge = (advantage, disadvantage) => Math.sign(Number(advantage) - Number(disadvantage));
   function rollD20(rng, advantage = 0, disadvantage = 0) {
-    const sign = edge(advantage, disadvantage);
-    const result = rollDice(rng, sign ? 2 : 1, 20);
+    const sign3 = edge(advantage, disadvantage);
+    const result = rollDice(rng, sign3 ? 2 : 1, 20);
     const { rolls } = result;
     return {
       rng: result.rng,
       rolls,
-      value: sign > 0 ? Math.max(...rolls) : sign < 0 ? Math.min(...rolls) : rolls[0],
-      mode: sign > 0 ? "advantage" : sign < 0 ? "disadvantage" : "normal"
+      value: sign3 > 0 ? Math.max(...rolls) : sign3 < 0 ? Math.min(...rolls) : rolls[0],
+      mode: sign3 > 0 ? "advantage" : sign3 < 0 ? "disadvantage" : "normal"
     };
   }
   function rollProtocolD20(rng, { bonus = 0, penalty = 0, tierAdvantage = 0 } = {}) {
     const b = Math.max(0, Math.min(2, bonus)), p = Math.max(0, Math.min(1, penalty));
-    const sign = b > p ? 1 : p > b ? -1 : 0;
-    const count = sign === 0 ? 1 : b === 2 && sign > 0 || tierAdvantage && sign < 0 ? 3 : 2;
+    const sign3 = b > p ? 1 : p > b ? -1 : 0;
+    const count = sign3 === 0 ? 1 : b === 2 && sign3 > 0 || tierAdvantage && sign3 < 0 ? 3 : 2;
     const result = rollDice(rng, count, 20);
     const sorted = [...result.rolls].sort((a, z) => a - z);
-    const value = count === 3 ? sorted[1] : sign > 0 ? Math.max(...result.rolls) : sign < 0 ? Math.min(...result.rolls) : result.rolls[0];
-    return { rng: result.rng, rolls: result.rolls, value, mode: count === 3 ? "middle" : sign > 0 ? "bonus" : sign < 0 ? "penalty" : "normal" };
+    const value = count === 3 ? sorted[1] : sign3 > 0 ? Math.max(...result.rolls) : sign3 < 0 ? Math.min(...result.rolls) : result.rolls[0];
+    return { rng: result.rng, rolls: result.rolls, value, mode: count === 3 ? "middle" : sign3 > 0 ? "bonus" : sign3 < 0 ? "penalty" : "normal" };
   }
   function probability(successes, advantage, disadvantage) {
-    const sign = edge(advantage, disadvantage);
-    if (sign > 0) return (400 - (20 - successes) ** 2) / 400;
-    if (sign < 0) return successes ** 2 / 400;
+    const sign3 = edge(advantage, disadvantage);
+    if (sign3 > 0) return (400 - (20 - successes) ** 2) / 400;
+    if (sign3 < 0) return successes ** 2 / 400;
     return successes / 20;
   }
   function hitChance(target2, modifier = 0, advantage = 0, disadvantage = 0) {
@@ -1064,28 +1064,28 @@ var FatedTactical = (() => {
   Object.assign(ranges, { dodgeBonus: [-30, 30], attackPercent: [-1, 4], attributePercent: [-1, 4], finalDamageMultiplier: [0, 8] });
   var ratios = ["reduction", "vulnerability", "shatter", "damageBonus", "attackPercent", "attributePercent", "finalDamageMultiplier"];
   var flags = ["taunted", "intercept", "skip", "rooted", "hidden", "disarmed", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"];
-  function rangeFor(key3, template) {
-    if (key3 === "armor") {
+  function rangeFor(key4, template) {
+    if (key4 === "armor") {
       const base = template?.modifiers.armor;
       if (base < 0) return [-1e5, -1];
       if (base === 0) return [0, 1e5];
     }
-    return Object.hasOwn(ranges, key3) ? ranges[key3] : void 0;
+    return Object.hasOwn(ranges, key4) ? ranges[key4] : void 0;
   }
-  function statusModifierRange(key3, template) {
-    const range = rangeFor(key3, template);
+  function statusModifierRange(key4, template) {
+    const range = rangeFor(key4, template);
     if (range) return range.join("\u2013");
-    if (key3 === "damageType") return damageTypes.join("/");
-    if (flags.includes(key3)) return "true/false";
-    throw new Error(`\u672A\u77E5\u72B6\u6001\u53C2\u6570\uFF1A${key3}`);
+    if (key4 === "damageType") return damageTypes.join("/");
+    if (flags.includes(key4)) return "true/false";
+    throw new Error(`\u672A\u77E5\u72B6\u6001\u53C2\u6570\uFF1A${key4}`);
   }
   function validateStatusModifiers(template, modifiers2) {
     if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
-    for (const [key3, value] of Object.entries(modifiers2)) {
-      if (!Object.hasOwn(template.modifiers, key3)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key3}`);
-      const range = rangeFor(key3, template);
-      const valid = range ? (ratios.includes(key3) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range[0] && value <= range[1] : key3 === "damageType" ? damageTypes.includes(value) : flags.includes(key3) && typeof value === "boolean";
-      if (!valid) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key3}\uFF0C\u5408\u6CD5\u8303\u56F4\uFF1A${statusModifierRange(key3, template)}`);
+    for (const [key4, value] of Object.entries(modifiers2)) {
+      if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
+      const range = rangeFor(key4, template);
+      const valid = range ? (ratios.includes(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range[0] && value <= range[1] : key4 === "damageType" ? damageTypes.includes(value) : flags.includes(key4) && typeof value === "boolean";
+      if (!valid) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key4}\uFF0C\u5408\u6CD5\u8303\u56F4\uFF1A${statusModifierRange(key4, template)}`);
     }
   }
 
@@ -1120,8 +1120,8 @@ var FatedTactical = (() => {
       const { x, y } = change;
       const cell = state.grid[y][x];
       if (cell.kind !== "wall") continue;
-      for (const table3 of [state.covers, state.interactives]) {
-        for (const [id3, item] of Object.entries(table3)) if (same2(item, change)) delete table3[id3];
+      for (const table4 of [state.covers, state.interactives]) {
+        for (const [id3, item] of Object.entries(table4)) if (same2(item, change)) delete table4[id3];
       }
       for (const unit of unitsAt(state, x, y).filter((unit2) => unit2.hp > 0)) {
         const free = state.grid.flatMap((row, y2) => row.flatMap((tile, x2) => tile.kind !== "wall" && !unitAt(state, x2, y2) && !coverAt(state, x2, y2) ? [{ x: x2, y: y2 }] : []));
@@ -1243,10 +1243,10 @@ var FatedTactical = (() => {
     }
     const movedCells = /* @__PURE__ */ new Map();
     for (const change of movingChanges) {
-      const key3 = `${change.x},${change.y}`;
-      const first = movedCells.get(key3);
+      const key4 = `${change.x},${change.y}`;
+      const first = movedCells.get(key4);
       if (first) first.after = change.after;
-      else movedCells.set(key3, change);
+      else movedCells.set(key4, change);
     }
     settleChanges(state, [...changes2, ...movedCells.values()], record2, damage);
   }
@@ -1336,8 +1336,8 @@ var FatedTactical = (() => {
     state.logs.push(event);
     return event;
   }
-  function tableEntry(table3, id3) {
-    return Object.hasOwn(table3 ?? {}, id3) ? table3[id3] : void 0;
+  function tableEntry(table4, id3) {
+    return Object.hasOwn(table4 ?? {}, id3) ? table4[id3] : void 0;
   }
   function getStatusTemplate(state, statusId2) {
     if (typeof statusId2 !== "string") return void 0;
@@ -1350,7 +1350,7 @@ var FatedTactical = (() => {
   }
   var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3));
   var equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? []].filter(Boolean))].map((id3) => equipmentFor(state, id3)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
-  var effectiveStat = (state, unit, key3) => dsl.stat(state, unit, key3, stat(unit, key3));
+  var effectiveStat = (state, unit, key4) => dsl.stat(state, unit, key4, stat(unit, key4));
   var resolveDC = (state, actor, dc) => typeof dc === "number" ? dc : clamp(dc.base + dc.scaleBy.perUnit * effectiveStat(state, actor, dc.scaleBy.stat), dc.min ?? 1, dc.max ?? 50);
   var finalDamageMultiplier = (unit) => values2(unit.statuses).reduce((mult, s) => mult * (s.modifiers?.finalDamageMultiplier ?? 1) ** (s.stacks ?? 1), 1);
   var resourcePool = (state, unit, resource3, instance) => {
@@ -1670,7 +1670,7 @@ var FatedTactical = (() => {
     const reduction = clamp(dsl.stat(state, unit, "damageReduction", changes(unit, "reduction"), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
     const defense = ctx.ignoreArmor ? 0 : armorOf(state, unit, type, pierce, ctx);
     const armorMultiplier = type === "true" ? 1 : 2e3 / (defense + 2e3);
-    const attributes3 = Object.fromEntries(Object.keys(unit.stats ?? {}).map((key3) => [key3, effectiveStat(state, unit, key3)]));
+    const attributes3 = Object.fromEntries(Object.keys(unit.stats ?? {}).map((key4) => [key4, effectiveStat(state, unit, key4)]));
     const attributeReduction = state.ruleset === "protocol" ? type === "physical" ? (Number(attributes3.con ?? 0) + Number(attributes3.str ?? 0) + Number(attributes3.agi ?? 0)) * 25e-4 : type === "energy" ? (Number(attributes3.spi ?? 0) + Number(attributes3.int ?? 0)) * 4e-3 : type === "mental" ? Number(attributes3.spi ?? 0) * 8e-3 : 0 : 0;
     return {
       shatter,
@@ -2083,8 +2083,8 @@ var FatedTactical = (() => {
   var oddsCache = /* @__PURE__ */ new Map();
   function diceAverage(dice3, map, critical = false) {
     const count = critical ? dice3.count * 2 : dice3.count;
-    const key3 = `${count}d${dice3.sides}`;
-    let probabilities = oddsCache.get(key3);
+    const key4 = `${count}d${dice3.sides}`;
+    let probabilities = oddsCache.get(key4);
     if (!probabilities) {
       probabilities = [1];
       for (let die = 0; die < count; die++) {
@@ -2097,7 +2097,7 @@ var FatedTactical = (() => {
         probabilities = next;
       }
       if (oddsCache.size >= 64) oddsCache.delete(oddsCache.keys().next().value);
-      oddsCache.set(key3, probabilities);
+      oddsCache.set(key4, probabilities);
     }
     return probabilities.reduce((sum, probability2, raw) => sum + probability2 * map(Math.max(0, raw + dice3.bonus)), 0);
   }
@@ -3043,11 +3043,11 @@ var FatedTactical = (() => {
     const hp = baseMultipliers.hp * mc / summonCount, mp = baseMultipliers.mp / summonCount;
     const raw = { hp: (con * 100 * hp + statSum) * count, mp: (int2 + spi) * 50 * mp * count, sp: (str + agi) * 50 * mp * count };
     const resources = {};
-    for (const [key3, value] of Object.entries(raw)) {
-      const old = previous[key3];
-      if (Object.hasOwn(previous, key3) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail2(`\u65E7 ${key3.toUpperCase()} `);
-      const ratio2 = old ? old.max ? old.current / old.max : 0 : 1;
-      resources[key3] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio2), ratio: ratio2 };
+    for (const [key4, value] of Object.entries(raw)) {
+      const old = previous[key4];
+      if (Object.hasOwn(previous, key4) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail2(`\u65E7 ${key4.toUpperCase()} `);
+      const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
+      resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio3), ratio: ratio3 };
     }
     return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
   }
@@ -3211,12 +3211,12 @@ var FatedTactical = (() => {
   var statusStackRules = ["refresh", "stack", "replace"];
   var statusLabels = ["name", "icon", "category", "description"];
   var maxStatusTemplates = 64;
-  var has = (record2, key3) => id2(key3) && own2(record2, key3);
+  var has = (record2, key4) => id2(key4) && own2(record2, key4);
   function fields(v, required, optional = []) {
     requireThat(plain(v) && required.every((k) => own2(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
   }
-  function checkOptional(o, key3, check) {
-    if (own2(o, key3)) requireThat(check(o[key3]), key3);
+  function checkOptional(o, key4, check) {
+    if (own2(o, key4)) requireThat(check(o[key4]), key4);
   }
   function table2(v, test, max = 200) {
     requireThat(plain(v) && Object.keys(v).length <= max, "\u5B9E\u4F53\u8868");
@@ -3225,8 +3225,8 @@ var FatedTactical = (() => {
       test(value, k);
     }
   }
-  function list(v, max, check, key3) {
-    requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key3);
+  function list(v, max, check, key4) {
+    requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key4);
   }
   function dice2(v) {
     fields(v, ["count", "sides"], ["bonus", "stat", "multiplier", "type"]);
@@ -3262,11 +3262,11 @@ var FatedTactical = (() => {
   function statusLifetime(v) {
     return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
   }
-  function statusTemplate(v, key3 = v?.id) {
+  function statusTemplate(v, key4 = v?.id) {
     fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers"], ["expireInto", "expireOn"]);
     checkOptional(v, "expireInto", id2);
     checkOptional(v, "expireOn", validExpireOn);
-    requireThat(id2(key3) && !own2(STATUSES, key3) && v.id === key3, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
+    requireThat(id2(key4) && !own2(STATUSES, key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
     requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300) && ["buff", "debuff", "control", "dot", "hot"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
     requireThat(statusLifetime(v) && int(v.maxStacks, 1, 10), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
     fields(v.modifiers, [], customModifierKeys);
@@ -3279,16 +3279,16 @@ var FatedTactical = (() => {
       requireThat(t.durationType === "battle_turns" && t.remainingTurns === 1 && t.expireInto !== t.id && (has(STATUSES, t.expireInto) || has(v, t.expireInto) && !v[t.expireInto].expireInto), "\u72B6\u6001\u5230\u671F\u76EE\u6807");
     }
   }
-  function defineStatus(state, key3, template) {
-    requireThat(plain(template) && (!own2(template, "id") || template.id === key3), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
-    const definition = { ...template, id: key3 };
-    statusTemplate(definition, key3);
-    requireThat(!getStatusTemplate(state, key3), "\u72B6\u6001\u6A21\u677F ID \u5DF2\u5B58\u5728");
+  function defineStatus(state, key4, template) {
+    requireThat(plain(template) && (!own2(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
+    const definition = { ...template, id: key4 };
+    statusTemplate(definition, key4);
+    requireThat(!getStatusTemplate(state, key4), "\u72B6\u6001\u6A21\u677F ID \u5DF2\u5B58\u5728");
     requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, "\u81EA\u5B9A\u4E49\u72B6\u6001\u6A21\u677F\u6570\u91CF");
-    (state.statusTemplates ??= {})[key3] = structuredClone(definition);
+    (state.statusTemplates ??= {})[key4] = structuredClone(definition);
     return structuredClone(definition);
   }
-  var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key3, amount2]) => ["hp", "mp", "sp"].includes(key3) && int(amount2, 0, 25e3)));
+  var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key4, amount2]) => ["hp", "mp", "sp"].includes(key4) && int(amount2, 0, 25e3)));
   function validateEffect(e, state) {
     requireThat(isExpression(e) && validExpression(e), "DSL expression");
     if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, "DSL save mode");
@@ -3352,18 +3352,18 @@ var FatedTactical = (() => {
     for (const k of ["damage", "heal"]) if (own2(v, k)) dice2(v[k]);
     effects(v.effects, state);
   }
-  function statusValue(v, key3, state) {
-    const t = getStatusTemplate(state, key3);
-    requireThat(id2(key3) && t, "\u72B6\u6001 ID");
+  function statusValue(v, key4, state) {
+    const t = getStatusTemplate(state, key4);
+    requireThat(id2(key4) && t, "\u72B6\u6001 ID");
     fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers", "stacks", "sourceUnitId"], ["appliedRound", "appliedTurn", "amount", "expireInto", "expireOn"]);
     checkOptional(v, "expireOn", (x) => x === null || validExpireOn(x));
     requireThat(v.expireInto === t.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
-    requireThat(v.id === key3 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, t.maxStacks) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
+    requireThat(v.id === key4 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, t.maxStacks) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
     fields(v.modifiers, Object.keys(t.modifiers));
     validateStatusModifiers(t, v.modifiers);
     checkOptional(v, "appliedRound", (x) => int(x, 1, 1e6));
     checkOptional(v, "appliedTurn", (x) => int(x, 0, 199));
-    requireThat(key3 === "shield" ? int(v.amount, 1, 1e9) : !own2(v, "amount"), "\u62A4\u76FE\u6C60");
+    requireThat(key4 === "shield" ? int(v.amount, 1, 1e9) : !own2(v, "amount"), "\u62A4\u76FE\u6C60");
   }
   function validateCell(v) {
     fields(v, ["kind", "z"]);
@@ -3371,7 +3371,7 @@ var FatedTactical = (() => {
   }
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
   var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "deathrattle", "deathrattleTriggered", "moraleCheckedRound", "maneuvers"];
-  function unitValue(v, key3, state) {
+  function unitValue(v, key4, state) {
     fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "effectUsage", "effectModifiers"]);
     for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
     checkOptional(v, "corpseOf", id2);
@@ -3394,7 +3394,7 @@ var FatedTactical = (() => {
       }
     }
     checkOptional(v, "reactionAvailable", (x) => typeof x === "boolean");
-    requireThat(v.id === key3 && text(v.name) && team(v.team) && coord2(v.x) && coord2(v.y), "\u68CB\u5B50");
+    requireThat(v.id === key4 && text(v.name) && team(v.team) && coord2(v.x) && coord2(v.y), "\u68CB\u5B50");
     list(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
     requireThat(v.facing.length === 2 && v.facing.some(Boolean), "\u671D\u5411");
     for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat(int(v[max], r === "hp" ? 1 : 0, 1e9) && int(v[r], 0, v[max]), r);
@@ -3434,7 +3434,7 @@ var FatedTactical = (() => {
     if (depth > 12) return false;
     if (v === null || ["string", "boolean"].includes(typeof v) || Number.isFinite(v)) return true;
     if (Array.isArray(v)) return v.length <= 500 && Array.from(v).every((x) => jsonTree(x, depth + 1));
-    return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key3, x]) => !own2(Object.prototype, key3) && jsonTree(x, depth + 1));
+    return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own2(Object.prototype, key4) && jsonTree(x, depth + 1));
   }
   function validateState(s) {
     fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "effectTemplates", "summonTemplates", "terrainPatches"]);
@@ -3442,12 +3442,12 @@ var FatedTactical = (() => {
       fields(s.time, ["raw", "hour", "minute", "timeOfDay", "calendar"]);
       requireThat(text(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
     }
-    if (own2(s, "effectTemplates")) table2(s.effectTemplates, (e, key3) => {
-      requireThat(isExpression(e) && e.id === key3, "effectTemplates");
+    if (own2(s, "effectTemplates")) table2(s.effectTemplates, (e, key4) => {
+      requireThat(isExpression(e) && e.id === key4, "effectTemplates");
       validateEffect(e, s);
     });
-    if (own2(s, "summonTemplates")) table2(s.summonTemplates, (u, key3) => {
-      unitValue(u, key3, s);
+    if (own2(s, "summonTemplates")) table2(s.summonTemplates, (u, key4) => {
+      unitValue(u, key4, s);
       requireThat(u.skills.every((skill2) => has(s.skills, skill2)), "summon skills");
     });
     if (own2(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
@@ -3549,7 +3549,7 @@ var FatedTactical = (() => {
     altar: { title: "\u9AD8\u53F0\u796D\u575B\u593A\u53D6\u6218", description: "\u5761\u9053\u662F\u4E0A\u53F0\u7684\u6377\u5F84\uFF1B\u6FC0\u6D3B\u796D\u575B\u53EF\u83B7\u5F97\u62A4\u76FE\u4E0E\u75BE\u8D70\uFF0C\u9AD8\u53F0\u8FDC\u5C04\u6709\u989D\u5916\u5C04\u7A0B\u3002", seed: 43 },
     boss: { title: "BOSS \u4E0E\u6742\u5175\u6DF7\u7F16\u6218", description: "\u5B88\u95E8\u5DE8\u50CF\u62A4\u7532\u539A\u3001\u4F53\u578B\u5927\u3002\u5148\u62C6\u63F4\u519B\uFF0C\u518D\u7528\u51C0\u5316\u3001\u7A7F\u7532\u548C\u51FB\u9000\u5206\u644A\u538B\u529B\u3002", seed: 83 }
   });
-  var own3 = (obj, key3) => Object.hasOwn(obj, key3);
+  var own3 = (obj, key4) => Object.hasOwn(obj, key4);
   var object2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
   var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own3(Object.prototype, id3) && id3 !== "prototype";
   var entries = (record2) => {
@@ -3572,11 +3572,11 @@ var FatedTactical = (() => {
     const assigned = /* @__PURE__ */ new Set();
     const imported = [];
     for (const [id3, unit] of entries(carry.units)) {
-      if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot) => own3(unit, slot)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key3) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key3))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
-      const statuses = Object.fromEntries(entries(unit.statuses).map(([key3, status2]) => {
-        if (!object2(status2) || status2.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key3}`);
-        statusValue(status2, key3, state);
-        return [key3, status2];
+      if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot) => own3(unit, slot)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key4) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key4))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
+      const statuses = Object.fromEntries(entries(unit.statuses).map(([key4, status2]) => {
+        if (!object2(status2) || status2.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key4}`);
+        statusValue(status2, key4, state);
+        return [key4, status2];
       }));
       for (const [instanceId, isWeapon] of [[unit.weapon, true], ...[unit.mainHand, unit.offHand].filter(Boolean).map((i) => [i, true]), ...[unit.shield].filter(Boolean).map((i) => [i, true]), ...unit.gear.map((i) => [i, false])]) {
         if (instanceId === null && isWeapon) continue;
@@ -3594,7 +3594,7 @@ var FatedTactical = (() => {
   function buildScenario(request = "ruins") {
     if (request?.kind === "custom_state" && object2(request.state)) return migrateStateEffects(structuredClone(request.state));
     if (typeof request === "string") request = { scenarioId: request };
-    if (!object2(request) || !Object.keys(request).every((key3) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key3))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
+    if (!object2(request) || !Object.keys(request).every((key4) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key4))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
     const { scenarioId = "ruins", mode = "free", ruleset = "protocol", persistentSnapshot } = request;
     if (typeof scenarioId !== "string" || !own3(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
     const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
@@ -3785,13 +3785,13 @@ var FatedTactical = (() => {
       const target2 = state.units[profile.recipientId ?? profile.id];
       if (!target2) continue;
       const enemy = target2.team !== actor.team;
-      const sign = enemy ? 1 : target2 === actor ? -1.5 : -1.15;
+      const sign3 = enemy ? 1 : target2 === actor ? -1.5 : -1.15;
       const damage = profile.expectedDamage ?? 0;
       const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage / target2.hp) : 0;
-      score += sign * (Math.min(target2.hp, damage) + kill * 6);
+      score += sign3 * (Math.min(target2.hp, damage) + kill * 6);
       if (profile.heal) {
         const healing = (profile.heal[0] + profile.heal[1]) / 2;
-        score -= sign * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (target2.statuses.shield ? 0.14 : 0.34));
+        score -= sign3 * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (target2.statuses.shield ? 0.14 : 0.34));
       }
       for (const effect of skill2?.effects ?? []) {
         const applied = effect.target === "self" || enemy && effect.statusId === "stealth" ? actor : target2;
@@ -3948,9 +3948,9 @@ var FatedTactical = (() => {
   }
 
   // src/api/commands.js
-  var get = (table3, key3, label) => {
-    requireThat(has(table3, key3), label);
-    return table3[key3];
+  var get = (table4, key4, label) => {
+    requireThat(has(table4, key4), label);
+    return table4[key4];
   };
   var nonempty = (patch) => requireThat(plain(patch) && Object.keys(patch).length > 0, "patch");
   var commands = {
@@ -4076,8 +4076,8 @@ var FatedTactical = (() => {
       fields(c, ["type", "zone"]);
       const z = structuredClone(c.zone);
       requireThat(plain(z) && id2(z.id), "\u533A\u57DF ID");
-      const table3 = s.zones ??= {};
-      table3[z.id] = z;
+      const table4 = s.zones ??= {};
+      table4[z.id] = z;
     },
     remove_zone(s, c) {
       fields(c, ["type", "zoneId"]);
@@ -4205,16 +4205,16 @@ var FatedTactical = (() => {
   var battleVersion = 3;
   var maxHistory = 2e3;
   var maxBatch = 32;
-  var own4 = (obj, key3) => Object.hasOwn(obj, key3);
-  var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key3) => own4(value, key3));
+  var own4 = (obj, key4) => Object.hasOwn(obj, key4);
+  var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own4(value, key4));
   function diff(before, after, path = [], changes2 = []) {
     if (before === after) return changes2;
     if (before && after && typeof before === "object" && typeof after === "object" && Array.isArray(before) === Array.isArray(after) && (!Array.isArray(before) || before.length === after.length)) {
-      for (const key3 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
+      for (const key4 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
         diff(
-          own4(before, key3) ? before[key3] : void 0,
-          own4(after, key3) ? after[key3] : void 0,
-          [...path, Array.isArray(before) ? Number(key3) : key3],
+          own4(before, key4) ? before[key4] : void 0,
+          own4(after, key4) ? after[key4] : void 0,
+          [...path, Array.isArray(before) ? Number(key4) : key4],
           changes2
         );
       }
@@ -4528,294 +4528,712 @@ var FatedTactical = (() => {
   if (typeof window !== "undefined") window.FatedTacticalGame = GameAPI;
 
   // src/ui/template.js
-  var TEMPLATE = `<main id="output-container" class="game-layout">
-    <header class="action-panel game-header">
-      <div class="game-brand"><p class="eyebrow">\u25C6\u3000\u547D\u5B9A\u4E4B\u8BD7 / \u6218\u672F\u7BB1\u5EAD</p><h1 id="battle-title">\u547D\u5B9A\u4E4B\u8BD7</h1><p id="scenario-preview" class="muted"></p></div>
-      <div class="top-controls">
-        <label>\u9884\u8BBE\u6218\u5C40 <select id="scenario-select" class="axis-select"></select></label>
-        <label>\u884C\u52A8\u89C4\u5219 <select id="mode-select"><option value="free">\u81EA\u7531 2 AP</option><option value="split">1 \u52A8\u4F5C + 1 \u653B\u51FB</option></select></label>
-        <label>\u9762\u677F\u914D\u8272 <select id="theme-select"><option value="amethyst">\u7D2B\u6676</option><option value="night-gold">\u591C\u91D1</option><option value="frost-silver">\u971C\u94F6</option></select></label>
-        <label>\u968F\u673A\u79CD\u5B50 <input id="seed-input" type="number" min="0" max="4294967295" step="1" required></label>
-        <button type="button" id="reset-button" class="game-button">\u91CD\u5F00</button>
+  var TEMPLATE = `<div class="ft-app" data-busy="false">
+  <section class="ft-stage" aria-label="\u6218\u573A">
+    <div class="axis-scroll ft-scroll" id="board-scroll">
+      <div class="ft-board battle-axis" id="board-frame">
+        <div class="tactical-grid ft-grid" id="board" aria-label="\u6218\u65D7\u68CB\u76D8"></div>
+        <div class="ft-tokens" id="board-tokens" aria-hidden="true"></div>
+        <div class="ft-fx" id="board-fx" aria-hidden="true"></div>
       </div>
-    </header>
-    <div class="game-columns">
-      <div class="battle-main">
-        <section class="action-panel" aria-labelledby="board-title">
-          <div class="panel-header-bar game-heading"><h2 class="panel-title" id="board-title">\u25C7\u300010\xD710 \u6218\u672F\u5E73\u9762\u56FE</h2><span id="round-badge" class="tag tag-round"></span><span id="ap-display" aria-label="\u884C\u52A8\u529B"></span></div>
-          <div class="panel-content">
-            <div id="battle-status" role="status" class="data-row"></div>
-            <div id="turn-order" class="turn-order" aria-label="\u5148\u653B\u5E8F\u5217"></div>
-            <div class="battle-axis">
-              <div class="axis-meta"><span class="axis-caption">\u7AD9\u4F4D\u4E0E\u8DDD\u79BB \xB7 XYZ</span><span class="axis-bounds">X 0\u20139\u3000Y 0\u20139</span></div>
-              <div class="axis-toolbar" aria-label="\u5355\u4F4D\u6D4B\u8DDD">
-                <label>\u6D4B\u8DDD\u8D77\u70B9<select class="axis-select" id="measure-origin"></select></label>
-                <label>\u6D4B\u8DDD\u76EE\u6807<select class="axis-select" id="measure-target"></select></label>
-              </div>
-              <div id="measure-readout" class="axis-readout" aria-live="polite"></div>
-              <p id="board-instructions" class="axis-bounds">\u5148\u70B9\u76EE\u6807\u683C\uFF0C\u518D\u9009\u52A8\u4F5C\uFF1B\u70B9\u5F53\u524D\u5175\u724C\u5207\u6362\u75BE\u8DD1\u3002<span id="sprint-indicator"></span></p>
-              <p class="axis-scroll-hint">\u7A84\u5C4F\u53EF\u5DE6\u53F3\u6ED1\u52A8\u67E5\u770B\u5B8C\u6574\u68CB\u76D8</p>
-              <div class="axis-scroll" role="region" aria-label="\u6218\u672F\u68CB\u76D8\uFF0C\u53EF\u6A2A\u5411\u6EDA\u52A8" tabindex="0">
-                <div class="tactical-board-wrap">
-                  <div class="tactical-y-rail" id="board-y" aria-hidden="true"></div>
-                  <div class="tactical-grid" id="board" aria-label="10\xD710 \u68CB\u76D8"></div>
-                  <div class="tactical-x-rail" id="board-x" aria-hidden="true"></div>
-                </div>
-              </div>
-              <div class="tactical-legend">\u89D2\u6807 = Z \u9AD8\u5EA6\uFF08\u91D1\u9AD8\uFF0F\u7070\u5E73\uFF0F\u84DD\u4F4E\uFF09 \xB7 \u68D5 C \u63A9\u4F53 \xB7 \u7D2B I \u4E92\u52A8 \xB7 # \u5899 \xB7 \u5761 \u659C\u5761 \xB7 \u7EA2\u8FB9 \u9661\u5D16 \xB7 <b class="tx-good">\u7EFF \u53EF\u8FBE</b> \xB7 <b class="tx-info">\u84DD \u666E\u653B\u5C04\u7A0B</b>\uFF08\u7EFF\u683C\u84DD\u70B9\uFF1D\u53EF\u8FBE\u4E14\u5728\u5C04\u7A0B\uFF09 \xB7 <b class="tx-violet">\u7D2B \u5F71\u54CD\u533A</b></div>
-              <div id="terrain-inspector" class="tactical-inspector"></div>
-            </div>
-          </div>
-        </section>
-      </div>
-      <aside class="battle-sidebar" aria-label="\u6218\u672F\u63A7\u5236\u4E0E\u65E5\u5FD7">
-        <section class="action-panel" aria-labelledby="action-title">
-          <div class="panel-header-bar game-heading"><h2 class="panel-title" id="action-title">\u2726\u3000\u56DE\u5408\u63A7\u5236</h2></div>
-          <div class="panel-content">
-            <div class="control-row turn-controls">
-              <button id="end-turn" type="button" class="game-button primary">\u7ED3\u675F\u56DE\u5408</button>
-              <button id="ai-step" type="button" class="game-button">\u654C\u65B9\u5355\u6B65</button>
-              <button id="undo-button" type="button" class="game-button">\u64A4\u9500</button>
-              <button id="resource-button" type="button" class="game-button">\u539F\u534F\u8BAE\u8D44\u6E90\u63A8\u6F14</button>
-              <label><input id="auto-ai" type="checkbox" checked> \u81EA\u52A8\u654C\u65B9</label>
-              <label>\u901F\u5EA6 <select id="ai-speed"><option value="800">\u6162\u901F</option><option value="350" selected>\u6807\u51C6</option><option value="80">\u5FEB\u901F</option></select></label>
-            </div>
-            <p id="action-error" class="tx-bad" role="alert" hidden></p>
-          </div>
-        </section>
-        <section class="action-panel" aria-labelledby="card-title">
-          <div class="panel-header-bar game-heading"><h2 id="card-title" class="panel-title">\u25C8\u3000\u5355\u4F4D / \u573A\u666F\u60C5\u62A5</h2></div>
-          <div id="unit-card" class="panel-content"></div>
-          <details class="feature-register"><summary>\u63A9\u4F53\u4E0E\u4E92\u52A8\u70B9</summary><div id="feature-cards" class="panel-content"></div></details>
-        </section>
-        <section class="action-panel" aria-labelledby="logs-title">
-          <div class="panel-header-bar game-heading"><h2 id="logs-title" class="panel-title">\u2261\u3000\u6218\u51B5\u65E5\u5FD7</h2></div>
-          <div id="combat-log" class="panel-content" aria-label="\u6218\u51B5\u65E5\u5FD7"></div>
-          <div class="panel-content control-row export-controls">
-            <button type="button" id="export-report" class="game-button" title="\u6253\u5F00\u4FBF\u4E8E\u7C98\u8D34\u7ED9 AI \u7684\u7CBE\u7B80\u6218\u62A5">\u5BFC\u51FA\u6218\u62A5</button>
-            <button type="button" id="export-snapshot" class="game-button" title="\u4FDD\u5B58\u6574\u5C40 JSON\uFF0C\u5BFC\u5165\u540E\u539F\u5730\u7EE7\u7EED">\u5BFC\u51FA\u5FEB\u7167</button>
-            <button type="button" id="export-persistent" class="game-button" title="\u4FDD\u5B58\u88C5\u5907\u8BA1\u6570\u4E0E\u5E38\u9A7B\u72B6\u6001\uFF0C\u4F9B\u4E0B\u4E00\u5173\u7EE7\u627F">\u5BFC\u51FA\u8DE8\u6218\u6570\u636E</button>
-            <button type="button" id="import-button" class="game-button">\u5BFC\u5165 JSON</button>
-            <button type="button" id="clear-persistent" class="game-button" hidden>\u6E05\u9664\u4E0B\u573A\u7EE7\u627F</button>
-            <input id="import-snapshot" type="file" accept=".json,application/json" hidden>
-          </div>
-        </section>
-        <details id="api-sandbox" class="action-panel">
-          <summary class="panel-header-bar game-heading"><span class="panel-title">\u2318\u3000\u9884\u7559 GameAPI \u6C99\u76D2\u8C03\u8BD5\u9762\u677F</span></summary>
-          <div class="panel-content">
-            <p class="muted">\u8BD5\u7B97\u53EA\u663E\u793A\u5DEE\u5F02\uFF0C\u4E0D\u4FEE\u6539\u6218\u5C40\u3002\u786E\u8BA4\u540E\u624D\u63D0\u4EA4\u3002</p>
-            <div class="control-row sandbox-examples">
-              <button type="button" class="game-button" data-example="counter">\u88C5\u5907\u8BA1\u6570</button>
-              <button type="button" class="game-button" data-example="status">\u65BD\u52A0\u72B6\u6001</button>
-              <button type="button" class="game-button" data-example="custom-status">\u81EA\u5B9A\u4E49\u72B6\u6001</button>
-              <button type="button" class="game-button" data-example="terrain">\u5730\u5F62\u4FEE\u6539</button>
-            </div>
-            <label for="sandbox-reason">\u8BD5\u7B97\u7406\u7531</label> <input id="sandbox-reason" value="\u5C40\u5185\u6D4B\u8BD5" maxlength="300">
-            <label>\u63D0\u6848\u8BF4\u660E <input id="sandbox-reason" type="text" value="\u6C99\u76D2\u8C03\u8BD5" maxlength="160"></label>
-            <label class="editor-label" for="sandbox-editor">\u547D\u4EE4 JSON</label><textarea id="sandbox-editor" rows="8" spellcheck="false">[]</textarea>
-            <div class="control-row">
-              <button type="button" id="sandbox-preview" class="game-button">\u8BD5\u7B97 Diff \u9884\u89C8</button>
-              <button type="button" id="sandbox-commit" class="game-button primary" disabled>\u786E\u8BA4\u63D0\u4EA4</button>
-              <button type="button" id="sandbox-undo" class="game-button">\u64A4\u9500</button>
-            </div>
-            <pre id="sandbox-output" aria-live="polite"></pre>
-          </div>
-        </details>
-      </aside>
     </div>
-  </main>
-  <section id="target-actions" class="action-panel battle-axis" aria-labelledby="target-title" hidden>
-    <div class="control-row target-head"><strong id="target-title"></strong><button type="button" id="close-target" class="game-button" aria-label="\u5173\u95ED\u76EE\u6807\u52A8\u4F5C">\xD7</button></div>
-    <div class="control-row target-protocol-controls" aria-label="\u653B\u51FB\u534F\u8BAE\u53C2\u6570">
+
+    <header class="ft-hud-top">
+      <div class="ft-hud-title">
+        <span class="ft-eyebrow">\u25C6 \u547D\u5B9A\u4E4B\u8BD7</span>
+        <strong id="battle-title" class="ft-title"></strong>
+        <span id="round-badge" class="ft-round"></span>
+      </div>
+      <div id="turn-order" class="ft-initiative" aria-label="\u5148\u653B\u5E8F\u5217"></div>
+      <nav class="ft-hud-menu" aria-label="\u9762\u677F">
+        <button type="button" class="ft-icon-button" data-open-drawer="log" aria-label="\u6218\u51B5\u65E5\u5FD7" title="\u6218\u51B5\u65E5\u5FD7">\u{1F4DC}<span id="log-unread" class="ft-dot" hidden></span></button>
+        <button type="button" class="ft-icon-button" data-open-drawer="unit" aria-label="\u5355\u4F4D\u60C5\u62A5" title="\u5355\u4F4D\u60C5\u62A5">\u25C8</button>
+        <button type="button" class="ft-icon-button" data-open-drawer="tools" aria-label="\u5DE5\u5177" title="\u5DE5\u5177">\u2692</button>
+        <button type="button" class="ft-icon-button" data-open-drawer="settings" aria-label="\u6218\u5C40\u8BBE\u7F6E" title="\u6218\u5C40\u8BBE\u7F6E">\u2699</button>
+      </nav>
+    </header>
+
+    <p id="terrain-inspector" class="ft-inspector" aria-live="polite"></p>
+
+    <div class="ft-overlay" aria-live="polite">
+      <div id="turn-banner" class="ft-banner" hidden></div>
+      <div id="action-ribbon" class="ft-ribbon" hidden></div>
+      <div id="dice-stage" class="ft-dice-stage"></div>
+      <ol id="caption" class="ft-caption"></ol>
+    </div>
+    <button type="button" id="skip-playback" class="ft-skip" hidden>\u8DF3\u8FC7\u52A8\u753B \u25B8\u25B8</button>
+
+    <footer class="ft-dock">
+      <div id="actor-card" class="ft-actor"></div>
+      <div class="ft-dock-actions">
+        <p id="battle-status" class="ft-status" role="status"></p>
+        <p id="sprint-indicator" class="ft-hint"></p>
+        <p id="action-error" class="ft-error" role="alert" hidden></p>
+        <div class="ft-row">
+          <button id="end-turn" type="button" class="game-button primary">\u7ED3\u675F\u56DE\u5408</button>
+          <button id="undo-button" type="button" class="game-button">\u64A4\u9500</button>
+          <button id="ai-step" type="button" class="game-button">\u654C\u65B9\u5355\u6B65</button>
+          <label class="ft-switch"><input id="auto-ai" type="checkbox" checked> \u81EA\u52A8\u654C\u65B9</label>
+          <label class="ft-mini-select">\u95F4\u9694 <select id="ai-speed"><option value="800">\u6162</option><option value="350" selected>\u6807\u51C6</option><option value="80">\u5FEB</option></select></label>
+        </div>
+      </div>
+    </footer>
+  </section>
+
+  <section id="target-actions" class="ft-target-card" aria-labelledby="target-title" hidden>
+    <div class="ft-target-head">
+      <strong id="target-title"></strong>
+      <button type="button" id="close-target" class="ft-close" aria-label="\u5173\u95ED">\xD7</button>
+    </div>
+    <div id="target-options" class="ft-target-options" hidden>
       <label>\u610F\u56FE <select id="intent-select"><option value="normal">\u5E38\u89C4</option><option value="function">\u673A\u80FD\u9650\u5236</option><option value="core">\u6838\u5FC3\u8981\u5BB3</option><option value="kill">\u62B9\u6740</option><option value="concept">\u6982\u5FF5\u7834\u788E</option></select></label>
       <label><input id="nonlethal-toggle" type="checkbox"> \u975E\u81F4\u6B7B</label>
       <label>\u5956\u52B1\u9AB0 <select id="bonus-dice-select"><option value="0">0</option><option value="1">1</option><option value="2">2</option></select></label>
     </div>
-    <div id="action-toolbar" class="control-row action-toolbar" aria-label="\u76EE\u6807\u53EF\u7528\u52A8\u4F5C"></div>
-    <button type="button" id="confirm-action" class="game-button primary" hidden>\u786E\u8BA4\u65BD\u653E</button>
-    <details id="target-preview"><summary>\u6218\u672F\u9884\u89C8</summary><div id="tactical-preview" class="axis-readout" aria-label="\u6218\u672F\u9884\u89C8" tabindex="0"></div></details>
+    <div id="action-toolbar" class="ft-actions" aria-label="\u53EF\u7528\u52A8\u4F5C"></div>
+    <div id="tactical-preview" class="ft-preview" aria-label="\u6218\u672F\u9884\u89C8" tabindex="0"></div>
+    <button type="button" id="confirm-action" class="game-button primary ft-confirm" hidden>\u786E\u8BA4</button>
   </section>
-  <dialog id="report-dialog" class="action-panel" aria-labelledby="report-title">
-    <h2 id="report-title" class="panel-title">\u7CBE\u7B80\u6218\u62A5</h2>
+
+  <div class="ft-scrim" id="drawer-scrim" hidden></div>
+
+  <aside class="ft-drawer" data-drawer="log" aria-label="\u6218\u51B5\u65E5\u5FD7" hidden>
+    <header class="ft-drawer-head"><h2>\u{1F4DC} \u6218\u51B5\u65E5\u5FD7</h2><button type="button" class="ft-close" data-close-drawer aria-label="\u5173\u95ED">\xD7</button></header>
+    <div id="combat-log" class="ft-log"></div>
+  </aside>
+
+  <aside class="ft-drawer" data-drawer="unit" aria-label="\u5355\u4F4D\u60C5\u62A5" hidden>
+    <header class="ft-drawer-head"><h2>\u25C8 \u5355\u4F4D\u60C5\u62A5</h2><button type="button" class="ft-close" data-close-drawer aria-label="\u5173\u95ED">\xD7</button></header>
+    <div id="unit-card" class="ft-unit-card"></div>
+    <h3 class="ft-section">\u63A9\u4F53\u4E0E\u4E92\u52A8\u70B9</h3>
+    <div id="feature-cards" class="ft-features"></div>
+  </aside>
+
+  <aside class="ft-drawer" data-drawer="settings" aria-label="\u6218\u5C40\u8BBE\u7F6E" hidden>
+    <header class="ft-drawer-head"><h2>\u2699 \u6218\u5C40\u8BBE\u7F6E</h2><button type="button" class="ft-close" data-close-drawer aria-label="\u5173\u95ED">\xD7</button></header>
+    <div class="ft-form">
+      <label data-scenario-only>\u9884\u8BBE\u6218\u5C40 <select id="scenario-select"></select></label>
+      <p id="scenario-preview" class="muted"></p>
+      <label>\u884C\u52A8\u89C4\u5219 <select id="mode-select"><option value="free">\u81EA\u7531 2 AP</option><option value="split">1 \u52A8\u4F5C + 1 \u653B\u51FB</option></select></label>
+      <label>\u968F\u673A\u79CD\u5B50 <input id="seed-input" type="number" min="0" max="4294967295" step="1" required></label>
+      <div class="ft-row">
+        <button type="button" id="reset-button" class="game-button primary">\u91CD\u5F00\u6218\u5C40</button>
+        <button type="button" id="clear-persistent" class="game-button" hidden>\u6E05\u9664\u8DE8\u6218\u6570\u636E</button>
+      </div>
+      <h3 class="ft-section">\u663E\u793A</h3>
+      <label>\u52A8\u753B\u901F\u5EA6 <select id="anim-speed"><option value="1.6">\u6162\uFF08\u770B\u6E05\u6BCF\u4E00\u6B65\uFF09</option><option value="1" selected>\u6807\u51C6</option><option value="0.5">\u5FEB</option><option value="0">\u5173\u95ED</option></select></label>
+      <label>\u9762\u677F\u914D\u8272 <select id="theme-select"><option value="amethyst">\u7D2B\u6676</option><option value="night-gold">\u591C\u91D1</option><option value="frost-silver">\u971C\u94F6</option></select></label>
+    </div>
+  </aside>
+
+  <aside class="ft-drawer" data-drawer="tools" aria-label="\u5DE5\u5177" hidden>
+    <header class="ft-drawer-head"><h2>\u2692 \u5DE5\u5177</h2><button type="button" class="ft-close" data-close-drawer aria-label="\u5173\u95ED">\xD7</button></header>
+    <div class="ft-form">
+      <h3 class="ft-section">\u6218\u62A5\u4E0E\u5B58\u6863</h3>
+      <div class="ft-row">
+        <button type="button" id="export-report" class="game-button primary">\u5BFC\u51FA\u6218\u62A5</button>
+        <button type="button" id="export-snapshot" class="game-button">\u4E0B\u8F7D\u5FEB\u7167</button>
+        <button type="button" id="export-persistent" class="game-button">\u4E0B\u8F7D\u8DE8\u6218\u6570\u636E</button>
+        <button type="button" id="import-button" class="game-button">\u5BFC\u5165\u5B58\u6863</button>
+        <input id="import-snapshot" type="file" accept=".json,application/json" hidden>
+      </div>
+      <h3 class="ft-section">\u6D4B\u8DDD</h3>
+      <div class="ft-row">
+        <label>\u8D77\u70B9 <select id="measure-origin"></select></label>
+        <label>\u76EE\u6807 <select id="measure-target"></select></label>
+      </div>
+      <p id="measure-readout" class="ft-readout" aria-live="polite"></p>
+      <h3 class="ft-section">\u63A8\u6F14</h3>
+      <button type="button" id="resource-button" class="game-button">\u6218\u524D\u8D44\u6E90\u63A8\u6F14</button>
+      <details id="api-sandbox" class="ft-dev">
+        <summary>\u5F00\u53D1\u8005\u6C99\u76D2\uFF08GameAPI \u547D\u4EE4\uFF09</summary>
+        <p class="muted">\u5148\u8BD5\u7B97\uFF0C\u53EA\u663E\u793A\u4F1A\u6539\u53D8\u4EC0\u4E48\uFF1B\u786E\u8BA4\u540E\u624D\u5199\u5165\u6218\u5C40\u3002</p>
+        <div class="ft-row">
+          <button type="button" class="game-button" data-example="counter">\u88C5\u5907\u8BA1\u6570 +1</button>
+          <button type="button" class="game-button" data-example="status">\u65BD\u52A0\u75BE\u8D70</button>
+          <button type="button" class="game-button" data-example="custom-status">\u81EA\u5B9A\u4E49\u72B6\u6001</button>
+          <button type="button" class="game-button" data-example="terrain">\u6539\u5730\u5F62</button>
+        </div>
+        <label>\u8BF4\u660E <input id="sandbox-reason" type="text" value="\u6C99\u76D2\u8C03\u8BD5" maxlength="160"></label>
+        <label>\u547D\u4EE4 <textarea id="sandbox-editor" rows="7" spellcheck="false">[]</textarea></label>
+        <div class="ft-row">
+          <button type="button" id="sandbox-preview" class="game-button">\u8BD5\u7B97</button>
+          <button type="button" id="sandbox-commit" class="game-button primary" disabled>\u786E\u8BA4\u63D0\u4EA4</button>
+          <button type="button" id="sandbox-undo" class="game-button">\u64A4\u9500</button>
+        </div>
+        <div id="sandbox-output" class="ft-readout" aria-live="polite"></div>
+      </details>
+    </div>
+  </aside>
+
+  <dialog id="report-dialog" class="ft-dialog" aria-labelledby="report-title">
+    <h2 id="report-title">\u7CBE\u7B80\u6218\u62A5</h2>
     <p class="muted">\u53EF\u76F4\u63A5\u7C98\u8D34\u7ED9 AI \u6269\u5199\uFF1B\u4E0D\u4F1A\u81EA\u52A8\u53D1\u9001\u3002</p>
     <textarea id="report-text" rows="13" readonly aria-label="\u6218\u62A5\u6587\u672C"></textarea>
-    <div class="control-row">
+    <div class="ft-row">
       <button type="button" id="copy-report" class="game-button primary">\u590D\u5236\u6218\u62A5</button>
       <button type="button" id="download-report" class="game-button">\u4E0B\u8F7D TXT</button>
       <form method="dialog"><button class="game-button">\u5173\u95ED</button></form>
     </div>
     <p id="report-message" role="status"></p>
   </dialog>
-  <dialog id="resource-dialog" class="action-panel" aria-labelledby="resource-title">
-    <h2 id="resource-title" class="panel-title">\u539F\u534F\u8BAE \xB7 \u6218\u524D\u8D44\u6E90\u63A8\u6F14</h2>
-    <p class="muted">\u9ED8\u8BA4\u586B\u5165\u6240\u9009\u68CB\u5B50\u7684\u4E94\u7EF4\uFF0C\u5C42\u7EA7\u6682\u586B\u4E00\u5C42\u3002\u4EC5\u5BF9\u8D26\uFF0C\u4E0D\u6539\u5F53\u524D\u6218\u6597\u3002</p>
-    <textarea id="resource-input" rows="8" aria-label="\u539F\u534F\u8BAE\u63A8\u6F14\u8F93\u5165 JSON"></textarea>
-    <div class="control-row"><button type="button" id="calculate-resources" class="game-button primary">\u8BA1\u7B97</button><form method="dialog"><button class="game-button">\u5173\u95ED</button></form></div>
-    <pre id="resource-output" aria-live="polite"></pre>
-  </dialog>`;
+
+  <dialog id="resource-dialog" class="ft-dialog" aria-labelledby="resource-title">
+    <h2 id="resource-title">\u6218\u524D\u8D44\u6E90\u63A8\u6F14</h2>
+    <p class="muted">\u9ED8\u8BA4\u586B\u5165\u6240\u9009\u5355\u4F4D\u7684\u4E94\u7EF4\uFF0C\u5C42\u7EA7\u6682\u586B\u4E00\u5C42\u3002\u53EA\u505A\u8BA1\u7B97\uFF0C\u4E0D\u6539\u5F53\u524D\u6218\u6597\u3002</p>
+    <textarea id="resource-input" rows="8" aria-label="\u63A8\u6F14\u8F93\u5165"></textarea>
+    <div class="ft-row">
+      <button type="button" id="calculate-resources" class="game-button primary">\u8BA1\u7B97</button>
+      <form method="dialog"><button class="game-button">\u5173\u95ED</button></form>
+    </div>
+    <div id="resource-output" class="ft-readout" aria-live="polite"></div>
+  </dialog>
+</div>`;
+
+  // src/ui/narrate.js
+  var DAMAGE_TYPES = Object.freeze({ physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" });
+  var STAT_NAMES = Object.freeze({ str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" });
+  var MANEUVERS = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
+  var INTENT_NAMES = { normal: "\u5E38\u89C4", function: "\u673A\u80FD\u9650\u5236", core: "\u6838\u5FC3\u8981\u5BB3", kill: "\u62B9\u6740", concept: "\u6982\u5FF5\u7834\u788E" };
+  var COUNTER_NAMES = { souls: "\u9B42\u6570", ammo: "\u5F39\u836F" };
+  var sign = (n) => n > 0 ? `+${n}` : `${n}`;
+  var pct = (n) => `${Math.round(n * 100)}%`;
+  var num2 = (n) => Number.isInteger(n) ? `${n}` : Number(n).toFixed(1);
+  var table3 = (t, id3) => t && id3 != null && Object.hasOwn(t, id3) ? t[id3] : void 0;
+  function nameOf(state, id3) {
+    if (id3 == null) return "\u67D0\u4EBA";
+    return table3(state?.units, id3)?.name ?? table3(state?.covers, id3)?.name ?? table3(state?.interactives, id3)?.name ?? String(id3);
+  }
+  function statusInfo(state, id3) {
+    return table3(STATUSES, id3) ?? table3(state?.statusTemplates, id3) ?? { name: id3 };
+  }
+  function diceMode(dice3, kept, { advantages = 0, disadvantages = 0, bonusDice = 0 } = {}) {
+    if (!Array.isArray(dice3) || dice3.length <= 1) return "normal";
+    if (dice3.length === 3) return "middle";
+    const hi = Math.max(...dice3), lo = Math.min(...dice3);
+    if (hi !== lo) return kept === hi ? "advantage" : "disadvantage";
+    return advantages + bonusDice > disadvantages ? "advantage" : "disadvantage";
+  }
+  function describeDice(dice3, kept, mode) {
+    if (!Array.isArray(dice3) || !dice3.length) return `\u9AB0\u503C ${kept}`;
+    if (mode === "normal") return `\u63B7 d20\uFF0C\u5F97 ${kept}`;
+    const label = { advantage: `\u4F18\u52BF\uFF1A\u63B7 ${dice3.length} \u9897 d20 \u53D6\u9AD8`, disadvantage: `\u52A3\u52BF\uFF1A\u63B7 ${dice3.length} \u9897 d20 \u53D6\u4F4E`, middle: "\u63B7 3 \u9897 d20 \u53D6\u4E2D\u95F4\u503C" }[mode];
+    return `${label}\uFF08${dice3.join("\u3001")}\uFF09\uFF0C\u5F97 ${kept}`;
+  }
+  function ratingLine(total, rating) {
+    if (!rating) return null;
+    if (!rating.multiplier) return `\u5408\u8BA1 ${total}\uFF0C\u4E0D\u8DB3 4\uFF0C\u5931\u624B`;
+    const row = RATING_TABLE.find((r) => r.name === rating.name);
+    return `\u5408\u8BA1 ${total}${row?.min != null ? ` \u2265 ${row.min}` : ""}\uFF0C\u8BC4\u7EA7\u300C${rating.name}\u300D\uFF0C\u4F24\u5BB3 \xD7${rating.multiplier}`;
+  }
+  function rollEntry(state, log) {
+    const d = log.detail ?? {};
+    const attacker = nameOf(state, log.actor), target2 = nameOf(state, d.targetId);
+    const kept = d.selected ?? d.dice?.[0];
+    const mode = diceMode(d.dice, kept, d);
+    const verdict = d.critical ? "\u66B4\u51FB" : d.hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D";
+    const tone = d.critical ? "crit" : d.hit ? "hit" : "miss";
+    const lines = [describeDice(d.dice, kept, mode)];
+    if (Number.isFinite(d.accuracy)) lines.push(`\u547D\u4E2D\u4FEE\u6B63 ${sign(d.accuracy)}\uFF0C\u5408\u8BA1 ${d.total}`);
+    const factors = [];
+    if (d.distanceTier?.name && Number.isFinite(d.distance)) factors.push(`\u8DDD\u79BB ${num2(d.distance)} \u683C\uFF08${d.distanceTier.name}\uFF09`);
+    if (d.highGround) factors.push(d.highGround > 0 ? `\u5C45\u9AD8\u4E34\u4E0B ${sign(d.highGround)}` : `\u4EF0\u653B ${sign(d.highGround)}`);
+    if (d.cover) factors.push(`\u88AB${d.coverId ? nameOf(state, d.coverId) : "\u63A9\u4F53"}\u906E\u6321 \u2212${d.cover}`);
+    if (d.flanked) factors.push("\u5939\u51FB +2");
+    if (d.arc === "back") factors.push("\u4ECE\u80CC\u540E\u51FA\u624B");
+    if (factors.length) lines.push(`\u4FEE\u6B63\u6765\u6E90\uFF1A${factors.join("\uFF0C")}`);
+    if (kept === 1) lines.push("\u5929\u7136 1\uFF1A\u65E0\u8BBA\u52A0\u503C\u591A\u5C11\uFF0C\u5FC5\u5B9A\u5931\u624B");
+    else if (kept === 20) lines.push("\u5929\u7136 20\uFF1A\u5FC5\u5B9A\u66B4\u51FB");
+    const rl = ratingLine(d.total, d.rating);
+    if (rl && kept !== 1) lines.push(rl);
+    if (d.intent && d.intent.required === false && d.intent.name && d.intent.name !== "\u5E38\u89C4") lines.push(`\u610F\u56FE\uFF1A${d.intent.name}`);
+    return {
+      tone,
+      icon: d.critical ? "\u{1F4A5}" : d.hit ? "\u2694\uFE0F" : "\u{1F4A8}",
+      title: `${attacker} \u653B\u51FB ${target2}\uFF1A${verdict}${d.hit && d.rating?.name && !d.critical ? `\uFF08${d.rating.name}\uFF09` : ""}`,
+      lines,
+      targetId: d.targetId,
+      roll: {
+        kind: "d20",
+        label: `${attacker} \u2192 ${target2} \xB7 \u547D\u4E2D\u68C0\u5B9A`,
+        dice: d.dice ?? [kept],
+        kept,
+        mode,
+        modifier: d.accuracy ?? 0,
+        modifierLabel: "\u547D\u4E2D\u4FEE\u6B63",
+        total: d.total,
+        target: d.defense,
+        targetLabel: "\u9632\u5FA1",
+        verdict: d.critical ? `\u66B4\u51FB\uFF01${d.rating?.name ? `\u300C${d.rating.name}\u300D` : ""}` : d.hit ? `\u547D\u4E2D\u300C${d.rating?.name ?? "\u6709\u6548"}\u300D` : kept === 1 ? "\u5929\u7136 1 \xB7 \u5931\u624B" : "\u672A\u547D\u4E2D",
+        tone,
+        note: d.rating?.multiplier && d.hit ? `\u4F24\u5BB3 \xD7${d.rating.multiplier}` : null
+      }
+    };
+  }
+  function damageEntry(state, log) {
+    const d = log.detail ?? {};
+    const target2 = nameOf(state, d.targetId);
+    const lines = [];
+    const dice3 = d.dice;
+    if (dice3 && typeof dice3 === "object") {
+      if (dice3.count) lines.push(`\u57FA\u7840\u4F24\u5BB3 ${dice3.count}d${dice3.sides}\uFF08${dice3.rolls.join(" + ")}\uFF09${dice3.bonus ? ` + ${dice3.bonus}` : ""} = ${dice3.value}`);
+      else if (Number.isFinite(dice3.value)) lines.push(`\u57FA\u7840\u4F24\u5BB3 ${dice3.value}`);
+    }
+    const mults = [];
+    if (d.ratingMultiplier && d.ratingMultiplier !== 1) mults.push(`\u8BC4\u7EA7\u300C${d.rating}\u300D\xD7${d.ratingMultiplier}`);
+    if (d.intent?.multiplier && d.intent.multiplier !== 1) mults.push(`\u610F\u56FE \xD7${d.intent.multiplier}`);
+    if (d.attackMultiplier && d.attackMultiplier !== 1) mults.push(`\u653B\u51FB\u52A0\u6210 \xD7${num2(d.attackMultiplier)}`);
+    if (d.multiplier && d.multiplier !== 1) mults.push(`\u589E\u4F24 \xD7${num2(d.multiplier)}`);
+    if (d.stanceScale && d.stanceScale !== 1) mults.push(`\u67B6\u52BF \xD7${d.stanceScale}`);
+    if (d.offHandScale && d.offHandScale !== 1) mults.push(`\u526F\u624B \xD7${d.offHandScale}`);
+    if (d.shatter) mults.push(`\u788E\u51B0 +${pct(d.shatter)}`);
+    if (d.vulnerability) mults.push(`\u6613\u4F24 +${pct(d.vulnerability)}`);
+    if (d.reduction) mults.push(`\u51CF\u4F24 \u2212${pct(d.reduction)}`);
+    if (d.attributeReduction) mults.push(`\u4F53\u9B44\u51CF\u4F24 \u2212${pct(d.attributeReduction)}`);
+    if (d.armorMultiplier && d.armorMultiplier < 0.995) mults.push(`\u62A4\u7532 \u2212${pct(1 - d.armorMultiplier)}`);
+    if (mults.length) lines.push(`\u500D\u7387\uFF1A${mults.join("\uFF0C")}`);
+    if (d.absorbed) lines.push(`\u62A4\u76FE\u5438\u6536 ${d.absorbed} \u70B9`);
+    if (Number.isFinite(d.hpBefore)) lines.push(`\u751F\u547D ${d.hpBefore} \u2192 ${d.hpAfter}`);
+    return { tone: "damage", icon: "\u{1FA78}", title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0 };
+  }
+  function saveCheck(state, who, c) {
+    const stat2 = STAT_NAMES[c.saveStat] ?? c.saveStat;
+    return `${who} ${stat2}\u8C41\u514D\uFF1Ad20 \u5F97 ${c.saveRoll} ${sign(c.saveBonus)} = ${c.saveTotal}\uFF0C\u9700\u8981 ${c.saveDC} \u2192 ${c.saved ? "\u901A\u8FC7" : "\u5931\u8D25"}`;
+  }
+  function saveEntry(state, log) {
+    const d = log.detail ?? {};
+    const who = nameOf(state, d.targetId);
+    const tone = d.saved ? "save-pass" : "save-fail";
+    const base = { tone, icon: d.saved ? "\u{1F6E1}\uFE0F" : "\u26A0\uFE0F", title: `${who}${d.saved ? "\u901A\u8FC7" : "\u672A\u901A\u8FC7"}\u8C41\u514D`, targetId: d.targetId };
+    if (d.contest) {
+      const { attack: a, defense: b, dc } = d.contest;
+      return {
+        ...base,
+        lines: [saveCheck(state, nameOf(state, log.actor), a), saveCheck(state, who, b), `\u4E24\u8005\u5DEE\u503C\u9700\u5C0F\u4E8E ${dc} \u624D\u7B97\u62B5\u6297\u6210\u529F`],
+        roll: {
+          kind: "versus",
+          label: `${who} \xB7 \u5BF9\u6297\u8C41\u514D`,
+          verdict: d.saved ? "\u62B5\u6297\u6210\u529F" : "\u62B5\u6297\u5931\u8D25",
+          tone,
+          left: { name: nameOf(state, log.actor), dice: [a.saveRoll], bonus: a.saveBonus, total: a.saveTotal },
+          right: { name: who, dice: [b.saveRoll], bonus: b.saveBonus, total: b.saveTotal }
+        }
+      };
+    }
+    if (Array.isArray(d.checks)) {
+      return {
+        ...base,
+        lines: [...d.checks.map((c) => saveCheck(state, who, c)), d.mode === "all" ? "\u9700\u8981\u5168\u90E8\u901A\u8FC7" : "\u4EFB\u4E00\u901A\u8FC7\u5373\u53EF"],
+        roll: {
+          kind: "d20",
+          label: `${who} \xB7 \u591A\u91CD\u8C41\u514D`,
+          dice: d.checks.map((c) => c.saveRoll),
+          kept: d.checks[0]?.saveRoll,
+          mode: "normal",
+          modifier: d.checks[0]?.saveBonus ?? 0,
+          total: d.checks[0]?.saveTotal,
+          verdict: d.saved ? "\u8C41\u514D\u901A\u8FC7" : "\u8C41\u514D\u5931\u8D25",
+          tone
+        }
+      };
+    }
+    const stat2 = STAT_NAMES[d.saveStat] ?? d.saveStat ?? "";
+    return {
+      ...base,
+      lines: [saveCheck(state, who, d)],
+      roll: {
+        kind: "d20",
+        label: `${who} \xB7 ${stat2}\u8C41\u514D`,
+        dice: [d.saveRoll],
+        kept: d.saveRoll,
+        mode: "normal",
+        modifier: d.saveBonus ?? 0,
+        modifierLabel: `${stat2}\u52A0\u503C`,
+        total: d.saveTotal,
+        target: d.saveDC,
+        targetLabel: "\u96BE\u5EA6",
+        verdict: d.saved ? "\u8C41\u514D\u901A\u8FC7" : "\u8C41\u514D\u5931\u8D25",
+        tone
+      }
+    };
+  }
+  function versus(state, log, label, success, verdictYes, verdictNo) {
+    const d = log.detail ?? {};
+    const left = nameOf(state, log.actor), right = nameOf(state, d.targetId);
+    const lt = d.attackerTotal ?? d.attackerRoll, rt = d.defenderTotal ?? d.defenderRoll;
+    const tone = success ? "hit" : "miss";
+    return {
+      tone,
+      icon: success ? "\u270A" : "\u270B",
+      title: log.text,
+      targetId: d.targetId,
+      lines: [
+        `${left}\uFF1Ad20 \u5F97 ${d.attackerRoll}${d.attackerTotal != null && d.attackerTotal !== d.attackerRoll ? `\uFF0C\u5408\u8BA1 ${d.attackerTotal}` : ""}`,
+        `${right}\uFF1Ad20 \u5F97 ${d.defenderRoll}${d.defenderTotal != null && d.defenderTotal !== d.defenderRoll ? `\uFF0C\u5408\u8BA1 ${d.defenderTotal}` : ""}`,
+        `${lt} \u5BF9 ${rt} \u2192 ${success ? verdictYes : verdictNo}`
+      ],
+      roll: {
+        kind: "versus",
+        label,
+        verdict: success ? verdictYes : verdictNo,
+        tone,
+        left: { name: left, dice: [d.attackerRoll], bonus: (d.attackerTotal ?? d.attackerRoll) - d.attackerRoll, total: lt },
+        right: { name: right, dice: [d.defenderRoll], bonus: (d.defenderTotal ?? d.defenderRoll) - d.defenderRoll, total: rt }
+      }
+    };
+  }
+  var MOVE_VERBS = { move: "\u79FB\u52A8", sprint: "\u75BE\u8DD1", disengage: "\u64A4\u79BB" };
+  function narrate(log, state) {
+    const d = log?.detail ?? {};
+    const actor = nameOf(state, log?.actor);
+    const base = { type: log?.type, tone: "info", icon: "\u25C6", title: log?.text ?? "", lines: [], quiet: false, actorId: log?.actor ?? null, targetId: d.targetId ?? null };
+    const out = (extra) => ({ ...base, ...extra });
+    switch (log?.type) {
+      case "initiative": {
+        const rows = [...d.initiative ?? []].sort((a, b) => b.total - a.total);
+        return out({
+          icon: "\u{1F3B2}",
+          tone: "turn",
+          title: "\u6295\u63B7\u5148\u653B\uFF0C\u51B3\u5B9A\u884C\u52A8\u987A\u5E8F",
+          lines: rows.map((r, i) => `${i + 1}. ${nameOf(state, r.unitId)}\uFF1Ad20 \u5F97 ${r.roll} + \u654F\u6377 ${r.agility}${r.flatInit ? ` ${sign(r.flatInit)}` : ""} = ${num2(r.total)}`)
+        });
+      }
+      case "initiative_order":
+        return out({ icon: "\u{1F500}", lines: (d.order ?? []).length ? [`\u65B0\u987A\u5E8F\uFF1A${d.order.map((id3) => nameOf(state, id3)).join(" \u2192 ")}`] : [] });
+      case "turn":
+        return out({ tone: "turn", icon: "\u23F3", title: `\u8F6E\u5230 ${actor} \u884C\u52A8`, quiet: true });
+      case "end":
+        return out({ icon: "\u23F9", title: `${actor} \u7ED3\u675F\u56DE\u5408`, quiet: true });
+      case "skip":
+        return out({ tone: "status", icon: "\u{1F4AB}", title: `${actor} \u53D7\u63A7\u5236\uFF0C\u8DF3\u8FC7\u672C\u56DE\u5408` });
+      case "action":
+        return out({ icon: "\u25B6", title: log.text, quiet: true });
+      case "move":
+      case "sprint":
+      case "disengage": {
+        const steps = d.steps ?? d.path?.length ?? 0;
+        return out({
+          tone: "move",
+          icon: d.interrupted ? "\u26D4" : "\u{1F463}",
+          title: `${actor}${MOVE_VERBS[log.type]} ${steps} \u683C${d.interrupted ? "\uFF0C\u9014\u4E2D\u88AB\u62E6\u4E0B" : ""}`,
+          lines: [`(${d.from?.x}, ${d.from?.y}) \u2192 (${d.to?.x}, ${d.to?.y})`, ...log.type === "disengage" ? ["\u64A4\u79BB\u4E0D\u4F1A\u89E6\u53D1\u501F\u673A\u653B\u51FB"] : []]
+        });
+      }
+      case "teleport":
+        return out({ tone: "move", icon: "\u2728", lines: [`(${d.from?.x}, ${d.from?.y}) \u2192 (${d.to?.x}, ${d.to?.y})`] });
+      case "knockback":
+        return out({ tone: "damage", icon: "\u{1F4A8}", lines: d.to ? [`\u88AB\u63A8\u5230 (${d.to.x}, ${d.to.y})`] : [] });
+      case "roll":
+        return out(rollEntry(state, log));
+      case "damage":
+        return out(damageEntry(state, log));
+      case "defeat":
+        return out({ tone: "defeat", icon: "\u2620\uFE0F", title: `${nameOf(state, d.targetId)} \u5012\u4E0B\u4E86` });
+      case "heal":
+        return out({
+          tone: "heal",
+          icon: "\u{1F49A}",
+          amount: d.amount ?? 0,
+          lines: d.dice?.count ? [`\u6CBB\u7597\u91CF ${d.dice.count}d${d.dice.sides}\uFF08${d.dice.rolls.join(" + ")}\uFF09${d.dice.bonus ? ` + ${d.dice.bonus}` : ""}`] : []
+        });
+      case "status": {
+        const s = statusInfo(state, d.statusId);
+        return out({
+          tone: "status",
+          icon: s.icon ?? "\u25C6",
+          lines: [s.description, Number.isInteger(d.remainingTurns) ? `\u6301\u7EED ${d.remainingTurns} \u56DE\u5408` : null].filter(Boolean),
+          statusName: s.name
+        });
+      }
+      case "expire":
+        return out({ icon: "\u231B", quiet: true });
+      case "status_patch":
+        return out({ icon: "\u270E", quiet: true });
+      case "shield":
+        return out({ tone: "heal", icon: "\u{1F6E1}\uFE0F", lines: d.remaining ? [`\u62A4\u76FE\u5269\u4F59 ${d.remaining}`] : [] });
+      case "shield_break":
+        return out({ tone: "damage", icon: "\u{1F494}" });
+      case "shatter":
+        return out({ tone: "crit", icon: "\u{1F9CA}", lines: d.multiplier ? [`\u8FD9\u4E00\u51FB\u4F24\u5BB3 \xD7${d.multiplier}`] : [] });
+      case "intent": {
+        const ok = d.success;
+        return out({
+          tone: ok ? "hit" : "miss",
+          icon: ok ? "\u{1F3AF}" : "\u{1F6E1}\uFE0F",
+          title: `\u610F\u56FE\u300C${d.name ?? INTENT_NAMES[d.intent] ?? d.intent}\u300D${ok ? "\u6210\u7ACB" : "\u53D7\u963B"}`,
+          lines: [
+            `\u653B\u65B9\uFF1A\u9636\u4F4D ${d.attackerBase} + \u9AB0 ${d.attackerD20}${d.ratingBonus ? ` + \u8BC4\u7EA7 ${d.ratingBonus}` : ""} = ${d.attackerTotal}`,
+            `\u5B88\u65B9\uFF1A\u9636\u4F4D ${d.defenderBase} + d20 ${d.defenderD20} + \u96BE\u5EA6 ${d.intentDifficulty} = ${d.defenderTotal}`,
+            ok ? `\u4F24\u5BB3 \xD7${d.multiplier}` : "\u610F\u56FE\u843D\u7A7A\uFF0C\u6309\u666E\u901A\u547D\u4E2D\u7ED3\u7B97"
+          ],
+          roll: {
+            kind: "versus",
+            label: `\u610F\u56FE\u5BF9\u6297 \xB7 ${d.name ?? ""}`,
+            verdict: ok ? "\u610F\u56FE\u6210\u7ACB" : "\u610F\u56FE\u53D7\u963B",
+            tone: ok ? "hit" : "miss",
+            left: { name: actor, dice: [d.attackerD20], bonus: d.attackerTotal - d.attackerD20, total: d.attackerTotal },
+            right: { name: nameOf(state, d.targetId), dice: [d.defenderD20], bonus: d.defenderTotal - d.defenderD20, total: d.defenderTotal }
+          }
+        });
+      }
+      case "save":
+        return out(saveEntry(state, log));
+      case "contest":
+        return out(versus(state, log, `${MANEUVERS[d.maneuver] ?? "\u5BF9\u6297"}\u68C0\u5B9A`, d.success, `${MANEUVERS[d.maneuver] ?? ""}\u6210\u529F`, `${MANEUVERS[d.maneuver] ?? ""}\u5931\u8D25`));
+      case "flee":
+        return out(versus(state, log, "\u9003\u8DD1\u68C0\u5B9A", d.success, "\u9003\u8DD1\u6210\u529F", "\u9003\u8DD1\u5931\u8D25"));
+      case "morale":
+        return out({
+          tone: d.shaken ? "status" : "defeat",
+          icon: "\u{1F3F3}\uFE0F",
+          lines: [`\u751F\u547D\u8DCC\u7834 ${pct(d.threshold ?? 0)}\uFF0C\u58EB\u6C14\u52A8\u6447`, Number.isFinite(d.roll) ? `\u58EB\u6C14\u68C0\u5B9A d20 \u5F97 ${d.roll}` : null].filter(Boolean),
+          roll: Number.isFinite(d.roll) ? {
+            kind: "d20",
+            label: `${nameOf(state, d.targetId)} \xB7 \u58EB\u6C14\u68C0\u5B9A`,
+            dice: [d.roll],
+            kept: d.roll,
+            mode: "normal",
+            modifier: 0,
+            total: d.roll,
+            verdict: d.shaken ? "\u52A8\u6447" : "\u6E83\u9003",
+            tone: d.shaken ? "status" : "miss"
+          } : void 0
+        });
+      case "proc": {
+        const hit = d.triggered;
+        return out({
+          tone: hit ? "status" : "info",
+          icon: "\u{1F3B2}",
+          title: `${log.text}${hit ? " \u89E6\u53D1" : " \u672A\u89E6\u53D1"}`,
+          quiet: !hit,
+          lines: Number.isFinite(d.chance) ? [`\u89E6\u53D1\u51E0\u7387 ${pct(d.chance)}\uFF0C\u63B7\u51FA ${pct(d.roll)} \u2192 ${hit ? "\u89E6\u53D1" : "\u672A\u89E6\u53D1"}`] : [],
+          roll: Number.isFinite(d.chance) && hit ? { kind: "chance", label: `${log.text} \xB7 \u51E0\u7387\u5224\u5B9A`, chance: d.chance, rolled: d.roll, verdict: "\u89E6\u53D1\uFF01", tone: "status" } : void 0
+        });
+      }
+      case "opportunity":
+        return out({ tone: "crit", icon: "\u26A1", title: `\u501F\u673A\u653B\u51FB\uFF01${log.text}` });
+      case "counter": {
+        const item = log.text.split(" \xB7 ")[0];
+        return out({ icon: "\u25C8", quiet: true, title: `${item} \u7684${COUNTER_NAMES[d.counterKey] ?? d.counterKey} ${d.before} \u2192 ${d.after}` });
+      }
+      case "cover_damage":
+        return out({ tone: "damage", icon: "\u{1FAB5}", lines: Number.isFinite(d.hpAfter) ? [`\u8010\u4E45 ${d.hpBefore} \u2192 ${d.hpAfter}`] : [] });
+      case "cover_break":
+        return out({ tone: "damage", icon: "\u{1F9F1}" });
+      case "cover_approach":
+        return out({ icon: "\u{1F9F1}", quiet: true });
+      case "interact":
+        return out({ tone: "status", icon: "\u2734\uFE0F" });
+      case "brace":
+      case "block":
+      case "guard":
+      case "parry":
+        return out({ tone: "status", icon: "\u{1F6E1}\uFE0F" });
+      case "followup":
+        return out({ tone: "hit", icon: "\u2694\uFE0F" });
+      case "reveal":
+        return out({ icon: "\u{1F441}" });
+      case "cleanse":
+        return out({ tone: "heal", icon: "\u2728" });
+      case "nonlethal":
+        return out({ tone: "status", icon: "\u{1F91A}" });
+      case "zone":
+        return out({ tone: "status", icon: "\u{1F300}", lines: d.damage ? [`\u53D7\u5230 ${d.damage} \u70B9\u4F24\u5BB3`] : [] });
+      case "zone_expire":
+        return out({ icon: "\u{1F300}", quiet: true });
+      case "spawn":
+        return out({ tone: "status", icon: "\u{1F331}" });
+      case "deathrattle":
+        return out({ tone: "crit", icon: "\u{1F480}" });
+      case "skill_cost":
+        return out({ icon: "\u{1FA78}", quiet: true });
+      case "item":
+        return out({ tone: "status", icon: "\u{1F9EA}", lines: Number.isFinite(d.remaining) ? [`\u5269\u4F59 ${d.remaining} \u6B21`] : [] });
+      case "outcome":
+        return out({ tone: "outcome", icon: "\u{1F3C1}" });
+      default:
+        return out({});
+    }
+  }
+  function narrateAll(logs, state) {
+    return (logs ?? []).map((log, index) => ({ index, round: log.round, ...narrate(log, state) }));
+  }
 
   // src/ui/render.js
+  var STATUS_ICON = { buff: "\u2191", debuff: "\u2193", control: "\u2298", dot: "\u2739", hot: "\u271A", shield: "\u2B21" };
+  var STANCES = { light_blade: "\u8F7B\u5251", dual_wield: "\u53CC\u6301", attunement: "\u540C\u8C03", greatsword: "\u91CD\u5251", sword_shield: "\u5251\u76FE" };
+  var SHAPES = { circle: "\u5706\u5F62\u8303\u56F4", cone: "\u9525\u5F62\u8303\u56F4", fan: "\u6247\u5F62\u8303\u56F4", line: "\u76F4\u7EBF\u8303\u56F4" };
+  var ARROWS = { "-1,-1": "\u2199", "0,-1": "\u2193", "1,-1": "\u2198", "-1,0": "\u2190", "1,0": "\u2192", "-1,1": "\u2196", "0,1": "\u2191", "1,1": "\u2197" };
+  var ACTION_LABELS = {
+    use_item: "\u4F7F\u7528\u9053\u5177",
+    move: "\u79FB\u52A8",
+    sprint: "\u75BE\u8DD1",
+    disengage: "\u64A4\u79BB",
+    attack: "\u666E\u653B",
+    interact: "\u4E92\u52A8",
+    brace: "\u67B6\u52BF\u9632\u5FA1",
+    block: "\u683C\u6321",
+    shield_bash: "\u76FE\u51FB",
+    charge: "\u84C4\u529B",
+    lock_on: "\u9501\u5B9A",
+    scan: "\u63A2\u5BDF",
+    grapple: "\u64D2\u62B1",
+    disarm: "\u7F34\u68B0",
+    trip: "\u7ECA\u6454",
+    push: "\u63A8\u649E",
+    flee: "\u9003\u8DD1",
+    detour: "\u7ED5\u884C",
+    reload: "\u88C5\u586B",
+    end: "\u7ED3\u675F\u56DE\u5408"
+  };
+  var ACTION_HINTS = {
+    move: "\u8D70\u5230\u8FD9\u4E00\u683C",
+    sprint: "\u8DD1\u5F97\u66F4\u8FDC\uFF0C\u8017 2 AP",
+    disengage: "\u79BB\u5F00\u65F6\u4E0D\u88AB\u501F\u673A",
+    attack: "\u7528\u6B66\u5668\u653B\u51FB",
+    interact: "\u4F7F\u7528\u573A\u666F\u8BBE\u65BD",
+    brace: "\u672C\u56DE\u5408\u51CF\u4F24",
+    block: "\u4E3E\u76FE\u683C\u6321",
+    charge: "\u4E3A\u4E0B\u4E00\u51FB\u84C4\u529B",
+    scan: "\u4FA6\u5BDF\u5468\u56F4",
+    lock_on: "\u4E0B\u6B21\u653B\u51FB\u66F4\u51C6",
+    grapple: "\u5BF9\u6297\u68C0\u5B9A\uFF0C\u64D2\u4F4F\u5BF9\u65B9",
+    disarm: "\u5BF9\u6297\u68C0\u5B9A\uFF0C\u6253\u843D\u6B66\u5668",
+    trip: "\u5BF9\u6297\u68C0\u5B9A\uFF0C\u7ECA\u5012\u5BF9\u65B9",
+    push: "\u5BF9\u6297\u68C0\u5B9A\uFF0C\u63A8\u5F00\u5BF9\u65B9",
+    flee: "\u5C1D\u8BD5\u8131\u79BB\u6218\u6597",
+    use_item: "\u4F7F\u7528\u526F\u624B\u9053\u5177",
+    reload: "\u8865\u5145\u5F39\u836F",
+    end: "\u4FDD\u7559\u5269\u4F59 AP"
+  };
+  var sign2 = (n) => n > 0 ? `+${n}` : `${n}`;
+  var pct2 = (n) => `${Math.round(n * 100)}%`;
+  var interval = (pair) => pair?.length === 2 ? pair[0] === pair[1] ? `${pair[0]}` : `${pair[0]}\u2013${pair[1]}` : null;
+  var side = (team2) => team2 === "blue" ? "\u6211\u65B9" : "\u654C\u65B9";
+  var ratio2 = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
+  var has2 = (table4, id3) => table4 && id3 != null && Object.hasOwn(table4, id3);
+  var get2 = (table4, id3) => has2(table4, id3) ? table4[id3] : void 0;
+  var values3 = (table4) => Object.values(table4 ?? {});
+  var key3 = (x, y) => `${x},${y}`;
+  var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
+  var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
+  var terrainLabel = (t) => t.kind === "wall" ? "\u5899\u4F53\uFF0C\u6321\u4F4F\u79FB\u52A8\u548C\u89C6\u7EBF" : t.kind === "slope" ? "\u5761\u9053" : t.z > 0 ? `\u9AD8\u53F0\uFF08\u9AD8 ${t.z}\uFF09` : t.z < 0 ? `\u4F4E\u5730\uFF08${t.z}\uFF09` : "\u5E73\u5730";
   function createRenderer(root) {
-    if (!root || typeof root.querySelector !== "function") throw new TypeError("renderer root must be a DOM element");
-    const byId4 = (id3) => root.querySelector(`[id="${id3}"]`);
-    const el2 = (tag, classes, text4) => {
-      const node3 = root.ownerDocument.createElement(tag);
-      if (classes) node3.className = classes;
-      if (text4 !== void 0 && text4 !== null) node3.textContent = String(text4);
-      return node3;
+    const doc = root.ownerDocument;
+    const $ = (id3) => root.querySelector(`[id="${id3}"]`);
+    const el2 = (tag, cls, text4) => {
+      const n = doc.createElement(tag);
+      if (cls) n.className = cls;
+      if (text4 != null) n.textContent = String(text4);
+      return n;
     };
-    const key3 = (x, y) => `${x},${y}`;
-    const value = (table3, id3) => table3 && Object.hasOwn(table3, id3) ? table3[id3] : void 0;
-    const values3 = (table3) => Object.values(table3 ?? {});
-    const sign = (n) => n > 0 ? `+${n}` : String(n);
-    const percent = (n) => `${Math.round(n * 100)}%`;
-    const interval = (pair) => pair?.length === 2 ? pair[0] === pair[1] ? `${pair[0]}` : `${pair[0]}\u2013${pair[1]}` : null;
-    const side = (team2) => team2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
-    const arrow = (facing) => ({ "-1,-1": "\u2199", "0,-1": "\u2193", "1,-1": "\u2198", "-1,0": "\u2190", "1,0": "\u2192", "-1,1": "\u2196", "0,1": "\u2191", "1,1": "\u2197" })[facing?.join(",")] ?? "\xB7";
-    const terrainLabel = (tile) => tile.kind === "wall" ? "# \u5899\u4F53\uFF08\u963B\u65AD\u79FB\u52A8\u53CA\u89C6\u7EBF\uFF09" : tile.kind === "slope" ? "\u5761\u9053" : tile.z ? "\u9AD8\u4F4E\u53F0" : "\u5E73\u5730";
-    const actions = { move: ["\u79FB\u52A8", 1], sprint: ["\u75BE\u8DD1", 2], attack: ["\u666E\u901A\u653B\u51FB", 1], reload: ["\u88C5\u586B", 1], brace: ["\u67B6\u52BF\u9632\u5FA1", 1], disengage: ["\u64A4\u79BB", 1], interact: ["\u4E92\u52A8", 1] };
-    const statusIcon = { buff: "\u2191", debuff: "\u2193", control: "\u2298", dot: "\u2739", hot: "\u271A", shield: "\u2B21" };
-    const statuses = (u) => values3(u.statuses);
-    const statusText = (s) => `${statusIcon[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}${Number.isInteger(s.remainingTurns) ? ` \xB7 ${s.remainingTurns}\u56DE\u5408` : s.durationType === "persistent" ? " \xB7 \u5E38\u9A7B" : ""}`;
-    const ratio2 = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
-    const activeFeedback = /* @__PURE__ */ new Map();
-    const boardCells = /* @__PURE__ */ new Map();
-    let dimensions = "", renderedScenario = null, logKeys = [], lastRender = null, baselineRanges;
-    function createButton(classes, text4) {
-      const button = el2("button", classes, text4);
-      button.type = "button";
-      return button;
-    }
-    function initializeBoard(state) {
-      const width = state.grid[0].length, height2 = state.grid.length;
-      const size = key3(width, height2);
-      if (dimensions === size) return;
-      dimensions = size;
-      const board = byId4("board"), xRail = byId4("board-x"), yRail = byId4("board-y");
-      board.closest(".battle-axis").style.setProperty("--rows", height2);
-      board.closest(".battle-axis").style.setProperty("--cols", width);
+    const cells = /* @__PURE__ */ new Map();
+    let dims = "", last = null, baseline = { move: /* @__PURE__ */ new Set(), attack: /* @__PURE__ */ new Set() }, logCount = -1;
+    function initBoard(state) {
+      const h = state.grid.length, w = state.grid[0].length;
+      if (dims === key3(w, h)) return;
+      dims = key3(w, h);
+      const board = $("board"), frame = $("board-frame");
+      frame.style.setProperty("--cols", w);
+      frame.style.setProperty("--rows", h);
       board.replaceChildren();
-      xRail.replaceChildren();
-      yRail.replaceChildren();
-      boardCells.clear();
-      for (let x = 0; x < width; x++) xRail.append(el2("span", "", x));
-      for (let y = height2 - 1; y >= 0; y--) {
-        yRail.append(el2("span", "", y));
-        for (let x = 0; x < width; x++) {
-          const cell = createButton("tactical-cell");
-          Object.assign(cell.dataset, { x, y, gx: x, gy: y });
-          const coord3 = el2("span", "tactical-cell-coord", key3(x, y));
-          const z = el2("span", "tactical-cell-tz");
-          const units = el2("span", "tactical-cell-units");
-          const features = el2("span", "tactical-cell-features");
-          const cost = el2("span", "cell-cost");
-          cell.append(coord3, z, units, features, cost);
-          boardCells.set(key3(x, y), { cell, z, units, features, cost });
-          board.append(cell);
-        }
+      cells.clear();
+      for (let y = h - 1; y >= 0; y--) for (let x = 0; x < w; x++) {
+        const cell = el2("button", "tactical-cell");
+        cell.type = "button";
+        Object.assign(cell.dataset, { x, y });
+        const coord3 = el2("span", "tactical-cell-coord", key3(x, y)), z = el2("span", "tactical-cell-tz");
+        const units = el2("span", "tactical-cell-units"), features = el2("span", "tactical-cell-features");
+        cell.append(coord3, z, units, features);
+        cells.set(key3(x, y), { cell, z, units, features });
+        board.append(cell);
       }
     }
-    function token(name, initial, z, cls = "", faction) {
-      const node3 = el2("span", `axis-unit ${cls}`);
+    function token(name, initial, z, cls, faction) {
+      const node3 = el2("span", `axis-unit ${cls ?? ""}`.trim());
       if (faction) node3.dataset.faction = faction;
       const head = el2("span", "axis-token-head");
-      const height2 = el2("span", "axis-z-badge", sign(z));
-      height2.dataset.zSign = z > 0 ? "pos" : z < 0 ? "neg" : "zero";
-      head.append(el2("span", "axis-unit-fallback-avatar", initial), height2);
+      const badge = el2("span", "axis-z-badge", sign2(z));
+      badge.dataset.zSign = z > 0 ? "pos" : z < 0 ? "neg" : "zero";
+      head.append(el2("span", "axis-unit-fallback-avatar", initial), badge);
       node3.append(head, el2("span", "axis-unit-name", name));
       return { node: node3, head };
     }
-    function resource3(node3, item, stat2, full) {
-      const cap = item[`max${stat2[0].toUpperCase()}${stat2[1]}`];
-      if (full) {
-        node3 = el2("span", `tag tag-resource resource-meter tag-${stat2}${cap && item[stat2] / cap <= 0.25 ? "-low" : ""}`, `${stat2.toUpperCase()} ${item[stat2]}/${cap}`);
-      } else {
-        const meter = el2("span", `token-meter ${stat2}`);
-        meter.append(node3 = el2("i"));
-      }
-      node3.style.setProperty("--resource-ratio", ratio2(item[stat2], cap));
-      return full ? node3 : node3.parentNode;
-    }
-    function unitToken(unit, z, isSelected) {
-      const { node: node3, head } = token(unit.name, Array.from(unit.name)[0] ?? "?", z, "", unit.team);
-      node3.dataset.unit = unit.id;
+    function unitToken(state, unit, z, chosen, isActive) {
+      const { node: node3, head } = token(unit.name, Array.from(unit.name)[0] ?? "?", z, isActive ? "is-active" : "", unit.team);
       node3.dataset.unitId = unit.id;
-      node3.setAttribute("aria-pressed", String(isSelected));
-      head.append(el2("span", "axis-facing-pip", arrow(unit.facing)));
+      node3.setAttribute("aria-pressed", String(chosen));
+      head.append(el2("span", "axis-facing-pip", ARROWS[unit.facing?.join(",")] ?? "\xB7"));
       const bars = el2("span", "token-meters");
-      for (const stat2 of ["hp", "mp", "sp"]) bars.append(resource3(null, unit, stat2, false));
+      for (const stat2 of ["hp", "mp", "sp"]) {
+        const meter = el2("span", `token-meter ${stat2}`), fill = el2("i");
+        fill.style.setProperty("--resource-ratio", ratio2(unit[stat2], unit[`max${stat2[0].toUpperCase()}${stat2[1]}`]));
+        meter.append(fill);
+        bars.append(meter);
+      }
       node3.append(bars);
-      const marks = statuses(unit);
-      if (marks.length) node3.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : statusIcon[marks[0].category] ?? "\u25C6"));
+      const marks = values3(unit.statuses);
+      if (marks.length) node3.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : STATUS_ICON[marks[0].category] ?? "\u25C6"));
       return node3;
     }
-    const coverText = (c) => `${c.id} ${c.name} \xB7 \u6750\u8D28 ${c.material} \xB7 HP ${c.hp}/${c.maxHp} \xB7 \u906E\u853D ${c.cover}${c.hp ? "" : " \xB7 \u5DF2\u574D\u584C"}`;
-    const interactiveText = (i) => `${i.id} ${i.name} \xB7 ${i.kind === "barrel" ? "\u5F15\u7206" : "\u796D\u575B\u589E\u76CA"} \xB7 ${i.spent ? "\u5DF2\u6D88\u8017" : "\u53EF\u7528"}`;
     function featureToken(f, z, isCover) {
-      const { node: node3 } = token(
-        f.id,
-        Array.from(isCover ? f.material || "\u63A9" : f.kind === "barrel" ? "\u6876" : "\u796D")[0],
-        z,
-        isCover ? `tactical-cover${f.hp ? "" : " is-broken"}` : `tactical-interact${f.spent ? " is-spent" : ""}`
-      );
+      const initial = Array.from(isCover ? f.material || "\u63A9" : f.kind === "barrel" ? "\u6876" : "\u796D")[0];
+      const { node: node3 } = token(f.name ?? f.id, initial, z, isCover ? `tactical-cover${f.hp ? "" : " is-broken"}` : `tactical-interact${f.spent ? " is-spent" : ""}`);
       if (isCover) {
         node3.dataset.cover = f.id;
-        const bar = el2("span", "tactical-cover-bar");
-        const fill = el2("i");
-        fill.style.width = percent(ratio2(f.hp, f.maxHp));
-        bar.append(fill);
-        node3.append(bar);
+        const bar2 = el2("span", "tactical-cover-bar"), fill = el2("i");
+        fill.style.width = pct2(ratio2(f.hp, f.maxHp));
+        bar2.append(fill);
+        node3.append(bar2);
       } else node3.dataset.interact = f.id;
       return node3;
     }
+    const coverText = (c) => `${c.name}\uFF1A${c.material}\u63A9\u4F53\uFF0C\u8010\u4E45 ${c.hp}/${c.maxHp}\uFF0C\u8EB2\u5728\u540E\u9762\u547D\u4E2D \u2212${c.cover}${c.hp ? "" : "\uFF08\u5DF2\u574D\u584C\uFF09"}`;
+    const interactiveText = (i) => `${i.name}\uFF1A${i.kind === "barrel" ? "\u53EF\u5F15\u7206\uFF0C\u6CE2\u53CA\u5468\u56F4" : "\u796D\u575B\uFF0C\u6FC0\u6D3B\u83B7\u5F97\u589E\u76CA"}${i.spent ? "\uFF08\u5DF2\u7528\u8FC7\uFF09" : ""}`;
     function cliffs(state, x, y, tile) {
       if (tile.kind !== "floor") return [];
       return [["top", x, y + 1], ["bottom", x, y - 1], ["left", x - 1, y], ["right", x + 1, y]].filter(([, nx, ny]) => {
-        const next = state.grid[ny]?.[nx];
-        return next?.kind === "floor" && Math.abs(next.z - tile.z) >= 2;
-      }).map(([direction]) => direction);
+        const n = state.grid[ny]?.[nx];
+        return n?.kind === "floor" && Math.abs(n.z - tile.z) >= 2;
+      }).map(([d]) => d);
     }
-    function atMap(list3) {
+    function group(list3) {
       const map = /* @__PURE__ */ new Map();
       for (const item of list3) {
-        const xy = key3(item.x, item.y);
-        if (!map.has(xy)) map.set(xy, []);
-        map.get(xy).push(item);
+        const k = key3(item.x, item.y);
+        if (!map.has(k)) map.set(k, []);
+        map.get(k).push(item);
       }
       return map;
     }
-    function renderBoard(state, selected, action, hover, range, preview2, baseline) {
-      initializeBoard(state);
-      const move = ["move", "sprint", "disengage"].includes(action?.type);
-      const unitLocations = atMap(values3(state.units).filter((u) => u.hp > 0));
-      const corpseLocations = atMap(corpses(state));
-      const coverLocations = atMap(values3(state.covers));
-      const interactions = atMap(values3(state.interactives));
-      const available = baseline.move;
-      const shots = baseline.attack;
-      const reach = new Set((!move && range?.ok && range.cells || []).map((p) => key3(p.x, p.y)));
-      const affected = new Set((!move && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
-      const path = new Set((move && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
-      const risks = new Set((move && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
+    function renderBoard(state, { selected, action, hover, preview: preview2, current }) {
+      initBoard(state);
+      const moving = ["move", "sprint", "disengage"].includes(action?.type);
+      const unitsAt2 = group(values3(state.units).filter((u) => u.hp > 0));
+      const bodiesAt = group(corpses(state)), coversAt = group(values3(state.covers)), itemsAt = group(values3(state.interactives));
+      const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
+      const path = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
+      const risks = new Set((moving && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
       const hoverKey = hover ? key3(hover.x, hover.y) : null;
-      let inspection = "\u60AC\u505C\u6216\u805A\u7126\u4EFB\u610F\u683C\u5B50\uFF0C\u67E5\u770B\u5730\u5F62\u3001\u5355\u4F4D\u6216\u573A\u666F\u8BBE\u65BD\u3002";
-      for (const [xy, slot] of boardCells) {
-        const { cell, z, units, features, cost } = slot;
+      const origin = state.units[selected] ?? current;
+      const originZ = origin ? state.grid[origin.y]?.[origin.x]?.z : 0;
+      let inspection = "";
+      for (const [xy, slot] of cells) {
+        const { cell } = slot;
         const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
-        const unit = unitLocations.get(xy)?.[0], cover = coverLocations.get(xy)?.[0], interactive = interactions.get(xy)?.[0];
-        const chosen = !!unit && selected === unit.id, isHover = hoverKey === xy;
-        const shelf = tile.kind === "floor" && tile.z !== 0;
-        const cliff = cliffs(state, x, y, tile);
+        const unit = unitsAt2.get(xy)?.[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
+        const chosen = !!unit && selected === unit.id, isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
+        const reach = baseline.move.has(xy);
         cell.className = [
           "tactical-cell",
-          tile.kind !== "floor" ? `terrain-${tile.kind}` : shelf ? "terrain-plateau" : "",
-          ...cliff.map((c) => `cliff-${c}`),
+          tile.kind !== "floor" ? `terrain-${tile.kind}` : tile.z ? "terrain-plateau" : "",
+          ...edges.map((c) => `cliff-${c}`),
           chosen ? "is-selected" : "",
           isHover ? "is-hovered" : "",
           isHover && preview2?.ok === false ? "is-invalid" : "",
-          available.has(xy) ? "is-reachable reachable" : "",
-          shots.has(xy) || reach.has(xy) ? "is-in-range in-range" : "",
-          available.has(xy) && (tile.kind === "slope" || tile.z !== state.grid[state.units[selected]?.y]?.[state.units[selected]?.x]?.z) ? "is-elevated-reach" : "",
+          reach ? "is-reachable" : "",
+          baseline.attack.has(xy) ? "is-in-range" : "",
+          reach && (tile.kind === "slope" || tile.z !== originZ) ? "is-elevated-reach" : "",
           affected.has(xy) ? "axis-covered" : "",
           path.has(xy) ? "is-path" : "",
           risks.has(xy) ? "is-opportunity" : ""
@@ -4823,320 +5241,788 @@ var FatedTactical = (() => {
         cell.dataset.terrainType = tile.kind;
         cell.dataset.terrainZ = tile.z;
         cell.dataset.terrainElev = tile.z < 0 ? "neg" : tile.z >= 2 ? "pos2" : "pos1";
-        if (unit) cell.dataset.unitId = unit.id;
-        else delete cell.dataset.unitId;
-        if (cover) cell.dataset.coverId = cover.id;
-        else delete cell.dataset.coverId;
-        if (interactive) cell.dataset.interactiveId = interactive.id;
-        else delete cell.dataset.interactiveId;
-        cell.setAttribute("aria-pressed", String(chosen));
-        const description = [
-          `(${xy}, Z${sign(tile.z)})`,
-          terrainLabel(tile),
-          cliff.length ? "\u9661\u5D16\u8FB9\uFF1A\u8DE8\u9AD8\u5DEE\u81F3\u5C11 2" : "",
-          unit ? `${side(unit.team)} ${unit.name}\uFF0C\u671D\u5411 ${arrow(unit.facing)} \xB7 HP ${unit.hp}/${unit.maxHp}${statuses(unit).length ? ` \xB7 ${statuses(unit).map(statusText).join("\u3001")}` : ""}` : "",
-          cover ? coverText(cover) : "",
-          interactive ? interactiveText(interactive) : "",
-          available.has(xy) ? `\u53EF\u8FBE\uFF0C${baseline.ap} AP` : ""
-        ].filter(Boolean).join(" \xB7 ");
-        cell.setAttribute("aria-label", description);
-        if (isHover) inspection = description;
-        const bodies = corpseLocations.get(xy) ?? [];
-        const signature = JSON.stringify([tile, unit, cover, interactive, chosen, bodies.map((body) => body.id)]);
-        if (slot.signature !== signature) {
-          slot.signature = signature;
-          z.textContent = tile.kind !== "wall" && tile.z !== 0 ? `z${sign(tile.z)}` : "";
-          const bodyTokens = bodies.map((body) => {
-            const { node: node3 } = token(body.name, "\u2020", tile.z, "tactical-corpse", body.team);
-            node3.dataset.corpseId = body.id;
-            node3.style.filter = "grayscale(1)";
-            node3.style.opacity = ".55";
-            node3.style.pointerEvents = "none";
-            node3.setAttribute("aria-label", `${body.name}\u7684\u5C38\u4F53`);
-            return node3;
-          });
-          units.replaceChildren(...[
-            ...bodyTokens,
-            unit ? unitToken(unit, tile.z, chosen) : null,
-            cover ? featureToken(cover, tile.z, true) : null,
-            interactive ? featureToken(interactive, tile.z, false) : null
-          ].filter(Boolean));
-          features.replaceChildren(...tile.kind !== "floor" ? [el2("span", "tactical-cell-tag", tile.kind === "wall" ? "#" : "\u5761")] : []);
+        for (const [name, v] of [["unitId", unit?.id], ["coverId", cover?.id], ["interactiveId", item?.id]]) {
+          if (v) cell.dataset[name] = v;
+          else delete cell.dataset[name];
         }
-        cost.textContent = "";
+        cell.setAttribute("aria-pressed", String(chosen));
+        const label = [
+          `(${xy}) ${terrainLabel(tile)}`,
+          edges.length ? "\u9661\u5D16\u8FB9" : "",
+          unit ? `${side(unit.team)}${unit.name}\uFF0C\u751F\u547D ${unit.hp}/${unit.maxHp}${values3(unit.statuses).length ? `\uFF0C${values3(unit.statuses).map((s) => s.name).join("\u3001")}` : ""}` : "",
+          cover ? coverText(cover) : "",
+          item ? interactiveText(item) : "",
+          reach ? "\u53EF\u4EE5\u8D70\u5230\u8FD9\u91CC" : ""
+        ].filter(Boolean).join(" \xB7 ");
+        cell.setAttribute("aria-label", label);
+        if (isHover) inspection = label;
+        const bodies = bodiesAt.get(xy) ?? [];
+        const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map((b) => b.id)]);
+        if (slot.signature === signature) continue;
+        slot.signature = signature;
+        slot.z.textContent = tile.kind !== "wall" && tile.z ? `z${sign2(tile.z)}` : "";
+        const dead = bodies.map((body) => {
+          const { node: node3 } = token(body.name, "\u2020", tile.z, "tactical-corpse", body.team);
+          node3.dataset.corpseId = body.id;
+          Object.assign(node3.style, { filter: "grayscale(1)", opacity: ".55", pointerEvents: "none" });
+          node3.setAttribute("aria-label", `${body.name}\u7684\u5C38\u4F53`);
+          return node3;
+        });
+        slot.units.replaceChildren(...dead, ...[
+          unit && unitToken(state, unit, tile.z, chosen, unit.id === current?.id),
+          cover && featureToken(cover, tile.z, true),
+          item && featureToken(item, tile.z, false)
+        ].filter(Boolean));
+        slot.features.replaceChildren(...tile.kind !== "floor" ? [el2("span", "tactical-cell-tag", tile.kind === "wall" ? "#" : "\u5761")] : []);
       }
-      byId4("terrain-inspector").textContent = inspection;
+      $("terrain-inspector").textContent = inspection;
     }
-    function renderPreview(state, action, hover, range, p, current, selectedUnit) {
-      const node3 = byId4("tactical-preview");
-      const lines = [];
-      if (!current) lines.push("\u7B49\u5F85\u5148\u653B\u5355\u4F4D\u3002");
-      else {
-        const label = range?.name ?? actions[action?.type]?.[0] ?? "\u6218\u672F\u9884\u89C8";
-        const summary = [label, range?.ap !== void 0 ? `${range.ap} AP` : "", range?.mp ? `${range.mp} MP` : "", range?.sp ? `${range.sp} SP` : ""];
-        if (action?.type === "brace" && range?.ok) summary.push(`${range.coverId ? `\u501F ${range.coverId}` : "\u7A7A\u5730"}\uFF1A\u51CF\u4F24 ${percent(range.reduction)}\uFF0F${range.turns} \u56DE\u5408`);
-        if (range?.shape && range.shape !== "single") summary.push(`\u8303\u56F4\uFF1A${{ circle: "\u5706\u5F62", cone: "\u9525\u5F62", fan: "\u6247\u5F62", line: "\u76F4\u7EBF" }[range.shape] ?? range.shape}`);
-        if (range?.ammo != null) summary.push(`\u5F39\u836F ${range.ammo}${range.capacity ? `/${range.capacity}` : "\uFF08\u547D\u4EE4\u7ED3\u7B97\u6D88\u8017\uFF09"}`);
-        if (range?.effects?.length) summary.push(`\u7279\u6548\uFF1A${range.effects.map(effectLabel).join("\u3001")}`);
-        lines.push(summary.filter(Boolean).join(" \xB7 "));
-        if (hover) {
-          const source = selectedUnit ?? current;
-          const targetTile = state.grid[hover.y]?.[hover.x];
-          const dz = p?.dz ?? (targetTile ? targetTile.z - state.grid[source.y][source.x].z : null);
-          const distance = p?.distance ?? (targetTile ? Math.hypot(hover.x - source.x, hover.y - source.y, dz) : null);
-          const geometry = [Number.isFinite(distance) ? `dXYZ ${distance.toFixed(2)}${p?.range == null ? "" : ` / \u5C04\u7A0B ${p.range}`}` : "", Number.isFinite(dz) ? `\u9AD8\u5DEE \u0394Z ${sign(dz)}` : ""];
-          if (p?.ok === false) geometry.push(p.error);
-          if (p?.steps) geometry.push(`${p.steps} \u6B65`);
-          if (p?.targets) geometry.push(`\u8986\u76D6 ${p.cells.length} \u683C\uFF0F${p.targets.length} \u76EE\u6807`);
-          if (p?.teleport) geometry.push(`\u77AC\u79FB\u843D\u70B9 (${p.teleport.x},${p.teleport.y})`);
-          const heading = geometry.filter(Boolean).join(" \xB7 ");
-          if (heading) lines.push(heading);
-          if (p?.opportunities?.length) lines.push(`\u26A0 \u501F\u673A\u98CE\u9669\uFF1A${p.opportunities.map((o) => `${o.name}\uFF08\u79BB\u5F00 ${o.from.x},${o.from.y} \u65F6\uFF09`).join("\u3001")}\u3002\u53EF\u6539\u7528\u64A4\u79BB\u3002`);
-          if (p?.ok && action?.type === "disengage") lines.push("\u64A4\u79BB\u8DEF\u7EBF\uFF1A\u672C\u6B21\u79FB\u52A8\u4E0D\u89E6\u53D1\u501F\u673A\u653B\u51FB\u3002");
-          for (const t of p?.targets ?? []) {
-            const check = t.saveStat ? `\u8C41\u514D ${t.saveStat.toUpperCase()} \xB7 d20${sign(t.saveBonus)} \u2265 ${t.saveDC}` : t.automatic ? "\u81EA\u52A8\u547D\u4E2D" : Number.isFinite(t.defense) ? `${t.advantage > 0 ? "2d20\u53D6\u9AD8" : t.advantage < 0 ? "2d20\u53D6\u4F4E" : "d20"}${sign(t.accuracy)} \u2265 ${t.defense}` : "";
-            lines.push([
-              t.name,
-              check,
-              t.saveStat ? `\u8C41\u514D\u901A\u8FC7 ${percent(t.saveChance)}` : Number.isFinite(t.hitChance) ? `\u547D\u4E2D ${percent(t.hitChance)}` : "",
-              Number.isFinite(t.expectedD20) ? `\u9884\u8BA1\u9AB0\u503C ${t.expectedD20.toFixed(1)}` : "",
-              t.coverId ? `\u906E\u853D ${t.coverId} \u2212${t.cover}` : Number.isFinite(t.cover) ? "\u65E0\u906E\u6321" : "",
-              Number.isFinite(t.highGround) ? `\u9AD8\u7A0B\u4FEE\u6B63 ${sign(t.highGround)}` : "",
-              t.flanked ? "\u5939\u51FB" : "",
-              t.backstab ? "\u80CC\u51FB" : "",
-              t.recipientId && t.recipientId !== t.id ? `\u63F4\u62A4\uFF1A${t.recipientId}` : "",
-              t.shield ? `\u62A4\u76FE ${t.shield}` : "",
-              t.damage && !t.heal ? `\u4F24\u5BB3 ${interval(t.damage)}` : "",
-              t.savedDamage ? `\u8C41\u514D\u540E ${interval(t.savedDamage)}` : "",
-              t.criticalDamage && !t.heal ? `\u66B4\u51FB ${interval(t.criticalDamage)}` : "",
-              Number.isFinite(t.expectedDamage) && !t.heal ? `\u671F\u671B ${t.expectedDamage.toFixed(1)}` : "",
-              t.heal ? `\u6CBB\u7597 ${interval(t.heal)}` : "",
-              t.healingShield?.[1] ? `\u9644\u76FE ${interval(t.healingShield)}` : ""
-            ].filter(Boolean).join(" \xB7 "));
-          }
-        } else if (range?.ok === false) lines.push(range.error);
-        else lines.push("\u60AC\u505C\u6216\u805A\u7126\u68CB\u683C\u67E5\u770B\u8DDD\u79BB\u3001\u884C\u52A8\u4EE3\u4EF7\u4E0E\u9884\u6D4B\u7ED3\u7B97\u3002");
-      }
-      const signature = lines.join("\n");
-      if (node3.dataset.signature !== signature) {
-        node3.dataset.signature = signature;
-        node3.replaceChildren(...lines.map((line) => el2("div", "preview-line", line)));
-        node3.scrollTop = 0;
-      }
+    function bar(stat2, cur, max) {
+      const node3 = el2("span", `ft-bar ${stat2}`);
+      node3.style.setProperty("--ratio", ratio2(cur, max));
+      node3.append(el2("i"), el2("span", "", `${stat2.toUpperCase()} ${cur}/${max}`));
+      return node3;
     }
-    function renderTurn(state, current, selected) {
-      const node3 = byId4("turn-order"), existing = new Map([...node3.children].map((btn) => [btn.dataset.unitId, btn]));
-      const buttons = state.order.map((id3, idx) => {
-        const u = value(state.units, id3);
+    function renderTurnOrder(state, current, selected) {
+      const node3 = $("turn-order");
+      const old = new Map([...node3.children].map((b) => [b.dataset.unitId, b]));
+      const chips = state.order.map((id3) => {
+        const u = get2(state.units, id3);
         if (!u) return null;
-        const btn = existing.get(id3) ?? createButton();
-        btn.className = `game-button turn-chip${u.hp <= 0 ? " is-defeated" : ""}`;
-        btn.dataset.unitId = id3;
-        btn.dataset.faction = u.team;
-        btn.textContent = `${idx + 1} \xB7 ${u.name}`;
-        btn.setAttribute("aria-current", String(id3 === current?.id));
-        btn.setAttribute("aria-pressed", String(id3 === selected));
-        return btn;
+        const chip = old.get(id3) ?? Object.assign(el2("button"), { type: "button" });
+        chip.className = `turn-chip${u.hp <= 0 ? " is-defeated" : ""}`;
+        chip.dataset.unitId = id3;
+        chip.dataset.faction = u.team;
+        chip.replaceChildren(el2("span", "chip-face", Array.from(u.name)[0]), el2("span", "", u.name.split(" \xB7 ")[0]));
+        chip.title = `${side(u.team)} ${u.name} \xB7 \u751F\u547D ${u.hp}/${u.maxHp}`;
+        chip.setAttribute("aria-current", String(id3 === current?.id));
+        chip.setAttribute("aria-pressed", String(id3 === selected));
+        return chip;
       }).filter(Boolean);
-      syncChildren(node3, buttons);
-      byId4("round-badge").textContent = `\u56DE\u5408 ${state.round}`;
-      byId4("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F \xB7 \u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F \xB7 ${side(state.outcome)}\u83B7\u80DC` : current ? `${side(current.team)}\u884C\u52A8 \xB7 ${current.name}${state.mode === "split" ? ` \xB7 \u52A8\u4F5C ${current.used.action ? "\u5DF2\u7528" : "\u53EF\u7528"}\uFF0F\u653B\u51FB ${current.used.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}` : ""}` : "\u7B49\u5F85\u884C\u52A8";
-      const ap = byId4("ap-display");
-      ap.replaceChildren(...[0, 1].map((i) => el2("span", `ap-crystal${i >= (current?.ap ?? 0) || state.outcome ? " is-used" : ""}`, i < (current?.ap ?? 0) && !state.outcome ? "\u25C6" : "\u25C7")));
-      ap.setAttribute("aria-label", `\u5269\u4F59 ${state.outcome ? 0 : current?.ap ?? 0} / 2 AP`);
+      node3.replaceChildren(...chips);
+      node3.querySelector('[aria-current="true"]')?.scrollIntoView?.({ block: "nearest", inline: "center" });
     }
-    function syncChildren(parent, list3) {
-      for (let i = 0; i < list3.length; i++) if (parent.children[i] !== list3[i]) parent.insertBefore(list3[i], parent.children[i] ?? null);
-      while (parent.children.length > list3.length) parent.lastElementChild.remove();
+    function renderActor(state, u) {
+      const node3 = $("actor-card");
+      if (!u) {
+        node3.replaceChildren(el2("span", "muted", "\u7B49\u5F85\u884C\u52A8"));
+        delete node3.dataset.faction;
+        return;
+      }
+      node3.dataset.faction = u.team;
+      const name = el2("div", "ft-actor-name");
+      name.append(el2("span", "", u.name), el2("small", "", `${side(u.team)} \xB7 \u7B2C ${state.round} \u56DE\u5408`));
+      const bars = el2("div", "ft-bars");
+      bars.append(bar("hp", u.hp, u.maxHp), bar("mp", u.mp, u.maxMp), bar("sp", u.sp, u.maxSp));
+      const meta = el2("div", "ft-actor-meta");
+      const ap = state.outcome ? 0 : u.ap;
+      const crystals = el2("span", "", "");
+      crystals.append(el2("span", "", "\u884C\u52A8\u529B "), ...[0, 1].map((i) => el2("span", `ap-crystal${i >= ap ? " is-used" : ""}`, i < ap ? "\u25C6" : "\u25C7")));
+      crystals.setAttribute("aria-label", `\u5269\u4F59 ${ap} / 2 AP`);
+      meta.append(crystals);
+      if (state.mode === "split") meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
+      for (const s of values3(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
+      node3.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
     }
-    function row(title, ...content) {
-      const line = el2("div", "data-row");
-      if (title) line.append(el2("b", "card-subtitle", title));
-      line.append(...content);
-      return line;
-    }
-    function renderCard(state, u, inspected) {
-      const node3 = byId4("unit-card");
+    function renderUnitCard(state, u, inspected) {
+      const node3 = $("unit-card");
       if (inspected && !u) {
-        node3.replaceChildren(row("\u573A\u666F\u60C5\u62A5", inspected.material ? coverText(inspected) : interactiveText(inspected)));
+        node3.replaceChildren(el2("p", "", inspected.material ? coverText(inspected) : interactiveText(inspected)));
         return;
       }
       if (!u) {
-        node3.replaceChildren(el2("p", "muted", "\u70B9\u9009\u6218\u68CB\u6216\u5148\u653B\u5E8F\u5217\uFF0C\u67E5\u770B\u5355\u4F4D\u60C5\u62A5\u3002"));
+        node3.replaceChildren(el2("p", "muted", "\u70B9\u51FB\u68CB\u76D8\u4E0A\u7684\u5355\u4F4D\u6216\u9876\u90E8\u7684\u5148\u653B\u5934\u50CF\u67E5\u770B\u60C5\u62A5\u3002"));
         return;
       }
-      const head = row(null);
-      head.classList.add("unit-resource-row");
+      const head = el2("div", "ft-card-head");
+      const face = el2("span", "ft-actor-face", Array.from(u.name)[0]);
       head.dataset.faction = u.team;
-      const name = el2("strong", "resource-unit-name", u.name);
-      name.dataset.faction = u.team;
-      name.prepend(el2("span", "resource-faction-label", side(u.team)));
-      head.append(name, el2("span", "tag tone-gold", `(${u.x},${u.y}, Z${sign(state.grid[u.y][u.x].z)}) \xB7 \u671D\u5411 ${arrow(u.facing)}`));
-      if (!u.hp) head.append(el2("span", "tag tone-red", "\u5DF2\u5012\u4E0B"));
-      else {
-        const template = value(state.equipment, value(state.items, u.weapon)?.templateId);
-        const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some((node4) => node4.reloadable);
-        if (melee) head.append(el2("span", "tag", u.reactionAvailable === false ? "\u501F\u673A\u5DF2\u7528" : "\u501F\u673A\u5C31\u7EEA"));
+      const title = el2("div");
+      const tile = state.grid[u.y][u.x];
+      title.append(el2("strong", "", u.name), el2("div", "muted", `${side(u.team)} \xB7 \u4F4D\u4E8E (${u.x}, ${u.y})${tile.z ? `\uFF0C\u9AD8\u5EA6 ${tile.z}` : ""} \xB7 \u671D\u5411 ${ARROWS[u.facing?.join(",")] ?? "\xB7"}${u.hp ? "" : " \xB7 \u5DF2\u5012\u4E0B"}`));
+      head.append(face, title);
+      const wrap = el2("div", "ft-actor");
+      wrap.dataset.faction = u.team;
+      wrap.style.width = "100%";
+      wrap.append(head);
+      const bars = el2("div", "ft-bars");
+      bars.append(bar("hp", u.hp, u.maxHp), bar("mp", u.mp, u.maxMp), bar("sp", u.sp, u.maxSp));
+      const stats2 = el2("div", "ft-kv");
+      for (const [id3, label] of Object.entries(STAT_NAMES)) {
+        const s = el2("span", "", label);
+        s.prepend(el2("b", "", u.stats[id3]));
+        stats2.append(s);
       }
-      const bars = row(null, ...["hp", "mp", "sp"].map((stat2) => resource3(null, u, stat2, true)), el2("span", "tag tone-gold", `${u.ap} AP`));
-      const stanceNames = { light_blade: "\u8F7B\u5251", dual_wield: "\u53CC\u6301", attunement: "\u540C\u8C03", greatsword: "\u91CD\u5251", sword_shield: "\u5251\u76FE" };
-      const cardStats = row(
-        null,
-        ...Object.entries({ str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" }).map(([id3, label]) => el2("span", `stat stat-${id3}`, `${label} ${u.stats[id3]}`)),
-        el2("span", "tag", `\u62A4\u7532 ${u.armor} \xB7 \u79FB\u52A8 ${u.move} \xB7 \u4F53\u578B ${u.size}`),
-        el2("span", "tag tone-violet", `\u6301\u68B0[${stanceNames[u.stance] ?? "\u8F7B\u5251"}] \xB7 \u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2 \xB7 \u60E9\u7F5A\u9AB0 ${u.penaltyDice ?? 0}/1`)
-      );
-      const marks = row("\u72B6\u6001", ...statuses(u).length ? statuses(u).map((s) => {
-        const badge = el2("span", "status-effect", statusText(s));
-        badge.title = [
-          s.name,
-          s.category,
-          s.tickTiming,
-          s.description,
-          s.amount !== void 0 ? `\u5F53\u524D\u6C60 ${s.amount}` : "",
-          s.modifiers ? JSON.stringify(s.modifiers) : ""
-        ].filter(Boolean).join(" \xB7 ");
-        return badge;
-      }) : [el2("span", "muted", "\u65E0")]);
-      const equipment = [.../* @__PURE__ */ new Set([u.mainHand, u.offHand, u.shield, u.weapon, ...u.gear])].filter(Boolean).map((id3) => {
-        const instance = value(state.items, id3), template = value(state.equipment, instance?.templateId);
-        if (!instance || !template) return el2("span", "tag", id3);
-        const counters = Object.entries(instance.counters ?? {}).map(([k, n]) => `${{ souls: "\u9B42\u6570 souls", ammo: "\u5F39\u836F ammo" }[k] ?? k} ${n}`);
-        const badge = el2("span", "tag tone-gold card-item", [template.name, ...counters].join(" \xB7 "));
-        badge.dataset.instanceId = id3;
-        badge.title = [id3, template.description, ...(template.effects ?? []).map(effectLabel)].filter(Boolean).join(" \xB7 ");
-        return badge;
-      });
-      const zones = values3(state.zones).filter((z) => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius).map((z) => el2("span", "status-effect", `\u533A\u57DF ${z.name} \xB7 ${z.damage} ${z.damageType}`));
-      node3.replaceChildren(head, bars, cardStats, marks, row("\u88C5\u5907\u5B9E\u4F8B", ...equipment.length ? equipment : [el2("span", "muted", "\u5F92\u624B")]), row("\u533A\u57DF", ...zones.length ? zones : [el2("span", "muted", "\u65E0")]));
+      const template = get2(state.equipment, get2(state.items, u.weapon)?.templateId);
+      const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some((n) => n.reloadable);
+      const facts = el2("p", "muted", [
+        `\u62A4\u7532 ${u.armor}`,
+        `\u79FB\u52A8 ${u.move} \u683C`,
+        `\u4F53\u578B ${u.size}`,
+        `\u6301\u68B0\uFF1A${STANCES[u.stance] ?? "\u8F7B\u5251"}`,
+        `\u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2`,
+        u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
+      ].filter(Boolean).join(" \xB7 "));
+      const statusList = el2("ul", "ft-list");
+      for (const s of values3(u.statuses)) {
+        const li = el2("li");
+        li.append(el2("b", "", statusText(s)), document_text(` ${duration(s)}`));
+        if (s.description) li.append(el2("p", "", s.description));
+        if (s.amount != null) li.append(el2("p", "", `\u5269\u4F59 ${s.amount} \u70B9`));
+        statusList.append(li);
+      }
+      if (!statusList.children.length) statusList.append(el2("li", "muted", "\u6CA1\u6709\u72B6\u6001"));
+      const gear = el2("ul", "ft-list");
+      for (const id3 of [.../* @__PURE__ */ new Set([u.mainHand, u.offHand, u.shield, u.weapon, ...u.gear ?? []])].filter(Boolean)) {
+        const inst = get2(state.items, id3), tpl = get2(state.equipment, inst?.templateId);
+        const li = el2("li");
+        li.dataset.instanceId = id3;
+        li.append(el2("b", "", tpl?.name ?? id3));
+        const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${{ souls: "\u9B42\u6570", ammo: "\u5F39\u836F" }[k] ?? k} ${n}`);
+        if (counters.length) li.append(document_text(` \xB7 ${counters.join(" \xB7 ")}`));
+        const text4 = [tpl?.description, ...(tpl?.effects ?? []).map(effectLabel)].filter(Boolean).join("\uFF1B");
+        if (text4) li.append(el2("p", "", text4));
+        gear.append(li);
+      }
+      if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
+      const zones = values3(state.zones).filter((z) => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius);
+      const parts = [wrap, bars, stats2, facts, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
+      if (zones.length) parts.push(el2("h3", "ft-section", "\u6240\u5904\u533A\u57DF"), el2("p", "", zones.map((z) => `${z.name}\uFF1A\u6BCF\u56DE\u5408 ${z.damage} \u70B9${DAMAGE_TYPES[z.damageType] ?? ""}\u4F24\u5BB3`).join("\uFF1B")));
+      node3.replaceChildren(...parts);
     }
+    const document_text = (t) => doc.createTextNode(t);
     function renderFeatures(state) {
-      const node3 = byId4("feature-cards");
-      const covers = values3(state.covers).map((c) => row(null, el2("span", `tag card-item ${c.hp ? "tone-amber" : "tone-slate"}`, `${coverText(c)} \xB7 (${c.x},${c.y})`)));
-      const interactives = values3(state.interactives).map((i) => row(null, el2("span", `tag card-item ${i.spent ? "tone-slate" : "tone-violet"}`, `${interactiveText(i)} \xB7 (${i.x},${i.y})`)));
-      node3.replaceChildren(...covers, ...interactives);
+      const list3 = [...values3(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values3(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
+      const ul = el2("ul", "ft-list");
+      for (const [text4, f] of list3) ul.append(el2("li", "", `${text4} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
+      $("feature-cards").replaceChildren(ul);
     }
-    function renderLogs(state) {
-      const node3 = byId4("combat-log");
-      const logs = state.logs.slice(-100).reverse();
-      const keys = logs.map((log) => JSON.stringify(log));
-      if (keys.length === logKeys.length && keys.every((k, i) => k === logKeys[i]) && node3.hasChildNodes()) return;
-      const existing = /* @__PURE__ */ new Map();
-      [...node3.children].forEach((child, i) => {
-        if (logKeys[i] != null) {
-          if (!existing.has(logKeys[i])) existing.set(logKeys[i], []);
-          existing.get(logKeys[i]).push(child);
+    function renderLog(state) {
+      if (state.logs.length === logCount && last?.state?.scenarioId === state.scenarioId) return false;
+      const node3 = $("combat-log");
+      const stick = node3.parentElement ? node3.parentElement.scrollHeight - node3.parentElement.scrollTop - node3.parentElement.clientHeight < 40 : true;
+      const entries2 = narrateAll(state.logs.slice(-160), state);
+      const out = [];
+      let round = null;
+      for (const e of entries2) {
+        if (e.round !== round) {
+          round = e.round;
+          out.push(el2("div", "ft-log-round", `\u7B2C ${round} \u56DE\u5408`));
         }
-      });
-      const entries2 = logs.map((log, i) => {
-        const cached = existing.get(keys[i])?.shift();
-        if (cached) return cached;
-        const entry = el2("details", `data-row log-entry${["damage", "defeat", "cover_break", "outcome"].includes(log.type) ? " damage-outcome" : ""}`);
-        entry.append(el2("summary", "", `R${log.round} \xB7 ${log.text}`));
-        entry.append(el2("pre", "log-detail", log.detail && Object.keys(log.detail).length ? JSON.stringify(log.detail, null, 2) : "\u65E0\u989D\u5916\u68C0\u5B9A\u660E\u7EC6\u3002"));
-        return entry;
-      });
-      syncChildren(node3, entries2.length ? entries2 : [el2("p", "muted", "\u6682\u65E0\u6218\u51B5\u3002")]);
-      logKeys = keys;
-      node3.scrollTop = 0;
+        if (e.quiet || !e.lines.length) {
+          const row2 = el2("div", `ft-log-entry${e.quiet ? " is-quiet" : ""}`);
+          row2.dataset.tone = e.tone;
+          const t = el2("div", "ft-log-title");
+          t.append(el2("span", "ft-log-icon", e.icon), el2("span", "", e.title));
+          row2.append(t);
+          out.push(row2);
+          continue;
+        }
+        const row = el2("details", "ft-log-entry");
+        row.dataset.tone = e.tone;
+        const summary = el2("summary");
+        summary.append(el2("span", "ft-log-icon", e.icon), el2("span", "", e.title));
+        const ul = el2("ul");
+        for (const line of e.lines) ul.append(el2("li", "", line));
+        row.append(summary, ul);
+        out.push(row);
+      }
+      node3.replaceChildren(...out.length ? out : [el2("p", "muted", "\u6218\u6597\u8FD8\u6CA1\u5F00\u59CB\u3002")]);
+      if (stick && node3.parentElement) node3.parentElement.scrollTop = node3.parentElement.scrollHeight;
+      const grew = logCount >= 0 && state.logs.length > logCount;
+      logCount = state.logs.length;
+      return grew;
+    }
+    function renderPreview(state, action, hover, range, p, actor) {
+      const node3 = $("tactical-preview");
+      const lines = [];
+      const line = (text4, cls) => {
+        const d = el2("div", `preview-line${cls ? ` ${cls}` : ""}`);
+        if (typeof text4 === "string") d.textContent = text4;
+        else d.append(...text4);
+        lines.push(d);
+        return d;
+      };
+      if (!actor || !action) {
+        node3.replaceChildren();
+        return;
+      }
+      const label = range?.name ?? ACTION_LABELS[action.type] ?? "\u52A8\u4F5C";
+      const cost = [range?.ap ? `${range.ap} AP` : "", range?.mp ? `${range.mp} MP` : "", range?.sp ? `${range.sp} SP` : ""].filter(Boolean).join(" + ");
+      const head = [el2("b", "", label)];
+      if (cost) head.push(document_text(`\uFF0C\u6D88\u8017 ${cost}`));
+      if (range?.shape && range.shape !== "single") head.push(document_text(`\uFF0C${SHAPES[range.shape] ?? range.shape}`));
+      line(head);
+      if (range?.effects?.length) line(`\u6548\u679C\uFF1A${range.effects.map(effectLabel).join("\uFF1B")}`);
+      if (action.type === "brace" && range?.ok) line(`${range.coverId ? `\u501F\u52A9${get2(state.covers, range.coverId)?.name ?? "\u63A9\u4F53"}` : "\u539F\u5730"}\u9632\u5FA1\uFF1A\u53D7\u5230\u4F24\u5BB3\u51CF\u5C11 ${pct2(range.reduction)}\uFF0C\u6301\u7EED ${range.turns} \u56DE\u5408`);
+      if (range?.ammo != null) line(`\u5F39\u836F ${range.ammo}${range.capacity ? ` / ${range.capacity}` : ""}`);
+      if (p?.ok === false) line(`\u2716 ${p.error}`, "is-warning");
+      else if (range?.ok === false) line(`\u2716 ${range.error}`, "is-warning");
+      if (hover && p) {
+        const geo = [];
+        if (p.steps) geo.push(`\u8D70 ${p.steps} \u683C`);
+        if (Number.isFinite(p.distance)) geo.push(`\u8DDD\u79BB ${p.distance.toFixed(1)} \u683C${p.range != null ? `\uFF08\u5C04\u7A0B ${p.range}\uFF09` : ""}`);
+        if (p.dz) geo.push(p.dz > 0 ? `\u76EE\u6807\u9AD8\u51FA ${p.dz}` : `\u76EE\u6807\u4F4E ${-p.dz}`);
+        if (p.teleport) geo.push(`\u77AC\u79FB\u5230 (${p.teleport.x}, ${p.teleport.y})`);
+        if (geo.length) line(geo.join("\uFF0C"));
+        if (p.opportunities?.length) line(`\u26A0 \u501F\u673A\u98CE\u9669\uFF1A${p.opportunities.map((o) => `${o.name}\uFF08\u4F60\u79BB\u5F00 ${o.from.x},${o.from.y} \u65F6\u51FA\u624B\uFF09`).join("\u3001")}\u3002\u6539\u7528\u300C\u64A4\u79BB\u300D\u53EF\u4EE5\u907F\u514D\u3002`, "is-warning");
+        if (p.ok && action.type === "disengage") line("\u64A4\u79BB\uFF1A\u8FD9\u6B21\u79FB\u52A8\u4E0D\u4F1A\u5F15\u53D1\u501F\u673A\u653B\u51FB\u3002");
+        for (const t of p.targets ?? []) {
+          const row = line([el2("b", "", t.name)]);
+          const bits = [];
+          let chance = null;
+          if (t.saveStat) {
+            chance = 1 - t.saveChance;
+            bits.push(`\u5BF9\u65B9\u9700\u8981${STAT_NAMES[t.saveStat] ?? t.saveStat}\u8C41\u514D\uFF08d20 ${sign2(t.saveBonus)}\uFF0C\u81F3\u5C11 ${t.saveDC}\uFF09\uFF0C\u751F\u6548\u7387 ${pct2(chance)}`);
+          } else if (t.automatic) bits.push("\u5FC5\u5B9A\u547D\u4E2D");
+          else if (Number.isFinite(t.hitChance)) {
+            chance = t.hitChance;
+            const dice3 = t.advantage > 0 ? "\u4F18\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u9AD8\uFF09" : t.advantage < 0 ? "\u52A3\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u4F4E\uFF09" : "d20";
+            bits.push(`\u547D\u4E2D\u7387 ${pct2(t.hitChance)}\uFF1A${dice3} + \u547D\u4E2D ${t.accuracy}\uFF0C\u5BF9\u6297\u9632\u5FA1 ${t.defense}`);
+          }
+          const mods = [
+            t.coverId ? `\u88AB${get2(state.covers, t.coverId)?.name ?? "\u63A9\u4F53"}\u906E\u6321 \u2212${t.cover}` : "",
+            t.highGround ? t.highGround > 0 ? `\u5C45\u9AD8\u4E34\u4E0B ${sign2(t.highGround)}` : `\u4EF0\u653B ${t.highGround}` : "",
+            t.flanked ? "\u5939\u51FB" : "",
+            t.backstab ? "\u80CC\u523A" : "",
+            t.recipientId && t.recipientId !== t.id ? `${get2(state.units, t.recipientId)?.name ?? t.recipientId}\u4F1A\u66FF\u5B83\u6321\u4E0B` : "",
+            t.shield ? `\u5BF9\u65B9\u6709 ${t.shield} \u70B9\u62A4\u76FE` : ""
+          ].filter(Boolean);
+          if (mods.length) bits.push(mods.join("\uFF0C"));
+          if (t.heal) bits.push(`\u6CBB\u7597 ${interval(t.heal)}`);
+          else if (t.damage) bits.push(`\u547D\u4E2D\u540E\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
+          row.append(el2("div", "", bits.join("\u3002")));
+          if (chance != null) {
+            const odds = el2("div", "ft-odds"), track = el2("span", "ft-odds-bar"), fill = el2("i");
+            fill.style.setProperty("--p", chance);
+            track.append(fill);
+            odds.append(track, el2("span", "", pct2(chance)));
+            row.append(odds);
+          }
+        }
+      }
+      node3.replaceChildren(...lines);
     }
     function render(state, ui = {}) {
-      const current = value(state.units, state.order[state.turn]);
-      const selected = ui.selectedId ?? ui.selectedUnitId ?? ui.selectedUnit ?? current?.id;
-      const raw = Object.hasOwn(ui, "action") ? ui.action : current?.team === "blue" ? { type: "move" } : null;
-      const action = typeof raw === "string" ? { type: raw, ...raw === "skill" && ui.skillId ? { skillId: ui.skillId } : {} } : raw;
-      const hover = ui.hover ?? ui.hoverCell ?? ui.target ?? ui.preview?.center ?? null;
-      const canAct = current?.team === "blue" && !state.outcome;
-      const previewRange = (command) => canAct ? preview(state, command) : null;
-      const newSnapshot = lastRender?.state !== state;
-      if (newSnapshot || lastRender?.sprint !== ui.sprint) {
-        const plan = previewRange({ type: ui.sprint ? "sprint" : "move" });
-        const hits = previewRange({ type: "attack" });
-        const keys = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
-        baselineRanges = { move: keys(plan), attack: keys(hits), ap: plan?.ap };
+      const current = get2(state.units, state.order[state.turn]);
+      const selected = ui.selectedId ?? current?.id;
+      const action = ui.action ?? null, hover = ui.hover ?? null;
+      const canAct = !ui.busy && current?.team === "blue" && !state.outcome;
+      const run = (cmd) => canAct ? preview(state, cmd) : null;
+      const fresh = last?.state !== state;
+      if (fresh || last?.sprint !== ui.sprint) {
+        const cells2 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
+        baseline = { move: cells2(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells2(run({ type: "attack" })) };
       }
-      const range = action ? previewRange({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
-      const aimed = ["move", "sprint", "disengage", "attack", "skill", "interact"].includes(action?.type);
-      const result = canAct && aimed && hover ? preview(state, { ...action, x: hover.x, y: hover.y }) : null;
-      if (renderedScenario !== state.scenarioId) {
-        for (const anim of activeFeedback.values()) anim.cancel();
-        renderedScenario = state.scenarioId;
-      }
-      const scenario = byId4("scenario-select");
-      if (!scenario.options.length) for (const [id3, s] of Object.entries(ui.scenarioOptions ?? SCENARIOS)) {
-        const opt = el2("option", "", s.title ?? s.label ?? s);
-        opt.value = s.id ?? id3;
-        scenario.append(opt);
-      }
-      const selectedUnit = value(state.units, selected);
-      byId4("sprint-indicator").textContent = ui.sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4 \xB7 2 AP" : "";
-      if (newSnapshot) {
-        byId4("battle-title").textContent = state.title;
+      const range = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
+      const aimed = ["move", "sprint", "disengage", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
+      const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
+      if (fresh) {
+        $("battle-title").textContent = state.title;
+        $("round-badge").textContent = `\u7B2C ${state.round} \u56DE\u5408`;
         renderFeatures(state);
-        renderLogs(state);
       }
-      if (newSnapshot || lastRender?.selected !== selected) renderTurn(state, current, selected);
-      byId4("end-turn").disabled = !canAct;
-      byId4("ai-step").disabled = !!state.outcome || current?.team !== "red";
-      renderBoard(state, selected, action, hover, range, result, baselineRanges);
-      if (ui.target) renderPreview(state, action, hover, range, result, current, action ? current : selectedUnit);
-      if (newSnapshot || lastRender?.selected !== selected || lastRender?.inspectedId !== ui.inspectedId) {
-        const feature = value(state.covers, ui.inspectedId) ?? value(state.interactives, ui.inspectedId);
-        renderCard(state, feature ? null : selectedUnit, feature);
+      if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);
+      if (fresh) renderActor(state, current);
+      $("sprint-indicator").textContent = ui.sprint ? "\u75BE\u8DD1\u8303\u56F4\u5DF2\u663E\u793A \xB7 \u8D70\u66F4\u8FDC\u9700\u8981 2 AP" : "";
+      renderBoard(state, { selected, action, hover, preview: result, current });
+      if (ui.target) renderPreview(state, action, hover, range, result, current);
+      if (fresh || last?.selected !== selected || last?.inspectedId !== ui.inspectedId) {
+        const feature = get2(state.covers, ui.inspectedId) ?? get2(state.interactives, ui.inspectedId);
+        renderUnitCard(state, feature ? null : get2(state.units, selected), feature);
       }
-      lastRender = { state, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
-      const message = byId4("action-error");
-      message.textContent = ui.error || "";
-      message.hidden = !ui.error;
+      $("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F\uFF1A\u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F\uFF1A${state.outcome === "blue" ? "\u6211\u65B9\u80DC\u5229" : "\u654C\u65B9\u80DC\u5229"}` : canAct ? "\u70B9\u51FB\u683C\u5B50\u9009\u62E9\u76EE\u6807\uFF0C\u518D\u9009\u8981\u505A\u7684\u4E8B" : current ? `${current.name} \u6B63\u5728\u884C\u52A8\u2026\u2026` : "";
+      last = { state, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
     }
-    function feedback(before, after) {
-      if (!before?.grid || !after?.grid || before.scenarioId !== after.scenarioId) return;
-      const changes2 = /* @__PURE__ */ new Map();
-      const push = (item, label, kind) => {
-        const xy = key3(item.x, item.y);
-        const previous = changes2.get(xy);
-        changes2.set(xy, previous ? { label: `${previous.label} ${label}`, kind: kind === "damage" ? kind : previous.kind } : { label, kind });
-      };
-      for (const u of values3(after.units)) {
-        const old = value(before.units, u.id);
-        if (!old) continue;
-        if (u.hp !== old.hp) push(u, sign(u.hp - old.hp), u.hp < old.hp ? "damage" : "heal");
-        else if (u.x !== old.x || u.y !== old.y) push(u, "\u25C6", "move");
-        else {
-          const gained = statuses(u).filter((s) => (value(old.statuses, s.id)?.stacks ?? 0) < s.stacks);
-          if (gained.length) push(u, gained.map((s) => s.name).join("\uFF0F"), "status");
-        }
-      }
-      for (const c of values3(after.covers)) {
-        const old = value(before.covers, c.id);
-        if (old && old.hp !== c.hp) push(c, c.hp <= 0 ? "\u574D\u584C" : sign(c.hp - old.hp), c.hp < old.hp ? "damage" : "heal");
-      }
-      for (const i of values3(after.interactives)) if (i.spent && value(before.interactives, i.id)?.spent === false) push(i, i.kind === "barrel" ? "\u5F15\u7206" : "\u5DF2\u6FC0\u6D3B", "status");
-      if (after.logs.length > before.logs.length) for (const log of after.logs.slice(before.logs.length)) {
-        if (log.type === "roll" && log.detail?.hit === false) {
-          const u = value(after.units, log.detail.targetId) ?? value(after.covers, log.detail.targetId);
-          if (u && !changes2.has(key3(u.x, u.y))) push(u, "\u672A\u547D\u4E2D", "status");
-        }
-      }
-      const reduced = root.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-      for (const [xy, { label, kind }] of changes2) {
-        const cell = boardCells.get(xy)?.cell;
-        if (!cell) continue;
-        activeFeedback.get(xy)?.cancel();
-        const overlay = el2("span", `cell-feedback ${kind}`), text4 = el2("b", "", label);
-        overlay.setAttribute("aria-hidden", "true");
-        overlay.append(text4);
-        cell.append(overlay);
-        const motion = reduced ? [{ opacity: 1 }, { opacity: 0.85, offset: 0.45 }, { opacity: 0 }] : [{ opacity: 1, transform: "translateY(0)" }, { opacity: 0.95, transform: "translateY(-7%)", offset: 0.4 }, { opacity: 0, transform: "translateY(-23%)" }];
-        const anim = overlay.animate(motion, { duration: 280, easing: "cubic-bezier(.23, 1, .32, 1)" });
-        activeFeedback.set(xy, anim);
-        anim.oncancel = anim.onfinish = () => {
-          overlay.remove();
-          if (activeFeedback.get(xy) === anim) activeFeedback.delete(xy);
+    function renderControls(state) {
+      const current = get2(state.units, state.order[state.turn]);
+      $("end-turn").disabled = !(current?.team === "blue" && !state.outcome);
+      $("ai-step").disabled = !!state.outcome || current?.team !== "red";
+    }
+    return { render, renderControls, renderLog };
+  }
+
+  // src/ui/animation.js
+  var STEP_MS = 150;
+  var BANNER_MS = 750;
+  var RIBBON_MS = 1300;
+  var ROLL_MS = 560;
+  var HOLD_MS = 1050;
+  var HIT_MS = 420;
+  var CAPTION_LIFE = 6500;
+  function createPlayback(root, { show, onIdle } = {}) {
+    const doc = root.ownerDocument, win = doc.defaultView;
+    const $ = (id3) => root.querySelector(`[id="${id3}"]`);
+    const app = root.querySelector(".ft-app") ?? root;
+    const queue = [];
+    const waiters = /* @__PURE__ */ new Set();
+    let running = false, skipping = false, speed = 1, generation = 0, current = null;
+    const reduced = () => win?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const canAnimate = (el3) => typeof el3?.animate === "function" && !reduced();
+    function wait(ms) {
+      if (skipping || speed <= 0) return Promise.resolve();
+      return new Promise((resolve) => {
+        const done = () => {
+          win.clearTimeout(timer);
+          waiters.delete(done);
+          resolve();
         };
+        const timer = win.setTimeout(done, ms * speed);
+        waiters.add(done);
+      });
+    }
+    async function play(el3, frames, options) {
+      if (skipping || speed <= 0 || !canAnimate(el3)) return;
+      const anim = el3.animate(frames, { ...options, duration: options.duration * speed });
+      const stop = () => anim.finish();
+      waiters.add(stop);
+      try {
+        await anim.finished;
+      } catch {
+      } finally {
+        waiters.delete(stop);
       }
     }
-    return { render, feedback };
+    const frame = () => $("board-frame");
+    const cellAt2 = (x, y) => root.querySelector(`#board [data-x="${x}"][data-y="${y}"]`);
+    const tokenOf = (id3) => root.querySelector(`#board .axis-unit[data-unit-id="${id3}"]`);
+    const positions = /* @__PURE__ */ new Map();
+    const homes = /* @__PURE__ */ new Map();
+    function center(x, y) {
+      const cell = cellAt2(x, y), box = frame()?.getBoundingClientRect();
+      if (!cell || !box) return null;
+      const r = cell.getBoundingClientRect();
+      return { x: r.left - box.left + r.width / 2, y: r.top - box.top + r.height / 2, w: r.width };
+    }
+    function whereIs(state, id3) {
+      if (positions.has(id3)) return positions.get(id3);
+      const thing = state.units?.[id3] ?? state.covers?.[id3] ?? state.interactives?.[id3];
+      return thing ? { x: thing.x, y: thing.y } : null;
+    }
+    function offset(id3, to) {
+      const home = homes.get(id3), a = home && center(home.x, home.y), b = center(to.x, to.y);
+      return a && b ? `translate(${b.x - a.x}px, ${b.y - a.y}px)` : "none";
+    }
+    async function walk(state, id3, path) {
+      const token = tokenOf(id3);
+      if (!token || !path?.length) return;
+      if (!homes.has(id3)) homes.set(id3, { ...state.units[id3] });
+      token.classList.add("is-moving");
+      const cell = token.closest(".tactical-cell");
+      if (cell) cell.style.zIndex = "25";
+      for (const step of path) {
+        const from = token.style.transform || "none", to = offset(id3, step);
+        token.style.transform = to;
+        positions.set(id3, { x: step.x, y: step.y });
+        await play(token, [{ transform: from }, { transform: to }], { duration: STEP_MS, easing: "ease-in-out" });
+      }
+    }
+    async function blink(state, id3, to) {
+      const token = tokenOf(id3);
+      if (!token) return;
+      if (!homes.has(id3)) homes.set(id3, { ...state.units[id3] });
+      await play(token, [{ opacity: 1 }, { opacity: 0 }], { duration: 160 });
+      token.style.transform = offset(id3, to);
+      positions.set(id3, { x: to.x, y: to.y });
+      await play(token, [{ opacity: 0 }, { opacity: 1 }], { duration: 200 });
+    }
+    async function lunge(state, attackerId, targetId) {
+      const token = tokenOf(attackerId), a = whereIs(state, attackerId), b = whereIs(state, targetId);
+      if (!token || !a || !b) return;
+      const p = center(a.x, a.y), q = center(b.x, b.y);
+      if (!p || !q) return;
+      const far = Math.hypot(q.x - p.x, q.y - p.y) > p.w * 1.6;
+      const base = token.style.transform && token.style.transform !== "none" ? `${token.style.transform} ` : "";
+      const dx = (q.x - p.x) * (far ? 0.08 : 0.32), dy = (q.y - p.y) * (far ? 0.08 : 0.32);
+      const swing = play(token, [
+        { transform: `${base}translate(0,0)` },
+        { transform: `${base}translate(${-dx * 0.3}px, ${-dy * 0.3}px)`, offset: 0.3 },
+        { transform: `${base}translate(${dx}px, ${dy}px)`, offset: 0.6 },
+        { transform: `${base}translate(0,0)` }
+      ], { duration: 380, easing: "ease-out" });
+      if (far) await bolt(p, q);
+      await swing;
+    }
+    async function bolt(p, q) {
+      const fx = $("board-fx");
+      if (!fx || skipping || speed <= 0) return;
+      const dot = doc.createElement("i");
+      dot.className = "ft-bolt";
+      Object.assign(dot.style, { left: `${p.x}px`, top: `${p.y}px` });
+      fx.append(dot);
+      await play(dot, [{ transform: "translate(-50%, -50%) scale(.6)" }, { transform: `translate(calc(${q.x - p.x}px - 50%), calc(${q.y - p.y}px - 50%)) scale(1)` }], { duration: 260, easing: "ease-in" });
+      dot.remove();
+    }
+    function shake(id3, heavy) {
+      const token = tokenOf(id3) ?? root.querySelector(`#board [data-cover="${id3}"], #board [data-interact="${id3}"]`);
+      if (!token) return Promise.resolve();
+      const base = token.style.transform && token.style.transform !== "none" ? `${token.style.transform} ` : "";
+      const k = heavy ? 7 : 4;
+      return play(token, [
+        { transform: `${base}translateX(0)`, filter: "brightness(1)" },
+        { transform: `${base}translateX(${-k}px)`, filter: "brightness(2.2) saturate(.4)", offset: 0.2 },
+        { transform: `${base}translateX(${k}px)`, offset: 0.45 },
+        { transform: `${base}translateX(${-k / 2}px)`, offset: 0.7 },
+        { transform: `${base}translateX(0)`, filter: "brightness(1)" }
+      ], { duration: 300 });
+    }
+    function fall(id3) {
+      const token = tokenOf(id3);
+      if (!token) return Promise.resolve();
+      token.style.opacity = ".4";
+      token.style.filter = "grayscale(1)";
+      return play(token, [{ opacity: 1, filter: "grayscale(0)" }, { opacity: 0.4, filter: "grayscale(1)" }], { duration: 520 });
+    }
+    function float(state, id3, text4, tone, sub) {
+      const fx = $("board-fx"), at = whereIs(state, id3), c = at && center(at.x, at.y);
+      if (!fx || !c || skipping || speed <= 0) return;
+      const node3 = doc.createElement("div");
+      node3.className = `ft-float ${tone}`;
+      node3.textContent = text4;
+      if (sub) {
+        const s = doc.createElement("small");
+        s.textContent = sub;
+        node3.append(s);
+      }
+      const jitter = (fx.childElementCount % 3 - 1) * 14;
+      Object.assign(node3.style, { left: `${c.x + jitter}px`, top: `${c.y - c.w * 0.2}px` });
+      fx.append(node3);
+      const anim = canAnimate(node3) ? node3.animate([
+        { opacity: 0, transform: "translate(-50%, -30%) scale(.6)" },
+        { opacity: 1, transform: "translate(-50%, -80%) scale(1.15)", offset: 0.15 },
+        { opacity: 1, transform: "translate(-50%, -110%) scale(1)", offset: 0.7 },
+        { opacity: 0, transform: "translate(-50%, -160%) scale(.95)" }
+      ], { duration: 1300 * Math.max(speed, 0.6), easing: "ease-out", fill: "forwards" }) : null;
+      const remove2 = () => node3.remove();
+      if (anim) anim.finished.then(remove2, remove2);
+      else win.setTimeout(remove2, 1200);
+    }
+    async function banner(text4, sub, faction, ms = BANNER_MS) {
+      const node3 = $("turn-banner");
+      if (!node3 || skipping || speed <= 0) return;
+      const b = doc.createElement("b"), s = doc.createElement("small");
+      b.textContent = text4;
+      s.textContent = sub;
+      node3.replaceChildren(b, s);
+      node3.dataset.faction = faction ?? "";
+      node3.hidden = false;
+      await play(node3, [{ opacity: 0, transform: "translateY(-50%) scaleY(.4)" }, { opacity: 1, transform: "translateY(-50%) scaleY(1)" }], { duration: 200, easing: "ease-out" });
+      await wait(ms);
+      await play(node3, [{ opacity: 1 }, { opacity: 0 }], { duration: 180 });
+      node3.hidden = true;
+    }
+    function ribbon(text4, faction) {
+      const node3 = $("action-ribbon");
+      if (!node3 || skipping || speed <= 0) return;
+      node3.textContent = text4;
+      node3.dataset.faction = faction ?? "";
+      node3.hidden = false;
+      win.clearTimeout(ribbon.timer);
+      ribbon.timer = win.setTimeout(() => {
+        node3.hidden = true;
+      }, Math.max(RIBBON_MS * speed, 600));
+    }
+    function caption(entry) {
+      const list3 = $("caption");
+      if (!list3) return;
+      const li = doc.createElement("li");
+      li.dataset.tone = entry.tone;
+      const icon = doc.createElement("span"), text4 = doc.createElement("span");
+      icon.textContent = entry.icon;
+      text4.textContent = entry.title;
+      li.append(icon, text4);
+      if (entry.lines?.length && !entry.roll) {
+        const s = doc.createElement("small");
+        s.textContent = entry.lines.at(-1);
+        li.append(s);
+      }
+      list3.append(li);
+      while (list3.children.length > 4) list3.firstElementChild.remove();
+      win.setTimeout(() => li.remove(), CAPTION_LIFE);
+    }
+    const el2 = (tag, cls, text4) => {
+      const n = doc.createElement(tag);
+      if (cls) n.className = cls;
+      if (text4 != null) n.textContent = String(text4);
+      return n;
+    };
+    const signed = (n) => n >= 0 ? `+ ${n}` : `\u2212 ${-n}`;
+    function die(value) {
+      const d = el2("span", "ft-die is-rolling", "?");
+      d.dataset.value = value;
+      return d;
+    }
+    async function tumble(dice3) {
+      if (skipping || speed <= 0) return;
+      const spin = win.setInterval(() => {
+        for (const d of dice3) d.textContent = 1 + Math.floor(Math.random() * 20);
+      }, 55);
+      await wait(ROLL_MS);
+      win.clearInterval(spin);
+    }
+    function settle(dice3, kept) {
+      let marked = false;
+      for (const d of dice3) {
+        const v = Number(d.dataset.value);
+        d.classList.remove("is-rolling");
+        d.textContent = Number.isFinite(v) ? v : "\u2013";
+        if (v === 20) d.classList.add("is-nat20");
+        if (v === 1) d.classList.add("is-nat1");
+        if (kept != null && dice3.length > 1) {
+          const keep = !marked && v === kept;
+          if (keep) marked = true;
+          d.classList.add(keep ? "is-kept" : "is-dropped");
+        } else d.classList.add("is-kept");
+      }
+    }
+    function formula(parts) {
+      const row = el2("div", "ft-formula");
+      for (const [value, label, cls] of parts) {
+        const cell = el2("span", "");
+        cell.style.display = "grid";
+        cell.style.justifyItems = "center";
+        cell.append(el2("b", cls ?? "", value));
+        if (label) cell.append(el2("i", "", label));
+        row.append(cell);
+      }
+      return row;
+    }
+    const op = (t) => [t, "", "op"];
+    async function diceCard(roll) {
+      const stage2 = $("dice-stage");
+      if (!stage2 || !roll || skipping || speed <= 0) return;
+      const card = el2("div", "ft-dice-card");
+      card.dataset.tone = roll.tone ?? "hit";
+      card.append(el2("div", "ft-dice-label", roll.label));
+      const verdict = el2("div", "ft-verdict", roll.verdict);
+      verdict.style.visibility = "hidden";
+      let dice3 = [], kept = null, details = [];
+      if (roll.kind === "d20") {
+        dice3 = (roll.dice?.length ? roll.dice : [roll.kept]).map(die);
+        kept = roll.kept;
+        const row = el2("div", "ft-dice-row");
+        row.append(...dice3);
+        card.append(row);
+        if (roll.mode && roll.mode !== "normal") card.append(el2("div", "ft-dice-mode", { advantage: "\u4F18\u52BF\uFF1A\u53D6\u8F83\u9AD8\u7684\u4E00\u9897", disadvantage: "\u52A3\u52BF\uFF1A\u53D6\u8F83\u4F4E\u7684\u4E00\u9897", middle: "\u63B7\u4E09\u9897\uFF0C\u53D6\u4E2D\u95F4\u503C" }[roll.mode]));
+        const parts = [[kept, "\u9AB0\u503C"], op(roll.modifier >= 0 ? "+" : "\u2212"), [Math.abs(roll.modifier ?? 0), roll.modifierLabel ?? "\u52A0\u503C"], op("="), [roll.total, "\u5408\u8BA1", "total"]];
+        if (roll.target != null) parts.push(op("vs"), [roll.target, roll.targetLabel ?? "\u76EE\u6807"]);
+        details.push(formula(parts));
+      } else if (roll.kind === "versus") {
+        const box = el2("div", "ft-versus");
+        for (const [i, sideRoll] of [roll.left, roll.right].entries()) {
+          const sideBox = el2("div", "ft-versus-side");
+          const d = die(sideRoll.dice?.[0]);
+          dice3.push(d);
+          sideBox.append(el2("span", "", sideRoll.name), d);
+          const sum = el2("div", "ft-formula");
+          sum.append(el2("i", "", sideRoll.bonus ? `${signed(sideRoll.bonus)} =` : "="), el2("b", "total", sideRoll.total));
+          details.push(sum);
+          sideBox.append(sum);
+          box.append(sideBox);
+          if (!i) box.append(el2("span", "ft-versus-vs", "VS"));
+        }
+        card.append(box);
+        for (const d of details) d.style.visibility = "hidden";
+        details = details.map((d) => ({ reveal: () => {
+          d.style.visibility = "";
+        } }));
+      } else if (roll.kind === "chance") {
+        const bar = el2("div", "ft-chance"), fill = el2("i"), mark = el2("b");
+        bar.style.setProperty("--chance", roll.chance);
+        bar.style.setProperty("--rolled", 0);
+        bar.append(fill, mark);
+        card.append(bar, el2("div", "ft-dice-note", `\u9700\u8981\u63B7\u8FDB ${Math.round(roll.chance * 100)}% \u4EE5\u5185`));
+        details.push({ reveal: () => bar.style.setProperty("--rolled", roll.rolled) });
+        mark.style.transition = "left .4s ease-out";
+      }
+      for (const d of details) if (d instanceof win.HTMLElement) {
+        d.style.visibility = "hidden";
+        card.append(d);
+      }
+      card.append(verdict);
+      if (roll.note) card.append(el2("div", "ft-dice-note", roll.note));
+      stage2.replaceChildren(card);
+      await play(card, [{ opacity: 0, transform: "translateY(-12px) scale(.94)" }, { opacity: 1, transform: "none" }], { duration: 200, easing: "ease-out" });
+      await tumble(dice3);
+      settle(dice3, kept);
+      await wait(220);
+      for (const d of details) d instanceof win.HTMLElement ? d.style.visibility = "" : d.reveal();
+      await wait(260);
+      verdict.style.visibility = "";
+      await play(verdict, [{ opacity: 0, transform: "scale(1.6)" }, { opacity: 1, transform: "scale(1)" }], { duration: 260, easing: "cubic-bezier(.2, 1.4, .4, 1)" });
+      await wait(HOLD_MS);
+      await play(card, [{ opacity: 1 }, { opacity: 0, transform: "translateY(-6px)" }], { duration: 180 });
+      card.remove();
+    }
+    async function stage(log, state, ctx) {
+      const entry = narrate(log, state);
+      const d = log.detail ?? {};
+      const unit = state.units?.[log.actor];
+      switch (log.type) {
+        case "turn":
+          if (unit) await banner(`${unit.name}`, `${unit.team === "blue" ? "\u6211\u65B9\u884C\u52A8" : "\u654C\u65B9\u884C\u52A8"} \xB7 \u7B2C ${log.round} \u56DE\u5408`, unit.team, unit.team === "blue" ? BANNER_MS * 0.8 : BANNER_MS);
+          return;
+        case "action":
+          ribbon(log.text, unit?.team);
+          await wait(250);
+          return;
+        case "move":
+        case "sprint":
+        case "disengage":
+          caption(entry);
+          await walk(state, log.actor, d.path ?? (d.to ? [d.to] : []));
+          return;
+        case "knockback":
+          caption(entry);
+          if (d.to) {
+            await shake(d.targetId, true);
+            await walk(state, d.targetId, [d.to]);
+          }
+          return;
+        case "teleport":
+          caption(entry);
+          if (d.to) await blink(state, d.targetId ?? log.actor, d.to);
+          return;
+        case "roll":
+          ctx.crit = !!d.critical;
+          await Promise.all([lunge(state, log.actor, d.targetId), diceCard(entry.roll)]);
+          caption(entry);
+          if (!d.hit) float(state, d.targetId, kept1(d) ? "\u5927\u5931\u624B" : "\u672A\u547D\u4E2D", "miss");
+          return;
+        case "damage":
+          caption(entry);
+          float(state, d.targetId, `\u2212${entry.amount}`, ctx.crit ? "crit" : "", ctx.crit ? "\u66B4\u51FB" : d.absorbed ? `\u62A4\u76FE\u5438\u6536 ${d.absorbed}` : void 0);
+          await shake(d.targetId, ctx.crit);
+          await wait(HIT_MS);
+          return;
+        case "heal":
+          caption(entry);
+          float(state, d.targetId ?? log.actor, `+${entry.amount}`, "heal");
+          await wait(HIT_MS);
+          return;
+        case "defeat":
+          caption(entry);
+          float(state, d.targetId, "\u5012\u4E0B", "miss");
+          await fall(d.targetId);
+          return;
+        case "status":
+          caption(entry);
+          float(state, d.targetId, entry.statusName ?? entry.title, "status");
+          await wait(320);
+          return;
+        case "shield":
+          caption(entry);
+          float(state, d.targetId ?? log.actor, "\u62A4\u76FE", "heal");
+          await wait(300);
+          return;
+        case "cover_damage":
+        case "cover_break":
+          caption(entry);
+          await shake(d.coverId ?? d.targetId, log.type === "cover_break");
+          return;
+        case "opportunity":
+          caption(entry);
+          ribbon(entry.title, state.units?.[log.actor]?.team);
+          await wait(500);
+          return;
+        default:
+          if (entry.roll) {
+            await diceCard(entry.roll);
+            caption(entry);
+            return;
+          }
+          if (!entry.quiet && entry.title) {
+            caption(entry);
+            await wait(280);
+          }
+      }
+    }
+    const kept1 = (d) => (d.selected ?? d.dice?.[0]) === 1;
+    async function run() {
+      if (running) return;
+      running = true;
+      const mine = generation;
+      app.dataset.busy = "true";
+      const skipButton = $("skip-playback");
+      if (skipButton) skipButton.hidden = false;
+      while (queue.length && mine === generation) {
+        const { before, after, logs } = queue.shift();
+        current = after;
+        positions.clear();
+        homes.clear();
+        show(before, { busy: true });
+        const ctx = { crit: false };
+        for (const log of logs) {
+          if (mine !== generation) break;
+          await stage(log, { ...after, units: { ...after.units, ...before.units }, grid: before.grid, covers: before.covers, interactives: before.interactives }, ctx);
+          if (log.type === "turn") ctx.crit = false;
+        }
+        if (mine !== generation) break;
+        positions.clear();
+        homes.clear();
+        settleTokens();
+        show(after, { busy: queue.length > 0 });
+        if (queue.length) await wait(120);
+      }
+      if (mine === generation) finish();
+    }
+    function settleTokens() {
+      for (const t of root.querySelectorAll("#board .axis-unit:not(.tactical-corpse)")) {
+        t.classList.remove("is-moving");
+        t.style.transform = t.style.opacity = t.style.filter = "";
+      }
+      for (const c of root.querySelectorAll("#board .tactical-cell")) c.style.zIndex = "";
+    }
+    function finish() {
+      running = false;
+      skipping = false;
+      app.dataset.busy = "false";
+      const skipButton = $("skip-playback");
+      if (skipButton) skipButton.hidden = true;
+      onIdle?.();
+    }
+    return {
+      /** 加入一次状态变化。返回 false 表示应直接显示（不演出）。 */
+      enqueue(before, after) {
+        if (!before || speed <= 0 || doc.hidden) return false;
+        const logs = after.logs.slice(before.logs.length);
+        if (!logs.length) return false;
+        queue.push({ before, after, logs });
+        run();
+        return true;
+      },
+      /** 立即结束全部演出并显示最终画面（同步完成）。 */
+      skip() {
+        if (!running) return;
+        const last = queue.at(-1)?.after ?? current;
+        this.reset();
+        if (last) show(last, { busy: false });
+        onIdle?.();
+      },
+      /** 战局被替换（撤销、读档、重开）时丢弃演出。 */
+      reset() {
+        generation++;
+        queue.length = 0;
+        for (const done of [...waiters]) done();
+        $("dice-stage")?.replaceChildren();
+        $("board-fx")?.replaceChildren();
+        $("caption")?.replaceChildren();
+        settleTokens();
+        for (const id3 of ["turn-banner", "action-ribbon", "skip-playback"]) {
+          const n = $(id3);
+          if (n) n.hidden = true;
+        }
+        running = false;
+        skipping = false;
+        app.dataset.busy = "false";
+      },
+      setSpeed(value) {
+        speed = Number.isFinite(value) && value >= 0 ? value : 1;
+      },
+      get busy() {
+        return running;
+      }
+    };
   }
 
   // src/ui/target_card.js
@@ -5176,41 +6062,93 @@ var FatedTactical = (() => {
   }
 
   // src/ui/main.js
+  var THEMES = ["amethyst", "night-gold", "frost-silver"];
+  var TARGETLESS = ["brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
+  var PATH_NAMES = { units: "\u5355\u4F4D", items: "\u7269\u54C1", grid: "\u5730\u5F62", statuses: "\u72B6\u6001", counters: "\u8BA1\u6570", statusTemplates: "\u72B6\u6001\u6A21\u677F", covers: "\u63A9\u4F53", interactives: "\u4E92\u52A8\u70B9" };
+  function describeProposal(result) {
+    if (!result?.ok) return `\u2716 \u65E0\u6CD5\u6267\u884C\uFF1A${result?.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
+    if (result.revision != null && !result.diff) return `\u2714 \u5DF2\u5199\u5165\u6218\u5C40\uFF08\u7248\u672C ${result.revision}\uFF09\u3002`;
+    const short = (v) => v == null ? "\u65E0" : typeof v === "object" ? v.name ? `\u300C${v.name}\u300D` : "\u4E00\u7EC4\u6570\u636E" : String(v);
+    const lines = (result.diff ?? []).filter((d) => d.path[0] !== "logs").map((d) => {
+      const path = d.path.map((p) => PATH_NAMES[p] ?? p).join(" \u203A ");
+      if (!("before" in d)) return `\uFF0B \u65B0\u589E ${path}\uFF1A${short(d.after)}`;
+      if (!("after" in d)) return `\uFF0D \u79FB\u9664 ${path}`;
+      return `\u2022 ${path}\uFF1A${short(d.before)} \u2192 ${short(d.after)}`;
+    });
+    return [`\u8BD5\u7B97\u901A\u8FC7\uFF0C\u786E\u8BA4\u540E\u4F1A\u6539\u53D8 ${lines.length} \u5904\uFF1A`, ...lines].join("\n");
+  }
   function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, storage: storageArea } = {}) {
     const document2 = root.ownerDocument, window2 = document2.defaultView;
     const localStorage2 = storageArea ?? window2?.localStorage;
     const $ = (id3) => root.querySelector(`[id="${id3}"]`);
     const view = createRenderer(root);
     const scenario = $("scenario-select"), mode = $("mode-select"), seed = $("seed-input");
-    const storage = { getItem: (key3) => {
-      try {
-        return localStorage2?.getItem(key3) ?? null;
-      } catch {
-        return null;
+    const storage = {
+      getItem: (key4) => {
+        try {
+          return localStorage2?.getItem(key4) ?? null;
+        } catch {
+          return null;
+        }
+      },
+      setItem: (key4, value) => {
+        try {
+          localStorage2?.setItem(key4, value);
+        } catch {
+        }
+      },
+      removeItem: (key4) => {
+        try {
+          localStorage2?.removeItem(key4);
+        } catch {
+        }
       }
-    }, setItem: (key3, value) => {
-      try {
-        localStorage2?.setItem(key3, value);
-      } catch {
-      }
-    }, removeItem: (key3) => {
-      try {
-        localStorage2?.removeItem(key3);
-      } catch {
-      }
-    } };
-    let state, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, message = "";
-    let menuButtons = /* @__PURE__ */ new Map();
-    const active = () => state.units[state.order[state.turn]];
+    };
+    let state, live, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, busy = false;
+    let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0;
+    const active = (s = state) => s?.units[s.order[s.turn]];
     const error2 = (value) => {
-      message = value;
-      $("action-error").hidden = !value;
-      $("action-error").textContent = value ?? "";
+      const node3 = $("action-error");
+      node3.hidden = !value;
+      node3.textContent = value ?? "";
     };
-    const draw = () => {
-      view.render(state, { selectedId, action, hover: target2 ?? hover, sprint, target: target2, inspectedId, error: message, scenarioOptions: customBattle ? {} : void 0 });
+    const safely = (fn) => {
+      try {
+        error2("");
+        return fn();
+      } catch (e) {
+        error2(e.message);
+        return void 0;
+      }
     };
-    const drawPreview = draw;
+    const draw = () => view.render(state, { selectedId, action, hover: target2 ?? hover, sprint, target: target2, inspectedId, busy });
+    const playback = createPlayback(root, {
+      show(next, opts) {
+        busy = !!opts?.busy;
+        show(next);
+      },
+      onIdle() {
+        busy = false;
+        show(live);
+        schedule();
+      }
+    });
+    function show(next) {
+      const changed = state !== next;
+      state = next;
+      if (changed && !target2) selectedId = state.units[selectedId]?.hp > 0 ? selectedId : active()?.id;
+      draw();
+      if (view.renderLog(state) && openDrawer !== "log") $("log-unread").hidden = false;
+      refreshMeasurement();
+    }
+    function resetSelection() {
+      selectedId = active(live ?? state)?.id;
+      action = null;
+      hover = target2 = null;
+      sprint = false;
+      inspectedId = null;
+      $("target-actions").hidden = true;
+    }
     const measurement = [$("measure-origin"), $("measure-target")];
     function measure() {
       const [from, to] = measurement.map((input) => state.units[input.value]);
@@ -5219,14 +6157,18 @@ var FatedTactical = (() => {
         return;
       }
       const dz = elevation(state, from) - elevation(state, to), cover = coverBetween(state, from, to);
-      $("measure-readout").textContent = `${from.name} \u2192 ${to.name} \xB7 \u6218\u68CB ${distance3D(state, from, to).toFixed(2)}\uFF0F\u539F\u534F\u8BAE ${game.protocolDistance({ ...from, z: elevation(state, from) }, { ...to, z: elevation(state, to) })} \xB7 \u0394Z ${dz > 0 ? "+" : ""}${dz} \xB7 ${!hasLOS(state, from, to) ? "# \u5899\u4F53\u963B\u65AD" : cover ? `${cover.id} \u906E\u853D \u2212${cover.cover}` : "\u89C6\u7EBF\u901A\u7545"}`;
+      const height2 = dz > 0 ? `${from.name}\u9AD8\u51FA ${dz}` : dz < 0 ? `${from.name}\u4F4E ${-dz}` : "\u4E24\u8005\u540C\u9AD8";
+      const sight = !hasLOS(state, from, to) ? "\u89C6\u7EBF\u88AB\u5899\u4F53\u6321\u4F4F" : cover ? `\u89C6\u7EBF\u7ECF\u8FC7${cover.name ?? cover.id}\uFF0C\u547D\u4E2D \u2212${cover.cover}` : "\u89C6\u7EBF\u901A\u7545";
+      $("measure-readout").textContent = `${from.name} \u2192 ${to.name}
+\u68CB\u76D8\u8DDD\u79BB ${distance3D(state, from, to).toFixed(1)} \u683C\uFF08\u534F\u8BAE\u8DDD\u79BB ${game.protocolDistance({ ...from, z: elevation(state, from) }, { ...to, z: elevation(state, to) })}\uFF09
+${height2}\uFF0C${sight}`;
     }
     function refreshMeasurement() {
       const living2 = Object.values(state.units).filter((u) => u.hp > 0);
       for (const [i, input] of measurement.entries()) {
         const old = input.value;
         input.replaceChildren(...living2.map((u) => {
-          const option = new window2.Option(`${u.name} (${u.x},${u.y},Z${elevation(state, u)})`, u.id);
+          const option = new window2.Option(`${u.name}\uFF08${u.x}, ${u.y}\uFF09`, u.id);
           option.dataset.faction = u.team;
           return option;
         }));
@@ -5235,16 +6177,31 @@ var FatedTactical = (() => {
       }
       measure();
     }
-    function safely(fn) {
-      try {
-        error2("");
-        return fn();
-      } catch (e) {
-        error2(e.message);
-        return void 0;
+    function setDrawer(name) {
+      const same3 = openDrawer === name;
+      closeDrawer();
+      if (same3 || !name) return;
+      const panel = root.querySelector(`aside[data-drawer="${name}"]`);
+      if (!panel) return;
+      closeTarget();
+      panel.hidden = false;
+      openDrawer = name;
+      $("drawer-scrim").hidden = false;
+      root.querySelector(`[data-open-drawer="${name}"]`)?.setAttribute("aria-pressed", "true");
+      if (name === "log") {
+        $("log-unread").hidden = true;
+        const scroller = $("combat-log").parentElement;
+        scroller.scrollTop = scroller.scrollHeight;
       }
     }
-    if (customBattle) scenario.closest("label").hidden = true;
+    function closeDrawer() {
+      if (!openDrawer) return;
+      root.querySelector(`aside[data-drawer="${openDrawer}"]`).hidden = true;
+      root.querySelector(`[data-open-drawer="${openDrawer}"]`)?.setAttribute("aria-pressed", "false");
+      $("drawer-scrim").hidden = true;
+      openDrawer = null;
+    }
+    if (customBattle) for (const node3 of root.querySelectorAll("[data-scenario-only]")) node3.hidden = true;
     else for (const [id3, { title }] of Object.entries(SCENARIOS)) scenario.add(new window2.Option(title, id3));
     function scenarioDescription() {
       $("scenario-preview").textContent = customBattle ? "\u6765\u81EA\u5F53\u524D\u804A\u5929 \xB7 10\xD710" : SCENARIOS[scenario.value].description + (carry ? " \xB7 \u5DF2\u8F7D\u5165\u8DE8\u6218\u88C5\u5907\u4E0E\u72B6\u6001" : "");
@@ -5262,82 +6219,72 @@ var FatedTactical = (() => {
       if (!seed.value || !seed.checkValidity()) throw new Error("\u79CD\u5B50\u987B\u4E3A 0\u20134294967295 \u7684\u6574\u6570");
       if (customBattle) {
         const value = Number(seed.value);
-        const state2 = customBattle.restart({ seed: value, mode: mode.value });
-        game.createBattle({ kind: "custom_state", state: state2 });
+        game.createBattle({ kind: "custom_state", state: customBattle.restart({ seed: value, mode: mode.value }) });
         customBattle.seed = value;
         storage.setItem(`${storageKey}/seed`, String(value));
-        return;
-      }
-      game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: "protocol", seed: Number(seed.value), ...carry ? { persistentSnapshot: carry } : {} });
+      } else game.createBattle({ scenarioId: scenario.value, mode: mode.value, ruleset: "protocol", seed: Number(seed.value), ...carry ? { persistentSnapshot: carry } : {} });
+      closeDrawer();
     }
     function schedule() {
-      clearTimeout(timer);
-      if (!state?.outcome && active()?.team === "red" && $("auto-ai").checked) {
-        timer = setTimeout(() => safely(() => game.stepEnemy()), Number($("ai-speed").value));
-      }
+      window2.clearTimeout(timer);
+      if (busy || playback.busy || live?.outcome || active(live)?.team !== "red" || !$("auto-ai").checked) return;
+      timer = window2.setTimeout(() => safely(() => game.stepEnemy()), Number($("ai-speed").value) || 350);
     }
     function pauseAI() {
       $("auto-ai").checked = false;
-      $("auto-ai").onchange();
+      storage.setItem("fated-tactical/auto", "false");
+      window2.clearTimeout(timer);
     }
-    function clearProposal() {
-      pending = null;
-      $("sandbox-commit").disabled = true;
-    }
-    function sandboxOutput(value) {
-      $("sandbox-output").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-    }
-    function update({ resetAction = false, save = false } = {}) {
-      const previous = state;
-      state = game.getBattleState();
-      if (resetAction || !state.units[selectedId]) {
-        selectedId = active()?.id;
-        action = null;
-        hover = target2 = null;
-        sprint = false;
-        inspectedId = null;
-        $("target-actions").hidden = true;
+    const continues = (a, b) => a && b && b.logs.length > a.logs.length && a.scenarioId === b.scenarioId && JSON.stringify(a.logs.at(-1)) === JSON.stringify(b.logs[a.logs.length - 1]);
+    function onChange() {
+      const before = live;
+      live = game.getBattleState();
+      try {
+        storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
+      } catch {
+        error2("\u6D4F\u89C8\u5668\u5B58\u50A8\u7A7A\u95F4\u4E0D\u8DB3\u6216\u5DF2\u5173\u95ED\uFF1B\u8BF7\u4E0B\u8F7D\u5FEB\u7167\u4FDD\u5B58\u6218\u5C40\u3002");
       }
-      draw();
-      refreshMeasurement();
-      if (save) {
-        try {
-          storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
-        } catch {
-          error2("\u6D4F\u89C8\u5668\u5B58\u50A8\u7A7A\u95F4\u4E0D\u8DB3\u6216\u5DF2\u5173\u95ED\uFF1B\u8BF7\u4E0B\u8F7D\u5FEB\u7167\u4FDD\u5B58\u6218\u5C40\u3002");
-        }
-        schedule();
+      view.renderControls(live);
+      resetSelection();
+      if (continues(before, live) && playback.enqueue(before, live)) {
+        window2.clearTimeout(timer);
+        return;
       }
-      return previous;
+      playback.reset();
+      busy = false;
+      show(live);
+      schedule();
     }
-    function execute(next) {
-      return safely(() => game.playAction(next));
-    }
-    function pointFrom(el2) {
-      const cell = el2.closest("[data-x][data-y]");
-      return cell ? { x: Number(cell.dataset.x), y: Number(cell.dataset.y) } : null;
-    }
+    const execute = (command) => safely(() => {
+      const result = game.playAction(command);
+      if (result && result.ok === false) error2(result.error);
+      return result;
+    });
+    const pointFrom = (node3) => {
+      const cell = node3?.closest?.("[data-x][data-y]");
+      return cell && $("board").contains(cell) ? { x: Number(cell.dataset.x), y: Number(cell.dataset.y) } : null;
+    };
     const cellFor = (at) => $("board").querySelector(`[data-x="${at.x}"][data-y="${at.y}"]`);
     function layoutTargetCard() {
-      if (!target2 || $("target-actions").hidden) return;
+      const card = $("target-actions");
+      if (!target2 || card.hidden) return;
       const anchor2 = cellFor(target2);
       if (!anchor2) return;
-      const r = anchor2.getBoundingClientRect(), clip = anchor2.closest(".axis-scroll").getBoundingClientRect();
-      const viewport = window2?.visualViewport;
-      if (r.right <= Math.max(clip.left, viewport?.offsetLeft ?? 0) || r.left >= Math.min(clip.right, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window2.innerWidth)) || r.bottom <= (viewport?.offsetTop ?? 0) || r.top >= (viewport?.offsetTop ?? 0) + (viewport?.height ?? window2.innerHeight)) {
+      const r = anchor2.getBoundingClientRect(), clip = $("board-scroll").getBoundingClientRect();
+      if (r.right <= clip.left || r.left >= clip.right || r.bottom <= clip.top || r.top >= clip.bottom) {
         closeTarget();
         return;
       }
-      placeTargetCard($("target-actions"), anchor2, viewport);
+      placeTargetCard(card, anchor2, window2.visualViewport);
     }
     function closeTarget(restoreFocus = false) {
       const at = target2;
+      if (!at && $("target-actions").hidden) return;
       target2 = action = null;
       $("target-actions").hidden = true;
       draw();
       if (restoreFocus && at) cellFor(at)?.focus({ preventScroll: true });
     }
-    const labelByType = { use_item: "\u4F7F\u7528\u526F\u624B\u9053\u5177", move: "\u79FB\u52A8", sprint: "\u75BE\u8DD1\u81F3\u6B64", disengage: "\u64A4\u79BB", attack: "\u666E\u653B", interact: "\u4E92\u52A8", brace: "\u67B6\u52BF\u9632\u5FA1", block: "\u683C\u6321", shield_bash: "\u76FE\u51FB", charge: "\u84C4\u529B", lock_on: "\u5B9A\u4F4D", scan: "\u63A2\u5BDF", grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E", flee: "\u9003\u8DD1", detour: "\u7ED5\u884C", reload: "\u88C5\u586B", end: "\u7ED3\u675F\u56DE\u5408" };
     function handlePoint(at, input = {}) {
       error2("");
       const unit = Object.values(state.units).find((u) => u.hp > 0 && u.x === at.x && u.y === at.y);
@@ -5348,79 +6295,68 @@ var FatedTactical = (() => {
       if (self) {
         const check = game.previewAction({ type: "sprint" });
         sprint = !sprint && check.ok;
-        if (!check.ok) error2(check.error);
+        if (!check.ok) error2(`\u4E0D\u80FD\u75BE\u8DD1\uFF1A${check.error}`);
       }
       selectedId = unit?.id ?? actor?.id;
       inspectedId = unit ? null : feature?.id;
       target2 = at;
       hover = at;
       action = null;
+      const bonus = $("bonus-dice-select");
+      bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
       const options = [];
-      $("bonus-dice-select").value = String(Math.min(Number($("bonus-dice-select").value), actor?.bonusDice ?? 0));
       const add = (type, skill2) => {
-        const targetless = ["brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"].includes(type);
         const command = {
           type,
-          ...targetless ? {} : at,
+          ...TARGETLESS.includes(type) ? {} : at,
           ...skill2 ? { skillId: skill2 } : {},
-          ...type === "attack" || type === "skill" ? {
-            intent: $("intent-select").value,
-            nonLethal: $("nonlethal-toggle").checked,
-            bonusDice: Number($("bonus-dice-select").value)
-          } : {}
+          ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
         };
         const plan = game.previewAction(command);
-        if (plan.ok) options.push({ command, plan, label: skill2 ? plan.name : labelByType[type] });
+        if (plan.ok) options.push({ command, plan, label: skill2 ? plan.name : ACTION_LABELS[type] });
       };
       if (canAct) {
-        if (self) {
-          add("brace");
-          add("block");
-          add("charge");
-          add("scan");
-          add("flee");
-          add("use_item");
-          add("reload");
-        } else {
-          add(sprint ? "sprint" : "move");
-          add("disengage");
-          add("attack");
-          add("lock_on");
-          add("grapple");
-          add("disarm");
-          add("trip");
-          add("push");
-        }
+        if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
+        else for (const t of [sprint ? "sprint" : "move", "disengage", "attack", "lock_on", "grapple", "disarm", "trip", "push"]) add(t);
         add("interact");
         for (const skill2 of actor.skills) add("skill", skill2);
         for (const [skill2] of equippedActiveSkills(state, actor)) add("skill", skill2);
         if (self) add("end");
       }
-      $("target-title").textContent = `${unit?.name ?? feature?.name ?? "\u5730\u5757"} \xB7 (${at.x}, ${at.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u5DF2\u542F\u7528" : " \xB7 \u666E\u901A\u79FB\u52A8" : ""}`;
+      const who = unit ? `${unit.team === "blue" ? "\u6211\u65B9" : "\u654C\u65B9"} ${unit.name}` : feature?.name ?? "\u7A7A\u5730";
+      $("target-title").textContent = `${who} \xB7 (${at.x}, ${at.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4" : "" : ""}`;
+      $("target-options").hidden = !options.some((o) => ["attack", "skill"].includes(o.command.type));
       const toolbar = $("action-toolbar");
       toolbar.replaceChildren();
       menuButtons = /* @__PURE__ */ new Map();
-      for (const { command, plan, label } of options) {
+      for (const choice of options) {
+        const { command, plan, label } = choice;
         const button = document2.createElement("button");
         button.type = "button";
         button.className = "game-button";
         button.dataset.action = command.type;
         if (command.skillId) button.dataset.skillId = command.skillId;
-        const risky = plan.opportunities?.length;
-        button.textContent = [label, plan.ap ? `${plan.ap} AP` : "", plan.mp ? `${plan.mp} MP` : "", plan.sp ? `${plan.sp} SP` : "", risky ? "\u26A0" : ""].filter(Boolean).join(" \xB7 ");
+        const cost = [plan.ap ? `${plan.ap} AP` : "", plan.mp ? `${plan.mp} MP` : "", plan.sp ? `${plan.sp} SP` : ""].filter(Boolean).join(" \xB7 ");
+        const odds = plan.targets?.[0]?.hitChance;
+        const note = [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `\u547D\u4E2D ${Math.round(odds * 100)}%` : "", plan.opportunities?.length ? "\u26A0 \u4F1A\u88AB\u501F\u673A" : ""].filter(Boolean).join(" \xB7 ");
+        button.append(label);
+        const small = document2.createElement("small");
+        small.textContent = note || ACTION_HINTS[command.type] || "";
+        if (small.textContent) button.append(small);
+        button.title = ACTION_HINTS[command.type] ?? label;
         button.setAttribute("aria-pressed", "false");
-        menuButtons.set(button, { command, plan, label });
+        menuButtons.set(button, choice);
         toolbar.append(button);
       }
-      if (!options.length) toolbar.textContent = canAct ? "\u5F53\u524D\u6CA1\u6709\u9002\u7528\u4E8E\u8FD9\u4E00\u683C\u7684\u52A8\u4F5C\u3002" : "\u5F53\u524D\u4E0D\u80FD\u884C\u52A8\uFF0C\u4EC5\u67E5\u770B\u5730\u5757\u3002";
-      $("target-preview").open = Boolean(options[0]?.plan.opportunities?.length);
-      $("target-actions").hidden = false;
-      $("target-actions").scrollTop = 0;
+      if (!options.length) toolbar.textContent = canAct ? "\u8FD9\u4E00\u683C\u6CA1\u6709\u80FD\u505A\u7684\u4E8B\u3002" : "\u73B0\u5728\u4E0D\u662F\u4F60\u7684\u56DE\u5408\uFF0C\u53EA\u80FD\u67E5\u770B\u3002";
+      const card = $("target-actions");
+      card.hidden = false;
+      card.scrollTop = 0;
       $("confirm-action").hidden = true;
       if (options.length) action = options[0].command;
       draw();
       layoutTargetCard();
-      if (input.detail === 0) (toolbar.querySelector("button") ?? $("close-target")).focus({ preventScroll: true });
+      if (input.detail === 0) (toolbar.querySelector("button") || $("close-target")).focus({ preventScroll: true });
     }
     function handleAction(button) {
       const choice = menuButtons.get(button);
@@ -5436,81 +6372,72 @@ var FatedTactical = (() => {
       const confirm = $("confirm-action");
       confirm.hidden = false;
       confirm.textContent = `\u786E\u8BA4${label}`;
-      $("target-preview").open = true;
       draw();
-    }
-    function hoverPoint(point2) {
-      hover = point2;
-      if (!target2) drawPreview();
+      layoutTargetCard();
     }
     function download(kind, value, format = "json") {
       const link = document2.createElement("a");
-      const isText = format === "txt";
-      const url = window2.URL.createObjectURL(new window2.Blob([isText ? value : JSON.stringify(value, null, 2)], { type: isText ? "text/plain;charset=utf-8" : "application/json" }));
+      const text4 = format === "txt";
+      const url = window2.URL.createObjectURL(new window2.Blob([text4 ? value : JSON.stringify(value, null, 2)], { type: text4 ? "text/plain;charset=utf-8" : "application/json" }));
       link.href = url;
-      link.download = `fated-${state.scenarioId}-${kind}.${format}`;
+      link.download = `fated-${live.scenarioId}-${kind}.${format}`;
       link.click();
-      setTimeout(() => window2.URL.revokeObjectURL(url), 1e3);
+      window2.setTimeout(() => window2.URL.revokeObjectURL(url), 1e3);
     }
+    const on = (id3, event, fn) => $(id3)?.addEventListener(event, fn, { signal });
     function bindControls() {
-      for (const input of measurement) input.onchange = () => {
+      for (const input of measurement) input.addEventListener("change", () => {
         input.dataset.faction = state.units[input.value]?.team ?? "";
         measure();
-      };
-      scenario.addEventListener("change", () => configure(scenario.value), { signal });
-      $("intent-select").onchange = () => {
+      }, { signal });
+      on("scenario-select", "change", () => configure(scenario.value));
+      for (const id3 of ["intent-select", "nonlethal-toggle", "bonus-dice-select"]) on(id3, "change", () => {
         if (target2) handlePoint(target2);
-      };
-      $("nonlethal-toggle").onchange = () => {
-        if (target2) handlePoint(target2);
-      };
-      $("bonus-dice-select").onchange = () => {
-        if (target2) handlePoint(target2);
-      };
-      $("theme-select").onchange = () => {
-        const theme = $("theme-select").value;
-        root.dataset.dlcTheme = theme;
-        try {
-          storage.setItem("fated-tactical/theme", theme);
-        } catch {
-        }
-      };
-      $("clear-persistent").onclick = () => {
+      });
+      on("theme-select", "change", () => {
+        root.dataset.dlcTheme = $("theme-select").value;
+        storage.setItem("fated-tactical/theme", root.dataset.dlcTheme);
+      });
+      on("anim-speed", "change", () => {
+        playback.setSpeed(Number($("anim-speed").value));
+        storage.setItem("fated-tactical/anim", $("anim-speed").value);
+      });
+      on("clear-persistent", "click", () => {
         carry = null;
-        try {
-          storage.removeItem(crossedKey);
-        } catch {
-        }
+        storage.removeItem(crossedKey);
         scenarioDescription();
-      };
-      $("reset-button").onclick = () => safely(restart);
-      $("end-turn").onclick = () => {
-        if (active()?.team === "blue") execute({ type: "end" });
-      };
-      $("undo-button").onclick = () => safely(() => {
+      });
+      on("reset-button", "click", () => safely(restart));
+      on("end-turn", "click", () => {
+        playback.skip();
+        if (active(live)?.team === "blue") execute({ type: "end" });
+      });
+      on("undo-button", "click", () => safely(() => {
         pauseAI();
-        const result = game.undoLastCommit();
-        if (!result.ok) error2(result.error);
-      });
-      $("ai-step").onclick = () => safely(() => {
-        clearTimeout(timer);
+        const r = game.undoLastCommit();
+        if (!r.ok) error2(r.error);
+      }));
+      on("ai-step", "click", () => safely(() => {
+        window2.clearTimeout(timer);
+        playback.skip();
         game.stepEnemy();
-      });
-      $("auto-ai").onchange = () => {
-        try {
-          storage.setItem("fated-tactical/auto", String($("auto-ai").checked));
-        } catch {
-        }
+      }));
+      on("auto-ai", "change", () => {
+        storage.setItem("fated-tactical/auto", String($("auto-ai").checked));
         schedule();
-      };
-      $("ai-speed").onchange = schedule;
+      });
+      on("ai-speed", "change", () => {
+        storage.setItem("fated-tactical/ai-speed", $("ai-speed").value);
+        schedule();
+      });
+      on("skip-playback", "click", () => playback.skip());
       const report = $("report-text"), reportMessage = $("report-message");
-      $("export-report").onclick = () => {
+      on("export-report", "click", () => {
         report.value = game.exportBattleReportText();
         reportMessage.textContent = "";
         $("report-dialog").showModal();
-      };
-      $("copy-report").onclick = async () => {
+      });
+      on("copy-report", "click", async () => {
         try {
           await window2.navigator.clipboard.writeText(report.value);
           reportMessage.textContent = "\u5DF2\u590D\u5236\u3002";
@@ -5519,17 +6446,17 @@ var FatedTactical = (() => {
           report.select();
           reportMessage.textContent = "\u6D4F\u89C8\u5668\u4E0D\u5141\u8BB8\u81EA\u52A8\u590D\u5236\uFF0C\u8BF7\u6309 Ctrl+C \u6216\u4E0B\u8F7D TXT\u3002";
         }
-      };
-      $("download-report").onclick = () => download("report", report.value, "txt");
-      $("export-snapshot").onclick = () => download("battle", game.exportBattleSnapshot());
-      $("export-persistent").onclick = () => download("persistent", game.exportPersistentCarryOver());
-      $("import-button").onclick = () => $("import-snapshot").click();
-      $("import-snapshot").onchange = async (event) => {
+      });
+      on("download-report", "click", () => download("report", report.value, "txt"));
+      on("export-snapshot", "click", () => download("battle", game.exportBattleSnapshot()));
+      on("export-persistent", "click", () => download("persistent", game.exportPersistentCarryOver()));
+      on("import-button", "click", () => $("import-snapshot").click());
+      on("import-snapshot", "change", async (event) => {
         const file = event.target.files[0];
         event.target.value = "";
         if (!file) return;
         try {
-          if (file.size > 8 * 1024 * 1024) throw new Error("JSON \u6587\u4EF6\u5927\u4E8E 8 MiB");
+          if (file.size > 8 * 1024 * 1024) throw new Error("\u6587\u4EF6\u5927\u4E8E 8 MiB");
           const data = JSON.parse(await file.text());
           if (data.kind === "persistent") {
             const previous = carry;
@@ -5540,15 +6467,13 @@ var FatedTactical = (() => {
               carry = previous;
               throw e;
             }
-            try {
-              storage.setItem(crossedKey, JSON.stringify(carry));
-            } catch {
-            }
+            storage.setItem(crossedKey, JSON.stringify(carry));
             scenarioDescription();
           } else {
             const restored = game.restoreBattleSnapshot(data);
             configure(restored.scenarioId);
             mode.value = restored.mode;
+            closeDrawer();
             if (restored.migratedFrom) {
               error2("\u5DF2\u6062\u590D\u65E7\u6218\u5C40\uFF1B\u501F\u673A\u89C4\u5219\u4ECE\u73B0\u5728\u751F\u6548\uFF0C\u65E7\u64A4\u9500\u8BB0\u5F55\u672A\u8FC1\u79FB\u3002");
               return;
@@ -5558,18 +6483,22 @@ var FatedTactical = (() => {
         } catch (e) {
           error2(`\u5BFC\u5165\u5931\u8D25\uFF1A${e.message}`);
         }
-      };
+      });
       const editor = $("sandbox-editor"), reason = $("sandbox-reason");
+      const clearProposal = () => {
+        pending = null;
+        $("sandbox-commit").disabled = true;
+      };
       for (const input of [editor, reason]) input.addEventListener("input", clearProposal, { signal });
-      $("api-sandbox").addEventListener("click", (event) => {
+      on("api-sandbox", "click", (event) => {
         const kind = event.target.closest("[data-example]")?.dataset.example;
         if (!kind) return;
-        const commands2 = {
+        const unitId = selectedId ?? active(live)?.id;
+        const examples = {
           counter: () => ({ type: "adjust_item_counter", instanceId: "soulblade-lan", counterKey: "souls", operation: "add", value: 1 }),
-          status: () => ({ type: "upsert_status", unitId: selectedId ?? active()?.id, statusId: "haste", options: { durationType: "persistent" } }),
+          status: () => ({ type: "upsert_status", unitId, statusId: "haste", options: { durationType: "persistent" } }),
           "custom-status": () => {
-            const id3 = "bone_frost";
-            const apply = { type: "upsert_status", unitId: selectedId ?? active()?.id, statusId: id3 };
+            const id3 = "bone_frost", apply = { type: "upsert_status", unitId, statusId: id3 };
             if (Object.hasOwn(game.listStatusTemplates(), id3)) return [apply];
             return [{ type: "define_status_template", template: {
               id: id3,
@@ -5587,111 +6516,133 @@ var FatedTactical = (() => {
           },
           terrain: () => ({ type: "set_terrain_cell", x: 0, y: 0, patch: { kind: "slope", z: 1 } })
         };
-        const example = commands2[kind]();
-        editor.value = JSON.stringify(Array.isArray(example) ? example : [example], null, 2);
+        const example = examples[kind]?.();
+        if (example) editor.value = JSON.stringify([example].flat(), null, 2);
         clearProposal();
-      }, { signal });
-      $("sandbox-preview").onclick = () => {
+      });
+      on("sandbox-preview", "click", () => {
         clearProposal();
+        let commands2;
         try {
-          const result = game.proposeCommands(JSON.parse(editor.value), { baseRevision: game.getStateSummary().revision, reason: reason.value });
-          sandboxOutput(result);
-          if (result.ok) {
-            pending = result.proposalId;
-            $("sandbox-commit").disabled = false;
-          }
+          commands2 = JSON.parse(editor.value);
         } catch (e) {
-          sandboxOutput(`JSON \u65E0\u6548\uFF1A${e.message}`);
+          $("sandbox-output").textContent = `\u547D\u4EE4\u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${e.message}`;
+          return;
         }
-      };
-      $("sandbox-commit").onclick = () => {
+        const result = game.proposeCommands(commands2, { baseRevision: game.getStateSummary().revision, reason: reason.value });
+        $("sandbox-output").textContent = describeProposal(result);
+        if (result.ok) {
+          pending = result.proposalId;
+          $("sandbox-commit").disabled = false;
+        }
+      });
+      on("sandbox-commit", "click", () => {
         const result = game.commitProposal(pending);
         clearProposal();
-        sandboxOutput(result);
-      };
-      $("sandbox-undo").onclick = () => {
+        $("sandbox-output").textContent = describeProposal(result);
+      });
+      on("sandbox-undo", "click", () => {
         pauseAI();
-        sandboxOutput(game.undoLastCommit());
+        const result = game.undoLastCommit();
         clearProposal();
-      };
-      $("resource-button").onclick = () => {
+        $("sandbox-output").textContent = result.ok ? `\u21B6 \u5DF2\u64A4\u9500\u4E0A\u4E00\u6B21\u6539\u52A8\uFF08\u7248\u672C ${result.revision}\uFF09\u3002` : `\u2716 ${result.error}`;
+      });
+      on("resource-button", "click", () => {
         const unit = state.units[selectedId] ?? active();
         const previous = unit ? { hp: { current: unit.hp, max: unit.maxHp }, mp: { current: unit.mp, max: unit.maxMp }, sp: { current: unit.sp, max: unit.maxSp } } : void 0;
         $("resource-input").value = JSON.stringify({ stats: unit?.stats ?? { str: 4, agi: 4, con: 4, int: 4, spi: 4 }, tier: 1, previous }, null, 2);
         $("calculate-resources").click();
         $("resource-dialog").showModal();
-      };
-      $("calculate-resources").onclick = () => {
+      });
+      on("calculate-resources", "click", () => {
         try {
-          const result = game.calculatePrebattleResources(JSON.parse($("resource-input").value));
+          const r = game.calculatePrebattleResources(JSON.parse($("resource-input").value));
           $("resource-output").textContent = [
-            `\u4E94\u7EF4\u5408\u8BA1 ${result.statSum} \xB7 MC ${result.mc} \xB7 \u96C6\u7FA4 ${result.count} \xB7 \u53EC\u5524\u521D\u59CB\u603B\u6570 ${result.summonCount}`,
-            ...Object.entries(result.resources).map(([k, v]) => `${k.toUpperCase()} ${v.current}/${v.max}\uFF08\u4E58\u6570 ${result.multipliers[k]}\uFF0C\u672A\u53D6\u6574\u4E0A\u9650 ${v.rawMax}\uFF09`)
+            `\u4E94\u7EF4\u5408\u8BA1 ${r.statSum} \xB7 MC ${r.mc} \xB7 \u96C6\u7FA4 ${r.count} \xB7 \u53EC\u5524\u521D\u59CB\u603B\u6570 ${r.summonCount}`,
+            ...Object.entries(r.resources).map(([k, v]) => `${k.toUpperCase()} ${v.current}/${v.max}\uFF08\u4E58\u6570 ${r.multipliers[k]}\uFF0C\u672A\u53D6\u6574\u4E0A\u9650 ${v.rawMax}\uFF09`)
           ].join("\n");
         } catch (e) {
           $("resource-output").textContent = e.message;
         }
-      };
-      $("close-target").onclick = () => closeTarget(true);
-      $("target-preview").addEventListener("toggle", layoutTargetCard, { signal });
-      document2.addEventListener("pointerdown", (e) => {
-        if (target2 && !$("target-actions").contains(e.target) && !pointFrom(e.target)) closeTarget();
-      }, { signal });
-      window2.addEventListener("scroll", layoutTargetCard, { capture: true, passive: true, signal });
-      window2.addEventListener("resize", layoutTargetCard, { signal });
-      window2.visualViewport?.addEventListener("resize", layoutTargetCard, { signal });
-      window2.visualViewport?.addEventListener("scroll", layoutTargetCard, { signal });
-      $("confirm-action").onclick = () => {
+      });
+      on("close-target", "click", () => closeTarget(true));
+      on("confirm-action", "click", () => {
         if (target2 && action) execute(action);
-      };
-      document2.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && target2 && !root.querySelector("dialog[open]")) closeTarget(true);
-      }, { signal });
-      $("action-toolbar").onclick = (e) => {
+      });
+      on("action-toolbar", "click", (e) => {
         const button = e.target.closest("[data-action]");
         if (button) handleAction(button);
-      };
-      $("turn-order").onclick = (e) => {
+      });
+      on("turn-order", "click", (e) => {
         const button = e.target.closest("[data-unit-id]");
         if (!button) return;
         selectedId = button.dataset.unitId;
         inspectedId = null;
         closeTarget();
-      };
-      $("board").onclick = (e) => {
+        draw();
+        setDrawer(openDrawer === "unit" ? null : "unit");
+      });
+      document2.addEventListener("pointerdown", (e) => {
+        if (target2 && !$("target-actions").contains(e.target) && !pointFrom(e.target)) closeTarget();
+      }, { signal });
+      document2.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape" || root.querySelector("dialog[open]")) return;
+        if (target2) closeTarget(true);
+        else if (openDrawer) closeDrawer();
+        else playback.skip();
+      }, { signal });
+      for (const [node3, event] of [[window2, "resize"], [window2.visualViewport, "resize"], [window2.visualViewport, "scroll"]]) node3?.addEventListener(event, layoutTargetCard, { signal });
+      window2.addEventListener("scroll", layoutTargetCard, { capture: true, passive: true, signal });
+      const board = $("board");
+      board.addEventListener("click", (e) => {
         const at = pointFrom(e.target);
-        if (at) handlePoint(at, e);
+        if (!at) return;
+        if (playback.busy) playback.skip();
+        handlePoint(at, e);
+      }, { signal });
+      const hoverPoint = (point2) => {
+        hover = point2;
+        if (!target2) draw();
       };
-      $("board").onpointerover = (e) => {
-        const at = pointFrom(e.target), before = e.relatedTarget instanceof Element && pointFrom(e.relatedTarget);
+      board.addEventListener("pointerover", (e) => {
+        const at = pointFrom(e.target), before = pointFrom(e.relatedTarget);
         if (at && (!before || at.x !== before.x || at.y !== before.y)) hoverPoint(at);
-      };
-      $("board").onpointerleave = () => hoverPoint(null);
-      $("board").onfocusin = (e) => {
+      }, { signal });
+      board.addEventListener("pointerleave", () => hoverPoint(null), { signal });
+      board.addEventListener("focusin", (e) => {
         const at = pointFrom(e.target);
         if (at) hoverPoint(at);
-      };
-      $("board").onfocusout = (e) => {
-        if (!$("board").contains(e.relatedTarget)) hoverPoint(null);
-      };
+      }, { signal });
+      board.addEventListener("focusout", (e) => {
+        if (!board.contains(e.relatedTarget)) hoverPoint(null);
+      }, { signal });
+      root.addEventListener("click", (e) => {
+        const opener = e.target.closest("[data-open-drawer]");
+        if (opener) setDrawer(opener.dataset.openDrawer);
+        else if (e.target.closest("[data-close-drawer]") || e.target === $("drawer-scrim")) closeDrawer();
+      }, { signal });
     }
     configure("ruins");
-    let snapshot;
+    let snapshot = initialState;
     try {
-      snapshot = initialState;
       if (!initialState || customBattle?.restoreSaved) {
         const saved = JSON.parse(storage.getItem(storageKey));
         if (saved?.state?.scenarioId === initialState?.scenarioId || !initialState) snapshot = saved ?? initialState;
       }
       carry = JSON.parse(storage.getItem(crossedKey));
-      $("auto-ai").checked = storage.getItem("fated-tactical/auto") !== "false";
-      const theme = storage.getItem("fated-tactical/theme");
-      if (["amethyst", "night-gold", "frost-silver"].includes(theme)) {
-        root.dataset.dlcTheme = theme;
-        $("theme-select").value = theme;
-      }
     } catch {
     }
+    $("auto-ai").checked = storage.getItem("fated-tactical/auto") !== "false";
+    const theme = storage.getItem("fated-tactical/theme");
+    if (THEMES.includes(theme)) {
+      root.dataset.dlcTheme = theme;
+      $("theme-select").value = theme;
+    } else if (THEMES.includes(root.dataset.dlcTheme)) $("theme-select").value = root.dataset.dlcTheme;
+    for (const [id3, key4] of [["anim-speed", "fated-tactical/anim"], ["ai-speed", "fated-tactical/ai-speed"]]) {
+      const value = storage.getItem(key4);
+      if (value != null && [...$(id3).options].some((o) => o.value === value)) $(id3).value = value;
+    }
+    playback.setSpeed(Number($("anim-speed").value));
     try {
       if (snapshot) {
         const restored = snapshot.kind === "battle" ? game.restoreBattleSnapshot(snapshot) : game.createBattle({ kind: "custom_state", state: snapshot });
@@ -5716,24 +6667,35 @@ var FatedTactical = (() => {
     configure(initial.scenarioId);
     mode.value = initial.mode;
     bindControls();
-    game.subscribe(() => {
-      const hadProposal = Boolean(pending);
-      clearProposal();
-      if (hadProposal) sandboxOutput("\u6218\u5C40\u5DF2\u53D8\u5316\uFF0C\u9700\u91CD\u65B0\u8BD5\u7B97\u3002");
-      const before = update({ resetAction: true, save: true });
-      if (before && state.logs.length > before.logs.length) view.feedback(before, state);
+    const unsubscribe = game.subscribe(() => {
+      if (pending) {
+        pending = null;
+        $("sandbox-commit").disabled = true;
+      }
+      onChange();
     });
-    update({ resetAction: true, save: true });
-    return { loadState(snapshot2) {
-      const result = snapshot2?.kind === "battle" ? game.restoreBattleSnapshot(snapshot2) : game.createBattle({ kind: "custom_state", state: snapshot2 });
-      if (!customBattle) configure(result.scenarioId);
-      mode.value = result.mode;
-      error2("");
-      update({ resetAction: true, save: true });
-      return result;
-    }, getState: () => game.getBattleState(), exportBattleReportText: () => game.exportBattleReportText(), exportMvuPatch: () => ({ kind: "battle", state: game.getBattleState() }), api: game, destroy() {
-      clearTimeout(timer);
-    } };
+    onChange();
+    seenLogs = live.logs.length;
+    $("log-unread").hidden = seenLogs <= 2;
+    return {
+      loadState(next) {
+        const result = next?.kind === "battle" ? game.restoreBattleSnapshot(next) : game.createBattle({ kind: "custom_state", state: next });
+        if (!customBattle) configure(result.scenarioId);
+        mode.value = result.mode;
+        error2("");
+        return result;
+      },
+      getState: () => game.getBattleState(),
+      exportBattleReportText: () => game.exportBattleReportText(),
+      exportMvuPatch: () => ({ kind: "battle", state: game.getBattleState() }),
+      api: game,
+      destroy() {
+        window2.clearTimeout(timer);
+        playback.reset();
+        closeDrawer();
+        if (typeof unsubscribe === "function") unsubscribe();
+      }
+    };
   }
 
   // src/ui/styles.js
@@ -6603,128 +7565,373 @@ var FatedTactical = (() => {
 .mc-select-option.mc-option-active,.mc-select-option:hover:not(:disabled){background:rgba(255,255,255,.065)}
 .mc-select-option:disabled{opacity:.5;cursor:not-allowed}
 `;
-  var tacticalUI = `/* Standalone layout and interactive states; exact r7 visual rules live in battle-theme.css. */
-:root { color-scheme: dark; --ease-out: cubic-bezier(.23, 1, .32, 1); }
-body { min-height: 100vh; background: radial-gradient(ellipse at 12% 0, rgb(var(--glow-rgb) / .18), transparent 44rem), var(--ink-2); }
-#output-container.game-layout { max-width: 1430px; padding: clamp(8px, 2vw, 28px); }
-.game-header { display: flex; justify-content: space-between; align-items: end; flex-wrap: wrap; gap: 14px 28px; padding: 19px clamp(13px, 2.5vw, 30px); }
-.game-brand { flex: 1 1 22ch; min-width: 0; }
-.eyebrow { color: var(--gold-soft); font-size: .78rem; letter-spacing: .2em; }
-.game-brand h1 { margin: 2px 0 5px; font-size: clamp(1.48rem, 3.2vw, 2.35rem); color: var(--accent-text); text-shadow: var(--title-shadow); overflow-wrap: anywhere; }
-.top-controls, .control-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
-.top-controls { align-items: end; }
-.top-controls label { display: grid; gap: 3px; min-width: 0; }
-.top-controls label, .turn-controls label { color: var(--text-soft); font-size: .82rem; }
-.game-layout select, .game-layout textarea, .game-layout input:not([type="checkbox"]):not([type="file"]) { min-width: 0; max-width: 100%; color: var(--text); border: 1px solid var(--line-mid); border-radius: 6px; background: var(--field); font: inherit; }
-.game-layout select, .game-layout input:not([type="checkbox"]):not([type="file"]) { min-height: 34px; padding: 3px 6px; }
-#seed-input { width: 13ch; }
-#sandbox-reason { width: 100%; }
-.editor-label { display: block; margin-top: 8px; }
-#scenario-select { width: min(100%, 11rem); }
-.game-columns { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); align-items: start; gap: 12px; }
-.game-heading { gap: 8px; padding: 9px 12px; }
-.muted { color: var(--text-muted); font-size: .86rem; line-height: 1.5; }
-.game-button { min-height: 34px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--line-mid); border-radius: 5px; background: linear-gradient(160deg, var(--raised-a), var(--raised-b)); color: var(--text); font: inherit; font-size: .85rem; overflow-wrap: anywhere; cursor: pointer; }
-.game-button.primary, .game-button[aria-pressed="true"] { background: linear-gradient(160deg, var(--btn-a), var(--btn-b)); border-color: rgb(var(--btn-line-rgb) / .75); color: var(--btn-text); }
-.game-button:disabled { opacity: .5; cursor: not-allowed; }
-.game-layout :is(button, select, input, summary, textarea, [tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-@media (hover: hover) and (pointer: fine) { .game-button:not(:disabled):hover { border-color: var(--gold); } }
-.ap-crystal { font-size: 1.08em; color: var(--gold-bright); text-shadow: var(--icon-glow); }
-.ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
-.turn-order { display: flex; flex-wrap: wrap; gap: 5px; padding-block: 2px 10px; }
-.turn-chip[data-faction="blue"] { border-color: var(--blue-line); color: var(--blue-text); }
-.turn-chip[data-faction="red"] { border-color: var(--red-line); color: var(--red-text); }
-.turn-chip[aria-current="true"] { box-shadow: inset 0 -2px var(--gold); }
-.turn-chip.is-defeated { opacity: .55; text-decoration: line-through; }
-.turn-controls { padding-top: 9px; margin-top: 9px; border-top: 1px solid var(--line); }
-#action-error { margin-top: 7px; font-size: .88em; }
-#terrain-inspector { min-height: 2.25em; }
-#tactical-preview { height: 6.15em; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
-.preview-line + .preview-line { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
-.battle-axis { margin-bottom: 0; }
-.battle-axis .tactical-x-rail { padding-inline: 5px; }
-.battle-axis .tactical-y-rail { padding-block: 5px; }
-.battle-axis .tactical-grid, .battle-axis .tactical-y-rail { grid-auto-rows: minmax(62px, 1fr); grid-template-rows: repeat(var(--rows, 10), minmax(62px, 1fr)); }
-.battle-axis .tactical-grid, .battle-axis .tactical-x-rail { grid-template-columns: repeat(var(--cols, 10), minmax(0, 1fr)); }
-.battle-axis .tactical-cell { min-height: 62px; color: var(--text); font: inherit; cursor: pointer; align-items: stretch; transition: none; }
-.battle-axis .tactical-cell:focus-visible { outline-offset: -2px; z-index: 2; }
-.battle-axis .tactical-cell-units { margin-top: 7px; flex-wrap: nowrap; }
-.battle-axis .tactical-cell-features { margin: 0; min-height: 9px; }
-.battle-axis .tactical-cell .axis-unit { min-width: 0; padding: 1px 3px; pointer-events: none; transform: none; transition: none; }
-.battle-axis .axis-token-head { width: 23px; height: 23px; }
-.battle-axis .axis-unit-fallback-avatar { width: 23px; height: 23px; }
-.battle-axis .axis-unit-name { max-width: min(100%, 9ch); }
-.battle-axis .axis-z-badge { min-width: 13px; height: 13px; right: -4px; padding-inline: 2px; font-size: 8px; line-height: 11px; }
-.battle-axis .axis-facing-pip { min-width: 11px; height: 11px; font-size: 8px; line-height: 9px; }
+  var tacticalUI = `/* \u5168\u5C4F\u6218\u65D7\u5E03\u5C40\u3002\u5730\u5F62\u3001\u5175\u724C\u7B49\u539F r7 \u7F8E\u672F\u89C4\u5219\u5728 battle-theme.css\uFF0C\u8FD9\u91CC\u53EA\u505A\u5E03\u5C40\u3001\u62BD\u5C49\u4E0E\u6F14\u51FA\u3002 */
+:root { color-scheme: dark; --ease-out: cubic-bezier(.23, 1, .32, 1); --ease-spring: cubic-bezier(.34, 1.56, .64, 1); }
+body { margin: 0; background: var(--ink-2); }
+
+.ft-app {
+  --hud-top: 58px; --hud-bottom: 118px; --drawer-w: min(400px, 92vw);
+  --tone-hit: #f2d58b; --tone-crit: #ffd700; --tone-miss: #a9b0c2; --tone-damage: #ff9a90;
+  --tone-heal: #96e6b3; --tone-status: #c6aef2; --tone-move: #a6e3c8; --tone-turn: #dfc080; --tone-defeat: #e07a7a;
+  position: relative; box-sizing: border-box; width: 100%; height: min(84vh, 860px); min-height: 540px; overflow: hidden;
+  color: var(--text); font-family: var(--font-body); font-size: 14px; line-height: 1.5;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 42%, rgb(var(--glow-rgb) / .16), transparent 70%),
+    radial-gradient(ellipse at 50% 120%, rgb(var(--accent-rgb) / .1), transparent 60%),
+    var(--ink-2);
+  border-radius: 10px;
+}
+.ft-app.ft-fullscreen { position: fixed; inset: 0; height: auto; min-height: 0; border-radius: 0; }
+.ft-app *, .ft-app *::before, .ft-app *::after { box-sizing: border-box; }
+.ft-app [hidden] { display: none !important; }
+.ft-app :is(button, select, input, summary, textarea, [tabindex]):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* ---------- \u821E\u53F0\u4E0E\u68CB\u76D8 ---------- */
+.ft-stage { position: absolute; inset: 0; container-type: size; }
+.ft-scroll {
+  position: absolute; inset: 0; display: grid; place-items: center; overflow: auto;
+  padding: calc(var(--hud-top) + 10px) 16px calc(var(--hud-bottom) + 10px);
+  overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
+}
+.ft-board.battle-axis {
+  --cell: max(50px, min(calc((100cqw - 40px) / var(--cols, 10)), calc((100cqh - var(--hud-top) - var(--hud-bottom) - 28px) / var(--rows, 10))));
+  position: relative; width: max-content; margin: 0; padding: 0; border: 0; background: none; box-shadow: none;
+}
+.ft-board.battle-axis .tactical-grid {
+  grid-template-columns: repeat(var(--cols, 10), var(--cell));
+  grid-template-rows: repeat(var(--rows, 10), var(--cell));
+  gap: 2px; padding: 5px; border-radius: 9px;
+  box-shadow: 0 18px 50px rgb(0 0 0 / .45), 0 0 0 1px rgb(var(--accent-rgb) / .16), inset 0 0 40px rgb(0 0 0 / .35);
+}
+.ft-board.battle-axis .tactical-cell {
+  min-height: 0; height: var(--cell); padding: 2px; color: var(--text); font: inherit; cursor: pointer;
+  align-items: stretch; justify-content: center; overflow: visible; transition: border-color .14s ease, background-color .14s ease;
+}
+.ft-board .tactical-cell-coord { opacity: .45; font-size: 8px; }
+.ft-board .tactical-cell-units { display: flex; justify-content: center; align-items: center; flex: 1; min-height: 0; margin: 0; gap: 2px; flex-wrap: nowrap; }
+.ft-board .tactical-cell-features { position: absolute; top: 1px; right: 3px; margin: 0; }
+.ft-board.battle-axis .tactical-cell .axis-unit { width: calc(var(--cell) - 10px); max-width: 100%; padding: 2px; pointer-events: none; transform: none; transition: none; will-change: transform; }
+.ft-board.battle-axis .axis-token-head, .ft-board.battle-axis .axis-unit-fallback-avatar { width: calc(var(--cell) * .42); height: calc(var(--cell) * .42); }
+.ft-board.battle-axis .axis-unit-fallback-avatar { font-size: calc(var(--cell) * .2); }
+.ft-board.battle-axis .axis-unit-name { max-width: 100%; font-size: max(9px, calc(var(--cell) * .14)); }
+.ft-board.battle-axis .axis-z-badge { min-width: 13px; height: 13px; right: -5px; padding-inline: 2px; font-size: 8px; line-height: 11px; }
+.ft-board.battle-axis .axis-facing-pip { min-width: 12px; height: 12px; font-size: 8px; line-height: 10px; }
+.ft-board .axis-unit.is-active { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 16px rgb(var(--gold-rgb) / .55); animation: ft-breathe 1.8s ease-in-out infinite; }
+.ft-board .axis-unit.is-moving { z-index: 30; }
+@keyframes ft-breathe { 50% { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 4px rgb(var(--gold-rgb) / .2); } }
+
 .token-meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; width: 100%; }
-.token-meter, .token-meter > i { display: block; height: 2px; border-radius: 2px; }
-.token-meter { background: rgba(0, 0, 0, .55); }
-.token-meter > i { width: calc(100% * var(--resource-ratio)); background: var(--meter-color); }
+.token-meter, .token-meter > i { display: block; height: 3px; border-radius: 2px; }
+.token-meter { background: rgba(0, 0, 0, .6); overflow: hidden; }
+.token-meter > i { width: calc(100% * var(--resource-ratio)); background: var(--meter-color); transition: width .45s var(--ease-out); }
 .token-meter.hp { --meter-color: #e78886; }
 .token-meter.mp { --meter-color: #86b8e6; }
 .token-meter.sp { --meter-color: #80cc9a; }
-.token-statuses { position: absolute; top: 1px; left: -2px; color: #e6dbfb; background: #4a3061; border: 1px solid #8168ac; border-radius: 4px; padding-inline: 1px; line-height: 1.2; font-size: 8px; }
+.token-statuses { position: absolute; top: 1px; left: -3px; color: #e6dbfb; background: #4a3061; border: 1px solid #8168ac; border-radius: 4px; padding-inline: 2px; line-height: 1.2; font-size: 9px; }
+
 .battle-axis .tactical-cell.is-reachable { border-color: rgba(125, 214, 157, .72); background-image: linear-gradient(150deg, rgba(109, 186, 137, .24), rgba(46, 104, 76, .3)); }
 .battle-axis .tactical-cell.is-elevated-reach { border-style: dashed; background-image: repeating-linear-gradient(135deg, rgba(92, 184, 147, .28) 0 4px, rgba(57, 118, 90, .16) 4px 8px); }
 .battle-axis .tactical-cell.is-in-range:not(.axis-covered) { border-color: rgba(110, 160, 214, .75); background-color: rgba(69, 137, 208, .22); }
-.battle-axis .tactical-cell.is-path { border-color: #aeedd3; }
-.battle-axis .tactical-cell.is-hovered, .battle-axis .tactical-cell.is-selected { outline: 1px solid var(--gold); outline-offset: -2px; }
-.battle-axis .tactical-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.battle-axis .tactical-cell.is-invalid { outline-color: #ed9b8f; }
-.cell-cost { position: absolute; bottom: 1px; right: 2px; color: #b9efcc; font-size: 8px; line-height: 1; pointer-events: none; }
-.battle-axis .axis-scroll-hint { display: none; }
-#unit-card, #combat-log, #feature-cards { overflow-wrap: anywhere; }
-#combat-log { max-height: 330px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
-.log-entry { display: block; }
-.log-entry summary, .feature-register > summary, #api-sandbox > summary { cursor: pointer; color: var(--accent-label); }
-.log-entry summary { font-weight: 600; }
-.log-detail { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-soft); font: inherit; font-size: .88em; padding-top: 5px; }
-.feature-register { border-top: 1px solid var(--line); }
-.feature-register > summary { padding: 8px 12px; font-size: .88rem; }
-.card-subtitle { flex: 1 0 100%; color: var(--accent-label); font-size: .86em; }
-.card-item { width: 100%; }
-#sandbox-editor { display: block; width: 100%; margin: 4px 0 8px; padding: 8px; resize: vertical; font: .87rem/1.45 monospace; }
-.sandbox-examples { margin-block: 8px; }
-#sandbox-output { max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-soft); margin-top: 8px; }
-/* Feedback is the only motion added: fixed nodes animate transform/opacity, no layout shifts. */
-.cell-feedback { position: absolute; inset: 1px; z-index: 5; pointer-events: none; border: 1px solid currentColor; border-radius: 5px; color: #f9df8f; box-shadow: inset 0 0 8px currentColor; }
-.cell-feedback > b { position: absolute; inset: 5px 0 auto; font: 700 12px/1.1 var(--font-display); text-align: center; text-shadow: 0 1px 3px #000, 0 0 5px #000; }
-.cell-feedback.damage { color: #ffaaa3; }
-.cell-feedback.heal { color: #adf1c5; }
-@media (max-width: 980px) { .game-columns { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 650px) { .battle-axis .axis-scroll-hint { display: block; } }
-@media (max-width: 540px) {
-  .battle-axis .tactical-grid, .battle-axis .tactical-y-rail { grid-template-rows: repeat(var(--rows, 10), minmax(55px, 1fr)); grid-auto-rows: minmax(55px, 1fr); }
-  .battle-axis .tactical-cell { min-height: 55px; }
-  .battle-axis .axis-unit-name { max-width: 4ch; }
-}
-#report-dialog { box-sizing: border-box; color: var(--text); width: min(680px, calc(100% - 24px)); max-height: calc(100% - 24px); padding: 16px; }
-#report-dialog::backdrop { background: rgb(8 7 14 / .72); }
-#report-text { display: block; box-sizing: border-box; width: 100%; max-height: 55vh; margin-block: 8px 12px; padding: 10px; resize: vertical; color: var(--text); background: var(--field); border: 1px solid var(--line); font: .92rem/1.55 var(--font-body); }
-#report-message { margin: 0; }
-#report-message:not(:empty) { margin-top: 8px; }
-.battle-axis .tactical-cell.is-opportunity { outline: 2px solid #e5a35e; outline-offset: -3px; }
-#board-instructions { margin: 8px 0; }
-#sprint-indicator { color: var(--gold-bright); }
-#target-actions { position: fixed; z-index: 20; inset: 8px auto auto 8px; width: 268px; box-sizing: border-box; margin: 0; padding: 8px; overflow: auto; overscroll-behavior: contain; background: var(--ink-1); box-shadow: 0 8px 24px #0009; }
-#target-actions[hidden] { display: none; }
-.target-head { justify-content: space-between; flex-wrap: nowrap; margin-bottom: 4px; }
-#target-title { min-width: 0; overflow-wrap: anywhere; }
-#close-target { flex: 0 0 auto; }
-#action-toolbar, #confirm-action { margin-block: 4px; }
-#target-preview > summary { color: var(--text-muted); cursor: pointer; font-size: .84em; }
-#target-actions #tactical-preview { height: auto; max-height: 7em; margin-bottom: 0; }
-#resource-dialog { box-sizing: border-box; width: min(640px, calc(100% - 24px)); padding: 16px; color: var(--text); }
-#resource-dialog::backdrop { background: rgb(8 7 14 / .72); }
-#resource-input { box-sizing: border-box; width: 100%; padding: 8px; }
-#resource-output { white-space: pre-wrap; overflow-wrap: anywhere; }
 .battle-axis .tactical-cell.is-in-range.is-reachable { border-color: #86cdab; }
 .battle-axis .tactical-cell.is-in-range.is-reachable::after { content: ''; pointer-events: none; position: absolute; inset: auto 4px 3px auto; width: 7px; height: 7px; border-radius: 50%; background: #7dbbfe; }
-@media (max-width: 700px) {
-  #target-actions { width: 242px; }
+.battle-axis .tactical-cell.is-path { border-color: #aeedd3; box-shadow: inset 0 0 0 1px #aeedd3; }
+.battle-axis .tactical-cell.is-hovered, .battle-axis .tactical-cell.is-selected { outline: 2px solid var(--gold); outline-offset: -2px; }
+.battle-axis .tactical-cell.is-invalid { outline-color: #ed9b8f; }
+.battle-axis .tactical-cell.is-opportunity { outline: 2px solid #e5a35e; outline-offset: -3px; }
+.battle-axis .tactical-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; z-index: 2; }
+.ft-app[data-busy="true"] .battle-axis .tactical-cell:is(.is-reachable, .is-in-range) { background-image: none; background-color: transparent; }
+
+/* \u7279\u6548\u5C42\uFF1A\u6D6E\u5B57\u3001\u5F39\u9053\u3001\u843D\u70B9 */
+.ft-tokens, .ft-fx { position: absolute; inset: 0; pointer-events: none; }
+.ft-fx { z-index: 40; }
+.ft-float {
+  position: absolute; transform: translate(-50%, -50%); white-space: nowrap; pointer-events: none;
+  font: 800 22px/1 var(--font-display); color: var(--tone-damage);
+  text-shadow: 0 2px 0 #000, 0 0 10px rgb(0 0 0 / .9), 0 0 18px currentColor;
+}
+.ft-float.heal { color: var(--tone-heal); }
+.ft-float.status { color: var(--tone-status); font-size: 14px; font-weight: 700; }
+.ft-float.miss { color: var(--tone-miss); font-size: 16px; }
+.ft-float.crit { color: var(--tone-crit); font-size: 32px; }
+.ft-float small { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; text-align: center; letter-spacing: .1em; }
+.ft-bolt { position: absolute; height: 3px; transform-origin: 0 50%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--gold-bright) 70%, #fff); box-shadow: 0 0 10px var(--gold-bright); }
+.ft-ring { position: absolute; width: var(--cell); height: var(--cell); transform: translate(-50%, -50%); border: 2px solid currentColor; border-radius: 50%; color: var(--tone-crit); }
+.ft-mark { position: absolute; width: var(--cell); height: var(--cell); transform: translate(-50%, -50%); border-radius: 6px; border: 2px solid var(--tone-damage); box-shadow: inset 0 0 14px rgb(255 110 100 / .5); }
+
+/* ---------- HUD ---------- */
+.ft-hud-top {
+  position: absolute; inset: 0 0 auto; z-index: 50; display: flex; align-items: center; gap: 14px; height: var(--hud-top); padding: 8px 14px;
+  background: linear-gradient(180deg, rgb(var(--shade-rgb) / .92), rgb(var(--shade-rgb) / .55) 70%, transparent);
+}
+.ft-hud-title { display: grid; flex: none; line-height: 1.2; }
+.ft-eyebrow { color: var(--gold-soft); font-size: 10px; letter-spacing: .24em; }
+.ft-title { color: var(--accent-text); font: 700 16px/1.25 var(--font-display); text-shadow: var(--title-shadow); white-space: nowrap; }
+.ft-round { color: var(--text-muted); font-size: 11px; }
+.ft-initiative { display: flex; flex: 1; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-block: 2px; }
+.ft-initiative::-webkit-scrollbar { display: none; }
+.ft-app .turn-chip {
+  flex: none; display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 2px 9px 2px 3px; border: 1px solid var(--line-mid); border-radius: 15px;
+  background: rgb(var(--shade-rgb) / .75); color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; transition: transform .2s var(--ease-out), background-color .2s;
+}
+.ft-app .turn-chip .chip-face { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--raised-b); font-size: 11px; }
+.ft-app .turn-chip[data-faction="blue"] { border-color: var(--blue-line); color: var(--blue-text); }
+.ft-app .turn-chip[data-faction="blue"] .chip-face { background: #1e3753; }
+.ft-app .turn-chip[data-faction="red"] { border-color: var(--red-line); color: var(--red-text); }
+.ft-app .turn-chip[data-faction="red"] .chip-face { background: #4d252c; }
+.ft-app .turn-chip[aria-current="true"] { background: linear-gradient(160deg, var(--btn-a), var(--btn-b)); color: var(--btn-text); box-shadow: 0 0 0 1px var(--gold), 0 0 12px rgb(var(--gold-rgb) / .35); transform: translateY(1px) scale(1.04); }
+.ft-app .turn-chip.is-defeated { opacity: .45; text-decoration: line-through; }
+.ft-hud-menu { display: flex; flex: none; gap: 6px; }
+.ft-icon-button {
+  position: relative; display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--line-mid); border-radius: 9px;
+  background: linear-gradient(160deg, var(--raised-a), var(--raised-b)); color: var(--accent-text); font-size: 17px; cursor: pointer;
+  transition: transform .15s var(--ease-out), border-color .15s;
+}
+.ft-icon-button:active { transform: scale(.94); }
+.ft-icon-button[aria-pressed="true"] { border-color: var(--gold); background: linear-gradient(160deg, var(--btn-a), var(--btn-b)); }
+.ft-dot { position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--gold-bright); box-shadow: 0 0 6px var(--gold-bright); }
+@media (hover: hover) and (pointer: fine) { .ft-icon-button:hover { border-color: var(--gold); } }
+
+.ft-inspector {
+  position: absolute; z-index: 45; top: calc(var(--hud-top) + 2px); left: 50%; transform: translateX(-50%); max-width: min(720px, 92%); margin: 0; padding: 3px 12px;
+  border-radius: 12px; background: rgb(var(--shade-rgb) / .72); color: var(--text-muted); font-size: 12px; text-align: center; pointer-events: none;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.ft-inspector:empty { display: none; }
+
+.ft-dock {
+  position: absolute; inset: auto 0 0; z-index: 50; display: flex; align-items: flex-end; gap: 14px; min-height: var(--hud-bottom); padding: 12px 14px;
+  background: linear-gradient(0deg, rgb(var(--shade-rgb) / .95), rgb(var(--shade-rgb) / .6) 72%, transparent); pointer-events: none;
+}
+.ft-dock > * { pointer-events: auto; }
+.ft-actor {
+  display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-items: center; width: min(340px, 46%); padding: 9px 11px;
+  border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); box-shadow: 0 8px 22px rgb(0 0 0 / .4);
+}
+.ft-actor[data-faction="blue"] { border-color: rgb(95 147 200 / .7); }
+.ft-actor[data-faction="red"] { border-color: rgb(192 114 122 / .7); }
+.ft-actor-face { grid-row: span 3; display: grid; place-items: center; width: 46px; height: 46px; border-radius: 10px; font: 700 20px var(--font-display); background: var(--raised-b); }
+.ft-actor[data-faction="blue"] .ft-actor-face { background: linear-gradient(160deg, #1e3753, #152740); color: var(--blue-text); }
+.ft-actor[data-faction="red"] .ft-actor-face { background: linear-gradient(160deg, #4d252c, #351a20); color: var(--red-text); }
+.ft-actor-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--accent-text); font-weight: 700; }
+.ft-actor-name > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ft-actor-name small { color: var(--text-muted); font-weight: 400; font-size: 11px; }
+.ft-bars { display: grid; gap: 3px; }
+.ft-bar { position: relative; height: 12px; border-radius: 6px; background: rgb(0 0 0 / .55); overflow: hidden; font-size: 9px; line-height: 12px; }
+.ft-bar > i { position: absolute; inset: 0 auto 0 0; width: calc(100% * var(--ratio, 0)); background: var(--bar); transition: width .5s var(--ease-out); }
+.ft-bar > span { position: relative; padding-left: 5px; color: #fff; text-shadow: 0 1px 2px #000; font-variant-numeric: tabular-nums; }
+.ft-bar.hp { --bar: linear-gradient(90deg, #a8474a, #e78886); }
+.ft-bar.mp { --bar: linear-gradient(90deg, #3f6c9b, #86b8e6); }
+.ft-bar.sp { --bar: linear-gradient(90deg, #3e7f57, #80cc9a); }
+.ft-actor-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; color: var(--text-soft); }
+.ft-chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid rgba(170, 140, 230, .38); border-radius: 9px; background: rgba(150, 118, 214, .14); color: #e6dbfb; font-size: 11px; }
+.ap-crystal { font-size: 1.15em; color: var(--gold-bright); text-shadow: var(--icon-glow); }
+.ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
+
+.ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
+.ft-status { margin: 0; color: var(--accent-label); font-size: 13px; text-align: right; }
+.ft-hint { margin: 0; color: var(--gold-bright); font-size: 12px; }
+.ft-hint:empty { display: none; }
+.ft-error { margin: 0; padding: 2px 10px; border-radius: 6px; background: rgb(120 30 30 / .6); color: #ffd0c8; font-size: 12px; }
+.ft-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.ft-app .game-button {
+  min-height: 34px; padding: 4px 12px; border: 1px solid var(--line-mid); border-radius: 7px; background: linear-gradient(160deg, var(--raised-a), var(--raised-b));
+  color: var(--text); font: inherit; font-size: 13px; cursor: pointer; transition: transform .12s var(--ease-out), border-color .15s;
+}
+.ft-app .game-button:active:not(:disabled) { transform: scale(.97); }
+.ft-app .game-button.primary, .ft-app .game-button[aria-pressed="true"] { background: linear-gradient(160deg, var(--btn-a), var(--btn-b)); border-color: rgb(var(--btn-line-rgb) / .75); color: var(--btn-text); }
+.ft-app .game-button:disabled { opacity: .45; cursor: not-allowed; }
+@media (hover: hover) and (pointer: fine) { .ft-app .game-button:not(:disabled):hover { border-color: var(--gold); } }
+.ft-switch, .ft-mini-select { display: inline-flex; align-items: center; gap: 4px; color: var(--text-soft); font-size: 12px; }
+.ft-app select, .ft-app textarea, .ft-app input:not([type="checkbox"]):not([type="file"]) {
+  min-width: 0; max-width: 100%; min-height: 32px; padding: 3px 7px; border: 1px solid var(--line-mid); border-radius: 6px; background: var(--field); color: var(--text); font: inherit; font-size: 13px;
+}
+.ft-skip {
+  position: absolute; z-index: 60; right: 14px; bottom: calc(var(--hud-bottom) + 6px); padding: 5px 12px; border: 1px solid var(--line-mid); border-radius: 16px;
+  background: rgb(var(--shade-rgb) / .85); color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer;
+}
+
+/* ---------- \u6F14\u51FA\u5C42\uFF1A\u56DE\u5408\u6A2A\u5E45\u3001\u884C\u52A8\u7F0E\u5E26\u3001\u9AB0\u5B50\u5361\u3001\u5B57\u5E55 ---------- */
+.ft-overlay { position: absolute; inset: 0; z-index: 55; pointer-events: none; }
+.ft-banner {
+  position: absolute; top: 38%; left: 0; right: 0; display: grid; justify-items: center; gap: 2px; padding: 14px 0; transform: translateY(-50%);
+  background: linear-gradient(90deg, transparent, rgb(var(--shade-rgb) / .9) 25%, rgb(var(--shade-rgb) / .9) 75%, transparent);
+  border-block: 1px solid rgb(var(--gold-rgb) / .35);
+}
+.ft-banner b { font: 800 30px/1.2 var(--font-display); letter-spacing: .12em; color: var(--accent-text); text-shadow: var(--title-shadow); }
+.ft-banner small { color: var(--text-muted); font-size: 12px; letter-spacing: .3em; }
+.ft-banner[data-faction="blue"] b { color: var(--blue-text); text-shadow: 0 0 16px rgb(95 147 200 / .7); }
+.ft-banner[data-faction="red"] b { color: var(--red-text); text-shadow: 0 0 16px rgb(192 114 122 / .7); }
+.ft-ribbon {
+  position: absolute; top: calc(var(--hud-top) + 30px); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 18px;
+  border: 1px solid var(--line-mid); border-radius: 20px; background: rgb(var(--shade-rgb) / .9); color: var(--accent-text); font-weight: 700; white-space: nowrap;
+  box-shadow: 0 6px 20px rgb(0 0 0 / .4);
+}
+.ft-ribbon[data-faction="blue"] { border-color: var(--blue-line); }
+.ft-ribbon[data-faction="red"] { border-color: var(--red-line); }
+
+.ft-dice-stage { position: absolute; top: calc(var(--hud-top) + 72px); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; }
+.ft-dice-card {
+  --tone: var(--tone-hit);
+  display: grid; justify-items: center; gap: 8px; min-width: 300px; max-width: min(460px, 92vw); padding: 14px 20px 16px;
+  border: 1px solid rgb(var(--gold-rgb) / .45); border-radius: 14px; background: linear-gradient(165deg, rgba(40, 32, 56, .97), rgba(14, 13, 24, .97));
+  box-shadow: 0 16px 40px rgb(0 0 0 / .55), 0 0 0 1px rgb(0 0 0 / .4), inset 0 1px 0 rgb(var(--sheen-rgb) / .06);
+}
+.ft-dice-card[data-tone="crit"] { --tone: var(--tone-crit); border-color: rgb(255 215 0 / .75); }
+.ft-dice-card[data-tone="miss"], .ft-dice-card[data-tone="save-pass"] { --tone: var(--tone-miss); }
+.ft-dice-card[data-tone="save-fail"], .ft-dice-card[data-tone="damage"] { --tone: var(--tone-damage); }
+.ft-dice-card[data-tone="status"] { --tone: var(--tone-status); }
+.ft-dice-label { color: var(--gold-soft); font-size: 12px; letter-spacing: .08em; text-align: center; }
+.ft-dice-row { display: flex; justify-content: center; gap: 10px; }
+.ft-die {
+  position: relative; display: grid; place-items: center; width: 62px; height: 62px; color: #1a1306; font: 800 24px/1 var(--font-display); font-variant-numeric: tabular-nums;
+  clip-path: polygon(50% 0, 93% 25%, 93% 75%, 50% 100%, 7% 75%, 7% 25%);
+  background: linear-gradient(160deg, #fff1c8, #d9b467 55%, #9d7a35);
+}
+.ft-die::after { content: ''; position: absolute; inset: 0; clip-path: polygon(50% 12%, 82% 68%, 18% 68%); background: rgb(255 255 255 / .16); }
+.ft-die.is-rolling { animation: ft-tumble .14s linear infinite; }
+.ft-die.is-dropped { filter: grayscale(.9) brightness(.55); transform: scale(.82); transition: filter .3s, transform .3s var(--ease-out); }
+.ft-die.is-kept { filter: drop-shadow(0 0 10px var(--tone)); }
+.ft-die.is-nat20 { background: linear-gradient(160deg, #fffbe0, #ffd700 50%, #c89400); }
+.ft-die.is-nat1 { background: linear-gradient(160deg, #ffd6d0, #c65a50 55%, #6e2622); color: #fff; }
+@keyframes ft-tumble { 0% { transform: rotate(0) scale(.94); } 50% { transform: rotate(14deg) scale(1.04); } 100% { transform: rotate(0) scale(.94); } }
+.ft-dice-mode { color: var(--text-muted); font-size: 11px; }
+.ft-formula { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 4px 6px; font-variant-numeric: tabular-nums; }
+.ft-formula b { font: 700 20px/1 var(--font-display); color: var(--accent-text); }
+.ft-formula i { font-style: normal; color: var(--text-muted); font-size: 11px; }
+.ft-formula .op { color: var(--gold-soft); font-size: 16px; }
+.ft-formula .total { font-size: 26px; color: var(--tone); }
+.ft-verdict { font: 800 24px/1.1 var(--font-display); letter-spacing: .1em; color: var(--tone); text-shadow: 0 0 14px var(--tone); }
+.ft-dice-note { color: var(--text-soft); font-size: 12px; }
+.ft-versus { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
+.ft-versus-side { display: grid; justify-items: center; gap: 4px; min-width: 0; }
+.ft-versus-side > span { max-width: 140px; overflow: hidden; color: var(--text-soft); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.ft-versus-vs { color: var(--gold-soft); font: 700 14px var(--font-display); }
+.ft-chance { position: relative; width: 260px; height: 14px; border-radius: 7px; background: rgb(0 0 0 / .5); overflow: hidden; }
+.ft-chance > i { position: absolute; inset: 0 auto 0 0; width: calc(100% * var(--chance)); background: rgb(var(--gold-rgb) / .5); }
+.ft-chance > b { position: absolute; top: -2px; bottom: -2px; left: calc(100% * var(--rolled)); width: 3px; background: #fff; box-shadow: 0 0 6px #fff; }
+
+.ft-caption { position: absolute; left: 14px; bottom: calc(var(--hud-bottom) + 6px); display: grid; gap: 4px; width: min(520px, 70%); margin: 0; padding: 0; list-style: none; }
+.ft-caption li {
+  --tone: var(--text-soft);
+  display: flex; gap: 7px; align-items: baseline; width: fit-content; max-width: 100%; padding: 4px 11px; border-left: 3px solid var(--tone); border-radius: 0 8px 8px 0;
+  background: rgb(var(--shade-rgb) / .86); color: var(--text); font-size: 13px; box-shadow: 0 4px 12px rgb(0 0 0 / .35);
+}
+.ft-caption li small { color: var(--text-muted); font-size: 11px; }
+
+[data-tone="hit"] { --tone: var(--tone-hit); }
+[data-tone="crit"] { --tone: var(--tone-crit); }
+[data-tone="miss"], [data-tone="save-pass"] { --tone: var(--tone-miss); }
+[data-tone="damage"], [data-tone="save-fail"] { --tone: var(--tone-damage); }
+[data-tone="heal"] { --tone: var(--tone-heal); }
+[data-tone="status"] { --tone: var(--tone-status); }
+[data-tone="move"] { --tone: var(--tone-move); }
+[data-tone="turn"], [data-tone="outcome"] { --tone: var(--tone-turn); }
+[data-tone="defeat"] { --tone: var(--tone-defeat); }
+
+/* ---------- \u76EE\u6807\u6D6E\u5361 ---------- */
+#target-actions.ft-target-card {
+  position: fixed; z-index: 70; inset: 8px auto auto 8px; width: 290px; margin: 0; padding: 10px; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid rgb(var(--gold-rgb) / .45); border-radius: 12px; background: var(--ink-1); color: var(--text); font-size: 13px;
+  box-shadow: 0 14px 34px rgb(0 0 0 / .6);
+}
+.ft-target-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+#target-title { min-width: 0; color: var(--accent-text); overflow-wrap: anywhere; }
+.ft-close { flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-mid); border-radius: 7px; background: var(--raised-b); color: var(--text); font-size: 17px; cursor: pointer; }
+.ft-target-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; color: var(--text-soft); font-size: 12px; }
+.ft-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.ft-actions .game-button { flex: 1 1 calc(50% - 5px); padding-inline: 8px; text-align: left; }
+.ft-actions .game-button small { display: block; color: var(--text-muted); font-size: 10px; }
+.ft-actions .game-button[aria-pressed="true"] small { color: inherit; opacity: .8; }
+.ft-preview { margin-top: 8px; max-height: 13em; overflow: auto; color: var(--text-soft); font-size: 12px; }
+.ft-preview:empty { display: none; }
+.preview-line + .preview-line { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
+.preview-line b { color: var(--accent-text); }
+.preview-line.is-warning { color: #f3c58c; }
+.ft-odds { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.ft-odds-bar { flex: 1; height: 6px; border-radius: 3px; background: rgb(0 0 0 / .5); overflow: hidden; }
+.ft-odds-bar > i { display: block; height: 100%; width: calc(100% * var(--p)); background: linear-gradient(90deg, #b48a3c, var(--gold-bright)); }
+.ft-confirm { width: 100%; margin-top: 8px; }
+
+/* ---------- \u62BD\u5C49 ---------- */
+.ft-drawer {
+  position: absolute; z-index: 80; top: 0; right: 0; bottom: 0; display: flex; flex-direction: column; width: var(--drawer-w);
+  border-left: 1px solid rgb(var(--gold-rgb) / .3); background: var(--panel-bg); box-shadow: -18px 0 40px rgb(0 0 0 / .45);
+  animation: ft-drawer-in .28s var(--ease-out);
+}
+@keyframes ft-drawer-in { from { transform: translateX(100%); } }
+.ft-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line-mid); background: var(--header-bg); }
+.ft-drawer-head h2 { margin: 0; color: var(--heading); font: 700 16px var(--font-display); }
+.ft-drawer > :not(.ft-drawer-head) { padding-inline: 14px; }
+.ft-drawer > :last-child { flex: 1; overflow: auto; padding-bottom: 16px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
+.ft-section { margin: 14px 0 6px; color: var(--accent-label); font: 600 13px var(--font-display); letter-spacing: .06em; }
+.ft-form { display: grid; align-content: start; gap: 8px; padding-top: 4px; }
+.ft-form > label, .ft-dev label { display: grid; gap: 3px; color: var(--text-soft); font-size: 12px; }
+.ft-form .ft-row { justify-content: flex-start; }
+.ft-readout { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--row-bg); color: var(--text-soft); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ft-readout:empty { display: none; }
+.ft-dev { margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--line-mid); border-radius: 8px; }
+.ft-dev > summary { color: var(--text-muted); cursor: pointer; font-size: 12px; }
+.ft-dev[open] { display: grid; gap: 8px; }
+#sandbox-editor { width: 100%; font: 12px/1.45 ui-monospace, Consolas, monospace; resize: vertical; }
+.muted { color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+
+/* \u65E5\u5FD7 */
+.ft-log { display: grid; align-content: start; gap: 4px; padding-top: 8px; }
+.ft-log-round { position: sticky; top: 0; z-index: 1; margin: 8px 0 2px; padding: 3px 0; color: var(--gold); background: var(--ink-1); font: 700 12px var(--font-display); letter-spacing: .2em; text-align: center; }
+.ft-log-entry { --tone: var(--line-mid); padding: 6px 9px; border-left: 3px solid var(--tone); border-radius: 0 7px 7px 0; background: var(--row-bg); }
+.ft-log-entry.is-quiet { padding-block: 2px; border-left-color: transparent; background: none; color: var(--text-muted); font-size: 12px; }
+.ft-log-entry > summary, .ft-log-entry > .ft-log-title { display: flex; gap: 6px; align-items: baseline; list-style: none; cursor: default; }
+.ft-log-entry > summary { cursor: pointer; }
+.ft-log-entry > summary::-webkit-details-marker { display: none; }
+.ft-log-entry > summary::after { content: '\u8BA1\u7B97 \u25BE'; margin-left: auto; flex: none; color: var(--text-muted); font-size: 10px; }
+.ft-log-entry[open] > summary::after { content: '\u6536\u8D77 \u25B4'; }
+.ft-log-entry ul { margin: 5px 0 0; padding-left: 20px; color: var(--text-soft); font-size: 12px; }
+.ft-log-entry li { margin: 1px 0; }
+.ft-log-icon { flex: none; width: 1.3em; text-align: center; }
+
+/* \u5355\u4F4D\u60C5\u62A5 */
+.ft-unit-card { display: grid; gap: 10px; padding-top: 10px; }
+.ft-card-head { display: flex; align-items: center; gap: 10px; }
+.ft-card-head strong { color: var(--accent-text); font: 700 17px var(--font-display); }
+.ft-kv { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.ft-kv > span { display: grid; justify-items: center; padding: 4px 0; border-radius: 6px; background: var(--row-bg); font-size: 11px; color: var(--text-muted); }
+.ft-kv b { color: var(--accent-text); font-size: 15px; }
+.ft-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.ft-list > li { padding: 5px 9px; border-radius: 7px; background: var(--row-bg); font-size: 12px; }
+.ft-list > li b { color: var(--accent-text); }
+.ft-list > li p { margin: 2px 0 0; color: var(--text-muted); font-size: 11px; }
+.ft-features { display: grid; gap: 5px; }
+
+/* \u5BF9\u8BDD\u6846 */
+.ft-dialog { width: min(660px, calc(100% - 24px)); max-height: calc(100% - 24px); padding: 18px; border: 1px solid rgb(var(--gold-rgb) / .45); border-radius: 12px; background: var(--ink-1); color: var(--text); }
+.ft-dialog::backdrop { background: rgb(8 7 14 / .72); }
+.ft-dialog h2 { margin: 0 0 6px; color: var(--heading); font: 700 17px var(--font-display); }
+.ft-dialog textarea { display: block; width: 100%; max-height: 55vh; margin-block: 8px 12px; padding: 10px; resize: vertical; }
+.ft-dialog .ft-row { justify-content: flex-start; }
+#report-message:not(:empty) { margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .ft-app { --hud-top: 96px; --hud-bottom: 150px; }
+  .ft-hud-top { flex-wrap: wrap; height: auto; gap: 6px 10px; }
+  .ft-initiative { order: 3; flex-basis: 100%; }
+  .ft-hud-menu { margin-left: auto; }
+  .ft-dock { flex-direction: column; align-items: stretch; gap: 6px; padding: 8px; }
+  .ft-actor { width: 100%; }
+  .ft-dock-actions { justify-items: stretch; }
+  .ft-row { justify-content: flex-start; }
+  .ft-dice-card { min-width: 0; width: min(360px, 92vw); padding: 10px 12px; }
+  .ft-die { width: 50px; height: 50px; font-size: 20px; }
+  #target-actions.ft-target-card { width: 250px; }
   #target-actions button { min-height: 44px; }
-  #board button { touch-action: manipulation; }
-}`;
+  .ft-board button { touch-action: manipulation; }
+  .ft-caption { width: calc(100% - 28px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ft-drawer { animation: none; }
+  .ft-board .axis-unit.is-active { animation: none; }
+  .ft-die.is-rolling { animation: none; }
+}
+`;
 
   // src/ui/mount.js
   var STYLE_ID = "data-fated-tactical-style";
@@ -6737,22 +7944,22 @@ body { min-height: 100vh; background: radial-gradient(ellipse at 12% 0, rgb(var(
     const fallback = typeof localStorage !== "undefined" ? localStorage : null;
     const source = storage || fallback;
     return {
-      getItem(key3) {
+      getItem(key4) {
         try {
-          return source?.getItem(`${prefix}/${key3}`) ?? null;
+          return source?.getItem(`${prefix}/${key4}`) ?? null;
         } catch {
           return null;
         }
       },
-      setItem(key3, value) {
+      setItem(key4, value) {
         try {
-          source?.setItem(`${prefix}/${key3}`, value);
+          source?.setItem(`${prefix}/${key4}`, value);
         } catch {
         }
       },
-      removeItem(key3) {
+      removeItem(key4) {
         try {
-          source?.removeItem(`${prefix}/${key3}`);
+          source?.removeItem(`${prefix}/${key4}`);
         } catch {
         }
       }
@@ -6815,7 +8022,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 
   // src/tavern/descriptor.js
   var identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-  var unsafeKey = (key3) => Object.hasOwn(Object.prototype, key3) || key3 === "prototype";
+  var unsafeKey = (key4) => Object.hasOwn(Object.prototype, key4) || key4 === "prototype";
   function parseBattleDescriptor(value) {
     if (typeof value !== "string") return null;
     const lines = value.trim().replace(/^```[^\r\n]*\r?\n/, "").replace(/\r?\n```$/, "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -6836,7 +8043,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID\u3001\u9635\u8425\u3001\u6765\u6E90\u3001\u663E\u793A\u540D\u53CA 0\u20139 \u8303\u56F4\u5185\u7684 x,y`);
       }
       const path = source?.startsWith("mvu:") ? source.slice(4).split("/") : [];
-      if (source !== "char_info" && (!path.length || path.some((key3) => !key3 || key3 !== key3.trim() || unsafeKey(key3)))) {
+      if (source !== "char_info" && (!path.length || path.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4)))) {
         fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u6765\u6E90\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
       }
       const [x, y] = point2.split(",").map(Number);
@@ -6997,7 +8204,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       const colon = line.value.indexOf(":");
       if (colon < 1 || !object3(parent)) continue;
-      const key3 = line.value.slice(0, colon).trim();
+      const key4 = line.value.slice(0, colon).trim();
       const tail = line.value.slice(colon + 1).trim();
       if (blockHeaders.has(tail)) {
         const chunks = [];
@@ -7005,16 +8212,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           chunks.push(lines[j].value);
           i = j;
         }
-        parent[key3] = chunks.join(tail.startsWith(">") ? " " : "\n");
+        parent[key4] = chunks.join(tail.startsWith(">") ? " " : "\n");
         continue;
       }
       if (tail) {
-        parent[key3] = scalar(tail);
+        parent[key4] = scalar(tail);
         continue;
       }
       const next = lines[i + 1];
       const child = next && next.indent > line.indent && next.value.startsWith("- ") ? [] : {};
-      parent[key3] = child;
+      parent[key4] = child;
       stack.push({ indent: line.indent, value: child });
     }
     return root;
@@ -7093,19 +8300,19 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function statsOf(record2) {
     const r = asObject(record2), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
     const result = {};
-    for (const key3 of attrNames) {
-      const aliases2 = [key3, ...Object.entries(statAliases).filter(([, v]) => v === key3).map(([k]) => k)];
-      result[key3] = Math.max(-20, Math.min(50, integer3(
+    for (const key4 of attrNames) {
+      const aliases2 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
+      result[key4] = Math.max(-20, Math.min(50, integer3(
         aliases2.find((alias) => own5(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own5(nested, alias))] : findValue(r, aliases2, 0),
         0
       )));
     }
     return result;
   }
-  function resource2(record2, key3, fallback) {
+  function resource2(record2, key4, fallback) {
     const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
-    const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key3] ?? [];
-    const value = own5(r, key3) ? r[key3] : own5(r, key3.toUpperCase()) ? r[key3.toUpperCase()] : own5(r, aliases2[1]) ? r[aliases2[1]] : own5(nested, key3) ? nested[key3] : own5(nested, aliases2[0]) ? nested[aliases2[0]] : own5(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
+    const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key4] ?? [];
+    const value = own5(r, key4) ? r[key4] : own5(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own5(r, aliases2[1]) ? r[aliases2[1]] : own5(nested, key4) ? nested[key4] : own5(nested, aliases2[0]) ? nested[aliases2[0]] : own5(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
     if (object3(value)) {
       const current2 = integer3(value.current ?? value.\u5F53\u524D ?? value.now ?? value.value, fallback);
       const upper = value.max ?? value.maximum ?? value.\u4E0A\u9650;
@@ -7113,29 +8320,29 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return { current: current2, max: max2 };
     }
     const current = integer3(value, fallback);
-    const maxValue = findValue(r, [`max${key3[0].toUpperCase()}${key3.slice(1)}`, `${key3}Max`, `${aliases2[1]}\u4E0A\u9650`], current);
+    const maxValue = findValue(r, [`max${key4[0].toUpperCase()}${key4.slice(1)}`, `${key4}Max`, `${aliases2[1]}\u4E0A\u9650`], current);
     const max = integer3(maxValue, current);
     return { current, max };
   }
-  function safeResource(pair, key3, warnings) {
-    let max = Math.max(key3 === "hp" ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));
+  function safeResource(pair, key4, warnings) {
+    let max = Math.max(key4 === "hp" ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));
     if (max > 1e9 || pair.current > 1e9) {
-      warnings.push(`${key3} \u8D85\u51FA\u5F15\u64CE\u4E0A\u9650\uFF0C\u5DF2\u622A\u5230 1e9`);
+      warnings.push(`${key4} \u8D85\u51FA\u5F15\u64CE\u4E0A\u9650\uFF0C\u5DF2\u622A\u5230 1e9`);
       max = Math.min(max, 1e9);
       current = Math.min(current, max);
     }
     return { current, max };
   }
-  function sourceName(record2, key3 = "") {
-    return text2(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key3));
+  function sourceName(record2, key4 = "") {
+    return text2(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key4));
   }
   function tierNumber(value, fallback = 1) {
     if (Number.isFinite(Number(value))) return Number(value);
     const match = text2(value).match(/[一二三四五六七]层级?/);
     return match ? "\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03".indexOf(match[0][0]) + 1 : fallback;
   }
-  function sourceId(record2, key3 = "") {
-    return text2(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key3));
+  function sourceId(record2, key4 = "") {
+    return text2(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key4));
   }
   var protagonistAliases = ["\u4E3B\u89D2", "\u73A9\u5BB6", "\u4E3B\u63A7", "protagonist", "player", "mvu_protagonist"];
   var charSources = ["char_info", "narrative_char_info"];
@@ -7149,11 +8356,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
     const char = chars.find((record2) => sourceName(record2) === name);
     if (charSources.includes(source.toLowerCase())) return char;
-    const matches2 = (record2, key3) => [sourceId(record2), sourceName(record2), record2.__sourceKey].includes(key3);
+    const matches2 = (record2, key4) => [sourceId(record2), sourceName(record2), record2.__sourceKey].includes(key4);
     if (source) return [...mvuRecords, ...chars].find((record2) => matches2(record2, source));
     const exact = [text2(participant.id ?? participant.uid), name].filter(Boolean);
-    for (const key3 of exact) {
-      const record2 = mvuRecords.find((record3) => matches2(record3, key3));
+    for (const key4 of exact) {
+      const record2 = mvuRecords.find((record3) => matches2(record3, key4));
       if (record2) return record2;
     }
     return char;
@@ -7161,12 +8368,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function collectMvu(value) {
     const root = asObject(value?.stat_data ?? value?.statData ?? value);
     const found = [];
-    const visit = (node3, key3 = "", path = []) => {
+    const visit = (node3, key4 = "", path = []) => {
       if (Array.isArray(node3)) return node3.forEach((v, i) => visit(v, String(i), [...path, i]));
       if (!object3(node3)) return;
-      const name = sourceName(node3, key3), hasStats = node3.stats || node3.attributes || node3.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own5(node3, k));
+      const name = sourceName(node3, key4), hasStats = node3.stats || node3.attributes || node3.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own5(node3, k));
       const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own5(node3, k));
-      if (name && (hasStats || hasResource)) found.push({ ...clone(node3), __sourceKey: key3, __sourcePath: path, __sourceKind: "MVU" });
+      if (name && (hasStats || hasResource)) found.push({ ...clone(node3), __sourceKey: key4, __sourcePath: path, __sourceKind: "MVU" });
       for (const [k, v] of Object.entries(node3)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path, k]);
     };
     visit(root);
@@ -7185,8 +8392,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var statusAliases = { burning: "burn", fire: "burn", bleeding: "bleed", frozen: "freeze", immobilize: "root", \u71C3\u70E7: "burn", \u51BB\u7ED3: "freeze", \u6655\u7729: "stun", \u52A0\u901F: "haste" };
   var statusNames = new Map(Object.values(STATUSES).map((status2) => [status2.name, status2.id]));
   function statusId(value) {
-    const key3 = text2(value).toLowerCase();
-    return own5(STATUSES, key3) ? key3 : statusNames.get(key3) ?? (own5(statusAliases, key3) ? statusAliases[key3] : null);
+    const key4 = text2(value).toLowerCase();
+    return own5(STATUSES, key4) ? key4 : statusNames.get(key4) ?? (own5(statusAliases, key4) ? statusAliases[key4] : null);
   }
   var bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer3(value, fallback)));
   function statusTurns(value, fallback) {
@@ -7201,7 +8408,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function convertEffects(effects2, context, warnings, prefix) {
     let input = Array.isArray(effects2) ? effects2 : effects2 == null ? [] : [effects2];
-    if (object3(effects2) && !["trigger", "kind", "type", "effect", "name", "\u7C7B\u578B"].some((key3) => own5(effects2, key3))) {
+    if (object3(effects2) && !["trigger", "kind", "type", "effect", "name", "\u7C7B\u578B"].some((key4) => own5(effects2, key4))) {
       input = Object.entries(effects2).flatMap(([kind, value]) => {
         if (!object3(value) && emptyEntry(value)) return [];
         if (object3(value)) return [{ kind, ...value }];
@@ -7270,7 +8477,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const cost = object3(value) ? Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(" ") : text2(value);
     const slots = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
     const resources = {};
-    for (const [, n, key3] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key3.toLowerCase()] = Number(n);
+    for (const [, n, key4] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key4.toLowerCase()] = Number(n);
     return { ...resources, slot: slots[0]?.[1] === "\u52A8\u4F5C" ? "action" : "attack", ap: new Set(slots.map((s) => s[1])).size === 2 ? 2 : 1 };
   }
   function damageTags(value, power) {
@@ -7339,9 +8546,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const value = record2.equipment ?? record2.equipments ?? record2.items ?? record2.\u88C5\u5907 ?? [];
     const slots = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
     const entries2 = Array.isArray(value) ? value.map((v) => ["", v]) : Object.entries(asObject(value));
-    return entries2.filter(([, item]) => object3(item)).map(([key3, item], i) => {
-      const rawSlot = text2(item.slot ?? item.position ?? item.\u4F4D\u7F6E) || key3;
-      return [slots.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.\u540D\u79F0 ?? (slots.has(key3) ? "" : key3) }, i];
+    return entries2.filter(([, item]) => object3(item)).map(([key4, item], i) => {
+      const rawSlot = text2(item.slot ?? item.position ?? item.\u4F4D\u7F6E) || key4;
+      return [slots.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.\u540D\u79F0 ?? (slots.has(key4) ? "" : key4) }, i];
     });
   }
   function normalizeBattleDefinition(raw, id3 = "") {
@@ -7406,9 +8613,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return list3.filter((participant, index) => {
       if (!object3(participant)) return false;
       const source = text2(participant.source);
-      const key3 = text2(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text2(participant?.name) || index}`);
-      if (seen.has(key3)) return false;
-      seen.add(key3);
+      const key4 = text2(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text2(participant?.name) || index}`);
+      if (seen.has(key4)) return false;
+      seen.add(key4);
       return true;
     });
   }
@@ -7469,9 +8676,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       const damageType2 = r.damageType ?? damageAliases.get(tag);
       if (damageType2 != null) skills[sid].damageType = damageType2;
-      for (const [key3, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["radius", 0, 6], ["width", 0, 6], ["accuracy", -20, 30], ["power", 0, 1e9]]) {
-        const value = r[key3] ?? (key3 === "power" ? taggedPower : costs[key3]);
-        if (value != null) skills[sid][key3] = bound(value, min, max);
+      for (const [key4, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["radius", 0, 6], ["width", 0, 6], ["accuracy", -20, 30], ["power", 0, 1e9]]) {
+        const value = r[key4] ?? (key4 === "power" ? taggedPower : costs[key4]);
+        if (value != null) skills[sid][key4] = bound(value, min, max);
       }
       if (attrNames.includes(r.save) && r.saveDC != null) {
         const saveDC = typeof r.saveDC === "object" ? r.saveDC : bound(r.saveDC, 1, 50);
@@ -7479,7 +8686,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
       if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
-      for (const key3 of ["damage", "heal"]) if (object3(r[key3])) skills[sid][key3] = normalizeDice(r[key3]);
+      for (const key4 of ["damage", "heal"]) if (object3(r[key4])) skills[sid][key4] = normalizeDice(r[key4]);
       return sid;
     });
     const pos2 = xyzOf(p.xyz ?? p);
@@ -7649,7 +8856,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     for (const [id3, unit] of Object.entries(units)) {
       const mapping = sourceMap[id3] ?? {};
       const path = Array.isArray(mapping.path) ? mapping.path : ["characters", id3];
-      for (const key3 of ["hp", "mp", "sp"]) if (unit && Number.isFinite(unit[key3])) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path, key3]), value: unit[key3] });
+      for (const key4 of ["hp", "mp", "sp"]) if (unit && Number.isFinite(unit[key4])) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path, key4]), value: unit[key4] });
       if (unit?.statuses && options.includeStatuses !== false) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path, "statuses"]), value: clone(unit.statuses) });
     }
     return ops;
@@ -7956,7 +9163,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return rule.type;
   }
   function fields2(rule, skip = []) {
-    return Object.entries(rule.properties).filter(([key3]) => !skip.includes(key3)).map(([key3, value]) => `${key3}${rule.required.includes(key3) ? "" : "?"}=${describe(value)}`).join("\uFF0C");
+    return Object.entries(rule.properties).filter(([key4]) => !skip.includes(key4)).map(([key4, value]) => `${key4}${rule.required.includes(key4) ? "" : "?"}=${describe(value)}`).join("\uFF0C");
   }
   var EFFECT_PROTOCOL = `\u3010\u7EDF\u4E00\u6548\u679C DSL\u3011
 \u5730\u5F62\u8282\u70B9 modifyTerrain\uFF08terrain: raise/lower/set\uFF0C\u6574\u6570 amount\uFF1Bz \u9650 \u22124\u20268\uFF09\u3001setTerrainKind\uFF08terrainKind: floor/wall/slope\uFF09\u3001addCover\uFF08hp\uFF09\u5747\u5FC5\u586B area\u3002area \u56DB\u79CD\u5199\u6CD5\uFF1A{"cells":[{"x":3,"y":4}]}\u3001{"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}\u3001{"center":"hitTarget","radius":1}\uFF08\u4E5F\u53EF self \u6216 {x,y}\uFF09\u3001{"center":"self","radius":1,"follow":true}\u3002\u5706\u4EE5\u68CB\u76D8\u5E73\u9762\u6B27\u6C0F\u8DDD\u79BB\u8BA1\u7B97\u3002\u4E3B\u52A8\u5730\u5F62\u6280\u80FD\u7528\u6280\u80FD\u6A21\u677F target: cell \u9009\u62E9\u5730\u9762\u683C\uFF0C\u8868\u8FBE\u5F0F target: self\uFF0Carea.center: hitTarget \u53D6\u7784\u51C6\u683C\u3002follow \u5FC5\u987B\u6709\u771F\u5B9E\u5355\u4F4D\u951A\u70B9\uFF0C\u56DE\u5408\u7ED3\u675F\u66F4\u65B0\uFF0C\u6B7B\u4EA1\u6216\u79BB\u573A\u6D88\u6563\u3002
@@ -8123,7 +9330,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
     if (!Array.isArray(saved)) return DEFAULT_SLOTS.map((slot) => ({ ...slot }));
     const defaults = new Map(DEFAULT_SLOTS.map((slot) => [slot.id, slot]));
     const entries2 = saved.filter((slot) => typeof slot?.id === "string");
-    const legacy = entries2.length > 0 && entries2.every((slot) => defaults.has(slot.id) && Object.keys(slot).every((key3) => key3 === "id" || key3 === "enabled"));
+    const legacy = entries2.length > 0 && entries2.every((slot) => defaults.has(slot.id) && Object.keys(slot).every((key4) => key4 === "id" || key4 === "enabled"));
     if (legacy) {
       const overrides = new Map(entries2.map((slot) => [slot.id, slot]));
       return DEFAULT_SLOTS.map((slot) => ({ ...slot, ...overrides.get(slot.id) }));
@@ -8150,10 +9357,10 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
       mvu_data: () => json(sources.mvuData ?? {}),
       latest_floor: () => sources.latestFloor || ""
     };
-    const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key3) => Object.hasOwn(variables, key3) ? variables[key3]() : "");
+    const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key4) => Object.hasOwn(variables, key4) ? variables[key4]() : "");
     function rosterText() {
       if (ctx.onlyUnitIds && state) {
-        const pick = (table3, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table3 ?? {}, id3)).map((id3) => [id3, table3[id3]]));
+        const pick = (table4, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
         const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
         const items = pick(state.items, rows.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? []]));
         return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows.flatMap((u) => u.skills ?? [])), statusTemplates: state.statusTemplates });
@@ -8162,7 +9369,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
       if (!state) return sources.roster || "";
       const templates = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
       const skillIds = new Set(Object.values(state.units ?? {}).flatMap((unit) => unit.skills ?? []));
-      const used = (table3, ids) => Object.fromEntries(Object.entries(table3 ?? {}).filter(([id3]) => ids.has(id3)));
+      const used = (table4, ids) => Object.fromEntries(Object.entries(table4 ?? {}).filter(([id3]) => ids.has(id3)));
       return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment: used(state.equipment, templates), skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
     }
     function battleText() {
@@ -8216,11 +9423,11 @@ ${variables.warnings()}` : "");
   }
 
   // src/tavern/api.js
-  function lookup(host, localWin, key3) {
+  function lookup(host, localWin, key4) {
     for (const scope of [localWin, host, localWin?.parent, localWin?.top, globalThis]) {
       try {
         for (const owner of [scope, scope?.TavernHelper]) {
-          const value = owner?.[key3];
+          const value = owner?.[key4];
           if (value != null) return typeof value === "function" ? value.bind(owner) : value;
         }
       } catch {
@@ -8228,8 +9435,8 @@ ${variables.warnings()}` : "");
     }
   }
   function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
-    const get2 = (key3) => lookup(host, localWin, key3);
-    const on = get2("eventOn"), remove2 = get2("eventRemoveListener");
+    const get3 = (key4) => lookup(host, localWin, key4);
+    const on = get3("eventOn"), remove2 = get3("eventRemoveListener");
     const cleanups = [];
     const stop = () => {
       for (const fn of cleanups.splice(0)) {
@@ -8242,8 +9449,8 @@ ${variables.warnings()}` : "");
     if (typeof on !== "function") return stop;
     try {
       for (const name of /* @__PURE__ */ new Set([
-        get2("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
-        get2("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
+        get3("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
+        get3("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
       ])) {
         const handler = (text4, id3) => {
           if (typeof text4 === "string" && text4 && (!id3 || id3 === genId)) onStreamChunk?.(text4, false);
@@ -8347,8 +9554,8 @@ ${variables.warnings()}` : "");
     }
   }
   function connection(settings, needModel) {
-    const base = settings.baseUrl?.trim().replace(/\/+$/, ""), key3 = settings.apiKey?.trim(), model = settings.model?.trim();
-    if (!base || !key3 || needModel && !model) throw new Error(`\u8BF7\u5728 API \u8BBE\u7F6E\u4E2D\u586B\u5199${!base ? "\u63A5\u53E3\u5730\u5740\uFF08baseUrl\uFF09" : !key3 ? "\u5BC6\u94A5\uFF08apiKey\uFF09" : "\u6A21\u578B\uFF08model\uFF09"}`);
+    const base = settings.baseUrl?.trim().replace(/\/+$/, ""), key4 = settings.apiKey?.trim(), model = settings.model?.trim();
+    if (!base || !key4 || needModel && !model) throw new Error(`\u8BF7\u5728 API \u8BBE\u7F6E\u4E2D\u586B\u5199${!base ? "\u63A5\u53E3\u5730\u5740\uFF08baseUrl\uFF09" : !key4 ? "\u5BC6\u94A5\uFF08apiKey\uFF09" : "\u6A21\u578B\uFF08model\uFF09"}`);
     if (globalThis.location?.protocol === "https:" && /^http:/i.test(base)) throw new Error(diagnoseApiError("Mixed Content"));
     const source = settings.apiSource || "openai";
     const headers = { "Content-Type": "application/json" };
@@ -8356,12 +9563,12 @@ ${variables.warnings()}` : "");
     if (source === "gemini") root = base.replace(/\/v1beta(?:\/.*)?$/i, "") + "/v1beta";
     else if (source === "claude") {
       root = base.replace(/\/messages$/i, "").replace(/\/v1$/i, "") + "/v1";
-      Object.assign(headers, { "x-api-key": key3, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
+      Object.assign(headers, { "x-api-key": key4, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
     } else if (source === "openai") {
       root = base.replace(/\/chat\/completions$/i, "");
-      headers.Authorization = `Bearer ${key3}`;
+      headers.Authorization = `Bearer ${key4}`;
     } else throw new Error(`\u672A\u77E5 API \u7C7B\u578B\uFF1A${source}`);
-    return { root, source, headers, model, key: encodeURIComponent(key3) };
+    return { root, source, headers, model, key: encodeURIComponent(key4) };
   }
   async function send(url, init, { fetchImpl = globalThis.fetch, signal }) {
     const res = await fetchImpl(url, { ...init, signal });
@@ -8370,8 +9577,8 @@ ${variables.warnings()}` : "");
   }
   var json2 = (res) => res.json ? res.json() : res.text().then(JSON.parse);
   async function fetchModels(settings, options = {}) {
-    const { root, source, key: key3, headers } = connection(settings, false);
-    const res = await send(`${root}/models${source === "gemini" ? `?key=${key3}` : ""}`, { method: "GET", headers }, options);
+    const { root, source, key: key4, headers } = connection(settings, false);
+    const res = await send(`${root}/models${source === "gemini" ? `?key=${key4}` : ""}`, { method: "GET", headers }, options);
     const data = await json2(res);
     return (source === "gemini" ? data.models : data.data)?.map((m) => source === "gemini" ? m.name?.replace(/^models\//, "") : m.id).filter((id3) => typeof id3 === "string" && id3) || [];
   }
@@ -8389,7 +9596,7 @@ ${variables.warnings()}` : "");
     return { contentDelta: d.content, reasoningDelta: d.reasoning_content, toolArgsDelta: d.tool_calls?.map((t) => t.function?.arguments).join("") || d.function_call?.arguments };
   }
   async function requestViaCustomApi(settings, messages, options = {}) {
-    const { root, source, model, key: key3, headers } = connection(settings, true);
+    const { root, source, model, key: key4, headers } = connection(settings, true);
     const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.2), max_tokens = Number(settings.max_tokens || 2400);
     const wireMessages = messages.map(({ role, content }) => ({ role, content }));
     let url, body;
@@ -8404,7 +9611,7 @@ ${variables.warnings()}` : "");
         url = `${root}/messages`;
         body = { model, system, messages: chat, temperature, max_tokens, stream };
       } else {
-        url = `${root}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key3}`;
+        url = `${root}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key4}`;
         body = {
           ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
           contents: chat.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
@@ -8701,18 +9908,18 @@ ${variables.warnings()}` : "");
       root.append(section);
       return grid;
     }
-    function field(grid, key3, title, input2, fallback, disabled = false, wide = false) {
+    function field(grid, key4, title, input2, fallback, disabled = false, wide = false) {
       const wrap = make("div", wide ? "field wide" : "field");
       const label = make("label", "", title);
-      input2.name = key3;
+      input2.name = key4;
       input2.disabled = disabled;
       const checkbox = input2.type === "checkbox";
-      if (checkbox) input2.checked = settings[key3] ?? fallback;
-      else input2.value = settings[key3] ?? fallback;
+      if (checkbox) input2.checked = settings[key4] ?? fallback;
+      else input2.value = settings[key4] ?? fallback;
       input2.onchange = () => {
         if (input2.type === "number" && (!input2.reportValidity() || !Number.isFinite(input2.valueAsNumber))) return;
-        ctx.save({ [key3]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
-        if (key3 === "apiMode") renderApiTab(page, ctx);
+        ctx.save({ [key4]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
+        if (key4 === "apiMode") renderApiTab(page, ctx);
       };
       label.append(input2);
       wrap.append(label);
@@ -8804,24 +10011,24 @@ ${variables.warnings()}` : "");
     timeoutField.append(timeoutLabel);
     sampling.append(timeoutField);
   }
-  function renderSettings(page, key3, ctx) {
-    if (key3 === "prompt") return renderPromptTab(page, ctx);
-    if (key3 === "api") return renderApiTab(page, ctx);
+  function renderSettings(page, key4, ctx) {
+    if (key4 === "prompt") return renderPromptTab(page, ctx);
+    if (key4 === "api") return renderApiTab(page, ctx);
   }
 
   // src/tavern/ai-sessions.js
   var roles = /* @__PURE__ */ new Set(["user", "assistant", "system", "tool"]);
   function createAiSessions(saved, persist, now = Date.now) {
     const data = { sessions: Array.isArray(saved?.sessions) ? structuredClone(saved.sessions) : [], activeId: saved?.activeId };
-    const get2 = (id3) => data.sessions.find((session) => session.id === id3);
-    const active = () => get2(data.activeId);
+    const get3 = (id3) => data.sessions.find((session) => session.id === id3);
+    const active = () => get3(data.activeId);
     const save = () => persist(data);
     let lastId = 0;
     function create(title = "\u65B0\u5EFA\u4F1A\u8BDD") {
       const ts = now();
       do {
         lastId = Math.max(ts, lastId + 1);
-      } while (get2(`sess_${lastId}`));
+      } while (get3(`sess_${lastId}`));
       const session = { id: `sess_${lastId}`, title, createdAt: ts, updatedAt: ts, messages: [] };
       data.sessions.push(session);
       data.activeId = session.id;
@@ -8838,20 +10045,20 @@ ${variables.warnings()}` : "");
     return {
       data,
       active,
-      get: get2,
+      get: get3,
       create() {
         const session = create();
         save();
         return session;
       },
       select(id3) {
-        if (get2(id3)) {
+        if (get3(id3)) {
           data.activeId = id3;
           save();
         }
       },
       rename(id3, title) {
-        const session = get2(id3);
+        const session = get3(id3);
         if (!session || !title.trim()) return;
         session.title = title.trim();
         change(session);
@@ -8864,13 +10071,13 @@ ${variables.warnings()}` : "");
         save();
       },
       clear(id3) {
-        const session = get2(id3);
+        const session = get3(id3);
         if (!session) return;
         session.messages.length = 0;
         change(session);
       },
       append(id3, ...messages) {
-        const session = get2(id3);
+        const session = get3(id3);
         if (!session) return [];
         const entries2 = messages.map((message) => {
           if (!roles.has(message.role)) throw new TypeError(`\u672A\u77E5\u6D88\u606F\u89D2\u8272\uFF1A${message.role}`);
@@ -8881,7 +10088,7 @@ ${variables.warnings()}` : "");
         return entries2;
       },
       update(id3, message, fields3) {
-        const session = get2(id3);
+        const session = get3(id3);
         if (!session?.messages.includes(message)) return;
         Object.assign(message, fields3);
         change(session);
@@ -8891,7 +10098,7 @@ ${variables.warnings()}` : "");
 
   // src/tavern/char-snapshots.js
   var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
-  var clean = (record2) => Object.fromEntries(Object.entries(record2 ?? {}).filter(([key3]) => !transient.has(key3) && !key3.startsWith("__source")));
+  var clean = (record2) => Object.fromEntries(Object.entries(record2 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
   var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
   var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
   async function characterRecords(sources, hydrated) {
@@ -8907,7 +10114,7 @@ ${variables.warnings()}` : "");
       if (mv) aliases(mv).forEach((name) => names.add(name));
       const char = sources.charInfo?.find(matches2);
       const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
-      const defs = (table3, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table3 ?? {}, id3)).map((id3) => [id3, table3[id3]]));
+      const defs = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
       const raw = {
         ...mv && { mvu: clean(mv) },
         ...char && { char_info: clean(char) },
@@ -8939,16 +10146,16 @@ ${variables.warnings()}` : "");
     header.append(title, select);
     box.append(header);
     const stats2 = line("dl", "fated-char-stats");
-    for (const [key3, name] of Object.entries(attributes2)) {
+    for (const [key4, name] of Object.entries(attributes2)) {
       const pair = make("div");
-      pair.append(make("dt", {}, name), make("dd", {}, unit.stats?.[key3] ?? "\u2014"));
+      pair.append(make("dt", {}, name), make("dd", {}, unit.stats?.[key4] ?? "\u2014"));
       stats2.append(pair);
     }
     box.append(stats2);
     const resources = line("p", "fated-char-resources");
-    for (const key3 of ["hp", "mp", "sp"]) {
-      const max = unit["max" + key3[0].toUpperCase() + key3.slice(1)], v = unit[key3];
-      const cell = make("span", {}, `${key3.toUpperCase()} ${v ?? "\u2014"} / ${max ?? "\u2014"}`);
+    for (const key4 of ["hp", "mp", "sp"]) {
+      const max = unit["max" + key4[0].toUpperCase() + key4.slice(1)], v = unit[key4];
+      const cell = make("span", {}, `${key4.toUpperCase()} ${v ?? "\u2014"} / ${max ?? "\u2014"}`);
       cell.style.setProperty("--fill", `${max ? Math.min(100, Math.max(0, v / max * 100)) : 0}%`);
       resources.append(cell);
     }
@@ -9149,7 +10356,7 @@ ${variables.warnings()}` : "");
   // src/tavern/overlay.js
   var own6 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
   var isObject = (v) => v && typeof v === "object" && !Array.isArray(v);
-  var safeProperty = (key3) => !["__proto__", "prototype", "constructor"].includes(key3);
+  var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
   var clone2 = (value) => {
     try {
       return structuredClone(value);
@@ -9196,11 +10403,11 @@ ${variables.warnings()}` : "");
   }
   function el(doc, tag, attrs2, content) {
     const n = doc.createElement(tag);
-    for (const [key3, value] of Object.entries(attrs2 || {})) {
-      if (key3 === "class") n.className = value;
-      else if (key3 === "style") n.style.cssText = value;
-      else if (key3 === "text") n.textContent = value;
-      else if (value != null) n.setAttribute(key3, value);
+    for (const [key4, value] of Object.entries(attrs2 || {})) {
+      if (key4 === "class") n.className = value;
+      else if (key4 === "style") n.style.cssText = value;
+      else if (key4 === "text") n.textContent = value;
+      else if (value != null) n.setAttribute(key4, value);
     }
     if (content != null) n.textContent = content;
     return n;
@@ -9247,10 +10454,10 @@ ${variables.warnings()}` : "");
   function deepMerge(base, extra) {
     const result = isObject(base) ? clone2(base) : {};
     if (!isObject(extra)) return result;
-    for (const [key3, value] of Object.entries(extra)) {
-      if (!safeProperty(key3)) continue;
-      if (isObject(value) && isObject(result[key3])) result[key3] = deepMerge(result[key3], value);
-      else result[key3] = clone2(value);
+    for (const [key4, value] of Object.entries(extra)) {
+      if (!safeProperty(key4)) continue;
+      if (isObject(value) && isObject(result[key4])) result[key4] = deepMerge(result[key4], value);
+      else result[key4] = clone2(value);
     }
     return result;
   }
@@ -9345,7 +10552,7 @@ ${variables.warnings()}` : "");
       if (!line.trim() || /^\s*#/.test(line)) continue;
       const match = line.match(/^(\s*)([-\w\u4e00-\u9fff]+)\s*:\s*(.*)$/);
       if (!match) continue;
-      const indent = match[1].length, key3 = match[2], raw = match[3].trim();
+      const indent = match[1].length, key4 = match[2], raw = match[3].trim();
       while (stack.length > 1 && indent <= stack.at(-1).indent) stack.pop();
       let valueOut = raw;
       if (!raw) {
@@ -9354,7 +10561,7 @@ ${variables.warnings()}` : "");
       } else if (/^(true|false)$/i.test(raw)) valueOut = raw.toLowerCase() === "true";
       else if (/^-?\d+(?:\.\d+)?$/.test(raw)) valueOut = Number(raw);
       else valueOut = parseJSON(raw, raw.replace(/^['"]|['"]$/g, ""));
-      stack.at(-1).object[key3] = valueOut;
+      stack.at(-1).object[key4] = valueOut;
       if (isObject(valueOut)) stack.push({ indent, object: valueOut });
     }
     return output;
@@ -9393,7 +10600,7 @@ ${variables.warnings()}` : "");
     return null;
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.1.9";
+  var TAVERN_VERSION = "0.1.10";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
@@ -9417,19 +10624,19 @@ ${variables.warnings()}` : "");
     stream: true,
     timeoutMs: 6e4
   };
-  function configFor(storage, key3) {
+  function configFor(storage, key4) {
     try {
-      const saved = parseJSON(storage?.getItem(key3), {});
+      const saved = parseJSON(storage?.getItem(key4), {});
       const mode = saved?.apiMode ?? (saved?.baseUrl ? "direct" : "tavern");
       return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode === "direct" ? "custom" : mode, slots: describeSlots(saved?.slots) });
     } catch {
       return clone2(DEFAULT_CONFIG);
     }
   }
-  function putConfig(storage, key3, value) {
+  function putConfig(storage, key4, value) {
     try {
       if (!storage) return false;
-      storage.setItem(key3, JSON.stringify(value));
+      storage.setItem(key4, JSON.stringify(value));
       return true;
     } catch {
       return false;
@@ -9531,11 +10738,11 @@ ${variables.warnings()}` : "");
       source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null
     };
   }
-  function patchValue(value, table3) {
+  function patchValue(value, table4) {
     if (!Array.isArray(value)) return value;
     return Object.fromEntries(value.filter((item) => item && (item.id || item.name)).map((item, index) => {
       const normalized = clone2(item);
-      if (table3 === "covers" || table3 === "interactives" || table3 === "zones") {
+      if (table4 === "covers" || table4 === "interactives" || table4 === "zones") {
         const xyz = normalized.xyz;
         if (Array.isArray(xyz)) {
           normalized.x = Number(xyz[0] ?? 0);
@@ -9543,28 +10750,28 @@ ${variables.warnings()}` : "");
           delete normalized.xyz;
         }
       }
-      if (table3 === "covers") {
+      if (table4 === "covers") {
         normalized.name ??= `\u63A9\u4F53${index + 1}`;
         normalized.material ??= "\u672A\u77E5\u6750\u6599";
         normalized.maxHp ??= normalized.hp ?? 1;
         normalized.hp ??= normalized.maxHp;
         normalized.cover ??= normalized.shielding ?? 2;
-        for (const key4 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key4)) delete normalized[key4];
+        for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key5)) delete normalized[key5];
       }
-      if (table3 === "interactives") {
+      if (table4 === "interactives") {
         normalized.name ??= "\u4E92\u52A8\u70B9";
         normalized.kind ??= "barrel";
         normalized.spent ??= false;
-        for (const key4 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key4)) delete normalized[key4];
+        for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key5)) delete normalized[key5];
       }
-      const key3 = String(normalized.id || normalized.name || index);
-      return [key3, normalized];
+      const key4 = String(normalized.id || normalized.name || index);
+      return [key4, normalized];
     }));
   }
   function normalizeSemanticPatch(patch) {
     if (!isObject(patch)) return patch;
     const result = clone2(patch);
-    for (const key3 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key3])) result[key3] = patchValue(result[key3], key3);
+    for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
     if (isObject(result.unit_patch)) {
       const unitPatch = result.unit_patch;
       const id3 = unitPatch.unitId || unitPatch.id;
@@ -9586,9 +10793,9 @@ ${variables.warnings()}` : "");
       if (!keys.length || !keys.every(safeProperty)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
       const last = keys.pop();
       let parent = result;
-      for (const key3 of keys) {
-        if (!own6(parent, key3)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation.path}`);
-        parent = parent[key3];
+      for (const key4 of keys) {
+        if (!own6(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation.path}`);
+        parent = parent[key4];
       }
       if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation.path}`);
       if (strict) {
@@ -9641,9 +10848,9 @@ ${variables.warnings()}` : "");
     let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
     let selectedMessageId = null, aiController = null, aiFinished, askAI, retryAI = null, aiPage = null;
     let characters = {}, mountedHashes = {}, scanStatus = "";
-    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key3) => own6(config.instances, key3));
-    const batches = (key3) => config.normalizationBatches?.[key3] ?? [];
-    const operations = (key3) => batches(key3).flatMap((batch) => batch.patch);
+    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own6(config.instances, key4));
+    const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
+    const operations = (key4) => batches(key4).flatMap((batch) => batch.patch);
     let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: "created" };
     const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
     const on = (node3, event, fn, opts = {}) => {
@@ -9663,19 +10870,19 @@ ${variables.warnings()}` : "");
     const tabs = el(doc, "nav", { class: "fated-tavern-tabs", role: "tablist" });
     const content = el(doc, "div", { class: "fated-tavern-content" });
     const pages = {};
-    for (const [key3, label] of [["instances", "\u{1F4E6} \u5B9E\u4F8B\u7EF4\u62A4"], ["prompt", "\u{1F9E9} \u63D0\u793A\u8BCD\u7EC4\u88C5"], ["api", "\u{1F50C} API \u8BBE\u7F6E"], ["ai", "\u{1F916} \u8F85\u52A9 AI"], ["sandbox", "\u2694\uFE0F \u6C99\u76D8"]]) {
-      const button = el(doc, "button", { type: "button", role: "tab", "aria-selected": key3 === "instances" ? "true" : "false", "data-tab": key3 }, label);
-      const page = el(doc, "div", { class: `fated-tab ${key3 === "instances" ? "active" : ""}`, "data-page": key3 });
+    for (const [key4, label] of [["instances", "\u{1F4E6} \u5B9E\u4F8B\u7EF4\u62A4"], ["prompt", "\u{1F9E9} \u63D0\u793A\u8BCD\u7EC4\u88C5"], ["api", "\u{1F50C} API \u8BBE\u7F6E"], ["ai", "\u{1F916} \u8F85\u52A9 AI"], ["sandbox", "\u2694\uFE0F \u6C99\u76D8"]]) {
+      const button = el(doc, "button", { type: "button", role: "tab", "aria-selected": key4 === "instances" ? "true" : "false", "data-tab": key4 }, label);
+      const page = el(doc, "div", { class: `fated-tab ${key4 === "instances" ? "active" : ""}`, "data-page": key4 });
       tabs.append(button);
       content.append(page);
-      pages[key3] = page;
+      pages[key4] = page;
       on(button, "click", () => {
         Object.entries(pages).forEach(([name, node3]) => {
-          node3.classList.toggle("active", name === key3);
+          node3.classList.toggle("active", name === key4);
         });
         [...tabs.children].forEach((x) => x.setAttribute("aria-selected", String(x === button)));
-        if (key3 === "prompt" || key3 === "api") renderSettings(page, key3, settingsContext());
-        if (key3 === "ai") aiPage?.show();
+        if (key4 === "prompt" || key4 === "api") renderSettings(page, key4, settingsContext());
+        if (key4 === "ai") aiPage?.show();
       });
     }
     const toast = el(doc, "aside", { class: "fated-toast", hidden: "", role: "status", "aria-live": "polite" });
@@ -9926,14 +11133,14 @@ ${tag.textContent || ""}
       page.append(list3);
       const entries2 = Object.entries(config.instances);
       if (!entries2.length) list3.append(el(doc, "p", { class: "fated-mini" }, "\u6682\u65E0\u5B9E\u4F8B\u3002\u6253\u5F00\u6C99\u76D8\u4F1A\u81EA\u52A8\u8BFB\u53D6\u5F53\u524D MVU\u3001char_info \u548C battle_init\u3002"));
-      for (const [key3, instance] of entries2) {
+      for (const [key4, instance] of entries2) {
         const box = el(doc, "article", { class: "fated-instance" });
-        box.dataset.unitId = key3;
-        const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key3}` });
-        select.checked = selectedIds().includes(key3);
-        on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key3])] : selectedIds().filter((k) => k !== key3)));
-        fillInstance(box, (tag, attrs2, value) => el(doc, tag, attrs2, value), instance, liveState(), characters[key3]?.raw, select);
-        const messages = warningsForUnit(sources.warnings, [key3], false);
+        box.dataset.unitId = key4;
+        const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
+        select.checked = selectedIds().includes(key4);
+        on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key4])] : selectedIds().filter((k) => k !== key4)));
+        fillInstance(box, (tag, attrs2, value) => el(doc, tag, attrs2, value), instance, liveState(), characters[key4]?.raw, select);
+        const messages = warningsForUnit(sources.warnings, [key4], false);
         if (messages.length) {
           const details = el(doc, "details", { class: "fated-char-diagnostics" }), list4 = el(doc, "ul");
           for (const { message } of messages) list4.append(el(doc, "li", {}, message));
@@ -9947,7 +11154,7 @@ ${tag.textContent || ""}
         box.append(actions2);
         list3.append(box);
         on(remove2, "click", () => {
-          delete config.instances[key3];
+          delete config.instances[key4];
           save();
           choose(selectedIds());
         });
@@ -9955,7 +11162,7 @@ ${tag.textContent || ""}
           const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
           const parsed = parseJSON(value, null);
           if (isObject(parsed)) {
-            config.instances[key3] = { ...parsed, id: key3, source: "AI \u7F16\u8F91" };
+            config.instances[key4] = { ...parsed, id: key4, source: "AI \u7F16\u8F91" };
             save();
             renderInstances();
           }
@@ -9966,8 +11173,8 @@ ${tag.textContent || ""}
         void scan(true);
       });
     }
-    function switchTab(key3) {
-      const button = tabs.querySelector(`[data-tab="${key3}"]`);
+    function switchTab(key4) {
+      const button = tabs.querySelector(`[data-tab="${key4}"]`);
       button?.click();
     }
     let promptKind = "validate", promptInstruction = "";
@@ -10057,8 +11264,8 @@ ${tag.textContent || ""}
       const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
       const nextInstances = {};
       for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
-        const key3 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
-        nextInstances[key3] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
+        const key4 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
+        nextInstances[key4] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
       }
       config.instances = nextInstances;
       diagnostics = {
@@ -10135,17 +11342,17 @@ ${tag.textContent || ""}
         const hydrated = await hydrate(epoch);
         if (epoch !== scanEpoch || disposed) return;
         const nextState = hydrated?.state ?? null;
-        const key3 = sources.battleKey;
-        const fresh = key3 ? await characterRecords(sources, hydrated) : {};
+        const key4 = sources.battleKey;
+        const fresh = key4 ? await characterRecords(sources, hydrated) : {};
         if (epoch !== scanEpoch || disposed) return;
         syncSettings();
-        const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key3] ?? {} };
+        const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key4] ?? {} };
         const removed = Object.keys(stored).filter((id4) => !fresh[id4]);
         diagnostics.removedCharacters = removed;
         for (const id4 of removed) delete stored[id4];
         const changed = ids.filter((id4) => !stored[id4]?.normalized || stored[id4].hash !== fresh[id4].hash);
-        const sourceChanged = activeBattleKey === key3 && (ids.some((id4) => mountedHashes[id4] !== fresh[id4].hash) || Object.keys(mountedHashes).some((id4) => !fresh[id4]));
-        if (sourceChanged || !gameMount || activeBattleKey !== key3) {
+        const sourceChanged = activeBattleKey === key4 && (ids.some((id4) => mountedHashes[id4] !== fresh[id4].hash) || Object.keys(mountedHashes).some((id4) => !fresh[id4]));
+        if (sourceChanged || !gameMount || activeBattleKey !== key4) {
           if (aiController) {
             const finished = aiFinished;
             aiController.abort();
@@ -10153,19 +11360,19 @@ ${tag.textContent || ""}
             if (epoch !== scanEpoch || disposed) return;
           }
           toast.hidden = true;
-          const kept = batches(key3).filter((batch) => Object.entries(batch.hashes).some(([id4, hash2]) => fresh[id4]?.hash === hash2));
-          const invalid = batches(key3).filter((batch) => !kept.includes(batch));
+          const kept = batches(key4).filter((batch) => Object.entries(batch.hashes).some(([id4, hash2]) => fresh[id4]?.hash === hash2));
+          const invalid = batches(key4).filter((batch) => !kept.includes(batch));
           if (invalid.length) {
-            persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key3]: kept } });
+            persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
           }
-          currentState = nextState ? applyNormalization(nextState, operations(key3)) : null;
-          activeBattleKey = key3;
+          currentState = nextState ? applyNormalization(nextState, operations(key4)) : null;
+          activeBattleKey = key4;
           mountState(currentState, !sourceChanged && !invalid.length && !changed.length);
         }
         characters = fresh;
         mountedHashes = Object.fromEntries(ids.map((id4) => [id4, fresh[id4].hash]));
         for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
-        if (key3 && (changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key3]: stored } });
+        if (key4 && (changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
         if (config.rosterSelection === null && ids.length) persistSettings({ rosterSelection: ids });
         const live = liveState();
         for (const unit of Object.values(live?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
@@ -10247,7 +11454,7 @@ ${tag.textContent || ""}
         if (session) feed(...aiSessions.append(session.id, { role: "system", content: content2, status: status2 }));
       };
       feed(...entries2);
-      const key3 = activeBattleKey;
+      const key4 = activeBattleKey;
       const controller2 = new AbortController();
       aiController = controller2;
       let finish;
@@ -10279,7 +11486,7 @@ ${tag.textContent || ""}
         }
         if (!prompts.length) throw new Error("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u63D0\u793A\u8BCD\uFF0C\u8BF7\u5728\u63D0\u793A\u8BCD\u7EC4\u88C5\u9875\u542F\u7528\u6709\u5185\u5BB9\u7684\u69FD\u4F4D");
         const streamUpdate = (snapshot, done, info) => {
-          if (disposed || controller2.signal.aborted || aiController !== controller2 || activeBattleKey !== key3) return;
+          if (disposed || controller2.signal.aborted || aiController !== controller2 || activeBattleKey !== key4) return;
           if (snapshot) updateReply({ content: snapshot }, false);
           if (!normalize) return;
           noticeBody.textContent = info?.isHeartbeat ? `\u5DF2\u7B49\u5F85 ${info.elapsedSec} \u79D2\uFF0C\u8FDE\u63A5\u4ECD\u5728\u4FDD\u6301\u2026` : done ? "\u5DF2\u6536\u5230\u5B8C\u6574\u54CD\u5E94\uFF0C\u6B63\u5728\u6821\u9A8C\u2026" : `\u5DF2\u6536\u5230 ${snapshot.length} \u5B57\u7B26\u2026`;
@@ -10294,7 +11501,7 @@ ${tag.textContent || ""}
             cancelled
           ]);
           controller2.signal.throwIfAborted();
-          if (disposed || aiController !== controller2 || key3 !== activeBattleKey) return;
+          if (disposed || aiController !== controller2 || key4 !== activeBattleKey) return;
           replyText = reply;
           try {
             const parsed = parseAIResponse(reply);
@@ -10322,7 +11529,7 @@ ${tag.textContent || ""}
             validate(nextState);
             if (normalize && patch.length) {
               refreshOpeningInitiative(nextState);
-              combined = [...operations(key3), ...patch];
+              combined = [...operations(key4), ...patch];
               const baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
               validate(applyNormalization(baseline, combined));
             }
@@ -10349,25 +11556,25 @@ ${tag.textContent || ""}
           renderInstances();
         }
         if (combined) {
-          const stored = { ...config.charSnapshots[key3] }, hashes = {};
+          const stored = { ...config.charSnapshots[key4] }, hashes = {};
           for (const [id4, rec] of Object.entries(records)) {
             stored[id4] = { ...rec, at: Date.now(), normalized: true };
             hashes[id4] = rec.hash;
           }
           const additions = patch.map((op) => {
-            const [, table3, target2] = op.path.split("/");
+            const [, table4, target2] = op.path.split("/");
             const owners = Object.keys(records).filter((id4) => {
               const u = nextState.units[id4];
               const items = [u?.weapon, u?.mainHand, u?.offHand, u?.shield, ...u?.gear ?? []];
-              if (table3 === "units") return target2 === id4;
-              if (table3 === "skills") return u?.skills?.includes(target2);
-              if (table3 === "items") return items.includes(target2);
-              if (table3 === "equipment") return items.some((k) => nextState.items[k]?.templateId === target2);
+              if (table4 === "units") return target2 === id4;
+              if (table4 === "skills") return u?.skills?.includes(target2);
+              if (table4 === "items") return items.includes(target2);
+              if (table4 === "equipment") return items.some((k) => nextState.items[k]?.templateId === target2);
               return false;
             });
             return { patch: [op], hashes: owners.length ? Object.fromEntries(owners.map((id4) => [id4, hashes[id4]])) : hashes };
           });
-          persistSettings({ charSnapshots: { ...config.charSnapshots, [key3]: stored }, normalizationBatches: { ...config.normalizationBatches, [key3]: [...batches(key3), ...additions] } });
+          persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored }, normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] } });
           scanStatus = `\u5DF2\u6807\u51C6\u5316 ${Object.keys(records).length} \u4E2A\u89D2\u8272`;
           renderInstances();
         }

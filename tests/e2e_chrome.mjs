@@ -75,6 +75,11 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   };
   const get = s => `document.querySelector(${JSON.stringify(s)})`;
   const click = async (selector, hover = false) => {
+    // 新界面把次要控件收在抽屉里：先像玩家一样点开对应抽屉
+    const drawer = await run(`(() => { const el = ${get(selector)}; for (let d = el?.parentElement?.closest('details:not([open])'); d; d = d.parentElement?.closest('details:not([open])')) d.open = true;
+      const d = el?.closest('aside[data-drawer]'); if (!d) { const open = document.querySelector('aside[data-drawer]:not([hidden]) [data-close-drawer]'); open?.click(); }
+      return d?.hidden ? d.dataset.drawer : null; })()`);
+    if (drawer) await click(`[data-open-drawer="${drawer}"]`);
     const box = await run(`(() => { const el = ${get(selector)}; if (!el) return null; el.scrollIntoView({block:'center',inline:'center'});
       const r=el.getBoundingClientRect(); return { x:r.left+r.width/2, y:r.top+r.height/2, clickable:!el.disabled && el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)) }; })()`);
     assert.ok(box?.clickable, `可点击 ${selector}: ${JSON.stringify(box)}`);
@@ -284,6 +289,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '100 格棋盘加载');
   await click('#auto-ai');
+  // 逐格断言 DOM 的步骤关闭演出；演出本身在自动敌方回合处单独验证
+  await select('#anim-speed', '0');
   await select('#scenario-select', 'altar');
   assert.match(await run(`${get('#scenario-preview')}.textContent`), /坡道/);
   await click('#reset-button');
@@ -291,9 +298,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.ok(await run('document.querySelectorAll("#board .terrain-slope").length >= 2'));
   await select('#scenario-select', 'ruins'); await click('#reset-button');
   assert.equal((await state()).scenarioId, 'ruins');
-  const layout = await run(`(() => { const board = ${get('#board')}.getBoundingClientRect(), box = ${get('.axis-scroll')}.getBoundingClientRect(), side = ${get('.battle-sidebar')}.getBoundingClientRect();
+  const layout = await run(`(() => { const board = ${get('#board')}.getBoundingClientRect(), box = ${get('.axis-scroll')}.getBoundingClientRect();
     return {cells:document.querySelectorAll('#board .tactical-cell').length, covers:document.querySelectorAll('#board .tactical-cover').length,
-    items:document.querySelectorAll('#board .tactical-interact').length, fit:board.width>350&&board.left>=box.left&&board.right<=box.right+1&&box.right<=side.left,
+    items:document.querySelectorAll('#board .tactical-interact').length, fit:board.width>350&&board.left>=box.left&&board.right<=box.right+1&&box.right<=innerWidth,
     spill:document.documentElement.scrollWidth>innerWidth }; })()`);
   assert.deepEqual(layout, { cells:100, covers:4, items:4, fit:true, spill:false });
   const actions = type => `#action-toolbar [data-action="${type}"]`;
@@ -371,8 +378,12 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   for (let i=0; red.team !== 'red' && i<8; i++) { await click('#end-turn'); red = await actor(); }
   assert.equal(red.team,'red');
   const logsBeforeAuto = (await state()).logs.length;
+  await select('#anim-speed', '0.5');
   await select('#ai-speed','80'); await click('#auto-ai');
+  await until(() => run(`document.querySelector('.ft-app').dataset.busy === 'true'`), '敌方行动有演出');
   await until(async () => (await state()).logs.length > logsBeforeAuto, '自动敌方回合');
+  await until(() => run(`document.querySelector('.ft-app').dataset.busy === 'false'`), '演出播完');
+  await select('#anim-speed', '0');
   await click('#auto-ai');
   await send('Browser.setDownloadBehavior', { behavior:'allow', downloadPath: profile });
   await click('#export-persistent');
@@ -382,7 +393,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const doc = await send('DOM.getDocument');
   const input = await send('DOM.querySelector', { nodeId:doc.root.nodeId, selector:'#import-snapshot' });
   await send('DOM.setFileInputFiles', { nodeId:input.nodeId, files:[carry] });
-  await until(async () => (await state()).scenarioId === 'boss', '导入跨战文件');
+  await until(async () => (await state()).scenarioId === 'boss', '导入跨战文件').catch(async e => { throw new Error(e.message + ' | ' + await run(`document.querySelector('#action-error').textContent + ' | ' + window.FatedTacticalGame.getBattleState().scenarioId`)); });
   assert.equal((await state()).items['soulblade-lan'].counters.souls,1);
   await run(`(() => {
     const g=window.FatedTacticalGame;
