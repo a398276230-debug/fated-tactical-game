@@ -325,7 +325,7 @@ var FatedTacticalTavern = (() => {
       if (template?.boundTo && template.boundTo !== actor.id) return [];
       return (template?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: equippedKey(instance, expr), instance }));
     });
-    const skillExpressions = (skill2, id3) => (skill2?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: `skill-${id3}:${expr.id}` }));
+    const skillExpressions2 = (skill2, id3) => (skill2?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: `skill-${id3}:${expr.id}` }));
     const activeId = (key3) => `effect:${key3}`;
     function activeSkills(state, actor) {
       if (!actor) return [];
@@ -672,7 +672,7 @@ var FatedTacticalTavern = (() => {
       return factors.filter((n) => !n.additive).reduce((factor, n) => factor * factorOf(n), 1) * Math.max(0, 1 + factors.filter((n) => n.additive).reduce((sum, n) => sum + factorOf(n) - 1, 0));
     }
     const check = (state, actor, key3, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key3] ?? 0 : 0), 0);
-    return { dispatch, stat: stat2, check, passiveNodes, damageFactor, activeSkills, skillExpressions, available, condition: condition3, changeResource };
+    return { dispatch, stat: stat2, check, passiveNodes, damageFactor, activeSkills, skillExpressions: skillExpressions2, available, condition: condition3, changeResource };
   }
 
   // src/core/spatial.js
@@ -1448,8 +1448,8 @@ var FatedTacticalTavern = (() => {
     const reduction = clamp(dsl.stat(state, unit, "damageReduction", changes(unit, "reduction"), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
     const defense = ctx.ignoreArmor ? 0 : armorOf(state, unit, type, pierce, ctx);
     const armorMultiplier = type === "true" ? 1 : 2e3 / (defense + 2e3);
-    const attributes2 = Object.fromEntries(Object.keys(unit.stats ?? {}).map((key3) => [key3, effectiveStat(state, unit, key3)]));
-    const attributeReduction = state.ruleset === "protocol" ? type === "physical" ? (Number(attributes2.con ?? 0) + Number(attributes2.str ?? 0) + Number(attributes2.agi ?? 0)) * 25e-4 : type === "energy" ? (Number(attributes2.spi ?? 0) + Number(attributes2.int ?? 0)) * 4e-3 : type === "mental" ? Number(attributes2.spi ?? 0) * 8e-3 : 0 : 0;
+    const attributes3 = Object.fromEntries(Object.keys(unit.stats ?? {}).map((key3) => [key3, effectiveStat(state, unit, key3)]));
+    const attributeReduction = state.ruleset === "protocol" ? type === "physical" ? (Number(attributes3.con ?? 0) + Number(attributes3.str ?? 0) + Number(attributes3.agi ?? 0)) * 25e-4 : type === "energy" ? (Number(attributes3.spi ?? 0) + Number(attributes3.int ?? 0)) * 4e-3 : type === "mental" ? Number(attributes3.spi ?? 0) * 8e-3 : 0 : 0;
     return {
       shatter,
       vulnerability,
@@ -1734,14 +1734,26 @@ var FatedTacticalTavern = (() => {
       return routeCell(route, opportunities);
     });
   }
+  function skillExpressions(skill2, id3) {
+    const entries2 = dsl.skillExpressions(skill2, id3);
+    if (!skill2?.damageType) return entries2;
+    return entries2.map((entry) => ({ ...entry, expr: { ...entry.expr, params: { damageType: skill2.damageType, ...entry.expr.params } } }));
+  }
+  function actorCost(template) {
+    const cost = template.resourceCost;
+    return { hp: cost?.hp ?? 0, mp: cost?.mp ?? template.mp ?? 0, sp: cost?.sp ?? template.sp ?? 0 };
+  }
+  var insufficientHP = "HP \u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u65BD\u653E";
   function paymentError(state, unit, ap, slot, template = {}) {
     if (unit.ap < ap) return `\u9700\u8981 ${ap} AP`;
     if (state.mode === "split" && (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot])) {
       return "\u672C\u56DE\u5408\u5BF9\u5E94\u7684\u884C\u52A8\u69FD\u5DF2\u4F7F\u7528";
     }
-    if (unit.mp < (template.mp ?? 0)) return "\u9B54\u529B\u4E0D\u8DB3";
-    if (unit.sp < (template.sp ?? 0)) return "\u4F53\u529B\u4E0D\u8DB3";
-    if (template.resourceCost && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return "\u88C5\u5907\u8D44\u6E90\u4E0D\u8DB3";
+    const { hp, mp, sp } = actorCost(template);
+    if (hp > 0 && hp >= unit.hp) return insufficientHP;
+    if (unit.mp < mp) return "\u9B54\u529B\u4E0D\u8DB3";
+    if (unit.sp < sp) return "\u4F53\u529B\u4E0D\u8DB3";
+    if (template.resourceCost?.resource && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return "\u88C5\u5907\u8D44\u6E90\u4E0D\u8DB3";
     if (findNode(template, "restoreResource") && changes(unit, "blockResourceRestore")) return "\u5F53\u524D\u72B6\u6001\u7981\u6B62\u88C5\u5907\u8D44\u6E90\u6062\u590D";
     return null;
   }
@@ -1889,8 +1901,8 @@ var FatedTacticalTavern = (() => {
       weaponId: weapon?.instance?.id,
       actionType: weapon ? "attack" : "skill",
       school: template.school,
-      damageType: template.damage?.type,
-      entries: weapon ? [] : template.entry ? [template.entry] : dsl.skillExpressions(template, context.skillId ?? "preview")
+      damageType: template.damage?.type ?? template.damageType,
+      entries: weapon ? [] : template.entry ? [template.entry] : skillExpressions(template, context.skillId ?? "preview")
     };
     const nodes = dsl.passiveNodes(state, actor, strike, strike.entries);
     const hasNode = (kind, mode) => nodes.some((node3) => node3.kind === kind && (!mode || node3.mode === mode));
@@ -1930,7 +1942,7 @@ var FatedTacticalTavern = (() => {
     const fixed = nodes.find((node3) => node3.kind === "modifyDamageBase");
     const fixedDamage = fixed?.unscaled ? fixed : null;
     const fixedAttack = fixed?.unscaled ? null : fixed;
-    const damageType2 = fixedDamage?.damageType ?? template.damage?.type ?? "physical";
+    const damageType2 = fixedDamage?.damageType ?? template.damage?.type ?? template.damageType ?? "physical";
     const tierPower = { 1: 2, 2: 2.8, 3: 4, 4: 8, 5: 15, 6: 35, 7: 80 }[actor.tier ?? 1] ?? 2;
     const attributeBase = () => state.ruleset === "protocol" ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? "str" : "int")) * 10 * tierPower : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
     const flatAttack = fixedAttack ? Math.max(0, fixedAttack.value + (fixedAttack.ignoreAttributes === false ? attributeBase() : 0)) : null;
@@ -2086,7 +2098,7 @@ var FatedTacticalTavern = (() => {
     if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
     if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
     const { ap, slot } = cost;
-    const common = { ok: true, ap, cost: ap, slot, mp: cost.mp ?? 0, sp: cost.sp ?? 0 };
+    const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
     if (type === "end") return common;
     if (changes(unit, "skip")) return fail("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
     const cannotPay = paymentError(state, unit, ap, slot, cost);
@@ -2474,7 +2486,7 @@ var FatedTacticalTavern = (() => {
   function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     const weapon = opportunityWeapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
     const template = action.type === "shield_bash" ? { name: "\u76FE\u51FB", range: 1, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, effects: shieldBashEffects } : weapon ? weapon.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
-    const skillEntries = template.entry ? [template.entry] : dsl.skillExpressions(weapon ? null : template, action.skillId);
+    const skillEntries = template.entry ? [template.entry] : skillExpressions(weapon ? null : template, action.skillId);
     const mainTarget = state.units[plan.corpseId ?? plan.targets.find((t) => t.kind !== "cover")?.id];
     const multipliers = [];
     const skillScale = action.type === "skill" ? Math.max(0, dsl.stat(state, actor, "skillPower", 1, { target: mainTarget, school: template.school, actionType: "skill" })) : 1;
@@ -2492,7 +2504,7 @@ var FatedTacticalTavern = (() => {
       melee: plan.targets[0]?.melee,
       arrow: Boolean(weapon?.ammo),
       ...action.type === "skill" && template.shape !== "single" ? { skillArea: new Set(plan.targets.map((target2) => target2.id)) } : {},
-      damageType: template.damage?.type,
+      damageType: template.damage?.type ?? template.damageType,
       power: template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? "int") * 10),
       nonLethal: plan.nonLethal
     };
@@ -2621,7 +2633,13 @@ var FatedTacticalTavern = (() => {
   }
   function applyAction(state, action) {
     const plan = preview(state, action);
-    if (!plan.ok) throw new Error(plan.error);
+    if (!plan.ok) {
+      if (plan.error === insufficientHP) {
+        record(state, currentUnit(state), "skill_rejected", insufficientHP, { skillId: action.skillId });
+        return state.logs.slice(-1);
+      }
+      throw new Error(plan.error);
+    }
     const { type, x, y, skillId } = action;
     if (needsTarget(type) && x === void 0) throw new Error("\u7F3A\u5C11\u76EE\u6807\u5750\u6807");
     const actor = currentUnit(state);
@@ -2634,7 +2652,11 @@ var FatedTacticalTavern = (() => {
       actor.sp -= plan.sp;
       if (type === "skill") {
         const skill2 = tableEntry(state.skills, skillId);
-        if (skill2?.resourceCost) {
+        if (plan.hp) {
+          actor.hp -= plan.hp;
+          record(state, actor, "skill_cost", `\u65BD\u653E ${skill2.name} \u6D88\u8017 ${plan.hp} HP`, { skillId, hp: plan.hp, remainingHP: actor.hp });
+        }
+        if (skill2?.resourceCost?.resource) {
           const { resource: resource3, amount: cost } = skill2.resourceCost;
           const { item, effect, amount: amount2 } = resourcePool(state, actor, resource3);
           changeCounter(state, actor, item, effect, resource3, amount2 - cost);
@@ -3041,7 +3063,7 @@ var FatedTacticalTavern = (() => {
     (state.statusTemplates ??= {})[key3] = structuredClone(definition);
     return structuredClone(definition);
   }
-  var resourceCost = (x) => plain(x) && Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6);
+  var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key3, amount2]) => ["hp", "mp", "sp"].includes(key3) && int(amount2, 0, 25e3)));
   function validateEffect(e, state) {
     requireThat(isExpression(e) && validExpression(e), "DSL expression");
     if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, "DSL save mode");
@@ -3090,7 +3112,8 @@ var FatedTacticalTavern = (() => {
     requireThat(new Set(pools.map((pool) => pool.resource)).size === pools.length, "DSL \u91CD\u590D\u8D44\u6E90\u6C60");
   }
   function skillTemplate(v, state) {
-    fields(v, ["name", "ap", "slot", "range", "shape", "target", "effects"], ["quality", "power", "mp", "sp", "radius", "width", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school"]);
+    fields(v, ["name", "ap", "slot", "range", "shape", "target", "effects"], ["quality", "power", "mp", "sp", "radius", "width", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType"]);
+    checkOptional(v, "damageType", (type) => damageTypes.includes(type));
     checkOptional(v, "school", text);
     checkOptional(v, "resourceCost", resourceCost);
     requireThat(text(v.name) && int(v.ap, 1, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 15) && ["single", "circle", "fan", "cone", "line"].includes(v.shape) && ["enemy", "ally", "self", "any", "corpse"].includes(v.target), "\u6280\u80FD");
@@ -6823,9 +6846,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const r = asObject(record2), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
     const result = {};
     for (const key3 of attrNames) {
-      const aliases = [key3, ...Object.entries(statAliases).filter(([, v]) => v === key3).map(([k]) => k)];
+      const aliases2 = [key3, ...Object.entries(statAliases).filter(([, v]) => v === key3).map(([k]) => k)];
       result[key3] = Math.max(-20, Math.min(50, integer3(
-        aliases.find((alias) => own5(nested, alias)) !== void 0 ? nested[aliases.find((alias) => own5(nested, alias))] : findValue(r, aliases, 0),
+        aliases2.find((alias) => own5(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own5(nested, alias))] : findValue(r, aliases2, 0),
         0
       )));
     }
@@ -6833,8 +6856,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function resource2(record2, key3, fallback) {
     const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
-    const aliases = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key3] ?? [];
-    const value = own5(r, key3) ? r[key3] : own5(r, key3.toUpperCase()) ? r[key3.toUpperCase()] : own5(r, aliases[1]) ? r[aliases[1]] : own5(nested, key3) ? nested[key3] : own5(nested, aliases[0]) ? nested[aliases[0]] : own5(nested, aliases[1]) ? nested[aliases[1]] : void 0;
+    const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key3] ?? [];
+    const value = own5(r, key3) ? r[key3] : own5(r, key3.toUpperCase()) ? r[key3.toUpperCase()] : own5(r, aliases2[1]) ? r[aliases2[1]] : own5(nested, key3) ? nested[key3] : own5(nested, aliases2[0]) ? nested[aliases2[0]] : own5(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
     if (object3(value)) {
       const current2 = integer3(value.current ?? value.\u5F53\u524D ?? value.now ?? value.value, fallback);
       const upper = value.max ?? value.maximum ?? value.\u4E0A\u9650;
@@ -6842,7 +6865,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return { current: current2, max: max2 };
     }
     const current = integer3(value, fallback);
-    const maxValue = findValue(r, [`max${key3[0].toUpperCase()}${key3.slice(1)}`, `${key3}Max`, `${aliases[1]}\u4E0A\u9650`], current);
+    const maxValue = findValue(r, [`max${key3[0].toUpperCase()}${key3.slice(1)}`, `${key3}Max`, `${aliases2[1]}\u4E0A\u9650`], current);
     const max = integer3(maxValue, current);
     return { current, max };
   }
@@ -6922,7 +6945,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const turns2 = typeof value === "string" ? value.match(/^\s*(\d+)\s*(?:回合|轮)\s*$/)?.[1] ?? value : value;
     return bound(turns2, 1, 100, fallback);
   }
-  function mapEffects(effects2, context = "skill", warnings = [], prefix = "imported") {
+  function warningSink(warnings, unitId, source, scope) {
+    return { push: (message) => warnings.push({ message, unitId, source, scope }) };
+  }
+  function convertEffects(effects2, context, warnings, prefix) {
     let input = Array.isArray(effects2) ? effects2 : effects2 == null ? [] : [effects2];
     if (object3(effects2) && !["trigger", "kind", "type", "effect", "name", "\u7C7B\u578B"].some((key3) => own5(effects2, key3))) {
       input = Object.entries(effects2).flatMap(([kind, value]) => {
@@ -6989,6 +7015,23 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var damageAliases = new Map(Object.entries({ \u7269\u7406: "physical", \u80FD\u91CF: "energy", \u7CBE\u795E: "mental", \u771F\u5B9E: "true" }));
   var damageTypes2 = ["physical", "energy", "mental", "true"];
+  function skillCosts(value) {
+    const cost = object3(value) ? Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(" ") : text2(value);
+    const slots = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
+    const resources = {};
+    for (const [, n, key3] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key3.toLowerCase()] = Number(n);
+    return { ...resources, slot: slots[0]?.[1] === "\u52A8\u4F5C" ? "action" : "attack", ap: new Set(slots.map((s) => s[1])).size === 2 ? 2 : 1 };
+  }
+  function damageTags(value, power) {
+    if (!value) return [];
+    const single = damageAliases.get(value);
+    if (single) return [{ kind: "damage", percentOfPower: 1, damageType: single }];
+    const parts = value.split(/[/／]/).map((s) => s.trim().match(/^(物理|能量|精神|真实)\s*(\d+(?:\.\d+)?)\s*([%％]?)$/));
+    if (parts.length < 2 || parts.some((p) => !p)) return [];
+    const percent = parts.every((p) => p[3]);
+    if (!percent && !(parts.every((p) => !p[3]) && parts.reduce((n, p) => n + Number(p[2]), 0) === Number(power))) return [];
+    return parts.map(([, type, n]) => ({ kind: "damage", damageType: damageAliases.get(type), ...percent ? { percentOfPower: Number(n) / 100 } : { flat: Number(n) } }));
+  }
   function normalizeDice(raw) {
     const dice3 = asObject(raw);
     const stat2 = own5(statAliases, dice3.stat) ? statAliases[dice3.stat] : dice3.stat;
@@ -7013,7 +7056,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const isWeapon = kind === "weapon";
     const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
     const templateId = `template-${idBase}`;
-    const effects2 = mapEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", warnings, `fx-${hash(templateId).toString(36)}`);
+    const effects2 = convertEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", warnings, `fx-${hash(templateId).toString(36)}`);
     const template = { name: name.slice(0, 100), kind, effects: effects2 };
     const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
     const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? defenseTag?.[1], 0, 1e6, kind === "shield" ? 1 : 0);
@@ -7094,8 +7137,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       mp: ["mp", "MP", "\u6CD5\u529B\u503C", "resources", "resource", "\u8D44\u6E90"],
       sp: ["sp", "SP", "\u4F53\u529B\u503C", "resources", "resource", "\u8D44\u6E90"]
     };
-    for (const [field, aliases] of Object.entries(fields3)) {
-      if (inline[field] != null && !aliases.some((alias) => own5(merged, alias))) merged[field] = clone(inline[field]);
+    for (const [field, aliases2] of Object.entries(fields3)) {
+      if (inline[field] != null && !aliases2.some((alias) => own5(merged, alias))) merged[field] = clone(inline[field]);
     }
     for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own5(merged, field) && inline[field] != null) merged[field] = inline[field];
     return merged;
@@ -7127,7 +7170,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z];
     return { x: Math.max(0, Math.min(9, integer3(xyz[0], 0))), y: Math.max(0, Math.min(9, integer3(xyz[1], 0))), z: integer3(xyz[2], 0) };
   }
-  function unitFrom(record2, participant, index, equipment, skills, items, warnings) {
+  function unitFrom(record2, participant, index, equipment, skills, items, sink) {
+    const effects2 = sink("effect"), resourcesSink = sink("resource"), warnings = sink("status");
     const p = participant ?? {};
     const name = text2(p.protagonistName || p.name) || sourceName(record2, p.id) || `\u5355\u4F4D ${index + 1}`;
     const id3 = p.id;
@@ -7136,8 +7180,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const bodyLengthM = Math.max(0.01, Math.min(1e9, number2(findValue(record2, ["bodyLengthM", "bodyLength", "bl", "\u4F53\u957F"], 1.7), 1.7)));
     const size = Math.max(1, Math.min(5, sizeFor(bodyLengthM).value === 2 ? 1 : sizeFor(bodyLengthM).value === 1 ? 2 : sizeFor(bodyLengthM).value === 0 ? 3 : sizeFor(bodyLengthM).value === -1 ? 4 : 5));
     const mc = Math.max(1, Math.min(64, integer3(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
-    const resources = { hp: safeResource(resource2(record2, "hp", Math.max(1, stats2.con * 100)), "hp", warnings), mp: safeResource(resource2(record2, "mp", Math.max(0, (stats2.int + stats2.spi) * 10)), "mp", warnings), sp: safeResource(resource2(record2, "sp", Math.max(0, (stats2.str + stats2.agi) * 10)), "sp", warnings) };
-    const slotItems = sourceEquipment(record2).map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, warnings));
+    const resources = { hp: safeResource(resource2(record2, "hp", Math.max(1, stats2.con * 100)), "hp", resourcesSink), mp: safeResource(resource2(record2, "mp", Math.max(0, (stats2.int + stats2.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource2(record2, "sp", Math.max(0, (stats2.str + stats2.agi) * 10)), "sp", resourcesSink) };
+    const slotItems = sourceEquipment(record2).map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, effects2));
     for (const item of slotItems) {
       equipment[item.templateId] ??= item.template;
       items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
@@ -7147,24 +7191,35 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const shield = !main?.template.twoHanded && slotItems.find((i) => i.template.kind === "shield");
     const gear = slotItems.filter((i) => ![main, off, shield].includes(i));
     const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
+    const skillInfo = {};
     const normalizedSkills = sourceSkills(record2).slice(0, 32).map(([raw, i]) => {
       const r = asObject(raw), sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${i}`;
       const labels = [].concat(r.tags ?? r.\u6807\u7B7E ?? []).join(" ");
       const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
       const taggedRange = labels.match(/有效距离\s*[:：][^\d\]]*(\d+)/)?.[1];
+      const costs = skillCosts(r.cost ?? r.\u6D88\u8017);
+      const tag = labels.match(/伤害\s*[:：]\s*([^\]]+)/)?.[1]?.trim();
+      const rawEffects = r.effects ?? r.\u6548\u679C;
+      const nodes = damageTags(tag, r.power ?? taggedPower);
+      skillInfo[sid] = { description: text2(r.description ?? r.\u63CF\u8FF0), damageType: damageAliases.get(tag), hp: costs.hp };
       skills[sid] = {
         name: text2(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`,
         quality: "\u666E\u901A",
-        ap: bound(r.ap, 1, 2),
-        slot: r.slot === "action" ? "action" : "attack",
+        ap: bound(r.ap ?? costs.ap, 1, 2),
+        slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
         range: bound(r.range ?? taggedRange, 0, 15, 1),
         shape: ["single", "circle", "fan", "cone", "line"].includes(r.shape) ? r.shape : "single",
         target: ["enemy", "ally", "self", "any", "corpse"].includes(r.target) ? r.target : "enemy",
         ...text2(r.school) ? { school: text2(r.school).slice(0, 100) } : {},
-        effects: mapEffects(r.effects ?? r.\u6548\u679C, "skill", warnings, `fx-${hash(sid).toString(36)}`)
+        effects: convertEffects(r.effects ?? r.\u6548\u679C, "skill", effects2, `fx-${hash(sid).toString(36)}`)
       };
+      if (!r.damage && (r.power != null || taggedPower) && nodes.length && (Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects))) {
+        skills[sid].effects.push({ id: `fx-${hash(sid).toString(36)}-damage`, trigger: "active", target: "hitTarget", effects: nodes });
+      }
+      const damageType2 = r.damageType ?? damageAliases.get(tag);
+      if (damageType2 != null) skills[sid].damageType = damageType2;
       for (const [key3, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["radius", 0, 6], ["width", 0, 6], ["accuracy", -20, 30], ["power", 0, 1e9]]) {
-        const value = r[key3] ?? (key3 === "power" ? taggedPower : void 0);
+        const value = r[key3] ?? (key3 === "power" ? taggedPower : costs[key3]);
         if (value != null) skills[sid][key3] = bound(value, min, max);
       }
       if (attrNames.includes(r.save) && r.saveDC != null) {
@@ -7172,6 +7227,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         if (validSaveDC(saveDC)) Object.assign(skills[sid], { save: r.save, saveDC: structuredClone(saveDC) });
       }
       if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
+      if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
       for (const key3 of ["damage", "heal"]) if (object3(r[key3])) skills[sid][key3] = normalizeDice(r[key3]);
       return sid;
     });
@@ -7222,7 +7278,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     else if (text2(creatureType)) unit.creatureType = text2(creatureType).slice(0, 100);
     const tags2 = p.tags ?? record2.tags;
     if (Array.isArray(tags2)) unit.tags = tags2.map((tag) => text2(tag).slice(0, 100)).filter(Boolean).slice(0, 32);
-    return { unit, profile: { id: id3, level, tier, stats: stats2, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record2.__sourcePath ?? null, sourceKind: record2.__sourceKind || "unknown", fieldSources: { numeric: record2.__sourceKind || "unknown", equipment: record2.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record2.__sourceKind || "unknown" } }, participant: p };
+    return { unit, profile: { id: id3, skillInfo, level, tier, stats: stats2, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record2.__sourcePath ?? null, sourceKind: record2.__sourceKind || "unknown", fieldSources: { numeric: record2.__sourceKind || "unknown", equipment: record2.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record2.__sourceKind || "unknown" } }, participant: p };
   }
   function terrainState(battle, state, warnings) {
     state.grid = createBattleGrid(battle, state.rng, Object.values(state.units), warnings);
@@ -7264,6 +7320,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function hydrateFromSources(input = {}, options = {}) {
     const source = asObject(input), warnings = [];
+    const sink = (unitId, source2, scope) => warningSink(warnings, unitId, source2, scope);
     const protagonistName = text2(source.protagonistName ?? options.protagonistName);
     const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
     const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
@@ -7286,14 +7343,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       let id3 = base;
       for (let suffix = 2; own5(units, id3); suffix++) id3 = `${base.slice(0, 52)}-${suffix}`;
       const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
-      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, warnings);
+      const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
+      if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
+      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope) => sink(id3, origin, scope));
       units[id3] = made.unit;
       profiles[id3] = made.profile;
       sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2) };
     };
     for (const [i, participant] of participants.entries()) {
       const record2 = resolved[i];
-      if (!record2 && participant.source) warnings.push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
       add(participant, record2 ?? { __sourceKind: "battle_init" }, i);
     }
     if (!participants.length) {
@@ -7308,19 +7366,25 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: ["free", "split"].includes(mode) ? mode : "free", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
     const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
     if (time) state.time = time;
-    terrainState(battle, state, warnings);
+    terrainState(battle, state, sink(null, "terrain", "terrain"));
     uniquePositions(state.units, state);
     let valid = true;
     try {
       validateState(state);
     } catch (error2) {
       valid = false;
-      warnings.push(`\u8F6C\u6362\u7ED3\u679C\u672A\u901A\u8FC7\u6821\u9A8C\uFF1A${error2.message}`);
+      sink(null, null, "state").push(`\u8F6C\u6362\u7ED3\u679C\u672A\u901A\u8FC7\u6821\u9A8C\uFF1A${error2.message}`);
       if (options.throwOnValidation) throw error2;
     }
     if (valid) beginBattle(state);
     const roster = Object.values(units).map((unit) => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
+    Object.defineProperty(state, "warnings", { value: warnings });
     return { state, roster, warnings, sourceMap, battleInit: battle, seed };
+  }
+  function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {
+    if (!unitIds?.length) return warnings;
+    const selected = new Set(unitIds);
+    return warnings.filter((w) => w.unitId === null ? includeGlobal : selected.has(w.unitId));
   }
   function pointer(path) {
     return "/" + path.map((x) => String(x).replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
@@ -7419,6 +7483,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
 
   // src/tavern/theme.js
+  var ciDark = `--ci-bg:#121417;--ci-surface:#1b1e22;--ci-surface-raised:#23272c;--ci-surface-soft:#2c3137;--ci-input:#0f1114;--ci-border:#494236;--ci-border-strong:#6a5b43;--ci-text:#f7f2e9;--ci-text-secondary:#d9cfbf;--ci-text-muted:#aea290;--ci-primary:#d2ac6d;--ci-primary-strong:#b88a46;--ci-primary-soft:rgb(210 172 109 / 18%);--ci-on-primary:#1d1811;--ci-success:#88a18e;--ci-danger:#d4878c;--ci-warning:#d2ad71;--ci-shadow:rgb(0 0 0 / 58%);color-scheme:dark`;
+  var ciLight = `--ci-bg:#e3ded6;--ci-surface:#f0ece6;--ci-surface-raised:#f6f2ec;--ci-surface-soft:#d5cec4;--ci-input:#f8f5ef;--ci-border:#b9aa96;--ci-border-strong:#806b50;--ci-text:#1f1d1a;--ci-text-secondary:#403a34;--ci-text-muted:#5d544a;--ci-primary:#6b4a22;--ci-primary-strong:#513615;--ci-primary-soft:rgb(107 74 34 / 12%);--ci-on-primary:#fff8ee;--ci-success:#365844;--ci-danger:#873941;--ci-warning:#68451f;--ci-shadow:rgb(58 47 36 / 24%);color-scheme:light`;
   var tavernTheme = `
 :where([data-fated-tavern-overlay], .fated-battle-entry) {
   --ink-0:#141423; --ink-1:#1e1e32; --ink-2:#11111d;
@@ -7555,6 +7621,18 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 .fated-ai-message header { display:flex; justify-content:space-between; gap:12px; color:var(--gold); font-size:.72em; margin-bottom:4px; }
 .fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }
 .fated-ai-info { color:var(--text-muted, var(--blue-text)); font-size:.78em; margin:5px 0; }
+[data-fated-tavern-overlay] { ${ciDark} }
+@media(prefers-color-scheme:light) { [data-fated-tavern-overlay] { ${ciLight} } }
+.fated-ci-dark,.fated-ci-dark [data-fated-tavern-overlay] { ${ciDark} }
+.fated-ci-light,.fated-ci-light [data-fated-tavern-overlay] { ${ciLight} }
+[data-fated-tavern-overlay] article.fated-instance.fated-instance { padding:14px 16px; margin-block:8px; color:var(--ci-text); border:1px solid var(--ci-border); border-radius:10px; background:var(--ci-surface); box-shadow:none }
+[data-fated-tavern-overlay] article.fated-instance::before { display:none }
+.fated-char-heading { display:flex;align-items:center;justify-content:space-between;gap:12px }.fated-char-heading input { flex:none; accent-color:var(--ci-primary) }.fated-char-name { color:var(--ci-text) }.fated-source-label { margin-inline-start:8px;color:var(--ci-text-muted) }
+.fated-char-stats,.fated-char-resources { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:10px 0 }.fated-char-stats div {padding:4px 6px;border-radius:4px;background:var(--ci-primary-soft)}.fated-char-stats dt {font-size:.8em;color:var(--ci-text-secondary)}.fated-char-stats dd {margin:0;font-weight:bold;color:var(--ci-primary)}
+.fated-char-resources {grid-template-columns:repeat(3,minmax(0,1fr));color:var(--ci-text-secondary)}.fated-char-resources span {padding-block-end:5px;background:linear-gradient(to right,var(--ci-primary-soft) var(--fill),var(--ci-surface-soft) var(--fill)) left bottom / 100% 4px no-repeat}
+.fated-instance h5 { margin:8px 0 2px;color:var(--ci-primary) }.fated-char-row { padding-block:3px }.fated-instance .fated-mini {color:var(--ci-text-muted)}.fated-instance summary { cursor:pointer }.fated-char-raw { border-top:1px solid var(--ci-border-strong); margin-block:8px; padding:6px 8px;background:var(--ci-input);color:var(--ci-text-secondary) }.fated-char-raw pre { max-height:12rem; overflow:auto;color:inherit }
+[data-fated-tavern-overlay] .fated-instance button:not([data-sandbox-mount] *) {background:var(--ci-surface-raised);border-color:var(--ci-border);color:var(--ci-text-secondary)}
+[data-fated-tavern-overlay] .fated-instance button:not([data-sandbox-mount] *):hover {background:var(--ci-primary-soft);border-color:var(--ci-primary);color:var(--ci-primary)}
 .fated-toast {
   position:fixed; z-index:2; top:max(16px,env(safe-area-inset-top)); right:16px; width:min(380px,calc(100vw - 32px));
   padding:12px 14px; border:1px solid var(--header-line); border-inline-start:3px solid var(--notice-color,var(--blue-text)); border-radius:8px;
@@ -7804,12 +7882,13 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
   }
   function resolveSlotContent(slot, ctx = {}) {
     const { sources = {}, state, instruction = "" } = ctx;
+    const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
     const variables = {
       battle_init: () => sources.battleRaw || json(sources.battleInit ?? {}),
       battle_state: () => json(state ?? {}),
-      warnings: () => json(sources.warnings ?? []),
+      warnings: () => json(warnings.map((w) => w.message)),
       user_instruction: () => instruction,
-      standardized_roster: () => sources.roster || "",
+      standardized_roster: () => ctx.onlyUnitIds ? rosterText() : sources.roster || "",
       roster: rosterText,
       battle: battleText,
       mvu_data: () => json(sources.mvuData ?? {}),
@@ -7817,6 +7896,12 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
     };
     const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key3) => Object.hasOwn(variables, key3) ? variables[key3]() : "");
     function rosterText() {
+      if (ctx.onlyUnitIds && state) {
+        const pick = (table3, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table3 ?? {}, id3)).map((id3) => [id3, table3[id3]]));
+        const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
+        const items = pick(state.items, rows.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? []]));
+        return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows.flatMap((u) => u.skills ?? [])), statusTemplates: state.statusTemplates });
+      }
       if (ctx.rosterText != null) return ctx.rosterText;
       if (!state) return sources.roster || "";
       const templates = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
@@ -7842,7 +7927,7 @@ ${json(board)}`;
       case "battle":
         return battleText();
       case "warnings":
-        return ctx.warningsText ?? (sources.warnings?.length ? `\u5F85\u5904\u7406\u8B66\u544A\uFF1A
+        return ctx.warningsText ?? (warnings.length ? `\u5F85\u5904\u7406\u8B66\u544A\uFF1A
 ${variables.warnings()}` : "");
       case "task":
         return expand(ctx.taskText ?? (ctx.kind === "chat" ? "\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u8EAB\u4EFD\u58F0\u660E\u4E2D\u7684\u6570\u636E\u8F93\u51FA\u8981\u6C42\u9002\u7528\u4E8E\u6218\u5C40\u53D8\u66F4\u3002\u73A9\u5BB6\u4EC5\u54A8\u8BE2\u65F6\uFF0C\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u6218\u6597\u4E0E\u5F15\u64CE\u95EE\u9898\u3002\u53EA\u6709\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u8C03\u6574\u6218\u5C40\u4E14\u5DF2\u52A0\u8F7D\u6218\u5C40\u65F6\uFF0C\u624D\u8F93\u51FA battle_patch \u6216 unit_patch JSON\u3002\u5F85\u5904\u7406\u8B66\u544A\u7531\u72EC\u7ACB\u7684\u6807\u51C6\u5316\u4EFB\u52A1\u5904\u7406\u3002" : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
@@ -8548,6 +8633,98 @@ ${variables.warnings()}` : "");
     };
   }
 
+  // src/tavern/char-snapshots.js
+  var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
+  var clean = (record2) => Object.fromEntries(Object.entries(record2 ?? {}).filter(([key3]) => !transient.has(key3) && !key3.startsWith("__source")));
+  var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
+  var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
+  async function characterRecords(sources, hydrated) {
+    const mvu = collectMvu(sources.mvuData), battle = sources.battleInit;
+    const participants = battle.units ?? battle.participants ?? [];
+    const rows = await Promise.all((hydrated?.roster ?? []).map(async (unit, i) => {
+      const mapping = hydrated.sourceMap?.[unit.id] ?? {};
+      const p = participants.find?.((p2) => p2.id === unit.id) ?? participants[unit.id] ?? participants[i];
+      const names = new Set([unit.id, unit.name, p?.name, mapping.sourceId, mapping.sourceName].filter(Boolean));
+      const matches2 = (r) => aliases(r).some((x) => names.has(x));
+      const samePath2 = mvu.find((r) => mapping.path && JSON.stringify(r.__sourcePath) === JSON.stringify(mapping.path));
+      const mv = samePath2 ?? mvu.find(matches2);
+      if (mv) aliases(mv).forEach((name) => names.add(name));
+      const char = sources.charInfo?.find(matches2);
+      const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
+      const defs = (table3, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table3 ?? {}, id3)).map((id3) => [id3, table3[id3]]));
+      const raw = {
+        ...mv && { mvu: clean(mv) },
+        ...char && { char_info: clean(char) },
+        battle_init: clean(p),
+        equipment: defs(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
+        skills: defs(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
+      };
+      const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordered(raw))));
+      return [unit.id, { raw, sourceKind, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
+    }));
+    return Object.fromEntries(rows);
+  }
+
+  // src/tavern/instance-card.js
+  var attributes2 = { str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" };
+  var types = { physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" };
+  var when = { passive: "\u88AB\u52A8", active: "\u4E3B\u52A8", on_hit: "\u547D\u4E2D\u65F6", on_attack: "\u653B\u51FB\u65F6", on_skill_cast: "\u65BD\u653E\u65F6", on_damaged: "\u53D7\u4F24\u65F6", on_heal: "\u6CBB\u7597\u65F6", on_turn_start: "\u56DE\u5408\u5F00\u59CB", on_turn_end: "\u56DE\u5408\u7ED3\u675F", on_kill: "\u51FB\u5012\u65F6", on_death: "\u5012\u4E0B\u65F6", on_equip: "\u88C5\u5907\u65F6", on_ally_death: "\u961F\u53CB\u5012\u4E0B\u65F6" };
+  var verbs = { heal: "\u6CBB\u7597", modifyStat: "\u5C5E\u6027\u4FEE\u6B63", modifyCheck: "\u68C0\u5B9A\u4FEE\u6B63", restoreResource: "\u6062\u590D\u8D44\u6E90", drainResource: "\u6D88\u8017\u8D44\u6E90", produceResource: "\u83B7\u5F97\u8D44\u6E90", removeStatus: "\u79FB\u9664\u72B6\u6001", shield: "\u62A4\u76FE", knockback: "\u51FB\u9000", teleportBackstab: "\u77AC\u79FB\u80CC\u523A", execute: "\u65A9\u6740", raiseDead: "\u590D\u751F", chainEffect: "\u6548\u679C\u94FE", procEffect: "\u89E6\u53D1\u6548\u679C", addItem: "\u83B7\u5F97\u7269\u54C1", upgradeHitTier: "\u63D0\u5347\u547D\u4E2D\u8BC4\u7EA7", forceOutcome: "\u5F3A\u5236\u5224\u5B9A", multiplyDamage: "\u4F24\u5BB3\u500D\u7387", modifyDamageBase: "\u57FA\u7840\u4F24\u5BB3", summon: "\u53EC\u5524" };
+  function effectSummary(expr, state) {
+    const status2 = (id3) => state?.statusTemplates?.[id3]?.name ?? STATUSES[id3]?.name ?? id3;
+    const node3 = (n) => (n.enabled === false ? "[\u5DF2\u5173\u95ED] " : "") + (n.kind === "damage" ? ["\u4F24\u5BB3", n.percentOfPower != null ? `\u5A01\u529B${Math.round(n.percentOfPower * 100)}%` : n.amount ?? n.flat, types[n.damageType]].filter((v) => v != null).join(" ") : n.kind === "grantStatus" ? `\u65BD\u52A0 ${status2(n.statusId)}${n.turns ? ` ${n.turns} \u56DE\u5408` : ""}` : n.kind === "chainEffect" ? n.effects.map(node3).join("\uFF0C") : [verbs[n.kind] ?? "\u6548\u679C", n.label ?? attributes2[n.stat] ?? n.stat ?? n.resource ?? "", n.amount ?? n.flat ?? n.factor ?? (n.percent != null ? `${n.percent * 100}%` : "")].filter((v) => v !== "").join(" "));
+    const roll = expr.roll;
+    return `${when[expr.trigger] ?? "\u89E6\u53D1"}${roll?.dice ? ` ${roll.dice}\u2265${roll.gte}` : roll?.save ? " \u8C41\u514D\u5931\u8D25" : roll?.chance != null ? ` ${Math.round(roll.chance * 100)}%` : ""} \u2192 ${(expr.effects ?? []).map(node3).join("\uFF1B")}`;
+  }
+  function fillInstance(box, make, unit, state, raw, select) {
+    const line = (tag, cls, value) => make(tag, { class: cls }, value);
+    const header = line("div", "fated-char-heading"), title = make("div");
+    title.append(line("strong", "fated-char-name", unit.name ?? unit.id), line("small", "fated-source-label", unit.source ?? "AI \u7F16\u8F91"));
+    header.append(title, select);
+    box.append(header);
+    const stats2 = line("dl", "fated-char-stats");
+    for (const [key3, name] of Object.entries(attributes2)) {
+      const pair = make("div");
+      pair.append(make("dt", {}, name), make("dd", {}, unit.stats?.[key3] ?? "\u2014"));
+      stats2.append(pair);
+    }
+    box.append(stats2);
+    const resources = line("p", "fated-char-resources");
+    for (const key3 of ["hp", "mp", "sp"]) {
+      const max = unit["max" + key3[0].toUpperCase() + key3.slice(1)], v = unit[key3];
+      const cell = make("span", {}, `${key3.toUpperCase()} ${v ?? "\u2014"} / ${max ?? "\u2014"}`);
+      cell.style.setProperty("--fill", `${max ? Math.min(100, Math.max(0, v / max * 100)) : 0}%`);
+      resources.append(cell);
+    }
+    box.append(resources);
+    const section = (title2, rows) => {
+      box.append(make("h5", {}, title2));
+      if (!rows.length) box.append(line("p", "fated-mini", `\u6682\u65E0${title2}`));
+      for (const [title3, template] of rows) {
+        const row = make(template?.effects?.length ? "details" : "div", { class: "fated-char-row" });
+        row.append(make(template?.effects?.length ? "summary" : "span", {}, title3));
+        for (const fx of template?.effects ?? []) row.append(line("p", "fated-mini", effectSummary(fx, state)));
+        box.append(row);
+      }
+    };
+    const wear = [["\u4E3B\u624B", unit.mainHand ?? unit.weapon], ["\u526F\u624B", unit.offHand], ["\u76FE\u724C", unit.shield], ...(unit.gear ?? []).map((id3) => ["\u7A7F\u6234", id3])];
+    const gear = wear.filter(([, id3]) => id3).map(([slot, id3]) => {
+      const item = state?.items?.[id3], t = state?.equipment?.[item?.templateId] ?? unit.equipment?.find((e) => e.id === id3)?.template;
+      const d = t?.damage;
+      return [`[${slot}] ${t?.name ?? id3} \xB7 \u653B\u51FB ${t?.attack ?? "\u2014"} \xB7 \u8DDD\u79BB ${t?.range ?? "\u2014"}${d ? ` \xB7 ${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}` : ""}`, t];
+    });
+    section("\u88C5\u5907", gear);
+    const skills = (unit.skills ?? []).map((id3) => {
+      const t = state?.skills?.[id3];
+      const damage = [...new Set([t?.damage?.type, t?.damageType, ...(t?.effects ?? []).flatMap((e) => e.effects.filter((n) => n.kind === "damage").map((n) => n.damageType)), unit.skillInfo?.[id3]?.damageType].filter(Boolean))].map((type) => types[type]).join("/");
+      return [`${t?.name ?? id3} \xB7 \u6D88\u8017 ${t?.resourceCost?.sp ?? t?.sp ?? 0} SP${t?.resourceCost?.mp ?? t?.mp ? ` / ${t.resourceCost?.mp ?? t.mp} MP` : ""}${t?.resourceCost?.hp ? ` / ${t.resourceCost.hp} HP` : ""} \xB7 \u5A01\u529B ${t?.power ?? "\u2014"} \xB7 ${damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B"} \xB7 \u8DDD\u79BB ${t?.range ?? "\u2014"}`, t];
+    });
+    section("\u6280\u80FD", skills);
+    const details = make("details", { class: "fated-char-raw" });
+    details.append(make("summary", {}, "\u539F\u59CB\u6570\u636E"), make("pre", {}, JSON.stringify({ instance: unit, source: raw, equipment: gear.map((r) => r[1]), skills: skills.map((r) => r[1]) }, null, 2)));
+    box.append(details);
+  }
+
   // src/tavern/ai-page.js
   var roleLabels = { user: "\u73A9\u5BB6", assistant: "\u8F85\u52A9 AI", system: "\u7CFB\u7EDF", tool: "\u5DE5\u5177" };
   var statusLabels2 = { ok: "\u5B8C\u6210", error: "\u5931\u8D25", aborted: "\u5DF2\u4E2D\u6B62" };
@@ -8570,13 +8747,12 @@ ${variables.warnings()}` : "");
       }
     }
   }
-  function mountAiPage(page, { make, on, sessions, send: send2, normalize, stop }) {
+  function mountAiPage(page, { make, on, sessions, send: send2, stop }) {
     const button = (label) => make("button", { type: "button" }, label);
     const toolbar = make("div", { class: "fated-actions" });
     const select = make("select", { "aria-label": "\u5207\u6362\u4F1A\u8BDD" });
     const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove = button("\u5220\u9664"), clear = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
-    const check = button("\u6807\u51C6\u5316");
-    toolbar.append(select, create, rename, remove, clear, check);
+    toolbar.append(select, create, rename, remove, clear);
     const edit = make("form", { class: "fated-actions", hidden: "" });
     const title = make("input", { "aria-label": "\u4F1A\u8BDD\u540D\u79F0", maxlength: "80", required: "" });
     const cancel = button("\u53D6\u6D88");
@@ -8634,7 +8810,7 @@ ${variables.warnings()}` : "");
       const session = sessions.active();
       info.textContent = `${session.messages.length} \u6761\u6D88\u606F \xB7 \u521B\u5EFA\u4E8E ${formatTime(session.createdAt)}`;
       submit.disabled = busy || !input.value.trim();
-      check.disabled = remove.disabled = clear.disabled = busy;
+      remove.disabled = clear.disabled = busy;
       abort.hidden = !busy;
       status2.textContent = busy ? "AI \u6B63\u5728\u56DE\u590D\u2026" : "";
       scrollToEnd();
@@ -8685,7 +8861,6 @@ ${variables.warnings()}` : "");
       sessions.clear(shownId);
       render();
     });
-    on(check, "click", normalize);
     on(abort, "click", stop);
     on(input, "input", () => {
       drafts.set(shownId, input.value);
@@ -8877,21 +9052,13 @@ ${variables.warnings()}` : "");
     const swipeId = message.swipe_id ?? message.swipeId ?? message.swipe_id_string ?? message.swipe ?? message.data?.swipe_id ?? "0";
     return { messageId: String(messageId), swipeId: String(swipeId) };
   }
-  function fnv1a(value) {
-    let hash2 = 2166136261;
-    for (const char of String(value)) {
-      hash2 ^= char.codePointAt(0);
-      hash2 = Math.imul(hash2, 16777619);
-    }
-    return (hash2 >>> 0).toString(16).padStart(8, "0");
-  }
   function safeKey(value) {
     return text3(value).replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 96) || "unknown";
   }
-  function battleKeyFor(chat, message, raw, battle) {
+  function battleKeyFor(chat, message, battle) {
     const meta = messageMeta(message);
     const explicit = battle?.battleId ?? battle?.id ?? "unnamed";
-    return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit), `h_${fnv1a(raw)}`].join("__");
+    return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit)].join("__");
   }
   function extractTag(source, names) {
     const value = text3(source);
@@ -8970,7 +9137,7 @@ ${variables.warnings()}` : "");
     return null;
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.1.5";
+  var TAVERN_VERSION = "0.1.8";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
@@ -8983,6 +9150,9 @@ ${variables.warnings()}` : "");
     headers: "{}",
     hideLauncher: false,
     autoScan: true,
+    charSnapshots: {},
+    rosterSelection: null,
+    normalizationBatches: {},
     slots: describeSlots(),
     extraText: "",
     aiSessions: { sessions: [], activeId: null },
@@ -9064,7 +9234,7 @@ ${variables.warnings()}` : "");
     const decodeTags = (value) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"');
     const battleSource = eligible.findLast((message) => extractTag(decodeTags(messageContent(message)), tags2));
     const sourceIndex = battleSource ? list3.indexOf(battleSource) : list3.length - 1;
-    const joined = list3.slice(0, sourceIndex + 1).map(messageContent).join("\n");
+    const joined = (preferredMessageId == null ? list3 : list3.slice(0, sourceIndex + 1)).map(messageContent).join("\n");
     const allText = decodeTags(messageContent(battleSource ?? eligible.at(-1)));
     let battleRaw = extractTag(allText, tags2);
     if (!battleRaw) {
@@ -9083,15 +9253,15 @@ ${variables.warnings()}` : "");
         battleRaw = JSON.stringify(recovered, null, 2);
       }
     }
-    const charBlocks = extractTags(joined, "char_info");
+    const charBlocks = extractTags(joined, "char_info").reverse();
     const charRaw = charBlocks[0] || "";
     const charInfo = charBlocks.flatMap((raw) => {
       const value = parseJSON(raw, null);
-      return value ? [value] : [parseLooseYaml(raw)];
+      return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
     });
     const mvuData = statData(variables) ?? variables ?? {};
     const sourceMessage = battleSource ?? eligible.at(-1);
-    const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleRaw, battleInit) : null;
+    const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit) : null;
     return {
       mvuData,
       latestFloor: battleSource ? messageContent(battleSource) : latestFloor,
@@ -9214,7 +9384,10 @@ ${variables.warnings()}` : "");
     const aiSessions = createAiSessions(config.aiSessions, (value) => persistSettings({ aiSessions: value }));
     let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
     let selectedMessageId = null, aiController = null, aiFinished, askAI, retryAI = null, aiPage = null;
-    const attemptedBattles = /* @__PURE__ */ new Set(), normalizedBattles = /* @__PURE__ */ new Map();
+    let characters = {}, mountedHashes = {}, scanStatus = "";
+    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key3) => own6(config.instances, key3));
+    const batches = (key3) => config.normalizationBatches?.[key3] ?? [];
+    const operations = (key3) => batches(key3).flatMap((batch) => batch.patch);
     let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: "created" };
     const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
     const on = (node3, event, fn, opts = {}) => {
@@ -9464,8 +9637,13 @@ ${tag.textContent || ""}
       const loadBattle = el(doc, "button", { type: "button", class: "fated-primary" }, battle ? "\u52A0\u8F7D\u6218\u573A" : "\u626B\u63CF\u5E76\u52A0\u8F7D");
       const showSource = el(doc, "details", { class: "fated-battle-source-box" });
       showSource.append(el(doc, "summary", {}, "\u67E5\u770B\u539F\u59CB battle_init"), el(doc, "pre", { class: "fated-battle-source" }, sources.battleRaw || "\u6682\u65E0\u539F\u59CB\u6570\u636E"));
-      battleActions.append(loadBattle);
-      battleCard.append(battleActions, showSource);
+      const normalize = el(doc, "button", { type: "button", "data-normalize": "" }, "\u6807\u51C6\u5316");
+      normalize.disabled = !selectedIds().length || !activeBattleKey || !!aiController;
+      const hint = !selectedIds().length ? [scanStatus, "\u8BF7\u5148\u52FE\u9009\u8981\u6807\u51C6\u5316\u7684\u89D2\u8272"].filter(Boolean).join(" \xB7 ") : scanStatus;
+      normalize.title = hint;
+      on(normalize, "click", () => runNormalize(selectedIds(), { force: true }));
+      battleActions.append(loadBattle, normalize);
+      battleCard.append(battleActions, el(doc, "p", { class: "fated-mini", "data-normalize-status": "" }, hint), showSource);
       page.append(battleCard);
       const diag = el(doc, "details", { class: "fated-diagnostics" });
       diag.append(el(doc, "summary", {}, "\u8BCA\u65AD\u65E5\u5FD7\uFF08\u626B\u63CF\u6765\u6E90 / \u53BB\u91CD\uFF09"));
@@ -9479,14 +9657,33 @@ ${tag.textContent || ""}
       const refresh = el(doc, "button", { type: "button" }, "\u4ECE\u5F53\u524D\u804A\u5929\u91CD\u65B0\u6C34\u5408");
       toolbar.append(refresh);
       page.append(toolbar);
+      const choose = (ids) => {
+        persistSettings({ rosterSelection: ids });
+        renderInstances();
+      };
+      for (const [label, all] of [["\u5168\u9009", true], ["\u53D6\u6D88\u5168\u9009", false]]) {
+        const b = el(doc, "button", { type: "button" }, label);
+        on(b, "click", () => choose(all ? Object.keys(config.instances) : []));
+        toolbar.append(b);
+      }
       const list3 = el(doc, "div");
       page.append(list3);
       const entries2 = Object.entries(config.instances);
       if (!entries2.length) list3.append(el(doc, "p", { class: "fated-mini" }, "\u6682\u65E0\u5B9E\u4F8B\u3002\u6253\u5F00\u6C99\u76D8\u4F1A\u81EA\u52A8\u8BFB\u53D6\u5F53\u524D MVU\u3001char_info \u548C battle_init\u3002"));
       for (const [key3, instance] of entries2) {
         const box = el(doc, "article", { class: "fated-instance" });
-        box.append(el(doc, "strong", {}, instance.name || key3), el(doc, "div", { class: "fated-mini" }, `\u6765\u6E90\uFF1A${instance.source || "\u624B\u52A8\u6216 AI \u7F16\u8F91"} \xB7 ${instance.notes || "\u5DF2\u6807\u51C6\u5316"}`));
-        box.append(el(doc, "pre", { class: "fated-status" }, JSON.stringify(instance, null, 2)));
+        box.dataset.unitId = key3;
+        const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key3}` });
+        select.checked = selectedIds().includes(key3);
+        on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key3])] : selectedIds().filter((k) => k !== key3)));
+        fillInstance(box, (tag, attrs2, value) => el(doc, tag, attrs2, value), instance, liveState(), characters[key3]?.raw, select);
+        const messages = warningsForUnit(sources.warnings, [key3], false);
+        if (messages.length) {
+          const details = el(doc, "details", { class: "fated-char-diagnostics" }), list4 = el(doc, "ul");
+          for (const { message } of messages) list4.append(el(doc, "li", {}, message));
+          details.append(el(doc, "summary", {}, `\u26A0 ${messages.length} \u6761\u8BCA\u65AD`), list4);
+          box.append(details);
+        }
         const actions2 = el(doc, "div", { class: "fated-actions" });
         const edit = el(doc, "button", { type: "button" }, "\u7F16\u8F91 JSON");
         const remove = el(doc, "button", { type: "button" }, "\u5220\u9664");
@@ -9496,13 +9693,13 @@ ${tag.textContent || ""}
         on(remove, "click", () => {
           delete config.instances[key3];
           save();
-          renderInstances();
+          choose(selectedIds());
         });
         on(edit, "click", () => {
           const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
           const parsed = parseJSON(value, null);
-          if (parsed) {
-            config.instances[key3] = parsed;
+          if (isObject(parsed)) {
+            config.instances[key3] = { ...parsed, id: key3, source: "AI \u7F16\u8F91" };
             save();
             renderInstances();
           }
@@ -9519,16 +9716,16 @@ ${tag.textContent || ""}
     }
     let promptKind = "validate", promptInstruction = "";
     let previewSink, lastSent = null;
-    function assemblyContext(kind = promptKind, instruction = promptInstruction) {
-      return { kind, instruction, state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
+    function assemblyContext(kind = promptKind, instruction = promptInstruction, onlyUnitIds = kind === "validate" ? selectedIds() : void 0) {
+      return { kind, instruction, onlyUnitIds, rawCharacters: Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
     }
     function publishMessages(messages, kind = promptKind) {
       previewSink?.(messages, kind);
       return messages;
     }
-    function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false) {
+    function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds) {
       const slots = config.slots;
-      const messages = assembleMessages(slots, assemblyContext(kind, instruction));
+      const messages = assembleMessages(slots, assemblyContext(kind, instruction, unitIds));
       if (config.debugPrompts) console.debug("[fated:prompts]", {
         kind,
         slots: slots.map((s) => ({ id: s.id, enabled: s.enabled })),
@@ -9553,8 +9750,12 @@ ${tag.textContent || ""}
         save: persistSettings
       };
     }
-    function runNormalize(sessionId) {
-      return askAI("validate", "", sessionId);
+    function runNormalize(unitIds = Object.keys(characters), { force = false, sessionId = force ? aiSessions.active().id : void 0 } = {}) {
+      const stored = config.charSnapshots[activeBattleKey] ?? {};
+      const ids = unitIds.filter((id4) => characters[id4] && (force || !stored[id4]?.normalized || stored[id4].hash !== characters[id4].hash));
+      if (!ids.length) return;
+      const records = Object.fromEntries(ids.map((id4) => [id4, { hash: characters[id4].hash, sourceKind: characters[id4].sourceKind }]));
+      return askAI("validate", "", sessionId, records);
     }
     async function hydrate(epoch) {
       const messages = await tavernMessages(host);
@@ -9632,7 +9833,7 @@ ${tag.textContent || ""}
       const target2 = pages.sandbox.querySelector("[data-sandbox-mount]");
       const restart = ({ seed, mode }) => {
         const next = hydrateFromSources(battleInput, { seed, mode, throwOnValidation: true }).state;
-        return applyNormalization(next, normalizedBattles.get(battleInstanceId));
+        return applyNormalization(next, operations(battleInstanceId));
       };
       gameMount = (options.mount || mount)(target2, {
         instanceId: battleInstanceId,
@@ -9665,29 +9866,44 @@ ${tag.textContent || ""}
         const hydrated = await hydrate(epoch);
         if (epoch !== scanEpoch || disposed) return;
         const nextState = hydrated?.state ?? null;
-        if (force || !gameMount || activeBattleKey !== sources.battleKey) {
+        const key3 = sources.battleKey;
+        const fresh = key3 ? await characterRecords(sources, hydrated) : {};
+        if (epoch !== scanEpoch || disposed) return;
+        syncSettings();
+        const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key3] ?? {} };
+        const removed = Object.keys(stored).filter((id4) => !fresh[id4]);
+        diagnostics.removedCharacters = removed;
+        for (const id4 of removed) delete stored[id4];
+        const changed = ids.filter((id4) => !stored[id4]?.normalized || stored[id4].hash !== fresh[id4].hash);
+        const sourceChanged = activeBattleKey === key3 && (ids.some((id4) => mountedHashes[id4] !== fresh[id4].hash) || Object.keys(mountedHashes).some((id4) => !fresh[id4]));
+        if (sourceChanged || !gameMount || activeBattleKey !== key3) {
           if (aiController) {
             const finished = aiFinished;
             aiController.abort();
-            attemptedBattles.delete(activeBattleKey);
             await finished;
             if (epoch !== scanEpoch || disposed) return;
           }
-          if (force) {
-            attemptedBattles.delete(sources.battleKey);
-            normalizedBattles.delete(sources.battleKey);
-          }
           toast.hidden = true;
-          currentState = nextState ? applyNormalization(nextState, normalizedBattles.get(sources.battleKey)) : null;
-          activeBattleKey = sources.battleKey;
-          mountState(currentState, !force);
+          const kept = batches(key3).filter((batch) => Object.entries(batch.hashes).some(([id4, hash2]) => fresh[id4]?.hash === hash2));
+          const invalid = batches(key3).filter((batch) => !kept.includes(batch));
+          if (invalid.length) {
+            persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key3]: kept } });
+          }
+          currentState = nextState ? applyNormalization(nextState, operations(key3)) : null;
+          activeBattleKey = key3;
+          mountState(currentState, !sourceChanged && !invalid.length && !changed.length);
         }
+        characters = fresh;
+        mountedHashes = Object.fromEntries(ids.map((id4) => [id4, fresh[id4].hash]));
+        for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
+        if (key3 && (changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key3]: stored } });
+        if (config.rosterSelection === null && ids.length) persistSettings({ rosterSelection: ids });
+        const live = liveState();
+        for (const unit of Object.values(live?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
+        scanStatus = changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u65E0\u53D8\u5316\uFF0C\u8DF3\u8FC7\u81EA\u52A8\u6807\u51C6\u5316";
         renderInstances();
-        if (currentState && !aiController && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
-          attemptedBattles.add(activeBattleKey);
-          void runNormalize();
-        }
-        if (node3) node3.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
+        if (currentState && !aiController && changed.length) void runNormalize(changed, { force: false });
+        if (node3) node3.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")} \xB7 ${scanStatus}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
         diagnostics = { ...diagnostics, phase: "scan-error", error: e?.stack || e?.message || String(e) };
         try {
@@ -9708,10 +9924,9 @@ ${tag.textContent || ""}
       const mountTarget = el(doc, "div", { "data-sandbox-mount": "" });
       page.append(mountTarget);
       const actions2 = el(doc, "div", { class: "fated-actions" });
-      const check = el(doc, "button", { type: "button" }, "\u6807\u51C6\u5316");
       const report = el(doc, "button", { type: "button" }, "\u6218\u62A5\u4EA4\u4ED8");
       const refresh = el(doc, "button", { type: "button" }, "\u91CD\u65B0\u626B\u63CF");
-      actions2.append(check, report, refresh);
+      actions2.append(report, refresh);
       page.append(actions2);
       const output = status2;
       on(refresh, "click", () => scan(true).catch(showError));
@@ -9732,9 +9947,8 @@ ${tag.textContent || ""}
           showError(e);
         }
       });
-      on(check, "click", () => runNormalize());
     }
-    askAI = async (kind, requestText = "", sessionId = kind === "chat" ? aiSessions.active().id : void 0) => {
+    askAI = async (kind, requestText = "", sessionId = kind === "chat" ? aiSessions.active().id : void 0, records) => {
       if (aiController || kind === "chat" && !requestText) return;
       syncSettings();
       promptKind = kind;
@@ -9772,9 +9986,11 @@ ${tag.textContent || ""}
         finish = resolve;
       });
       aiPage?.setBusy(true);
+      const normalizeButton = pages.instances.querySelector("[data-normalize]");
+      if (normalizeButton) normalizeButton.disabled = true;
       const timeout = setTimeout(() => controller2.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), config.timeoutMs ?? 6e4);
       const label = normalize ? "\u6807\u51C6\u5316" : "AI \u8C03\u6574";
-      const retryRequest = () => askAI(kind, requestText, sessionId);
+      const retryRequest = () => normalize ? runNormalize(Object.keys(records), { force: true, sessionId: sessionId ?? null }) : askAI(kind, requestText, sessionId);
       if (normalize) notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", "", null, true);
       else toast.hidden = true;
       let receivedPatch = normalize, replyText = "", unresolved = [], appliedCount = 0;
@@ -9786,7 +10002,7 @@ ${tag.textContent || ""}
           }
           throw new Error("\u6CA1\u6709\u53EF\u6807\u51C6\u5316\u7684\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6C99\u76D8");
         }
-        let prompts = prepareMessages(kind, requestText, true);
+        let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
         if (!normalize) {
           prompts = [...prompts, ...history, { role: "user", content: requestText }];
           lastSent = prompts;
@@ -9837,7 +10053,7 @@ ${tag.textContent || ""}
             validate(nextState);
             if (normalize && patch.length) {
               refreshOpeningInitiative(nextState);
-              combined = [...normalizedBattles.get(key3) ?? [], ...patch];
+              combined = [...operations(key3), ...patch];
               const baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
               validate(applyNormalization(baseline, combined));
             }
@@ -9863,7 +10079,29 @@ ${tag.textContent || ""}
           save();
           renderInstances();
         }
-        if (combined) normalizedBattles.set(key3, combined);
+        if (combined) {
+          const stored = { ...config.charSnapshots[key3] }, hashes = {};
+          for (const [id4, rec] of Object.entries(records)) {
+            stored[id4] = { ...rec, at: Date.now(), normalized: true };
+            hashes[id4] = rec.hash;
+          }
+          const additions = patch.map((op) => {
+            const [, table3, target2] = op.path.split("/");
+            const owners = Object.keys(records).filter((id4) => {
+              const u = nextState.units[id4];
+              const items = [u?.weapon, u?.mainHand, u?.offHand, u?.shield, ...u?.gear ?? []];
+              if (table3 === "units") return target2 === id4;
+              if (table3 === "skills") return u?.skills?.includes(target2);
+              if (table3 === "items") return items.includes(target2);
+              if (table3 === "equipment") return items.some((k) => nextState.items[k]?.templateId === target2);
+              return false;
+            });
+            return { patch: [op], hashes: owners.length ? Object.fromEntries(owners.map((id4) => [id4, hashes[id4]])) : hashes };
+          });
+          persistSettings({ charSnapshots: { ...config.charSnapshots, [key3]: stored }, normalizationBatches: { ...config.normalizationBatches, [key3]: [...batches(key3), ...additions] } });
+          scanStatus = `\u5DF2\u6807\u51C6\u5316 ${Object.keys(records).length} \u4E2A\u89D2\u8272`;
+          renderInstances();
+        }
         updateReply({ content: replyText, status: "ok" });
         const result = Array.isArray(patch) && !patch.length ? "\u65E0\u8865\u4E01\u53D8\u66F4" : "\u8865\u4E01\u5DF2\u5E94\u7528";
         postStatus(`${label}\uFF1A${result}${unresolved.length ? `\uFF0C\u5F85\u5904\u7406\uFF1A${unresolved.join("\uFF1B")}` : ""}`, "ok");
@@ -9892,7 +10130,10 @@ ${tag.textContent || ""}
       } finally {
         clearTimeout(timeout);
         if (aiController === controller2) aiController = null;
-        if (!disposed) aiPage?.setBusy(false);
+        if (!disposed) {
+          aiPage?.setBusy(false);
+          renderInstances();
+        }
         finish();
       }
     };
@@ -9916,7 +10157,6 @@ ${tag.textContent || ""}
       on,
       sessions: aiSessions,
       send: (message) => askAI("chat", message),
-      normalize: () => runNormalize(aiSessions.active().id),
       stop: () => aiController?.abort(new DOMException("\u5DF2\u53D6\u6D88", "AbortError"))
     });
     updateMagic();

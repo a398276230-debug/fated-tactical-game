@@ -1,5 +1,7 @@
 // Console chrome. The variable values are the amethyst palette from
 // styles/battle-theme.css so the Tavern console and the sandbox look like one UI.
+const ciDark = `--ci-bg:#121417;--ci-surface:#1b1e22;--ci-surface-raised:#23272c;--ci-surface-soft:#2c3137;--ci-input:#0f1114;--ci-border:#494236;--ci-border-strong:#6a5b43;--ci-text:#f7f2e9;--ci-text-secondary:#d9cfbf;--ci-text-muted:#aea290;--ci-primary:#d2ac6d;--ci-primary-strong:#b88a46;--ci-primary-soft:rgb(210 172 109 / 18%);--ci-on-primary:#1d1811;--ci-success:#88a18e;--ci-danger:#d4878c;--ci-warning:#d2ad71;--ci-shadow:rgb(0 0 0 / 58%);color-scheme:dark`;
+const ciLight = `--ci-bg:#e3ded6;--ci-surface:#f0ece6;--ci-surface-raised:#f6f2ec;--ci-surface-soft:#d5cec4;--ci-input:#f8f5ef;--ci-border:#b9aa96;--ci-border-strong:#806b50;--ci-text:#1f1d1a;--ci-text-secondary:#403a34;--ci-text-muted:#5d544a;--ci-primary:#6b4a22;--ci-primary-strong:#513615;--ci-primary-soft:rgb(107 74 34 / 12%);--ci-on-primary:#fff8ee;--ci-success:#365844;--ci-danger:#873941;--ci-warning:#68451f;--ci-shadow:rgb(58 47 36 / 24%);color-scheme:light`;
 export const tavernTheme = `
 :where([data-fated-tavern-overlay], .fated-battle-entry) {
   --ink-0:#141423; --ink-1:#1e1e32; --ink-2:#11111d;
@@ -136,6 +138,18 @@ export const tavernTheme = `
 .fated-ai-message header { display:flex; justify-content:space-between; gap:12px; color:var(--gold); font-size:.72em; margin-bottom:4px; }
 .fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }
 .fated-ai-info { color:var(--text-muted, var(--blue-text)); font-size:.78em; margin:5px 0; }
+[data-fated-tavern-overlay] { ${ciDark} }
+@media(prefers-color-scheme:light) { [data-fated-tavern-overlay] { ${ciLight} } }
+.fated-ci-dark,.fated-ci-dark [data-fated-tavern-overlay] { ${ciDark} }
+.fated-ci-light,.fated-ci-light [data-fated-tavern-overlay] { ${ciLight} }
+[data-fated-tavern-overlay] article.fated-instance.fated-instance { padding:14px 16px; margin-block:8px; color:var(--ci-text); border:1px solid var(--ci-border); border-radius:10px; background:var(--ci-surface); box-shadow:none }
+[data-fated-tavern-overlay] article.fated-instance::before { display:none }
+.fated-char-heading { display:flex;align-items:center;justify-content:space-between;gap:12px }.fated-char-heading input { flex:none; accent-color:var(--ci-primary) }.fated-char-name { color:var(--ci-text) }.fated-source-label { margin-inline-start:8px;color:var(--ci-text-muted) }
+.fated-char-stats,.fated-char-resources { display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:10px 0 }.fated-char-stats div {padding:4px 6px;border-radius:4px;background:var(--ci-primary-soft)}.fated-char-stats dt {font-size:.8em;color:var(--ci-text-secondary)}.fated-char-stats dd {margin:0;font-weight:bold;color:var(--ci-primary)}
+.fated-char-resources {grid-template-columns:repeat(3,minmax(0,1fr));color:var(--ci-text-secondary)}.fated-char-resources span {padding-block-end:5px;background:linear-gradient(to right,var(--ci-primary-soft) var(--fill),var(--ci-surface-soft) var(--fill)) left bottom / 100% 4px no-repeat}
+.fated-instance h5 { margin:8px 0 2px;color:var(--ci-primary) }.fated-char-row { padding-block:3px }.fated-instance .fated-mini {color:var(--ci-text-muted)}.fated-instance summary { cursor:pointer }.fated-char-raw { border-top:1px solid var(--ci-border-strong); margin-block:8px; padding:6px 8px;background:var(--ci-input);color:var(--ci-text-secondary) }.fated-char-raw pre { max-height:12rem; overflow:auto;color:inherit }
+[data-fated-tavern-overlay] .fated-instance button:not([data-sandbox-mount] *) {background:var(--ci-surface-raised);border-color:var(--ci-border);color:var(--ci-text-secondary)}
+[data-fated-tavern-overlay] .fated-instance button:not([data-sandbox-mount] *):hover {background:var(--ci-primary-soft);border-color:var(--ci-primary);color:var(--ci-primary)}
 .fated-toast {
   position:fixed; z-index:2; top:max(16px,env(safe-area-inset-top)); right:16px; width:min(380px,calc(100vw - 32px));
   padding:12px 14px; border:1px solid var(--header-line); border-inline-start:3px solid var(--notice-color,var(--blue-text)); border-radius:8px;

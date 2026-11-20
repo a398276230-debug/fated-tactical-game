@@ -8,6 +8,8 @@ const IDENTITY = `你是命定战斗助手。你需要根据用户输入对战�
 
 不做叙事、不扮演角色、不推进剧情，只输出引擎可执行的数据变更。按当前任务要求组织补丁和待处理项，沿用快照中的角色、装备、技能和状态 ID，保留与本次操作无关的数据。提交前检查路径、参数和数值范围，确保整批变更可以在当前战局执行。`;
 
+import { warningsForUnit } from './converter.js';
+
 export const DEFAULT_SLOTS = [
   { id: 'identity', label: '身份与任务声明', role: 'system', enabled: true, desc: '命定战斗助手的职责与边界', content: IDENTITY },
   { id: 'protocol', label: '战斗协议与规则说明', role: 'system', enabled: true, desc: '真实战斗协议的数值口径、判定方式、输出约束' },
@@ -91,15 +93,22 @@ export function describeSlots(saved) {
 
 export function resolveSlotContent(slot, ctx = {}) {
   const { sources = {}, state, instruction = '' } = ctx;
+  const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
   const variables = {
     battle_init: () => sources.battleRaw || json(sources.battleInit ?? {}),
-    battle_state: () => json(state ?? {}), warnings: () => json(sources.warnings ?? []),
-    user_instruction: () => instruction, standardized_roster: () => sources.roster || '',
+    battle_state: () => json(state ?? {}), warnings: () => json(warnings.map(w => w.message)),
+    user_instruction: () => instruction, standardized_roster: () => ctx.onlyUnitIds ? rosterText() : sources.roster || '',
     roster: rosterText, battle: battleText,
     mvu_data: () => json(sources.mvuData ?? {}), latest_floor: () => sources.latestFloor || '',
   };
   const expand = template => String(template).replace(/\{\{(\w+)\}\}/g, (_, key) => Object.hasOwn(variables, key) ? variables[key]() : '');
   function rosterText() {
+    if (ctx.onlyUnitIds && state) {
+      const pick = (table, ids) => Object.fromEntries([...new Set(ids)].filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
+      const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
+      const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear??[])]));
+      return json({raw:pick(ctx.rawCharacters,ctx.onlyUnitIds), units, items, equipment:pick(state.equipment,Object.values(items).map(i=>i.templateId)), skills:pick(state.skills,rows.flatMap(u=>u.skills??[])), statusTemplates:state.statusTemplates});
+    }
     if (ctx.rosterText != null) return ctx.rosterText;
     if (!state) return sources.roster || '';
     const templates = new Set(Object.values(state.items ?? {}).map(item => item.templateId));
@@ -119,7 +128,7 @@ export function resolveSlotContent(slot, ctx = {}) {
     case 'protocol': return protocol;
     case 'roster': return rosterText();
     case 'battle': return battleText();
-    case 'warnings': return ctx.warningsText ?? (sources.warnings?.length ? `待处理警告：\n${variables.warnings()}` : '');
+    case 'warnings': return ctx.warningsText ?? (warnings.length ? `待处理警告：\n${variables.warnings()}` : '');
     case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? '【辅助 AI 对话】身份声明中的数据输出要求适用于战局变更。玩家仅咨询时，直接用文字回答战斗与引擎问题。只有玩家明确要求调整战局且已加载战局时，才输出 battle_patch 或 unit_patch JSON。待处理警告由独立的标准化任务处理。' : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
     case 'extra': return expand(ctx.extraText || '');
     case 'assistant': return ctx.assistantText || '';

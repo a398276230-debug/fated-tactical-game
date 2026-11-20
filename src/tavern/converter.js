@@ -267,9 +267,16 @@ function statusTurns(value, fallback) {
   return bound(turns, 1, 100, fallback);
 }
 
-/** Map only effects understood by validation/engine. Unknown effects are
- * intentionally dropped (level 3 safety downgrade), never executed. */
+function warningSink(warnings, unitId, source, scope) {
+  return { push: message => warnings.push({ message, unitId, source, scope }) };
+}
+
+/** Map only effects understood by validation/engine. Unknown effects are dropped. */
 export function mapEffects(effects, context = 'skill', warnings = [], prefix = 'imported') {
+  return convertEffects(effects, context, warningSink(warnings, null, null, 'effect'), prefix);
+}
+
+function convertEffects(effects, context, warnings, prefix) {
   let input = Array.isArray(effects) ? effects : effects == null ? [] : [effects];
   if (object(effects) && !['trigger','kind','type','effect','name','类型'].some(key => own(effects, key))) {
     input = Object.entries(effects).flatMap(([kind, value]) => {
@@ -334,6 +341,23 @@ export const mapEffect = (raw, context, warnings) => mapEffects([raw], context, 
 
 const damageAliases = new Map(Object.entries({ 物理: 'physical', 能量: 'energy', 精神: 'mental', 真实: 'true' }));
 const damageTypes = ['physical', 'energy', 'mental', 'true'];
+function skillCosts(value) {
+  const cost = object(value) ? Object.entries(value).map(([k,v]) => `${k}: ${v}`).join(' ') : text(value);
+  const slots = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
+  const resources = {};
+  for (const [,n,key] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key.toLowerCase()] = Number(n);
+  return { ...resources, slot: slots[0]?.[1] === '动作' ? 'action' : 'attack', ap: new Set(slots.map(s => s[1])).size === 2 ? 2 : 1 };
+}
+function damageTags(value, power) {
+  if (!value) return [];
+  const single = damageAliases.get(value);
+  if (single) return [{ kind:'damage', percentOfPower:1, damageType:single }];
+  const parts = value.split(/[/／]/).map(s => s.trim().match(/^(物理|能量|精神|真实)\s*(\d+(?:\.\d+)?)\s*([%％]?)$/));
+  if (parts.length < 2 || parts.some(p => !p)) return [];
+  const percent = parts.every(p => p[3]);
+  if (!percent && !(parts.every(p => !p[3]) && parts.reduce((n,p) => n + Number(p[2]),0) === Number(power))) return [];
+  return parts.map(([,type,n]) => ({kind:'damage', damageType:damageAliases.get(type), ...(percent ? {percentOfPower:Number(n)/100} : {flat:Number(n)})}));
+}
 function normalizeDice(raw) {
   const dice = asObject(raw);
   const stat = own(statAliases, dice.stat) ? statAliases[dice.stat] : dice.stat;
@@ -359,7 +383,7 @@ function normalizeEquipment(raw, slot, owner, index, warnings) {
   const isWeapon = kind === 'weapon';
   const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
   const templateId = `template-${idBase}`;
-  const effects = mapEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', warnings, `fx-${hash(templateId).toString(36)}`);
+  const effects = convertEffects(r.effects ?? r.effectsList ?? r.效果, 'equipment', warnings, `fx-${hash(templateId).toString(36)}`);
   const template = { name: name.slice(0, 100), kind, effects };
   const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
   const defense = bound(r.defense ?? r.防御 ?? defenseTag?.[1], 0, 1000000, kind === 'shield' ? 1 : 0);
@@ -477,7 +501,8 @@ function participantList(battle) {
 function teamOf(value, fallback = 'red') { const t = text(value).toLowerCase(); return ['blue','player','ally','友方','我方'].includes(t) ? 'blue' : ['red','enemy','foe','敌方'].includes(t) ? 'red' : fallback; }
 function xyzOf(value) { const p = asObject(value); const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z]; return { x: Math.max(0, Math.min(9, integer(xyz[0], 0))), y: Math.max(0, Math.min(9, integer(xyz[1], 0))), z: integer(xyz[2], 0) }; }
 
-function unitFrom(record, participant, index, equipment, skills, items, warnings) {
+function unitFrom(record, participant, index, equipment, skills, items, sink) {
+  const effects = sink('effect'), resourcesSink = sink('resource'), warnings = sink('status');
   const p = participant ?? {};
   const name = text(p.protagonistName || p.name) || sourceName(record, p.id) || `单位 ${index + 1}`;
   const id = p.id;
@@ -486,8 +511,8 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
   const bodyLengthM = Math.max(.01, Math.min(1e9, number(findValue(record, ['bodyLengthM','bodyLength','bl','体长'], 1.7), 1.7)));
   const size = Math.max(1, Math.min(5, sizeFor(bodyLengthM).value === 2 ? 1 : sizeFor(bodyLengthM).value === 1 ? 2 : sizeFor(bodyLengthM).value === 0 ? 3 : sizeFor(bodyLengthM).value === -1 ? 4 : 5));
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
-  const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', warnings), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', warnings), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', warnings) };
-  const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, warnings));
+  const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
+  const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, effects));
   for (const item of slotItems) {
     equipment[item.templateId] ??= item.template;
     items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
@@ -498,21 +523,32 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
   const shield = !main?.template.twoHanded && slotItems.find(i => i.template.kind === 'shield');
   const gear = slotItems.filter(i => ![main, off, shield].includes(i));
   const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
+  const skillInfo = {};
   const normalizedSkills = sourceSkills(record).slice(0, 32).map(([raw, i]) => {
     const r = asObject(raw), sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${i}`;
     const labels = [].concat(r.tags ?? r.标签 ?? []).join(' ');
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const taggedRange = labels.match(/有效距离\s*[:：][^\d\]]*(\d+)/)?.[1];
+    const costs = skillCosts(r.cost ?? r.消耗);
+    const tag = labels.match(/伤害\s*[:：]\s*([^\]]+)/)?.[1]?.trim();
+    const rawEffects = r.effects ?? r.效果;
+    const nodes = damageTags(tag, r.power ?? taggedPower);
+    skillInfo[sid] = { description:text(r.description ?? r.描述), damageType:damageAliases.get(tag), hp:costs.hp };
     skills[sid] = {
       name: text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`,
-      quality: '普通', ap: bound(r.ap, 1, 2), slot: r.slot === 'action' ? 'action' : 'attack',
+      quality: '普通', ap: bound(r.ap ?? costs.ap, 1, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(r.range ?? taggedRange, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
       target: ['enemy', 'ally', 'self', 'any', 'corpse'].includes(r.target) ? r.target : 'enemy',
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
-      effects: mapEffects(r.effects ?? r.效果, 'skill', warnings, `fx-${hash(sid).toString(36)}`),
+      effects: convertEffects(r.effects ?? r.效果, 'skill', effects, `fx-${hash(sid).toString(36)}`),
     };
+    if (!r.damage && (r.power != null || taggedPower) && nodes.length && (Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects))) {
+      skills[sid].effects.push({id:`fx-${hash(sid).toString(36)}-damage`,trigger:'active',target:'hitTarget',effects:nodes});
+    }
+    const damageType = r.damageType ?? damageAliases.get(tag);
+    if (damageType != null) skills[sid].damageType = damageType;
     for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['radius', 0, 6], ['width', 0, 6], ['accuracy', -20, 30], ['power', 0, 1e9]]) {
-      const value = r[key] ?? (key === 'power' ? taggedPower : undefined);
+      const value = r[key] ?? (key === 'power' ? taggedPower : costs[key]);
       if (value != null) skills[sid][key] = bound(value, min, max);
     }
     if (attrNames.includes(r.save) && r.saveDC != null) {
@@ -520,6 +556,7 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
       if (validSaveDC(saveDC)) Object.assign(skills[sid], { save: r.save, saveDC: structuredClone(saveDC) });
     }
     if (object(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
+    if (costs.hp != null) skills[sid].resourceCost = { hp:bound(costs.hp, 0, 25000), ...skills[sid].resourceCost };
     for (const key of ['damage', 'heal']) if (object(r[key])) skills[sid][key] = normalizeDice(r[key]);
     return sid;
   });
@@ -567,7 +604,7 @@ function unitFrom(record, participant, index, equipment, skills, items, warnings
   else if (text(creatureType)) unit.creatureType = text(creatureType).slice(0, 100);
   const tags = p.tags ?? record.tags;
   if (Array.isArray(tags)) unit.tags = tags.map(tag => text(tag).slice(0, 100)).filter(Boolean).slice(0, 32);
-  return { unit, profile: { id, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
+  return { unit, profile: { id, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
 }
 
 function terrainState(battle, state, warnings) {
@@ -610,6 +647,7 @@ function uniquePositions(units, state) {
  * which the engine unit schema intentionally does not store. */
 export function hydrateFromSources(input = {}, options = {}) {
   const source = asObject(input), warnings = [];
+  const sink = (unitId, source, scope) => warningSink(warnings, unitId, source, scope);
   const protagonistName = text(source.protagonistName ?? options.protagonistName);
   const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
   const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
@@ -634,14 +672,15 @@ export function hydrateFromSources(input = {}, options = {}) {
     let id = base;
     for (let suffix = 2; own(units, id); suffix++) id = `${base.slice(0, 52)}-${suffix}`;
     const persona = !descriptor && record === protagonist && protagonistName ? { protagonistName } : {};
-    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, warnings);
+    const origin = record.__sourceKind?.toLowerCase() ?? 'battle_init';
+    if (index < participants.length && !resolved[index] && participant.source) sink(id, 'battle_init', 'state').push(`未找到参战来源：${participant.source}（${participant.name ?? participant.id}）`);
+    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, scope => sink(id, origin, scope));
     units[id] = made.unit;
     profiles[id] = made.profile;
     sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };
   };
   for (const [i, participant] of participants.entries()) {
     const record = resolved[i];
-    if (!record && participant.source) warnings.push(`未找到参战来源：${participant.source}（${participant.name ?? participant.id}）`);
     add(participant, record ?? { __sourceKind: 'battle_init' }, i);
   }
   // Older battles without an explicit roster retain the discovered characters.
@@ -657,17 +696,25 @@ export function hydrateFromSources(input = {}, options = {}) {
   const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: ['free','split'].includes(mode) ? mode : 'free', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
-  terrainState(battle, state, warnings);
+  terrainState(battle, state, sink(null, 'terrain', 'terrain'));
   uniquePositions(state.units, state);
   let valid = true;
   try { validateState(state); } catch (error) {
     valid = false;
-    warnings.push(`转换结果未通过校验：${error.message}`);
+    sink(null, null, 'state').push(`转换结果未通过校验：${error.message}`);
     if (options.throwOnValidation) throw error;
   }
   if (valid) beginBattle(state);
   const roster = Object.values(units).map(unit => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
+  // Keep conversion diagnostics out of serialized engine state (which has a strict schema).
+  Object.defineProperty(state, 'warnings', { value: warnings });
   return { state, roster, warnings, sourceMap, battleInit: battle, seed };
+}
+
+export function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {
+  if (!unitIds?.length) return warnings;
+  const selected = new Set(unitIds);
+  return warnings.filter(w => w.unitId === null ? includeGlobal : selected.has(w.unitId));
 }
 
 export const convertSources = hydrateFromSources;

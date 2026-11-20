@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { hydrateFromSources, parseBattleInit, mapEffects } from '../src/tavern/converter.js';
+import { validateState } from '../src/api/validation.js';
+import { applyAction, preview } from '../src/core/combat.js';
+import { characterRecords } from '../src/tavern/char-snapshots.js';
+import { effectSummary } from '../src/tavern/instance-card.js';
+import { resolveSlotContent } from '../src/tavern/prompts.js';
+import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
 
 const mvu = {
@@ -95,7 +100,7 @@ unit|e2|red|char_info|木偶|8,7`;
   assert.equal(result.state.units.a1.stats.str, 0);
   assert.equal(result.state.units.e1.stats.str, 4);
   assert.equal(result.state.units.e2.stats.str, 5);
-  assert.ok(result.warnings.some(w => w.includes('mvu:不存在/队友A')));
+  assert.ok(result.warnings.some(w => w.message.includes('mvu:不存在/队友A')));
 });
 
 test('battle_init 描述符拒绝重复起点与模糊 MVU 来源', () => {
@@ -128,7 +133,7 @@ test('legacy TT JSON imports grid rectangles, slopes and walls and falls back to
   assert.deepEqual(state.grid[5][6], { kind: 'wall', z: 0 });
   assert.deepEqual(state.grid[7][6], { kind: 'slope', z: 1 });
   assert.deepEqual(state.grid[8][8], { kind: 'floor', z: 2 });
-  assert.ok(warnings.some(w => w.includes('grid.walls')));
+  assert.ok(warnings.some(w => w.message.includes('grid.walls')));
 });
 
 test('Chinese slots, status durations and unsupported effect warnings', () => {
@@ -151,7 +156,7 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   assert.equal(state.equipment[state.items[p.gear[0]].templateId].armor, 6);
   assert.equal(p.statuses.root.remainingTurns, 3);
   assert.deepEqual(state.skills[p.skills[0]].effects.map(e => e.effects), [[{ kind: 'grantStatus', statusId: 'freeze' }]]);
-  for (const label of ['场地弹药补给', '轻便', '不存在']) assert.ok(warnings.some(w => w.includes(label)));
+  for (const label of ['场地弹药补给', '轻便', '不存在']) assert.ok(warnings.some(w => w.message.includes(label)));
 });
 
 const shooterYaml = `技能:
@@ -184,26 +189,103 @@ test('G100 populated YAML block keeps executable content and diagnoses unknown c
   }
   assert.deepEqual(warnings, []);
   assert.deepEqual(mapEffects('|\n 平直射击: 尚未定义的动作', 'skill', warnings), []);
-  assert.ok(warnings.some(w => w.includes('尚未定义的动作')));
+  assert.ok(warnings.some(w => w.message.includes('尚未定义的动作')));
 });
 test('G101 status placeholders are silent without hiding invalid modifier overrides', () => {
   const {state,warnings} = hydrateDummy({ 状态: ['|', '>-', {}, null, {id:'stun',modifiers:'|'}] });
   assert.deepEqual(warnings, []);
   assert.equal(state.units.e1.statuses.stun.modifiers.skip, true);
   const bad = hydrateDummy({ 状态: [{id:'stun',modifiers:{badKey:2}}] });
-  assert.ok(bad.warnings.some(w => w.includes('状态 stun 已拒绝')));
+  assert.ok(bad.warnings.some(w => w.message.includes('状态 stun 已拒绝')));
 });
 test('G102/G103 original YAML and rejected effects retain the referenced skill template', () => {
-  const {state,warnings} = hydrateDummy(shooterYaml);
+  const {state,warnings} = hydrateDummy(shooterYaml.replace('[伤害: 物理]',''));
   const [id] = state.units.e1.skills;
   assert.equal(id, 'skill-e1-10nk26b-0');
   assert.deepEqual(warnings, []);
   const skill = state.skills[id];
   assert.deepEqual([skill.name,skill.effects,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
   const rejected = hydrateDummy(shooterYaml.replace('效果: |','效果: 不认识的动作'));
-  assert.deepEqual(rejected.state.skills[id], skill);
-  assert.ok(rejected.warnings.some(w => w.includes('不认识的动作')));
+  assert.deepEqual(rejected.state.skills[id], { ...skill, damageType:'physical' });
+  assert.ok(rejected.warnings.some(w => w.message.includes('不认识的动作')));
   console.log('G103 skill', id, JSON.stringify(skill), 'warnings=[]');
+});
+
+test('G124–G126/G129/G130 原文标签生成独立伤害节点，实际施放扣 SP', () => {
+  for (const [label,type] of Object.entries({物理:'physical',能量:'energy',精神:'mental',真实:'true'})) {
+    const {state,roster,warnings}=hydrateDummy(shooterYaml.replace('[伤害: 物理]',`[伤害: ${label}]`));
+    const actor=state.units.e1, target=state.units.p1, id=actor.skills[0], s=state.skills[id];
+    assert.deepEqual(warnings,[]);assert.equal(roster.find(u=>u.id==='e1').skillInfo[id].damageType,type);
+    assert.deepEqual(s.effects[0].effects,[{kind:'damage',percentOfPower:1,damageType:type}]);assert.equal(s.sp,20);assert.equal(s.slot,'attack');
+    state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={attack:0,action:0};actor.sp=actor.maxSp=40;actor.x=1;actor.y=1;target.x=2;target.y=1;
+    const before=target.hp;applyAction(state,{type:'skill',skillId:id,x:2,y:1});assert.equal(actor.sp,20);assert.ok(target.hp<before);
+    if(label==='物理') console.log('G130',JSON.stringify({[id]:s}),`SP 40→${actor.sp}; HP ${before}→${target.hp}`);
+  }
+});
+function castFixture(cost='攻击: 20 SP') {
+  const {state,warnings}=hydrateDummy(shooterYaml.replace('攻击: 20 SP',cost));
+  assert.deepEqual(warnings,[]);
+  const actor=state.units.e1,target=state.units.p1,id=actor.skills[0],skill=state.skills[id];
+  state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={attack:0,action:0};actor.hp=actor.maxHp=21;actor.mp=actor.maxMp=20;actor.sp=actor.maxSp=40;actor.x=1;actor.y=1;target.x=2;target.y=1;target.hp=target.maxHp=500;
+  return {state,actor,skill,action:{type:'skill',skillId:id,x:2,y:1}};
+}
+test('G124-a/d 顶层伤害类型校验',()=>{
+  const {state,skill}=castFixture();assert.equal(skill.damageType,'physical');validateState(state);skill.damageType='fire';assert.throws(()=>validateState(state),/damageType/);
+});
+test('G124-b/c 实际伤害日志记录节点覆盖或技能默认',()=>{
+  for (const override of [undefined,'mental']) {
+    const {state,skill,action}=castFixture();skill.damageType='energy';const node=skill.effects[0].effects[0];delete node.damageType;if(override)node.damageType=override;
+    validateState(state);const log=applyAction(state,action).find(l=>l.detail.effectId===skill.effects[0].id && l.detail.hpBefore);
+    assert.equal(log.detail.damageType,override??'energy');
+  }
+});
+test('G125-a/b HP 付费保留最后 1 HP，拒绝无副作用且有日志',()=>{
+  for(const hp of [21,20,19]) {
+    const {state,actor,action,skill}=castFixture();actor.hp=hp;skill.resourceCost={hp:20};validateState(state);
+    if(hp>20){applyAction(state,action);assert.equal(actor.hp,1);assert.ok(state.logs.some(l=>l.text==='施放 制式轻矢点射 消耗 20 HP'));}
+    else {const n=state.logs.length;assert.equal(preview(state,action).error,'HP 不足，无法施放');assert.equal(state.logs.length,n);assert.equal(applyAction(state,action)[0].type,'skill_rejected');assert.equal(state.logs.at(-1).text,'HP 不足，无法施放');assert.deepEqual([actor.hp,actor.sp,actor.ap],[hp,40,2]);}
+  }
+});
+test('G125-c/d 组合资源与双槽，以及原文 1 HP',()=>{
+  const {state,actor,action,skill}=castFixture('1 HP');assert.deepEqual(skill.resourceCost,{hp:1});skill.resourceCost={mp:10,sp:5,hp:3};validateState(state);applyAction(state,action);assert.deepEqual([actor.mp,actor.sp,actor.hp],[10,35,18]);
+  const b=castFixture('攻击: 1 动作: 1，20 SP，10 HP');b.state.mode='split';applyAction(b.state,b.action);assert.deepEqual([b.actor.hp,b.actor.sp,b.actor.ap,b.actor.used],[11,20,0,{attack:1,action:1}]);
+  for(const bad of [{},{hp:-1},{hp:25001},{hp:1,foo:1},{hp:1.1}]){skill.resourceCost=bad;assert.throws(()=>validateState(state),/resourceCost/);}
+});
+
+test('G127 混合伤害区分绝对值和百分比；动作、MP 和双槽消耗', () => {
+  for(const [tag,nodes,cost,expected] of [['物理40/能量20',[{flat:40},{flat:20}],'攻击: 1 动作: 1',{ap:2,slot:'attack'}],['物理40%/能量20%',[{percentOfPower:.4},{percentOfPower:.2}],'动作: 1',{ap:1,slot:'action'}],['物理40/能量20',[{flat:40},{flat:20}],'20 MP',{mp:20}]]){
+    const {state}=hydrateDummy(shooterYaml.replace('威力: 50','威力: 60').replace('伤害: 物理',`伤害: ${tag}`).replace('攻击: 20 SP',cost));const s=state.skills[state.units.e1.skills[0]];
+    for(const [k,v] of Object.entries(expected))assert.equal(s[k],v);
+    assert.deepEqual(s.effects[0].effects,nodes.map((n,i)=>({kind:'damage',damageType:i?'energy':'physical',...n})));
+  }
+});
+
+test('G134/G137/G141 结构化诊断保留角色归属和全局地形',()=>{
+  const input={mvu:{主角:{name:'主角',hp:100,skills:[{name:'例一',效果:'主角被动'}]}},charInfo:{name:'怪物',skills:[{name:'例二',效果:'低伤校准'}]},battleInit:{units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'monster-1',source:'char_info',name:'怪物',team:'red',x:4,y:4}],grid:{walls:[[-1,5]]}}};
+  const result=hydrateFromSources(input,{throwOnValidation:true}),{warnings}=result.state;
+  assert.deepEqual(warnings.map(({message,...meta})=>meta),[{unitId:'p',source:'mvu',scope:'effect'},{unitId:'monster-1',source:'char_info',scope:'effect'},{unitId:null,source:'terrain',scope:'terrain'}]);
+  assert.ok(warnings.every(w => typeof w.message === 'string'));
+  assert.strictEqual(warnings, result.warnings);
+  assert.strictEqual(warningsForUnit(warnings, []), warnings);
+  assert.deepEqual(warningsForUnit(warnings, ['monster-1']), warnings.slice(1));
+  assert.deepEqual(warningsForUnit(warnings, ['monster-1'], false), [warnings[1]]);
+  for(const slot of [{id:'warnings'},{id:'custom',custom:true,content:'{{warnings}}'}]){const msg=resolveSlotContent(slot,{sources:result,onlyUnitIds:['monster-1']});assert.ok(msg.includes('低伤校准')&&msg.includes('grid.walls')&&!msg.includes('主角被动'));}
+});
+
+test('char fingerprint merges raw sources without hashing placement or actor AP', async () => {
+  const sources={mvuData:{主角:{name:'阿青',hp:20,skills:[{ap:1}]}},charInfo:[{name:'阿青',描述:'原始信息'}],battleInit:{units:[{id:'p',x:1,ap:2}]}};
+  const h={roster:[{id:'p',name:'阿青',source:'MVU'}],sourceMap:{p:{path:['主角']}}};
+  const read=async()=>(await characterRecords(sources,h)).p;
+  const first=await read(); assert.equal(first.raw.char_info.描述,'原始信息');
+  sources.battleInit.units[0].x=9;sources.battleInit.units[0].ap=0;
+  sources.mvuData.主角={skills:[{ap:1}],hp:20,name:'阿青'}; assert.equal((await read()).hash,first.hash);
+  sources.mvuData.主角.skills[0].ap=2; assert.notEqual((await read()).hash,first.hash);
+  sources.mvuData.主角.skills[0].ap=1;sources.charInfo[0].描述='修改';assert.notEqual((await read()).hash,first.hash);
+});
+test('scoped roster omits other units and item/skill templates; human DSL summary includes roll and turns', () => {
+  const ctx={state:{units:{p:{weapon:'i',skills:['a']},q:{weapon:'j',skills:['b']}},items:{i:{templateId:'t'},j:{templateId:'u'}},equipment:{t:{},u:{}},skills:{a:{},b:{}}},rawCharacters:{p:{tag:'原始'},q:{}},onlyUnitIds:['p']};
+  const row=JSON.parse(resolveSlotContent({id:'roster'},ctx)); for(const [key,id] of Object.entries({units:'p',items:'i',equipment:'t',skills:'a',raw:'p'}))assert.deepEqual(Object.keys(row[key]),[id]);
+  assert.equal(effectSummary({trigger:'on_hit',roll:{dice:'d20',gte:16},effects:[{kind:'grantStatus',statusId:'bleed',turns:2}]}),'命中时 d20≥16 → 施加 流血 2 回合');
 });
 
 test('battle_init 配套正则输出可点击入口', () => {

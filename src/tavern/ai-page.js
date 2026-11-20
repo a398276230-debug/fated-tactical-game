@@ -22,13 +22,12 @@ function renderMarkdown(target, content, make) {
   }
 }
 
-export function mountAiPage(page, { make, on, sessions, send, normalize, stop }) {
+export function mountAiPage(page, { make, on, sessions, send, stop }) {
   const button = label => make('button', { type: 'button' }, label);
   const toolbar = make('div', { class: 'fated-actions' });
   const select = make('select', { 'aria-label': '切换会话' });
   const create = button('新建'), rename = button('重命名'), remove = button('删除'), clear = button('清空当前会话');
-  const check = button('标准化');
-  toolbar.append(select, create, rename, remove, clear, check);
+  toolbar.append(select, create, rename, remove, clear);
   const edit = make('form', { class: 'fated-actions', hidden: '' });
   const title = make('input', { 'aria-label': '会话名称', maxlength: '80', required: '' });
   const cancel = button('取消');
@@ -89,7 +88,7 @@ export function mountAiPage(page, { make, on, sessions, send, normalize, stop })
     const session = sessions.active();
     info.textContent = `${session.messages.length} 条消息 · 创建于 ${formatTime(session.createdAt)}`;
     submit.disabled = busy || !input.value.trim();
-    check.disabled = remove.disabled = clear.disabled = busy;
+    remove.disabled = clear.disabled = busy;
     abort.hidden = !busy;
     status.textContent = busy ? 'AI 正在回复…' : '';
     scrollToEnd();
@@ -113,7 +112,6 @@ export function mountAiPage(page, { make, on, sessions, send, normalize, stop })
   on(edit, 'submit', event => { event.preventDefault(); if (!title.value.trim()) return; sessions.rename(shownId, title.value); edit.hidden = true; render(); });
   on(remove, 'click', () => { drafts.delete(shownId); sessions.remove(shownId); render(); });
   on(clear, 'click', () => { sessions.clear(shownId); render(); });
-  on(check, 'click', normalize);
   on(abort, 'click', stop);
   on(input, 'input', () => { drafts.set(shownId, input.value); refresh(); });
   on(input, 'keydown', event => {

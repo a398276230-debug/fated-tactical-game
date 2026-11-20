@@ -1,4 +1,4 @@
-import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseSimpleYaml } from './converter.js';
+import { hydrateFromSources as hydrateBattleState, buildMvuJsonPatch, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -8,6 +8,8 @@ import { assembleMessages, describeSlots } from './prompts.js';
 import { requestViaTavern, requestViaCustomApi } from './api.js';
 import { renderSettings } from './settings.js';
 import { createAiSessions } from './ai-sessions.js';
+import { characterRecords } from './char-snapshots.js';
+import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
 
 /*
@@ -144,17 +146,12 @@ function messageMeta(message, index = 0) {
   const swipeId = message.swipe_id ?? message.swipeId ?? message.swipe_id_string ?? message.swipe ?? message.data?.swipe_id ?? '0';
   return { messageId: String(messageId), swipeId: String(swipeId) };
 }
-function fnv1a(value) {
-  let hash = 2166136261;
-  for (const char of String(value)) { hash ^= char.codePointAt(0); hash = Math.imul(hash, 16777619); }
-  return (hash >>> 0).toString(16).padStart(8, '0');
-}
 function safeKey(value) { return text(value).replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 96) || 'unknown';
 }
-function battleKeyFor(chat, message, raw, battle) {
+function battleKeyFor(chat, message, battle) {
   const meta = messageMeta(message);
   const explicit = battle?.battleId ?? battle?.id ?? 'unnamed';
-  return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit), `h_${fnv1a(raw)}`].join('__');
+  return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit)].join('__');
 }
 function extractTag(source, names) {
   const value = text(source);
@@ -247,11 +244,12 @@ export function parseJSONPatch(value) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.1.5';
+export const TAVERN_VERSION = '0.1.8';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.2, max_tokens: 2400,
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true,
+  charSnapshots: {}, rosterSelection: null, normalizationBatches: {},
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
 };
 function configFor(storage, key) {
@@ -309,7 +307,8 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
   const decodeTags = value => value.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"');
   const battleSource = eligible.findLast(message => extractTag(decodeTags(messageContent(message)), tags));
   const sourceIndex = battleSource ? list.indexOf(battleSource) : list.length - 1;
-  const joined = list.slice(0, sourceIndex + 1).map(messageContent).join('\n');
+  // Live scans include subsequent char_info updates; historical battle selection stays bounded to its floor.
+  const joined = (preferredMessageId == null ? list : list.slice(0, sourceIndex + 1)).map(messageContent).join('\n');
   const allText = decodeTags(messageContent(battleSource ?? eligible.at(-1)));
   let battleRaw = extractTag(allText, tags);
   // Some older prompt routes emit a marker without a closing marker, e.g.
@@ -331,15 +330,15 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
     const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
     if (recovered) { battleInit = recovered; battleRaw = JSON.stringify(recovered, null, 2); }
   }
-  const charBlocks = extractTags(joined, 'char_info');
+  const charBlocks = extractTags(joined, 'char_info').reverse();
   const charRaw = charBlocks[0] || '';
   const charInfo = charBlocks.flatMap(raw => {
     const value = parseJSON(raw, null);
-    return value ? [value] : [parseLooseYaml(raw)];
+    return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
   });
   const mvuData = statData(variables) ?? variables ?? {};
   const sourceMessage = battleSource ?? eligible.at(-1);
-  const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleRaw, battleInit) : null;
+  const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit) : null;
   return { mvuData, latestFloor: battleSource ? messageContent(battleSource) : latestFloor, battleInit, charInfo, battleRaw, charRaw, roster: '', protagonistName: '', battleKey,
     source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null };
 }
@@ -432,7 +431,10 @@ export function mountTavernOverlay(options = {}) {
 
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
   let selectedMessageId = null, aiController = null, aiFinished, askAI, retryAI = null, aiPage = null;
-  const attemptedBattles = new Set(), normalizedBattles = new Map();
+  let characters = {}, mountedHashes = {}, scanStatus = '';
+  const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter(key => own(config.instances,key));
+  const batches = key => config.normalizationBatches?.[key] ?? [];
+  const operations = key => batches(key).flatMap(batch=>batch.patch);
   let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: 'created' };
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
@@ -639,7 +641,12 @@ export function mountTavernOverlay(options = {}) {
     const loadBattle = el(doc, 'button', { type: 'button', class: 'fated-primary' }, battle ? '加载战场' : '扫描并加载');
     const showSource = el(doc, 'details', { class: 'fated-battle-source-box' });
     showSource.append(el(doc, 'summary', {}, '查看原始 battle_init'), el(doc, 'pre', { class: 'fated-battle-source' }, sources.battleRaw || '暂无原始数据'));
-    battleActions.append(loadBattle); battleCard.append(battleActions, showSource); page.append(battleCard);
+    const normalize = el(doc,'button',{type:'button','data-normalize':''},'标准化');
+    normalize.disabled = !selectedIds().length || !activeBattleKey || !!aiController;
+    const hint = !selectedIds().length ? [scanStatus,'请先勾选要标准化的角色'].filter(Boolean).join(' · ') : scanStatus;
+    normalize.title = hint;
+    on(normalize,'click',()=>runNormalize(selectedIds(),{force:true}));
+    battleActions.append(loadBattle,normalize); battleCard.append(battleActions,el(doc,'p',{class:'fated-mini','data-normalize-status':''},hint),showSource); page.append(battleCard);
     const diag = el(doc, 'details', { class: 'fated-diagnostics' });
     diag.append(el(doc, 'summary', {}, '诊断日志（扫描来源 / 去重）'));
     diag.append(el(doc, 'pre', { class: 'fated-status', 'data-diagnostics': '' }, JSON.stringify(diagnostics, null, 2)));
@@ -647,17 +654,29 @@ export function mountTavernOverlay(options = {}) {
     on(loadBattle, 'click', async () => { switchTab('sandbox'); await scan(); });
     const toolbar = el(doc, 'div', { class: 'fated-actions' });
     const refresh = el(doc, 'button', { type: 'button' }, '从当前聊天重新水合'); toolbar.append(refresh); page.append(toolbar);
+    const choose = ids => { persistSettings({rosterSelection:ids}); renderInstances(); };
+    for (const [label,all] of [['全选',true],['取消全选',false]]) { const b=el(doc,'button',{type:'button'},label); on(b,'click',()=>choose(all?Object.keys(config.instances):[])); toolbar.append(b); }
     const list = el(doc, 'div'); page.append(list);
     const entries = Object.entries(config.instances);
     if (!entries.length) list.append(el(doc, 'p', { class: 'fated-mini' }, '暂无实例。打开沙盘会自动读取当前 MVU、char_info 和 battle_init。'));
     for (const [key, instance] of entries) {
       const box = el(doc, 'article', { class: 'fated-instance' });
-      box.append(el(doc, 'strong', {}, instance.name || key), el(doc, 'div', { class: 'fated-mini' }, `来源：${instance.source || '手动或 AI 编辑'} · ${instance.notes || '已标准化'}`));
-      box.append(el(doc, 'pre', { class: 'fated-status' }, JSON.stringify(instance, null, 2)));
+      box.dataset.unitId = key;
+      const select = el(doc,'input',{type:'checkbox','aria-label':`选择 ${instance.name || key}`});
+      select.checked = selectedIds().includes(key);
+      on(select,'change',()=>choose(select.checked?[...new Set([...selectedIds(),key])]:selectedIds().filter(k=>k!==key)));
+      fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select);
+      const messages = warningsForUnit(sources.warnings, [key], false);
+      if (messages.length) {
+        const details = el(doc,'details',{class:'fated-char-diagnostics'}), list = el(doc,'ul');
+        for (const { message } of messages) list.append(el(doc,'li',{},message));
+        details.append(el(doc,'summary',{},`⚠ ${messages.length} 条诊断`),list);
+        box.append(details);
+      }
       const actions = el(doc, 'div', { class: 'fated-actions' }); const edit = el(doc, 'button', { type: 'button' }, '编辑 JSON'); const remove = el(doc, 'button', { type: 'button' }, '删除');
       actions.append(edit, remove); box.append(actions); list.append(box);
-      on(remove, 'click', () => { delete config.instances[key]; save(); renderInstances(); });
-      on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (parsed) { config.instances[key] = parsed; save(); renderInstances(); } });
+      on(remove, 'click', () => { delete config.instances[key]; save(); choose(selectedIds()); });
+      on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
     on(refresh, 'click', () => { selectedMessageId = null; void scan(true); });
   }
@@ -668,16 +687,16 @@ export function mountTavernOverlay(options = {}) {
 
   let promptKind = 'validate', promptInstruction = '';
   let previewSink, lastSent = null;
-  function assemblyContext(kind = promptKind, instruction = promptInstruction) {
-    return { kind, instruction, state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
+  function assemblyContext(kind = promptKind, instruction = promptInstruction, onlyUnitIds = kind === 'validate' ? selectedIds() : undefined) {
+    return { kind, instruction, onlyUnitIds, rawCharacters:Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
   }
   function publishMessages(messages, kind = promptKind) {
     previewSink?.(messages, kind);
     return messages;
   }
-  function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false) {
+  function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds) {
     const slots = config.slots;
-    const messages = assembleMessages(slots, assemblyContext(kind, instruction));
+    const messages = assembleMessages(slots, assemblyContext(kind, instruction,unitIds));
     if (config.debugPrompts) console.debug('[fated:prompts]', { kind, slots: slots.map(s => ({ id: s.id, enabled: s.enabled })),
       messages: messages.map(({ slotId, role, content }) => ({ slotId, role, chars: content.length })) });
     if (sending && messages.length) lastSent = messages;
@@ -688,7 +707,13 @@ export function mountTavernOverlay(options = {}) {
     return { host, settings: config, slots: config.slots, assemblyContext, prepareMessages, lastSent: () => lastSent,
       onPreview(fn) { previewSink = fn; }, fetchImpl: options.fetch, save: persistSettings };
   }
-  function runNormalize(sessionId) { return askAI('validate', '', sessionId); }
+  function runNormalize(unitIds = Object.keys(characters), {force=false, sessionId=force?aiSessions.active().id:undefined} = {}) {
+    const stored=config.charSnapshots[activeBattleKey]??{};
+    const ids=unitIds.filter(id=>characters[id] && (force || !stored[id]?.normalized || stored[id].hash!==characters[id].hash));
+    if (!ids.length) return;
+    const records=Object.fromEntries(ids.map(id=>[id,{hash:characters[id].hash,sourceKind:characters[id].sourceKind}]));
+    return askAI('validate','',sessionId,records);
+  }
 
   async function hydrate(epoch) {
     const messages = await tavernMessages(host);
@@ -761,7 +786,7 @@ export function mountTavernOverlay(options = {}) {
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
     const restart = ({ seed, mode }) => {
       const next = hydrateBattleState(battleInput, { seed, mode, throwOnValidation: true }).state;
-      return applyNormalization(next, normalizedBattles.get(battleInstanceId));
+      return applyNormalization(next, operations(battleInstanceId));
     };
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
@@ -785,30 +810,45 @@ export function mountTavernOverlay(options = {}) {
       const hydrated = await hydrate(epoch);
       if (epoch !== scanEpoch || disposed) return;
       const nextState = hydrated?.state ?? null;
-      if (force || !gameMount || activeBattleKey !== sources.battleKey) {
+      const key=sources.battleKey;
+      const fresh=key ? await characterRecords(sources,hydrated) : {};
+      if(epoch!==scanEpoch || disposed) return;
+      syncSettings();
+      const ids=Object.keys(fresh), stored={...(config.charSnapshots[key]??{})};
+      const removed=Object.keys(stored).filter(id=>!fresh[id]);
+      diagnostics.removedCharacters=removed;
+      for(const id of removed) delete stored[id];
+      const changed=ids.filter(id=>!stored[id]?.normalized || stored[id].hash!==fresh[id].hash);
+      const sourceChanged=activeBattleKey===key && (ids.some(id=>mountedHashes[id]!==fresh[id].hash)||Object.keys(mountedHashes).some(id=>!fresh[id]));
+      if (sourceChanged || !gameMount || activeBattleKey !== key) {
         if (aiController) {
           const finished = aiFinished;
           aiController.abort();
-          attemptedBattles.delete(activeBattleKey);
           await finished;
           if (epoch !== scanEpoch || disposed) return;
         }
-        if (force) {
-          attemptedBattles.delete(sources.battleKey);
-          normalizedBattles.delete(sources.battleKey);
-        }
         toast.hidden = true;
-        currentState = nextState ? applyNormalization(nextState, normalizedBattles.get(sources.battleKey)) : null;
-        activeBattleKey = sources.battleKey;
-        mountState(currentState, !force);
+        // Replay only batches whose input still matches; never resurrect obsolete equipment effects.
+        const kept=batches(key).filter(batch=>Object.entries(batch.hashes).some(([id,hash])=>fresh[id]?.hash===hash));
+        const invalid=batches(key).filter(batch=>!kept.includes(batch));
+        if(invalid.length) {
+          persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
+        }
+        currentState = nextState ? applyNormalization(nextState, operations(key)) : null;
+        activeBattleKey = key;
+        mountState(currentState, !sourceChanged && !invalid.length && !changed.length);
       }
+      characters=fresh; mountedHashes=Object.fromEntries(ids.map(id=>[id,fresh[id].hash]));
+      for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
+      if(key && (changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
+      if(config.rosterSelection===null && ids.length) persistSettings({rosterSelection:ids});
+      const live=liveState();
+      for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
+      scanStatus=changed.length?`待标准化 ${changed.length} 个角色`:'无变化，跳过自动标准化';
       renderInstances();
-      if (currentState && !aiController && sources.warnings?.length && !attemptedBattles.has(activeBattleKey) && !normalizedBattles.has(activeBattleKey)) {
-        attemptedBattles.add(activeBattleKey);
-        void runNormalize();
-      }
+      if (currentState && !aiController && changed.length) void runNormalize(changed,{force:false});
       if (node) node.textContent = currentState
-        ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')}`
+        ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')} · ${scanStatus}`
         : '扫描完成（未找到可挂载的战局）。';
     } catch (e) {
       diagnostics = { ...diagnostics, phase: 'scan-error', error: e?.stack || e?.message || String(e) };
@@ -823,13 +863,12 @@ export function mountTavernOverlay(options = {}) {
     const page = pages.sandbox; page.replaceChildren(el(doc, 'h3', {}, '沙盘'));
     const status = el(doc, 'div', { class: 'fated-status', 'data-status': '' }, '打开此页会自动侦测当前聊天。'); page.append(status);
     const mountTarget = el(doc, 'div', { 'data-sandbox-mount': '' }); page.append(mountTarget);
-    const actions = el(doc, 'div', { class: 'fated-actions' }); const check = el(doc, 'button', { type: 'button' }, '标准化'); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(check, report, refresh); page.append(actions);
+    const actions = el(doc, 'div', { class: 'fated-actions' }); const report = el(doc, 'button', { type: 'button' }, '战报交付'); const refresh = el(doc, 'button', { type: 'button' }, '重新扫描'); actions.append(report, refresh); page.append(actions);
     const output = status;
     on(refresh, 'click', () => scan(true).catch(showError));
     on(report, 'click', () => { try { const reportText = gameMount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.() || (currentState ? `当前战局：${currentState.title} · 回合 ${currentState.round} · ${Object.values(currentState.units || {}).length} 个单位` : ''); const patch = liveState() ? buildMvuJsonPatch(liveState(), sources.sourceMap) : (gameMount?.exportMvuPatch?.() || options.game?.exportMvuPatch?.() || ''); const result = [reportText, patch].filter(Boolean).join('\n\n'); const textarea = doc.querySelector('#send_textarea'); if (textarea) { textarea.value = result; textarea.dispatchEvent(new Event('input', { bubbles: true })); } if (typeof navigator !== 'undefined' && navigator.clipboard) navigator.clipboard.writeText(result).catch(() => {}); output.textContent = result || '当前没有可交付的战报。'; } catch (e) { showError(e); } });
-    on(check, 'click', () => runNormalize());
   }
-  askAI = async (kind, requestText = '', sessionId = kind === 'chat' ? aiSessions.active().id : undefined) => {
+  askAI = async (kind, requestText = '', sessionId = kind === 'chat' ? aiSessions.active().id : undefined, records) => {
       if (aiController || (kind === 'chat' && !requestText)) return;
       syncSettings();
       promptKind = kind; promptInstruction = requestText;
@@ -859,9 +898,11 @@ export function mountTavernOverlay(options = {}) {
       let finish;
       aiFinished = new Promise(resolve => { finish = resolve; });
       aiPage?.setBusy(true);
+      const normalizeButton = pages.instances.querySelector('[data-normalize]');
+      if (normalizeButton) normalizeButton.disabled = true;
       const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), config.timeoutMs ?? 60000);
       const label = normalize ? '标准化' : 'AI 调整';
-      const retryRequest = () => askAI(kind, requestText, sessionId);
+      const retryRequest = () => normalize ? runNormalize(Object.keys(records),{force:true, sessionId:sessionId??null}) : askAI(kind, requestText, sessionId);
       if (normalize) notify('正在标准化中…', '', null, true);
       else toast.hidden = true;
       let receivedPatch = normalize, replyText = '', unresolved = [], appliedCount = 0;
@@ -870,7 +911,7 @@ export function mountTavernOverlay(options = {}) {
           if (!session) { toast.hidden = true; return; }
           throw new Error('没有可标准化的战局，请先扫描沙盘');
         }
-        let prompts = prepareMessages(kind, requestText, true);
+        let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
         if (!normalize) {
           prompts = [...prompts, ...history, { role: 'user', content: requestText }];
           lastSent = prompts;
@@ -919,7 +960,7 @@ export function mountTavernOverlay(options = {}) {
             validate(nextState);
             if (normalize && patch.length) {
               refreshOpeningInitiative(nextState);
-              combined = [...(normalizedBattles.get(key) ?? []), ...patch];
+              combined = [...operations(key), ...patch];
               const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
               validate(applyNormalization(baseline, combined));
             }
@@ -943,7 +984,26 @@ export function mountTavernOverlay(options = {}) {
           for (const unit of Object.values(nextState.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
           save(); renderInstances();
         }
-        if (combined) normalizedBattles.set(key, combined);
+        if (combined) {
+          const stored={...config.charSnapshots[key]}, hashes={};
+          for(const [id,rec] of Object.entries(records)) {stored[id]={...rec,at:Date.now(),normalized:true};hashes[id]=rec.hash;}
+          // Keep operation order, tagging each operation with the units that actually use its target.
+          // Shared template definitions remain available while any dependent unit is unchanged.
+          const additions=patch.map(op=>{
+            const [,table,target]=op.path.split('/');
+            const owners=Object.keys(records).filter(id=>{
+              const u=nextState.units[id]; const items=[u?.weapon,u?.mainHand,u?.offHand,u?.shield,...(u?.gear??[])];
+              if(table==='units') return target===id;
+              if(table==='skills') return u?.skills?.includes(target);
+              if(table==='items') return items.includes(target);
+              if(table==='equipment') return items.some(k=>nextState.items[k]?.templateId===target);
+              return false;
+            });
+            return {patch:[op],hashes:owners.length?Object.fromEntries(owners.map(id=>[id,hashes[id]])):hashes};
+          });
+          persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored},normalizationBatches:{...config.normalizationBatches,[key]:[...batches(key),...additions]}});
+          scanStatus=`已标准化 ${Object.keys(records).length} 个角色`; renderInstances();
+        }
         updateReply({ content: replyText, status: 'ok' });
         const result = Array.isArray(patch) && !patch.length ? '无补丁变更' : '补丁已应用';
         postStatus(`${label}：${result}${unresolved.length ? `，待处理：${unresolved.join('；')}` : ''}`, 'ok');
@@ -962,7 +1022,7 @@ export function mountTavernOverlay(options = {}) {
       } finally {
         clearTimeout(timeout);
         if (aiController === controller) aiController = null;
-        if (!disposed) aiPage?.setBusy(false);
+        if (!disposed) { aiPage?.setBusy(false); renderInstances(); }
         finish();
       }
   };
@@ -978,7 +1038,7 @@ export function mountTavernOverlay(options = {}) {
   }
   renderInstances(); renderSandbox();
   aiPage = mountAiPage(pages.ai, { make: (tag, attrs, content) => el(doc, tag, attrs, content), on, sessions: aiSessions,
-    send: message => askAI('chat', message), normalize: () => runNormalize(aiSessions.active().id), stop: () => aiController?.abort(new DOMException('已取消', 'AbortError')) });
+    send: message => askAI('chat', message), stop: () => aiController?.abort(new DOMException('已取消', 'AbortError')) });
   updateMagic();
   bindEventBus();
   foldBattleEntries();

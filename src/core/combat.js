@@ -619,15 +619,30 @@ export function reachable(state, type = 'move', unit = currentUnit(state), dista
   });
 }
 
+// Apply the skill default as expression parameters, not by mutating saved DSL nodes.
+// executeNodes merges explicit node fields over params, including inside chainEffect.
+function skillExpressions(skill, id) {
+  const entries = dsl.skillExpressions(skill, id);
+  if (!skill?.damageType) return entries;
+  return entries.map(entry => ({ ...entry, expr: { ...entry.expr, params: {damageType:skill.damageType, ...entry.expr.params} } }));
+}
+function actorCost(template) {
+  const cost = template.resourceCost;
+  return { hp: cost?.hp ?? 0, mp: cost?.mp ?? template.mp ?? 0, sp: cost?.sp ?? template.sp ?? 0 };
+}
+const insufficientHP = 'HP 不足，无法施放';
+
 // Split mode assigns an AP to each slot. Two-AP actions occupy both slots.
 function paymentError(state, unit, ap, slot, template = {}) {
   if (unit.ap < ap) return `需要 ${ap} AP`;
   if (state.mode === 'split' && (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot])) {
     return '本回合对应的行动槽已使用';
   }
-  if (unit.mp < (template.mp ?? 0)) return '魔力不足';
-  if (unit.sp < (template.sp ?? 0)) return '体力不足';
-  if (template.resourceCost && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return '装备资源不足';
+  const {hp,mp,sp} = actorCost(template);
+  if (hp > 0 && hp >= unit.hp) return insufficientHP;
+  if (unit.mp < mp) return '魔力不足';
+  if (unit.sp < sp) return '体力不足';
+  if (template.resourceCost?.resource && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return '装备资源不足';
   if (findNode(template, 'restoreResource') && changes(unit, 'blockResourceRestore')) return '当前状态禁止装备资源恢复';
   return null;
 }
@@ -774,7 +789,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const backstab = !cover && arc !== 'front' && geometry.melee;
   const strike = { target, melee: geometry.melee, arrow, backstab, highGround: geometry.dz > 0,
     weaponId: weapon?.instance?.id, actionType: weapon ? 'attack' : 'skill', school: template.school,
-    damageType: template.damage?.type, entries: weapon ? [] : template.entry ? [template.entry] : dsl.skillExpressions(template, context.skillId ?? 'preview') };
+    damageType: template.damage?.type ?? template.damageType, entries: weapon ? [] : template.entry ? [template.entry] : skillExpressions(template, context.skillId ?? 'preview') };
   const nodes = dsl.passiveNodes(state, actor, strike, strike.entries);
   const hasNode = (kind, mode) => nodes.some(node => node.kind === kind && (!mode || node.mode === mode));
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, 'guaranteed_crit') || hasNode('forceOutcome', 'crit'));
@@ -826,7 +841,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const fixed = nodes.find(node => node.kind === 'modifyDamageBase');
   const fixedDamage = fixed?.unscaled ? fixed : null;
   const fixedAttack = fixed?.unscaled ? null : fixed;
-  const damageType = fixedDamage?.damageType ?? template.damage?.type ?? 'physical';
+  const damageType = fixedDamage?.damageType ?? template.damage?.type ?? template.damageType ?? 'physical';
   const tierPower = ({1:2, 2:2.8, 3:4, 4:8, 5:15, 6:35, 7:80})[actor.tier ?? 1] ?? 2;
   const attributeBase = () => state.ruleset === 'protocol'
     ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? 'str' : 'int')) * 10 * tierPower
@@ -937,7 +952,7 @@ export function preview(state, action) {
   if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed)) return fail('动作带有不适用的参数');
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !tileAt(state, x, y))) return fail('目标坐标超出棋盘');
   const { ap, slot } = cost;
-  const common = { ok: true, ap, cost: ap, slot, mp: cost.mp ?? 0, sp: cost.sp ?? 0 };
+  const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === 'end') return common;
   if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
   const cannotPay = paymentError(state, unit, ap, slot, cost);
@@ -1248,7 +1263,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const template = action.type === 'shield_bash'
     ? { name: '盾击', range: 1, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, effects: shieldBashEffects }
     : weapon ? weapon.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
-  const skillEntries = template.entry ? [template.entry] : dsl.skillExpressions(weapon ? null : template, action.skillId);
+  const skillEntries = template.entry ? [template.entry] : skillExpressions(weapon ? null : template, action.skillId);
   const mainTarget = state.units[plan.corpseId ?? plan.targets.find(t => t.kind !== 'cover')?.id];
   const multipliers = [];
   const skillScale = action.type === 'skill' ? Math.max(0, dsl.stat(state, actor, 'skillPower', 1, { target: mainTarget, school: template.school, actionType: 'skill' })) : 1;
@@ -1256,7 +1271,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     resourceCost: template.resourceCost?.amount, opportunityAttack: Boolean(opportunityWeapon),
     melee: plan.targets[0]?.melee, arrow: Boolean(weapon?.ammo),
     ...(action.type === 'skill' && template.shape !== 'single' ? { skillArea: new Set(plan.targets.map(target => target.id)) } : {}),
-    damageType: template.damage?.type, power: template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? 'int') * 10), nonLethal: plan.nonLethal };
+    damageType: template.damage?.type ?? template.damageType, power: template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? 'int') * 10), nonLethal: plan.nonLethal };
   if (action.type === 'skill') {
     dispatchEffect(state, actor, 'on_skill_cast', effectContext, skillEntries);
     if (template.shape !== 'single' && plan.targets.length) {
@@ -1372,7 +1387,14 @@ function applyInteraction(state, actor, plan) {
 
 export function applyAction(state, action) {
   const plan = preview(state, action);
-  if (!plan.ok) throw new Error(plan.error);
+  if (!plan.ok) {
+    // The API simulates on a copy: throwing after record() would discard the rejection log.
+    if (plan.error === insufficientHP) {
+      record(state, currentUnit(state), 'skill_rejected', insufficientHP, {skillId:action.skillId});
+      return state.logs.slice(-1);
+    }
+    throw new Error(plan.error);
+  }
   const { type, x, y, skillId } = action;
   if (needsTarget(type) && x === undefined) throw new Error('缺少目标坐标');
   const actor = currentUnit(state);
@@ -1385,7 +1407,11 @@ export function applyAction(state, action) {
     actor.sp -= plan.sp;
     if (type === 'skill') {
       const skill = tableEntry(state.skills, skillId);
-      if (skill?.resourceCost) {
+      if (plan.hp) {
+        actor.hp -= plan.hp;
+        record(state, actor, 'skill_cost', `施放 ${skill.name} 消耗 ${plan.hp} HP`, {skillId, hp:plan.hp, remainingHP:actor.hp});
+      }
+      if (skill?.resourceCost?.resource) {
         const { resource, amount: cost } = skill.resourceCost;
         const { item, effect, amount } = resourcePool(state, actor, resource);
         changeCounter(state, actor, item, effect, resource, amount - cost);

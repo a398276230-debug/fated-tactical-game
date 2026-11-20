@@ -176,7 +176,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(restarted.units.p1.ap, 2);
   assert.equal(restarted.equipment[restarted.items[restarted.units.p1.mainHand].templateId].attack, 10);
   assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-tab]'), b => b.dataset.tab)`), ['instances', 'prompt', 'api', 'ai', 'sandbox']);
-  assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-page="sandbox"] > .fated-actions button'), b => b.textContent)`), ['标准化', '战报交付', '重新扫描']);
+  assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-page="sandbox"] > .fated-actions button'), b => b.textContent)`), ['战报交付', '重新扫描']);
   assert.equal(await run(`!!document.querySelector('[data-page="sandbox"] > .fated-chat')`), false);
   await run(`
     window.aiListeners = new Map();
@@ -246,7 +246,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run(`aiSend('调整错误路径'); aiProbe.resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/units/missing/armor', value: 6 }] }))`);
   await until(async () => (await bubble())?.status === 'error', '会话补丁错误');
   assert.match((await aiData()).sessions.at(-1).messages.at(-1).content, /失败/);
-  await run(`aiButton('标准化').click(); aiProbe.resolve(JSON.stringify({ patch: [{op:'replace',path:'/units/p1/armor',value:7}], unresolved: ['模拟待处理项'] }))`);
+  await run(`document.querySelector('[data-tab="instances"]').click(); document.querySelector('[data-normalize]').click(); document.querySelector('[data-tab="ai"]').click(); aiProbe.resolve(JSON.stringify({ patch: [{op:'replace',path:'/units/p1/armor',value:7}], unresolved: ['模拟待处理项'] }))`);
   await until(async () => (await bubble())?.status === 'ok', 'AI 页调用标准化');
   assert.match((await aiData()).sessions.at(-1).messages.at(-1).content, /模拟待处理项/);
   await run(`aiSend('Markdown 测试'); aiProbe.resolve(${JSON.stringify('一段 `行内代码`。\n\n```js\nconst n = 1;\n```\n\n下一段。')})`);

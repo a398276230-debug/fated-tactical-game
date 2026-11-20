@@ -75,7 +75,8 @@ export function defineStatus(state, key, template) {
   return structuredClone(definition);
 }
 
-const resourceCost = x => plain(x) && Object.keys(x).length === 2 && id(x.resource) && int(x.amount, 1, 1000000);
+const resourceCost = x => plain(x) && (Object.keys(x).length === 2 && id(x.resource) && int(x.amount, 1, 1000000)
+  || Object.keys(x).length > 0 && Object.entries(x).every(([key, amount]) => ['hp','mp','sp'].includes(key) && int(amount, 0, 25000)));
 export function validateEffect(e, state) {
   requireThat(isExpression(e) && validExpression(e), 'DSL expression');
   if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, 'DSL save mode');
@@ -120,7 +121,8 @@ export function equipmentTemplate(v, state) {
   requireThat(new Set(pools.map(pool => pool.resource)).size === pools.length, 'DSL 重复资源池');
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType']);
+  checkOptional(v, 'damageType', type => damageTypes.includes(type));
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);
   requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)

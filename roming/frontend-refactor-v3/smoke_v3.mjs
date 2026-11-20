@@ -268,8 +268,8 @@ async function slotProbe(id) {
     equal(message()?.content, '新内容：!', '编辑未立即刷新预览');
     const template = '{{battle_init}}|{{battle_state}}|{{warnings}}|{{user_instruction}}|{{roster}}|{{battle}}';
     write(key, 'textarea', template);
-    const context = { instruction: '向右', rosterText: '参战者', battleText: '地形', state: { turn: 3 }, sources: { battleRaw: '初始', warnings: ['缺失'] } };
-    const expected = ['初始', JSON.stringify(context.state, null, 2), JSON.stringify(context.sources.warnings, null, 2), '向右', '参战者', '地形'].join('|');
+    const context = { instruction: '向右', rosterText: '参战者', battleText: '地形', state: { turn: 3 }, sources: { battleRaw: '初始', warnings: [{ message: '缺失', unitId: null, source: null, scope: 'state' }] } };
+    const expected = ['初始', JSON.stringify(context.state, null, 2), JSON.stringify(context.sources.warnings.map(w => w.message), null, 2), '向右', '参战者', '地形'].join('|');
     equal(assembleMessages(slots(), context).find(m => m.slotId === key)?.content, expected, '非空宏展开错误');
   } else if (id === 16) {
     equal(preview().length, initial.length + 1, '删除前应存在新消息');
@@ -302,7 +302,7 @@ await check(12, '转换器保留新特效与合法覆盖，拒绝非法覆盖', 
   assert.deepEqual(mapEffects(skills, 'skill', warnings).flatMap(e => e.effects.map(n => n.kind)), ['modifyDamageBase','grantStatus','grantStatus']);
   assert.deepEqual(warnings, []);
   assert.deepEqual(mapEffects([{ kind: 'status', statusId: 'stun', modifiers: { damage: 1 } }], 'skill', warnings), []);
-  assert.match(warnings[0], /stun.*damage/);
+  assert.match(warnings[0].message, /stun.*damage/);
 });
 await check(13, '新建自定义槽位增加具名消息', () => inChrome(13));
 await check(14, '编辑静态内容并展开宏', () => inChrome(14));
@@ -424,7 +424,7 @@ async function normalizeProbe(id) {
   try {
     // Stub only while dispatching the real manual request, never during scan/polling.
     if (timerCase) window.setTimeout = (_callback, ms) => { delays.push(ms); return -delays.length; };
-    click(page('sandbox'), '标准化');
+    tab('instances'); click(page('instances'), '标准化');
     await Promise.resolve();
   } finally { window.setTimeout = original; }
   expect(calls.length === before + 1, '手动标准化未产生唯一的新请求');
