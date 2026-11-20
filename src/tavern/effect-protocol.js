@@ -37,7 +37,7 @@ ROLL：无 roll 时一定尝试。chance 直接用 0…1 比例，d20 比较 >= 
 TARGET：self 自身，hitTarget 当前命中或选中的单位，attacker 攻击者，killedUnit 被击倒单位，corpse 未被消耗的尸体。enemiesInRadius / alliesInRadius 使用 params.radius 或节点 radius（默认1格），施法范围内从覆盖格筛选。节点可覆写目标。尸体不会阻挡移动，raiseDead 会消耗尸体。
 
 DO / WITH：节点按数组顺序执行，每个节点均可加 label、target、condition 和 radius（0…15）。
-• ${node.oneOf.map(rule => `${rule.properties.kind.const} ${fields(rule, ['kind','enabled','label','target','condition','radius'])}`).join('\n• ')}
+• ${node.oneOf.map(rule => `${rule.properties.kind.const}：${rule.description} ${fields(rule, ['kind','enabled','label','target','condition','radius'])}`).join('\n• ')}
 
 非致命：damage 节点 lethal 默认为 true。lethal:false 只保护该节点的实际承伤者，允许组合 resourceMultiplier、strikeBonus；抵扣结算后最低留 1 HP。承伤单位 nonLethal:true 或其状态 modifiers.preserveLife:true 也保命，lethal:true 不能绕开。倍率不能保证不致死。独立的主击和其他伤害节点不自动继承此开关。
 数值与结算：amount/flat 是绝对量。百分比以小数表示。percentOfPrevious 读取链内上一数值节点的实际结果，percentOfDamageDealt 读取本次实际扣血，percentOfPower 乘技能基础威力，percentOfHealing 读取治疗经加成后的量。levelScaling.perLevel 从 1 阶基准每阶增长，min/max 则在 1…7 阶线性插值。resourceScale 读取存量，可用 unitSize 向下取整分组。multiplyDamage 的 factor 是总系数（+12% 写 1.12），additive=true 合并各系数相对 1 的增量。主击乘区使用 passive/on_attack/on_skill_cast。modifyDamageBase 替换起伤，ignoreAttributes 缺省为 true，unscaled 跳过评级和姿态等攻击倍率。forceOutcome 保障命中或暴击，upgradeHitTier 提高已命中的评级。modifyCheck 的各项分别服务于先攻、闪避、潜行、命中、核心意图、高地和优势。teleportBackstab 校验背后空格再移动，提供优势和伤害倍率。knockback 碰撞默认伤害 5 并眩晕。

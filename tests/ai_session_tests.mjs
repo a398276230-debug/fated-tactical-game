@@ -4,6 +4,17 @@ import { createAiSessions } from '../src/tavern/ai-sessions.js';
 import { requestViaCustomApi } from '../src/tavern/api.js';
 import { assembleMessages, DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from '../src/tavern/prompts.js';
 
+import { effectSchema } from '../src/core/effect_schema.js';
+
+test('每个 DSL 节点的用法说明进入实际组装的默认助手消息', () => {
+  const messages = assembleMessages(DEFAULT_SLOTS, {});
+  for (const rule of effectSchema.$defs.node.oneOf) {
+    const kind = rule.properties.kind.const;
+    assert.match(rule.description, /\p{Script=Han}/u, kind);
+    assert.ok(messages.some(m => m.content.includes(`• ${kind}：${rule.description}`)), kind);
+  }
+});
+
 const gate = (id, description, fn) => test(`${id} ${description}`, fn);
 
 gate('G41', '身份槽位在首位且包含完整职责', () => {

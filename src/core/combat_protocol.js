@@ -44,6 +44,7 @@ export const STANCE_RULES = Object.freeze({
 });
 export function stanceRules(stance) { return STANCE_RULES[stance] ?? STANCE_RULES.unarmed; }
 export function sizeFor(bodyLengthM) { return BL_SIZE_TABLE.find(x => Number.isFinite(bodyLengthM) && bodyLengthM < x.max) ?? BL_SIZE_TABLE[2]; }
+export function sizeClassFor(bodyLengthM) { return Math.min(5, 3 - sizeFor(bodyLengthM).value); }
 export function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
 export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
 export function ratingFor(total) { return RATING_TABLE.find(x => x.min === null || total >= x.min); }

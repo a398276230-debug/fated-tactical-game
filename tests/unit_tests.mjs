@@ -17,6 +17,7 @@ import './combat_protocol_tests.mjs';
 import './live_protocol_tests.mjs';
 import './zone_tests.mjs';
 import './terrain_effects_tests.mjs';
+import './spawn_unit_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';

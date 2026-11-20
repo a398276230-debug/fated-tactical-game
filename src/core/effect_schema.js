@@ -19,7 +19,39 @@ const condition = (type, properties, required = Object.keys(properties)) => obje
 const comparison = (type, value) => condition(type, { op: compare, value });
 const tags = ['targetHasCategory','targetCreatureType','selfHasStatus','targetHasStatus','weaponType','skillSchool','actionType','damageType','hitRating','selfHasTag','targetHasTag'];
 const bool = { type: 'boolean' };
-const node = (kind, properties, required = []) => object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref('condition'), radius: number(0, 15), ...properties }, ['kind', ...required]);
+// These JSON Schema descriptions also serve as the assistant's node reference.
+const nodeNotes = {
+  damage: '对目标造成一次伤害；仅此段不能致死时写 lethal:false，不要用降低伤害倍率代替。',
+  heal: '恢复目标生命并触发治疗事件；要恢复法力或体力请用 restoreResource。',
+  modifyTerrain: '改变区域内格子的高度：raise/lower 是相对变化，set 是绝对高度；不改变地面类型。',
+  setTerrainKind: '把区域改为地面、墙或坡；造墙跳过已占用格，临时墙用 remainingTurns 设置时限。',
+  addCover: '在可用格生成有耐久的掩体；要彻底阻断视线请改用墙。',
+  restoreResource: '向目标资源池返还资源；支持按施放费用返还，并受禁止恢复效果限制。',
+  drainResource: '从目标资源池扣费；必须付足才继续时用 requireFull。',
+  produceResource: '产生指定资源；要定义装备实例计数器，在 passive/self 中声明 cap 和 initial。',
+  grantStatus: '施加已有状态模板；statusId 是模板 ID 而非显示名，自定义状态要先建模板。',
+  removeStatus: '解除状态，按 statusId 或 category 二选一；不能清除永久状态。',
+  modifyStat: '调整属性数值；被动用于常驻修正，触发式用于有期限的修正。',
+  modifyDamageBase: '被动：替换攻击起伤，不是额外造成一段伤害。',
+  modifyCheck: '被动：给指定检定加值；要改变基础属性用 modifyStat。',
+  forceOutcome: '被动：让带伤害的主击必定命中或暴击，不单独造成伤害。',
+  upgradeHitTier: '被动：将已经命中的评级提升一档，不把未命中变成命中。',
+  multiplyDamage: '调整伤害倍率；factor 是总系数，增伤 12% 写 1.12。',
+  knockback: '将目标逐格推离施术者；遇阻时结算碰撞伤害和眩晕。',
+  teleportBackstab: '移到目标背后的可用格进行背刺，不是任意坐标传送。',
+  shield: '为目标添加限时护盾吸收伤害；stack 用于叠加现有盾量。',
+  execute: '按剩余生命比例判断斩杀；strict 表示严格低于阈值，仍受保命规则限制。',
+  summon: '克隆已有原型；templateId 指向 summonTemplates 或场上单位，statScale 缩放面板，不继承装备。没有原型用 spawnUnit。',
+  spawnUnit: '无需原型，按 name 生成友方棋子；通常省略五维与资源，由施术者预算推算，tier 不高于施术者。skills 填 state.skills 的 ID，装备槽填 state.equipment 模板 ID（不是实例 ID），每只独立铸装。',
+  raiseDead: '消耗未使用的尸体生成亡灵；无尸体的召唤不要用此节点。',
+  addItem: '增加单位库存中的物品数量，不铸造或装备 state.items 实例。',
+  chainEffect: '依次执行子节点；前一步没有生效就应停止时写 stopOnFailure:true。',
+  procEffect: '通过 ref 调用已有表达式的 ID，仍需通过其触发门槛；禁止循环引用。',
+};
+const node = (kind, properties, required = []) => {
+  if (!Object.hasOwn(nodeNotes, kind) || !nodeNotes[kind].trim()) throw new Error(`DSL 节点 ${kind} 缺少用法说明`);
+  return { ...object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref('condition'), radius: number(0, 15), ...properties }, ['kind', ...required]), description: nodeNotes[kind] };
+};
 const coord = integer(0, 9);
 const point = object({x: coord, y: coord}, ['x','y']);
 const anchor = enumOf('self','hitTarget');
@@ -74,6 +106,11 @@ export const effectSchema = {
       node('knockback', { distance: integer(1, 5), collisionDamage: integer(0, 80) }),
       node('teleportBackstab', { bonusMultiplier: number(0, 4) }),
       node('shield', { ...magnitudes, ...scaling, turns, stack: bool, percentOfHealing: number(0, 4) }),
+      node('spawnUnit', { name:string, count:integer(1,10), tier:integer(1,7), attribute,
+        stats:object(Object.fromEntries(attribute.enum.map(k=>[k,integer(0,20)])),attribute.enum),
+        maxHp:integer(1,1e9), maxMp:integer(0,1e9), maxSp:integer(0,1e9), armor:integer(0,1e6), size:integer(1,5),
+        bodyLengthM:number(.01,1e9), mc:integer(1,64), move:integer(1,10), skills:array(id,32,0), gear:array(id,12,0),
+        ...Object.fromEntries(['mainHand','offHand','shield'].map(k=>[k,union(id,{type:'null'})])) }, ['name']),
       node('summon', { templateId: id, statScale: number(.01, 1), count: integer(1, 10) }, ['templateId']),
       node('raiseDead', { statScale: number(.01, 1) }), node('addItem', { itemId: id, count: integer(1, 10000) }, ['itemId']),
       node('execute', { threshold: fraction, strict: bool, requiresPool: id }, ['threshold']),

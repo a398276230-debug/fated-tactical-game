@@ -25,7 +25,38 @@ var condition = (type, properties, required = Object.keys(properties)) => object
 var comparison = (type, value) => condition(type, { op: compare, value });
 var tags = ["targetHasCategory", "targetCreatureType", "selfHasStatus", "targetHasStatus", "weaponType", "skillSchool", "actionType", "damageType", "hitRating", "selfHasTag", "targetHasTag"];
 var bool = { type: "boolean" };
-var node = (kind, properties, required = []) => object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref("condition"), radius: number(0, 15), ...properties }, ["kind", ...required]);
+var nodeNotes = {
+  damage: "\u5BF9\u76EE\u6807\u9020\u6210\u4E00\u6B21\u4F24\u5BB3\uFF1B\u4EC5\u6B64\u6BB5\u4E0D\u80FD\u81F4\u6B7B\u65F6\u5199 lethal:false\uFF0C\u4E0D\u8981\u7528\u964D\u4F4E\u4F24\u5BB3\u500D\u7387\u4EE3\u66FF\u3002",
+  heal: "\u6062\u590D\u76EE\u6807\u751F\u547D\u5E76\u89E6\u53D1\u6CBB\u7597\u4E8B\u4EF6\uFF1B\u8981\u6062\u590D\u6CD5\u529B\u6216\u4F53\u529B\u8BF7\u7528 restoreResource\u3002",
+  modifyTerrain: "\u6539\u53D8\u533A\u57DF\u5185\u683C\u5B50\u7684\u9AD8\u5EA6\uFF1Araise/lower \u662F\u76F8\u5BF9\u53D8\u5316\uFF0Cset \u662F\u7EDD\u5BF9\u9AD8\u5EA6\uFF1B\u4E0D\u6539\u53D8\u5730\u9762\u7C7B\u578B\u3002",
+  setTerrainKind: "\u628A\u533A\u57DF\u6539\u4E3A\u5730\u9762\u3001\u5899\u6216\u5761\uFF1B\u9020\u5899\u8DF3\u8FC7\u5DF2\u5360\u7528\u683C\uFF0C\u4E34\u65F6\u5899\u7528 remainingTurns \u8BBE\u7F6E\u65F6\u9650\u3002",
+  addCover: "\u5728\u53EF\u7528\u683C\u751F\u6210\u6709\u8010\u4E45\u7684\u63A9\u4F53\uFF1B\u8981\u5F7B\u5E95\u963B\u65AD\u89C6\u7EBF\u8BF7\u6539\u7528\u5899\u3002",
+  restoreResource: "\u5411\u76EE\u6807\u8D44\u6E90\u6C60\u8FD4\u8FD8\u8D44\u6E90\uFF1B\u652F\u6301\u6309\u65BD\u653E\u8D39\u7528\u8FD4\u8FD8\uFF0C\u5E76\u53D7\u7981\u6B62\u6062\u590D\u6548\u679C\u9650\u5236\u3002",
+  drainResource: "\u4ECE\u76EE\u6807\u8D44\u6E90\u6C60\u6263\u8D39\uFF1B\u5FC5\u987B\u4ED8\u8DB3\u624D\u7EE7\u7EED\u65F6\u7528 requireFull\u3002",
+  produceResource: "\u4EA7\u751F\u6307\u5B9A\u8D44\u6E90\uFF1B\u8981\u5B9A\u4E49\u88C5\u5907\u5B9E\u4F8B\u8BA1\u6570\u5668\uFF0C\u5728 passive/self \u4E2D\u58F0\u660E cap \u548C initial\u3002",
+  grantStatus: "\u65BD\u52A0\u5DF2\u6709\u72B6\u6001\u6A21\u677F\uFF1BstatusId \u662F\u6A21\u677F ID \u800C\u975E\u663E\u793A\u540D\uFF0C\u81EA\u5B9A\u4E49\u72B6\u6001\u8981\u5148\u5EFA\u6A21\u677F\u3002",
+  removeStatus: "\u89E3\u9664\u72B6\u6001\uFF0C\u6309 statusId \u6216 category \u4E8C\u9009\u4E00\uFF1B\u4E0D\u80FD\u6E05\u9664\u6C38\u4E45\u72B6\u6001\u3002",
+  modifyStat: "\u8C03\u6574\u5C5E\u6027\u6570\u503C\uFF1B\u88AB\u52A8\u7528\u4E8E\u5E38\u9A7B\u4FEE\u6B63\uFF0C\u89E6\u53D1\u5F0F\u7528\u4E8E\u6709\u671F\u9650\u7684\u4FEE\u6B63\u3002",
+  modifyDamageBase: "\u88AB\u52A8\uFF1A\u66FF\u6362\u653B\u51FB\u8D77\u4F24\uFF0C\u4E0D\u662F\u989D\u5916\u9020\u6210\u4E00\u6BB5\u4F24\u5BB3\u3002",
+  modifyCheck: "\u88AB\u52A8\uFF1A\u7ED9\u6307\u5B9A\u68C0\u5B9A\u52A0\u503C\uFF1B\u8981\u6539\u53D8\u57FA\u7840\u5C5E\u6027\u7528 modifyStat\u3002",
+  forceOutcome: "\u88AB\u52A8\uFF1A\u8BA9\u5E26\u4F24\u5BB3\u7684\u4E3B\u51FB\u5FC5\u5B9A\u547D\u4E2D\u6216\u66B4\u51FB\uFF0C\u4E0D\u5355\u72EC\u9020\u6210\u4F24\u5BB3\u3002",
+  upgradeHitTier: "\u88AB\u52A8\uFF1A\u5C06\u5DF2\u7ECF\u547D\u4E2D\u7684\u8BC4\u7EA7\u63D0\u5347\u4E00\u6863\uFF0C\u4E0D\u628A\u672A\u547D\u4E2D\u53D8\u6210\u547D\u4E2D\u3002",
+  multiplyDamage: "\u8C03\u6574\u4F24\u5BB3\u500D\u7387\uFF1Bfactor \u662F\u603B\u7CFB\u6570\uFF0C\u589E\u4F24 12% \u5199 1.12\u3002",
+  knockback: "\u5C06\u76EE\u6807\u9010\u683C\u63A8\u79BB\u65BD\u672F\u8005\uFF1B\u9047\u963B\u65F6\u7ED3\u7B97\u78B0\u649E\u4F24\u5BB3\u548C\u7729\u6655\u3002",
+  teleportBackstab: "\u79FB\u5230\u76EE\u6807\u80CC\u540E\u7684\u53EF\u7528\u683C\u8FDB\u884C\u80CC\u523A\uFF0C\u4E0D\u662F\u4EFB\u610F\u5750\u6807\u4F20\u9001\u3002",
+  shield: "\u4E3A\u76EE\u6807\u6DFB\u52A0\u9650\u65F6\u62A4\u76FE\u5438\u6536\u4F24\u5BB3\uFF1Bstack \u7528\u4E8E\u53E0\u52A0\u73B0\u6709\u76FE\u91CF\u3002",
+  execute: "\u6309\u5269\u4F59\u751F\u547D\u6BD4\u4F8B\u5224\u65AD\u65A9\u6740\uFF1Bstrict \u8868\u793A\u4E25\u683C\u4F4E\u4E8E\u9608\u503C\uFF0C\u4ECD\u53D7\u4FDD\u547D\u89C4\u5219\u9650\u5236\u3002",
+  summon: "\u514B\u9686\u5DF2\u6709\u539F\u578B\uFF1BtemplateId \u6307\u5411 summonTemplates \u6216\u573A\u4E0A\u5355\u4F4D\uFF0CstatScale \u7F29\u653E\u9762\u677F\uFF0C\u4E0D\u7EE7\u627F\u88C5\u5907\u3002\u6CA1\u6709\u539F\u578B\u7528 spawnUnit\u3002",
+  spawnUnit: "\u65E0\u9700\u539F\u578B\uFF0C\u6309 name \u751F\u6210\u53CB\u65B9\u68CB\u5B50\uFF1B\u901A\u5E38\u7701\u7565\u4E94\u7EF4\u4E0E\u8D44\u6E90\uFF0C\u7531\u65BD\u672F\u8005\u9884\u7B97\u63A8\u7B97\uFF0Ctier \u4E0D\u9AD8\u4E8E\u65BD\u672F\u8005\u3002skills \u586B state.skills \u7684 ID\uFF0C\u88C5\u5907\u69FD\u586B state.equipment \u6A21\u677F ID\uFF08\u4E0D\u662F\u5B9E\u4F8B ID\uFF09\uFF0C\u6BCF\u53EA\u72EC\u7ACB\u94F8\u88C5\u3002",
+  raiseDead: "\u6D88\u8017\u672A\u4F7F\u7528\u7684\u5C38\u4F53\u751F\u6210\u4EA1\u7075\uFF1B\u65E0\u5C38\u4F53\u7684\u53EC\u5524\u4E0D\u8981\u7528\u6B64\u8282\u70B9\u3002",
+  addItem: "\u589E\u52A0\u5355\u4F4D\u5E93\u5B58\u4E2D\u7684\u7269\u54C1\u6570\u91CF\uFF0C\u4E0D\u94F8\u9020\u6216\u88C5\u5907 state.items \u5B9E\u4F8B\u3002",
+  chainEffect: "\u4F9D\u6B21\u6267\u884C\u5B50\u8282\u70B9\uFF1B\u524D\u4E00\u6B65\u6CA1\u6709\u751F\u6548\u5C31\u5E94\u505C\u6B62\u65F6\u5199 stopOnFailure:true\u3002",
+  procEffect: "\u901A\u8FC7 ref \u8C03\u7528\u5DF2\u6709\u8868\u8FBE\u5F0F\u7684 ID\uFF0C\u4ECD\u9700\u901A\u8FC7\u5176\u89E6\u53D1\u95E8\u69DB\uFF1B\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002"
+};
+var node = (kind, properties, required = []) => {
+  if (!Object.hasOwn(nodeNotes, kind) || !nodeNotes[kind].trim()) throw new Error(`DSL \u8282\u70B9 ${kind} \u7F3A\u5C11\u7528\u6CD5\u8BF4\u660E`);
+  return { ...object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref("condition"), radius: number(0, 15), ...properties }, ["kind", ...required]), description: nodeNotes[kind] };
+};
 var coord = integer(0, 9);
 var point = object({ x: coord, y: coord }, ["x", "y"]);
 var anchor = enumOf("self", "hitTarget");
@@ -117,6 +148,24 @@ var effectSchema = {
       node("knockback", { distance: integer(1, 5), collisionDamage: integer(0, 80) }),
       node("teleportBackstab", { bonusMultiplier: number(0, 4) }),
       node("shield", { ...magnitudes, ...scaling, turns, stack: bool, percentOfHealing: number(0, 4) }),
+      node("spawnUnit", {
+        name: string,
+        count: integer(1, 10),
+        tier: integer(1, 7),
+        attribute,
+        stats: object(Object.fromEntries(attribute.enum.map((k) => [k, integer(0, 20)])), attribute.enum),
+        maxHp: integer(1, 1e9),
+        maxMp: integer(0, 1e9),
+        maxSp: integer(0, 1e9),
+        armor: integer(0, 1e6),
+        size: integer(1, 5),
+        bodyLengthM: number(0.01, 1e9),
+        mc: integer(1, 64),
+        move: integer(1, 10),
+        skills: array(id, 32, 0),
+        gear: array(id, 12, 0),
+        ...Object.fromEntries(["mainHand", "offHand", "shield"].map((k) => [k, union(id, { type: "null" })]))
+      }, ["name"]),
       node("summon", { templateId: id, statScale: number(0.01, 1), count: integer(1, 10) }, ["templateId"]),
       node("raiseDead", { statScale: number(0.01, 1) }),
       node("addItem", { itemId: id, count: integer(1, 1e4) }, ["itemId"]),
@@ -486,6 +535,9 @@ function createEffectEngine(io) {
             break;
           case "raiseDead":
             result = io.raise(state, actor, target2, p.statScale ?? 0.5);
+            break;
+          case "spawnUnit":
+            if (livingUnit(actor)) result = io.spawn(state, actor, p, ctx.center ?? target2 ?? actor);
             break;
           case "summon":
             if (livingUnit(actor)) result = io.summon(state, actor, p.templateId, ctx.center ?? target2, p.statScale ?? 1, p.count ?? 1);
@@ -958,6 +1010,9 @@ function stanceRules(stance) {
 function sizeFor(bodyLengthM) {
   return BL_SIZE_TABLE.find((x) => Number.isFinite(bodyLengthM) && bodyLengthM < x.max) ?? BL_SIZE_TABLE[2];
 }
+function sizeClassFor(bodyLengthM) {
+  return Math.min(5, 3 - sizeFor(bodyLengthM).value);
+}
 function sizeForUnit(unit = {}) {
   return unit.bodyLengthM == null ? BL_SIZE_TABLE.find((x) => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2] : sizeFor(unit.bodyLengthM);
 }
@@ -1201,6 +1256,75 @@ function updateTerrainPatches(state, record2, damage, advance2 = false) {
     else movedCells.set(key4, change);
   }
   settleChanges(state, [...changes2, ...movedCells.values()], record2, damage);
+}
+
+// src/core/prebattle_resources.js
+var hpTier = [1, 2, 4, 10, 20, 40, 100];
+var manaTier = [1, 2.5, 6, 15, 35, 80, 160];
+var attributes = ["str", "agi", "con", "int", "spi"];
+var finite = (n, min, max) => Number.isFinite(n) && n >= min && n <= max;
+var integer2 = (n, min, max) => Number.isSafeInteger(n) && finite(n, min, max);
+var fail = (field) => {
+  throw new Error(`\u6218\u524D\u8D44\u6E90\u63A8\u6F14\uFF1A${field}\u65E0\u6548`);
+};
+function calculatePrebattleResources(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) fail("\u8F93\u5165");
+  const { stats: stats2, tier, bodyLengthM = null, count = 1, summonCount = 1, previous = {} } = input;
+  if (!stats2 || !attributes.every((k) => integer2(stats2[k], 0, 1e6))) fail("\u4E94\u7EF4");
+  if (!integer2(tier, 1, 7)) fail("\u5C42\u7EA7");
+  if (bodyLengthM !== null && !finite(bodyLengthM, Number.MIN_VALUE, 1e9)) fail("\u4F53\u957F");
+  if (!integer2(count, 1, 1e6) || !integer2(summonCount, 1, 1e6)) fail("\u96C6\u7FA4\u6570\u91CF\u6216\u53EC\u5524\u521D\u59CB\u603B\u6570");
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)) fail("\u65E7\u8D44\u6E90");
+  const { str, agi, con, int: int2, spi } = stats2;
+  const statSum = str + agi + con + int2 + spi;
+  const mc = bodyLengthM >= 10 ? 2 + Math.floor(Math.log2(bodyLengthM / 10)) : 1;
+  const baseMultipliers = { hp: hpTier[tier - 1], mp: manaTier[tier - 1], sp: manaTier[tier - 1] };
+  const hp = baseMultipliers.hp * mc / summonCount, mp = baseMultipliers.mp / summonCount;
+  const raw = { hp: (con * 100 * hp + statSum) * count, mp: (int2 + spi) * 50 * mp * count, sp: (str + agi) * 50 * mp * count };
+  const resources = {};
+  for (const [key4, value] of Object.entries(raw)) {
+    const old = previous[key4];
+    if (Object.hasOwn(previous, key4) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail(`\u65E7 ${key4.toUpperCase()} `);
+    const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
+    resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio3), ratio: ratio3 };
+  }
+  return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
+}
+function protocolDistance(a, b) {
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) + Math.ceil(Math.abs(a.z - b.z) / 2);
+}
+
+// src/core/spawn-unit.js
+var attrs = ["str", "agi", "con", "int", "spi"];
+var tierCaps = [8, 10, 12, 14, 16, 18, 20];
+function budget(actor, spec) {
+  const tier = Math.min(actor.tier ?? 1, spec.tier ?? 7);
+  const a = spec.attribute ? actor.stats[spec.attribute] : Math.max(actor.stats.int, actor.stats.spi);
+  return { tier, sum: Math.max(tier * 5, a * 5 - 30), cap: Math.min(a, tierCaps[tier - 1]) };
+}
+function spawnStatsAllowed(actor, spec) {
+  const { cap, sum } = budget(actor, spec);
+  return !spec.stats || attrs.every((k) => spec.stats[k] >= 0 && spec.stats[k] <= cap) && attrs.reduce((n, k) => n + spec.stats[k], 0) <= sum;
+}
+function spawnPanel(actor, spec) {
+  const { tier, cap, sum } = budget(actor, spec);
+  const total = Math.min(sum, 5 * cap);
+  if (total < 0 || !spawnStatsAllowed(actor, spec)) return null;
+  const stats2 = spec.stats ? { ...spec.stats } : Object.fromEntries(attrs.map((k, i) => [k, Math.floor(total / 5) + Number(i < total % 5)]));
+  const bodyLengthM = spec.bodyLengthM ?? 1.7;
+  const { resources, mc } = calculatePrebattleResources({ stats: stats2, tier, bodyLengthM, summonCount: spec.count ?? 1 });
+  return {
+    stats: stats2,
+    tier,
+    bodyLengthM,
+    mc: spec.mc ?? mc,
+    size: spec.size ?? sizeClassFor(bodyLengthM),
+    armor: spec.armor ?? 0,
+    move: spec.move ?? 3,
+    maxHp: spec.maxHp ?? resources.hp.max,
+    maxMp: spec.maxMp ?? resources.mp.max,
+    maxSp: spec.maxSp ?? resources.sp.max
+  };
 }
 
 // src/core/combat.js
@@ -1843,7 +1967,60 @@ function spawnEffectUnit(state, actor, original, center, scale, corpse) {
   record(state, actor, corpse ? "raise_dead" : "spawn", `${unit.name}${corpse ? "\u590D\u751F" : "\u767B\u573A"}`, { unitId: id3, ...corpse ? { corpseId: original.id } : {} });
   return true;
 }
+function nextFreeId(table4, prefix) {
+  let n = 1;
+  while (Object.hasOwn(table4, `${prefix}-${n}`)) n++;
+  return `${prefix}-${n}`;
+}
+function spawnUnitEffect(state, actor, spec, center) {
+  const count = spec.count ?? 1;
+  const reject = (reason) => {
+    record(state, actor, "spawn_unresolved", `\u53EC\u5524${spec.name}\u5931\u8D25\uFF1A${reason}`, { unresolved: true });
+    return false;
+  };
+  if (Object.keys(state.units).length + count > 200 || state.order.length + count > 200) return reject("\u5355\u4F4D\u6570\u91CF\u8FBE\u5230\u4E0A\u9650");
+  const slots = [spec.mainHand, spec.offHand, spec.shield, ...spec.gear ?? []].filter(Boolean);
+  if (Object.keys(state.items).length + slots.length * count > 200) return reject("\u88C5\u5907\u5B9E\u4F8B\u6570\u91CF\u8FBE\u5230\u4E0A\u9650");
+  const panel = spawnPanel(actor, spec);
+  if (!panel || panel.maxHp < 1) return reject("\u53EC\u5524\u8005\u5C5E\u6027\u9884\u7B97\u4E0D\u8DB3");
+  const cells = allCells(state).filter((p) => emptyGround(state, p)).sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
+  if (cells.length < count) return reject("\u53EF\u7528\u7A7A\u683C\u4E0D\u8DB3");
+  const mint = (templateId) => {
+    if (!templateId) return null;
+    const id3 = nextFreeId(state.items, "item");
+    state.items[id3] = { id: id3, templateId, counters: initialCounters(state.equipment[templateId]) };
+    return id3;
+  };
+  for (const at of cells.slice(0, count)) {
+    const id3 = nextFreeId(state.units, "summon"), mainHand = mint(spec.mainHand);
+    state.units[id3] = {
+      ...panel,
+      stats: { ...panel.stats },
+      id: id3,
+      name: spec.name,
+      team: actor.team,
+      ...at,
+      facing: [...actor.facing],
+      hp: panel.maxHp,
+      mp: panel.maxMp,
+      sp: panel.maxSp,
+      ap: 0,
+      used: { attack: 0, action: 0 },
+      weapon: mainHand,
+      mainHand,
+      offHand: mint(spec.offHand),
+      shield: mint(spec.shield),
+      gear: (spec.gear ?? []).map(mint),
+      skills: [...spec.skills ?? []],
+      statuses: {}
+    };
+    state.order.push(id3);
+    record(state, actor, "spawn", `${spec.name}\u767B\u573A`, { unitId: id3 });
+  }
+  return true;
+}
 var dsl = createEffectEngine({
+  spawn: spawnUnitEffect,
   terrain: (state, actor, node3, ctx) => applyTerrainEffect(state, actor, node3, ctx, record, terrainDamage),
   equipped,
   living,
@@ -2233,7 +2410,7 @@ var ACTIONS = Object.freeze({
 var movementNames = Object.freeze({ move: "\u79FB\u52A8", sprint: "\u75BE\u8DD1", disengage: "\u64A4\u79BB" });
 var isMovement = (type) => Object.hasOwn(movementNames, type);
 var needsTarget = (type) => isMovement(type) || ["attack", "skill", "shield_bash", "interact", "lock_on", "grapple", "disarm", "trip", "push"].includes(type);
-var fail = (error2, extra = {}) => ({ ok: false, error: error2, ...extra });
+var fail2 = (error2, extra = {}) => ({ ok: false, error: error2, ...extra });
 var healMultiplier = (state, actor) => dsl.stat(state, actor, "healing", 1, { actionType: "skill" });
 var healShieldRatio = (state, actor) => equipped(state, actor).reduce((sum, item) => sum + (findNode(item.template, "shield", (node3) => node3.percentOfHealing != null)?.percentOfHealing ?? 0), 0);
 function inInteractionRange(state, actor, at) {
@@ -2254,44 +2431,44 @@ function shapeTargets(state, actor, cells, template) {
   return living(state).filter((unit) => keys.has(key2(unit.x, unit.y)) && selectionAllows(template, actor, unit));
 }
 function preview(state, action) {
-  if (state.outcome) return fail("\u6218\u6597\u5DF2\u7ECF\u7ED3\u675F");
+  if (state.outcome) return fail2("\u6218\u6597\u5DF2\u7ECF\u7ED3\u675F");
   const unit = currentUnit(state);
-  if (!alive(unit) && action?.type !== "end") return fail("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
-  if (!action || typeof action !== "object" || Array.isArray(action)) return fail("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
+  if (!alive(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
+  if (!action || typeof action !== "object" || Array.isArray(action)) return fail2("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
   const { type, x, y, skillId } = action;
-  if (!Object.keys(action).every((field) => ["type", "x", "y", "skillId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field))) return fail("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
-  if (action.bonusDice !== void 0 && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail("\u5956\u52B1\u9AB0\u50A8\u5907\u4E0D\u8DB3");
-  if (action.intent !== void 0 && !["normal", "function", "core", "kill", "concept"].includes(action.intent)) return fail("\u610F\u56FE\u7C7B\u578B\u65E0\u6548");
+  if (!Object.keys(action).every((field) => ["type", "x", "y", "skillId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
+  if (action.bonusDice !== void 0 && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail2("\u5956\u52B1\u9AB0\u50A8\u5907\u4E0D\u8DB3");
+  if (action.intent !== void 0 && !["normal", "function", "core", "kill", "concept"].includes(action.intent)) return fail2("\u610F\u56FE\u7C7B\u578B\u65E0\u6548");
   const equipmentSkill = type === "skill" ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
   const skill2 = type === "skill" ? equipmentSkill ?? tableEntry(state.skills, skillId) : null;
-  if (type === "skill" && (!skill2 || !equipmentSkill && !unit.skills.includes(skillId))) return fail("\u5355\u4F4D\u6CA1\u6709\u6B64\u6280\u80FD");
-  if (equipmentSkill && !dsl.available(state, unit, equipmentSkill.entry)) return fail("\u88C5\u5907\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
+  if (type === "skill" && (!skill2 || !equipmentSkill && !unit.skills.includes(skillId))) return fail2("\u5355\u4F4D\u6CA1\u6709\u6B64\u6280\u80FD");
+  if (equipmentSkill && !dsl.available(state, unit, equipmentSkill.entry)) return fail2("\u88C5\u5907\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
   if (skill2 && !equipmentSkill) {
     const entries2 = dsl.skillExpressions(skill2, skillId);
-    if (entries2.length && entries2.length === skill2.effects.length && !skill2.damage && !skill2.heal && !entries2.some((entry) => dsl.available(state, unit, entry))) return fail("\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
+    if (entries2.length && entries2.length === skill2.effects.length && !skill2.damage && !skill2.heal && !entries2.some((entry) => dsl.available(state, unit, entry))) return fail2("\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
   }
   const cost = skill2 ?? tableEntry(ACTIONS, type);
-  if (!cost) return fail("\u672A\u77E5\u52A8\u4F5C");
+  if (!cost) return fail2("\u672A\u77E5\u52A8\u4F5C");
   const aimed = needsTarget(type);
   const unplaced = x === void 0 && y === void 0;
-  if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
-  if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
+  if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
+  if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
   const { ap, slot } = cost;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === "end") return common;
-  if (changes(unit, "skip")) return fail("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
+  if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
   const cannotPay = paymentError(state, unit, ap, slot, cost);
-  if (cannotPay) return fail(cannotPay, { ap });
+  if (cannotPay) return fail2(cannotPay, { ap });
   const center = unplaced ? void 0 : pos(x, y);
   const weapon = weaponInfo(state, unit);
-  if (type === "shield_bash" && !unit.shield) return fail("\u6CA1\u6709\u76FE\u724C");
+  if (type === "shield_bash" && !unit.shield) return fail2("\u6CA1\u6709\u76FE\u724C");
   if (type === "reload") {
-    if (!weapon.ammo || weapon.infiniteAmmo) return fail("\u5F53\u524D\u6B66\u5668\u4E0D\u9700\u8981\u88C5\u586B");
-    if (weapon.ammoCount >= weapon.ammo.cap) return fail("\u5F39\u4ED3\u5DF2\u6EE1");
+    if (!weapon.ammo || weapon.infiniteAmmo) return fail2("\u5F53\u524D\u6B66\u5668\u4E0D\u9700\u8981\u88C5\u586B");
+    if (weapon.ammoCount >= weapon.ammo.cap) return fail2("\u5F39\u4ED3\u5DF2\u6EE1");
     return { ...common, ammo: weapon.ammoCount, capacity: weapon.ammo.cap };
   }
   if (type === "block") {
-    if (stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
+    if (stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
     return { ...common, name: "\u683C\u6321", reduction: unit.blockMode === "heavy" ? 0.45 : 0.25, turns: 1 };
   }
   if (type === "brace") {
@@ -2306,8 +2483,8 @@ function preview(state, action) {
   }
   if (type === "use_item") {
     const item = equipmentFor(state, unit.offHand);
-    if (unit.stance !== "attunement" || item.template?.kind !== "consumable") return fail("\u53EA\u6709\u540C\u8C03\u59FF\u6001\u53EF\u4EE5\u514D\u8D39\u4F7F\u7528\u526F\u624B\u9053\u5177");
-    if ((unit.attunementCharges ?? 0) <= 0) return fail("\u540C\u8C03\u9053\u5177\u6B21\u6570\u5DF2\u7528\u5C3D");
+    if (unit.stance !== "attunement" || item.template?.kind !== "consumable") return fail2("\u53EA\u6709\u540C\u8C03\u59FF\u6001\u53EF\u4EE5\u514D\u8D39\u4F7F\u7528\u526F\u624B\u9053\u5177");
+    if ((unit.attunementCharges ?? 0) <= 0) return fail2("\u540C\u8C03\u9053\u5177\u6B21\u6570\u5DF2\u7528\u5C3D");
     return { ...common, name: `\u4F7F\u7528${item.template.name}`, maneuver: "use_item", itemId: unit.offHand };
   }
   if (type === "charge") return { ...common, name: "\u84C4\u529B", maneuver: "charge" };
@@ -2316,21 +2493,21 @@ function preview(state, action) {
   if (type === "detour") return { ...common, name: "\u7ED5\u884C", maneuver: "detour" };
   if (type === "lock_on") {
     const target2 = locateUnit(state, center);
-    if (!target2 || target2.team === unit.team) return fail("\u5B9A\u4F4D\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
+    if (!target2 || target2.team === unit.team) return fail2("\u5B9A\u4F4D\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
     return { ...common, name: "\u5B9A\u4F4D", maneuver: "lock_on", targetId: target2.id };
   }
   if (["grapple", "disarm", "trip", "push"].includes(type)) {
     const target2 = locateUnit(state, center);
-    if (!target2 || target2.team === unit.team) return fail("\u6218\u672F\u5BF9\u6297\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
-    if (gridDistance(unit, target2) > 1 || !hasLOS(state, unit, target2)) return fail("\u6218\u672F\u5BF9\u6297\u9700\u8981\u8D34\u8EAB\u4E14\u89C6\u7EBF\u7545\u901A");
+    if (!target2 || target2.team === unit.team) return fail2("\u6218\u672F\u5BF9\u6297\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
+    if (gridDistance(unit, target2) > 1 || !hasLOS(state, unit, target2)) return fail2("\u6218\u672F\u5BF9\u6297\u9700\u8981\u8D34\u8EAB\u4E14\u89C6\u7EBF\u7545\u901A");
     return { ...common, name: { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" }[type], maneuver: type, targetId: target2.id };
   }
   if (isMovement(type)) {
-    if (changes(unit, "rooted")) return fail("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u79FB\u52A8");
+    if (changes(unit, "rooted")) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u79FB\u52A8");
     const cells2 = reachable(state, type, unit);
     if (unplaced) return { ...common, cells: cells2 };
     const choice = cells2.find((at) => sameCell(at, center));
-    if (!choice) return fail("\u65E0\u6CD5\u5230\u8FBE\uFF1A\u8DDD\u79BB\u3001\u5360\u4F4D\u3001\u5899\u4F53\u6216\u9661\u5D16\u963B\u6321", { cells: cells2 });
+    if (!choice) return fail2("\u65E0\u6CD5\u5230\u8FBE\uFF1A\u8DDD\u79BB\u3001\u5360\u4F4D\u3001\u5899\u4F53\u6216\u9661\u5D16\u963B\u6321", { cells: cells2 });
     return {
       ...common,
       cells: cells2,
@@ -2344,7 +2521,7 @@ function preview(state, action) {
     const objects = values2(state.interactives).filter((v) => !v.spent && inInteractionRange(state, unit, v)).sort(byId2);
     if (unplaced) return { ...common, cells: objects.map((v) => pos(v.x, v.y)) };
     const item = objects.find((v) => sameCell(v, center));
-    if (!item) return fail("\u6CA1\u6709\u53EF\u7528\u7684\u90BB\u8FD1\u4E92\u52A8\u70B9");
+    if (!item) return fail2("\u6CA1\u6709\u53EF\u7528\u7684\u90BB\u8FD1\u4E92\u52A8\u70B9");
     const cells2 = item.kind === "barrel" ? area(state, unit, center, { shape: "circle", range: 2, radius: 1.5 }) : [center];
     const keyset = new Set(cells2.map((at) => key2(at.x, at.y)));
     const targets2 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y))).map((u) => {
@@ -2360,8 +2537,8 @@ function preview(state, action) {
   const shieldBash = type === "shield_bash";
   const template = shieldBash ? { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, effects: shieldBashEffects } : attack ? weapon.template : skill2;
   const effect = attack ? void 0 : findNode(template, "teleportBackstab");
-  if (effect && changes(unit, "rooted")) return fail("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u77AC\u79FB");
-  if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail("\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B");
+  if (effect && changes(unit, "rooted")) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u77AC\u79FB");
+  if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail2("\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B");
   const triggers = attack && !shieldBash ? weapon.effects.map((e) => ({ ...e })) : (template.effects ?? []).map((e) => ({ ...e }));
   const stance = unit.stance ?? (unit.offHand ? unit.offHand.kind === "consumable" ? "attunement" : "dual_wield" : unit.shield ? "sword_shield" : "light_blade");
   const tuning = {
@@ -2385,32 +2562,32 @@ function preview(state, action) {
     return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, action.nonLethal ?? unit.nonLethal) };
   }
   const geometry = reaches(state, unit, center, template, attack && !shieldBash ? weapon.ammo : null);
-  if (!isGround(state, center)) return fail("\u5899\u4F53\u65E0\u6CD5\u6307\u5B9A", geometry);
-  if (geometry.distance > geometry.range + 1e-9) return fail("\u76EE\u6807\u8D85\u51FA\u5C04\u7A0B", geometry);
-  if (!hasLOS(state, unit, center)) return fail("\u5899\u4F53\u963B\u65AD\u89C6\u7EBF", geometry);
+  if (!isGround(state, center)) return fail2("\u5899\u4F53\u65E0\u6CD5\u6307\u5B9A", geometry);
+  if (geometry.distance > geometry.range + 1e-9) return fail2("\u76EE\u6807\u8D85\u51FA\u5C04\u7A0B", geometry);
+  if (!hasLOS(state, unit, center)) return fail2("\u5899\u4F53\u963B\u65AD\u89C6\u7EBF", geometry);
   const aimedUnit = locateUnit(state, center);
   if (corpseSkill) {
     const corpse = corpses(state).find((c) => sameCell(c, center));
-    return corpse ? { ...common, ...geometry, ...tuning, cells: [center], targets: [], center, corpseId: corpse.id } : fail("\u76EE\u6807\u683C\u6CA1\u6709\u53EF\u7528\u5C38\u4F53");
+    return corpse ? { ...common, ...geometry, ...tuning, cells: [center], targets: [], center, corpseId: corpse.id } : fail2("\u76EE\u6807\u683C\u6CA1\u6709\u53EF\u7528\u5C38\u4F53");
   }
   const execute = findNode(template, "execute", (node3) => node3.requiresPool);
-  if (execute && !canExecute(state, unit, aimedUnit, execute, action.nonLethal ?? unit.nonLethal)) return fail("\u76EE\u6807\u6216\u88C5\u5907\u8D44\u6E90\u4E0D\u6EE1\u8DB3\u65A9\u6740\u6761\u4EF6");
+  if (execute && !canExecute(state, unit, aimedUnit, execute, action.nonLethal ?? unit.nonLethal)) return fail2("\u76EE\u6807\u6216\u88C5\u5907\u8D44\u6E90\u4E0D\u6EE1\u8DB3\u65A9\u6740\u6761\u4EF6");
   const solid = locateCover(state, center);
   const coverTarget = Boolean(solid && (attack || hasStrikeDamage(template)));
   const cells = area(state, unit, center, template, attack && !shieldBash ? weapon.ammo : null);
   const aoe = (template.shape ?? "single") !== "single";
-  if (!cells.length) return fail("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", geometry);
+  if (!cells.length) return fail2("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", geometry);
   if (!aoe) {
     if (!(attack ? aimedUnit && aimedUnit.team !== unit.team : selectionAllows(template, unit, aimedUnit)) && !coverTarget && template.target !== "cell") {
-      return fail("\u8BE5\u683C\u6CA1\u6709\u5408\u9002\u7684\u76EE\u6807", geometry);
+      return fail2("\u8BE5\u683C\u6CA1\u6709\u5408\u9002\u7684\u76EE\u6807", geometry);
     }
-    if (aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, unit, aimedUnit)) return fail("\u76EE\u6807\u6B63\u5728\u9690\u8EAB", geometry);
+    if (aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, unit, aimedUnit)) return fail2("\u76EE\u6807\u6B63\u5728\u9690\u8EAB", geometry);
   }
   const hostile = attack || template.target === "enemy" || hasStrikeDamage(template) && template.target !== "ally" && template.target !== "self";
   const taunter = hostile ? tauntFor(state, unit, template, attack && !shieldBash ? weapon.ammo : null) : null;
-  if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail(`\u53D7\u5632\u8BBD\uFF0C\u5FC5\u987B\u6307\u5B9A${taunter.name}`, geometry);
+  if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail2(`\u53D7\u5632\u8BBD\uFF0C\u5FC5\u987B\u6307\u5B9A${taunter.name}`, geometry);
   const blink = effect && aimedUnit ? backCell(state, aimedUnit) : null;
-  if (effect && !blink) return fail("\u76EE\u6807\u80CC\u540E\u7684\u77AC\u79FB\u843D\u70B9\u88AB\u963B\u6321", geometry);
+  if (effect && !blink) return fail2("\u76EE\u6807\u80CC\u540E\u7684\u77AC\u79FB\u843D\u70B9\u88AB\u963B\u6321", geometry);
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
   const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template);
@@ -2974,42 +3151,6 @@ function applyAction(state, action) {
   return state.logs.slice(before);
 }
 
-// src/core/prebattle_resources.js
-var hpTier = [1, 2, 4, 10, 20, 40, 100];
-var manaTier = [1, 2.5, 6, 15, 35, 80, 160];
-var attributes = ["str", "agi", "con", "int", "spi"];
-var finite = (n, min, max) => Number.isFinite(n) && n >= min && n <= max;
-var integer2 = (n, min, max) => Number.isSafeInteger(n) && finite(n, min, max);
-var fail2 = (field) => {
-  throw new Error(`\u6218\u524D\u8D44\u6E90\u63A8\u6F14\uFF1A${field}\u65E0\u6548`);
-};
-function calculatePrebattleResources(input = {}) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) fail2("\u8F93\u5165");
-  const { stats: stats2, tier, bodyLengthM = null, count = 1, summonCount = 1, previous = {} } = input;
-  if (!stats2 || !attributes.every((k) => integer2(stats2[k], 0, 1e6))) fail2("\u4E94\u7EF4");
-  if (!integer2(tier, 1, 7)) fail2("\u5C42\u7EA7");
-  if (bodyLengthM !== null && !finite(bodyLengthM, Number.MIN_VALUE, 1e9)) fail2("\u4F53\u957F");
-  if (!integer2(count, 1, 1e6) || !integer2(summonCount, 1, 1e6)) fail2("\u96C6\u7FA4\u6570\u91CF\u6216\u53EC\u5524\u521D\u59CB\u603B\u6570");
-  if (!previous || typeof previous !== "object" || Array.isArray(previous)) fail2("\u65E7\u8D44\u6E90");
-  const { str, agi, con, int: int2, spi } = stats2;
-  const statSum = str + agi + con + int2 + spi;
-  const mc = bodyLengthM >= 10 ? 2 + Math.floor(Math.log2(bodyLengthM / 10)) : 1;
-  const baseMultipliers = { hp: hpTier[tier - 1], mp: manaTier[tier - 1], sp: manaTier[tier - 1] };
-  const hp = baseMultipliers.hp * mc / summonCount, mp = baseMultipliers.mp / summonCount;
-  const raw = { hp: (con * 100 * hp + statSum) * count, mp: (int2 + spi) * 50 * mp * count, sp: (str + agi) * 50 * mp * count };
-  const resources = {};
-  for (const [key4, value] of Object.entries(raw)) {
-    const old = previous[key4];
-    if (Object.hasOwn(previous, key4) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail2(`\u65E7 ${key4.toUpperCase()} `);
-    const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
-    resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio3), ratio: ratio3 };
-  }
-  return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
-}
-function protocolDistance(a, b) {
-  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y)) + Math.ceil(Math.abs(a.z - b.z) / 2);
-}
-
 // src/presets/catalog.js
 var dice = (count, sides, stat2, type, bonus = 0) => ({ count, sides, stat: stat2, type, bonus });
 var status = (id3, statusId2, extra = {}) => expression(id3, "on_hit", "hitTarget", [{ kind: "grantStatus", statusId: statusId2, ...extra }], { condition: { type: "saved", value: false } });
@@ -3160,7 +3301,7 @@ var num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
 var text = (v, max = 100) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
 var team = (v) => v === "blue" || v === "red";
 var coord2 = (v) => int(v, 0, 9);
-var attrs = ["str", "agi", "con", "int", "spi"];
+var attrs2 = ["str", "agi", "con", "int", "spi"];
 var statusDurations = ["battle_turns", "until_removed", "persistent"];
 var statusTickTimings = ["onTurnStart", "onTurnEnd"];
 var statusStackRules = ["refresh", "stack", "replace"];
@@ -3187,7 +3328,7 @@ function dice2(v) {
   fields(v, ["count", "sides"], ["bonus", "stat", "multiplier", "type"]);
   requireThat(int(v.count, 0, 1e6) && int(v.sides, 0, 1e6) && (v.count === 0 || v.sides >= 1), "\u4F24\u5BB3\u9AB0");
   checkOptional(v, "bonus", (x) => int(x, -1e9, 1e9));
-  checkOptional(v, "stat", (x) => attrs.includes(x));
+  checkOptional(v, "stat", (x) => attrs2.includes(x));
   checkOptional(v, "multiplier", (x) => num(x, 0, 8));
   checkOptional(v, "type", (x) => damageTypes.includes(x));
 }
@@ -3249,6 +3390,17 @@ function validateEffect(e, state) {
   if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, "DSL save mode");
   else requireThat(!e.roll?.mode, "DSL save mode");
   for (const node3 of effectNodes(e.effects)) {
+    if (node3.kind === "spawnUnit" && state) {
+      const skills = node3.skills ?? [];
+      requireThat(skills.every((k) => has(state.skills, k)) && new Set(skills).size === skills.length, "spawnUnit \u6280\u80FD\u5F15\u7528");
+      for (const [slot, ids] of [["hand", [node3.mainHand, node3.offHand]], ["shield", [node3.shield]], ["gear", node3.gear ?? []]]) {
+        for (const k of ids.filter(Boolean)) {
+          requireThat(has(state.equipment, k), "spawnUnit \u88C5\u5907\u6A21\u677F\u5F15\u7528");
+          const t = state.equipment[k];
+          requireThat(slot === "shield" ? t.kind === "shield" : slot === "gear" ? ["armor", "accessory", "consumable"].includes(t.kind) : t.kind === "consumable" || (!t.kind || t.kind === "weapon") && !!t.damage, "spawnUnit \u88C5\u5907\u69FD");
+        }
+      }
+    }
     if (node3.kind === "removeStatus") requireThat(Boolean(node3.statusId) !== Boolean(node3.category), "DSL removeStatus selector");
     if (node3.statusId) {
       const template = getStatusTemplate(state, node3.statusId);
@@ -3301,7 +3453,7 @@ function skillTemplate(v, state) {
   for (const k of ["mp", "sp"]) checkOptional(v, k, (x) => int(x, 0, 25e3));
   for (const k of ["radius", "width"]) checkOptional(v, k, (x) => int(x, 0, 6));
   checkOptional(v, "accuracy", (x) => int(x, -20, 30));
-  checkOptional(v, "save", (x) => attrs.includes(x));
+  checkOptional(v, "save", (x) => attrs2.includes(x));
   checkOptional(v, "saveDC", validSaveDC);
   requireThat(own2(v, "save") === own2(v, "saveDC"), "save/saveDC");
   for (const k of ["damage", "heal"]) if (own2(v, k)) dice2(v[k]);
@@ -3354,8 +3506,8 @@ function unitValue(v, key4, state) {
   requireThat(v.facing.length === 2 && v.facing.some(Boolean), "\u671D\u5411");
   for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat(int(v[max], r === "hp" ? 1 : 0, 1e9) && int(v[r], 0, v[max]), r);
   fields(v.used, ["action", "attack"]);
-  fields(v.stats, attrs);
-  requireThat(attrs.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 1, 10), "\u5355\u4F4D\u6570\u503C");
+  fields(v.stats, attrs2);
+  requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 1, 10), "\u5355\u4F4D\u6570\u503C");
   requireThat(v.weapon === null || id2(v.weapon), "weapon");
   for (const slot of ["mainHand", "offHand", "shield"]) checkOptional(v, slot, (x) => x === null || id2(x));
   checkOptional(v, "bodyLengthM", (x) => num(x, 0.01, 1e9));
@@ -3487,6 +3639,17 @@ function validateState(s) {
       equipped2.add(i);
     }
     requireThat(v.skills.every((i) => has(s.skills, i)) && new Set(v.skills).size === v.skills.length, "\u6280\u80FD\u5F15\u7528");
+    const visited = /* @__PURE__ */ new Set();
+    function checkSpawnBudget(expr) {
+      if (visited.has(expr.id)) return;
+      visited.add(expr.id);
+      for (const n of effectNodes(expr.effects)) {
+        if (n.kind === "spawnUnit" && n.stats) requireThat(spawnStatsAllowed(v, n), "spawnUnit \u4E94\u7EF4\u9884\u7B97");
+        if (n.kind === "procEffect") checkSpawnBudget(byId4.get(n.ref));
+      }
+    }
+    for (const template of [...v.skills.map((id3) => s.skills[id3]), ...[...new Set(slots)].map((id3) => s.equipment[s.items[id3].templateId])])
+      template.effects.forEach(checkSpawnBudget);
   });
   list(s.order, 200, (x) => has(s.units, x), "\u5148\u653B\u961F\u5217");
   requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1)) && Object.values(s.units).every((u) => u.hp <= 0 || s.order.includes(u.id)), "\u5148\u653B\u7D22\u5F15");
@@ -3917,7 +4080,7 @@ var commands = {
     for (const k of ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]) if (own2(c.patch, k)) u[k] = c.patch[k];
     if (own2(c.patch, "stats")) {
       nonempty(c.patch.stats);
-      fields(c.patch.stats, [], attrs);
+      fields(c.patch.stats, [], attrs2);
       Object.assign(u.stats, c.patch.stats);
     }
     if (own2(c.patch, "mainHand")) u.weapon = c.patch.mainHand;
@@ -8628,7 +8791,7 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink) {
   const stats2 = statsOf(record2), level = Math.max(1, integer3(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
   const tier = Math.max(1, Math.min(7, tierNumber(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
   const bodyLengthM = readBodyLength(record2, sink("state"));
-  const size = Math.min(5, 3 - sizeFor(bodyLengthM).value);
+  const size = sizeClassFor(bodyLengthM);
   const mc = Math.max(1, Math.min(64, integer3(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource2(record2, "hp", Math.max(1, stats2.con * 100)), "hp", resourcesSink), mp: safeResource(resource2(record2, "mp", Math.max(0, (stats2.int + stats2.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource2(record2, "sp", Math.max(0, (stats2.str + stats2.agi) * 10)), "sp", resourcesSink) };
   const slotItems = sourceEquipment(record2).map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, sink));
@@ -9216,7 +9379,7 @@ ROLL\uFF1A\u65E0 roll \u65F6\u4E00\u5B9A\u5C1D\u8BD5\u3002chance \u76F4\u63A5\u7
 TARGET\uFF1Aself \u81EA\u8EAB\uFF0ChitTarget \u5F53\u524D\u547D\u4E2D\u6216\u9009\u4E2D\u7684\u5355\u4F4D\uFF0Cattacker \u653B\u51FB\u8005\uFF0CkilledUnit \u88AB\u51FB\u5012\u5355\u4F4D\uFF0Ccorpse \u672A\u88AB\u6D88\u8017\u7684\u5C38\u4F53\u3002enemiesInRadius / alliesInRadius \u4F7F\u7528 params.radius \u6216\u8282\u70B9 radius\uFF08\u9ED8\u8BA41\u683C\uFF09\uFF0C\u65BD\u6CD5\u8303\u56F4\u5185\u4ECE\u8986\u76D6\u683C\u7B5B\u9009\u3002\u8282\u70B9\u53EF\u8986\u5199\u76EE\u6807\u3002\u5C38\u4F53\u4E0D\u4F1A\u963B\u6321\u79FB\u52A8\uFF0CraiseDead \u4F1A\u6D88\u8017\u5C38\u4F53\u3002
 
 DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BCF\u4E2A\u8282\u70B9\u5747\u53EF\u52A0 label\u3001target\u3001condition \u548C radius\uFF080\u202615\uFF09\u3002
-\u2022 ${node2.oneOf.map((rule) => `${rule.properties.kind.const} ${fields2(rule, ["kind", "enabled", "label", "target", "condition", "radius"])}`).join("\n\u2022 ")}
+\u2022 ${node2.oneOf.map((rule) => `${rule.properties.kind.const}\uFF1A${rule.description} ${fields2(rule, ["kind", "enabled", "label", "target", "condition", "radius"])}`).join("\n\u2022 ")}
 
 \u975E\u81F4\u547D\uFF1Adamage \u8282\u70B9 lethal \u9ED8\u8BA4\u4E3A true\u3002lethal:false \u53EA\u4FDD\u62A4\u8BE5\u8282\u70B9\u7684\u5B9E\u9645\u627F\u4F24\u8005\uFF0C\u5141\u8BB8\u7EC4\u5408 resourceMultiplier\u3001strikeBonus\uFF1B\u62B5\u6263\u7ED3\u7B97\u540E\u6700\u4F4E\u7559 1 HP\u3002\u627F\u4F24\u5355\u4F4D nonLethal:true \u6216\u5176\u72B6\u6001 modifiers.preserveLife:true \u4E5F\u4FDD\u547D\uFF0Clethal:true \u4E0D\u80FD\u7ED5\u5F00\u3002\u500D\u7387\u4E0D\u80FD\u4FDD\u8BC1\u4E0D\u81F4\u6B7B\u3002\u72EC\u7ACB\u7684\u4E3B\u51FB\u548C\u5176\u4ED6\u4F24\u5BB3\u8282\u70B9\u4E0D\u81EA\u52A8\u7EE7\u627F\u6B64\u5F00\u5173\u3002
 \u6570\u503C\u4E0E\u7ED3\u7B97\uFF1Aamount/flat \u662F\u7EDD\u5BF9\u91CF\u3002\u767E\u5206\u6BD4\u4EE5\u5C0F\u6570\u8868\u793A\u3002percentOfPrevious \u8BFB\u53D6\u94FE\u5185\u4E0A\u4E00\u6570\u503C\u8282\u70B9\u7684\u5B9E\u9645\u7ED3\u679C\uFF0CpercentOfDamageDealt \u8BFB\u53D6\u672C\u6B21\u5B9E\u9645\u6263\u8840\uFF0CpercentOfPower \u4E58\u6280\u80FD\u57FA\u7840\u5A01\u529B\uFF0CpercentOfHealing \u8BFB\u53D6\u6CBB\u7597\u7ECF\u52A0\u6210\u540E\u7684\u91CF\u3002levelScaling.perLevel \u4ECE 1 \u9636\u57FA\u51C6\u6BCF\u9636\u589E\u957F\uFF0Cmin/max \u5219\u5728 1\u20267 \u9636\u7EBF\u6027\u63D2\u503C\u3002resourceScale \u8BFB\u53D6\u5B58\u91CF\uFF0C\u53EF\u7528 unitSize \u5411\u4E0B\u53D6\u6574\u5206\u7EC4\u3002multiplyDamage \u7684 factor \u662F\u603B\u7CFB\u6570\uFF08+12% \u5199 1.12\uFF09\uFF0Cadditive=true \u5408\u5E76\u5404\u7CFB\u6570\u76F8\u5BF9 1 \u7684\u589E\u91CF\u3002\u4E3B\u51FB\u4E58\u533A\u4F7F\u7528 passive/on_attack/on_skill_cast\u3002modifyDamageBase \u66FF\u6362\u8D77\u4F24\uFF0CignoreAttributes \u7F3A\u7701\u4E3A true\uFF0Cunscaled \u8DF3\u8FC7\u8BC4\u7EA7\u548C\u59FF\u6001\u7B49\u653B\u51FB\u500D\u7387\u3002forceOutcome \u4FDD\u969C\u547D\u4E2D\u6216\u66B4\u51FB\uFF0CupgradeHitTier \u63D0\u9AD8\u5DF2\u547D\u4E2D\u7684\u8BC4\u7EA7\u3002modifyCheck \u7684\u5404\u9879\u5206\u522B\u670D\u52A1\u4E8E\u5148\u653B\u3001\u95EA\u907F\u3001\u6F5C\u884C\u3001\u547D\u4E2D\u3001\u6838\u5FC3\u610F\u56FE\u3001\u9AD8\u5730\u548C\u4F18\u52BF\u3002teleportBackstab \u6821\u9A8C\u80CC\u540E\u7A7A\u683C\u518D\u79FB\u52A8\uFF0C\u63D0\u4F9B\u4F18\u52BF\u548C\u4F24\u5BB3\u500D\u7387\u3002knockback \u78B0\u649E\u9ED8\u8BA4\u4F24\u5BB3 5 \u5E76\u7729\u6655\u3002
@@ -10435,9 +10598,9 @@ function safeStorage(host) {
 function text3(value) {
   return value == null ? "" : String(value);
 }
-function el(doc, tag, attrs2, content) {
+function el(doc, tag, attrs3, content) {
   const n = doc.createElement(tag);
-  for (const [key4, value] of Object.entries(attrs2 || {})) {
+  for (const [key4, value] of Object.entries(attrs3 || {})) {
     if (key4 === "class") n.className = value;
     else if (key4 === "style") n.style.cssText = value;
     else if (key4 === "text") n.textContent = value;
@@ -10635,7 +10798,7 @@ function parseJSONPatch(value) {
   return null;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.2.1";
+var TAVERN_VERSION = "0.2.2";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
@@ -11307,7 +11470,7 @@ ${tag.textContent || ""}
       const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
       select.checked = selectedIds().includes(key4);
       on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key4])] : selectedIds().filter((k) => k !== key4)));
-      fillInstance(box, (tag, attrs2, value) => el(doc, tag, attrs2, value), instance, liveState(), characters[key4]?.raw, select);
+      fillInstance(box, (tag, attrs3, value) => el(doc, tag, attrs3, value), instance, liveState(), characters[key4]?.raw, select);
       const messages = warningsForUnit(sources.warnings, [key4], false);
       if (messages.length) {
         const details = el(doc, "details", { class: "fated-char-diagnostics" }), list4 = el(doc, "ul");
@@ -11811,7 +11974,7 @@ ${tag.textContent || ""}
   renderInstances();
   renderSandbox();
   aiPage = mountAiPage(pages.ai, {
-    make: (tag, attrs2, content2) => el(doc, tag, attrs2, content2),
+    make: (tag, attrs3, content2) => el(doc, tag, attrs3, content2),
     on,
     sessions: aiSessions,
     send: (message) => askAI("chat", message),

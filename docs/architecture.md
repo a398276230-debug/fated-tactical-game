@@ -1,6 +1,6 @@
 # 架构与文件归属（现状记录）
 
-记录口径：仓库当前代码（`package.json` 0.2.1，快照 `battleVersion = 3`，跨战档案 `version = 1`）。
+记录口径：仓库当前代码（`package.json` 0.2.2，快照 `battleVersion = 3`，跨战档案 `version = 1`）。
 本文只描述已存在的结构、边界和字段，不含规划项。效果 DSL 见 [dsl.md](dsl.md)，状态系统见 [status.md](status.md)。
 
 ---
@@ -225,7 +225,7 @@ undoLastCommit()            → state = frames.pop().before
 | `adjust_item_counter` | `set`/`add` 装备计数器 | 上限取模板 `cap` 与当前值较大者 |
 | `patch_equipment_template` | 热改装备模板 | 不可改变资源池集合、不可改变是否带 `damage` |
 | `patch_skill_template` | 热改技能模板 | 模板校验；effects 走旧效果适配 |
-| `spawn_unit` | 增援 | 存活、未行动、坐标/装备/技能合法 |
+| `spawn_unit` | 增援 | 命令接收全量单位（存活、未行动、坐标/装备/技能合法）；不同于按施术者公式生成棋子并铸造装备的 DSL 节点 `spawnUnit` |
 | `remove_unit` | 移除单位 | 同步 `order`/`turn` |
 | `equip_item` | 移动实例到槽位 | 先清空所有单位的同名实例引用 |
 | `set_zone` / `remove_zone` | 持续区域 | 字段白名单 |
@@ -271,7 +271,7 @@ undoLastCommit()            → state = frames.pop().before
 | 开局与轮次 | `initiative`, `turn`, `end`, `skip`, `initiative_order`, `morale`, `outcome` |
 | 行动与移动 | `action`, `move`, `sprint`, `disengage`, `teleport`, `knockback`, `interact`, `block`, `brace`, `maneuver`, `flee`, `detour`, `item`, `skill_cost`, `skill_rejected`, `nonlethal`, `cover_approach` |
 | 判定 | `roll`, `intent`, `save`, `contest`, `opportunity`, `parry`, `followup`, `proc` |
-| 伤害与资源 | `damage`, `heal`, `shield`, `shield_break`, `shatter`, `reveal`, `guard`, `counter`, `cleanse`, `defeat`, `deathrattle`, `spawn`, `raise_dead` |
+| 伤害与资源 | `damage`, `heal`, `shield`, `shield_break`, `shatter`, `reveal`, `guard`, `counter`, `cleanse`, `defeat`, `deathrattle`, `spawn`（每个新棋子记录 unitId）, `spawn_unresolved`（召唤预算或可用空格不足，未写入棋子/装备）, `raise_dead` |
 | 掩体 | `cover_damage`, `cover_break` |
 | 地形 | `terrain`, `terrain_skip`, `terrain_expire`, `terrain_unresolved`, `terrain_displace` |
 | 区域 | `zone`, `zone_expire` |

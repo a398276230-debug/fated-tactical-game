@@ -231,6 +231,7 @@ export function createEffectEngine(io) {
             result = io.terrain(state, actor, { ...node, label }, ctx);
             break;
           case 'raiseDead': result = io.raise(state, actor, target, p.statScale ?? .5); break;
+          case 'spawnUnit': if (livingUnit(actor)) result = io.spawn(state, actor, p, ctx.center ?? target ?? actor); break;
           case 'summon': if (livingUnit(actor)) result = io.summon(state, actor, p.templateId, ctx.center ?? target, p.statScale ?? 1, p.count ?? 1); break;
           case 'addItem': {
             if (!livingUnit(target)) break;

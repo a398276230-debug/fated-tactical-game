@@ -1,5 +1,6 @@
 import { getStatusTemplate, STATUSES } from '../core/combat.js';
 import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.js';
+import { spawnStatsAllowed } from '../core/spawn-unit.js';
 import { resourceDefinitions } from '../core/effects.js';
 
 import { effectNodes, isExpression, validExpireOn, validExpression, validSaveDC, validTerrainNode } from '../core/effect_schema.js';
@@ -82,6 +83,18 @@ export function validateEffect(e, state) {
   if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, 'DSL save mode');
   else requireThat(!e.roll?.mode, 'DSL save mode');
   for (const node of effectNodes(e.effects)) {
+    if (node.kind === 'spawnUnit' && state) {
+      const skills = node.skills ?? [];
+      requireThat(skills.every(k=>has(state.skills,k)) && new Set(skills).size === skills.length, 'spawnUnit 技能引用');
+      for (const [slot, ids] of [['hand',[node.mainHand,node.offHand]], ['shield',[node.shield]], ['gear',node.gear ?? []]]) {
+        for (const k of ids.filter(Boolean)) {
+          requireThat(has(state.equipment,k), 'spawnUnit 装备模板引用');
+          const t = state.equipment[k];
+          requireThat(slot === 'shield' ? t.kind === 'shield' : slot === 'gear' ? ['armor','accessory','consumable'].includes(t.kind) :
+            t.kind === 'consumable' || ((!t.kind || t.kind === 'weapon') && !!t.damage), 'spawnUnit 装备槽');
+        }
+      }
+    }
     if (node.kind === 'removeStatus') requireThat(Boolean(node.statusId) !== Boolean(node.category), 'DSL removeStatus selector');
     if (node.statusId) {
       const template = getStatusTemplate(state, node.statusId);
@@ -302,6 +315,18 @@ export function validateState(s) {
       equipped.add(i);
     }
     requireThat(v.skills.every(i => has(s.skills, i)) && new Set(v.skills).size === v.skills.length, '技能引用');
+    // Shared templates have no caster of their own: check budgets for each actual owner.
+    const visited = new Set();
+    function checkSpawnBudget(expr) {
+      if (visited.has(expr.id)) return;
+      visited.add(expr.id);
+      for (const n of effectNodes(expr.effects)) {
+        if (n.kind === 'spawnUnit' && n.stats) requireThat(spawnStatsAllowed(v,n), 'spawnUnit 五维预算');
+        if (n.kind === 'procEffect') checkSpawnBudget(byId.get(n.ref));
+      }
+    }
+    for (const template of [...v.skills.map(id=>s.skills[id]), ...[...new Set(slots)].map(id=>s.equipment[s.items[id].templateId])])
+      template.effects.forEach(checkSpawnBudget);
   });
   list(s.order, 200, x => has(s.units, x), '先攻队列');
   requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1))

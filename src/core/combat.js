@@ -7,7 +7,8 @@ import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitMo
 
 import { validateStatusModifiers } from './status_modifiers.js';
 import { applyTerrainEffect, updateTerrainPatches } from './terrain-effects.js';
-import { createEffectEngine, corpses, expression, resourceDefinitions } from './effects.js';
+import { spawnPanel } from './spawn-unit.js';
+import { createEffectEngine, corpses, expression, initialCounters, resourceDefinitions } from './effects.js';
 import { effectNodes, isExpression, validExpireOn } from './effect_schema.js';
 export { corpses };
 
@@ -579,7 +580,42 @@ function spawnEffectUnit(state, actor, original, center, scale, corpse) {
   return true;
 }
 
-const dsl = createEffectEngine({ terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
+function nextFreeId(table, prefix) {
+  let n = 1;
+  while (Object.hasOwn(table, `${prefix}-${n}`)) n++;
+  return `${prefix}-${n}`;
+}
+function spawnUnitEffect(state, actor, spec, center) {
+  const count = spec.count ?? 1;
+  const reject = reason => {
+    record(state, actor, 'spawn_unresolved', `召唤${spec.name}失败：${reason}`, {unresolved:true});
+    return false;
+  };
+  if (Object.keys(state.units).length + count > 200 || state.order.length + count > 200) return reject('单位数量达到上限');
+  const slots = [spec.mainHand, spec.offHand, spec.shield, ...(spec.gear ?? [])].filter(Boolean);
+  if (Object.keys(state.items).length + slots.length * count > 200) return reject('装备实例数量达到上限');
+  const panel = spawnPanel(actor, spec);
+  if (!panel || panel.maxHp < 1) return reject('召唤者属性预算不足');
+  const cells = allCells(state).filter(p => emptyGround(state,p)).sort((a,b)=>distance(state,center,a)-distance(state,center,b));
+  if (cells.length < count) return reject('可用空格不足');
+  const mint = templateId => {
+    if (!templateId) return null;
+    const id = nextFreeId(state.items,'item');
+    state.items[id] = {id,templateId,counters:initialCounters(state.equipment[templateId])};
+    return id;
+  };
+  for (const at of cells.slice(0,count)) {
+    const id = nextFreeId(state.units,'summon'), mainHand = mint(spec.mainHand);
+    state.units[id] = {...panel, stats:{...panel.stats}, id, name:spec.name, team:actor.team, ...at, facing:[...actor.facing],
+      hp:panel.maxHp, mp:panel.maxMp, sp:panel.maxSp, ap:0, used:{attack:0,action:0}, weapon:mainHand, mainHand,
+      offHand:mint(spec.offHand), shield:mint(spec.shield), gear:(spec.gear ?? []).map(mint), skills:[...(spec.skills ?? [])], statuses:{}};
+    state.order.push(id);
+    record(state, actor, 'spawn', `${spec.name}登场`, {unitId:id});
+  }
+  return true;
+}
+
+const dsl = createEffectEngine({ spawn: spawnUnitEffect, terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
   counter: changeCounter, damage: damageTarget, loseHP, heal: restoreHP, grant: grantStatus, record, saved: effectSaved, removeStatus, knockback, teleport: teleportBehind, statusModifier: changes, blockRestore: unit => changes(unit, 'blockResourceRestore'),
   weaponType: (state, actor) => { const weapon = weaponInfo(state, actor).template; return weapon.weaponType ?? weapon.weaponClass ?? weapon.rangeType; },
   findExpression: (state, ref) => [...values(state.equipment), ...values(state.skills)].flatMap(t => t.effects).find(e => isExpression(e) && e.id === ref),

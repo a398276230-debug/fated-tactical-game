@@ -2,7 +2,7 @@ import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { validateEffect, validateState } from '../api/validation.js';
 import { validSaveDC } from '../core/effect_schema.js';
 import { validateStatusModifiers } from '../core/status_modifiers.js';
-import { sizeFor, stanceFor } from '../core/combat_protocol.js';
+import { sizeClassFor, stanceFor } from '../core/combat_protocol.js';
 import { adaptLegacyEffects, initialCounters } from '../core/effects.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { parseBattleDescriptor } from './descriptor.js';
@@ -542,7 +542,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
   const stats = statsOf(record), level = Math.max(1, integer(findValue(record, ['level','等级'], 1), 1));
   const tier = Math.max(1, Math.min(7, tierNumber(findValue(record, ['tier','levelTier','层级','生命层级'], level), level)));
   const bodyLengthM = readBodyLength(record, sink('state'));
-  const size = Math.min(5, 3 - sizeFor(bodyLengthM).value);
+  const size = sizeClassFor(bodyLengthM);
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
   const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, sink));

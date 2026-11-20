@@ -124,6 +124,8 @@
 
 `modifyTerrain` 有两个 schema 分支（`raise|lower` 与 `set`），运行时是同一个 kind。
 
+**新增节点规范：** 在 `src/core/effect_schema.js` 的 `nodeNotes` 为每个新 `kind` 写一句给辅助助手看的中文说明：它解决什么问题，以及最容易写错的引用、结算时机或与相邻节点的区别。同一 `kind` 的多个 schema 分支共用说明。`node()` 会把说明写入 JSON Schema 的 `description`；默认 `protocol` 槽自动渲染它，不另抄提示词。缺少说明会报错。
+
 “执行”列：`exec` = `executeNodes` 有分支；`passive` = 只在 `passiveNodes` 读取路径生效。
 
 | kind | 主要字段 | 执行 | 行为 |
@@ -145,6 +147,7 @@
 | `teleportBackstab` | `bonusMultiplier` | exec | 目标背后空格校验；预览阶段同时改写命中上下文 |
 | `shield` | `amount, percent, percentOfHealing, turns, stack` | exec | 直接 `grantStatus('shield')`；`stack` 时叠加现有池 |
 | `execute` | `threshold, strict, requiresPool` | exec | 直接清空 HP；`nonLethal`/`preserveLife` 可阻断；`requiresPool` 要求该资源池存在 |
+| `spawnUnit` | 必填 `name`；可选 `count`（1–10）、`tier, attribute, stats, maxHp/maxMp/maxSp, armor, size, bodyLengthM, mc, move, skills, mainHand/offHand/shield, gear` | exec | 无需单位原型。层级取施术者与节点较低者；默认关联属性取智力、精神较高者。最终五维均分 `max(5T,5A−30)`，余数依力量、敏捷、体质、智力、精神分配，各项不超过关联属性及层级上限。按召唤总数推算每只的资源。技能引用现有技能 ID；装备引用模板 ID，各单位独立铸造实例。无足够空格或预算时整批不生成。 |
 | `summon` | `templateId, statScale, count` | exec | 从 `state.summonTemplates` 或现有单位取原型；落点取距 `ctx.center` 最近空格；ID `summon-N` |
 | `raiseDead` | `statScale` | exec | 只对未消耗尸体生效，`creatureType='undead'` |
 | `addItem` | `itemId, count` | exec | 写 `unit.inventory`（不是 `state.items`） |
