@@ -190,6 +190,40 @@ export function createEffectEngine(io) {
       + (p.percentOfSelfMaxHp ?? 0) * actor.maxHp + (p.percentOfTargetMaxHp ?? p.percentOfMaxHp ?? 0) * target.maxHp
       + (p.percentOfPower ?? 0) * (ctx.power ?? 0);
   }
+  function nodeAmount(state, actor, target, p, ctx) {
+    const extra = ['heal', 'shield', 'damage'].includes(p.kind) ? (p.percent ?? 0) * target.maxHp : 0;
+    return Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target, p, ctx) + extra) * (ctx.skillScale ?? 1))));
+  }
+  function damagePacket(state, actor, target, p, ctx, amount) {
+    const type = (p.inheritDamageType ? ctx.damageType : p.damageType) ?? 'true';
+    const raw = amount * (p.resourceMultiplier ? resource(state, actor, p.resourceMultiplier) : 1)
+      * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target, damageType: type }));
+    return { type, raw, hit: p.strikeBonus, ignoreArmor: p.ignoreArmor, preserveLife: p.lethal === false || ctx.nonLethal };
+  }
+  function previewDamage(state, actor, target, trigger, ctx, extra) {
+    const packets = [];
+    let conditional = false;
+    const entries = new Map([...(trigger === 'active' ? [] : expressions(state, actor)), ...extra].map(entry => [entry.key, entry]));
+    for (const entry of entries.values()) {
+      const { expr } = entry;
+      if (expr.trigger !== trigger || !available(state, actor, entry) || !sourceApplies(entry, ctx)) continue;
+      const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1)
+        .filter(unit => condition(state, actor, subject(actor, unit, ctx), expr.condition, ctx, entry));
+      if (!eligible.length) continue;
+      for (const node of expr.effects) {
+        if (node.enabled === false) continue;
+        if (node.kind === 'procEffect' || node.kind === 'chainEffect') { conditional = true; continue; }
+        if (node.kind !== 'damage') continue;
+        const p = { ...expr.params, ...node };
+        const recipients = p.target && p.target !== expr.target ? targets(state, actor, p.target, ctx, p.radius ?? 1) : eligible;
+        if (!recipients.some(unit => unit.id === target.id) || (p.excludeHitTarget && target.id === ctx.target?.id)) continue;
+        if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
+        if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) { conditional = true; continue; }
+        packets.push(damagePacket(state, actor, target, p, ctx, nodeAmount(state, actor, target, p, ctx)));
+      }
+    }
+    return { packets, conditional };
+  }
   function changeResource(state, actor, target, node, amount, label, entry, ctx) {
     const name = node.resource, drain = node.kind === 'drainResource';
     if (node.kind === 'restoreResource' && io.blockRestore(target)) return false;
@@ -219,7 +253,7 @@ export function createEffectEngine(io) {
       for (const target of recipients) {
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
         const label = node.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
-        const amount = Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target, p, ctx) + (['heal','shield','damage'].includes(node.kind) ? (p.percent ?? 0) * target.maxHp : 0)) * (ctx.skillScale ?? 1))));
+        const amount = nodeAmount(state, actor, target, p, ctx);
         let result;
         switch (node.kind) {
           case 'procEffect': {
@@ -245,13 +279,11 @@ export function createEffectEngine(io) {
             switch (node.kind) {
               case 'damage':
                 if (!(p.excludeHitTarget && target === ctx.target) && amount > 0) {
-                  const type = (p.inheritDamageType ? ctx.damageType : p.damageType) ?? 'true';
-                  const raw = amount * (p.resourceMultiplier ? resource(state, actor, p.resourceMultiplier) : 1)
-                    * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target, damageType: type }));
+                  const { type, raw, hit, ignoreArmor, preserveLife } = damagePacket(state, actor, target, p, ctx, amount);
                   result = io.damage(state, target, actor.id, raw, type, label, {
-                    attacker: actor, hit: p.strikeBonus, melee: ctx.melee, reaction: true,
+                    attacker: actor, hit, melee: ctx.melee, reaction: true,
                     direct: p.strikeBonus || !['on_damaged','on_death','on_ally_death','on_turn_start','on_turn_end'].includes(entry.expr.trigger),
-                    committedRecipient: p.strikeBonus ? target : undefined, preserveLife: p.lethal === false || ctx.nonLethal, ignoreArmor: p.ignoreArmor,
+                    committedRecipient: p.strikeBonus ? target : undefined, preserveLife, ignoreArmor,
                     details: { effectId: entry.expr.id, ...(p.strikeBonus ? { bonusDamage: true } : {}) },
                   }).dealt;
                 }
@@ -390,5 +422,5 @@ export function createEffectEngine(io) {
   }
   const check = (state, actor, key, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries)
     .reduce((sum, n) => sum + (n.kind === 'modifyCheck' ? n[key] ?? 0 : 0), 0);
-  return { dispatch, stat, check, passiveNodes, damageFactor, activeSkills, skillExpressions, available, condition, changeResource };
+  return { dispatch, stat, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions, available, condition, changeResource };
 }

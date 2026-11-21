@@ -651,6 +651,44 @@ function createEffectEngine(io) {
     const scaled = (p.amount ?? 0) * level + (p.perLevel ?? 0) * tier + (rs ? (rs.unitSize ? Math.floor(units) : units) * rs.perUnit : 0);
     return scaled + (p.flat ?? 0) + (p.percentOfHealing ?? 0) * (ctx.healing ?? 0) + (p.targetTierBase ? p.targetTierBase ** ((ctx.target?.tier ?? 1) - 1) : 0) + (p.percentOfDamageDealt ?? 0) * (ctx.dealt ?? 0) + (p.percentOfPrevious ?? 0) * (ctx.previous ?? 0) + (p.percentOfSelfMaxHp ?? 0) * actor.maxHp + (p.percentOfTargetMaxHp ?? p.percentOfMaxHp ?? 0) * target2.maxHp + (p.percentOfPower ?? 0) * (ctx.power ?? 0);
   }
+  function nodeAmount(state, actor, target2, p, ctx) {
+    const extra = ["heal", "shield", "damage"].includes(p.kind) ? (p.percent ?? 0) * target2.maxHp : 0;
+    return Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target2, p, ctx) + extra) * (ctx.skillScale ?? 1))));
+  }
+  function damagePacket(state, actor, target2, p, ctx, amount2) {
+    const type = (p.inheritDamageType ? ctx.damageType : p.damageType) ?? "true";
+    const raw = amount2 * (p.resourceMultiplier ? resource3(state, actor, p.resourceMultiplier) : 1) * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target: target2, damageType: type }));
+    return { type, raw, hit: p.strikeBonus, ignoreArmor: p.ignoreArmor, preserveLife: p.lethal === false || ctx.nonLethal };
+  }
+  function previewDamage(state, actor, target2, trigger, ctx, extra) {
+    const packets = [];
+    let conditional = false;
+    const entries2 = new Map([...trigger === "active" ? [] : expressions(state, actor), ...extra].map((entry) => [entry.key, entry]));
+    for (const entry of entries2.values()) {
+      const { expr } = entry;
+      if (expr.trigger !== trigger || !available(state, actor, entry) || !sourceApplies(entry, ctx)) continue;
+      const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((unit) => condition3(state, actor, subject2(actor, unit, ctx), expr.condition, ctx, entry));
+      if (!eligible.length) continue;
+      for (const node3 of expr.effects) {
+        if (node3.enabled === false) continue;
+        if (node3.kind === "procEffect" || node3.kind === "chainEffect") {
+          conditional = true;
+          continue;
+        }
+        if (node3.kind !== "damage") continue;
+        const p = { ...expr.params, ...node3 };
+        const recipients = p.target && p.target !== expr.target ? targets(state, actor, p.target, ctx, p.radius ?? 1) : eligible;
+        if (!recipients.some((unit) => unit.id === target2.id) || p.excludeHitTarget && target2.id === ctx.target?.id) continue;
+        if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
+        if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) {
+          conditional = true;
+          continue;
+        }
+        packets.push(damagePacket(state, actor, target2, p, ctx, nodeAmount(state, actor, target2, p, ctx)));
+      }
+    }
+    return { packets, conditional };
+  }
   function changeResource(state, actor, target2, node3, amount2, label, entry, ctx) {
     const name = node3.resource, drain = node3.kind === "drainResource";
     if (node3.kind === "restoreResource" && io.blockRestore(target2)) return false;
@@ -679,7 +717,7 @@ function createEffectEngine(io) {
       for (const target2 of recipients) {
         if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
         const label = node3.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
-        const amount2 = Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target2, p, ctx) + (["heal", "shield", "damage"].includes(node3.kind) ? (p.percent ?? 0) * target2.maxHp : 0)) * (ctx.skillScale ?? 1))));
+        const amount2 = nodeAmount(state, actor, target2, p, ctx);
         let result;
         switch (node3.kind) {
           case "procEffect": {
@@ -719,17 +757,16 @@ function createEffectEngine(io) {
             switch (node3.kind) {
               case "damage":
                 if (!(p.excludeHitTarget && target2 === ctx.target) && amount2 > 0) {
-                  const type = (p.inheritDamageType ? ctx.damageType : p.damageType) ?? "true";
-                  const raw = amount2 * (p.resourceMultiplier ? resource3(state, actor, p.resourceMultiplier) : 1) * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target: target2, damageType: type }));
+                  const { type, raw, hit, ignoreArmor, preserveLife } = damagePacket(state, actor, target2, p, ctx, amount2);
                   result = io.damage(state, target2, actor.id, raw, type, label, {
                     attacker: actor,
-                    hit: p.strikeBonus,
+                    hit,
                     melee: ctx.melee,
                     reaction: true,
                     direct: p.strikeBonus || !["on_damaged", "on_death", "on_ally_death", "on_turn_start", "on_turn_end"].includes(entry.expr.trigger),
                     committedRecipient: p.strikeBonus ? target2 : void 0,
-                    preserveLife: p.lethal === false || ctx.nonLethal,
-                    ignoreArmor: p.ignoreArmor,
+                    preserveLife,
+                    ignoreArmor,
                     details: { effectId: entry.expr.id, ...p.strikeBonus ? { bonusDamage: true } : {} }
                   }).dealt;
                 }
@@ -898,7 +935,7 @@ function createEffectEngine(io) {
     return factors.filter((n) => !n.additive).reduce((factor, n) => factor * factorOf(n), 1) * Math.max(0, 1 + factors.filter((n) => n.additive).reduce((sum, n) => sum + factorOf(n) - 1, 0));
   }
   const check = (state, actor, key4, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key4] ?? 0 : 0), 0);
-  return { dispatch, stat: stat2, check, passiveNodes, damageFactor, activeSkills, skillExpressions: skillExpressions2, available, condition: condition3, changeResource };
+  return { dispatch, stat: stat2, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions: skillExpressions2, available, condition: condition3, changeResource };
 }
 
 // src/core/rng.js
@@ -1801,7 +1838,7 @@ function damageTarget(state, target2, sourceUnitId, amount2, type, label, option
     record(state, sourceUnitId, "shatter", `${recipient.name}\u53D7\u5230\u788E\u88C2\u589E\u4F24`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
   }
   if (hit) expireStatuses(state, recipient, "on_struck", { sourceUnitId });
-  const net = Math.max(0, Math.floor(modified - dsl.stat(state, recipient, "damageReductionFlat", 0, { target: attacker, damageType: type, intercepting: recipient !== target2 })));
+  const net = damageAfterFlatReduction(state, recipient, modified, attacker, type, recipient !== target2);
   let pending = net;
   for (const shield of values2(recipient.statuses).filter((status2) => status2.amount > 0).sort(byId2)) {
     if (!pending) break;
@@ -1831,6 +1868,9 @@ function damageTarget(state, target2, sourceUnitId, amount2, type, label, option
     if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, "true", "\u68D8\u7532\u53CD\u4F24", { reaction: true });
   }
   return { recipient, dealt };
+}
+function damageAfterFlatReduction(state, unit, amount2, attacker, damageType2, intercepting = false) {
+  return Math.max(0, Math.floor(amount2 - dsl.stat(state, unit, "damageReductionFlat", 0, { target: attacker, damageType: damageType2, intercepting })));
 }
 function mitigatedDamage(amount2, formula, hit, attacker) {
   return Math.max(0, hit ? Math.floor(amount2 * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker) : 1)) : Math.floor(amount2 * formula.multiplier) - Math.floor(formula.armor));
@@ -2749,6 +2789,9 @@ function preview(state, action) {
       target2.healingShield = healing.map((n) => Math.min(1e4, Math.floor(n * healShieldRatio(state, unit))));
     }
   }
+  if (type === "skill" && targetUnits.length) {
+    previewSkillEffects(state, unit, template, skillId, common, targets, targetUnits, center, action.nonLethal ?? unit.nonLethal);
+  }
   const first = targets.find((t) => sameCell(t, center)) ?? targets[0];
   return {
     ...first,
@@ -2766,6 +2809,87 @@ function preview(state, action) {
     ...blink ? { teleport: blink } : {},
     hostile
   };
+}
+function previewSkillEffects(state, unit, template, skillId, cost, profiles, units, center, nonLethal) {
+  const entries2 = template.entry ? [template.entry] : skillExpressions(template, skillId);
+  if (!entries2.length) return;
+  const mainTarget = units[0];
+  const actor = {
+    ...unit,
+    hp: unit.hp - cost.hp,
+    mp: unit.mp - cost.mp,
+    sp: unit.sp - cost.sp,
+    ap: unit.ap - cost.ap,
+    used: { ...unit.used }
+  };
+  if (cost.ap === 2) {
+    actor.used.attack++;
+    actor.used.action++;
+  } else if (cost.slot) actor.used[cost.slot]++;
+  const area2 = template.shape !== "single";
+  const context = {
+    target: mainTarget,
+    center,
+    entries: entries2,
+    actionType: "skill",
+    school: template.school,
+    weaponId: template.entry?.instance?.id,
+    damageType: template.damage?.type ?? template.damageType,
+    melee: profiles[0]?.melee,
+    nonLethal,
+    power: castPower(state, actor, template),
+    skillScale: castSkillScale(state, actor, template, mainTarget),
+    ...area2 ? { skillArea: new Set(units.map((target2) => target2.id)) } : {}
+  };
+  const perTarget = area2 ? entries2.filter(({ expr }) => expr.target === "hitTarget") : [];
+  const shared = area2 ? entries2.filter((entry) => !perTarget.includes(entry)) : entries2;
+  for (const [i, unitTarget] of units.entries()) {
+    const target2 = unitTarget.id === actor.id ? actor : unitTarget;
+    const profile = profiles[i];
+    const effects2 = [
+      dsl.previewDamage(state, actor, target2, "on_skill_cast", context, entries2),
+      dsl.previewDamage(state, actor, target2, "active", context, shared)
+    ];
+    if (perTarget.length) effects2.push(dsl.previewDamage(state, actor, target2, "active", { ...context, target: target2 }, perTarget));
+    const hitContext = {
+      ...context,
+      target: target2,
+      center: pos(target2.x, target2.y),
+      melee: profile.melee,
+      backstab: profile.backstab,
+      damageType: profile.damageType
+    };
+    const hit = dsl.previewDamage(state, actor, target2, "on_hit", hitContext, entries2);
+    const packets = effects2.flatMap((result) => result.packets).filter((packet) => packet.raw > 0);
+    const conditional = effects2.some((result) => result.conditional) || hit.conditional || hit.packets.some((packet) => packet.raw > 0);
+    if (conditional) profile.conditionalDamage = true;
+    if (!packets.length) returnIfNoDamage(profile);
+    if (!packets.length) continue;
+    let shield = shieldTotal(target2), hp = target2.hp;
+    for (const packet of packets) {
+      const hit2 = Boolean(packet.hit);
+      const formula = mitigation(state, target2, packet.type, hit2, 0, { attacker: actor, ignoreArmor: packet.ignoreArmor });
+      const modified = mitigatedDamage(packet.raw, formula, hit2, actor);
+      const net = damageAfterFlatReduction(state, target2, modified, actor, packet.type);
+      const absorbed = Math.min(shield, net);
+      shield -= absorbed;
+      const floor = packet.preserveLife || target2.nonLethal || changes(target2, "preserveLife") ? 1 : 0;
+      hp = Math.max(floor, hp - (net - absorbed));
+      if (hp === 0) break;
+    }
+    const dealt = target2.hp - hp;
+    profile.directEffectDamage = dealt;
+    if (!profile.dice) {
+      profile.damage = [dealt, dealt];
+      profile.damageMin = profile.damageMax = profile.expectedDamage = dealt;
+    } else {
+      profile.damageMax = Math.min(target2.hp, profile.damageMax + dealt);
+      profile.expectedDamage = Math.min(target2.hp, profile.expectedDamage + dealt);
+    }
+  }
+}
+function returnIfNoDamage(profile) {
+  if (!profile.dice && profile.conditionalDamage) profile.damage = null;
 }
 function maneuverContest(state, actor, target2, maneuver) {
   const attackStat = maneuver === "grapple" ? "str" : "agi";
@@ -2990,13 +3114,18 @@ function teleportBehind(state, actor, target2) {
   record(state, actor, "teleport", `${actor.name}\u77AC\u79FB\u81F3\u76EE\u6807\u80CC\u540E`, { from, to: pointAt(state, actor) });
   return true;
 }
+var castPower = (state, actor, template) => template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? "int") * 10);
+var castSkillScale = (state, actor, template, target2) => Math.max(
+  0,
+  dsl.stat(state, actor, "skillPower", 1, { target: target2, school: template.school, actionType: "skill" })
+);
 function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const weapon = opportunityWeapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
   const template = action.type === "shield_bash" ? { name: "\u76FE\u51FB", range: 1, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, effects: shieldBashEffects } : weapon ? weapon.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
   const skillEntries = template.entry ? [template.entry] : skillExpressions(weapon ? null : template, action.skillId);
   const mainTarget = state.units[plan.corpseId ?? plan.targets.find((t) => t.kind !== "cover")?.id];
   const multipliers = [];
-  const skillScale = action.type === "skill" ? Math.max(0, dsl.stat(state, actor, "skillPower", 1, { target: mainTarget, school: template.school, actionType: "skill" })) : 1;
+  const skillScale = action.type === "skill" ? castSkillScale(state, actor, template, mainTarget) : 1;
   const effectContext = {
     target: mainTarget,
     center: plan.center,
@@ -3013,7 +3142,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     arrow: Boolean(weapon?.ammo),
     ...action.type === "skill" && template.shape !== "single" ? { skillArea: new Set(plan.targets.map((target2) => target2.id)) } : {},
     damageType: template.damage?.type ?? template.damageType,
-    power: template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? "int") * 10),
+    power: castPower(state, actor, template),
     nonLethal: plan.nonLethal
   };
   if (action.type === "skill") {
@@ -11620,7 +11749,7 @@ function sourceBundle(variables, messages, chat = "default", preferredMessageId)
   const decodeTags = (value) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"');
   const battleSource = eligible.findLast((message) => extractTag(decodeTags(messageContent(message)), tags2));
   const sourceIndex = battleSource ? list3.indexOf(battleSource) : list3.length - 1;
-  const joined = (preferredMessageId == null ? list3 : list3.slice(0, sourceIndex + 1)).map(messageContent).join("\n");
+  const joined = list3.slice(0, sourceIndex + 1).map(messageContent).join("\n");
   const allText = decodeTags(messageContent(battleSource ?? eligible.at(-1)));
   let battleRaw = extractTag(allText, tags2);
   if (!battleRaw) {
@@ -11769,12 +11898,14 @@ function mountTavernOverlay(options = {}) {
   let config = configFor(storage, configKey);
   const aiSessions = createAiSessions(config.aiSessions, (value) => persistSettings({ aiSessions: value }));
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
-  let selectedMessageId = null, aiController = null, aiFinished, askAI, retryAI = null, aiPage = null;
-  let characters = {}, mountedHashes = {}, scanStatus = "";
+  let selectedMessageId = null, selectedBattleText = "", aiController = null, aiFinished, askAI, retryAI = null, aiPage = null;
+  let characters = {}, scanStatus = "";
+  const openingSources = /* @__PURE__ */ new Map();
+  const enteredBattles = /* @__PURE__ */ new Set();
   const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own6(config.instances, key4));
   const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
   const operations = (key4) => batches(key4).flatMap((batch) => batch.patch);
-  let battleObserver = null, variableScanTimer, variableScanEpoch = 0, diagnostics = { phase: "created" };
+  let battleObserver = null, diagnostics = { phase: "created" };
   const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
   const on = (node3, event, fn, opts = {}) => {
     if (!node3) return;
@@ -11899,8 +12030,18 @@ function mountTavernOverlay(options = {}) {
     launcher.hidden = true;
     if (config.autoScan !== false) {
       selectedMessageId = null;
+      selectedBattleText = "";
       await scan();
     }
+  }
+  async function openBattleEntry(messageId, battleText = "") {
+    if (messageId == null && !battleText) return open();
+    selectedMessageId = messageId == null ? null : String(messageId);
+    selectedBattleText = battleText;
+    panel.hidden = false;
+    launcher.hidden = true;
+    switchTab("sandbox");
+    await scan();
   }
   let panelFullscreen = false;
   let panelRestore = null;
@@ -11948,19 +12089,8 @@ function mountTavernOverlay(options = {}) {
       } catch (_) {
       }
     };
-    bind("fated_tactical:open_ui", () => {
-      open().catch(showError);
-    });
-    bind(getGlobal(host, "Mvu")?.events?.VARIABLE_UPDATE_ENDED ?? "mag_variable_update_ended", (variables) => {
-      if (!activeBattleKey || selectedMessageId != null || config.autoScan === false || !statData(variables)) return;
-      const chat = chatId(host), update = ++variableScanEpoch;
-      clearTimeout(variableScanTimer);
-      variableScanTimer = setTimeout(async () => {
-        if (aiController) await aiFinished;
-        if (!disposed && update === variableScanEpoch && chatId(host) === chat && selectedMessageId == null && config.autoScan !== false) {
-          await scan(false, statData(variables));
-        }
-      }, 0);
+    bind("fated_tactical:open_ui", (entry) => {
+      openBattleEntry(entry?.messageId, text3(entry?.battleText)).catch(showError);
     });
   }
   function closePanel() {
@@ -11984,11 +12114,7 @@ function mountTavernOverlay(options = {}) {
       event.preventDefault();
       event.stopPropagation();
       const floor = trigger.closest("[mesid], [data-message-id], [data-mesid]");
-      selectedMessageId = floor?.getAttribute("mesid") ?? floor?.dataset.messageId ?? floor?.dataset.mesid ?? null;
-      panel.hidden = false;
-      launcher.hidden = true;
-      switchTab("sandbox");
-      void scan();
+      void openBattleEntry(floor?.getAttribute("mesid") ?? floor?.dataset.messageId ?? floor?.dataset.mesid);
     }
   }, { capture: true });
   function draggable(node3, handle) {
@@ -12263,7 +12389,8 @@ ${tag.textContent || ""}
     }
     on(refresh, "click", () => {
       selectedMessageId = null;
-      void scan(true);
+      selectedBattleText = "";
+      void scan();
     });
   }
   function switchTab(key4) {
@@ -12314,16 +12441,26 @@ ${tag.textContent || ""}
     const records = Object.fromEntries(ids.map((id4) => [id4, { hash: characters[id4].hash, sourceKind: characters[id4].sourceKind }]));
     return askAI("validate", "", sessionId, records);
   }
-  async function hydrate(epoch, updatedMvu) {
-    const messages = await tavernMessages(host);
-    const nextSources = sourceBundle({}, messages, chatId(host), selectedMessageId);
-    const messageId = Number(nextSources.source?.messageId);
-    nextSources.mvuData = clone2(updatedMvu ?? await readBattleVariables(host, messageId));
-    nextSources.protagonistName = tavernIdentity(host);
+  const battleStorageKey = (key4, field) => `fated-tactical/${key4}/${field}`;
+  function readBattleStorage(key4, field) {
+    try {
+      return parseJSON(storage?.getItem(battleStorageKey(key4, field)));
+    } catch {
+      return null;
+    }
+  }
+  async function hydrate(epoch, candidate) {
+    const key4 = candidate.battleKey;
+    const opening = key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
+    const nextSources = opening ? clone2(opening) : candidate;
+    if (key4 && !opening) {
+      nextSources.mvuData = clone2(await readBattleVariables(host, Number(candidate.source?.messageId)));
+      nextSources.protagonistName = tavernIdentity(host);
+    }
     if (epoch !== scanEpoch || disposed) return null;
-    sources = nextSources;
-    foldBattleEntries();
-    if (!sources.battleInit) {
+    const openingSource = !opening && key4 ? clone2(nextSources) : null;
+    if (!nextSources.battleInit) {
+      sources = nextSources;
       diagnostics = { phase: "no-battle" };
       config.instances = {};
       return null;
@@ -12332,7 +12469,8 @@ ${tag.textContent || ""}
     let hydrated = null;
     let conversionError = null;
     if (typeof converter === "function") {
-      const input = { mvu: sources.mvuData, stat_data: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, protagonistName: sources.protagonistName };
+      const { mvuData, charInfo, battleInit, protagonistName } = nextSources;
+      const input = { mvu: mvuData, stat_data: mvuData, charInfo, battleInit, protagonistName };
       try {
         hydrated = await converter(input);
       } catch (error2) {
@@ -12341,7 +12479,7 @@ ${tag.textContent || ""}
     }
     if (epoch !== scanEpoch || disposed) return null;
     if (conversionError) {
-      diagnostics = { phase: "conversion-error", error: conversionError?.stack || conversionError?.message || String(conversionError), mvuKeys: Object.keys(sources.mvuData || {}), charCount: sources.charInfo?.length || 0, participantCount: sources.battleInit?.units?.length || sources.battleInit?.participants?.length || 0 };
+      diagnostics = { phase: "conversion-error", error: conversionError?.stack || conversionError?.message || String(conversionError), mvuKeys: Object.keys(nextSources.mvuData || {}), charCount: nextSources.charInfo?.length || 0, participantCount: nextSources.battleInit?.units?.length || nextSources.battleInit?.participants?.length || 0 };
       try {
         console.error("[fated-tactical] hydrate failed", diagnostics);
       } catch (_) {
@@ -12350,6 +12488,7 @@ ${tag.textContent || ""}
       if (diagnosticNode2) diagnosticNode2.textContent = JSON.stringify(diagnostics, null, 2);
       throw conversionError;
     }
+    sources = nextSources;
     sources.warnings = hydrated?.warnings ?? [];
     sources.sourceMap = hydrated?.sourceMap ?? {};
     sources.seed = hydrated?.seed ?? hydrated?.state?.rng;
@@ -12358,8 +12497,8 @@ ${tag.textContent || ""}
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
     const nextInstances = {};
     for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
-      const key4 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
-      nextInstances[key4] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
+      const key5 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
+      nextInstances[key5] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
     }
     config.instances = nextInstances;
     diagnostics = {
@@ -12379,6 +12518,10 @@ ${tag.textContent || ""}
     save();
     const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
     if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
+    if (openingSource && hydrated?.state) {
+      openingSources.set(key4, openingSource);
+      putConfig(storage, battleStorageKey(key4, "opening-source"), openingSource);
+    }
     return hydrated;
   }
   let stopTerrainNotices;
@@ -12438,17 +12581,38 @@ ${tag.textContent || ""}
     refreshOutcome(next);
     return next;
   }
-  async function scan(force = false, updatedMvu) {
+  async function scan() {
     const epoch = ++scanEpoch;
     const node3 = pages.sandbox.querySelector("[data-status]");
     if (node3) node3.textContent = "\u6B63\u5728\u8BFB\u53D6 MVU\u3001\u6700\u65B0\u697C\u5C42\u5E76\u8F6C\u6362\u2026";
     try {
-      const hydrated = await hydrate(epoch, updatedMvu);
-      if (epoch !== scanEpoch || disposed) return;
+      const chat = chatId(host);
+      const messages = await tavernMessages(host);
+      if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
+      let entryId = selectedMessageId;
+      if (entryId == null && selectedBattleText) {
+        const entryIndex = messages.findLastIndex((message) => message?.role !== "user" && !message?.is_user && extractTag(messageContent(message), ["battle_init"])?.trim() === selectedBattleText.trim());
+        if (entryIndex >= 0) entryId = messageMeta(messages[entryIndex], entryIndex).messageId;
+      }
+      const candidate = sourceBundle({}, messages, chat, entryId);
+      const key4 = candidate.battleKey;
+      foldBattleEntries();
+      if (key4 && activeBattleKey === key4 && gameMount) {
+        if (node3) node3.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
+        return;
+      }
+      if (activeBattleKey !== key4 && aiController) {
+        const finished = aiFinished;
+        aiController.abort();
+        await finished;
+        if (epoch !== scanEpoch || disposed) return;
+      }
+      const savedBattle = Boolean(key4 && readBattleStorage(key4, "fated-tactical/battle-v1")?.kind === "battle");
+      const hydrated = await hydrate(epoch, candidate);
+      if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       const nextState = hydrated?.state ?? null;
-      const key4 = sources.battleKey;
       const fresh = key4 ? await characterRecords(sources, hydrated) : {};
-      if (epoch !== scanEpoch || disposed) return;
+      if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       syncSettings();
       const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key4] ?? {} };
       const removed = Object.keys(stored).filter((id4) => !fresh[id4]);
@@ -12473,31 +12637,23 @@ ${tag.textContent || ""}
       const invalid = batches(key4).length !== kept.length;
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
       const changed = normalizationCandidates(fresh, stored, remaining);
-      const sourceChanged = activeBattleKey === key4 && (ids.some((id4) => mountedHashes[id4] !== fresh[id4].hash) || Object.keys(mountedHashes).some((id4) => !fresh[id4]));
-      if (sourceChanged || invalid || !gameMount || activeBattleKey !== key4) {
-        if (aiController) {
-          const finished = aiFinished;
-          aiController.abort();
-          await finished;
-          if (epoch !== scanEpoch || disposed) return;
-        }
-        toast.hidden = true;
-        currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
-        if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
-        activeBattleKey = key4;
-        mountState(currentState, !sourceChanged && !invalid && !changed.length);
-      }
+      toast.hidden = true;
+      currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
+      if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
+      mountState(currentState, savedBattle);
+      activeBattleKey = key4;
       characters = fresh;
-      mountedHashes = Object.fromEntries(ids.map((id4) => [id4, fresh[id4].hash]));
       for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
       if (key4 && (changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
       if (config.rosterSelection === null && ids.length) persistSettings({ rosterSelection: ids });
       filterResolved(stored, fresh, kept);
       const live = liveState();
       for (const unit of Object.values(live?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
-      scanStatus = changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u65E0\u53D8\u5316\uFF0C\u8DF3\u8FC7\u81EA\u52A8\u6807\u51C6\u5316";
+      const firstEntry = currentState && key4 && !savedBattle && !enteredBattles.has(key4);
+      if (key4 && currentState) enteredBattles.add(key4);
+      scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
       renderInstances();
-      if (currentState && !aiController && changed.length) void runNormalize(changed, { force: false });
+      if (firstEntry && changed.length) void runNormalize(changed, { force: false });
       if (node3) node3.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")} \xB7 ${scanStatus}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
     } catch (e) {
       diagnostics = { ...diagnostics, phase: "scan-error", error: e?.stack || e?.message || String(e) };
@@ -12508,7 +12664,7 @@ ${tag.textContent || ""}
       const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
       if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
       showError(e);
-      notify("\u6218\u5C40\u52A0\u8F7D\u5931\u8D25", e.message, () => scan(force));
+      notify("\u6218\u5C40\u52A0\u8F7D\u5931\u8D25", e.message, () => scan());
     }
   }
   async function deliverBattleReport() {
@@ -12561,7 +12717,7 @@ ${tag.textContent || ""}
       persistSettings({ hideLauncher: hideLauncher.checked });
       updateMagic();
     });
-    on(refresh, "click", () => scan(true).catch(showError));
+    on(refresh, "click", () => scan().catch(showError));
     on(report, "click", deliverBattleReport);
   }
   askAI = async (kind, requestText = "", sessionId = kind === "chat" ? aiSessions.active().id : void 0, records) => {
@@ -12807,7 +12963,6 @@ ${tag.textContent || ""}
     stopTerrainNotices?.();
     aiController?.abort();
     battleObserver?.disconnect();
-    clearTimeout(variableScanTimer);
     try {
       controller?.abort();
     } catch (_) {
@@ -12833,7 +12988,7 @@ ${tag.textContent || ""}
 
 // src/tavern/regex.js
 var BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>([\s\S]*?)<\/battle_init>/gi;
-var BATTLE_INIT_DISPLAY_REPLACEMENT = '<details class="fated-battle-entry" data-fated-battle-entry="true"><summary>\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3</summary><div class="fated-battle-meta">\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40</div><pre class="fated-battle-source">$1</pre><button type="button" class="fated-battle-enter" data-fated-battle-open="true">\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0</button><script>(function(){var b=document.currentScript.previousElementSibling;if(!b)return;b.addEventListener("click",function(){if(typeof eventEmit==="function")eventEmit("fated_tactical:open_ui",{source:"battle_init"});});})();<\/script></details>';
+var BATTLE_INIT_DISPLAY_REPLACEMENT = '<details class="fated-battle-entry" data-fated-battle-entry="true"><summary>\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3</summary><div class="fated-battle-meta">\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40</div><pre class="fated-battle-source">$1</pre><button type="button" class="fated-battle-enter" data-fated-battle-open="true">\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0</button><script>(function(){var b=document.currentScript.previousElementSibling;if(!b)return;b.addEventListener("click",function(){if(typeof eventEmit!=="function")return;var selector="[mesid], [data-message-id], [data-mesid]",floor=b.closest(selector);try{floor=floor||window.frameElement?.closest(selector);}catch(_){}eventEmit("fated_tactical:open_ui",{source:"battle_init",messageId:floor?.getAttribute("mesid")??floor?.dataset.messageId??floor?.dataset.mesid,battleText:b.previousElementSibling.textContent});});})();<\/script></details>';
 var BATTLE_INIT_DISPLAY_RULE = Object.freeze({
   id: "fated-tactical-battle-init-display",
   name: "\u547D\u5B9A\u6218\u672F\uFF1Abattle_init \u6218\u573A\u5165\u53E3",

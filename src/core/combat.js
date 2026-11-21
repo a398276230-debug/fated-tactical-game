@@ -332,7 +332,7 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     record(state, sourceUnitId, 'shatter', `${recipient.name}受到碎裂增伤`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
   }
   if (hit) expireStatuses(state, recipient, 'on_struck', { sourceUnitId });
-  const net = Math.max(0, Math.floor(modified - dsl.stat(state, recipient, 'damageReductionFlat', 0, { target: attacker, damageType: type, intercepting: recipient !== target })));
+  const net = damageAfterFlatReduction(state, recipient, modified, attacker, type, recipient !== target);
   let pending = net;
   for (const shield of values(recipient.statuses).filter(status => status.amount > 0).sort(byId)) {
     if (!pending) break;
@@ -354,6 +354,10 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, 'true', '棘甲反伤', { reaction: true });
   }
   return { recipient, dealt };
+}
+
+function damageAfterFlatReduction(state, unit, amount, attacker, damageType, intercepting = false) {
+  return Math.max(0, Math.floor(amount - dsl.stat(state, unit, 'damageReductionFlat', 0, { target: attacker, damageType, intercepting })));
 }
 
 function mitigatedDamage(amount, formula, hit, attacker) {
@@ -1158,10 +1162,71 @@ export function preview(state, action) {
       target.healingShield = healing.map(n => Math.min(10000, Math.floor(n * healShieldRatio(state, unit))));
     }
   }
+  if (type === 'skill' && targetUnits.length) {
+    previewSkillEffects(state, unit, template, skillId, common, targets, targetUnits, center, action.nonLethal ?? unit.nonLethal);
+  }
   const first = targets.find(t => sameCell(t, center)) ?? targets[0];
   return { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.damageMultiplier } : {}),
     bonusDice: action.bonusDice ?? 0, intent: action.intent ?? unit.intent ?? 'normal', nonLethal: action.nonLethal ?? unit.nonLethal ?? false,
     dXYZ: geometry.distance, cells, targets, center, ...(blink ? { teleport: blink } : {}), hostile };
+}
+
+function previewSkillEffects(state, unit, template, skillId, cost, profiles, units, center, nonLethal) {
+  const entries = template.entry ? [template.entry] : skillExpressions(template, skillId);
+  if (!entries.length) return;
+  const mainTarget = units[0];
+  const actor = { ...unit, hp: unit.hp - cost.hp, mp: unit.mp - cost.mp, sp: unit.sp - cost.sp,
+    ap: unit.ap - cost.ap, used: { ...unit.used } };
+  if (cost.ap === 2) { actor.used.attack++; actor.used.action++; }
+  else if (cost.slot) actor.used[cost.slot]++;
+  const area = template.shape !== 'single';
+  const context = { target: mainTarget, center, entries, actionType: 'skill', school: template.school,
+    weaponId: template.entry?.instance?.id, damageType: template.damage?.type ?? template.damageType,
+    melee: profiles[0]?.melee, nonLethal, power: castPower(state, actor, template),
+    skillScale: castSkillScale(state, actor, template, mainTarget),
+    ...(area ? { skillArea: new Set(units.map(target => target.id)) } : {}) };
+  const perTarget = area ? entries.filter(({ expr }) => expr.target === 'hitTarget') : [];
+  const shared = area ? entries.filter(entry => !perTarget.includes(entry)) : entries;
+  for (const [i, unitTarget] of units.entries()) {
+    const target = unitTarget.id === actor.id ? actor : unitTarget;
+    const profile = profiles[i];
+    const effects = [dsl.previewDamage(state, actor, target, 'on_skill_cast', context, entries),
+      dsl.previewDamage(state, actor, target, 'active', context, shared)];
+    if (perTarget.length) effects.push(dsl.previewDamage(state, actor, target, 'active', { ...context, target }, perTarget));
+    const hitContext = { ...context, target, center: pos(target.x, target.y), melee: profile.melee,
+      backstab: profile.backstab, damageType: profile.damageType };
+    const hit = dsl.previewDamage(state, actor, target, 'on_hit', hitContext, entries);
+    const packets = effects.flatMap(result => result.packets).filter(packet => packet.raw > 0);
+    const conditional = effects.some(result => result.conditional) || hit.conditional || hit.packets.some(packet => packet.raw > 0);
+    if (conditional) profile.conditionalDamage = true;
+    if (!packets.length) returnIfNoDamage(profile);
+    if (!packets.length) continue;
+    let shield = shieldTotal(target), hp = target.hp;
+    for (const packet of packets) {
+      const hit = Boolean(packet.hit);
+      const formula = mitigation(state, target, packet.type, hit, 0, { attacker: actor, ignoreArmor: packet.ignoreArmor });
+      const modified = mitigatedDamage(packet.raw, formula, hit, actor);
+      const net = damageAfterFlatReduction(state, target, modified, actor, packet.type);
+      const absorbed = Math.min(shield, net);
+      shield -= absorbed;
+      const floor = packet.preserveLife || target.nonLethal || changes(target, 'preserveLife') ? 1 : 0;
+      hp = Math.max(floor, hp - (net - absorbed));
+      if (hp === 0) break;
+    }
+    const dealt = target.hp - hp;
+    profile.directEffectDamage = dealt;
+    if (!profile.dice) {
+      profile.damage = [dealt, dealt];
+      profile.damageMin = profile.damageMax = profile.expectedDamage = dealt;
+    } else {
+      profile.damageMax = Math.min(target.hp, profile.damageMax + dealt);
+      profile.expectedDamage = Math.min(target.hp, profile.expectedDamage + dealt);
+    }
+  }
+}
+
+function returnIfNoDamage(profile) {
+  if (!profile.dice && profile.conditionalDamage) profile.damage = null;
 }
 
 function maneuverContest(state, actor, target, maneuver) {
@@ -1339,6 +1404,11 @@ function teleportBehind(state, actor, target) {
   return true;
 }
 
+const castPower = (state, actor, template) => template.power ?? template.attack
+  ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? 'int') * 10);
+const castSkillScale = (state, actor, template, target) => Math.max(0,
+  dsl.stat(state, actor, 'skillPower', 1, { target, school: template.school, actionType: 'skill' }));
+
 function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const weapon = opportunityWeapon ?? (action.type === 'attack' ? weaponInfo(state, actor) : null);
   const template = action.type === 'shield_bash'
@@ -1347,13 +1417,13 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const skillEntries = template.entry ? [template.entry] : skillExpressions(weapon ? null : template, action.skillId);
   const mainTarget = state.units[plan.corpseId ?? plan.targets.find(t => t.kind !== 'cover')?.id];
   const multipliers = [];
-  const skillScale = action.type === 'skill' ? Math.max(0, dsl.stat(state, actor, 'skillPower', 1, { target: mainTarget, school: template.school, actionType: 'skill' })) : 1;
+  const skillScale = action.type === 'skill' ? castSkillScale(state, actor, template, mainTarget) : 1;
   const effectContext = { target: mainTarget, center: plan.center, terrainTarget: template.target === 'cell' ? locateUnit(state, plan.center) ?? plan.center : null,
     actionType: action.type, school: template.school, multipliers, skillScale, entries: skillEntries, weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
     resourceCost: template.resourceCost?.amount, opportunityAttack: Boolean(opportunityWeapon),
     melee: plan.targets[0]?.melee, arrow: Boolean(weapon?.ammo),
     ...(action.type === 'skill' && template.shape !== 'single' ? { skillArea: new Set(plan.targets.map(target => target.id)) } : {}),
-    damageType: template.damage?.type ?? template.damageType, power: template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? 'int') * 10), nonLethal: plan.nonLethal };
+    damageType: template.damage?.type ?? template.damageType, power: castPower(state, actor, template), nonLethal: plan.nonLethal };
   if (action.type === 'skill') {
     dispatchEffect(state, actor, 'on_skill_cast', effectContext, skillEntries);
     if (template.shape !== 'single' && plan.targets.length) {

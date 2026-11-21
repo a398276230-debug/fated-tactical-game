@@ -83,6 +83,28 @@ test('DSL area resolves each affected unit once and applies school scaling', () 
   assert.deepEqual(hits.map(log => [log.detail.targetId, log.detail.amount]).sort(), [[enemy.id, 120], [second.id, 120]].sort());
 });
 
+test('DSL active damage is included in skill preview and matches execution', () => {
+  const { state, actor, enemy } = setup();
+  state.skills.dsl_preview_damage = {
+    name: 'DSL 预览伤害', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy',
+    power: 100, effects: [expr('preview_damage', 'active', 'hitTarget', [
+      { kind: 'damage', percentOfPower: 1.2, damageType: 'energy' },
+    ])], damageType: 'energy',
+  };
+  actor.skills.push('dsl_preview_damage');
+  actor.x = enemy.x; actor.y = enemy.y - 1;
+  const action = { type: 'skill', skillId: 'dsl_preview_damage', x: enemy.x, y: enemy.y };
+  const plan = preview(state, action);
+  assert.equal(plan.ok, true);
+  assert.deepEqual(plan.targets[0].damage, [120, 120]);
+  const hpBefore = enemy.hp;
+  applyAction(state, action);
+  const damageLog = state.logs.slice(-10).find(log => log.type === 'damage' && log.detail?.effectId === 'preview_damage');
+  assert.ok(damageLog);
+  assert.equal(damageLog.detail.amount, hpBefore - enemy.hp);
+  assert.equal(damageLog.detail.amount, plan.targets[0].damage[0]);
+});
+
 test('DSL active equipment, chain, proc, cooldown and serialization', () => {
   const active = expr('active_test', 'active', 'self', [{ kind: 'chainEffect', effects: [
     { kind: 'drainResource', resource: 'hp', amount: 12, minimumRemaining: 1, requireFull: true },

@@ -104,17 +104,20 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.eventOn = (name, fn) => { hostEvents.set(name, fn); return () => hostEvents.delete(name); };
     iframe.contentWindow.eval(bundle);
     const battle = '<battle_init>\\nbattle|1|chrome-host|酒馆联调|terrain|12\\nunit|p1|blue|mvu:主角|玩家|2,2\\nunit|e1|red|char_info|对手|7,7\\n</battle_init>';
-    const messages = [
+    window.battleFixture = battle;
+    window.overlayFrame = iframe;
+    window.overlayBundle = bundle;
+    const messages = window.hostMessages = [
       {message_id:0, role:'assistant', message:'<char_info>{"name":"对手","stats":{"agi":-20}}</char_info>' + battle},
       {message_id:1, role:'assistant', message:'后续叙事'},
     ];
     window.hostCalls = [];
     window.emitMvuUpdate = () => hostEvents.get('mag_variable_update_ended')?.(Mvu.getMvuData({message_id:0}));
-    window.getLastMessageId = () => 1;
-    window.getChatMessages = (range) => { window.hostRange = range; return range === '0-1' ? messages : [messages.at(-1)]; };
+    window.getLastMessageId = () => messages.at(-1).message_id;
+    window.getChatMessages = (range) => { window.hostRange = range; return messages; };
     window.Mvu = {getMvuData({message_id}) {
       hostCalls.push(message_id);
-      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:321,上限:321},装备:{旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...window.extraBowEffects}}}}}};
+      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},装备:{旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...window.extraBowEffects}}}}}};
     }};
     window.generateRaw = async config => new Promise((resolve,reject) => {
       window.hostRequests ||= [];
@@ -163,6 +166,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化失败'`), '错误提示');
   assert.match(await run(`document.querySelector('.fated-toast p').textContent`), /联调模拟网络错误/);
+  await run('window.__fatedTacticalTavern.scan()');
+  assert.equal(await run('hostRequests.length'), 1);
   await click('.fated-toast button');
   await until(() => run('hostRequests.length === 2'), '重试请求');
   await run('window.completeHostAI()');
@@ -177,26 +182,54 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.deepEqual(await run(`window.__fatedTacticalTavern.getState().warnings.filter(w=>w.unitId==='p1')`),[]);
     assert.equal(await run('hostRequests.length'),3);
   }
-  await run(`window.extraBowEffects={冰冻箭:'命中后冰冻目标'}; window.emitMvuUpdate()`);
-  await until(()=>run('hostRequests.length === 4'),'MVU 更新后重新检查未处理诊断');
-  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
-  const sentWarnings = index => run(`hostRequests[${index}].ordered_prompts.map(m=>m.content).join('').split('待处理警告：\\n').at(-1).split('\\n\\n')[0]`);
-  assert.match(await sentWarnings(3), /冰冻箭/);
-  assert.doesNotMatch(await sentWarnings(3), /恒定拉距/);
-  assert.equal(await run(`(() => { const s=window.__fatedTacticalTavern.getState(); return s.equipment[s.items[s.units.p1.mainHand].templateId].attack; })()`), 10);
+  const tavernState = () => run('window.__fatedTacticalTavern.getState()');
+  const opening = await tavernState();
+  await run(`document.querySelector('[data-tab="sandbox"]').click();
+    const auto = document.querySelector('#auto-ai'); if (auto.checked) auto.click();
+    document.querySelector('#end-turn').click();`);
+  const halfBattle = await tavernState();
+  assert.ok(halfBattle.logs.length > opening.logs.length);
+  await run(`const draft = document.createElement('textarea'); draft.id = 'send_textarea'; document.body.append(draft);
+    document.querySelector('[data-page="sandbox"] > .fated-actions button').click();`);
+  assert.match(await run(`document.querySelector('#send_textarea').value`), /战斗尚未结束/);
+  assert.equal(await run(`document.querySelector('.fated-tavern-panel').hidden`), true);
+  await run(`window.narrativeHp=123; window.extraBowEffects={冰冻箭:'命中后冰冻目标'};
+    hostMessages.push({message_id:2,role:'user',message:document.querySelector('#send_textarea').value},
+      {message_id:3,role:'assistant',message:'续写<char_info>{"name":"对手","stats":{"agi":99}}</char_info>'});
+    document.querySelector('#send_textarea').remove(); window.emitMvuUpdate();
+    window.__fatedTacticalTavern.open();`);
+  await run('window.__fatedTacticalTavern.scan()');
+  assert.deepEqual(await tavernState(), halfBattle);
+  assert.equal(await run('hostRequests.length'), 3);
+  await run(`(async () => { const frame = document.createElement('iframe'); frame.hidden = true;
+    document.body.append(frame); frame.contentWindow.eval(overlayBundle); overlayFrame.remove(); window.overlayFrame = frame;
+    await window.__fatedTacticalTavern.open(); })()`);
+  assert.deepEqual(await tavernState(), halfBattle);
+  assert.equal(await run('hostRequests.length'), 3);
+  await run(`hostMessages.push({message_id:4,role:'assistant',message:battleFixture.replace('chrome-host','chrome-next')});
+    window.__fatedTacticalTavern.open()`);
+  await until(() => run('hostRequests.length === 4'), '新战场发起首次自动标准化');
+  assert.equal((await tavernState()).units.p1.hp, 123);
   await run('window.completeHostAI()');
-  await until(()=>run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`),'部分诊断解决');
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`), '新战场标准化完成');
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
-  assert.doesNotMatch(await run(`${get(cardWarnings)}.textContent`), /恒定拉距/);
-  await click('.fated-toast button:nth-of-type(2)');
-  await run('window.emitMvuUpdate()');
-  await until(()=>run('hostRequests.length === 5'),'相同未解决诊断在下一次 MVU 更新重试');
-  assert.match(await sentWarnings(4), /冰冻箭/);
-  assert.doesNotMatch(await sentWarnings(4), /恒定拉距/);
-  await run('window.completeHostAI()');
-  await until(()=>run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`),'重试诊断应用完成');
-  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
-  await click('.fated-toast button:nth-of-type(2)');
+  await run(`(() => {
+    const { renderBattleInitEntry } = overlayFrame.contentWindow.FatedTacticalTavern;
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const entry = frame.contentDocument;
+    entry.body.insertAdjacentHTML('beforeend', renderBattleInitEntry(battleFixture));
+    frame.contentWindow.eventEmit = (name, payload) => hostEvents.get(name)?.(payload);
+    const script = entry.querySelector('script');
+    const executable = entry.createElement('script'); executable.textContent = script.textContent;
+    script.replaceWith(executable);
+    entry.querySelector('button').click();
+    frame.remove();
+  })()`);
+  await until(async () => (await tavernState())?.scenarioId === halfBattle.scenarioId, '旧楼入口恢复原战场');
+  assert.deepEqual(await tavernState(), halfBattle);
+  assert.equal(await run('hostRequests.length'), 4);
+  await run(`document.querySelector('#reset-button').click(); document.querySelector('[data-tab="instances"]').click();`);
   const panelBefore = await run(`(() => { const r=document.querySelector('.fated-tavern-panel').getBoundingClientRect(); return {left:r.left,top:r.top,width:r.width,height:r.height}; })()`);
   await click('.fated-tavern-fullscreen');
   assert.equal(await run('document.querySelector(".fated-tavern-panel").classList.contains("is-fullscreen")'), true);
@@ -225,7 +258,6 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click(toggle);
   assert.deepEqual(await preview(), enabledMessages);
   await click('[data-tab="sandbox"]');
-  const tavernState = () => run('window.__fatedTacticalTavern.getState()');
   let imported = await tavernState();
   assert.equal(imported.title, '酒馆联调');
   assert.equal(imported.order[0], 'p1');
