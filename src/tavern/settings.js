@@ -357,6 +357,14 @@ export function renderApiTab(page, ctx) {
     else await requestViaCustomApi(probe, messages, { host: ctx.host, fetchImpl: ctx.fetchImpl });
     return '测试连接成功';
   });
+  const battle = card('⚔️ 战斗 AI（敌方陪玩）');
+  field(battle, 'battleAiEnabled', '启用战斗 AI', Object.assign(input('checkbox'), { type:'checkbox' }), false);
+  field(battle, 'battleAiMode', '调用通道', select([['same','复用上方 API 配置'],['custom','独立战斗 AI API']]), 'same');
+  field(battle, 'battleAiBaseUrl', '战斗 AI API 地址', input('text', {placeholder:'http://127.0.0.1:8317/v1'}), '', settings.battleAiMode !== 'custom');
+  field(battle, 'battleAiApiKey', '战斗 AI API 密钥', input('password', {autocomplete:'off'}), '', settings.battleAiMode !== 'custom');
+  field(battle, 'battleAiModel', '战斗 AI 模型', input('text', {placeholder:'deepseek-v4.1-flash'}), '', settings.battleAiMode !== 'custom');
+  const battleHelp = make('p', 'hint wide', '战斗 AI 只接收当前敌方连续回合的可行动角色、技能与装备、攻击范围、互动、地形高度和隔断。模型输出非法 JSON 或非法动作时自动重试一次，仍失败则使用本地 AI。');
+  battle.append(battleHelp);
   const sampling = card('⚙ 采样参数');
   field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.8);
   field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 2400);

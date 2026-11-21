@@ -52,6 +52,7 @@ export const TEMPLATE = `<div class="ft-app" data-busy="false">
           <button id="undo-button" type="button" class="game-button">撤销</button>
           <button id="ai-step" type="button" class="game-button">敌方单步</button>
           <label class="ft-switch"><input id="auto-ai" type="checkbox" checked> 自动敌方</label>
+          <label class="ft-switch"><input id="llm-enemy-ai" type="checkbox"> LLM接手敌方回合</label>
           <label class="ft-mini-select">间隔 <select id="ai-speed"><option value="800">慢</option><option value="350" selected>标准</option><option value="80">快</option></select></label>
         </div>
       </div>

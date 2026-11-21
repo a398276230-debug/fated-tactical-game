@@ -260,6 +260,7 @@ export const TAVERN_VERSION = '0.2.12';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
+  battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
   charSnapshots: {}, rosterSelection: null, normalizationBatches: {},
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
@@ -934,8 +935,16 @@ export function mountTavernOverlay(options = {}) {
     };
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
-      onVictory() {
+      battleAiRequest: async (messages, signal) => {
         syncSettings();
+        const battleConfig = config.battleAiMode === 'custom'
+          ? { ...config, apiMode: 'custom', baseUrl: config.battleAiBaseUrl, apiKey: config.battleAiApiKey, model: config.battleAiModel,
+              apiTransport: config.battleAiApiTransport, apiSource: config.battleAiApiSource, stream: false, max_tokens: 2400 }
+          : { ...config, stream: false, max_tokens: 2400 };
+        return requestTavernAI(host, battleConfig, messages, options.fetch, signal);
+      },
+      onVictory() {
+        syncSettings;
         if (config.autoDeliverBattleReport !== false) void deliverBattleReport();
       },
     });

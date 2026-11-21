@@ -5493,6 +5493,7 @@ var FatedTactical = (() => {
           <button id="undo-button" type="button" class="game-button">\u64A4\u9500</button>
           <button id="ai-step" type="button" class="game-button">\u654C\u65B9\u5355\u6B65</button>
           <label class="ft-switch"><input id="auto-ai" type="checkbox" checked> \u81EA\u52A8\u654C\u65B9</label>
+          <label class="ft-switch"><input id="llm-enemy-ai" type="checkbox"> LLM\u63A5\u624B\u654C\u65B9\u56DE\u5408</label>
           <label class="ft-mini-select">\u95F4\u9694 <select id="ai-speed"><option value="800">\u6162</option><option value="350" selected>\u6807\u51C6</option><option value="80">\u5FEB</option></select></label>
         </div>
       </div>
@@ -7006,6 +7007,139 @@ var FatedTactical = (() => {
     card.style.top = `${clamp2(y, top, bottom - card.getBoundingClientRect().height)}px`;
   }
 
+  // src/core/battle-ai.js
+  var RULES = `\u4F60\u662F\u547D\u5B9A\u6218\u672F\u6C99\u76D8\u7684\u654C\u65B9\u966A\u73A9 AI\u3002\u4F60\u7684\u8EAB\u4EFD\u662F user \u4E00\u65B9\u7684\u5BF9\u624B\uFF0C\u53EA\u63A7\u5236\u5F53\u524D\u8FDE\u7EED\u884C\u52A8\u7684\u654C\u65B9\u89D2\u8272\uFF0C\u4E0D\u66FF\u73A9\u5BB6\u505A\u51B3\u5B9A\u3002
+\u89C4\u5219\u6458\u8981\uFF1A\u6BCF\u56DE\u5408\u6BCF\u4E2A\u89D2\u8272\u67091\u4E2A\u653B\u51FB\u69FD\u548C1\u4E2A\u52A8\u4F5C\u69FD\uFF0C\u79FB\u52A8\u3001\u88C5\u586B\u3001\u4E92\u52A8\u3001\u6362\u88C5\u4F7F\u7528\u52A8\u4F5C\u69FD\uFF0C\u653B\u51FB\u4F7F\u7528\u653B\u51FB\u69FD\uFF0C\u91CD\u578B\u6280\u80FD\u53EF\u540C\u65F6\u7528\u4E24\u69FD\u3002\u653B\u51FB\u4F7F\u7528\u4E09\u7EF4\u8DDD\u79BB\u3001\u89C6\u7EBF\u3001\u5C04\u7A0B\u3001\u5730\u5F62\u548C\u63A9\u4F53\u5224\u5B9A\u3002\u5207\u78CB\u53CC\u65B9\u975E\u81F4\u6B7B\u5E76\u5728\u4F4E\u4E8E30%\u751F\u547D\u65F6\u9000\u573A\uFF0C\u7ADE\u6280\u53CC\u65B9\u975E\u81F4\u6B7B\u81F31\u751F\u547D\u51FA\u5C40\uFF0C\u538B\u5236\u6218\u53EA\u6709\u538B\u5236\u65B9\u7684\u538B\u5236\u52A8\u4F5C\u7559\u6D3B\u53E3\uFF0C\u5B88\u536B\u6218\u84DD\u65B9\u575A\u63015\u8F6E\u3002\u6218\u610F\u4F1A\u5F71\u54CD\u547D\u4E2D\uFF0C\u6240\u6709\u6218\u6597\u53EA\u6709\u7AD9\u5728\u5730\u56FE\u8FB9\u754C\u624D\u80FD\u9003\u8DD1\u3002\u6280\u80FD\u3001\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u548C\u80CC\u5305\u6D88\u8017\u54C1\u90FD\u53EF\u80FD\u6709\u6B21\u6570\u3001\u51B7\u5374\u548C\u8D44\u6E90\u8D39\u7528\uFF0C\u5FC5\u987B\u4F18\u5148\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u6570\u636E\u3002
+\u4F60\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u5355\u4F4D\u3001\u6280\u80FD\u3001\u88C5\u5907\u3001\u884C\u52A8\u8303\u56F4\u3001\u4E92\u52A8\u70B9\u548C\u5730\u56FE\u505A\u51B3\u7B56\u3002
+\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981 Markdown\u3001\u89E3\u91CA\u3001\u601D\u8003\u8FC7\u7A0B\u3002\u683C\u5F0F\u4E3A {"actions":[{"unitId":"\u654C\u65B9\u5355\u4F4DID","action":{"type":"attack|skill|move|sprint|disengage|brace|reload|interact|suppress|free_ally|flee|switch_weapon|end","x":\u6574\u6570,"y":\u6574\u6570,"skillId":"\u6280\u80FDID"\u3002\u975E\u6280\u80FD\u52A8\u4F5C\u4E0D\u8981\u8F93\u51FA skillId\uFF0C\u672A\u4F7F\u7528\u7684\u5750\u6807\u4E5F\u4E0D\u8981\u8F93\u51FA\u3002}}]}\u3002\u52A8\u4F5C\u6309\u6267\u884C\u987A\u5E8F\u6392\u5217\uFF0C\u6700\u591A\u8986\u76D6\u5F53\u524D\u5230\u4E0B\u4E00\u4E2A\u73A9\u5BB6\u5355\u4F4D\u4E4B\u524D\u7684\u654C\u65B9\u56DE\u5408\u3002\u6BCF\u4E2A\u52A8\u4F5C\u90FD\u5FC5\u987B\u6709 unitId\u3002`;
+  var copy2 = (value) => structuredClone(value);
+  function compactSkill(state, unit, id3) {
+    const s = state.skills[id3];
+    if (!s) return null;
+    return {
+      id: id3,
+      name: s.name,
+      slot: s.slot,
+      ap: s.ap,
+      range: s.range,
+      shape: s.shape,
+      target: s.target,
+      power: s.power,
+      damageType: s.damageType,
+      damage: s.damage,
+      effects: s.effects,
+      usage: state.units[unit.id]?.skillUsage?.[id3]
+    };
+  }
+  function unitView(state, unit) {
+    const skills = [.../* @__PURE__ */ new Set([
+      ...unit.skills ?? [],
+      ...Object.keys(unit.inventory ?? {}),
+      ...Object.keys(state.skills).filter((id3) => state.skills[id3]?.backpackItem),
+      ...equippedActiveSkills(state, unit).map(([id3]) => id3)
+    ])].map((id3) => compactSkill(state, unit, id3)).filter(Boolean);
+    const actions = [];
+    const shadow = copy2(state);
+    shadow.turn = shadow.order.indexOf(unit.id);
+    for (const type of ["attack", "move", "sprint", "disengage", "brace", "reload", "flee", "suppress", "free_ally", "end"]) {
+      const plan = preview(shadow, { type });
+      if (plan.ok || type === "move") actions.push(type);
+    }
+    return {
+      id: unit.id,
+      name: unit.name,
+      team: unit.team,
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      mp: unit.mp,
+      sp: unit.sp,
+      x: unit.x,
+      y: unit.y,
+      z: elevation(state, unit),
+      ap: unit.ap,
+      used: unit.used,
+      statuses: unit.statuses,
+      mainHand: unit.mainHand ?? unit.weapon,
+      offHand: unit.offHand,
+      skills,
+      actions,
+      atEdge: atBattleEdge(state, unit),
+      switchableWeapons: switchableWeapons(state, unit).map((id3) => ({ id: id3, name: state.equipment[state.items[id3]?.templateId]?.name ?? id3 })),
+      rangeHint: { attack: state.equipment[state.items[unit.mainHand ?? unit.weapon] ? state.items[unit.mainHand ?? unit.weapon].templateId : ""]?.range ?? 1.5 }
+    };
+  }
+  function battleAiPayload(state) {
+    const current = state.order[state.turn];
+    const start = state.order.indexOf(current);
+    const actors = [];
+    for (let i = 0; i < state.order.length; i++) {
+      const unit = state.units[state.order[(start + i) % state.order.length]];
+      if (!unit || unit.hp <= 0 || unit.fled) continue;
+      if (actors.length && unit.team === "blue") break;
+      if (unit.team === "red") actors.push(unitView(state, unit));
+    }
+    const grid = state.grid.map((row) => row.map((cell) => cell.kind === "wall" ? "#" : cell.kind === "slope" ? `^${cell.z ?? 0}` : cell.kind === "floor" ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(" "));
+    const movement = {};
+    for (const unit of actors) {
+      const shadow = copy2(state);
+      shadow.turn = shadow.order.indexOf(unit.id);
+      const plan = preview(shadow, { type: "move" });
+      movement[unit.id] = (plan.cells ?? []).map(({ x, y }) => [x, y]);
+    }
+    return { rules: RULES, battle: {
+      title: state.title,
+      type: state.battleType,
+      round: state.round,
+      turnUnitId: current,
+      units: actors,
+      allUnits: Object.values(state.units).filter((u) => u.hp > 0 && !u.fled).map((u) => ({ id: u.id, team: u.team, x: u.x, y: u.y, hp: u.hp, maxHp: u.maxHp })),
+      covers: state.covers,
+      interactives: state.interactives,
+      movement,
+      grid
+    }, actorIds: actors.map((u) => u.id) };
+  }
+  function parse(text4) {
+    const match = String(text4).match(/\{[\s\S]*\}/);
+    const data = JSON.parse(match?.[0] ?? text4);
+    if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error("\u6218\u6597 AI \u5FC5\u987B\u8FD4\u56DE actions \u6570\u7EC4");
+    return data.actions;
+  }
+  async function requestBattleAi(state, request, { signal } = {}) {
+    const payload = battleAiPayload(state);
+    if (!payload.actorIds.length) return [];
+    let messages = [{ role: "system", content: RULES }, { role: "user", content: JSON.stringify(payload) }];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reply = await request(messages, signal);
+      try {
+        const actions = parse(reply);
+        const valid = [];
+        const shadow = copy2(state);
+        for (const entry of actions) {
+          if (!entry || typeof entry.unitId !== "string" || !entry.action || typeof entry.action.type !== "string") throw new Error("\u52A8\u4F5C\u7F3A\u5C11 unitId \u6216 action.type");
+          const actor = shadow.units[entry.unitId];
+          if (!actor || actor.team !== "red") throw new Error(`\u4E0D\u80FD\u63A7\u5236\u5355\u4F4D ${entry.unitId}`);
+          if (shadow.units[shadow.order[shadow.turn]]?.id !== entry.unitId) throw new Error(`\u884C\u52A8\u987A\u5E8F\u9519\u8BEF\uFF0C\u5E94\u8F6E\u5230 ${shadow.order[shadow.turn]}`);
+          const action = Object.fromEntries(Object.entries(entry.action).filter(([, value]) => value !== null));
+          if (action.type === "skill" && typeof action.skillId !== "string") throw new Error("\u6280\u80FD\u52A8\u4F5C\u5FC5\u987B\u63D0\u4F9B skillId");
+          if (action.type !== "skill") delete action.skillId;
+          const plan = preview(shadow, action);
+          if (!plan.ok) throw new Error(`${entry.unitId} \u7684 ${entry.action.type} \u4E0D\u5408\u6CD5\uFF1A${plan.error}`);
+          applyAction(shadow, action);
+          valid.push({ ...entry, action });
+          const next = shadow.units[shadow.order[shadow.turn]];
+          if (!next || next.team !== "red") break;
+        }
+        if (!valid.length) throw new Error("actions \u4E3A\u7A7A");
+        return valid;
+      } catch (error2) {
+        if (attempt) throw error2;
+        messages = [...messages, { role: "assistant", content: reply }, { role: "user", content: `\u4E0A\u4E00\u4EFD JSON \u6216\u52A8\u4F5C\u65E0\u6548\uFF1A${error2.message}\u3002\u53EA\u8F93\u51FA\u4FEE\u6B63\u540E\u7684\u5B8C\u6574 JSON\u3002` }];
+      }
+    }
+    throw new Error("\u6218\u6597 AI \u672A\u8FD4\u56DE\u6709\u6548\u52A8\u4F5C");
+  }
+
   // src/ui/main.js
   var THEMES = ["amethyst", "night-gold", "frost-silver"];
   var TARGETLESS = ["end_encounter", "switch_weapon", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
@@ -7022,7 +7156,7 @@ var FatedTactical = (() => {
     });
     return [`\u8BD5\u7B97\u901A\u8FC7\uFF0C\u786E\u8BA4\u540E\u4F1A\u6539\u53D8 ${lines.length} \u5904\uFF1A`, ...lines].join("\n");
   }
-  function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, onVictory, storage: storageArea } = {}) {
+  function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, onVictory, storage: storageArea, battleAiRequest } = {}) {
     const document2 = root.ownerDocument, window2 = document2.defaultView;
     const localStorage2 = storageArea ?? window2?.localStorage;
     const $ = (id3) => root.querySelector(`[id="${id3}"]`);
@@ -7052,7 +7186,7 @@ var FatedTactical = (() => {
     };
     let bagAim = null;
     let state, live, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, busy = false;
-    let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0;
+    let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
     const active = (s = state) => s?.units[s.order[s.turn]];
     const error2 = (value) => {
       const node3 = $("action-error");
@@ -7302,10 +7436,36 @@ ${height2}\uFF0C${sight}`;
       } else game.createBattle({ scenarioId: scenario.value, ruleset: "protocol", seed: Number(seed.value), ...carry ? { persistentSnapshot: carry } : {} });
       closeDrawer();
     }
+    async function runBattleAiTurn() {
+      const initial2 = live;
+      if (!battleAiRequest || !$("llm-enemy-ai")?.checked || battleAiBusy || !initial2 || initial2.outcome || active(initial2)?.team !== "red") return false;
+      battleAiBusy = true;
+      try {
+        const entries2 = await requestBattleAi(initial2, battleAiRequest);
+        let executed = false;
+        for (const entry of entries2) {
+          const current = game.getBattleState(), actor = active(current);
+          if (!actor || actor.team !== "red" || actor.id !== entry.unitId || current.outcome) break;
+          const plan = game.previewAction(entry.action);
+          if (!plan.ok) throw new Error(plan.error || "\u5916\u90E8\u6218\u6597 AI \u8FD4\u56DE\u4E86\u975E\u6CD5\u52A8\u4F5C");
+          game.playAction(entry.action);
+          executed = true;
+        }
+        return executed;
+      } catch (error3) {
+        console.warn("[fated:battle-ai] fallback to local AI", error3);
+        return false;
+      } finally {
+        battleAiBusy = false;
+      }
+    }
     function schedule() {
       window2.clearTimeout(timer);
-      if (busy || playback.busy || live?.outcome || active(live)?.team !== "red" || !$("auto-ai").checked) return;
-      timer = window2.setTimeout(() => safely(() => game.stepEnemy()), Number($("ai-speed").value) || 350);
+      if (busy || playback.busy || live?.outcome || active(live)?.team !== "red" || !$("auto-ai").checked || battleAiBusy) return;
+      timer = window2.setTimeout(() => safely(async () => {
+        const usedExternal = await runBattleAiTurn();
+        if (!usedExternal && !live?.outcome && active(live)?.team === "red") game.stepEnemy();
+      }), Number($("ai-speed").value) || 350);
     }
     function pauseAI() {
       $("auto-ai").checked = false;
@@ -7545,13 +7705,17 @@ ${height2}\uFF0C${sight}`;
         const r = game.undoLastCommit();
         if (!r.ok) error2(r.error);
       }));
-      on("ai-step", "click", () => safely(() => {
+      on("ai-step", "click", () => safely(async () => {
         window2.clearTimeout(timer);
         playback.skip();
-        game.stepEnemy();
+        if (!await runBattleAiTurn()) game.stepEnemy();
       }));
       on("auto-ai", "change", () => {
         storage.setItem("fated-tactical/auto", String($("auto-ai").checked));
+        schedule();
+      });
+      on("llm-enemy-ai", "change", () => {
+        storage.setItem("fated-tactical/llm-enemy-ai", String($("llm-enemy-ai").checked));
         schedule();
       });
       on("ai-speed", "change", () => {
@@ -7774,6 +7938,7 @@ ${height2}\uFF0C${sight}`;
     } catch {
     }
     $("auto-ai").checked = storage.getItem("fated-tactical/auto") !== "false";
+    $("llm-enemy-ai").checked = storage.getItem("fated-tactical/llm-enemy-ai") === "true";
     const theme = storage.getItem("fated-tactical/theme");
     if (THEMES.includes(theme)) {
       root.dataset.dlcTheme = theme;
@@ -11701,6 +11866,14 @@ ${variables.warnings()}` : "");
       else await requestViaCustomApi(probe, messages, { host: ctx.host, fetchImpl: ctx.fetchImpl });
       return "\u6D4B\u8BD5\u8FDE\u63A5\u6210\u529F";
     });
+    const battle = card("\u2694\uFE0F \u6218\u6597 AI\uFF08\u654C\u65B9\u966A\u73A9\uFF09");
+    field(battle, "battleAiEnabled", "\u542F\u7528\u6218\u6597 AI", Object.assign(input("checkbox"), { type: "checkbox" }), false);
+    field(battle, "battleAiMode", "\u8C03\u7528\u901A\u9053", select([["same", "\u590D\u7528\u4E0A\u65B9 API \u914D\u7F6E"], ["custom", "\u72EC\u7ACB\u6218\u6597 AI API"]]), "same");
+    field(battle, "battleAiBaseUrl", "\u6218\u6597 AI API \u5730\u5740", input("text", { placeholder: "http://127.0.0.1:8317/v1" }), "", settings.battleAiMode !== "custom");
+    field(battle, "battleAiApiKey", "\u6218\u6597 AI API \u5BC6\u94A5", input("password", { autocomplete: "off" }), "", settings.battleAiMode !== "custom");
+    field(battle, "battleAiModel", "\u6218\u6597 AI \u6A21\u578B", input("text", { placeholder: "deepseek-v4.1-flash" }), "", settings.battleAiMode !== "custom");
+    const battleHelp = make("p", "hint wide", "\u6218\u6597 AI \u53EA\u63A5\u6536\u5F53\u524D\u654C\u65B9\u8FDE\u7EED\u56DE\u5408\u7684\u53EF\u884C\u52A8\u89D2\u8272\u3001\u6280\u80FD\u4E0E\u88C5\u5907\u3001\u653B\u51FB\u8303\u56F4\u3001\u4E92\u52A8\u3001\u5730\u5F62\u9AD8\u5EA6\u548C\u9694\u65AD\u3002\u6A21\u578B\u8F93\u51FA\u975E\u6CD5 JSON \u6216\u975E\u6CD5\u52A8\u4F5C\u65F6\u81EA\u52A8\u91CD\u8BD5\u4E00\u6B21\uFF0C\u4ECD\u5931\u8D25\u5219\u4F7F\u7528\u672C\u5730 AI\u3002");
+    battle.append(battleHelp);
     const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
     field(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.8);
     field(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 2400);
@@ -12376,6 +12549,13 @@ ${variables.warnings()}` : "");
     model: "",
     temperature: 0.8,
     max_tokens: 2400,
+    battleAiEnabled: false,
+    battleAiMode: "same",
+    battleAiBaseUrl: "",
+    battleAiApiKey: "",
+    battleAiModel: "",
+    battleAiApiTransport: "direct",
+    battleAiApiSource: "openai",
     extraBody: "{}",
     excludeParams: "",
     headers: "{}",
@@ -13268,8 +13448,23 @@ ${tag.textContent || ""}
         storage,
         state,
         customBattle: { seed: sources.seed, restart, restoreSaved },
-        onVictory() {
+        battleAiRequest: async (messages, signal) => {
           syncSettings();
+          const battleConfig = config.battleAiMode === "custom" ? {
+            ...config,
+            apiMode: "custom",
+            baseUrl: config.battleAiBaseUrl,
+            apiKey: config.battleAiApiKey,
+            model: config.battleAiModel,
+            apiTransport: config.battleAiApiTransport,
+            apiSource: config.battleAiApiSource,
+            stream: false,
+            max_tokens: 2400
+          } : { ...config, stream: false, max_tokens: 2400 };
+          return requestTavernAI(host, battleConfig, messages, options.fetch, signal);
+        },
+        onVictory() {
+          syncSettings;
           if (config.autoDeliverBattleReport !== false) void deliverBattleReport();
         }
       });

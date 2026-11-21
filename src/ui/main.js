@@ -5,6 +5,7 @@ import { createPlayback } from './animation.js';
 import { equippedActiveSkills, switchableWeapons } from '../core/combat.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
+import { requestBattleAi } from '../core/battle-ai.js';
 
 const THEMES = ['amethyst', 'night-gold', 'frost-silver'];
 const TARGETLESS = ['end_encounter','switch_weapon', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
@@ -24,7 +25,7 @@ function describeProposal(result) {
   return [`试算通过，确认后会改变 ${lines.length} 处：`, ...lines].join('\n');
 }
 
-export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, onVictory, storage: storageArea } = {}) {
+export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, onVictory, storage: storageArea, battleAiRequest } = {}) {
   const document = root.ownerDocument, window = document.defaultView;
   const localStorage = storageArea ?? window?.localStorage;
   const $ = id => root.querySelector(`[id="${id}"]`);
@@ -39,7 +40,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   // state：屏幕上正在展示的战局（演出时会落后于真实战局）；live：规则层的真实战局。
   let bagAim = null;
   let state, live, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, busy = false;
-  let menuButtons = new Map(), openDrawer = null, seenLogs = 0;
+  let menuButtons = new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
 
   const active = (s = state) => s?.units[s.order[s.turn]];
   const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
@@ -256,10 +257,34 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
 
   // ---------- 敌方自动 ----------
+  async function runBattleAiTurn() {
+    const initial = live;
+    if (!battleAiRequest || !$('llm-enemy-ai')?.checked || battleAiBusy || !initial || initial.outcome || active(initial)?.team !== 'red') return false;
+    battleAiBusy = true;
+    try {
+      const entries = await requestBattleAi(initial, battleAiRequest);
+      let executed = false;
+      for (const entry of entries) {
+        const current = game.getBattleState(), actor = active(current);
+        if (!actor || actor.team !== 'red' || actor.id !== entry.unitId || current.outcome) break;
+        const plan = game.previewAction(entry.action);
+        if (!plan.ok) throw new Error(plan.error || '外部战斗 AI 返回了非法动作');
+        game.playAction(entry.action);
+        executed = true;
+      }
+      return executed;
+    } catch (error) {
+      console.warn('[fated:battle-ai] fallback to local AI', error);
+      return false;
+    } finally { battleAiBusy = false; }
+  }
   function schedule() {
     window.clearTimeout(timer);
-    if (busy || playback.busy || live?.outcome || active(live)?.team !== 'red' || !$('auto-ai').checked) return;
-    timer = window.setTimeout(() => safely(() => game.stepEnemy()), Number($('ai-speed').value) || 350);
+    if (busy || playback.busy || live?.outcome || active(live)?.team !== 'red' || !$('auto-ai').checked || battleAiBusy) return;
+    timer = window.setTimeout(() => safely(async () => {
+      const usedExternal = await runBattleAiTurn();
+      if (!usedExternal && !live?.outcome && active(live)?.team === 'red') game.stepEnemy();
+    }), Number($('ai-speed').value) || 350);
   }
   function pauseAI() { $('auto-ai').checked = false; storage.setItem('fated-tactical/auto', 'false'); window.clearTimeout(timer); }
 
@@ -446,8 +471,9 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     on('reset-button', 'click', () => safely(restart));
     on('end-turn', 'click', () => { playback.skip(); if (active(live)?.team === 'blue') execute({ type: 'end' }); });
     on('undo-button', 'click', () => safely(() => { pauseAI(); const r = game.undoLastCommit(); if (!r.ok) error(r.error); }));
-    on('ai-step', 'click', () => safely(() => { window.clearTimeout(timer); playback.skip(); game.stepEnemy(); }));
+    on('ai-step', 'click', () => safely(async () => { window.clearTimeout(timer); playback.skip(); if (!(await runBattleAiTurn())) game.stepEnemy(); }));
     on('auto-ai', 'change', () => { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); schedule(); });
+    on('llm-enemy-ai', 'change', () => { storage.setItem('fated-tactical/llm-enemy-ai', String($('llm-enemy-ai').checked)); schedule(); });
     on('ai-speed', 'change', () => { storage.setItem('fated-tactical/ai-speed', $('ai-speed').value); schedule(); });
     on('skip-playback', 'click', () => playback.skip());
     bindZoom();
@@ -606,6 +632,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     carry = JSON.parse(storage.getItem(crossedKey));
   } catch { /* 存储不可用不影响游戏 */ }
   $('auto-ai').checked = storage.getItem('fated-tactical/auto') !== 'false';
+  $('llm-enemy-ai').checked = storage.getItem('fated-tactical/llm-enemy-ai') === 'true';
   const theme = storage.getItem('fated-tactical/theme');
   if (THEMES.includes(theme)) { root.dataset.dlcTheme = theme; $('theme-select').value = theme; }
   else if (THEMES.includes(root.dataset.dlcTheme)) $('theme-select').value = root.dataset.dlcTheme;
