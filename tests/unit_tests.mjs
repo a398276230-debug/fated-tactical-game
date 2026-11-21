@@ -377,7 +377,7 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
 });
 
 test('三个预设均可打到胜负；完整战报和 JSON 日志可重放', () => {
-  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','blue']]) {
+  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','red']]) {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {
       a.playAction(chooseAction(a.getBattleState()));

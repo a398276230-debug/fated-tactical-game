@@ -696,6 +696,16 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
   const unit = { id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: text(p.moraleType) || 'standard' };
   if (isProtagonist) {
+    const bagWeapons = [];
+    for (const [slot, raw, index] of sourceEquipment({装备:record.背包})) {
+      if ((raw.类型 !== '武器' && raw.kind !== 'weapon') || bound(raw.数量 ?? raw.count, 0, 1e9, 1) === 0) continue;
+      const item = normalizeEquipment(raw, slot, id, `bag-${index}`, sink);
+      if (item.template.kind !== 'weapon') continue;
+      equipment[item.templateId] = item.template;
+      items[item.id] = {id:item.id,templateId:item.templateId,counters:item.counters};
+      bagWeapons.push(item.id);
+    }
+    if (bagWeapons.length) unit.bagWeapons = bagWeapons;
     const inventory = importBackpack(record.背包, id, skills, sink);
     if (Object.keys(inventory).length) unit.inventory = inventory;
   }

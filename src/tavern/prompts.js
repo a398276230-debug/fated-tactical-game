@@ -109,7 +109,7 @@ export function resolveSlotContent(slot, ctx = {}) {
     if (ctx.onlyUnitIds && state) {
       const pick = (table, ids) => Object.fromEntries([...new Set(ids)].filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
       const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
-      const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear??[])]));
+      const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear??[]),...(u.bagWeapons??[])]));
       return json({raw:pick(ctx.rawCharacters,ctx.onlyUnitIds), units, items, equipment:pick(state.equipment,Object.values(items).map(i=>i.templateId)), skills:pick(state.skills,rows.flatMap(u=>[...(u.skills??[]), ...Object.keys(u.inventory??{})])), statusTemplates:state.statusTemplates});
     }
     if (ctx.rosterText != null) return ctx.rosterText;

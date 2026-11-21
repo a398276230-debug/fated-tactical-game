@@ -74,8 +74,8 @@ const isWeapon = template => template?.kind === 'weapon' || Boolean(template?.da
 const gearFor = (state, unit) => (unit.gear ?? []).map(id => equipmentFor(state, id)).filter(({template}) => !isWeapon(template) && template?.kind !== 'shield');
 export function switchableWeapons(state, unit) {
   const main = unit.mainHand ?? unit.weapon;
-  if (!isWeapon(equipmentFor(state, main).template)) return [];
-  return [...new Set([unit.offHand, ...(unit.gear ?? [])])].filter(id => {
+  const bag = unit.bagWeapons ?? [];
+  return [...new Set([...(isWeapon(equipmentFor(state, main).template) ? [unit.offHand, ...(unit.gear ?? [])] : []), ...bag])].filter(id => {
     if (!id || id === main) return false;
     const { template } = equipmentFor(state, id);
     return isWeapon(template) && (!template.boundTo || template.boundTo === unit.id)
@@ -743,15 +743,15 @@ function weaponInfo(state, unit) {
     template: weapon.template ?? normalAttack, soulMultiplier: 1 + souls * (scale?.resourceScale.perUnit ?? 0) };
 }
 
-function reaches(state, actor, at, template, ammo) {
+function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
   const dz = elevation(state, actor) - elevation(state, at);
   const melee = isMelee(template) && !ammo;
-  const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? (ammo ? dsl.check(state, actor, 'highGroundRange', { weaponId: actor.mainHand ?? actor.weapon, highGround: true }) : 1) : -1);
+  const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? (ammo ? dsl.check(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
   return { distance: distance(state, actor, at), dz, range: Math.max(0, range), melee };
 }
 
-function validReach(state, actor, at, template, ammo) {
-  const geometry = reaches(state, actor, at, template, ammo);
+function validReach(state, actor, at, template, ammo, weaponId) {
+  const geometry = reaches(state, actor, at, template, ammo, weaponId);
   return ground(state, at) && geometry.distance <= geometry.range + 1e-9 && clearSight(state, actor, at);
 }
 
@@ -857,7 +857,7 @@ const flatDice = value => ({ rolls: [], count: 0, sides: 0, bonus: value, value 
 
 function targetProfile(state, actor, target, at, template, context = {}) {
   const { weapon, origin = actor, teleport, cover = false } = context;
-  const geometry = reaches(state, origin, at, template, weapon?.ammo);
+  const geometry = reaches(state, origin, at, template, weapon?.ammo, weapon?.instance?.id);
   const arrow = Boolean(weapon?.ammo);
   const arc = target && !cover ? facingArc(target, origin) : 'front';
   const backstab = !cover && arc !== 'front' && geometry.melee;
@@ -959,7 +959,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
 
 const ACTIONS = Object.freeze({
   move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
-  switch_weapon: { ap: 1, slot: 'action' }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
+  switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
@@ -1036,7 +1036,8 @@ export function preview(state, action) {
   }
   const item = !unplaced && (type === 'interact' || type === 'attack') ? values(state.interactives).find(v => !v.spent && v.x === x && v.y === y) : null;
   const detonate = item?.kind === 'barrel';
-  const { ap } = cost, slot = detonate ? 'attack' : cost.slot;
+  const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
+  const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === 'end') return common;
   if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
@@ -1046,7 +1047,7 @@ export function preview(state, action) {
   const weapon = weaponInfo(state, unit);
   if (type === 'switch_weapon') {
     if (!switchableWeapons(state, unit).includes(action.itemId)) return fail('没有可切换的武器');
-    return { ...common, itemId: action.itemId, name: `切换武器：${equipmentFor(state, action.itemId).template.name}` };
+    return { ...common, itemId: action.itemId, name: `${unit.bagWeapons?.includes(action.itemId) ? '从背包换装' : '切换武器'}：${equipmentFor(state, action.itemId).template.name}` };
   }
   if (type === 'shield_bash' && !unit.shield) return fail('没有盾牌');
   if (type === 'reload') {
@@ -1362,7 +1363,9 @@ function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
   const cost = (actor.tier ?? 1) * 10;
   if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < .8) return;
   const offTemplate = weapon.offHand.template;
-  const profile = targetProfile(state, actor, target, target, offTemplate, { weapon: { ...weapon.offHand, stance: 'dual_wield' } });
+  const ammo = resourceDefinitions(offTemplate, true).find(node => node.reloadable);
+  if (!validReach(state, actor, target, offTemplate, ammo, actor.offHand)) return;
+  const profile = targetProfile(state, actor, target, target, offTemplate, { weapon: { ...weapon.offHand, ammo, stance: 'dual_wield' } });
   profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
   profile.bonusDice = 0;
   record(state, actor, 'followup', `${actor.name}使用${offTemplate.name}追击${target.name}`, { targetId: target.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
@@ -1629,6 +1632,7 @@ export function applyAction(state, action) {
       const old = actor.mainHand ?? actor.weapon;
       const fromOff = plan.itemId === actor.offHand;
       if (fromOff) actor.offHand = old;
+      else if (actor.bagWeapons?.includes(plan.itemId)) actor.bagWeapons.splice(actor.bagWeapons.indexOf(plan.itemId), 1, ...(old ? [old] : []));
       else actor.gear[actor.gear.indexOf(plan.itemId)] = old;
       actor.mainHand = actor.weapon = plan.itemId;
       actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });

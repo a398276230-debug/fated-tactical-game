@@ -500,7 +500,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click(swapButton);
   const switched = await tavernState();
   assert.equal(switched.equipment[switched.items[switched.units.p1.mainHand].templateId].name, '黑灵');
-  assert.deepEqual(switched.units.p1.used,{action:1,attack:0});
+  assert.deepEqual(switched.units.p1.used,{action:0,attack:0});
   await run(`(() => {
     const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/'));
     const config = JSON.parse(localStorage.getItem(key));

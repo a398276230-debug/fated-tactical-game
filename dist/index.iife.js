@@ -1571,8 +1571,8 @@ var FatedTactical = (() => {
   var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3)).filter(({ template }) => !isWeapon(template) && template?.kind !== "shield");
   function switchableWeapons(state, unit) {
     const main = unit.mainHand ?? unit.weapon;
-    if (!isWeapon(equipmentFor(state, main).template)) return [];
-    return [.../* @__PURE__ */ new Set([unit.offHand, ...unit.gear ?? []])].filter((id3) => {
+    const bag = unit.bagWeapons ?? [];
+    return [.../* @__PURE__ */ new Set([...isWeapon(equipmentFor(state, main).template) ? [unit.offHand, ...unit.gear ?? []] : [], ...bag])].filter((id3) => {
       if (!id3 || id3 === main) return false;
       const { template } = equipmentFor(state, id3);
       return isWeapon(template) && (!template.boundTo || template.boundTo === unit.id) && !(template.twoHanded && (unit.offHand || unit.shield));
@@ -2352,14 +2352,14 @@ var FatedTactical = (() => {
       soulMultiplier: 1 + souls * (scale?.resourceScale.perUnit ?? 0)
     };
   }
-  function reaches(state, actor, at, template, ammo) {
+  function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
     const dz = elevation(state, actor) - elevation(state, at);
     const melee = isMelee(template) && !ammo;
-    const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? ammo ? dsl.check(state, actor, "highGroundRange", { weaponId: actor.mainHand ?? actor.weapon, highGround: true }) : 1 : -1);
+    const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? ammo ? dsl.check(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
     return { distance: distance3D(state, actor, at), dz, range: Math.max(0, range), melee };
   }
-  function validReach(state, actor, at, template, ammo) {
-    const geometry = reaches(state, actor, at, template, ammo);
+  function validReach(state, actor, at, template, ammo, weaponId) {
+    const geometry = reaches(state, actor, at, template, ammo, weaponId);
     return isGround(state, at) && geometry.distance <= geometry.range + 1e-9 && hasLOS(state, actor, at);
   }
   function visibleEnemy(state, actor, target2) {
@@ -2453,7 +2453,7 @@ var FatedTactical = (() => {
   var flatDice = (value) => ({ rolls: [], count: 0, sides: 0, bonus: value, value });
   function targetProfile(state, actor, target2, at, template, context = {}) {
     const { weapon, origin = actor, teleport, cover = false } = context;
-    const geometry = reaches(state, origin, at, template, weapon?.ammo);
+    const geometry = reaches(state, origin, at, template, weapon?.ammo, weapon?.instance?.id);
     const arrow = Boolean(weapon?.ammo);
     const arc = target2 && !cover ? facingArc(target2, origin) : "front";
     const backstab = !cover && arc !== "front" && geometry.melee;
@@ -2592,7 +2592,7 @@ var FatedTactical = (() => {
     move: { ap: 1, slot: "action" },
     sprint: { ap: 2, slot: "action" },
     disengage: { ap: 1, slot: "action" },
-    switch_weapon: { ap: 1, slot: "action" },
+    switch_weapon: { ap: 0, slot: null },
     attack: { ap: 1, slot: "attack" },
     reload: { ap: 1, slot: "action" },
     brace: { ap: 1, slot: "action" },
@@ -2671,7 +2671,8 @@ var FatedTactical = (() => {
     }
     const item = !unplaced && (type === "interact" || type === "attack") ? values2(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
     const detonate = item?.kind === "barrel";
-    const { ap } = cost, slot = detonate ? "attack" : cost.slot;
+    const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
+    const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? "action" : detonate ? "attack" : cost.slot;
     const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
     if (type === "end") return common;
     if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
@@ -2681,7 +2682,7 @@ var FatedTactical = (() => {
     const weapon = weaponInfo(state, unit);
     if (type === "switch_weapon") {
       if (!switchableWeapons(state, unit).includes(action.itemId)) return fail2("\u6CA1\u6709\u53EF\u5207\u6362\u7684\u6B66\u5668");
-      return { ...common, itemId: action.itemId, name: `\u5207\u6362\u6B66\u5668\uFF1A${equipmentFor(state, action.itemId).template.name}` };
+      return { ...common, itemId: action.itemId, name: `${unit.bagWeapons?.includes(action.itemId) ? "\u4ECE\u80CC\u5305\u6362\u88C5" : "\u5207\u6362\u6B66\u5668"}\uFF1A${equipmentFor(state, action.itemId).template.name}` };
     }
     if (type === "shield_bash" && !unit.shield) return fail2("\u6CA1\u6709\u76FE\u724C");
     if (type === "reload") {
@@ -3126,7 +3127,9 @@ var FatedTactical = (() => {
     const cost = (actor.tier ?? 1) * 10;
     if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < 0.8) return;
     const offTemplate = weapon.offHand.template;
-    const profile = targetProfile(state, actor, target2, target2, offTemplate, { weapon: { ...weapon.offHand, stance: "dual_wield" } });
+    const ammo = resourceDefinitions(offTemplate, true).find((node3) => node3.reloadable);
+    if (!validReach(state, actor, target2, offTemplate, ammo, actor.offHand)) return;
+    const profile = targetProfile(state, actor, target2, target2, offTemplate, { weapon: { ...weapon.offHand, ammo, stance: "dual_wield" } });
     profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
     profile.bonusDice = 0;
     record(state, actor, "followup", `${actor.name}\u4F7F\u7528${offTemplate.name}\u8FFD\u51FB${target2.name}`, { targetId: target2.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
@@ -3441,6 +3444,7 @@ var FatedTactical = (() => {
         const old = actor.mainHand ?? actor.weapon;
         const fromOff = plan.itemId === actor.offHand;
         if (fromOff) actor.offHand = old;
+        else if (actor.bagWeapons?.includes(plan.itemId)) actor.bagWeapons.splice(actor.bagWeapons.indexOf(plan.itemId), 1, ...old ? [old] : []);
         else actor.gear[actor.gear.indexOf(plan.itemId)] = old;
         actor.mainHand = actor.weapon = plan.itemId;
         actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
@@ -3869,7 +3873,7 @@ var FatedTactical = (() => {
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
   var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "deathrattle", "deathrattleTriggered", "moraleCheckedRound", "maneuvers"];
   function unitValue(v, key4, state) {
-    fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "effectUsage", "effectModifiers", "altitude"]);
+    fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "bagWeapons", "effectUsage", "effectModifiers", "altitude"]);
     if (own2(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
     for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
     checkOptional(v, "corpseOf", id2);
@@ -3924,6 +3928,7 @@ var FatedTactical = (() => {
     checkOptional(v, "parryRefunded", (x) => typeof x === "boolean");
     checkOptional(v, "attunementCharges", (x) => int(x, 0, 2));
     checkOptional(v, "blockMode", (x) => ["normal", "heavy"].includes(x));
+    if (own2(v, "bagWeapons")) list(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
     list(v.gear, 12, id2, "gear");
     list(v.skills, 32, id2, "skills");
     table2(v.statuses, (status2, statusId2) => statusValue(status2, statusId2, state), maxStatusTemplates + Object.keys(STATUSES).length);
@@ -4022,6 +4027,11 @@ var FatedTactical = (() => {
         occupied.add(point2);
       }
       const slots = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
+      for (const i of v.bagWeapons ?? []) {
+        const t = s.equipment[s.items[i]?.templateId];
+        requireThat(t?.damage && !slots.includes(i) && !equipped2.has(i), "\u80CC\u5305\u6B66\u5668\u5F15\u7528\u6216\u5F52\u5C5E");
+        equipped2.add(i);
+      }
       for (const i of new Set(slots)) {
         const template = has(s.items, i) ? s.equipment[s.items[i].templateId] : null;
         const weaponSlot = i === v.weapon || i === v.mainHand || i === v.offHand;
@@ -9895,6 +9905,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: text2(p.moraleType) || "standard" };
     if (isProtagonist) {
+      const bagWeapons = [];
+      for (const [slot, raw, index2] of sourceEquipment({ \u88C5\u5907: record2.\u80CC\u5305 })) {
+        if (raw.\u7C7B\u578B !== "\u6B66\u5668" && raw.kind !== "weapon" || bound(raw.\u6570\u91CF ?? raw.count, 0, 1e9, 1) === 0) continue;
+        const item = normalizeEquipment(raw, slot, id3, `bag-${index2}`, sink);
+        if (item.template.kind !== "weapon") continue;
+        equipment[item.templateId] = item.template;
+        items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
+        bagWeapons.push(item.id);
+      }
+      if (bagWeapons.length) unit.bagWeapons = bagWeapons;
       const inventory = importBackpack(record2.\u80CC\u5305, id3, skills, sink);
       if (Object.keys(inventory).length) unit.inventory = inventory;
     }
@@ -10742,7 +10762,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
       if (ctx.onlyUnitIds && state) {
         const pick = (table4, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
         const units = pick(state.units, ctx.onlyUnitIds), rows2 = Object.values(units);
-        const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? []]));
+        const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? [], ...u.bagWeapons ?? []]));
         return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})])), statusTemplates: state.statusTemplates });
       }
       if (ctx.rosterText != null) return ctx.rosterText;

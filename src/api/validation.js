@@ -173,7 +173,7 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'tags', 'resources', 'inventory', 'effectUsage', 'effectModifiers', 'altitude']);
+  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'tags', 'resources', 'inventory', 'bagWeapons', 'effectUsage', 'effectModifiers', 'altitude']);
   if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
   for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
   checkOptional(v, 'corpseOf', id);
@@ -215,6 +215,7 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
   checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'moraleType', x => typeof x === 'string'); checkOptional(v, 'moraleState', x => typeof x === 'string');
   checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'parryQuota', x => int(x, 0, 2)); checkOptional(v, 'parryRefunded', x => typeof x === 'boolean'); checkOptional(v, 'attunementCharges', x => int(x, 0, 2)); checkOptional(v, 'blockMode', x => ['normal','heavy'].includes(x));
+  if (own(v,'bagWeapons')) list(v.bagWeapons, 200, id, '背包武器');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
   table(v.statuses, (status, statusId) => statusValue(status, statusId, state), maxStatusTemplates + Object.keys(STATUSES).length);
 }
@@ -312,6 +313,11 @@ export function validateState(s) {
       occupied.add(point);
     }
     const slots = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
+    for (const i of v.bagWeapons ?? []) {
+      const t = s.equipment[s.items[i]?.templateId];
+      requireThat(t?.damage && !slots.includes(i) && !equipped.has(i), '背包武器引用或归属');
+      equipped.add(i);
+    }
     for (const i of new Set(slots)) {
       const template = has(s.items, i) ? s.equipment[s.items[i].templateId] : null;
       const weaponSlot = i === v.weapon || i === v.mainHand || i === v.offHand;

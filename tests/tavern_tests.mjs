@@ -26,7 +26,13 @@ test('主角背包消耗品扣库存、未知用途进入标准化，装备优�
   const input={mvu:{主角:{...mvu.主角,装备:{刀:{类型:'武器',标签:['主手']},匕首:{类型:'武器',标签:['副手']},战杖:{类型:'武器',标签:['双手']}},背包:bag}},charInfo:{name:'木偶',hp:500,背包:bag},battleInit:{units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:2,y:1}]}};
   const {state,warnings}=hydrateFromSources(input,{throwOnValidation:true});
   const {p,e}=state.units;assert.equal(state.equipment[state.items[p.mainHand].templateId].name,'战杖');assert.equal(p.offHand,null);
-  assert.equal(e.inventory,undefined);assert.ok(!Object.values(state.equipment).some(t=>t.name==='藏刀'));
+  assert.equal(e.inventory,undefined);assert.equal(e.bagWeapons,undefined);
+  const [bagKnife]=p.bagWeapons;assert.equal(state.equipment[state.items[bagKnife].templateId].name,'藏刀');
+  const swapped=structuredClone(state), wielder=swapped.units.p;
+  swapped.turn=swapped.order.indexOf('p');wielder.ap=2;wielder.used={attack:0,action:0};
+  const draw={type:'switch_weapon',itemId:bagKnife};assert.equal(preview(swapped,draw).ap,1);
+  applyAction(swapped,draw);assert.equal(wielder.mainHand,bagKnife);assert.deepEqual(wielder.bagWeapons,[p.mainHand]);
+  assert.deepEqual(wielder.used,{attack:0,action:1});assert.equal(preview(swapped,{...draw,itemId:p.mainHand}).ok,false);validateState(swapped);
   const [bomb,potion]=Object.keys(p.inventory);assert.equal(p.inventory[bomb],3);assert.deepEqual(p.skills,[]);
   assert.ok(warnings.some(w=>w.unitId==='p' && w.originPath===`/skills/${potion}` && w.message.includes('小红瓶')));
   assert.match(resolveSlotContent({id:'roster'},{state,onlyUnitIds:['p']}),/小红瓶/);
@@ -35,6 +41,15 @@ test('主角背包消耗品扣库存、未知用途进入标准化，装备优�
   assert.equal(preview(state,{...use,x:p.x,y:p.y}).ok,false);assert.equal(p.inventory[bomb],3);
   applyAction(state,use);assert.equal(p.inventory[bomb],2);assert.equal(bag.手榴弹.数量,3);assert.equal(e.hp,400);
   assert.deepEqual(p.used,{attack:0,action:1});assert.ok(state.logs.some(log=>log.text.includes('手榴弹（数量 3 → 2）')));validateState(state);
+});
+
+test('主手弓命中后，小刀只在自己射程内追击和扣 SP', () => {
+  for (const dist of [1,4]) {
+    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',位置:'主手',effects:[{id:'guarantee',trigger:'passive',target:'self',effects:[{kind:'forceOutcome',mode:'crit'}]}]},小刀:{类型:'武器',位置:'副手'}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
+    const {p,e}=state.units;state.turn=state.order.indexOf('p');p.used={attack:0,action:0};p.ap=2;e.hp=e.maxHp=99999;const sp=p.sp;
+    applyAction(state,{type:'attack',x:e.x,y:e.y});assert.ok(e.hp<99999);
+    assert.equal(state.logs.some(l=>l.type==='followup'),dist===1);assert.equal(sp-p.sp,dist===1?10:0);
+  }
 });
 
 test('MVU 和 char_info 可用装备标签声明初始主副手；剧情位置优先', () => {
@@ -88,8 +103,8 @@ test('MVU 空位置的风律弓与黑灵可换主手，不自动双持', () => {
   state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={action:0,attack:0};
   const swap={type:'switch_weapon',itemId:knife};assert.ok(preview(state,swap).ok);
   applyAction(state,swap);assert.equal(actor.mainHand,knife);assert.equal(actor.weapon,knife);assert.equal(actor.offHand,null);
-  assert.deepEqual(actor.used,{attack:0,action:1});assert.deepEqual(switchableWeapons(state,actor),[bow]);
-  assert.equal(preview(state,{...swap,itemId:bow}).ok,false);validateState(state);
+  assert.deepEqual(actor.used,{attack:0,action:0});assert.equal(actor.ap,2);assert.deepEqual(switchableWeapons(state,actor),[bow]);
+  actor.used.action=1;actor.ap=1;assert.equal(preview(state,{...swap,itemId:bow}).ok,true);validateState(state);
 });
 
 test('酒馆 battle_init participant source 映射中文 MVU 主角并保留装备', () => {
