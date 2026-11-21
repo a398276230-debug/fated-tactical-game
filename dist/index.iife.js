@@ -12291,7 +12291,7 @@ ${variables.warnings()}` : "");
     return JSON.stringify(value);
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.2.10";
+  var TAVERN_VERSION = "0.2.11";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
