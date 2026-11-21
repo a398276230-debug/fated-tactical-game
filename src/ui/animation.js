@@ -330,10 +330,13 @@ export function createPlayback(root, { show, onIdle } = {}) {
       const { before, after, logs } = queue.shift();
       current = after;
       positions.clear(); homes.clear();
-      show(before, { busy: true });
+      const visible = structuredClone(before);
+      show(visible, { busy: true });
       const ctx = { crit: false };
       for (const log of logs) {
         if (mine !== generation) break;
+        applyVisualLog(visible, log);
+        show(visible, { busy: true });
         // 所有命名都用结算后状态，保证新召唤单位、尸体也能找到名字
         // 坐标取行动前，名字补上结算后才出现的单位（召唤物）
         await stage(log, { ...after, units: { ...after.units, ...before.units }, grid: before.grid, covers: before.covers, interactives: before.interactives }, ctx);
@@ -347,6 +350,23 @@ export function createPlayback(root, { show, onIdle } = {}) {
     }
     if (mine === generation) finish();
   }
+  function applyVisualLog(state, log) {
+    const detail = log.detail ?? {};
+    const target = state.units?.[detail.targetId ?? log.actor];
+    if (target) {
+      if (Number.isFinite(detail.hpAfter)) target.hp = detail.hpAfter;
+      if (Number.isFinite(detail.mpAfter)) target.mp = detail.mpAfter;
+      if (Number.isFinite(detail.spAfter)) target.sp = detail.spAfter;
+      if (Number.isFinite(detail.remainingHP)) target.hp = detail.remainingHP;
+      if (detail.fled === true) target.fled = true;
+    }
+    if (detail.resource && Number.isFinite(detail.after)) {
+      const owner = state.units?.[detail.targetId ?? log.actor];
+      if (owner && detail.resource in owner) owner[detail.resource] = detail.after;
+    }
+    if (log.type === 'defeat' && target) target.hp = 0;
+  }
+
   function settleTokens() {
     for (const t of root.querySelectorAll('#board .axis-unit:not(.tactical-corpse)')) {
       t.classList.remove('is-moving');

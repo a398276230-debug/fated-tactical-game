@@ -6913,10 +6913,13 @@ var FatedTactical = (() => {
         current = after;
         positions.clear();
         homes.clear();
-        show(before, { busy: true });
+        const visible = structuredClone(before);
+        show(visible, { busy: true });
         const ctx = { crit: false };
         for (const log of logs) {
           if (mine !== generation) break;
+          applyVisualLog(visible, log);
+          show(visible, { busy: true });
           await stage(log, { ...after, units: { ...after.units, ...before.units }, grid: before.grid, covers: before.covers, interactives: before.interactives }, ctx);
           if (log.type === "turn") ctx.crit = false;
         }
@@ -6928,6 +6931,22 @@ var FatedTactical = (() => {
         if (queue.length) await wait(120);
       }
       if (mine === generation) finish();
+    }
+    function applyVisualLog(state, log) {
+      const detail = log.detail ?? {};
+      const target2 = state.units?.[detail.targetId ?? log.actor];
+      if (target2) {
+        if (Number.isFinite(detail.hpAfter)) target2.hp = detail.hpAfter;
+        if (Number.isFinite(detail.mpAfter)) target2.mp = detail.mpAfter;
+        if (Number.isFinite(detail.spAfter)) target2.sp = detail.spAfter;
+        if (Number.isFinite(detail.remainingHP)) target2.hp = detail.remainingHP;
+        if (detail.fled === true) target2.fled = true;
+      }
+      if (detail.resource && Number.isFinite(detail.after)) {
+        const owner = state.units?.[detail.targetId ?? log.actor];
+        if (owner && detail.resource in owner) owner[detail.resource] = detail.after;
+      }
+      if (log.type === "defeat" && target2) target2.hp = 0;
     }
     function settleTokens() {
       for (const t of root.querySelectorAll("#board .axis-unit:not(.tactical-corpse)")) {
