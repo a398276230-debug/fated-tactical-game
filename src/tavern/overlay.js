@@ -256,7 +256,7 @@ function fingerprintAt(state, path) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.2.8';
+export const TAVERN_VERSION = '0.2.9';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
@@ -791,7 +791,10 @@ export function mountTavernOverlay(options = {}) {
       on(remove, 'click', () => { delete config.instances[key]; save(); choose(selectedIds()); });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
-    on(refresh, 'click', () => { selectedMessageId = null; selectedBattleText = ''; void scan(); });
+    on(refresh, 'click', () => {
+      if (!host.confirm('从当前聊天重新读取本场参战者？这会重置本场战斗进度、清除本场标准化补丁并恢复原始诊断。不会请求 AI，也不影响其他战场。')) return;
+      void scan({ rehydrate: true });
+    });
   }
   function switchTab(key) {
     const button = tabs.querySelector(`[data-tab="${key}"]`);
@@ -834,9 +837,9 @@ export function mountTavernOverlay(options = {}) {
     try { return parseJSON(storage?.getItem(battleStorageKey(key, field))); }
     catch { return null; }
   }
-  async function hydrate(epoch, candidate) {
+  async function hydrate(epoch, candidate, rehydrate) {
     const key = candidate.battleKey;
-    const opening = key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
+    const opening = !rehydrate && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
     const nextSources = opening ? clone(opening) : candidate;
     if (key && !opening) {
       nextSources.mvuData = clone(await readBattleVariables(host, Number(candidate.source?.messageId)));
@@ -964,7 +967,7 @@ export function mountTavernOverlay(options = {}) {
     refreshOutcome(next);
     return next;
   }
-  async function scan() {
+  async function scan({ rehydrate = false } = {}) {
     const epoch = ++scanEpoch;
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
     try {
@@ -980,32 +983,32 @@ export function mountTavernOverlay(options = {}) {
       const candidate = sourceBundle({}, messages, chat, entryId);
       const key = candidate.battleKey;
       foldBattleEntries();
-      if (key && activeBattleKey === key && gameMount) {
+      if (!rehydrate && key && activeBattleKey === key && gameMount) {
         refreshPortraits(currentState, epoch);
         if (node) node.textContent = `已续接当前战局 · ${scanStatus}`;
         return;
       }
-      if (activeBattleKey !== key && aiController) {
+      if ((rehydrate || activeBattleKey !== key) && aiController) {
         const finished = aiFinished;
         aiController.abort();
         await finished;
         if (epoch !== scanEpoch || disposed) return;
       }
       const savedBattle = Boolean(key && readBattleStorage(key, 'fated-tactical/battle-v1')?.kind === 'battle');
-      const hydrated = await hydrate(epoch, candidate);
+      const hydrated = await hydrate(epoch, candidate, rehydrate);
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       const nextState = hydrated?.state ?? null;
       const fresh=key ? await characterRecords(sources,hydrated) : {};
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       syncSettings();
-      const ids=Object.keys(fresh), stored={...(config.charSnapshots[key]??{})};
+      const ids=Object.keys(fresh), stored=rehydrate ? {} : {...(config.charSnapshots[key]??{})};
       const removed=Object.keys(stored).filter(id=>!fresh[id]);
       diagnostics.removedCharacters=removed;
       for(const id of removed) delete stored[id];
       const rawWarnings = sources.warnings ?? [];
       const kept = [];
       let replay = nextState;
-      for (const batch of batches(key)) {
+      for (const batch of rehydrate ? [] : batches(key)) {
         const owners = Object.entries(batch.hashes);
         const matchesHash = ([id, hash]) => fresh[id]?.hash === hash;
         const sameInput = batch.receipts ? owners.every(matchesHash) : owners.some(matchesHash);
@@ -1024,17 +1027,17 @@ export function mountTavernOverlay(options = {}) {
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
       if (invalid) persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
-      mountState(currentState, savedBattle);
+      mountState(currentState, savedBattle && !rehydrate);
       refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
       for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
-      if(key && (changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
-      if(config.rosterSelection===null && ids.length) persistSettings({rosterSelection:ids});
+      if(key && (rehydrate||changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
+      if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
       filterResolved(stored, fresh, kept);
       const live=liveState();
       for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
-      const firstEntry = currentState && key && !savedBattle && !enteredBattles.has(key);
+      const firstEntry = !rehydrate && currentState && key && !savedBattle && !enteredBattles.has(key);
       if (key && currentState) enteredBattles.add(key);
       scanStatus = firstEntry && changed.length ? `待标准化 ${changed.length} 个角色` : '可手动标准化所选角色';
       renderInstances();
@@ -1048,7 +1051,7 @@ export function mountTavernOverlay(options = {}) {
       const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
       if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
       showError(e);
-      notify('战局加载失败', e.message, () => scan());
+      notify('战局加载失败', e.message, () => scan({ rehydrate }));
     }
   }
   async function deliverBattleReport() {

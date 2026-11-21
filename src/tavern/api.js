@@ -65,19 +65,26 @@ export function diagnoseApiError(rawText, status) {
   return `${status ? `HTTP ${status}：` : ''}${hint}${detail ? `（${detail.slice(0, 500)}）` : ''}`;
 }
 
-export async function readSseStream(readableStream, extractDelta, onStreamChunk) {
+export async function readSseStream(readableStream, extractDelta, onStreamChunk, trace = {}) {
   const reader = readableStream.getReader(), decoder = new TextDecoder();
   const start = Date.now();
   let buffer = '', content = '', args = '', heartbeatCount = 0;
+  let jsonBody = null;
   function line(raw) {
     const s = raw.trim();
+    // A relay may forward a complete JSON response without its upstream MIME type.
+    if (trace.relay && (jsonBody !== null || (!trace.events && s.startsWith('{')))) {
+      jsonBody = (jsonBody ?? '') + raw + '\n';
+      return false;
+    }
     if (s.startsWith(':')) {
       onStreamChunk?.('', false, { isHeartbeat: true, heartbeatCount: ++heartbeatCount, elapsedSec: Math.floor((Date.now() - start) / 1000) });
     } else if (s.startsWith('data:')) {
       const data = s.slice(5).trim();
-      if (data === '[DONE]') return true;
+      if (data === '[DONE]') { trace.done = true; return true; }
       if (!data) return false;
       const event = JSON.parse(data);
+      trace.events = (trace.events || 0) + 1;
       if (event.error) throw new Error(diagnoseApiError(event.error.message));
       const d = extractDelta(event) || {};
       const c = typeof d === 'string' ? d : d.contentDelta;
@@ -98,6 +105,13 @@ export async function readSseStream(readableStream, extractDelta, onStreamChunk)
       const lines = buffer.split('\n');
       buffer = done ? '' : lines.pop();
       if (lines.some(line)) break;
+    }
+    if (jsonBody !== null) {
+      const event = JSON.parse(jsonBody);
+      if (event.error) throw new Error(diagnoseApiError(event.error.message));
+      trace.json = true;
+      const d = extractDelta(event);
+      return d.contentDelta || d.toolArgsDelta || '';
     }
     return content || args;
   } finally {
@@ -215,15 +229,27 @@ export async function requestViaCustomApi(settings, messages, options = {}) {
     ? await sendViaTavernBackend('generate', conn, body, options)
     : await send(url, { method: 'POST', headers, body: JSON.stringify(body) }, options);
   let text;
-  if (stream && res.body?.getReader && !/application\/json/i.test(res.headers?.get?.('content-type') || '')) {
-    text = await readSseStream(res.body, event => deltas(source, event), options.onStreamChunk);
+  const trace = { relay: settings.apiTransport === 'tavern', reasoning: 0 };
+  const extract = event => {
+    const choice = event.choices?.[0];
+    const reasoning = (choice?.delta || choice?.message)?.reasoning_content;
+    if (typeof reasoning === 'string') trace.reasoning += reasoning.length;
+    if (choice?.finish_reason) trace.finish = choice.finish_reason;
+    return deltas(source, event);
+  };
+  if (stream && res.body?.getReader && (trace.relay || !/application\/json/i.test(res.headers?.get?.('content-type') || ''))) {
+    text = await readSseStream(res.body, extract, options.onStreamChunk, trace);
   } else {
     const data = await json(res);
     if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === 'tavern' ? '酒馆后端未能生成回复，请检查 API 地址、密钥和酒馆后端网络' : '')));
-    const d = deltas(source, data);
+    trace.json = true;
+    const d = extract(data);
     text = source === 'claude' ? (data.content || []).filter(p => p.type === 'text' || !p.type).map(p => p.text).join('') : d.contentDelta || d.toolArgsDelta || '';
   }
-  if (typeof text !== 'string' || !text.trim()) throw new Error('独立 API 未返回有效文本，请检查模型和协议类型');
+  if (typeof text !== 'string' || !text.trim()) {
+    const format = trace.json ? 'JSON' : `流事件 ${trace.events ?? 0} 个，${trace.done ? '收到 [DONE]' : '连接已结束，未收到 [DONE]'}`;
+    throw new Error(`独立 API 未返回有效文本（${trace.relay ? '酒馆后端' : '浏览器直连'}；${format}；推理 ${trace.reasoning} 字符，正文 0；finish_reason=${trace.finish || '未提供'}）`);
+  }
   options.onStreamChunk?.(text, true);
   return text;
 }

@@ -132,6 +132,17 @@ test('独立 API 经酒馆后端拉取模型并生成，使用独立地址和密
   assert.deepEqual(routes, ['/csrf-token', `${endpoint}/status`, '/csrf-token', `${endpoint}/generate`, '/csrf-token', `${endpoint}/generate`]);
 });
 
+test('酒馆转发按实际报文识别 SSE 与 JSON，并区分仅推理的结束原因', async () => {
+  const settings = { apiTransport: 'tavern', baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'deepseek' };
+  const call = (body, type) => requestViaCustomApi(settings, [], { host: { location: { origin: 'https://tavern.test' } },
+    fetchImpl: async url => url.endsWith('/csrf-token') ? Response.json({token:'csrf'}) : new Response(body, { headers: { 'Content-Type': type } }) });
+  const reasoning = 'data: {"choices":[{"delta":{"reasoning_content":"草稿"}}]}\n\n';
+  assert.equal(await call(reasoning + 'data: {"choices":[{"delta":{"content":"正文"}}]}\n\ndata: [DONE]\n\n', 'application/json'), '正文');
+  assert.equal(await call(JSON.stringify({choices:[{message:{content:'正文'}}]}, null, 2), 'text/plain'), '正文');
+  await assert.rejects(call(reasoning, 'text/plain'), /未收到 \[DONE\].*推理 2 字符，正文 0/);
+  await assert.rejects(call(reasoning + 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\ndata: [DONE]\n', 'text/plain'), /收到 \[DONE\].*finish_reason=length/);
+});
+
 test('独立 API 的推理字段不会进入回复或流式回调', async () => {
   const settings = { baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'test' };
   for (const stream of [true, false]) {

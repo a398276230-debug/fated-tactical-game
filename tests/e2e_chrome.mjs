@@ -469,6 +469,20 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await panelHidden(), true);
   assert.equal((await reports()).length, 2);
   assert.equal((await reports())[1], (await reports())[0]);
+  await run(`window.__fatedTacticalTavern.open()`);
+  await click('[data-tab="instances"]');
+  const requestsBeforeHydrate = await run('hostRequests.length');
+  await run(`for (const id of ['p1','e1']) [...document.querySelectorAll('.fated-instance[data-unit-id="'+id+'"] button')].find(b=>b.textContent==='删除').click()`);
+  assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 0);
+  await run(`window.confirm = () => true; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
+  await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
+  const raw = await tavernState();
+  assert.equal(raw.units.p1.hp, 245);
+  assert.ok(await run(`window.__fatedTacticalTavern.getDiagnostics().warnings.some(w=>w.message.includes('恒定拉距'))`));
+  assert.equal(raw.equipment[raw.items[raw.units.p1.mainHand].templateId].attack, 14);
+  await run('window.__fatedTacticalTavern.scan()');
+  assert.deepEqual(await tavernState(), raw);
+  assert.equal(await run('hostRequests.length'), requestsBeforeHydrate);
   await run(`(() => {
     const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/'));
     const config = JSON.parse(localStorage.getItem(key));

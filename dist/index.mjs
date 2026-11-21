@@ -10669,19 +10669,28 @@ function diagnoseApiError(rawText, status2) {
   const hint = /mixed content/i.test(detail) ? "HTTPS \u9875\u9762\u4E0D\u80FD\u8BF7\u6C42 HTTP \u63A5\u53E3\uFF0C\u8BF7\u4F7F\u7528 HTTPS \u5730\u5740" : { 401: "\u5BC6\u94A5\u65E0\u6548", 403: "\u65E0\u8BBF\u95EE\u6743\u9650", 404: "\u6A21\u578B\u6216\u63A5\u53E3\u5730\u5740\u9519\u8BEF", 429: "\u8BF7\u6C42\u9650\u6D41\u6216\u989D\u5EA6\u4E0D\u8DB3" }[status2] || (status2 >= 500 ? "\u4E0A\u6E38\u670D\u52A1\u6545\u969C" : "API \u8BF7\u6C42\u5931\u8D25");
   return `${status2 ? `HTTP ${status2}\uFF1A` : ""}${hint}${detail ? `\uFF08${detail.slice(0, 500)}\uFF09` : ""}`;
 }
-async function readSseStream(readableStream, extractDelta, onStreamChunk) {
+async function readSseStream(readableStream, extractDelta, onStreamChunk, trace = {}) {
   const reader = readableStream.getReader(), decoder = new TextDecoder();
   const start = Date.now();
   let buffer = "", content = "", args = "", heartbeatCount = 0;
+  let jsonBody = null;
   function line(raw) {
     const s = raw.trim();
+    if (trace.relay && (jsonBody !== null || !trace.events && s.startsWith("{"))) {
+      jsonBody = (jsonBody ?? "") + raw + "\n";
+      return false;
+    }
     if (s.startsWith(":")) {
       onStreamChunk?.("", false, { isHeartbeat: true, heartbeatCount: ++heartbeatCount, elapsedSec: Math.floor((Date.now() - start) / 1e3) });
     } else if (s.startsWith("data:")) {
       const data = s.slice(5).trim();
-      if (data === "[DONE]") return true;
+      if (data === "[DONE]") {
+        trace.done = true;
+        return true;
+      }
       if (!data) return false;
       const event = JSON.parse(data);
+      trace.events = (trace.events || 0) + 1;
       if (event.error) throw new Error(diagnoseApiError(event.error.message));
       const d = extractDelta(event) || {};
       const c = typeof d === "string" ? d : d.contentDelta;
@@ -10702,6 +10711,13 @@ async function readSseStream(readableStream, extractDelta, onStreamChunk) {
       const lines = buffer.split("\n");
       buffer = done ? "" : lines.pop();
       if (lines.some(line)) break;
+    }
+    if (jsonBody !== null) {
+      const event = JSON.parse(jsonBody);
+      if (event.error) throw new Error(diagnoseApiError(event.error.message));
+      trace.json = true;
+      const d = extractDelta(event);
+      return d.contentDelta || d.toolArgsDelta || "";
     }
     return content || args;
   } finally {
@@ -10816,15 +10832,27 @@ async function requestViaCustomApi(settings, messages, options = {}) {
   }
   const res = settings.apiTransport === "tavern" ? await sendViaTavernBackend("generate", conn, body, options) : await send(url, { method: "POST", headers, body: JSON.stringify(body) }, options);
   let text4;
-  if (stream && res.body?.getReader && !/application\/json/i.test(res.headers?.get?.("content-type") || "")) {
-    text4 = await readSseStream(res.body, (event) => deltas(source, event), options.onStreamChunk);
+  const trace = { relay: settings.apiTransport === "tavern", reasoning: 0 };
+  const extract = (event) => {
+    const choice = event.choices?.[0];
+    const reasoning = (choice?.delta || choice?.message)?.reasoning_content;
+    if (typeof reasoning === "string") trace.reasoning += reasoning.length;
+    if (choice?.finish_reason) trace.finish = choice.finish_reason;
+    return deltas(source, event);
+  };
+  if (stream && res.body?.getReader && (trace.relay || !/application\/json/i.test(res.headers?.get?.("content-type") || ""))) {
+    text4 = await readSseStream(res.body, extract, options.onStreamChunk, trace);
   } else {
     const data = await json2(res);
     if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === "tavern" ? "\u9152\u9986\u540E\u7AEF\u672A\u80FD\u751F\u6210\u56DE\u590D\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC" : "")));
-    const d = deltas(source, data);
+    trace.json = true;
+    const d = extract(data);
     text4 = source === "claude" ? (data.content || []).filter((p) => p.type === "text" || !p.type).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || "";
   }
-  if (typeof text4 !== "string" || !text4.trim()) throw new Error("\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u6A21\u578B\u548C\u534F\u8BAE\u7C7B\u578B");
+  if (typeof text4 !== "string" || !text4.trim()) {
+    const format = trace.json ? "JSON" : `\u6D41\u4E8B\u4EF6 ${trace.events ?? 0} \u4E2A\uFF0C${trace.done ? "\u6536\u5230 [DONE]" : "\u8FDE\u63A5\u5DF2\u7ED3\u675F\uFF0C\u672A\u6536\u5230 [DONE]"}`;
+    throw new Error(`\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C\uFF08${trace.relay ? "\u9152\u9986\u540E\u7AEF" : "\u6D4F\u89C8\u5668\u76F4\u8FDE"}\uFF1B${format}\uFF1B\u63A8\u7406 ${trace.reasoning} \u5B57\u7B26\uFF0C\u6B63\u6587 0\uFF1Bfinish_reason=${trace.finish || "\u672A\u63D0\u4F9B"}\uFF09`);
+  }
   options.onStreamChunk?.(text4, true);
   return text4;
 }
@@ -11855,7 +11883,7 @@ function fingerprintAt(state, path) {
   return JSON.stringify(value);
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.2.8";
+var TAVERN_VERSION = "0.2.9";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
@@ -12592,9 +12620,8 @@ ${tag.textContent || ""}
       });
     }
     on(refresh, "click", () => {
-      selectedMessageId = null;
-      selectedBattleText = "";
-      void scan();
+      if (!host.confirm("\u4ECE\u5F53\u524D\u804A\u5929\u91CD\u65B0\u8BFB\u53D6\u672C\u573A\u53C2\u6218\u8005\uFF1F\u8FD9\u4F1A\u91CD\u7F6E\u672C\u573A\u6218\u6597\u8FDB\u5EA6\u3001\u6E05\u9664\u672C\u573A\u6807\u51C6\u5316\u8865\u4E01\u5E76\u6062\u590D\u539F\u59CB\u8BCA\u65AD\u3002\u4E0D\u4F1A\u8BF7\u6C42 AI\uFF0C\u4E5F\u4E0D\u5F71\u54CD\u5176\u4ED6\u6218\u573A\u3002")) return;
+      void scan({ rehydrate: true });
     });
   }
   function switchTab(key4) {
@@ -12653,9 +12680,9 @@ ${tag.textContent || ""}
       return null;
     }
   }
-  async function hydrate(epoch, candidate) {
+  async function hydrate(epoch, candidate, rehydrate) {
     const key4 = candidate.battleKey;
-    const opening = key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
+    const opening = !rehydrate && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
     const nextSources = opening ? clone2(opening) : candidate;
     if (key4 && !opening) {
       nextSources.mvuData = clone2(await readBattleVariables(host, Number(candidate.source?.messageId)));
@@ -12794,7 +12821,7 @@ ${tag.textContent || ""}
     refreshOutcome(next);
     return next;
   }
-  async function scan() {
+  async function scan({ rehydrate = false } = {}) {
     const epoch = ++scanEpoch;
     const node3 = pages.sandbox.querySelector("[data-status]");
     if (node3) node3.textContent = "\u6B63\u5728\u8BFB\u53D6 MVU\u3001\u6700\u65B0\u697C\u5C42\u5E76\u8F6C\u6362\u2026";
@@ -12810,32 +12837,32 @@ ${tag.textContent || ""}
       const candidate = sourceBundle({}, messages, chat, entryId);
       const key4 = candidate.battleKey;
       foldBattleEntries();
-      if (key4 && activeBattleKey === key4 && gameMount) {
+      if (!rehydrate && key4 && activeBattleKey === key4 && gameMount) {
         refreshPortraits(currentState, epoch);
         if (node3) node3.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
         return;
       }
-      if (activeBattleKey !== key4 && aiController) {
+      if ((rehydrate || activeBattleKey !== key4) && aiController) {
         const finished = aiFinished;
         aiController.abort();
         await finished;
         if (epoch !== scanEpoch || disposed) return;
       }
       const savedBattle = Boolean(key4 && readBattleStorage(key4, "fated-tactical/battle-v1")?.kind === "battle");
-      const hydrated = await hydrate(epoch, candidate);
+      const hydrated = await hydrate(epoch, candidate, rehydrate);
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       const nextState = hydrated?.state ?? null;
       const fresh = key4 ? await characterRecords(sources, hydrated) : {};
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       syncSettings();
-      const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key4] ?? {} };
+      const ids = Object.keys(fresh), stored = rehydrate ? {} : { ...config.charSnapshots[key4] ?? {} };
       const removed = Object.keys(stored).filter((id4) => !fresh[id4]);
       diagnostics.removedCharacters = removed;
       for (const id4 of removed) delete stored[id4];
       const rawWarnings = sources.warnings ?? [];
       const kept = [];
       let replay = nextState;
-      for (const batch of batches(key4)) {
+      for (const batch of rehydrate ? [] : batches(key4)) {
         const owners = Object.entries(batch.hashes);
         const matchesHash = ([id4, hash2]) => fresh[id4]?.hash === hash2;
         const sameInput = batch.receipts ? owners.every(matchesHash) : owners.some(matchesHash);
@@ -12854,17 +12881,17 @@ ${tag.textContent || ""}
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
-      mountState(currentState, savedBattle);
+      mountState(currentState, savedBattle && !rehydrate);
       refreshPortraits(currentState, epoch);
       activeBattleKey = key4;
       characters = fresh;
       for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
-      if (key4 && (changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
-      if (config.rosterSelection === null && ids.length) persistSettings({ rosterSelection: ids });
+      if (key4 && (rehydrate || changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
+      if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
       filterResolved(stored, fresh, kept);
       const live = liveState();
       for (const unit of Object.values(live?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
-      const firstEntry = currentState && key4 && !savedBattle && !enteredBattles.has(key4);
+      const firstEntry = !rehydrate && currentState && key4 && !savedBattle && !enteredBattles.has(key4);
       if (key4 && currentState) enteredBattles.add(key4);
       scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
       renderInstances();
@@ -12879,7 +12906,7 @@ ${tag.textContent || ""}
       const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
       if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
       showError(e);
-      notify("\u6218\u5C40\u52A0\u8F7D\u5931\u8D25", e.message, () => scan());
+      notify("\u6218\u5C40\u52A0\u8F7D\u5931\u8D25", e.message, () => scan({ rehydrate }));
     }
   }
   async function deliverBattleReport() {
