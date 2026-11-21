@@ -1,4 +1,4 @@
-import { resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
+import { resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
@@ -256,7 +256,7 @@ function fingerprintAt(state, path) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.2.7';
+export const TAVERN_VERSION = '0.2.8';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
@@ -1131,14 +1131,14 @@ export function mountTavernOverlay(options = {}) {
       if (normalize) notify('正在标准化中…', '', null, true);
       else toast.hidden = true;
       let receivedPatch = normalize, replyText = '', unresolved = [], appliedCount = 0;
+      const scopedWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)) : [];
       try {
         if (normalize && !liveState()) {
           if (!session) { toast.hidden = true; return; }
           throw new Error('没有可标准化的战局，请先扫描沙盘');
         }
         let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
-        const sentWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)).filter(w =>
-          prompts.some(m => m.content.includes(JSON.stringify(w.message)))) : [];
+        const sentWarnings = scopedWarnings.filter(w => prompts.some(m => m.content.includes(JSON.stringify(w.message))));
         if (!normalize) {
           prompts = [...prompts, ...history, { role: 'user', content: requestText }];
           lastSent = prompts;
@@ -1147,8 +1147,10 @@ export function mountTavernOverlay(options = {}) {
         if (!prompts.length) throw new Error('没有可发送的提示词，请在提示词组装页启用有内容的槽位');
         const streamUpdate = (snapshot, done, info) => {
           if (disposed || controller.signal.aborted || aiController !== controller || activeBattleKey !== key) return;
-          if (snapshot) updateReply({ content: snapshot }, false);
-          if (!normalize) return;
+          if (!normalize) {
+            if (snapshot) updateReply({ content: snapshot }, false);
+            return;
+          }
           noticeBody.textContent = info?.isHeartbeat ? `已等待 ${info.elapsedSec} 秒，连接仍在保持…` :
             done ? '已收到完整响应，正在校验…' : `已收到 ${snapshot.length} 字符…`;
           noticeBody.hidden = false;
@@ -1157,15 +1159,19 @@ export function mountTavernOverlay(options = {}) {
         const validate = options.validateState || defaultValidateState;
         let patch, nextState, combined, solved, baseline;
         for (let attempt = 0; ; attempt++) {
+          replyText = '';
+          unresolved = [];
           const reply = await Promise.race([
             requestTavernAI(host, config, prompts, options.fetch, controller.signal, streamUpdate), cancelled,
           ]);
           controller.signal.throwIfAborted();
           if (disposed || aiController !== controller || key !== activeBattleKey) return;
-          replyText = reply;
           try {
             const parsed = parseAIResponse(reply);
             patch = parseJSONPatch(reply) ?? (normalize ? null : parsed.patch);
+            // Only show structured output in the normalization card. Some providers put
+            // untagged reasoning directly in content, which cannot be identified reliably.
+            replyText = normalize ? (patch ? JSON.stringify(parsed.data, null, 2) : '') : reply;
             const pending = parsed.data?.unresolved ?? [];
             if (!Array.isArray(pending) && normalize) throw new Error('unresolved 必须是 JSON 数组');
             unresolved = Array.isArray(pending) ? pending.map(item => typeof item === 'string' ? item : JSON.stringify(item)) : [];
@@ -1202,7 +1208,7 @@ export function mountTavernOverlay(options = {}) {
           } catch (error) {
             if (!normalize || attempt > 0) throw error;
             notify('正在标准化中…', '模型正在修正补丁格式', null, true);
-            prompts = [...prompts, { role: 'user', content: `上一条输出校验失败（${error.message}）。按上面的例子使用精确 ID 和路径，重新输出完整 JSON 对象。\n上一条输出：${reply.slice(0, 3500)}` }];
+            prompts = [...prompts, { role: 'user', content: `上一条输出校验失败（${error.message}）。按上面的例子使用精确 ID 和路径，重新输出完整 JSON 对象。${replyText ? `\n上一条补丁：${replyText.slice(0, 3500)}` : ''}` }];
             lastSent = prompts;
             publishMessages(prompts, kind);
           }
@@ -1245,6 +1251,7 @@ export function mountTavernOverlay(options = {}) {
           filterResolved(stored, characters);
           scanStatus=`已标准化 ${Object.keys(records).length} 个角色`; renderInstances(); prepareMessages();
         }
+        if (normalize) unresolved = pendingDiagnostics(scopedWarnings.filter(w => !solved.includes(w)), unresolved);
         updateReply({ content: replyText, status: 'ok' });
         const result = Array.isArray(patch) && !patch.length ? '无补丁变更' : '补丁已应用';
         postStatus(`${label}：${result}${unresolved.length ? `，待处理：${unresolved.join('；')}` : ''}`, 'ok');
@@ -1255,11 +1262,12 @@ export function mountTavernOverlay(options = {}) {
         const aborted = e?.name === 'AbortError';
         const status = aborted ? 'aborted' : 'error';
         const detail = e?.message || String(e);
+        if (normalize) unresolved = pendingDiagnostics(appliedCount ? scopedWarnings.filter(w => !solved?.includes(w)) : scopedWarnings, unresolved);
         const partial = assistantMessage?.content || replyText;
         updateReply({ status, content: aborted ? partial ?? '' : [partial, `错误：${detail}`].filter(Boolean).join('\n\n') });
         if (receivedPatch) postStatus(`${label}${aborted ? '已中止' : '失败'}：${detail}${unresolved.length ? `；未解决：${unresolved.join('；')}` : ''}`, status);
         if (normalize && !disposed) notify(`${label}${aborted ? '已中止' : '失败'}`, detail, aborted ? null : retryRequest, false,
-          aborted ? { raw: replyText } : { tone: 'error', applied: appliedCount, unresolved, raw: replyText });
+          { tone: aborted ? 'neutral' : 'error', applied: appliedCount, unresolved, raw: replyText });
       } finally {
         clearTimeout(timeout);
         if (aiController === controller) aiController = null;

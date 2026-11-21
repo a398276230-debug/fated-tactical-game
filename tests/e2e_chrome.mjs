@@ -139,7 +139,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.overlayFrame = iframe;
     window.overlayBundle = bundle;
     const messages = window.hostMessages = [
-      {message_id:0, role:'assistant', message:'<char_info>{"name":"对手","stats":{"agi":-20}}</char_info>' + battle},
+      {message_id:0, role:'assistant', message:'<char_info>{"name":"对手","stats":{"agi":-20},"装备":{"木弩":{"类型":"武器","位置":"主手","标签":["弩","攻击: 10"],"效果":{"恒定发射":"以稳定机括发射钝头木矢，攻击力恒定为10。"}}}}</char_info>' + battle},
       {message_id:1, role:'assistant', message:'后续叙事'},
     ];
     window.hostCalls = [];
@@ -154,14 +154,19 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
       window.hostRequests ||= [];
       hostRequests.push(config);
       window.completeHostAI = () => {
-        if (hostRequests.length === 1) return reject(new Error('联调模拟网络错误'));
-        if (hostRequests.length === 2) return resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/stat_data/主角/attack', value: 999 }] }));
+        if (hostRequests.length === 1 || hostRequests.length === 2) return resolve('推理草稿：先分析冰冻箭和恒定发射，然后输出 {"patch":');
         const state = window.__fatedTacticalTavern.getState();
         const id = state.items[state.units.p1.mainHand].templateId;
         if (!config.ordered_prompts.some(m => m.role === 'system' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('系统槽位缺少战局装备快照'));
         const warning = state.warnings.find(w => w.message.includes('恒定拉距'));
         const resolves = warning ? [{unitId:warning.unitId, originPath:warning.originPath, message:warning.message}] : [];
-        resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10,resolves}],unresolved:window.extraBowEffects ? ['冰冻箭：控制效果尚未实现'] : []}));
+        const patch = [{op:'replace',path:'/equipment/'+id+'/attack',value:10,resolves}];
+        const crossbow = state.warnings.find(w => w.unitId === 'e1' && w.message.includes('恒定发射'));
+        if (crossbow) {
+          const { unitId, originPath, message } = crossbow;
+          patch.push({op:'replace',path:originPath+'/attack',value:10,resolves:[{unitId,originPath,message}]});
+        }
+        resolve(JSON.stringify({patch,unresolved:window.extraBowEffects ? ['冰冻箭：控制效果尚未实现'] : []}));
       };
     });
   })()`);
@@ -201,15 +206,18 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run('window.hostRequests.length'), 1);
   assert.equal(await run(`document.querySelector('.fated-toast strong').textContent`), '正在标准化中…');
   await run('window.completeHostAI()');
-  await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化失败'`), '错误提示');
-  assert.match(await run(`document.querySelector('.fated-toast p').textContent`), /联调模拟网络错误/);
-  await run('window.__fatedTacticalTavern.scan()');
-  assert.equal(await run('hostRequests.length'), 1);
-  await click('.fated-toast button');
-  await until(() => run('hostRequests.length === 2'), '重试请求');
+  await until(() => run('hostRequests.length === 2'), '自动纠正模型补丁');
+  assert.doesNotMatch(await run('hostRequests[1].ordered_prompts.at(-1).content'), /推理草稿/);
   await run('window.completeHostAI()');
-  await until(() => run('hostRequests.length === 3'), '自动纠正模型补丁');
-  assert.match(await run('hostRequests[2].ordered_prompts.at(-1).content'), /stat_data/);
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化失败'`), '错误提示');
+  assert.match(await run(`document.querySelector('.fated-toast > p:not(.fated-toast-summary)').textContent`), /模型未返回有效的战局补丁/);
+  assert.equal(await run(`document.querySelector('.fated-toast-summary').textContent`), '已应用 0 项补丁 · 剩余 2 项未解决');
+  assert.match(await run(`document.querySelector('.fated-toast-issues').textContent`), /恒定拉距.*恒定发射/);
+  assert.equal(await run(`!!document.querySelector('.fated-toast-raw')`), false);
+  await run('window.__fatedTacticalTavern.scan()');
+  assert.equal(await run('hostRequests.length'), 2);
+  await click('.fated-toast button');
+  await until(() => run('hostRequests.length === 3'), '重试请求');
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化完成'`), '应用校验补丁');
   await click('.fated-toast button:nth-of-type(2)');
@@ -250,6 +258,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`), '新战场标准化完成');
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
+  assert.match(await run(`document.querySelector('.fated-toast-summary').textContent`), /剩余 1 项未解决/);
   await run(`(() => {
     const { renderBattleInitEntry } = overlayFrame.contentWindow.FatedTacticalTavern;
     const frame = document.createElement('iframe');

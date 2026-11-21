@@ -68,7 +68,7 @@ export function diagnoseApiError(rawText, status) {
 export async function readSseStream(readableStream, extractDelta, onStreamChunk) {
   const reader = readableStream.getReader(), decoder = new TextDecoder();
   const start = Date.now();
-  let buffer = '', content = '', reasoning = '', args = '', heartbeatCount = 0;
+  let buffer = '', content = '', args = '', heartbeatCount = 0;
   function line(raw) {
     const s = raw.trim();
     if (s.startsWith(':')) {
@@ -81,9 +81,10 @@ export async function readSseStream(readableStream, extractDelta, onStreamChunk)
       if (event.error) throw new Error(diagnoseApiError(event.error.message));
       const d = extractDelta(event) || {};
       const c = typeof d === 'string' ? d : d.contentDelta;
-      if (c || d.reasoningDelta || d.toolArgsDelta) {
-        content += c || ''; reasoning += d.reasoningDelta || ''; args += d.toolArgsDelta || '';
-        onStreamChunk?.(content || args || reasoning, false);
+      if (c || d.toolArgsDelta) {
+        content += c || '';
+        args += d.toolArgsDelta || '';
+        onStreamChunk?.(content || args, false);
       }
     }
     return false;
@@ -98,7 +99,7 @@ export async function readSseStream(readableStream, extractDelta, onStreamChunk)
       buffer = done ? '' : lines.pop();
       if (lines.some(line)) break;
     }
-    return content || args || reasoning;
+    return content || args;
   } finally {
     if (!ended) reader.cancel().catch(() => {});
     reader.releaseLock();
@@ -171,15 +172,15 @@ export async function fetchModels(settings, options = {}) {
 function deltas(source, event) {
   if (source === 'gemini') {
     const parts = event.candidates?.[0]?.content?.parts || [];
-    return { contentDelta: parts.filter(p => !p.thought).map(p => p.text).join(''), reasoningDelta: parts.filter(p => p.thought).map(p => p.text).join('') };
+    return { contentDelta: parts.filter(p => !p.thought).map(p => p.text).join('') };
   }
   if (source === 'claude') {
     const d = event.delta || event.content_block || {};
-    return { contentDelta: d.text, reasoningDelta: d.thinking, toolArgsDelta: d.partial_json };
+    return { contentDelta: d.text, toolArgsDelta: d.partial_json };
   }
   const choice = event.choices?.[0];
   const d = choice?.delta || choice?.message || {};
-  return { contentDelta: d.content, reasoningDelta: d.reasoning_content, toolArgsDelta: d.tool_calls?.map(t => t.function?.arguments).join('') || d.function_call?.arguments };
+  return { contentDelta: d.content, toolArgsDelta: d.tool_calls?.map(t => t.function?.arguments).join('') || d.function_call?.arguments };
 }
 
 export async function requestViaCustomApi(settings, messages, options = {}) {
@@ -220,7 +221,7 @@ export async function requestViaCustomApi(settings, messages, options = {}) {
     const data = await json(res);
     if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === 'tavern' ? '酒馆后端未能生成回复，请检查 API 地址、密钥和酒馆后端网络' : '')));
     const d = deltas(source, data);
-    text = source === 'claude' ? (data.content || []).map(p => p.text).join('') : d.contentDelta || d.toolArgsDelta || d.reasoningDelta || '';
+    text = source === 'claude' ? (data.content || []).filter(p => p.type === 'text' || !p.type).map(p => p.text).join('') : d.contentDelta || d.toolArgsDelta || '';
   }
   if (typeof text !== 'string' || !text.trim()) throw new Error('独立 API 未返回有效文本，请检查模型和协议类型');
   options.onStreamChunk?.(text, true);

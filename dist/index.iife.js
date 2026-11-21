@@ -9868,12 +9868,26 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var strings = (v) => (Array.isArray(v) ? v : [v]).filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
   var matches2 = (message, s) => message.includes(s) || s.includes(message);
   var subject = (message) => message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim() ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
+  var describesWarning = (item, warning) => {
+    const label = subject(warning.message);
+    return matches2(warning.message, item) || Boolean(label && item.includes(label));
+  };
+  function pendingDiagnostics(warnings, unresolved) {
+    const notes2 = [...new Set(strings(unresolved))];
+    return [
+      ...warnings.map((warning) => {
+        const details = notes2.filter((note) => note !== warning.message && describesWarning(note, warning));
+        return details.length ? `${warning.message}\uFF08\u6A21\u578B\u8BF4\u660E\uFF1A${details.join("\uFF1B")}\uFF09` : warning.message;
+      }),
+      ...notes2.filter((note) => !warnings.some((warning) => describesWarning(note, warning)))
+    ];
+  }
   function resolvedDiagnostics(sent, records, patch, reply) {
     const top = [...strings(reply.resolved), ...strings(reply.resolvedWarnings)];
     const declared = top.length || patch.some((op) => op.resolves != null);
     const identified = (op, warning) => [].concat(op.resolves ?? []).some((receipt) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message);
     const pending = strings(reply.unresolved);
-    const isPending = (w) => pending.some((s) => matches2(w.message, s) || subject(w.message) && s.includes(subject(w.message)));
+    const isPending = (w) => pending.some((item) => describesWarning(item, w));
     return sent.filter((w) => {
       if (w.unitId == null || !Object.hasOwn(records, w.unitId) || isPending(w)) return false;
       const label = subject(w.message);
@@ -10710,7 +10724,7 @@ ${variables.warnings()}` : "");
   async function readSseStream(readableStream, extractDelta, onStreamChunk) {
     const reader = readableStream.getReader(), decoder = new TextDecoder();
     const start = Date.now();
-    let buffer = "", content = "", reasoning = "", args = "", heartbeatCount = 0;
+    let buffer = "", content = "", args = "", heartbeatCount = 0;
     function line(raw) {
       const s = raw.trim();
       if (s.startsWith(":")) {
@@ -10723,11 +10737,10 @@ ${variables.warnings()}` : "");
         if (event.error) throw new Error(diagnoseApiError(event.error.message));
         const d = extractDelta(event) || {};
         const c = typeof d === "string" ? d : d.contentDelta;
-        if (c || d.reasoningDelta || d.toolArgsDelta) {
+        if (c || d.toolArgsDelta) {
           content += c || "";
-          reasoning += d.reasoningDelta || "";
           args += d.toolArgsDelta || "";
-          onStreamChunk?.(content || args || reasoning, false);
+          onStreamChunk?.(content || args, false);
         }
       }
       return false;
@@ -10742,7 +10755,7 @@ ${variables.warnings()}` : "");
         buffer = done ? "" : lines.pop();
         if (lines.some(line)) break;
       }
-      return content || args || reasoning;
+      return content || args;
     } finally {
       if (!ended) reader.cancel().catch(() => {
       });
@@ -10817,15 +10830,15 @@ ${variables.warnings()}` : "");
   function deltas(source, event) {
     if (source === "gemini") {
       const parts = event.candidates?.[0]?.content?.parts || [];
-      return { contentDelta: parts.filter((p) => !p.thought).map((p) => p.text).join(""), reasoningDelta: parts.filter((p) => p.thought).map((p) => p.text).join("") };
+      return { contentDelta: parts.filter((p) => !p.thought).map((p) => p.text).join("") };
     }
     if (source === "claude") {
       const d2 = event.delta || event.content_block || {};
-      return { contentDelta: d2.text, reasoningDelta: d2.thinking, toolArgsDelta: d2.partial_json };
+      return { contentDelta: d2.text, toolArgsDelta: d2.partial_json };
     }
     const choice = event.choices?.[0];
     const d = choice?.delta || choice?.message || {};
-    return { contentDelta: d.content, reasoningDelta: d.reasoning_content, toolArgsDelta: d.tool_calls?.map((t) => t.function?.arguments).join("") || d.function_call?.arguments };
+    return { contentDelta: d.content, toolArgsDelta: d.tool_calls?.map((t) => t.function?.arguments).join("") || d.function_call?.arguments };
   }
   async function requestViaCustomApi(settings, messages, options = {}) {
     const conn = connection(settings, true);
@@ -10861,7 +10874,7 @@ ${variables.warnings()}` : "");
       const data = await json2(res);
       if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === "tavern" ? "\u9152\u9986\u540E\u7AEF\u672A\u80FD\u751F\u6210\u56DE\u590D\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC" : "")));
       const d = deltas(source, data);
-      text4 = source === "claude" ? (data.content || []).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || d.reasoningDelta || "";
+      text4 = source === "claude" ? (data.content || []).filter((p) => p.type === "text" || !p.type).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || "";
     }
     if (typeof text4 !== "string" || !text4.trim()) throw new Error("\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u6A21\u578B\u548C\u534F\u8BAE\u7C7B\u578B");
     options.onStreamChunk?.(text4, true);
@@ -11894,7 +11907,7 @@ ${variables.warnings()}` : "");
     return JSON.stringify(value);
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.2.7";
+  var TAVERN_VERSION = "0.2.8";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
@@ -13020,6 +13033,7 @@ ${tag.textContent || ""}
       if (normalize) notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", "", null, true);
       else toast.hidden = true;
       let receivedPatch = normalize, replyText = "", unresolved = [], appliedCount = 0;
+      const scopedWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)) : [];
       try {
         if (normalize && !liveState()) {
           if (!session) {
@@ -13029,7 +13043,7 @@ ${tag.textContent || ""}
           throw new Error("\u6CA1\u6709\u53EF\u6807\u51C6\u5316\u7684\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6C99\u76D8");
         }
         let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
-        const sentWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)).filter((w) => prompts.some((m) => m.content.includes(JSON.stringify(w.message)))) : [];
+        const sentWarnings = scopedWarnings.filter((w) => prompts.some((m) => m.content.includes(JSON.stringify(w.message))));
         if (!normalize) {
           prompts = [...prompts, ...history, { role: "user", content: requestText }];
           lastSent = prompts;
@@ -13038,25 +13052,29 @@ ${tag.textContent || ""}
         if (!prompts.length) throw new Error("\u6CA1\u6709\u53EF\u53D1\u9001\u7684\u63D0\u793A\u8BCD\uFF0C\u8BF7\u5728\u63D0\u793A\u8BCD\u7EC4\u88C5\u9875\u542F\u7528\u6709\u5185\u5BB9\u7684\u69FD\u4F4D");
         const streamUpdate = (snapshot, done, info) => {
           if (disposed || controller2.signal.aborted || aiController !== controller2 || activeBattleKey !== key4) return;
-          if (snapshot) updateReply({ content: snapshot }, false);
-          if (!normalize) return;
+          if (!normalize) {
+            if (snapshot) updateReply({ content: snapshot }, false);
+            return;
+          }
           noticeBody.textContent = info?.isHeartbeat ? `\u5DF2\u7B49\u5F85 ${info.elapsedSec} \u79D2\uFF0C\u8FDE\u63A5\u4ECD\u5728\u4FDD\u6301\u2026` : done ? "\u5DF2\u6536\u5230\u5B8C\u6574\u54CD\u5E94\uFF0C\u6B63\u5728\u6821\u9A8C\u2026" : `\u5DF2\u6536\u5230 ${snapshot.length} \u5B57\u7B26\u2026`;
           noticeBody.hidden = false;
         };
         const cancelled = new Promise((_, reject) => controller2.signal.addEventListener("abort", () => reject(controller2.signal.reason), { once: true }));
         const validate = options.validateState || validateState;
-        let patch, nextState, combined, solved, baseline;
+        let patch, nextState, combined, solved2, baseline;
         for (let attempt = 0; ; attempt++) {
+          replyText = "";
+          unresolved = [];
           const reply = await Promise.race([
             requestTavernAI(host, config, prompts, options.fetch, controller2.signal, streamUpdate),
             cancelled
           ]);
           controller2.signal.throwIfAborted();
           if (disposed || aiController !== controller2 || key4 !== activeBattleKey) return;
-          replyText = reply;
           try {
             const parsed = parseAIResponse(reply);
             patch = parseJSONPatch(reply) ?? (normalize ? null : parsed.patch);
+            replyText = normalize ? patch ? JSON.stringify(parsed.data, null, 2) : "" : reply;
             const pending = parsed.data?.unresolved ?? [];
             if (!Array.isArray(pending) && normalize) throw new Error("unresolved \u5FC5\u987B\u662F JSON \u6570\u7EC4");
             unresolved = Array.isArray(pending) ? pending.map((item) => typeof item === "string" ? item : JSON.stringify(item)) : [];
@@ -13077,7 +13095,7 @@ ${tag.textContent || ""}
             }
             if (normalize && !patch.length) throw new Error("\u6A21\u578B\u8FD4\u56DE\u7A7A\u8865\u4E01\uFF0C\u6CA1\u6709\u53EF\u6CE8\u5165\u7684\u53D8\u66F4");
             if (normalize) {
-              solved = resolvedDiagnostics(sentWarnings, records, patch, { ...parsed.data, unresolved });
+              solved2 = resolvedDiagnostics(sentWarnings, records, patch, { ...parsed.data, unresolved });
               patch = patch.map(({ resolves, ...operation }) => operation);
             }
             nextState = (options.applyPatch ?? applyPatch)(liveState(), patch, normalize);
@@ -13095,8 +13113,8 @@ ${tag.textContent || ""}
           } catch (error2) {
             if (!normalize || attempt > 0) throw error2;
             notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", "\u6A21\u578B\u6B63\u5728\u4FEE\u6B63\u8865\u4E01\u683C\u5F0F", null, true);
-            prompts = [...prompts, { role: "user", content: `\u4E0A\u4E00\u6761\u8F93\u51FA\u6821\u9A8C\u5931\u8D25\uFF08${error2.message}\uFF09\u3002\u6309\u4E0A\u9762\u7684\u4F8B\u5B50\u4F7F\u7528\u7CBE\u786E ID \u548C\u8DEF\u5F84\uFF0C\u91CD\u65B0\u8F93\u51FA\u5B8C\u6574 JSON \u5BF9\u8C61\u3002
-\u4E0A\u4E00\u6761\u8F93\u51FA\uFF1A${reply.slice(0, 3500)}` }];
+            prompts = [...prompts, { role: "user", content: `\u4E0A\u4E00\u6761\u8F93\u51FA\u6821\u9A8C\u5931\u8D25\uFF08${error2.message}\uFF09\u3002\u6309\u4E0A\u9762\u7684\u4F8B\u5B50\u4F7F\u7528\u7CBE\u786E ID \u548C\u8DEF\u5F84\uFF0C\u91CD\u65B0\u8F93\u51FA\u5B8C\u6574 JSON \u5BF9\u8C61\u3002${replyText ? `
+\u4E0A\u4E00\u6761\u8865\u4E01\uFF1A${replyText.slice(0, 3500)}` : ""}` }];
             lastSent = prompts;
             publishMessages(prompts, kind);
           }
@@ -13118,11 +13136,11 @@ ${tag.textContent || ""}
             hashes[id4] = rec.hash;
           }
           const before = applyPatch(baseline, operations(key4), true);
-          const additions = solved.length ? [{
+          const additions = solved2.length ? [{
             patch,
             hashes,
-            receipts: solved.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
-            guards: [.../* @__PURE__ */ new Set([...patch.map((op) => op.path.split("/").slice(0, 3).join("/")), ...solved.map((w) => w.originPath).filter(Boolean)])].map((path) => [path, fingerprintAt(before, path) ?? null])
+            receipts: solved2.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
+            guards: [.../* @__PURE__ */ new Set([...patch.map((op) => op.path.split("/").slice(0, 3).join("/")), ...solved2.map((w) => w.originPath).filter(Boolean)])].map((path) => [path, fingerprintAt(before, path) ?? null])
           }] : patch.map((op) => {
             const [, table4, target2] = op.path.split("/");
             const owners = Object.keys(records).filter((id4) => {
@@ -13142,6 +13160,7 @@ ${tag.textContent || ""}
           renderInstances();
           prepareMessages();
         }
+        if (normalize) unresolved = pendingDiagnostics(scopedWarnings.filter((w) => !solved2.includes(w)), unresolved);
         updateReply({ content: replyText, status: "ok" });
         const result = Array.isArray(patch) && !patch.length ? "\u65E0\u8865\u4E01\u53D8\u66F4" : "\u8865\u4E01\u5DF2\u5E94\u7528";
         postStatus(`${label}\uFF1A${result}${unresolved.length ? `\uFF0C\u5F85\u5904\u7406\uFF1A${unresolved.join("\uFF1B")}` : ""}`, "ok");
@@ -13157,6 +13176,7 @@ ${tag.textContent || ""}
         const aborted = e?.name === "AbortError";
         const status2 = aborted ? "aborted" : "error";
         const detail = e?.message || String(e);
+        if (normalize) unresolved = pendingDiagnostics(appliedCount ? scopedWarnings.filter((w) => !solved?.includes(w)) : scopedWarnings, unresolved);
         const partial = assistantMessage?.content || replyText;
         updateReply({ status: status2, content: aborted ? partial ?? "" : [partial, `\u9519\u8BEF\uFF1A${detail}`].filter(Boolean).join("\n\n") });
         if (receivedPatch) postStatus(`${label}${aborted ? "\u5DF2\u4E2D\u6B62" : "\u5931\u8D25"}\uFF1A${detail}${unresolved.length ? `\uFF1B\u672A\u89E3\u51B3\uFF1A${unresolved.join("\uFF1B")}` : ""}`, status2);
@@ -13165,7 +13185,7 @@ ${tag.textContent || ""}
           detail,
           aborted ? null : retryRequest,
           false,
-          aborted ? { raw: replyText } : { tone: "error", applied: appliedCount, unresolved, raw: replyText }
+          { tone: aborted ? "neutral" : "error", applied: appliedCount, unresolved, raw: replyText }
         );
       } finally {
         clearTimeout(timeout);

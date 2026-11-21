@@ -132,6 +132,31 @@ test('独立 API 经酒馆后端拉取模型并生成，使用独立地址和密
   assert.deepEqual(routes, ['/csrf-token', `${endpoint}/status`, '/csrf-token', `${endpoint}/generate`, '/csrf-token', `${endpoint}/generate`]);
 });
 
+test('独立 API 的推理字段不会进入回复或流式回调', async () => {
+  const settings = { baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'test' };
+  for (const stream of [true, false]) {
+    const chunks = [];
+    await assert.rejects(requestViaCustomApi({ ...settings, stream }, [], {
+      onStreamChunk: text => chunks.push(text),
+      async fetchImpl() {
+        return stream
+          ? new Response('data: {"choices":[{"delta":{"reasoning_content":"推理草稿"}}]}\n\ndata: [DONE]\n\n')
+          : Response.json({ choices: [{ message: { reasoning_content: '推理草稿' } }] });
+      },
+    }), /未返回有效文本/);
+    assert.deepEqual(chunks, []);
+  }
+  const chunks = [];
+  const text = await requestViaCustomApi(settings, [], {
+    onStreamChunk: text => chunks.push(text),
+    async fetchImpl() {
+      return new Response('data: {"choices":[{"delta":{"reasoning_content":"推理草稿"}}]}\n\ndata: {"choices":[{"delta":{"content":"正式回复"}}]}\n\ndata: [DONE]\n\n');
+    },
+  });
+  assert.equal(text, '正式回复');
+  assert.deepEqual(chunks, ['正式回复', '正式回复']);
+});
+
 test('会话增删改查、消息追加与持久化保持隔离', () => {
   let stored;
   const store = createAiSessions(null, data => { stored = JSON.stringify(data); }, () => 100);

@@ -5,6 +5,22 @@ const matches = (message, s) => message.includes(s) || s.includes(message);
 const subject = message => message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim()
   ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
 
+const describesWarning = (item, warning) => {
+  const label = subject(warning.message);
+  return matches(warning.message, item) || Boolean(label && item.includes(label));
+};
+
+export function pendingDiagnostics(warnings, unresolved) {
+  const notes = [...new Set(strings(unresolved))];
+  return [
+    ...warnings.map(warning => {
+      const details = notes.filter(note => note !== warning.message && describesWarning(note, warning));
+      return details.length ? `${warning.message}（模型说明：${details.join('；')}）` : warning.message;
+    }),
+    ...notes.filter(note => !warnings.some(warning => describesWarning(note, warning))),
+  ];
+}
+
 export function resolvedDiagnostics(sent, records, patch, reply) {
   const top = [...strings(reply.resolved), ...strings(reply.resolvedWarnings)];
   const declared = top.length || patch.some(op => op.resolves != null);
@@ -12,7 +28,7 @@ export function resolvedDiagnostics(sent, records, patch, reply) {
     receipt && typeof receipt === 'object' && receipt.unitId === warning.unitId
     && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message);
   const pending = strings(reply.unresolved);
-  const isPending = w => pending.some(s => matches(w.message,s) || (subject(w.message) && s.includes(subject(w.message))));
+  const isPending = w => pending.some(item => describesWarning(item, w));
   return sent.filter(w => {
     if (w.unitId == null || !Object.hasOwn(records, w.unitId) || isPending(w)) return false;
     const label = subject(w.message);
