@@ -1,4 +1,4 @@
-import { resolvedDiagnostics, remainingDiagnostics, warningKey } from './resolved-warnings.js';
+import { resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
@@ -243,6 +243,15 @@ export function parseJSONPatch(value) {
   return null;
 }
 
+function fingerprintAt(state, path) {
+  let value = state;
+  for (const key of path.slice(1).split('/').map(key => key.replaceAll('~1', '/').replaceAll('~0', '~'))) {
+    if (value == null || !own(value, key)) return undefined;
+    value = value[key];
+  }
+  return JSON.stringify(value);
+}
+
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
@@ -437,7 +446,7 @@ export function mountTavernOverlay(options = {}) {
   const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter(key => own(config.instances,key));
   const batches = key => config.normalizationBatches?.[key] ?? [];
   const operations = key => batches(key).flatMap(batch=>batch.patch);
-  let battleObserver = null, removeOpenEvent = null, diagnostics = { phase: 'created' };
+  let battleObserver = null, variableScanTimer, variableScanEpoch = 0, diagnostics = { phase: 'created' };
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
   const root = el(doc, 'div', { 'data-fated-tavern-overlay': '' });
@@ -561,12 +570,26 @@ export function mountTavernOverlay(options = {}) {
   function bindEventBus() {
     const eventOn = hostMethod(host, 'eventOn');
     if (typeof eventOn !== 'function') return;
-    const handler = () => { open().catch(showError); };
-    try {
-      const result = eventOn('fated_tactical:open_ui', handler);
-      if (typeof result === 'function') removeOpenEvent = result;
-      else if (result?.off && typeof result.off === 'function') removeOpenEvent = () => result.off();
-    } catch (_) { /* event bus is optional outside JS-Slash-Runner */ }
+    const bind = (name, handler) => {
+      try {
+        const result = eventOn(name, handler);
+        listeners.push(typeof result === 'function' ? result : typeof result?.off === 'function'
+          ? () => result.off() : () => hostMethod(host, 'eventRemoveListener')?.(name, handler));
+      } catch (_) { /* event bus is optional outside JS-Slash-Runner */ }
+    };
+    bind('fated_tactical:open_ui', () => { open().catch(showError); });
+    bind(getGlobal(host, 'Mvu')?.events?.VARIABLE_UPDATE_ENDED ?? 'mag_variable_update_ended', variables => {
+      if (!activeBattleKey || selectedMessageId != null || config.autoScan === false || !statData(variables)) return;
+      const chat = chatId(host), update = ++variableScanEpoch;
+      clearTimeout(variableScanTimer);
+      // Leave MVU's event handler before reading the post-update variable object.
+      variableScanTimer = setTimeout(async () => {
+        if (aiController) await aiFinished;
+        if (!disposed && update === variableScanEpoch && chatId(host) === chat && selectedMessageId == null && config.autoScan !== false) {
+          await scan(false, statData(variables));
+        }
+      }, 0);
+    });
   }
   function closePanel() { hide(); }
   on(launcher, 'click', event => { if (launcher.dataset.dragged === 'true') { delete launcher.dataset.dragged; event.preventDefault(); return; } open(); });
@@ -802,19 +825,20 @@ export function mountTavernOverlay(options = {}) {
   }
   function runNormalize(unitIds = Object.keys(characters), {force=false, sessionId=force?aiSessions.active().id:undefined} = {}) {
     const stored=config.charSnapshots[activeBattleKey]??{};
-    const ids=unitIds.filter(id=>characters[id] && (force || !stored[id]?.normalized || stored[id].hash!==characters[id].hash));
+    const eligible = force ? Object.keys(characters) : normalizationCandidates(characters, stored, sources.warnings ?? []);
+    const ids = unitIds.filter(id => eligible.includes(id));
     if (!ids.length) return;
     const records=Object.fromEntries(ids.map(id=>[id,{hash:characters[id].hash,sourceKind:characters[id].sourceKind}]));
     return askAI('validate','',sessionId,records);
   }
 
-  async function hydrate(epoch) {
+  async function hydrate(epoch, updatedMvu) {
     const messages = await tavernMessages(host);
     const nextSources = sourceBundle({}, messages, chatId(host), selectedMessageId);
     const messageId = Number(nextSources.source?.messageId);
     // MVU may return objects created in the parent window. Clone them into
     // the script realm before passing them to the converter's plain-object checks.
-    nextSources.mvuData = clone(await readBattleVariables(host, messageId));
+    nextSources.mvuData = clone(updatedMvu ?? await readBattleVariables(host, messageId));
     nextSources.protagonistName = tavernIdentity(host);
     if (epoch !== scanEpoch || disposed) return null;
     sources = nextSources;
@@ -903,9 +927,9 @@ export function mountTavernOverlay(options = {}) {
     }
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
-  function filterResolved(stored, records) {
+  function filterResolved(stored, records, retained = batches(activeBattleKey)) {
     const warnings = sources.warnings ??= [];
-    const remaining = remainingDiagnostics(warnings, stored, records);
+    const remaining = remainingDiagnostics(warnings, stored, records, retained);
     warnings.splice(0, warnings.length, ...remaining);
     diagnostics.warnings = warnings;
   }
@@ -919,11 +943,11 @@ export function mountTavernOverlay(options = {}) {
     refreshOutcome(next);
     return next;
   }
-  async function scan(force = false) {
+  async function scan(force = false, updatedMvu) {
     const epoch = ++scanEpoch;
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
     try {
-      const hydrated = await hydrate(epoch);
+      const hydrated = await hydrate(epoch, updatedMvu);
       if (epoch !== scanEpoch || disposed) return;
       const nextState = hydrated?.state ?? null;
       const key=sources.battleKey;
@@ -934,9 +958,27 @@ export function mountTavernOverlay(options = {}) {
       const removed=Object.keys(stored).filter(id=>!fresh[id]);
       diagnostics.removedCharacters=removed;
       for(const id of removed) delete stored[id];
-      const changed=ids.filter(id=>!stored[id]?.normalized || stored[id].hash!==fresh[id].hash);
+      const rawWarnings = sources.warnings ?? [];
+      const kept = [];
+      let replay = nextState;
+      for (const batch of batches(key)) {
+        const owners = Object.entries(batch.hashes);
+        const matchesHash = ([id, hash]) => fresh[id]?.hash === hash;
+        const sameInput = batch.receipts ? owners.every(matchesHash) : owners.some(matchesHash);
+        const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key }) => fresh[unitId]
+          && rawWarnings.some(w => w.unitId === unitId && warningKey(w) === key));
+        if (!sameInput && !sameDiagnostics) continue;
+        if (batch.guards && !batch.guards.every(([path, value]) => (fingerprintAt(replay, path) ?? null) === value)) continue;
+        try {
+          replay = applyPatch(replay, batch.patch, true);
+          kept.push(batch);
+        } catch (_) { /* a previous patch or its target is no longer available */ }
+      }
+      const invalid = batches(key).length !== kept.length;
+      const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
+      const changed = normalizationCandidates(fresh, stored, remaining);
       const sourceChanged=activeBattleKey===key && (ids.some(id=>mountedHashes[id]!==fresh[id].hash)||Object.keys(mountedHashes).some(id=>!fresh[id]));
-      if (sourceChanged || !gameMount || activeBattleKey !== key) {
+      if (sourceChanged || invalid || !gameMount || activeBattleKey !== key) {
         if (aiController) {
           const finished = aiFinished;
           aiController.abort();
@@ -944,21 +986,16 @@ export function mountTavernOverlay(options = {}) {
           if (epoch !== scanEpoch || disposed) return;
         }
         toast.hidden = true;
-        // Replay only batches whose input still matches; never resurrect obsolete equipment effects.
-        const kept=batches(key).filter(batch=>Object.entries(batch.hashes).some(([id,hash])=>fresh[id]?.hash===hash));
-        const invalid=batches(key).filter(batch=>!kept.includes(batch));
-        if(invalid.length) {
-          persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
-        }
-        currentState = nextState ? applyNormalization(nextState, operations(key)) : null;
+        currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
+        if (invalid) persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
         activeBattleKey = key;
-        mountState(currentState, !sourceChanged && !invalid.length && !changed.length);
+        mountState(currentState, !sourceChanged && !invalid && !changed.length);
       }
       characters=fresh; mountedHashes=Object.fromEntries(ids.map(id=>[id,fresh[id].hash]));
       for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
       if(key && (changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
       if(config.rosterSelection===null && ids.length) persistSettings({rosterSelection:ids});
-      filterResolved(stored, fresh);
+      filterResolved(stored, fresh, kept);
       const live=liveState();
       for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
       scanStatus=changed.length?`待标准化 ${changed.length} 个角色`:'无变化，跳过自动标准化';
@@ -1080,7 +1117,7 @@ export function mountTavernOverlay(options = {}) {
         };
         const cancelled = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
         const validate = options.validateState || defaultValidateState;
-        let patch, nextState, combined, solved;
+        let patch, nextState, combined, solved, baseline;
         for (let attempt = 0; ; attempt++) {
           const reply = await Promise.race([
             requestTavernAI(host, config, prompts, options.fetch, controller.signal, streamUpdate), cancelled,
@@ -1117,7 +1154,7 @@ export function mountTavernOverlay(options = {}) {
             if (normalize && patch.length) {
               refreshOpeningInitiative(nextState);
               combined = [...operations(key), ...patch];
-              const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+              baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
               validate(applyNormalization(baseline, combined));
             }
             syncEquipmentEffects(nextState);
@@ -1144,12 +1181,17 @@ export function mountTavernOverlay(options = {}) {
           const stored={...config.charSnapshots[key]}, hashes={};
           for(const [id,rec] of Object.entries(records)) {
             const previous = stored[id]?.hash === rec.hash ? stored[id].resolvedWarnings ?? [] : [];
-            const resolvedWarnings = [...new Set([...previous, ...solved.filter(w=>w.unitId===id).map(warningKey)])];
-            stored[id]={...rec,at:Date.now(),normalized:true,resolvedWarnings};hashes[id]=rec.hash;
+            stored[id]={...rec,at:Date.now(),normalized:true,resolvedWarnings:previous};hashes[id]=rec.hash;
           }
           // Keep operation order, tagging each operation with the units that actually use its target.
           // Shared template definitions remain available while any dependent unit is unchanged.
-          const additions=patch.map(op=>{
+          const before = applyPatch(baseline, operations(key), true);
+          const additions = solved.length ? [{
+            patch, hashes,
+            receipts: solved.map(w => ({ unitId: w.unitId, key: warningKey(w) })),
+            guards: [...new Set([...patch.map(op => op.path.split('/').slice(0, 3).join('/')), ...solved.map(w => w.originPath).filter(Boolean)])]
+              .map(path => [path, fingerprintAt(before, path) ?? null]),
+          }] : patch.map(op=>{
             const [,table,target]=op.path.split('/');
             const owners=Object.keys(records).filter(id=>{
               const u=nextState.units[id]; const items=[u?.weapon,u?.mainHand,u?.offHand,u?.shield,...(u?.gear??[])];
@@ -1209,7 +1251,7 @@ export function mountTavernOverlay(options = {}) {
   }
   const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone(config), getDiagnostics: () => clone(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, getSources: () => clone(sources), getState: () => { const state = clone(liveState()); if (state) Object.defineProperty(state,'warnings',{value:clone(sources.warnings ?? [])}); return state; } };
   function dispose() {
-    if (disposed) return; disposed = true; stopTerrainNotices?.(); aiController?.abort(); battleObserver?.disconnect(); removeOpenEvent?.(); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
+    if (disposed) return; disposed = true; stopTerrainNotices?.(); aiController?.abort(); battleObserver?.disconnect(); clearTimeout(variableScanTimer); try { controller?.abort(); } catch (_) {} for (const remove of listeners.splice(0)) remove(); try { gameMount?.unmount?.(); } catch (_) {} root.remove(); try { if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern; } catch (_) {} }
   try { host.__fatedTacticalTavern = api; } catch (_) {}
   if (options.open) open();
   return api;

@@ -22,15 +22,16 @@ export const DEFAULT_SLOTS = [
 
 const TAG_MAPPING = `【世界书标签 → DSL / API 映射】
 • [威力: X] + [伤害: 类型] → 以 X 为威力基准，damage 节点用 percentOfPower:1.0 和对应的 damageType。[威力: X 物理] 等价于 [威力: X][伤害: 物理]，不额外叠加伤害。
+• 旧档「效果：100%物理伤害」配合威力标签，使用 damage 节点 percentOfPower:1、damageType:"physical"。比例混合伤害每种类型用独立节点，例如 60%物理伤害/40%能量伤害写 0.6 与 0.4。
 • 混合伤害：[威力: 60][伤害: 物理40/能量20] 中各分量之和等于威力。必须拆成多个 damage 节点，每个节点只写一个 damageType 和对应数值，不得在单节点里塞多个类型。例：[{"kind":"damage","flat":40,"damageType":"physical"},{"kind":"damage","flat":20,"damageType":"energy"}]。不得再叠加一次总威力。
 • [关联属性: 敏捷] → 技能的关联检定属性为 agi；不要把施术者的关联属性误作目标的豁免属性。[有效距离: 中程(5)] → range:5。
 • [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → range:4、shape:fan、target:enemy，radius 按实际覆盖半径填写，不把射程当半径。
 • 空效果：目标对象的效果字段为 {} 或缺失时，表示该字段没有可执行效果，不产生任何补丁操作，也不计入 unresolved。纯位移、纯状态授予等技能仍有可执行节点，不属于空效果。`;
-const diagnosisProtocol = '诊断归属：patch 操作的可选 resolves（字符串或字符串数组）说明该操作解决的原诊断；也可在响应顶层使用 resolved 或 resolvedWarnings 字符串数组。这些字段不是 DSL 节点或战局字段。';
+const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。旧式诊断字符串仅在能唯一匹配时有效。这些字段不是 DSL 节点或战局字段。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，优先在操作上填写 resolves，复制已解决诊断原文或足以唯一定位的效果名；也可用顶层 resolved 或 resolvedWarnings 数组。只声明本次已修复的诊断；未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次已修复的诊断；未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
@@ -54,7 +55,7 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 【拆解原则】先尝试拆解，再考虑放弃。可用多状态 + 手动触发技能组合表达复杂效果。仅当引擎没有 kind 或组合可表达时才放入 unresolved，写明原效果并简述尝试过的方向（一句话）。部分可解时提交可解部分。
 拆解后先在内部列出拟用的 kind / status，逐个自查：参数写全了吗？statusId 存在吗？数值在范围内吗？然后只输出最终 {"patch":[],"unresolved":[]}。
 正例（仅当快照确有 p1，且警告明确其护甲应为 6）：
-{"patch":[{"op":"replace","path":"/units/p1/armor","value":6,"resolves":["基础护甲缺失"]}],"unresolved":[]}
+{"patch":[{"op":"replace","path":"/units/p1/armor","value":6,"resolves":[{"unitId":"p1","originPath":null,"message":"基础护甲缺失"}]}],"unresolved":[]}
 【DSL 正例】先找事件、筛选条件及概率，再确定目标、节点字段与数值。下面每行是一条可放入 effects 的表达式，换成全局唯一 ID。
 • 简单命中附状态：{"id":"hit_burn","label":"灼印","trigger":"on_hit","target":"hitTarget","effects":[{"kind":"grantStatus","statusId":"burn","turns":2}]}
 • 条件加成：{"id":"night_edge","trigger":"passive","target":"self","condition":{"type":"timeOfDay","value":"night"},"effects":[{"kind":"multiplyDamage","factor":1.2}]}
@@ -98,7 +99,7 @@ export function resolveSlotContent(slot, ctx = {}) {
   const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
   const variables = {
     battle_init: () => sources.battleRaw || json(sources.battleInit ?? {}),
-    battle_state: () => json(state ?? {}), warnings: () => json(warnings.map(w => w.message)),
+    battle_state: () => json(state ?? {}), warnings: () => json(warnings.map(({unitId, originPath = null, message}) => ({unitId, originPath, message}))),
     user_instruction: () => instruction, standardized_roster: () => ctx.onlyUnitIds ? rosterText() : sources.roster || '',
     roster: rosterText, battle: battleText,
     mvu_data: () => json(sources.mvuData ?? {}), latest_floor: () => sources.latestFloor || '',

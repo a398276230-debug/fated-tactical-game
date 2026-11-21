@@ -99,7 +99,7 @@ export function parseSimpleYaml(input) {
       } else parent.push(scalar(rest));
       continue;
     }
-    const colon = line.value.indexOf(':');
+    const colon = line.value.search(/[:：]/);
     if (colon < 1 || !object(parent)) continue;
     const key = line.value.slice(0, colon).trim();
     const tail = line.value.slice(colon + 1).trim();
@@ -368,6 +368,14 @@ function damageTags(value, power) {
   if (!percent && !(parts.every(p => !p[3]) && parts.reduce((n,p) => n + Number(p[2]),0) === Number(power))) return [];
   return parts.map(([,type,n]) => ({kind:'damage', damageType:damageAliases.get(type), ...(percent ? {percentOfPower:Number(n)/100} : {flat:Number(n)})}));
 }
+function legacyPercentDamage(raw) {
+  const entries = Array.isArray(raw) ? raw : object(raw) && !isExpression(raw) ? Object.values(raw) : [raw];
+  if (!entries.length || entries.some(entry => typeof entry !== 'string')) return [];
+  const parts = entries.flatMap(entry => entry.trim().replace(/^[|>][-+2]?[^\S\r\n]*\r?\n/, '').trim().split(/[/／、+＋]/))
+    .map(part => part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(物理|能量|精神|真实)(?:伤害)?[。.]?$/));
+  if (parts.some(part => !part || Number(part[1]) <= 0 || Number(part[1]) > 1000)) return [];
+  return parts.map(([, percent, type]) => ({ kind: 'damage', percentOfPower: Number(percent) / 100, damageType: damageAliases.get(type) }));
+}
 function normalizeDice(raw) {
   const dice = asObject(raw);
   const stat = own(statAliases, dice.stat) ? statAliases[dice.stat] : dice.stat;
@@ -569,26 +577,29 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
   const skillInfo = {};
   const normalizedSkills = sourceSkills(record).slice(0, 32).map(([raw, i]) => {
     const r = asObject(raw), sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${i}`;
-    const labels = [].concat(r.tags ?? r.标签 ?? []).join(' ');
+    const labels = [].concat(r.tags ?? r.标签 ?? [], r.description ?? r.描述 ?? '').join(' ');
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const taggedRange = labels.match(/有效距离\s*[:：][^\d\]]*(\d+)/)?.[1];
     const costs = skillCosts(r.cost ?? r.消耗);
     const tag = labels.match(/伤害\s*[:：]\s*([^\]]+)/)?.[1]?.trim();
     const rawEffects = r.effects ?? r.效果;
-    const nodes = damageTags(tag, r.power ?? taggedPower);
-    skillInfo[sid] = { description:text(r.description ?? r.描述), damageType:damageAliases.get(tag), hp:costs.hp };
+    const power = r.power ?? taggedPower;
+    const legacyDamage = !r.damage && power != null ? legacyPercentDamage(rawEffects) : [];
+    const damageType = r.damageType ?? (legacyDamage.length === 1 ? legacyDamage[0].damageType : damageAliases.get(tag));
+    skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`,
       quality: '普通', ap: bound(r.ap ?? costs.ap, 1, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(r.range ?? taggedRange, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
       target: ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(r.target) ? r.target : 'enemy',
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
-      effects: convertEffects(r.effects ?? r.效果, 'skill', sink('effect', `/skills/${sid}`), `fx-${hash(sid).toString(36)}`),
+      effects: legacyDamage.length ? [] : convertEffects(rawEffects, 'skill', sink('effect', `/skills/${sid}`), `fx-${hash(sid).toString(36)}`),
     };
-    if (!r.damage && (r.power != null || taggedPower) && nodes.length && (Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects))) {
+    const emptyEffects = Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects);
+    const nodes = legacyDamage.length ? legacyDamage : emptyEffects && !r.damage && power != null ? damageTags(tag, power) : [];
+    if (nodes.length) {
       skills[sid].effects.push({id:`fx-${hash(sid).toString(36)}-damage`,trigger:'active',target:'hitTarget',effects:nodes});
     }
-    const damageType = r.damageType ?? damageAliases.get(tag);
     if (damageType != null) skills[sid].damageType = damageType;
     for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['radius', 0, 6], ['width', 0, 6], ['accuracy', -20, 30], ['power', 0, 1e9]]) {
       const value = r[key] ?? (key === 'power' ? taggedPower : costs[key]);

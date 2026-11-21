@@ -273,6 +273,27 @@ test('G124–G126/G129/G130 原文标签生成独立伤害节点，实际施放�
     if(label==='物理') console.log('G130',JSON.stringify({[id]:s}),`SP 40→${actor.sp}; HP ${before}→${target.hp}`);
   }
 });
+test('旧技能效果中的百分比伤害按威力结算一次，混合类型独立结算', () => {
+  for (const [effect, expected] of [
+    ['100%物理伤害', [['physical', 1]]],
+    ['60％物理伤害/40%能量伤害', [['physical', .6], ['energy', .4]]],
+  ]) {
+    const {state, warnings} = hydrateDummy(shooterYaml.replace('[伤害: 物理]', '').replace('效果: |', `效果：${effect}`));
+    const actor = state.units.e1, target = state.units.p1, skillId = actor.skills[0];
+    const skill = state.skills[skillId];
+    assert.deepEqual(warnings, []);
+    assert.equal(skill.power, 50);
+    assert.equal(skill.effects.length, 1);
+    assert.deepEqual(skill.effects[0].effects.map(n => [n.damageType, n.percentOfPower]), expected);
+    state.turn = state.order.indexOf(actor.id);
+    Object.assign(actor, { ap: 2, used: { attack: 0, action: 0 }, sp: 40, maxSp: 40, x: 1, y: 1 });
+    Object.assign(target, { hp: 500, maxHp: 500, armor: 0, x: 2, y: 1 });
+    const start = state.logs.length;
+    applyAction(state, { type: 'skill', skillId, x: 2, y: 1 });
+    assert.deepEqual(state.logs.slice(start).filter(e => e.type === 'damage').map(e => e.detail.raw), expected.map(([,ratio]) => 50 * ratio));
+    assert.equal(target.hp, 450);
+  }
+});
 function castFixture(cost='攻击: 20 SP') {
   const {state,warnings}=hydrateDummy(shooterYaml.replace('攻击: 20 SP',cost));
   assert.deepEqual(warnings,[]);
@@ -333,6 +354,9 @@ test('诊断收据：操作声明和顶层别名只消除已发送、已解决�
   assert.deepEqual(resolvedDiagnostics(warnings,records,[op],{}),[]);
   assert.deepEqual(resolvedDiagnostics([ice],records,[op],{}),[ice]);
   assert.deepEqual(resolvedDiagnostics([ice],records,[{...op,path:'/skills/other/effects'}],{}),[]);
+  const explicit = { ...op, resolves: [{ unitId:'p', originPath:ice.originPath, message:ice.message }] };
+  assert.deepEqual(resolvedDiagnostics(warnings, {...records,e:{hash:'e'}}, [explicit], {}), [ice]);
+  assert.deepEqual(resolvedDiagnostics(warnings, {...records,e:{hash:'e'}}, [{...op,resolves:'冰冻箭'}], {}), []);
   const snapshots={p:{hash:'h',resolvedWarnings:[warningKey(ice)]}};
   assert.deepEqual(remainingDiagnostics(warnings,snapshots,records),[fire,enemy]);
   assert.deepEqual(remainingDiagnostics(warnings,snapshots,{p:{hash:'changed'}}),warnings);

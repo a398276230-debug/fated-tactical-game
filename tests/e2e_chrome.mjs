@@ -100,6 +100,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     iframe.hidden = true;
     document.body.append(iframe);
     const bundle = await (await fetch('/dist/tavern.iife.js')).text();
+    window.hostEvents = new Map();
+    window.eventOn = (name, fn) => { hostEvents.set(name, fn); return () => hostEvents.delete(name); };
     iframe.contentWindow.eval(bundle);
     const battle = '<battle_init>\\nbattle|1|chrome-host|酒馆联调|terrain|12\\nunit|p1|blue|mvu:主角|玩家|2,2\\nunit|e1|red|char_info|对手|7,7\\n</battle_init>';
     const messages = [
@@ -107,6 +109,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
       {message_id:1, role:'assistant', message:'后续叙事'},
     ];
     window.hostCalls = [];
+    window.emitMvuUpdate = () => hostEvents.get('mag_variable_update_ended')?.(Mvu.getMvuData({message_id:0}));
     window.getLastMessageId = () => 1;
     window.getChatMessages = (range) => { window.hostRange = range; return range === '0-1' ? messages : [messages.at(-1)]; };
     window.Mvu = {getMvuData({message_id}) {
@@ -122,7 +125,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         const state = window.__fatedTacticalTavern.getState();
         const id = state.items[state.units.p1.mainHand].templateId;
         if (!config.ordered_prompts.some(m => m.role === 'system' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('系统槽位缺少战局装备快照'));
-        resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10,resolves:'恒定拉距'}],unresolved:window.extraBowEffects ? ['冰冻箭：控制效果尚未实现'] : []}));
+        const warning = state.warnings.find(w => w.message.includes('恒定拉距'));
+        const resolves = warning ? [{unitId:warning.unitId, originPath:warning.originPath, message:warning.message}] : [];
+        resolve(JSON.stringify({patch:[{op:'replace',path:'/equipment/'+id+'/attack',value:10,resolves}],unresolved:window.extraBowEffects ? ['冰冻箭：控制效果尚未实现'] : []}));
       };
     });
   })()`);
@@ -172,16 +177,26 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.deepEqual(await run(`window.__fatedTacticalTavern.getState().warnings.filter(w=>w.unitId==='p1')`),[]);
     assert.equal(await run('hostRequests.length'),3);
   }
-  await run(`window.extraBowEffects={冰冻箭:'命中后冰冻目标'}; window.__fatedTacticalTavern.scan()`);
-  await until(()=>run('hostRequests.length === 4'),'原文变更重新计算诊断');
-  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 2 条诊断/);
+  await run(`window.extraBowEffects={冰冻箭:'命中后冰冻目标'}; window.emitMvuUpdate()`);
+  await until(()=>run('hostRequests.length === 4'),'MVU 更新后重新检查未处理诊断');
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
+  const sentWarnings = index => run(`hostRequests[${index}].ordered_prompts.map(m=>m.content).join('').split('待处理警告：\\n').at(-1).split('\\n\\n')[0]`);
+  assert.match(await sentWarnings(3), /冰冻箭/);
+  assert.doesNotMatch(await sentWarnings(3), /恒定拉距/);
+  assert.equal(await run(`(() => { const s=window.__fatedTacticalTavern.getState(); return s.equipment[s.items[s.units.p1.mainHand].templateId].attack; })()`), 10);
   await run('window.completeHostAI()');
   await until(()=>run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`),'部分诊断解决');
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
   assert.doesNotMatch(await run(`${get(cardWarnings)}.textContent`), /恒定拉距/);
   await click('.fated-toast button:nth-of-type(2)');
-  await run('window.__fatedTacticalTavern.scan()');
+  await run('window.emitMvuUpdate()');
+  await until(()=>run('hostRequests.length === 5'),'相同未解决诊断在下一次 MVU 更新重试');
+  assert.match(await sentWarnings(4), /冰冻箭/);
+  assert.doesNotMatch(await sentWarnings(4), /恒定拉距/);
+  await run('window.completeHostAI()');
+  await until(()=>run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`),'重试诊断应用完成');
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
+  await click('.fated-toast button:nth-of-type(2)');
   const panelBefore = await run(`(() => { const r=document.querySelector('.fated-tavern-panel').getBoundingClientRect(); return {left:r.left,top:r.top,width:r.width,height:r.height}; })()`);
   await click('.fated-tavern-fullscreen');
   assert.equal(await run('document.querySelector(".fated-tavern-panel").classList.contains("is-fullscreen")'), true);

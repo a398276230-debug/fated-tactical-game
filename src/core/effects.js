@@ -273,8 +273,13 @@ export function createEffectEngine(io) {
               case 'multiplyDamage': if (ctx.multipliers && (!p.damageType || p.damageType === ctx.damageType)) { ctx.multipliers.push({ ...p, instance: entry.instance }); result = true; } break;
               case 'modifyStat': {
                 const modifiers = target.effectModifiers ??= {};
-                modifiers[`${source.id}:${entry.key}:${p.stat}`] = { stat: p.stat, flat: (p.flat ?? 0) * levelScale(p.levelScaling, actor.tier ?? 1), percent: (p.percent ?? 0) * levelScale(p.levelScaling, actor.tier ?? 1), turns: p.duration ?? p.turns ?? 1,
-                  ...(p.damageType ? { damageType: p.damageType } : {}), round: state.round, turn: state.turn };
+                const scale = levelScale(p.levelScaling, actor.tier ?? 1);
+                const modifier = { stat: p.stat, flat: (p.flat ?? 0) * scale, percent: (p.percent ?? 0) * scale,
+                  turns: p.duration ?? p.turns ?? 1, ...(p.damageType ? { damageType: p.damageType } : {}),
+                  round: state.round, turn: state.turn };
+                modifiers[`${source.id}:${entry.key}:${p.stat}`] = modifier;
+                io.record(state, actor, 'stat_modifier', `${target.name}获得${label}的属性修正`,
+                  { targetId: target.id, ...modifier });
                 result = true; break;
               }
             }
@@ -295,17 +300,25 @@ export function createEffectEngine(io) {
       .filter(target => condition(state, actor, subject(actor, target, ctx), expr.condition, ctx, entry));
     if (!eligible.length) return false;
     const roll = expr.roll;
-    if (roll?.dice && io.die(state, 20) < roll.gte) return false;
+    const label = expr.label ?? entry.sourceName ?? expr.id;
+    const targetId = eligible.length === 1 && livingUnit(eligible[0]) ? eligible[0].id : null;
+    if (roll?.dice) {
+      const die = io.die(state, 20);
+      const triggered = die >= roll.gte;
+      io.record(state, actor, 'proc', label, { targetId, die, dc: roll.gte, triggered });
+      if (!triggered) return false;
+    }
     if (roll?.chance != null && (!roll.save && !roll.contest || roll.chance < 1)) {
       const draw = io.random(state);
-      io.record(state, actor, 'proc', expr.label ?? expr.id, { targetId: eligible[0].id, roll: draw, chance: roll.chance, triggered: draw < roll.chance });
-      if (draw >= roll.chance) return false;
+      const triggered = draw < roll.chance;
+      io.record(state, actor, 'proc', label, { targetId, roll: draw, chance: roll.chance, triggered });
+      if (!triggered) return false;
     }
     seen.add(expr.id);
     let applied = false;
     for (const target of eligible) {
       if ((roll?.save || roll?.contest) && !livingUnit(target)) continue;
-      if ((roll?.save || roll?.contest) && io.saved(state, actor, target, roll)) continue;
+      if ((roll?.save || roll?.contest) && io.saved(state, actor, target, roll, label)) continue;
       applied = executeNodes(state, actor, actor, expr.effects, target, { ...ctx }, entry, seen, depth) || applied;
     }
     seen.delete(expr.id);

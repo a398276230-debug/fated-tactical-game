@@ -111,7 +111,8 @@ export function patchStatus(state, unitId, statusId, patch) {
   if (patchExpiry) status.expireOn = structuredClone(expireOn);
   if (Object.hasOwn(modifiers, 'amount')) status.amount = clamp(modifiers.amount, 1, 100000);
   record(state, unit, 'status_patch', `${unit.name}的${status.name}参数已更新`,
-    { targetId: unitId, statusId, modifiers, ...(patchExpiry ? { expireOn: status.expireOn } : {}) });
+    { ...statusLogDetail(unit, status), effectiveModifiers: { ...status.modifiers }, modifiers,
+      ...(patchExpiry ? { expireOn: status.expireOn } : {}) });
   return status;
 }
 
@@ -143,9 +144,14 @@ export function grantStatus(state, unit, statusId, options = {}) {
     ? applied.modifiers.amount : clamp(options.amount, 1, 10000);
   unit.statuses[statusId] = applied;
   record(state, applied.sourceUnitId ?? unit.id, 'status', `${unit.name}获得${template.name} ×${stacks}`,
-    { targetId: unit.id, statusId, stacks, remainingTurns: applied.remainingTurns,
-      ...(applied.amount == null ? {} : { amount: applied.amount }) });
+    statusLogDetail(unit, applied));
   return applied;
+}
+
+function statusLogDetail(unit, status) {
+  const { id: statusId, stacks, remainingTurns, durationType, tickTiming, modifiers, amount, expireOn } = status;
+  return { targetId: unit.id, statusId, stacks, remainingTurns, durationType, tickTiming, modifiers: { ...modifiers },
+    ...(amount == null ? {} : { amount }), ...(expireOn ? { expireOn: structuredClone(expireOn) } : {}) };
 }
 
 function grantShield(state, unit, amount, { stack, ...options } = {}) {
@@ -390,9 +396,10 @@ function tick(state, unit, timing) {
     if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
     const source = status.sourceUnitId ?? unit.id;
     const amount = status.modifiers?.damage;
-    if (amount) damageTarget(state, unit, source, amount * status.stacks, status.modifiers.damageType ?? 'true', status.name);
+    const detail = { statusId: status.id, tickTiming: timing };
+    if (amount) damageTarget(state, unit, source, amount * status.stacks, status.modifiers.damageType ?? 'true', status.name, { details: detail });
     const heal = status.modifiers?.heal;
-    if (heal && alive(unit)) restoreHP(state, unit, heal * status.stacks, source, status.name);
+    if (heal && alive(unit)) restoreHP(state, unit, heal * status.stacks, source, status.name, detail);
   }
 }
 
@@ -512,6 +519,10 @@ export function beginBattle(state) {
     }
   }
   record(state, null, 'initiative', '敏捷 + d20：确定先攻次序', { initiative });
+  for (const unit of living(state)) for (const status of values(unit.statuses)) {
+    record(state, status.sourceUnitId ?? unit.id, 'status', `${unit.name}开场已有${status.name} ×${status.stacks}`,
+      { ...statusLogDetail(unit, status), initial: true });
+  }
   if (!refreshOutcome(state)) settleTurn(state);
   return state;
 }
@@ -531,8 +542,10 @@ function initiativeOrder(state, rollFor) {
 
 // Reuse the opening dice when normalization changes check bonuses before play.
 export function refreshOpeningInitiative(state) {
-  const [entry, turn] = state.logs;
-  if (state.round !== 1 || state.turn !== 0 || state.logs.length !== 2 || entry.type !== 'initiative' || turn.type !== 'turn') return;
+  const [entry, ...following] = state.logs;
+  const turn = following.pop();
+  if (state.round !== 1 || state.turn !== 0 || entry?.type !== 'initiative' || turn?.type !== 'turn'
+    || following.some(log => log.type !== 'status' || !log.detail.initial)) return;
   const previous = entry.detail.initiative;
   if (!Array.isArray(previous) || !currentUnit(state)) return;
   const rolls = new Map(previous.filter(row => row && Number.isInteger(row.roll)).map(row => [row.unitId, row.roll]));
@@ -1170,14 +1183,21 @@ function changeCounter(state, actor, weapon, effect, resource, after) {
 }
 
 function resolveCheck(state, actor, profile) {
+  const cover = profile.kind === 'cover' ? { targetKind: 'cover', targetName: profile.name } : {};
   if (profile.saveStat) {
     const saveRoll = randomDie(state, 20), saveTotal = saveRoll + profile.saveBonus;
     const saved = saveTotal >= profile.saveDC;
     record(state, actor, 'save', `${profile.name}${saved ? '通过' : '未通过'}豁免 (${saveTotal}/${profile.saveDC})`,
-      { targetId: profile.id, saveStat: profile.saveStat, saveRoll, saveBonus: profile.saveBonus, saveTotal, saveDC: profile.saveDC, saved });
+      { targetId: profile.id, ...cover, saveStat: profile.saveStat, saveRoll, saveBonus: profile.saveBonus, saveTotal, saveDC: profile.saveDC, saved });
     return { hit: true, critical: false, saved };
   }
-  if (profile.automatic) return { hit: true, critical: profile.guaranteeCrit, rating: ratingFor(profile.guaranteeCrit ? 20 : 11), intent: { success: true, multiplier: 1 }, saved: false };
+  if (profile.automatic) {
+    const rating = ratingFor(profile.guaranteeCrit ? 20 : 11);
+    if (profile.dice) record(state, actor, 'hit_result', `${profile.name}：自动命中`, {
+      targetId: profile.id, ...cover, automatic: true, hit: true, critical: Boolean(profile.guaranteeCrit), rating,
+    });
+    return { hit: true, critical: profile.guaranteeCrit, rating, intent: { success: true, multiplier: 1 }, saved: false };
+  }
   const requestedBonus = profile.bonusDice ?? 0;
   const { rng, rolls: dice, value: selected } = requestedBonus || actor.penaltyDice
     ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 })
@@ -1213,7 +1233,7 @@ function resolveCheck(state, actor, profile) {
   // Failed intent falls back to an ordinary landed hit; it does not erase the attack.
   const effectiveHit = hit;
   record(state, actor, 'roll', `${profile.name}：${critical ? '暴击' : hit ? '命中' : '未命中'} (${total}/${profile.defense})`, {
-    targetId: profile.id, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
+    targetId: profile.id, ...cover, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
     advantages: profile.advantages, disadvantages: profile.disadvantages, highGround: profile.highGround, cover: profile.cover,
     ...(profile.coverId ? { coverId: profile.coverId } : {}),
     rating, distanceTier: distanceTier(profile.distance), bonusDice: requestedBonus,
@@ -1276,7 +1296,7 @@ function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
   dispatchEffect(state, actor, 'on_hit', { target: recipient, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical: result.critical, weaponId: weapon.offHand.instance?.id, damageType: profile.damageType });
 }
 
-function effectSaved(state, actor, target, effect) {
+function effectSaved(state, actor, target, effect, sourceName) {
   const check = (unit, saveStat, saveDC) => {
     const saveRoll = randomDie(state, 20), saveBonus = effectiveStat(state, unit, saveStat);
     const saveTotal = saveRoll + saveBonus;
@@ -1293,7 +1313,7 @@ function effectSaved(state, actor, target, effect) {
     detail = { checks, mode: effect.mode, saved: effect.mode === 'all' ? checks.every(x => x.saved) : checks.some(x => x.saved) };
   } else detail = check(target, effect.save, dc);
   const { saved } = detail;
-  record(state, actor, 'save', `${target.name}${saved ? '通过' : '未通过'}豁免`, { targetId: target.id, ...detail });
+  record(state, actor, 'save', `${target.name}${saved ? '通过' : '未通过'}豁免`, { targetId: target.id, sourceName, ...detail });
   return saved;
 }
 
@@ -1304,6 +1324,7 @@ function removeStatus(state, actor, target, effect) {
     if (effect.statusId ? effect.statusId !== status.id : !categoryMatches || status.durationType === 'persistent') continue;
     delete target.statuses[status.id];
     removed.push(status.id);
+    record(state, actor, 'expire', `${target.name}的${status.name}被解除`, { targetId: target.id, statusId: status.id });
   }
   if (effect.category) record(state, actor, 'cleanse', `${target.name}受到净化`, { targetId: target.id, removed });
   return removed.length > 0;
