@@ -10558,8 +10558,10 @@ async function readSseStream(readableStream, extractDelta, onStreamChunk) {
 function connection(settings, needModel) {
   const base = settings.baseUrl?.trim().replace(/\/+$/, ""), key4 = settings.apiKey?.trim(), model = settings.model?.trim();
   if (!base || !key4 || needModel && !model) throw new Error(`\u8BF7\u5728 API \u8BBE\u7F6E\u4E2D\u586B\u5199${!base ? "\u63A5\u53E3\u5730\u5740\uFF08baseUrl\uFF09" : !key4 ? "\u5BC6\u94A5\uFF08apiKey\uFF09" : "\u6A21\u578B\uFF08model\uFF09"}`);
-  if (globalThis.location?.protocol === "https:" && /^http:/i.test(base)) throw new Error(diagnoseApiError("Mixed Content"));
-  const source = settings.apiSource || "openai";
+  if (settings.apiTransport !== "tavern" && globalThis.location?.protocol === "https:" && /^http:/i.test(base)) {
+    throw new Error(diagnoseApiError("Mixed Content"));
+  }
+  const source = settings.apiTransport === "tavern" ? "openai" : settings.apiSource || "openai";
   const headers = { "Content-Type": "application/json" };
   let root;
   if (source === "gemini") root = base.replace(/\/v1beta(?:\/.*)?$/i, "") + "/v1beta";
@@ -10578,10 +10580,44 @@ async function send(url, init, { fetchImpl = globalThis.fetch, signal }) {
   return res;
 }
 var json2 = (res) => res.json ? res.json() : res.text().then(JSON.parse);
+async function sendViaTavernBackend(endpoint, { root, headers }, body, options) {
+  const host = options.host ?? globalThis.window;
+  const origin = host?.location?.origin;
+  if (!origin || !/^https?:\/\//.test(origin)) throw new Error("\u8BF7\u5728\u9152\u9986\u9875\u9762\u5185\u4F7F\u7528\u540E\u7AEF\u8F6C\u53D1");
+  let upstream;
+  try {
+    upstream = new URL(root);
+  } catch {
+    throw new Error("\u8BF7\u586B\u5199\u5B8C\u6574\u7684 API \u5730\u5740");
+  }
+  if (!["http:", "https:"].includes(upstream.protocol) || upstream.username || upstream.password || upstream.search || upstream.hash) {
+    throw new Error("API \u5730\u5740\u5E94\u4E3A\u4E0D\u542B\u767B\u5F55\u4FE1\u606F\u3001\u67E5\u8BE2\u53C2\u6570\u6216\u7247\u6BB5\u7684 HTTP(S) \u5730\u5740");
+  }
+  const transport = { ...options, fetchImpl: options.fetchImpl ?? host.fetch.bind(host) };
+  const sameOrigin = { credentials: "same-origin", mode: "same-origin", redirect: "error" };
+  const tokenReply = await send(`${origin}/csrf-token`, sameOrigin, transport);
+  const { token } = await json2(tokenReply);
+  if (typeof token !== "string" || !token) throw new Error("\u9152\u9986\u672A\u8FD4\u56DE CSRF \u4EE4\u724C\uFF0C\u8BF7\u5237\u65B0\u9152\u9986\u9875\u9762");
+  return send(`${origin}/api/backends/chat-completions/${endpoint}`, {
+    ...sameOrigin,
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
+    body: JSON.stringify({
+      ...body,
+      chat_completion_source: "custom",
+      custom_url: root,
+      // SillyTavern parses this field as YAML, which also accepts JSON objects.
+      custom_include_headers: JSON.stringify({ Authorization: headers.Authorization })
+    })
+  }, transport);
+}
 async function fetchModels(settings, options = {}) {
-  const { root, source, key: key4, headers } = connection(settings, false);
-  const res = await send(`${root}/models${source === "gemini" ? `?key=${key4}` : ""}`, { method: "GET", headers }, options);
+  const conn = connection(settings, false);
+  const { root, source, key: key4, headers } = conn;
+  const viaTavern = settings.apiTransport === "tavern";
+  const res = viaTavern ? await sendViaTavernBackend("status", conn, {}, options) : await send(`${root}/models${source === "gemini" ? `?key=${key4}` : ""}`, { method: "GET", headers }, options);
   const data = await json2(res);
+  if (viaTavern && data.error) throw new Error("\u9152\u9986\u540E\u7AEF\u62C9\u53D6\u6A21\u578B\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC");
   return (source === "gemini" ? data.models : data.data)?.map((m) => source === "gemini" ? m.name?.replace(/^models\//, "") : m.id).filter((id3) => typeof id3 === "string" && id3) || [];
 }
 function deltas(source, event) {
@@ -10598,7 +10634,8 @@ function deltas(source, event) {
   return { contentDelta: d.content, reasoningDelta: d.reasoning_content, toolArgsDelta: d.tool_calls?.map((t) => t.function?.arguments).join("") || d.function_call?.arguments };
 }
 async function requestViaCustomApi(settings, messages, options = {}) {
-  const { root, source, model, key: key4, headers } = connection(settings, true);
+  const conn = connection(settings, true);
+  const { root, source, model, key: key4, headers } = conn;
   const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 2400);
   const wireMessages = messages.map(({ role, content }) => ({ role, content }));
   let url, body;
@@ -10622,13 +10659,13 @@ async function requestViaCustomApi(settings, messages, options = {}) {
       };
     }
   }
-  const res = await send(url, { method: "POST", headers, body: JSON.stringify(body) }, options);
+  const res = settings.apiTransport === "tavern" ? await sendViaTavernBackend("generate", conn, body, options) : await send(url, { method: "POST", headers, body: JSON.stringify(body) }, options);
   let text4;
   if (stream && res.body?.getReader && !/application\/json/i.test(res.headers?.get?.("content-type") || "")) {
     text4 = await readSseStream(res.body, (event) => deltas(source, event), options.onStreamChunk);
   } else {
     const data = await json2(res);
-    if (data.error) throw new Error(diagnoseApiError(data.error.message));
+    if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === "tavern" ? "\u9152\u9986\u540E\u7AEF\u672A\u80FD\u751F\u6210\u56DE\u590D\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC" : "")));
     const d = deltas(source, data);
     text4 = source === "claude" ? (data.content || []).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || d.reasoningDelta || "";
   }
@@ -10921,7 +10958,7 @@ function renderApiTab(page, ctx) {
     input2.onchange = () => {
       if (input2.type === "number" && (!input2.reportValidity() || !Number.isFinite(input2.valueAsNumber))) return;
       ctx.save({ [key4]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
-      if (key4 === "apiMode") renderApiTab(page, ctx);
+      if (key4 === "apiMode" || key4 === "apiTransport") renderApiTab(page, ctx);
     };
     label.append(input2);
     wrap.append(label);
@@ -10936,10 +10973,14 @@ function renderApiTab(page, ctx) {
   const input = (type, props = {}) => Object.assign(make("input"), { type }, props);
   const api = card("\u{1F50C} \u72EC\u7ACB API \u63A5\u53E3\u914D\u7F6E\uFF08\u4E0E\u4E3B\u804A\u5929\u5B8C\u5168\u89E3\u8026\uFF09");
   field(api, "apiMode", "\u63A5\u53E3\u8C03\u7528\u65B9\u5F0F", select([
-    ["custom", "\u{1F680} \u72EC\u7ACB\u81EA\u5B9A\u4E49 API \u76F4\u8FDE\uFF08\u63A8\u8350\uFF0C\u4E0D\u5360\u4E3BAPI\u989D\u5EA6\uFF09"],
+    ["custom", "\u{1F680} \u72EC\u7ACB\u81EA\u5B9A\u4E49 API"],
     ["tavern", "\u{1F37A} \u9152\u9986\u5F53\u524D\u8FDE\u63A5 API (TavernHelper.generateRaw)"]
   ]), "tavern");
-  field(api, "apiSource", "\u72EC\u7ACB API \u534F\u8BAE\u7C7B\u578B", select([
+  field(api, "apiTransport", "\u72EC\u7ACB API \u8BF7\u6C42\u8DEF\u5F84", select([
+    ["direct", "\u6D4F\u89C8\u5668\u76F4\u8FDE"],
+    ["tavern", "\u7ECF\u9152\u9986\u540E\u7AEF\uFF08OpenAI \u517C\u5BB9\uFF09"]
+  ]), "direct", tavern);
+  if (settings.apiTransport !== "tavern") field(api, "apiSource", "\u72EC\u7ACB API \u534F\u8BAE\u7C7B\u578B", select([
     ["openai", "OpenAI \u517C\u5BB9\u63A5\u53E3 (\u53CD\u4EE3/DeepSeek/\u7845\u57FA/OneAPI\u7B49)"],
     ["gemini", "Google Gemini \u539F\u751F\u63A5\u53E3 (/v1beta/models)"],
     ["claude", "Anthropic Claude \u539F\u751F\u63A5\u53E3 (/v1/messages)"]
@@ -10973,7 +11014,7 @@ function renderApiTab(page, ctx) {
   let picker;
   load.onclick = () => run("\u6B63\u5728\u62C9\u53D6\u6A21\u578B\u2026", async () => {
     picker?.remove();
-    const names = await fetchModels({ ...ctx.settings }, { fetchImpl: ctx.fetchImpl });
+    const names = await fetchModels({ ...ctx.settings }, { host: ctx.host, fetchImpl: ctx.fetchImpl });
     if (!names.length) throw new Error("\u63A5\u53E3\u672A\u8FD4\u56DE\u53EF\u7528\u6A21\u578B");
     picker = select([["", "\u8BF7\u9009\u62E9\u6A21\u578B"], ...names.map((name) => [name, name])]);
     picker.setAttribute("aria-label", "\u53EF\u7528\u6A21\u578B");
@@ -10989,7 +11030,7 @@ function renderApiTab(page, ctx) {
     const probe = { ...ctx.settings, max_tokens: 8 };
     const messages = [{ role: "user", content: "\u53EA\u56DE\u590D OK" }];
     if (tavern) await requestViaTavern(ctx.host, probe, messages, {});
-    else await requestViaCustomApi(probe, messages, { fetchImpl: ctx.fetchImpl });
+    else await requestViaCustomApi(probe, messages, { host: ctx.host, fetchImpl: ctx.fetchImpl });
     return "\u6D4B\u8BD5\u8FDE\u63A5\u6210\u529F";
   });
   const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
@@ -11635,7 +11676,7 @@ function parseAIResponse(value) {
   return { data: parsed, patch, text: source };
 }
 function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChunk) {
-  const options = { fetchImpl, signal, onStreamChunk };
+  const options = { host, fetchImpl, signal, onStreamChunk };
   return config.apiMode === "custom" || config.apiMode === "direct" ? requestViaCustomApi(config, messages, options) : requestViaTavern(host, config, messages, options);
 }
 function parseJSONPatch(value) {
@@ -11659,7 +11700,7 @@ function fingerprintAt(state, path) {
   return JSON.stringify(value);
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.2.4";
+var TAVERN_VERSION = "0.2.7";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",

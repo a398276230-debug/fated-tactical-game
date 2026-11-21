@@ -287,7 +287,7 @@ export function renderApiTab(page, ctx) {
     input.onchange = () => {
       if (input.type === 'number' && (!input.reportValidity() || !Number.isFinite(input.valueAsNumber))) return;
       ctx.save({ [key]: checkbox ? input.checked : input.type === 'number' ? input.valueAsNumber : input.value });
-      if (key === 'apiMode') renderApiTab(page, ctx);
+      if (key === 'apiMode' || key === 'apiTransport') renderApiTab(page, ctx);
     };
     label.append(input);
     wrap.append(label);
@@ -302,10 +302,14 @@ export function renderApiTab(page, ctx) {
   const input = (type, props = {}) => Object.assign(make('input'), { type }, props);
   const api = card('🔌 独立 API 接口配置（与主聊天完全解耦）');
   field(api, 'apiMode', '接口调用方式', select([
-    ['custom', '🚀 独立自定义 API 直连（推荐，不占主API额度）'],
+    ['custom', '🚀 独立自定义 API'],
     ['tavern', '🍺 酒馆当前连接 API (TavernHelper.generateRaw)'],
   ]), 'tavern');
-  field(api, 'apiSource', '独立 API 协议类型', select([
+  field(api, 'apiTransport', '独立 API 请求路径', select([
+    ['direct', '浏览器直连'],
+    ['tavern', '经酒馆后端（OpenAI 兼容）'],
+  ]), 'direct', tavern);
+  if (settings.apiTransport !== 'tavern') field(api, 'apiSource', '独立 API 协议类型', select([
     ['openai', 'OpenAI 兼容接口 (反代/DeepSeek/硅基/OneAPI等)'], ['gemini', 'Google Gemini 原生接口 (/v1beta/models)'],
     ['claude', 'Anthropic Claude 原生接口 (/v1/messages)'],
   ]), 'openai', tavern);
@@ -334,7 +338,7 @@ export function renderApiTab(page, ctx) {
   let picker;
   load.onclick = () => run('正在拉取模型…', async () => {
     picker?.remove();
-    const names = await fetchModels({ ...ctx.settings }, { fetchImpl: ctx.fetchImpl });
+    const names = await fetchModels({ ...ctx.settings }, { host: ctx.host, fetchImpl: ctx.fetchImpl });
     if (!names.length) throw new Error('接口未返回可用模型');
     picker = select([['', '请选择模型'], ...names.map(name => [name, name])]);
     picker.setAttribute('aria-label', '可用模型');
@@ -350,7 +354,7 @@ export function renderApiTab(page, ctx) {
     const probe = { ...ctx.settings, max_tokens: 8 };
     const messages = [{ role: 'user', content: '只回复 OK' }];
     if (tavern) await requestViaTavern(ctx.host, probe, messages, {});
-    else await requestViaCustomApi(probe, messages, { fetchImpl: ctx.fetchImpl });
+    else await requestViaCustomApi(probe, messages, { host: ctx.host, fetchImpl: ctx.fetchImpl });
     return '测试连接成功';
   });
   const sampling = card('⚙ 采样参数');

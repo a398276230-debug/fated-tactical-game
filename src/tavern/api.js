@@ -108,8 +108,10 @@ export async function readSseStream(readableStream, extractDelta, onStreamChunk)
 function connection(settings, needModel) {
   const base = settings.baseUrl?.trim().replace(/\/+$/, ''), key = settings.apiKey?.trim(), model = settings.model?.trim();
   if (!base || !key || (needModel && !model)) throw new Error(`请在 API 设置中填写${!base ? '接口地址（baseUrl）' : !key ? '密钥（apiKey）' : '模型（model）'}`);
-  if (globalThis.location?.protocol === 'https:' && /^http:/i.test(base)) throw new Error(diagnoseApiError('Mixed Content'));
-  const source = settings.apiSource || 'openai';
+  if (settings.apiTransport !== 'tavern' && globalThis.location?.protocol === 'https:' && /^http:/i.test(base)) {
+    throw new Error(diagnoseApiError('Mixed Content'));
+  }
+  const source = settings.apiTransport === 'tavern' ? 'openai' : settings.apiSource || 'openai';
   const headers = { 'Content-Type': 'application/json' };
   let root;
   if (source === 'gemini') root = base.replace(/\/v1beta(?:\/.*)?$/i, '') + '/v1beta';
@@ -130,10 +132,39 @@ async function send(url, init, { fetchImpl = globalThis.fetch, signal }) {
 }
 const json = res => res.json ? res.json() : res.text().then(JSON.parse);
 
+async function sendViaTavernBackend(endpoint, { root, headers }, body, options) {
+  const host = options.host ?? globalThis.window;
+  const origin = host?.location?.origin;
+  if (!origin || !/^https?:\/\//.test(origin)) throw new Error('请在酒馆页面内使用后端转发');
+  let upstream;
+  try { upstream = new URL(root); } catch { throw new Error('请填写完整的 API 地址'); }
+  if (!['http:', 'https:'].includes(upstream.protocol) || upstream.username || upstream.password || upstream.search || upstream.hash) {
+    throw new Error('API 地址应为不含登录信息、查询参数或片段的 HTTP(S) 地址');
+  }
+  const transport = { ...options, fetchImpl: options.fetchImpl ?? host.fetch.bind(host) };
+  const sameOrigin = { credentials: 'same-origin', mode: 'same-origin', redirect: 'error' };
+  const tokenReply = await send(`${origin}/csrf-token`, sameOrigin, transport);
+  const { token } = await json(tokenReply);
+  if (typeof token !== 'string' || !token) throw new Error('酒馆未返回 CSRF 令牌，请刷新酒馆页面');
+  return send(`${origin}/api/backends/chat-completions/${endpoint}`, {
+    ...sameOrigin,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': token },
+    body: JSON.stringify({ ...body, chat_completion_source: 'custom', custom_url: root,
+      // SillyTavern parses this field as YAML, which also accepts JSON objects.
+      custom_include_headers: JSON.stringify({ Authorization: headers.Authorization }) }),
+  }, transport);
+}
+
 export async function fetchModels(settings, options = {}) {
-  const { root, source, key, headers } = connection(settings, false);
-  const res = await send(`${root}/models${source === 'gemini' ? `?key=${key}` : ''}`, { method: 'GET', headers }, options);
+  const conn = connection(settings, false);
+  const { root, source, key, headers } = conn;
+  const viaTavern = settings.apiTransport === 'tavern';
+  const res = viaTavern
+    ? await sendViaTavernBackend('status', conn, {}, options)
+    : await send(`${root}/models${source === 'gemini' ? `?key=${key}` : ''}`, { method: 'GET', headers }, options);
   const data = await json(res);
+  if (viaTavern && data.error) throw new Error('酒馆后端拉取模型失败，请检查 API 地址、密钥和酒馆后端网络');
   return (source === 'gemini' ? data.models : data.data)?.map(m => source === 'gemini' ? m.name?.replace(/^models\//, '') : m.id).filter(id => typeof id === 'string' && id) || [];
 }
 
@@ -152,7 +183,8 @@ function deltas(source, event) {
 }
 
 export async function requestViaCustomApi(settings, messages, options = {}) {
-  const { root, source, model, key, headers } = connection(settings, true);
+  const conn = connection(settings, true);
+  const { root, source, model, key, headers } = conn;
   const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 2400);
   // Strict native APIs reject UI-only provenance keys on individual messages.
   const wireMessages = messages.map(({ role, content }) => ({ role, content }));
@@ -178,13 +210,15 @@ export async function requestViaCustomApi(settings, messages, options = {}) {
       };
     }
   }
-  const res = await send(url, { method: 'POST', headers, body: JSON.stringify(body) }, options);
+  const res = settings.apiTransport === 'tavern'
+    ? await sendViaTavernBackend('generate', conn, body, options)
+    : await send(url, { method: 'POST', headers, body: JSON.stringify(body) }, options);
   let text;
   if (stream && res.body?.getReader && !/application\/json/i.test(res.headers?.get?.('content-type') || '')) {
     text = await readSseStream(res.body, event => deltas(source, event), options.onStreamChunk);
   } else {
     const data = await json(res);
-    if (data.error) throw new Error(diagnoseApiError(data.error.message));
+    if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === 'tavern' ? '酒馆后端未能生成回复，请检查 API 地址、密钥和酒馆后端网络' : '')));
     const d = deltas(source, data);
     text = source === 'claude' ? (data.content || []).map(p => p.text).join('') : d.contentDelta || d.toolArgsDelta || d.reasoningDelta || '';
   }

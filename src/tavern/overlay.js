@@ -224,7 +224,7 @@ export function parseAIResponse(value) {
   return { data: parsed, patch, text: source };
 }
 export function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChunk) {
-  const options = { fetchImpl, signal, onStreamChunk };
+  const options = { host, fetchImpl, signal, onStreamChunk };
   return config.apiMode === 'custom' || config.apiMode === 'direct'
     ? requestViaCustomApi(config, messages, options)
     : requestViaTavern(host, config, messages, options);
@@ -255,7 +255,7 @@ function fingerprintAt(state, path) {
 export { deepMerge, applyPatch };
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.2.4';
+export const TAVERN_VERSION = '0.2.7';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAiSessions } from '../src/tavern/ai-sessions.js';
-import { requestViaCustomApi } from '../src/tavern/api.js';
+import { fetchModels, requestViaCustomApi } from '../src/tavern/api.js';
 import { assembleMessages, DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from '../src/tavern/prompts.js';
 
 import { effectSchema } from '../src/core/effect_schema.js';
@@ -91,6 +91,45 @@ test('纯 system 提示词可发送给 Claude 和 Gemini', async () => {
     assert.equal(reply, '完成');
   }
   assert.deepEqual(messages, [{ role: 'system', content: '标准化任务' }]);
+});
+
+test('独立 API 经酒馆后端拉取模型并生成，使用独立地址和密钥', async () => {
+  const origin = 'https://tavern.example.test';
+  const settings = { apiTransport: 'tavern', baseUrl: 'https://upstream.example.test/v1/', apiKey: 'aux-key', model: 'aux-model' };
+  const messages = [{ role: 'user', content: '测试', source: 'ui' }];
+  const signal = new AbortController().signal;
+  const routes = [];
+  const options = {
+    host: { location: { origin } }, signal,
+    async fetchImpl(url, init) {
+      assert.equal(init.signal, signal);
+      assert.equal(init.mode, 'same-origin');
+      assert.equal(init.redirect, 'error');
+      const route = new URL(url);
+      assert.equal(route.origin, origin);
+      routes.push(route.pathname);
+      if (route.pathname === '/csrf-token') return Response.json({ token: 'csrf-test' });
+      assert.equal(init.method, 'POST');
+      assert.equal(init.headers['X-CSRF-Token'], 'csrf-test');
+      assert.equal(init.headers.Authorization, undefined);
+      const body = JSON.parse(init.body);
+      assert.equal(body.chat_completion_source, 'custom');
+      assert.equal(body.custom_url, 'https://upstream.example.test/v1');
+      assert.deepEqual(JSON.parse(body.custom_include_headers), { Authorization: 'Bearer aux-key' });
+      if (route.pathname.endsWith('/status')) return Response.json({ data: [{ id: 'aux-model' }] });
+      assert.equal(body.model, 'aux-model');
+      assert.deepEqual(body.messages, [{ role: 'user', content: '测试' }]);
+      return body.stream
+        ? new Response('data: {"choices":[{"delta":{"content":"完成"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+        : Response.json({ choices: [{ message: { content: '完成' } }] });
+    },
+  };
+  assert.deepEqual(await fetchModels(settings, options), ['aux-model']);
+  for (const stream of [true, false]) {
+    assert.equal(await requestViaCustomApi({ ...settings, stream }, messages, options), '完成');
+  }
+  const endpoint = '/api/backends/chat-completions';
+  assert.deepEqual(routes, ['/csrf-token', `${endpoint}/status`, '/csrf-token', `${endpoint}/generate`, '/csrf-token', `${endpoint}/generate`]);
 });
 
 test('会话增删改查、消息追加与持久化保持隔离', () => {

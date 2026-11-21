@@ -23,6 +23,22 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
+      if (url.pathname === '/csrf-token') {
+        res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ token: 'test-csrf' }));
+        return;
+      }
+      if (url.pathname.startsWith('/api/backends/chat-completions/')) {
+        let raw = '';
+        for await (const chunk of req) raw += chunk;
+        const body = JSON.parse(raw);
+        const valid = req.method === 'POST' && req.headers['x-csrf-token'] === 'test-csrf'
+          && body.chat_completion_source === 'custom' && body.custom_url === 'https://upstream.example.test/v1'
+          && JSON.parse(body.custom_include_headers).Authorization === 'Bearer aux-test';
+        const data = url.pathname.endsWith('/status') ? { data: [{ id: 'aux-model' }] }
+          : body.model === 'aux-model' ? { choices: [{ message: { content: 'OK' } }] } : { error: { message: 'unexpected model' } };
+        res.writeHead(valid ? 200 : 400, { 'Content-Type': 'application/json' }).end(JSON.stringify(data));
+        return;
+      }
       const path = resolve(root, `.${url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)}`);
       if (!path.startsWith(resolve(root) + sep)) { res.writeHead(403).end(); return; }
       const type = { '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css' }[extname(path)];
@@ -253,6 +269,18 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/')))).slots.find(s => s.id === 'protocol').enabled`), false);
   await click('[data-tab="api"]');
   assert.equal(await run(`document.querySelector('[name="apiSource"]').disabled`), true);
+  await select('[name="apiMode"]', 'custom');
+  await select('[name="apiTransport"]', 'tavern');
+  await select('[name="baseUrl"]', 'https://upstream.example.test/v1');
+  await select('[name="apiKey"]', 'aux-test');
+  const apiButton = text => run(`Array.from(document.querySelectorAll('[data-page="api"] .cmd-row button')).find(b => b.textContent.includes(${JSON.stringify(text)})).click()`);
+  await apiButton('拉取模型');
+  await until(() => run(`!!document.querySelector('[aria-label="可用模型"]')`), '后端返回模型列表');
+  await select('[aria-label="可用模型"]', 'aux-model');
+  await apiButton('测试连接');
+  await until(() => run(`document.querySelector('.api-status').textContent === '测试连接成功'`), '经酒馆后端测试生成');
+  await select('[name="apiTransport"]', 'direct');
+  await select('[name="apiMode"]', 'tavern');
   await click('[data-tab="prompt"]');
   assert.equal(await run(`${get(toggle)}.checked`), false);
   await click(toggle);
