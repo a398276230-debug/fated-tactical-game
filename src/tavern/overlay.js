@@ -5,6 +5,7 @@ import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
 import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
 import { tavernTheme } from './theme.js';
+import { readBattlePortraits } from './portraits.js';
 import { assembleMessages, describeSlots } from './prompts.js';
 import { requestViaTavern, requestViaCustomApi } from './api.js';
 import { renderSettings } from './settings.js';
@@ -906,6 +907,15 @@ export function mountTavernOverlay(options = {}) {
     return hydrated;
   }
   let stopTerrainNotices;
+  function refreshPortraits(state, epoch) {
+    const mount = gameMount;
+    if (!mount?.setPortraits || !state) return;
+    const isCurrent = () => !disposed && gameMount === mount && scanEpoch === epoch;
+    void readBattlePortraits(host, state.units, sources.sourceMap ?? {}, isCurrent).then(portraits => {
+      if (isCurrent()) mount.setPortraits(portraits);
+    }).catch(() => { /* Portraits are optional. */ });
+  }
+
   function mountState(state, restoreSaved = false) {
     stopTerrainNotices?.();
     stopTerrainNotices = undefined;
@@ -971,6 +981,7 @@ export function mountTavernOverlay(options = {}) {
       const key = candidate.battleKey;
       foldBattleEntries();
       if (key && activeBattleKey === key && gameMount) {
+        refreshPortraits(currentState, epoch);
         if (node) node.textContent = `已续接当前战局 · ${scanStatus}`;
         return;
       }
@@ -1014,6 +1025,7 @@ export function mountTavernOverlay(options = {}) {
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
       if (invalid) persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
       mountState(currentState, savedBattle);
+      refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
       for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};

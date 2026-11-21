@@ -5683,7 +5683,7 @@ var key3 = (x, y) => `${x},${y}`;
 var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
 var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
 var terrainLabel = (t) => t.kind === "wall" ? "\u5899\u4F53\uFF0C\u6321\u4F4F\u79FB\u52A8\u548C\u89C6\u7EBF" : t.kind === "slope" ? "\u5761\u9053" : t.z > 0 ? `\u9AD8\u53F0\uFF08\u9AD8 ${t.z}\uFF09` : t.z < 0 ? `\u4F4E\u5730\uFF08${t.z}\uFF09` : "\u5E73\u5730";
-function createRenderer(root) {
+function createRenderer(root, portraitFor = () => []) {
   const doc = root.ownerDocument;
   const $ = (id3) => root.querySelector(`[id="${id3}"]`);
   const el2 = (tag, cls, text4) => {
@@ -5728,6 +5728,24 @@ function createRenderer(root) {
     const { node: node3, head } = token(unit.name, Array.from(unit.name)[0] ?? "?", z, isActive ? "is-active" : "", unit.team);
     node3.dataset.unitId = unit.id;
     node3.setAttribute("aria-pressed", String(chosen));
+    const portraits = portraitFor(unit.id);
+    if (portraits.length) {
+      const image = el2("img", "axis-unit-portrait");
+      image.alt = "";
+      image.referrerPolicy = "no-referrer";
+      let index = 0;
+      image.onload = () => {
+        image.hidden = false;
+      };
+      image.onerror = () => {
+        image.hidden = true;
+        if (++index < portraits.length) image.src = portraits[index];
+        else image.remove();
+      };
+      image.hidden = true;
+      image.src = portraits[0];
+      head.prepend(image);
+    }
     head.append(el2("span", "axis-facing-pip", ARROWS[unit.facing?.join(",")] ?? "\xB7"));
     const bars = el2("span", "token-meters");
     for (const stat2 of ["hp", "mp", "sp"]) {
@@ -5822,7 +5840,7 @@ function createRenderer(root) {
       cell.setAttribute("aria-label", label);
       if (isHover) inspection = label;
       const bodies = bodiesAt.get(xy) ?? [];
-      const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map((b) => b.id)]);
+      const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map((b) => b.id), unit && portraitFor(unit.id)]);
       if (slot.signature === signature) continue;
       slot.signature = signature;
       slot.z.textContent = tile.kind !== "wall" && tile.z ? `z${sign2(tile.z)}` : "";
@@ -6649,7 +6667,8 @@ function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactic
   const document2 = root.ownerDocument, window2 = document2.defaultView;
   const localStorage2 = storageArea ?? window2?.localStorage;
   const $ = (id3) => root.querySelector(`[id="${id3}"]`);
-  const view = createRenderer(root);
+  let portraits = {};
+  const view = createRenderer(root, (id3) => Object.hasOwn(portraits, id3) ? portraits[id3] : []);
   const scenario = $("scenario-select"), seed = $("seed-input");
   const storage = {
     getItem: (key4) => {
@@ -7389,6 +7408,10 @@ ${height2}\uFF0C${sight}`;
   seenLogs = live.logs.length;
   $("log-unread").hidden = seenLogs <= 2;
   return {
+    setPortraits(next) {
+      portraits = next;
+      draw();
+    },
     loadState(next) {
       const result = next?.kind === "battle" ? game.restoreBattleSnapshot(next) : game.createBattle({ kind: "custom_state", state: next });
       if (!customBattle) configure(result.scenarioId);
@@ -8061,6 +8084,19 @@ var battleTheme = `:root{--ink-0:#141423;--ink-1:#1e1e32;--ink-2:#11111d;--surfa
       user-select: none;
     }
     .battle-axis .axis-token-head .unit-avatar + .axis-unit-fallback-avatar { display: none; }
+    .battle-axis .axis-unit-portrait {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      object-fit: cover;
+      object-position: center 30%;
+      border: 1.5px solid var(--axis-side-border, rgb(var(--neutral-rgb) / .65));
+      border-radius: 50%;
+      background: rgb(var(--shade-rgb) / .88);
+    }
+    .battle-axis .axis-unit-portrait:not([hidden]) + .axis-unit-fallback-avatar { visibility: hidden; }
     .battle-axis .axis-z-badge {
       position: absolute;
       top: -4px;
@@ -8796,6 +8832,9 @@ function mount(container, options = {}) {
     },
     loadState(state) {
       return ui.loadState(state);
+    },
+    setPortraits(portraits) {
+      if (active) ui.setPortraits(portraits);
     },
     getState: ui.getState,
     exportBattleReportText: ui.exportBattleReportText,
@@ -9707,7 +9746,7 @@ function hydrateFromSources(input = {}, options = {}) {
     const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path));
     units[id3] = made.unit;
     profiles[id3] = made.profile;
-    sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2) };
+    sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2), isProtagonist: record2 === protagonist };
   };
   for (const [i, participant] of participants.entries()) {
     const record2 = resolved[i];
@@ -10148,6 +10187,109 @@ var tavernTheme = `
   [data-fated-tavern-overlay] button:not([data-sandbox-mount] *) { min-height:36px }
 }
 `;
+
+// src/tavern/portraits.js
+function readStatusAvatars(dbFactory, scope) {
+  if (!dbFactory) return Promise.resolve([]);
+  return new Promise((resolve, reject) => {
+    const open = dbFactory.open("status-avatar-db");
+    open.onupgradeneeded = () => open.transaction.abort();
+    open.onerror = () => resolve([]);
+    open.onsuccess = () => {
+      const db = open.result;
+      try {
+        const request = db.transaction("avatars").objectStore("avatars").index("scope_key").getAll(scope);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      } catch {
+        resolve([]);
+      } finally {
+        db.close();
+      }
+    };
+  });
+}
+function imageUrl(value, base) {
+  if (typeof value !== "string" || !value.trim() || value.includes("{{")) return "";
+  const text4 = value.trim();
+  if (/^data:image\/(png|jpe?g|webp|gif|avif);base64,/i.test(text4)) return text4;
+  try {
+    const url = new URL(text4, base);
+    if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || /\.svgz?$/i.test(url.pathname)) return "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+async function predefinedAvatars(host, readVariables) {
+  const variables = await readVariables?.({ type: "character" });
+  const version2 = String(variables?.\u8D44\u6E90\u7248\u672C?.\u547D\u5B9A\u4E4B\u8BD7 ?? "").trim().replace(/^v/i, "");
+  for (const candidate of /* @__PURE__ */ new Set([version2, "1.2.5"])) {
+    if (!/^\d+\.\d+\.\d+$/.test(candidate)) continue;
+    try {
+      const response = await host.fetch(`https://cdn.poem-of-destiny.com/assets/${candidate}/frontend/assets/data/predefined-avatars.json`, { signal: AbortSignal.timeout(3e3) });
+      if (!response.ok) continue;
+      const text4 = await response.text();
+      const fields3 = text4.replace(
+        /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+        (token) => token.startsWith("/") ? "" : token
+      );
+      return JSON.parse(fields3.replace(/,\s*}/g, "}"));
+    } catch {
+    }
+  }
+  return {};
+}
+async function readBattlePortraits(host, units, sourceMap, isCurrent = () => true) {
+  const readVariables = hostMethod(host, "getVariables");
+  const getCharacterName = hostMethod(host, "getCurrentCharacterName");
+  const entries2 = Object.values(units).map((unit) => {
+    const source = sourceMap[unit.id];
+    const name = source?.path?.[0] === "\u5173\u7CFB\u5217\u8868" ? source.path[1] : source?.sourceName || unit.name;
+    return [unit.id, source?.isProtagonist ? "player" : "partner", source?.isProtagonist ? "\u4E3B\u89D2" : name];
+  });
+  const attempt = async (fn) => {
+    try {
+      return await fn();
+    } catch {
+      return void 0;
+    }
+  };
+  const [records, persona, chat] = await Promise.all([
+    attempt(async () => readStatusAvatars(host.indexedDB, `status:${await getCharacterName?.() || "unknown-character"}`)),
+    attempt(async () => {
+      if (!entries2.some(([, type]) => type === "player")) return "";
+      for (const scope of hostScopes(host)) {
+        const tavern = scope.SillyTavern;
+        const macros = tavern?.substituteParams ? tavern : tavern?.getContext?.();
+        const value = await macros?.substituteParams?.("{{userAvatarPath}}");
+        if (value && value !== "{{userAvatarPath}}") return value;
+      }
+      return hostMethod(host, "substituteParams")?.("{{userAvatarPath}}");
+    }),
+    attempt(() => readVariables?.({ type: "chat" }))
+  ]);
+  const base = host.location?.href;
+  const overrides = new Map((records ?? []).map((row) => [`${row.owner_type}::${row.owner_name}`, row]));
+  const portraits = {};
+  const missing = [];
+  for (const [id3, type, name] of entries2) {
+    const record2 = overrides.get(`${type}::${name}`);
+    if (record2?.source_type === "removed") continue;
+    const fallback = type === "player" ? persona : Object.hasOwn(chat?.status?.externalAvatars?.partners ?? {}, name) ? chat.status.externalAvatars.partners[name]?.url : "";
+    const candidates = [...new Set([imageUrl(record2?.value, base), imageUrl(fallback, base)].filter(Boolean))];
+    if (candidates.length) portraits[id3] = candidates;
+    else if (type === "partner" && sourceMap[id3]?.path?.[0] === "\u5173\u7CFB\u5217\u8868") missing.push([id3, name]);
+  }
+  if (missing.length && isCurrent()) {
+    const defaults = await attempt(() => predefinedAvatars(host, readVariables)) ?? {};
+    for (const [id3, name] of missing) {
+      const url = imageUrl(Object.hasOwn(defaults, name) ? defaults[name] : "", base);
+      if (url) portraits[id3] = [url];
+    }
+  }
+  return portraits;
+}
 
 // src/tavern/effect-protocol.js
 var { expression: expression2, condition: condition2, node: node2, expireOn } = effectSchema.$defs;
@@ -12566,6 +12708,15 @@ ${tag.textContent || ""}
     return hydrated;
   }
   let stopTerrainNotices;
+  function refreshPortraits(state, epoch) {
+    const mount3 = gameMount;
+    if (!mount3?.setPortraits || !state) return;
+    const isCurrent = () => !disposed && gameMount === mount3 && scanEpoch === epoch;
+    void readBattlePortraits(host, state.units, sources.sourceMap ?? {}, isCurrent).then((portraits) => {
+      if (isCurrent()) mount3.setPortraits(portraits);
+    }).catch(() => {
+    });
+  }
   function mountState(state, restoreSaved = false) {
     stopTerrainNotices?.();
     stopTerrainNotices = void 0;
@@ -12639,6 +12790,7 @@ ${tag.textContent || ""}
       const key4 = candidate.battleKey;
       foldBattleEntries();
       if (key4 && activeBattleKey === key4 && gameMount) {
+        refreshPortraits(currentState, epoch);
         if (node3) node3.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
         return;
       }
@@ -12682,6 +12834,7 @@ ${tag.textContent || ""}
       currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
       mountState(currentState, savedBattle);
+      refreshPortraits(currentState, epoch);
       activeBattleKey = key4;
       characters = fresh;
       for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };

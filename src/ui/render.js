@@ -30,7 +30,7 @@ const statusText = s => `${STATUS_ICON[s.category] ?? '◆'} ${s.name ?? s.id}${
 const duration = s => (Number.isInteger(s.remainingTurns) ? `剩 ${s.remainingTurns} 回合` : s.durationType === 'persistent' ? '常驻' : '');
 const terrainLabel = t => (t.kind === 'wall' ? '墙体，挡住移动和视线' : t.kind === 'slope' ? '坡道' : t.z > 0 ? `高台（高 ${t.z}）` : t.z < 0 ? `低地（${t.z}）` : '平地');
 
-export function createRenderer(root) {
+export function createRenderer(root, portraitFor = () => []) {
   const doc = root.ownerDocument;
   const $ = id => root.querySelector(`[id="${id}"]`);
   const el = (tag, cls, text) => {
@@ -76,6 +76,22 @@ export function createRenderer(root) {
     const { node, head } = token(unit.name, Array.from(unit.name)[0] ?? '?', z, isActive ? 'is-active' : '', unit.team);
     node.dataset.unitId = unit.id;
     node.setAttribute('aria-pressed', String(chosen));
+    const portraits = portraitFor(unit.id);
+    if (portraits.length) {
+      const image = el('img', 'axis-unit-portrait');
+      image.alt = '';
+      image.referrerPolicy = 'no-referrer';
+      let index = 0;
+      image.onload = () => { image.hidden = false; };
+      image.onerror = () => {
+        image.hidden = true;
+        if (++index < portraits.length) image.src = portraits[index];
+        else image.remove();
+      };
+      image.hidden = true;
+      image.src = portraits[0];
+      head.prepend(image);
+    }
     head.append(el('span', 'axis-facing-pip', ARROWS[unit.facing?.join(',')] ?? '·'));
     const bars = el('span', 'token-meters');
     for (const stat of ['hp', 'mp', 'sp']) {
@@ -153,7 +169,7 @@ export function createRenderer(root) {
       cell.setAttribute('aria-label', label);
       if (isHover) inspection = label;
       const bodies = bodiesAt.get(xy) ?? [];
-      const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map(b => b.id)]);
+      const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map(b => b.id), unit && portraitFor(unit.id)]);
       if (slot.signature === signature) continue;
       slot.signature = signature;
       slot.z.textContent = tile.kind !== 'wall' && tile.z ? `z${sign(tile.z)}` : '';

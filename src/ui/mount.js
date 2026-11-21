@@ -57,6 +57,7 @@ export function mount(container, options = {}) {
     unmount() { if (!active) return; active = false; controller.abort(); ui.destroy?.(); root.remove(); },
     destroy() { result.unmount(); },
     loadState(state) { return ui.loadState(state); },
+    setPortraits(portraits) { if (active) ui.setPortraits(portraits); },
     getState: ui.getState,
     exportBattleReportText: ui.exportBattleReportText,
     exportMvuPatch: ui.exportMvuPatch,

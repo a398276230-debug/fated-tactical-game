@@ -732,7 +732,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path));
     units[id] = made.unit;
     profiles[id] = made.profile;
-    sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record) };
+    sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist };
   };
   for (const [i, participant] of participants.entries()) {
     const record = resolved[i];

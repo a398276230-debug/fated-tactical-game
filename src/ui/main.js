@@ -28,7 +28,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   const document = root.ownerDocument, window = document.defaultView;
   const localStorage = storageArea ?? window?.localStorage;
   const $ = id => root.querySelector(`[id="${id}"]`);
-  const view = createRenderer(root);
+  let portraits = {};
+  const view = createRenderer(root, id => Object.hasOwn(portraits, id) ? portraits[id] : []);
   const scenario = $('scenario-select'), seed = $('seed-input');
   const storage = {
     getItem: key => { try { return localStorage?.getItem(key) ?? null; } catch { return null; } },
@@ -611,6 +612,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   $('log-unread').hidden = seenLogs <= 2;
 
   return {
+    setPortraits(next) { portraits = next; draw(); },
     loadState(next) {
       const result = next?.kind === 'battle' ? game.restoreBattleSnapshot(next) : game.createBattle({ kind: 'custom_state', state: next });
       if (!customBattle) configure(result.scenarioId);

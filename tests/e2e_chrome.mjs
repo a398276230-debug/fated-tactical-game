@@ -116,6 +116,21 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     iframe.hidden = true;
     document.body.append(iframe);
     const bundle = await (await fetch('/dist/tavern.iife.js')).text();
+    const pixel = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    window.SillyTavern = { substituteParams: macro => macro === '{{userAvatarPath}}' ? pixel : macro };
+    window.getCurrentCharacterName = () => '头像测试卡';
+    await new Promise((resolve, reject) => {
+      const open = indexedDB.open('status-avatar-db', 1);
+      open.onupgradeneeded = () => open.result.createObjectStore('avatars', { keyPath:'key' }).createIndex('scope_key', 'scope_key');
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction('avatars', 'readwrite');
+        tx.objectStore('avatars').put({ key:'status:头像测试卡::partner::对手', scope_key:'status:头像测试卡', owner_type:'partner', owner_name:'对手', source_type:'upload', value:pixel });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+      };
+    });
     window.hostEvents = new Map();
     window.eventOn = (name, fn) => { hostEvents.set(name, fn); return () => hostEvents.delete(name); };
     iframe.contentWindow.eval(bundle);
@@ -159,6 +174,12 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('document.querySelector(".fated-tavern-launcher").removeAttribute("data-dragged")');
   await click('.fated-tavern-launcher');
   await until(() => run('window.hostRequests?.length === 1'), '有警告自动调用酒馆助手');
+  await until(() => run(`['p1', 'e1'].every(id => {
+    const image = document.querySelector('#board [data-unit-id="' + id + '"] .axis-unit-portrait');
+    return image && !image.hidden && image.naturalWidth > 0 && getComputedStyle(image.nextElementSibling).visibility === 'hidden';
+  })`), '主角酒馆头像与对手本地立绘显示在兵牌上').catch(async error => {
+    throw new Error(`${error.message} ${await run(`JSON.stringify([...document.querySelectorAll('#board [data-unit-id]')].map(n => [n.dataset.unitId, n.querySelector('img')?.outerHTML]))`)}`);
+  });
   assert.match(await run(`${get('article.fated-instance')}.textContent`), /体型 中型 \(1\.7m\)/);
   const cardWarnings = '.fated-instance[data-unit-id="p1"] .fated-char-diagnostics';
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*恒定拉距/);

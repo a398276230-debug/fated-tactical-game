@@ -650,6 +650,19 @@
       user-select: none;
     }
     .battle-axis .axis-token-head .unit-avatar + .axis-unit-fallback-avatar { display: none; }
+    .battle-axis .axis-unit-portrait {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+      object-fit: cover;
+      object-position: center 30%;
+      border: 1.5px solid var(--axis-side-border, rgb(var(--neutral-rgb) / .65));
+      border-radius: 50%;
+      background: rgb(var(--shade-rgb) / .88);
+    }
+    .battle-axis .axis-unit-portrait:not([hidden]) + .axis-unit-fallback-avatar { visibility: hidden; }
     .battle-axis .axis-z-badge {
       position: absolute;
       top: -4px;
