@@ -70,8 +70,19 @@ function equipmentFor(state, instanceId) {
   const template = tableEntry(state.equipment, instance?.templateId);
   return { instance, template, effects: template?.effects ?? [] };
 }
-const gearFor = (state, unit) => (unit.gear ?? []).map(id => equipmentFor(state, id));
-const equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...(unit.gear ?? [])].filter(Boolean))].map(id => equipmentFor(state, id)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
+const isWeapon = template => template?.kind === 'weapon' || Boolean(template?.damage && !template.kind);
+const gearFor = (state, unit) => (unit.gear ?? []).map(id => equipmentFor(state, id)).filter(({template}) => !isWeapon(template) && template?.kind !== 'shield');
+export function switchableWeapons(state, unit) {
+  const main = unit.mainHand ?? unit.weapon;
+  if (!isWeapon(equipmentFor(state, main).template)) return [];
+  return [...new Set([unit.offHand, ...(unit.gear ?? [])])].filter(id => {
+    if (!id || id === main) return false;
+    const { template } = equipmentFor(state, id);
+    return isWeapon(template) && (!template.boundTo || template.boundTo === unit.id)
+      && !(template.twoHanded && (unit.offHand || unit.shield));
+  });
+}
+const equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map(g => g.instance?.id)].filter(Boolean))].map(id => equipmentFor(state, id)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
 const effectiveStat = (state, unit, key) => dsl.stat(state, unit, key, stat(unit, key));
 const resolveDC = (state, actor, dc) => typeof dc === 'number' ? dc
   : clamp(dc.base + dc.scaleBy.perUnit * effectiveStat(state, actor, dc.scaleBy.stat), dc.min ?? 1, dc.max ?? 50);
@@ -948,7 +959,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
 
 const ACTIONS = Object.freeze({
   move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
-  attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
+  switch_weapon: { ap: 1, slot: 'action' }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
@@ -998,12 +1009,15 @@ export function preview(state, action) {
   if (!alive(unit) && action?.type !== 'end') return fail('当前单位不能行动');
   if (!action || typeof action !== 'object' || Array.isArray(action)) return fail('动作格式错误');
   const { type, x, y, skillId } = action;
-  if (!Object.keys(action).every(field => ['type', 'x', 'y', 'skillId', 'bonusDice', 'intent', 'nonLethal', 'maneuver'].includes(field))) return fail('动作含未知字段');
+  if (!Object.keys(action).every(field => (type === 'switch_weapon' && field === 'itemId') || ['type', 'x', 'y', 'skillId', 'bonusDice', 'intent', 'nonLethal', 'maneuver'].includes(field))) return fail('动作含未知字段');
   if (action.bonusDice !== undefined && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail('奖励骰储备不足');
   if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
   const equipmentSkill = type === 'skill' ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
   const skill = type === 'skill' ? equipmentSkill ?? tableEntry(state.skills, skillId) : null;
-  if (type === 'skill' && (!skill || (!equipmentSkill && !unit.skills.includes(skillId)))) return fail('单位没有此技能');
+  if (skill?.backpackItem) {
+    if (!(unit.inventory?.[skillId] > 0)) return fail('背包物品数量不足');
+    if (!skill.damage && !skill.heal && !skill.effects.some(e => ['active','on_skill_cast'].includes(e.trigger) && e.effects?.some(n => n.enabled !== false))) return fail('背包物品尚无可执行效果，请先标准化');
+  } else if (type === 'skill' && (!skill || (!equipmentSkill && !unit.skills.includes(skillId)))) return fail('单位没有此技能');
   if (equipmentSkill && !dsl.available(state, unit, equipmentSkill.entry)) return fail('装备技能次数已用尽或冷却中');
   if (skill && !equipmentSkill) {
     const entries = dsl.skillExpressions(skill, skillId);
@@ -1030,6 +1044,10 @@ export function preview(state, action) {
   if (cannotPay) return fail(cannotPay, { ap });
   const center = unplaced ? undefined : pos(x, y);
   const weapon = weaponInfo(state, unit);
+  if (type === 'switch_weapon') {
+    if (!switchableWeapons(state, unit).includes(action.itemId)) return fail('没有可切换的武器');
+    return { ...common, itemId: action.itemId, name: `切换武器：${equipmentFor(state, action.itemId).template.name}` };
+  }
   if (type === 'shield_bash' && !unit.shield) return fail('没有盾牌');
   if (type === 'reload') {
     if (!weapon.ammo || weapon.infiniteAmmo) return fail('当前武器不需要装填');
@@ -1347,7 +1365,7 @@ function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
   const profile = targetProfile(state, actor, target, target, offTemplate, { weapon: { ...weapon.offHand, stance: 'dual_wield' } });
   profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
   profile.bonusDice = 0;
-  record(state, actor, 'followup', `${actor.name}发动副手追击`, { targetId: target.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
+  record(state, actor, 'followup', `${actor.name}使用${offTemplate.name}追击${target.name}`, { targetId: target.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
   setResourceTotal(state, actor, 'sp', actor.sp - cost, actor.id, '副手追击');
   const result = resolveCheck(state, actor, profile);
   if (!result.hit) return;
@@ -1495,7 +1513,7 @@ function applyMovement(state, actor, type, plan) {
           threatens(state, source, actor, to)) continue;
         unit.reactionAvailable = false;
         const center = pos(actor.x, actor.y);
-        record(state, unit, 'opportunity', `${unit.name}对${actor.name}发动借机攻击`,
+        record(state, unit, 'opportunity', `${unit.name}对${actor.name}发动借机攻击（${weapon.template.name}）`,
           { ...opportunityDetail(unit, center, to), targetId: actor.id });
         const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
         applyStrike(state, unit, { type: 'attack' }, { center, targets: [profile], hostile: true }, weapon);
@@ -1569,6 +1587,11 @@ export function applyAction(state, action) {
     if (plan.sp) setResourceTotal(state, actor, 'sp', actor.sp - plan.sp, actor.id, costSource);
     if (type === 'skill') {
       const skill = tableEntry(state.skills, skillId);
+      if (skill?.backpackItem) {
+        const before = actor.inventory[skillId];
+        actor.inventory[skillId] = before - 1;
+        record(state, actor, 'item_spent', `${actor.name}消耗${skill.name}（数量 ${before} → ${before - 1}）`, {itemId:skillId,before,after:before-1});
+      }
       if (plan.hp) {
         const hpBefore = actor.hp;
         actor.hp -= plan.hp;
@@ -1587,17 +1610,32 @@ export function applyAction(state, action) {
     const targetId = plan.targets?.find(target => target.kind !== 'cover')?.id ?? null;
     const intentNames = { function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
     const actionLabel = plan.name ?? (movementNames[type] ?? ({ reload: '装填', brace: '依托防御', interact: '互动' })[type]);
+    const strike = ['attack','skill','shield_bash'].includes(type) && !plan.interactiveId;
     const actionText = actionIntent !== 'normal'
       ? `${actor.name}：${actionLabel}以意图：${intentNames[actionIntent]}攻击${state.units[targetId]?.name ?? '目标'}`
       : `${actor.name}：${actionLabel}`;
     record(state, actor, 'action', actionText,
       { action: { type, ...(x === undefined ? {} : { x, y }), ...(skillId === undefined ? {} : { skillId }) }, intent: actionIntent, targetId,
+        ...(strike ? { attackSource: type === 'shield_bash' ? `${equipmentFor(state, actor.shield).template?.name ?? '盾牌'}盾击` : actionLabel,
+          attackTargets: (plan.targets ?? []).map(t => t.kind === 'cover' ? {cover:t.name} : {unit:t.id}),
+          ...(plan.corpseId ? {corpseId:plan.corpseId} : {}) } : {}),
         ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
   }
   switch (type) {
     case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
     case 'attack': if (plan.interactiveId) { applyInteraction(state, actor, plan); break; }
     case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
+    case 'switch_weapon': {
+      const old = actor.mainHand ?? actor.weapon;
+      const fromOff = plan.itemId === actor.offHand;
+      if (fromOff) actor.offHand = old;
+      else actor.gear[actor.gear.indexOf(plan.itemId)] = old;
+      actor.mainHand = actor.weapon = plan.itemId;
+      actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
+      if (actor.stance === 'attunement' && !actor.attunementCharges) actor.stance = 'light_blade';
+      if (!fromOff) dispatchEffect(state, actor, 'on_equip', { equippedItemId: plan.itemId, weaponId: plan.itemId });
+      break;
+    }
     case 'use_item': {
       actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
       record(state, actor, 'item', `${actor.name}使用同调副手道具`, { itemId: plan.itemId, remaining: actor.attunementCharges });

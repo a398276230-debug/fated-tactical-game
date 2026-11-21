@@ -3,6 +3,11 @@ import { test } from 'node:test';
 import { createGameAPI, calculatePrebattleResources, protocolDistance } from '../src/api/game_api.js';
 import { bodySizeLabel } from '../src/core/combat_protocol.js';
 import { preview } from '../src/core/combat.js';
+import { validateEffect, validateState } from '../src/api/validation.js';
+import { initialCounters } from '../src/core/effects.js';
+import { BUILTIN_RESOURCES, resourceLabel } from '../src/core/resource_names.js';
+import { formatBattleReportText } from '../src/api/battle_report.js';
+import { hydrateFromSources } from '../src/tavern/converter.js';
 import { chooseAction } from '../src/core/ai.js';
 import './spatial_tests.mjs';
 import './opportunity_tests.mjs';
@@ -29,6 +34,30 @@ import './ai_session_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };
+test('实例计数器声明、命名、转换诊断与战报标签', () => {
+  const expr = (node, id='pool') => ({id, trigger:'passive',target:'self',effects:[node]});
+  const pool = expr({kind:'produceResource',resource:'souls',cap:10,initial:0});
+  const state = boot().getBattleState();
+  state.equipment.soulblade.effects = [pool];
+  assert.deepEqual(initialCounters(state.equipment.soulblade), {souls:0});
+  validateState(state);
+  for (const kind of ['produceResource','restoreResource','drainResource']) {
+    for (const resource of ['魂数','has space','','constructor','prototype']) assert.throws(()=>validateEffect(expr({kind, resource})));
+    for (const resource of BUILTIN_RESOURCES) {
+      assert.throws(()=>validateEffect(expr({kind,resource,local:true})), /实例计数器不能使用内置资源/);
+      validateEffect(expr({kind,resource}));
+    }
+    validateEffect(expr({kind,resource:'kill-charge_2',local:true}));
+  }
+  const use = expr({kind:'drainResource',resource:'soul',local:true},'use');
+  const imported = hydrateFromSources({mvu:{主角:{装备:{魂刀:{类型:'武器',效果:[pool,use]}}}},battleInit:{units:[{id:'p',name:'主角',source:'mvu:主角',team:'blue',x:1,y:1},{id:'e',name:'敌',source:'char_info',team:'red',x:2,y:2}]}});
+  const main = imported.state.units.p.mainHand;
+  assert.ok(imported.warnings.some(w=>w.unitId==='p' && w.originPath===`/equipment/${imported.state.items[main].templateId}` && w.message.includes('引用了未声明的实例计数器 soul，')));
+  assert.equal(resourceLabel('souls'),'魂数');assert.equal(resourceLabel('kills'),'kills');
+  const report = formatBattleReportText({title:'战报',units:[],rounds:[{round:1,events:[{type:'counter',text:'ammo souls · souls 0 → 1',detail:{counterKey:'souls',before:0,after:1}}]}]});
+  assert.match(report,/ammo souls · 魂数 0 → 1/);
+});
+
 const act = (a, type, x, y, skillId) => a.playAction({ type, ...(x === undefined ? {} : { x, y }), ...(skillId ? { skillId } : {}) });
 const probe = (a, type, x, y, skillId) => a.previewAction({ type, x, y, ...(skillId ? { skillId } : {}) });
 const stats = (unitId, patch) => ({ type:'set_unit_stat', unitId, patch });
@@ -134,7 +163,7 @@ test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移
   const text=a.exportBattleReportText();
   assert.match(text,/^- 回合一$/m);
   assert.match(text,/确定先攻次序：岚 · 噬魂剑客\(1, 2, z=0\) → /);
-  assert.match(text,/岚 · 噬魂剑客\(1, 2, z=0\)开始回合：移动至 \(2, 2, z=0\)；使用噬魂太刀/);
+  assert.match(text,/岚 · 噬魂剑客\(1, 2, z=0\)开始回合：移动至 \(2, 2, z=0\)；岚 · 噬魂剑客\(2, 2, z=0\)使用噬魂太刀攻击受伤斥候/);
   assert.match(text,/受伤斥候\(3, 2, z=0\)倒下；噬魂太刀 · 魂数 0 → 1/);
   assert.doesNotMatch(text,/d20|swordsman|\bjournal\b|26\/12/);
   assert.deepEqual(a.exportBattleSnapshot(),before);

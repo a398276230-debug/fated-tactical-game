@@ -2,12 +2,12 @@ import { createGameAPI } from '../api/game_api.js';
 import { SCENARIOS } from '../presets/scenarios.js';
 import { createRenderer, ACTION_LABELS, ACTION_HINTS } from './render.js';
 import { createPlayback } from './animation.js';
-import { equippedActiveSkills } from '../core/combat.js';
+import { equippedActiveSkills, switchableWeapons } from '../core/combat.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 
 const THEMES = ['amethyst', 'night-gold', 'frost-silver'];
-const TARGETLESS = ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
+const TARGETLESS = ['switch_weapon', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
 const PATH_NAMES = { units: '单位', items: '物品', grid: '地形', statuses: '状态', counters: '计数', statusTemplates: '状态模板', covers: '掩体', interactives: '互动点' };
 
 /** 把沙盒试算结果写成人能读的句子（保留原始键名，便于对照命令）。 */
@@ -37,6 +37,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     removeItem: key => { try { localStorage?.removeItem(key); } catch { /* optional */ } },
   };
   // state：屏幕上正在展示的战局（演出时会落后于真实战局）；live：规则层的真实战局。
+  let bagAim = null;
   let state, live, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, busy = false;
   let menuButtons = new Map(), openDrawer = null, seenLogs = 0;
 
@@ -171,6 +172,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     refreshMeasurement();
   }
   function resetSelection() {
+    bagAim = null;
     selectedId = active(live ?? state)?.id;
     action = null; hover = target = null; sprint = false; inspectedId = null;
     $('target-actions').hidden = true;
@@ -300,7 +302,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
   function closeTarget(restoreFocus = false) {
     const at = target;
-    if (!at && $('target-actions').hidden) return;
+    if (!at && !bagAim && $('target-actions').hidden) return;
+    bagAim = null;
     target = action = null;
     $('target-actions').hidden = true;
     draw();
@@ -314,6 +317,17 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const actor = active();
     const canAct = actor?.team === 'blue' && !state.outcome;
     const self = canAct && unit?.id === actor.id;
+    if (bagAim) {
+      const command = { type:'skill', skillId:bagAim, ...at };
+      const plan = game.previewAction(command);
+      if (!plan.ok) { error(plan.error); return; }
+      target = at; hover = at; action = command; bagAim = null;
+      $('target-title').textContent = `${plan.name} · (${at.x}, ${at.y})`;
+      $('action-toolbar').replaceChildren(); $('target-options').hidden = true;
+      $('target-actions').hidden = false; $('confirm-action').hidden = false;
+      $('confirm-action').textContent = `确认使用${plan.name}`;
+      draw(); layoutTargetCard(); return;
+    }
     if (self) {
       const check = game.previewAction({ type: 'sprint' });
       sprint = !sprint && check.ok;
@@ -325,19 +339,29 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [];
-    const add = (type, skill) => {
-      const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}),
+    const add = (type, skill, itemId) => {
+      const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
-      if (plan.ok && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
+      if (plan.ok && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill || itemId || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
     };
     if (canAct) {
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
       else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      if (self) for (const itemId of switchableWeapons(state, actor)) add('switch_weapon', null, itemId);
       add('interact');
       for (const skill of actor.skills) add('skill', skill);
       for (const [skill] of equippedActiveSkills(state, actor)) add('skill', skill);
-      if (self) add('end');
+      if (self) {
+        for (const [skillId, count] of Object.entries(actor.inventory ?? {})) {
+          const item = state.skills[skillId];
+          if (!item?.backpackItem || count < 1) continue;
+          const command = { type:'skill', skillId };
+          const plan = game.previewAction(command);
+          options.push({ command, plan, bag:true, label:`使用背包物品：${item.name} ×${count}` });
+        }
+        add('end');
+      }
     }
     const who = unit ? `${unit.team === 'blue' ? '我方' : '敌方'} ${unit.name}` : feature?.name ?? '空地';
     $('target-title').textContent = `${who} · (${at.x}, ${at.y})${self ? (sprint ? ' · 疾跑范围' : '') : ''}`;
@@ -357,7 +381,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const small = document.createElement('small');
       small.textContent = note || ACTION_HINTS[command.type] || '';
       if (small.textContent) button.append(small);
-      button.title = ACTION_HINTS[command.type] ?? label;
+      button.disabled = !plan.ok;
+      button.title = plan.error || ACTION_HINTS[command.type] || label;
+      if (!plan.ok) small.textContent = plan.error;
+      if (!plan.ok && !small.parentNode) button.append(small);
       button.setAttribute('aria-pressed', 'false');
       menuButtons.set(button, choice);
       toolbar.append(button);
@@ -375,6 +402,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function handleAction(button) {
     const choice = menuButtons.get(button);
     if (!choice) return;
+    if (choice.bag) {
+      bagAim = choice.command.skillId; action = choice.command; target = null; sprint = false;
+      $('target-actions').hidden = true; error(`请选择${choice.plan.name}的目标（Esc 取消）`); draw(); return;
+    }
     const { command, plan, label } = choice;
     error('');
     // 攻击、技能和有借机风险的移动要二次确认，其余直接执行
@@ -529,7 +560,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     }, { signal });
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape' || root.querySelector('dialog[open]')) return;
-      if (target) closeTarget(true);
+      if (target || bagAim) closeTarget(true);
       else if (openDrawer) closeDrawer();
       else playback.skip();
     }, { signal });

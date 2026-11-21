@@ -1,3 +1,5 @@
+import { resourceLabel } from '../core/resource_names.js';
+
 const damageNames = { physical: '物理', energy: '能量', mental: '精神', true: '真实' };
 const statNames = {
   str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神', accuracy: '命中', dodge: '闪避',
@@ -106,6 +108,14 @@ export function formatBattleReportText(report, unitNames = {}) {
           const action = detail.action?.type;
           if (['move', 'sprint', 'disengage', 'interact'].includes(action) || (action === 'brace' && events[i + 1]?.type === 'brace')) break;
           const actorName = name(event, actor);
+          if (detail.attackSource) {
+            const targets = (detail.attackTargets ?? []).map(t => t.unit ? name(event, t.unit) : t.cover);
+            if (!targets.length && detail.corpseId) targets.push(name(event, detail.corpseId));
+            const aim = targets.join('、') || `格子 (${detail.action.x}, ${detail.action.y})`;
+            const intent = {function:'机能限制', core:'核心要害', kill:'抹杀', concept:'概念破碎'}[detail.intent];
+            add(`${actorName}使用${detail.attackSource}${intent ? `以意图：${intent}` : ''}${action === 'skill' ? '，目标：' : '攻击'}${aim}`);
+            break;
+          }
           const prefix = `${actorName}：`;
           const rawPrefix = `${names.get(actor) ?? actor}：`;
           const label = text.startsWith(prefix) ? text.slice(prefix.length)
@@ -194,9 +204,14 @@ export function formatBattleReportText(report, unitNames = {}) {
         case 'resource':
           add(replaceUnitNames(event, text) + change(detail.resource?.toUpperCase(), detail.before, detail.after));
           break;
-        case 'counter':
-          add(replaceUnitNames(event, text).replace(/\bsouls\b/g, '魂数').replace(/\bammo\b/g, '弹药'));
+        case 'counter': {
+          const { counterKey, before, after } = detail;
+          const suffix = ` · ${counterKey} ${before} → ${after}`;
+          const label = counterKey && text.endsWith(suffix)
+            ? `${text.slice(0, -suffix.length)} · ${resourceLabel(counterKey)} ${before} → ${after}` : text;
+          add(replaceUnitNames(event, label));
           break;
+        }
         case 'outcome':
           turn = null; rows.push(replaceUnitNames(event, text));
           break;

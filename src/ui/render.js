@@ -1,4 +1,5 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
+import { resourceLabel } from '../core/resource_names.js';
 import { effectLabel, resourceDefinitions } from '../core/effects.js';
 import { preview as rulesPreview, corpses } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
@@ -269,7 +270,7 @@ export function createRenderer(root, portraitFor = () => []) {
       const inst = get(state.items, id), tpl = get(state.equipment, inst?.templateId);
       const li = el('li'); li.dataset.instanceId = id;
       li.append(el('b', '', tpl?.name ?? id));
-      const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${({ souls: '魂数', ammo: '弹药' })[k] ?? k} ${n}`);
+      const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${resourceLabel(k)} ${n}`);
       if (counters.length) li.append(document_text(` · ${counters.join(' · ')}`));
       const text = [tpl?.description, ...(tpl?.effects ?? []).map(effectLabel)].filter(Boolean).join('；');
       if (text) li.append(el('p', '', text));

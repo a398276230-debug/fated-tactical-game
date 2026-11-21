@@ -11,7 +11,7 @@ export const DAMAGE_TYPES = Object.freeze({ physical: '物理', energy: '能量'
 export const STAT_NAMES = Object.freeze({ str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神' });
 const MANEUVERS = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
 const INTENT_NAMES = { normal: '常规', function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
-const COUNTER_NAMES = { souls: '魂数', ammo: '弹药' };
+import { resourceLabel } from '../core/resource_names.js';
 
 const sign = n => (n > 0 ? `+${n}` : `${n}`);
 const pct = n => `${Math.round(n * 100)}%`;
@@ -222,7 +222,7 @@ export function narrate(log, state) {
     case 'opportunity': return out({ tone: 'crit', icon: '⚡', title: `借机攻击！${log.text}` });
     case 'counter': {
       const item = log.text.split(' · ')[0];
-      return out({ icon: '◈', quiet: true, title: `${item} 的${COUNTER_NAMES[d.counterKey] ?? d.counterKey} ${d.before} → ${d.after}` });
+      return out({ icon: '◈', quiet: true, title: `${item} 的${resourceLabel(d.counterKey)} ${d.before} → ${d.after}` });
     }
     case 'cover_damage': return out({ tone: 'damage', icon: '🪵', lines: Number.isFinite(d.hpAfter) ? [`耐久 ${d.hpBefore} → ${d.hpAfter}`] : [] });
     case 'cover_break': return out({ tone: 'damage', icon: '🧱' });

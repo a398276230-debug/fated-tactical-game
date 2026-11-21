@@ -4,6 +4,7 @@ import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.j
 import { spawnStatsAllowed } from '../core/spawn-unit.js';
 import { resourceDefinitions } from '../core/effects.js';
 
+import { BUILTIN_RESOURCES } from '../core/resource_names.js';
 import { effectNodes, isExpression, validExpireOn, validExpression, validSaveDC, validTerrainNode } from '../core/effect_schema.js';
 import { timeOfDay } from '../core/battle_time.js';
 
@@ -101,6 +102,9 @@ export function validateEffect(e, state) {
       if (node.stacks && (!has(STATUSES, node.statusId) || has(state?.statusTemplates ?? {}, node.statusId))) requireThat(node.stacks <= template.maxStacks, 'DSL status stacks');
       if (node.amount != null) requireThat(own(template.modifiers, 'amount') && int(node.amount, 1, 10000), 'DSL status amount');
     }
+    if (node.local && ['produceResource','restoreResource','drainResource'].includes(node.kind)) {
+      requireThat(!BUILTIN_RESOURCES.includes(node.resource), `DSL 实例计数器不能使用内置资源 ${node.resource}`);
+    }
     if (node.initial != null) requireThat(node.cap != null && node.initial <= node.cap, 'DSL resource initial');
   }
 }
@@ -132,7 +136,8 @@ export function equipmentTemplate(v, state) {
   requireThat(new Set(pools.map(pool => pool.resource)).size === pools.length, 'DSL 重复资源池');
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem']);
+  checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
   checkOptional(v, 'damageType', type => damageTypes.includes(type));
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);

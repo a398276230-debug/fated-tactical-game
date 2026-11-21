@@ -148,7 +148,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.getChatMessages = (range) => { window.hostRange = range; return messages; };
     window.Mvu = {getMvuData({message_id}) {
       hostCalls.push(message_id);
-      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},装备:{旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...window.extraBowEffects}}}}}};
+      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},背包:window.battleBag,装备:{...window.reserveWeapons,旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...window.extraBowEffects}}}}}};
     }};
     window.generateRaw = async config => new Promise((resolve,reject) => {
       window.hostRequests ||= [];
@@ -474,7 +474,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const requestsBeforeHydrate = await run('hostRequests.length');
   await run(`for (const id of ['p1','e1']) [...document.querySelectorAll('.fated-instance[data-unit-id="'+id+'"] button')].find(b=>b.textContent==='删除').click()`);
   assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 0);
-  await run(`window.confirm = () => true; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
+  await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',effects:[{id:'heal_self',trigger:'active',target:'self',effects:[{kind:'heal',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
   await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
   const raw = await tavernState();
   assert.equal(raw.units.p1.hp, 245);
@@ -483,6 +483,24 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.__fatedTacticalTavern.scan()');
   assert.deepEqual(await tavernState(), raw);
   assert.equal(await run('hostRequests.length'), requestsBeforeHydrate);
+  await click('[data-tab="sandbox"]');
+  await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
+  const bagId = Object.keys(raw.units.p1.inventory)[0];
+  assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`),false,await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.title`));
+  await click(`#target-actions [data-skill-id="${bagId}"]`);
+  await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
+  assert.equal((await tavernState()).units.p1.inventory[bagId],3);
+  await click('#confirm-action');
+  assert.equal((await tavernState()).units.p1.inventory[bagId],2);
+  await run(`${get('#sandbox-undo')}.click()`);
+  assert.equal((await tavernState()).units.p1.inventory[bagId],3);
+  await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
+  const swapButton = '#target-actions [data-action="switch_weapon"]';
+  assert.match(await run(`${get(swapButton)}.textContent`), /切换武器：黑灵/);
+  await click(swapButton);
+  const switched = await tavernState();
+  assert.equal(switched.equipment[switched.items[switched.units.p1.mainHand].templateId].name, '黑灵');
+  assert.deepEqual(switched.units.p1.used,{action:1,attack:0});
   await run(`(() => {
     const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/'));
     const config = JSON.parse(localStorage.getItem(key));

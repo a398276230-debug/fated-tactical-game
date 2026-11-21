@@ -910,7 +910,7 @@ var FatedTacticalTavern = (() => {
       if (depth >= 8) return;
       dispatches.set(state, depth + 1);
       try {
-        const equipment = expressions(state, actor);
+        const equipment = expressions(state, actor).filter((entry) => !context.equippedItemId || entry.instance?.id === context.equippedItemId);
         for (const entry of new Map([...trigger === "active" ? [] : equipment, ...extra].map((entry2) => [entry2.key, entry2])).values()) {
           if (entry.expr.trigger === trigger) run(state, actor, entry, { ...context });
         }
@@ -1544,8 +1544,18 @@ var FatedTacticalTavern = (() => {
     const template = tableEntry(state.equipment, instance?.templateId);
     return { instance, template, effects: template?.effects ?? [] };
   }
-  var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3));
-  var equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? []].filter(Boolean))].map((id3) => equipmentFor(state, id3)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
+  var isWeapon = (template) => template?.kind === "weapon" || Boolean(template?.damage && !template.kind);
+  var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3)).filter(({ template }) => !isWeapon(template) && template?.kind !== "shield");
+  function switchableWeapons(state, unit) {
+    const main = unit.mainHand ?? unit.weapon;
+    if (!isWeapon(equipmentFor(state, main).template)) return [];
+    return [.../* @__PURE__ */ new Set([unit.offHand, ...unit.gear ?? []])].filter((id3) => {
+      if (!id3 || id3 === main) return false;
+      const { template } = equipmentFor(state, id3);
+      return isWeapon(template) && (!template.boundTo || template.boundTo === unit.id) && !(template.twoHanded && (unit.offHand || unit.shield));
+    });
+  }
+  var equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map((g) => g.instance?.id)].filter(Boolean))].map((id3) => equipmentFor(state, id3)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
   var effectiveStat = (state, unit, key4) => dsl.stat(state, unit, key4, stat(unit, key4));
   var resolveDC = (state, actor, dc) => typeof dc === "number" ? dc : clamp(dc.base + dc.scaleBy.perUnit * effectiveStat(state, actor, dc.scaleBy.stat), dc.min ?? 1, dc.max ?? 50);
   var finalDamageMultiplier = (unit) => values2(unit.statuses).reduce((mult, s) => mult * (s.modifiers?.finalDamageMultiplier ?? 1) ** (s.stacks ?? 1), 1);
@@ -2559,6 +2569,7 @@ var FatedTacticalTavern = (() => {
     move: { ap: 1, slot: "action" },
     sprint: { ap: 2, slot: "action" },
     disengage: { ap: 1, slot: "action" },
+    switch_weapon: { ap: 1, slot: "action" },
     attack: { ap: 1, slot: "attack" },
     reload: { ap: 1, slot: "action" },
     brace: { ap: 1, slot: "action" },
@@ -2611,12 +2622,15 @@ var FatedTacticalTavern = (() => {
     if (!alive(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
     if (!action || typeof action !== "object" || Array.isArray(action)) return fail2("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
     const { type, x, y, skillId } = action;
-    if (!Object.keys(action).every((field) => ["type", "x", "y", "skillId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
+    if (!Object.keys(action).every((field) => type === "switch_weapon" && field === "itemId" || ["type", "x", "y", "skillId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
     if (action.bonusDice !== void 0 && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail2("\u5956\u52B1\u9AB0\u50A8\u5907\u4E0D\u8DB3");
     if (action.intent !== void 0 && !["normal", "function", "core", "kill", "concept"].includes(action.intent)) return fail2("\u610F\u56FE\u7C7B\u578B\u65E0\u6548");
     const equipmentSkill = type === "skill" ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
     const skill2 = type === "skill" ? equipmentSkill ?? tableEntry(state.skills, skillId) : null;
-    if (type === "skill" && (!skill2 || !equipmentSkill && !unit.skills.includes(skillId))) return fail2("\u5355\u4F4D\u6CA1\u6709\u6B64\u6280\u80FD");
+    if (skill2?.backpackItem) {
+      if (!(unit.inventory?.[skillId] > 0)) return fail2("\u80CC\u5305\u7269\u54C1\u6570\u91CF\u4E0D\u8DB3");
+      if (!skill2.damage && !skill2.heal && !skill2.effects.some((e) => ["active", "on_skill_cast"].includes(e.trigger) && e.effects?.some((n) => n.enabled !== false))) return fail2("\u80CC\u5305\u7269\u54C1\u5C1A\u65E0\u53EF\u6267\u884C\u6548\u679C\uFF0C\u8BF7\u5148\u6807\u51C6\u5316");
+    } else if (type === "skill" && (!skill2 || !equipmentSkill && !unit.skills.includes(skillId))) return fail2("\u5355\u4F4D\u6CA1\u6709\u6B64\u6280\u80FD");
     if (equipmentSkill && !dsl.available(state, unit, equipmentSkill.entry)) return fail2("\u88C5\u5907\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
     if (skill2 && !equipmentSkill) {
       const entries2 = dsl.skillExpressions(skill2, skillId);
@@ -2642,6 +2656,10 @@ var FatedTacticalTavern = (() => {
     if (cannotPay) return fail2(cannotPay, { ap });
     const center = unplaced ? void 0 : pos(x, y);
     const weapon = weaponInfo(state, unit);
+    if (type === "switch_weapon") {
+      if (!switchableWeapons(state, unit).includes(action.itemId)) return fail2("\u6CA1\u6709\u53EF\u5207\u6362\u7684\u6B66\u5668");
+      return { ...common, itemId: action.itemId, name: `\u5207\u6362\u6B66\u5668\uFF1A${equipmentFor(state, action.itemId).template.name}` };
+    }
     if (type === "shield_bash" && !unit.shield) return fail2("\u6CA1\u6709\u76FE\u724C");
     if (type === "reload") {
       if (!weapon.ammo || weapon.infiniteAmmo) return fail2("\u5F53\u524D\u6B66\u5668\u4E0D\u9700\u8981\u88C5\u586B");
@@ -3088,7 +3106,7 @@ var FatedTacticalTavern = (() => {
     const profile = targetProfile(state, actor, target2, target2, offTemplate, { weapon: { ...weapon.offHand, stance: "dual_wield" } });
     profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
     profile.bonusDice = 0;
-    record(state, actor, "followup", `${actor.name}\u53D1\u52A8\u526F\u624B\u8FFD\u51FB`, { targetId: target2.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
+    record(state, actor, "followup", `${actor.name}\u4F7F\u7528${offTemplate.name}\u8FFD\u51FB${target2.name}`, { targetId: target2.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
     setResourceTotal(state, actor, "sp", actor.sp - cost, actor.id, "\u526F\u624B\u8FFD\u51FB");
     const result = resolveCheck(state, actor, profile);
     if (!result.hit) return;
@@ -3251,7 +3269,7 @@ var FatedTacticalTavern = (() => {
             state,
             unit,
             "opportunity",
-            `${unit.name}\u5BF9${actor.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB`,
+            `${unit.name}\u5BF9${actor.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB\uFF08${weapon.template.name}\uFF09`,
             { ...opportunityDetail(unit, center, to2), targetId: actor.id }
           );
           const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
@@ -3328,6 +3346,11 @@ var FatedTacticalTavern = (() => {
       if (plan.sp) setResourceTotal(state, actor, "sp", actor.sp - plan.sp, actor.id, costSource);
       if (type === "skill") {
         const skill2 = tableEntry(state.skills, skillId);
+        if (skill2?.backpackItem) {
+          const before2 = actor.inventory[skillId];
+          actor.inventory[skillId] = before2 - 1;
+          record(state, actor, "item_spent", `${actor.name}\u6D88\u8017${skill2.name}\uFF08\u6570\u91CF ${before2} \u2192 ${before2 - 1}\uFF09`, { itemId: skillId, before: before2, after: before2 - 1 });
+        }
         if (plan.hp) {
           const hpBefore = actor.hp;
           actor.hp -= plan.hp;
@@ -3353,6 +3376,7 @@ var FatedTacticalTavern = (() => {
       const targetId = plan.targets?.find((target2) => target2.kind !== "cover")?.id ?? null;
       const intentNames = { function: "\u673A\u80FD\u9650\u5236", core: "\u6838\u5FC3\u8981\u5BB3", kill: "\u62B9\u6740", concept: "\u6982\u5FF5\u7834\u788E" };
       const actionLabel = plan.name ?? (movementNames[type] ?? { reload: "\u88C5\u586B", brace: "\u4F9D\u6258\u9632\u5FA1", interact: "\u4E92\u52A8" }[type]);
+      const strike = ["attack", "skill", "shield_bash"].includes(type) && !plan.interactiveId;
       const actionText = actionIntent !== "normal" ? `${actor.name}\uFF1A${actionLabel}\u4EE5\u610F\u56FE\uFF1A${intentNames[actionIntent]}\u653B\u51FB${state.units[targetId]?.name ?? "\u76EE\u6807"}` : `${actor.name}\uFF1A${actionLabel}`;
       record(
         state,
@@ -3363,6 +3387,11 @@ var FatedTacticalTavern = (() => {
           action: { type, ...x === void 0 ? {} : { x, y }, ...skillId === void 0 ? {} : { skillId } },
           intent: actionIntent,
           targetId,
+          ...strike ? {
+            attackSource: type === "shield_bash" ? `${equipmentFor(state, actor.shield).template?.name ?? "\u76FE\u724C"}\u76FE\u51FB` : actionLabel,
+            attackTargets: (plan.targets ?? []).map((t) => t.kind === "cover" ? { cover: t.name } : { unit: t.id }),
+            ...plan.corpseId ? { corpseId: plan.corpseId } : {}
+          } : {},
           ap: plan.ap,
           mp: plan.mp,
           sp: plan.sp,
@@ -3385,6 +3414,17 @@ var FatedTacticalTavern = (() => {
       case "shield_bash":
         applyStrike(state, actor, { type, skillId }, plan);
         break;
+      case "switch_weapon": {
+        const old = actor.mainHand ?? actor.weapon;
+        const fromOff = plan.itemId === actor.offHand;
+        if (fromOff) actor.offHand = old;
+        else actor.gear[actor.gear.indexOf(plan.itemId)] = old;
+        actor.mainHand = actor.weapon = plan.itemId;
+        actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
+        if (actor.stance === "attunement" && !actor.attunementCharges) actor.stance = "light_blade";
+        if (!fromOff) dispatchEffect(state, actor, "on_equip", { equippedItemId: plan.itemId, weaponId: plan.itemId });
+        break;
+      }
       case "use_item": {
         actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
         record(state, actor, "item", `${actor.name}\u4F7F\u7528\u540C\u8C03\u526F\u624B\u9053\u5177`, { itemId: plan.itemId, remaining: actor.attunementCharges });
@@ -3593,6 +3633,20 @@ var FatedTacticalTavern = (() => {
     })
   };
 
+  // src/core/resource_names.js
+  var BUILTIN_RESOURCES = Object.freeze(["hp", "mp", "sp", "ap", "action", "attack"]);
+  var RESOURCE_NAMES = Object.freeze({
+    hp: "\u751F\u547D",
+    mp: "\u6CD5\u529B",
+    sp: "\u4F53\u529B",
+    ap: "\u884C\u52A8\u70B9",
+    action: "\u52A8\u4F5C",
+    attack: "\u653B\u51FB",
+    souls: "\u9B42\u6570",
+    ammo: "\u5F39\u836F"
+  });
+  var resourceLabel = (name) => Object.hasOwn(RESOURCE_NAMES, name) ? RESOURCE_NAMES[name] : name;
+
   // src/core/battle_time.js
   var timeOfDay = (hour, minute) => {
     const clock = hour * 60 + minute;
@@ -3718,6 +3772,9 @@ var FatedTacticalTavern = (() => {
         if (node3.stacks && (!has(STATUSES, node3.statusId) || has(state?.statusTemplates ?? {}, node3.statusId))) requireThat(node3.stacks <= template.maxStacks, "DSL status stacks");
         if (node3.amount != null) requireThat(own2(template.modifiers, "amount") && int(node3.amount, 1, 1e4), "DSL status amount");
       }
+      if (node3.local && ["produceResource", "restoreResource", "drainResource"].includes(node3.kind)) {
+        requireThat(!BUILTIN_RESOURCES.includes(node3.resource), `DSL \u5B9E\u4F8B\u8BA1\u6570\u5668\u4E0D\u80FD\u4F7F\u7528\u5185\u7F6E\u8D44\u6E90 ${node3.resource}`);
+      }
       if (node3.initial != null) requireThat(node3.cap != null && node3.initial <= node3.cap, "DSL resource initial");
     }
   }
@@ -3753,7 +3810,8 @@ var FatedTacticalTavern = (() => {
     requireThat(new Set(pools.map((pool) => pool.resource)).size === pools.length, "DSL \u91CD\u590D\u8D44\u6E90\u6C60");
   }
   function skillTemplate(v, state) {
-    fields(v, ["name", "ap", "slot", "range", "shape", "target", "effects"], ["quality", "power", "mp", "sp", "radius", "width", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType"]);
+    fields(v, ["name", "ap", "slot", "range", "shape", "target", "effects"], ["quality", "power", "mp", "sp", "radius", "width", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType", "backpackItem"]);
+    checkOptional(v, "backpackItem", (flag) => flag === true && v.ap === 1 && v.slot === "action");
     checkOptional(v, "damageType", (type) => damageTypes.includes(type));
     checkOptional(v, "school", text);
     checkOptional(v, "resourceCost", resourceCost);
@@ -4007,9 +4065,9 @@ var FatedTacticalTavern = (() => {
         statusValue(status2, key4, state);
         return [key4, status2];
       }));
-      for (const [instanceId, isWeapon] of [[unit.weapon, true], ...[unit.mainHand, unit.offHand].filter(Boolean).map((i) => [i, true]), ...[unit.shield].filter(Boolean).map((i) => [i, true]), ...unit.gear.map((i) => [i, false])]) {
-        if (instanceId === null && isWeapon) continue;
-        if (!safeId(instanceId) || !own3(carry.items, instanceId) || assigned.has(instanceId) || own3(state.equipment[state.items[instanceId].templateId], "damage") !== isWeapon) throw new Error(`\u8DE8\u6218\u88C5\u5907\u5F52\u5C5E\u65E0\u6548\uFF1A${instanceId}`);
+      for (const [instanceId, isWeapon2] of [[unit.weapon, true], ...[unit.mainHand, unit.offHand].filter(Boolean).map((i) => [i, true]), ...[unit.shield].filter(Boolean).map((i) => [i, true]), ...unit.gear.map((i) => [i, false])]) {
+        if (instanceId === null && isWeapon2) continue;
+        if (!safeId(instanceId) || !own3(carry.items, instanceId) || assigned.has(instanceId) || own3(state.equipment[state.items[instanceId].templateId], "damage") !== isWeapon2) throw new Error(`\u8DE8\u6218\u88C5\u5907\u5F52\u5C5E\u65E0\u6548\uFF1A${instanceId}`);
         assigned.add(instanceId);
       }
       if (own3(state.units, id3)) imported.push([id3, { statuses, weapon: unit.weapon, mainHand: unit.mainHand ?? unit.weapon, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
@@ -4655,6 +4713,14 @@ var FatedTacticalTavern = (() => {
             const action = detail.action?.type;
             if (["move", "sprint", "disengage", "interact"].includes(action) || action === "brace" && events2[i + 1]?.type === "brace") break;
             const actorName = name(event, actor);
+            if (detail.attackSource) {
+              const targets = (detail.attackTargets ?? []).map((t) => t.unit ? name(event, t.unit) : t.cover);
+              if (!targets.length && detail.corpseId) targets.push(name(event, detail.corpseId));
+              const aim = targets.join("\u3001") || `\u683C\u5B50 (${detail.action.x}, ${detail.action.y})`;
+              const intent = { function: "\u673A\u80FD\u9650\u5236", core: "\u6838\u5FC3\u8981\u5BB3", kill: "\u62B9\u6740", concept: "\u6982\u5FF5\u7834\u788E" }[detail.intent];
+              add(`${actorName}\u4F7F\u7528${detail.attackSource}${intent ? `\u4EE5\u610F\u56FE\uFF1A${intent}` : ""}${action === "skill" ? "\uFF0C\u76EE\u6807\uFF1A" : "\u653B\u51FB"}${aim}`);
+              break;
+            }
             const prefix = `${actorName}\uFF1A`;
             const rawPrefix = `${names.get(actor) ?? actor}\uFF1A`;
             const label = text4.startsWith(prefix) ? text4.slice(prefix.length) : text4.startsWith(rawPrefix) ? text4.slice(rawPrefix.length) : text4;
@@ -4743,9 +4809,13 @@ var FatedTacticalTavern = (() => {
           case "resource":
             add(replaceUnitNames(event, text4) + change(detail.resource?.toUpperCase(), detail.before, detail.after));
             break;
-          case "counter":
-            add(replaceUnitNames(event, text4).replace(/\bsouls\b/g, "\u9B42\u6570").replace(/\bammo\b/g, "\u5F39\u836F"));
+          case "counter": {
+            const { counterKey, before, after } = detail;
+            const suffix = ` \xB7 ${counterKey} ${before} \u2192 ${after}`;
+            const label = counterKey && text4.endsWith(suffix) ? `${text4.slice(0, -suffix.length)} \xB7 ${resourceLabel(counterKey)} ${before} \u2192 ${after}` : text4;
+            add(replaceUnitNames(event, label));
             break;
+          }
           case "outcome":
             turn = null;
             rows2.push(replaceUnitNames(event, text4));
@@ -5289,7 +5359,6 @@ var FatedTacticalTavern = (() => {
   var STAT_NAMES = Object.freeze({ str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" });
   var MANEUVERS = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
   var INTENT_NAMES = { normal: "\u5E38\u89C4", function: "\u673A\u80FD\u9650\u5236", core: "\u6838\u5FC3\u8981\u5BB3", kill: "\u62B9\u6740", concept: "\u6982\u5FF5\u7834\u788E" };
-  var COUNTER_NAMES = { souls: "\u9B42\u6570", ammo: "\u5F39\u836F" };
   var sign = (n) => n > 0 ? `+${n}` : `${n}`;
   var pct = (n) => `${Math.round(n * 100)}%`;
   var num2 = (n) => Number.isInteger(n) ? `${n}` : Number(n).toFixed(1);
@@ -5608,7 +5677,7 @@ var FatedTacticalTavern = (() => {
         return out({ tone: "crit", icon: "\u26A1", title: `\u501F\u673A\u653B\u51FB\uFF01${log.text}` });
       case "counter": {
         const item = log.text.split(" \xB7 ")[0];
-        return out({ icon: "\u25C8", quiet: true, title: `${item} \u7684${COUNTER_NAMES[d.counterKey] ?? d.counterKey} ${d.before} \u2192 ${d.after}` });
+        return out({ icon: "\u25C8", quiet: true, title: `${item} \u7684${resourceLabel(d.counterKey)} ${d.before} \u2192 ${d.after}` });
       }
       case "cover_damage":
         return out({ tone: "damage", icon: "\u{1FAB5}", lines: Number.isFinite(d.hpAfter) ? [`\u8010\u4E45 ${d.hpBefore} \u2192 ${d.hpAfter}`] : [] });
@@ -5991,7 +6060,7 @@ var FatedTacticalTavern = (() => {
         const li = el2("li");
         li.dataset.instanceId = id3;
         li.append(el2("b", "", tpl?.name ?? id3));
-        const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${{ souls: "\u9B42\u6570", ammo: "\u5F39\u836F" }[k] ?? k} ${n}`);
+        const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${resourceLabel(k)} ${n}`);
         if (counters.length) li.append(document_text(` \xB7 ${counters.join(" \xB7 ")}`));
         const text4 = [tpl?.description, ...(tpl?.effects ?? []).map(effectLabel)].filter(Boolean).join("\uFF1B");
         if (text4) li.append(el2("p", "", text4));
@@ -6678,7 +6747,7 @@ var FatedTacticalTavern = (() => {
 
   // src/ui/main.js
   var THEMES = ["amethyst", "night-gold", "frost-silver"];
-  var TARGETLESS = ["brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
+  var TARGETLESS = ["switch_weapon", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
   var PATH_NAMES = { units: "\u5355\u4F4D", items: "\u7269\u54C1", grid: "\u5730\u5F62", statuses: "\u72B6\u6001", counters: "\u8BA1\u6570", statusTemplates: "\u72B6\u6001\u6A21\u677F", covers: "\u63A9\u4F53", interactives: "\u4E92\u52A8\u70B9" };
   function describeProposal(result) {
     if (!result?.ok) return `\u2716 \u65E0\u6CD5\u6267\u884C\uFF1A${result?.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
@@ -6720,6 +6789,7 @@ var FatedTacticalTavern = (() => {
         }
       }
     };
+    let bagAim = null;
     let state, live, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, busy = false;
     let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0;
     const active = (s = state) => s?.units[s.order[s.turn]];
@@ -6887,6 +6957,7 @@ var FatedTacticalTavern = (() => {
       refreshMeasurement();
     }
     function resetSelection() {
+      bagAim = null;
       selectedId = active(live ?? state)?.id;
       action = null;
       hover = target2 = null;
@@ -7024,7 +7095,8 @@ ${height2}\uFF0C${sight}`;
     }
     function closeTarget(restoreFocus = false) {
       const at = target2;
-      if (!at && $("target-actions").hidden) return;
+      if (!at && !bagAim && $("target-actions").hidden) return;
+      bagAim = null;
       target2 = action = null;
       $("target-actions").hidden = true;
       draw();
@@ -7037,6 +7109,27 @@ ${height2}\uFF0C${sight}`;
       const actor = active();
       const canAct = actor?.team === "blue" && !state.outcome;
       const self = canAct && unit?.id === actor.id;
+      if (bagAim) {
+        const command = { type: "skill", skillId: bagAim, ...at };
+        const plan = game.previewAction(command);
+        if (!plan.ok) {
+          error2(plan.error);
+          return;
+        }
+        target2 = at;
+        hover = at;
+        action = command;
+        bagAim = null;
+        $("target-title").textContent = `${plan.name} \xB7 (${at.x}, ${at.y})`;
+        $("action-toolbar").replaceChildren();
+        $("target-options").hidden = true;
+        $("target-actions").hidden = false;
+        $("confirm-action").hidden = false;
+        $("confirm-action").textContent = `\u786E\u8BA4\u4F7F\u7528${plan.name}`;
+        draw();
+        layoutTargetCard();
+        return;
+      }
       if (self) {
         const check = game.previewAction({ type: "sprint" });
         sprint = !sprint && check.ok;
@@ -7050,23 +7143,34 @@ ${height2}\uFF0C${sight}`;
       const bonus = $("bonus-dice-select");
       bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
       const options = [];
-      const add = (type, skill2) => {
+      const add = (type, skill2, itemId) => {
         const command = {
           type,
           ...TARGETLESS.includes(type) ? {} : at,
           ...skill2 ? { skillId: skill2 } : {},
+          ...itemId ? { itemId } : {},
           ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
         };
         const plan = game.previewAction(command);
-        if (plan.ok && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill2 || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
+        if (plan.ok && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill2 || itemId || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
       };
       if (canAct) {
         if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
         else for (const t of [sprint ? "sprint" : "move", "disengage", "attack", "lock_on", "grapple", "disarm", "trip", "push"]) add(t);
+        if (self) for (const itemId of switchableWeapons(state, actor)) add("switch_weapon", null, itemId);
         add("interact");
         for (const skill2 of actor.skills) add("skill", skill2);
         for (const [skill2] of equippedActiveSkills(state, actor)) add("skill", skill2);
-        if (self) add("end");
+        if (self) {
+          for (const [skillId, count] of Object.entries(actor.inventory ?? {})) {
+            const item = state.skills[skillId];
+            if (!item?.backpackItem || count < 1) continue;
+            const command = { type: "skill", skillId };
+            const plan = game.previewAction(command);
+            options.push({ command, plan, bag: true, label: `\u4F7F\u7528\u80CC\u5305\u7269\u54C1\uFF1A${item.name} \xD7${count}` });
+          }
+          add("end");
+        }
       }
       const who = unit ? `${unit.team === "blue" ? "\u6211\u65B9" : "\u654C\u65B9"} ${unit.name}` : feature?.name ?? "\u7A7A\u5730";
       $("target-title").textContent = `${who} \xB7 (${at.x}, ${at.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4" : "" : ""}`;
@@ -7088,7 +7192,10 @@ ${height2}\uFF0C${sight}`;
         const small = document2.createElement("small");
         small.textContent = note || ACTION_HINTS[command.type] || "";
         if (small.textContent) button.append(small);
-        button.title = ACTION_HINTS[command.type] ?? label;
+        button.disabled = !plan.ok;
+        button.title = plan.error || ACTION_HINTS[command.type] || label;
+        if (!plan.ok) small.textContent = plan.error;
+        if (!plan.ok && !small.parentNode) button.append(small);
         button.setAttribute("aria-pressed", "false");
         menuButtons.set(button, choice);
         toolbar.append(button);
@@ -7106,6 +7213,16 @@ ${height2}\uFF0C${sight}`;
     function handleAction(button) {
       const choice = menuButtons.get(button);
       if (!choice) return;
+      if (choice.bag) {
+        bagAim = choice.command.skillId;
+        action = choice.command;
+        target2 = null;
+        sprint = false;
+        $("target-actions").hidden = true;
+        error2(`\u8BF7\u9009\u62E9${choice.plan.name}\u7684\u76EE\u6807\uFF08Esc \u53D6\u6D88\uFF09`);
+        draw();
+        return;
+      }
       const { command, plan, label } = choice;
       error2("");
       if (!(["skill", "attack"].includes(command.type) || plan.opportunities?.length)) {
@@ -7345,7 +7462,7 @@ ${height2}\uFF0C${sight}`;
       }, { signal });
       document2.addEventListener("keydown", (e) => {
         if (e.key !== "Escape" || root.querySelector("dialog[open]")) return;
-        if (target2) closeTarget(true);
+        if (target2 || bagAim) closeTarget(true);
         else if (openDrawer) closeDrawer();
         else playback.skip();
       }, { signal });
@@ -9447,7 +9564,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const kindAliases = /* @__PURE__ */ new Map([["\u6B66\u5668", "weapon"], ["\u9632\u5177", "armor"], ["\u9970\u54C1", "accessory"], ["\u6D88\u8017\u54C1", "consumable"]]);
     const declaredKind = ["weapon", "armor", "accessory", "consumable"].includes(r.kind) ? r.kind : kindAliases.get(r.\u7C7B\u578B);
     const kind = isShield ? "shield" : declaredKind || (["mainHand", "offHand", "twoHands"].includes(slot) || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|法杖|发射器/.test(`${name} ${labels}`) ? "weapon" : "accessory");
-    const isWeapon = kind === "weapon";
+    const isWeapon2 = kind === "weapon";
     const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
     const templateId = `template-${idBase}`;
     const effects2 = convertEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", sink("effect", `/equipment/${templateId}`), `fx-${hash(templateId).toString(36)}`);
@@ -9455,13 +9572,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
     const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? defenseTag?.[1], 0, 1e6, kind === "shield" ? 1 : 0);
     if (kind === "shield") Object.assign(template, { weaponClass: "shield", hand: "off_hand", shield: true, defense });
-    else if (isWeapon) {
+    else if (isWeapon2) {
       const classes = ["ranged", "light_blade", "greatsword", "staff", "auxiliary"];
       const weaponClassAlias = /* @__PURE__ */ new Map([["bow", "ranged"], ["crossbow", "ranged"], ["arcane", "staff"]]);
       const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
       const ranged = r.ranged ?? (r.rangeType ? r.rangeType === "ranged" : ["ranged", "staff"].includes(explicitClass) || /弓|弩|法杖|远程|发射器/.test(`${name} ${labels}`));
       const twoHanded = slot === "twoHands" || r.twoHanded === true || r.hand === "two_handed" || explicitClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
-      const attackTag = labels.match(/攻击\s*[:：]\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
+      const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
       const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? "ranged" : twoHanded ? "greatsword" : "light_blade";
       Object.assign(template, {
         weaponClass,
@@ -9475,6 +9592,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       });
       if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
     } else Object.assign(template, { armor: bound(r.armor, 0, 1e6, defense), defense });
+    const declared = new Set(resourceDefinitions(template).map((node3) => node3.resource));
+    const missing = /* @__PURE__ */ new Set();
+    for (const expr of effects2) for (const node3 of effectNodes(expr.effects)) {
+      if (node3.local && ["produceResource", "restoreResource", "drainResource"].includes(node3.kind) && !declared.has(node3.resource)) missing.add(node3.resource);
+    }
+    for (const key4 of missing) sink("effect", `/equipment/${templateId}`).push(`\u88C5\u5907\u300C${name}\u300D\u5F15\u7528\u4E86\u672A\u58F0\u660E\u7684\u5B9E\u4F8B\u8BA1\u6570\u5668 ${key4}\uFF0C\u8FD0\u884C\u65F6\u4F1A\u88AB\u8DF3\u8FC7`);
     const counters = initialCounters(template);
     return { id: idBase, templateId, template, counters, slot, name };
   }
@@ -9483,7 +9606,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const slots = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
     const entries2 = Array.isArray(value) ? value.map((v) => ["", v]) : Object.entries(asObject(value));
     return entries2.filter(([, item]) => object3(item)).map(([key4, item], i) => {
-      const rawSlot = text2(item.slot ?? item.position ?? item.\u4F4D\u7F6E) || key4;
+      const position = [item.slot, item.position, item.\u4F4D\u7F6E].map(text2).find(Boolean);
+      const tags2 = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).map(text2).join(",");
+      const hand = tags2.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
+      const rawSlot = position || (slots.has(key4) ? key4 : hand || key4);
       return [slots.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.\u540D\u79F0 ?? (slots.has(key4) ? "" : key4) }, i];
     });
   }
@@ -9593,7 +9719,47 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z];
     return { x: Math.max(0, Math.min(9, integer3(xyz[0], 0))), y: Math.max(0, Math.min(9, integer3(xyz[1], 0))), z: integer3(xyz[2], 0) };
   }
-  function unitFrom(record2, participant, index, equipment, skills, items, sink) {
+  function importBackpack(bag, owner, skills, sink) {
+    const inventory = {};
+    for (const [name, item] of Object.entries(asObject(bag))) {
+      if (item?.\u7C7B\u578B !== "\u6D88\u8017\u54C1" && item?.kind !== "consumable") continue;
+      const count = bound(item.\u6570\u91CF ?? item.count, 0, 1e9, 1);
+      if (!count) continue;
+      const id3 = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
+      const warnings = sink("effect", `/skills/${id3}`);
+      const raw = item.effects ?? item.\u6548\u679C;
+      const tags2 = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).join(" ");
+      const range = bound(item.range ?? tags2.match(/(?:射程|有效距离)\s*[:：][^\d]*(\d+)/)?.[1], 0, 15, 3);
+      let effects2;
+      const entries2 = Object.entries(asObject(raw));
+      const simple = entries2.length === 1 && /^(物理|能量|精神|真实)伤害$/.exec(entries2[0][0]);
+      const amount2 = simple && /^造成\s*(\d+)\s*(?:点)?伤害[。.]?$/.exec(entries2[0][1]);
+      if (amount2) effects2 = [{ id: `${id3}-use`, trigger: "active", target: "hitTarget", effects: [{ kind: "damage", damageType: damageAliases.get(simple[1]), flat: bound(amount2[1], 0, 1e9) }] }];
+      else {
+        const notes2 = [];
+        effects2 = convertEffects(raw, "skill", notes2, id3);
+        for (const note of notes2) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\uFF1A${note}`);
+        if (!effects2.length && !notes2.length) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\u7F3A\u5C11\u6548\u679C\uFF1A\u8BF7\u6309\u540D\u79F0\u63A8\u5B9A\u7528\u9014\u3001\u76EE\u6807\u548C\u6570\u503C\uFF0C\u8865\u5168\u53EF\u6267\u884C\u6548\u679C`);
+      }
+      const target2 = ["enemy", "ally", "self", "any", "cell", "corpse"].includes(item.target) ? item.target : "enemy";
+      const shape2 = ["circle", "line", "fan", "cone"].includes(item.shape) ? item.shape : "single";
+      skills[id3] = {
+        name: name.slice(0, 100),
+        backpackItem: true,
+        ap: 1,
+        slot: "action",
+        range,
+        shape: shape2,
+        target: target2,
+        effects: effects2,
+        ...item.radius != null && { radius: bound(item.radius, 0, 6) },
+        ...item.width != null && { width: bound(item.width, 0, 6) }
+      };
+      inventory[id3] = count;
+    }
+    return inventory;
+  }
+  function unitFrom(record2, participant, index, equipment, skills, items, sink, isProtagonist) {
     const resourcesSink = sink("resource"), warnings = sink("status");
     const p = participant ?? {};
     const name = text2(p.protagonistName || p.name) || sourceName(record2, p.id) || `\u5355\u4F4D ${index + 1}`;
@@ -9609,7 +9775,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       equipment[item.templateId] ??= item.template;
       items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
     }
-    const main = slotItems.find((i) => i.template.kind === "weapon" && ["mainHand", "twoHands"].includes(i.slot)) ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot !== "offHand");
+    const main = slotItems.find((i) => i.template.kind === "weapon" && i.template.twoHanded) ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot === "mainHand") ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot !== "offHand");
     const off = !main?.template.twoHanded && slotItems.find((i) => i.slot === "offHand" && ["weapon", "consumable"].includes(i.template.kind));
     const shield = !main?.template.twoHanded && slotItems.find((i) => i.template.kind === "shield");
     const gear = slotItems.filter((i) => ![main, off, shield].includes(i));
@@ -9699,6 +9865,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: text2(p.moraleType) || "standard" };
+    if (isProtagonist) {
+      const inventory = importBackpack(record2.\u80CC\u5305, id3, skills, sink);
+      if (Object.keys(inventory).length) unit.inventory = inventory;
+    }
     const creatureType = p.creatureType ?? record2.creatureType;
     if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text2).filter(Boolean).slice(0, 12);
     else if (text2(creatureType)) unit.creatureType = text2(creatureType).slice(0, 100);
@@ -9772,7 +9942,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
       const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
       if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
-      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path));
+      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path), record2 === protagonist);
       units[id3] = made.unit;
       profiles[id3] = made.profile;
       sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2), isProtagonist: record2 === protagonist };
@@ -10466,7 +10636,7 @@ damageType \u968F damage\uFF1B\u53D7\u51FB\u788E\u88C2\u7528 shatter \u914D\u540
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。
+• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。backpackItem:true 是背包消耗品的使用模板，不是角色技能。若消耗品没写效果，按物品名、标签主动推定合理的目标、距离、范围和数值，补出可执行的 active DSL；不可仅因原文缺数值而列为 unresolved。按警告路径修改模板，不要改库存、移除 backpackItem 或加入单位 skills。保留 ap:1、slot:action。
 • /items/<id>：道具实例（如 /items/item_01），不是模板属性。
 • /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），同名定义覆盖默认模板；已有实例须同时与新模板对齐。普通新增状态使用新 ID。
 • /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
@@ -10542,12 +10712,12 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
         const pick = (table4, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
         const units = pick(state.units, ctx.onlyUnitIds), rows2 = Object.values(units);
         const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? []]));
-        return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows2.flatMap((u) => u.skills ?? [])), statusTemplates: state.statusTemplates });
+        return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})])), statusTemplates: state.statusTemplates });
       }
       if (ctx.rosterText != null) return ctx.rosterText;
       if (!state) return sources.roster || "";
       const templates = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
-      const skillIds = new Set(Object.values(state.units ?? {}).flatMap((unit) => unit.skills ?? []));
+      const skillIds = new Set(Object.values(state.units ?? {}).flatMap((unit) => [...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})]));
       const used = (table4, ids) => Object.fromEntries(Object.entries(table4 ?? {}).filter(([id3]) => ids.has(id3)));
       return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment: used(state.equipment, templates), skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
     }
@@ -11904,7 +12074,7 @@ ${variables.warnings()}` : "");
     return JSON.stringify(value);
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.2.9";
+  var TAVERN_VERSION = "0.2.10";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",

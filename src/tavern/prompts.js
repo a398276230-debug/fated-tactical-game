@@ -36,7 +36,7 @@ export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。
+• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。backpackItem:true 是背包消耗品的使用模板，不是角色技能。若消耗品没写效果，按物品名、标签主动推定合理的目标、距离、范围和数值，补出可执行的 active DSL；不可仅因原文缺数值而列为 unresolved。按警告路径修改模板，不要改库存、移除 backpackItem 或加入单位 skills。保留 ap:1、slot:action。
 • /items/<id>：道具实例（如 /items/item_01），不是模板属性。
 • /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），同名定义覆盖默认模板；已有实例须同时与新模板对齐。普通新增状态使用新 ID。
 • /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
@@ -110,12 +110,12 @@ export function resolveSlotContent(slot, ctx = {}) {
       const pick = (table, ids) => Object.fromEntries([...new Set(ids)].filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
       const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
       const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear??[])]));
-      return json({raw:pick(ctx.rawCharacters,ctx.onlyUnitIds), units, items, equipment:pick(state.equipment,Object.values(items).map(i=>i.templateId)), skills:pick(state.skills,rows.flatMap(u=>u.skills??[])), statusTemplates:state.statusTemplates});
+      return json({raw:pick(ctx.rawCharacters,ctx.onlyUnitIds), units, items, equipment:pick(state.equipment,Object.values(items).map(i=>i.templateId)), skills:pick(state.skills,rows.flatMap(u=>[...(u.skills??[]), ...Object.keys(u.inventory??{})])), statusTemplates:state.statusTemplates});
     }
     if (ctx.rosterText != null) return ctx.rosterText;
     if (!state) return sources.roster || '';
     const templates = new Set(Object.values(state.items ?? {}).map(item => item.templateId));
-    const skillIds = new Set(Object.values(state.units ?? {}).flatMap(unit => unit.skills ?? []));
+    const skillIds = new Set(Object.values(state.units ?? {}).flatMap(unit => [...(unit.skills ?? []), ...Object.keys(unit.inventory ?? {})]));
     const used = (table, ids) => Object.fromEntries(Object.entries(table ?? {}).filter(([id]) => ids.has(id)));
     return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment: used(state.equipment, templates), skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
   }

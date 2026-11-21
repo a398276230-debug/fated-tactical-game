@@ -367,7 +367,7 @@ export function createEffectEngine(io) {
     if (depth >= 8) return;
     dispatches.set(state, depth + 1);
     try {
-      const equipment = expressions(state, actor);
+      const equipment = expressions(state, actor).filter(entry => !context.equippedItemId || entry.instance?.id === context.equippedItemId);
       for (const entry of new Map([...(trigger === 'active' ? [] : equipment), ...extra].map(entry => [entry.key, entry])).values()) {
         if (entry.expr.trigger === trigger) run(state, actor, entry, { ...context });
       }

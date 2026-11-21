@@ -13,6 +13,7 @@ test('单体攻击战报明确显示意图，范围攻击不显示部位意图',
   a.playAction({ type:'attack', x:3, y:2, intent:'core' });
   const report = a.exportBattleReportText();
   assert.match(report, /使用噬魂太刀以意图：核心要害攻击受伤斥候/);
+  assert.match(report, /[^；]+\(2, 2, z=\d+\)使用噬魂太刀以意图：核心要害攻击受伤斥候\(3, 2, z=\d+\)/);
   const events = a.exportBattleReport().rounds.flatMap(r => r.events);
   const rollIndex = events.findIndex(e => e.type === 'roll' && e.detail.intent?.required);
   assert.ok(rollIndex >= 0);
@@ -29,6 +30,7 @@ test('单体攻击战报明确显示意图，范围攻击不显示部位意图',
   const attack = b.exportBattleReport().rounds.flatMap(r => r.events).find(e => e.type === 'action' && e.detail.action?.skillId === 'fan');
   assert.equal(attack.detail.intent, 'normal');
   assert.doesNotMatch(b.exportBattleReportText(), /血牙扇斩以意图：核心要害/);
+  assert.match(b.exportBattleReportText(), /使用血牙扇斩，目标：[^；\n]+\(/);
   assert.ok(state.units.swordsman);
 });
 

@@ -3,11 +3,11 @@ import { validateEffect, validateState } from '../api/validation.js';
 import { validSaveDC } from '../core/effect_schema.js';
 import { validateStatusModifiers } from '../core/status_modifiers.js';
 import { sizeClassFor, stanceFor } from '../core/combat_protocol.js';
-import { adaptLegacyEffects, initialCounters } from '../core/effects.js';
+import { adaptLegacyEffects, initialCounters, resourceDefinitions } from '../core/effects.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
-import { isExpression, validExpression } from '../core/effect_schema.js';
+import { effectNodes, isExpression, validExpression } from '../core/effect_schema.js';
 import { parseBattleTime } from '../core/battle_time.js';
 
 /*
@@ -413,7 +413,7 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
     const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : ['ranged', 'staff'].includes(explicitClass) || /弓|弩|法杖|远程|发射器/.test(`${name} ${labels}`));
     const twoHanded = slot === 'twoHands' || r.twoHanded === true || r.hand === 'two_handed' || explicitClass === 'greatsword'
       || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
-    const attackTag = labels.match(/攻击\s*[:：]\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
+    const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
     const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? 'ranged' : twoHanded ? 'greatsword' : 'light_blade';
     Object.assign(template, {
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
@@ -424,6 +424,12 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
     });
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
   } else Object.assign(template, { armor: bound(r.armor, 0, 1000000, defense), defense });
+  const declared = new Set(resourceDefinitions(template).map(node => node.resource));
+  const missing = new Set();
+  for (const expr of effects) for (const node of effectNodes(expr.effects)) {
+    if (node.local && ['produceResource','restoreResource','drainResource'].includes(node.kind) && !declared.has(node.resource)) missing.add(node.resource);
+  }
+  for (const key of missing) sink('effect', `/equipment/${templateId}`).push(`装备「${name}」引用了未声明的实例计数器 ${key}，运行时会被跳过`);
   const counters = initialCounters(template);
   return { id: idBase, templateId, template, counters, slot, name };
 }
@@ -433,7 +439,11 @@ function sourceEquipment(record) {
   const slots = new Map(Object.entries({ mainHand: 'mainHand', main: 'mainHand', weapon: 'mainHand', 主手: 'mainHand', 双手: 'twoHands', 双手武器: 'twoHands', offHand: 'offHand', off: 'offHand', 副手: 'offHand', shield: 'shield', 盾牌: 'shield' }));
   const entries = Array.isArray(value) ? value.map(v => ['', v]) : Object.entries(asObject(value));
   return entries.filter(([, item]) => object(item)).map(([key, item], i) => {
-    const rawSlot = text(item.slot ?? item.position ?? item.位置) || key;
+    // A later narrative placement overrides the starting hand declared in equipment tags.
+    const position = [item.slot, item.position, item.位置].map(text).find(Boolean);
+    const tags = [].concat(item.tags ?? item.标签 ?? []).map(text).join(',');
+    const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
+    const rawSlot = position || (slots.has(key) ? key : hand || key);
     return [slots.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.名称 ?? (slots.has(key) ? '' : key) }, i];
   });
 }
@@ -552,7 +562,38 @@ function participantList(battle) {
 function teamOf(value, fallback = 'red') { const t = text(value).toLowerCase(); return ['blue','player','ally','友方','我方'].includes(t) ? 'blue' : ['red','enemy','foe','敌方'].includes(t) ? 'red' : fallback; }
 function xyzOf(value) { const p = asObject(value); const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z]; return { x: Math.max(0, Math.min(9, integer(xyz[0], 0))), y: Math.max(0, Math.min(9, integer(xyz[1], 0))), z: integer(xyz[2], 0) }; }
 
-function unitFrom(record, participant, index, equipment, skills, items, sink) {
+function importBackpack(bag, owner, skills, sink) {
+  const inventory = {};
+  for (const [name, item] of Object.entries(asObject(bag))) {
+    if (item?.类型 !== '消耗品' && item?.kind !== 'consumable') continue;
+    const count = bound(item.数量 ?? item.count, 0, 1e9, 1);
+    if (!count) continue;
+    const id = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
+    const warnings = sink('effect', `/skills/${id}`);
+    const raw = item.effects ?? item.效果;
+    const tags = [].concat(item.tags ?? item.标签 ?? []).join(' ');
+    const range = bound(item.range ?? tags.match(/(?:射程|有效距离)\s*[:：][^\d]*(\d+)/)?.[1], 0, 15, 3);
+    let effects;
+    const entries = Object.entries(asObject(raw));
+    const simple = entries.length === 1 && /^(物理|能量|精神|真实)伤害$/.exec(entries[0][0]);
+    const amount = simple && /^造成\s*(\d+)\s*(?:点)?伤害[。.]?$/.exec(entries[0][1]);
+    if (amount) effects = [{id:`${id}-use`,trigger:'active',target:'hitTarget',effects:[{kind:'damage',damageType:damageAliases.get(simple[1]),flat:bound(amount[1],0,1e9)}]}];
+    else {
+      const notes = [];
+      effects = convertEffects(raw, 'skill', notes, id);
+      for (const note of notes) warnings.push(`背包消耗品「${name}」：${note}`);
+      if (!effects.length && !notes.length) warnings.push(`背包消耗品「${name}」缺少效果：请按名称推定用途、目标和数值，补全可执行效果`);
+    }
+    const target = ['enemy','ally','self','any','cell','corpse'].includes(item.target) ? item.target : 'enemy';
+    const shape = ['circle','line','fan','cone'].includes(item.shape) ? item.shape : 'single';
+    skills[id] = {name:name.slice(0,100),backpackItem:true,ap:1,slot:'action',range,shape,target,effects,
+      ...(item.radius != null && {radius:bound(item.radius,0,6)}), ...(item.width != null && {width:bound(item.width,0,6)})};
+    inventory[id] = count;
+  }
+  return inventory;
+}
+
+function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist) {
   const resourcesSink = sink('resource'), warnings = sink('status');
   const p = participant ?? {};
   const name = text(p.protagonistName || p.name) || sourceName(record, p.id) || `单位 ${index + 1}`;
@@ -568,7 +609,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
     equipment[item.templateId] ??= item.template;
     items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
   }
-  const main = slotItems.find(i => i.template.kind === 'weapon' && ['mainHand', 'twoHands'].includes(i.slot))
+  const main = slotItems.find(i => i.template.kind === 'weapon' && i.template.twoHanded)
+    ?? slotItems.find(i => i.template.kind === 'weapon' && i.slot === 'mainHand')
     ?? slotItems.find(i => i.template.kind === 'weapon' && i.slot !== 'offHand');
   const off = !main?.template.twoHanded && slotItems.find(i => i.slot === 'offHand' && ['weapon', 'consumable'].includes(i.template.kind));
   const shield = !main?.template.twoHanded && slotItems.find(i => i.template.kind === 'shield');
@@ -653,6 +695,10 @@ function unitFrom(record, participant, index, equipment, skills, items, sink) {
   const facing = rawFacing.slice(0, 2).map(n => Math.sign(integer(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
   const unit = { id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: text(p.moraleType) || 'standard' };
+  if (isProtagonist) {
+    const inventory = importBackpack(record.背包, id, skills, sink);
+    if (Object.keys(inventory).length) unit.inventory = inventory;
+  }
   const creatureType = p.creatureType ?? record.creatureType;
   if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text).filter(Boolean).slice(0, 12);
   else if (text(creatureType)) unit.creatureType = text(creatureType).slice(0, 100);
@@ -729,7 +775,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record.__sourceKind?.toLowerCase() ?? 'battle_init';
     if (index < participants.length && !resolved[index] && participant.source) sink(id, 'battle_init', 'state').push(`未找到参战来源：${participant.source}（${participant.name ?? participant.id}）`);
-    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path));
+    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist);
     units[id] = made.unit;
     profiles[id] = made.profile;
     sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist };
