@@ -23,7 +23,11 @@ function tactics(state, actor, action, plan) {
     const sign = enemy ? 1 : (target === actor ? -1.5 : -1.15);
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target.hp ? Math.min(profile.hitChance ?? 1, damage / target.hp) : 0;
-    score += sign * (Math.min(target.hp, damage) + kill * 6);
+    const statusValue = target.statuses ? Object.values(target.statuses).reduce((value, status) => {
+      const control = status.modifiers?.skip || status.modifiers?.root || status.modifiers?.disadvantage;
+      return value + (control ? (enemy ? 8 : -8) : 0) + (status.durationType === 'battle_turns' ? 1 : 0);
+    }, 0) : 0;
+    score += sign * (Math.min(target.hp, damage) + kill * 6 + statusValue);
     if (profile.heal) {
       const healing = (profile.heal[0] + profile.heal[1]) / 2;
       score -= sign * (Math.min(healthGap(target), healing) * .9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target) ? .14 : .34));
@@ -34,6 +38,19 @@ function tactics(state, actor, action, plan) {
     if (!target) continue;
     const sign = target.team === actor.team ? 1 : -1;
     score += sign * (heal * .9 + Math.min(shieldGain, target.maxHp) * .5);
+  }
+  const skill = action.type === 'skill' ? state.skills[action.skillId] : null;
+  const effects = skill ? skill.effects ?? [] : [];
+  for (const effect of effects.flatMap(entry => entry.effects ?? [])) {
+    const target = effect.targetId ? state.units[effect.targetId] : actor;
+    const enemy = target.team !== actor.team;
+    const control = ['grantStatus','modifyStat','removeStatus'].includes(effect.kind) && ['stun','root','freeze','taunt','suppressed'].includes(effect.statusId ?? effect.stat);
+    if (control) score += enemy ? 7 + (target.used.attack ? 2 : 0) : -7;
+    if (effect.kind === 'removeStatus') score += enemy ? -4 : (target.statuses && Object.keys(target.statuses).length ? 8 : 0);
+    if (effect.kind === 'summon' || effect.kind === 'spawnUnit') score += enemy ? 2 : 4;
+  }
+  if (skill?.effects?.some(entry => entry.effects?.some(effect => ['modifyTerrain','setTerrainKind','addCover'].includes(effect.kind)))) {
+    score += Object.values(state.units).some(unit => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
 }

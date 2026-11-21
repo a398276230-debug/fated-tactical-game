@@ -4477,7 +4477,11 @@ var FatedTactical = (() => {
       const sign3 = enemy ? 1 : target2 === actor ? -1.5 : -1.15;
       const damage = profile.expectedDamage ?? 0;
       const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage / target2.hp) : 0;
-      score += sign3 * (Math.min(target2.hp, damage) + kill * 6);
+      const statusValue2 = target2.statuses ? Object.values(target2.statuses).reduce((value, status2) => {
+        const control = status2.modifiers?.skip || status2.modifiers?.root || status2.modifiers?.disadvantage;
+        return value + (control ? enemy ? 8 : -8 : 0) + (status2.durationType === "battle_turns" ? 1 : 0);
+      }, 0) : 0;
+      score += sign3 * (Math.min(target2.hp, damage) + kill * 6 + statusValue2);
       if (profile.heal) {
         const healing = (profile.heal[0] + profile.heal[1]) / 2;
         score -= sign3 * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target2) ? 0.14 : 0.34));
@@ -4488,6 +4492,19 @@ var FatedTactical = (() => {
       if (!target2) continue;
       const sign3 = target2.team === actor.team ? 1 : -1;
       score += sign3 * (heal * 0.9 + Math.min(shieldGain, target2.maxHp) * 0.5);
+    }
+    const skill2 = action.type === "skill" ? state.skills[action.skillId] : null;
+    const effects2 = skill2 ? skill2.effects ?? [] : [];
+    for (const effect of effects2.flatMap((entry) => entry.effects ?? [])) {
+      const target2 = effect.targetId ? state.units[effect.targetId] : actor;
+      const enemy = target2.team !== actor.team;
+      const control = ["grantStatus", "modifyStat", "removeStatus"].includes(effect.kind) && ["stun", "root", "freeze", "taunt", "suppressed"].includes(effect.statusId ?? effect.stat);
+      if (control) score += enemy ? 7 + (target2.used.attack ? 2 : 0) : -7;
+      if (effect.kind === "removeStatus") score += enemy ? -4 : target2.statuses && Object.keys(target2.statuses).length ? 8 : 0;
+      if (effect.kind === "summon" || effect.kind === "spawnUnit") score += enemy ? 2 : 4;
+    }
+    if (skill2?.effects?.some((entry) => entry.effects?.some((effect) => ["modifyTerrain", "setTerrainKind", "addCover"].includes(effect.kind)))) {
+      score += Object.values(state.units).some((unit) => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
     }
     return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * 0.35 - plan.sp * 0.25;
   }
