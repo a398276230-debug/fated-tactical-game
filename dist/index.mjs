@@ -548,10 +548,22 @@ function createEffectEngine(io) {
     if (name === "action" || name === "attack") return unit.used[name] ? 0 : 1;
     return own(unit.resources, name) ?? io.resourcePool(state, unit, name)?.amount ?? 0;
   }
-  function available(state, actor, { expr, key: key4 }) {
+  function usageStatus(state, actor, { expr, key: key4 }) {
     const usage = own(actor.effectUsage, key4);
     const p = expr.params ?? {};
-    return (usage?.count ?? 0) < (p.usesPerBattle ?? (expr.trigger === "on_equip" ? 1 : Infinity)) && (usage == null || state.round - usage.round >= (p.cooldown ?? 0));
+    const limit = p.usesPerBattle === void 0 && expr.trigger === "on_equip" ? 1 : p.usesPerBattle;
+    return {
+      usesLeft: limit == null ? null : Math.max(0, limit - (usage?.count ?? 0)),
+      cooldownRemaining: usage ? Math.max(0, (p.cooldown ?? 0) - (state.round - usage.round)) : 0
+    };
+  }
+  function available(state, actor, entry) {
+    const { usesLeft, cooldownRemaining } = usageStatus(state, actor, entry);
+    return usesLeft !== 0 && cooldownRemaining === 0;
+  }
+  function spendUse(state, actor, { key: key4 }) {
+    const usage = actor.effectUsage ??= {};
+    usage[key4] = { count: (own(usage, key4)?.count ?? 0) + 1, round: state.round };
   }
   function condition3(state, actor, subject3, rule, ctx, entry) {
     if (!rule) return true;
@@ -620,7 +632,7 @@ function createEffectEngine(io) {
       case "distance":
         return !!subject3 && compare2(io.distance(state, actor, subject3), op, value);
       case "usesLeft":
-        return available(state, actor, entry) === (value ?? true);
+        return (ctx.castUses?.has(entry.key) === true || available(state, actor, entry)) === (value ?? true);
       default:
         return false;
     }
@@ -843,7 +855,8 @@ function createEffectEngine(io) {
     return applied;
   }
   function run(state, actor, entry, ctx, seen = /* @__PURE__ */ new Set(), depth = 0) {
-    if (depth > 8 || seen.has(entry.expr.id) || !available(state, actor, entry) || !sourceApplies(entry, ctx)) return false;
+    const prepaid = ctx.castUses?.has(entry.key);
+    if (depth > 8 || seen.has(entry.expr.id) || !prepaid && !available(state, actor, entry) || !sourceApplies(entry, ctx)) return false;
     const { expr, key: key4 } = entry;
     if (![...effectNodes(expr.effects, true)].some((node3) => node3.kind !== "chainEffect")) return false;
     const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((target2) => condition3(state, actor, subject2(actor, target2, ctx), expr.condition, ctx, entry));
@@ -871,9 +884,8 @@ function createEffectEngine(io) {
       applied = executeNodes(state, actor, actor, expr.effects, target2, { ...ctx }, entry, seen, depth) || applied;
     }
     seen.delete(expr.id);
-    if (applied && (expr.params?.usesPerBattle != null || expr.params?.cooldown || expr.trigger === "on_equip")) {
-      const usage = actor.effectUsage ??= {};
-      usage[key4] = { count: (usage[key4]?.count ?? 0) + 1, round: state.round };
+    if (!prepaid && applied && (expr.params?.usesPerBattle != null || expr.params?.cooldown || expr.trigger === "on_equip" && expr.params?.usesPerBattle === void 0)) {
+      spendUse(state, actor, entry);
     }
     return applied;
   }
@@ -938,7 +950,7 @@ function createEffectEngine(io) {
     return factors.filter((n) => !n.additive).reduce((factor, n) => factor * factorOf(n), 1) * Math.max(0, 1 + factors.filter((n) => n.additive).reduce((sum, n) => sum + factorOf(n) - 1, 0));
   }
   const check = (state, actor, key4, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key4] ?? 0 : 0), 0);
-  return { dispatch, stat: stat2, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions: skillExpressions2, available, condition: condition3, changeResource };
+  return { dispatch, stat: stat2, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions: skillExpressions2, available, usageStatus, spendUse, condition: condition3, changeResource };
 }
 
 // src/core/rng.js
@@ -2308,6 +2320,20 @@ function skillExpressions(skill2, id3) {
   if (!skill2?.damageType) return entries2;
   return entries2.map((entry) => ({ ...entry, expr: { ...entry.expr, params: { damageType: skill2.damageType, ...entry.expr.params } } }));
 }
+function castLimits(skill2, id3) {
+  const entries2 = skill2.entry ? [skill2.entry] : dsl.skillExpressions(skill2, id3);
+  return entries2.filter(({ expr }) => ["active", "on_skill_cast"].includes(expr.trigger) && (expr.params?.usesPerBattle != null || expr.params?.cooldown != null));
+}
+function skillAvailability(state, actor, skill2, id3) {
+  const entries2 = castLimits(skill2, id3);
+  let usesLeft = null, cooldownRemaining = 0;
+  for (const entry of entries2) {
+    const status2 = dsl.usageStatus(state, actor, entry);
+    if (status2.usesLeft != null) usesLeft = Math.min(usesLeft ?? Infinity, status2.usesLeft);
+    cooldownRemaining = Math.max(cooldownRemaining, status2.cooldownRemaining);
+  }
+  return { usesLeft, cooldownRemaining };
+}
 function actorCost(template) {
   const cost = template.resourceCost;
   return { hp: cost?.hp ?? 0, mp: cost?.mp ?? template.mp ?? 0, sp: cost?.sp ?? template.sp ?? 0 };
@@ -2665,11 +2691,9 @@ function preview(state, action) {
     if (!(unit.inventory?.[skillId] > 0)) return fail2("\u80CC\u5305\u7269\u54C1\u6570\u91CF\u4E0D\u8DB3");
     if (!skill2.damage && !skill2.heal && !skill2.effects.some((e) => ["active", "on_skill_cast"].includes(e.trigger) && e.effects?.some((n) => n.enabled !== false))) return fail2("\u80CC\u5305\u7269\u54C1\u5C1A\u65E0\u53EF\u6267\u884C\u6548\u679C\uFF0C\u8BF7\u5148\u6807\u51C6\u5316");
   } else if (type === "skill" && (!skill2 || !equipmentSkill && !unit.skills.includes(skillId))) return fail2("\u5355\u4F4D\u6CA1\u6709\u6B64\u6280\u80FD");
-  if (equipmentSkill && !dsl.available(state, unit, equipmentSkill.entry)) return fail2("\u88C5\u5907\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
-  if (skill2 && !equipmentSkill) {
-    const entries2 = dsl.skillExpressions(skill2, skillId);
-    if (entries2.length && entries2.length === skill2.effects.length && !skill2.damage && !skill2.heal && !entries2.some((entry) => dsl.available(state, unit, entry))) return fail2("\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
-  }
+  const availability = skill2 ? skillAvailability(state, unit, skill2, skillId) : {};
+  if (availability.usesLeft === 0) return fail2("\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D", availability);
+  if (availability.cooldownRemaining > 0) return fail2(`\u6280\u80FD\u51B7\u5374\u4E2D\uFF0C\u8FD8\u9700 ${availability.cooldownRemaining} \u8F6E`, availability);
   if (type === "flee" && !atBattleEdge(state, unit)) return fail2("\u987B\u5148\u79FB\u52A8\u5230\u6218\u573A\u8FB9\u754C\u624D\u80FD\u9003\u8DD1");
   const cost = skill2 ?? tableEntry(ACTIONS, type);
   if (!cost) return fail2("\u672A\u77E5\u52A8\u4F5C");
@@ -2685,12 +2709,12 @@ function preview(state, action) {
   const detonate = item?.kind === "barrel";
   const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
   const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? "action" : detonate ? "attack" : cost.slot;
-  const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
+  const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost), ...availability };
   if (type === "end") return common;
   if (type === "end_encounter") return ["spar", "arena"].includes(state.battleType) ? { ...common, name: state.battleType === "spar" ? "\u53EB\u505C\u5207\u78CB\uFF08\u5E73\u5C40\uFF09" : "\u5168\u961F\u8BA4\u8F93" } : fail2("\u672C\u573A\u4E0D\u80FD\u76F4\u63A5\u53EB\u505C\u6216\u8BA4\u8F93");
   if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
   const cannotPay = paymentError(state, unit, ap, slot, cost);
-  if (cannotPay) return fail2(cannotPay, { ap });
+  if (cannotPay) return fail2(cannotPay, { ap, ...availability });
   const center = unplaced ? void 0 : pos(x, y);
   const weapon = weaponInfo(state, unit);
   if (type === "switch_weapon") {
@@ -3224,7 +3248,7 @@ var castSkillScale = (state, actor, template, target2) => Math.max(
   0,
   dsl.stat(state, actor, "skillPower", 1, { target: target2, school: template.school, actionType: "skill" })
 );
-function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
+function applyStrike(state, actor, action, plan, opportunityWeapon = null, castUses) {
   const weapon = opportunityWeapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
   const template = action.type === "shield_bash" ? { name: "\u76FE\u51FB", range: 1, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, effects: shieldBashEffects } : weapon ? weapon.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
   const skillEntries = template.entry ? [template.entry] : skillExpressions(weapon ? null : template, action.skillId);
@@ -3240,6 +3264,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     multipliers,
     skillScale,
     entries: skillEntries,
+    castUses,
     weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
     resourceCost: template.resourceCost?.amount,
     opportunityAttack: Boolean(opportunityWeapon),
@@ -3397,6 +3422,13 @@ function applyAction(state, action) {
   const before = state.logs.length;
   const moving = ["move", "sprint", "disengage"].includes(type);
   const initialCover = moving ? new Set(nearbyCovers(state, actor).map((c) => c.id)) : null;
+  let castUses;
+  if (type === "skill") {
+    const skill2 = tableEntry(state.skills, skillId) ?? new Map(equippedActiveSkills(state, actor)).get(skillId);
+    const limits = castLimits(skill2, skillId);
+    castUses = new Set(limits.map((entry) => entry.key));
+    for (const entry of limits) dsl.spendUse(state, actor, entry);
+  }
   if (type !== "end") {
     actor.ap -= plan.ap;
     const costSource = plan.name ?? movementNames[type] ?? type;
@@ -3471,7 +3503,7 @@ function applyAction(state, action) {
       }
     case "skill":
     case "shield_bash":
-      applyStrike(state, actor, { type, skillId }, plan);
+      applyStrike(state, actor, { type, skillId }, plan, null, castUses);
       break;
     case "end_encounter": {
       concludeObjective(state, state.battleType === "spar" ? "draw" : actor.team === "blue" ? "red" : "blue", state.battleType === "spar" ? "\u53CC\u65B9\u70B9\u5230\u4E3A\u6B62" : `${actor.name}\u4EE3\u8868\u672C\u961F\u8BA4\u8F93`);
@@ -5251,7 +5283,10 @@ function createGameAPI() {
       const s = current();
       if (!own4(s.units, unitId)) return null;
       const unit = s.units[unitId];
-      return copy({ ...unit, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id3, i, all) => all.indexOf(id3) === i).map((id3) => ({
+      const skills = [...unit.skills, ...Object.keys(unit.inventory ?? {}).filter((id3) => s.skills[id3]?.backpackItem)];
+      const templates = [...skills.map((id3) => [id3, s.skills[id3]]), ...equippedActiveSkills(s, unit)];
+      const skillUsage = Object.fromEntries(templates.filter(([, template]) => template).map(([id3, template]) => [id3, skillAvailability(s, unit, template, id3)]));
+      return copy({ ...unit, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id3, i, all) => all.indexOf(id3) === i).map((id3) => ({
         ...s.items[id3],
         template: s.equipment[s.items[id3].templateId]
       })) });
@@ -7280,7 +7315,7 @@ ${height2}\uFF0C${sight}`;
     const bonus = $("bonus-dice-select");
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [];
-    const add = (type, skill2, itemId) => {
+    const add = (type, skill2, itemId, skillName) => {
       const command = {
         type,
         ...TARGETLESS.includes(type) ? {} : at,
@@ -7289,15 +7324,19 @@ ${height2}\uFF0C${sight}`;
         ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
       };
       const plan = game.previewAction(command);
-      if ((plan.ok || type === "flee" && plan.error?.includes("\u8FB9\u754C")) && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill2 || itemId || plan.interactiveId || type === "end_encounter" ? plan.name : ACTION_LABELS[type] });
+      const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
+      if ((plan.ok || limited || type === "flee" && plan.error?.includes("\u8FB9\u754C")) && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) {
+        const label = skillName ?? (skill2 || itemId || plan.interactiveId || type === "end_encounter" ? plan.name : ACTION_LABELS[type]);
+        options.push({ command, plan, label });
+      }
     };
     if (canAct) {
       if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
       else for (const t of [sprint ? "sprint" : "move", "disengage", "attack", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add("switch_weapon", null, itemId);
       add("interact");
-      for (const skill2 of actor.skills) add("skill", skill2);
-      for (const [skill2] of equippedActiveSkills(state, actor)) add("skill", skill2);
+      for (const skill2 of actor.skills) add("skill", skill2, void 0, state.skills[skill2]?.name);
+      for (const [skill2, template] of equippedActiveSkills(state, actor)) add("skill", skill2, void 0, template.name);
       if (self) {
         for (const [skillId, count] of Object.entries(actor.inventory ?? {})) {
           const item = state.skills[skillId];
@@ -7326,7 +7365,7 @@ ${height2}\uFF0C${sight}`;
       const cost = [plan.ap ? `${plan.ap} AP` : "", plan.mp ? `${plan.mp} MP` : "", plan.sp ? `${plan.sp} SP` : ""].filter(Boolean).join(" \xB7 ");
       const odds = plan.targets?.[0]?.hitChance;
       const note = [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `\u547D\u4E2D ${Math.round(odds * 100)}%` : "", plan.opportunities?.length ? "\u26A0 \u4F1A\u88AB\u501F\u673A" : ""].filter(Boolean).join(" \xB7 ");
-      button.append(label);
+      button.append(Number.isFinite(plan.usesLeft) ? `${label}\uFF08\u5269\u4F59 ${plan.usesLeft} \u6B21\uFF09` : label);
       const small = document2.createElement("small");
       small.textContent = note || ACTION_HINTS[command.type] || "";
       if (small.textContent) button.append(small);
@@ -9609,6 +9648,7 @@ function convertEffects(effects2, context, warnings, prefix) {
   if (object3(effects2) && !["trigger", "kind", "type", "effect", "name", "\u7C7B\u578B"].some((key4) => own5(effects2, key4))) {
     input = Object.entries(effects2).flatMap(([kind, value]) => {
       if (!object3(value) && emptyEntry(value)) return [];
+      if (isExpression(value)) return [{ ...value, id: value.id ?? (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(kind) ? kind : `${prefix}-${hash(kind).toString(36)}`) }];
       if (object3(value)) return [{ kind, ...value }];
       warnings.push(`\u4E0D\u652F\u6301\u7684\u63CF\u8FF0\u6027\u6548\u679C\u5DF2\u5FFD\u7565\uFF1A${kind}${text2(value) ? `\uFF1A${text2(value)}` : ""}`);
       return [];
@@ -10693,7 +10733,7 @@ remainingTurns \u4EE5\u5355\u4F4D\u56DE\u5408\u7ED3\u675F\u9012\u51CF\uFF0C\u770
 \u88C5\u5907\u4E0E\u6280\u80FD effects \u90FD\u662F\u8868\u8FBE\u5F0F\u6570\u7EC4\uFF080\u202624 \u9879\uFF09\u3002\u6BCF\u6761\u8868\u8FBE\u5F0F\u4F7F\u7528\u6218\u5C40\u5185\u552F\u4E00 id\uFF0Clabel \u662F\u754C\u9762\u663E\u793A\u540D\u3002\u5916\u5C42\u6CA1\u6709 kind\uFF0C\u5185\u5C42\u8282\u70B9\u5FC5\u987B\u6709 kind\u3002\u4E94\u6BB5\u5199\u6CD5\uFF1AWHEN(trigger) \u2192 IF(condition\uFF0C\u53EF\u7701) \u2192 ROLL(\u53EF\u7701) \u2192 TARGET(target) \u2192 DO(effects)\uFF0CWITH \u4EE5\u8282\u70B9\u5B57\u6BB5\u6216\u5171\u4EAB params \u8868\u8FBE\u3002\u8282\u70B9\u540C\u540D\u5B57\u6BB5\u8986\u76D6 params\u3002\u9664\u8868\u4E2D\u58F0\u660E\u5B57\u6BB5\u5916\u4E0D\u5141\u8BB8\u989D\u5916\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\u3002
 \u8868\u8FBE\u5F0F\u5B57\u6BB5\uFF1A${fields2(expression2)}\u3002
 
-WHEN\uFF1Apassive \u6301\u7EED\u8BFB\u53D6\uFF0C\u5E38\u9A7B\u4FEE\u6B63\u7528 self \u4E14\u7701\u7565 roll\u3002on_attack \u4E3A\u6B66\u5668\u51FA\u624B\u3001\u547D\u4E2D\u524D\u3002on_hit \u4E3A\u5224\u5B9A\u547D\u4E2D\u540E\uFF0C\u5BF9\u5B9E\u9645\u627F\u4F24\u8005\u89E6\u53D1\uFF0C\u82E5\u4E0D\u5E0C\u671B\u8C41\u514D\u6210\u529F\u65F6\u89E6\u53D1\u5219\u52A0 saved=false\u3002on_damaged \u4E3A\u5B9E\u9645\u6263\u8840\u540E\uFF0C\u53EF\u8BFB attacker\u3001\u4F24\u5BB3\u91CF\u548C melee \u7B49\u6807\u7B7E\u3002on_kill \u4E3A\u51FB\u5012\u654C\u4EBA\uFF0Con_death \u4E3A\u81EA\u8EAB\u6B7B\u4EA1\uFF0Con_ally_death \u4E3A\u961F\u53CB\u6B7B\u4EA1\uFF08\u4E8B\u4EF6\u76EE\u6807\u4E3A\u5012\u4E0B\u7684\u961F\u53CB\uFF09\u3002on_turn_start / on_turn_end \u5BF9\u5E94\u81EA\u8EAB\u56DE\u5408\u3002on_skill_cast \u4E3A\u6280\u80FD\u91CA\u653E\uFF0C\u7ED3\u7B97\u4E3B\u51FB\u524D\u3002on_equip \u88C5\u5907\u540C\u6B65\u65F6\u89E6\u53D1\uFF0C\u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\u3002on_heal \u4E3A\u53D1\u51FA\u6CBB\u7597\u540E\uFF0C\u53EF\u8BFB\u6CBB\u7597\u91CF\u3002active \u4E3A\u6280\u80FD\u4E3B\u52A8\u53D1\u52A8\uFF0C\u5199\u5728\u88C5\u5907\u4E0A\u65F6\u72EC\u7ACB\u751F\u6210\u6309\u94AE\uFF0C\u9ED8\u8BA4 1AP \u548C action \u69FD\u3002usesPerBattle \u53EF\u7528 null \u8868\u793A\u65E0\u663E\u5F0F\u4E0A\u9650\uFF0Ccooldown \u4EE5\u6218\u6597\u8F6E\u8BA1\u3002params.source=weapon \u8868\u793A\u53EA\u5728\u672C\u6B21\u4F7F\u7528\u8BE5\u88C5\u5907\u5B9E\u4F8B\u65F6\u751F\u6548\u3002
+WHEN\uFF1Apassive \u6301\u7EED\u8BFB\u53D6\uFF0C\u5E38\u9A7B\u4FEE\u6B63\u7528 self \u4E14\u7701\u7565 roll\u3002on_attack \u4E3A\u6B66\u5668\u51FA\u624B\u3001\u547D\u4E2D\u524D\u3002on_hit \u4E3A\u5224\u5B9A\u547D\u4E2D\u540E\uFF0C\u5BF9\u5B9E\u9645\u627F\u4F24\u8005\u89E6\u53D1\uFF0C\u82E5\u4E0D\u5E0C\u671B\u8C41\u514D\u6210\u529F\u65F6\u89E6\u53D1\u5219\u52A0 saved=false\u3002on_damaged \u4E3A\u5B9E\u9645\u6263\u8840\u540E\uFF0C\u53EF\u8BFB attacker\u3001\u4F24\u5BB3\u91CF\u548C melee \u7B49\u6807\u7B7E\u3002on_kill \u4E3A\u51FB\u5012\u654C\u4EBA\uFF0Con_death \u4E3A\u81EA\u8EAB\u6B7B\u4EA1\uFF0Con_ally_death \u4E3A\u961F\u53CB\u6B7B\u4EA1\uFF08\u4E8B\u4EF6\u76EE\u6807\u4E3A\u5012\u4E0B\u7684\u961F\u53CB\uFF09\u3002on_turn_start / on_turn_end \u5BF9\u5E94\u81EA\u8EAB\u56DE\u5408\u3002on_skill_cast \u4E3A\u6280\u80FD\u91CA\u653E\uFF0C\u7ED3\u7B97\u4E3B\u51FB\u524D\u3002on_equip \u88C5\u5907\u540C\u6B65\u65F6\u89E6\u53D1\uFF0C\u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\u3002on_heal \u4E3A\u53D1\u51FA\u6CBB\u7597\u540E\uFF0C\u53EF\u8BFB\u6CBB\u7597\u91CF\u3002active \u4E3A\u6280\u80FD\u4E3B\u52A8\u53D1\u52A8\uFF0C\u5199\u5728\u88C5\u5907\u4E0A\u65F6\u72EC\u7ACB\u751F\u6210\u6309\u94AE\uFF0C\u9ED8\u8BA4 1AP \u548C action \u69FD\u3002\u6280\u80FD\u7684 active / on_skill_cast \u8868\u8FBE\u5F0F\u58F0\u660E params.usesPerBattle \u6216 cooldown \u65F6\u9650\u5236\u6574\u62DB\uFF0C\u5408\u6CD5\u65BD\u653E\u5373\u6263\u4E00\u6B21\uFF0C\u5931\u624B\u3001\u8C41\u514D\u6216\u7A7A\u653E\u4E5F\u8BA1\u6570\uFF1B\u88C5\u5907\u751F\u6210\u7684 active \u6280\u80FD\u540C\u7406\u3002\u53EA\u9650\u5236\u547D\u4E2D\u8FFD\u52A0\u6548\u679C\u65F6\u5728 on_hit \u8868\u8FBE\u5F0F\u58F0\u660E\uFF0C\u5B9E\u9645\u751F\u6548\u624D\u8BA1\u6570\u3002usesPerBattle:null \u8868\u793A\u4E0D\u9650\u6B21\u6570\uFF08\u4E5F\u8986\u76D6 on_equip \u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\uFF09\uFF0Ccooldown \u4EE5\u6218\u6597\u8F6E\u8BA1\u3002params.source=weapon \u8868\u793A\u53EA\u5728\u672C\u6B21\u4F7F\u7528\u8BE5\u88C5\u5907\u5B9E\u4F8B\u65F6\u751F\u6548\u3002
 
 IF\uFF1A\u6570\u7EC4\u7B49\u4EF7\u4E8E AND\uFF0Cor \u4EFB\u4E00\u6210\u7ACB\u3001not \u53D6\u53CD\u3002self \u4E3A\u53D7\u76CA\u8005\u65F6\uFF0C\u76EE\u6807\u6761\u4EF6\u4F18\u5148\u68C0\u67E5\u5F53\u524D\u653B\u51FB\u6216\u6280\u80FD\u5BF9\u8C61\u3002targetHasCategory \u7684 negative \u6307 debuff/dot/control\uFF0Cnone \u6307\u65E0\u4E09\u7C7B\u8D1F\u9762\u72B6\u6001\u3002timeOfDay \u6765\u81EA <tp>\uFF0CtargetLevel \u4E0E\u81EA\u8EAB\u6BD4\u8F83\u3002\u5E03\u5C14\u6761\u4EF6\u7701\u7565 value \u7B49\u540C true\u3002weaponType\u3001skillSchool\u3001\u6807\u7B7E\u53CA\u7269\u79CD\u5B57\u7B26\u4E32\u4E0E\u5FEB\u7167\u4E00\u81F4\u3002
 \u2022 ${condition2.oneOf.map((rule) => rule.type === "array" ? describe(rule) : `${rule.properties.type.const} ${fields2(rule, ["type"])}`).join("\n\u2022 ")}
@@ -12239,7 +12279,7 @@ function fingerprintAt(state, path) {
   return JSON.stringify(value);
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.2.11";
+var TAVERN_VERSION = "0.2.12";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",

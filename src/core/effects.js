@@ -119,11 +119,22 @@ export function createEffectEngine(io) {
     if (name === 'action' || name === 'attack') return unit.used[name] ? 0 : 1;
     return own(unit.resources, name) ?? io.resourcePool(state, unit, name)?.amount ?? 0;
   }
-  function available(state, actor, { expr, key }) {
+  function usageStatus(state, actor, { expr, key }) {
     const usage = own(actor.effectUsage, key);
     const p = expr.params ?? {};
-    return (usage?.count ?? 0) < (p.usesPerBattle ?? (expr.trigger === 'on_equip' ? 1 : Infinity))
-      && (usage == null || state.round - usage.round >= (p.cooldown ?? 0));
+    const limit = p.usesPerBattle === undefined && expr.trigger === 'on_equip' ? 1 : p.usesPerBattle;
+    return {
+      usesLeft: limit == null ? null : Math.max(0, limit - (usage?.count ?? 0)),
+      cooldownRemaining: usage ? Math.max(0, (p.cooldown ?? 0) - (state.round - usage.round)) : 0,
+    };
+  }
+  function available(state, actor, entry) {
+    const { usesLeft, cooldownRemaining } = usageStatus(state, actor, entry);
+    return usesLeft !== 0 && cooldownRemaining === 0;
+  }
+  function spendUse(state, actor, { key }) {
+    const usage = actor.effectUsage ??= {};
+    usage[key] = { count: (own(usage, key)?.count ?? 0) + 1, round: state.round };
   }
   function condition(state, actor, subject, rule, ctx, entry) {
     if (!rule) return true;
@@ -161,7 +172,7 @@ export function createEffectEngine(io) {
       case 'intercepting': case 'melee': case 'arrow': case 'backstab': case 'critical':
       case 'opportunityAttack': case 'saved': case 'reaction': case 'highGround': return Boolean(ctx[type]) === (value ?? true);
       case 'distance': return !!subject && compare(io.distance(state, actor, subject), op, value);
-      case 'usesLeft': return available(state, actor, entry) === (value ?? true);
+      case 'usesLeft': return (ctx.castUses?.has(entry.key) === true || available(state, actor, entry)) === (value ?? true);
       default: return false;
     }
   }
@@ -327,7 +338,8 @@ export function createEffectEngine(io) {
     return applied;
   }
   function run(state, actor, entry, ctx, seen = new Set(), depth = 0) {
-    if (depth > 8 || seen.has(entry.expr.id) || !available(state, actor, entry) || !sourceApplies(entry, ctx)) return false;
+    const prepaid = ctx.castUses?.has(entry.key);
+    if (depth > 8 || seen.has(entry.expr.id) || (!prepaid && !available(state, actor, entry)) || !sourceApplies(entry, ctx)) return false;
     const { expr, key } = entry;
     if (![...effectNodes(expr.effects, true)].some(node => node.kind !== 'chainEffect')) return false;
     const eligible = targets(state, actor, expr.target, ctx, expr.params?.radius ?? 1)
@@ -356,9 +368,8 @@ export function createEffectEngine(io) {
       applied = executeNodes(state, actor, actor, expr.effects, target, { ...ctx }, entry, seen, depth) || applied;
     }
     seen.delete(expr.id);
-    if (applied && (expr.params?.usesPerBattle != null || expr.params?.cooldown || expr.trigger === 'on_equip')) {
-      const usage = actor.effectUsage ??= {};
-      usage[key] = { count: (usage[key]?.count ?? 0) + 1, round: state.round };
+    if (!prepaid && applied && (expr.params?.usesPerBattle != null || expr.params?.cooldown || (expr.trigger === 'on_equip' && expr.params?.usesPerBattle === undefined))) {
+      spendUse(state, actor, entry);
     }
     return applied;
   }
@@ -424,5 +435,5 @@ export function createEffectEngine(io) {
   }
   const check = (state, actor, key, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries)
     .reduce((sum, n) => sum + (n.kind === 'modifyCheck' ? n[key] ?? 0 : 0), 0);
-  return { dispatch, stat, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions, available, condition, changeResource };
+  return { dispatch, stat, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions, available, usageStatus, spendUse, condition, changeResource };
 }

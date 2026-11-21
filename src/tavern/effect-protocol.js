@@ -25,7 +25,7 @@ remainingTurns 以单位回合结束递减，省略为 1，persistent:true 在�
 装备与技能 effects 都是表达式数组（0…24 项）。每条表达式使用战局内唯一 id，label 是界面显示名。外层没有 kind，内层节点必须有 kind。五段写法：WHEN(trigger) → IF(condition，可省) → ROLL(可省) → TARGET(target) → DO(effects)，WITH 以节点字段或共享 params 表达。节点同名字段覆盖 params。除表中声明字段外不允许额外字段，? 表示可省。
 表达式字段：${fields(expression)}。
 
-WHEN：passive 持续读取，常驻修正用 self 且省略 roll。on_attack 为武器出手、命中前。on_hit 为判定命中后，对实际承伤者触发，若不希望豁免成功时触发则加 saved=false。on_damaged 为实际扣血后，可读 attacker、伤害量和 melee 等标签。on_kill 为击倒敌人，on_death 为自身死亡，on_ally_death 为队友死亡（事件目标为倒下的队友）。on_turn_start / on_turn_end 对应自身回合。on_skill_cast 为技能释放，结算主击前。on_equip 装备同步时触发，默认每战一次。on_heal 为发出治疗后，可读治疗量。active 为技能主动发动，写在装备上时独立生成按钮，默认 1AP 和 action 槽。usesPerBattle 可用 null 表示无显式上限，cooldown 以战斗轮计。params.source=weapon 表示只在本次使用该装备实例时生效。
+WHEN：passive 持续读取，常驻修正用 self 且省略 roll。on_attack 为武器出手、命中前。on_hit 为判定命中后，对实际承伤者触发，若不希望豁免成功时触发则加 saved=false。on_damaged 为实际扣血后，可读 attacker、伤害量和 melee 等标签。on_kill 为击倒敌人，on_death 为自身死亡，on_ally_death 为队友死亡（事件目标为倒下的队友）。on_turn_start / on_turn_end 对应自身回合。on_skill_cast 为技能释放，结算主击前。on_equip 装备同步时触发，默认每战一次。on_heal 为发出治疗后，可读治疗量。active 为技能主动发动，写在装备上时独立生成按钮，默认 1AP 和 action 槽。技能的 active / on_skill_cast 表达式声明 params.usesPerBattle 或 cooldown 时限制整招，合法施放即扣一次，失手、豁免或空放也计数；装备生成的 active 技能同理。只限制命中追加效果时在 on_hit 表达式声明，实际生效才计数。usesPerBattle:null 表示不限次数（也覆盖 on_equip 默认每战一次），cooldown 以战斗轮计。params.source=weapon 表示只在本次使用该装备实例时生效。
 
 IF：数组等价于 AND，or 任一成立、not 取反。self 为受益者时，目标条件优先检查当前攻击或技能对象。targetHasCategory 的 negative 指 debuff/dot/control，none 指无三类负面状态。timeOfDay 来自 <tp>，targetLevel 与自身比较。布尔条件省略 value 等同 true。weaponType、skillSchool、标签及物种字符串与快照一致。
 • ${condition.oneOf.map(rule => rule.type === 'array' ? describe(rule) : `${rule.properties.type.const} ${fields(rule, ['type'])}`).join('\n• ')}

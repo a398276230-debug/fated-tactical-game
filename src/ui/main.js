@@ -339,19 +339,23 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [];
-    const add = (type, skill, itemId) => {
+    const add = (type, skill, itemId, skillName) => {
       const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
-      if ((plan.ok || (type === 'flee' && plan.error?.includes('边界'))) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill || itemId || plan.interactiveId || type === 'end_encounter' ? plan.name : ACTION_LABELS[type] });
+      const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
+      if ((plan.ok || limited || (type === 'flee' && plan.error?.includes('边界'))) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) {
+        const label = skillName ?? (skill || itemId || plan.interactiveId || type === 'end_encounter' ? plan.name : ACTION_LABELS[type]);
+        options.push({ command, plan, label });
+      }
     };
     if (canAct) {
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
       else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add('switch_weapon', null, itemId);
       add('interact');
-      for (const skill of actor.skills) add('skill', skill);
-      for (const [skill] of equippedActiveSkills(state, actor)) add('skill', skill);
+      for (const skill of actor.skills) add('skill', skill, undefined, state.skills[skill]?.name);
+      for (const [skill, template] of equippedActiveSkills(state, actor)) add('skill', skill, undefined, template.name);
       if (self) {
         for (const [skillId, count] of Object.entries(actor.inventory ?? {})) {
           const item = state.skills[skillId];
@@ -378,7 +382,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const cost = [plan.ap ? `${plan.ap} AP` : '', plan.mp ? `${plan.mp} MP` : '', plan.sp ? `${plan.sp} SP` : ''].filter(Boolean).join(' · ');
       const odds = plan.targets?.[0]?.hitChance;
       const note = [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `命中 ${Math.round(odds * 100)}%` : '', plan.opportunities?.length ? '⚠ 会被借机' : ''].filter(Boolean).join(' · ');
-      button.append(label);
+      button.append(Number.isFinite(plan.usesLeft) ? `${label}（剩余 ${plan.usesLeft} 次）` : label);
       const small = document.createElement('small');
       small.textContent = note || ACTION_HINTS[command.type] || '';
       if (small.textContent) button.append(small);

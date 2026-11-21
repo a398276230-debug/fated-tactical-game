@@ -474,7 +474,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const requestsBeforeHydrate = await run('hostRequests.length');
   await run(`for (const id of ['p1','e1']) [...document.querySelectorAll('.fated-instance[data-unit-id="'+id+'"] button')].find(b=>b.textContent==='删除').click()`);
   assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 0);
-  await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',effects:[{id:'heal_self',trigger:'active',target:'self',effects:[{kind:'heal',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
+  await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',effects:[{id:'heal_self',trigger:'active',target:'self',params:{usesPerBattle:1},effects:[{kind:'heal',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
   await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
   const raw = await tavernState();
   assert.equal(raw.units.p1.hp, 245);
@@ -487,11 +487,15 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
   const bagId = Object.keys(raw.units.p1.inventory)[0];
   assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`),false,await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.title`));
+  assert.match(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.textContent`), /剩余 1 次/);
   await click(`#target-actions [data-skill-id="${bagId}"]`);
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
   assert.equal((await tavernState()).units.p1.inventory[bagId],3);
   await click('#confirm-action');
   assert.equal((await tavernState()).units.p1.inventory[bagId],2);
+  await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
+  assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`), true);
+  assert.match(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.textContent`), /剩余 0 次.*次数已用尽/);
   await run(`${get('#sandbox-undo')}.click()`);
   assert.equal((await tavernState()).units.p1.inventory[bagId],3);
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);

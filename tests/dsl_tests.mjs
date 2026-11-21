@@ -1,10 +1,10 @@
 import { expression as fx } from '../src/core/effects.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyAction, corpses, currentUnit, equippedActiveSkills, grantStatus, living, preview } from '../src/core/combat.js';
+import { applyAction, corpses, currentUnit, equippedActiveSkills, grantStatus, living, preview, syncEquipmentEffects } from '../src/core/combat.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { validateState } from '../src/api/validation.js';
-import { hydrateFromSources } from '../src/tavern/converter.js';
+import { hydrateFromSources, mapEffects } from '../src/tavern/converter.js';
 import { parseBattleTime } from '../src/core/battle_time.js';
 
 const expr = (id, trigger, target, effects, extra = {}) => ({ id, trigger, target, effects, ...extra });
@@ -17,6 +17,64 @@ function setup(effects = []) {
   Object.assign(enemy, { hp: 1000, maxHp: 1000, nonLethal: false });
   return { state, actor, enemy, weapon };
 }
+
+test('主动限次技能即使满血空放也消耗次数，并限制基础治疗', () => {
+  const {state, actor} = setup();
+  actor.hp = actor.maxHp;
+  actor.skills.push('limited');
+  state.skills.limited = { name:'限次试验', ap:1, slot:'action', range:0, shape:'single', target:'self',
+    heal:{count:1,sides:4}, effects:[expr('once','active','self',[{kind:'heal',amount:5}],{params:{usesPerBattle:1}})] };
+  const cast = {type:'skill',skillId:'limited',x:actor.x,y:actor.y};
+  applyAction(state,cast);
+  actor.ap=2; actor.used={action:0,attack:0};
+  assert.match(preview(state,cast).error ?? '', /次数已用尽/);
+});
+
+test('基础伤害技能的冷却和次数在概率效果落空时也照常结算', () => {
+  const {state, actor, enemy} = setup();
+  actor.skills.push('limited');
+  state.skills.limited = { name:'限次攻击', ap:1, slot:'attack', range:3, shape:'single', target:'enemy',
+    damage:{count:1,sides:4,stat:'str',type:'true'},
+    effects:[expr('once','active','hitTarget',[{kind:'damage',flat:5}],{roll:{chance:0},params:{usesPerBattle:2,cooldown:2}})] };
+  const cast = {...strike,type:'skill',skillId:'limited'};
+  assert.equal(preview(state,cast).usesLeft,2);
+  assert.equal(preview(state,{...cast,x:actor.x,y:actor.y}).ok,false);
+  assert.equal(actor.effectUsage,undefined);
+  applyAction(state,cast);
+  assert.deepEqual(actor.effectUsage['skill-limited:once'],{count:1,round:1});
+  const cooling = preview(state,cast);
+  assert.equal(cooling.ok,false);
+  assert.equal(cooling.usesLeft,1);
+  assert.equal(cooling.cooldownRemaining,2);
+  state.round+=2; actor.ap=2; actor.used={action:0,attack:0};
+  assert.equal(preview(state,cast).ok,true);
+  applyAction(state,cast);
+  assert.equal(preview(state,cast).usesLeft,0);
+  assert.ok(enemy.hp>0);
+  validateState(state);
+});
+
+test('按名称映射的效果对象保留主动表达式和次数限制', () => {
+  const effect = { trigger:'active', target:'self', params:{usesPerBattle:3}, effects:[{kind:'heal',amount:5}] };
+  const warnings = [];
+  const [mapped] = mapEffects({突进:effect}, 'skill', warnings);
+  assert.deepEqual(warnings, []);
+  const {id, ...body} = mapped;
+  assert.deepEqual(body, effect);
+  assert.equal(mapEffects({突进:effect})[0].id, id);
+  assert.equal(mapEffects({dash:{...effect,id:'explicit'}})[0].id,'explicit');
+});
+
+test('on_equip 缺省每战一次，显式 null 允许再次触发', () => {
+  for (const [params, expected] of [[{},1],[{usesPerBattle:null},2]]) {
+    const {state, actor} = setup([expr('equip','on_equip','self',[{kind:'heal',amount:1}],{params})]);
+    actor.hp=actor.maxHp-3;
+    const hp=actor.hp;
+    syncEquipmentEffects(state);
+    syncEquipmentEffects(state);
+    assert.equal(actor.hp-hp,expected);
+  }
+});
 
 test('G55/G56 death, corpse isolation and resurrection', () => {
   const { state, actor, enemy } = setup();
@@ -77,10 +135,11 @@ test('DSL area resolves each affected unit once and applies school scaling', () 
   state.units[second.id] = second;
   state.order.push(second.id);
   state.grid[second.y][second.x] = { kind: 'floor', z: 0 };
-  state.skills.area_test = { name: '范围测试', school: 'divine', ap: 1, slot: 'action', range: 3, shape: 'circle', radius: 1, target: 'enemy', effects: [expr('area_damage', 'active', 'enemiesInRadius', [{ kind: 'damage', target: 'enemiesInRadius', amount: 100 }])] };
+  state.skills.area_test = { name: '范围测试', school: 'divine', ap: 1, slot: 'action', range: 3, shape: 'circle', radius: 1, target: 'enemy', effects: [expr('area_damage', 'active', 'hitTarget', [{ kind: 'damage', amount: 100 }], { params: { usesPerBattle: 1 } })] };
   actor.skills.push('area_test');
   const hits = applyAction(state, { ...strike, type: 'skill', skillId: 'area_test' }).filter(log => log.detail.effectId === 'area_damage');
   assert.deepEqual(hits.map(log => [log.detail.targetId, log.detail.amount]).sort(), [[enemy.id, 120], [second.id, 120]].sort());
+  assert.equal(actor.effectUsage['skill-area_test:area_damage'].count, 1);
 });
 
 test('DSL active damage is included in skill preview and matches execution', () => {

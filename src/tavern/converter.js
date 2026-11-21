@@ -291,6 +291,7 @@ function convertEffects(effects, context, warnings, prefix) {
   if (object(effects) && !['trigger','kind','type','effect','name','类型'].some(key => own(effects, key))) {
     input = Object.entries(effects).flatMap(([kind, value]) => {
       if (!object(value) && emptyEntry(value)) return [];
+      if (isExpression(value)) return [{ ...value, id: value.id ?? (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(kind) ? kind : `${prefix}-${hash(kind).toString(36)}`) }];
       if (object(value)) return [{ kind, ...value }];
       warnings.push(`不支持的描述性效果已忽略：${kind}${text(value) ? `：${text(value)}` : ''}`);
       return [];

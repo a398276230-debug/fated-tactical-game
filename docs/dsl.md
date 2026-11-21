@@ -81,7 +81,7 @@
 
 `dc` 与技能 `saveDC` 同一规则：`1…50` 整数，或 `{base, scaleBy:{stat,perUnit}, min?, max?}`；运行时 `clamp(base + perUnit × 施术者当前生效属性, min??1, max??50)`。
 `chance` 在豁免/对抗形式中作为前置概率门，两者可同时给出。
-未命中、豁免成功、概率失败都不消耗 `usesPerBattle`。
+技能 `active` / `on_skill_cast` 表达式和装备主动技能可限制整招。合法施放扣一次，失手、豁免成功或空放也计数。多个施放限制同时生效，每次范围施放只扣一次。`on_hit` 等事件表达式按实际生效计数。`cooldown` 以战斗轮计，`usesPerBattle: null` 表示不限次数，也覆盖 `on_equip` 的默认每战一次。
 
 ---
 

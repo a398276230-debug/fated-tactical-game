@@ -3,7 +3,7 @@ import { migrateStateEffects } from '../core/effects.js';
 import { buildScenario } from '../presets/scenarios.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
-import { applyAction, currentUnit, preview, refreshOutcome, settleTurn, STATUSES, statusModifierKeys, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
+import { applyAction, currentUnit, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, statusModifierKeys, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
 import { chooseAction } from '../core/ai.js';
 import { applyCommand } from './commands.js';
 import { validateState } from './validation.js';
@@ -242,7 +242,10 @@ export function createGameAPI() {
       const s = current();
       if (!own(s.units, unitId)) return null;
       const unit = s.units[unitId];
-      return copy({ ...unit, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id, i, all) => all.indexOf(id) === i).map(id => ({
+      const skills = [...unit.skills, ...Object.keys(unit.inventory ?? {}).filter(id => s.skills[id]?.backpackItem)];
+      const templates = [...skills.map(id => [id, s.skills[id]]), ...equippedActiveSkills(s, unit)];
+      const skillUsage = Object.fromEntries(templates.filter(([, template]) => template).map(([id, template]) => [id, skillAvailability(s, unit, template, id)]));
+      return copy({ ...unit, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id, i, all) => all.indexOf(id) === i).map(id => ({
         ...s.items[id], template: s.equipment[s.items[id].templateId],
       })) });
     },

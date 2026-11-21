@@ -745,6 +745,21 @@ function skillExpressions(skill, id) {
   if (!skill?.damageType) return entries;
   return entries.map(entry => ({ ...entry, expr: { ...entry.expr, params: {damageType:skill.damageType, ...entry.expr.params} } }));
 }
+function castLimits(skill, id) {
+  const entries = skill.entry ? [skill.entry] : dsl.skillExpressions(skill, id);
+  return entries.filter(({expr}) => ['active', 'on_skill_cast'].includes(expr.trigger)
+    && (expr.params?.usesPerBattle != null || expr.params?.cooldown != null));
+}
+export function skillAvailability(state, actor, skill, id) {
+  const entries = castLimits(skill, id);
+  let usesLeft = null, cooldownRemaining = 0;
+  for (const entry of entries) {
+    const status = dsl.usageStatus(state, actor, entry);
+    if (status.usesLeft != null) usesLeft = Math.min(usesLeft ?? Infinity, status.usesLeft);
+    cooldownRemaining = Math.max(cooldownRemaining, status.cooldownRemaining);
+  }
+  return { usesLeft, cooldownRemaining };
+}
 function actorCost(template) {
   const cost = template.resourceCost;
   return { hp: cost?.hp ?? 0, mp: cost?.mp ?? template.mp ?? 0, sp: cost?.sp ?? template.sp ?? 0 };
@@ -1067,12 +1082,9 @@ export function preview(state, action) {
     if (!(unit.inventory?.[skillId] > 0)) return fail('背包物品数量不足');
     if (!skill.damage && !skill.heal && !skill.effects.some(e => ['active','on_skill_cast'].includes(e.trigger) && e.effects?.some(n => n.enabled !== false))) return fail('背包物品尚无可执行效果，请先标准化');
   } else if (type === 'skill' && (!skill || (!equipmentSkill && !unit.skills.includes(skillId)))) return fail('单位没有此技能');
-  if (equipmentSkill && !dsl.available(state, unit, equipmentSkill.entry)) return fail('装备技能次数已用尽或冷却中');
-  if (skill && !equipmentSkill) {
-    const entries = dsl.skillExpressions(skill, skillId);
-    if (entries.length && entries.length === skill.effects.length && !skill.damage && !skill.heal
-      && !entries.some(entry => dsl.available(state, unit, entry))) return fail('技能次数已用尽或冷却中');
-  }
+  const availability = skill ? skillAvailability(state, unit, skill, skillId) : {};
+  if (availability.usesLeft === 0) return fail('技能次数已用尽', availability);
+  if (availability.cooldownRemaining > 0) return fail(`技能冷却中，还需 ${availability.cooldownRemaining} 轮`, availability);
   if (type === 'flee' && !atBattleEdge(state,unit)) return fail('须先移动到战场边界才能逃跑');
   const cost = skill ?? tableEntry(ACTIONS, type);
   if (!cost) return fail('未知动作');
@@ -1088,13 +1100,13 @@ export function preview(state, action) {
   const detonate = item?.kind === 'barrel';
   const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
   const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
-  const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
+  const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost), ...availability };
   if (type === 'end') return common;
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
     ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
   if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
   const cannotPay = paymentError(state, unit, ap, slot, cost);
-  if (cannotPay) return fail(cannotPay, { ap });
+  if (cannotPay) return fail(cannotPay, { ap, ...availability });
   const center = unplaced ? undefined : pos(x, y);
   const weapon = weaponInfo(state, unit);
   if (type === 'switch_weapon') {
@@ -1500,7 +1512,7 @@ const castPower = (state, actor, template) => template.power ?? template.attack
 const castSkillScale = (state, actor, template, target) => Math.max(0,
   dsl.stat(state, actor, 'skillPower', 1, { target, school: template.school, actionType: 'skill' }));
 
-function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
+function applyStrike(state, actor, action, plan, opportunityWeapon = null, castUses) {
   const weapon = opportunityWeapon ?? (action.type === 'attack' ? weaponInfo(state, actor) : null);
   const template = action.type === 'shield_bash'
     ? { name: '盾击', range: 1, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, effects: shieldBashEffects }
@@ -1510,7 +1522,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
   const multipliers = [];
   const skillScale = action.type === 'skill' ? castSkillScale(state, actor, template, mainTarget) : 1;
   const effectContext = { target: mainTarget, center: plan.center, terrainTarget: template.target === 'cell' ? locateUnit(state, plan.center) ?? plan.center : null,
-    actionType: action.type, school: template.school, multipliers, skillScale, entries: skillEntries, weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
+    actionType: action.type, school: template.school, multipliers, skillScale, entries: skillEntries, castUses, weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
     resourceCost: template.resourceCost?.amount, opportunityAttack: Boolean(opportunityWeapon),
     melee: plan.targets[0]?.melee, arrow: Boolean(weapon?.ammo),
     ...(action.type === 'skill' && template.shape !== 'single' ? { skillArea: new Set(plan.targets.map(target => target.id)) } : {}),
@@ -1653,6 +1665,13 @@ export function applyAction(state, action) {
   const before = state.logs.length;
   const moving = ['move', 'sprint', 'disengage'].includes(type);
   const initialCover = moving ? new Set(nearbyCovers(state, actor).map(c => c.id)) : null;
+  let castUses;
+  if (type === 'skill') {
+    const skill = tableEntry(state.skills, skillId) ?? new Map(equippedActiveSkills(state, actor)).get(skillId);
+    const limits = castLimits(skill, skillId);
+    castUses = new Set(limits.map(entry => entry.key));
+    for (const entry of limits) dsl.spendUse(state, actor, entry);
+  }
   if (type !== 'end') {
     actor.ap -= plan.ap;
     const costSource = plan.name ?? movementNames[type] ?? type;
@@ -1698,7 +1717,7 @@ export function applyAction(state, action) {
   if (!actor.fled) switch (type) {
     case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
     case 'attack': if (plan.interactiveId) { applyInteraction(state, actor, plan); break; }
-    case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
+    case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan, null, castUses); break;
     case 'end_encounter': {
       concludeObjective(state,state.battleType === 'spar' ? 'draw' : actor.team === 'blue' ? 'red' : 'blue', state.battleType === 'spar' ? '双方点到为止' : `${actor.name}代表本队认输`);
       break;
