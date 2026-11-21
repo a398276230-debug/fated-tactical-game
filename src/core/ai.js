@@ -1,4 +1,4 @@
-import { currentUnit, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { currentUnit, equippedActiveSkills, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
@@ -29,11 +29,17 @@ function tactics(state, actor, action, plan) {
       score -= sign * (Math.min(healthGap(target), healing) * .9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target) ? .14 : .34));
     }
   }
+  for (const { id, heal, shieldGain } of plan.support ?? []) {
+    const target = state.units[id];
+    if (!target) continue;
+    const sign = target.team === actor.team ? 1 : -1;
+    score += sign * (heal * .9 + Math.min(shieldGain, target.maxHp) * .5);
+  }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
 }
 
 function aimedOptions(state, actor, attacksOnly = false) {
-  const units = Object.values(state.units).filter(u => u.hp > 0).sort(byId);
+  const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled).sort(byId);
   const covers = Object.values(state.covers).filter(c => c.hp > 0).sort(byId);
   const choices = [];
   function consider(action) {
@@ -42,13 +48,17 @@ function aimedOptions(state, actor, attacksOnly = false) {
   }
   const enemies = units.filter(u => visibleEnemy(state, actor, u));
   for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y });
-  for (const skillId of [...actor.skills].sort()) {
-    const skill = state.skills[skillId];
+  const items = Object.entries(actor.inventory ?? {}).filter(([id, count]) => count > 0 && state.skills[id]?.backpackItem);
+  const templates = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...items.map(([id]) => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
+  for (const skillId of [...templates.keys()].sort()) {
+    const skill = templates.get(skillId);
     if (!skill || attacksOnly && (skill.slot !== 'attack' || skill.ap > 1)) continue;
     const query = preview(state, { type: 'skill', skillId });
     if (!query.ok) continue;
     let candidates;
-    if (skill.shape === 'single') {
+    if (skill.target === 'cell' || skill.target === 'corpse') {
+      candidates = query.cells;
+    } else if (skill.shape === 'single') {
       candidates = skill.target === 'enemy' ? enemies : skill.target === 'self' ? [actor] : units.filter(u => skill.target === 'any' || u.team === actor.team);
     } else if (attacksOnly) {
       candidates = enemies;

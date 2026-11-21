@@ -673,7 +673,7 @@ function createEffectEngine(io) {
     const raw = amount2 * (p.resourceMultiplier ? resource3(state, actor, p.resourceMultiplier) : 1) * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target: target2, damageType: type }));
     return { type, raw, hit: p.strikeBonus, ignoreArmor: p.ignoreArmor, preserveLife: p.lethal === false || ctx.nonLethal };
   }
-  function previewDamage(state, actor, target2, trigger, ctx, extra) {
+  function previewEffects(state, actor, target2, trigger, ctx, extra, support) {
     const packets = [];
     let conditional = false;
     const entries2 = new Map([...trigger === "active" ? [] : expressions(state, actor), ...extra].map((entry) => [entry.key, entry]));
@@ -688,10 +688,19 @@ function createEffectEngine(io) {
           conditional = true;
           continue;
         }
-        if (node3.kind !== "damage") continue;
+        if (!["damage", "heal", "shield"].includes(node3.kind)) continue;
         const p = { ...expr.params, ...node3 };
         const recipients = p.target && p.target !== expr.target ? targets(state, actor, p.target, ctx, p.radius ?? 1) : eligible;
-        if (!recipients.some((unit) => unit.id === target2.id) || p.excludeHitTarget && target2.id === ctx.target?.id) continue;
+        if (node3.kind !== "damage") {
+          if (!support || expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) continue;
+          for (const recipient of recipients) {
+            if (!livingUnit(recipient) || !condition3(state, actor, subject2(actor, recipient, ctx), p.condition, ctx, entry)) continue;
+            const amount2 = nodeAmount(state, actor, recipient, p, ctx);
+            if (amount2 > 0) support.push({ id: recipient.id, kind: node3.kind, amount: amount2, stack: p.stack });
+          }
+          continue;
+        }
+        if (!target2 || !recipients.some((unit) => unit.id === target2.id) || p.excludeHitTarget && target2.id === ctx.target?.id) continue;
         if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
         if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) {
           conditional = true;
@@ -950,7 +959,7 @@ function createEffectEngine(io) {
     return factors.filter((n) => !n.additive).reduce((factor, n) => factor * factorOf(n), 1) * Math.max(0, 1 + factors.filter((n) => n.additive).reduce((sum, n) => sum + factorOf(n) - 1, 0));
   }
   const check = (state, actor, key4, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key4] ?? 0 : 0), 0);
-  return { dispatch, stat: stat2, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions: skillExpressions2, available, usageStatus, spendUse, condition: condition3, changeResource };
+  return { dispatch, stat: stat2, check, passiveNodes, damageFactor, previewEffects, activeSkills, skillExpressions: skillExpressions2, available, usageStatus, spendUse, condition: condition3, changeResource };
 }
 
 // src/core/rng.js
@@ -2913,9 +2922,7 @@ function preview(state, action) {
       target2.healingShield = healing.map((n) => Math.min(1e4, Math.floor(n * healShieldRatio(state, unit))));
     }
   }
-  if (type === "skill" && targetUnits.length) {
-    previewSkillEffects(state, unit, template, skillId, common, targets, targetUnits, center, action.nonLethal ?? unit.nonLethal);
-  }
+  const support = type === "skill" ? previewSkillEffects(state, unit, template, skillId, common, targets, targetUnits, center, action.nonLethal ?? unit.nonLethal) : [];
   const first = targets.find((t) => sameCell(t, center)) ?? targets[0];
   return {
     ...first,
@@ -2930,13 +2937,14 @@ function preview(state, action) {
     cells,
     targets,
     center,
+    ...support.length ? { support } : {},
     ...blink ? { teleport: blink } : {},
     hostile
   };
 }
 function previewSkillEffects(state, unit, template, skillId, cost, profiles, units, center, nonLethal) {
   const entries2 = template.entry ? [template.entry] : skillExpressions(template, skillId);
-  if (!entries2.length) return;
+  if (!entries2.length) return [];
   const mainTarget = units[0];
   const actor = {
     ...unit,
@@ -2967,14 +2975,19 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
   };
   const perTarget = area2 ? entries2.filter(({ expr }) => expr.target === "hitTarget") : [];
   const shared = area2 ? entries2.filter((entry) => !perTarget.includes(entry)) : entries2;
+  const support = [];
+  if (!units.length) {
+    dsl.previewEffects(state, actor, null, "on_skill_cast", context, entries2, support);
+    dsl.previewEffects(state, actor, null, "active", context, entries2, support);
+  }
   for (const [i, unitTarget] of units.entries()) {
     const target2 = unitTarget.id === actor.id ? actor : unitTarget;
     const profile = profiles[i];
     const effects2 = [
-      dsl.previewDamage(state, actor, target2, "on_skill_cast", context, entries2),
-      dsl.previewDamage(state, actor, target2, "active", context, shared)
+      dsl.previewEffects(state, actor, target2, "on_skill_cast", context, entries2, i === 0 ? support : void 0),
+      dsl.previewEffects(state, actor, target2, "active", context, shared, i === 0 ? support : void 0)
     ];
-    if (perTarget.length) effects2.push(dsl.previewDamage(state, actor, target2, "active", { ...context, target: target2 }, perTarget));
+    if (perTarget.length) effects2.push(dsl.previewEffects(state, actor, target2, "active", { ...context, target: target2 }, perTarget, support));
     const hitContext = {
       ...context,
       target: target2,
@@ -2983,7 +2996,7 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
       backstab: profile.backstab,
       damageType: profile.damageType
     };
-    const hit = dsl.previewDamage(state, actor, target2, "on_hit", hitContext, entries2);
+    const hit = dsl.previewEffects(state, actor, target2, "on_hit", hitContext, entries2);
     const packets = effects2.flatMap((result) => result.packets).filter((packet) => packet.raw > 0);
     const conditional = effects2.some((result) => result.conditional) || hit.conditional || hit.packets.some((packet) => packet.raw > 0);
     if (conditional) profile.conditionalDamage = true;
@@ -3011,6 +3024,20 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
       profile.expectedDamage = Math.min(target2.hp, profile.expectedDamage + dealt);
     }
   }
+  const recipients = /* @__PURE__ */ new Map();
+  for (const { id: id3, kind, amount: amount2, stack } of support) {
+    const target2 = id3 === actor.id ? actor : state.units[id3];
+    const baseShield = statusOf(target2, actionStatuses.shield)?.amount ?? 0;
+    if (!recipients.has(id3)) recipients.set(id3, { id: id3, heal: 0, shield: baseShield, baseShield });
+    const result = recipients.get(id3);
+    if (kind === "heal") {
+      const healing = dsl.stat(state, actor, "healing", amount2, { target: target2, actionType: "skill" });
+      result.heal = Math.min(target2.maxHp - target2.hp, result.heal + Math.max(0, Math.floor(healing)));
+    } else {
+      result.shield = clamp(amount2 + (stack ? result.shield : 0), 1, 1e4);
+    }
+  }
+  return [...recipients.values()].map(({ id: id3, heal, shield, baseShield }) => ({ id: id3, heal, shieldGain: shield - baseShield }));
 }
 function returnIfNoDamage(profile) {
   if (!profile.dice && profile.conditionalDamage) profile.damage = null;
@@ -4404,10 +4431,16 @@ function tactics(state, actor, action, plan) {
       score -= sign3 * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target2) ? 0.14 : 0.34));
     }
   }
+  for (const { id: id3, heal, shieldGain } of plan.support ?? []) {
+    const target2 = state.units[id3];
+    if (!target2) continue;
+    const sign3 = target2.team === actor.team ? 1 : -1;
+    score += sign3 * (heal * 0.9 + Math.min(shieldGain, target2.maxHp) * 0.5);
+  }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * 0.35 - plan.sp * 0.25;
 }
 function aimedOptions(state, actor, attacksOnly = false) {
-  const units = Object.values(state.units).filter((u) => u.hp > 0).sort(byId3);
+  const units = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled).sort(byId3);
   const covers = Object.values(state.covers).filter((c) => c.hp > 0).sort(byId3);
   const choices = [];
   function consider(action) {
@@ -4416,13 +4449,17 @@ function aimedOptions(state, actor, attacksOnly = false) {
   }
   const enemies = units.filter((u) => visibleEnemy(state, actor, u));
   for (const target2 of [...enemies, ...attacksOnly ? [] : covers]) consider({ type: "attack", x: target2.x, y: target2.y });
-  for (const skillId of [...actor.skills].sort()) {
-    const skill2 = state.skills[skillId];
+  const items = Object.entries(actor.inventory ?? {}).filter(([id3, count]) => count > 0 && state.skills[id3]?.backpackItem);
+  const templates = new Map([...actor.skills.map((id3) => [id3, state.skills[id3]]), ...items.map(([id3]) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, actor)]);
+  for (const skillId of [...templates.keys()].sort()) {
+    const skill2 = templates.get(skillId);
     if (!skill2 || attacksOnly && (skill2.slot !== "attack" || skill2.ap > 1)) continue;
     const query = preview(state, { type: "skill", skillId });
     if (!query.ok) continue;
     let candidates;
-    if (skill2.shape === "single") {
+    if (skill2.target === "cell" || skill2.target === "corpse") {
+      candidates = query.cells;
+    } else if (skill2.shape === "single") {
       candidates = skill2.target === "enemy" ? enemies : skill2.target === "self" ? [actor] : units.filter((u) => skill2.target === "any" || u.team === actor.team);
     } else if (attacksOnly) {
       candidates = enemies;

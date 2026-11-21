@@ -211,7 +211,7 @@ export function createEffectEngine(io) {
       * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target, damageType: type }));
     return { type, raw, hit: p.strikeBonus, ignoreArmor: p.ignoreArmor, preserveLife: p.lethal === false || ctx.nonLethal };
   }
-  function previewDamage(state, actor, target, trigger, ctx, extra) {
+  function previewEffects(state, actor, target, trigger, ctx, extra, support) {
     const packets = [];
     let conditional = false;
     const entries = new Map([...(trigger === 'active' ? [] : expressions(state, actor)), ...extra].map(entry => [entry.key, entry]));
@@ -224,10 +224,19 @@ export function createEffectEngine(io) {
       for (const node of expr.effects) {
         if (node.enabled === false) continue;
         if (node.kind === 'procEffect' || node.kind === 'chainEffect') { conditional = true; continue; }
-        if (node.kind !== 'damage') continue;
+        if (!['damage', 'heal', 'shield'].includes(node.kind)) continue;
         const p = { ...expr.params, ...node };
         const recipients = p.target && p.target !== expr.target ? targets(state, actor, p.target, ctx, p.radius ?? 1) : eligible;
-        if (!recipients.some(unit => unit.id === target.id) || (p.excludeHitTarget && target.id === ctx.target?.id)) continue;
+        if (node.kind !== 'damage') {
+          if (!support || expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) continue;
+          for (const recipient of recipients) {
+            if (!livingUnit(recipient) || !condition(state, actor, subject(actor, recipient, ctx), p.condition, ctx, entry)) continue;
+            const amount = nodeAmount(state, actor, recipient, p, ctx);
+            if (amount > 0) support.push({ id: recipient.id, kind: node.kind, amount, stack: p.stack });
+          }
+          continue;
+        }
+        if (!target || !recipients.some(unit => unit.id === target.id) || (p.excludeHitTarget && target.id === ctx.target?.id)) continue;
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
         if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) { conditional = true; continue; }
         packets.push(damagePacket(state, actor, target, p, ctx, nodeAmount(state, actor, target, p, ctx)));
@@ -435,5 +444,5 @@ export function createEffectEngine(io) {
   }
   const check = (state, actor, key, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries)
     .reduce((sum, n) => sum + (n.kind === 'modifyCheck' ? n[key] ?? 0 : 0), 0);
-  return { dispatch, stat, check, passiveNodes, damageFactor, previewDamage, activeSkills, skillExpressions, available, usageStatus, spendUse, condition, changeResource };
+  return { dispatch, stat, check, passiveNodes, damageFactor, previewEffects, activeSkills, skillExpressions, available, usageStatus, spendUse, condition, changeResource };
 }

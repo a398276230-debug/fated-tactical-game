@@ -1262,18 +1262,18 @@ export function preview(state, action) {
       target.healingShield = healing.map(n => Math.min(10000, Math.floor(n * healShieldRatio(state, unit))));
     }
   }
-  if (type === 'skill' && targetUnits.length) {
-    previewSkillEffects(state, unit, template, skillId, common, targets, targetUnits, center, action.nonLethal ?? unit.nonLethal);
-  }
+  const support = type === 'skill'
+    ? previewSkillEffects(state, unit, template, skillId, common, targets, targetUnits, center, action.nonLethal ?? unit.nonLethal)
+    : [];
   const first = targets.find(t => sameCell(t, center)) ?? targets[0];
   return { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.damageMultiplier } : {}),
     bonusDice: action.bonusDice ?? 0, intent: action.intent ?? unit.intent ?? 'normal', nonLethal: action.nonLethal ?? unit.nonLethal ?? false,
-    dXYZ: geometry.distance, cells, targets, center, ...(blink ? { teleport: blink } : {}), hostile };
+    dXYZ: geometry.distance, cells, targets, center, ...(support.length ? {support} : {}), ...(blink ? { teleport: blink } : {}), hostile };
 }
 
 function previewSkillEffects(state, unit, template, skillId, cost, profiles, units, center, nonLethal) {
   const entries = template.entry ? [template.entry] : skillExpressions(template, skillId);
-  if (!entries.length) return;
+  if (!entries.length) return [];
   const mainTarget = units[0];
   const actor = { ...unit, hp: unit.hp - cost.hp, mp: unit.mp - cost.mp, sp: unit.sp - cost.sp,
     ap: unit.ap - cost.ap, used: { ...unit.used } };
@@ -1287,15 +1287,20 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
     ...(area ? { skillArea: new Set(units.map(target => target.id)) } : {}) };
   const perTarget = area ? entries.filter(({ expr }) => expr.target === 'hitTarget') : [];
   const shared = area ? entries.filter(entry => !perTarget.includes(entry)) : entries;
+  const support = [];
+  if (!units.length) {
+    dsl.previewEffects(state, actor, null, 'on_skill_cast', context, entries, support);
+    dsl.previewEffects(state, actor, null, 'active', context, entries, support);
+  }
   for (const [i, unitTarget] of units.entries()) {
     const target = unitTarget.id === actor.id ? actor : unitTarget;
     const profile = profiles[i];
-    const effects = [dsl.previewDamage(state, actor, target, 'on_skill_cast', context, entries),
-      dsl.previewDamage(state, actor, target, 'active', context, shared)];
-    if (perTarget.length) effects.push(dsl.previewDamage(state, actor, target, 'active', { ...context, target }, perTarget));
+    const effects = [dsl.previewEffects(state, actor, target, 'on_skill_cast', context, entries, i === 0 ? support : undefined),
+      dsl.previewEffects(state, actor, target, 'active', context, shared, i === 0 ? support : undefined)];
+    if (perTarget.length) effects.push(dsl.previewEffects(state, actor, target, 'active', { ...context, target }, perTarget, support));
     const hitContext = { ...context, target, center: pos(target.x, target.y), melee: profile.melee,
       backstab: profile.backstab, damageType: profile.damageType };
-    const hit = dsl.previewDamage(state, actor, target, 'on_hit', hitContext, entries);
+    const hit = dsl.previewEffects(state, actor, target, 'on_hit', hitContext, entries);
     const packets = effects.flatMap(result => result.packets).filter(packet => packet.raw > 0);
     const conditional = effects.some(result => result.conditional) || hit.conditional || hit.packets.some(packet => packet.raw > 0);
     if (conditional) profile.conditionalDamage = true;
@@ -1323,6 +1328,20 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
       profile.expectedDamage = Math.min(target.hp, profile.expectedDamage + dealt);
     }
   }
+  const recipients = new Map();
+  for (const {id, kind, amount, stack} of support) {
+    const target = id === actor.id ? actor : state.units[id];
+    const baseShield = statusOf(target, actionStatuses.shield)?.amount ?? 0;
+    if (!recipients.has(id)) recipients.set(id, {id, heal: 0, shield: baseShield, baseShield});
+    const result = recipients.get(id);
+    if (kind === 'heal') {
+      const healing = dsl.stat(state, actor, 'healing', amount, {target, actionType: 'skill'});
+      result.heal = Math.min(target.maxHp - target.hp, result.heal + Math.max(0, Math.floor(healing)));
+    } else {
+      result.shield = clamp(amount + (stack ? result.shield : 0), 1, 10000);
+    }
+  }
+  return [...recipients.values()].map(({id, heal, shield, baseShield}) => ({id, heal, shieldGain: shield - baseShield}));
 }
 
 function returnIfNoDamage(profile) {

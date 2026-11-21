@@ -2,6 +2,7 @@ import { expression as fx } from '../src/core/effects.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { applyAction, corpses, currentUnit, equippedActiveSkills, grantStatus, living, preview, syncEquipmentEffects } from '../src/core/combat.js';
+import { chooseAction } from '../src/core/ai.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { validateState } from '../src/api/validation.js';
 import { hydrateFromSources, mapEffects } from '../src/tavern/converter.js';
@@ -162,6 +163,39 @@ test('DSL active damage is included in skill preview and matches execution', () 
   assert.ok(damageLog);
   assert.equal(damageLog.detail.amount, hpBefore - enemy.hp);
   assert.equal(damageLog.detail.amount, plan.targets[0].damage[0]);
+});
+
+test('AI considers DSL healing and shields across learned, equipment and backpack skills', () => {
+  for (const source of ['learned', 'equipment', 'backpack']) {
+    const node = source === 'equipment' ? {kind:'shield',amount:1000} : {kind:'heal',amount:1000};
+    const effect = expr('support', 'active', 'self', [node], {params:{usesPerBattle:1}});
+    const {state, actor} = setup(source === 'equipment' ? [effect] : []);
+    actor.hp = Math.floor(actor.maxHp / 2);
+    let skillId = 'support_test';
+    if (source === 'equipment') {
+      [[skillId]] = equippedActiveSkills(state, actor);
+      grantStatus(state, actor, 'shield', {amount:10});
+    } else {
+      state.skills[skillId] = {name:'支援测试',ap:1,slot:'action',range:0,shape:'single',target:'self',effects:[effect]};
+      if (source === 'learned') actor.skills.push(skillId);
+      else {
+        state.skills[skillId].backpackItem = true;
+        actor.inventory = {[skillId]:1};
+      }
+    }
+    const cast = {type:'skill',skillId,x:actor.x,y:actor.y};
+    const before = structuredClone(state);
+    const [{heal,shieldGain}] = preview(state,cast).support;
+    assert.equal(heal, source === 'equipment' ? 0 : actor.maxHp - actor.hp);
+    assert.equal(shieldGain, source === 'equipment' ? 990 : 0);
+    assert.deepEqual(chooseAction(state),cast);
+    assert.deepEqual(state,before);
+    applyAction(state,cast);
+    if (source === 'equipment') assert.equal(actor.statuses.shield.amount,1000);
+    else assert.equal(actor.hp,actor.maxHp);
+    if (source === 'backpack') assert.equal(actor.inventory[skillId],0);
+    assert.notDeepEqual(chooseAction(state),cast);
+  }
 });
 
 test('DSL active equipment, chain, proc, cooldown and serialization', () => {
