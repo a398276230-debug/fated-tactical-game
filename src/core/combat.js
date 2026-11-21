@@ -1,9 +1,9 @@
-import { aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D as distance,
+import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D as distance,
   elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS as clearSight,
   isFlanked as flank, isGround as ground, movementOptions, passableEdge as fitsHeight, unitAt } from './spatial.js';
 import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, moraleResult, initiative as protocolInitiative } from './combat_protocol.js';
+import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative } from './combat_protocol.js';
 
 import { validateStatusModifiers } from './status_modifiers.js';
 import { applyTerrainEffect, updateTerrainPatches } from './terrain-effects.js';
@@ -45,7 +45,7 @@ const key = (x, y) => `${x},${y}`;
 const stat = (unit, id) => Number(unit.stats?.[id] ?? 0) * Math.max(0, 1 + changes(unit, 'attributePercent'));
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
 export const statusModifier = (unit, name) => values(unit.statuses).reduce((sum, s) =>
-  sum + Number(s.modifiers?.[name] ?? 0) * (s.stacks ?? 1), 0);
+  sum + Number(s.modifiers?.[name] ?? 0) * (s.stacks ?? 1), moraleModifiers[unit.moraleState]?.[name] ?? 0);
 const changes = statusModifier;
 const statusOf = (unit, id) => Object.hasOwn(unit.statuses ?? {}, id) ? unit.statuses[id] : undefined;
 export const currentUnit = state => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : undefined;
@@ -171,13 +171,46 @@ function grantShield(state, unit, amount, { stack, ...options } = {}) {
   return grantStatus(state, unit, statusId, { ...options, amount: amount + previous });
 }
 
+function concludeObjective(state, outcome, reason) {
+  state.battleConclusion = reason;
+  state.outcome = outcome;
+  record(state, null, 'outcome', `战斗结束：${reason}（${outcome === 'draw' ? '平局' : outcome === 'blue' ? '蓝方获胜' : '红方获胜'}）`, {outcome, reason});
+  return outcome;
+}
+function encounterNonlethal(state, source) {
+  return state.battleType === 'spar' || state.battleType === 'arena';
+}
+function retireFromContest(state, unit, source) {
+  if (unit.fled || unit.hp <= 0) return false;
+  const label = state.battleType === 'spar' && unit.hp * 10 < unit.maxHp * 3 ? '生命低于 30%，切磋退场'
+    : state.battleType === 'arena' && unit.hp === 1 ? '竞技落败出局'
+    : null;
+  if (!label) return false;
+  unit.fled = true;
+  unit.ap = 0;
+  record(state, unit, 'yield', `${unit.name}${label}（HP ${unit.hp}/${unit.maxHp}）`, {targetId:unit.id,hp:unit.hp,maxHp:unit.maxHp});
+  return true;
+}
 export function refreshOutcome(state) {
+  if (state.battleConclusion) return state.outcome;
+  if (['spar','arena'].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
   updateTerrainPatches(state, record, terrainDamage);
   let blue = false, red = false;
   for (const unit of values(state.units)) if (alive(unit) && !unit.fled) {
     blue ||= unit.team === 'blue';
     red ||= unit.team === 'red';
   }
+  if (state.battleType === 'suppress') {
+    const side = state.suppressingTeam, label = side === 'blue' ? '蓝方' : '红方';
+    const defenders = values(state.units).filter(u => u.team !== side);
+    const present = defenders.filter(u => alive(u) && !u.fled);
+    const dead = defenders.filter(u => !alive(u));
+    if (!present.length && defenders.length) return concludeObjective(state,side === 'blue' ? 'red' : 'blue',
+      dead.length === defenders.length ? `${label}过失致死，压制失败` : `${label}未能留住目标，压制失败`);
+    if ((side === 'blue' ? blue : red) && present.length && present.every(u => u.statuses.suppressed?.holdTotal != null))
+      return concludeObjective(state,side,`${label}压制成功${dead.length ? '，过失致死：'+dead.map(u=>u.name).join('、') : ''}`);
+  }
+  if (blue && red && state.battleType === 'guard' && state.round > 5) return concludeObjective(state,'blue','守方坚守五轮');
   const result = blue && red ? null : blue ? 'blue' : red ? 'red' : 'draw';
   if (state.outcome !== result) {
     state.outcome = result;
@@ -215,11 +248,12 @@ function loseHP(state, target, raw, sourceUnitId, type, label, detail = {}, trig
   if (!alive(target) || (target.fled && !effectContext.forcedDisplacement)) return 0;
   const hpBefore = target.hp;
   const source = tableEntry(state.units, sourceUnitId);
-  const preserveLife = !effectContext.forcedDisplacement && (effectContext.preserveLife || target.nonLethal || changes(target, 'preserveLife'));
+  const preserveLife = encounterNonlethal(state, source) || !effectContext.forcedDisplacement && (effectContext.preserveLife || target.nonLethal || changes(target, 'preserveLife'));
   target.hp = Math.max(preserveLife ? 1 : 0, hpBefore - Math.max(0, Math.floor(raw)));
   const amount = hpBefore - target.hp;
   record(state, sourceUnitId, 'damage', `${effectContext.damagePrefix ?? ''}${target.name}受到${amount}点${label}伤害`,
     { ...detail, targetId: target.id, damageType: type, amount, hpBefore, hpAfter: target.hp });
+  if (retireFromContest(state,target,source)) return amount;
   if (amount > 0) expireStatuses(state, target, 'on_damaged', { sourceUnitId, direct: effectContext.direct });
   if (!alive(target)) {
     const allies = living(state).filter(unit => unit.team === target.team);
@@ -269,12 +303,15 @@ function triggerDeathrattle(state, target, sourceUnitId) {
 
 function moraleCheck(state) {
   for (const unit of living(state)) {
-    const result = moraleResult({ type: unit.moraleType ?? 'standard', hp: unit.hp, maxHp: unit.maxHp, d20: randomDie(state, 20) });
-    if (!result.triggered || unit.moraleCheckedRound === state.round) continue;
+    if (unit.protagonist || unit.moraleCheckedRound === state.round) continue;
+    const type = unit.moraleType ?? 'standard', rule = MORALE[type];
+    const low = unit.hp / unit.maxHp < rule.threshold;
+    const impaired = ['shaken','routed'].includes(unit.moraleState);
+    if (low === impaired) continue; // Already broken, or healthy and steady.
+    const result = moraleResult({type,hp:unit.hp,maxHp:unit.maxHp,d20:low && rule.check ? randomDie(state,20) : undefined});
     unit.moraleCheckedRound = state.round;
-    if (!result.check) { unit.moraleState = 'shaken'; continue; }
-    unit.moraleState = result.shaken ? 'shaken' : 'routed';
-    record(state, unit, 'morale', `${unit.name}${result.shaken ? '动摇' : '溃逃'}`, { targetId: unit.id, ...result });
+    unit.moraleState = result.outcome;
+    record(state, unit, 'morale', `${unit.name}${low ? '战意：'+moraleLabels[result.outcome] : '重振战意'}`, {targetId:unit.id,...result,recovered:!low});
   }
 }
 
@@ -458,16 +495,25 @@ function endTurn(state, unit) {
 export function settleTurn(state) {
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
-    if (alive(unit)) {
+    if (state.outcome) return;
+    if (alive(unit) && !unit.fled) {
       unit.used = { attack: 0, action: 0 };
       unit.reactionAvailable = true;
       unit.ap = 2;
       record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
+      const hold = unit.statuses.suppressed;
+      if (hold?.holdTotal != null) {
+        const roll = randomDie(state,20), total = roll + Math.floor(effectiveStat(state,unit,'str') * unit.hp / unit.maxHp);
+        const success = total > hold.holdTotal;
+        if (success) delete unit.statuses.suppressed;
+        record(state,unit,'break_hold',`${unit.name}挣脱检定${success ? '成功，解除被压制' : '失败，仍被压制'}（${total} 对 ${hold.holdTotal}）`,{roll,total,threshold:hold.holdTotal,success});
+      }
       expireStatuses(state, unit, 'on_turn_start', { sourceUnitId: unit.id });
       tick(state, unit, 'onTurnStart');
       tickZones(state, unit);
       dsl.dispatch(state, unit, 'on_turn_start');
       if (refreshOutcome(state)) { unit.ap = 0; return; }
+      if (unit.fled) { advanceCursor(state); continue; }
       if (alive(unit) && !changes(unit, 'skip')) return;
       if (alive(unit)) record(state, unit, 'skip', `${unit.name}因控制跳过行动`);
       endTurn(state, unit);
@@ -513,6 +559,7 @@ function advanceCursor(state) {
   }
   resetFacing(state);
   moraleCheck(state);
+  refreshOutcome(state);
 }
 
 export function beginBattle(state) {
@@ -869,7 +916,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, 'guaranteed_crit') || hasNode('forceOutcome', 'crit'));
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, 'guaranteed_hit') || hasNode('forceOutcome', 'hit'));
   const tierUp = hasStrikeDamage(template) && hasNode('upgradeHitTier');
-  const dodge = cover ? 0 : dsl.stat(state, target, 'dodge', dsl.check(state, target, 'dodgeBonus', { target: actor })
+  const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
+  const dodge = execution || cover ? 0 : dsl.stat(state, target, 'dodge', dsl.check(state, target, 'dodgeBonus', { target: actor })
     + dsl.check(state, target, 'dodgeAgility', { target: actor }) + changes(target, 'dodgeBonus'), { target: actor });
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? dsl.check(state, actor, 'highGroundAccuracy', strike) : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;
@@ -888,9 +936,9 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   // belong in the damage formula; hit comes from explicit weapon/skill and combat modifiers.
   const accuracy = dsl.stat(state, actor, 'accuracy', (template.accuracy ?? 0) + (state.ruleset === 'sandbox' ? effectiveStat(state, actor, geometry.melee ? 'str' : 'agi') : 0)
     + high + sizeAccuracy + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + changes(actor, 'accuracy')
-    + (cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty
+    + (execution || cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty
     + dsl.check(state, actor, 'accuracyBonus', strike), strike) - dodge;
-  const explicitEvasion = changes(target, 'incomingAccuracy');
+  const explicitEvasion = execution ? 0 : changes(target, 'incomingAccuracy');
   const equipmentDefense = gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0)
     + (target.shield ? equipmentFor(state, target.shield).template?.defense ?? 0 : 0);
   // Protocol mode has no implicit AGI-to-defense; sandbox keeps its legacy balance only for regression fixtures.
@@ -936,7 +984,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const flat = fixedAttack || fixedDamage;
   const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice, critical)).map(n => shown(n, factor));
   const average = (critical = false, factor = 1) => flat ? shown(protocolInitial, factor) : diceAverage(dice, n => shown(n, factor), critical);
-  const damage = dice ? (protocolInitial == null ? bounds() : [shown(protocolInitial), shown(protocolInitial)]) : [0, 0];
+  const minFactor = execution ? 1.3 : 1;
+  const damage = dice ? (protocolInitial == null ? bounds(false,minFactor) : [shown(protocolInitial,minFactor), shown(protocolInitial,minFactor)]) : [0, 0];
   const criticalDamage = dice && critChance > 0 ? bounds(true) : null;
   const savedDamage = dice && saveStat ? bounds(false, .5) : null;
   const expectedDamage = !dice ? 0 : Math.max(0, hitChance - critChance - saveChance) * average()
@@ -949,7 +998,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, 'accuracy') },
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
-    automatic: Boolean(automatic), guaranteeHit, guaranteeCrit, tierUp, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
+    automatic: Boolean(automatic), execution, guaranteeHit, guaranteeCrit, tierUp, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
     coreBonus: dsl.check(state, actor, 'coreBonus', strike), dodgeBonus: dodge,
     damageMultiplier: dsl.stat(state, actor, 'damage', multiplier * dsl.damageFactor(state, actor, { ...strike, damageType }), { ...strike, damageType }),
     offHand: Boolean(weapon?.offHand?.template), armor: reduction.armor, damagePipeline: reduction.armorMultiplier,
@@ -959,15 +1008,15 @@ function targetProfile(state, actor, target, at, template, context = {}) {
 
 const ACTIONS = Object.freeze({
   move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
-  switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
+  end_encounter: {ap:0,slot:null}, switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
-  grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
+  free_ally: { ap: 1, slot: 'attack' }, suppress: { ap: 1, slot: 'attack' }, grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
   flee: { ap: 1, slot: 'action' }, detour: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
 });
 const movementNames = Object.freeze({ move: '移动', sprint: '疾跑', disengage: '撤离' });
 const isMovement = type => Object.hasOwn(movementNames, type);
-const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push'].includes(type);
+const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 const healMultiplier = (state, actor) => dsl.stat(state, actor, 'healing', 1, { actionType: 'skill' });
 const healShieldRatio = (state, actor) => equipped(state, actor).reduce((sum, item) => sum +
@@ -981,7 +1030,7 @@ function nearbyCovers(state, at) {
 }
 
 function canExecute(state, actor, target, effect, nonLethal) {
-  return alive(target) && target.team !== actor.team && visibleEnemy(state, actor, target)
+  return !encounterNonlethal(state,actor) && alive(target) && !target.fled && target.team !== actor.team && visibleEnemy(state, actor, target)
     && (effect.strict ? target.hp / target.maxHp < effect.threshold : target.hp / target.maxHp <= effect.threshold) && !nonLethal && !target.nonLethal && !changes(target, 'preserveLife')
     && (!effect.requiresPool || Boolean(resourcePool(state, actor, effect.requiresPool)));
 }
@@ -1024,6 +1073,7 @@ export function preview(state, action) {
     if (entries.length && entries.length === skill.effects.length && !skill.damage && !skill.heal
       && !entries.some(entry => dsl.available(state, unit, entry))) return fail('技能次数已用尽或冷却中');
   }
+  if (type === 'flee' && !atBattleEdge(state,unit)) return fail('须先移动到战场边界才能逃跑');
   const cost = skill ?? tableEntry(ACTIONS, type);
   if (!cost) return fail('未知动作');
   const aimed = needsTarget(type);
@@ -1040,6 +1090,8 @@ export function preview(state, action) {
   const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === 'end') return common;
+  if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
+    ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
   if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
   const cannotPay = paymentError(state, unit, ap, slot, cost);
   if (cannotPay) return fail(cannotPay, { ap });
@@ -1073,12 +1125,29 @@ export function preview(state, action) {
   }
   if (type === 'charge') return { ...common, name: '蓄力', maneuver: 'charge' };
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
+
   if (type === 'flee') return { ...common, name: '逃跑', maneuver: 'flee' };
   if (type === 'detour') return { ...common, name: '绕行', maneuver: 'detour' };
   if (type === 'lock_on') {
     const target = locateUnit(state, center);
     if (!target || target.team === unit.team) return fail('定位必须指定敌方单位');
     return { ...common, name: '定位', maneuver: 'lock_on', targetId: target.id };
+  }
+  if (type === 'free_ally') {
+    if (state.battleType !== 'suppress' || unit.team === state.suppressingTeam || unit.statuses.suppressed || unit.fled) return fail('仅未被压制的抵抗方可以救援');
+    const allies = living(state).filter(t => t !== unit && t.team === unit.team && t.statuses.suppressed && distance(state,unit,t)<=1 && clearSight(state,unit,t));
+    if (!center) return {...common,cells:allies.map(t=>pos(t.x,t.y))};
+    const ally = allies.find(t=>sameCell(t,center));
+    return ally ? {...common,name:'解除压制',targetId:ally.id} : fail('需要贴近一格内被压制的队友');
+  }
+  if (type === 'suppress') {
+    if (state.battleType !== 'suppress' || unit.team !== state.suppressingTeam) return fail('仅压制方可以使用压制');
+    const available = living(state).filter(t => t.team !== unit.team && t.statuses.suppressed?.holdTotal == null && distance(state,unit,t)<=1 && visibleEnemy(state,unit,t) && clearSight(state,unit,t));
+    if (!center) return {...common,cells:available.map(t=>pos(t.x,t.y))};
+    const target = available.find(t=>sameCell(t,center));
+    if (!target) return fail('压制需要一格内可见且未被压制的敌人');
+    const profile = targetProfile(state,unit,target,target,normalAttack);
+    return {...common,name:'压制',targetId:target.id,targets:[{...profile,damage:null,expectedDamage:0}]};
   }
   if (['grapple','disarm','trip','push'].includes(type)) {
     const target = locateUnit(state, center);
@@ -1228,7 +1297,7 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
       const net = damageAfterFlatReduction(state, target, modified, actor, packet.type);
       const absorbed = Math.min(shield, net);
       shield -= absorbed;
-      const floor = packet.preserveLife || target.nonLethal || changes(target, 'preserveLife') ? 1 : 0;
+      const floor = encounterNonlethal(state,actor) || packet.preserveLife || target.nonLethal || changes(target, 'preserveLife') ? 1 : 0;
       hp = Math.max(floor, hp - (net - absorbed));
       if (hp === 0) break;
     }
@@ -1276,9 +1345,9 @@ function resolveCheck(state, actor, profile) {
     return { hit: true, critical: false, saved };
   }
   if (profile.automatic) {
-    const rating = ratingFor(profile.guaranteeCrit ? 20 : 11);
+    const rating = ratingFor(profile.guaranteeCrit || profile.execution ? 20 : 11);
     if (profile.dice) record(state, actor, 'hit_result', `${profile.name}：自动命中`, {
-      targetId: profile.id, ...cover, automatic: true, hit: true, critical: Boolean(profile.guaranteeCrit), rating,
+      targetId: profile.id, ...cover, automatic: true, hit: true, critical: Boolean(profile.guaranteeCrit), ...(profile.execution && {execution:true}), rating,
     });
     return { hit: true, critical: profile.guaranteeCrit, rating, intent: { success: true, multiplier: 1 }, saved: false };
   }
@@ -1295,6 +1364,7 @@ function resolveCheck(state, actor, profile) {
   if (profile.guaranteeCrit && rating.multiplier < 1.3) rating = ratingFor(20);
   const critical = profile.guaranteeCrit || selected === 20;
   const hit = Boolean(profile.guaranteeHit || selected !== 1 && rating.multiplier > 0);
+  if (profile.execution && hit && rating.multiplier < 1.3) rating = ratingFor(20);
   let intent = { required: false, success: true, multiplier: 1 };
   let intentDetail;
   const defender = state.units[profile.id];
@@ -1320,7 +1390,7 @@ function resolveCheck(state, actor, profile) {
     targetId: profile.id, ...cover, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
     advantages: profile.advantages, disadvantages: profile.disadvantages, highGround: profile.highGround, cover: profile.cover,
     ...(profile.coverId ? { coverId: profile.coverId } : {}),
-    rating, distanceTier: distanceTier(profile.distance), bonusDice: requestedBonus,
+    ...(profile.execution && {execution:true}), rating, distanceTier: distanceTier(profile.distance), bonusDice: requestedBonus,
     distance: profile.distance, dz: profile.dz, flanked: profile.flanked, arc: profile.arc, hit: effectiveHit, critical,
     intent,
   });
@@ -1359,7 +1429,7 @@ function healWithGear(state, actor, target, spec, name, skillScale = 1) {
 
 function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
   const weapon = weaponInfo(state, actor);
-  if (weapon.stance !== 'dual_wield' || !weapon.offHand.template?.damage || !alive(target)) return;
+  if (weapon.stance !== 'dual_wield' || !weapon.offHand.template?.damage || !alive(target) || target.fled) return;
   const cost = (actor.tier ?? 1) * 10;
   if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < .8) return;
   const offTemplate = weapon.offHand.template;
@@ -1461,7 +1531,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     if (!alive(actor)) break;
     const cover = preview.kind === 'cover';
     const target = (cover ? state.covers : state.units)[preview.id];
-    if (!alive(target)) continue;
+    if (!alive(target) || target.fled) continue;
     let profile = preview;
     if (preview.saveStat && typeof template.saveDC === 'object') {
       profile = { ...profile, saveDC: resolveDC(state, actor, template.saveDC), saveBonus: effectiveStat(state, target, preview.saveStat) };
@@ -1504,7 +1574,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
 
 function applyMovement(state, actor, type, plan) {
   const from = pointAt(state, actor), path = [];
-  const canContinue = () => alive(actor) && !changes(actor, 'skip') && !changes(actor, 'rooted');
+  const canContinue = () => alive(actor) && !actor.fled && !changes(actor, 'skip') && !changes(actor, 'rooted');
   for (const to of plan.path) {
     if (type !== 'disengage') {
       // Snapshot the reactor order, but recheck eligibility before each strike:
@@ -1624,10 +1694,15 @@ export function applyAction(state, action) {
           ...(plan.corpseId ? {corpseId:plan.corpseId} : {}) } : {}),
         ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
   }
-  switch (type) {
+  if (type === 'skill' && plan.hp) retireFromContest(state, actor);
+  if (!actor.fled) switch (type) {
     case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
     case 'attack': if (plan.interactiveId) { applyInteraction(state, actor, plan); break; }
     case 'skill': case 'shield_bash': applyStrike(state, actor, { type, skillId }, plan); break;
+    case 'end_encounter': {
+      concludeObjective(state,state.battleType === 'spar' ? 'draw' : actor.team === 'blue' ? 'red' : 'blue', state.battleType === 'spar' ? '双方点到为止' : `${actor.name}代表本队认输`);
+      break;
+    }
     case 'switch_weapon': {
       const old = actor.mainHand ?? actor.weapon;
       const fromOff = plan.itemId === actor.offHand;
@@ -1655,10 +1730,28 @@ export function applyAction(state, action) {
       const target = enemies[0]; const attackerRoll = randomDie(state,20), defenderRoll = randomDie(state,20);
       const success = target ? effectiveStat(state, actor, 'agi') + attackerRoll >= effectiveStat(state, target, 'agi') + defenderRoll : true;
       record(state, actor, 'flee', `${actor.name}${success ? '逃跑成功' : '逃跑失败'}`, { targetId: target?.id ?? null, attackerRoll, defenderRoll, success });
-      if (success) { actor.fled = true; state.outcome = actor.team === 'blue' ? 'red' : 'blue'; }
+      if (success) { actor.fled = true; actor.ap = 0; }
       break;
     }
     case 'detour': record(state, actor, 'maneuver', `${actor.name}选择绕行`, { maneuver: 'detour' }); break;
+    case 'free_ally': {
+      const ally = state.units[plan.targetId];
+      delete ally.statuses.suppressed;
+      record(state,actor,'free_ally',`${actor.name}为${ally.name}解除压制`,{targetId:ally.id});
+      break;
+    }
+    case 'suppress': {
+      const target = state.units[plan.targetId];
+      record(state,actor,'suppress_attack',`${actor.name}尝试压制${target.name}`,{targetId:target.id});
+      if (!resolveCheck(state, actor, plan.targets[0]).hit) break;
+      const attackerRoll=randomDie(state,20), defenderRoll=randomDie(state,20);
+      const attackerTotal=attackerRoll+effectiveStat(state,actor,'str'), defenderTotal=defenderRoll+effectiveStat(state,target,'str');
+      const success=attackerTotal>defenderTotal;
+      record(state,actor,'suppress_check',`${actor.name}对${target.name}力量对抗${success?'成功':'失败'}（${attackerTotal} 对 ${defenderTotal}）`,{targetId:target.id,attackerRoll,defenderRoll,attackerTotal,defenderTotal,success});
+      if (success) grantStatus(state,target,'suppressed',{sourceUnitId:actor.id}).holdTotal=attackerTotal;
+      else if (defenderTotal > attackerTotal) grantStatus(state,actor,'stun',{sourceUnitId:target.id,turns:1});
+      break;
+    }
     case 'grapple': case 'disarm': case 'trip': case 'push': {
       const target = state.units[plan.targetId];
       if (target && maneuverContest(state, actor, target, type)) {
@@ -1695,7 +1788,7 @@ export function applyAction(state, action) {
   }
   if (refreshOutcome(state)) { if (actor) actor.ap = 0; return state.logs.slice(before); }
   if (type === 'end' || !alive(actor) || !actor.ap) {
-    endTurn(state, actor);
+    if (!actor.fled) endTurn(state, actor);
     if (!refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
   }
   return state.logs.slice(before);

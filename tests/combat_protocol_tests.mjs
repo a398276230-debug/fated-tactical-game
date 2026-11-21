@@ -22,8 +22,10 @@ test('纯伤害流水线、集群命中数、战意与非致死下限', () => {
   assert.equal(d.effectiveDefense,1000); assert.equal(d.armorMultiplier,2/3); assert.ok(Math.abs(d.damage-100*2/3)<1e-12);
   assert.deepEqual(areaResolution({baseDamage:10,rangeTier:5,members:10,coverage:.8}),{nHit:4,damage:40,perTarget:10});
   assert.deepEqual(areaResolution({baseDamage:10,mc:3,rangeTier:10,members:3,coverage:.5,colossus:true}),{nHit:2,damage:30,perTarget:15});
-  assert.equal(moraleResult({type:'standard',hp:29,maxHp:100,d20:11}).shaken,true);
-  assert.equal(moraleResult({type:'deathmatch',hp:10,maxHp:100,d20:12}).shaken,false);
+  assert.equal(moraleResult({type:'standard',hp:29,maxHp:100,d20:12}).outcome,'steady');
+  assert.deepEqual(moraleResult({type:'spar',hp:39,maxHp:100}), {threshold:.4,triggered:true,check:false,roll:null,outcome:'shaken'});
+  assert.equal(moraleResult({type:'standard',hp:29,maxHp:100,d20:11}).outcome,'routed');
+  assert.equal(moraleResult({type:'deathmatch',hp:10,maxHp:100,d20:12}).triggered,false);
   assert.equal(nonLethalHp(0,true),1); assert.equal(nonLethalHp(0,false),0);
   assert.deepEqual(Object.keys(MORALE).length,6);
 });

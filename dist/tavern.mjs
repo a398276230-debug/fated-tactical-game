@@ -7,6 +7,7 @@ var key = ({ x, y }) => `${x},${y}`;
 var same = (a, b) => a.x === b.x && a.y === b.y;
 var byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 var table = (collection) => Object.values(collection ?? {});
+var atBattleEdge = (state, { x, y }) => x === 0 || y === 0 || y === state.grid.length - 1 || x === state.grid[y]?.length - 1;
 function cellAt(state, x, y) {
   if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return void 0;
   return state.grid[y]?.[x];
@@ -16,7 +17,7 @@ var isGround = (state, at) => {
   const cell = cellAt(state, at.x, at.y);
   return Boolean(cell && cell.kind !== "wall");
 };
-var unitAt = (state, x, y, exceptId) => table(state.units).filter((unit) => unit.hp > 0 && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
+var unitAt = (state, x, y, exceptId) => table(state.units).filter((unit) => unit.hp > 0 && !unit.fled && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
 var coverAt = (state, x, y) => table(state.covers).filter((cover) => cover.hp > 0 && cover.x === x && cover.y === y).sort(byId)[0];
 var gridDistance = (a, b) => Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
 var distance3D = (state, a, b) => Math.hypot(b.x - a.x, b.y - a.y, elevation(state, b) - elevation(state, a));
@@ -154,7 +155,7 @@ function isFlanked(state, attacker, defender) {
   const adjacent = (unit) => !same(unit, defender) && gridDistance(unit, defender) === 1 && Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender);
   if (!adjacent(attacker)) return false;
   const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
-  return table(state.units).some((ally) => ally.hp > 0 && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
+  return table(state.units).some((ally) => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
 }
 
 // src/core/effect_schema.js
@@ -711,10 +712,12 @@ function createEffectEngine(io) {
   function executeNodes(state, actor, source, nodes, inherited, ctx, entry, seen, depth, exprTarget = entry.expr.target, stopOnFailure = false) {
     let applied = false;
     for (const node3 of nodes) {
+      if (actor.fled) break;
       if (node3.enabled === false) continue;
       const p = { ...entry.expr.params, ...node3 };
       const recipients = node3.target && node3.target !== exprTarget ? targets(state, actor, node3.target, ctx, p.radius ?? 1) : [inherited];
       for (const target2 of recipients) {
+        if (target2?.fled) continue;
         if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
         const label = node3.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
         const amount2 = nodeAmount(state, actor, target2, p, ctx);
@@ -1104,10 +1107,15 @@ function intentCheck(intent = "normal", attackerTier = 1, defenderTier = 1, atta
   if (attackerTier < defenderTier - 1) return { required: true, success: false, forced: true, ...spec };
   return { required: true, success: attackerTier * 5 + attackerD20 + ratingBonus >= defenderTier * 5 + defenderD20 + spec.difficulty, ...spec };
 }
-function moraleResult({ type = "standard", hp, maxHp, d20 = 20 } = {}) {
-  const rule = MORALE[type] ?? MORALE.standard;
-  const triggered = hp / maxHp < rule.threshold;
-  return { threshold: rule.threshold, triggered, check: rule.check, roll: rule.check ? d20 : null, shaken: triggered && (!rule.check || d20 < 12) };
+var moraleTypes = Object.freeze({ \u6807\u51C6: "standard", \u5207\u78CB: "spar", \u7ADE\u6280: "arena", \u538B\u5236: "suppress", \u6B7B\u6597: "deathmatch", \u5B88\u536B: "guard" });
+var moraleTypeFor = (value) => Object.hasOwn(MORALE, value) ? value : Object.hasOwn(moraleTypes, value) ? moraleTypes[value] : null;
+var moraleLabels = Object.freeze({ steady: "\u575A\u5B88", shaken: "\u52A8\u6447", routed: "\u6E83\u9003" });
+var moraleModifiers = Object.freeze({ shaken: Object.freeze({ accuracy: -2 }), routed: Object.freeze({ accuracy: -4 }) });
+function moraleResult({ type = "standard", hp, maxHp, d20 } = {}) {
+  const { threshold, check } = MORALE[type] ?? MORALE.standard;
+  const triggered = maxHp > 0 && hp / maxHp < threshold;
+  const roll = triggered && check ? d20 ?? null : null;
+  return { threshold, check, triggered, roll, outcome: !triggered ? "steady" : !check ? "shaken" : roll !== null && roll < 12 ? "routed" : "steady" };
 }
 
 // src/core/status_modifiers.js
@@ -1419,6 +1427,7 @@ var def = (name, icon, category, remainingTurns, description, modifiers3 = {}, o
   ...options
 });
 var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
+  suppressed: def("\u88AB\u538B\u5236", "\u26D3\uFE0F", "control", 1, "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002", { skip: true }, { durationType: "until_removed" }),
   burn: def("\u707C\u70E7", "\u{1F525}", "dot", 2, "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002", { damage: 5, damageType: "energy" }),
   bleed: def(
     "\u6D41\u8840",
@@ -1492,7 +1501,7 @@ function changeAltitude(state, actor, node3) {
 var key2 = (x, y) => `${x},${y}`;
 var stat = (unit, id3) => Number(unit.stats?.[id3] ?? 0) * Math.max(0, 1 + changes(unit, "attributePercent"));
 var clamp = (number3, min, max) => Math.max(min, Math.min(max, number3));
-var statusModifier = (unit, name) => values2(unit.statuses).reduce((sum, s) => sum + Number(s.modifiers?.[name] ?? 0) * (s.stacks ?? 1), 0);
+var statusModifier = (unit, name) => values2(unit.statuses).reduce((sum, s) => sum + Number(s.modifiers?.[name] ?? 0) * (s.stacks ?? 1), moraleModifiers[unit.moraleState]?.[name] ?? 0);
 var changes = statusModifier;
 var statusOf = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
@@ -1632,13 +1641,47 @@ function grantShield(state, unit, amount2, { stack, ...options } = {}) {
   const previous = stack ? statusOf(unit, statusId2)?.amount ?? 0 : 0;
   return grantStatus(state, unit, statusId2, { ...options, amount: amount2 + previous });
 }
+function concludeObjective(state, outcome, reason) {
+  state.battleConclusion = reason;
+  state.outcome = outcome;
+  record(state, null, "outcome", `\u6218\u6597\u7ED3\u675F\uFF1A${reason}\uFF08${outcome === "draw" ? "\u5E73\u5C40" : outcome === "blue" ? "\u84DD\u65B9\u83B7\u80DC" : "\u7EA2\u65B9\u83B7\u80DC"}\uFF09`, { outcome, reason });
+  return outcome;
+}
+function encounterNonlethal(state, source) {
+  return state.battleType === "spar" || state.battleType === "arena";
+}
+function retireFromContest(state, unit, source) {
+  if (unit.fled || unit.hp <= 0) return false;
+  const label = state.battleType === "spar" && unit.hp * 10 < unit.maxHp * 3 ? "\u751F\u547D\u4F4E\u4E8E 30%\uFF0C\u5207\u78CB\u9000\u573A" : state.battleType === "arena" && unit.hp === 1 ? "\u7ADE\u6280\u843D\u8D25\u51FA\u5C40" : null;
+  if (!label) return false;
+  unit.fled = true;
+  unit.ap = 0;
+  record(state, unit, "yield", `${unit.name}${label}\uFF08HP ${unit.hp}/${unit.maxHp}\uFF09`, { targetId: unit.id, hp: unit.hp, maxHp: unit.maxHp });
+  return true;
+}
 function refreshOutcome(state) {
+  if (state.battleConclusion) return state.outcome;
+  if (["spar", "arena"].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
   updateTerrainPatches(state, record, terrainDamage);
   let blue = false, red = false;
   for (const unit of values2(state.units)) if (alive(unit) && !unit.fled) {
     blue ||= unit.team === "blue";
     red ||= unit.team === "red";
   }
+  if (state.battleType === "suppress") {
+    const side2 = state.suppressingTeam, label = side2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
+    const defenders = values2(state.units).filter((u) => u.team !== side2);
+    const present2 = defenders.filter((u) => alive(u) && !u.fled);
+    const dead = defenders.filter((u) => !alive(u));
+    if (!present2.length && defenders.length) return concludeObjective(
+      state,
+      side2 === "blue" ? "red" : "blue",
+      dead.length === defenders.length ? `${label}\u8FC7\u5931\u81F4\u6B7B\uFF0C\u538B\u5236\u5931\u8D25` : `${label}\u672A\u80FD\u7559\u4F4F\u76EE\u6807\uFF0C\u538B\u5236\u5931\u8D25`
+    );
+    if ((side2 === "blue" ? blue : red) && present2.length && present2.every((u) => u.statuses.suppressed?.holdTotal != null))
+      return concludeObjective(state, side2, `${label}\u538B\u5236\u6210\u529F${dead.length ? "\uFF0C\u8FC7\u5931\u81F4\u6B7B\uFF1A" + dead.map((u) => u.name).join("\u3001") : ""}`);
+  }
+  if (blue && red && state.battleType === "guard" && state.round > 5) return concludeObjective(state, "blue", "\u5B88\u65B9\u575A\u5B88\u4E94\u8F6E");
   const result = blue && red ? null : blue ? "blue" : red ? "red" : "draw";
   if (state.outcome !== result) {
     state.outcome = result;
@@ -1686,7 +1729,7 @@ function loseHP(state, target2, raw, sourceUnitId, type, label, detail = {}, tri
   if (!alive(target2) || target2.fled && !effectContext.forcedDisplacement) return 0;
   const hpBefore = target2.hp;
   const source = tableEntry(state.units, sourceUnitId);
-  const preserveLife = !effectContext.forcedDisplacement && (effectContext.preserveLife || target2.nonLethal || changes(target2, "preserveLife"));
+  const preserveLife = encounterNonlethal(state, source) || !effectContext.forcedDisplacement && (effectContext.preserveLife || target2.nonLethal || changes(target2, "preserveLife"));
   target2.hp = Math.max(preserveLife ? 1 : 0, hpBefore - Math.max(0, Math.floor(raw)));
   const amount2 = hpBefore - target2.hp;
   record(
@@ -1696,6 +1739,7 @@ function loseHP(state, target2, raw, sourceUnitId, type, label, detail = {}, tri
     `${effectContext.damagePrefix ?? ""}${target2.name}\u53D7\u5230${amount2}\u70B9${label}\u4F24\u5BB3`,
     { ...detail, targetId: target2.id, damageType: type, amount: amount2, hpBefore, hpAfter: target2.hp }
   );
+  if (retireFromContest(state, target2, source)) return amount2;
   if (amount2 > 0) expireStatuses(state, target2, "on_damaged", { sourceUnitId, direct: effectContext.direct });
   if (!alive(target2)) {
     const allies = living(state).filter((unit) => unit.team === target2.team);
@@ -1765,15 +1809,15 @@ function triggerDeathrattle(state, target2, sourceUnitId) {
 }
 function moraleCheck(state) {
   for (const unit of living(state)) {
-    const result = moraleResult({ type: unit.moraleType ?? "standard", hp: unit.hp, maxHp: unit.maxHp, d20: randomDie(state, 20) });
-    if (!result.triggered || unit.moraleCheckedRound === state.round) continue;
+    if (unit.protagonist || unit.moraleCheckedRound === state.round) continue;
+    const type = unit.moraleType ?? "standard", rule = MORALE[type];
+    const low = unit.hp / unit.maxHp < rule.threshold;
+    const impaired = ["shaken", "routed"].includes(unit.moraleState);
+    if (low === impaired) continue;
+    const result = moraleResult({ type, hp: unit.hp, maxHp: unit.maxHp, d20: low && rule.check ? randomDie(state, 20) : void 0 });
     unit.moraleCheckedRound = state.round;
-    if (!result.check) {
-      unit.moraleState = "shaken";
-      continue;
-    }
-    unit.moraleState = result.shaken ? "shaken" : "routed";
-    record(state, unit, "morale", `${unit.name}${result.shaken ? "\u52A8\u6447" : "\u6E83\u9003"}`, { targetId: unit.id, ...result });
+    unit.moraleState = result.outcome;
+    record(state, unit, "morale", `${unit.name}${low ? "\u6218\u610F\uFF1A" + moraleLabels[result.outcome] : "\u91CD\u632F\u6218\u610F"}`, { targetId: unit.id, ...result, recovered: !low });
   }
 }
 function restoreHP(state, target2, raw, sourceUnitId, label, detail = {}) {
@@ -1958,11 +2002,19 @@ function endTurn(state, unit) {
 function settleTurn(state) {
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
-    if (alive(unit)) {
+    if (state.outcome) return;
+    if (alive(unit) && !unit.fled) {
       unit.used = { attack: 0, action: 0 };
       unit.reactionAvailable = true;
       unit.ap = 2;
       record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
+      const hold = unit.statuses.suppressed;
+      if (hold?.holdTotal != null) {
+        const roll = randomDie(state, 20), total = roll + Math.floor(effectiveStat(state, unit, "str") * unit.hp / unit.maxHp);
+        const success = total > hold.holdTotal;
+        if (success) delete unit.statuses.suppressed;
+        record(state, unit, "break_hold", `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total} \u5BF9 ${hold.holdTotal}\uFF09`, { roll, total, threshold: hold.holdTotal, success });
+      }
       expireStatuses(state, unit, "on_turn_start", { sourceUnitId: unit.id });
       tick(state, unit, "onTurnStart");
       tickZones(state, unit);
@@ -1970,6 +2022,10 @@ function settleTurn(state) {
       if (refreshOutcome(state)) {
         unit.ap = 0;
         return;
+      }
+      if (unit.fled) {
+        advanceCursor(state);
+        continue;
       }
       if (alive(unit) && !changes(unit, "skip")) return;
       if (alive(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
@@ -2013,6 +2069,7 @@ function advanceCursor(state) {
   }
   resetFacing(state);
   moraleCheck(state);
+  refreshOutcome(state);
 }
 function beginBattle(state) {
   state.logs ??= [];
@@ -2422,7 +2479,8 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, "guaranteed_crit") || hasNode("forceOutcome", "crit"));
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, "guaranteed_hit") || hasNode("forceOutcome", "hit"));
   const tierUp = hasStrikeDamage(template) && hasNode("upgradeHitTier");
-  const dodge = cover ? 0 : dsl.stat(state, target2, "dodge", dsl.check(state, target2, "dodgeBonus", { target: actor }) + dsl.check(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"), { target: actor });
+  const execution = !cover && target2?.team !== actor.team && ["shaken", "routed"].includes(target2?.moraleState) && ["kill", "concept"].includes(context.intent) && hasStrikeDamage(template);
+  const dodge = execution || cover ? 0 : dsl.stat(state, target2, "dodge", dsl.check(state, target2, "dodgeBonus", { target: actor }) + dsl.check(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"), { target: actor });
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? dsl.check(state, actor, "highGroundAccuracy", strike) : 0);
   const flanked = target2 && !cover ? isFlanked(state, origin, target2) : false;
   const protectedBy = target2 && !cover && !geometry.melee ? coverBetween(state, origin, target2) : null;
@@ -2436,8 +2494,8 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
   const rules = stanceRules(stance);
   const rangedDistance = weapon && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
-  const accuracy = dsl.stat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + dsl.check(state, actor, "accuracyBonus", strike), strike) - dodge;
-  const explicitEvasion = changes(target2, "incomingAccuracy");
+  const accuracy = dsl.stat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (execution || cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + dsl.check(state, actor, "accuracyBonus", strike), strike) - dodge;
+  const explicitEvasion = execution ? 0 : changes(target2, "incomingAccuracy");
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
   const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 10 + explicitEvasion + equipmentDefense;
   const advantages = changes(actor, "advantage") + dsl.check(state, actor, "advantage", strike) + Number(Boolean(teleport)) + (template.advantage ?? 0);
@@ -2470,7 +2528,8 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
   const flat = fixedAttack || fixedDamage;
   const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice3, critical)).map((n) => shown(n, factor));
   const average = (critical = false, factor = 1) => flat ? shown(protocolInitial, factor) : diceAverage(dice3, (n) => shown(n, factor), critical);
-  const damage = dice3 ? protocolInitial == null ? bounds() : [shown(protocolInitial), shown(protocolInitial)] : [0, 0];
+  const minFactor = execution ? 1.3 : 1;
+  const damage = dice3 ? protocolInitial == null ? bounds(false, minFactor) : [shown(protocolInitial, minFactor), shown(protocolInitial, minFactor)] : [0, 0];
   const criticalDamage = dice3 && critChance2 > 0 ? bounds(true) : null;
   const savedDamage = dice3 && saveStat ? bounds(false, 0.5) : null;
   const expectedDamage = !dice3 ? 0 : Math.max(0, hitChance2 - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
@@ -2507,6 +2566,7 @@ function targetProfile(state, actor, target2, at, template, context = {}) {
     critChance: critChance2,
     expectedD20,
     automatic: Boolean(automatic),
+    execution,
     guaranteeHit,
     guaranteeCrit,
     tierUp,
@@ -2540,6 +2600,7 @@ var ACTIONS = Object.freeze({
   move: { ap: 1, slot: "action" },
   sprint: { ap: 2, slot: "action" },
   disengage: { ap: 1, slot: "action" },
+  end_encounter: { ap: 0, slot: null },
   switch_weapon: { ap: 0, slot: null },
   attack: { ap: 1, slot: "attack" },
   reload: { ap: 1, slot: "action" },
@@ -2550,6 +2611,8 @@ var ACTIONS = Object.freeze({
   charge: { ap: 1, slot: "action" },
   lock_on: { ap: 1, slot: "action" },
   scan: { ap: 1, slot: "action" },
+  free_ally: { ap: 1, slot: "attack" },
+  suppress: { ap: 1, slot: "attack" },
   grapple: { ap: 1, slot: "attack" },
   disarm: { ap: 1, slot: "attack" },
   trip: { ap: 1, slot: "attack" },
@@ -2561,7 +2624,7 @@ var ACTIONS = Object.freeze({
 });
 var movementNames = Object.freeze({ move: "\u79FB\u52A8", sprint: "\u75BE\u8DD1", disengage: "\u64A4\u79BB" });
 var isMovement = (type) => Object.hasOwn(movementNames, type);
-var needsTarget = (type) => isMovement(type) || ["attack", "skill", "shield_bash", "interact", "lock_on", "grapple", "disarm", "trip", "push"].includes(type);
+var needsTarget = (type) => isMovement(type) || ["attack", "skill", "shield_bash", "interact", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"].includes(type);
 var fail2 = (error2, extra = {}) => ({ ok: false, error: error2, ...extra });
 var healMultiplier = (state, actor) => dsl.stat(state, actor, "healing", 1, { actionType: "skill" });
 var healShieldRatio = (state, actor) => equipped(state, actor).reduce((sum, item) => sum + (findNode(item.template, "shield", (node3) => node3.percentOfHealing != null)?.percentOfHealing ?? 0), 0);
@@ -2572,7 +2635,7 @@ function nearbyCovers(state, at) {
   return values2(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at, c)).sort(byId2);
 }
 function canExecute(state, actor, target2, effect, nonLethal) {
-  return alive(target2) && target2.team !== actor.team && visibleEnemy(state, actor, target2) && (effect.strict ? target2.hp / target2.maxHp < effect.threshold : target2.hp / target2.maxHp <= effect.threshold) && !nonLethal && !target2.nonLethal && !changes(target2, "preserveLife") && (!effect.requiresPool || Boolean(resourcePool(state, actor, effect.requiresPool)));
+  return !encounterNonlethal(state, actor) && alive(target2) && !target2.fled && target2.team !== actor.team && visibleEnemy(state, actor, target2) && (effect.strict ? target2.hp / target2.maxHp < effect.threshold : target2.hp / target2.maxHp <= effect.threshold) && !nonLethal && !target2.nonLethal && !changes(target2, "preserveLife") && (!effect.requiresPool || Boolean(resourcePool(state, actor, effect.requiresPool)));
 }
 function usableTiles(state, actor, template, weapon, nonLethal) {
   const execute = findNode(template, "execute", (node3) => node3.requiresPool);
@@ -2607,6 +2670,7 @@ function preview(state, action) {
     const entries2 = dsl.skillExpressions(skill2, skillId);
     if (entries2.length && entries2.length === skill2.effects.length && !skill2.damage && !skill2.heal && !entries2.some((entry) => dsl.available(state, unit, entry))) return fail2("\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D\u6216\u51B7\u5374\u4E2D");
   }
+  if (type === "flee" && !atBattleEdge(state, unit)) return fail2("\u987B\u5148\u79FB\u52A8\u5230\u6218\u573A\u8FB9\u754C\u624D\u80FD\u9003\u8DD1");
   const cost = skill2 ?? tableEntry(ACTIONS, type);
   if (!cost) return fail2("\u672A\u77E5\u52A8\u4F5C");
   const aimed = needsTarget(type);
@@ -2623,6 +2687,7 @@ function preview(state, action) {
   const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? "action" : detonate ? "attack" : cost.slot;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost) };
   if (type === "end") return common;
+  if (type === "end_encounter") return ["spar", "arena"].includes(state.battleType) ? { ...common, name: state.battleType === "spar" ? "\u53EB\u505C\u5207\u78CB\uFF08\u5E73\u5C40\uFF09" : "\u5168\u961F\u8BA4\u8F93" } : fail2("\u672C\u573A\u4E0D\u80FD\u76F4\u63A5\u53EB\u505C\u6216\u8BA4\u8F93");
   if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
   const cannotPay = paymentError(state, unit, ap, slot, cost);
   if (cannotPay) return fail2(cannotPay, { ap });
@@ -2667,6 +2732,22 @@ function preview(state, action) {
     const target2 = locateUnit(state, center);
     if (!target2 || target2.team === unit.team) return fail2("\u5B9A\u4F4D\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
     return { ...common, name: "\u5B9A\u4F4D", maneuver: "lock_on", targetId: target2.id };
+  }
+  if (type === "free_ally") {
+    if (state.battleType !== "suppress" || unit.team === state.suppressingTeam || unit.statuses.suppressed || unit.fled) return fail2("\u4EC5\u672A\u88AB\u538B\u5236\u7684\u62B5\u6297\u65B9\u53EF\u4EE5\u6551\u63F4");
+    const allies = living(state).filter((t) => t !== unit && t.team === unit.team && t.statuses.suppressed && distance3D(state, unit, t) <= 1 && hasLOS(state, unit, t));
+    if (!center) return { ...common, cells: allies.map((t) => pos(t.x, t.y)) };
+    const ally = allies.find((t) => sameCell(t, center));
+    return ally ? { ...common, name: "\u89E3\u9664\u538B\u5236", targetId: ally.id } : fail2("\u9700\u8981\u8D34\u8FD1\u4E00\u683C\u5185\u88AB\u538B\u5236\u7684\u961F\u53CB");
+  }
+  if (type === "suppress") {
+    if (state.battleType !== "suppress" || unit.team !== state.suppressingTeam) return fail2("\u4EC5\u538B\u5236\u65B9\u53EF\u4EE5\u4F7F\u7528\u538B\u5236");
+    const available = living(state).filter((t) => t.team !== unit.team && t.statuses.suppressed?.holdTotal == null && distance3D(state, unit, t) <= 1 && visibleEnemy(state, unit, t) && hasLOS(state, unit, t));
+    if (!center) return { ...common, cells: available.map((t) => pos(t.x, t.y)) };
+    const target2 = available.find((t) => sameCell(t, center));
+    if (!target2) return fail2("\u538B\u5236\u9700\u8981\u4E00\u683C\u5185\u53EF\u89C1\u4E14\u672A\u88AB\u538B\u5236\u7684\u654C\u4EBA");
+    const profile = targetProfile(state, unit, target2, target2, normalAttack);
+    return { ...common, name: "\u538B\u5236", targetId: target2.id, targets: [{ ...profile, damage: null, expectedDamage: 0 }] };
   }
   if (["grapple", "disarm", "trip", "push"].includes(type)) {
     const target2 = locateUnit(state, center);
@@ -2892,7 +2973,7 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
       const net = damageAfterFlatReduction(state, target2, modified, actor, packet.type);
       const absorbed = Math.min(shield, net);
       shield -= absorbed;
-      const floor = packet.preserveLife || target2.nonLethal || changes(target2, "preserveLife") ? 1 : 0;
+      const floor = encounterNonlethal(state, actor) || packet.preserveLife || target2.nonLethal || changes(target2, "preserveLife") ? 1 : 0;
       hp = Math.max(floor, hp - (net - absorbed));
       if (hp === 0) break;
     }
@@ -2954,13 +3035,14 @@ function resolveCheck(state, actor, profile) {
     return { hit: true, critical: false, saved };
   }
   if (profile.automatic) {
-    const rating2 = ratingFor(profile.guaranteeCrit ? 20 : 11);
+    const rating2 = ratingFor(profile.guaranteeCrit || profile.execution ? 20 : 11);
     if (profile.dice) record(state, actor, "hit_result", `${profile.name}\uFF1A\u81EA\u52A8\u547D\u4E2D`, {
       targetId: profile.id,
       ...cover,
       automatic: true,
       hit: true,
       critical: Boolean(profile.guaranteeCrit),
+      ...profile.execution && { execution: true },
       rating: rating2
     });
     return { hit: true, critical: profile.guaranteeCrit, rating: rating2, intent: { success: true, multiplier: 1 }, saved: false };
@@ -2977,6 +3059,7 @@ function resolveCheck(state, actor, profile) {
   if (profile.guaranteeCrit && rating.multiplier < 1.3) rating = ratingFor(20);
   const critical = profile.guaranteeCrit || selected === 20;
   const hit = Boolean(profile.guaranteeHit || selected !== 1 && rating.multiplier > 0);
+  if (profile.execution && hit && rating.multiplier < 1.3) rating = ratingFor(20);
   let intent = { required: false, success: true, multiplier: 1 };
   let intentDetail;
   const defender = state.units[profile.id];
@@ -3024,6 +3107,7 @@ function resolveCheck(state, actor, profile) {
     highGround: profile.highGround,
     cover: profile.cover,
     ...profile.coverId ? { coverId: profile.coverId } : {},
+    ...profile.execution && { execution: true },
     rating,
     distanceTier: distanceTier(profile.distance),
     bonusDice: requestedBonus,
@@ -3071,7 +3155,7 @@ function healWithGear(state, actor, target2, spec, name, skillScale = 1) {
 }
 function offHandFollowup(state, actor, target2, primaryProfile, primaryRating) {
   const weapon = weaponInfo(state, actor);
-  if (weapon.stance !== "dual_wield" || !weapon.offHand.template?.damage || !alive(target2)) return;
+  if (weapon.stance !== "dual_wield" || !weapon.offHand.template?.damage || !alive(target2) || target2.fled) return;
   const cost = (actor.tier ?? 1) * 10;
   if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < 0.8) return;
   const offTemplate = weapon.offHand.template;
@@ -3182,7 +3266,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
     if (!alive(actor)) break;
     const cover = preview2.kind === "cover";
     const target2 = (cover ? state.covers : state.units)[preview2.id];
-    if (!alive(target2)) continue;
+    if (!alive(target2) || target2.fled) continue;
     let profile = preview2;
     if (preview2.saveStat && typeof template.saveDC === "object") {
       profile = { ...profile, saveDC: resolveDC(state, actor, template.saveDC), saveBonus: effectiveStat(state, target2, preview2.saveStat) };
@@ -3230,7 +3314,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null) {
 }
 function applyMovement(state, actor, type, plan) {
   const from = pointAt(state, actor), path = [];
-  const canContinue = () => alive(actor) && !changes(actor, "skip") && !changes(actor, "rooted");
+  const canContinue = () => alive(actor) && !actor.fled && !changes(actor, "skip") && !changes(actor, "rooted");
   for (const to2 of plan.path) {
     if (type !== "disengage") {
       const sources = opportunitySources(state, actor);
@@ -3373,7 +3457,8 @@ function applyAction(state, action) {
       }
     );
   }
-  switch (type) {
+  if (type === "skill" && plan.hp) retireFromContest(state, actor);
+  if (!actor.fled) switch (type) {
     case "move":
     case "sprint":
     case "disengage":
@@ -3388,6 +3473,10 @@ function applyAction(state, action) {
     case "shield_bash":
       applyStrike(state, actor, { type, skillId }, plan);
       break;
+    case "end_encounter": {
+      concludeObjective(state, state.battleType === "spar" ? "draw" : actor.team === "blue" ? "red" : "blue", state.battleType === "spar" ? "\u53CC\u65B9\u70B9\u5230\u4E3A\u6B62" : `${actor.name}\u4EE3\u8868\u672C\u961F\u8BA4\u8F93`);
+      break;
+    }
     case "switch_weapon": {
       const old = actor.mainHand ?? actor.weapon;
       const fromOff = plan.itemId === actor.offHand;
@@ -3426,13 +3515,31 @@ function applyAction(state, action) {
       record(state, actor, "flee", `${actor.name}${success ? "\u9003\u8DD1\u6210\u529F" : "\u9003\u8DD1\u5931\u8D25"}`, { targetId: target2?.id ?? null, attackerRoll, defenderRoll, success });
       if (success) {
         actor.fled = true;
-        state.outcome = actor.team === "blue" ? "red" : "blue";
+        actor.ap = 0;
       }
       break;
     }
     case "detour":
       record(state, actor, "maneuver", `${actor.name}\u9009\u62E9\u7ED5\u884C`, { maneuver: "detour" });
       break;
+    case "free_ally": {
+      const ally = state.units[plan.targetId];
+      delete ally.statuses.suppressed;
+      record(state, actor, "free_ally", `${actor.name}\u4E3A${ally.name}\u89E3\u9664\u538B\u5236`, { targetId: ally.id });
+      break;
+    }
+    case "suppress": {
+      const target2 = state.units[plan.targetId];
+      record(state, actor, "suppress_attack", `${actor.name}\u5C1D\u8BD5\u538B\u5236${target2.name}`, { targetId: target2.id });
+      if (!resolveCheck(state, actor, plan.targets[0]).hit) break;
+      const attackerRoll = randomDie(state, 20), defenderRoll = randomDie(state, 20);
+      const attackerTotal = attackerRoll + effectiveStat(state, actor, "str"), defenderTotal = defenderRoll + effectiveStat(state, target2, "str");
+      const success = attackerTotal > defenderTotal;
+      record(state, actor, "suppress_check", `${actor.name}\u5BF9${target2.name}\u529B\u91CF\u5BF9\u6297${success ? "\u6210\u529F" : "\u5931\u8D25"}\uFF08${attackerTotal} \u5BF9 ${defenderTotal}\uFF09`, { targetId: target2.id, attackerRoll, defenderRoll, attackerTotal, defenderTotal, success });
+      if (success) grantStatus(state, target2, "suppressed", { sourceUnitId: actor.id }).holdTotal = attackerTotal;
+      else if (defenderTotal > attackerTotal) grantStatus(state, actor, "stun", { sourceUnitId: target2.id, turns: 1 });
+      break;
+    }
     case "grapple":
     case "disarm":
     case "trip":
@@ -3488,7 +3595,7 @@ function applyAction(state, action) {
     return state.logs.slice(before);
   }
   if (type === "end" || !alive(actor) || !actor.ap) {
-    endTurn(state, actor);
+    if (!actor.fled) endTurn(state, actor);
     if (!refreshOutcome(state)) {
       advanceCursor(state);
       settleTurn(state);
@@ -3804,7 +3911,8 @@ function skillTemplate(v, state) {
 function statusValue(v, key4, state) {
   const t = getStatusTemplate(state, key4);
   requireThat(id2(key4) && t, "\u72B6\u6001 ID");
-  fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers", "stacks", "sourceUnitId"], ["appliedRound", "appliedTurn", "amount", "expireInto", "expireOn"]);
+  fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers", "stacks", "sourceUnitId"], ["appliedRound", "appliedTurn", "amount", "expireInto", "expireOn", "holdTotal"]);
+  checkOptional(v, "holdTotal", (x) => v.id === "suppressed" && Number.isFinite(x));
   checkOptional(v, "expireOn", (x) => x === null || validExpireOn(x));
   requireThat(v.expireInto === t.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
   requireThat(v.id === key4 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, t.maxStacks) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
@@ -3819,7 +3927,7 @@ function validateCell(v) {
   requireThat(["floor", "slope", "wall"].includes(v.kind) && int(v.z, -4, 8), "\u5730\u5F62");
 }
 var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
-var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "deathrattle", "deathrattleTriggered", "moraleCheckedRound", "maneuvers"];
+var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "deathrattle", "deathrattleTriggered", "moraleCheckedRound", "maneuvers"];
 function unitValue(v, key4, state) {
   fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "bagWeapons", "effectUsage", "effectModifiers", "altitude"]);
   if (own2(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
@@ -3869,8 +3977,9 @@ function unitValue(v, key4, state) {
   checkOptional(v, "bonusDice", (x) => int(x, 0, 2));
   checkOptional(v, "penaltyDice", (x) => int(x, 0, 1));
   checkOptional(v, "stance", (x) => typeof x === "string");
-  checkOptional(v, "moraleType", (x) => typeof x === "string");
-  checkOptional(v, "moraleState", (x) => typeof x === "string");
+  checkOptional(v, "protagonist", (x) => x === true);
+  checkOptional(v, "moraleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
+  checkOptional(v, "moraleState", (x) => typeof x === "string" && Object.hasOwn(moraleLabels, x));
   checkOptional(v, "greatswordMode", (x) => ["offensive", "defensive"].includes(x));
   checkOptional(v, "parryQuota", (x) => int(x, 0, 2));
   checkOptional(v, "parryRefunded", (x) => typeof x === "boolean");
@@ -3888,7 +3997,10 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own2(Object.prototype, key4) && jsonTree(x, depth + 1));
 }
 function validateState(s) {
-  fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "effectTemplates", "summonTemplates", "terrainPatches"]);
+  fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "effectTemplates", "summonTemplates", "terrainPatches", "battleType", "battleConclusion", "suppressingTeam"]);
+  requireThat(s.battleType === "suppress" ? ["blue", "red"].includes(s.suppressingTeam) : s.suppressingTeam === void 0, "\u538B\u5236\u65B9");
+  checkOptional(s, "battleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
+  checkOptional(s, "battleConclusion", (x) => typeof x === "string" && x.trim().length > 0 && s.outcome != null);
   if (own2(s, "time")) {
     fields(s.time, ["raw", "hour", "minute", "timeOfDay", "calendar"]);
     requireThat(text(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
@@ -3970,7 +4082,7 @@ function validateState(s) {
   table2(s.units, (v, k) => {
     unitValue(v, k, s);
     const point2 = `${v.x},${v.y}`;
-    if (v.hp > 0) {
+    if (v.hp > 0 && !v.fled) {
       requireThat(!occupied.has(point2) && s.grid[v.y][v.x].kind !== "wall" && !Object.values(s.covers).some((c) => c.hp > 0 && c.x === v.x && c.y === v.y), "\u68CB\u5B50\u4F4D\u7F6E\u91CD\u53E0\u6216\u963B\u6321");
       occupied.add(point2);
     }
@@ -4294,12 +4406,13 @@ function aimedOptions(state, actor, attacksOnly = false) {
   }
   return choices;
 }
-function approach(state, actor, enemies) {
+function approach(state, actor, enemies, suppress = false) {
   const weapon = state.equipment[state.items[actor.weapon]?.templateId];
   const range = weapon?.range ?? 1.5;
   const spots = [{ x: actor.x, y: actor.y, steps: 0 }, ...reachable(state, "move", actor, Infinity)];
   const clearAttackCell = (probe) => enemies.some((target2) => {
     const d = distance3D(state, probe, target2);
+    if (suppress) return d <= 1 && hasLOS(state, probe, target2);
     if (d > range + 1) return false;
     const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
@@ -4327,8 +4440,45 @@ function chooseAction(state) {
   if (state.outcome) return null;
   const actor = currentUnit(state);
   if (!actor || !actor.hp || !actor.ap) return { ...END };
-  const enemies = Object.values(state.units).filter((u) => u.hp > 0 && u.team !== actor.team).sort(byId3);
+  const enemies = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId3);
   if (!enemies.length) return { ...END };
+  if (actor.moraleState === "routed") {
+    if (atBattleEdge(state, actor)) return preview(state, { type: "flee" }).ok ? { type: "flee" } : { ...END };
+    const move = preview(state, { type: "move" });
+    if (!move.ok) return { ...END };
+    const exit = reachable(state, "move", actor, Infinity).filter((cell) => atBattleEdge(state, cell)).sort((a, b) => a.steps - b.steps)[0];
+    const dest = exit?.path.slice().reverse().find((p) => move.cells.some((c) => samePosition(c, p)));
+    return dest ? { type: "move", x: dest.x, y: dest.y } : { ...END };
+  }
+  if (state.battleType === "suppress" && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
+    const held = Object.values(state.units).filter((t) => t.team === actor.team && t.hp > 0 && !t.fled && t.statuses.suppressed).sort(byId3);
+    for (const ally of held) {
+      const rescue = { type: "free_ally", x: ally.x, y: ally.y };
+      if (preview(state, rescue).ok) return rescue;
+    }
+    if (held.length) {
+      const move = preview(state, { type: "move" });
+      if (move.ok) {
+        const route = approach(state, actor, held, true);
+        const dest = route.slice().reverse().find((p) => move.cells.some((c) => samePosition(c, p)));
+        if (dest) return { type: "move", x: dest.x, y: dest.y };
+      }
+    }
+  }
+  if (state.battleType === "suppress" && state.suppressingTeam === actor.team) {
+    for (const enemy of enemies) {
+      const action = { type: "suppress", x: enemy.x, y: enemy.y };
+      if (preview(state, action).ok) return action;
+    }
+    const targets = enemies.filter((t) => !t.statuses.suppressed && visibleEnemy(state, actor, t));
+    const path = targets.length && approach(state, actor, targets, true);
+    if (path?.length) {
+      const move = preview(state, { type: "move" });
+      const dest = path.slice().reverse().find((p) => move.cells?.some((c) => samePosition(c, p)));
+      if (dest) return { type: "move", x: dest.x, y: dest.y };
+    }
+    return { ...END };
+  }
   const visible = enemies.filter((u) => visibleEnemy(state, actor, u));
   const objectives = visible.length ? visible : enemies;
   let best = { action: END, score: 0.6 };
@@ -4716,7 +4866,7 @@ function formatBattleReportText(report, unitNames = {}) {
           else {
             const verdict = detail.critical ? `\u5BF9${target2}\u6253\u51FA\u66B4\u51FB` : `\u51FB\u4E2D${target2}`;
             const grade = detail.automatic ? "\u81EA\u52A8\u547D\u4E2D" : checkGrade(true, detail.selected);
-            add(verdict + notes([grade, detail.rating?.name].filter(Boolean)));
+            add(verdict + notes([grade, detail.rating?.name, detail.execution && "\u5904\u51B3\u52A0\u6210"].filter(Boolean)));
           }
           break;
         }
@@ -4751,7 +4901,7 @@ function formatBattleReportText(report, unitNames = {}) {
           add(replaceUnitNames(event, text4) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]));
           break;
         case "morale":
-          add(replaceUnitNames(event, text4) + (detail.check ? notes([`\u58EB\u6C14\u68C0\u5B9A${checkGrade(detail.shaken, detail.roll)}`]) : ""));
+          add(replaceUnitNames(event, text4) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
           break;
         case "status":
         case "status_patch": {
@@ -5628,9 +5778,9 @@ function narrate(log, state) {
       return out(versus(state, log, "\u9003\u8DD1\u68C0\u5B9A", d.success, "\u9003\u8DD1\u6210\u529F", "\u9003\u8DD1\u5931\u8D25"));
     case "morale":
       return out({
-        tone: d.shaken ? "status" : "defeat",
+        tone: (d.outcome ?? (d.shaken ? "shaken" : "routed")) === "routed" ? "defeat" : "status",
         icon: "\u{1F3F3}\uFE0F",
-        lines: [`\u751F\u547D\u8DCC\u7834 ${pct(d.threshold ?? 0)}\uFF0C\u58EB\u6C14\u52A8\u6447`, Number.isFinite(d.roll) ? `\u58EB\u6C14\u68C0\u5B9A d20 \u5F97 ${d.roll}` : null].filter(Boolean),
+        lines: [log.text, `${d.recovered ? "\u751F\u547D\u6062\u590D\u81F3\u9608\u503C" : "\u751F\u547D\u4F4E\u4E8E\u9608\u503C"} ${pct(d.threshold ?? 0)}`],
         roll: Number.isFinite(d.roll) ? {
           kind: "d20",
           label: `${nameOf(state, d.targetId)} \xB7 \u58EB\u6C14\u68C0\u5B9A`,
@@ -5639,8 +5789,8 @@ function narrate(log, state) {
           mode: "normal",
           modifier: 0,
           total: d.roll,
-          verdict: d.shaken ? "\u52A8\u6447" : "\u6E83\u9003",
-          tone: d.shaken ? "status" : "miss"
+          verdict: d.outcome ? d.roll >= 12 ? "\u575A\u5B88" : "\u6E83\u9003" : d.shaken ? "\u52A8\u6447" : "\u6E83\u9003",
+          tone: d.roll >= 12 ? "hit" : "miss"
         } : void 0
       });
     case "proc": {
@@ -5716,6 +5866,8 @@ var ACTION_LABELS = {
   attack: "\u666E\u653B",
   interact: "\u4E92\u52A8",
   brace: "\u67B6\u52BF\u9632\u5FA1",
+  free_ally: "\u89E3\u9664\u538B\u5236",
+  suppress: "\u538B\u5236",
   block: "\u683C\u6321",
   shield_bash: "\u76FE\u51FB",
   charge: "\u84C4\u529B",
@@ -5736,6 +5888,8 @@ var ACTION_HINTS = {
   disengage: "\u79BB\u5F00\u65F6\u4E0D\u88AB\u501F\u673A",
   attack: "\u7528\u6B66\u5668\u653B\u51FB",
   interact: "\u4F7F\u7528\u573A\u666F\u8BBE\u65BD",
+  free_ally: "\u7528\u653B\u51FB\u69FD\u76F4\u63A5\u89E3\u6551\u76F8\u90BB\u961F\u53CB",
+  suppress: "\u4E00\u683C\u5185\u547D\u4E2D\u540E\u8FDB\u884C\u529B\u91CF\u5BF9\u6297\uFF0C\u4E0D\u9020\u6210\u4F24\u5BB3",
   brace: "\u672C\u56DE\u5408\u51CF\u4F24",
   block: "\u4E3E\u76FE\u683C\u6321",
   charge: "\u4E3A\u4E0B\u4E00\u51FB\u84C4\u529B",
@@ -5871,7 +6025,7 @@ function createRenderer(root, portraitFor = () => []) {
   function renderBoard(state, { selected, action, hover, preview: preview2, current }) {
     initBoard(state);
     const moving = ["move", "sprint", "disengage"].includes(action?.type);
-    const unitsAt2 = group(values3(state.units).filter((u) => u.hp > 0));
+    const unitsAt2 = group(values3(state.units).filter((u) => u.hp > 0 && !u.fled));
     const bodiesAt = group(corpses(state)), coversAt = group(values3(state.covers)), itemsAt = group(values3(state.interactives));
     const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
     const path = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
@@ -5982,6 +6136,7 @@ function createRenderer(root, portraitFor = () => []) {
     crystals.append(el2("span", "", "\u884C\u52A8\u529B "), ...[0, 1].map((i) => el2("span", `ap-crystal${i >= ap ? " is-used" : ""}`, i < ap ? "\u25C6" : "\u25C7")));
     crystals.setAttribute("aria-label", `\u5269\u4F59 ${ap} / 2 AP`);
     meta.append(crystals);
+    if (u.moraleState && u.moraleState !== "steady") meta.append(el2("span", "ft-chip", `\u6218\u610F${moraleLabels[u.moraleState]}`));
     meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
     for (const s of values3(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
     node3.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
@@ -6001,7 +6156,7 @@ function createRenderer(root, portraitFor = () => []) {
     head.dataset.faction = u.team;
     const title = el2("div");
     const tile = state.grid[u.y][u.x];
-    title.append(el2("strong", "", u.name), el2("div", "muted", `${side(u.team)} \xB7 \u4F4D\u4E8E (${u.x}, ${u.y})${tile.z ? `\uFF0C\u9AD8\u5EA6 ${tile.z}` : ""} \xB7 \u671D\u5411 ${ARROWS[u.facing?.join(",")] ?? "\xB7"}${u.hp ? "" : " \xB7 \u5DF2\u5012\u4E0B"}`));
+    title.append(el2("strong", "", u.name), el2("div", "muted", `${side(u.team)} \xB7 \u6218\u610F\uFF1A${u.protagonist ? "\u81EA\u4E3B" : moraleLabels[u.moraleState ?? "steady"]} \xB7 \u4F4D\u4E8E (${u.x}, ${u.y})${tile.z ? `\uFF0C\u9AD8\u5EA6 ${tile.z}` : ""} \xB7 \u671D\u5411 ${ARROWS[u.facing?.join(",")] ?? "\xB7"}${u.hp ? "" : " \xB7 \u5DF2\u5012\u4E0B"}`));
     head.append(face, title);
     const wrap = el2("div", "ft-actor");
     wrap.dataset.faction = u.team;
@@ -6155,7 +6310,7 @@ function createRenderer(root, portraitFor = () => []) {
         ].filter(Boolean);
         if (mods.length) bits.push(mods.join("\uFF0C"));
         if (t.heal) bits.push(`\u6CBB\u7597 ${interval(t.heal)}`);
-        else if (t.damage) bits.push(`\u547D\u4E2D\u540E\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
+        else if (t.damage) bits.push(`${t.execution ? "\u5904\u51B3\uFF1A\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u81F3\u5C11\u5E73\u66B4\u51FB\u3002" : ""}\u547D\u4E2D\u540E\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
         row.append(el2("div", "", bits.join("\u3002")));
         if (chance != null) {
           const odds = el2("div", "ft-odds"), track = el2("span", "ft-odds-bar"), fill = el2("i");
@@ -6183,7 +6338,8 @@ function createRenderer(root, portraitFor = () => []) {
     const aimed = ["move", "sprint", "disengage", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
     const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
     if (fresh) {
-      $("battle-title").textContent = state.title;
+      const battleKind = Object.keys(moraleTypes).find((k) => moraleTypes[k] === state.battleType);
+      $("battle-title").textContent = battleKind ? `${state.title} \xB7 ${battleKind}${state.battleType === "guard" ? "\uFF08\u84DD\u65B9\u575A\u5B88\u4E94\u8F6E\uFF09" : ""}` : state.title;
       $("round-badge").textContent = `\u7B2C ${state.round} \u56DE\u5408`;
       renderFeatures(state);
     }
@@ -6728,7 +6884,7 @@ function placeTargetCard(card, anchor2, viewport = window.visualViewport) {
 
 // src/ui/main.js
 var THEMES = ["amethyst", "night-gold", "frost-silver"];
-var TARGETLESS = ["switch_weapon", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
+var TARGETLESS = ["end_encounter", "switch_weapon", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
 var PATH_NAMES = { units: "\u5355\u4F4D", items: "\u7269\u54C1", grid: "\u5730\u5F62", statuses: "\u72B6\u6001", counters: "\u8BA1\u6570", statusTemplates: "\u72B6\u6001\u6A21\u677F", covers: "\u63A9\u4F53", interactives: "\u4E92\u52A8\u70B9" };
 function describeProposal(result) {
   if (!result?.ok) return `\u2716 \u65E0\u6CD5\u6267\u884C\uFF1A${result?.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
@@ -7036,7 +7192,7 @@ ${height2}\uFF0C${sight}`;
   function onChange() {
     const before = live;
     live = game.getBattleState();
-    if (!["blue", "red"].includes(live.outcome)) victoryPending = false;
+    if (!live.outcome) victoryPending = false;
     else if (before && !before.outcome) victoryPending = true;
     try {
       storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
@@ -7133,11 +7289,11 @@ ${height2}\uFF0C${sight}`;
         ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
       };
       const plan = game.previewAction(command);
-      if (plan.ok && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill2 || itemId || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
+      if ((plan.ok || type === "flee" && plan.error?.includes("\u8FB9\u754C")) && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill2 || itemId || plan.interactiveId || type === "end_encounter" ? plan.name : ACTION_LABELS[type] });
     };
     if (canAct) {
       if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
-      else for (const t of [sprint ? "sprint" : "move", "disengage", "attack", "lock_on", "grapple", "disarm", "trip", "push"]) add(t);
+      else for (const t of [sprint ? "sprint" : "move", "disengage", "attack", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add("switch_weapon", null, itemId);
       add("interact");
       for (const skill2 of actor.skills) add("skill", skill2);
@@ -7150,6 +7306,7 @@ ${height2}\uFF0C${sight}`;
           const plan = game.previewAction(command);
           options.push({ command, plan, bag: true, label: `\u4F7F\u7528\u80CC\u5305\u7269\u54C1\uFF1A${item.name} \xD7${count}` });
         }
+        add("end_encounter");
         add("end");
       }
     }
@@ -7206,7 +7363,7 @@ ${height2}\uFF0C${sight}`;
     }
     const { command, plan, label } = choice;
     error2("");
-    if (!(["skill", "attack"].includes(command.type) || plan.opportunities?.length)) {
+    if (!(["skill", "attack", "end_encounter"].includes(command.type) || plan.opportunities?.length)) {
       execute(command);
       return;
     }
@@ -8982,7 +9139,15 @@ function parseBattleDescriptor(value) {
   const fail4 = (message) => {
     throw new Error(`battle_init \u63CF\u8FF0\u7B26\uFF1A${message}`);
   };
-  const [kind, version2, battleId, sceneTitle, terrainMode, seedText, ...extra] = lines[0].split("|").map((x) => x.trim());
+  const [kind, version2, battleId, sceneTitle, terrainMode, ...options] = lines[0].split("|").map((x) => x.trim());
+  const sideToken = options.at(-1)?.match(/^压制方=(blue|red)$/);
+  if (sideToken) options.pop();
+  const typeToken = options.at(-1)?.match(/^战斗类型=(.+)$/);
+  const moraleType = typeToken && moraleTypeFor(typeToken[1]);
+  if (typeToken && !moraleType) fail4("\u672A\u77E5\u6218\u6597\u7C7B\u578B\uFF0C\u53EF\u9009\uFF1A\u6807\u51C6\u3001\u5207\u78CB\u3001\u7ADE\u6280\u3001\u538B\u5236\u3001\u6B7B\u6597\u3001\u5B88\u536B");
+  if (moraleType === "suppress" !== !!sideToken) fail4("\u538B\u5236\u6218\u5FC5\u987B\u5728\u6218\u6597\u7C7B\u578B\u540E\u58F0\u660E |\u538B\u5236\u65B9=blue \u6216 |\u538B\u5236\u65B9=red\uFF1B\u5176\u4ED6\u7C7B\u578B\u4E0D\u586B\u538B\u5236\u65B9");
+  if (typeToken) options.pop();
+  const [seedText, ...extra] = options;
   if (kind !== "battle" || version2 !== "1" || extra.length || !identifier.test(battleId ?? "") || unsafeKey(battleId) || !sceneTitle || sceneTitle.length > 100 || !["flat", "terrain"].includes(terrainMode)) {
     fail4("\u9996\u884C\u5E94\u4E3A battle|1|ID|\u573A\u666F\u6807\u9898|flat \u6216 terrain\uFF0C\u53EF\u8FFD\u52A0 |seed");
   }
@@ -9044,7 +9209,7 @@ function parseBattleDescriptor(value) {
     });
   }
   if (!units.length) fail4("\u81F3\u5C11\u9700\u8981\u4E00\u6761 unit \u8BB0\u5F55");
-  return { version: 1, battleId, sceneTitle, terrainMode, ...seedText === void 0 ? {} : { seed: Number(seedText) }, units, ...covers.length && { covers }, ...interactives.length && { interactives } };
+  return { version: 1, battleId, sceneTitle, terrainMode, ...moraleType && { moraleType }, ...sideToken && { suppressingTeam: sideToken[1] }, ...seedText === void 0 ? {} : { seed: Number(seedText) }, units, ...covers.length && { covers }, ...interactives.length && { interactives } };
 }
 
 // src/tavern/terrain.js
@@ -9845,7 +10010,8 @@ function unitFrom(record2, participant, index, equipment, skills, items, sink, i
   const rawFacing = Array.isArray(p.facing) ? p.facing : [team2 === "blue" ? 1 : -1, 0];
   const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
-  const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: text2(p.moraleType) || "standard" };
+  const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+  if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
   if (isProtagonist) {
     const bagWeapons = [];
     for (const [slot, raw, index2] of sourceEquipment({ \u88C5\u5907: record2.\u80CC\u5305 })) {
@@ -9933,7 +10099,7 @@ function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
     if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
-    const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path), record2 === protagonist);
+    const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { moraleType: battle.moraleType, ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path), record2 === protagonist);
     units[id3] = made.unit;
     profiles[id3] = made.profile;
     sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2), isProtagonist: record2 === protagonist };
@@ -9950,7 +10116,7 @@ function hydrateFromSources(input = {}, options = {}) {
   }
   const title = text2(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
   const seed = integer3(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-  const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+  const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
   terrainState(battle, state, sink(null, "terrain", "terrain"));
@@ -10557,7 +10723,7 @@ var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
 
 \u3010\u59FF\u6001\u3011\u76FE\u2192\u5251\u76FE\uFF1B\u6D88\u8017/\u8F85\u52A9\u526F\u624B\u2192\u540C\u8C03\uFF1B\u91CD\u578B/\u53CC\u624B\u4E3B\u624B\u2192\u91CD\u5251\uFF1B\u5176\u4ED6\u526F\u624B\u2192\u53CC\u6301\uFF1B\u4EC5\u4E3B\u624B\u2192\u8F7B\u5251\uFF1B\u7A7A\u624B\u2192\u65E0\u68B0\u3002\u59FF\u6001\u51B3\u5B9A\u7A7F\u7532\u3001\u8FFD\u51FB\u3001\u5F39\u53CD\u548C\u683C\u6321\u3002
 
-\u3010\u58EB\u6C14\u4E0E\u9003\u8DD1\u3011\u6362\u8F6E\u68C0\u67E5\u58EB\u6C14\u3002\u4E3B\u52A8flee\u4EE5\u81EA\u8EAB\u654F+d20\u5BF9\u5B58\u6D3B\u654C\u65B9\u6700\u9AD8\u654F+d20\uFF0C\u5E73\u624B\u53EF\u9003\u3002`;
+\u3010\u58EB\u6C14\u4E0E\u9003\u8DD1\u3011\u5207\u78CB\u65E0\u6761\u4EF6\u975E\u81F4\u6B7B\uFF0C\u4EFB\u4F55\u5355\u4F4D HP \u4F4E\u4E8E 30% \u7ACB\u5373\u5207\u78CB\u9000\u573A\uFF0C\u4E0D\u7B97\u9003\u8DD1\u6216\u51FB\u6740\u3002\u7ADE\u6280\u53CC\u65B9\u975E\u81F4\u6B7B\uFF0C1 HP \u843D\u8D25\u51FA\u5C40\u3002\u538B\u5236\u6218\u53CC\u65B9\u666E\u901A\u653B\u51FB\u4ECD\u53EF\u81F4\u6B7B\uFF0C\u53EA\u6709\u538B\u5236\u65B9\u53EF\u7528\u65E0\u4F24\u5BB3\u76841\u683C\u538B\u5236\u653B\u51FB\uFF1A\u547D\u4E2D\u540E\u4EE5d20+\u529B\u91CF\u5BF9\u6297\uFF0C\u653B\u65B9\u80DC\u4F7F\u5BF9\u624B\u88AB\u538B\u5236\uFF0C\u5B88\u65B9\u80DC\u5219\u653B\u65B9\u7729\u66551\u56DE\u5408\uFF0C\u5E73\u624B\u65E0\u72B6\u6001\uFF1B\u88AB\u538B\u5236\u8005\u56DE\u5408\u5F00\u59CB\u65F6d20+floor(\u529B\u91CF\xD7\u5F53\u524DHP\u6BD4\u4F8B)\u5927\u4E8E\u539F\u653B\u65B9\u603B\u70B9\u6570\u624D\u6323\u8131\uFF1B\u672A\u88AB\u538B\u5236\u7684\u62B5\u6297\u65B9\u961F\u53CB\u53EF\u57281\u683C\u5185\u7528\u653B\u51FB\u69FD\u76F4\u63A5\u89E3\u9664\u538B\u5236\u3002\u573A\u4E0A\u62B5\u6297\u65B9\u5168\u90E8\u88AB\u538B\u5236\u5373\u80DC\uFF0C\u5168\u90E8\u6B7B\u4EA1\u5219\u538B\u5236\u5931\u8D25\u3002\u6362\u8F6E\u68C0\u67E5\u975E\u4E3B\u89D2\u6218\u610F\u3002\u5207\u78CB40%\u3001\u7ADE\u628030%\u3001\u538B\u523650%\u4EE5\u4E0B\u81EA\u52A8\u52A8\u6447\uFF08\u547D\u4E2D\u22122\uFF09\uFF1B\u6807\u51C630%\u3001\u5B88\u536B35%\u3001\u6B7B\u659710%\u4EE5\u4E0B d20<12 \u6E83\u9003\uFF08\u547D\u4E2D\u22124\uFF0CAI \u5C1D\u8BD5\u9003\u8DD1\uFF09\uFF0C\u5426\u5219\u575A\u5B88\u3002\u56DE\u8840\u8FBE\u9608\u503C\u540E\u4E0B\u8F6E\u6062\u590D\u3002\u5BF9\u52A8\u6447\u6216\u6E83\u9003\u8005\u7528\u62B9\u6740/\u6982\u5FF5\u7834\u788E\uFF0C\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u8BC4\u7EA7\u81F3\u5C11\u5E73\u66B4\u51FB\uFF0C\u4E0D\u4FDD\u8BC1\u547D\u4E2D\u3002\u6240\u6709\u6218\u6597\u5747\u987B\u7AD9\u5728\u5730\u56FE\u6700\u5916\u5708\u624D\u80FD\u5C1D\u8BD5\u9003\u8DD1\u3002\u4E3B\u52A8flee\u4EE5\u81EA\u8EAB\u654F+d20\u5BF9\u5B58\u6D3B\u654C\u65B9\u6700\u9AD8\u654F+d20\uFF0C\u5E73\u624B\u53EF\u9003\u3002`;
 var ENGINE_API_SUMMARY = `${PROTOCOL_RULES}
 
 \u3010API \u6620\u5C04\u3011

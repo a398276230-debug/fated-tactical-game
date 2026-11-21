@@ -23,6 +23,8 @@ test('定位、擒抱、缴械、绊摔、推撞都写入可重放日志',()=>{
 });
 test('逃跑动作产生结构化成功或失败日志并可写入快照',()=>{
  const a=boot(); endTo(a,'swordsman');
+ assert.match(a.previewAction({type:'flee'}).error,/边界/);
+ commit(a,{type:'set_unit_stat',unitId:'swordsman',patch:{x:0,y:2}});
  const plan=a.previewAction({type:'flee'}); assert.equal(plan.ok,true);
  a.playAction({type:'flee'});
  assert.ok(a.listActionLogs(20).some(x=>x.type==='flee'));

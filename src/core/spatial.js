@@ -9,6 +9,8 @@ const same = (a, b) => a.x === b.x && a.y === b.y;
 const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 const table = collection => Object.values(collection ?? {});
 
+export const atBattleEdge = (state, {x, y}) => x === 0 || y === 0 || y === state.grid.length - 1 || x === state.grid[y]?.length - 1;
+
 export function cellAt(state, x, y) {
   if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return undefined;
   return state.grid[y]?.[x];
@@ -19,7 +21,7 @@ export const isGround = (state, at) => {
   return Boolean(cell && cell.kind !== 'wall');
 };
 export const unitAt = (state, x, y, exceptId) => table(state.units)
-  .filter(unit => unit.hp > 0 && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
+  .filter(unit => unit.hp > 0 && !unit.fled && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
 export const coverAt = (state, x, y) => table(state.covers)
   .filter(cover => cover.hp > 0 && cover.x === x && cover.y === y).sort(byId)[0];
 export const gridDistance = (a, b) => Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
@@ -201,6 +203,6 @@ export function isFlanked(state, attacker, defender) {
     Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender);
   if (!adjacent(attacker)) return false;
   const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
-  return table(state.units).some(ally => ally.hp > 0 && ally.id !== attacker.id && ally.team === attacker.team &&
+  return table(state.units).some(ally => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team &&
     adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
 }

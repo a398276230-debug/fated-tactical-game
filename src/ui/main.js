@@ -7,7 +7,7 @@ import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 
 const THEMES = ['amethyst', 'night-gold', 'frost-silver'];
-const TARGETLESS = ['switch_weapon', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
+const TARGETLESS = ['end_encounter','switch_weapon', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
 const PATH_NAMES = { units: '单位', items: '物品', grid: '地形', statuses: '状态', counters: '计数', statusTemplates: '状态模板', covers: '掩体', interactives: '互动点' };
 
 /** 把沙盒试算结果写成人能读的句子（保留原始键名，便于对照命令）。 */
@@ -269,7 +269,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function onChange() {
     const before = live;
     live = game.getBattleState();
-    if (!['blue', 'red'].includes(live.outcome)) victoryPending = false;
+    if (!live.outcome) victoryPending = false;
     else if (before && !before.outcome) victoryPending = true;
     try { storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
     catch { error('浏览器存储空间不足或已关闭；请下载快照保存战局。'); }
@@ -343,11 +343,11 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
-      if (plan.ok && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill || itemId || plan.interactiveId ? plan.name : ACTION_LABELS[type] });
+      if ((plan.ok || (type === 'flee' && plan.error?.includes('边界'))) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) options.push({ command, plan, label: skill || itemId || plan.interactiveId || type === 'end_encounter' ? plan.name : ACTION_LABELS[type] });
     };
     if (canAct) {
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
-      else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add('switch_weapon', null, itemId);
       add('interact');
       for (const skill of actor.skills) add('skill', skill);
@@ -360,6 +360,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
           const plan = game.previewAction(command);
           options.push({ command, plan, bag:true, label:`使用背包物品：${item.name} ×${count}` });
         }
+        add('end_encounter');
         add('end');
       }
     }
@@ -409,7 +410,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const { command, plan, label } = choice;
     error('');
     // 攻击、技能和有借机风险的移动要二次确认，其余直接执行
-    if (!(['skill', 'attack'].includes(command.type) || plan.opportunities?.length)) { execute(command); return; }
+    if (!(['skill', 'attack','end_encounter'].includes(command.type) || plan.opportunities?.length)) { execute(command); return; }
     action = command;
     for (const btn of menuButtons.keys()) btn.setAttribute('aria-pressed', String(btn === button));
     const confirm = $('confirm-action');

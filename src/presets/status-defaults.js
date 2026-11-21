@@ -11,6 +11,7 @@ const def = (name, icon, category, remainingTurns, description, modifiers = {}, 
     modifiers: Object.freeze(modifiers), ...options });
 
 export const STATUSES = Object.freeze(Object.fromEntries(Object.entries({
+  suppressed: def('被压制','⛓️','control',1,'无法行动，自己的回合开始时尝试挣脱。',{skip:true},{durationType:'until_removed'}),
   burn: def('灼烧', '🔥', 'dot', 2, '回合初受到火焰能量伤害。', { damage: 5, damageType: 'energy' }),
   bleed: def('流血', '🩸', 'dot', 3, '回合末每层受到 3 点真实伤害。', { damage: 3, damageType: 'true' },
     { stackRule: 'stack', maxStacks: 5, tickTiming: 'onTurnEnd' }),

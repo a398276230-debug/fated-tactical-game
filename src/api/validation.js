@@ -4,6 +4,7 @@ import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.j
 import { spawnStatsAllowed } from '../core/spawn-unit.js';
 import { resourceDefinitions } from '../core/effects.js';
 
+import { MORALE, moraleLabels } from '../core/combat_protocol.js';
 import { BUILTIN_RESOURCES } from '../core/resource_names.js';
 import { effectNodes, isExpression, validExpireOn, validExpression, validSaveDC, validTerrainNode } from '../core/effect_schema.js';
 import { timeOfDay } from '../core/battle_time.js';
@@ -155,7 +156,8 @@ export function skillTemplate(v, state) {
 export function statusValue(v, key, state) {
   const t = getStatusTemplate(state, key);
   requireThat(id(key) && t, '状态 ID');
-  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers', 'stacks', 'sourceUnitId'], ['appliedRound', 'appliedTurn', 'amount', 'expireInto', 'expireOn']);
+  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers', 'stacks', 'sourceUnitId'], ['appliedRound', 'appliedTurn', 'amount', 'expireInto', 'expireOn', 'holdTotal']);
+  checkOptional(v,'holdTotal',x=>v.id==='suppressed' && Number.isFinite(x));
   checkOptional(v, 'expireOn', x => x === null || validExpireOn(x));
   requireThat(v.expireInto === t.expireInto, '状态到期目标');
   requireThat(v.id === key && statusLabels.every(k => v[k] === t[k]) && statusLifetime(v)
@@ -171,7 +173,7 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
-const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','maneuvers'];
+const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','deathrattle','deathrattleTriggered','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
   fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'tags', 'resources', 'inventory', 'bagWeapons', 'effectUsage', 'effectModifiers', 'altitude']);
   if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
@@ -213,7 +215,7 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'lockedTargetId', x => x === null || id(x));
   checkOptional(v, 'intent', x => typeof x === 'string' && ['normal','function','core','kill','concept'].includes(x));
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
-  checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'moraleType', x => typeof x === 'string'); checkOptional(v, 'moraleState', x => typeof x === 'string');
+  checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'protagonist', x => x === true); checkOptional(v, 'moraleType', x => typeof x === 'string' && Object.hasOwn(MORALE,x)); checkOptional(v, 'moraleState', x => typeof x === 'string' && Object.hasOwn(moraleLabels,x));
   checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'parryQuota', x => int(x, 0, 2)); checkOptional(v, 'parryRefunded', x => typeof x === 'boolean'); checkOptional(v, 'attunementCharges', x => int(x, 0, 2)); checkOptional(v, 'blockMode', x => ['normal','heavy'].includes(x));
   if (own(v,'bagWeapons')) list(v.bagWeapons, 200, id, '背包武器');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
@@ -226,7 +228,10 @@ function jsonTree(v, depth = 0) {
   return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key, x]) => !own(Object.prototype, key) && jsonTree(x, depth + 1));
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','effectTemplates','summonTemplates','terrainPatches']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','effectTemplates','summonTemplates','terrainPatches','battleType','battleConclusion','suppressingTeam']);
+  requireThat(s.battleType === 'suppress' ? ['blue','red'].includes(s.suppressingTeam) : s.suppressingTeam === undefined, '压制方');
+  checkOptional(s,'battleType',x=>typeof x==='string' && Object.hasOwn(MORALE,x));
+  checkOptional(s,'battleConclusion',x=>typeof x==='string' && x.trim().length>0 && s.outcome != null);
   if (own(s, 'time')) {
     fields(s.time, ['raw','hour','minute','timeOfDay','calendar']);
     requireThat(text(s.time.raw, 500) && typeof s.time.calendar === 'string' && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23)
@@ -307,7 +312,7 @@ export function validateState(s) {
   table(s.units, (v, k) => {
     unitValue(v, k, s);
     const point = `${v.x},${v.y}`;
-    if (v.hp > 0) {
+    if (v.hp > 0 && !v.fled) {
       requireThat(!occupied.has(point) && s.grid[v.y][v.x].kind !== 'wall'
         && !Object.values(s.covers).some(c => c.hp > 0 && c.x === v.x && c.y === v.y), '棋子位置重叠或阻挡');
       occupied.add(point);

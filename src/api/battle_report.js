@@ -130,7 +130,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           else {
             const verdict = detail.critical ? `对${target}打出暴击` : `击中${target}`;
             const grade = detail.automatic ? '自动命中' : checkGrade(true, detail.selected);
-            add(verdict + notes([grade, detail.rating?.name].filter(Boolean)));
+            add(verdict + notes([grade, detail.rating?.name, detail.execution && '处决加成'].filter(Boolean)));
           }
           break;
         }
@@ -164,7 +164,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           add(replaceUnitNames(event, text) + notes([detail.perfect ? '大成功' : checkGrade(detail.success, detail.defenderRoll)]));
           break;
         case 'morale':
-          add(replaceUnitNames(event, text) + (detail.check ? notes([`士气检定${checkGrade(detail.shaken, detail.roll)}`]) : ''));
+          add(replaceUnitNames(event, text) + (Number.isFinite(detail.roll) ? notes([`战意检定${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ''));
           break;
         case 'status': case 'status_patch': {
           const brace = events[i - 1];

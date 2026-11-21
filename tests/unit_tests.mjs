@@ -28,6 +28,7 @@ import './terrain_descriptor_regression_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
 import './tactical_action_tests.mjs';
+import './morale_tests.mjs';
 import './control_state_tests.mjs';
 import './tavern_tests.mjs';
 import './ai_session_tests.mjs';

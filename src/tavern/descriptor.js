@@ -1,3 +1,4 @@
+import { moraleTypeFor } from '../core/combat_protocol.js';
 const identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const unsafeKey = key => Object.hasOwn(Object.prototype, key) || key === 'prototype';
 
@@ -8,7 +9,15 @@ export function parseBattleDescriptor(value) {
     .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   if (!/^\s*(battle|unit)\s*\|/i.test(lines[0] ?? '')) return null;
   const fail = message => { throw new Error(`battle_init 描述符：${message}`); };
-  const [kind, version, battleId, sceneTitle, terrainMode, seedText, ...extra] = lines[0].split('|').map(x => x.trim());
+  const [kind, version, battleId, sceneTitle, terrainMode, ...options] = lines[0].split('|').map(x => x.trim());
+  const sideToken = options.at(-1)?.match(/^压制方=(blue|red)$/);
+  if (sideToken) options.pop();
+  const typeToken = options.at(-1)?.match(/^战斗类型=(.+)$/);
+  const moraleType = typeToken && moraleTypeFor(typeToken[1]);
+  if (typeToken && !moraleType) fail('未知战斗类型，可选：标准、切磋、竞技、压制、死斗、守卫');
+  if ((moraleType === 'suppress') !== !!sideToken) fail('压制战必须在战斗类型后声明 |压制方=blue 或 |压制方=red；其他类型不填压制方');
+  if (typeToken) options.pop();
+  const [seedText,...extra] = options;
   if (kind !== 'battle' || version !== '1' || extra.length || !identifier.test(battleId ?? '') || unsafeKey(battleId)
     || !sceneTitle || sceneTitle.length > 100 || !['flat', 'terrain'].includes(terrainMode)) {
     fail('首行应为 battle|1|ID|场景标题|flat 或 terrain，可追加 |seed');
@@ -64,5 +73,5 @@ export function parseBattleDescriptor(value) {
       ...(altitudeMatch ? { altitude } : coordinates[2] !== undefined ? { z } : {}) });
   }
   if (!units.length) fail('至少需要一条 unit 记录');
-  return { version: 1, battleId, sceneTitle, terrainMode, ...(seedText === undefined ? {} : { seed: Number(seedText) }), units, ...(covers.length && {covers}), ...(interactives.length && {interactives}) };
+  return { version: 1, battleId, sceneTitle, terrainMode, ...(moraleType && {moraleType}), ...(sideToken && {suppressingTeam:sideToken[1]}), ...(seedText === undefined ? {} : { seed: Number(seedText) }), units, ...(covers.length && {covers}), ...(interactives.length && {interactives}) };
 }

@@ -246,11 +246,13 @@ export function createEffectEngine(io) {
   function executeNodes(state, actor, source, nodes, inherited, ctx, entry, seen, depth, exprTarget = entry.expr.target, stopOnFailure = false) {
     let applied = false;
     for (const node of nodes) {
+      if (actor.fled) break;
       if (node.enabled === false) continue;
       const p = { ...entry.expr.params, ...node };
       const recipients = node.target && node.target !== exprTarget
         ? targets(state, actor, node.target, ctx, p.radius ?? 1) : [inherited];
       for (const target of recipients) {
+        if (target?.fled) continue;
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
         const label = node.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
         const amount = nodeAmount(state, actor, target, p, ctx);

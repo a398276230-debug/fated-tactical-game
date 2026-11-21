@@ -77,6 +77,15 @@ export function areaResolution({ baseDamage, mc = 1, coverage = 1, rangeTier = 1
   const per = colossus ? baseDamage * mc * coverage : baseDamage;
   return { nHit, damage: per * nHit, perTarget: per };
 }
-export function moraleResult({ type = 'standard', hp, maxHp, d20 = 20 } = {}) { const rule = MORALE[type] ?? MORALE.standard; const triggered = hp / maxHp < rule.threshold; return { threshold: rule.threshold, triggered, check: rule.check, roll: rule.check ? d20 : null, shaken: triggered && (!rule.check || d20 < 12) }; }
+export const moraleTypes = Object.freeze({标准:'standard',切磋:'spar',竞技:'arena',压制:'suppress',死斗:'deathmatch',守卫:'guard'});
+export const moraleTypeFor = value => Object.hasOwn(MORALE,value) ? value : Object.hasOwn(moraleTypes,value) ? moraleTypes[value] : null;
+export const moraleLabels = Object.freeze({steady:'坚守',shaken:'动摇',routed:'溃逃'});
+export const moraleModifiers = Object.freeze({shaken:Object.freeze({accuracy:-2}),routed:Object.freeze({accuracy:-4})});
+export function moraleResult({ type = 'standard', hp, maxHp, d20 } = {}) {
+  const {threshold,check} = MORALE[type] ?? MORALE.standard;
+  const triggered = maxHp > 0 && hp / maxHp < threshold;
+  const roll = triggered && check ? d20 ?? null : null;
+  return {threshold,check,triggered,roll,outcome: !triggered ? 'steady' : !check ? 'shaken' : roll !== null && roll < 12 ? 'routed' : 'steady'};
+}
 export function nonLethalHp(hp, nonLethal) { return nonLethal ? Math.max(1, hp) : Math.max(0, hp); }
 export function normalizeEquipment(unit = {}) { return { mainHand: unit.mainHand ?? unit.weapon ?? null, offHand: unit.offHand ?? null, shield: unit.shield ?? null }; }

@@ -2,7 +2,7 @@ import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { validateEffect, validateState } from '../api/validation.js';
 import { validSaveDC } from '../core/effect_schema.js';
 import { validateStatusModifiers } from '../core/status_modifiers.js';
-import { sizeClassFor, stanceFor } from '../core/combat_protocol.js';
+import { sizeClassFor, stanceFor, moraleTypeFor } from '../core/combat_protocol.js';
 import { adaptLegacyEffects, initialCounters, resourceDefinitions } from '../core/effects.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { parseBattleDescriptor } from './descriptor.js';
@@ -694,7 +694,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const rawFacing = Array.isArray(p.facing) ? p.facing : [team === 'blue' ? 1 : -1, 0];
   const facing = rawFacing.slice(0, 2).map(n => Math.sign(integer(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
-  const unit = { id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: text(p.moraleType) || 'standard' };
+  const unit = { id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
+  if (p.moraleType && !moraleTypeFor(p.moraleType)) sink('state').push(`未知战斗类型「${p.moraleType}」，按标准处理`);
   if (isProtagonist) {
     const bagWeapons = [];
     for (const [slot, raw, index] of sourceEquipment({装备:record.背包})) {
@@ -785,7 +786,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record.__sourceKind?.toLowerCase() ?? 'battle_init';
     if (index < participants.length && !resolved[index] && participant.source) sink(id, 'battle_init', 'state').push(`未找到参战来源：${participant.source}（${participant.name ?? participant.id}）`);
-    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist);
+    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { moraleType:battle.moraleType, ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist);
     units[id] = made.unit;
     profiles[id] = made.profile;
     sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist };
@@ -803,7 +804,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   }
   const title = text(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || '酒馆战术战局';
   const seed = integer(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-  const state = { scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
   terrainState(battle, state, sink(null, 'terrain', 'terrain'));

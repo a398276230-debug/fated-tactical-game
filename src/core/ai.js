@@ -1,5 +1,5 @@
 import { currentUnit, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
-import { coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
+import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
 const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
@@ -67,12 +67,13 @@ function aimedOptions(state, actor, attacksOnly = false) {
 
 // Obstacle-aware objective distances. Firing positions include cells facing ranged targets,
 // while melee units pursue the boundary around their opponents rather than the occupied tile.
-function approach(state, actor, enemies) {
+function approach(state, actor, enemies, suppress = false) {
   const weapon = state.equipment[state.items[actor.weapon]?.templateId];
   const range = weapon?.range ?? 1.5;
   const spots = [{ x: actor.x, y: actor.y, steps: 0 }, ...reachable(state, 'move', actor, Infinity)];
   const clearAttackCell = probe => enemies.some(target => {
     const d = distance3D(state, probe, target);
+    if (suppress) return d <= 1 && hasLOS(state,probe,target);
     if (d > range + 1) return false;
     const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
@@ -101,8 +102,45 @@ export function chooseAction(state) {
   if (state.outcome) return null;
   const actor = currentUnit(state);
   if (!actor || !actor.hp || !actor.ap) return { ...END };
-  const enemies = Object.values(state.units).filter(u => u.hp > 0 && u.team !== actor.team).sort(byId);
+  const enemies = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId);
   if (!enemies.length) return { ...END };
+  if (actor.moraleState === 'routed') {
+    if (atBattleEdge(state,actor)) return preview(state,{type:'flee'}).ok ? {type:'flee'} : {...END};
+    const move = preview(state,{type:'move'});
+    if (!move.ok) return {...END};
+    const exit = reachable(state,'move',actor,Infinity).filter(cell=>atBattleEdge(state,cell)).sort((a,b)=>a.steps-b.steps)[0];
+    const dest = exit?.path.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p)));
+    return dest ? {type:'move',x:dest.x,y:dest.y} : {...END};
+  }
+  if (state.battleType === 'suppress' && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
+    const held = Object.values(state.units).filter(t=>t.team===actor.team && t.hp>0 && !t.fled && t.statuses.suppressed).sort(byId);
+    for (const ally of held) {
+      const rescue={type:'free_ally',x:ally.x,y:ally.y};
+      if (preview(state,rescue).ok) return rescue;
+    }
+    if (held.length) {
+      const move=preview(state,{type:'move'});
+      if (move.ok) {
+        const route=approach(state,actor,held,true);
+        const dest=route.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p)));
+        if(dest) return {type:'move',x:dest.x,y:dest.y};
+      }
+    }
+  }
+  if (state.battleType === 'suppress' && state.suppressingTeam === actor.team) {
+    for (const enemy of enemies) {
+      const action={type:'suppress',x:enemy.x,y:enemy.y};
+      if (preview(state,action).ok) return action;
+    }
+    const targets=enemies.filter(t=>!t.statuses.suppressed && visibleEnemy(state,actor,t));
+    const path=targets.length && approach(state,actor,targets,true);
+    if (path?.length) {
+      const move=preview(state,{type:'move'});
+      const dest=path.slice().reverse().find(p=>move.cells?.some(c=>samePosition(c,p)));
+      if (dest) return {type:'move',x:dest.x,y:dest.y};
+    }
+    return {...END};
+  }
   const visible = enemies.filter(u => visibleEnemy(state, actor, u));
   const objectives = visible.length ? visible : enemies;
   let best = { action: END, score: .6 };

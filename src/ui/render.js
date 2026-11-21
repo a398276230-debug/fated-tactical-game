@@ -3,7 +3,7 @@ import { resourceLabel } from '../core/resource_names.js';
 import { effectLabel, resourceDefinitions } from '../core/effects.js';
 import { preview as rulesPreview, corpses } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
-import { bodySizeLabel } from '../core/combat_protocol.js';
+import { bodySizeLabel, moraleLabels, moraleTypes } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES, DAMAGE_TYPES } from './narrate.js';
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
@@ -11,10 +11,10 @@ const STANCES = { light_blade: '轻剑', dual_wield: '双持', attunement: '同�
 const SHAPES = { circle: '圆形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
 const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' };
 export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', attack: '普攻', interact: '互动', brace: '架势防御',
-  block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',
+  free_ally: '解除压制', suppress: '压制', block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',
   flee: '逃跑', detour: '绕行', reload: '装填', end: '结束回合' };
 export const ACTION_HINTS = { move: '走到这一格', sprint: '跑得更远，耗 2 AP', disengage: '离开时不被借机', attack: '用武器攻击', interact: '使用场景设施',
-  brace: '本回合减伤', block: '举盾格挡', charge: '为下一击蓄力', scan: '侦察周围', lock_on: '下次攻击更准', grapple: '对抗检定，擒住对方',
+  free_ally: '用攻击槽直接解救相邻队友', suppress: '一格内命中后进行力量对抗，不造成伤害', brace: '本回合减伤', block: '举盾格挡', charge: '为下一击蓄力', scan: '侦察周围', lock_on: '下次攻击更准', grapple: '对抗检定，擒住对方',
   disarm: '对抗检定，打落武器', trip: '对抗检定，绊倒对方', push: '对抗检定，推开对方', flee: '尝试脱离战斗', use_item: '使用副手道具',
   reload: '补充弹药', end: '保留剩余 AP' };
 
@@ -137,7 +137,7 @@ export function createRenderer(root, portraitFor = () => []) {
   function renderBoard(state, { selected, action, hover, preview, current }) {
     initBoard(state);
     const moving = ['move', 'sprint', 'disengage'].includes(action?.type);
-    const unitsAt = group(values(state.units).filter(u => u.hp > 0));
+    const unitsAt = group(values(state.units).filter(u => u.hp > 0 && !u.fled));
     const bodiesAt = group(corpses(state)), coversAt = group(values(state.covers)), itemsAt = group(values(state.interactives));
     const affected = new Set((!moving && preview?.ok && preview.cells || []).map(p => key(p.x, p.y)));
     const path = new Set((moving && preview?.ok && preview.path || []).map(p => key(p.x, p.y)));
@@ -228,6 +228,7 @@ export function createRenderer(root, portraitFor = () => []) {
     crystals.append(el('span', '', '行动力 '), ...[0, 1].map(i => el('span', `ap-crystal${i >= ap ? ' is-used' : ''}`, i < ap ? '◆' : '◇')));
     crystals.setAttribute('aria-label', `剩余 ${ap} / 2 AP`);
     meta.append(crystals);
+    if (u.moraleState && u.moraleState !== 'steady') meta.append(el('span','ft-chip',`战意${moraleLabels[u.moraleState]}`));
     meta.append(el('span', 'ft-chip', `动作${u.used?.action ? '已用' : '可用'} · 攻击${u.used?.attack ? '已用' : '可用'}`));
     for (const s of values(u.statuses)) meta.append(el('span', 'ft-chip', statusText(s)));
     node.replaceChildren(el('span', 'ft-actor-face', Array.from(u.name)[0]), name, bars, meta);
@@ -245,7 +246,7 @@ export function createRenderer(root, portraitFor = () => []) {
     head.dataset.faction = u.team;
     const title = el('div');
     const tile = state.grid[u.y][u.x];
-    title.append(el('strong', '', u.name), el('div', 'muted', `${side(u.team)} · 位于 (${u.x}, ${u.y})${tile.z ? `，高度 ${tile.z}` : ''} · 朝向 ${ARROWS[u.facing?.join(',')] ?? '·'}${u.hp ? '' : ' · 已倒下'}`));
+    title.append(el('strong', '', u.name), el('div', 'muted', `${side(u.team)} · 战意：${u.protagonist ? '自主' : moraleLabels[u.moraleState ?? 'steady']} · 位于 (${u.x}, ${u.y})${tile.z ? `，高度 ${tile.z}` : ''} · 朝向 ${ARROWS[u.facing?.join(',')] ?? '·'}${u.hp ? '' : ' · 已倒下'}`));
     head.append(face, title);
     const wrap = el('div', 'ft-actor'); wrap.dataset.faction = u.team; wrap.style.width = '100%';
     wrap.append(head);
@@ -365,7 +366,7 @@ export function createRenderer(root, portraitFor = () => []) {
           t.shield ? `对方有 ${t.shield} 点护盾` : ''].filter(Boolean);
         if (mods.length) bits.push(mods.join('，'));
         if (t.heal) bits.push(`治疗 ${interval(t.heal)}`);
-        else if (t.damage) bits.push(`命中后伤害约 ${interval(t.damage)}${t.savedDamage ? `（豁免成功则 ${interval(t.savedDamage)}）` : ''}`);
+        else if (t.damage) bits.push(`${t.execution ? '处决：忽略闪避，命中至少平暴击。' : ''}命中后伤害约 ${interval(t.damage)}${t.savedDamage ? `（豁免成功则 ${interval(t.savedDamage)}）` : ''}`);
         row.append(el('div', '', bits.join('。')));
         if (chance != null) {
           const odds = el('div', 'ft-odds'), track = el('span', 'ft-odds-bar'), fill = el('i');
@@ -392,7 +393,8 @@ export function createRenderer(root, portraitFor = () => []) {
     const aimed = ['move', 'sprint', 'disengage', 'attack', 'skill', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push', 'shield_bash'].includes(action?.type);
     const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
     if (fresh) {
-      $('battle-title').textContent = state.title;
+      const battleKind = Object.keys(moraleTypes).find(k => moraleTypes[k] === state.battleType);
+      $('battle-title').textContent = battleKind ? `${state.title} · ${battleKind}${state.battleType === 'guard' ? '（蓝方坚守五轮）' : ''}` : state.title;
       $('round-badge').textContent = `第 ${state.round} 回合`;
       renderFeatures(state);
     }

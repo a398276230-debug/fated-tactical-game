@@ -209,10 +209,10 @@ export function narrate(log, state) {
     case 'save': return out(saveEntry(state, log));
     case 'contest': return out(versus(state, log, `${MANEUVERS[d.maneuver] ?? '对抗'}检定`, d.success, `${MANEUVERS[d.maneuver] ?? ''}成功`, `${MANEUVERS[d.maneuver] ?? ''}失败`));
     case 'flee': return out(versus(state, log, '逃跑检定', d.success, '逃跑成功', '逃跑失败'));
-    case 'morale': return out({ tone: d.shaken ? 'status' : 'defeat', icon: '🏳️',
-      lines: [`生命跌破 ${pct(d.threshold ?? 0)}，士气动摇`, Number.isFinite(d.roll) ? `士气检定 d20 得 ${d.roll}` : null].filter(Boolean),
+    case 'morale': return out({ tone: (d.outcome ?? (d.shaken ? 'shaken' : 'routed')) === 'routed' ? 'defeat' : 'status', icon: '🏳️',
+      lines: [log.text, `${d.recovered ? '生命恢复至阈值' : '生命低于阈值'} ${pct(d.threshold ?? 0)}`],
       roll: Number.isFinite(d.roll) ? { kind: 'd20', label: `${nameOf(state, d.targetId)} · 士气检定`, dice: [d.roll], kept: d.roll, mode: 'normal', modifier: 0, total: d.roll,
-        verdict: d.shaken ? '动摇' : '溃逃', tone: d.shaken ? 'status' : 'miss' } : undefined });
+        verdict: d.outcome ? (d.roll >= 12 ? '坚守' : '溃逃') : (d.shaken ? '动摇' : '溃逃'), tone: d.roll >= 12 ? 'hit' : 'miss' } : undefined });
     case 'proc': {
       const hit = d.triggered;
       return out({ tone: hit ? 'status' : 'info', icon: '🎲', title: `${log.text}${hit ? ' 触发' : ' 未触发'}`, quiet: !hit,
