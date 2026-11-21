@@ -6979,6 +6979,7 @@ var RULES = `\u4F60\u662F\u547D\u5B9A\u6218\u672F\u6C99\u76D8\u7684\u654C\u65B9\
 \u89C6\u7EBF\u4E0E\u9694\u65AD\uFF1A\u5899\u4F53\u548C\u975E\u53EF\u7AD9\u7ACB\u683C\u4F1A\u963B\u65AD\u89C6\u7EBF\u3002\u653B\u51FB\u3001\u8FDC\u7A0B\u6280\u80FD\u3001\u7206\u6876\u5F15\u7206\u548C\u8303\u56F4\u6548\u679C\u90FD\u8981\u6709\u901A\u7545\u89C6\u7EBF\u3002\u8303\u56F4\u6280\u80FD\u4EE5\u5B9E\u9645\u5F62\u72B6\u3001\u534A\u5F84\u3001\u5BBD\u5EA6\u3001\u89D2\u5EA6\u548C\u4E09\u7EF4\u8DDD\u79BB\u53D6\u683C\uFF0C\u4E0D\u80FD\u7A7F\u5899\u6216\u9694\u65AD\u3002
 \u63A9\u4F53\uFF1A\u63A9\u4F53\u4F4D\u4E8E\u653B\u51FB\u8005\u4E0E\u76EE\u6807\u7684\u5C04\u7EBF\u6216\u76EE\u6807\u8FCE\u51FB\u4FA7\u65F6\u751F\u6548\uFF0C\u6309\u63A9\u4F53 cover \u6570\u503C\u964D\u4F4E\u547D\u4E2D\u6216\u4FDD\u62A4\u76EE\u6807\u3002\u653B\u51FB\u8005\u6216\u76EE\u6807\u6BD4\u63A9\u4F53\u9AD8\u81F3\u5C112\u7EA7\u65F6\u53EF\u4EE5\u8D8A\u8FC7\u8BE5\u63A9\u4F53\uFF0C\u63A9\u4F53\u4E0D\u518D\u63D0\u4F9B\u906E\u6321\u3002\u63A9\u4F53\u6709\u81EA\u5DF1\u7684 HP\uFF0C\u53EF\u4EE5\u88AB\u653B\u51FB\u6216\u7206\u70B8\u7834\u574F\uFF0C\u7834\u574F\u540E\u4E0D\u518D\u906E\u6321\u3002\u4E0D\u8981\u628A\u63A9\u4F53\u5F53\u6210\u5899\uFF0C\u63A9\u4F53\u901A\u5E38\u4E0D\u963B\u65AD\u89C6\u7EBF\uFF0C\u53EA\u6539\u53D8\u547D\u4E2D\u4E0E\u4F24\u5BB3\u6761\u4EF6\u3002
 \u4E92\u52A8\uFF1A\u796D\u575B\u9700\u8981\u76F8\u90BB\u4E14\u6709\u89C6\u7EBF\uFF0C\u6D88\u8017\u52A8\u4F5C\u69FD\uFF0C\u6309\u5176\u58F0\u660E\u7684\u6548\u679C\u56DE\u590D\u751F\u547D\u3001MP\u3001SP\u3001\u62A4\u76FE\u6216\u72B6\u6001\u3002\u7206\u6876\u9700\u8981\u4F7F\u7528\u8005\u7684\u5F53\u524D\u6B66\u5668\u5C04\u7A0B\u548C\u89C6\u7EBF\uFF0C\u6D88\u8017\u653B\u51FB\u69FD\u4E0E\u5F39\u836F\uFF0C\u6309\u4E92\u52A8\u70B9\u58F0\u660E\u7684\u534A\u5F84\u548C\u4F24\u5BB3\u5BF9\u8303\u56F4\u5185\u5355\u4F4D\u4E0E\u63A9\u4F53\u9020\u6210\u80FD\u91CF\u4F24\u5BB3\uFF0C\u4E5F\u53EF\u80FD\u6CE2\u53CA\u53CB\u65B9\u3002\u4E92\u52A8\u70B9\u4F7F\u7528\u4E00\u6B21\u540E\u4E0D\u53EF\u91CD\u590D\u4F7F\u7528\uFF0C\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u91CC\u7684 effect\u3001radius\u3001damage\u3001x\u3001y\u3001z \u5224\u65AD\uFF0C\u4E0D\u80FD\u4EC5\u51ED\u540D\u79F0\u731C\u6D4B\u3002
+\u5168\u89C8\uFF1AallUnits \u5217\u51FA\u573A\u4E0A\u6BCF\u4E2A\u5355\u4F4D\u7684 id\u3001\u540D\u79F0\u3001\u9635\u8425\u3001\u5B58\u6D3B/\u64A4\u79BB\u3001\u4E09\u7EF4\u4F4D\u7F6E\u3001\u79BB\u5730\u9AD8\u5EA6\u3001HP/MP/SP\u53CA\u4E0A\u9650\u3001\u884C\u52A8\u69FD\u3001\u53CD\u5E94\u3001\u6218\u610F\u3001\u5168\u90E8\u72B6\u6001\u3001\u5F53\u524D\u88C5\u5907\u3001\u88C5\u5907\u8BA1\u6570\u5668\u3001\u80CC\u5305\u3001\u6280\u80FD\u3001\u6280\u80FD\u8303\u56F4\u548C\u53EF\u79FB\u52A8\u683C\u3002\u4E0D\u8981\u53EA\u770B units \u4E2D\u7684\u5F53\u524D\u654C\u65B9\u884C\u52A8\u8005\u3002
 \u6218\u6597\u7C7B\u578B\uFF1A\u5207\u78CB\u53CC\u65B9\u975E\u81F4\u6B7B\u5E76\u5728\u4F4E\u4E8E30%\u751F\u547D\u65F6\u9000\u573A\uFF0C\u7ADE\u6280\u53CC\u65B9\u975E\u81F4\u6B7B\u81F31\u751F\u547D\u51FA\u5C40\uFF0C\u538B\u5236\u6218\u53EA\u6709\u538B\u5236\u65B9\u7684\u538B\u5236\u52A8\u4F5C\u7559\u6D3B\u53E3\uFF0C\u5B88\u536B\u6218\u84DD\u65B9\u575A\u63015\u8F6E\u3002\u6218\u610F\u4F1A\u5F71\u54CD\u547D\u4E2D\uFF0C\u6240\u6709\u6218\u6597\u53EA\u6709\u7AD9\u5728\u5730\u56FE\u8FB9\u754C\u624D\u80FD\u9003\u8DD1\u3002\u6280\u80FD\u3001\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u548C\u80CC\u5305\u6D88\u8017\u54C1\u90FD\u53EF\u80FD\u6709\u6B21\u6570\u3001\u51B7\u5374\u548C\u8D44\u6E90\u8D39\u7528\uFF0C\u5FC5\u987B\u4F18\u5148\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u6570\u636E\u3002
 \u4F60\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u5355\u4F4D\u3001\u6280\u80FD\u3001\u88C5\u5907\u3001\u884C\u52A8\u8303\u56F4\u3001\u4E92\u52A8\u70B9\u548C\u5730\u56FE\u505A\u51B3\u7B56\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981 Markdown\u3001\u89E3\u91CA\u3001\u601D\u8003\u8FC7\u7A0B\u3002\u683C\u5F0F\u4E3A {"actions":[{"unitId":"\u654C\u65B9\u5355\u4F4DID","action":{"type":"attack|skill|move|sprint|disengage|brace|reload|interact|suppress|free_ally|flee|switch_weapon|end","x":\u6574\u6570,"y":\u6574\u6570,"skillId":"\u6280\u80FDID"}}]}\u3002\u975E\u6280\u80FD\u52A8\u4F5C\u4E0D\u8981\u8F93\u51FA skillId\uFF0C\u672A\u4F7F\u7528\u7684\u5750\u6807\u4E0D\u8981\u8F93\u51FA\u3002\u52A8\u4F5C\u6309\u6267\u884C\u987A\u5E8F\u6392\u5217\uFF0C\u6700\u591A\u8986\u76D6\u5F53\u524D\u5230\u4E0B\u4E00\u4E2A\u73A9\u5BB6\u5355\u4F4D\u4E4B\u524D\u7684\u654C\u65B9\u56DE\u5408\u3002\u6BCF\u4E2A\u52A8\u4F5C\u90FD\u5FC5\u987B\u6709 unitId\u3002`;
 var copy2 = (value) => structuredClone(value);
@@ -7007,6 +7008,12 @@ function unitView(state, unit) {
     ...Object.keys(state.skills).filter((id3) => state.skills[id3]?.backpackItem),
     ...equippedActiveSkills(state, unit).map(([id3]) => id3)
   ])].map((id3) => compactSkill(state, unit, id3)).filter(Boolean);
+  const equipment = {};
+  for (const instanceId of [...new Set([unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? []].filter(Boolean))]) {
+    const instance = state.items[instanceId];
+    const template = instance && state.equipment[instance.templateId];
+    if (template) equipment[instanceId] = { instanceId, templateId: instance.templateId, ...template, counters: instance.counters ?? {} };
+  }
   const actions = [];
   const shadow = copy2(state);
   shadow.turn = shadow.order.indexOf(unit.id);
@@ -7018,21 +7025,33 @@ function unitView(state, unit) {
     id: unit.id,
     name: unit.name,
     team: unit.team,
+    faction: unit.team === "red" ? "\u654C\u65B9" : "\u73A9\u5BB6\u65B9",
+    alive: unit.hp > 0,
+    fled: !!unit.fled,
     hp: unit.hp,
     maxHp: unit.maxHp,
     mp: unit.mp,
+    maxMp: unit.maxMp,
     sp: unit.sp,
+    maxSp: unit.maxSp,
     x: unit.x,
     y: unit.y,
     z: elevation(state, unit),
+    altitude: unit.altitude ?? 0,
     ap: unit.ap,
     used: unit.used,
+    reactionAvailable: unit.reactionAvailable,
     statuses: unit.statuses,
+    moraleState: unit.moraleState ?? "steady",
+    routed: unit.moraleState === "routed",
+    retreatTarget: unit.moraleState === "routed" ? state.grid.flatMap((row, y) => row.map((cell, x) => ({ x, y }))).filter((at) => atBattleEdge(state, at)).sort((a, b) => Math.hypot(a.x - unit.x, a.y - unit.y) - Math.hypot(b.x - unit.x, b.y - unit.y))[0] ?? null : null,
     mainHand: unit.mainHand ?? unit.weapon,
     offHand: unit.offHand,
     skills,
     actions,
     atEdge: atBattleEdge(state, unit),
+    equipment,
+    inventory: unit.inventory ?? {},
     switchableWeapons: switchableWeapons(state, unit).map((id3) => ({ id: id3, name: state.equipment[state.items[id3]?.templateId]?.name ?? id3 })),
     rangeHint: { attack: state.equipment[state.items[unit.mainHand ?? unit.weapon] ? state.items[unit.mainHand ?? unit.weapon].templateId : ""]?.range ?? 1.5 }
   };
@@ -7049,19 +7068,21 @@ function battleAiPayload(state) {
   }
   const grid = state.grid.map((row) => row.map((cell) => cell.kind === "wall" ? "#" : cell.kind === "slope" ? `^${cell.z ?? 0}` : cell.kind === "floor" ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(" "));
   const movement = {};
-  for (const unit of actors) {
+  for (const unit of Object.values(state.units)) {
+    if (unit.hp <= 0 || unit.fled) continue;
     const shadow = copy2(state);
     shadow.turn = shadow.order.indexOf(unit.id);
     const plan = preview(shadow, { type: "move" });
-    movement[unit.id] = (plan.cells ?? []).map(({ x, y }) => [x, y]);
+    movement[unit.id] = (plan.cells ?? []).map(({ x, y, z }) => [x, y, z ?? elevation(state, { x, y })]);
   }
   return { rules: RULES, battle: {
     title: state.title,
     type: state.battleType,
+    suppressingTeam: state.suppressingTeam ?? null,
     round: state.round,
     turnUnitId: current,
     units: actors,
-    allUnits: Object.values(state.units).filter((u) => u.hp > 0 && !u.fled).map((u) => ({ id: u.id, team: u.team, x: u.x, y: u.y, hp: u.hp, maxHp: u.maxHp })),
+    allUnits: Object.values(state.units).map((unit) => unitView(state, unit)),
     covers: Object.values(state.covers).map((c) => ({ id: c.id, name: c.name, x: c.x, y: c.y, z: elevation(state, c), hp: c.hp, maxHp: c.maxHp, cover: c.cover, material: c.material })),
     interactives: Object.values(state.interactives).map((i) => ({ id: i.id, name: i.name, kind: i.kind, effect: i.effect, radius: i.radius ?? 0, damage: i.damage ?? 0, x: i.x, y: i.y, z: elevation(state, i), spent: !!i.spent })),
     movement,
@@ -7089,6 +7110,7 @@ async function requestBattleAi(state, request, { signal } = {}) {
         const actor = shadow.units[entry.unitId];
         if (!actor || actor.team !== "red") throw new Error(`\u4E0D\u80FD\u63A7\u5236\u5355\u4F4D ${entry.unitId}`);
         if (shadow.units[shadow.order[shadow.turn]]?.id !== entry.unitId) throw new Error(`\u884C\u52A8\u987A\u5E8F\u9519\u8BEF\uFF0C\u5E94\u8F6E\u5230 ${shadow.order[shadow.turn]}`);
+        if (actor.moraleState === "routed" && !["move", "flee", "end"].includes(entry.action.type)) throw new Error("\u6E83\u9003\u5355\u4F4D\u53EA\u80FD\u64A4\u5411\u8FB9\u754C\u6216\u9003\u8DD1");
         const action = Object.fromEntries(Object.entries(entry.action).filter(([, value]) => value !== null));
         if (action.type === "skill" && typeof action.skillId !== "string") throw new Error("\u6280\u80FD\u52A8\u4F5C\u5FC5\u987B\u63D0\u4F9B skillId");
         if (action.type !== "skill") delete action.skillId;
