@@ -664,7 +664,7 @@ var FatedTactical = (() => {
         case "resourceAtLeast":
           return resource3(state, actor, rule.resource) >= rule.amount;
         case "weaponType":
-          return (ctx.weaponType ?? io.weaponType(state, actor)) === value;
+          return ctx.weaponType != null ? ctx.weaponType === value : io.weaponMatches(state, actor, ctx.weaponId, value);
         case "skillSchool":
           return ctx.school === value;
         case "actionType":
@@ -2343,9 +2343,9 @@ var FatedTactical = (() => {
     teleport: teleportBehind,
     statusModifier: changes,
     blockRestore: (unit) => changes(unit, "blockResourceRestore"),
-    weaponType: (state, actor) => {
-      const weapon = weaponInfo(state, actor).template;
-      return weapon.weaponType ?? weapon.weaponClass ?? weapon.rangeType;
+    weaponMatches: (state, actor, instanceId, value) => {
+      const weapon = instanceId ? equipmentFor(state, instanceId).template : weaponInfo(state, actor).template;
+      return weapon?.weaponType === value || (weapon?.weaponClass ?? weapon?.rangeType) === value;
     },
     findExpression: (state, ref2) => [...values2(state.equipment), ...values2(state.skills)].flatMap((t) => t.effects).find((e) => isExpression(e) && e.id === ref2),
     raise: (state, actor, target2, scale) => corpses(state).includes(target2) && spawnEffectUnit(state, actor, target2, target2, scale, true),
@@ -3324,7 +3324,7 @@ var FatedTactical = (() => {
       armorPierce: profile.armorPierce,
       details: { dice: dice3, rating: result.rating?.name, followup: true, cost }
     });
-    dispatchEffect(state, actor, "on_hit", { target: recipient, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical: result.critical, weaponId: weapon.offHand.instance?.id, damageType: profile.damageType });
+    dispatchEffect(state, actor, "on_hit", { target: recipient, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical: result.critical, actionType: "attack", weaponId: weapon.offHand.instance?.id, damageType: profile.damageType });
   }
   function effectSaved(state, actor, target2, effect, sourceName2) {
     const check = (unit, saveStat, saveDC) => {
@@ -10196,7 +10196,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       existing.cap = Math.max(existing.cap ?? 0, capacity);
       existing.initial = capacity;
     } else item.template.effects.push({ id: `${item.templateId}-ammo`, trigger: "passive", target: "self", effects: [{ kind: "produceResource", resource: "ammo", cap: Math.max(1, capacity), initial: capacity }] });
-    const spendsAmmo = item.template.effects.some((expr) => expr.trigger === "on_attack" && effectNodes(expr.effects).some((node3) => node3.kind === "drainResource" && node3.resource === "ammo"));
+    const spendsAmmo = item.template.effects.some((expr) => expr.trigger === "on_attack" && [...effectNodes(expr.effects)].some((node3) => node3.kind === "drainResource" && node3.resource === "ammo"));
     if (!spendsAmmo) item.template.effects.push({ id: `${item.templateId}-ammo-spend`, trigger: "on_attack", target: "self", params: { source: "weapon" }, condition: { type: "selfStatusModifier", key: "infiniteAmmo", value: false }, effects: [{ kind: "drainResource", resource: "ammo", local: true, amount: 1, requireFull: true }] });
     item.counters.ammo = capacity;
   }
@@ -10220,11 +10220,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const classes = ["ranged", "light_blade", "greatsword", "staff", "auxiliary"];
       const weaponClassAlias = /* @__PURE__ */ new Map([["bow", "ranged"], ["crossbow", "ranged"], ["arcane", "staff"]]);
       const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-      const ranged = r.ranged ?? (r.rangeType ? r.rangeType === "ranged" : tagEntries(r.tags ?? r.\u6807\u7B7E).some((tag) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag)));
+      const subtype = tagEntries(r.tags ?? r.\u6807\u7B7E).find((tag) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag));
+      const ranged = r.ranged ?? (r.rangeType ? r.rangeType === "ranged" : Boolean(subtype));
       const twoHanded = slot === "twoHands" || r.twoHanded === true || r.hand === "two_handed" || explicitClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
       const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
       const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? "ranged" : twoHanded ? "greatsword" : "light_blade";
       Object.assign(template, {
+        ...r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {},
         weaponClass,
         hand: twoHanded ? "two_handed" : slot === "offHand" ? "off_hand" : "one_handed",
         ranged: Boolean(ranged),
@@ -11199,7 +11201,7 @@ remainingTurns \u4EE5\u5355\u4F4D\u56DE\u5408\u7ED3\u675F\u9012\u51CF\uFF0C\u770
 
 WHEN\uFF1Apassive \u6301\u7EED\u8BFB\u53D6\uFF0C\u5E38\u9A7B\u4FEE\u6B63\u7528 self \u4E14\u7701\u7565 roll\u3002on_attack \u4E3A\u6B66\u5668\u51FA\u624B\u3001\u547D\u4E2D\u524D\u3002on_hit \u4E3A\u5224\u5B9A\u547D\u4E2D\u540E\uFF0C\u5BF9\u5B9E\u9645\u627F\u4F24\u8005\u89E6\u53D1\uFF0C\u82E5\u4E0D\u5E0C\u671B\u8C41\u514D\u6210\u529F\u65F6\u89E6\u53D1\u5219\u52A0 saved=false\u3002on_damaged \u4E3A\u5B9E\u9645\u6263\u8840\u540E\uFF0C\u53EF\u8BFB attacker\u3001\u4F24\u5BB3\u91CF\u548C melee \u7B49\u6807\u7B7E\u3002on_kill \u4E3A\u51FB\u5012\u654C\u4EBA\uFF0Con_death \u4E3A\u81EA\u8EAB\u6B7B\u4EA1\uFF0Con_ally_death \u4E3A\u961F\u53CB\u6B7B\u4EA1\uFF08\u4E8B\u4EF6\u76EE\u6807\u4E3A\u5012\u4E0B\u7684\u961F\u53CB\uFF09\u3002on_turn_start / on_turn_end \u5BF9\u5E94\u81EA\u8EAB\u56DE\u5408\u3002on_skill_cast \u4E3A\u6280\u80FD\u91CA\u653E\uFF0C\u7ED3\u7B97\u4E3B\u51FB\u524D\u3002on_equip \u88C5\u5907\u540C\u6B65\u65F6\u89E6\u53D1\uFF0C\u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\u3002on_heal \u4E3A\u53D1\u51FA\u6CBB\u7597\u540E\uFF0C\u53EF\u8BFB\u6CBB\u7597\u91CF\u3002active \u4E3A\u6280\u80FD\u4E3B\u52A8\u53D1\u52A8\uFF0C\u5199\u5728\u88C5\u5907\u4E0A\u65F6\u72EC\u7ACB\u751F\u6210\u6309\u94AE\uFF0C\u9ED8\u8BA4 1AP \u548C action \u69FD\u3002\u6280\u80FD\u7684 active / on_skill_cast \u8868\u8FBE\u5F0F\u58F0\u660E params.usesPerBattle \u6216 cooldown \u65F6\u9650\u5236\u6574\u62DB\uFF0C\u5408\u6CD5\u65BD\u653E\u5373\u6263\u4E00\u6B21\uFF0C\u5931\u624B\u3001\u8C41\u514D\u6216\u7A7A\u653E\u4E5F\u8BA1\u6570\uFF1B\u88C5\u5907\u751F\u6210\u7684 active \u6280\u80FD\u540C\u7406\u3002\u53EA\u9650\u5236\u547D\u4E2D\u8FFD\u52A0\u6548\u679C\u65F6\u5728 on_hit \u8868\u8FBE\u5F0F\u58F0\u660E\uFF0C\u5B9E\u9645\u751F\u6548\u624D\u8BA1\u6570\u3002usesPerBattle:null \u8868\u793A\u4E0D\u9650\u6B21\u6570\uFF08\u4E5F\u8986\u76D6 on_equip \u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\uFF09\uFF0Ccooldown \u4EE5\u6218\u6597\u8F6E\u8BA1\u3002params.source=weapon \u8868\u793A\u53EA\u5728\u672C\u6B21\u4F7F\u7528\u8BE5\u88C5\u5907\u5B9E\u4F8B\u65F6\u751F\u6548\u3002
 
-IF\uFF1A\u6570\u7EC4\u7B49\u4EF7\u4E8E AND\uFF0Cor \u4EFB\u4E00\u6210\u7ACB\u3001not \u53D6\u53CD\u3002self \u4E3A\u53D7\u76CA\u8005\u65F6\uFF0C\u76EE\u6807\u6761\u4EF6\u4F18\u5148\u68C0\u67E5\u5F53\u524D\u653B\u51FB\u6216\u6280\u80FD\u5BF9\u8C61\u3002targetHasCategory \u7684 negative \u6307 debuff/dot/control\uFF0Cnone \u6307\u65E0\u4E09\u7C7B\u8D1F\u9762\u72B6\u6001\u3002timeOfDay \u6765\u81EA <tp>\uFF0CtargetLevel \u4E0E\u81EA\u8EAB\u6BD4\u8F83\u3002\u5E03\u5C14\u6761\u4EF6\u7701\u7565 value \u7B49\u540C true\u3002weaponType\u3001skillSchool\u3001\u6807\u7B7E\u53CA\u7269\u79CD\u5B57\u7B26\u4E32\u4E0E\u5FEB\u7167\u4E00\u81F4\u3002
+IF\uFF1A\u6570\u7EC4\u7B49\u4EF7\u4E8E AND\uFF0Cor \u4EFB\u4E00\u6210\u7ACB\u3001not \u53D6\u53CD\u3002self \u4E3A\u53D7\u76CA\u8005\u65F6\uFF0C\u76EE\u6807\u6761\u4EF6\u4F18\u5148\u68C0\u67E5\u5F53\u524D\u653B\u51FB\u6216\u6280\u80FD\u5BF9\u8C61\u3002targetHasCategory \u7684 negative \u6307 debuff/dot/control\uFF0Cnone \u6307\u65E0\u4E09\u7C7B\u8D1F\u9762\u72B6\u6001\u3002timeOfDay \u6765\u81EA <tp>\uFF0CtargetLevel \u4E0E\u81EA\u8EAB\u6BD4\u8F83\u3002\u5E03\u5C14\u6761\u4EF6\u7701\u7565 value \u7B49\u540C true\u3002weaponType \u53EF\u5339\u914D\u5B9E\u9645\u51FA\u624B\u6B66\u5668\u7684\u5B50\u7C7B\uFF08\u5F13\u3001\u5F29\u3001\u706B\u67AA\u3001\u6295\u63B7\u6B66\u5668\uFF09\u6216\u5927\u7C7B\uFF08\u5982 ranged\uFF09\u3002\u9970\u54C1\u4EC5\u5F3A\u5316\u5F13\u666E\u653B\u65F6\u7528 condition:[{type:'actionType',value:'attack'},{type:'weaponType',value:'\u5F13'}]\uFF0C\u914D\u5408 on_hit \u8FFD\u52A0\u4F24\u5BB3\uFF1B\u4E0D\u8981\u7528 arrow \u4EE3\u6307\u5F13\uFF0C\u4E5F\u4E0D\u8981\u7ED9\u9970\u54C1\u5199 params.source:'weapon'\u3002skillSchool\u3001\u6807\u7B7E\u53CA\u7269\u79CD\u5B57\u7B26\u4E32\u4E0E\u5FEB\u7167\u4E00\u81F4\u3002
 \u2022 ${condition2.oneOf.map((rule) => rule.type === "array" ? describe(rule) : `${rule.properties.type.const} ${fields2(rule, ["type"])}`).join("\n\u2022 ")}
 
 ROLL\uFF1A\u65E0 roll \u65F6\u4E00\u5B9A\u5C1D\u8BD5\u3002chance \u76F4\u63A5\u7528 0\u20261 \u6BD4\u4F8B\uFF0Cd20 \u6BD4\u8F83 >= gte\u3002save \u53D6\u76EE\u6807 d20+\u5C5E\u6027\uFF0C\u8FBE\u5230 dc \u5219\u901A\u8FC7\u5E76\u8DF3\u8FC7\u8282\u70B9\u3002save \u6570\u7EC4\u5FC5\u987B\u63D0\u4F9B mode\uFF0C\u6210\u5458\u552F\u4E00\uFF0C\u6BCF\u9879\u72EC\u7ACB\u63B7\u9AB0\u3002contest \u7684\u653B\u65B9 d20+attacker \u51CF\u5B88\u65B9 d20+defender \u8FBE\u5230 dc \u65F6\u6267\u884C\u8282\u70B9\u3002\u8C41\u514D\u6216\u5BF9\u6297\u53EF\u540C\u65F6\u63D0\u4F9B chance \u4F5C\u4E3A\u524D\u7F6E\u6982\u7387\u95E8\u3002dc \u4E0E\u6280\u80FD saveDC \u5747\u652F\u6301\u516C\u5F0F\uFF0C\u89C1\u4E0A\u8282\u6570\u503C\u534F\u8BAE\u3002

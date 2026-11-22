@@ -163,7 +163,7 @@ export function createEffectEngine(io) {
       case 'targetHasTag': return subject?.tags?.includes(value) ?? false;
       case 'duel': return (io.living(state).length === 2) === (value ?? true);
       case 'resourceAtLeast': return resource(state, actor, rule.resource) >= rule.amount;
-      case 'weaponType': return (ctx.weaponType ?? io.weaponType(state, actor)) === value;
+      case 'weaponType': return ctx.weaponType != null ? ctx.weaponType === value : io.weaponMatches(state, actor, ctx.weaponId, value);
       case 'skillSchool': return ctx.school === value;
       case 'actionType': return ctx.actionType === value;
       case 'damageType': return ctx.damageType === value;

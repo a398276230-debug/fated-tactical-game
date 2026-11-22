@@ -86,6 +86,7 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
     类型: 武器
     标签:
       - 弩
+      - "弹药: 5"
       - 主手
       - "攻击: 10"
       - "有效距离: 中程(5)"
@@ -103,12 +104,14 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
   for (const [id, range, hp, stats] of [['p',4,628,[6,6,6,5,5]],['e',5,610,[1,1,6,1,1]]]) {
     const unit = state.units[id], item = state.items[unit.mainHand], template = state.equipment[item.templateId];
     assert.equal(template.weaponClass, 'ranged');
+    assert.equal(template.weaponType, id === 'p' ? '弓' : '弩');
+    assert.equal(template.effects.filter(e => e.effects.some(n => n.kind === 'drainResource' && n.resource === 'ammo')).length, 1);
     assert.equal(template.range, range);
     assert.deepEqual([unit.hp, unit.maxHp, unit.mp, unit.sp, unit.tier], [hp, hp, ...(id === 'p' ? [500,600,1] : [100,100,1])]);
     assert.equal(template.name, id === 'p' ? '冰霜之弓' : '木弩臂');
     assert.deepEqual(unit.skills, []);
     assert.deepEqual(Object.values(unit.stats), stats);
-    assert.equal(item.counters.ammo, 20);
+    assert.equal(item.counters.ammo, id === 'p' ? 20 : 25);
   }
   assert.notEqual(state.units.p.mainHand,state.units.e.mainHand);
   state.turn = state.order.indexOf('p');
@@ -131,6 +134,23 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
   assert.equal(preview(state, attack).error, '弹药已耗尽');
   assert.equal(preview(state, {type:'reload'}).ok, false);
   assert.deepEqual(input.mvu.主角.背包.箭筒.标签,['弹药:20']);
+});
+
+test('箭袋命中附伤只强化指定子类，不等同远程或有弹药', () => {
+  for (const subtype of ['弓','弩','火枪','投掷武器']) {
+    const {state} = hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{
+      冰霜之弓:{类型:'武器',标签:[subtype,'双手','攻击: 185','有效距离: 中程(5)'],accuracy:30},
+      箭筒:{类型:'弹药容器',位置:'饰品',标签:['弹药: 20'],effects:[{id:'quiver-bonus',trigger:'on_hit',target:'hitTarget',condition:[{type:'actionType',value:'attack'},{type:'weaponType',value:'弓'}],effects:[{kind:'damage',flat:8,damageType:'true'}]}]}
+    }}},charInfo:{name:'木偶',hp:10000},battleInit:'battle|1|q|箭袋|flat|123\nunit|p|blue|mvu:主角|主角|1,1\nunit|e|red|char_info|木偶|4,1'}, {throwOnValidation:true});
+    state.turn = state.order.indexOf('p');
+    Object.assign(state.units.p,{ap:2,used:{attack:0,action:0}});
+    state.rng = 123456789;
+    const plain = structuredClone(state);
+    Object.values(plain.equipment).find(t => t.name === '箭筒').effects = [];
+    for (const s of [state, plain]) applyAction(s,{type:'attack',x:4,y:1});
+    assert.ok(plain.units.e.hp < 10000, JSON.stringify(plain.logs.slice(-4)));
+    assert.equal(plain.units.e.hp-state.units.e.hp, subtype === '弓' ? 8 : 0, subtype);
+  }
 });
 
 test('主角背包消耗品扣库存、未知用途进入标准化，装备优先双手', () => {

@@ -429,7 +429,7 @@ function attachAmmoPool(item, capacity) {
     existing.cap = Math.max(existing.cap ?? 0, capacity);
     existing.initial = capacity;
   } else item.template.effects.push({ id: `${item.templateId}-ammo`, trigger: 'passive', target: 'self', effects: [{ kind: 'produceResource', resource: 'ammo', cap: Math.max(1, capacity), initial: capacity }] });
-  const spendsAmmo = item.template.effects.some(expr => expr.trigger === 'on_attack' && effectNodes(expr.effects).some(node => node.kind === 'drainResource' && node.resource === 'ammo'));
+  const spendsAmmo = item.template.effects.some(expr => expr.trigger === 'on_attack' && [...effectNodes(expr.effects)].some(node => node.kind === 'drainResource' && node.resource === 'ammo'));
   if (!spendsAmmo) item.template.effects.push({ id: `${item.templateId}-ammo-spend`, trigger: 'on_attack', target: 'self', params: {source:'weapon'}, condition: {type:'selfStatusModifier',key:'infiniteAmmo',value:false}, effects: [{ kind: 'drainResource', resource: 'ammo', local: true, amount: 1, requireFull: true }] });
   item.counters.ammo = capacity;
 }
@@ -454,12 +454,14 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
     const classes = ['ranged', 'light_blade', 'greatsword', 'staff', 'auxiliary'];
     const weaponClassAlias = new Map([['bow', 'ranged'], ['crossbow', 'ranged'], ['arcane', 'staff']]);
     const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-    const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : tagEntries(r.tags ?? r.标签).some(tag => ['弓','弩','火枪','投掷武器'].includes(tag)));
+    const subtype = tagEntries(r.tags ?? r.标签).find(tag => ['弓','弩','火枪','投掷武器'].includes(tag));
+    const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : Boolean(subtype));
     const twoHanded = slot === 'twoHands' || r.twoHanded === true || r.hand === 'two_handed' || explicitClass === 'greatsword'
       || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
     const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
     const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? 'ranged' : twoHanded ? 'greatsword' : 'light_blade';
     Object.assign(template, {
+      ...(r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {}),
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
       range: bound(area.range, 1, 15, ranged ? 4 : 1),

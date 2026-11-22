@@ -27,7 +27,7 @@ remainingTurns 以单位回合结束递减，省略为 1，persistent:true 在�
 
 WHEN：passive 持续读取，常驻修正用 self 且省略 roll。on_attack 为武器出手、命中前。on_hit 为判定命中后，对实际承伤者触发，若不希望豁免成功时触发则加 saved=false。on_damaged 为实际扣血后，可读 attacker、伤害量和 melee 等标签。on_kill 为击倒敌人，on_death 为自身死亡，on_ally_death 为队友死亡（事件目标为倒下的队友）。on_turn_start / on_turn_end 对应自身回合。on_skill_cast 为技能释放，结算主击前。on_equip 装备同步时触发，默认每战一次。on_heal 为发出治疗后，可读治疗量。active 为技能主动发动，写在装备上时独立生成按钮，默认 1AP 和 action 槽。技能的 active / on_skill_cast 表达式声明 params.usesPerBattle 或 cooldown 时限制整招，合法施放即扣一次，失手、豁免或空放也计数；装备生成的 active 技能同理。只限制命中追加效果时在 on_hit 表达式声明，实际生效才计数。usesPerBattle:null 表示不限次数（也覆盖 on_equip 默认每战一次），cooldown 以战斗轮计。params.source=weapon 表示只在本次使用该装备实例时生效。
 
-IF：数组等价于 AND，or 任一成立、not 取反。self 为受益者时，目标条件优先检查当前攻击或技能对象。targetHasCategory 的 negative 指 debuff/dot/control，none 指无三类负面状态。timeOfDay 来自 <tp>，targetLevel 与自身比较。布尔条件省略 value 等同 true。weaponType、skillSchool、标签及物种字符串与快照一致。
+IF：数组等价于 AND，or 任一成立、not 取反。self 为受益者时，目标条件优先检查当前攻击或技能对象。targetHasCategory 的 negative 指 debuff/dot/control，none 指无三类负面状态。timeOfDay 来自 <tp>，targetLevel 与自身比较。布尔条件省略 value 等同 true。weaponType 可匹配实际出手武器的子类（弓、弩、火枪、投掷武器）或大类（如 ranged）。饰品仅强化弓普攻时用 condition:[{type:'actionType',value:'attack'},{type:'weaponType',value:'弓'}]，配合 on_hit 追加伤害；不要用 arrow 代指弓，也不要给饰品写 params.source:'weapon'。skillSchool、标签及物种字符串与快照一致。
 • ${condition.oneOf.map(rule => rule.type === 'array' ? describe(rule) : `${rule.properties.type.const} ${fields(rule, ['type'])}`).join('\n• ')}
 
 ROLL：无 roll 时一定尝试。chance 直接用 0…1 比例，d20 比较 >= gte。save 取目标 d20+属性，达到 dc 则通过并跳过节点。save 数组必须提供 mode，成员唯一，每项独立掷骰。contest 的攻方 d20+attacker 减守方 d20+defender 达到 dc 时执行节点。豁免或对抗可同时提供 chance 作为前置概率门。dc 与技能 saveDC 均支持公式，见上节数值协议。

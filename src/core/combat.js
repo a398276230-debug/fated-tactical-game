@@ -685,7 +685,10 @@ function spawnUnitEffect(state, actor, spec, center) {
 
 const dsl = createEffectEngine({ changeAltitude, spawn: spawnUnitEffect, terrain: (state, actor, node, ctx) => applyTerrainEffect(state, actor, node, ctx, record, terrainDamage), equipped, living, resourcePool, distance, die: randomDie, random: randomUnit,
   counter: changeCounter, damage: damageTarget, loseHP, heal: restoreHP, setResourceTotal, grant: grantStatus, grantShield, record, saved: effectSaved, removeStatus, knockback, teleport: teleportBehind, statusModifier: changes, blockRestore: unit => changes(unit, 'blockResourceRestore'),
-  weaponType: (state, actor) => { const weapon = weaponInfo(state, actor).template; return weapon.weaponType ?? weapon.weaponClass ?? weapon.rangeType; },
+  weaponMatches: (state, actor, instanceId, value) => {
+    const weapon = instanceId ? equipmentFor(state, instanceId).template : weaponInfo(state, actor).template;
+    return weapon?.weaponType === value || (weapon?.weaponClass ?? weapon?.rangeType) === value;
+  },
   findExpression: (state, ref) => [...values(state.equipment), ...values(state.skills)].flatMap(t => t.effects).find(e => isExpression(e) && e.id === ref),
   raise: (state, actor, target, scale) => corpses(state).includes(target) && spawnEffectUnit(state, actor, target, target, scale, true),
   summon: (state, actor, id, at, scale, count) => {
@@ -1507,7 +1510,7 @@ function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
     attacker: actor, hit: true, melee: profile.melee, armorPierce: profile.armorPierce,
     details: { dice, rating: result.rating?.name, followup: true, cost },
   });
-  dispatchEffect(state, actor, 'on_hit', { target: recipient, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical: result.critical, weaponId: weapon.offHand.instance?.id, damageType: profile.damageType });
+  dispatchEffect(state, actor, 'on_hit', { target: recipient, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical: result.critical, actionType: 'attack', weaponId: weapon.offHand.instance?.id, damageType: profile.damageType });
 }
 
 function effectSaved(state, actor, target, effect, sourceName) {
