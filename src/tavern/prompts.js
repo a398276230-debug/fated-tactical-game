@@ -60,11 +60,14 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 【机制拼装 Cookbook】上面的选格瞬移和结算前选数是交互范式。选分支用 ask kind:option，随后用 if 比较 vars.<out> 与选项 ID。
 • 天气规则值：{"id":"place_zone","hook":"active","program":[{"op":"spawn","entityKind":"zone","spec":{"name":"雪域","tags":["dark_snow"],"remainingTurns":2,"area":{"shape":"circle","center":"center","radius":10},"rules":[{"id":"snow_tick","hook":"turn_start","filter":"self.team != source.team","program":[{"op":"damage","target":"self","amount":10,"damageType":"true","direct":false}]}]}}]}
 Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合的覆盖单位，source 是区域来源。其他规则用 in_zone(self, 'dark_snow') 查询天气。
-• 本回合重放规则值：{"id":"repeat_skills","hook":"active","program":[{"op":"for_each","select":{"from":"tape","where":"candidate.actorId == self.id && candidate.round == round && candidate.turn == turn && (candidate.actionType == 'attack' || (candidate.actionType == 'skill' && candidate.skillId != event.skillId))"},"bind":"entry","body":[{"op":"perform","actor":"self","actionKind":"replay","tapeRecord":"vars.entry"}]}]}
-磁带按记录顺序遍历。若须等到持有者回合结束才重放，使用 turn_end，不是 after_action；只重放已录制的攻击/技能，不宣称包含普通移动、互动或尚未结算的动作。重放会重新结算，目标仍须合法，可重新要求玩家输入。排除重放技能本身以免递归。
+• 本回合重放规则值：{"id":"repeat_turn","hook":"turn_end","usesPerBattle":1,"filter":"self.resource.attack == 0 && self.resource.action == 0","program":[{"op":"for_each","select":{"from":"tape","where":"candidate.actorId == self.id && candidate.round == round && candidate.turn == turn"},"bind":"entry","body":[{"op":"perform","actor":"self","actionKind":"replay","tapeRecord":"vars.entry"}]}]}
+两个伪池各表示一个行动槽的剩余量。磁带按结算顺序遍历，包含移动、疾跑、撤离、互动、攻击、技能、换武器及道具使用等棋盘行动。重放默认不再消耗槽位和技能资源费用，按当前棋盘重新结算，可再次提问。已用掉的互动点、不可到达的落点等非法记录会跳过。重放产生的子行动不会再次写入磁带。
 • 裂隙投射：先 ask(cell) 保存落点，再 perform(skillId:"vars.chosenSkill", overrides:{origin:"vars.cell"})；origin 改的是施放起点，不是指定目标。
 • 冰晶封印：在 on_lethal_p2 判断 self.hp == 0 && self.mp == 0 && self.sp == 0，通过才 mutate_event(preventDeath:true) 并施加冰封。这是 HP 归零时检查另外两池，不是任意顺序的三池监听器。
 • 战帅直觉：before_commit 里 ask 得到 vars.kept，先 let 记下 event.finalAmount - vars.kept，再 mutate_event 改 finalAmount。若 vars.rest > 0，apply_status 的 stacks 写 vars.rest，不必等 after_damage 的 event.dealt。
+• 动态换池：ask(option) 选出 hp/mp/sp 后，resource 的 pool 可直接填 "vars.fromPool" 或 "vars.toPool"。余额表达式用 "resource(self, vars.fromPool)"，固定池可用 self.mp 等字段。数值上限同时考虑来源余额和目的池可用容量，扣款成功后按实际扣量转入。表达式只支持注册路径与函数。
+• 可消耗状态：长期保留且可消费的标记用 durationType:"until_removed" 与 maxStacks:"self.maxHp"。部分消费用 stackMode:"replace" 写剩余层数，归零用 remove_status。persistent 状态受移除保护。
+• 濒死换池：on_lethal_p1 在 HP 已归零时执行。用一个 if 的 then/else 依序选择 SP、MP，随后只 swap 一次。换入正 HP 会自动跳过 on_lethal_p2。swap 受两池各自上限约束。
 • 状态联动：after_status_applied 读取 event.statusId；先 let 存为 vars.sid，再用 remove_status.where:"status.id == vars.sid" 筛选目标现有状态。before_target 可用 redirectTarget 重定向到当前棋盘上确实存在的单位，不要凭空创造一个不存在的魔宠。
 • 封印资源规则值：{"id":"seal_resources","hook":"before_commit","filter":"event.targetId == self.id && (event.pool == 'hp' || event.pool == 'mp' || event.pool == 'sp') && event.sourceRuleId != 'seal_release'","program":[{"op":"mutate_event","patch":{"cancel":true}}]}
 这会拦截 VM 的 damage、heal、resource 提交，并放行指定解封规则。模板技能支付走行动路径，按原文需要另用 before_action 拦截。

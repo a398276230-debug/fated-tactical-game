@@ -94,17 +94,16 @@ test('默认天气、磁带重放和资源封印食谱在生产 VM 中结算', (
   const state = buildScenario('ruins');
   const actor = currentUnit(state);
   const enemy = Object.values(state.units).find(unit => unit.team !== actor.team);
-  actor.rules = [recipe('封印资源')];
+  actor.rules = [recipe('封印资源'), recipe('本回合重放')];
   state.skills.weather = { name: '天气', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [recipe('天气')] };
-  state.skills.probe = { name: '资源探针', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [{
+  state.skills.probe = { name: '资源探针', ap: 1, slot: 'attack', range: 0, shape: 'single', target: 'self', rules: [{
     id: 'probe_changes', hook: 'active', program: [
       { op: 'damage', target: 'self', amount: 3, damageType: 'true' },
       { op: 'heal', target: 'self', amount: 2 },
       { op: 'resource', target: 'self', pool: ['mp', 'sp'], mode: 'set', amount: 0 },
     ],
   }] };
-  state.skills.reprise = { name: '重放', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [recipe('本回合重放')] };
-  actor.skills.push('weather', 'probe', 'reprise');
+  actor.skills.push('weather', 'probe');
   const cast = skillId => applyAction(state, { type: 'skill', skillId, x: actor.x, y: actor.y });
   const probe = structuredClone(state);
   delete probe.units[actor.id].rules;
@@ -114,11 +113,13 @@ test('默认天气、磁带重放和资源封印食谱在生产 VM 中结算', (
   assert.ok(actor.mp > 0 && actor.sp > 0);
   cast('probe');
   assert.deepEqual([actor.hp, actor.mp, actor.sp], resources);
-  assert.deepEqual(cast('reprise').filter(row => row.type === 'action').map(row => row.detail.action.skillId), ['reprise', 'probe']);
   cast('weather');
   const hp = enemy.hp;
   dispatchVMHook(state, 'turn_start', { actorId: enemy.id, targetId: enemy.id, ownerIds: [enemy.id] });
   assert.equal(enemy.hp, hp - 10);
+  const replay = applyAction(state, { type: 'brace' }).filter(row => row.type === 'action').map(row => row.detail.action.skillId ?? row.detail.action.type);
+  assert.deepEqual(replay, ['brace', 'probe', 'weather', 'brace']);
+  assert.equal(state.tape.length, 3);
 });
 
 test('技能先手按槽取最大值并复用开场骰，模板接受 30 格但拒绝 31 格', () => {

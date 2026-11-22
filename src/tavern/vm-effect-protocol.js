@@ -51,6 +51,7 @@ mutate_event 的 patch 必须至少有一个字段，只能用于下列可写 ho
 ${eventPatches.join('\n')}
 清除敌方区域用 {"op":"despawn","entityKind":"zone","select":{"from":"zones","where":"zone.team != null && zone.team != self.team"}}。zone.team 和 candidate.team 读取创建时的阵营；zone.sourceId 和 candidate.sourceId 读取创建者 ID。若需限定范围，用 select.area 筛选区域覆盖格。spawn 的 spec 由 entityKind 决定，unit 的 templateId/copyOf/spawnPanel 至多选一个；都不写时按施术者预算自动生成面板。生成规格中的 tier、count、remainingTurns、area.radius 可写数值表达式，例如 tier:"max(1, self.tier - 1)"。terrain 至少有 kind 或 height，提供 mode 时必须有 height：
 ${spawnSpecs.join('\n')}
+召唤物的 sourceSkillId 由引擎记录实际生成它的技能 ID，支持主动、被动和装备虚拟技能（equip:<实例ID>:<规则ID>）。用 self.sourceSkillId、target.sourceSkillId、candidate.sourceSkillId 或 vars.<局部实体>.sourceSkillId 读取。on_summon_evict 的 event.sourceSkillId 读取即将消散的旧召唤物的来源技能。无技能来源或旧存档缺少记录时读到 null。此字段只读。
 zoneArea：${describe(defs.spawn_zone.properties.area)}。single 只覆盖中心格；rect 需 rect 对象，cells 需 cells 数组。
 
 【表达式与选择】
