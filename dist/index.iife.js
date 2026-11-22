@@ -513,8 +513,8 @@ var FatedTactical = (() => {
   var register = (name, description, read, legacy = false) => variables.set(name, { description, read, legacy });
   var family = (name, pattern, description, read, legacy = false) => families.push({ name, pattern, description, read, legacy });
   var query = (name, args, signature, description, read) => queries.set(name, { args, signature, description, read });
-  var own = (record2, key4) => record2 == null ? void 0 : Object.getOwnPropertyDescriptor(record2, key4)?.value;
-  var path = (record2, ...keys) => keys.reduce(own, record2);
+  var own = (record3, key4) => record3 == null ? void 0 : Object.getOwnPropertyDescriptor(record3, key4)?.value;
+  var path = (record3, ...keys) => keys.reduce(own, record3);
   var scalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" ? value : null;
   var idPattern = "[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}";
   var blockedKeys = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
@@ -946,8 +946,8 @@ var FatedTactical = (() => {
           if (b === null) return null;
           if (equality) {
             if ((a === void 0 || b === void 0) && a !== explicitNull && b !== explicitNull) return null;
-            const equal = (a ?? explicitNull) === (b ?? explicitNull);
-            return first === "==" ? equal : !equal;
+            const equal2 = (a ?? explicitNull) === (b ?? explicitNull);
+            return first === "==" ? equal2 : !equal2;
           }
           if (unavailable(b)) return null;
           if (first === "&&" || first === "||") return Boolean(b);
@@ -1826,8 +1826,8 @@ var FatedTactical = (() => {
         if (op.scope === "owner" && !owner && !skill2) return;
         const value = evaluate3(op.value);
         if (value !== null && ["number", "string", "boolean"].includes(typeof value)) {
-          const record2 = op.scope !== "owner" ? vars : skill2 ? (state.vm.skillVars ??= {})[JSON.stringify([skill2.ownerId, skill2.id])] ??= skillCarrierVars(state, skill2) : owner.vars ??= {};
-          Object.defineProperty(record2, op.name, { value, writable: true, enumerable: true, configurable: true });
+          const record3 = op.scope !== "owner" ? vars : skill2 ? (state.vm.skillVars ??= {})[JSON.stringify([skill2.ownerId, skill2.id])] ??= skillCarrierVars(state, skill2) : owner.vars ??= {};
+          Object.defineProperty(record3, op.name, { value, writable: true, enumerable: true, configurable: true });
         }
         return;
       }
@@ -1906,8 +1906,8 @@ var FatedTactical = (() => {
   var mirrors = { hp: "maxHp", mp: "maxMp", sp: "maxSp" };
   var initialMirrors = { hp: "initialMaxHp", mp: "initialMaxMp", sp: "initialMaxSp" };
   var carrierTables = { unit: "units", item: "items", status: "statuses", zone: "zones" };
-  function own5(record2, key4) {
-    return record2 && Object.hasOwn(record2, key4) ? record2[key4] : void 0;
+  function own5(record3, key4) {
+    return record3 && Object.hasOwn(record3, key4) ? record3[key4] : void 0;
   }
   function carrier(state, ownerKind, ownerId) {
     const table4 = own5(carrierTables, ownerKind);
@@ -3307,12 +3307,12 @@ var FatedTactical = (() => {
 
   // src/core/vm-action.js
   var own8 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-  function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record2 = false }) {
+  function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record3 = false }) {
     return pushFrame(state, {
       native: "action",
       ownerId: actorId,
       sourceId: actorId,
-      data: { action, overrides: overrides2, record: record2 },
+      data: { action, overrides: overrides2, record: record3 },
       answers: []
     });
   }
@@ -3362,7 +3362,7 @@ var FatedTactical = (() => {
   }
   function continueAction({ state, frame, host }) {
     const actor = own8(state.units, frame.ownerId);
-    const { action, overrides: overrides2, record: record2 } = frame.data;
+    const { action, overrides: overrides2, record: record3 } = frame.data;
     if (!actor || frame.pc !== 5 && (actor.hp <= 0 || actor.fled)) {
       state.vm.stack.pop();
       return;
@@ -3374,7 +3374,7 @@ var FatedTactical = (() => {
         if (provisional?.ok) plan2 = { ...provisional, provisional: true };
       }
       if (!plan2?.ok) {
-        if (record2 && !host.rejectAction?.(state, actor, action, plan2?.error)) throw new Error(plan2?.error ?? "\u65E0\u6CD5\u6267\u884C\u52A8\u4F5C");
+        if (record3 && !host.rejectAction?.(state, actor, action, plan2?.error)) throw new Error(plan2?.error ?? "\u65E0\u6CD5\u6267\u884C\u52A8\u4F5C");
         state.vm.stack.pop();
         return;
       }
@@ -3417,7 +3417,7 @@ var FatedTactical = (() => {
       if (plan.provisional || event.origin.x !== originalOrigin.x || event.origin.y !== originalOrigin.y || event.origin.z !== originalOrigin.z || event.origin.altitude !== originalOrigin.altitude || event.ignoreLOS === true !== (overrides2.ignoreLOS === true)) {
         const replanned = host.planAction(state, actor, action, { ...overrides2, origin: event.origin, ignoreLOS: event.ignoreLOS });
         if (!replanned?.ok) {
-          if (record2 && !host.rejectAction?.(state, actor, action, replanned?.error)) throw new Error(replanned?.error ?? "\u65E0\u6CD5\u6267\u884C\u52A8\u4F5C");
+          if (record3 && !host.rejectAction?.(state, actor, action, replanned?.error)) throw new Error(replanned?.error ?? "\u65E0\u6CD5\u6267\u884C\u52A8\u4F5C");
           state.vm.stack.pop();
           return;
         }
@@ -3455,7 +3455,7 @@ var FatedTactical = (() => {
       return;
     }
     if (frame.pc === 5 && !continueNativeAction({ state, frame, actor, plan, event, overrides: overrides2, host })) return;
-    if (record2 && isTapeAction(action.type)) {
+    if (record3 && isTapeAction(action.type)) {
       const parameters = Object.fromEntries(["itemId", "maneuver", "intent", "nonLethal", "bonusDice"].filter((key4) => Object.hasOwn(action, key4)).map((key4) => [key4, action[key4]]));
       state.tape ??= [];
       state.tape.push({
@@ -4596,8 +4596,8 @@ var FatedTactical = (() => {
     if (!plain2(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain2(vm.events) || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining) || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain2(pools)) return false;
     if (vm.endingTurn !== void 0 && (!vm.pendingAsk || typeof vm.endingTurn !== "string" || vm.endingTurn !== state.order?.[state.turn] || !own11(state.units, vm.endingTurn))) return false;
     if (vm.endingTicks !== void 0 && (!vm.endingTurn || !Array.isArray(vm.endingTicks) || !vm.endingTicks.every((id3) => typeof id3 === "string"))) return false;
-    for (const record2 of [...vm.stack, ...Object.values(vm.events)]) {
-      if (!plain2(record2) || Object.hasOwn(record2, "sourceSkillId") && !validVmSourceSkillId(record2.sourceSkillId)) return false;
+    for (const record3 of [...vm.stack, ...Object.values(vm.events)]) {
+      if (!plain2(record3) || Object.hasOwn(record3, "sourceSkillId") && !validVmSourceSkillId(record3.sourceSkillId)) return false;
     }
     for (const unit of Object.values(state.units ?? {})) {
       for (const [key4, maximum] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
@@ -6919,7 +6919,7 @@ var FatedTactical = (() => {
   var statusLabels = ["name", "icon", "category", "description"];
   var maxStatusStacks = 999999;
   var maxStatusTemplates = 64;
-  var has = (record2, key4) => id2(key4) && own12(record2 ?? {}, key4);
+  var has = (record3, key4) => id2(key4) && own12(record3 ?? {}, key4);
   function fields(v, required, optional = []) {
     requireThat(plain(v) && required.every((k) => own12(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
   }
@@ -7220,32 +7220,32 @@ var FatedTactical = (() => {
   function tapeValue(tape, state) {
     let seq = 0;
     let round = 1;
-    list2(tape, 1e5, (record2) => {
+    list2(tape, 1e5, (record3) => {
       fields(
-        record2,
+        record3,
         ["seq", "round", "turn", "actorId", "team", "actionType", "skillId", "targetSpec", "origin"],
         ["aimed", "interactiveId", "parameters"]
       );
-      requireThat(Number.isSafeInteger(record2.seq) && record2.seq === seq + 1 && int(record2.round, round, state.round) && int(record2.turn, 0, 199) && id2(record2.actorId) && team(record2.team) && isTapeAction(record2.actionType) && (record2.actionType === "skill" ? validVmSourceSkillId(record2.skillId) : record2.skillId === null), "VM \u78C1\u5E26\u8BB0\u5F55");
-      checkOptional(record2, "aimed", (value) => value === false);
-      checkOptional(record2, "interactiveId", (value) => id2(value) && ["attack", "interact"].includes(record2.actionType));
-      if (own12(record2, "parameters")) {
-        const { parameters } = record2;
+      requireThat(Number.isSafeInteger(record3.seq) && record3.seq === seq + 1 && int(record3.round, round, state.round) && int(record3.turn, 0, 199) && id2(record3.actorId) && team(record3.team) && isTapeAction(record3.actionType) && (record3.actionType === "skill" ? validVmSourceSkillId(record3.skillId) : record3.skillId === null), "VM \u78C1\u5E26\u8BB0\u5F55");
+      checkOptional(record3, "aimed", (value) => value === false);
+      checkOptional(record3, "interactiveId", (value) => id2(value) && ["attack", "interact"].includes(record3.actionType));
+      if (own12(record3, "parameters")) {
+        const { parameters } = record3;
         fields(parameters, [], ["itemId", "maneuver", "intent", "nonLethal", "bonusDice"]);
-        checkOptional(parameters, "itemId", (value) => record2.actionType === "switch_weapon" && id2(value));
+        checkOptional(parameters, "itemId", (value) => record3.actionType === "switch_weapon" && id2(value));
         checkOptional(parameters, "maneuver", (value) => typeof value === "string");
         checkOptional(parameters, "intent", (value) => ["normal", "function", "core", "kill", "concept"].includes(value));
         checkOptional(parameters, "nonLethal", (value) => typeof value === "boolean");
         checkOptional(parameters, "bonusDice", (value) => int(value, 0, 2));
       }
-      const { targetSpec } = record2;
+      const { targetSpec } = record3;
       fields(targetSpec, ["x", "y", "targetId", "answers"], ["z"]);
       requireThat(inGrid(state, targetSpec.x, targetSpec.y) && (targetSpec.targetId === null || id2(targetSpec.targetId)), "VM \u78C1\u5E26\u76EE\u6807");
       checkOptional(targetSpec, "z", (z) => int(z, -4, 20));
       list2(targetSpec.answers, 2e3, (answer) => id2(answer) || Number.isFinite(answer) || pointValue(state, answer) || Array.isArray(answer) && answer.length > 0 && answer.length <= 200 && answer.every(id2), "VM \u78C1\u5E26\u7B54\u6848");
-      requireThat(pointValue(state, record2.origin), "VM \u78C1\u5E26\u8D77\u70B9");
-      seq = record2.seq;
-      round = record2.round;
+      requireThat(pointValue(state, record3.origin), "VM \u78C1\u5E26\u8D77\u70B9");
+      seq = record3.seq;
+      round = record3.round;
       return true;
     }, "VM \u78C1\u5E26");
   }
@@ -7405,9 +7405,9 @@ var FatedTactical = (() => {
   var own13 = (obj, key4) => Object.hasOwn(obj, key4);
   var object2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
   var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own13(Object.prototype, id3) && id3 !== "prototype";
-  var entries2 = (record2) => {
-    if (!object2(record2) || Object.keys(record2).length > 200 || !Object.keys(record2).every(safeId)) throw new Error("\u8DE8\u6218\u6863\u6848 ID \u65E0\u6548");
-    return Object.entries(record2);
+  var entries2 = (record3) => {
+    if (!object2(record3) || Object.keys(record3).length > 200 || !Object.keys(record3).every(safeId)) throw new Error("\u8DE8\u6218\u6863\u6848 ID \u65E0\u6548");
+    return Object.entries(record3);
   };
   var gravefire = {
     name: "\u5893\u706B\u4F59\u70EC",
@@ -8519,10 +8519,10 @@ var FatedTactical = (() => {
     if (saved.vm?.stack?.length || replayed.vm?.stack?.length || !Array.isArray(replayed.tape)) return saved;
     const originCount = origin.tape?.length ?? 0;
     const newRecords = replayed.tape.slice(originCount);
-    const legacyRecords = newRecords.filter((record2) => !record2.interactiveId && ["attack", "skill"].includes(record2.actionType));
-    if (legacyRecords.length === newRecords.length && !legacyRecords.some((record2) => record2.parameters)) return saved;
-    const legacyTape = [...replayed.tape.slice(0, originCount), ...legacyRecords.map((record2, i) => {
-      const { parameters, seq, ...legacy } = record2;
+    const legacyRecords = newRecords.filter((record3) => !record3.interactiveId && ["attack", "skill"].includes(record3.actionType));
+    if (legacyRecords.length === newRecords.length && !legacyRecords.some((record3) => record3.parameters)) return saved;
+    const legacyTape = [...replayed.tape.slice(0, originCount), ...legacyRecords.map((record3, i) => {
+      const { parameters, seq, ...legacy } = record3;
       return { seq: originCount + i + 1, ...legacy };
     })];
     if (diff(legacyTape.length ? legacyTape : origin.tape, saved.tape).length) return saved;
@@ -13519,13 +13519,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var attrNames = ["str", "agi", "con", "int", "spi"];
   var statAliases = { strength: "str", dexterity: "agi", agility: "agi", constitution: "con", intelligence: "int", spirit: "spi", wisdom: "spi", \u529B\u91CF: "str", \u654F\u6377: "agi", \u4F53\u8D28: "con", \u667A\u529B: "int", \u7CBE\u795E: "spi" };
-  function findValue(record2, names, fallback) {
-    const r = asObject(record2);
+  function findValue(record3, names, fallback) {
+    const r = asObject(record3);
     for (const name of names) if (own15(r, name)) return r[name];
     return fallback;
   }
-  function statsOf(record2) {
-    const r = asObject(record2), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
+  function statsOf(record3) {
+    const r = asObject(record3), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
     const result = {};
     for (const key4 of attrNames) {
       const aliases2 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
@@ -13536,8 +13536,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return result;
   }
-  function resource(record2, key4, fallback) {
-    const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
+  function resource(record3, key4, fallback) {
+    const r = asObject(record3), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
     const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key4] ?? [];
     const value = own15(r, key4) ? r[key4] : own15(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own15(r, aliases2[1]) ? r[aliases2[1]] : own15(nested, key4) ? nested[key4] : own15(nested, aliases2[0]) ? nested[aliases2[0]] : own15(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
     if (object3(value)) {
@@ -13560,16 +13560,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return { current, max };
   }
-  function sourceName(record2, key4 = "") {
-    return text3(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key4));
+  function sourceName(record3, key4 = "") {
+    return text3(findValue(record3, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key4));
   }
   function tierNumber(value, fallback = 1) {
     if (Number.isFinite(Number(value))) return Number(value);
     const match = text3(value).match(/[一二三四五六七]层级?/);
     return match ? "\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03".indexOf(match[0][0]) + 1 : fallback;
   }
-  function sourceId(record2, key4 = "") {
-    return text3(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key4));
+  function sourceId(record3, key4 = "") {
+    return text3(findValue(record3, ["id", "uid", "characterId", "instanceId", "ID"], key4));
   }
   var protagonistAliases = ["\u4E3B\u89D2", "\u73A9\u5BB6", "\u4E3B\u63A7", "protagonist", "player", "mvu_protagonist"];
   var charSources = ["char_info", "narrative_char_info"];
@@ -13578,17 +13578,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const source = text3(participant.source), name = text3(participant.name);
     if (source.startsWith("mvu:")) {
       const path2 = source.slice(4).split("/");
-      return mvuRecords.find((record2) => samePath(record2.__sourcePath, path2));
+      return mvuRecords.find((record3) => samePath(record3.__sourcePath, path2));
     }
     if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
-    const char = chars.find((record2) => sourceName(record2) === name);
+    const char = chars.find((record3) => sourceName(record3) === name);
     if (charSources.includes(source.toLowerCase())) return char;
-    const matches2 = (record2, key4) => [sourceId(record2), sourceName(record2), record2.__sourceKey].includes(key4);
-    if (source) return [...mvuRecords, ...chars].find((record2) => matches2(record2, source));
+    const matches2 = (record3, key4) => [sourceId(record3), sourceName(record3), record3.__sourceKey].includes(key4);
+    if (source) return [...mvuRecords, ...chars].find((record3) => matches2(record3, source));
     const exact = [text3(participant.id ?? participant.uid), name].filter(Boolean);
     for (const key4 of exact) {
-      const record2 = mvuRecords.find((record3) => matches2(record3, key4));
-      if (record2) return record2;
+      const record3 = mvuRecords.find((record4) => matches2(record4, key4));
+      if (record3) return record3;
     }
     return char;
   }
@@ -13604,9 +13604,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own15(node, k));
       if (name && (hasStats || hasResource)) {
         const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own15(companionLengths, key4) ? companionLengths[key4] : void 0;
-        const record2 = clone(node);
-        if (Number.isFinite(length) && length > 0) record2.bodyLengthM = length;
-        found.push({ ...record2, __sourceKey: key4, __sourcePath: path2, __sourceKind: "MVU" });
+        const record3 = clone(node);
+        if (Number.isFinite(length) && length > 0) record3.bodyLengthM = length;
+        found.push({ ...record3, __sourceKey: key4, __sourcePath: path2, __sourceKind: "MVU" });
       }
       for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path2, k]);
     };
@@ -13908,8 +13908,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     attachAmmoPool(item, ammoCapacity(r));
     return item;
   }
-  function sourceEquipment(record2) {
-    const value = record2.equipment ?? record2.equipments ?? record2.items ?? record2.\u88C5\u5907 ?? [];
+  function sourceEquipment(record3) {
+    const value = record3.equipment ?? record3.equipments ?? record3.items ?? record3.\u88C5\u5907 ?? [];
     const slots3 = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
     const entries3 = Array.isArray(value) ? value.map((v) => ["", v]) : Object.entries(asObject(value));
     return entries3.filter(([, item]) => object3(item)).map(([key4, item], i) => {
@@ -13956,15 +13956,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const n = Number(match[1]) / (/^(cm|厘米)$/i.test(match[2]) ? 100 : 1);
     return Number.isFinite(n) && n > 0 ? Math.max(0.01, Math.min(1e9, n)) : null;
   }
-  function readBodyLength(record2, warnings) {
-    const keys = lengthKeys.filter((key4) => own15(record2, key4));
+  function readBodyLength(record3, warnings) {
+    const keys = lengthKeys.filter((key4) => own15(record3, key4));
     for (const key4 of keys) {
-      const raw = record2[key4];
+      const raw = record3[key4];
       const length = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.max(0.01, Math.min(1e9, raw)) : typeof raw === "string" ? meters(explicitLength.exec(raw.replace(/\([^()]*\)|（[^（）]*）/g, "").trim())) : null;
       if (length !== null) return length;
     }
     for (const field of ["\u5916\u8C8C\u7279\u8D28", "\u5916\u8C8C", "\u63CF\u8FF0", "appearance", "description"]) {
-      const value = record2[field];
+      const value = record3[field];
       const prose = Array.isArray(value) ? value.filter((s) => typeof s === "string").join("\n") : object3(value) ? Object.entries(value).filter(([, v]) => typeof v === "string" || typeof v === "number").map(([k, v]) => `${k}: ${v}`).join("\n") : value;
       if (typeof prose !== "string") continue;
       for (const match of prose.matchAll(describedLength)) {
@@ -13972,11 +13972,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         if (length !== null) return length;
       }
     }
-    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text3(record2[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`);
+    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text3(record3[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`);
     return 1.7;
   }
-  function mergeBattleParticipant(record2, participant, battle) {
-    const fallback = asObject(record2), inline = asObject(participant);
+  function mergeBattleParticipant(record3, participant, battle) {
+    const fallback = asObject(record3), inline = asObject(participant);
     const battleEquipment = battleEquipmentRecord(participant, battle), battleSkills = battleSkillsRecord(participant, battle);
     const merged = { ...fallback };
     if (!(merged.equipment ?? merged.equipments ?? merged.items ?? merged.\u88C5\u5907) && battleEquipment) merged.equipment = battleEquipment;
@@ -13998,8 +13998,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own15(merged, field) && inline[field] != null) merged[field] = inline[field];
     return merged;
   }
-  function sourceSkills(record2) {
-    const value = record2.skills ?? record2.abilities ?? record2.\u6280\u80FD ?? [];
+  function sourceSkills(record3) {
+    const value = record3.skills ?? record3.abilities ?? record3.\u6280\u80FD ?? [];
     if (Array.isArray(value)) return value.map((v, i) => [v, i]);
     return Object.entries(asObject(value)).map(([name, v], i) => [{ ...asObject(v), name: v?.name ?? v?.\u540D\u79F0 ?? name }, i]);
   }
@@ -14057,24 +14057,24 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return inventory;
   }
-  function unitFrom(record2, participant, index, equipment, skills, items, sink, isProtagonist) {
+  function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist) {
     const resourcesSink = sink("resource"), warnings = sink("status");
     const p = participant ?? {};
-    const name = text3(p.protagonistName || p.name) || sourceName(record2, p.id) || `\u5355\u4F4D ${index + 1}`;
+    const name = text3(p.protagonistName || p.name) || sourceName(record3, p.id) || `\u5355\u4F4D ${index + 1}`;
     const id3 = p.id;
-    const stats = statsOf(record2), level = Math.max(1, integer3(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
-    const tier = Math.max(1, Math.min(7, tierNumber(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
-    const bodyLengthM = readBodyLength(record2, sink("state"));
+    const stats = statsOf(record3), level = Math.max(1, integer3(findValue(record3, ["level", "\u7B49\u7EA7"], 1), 1));
+    const tier = Math.max(1, Math.min(7, tierNumber(findValue(record3, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
+    const bodyLengthM = readBodyLength(record3, sink("state"));
     const size = sizeClassFor(bodyLengthM);
-    const mc = Math.max(1, Math.min(64, integer3(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
-    const resources = { hp: safeResource(resource(record2, "hp", Math.max(1, stats.con * 100)), "hp", resourcesSink), mp: safeResource(resource(record2, "mp", Math.max(0, (stats.int + stats.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource(record2, "sp", Math.max(0, (stats.str + stats.agi) * 10)), "sp", resourcesSink) };
-    const sourceEntries = sourceEquipment(record2);
+    const mc = Math.max(1, Math.min(64, integer3(findValue(record3, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
+    const resources = { hp: safeResource(resource(record3, "hp", Math.max(1, stats.con * 100)), "hp", resourcesSink), mp: safeResource(resource(record3, "mp", Math.max(0, (stats.int + stats.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource(record3, "sp", Math.max(0, (stats.str + stats.agi) * 10)), "sp", resourcesSink) };
+    const sourceEntries = sourceEquipment(record3);
     const slotItems = sourceEntries.map(([slot2, value, i]) => normalizeEquipment(value, slot2, id3, i, sink));
     const main = slotItems.find((i) => i.template.kind === "weapon" && i.template.twoHanded) ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot === "mainHand") ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot !== "offHand");
     const off = !main?.template.twoHanded && slotItems.find((i) => i.slot === "offHand" && ["weapon", "consumable"].includes(i.template.kind));
     const shield = !main?.template.twoHanded && slotItems.find((i) => i.template.kind === "shield");
     const gear = slotItems.filter((i) => ![main, off, shield].includes(i));
-    const bagEntries = record2.__sourceKind === "MVU" ? sourceEquipment({ \u88C5\u5907: record2.\u80CC\u5305 }) : [];
+    const bagEntries = record3.__sourceKind === "MVU" ? sourceEquipment({ \u88C5\u5907: record3.\u80CC\u5305 }) : [];
     const containerCounts = [...sourceEntries, ...bagEntries].map(([, raw]) => raw.\u7C7B\u578B === "\u6B66\u5668" || raw.kind === "weapon" ? null : ammoCapacity(raw)).filter((value) => value != null);
     const ammoWeapon = [main, off, ...gear].find((item) => item?.template?.ranged);
     if (ammoWeapon && containerCounts.length) {
@@ -14088,7 +14088,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
     const skillInfo = {};
-    const normalizedSkills = sourceSkills(record2).slice(0, 32).map(([raw, i]) => {
+    const normalizedSkills = sourceSkills(record3).slice(0, 32).map(([raw, i]) => {
       const r = asObject(raw), sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${i}`;
       const skillName = text3(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`;
       const labels = [].concat(r.tags ?? r.\u6807\u7B7E ?? [], r.description ?? r.\u63CF\u8FF0 ?? "").join(" ");
@@ -14155,7 +14155,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return sid;
     });
     const pos2 = xyzOf(p.xyz ?? p);
-    const sourceStatuses = record2.statuses ?? record2.\u72B6\u6001\u6548\u679C ?? record2.\u72B6\u6001 ?? record2.effects;
+    const sourceStatuses = record3.statuses ?? record3.\u72B6\u6001\u6548\u679C ?? record3.\u72B6\u6001 ?? record3.effects;
     const statuses = {};
     const statusEntries = Array.isArray(sourceStatuses) ? sourceStatuses.map((s) => [typeof s === "string" ? s : s?.id ?? s?.statusId ?? s?.name ?? s?.\u540D\u79F0, s]) : Object.entries(asObject(sourceStatuses));
     for (const [rawId, rawStatus] of statusEntries) {
@@ -14188,13 +14188,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const rawFacing = Array.isArray(p.facing) ? p.facing : [team2 === "blue" ? 1 : -1, 0];
     const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
-    const rawMove = number2(findValue(record2, ["move", "movement", "\u79FB\u52A8"], null), NaN);
+    const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
     const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
-      for (const [slot2, raw, index2] of sourceEquipment({ \u88C5\u5907: record2.\u80CC\u5305 })) {
+      for (const [slot2, raw, index2] of sourceEquipment({ \u88C5\u5907: record3.\u80CC\u5305 })) {
         if (raw.\u7C7B\u578B !== "\u6B66\u5668" && raw.kind !== "weapon" || bound(raw.\u6570\u91CF ?? raw.count, 0, 1e9, 1) === 0) continue;
         const item = normalizeEquipment(raw, slot2, id3, `bag-${index2}`, sink);
         if (item.template.kind === "weapon") {
@@ -14205,17 +14205,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         }
       }
       if (bagWeapons.length) unit.bagWeapons = bagWeapons;
-      const inventory = importBackpack(record2.\u80CC\u5305, id3, skills, sink);
+      const inventory = importBackpack(record3.\u80CC\u5305, id3, skills, sink);
       if (Object.keys(inventory).length) unit.inventory = inventory;
     }
-    const creatureType = p.creatureType ?? record2.creatureType;
+    const creatureType = p.creatureType ?? record3.creatureType;
     if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text3).filter(Boolean).slice(0, 12);
     else if (text3(creatureType)) unit.creatureType = text3(creatureType).slice(0, 100);
-    const tags = p.tags ?? record2.tags;
+    const tags = p.tags ?? record3.tags;
     if (Array.isArray(tags)) unit.tags = tags.map(text3).filter((tag2) => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(tag2)).slice(0, 32);
-    unit.rules = readRules(record2.rules, sink("effect", `/units/${id3}`));
-    unit.mods = readMods(record2.mods, sink("effect", `/units/${id3}`));
-    return { unit, profile: { id: id3, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record2.__sourcePath ?? null, sourceKind: record2.__sourceKind || "unknown", fieldSources: { numeric: record2.__sourceKind || "unknown", equipment: record2.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record2.__sourceKind || "unknown" } }, participant: p };
+    unit.rules = readRules(record3.rules, sink("effect", `/units/${id3}`));
+    unit.mods = readMods(record3.mods, sink("effect", `/units/${id3}`));
+    return { unit, profile: { id: id3, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record3.__sourcePath ?? null, sourceKind: record3.__sourceKind || "unknown", fieldSources: { numeric: record3.__sourceKind || "unknown", equipment: record3.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record3.__sourceKind || "unknown" } }, participant: p };
   }
   function terrainState(battle, state, warnings) {
     state.grid = createBattleGrid(battle, state.rng, Object.values(state.units), warnings);
@@ -14264,9 +14264,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const protagonistName = text3(source.protagonistName ?? options.protagonistName);
     const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
     const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
-    const chars = parseCharInfo(source.charInfo ?? source.char_info ?? "").map((record2) => ({ ...record2, __sourceKind: "char_info" }));
+    const chars = parseCharInfo(source.charInfo ?? source.char_info ?? "").map((record3) => ({ ...record3, __sourceKind: "char_info" }));
     const mvuRecords = collectMvu(mvu);
-    const protagonist = protagonistAliases.flatMap((alias) => mvuRecords.filter((record2) => samePath(record2.__sourcePath, [alias])))[0];
+    const protagonist = protagonistAliases.flatMap((alias) => mvuRecords.filter((record3) => samePath(record3.__sourcePath, [alias])))[0];
     const descriptor = battle.version === 1 && ["flat", "terrain"].includes(battle.terrainMode);
     const participants = participantList(battle);
     const resolved = participants.map((participant) => resolveParticipant(participant, mvuRecords, chars, protagonist));
@@ -14278,26 +14278,26 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
     const units = {}, profiles = {}, sourceMap = {};
-    const add = (participant, record2, index) => {
+    const add = (participant, record3, index) => {
       const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
       let id3 = base;
       for (let suffix = 2; own15(units, id3); suffix++) id3 = `${base.slice(0, 52)}-${suffix}`;
-      const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
-      const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
+      const persona = !descriptor && record3 === protagonist && protagonistName ? { protagonistName } : {};
+      const origin = record3.__sourceKind?.toLowerCase() ?? "battle_init";
       if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
-      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { moraleType: battle.moraleType, ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record2 === protagonist);
+      const made = unitFrom(mergeBattleParticipant(record3, participant, battle), { moraleType: battle.moraleType, ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist);
       units[id3] = made.unit;
       profiles[id3] = made.profile;
-      sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2), isProtagonist: record2 === protagonist };
+      sourceMap[id3] = { path: record3?.__sourcePath, sourceId: sourceId(record3), sourceName: sourceName(record3), isProtagonist: record3 === protagonist };
     };
     for (const [i, participant] of participants.entries()) {
-      const record2 = resolved[i];
-      add(participant, record2 ?? { __sourceKind: "battle_init" }, i);
+      const record3 = resolved[i];
+      add(participant, record3 ?? { __sourceKind: "battle_init" }, i);
     }
     if (!participants.length) {
-      const records2 = [...mvuRecords, ...chars.filter((char) => !mvuRecords.some((record2) => sourceName(record2, record2.__sourceKey) === sourceName(char)))];
-      for (const [i, record2] of records2.entries()) {
-        add({ name: sourceName(record2, record2.__sourceKey), source: sourceId(record2), faction: i ? "red" : "blue", x: i, y: 0 }, record2, i);
+      const records2 = [...mvuRecords, ...chars.filter((char) => !mvuRecords.some((record3) => sourceName(record3, record3.__sourceKey) === sourceName(char)))];
+      for (const [i, record3] of records2.entries()) {
+        add({ name: sourceName(record3, record3.__sourceKey), source: sourceId(record3), faction: i ? "red" : "blue", x: i, y: 0 }, record3, i);
       }
     }
     const title = text3(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
@@ -14842,6 +14842,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 .fated-ai-message[data-status=error] { border-color:#d66; }.fated-ai-message[data-status=aborted] { opacity:.7; }
 .fated-ai-message header { display:flex; justify-content:space-between; gap:12px; color:var(--gold); font-size:.72em; margin-bottom:4px; }
 .fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }.fated-ai-msg-actions { display:flex; gap:6px; margin-top:7px; }.fated-ai-icon-btn { min-width:30px; padding-inline:6px !important; }.fated-ai-msg-feedback { margin-top:5px; color:var(--text-soft); white-space:pre-wrap; }.fated-ai-msg-feedback[data-tone=ok] { color:var(--ci-success); }.fated-ai-msg-feedback[data-tone=error] { color:var(--red-text); }
+.fated-ai-msg-actions { flex-wrap:wrap; align-items:center; }
+.fated-ai-msg-actions [data-ai-versions] { color:var(--text-muted, var(--blue-text)); font-size:.78em; }
+.fated-ai-editor { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.fated-ai-editor textarea { flex-basis:100%; min-width:0; }
 .fated-ai-info { color:var(--text-muted, var(--blue-text)); font-size:.78em; margin:5px 0; }
 [data-fated-tavern-overlay] { ${ciDark} }
 @media(prefers-color-scheme:light) { [data-fated-tavern-overlay] { ${ciLight} } }
@@ -15045,10 +15049,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const portraits = {};
     const missing = [];
     for (const [id3, type, name] of entries3) {
-      const record2 = overrides2.get(`${type}::${name}`);
-      if (record2?.source_type === "removed") continue;
+      const record3 = overrides2.get(`${type}::${name}`);
+      if (record3?.source_type === "removed") continue;
       const fallback = type === "player" ? persona : Object.hasOwn(chat?.status?.externalAvatars?.partners ?? {}, name) ? chat.status.externalAvatars.partners[name]?.url : "";
-      const candidates = [...new Set([imageUrl(record2?.value, base), imageUrl(fallback, base)].filter(Boolean))];
+      const candidates = [...new Set([imageUrl(record3?.value, base), imageUrl(fallback, base)].filter(Boolean))];
       if (candidates.length) portraits[id3] = candidates;
       else if (type === "partner" && sourceMap[id3]?.path?.[0] === "\u5173\u7CFB\u5217\u8868") missing.push([id3, name]);
     }
@@ -16017,6 +16021,11 @@ ${variables2.warnings()}` : "");
       session.updatedAt = now();
       save();
     }
+    const historyBefore = (session, index) => session.messages.slice(0, index).filter(
+      (message) => ["user", "assistant"].includes(message.role) && message.content?.trim() && !["error", "aborted"].includes(message.status)
+    ).map(({ role, content }) => ({ role, content }));
+    const blankReply = () => ({ ts: now(), role: "assistant", content: "" });
+    const versionOf = ({ versions, versionIndex, ...reply }) => reply;
     return {
       data,
       active: active2,
@@ -16080,22 +16089,48 @@ ${variables2.warnings()}` : "");
           }
         }
         if (userIdx < 0) return null;
-        const historyBeforeUser = session.messages.slice(0, userIdx).filter(
-          (message) => ["user", "assistant"].includes(message.role) && message.content?.trim() && !["error", "aborted"].includes(message.status)
-        ).map(({ role, content }) => ({ role, content }));
-        const userMessage = session.messages[userIdx];
-        session.messages.splice(userIdx + 1);
-        const assistantMessage = { ts: now(), role: "assistant", content: "" };
-        session.messages.push(assistantMessage);
+        const historyBeforeUser = historyBefore(session, userIdx);
+        const versions = [...targetAssistantMessage.versions ?? []];
+        versions[targetAssistantMessage.versionIndex ?? 0] = versionOf(targetAssistantMessage);
+        const versionIndex = versions.length;
+        versions.push(null);
+        const assistantMessage = { ...blankReply(), versions, versionIndex };
+        session.messages[idx] = assistantMessage;
         change2(session);
-        return { userMessage, assistantMessage, historyBeforeUser };
+        return { userMessage: session.messages[userIdx], assistantMessage, historyBeforeUser };
+      },
+      selectVersion(id3, message, index) {
+        const session = get3(id3);
+        const slot2 = session?.messages.indexOf(message) ?? -1;
+        if (slot2 < 0 || !message.versions?.[index] || message.versionIndex === index) return;
+        const versions = [...message.versions];
+        versions[message.versionIndex] = versionOf(message);
+        const selected2 = versions[index];
+        versions[index] = null;
+        session.messages[slot2] = { ...selected2, versions, versionIndex: index };
+        change2(session);
+      },
+      prepareEdit(id3, message, input) {
+        const session = get3(id3);
+        const index = session?.messages.findLastIndex((entry2) => entry2.role === "user") ?? -1;
+        const content = input.trim();
+        if (index < 0 || session.messages[index] !== message || !content) return null;
+        if (session.messages.slice(index + 1).some((reply) => reply.undoReceipt || reply.versions?.some((version2) => version2?.undoReceipt))) {
+          throw new Error("\u8BF7\u5148\u64A4\u9500\u6B64\u8F6E\u56DE\u590D\u5DF2\u5E94\u7528\u7684\u8865\u4E01\uFF0C\u518D\u7F16\u8F91\u63D0\u95EE");
+        }
+        const historyBeforeUser = historyBefore(session, index);
+        const assistantMessage = blankReply();
+        message.content = content;
+        session.messages.splice(index + 1, Infinity, assistantMessage);
+        change2(session);
+        return { userMessage: message, assistantMessage, historyBeforeUser };
       }
     };
   }
 
   // src/tavern/char-snapshots.js
   var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
-  var clean = (record2) => Object.fromEntries(Object.entries(record2 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
+  var clean = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
   var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
   var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
   async function characterRecords(sources, hydrated) {
@@ -16330,7 +16365,7 @@ ${variables2.warnings()}` : "");
       }
     }
   }
-  function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, applyJson, extractJson = () => [] }) {
+  function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, editMessage, applyJson, undoJson, copyText, extractJson = () => [] }) {
     const button = (label) => make("button", { type: "button" }, label);
     const toolbar = make("div", { class: "fated-actions" });
     const select = make("select", { "aria-label": "\u5207\u6362\u4F1A\u8BDD" });
@@ -16357,6 +16392,11 @@ ${variables2.warnings()}` : "");
     function updateMessage(message) {
       let row = rows2.get(message);
       if (!row) {
+        let switchVersion = function(offset) {
+          sessions.selectVersion(shownId, message, message.versionIndex + offset);
+          render();
+          rows2.get(sessions.active().messages[messageIndex])?.[offset < 0 ? "previous" : "next"].focus();
+        };
         const bubble = make("article", { class: "fated-ai-message", "data-role": message.role });
         const heading = make("header", {}, roleLabels[message.role] ?? message.role);
         const time = make("time", { datetime: new Date(message.ts).toISOString() }, formatTime(message.ts));
@@ -16367,12 +16407,64 @@ ${variables2.warnings()}` : "");
         const feedback = make("div", { class: "fated-ai-msg-feedback" });
         const rerollButton = make("button", { type: "button", class: "fated-ai-icon-btn", "data-ai-reroll": "", title: "\u91CD\u65B0\u751F\u6210\u6B64\u56DE\u590D", "aria-label": "\u91CD\u65B0\u751F\u6210\u6B64\u56DE\u590D" }, "\u21BB");
         const applyButton = make("button", { type: "button", "data-ai-apply": "" }, "\u5E94\u7528");
-        actions.append(rerollButton, applyButton);
-        bubble.append(heading, body, actions, feedback);
+        const undoButton = make("button", { type: "button", "data-ai-undo": "" }, "\u64A4\u9500\u5E94\u7528");
+        const copyButton = make("button", { type: "button", "data-ai-copy": "" }, "\u590D\u5236");
+        const editButton = make("button", { type: "button", "data-ai-edit": "" }, "\u7F16\u8F91");
+        const previous = make("button", { type: "button", "aria-label": "\u4E0A\u4E00\u4E2A\u56DE\u590D\u7248\u672C" }, "\u2039");
+        const next = make("button", { type: "button", "aria-label": "\u4E0B\u4E00\u4E2A\u56DE\u590D\u7248\u672C" }, "\u203A");
+        const counter = make("span", { "data-ai-versions": "" });
+        const editor = make("form", { class: "fated-ai-editor", hidden: "" });
+        const text5 = make("textarea", { rows: "4", "aria-label": "\u7F16\u8F91\u4E0A\u4E00\u6761\u63D0\u95EE", required: "" });
+        const saveEdit = make("button", { type: "submit" }, "\u4FDD\u5B58\u5E76\u91CD\u65B0\u751F\u6210");
+        const cancelEdit = button("\u53D6\u6D88");
+        editor.append(text5, saveEdit, cancelEdit);
+        actions.append(editButton, rerollButton, applyButton, undoButton, copyButton, previous, counter, next);
+        feedback.setAttribute("role", "status");
+        bubble.append(heading, body, editor, actions, feedback);
+        const report = (value, tone) => {
+          feedback.textContent = value;
+          feedback.dataset.tone = tone;
+        };
         on(rerollButton, "click", () => reroll?.(message));
-        on(applyButton, "click", () => applyJson?.(message, extractJson(message.content).at(-1), feedback));
+        on(applyButton, "click", () => applyJson?.(message, extractJson(message.content).at(-1)));
+        on(undoButton, "click", () => undoJson?.(message));
+        on(copyButton, "click", async () => {
+          try {
+            await copyText(message.content);
+            report("\u5DF2\u590D\u5236\u56DE\u590D", "ok");
+          } catch {
+            report("\u65E0\u6CD5\u5199\u5165\u526A\u8D34\u677F\uFF0C\u53EF\u9009\u4E2D\u56DE\u590D\u6B63\u6587\u624B\u52A8\u590D\u5236", "error");
+          }
+        });
+        const messageIndex = sessions.active().messages.indexOf(message);
+        on(previous, "click", () => switchVersion(-1));
+        on(next, "click", () => switchVersion(1));
+        on(editButton, "click", () => {
+          editor.hidden = false;
+          body.hidden = true;
+          refresh();
+          text5.value = message.content;
+          text5.focus();
+          text5.setSelectionRange(text5.value.length, text5.value.length);
+        });
+        on(cancelEdit, "click", () => {
+          editor.hidden = true;
+          body.hidden = false;
+          report("", "");
+          refresh();
+          editButton.focus();
+        });
+        on(editor, "submit", (event) => {
+          event.preventDefault();
+          if (busy || !text5.value.trim()) return;
+          try {
+            editMessage?.(message, text5.value);
+          } catch (error2) {
+            report(error2.message, "error");
+          }
+        });
         log.append(bubble);
-        row = { bubble, badge, body, actions, feedback, rerollButton, applyButton };
+        row = { bubble, badge, body, actions, feedback, editor, saveEdit, editButton, rerollButton, applyButton, undoButton, copyButton, previous, counter, next };
         rows2.set(message, row);
       }
       row.bubble.dataset.status = message.status ?? "";
@@ -16380,18 +16472,22 @@ ${variables2.warnings()}` : "");
       row.body.replaceChildren();
       if (message.role === "assistant") renderMarkdown(row.body, message.content, make);
       else row.body.textContent = [message.toolName, message.content, message.toolResult == null ? "" : typeof message.toolResult === "string" ? message.toolResult : JSON.stringify(message.toolResult, null, 2)].filter(Boolean).join("\n");
-      if (message.role === "assistant") {
-        const ready = message.status === "ok";
-        row.actions.hidden = !message.status;
-        row.rerollButton.disabled = busy;
-        row.applyButton.hidden = !ready || !extractJson(message.content).length;
-        row.applyButton.disabled = busy;
-      } else row.actions.hidden = true;
+      const assistant = message.role === "assistant";
+      const versionCount = message.versions?.length ?? 1;
+      row.rerollButton.hidden = !assistant;
+      row.applyButton.hidden = !assistant || !!message.undoReceipt || message.status !== "ok" || !extractJson(message.content).length;
+      row.undoButton.hidden = !assistant || !message.undoReceipt;
+      row.copyButton.hidden = !assistant || !message.content.trim();
+      row.previous.hidden = row.next.hidden = row.counter.hidden = versionCount < 2;
+      row.counter.textContent = `${(message.versionIndex ?? 0) + 1} / ${versionCount}`;
+      row.feedback.dataset.tone = message.applyError ? "error" : "ok";
+      row.feedback.textContent = message.applyError ?? message.applyNotice ?? "";
     }
     function render() {
       const session = sessions.active();
       select.replaceChildren(...sessions.data.sessions.map((s) => make("option", { value: s.id }, s.title)));
       select.value = session.id;
+      const scrollTop = shownId === session.id && !pinned ? log.scrollTop : null;
       if (shownId !== session.id) {
         shownId = session.id;
         edit.hidden = true;
@@ -16401,16 +16497,23 @@ ${variables2.warnings()}` : "");
       rows2.clear();
       log.replaceChildren();
       for (const message of session.messages) updateMessage(message);
+      if (scrollTop !== null) log.scrollTop = scrollTop;
       refresh();
     }
     function refresh() {
-      for (const row of rows2.values()) {
-        row.rerollButton.disabled = busy;
-        row.applyButton.disabled = busy;
-      }
       const session = sessions.active();
+      const lastUser = session.messages.findLast((message) => message.role === "user");
+      const editing = lastUser && rows2.has(lastUser) && !rows2.get(lastUser).editor.hidden;
+      for (const [message, row] of rows2) {
+        row.editButton.hidden = message !== lastUser || editing;
+        row.actions.hidden = message.role === "user" ? row.editButton.hidden : message.role !== "assistant" || !message.status;
+        row.editButton.disabled = row.saveEdit.disabled = row.applyButton.disabled = row.undoButton.disabled = busy;
+        row.rerollButton.disabled = busy || editing;
+        row.previous.disabled = busy || !message.versions?.[message.versionIndex - 1];
+        row.next.disabled = busy || !message.versions?.[message.versionIndex + 1];
+      }
       info.textContent = `${session.messages.length} \u6761\u6D88\u606F \xB7 \u521B\u5EFA\u4E8E ${formatTime(session.createdAt)}`;
-      submit.disabled = busy || !input.value.trim();
+      submit.disabled = busy || !input.value.trim() || editing;
       remove.disabled = clear.disabled = busy;
       abort.hidden = !busy;
       status.textContent = busy ? "AI \u6B63\u5728\u56DE\u590D\u2026" : "";
@@ -16418,7 +16521,7 @@ ${variables2.warnings()}` : "");
     }
     function submitMessage() {
       const value = input.value.trim();
-      if (busy || !value) return;
+      if (submit.disabled || !value) return;
       input.value = "";
       drafts.delete(shownId);
       pinned = true;
@@ -16492,8 +16595,47 @@ ${variables2.warnings()}` : "");
     };
   }
 
+  // src/tavern/ai-patch-undo.js
+  var own16 = (object4, key4) => object4 != null && Object.hasOwn(object4, key4);
+  var record2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  var pointer2 = (key4) => key4.replaceAll("~", "~0").replaceAll("/", "~1");
+  function equal(a, b) {
+    if (a === b) return true;
+    if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, i) => equal(value, b[i]));
+    if (!record2(a) || !record2(b)) return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((key4) => own16(b, key4) && equal(a[key4], b[key4]));
+  }
+  function chatUndoChanges(before, after) {
+    const changes2 = [];
+    function visit(a, b, path2) {
+      for (const key4 of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
+        const next = `${path2}/${pointer2(key4)}`;
+        const had = own16(a, key4), has3 = own16(b, key4);
+        if (had && has3 && record2(a[key4]) && record2(b[key4])) visit(a[key4], b[key4], next);
+        else if (had !== has3 || !equal(a[key4], b[key4])) {
+          changes2.push({ path: next, has: has3, ...has3 ? { expected: b[key4] } : {}, inverse: had ? { op: has3 ? "replace" : "add", path: next, value: a[key4] } : { op: "remove", path: next } });
+        }
+      }
+    }
+    visit(before, after, "");
+    return changes2;
+  }
+  function chatInversePatch(state, changes2) {
+    return changes2.map(({ path: path2, has: has3, expected, inverse }) => {
+      const keys = path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"));
+      const key4 = keys.pop();
+      let parent = state;
+      for (const part of keys) parent = own16(parent, part) ? parent[part] : void 0;
+      if (!record2(parent) || own16(parent, key4) !== has3 || has3 && !equal(parent[key4], expected)) {
+        throw new Error(`\u5B57\u6BB5\u5DF2\u88AB\u540E\u7EED\u64CD\u4F5C\u4FEE\u6539\uFF1A${path2}`);
+      }
+      return inverse;
+    });
+  }
+
   // src/tavern/overlay.js
-  var own16 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+  var own17 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
   var isObject2 = (v) => v && typeof v === "object" && !Array.isArray(v);
   var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
   var clone2 = (value) => {
@@ -16783,7 +16925,7 @@ ${variables2.warnings()}` : "");
   function fingerprintAt(state, path2) {
     let value = state;
     for (const key4 of path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-      if (value == null || !own16(value, key4)) return void 0;
+      if (value == null || !own17(value, key4)) return void 0;
       value = value[key4];
     }
     return JSON.stringify(value);
@@ -16793,7 +16935,7 @@ ${variables2.warnings()}` : "");
     const candidates = [], rejected = [];
     for (const [index, operation2] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
       const unitId = typeof operation2?.path === "string" ? operation2.path.match(/^\/units\/([^/]+)/)?.[1] : void 0;
-      if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own16(operation2, "value") || unitId && allowedUnitIds && !allowedUnitIds.includes(unitId)) {
+      if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own17(operation2, "value") || unitId && allowedUnitIds && !allowedUnitIds.includes(unitId)) {
         rejected.push({ index, op: operation2, path: typeof operation2?.path === "string" ? operation2.path : "", reason: "\u8DEF\u5F84\u6216\u64CD\u4F5C\u4E0D\u5728\u5141\u8BB8\u767D\u540D\u5355\u5185" });
       } else candidates.push({ index, op: operation2, lastError: "" });
     }
@@ -17044,15 +17186,15 @@ ${variables2.warnings()}` : "");
     }
     const list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
     if (!Array.isArray(list4)) return result;
-    const pointer2 = (path2) => String(path2 || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
+    const pointer3 = (path2) => String(path2 || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
     for (const operation2 of list4) {
       if (!operation2 || !operation2.op) continue;
-      const keys = pointer2(operation2.path);
+      const keys = pointer3(operation2.path);
       if (!keys.length || !keys.every(safeProperty)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
       const last = keys.pop();
       let parent = result;
       for (const key4 of keys) {
-        if (!own16(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+        if (!own17(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
         parent = parent[key4];
       }
       if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
@@ -17061,7 +17203,7 @@ ${variables2.warnings()}` : "");
           const append = last === "-" && operation2.op === "add";
           if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation2.path}`);
         }
-        if (operation2.op !== "add" && !own16(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+        if (operation2.op !== "add" && !own17(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
         if (operation2.op === "add" && Array.isArray(parent) && last !== "-") {
           parent.splice(Number(last), 0, clone2(operation2.value));
           continue;
@@ -17084,7 +17226,7 @@ ${variables2.warnings()}` : "");
     const list4 = [payload, payload?.patch, payload?.patches, payload?.jsonPatch, payload?.battle_patch, payload?.unit_patch].find(Array.isArray) ?? (payload?.op ? [payload] : null);
     if (list4) {
       for (const operation2 of list4) {
-        if (!["add", "replace", "remove"].includes(operation2?.op) || operation2.op !== "remove" && !own16(operation2, "value")) {
+        if (!["add", "replace", "remove"].includes(operation2?.op) || operation2.op !== "remove" && !own17(operation2, "value")) {
           throw new Error(`\u4E0D\u652F\u6301\u7684\u8865\u4E01\u64CD\u4F5C\uFF1A${operation2?.path ?? "\u7F3A\u5C11\u8DEF\u5F84"}`);
         }
         if (typeof operation2.path !== "string" || !operation2.path.startsWith("/")) throw new Error("\u8865\u4E01\u8DEF\u5F84\u5FC5\u987B\u4EE5 / \u5F00\u5934");
@@ -17092,23 +17234,23 @@ ${variables2.warnings()}` : "");
       return list4;
     }
     if (!isObject2(semantic)) throw unrecognized();
-    const slice = Object.fromEntries(chatTables.filter((key4) => own16(semantic, key4)).map((key4) => [key4, semantic[key4]]));
+    const slice = Object.fromEntries(chatTables.filter((key4) => own17(semantic, key4)).map((key4) => [key4, semantic[key4]]));
     if (isObject2(semantic.unit_patch)) {
       const { unitId, id: id4 = unitId, patch } = semantic.unit_patch;
-      if (!id4 || !safeProperty(id4) || !own16(state.units, id4) || !isObject2(patch)) throw unrecognized();
+      if (!id4 || !safeProperty(id4) || !own17(state.units, id4) || !isObject2(patch)) throw unrecognized();
       slice.units = { ...slice.units, [id4]: patch };
     }
     if (Object.keys(slice).length) return normalizeSemanticPatch(slice);
     if (typeof semantic.name !== "string") throw unrecognized();
     const matches2 = ["skills", "equipment", "statusTemplates"].flatMap((table5) => Object.entries(state[table5] ?? {}).filter(([id4, value]) => semantic.id ? id4 === semantic.id : value.name === semantic.name).map(([id4]) => ({ table: table5, id: id4 })));
-    const inferred = own16(semantic, "ap") || own16(semantic, "slot") ? "skills" : own16(semantic, "kind") || own16(semantic, "weaponClass") ? "equipment" : own16(semantic, "durationType") || own16(semantic, "maxStacks") || own16(semantic, "category") ? "statusTemplates" : void 0;
+    const inferred = own17(semantic, "ap") || own17(semantic, "slot") ? "skills" : own17(semantic, "kind") || own17(semantic, "weaponClass") ? "equipment" : own17(semantic, "durationType") || own17(semantic, "maxStacks") || own17(semantic, "category") ? "statusTemplates" : void 0;
     const scoped = inferred ? matches2.filter((match) => match.table === inferred) : matches2;
     if (scoped.length > 1) throw unrecognized();
     const table4 = scoped[0]?.table ?? inferred, id3 = scoped[0]?.id ?? semantic.id;
     if (!table4 || typeof id3 !== "string" || !id3 || !safeProperty(id3)) throw unrecognized();
     const { id: ignored, ...definition } = semantic;
     const path2 = `/${table4}/${id3.replaceAll("~", "~0").replaceAll("/", "~1")}`;
-    return [{ op: own16(state[table4], id3) ? "replace" : "add", path: path2, value: table4 === "statusTemplates" ? { ...definition, id: id3 } : definition }];
+    return [{ op: own17(state[table4], id3) ? "replace" : "add", path: path2, value: table4 === "statusTemplates" ? { ...definition, id: id3 } : definition }];
   }
   function style(doc) {
     const installed = doc.querySelector("style[data-fated-tavern-overlay]");
@@ -17141,7 +17283,7 @@ ${variables2.warnings()}` : "");
     let characters = {}, scanStatus = "";
     const openingSources = /* @__PURE__ */ new Map();
     const enteredBattles = /* @__PURE__ */ new Set();
-    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own16(config.instances, key4));
+    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own17(config.instances, key4));
     const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
     const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
     let battleObserver = null, diagnostics = { phase: "created" };
@@ -18350,9 +18492,9 @@ ${tag2.textContent || ""}
           if (direct) return [direct];
           return [...blockedWarnings].map((warning) => warning.unitId).filter(Boolean);
         }));
-        for (const [id4, record2] of Object.entries(records2)) {
-          const previous = stored[id4]?.hash === record2.hash ? stored[id4].resolvedWarnings ?? [] : [];
-          stored[id4] = { ...record2, at: Date.now(), normalized: !rejectedUnits.has(id4), resolvedWarnings: previous };
+        for (const [id4, record3] of Object.entries(records2)) {
+          const previous = stored[id4]?.hash === record3.hash ? stored[id4].resolvedWarnings ?? [] : [];
+          stored[id4] = { ...record3, at: Date.now(), normalized: !rejectedUnits.has(id4), resolvedWarnings: previous };
         }
         syncSettings();
         const receipts = narrative.map(({ receipt }) => receipt);
@@ -18378,29 +18520,73 @@ ${tag2.textContent || ""}
         throw error2;
       }
     }
-    async function applyChatJson(sessionId, message, payload, feedback) {
-      try {
-        if (!liveState() || typeof gameMount?.loadState !== "function") throw new Error("\u5F53\u524D\u6CA1\u6709\u5DF2\u52A0\u8F7D\u7684\u6C99\u76D8\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6216\u8FDB\u5165\u6218\u5C40");
-        const current = liveState();
-        const patch = chatPatch(current, payload);
-        const next = applyPatch(current, patch, Array.isArray(patch));
-        syncEquipmentEffects(next);
-        refreshOutcome(next);
-        (options.validateState || validateState)(next);
-        gameMount.loadState(next);
-        currentState = next;
-        for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
-        save();
-        renderInstances();
-        prepareMessages();
-        aiSessions.update(sessionId, message, { appliedAt: Date.now(), applyError: null });
-        feedback.dataset.tone = "ok";
-        feedback.textContent = `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF08\u53D8\u66F4 ${Array.isArray(patch) ? patch.length : 1} \u9879\uFF09`;
-      } catch (error2) {
-        feedback.dataset.tone = "error";
-        feedback.textContent = `\u5E94\u7528\u5931\u8D25\uFF1A${error2.message}`;
-        aiSessions.update(sessionId, message, { applyError: error2.message });
+    function installChatState(next, previous) {
+      (options.validateState || validateState)(next);
+      gameMount.loadState(next);
+      currentState = liveState();
+      for (const id4 of Object.keys(previous.units)) if (!own17(currentState.units, id4)) delete config.instances[id4];
+      for (const unit of Object.values(currentState.units)) {
+        const metadata = { ...config.instances[unit.id] };
+        for (const key4 of Object.keys(previous.units[unit.id] ?? {})) delete metadata[key4];
+        config.instances[unit.id] = { ...metadata, ...clone2(unit) };
       }
+      save();
+      renderInstances();
+      prepareMessages();
+    }
+    function changeChatPatch(message, payload, undo = false) {
+      if (aiController) return;
+      const sessionId = aiSessions.active().id;
+      if (!aiSessions.active().messages.includes(message) || message.status !== "ok" || Boolean(message.undoReceipt) !== undo) return;
+      try {
+        const current = liveState();
+        if (!activeBattleKey || !current || typeof gameMount?.loadState !== "function") throw new Error("\u5F53\u524D\u6CA1\u6709\u5DF2\u52A0\u8F7D\u7684\u6C99\u76D8\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6216\u8FDB\u5165\u6218\u5C40");
+        if (undo && message.undoReceipt.battleKey !== activeBattleKey) throw new Error("\u8BF7\u8FD4\u56DE\u5E94\u7528\u8865\u4E01\u65F6\u7684\u6218\u5C40");
+        const patch = undo ? chatInversePatch(current, message.undoReceipt.changes) : chatPatch(current, payload);
+        const next = applyPatch(current, patch, Array.isArray(patch));
+        if (!undo) {
+          syncEquipmentEffects(next);
+          refreshOutcome(next);
+          if (!chatUndoChanges(current, next).length) throw new Error("\u6B64\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u5F53\u524D\u6218\u5C40");
+        }
+        installChatState(next, current);
+        const undoReceipt = undo ? null : { battleKey: activeBattleKey, changes: chatUndoChanges(current, currentState) };
+        aiSessions.update(sessionId, message, {
+          undoReceipt,
+          applyError: null,
+          applyNotice: undo ? "\u2713 \u5DF2\u64A4\u9500" : `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF08\u53D8\u66F4 ${undoReceipt.changes.length} \u5904\uFF09`
+        });
+      } catch (error2) {
+        aiSessions.update(sessionId, message, { applyError: `${undo ? "\u64A4\u9500" : "\u5E94\u7528"}\u5931\u8D25\uFF1A${error2.message}` });
+      }
+      aiPage.feed(sessionId, message);
+    }
+    async function copyChatText(text5) {
+      try {
+        await doc.defaultView.navigator.clipboard.writeText(text5);
+        return;
+      } catch {
+      }
+      const previousFocus = doc.activeElement;
+      const field = el(doc, "textarea", { readonly: "", tabindex: "-1" });
+      field.value = text5;
+      field.style.cssText = "position:fixed;inset:0 auto auto 0;width:1px;height:1px;opacity:0";
+      doc.body.append(field);
+      try {
+        field.select();
+        if (!doc.execCommand?.("copy")) throw new Error("\u65E0\u6CD5\u8BBF\u95EE\u526A\u8D34\u677F");
+      } finally {
+        field.remove();
+        previousFocus?.focus?.({ preventScroll: true });
+      }
+    }
+    function regenerateChat(prepare) {
+      if (aiController) return;
+      const id4 = aiSessions.active().id;
+      const turn = prepare(id4);
+      if (!turn) return;
+      aiPage.render();
+      askChat(turn.userMessage.content, id4, turn);
     }
     async function askChat(requestText, sessionId = aiSessions.active().id, rerollTurn) {
       const session = aiSessions.get(sessionId);
@@ -18477,14 +18663,11 @@ ${tag2.textContent || ""}
       on,
       sessions: aiSessions,
       send: (message) => askChat(message),
-      reroll: (message) => {
-        const turn = aiSessions.prepareReroll(aiSessions.active().id, message);
-        if (turn) {
-          aiPage.render?.();
-          askChat(turn.userMessage.content, aiSessions.active().id, turn);
-        }
-      },
-      applyJson: (message, payload, feedback) => applyChatJson(aiSessions.active().id, message, payload, feedback),
+      reroll: (message) => regenerateChat((id4) => aiSessions.prepareReroll(id4, message)),
+      editMessage: (message, content2) => regenerateChat((id4) => aiSessions.prepareEdit(id4, message, content2)),
+      applyJson: changeChatPatch,
+      undoJson: (message) => changeChatPatch(message, void 0, true),
+      copyText: copyChatText,
       extractJson: (text5) => {
         const candidate = preferredJson(text5);
         return candidate ? [candidate] : [];
