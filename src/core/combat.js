@@ -621,7 +621,7 @@ export function reachable(state, type = 'move', unit = currentUnit(state), dista
     : Math.max(0, scale.limit - (unit.moved ?? 0) * mult + changes(unit, 'movement') * mult));
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === 'disengage' });
   if (!routes.length && scale.limit === 0 && distanceLimit === undefined) {
-    return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [] }];
+    return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
   }
   const sources = type === 'disengage' ? [] : opportunitySources(state, unit).filter(source => canReact(state, source, unit));
   const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
@@ -1108,6 +1108,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     const choice = cells.find(at => sameCell(at, center));
     if (!choice) return fail('无法到达：距离、占位、墙体或陡崖阻挡', { cells });
     return { ...common, cells, path: choice.path, steps: choice.steps, opportunities: choice.opportunities,
+      ...(choice.bankedProgress != null && { bankedProgress: choice.bankedProgress }),
       dz: elevation(state, center) - elevation(state, unit) };
   }
   if (type === 'interact' || detonate) {

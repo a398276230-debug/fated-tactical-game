@@ -471,6 +471,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const actor = active();
     const canAct = actor?.team === 'blue' && !state.outcome;
     const self = canAct && unit?.id === actor.id;
+    const onActorCell = canAct && actor.x === at.x && actor.y === at.y;
     if (bagAim) {
       const command = { type:'skill', skillId:bagAim, ...at, ...(unit?.id ? { targetId: unit.id } : {}) };
       const plan = game.previewAction(command);
@@ -498,15 +499,18 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
         ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
+      if (onActorCell && ['move', 'sprint'].includes(type) && !(plan.bankedProgress > (actor.moveCarryPermille ?? 0))) return;
       const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
       if ((plan.ok || limited || (type === 'flee' && plan.error?.includes('边界'))) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) {
-        const label = skillName ?? (skill || itemId || plan.interactiveId || type === 'end_encounter' ? plan.name : ACTION_LABELS[type]);
+        const label = plan.bankedProgress != null ? (type === 'sprint' ? '疾跑推进' : '蓄步推进')
+          : skillName ?? (skill || itemId || plan.interactiveId || type === 'end_encounter' ? plan.name : ACTION_LABELS[type]);
         options.push({ command, plan, label });
       }
     };
     if (canAct) {
+      if (onActorCell) { add('move'); add('sprint'); }
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
-      else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      else for (const t of [...(onActorCell ? [] : [sprint ? 'sprint' : 'move']), 'disengage', 'attack', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add('switch_weapon', null, itemId);
       add('interact');
       const skills = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);

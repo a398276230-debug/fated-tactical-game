@@ -196,11 +196,18 @@ export function createRenderer(root, portraitFor = () => []) {
     $('terrain-inspector').textContent = inspection;
   }
 
-  function bar(stat, cur, max) {
+  function bar(stat, cur, max, label = `${stat.toUpperCase()} ${cur}/${max}`) {
     const node = el('span', `ft-bar ${stat}`);
     node.style.setProperty('--ratio', ratio(cur, max));
-    node.append(el('i'), el('span', '', `${stat.toUpperCase()} ${cur}/${max}`));
+    node.append(el('i'), el('span', '', label));
     return node;
+  }
+
+  function appendMovementCarry(bars, unit, state) {
+    const carry = unit.moveCarryPermille ?? 0;
+    if (carry || (unit.moveM != null && unit.moveM < state.scale?.cellM)) {
+      bars.append(bar('sp', carry, 1000, `蓄步 ${carry / 10}%`));
+    }
   }
 
   function renderTurnOrder(state, current, selected) {
@@ -230,6 +237,7 @@ export function createRenderer(root, portraitFor = () => []) {
     name.append(el('span', '', u.name), el('small', '', `${side(u.team)} · 第 ${state.round} 回合`));
     const bars = el('div', 'ft-bars');
     bars.append(bar('hp', u.hp, u.maxHp), bar('mp', u.mp, u.maxMp), bar('sp', u.sp, u.maxSp));
+    appendMovementCarry(bars, u, state);
     const meta = el('div', 'ft-actor-meta');
     const ap = state.outcome ? 0 : u.ap;
     const crystals = el('span', '', '');
@@ -260,6 +268,7 @@ export function createRenderer(root, portraitFor = () => []) {
     wrap.append(head);
     const bars = el('div', 'ft-bars');
     bars.append(bar('hp', u.hp, u.maxHp), bar('mp', u.mp, u.maxMp), bar('sp', u.sp, u.maxSp));
+    appendMovementCarry(bars, u, state);
     const stats = el('div', 'ft-kv');
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
@@ -348,7 +357,8 @@ export function createRenderer(root, portraitFor = () => []) {
     else if (range?.ok === false) line(`✖ ${range.error}`, 'is-warning');
     if (hover && p) {
       const geo = [];
-      if (p.steps) geo.push(`走 ${p.steps} 格`);
+      if (p.bankedProgress != null) geo.push(`蓄步进度将达到 ${p.bankedProgress / 10}%`);
+      else if (p.steps) geo.push(`走 ${p.steps} 格`);
       if (Number.isFinite(p.distance)) geo.push(`距离 ${p.distance.toFixed(1)} 格${p.range != null ? `（射程 ${p.range}）` : ''}`);
       if (p.dz) geo.push(p.dz > 0 ? `目标高出 ${p.dz}` : `目标低 ${-p.dz}`);
       if (p.teleport) geo.push(`瞬移到 (${p.teleport.x}, ${p.teleport.y})`);

@@ -1,5 +1,10 @@
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 
+export function movementProgressText(progressPermille) {
+  const approximate = Math.round(progressPermille / 100) * 10;
+  return approximate === 0 ? '不到 10%' : approximate === 100 ? '接近 100%' : `约 ${approximate}%`;
+}
+
 export function vmAttribution(state) {
   const stack = state.vm?.stack ?? [];
   const ruleFrame = [...stack].reverse().find(frame => frame.ruleId);

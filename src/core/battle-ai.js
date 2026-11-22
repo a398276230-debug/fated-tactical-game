@@ -2,6 +2,7 @@ import { applyAction, equippedActiveSkills, isPassiveSkill, preview, skillAvaila
 import { elevation, atBattleEdge } from './spatial.js';
 const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user 一方的对手，只控制当前连续行动的敌方角色，不替玩家做决定。
 行动：每回合每个角色有1个攻击槽和1个动作槽。移动、装填、互动、换装、架势和逃跑使用动作槽，普通攻击、技能攻击、压制和解除压制使用攻击槽，重型技能可同时使用两槽。一个动作只能使用当前行动者自己的槽位。动作、技能和背包物品的实际 ap、slot、资源、次数与冷却以输入数据为准。
+蓄步：movementCarry 按单位列出已积累的百分比，以及原地 move 或 sprint 后可达到的百分比。若有正收益且需要接近目标，可在自己当前坐标执行该移动来积累进度，攒够后再选择实际落点。
 距离与高度：攻击和技能按三维欧氏距离 sqrt(dx²+dy²+dz²) 检查射程。z 是格子高度加单位离地高度。高处攻击低处时，远程攻击通常获得最多+1格射程，低处攻击高处时通常减少1格射程，实际值以技能/装备数据和预览规则为准。移动每跨一格有高度限制，平地通常只能跨1级高度，坡地可跨2级，墙不能通行。移动到高处或低处会消耗路径允许的动作预算，不能把二维相邻当作一定可达。
 视线与隔断：墙体和非可站立格会阻断视线。攻击、远程技能、爆桶引爆和范围效果都要有通畅视线。范围技能以实际形状、半径、宽度、角度和三维距离取格，不能穿墙或隔断。环形以落点为中心并排除中心格，范围伤害可能波及友军。射程为 0 的扇形、锥形和直线沿施术者当前朝向展开。
 掩体：掩体位于攻击者与目标的射线或目标迎击侧时生效，按掩体 cover 数值降低命中或保护目标。攻击者或目标比掩体高至少2级时可以越过该掩体，掩体不再提供遮挡。掩体有自己的 HP，可以被攻击或爆炸破坏，破坏后不再遮挡。不要把掩体当成墙，掩体通常不阻断视线，只改变命中与伤害条件。
@@ -57,18 +58,23 @@ export function battleAiPayload(state) {
     if (unit.team === 'red') actors.push(unitView(state, unit));
   }
   const grid = state.grid.map(row => row.map(cell => cell.kind === 'wall' ? '#' : cell.kind === 'slope' ? `^${cell.z ?? 0}` : cell.kind === 'floor' ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(' '));
-  const movement = {};
+  const movement = {}, movementCarry = {};
   for (const unit of Object.values(state.units)) {
     if (unit.hp <= 0 || unit.fled) continue;
     const shadow = copy(state);
     shadow.turn = shadow.order.indexOf(unit.id);
     const plan = preview(shadow, { type:'move' });
     movement[unit.id] = (plan.cells ?? []).map(({x,y,z}) => [x,y,z ?? elevation(state,{x,y})]);
+    const carry = unit.moveCarryPermille ?? 0;
+    const move = plan.cells?.find(cell => cell.bankedProgress > carry);
+    const sprint = move && preview(shadow, { type: 'sprint' }).cells?.find(cell => cell.bankedProgress > carry);
+    if (carry || move || sprint) movementCarry[unit.id] = { currentPercent: carry / 10,
+      ...(move && { movePercent: move.bankedProgress / 10 }), ...(sprint && { sprintPercent: sprint.bankedProgress / 10 }) };
   }
   return { rules: RULES, battle: { title: state.title, type: state.battleType, suppressingTeam: state.suppressingTeam ?? null, round: state.round, turnUnitId: current,
     units: actors, allUnits: Object.values(state.units).map(unit => unitView(state, unit)),
     covers: Object.values(state.covers).map(c => ({ id:c.id, name:c.name, x:c.x, y:c.y, z:elevation(state,c), hp:c.hp, maxHp:c.maxHp, cover:c.cover, material:c.material })),
-    interactives: Object.values(state.interactives).map(i => ({ id:i.id, name:i.name, kind:i.kind, effect:i.effect, radius:i.radius ?? 0, damage:i.damage ?? 0, x:i.x, y:i.y, z:elevation(state,i), spent:!!i.spent })), movement, grid }, actorIds: actors.map(u => u.id) };
+    interactives: Object.values(state.interactives).map(i => ({ id:i.id, name:i.name, kind:i.kind, effect:i.effect, radius:i.radius ?? 0, damage:i.damage ?? 0, x:i.x, y:i.y, z:elevation(state,i), spent:!!i.spent })), movement, movementCarry, grid }, actorIds: actors.map(u => u.id) };
 }
 function parse(text) {
   const match = String(text).match(/\{[\s\S]*\}/);

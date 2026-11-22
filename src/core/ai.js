@@ -205,12 +205,13 @@ export function chooseAction(state) {
   if (!actor || !actor.hp || !actor.ap) return { ...END };
   const enemies = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId);
   if (!enemies.length) return { ...END };
+  const bankStep = move => move.cells?.find(cell => cell.bankedProgress > (actor.moveCarryPermille ?? 0));
   if (actor.moraleState === 'routed') {
     if (atBattleEdge(state,actor)) return preview(state,{type:'flee'}).ok ? {type:'flee'} : {...END};
     const move = preview(state,{type:'move'});
     if (!move.ok) return {...END};
     const exit = reachable(state,'move',actor,Infinity).filter(cell=>atBattleEdge(state,cell)).sort((a,b)=>a.steps-b.steps)[0];
-    const dest = exit?.path.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p)));
+    const dest = exit && (exit.path.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p))) ?? bankStep(move));
     return dest ? {type:'move',x:dest.x,y:dest.y} : {...END};
   }
   if (state.battleType === 'suppress' && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
@@ -223,7 +224,7 @@ export function chooseAction(state) {
       const move=preview(state,{type:'move'});
       if (move.ok) {
         const route=approach(state,actor,held,true);
-        const dest=route.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p)));
+        const dest=route.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p))) ?? (route.length ? bankStep(move) : undefined);
         if(dest) return {type:'move',x:dest.x,y:dest.y};
       }
     }
@@ -237,7 +238,7 @@ export function chooseAction(state) {
     const path=targets.length && approach(state,actor,targets,true);
     if (path?.length) {
       const move=preview(state,{type:'move'});
-      const dest=path.slice().reverse().find(p=>move.cells?.some(c=>samePosition(c,p)));
+      const dest=path.slice().reverse().find(p=>move.cells?.some(c=>samePosition(c,p))) ?? bankStep(move);
       if (dest) return {type:'move',x:dest.x,y:dest.y};
     }
     return {...END};
@@ -269,8 +270,11 @@ export function chooseAction(state) {
       const high = elevation(state, cell) - z0;
       const cover = coverQuality(state, cell, objectives) - startingCover;
       let score = (projectedDepth ? 1.8 + projectedDepth * .55 : progress * .35) + high * .8 + cover;
-      if (cell.steps === 0 && actor.moveM > 0 && baseline > 0) score += 1;
-      if (type === 'sprint') score = score * .82 - 1.2;
+      if (cell.bankedProgress != null) {
+        const gain = cell.bankedProgress - (actor.moveCarryPermille ?? 0);
+        if (gain <= 0 || !plannedPath.length) continue;
+        score = 1.6 + cell.bankedProgress / 1000 + gain / 1000 - (type === 'sprint' ? .6 : 0);
+      } else if (type === 'sprint') score = score * .82 - 1.2;
       score -= (cell.opportunities?.length ?? 0) * 3.5;
       if (type === 'disengage') score -= .2;
       movements.push({ type, cell, score, available: actor.ap - options.ap });
@@ -282,7 +286,7 @@ export function chooseAction(state) {
     let score = movementScore;
     if (available > 0 && !actor.used.attack) {
       const moved = { ...actor, x: cell.x, y: cell.y, ap: available,
-        facing: facingToward(cell.path.at(-2) ?? actor, cell),
+        facing: cell.steps === 0 ? actor.facing : facingToward(cell.path.at(-2) ?? actor, cell),
         used: { ...actor.used, action: actor.used.action + 1 } };
       const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
       const followup = Math.max(0, ...aimedOptions(shadow, moved, true).map(choice => choice.score));

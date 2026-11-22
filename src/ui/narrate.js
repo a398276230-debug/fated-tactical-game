@@ -12,7 +12,7 @@ export const STAT_NAMES = Object.freeze({ str: '力量', agi: '敏捷', con: '�
 const MANEUVERS = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
 const INTENT_NAMES = { normal: '常规', function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
 import { resourceLabel } from '../core/resource_names.js';
-import { proseNumber, attributionLine, choiceProse } from '../core/log-attribution.js';
+import { proseNumber, attributionLine, choiceProse, movementProgressText } from '../core/log-attribution.js';
 
 const sign = n => (n > 0 ? `+${n}` : `${n}`);
 const pct = n => `${Math.round(n * 100)}%`;
@@ -176,6 +176,10 @@ export function narrate(log, state) {
     case 'action': return out({ icon: '▶', title: log.text, quiet: true });
     case 'choice': return out(d.choice ? choiceProse(d.choice, actor, id => nameOf(state, id)) : {});
     case 'move': case 'sprint': case 'disengage': {
+      if (Number.isFinite(d.progressPermille)) {
+        const verb = log.type === 'sprint' ? '疾跑推进' : '蓄步推进';
+        return out({ tone: 'move', icon: '👣', title: `${actor}${verb}，跨区进度${movementProgressText(d.progressPermille)}` });
+      }
       const steps = d.steps ?? d.path?.length ?? 0;
       return out({ tone: 'move', icon: d.interrupted ? '⛔' : '👣',
         title: `${actor}${MOVE_VERBS[log.type]} ${steps} 格${d.interrupted ? '，途中被拦下' : ''}`,

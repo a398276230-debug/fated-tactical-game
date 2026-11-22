@@ -71,4 +71,41 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   await waitFor('!document.querySelector("#confirm-action").hidden');
   assert.equal(await run('document.querySelector("#target-unit-options [aria-pressed=\\"true\\"]")?.dataset.targetId'), targetId);
   assert.equal(await run('document.querySelector("#board .tactical-cell[data-x=\\"3\\"][data-y=\\"2\\"] [data-unit-id][aria-pressed=\\"true\\"]")?.dataset.unitId'), targetId);
+
+  await run(`(() => {
+    const game = window.FatedTacticalGame;
+    const state = game.getBattleState();
+    state.scale.cellM = 1000;
+    const actor = state.units[state.order[state.turn]];
+    actor.moveM = 300;
+    actor.moveCarryPermille = 0;
+    game.createBattle({ kind: 'custom_state', state });
+    document.querySelector('#board .tactical-cell[data-x="2"][data-y="2"]').click();
+    return true;
+  })()`);
+  assert.match(await run('document.querySelector("#action-toolbar [data-action=move]")?.textContent ?? ""'), /蓄步推进/);
+  assert.match(await run('document.querySelector("#action-toolbar [data-action=sprint]")?.textContent ?? ""'), /疾跑推进/);
+  await run('document.querySelector("#action-toolbar [data-action=move]").click(); true');
+  await waitFor('document.querySelector("#actor-card").textContent.includes("蓄步 30%")');
+  await waitFor('document.querySelector("#caption").textContent.includes("约 30%")');
+  const banked = await run(`(() => {
+    const state = window.FatedTacticalGame.getBattleState();
+    const actor = state.units[state.order[state.turn]];
+    return [actor.x, actor.y, actor.moveCarryPermille, actor.used.action];
+  })()`);
+  assert.deepEqual(banked, [2, 2, 300, 1]);
+  const report = await run('window.FatedTacticalGame.exportBattleReportText()');
+  assert.match(report, /约 30%/);
+  assert.doesNotMatch(report, /300m|移动 0 格/);
+
+  await run(`(() => {
+    const game = window.FatedTacticalGame;
+    const state = game.exportBattleSnapshot().origin;
+    game.createBattle({ kind: 'custom_state', state });
+    document.querySelector('#board .tactical-cell[data-x="2"][data-y="2"]').click();
+    document.querySelector('#action-toolbar [data-action=sprint]').click();
+    return true;
+  })()`);
+  await waitFor('Object.values(window.FatedTacticalGame.getBattleState().units).some(unit => unit.moveCarryPermille === 600)');
+  assert.match(await run('window.FatedTacticalGame.exportBattleReportText()'), /疾跑推进.*约 60%/);
 });

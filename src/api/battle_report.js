@@ -26,7 +26,7 @@ const expiryEvents = {
 };
 const checkGrade = (success, roll) => success ? (roll === 20 ? '大成功' : '成功') : (roll === 1 ? '大失败' : '失败');
 const maneuvers = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
-import { proseNumber, attributionLine, choiceProse } from '../core/log-attribution.js';
+import { proseNumber, attributionLine, choiceProse, movementProgressText } from '../core/log-attribution.js';
 const signed = value => `${value > 0 ? '+' : ''}${proseNumber(value)}`;
 const percent = value => Number((value * 100).toFixed(4));
 const notes = parts => parts.length ? `（${parts.join('，')}）` : '';
@@ -237,9 +237,12 @@ export function formatBattleReportText(report, unitNames = {}) {
         default: {
           if (type === 'cover_damage' && detail.amount === 0) break;
           const ownAction = turn?.actor === actor && ['move', 'sprint', 'disengage', 'teleport', 'altitude', 'interact', 'skip', 'brace', 'cover_approach'].includes(type);
-          let label = replaceUnitNames(event, text);
+          const banked = Number.isFinite(detail.progressPermille) && ['move', 'sprint', 'disengage'].includes(type);
+          const verb = type === 'sprint' ? '疾跑推进' : '蓄步推进';
+          let label = banked ? `${ownAction ? '' : name(event, actor)}${verb}，跨区进度${movementProgressText(detail.progressPermille)}`
+            : replaceUnitNames(event, text);
           const actorRaw = names.get(actor) ?? actor;
-          if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
+          if (!banked && ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
           if (['teleport','knockback'].includes(type) && Number.isInteger(detail.to?.z)) {
             const destination = `(${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
             if (!text.includes(`至 ${destination}`)) label += `，至 ${destination}`;
