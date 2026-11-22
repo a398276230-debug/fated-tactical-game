@@ -560,7 +560,7 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
       ...(r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {}),
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
-      range: bound(area.range, 0, 64, ranged ? 4 : 1), ...(area.range != null ? { rawRange: area.range } : {}),
+      range: bound(area.range, 0, 64, ranged ? 4 : 1), rawRange: area.range ?? (ranged ? 4 : 1),
       attack: bound(r.attack ?? r.攻击 ?? attackTag?.[1], 0, 1e9), accuracy: bound(r.accuracy ?? r.命中, -20, 30, 0),
       damage: normalizeDice(r.damage ?? { stat: 'str' }),
       ...geometryFields(area),
@@ -790,7 +790,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
-      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), ...(area.range != null ? { rawRange: area.range } : {}), ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
+      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), rawRange: area.range ?? 1, ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(area.range, 0, 30, 1), shape: area.shape ?? 'single',
       target: area.target ?? 'enemy', ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),

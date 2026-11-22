@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { parseBattleDescriptor } from '../src/tavern/descriptor.js';
 import { parseAreaTags } from '../src/tavern/area-tags.js';
 import { defaultCoverHp, resolveEffectiveTier, hydrateFromSources } from '../src/tavern/converter.js';
+import { actionSkill, weaponInfo } from '../src/core/combat.js';
 
 test('battle_init parses rectangular board, scale units, and stacked units', () => {
   const value = `<battle_init>\nbattle|1|scale-test|断桥|flat|棋盘=16×8|比例尺=1km|42\nunit|p1|blue|char_info|甲|15,7,0\nunit|p2|blue|char_info|乙|15,7,0\n</battle_init>`;
@@ -20,6 +21,18 @@ test('area tags preserve zero/fractional raw distances and slash components', ()
   assert.equal(area.range, 0);
   assert.equal(area.shape, 'circle');
   assert.equal(area.target, 'enemy');
+});
+
+test('untagged equipment and skill default ranges use the battle scale', () => {
+  const { state } = hydrateFromSources({
+    battleInit: '<battle_init>\nbattle|1|default-range|神战|flat|比例尺=1km\nunit|p1|blue|char_info|甲|1,1,0\n</battle_init>',
+    charInfo: [{ name: '甲', tier: 1, equipment: [{ name: '铁剑', kind: 'weapon', slot: 'mainHand' }], skills: [{ name: '重击' }] }],
+  }, { throwOnValidation: true });
+  const unit = state.units.p1;
+  assert.equal(state.equipment[state.items[unit.mainHand].templateId].rawRange, 1);
+  assert.equal(state.skills[unit.skills[0]].rawRange, 1);
+  assert.equal(weaponInfo(state, unit).template.range, 0);
+  assert.equal(actionSkill(state, unit, unit.skills[0]).range, 0);
 });
 
 test('effective tier and cover HP follow scale acceptance', () => {
