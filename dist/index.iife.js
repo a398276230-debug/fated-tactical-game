@@ -5345,14 +5345,15 @@ var FatedTactical = (() => {
       souls,
       offHand,
       stance,
-      template: weapon2.template ?? normalAttack,
+      template: weapon2.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, "weapon")),
       soulMultiplier: modStat(state, unit, "damageMult", 1, { souls, weaponTemplateId: weapon2.instance?.templateId })
     };
   }
   function reaches(state, actor, at2, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
     const dz = elevation(state, actor) - elevation(state, at2);
     const melee = isMelee(template) && !ammo;
-    const range2 = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? ammo?.reloadable ? modCheck(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
+    const baseRange = template.range ?? 1.5;
+    const range2 = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? ammo?.reloadable ? modCheck(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
     return { distance: distance3D(state, actor, at2), dz, range: Math.max(0, range2), melee };
   }
   function validReach(state, actor, at2, template, ammo, weaponId) {

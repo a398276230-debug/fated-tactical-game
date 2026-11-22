@@ -711,13 +711,14 @@ export function weaponInfo(state, unit) {
   const offHand = equipmentFor(state, unit.offHand);
   const stance = unit.stance ?? stanceFor({ mainHand: weapon.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
   return { ...weapon, ammo, ammoCount, infiniteAmmo, souls, offHand, stance,
-    template: weapon.template ?? normalAttack, soulMultiplier: modStat(state, unit, 'damageMult', 1, { souls, weaponTemplateId: weapon.instance?.templateId }) };
+    template: weapon.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, 'weapon')), soulMultiplier: modStat(state, unit, 'damageMult', 1, { souls, weaponTemplateId: weapon.instance?.templateId }) };
 }
 
 function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
   const dz = elevation(state, actor) - elevation(state, at);
   const melee = isMelee(template) && !ammo;
-  const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? (ammo?.reloadable ? modCheck(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
+  const baseRange = template.range ?? 1.5;
+  const range = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? (ammo?.reloadable ? modCheck(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
   return { distance: distance(state, actor, at), dz, range: Math.max(0, range), melee };
 }
 
