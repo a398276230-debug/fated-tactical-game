@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
 import { beginBattle } from '../src/core/combat.js';
+import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 import { formatBattleReportText } from '../src/api/battle_report.js';
 import { RATING_TABLE } from '../src/core/combat_protocol.js';
 
@@ -58,7 +59,7 @@ test('持续伤害与恢复按每次实际结算展示来源和 HP', () => {
   const a = boot();
   const state = a.getBattleState();
   const id = state.order[(state.turn + 1) % state.order.length];
-  state.units[id].hp = state.units[id].maxHp - 1;
+  updatePoolCurrent(state, getPool(state, id, 'hp').id, 'set', state.units[id].maxHp - 1);
   a.createBattle({ kind: 'custom_state', state });
   const proposal = a.proposeCommands(['poison', 'regen'].map(statusId => ({
     type: 'upsert_status', unitId: id, statusId,
@@ -102,13 +103,7 @@ test('战报用施加时的状态实例呈现层数、护盾、解除条件和�
 
   const legacy = a.exportBattleSnapshot();
   legacy.version = 6;
-  for (const event of legacy.state.logs.filter(e => e.type === 'status')) {
-    for (const key of ['modifiers', 'durationType', 'tickTiming', 'expireOn']) delete event.detail[key];
-  }
-  const resumed = boot();
-  assert.equal(resumed.restoreBattleSnapshot(legacy).migratedFrom, 6);
-  assert.match(resumed.exportBattleReportText(), /获得冰冻（持续 1 回合，来源 [^；]+/);
-  assert.deepEqual(resumed.exportBattleSnapshot().journal, []);
+  assert.throws(() => boot().restoreBattleSnapshot(legacy), /仅支持版本 11/);
 
   const nextBattle = a.getBattleState();
   nextBattle.logs = [];
@@ -120,28 +115,28 @@ test('战报保留技能的三种消耗与 DSL 实际恢复的来源', () => {
   const a = boot();
   const state = a.getBattleState();
   const actor = state.units[state.order[state.turn]];
-  actor.mp = actor.maxMp = 20;
-  actor.sp = actor.maxSp = 20;
+  for (const [key, max] of [['mp', 'maxMp'], ['sp', 'maxSp']]) {
+    const pool = getPool(state, actor.id, key);
+    actor[max] = pool.max = pool.contributors[0].maxBase = 20;
+    updatePoolCurrent(state, pool.id, 'set', 20);
+  }
   const hp = actor.hp;
   state.skills.recovery = {
     name: '回气术', ap: 1, slot: 'action', range: 0, shape: 'single', target: 'self',
     resourceCost: { hp: 1, mp: 4, sp: 3 },
-    effects: [{ id: 'recovery', trigger: 'active', target: 'self', roll: { dice: 'd20', gte: 1 }, effects: [
-      { kind: 'restoreResource', resource: 'mp', amount: 2 },
-      { kind: 'restoreResource', resource: 'sp', amount: 1 },
-      { kind: 'modifyStat', stat: 'str', flat: 2, duration: 3 },
+    rules: [{ id: 'recovery', hook: 'active', program: [
+      { op: 'resource', target: 'self', pool: 'mp', mode: 'add', amount: 2 },
+      { op: 'resource', target: 'self', pool: 'sp', mode: 'add', amount: 1 },
     ] }],
   };
   actor.skills.push('recovery');
   a.createBattle({ kind: 'custom_state', state });
   a.playAction({ type: 'skill', skillId: 'recovery', x: actor.x, y: actor.y });
   const report = a.exportBattleReportText();
-  assert.match(report, /回气术触发检定(?:大成功|成功)/);
-  assert.ok(report.includes(`施放 回气术 消耗 1 HP（HP ${hp} → ${hp - 1}）`));
+  assert.ok(report.includes(`因回气术消耗1点 HP（HP ${hp} → ${hp - 1}）`), report);
   for (const text of [
     '因回气术消耗4点 MP（MP 20 → 16）', '因回气术消耗3点 SP（SP 20 → 17）',
     '因回气术恢复2点 MP（MP 16 → 18）', '因回气术恢复1点 SP（SP 17 → 18）',
-    '获得回气术的属性修正（持续 3 回合，力量 +2）',
   ]) assert.ok(report.includes(text), report);
   const restored = boot();
   restored.restoreBattleSnapshot(a.exportBattleSnapshot());

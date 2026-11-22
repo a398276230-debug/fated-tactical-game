@@ -47,7 +47,11 @@ export const TEMPLATE = `<div class="ft-app" data-busy="false">
         <p id="battle-status" class="ft-status" role="status"></p>
         <p id="sprint-indicator" class="ft-hint"></p>
         <p id="action-error" class="ft-error" role="alert" hidden></p>
-        <div class="ft-row">
+        <section id="pending-ask" class="ft-ask" aria-labelledby="pending-ask-prompt" hidden>
+          <p id="pending-ask-prompt" tabindex="-1"></p>
+          <div id="pending-ask-choices" class="ft-ask-choices"></div>
+        </section>
+        <div class="ft-row" id="turn-controls">
           <button id="end-turn" type="button" class="game-button primary">结束回合</button>
           <button id="undo-button" type="button" class="game-button">撤销</button>
           <button id="ai-step" type="button" class="game-button">敌方单步</button>

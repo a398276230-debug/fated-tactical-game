@@ -79,6 +79,8 @@ body { margin: 0; background: var(--ink-2); }
 .battle-axis .tactical-cell.is-opportunity { outline: 2px solid #e5a35e; outline-offset: -3px; }
 .battle-axis .tactical-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; z-index: 2; }
 .ft-app[data-busy="true"] .battle-axis .tactical-cell:is(.is-reachable, .is-in-range) { background-image: none; background-color: transparent; }
+.battle-axis .tactical-cell:disabled { cursor: default; }
+.battle-axis .tactical-cell.is-ask-option { border-color: var(--gold); box-shadow: inset 0 0 0 2px var(--gold); }
 
 /* 特效层：浮字、弹道、落点 */
 .ft-tokens, .ft-fx { position: absolute; inset: 0; pointer-events: none; }
@@ -169,6 +171,11 @@ body { margin: 0; background: var(--ink-2); }
 .ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
 
 .ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
+.ft-ask { width: min(100%, 28rem); padding: 8px 10px; border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); }
+.ft-ask p { margin: 0 0 6px; color: var(--accent-text); overflow-wrap: anywhere; }
+.ft-ask-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: 24vh; overflow: auto; }
+.ft-ask-choices button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.ft-ask-choices input[type="range"] { max-width: 100%; flex: 1 1 8rem; padding: 0; accent-color: var(--gold); }
 .ft-status { margin: 0; color: var(--accent-label); font-size: 13px; text-align: right; }
 .ft-hint { margin: 0; color: var(--gold-bright); font-size: 12px; }
 .ft-hint:empty { display: none; }

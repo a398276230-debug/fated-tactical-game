@@ -2,13 +2,16 @@ import { bodySizeLabel } from '../core/combat_protocol.js';
 import { STATUSES } from '../core/combat.js';
 const attributes = {str:'力量',agi:'敏捷',con:'体质',int:'智力',spi:'精神'};
 const types = {physical:'物理',energy:'能量',mental:'精神',true:'真实'};
-const when = {passive:'被动',active:'主动',on_hit:'命中时',on_attack:'攻击时',on_skill_cast:'施放时',on_damaged:'受伤时',on_heal:'治疗时',on_turn_start:'回合开始',on_turn_end:'回合结束',on_kill:'击倒时',on_death:'倒下时',on_equip:'装备时',on_ally_death:'队友倒下时'};
-const verbs={heal:'治疗',modifyStat:'属性修正',modifyCheck:'检定修正',restoreResource:'恢复资源',drainResource:'消耗资源',produceResource:'获得资源',removeStatus:'移除状态',shield:'护盾',knockback:'击退',teleportBackstab:'瞬移背刺',execute:'斩杀',raiseDead:'复生',chainEffect:'效果链',procEffect:'触发效果',addItem:'获得物品',upgradeHitTier:'提升命中评级',forceOutcome:'强制判定',multiplyDamage:'伤害倍率',modifyDamageBase:'基础伤害',summon:'召唤'};
-export function effectSummary(expr,state) {
-  const status = id=>state?.statusTemplates?.[id]?.name ?? STATUSES[id]?.name ?? id;
-  const node = n => (n.enabled===false?'[已关闭] ':'')+(n.kind==='damage'?['伤害',n.percentOfPower!=null?`威力${Math.round(n.percentOfPower*100)}%`:n.amount??n.flat,types[n.damageType]].filter(v=>v!=null).join(' '):n.kind==='grantStatus'?`施加 ${status(n.statusId)}${n.turns?` ${n.turns} 回合`:''}`:n.kind==='chainEffect'?n.effects.map(node).join('，'): [verbs[n.kind]??'效果',n.label??attributes[n.stat]??n.stat??n.resource??'',n.amount??n.flat??n.factor??(n.percent!=null?`${n.percent*100}%`:'')].filter(v=>v!=='').join(' '));
-  const roll=expr.roll;
-  return `${when[expr.trigger]??'触发'}${roll?.dice?` ${roll.dice}≥${roll.gte}`:roll?.save?' 豁免失败':roll?.chance!=null?` ${Math.round(roll.chance*100)}%`:''} → ${(expr.effects??[]).map(node).join('；')}`;
+const when = { active: '主动', after_hit: '命中时', before_action: '行动前', after_damage: '伤害结算后', after_heal: '治疗后', turn_start: '回合开始', turn_end: '回合结束', on_kill: '击倒时', on_death: '倒下时' };
+const verbs = { let: '记录数值', if: '条件分支', for_each: '逐个结算', check: '检定', ask: '等待选择', mutate_event: '调整结算', damage: '伤害', heal: '治疗', resource: '调整资源', apply_status: '施加状态', remove_status: '移除状态', move: '位移', spawn: '生成', remove: '移除', perform: '执行行动', link_pool: '调整共享资源' };
+export function ruleSummary(rule, state) {
+  const statusName = id => state?.statusTemplates?.[id]?.name ?? STATUSES[id]?.name ?? id;
+  const describe = op => {
+    const prefix = op.enabled === false ? '已关闭：' : '';
+    if (op.op === 'apply_status') return `${prefix}施加 ${statusName(op.statusId)}${typeof op.turns === 'number' ? ` ${op.turns} 回合` : ''}`;
+    return [prefix + (verbs[op.op] ?? '效果'), types[op.damageType], typeof op.amount === 'number' ? op.amount : null].filter(value => value != null).join(' ');
+  };
+  return `${rule.enabled === false ? '已关闭：' : ''}${when[rule.hook] ?? '触发'} → ${rule.program.map(describe).join('；')}`;
 }
 const RESOURCES = [['hp','HP','maxHp'],['mp','MP','maxMp'],['sp','SP','maxSp']];
 const TEAMS = {blue:'我方',red:'敌方'};
@@ -68,14 +71,14 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
     block.append(make('h5',{},`${heading}${rows.length?` · ${rows.length}`:''}`));
     if(!rows.length) block.append(line('p','fated-mini',`暂无${heading}`));
     for(const {label,meta,template} of rows){
-      const fx=template?.effects??[];
+      const fx = template?.rules ?? [];
       const row=make(fx.length?'details':'div',{class:'fated-char-row'});
       const head=make(fx.length?'summary':'div',{class:'fated-char-row-head'});
       head.append(line('span','fated-char-row-name',label));
       for(const m of meta) head.append(line('span','fated-char-chip',m));
       if(fx.length) head.append(line('span','fated-char-fx',`${fx.length} 个效果`));
       row.append(head);
-      for(const e of fx) row.append(line('p','fated-mini',effectSummary(e,state)));
+      for(const e of fx) row.append(line('p','fated-mini',ruleSummary(e,state)));
       block.append(row);
     }
     body.append(block);
@@ -89,7 +92,7 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
   section('装备',gear);
   const skills=(unit.skills??[]).map(id=>{
     const t=state?.skills?.[id];
-    const damage=[...new Set([t?.damage?.type,t?.damageType,...(t?.effects??[]).flatMap(e=>e.effects.filter(n=>n.kind==='damage').map(n=>n.damageType)),unit.skillInfo?.[id]?.damageType].filter(Boolean))].map(type=>types[type]).join('/');
+    const damage=[...new Set([t?.damage?.type,t?.damageType,...(t?.rules ?? []).flatMap(rule => rule.program.filter(op => op.op === 'damage').map(op => op.damageType)),unit.skillInfo?.[id]?.damageType].filter(Boolean))].map(type=>types[type]).join('/');
     const cost=[`${t?.resourceCost?.sp??t?.sp??0} SP`,(t?.resourceCost?.mp??t?.mp)?`${t.resourceCost?.mp??t.mp} MP`:null,t?.resourceCost?.hp?`${t.resourceCost.hp} HP`:null].filter(Boolean).join(' / ');
     return {label:t?.name??id,meta:[`消耗 ${cost}`,`威力 ${t?.power??'—'}`,damage||'无伤害类型',`距离 ${t?.range??'—'}`],template:t};
   });

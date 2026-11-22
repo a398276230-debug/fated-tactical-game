@@ -1,6 +1,6 @@
-import { initialCounters, migrateStateEffects } from '../core/effects.js';
 import { beginBattle } from '../core/combat.js';
 import { calculatePrebattleResources } from '../core/prebattle_resources.js';
+import { createPool } from '../core/vm-pools.js';
 import { EQUIPMENT, SKILLS } from './catalog.js';
 import { fields, validateState, statusTemplateTable, statusValue } from '../api/validation.js';
 
@@ -18,10 +18,29 @@ const entries = record => {
   if (!object(record) || Object.keys(record).length > 200 || !Object.keys(record).every(safeId)) throw new Error('跨战档案 ID 无效');
   return Object.entries(record);
 };
-const gearSlots = ['weapon', 'gear'];
+const gravefire = {
+  name: '墓火余烬', templateId: 'gravefire', tags: ['fire'], tier: 1, vars: {}, mods: [],
+  area: { shape: 'circle', radius: 1 }, follow: false, remainingTurns: 2, persistent: false,
+  rules: [{ id: 'gravefire-tick', hook: 'turn_start',
+    program: [{ op: 'damage', target: 'self', amount: 2, damageType: 'energy', direct: false }] }],
+};
+const colossusDeath = {
+  id: 'colossus-death', hook: 'on_death',
+  program: [{ op: 'spawn', entityKind: 'zone', at: 'self', spec: gravefire }],
+};
+
+function equipItem(state, id, templateId, sourceId, carriedAmounts = {}) {
+  for (const poolId of Object.values(state.items[id]?.pools ?? {})) delete state.pools[poolId];
+  const { name, tags = [], tier = 1, vars = {}, mods = [], rules = [], pools = {} } = state.equipment[templateId];
+  state.items[id] = { id, templateId, sourceId, ...structuredClone({ name, tags, tier, vars, mods, rules }), pools: {} };
+  for (const [key, { cap, initial = cap, reloadable = false }] of Object.entries(pools)) {
+    createPool(state, { key, ownerKind: 'item', ownerId: id, max: cap, current: carriedAmounts[key] ?? initial, reloadable });
+  }
+  return id;
+}
 function importCarry(state, value) {
   // v1 carry records only had weapon; normalize them into mainHand without changing replay data.
-  fields(value, ['kind', 'version', 'items', 'units'], ['statusTemplates']);
+  fields(value, ['kind', 'version', 'items', 'units'], ['statusTemplates', 'pools']);
   if (value.version !== 1 || value.kind !== 'persistent') throw new Error('无效的跨战档案');
   const carry = structuredClone(value);
   if (own(carry, 'statusTemplates')) {
@@ -29,9 +48,14 @@ function importCarry(state, value) {
     state.statusTemplates = carry.statusTemplates;
   }
   for (const [id, item] of entries(carry.items)) {
-    if (!object(item) || item.id !== id || !own(state.equipment, item.templateId) || !object(item.counters)) throw new Error(`无效的跨战装备：${id}`);
-    if (!own(state.items, id) || state.items[id].templateId === item.templateId) state.items[id] = item;
-    else throw new Error(`跨战装备模板冲突：${id}`);
+    if (!object(item) || item.id !== id || !own(state.equipment, item.templateId)) throw new Error(`无效的跨战装备：${id}`);
+    if (own(state.items, id) && state.items[id].templateId !== item.templateId) throw new Error(`跨战装备模板冲突：${id}`);
+    const amounts = { ...item.counters };
+    for (const [key, poolId] of Object.entries(item.pools ?? {})) {
+      const amount = carry.pools?.[poolId]?.current;
+      if (Number.isFinite(amount)) amounts[key] = amount;
+    }
+    equipItem(state, id, item.templateId, item.sourceId ?? null, amounts);
   }
   const assigned = new Set();
   const imported = [];
@@ -43,13 +67,19 @@ function importCarry(state, value) {
       statusValue(status, key, state);
       return [key, status];
     }));
-    for (const [instanceId, isWeapon] of [[unit.weapon, true], ...[unit.mainHand, unit.offHand].filter(Boolean).map(i => [i, true]), ...[unit.shield].filter(Boolean).map(i => [i, true]), ...unit.gear.map(i => [i, false])]) {
-      if (instanceId === null && isWeapon) continue;
-      if (!safeId(instanceId) || !own(carry.items, instanceId) || assigned.has(instanceId)
-        || own(state.equipment[state.items[instanceId].templateId], 'damage') !== isWeapon) throw new Error(`跨战装备归属无效：${instanceId}`);
+    const mainHand = unit.mainHand ?? unit.weapon;
+    const slots = [[mainHand, 'mainHand'], [unit.offHand ?? null, 'offHand'], [unit.shield ?? null, 'shield'],
+      ...unit.gear.map(instanceId => [instanceId, 'gear'])];
+    for (const [instanceId, slot] of slots) {
+      if (instanceId === null && slot !== 'gear') continue;
+      if (!safeId(instanceId) || !own(carry.items, instanceId) || assigned.has(instanceId)) throw new Error(`跨战装备归属无效：${instanceId}`);
+      const template = state.equipment[state.items[instanceId].templateId];
+      const allowed = slot === 'shield' ? template.kind === 'shield' : slot === 'gear' ? !own(template, 'damage')
+        : own(template, 'damage') || slot === 'offHand' && template.kind === 'consumable';
+      if (!allowed) throw new Error(`跨战装备槽位无效：${instanceId}`);
       assigned.add(instanceId);
     }
-    if (own(state.units, id)) imported.push([id, { statuses, weapon: unit.weapon, mainHand: unit.mainHand ?? unit.weapon, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
+    if (own(state.units, id)) imported.push([id, { statuses, weapon: mainHand, mainHand, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
   }
   // Carried ownership is authoritative. An absent unit's slot becomes inventory,
   // and a different scenario's default slot must not duplicate that instance.
@@ -61,7 +91,7 @@ function importCarry(state, value) {
 }
 
 export function buildScenario(request = 'ruins') {
-  if (request?.kind === 'custom_state' && object(request.state)) return migrateStateEffects(structuredClone(request.state));
+  if (request?.kind === 'custom_state' && object(request.state)) return structuredClone(request.state);
   if (typeof request === 'string') request = { scenarioId: request };
   if (!object(request) || !Object.keys(request).every(key => ['scenarioId', 'seed', 'mode', 'ruleset', 'persistentSnapshot'].includes(key))) throw new Error('无效的开局参数');
   const { scenarioId = 'ruins', ruleset = 'protocol', persistentSnapshot } = request;
@@ -72,21 +102,18 @@ export function buildScenario(request = 'ruins') {
   const state = { scenarioId, title, mode:'split', ruleset, round: 1, turn: 0, order: [], units: {}, items: {},
     equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS),
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
-    covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+    covers: {}, interactives: {}, zones: {}, pools: {}, rng: seed, logs: [], outcome: null };
   function unit(id, name, team, x, y, weapon, skills, options = {}) {
-    const { hp = 32, agi = 5, str = 4, con = 4, int = 4, spi = 4, armor = 1, size = 1, gear = [], weaponId = `${id}-weapon`, offHandTemplate = null, shieldTemplate = null } = options;
-    const equip = (id, templateId) => {
-      const counters = initialCounters(state.equipment[templateId]);
-      state.items[id] = { id, templateId, counters };
-      return id;
-    };
+    const { hp = 32, agi = 5, str = 4, con = 4, int = 4, spi = 4, armor = 1, size = 1, gear = [],
+      weaponId = `${id}-weapon`, offHandTemplate = null, shieldTemplate = null, bodyLengthM = 1.7, mc = 1, rules = [] } = options;
+    const equip = (itemId, templateId) => equipItem(state, itemId, templateId, id);
     const offHand = offHandTemplate ? equip(`${id}-offhand`, offHandTemplate) : null;
     const shield = shieldTemplate ? equip(`${id}-shield`, shieldTemplate) : null;
     const stance = shield ? 'sword_shield' : offHandTemplate === 'potion' ? 'attunement' : offHand ? 'dual_wield' : state.equipment[weapon]?.weaponClass === 'greatsword' ? 'greatsword' : 'light_blade';
-    const resources = ruleset === 'protocol' ? calculatePrebattleResources({ stats:{str, agi, con, int, spi}, tier:1, bodyLengthM:1.7 }).resources : null;
+    const resources = ruleset === 'protocol' ? calculatePrebattleResources({ stats:{str, agi, con, int, spi}, tier:1, bodyLengthM }).resources : null;
     const hpValue = resources?.hp.current ?? hp, mpValue = resources?.mp.current ?? 14, spValue = resources?.sp.current ?? 10;
     state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp:hpValue, maxHp:resources?.hp.max ?? hpValue,
-      mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM: 1.7, mc: 1,
+      mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM, mc, templateId: id, tags: [], vars: {}, mods: [], rules,
       bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, moraleType: 'standard',
       mp: mpValue, maxMp:resources?.mp.max ?? mpValue, sp: spValue, maxSp:resources?.sp.max ?? spValue, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
@@ -128,17 +155,19 @@ export function buildScenario(request = 'ruins') {
     interact('I1', 5, 4, 'altar'); interact('I2', 8, 4, 'barrel'); interact('I3', 4, 6, 'barrel'); interact('I4', 2, 2, 'altar');
   } else {
     heroes(1, 4);
-    unit('colossus', '铜棺守门巨像', 'red', 6, 4, 'pike', ['surge', 'challenge', 'armor'], { hp: 140, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, deathrattle: { kind: 'zone', name: '墓火余烬', radius: 1, remainingTurns: 2, amount: 2, damageType: 'energy', team: 'all' } });
+    unit('colossus', '铜棺守门巨像', 'red', 6, 4, 'pike', ['surge', 'challenge', 'armor'],
+      { hp: 140, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, rules: [colossusDeath] });
     unit('acolyte', '棺庭祭司', 'red', 8, 5, 'staff', ['ward', 'hymn', 'curse'], { hp: 32, spi: 7 });
     unit('knife', '墓道刺客', 'red', 5, 7, 'bloodfang', ['blink', 'fan'], { hp: 29, agi: 8 });
     unit('rifle', '重弩侍从', 'red', 8, 2, 'crossbow', ['shift'], { hp: 28 });
     [[4, 3], [4, 5], [4, 6], [7, 3], [7, 6], [1, 1]].forEach(([x, y]) => wall(x, y));
     cover('C1', 3, 4, '棺石', 20, 3); cover('C2', 5, 2, '钢板', 18, 3); cover('C3', 5, 5, '木箱', 10, 2); cover('C4', 8, 6, '棺石', 20, 3);
-    state.zones['Z1'] = { id:'Z1', name:'墓火领域', x:7, y:4, radius:1, remainingTurns:99, damage:2, damageType:'energy', team:'all' };
+    state.zones.Z1 = { ...structuredClone(gravefire), id: 'Z1', name: '墓火领域', sourceId: null,
+      area: { ...gravefire.area, center: { x: 7, y: 4 } }, remainingTurns: 99 };
     interact('I1', 6, 5, 'barrel'); interact('I2', 4, 7, 'altar'); interact('I3', 7, 2, 'barrel'); interact('I4', 2, 4, 'altar');
   }
   // A spare of the same template stays in the inventory, not in a unit slot.
-  state.items['soulblade-spare'] = { id: 'soulblade-spare', templateId: 'soulblade', counters: { souls: 0 } };
+  equipItem(state, 'soulblade-spare', 'soulblade', null);
   if (persistentSnapshot !== undefined) {
     importCarry(state, persistentSnapshot);
     state.order = Object.keys(state.units);

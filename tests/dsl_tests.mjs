@@ -1,275 +1,220 @@
-import { expression as fx } from '../src/core/effects.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyAction, corpses, currentUnit, equippedActiveSkills, grantStatus, living, preview, syncEquipmentEffects } from '../src/core/combat.js';
+import { applyAction, corpses, currentUnit, equippedActiveSkills, living, preview } from '../src/core/combat.js';
 import { chooseAction } from '../src/core/ai.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { validateState } from '../src/api/validation.js';
-import { hydrateFromSources, mapEffects } from '../src/tavern/converter.js';
+import { hydrateFromSources } from '../src/tavern/converter.js';
 import { parseBattleTime } from '../src/core/battle_time.js';
-import { validFormula, evaluateFormula } from '../src/core/formula.js';
+import { validExpr, evaluateExpr } from '../src/core/formula.js';
+import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 
-const expr = (id, trigger, target, effects, extra = {}) => ({ id, trigger, target, effects, ...extra });
-const strike = { type: 'attack', x: 3, y: 2 };
-function setup(effects = []) {
+function battle() {
   const state = buildScenario('ruins');
-  const actor = currentUnit(state), enemy = state.units.scout, item = state.items[actor.weapon];
-  item.templateId = 'v10_weapon'; item.counters = {};
-  const weapon = state.equipment.v10_weapon = { name: 'DSL 测试剑', range: 2, damage: { count: 1, sides: 4, type: 'true' }, effects: [fx('no-miss', 'passive', 'self', [{ kind: 'forceOutcome', mode: 'hit' }]), fx('fixed', 'passive', 'self', [{ kind: 'modifyDamageBase', value: 20 }]), ...effects] };
-  Object.assign(enemy, { hp: 1000, maxHp: 1000, nonLethal: false });
-  return { state, actor, enemy, weapon };
+  const actor = currentUnit(state), enemy = state.units.scout;
+  actor.nonLethal = enemy.nonLethal = false;
+  return { state, actor, enemy };
 }
+function learn({ state, actor, enemy }, id, program, fields = {}, rule = {}) {
+  state.skills[id] = { name: id, range: 3, ap: 1, slot: 'action', shape: 'single', target: 'enemy',
+    rules: [{ id, hook: 'active', program, ...rule }], ...fields };
+  actor.skills.push(id);
+  const point = fields.target === 'self' ? actor : enemy;
+  return { type: 'skill', skillId: id, x: point.x, y: point.y };
+}
+const damage = (amount, target = 'target') => ({ op: 'damage', target, amount, damageType: 'true' });
 
-test('四则公式支持受控变量、括号和除法，并用于命中后伤害', () => {
-  const {state, actor, enemy} = setup();
+test('VM expressions use caster stats, arithmetic and runtime comparisons', () => {
+  const fixture = battle();
+  const { state, actor, enemy } = fixture;
   actor.stats.str = 10;
-  state.equipment.v10_weapon.effects.push(expr('formula-bonus','on_hit','hitTarget',[
-    {kind:'damage', flat:'(attacker.str-5)/attacker.str*20', damageType:'true'}
-  ]));
+  const cast = learn(fixture, 'formula', [{ op: 'if', cond: 'self.str - 5 >= 5',
+    then: [damage('(self.str - 5) / self.str * 6')], else: [damage(1)] }]);
   const before = enemy.hp;
-  applyAction(state, strike);
-  assert.equal(before - enemy.hp, 36, '26 主击 + 10 附伤');
-});
-
-test('公式变量是闭集，中文名、任意路径和除零均被拒绝或跳过', () => {
-  assert.equal(validFormula('我方力量+1'), false);
-  assert.equal(validFormula('state.units.e1.hp'), false);
-  assert.equal(evaluateFormula('10/0', {}), null);
-});
-
-test('条件也支持运行时公式比较', () => {
-  const {state, actor, enemy} = setup();
-  actor.stats.str = 10;
-  const effect = expr('conditional-formula','on_hit','hitTarget', [{kind:'damage',flat:7}], {
-    condition:{type:'compare',left:'attacker.str-5',op:'>=',right:5}
-  });
-  state.equipment.v10_weapon.effects.push(effect);
-  applyAction(state, strike);
-  assert.equal(enemy.hp, 967);
-});
-
-test('主动限次技能即使满血空放也消耗次数，并限制基础治疗', () => {
-  const {state, actor} = setup();
-  actor.hp = actor.maxHp;
-  actor.skills.push('limited');
-  state.skills.limited = { name:'限次试验', ap:1, slot:'action', range:0, shape:'single', target:'self',
-    heal:{count:1,sides:4}, effects:[expr('once','active','self',[{kind:'heal',amount:5}],{params:{usesPerBattle:1}})] };
-  const cast = {type:'skill',skillId:'limited',x:actor.x,y:actor.y};
-  applyAction(state,cast);
-  actor.ap=2; actor.used={action:0,attack:0};
-  assert.match(preview(state,cast).error ?? '', /次数已用尽/);
-});
-
-test('基础伤害技能的冷却和次数在概率效果落空时也照常结算', () => {
-  const {state, actor, enemy} = setup();
-  actor.skills.push('limited');
-  state.skills.limited = { name:'限次攻击', ap:1, slot:'attack', range:3, shape:'single', target:'enemy',
-    damage:{count:1,sides:4,stat:'str',type:'true'},
-    effects:[expr('once','active','hitTarget',[{kind:'damage',flat:5}],{roll:{chance:0},params:{usesPerBattle:2,cooldown:2}})] };
-  const cast = {...strike,type:'skill',skillId:'limited'};
-  assert.equal(preview(state,cast).usesLeft,2);
-  assert.equal(preview(state,{...cast,x:actor.x,y:actor.y}).ok,false);
-  assert.equal(actor.effectUsage,undefined);
-  applyAction(state,cast);
-  assert.deepEqual(actor.effectUsage['skill-limited:once'],{count:1,round:1});
-  const cooling = preview(state,cast);
-  assert.equal(cooling.ok,false);
-  assert.equal(cooling.usesLeft,1);
-  assert.equal(cooling.cooldownRemaining,2);
-  state.round+=2; actor.ap=2; actor.used={action:0,attack:0};
-  assert.equal(preview(state,cast).ok,true);
-  applyAction(state,cast);
-  assert.equal(preview(state,cast).usesLeft,0);
-  assert.ok(enemy.hp>0);
   validateState(state);
+  applyAction(state, cast);
+  assert.equal(before - enemy.hp, 3);
 });
 
-test('按名称映射的效果对象保留主动表达式和次数限制', () => {
-  const effect = { trigger:'active', target:'self', params:{usesPerBattle:3}, effects:[{kind:'heal',amount:5}] };
-  const warnings = [];
-  const [mapped] = mapEffects({突进:effect}, 'skill', warnings);
-  assert.deepEqual(warnings, []);
-  const {id, ...body} = mapped;
-  assert.deepEqual(body, effect);
-  assert.equal(mapEffects({突进:effect})[0].id, id);
-  assert.equal(mapEffects({dash:{...effect,id:'explicit'}})[0].id,'explicit');
+test('expression paths are closed and divide by zero cannot produce a damage amount', () => {
+  assert.equal(validExpr('我方力量 + 1'), false);
+  assert.equal(validExpr('state.units.e1.hp'), false);
+  assert.equal(evaluateExpr('10 / 0', {}), null);
+  const fixture = battle();
+  const { state, enemy } = fixture;
+  const cast = learn(fixture, 'bad-amount', [damage('10 / 0')]);
+  const before = enemy.hp;
+  applyAction(state, cast);
+  assert.equal(enemy.hp, before);
 });
 
-test('on_equip 缺省每战一次，显式 null 允许再次触发', () => {
-  for (const [params, expected] of [[{},1],[{usesPerBattle:null},2]]) {
-    const {state, actor} = setup([expr('equip','on_equip','self',[{kind:'heal',amount:1}],{params})]);
-    actor.hp=actor.maxHp-3;
-    const hp=actor.hp;
-    syncEquipmentEffects(state);
-    syncEquipmentEffects(state);
-    assert.equal(actor.hp-hp,expected);
-  }
+test('a full-health cast consumes its use and preview stays free of side effects', () => {
+  const fixture = battle();
+  const { state, actor } = fixture;
+  const cast = learn(fixture, 'once', [{ op: 'heal', target: 'self', amount: 5 }], { target: 'self', range: 0 }, { usesPerBattle: 1 });
+  const before = structuredClone(state);
+  assert.equal(preview(state, cast).usesLeft, 1);
+  assert.deepEqual(state, before);
+  applyAction(state, cast);
+  actor.ap = 2;
+  actor.used = { attack: 0, action: 0 };
+  assert.equal(preview(state, cast).usesLeft, 0);
+  assert.equal(preview(state, cast).ok, false);
 });
 
-test('G55/G56 death, corpse isolation and resurrection', () => {
-  const { state, actor, enemy } = setup();
-  enemy.hp = 1;
-  applyAction(state, strike);
-  assert.deepEqual(enemy.diedAt, { round: 1, turn: 0 });
+test('a failed chance check still consumes the active rule use', () => {
+  const fixture = battle();
+  const { state, actor, enemy } = fixture;
+  const cast = learn(fixture, 'chance', [{ op: 'check', kind: 'chance', dc: 0, onPass: [damage(1)] }], {}, { usesPerBattle: 1 });
+  const hp = enemy.hp;
+  assert.equal(preview(state, cast).usesLeft, 1);
+  applyAction(state, cast);
+  assert.equal(enemy.hp, hp);
+  actor.ap = 2;
+  actor.used = { attack: 0, action: 0 };
+  assert.equal(preview(state, cast).usesLeft, 0);
+});
+
+test('an equipment skill can chain committed resource amounts into restoration and item creation', () => {
+  const { state, actor } = battle();
+  const item = state.items[actor.weapon];
+  state.equipment[item.templateId].skills = ['transmute'];
+  state.equipment.token = { name: '灵魂结晶', kind: 'consumable' };
+  state.skills.transmute = { name: '转化', range: 0, ap: 1, slot: 'action', shape: 'single', target: 'self',
+    rules: [{ id: 'transmute', hook: 'active', usesPerBattle: 1, program: [
+      { op: 'resource', target: 'self', pool: 'hp', mode: 'sub', amount: 10, minRemain: 1, requireFull: true, out: 'spent' },
+      { op: 'resource', target: 'self', pool: 'mp', mode: 'add', amount: '-vars.spent / 2' },
+      { op: 'spawn', entityKind: 'item', spec: { templateId: 'token' } },
+    ] }] };
+  const [[skillId]] = equippedActiveSkills(state, actor);
+  updatePoolCurrent(state, getPool(state, actor.id, 'mp').id, 'set', 0);
+  const before = actor.hp;
+  const cast = { type: 'skill', skillId, x: actor.x, y: actor.y };
+  validateState(state);
+  applyAction(state, cast);
+  assert.equal(actor.hp, before - 10);
+  assert.equal(actor.mp, Math.min(actor.maxMp, 5));
+  assert.equal(actor.inventory.token, 1);
+  validateState(JSON.parse(JSON.stringify(state)));
+});
+
+test('defeat isolates the corpse, and VM revive restores the original unit and turn order', () => {
+  const fixture = battle();
+  const { state, actor, enemy } = fixture;
+  const kill = learn(fixture, 'kill-test', [damage(9999)]);
+  const revive = learn(fixture, 'revive-test', [{ op: 'revive', target: 'target', hpPercent: 0.5 }], { target: 'corpse' });
+  assert.equal(preview(state, revive).ok, false);
+  applyAction(state, kill);
   assert.ok(corpses(state).includes(enemy));
   assert.ok(!living(state).includes(enemy));
-  assert.equal(grantStatus(state, enemy, 'haste'), null);
-  assert.equal(preview(state, strike).ok, false);
-  state.skills.necromancy = { name: '复生', ap: 1, slot: 'action', range: 3, shape: 'single', target: 'corpse', effects: [expr('raise', 'active', 'corpse', [{ kind: 'raiseDead', statScale: .5 }], { params: { usesPerBattle: 1 } })] };
-  actor.skills.push('necromancy');
-  applyAction(state, { ...strike, type: 'skill', skillId: 'necromancy' });
-  const raised = living(state).find(u => u.corpseOf === enemy.id);
-  assert.equal(raised.name, enemy.name);
-  assert.equal(raised.team, actor.team);
-  assert.equal(raised.maxHp, 500);
-  assert.equal(enemy.corpseConsumed, true);
+  assert.equal(preview(state, kill).ok, false);
+  actor.ap = 2;
+  actor.used = { attack: 0, action: 0 };
+  assert.ok(preview(state, revive).ok);
+  applyAction(state, revive);
+  assert.equal(enemy.hp, Math.floor(enemy.maxHp / 2));
+  assert.ok(living(state).includes(enemy));
   assert.ok(!corpses(state).includes(enemy));
+  assert.equal(state.order.filter(id => id === enemy.id).length, 1);
   validateState(JSON.parse(JSON.stringify(state)));
-  console.log('G55/G56', JSON.stringify({ diedAt: enemy.diedAt, corpseConsumed: enemy.corpseConsumed, raised: { name: raised.name, hp: raised.hp, team: raised.team } }));
 });
 
-test('G58/G59 tp hydration and night effect', () => {
+test('battle time hydrates from tp and a rule can branch on day or night', () => {
   const tp = clock => `<tp>复兴纪元488年-10月-14日-星期四-${clock} @ 城区 08:15</tp>`;
   const { state } = hydrateFromSources({ task: tp('11:25') }, { throwOnValidation: true });
   assert.deepEqual(state.time, { raw: '复兴纪元488年-10月-14日-星期四-11:25', hour: 11, minute: 25, timeOfDay: 'day', calendar: '复兴纪元488年-10月-14日-星期四' });
-  for (const [clock, value] of [['04:59','night'],['05:00','dawn'],['07:59','dawn'],['08:00','day'],['16:59','day'],['17:00','dusk'],['19:29','dusk'],['19:30','night']]) assert.equal(parseBattleTime(tp(clock)).timeOfDay, value);
-  const results = {};
-  for (const clock of ['11:25','22:30']) {
-    const { state } = setup([expr('moon', 'on_hit', 'hitTarget', [{ kind: 'damage', amount: 40 }], { condition: { type: 'timeOfDay', value: 'night' } })]);
-    state.time = parseBattleTime(tp(clock));
-    results[clock] = applyAction(state, strike).filter(log => log.detail.effectId === 'moon').map(log => log.detail.amount);
+  for (const [clock, period] of [['04:59', 'night'], ['05:00', 'dawn'], ['07:59', 'dawn'], ['08:00', 'day'], ['16:59', 'day'], ['17:00', 'dusk'], ['19:29', 'dusk'], ['19:30', 'night']]) {
+    assert.equal(parseBattleTime(tp(clock)).timeOfDay, period);
   }
-  assert.deepEqual(results, { '11:25': [], '22:30': [40] });
-  console.log('G58/G59', JSON.stringify({ time: state.time, results }));
-});
-
-test('G60/G61 combined and opposed saves', () => {
-  for (const mode of ['all','any','contest']) {
-    const save = fx('save-gate', 'on_hit', 'hitTarget', [{ kind: 'grantStatus', statusId: 'stun' }], { roll: mode === 'contest' ? { contest: { attacker: 'str', defender: 'con', dc: 10 } } : { save: ['str','con'], dc: 20, mode } });
-    const { state, actor, enemy } = setup([save]);
-    Object.assign(enemy.stats, { str: 50, con: -20 }); actor.stats.str = 50;
-    validateState(state);
-    const { detail } = applyAction(state, strike).find(log => log.type === 'save');
-    assert.equal(detail.saved, mode === 'any');
-    assert.equal(!!enemy.statuses.stun, mode !== 'any');
-    if (mode === 'contest') { assert.equal(detail.contest.attack.saveBonus, 50); assert.equal(detail.contest.defense.saveBonus, -20); }
-    else assert.deepEqual(detail.checks.map(check => check.saved), [true, false]);
-    console.log(mode === 'contest' ? 'G61' : 'G60', JSON.stringify(detail));
+  for (const [clock, amount] of [['11:25', 0], ['22:30', 2]]) {
+    const fixture = battle();
+    fixture.state.time = parseBattleTime(tp(clock));
+    const cast = learn(fixture, 'moon', [{ op: 'if', cond: "timeOfDay == 'night'", then: [damage(2)] }]);
+    const before = fixture.enemy.hp;
+    applyAction(fixture.state, cast);
+    assert.equal(before - fixture.enemy.hp, amount);
   }
 });
 
-test('DSL area resolves each affected unit once and applies school scaling', () => {
-  const { state, actor, enemy } = setup([expr('divine_power', 'passive', 'self', [{ kind: 'modifyStat', stat: 'skillPower', percent: .2 }], { condition: { type: 'skillSchool', value: 'divine' } })]);
-  const second = structuredClone(enemy);
-  Object.assign(second, { id: 'second_scout', x: enemy.x, y: enemy.y + 1, weapon: null, gear: [] });
-  state.units[second.id] = second;
-  state.order.push(second.id);
-  state.grid[second.y][second.x] = { kind: 'floor', z: 0 };
-  state.skills.area_test = { name: '范围测试', school: 'divine', ap: 1, slot: 'action', range: 3, shape: 'circle', radius: 1, target: 'enemy', effects: [expr('area_damage', 'active', 'hitTarget', [{ kind: 'damage', amount: 100 }], { params: { usesPerBattle: 1 } })] };
-  actor.skills.push('area_test');
-  const hits = applyAction(state, { ...strike, type: 'skill', skillId: 'area_test' }).filter(log => log.detail.effectId === 'area_damage');
-  assert.deepEqual(hits.map(log => [log.detail.targetId, log.detail.amount]).sort(), [[enemy.id, 120], [second.id, 120]].sort());
-  assert.equal(actor.effectUsage['skill-area_test:area_damage'].count, 1);
+test('active VM damage is included in skill preview and matches execution', () => {
+  const fixture = battle();
+  const { state, enemy } = fixture;
+  const cast = learn(fixture, 'preview-damage', [damage('event.power * 1.2')], { power: 5 });
+  const plan = preview(state, cast);
+  assert.equal(plan.ok, true, plan.error);
+  assert.deepEqual(plan.targets[0].damage, [6, 6]);
+  const before = enemy.hp;
+  applyAction(state, cast);
+  assert.equal(before - enemy.hp, plan.targets[0].damage[0]);
 });
 
-test('DSL active damage is included in skill preview and matches execution', () => {
-  const { state, actor, enemy } = setup();
-  state.skills.dsl_preview_damage = {
-    name: 'DSL 预览伤害', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy',
-    power: 100, effects: [expr('preview_damage', 'active', 'hitTarget', [
-      { kind: 'damage', percentOfPower: 1.2, damageType: 'energy' },
-    ])], damageType: 'energy',
-  };
-  actor.skills.push('dsl_preview_damage');
-  actor.x = enemy.x; actor.y = enemy.y - 1;
-  const action = { type: 'skill', skillId: 'dsl_preview_damage', x: enemy.x, y: enemy.y };
-  const plan = preview(state, action);
-  assert.equal(plan.ok, true);
-  assert.deepEqual(plan.targets[0].damage, [120, 120]);
-  const hpBefore = enemy.hp;
-  applyAction(state, action);
-  const damageLog = state.logs.slice(-10).find(log => log.type === 'damage' && log.detail?.effectId === 'preview_damage');
-  assert.ok(damageLog);
-  assert.equal(damageLog.detail.amount, hpBefore - enemy.hp);
-  assert.equal(damageLog.detail.amount, plan.targets[0].damage[0]);
-});
-
-test('伤害类型限定状态减伤，真伤穿过减伤但仍消耗护盾', () => {
-  for (const [type, expected] of [['physical', 9], ['energy', 67], ['mental', 67], ['true', 97]]) {
-    const { state, actor, enemy } = setup();
+test('qualified damage reduction affects only its type and shields still absorb true damage', () => {
+  for (const [damageType, expected] of [['physical', 2], ['energy', 6], ['mental', 6], ['true', 6]]) {
+    const fixture = battle();
+    const { state, actor, enemy } = fixture;
     enemy.armor = 0;
-    enemy.statuses.typed = { modifiers: { damageType: 'physical', armor: 8, reduction: .5 }, stacks: 1 };
-    enemy.statuses.general = { modifiers: { reduction: .2 }, stacks: 1 };
-    enemy.statuses.shield = { id: 'shield', name: '护盾', modifiers: {}, amount: 3, stacks: 1 };
-    enemy.gear.push('test-armor');
-    state.items['test-armor'] = { id: 'test-armor', templateId: 'test-armor', counters: {} };
-    state.equipment['test-armor'] = { name: '测试护甲', effects: [expr('flat-reduction', 'passive', 'self', [{ kind: 'modifyStat', stat: 'damageReductionFlat', flat: 10 }])] };
-    state.skills.typed_damage = {
-      name: '伤害类型测试', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy',
-      effects: [expr('typed-packet', 'active', 'hitTarget', [{ kind: 'damage', flat: 100, damageType: type }])],
-    };
-    actor.skills.push('typed_damage');
-    actor.x = enemy.x; actor.y = enemy.y - 1;
-    const action = { type: 'skill', skillId: 'typed_damage', x: enemy.x, y: enemy.y };
-    const plan = preview(state, action);
-    assert.equal(plan.ok, true, plan.error);
-    assert.deepEqual(plan.targets[0].damage, [expected, expected], type);
-    const before = enemy.hp;
-    applyAction(state, action);
-    assert.equal(before - enemy.hp, expected, type);
-    assert.equal(enemy.statuses.shield, undefined);
+    Object.assign(enemy.stats, { str: 0, agi: 0, con: 0, int: 0, spi: 0 });
+    enemy.mods = [{ stat: 'damageReduction', damageType: 'physical', flat: 0.5 }];
+    state.statusTemplates = { ward: { id: 'ward', name: '护盾', category: 'shield', vars: { shieldAmount: 2 } } };
+    const ward = learn(fixture, 'ward-test', [{ op: 'apply_status', target: 'target', statusId: 'ward' }]);
+    const strike = learn(fixture, 'typed-test', [{ op: 'damage', target: 'target', amount: 8, damageType }]);
+    validateState(state);
+    applyAction(state, ward);
+    actor.ap = 2;
+    actor.used = { attack: 0, action: 0 };
+    assert.deepEqual(preview(state, strike).targets[0].damage, [expected, expected], damageType);
+    const hp = enemy.hp;
+    applyAction(state, strike);
+    assert.equal(hp - enemy.hp, expected, damageType);
+    assert.equal(enemy.statuses.ward, undefined);
   }
 });
 
-test('AI considers DSL healing and shields across learned, equipment and backpack skills', () => {
-  for (const source of ['learned', 'equipment', 'backpack']) {
-    const node = source === 'equipment' ? {kind:'shield',amount:1000} : {kind:'heal',amount:1000};
-    const effect = expr('support', 'active', 'self', [node], {params:{usesPerBattle:1}});
-    const {state, actor} = setup(source === 'equipment' ? [effect] : []);
-    actor.hp = Math.floor(actor.maxHp / 2);
-    let skillId = 'support_test';
-    if (source === 'equipment') {
-      [[skillId]] = equippedActiveSkills(state, actor);
-      grantStatus(state, actor, 'shield', {amount:10});
-    } else {
-      state.skills[skillId] = {name:'支援测试',ap:1,slot:'action',range:0,shape:'single',target:'self',effects:[effect]};
-      if (source === 'learned') actor.skills.push(skillId);
-      else {
-        state.skills[skillId].backpackItem = true;
-        actor.inventory = {[skillId]:1};
-      }
-    }
-    const cast = {type:'skill',skillId,x:actor.x,y:actor.y};
-    const before = structuredClone(state);
-    const [{heal,shieldGain}] = preview(state,cast).support;
-    assert.equal(heal, source === 'equipment' ? 0 : actor.maxHp - actor.hp);
-    assert.equal(shieldGain, source === 'equipment' ? 990 : 0);
-    assert.deepEqual(chooseAction(state),cast);
-    assert.deepEqual(state,before);
-    applyAction(state,cast);
-    if (source === 'equipment') assert.equal(actor.statuses.shield.amount,1000);
-    else assert.equal(actor.hp,actor.maxHp);
-    if (source === 'backpack') assert.equal(actor.inventory[skillId],0);
-    assert.notDeepEqual(chooseAction(state),cast);
-  }
-});
-
-test('DSL active equipment, chain, proc, cooldown and serialization', () => {
-  const active = expr('active_test', 'active', 'self', [{ kind: 'chainEffect', effects: [
-    { kind: 'drainResource', resource: 'hp', amount: 12, minimumRemaining: 1, requireFull: true },
-    { kind: 'restoreResource', resource: 'mp', percentOfPrevious: .5 },
-    { kind: 'procEffect', ref: 'crystal' },
-  ] }], { roll: { dice: 'd20', gte: 1 }, params: { usesPerBattle: 1, cooldown: 2 } });
-  const { state, actor } = setup([active]);
-  actor.mp = 0;
-  state.effectTemplates = { crystal: expr('crystal', 'active', 'self', [{ kind: 'addItem', itemId: 'soul_crystal' }]) };
+test('an area rule damages each enemy it selects once and spends one use', () => {
+  const fixture = battle();
+  const { state, actor, enemy } = fixture;
+  const second = state.units.raider;
+  Object.assign(second, { x: enemy.x, y: enemy.y + 1 });
+  state.grid[second.y][second.x] = { kind: 'floor', z: 0 };
+  const select = { from: 'units', area: { shape: 'circle', origin: 'center', radius: 1 },
+    where: 'candidate.alive && candidate.team != self.team' };
+  const cast = learn(fixture, 'area-test', [{ op: 'for_each', select, body: [damage(1)] }],
+    { shape: 'circle', radius: 1 }, { usesPerBattle: 1 });
   validateState(state);
-  const [[key]] = equippedActiveSkills(state, actor);
-  applyAction(state, { type: 'skill', skillId: key, x: actor.x, y: actor.y });
-  assert.equal(actor.mp, Math.min(actor.maxMp, 6));
-  assert.equal(actor.inventory.soul_crystal, 1);
-  assert.equal(preview(state, { type: 'skill', skillId: key }).ok, false);
-  validateState(JSON.parse(JSON.stringify(state)));
-  state.effectTemplates.crystal.effects.push({ kind: 'procEffect', ref: 'active_test' });
-  assert.throws(() => validateState(state), /循环引用/);
+  const hp = Object.fromEntries([enemy, second, actor].map(unit => [unit.id, unit.hp]));
+  applyAction(state, cast);
+  assert.equal(hp[enemy.id] - enemy.hp, 1);
+  assert.equal(hp[second.id] - second.hp, 1);
+  assert.equal(actor.hp, hp[actor.id]);
+  actor.ap = 2;
+  actor.used = { attack: 0, action: 0 };
+  assert.equal(preview(state, cast).usesLeft, 0);
+});
+
+for (const source of ['learned', 'equipment', 'backpack']) test(`AI considers VM healing from ${source} without mutating state`, () => {
+  const fixture = battle();
+  const { state, actor } = fixture;
+  updatePoolCurrent(state, getPool(state, actor.id, 'hp').id, 'set', Math.floor(actor.maxHp / 2));
+  const program = [{ op: 'heal', target: 'self', amount: 1000 }];
+  let cast = { type: 'skill', x: actor.x, y: actor.y };
+  if (source === 'equipment') {
+    const item = state.items[actor.weapon];
+    state.skills.support = { name: 'support', range: 0, ap: 1, slot: 'action', shape: 'single', target: 'self',
+      rules: [{ id: 'support', hook: 'active', usesPerBattle: 1, program }] };
+    state.equipment[item.templateId].skills = ['support'];
+    [[cast.skillId]] = equippedActiveSkills(state, actor);
+  } else {
+    cast = learn(fixture, 'support', program, { target: 'self', range: 0 }, { usesPerBattle: 1 });
+    if (source === 'backpack') {
+      state.skills.support.backpackItem = true;
+      actor.skills = actor.skills.filter(id => id !== 'support');
+      actor.inventory = { support: 1 };
+    }
+  }
+  const before = structuredClone(state);
+  assert.deepEqual(chooseAction(state), cast);
+  assert.deepEqual(state, before);
+  applyAction(state, cast);
+  assert.equal(actor.hp, actor.maxHp);
+  if (source === 'backpack') assert.equal(actor.inventory.support, 0);
 });

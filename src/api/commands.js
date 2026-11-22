@@ -1,10 +1,17 @@
-import { adaptLegacyEffects, resourceDefinitions } from '../core/effects.js';
 import { getStatusTemplate, grantStatus, patchStatus } from '../core/combat.js';
+import { evaluateExpr } from '../core/formula.js';
+import { getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
+import { recordVM } from '../core/vm-runtime.js';
 import { attrs, checkOptional, coord, defineStatus, equipmentTemplate, fields, has, id, int, own,
-  plain, requireThat as check, skillTemplate, unitValue, validateCell } from './validation.js';
+  plain, requireThat as check, skillTemplate, statusValue, unitValue, validateCell, zoneValue } from './validation.js';
 
 const get = (table, key, label) => { check(has(table, key), label); return table[key]; };
 const nonempty = patch => check(plain(patch) && Object.keys(patch).length > 0, 'patch');
+const builtins = ['hp', 'mp', 'sp'];
+const deleteOwnedPools = (state, owner) => {
+  for (const poolId of Object.values(owner.pools ?? {})) delete state.pools[poolId];
+};
+const statusPatchFields = ['remainingTurns', 'durationType', 'stackMode', 'stacks', 'vars', 'mods', 'expireOn'];
 
 const commands = {
   set_unit_stat(s, c) {
@@ -23,6 +30,7 @@ const commands = {
     if (own(c.patch, 'bonusDice')) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
     if (own(c.patch, 'penaltyDice')) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
     unitValue(u, u.id, s);
+    for (const key of builtins) if (own(c.patch, key) && u.pools?.[key]) updatePoolCurrent(s, u.pools[key], 'set', u[key]);
   },
   define_status_template(s, c) {
     fields(c, ['type','template']);
@@ -30,13 +38,51 @@ const commands = {
   },
   patch_status(s, c) {
     fields(c, ['type','unitId','statusId','patch']);
-    patchStatus(s, c.unitId, c.statusId, c.patch);
+    const unit = get(s.units, c.unitId, 'unitId');
+    const status = get(unit.statuses, c.statusId, 'statusId');
+    if (!own(status, 'templateId')) return patchStatus(s, c.unitId, c.statusId, c.patch);
+    nonempty(c.patch);
+    fields(c.patch, [], statusPatchFields);
+    const next = { ...status, ...c.patch };
+    if (own(c.patch, 'vars')) {
+      check(plain(c.patch.vars), 'VM 状态变量');
+      next.vars = { ...status.vars, ...c.patch.vars };
+    }
+    statusValue(next, c.statusId, s, unit.id);
+    unit.statuses[c.statusId] = next;
+    recordVM(s, unit, 'status_patch', `${unit.name}的${next.name}参数已更新`, { targetId: unit.id, statusId: next.id });
   },
   upsert_status(s, c) {
     fields(c, ['type','unitId','statusId'], ['options']);
     const u = get(s.units, c.unitId, 'unitId'), status = getStatusTemplate(s, c.statusId);
     check(status, 'statusId');
     const options = own(c, 'options') ? c.options : {};
+    if (!own(status, 'modifiers')) {
+      fields(options, [], [...statusPatchFields, 'sourceId', 'extendTurns']);
+      checkOptional(options, 'sourceId', source => source === null || has(s.units, source));
+      checkOptional(options, 'remainingTurns', turns => int(turns, 1, 100));
+      checkOptional(options, 'stacks', count => int(count, 1, status.maxStacks ?? 1));
+      checkOptional(options, 'extendTurns', turns => int(turns, 1, 100));
+      if (own(options, 'vars')) check(plain(options.vars), 'VM 状态变量');
+      const previous = u.statuses[c.statusId];
+      const { extendTurns = 1, ...patch } = options;
+      const sourceId = own(patch, 'sourceId') ? patch.sourceId : previous?.sourceId ?? null;
+      const source = s.units[sourceId];
+      const vars = Object.fromEntries(Object.entries(status.vars ?? {}).flatMap(([key, expr]) => {
+        const value = evaluateExpr(expr, { self: source, source, target: u, event: {} });
+        return value === null ? [] : [[key, value]];
+      }));
+      const instance = { remainingTurns: 1, durationType: 'battle_turns', stackMode: 'refresh', stacks: 1,
+        ...status, ...patch, templateId: status.id, ownerId: u.id, sourceId, vars: { ...vars, ...patch.vars } };
+      if (previous && instance.stackMode === 'stack') instance.stacks = Math.min(status.maxStacks ?? 1, previous.stacks + instance.stacks);
+      if (previous && instance.stackMode === 'extend') instance.remainingTurns = Math.min(100, previous.remainingTurns + extendTurns);
+      if (previous?.pools) instance.pools = previous.pools;
+      statusValue(instance, c.statusId, s, u.id);
+      if (u.hp <= 0 || u.fled) return;
+      u.statuses[c.statusId] = instance;
+      recordVM(s, source ?? u, 'status', `${u.name}获得${instance.name} ×${instance.stacks}`, { targetId: u.id, statusId: instance.id });
+      return;
+    }
     fields(options, [], ['remainingTurns','durationType','stacks','stackRule','tickTiming','amount','sourceUnitId','modifiers','expireOn']);
     checkOptional(options, 'remainingTurns', x => int(x, 1, 100));
     checkOptional(options, 'durationType', x => ['battle_turns','until_removed','persistent'].includes(x));
@@ -54,36 +100,37 @@ const commands = {
   remove_status(s, c) {
     fields(c, ['type','unitId','statusId']);
     check(getStatusTemplate(s, c.statusId), 'statusId');
-    delete get(s.units, c.unitId, 'unitId').statuses[c.statusId];
+    const unit = get(s.units, c.unitId, 'unitId');
+    const status = unit.statuses[c.statusId];
+    if (status) deleteOwnedPools(s, status);
+    delete unit.statuses[c.statusId];
   },
-  adjust_item_counter(s, c) {
-    fields(c, ['type','instanceId','counterKey','operation','value']);
-    const item = get(s.items, c.instanceId, 'instanceId');
-    check(has(item.counters, c.counterKey) && ['set','add'].includes(c.operation), '计数器命令');
-    const effect = resourceDefinitions(s.equipment[item.templateId]).find(e => e.resource === c.counterKey);
-    const limit = effect.cap;
-    check(int(c.value, -limit, limit), '计数器命令');
-    const next = c.operation === 'set' ? c.value : item.counters[c.counterKey] + c.value;
-    const cap = Math.max(effect.cap, item.counters[c.counterKey]);
-    check(int(next, 0, cap), `计数结果须在 0–${cap}`);
-    item.counters[c.counterKey] = next;
+  adjust_pool(s, c) {
+    fields(c, ['type', 'poolId', 'operation', 'value']);
+    const pool = typeof c.poolId === 'string' && plain(s.pools) && own(s.pools, c.poolId) ? s.pools[c.poolId] : undefined;
+    check(pool && ['set', 'add'].includes(c.operation) && Number.isFinite(c.value), '资源池命令');
+    const next = c.operation === 'set' ? c.value : pool.current + c.value;
+    check(Number.isFinite(next) && next >= 0 && next <= pool.max, `资源池须在 0–${pool.max}`);
+    updatePoolCurrent(s, pool.id, 'set', next);
   },
   patch_equipment_template(s, c) {
     fields(c, ['type','templateId','patch']);
     const old = get(s.equipment, c.templateId, 'templateId');
     nonempty(c.patch);
     const next = { ...old, ...c.patch };
-    if (Array.isArray(c.patch.effects)) next.effects = adaptLegacyEffects(next.effects, 'equipment', `legacy-equipment-${c.templateId}`);
     equipmentTemplate(next, s);
-    const counters = t => resourceDefinitions(t).map(e => e.resource).sort().join('|');
-    check(counters(next) === counters(old) && own(old, 'damage') === own(next, 'damage'), '不能热改装备槽类型或实例计数器定义');
+    const sameSlot = old.kind === next.kind && own(old, 'damage') === own(next, 'damage');
+    const instances = Object.values(s.items).filter(item => item.templateId === c.templateId);
+    if (instances.length) check(sameSlot && !own(c.patch, 'pools'), '不能热改已实例化装备的槽类型或资源池定义');
     s.equipment[c.templateId] = next;
+    for (const item of instances) {
+      for (const key of ['name', 'tags', 'tier', 'rules', 'mods']) if (own(c.patch, key) && own(item, key)) item[key] = structuredClone(next[key]);
+    }
   },
   patch_skill_template(s, c) {
     fields(c, ['type','templateId','patch']);
     nonempty(c.patch);
     const next = { ...get(s.skills, c.templateId, 'templateId'), ...c.patch };
-    if (Array.isArray(c.patch.effects)) next.effects = adaptLegacyEffects(next.effects, 'skill', `legacy-skills-${c.templateId}`);
     skillTemplate(next, s);
     s.skills[c.templateId] = next;
   },
@@ -92,16 +139,27 @@ const commands = {
     const v = c.unit;
     check(plain(v) && id(v.id) && !own(s.units, v.id), 'unit.id');
     unitValue(v, v.id, s);
+    check(!own(v, 'pools'), '增援资源池由战局初始化');
     check(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0, '增援须存活且行动未开始');
     v.mainHand = v.weapon;
     if (v.offHand === undefined) v.offHand = null;
     if (v.shield === undefined) v.shield = null;
     s.units[v.id] = v;
+    if (s.vm || s.pools) initializeUnitPools(s, v.id);
     s.order.push(v.id);
   },
   remove_unit(s, c) {
     fields(c, ['type','unitId']);
-    get(s.units, c.unitId, 'unitId');
+    const unit = get(s.units, c.unitId, 'unitId');
+    const linked = builtins.filter(key => (getPool(s, unit.id, key)?.contributors.length ?? 0) > 1);
+    if (linked.length) unlinkPools(s, [unit.id], linked);
+    deleteOwnedPools(s, unit);
+    for (const status of Object.values(unit.statuses)) deleteOwnedPools(s, status);
+    for (const item of Object.values(s.items)) if (item.ownerId === unit.id) item.ownerId = null;
+    for (const zone of Object.values(s.zones ?? {})) if (zone.area?.anchorUnitId === unit.id) {
+      deleteOwnedPools(s, zone);
+      delete s.zones[zone.id];
+    }
     const index = s.order.indexOf(c.unitId);
     if (index >= 0) {
       s.order.splice(index, 1);
@@ -118,6 +176,7 @@ const commands = {
       for (const slot of ['weapon', 'mainHand', 'offHand', 'shield']) if (v[slot] === instance.id) v[slot] = null;
       v.gear = v.gear.filter(i => i !== instance.id);
     }
+    if (own(instance, 'ownerId')) instance.ownerId = u?.id ?? null;
     if (u) {
       if (own(s.equipment[instance.templateId], 'damage')) { u.weapon = instance.id; u.mainHand = instance.id; }
       else u.gear.push(instance.id);
@@ -126,13 +185,16 @@ const commands = {
   set_zone(s, c) {
     fields(c, ['type','zone']);
     const z = structuredClone(c.zone);
-    check(plain(z) && id(z.id), '区域 ID');
+    zoneValue(z, z?.id, s);
+    check(!own(z, 'pools'), '区域资源池由战局绑定');
     const table = s.zones ??= {};
+    if (table[z.id]?.pools) deleteOwnedPools(s, table[z.id]);
     table[z.id] = z;
   },
   remove_zone(s, c) {
     fields(c, ['type','zoneId']);
-    check(has(s.zones ?? {}, c.zoneId), '区域 ID');
+    const zone = get(s.zones ?? {}, c.zoneId, '区域 ID');
+    deleteOwnedPools(s, zone);
     delete s.zones[c.zoneId];
   },
   set_terrain_cell(s, c) {

@@ -41,11 +41,13 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   let bagAim = null;
   let state, live, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, busy = false;
   let menuButtons = new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
+  let visibleAsk = null, askCells = null;
 
+  const pendingAsk = () => live?.vm?.pendingAsk;
   const active = (s = state) => s?.units[s.order[s.turn]];
   const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
-  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy });
+  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy, askLocked: !!pendingAsk(), askCells });
 
   // ---------- 屏幕适配 ----------
   // HUD 高度随换行、横竖屏变化，实测后写回 CSS 变量，棋盘据此留白并计算格子尺寸。
@@ -168,7 +170,12 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const changed = state !== next;
     state = next;
     if (changed && !target) selectedId = state.units[selectedId]?.hp > 0 ? selectedId : active()?.id;
+    const askChanged = renderAsk(!busy && state === live ? pendingAsk() : null);
     draw();
+    if (askChanged) {
+      const firstCell = $('board').querySelector('.is-ask-option');
+      (firstCell ?? $('pending-ask-prompt')).focus({ preventScroll: true });
+    }
     if (view.renderLog(state) && openDrawer !== 'log') $('log-unread').hidden = false;
     refreshMeasurement();
   }
@@ -177,6 +184,55 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     selectedId = active(live ?? state)?.id;
     action = null; hover = target = null; sprint = false; inspectedId = null;
     $('target-actions').hidden = true;
+  }
+
+  // ---------- 挂起选择 ----------
+  function answer(ask, fields) {
+    if (visibleAsk === ask && pendingAsk() === ask && !busy) {
+      execute({ type: 'answer', askId: ask.askId, ...fields });
+    }
+  }
+
+  function renderAsk(ask) {
+    if (visibleAsk === (ask ?? null)) return;
+    visibleAsk = ask ?? null;
+    askCells = null;
+    const panel = $('pending-ask'), prompt = $('pending-ask-prompt'), choices = $('pending-ask-choices');
+    choices.replaceChildren();
+    panel.hidden = !ask;
+    if (!ask) return;
+
+    const chooser = live.units[ask.chooserId];
+    prompt.textContent = chooser ? `${chooser.name} · ${ask.prompt}` : ask.prompt;
+    function addButton(label, getValue, primary = false) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = primary ? 'game-button primary' : 'game-button';
+      button.textContent = label;
+      button.addEventListener('click', () => answer(ask, { value: getValue() }), { signal });
+      choices.append(button);
+    }
+
+    if (ask.kind === 'cell') {
+      askCells = new Set(ask.options.map(({ x, y }) => `${x},${y}`));
+      choices.textContent = '请选择棋盘上高亮的一格。';
+    } else if (ask.kind === 'option' || ask.kind === 'entity') {
+      for (const { id, label } of ask.options) addButton(label, () => id);
+    } else if (ask.kind === 'number') {
+      const { min, max, step = 1 } = ask.options;
+      const slider = document.createElement('input'), readout = document.createElement('output');
+      slider.type = 'range';
+      slider.id = 'pending-ask-number';
+      slider.setAttribute('aria-labelledby', prompt.id);
+      Object.assign(slider, { min, max, step, value: min });
+      readout.setAttribute('for', slider.id);
+      const updateReadout = () => { readout.value = slider.value; };
+      slider.addEventListener('input', updateReadout, { signal });
+      updateReadout();
+      choices.append(slider, readout);
+      addButton('确认数值', () => slider.valueAsNumber, true);
+    }
+    return true;
   }
 
   // ---------- 测距 ----------
@@ -206,6 +262,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
 
   // ---------- 抽屉 ----------
   function setDrawer(name) {
+    if (pendingAsk()) return;
     const same = openDrawer === name;
     closeDrawer();
     if (same || !name) return;
@@ -259,17 +316,19 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   // ---------- 敌方自动 ----------
   async function runBattleAiTurn() {
     const initial = live;
-    if (!battleAiRequest || !$('llm-enemy-ai')?.checked || battleAiBusy || !initial || initial.outcome || active(initial)?.team !== 'red') return false;
+    if (!battleAiRequest || !$('llm-enemy-ai')?.checked || battleAiBusy || !initial || pendingAsk() || initial.outcome || active(initial)?.team !== 'red') return false;
     battleAiBusy = true;
     try {
       const entries = await requestBattleAi(initial, battleAiRequest);
-      let executed = false;
+      let executed = false, expected = initial;
       for (const entry of entries) {
-        const current = game.getBattleState(), actor = active(current);
-        if (!actor || actor.team !== 'red' || actor.id !== entry.unitId || current.outcome) break;
+        if (signal?.aborted || live !== expected || pendingAsk()) break;
+        const actor = active(live);
+        if (!actor || actor.team !== 'red' || actor.id !== entry.unitId || live.outcome) break;
         const plan = game.previewAction(entry.action);
         if (!plan.ok) throw new Error(plan.error || '外部战斗 AI 返回了非法动作');
         game.playAction(entry.action);
+        expected = live;
         executed = true;
       }
       return executed;
@@ -280,11 +339,16 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
   function schedule() {
     window.clearTimeout(timer);
-    if (busy || playback.busy || live?.outcome || active(live)?.team !== 'red' || !$('auto-ai').checked || battleAiBusy) return;
-    timer = window.setTimeout(() => safely(async () => {
-      const usedExternal = await runBattleAiTurn();
-      if (!usedExternal && !live?.outcome && active(live)?.team === 'red') game.stepEnemy();
-    }), Number($('ai-speed').value) || 350);
+    if (busy || playback.busy || pendingAsk() || live?.outcome || active(live)?.team !== 'red' || !$('auto-ai').checked || battleAiBusy) return;
+    timer = window.setTimeout(stepEnemy, Number($('ai-speed').value) || 350);
+  }
+  async function stepEnemy() {
+    if (pendingAsk() || battleAiBusy) return;
+    const before = live;
+    const usedExternal = await runBattleAiTurn();
+    if (signal?.aborted) return;
+    if (!usedExternal && live === before && !pendingAsk() && !live?.outcome && active(live)?.team === 'red') safely(() => game.stepEnemy());
+    else if (live !== before) schedule();
   }
   function pauseAI() { $('auto-ai').checked = false; storage.setItem('fated-tactical/auto', 'false'); window.clearTimeout(timer); }
 
@@ -299,12 +363,17 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     try { storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
     catch { error('浏览器存储空间不足或已关闭；请下载快照保存战局。'); }
     view.renderControls(live);
+    if (pendingAsk()) {
+      closeDrawer();
+      for (const dialog of root.querySelectorAll('dialog[open]')) dialog.close();
+    }
     resetSelection();
     if (continues(before, live) && playback.enqueue(before, live)) { window.clearTimeout(timer); return; }
     playback.reset();
     finishPlayback();
   }
   const execute = command => safely(() => {
+    if (pendingAsk() && command.type !== 'answer') return;
     const result = game.playAction(command);
     if (result && result.ok === false) error(result.error);
     return result;
@@ -336,6 +405,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
 
   function handlePoint(at, input = {}) {
+    if (pendingAsk()) return;
     error('');
     const unit = Object.values(state.units).find(u => u.hp > 0 && u.x === at.x && u.y === at.y);
     const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find(v => v.x === at.x && v.y === at.y);
@@ -430,6 +500,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (input.detail === 0) (toolbar.querySelector('button') || $('close-target')).focus({ preventScroll: true });
   }
   function handleAction(button) {
+    if (pendingAsk()) return;
     const choice = menuButtons.get(button);
     if (!choice) return;
     if (choice.bag) {
@@ -467,11 +538,31 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     for (const id of ['intent-select', 'nonlethal-toggle', 'bonus-dice-select']) on(id, 'change', () => { if (target) handlePoint(target); });
     on('theme-select', 'change', () => { root.dataset.dlcTheme = $('theme-select').value; storage.setItem('fated-tactical/theme', root.dataset.dlcTheme); });
     on('anim-speed', 'change', () => { playback.setSpeed(Number($('anim-speed').value)); storage.setItem('fated-tactical/anim', $('anim-speed').value); });
-    on('clear-persistent', 'click', () => { carry = null; storage.removeItem(crossedKey); scenarioDescription(); });
-    on('reset-button', 'click', () => safely(restart));
-    on('end-turn', 'click', () => { playback.skip(); if (active(live)?.team === 'blue') execute({ type: 'end' }); });
-    on('undo-button', 'click', () => safely(() => { pauseAI(); const r = game.undoLastCommit(); if (!r.ok) error(r.error); }));
-    on('ai-step', 'click', () => safely(async () => { window.clearTimeout(timer); playback.skip(); if (!(await runBattleAiTurn())) game.stepEnemy(); }));
+    on('clear-persistent', 'click', () => {
+      if (pendingAsk()) return;
+      carry = null;
+      storage.removeItem(crossedKey);
+      scenarioDescription();
+    });
+    on('reset-button', 'click', () => { if (!pendingAsk()) safely(restart); });
+    on('end-turn', 'click', () => {
+      if (pendingAsk()) return;
+      playback.skip();
+      if (active(live)?.team === 'blue') execute({ type: 'end' });
+    });
+    on('undo-button', 'click', () => safely(() => {
+      if (pendingAsk()) return;
+      pauseAI();
+      const result = game.undoLastCommit();
+      if (!result.ok) error(result.error);
+    }));
+    on('ai-step', 'click', () => {
+      if (pendingAsk()) return;
+      window.clearTimeout(timer);
+      playback.skip();
+      window.clearTimeout(timer);
+      void stepEnemy();
+    });
     on('auto-ai', 'change', () => { storage.setItem('fated-tactical/auto', String($('auto-ai').checked)); schedule(); });
     on('llm-enemy-ai', 'change', () => { storage.setItem('fated-tactical/llm-enemy-ai', String($('llm-enemy-ai').checked)); schedule(); });
     on('ai-speed', 'change', () => { storage.setItem('fated-tactical/ai-speed', $('ai-speed').value); schedule(); });
@@ -495,14 +586,16 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     on('download-report', 'click', () => download('report', report.value, 'txt'));
     on('export-snapshot', 'click', () => download('battle', game.exportBattleSnapshot()));
     on('export-persistent', 'click', () => download('persistent', game.exportPersistentCarryOver()));
-    on('import-button', 'click', () => $('import-snapshot').click());
+    on('import-button', 'click', () => { if (!pendingAsk()) $('import-snapshot').click(); });
     on('import-snapshot', 'change', async event => {
       const file = event.target.files[0];
       event.target.value = '';
-      if (!file) return;
+      if (!file || pendingAsk()) return;
+      const before = live;
       try {
         if (file.size > 8 * 1024 * 1024) throw new Error('文件大于 8 MiB');
         const data = JSON.parse(await file.text());
+        if (signal?.aborted || live !== before || pendingAsk()) return;
         if (data.kind === 'persistent') {
           const previous = carry;
           carry = data;
@@ -528,14 +621,14 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       if (!kind) return;
       const unitId = selectedId ?? active(live)?.id;
       const examples = {
-        counter: () => ({ type: 'adjust_item_counter', instanceId: 'soulblade-lan', counterKey: 'souls', operation: 'add', value: 1 }),
+        counter: () => ({ type: 'adjust_pool', poolId: game.getBattleState().items['soulblade-lan']?.pools?.souls ?? '', operation: 'add', value: 1 }),
         status: () => ({ type: 'upsert_status', unitId, statusId: 'haste', options: { durationType: 'persistent' } }),
         'custom-status': () => {
           const id = 'bone_frost', apply = { type: 'upsert_status', unitId, statusId: id };
           if (Object.hasOwn(game.listStatusTemplates(), id)) return [apply];
-          return [{ type: 'define_status_template', template: { id, name: '蚀骨寒霜', icon: '❄️', description: '回合初受到 3 点能量伤害，移动距离 −1。',
-            category: 'dot', remainingTurns: 2, durationType: 'battle_turns', tickTiming: 'onTurnStart', stackRule: 'refresh', maxStacks: 1,
-            modifiers: { damage: 3, damageType: 'energy', movement: -1 } } }, apply];
+          return [{ type: 'define_status_template', template: { id, name: '蚀骨寒霜', icon: '❄️', description: '回合初受到 3 点能量伤害。',
+            category: 'dot', remainingTurns: 2, durationType: 'battle_turns', stackMode: 'refresh', maxStacks: 1,
+            rules: [{ id: 'bone-frost-tick', hook: 'turn_start', program: [{ op: 'damage', target: 'self', amount: 3, damageType: 'energy', direct: false }] }] } }, apply];
         },
         terrain: () => ({ type: 'set_terrain_cell', x: 0, y: 0, patch: { kind: 'slope', z: 1 } }),
       };
@@ -544,6 +637,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       clearProposal();
     });
     on('sandbox-preview', 'click', () => {
+      if (pendingAsk()) return;
       clearProposal();
       let commands;
       try { commands = JSON.parse(editor.value); } catch (e) { $('sandbox-output').textContent = `命令不是合法 JSON：${e.message}`; return; }
@@ -551,8 +645,14 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       $('sandbox-output').textContent = describeProposal(result);
       if (result.ok) { pending = result.proposalId; $('sandbox-commit').disabled = false; }
     });
-    on('sandbox-commit', 'click', () => { const result = game.commitProposal(pending); clearProposal(); $('sandbox-output').textContent = describeProposal(result); });
+    on('sandbox-commit', 'click', () => {
+      if (pendingAsk()) return;
+      const result = game.commitProposal(pending);
+      clearProposal();
+      $('sandbox-output').textContent = describeProposal(result);
+    });
     on('sandbox-undo', 'click', () => {
+      if (pendingAsk()) return;
       pauseAI();
       const result = game.undoLastCommit();
       clearProposal();
@@ -578,6 +678,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     on('confirm-action', 'click', () => { if (target && action) execute(action); });
     on('action-toolbar', 'click', e => { const button = e.target.closest('[data-action]'); if (button) handleAction(button); });
     on('turn-order', 'click', e => {
+      if (pendingAsk()) return;
       const button = e.target.closest('[data-unit-id]');
       if (!button) return;
       selectedId = button.dataset.unitId;
@@ -602,10 +703,14 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     board.addEventListener('click', e => {
       const at = pointFrom(e.target);
       if (!at) return;
+      if (pendingAsk()) {
+        if (askCells?.has(`${at.x},${at.y}`)) answer(visibleAsk, at);
+        return;
+      }
       if (playback.busy) playback.skip(); // 演出中点棋盘 = 跳过演出
       handlePoint(at, e);
     }, { signal });
-    const hoverPoint = point => { hover = point; if (!target) draw(); };
+    const hoverPoint = point => { if (!pendingAsk()) { hover = point; if (!target) draw(); } };
     board.addEventListener('pointerover', e => {
       const at = pointFrom(e.target), before = pointFrom(e.relatedTarget);
       if (at && (!before || at.x !== before.x || at.y !== before.y)) hoverPoint(at);

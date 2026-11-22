@@ -1,0 +1,251 @@
+import { continueStrike, currentUnit, equippedActiveSkills, getStatusTemplate, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP } from './combat.js';
+import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
+import { aggregateModifiers, applyStatMod, collectRules } from './vm-carriers.js';
+import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
+import { continueApplyStatus, continueCheck, continueRemoveStatus, ruleOps } from './vm-rules.js';
+import { continueAction, perform, queueVMAction } from './vm-action.js';
+import { createPool, getPool, initializeUnitPools, updatePoolCurrent } from './vm-pools.js';
+import { spatialOps, spatialContinuations, refreshFollowingZones, expireSpatialEffects } from './vm-spatial-ops.js';
+import { elevation } from './spatial.js';
+import { evaluateExpr } from './formula.js';
+
+const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
+const values = table => Object.values(table ?? {});
+const lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
+const mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
+
+export function recordVM(state, unit, type, text, detail = {}) {
+  const positions = Object.fromEntries(Object.values(state.units).map(unit => [unit.id, { x: unit.x, y: unit.y, z: elevation(state, unit) }]));
+  state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text, detail, positions });
+}
+
+const handlers = {
+  action: continueAction, commit: continueCommit, lethal: continueLethal, check: continueCheck,
+  apply_status: continueApplyStatus, remove_status: continueRemoveStatus,
+  ...spatialContinuations,
+  strike: continueStrike,
+};
+
+export function initializeVMWorld(state) {
+  state.vm ??= newVM();
+  state.pools ??= {};
+  for (const unit of Object.values(state.units)) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
+  for (const item of Object.values(state.items ?? {})) {
+    for (const [key, definition] of Object.entries(own(state.equipment, item.templateId)?.pools ?? {})) {
+      if (!getPool(state, item.id, key, 'item') && Number.isFinite(definition.cap)) createPool(state, {
+        ownerKind: 'item', ownerId: item.id, key, max: definition.cap,
+        current: definition.initial ?? 0, reloadable: definition.reloadable ?? false,
+      });
+    }
+  }
+}
+
+export function advanceVMSpatial(state) {
+  initializeVMWorld(state);
+  if (state.vm.pendingAsk) return;
+  const idle = !state.vm.stack.length;
+  if (idle) state.vm.stepsRemaining = 2000;
+  const parent = state.vm.stack.at(-1) ?? { ownerId: null, sourceId: null };
+  expireSpatialEffects(state, vmHost, { advance: true, parent });
+  if (idle) stepVM(state, vmHost);
+}
+
+export function dispatchVMHook(state, hook, event) {
+  initializeVMWorld(state);
+  const parent = state.vm.stack.at(-1) ?? { sourceId: event.actorId };
+  const idle = state.vm.stack.length === 0;
+  if (idle) state.vm.stepsRemaining = 2000;
+  scheduleHooks(state, parent, hook, newEvent(state, event), vmHost);
+  if (idle) stepVM(state, vmHost);
+}
+
+export function commitVMEffect(state, data) {
+  initializeVMWorld(state);
+  const parent = state.vm.stack.at(-1) ?? { ownerId: data.sourceId ?? data.targetId, sourceId: data.sourceId ?? null };
+  const idle = !state.vm.stack.length;
+  if (idle) state.vm.stepsRemaining = 2000;
+  scheduleCommit(state, parent, { pool: 'hp', ...data });
+  if (idle) stepVM(state, vmHost);
+}
+
+export const vmHost = {
+  ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
+  log: recordVM,
+  event: newEvent,
+  hooks: (state, frame, hook, ref) => scheduleHooks(state, frame, hook, ref, vmHost),
+  commit: scheduleCommit,
+  followup(state, frame, weapon, profile) {
+    pushFrame(state, { native: 'strike', ownerId: frame.ownerId, sourceId: frame.sourceId,
+      eventRef: frame.eventRef, data: frame.data, plan: { center: profile, targets: [profile] }, weapon, followup: true, started: true });
+  },
+  expireStatuses(state, hook, event) {
+    const ids = new Set([event.actorId, event.targetId, ...(event.ownerIds ?? [])]);
+    for (const id of ids) {
+      const unit = own(state.units, id);
+      for (const [key, status] of Object.entries(unit?.statuses ?? {})) {
+        const expires = [status.expireOn].flat().some(rule => rule?.hook === hook &&
+          (rule.filter === undefined || evaluateExpr(rule.filter, { self: unit, status, event,
+            source: own(state.units, status.sourceId), target: own(state.units, event.targetId) })));
+        if (!expires) continue;
+        delete unit.statuses[key];
+        recordVM(state, unit, 'expire', `${unit.name}的${status.name}提前解除`, { targetId: id, statusId: key, hook });
+      }
+    }
+  },
+  rules(state, hook, event) {
+    const entries = collectRules(state, hook, event);
+    const actor = own(state.units, event.actorId);
+    const skill = own(state.skills, event.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(event.skillId);
+    return [...entries, ...(event.rules ?? skill?.rules ?? []).filter(rule => rule.hook === hook).map(rule => ({
+      rule, ownerId: event.actorId, sourceId: event.actorId, carrierOrder: -1, useKey: JSON.stringify([event.actorId, event.skillId, rule.id]),
+    }))];
+  },
+  enterRule(state, frame, key) {
+    const count = own(state.vm.uses, key) ?? 0;
+    if (frame.rule.usesPerBattle === undefined) return true;
+    if (count >= frame.rule.usesPerBattle) return false;
+    (state.vm.uses ??= {})[key] = count + 1;
+    return true;
+  },
+  continue(env) {
+    const handler = own(handlers, env.frame.native);
+    if (!handler) throw new Error(`未知结算阶段 ${env.frame.native}`);
+    handler(env);
+  },
+  resource: (state, unit, key) => unit && getPool(state, unit.id, key)?.current,
+  statusTemplate: getStatusTemplate,
+  flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
+  stat: (state, unit, key) => mod(state, {}, unit.id, key, unit.stats?.[key] ?? 0),
+  checkBonus: (state, unit, event) => mod(state, event, unit.id, 'checkBonus', 0) + (event.checkKind === 'save' ? mod(state, event, unit.id, 'resistBonus', 0) : 0),
+  prepareDamage(state, source, target, data) {
+    const { damageType } = data;
+    const event = { damageType, actorId: source?.id ?? null, targetId: target.id, weaponTemplateId: data.weaponTemplateId ?? null,
+      backstab: data.backstab ?? false, melee: data.melee ?? false, souls: data.souls ?? 0 };
+    if (source && vmHost.flag(state, source, 'harmless')) return 0;
+    let amount = data.amount;
+    if (source) {
+      amount += mod(state, event, source.id, 'damageFlat', 0);
+      amount = mod(state, event, source.id, 'damageMult', amount);
+    }
+    if (damageType !== 'true') {
+      const pierce = data.armorPierce ?? { flat: source ? mod(state, event, source.id, 'armorPierce', 0) : 0,
+        percent: source ? mod(state, event, source.id, 'armorPiercePercent', 0) : 0 };
+      const reduction = mitigation(state, target, damageType, data.direct !== false, pierce,
+        { attacker: source, intercepting: data.intercepted, ignoreArmor: data.ignoreArmor });
+      if (data.direct === false) {
+        const reduced = Math.floor(amount * reduction.multiplier * (1 - reduction.attributeReduction));
+        amount = Math.max(0, reduced - (reduction.multiplier === 1 ? Math.ceil(reduction.armor) : 0));
+      } else {
+        amount *= reduction.multiplier * (1 - reduction.attributeReduction);
+        amount *= reduction.armorMultiplier;
+      }
+      amount = damageAfterFlatReduction(state, target, amount, source, damageType, data.intercepted);
+      amount *= 1 - Math.min(1, mod(state, event, target.id, 'dr', 0));
+      // Damage from a carrier/status still uses the attacker's final multiplier;
+      // VM commits must not bypass the same terminal damage modifier as native hits.
+      if (source) amount *= values(source.statuses).reduce((mult, status) =>
+        status.modifiers?.damageType != null && status.modifiers.damageType !== damageType
+          ? mult : mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1), 1);
+    }
+    return Math.max(0, source ? mod(state, event, source.id, 'finalDamageMult', amount) : amount);
+  },
+  preserveLife: encounterNonlethal,
+  rejectAction(state, actor, action, error) {
+    if (error !== insufficientHP) return false;
+    recordVM(state, actor, 'skill_rejected', error, { skillId: action.skillId });
+    return true;
+  },
+  prepareHeal(state, source, target, data) {
+    if (source && vmHost.flag(state, source, 'harmless')) return 0;
+    const event = { actorId: source?.id ?? null, targetId: target.id, actionType: data.actionType ?? null };
+    const scaled = source ? mod(state, event, source.id, 'healingMult', data.amount) : data.amount;
+    return Math.max(0, mod(state, event, target.id, 'incomingHealMult', scaled));
+  },
+  planAction(state, actor, action, overrides) {
+    // Preview against the invoking actor, including recursive actions by a different unit.
+    const unit = { ...actor };
+    if (overrides.free) Object.assign(unit, { hp: unit.maxHp, mp: unit.maxMp, sp: unit.maxSp });
+    if (overrides.ignoreSlots) Object.assign(unit, { ap: 2, used: { attack: 0, action: 0 } });
+    const skill = own(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
+    const view = { ...state, turn: state.order.indexOf(actor.id), units: { ...state.units, [actor.id]: unit } };
+    const planned = preview(view, action, { simulateRules: false });
+    if (!planned.ok) return planned;
+    return { ...planned, center: planned.center ?? { x: actor.x, y: actor.y }, targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter(row => row.kind !== 'cover').map(row => row.id),
+      power: skill?.power ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
+      damageType: skill?.damageType ?? skill?.damage?.type ?? planned.damageType ?? null,
+      weaponTemplateId: action.type === 'attack' ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null };
+  },
+  payAction(state, actor, plan, event, overrides) {
+    if (!overrides.ignoreSlots) {
+      actor.ap -= plan.ap;
+      for (const slot of plan.ap === 2 ? ['attack', 'action'] : plan.slot ? [plan.slot] : []) actor.used[slot]++;
+    }
+    if (overrides.free) return;
+    for (const key of ['hp', 'mp', 'sp']) {
+      const cost = Math.max(0, Math.floor((event[`${key}Cost`] ?? 0) * (event.costScale ?? 1)));
+      if (!cost) continue;
+      const pool = getPool(state, actor.id, key);
+      const { before, after } = updatePoolCurrent(state, pool.id, 'sub', cost, { minRemain: key === 'hp' ? 1 : 0 });
+      recordVM(state, actor, 'resource', `${actor.name}因${plan.name}消耗${before - after}点 ${key.toUpperCase()}`,
+        { targetId: actor.id, resource: key, amount: before - after, before, after });
+    }
+  },
+  runAction({ state, frame, actor, plan, event, overrides }) {
+    event.power *= overrides.scale ?? 1;
+    event.power *= event.damageScale ?? 1;
+    const skill = own(state.skills, event.skillId);
+    if (skill?.backpackItem) {
+      const before = actor.inventory[event.skillId];
+      actor.inventory[event.skillId] = before - 1;
+      recordVM(state, actor, 'item_spent', `${actor.name}消耗${skill.name}（数量 ${before} → ${before - 1}）`,
+        { itemId: event.skillId, before, after: before - 1 });
+    }
+    const name = plan.name ?? skill?.name ?? '技能';
+    const intent = plan.isSingle ? plan.intent ?? 'normal' : 'normal';
+    recordVM(state, actor, 'action', `${actor.name}：${name}`, {
+      action: frame.data.action, targetId: event.targetId, intent, attackSource: name,
+      attackTargets: event.targets.map(id => ({ unit: id })), ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap,
+    });
+    const targets = event.targets.filter(id => id !== plan.corpseId).map(id => (plan.targets ?? []).find(profile => profile.id === id)
+      ?? retargetStrike(state, actor, frame.data.action, state.units[id], plan));
+    if (!event.redirectTarget && !event.replaceTarget) targets.push(...(plan.targets ?? []).filter(profile => profile.kind === 'cover'));
+    pushFrame(state, { native: 'strike', ownerId: actor.id, sourceId: actor.id, eventRef: frame.eventRef,
+      data: frame.data.action, plan: { ...plan, targets }, scale: overrides.scale ?? 1 });
+    scheduleHooks(state, frame, 'active', frame.eventRef, vmHost);
+  },
+};
+
+export function validVmState(state) {
+  const { vm, pools } = state;
+  const plain = value => value && Object.getPrototypeOf(value) === Object.prototype;
+  if (!plain(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain(vm.events)
+      || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining)
+      || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain(pools)) return false;
+  for (const unit of Object.values(state.units ?? {})) {
+    for (const [key, maximum] of [['hp', 'maxHp'], ['mp', 'maxMp'], ['sp', 'maxSp']]) {
+      const pool = own(pools, own(unit.pools, key));
+      if (!pool || pool.kind !== key || pool.current !== unit[key] || pool.max !== unit[maximum]
+          || !Array.isArray(pool.contributors) || !pool.contributors.some(c => c.ownerKind === 'unit' && c.ownerId === unit.id)) return false;
+    }
+  }
+  return state.tape === undefined || Array.isArray(state.tape);
+}
+
+export function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false, opportunity, weapon } = {}) {
+  if (dryRun) {
+    state = structuredClone(state);
+    actor = own(state.units, actor?.id);
+  }
+  initializeVMWorld(state);
+  if (action.type === 'answer') answerVM(state, action, vmHost);
+  else {
+    if (state.vm.stack.length || state.vm.pendingAsk) throw new Error('请先回答当前战斗选择');
+    if (!actor) throw new Error('没有行动者');
+    state.vm.stepsRemaining = 2000;
+    if (opportunity) pushFrame(state, { native: 'strike', ownerId: actor.id, sourceId: actor.id, data: action, plan: opportunity, weapon });
+    else queueVMAction(state, { actorId: actor.id, action, record: true });
+  }
+  const result = stepVM(state, vmHost, { dryRun });
+  refreshFollowingZones(state, vmHost);
+  return dryRun ? { ...result, state } : result;
+}

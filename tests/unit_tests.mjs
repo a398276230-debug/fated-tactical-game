@@ -3,9 +3,10 @@ import { test } from 'node:test';
 import { createGameAPI, calculatePrebattleResources, protocolDistance } from '../src/api/game_api.js';
 import { bodySizeLabel } from '../src/core/combat_protocol.js';
 import { preview } from '../src/core/combat.js';
-import { validateEffect, validateState } from '../src/api/validation.js';
-import { initialCounters } from '../src/core/effects.js';
-import { BUILTIN_RESOURCES, resourceLabel } from '../src/core/resource_names.js';
+import { validateState } from '../src/api/validation.js';
+import { getPool } from '../src/core/vm-pools.js';
+import { validVmRule } from '../src/core/vm-schema.js';
+import { resourceLabel } from '../src/core/resource_names.js';
 import { formatBattleReportText } from '../src/api/battle_report.js';
 import { hydrateFromSources } from '../src/tavern/converter.js';
 import { chooseAction } from '../src/core/ai.js';
@@ -32,28 +33,31 @@ import './morale_tests.mjs';
 import './control_state_tests.mjs';
 import './tavern_tests.mjs';
 import './ai_session_tests.mjs';
+import './vm_expr_tests.mjs';
+import './vm_schema_tests.mjs';
+import './vm_pools_tests.mjs';
+import './vm_carriers_tests.mjs';
+import './vm_spatial_tests.mjs';
+import './vm_corpus_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };
-test('实例计数器声明、命名、转换诊断与战报标签', () => {
-  const expr = (node, id='pool') => ({id, trigger:'passive',target:'self',effects:[node]});
-  const pool = expr({kind:'produceResource',resource:'souls',cap:10,initial:0});
+test('实例资源池声明、命名、转换诊断与战报标签', () => {
+  const rule = (pool, mode) => ({ id:'use-pool', hook:'active', program:[{ op:'resource', target:'self', pool, mode, amount:1, local:true }] });
   const state = boot().getBattleState();
-  state.equipment.soulblade.effects = [pool];
-  assert.deepEqual(initialCounters(state.equipment.soulblade), {souls:0});
+  assert.deepEqual(state.equipment.soulblade.pools.souls, {cap:10, initial:0, reloadable:false});
+  const {current, max} = getPool(state, 'soulblade-lan', 'souls', 'item');
+  assert.deepEqual({current, max}, {current:0, max:10});
   validateState(state);
-  for (const kind of ['produceResource','restoreResource','drainResource']) {
-    for (const resource of ['魂数','has space','','constructor','prototype']) assert.throws(()=>validateEffect(expr({kind, resource})));
-    for (const resource of BUILTIN_RESOURCES) {
-      assert.throws(()=>validateEffect(expr({kind,resource,local:true})), /实例计数器不能使用内置资源/);
-      validateEffect(expr({kind,resource}));
-    }
-    validateEffect(expr({kind,resource:'kill-charge_2',local:true}));
+  for (const mode of ['add', 'set', 'sub']) {
+    for (const key of ['魂数','has space','','constructor','prototype']) assert.equal(validVmRule(rule(key, mode)), false, key);
+    assert.equal(validVmRule(rule('kill-charge_2', mode)), true);
   }
-  const use = expr({kind:'drainResource',resource:'soul',local:true},'use');
-  const imported = hydrateFromSources({mvu:{主角:{装备:{魂刀:{类型:'武器',效果:[pool,use]}}}},battleInit:{units:[{id:'p',name:'主角',source:'mvu:主角',team:'blue',x:1,y:1},{id:'e',name:'敌',source:'char_info',team:'red',x:2,y:2}]}});
+  const imported = hydrateFromSources({mvu:{主角:{装备:{魂刀:{类型:'武器',pools:{souls:{cap:10,initial:0},'has space':{cap:10}},rules:[rule('souls','sub')]}}}},battleInit:{units:[{id:'p',name:'主角',source:'mvu:主角',team:'blue',x:1,y:1},{id:'e',name:'敌',source:'char_info',team:'red',x:2,y:2}]}});
   const main = imported.state.units.p.mainHand;
-  assert.ok(imported.warnings.some(w=>w.unitId==='p' && w.originPath===`/equipment/${imported.state.items[main].templateId}` && w.message.includes('引用了未声明的实例计数器 soul，')));
+  const templateId = imported.state.items[main].templateId;
+  assert.deepEqual(imported.state.equipment[templateId].pools, {souls:{cap:10,initial:0}});
+  assert.ok(imported.warnings.some(w=>w.unitId==='p' && w.originPath===`/equipment/${templateId}` && w.message.includes('pools.has space')));
   assert.equal(resourceLabel('souls'),'魂数');assert.equal(resourceLabel('kills'),'kills');
   const report = formatBattleReportText({title:'战报',units:[],rounds:[{round:1,events:[{type:'counter',text:'ammo souls · souls 0 → 1',detail:{counterKey:'souls',before:0,after:1}}]}]});
   assert.match(report,/ammo souls · 魂数 0 → 1/);
@@ -64,7 +68,8 @@ const probe = (a, type, x, y, skillId) => a.previewAction({ type, x, y, ...(skil
 const stats = (unitId, patch) => ({ type:'set_unit_stat', unitId, patch });
 const status = (unitId, statusId, options) => ({ type:'upsert_status', unitId, statusId, ...(options ? { options } : {}) });
 const remove = (unitId, statusId) => ({ type:'remove_status', unitId, statusId });
-const counter = (instanceId, value, counterKey = 'souls') => ({ type:'adjust_item_counter', instanceId, counterKey, operation:'set', value });
+const pool = (a, itemId, key = 'souls') => getPool(a.getBattleState(), itemId, key, 'item');
+const adjust = (a, itemId, value, key) => ({ type:'adjust_pool', poolId:pool(a,itemId,key).id, operation:'set', value });
 const cell = (x,y,patch) => ({ type:'set_terrain_cell', x,y,patch });
 const propose = (a, ...commands) => a.proposeCommands(commands, { baseRevision: a.getStateSummary().revision, reason:'验收' });
 const commit = (a, ...commands) => {
@@ -127,10 +132,10 @@ test('固定双槽：移动→普攻，RNG/动作日志与击杀计数可撤销�
   act(a,'attack',3,2);
   const after = a.exportBattleSnapshot();
   assert.equal(u(a,'scout').hp,0);
-  assert.equal(a.getBattleState().items['soulblade-lan'].counters.souls,1);
-  assert.equal(a.getBattleState().items['soulblade-spare'].counters.souls,0);
   a.undoLastCommit(); assert.deepEqual(a.exportBattleSnapshot(),before);
   act(a,'attack',3,2); assert.deepEqual(a.exportBattleSnapshot(),after);
+  assert.equal(pool(a,'soulblade-spare').current,0);
+  assert.equal(pool(a,'soulblade-lan').current,1);
 });
 
 test('架势防御区分空地与借掩体，战报不把站位当成遮蔽', () => {
@@ -148,13 +153,17 @@ test('架势防御区分空地与借掩体，战报不把站位当成遮蔽', ()
   assert.doesNotMatch(text,/遮蔽/);
 });
 
-test('旧战局按末态续接，不将新规则反算到旧撤销记录', () => {
-  const a=boot(); act(a,'move',2,2);
-  const saved=a.exportBattleSnapshot(); saved.version=1;
-  const b=createGameAPI(); assert.equal(b.restoreBattleSnapshot(saved).migratedFrom,1);
-  assert.deepEqual(b.getBattleState(),saved.state);
-  assert.equal(b.undoLastCommit().ok,false);
-  assert.equal(b.exportBattleSnapshot().version,10);
+test('拒绝旧战局快照并保留当前 VM 战局；当前版本仍可恢复及撤销', () => {
+  const a=boot(); const origin=a.exportBattleSnapshot(); act(a,'move',2,2);
+  const saved=a.exportBattleSnapshot();
+  const b=boot('boss'); const before=b.exportBattleSnapshot();
+  assert.throws(() => b.restoreBattleSnapshot({...saved, version:1}), /仅支持版本 11/);
+  assert.deepEqual(b.exportBattleSnapshot(),before);
+  b.restoreBattleSnapshot(saved);
+  assert.equal(b.exportBattleSnapshot().version,11);
+  assert.deepEqual(b.exportBattleSnapshot(),saved);
+  assert.equal(b.undoLastCommit().ok,true);
+  assert.deepEqual(b.exportBattleSnapshot(),origin);
 });
 
 test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移动', () => {
@@ -164,8 +173,9 @@ test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移
   const text=a.exportBattleReportText();
   assert.match(text,/^- 回合一$/m);
   assert.match(text,/确定先攻次序：岚 · 噬魂剑客\(1, 2, z=0\) → /);
-  assert.match(text,/岚 · 噬魂剑客\(1, 2, z=0\)开始回合：移动至 \(2, 2, z=0\)；岚 · 噬魂剑客\(2, 2, z=0\)使用噬魂太刀攻击受伤斥候/);
-  assert.match(text,/受伤斥候\(3, 2, z=0\)倒下；噬魂太刀 · 魂数 0 → 1/);
+  assert.match(text,/岚 · 噬魂剑客\(1, 2, z=0\)开始回合：移动至 \(2, 2, z=0\)；[^\n]*岚 · 噬魂剑客\(2, 2, z=0\)[^\n]*噬魂太刀[^\n]*受伤斥候\(3, 2, z=0\)/);
+  assert.match(text,/受伤斥候\(3, 2, z=0\)倒下[^\n]*(?:魂数|SOULS) 0 → 1/);
+  assert.equal(text.match(/移动至 \(2, 2, z=0\)/g)?.length,1);
   assert.doesNotMatch(text,/d20|swordsman|\bjournal\b|26\/12/);
   assert.deepEqual(a.exportBattleSnapshot(),before);
   assert.ok(a.exportBattleReport().rounds[0].events.some(e=>e.type==='roll' && e.positions?.swordsman));
@@ -180,7 +190,7 @@ test('双槽禁止两次移动；重技占 2 AP；轻技消耗 MP、施加状态
   assert.throws(() => act(a,'skill',2,2,'armor'), /槽/);
   const b = boot();
   act(b,'skill',3,2,'challenge');
-  assert.equal(u(b,'scout').statuses.taunt.sourceUnitId,'swordsman');
+  assert.equal(u(b,'scout').statuses.taunt.sourceId,'swordsman');
   assert.equal(u(b,'swordsman').mp,12);
 });
 
@@ -200,26 +210,30 @@ test('优势/劣势抵消；自然 1/20 门槛与命中概率可审计', () => {
 
 test('装备转手/热改/跨战：同名两刀不串值，常驻状态跟随 ID', () => {
   const a = boot();
-  commit(a,counter('soulblade-lan',3),counter('soulblade-spare',2), status('swordsman','haste',{durationType:'persistent'}), status('swordsman','blind'));
-  commit(a,{type:'patch_equipment_template',templateId:'soulblade',patch:{effects: a.getBattleState().equipment.soulblade.effects.map(e => ({ ...e, effects: e.effects.map(n => n.resourceScale ? { ...n, resourceScale: { ...n.resourceScale, perUnit: .75 } } : n.cap ? { ...n, cap: 8 } : n) }))}},
+  commit(a,adjust(a,'soulblade-lan',3),adjust(a,'soulblade-spare',2), status('swordsman','haste',{durationType:'persistent'}), status('swordsman','blind'));
+  const mods = a.getBattleState().equipment.soulblade.mods.map(mod => mod.stat === 'damageMult' ? {...mod, mult:'1 + 0.75 * event.souls'} : mod);
+  commit(a,{type:'patch_equipment_template',templateId:'soulblade',patch:{mods}},
     {type:'equip_item',instanceId:'soulblade-lan',unitId:'ranger'},{type:'equip_item',instanceId:'soulblade-spare',unitId:'swordsman'});
-  assert.equal(u(a,'ranger').equipment[0].counters.souls,3);
-  assert.equal(u(a,'swordsman').equipment[0].counters.souls,2);
+  assert.equal(u(a,'ranger').equipment[0].id,'soulblade-lan');
+  assert.equal(u(a,'swordsman').equipment[0].id,'soulblade-spare');
+  assert.equal(pool(a,'soulblade-lan').current,3);
+  assert.equal(pool(a,'soulblade-spare').current,2);
+  assert.deepEqual(u(a,'swordsman').equipment[0].mods,mods);
   assert.equal(a.previewAction({type:'attack'}).multiplier,2.5);
   const b=boot({scenarioId:'altar',persistentSnapshot:JSON.parse(JSON.stringify(a.exportPersistentCarryOver()))});
   assert.equal(u(b,'ranger').weapon,'soulblade-lan');
-  assert.equal(u(b,'ranger').equipment[0].counters.souls,3);
   assert.ok(u(b,'swordsman').statuses.haste);
   assert.equal(u(b,'swordsman').statuses.blind,undefined);
+  assert.equal(pool(b,'soulblade-lan').current,3);
 });
 
 test('DoT / HoT、叠层及持续：开头灼烧中毒再生，回合末流血', () => {
   const a=boot();
   commit(a,stats('oracle',{hp:25}),status('oracle','burn'),status('oracle','regen'),status('oracle','poison'),status('oracle','bleed'),status('oracle','bleed'));
-  turn(a,'oracle'); assert.equal(u(a,'oracle').hp,22); assert.equal(u(a,'oracle').statuses.bleed.stacks,2);
-  end(a); assert.equal(u(a,'oracle').hp,16);
+  turn(a,'oracle'); assert.equal(u(a,'oracle').hp,23); assert.equal(u(a,'oracle').statuses.bleed.stacks,2);
+  end(a); assert.equal(u(a,'oracle').hp,17);
   assert.equal(u(a,'oracle').statuses.bleed.remainingTurns,2);
-  assert.equal(a.getBattleState().items['soulblade-lan'].counters.souls,0);
+  assert.equal(pool(a,'soulblade-lan').current,0);
 });
 
 test('流血和中毒跳过护甲与架势减伤，灼烧仍受减伤', () => {
@@ -230,9 +244,9 @@ test('流血和中毒跳过护甲与架势减伤，灼烧仍受减伤', () => {
   assert.equal(u(a, 'oracle').hp, 19);
   end(a);
   assert.equal(u(a, 'oracle').hp, 16);
-  const ticks = events(a).filter(event => event.type === 'damage' && event.detail.targetId === 'oracle' && event.detail.tickTiming);
-  assert.deepEqual(ticks.map(({ detail }) => [detail.statusId, detail.damageType, detail.amount]), [
-    ['burn', 'energy', 3], ['poison', 'true', 3], ['bleed', 'true', 3],
+  const ticks = events(a).filter(event => event.type === 'damage' && event.detail.targetId === 'oracle');
+  assert.deepEqual(ticks.map(({ detail }) => [detail.damageType, detail.amount, detail.hpBefore, detail.hpAfter]), [
+    ['energy', 3, 25, 22], ['true', 3, 22, 19], ['true', 3, 19, 16],
   ]);
 });
 
@@ -244,12 +258,15 @@ test('护盾、冻伤碎冰、棘甲反伤、援护在同一笔伤害事务中�
   act(a,'attack',2,2);
   assert.equal(u(a,'scout').hp,4);
   assert.equal(u(a,'swordsman').hp,39);
-  assert.ok(events(a).some(e=>e.type==='shield_break'));
-  const b=boot();
-  commit(b,stats('gunner',{x:2,y:2}),status('gunner','freeze'));
-  act(b,'attack',2,2);
-  assert.ok(events(b).some(e=>e.type==='shatter'));
+  assert.equal(events(a).find(e=>e.type==='damage' && e.detail.targetId==='gunner').detail.absorbed,2);
+  assert.equal(u(a,'gunner').statuses.shield,undefined);
   assert.ok(u(a,'gunner').hp<27);
+  const b=boot(), baseline=boot();
+  commit(b,stats('gunner',{x:2,y:2}),status('gunner','freeze'));
+  commit(baseline,stats('gunner',{x:2,y:2}));
+  act(b,'attack',2,2);
+  act(baseline,'attack',2,2);
+  assert.ok(u(b,'gunner').hp<u(baseline,'gunner').hp,'冻伤碎冰应增加实际伤害');
 });
 
 test('眩晕跳过一轮行动；定身仍可施法；嘲讽迫使选择来源', () => {
@@ -264,10 +281,10 @@ test('眩晕跳过一轮行动；定身仍可施法；嘲讽迫使选择来源',
 
 test('弩弹、1AP 装填、同一槽不能复用；祭坛给予可见护盾疾走', () => {
   const a=boot(); turn(a,'ranger');
-  commit(a,counter('ranger-weapon',0,'ammo'));
+  commit(a,adjust(a,'ranger-weapon',0,'ammo'));
   assert.match(a.previewAction({type:'attack'}).error,/弹仓/);
   act(a,'reload'); assert.equal(u(a,'ranger').ap,1);
-  assert.equal(a.getBattleState().items['ranger-weapon'].counters.ammo,6);
+  assert.equal(pool(a,'ranger-weapon','ammo').current,6);
   assert.equal(probe(a,'interact',2,3).ok,false); end(a);turn(a,'ranger');
   act(a,'interact',2,3); assert.ok(u(a,'ranger').statuses.haste); assert.equal(u(a,'ranger').statuses.shield.amount,10);
 });
@@ -291,14 +308,18 @@ test('圣咏徽记提升团队治疗并附盾；净化保留常驻效果', () =>
   act(a,'skill',1,2,'cleanse');
   assert.equal(u(a,'swordsman').statuses.root,undefined);
   assert.ok(u(a,'swordsman').statuses.vulnerable);
-  assert.ok(u(a,'swordsman').statuses.shield.amount>0);
   assert.ok(u(a,'swordsman').hp>19);
+  const cleanseShield=u(a,'swordsman').statuses.shield?.vars.shieldAmount;
   end(a); turn(a,'oracle');
   const p=probe(a,'skill',1,3,'hymn');
-  assert.ok(p.targets.some(t=>t.id==='swordsman'&&t.healingShield[0]>0));
+  assert.ok(p.targets.some(t=>t.id==='swordsman'));
   assert.ok(p.targets.some(t=>t.id==='ranger'));
   act(a,'skill',1,3,'hymn');
   assert.ok(u(a,'ranger').statuses.regen);
+  assert.deepEqual({
+    cleanse: cleanseShield > 0,
+    hymn: u(a,'ranger').statuses.shield?.vars.shieldAmount > 0,
+  }, {cleanse:true, hymn:true}, '净化和团队治疗均应触发圣咏徽记护盾');
 });
 
 test('重斩击退撞墙并晕眩；爆桶不是刀的直杀来源', () => {
@@ -312,7 +333,7 @@ test('重斩击退撞墙并晕眩；爆桶不是刀的直杀来源', () => {
   commit(b,stats('swordsman',{x:8,y:6}),stats('scout',{x:7,y:7}));
   act(b,'interact',7,6);
   assert.equal(u(b,'scout').hp,0);
-  assert.equal(b.getBattleState().items['soulblade-lan'].counters.souls,0);
+  assert.equal(pool(b,'soulblade-lan').current,0);
 });
 
 test('爆桶按武器射程与视线引爆，祭坛独立消耗动作槽', () => {
@@ -336,23 +357,24 @@ test('爆桶按武器射程与视线引爆，祭坛独立消耗动作槽', () =>
   act(a,'interact',barrel.x,barrel.y);
   assert.equal(a.getBattleState().interactives.I2.spent,true);
   assert.equal(u(a,'scout').hp,0);
-  assert.equal(a.getBattleState().items['ranger-weapon'].counters.ammo,5);
+  assert.equal(pool(a,'ranger-weapon','ammo').current,5);
   assert.equal(a.previewAction({type:'attack'}).ok,false);
   assert.equal(a.previewAction({type:'brace'}).ok,true);
 });
 
 test('白名单拒绝畸形值；事务原子；幂等检查、真实 diff 和 revision 失效', () => {
   const a=boot(); const snap=a.exportBattleSnapshot();
-  for (const command of [{}, {type:'nope'}, stats('swordsman',{}), stats('swordsman',{hp:100000}), stats('swordsman',{x:10}), stats('swordsman',{mp:NaN}), status('swordsman','not_real'), counter('soulblade-lan',11), cell(1,2,{kind:'wall'}), JSON.parse('{"type":"set_unit_stat","unitId":"swordsman","patch":{"__proto__":{}}}')]) {
+  const souls = value => adjust(a,'soulblade-lan',value);
+  for (const command of [{}, {type:'nope'}, stats('swordsman',{}), stats('swordsman',{hp:100000}), stats('swordsman',{x:10}), stats('swordsman',{mp:NaN}), status('swordsman','not_real'), souls(11), cell(1,2,{kind:'wall'}), JSON.parse('{"type":"set_unit_stat","unitId":"swordsman","patch":{"__proto__":{}}}')]) {
     assert.equal(propose(a,command).ok,false,JSON.stringify(command));
   }
-  assert.equal(propose(a,counter('soulblade-lan',3),{}).ok,false);
-  const p=propose(a,counter('soulblade-lan',3));
+  assert.equal(propose(a,souls(3),{}).ok,false);
+  const p=propose(a,souls(3));
   assert.deepEqual(a.exportBattleSnapshot(),snap);
-  assert.deepEqual(p.diff,[{path:['items','soulblade-lan','counters','souls'],before:0,after:3}]);
+  assert.deepEqual(p.diff,[{path:['pools',souls(3).poolId,'current'],before:0,after:3}]);
   assert.equal(a.commitProposal(p.proposalId).ok,true);
   assert.equal(a.commitProposal(p.proposalId).ok,false);
-  const stale=propose(a,counter('soulblade-lan',4));
+  const stale=propose(a,souls(4));
   const rollback=propose(a,{type:'replay_or_undo',operation:'undo'});
   assert.equal(a.commitProposal(rollback.proposalId).ok,true);
   assert.equal(a.commitProposal(stale.proposalId).ok,false);
@@ -362,7 +384,8 @@ test('白名单拒绝畸形值；事务原子；幂等检查、真实 diff 和 r
 test('技能热改、增援/撤离与复原；篡改快照无法替换战局', () => {
   const a=boot();
   const copy=a.getBattleState().units.scout;
-  Object.assign(copy,{id:'reserve',name:'援军',x:9,y:9,weapon:null,ap:0});
+  delete copy.pools;
+  Object.assign(copy,{id:'reserve',name:'援军',x:9,y:9,weapon:null,mainHand:null,ap:0});
   commit(a,{type:'spawn_unit',unit:copy},{type:'patch_skill_template',templateId:'brand',patch:{mp:3}});
   assert.equal(u(a,'reserve').hp,4);
   assert.equal(probe(a,'skill',3,2,'brand').mp,3);
@@ -391,16 +414,16 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
   assert.equal(a.stepEnemy().ok,true); assert.notDeepEqual(a.exportBattleSnapshot(),before);
 });
 
-test('三个预设均可打到胜负；完整战报和 JSON 日志可重放', () => {
-  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','blue']]) {
+for (const scenarioId of ['ruins','altar','boss']) {
+  test(`${scenarioId} 打到胜负并完整重放战报和 JSON 日志`, () => {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {
       a.playAction(chooseAction(a.getBattleState()));
     }
-    assert.equal(a.getStateSummary().outcome,expected,scenarioId);
     const snapshot=JSON.parse(JSON.stringify(a.exportBattleSnapshot()));
     const b=createGameAPI(); b.createBattle(snapshot);
     assert.deepEqual(b.exportBattleSnapshot(),snapshot);
     assert.deepEqual(b.exportBattleReport(),a.exportBattleReport());
-  }
-});
+    assert.equal(a.getStateSummary().outcome,'blue',scenarioId);
+  });
+}

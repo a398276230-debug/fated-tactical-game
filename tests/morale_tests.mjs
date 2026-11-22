@@ -34,7 +34,7 @@ test('切磋可叫停，竞技可认输，压制与守卫可在双方仍存活�
 test('竞技双方非致死，压制战双方都可致死',()=>{
   for(const [type,side,shouldLive] of [['arena',null,true],['suppress','blue',false],['suppress','red',false]]) {
     const s=fixture(),{p,e}=s.units;s.battleType=type;if(side)s.suppressingTeam=side;
-    s.skills.test={name:'测试攻击',range:2,ap:1,slot:'attack',shape:'single',target:'enemy',effects:[{id:'blast',trigger:'active',target:'hitTarget',effects:[{kind:'damage',flat:1000,damageType:'true'}]}]};
+    s.skills.test={name:'测试攻击',range:2,ap:1,slot:'attack',shape:'single',target:'enemy',rules:[{id:'blast',hook:'active',program:[{op:'damage',target:'target',amount:1000,damageType:'true'}]}]};
     p.skills.push('test');s.turn=s.order.indexOf('p');p.ap=2;p.used={action:0,attack:0};
     e.hp=29;refreshOutcome(s);assert.ok(!e.fled);applyAction(s,{type:'skill',skillId:'test',x:e.x,y:e.y});
     assert.equal(e.hp,shouldLive?1:0);assert.equal(!!e.fled,shouldLive);validateState(s);

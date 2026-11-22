@@ -4,14 +4,14 @@ import { createAiSessions } from '../src/tavern/ai-sessions.js';
 import { fetchModels, requestViaCustomApi } from '../src/tavern/api.js';
 import { assembleMessages, DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from '../src/tavern/prompts.js';
 
-import { effectSchema } from '../src/core/effect_schema.js';
+import { validVmRule, vmSchema } from '../src/core/vm-schema.js';
 
-test('每个 DSL 节点的用法说明进入实际组装的默认助手消息', () => {
+test('每个 VM 指令的用法说明进入实际组装的默认助手消息', () => {
   const messages = assembleMessages(DEFAULT_SLOTS, {});
-  for (const rule of effectSchema.$defs.node.oneOf) {
-    const kind = rule.properties.kind.const;
-    assert.match(rule.description, /\p{Script=Han}/u, kind);
-    assert.ok(messages.some(m => m.content.includes(`• ${kind}：${rule.description}`)), kind);
+  for (const opcode of vmSchema.$defs.opcode.oneOf) {
+    const op = opcode.properties.op.const;
+    assert.match(opcode.description, /\p{Script=Han}/u, op);
+    assert.ok(messages.some(m => m.content.includes(`• ${op}：${opcode.description}`)), op);
   }
 });
 
@@ -53,21 +53,26 @@ gate('G44', '旧内置 user 一次迁移，自定义 role 保留', () => {
   assert.deepEqual(describeSlots(migrated), migrated);
 });
 
-gate('G45', '任务拆解、自查与 DSL 示例', () => {
+gate('G45', '任务拆解、自查与 VM 示例', () => {
   const task = resolveSlotContent({ id: 'task' });
-  assert.equal(task.split('\n').filter(line => line.startsWith('• ') && line.includes('"trigger"')).length, 9);
-  assert.match(task, /临时土墙[^\n]+"remainingTurns":3/);
+  const examples = [...task.matchAll(/^• [^\n：]+值：(\{.*\})$/gm)].map(([, json]) => JSON.parse(json));
+  assert.equal(examples.length, 5);
+  const statusTemplates = { laugh_disabled: examples.find(example => example.id === 'laugh_disabled') };
+  for (const example of examples) {
+    for (const rule of example.rules ?? [example]) assert.equal(validVmRule(rule, { statusTemplates }), true, rule.id);
+  }
   assert.match(task, /低伤校准[^\n]+"lethal":false/);
-  for (const text of ['先尝试拆解，再考虑放弃', '多状态 + 手动触发技能', '简述尝试过的方向', '参数写全了吗？statusId 存在吗？数值在范围内吗？']) assert.ok(task.includes(text));
+  assert.match(task, /飞行规则值[^\n]+"mode":"altitude","deltaZ":3/);
+  for (const text of ['先尝试拆解，再考虑放弃', '未解决或仅部分解决', '简短原因', '检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围']) assert.ok(task.includes(text));
   assert.doesNotMatch(task, /卡在哪一步/);
 });
 
 test('G97 protocol maps mixed damage, empty effects and worldbook tags', () => {
   const protocol = resolveSlotContent({ id: 'protocol' });
-  assert.match(protocol, /混合伤害：.*必须拆成多个 damage 节点.*每个节点只写一个 damageType/);
-  const nodes = JSON.parse(protocol.match(/混合伤害：.*?例：(\[.*?\])。/)[1]);
-  assert.deepEqual(nodes, [{ kind: 'damage', flat: 40, damageType: 'physical' }, { kind: 'damage', flat: 20, damageType: 'energy' }]);
-  assert.match(protocol, /空效果：.*为 \{\} 或缺失.*不产生任何补丁操作，也不计入 unresolved.*纯位移、纯状态授予.*不属于空效果/);
+  assert.match(protocol, /混合伤害：.*拆成两个指令.*不再额外造成总威力伤害/);
+  const program = JSON.parse(protocol.match(/混合伤害：.*?例：(\[.*?\])。/)[1]);
+  assert.deepEqual(program, [{ op: 'damage', target: 'target', amount: 40, damageType: 'physical' }, { op: 'damage', target: 'target', amount: 20, damageType: 'energy' }]);
+  assert.match(protocol, /原文效果为 \{\} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则/);
   for (const tag of ['[威力: X 物理]', '[关联属性: 敏捷]', '[有效距离: 中程(5)]', '[单体]', '[范围: 中程(4)+扇(敌方)]']) assert.ok(protocol.includes(tag), tag);
 });
 

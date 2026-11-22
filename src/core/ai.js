@@ -1,4 +1,4 @@
-import { currentUnit, equippedActiveSkills, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { currentUnit, equippedActiveSkills, getStatusTemplate, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
@@ -7,7 +7,8 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const healthGap = unit => unit.maxHp - unit.hp;
 const samePosition = (a, b) => a.x === b.x && a.y === b.y;
 
-function tactics(state, actor, action, plan) {
+export function tactics(state, actor, action, plan) {
+  if (!plan?.ok) return -Infinity;
   if (action.type === 'interact' && plan.kind === 'altar') return 4 + Math.min(8, healthGap(actor)) * .95 + Math.min(5, actor.maxMp - actor.mp) * .55;
   let score = 0;
   for (const profile of plan.targets ?? []) {
@@ -40,22 +41,33 @@ function tactics(state, actor, action, plan) {
     score += sign * (heal * .9 + Math.min(shieldGain, target.maxHp) * .5);
   }
   const skill = action.type === 'skill' ? state.skills[action.skillId] : null;
-  const effects = skill ? skill.effects ?? [] : [];
-  for (const effect of effects.flatMap(entry => entry.effects ?? [])) {
-    const target = effect.targetId ? state.units[effect.targetId] : actor;
-    const enemy = target.team !== actor.team;
-    const control = ['grantStatus','modifyStat','removeStatus'].includes(effect.kind) && ['stun','root','freeze','taunt','suppressed'].includes(effect.statusId ?? effect.stat);
-    if (control) score += enemy ? 7 + (target.used.attack ? 2 : 0) : -7;
-    if (effect.kind === 'removeStatus') score += enemy ? -4 : (target.statuses && Object.keys(target.statuses).length ? 8 : 0);
-    if (effect.kind === 'summon' || effect.kind === 'spawnUnit') score += enemy ? 2 : 4;
+  const programs = (skill?.rules ?? []).filter(rule => rule.enabled !== false && ['active', 'after_hit'].includes(rule.hook))
+    .flatMap(rule => rule.program).filter(op => op.enabled !== false);
+  for (const op of programs) {
+    const targetAtAction = Number.isFinite(action.x) && Number.isFinite(action.y)
+      ? Object.values(state.units).find(unit => unit.x === action.x && unit.y === action.y) : null;
+    const targets = op.target === 'self' ? [actor]
+      : (plan.targets ?? []).map(profile => state.units[profile.recipientId ?? profile.id]).filter(Boolean);
+    if (!targets.length && targetAtAction) targets.push(targetAtAction);
+    if (op.op === 'spawn') score += op.entityKind === 'unit' ? 4 : 2;
+    for (const target of targets) {
+      const enemy = target.team !== actor.team;
+      const status = getStatusTemplate(state, op.statusId);
+      const control = op.op === 'apply_status' && (status?.category === 'control' || ['stun', 'root', 'freeze', 'suppressed'].includes(op.statusId));
+      const profile = (plan.targets ?? []).find(row => (row.recipientId ?? row.id) === target.id);
+      if (control && profile?.expectedDamage > 0 && !target.statuses[op.statusId]) {
+        score += enemy ? 7 + (target.used.attack ? 2 : 0) : -7;
+      }
+      if (op.op === 'remove_status' && Object.values(target.statuses ?? {}).some(value => ['debuff', 'control', 'dot'].includes(value.category))) score += enemy ? -4 : 8;
+    }
   }
-  if (skill?.effects?.some(entry => entry.effects?.some(effect => ['modifyTerrain','setTerrainKind','addCover'].includes(effect.kind)))) {
+  if (programs.some(op => ['set_terrain', 'modify_terrain', 'add_cover'].includes(op.op))) {
     score += Object.values(state.units).some(unit => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
 }
 
-function aimedOptions(state, actor, attacksOnly = false) {
+export function aimedOptions(state, actor, attacksOnly = false) {
   const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled).sort(byId);
   const covers = Object.values(state.covers).filter(c => c.hp > 0).sort(byId);
   const choices = [];

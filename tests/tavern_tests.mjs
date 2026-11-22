@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateState } from '../src/api/validation.js';
+import { getPool, refreshPoolMax, updatePoolCurrent } from '../src/core/vm-pools.js';
 import { applyAction, preview, switchableWeapons } from '../src/core/combat.js';
 import { resolvedDiagnostics, remainingDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
-import { effectSummary } from '../src/tavern/instance-card.js';
+import { ruleSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
@@ -21,12 +22,30 @@ const mvu = {
   },
 };
 
+const damageOp = (damageType, amount) => ({ op: 'damage', target: 'target', damageType, amount });
+const setResource = (state, unit, key, current) => updatePoolCurrent(state, getPool(state, unit.id, key).id, 'set', current);
+
+function setMaxResource(state, unit, key, max, current = max) {
+  const pool = getPool(state, unit.id, key);
+  assert.equal(pool.contributors.length, 1);
+  pool.contributors[0].maxBase = max;
+  refreshPoolMax(state, pool.id);
+  setResource(state, unit, key, current);
+}
+
+const guaranteeHit = {
+  id: 'guarantee', hook: 'before_check', filter: "event.actorId == self.id && event.actionType == 'attack'",
+  program: [{ op: 'mutate_event', patch: { forceOutcome: 'crit' } }],
+};
+
 test('面积标签解析角度、环形和敌友，范围伤害允许友伤', () => {
   const damage = {count:1,sides:4,type:'physical',bonus:10};
   const {state}=hydrateFromSources({
     mvu:{主角:{...mvu.主角,技能:{
-      扇击:{标签:['[范围: 中程(4)+扇(敌方)] [有效距离: 中程(4)] [角度:120°]'],effects:[{
-        id:'fan-damage', trigger:'active', target:'hitTarget', effects:[{kind:'damage',flat:10,damageType:'true'}],
+      扇击:{标签:['[范围: 中程(4)+扇(敌方)] [有效距离: 中程(4)] [角度:120°]'],rules:[{
+        id:'fan-damage', hook:'active', program:[{op:'for_each', select:{from:'units',
+          area:{shape:'fan',origin:'self',radius:4,angle:120}, where:'candidate.alive && candidate.id != self.id'},
+          body:[damageOp('true',10)]}],
       }]},
       环击:{标签:['范围:近程(2)+环(所有)','有效距离:近程(2)'],damage},
       横扫:{标签:['范围:近程(2)+线(敌方)','有效距离:0'],damage},
@@ -46,7 +65,7 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
   const aim = (skillId,x,y) => preview(state,{type:'skill',skillId,x,y});
   const fanPlan = aim(fan,3,1);
   assert.ok(fanPlan.ok && fanPlan.cells.length > 1);
-  assert.ok(fanPlan.targets.some(target => target.id === 'f'));
+  assert.ok(fanPlan.targets.some(target => target.id === 'e'));
   const ringPlan = aim(ring,3,1);
   assert.ok(ringPlan.ok && ringPlan.cells.some(cell => cell.x === 2 && cell.y === 1));
   assert.ok(!ringPlan.cells.some(cell => cell.x === 3 && cell.y === 1));
@@ -56,10 +75,14 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
   assert.ok(aim(heal,2,1).ok);
   assert.equal(aim(heal,3,1).ok, false);
   assert.deepEqual(aim(ground,3,1).targets, []);
-  state.units.f.maxHp = state.units.f.hp = 100;
-  const allyHp = state.units.f.hp;
+  setMaxResource(state, state.units.f, 'hp', 100);
+  setMaxResource(state, state.units.e, 'hp', 100);
+  const { hp: allyHp } = state.units.f;
+  const { hp: enemyHp } = state.units.e;
+  validateState(state);
   applyAction(state,{type:'skill',skillId:fan,x:3,y:1});
   assert.equal(state.units.f.hp, allyHp - 10);
+  assert.equal(state.units.e.hp, enemyHp - 10);
 });
 
 test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
@@ -105,13 +128,15 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
     const unit = state.units[id], item = state.items[unit.mainHand], template = state.equipment[item.templateId];
     assert.equal(template.weaponClass, 'ranged');
     assert.equal(template.weaponType, id === 'p' ? '弓' : '弩');
-    assert.equal(template.effects.filter(e => e.effects.some(n => n.kind === 'drainResource' && n.resource === 'ammo')).length, 1);
+    const ammoRules = template.rules.filter(rule => rule.hook === 'before_action' &&
+      rule.program.some(op => op.op === 'resource' && op.pool === 'ammo' && op.mode === 'sub' && op.local));
+    assert.equal(ammoRules.length, 1);
     assert.equal(template.range, range);
     assert.deepEqual([unit.hp, unit.maxHp, unit.mp, unit.sp, unit.tier], [hp, hp, ...(id === 'p' ? [500,600,1] : [100,100,1])]);
     assert.equal(template.name, id === 'p' ? '冰霜之弓' : '木弩臂');
     assert.deepEqual(unit.skills, []);
     assert.deepEqual(Object.values(unit.stats), stats);
-    assert.equal(item.counters.ammo, id === 'p' ? 20 : 25);
+    assert.equal(getPool(state, item.id, 'ammo', 'item').current, id === 'p' ? 20 : 25);
   }
   assert.notEqual(state.units.p.mainHand,state.units.e.mainHand);
   state.turn = state.order.indexOf('p');
@@ -123,12 +148,13 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
   assert.ok(shot.ok, shot.error);
   assert.equal(shot.ammo, 20);
   applyAction(state, attack);
-  assert.equal(item.counters.ammo, 19);
-  item.counters.ammo = 1;
+  const ammo = getPool(state, item.id, 'ammo', 'item');
+  assert.equal(getPool(state, item.id, 'ammo', 'item').current, 19);
+  updatePoolCurrent(state, ammo.id, 'set', 1);
   actor.ap = 2;
   actor.used = {attack:0, action:0};
   applyAction(state, attack);
-  assert.equal(item.counters.ammo, 0);
+  assert.equal(getPool(state, item.id, 'ammo', 'item').current, 0);
   actor.ap = 2;
   actor.used = {attack:0, action:0};
   assert.equal(preview(state, attack).error, '弹药已耗尽');
@@ -140,13 +166,19 @@ test('箭袋命中附伤只强化指定子类，不等同远程或有弹药', ()
   for (const subtype of ['弓','弩','火枪','投掷武器']) {
     const {state} = hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{
       冰霜之弓:{类型:'武器',标签:[subtype,'双手','攻击: 185','有效距离: 中程(5)'],accuracy:30},
-      箭筒:{类型:'弹药容器',位置:'饰品',标签:['弹药: 20'],effects:[{id:'quiver-bonus',trigger:'on_hit',target:'hitTarget',condition:[{type:'actionType',value:'attack'},{type:'weaponType',value:'弓'}],effects:[{kind:'damage',flat:8,damageType:'true'}]}]}
+      箭筒:{类型:'弹药容器',位置:'饰品',标签:['弹药: 20']}
     }}},charInfo:{name:'木偶',hp:10000},battleInit:'battle|1|q|箭袋|flat|123\nunit|p|blue|mvu:主角|主角|1,1\nunit|e|red|char_info|木偶|4,1'}, {throwOnValidation:true});
     state.turn = state.order.indexOf('p');
     Object.assign(state.units.p,{ap:2,used:{attack:0,action:0}});
     state.rng = 123456789;
+    const bow = Object.entries(state.equipment).find(([, item]) => item.weaponType === '弓')?.[0] ?? 'other-bow';
+    const quiver = Object.values(state.equipment).find(item => item.name === '箭筒');
+    quiver.rules.push({ id:'quiver-bonus', hook:'after_hit',
+      filter:`event.actorId == self.id && event.actionType == 'attack' && event.weaponTemplateId == '${bow}'`,
+      program:[damageOp('true',8)] });
     const plain = structuredClone(state);
-    Object.values(plain.equipment).find(t => t.name === '箭筒').effects = [];
+    Object.values(plain.equipment).find(t => t.name === '箭筒').rules = [];
+    validateState(state);
     for (const s of [state, plain]) applyAction(s,{type:'attack',x:4,y:1});
     assert.ok(plain.units.e.hp < 10000, JSON.stringify(plain.logs.slice(-4)));
     assert.equal(plain.units.e.hp-state.units.e.hp, subtype === '弓' ? 8 : 0, subtype);
@@ -168,20 +200,31 @@ test('主角背包消耗品扣库存、未知用途进入标准化，装备优�
   const [bomb,potion]=Object.keys(p.inventory);assert.equal(p.inventory[bomb],3);assert.deepEqual(p.skills,[]);
   assert.ok(warnings.some(w=>w.unitId==='p' && w.originPath===`/skills/${potion}` && w.message.includes('小红瓶')));
   assert.match(resolveSlotContent({id:'roster'},{state,onlyUnitIds:['p']}),/小红瓶/);
-  state.turn=state.order.indexOf('p');p.ap=2;p.used={attack:0,action:0};e.hp=e.maxHp=500;
+  assert.deepEqual(state.skills[bomb].rules.map(rule=>rule.program),[[damageOp('physical',100)]]);
+  state.turn=state.order.indexOf('p');p.ap=2;p.used={attack:0,action:0};
   const use={type:'skill',skillId:bomb,x:e.x,y:e.y};assert.equal(preview(state,{...use,skillId:potion}).ok,false);
   assert.equal(preview(state,{...use,x:p.x,y:p.y}).ok,false);assert.equal(p.inventory[bomb],3);
-  applyAction(state,use);assert.equal(p.inventory[bomb],2);assert.equal(bag.手榴弹.数量,3);assert.equal(e.hp,400);
-  assert.deepEqual(p.used,{attack:0,action:1});assert.ok(state.logs.some(log=>log.text.includes('手榴弹（数量 3 → 2）')));validateState(state);
+  const before = e.hp;
+  const logs = applyAction(state,use);
+  assert.equal(e.hp,before-100);assert.equal(bag.手榴弹.数量,3);
+  assert.deepEqual(p.used,{attack:0,action:1});validateState(state);
+  assert.equal(p.inventory[bomb],2,'VM cast must consume one backpack item');
+  assert.ok(logs.some(log=>log.text.includes('手榴弹（数量 3 → 2）')));
 });
 
 test('主手弓命中后，小刀只在自己射程内追击和扣 SP', () => {
+  const followups = [];
   for (const dist of [1,4]) {
-    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',标签:['弓'],位置:'主手',effects:[{id:'guarantee',trigger:'passive',target:'self',effects:[{kind:'forceOutcome',mode:'crit'}]}]},小刀:{类型:'武器',位置:'副手'}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
-    const {p,e}=state.units;state.turn=state.order.indexOf('p');p.used={attack:0,action:0};p.ap=2;e.hp=e.maxHp=99999;const sp=p.sp;
-    applyAction(state,{type:'attack',x:e.x,y:e.y});assert.ok(e.hp<99999);
-    assert.equal(state.logs.some(l=>l.type==='followup'),dist===1);assert.equal(sp-p.sp,dist===1?10:0);
+    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',标签:['弓'],位置:'主手',rules:[guaranteeHit]},小刀:{类型:'武器',位置:'副手'}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
+    const {p,e}=state.units;state.turn=state.order.indexOf('p');p.used={attack:0,action:0};p.ap=2;const sp=p.sp, hp=e.hp;
+    validateState(state);
+    assert.equal(state.equipment[state.items[p.offHand].templateId].name,'小刀');
+    assert.equal(p.stance,'dual_wield');
+    const logs=applyAction(state,{type:'attack',x:e.x,y:e.y});
+    assert.ok(e.hp<hp);
+    followups.push([dist,logs.some(l=>l.type==='followup'),sp-p.sp]);
   }
+  assert.deepEqual(followups,[[1,true,10],[4,false,0]]);
 });
 
 test('MVU 和 char_info 可用装备标签声明初始主副手；剧情位置优先', () => {
@@ -373,10 +416,12 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   assert.equal(state.equipment[state.items[p.mainHand].templateId].name, '匕首');
   assert.equal(state.equipment[state.items[p.shield].templateId].name, '木盾');
   assert.equal(state.equipment[state.items[p.gear[0]].templateId].armor, 6);
-  assert.equal(p.statuses.root.remainingTurns, 3);
-  assert.deepEqual(state.skills[p.skills[0]].effects.map(e => e.effects), [[{ kind: 'grantStatus', statusId: 'freeze' }]]);
+  assert.deepEqual(state.skills[p.skills[0]].rules, []);
+  const skillWarnings = warnings.filter(w => w.originPath === `/skills/${p.skills[0]}`);
+  assert.ok(skillWarnings.some(w => /statusId.*freeze/.test(w.message)));
   assert.equal(p.statuses.poison, undefined);
   for (const label of ['场地弹药补给', '轻便', '不存在', '冰冻', '中毒：每回合受到能量伤害']) assert.ok(warnings.some(w => w.message.includes(label)));
+  assert.equal(p.statuses.root.remainingTurns, 3, 'opening status must retain its authored duration');
 });
 
 const shooterYaml = `技能:
@@ -448,25 +493,31 @@ test('G98/G99 empty YAML scalars and objects emit neither effects nor warnings',
     assert.deepEqual(warnings, [], `${context}: ${JSON.stringify(value)}`);
   }
 });
-test('G100 populated YAML block keeps executable content and diagnoses unknown content', () => {
+test('G100 populated YAML blocks keep VM rules and diagnose unstandardized text', () => {
+  const rule = { id:'straight-shot', hook:'active', program:[{op:'move',target:'target',mode:'push',distance:1}] };
+  const vmLine = `平直射击: ${JSON.stringify(rule)}`;
   const warnings = [];
-  const block = '| \n 平直射击: knockback';
-  assert.equal(mapEffects(block, 'skill', warnings)[0]?.effects[0]?.kind, 'knockback');
+  assert.deepEqual(mapEffects(`| \n ${vmLine}`, 'skill', warnings), [rule]);
   for (const header of ['|','>-','|2']) {
-    const {state, warnings: actual} = hydrateDummy(shooterYaml.replace('效果: |', `效果: ${header}\n      平直射击: knockback`));
-    assert.equal(state.skills[state.units.e1.skills[0]].effects[0]?.effects[0]?.kind, 'knockback');
+    const {state, warnings: actual} = hydrateDummy(shooterYaml.replace('效果: |', `效果: ${header}\n      ${vmLine}`));
+    assert.deepEqual(state.skills[state.units.e1.skills[0]].rules, [rule]);
     assert.deepEqual(actual, []);
   }
   assert.deepEqual(warnings, []);
-  assert.deepEqual(mapEffects('|\n 平直射击: 尚未定义的动作', 'skill', warnings), []);
-  assert.ok(warnings.some(w => w.message.includes('尚未定义的动作')));
+  for (const narrative of ['knockback', '尚未定义的动作']) {
+    const {state, warnings: actual} = hydrateDummy(shooterYaml.replace('效果: |', `效果: |\n      平直射击: ${narrative}`));
+    const id = state.units.e1.skills[0];
+    assert.deepEqual(state.skills[id].rules, []);
+    assert.ok(actual.some(w => w.originPath === `/skills/${id}` && w.message.includes(narrative)));
+  }
 });
 test('G101 status placeholders are silent without hiding invalid modifier overrides', () => {
   const {state,warnings} = hydrateDummy({ 状态: ['|', '>-', {}, null, {id:'stun',modifiers:'|'}] });
   assert.deepEqual(warnings, []);
   assert.equal(state.units.e1.statuses.stun.modifiers.skip, true);
   const bad = hydrateDummy({ 状态: [{id:'stun',modifiers:{badKey:2}}] });
-  assert.ok(bad.warnings.some(w => w.message.includes('状态 stun 已拒绝')));
+  assert.equal(bad.state.units.e1.statuses.stun.modifiers.skip, true);
+  assert.ok(bad.warnings.some(w => w.message.includes('状态 stun 的 modifiers 待标准化') && w.message.includes('badKey')));
 });
 test('G102/G103 original YAML and rejected effects retain the referenced skill template', () => {
   const {state,warnings} = hydrateDummy(shooterYaml.replace('[伤害: 物理]',''));
@@ -474,11 +525,10 @@ test('G102/G103 original YAML and rejected effects retain the referenced skill t
   assert.equal(id, 'skill-e1-10nk26b-0');
   assert.deepEqual(warnings, []);
   const skill = state.skills[id];
-  assert.deepEqual([skill.name,skill.effects,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
+  assert.deepEqual([skill.name,skill.rules,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
   const rejected = hydrateDummy(shooterYaml.replace('效果: |','效果: 不认识的动作'));
   assert.deepEqual(rejected.state.skills[id], { ...skill, damageType:'physical' });
-  assert.ok(rejected.warnings.some(w => w.message.includes('不认识的动作')));
-  console.log('G103 skill', id, JSON.stringify(skill), 'warnings=[]');
+  assert.ok(rejected.warnings.some(w => w.originPath === `/skills/${id}` && w.message.includes('不认识的动作')));
 });
 
 test('G124–G126/G129/G130 原文标签生成独立伤害节点，实际施放扣 SP', () => {
@@ -486,30 +536,34 @@ test('G124–G126/G129/G130 原文标签生成独立伤害节点，实际施放�
     const {state,roster,warnings}=hydrateDummy(shooterYaml.replace('[伤害: 物理]',`[伤害: ${label}]`));
     const actor=state.units.e1, target=state.units.p1, id=actor.skills[0], s=state.skills[id];
     assert.deepEqual(warnings,[]);assert.equal(roster.find(u=>u.id==='e1').skillInfo[id].damageType,type);
-    assert.deepEqual(s.effects[0].effects,[{kind:'damage',percentOfPower:1,damageType:type}]);assert.equal(s.sp,20);assert.equal(s.slot,'attack');
-    state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={attack:0,action:0};actor.sp=actor.maxSp=40;actor.x=1;actor.y=1;target.x=2;target.y=1;
-    const before=target.hp;applyAction(state,{type:'skill',skillId:id,x:2,y:1});assert.equal(actor.sp,20);assert.ok(target.hp<before);
-    if(label==='物理') console.log('G130',JSON.stringify({[id]:s}),`SP 40→${actor.sp}; HP ${before}→${target.hp}`);
+    assert.deepEqual(s.rules.map(rule=>[rule.hook,rule.program]),[['active',[damageOp(type,'event.power')]]]);
+    assert.equal(s.sp,20);assert.equal(s.slot,'attack');
+    state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={attack:0,action:0};actor.x=1;actor.y=1;target.x=2;target.y=1;
+    setMaxResource(state,actor,'sp',40);
+    const before=target.hp;
+    const logs=applyAction(state,{type:'skill',skillId:id,x:2,y:1});
+    assert.equal(actor.sp,20);assert.ok(target.hp<before);
+    assert.equal(logs.find(log=>log.type==='damage').detail.damageType,type);
   }
 });
 test('旧技能效果中的百分比伤害按威力结算一次，混合类型独立结算', () => {
   for (const [effect, expected] of [
-    ['100%物理伤害', [['physical', 1]]],
-    ['60％物理伤害/40%能量伤害', [['physical', .6], ['energy', .4]]],
+    ['100%物理伤害', [['physical', 'event.power', 50]]],
+    ['60％物理伤害/40%能量伤害', [['physical', 'event.power * (60 / 100)', 30], ['energy', 'event.power * (40 / 100)', 20]]],
   ]) {
     const {state, warnings} = hydrateDummy(shooterYaml.replace('[伤害: 物理]', '').replace('效果: |', `效果：${effect}`));
     const actor = state.units.e1, target = state.units.p1, skillId = actor.skills[0];
     const skill = state.skills[skillId];
     assert.deepEqual(warnings, []);
     assert.equal(skill.power, 50);
-    assert.equal(skill.effects.length, 1);
-    assert.deepEqual(skill.effects[0].effects.map(n => [n.damageType, n.percentOfPower]), expected);
+    assert.deepEqual(skill.rules.map(rule=>rule.program),[expected.map(([type,amount])=>damageOp(type,amount))]);
     state.turn = state.order.indexOf(actor.id);
-    Object.assign(actor, { ap: 2, used: { attack: 0, action: 0 }, sp: 40, maxSp: 40, x: 1, y: 1 });
-    Object.assign(target, { hp: 500, maxHp: 500, armor: 0, x: 2, y: 1 });
-    const start = state.logs.length;
-    applyAction(state, { type: 'skill', skillId, x: 2, y: 1 });
-    assert.deepEqual(state.logs.slice(start).filter(e => e.type === 'damage').map(e => e.detail.raw), expected.map(([,ratio]) => 50 * ratio));
+    Object.assign(actor, { ap: 2, used: { attack: 0, action: 0 }, x: 1, y: 1 });
+    Object.assign(target, { armor: 0, x: 2, y: 1 });
+    setMaxResource(state, actor, 'sp', 40);
+    setMaxResource(state, target, 'hp', 500);
+    const logs = applyAction(state, { type: 'skill', skillId, x: 2, y: 1 });
+    assert.deepEqual(logs.filter(e => e.type === 'damage').map(e => [e.detail.damageType,e.detail.amount]), expected.map(([type,,amount]) => [type,amount]));
     assert.equal(target.hp, 450);
   }
 });
@@ -517,24 +571,51 @@ function castFixture(cost='攻击: 20 SP') {
   const {state,warnings}=hydrateDummy(shooterYaml.replace('攻击: 20 SP',cost));
   assert.deepEqual(warnings,[]);
   const actor=state.units.e1,target=state.units.p1,id=actor.skills[0],skill=state.skills[id];
-  state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={attack:0,action:0};actor.hp=actor.maxHp=21;actor.mp=actor.maxMp=20;actor.sp=actor.maxSp=40;actor.x=1;actor.y=1;target.x=2;target.y=1;target.hp=target.maxHp=500;
+  state.turn=state.order.indexOf(actor.id);actor.ap=2;actor.used={attack:0,action:0};actor.x=1;actor.y=1;target.x=2;target.y=1;
+  setMaxResource(state,actor,'hp',21);
+  setMaxResource(state,actor,'mp',20);
+  setMaxResource(state,actor,'sp',40);
+  setMaxResource(state,target,'hp',500);
   return {state,actor,skill,action:{type:'skill',skillId:id,x:2,y:1}};
 }
 test('G124-a/d 顶层伤害类型校验',()=>{
   const {state,skill}=castFixture();assert.equal(skill.damageType,'physical');validateState(state);skill.damageType='fire';assert.throws(()=>validateState(state),/damageType/);
 });
-test('G124-b/c 实际伤害日志记录节点覆盖或技能默认',()=>{
-  for (const override of [undefined,'mental']) {
-    const {state,skill,action}=castFixture();skill.damageType='energy';const node=skill.effects[0].effects[0];delete node.damageType;if(override)node.damageType=override;
-    validateState(state);const log=applyAction(state,action).find(l=>l.detail.effectId===skill.effects[0].id && l.detail.hpBefore);
-    assert.equal(log.detail.damageType,override??'energy');
+test('G124-b/c VM 伤害指令显式声明类型，结算日志使用该类型',()=>{
+  for (const type of ['energy','mental']) {
+    const {state,skill,action}=castFixture();
+    skill.damageType='energy';
+    const [op]=skill.rules[0].program;
+    delete op.damageType;
+    assert.throws(()=>validateState(state),/VM 规则/);
+    op.damageType=type;
+    validateState(state);
+    const log=applyAction(state,action).find(l=>l.type==='damage');
+    assert.equal(log.detail.damageType,type);
   }
 });
-test('G125-a/b HP 付费保留最后 1 HP，拒绝无副作用且有日志',()=>{
-  for(const hp of [21,20,19]) {
-    const {state,actor,action,skill}=castFixture();actor.hp=hp;skill.resourceCost={hp:20};validateState(state);
-    if(hp>20){applyAction(state,action);assert.equal(actor.hp,1);assert.ok(state.logs.some(l=>l.text==='施放 制式轻矢点射 消耗 20 HP'));}
-    else {const n=state.logs.length;assert.equal(preview(state,action).error,'HP 不足，无法施放');assert.equal(state.logs.length,n);assert.equal(applyAction(state,action)[0].type,'skill_rejected');assert.equal(state.logs.at(-1).text,'HP 不足，无法施放');assert.deepEqual([actor.hp,actor.sp,actor.ap],[hp,40,2]);}
+test('G125-a HP 付费保留最后 1 HP，战报记录实际扣除量',()=>{
+  const {state,actor,action,skill}=castFixture();
+  skill.resourceCost={hp:20};
+  validateState(state);
+  const logs=applyAction(state,action);
+  assert.equal(actor.hp,1);
+  const cost=logs.find(log=>log.type==='resource' && log.detail.resource==='hp');
+  assert.deepEqual(cost?.detail,{targetId:actor.id,resource:'hp',amount:20,before:21,after:1});
+  assert.match(cost.text,/制式轻矢点射.*20点 HP/);
+});
+test('G125-b HP 不足时拒绝、保留行动状态并记录原因',()=>{
+  for(const hp of [20,19]) {
+    const {state,actor,action,skill}=castFixture();
+    setResource(state,actor,'hp',hp);
+    skill.resourceCost={hp:20};
+    validateState(state);
+    const before=structuredClone(state);
+    assert.equal(preview(state,action).error,'HP 不足，无法施放');
+    assert.deepEqual(state,before);
+    const logs=applyAction(state,action);
+    assert.deepEqual([actor.hp,actor.sp,actor.ap,actor.used],[hp,40,2,{attack:0,action:0}]);
+    assert.deepEqual(logs.map(({type,text})=>[type,text]),[['skill_rejected','HP 不足，无法施放']]);
   }
 });
 test('G125-c/d 组合资源与双槽，以及原文 1 HP',()=>{
@@ -544,10 +625,10 @@ test('G125-c/d 组合资源与双槽，以及原文 1 HP',()=>{
 });
 
 test('G127 混合伤害区分绝对值和百分比；动作、MP 和双槽消耗', () => {
-  for(const [tag,nodes,cost,expected] of [['物理40/能量20',[{flat:40},{flat:20}],'攻击: 1 动作: 1',{ap:2,slot:'attack'}],['物理40%/能量20%',[{percentOfPower:.4},{percentOfPower:.2}],'动作: 1',{ap:1,slot:'action'}],['物理40/能量20',[{flat:40},{flat:20}],'20 MP',{mp:20}]]){
+  for(const [tag,amounts,cost,expected] of [['物理40/能量20',[40,20],'攻击: 1 动作: 1',{ap:2,slot:'attack'}],['物理40%/能量20%',['event.power * (40 / 100)','event.power * (20 / 100)'],'动作: 1',{ap:1,slot:'action'}],['物理40/能量20',[40,20],'20 MP',{mp:20}]]){
     const {state}=hydrateDummy(shooterYaml.replace('威力: 50','威力: 60').replace('伤害: 物理',`伤害: ${tag}`).replace('攻击: 20 SP',cost));const s=state.skills[state.units.e1.skills[0]];
     for(const [k,v] of Object.entries(expected))assert.equal(s[k],v);
-    assert.deepEqual(s.effects[0].effects,nodes.map((n,i)=>({kind:'damage',damageType:i?'energy':'physical',...n})));
+    assert.deepEqual(s.rules.map(rule=>rule.program),[[damageOp('physical',amounts[0]),damageOp('energy',amounts[1])]]);
   }
 });
 
@@ -566,13 +647,14 @@ test('G134/G137/G141 结构化诊断保留角色归属和全局地形',()=>{
 test('诊断收据：操作声明和顶层别名只消除已发送、已解决的目标角色诊断',()=>{
   const mk=(name,id='p')=>({message:`不支持的描述性效果已忽略：${name}：原描述`,unitId:id,originPath:'/skills/ice',source:'mvu',scope:'effect'});
   const ice=mk('冰冻箭'),fire=mk('火矢'),enemy=mk('冰冻箭','e'), warnings=[ice,fire,enemy];
-  const records={p:{hash:'h'}};const op={op:'replace',path:'/skills/ice/effects',value:[]};
+  const records={p:{hash:'h'}};
+  const op={op:'replace',path:'/skills/ice/rules',value:[{id:'freeze-target',hook:'active',program:[{op:'apply_status',target:'target',statusId:'freeze',turns:1}]}]};
   for(const [patch,reply] of [[[ {...op,resolves:'冰冻箭'} ],{}],[[op],{resolved:[ice.message]}],[[op],{resolvedWarnings:['冰冻箭']}],[[{...op,resolves:['冰冻箭','火矢']}],{unresolved:['火矢：尚不能转换']}]]) {
     assert.deepEqual(resolvedDiagnostics(warnings,records,patch,reply),[ice]);
   }
   assert.deepEqual(resolvedDiagnostics(warnings,records,[op],{}),[]);
   assert.deepEqual(resolvedDiagnostics([ice],records,[op],{}),[ice]);
-  assert.deepEqual(resolvedDiagnostics([ice],records,[{...op,path:'/skills/other/effects'}],{}),[]);
+  assert.deepEqual(resolvedDiagnostics([ice],records,[{...op,path:'/skills/other/rules'}],{}),[]);
   const explicit = { ...op, resolves: [{ unitId:'p', originPath:ice.originPath, message:ice.message }] };
   assert.deepEqual(resolvedDiagnostics(warnings, {...records,e:{hash:'e'}}, [explicit], {}), [ice]);
   assert.deepEqual(resolvedDiagnostics(warnings, {...records,e:{hash:'e'}}, [{...op,resolves:'冰冻箭'}], {}), []);
@@ -591,10 +673,13 @@ test('char fingerprint merges raw sources without hashing placement or actor AP'
   sources.mvuData.主角.skills[0].ap=2; assert.notEqual((await read()).hash,first.hash);
   sources.mvuData.主角.skills[0].ap=1;sources.charInfo[0].描述='修改';assert.notEqual((await read()).hash,first.hash);
 });
-test('scoped roster omits other units and item/skill templates; human DSL summary includes roll and turns', () => {
+test('scoped roster omits other units and their item/skill templates', () => {
   const ctx={state:{units:{p:{weapon:'i',skills:['a']},q:{weapon:'j',skills:['b']}},items:{i:{templateId:'t'},j:{templateId:'u'}},equipment:{t:{},u:{}},skills:{a:{},b:{}}},rawCharacters:{p:{tag:'原始'},q:{}},onlyUnitIds:['p']};
   const row=JSON.parse(resolveSlotContent({id:'roster'},ctx)); for(const [key,id] of Object.entries({units:'p',items:'i',equipment:'t',skills:'a',raw:'p'}))assert.deepEqual(Object.keys(row[key]),[id]);
-  assert.equal(effectSummary({trigger:'on_hit',roll:{dice:'d20',gte:16},effects:[{kind:'grantStatus',statusId:'bleed',turns:2}]}),'命中时 d20≥16 → 施加 流血 2 回合');
+});
+
+test('instance-card formatter displays legacy roll and duration text', () => {
+  assert.equal(ruleSummary({hook:'after_hit',program:[{op:'apply_status',statusId:'bleed',turns:2}]}),'命中时 → 施加 流血 2 回合');
 });
 
 test('battle_init 配套正则输出可点击入口', () => {

@@ -15,7 +15,7 @@ var FatedTacticalTavern = (() => {
     }
     return to;
   };
-  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+  var __toCommonJS = (mod2) => __copyProps(__defProp({}, "__esModule", { value: true }), mod2);
 
   // src/tavern/main.js
   var main_exports = {};
@@ -41,9 +41,9 @@ var FatedTacticalTavern = (() => {
     if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return void 0;
     return state.grid[y]?.[x];
   }
-  var elevation = (state, at) => (cellAt(state, at.x, at.y)?.z ?? 0) + (at.altitude ?? 0);
-  var isGround = (state, at) => {
-    const cell = cellAt(state, at.x, at.y);
+  var elevation = (state, at2) => (cellAt(state, at2.x, at2.y)?.z ?? 0) + (at2.altitude ?? 0);
+  var isGround = (state, at2) => {
+    const cell = cellAt(state, at2.x, at2.y);
     return Boolean(cell && cell.kind !== "wall");
   };
   var unitAt = (state, x, y, exceptId) => table(state.units).filter((unit) => unit.hp > 0 && !unit.fled && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
@@ -57,12 +57,12 @@ var FatedTacticalTavern = (() => {
   }
   function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = true } = {}) {
     const dx = to.x - from.x, dy = to.y - from.y;
-    const passable = (at) => from.altitude > 0 ? isGround(state, at) : passableEdge(state, from, at);
+    const passable = (at2) => from.altitude > 0 ? isGround(state, at2) : passableEdge(state, from, at2);
     if (gridDistance(from, to) !== 1 || !passable(to)) return false;
-    const vacant = (at) => !unitAt(state, at.x, at.y, ignoreUnitId) && !coverAt(state, at.x, at.y);
+    const vacant = (at2) => !unitAt(state, at2.x, at2.y, ignoreUnitId) && !coverAt(state, at2.x, at2.y);
     if (!vacant(to)) return false;
     if (!dx || !dy) return true;
-    return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every((at) => vacant(at) && passable(at) && passableEdge(state, at, to));
+    return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every((at2) => vacant(at2) && passable(at2) && passableEdge(state, at2, to));
   }
   function search(state, unit, limit, options, target2) {
     if (!isGround(state, unit) || !(limit >= 0)) return [];
@@ -85,23 +85,27 @@ var FatedTacticalTavern = (() => {
   }
   var coords = ({ x, y, z }) => ({ x, y, z });
   function unwind(last) {
-    const path = [];
-    for (let step = last; step.previous; step = step.previous) path.push(coords(step));
-    return path.reverse();
+    const path2 = [];
+    for (let step = last; step.previous; step = step.previous) path2.push(coords(step));
+    return path2.reverse();
   }
-  function movementOptions(state, unit, maxSteps = Infinity, options) {
-    return search(state, unit, maxSteps, options).map((cell) => ({ ...coords(cell), cost: cell.cost, path: unwind(cell) }));
+  function movementOptions(state, unit, maxSteps2 = Infinity, options) {
+    return search(state, unit, maxSteps2, options).map((cell) => ({ ...coords(cell), cost: cell.cost, path: unwind(cell) }));
+  }
+  function findPath(state, unit, target2, maxSteps2 = Infinity, options) {
+    const [last] = search(state, unit, maxSteps2, options, target2);
+    return last ? unwind(last) : null;
   }
   function supercoverLine(from, to) {
     if (![from.x, from.y, to.x, to.y].every(Number.isSafeInteger)) return [];
     let { x, y } = from;
     const dx = Math.abs(to.x - x), dy = Math.abs(to.y - y);
     const sx = Math.sign(to.x - x), sy = Math.sign(to.y - y);
-    const cells = [{ x, y }];
+    const cells2 = [{ x, y }];
     for (let ix = 0, iy = 0; ix < dx || iy < dy; ) {
       const nextX = (2 * ix + 1) * dy, nextY = (2 * iy + 1) * dx;
       if (nextX === nextY) {
-        cells.push({ x: x + sx, y }, { x, y: y + sy });
+        cells2.push({ x: x + sx, y }, { x, y: y + sy });
         x += sx;
         y += sy;
         ix++;
@@ -113,13 +117,13 @@ var FatedTacticalTavern = (() => {
         y += sy;
         iy++;
       }
-      cells.push({ x, y });
+      cells2.push({ x, y });
     }
-    return cells;
+    return cells2;
   }
   function hasLOS(state, from, to) {
     if (!isGround(state, from) || !isGround(state, to)) return false;
-    return supercoverLine(from, to).every((at) => isGround(state, at));
+    return supercoverLine(from, to).every((at2) => isGround(state, at2));
   }
   function aoeCells(state, origin, target2, options = {}) {
     const {
@@ -129,10 +133,10 @@ var FatedTacticalTavern = (() => {
       angle = shape2 === "fan" ? 100 : 60,
       innerRadius = 0,
       facing = origin.facing,
-      range = distance3D(state, origin, target2)
+      range: range2 = distance3D(state, origin, target2)
     } = options;
-    const limitAt = typeof range === "function" ? range : () => range;
-    const inRange = (at) => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
+    const limitAt = typeof range2 === "function" ? range2 : () => range2;
+    const inRange = (at2) => distance3D(state, origin, at2) <= limitAt(at2) + EPSILON;
     if (!hasLOS(state, origin, target2) || !inRange(target2)) return [];
     if (shape2 === "single") return [{ x: target2.x, y: target2.y, z: elevation(state, target2) }];
     const [dx, dy] = same(origin, target2) ? facing ?? [1, 0] : [target2.x - origin.x, target2.y - origin.y];
@@ -141,17 +145,17 @@ var FatedTacticalTavern = (() => {
     const minCosine = Math.cos(Math.max(0, Math.min(360, angle)) * Math.PI / 360);
     const result = [];
     state.grid.forEach((row, y) => row.forEach((cell, x) => {
-      const at = { x, y, z: cell.z };
+      const at2 = { x, y, z: cell.z };
       if (shape2 === "circle" || shape2 === "ring") {
-        const distance2 = distance3D(state, target2, at);
-        if (distance2 <= radius + EPSILON && (shape2 !== "ring" || !same(target2, at) && distance2 >= innerRadius - EPSILON) && hasLOS(state, target2, at)) result.push(at);
+        const distance2 = distance3D(state, target2, at2);
+        if (distance2 <= radius + EPSILON && (shape2 !== "ring" || !same(target2, at2) && distance2 >= innerRadius - EPSILON) && hasLOS(state, target2, at2)) result.push(at2);
         return;
       }
-      if (same(origin, at) || (options.radius == null ? !inRange(at) : distance3D(state, origin, at) > radius + EPSILON)) return;
+      if (same(origin, at2) || (options.radius == null ? !inRange(at2) : distance3D(state, origin, at2) > radius + EPSILON)) return;
       const vx = x - origin.x, vy = y - origin.y;
       const forward = (vx * dx + vy * dy) / aimLength;
       const inside = shape2 === "line" ? forward > 0 && Math.abs(vx * dy - vy * dx) / aimLength <= width + EPSILON : forward / Math.hypot(vx, vy) >= minCosine - EPSILON;
-      if (inside && hasLOS(state, origin, at)) result.push(at);
+      if (inside && hasLOS(state, origin, at2)) result.push(at2);
     }));
     return result;
   }
@@ -163,10 +167,10 @@ var FatedTacticalTavern = (() => {
     const covers = table(state.covers).filter((cover) => {
       if (cover.hp <= 0 || !(cover.cover > 0) || same(cover, from) || same(cover, to) || !isGround(state, cover)) return false;
       const cx = cover.x - to.x, cy = cover.y - to.y;
-      const fraction2 = (cx * dx + cy * dy) / squaredLength;
-      if (fraction2 <= 0 || fraction2 >= 1) return false;
+      const fraction = (cx * dx + cy * dy) / squaredLength;
+      if (fraction <= 0 || fraction >= 1) return false;
       const z = elevation(state, cover);
-      if (sourceZ - z >= 2 || targetZ - z >= 2 || targetZ + (sourceZ - targetZ) * fraction2 - z >= 2) return false;
+      if (sourceZ - z >= 2 || targetZ - z >= 2 || targetZ + (sourceZ - targetZ) * fraction - z >= 2) return false;
       const adjacentIncoming = gridDistance(cover, to) === 1 && (!cx || Math.sign(cx) === Math.sign(dx)) && (!cy || Math.sign(cy) === Math.sign(dy));
       return ray.has(key(cover)) || adjacentIncoming && hasLOS(state, cover, to);
     });
@@ -191,1005 +195,6 @@ var FatedTacticalTavern = (() => {
     return table(state.units).some((ally) => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
   }
 
-  // src/core/formula.js
-  var variables = /* @__PURE__ */ new Map();
-  var families = [];
-  var register = (name, description, read) => variables.set(name, { description, read });
-  var family = (name, pattern, description, read) => families.push({ name, pattern, description, read });
-  var unitFields = {
-    str: "\u529B\u91CF",
-    agi: "\u654F\u6377",
-    con: "\u4F53\u8D28",
-    int: "\u667A\u529B",
-    spi: "\u7CBE\u795E",
-    tier: "\u5C42\u7EA7",
-    hp: "\u5F53\u524D\u751F\u547D",
-    maxHp: "\u751F\u547D\u4E0A\u9650",
-    mp: "\u5F53\u524D\u6CD5\u529B",
-    maxMp: "\u6CD5\u529B\u4E0A\u9650",
-    sp: "\u5F53\u524D\u4F53\u529B",
-    maxSp: "\u4F53\u529B\u4E0A\u9650"
-  };
-  var scopes = { self: "\u6548\u679C\u4E3B\u4F53", attacker: "\u4E8B\u4EF6\u653B\u51FB\u8005", target: "\u5F53\u524D\u76EE\u6807" };
-  for (const [scope, label] of Object.entries(scopes)) {
-    for (const [field, meaning] of Object.entries(unitFields)) {
-      register(`${scope}.${field}`, `${label}\u7684${meaning}`, (context) => context[scope]?.stats?.[field] ?? context[scope]?.[field]);
-    }
-    register(`${scope}.hpRatio`, `${label}\u7684\u751F\u547D\u6BD4\u4F8B\uFF080\u20261\uFF09`, (context) => {
-      const unit = context[scope];
-      return unit?.maxHp ? unit.hp / unit.maxHp : 0;
-    });
-    family(
-      `${scope}.resource.<id>`,
-      new RegExp(`^${scope}\\.resource\\.([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})$`),
-      `${label}\u7684\u8D44\u6E90\u4F59\u989D\uFF0C\u4F7F\u7528\u8D44\u6E90 ID`,
-      (context, id3) => context.resource(context[scope], id3)
-    );
-    family(
-      `${scope}.stacks.<id>`,
-      new RegExp(`^${scope}\\.stacks\\.([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})$`),
-      `${label}\u7684\u72B6\u6001\u5C42\u6570\uFF0C\u4F7F\u7528\u72B6\u6001 ID`,
-      (context, id3) => {
-        const statuses = context[scope]?.statuses;
-        return statuses && Object.hasOwn(statuses, id3) ? statuses[id3].stacks : 0;
-      }
-    );
-  }
-  register("distance", "\u6548\u679C\u4E3B\u4F53\u5230\u5F53\u524D\u76EE\u6807\u7684\u4E09\u7EF4\u8DDD\u79BB", (context) => context.distance());
-  register("round", "\u5F53\u524D\u8F6E\u6570", (context) => context.round);
-  register("turn", "\u5F53\u524D\u884C\u52A8\u8005\u5728\u5148\u653B\u987A\u5E8F\u4E2D\u7684\u7D22\u5F15\uFF08\u4ECE 0 \u5F00\u59CB\uFF09", (context) => context.turn);
-  register("weapon.attack", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u653B\u51FB\u529B", (context) => context.weapon()?.attack);
-  register("weapon.range", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u57FA\u7840\u5C04\u7A0B", (context) => context.weapon()?.range);
-  for (const [name, description] of Object.entries({
-    power: "\u6280\u80FD\u5A01\u529B",
-    dealt: "\u672C\u6B21\u5B9E\u9645\u6263\u9664\u7684 HP",
-    absorbed: "\u672C\u6B21\u88AB\u62A4\u76FE\u5438\u6536\u7684\u4F24\u5BB3",
-    previous: "\u5F53\u524D\u6548\u679C\u94FE\u4E0A\u4E00\u6B65\u5B9E\u9645\u6570\u503C",
-    healing: "\u672C\u6B21\u6CBB\u7597\u91CF"
-  })) register(`event.${name}`, description, (context) => context.event[name]);
-  var formulaReference = [...variables.entries()].map(([name, { description }]) => `${name}\uFF08${description}\uFF09`).concat(families.map(({ name, description }) => `${name}\uFF08${description}\uFF09`)).join("\uFF0C");
-  function resolveVariable(name) {
-    const exact = variables.get(name);
-    if (exact) return exact.read;
-    for (const { pattern, read } of families) {
-      const match = pattern.exec(name);
-      if (match) return (context) => read(context, match[1]);
-    }
-    return null;
-  }
-  var cache = /* @__PURE__ */ new Map();
-  function compile(text4) {
-    if (typeof text4 !== "string" || !text4.length || text4.length > 200) return null;
-    if (cache.has(text4)) return cache.get(text4);
-    const tokens = text4.match(/[A-Za-z]+\.(?:resource|stacks)\.[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}|\d+(?:\.\d+)?|[A-Za-z_][\w.]*|[^\s]/g) ?? [];
-    if (tokens.length > 80) return null;
-    const dependencies = /* @__PURE__ */ new Set();
-    let index = 0;
-    function atom() {
-      const token = tokens[index++];
-      if (token === "-") return ["neg", atom()];
-      if (token === "+") return atom();
-      if (token === "(") {
-        const expression3 = sum();
-        if (tokens[index++] !== ")") throw new SyntaxError("Expected closing parenthesis");
-        return expression3;
-      }
-      if (token && /^\d/.test(token) && Number.isFinite(+token)) return +token;
-      const name = token;
-      const read = resolveVariable(name);
-      if (!read) throw new SyntaxError(`Unknown formula operand: ${token}`);
-      dependencies.add(name);
-      return read;
-    }
-    function product() {
-      let left = atom();
-      while (["*", "/"].includes(tokens[index])) left = [tokens[index++], left, atom()];
-      return left;
-    }
-    function sum() {
-      let left = product();
-      while (["+", "-"].includes(tokens[index])) left = [tokens[index++], left, product()];
-      return left;
-    }
-    let compiled = null;
-    try {
-      const tree = sum();
-      if (index === tokens.length) compiled = { tree, dependencies };
-    } catch (error2) {
-      if (!(error2 instanceof SyntaxError)) throw error2;
-    }
-    if (cache.size >= 512) cache.clear();
-    cache.set(text4, compiled);
-    return compiled;
-  }
-  var validFormula = (text4) => compile(text4) !== null;
-  var formulaUses = (text4, name) => compile(text4)?.dependencies.has(name) ?? false;
-  function evaluateFormula(text4, context) {
-    function visit(tree) {
-      if (typeof tree === "number") return tree;
-      if (typeof tree === "function") return tree(context) ?? 0;
-      const [op, left, right] = tree;
-      const a = visit(left);
-      if (op === "neg") return -a;
-      const b = visit(right);
-      const result = op === "+" ? a + b : op === "-" ? a - b : op === "*" ? a * b : b === 0 ? NaN : a / b;
-      return Number.isFinite(result) ? result : NaN;
-    }
-    const compiled = compile(text4);
-    const value = compiled ? visit(compiled.tree) : NaN;
-    return Number.isFinite(value) ? value : null;
-  }
-
-  // src/core/effect_schema.js
-  var enumOf = (...values4) => ({ enum: values4 });
-  var number = (minimum, maximum, type = "number") => ({ type, minimum, maximum });
-  var integer = (min, max) => number(min, max, "integer");
-  var object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
-  var array = (items, maxItems, minItems = 1) => ({ type: "array", items, minItems, maxItems });
-  var union = (...oneOf) => ({ oneOf });
-  var ref = (name) => ({ $ref: `#/$defs/${name}` });
-  var string = { type: "string", minLength: 1, maxLength: 100 };
-  var id = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" };
-  var fraction = number(0, 1);
-  var amount = number(0, 1e9);
-  var turns = integer(1, 100);
-  var damageType = enumOf("physical", "energy", "mental", "true");
-  var scaling = {
-    perLevel: number(0, 10),
-    levelScaling: union(object({ perLevel: number(0, 10) }, ["perLevel"]), object({ min: number(0, 10), max: number(0, 10) }, ["min", "max"])),
-    resourceScale: object({ resource: id, perUnit: number(0, 1e6), unitSize: number(1, 1e9) }, ["resource", "perUnit"])
-  };
-  var magnitudes = { amount, percent: fraction, percentOfDamageDealt: fraction, percentOfPrevious: fraction };
-  var target = enumOf("self", "hitTarget", "attacker", "enemiesInRadius", "alliesInRadius", "corpse", "killedUnit");
-  var stats = enumOf("str", "agi", "con", "int", "spi", "accuracy", "dodge", "defense", "initiative", "armor", "armorPierce", "damageReduction", "damageReductionFlat", "damage", "healing", "skillPower");
-  var compare = enumOf("<", "<=", "=", ">=", ">");
-  var condition = (type, properties, required = Object.keys(properties)) => object({ type: { const: type }, ...properties }, ["type", ...required]);
-  var comparison = (type, value) => condition(type, { op: compare, value });
-  var tags = ["targetHasCategory", "targetCreatureType", "selfHasStatus", "targetHasStatus", "weaponType", "skillSchool", "actionType", "damageType", "hitRating", "selfHasTag", "targetHasTag"];
-  var bool = { type: "boolean" };
-  var nodeNotes = {
-    damage: "\u5BF9\u76EE\u6807\u9020\u6210\u4E00\u6B21\u4F24\u5BB3\uFF1B\u4EC5\u6B64\u6BB5\u4E0D\u80FD\u81F4\u6B7B\u65F6\u5199 lethal:false\uFF0C\u4E0D\u8981\u7528\u964D\u4F4E\u4F24\u5BB3\u500D\u7387\u4EE3\u66FF\u3002",
-    heal: "\u6062\u590D\u76EE\u6807\u751F\u547D\u5E76\u89E6\u53D1\u6CBB\u7597\u4E8B\u4EF6\uFF1B\u8981\u6062\u590D\u6CD5\u529B\u6216\u4F53\u529B\u8BF7\u7528 restoreResource\u3002",
-    changeAltitude: "\u6539\u53D8\u65BD\u672F\u8005\u79BB\u5730\u9AD8\u5EA6\uFF0C\u9ED8\u8BA4\u5347\u9AD8 3\u3002delta \u4E3A\u6709\u7B26\u53F7\u9AD8\u5EA6\u5DEE\uFF0C0 \u79BB\u5730\u9AD8\u5EA6\u8868\u793A\u843D\u5730\uFF1Bland:true \u53EF\u76F4\u63A5\u843D\u5730\u3002\u4FDD\u6301\u5230\u518D\u6B21\u6539\u53D8\u9AD8\u5EA6\uFF0C\u9002\u7528\u4E8E\u98DE\u884C\u548C\u60AC\u6D6E\u3002",
-    modifyTerrain: "\u6539\u53D8\u533A\u57DF\u5185\u683C\u5B50\u7684\u9AD8\u5EA6\uFF1Araise/lower \u662F\u76F8\u5BF9\u53D8\u5316\uFF0Cset \u662F\u7EDD\u5BF9\u9AD8\u5EA6\uFF1B\u4E0D\u6539\u53D8\u5730\u9762\u7C7B\u578B\u3002",
-    setTerrainKind: "\u628A\u533A\u57DF\u6539\u4E3A\u5730\u9762\u3001\u5899\u6216\u5761\uFF1B\u9020\u5899\u8DF3\u8FC7\u5DF2\u5360\u7528\u683C\uFF0C\u4E34\u65F6\u5899\u7528 remainingTurns \u8BBE\u7F6E\u65F6\u9650\u3002",
-    addCover: "\u5728\u53EF\u7528\u683C\u751F\u6210\u6709\u8010\u4E45\u7684\u63A9\u4F53\uFF1B\u8981\u5F7B\u5E95\u963B\u65AD\u89C6\u7EBF\u8BF7\u6539\u7528\u5899\u3002",
-    restoreResource: "\u5411\u76EE\u6807\u8D44\u6E90\u6C60\u8FD4\u8FD8\u8D44\u6E90\uFF1B\u652F\u6301\u6309\u65BD\u653E\u8D39\u7528\u8FD4\u8FD8\uFF0C\u5E76\u53D7\u7981\u6B62\u6062\u590D\u6548\u679C\u9650\u5236\u3002",
-    drainResource: "\u4ECE\u76EE\u6807\u8D44\u6E90\u6C60\u6263\u8D39\uFF1B\u5FC5\u987B\u4ED8\u8DB3\u624D\u7EE7\u7EED\u65F6\u7528 requireFull\u3002",
-    produceResource: "\u4EA7\u751F\u6307\u5B9A\u8D44\u6E90\uFF1B\u8981\u5B9A\u4E49\u88C5\u5907\u5B9E\u4F8B\u8BA1\u6570\u5668\uFF0C\u5728 passive/self \u4E2D\u58F0\u660E cap \u548C initial\u3002",
-    grantStatus: "\u65BD\u52A0\u5DF2\u6709\u72B6\u6001\u6A21\u677F\uFF1BstatusId \u662F\u6A21\u677F ID \u800C\u975E\u663E\u793A\u540D\uFF0C\u81EA\u5B9A\u4E49\u72B6\u6001\u8981\u5148\u5EFA\u6A21\u677F\u3002",
-    removeStatus: "\u89E3\u9664\u72B6\u6001\uFF0C\u6309 statusId \u6216 category \u4E8C\u9009\u4E00\uFF1B\u4E0D\u80FD\u6E05\u9664\u6C38\u4E45\u72B6\u6001\u3002",
-    modifyStat: "\u8C03\u6574\u5C5E\u6027\u6570\u503C\uFF1B\u88AB\u52A8\u7528\u4E8E\u5E38\u9A7B\u4FEE\u6B63\uFF0C\u89E6\u53D1\u5F0F\u7528\u4E8E\u6709\u671F\u9650\u7684\u4FEE\u6B63\u3002",
-    modifyDamageBase: "\u88AB\u52A8\uFF1A\u66FF\u6362\u653B\u51FB\u8D77\u4F24\uFF0C\u4E0D\u662F\u989D\u5916\u9020\u6210\u4E00\u6BB5\u4F24\u5BB3\u3002",
-    modifyCheck: "\u88AB\u52A8\uFF1A\u7ED9\u6307\u5B9A\u68C0\u5B9A\u52A0\u503C\uFF1B\u8981\u6539\u53D8\u57FA\u7840\u5C5E\u6027\u7528 modifyStat\u3002",
-    forceOutcome: "\u88AB\u52A8\uFF1A\u8BA9\u5E26\u4F24\u5BB3\u7684\u4E3B\u51FB\u5FC5\u5B9A\u547D\u4E2D\u6216\u66B4\u51FB\uFF0C\u4E0D\u5355\u72EC\u9020\u6210\u4F24\u5BB3\u3002",
-    upgradeHitTier: "\u88AB\u52A8\uFF1A\u5C06\u5DF2\u7ECF\u547D\u4E2D\u7684\u8BC4\u7EA7\u63D0\u5347\u4E00\u6863\uFF0C\u4E0D\u628A\u672A\u547D\u4E2D\u53D8\u6210\u547D\u4E2D\u3002",
-    multiplyDamage: "\u8C03\u6574\u4F24\u5BB3\u500D\u7387\uFF1Bfactor \u662F\u603B\u7CFB\u6570\uFF0C\u589E\u4F24 12% \u5199 1.12\u3002",
-    knockback: "\u5C06\u76EE\u6807\u9010\u683C\u63A8\u79BB\u65BD\u672F\u8005\uFF1B\u9047\u963B\u65F6\u7ED3\u7B97\u78B0\u649E\u4F24\u5BB3\u548C\u7729\u6655\u3002",
-    teleportBackstab: "\u79FB\u5230\u76EE\u6807\u80CC\u540E\u7684\u53EF\u7528\u683C\u8FDB\u884C\u80CC\u523A\uFF0C\u4E0D\u662F\u4EFB\u610F\u5750\u6807\u4F20\u9001\u3002",
-    shield: "\u4E3A\u76EE\u6807\u6DFB\u52A0\u9650\u65F6\u62A4\u76FE\u5438\u6536\u4F24\u5BB3\uFF1Bstack \u7528\u4E8E\u53E0\u52A0\u73B0\u6709\u76FE\u91CF\u3002",
-    execute: "\u6309\u5269\u4F59\u751F\u547D\u6BD4\u4F8B\u5224\u65AD\u65A9\u6740\uFF1Bstrict \u8868\u793A\u4E25\u683C\u4F4E\u4E8E\u9608\u503C\uFF0C\u4ECD\u53D7\u4FDD\u547D\u89C4\u5219\u9650\u5236\u3002",
-    summon: "\u514B\u9686\u5DF2\u6709\u539F\u578B\uFF1BtemplateId \u6307\u5411 summonTemplates \u6216\u573A\u4E0A\u5355\u4F4D\uFF0CstatScale \u7F29\u653E\u9762\u677F\uFF0C\u4E0D\u7EE7\u627F\u88C5\u5907\u3002\u6CA1\u6709\u539F\u578B\u7528 spawnUnit\u3002",
-    spawnUnit: "\u65E0\u9700\u539F\u578B\uFF0C\u6309 name \u751F\u6210\u53CB\u65B9\u68CB\u5B50\uFF1B\u901A\u5E38\u7701\u7565\u4E94\u7EF4\u4E0E\u8D44\u6E90\uFF0C\u7531\u65BD\u672F\u8005\u9884\u7B97\u63A8\u7B97\uFF0Ctier \u4E0D\u9AD8\u4E8E\u65BD\u672F\u8005\u3002skills \u586B state.skills \u7684 ID\uFF0C\u88C5\u5907\u69FD\u586B state.equipment \u6A21\u677F ID\uFF08\u4E0D\u662F\u5B9E\u4F8B ID\uFF09\uFF0C\u6BCF\u53EA\u72EC\u7ACB\u94F8\u88C5\u3002",
-    raiseDead: "\u6D88\u8017\u672A\u4F7F\u7528\u7684\u5C38\u4F53\u751F\u6210\u4EA1\u7075\uFF1B\u65E0\u5C38\u4F53\u7684\u53EC\u5524\u4E0D\u8981\u7528\u6B64\u8282\u70B9\u3002",
-    addItem: "\u589E\u52A0\u5355\u4F4D\u5E93\u5B58\u4E2D\u7684\u7269\u54C1\u6570\u91CF\uFF0C\u4E0D\u94F8\u9020\u6216\u88C5\u5907 state.items \u5B9E\u4F8B\u3002",
-    chainEffect: "\u4F9D\u6B21\u6267\u884C\u5B50\u8282\u70B9\uFF1B\u524D\u4E00\u6B65\u6CA1\u6709\u751F\u6548\u5C31\u5E94\u505C\u6B62\u65F6\u5199 stopOnFailure:true\u3002",
-    procEffect: "\u901A\u8FC7 ref \u8C03\u7528\u5DF2\u6709\u8868\u8FBE\u5F0F\u7684 ID\uFF0C\u4ECD\u9700\u901A\u8FC7\u5176\u89E6\u53D1\u95E8\u69DB\uFF1B\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002"
-  };
-  var formulaFields = {
-    damage: ["amount", "flat", "percent", "percentOfDamageDealt", "percentOfPrevious", "percentOfTargetMaxHp", "percentOfSelfMaxHp", "percentOfPower", "perLevel"],
-    heal: ["amount", "percent", "percentOfDamageDealt", "percentOfPrevious", "percentOfMaxHp", "perLevel"],
-    shield: ["amount", "percent", "percentOfDamageDealt", "percentOfPrevious", "percentOfHealing", "perLevel"],
-    restoreResource: ["amount", "percent", "percentOfPrevious", "percentPerCost", "perLevel"],
-    drainResource: ["amount", "percent", "percentOfPrevious", "percentPerCost", "perLevel"],
-    produceResource: ["amount", "percent", "perLevel"],
-    multiplyDamage: ["factor"],
-    modifyStat: ["flat", "percent"],
-    modifyDamageBase: ["value"],
-    execute: ["threshold"]
-  };
-  var formulaBounds = /* @__PURE__ */ new Map();
-  var node = (kind, properties, required = []) => {
-    for (const key4 of formulaFields[kind] ?? []) {
-      if (!properties[key4]) continue;
-      formulaBounds.set(`${kind}.${key4}`, properties[key4]);
-      properties[key4] = union(properties[key4], ref("formula"));
-    }
-    if (!Object.hasOwn(nodeNotes, kind) || !nodeNotes[kind].trim()) throw new Error(`DSL \u8282\u70B9 ${kind} \u7F3A\u5C11\u7528\u6CD5\u8BF4\u660E`);
-    return { ...object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref("condition"), radius: number(0, 15), ...properties }, ["kind", ...required]), description: nodeNotes[kind] };
-  };
-  var coord = integer(0, 9);
-  var point = object({ x: coord, y: coord }, ["x", "y"]);
-  var anchor = enumOf("self", "hitTarget");
-  var terrainDuration = { area: ref("terrainArea"), remainingTurns: turns, persistent: bool };
-  var resource = { resource: id, ...magnitudes, ...scaling };
-  var attribute = enumOf("str", "agi", "con", "int", "spi");
-  var events = ["on_attack", "on_hit", "on_damaged", "on_kill", "on_death", "on_turn_start", "on_turn_end", "on_skill_cast", "on_equip", "on_heal", "on_ally_death"];
-  var expireRule = union(
-    object({ trigger: enumOf("on_damaged"), damageType: enumOf("any", "direct", "indirect"), exceptSource: enumOf("self") }, ["trigger"]),
-    object({ trigger: enumOf("on_struck", ...events.filter((event) => event !== "on_damaged")), exceptSource: enumOf("self") }, ["trigger"])
-  );
-  var checkKeys = ["iniBonus", "dodgeBonus", "stealthBonus", "accuracyBonus", "initiativeAgility", "dodgeAgility", "coreBonus", "highGroundRange", "highGroundAccuracy", "advantage"];
-  var modifiers = { type: "object", additionalProperties: union(number(-1e9, 1e9), string, { type: "boolean" }) };
-  var effectSchema = {
-    $schema: "https://json-schema.org/draft/2020-12/schema",
-    title: "Fated Tactical Game effect expression",
-    $ref: "#/$defs/expression",
-    $defs: {
-      terrainArea: union(
-        object({ cells: array(point, 100) }, ["cells"]),
-        object({ rect: object({ x1: coord, y1: coord, x2: coord, y2: coord }, ["x1", "y1", "x2", "y2"]) }, ["rect"]),
-        object({ center: union(point, anchor), radius: number(0, 15), follow: { const: false } }, ["center", "radius"]),
-        object({ center: anchor, radius: number(0, 15), follow: { const: true } }, ["center", "radius", "follow"])
-      ),
-      saveDC: union(integer(1, 50), object({
-        base: number(-1e9, 1e9),
-        scaleBy: object({ stat: attribute, perUnit: number(-1e9, 1e9) }, ["stat", "perUnit"]),
-        min: number(1, 1e9),
-        max: number(1, 1e9)
-      }, ["base", "scaleBy"])),
-      formula: { type: "string", minLength: 1, maxLength: 200, format: "combat-formula" },
-      expireOn: union(expireRule, array(expireRule, 12)),
-      condition: union(
-        array(ref("condition"), 12),
-        ...["and", "or", "not"].map((type) => condition(type, { conditions: array(ref("condition"), type === "not" ? 1 : 12) })),
-        condition("compare", { left: union(number(-1e9, 1e9), ref("formula")), op: compare, right: union(number(-1e9, 1e9), ref("formula")) }),
-        ...["selfHp", "targetHp"].map((type) => comparison(type, fraction)),
-        comparison("distance", number(0, 20)),
-        comparison("targetLevel", enumOf("self")),
-        ...tags.map((type) => condition(type, { value: string })),
-        condition("timeOfDay", { value: enumOf("dawn", "day", "dusk", "night") }),
-        ...["duel", "usesLeft", "intercepting", "melee", "arrow", "backstab", "critical", "opportunityAttack", "saved", "enemy", "reaction", "highGround"].map((type) => condition(type, { value: { type: "boolean" } }, [])),
-        condition("selfStatusModifier", { key: string, value: bool }),
-        condition("resourceAtLeast", { resource: id, amount })
-      ),
-      expression: object({
-        id,
-        label: string,
-        trigger: enumOf("passive", ...events, "active"),
-        condition: ref("condition"),
-        roll: union(
-          object({ dice: { const: "d20" }, gte: integer(1, 20) }, ["dice", "gte"]),
-          object({ chance: fraction }, ["chance"]),
-          object({ save: union(attribute, array(attribute, 5, 2)), dc: ref("saveDC"), mode: enumOf("all", "any"), chance: fraction }, ["save", "dc"]),
-          object({ contest: object({ attacker: attribute, defender: attribute, dc: ref("saveDC") }, ["attacker", "defender", "dc"]), chance: fraction }, ["contest"])
-        ),
-        target,
-        effects: array(ref("node"), 12),
-        params: object({
-          ...scaling,
-          radius: number(0, 15),
-          turns,
-          stacks: integer(1, 10),
-          amount,
-          percent: fraction,
-          usesPerBattle: union(integer(1, 1e4), { type: "null" }),
-          cooldown: turns,
-          ap: integer(0, 2),
-          mp: integer(0, 25e3),
-          sp: integer(0, 25e3),
-          slot: enumOf("attack", "action"),
-          range: integer(0, 15),
-          source: enumOf("weapon")
-        })
-      }, ["id", "trigger", "target", "effects"]),
-      node: union(
-        node("damage", { ...magnitudes, ...scaling, lethal: { ...bool, default: true }, resourceMultiplier: id, percentOfTargetMaxHp: fraction, percentOfSelfMaxHp: fraction, percentOfPower: number(0, 10), damageType, ignoreArmor: { type: "boolean" }, excludeHitTarget: bool, flat: amount, strikeBonus: bool, inheritDamageType: bool }),
-        node("modifyTerrain", { ...terrainDuration, terrain: enumOf("raise", "lower"), amount: integer(0, 12) }, ["area", "terrain", "amount"]),
-        node("modifyTerrain", { ...terrainDuration, terrain: enumOf("set"), amount: integer(-4, 8) }, ["area", "terrain", "amount"]),
-        node("setTerrainKind", { ...terrainDuration, terrainKind: enumOf("floor", "wall", "slope") }, ["area", "terrainKind"]),
-        node("addCover", { ...terrainDuration, hp: integer(1, 1e9) }, ["area", "hp"]),
-        node("heal", { ...magnitudes, ...scaling, percentOfMaxHp: fraction }),
-        ...["restoreResource", "drainResource", "produceResource"].map((kind) => node(kind, { ...resource, minimumRemaining: amount, requireFull: bool, local: bool, ...kind === "produceResource" ? { cap: integer(1, 1e9), initial: integer(0, 1e9), reloadable: bool, targetTierBase: integer(1, 8) } : {}, percentPerCost: fraction }, ["resource"])),
-        node("grantStatus", { statusId: id, turns, stacks: integer(1, 10), modifiers, amount, expireOn: ref("expireOn"), durationType: enumOf("battle_turns", "until_removed", "persistent") }, ["statusId"]),
-        node("removeStatus", { statusId: id, category: enumOf("all_negative", "buff", "debuff", "control", "dot", "hot", "shield") }),
-        node("modifyStat", { stat: stats, flat: number(-1e9, 1e9), percent: number(-1, 10), duration: turns, damageType, levelScaling: scaling.levelScaling }, ["stat"]),
-        node("modifyDamageBase", { value: amount, ignoreAttributes: bool, unscaled: bool, damageType }, ["value"]),
-        node("modifyCheck", Object.fromEntries(checkKeys.map((key4) => [key4, number(-30, 30)]))),
-        node("forceOutcome", { mode: enumOf("hit", "crit") }, ["mode"]),
-        node("upgradeHitTier", {}),
-        node("changeAltitude", { delta: integer(-12, 12), land: { type: "boolean" } }),
-        node("knockback", { distance: integer(1, 5), collisionDamage: integer(0, 80) }),
-        node("teleportBackstab", { bonusMultiplier: number(0, 4) }),
-        node("shield", { ...magnitudes, ...scaling, turns, stack: bool, percentOfHealing: number(0, 4) }),
-        node("spawnUnit", {
-          name: string,
-          count: integer(1, 10),
-          tier: integer(1, 7),
-          attribute,
-          stats: object(Object.fromEntries(attribute.enum.map((k) => [k, integer(0, 20)])), attribute.enum),
-          maxHp: integer(1, 1e9),
-          maxMp: integer(0, 1e9),
-          maxSp: integer(0, 1e9),
-          armor: integer(0, 1e6),
-          size: integer(1, 5),
-          bodyLengthM: number(0.01, 1e9),
-          mc: integer(1, 64),
-          move: integer(1, 10),
-          skills: array(id, 32, 0),
-          gear: array(id, 12, 0),
-          ...Object.fromEntries(["mainHand", "offHand", "shield"].map((k) => [k, union(id, { type: "null" })]))
-        }, ["name"]),
-        node("summon", { templateId: id, statScale: number(0.01, 1), count: integer(1, 10) }, ["templateId"]),
-        node("raiseDead", { statScale: number(0.01, 1) }),
-        node("addItem", { itemId: id, count: integer(1, 1e4) }, ["itemId"]),
-        node("execute", { threshold: fraction, strict: bool, requiresPool: id }, ["threshold"]),
-        node("multiplyDamage", { factor: number(0, 10), damageType, additive: bool, resourceScale: scaling.resourceScale, local: bool }),
-        node("chainEffect", { effects: array(ref("node"), 12), stopOnFailure: bool }, ["effects"]),
-        node("procEffect", { ref: id }, ["ref"])
-      )
-    }
-  };
-  function matches(value, schema, depth = 0) {
-    if (depth > 24) return false;
-    const next = (v, s) => matches(v, s, depth + 1);
-    if (schema.$ref) return next(value, effectSchema.$defs[schema.$ref.split("/").at(-1)]);
-    if (schema.oneOf) return schema.oneOf.filter((s) => next(value, s)).length === 1;
-    if (Object.hasOwn(schema, "const")) return value === schema.const;
-    if (schema.enum) return schema.enum.includes(value);
-    switch (schema.type) {
-      case "object":
-        return value && Object.getPrototypeOf(value) === Object.prototype && schema.required?.every((key4) => Object.hasOwn(value, key4)) !== false && Object.entries(value).every(([key4, item]) => !Object.hasOwn(Object.prototype, key4) && key4 !== "prototype" && (Object.hasOwn(schema.properties ?? {}, key4) ? next(item, schema.properties[key4]) : schema.additionalProperties && next(item, schema.additionalProperties)));
-      case "array":
-        return Array.isArray(value) && value.length >= schema.minItems && value.length <= schema.maxItems && Array.from(value).every((item) => next(item, schema.items));
-      case "string":
-        if (schema.format === "combat-formula") return validFormula(value);
-        return typeof value === "string" && value.trim().length >= (schema.minLength ?? 1) && value.length <= (schema.maxLength ?? 100) && (!schema.pattern || new RegExp(schema.pattern).test(value) && !Object.hasOwn(Object.prototype, value) && value !== "prototype");
-      case "integer":
-        if (!Number.isInteger(value)) return false;
-      // fall through
-      case "number":
-        return Number.isFinite(value) && value >= schema.minimum && value <= schema.maximum;
-      case "null":
-        return value === null;
-      default:
-        return typeof value === schema.type;
-    }
-  }
-  var isExpression = (effect) => effect != null && Object.hasOwn(effect, "trigger");
-  var orderedDC = (dc) => (dc?.min ?? 1) <= (dc?.max ?? 50);
-  var validSaveDC = (dc) => matches(dc, effectSchema.$defs.saveDC) && orderedDC(dc);
-  var validExpireOn = (value) => matches(value, effectSchema.$defs.expireOn);
-  var terrainKinds = ["modifyTerrain", "setTerrainKind", "addCover"];
-  var validTerrainNode = (node3) => terrainKinds.includes(node3?.kind) && matches(node3, effectSchema.$defs.node);
-  var validExpression = (effect) => matches(effect, effectSchema.$defs.expression) && orderedDC(effect.roll?.contest?.dc ?? effect.roll?.dc);
-  var effectNodes = function* (nodes, enabledOnly = false) {
-    for (const node3 of nodes) {
-      if (enabledOnly && node3.enabled === false) continue;
-      yield node3;
-      if (node3.kind === "chainEffect") yield* effectNodes(node3.effects, enabledOnly);
-    }
-  };
-
-  // src/core/effects.js
-  var levelScale = (ls, tier) => ls?.perLevel != null ? 1 + ls.perLevel * (tier - 1) : ls ? ls.min + (ls.max - ls.min) * (tier - 1) / 6 : 1;
-  var livingUnit = (unit) => unit && unit.hp > 0 && !unit.fled;
-  var own = (table4, key4) => Object.hasOwn(table4 ?? {}, key4) ? table4[key4] : void 0;
-  var values = (table4) => Object.values(table4 ?? {});
-  function legacyId(prefix, index) {
-    if (prefix.length <= 45) return `${prefix}-${index}`;
-    const hash2 = Array.from(prefix).reduce((sum, char) => Math.imul(sum ^ char.charCodeAt(0), 16777619), 2166136261);
-    return `${prefix.slice(0, 35)}-${(hash2 >>> 0).toString(36)}-${index}`;
-  }
-  var compare2 = (left, op, right) => ({ "<": left < right, "<=": left <= right, "=": left === right, ">=": left >= right, ">": left > right })[op];
-  var ratio = (unit) => unit?.hp / unit?.maxHp;
-  var corpses = (state) => values(state.units).filter((unit) => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
-  var expression = (id3, trigger, target2, effects2, extra = {}) => ({ id: id3, trigger, target: target2, effects: effects2, ...extra });
-  var equippedKey = (instance, expr) => `${instance.id}:${expr.id}`;
-  var resourceDefinitions = (template, enabledOnly = false) => (template?.effects ?? []).filter((e) => e.trigger === "passive" && e.target === "self").flatMap((e) => [...effectNodes(e.effects, enabledOnly)].filter((n) => n.kind === "produceResource" && n.cap != null));
-  var initialCounters = (template) => Object.fromEntries(resourceDefinitions(template).map((n) => [n.resource, n.initial ?? 0]));
-  var effectLabel = (expr) => expr.label ?? `${expr.trigger} \xB7 ${expr.effects.map((n) => n.label ?? n.kind).join(" / ")}`;
-  function adaptLegacyEffects(effects2, context, prefix = "legacy") {
-    return effects2.flatMap((e, i) => {
-      if (isExpression(e) || !e || typeof e !== "object") return [e];
-      const id3 = legacyId(prefix, i);
-      const fields3 = (...keys) => Object.fromEntries(keys.filter((k) => Object.hasOwn(e, k)).map((k) => [k, e[k]]));
-      const rule = (type, value = true) => ({ type, value });
-      const source = context === "equipment" ? { params: { source: "weapon" } } : {};
-      const unsaved = rule("saved", false);
-      const scope = e.scope === "arrow" ? rule("arrow") : e.scope ? rule("melee", e.scope === "melee") : null;
-      const passive = (nodes, extra) => expression(id3, "passive", "self", nodes, extra);
-      const hit = (nodes, extra = {}) => expression(id3, "on_hit", "hitTarget", nodes, { ...source, condition: unsaved, ...extra });
-      const status2 = { kind: "grantStatus", ...fields3("statusId", "turns", "stacks", "modifiers", "amount") };
-      const pool = (resource3, cap, extra) => ({ kind: "produceResource", resource: resource3, cap, ...extra });
-      const scoped = scope ? { condition: scope } : {};
-      switch (e.kind) {
-        case "status":
-          return hit([{
-            ...status2,
-            ...e.target === "self" ? { target: "self" } : {},
-            ...e.statusId === "stealth" && e.target !== "self" ? { condition: rule("enemy", false) } : {}
-          }, ...e.statusId === "stealth" && e.target !== "self" ? [{ ...status2, target: "self", condition: rule("enemy") }] : []]);
-        case "save_or_status":
-          return hit([status2], { roll: { ...e.contest ? { contest: e.contest } : { save: e.save, dc: e.saveDC, ...fields3("mode") }, ...fields3("chance") } });
-        case "fixed_attack":
-          return passive([{ kind: "modifyDamageBase", ...fields3("value", "ignoreAttributes") }], source);
-        case "fixed_damage":
-          return passive([{ kind: "modifyDamageBase", value: e.amount, damageType: e.damageType, unscaled: true }]);
-        case "bonus_damage":
-          return hit([{ kind: "damage", flat: e.amount, damageType: e.damageType, strikeBonus: true, label: "\u9644\u52A0\u4F24\u5BB3" }], { params: {}, ...scope ? { condition: scope } : { condition: rule("enemy") } });
-        case "check_bonus":
-          return passive([{ kind: "modifyCheck", ...Object.fromEntries(Object.entries(e).filter(([k]) => k !== "kind")) }]);
-        case "guaranteed_hit":
-        case "guaranteed_crit":
-          return passive([{ kind: "forceOutcome", mode: e.kind === "guaranteed_hit" ? "hit" : "crit" }], scoped);
-        case "hit_tier_up":
-          return passive([{ kind: "upgradeHitTier" }], scoped);
-        case "infinite_ammo":
-          return expression(id3, "on_equip", "self", [{ kind: "grantStatus", statusId: "infinite_ammo", durationType: "until_removed" }]);
-        case "on_hit_status":
-          return hit([status2], { params: {}, condition: [unsaved, rule("enemy"), ...scope ? [scope] : []] });
-        case "tier_growth":
-          return passive((e.stat === "attributes" ? ["str", "agi", "con", "int", "spi"] : ["damage"]).map((stat2) => ({ kind: "modifyStat", stat: stat2, percent: 1, levelScaling: e.value })), e.stat === "attack" ? source : {});
-        case "resource_pool":
-          return passive([pool(e.counterKey, e.capacity)]);
-        case "resource_scale":
-          return passive([{ kind: "multiplyDamage", additive: true, resourceScale: { resource: e.resource, perUnit: e.perUnit } }]);
-        case "resource_restore":
-          return expression(id3, "active", "self", ["hp", "mp", "sp"].map((resource3) => ({ kind: "restoreResource", resource: resource3, percentPerCost: e.perUnit })));
-        case "execute_threshold":
-          return expression(id3, "active", "hitTarget", [{ kind: "chainEffect", stopOnFailure: true, effects: [
-            { kind: "execute", threshold: e.threshold, strict: true, requiresPool: e.resource },
-            { kind: "produceResource", target: "self", resource: e.resource, targetTierBase: e.perTier }
-          ] }]);
-        case "kill_charge_weapon":
-          return [passive([pool(e.counterKey ?? "souls", e.maxStacks ?? 10), {
-            kind: "multiplyDamage",
-            local: true,
-            resourceScale: { resource: e.counterKey ?? "souls", perUnit: e.bonusPerStack ?? 0.5 }
-          }], source), expression(`${id3}-kill`, "on_kill", "self", [
-            { kind: "produceResource", resource: e.counterKey ?? "souls", amount: 1, local: true }
-          ], source)];
-        case "ammo":
-          return [
-            passive([
-              pool(e.counterKey ?? "ammo", e.capacity ?? 6, { initial: e.capacity ?? 6, reloadable: true }),
-              { kind: "modifyStat", stat: "armorPierce", flat: e.armorPierce ?? 0 },
-              { kind: "modifyCheck", highGroundRange: e.highGroundRange ?? 0, highGroundAccuracy: e.highGroundAccuracy ?? 0 }
-            ], source),
-            expression(`${id3}-spend`, "on_attack", "self", [{ kind: "drainResource", resource: e.counterKey ?? "ammo", local: true, amount: 1, requireFull: true }], {
-              ...source,
-              condition: { type: "not", conditions: [{ type: "selfStatusModifier", key: "infiniteAmmo", value: true }] }
-            })
-          ];
-        case "frost_thorns": {
-          const condition3 = [rule("melee"), rule("reaction", false), rule("enemy")];
-          return [
-            expression(id3, "on_damaged", "attacker", [{ kind: "damage", amount: e.damage ?? 3, label: "\u971C\u7EB9\u8346\u68D8" }], { condition: condition3 }),
-            expression(`${id3}-status`, "on_damaged", "attacker", [{ ...status2, statusId: status2.statusId ?? "chill" }], { condition: condition3, roll: { chance: e.chance ?? 0.4 }, label: "\u971C\u7EB9\u8346\u68D8" })
-          ];
-        }
-        case "backstab":
-          return [
-            passive([{ kind: "multiplyDamage", factor: 1 + (e.bonusMultiplier ?? 0.4) }, { kind: "modifyCheck", advantage: 1 }], { ...source, condition: rule("backstab") }),
-            expression(
-              `${id3}-hit`,
-              "on_hit",
-              "hitTarget",
-              [
-                { kind: "grantStatus", statusId: "bleed", stacks: e.bleedStacks ?? 1 },
-                { kind: "damage", amount: e.comboDamage ?? 0, inheritDamageType: true, label: "\u53CC\u751F\u8840\u7259\u8FDE\u51FB" }
-              ],
-              { ...source, condition: { type: "or", conditions: [rule("backstab"), rule("critical")] } }
-            )
-          ];
-        case "healing_shield":
-          return [
-            passive([{ kind: "modifyStat", stat: "healing", percent: e.healBonus ?? 0.25, condition: { type: "actionType", value: "skill" } }]),
-            expression(`${id3}-shield`, "on_heal", "hitTarget", [{ kind: "shield", percentOfHealing: e.shieldRatio ?? 0.5, stack: true }], { condition: rule("actionType", "skill") })
-          ];
-        case "opportunity_root":
-          return hit([{ kind: "grantStatus", statusId: "root", turns: 1 }], { condition: rule("opportunityAttack") });
-        case "knockback":
-          return hit([{ kind: "knockback", ...fields3("distance", "collisionDamage") }]);
-        case "teleport_backstab":
-          return expression(id3, "active", "hitTarget", [{ kind: "teleportBackstab", ...fields3("bonusMultiplier") }]);
-        case "cleanse":
-          return hit([{ kind: "removeStatus", category: "all_negative" }]);
-        default:
-          return [e];
-      }
-    });
-  }
-  function migrateStateEffects(state) {
-    for (const [table4, context] of [["equipment", "equipment"], ["skills", "skill"]]) {
-      for (const [id3, template] of Object.entries(state[table4] ?? {})) {
-        if (Array.isArray(template?.effects) && template.effects.some((e) => !isExpression(e))) {
-          template.effects = adaptLegacyEffects(template.effects, context, `legacy-${table4}-${id3}`);
-        }
-      }
-    }
-    return state;
-  }
-  function createEffectEngine(io) {
-    const expressions = (state, actor) => io.equipped(state, actor).flatMap(({ template, instance }) => {
-      if (template?.boundTo && template.boundTo !== actor.id) return [];
-      return (template?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: equippedKey(instance, expr), instance, sourceName: template.name }));
-    });
-    const skillExpressions2 = (skill2, id3) => (skill2?.effects ?? []).filter(isExpression).map((expr) => ({ expr, key: `skill-${id3}:${expr.id}`, sourceName: skill2.name }));
-    const activeId = (key4) => `effect:${key4}`;
-    function activeSkills(state, actor) {
-      if (!actor) return [];
-      return expressions(state, actor).filter(({ expr }) => expr.trigger === "active" && [...effectNodes(expr.effects, true)].some((node3) => node3.kind !== "chainEffect")).map((entry) => {
-        const { expr, key: key4 } = entry, p = expr.params ?? {};
-        return [activeId(key4), {
-          name: expr.label ?? expr.id,
-          ap: p.ap ?? 1,
-          mp: p.mp ?? 0,
-          sp: p.sp ?? 0,
-          slot: p.slot ?? "action",
-          range: p.range ?? (expr.target === "self" ? 0 : 3),
-          shape: "single",
-          target: expr.target === "corpse" ? "corpse" : expr.target === "self" ? "self" : "any",
-          effects: [expr],
-          entry
-        }];
-      });
-    }
-    function resource3(state, unit, name) {
-      if (["hp", "mp", "sp", "ap"].includes(name)) return unit[name] ?? 0;
-      if (name === "action" || name === "attack") return unit.used[name] ? 0 : 1;
-      return own(unit.resources, name) ?? io.resourcePool(state, unit, name)?.amount ?? 0;
-    }
-    function usageStatus(state, actor, { expr, key: key4 }) {
-      const usage = own(actor.effectUsage, key4);
-      const p = expr.params ?? {};
-      const limit = p.usesPerBattle === void 0 && expr.trigger === "on_equip" ? 1 : p.usesPerBattle;
-      return {
-        usesLeft: limit == null ? null : Math.max(0, limit - (usage?.count ?? 0)),
-        cooldownRemaining: usage ? Math.max(0, (p.cooldown ?? 0) - (state.round - usage.round)) : 0
-      };
-    }
-    function available(state, actor, entry) {
-      const { usesLeft, cooldownRemaining } = usageStatus(state, actor, entry);
-      return usesLeft !== 0 && cooldownRemaining === 0;
-    }
-    function spendUse(state, actor, { key: key4 }) {
-      const usage = actor.effectUsage ??= {};
-      usage[key4] = { count: (own(usage, key4)?.count ?? 0) + 1, round: state.round };
-    }
-    function operand(state, actor, target2, ctx, value) {
-      if (typeof value !== "string") return value;
-      return evaluateFormula(value, {
-        self: actor,
-        attacker: ctx.attacker,
-        target: target2,
-        event: ctx,
-        weapon: () => state.equipment[state.items[ctx.weaponId ?? actor.mainHand]?.templateId],
-        resource: (unit, name) => resource3(state, unit, name),
-        distance: () => target2 ? io.distance(state, actor, target2) : 0,
-        round: state.round ?? 0,
-        turn: state.turn ?? 0
-      });
-    }
-    function formulaOperand(state, actor, target2, ctx, value, label) {
-      const result = operand(state, actor, target2, ctx, value);
-      if (result === null && !ctx.preview) io.record(state, actor, "formula_error", `${label ?? "\u6548\u679C"}\u516C\u5F0F\u65E0\u6CD5\u6C42\u503C`, { formula: value });
-      return result;
-    }
-    function operands(state, actor, target2, ctx, node3) {
-      let resolved = node3;
-      for (const key4 of formulaFields[node3.kind] ?? []) if (typeof node3[key4] === "string") {
-        if (resolved === node3) resolved = { ...node3 };
-        const bounds = formulaBounds.get(`${node3.kind}.${key4}`);
-        const value = formulaOperand(state, actor, target2, ctx, node3[key4], node3.label ?? node3.kind);
-        if (value === null) return null;
-        resolved[key4] = bounds ? Math.max(bounds.minimum, Math.min(bounds.maximum, value)) : value;
-      }
-      return resolved;
-    }
-    function condition3(state, actor, subject3, rule, ctx, entry) {
-      if (!rule) return true;
-      const check2 = (child) => condition3(state, actor, subject3, child, ctx, entry);
-      if (Array.isArray(rule)) return rule.every(check2);
-      const { type, value, op } = rule;
-      switch (type) {
-        case "compare": {
-          const left = operand(state, actor, subject3, ctx, rule.left);
-          const right = operand(state, actor, subject3, ctx, rule.right);
-          return left !== null && right !== null && compare2(left, rule.op, right);
-        }
-        case "and":
-          return rule.conditions.every(check2);
-        case "or":
-          return rule.conditions.some(check2);
-        case "not":
-          return !check2(rule.conditions[0]);
-        case "selfHp":
-          return compare2(ratio(actor), op, value);
-        case "targetHp":
-          return compare2(ratio(subject3), op, value);
-        case "targetLevel":
-          return !!subject3 && compare2(subject3.tier ?? 1, op, actor.tier ?? 1);
-        case "targetHasCategory": {
-          if (!subject3) return false;
-          const categories = values(subject3.statuses).map((s) => s.category);
-          const negative = categories.some((x) => ["debuff", "dot", "control"].includes(x));
-          return value === "none" ? !negative : value === "negative" ? negative : categories.includes(value);
-        }
-        case "targetCreatureType":
-          return [].concat(subject3?.creatureType ?? []).includes(value);
-        case "timeOfDay":
-          return state.time?.timeOfDay === value;
-        case "selfHasStatus":
-          return !!own(actor.statuses, value);
-        case "selfStatusModifier":
-          return Boolean(io.statusModifier(actor, rule.key)) === value;
-        case "targetHasStatus":
-          return !!own(subject3?.statuses, value);
-        case "selfHasTag":
-          return actor.tags?.includes(value) ?? false;
-        case "targetHasTag":
-          return subject3?.tags?.includes(value) ?? false;
-        case "duel":
-          return io.living(state).length === 2 === (value ?? true);
-        case "resourceAtLeast":
-          return resource3(state, actor, rule.resource) >= rule.amount;
-        case "weaponType":
-          return ctx.weaponType != null ? ctx.weaponType === value : io.weaponMatches(state, actor, ctx.weaponId, value);
-        case "skillSchool":
-          return ctx.school === value;
-        case "actionType":
-          return ctx.actionType === value;
-        case "damageType":
-          return ctx.damageType === value;
-        case "hitRating":
-          return ctx.hitRating === value;
-        case "enemy":
-          return Boolean(subject3 && subject3.team !== actor.team) === (value ?? true);
-        case "intercepting":
-        case "melee":
-        case "arrow":
-        case "backstab":
-        case "critical":
-        case "opportunityAttack":
-        case "saved":
-        case "reaction":
-        case "highGround":
-          return Boolean(ctx[type]) === (value ?? true);
-        case "distance":
-          return !!subject3 && compare2(io.distance(state, actor, subject3), op, value);
-        case "usesLeft":
-          return (ctx.castUses?.has(entry.key) === true || available(state, actor, entry)) === (value ?? true);
-        default:
-          return false;
-      }
-    }
-    function targets2(state, actor, name, ctx, radius) {
-      const center = ctx.center ?? actor;
-      switch (name) {
-        case "self":
-          return [actor];
-        case "hitTarget":
-          return ctx.target ? [ctx.target] : [];
-        case "attacker":
-          return ctx.attacker ? [ctx.attacker] : [];
-        case "killedUnit":
-          return ctx.killed ? [ctx.killed] : [];
-        case "corpse":
-          return corpses(state).filter((u) => ctx.center ? u.x === center.x && u.y === center.y : io.distance(state, actor, u) <= radius).slice(0, 1);
-        default:
-          return io.living(state).filter((u) => u.team === actor.team === (name === "alliesInRadius") && (ctx.skillArea ? ctx.skillArea.has(u.id) : io.distance(state, center, u) <= radius));
-      }
-    }
-    const subject2 = (actor, target2, ctx) => target2 === actor ? ctx.target ?? actor : target2;
-    function magnitude(state, actor, target2, p, ctx) {
-      const tier = actor.tier ?? 1;
-      const ls = p.levelScaling;
-      const level = levelScale(ls, tier);
-      const rs = p.resourceScale;
-      const units = rs ? resource3(state, actor, rs.resource) / (rs.unitSize ?? 1) : 0;
-      const scaled = (p.amount ?? 0) * level + (p.perLevel ?? 0) * tier + (rs ? (rs.unitSize ? Math.floor(units) : units) * rs.perUnit : 0);
-      return scaled + (p.flat ?? 0) + (p.percentOfHealing ?? 0) * (ctx.healing ?? 0) + (p.targetTierBase ? p.targetTierBase ** ((ctx.target?.tier ?? 1) - 1) : 0) + (p.percentOfDamageDealt ?? 0) * (ctx.dealt ?? 0) + (p.percentOfPrevious ?? 0) * (ctx.previous ?? 0) + (p.percentOfSelfMaxHp ?? 0) * actor.maxHp + (p.percentOfTargetMaxHp ?? p.percentOfMaxHp ?? 0) * target2.maxHp + (p.percentOfPower ?? 0) * (ctx.power ?? 0);
-    }
-    function hasEventFormula(node3, eventName) {
-      return (formulaFields[node3.kind] ?? []).some((key4) => formulaUses(node3[key4], `event.${eventName}`));
-    }
-    function nodeAmount(state, actor, target2, p, ctx) {
-      const extra = ["heal", "shield", "damage"].includes(p.kind) ? (p.percent ?? 0) * target2.maxHp : 0;
-      return Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target2, p, ctx) + extra) * (ctx.skillScale ?? 1))));
-    }
-    function damagePacket(state, actor, target2, p, ctx, amount2) {
-      const type = (p.inheritDamageType ? ctx.damageType : p.damageType) ?? "true";
-      const raw = amount2 * (p.resourceMultiplier ? resource3(state, actor, p.resourceMultiplier) : 1) * (p.strikeBonus ? 1 : ctx.damageFactor?.(type) ?? damageFactor(state, actor, { ...ctx, target: target2, damageType: type }));
-      return { type, raw, hit: p.strikeBonus, ignoreArmor: p.ignoreArmor, preserveLife: p.lethal === false || ctx.nonLethal };
-    }
-    function previewEffects(state, actor, target2, trigger, ctx, extra, support) {
-      const packets = [];
-      let conditional = false;
-      const entries2 = new Map([...trigger === "active" ? [] : expressions(state, actor), ...extra].map((entry) => [entry.key, entry]));
-      for (const entry of entries2.values()) {
-        const { expr } = entry;
-        if (expr.trigger !== trigger || !available(state, actor, entry) || !sourceApplies(entry, ctx)) continue;
-        const eligible = targets2(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((unit) => condition3(state, actor, subject2(actor, unit, ctx), expr.condition, ctx, entry));
-        if (!eligible.length) continue;
-        for (const node3 of expr.effects) {
-          if (node3.enabled === false) continue;
-          if (node3.kind === "procEffect" || node3.kind === "chainEffect") {
-            conditional = true;
-            continue;
-          }
-          if (!["damage", "heal", "shield"].includes(node3.kind)) continue;
-          const p = { ...expr.params, ...node3 };
-          const recipients = p.target && p.target !== expr.target ? targets2(state, actor, p.target, ctx, p.radius ?? 1) : eligible;
-          if (node3.kind !== "damage") {
-            if (!support || expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) continue;
-            for (const recipient of recipients) {
-              if (!livingUnit(recipient) || !condition3(state, actor, subject2(actor, recipient, ctx), p.condition, ctx, entry)) continue;
-              const amount2 = nodeAmount(state, actor, recipient, operands(state, actor, recipient, ctx, p), ctx);
-              if (amount2 > 0) support.push({ id: recipient.id, kind: node3.kind, amount: amount2, stack: p.stack });
-            }
-            continue;
-          }
-          if (!target2 || !recipients.some((unit) => unit.id === target2.id) || p.excludeHitTarget && target2.id === ctx.target?.id) continue;
-          if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
-          if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing || hasEventFormula(p, "dealt") || hasEventFormula(p, "previous") || hasEventFormula(p, "healing")) {
-            conditional = true;
-            continue;
-          }
-          const resolved = operands(state, actor, target2, ctx, p);
-          if (resolved === null) {
-            conditional = true;
-            continue;
-          }
-          packets.push(damagePacket(state, actor, target2, resolved, ctx, nodeAmount(state, actor, target2, resolved, ctx)));
-        }
-      }
-      return { packets, conditional };
-    }
-    function changeResource(state, actor, target2, node3, amount2, label, entry, ctx) {
-      const name = node3.resource, drain = node3.kind === "drainResource";
-      if (node3.kind === "restoreResource" && io.blockRestore(target2)) return false;
-      const pool = io.resourcePool(state, target2, name, node3.local ? entry?.instance : void 0);
-      if (node3.local && !pool) return false;
-      const before = pool?.amount ?? resource3(state, target2, name);
-      const cap = { hp: target2.maxHp, mp: target2.maxMp, sp: target2.maxSp, ap: 2, action: 1, attack: 1 }[name] ?? pool?.effect.cap ?? node3.cap ?? 1e9;
-      amount2 = Math.floor(amount2 + ((node3.percent ?? 0) + (node3.percentPerCost ?? 0) * (ctx?.resourceCost ?? 0)) * (drain ? before : cap));
-      if (drain && node3.requireFull && before - (node3.minimumRemaining ?? 0) < amount2) return false;
-      const after = drain ? before - Math.min(amount2, Math.max(0, before - (node3.minimumRemaining ?? 0))) : Math.min(cap, before + amount2);
-      if (after === before) return 0;
-      if (name === "hp") return drain ? io.loseHP(state, target2, before - after, actor.id, "true", label, {}, false) : io.heal(state, target2, after - before, actor.id, label);
-      if (name === "mp" || name === "sp") io.setResourceTotal(state, target2, name, after, actor.id, label);
-      else if (name === "ap") target2.ap = after;
-      else if (name === "action" || name === "attack") target2.used[name] = 1 - after;
-      else if (pool?.effect) io.counter(state, target2, pool.item, pool.effect, name, after);
-      else (target2.resources ??= {})[name] = after;
-      return Math.abs(before - after);
-    }
-    function executeNodes(state, actor, source, nodes, inherited, ctx, entry, seen, depth, exprTarget = entry.expr.target, stopOnFailure = false) {
-      let applied = false;
-      for (const node3 of nodes) {
-        if (actor.fled) break;
-        if (node3.enabled === false) continue;
-        const raw = { ...entry.expr.params, ...node3 };
-        const recipients = node3.target && node3.target !== exprTarget ? targets2(state, actor, node3.target, ctx, raw.radius ?? 1) : [inherited];
-        for (const target2 of recipients) {
-          const p = operands(state, actor, target2, ctx, raw);
-          if (p === null || target2?.fled) continue;
-          if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
-          const label = node3.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
-          const amount2 = nodeAmount(state, actor, target2, p, ctx);
-          let result;
-          switch (node3.kind) {
-            case "procEffect": {
-              const ref2 = own(state.effectTemplates, p.ref) ?? io.findExpression(state, p.ref);
-              if (ref2) result = run(state, actor, { ...entry, expr: ref2, key: `${entry.key}:${p.ref}` }, ctx, seen, depth + 1);
-              break;
-            }
-            case "chainEffect":
-              result = executeNodes(state, actor, source, p.effects, target2, ctx, entry, seen, depth, node3.target ?? exprTarget, p.stopOnFailure);
-              break;
-            case "changeAltitude":
-              if (livingUnit(actor)) result = io.changeAltitude(state, actor, p);
-              break;
-            case "modifyTerrain":
-            case "setTerrainKind":
-            case "addCover":
-              result = io.terrain(state, actor, { ...node3, label }, ctx);
-              break;
-            case "raiseDead":
-              result = io.raise(state, actor, target2, p.statScale ?? 0.5);
-              break;
-            case "spawnUnit":
-              if (livingUnit(actor)) result = io.spawn(state, actor, p, ctx.center ?? target2 ?? actor);
-              break;
-            case "summon":
-              if (livingUnit(actor)) result = io.summon(state, actor, p.templateId, ctx.center ?? target2, p.statScale ?? 1, p.count ?? 1);
-              break;
-            case "addItem": {
-              if (!livingUnit(target2)) break;
-              const inventory = target2.inventory ??= {};
-              inventory[p.itemId] = Math.min(1e9, (own(inventory, p.itemId) ?? 0) + (p.count ?? 1));
-              result = true;
-              break;
-            }
-            default: {
-              if (!livingUnit(target2)) break;
-              switch (node3.kind) {
-                case "damage":
-                  if (!(p.excludeHitTarget && target2 === ctx.target) && amount2 > 0) {
-                    const { type, raw: raw2, hit, ignoreArmor, preserveLife } = damagePacket(state, actor, target2, p, ctx, amount2);
-                    result = io.damage(state, target2, actor.id, raw2, type, label, {
-                      attacker: actor,
-                      hit,
-                      melee: ctx.melee,
-                      reaction: true,
-                      direct: p.strikeBonus || !["on_damaged", "on_death", "on_ally_death", "on_turn_start", "on_turn_end"].includes(entry.expr.trigger),
-                      committedRecipient: p.strikeBonus ? target2 : void 0,
-                      preserveLife,
-                      ignoreArmor,
-                      details: { effectId: entry.expr.id, ...p.strikeBonus ? { bonusDamage: true } : {} }
-                    }).dealt;
-                  }
-                  break;
-                case "heal":
-                  if (amount2 > 0) result = io.heal(state, target2, amount2, actor.id, label, { actionType: ctx.actionType });
-                  break;
-                case "restoreResource":
-                case "produceResource":
-                case "drainResource":
-                  result = changeResource(state, actor, target2, p, amount2, label, entry, ctx);
-                  break;
-                case "grantStatus":
-                  result = io.grant(state, target2, p.statusId, { sourceUnitId: actor.id, ...p.turns ? { turns: Math.min(100, Math.max(1, Math.round(p.turns * (ctx.skillScale ?? 1)))) } : {}, ...p.stacks ? { stacks: p.stacks } : {}, ...p.amount ? { amount: p.amount } : {}, ...p.durationType ? { durationType: p.durationType } : {}, ...p.modifiers ? { modifiers: p.modifiers } : {}, ...p.expireOn ? { expireOn: p.expireOn } : {} });
-                  break;
-                case "removeStatus":
-                  result = io.removeStatus(state, actor, target2, p);
-                  break;
-                case "knockback":
-                  io.knockback(state, actor, target2, p);
-                  result = true;
-                  break;
-                case "teleportBackstab":
-                  result = io.teleport(state, actor, target2);
-                  break;
-                case "shield":
-                  if (amount2 > 0) result = io.grantShield(state, target2, amount2, { sourceUnitId: actor.id, turns: p.turns, stack: p.stack });
-                  break;
-                case "execute":
-                  if (!ctx.nonLethal && !target2.nonLethal && !io.statusModifier(target2, "preserveLife") && compare2(ratio(target2), p.strict ? "<" : "<=", p.threshold) && (!p.requiresPool || io.resourcePool(state, actor, p.requiresPool))) {
-                    result = io.loseHP(state, target2, target2.hp, actor.id, "true", label, { execute: true });
-                  }
-                  break;
-                case "multiplyDamage":
-                  if (ctx.multipliers && (!p.damageType || p.damageType === ctx.damageType)) {
-                    ctx.multipliers.push({ ...p, instance: entry.instance });
-                    result = true;
-                  }
-                  break;
-                case "modifyStat": {
-                  const modifiers3 = target2.effectModifiers ??= {};
-                  const scale = levelScale(p.levelScaling, actor.tier ?? 1);
-                  const modifier = {
-                    stat: p.stat,
-                    flat: (p.flat ?? 0) * scale,
-                    percent: (p.percent ?? 0) * scale,
-                    turns: p.duration ?? p.turns ?? 1,
-                    ...p.damageType ? { damageType: p.damageType } : {},
-                    round: state.round,
-                    turn: state.turn
-                  };
-                  modifiers3[`${source.id}:${entry.key}:${p.stat}`] = modifier;
-                  io.record(
-                    state,
-                    actor,
-                    "stat_modifier",
-                    `${target2.name}\u83B7\u5F97${label}\u7684\u5C5E\u6027\u4FEE\u6B63`,
-                    { targetId: target2.id, ...modifier }
-                  );
-                  result = true;
-                  break;
-                }
-              }
-            }
-          }
-          if (!result && stopOnFailure || result === false && node3.kind === "drainResource" && p.requireFull) return applied;
-          if (typeof result === "number") ctx.previous = result;
-          applied ||= Boolean(result);
-        }
-      }
-      return applied;
-    }
-    function run(state, actor, entry, ctx, seen = /* @__PURE__ */ new Set(), depth = 0) {
-      const prepaid = ctx.castUses?.has(entry.key);
-      if (depth > 8 || seen.has(entry.expr.id) || !prepaid && !available(state, actor, entry) || !sourceApplies(entry, ctx)) return false;
-      const { expr, key: key4 } = entry;
-      if (![...effectNodes(expr.effects, true)].some((node3) => node3.kind !== "chainEffect")) return false;
-      const eligible = targets2(state, actor, expr.target, ctx, expr.params?.radius ?? 1).filter((target2) => condition3(state, actor, subject2(actor, target2, ctx), expr.condition, ctx, entry));
-      if (!eligible.length) return false;
-      const roll = expr.roll;
-      const label = expr.label ?? entry.sourceName ?? expr.id;
-      const targetId = eligible.length === 1 && livingUnit(eligible[0]) ? eligible[0].id : null;
-      if (roll?.dice) {
-        const die = io.die(state, 20);
-        const triggered = die >= roll.gte;
-        io.record(state, actor, "proc", label, { targetId, die, dc: roll.gte, triggered });
-        if (!triggered) return false;
-      }
-      if (roll?.chance != null && (!roll.save && !roll.contest || roll.chance < 1)) {
-        const draw = io.random(state);
-        const triggered = draw < roll.chance;
-        io.record(state, actor, "proc", label, { targetId, roll: draw, chance: roll.chance, triggered });
-        if (!triggered) return false;
-      }
-      seen.add(expr.id);
-      let applied = false;
-      for (const target2 of eligible) {
-        if ((roll?.save || roll?.contest) && !livingUnit(target2)) continue;
-        if ((roll?.save || roll?.contest) && io.saved(state, actor, target2, roll, label)) continue;
-        applied = executeNodes(state, actor, actor, expr.effects, target2, { ...ctx }, entry, seen, depth) || applied;
-      }
-      seen.delete(expr.id);
-      if (!prepaid && applied && (expr.params?.usesPerBattle != null || expr.params?.cooldown || expr.trigger === "on_equip" && expr.params?.usesPerBattle === void 0)) {
-        spendUse(state, actor, entry);
-      }
-      return applied;
-    }
-    const dispatches = /* @__PURE__ */ new WeakMap();
-    function dispatch(state, actor, trigger, context = {}, extra = []) {
-      if (!actor || trigger !== "on_death" && trigger !== "on_kill" && !livingUnit(actor)) return;
-      const depth = dispatches.get(state) ?? 0;
-      if (depth >= 8) return;
-      dispatches.set(state, depth + 1);
-      try {
-        const equipment = expressions(state, actor).filter((entry) => !context.equippedItemId || entry.instance?.id === context.equippedItemId);
-        for (const entry of new Map([...trigger === "active" ? [] : equipment, ...extra].map((entry2) => [entry2.key, entry2])).values()) {
-          if (entry.expr.trigger === trigger) run(state, actor, entry, { ...context });
-        }
-      } finally {
-        dispatches.set(state, depth);
-      }
-    }
-    function sourceApplies(entry, ctx) {
-      return entry.expr.params?.source !== "weapon" || Boolean(entry.instance && ctx.weaponId === entry.instance.id);
-    }
-    function passiveNodes(state, actor, ctx, extra = []) {
-      if (!actor) return [];
-      return [...expressions(state, actor), ...extra].flatMap((entry) => {
-        const { expr } = entry;
-        if (!sourceApplies(entry, ctx) || expr.trigger !== "passive" || expr.roll || expr.target !== "self" || !available(state, actor, entry) || !condition3(state, actor, ctx.target ?? actor, expr.condition, ctx, entry)) return [];
-        const seen = /* @__PURE__ */ new Set([expr.id]);
-        const collect = (nodes, owner = expr) => nodes.flatMap((node3) => {
-          if (node3.enabled === false || node3.target && node3.target !== "self" || !condition3(state, actor, ctx.target ?? actor, node3.condition, ctx, entry)) return [];
-          if (node3.kind === "chainEffect") return collect(node3.effects, owner);
-          if (node3.kind === "procEffect") {
-            const ref2 = own(state.effectTemplates, node3.ref) ?? io.findExpression(state, node3.ref);
-            if (!ref2 || seen.has(ref2.id) || seen.size >= 8 || ref2.roll || ref2.target !== "self" || !condition3(state, actor, ctx.target ?? actor, ref2.condition, ctx, entry)) return [];
-            seen.add(ref2.id);
-            const resolved2 = collect(ref2.effects, ref2);
-            seen.delete(ref2.id);
-            return resolved2;
-          }
-          const resolved = operands(state, actor, ctx.target ?? actor, ctx, { ...owner.params, ...node3, instance: entry.instance });
-          return resolved === null ? [] : [resolved];
-        });
-        return collect(expr.effects);
-      });
-    }
-    function stat2(state, actor, name, base, ctx = {}, temporaryOnly = false) {
-      const modifiers3 = values(actor.effectModifiers);
-      if (!temporaryOnly) modifiers3.push(...passiveNodes(state, actor, ctx, ctx.entries).filter((n) => n.kind === "modifyStat"));
-      let flat = 0, percent2 = 0;
-      for (const m of modifiers3) if (m.stat === name && (!m.damageType || m.damageType === ctx.damageType)) {
-        const scale = levelScale(m.levelScaling, actor.tier ?? 1);
-        flat += (m.flat ?? 0) * scale;
-        percent2 += (m.percent ?? 0) * scale;
-      }
-      return (base + flat) * Math.max(0, 1 + percent2);
-    }
-    function damageFactor(state, actor, ctx, event = []) {
-      const factors = [...event, ...passiveNodes(state, actor, ctx, ctx.entries)].filter((n) => n.kind === "multiplyDamage" && (!n.damageType || n.damageType === ctx.damageType));
-      const factorOf = (n) => {
-        const scale = n.resourceScale;
-        const count = !scale ? 0 : n.local ? io.resourcePool(state, actor, scale.resource, n.instance)?.amount ?? 0 : resource3(state, actor, scale.resource);
-        return (n.factor ?? 1) + (scale ? (scale.unitSize ? Math.floor(count / scale.unitSize) : count) * scale.perUnit : 0);
-      };
-      return factors.filter((n) => !n.additive).reduce((factor, n) => factor * factorOf(n), 1) * Math.max(0, 1 + factors.filter((n) => n.additive).reduce((sum, n) => sum + factorOf(n) - 1, 0));
-    }
-    const check = (state, actor, key4, ctx = {}) => passiveNodes(state, actor, ctx, ctx.entries).reduce((sum, n) => sum + (n.kind === "modifyCheck" ? n[key4] ?? 0 : 0), 0);
-    return { dispatch, stat: stat2, check, passiveNodes, damageFactor, previewEffects, activeSkills, skillExpressions: skillExpressions2, available, usageStatus, spendUse, condition: condition3, changeResource };
-  }
-
   // src/core/rng.js
   var UINT32_SIZE = 4294967296;
   function advance(rng) {
@@ -1210,15 +215,15 @@ var FatedTacticalTavern = (() => {
   }
   function rollDice(rng, count, sides) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError("Invalid dice count");
-    let total = 0;
+    let total2 = 0;
     const rolls = [];
     for (let i = 0; i < count; i++) {
       const roll = rollDie(rng, sides);
       rng = roll.rng;
       rolls.push(roll.value);
-      total += roll.value;
+      total2 += roll.value;
     }
-    return { rng, total, rolls };
+    return { rng, total: total2, rolls };
   }
   var edge = (advantage, disadvantage) => Math.sign(Number(advantage) - Number(disadvantage));
   function rollD20(rng, advantage = 0, disadvantage = 0) {
@@ -1299,8 +304,8 @@ var FatedTacticalTavern = (() => {
     standard: { threshold: 0.3, check: true },
     guard: { threshold: 0.35, check: true }
   });
-  var stanceFor = (slots = {}) => {
-    const main = slots.mainHand ?? slots.weapon ?? null, off = slots.offHand ?? null, shield = slots.shield ?? null;
+  var stanceFor = (slots2 = {}) => {
+    const main = slots2.mainHand ?? slots2.weapon ?? null, off = slots2.offHand ?? null, shield = slots2.shield ?? null;
     if (shield) return "sword_shield";
     if (off?.kind === "consumable" || off?.kind === "auxiliary") return "attunement";
     if (main?.heavy || main?.twoHanded) return "greatsword";
@@ -1332,8 +337,8 @@ var FatedTacticalTavern = (() => {
   function distanceTier(distance2) {
     return DISTANCE_TABLE.find((x) => distance2 >= x.min && distance2 <= x.max) ?? DISTANCE_TABLE.at(-1);
   }
-  function ratingFor(total) {
-    return RATING_TABLE.find((x) => x.min === null || total >= x.min);
+  function ratingFor(total2) {
+    return RATING_TABLE.find((x) => x.min === null || total2 >= x.min);
   }
   function initiative({ agility = 0, percent: percent2 = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) {
     return agility * (1 + percent2) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat;
@@ -1407,183 +412,2313 @@ var FatedTacticalTavern = (() => {
     return Object.hasOwn(ranges, key4) ? ranges[key4] : void 0;
   }
   function statusModifierRange(key4, template) {
-    const range = rangeFor(key4, template);
-    if (range) return range.join("\u2013");
+    const range2 = rangeFor(key4, template);
+    if (range2) return range2.join("\u2013");
     if (key4 === "damageType") return damageTypes.join("/");
     if (flags.includes(key4)) return "true/false";
     throw new Error(`\u672A\u77E5\u72B6\u6001\u53C2\u6570\uFF1A${key4}`);
   }
   var modifierKeys = Object.freeze([...Object.keys(ranges), "damageType", ...flags]);
-  function validateStatusModifiers(template, modifiers3) {
-    if (!modifiers3 || Object.getPrototypeOf(modifiers3) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
-    for (const [key4, value] of Object.entries(modifiers3)) {
+  function validateStatusModifiers(template, modifiers2) {
+    if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
+    for (const [key4, value] of Object.entries(modifiers2)) {
       if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
-      const range = rangeFor(key4, template);
-      const valid = range ? (ratios.includes(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range[0] && value <= range[1] : key4 === "damageType" ? damageTypes.includes(value) : flags.includes(key4) && typeof value === "boolean";
-      if (!valid) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key4}\uFF0C\u5408\u6CD5\u8303\u56F4\uFF1A${statusModifierRange(key4, template)}`);
+      const range2 = rangeFor(key4, template);
+      const valid2 = range2 ? (ratios.includes(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range2[0] && value <= range2[1] : key4 === "damageType" ? damageTypes.includes(value) : flags.includes(key4) && typeof value === "boolean";
+      if (!valid2) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key4}\uFF0C\u5408\u6CD5\u8303\u56F4\uFF1A${statusModifierRange(key4, template)}`);
     }
   }
 
-  // src/core/terrain-effects.js
-  var unitsAt = (state, x, y) => Object.values(state.units).filter((u) => u.x === x && u.y === y);
-  var present = (unit) => unit && unit.hp > 0 && !unit.fled;
-  var same2 = (a, b) => a.x === b.x && a.y === b.y;
-  var occupiedByUnit = (state, point2) => unitsAt(state, point2.x, point2.y).some((unit) => unit.hp > 0);
-  var blocked = (state, point2) => occupiedByUnit(state, point2) || [...Object.values(state.covers), ...Object.values(state.interactives)].some((other) => same2(other, point2));
-  var maxPatches = 64;
-  function cellsIn(state, area2, center) {
-    const { rect } = area2;
-    const points = area2.cells ?? state.grid.flatMap((row, y) => row.flatMap((_, x) => {
-      const inside = rect ? x >= Math.min(rect.x1, rect.x2) && x <= Math.max(rect.x1, rect.x2) && y >= Math.min(rect.y1, rect.y2) && y <= Math.max(rect.y1, rect.y2) : center && Math.hypot(x - center.x, y - center.y) <= area2.radius;
-      return inside ? [{ x, y }] : [];
-    }));
-    return [...new Map(points.filter((p) => cellAt(state, p.x, p.y)).map((p) => [`${p.x},${p.y}`, p])).values()];
-  }
-  function changeCell(cell, node3) {
-    if (node3.kind === "setTerrainKind") return { ...cell, kind: node3.terrainKind };
-    const z = node3.terrain === "set" ? node3.amount : cell.z + (node3.terrain === "raise" ? node3.amount : -node3.amount);
-    return { ...cell, z: Math.min(8, Math.max(-4, z)) };
-  }
-  var effectiveHeight = (cell) => cell.kind === "slope" ? 1 : cell.z;
-  function writeCell(state, { x, y }, after, changes2, restored = false) {
-    const before = state.grid[y][x];
-    state.grid[y][x] = after;
-    changes2.push({ x, y, before, after, restored, units: unitsAt(state, x, y) });
-  }
-  function settleChanges(state, changes2, record2, damage) {
-    for (const change of changes2) {
-      const { x, y } = change;
-      const cell = state.grid[y][x];
-      if (cell.kind !== "wall") continue;
-      for (const table4 of [state.covers, state.interactives]) {
-        for (const [id3, item] of Object.entries(table4)) if (same2(item, change)) delete table4[id3];
-      }
-      for (const unit of unitsAt(state, x, y).filter((unit2) => unit2.hp > 0)) {
-        const free = state.grid.flatMap((row, y2) => row.flatMap((tile, x2) => tile.kind !== "wall" && !unitAt(state, x2, y2) && !coverAt(state, x2, y2) ? [{ x: x2, y: y2 }] : []));
-        const distance2 = (p) => (p.x - x) ** 2 + (p.y - y) ** 2;
-        const landing = free.sort((a, b) => distance2(a) - distance2(b))[0];
-        if (landing) {
-          const from = { x: unit.x, y: unit.y, z: change.before.z + (unit.altitude ?? 0) };
-          Object.assign(unit, landing);
-          const to = { ...landing, z: elevation(state, unit) };
-          record2(state, unit, "terrain_displace", `${unit.name}\u56E0\u5899\u4F53\u8FD8\u539F\u79FB\u81F3 (${to.x}, ${to.y}, z=${to.z})`, { x: to.x, y: to.y, from, to });
-        } else damage(state, unit, unit.hp, "\u5899\u4F53\u8FD8\u539F\uFF0C\u65E0\u53EF\u7AD9\u7ACB\u683C", { forcedDisplacement: true });
-      }
+  // src/core/formula.js
+  var variables = /* @__PURE__ */ new Map();
+  var families = [];
+  var queries = /* @__PURE__ */ new Map();
+  var register = (name, description, read, legacy = false) => variables.set(name, { description, read, legacy });
+  var family = (name, pattern, description, read, legacy = false) => families.push({ name, pattern, description, read, legacy });
+  var query = (name, args, description, read) => queries.set(name, { args, description, read });
+  var own = (record2, key4) => record2 == null ? void 0 : Object.getOwnPropertyDescriptor(record2, key4)?.value;
+  var path = (record2, ...keys) => keys.reduce(own, record2);
+  var scalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" ? value : null;
+  var idPattern = "[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}";
+  var blockedKeys = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
+  var safeKey = (key4) => !blockedKeys.has(key4);
+  var callback = (context, key4, ...args) => {
+    const read = own(context, key4);
+    return typeof read === "function" ? read(...args, context) : void 0;
+  };
+  var unitFields = {
+    str: "\u529B\u91CF",
+    agi: "\u654F\u6377",
+    con: "\u4F53\u8D28",
+    int: "\u667A\u529B",
+    spi: "\u7CBE\u795E",
+    tier: "\u5C42\u7EA7",
+    hp: "\u5F53\u524D\u751F\u547D",
+    maxHp: "\u751F\u547D\u4E0A\u9650",
+    mp: "\u5F53\u524D\u6CD5\u529B",
+    maxMp: "\u6CD5\u529B\u4E0A\u9650",
+    sp: "\u5F53\u524D\u4F53\u529B",
+    maxSp: "\u4F53\u529B\u4E0A\u9650"
+  };
+  var vmUnitFields = {
+    id: "\u5B9E\u4F53 ID",
+    armor: "\u62A4\u7532",
+    x: "\u6A2A\u5750\u6807",
+    y: "\u7EB5\u5750\u6807",
+    z: "\u5B9E\u9645\u9AD8\u5EA6",
+    altitude: "\u79BB\u5730\u9AD8\u5EA6",
+    mc: "\u5DE8\u578B\u7CFB\u6570",
+    alive: "\u662F\u5426\u5B58\u6D3B\u4E14\u5728\u573A",
+    team: "\u9635\u8425"
+  };
+  var unitScopes = { self: "\u6548\u679C\u4E3B\u4F53", attacker: "\u4E8B\u4EF6\u653B\u51FB\u8005", target: "\u5F53\u524D\u76EE\u6807", source: "\u6548\u679C\u6765\u6E90", candidate: "\u5F53\u524D\u7B5B\u9009\u5B9E\u4F53" };
+  var legacyScopes = /* @__PURE__ */ new Set(["self", "attacker", "target"]);
+  var entityScopes = /* @__PURE__ */ new Set([...Object.keys(unitScopes), "status", "zone"]);
+  function unitField(context, scope, field) {
+    const unit = own(context, scope);
+    const value = own(unit, field);
+    if (field === "alive") {
+      const hp = own(unit, "hp");
+      return value ?? (Number.isFinite(hp) ? hp > 0 && !own(unit, "fled") : void 0);
     }
-    for (const { before, after, restored, units } of changes2) {
-      const drop = effectiveHeight(before) - effectiveHeight(after);
-      for (const unit of units.filter(present)) {
-        if (drop > 0 && !unit.altitude) damage(state, unit, drop * 50, `\u5730\u5F62${restored ? "\u8FD8\u539F" : "\u53D8\u5316"}\u9AD8\u5EA6\u843D\u5DEE ${drop}\uFF0C`, { drop });
-      }
+    if (field === "z" && unit != null) return callback(context, "elevation", unit) ?? value;
+    return path(unit, "stats", field) ?? value;
+  }
+  function* records(collection) {
+    for (const key4 of Object.keys(collection ?? {})) yield own(collection, key4);
+  }
+  function statusOf(unit, id3) {
+    const statuses = own(unit, "statuses");
+    const direct = own(statuses, id3);
+    if (direct != null && !Array.isArray(statuses)) return direct;
+    for (const status of records(statuses)) {
+      if (own(status, "templateId") === id3 || own(status, "id") === id3) return status;
+    }
+    return void 0;
+  }
+  function dynamicFamily(prefix, description, read, legacy = false) {
+    family(`${prefix}.<id>`, new RegExp(`^${prefix.replaceAll(".", "\\.")}\\.(${idPattern})$`), description, read, legacy);
+  }
+  for (const [scope, label] of Object.entries(unitScopes)) {
+    const legacy = legacyScopes.has(scope);
+    for (const [field, meaning] of Object.entries({ ...unitFields, ...vmUnitFields })) {
+      register(`${scope}.${field}`, `${label}\u7684${meaning}`, (context) => unitField(context, scope, field), legacy && Object.hasOwn(unitFields, field));
+    }
+    register(`${scope}.hpRatio`, `${label}\u7684\u751F\u547D\u6BD4\u4F8B\uFF080\u20261\uFF09`, (context) => {
+      const unit = own(context, scope);
+      const maxHp = own(unit, "maxHp");
+      const hp = own(unit, "hp");
+      return maxHp == null || maxHp === 0 ? 0 : numeric((a, b) => a / b, hp, maxHp);
+    }, legacy);
+    dynamicFamily(`${scope}.resource`, `${label}\u7684\u8D44\u6E90\u4F59\u989D\uFF0C\u4F7F\u7528\u8D44\u6E90 ID`, (context, id3) => {
+      const entity = own(context, scope);
+      return callback(context, "resource", entity, id3) ?? path(entity, "resources", id3);
+    }, legacy);
+    dynamicFamily(`${scope}.stacks`, `${label}\u7684\u72B6\u6001\u5C42\u6570\uFF0C\u4F7F\u7528\u72B6\u6001 ID`, (context, id3) => {
+      const entity = own(context, scope);
+      return callback(context, "stacks", entity, id3) ?? own(statusOf(entity, id3), "stacks") ?? 0;
+    }, legacy);
+    dynamicFamily(`${scope}.vars`, `${label}\u7684\u53D8\u91CF`, (context, id3) => path(context, scope, "vars", id3));
+  }
+  dynamicFamily("vars", "\u5F53\u524D\u6808\u5E27\u7684\u5C40\u90E8\u53D8\u91CF", (context, id3) => path(context, "vars", id3));
+  for (const scope of ["status", "zone"]) {
+    dynamicFamily(`${scope}.vars`, `${scope === "status" ? "\u72B6\u6001" : "\u533A\u57DF"}\u5B9E\u4F8B\u7684\u53D8\u91CF`, (context, id3) => path(context, scope, "vars", id3));
+  }
+  for (const [scope, fields3] of Object.entries({
+    status: { id: "\u72B6\u6001 ID", category: "\u72B6\u6001\u7C7B\u522B", tier: "\u72B6\u6001\u5C42\u7EA7", stacks: "\u72B6\u6001\u5C42\u6570", remainingTurns: "\u5269\u4F59\u56DE\u5408" },
+    tape: { round: "\u8BB0\u5F55\u8F6E\u6570", actorId: "\u884C\u52A8\u8005 ID", team: "\u884C\u52A8\u8005\u9635\u8425", actionType: "\u884C\u52A8\u7C7B\u578B", skillId: "\u6280\u80FD ID" }
+  })) {
+    for (const [field, description] of Object.entries(fields3)) {
+      register(`${scope}.${field}`, description, (context) => path(context, scope, field));
     }
   }
-  function applyTerrainEffect(state, actor, node3, context, record2, damage) {
-    const area2 = node3.area;
-    const center = area2.center === "self" ? actor : area2.center === "hitTarget" ? context.terrainTarget ?? context.target ?? context.center : area2.center;
-    const name = node3.label ?? node3.kind;
-    const unresolved = (reason) => {
-      record2(state, actor, "terrain_unresolved", `\u5730\u5F62\u6548\u679C\u672A\u751F\u6548\uFF1A${reason}`, { unresolved: true, name });
-      return false;
+  register("round", "\u5F53\u524D\u8F6E\u6570", (context) => own(context, "round"), true);
+  register("turn", "\u5F53\u524D\u884C\u52A8\u8005\u5728\u5148\u653B\u987A\u5E8F\u4E2D\u7684\u7D22\u5F15\uFF08\u4ECE 0 \u5F00\u59CB\uFF09", (context) => own(context, "turn"), true);
+  register("timeOfDay", "\u6218\u573A\u65F6\u6BB5\uFF08dawn/day/dusk/night\uFF09", (context) => own(context, "timeOfDay"));
+  register("pool", "\u8D44\u6E90\u6307\u4EE4\u5F53\u524D\u5904\u7406\u7684\u8D44\u6E90\u6C60\u952E", (context) => own(context, "pool"));
+  register("distance", "\u6548\u679C\u4E3B\u4F53\u5230\u5F53\u524D\u76EE\u6807\u7684\u4E09\u7EF4\u8DDD\u79BB", (context) => readDistance(context, own(context, "self"), own(context, "target")), true);
+  register("weapon.attack", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u653B\u51FB\u529B", (context) => own(callback(context, "weapon"), "attack"), true);
+  register("weapon.range", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u57FA\u7840\u5C04\u7A0B", (context) => own(callback(context, "weapon"), "range"), true);
+  for (const [name, description] of Object.entries({
+    power: "\u6280\u80FD\u5A01\u529B",
+    dealt: "\u672C\u6B21\u5B9E\u9645\u6263\u9664\u7684 HP",
+    absorbed: "\u672C\u6B21\u88AB\u62A4\u76FE\u5438\u6536\u7684\u4F24\u5BB3",
+    previous: "\u5F53\u524D\u6548\u679C\u94FE\u4E0A\u4E00\u6B65\u5B9E\u9645\u6570\u503C",
+    healing: "\u672C\u6B21\u6CBB\u7597\u91CF"
+  })) register(`event.${name}`, description, (context) => path(context, "event", name), true);
+  family("event.<field>", /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, "\u6D3B\u8DC3\u4E8B\u4EF6\u7684\u81EA\u6709\u6807\u91CF\u5B57\u6BB5", (context, key4) => path(context, "event", key4));
+  function readDistance(context, from, to) {
+    if (typeof own(context, "distance") === "function") return callback(context, "distance", from, to);
+    if (from == null || to == null) return null;
+    const coords2 = (entity) => ["x", "y", "z"].map((axis) => axis === "z" ? callback(context, "elevation", entity) ?? own(entity, "z") ?? own(entity, "altitude") ?? 0 : own(entity, axis));
+    const a = coords2(from), b = coords2(to);
+    return a.every(Number.isFinite) && b.every(Number.isFinite) ? Math.hypot(...b.map((value, i) => value - a[i])) : null;
+  }
+  var numeric = (fn, ...args) => args.every(Number.isFinite) ? scalar(fn(...args)) : null;
+  query("min", ["value", "value"], "\u53D6\u4E24\u4E2A\u6570\u7684\u8F83\u5C0F\u503C", ([a, b]) => numeric(Math.min, a, b));
+  query("max", ["value", "value"], "\u53D6\u4E24\u4E2A\u6570\u7684\u8F83\u5927\u503C", ([a, b]) => numeric(Math.max, a, b));
+  query("floor", ["value"], "\u5411\u4E0B\u53D6\u6574", ([value]) => numeric(Math.floor, value));
+  query("ceil", ["value"], "\u5411\u4E0A\u53D6\u6574", ([value]) => numeric(Math.ceil, value));
+  query("abs", ["value"], "\u53D6\u7EDD\u5BF9\u503C", ([value]) => numeric(Math.abs, value));
+  query("clamp", ["value", "value", "value"], "\u5C06\u6570\u503C\u94B3\u5236\u5728\u4E0A\u4E0B\u9650\u4E4B\u95F4", ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
+  query("distance", ["unit", "unit"], "distance(a, b) \u8BFB\u53D6\u4E24\u5355\u4F4D\u7684\u4E09\u7EF4\u8DDD\u79BB\uFF0Cdistance() \u9ED8\u8BA4 self \u5230 target", ([a, b], context) => readDistance(context, a, b));
+  var booleanQuery = (value) => typeof value === "boolean" ? value : null;
+  var statusPresent = (context, entity, id3) => booleanQuery(callback(context, "hasStatus", entity, id3) ?? statusOf(entity, id3) != null);
+  function tagged(entity, tag2) {
+    const tags = own(entity, "tags");
+    if (!Array.isArray(tags)) return false;
+    for (const entry2 of records(tags)) if (entry2 === tag2) return true;
+    return false;
+  }
+  var withId = (read) => ([entity, id3], context) => typeof id3 === "string" && safeKey(id3) ? booleanQuery(read(context, entity, id3)) : null;
+  query("has_status", ["unit", "value"], "has_status(unit, 'statusId') \u67E5\u8BE2\u5355\u4F4D\u662F\u5426\u6301\u6709\u72B6\u6001", withId(statusPresent));
+  query("has_tag", ["entity", "value"], "has_tag(entity, 'tag') \u67E5\u8BE2\u5B9E\u4F53\u662F\u5426\u5E26\u6709\u6807\u7B7E", withId((context, entity, tag2) => callback(context, "hasTag", entity, tag2) ?? tagged(entity, tag2)));
+  query("in_zone", ["unit", "value"], "in_zone(unit, 'tagOrTemplateId') \u67E5\u8BE2\u5355\u4F4D\u662F\u5426\u5728\u6307\u5B9A\u533A\u57DF\u5185", withId((context, entity, id3) => callback(context, "inZone", entity, id3)));
+  query("is_immune", ["unit", "value"], "is_immune(unit, 'statusIdOrTag') \u53EA\u8BFB\u5E72\u8DD1\u514D\u75AB\u62E6\u622A", withId((context, entity, id3) => {
+    const read = own(context, "isImmune");
+    return typeof read === "function" ? read(entity, id3, { dryRun: true }, context) : null;
+  }));
+  query("any_unit_has_status", ["value"], "any_unit_has_status('statusId') \u67E5\u8BE2\u6218\u573A\u4E0A\u662F\u5426\u6709\u4EFB\u610F\u5355\u4F4D\u6301\u6709\u72B6\u6001", ([id3], context, runtime) => {
+    if (typeof id3 !== "string" || !safeKey(id3) || own(context, "units") == null) return null;
+    for (const unit of records(own(context, "units"))) {
+      if (!runtime.step()) return null;
+      const present = statusPresent(context, unit, id3);
+      if (present !== false) return present;
+    }
+    return false;
+  });
+  query("count_units", ["predicate"], "count_units(predicate) \u6309 candidate \u9010\u4E2A\u8BA1\u7B97\u8C13\u8BCD\uFF0C\u53EF\u4F7F\u7528\u5355\u5F15\u53F7\u5305\u88F9\u8868\u8FBE\u5F0F", ([expr2], context, runtime) => {
+    const units = own(context, "units");
+    return units == null ? null : aggregate(units, expr2, context, runtime, false);
+  });
+  query("count", ["value"], "count('selector') \u8BFB\u53D6\u7EAF\u9009\u62E9\u5668\u56DE\u8C03\u8FD4\u56DE\u7684\u5B9E\u4F53\u6570\u91CF", ([key4], context) => selected(context, key4)?.length);
+  query("sum", ["value", "expr"], "sum('selector', candidate.hp) \u9010\u4E2A\u7ED1\u5B9A candidate \u5E76\u6C42\u548C", ([key4, expr2], context, runtime) => {
+    const candidates = selected(context, key4);
+    return candidates == null ? null : aggregate(candidates, expr2, context, runtime, true);
+  });
+  function selected(context, key4) {
+    if (typeof key4 !== "string" || !safeKey(key4)) return null;
+    const candidates = callback(context, "select", key4);
+    return Array.isArray(candidates) ? candidates : null;
+  }
+  function aggregate(collection, expr2, context, runtime, sum) {
+    let total2 = 0;
+    const fields3 = Object.getOwnPropertyDescriptors(context);
+    for (const candidate of records(collection)) {
+      if (!runtime.step()) return null;
+      if (candidate == null) continue;
+      fields3.candidate = { value: candidate, enumerable: true };
+      const value = runtime.visit(expr2, Object.create(null, fields3));
+      if (sum ? !Number.isFinite(value) : typeof value !== "boolean") return null;
+      total2 += sum ? value : Number(value);
+      if (!Number.isFinite(total2)) return null;
+    }
+    return total2;
+  }
+  var formulaQueryNames = () => [...queries.keys()];
+  var formulaReference = [...variables].map(([name, { description }]) => `${name}\uFF08${description}\uFF09`).concat(
+    families.map(({ name, description }) => `${name}\uFF08${description}\uFF09`),
+    [...queries].map(([name, { description }]) => `${name}\uFF08${description}\uFF09`)
+  ).join("\uFF0C");
+  function resolveVariable(name, legacy) {
+    const exact = variables.get(name);
+    if (exact && (!legacy || exact.legacy)) return exact.read;
+    for (const { pattern, read, legacy: supported } of families) {
+      if (legacy && !supported) continue;
+      const match = pattern.exec(name);
+      if (match && safeKey(match[1])) return (context) => read(context, match[1]);
+    }
+    return null;
+  }
+  var numericLiteral = /(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
+  var dynamicIdentifier = /(?:[A-Za-z]+\.(?:resource|stacks|vars)\.|vars\.)[A-Za-z0-9][A-Za-z0-9_-]{0,63}/;
+  var legacyIdentifier = /[A-Za-z]+\.(?:resource|stacks)\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}/;
+  var identifier = /[A-Za-z_][\w.]*/;
+  var quoted = /'(?:[^'\\\r\n]|\\['\\])*'/;
+  var lexer = (...patterns) => new RegExp([...patterns.map((pattern) => pattern.source), "[^\\s]"].join("|"), "g");
+  var vmTokens = lexer(dynamicIdentifier, numericLiteral, identifier, quoted, /&&|\|\||<=|>=|==|!=/);
+  var legacyTokens = lexer(legacyIdentifier, /\d+(?:\.\d+)?/, identifier);
+  var precedence = /* @__PURE__ */ new Map([
+    ["||", 1],
+    ["&&", 2],
+    ["==", 3],
+    ["!=", 3],
+    ["<", 4],
+    ["<=", 4],
+    [">", 4],
+    [">=", 4],
+    ["+", 5],
+    ["-", 5],
+    ["*", 6],
+    ["/", 6],
+    ["%", 6]
+  ]);
+  var legacyOperators = /* @__PURE__ */ new Set(["+", "-", "*", "/"]);
+  var VM_LIMITS = { length: 1024, tokens: 256 };
+  var LEGACY_LIMITS = { length: 200, tokens: 80 };
+  function parse(text5, legacy, dependencies) {
+    const limits = legacy ? LEGACY_LIMITS : VM_LIMITS;
+    if (!text5.length || text5.length > limits.length) throw new SyntaxError("Invalid expression length");
+    const tokens = text5.match(legacy ? legacyTokens : vmTokens) ?? [];
+    if (tokens.length > limits.tokens) throw new SyntaxError("Too many expression tokens");
+    let index = 0;
+    const take = (token) => {
+      if (tokens[index] !== token) return false;
+      index++;
+      return true;
     };
-    if (area2.follow && !present(center)) return unresolved("\u533A\u57DF\u6CA1\u6709\u5B58\u6D3B\u7684\u951A\u70B9\u5355\u4F4D");
-    if (Object.keys(state.terrainPatches ?? {}).length >= maxPatches) return unresolved("\u5730\u5F62\u6548\u679C\u6570\u91CF\u8FBE\u5230\u4E0A\u9650");
-    let n = 1;
-    while (Object.hasOwn(state.terrainPatches ?? {}, `terrain-${n}`) || Object.keys(state.covers).some((id3) => id3.startsWith(`terrain-${n}-`))) n++;
-    const entry = {
-      id: `terrain-${n}`,
+    const expect = (token) => {
+      if (!take(token)) throw new SyntaxError(`Expected ${token}`);
+    };
+    function readCall(name) {
+      const entry2 = queries.get(name);
+      if (!entry2) throw new SyntaxError(`Unknown query: ${name}`);
+      const args = [];
+      if (name === "distance" && take(")")) {
+        args.push(readScope("self", "unit"), readScope("target", "unit"));
+      } else {
+        for (const [i, kind] of entry2.args.entries()) {
+          if (i > 0) expect(",");
+          if (kind === "entity" || kind === "unit") {
+            args.push(readScope(tokens[index++], kind));
+            continue;
+          }
+          let expr2 = expression();
+          if (kind === "predicate" && expr2[0] === "literal" && typeof expr2[1] === "string") {
+            expr2 = parse(expr2[1], false, dependencies);
+          }
+          args.push(kind === "value" ? expr2 : ["deferred", expr2]);
+        }
+        expect(")");
+      }
+      return ["call", entry2.read, args];
+    }
+    function readScope(scope, kind) {
+      const allowed = kind === "unit" ? Object.hasOwn(unitScopes, scope) : entityScopes.has(scope);
+      if (!allowed) throw new SyntaxError(`Expected ${kind} scope`);
+      dependencies.add(scope);
+      return ["scope", scope];
+    }
+    function atom() {
+      const token = tokens[index++];
+      if (token === "-" || token === "+" || !legacy && token === "!") return ["unary", token, atom()];
+      if (token === "(") {
+        const inner = expression();
+        expect(")");
+        return inner;
+      }
+      if (token && /^(?:\d|\.\d)/.test(token) && Number.isFinite(Number(token))) return ["literal", Number(token)];
+      if (!legacy) {
+        if (token === "true" || token === "false") return ["literal", token === "true"];
+        if (token && quoted.test(token)) return ["literal", token.slice(1, -1).replace(/\\(['\\])/g, "$1")];
+        if (take("(")) return readCall(token);
+      }
+      const read = resolveVariable(token, legacy);
+      if (!read) throw new SyntaxError(`Unknown expression operand: ${token}`);
+      dependencies.add(token);
+      return ["variable", read];
+    }
+    function expression(min = 0) {
+      let left = atom();
+      for (; ; ) {
+        const op = tokens[index];
+        const level = precedence.get(op);
+        if (level === void 0 || level < min || legacy && !legacyOperators.has(op)) break;
+        index++;
+        left = ["binary", op, left, expression(level + 1)];
+      }
+      if (min === 0 && !legacy && take("?")) {
+        const yes = expression();
+        expect(":");
+        return ["conditional", left, yes, expression()];
+      }
+      return left;
+    }
+    const tree = expression();
+    if (index !== tokens.length) throw new SyntaxError("Unexpected expression token");
+    return tree;
+  }
+  var operations = {
+    "+": (a, b) => a + b,
+    "-": (a, b) => a - b,
+    "*": (a, b) => a * b,
+    "/": (a, b) => a / b,
+    "%": (a, b) => a % b,
+    "<": (a, b) => a < b,
+    "<=": (a, b) => a <= b,
+    ">": (a, b) => a > b,
+    ">=": (a, b) => a >= b
+  };
+  function evaluate(tree, context, legacy) {
+    let remaining = 1e5;
+    const step = () => remaining-- > 0;
+    const runtime = { visit, step };
+    function visit(node, current) {
+      if (!step()) return null;
+      const [kind, first, second, third] = node;
+      switch (kind) {
+        case "literal":
+          return first;
+        case "scope":
+          return own(current, first) ?? null;
+        case "deferred":
+          return first;
+        case "variable": {
+          const value = first(current);
+          return scalar(legacy ? value ?? 0 : value);
+        }
+        case "call": {
+          const args = [];
+          for (const arg of second) {
+            const value = visit(arg, current);
+            if (value === null) return null;
+            args.push(value);
+          }
+          return scalar(first(args, current, runtime));
+        }
+        case "conditional": {
+          const condition = visit(first, current);
+          return condition === null ? null : visit(condition ? second : third, current);
+        }
+        case "unary": {
+          const value = visit(second, current);
+          if (value === null) return null;
+          if (first === "!") return !value;
+          if (legacy && first === "+") return value;
+          return numeric(first === "-" ? (x) => -x : (x) => +x, value);
+        }
+        case "binary": {
+          const a = visit(second, current);
+          if (a === null) return null;
+          if (first === "&&" && !a) return false;
+          if (first === "||" && a) return true;
+          const b = visit(third, current);
+          if (b === null) return null;
+          if (first === "&&" || first === "||") return Boolean(b);
+          if (first === "==") return a === b;
+          if (first === "!=") return a !== b;
+          return numeric(operations[first], a, b);
+        }
+      }
+      return null;
+    }
+    return visit(tree, context);
+  }
+  var legacyCache = /* @__PURE__ */ new Map();
+  var exprCache = /* @__PURE__ */ new Map();
+  function compile(value, legacy) {
+    if (typeof value !== "string") return !legacy && scalar(value) !== null ? { tree: ["literal", value], dependencies: /* @__PURE__ */ new Set() } : null;
+    const cache = legacy ? legacyCache : exprCache;
+    if (value.length > (legacy ? LEGACY_LIMITS : VM_LIMITS).length) return null;
+    if (cache.has(value)) return cache.get(value);
+    const dependencies = /* @__PURE__ */ new Set();
+    let compiled = null;
+    try {
+      compiled = { tree: parse(value, legacy, dependencies), dependencies };
+    } catch (error2) {
+      if (!(error2 instanceof SyntaxError)) throw error2;
+    }
+    if (cache.size >= 512) cache.clear();
+    cache.set(value, compiled);
+    return compiled;
+  }
+  var validExpr = (value) => compile(value, false) !== null;
+  function evaluateExpr(value, context) {
+    const compiled = compile(value, false);
+    return compiled ? evaluate(compiled.tree, context, false) : null;
+  }
+
+  // src/core/vm-select.js
+  var coordinate = (value) => Number.isFinite(value?.x) && Number.isFinite(value?.y);
+  var sortedValues = (table4) => Object.keys(table4 ?? {}).sort().map((key4) => table4[key4]);
+  var cellKey = ({ x, y }) => `${x},${y}`;
+  function zoneContains(state, zone, at2) {
+    if (!coordinate(at2)) return false;
+    const { shape: shape2, anchorUnitId, center, radius, innerRadius, rect, cells: cells2 } = zone.area;
+    const anchor = anchorUnitId && Object.hasOwn(state.units, anchorUnitId) ? state.units[anchorUnitId] : null;
+    if (zone.follow && anchorUnitId && (!anchor || anchor.hp <= 0 || anchor.fled)) return false;
+    const origin = zone.follow ? anchor ?? center : center ?? anchor;
+    if (shape2 === "board") return state.grid[at2.y]?.[at2.x] != null;
+    if (shape2 === "cells") return cells2?.some((cell) => cell.x === at2.x && cell.y === at2.y) ?? false;
+    if (shape2 === "rect") return Boolean(rect && at2.x >= Math.min(rect.x1, rect.x2) && at2.x <= Math.max(rect.x1, rect.x2) && at2.y >= Math.min(rect.y1, rect.y2) && at2.y <= Math.max(rect.y1, rect.y2));
+    if (!coordinate(origin)) return false;
+    const distance2 = distance3D(state, origin, at2);
+    return distance2 <= radius && (shape2 === "circle" || shape2 === "ring" && distance2 >= (innerRadius ?? 0));
+  }
+  function rows(state, selector2, context) {
+    switch (selector2.from) {
+      case "units":
+        return sortedValues(state.units);
+      case "zones":
+        return sortedValues(state.zones);
+      case "tape":
+        return state.tape ?? [];
+      case "statuses":
+        return sortedValues(context[selector2.of ?? "target"]?.statuses);
+      case "cells":
+        return state.grid.flatMap((row, y) => row.map(({ z }, x) => ({ x, y, z })));
+      case "self":
+      case "source":
+      case "target":
+      case "attacker":
+        return [context[selector2.from]].filter(Boolean);
+      default:
+        return [];
+    }
+  }
+  function selectVM(state, selector2, context, { pure = false } = {}) {
+    if (typeof selector2 === "string") selector2 = { from: selector2 };
+    if (!selector2) return [];
+    let candidates = rows(state, selector2, context);
+    if (selector2.area) {
+      const { origin: from = "self", shape: shape2, radius, innerRadius, width, angle } = selector2.area;
+      const origin = typeof from === "string" ? context[from] : from;
+      if (!coordinate(origin)) return [];
+      const aim = ["line", "fan", "cone"].includes(shape2) && coordinate(context.target) ? context.target : origin;
+      const cells2 = new Set(aoeCells(state, origin, aim, { shape: shape2, radius, innerRadius, width, angle, range: Infinity }).map(cellKey));
+      candidates = candidates.filter((candidate) => coordinate(candidate) && cells2.has(cellKey(candidate)));
+    }
+    if (selector2.where !== void 0) {
+      candidates = candidates.filter((candidate) => {
+        const scope = { ...context, candidate };
+        if (selector2.from === "statuses") scope.status = candidate;
+        if (selector2.from === "zones") scope.zone = candidate;
+        if (selector2.from === "tape") scope.tape = candidate;
+        return evaluateExpr(selector2.where, scope) === true;
+      });
+    }
+    const { pick } = selector2;
+    if (!pick || pick === "all") return candidates;
+    if (pick.first !== void 0) return candidates.slice(0, pick.first);
+    if (pick.nearest !== void 0 && coordinate(context.self)) {
+      return candidates.filter(coordinate).sort((a, b) => distance3D(state, context.self, a) - distance3D(state, context.self, b)).slice(0, pick.nearest);
+    }
+    if (pick.random !== void 0 && !pure) {
+      const remaining = [...candidates], selected2 = [];
+      while (remaining.length && selected2.length < pick.random) {
+        const sample = nextRng(state.rng);
+        state.rng = sample.rng;
+        selected2.push(...remaining.splice(Math.floor(sample.value * remaining.length), 1));
+      }
+      return selected2;
+    }
+    return [];
+  }
+
+  // src/core/vm-carriers.js
+  var own2 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var entries = (table4) => Object.keys(table4 ?? {}).sort().map((key4) => [key4, table4[key4]]);
+  var compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  var alive = (unit) => Boolean(unit && !unit.fled && (unit.alive ?? unit.hp > 0));
+  var active = (entity) => entity.persistent || entity.durationType === "persistent" || entity.durationType === "until_removed" || !(entity.remainingTurns <= 0);
+  var idOf = (ref2) => typeof ref2 === "string" ? ref2 : ref2?.id;
+  var slots = ["attack", "action", "move", "cast", "reaction"];
+  function carriers(state) {
+    const units = entries(state.units);
+    const equippedBy = /* @__PURE__ */ new Map();
+    const result = [];
+    for (const [id3, unit] of units) {
+      result.push({ entity: unit, carrier: { type: "unit", id: id3 }, nativeOwnerId: id3 });
+      for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...unit.gear ?? []]) {
+        if (itemId != null && !equippedBy.has(itemId)) equippedBy.set(itemId, id3);
+      }
+    }
+    for (const [ownerId, unit] of units) {
+      for (const [id3, entity] of entries(unit.statuses)) {
+        if (active(entity)) result.push({ entity, carrier: { type: "status", id: id3, ownerId }, nativeOwnerId: ownerId });
+      }
+    }
+    for (const [id3, entity] of entries(state.items)) {
+      const nativeOwnerId = equippedBy.get(id3) ?? entity.ownerId;
+      const template = own2(state.equipment, entity.templateId);
+      if (own2(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
+        result.push({ entity: { ...template, ...entity }, carrier: { type: "item", id: id3 }, nativeOwnerId });
+      }
+    }
+    for (const [id3, entity] of entries(state.zones)) {
+      if (!entity.area) continue;
+      const anchorId = entity.area.anchorUnitId;
+      if (!active(entity) || entity.follow && anchorId && !alive(own2(state.units, anchorId))) continue;
+      result.push({ entity, carrier: { type: "zone", id: id3 }, nativeOwnerId: anchorId ?? entity.sourceId });
+    }
+    return result;
+  }
+  function eventUnit(state, ref2) {
+    return own2(state.units, idOf(ref2));
+  }
+  function sourceIdOf(row, ownerId, event) {
+    return row.entity.sourceId ?? row.nativeOwnerId ?? event.sourceId ?? idOf(event.source) ?? ownerId;
+  }
+  function scopeFor(state, row, ownerId, event, queries2) {
+    const self = own2(state.units, ownerId);
+    const source = eventUnit(state, sourceIdOf(row, ownerId, event));
+    const target2 = eventUnit(state, event.targetId ?? event.target);
+    const attacker = eventUnit(state, event.actorId ?? event.actor ?? event.attackerId ?? event.attacker ?? event.sourceId ?? event.source ?? event.killerId ?? event.killer) ?? source;
+    return {
+      self,
+      source,
+      target: target2,
+      attacker,
+      event: { ...event, actor: attacker, source, target: target2 },
+      vars: row.entity.vars,
+      status: row.carrier.type === "status" ? row.entity : void 0,
+      zone: row.carrier.type === "zone" ? row.entity : void 0,
+      center: event.center,
+      round: state.round,
+      turn: state.turn,
+      timeOfDay: state.time?.timeOfDay,
+      units: state.units,
+      ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
+      resource: (unit, key4) => own2(state.pools, own2(unit?.pools, key4))?.current ?? own2(unit, key4),
+      inZone: (unit, key4) => entries(state.zones).some(([, zone]) => active(zone) && (zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, unit)),
+      isImmune: queries2.isImmune && ((unit, key4) => queries2.isImmune(state, unit, key4)),
+      select: (key4, context) => selectVM(state, own2(queries2.selectors, key4), context, { pure: true })
+    };
+  }
+  function recipients(state, row, unitIds, event, queries2) {
+    const { entity, carrier: carrier4, nativeOwnerId } = row;
+    const shared = entity.shareRulesTo ? new Set(selectVM(
+      state,
+      entity.shareRulesTo,
+      scopeFor(state, row, nativeOwnerId, event, queries2),
+      { pure: true }
+    )) : null;
+    return unitIds.filter((id3) => {
+      const unit = own2(state.units, id3);
+      return carrier4.type === "zone" ? zoneContains(state, entity, unit) || shared?.has(unit) : id3 === nativeOwnerId || shared?.has(unit);
+    });
+  }
+  function eventOwners(state, hook2, event) {
+    const actor = event.actorId ?? event.actor ?? event.sourceId ?? event.source;
+    const target2 = event.targetId ?? event.target;
+    const killer = event.killerId ?? event.killer ?? actor;
+    const dead = event.deadId ?? event.killedId ?? (typeof event.killed === "boolean" ? void 0 : event.killed) ?? target2;
+    let refs;
+    if (event.ownerIds) refs = event.ownerIds;
+    else if (hook2 === "round_start" || hook2 === "round_end") refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
+    else if (hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2") {
+      refs = event.units ?? entries(state.units).filter(([, unit]) => event.poolId != null && unit.pools?.hp === event.poolId).map(([id3]) => id3);
+    } else if (hook2 === "on_ally_death") {
+      const ally = eventUnit(state, dead);
+      refs = ally ? entries(state.units).filter(([id3, unit]) => id3 !== ally.id && unit.team === ally.team && alive(unit)).map(([id3]) => id3) : [];
+    } else if (hook2 === "on_death") refs = event.units ?? [dead];
+    else if (hook2 === "on_kill") refs = [killer];
+    else if (hook2 === "turn_start" || hook2 === "turn_end") refs = [event.unitId ?? event.unit ?? actor ?? target2];
+    else refs = [actor, event.sourceId ?? event.source, target2, ...event.targets ?? []];
+    return [...new Set(refs.map(idOf).filter((id3) => id3 != null && own2(state.units, id3)))].sort();
+  }
+  function templateKey({ entity, carrier: carrier4 }) {
+    return entity.templateId ?? JSON.stringify([carrier4.type, carrier4.ownerId, carrier4.id]);
+  }
+  function collectRules(state, hook2, event = {}, queries2 = {}) {
+    const unitIds = eventOwners(state, hook2, event);
+    if (!unitIds.length) return [];
+    const candidates = [];
+    for (const [carrierOrder, row] of carriers(state).entries()) {
+      const rules = row.entity.rules?.filter((rule2) => rule2.enabled !== false && rule2.hook === hook2);
+      if (!rules?.length) continue;
+      for (const ownerId of recipients(state, row, unitIds, event, queries2)) {
+        for (const rule2 of rules) {
+          const dedupeKey = rule2.dedupeKey ?? `${templateKey(row)}:${rule2.id}`;
+          const useKey = JSON.stringify([ownerId, dedupeKey]);
+          candidates.push({ dedupeKey, entry: { rule: rule2, carrierOrder, ownerId, sourceId: sourceIdOf(row, ownerId, event), carrier: row.carrier, useKey } });
+        }
+      }
+    }
+    candidates.sort(({ entry: a }, { entry: b }) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compare(a.rule.id, b.rule.id) || compare(a.ownerId, b.ownerId));
+    const pooled = hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2";
+    const seen = /* @__PURE__ */ new Set();
+    return candidates.flatMap(({ dedupeKey, entry: entry2 }) => {
+      const key4 = pooled ? dedupeKey : entry2.useKey;
+      if (seen.has(key4)) return [];
+      seen.add(key4);
+      return [entry2];
+    });
+  }
+  function matchesModifier(mod2, event) {
+    return (mod2.damageType === void 0 || mod2.damageType === event.damageType) && (mod2.checkKind === void 0 || mod2.checkKind === event.checkKind || mod2.checkKind === event.statusId || event.tags?.includes(mod2.checkKind));
+  }
+  function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
+    const stats = /* @__PURE__ */ new Map();
+    const locks = Object.fromEntries(slots.map((slot2) => [slot2, false]));
+    const flags2 = /* @__PURE__ */ new Set();
+    const policy = /* @__PURE__ */ new Map();
+    const seen = /* @__PURE__ */ new Set();
+    if (own2(state.units, unitId)) {
+      for (const row of carriers(state)) {
+        if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries2).length) continue;
+        const context = scopeFor(state, row, unitId, event, queries2);
+        for (const [index, mod2] of row.entity.mods.entries()) {
+          const key4 = JSON.stringify([templateKey(row), index]);
+          if (seen.has(key4) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
+          const values5 = {};
+          for (const field of ["flat", "mult", "additivePercent"]) {
+            if (mod2[field] === void 0) continue;
+            const value = evaluateExpr(mod2[field], context);
+            if (Number.isFinite(value)) values5[field] = value;
+          }
+          if (!Object.keys(values5).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length) continue;
+          seen.add(key4);
+          if (mod2.stat && Object.keys(values5).length) {
+            const total2 = stats.get(mod2.stat) ?? { flat: 0, mult: 1, additivePercent: 0 };
+            total2.flat += values5.flat ?? 0;
+            total2.mult *= values5.mult ?? 1;
+            total2.additivePercent += values5.additivePercent ?? 0;
+            stats.set(mod2.stat, total2);
+          }
+          for (const lock of mod2.locks ?? []) if (Object.hasOwn(locks, lock)) locks[lock] = true;
+          for (const flag of mod2.flags ?? []) flags2.add(flag);
+          for (const [field, value] of Object.entries(mod2.controlPolicy ?? {})) {
+            if (!policy.has(field)) policy.set(field, Array.isArray(value) ? [...value] : value);
+          }
+        }
+      }
+    }
+    return {
+      stats: Object.fromEntries(stats),
+      locks,
+      flags: Object.fromEntries([...flags2].map((flag) => [flag, true])),
+      controlPolicy: { controller: "default", allegiance: "normal", ...Object.fromEntries(policy) }
+    };
+  }
+  function applyStatMod(base, { flat = 0, mult = 1, additivePercent = 0 } = {}) {
+    return (base + flat) * (1 + additivePercent) * mult;
+  }
+
+  // src/presets/status-defaults.js
+  var actionStatuses = Object.freeze({
+    brace: "guarded",
+    block: "guarded",
+    charge: "charge",
+    lock_on: "lock_on",
+    scan: "weakness",
+    grapple: "grappled",
+    trip: "prone",
+    use_item: "haste",
+    altar: "haste",
+    shield: "shield",
+    collision: "stun",
+    shield_bash: "stun"
+  });
+  var def = (name, icon, category, remainingTurns, description, modifiers2 = {}, options = {}) => {
+    const { stackMode = "refresh", tags = [], vars = {}, mods = [], rules = [], ...rest } = options;
+    return Object.freeze({
       name,
-      node: node3,
-      ...area2.follow ? { anchorUnitId: center.id, center: { x: center.x, y: center.y } } : {},
-      remainingTurns: node3.remainingTurns ?? 1,
-      persistent: node3.persistent === true,
-      patch: [],
-      covers: []
+      icon,
+      category,
+      description,
+      remainingTurns,
+      durationType: "battle_turns",
+      tickTiming: "onTurnStart",
+      stackMode,
+      stackRule: stackMode,
+      maxStacks: 1,
+      tier: 1,
+      tags: Object.freeze(tags),
+      vars: Object.freeze(vars),
+      mods: Object.freeze(mods),
+      rules: Object.freeze(rules),
+      modifiers: Object.freeze(modifiers2),
+      ...rest
+    });
+  };
+  var allSlots = ["attack", "action", "move", "cast", "reaction"];
+  var tick = (id3, hook2, op) => ({ id: id3, hook: hook2, program: [{ target: "self", ...op }] });
+  var dot = (id3, hook2, amount, damageType2) => tick(id3, hook2, { op: "damage", amount, damageType: damageType2, direct: false });
+  var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
+    // Native combat reads modifiers for reporting and its movement, action, and strike calculations.
+    suppressed: def(
+      "\u88AB\u538B\u5236",
+      "\u26D3\uFE0F",
+      "control",
+      1,
+      "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002",
+      { skip: true },
+      { durationType: "until_removed", tags: ["control"], mods: [{ locks: allSlots }] }
+    ),
+    burn: def(
+      "\u707C\u70E7",
+      "\u{1F525}",
+      "dot",
+      2,
+      "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002",
+      {},
+      { tags: ["fire"], rules: [dot("burn-tick", "turn_start", 5, "energy")] }
+    ),
+    bleed: def(
+      "\u6D41\u8840",
+      "\u{1FA78}",
+      "dot",
+      3,
+      "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
+      {},
+      { stackMode: "stack", maxStacks: 5, tickTiming: "onTurnEnd", rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")] }
+    ),
+    poison: def(
+      "\u4E2D\u6BD2",
+      "\u2620\uFE0F",
+      "dot",
+      3,
+      "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
+      {},
+      { stackMode: "stack", maxStacks: 4, tags: ["poison"], rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")] }
+    ),
+    regen: def(
+      "\u518D\u751F",
+      "\u{1F49A}",
+      "hot",
+      3,
+      "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002",
+      {},
+      { rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })] }
+    ),
+    shield: def(
+      "\u62A4\u76FE",
+      "\u{1F6E1}\uFE0F",
+      "shield",
+      2,
+      "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002",
+      { amount: 8 },
+      { stackMode: "replace", vars: { shieldAmount: 8 } }
+    ),
+    guarded: def("\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", { reduction: 0.35 }),
+    taunt: def("\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", { taunted: true }),
+    guard: def("\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", { intercept: true }),
+    thorns: def("\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {}, {
+      rules: [{
+        id: "thorns-retaliate",
+        hook: "after_damage",
+        filter: "event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team",
+        program: [{ op: "damage", target: "attacker", amount: 5, damageType: "true", direct: false }]
+      }]
+    }),
+    stun: def("\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", { skip: true }, { tags: ["control"], mods: [{ locks: allSlots }] }),
+    freeze: def(
+      "\u51B0\u51BB",
+      "\u{1F9CA}",
+      "control",
+      1,
+      "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002",
+      { skip: true, shatter: 0.5 },
+      { tags: ["control", "ice"], mods: [{ locks: allSlots }], expireOn: Object.freeze({ trigger: "on_struck" }) }
+    ),
+    root: def(
+      "\u5B9A\u8EAB",
+      "\u26D3\uFE0F",
+      "control",
+      2,
+      "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002",
+      { rooted: true },
+      { tags: ["control"], mods: [{ locks: ["move"] }] }
+    ),
+    blind: def(
+      "\u81F4\u76F2",
+      "\u{1F311}",
+      "debuff",
+      2,
+      "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002",
+      { disadvantage: 1 },
+      { mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }] }
+    ),
+    vulnerable: def(
+      "\u6613\u4F24",
+      "\u{1F4A2}",
+      "debuff",
+      2,
+      "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002",
+      { vulnerability: 0.35 },
+      { rules: [{
+        id: "vulnerable-damage",
+        hook: "before_commit",
+        filter: "event.commitKind == 'damage' && event.targetId == self.id",
+        program: [{ op: "mutate_event", patch: { finalAmount: "event.finalAmount * 1.35" } }]
+      }] }
+    ),
+    sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", { armor: -4 }, { mods: [{ stat: "armor", flat: -4 }] }),
+    mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
+    stealth: def(
+      "\u9690\u8EAB",
+      "\u{1F464}",
+      "buff",
+      2,
+      "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002",
+      { hidden: true, advantage: 1 },
+      {
+        tags: ["stealth"],
+        mods: [{ stat: "advantage", flat: 1, checkKind: "attack" }],
+        expireOn: Object.freeze([Object.freeze({ trigger: "on_attack" }), Object.freeze({ trigger: "on_struck" })])
+      }
+    ),
+    haste: def("\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002", { movement: 1 }),
+    chill: def("\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", { movement: -1, accuracy: -2 }),
+    charge: def("\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", { damageBonus: 0.15 }),
+    lock_on: def("\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", { accuracy: 1 }),
+    weakness: def("\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", { intentDifficulty: -2 }, { stackMode: "stack", maxStacks: 3 }),
+    grappled: def(
+      "\u64D2\u62B1",
+      "\u26D3",
+      "control",
+      1,
+      "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002",
+      { rooted: true },
+      { tags: ["control"], mods: [{ locks: ["move"] }] }
+    ),
+    prone: def("\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", { incomingAccuracy: 2, rooted: true }, { mods: [{ locks: ["move"] }] }),
+    infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
+  }).map(([id3, status]) => [id3, Object.freeze({ id: id3, ...status })])));
+
+  // src/core/tactical-vm.js
+  var maxSteps = 2e3;
+  var maxDepth = 64;
+  var own3 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  var coordinate2 = (value) => Number.isInteger(value?.x) && Number.isInteger(value?.y);
+  var samePoint = (a, b) => a.x === b.x && a.y === b.y;
+  var newVM = () => ({ stack: [], events: {}, pendingAsk: null, stepsRemaining: maxSteps, serial: 0 });
+  var nextId = (vm, prefix) => `${prefix}_${++vm.serial}`;
+  function resolveEntity(state, ref2) {
+    if (!ref2) return void 0;
+    return ref2.type === "status" ? own3(own3(state.units, ref2.ownerId)?.statuses, ref2.id) : ref2.type === "unit" ? own3(state.units, ref2.id) : ref2.type === "zone" ? own3(state.zones, ref2.id) : ref2.type === "item" ? own3(state.items, ref2.id) : ref2.value;
+  }
+  function entityRef(state, value, from, owner) {
+    if (from === "statuses") return { type: "status", ownerId: owner.id, id: Object.keys(owner.statuses).find((key4) => owner.statuses[key4] === value) };
+    if (from === "tape" || from === "cells") return { type: "literal", value };
+    if (from === "zones") return { type: "zone", id: value.id };
+    if (own3(state.units, value.id) === value) return { type: "unit", id: value.id };
+    return { type: "literal", value };
+  }
+  function makeFrame(vm, spec) {
+    return {
+      frameId: nextId(vm, "f"),
+      kind: "action",
+      ownerId: null,
+      sourceId: null,
+      ruleId: null,
+      program: [],
+      pc: 0,
+      vars: {},
+      eventRef: null,
+      ...spec
     };
-    const points = cellsIn(state, area2, center);
-    const changes2 = [];
-    const count = place(state, entry, points, record2, actor, changes2);
-    if (!count) {
-      const occupied = points.length && points.every((p) => occupiedByUnit(state, p));
-      return unresolved(occupied ? "\u76EE\u6807\u533A\u57DF\u5168\u90E8\u88AB\u5355\u4F4D\u5360\u7528" : "\u76EE\u6807\u533A\u57DF\u6CA1\u6709\u53EF\u7528\u683C\u5B50");
+  }
+  function pushFrame(state, spec) {
+    const frame = makeFrame(state.vm, spec);
+    state.vm.stack.push(frame);
+    return frame;
+  }
+  function childFrame(state, frame, patch) {
+    return pushFrame(state, {
+      kind: frame.kind,
+      ownerId: frame.ownerId,
+      sourceId: frame.sourceId,
+      ruleId: frame.ruleId,
+      eventRef: frame.eventRef,
+      carrier: frame.carrier ?? null,
+      scope: frame.scope ?? null,
+      hook: frame.hook ?? null,
+      localsRef: frame.localsRef ?? frame.frameId,
+      ...patch
+    });
+  }
+  function registers(state, frame) {
+    return (state.vm.stack.find((entry2) => entry2.frameId === frame.localsRef) ?? frame).vars;
+  }
+  function contextFor(state, frame, host) {
+    const event = own3(state.vm.events, frame.eventRef) ?? {};
+    const self = own3(state.units, frame.ownerId);
+    const source = own3(state.units, frame.sourceId);
+    const target2 = resolveEntity(state, frame.scope?.target) ?? own3(state.units, event.targetId);
+    const attacker = own3(state.units, event.actorId) ?? source;
+    const vars = { ...registers(state, frame) };
+    const bound2 = resolveEntity(state, frame.scope?.bound);
+    if (frame.scope?.bind && bound2 !== void 0) vars[frame.scope.bind] = bound2;
+    const carrier4 = resolveEntity(state, frame.carrier);
+    return {
+      self,
+      source,
+      target: target2,
+      attacker,
+      candidate: bound2,
+      vars,
+      event: { ...event, actor: attacker, source, target: target2 },
+      status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
+      zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === "zone" ? carrier4 : void 0),
+      tape: resolveEntity(state, frame.scope?.tape),
+      center: event.center,
+      pool: frame.scope?.pool,
+      round: state.round,
+      turn: state.turn,
+      timeOfDay: state.time?.timeOfDay,
+      units: Object.values(state.units),
+      distance: (a = self, b = target2) => coordinate2(a) && coordinate2(b) ? distance3D(state, a, b) : null,
+      resource: (entity, key4) => host.resource?.(state, entity, key4) ?? own3(entity, key4),
+      inZone: (entity, key4) => Object.values(state.zones ?? {}).some((zone) => (zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, entity)),
+      isImmune: (unit, key4) => host.isImmune?.(state, unit, key4, frame) ?? false,
+      select: (selector2) => selectVM(state, selector2, contextFor(state, frame, host), { pure: true })
+    };
+  }
+  function newEvent(state, initial) {
+    const eventRef = nextId(state.vm, "ev");
+    state.vm.events[eventRef] = structuredClone(initial);
+    return eventRef;
+  }
+  function scheduleHooks(state, parent, hook2, eventRef, host) {
+    const event = own3(state.vm.events, eventRef);
+    host.expireStatuses?.(state, hook2, event);
+    const entries3 = host.rules?.(state, hook2, event) ?? [];
+    const ordered2 = entries3.filter(({ rule: rule2 }) => rule2.enabled !== false).sort((a, b) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compareId(a.rule.id, b.rule.id));
+    for (const entry2 of ordered2.reverse()) pushFrame(state, {
+      kind: "hook",
+      hook: hook2,
+      eventRef,
+      ownerId: entry2.ownerId,
+      sourceId: entry2.sourceId ?? parent.sourceId,
+      ruleId: entry2.rule.id,
+      carrier: entry2.carrier ?? null,
+      rule: entry2.rule,
+      useKey: entry2.useKey ?? `${entry2.ownerId}:${entry2.rule.dedupeKey ?? entry2.rule.id}`,
+      program: entry2.rule.program
+    });
+  }
+  function pruneEvents(vm) {
+    for (const id3 of Object.keys(vm.events)) {
+      if (!vm.stack.some((frame) => frame.eventRef === id3 || frame.awaitEvent === id3)) delete vm.events[id3];
     }
-    (state.terrainPatches ??= {})[entry.id] = entry;
-    record2(state, actor, "terrain", `${name}\u5F71\u54CD\u4E86 ${count} \u683C`, { terrainId: entry.id, count });
-    settleChanges(state, changes2, record2, damage);
+  }
+  function writeChoice(state, frame, ask, value, host) {
+    registers(state, frame)[ask.outVar] = value;
+    const action = state.vm.stack.findLast((entry2) => entry2.native === "action");
+    if (action) action.answers.push(value);
+    const unit = own3(state.units, ask.chooserId);
+    const option = Array.isArray(ask.options) && ask.options.find((option2) => option2.id === value);
+    const label = coordinate2(value) ? `(${value.x}, ${value.y})` : option?.label ?? value;
+    host.log(state, unit, "choice", `${unit.name}\u9009\u62E9\u4E86${label}`);
+  }
+  function automaticChoice(state, ask, host) {
+    if (ask.kind === "number") return ask.aiPolicy === "max" ? ask.options.max : ask.options.min;
+    return host.choose?.(state, ask) ?? ask.options[0];
+  }
+  function askInstruction(state, frame, op, context, host, options) {
+    const chooser = selectVM(state, op.chooser, context)[0];
+    if (!chooser) return;
+    let choices;
+    if (op.kind === "number") {
+      const min = evaluateExpr(op.min, context), max = evaluateExpr(op.max, context);
+      if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return;
+      choices = { min, max, step: Number.isInteger(min) && Number.isInteger(max) ? 1 : "any" };
+    } else if (op.kind === "option") choices = op.options;
+    else if (op.kind === "entity") choices = selectVM(state, op.select, context).map(({ id: id3, name }) => ({ id: id3, label: name ?? id3 }));
+    else choices = selectVM(state, op.select, context).filter((cell) => coordinate2(cell) && !unitAt(state, cell.x, cell.y, chooser.id)).map(({ x, y }) => ({ x, y }));
+    if (!choices || choices.length === 0) return;
+    const ask = {
+      askId: nextId(state.vm, "ask"),
+      chooserId: chooser.id,
+      prompt: op.prompt,
+      kind: op.kind,
+      options: choices,
+      outVar: op.out,
+      aiPolicy: op.aiPolicy
+    };
+    if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.controlPolicy?.controller === "ai" || chooser.team === "red"))) {
+      if (options.dryRun) options.conditional = true;
+      const choice = automaticChoice(state, ask, host);
+      writeChoice(state, frame, ask, ask.kind === "entity" || ask.kind === "option" ? choice.id : choice, host);
+    } else state.vm.pendingAsk = ask;
+  }
+  function answerVM(state, action, host) {
+    const ask = state.vm?.pendingAsk;
+    const frame = state.vm?.stack.at(-1);
+    if (!ask || !frame || action.askId !== ask.askId) throw new Error("\u8BE5\u6218\u6597\u9009\u62E9\u5DF2\u5931\u6548");
+    if (Object.keys(action).some((key4) => !["type", "askId", "value", "x", "y"].includes(key4))) throw new Error("\u56DE\u7B54\u542B\u672A\u77E5\u5B57\u6BB5");
+    let value;
+    if (ask.kind === "cell") {
+      if (Object.hasOwn(action, "value") || !coordinate2(action) || !ask.options.some((cell) => samePoint(cell, action))) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u683C\u5B50");
+      value = { x: action.x, y: action.y };
+    } else {
+      if (Object.hasOwn(action, "x") || Object.hasOwn(action, "y")) throw new Error("\u56DE\u7B54\u7C7B\u578B\u4E0D\u5339\u914D");
+      value = action.value;
+      if (ask.kind === "number") {
+        const { min, max, step } = ask.options;
+        if (!Number.isFinite(value) || value < min || value > max || step === 1 && !Number.isInteger(value)) throw new Error("\u6570\u503C\u8D85\u51FA\u9009\u62E9\u8303\u56F4");
+      } else if (!ask.options.some((option) => option.id === value)) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u9009\u9879");
+    }
+    writeChoice(state, frame, ask, value, host);
+    state.vm.pendingAsk = null;
+  }
+  function stepLoop(state, frame) {
+    const ref2 = frame.items[frame.pc++];
+    const entity = resolveEntity(state, ref2);
+    if (!entity) return;
+    const scope = { ...frame.scope, bound: ref2 };
+    if (frame.from === "statuses") scope.status = ref2;
+    if (frame.from === "zones") scope.zone = ref2;
+    if (frame.from === "tape") scope.tape = ref2;
+    if (frame.bind) scope.bind = frame.bind;
+    else {
+      delete scope.bind;
+      if (ref2.type === "unit") scope.target = ref2;
+    }
+    childFrame(state, frame, { kind: frame.hook ? "hook" : "action", scope, program: frame.program });
+  }
+  function execute(state, frame, op, host, options) {
+    const context = contextFor(state, frame, host);
+    const evaluate3 = (value) => evaluateExpr(value, context);
+    const vars = registers(state, frame);
+    switch (op.op) {
+      case "let": {
+        const owner = frame.carrier ? resolveEntity(state, frame.carrier) : context.self;
+        if (op.scope === "owner" && !owner) return;
+        const value = evaluate3(op.value);
+        if (value !== null && ["number", "string", "boolean"].includes(typeof value)) {
+          const record2 = op.scope === "owner" ? owner.vars ??= {} : vars;
+          Object.defineProperty(record2, op.name, { value, writable: true, enumerable: true, configurable: true });
+        }
+        return;
+      }
+      case "if": {
+        const program2 = evaluate3(op.cond) === true ? op.then : op.else;
+        if (program2?.length) childFrame(state, frame, { program: program2 });
+        return;
+      }
+      case "for_each": {
+        const entities = selectVM(state, op.select, context);
+        if (!entities.length) return;
+        const { from, of = "target" } = op.select;
+        const items = entities.map((entity) => entityRef(state, entity, from, context[of]));
+        childFrame(state, frame, { kind: "loop", from, bind: op.bind ?? null, items, program: op.body });
+        return;
+      }
+      case "ask":
+        askInstruction(state, frame, op, context, host, options);
+        return;
+      default: {
+        if (!Object.hasOwn(host.ops, op.op)) throw new Error(`\u672A\u77E5 Opcode ${op.op}`);
+        host.ops[op.op]({
+          state,
+          frame,
+          op,
+          context,
+          evaluate: evaluate3,
+          vars,
+          options,
+          host,
+          select: (selector2) => selectVM(state, selector2, context),
+          push: (spec) => pushFrame(state, spec),
+          branch: (program2) => childFrame(state, frame, { program: program2 })
+        });
+      }
+    }
+  }
+  function stepVM(state, host, options = {}) {
+    const vm = state.vm;
+    while (vm.stack.length && !vm.pendingAsk) {
+      const frame = vm.stack.at(-1);
+      if (vm.stepsRemaining-- <= 0 || vm.stack.length > maxDepth) {
+        host.log(state, own3(state.units, frame.ownerId), "vm_halt", "\u7ED3\u7B97\u8D85\u8FC7\u6307\u4EE4\u6B65\u6570\u6216\u6808\u6DF1\u9650\u5236\uFF0C\u5DF2\u4E2D\u6B62\u672C\u6B21\u7ED3\u7B97");
+        vm.stack.length = 0;
+        break;
+      }
+      if (frame.rule && !frame.entered) {
+        frame.entered = true;
+        const { rule: rule2, useKey } = frame;
+        if (rule2.filter !== void 0 && evaluateExpr(rule2.filter, contextFor(state, frame, host)) !== true || host.enterRule?.(state, frame, useKey) === false) {
+          vm.stack.pop();
+          continue;
+        }
+      }
+      if (frame.native) {
+        host.continue({ state, frame, host, options, context: contextFor(state, frame, host) });
+        continue;
+      }
+      if (frame.kind === "loop") {
+        if (frame.pc >= frame.items.length) vm.stack.pop();
+        else stepLoop(state, frame);
+        continue;
+      }
+      if (frame.pc >= frame.program.length) {
+        vm.stack.pop();
+        continue;
+      }
+      const op = frame.program[frame.pc++];
+      if (op.enabled !== false) execute(state, frame, op, host, options);
+    }
+    pruneEvents(vm);
+    return { pendingAsk: vm.pendingAsk, conditional: options.conditional === true };
+  }
+
+  // src/core/vm-pools.js
+  var mirrors = { hp: "maxHp", mp: "maxMp", sp: "maxSp" };
+  var carrierTables = { unit: "units", item: "items", status: "statuses", zone: "zones" };
+  function own4(record2, key4) {
+    return record2 && Object.hasOwn(record2, key4) ? record2[key4] : void 0;
+  }
+  function carrier(state, ownerKind, ownerId) {
+    const table4 = own4(carrierTables, ownerKind);
+    const owner = table4 && own4(state[table4], ownerId);
+    if (!owner) throw new RangeError(`Unknown ${ownerKind} pool owner: ${ownerId}`);
+    return owner;
+  }
+  function requirePool(state, poolId) {
+    const pool = own4(state.pools, poolId);
+    if (!pool) throw new RangeError(`Unknown pool: ${poolId}`);
+    return pool;
+  }
+  function nonnegative(value, name) {
+    if (!Number.isFinite(value) || value < 0) throw new RangeError(`${name} must be finite and nonnegative`);
+    return value;
+  }
+  function clamp(value, max) {
+    return Math.max(0, Math.min(value, max));
+  }
+  function nextId2(state, reserved2, base) {
+    let id3 = base;
+    for (let suffix = 2; own4(state.pools, id3) || reserved2.has(id3); suffix++) id3 = `${base}_${suffix}`;
+    reserved2.add(id3);
+    return id3;
+  }
+  function syncMirrors(state, pool) {
+    const maxField = own4(mirrors, pool.kind);
+    if (!maxField) return;
+    for (const { ownerKind, ownerId } of pool.contributors) {
+      const unit = ownerKind === "unit" && own4(state.units, ownerId);
+      if (unit && own4(unit.pools, pool.kind) === pool.id) {
+        unit[pool.kind] = pool.current;
+        unit[maxField] = pool.max;
+      }
+    }
+  }
+  function publish(state, pools, bindings = [], removed = []) {
+    if (pools.length === 0) return;
+    state.pools ??= {};
+    for (const pool of pools) state.pools[pool.id] = pool;
+    for (const { owner, key: key4, poolId } of bindings) owner.pools = { ...owner.pools, [key4]: poolId };
+    for (const poolId of removed) delete state.pools[poolId];
+    for (const pool of pools) syncMirrors(state, pool);
+  }
+  function getPool(state, ownerId, key4, ownerKind = "unit") {
+    const table4 = own4(carrierTables, ownerKind);
+    const owner = table4 && own4(state[table4], ownerId);
+    return own4(state.pools, own4(owner?.pools, key4));
+  }
+  function planPool(state, reserved2, { ownerKind = "unit", ownerId, key: key4, max, current = max, reloadable = false }) {
+    const owner = carrier(state, ownerKind, ownerId);
+    if (typeof key4 !== "string" || key4.length === 0) throw new TypeError("Pool key must be a nonempty string");
+    if (own4(owner.pools, key4) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key4}`);
+    nonnegative(max, "Pool max");
+    if (!Number.isFinite(current)) throw new RangeError("Pool current must be finite");
+    if (typeof reloadable !== "boolean") throw new TypeError("Pool reloadable must be boolean");
+    const id3 = nextId2(state, reserved2, `pool_${ownerKind === "unit" ? "" : `${ownerKind}_`}${ownerId}_${key4}`);
+    const kind = ownerKind === "unit" && Object.hasOwn(mirrors, key4) ? key4 : "custom";
+    const pool = {
+      id: id3,
+      kind,
+      contributors: [{ ownerKind, ownerId, maxBase: max }],
+      current: clamp(current, max),
+      max,
+      reloadable
+    };
+    return { pool, binding: { owner, key: key4, poolId: id3 } };
+  }
+  function createPool(state, spec) {
+    const { pool, binding } = planPool(state, /* @__PURE__ */ new Set(), spec);
+    publish(state, [pool], [binding]);
+    return pool.id;
+  }
+  function initializeUnitPools(state, unitId, resources) {
+    const unit = carrier(state, "unit", unitId);
+    const reserved2 = /* @__PURE__ */ new Set();
+    const plans = Object.entries(mirrors).map(([key4, maxField]) => planPool(state, reserved2, {
+      max: resources ? own4(resources, key4)?.max : unit[maxField],
+      current: resources ? own4(resources, key4)?.current : unit[key4],
+      ownerId: unitId,
+      key: key4
+    }));
+    publish(state, plans.map((p) => p.pool), plans.map((p) => p.binding));
+    return Object.fromEntries(plans.map(({ pool }) => [pool.kind, pool.id]));
+  }
+  function maxFor(state, contributor, effectiveMax) {
+    return nonnegative(effectiveMax ? effectiveMax(contributor, state) : contributor.maxBase, "Contributor max");
+  }
+  function total(values5, name) {
+    return nonnegative(values5.reduce((sum, value) => sum + value, 0), name);
+  }
+  function unitBindings(state, pool) {
+    return pool.contributors.map((contributor) => {
+      const { ownerKind, ownerId } = contributor;
+      const owner = carrier(state, ownerKind, ownerId);
+      if (ownerKind !== "unit" || getPool(state, ownerId, pool.kind) !== pool) {
+        throw new RangeError(`Invalid contributor binding: ${pool.id}/${ownerId}`);
+      }
+      return { contributor, owner };
+    });
+  }
+  function selectedPools(state, unitIds, kind) {
+    const ids = unitIds.map((id3) => {
+      const pool = getPool(state, id3, kind);
+      if (!pool || pool.kind !== kind) throw new RangeError(`Missing ${kind} pool for unit: ${id3}`);
+      return pool.id;
+    });
+    return [...new Set(ids)].sort().map((id3) => requirePool(state, id3));
+  }
+  function topology(state, unitIds, kinds, plan, effectiveMax) {
+    const units = [...new Set(unitIds)].sort();
+    const reserved2 = /* @__PURE__ */ new Set();
+    const pools = [], bindings = [], removed = [];
+    for (const kind of [...new Set(kinds)].sort()) {
+      if (!Object.hasOwn(mirrors, kind)) throw new RangeError(`Pool cannot be linked or unlinked: ${kind}`);
+      plan(state, selectedPools(state, units, kind), new Set(units), effectiveMax, {
+        reserved: reserved2,
+        pools,
+        bindings,
+        removed
+      });
+    }
+    publish(state, pools, bindings, removed);
+    return pools.map((pool) => pool.id);
+  }
+  function linkPools(state, unitIds, kinds, { effectiveMax } = {}) {
+    return topology(state, unitIds, kinds, (state2, sources, _, effectiveMax2, plan) => {
+      if (sources.length < 2) return;
+      const kind = sources[0].kind;
+      const members = sources.flatMap((pool) => unitBindings(state2, pool));
+      members.sort((a, b) => a.contributor.ownerId < b.contributor.ownerId ? -1 : a.contributor.ownerId > b.contributor.ownerId ? 1 : 0);
+      const contributors = members.map((member) => member.contributor);
+      const max = total(contributors.map((c) => maxFor(state2, c, effectiveMax2)), "Shared pool max");
+      const current = clamp(total(sources.map((pool) => pool.current), "Shared pool current"), max);
+      const id3 = nextId2(state2, plan.reserved, `pool_shared_${kind}`);
+      plan.pools.push({ id: id3, kind, contributors, current, max, reloadable: sources.every((pool) => pool.reloadable) });
+      for (const { owner } of members) plan.bindings.push({ owner, key: kind, poolId: id3 });
+      for (const pool of sources) plan.removed.push(pool.id);
+    }, effectiveMax);
+  }
+  function unlinkPools(state, unitIds, kinds, { effectiveMax } = {}) {
+    return topology(state, unitIds, kinds, (state2, sources, selected2, effectiveMax2, plan) => {
+      for (const pool of sources) {
+        if (pool.contributors.length < 2) continue;
+        const groups = [], remaining = [];
+        for (const member of unitBindings(state2, pool)) {
+          if (selected2.has(member.contributor.ownerId)) groups.push([member]);
+          else remaining.push(member);
+        }
+        if (remaining.length) groups.push(remaining);
+        const capacities = groups.map((group) => total(group.map(({ contributor }) => maxFor(state2, contributor, effectiveMax2)), "Unlinked pool max"));
+        const maxTotal = total(capacities, "Unlinked total max");
+        const currentTotal = clamp(pool.current, maxTotal);
+        const full = currentTotal === maxTotal;
+        const ratio3 = full ? 1 : currentTotal / maxTotal;
+        let currentLeft = currentTotal;
+        for (const [index, members] of groups.entries()) {
+          const max = capacities[index];
+          const share = index === groups.length - 1 ? currentLeft : max * ratio3;
+          const current = full ? max : Math.min(currentLeft, clamp(share, max));
+          currentLeft -= current;
+          const keepId = members === remaining;
+          const id3 = keepId ? pool.id : nextId2(state2, plan.reserved, `pool_${members[0].contributor.ownerId}_${pool.kind}`);
+          plan.pools.push({ ...pool, id: id3, contributors: members.map((member) => member.contributor), current, max });
+          if (!keepId) plan.bindings.push({ owner: members[0].owner, key: pool.kind, poolId: id3 });
+        }
+        if (!remaining.length) plan.removed.push(pool.id);
+      }
+    }, effectiveMax);
+  }
+  function change(pool, before, applied = true) {
+    const lethal = pool.kind === "hp" && before > 0 && pool.current === 0 ? { poolId: pool.id, units: pool.contributors.map((c) => c.ownerId) } : null;
+    return { poolId: pool.id, before, after: pool.current, applied, lethal };
+  }
+  function updatePoolCurrent(state, poolId, mode, amount, { minRemain = 0, requireFull = false } = {}) {
+    const pool = requirePool(state, poolId);
+    if (!Number.isFinite(amount)) throw new RangeError("Pool amount must be finite");
+    const before = pool.current;
+    let current;
+    switch (mode) {
+      case "set":
+        current = amount;
+        break;
+      case "add":
+        current = before + amount;
+        break;
+      case "sub": {
+        nonnegative(amount, "Pool subtraction");
+        nonnegative(minRemain, "Minimum pool remainder");
+        const available = Math.max(0, before - minRemain);
+        if (requireFull && amount > available) return change(pool, before, false);
+        current = before - Math.min(available, amount);
+        break;
+      }
+      default:
+        throw new RangeError(`Unknown pool update mode: ${mode}`);
+    }
+    if (!Number.isFinite(current)) throw new RangeError("Pool update must produce a finite current");
+    const next = { ...pool, current: clamp(current, pool.max) };
+    publish(state, [next]);
+    return change(next, before);
+  }
+  function swapPoolCurrents(state, firstId, secondId) {
+    const first = requirePool(state, firstId);
+    const second = requirePool(state, secondId);
+    if (firstId === secondId) return [];
+    const nextFirst = { ...first, current: clamp(second.current, first.max) };
+    const nextSecond = { ...second, current: clamp(first.current, second.max) };
+    publish(state, [nextFirst, nextSecond]);
+    return [change(nextFirst, first.current), change(nextSecond, second.current)];
+  }
+
+  // src/core/vm-commit.js
+  var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
+  var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  function scheduleCommit(state, parent, data) {
+    return pushFrame(state, {
+      native: "commit",
+      ownerId: parent.ownerId,
+      sourceId: parent.sourceId,
+      ruleId: parent.ruleId,
+      callerId: parent.localsRef ?? parent.frameId,
+      data
+    });
+  }
+  function commitOp(env) {
+    const { state, frame, op, context, select } = env;
+    const targets2 = select(op.target).filter((unit) => entry(state.units, unit.id) === unit);
+    const sourceId2 = context.self?.id ?? frame.sourceId;
+    for (const target2 of targets2.reverse()) {
+      const pools = op.op === "resource" ? [op.pool].flat() : ["hp"];
+      for (const pool of pools.reverse()) {
+        const amount = op.amount === void 0 ? 0 : evaluateExpr(op.amount, { ...context, target: target2, pool });
+        const minRemain = op.minRemain === void 0 ? 0 : evaluateExpr(op.minRemain, { ...context, target: target2, pool });
+        if (!Number.isFinite(amount) || !Number.isFinite(minRemain)) continue;
+        const action = context.event;
+        const label = context.status?.name ?? entry(state.skills, action?.skillId)?.name;
+        scheduleCommit(state, frame, {
+          ...op,
+          sourceId: sourceId2,
+          targetId: target2.id,
+          pool,
+          amount,
+          minRemain,
+          ...label && { label },
+          actionType: action?.actionType ?? null,
+          skillId: action?.skillId ?? null,
+          ...frame.carrier?.type === "item" ? { carrierId: frame.carrier.id } : {}
+        });
+      }
+    }
+  }
+  var commitOps = {
+    damage: commitOp,
+    heal: commitOp,
+    resource: commitOp,
+    link_pool({ state, context, select, op, host }) {
+      const ids = select(op.units).filter((unit) => entry(state.units, unit.id) === unit).map((unit) => unit.id);
+      if (ids.length < (op.mode === "link" ? 2 : 1)) return;
+      (op.mode === "link" ? linkPools : unlinkPools)(state, ids, op.pools);
+      host.log(state, context.self, "pool_link", `${context.self.name}${op.mode === "link" ? "\u8FDE\u63A5" : "\u62C6\u5206"}\u4E86\u8D44\u6E90\u6C60`);
+    }
+  };
+  function continueCommit({ state, frame, host }) {
+    const { data } = frame;
+    const { op, pool: key4 } = data;
+    const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
+    const localOwner = data.local && frame.data.carrierId;
+    const pool = getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
+    if (!pool || !target2) {
+      state.vm.stack.pop();
+      return;
+    }
+    let event = entry(state.vm.events, frame.eventRef);
+    if (frame.pc === 0) {
+      const dying = state.vm.stack.some((parent) => parent.native === "lethal" && parent.data.poolId === target2.pools?.hp);
+      if (!alive2(target2) && !(op === "resource" && dying && !target2.fled)) {
+        state.vm.stack.pop();
+        return;
+      }
+      const amount = op === "damage" ? host.prepareDamage?.(state, source, target2, data) ?? data.amount : op === "heal" ? host.prepareHeal?.(state, source, target2, data) ?? data.amount : data.amount;
+      frame.eventRef = newEvent(state, {
+        commitKind: op,
+        actorId: data.sourceId,
+        targetId: target2.id,
+        pool: key4,
+        poolId: pool.id,
+        damageType: data.damageType ?? null,
+        rawAmount: data.amount,
+        finalAmount: amount,
+        sourceRuleId: frame.ruleId,
+        direct: data.direct ?? true,
+        preserveLife: data.lethal === false || Boolean(target2.nonLethal || host.flag?.(state, target2, "preserveLife") || host.preserveLife?.(state, source)),
+        actionType: data.actionType ?? null,
+        skillId: data.skillId ?? null,
+        weaponTemplateId: data.weaponTemplateId ?? null,
+        melee: data.melee ?? false,
+        backstab: data.backstab ?? false
+      });
+      frame.pc++;
+      scheduleHooks(state, frame, "before_commit", frame.eventRef, host);
+      return;
+    }
+    if (frame.pc === 1) {
+      frame.pc++;
+      if (event.cancel || !Number.isFinite(event.finalAmount)) {
+        state.vm.stack.pop();
+        return;
+      }
+      const before = pool.current;
+      let absorbed = 0;
+      if (op === "damage") {
+        let pending = Math.max(0, Math.floor(event.finalAmount));
+        for (const statusKey of Object.keys(target2.statuses ?? {}).sort()) {
+          const status = target2.statuses[statusKey];
+          const shield = status.category === "shield" ? status.vars?.shieldAmount : 0;
+          if (!(shield > 0) || !pending) continue;
+          const amount = Math.min(shield, pending);
+          pending -= amount;
+          absorbed += amount;
+          status.vars.shieldAmount -= amount;
+          host.log(state, target2, "shield", `${target2.name}\u7684${status.name}\u5438\u6536${amount}\u70B9\u4F24\u5BB3`, { targetId: target2.id, statusId: status.id ?? status.templateId ?? null });
+          if (!status.vars.shieldAmount) delete target2.statuses[statusKey];
+        }
+        updatePoolCurrent(state, pool.id, "sub", pending, { minRemain: event.preserveLife ? 1 : 0 });
+        event.dealt = before - getPool(state, target2.id, key4).current;
+        event.absorbed = absorbed;
+        host.log(state, source, "damage", `${target2.name}\u53D7\u5230${event.dealt}\u70B9${data.label ?? ""}\u4F24\u5BB3`, { ...data.details, targetId: target2.id, damageType: event.damageType, amount: event.dealt, absorbed, hpBefore: before, hpAfter: target2.hp });
+      } else if (op === "heal") {
+        updatePoolCurrent(state, pool.id, "add", Math.max(0, Math.floor(event.finalAmount)));
+        event.healing = target2.hp - before;
+        host.log(state, source, "heal", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}\u6062\u590D${event.healing}\u70B9\u751F\u547D`, { ...data.details, targetId: target2.id, amount: event.healing, hpBefore: before, hpAfter: target2.hp });
+      } else {
+        if (data.mode === "swap") {
+          const other = getPool(state, localOwner || target2.id, data.otherPool, localOwner ? "item" : "unit");
+          if (other) swapPoolCurrents(state, pool.id, other.id);
+        } else {
+          const amount = data.mode === "sub" ? Math.max(0, event.finalAmount) : event.finalAmount;
+          const changed = updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
+          if (!changed.applied) {
+            const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
+            if (caller) caller.pc = caller.program.length;
+            state.vm.stack.pop();
+            return;
+          }
+        }
+        const after = entry(state.pools, pool.id).current;
+        event.change = after - before;
+        host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${after >= before ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(after - before)}\u70B9 ${key4.toUpperCase()}`, { targetId: target2.id, resource: key4, before, after });
+      }
+      const result = entry(state.vm.events, data.resultEventRef);
+      if (result) {
+        for (const key5 of ["dealt", "absorbed", "healing"]) if (event[key5] !== void 0) result[key5] = event[key5];
+      }
+      if (data.out) {
+        const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
+        if (caller) caller.vars[data.out] = event.dealt ?? event.healing ?? event.change;
+      }
+      const depletion = Object.values(state.pools).filter((candidate) => candidate.kind === "hp" && candidate.current === 0 && (candidate.id === pool.id && before > 0 || op === "resource" && data.mode === "swap" && candidate.id === target2.pools?.[data.otherPool]) && !state.vm.stack.some((parent) => parent.native === "lethal" && parent.data.poolId === candidate.id));
+      for (const depleted of depletion.reverse()) pushFrame(state, {
+        native: "lethal",
+        ownerId: target2.id,
+        sourceId: data.sourceId,
+        data: {
+          poolId: depleted.id,
+          damageType: event.damageType,
+          targetId: target2.id,
+          overkill: Math.max(0, event.finalAmount - absorbed - before)
+        }
+      });
+      return;
+    }
+    if (frame.pc === 2) {
+      frame.pc++;
+      const hook2 = op === "damage" ? "after_damage" : op === "heal" ? "after_heal" : null;
+      if (hook2) scheduleHooks(state, frame, hook2, frame.eventRef, host);
+      return;
+    }
+    state.vm.stack.pop();
+  }
+  function continueLethal({ state, frame, host }) {
+    const { data } = frame;
+    const pool = entry(state.pools, data.poolId);
+    if (!pool) {
+      state.vm.stack.pop();
+      return;
+    }
+    if (frame.pc === 0) {
+      frame.eventRef = newEvent(state, {
+        ...data,
+        actorId: frame.sourceId,
+        killer: frame.sourceId,
+        units: pool.contributors.filter((c) => c.ownerKind === "unit").map((c) => c.ownerId).sort()
+      });
+      frame.pc++;
+      scheduleHooks(state, frame, "on_lethal_p1", frame.eventRef, host);
+      return;
+    }
+    if (frame.pc === 1) {
+      frame.pc++;
+      if (pool.current <= 0) scheduleHooks(state, frame, "on_lethal_p2", frame.eventRef, host);
+      return;
+    }
+    if (frame.pc === 2) {
+      frame.pc++;
+      const event = state.vm.events[frame.eventRef];
+      if (pool.current > 0) return;
+      if (event.preventDeath) {
+        updatePoolCurrent(state, pool.id, "set", 1);
+        return;
+      }
+      for (const unitId of event.units) {
+        const unit = entry(state.units, unitId);
+        if (!unit || unit.pools?.hp !== pool.id) continue;
+        unit.diedAt = { round: state.round, turn: state.turn };
+        unit.corpseOf ??= unit.id;
+        host.log(state, entry(state.units, frame.sourceId), "defeat", `${unit.name}\u5012\u4E0B`, { targetId: unit.id });
+      }
+      scheduleHooks(state, frame, "on_death", frame.eventRef, host);
+      return;
+    }
+    state.vm.stack.pop();
+  }
+
+  // src/core/vm-schema.js
+  var enumOf = (...values5) => ({ enum: values5 });
+  var ref = (name) => ({ $ref: `#/$defs/${name}` });
+  var either = (...anyOf) => ({ anyOf });
+  var variants = (...oneOf) => ({ oneOf });
+  var object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
+  var list = (items, minItems = 0) => ({ type: "array", items, minItems });
+  var needs = (...required) => ({ required });
+  var when = (field, condition, then) => ({ if: { properties: { [field]: condition }, required: [field] }, then });
+  var withRules = (schema, ...allOf) => ({ ...schema, allOf });
+  var literal = (value) => ({ const: value });
+  var integer = (minimum, maximum) => ({ type: "integer", minimum, ...maximum === void 0 ? {} : { maximum } });
+  var number = { type: "number" };
+  var bool = { type: "boolean" };
+  var text = { type: "string", pattern: "\\S" };
+  var reserved = [...Object.getOwnPropertyNames(Object.prototype), "prototype"];
+  var idPattern2 = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
+  var id = { type: "string", pattern: `^${idPattern2}$`, not: enumOf(...reserved) };
+  var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved.map((key4) => `vars.${key4}`)) };
+  var tag = { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" };
+  var statusId = { ...id, format: "tactical-status-id" };
+  var formula = { ...text, format: "tactical-expr" };
+  var expr = ref("expr");
+  var numericExpr = either(number, formula);
+  var booleanExpr = either(bool, formula);
+  var entityId = either(id, variable);
+  var damageType = enumOf("physical", "energy", "mental", "true");
+  var attribute = enumOf("str", "agi", "con", "int", "spi");
+  var slot = enumOf("attack", "action", "move", "cast", "reaction");
+  var point2 = object({ x: number, y: number }, ["x", "y"]);
+  var point = object({ x: number, y: number, z: number }, ["x", "y"]);
+  var scopes = ["self", "source", "target", "attacker"];
+  var pointRef = either(point, enumOf(...scopes, "center"), variable);
+  var selector = ref("selector");
+  var target = ref("targetRef");
+  var program = ref("program");
+  var turns = integer(1, 100);
+  var chooseOptions = list(object({ id, label: text }, ["id", "label"]), 1);
+  var mapOf = (key4, value) => ({ type: "object", propertyNames: key4, additionalProperties: value });
+  var eventPatchFields = {
+    before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: point2, ignoreLOS: booleanExpr },
+    before_target: { cancel: booleanExpr, redirectTarget: entityId, replaceTarget: object({ from: entityId, to: entityId }, ["from", "to"]), skipColossusArea: booleanExpr, damageScale: numericExpr },
+    before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
+    before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
+    before_status: { cancel: booleanExpr },
+    on_lethal_p2: { preventDeath: booleanExpr }
+  };
+  var vmHooks = Object.freeze([
+    "active",
+    "before_action",
+    "before_target",
+    "before_check",
+    "after_check",
+    "before_commit",
+    "before_status",
+    "on_lethal_p1",
+    "on_lethal_p2",
+    "after_action",
+    "after_hit",
+    "after_damage",
+    "after_heal",
+    "after_status_applied",
+    "after_status_removed",
+    "on_status_immunized",
+    "on_summon_evict",
+    "on_death",
+    "on_ally_death",
+    "on_kill",
+    "turn_start",
+    "turn_end",
+    "round_start",
+    "round_end"
+  ]);
+  var hook = enumOf(...vmHooks);
+  var patchSchemas = Object.fromEntries(Object.entries(eventPatchFields).map(([name, fields3]) => [
+    name,
+    { ...object(fields3), minProperties: 1 }
+  ]));
+  var opNotes = Object.freeze({
+    let: "\u5C06\u8868\u8FBE\u5F0F\u7ED3\u679C\u5199\u5165 vars.<\u540D\u79F0>\u3002\u9ED8\u8BA4\u5199\u5F53\u524D\u5E27\uFF0Cscope:owner \u5199\u89C4\u5219\u5BBF\u4E3B\u3002",
+    if: "\u6309 cond \u9009\u62E9 then \u6216 else \u6307\u4EE4\u5E8F\u5217\u3002\u672A\u63D0\u4F9B else \u65F6\u4E3A\u5047\u5373\u8DF3\u8FC7\u3002",
+    for_each: "\u5BF9 Selector \u7684\u7ED3\u679C\u5FEB\u7167\u9010\u9879\u6267\u884C body\u3002\u7701\u7565 bind \u65F6\u5B50\u5E27\u7684 target \u662F\u5F53\u524D\u9879\u3002",
+    check: "\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u5165\u5E27\u53D8\u91CF\u3002",
+    ask: "\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002",
+    damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
+    heal: "\u4EC5\u6CBB\u7597\u5B58\u6D3B\u4E14\u5141\u8BB8\u53D7\u7597\u7684\u5355\u4F4D\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
+    resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002swap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\uFF1Bcap/initial \u5728\u6A21\u677F\u4E0A\u58F0\u660E\u3002",
+    link_pool: "\u7528 units \u9009\u62E9\u5355\u4F4D\uFF0C\u5C06\u6307\u5B9A\u7684 HP/MP/SP \u6C60\u5408\u5E76\u5171\u4EAB\u6216\u62C6\u56DE\u72EC\u7ACB\u6C60\u3002",
+    apply_status: "\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002\u62A4\u76FE\u4F7F\u7528 shield \u72B6\u6001\u4E0E shieldAmount \u53D8\u91CF\u3002",
+    remove_status: "\u5728\u76EE\u6807\u6301\u6709\u7684\u72B6\u6001\u4E2D\u7528 where \u7B5B\u9009\u53EF\u79FB\u9664\u9879\u3002outCount \u8BB0\u5F55\u6210\u529F\u79FB\u9664\u7684\u6570\u91CF\u3002",
+    mutate_event: "\u4EC5\u5728\u6709\u53EF\u5199\u5B57\u6BB5\u7684\u62E6\u622A\u94A9\u5B50\u6539\u5199\u5F53\u524D\u4E8B\u4EF6\u3002patch \u7684\u952E\u5FC5\u987B\u5C5E\u4E8E\u5F53\u524D Rule.hook\u3002",
+    move: "\u7EDF\u4E00\u79FB\u52A8\u3001\u77AC\u79FB\u3001\u63A8\u62C9\u4E0E\u9AD8\u5EA6\u53D8\u5316\u3002push/pull \u9010\u683C\u5224\u78B0\u649E\uFF0Caltitude \u53EF\u7528 deltaZ \u6216 land\u3002",
+    spawn: "\u6309 entityKind \u63D0\u4F9B\u5BF9\u5E94\u7684 spec \u751F\u6210\u5355\u4F4D\u3001\u7ED3\u754C\u3001\u5730\u5F62\u3001\u63A9\u4F53\u6216\u5E93\u5B58\u7269\u54C1\uFF1Bat \u6307\u5B9A\u843D\u70B9\u3002",
+    revive: "\u53EA\u5BF9\u672A\u88AB blockRevive \u7981\u6B62\u7684\u9635\u4EA1\u5355\u4F4D\u751F\u6548\uFF1BhpPercent/mpPercent/spPercent \u4EE5 1 \u4E3A\u6EE1\u989D\u3002",
+    perform: "\u538B\u5165\u72EC\u7ACB\u5B50\u52A8\u4F5C\uFF1Bskill \u7528 skillId\uFF0Creplay \u7528 tapeRecord \u5F15\u7528\u78C1\u5E26\u8BB0\u5F55\uFF0C\u5FC5\u8981\u65F6\u7528 overrides \u663E\u5F0F\u8986\u5199\u3002"
+  });
+  function opcode(op, properties, required, ...conditions) {
+    if (!Object.hasOwn(opNotes, op) || !opNotes[op].trim()) throw new Error(`VM \u6307\u4EE4 ${op} \u7F3A\u5C11\u7528\u6CD5\u8BF4\u660E`);
+    const schema = { ...object({ op: literal(op), enabled: { ...bool, default: true }, label: text, ...properties }, ["op", ...required]), description: opNotes[op] };
+    return conditions.length ? withRules(schema, ...conditions) : schema;
+  }
+  var controlPolicy = object({
+    controller: enumOf("default", "ai"),
+    allegiance: enumOf("normal", "friendly_only", "all_hostile"),
+    forcedActionKinds: list(enumOf("attack", "skill")),
+    allowFriendlyTarget: bool,
+    moraleLock: literal("steady")
+  });
+  var stat = enumOf(
+    ...attribute.enum,
+    "armor",
+    "armorPierce",
+    "armorPiercePercent",
+    "damageMult",
+    "finalDamageMult",
+    "damageFlat",
+    "damageReduction",
+    "damageReductionFlat",
+    "dr",
+    "healingMult",
+    "incomingHealMult",
+    "costMult",
+    "checkBonus",
+    "dcBonus",
+    "resistBonus",
+    "advantage",
+    "initiativeFlat"
+  );
+  var statMod = withRules(
+    object({
+      stat,
+      flat: numericExpr,
+      mult: numericExpr,
+      additivePercent: numericExpr,
+      damageType,
+      checkKind: text,
+      locks: list(slot, 1),
+      flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless"), 1),
+      controlPolicy,
+      when: booleanExpr
+    }),
+    either(needs("stat"), needs("locks"), needs("flags"), needs("controlPolicy")),
+    when("flat", {}, needs("stat")),
+    when("mult", {}, needs("stat")),
+    when("additivePercent", {}, needs("stat"))
+  );
+  var overrides = object({ free: bool, ignoreSlots: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
+  var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
+  var area = object({
+    shape: enumOf("single", "circle", "ring", "fan", "cone", "line", "rect"),
+    origin: either(enumOf("self", "target", "center"), point2),
+    radius: { type: "number", minimum: 0 },
+    innerRadius: { type: "number", minimum: 0 },
+    width: { type: "number", minimum: 0 },
+    angle: { type: "number", minimum: 0 }
+  }, ["shape"]);
+  var zoneArea = withRules(object({
+    shape: enumOf("circle", "ring", "rect", "cells", "board"),
+    anchorUnitId: entityId,
+    center: point2,
+    radius: { type: "number", minimum: 0 },
+    innerRadius: { type: "number", minimum: 0 },
+    rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
+    cells: list(point2, 1)
+  }, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
+  var carrier2 = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), mods: list(ref("statMod")), rules: list(ref("rule")) };
+  var spawnSpecs = {
+    unit: withRules(object({
+      ...carrier2,
+      templateId: id,
+      copyOf: target,
+      count: integer(1, 10),
+      spawnPanel: object({
+        attribute,
+        tier: integer(1, 7),
+        stats: object(Object.fromEntries(attribute.enum.map((name) => [name, integer(0, 20)])), attribute.enum),
+        maxHp: integer(1),
+        maxMp: integer(0),
+        maxSp: integer(0),
+        armor: integer(0),
+        size: integer(1, 5),
+        bodyLengthM: { type: "number", exclusiveMinimum: 0 },
+        mc: integer(1),
+        move: integer(0),
+        skills: list(id),
+        gear: list(id),
+        mainHand: id,
+        offHand: id,
+        shield: id
+      })
+    }), variants(needs("templateId"), needs("copyOf"), needs("spawnPanel"))),
+    zone: object({ ...carrier2, templateId: id, area: zoneArea, follow: bool, remainingTurns: turns, persistent: bool }, ["area"]),
+    terrain: withRules(object({ kind: enumOf("floor", "wall", "slope"), height: number, mode: enumOf("set", "raise", "lower"), area, remainingTurns: turns, persistent: bool }), either(needs("kind"), needs("height")), when("mode", {}, needs("height"))),
+    cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area, remainingTurns: turns, persistent: bool }),
+    item: object({ templateId: id, count: integer(1) }, ["templateId"])
+  };
+  var opcodeSchemas = [
+    opcode("let", { name: id, value: expr, scope: enumOf("frame", "owner") }, ["name", "value"]),
+    opcode("if", { cond: booleanExpr, then: program, else: program }, ["cond", "then"]),
+    opcode("for_each", { select: selector, bind: id, body: program }, ["select", "body"]),
+    opcode("check", {
+      kind: enumOf("save", "contest", "d20", "chance", "attack"),
+      stat: either(attribute, list(attribute, 1)),
+      defenderStat: attribute,
+      dc: numericExpr,
+      mode: enumOf("all", "any"),
+      statusId,
+      tags: list(tag),
+      onPass: program,
+      onFail: program,
+      out: id
+    }, ["kind"]),
+    opcode(
+      "ask",
+      {
+        chooser: target,
+        kind: enumOf("cell", "entity", "option", "number"),
+        prompt: text,
+        out: id,
+        aiPolicy: enumOf("max", "min", "best_offensive_cell", "safest_cell", "highest_threat", "first"),
+        select: selector,
+        options: chooseOptions,
+        min: numericExpr,
+        max: numericExpr
+      },
+      ["chooser", "kind", "prompt", "out", "aiPolicy"],
+      when("kind", enumOf("cell", "entity"), withRules(needs("select"), { not: either(needs("options"), needs("min"), needs("max")) })),
+      when("kind", literal("option"), withRules(needs("options"), { not: either(needs("select"), needs("min"), needs("max")) })),
+      when("kind", literal("number"), withRules(needs("min", "max"), { not: either(needs("options"), needs("select")) }))
+    ),
+    opcode("damage", { target, amount: numericExpr, damageType, ignoreArmor: bool, lethal: bool, direct: bool, out: id }, ["target", "amount", "damageType"]),
+    opcode("heal", { target, amount: numericExpr, out: id }, ["target", "amount"]),
+    opcode(
+      "resource",
+      {
+        target,
+        pool: either(id, list(id, 1)),
+        mode: enumOf("add", "sub", "set", "swap"),
+        amount: numericExpr,
+        otherPool: id,
+        local: bool,
+        minRemain: numericExpr,
+        requireFull: bool,
+        out: id
+      },
+      ["target", "pool", "mode"],
+      when("mode", literal("swap"), withRules({ ...needs("otherPool"), properties: { pool: id } }, { not: needs("amount") })),
+      when("mode", enumOf("add", "sub", "set"), { ...needs("amount"), not: needs("otherPool") })
+    ),
+    opcode("link_pool", { units: selector, pools: list(enumOf("hp", "mp", "sp"), 1), mode: enumOf("link", "unlink") }, ["units", "pools", "mode"]),
+    opcode("apply_status", {
+      target,
+      statusId,
+      turns: numericExpr,
+      stacks: numericExpr,
+      stackMode: enumOf("refresh", "stack", "replace", "extend"),
+      extendTurns: numericExpr,
+      vars: mapOf(id, expr),
+      expireOn: ref("expireRule")
+    }, ["target", "statusId"]),
+    opcode("remove_status", { target, where: booleanExpr, reason: enumOf("dispelled", "cleansed", "expired"), outCount: id }, ["target", "where"]),
+    opcode("mutate_event", { patch: either(...Object.keys(patchSchemas).map((name) => ref(`patch_${name}`))) }, ["patch"]),
+    opcode("move", {
+      target,
+      mode: enumOf("teleport", "step", "push", "pull", "altitude"),
+      to: either(point, formula),
+      distance: numericExpr,
+      deltaZ: numericExpr,
+      land: bool,
+      collisionDamage: numericExpr,
+      onCollide: program
+    }, ["target", "mode"]),
+    opcode(
+      "spawn",
+      { entityKind: enumOf(...Object.keys(spawnSpecs)), spec: { type: "object" }, at: pointRef, out: id },
+      ["entityKind", "spec"],
+      ...Object.keys(spawnSpecs).map((kind) => when("entityKind", literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))
+    ),
+    opcode("revive", { target, hpPercent: numericExpr, mpPercent: numericExpr, spPercent: numericExpr, hpFlat: numericExpr }, ["target"]),
+    opcode(
+      "perform",
+      { actor: target, actionKind: enumOf("skill", "attack", "replay"), skillId: id, tapeRecord: variable, target, overrides },
+      ["actor", "actionKind"],
+      when("actionKind", literal("skill"), { ...needs("skillId"), not: needs("tapeRecord") }),
+      when("actionKind", literal("replay"), { ...needs("tapeRecord"), not: needs("skillId") }),
+      when("actionKind", literal("attack"), { not: either(needs("skillId"), needs("tapeRecord")) })
+    )
+  ];
+  var vmOpcodes = Object.freeze(opcodeSchemas.map((schema) => schema.properties.op.const));
+  var instructionBranches = ["then", "else", "body", "onPass", "onFail", "onCollide"];
+  var guardedHooks = [...Object.keys(patchSchemas), "readOnly"];
+  var hookGuard = (name) => ref(`opcodeGuard_${name}`);
+  var guardedProgram = (name) => list(hookGuard(name));
+  var defs = {
+    expr: either(number, bool, formula),
+    tag,
+    selector: withRules(object({
+      from: enumOf(...scopes, "units", "statuses", "zones", "cells", "tape"),
+      of: enumOf(...scopes),
+      area,
+      where: booleanExpr,
+      pick: variants(literal("all"), ...["first", "random", "nearest"].map((key4) => object({ [key4]: integer(1) }, [key4])))
+    }, ["from"]), when("of", {}, { properties: { from: literal("statuses") } })),
+    targetRef: either(enumOf(...scopes), selector),
+    expireRule,
+    statMod,
+    controlPolicy,
+    ...Object.fromEntries(Object.entries(patchSchemas).map(([name, schema]) => [`patch_${name}`, schema])),
+    ...Object.fromEntries(Object.entries(spawnSpecs).map(([name, schema]) => [`spawn_${name}`, schema])),
+    ...Object.fromEntries(guardedHooks.map((name) => {
+      const properties = Object.fromEntries(instructionBranches.map((branch) => [branch, guardedProgram(name)]));
+      return [`opcodeGuard_${name}`, name === "readOnly" ? { properties, not: needs("patch") } : { properties: { ...properties, patch: ref(`patch_${name}`) } }];
+    })),
+    opcode: variants(...opcodeSchemas),
+    program: list(ref("opcode")),
+    rule: withRules(
+      object({
+        id,
+        hook,
+        program,
+        label: text,
+        enabled: { ...bool, default: true },
+        priority: { type: "integer" },
+        dedupeKey: text,
+        usesPerBattle: integer(1),
+        filter: booleanExpr
+      }, ["id", "hook", "program"]),
+      ...Object.keys(patchSchemas).map((name) => when("hook", literal(name), { properties: { program: guardedProgram(name) } })),
+      when("hook", { not: enumOf(...Object.keys(patchSchemas)) }, { properties: { program: guardedProgram("readOnly") } })
+    )
+  };
+  var root = (title, name) => ({ $schema: "https://json-schema.org/draft/2020-12/schema", title, ...ref(name), $defs: defs });
+  var vmSchema = root("Fated Tactical VM Rule", "rule");
+  var vmOpcodeSchema = root("Fated Tactical VM Opcode", "opcode");
+  var vmProgramSchema = root("Fated Tactical VM Program", "program");
+  var vmSelectorSchema = root("Fated Tactical VM Selector", "selector");
+  var vmStatModSchema = root("Fated Tactical VM StatMod", "statMod");
+  function matches(value, schema, context, depth = 0) {
+    if (depth > 512) return false;
+    const next = (item, rule2) => matches(item, rule2, context, depth + 1);
+    if (schema.$ref && !next(value, defs[schema.$ref.split("/").at(-1)])) return false;
+    if (Object.hasOwn(schema, "const") && value !== schema.const) return false;
+    if (schema.enum && !schema.enum.includes(value)) return false;
+    if (schema.not && next(value, schema.not)) return false;
+    if (schema.anyOf && !schema.anyOf.some((rule2) => next(value, rule2))) return false;
+    if (schema.oneOf && schema.oneOf.filter((rule2) => next(value, rule2)).length !== 1) return false;
+    if (schema.allOf && !schema.allOf.every((rule2) => next(value, rule2))) return false;
+    if (schema.if && next(value, schema.if) && !next(value, schema.then)) return false;
+    if (schema.type === "boolean") return typeof value === "boolean";
+    if (schema.type === "number" || schema.type === "integer") {
+      return Number.isFinite(value) && (schema.type !== "integer" || Number.isInteger(value)) && (schema.minimum === void 0 || value >= schema.minimum) && (schema.maximum === void 0 || value <= schema.maximum) && (schema.exclusiveMinimum === void 0 || value > schema.exclusiveMinimum);
+    }
+    if (schema.type === "string") {
+      if (typeof value !== "string" || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
+      if (schema.format === "tactical-expr") return validExpr(value);
+      if (schema.format === "tactical-status-id") return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
+      return true;
+    }
+    if (schema.type === "array") {
+      return Array.isArray(value) && value.length >= schema.minItems && Array.from(value).every((item) => next(item, schema.items));
+    }
+    const plainObject = value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+    if (schema.type === "object" && !plainObject) return false;
+    if (plainObject) {
+      if (schema.required?.some((key4) => !Object.hasOwn(value, key4))) return false;
+      const entries3 = Object.entries(value);
+      if (entries3.length < (schema.minProperties ?? 0)) return false;
+      return entries3.every(([key4, item]) => {
+        if (schema.propertyNames && !next(key4, schema.propertyNames)) return false;
+        if (Object.hasOwn(schema.properties ?? {}, key4)) return next(item, schema.properties[key4]);
+        if (schema.additionalProperties === false) return false;
+        return !schema.additionalProperties || next(item, schema.additionalProperties);
+      });
+    }
     return true;
   }
-  function place(state, entry, points, record2, actor, changes2) {
-    const { node: node3 } = entry;
-    let occupied = 0;
-    for (const { x, y } of points) {
-      const cell = cellAt(state, x, y);
-      const point2 = { x, y };
-      if (node3.terrainKind === "wall" || node3.kind === "addCover") {
-        if (occupiedByUnit(state, point2)) occupied++;
-        if (blocked(state, point2) || node3.kind === "addCover" && (cell.kind === "wall" || Object.keys(state.covers).length >= 200)) continue;
-      }
-      if (node3.kind === "addCover") {
-        const id3 = `${entry.id}-${x}-${y}`;
-        state.covers[id3] = { id: id3, name: entry.name, x, y, material: "\u5730\u5F62\u6548\u679C", hp: node3.hp, maxHp: node3.hp, cover: 2 };
-        entry.covers.push({ id: id3, x, y, before: null });
-      } else {
-        const after = changeCell(cell, node3);
-        entry.patch.push({ x, y, before: { ...cell }, after });
-        writeCell(state, point2, after, changes2);
-      }
+  var valid = (value, name, options) => Boolean(matches(value, defs[name], options));
+  var validHook = (value, options, guard) => options.hook === void 0 || vmHooks.includes(options.hook) && matches(value, guard(Object.hasOwn(patchSchemas, options.hook) ? options.hook : "readOnly"), options);
+  var validVmOpcode = (value, options = {}) => valid(value, "opcode", options) && validHook(value, options, hookGuard);
+  var validVmRule = (value, options = {}) => valid(value, "rule", options);
+  var validVmStatMod = (value, options = {}) => valid(value, "statMod", options);
+  var validVmTag = (value) => valid(value, "tag", {});
+
+  // src/core/vm-rules.js
+  var own5 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
+  var evaluate2 = (expression, context, fallback) => expression === void 0 ? fallback : evaluateExpr(expression, context);
+  var live = (unit) => unit?.hp > 0 && !unit.fled;
+  function operation({ state, frame, op, context, select }, native, selector2) {
+    const targets2 = selector2 === void 0 ? [context.target ?? context.self] : select(selector2);
+    for (const target2 of targets2.reverse()) {
+      if (!target2 || own5(state.units, target2.id) !== target2) continue;
+      pushFrame(state, {
+        native,
+        ownerId: frame.ownerId,
+        sourceId: frame.sourceId,
+        ruleId: frame.ruleId,
+        scope: { ...frame.scope, target: { type: "unit", id: target2.id } },
+        eventRef: frame.eventRef,
+        localsRef: frame.localsRef ?? frame.frameId,
+        callerId: frame.localsRef ?? frame.frameId,
+        branchFrameId: frame.frameId,
+        data: op
+      });
     }
-    if (occupied) record2(state, actor, "terrain_skip", `${occupied} \u683C\u56E0\u5355\u4F4D\u5360\u7528\u88AB\u8DF3\u8FC7`, { count: occupied });
-    return entry.patch.length + entry.covers.length;
   }
-  function remove(state, entry, entries2, changes2) {
-    for (const { id: id3 } of entry.covers) delete state.covers[id3];
-    for (const patch of entry.patch) {
-      let cell = patch.before;
-      const replay = [];
-      for (const other of entries2.slice(entries2.indexOf(entry) + 1)) {
-        const layer = other.patch.find((p) => same2(p, patch));
-        if (!layer) continue;
-        const after = changeCell(cell, other.node);
-        replay.push({ layer, before: cell, after });
-        cell = after;
-      }
-      for (const { layer, before, after } of replay) Object.assign(layer, { before, after });
-      writeCell(state, patch, cell, changes2, true);
-    }
-    entry.patch = [];
-    entry.covers = [];
+  function output(state, frame, key4, value) {
+    if (key4 === void 0) return;
+    const caller = state.vm.stack.find((entry2) => entry2.frameId === frame.callerId);
+    if (caller) caller.vars[key4] = value;
   }
-  function updateTerrainPatches(state, record2, damage, advance2 = false) {
-    const entries2 = Object.values(state.terrainPatches ?? {});
-    const moved = [], changes2 = [], movingChanges = [];
-    for (const entry of entries2.slice().reverse()) {
-      const anchor2 = state.units[entry.anchorUnitId];
-      const lost = entry.anchorUnitId && !present(anchor2);
-      if (advance2 && !entry.persistent && entry.remainingTurns > 0) entry.remainingTurns--;
-      if (lost || !entry.persistent && entry.remainingTurns === 0) {
-        entry.remainingTurns = 0;
-        entry.persistent = false;
-        remove(state, entry, entries2, changes2);
-        delete state.terrainPatches[entry.id];
-        record2(state, anchor2, "terrain_expire", `${entry.name}${lost ? "\u56E0\u951A\u70B9\u79BB\u573A\u800C\u6D88\u6563" : "\u5230\u671F\u8FD8\u539F"}`, { terrainId: entry.id });
-      } else if (advance2 && anchor2 && !same2(anchor2, entry.center)) {
-        remove(state, entry, entries2, movingChanges);
-        entry.center = { x: anchor2.x, y: anchor2.y };
-        moved.unshift(entry);
+  function dice(state, sides) {
+    const result = rollDie(state.rng, sides);
+    state.rng = result.rng;
+    return result.value;
+  }
+  var ruleOps = {
+    check(env) {
+      operation(env, "check");
+    },
+    apply_status(env) {
+      operation(env, "apply_status", env.op.target);
+    },
+    remove_status(env) {
+      operation(env, "remove_status", env.op.target);
+    },
+    revive({ state, op, select, context, host }) {
+      for (const target2 of select(op.target)) {
+        const hp = getPool(state, target2.id, "hp");
+        if (!hp || live(target2) || target2.fled || target2.corpseConsumed || host.flag?.(state, target2, "blockRevive")) continue;
+        if (hp.contributors.length !== 1) continue;
+        const values5 = ["hp", "mp", "sp"].map((key4) => {
+          const pool = getPool(state, target2.id, key4);
+          const fraction = evaluate2(op[`${key4}Percent`], { ...context, target: target2 }, key4 === "hp" ? 1 : 0);
+          const flat = key4 === "hp" && op.hpFlat !== void 0 ? evaluateExpr(op.hpFlat, { ...context, target: target2 }) : fraction * pool.max;
+          return { pool, flat };
+        });
+        if (values5.some(({ flat }) => !Number.isFinite(flat))) continue;
+        for (const { pool, flat } of values5) updatePoolCurrent(state, pool.id, "set", bounded(flat, pool.kind === "hp" ? 1 : 0, pool.max));
+        delete target2.diedAt;
+        if (!state.order.includes(target2.id)) state.order.push(target2.id);
+        host.log(state, context.self, "revive", `${target2.name}\u590D\u6D3B\uFF0C\u6062\u590D\u81F3${target2.hp}\u70B9\u751F\u547D`, { targetId: target2.id });
+      }
+    },
+    mutate_event({ state, frame, op, context, host }) {
+      const event = own5(state.vm.events, frame.eventRef);
+      if (!event || !frame.hook || !validVmOpcode(op, { hook: frame.hook })) throw new Error("\u4E8B\u4EF6\u6539\u5199\u4E0D\u7B26\u5408\u5F53\u524D\u62E6\u622A\u94A9\u5B50");
+      for (const [key4, expression] of Object.entries(op.patch)) {
+        const resolveId = (id3) => id3.startsWith("vars.") ? own5(context.vars, id3.slice(5)) : id3;
+        let value;
+        if (key4 === "redirectTarget") value = resolveId(expression);
+        else if (key4 === "replaceTarget") value = { from: resolveId(expression.from), to: resolveId(expression.to) };
+        else if (typeof expression === "object" || ["minRating", "forceOutcome"].includes(key4)) value = expression;
+        else value = evaluateExpr(expression, context);
+        if (value == null || key4 === "replaceTarget" && (!value.from || !value.to)) continue;
+        event[key4] = value;
+        if (key4 === "redirectTarget") host.log(state, context.self, "redirect", `${context.self.name}\u91CD\u5B9A\u5411\u4E86\u76EE\u6807`, { targetId: value });
+        else if (key4 === "cancel" && value) host.log(state, context.self, "intercept", `${context.self.name}\u62E6\u622A\u4E86\u672C\u6B21\u7ED3\u7B97`, { targetId: event.targetId });
       }
     }
-    for (const entry of moved) {
-      delete state.terrainPatches[entry.id];
-      state.terrainPatches[entry.id] = entry;
-      place(state, entry, cellsIn(state, entry.node.area, entry.center), record2, state.units[entry.anchorUnitId], movingChanges);
+  };
+  function continueCheck({ state, frame, host, context }) {
+    const { data: op } = frame;
+    if (frame.pc === 0) {
+      const dc = evaluate2(op.dc, context, op.kind === "chance" ? 0 : 10);
+      if (!Number.isFinite(dc)) {
+        state.vm.stack.pop();
+        return;
+      }
+      frame.eventRef = newEvent(state, {
+        checkKind: op.kind,
+        actorId: context.self.id,
+        targetId: context.target.id,
+        dc,
+        stat: op.stat ?? null,
+        statusId: op.statusId ?? null,
+        tags: op.tags ?? []
+      });
+      frame.pc++;
+      scheduleHooks(state, frame, "before_check", frame.eventRef, host);
+      return;
     }
-    const movedCells = /* @__PURE__ */ new Map();
-    for (const change of movingChanges) {
-      const key4 = `${change.x},${change.y}`;
-      const first = movedCells.get(key4);
-      if (first) first.after = change.after;
-      else movedCells.set(key4, change);
+    const event = state.vm.events[frame.eventRef];
+    if (frame.pc === 1) {
+      frame.pc++;
+      const kind = op.kind;
+      const subject2 = kind === "save" ? context.target : context.self;
+      const stat3 = (unit, key4) => host.stat?.(state, unit, key4) ?? unit.stats?.[key4] ?? 0;
+      const stats = [op.stat ?? null].flat();
+      const checkBonus = host.checkBonus?.(state, subject2, event) ?? 0;
+      const dc = event.dc + (event.dcDelta ?? 0);
+      const outcomes = stats.map((key4) => {
+        let roll2 = dice(state, kind === "chance" ? 100 : 20);
+        if (event.advantageDelta > 0) roll2 = Math.max(roll2, dice(state, 20));
+        if (event.advantageDelta < 0) roll2 = Math.min(roll2, dice(state, 20));
+        const total3 = roll2 + (key4 ? stat3(subject2, key4) : 0) + checkBonus + (event.bonusDelta ?? 0);
+        const difficulty = kind === "contest" ? dice(state, 20) + stat3(context.target, op.defenderStat ?? key4) : dc;
+        const passed2 = kind === "chance" ? roll2 <= difficulty : total3 >= difficulty;
+        return { roll: roll2, total: total3, difficulty, passed: passed2 };
+      });
+      const { roll, total: total2 } = outcomes[0];
+      const passed = ["pass", "hit", "crit"].includes(event.forceOutcome) ? true : ["fail", "miss"].includes(event.forceOutcome) ? false : op.mode === "any" ? outcomes.some((outcome) => outcome.passed) : outcomes.every((outcome) => outcome.passed);
+      Object.assign(event, { roll, total: total2, dc, passed, rating: event.forceOutcome === "crit" ? "crit" : event.minRating ?? (passed ? "hit" : "miss") });
+      host.log(
+        state,
+        subject2,
+        kind === "save" ? "save" : kind === "attack" ? "attack_roll" : "proc",
+        `${subject2.name}\u68C0\u5B9A${passed ? "\u6210\u529F" : "\u5931\u8D25"}\uFF08${outcomes.map((outcome) => `${outcome.roll}\u70B9\uFF0C\u5408\u8BA1${outcome.total}\u5BF9${outcome.difficulty}`).join("\uFF1B")}\uFF09`,
+        { targetId: context.target.id, roll, total: total2, dc, success: passed }
+      );
+      scheduleHooks(state, frame, "after_check", frame.eventRef, host);
+      return;
     }
-    settleChanges(state, [...changes2, ...movedCells.values()], record2, damage);
+    output(state, frame, op.out, event.passed);
+    const program2 = event.passed ? op.onPass : op.onFail;
+    state.vm.stack.pop();
+    if (program2?.length) {
+      const parent = state.vm.stack.find((entry2) => entry2.frameId === frame.branchFrameId);
+      pushFrame(state, {
+        kind: parent.kind === "loop" ? "action" : parent.kind,
+        hook: parent.hook ?? null,
+        carrier: parent.carrier ?? null,
+        ownerId: parent.ownerId,
+        sourceId: parent.sourceId,
+        ruleId: parent.ruleId,
+        eventRef: parent.eventRef,
+        scope: parent.scope ?? null,
+        localsRef: frame.callerId,
+        program: program2
+      });
+    }
+  }
+  function continueApplyStatus({ state, frame, host, context }) {
+    const { data: op } = frame;
+    const target2 = context.target;
+    const template = host.statusTemplate?.(state, op.statusId);
+    if (!target2 || !template) {
+      state.vm.stack.pop();
+      return;
+    }
+    if (frame.pc === 0) {
+      frame.awaitEvent = newEvent(state, {
+        actorId: context.self?.id ?? null,
+        targetId: target2.id,
+        statusId: op.statusId,
+        tags: template.tags ?? [],
+        category: template.category ?? "special",
+        tier: template.tier ?? 1
+      });
+      frame.pc++;
+      scheduleHooks(state, frame, "before_status", frame.awaitEvent, host);
+      return;
+    }
+    if (frame.pc === 1) {
+      frame.pc++;
+      const event = state.vm.events[frame.awaitEvent];
+      if (event.cancel) {
+        host.log(state, target2, "status_immune", `${target2.name}\u514D\u75AB\u4E86${template.name}`, { targetId: target2.id, statusId: op.statusId });
+        scheduleHooks(state, frame, "on_status_immunized", frame.awaitEvent, host);
+        return;
+      }
+      if (!live(target2)) return;
+      const previous = own5(target2.statuses, op.statusId);
+      const stackMode = op.stackMode ?? template.stackMode ?? "refresh";
+      const values5 = { ...template.vars, ...op.vars };
+      const vars = Object.fromEntries(Object.entries(values5).map(([key4, expr2]) => [key4, evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
+      const maxStacks = template.maxStacks ?? 1;
+      const duration2 = evaluate2(op.turns, context, template.remainingTurns ?? 1);
+      const count = evaluate2(op.stacks, context, 1);
+      const extension = evaluate2(op.extendTurns, context, 1);
+      if (![duration2, count, extension].every(Number.isFinite)) return;
+      const status = {
+        ...structuredClone(template),
+        id: op.statusId,
+        templateId: op.statusId,
+        ownerId: target2.id,
+        sourceId: context.self?.id ?? null,
+        vars,
+        tags: template.tags ?? [],
+        tier: template.tier ?? 1,
+        mods: template.mods ?? [],
+        rules: template.rules ?? [],
+        stackMode,
+        stacks: bounded(count, 1, maxStacks),
+        durationType: template.durationType ?? "battle_turns",
+        remainingTurns: bounded(duration2, 1, 100)
+      };
+      if (op.expireOn) status.expireOn = op.expireOn;
+      if (previous && stackMode === "stack") status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
+      if (previous && stackMode === "extend") status.remainingTurns = bounded(previous.remainingTurns + extension, 1, 100);
+      target2.statuses[op.statusId] = status;
+      host.log(state, context.self, status.category === "shield" ? "shield" : "status", `${target2.name}\u83B7\u5F97${status.name}\uFF08${status.stacks}\u5C42\uFF09`, { targetId: target2.id, statusId: op.statusId });
+      scheduleHooks(state, frame, "after_status_applied", frame.awaitEvent, host);
+      return;
+    }
+    state.vm.stack.pop();
+  }
+  function continueRemoveStatus({ state, frame, host, context }) {
+    const { data: op } = frame;
+    const target2 = context.target;
+    if (!target2) {
+      state.vm.stack.pop();
+      return;
+    }
+    frame.statusKeys ??= Object.keys(target2.statuses).sort();
+    if (frame.pc >= frame.statusKeys.length) {
+      output(state, frame, op.outCount, frame.removed ?? 0);
+      state.vm.stack.pop();
+      return;
+    }
+    const statusId3 = frame.statusKeys[frame.pc++];
+    const status = own5(target2.statuses, statusId3);
+    if (!status || status.durationType === "persistent" || evaluateExpr(op.where, { ...context, status }) !== true) return;
+    delete target2.statuses[statusId3];
+    frame.removed = (frame.removed ?? 0) + 1;
+    const reason = op.reason ?? "dispelled";
+    frame.eventRef = newEvent(state, { actorId: context.self?.id ?? null, targetId: target2.id, statusId: statusId3, removeReason: reason, reason });
+    host.log(state, context.self, reason === "expired" ? "expire" : "cleanse", `${target2.name}\u5931\u53BB${status.name}`, { targetId: target2.id, statusId: statusId3 });
+    scheduleHooks(state, frame, "after_status_removed", frame.eventRef, host);
+  }
+
+  // src/core/vm-action.js
+  var own6 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record2 = false }) {
+    return pushFrame(state, {
+      native: "action",
+      ownerId: actorId,
+      sourceId: actorId,
+      data: { action, overrides: overrides2, record: record2 },
+      answers: []
+    });
+  }
+  function perform({ state, frame, context, select, op }) {
+    const actors = select(op.actor);
+    for (const actor of actors.reverse()) {
+      if (actor.hp <= 0 || actor.fled) continue;
+      const ref2 = op.tapeRecord?.replace(/^vars\./, "");
+      const tape = op.actionKind === "replay" ? own6(context.vars, ref2) ?? context.tape : void 0;
+      if (op.actionKind === "replay" && !tape) continue;
+      const action = { type: tape?.actionType ?? op.actionKind };
+      const skillId = tape?.skillId ?? op.skillId;
+      if (skillId) action.skillId = skillId;
+      const target2 = op.target ? select(op.target)[0] : context.target;
+      const point4 = tape?.targetSpec ?? target2 ?? actor;
+      if (Number.isInteger(point4.x) && Number.isInteger(point4.y)) Object.assign(action, { x: point4.x, y: point4.y });
+      const overrides2 = tape ? { free: true, ignoreSlots: true, ...op.overrides } : { ...op.overrides };
+      if (overrides2.scale !== void 0) {
+        overrides2.scale = evaluateExpr(overrides2.scale, context);
+        if (!Number.isFinite(overrides2.scale)) continue;
+      }
+      if (typeof overrides2.origin === "string") {
+        const point5 = context[overrides2.origin] ?? own6(context.vars, overrides2.origin.replace(/^vars\./, ""));
+        if (!point5 || !Number.isInteger(point5.x) || !Number.isInteger(point5.y)) continue;
+        overrides2.origin = { x: point5.x, y: point5.y };
+      }
+      queueVMAction(state, { actorId: actor.id, action, overrides: overrides2 });
+    }
+  }
+  function continueAction({ state, frame, host }) {
+    const actor = own6(state.units, frame.ownerId);
+    const { action, overrides: overrides2, record: record2 } = frame.data;
+    if (!actor || actor.hp <= 0 || actor.fled) {
+      state.vm.stack.pop();
+      return;
+    }
+    if (frame.pc === 0) {
+      const plan2 = host.planAction(state, actor, action, overrides2);
+      if (!plan2?.ok) {
+        if (record2 && !host.rejectAction?.(state, actor, action, plan2?.error)) throw new Error(plan2?.error ?? "\u65E0\u6CD5\u6267\u884C\u52A8\u4F5C");
+        state.vm.stack.pop();
+        return;
+      }
+      frame.plan = plan2;
+      frame.eventRef = newEvent(state, {
+        actorId: actor.id,
+        actionType: action.type,
+        skillId: action.skillId ?? null,
+        targetId: plan2.targetIds[0] ?? null,
+        center: plan2.center,
+        origin: overrides2.origin ?? { x: actor.x, y: actor.y },
+        mpCost: plan2.mp ?? 0,
+        spCost: plan2.sp ?? 0,
+        hpCost: plan2.hp ?? 0,
+        power: plan2.power ?? 0,
+        hostile: plan2.hostile ?? false,
+        weaponTemplateId: plan2.weaponTemplateId ?? null
+      });
+      frame.pc++;
+      scheduleHooks(state, frame, "before_action", frame.eventRef, host);
+      return;
+    }
+    const event = state.vm.events[frame.eventRef];
+    const { plan } = frame;
+    if (frame.pc === 1) {
+      frame.pc++;
+      if (event.cancel) {
+        if (event.consumeCostOnCancel) host.payAction(state, actor, plan, event, overrides2);
+        state.vm.stack.pop();
+        return;
+      }
+      host.payAction(state, actor, plan, event, overrides2);
+      Object.assign(event, {
+        targets: plan.targetIds,
+        isSingle: plan.isSingle,
+        isArea: !plan.isSingle,
+        isRanged: plan.isRanged,
+        damageType: plan.damageType ?? null
+      });
+      scheduleHooks(state, frame, "before_target", frame.eventRef, host);
+      return;
+    }
+    if (frame.pc === 2) {
+      frame.pc++;
+      if (event.cancel) {
+        state.vm.stack.pop();
+        return;
+      }
+      if (event.redirectTarget) event.targets = [event.redirectTarget];
+      if (event.replaceTarget) event.targets = event.targets.map((id3) => id3 === event.replaceTarget.from ? event.replaceTarget.to : id3);
+      event.targets = [...new Set(event.targets)].filter((id3) => own6(state.units, id3));
+      event.targetId = event.targets[0] ?? null;
+      host.runAction({ state, frame, actor, plan, event, overrides: overrides2 });
+      return;
+    }
+    if (frame.pc === 3) {
+      frame.pc++;
+      scheduleHooks(state, frame, "after_action", frame.eventRef, host);
+      return;
+    }
+    if (record2 && ["skill", "attack", "move"].includes(action.type)) {
+      state.tape ??= [];
+      state.tape.push({
+        seq: (state.tape.at(-1)?.seq ?? 0) + 1,
+        round: state.round,
+        turn: state.turn,
+        actorId: actor.id,
+        team: actor.team,
+        actionType: action.type,
+        skillId: action.skillId ?? null,
+        targetSpec: { ...event.center, targetId: event.targetId, answers: frame.answers },
+        origin: event.origin
+      });
+    }
+    state.vm.stack.pop();
   }
 
   // src/core/prebattle_resources.js
@@ -1597,13 +2732,13 @@ var FatedTacticalTavern = (() => {
   };
   function calculatePrebattleResources(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) fail("\u8F93\u5165");
-    const { stats: stats2, tier, bodyLengthM = null, count = 1, summonCount = 1, previous = {} } = input;
-    if (!stats2 || !attributes.every((k) => integer2(stats2[k], 0, 1e6))) fail("\u4E94\u7EF4");
+    const { stats, tier, bodyLengthM = null, count = 1, summonCount = 1, previous = {} } = input;
+    if (!stats || !attributes.every((k) => integer2(stats[k], 0, 1e6))) fail("\u4E94\u7EF4");
     if (!integer2(tier, 1, 7)) fail("\u5C42\u7EA7");
     if (bodyLengthM !== null && !finite(bodyLengthM, Number.MIN_VALUE, 1e9)) fail("\u4F53\u957F");
     if (!integer2(count, 1, 1e6) || !integer2(summonCount, 1, 1e6)) fail("\u96C6\u7FA4\u6570\u91CF\u6216\u53EC\u5524\u521D\u59CB\u603B\u6570");
     if (!previous || typeof previous !== "object" || Array.isArray(previous)) fail("\u65E7\u8D44\u6E90");
-    const { str, agi, con, int: int2, spi } = stats2;
+    const { str, agi, con, int: int2, spi } = stats;
     const statSum = str + agi + con + int2 + spi;
     const mc = bodyLengthM >= 10 ? 2 + Math.floor(Math.log2(bodyLengthM / 10)) : 1;
     const baseMultipliers = { hp: hpTier[tier - 1], mp: manaTier[tier - 1], sp: manaTier[tier - 1] };
@@ -1613,8 +2748,8 @@ var FatedTacticalTavern = (() => {
     for (const [key4, value] of Object.entries(raw)) {
       const old = previous[key4];
       if (Object.hasOwn(previous, key4) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail(`\u65E7 ${key4.toUpperCase()} `);
-      const ratio4 = old ? old.max ? old.current / old.max : 0 : 1;
-      resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio4), ratio: ratio4 };
+      const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
+      resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio3), ratio: ratio3 };
     }
     return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
   }
@@ -1636,13 +2771,13 @@ var FatedTacticalTavern = (() => {
   }
   function spawnPanel(actor, spec) {
     const { tier, cap, sum } = budget(actor, spec);
-    const total = Math.min(sum, 5 * cap);
-    if (total < 0 || !spawnStatsAllowed(actor, spec)) return null;
-    const stats2 = spec.stats ? { ...spec.stats } : Object.fromEntries(attrs.map((k, i) => [k, Math.floor(total / 5) + Number(i < total % 5)]));
+    const total2 = Math.min(sum, 5 * cap);
+    if (total2 < 0 || !spawnStatsAllowed(actor, spec)) return null;
+    const stats = spec.stats ? { ...spec.stats } : Object.fromEntries(attrs.map((k, i) => [k, Math.floor(total2 / 5) + Number(i < total2 % 5)]));
     const bodyLengthM = spec.bodyLengthM ?? 1.7;
-    const { resources, mc } = calculatePrebattleResources({ stats: stats2, tier, bodyLengthM, summonCount: spec.count ?? 1 });
+    const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, summonCount: spec.count ?? 1 });
     return {
-      stats: stats2,
+      stats,
       tier,
       bodyLengthM,
       mc: spec.mc ?? mc,
@@ -1655,135 +2790,925 @@ var FatedTacticalTavern = (() => {
     };
   }
 
-  // src/presets/status-defaults.js
-  var actionStatuses = Object.freeze({
-    brace: "guarded",
-    block: "guarded",
-    charge: "charge",
-    lock_on: "lock_on",
-    scan: "weakness",
-    grapple: "grappled",
-    trip: "prone",
-    use_item: "haste",
-    altar: "haste",
-    shield: "shield",
-    collision: "stun",
-    shield_bash: "stun"
-  });
-  var def = (name, icon, category, remainingTurns, description, modifiers3 = {}, options = {}) => Object.freeze({
-    name,
-    icon,
-    category,
-    description,
-    remainingTurns,
-    durationType: "battle_turns",
-    tickTiming: "onTurnStart",
-    stackRule: "refresh",
-    maxStacks: 1,
-    modifiers: Object.freeze(modifiers3),
-    ...options
-  });
-  var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
-    suppressed: def("\u88AB\u538B\u5236", "\u26D3\uFE0F", "control", 1, "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002", { skip: true }, { durationType: "until_removed" }),
-    burn: def("\u707C\u70E7", "\u{1F525}", "dot", 2, "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002", { damage: 5, damageType: "energy" }),
-    bleed: def(
-      "\u6D41\u8840",
-      "\u{1FA78}",
-      "dot",
-      3,
-      "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
-      { damage: 3, damageType: "true" },
-      { stackRule: "stack", maxStacks: 5, tickTiming: "onTurnEnd" }
-    ),
-    poison: def(
-      "\u4E2D\u6BD2",
-      "\u2620\uFE0F",
-      "dot",
-      3,
-      "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
-      { damage: 3, damageType: "true" },
-      { stackRule: "stack", maxStacks: 4 }
-    ),
-    regen: def("\u518D\u751F", "\u{1F49A}", "hot", 3, "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002", { heal: 5 }),
-    shield: def("\u62A4\u76FE", "\u{1F6E1}\uFE0F", "shield", 2, "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002", { amount: 8 }, { stackRule: "replace" }),
-    guarded: def("\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", { reduction: 0.35 }),
-    taunt: def("\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", { taunted: true }),
-    guard: def("\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", { intercept: true }),
-    thorns: def("\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", { reflect: 5 }),
-    stun: def("\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", { skip: true }),
-    freeze: def("\u51B0\u51BB", "\u{1F9CA}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002", { skip: true, shatter: 0.5 }, { expireOn: Object.freeze({ trigger: "on_struck" }) }),
-    root: def("\u5B9A\u8EAB", "\u26D3\uFE0F", "control", 2, "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002", { rooted: true }),
-    blind: def("\u81F4\u76F2", "\u{1F311}", "debuff", 2, "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002", { disadvantage: 1 }),
-    vulnerable: def("\u6613\u4F24", "\u{1F4A2}", "debuff", 2, "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002", { vulnerability: 0.35 }),
-    sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", { armor: -4 }),
-    mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
-    stealth: def("\u9690\u8EAB", "\u{1F464}", "buff", 2, "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002", { hidden: true, advantage: 1 }, { expireOn: Object.freeze([Object.freeze({ trigger: "on_attack" }), Object.freeze({ trigger: "on_struck" })]) }),
-    haste: def("\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002", { movement: 1 }),
-    chill: def("\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", { movement: -1, accuracy: -2 }),
-    charge: def("\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", { damageBonus: 0.15 }),
-    lock_on: def("\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", { accuracy: 1 }),
-    weakness: def("\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", { intentDifficulty: -2 }, { stackRule: "stack", maxStacks: 3 }),
-    grappled: def("\u64D2\u62B1", "\u26D3", "control", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002", { rooted: true }),
-    prone: def("\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", { incomingAccuracy: 2, rooted: true }),
-    infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
-  }).map(([id3, status2]) => [id3, Object.freeze({ id: id3, ...status2 })])));
+  // src/core/vm-spatial-ops.js
+  var own7 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var values = (table4) => Object.values(table4 ?? {});
+  var live2 = (unit) => unit && unit.hp > 0 && !unit.fled;
+  var point3 = (value) => Number.isSafeInteger(value?.x) && Number.isSafeInteger(value?.y);
+  var xy = ({ x, y }) => ({ x, y });
+  var same2 = (a, b) => a.x === b.x && a.y === b.y;
+  var at = (state, entity) => ({ ...xy(entity), z: elevation(state, entity) });
+  var cells = (state) => state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })));
+  var blocked = (state, p, ignored = /* @__PURE__ */ new Set()) => !isGround(state, p) || coverAt(state, p.x, p.y) || values(state.units).some((unit) => live2(unit) && !ignored.has(unit.id) && same2(unit, p));
+  var fixture = (state, p) => values(state.interactives).some((item) => same2(item, p));
+  var clamp2 = (value, min, max) => Math.max(min, Math.min(value, max));
+  var capitalize = (key4) => key4[0].toUpperCase() + key4.slice(1);
+  function nextId3(state, table4, prefix) {
+    state.spatialSerial ??= {};
+    let serial = state.spatialSerial[prefix] ?? 0;
+    const pattern = new RegExp(`^${prefix}-(\\d+)$`);
+    for (const id3 of Object.keys(table4)) {
+      const suffix = Number(pattern.exec(id3)?.[1]);
+      if (Number.isSafeInteger(suffix)) serial = Math.max(serial, suffix);
+    }
+    state.spatialSerial[prefix] = serial + 1;
+    return `${prefix}-${serial + 1}`;
+  }
+  function resolvePoint(value, context) {
+    if (point3(value)) return value;
+    if (typeof value !== "string") return void 0;
+    const resolved = ["self", "source", "target", "attacker", "center"].includes(value) ? context[value] : value.startsWith("vars.") ? own7(context.vars, value.slice(5)) : evaluateExpr(value, context);
+    if (point3(resolved)) return resolved;
+    if (typeof resolved === "string") {
+      const unit = context.units.find((unit2) => unit2.id === resolved);
+      if (point3(unit)) return unit;
+    }
+  }
+  function inherit(frame) {
+    return {
+      ownerId: frame.ownerId,
+      sourceId: frame.sourceId,
+      ruleId: frame.ruleId,
+      eventRef: frame.eventRef,
+      carrier: frame.carrier ?? null,
+      scope: frame.scope ?? {},
+      hook: frame.hook ?? null,
+      localsRef: frame.localsRef ?? frame.frameId
+    };
+  }
+  function logMove(state, host, unit, mode, from, path2, collision) {
+    const types2 = { teleport: "teleport", step: "move", push: "knockback", pull: "knockback", altitude: "altitude" };
+    const verbs2 = { teleport: "\u77AC\u79FB", step: "\u79FB\u52A8", push: "\u88AB\u63A8\u79BB", pull: "\u88AB\u62C9\u8FD1", altitude: "\u6539\u53D8\u9AD8\u5EA6" };
+    const to = at(state, unit);
+    const destination = `(${to.x}, ${to.y}, z=${to.z})`;
+    const text5 = `${unit.name}${verbs2[mode]}\u81F3 ${destination}${collision ? "\uFF0C\u9047\u5230\u963B\u6321" : ""}`;
+    host.log(state, unit, types2[mode], text5, { targetId: unit.id, from, to, path: path2, ...collision ? { collision } : {} });
+  }
+  function teleport({ state, host, context, op }, targets2) {
+    const anchor = targets2[0];
+    if (targets2.some((unit) => unit.locks?.move)) return;
+    const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
+    if (!destination) return;
+    const ignored = new Set(targets2.map((unit) => unit.id));
+    const landings = targets2.map((unit) => ({
+      unit,
+      from: at(state, unit),
+      to: { x: destination.x + unit.x - anchor.x, y: destination.y + unit.y - anchor.y }
+    }));
+    if (landings.some(({ to }) => blocked(state, to, ignored))) return;
+    for (const { unit, to } of landings) Object.assign(unit, to);
+    refreshFollowingZones(state, host);
+    for (const { unit, from } of landings) if (!same2(unit, from)) logMove(state, host, unit, "teleport", from, []);
+  }
+  function move(env) {
+    const { state, frame, op, context, select, push } = env;
+    const targets2 = select(op.target).filter((unit) => own7(state.units, unit.id) === unit && live2(unit));
+    if (!targets2.length) return;
+    if (op.mode === "teleport") {
+      teleport(env, targets2);
+      return;
+    }
+    push({ ...inherit(frame), native: "spatialMove", data: { op, unitIds: targets2.map((unit) => unit.id) } });
+  }
+  function continueMove({ state, frame, host, context }) {
+    const { op, unitIds } = frame.data;
+    if (frame.pc >= unitIds.length) {
+      state.vm.stack.pop();
+      return;
+    }
+    const unit = own7(state.units, unitIds[frame.pc++]);
+    if (!live2(unit) || op.mode !== "push" && op.mode !== "pull" && unit.locks?.move) return;
+    const scope = { ...context, target: unit };
+    const from = at(state, unit);
+    const path2 = [];
+    let collision;
+    if (op.mode === "altitude") {
+      const delta = op.deltaZ === void 0 ? 3 : evaluateExpr(op.deltaZ, scope);
+      if (!op.land && !Number.isFinite(delta)) return;
+      const altitude = op.land ? 0 : clamp2((unit.altitude ?? 0) + Math.trunc(delta), 0, 12);
+      if (altitude === (unit.altitude ?? 0)) return;
+      unit.altitude = altitude;
+    } else if (op.mode === "step") {
+      const to = resolvePoint(op.to, scope);
+      const distance2 = op.distance === void 0 ? 1 : evaluateExpr(op.distance, scope);
+      if (!to || !Number.isFinite(distance2)) return;
+      const steps = findPath(state, unit, to, Math.floor(distance2));
+      if (!steps?.length) return;
+      path2.push(...steps);
+      Object.assign(unit, xy(to));
+    } else {
+      const origin = op.to === void 0 ? context.self ?? context.source : resolvePoint(op.to, scope);
+      const distance2 = op.distance === void 0 ? 1 : evaluateExpr(op.distance, scope);
+      if (!point3(origin) || !Number.isFinite(distance2)) return;
+      const away = facingToward(origin, unit);
+      if (!away.some(Boolean)) return;
+      for (let step = 0; step < Math.floor(distance2); step++) {
+        const [dx, dy] = op.mode === "push" ? away : facingToward(unit, origin);
+        if (!dx && !dy) break;
+        const next = { x: unit.x + dx, y: unit.y + dy, altitude: unit.altitude ?? 0 };
+        if (!canStep(state, unit, next)) {
+          collision = xy(next);
+          break;
+        }
+        Object.assign(unit, xy(next));
+        path2.push(at(state, unit));
+      }
+      if (!path2.length && !collision) return;
+    }
+    refreshFollowingZones(state, host);
+    logMove(state, host, unit, op.mode, from, path2, collision);
+    if (!collision) return;
+    const target2 = { type: "unit", id: unit.id };
+    const inherited = inherit(frame);
+    if (op.onCollide?.length) pushFrame(state, {
+      ...inherited,
+      kind: frame.hook ? "hook" : "action",
+      scope: { ...inherited.scope, target: target2 },
+      program: op.onCollide
+    });
+    const amount = evaluateExpr(op.collisionDamage, scope);
+    if (Number.isFinite(amount) && amount > 0) scheduleCommit(state, frame, {
+      op: "damage",
+      pool: "hp",
+      damageType: "true",
+      direct: false,
+      amount,
+      targetId: unit.id,
+      sourceId: context.self?.id ?? frame.sourceId,
+      label: op.label ?? "\u649E\u51FB"
+    });
+  }
+  function carrier3(spec, sourceId2, id3, templateId, context) {
+    const vars = Object.fromEntries(Object.entries(spec.vars ?? {}).flatMap(([key4, expression]) => {
+      const value = evaluateExpr(expression, context);
+      return value === null ? [] : [[key4, value]];
+    }));
+    return {
+      id: id3,
+      templateId,
+      name: spec.name ?? templateId,
+      sourceId: sourceId2,
+      tier: spec.tier ?? context.self?.tier ?? 1,
+      tags: [...spec.tags ?? []],
+      vars,
+      mods: structuredClone(spec.mods ?? []),
+      rules: structuredClone(spec.rules ?? [])
+    };
+  }
+  function publishOut(state, frame, out, id3) {
+    if (out === void 0 || !id3) return;
+    const registers2 = state.vm.stack.find((entry2) => entry2.frameId === frame.localsRef) ?? frame;
+    Object.defineProperty(registers2.vars, out, { value: id3, writable: true, enumerable: true, configurable: true });
+  }
+  function itemPlan(state, templateId, context) {
+    const template = own7(state.equipment, templateId);
+    if (!template) return void 0;
+    const pools = Object.entries(template.pools ?? {}).map(([key4, definition]) => {
+      const max = evaluateExpr(definition.cap, context);
+      const current = definition.initial === void 0 ? max : evaluateExpr(definition.initial, context);
+      return { key: key4, max, current, reloadable: definition.reloadable === true };
+    });
+    if (pools.some(({ max, current }) => !Number.isFinite(max) || max < 0 || !Number.isFinite(current))) return void 0;
+    return { template, templateId, pools };
+  }
+  function mintItem(state, plan, sourceId2, ownerId, context) {
+    const id3 = nextId3(state, state.items ??= {}, "item");
+    const { template, templateId, pools } = plan;
+    const item = { ...carrier3(template, sourceId2, id3, templateId, context), ownerId };
+    state.items[id3] = item;
+    for (const pool of pools) createPool(state, { ...pool, ownerKind: "item", ownerId: id3 });
+    return id3;
+  }
+  function spawnItems({ state, frame, host, context, op }) {
+    const owner = context.target && own7(state.units, context.target.id) === context.target ? context.target : context.self;
+    if (!live2(owner)) return;
+    const { templateId, count = 1 } = op.spec;
+    const plan = itemPlan(state, templateId, { ...context, target: owner });
+    if (!plan || values(state.items).length + count > 200) return;
+    let first;
+    for (let i = 0; i < count; i++) {
+      const id3 = mintItem(state, plan, context.self?.id ?? frame.sourceId, owner.id, context);
+      (owner.inventory ??= {})[templateId] = (own7(owner.inventory, templateId) ?? 0) + 1;
+      first ??= id3;
+    }
+    publishOut(state, frame, op.out, first);
+    host.log(state, owner, "spawn", `${owner.name}\u83B7\u5F97 ${count} \u4EF6${plan.template.name ?? templateId}`, { itemId: first, count });
+  }
+  function unitPlan(state, context, spec, original) {
+    const actor = context.self;
+    const count = spec.count ?? 1;
+    const panel = spec.spawnPanel ? spawnPanel(actor, { ...spec.spawnPanel, tier: spec.tier ?? spec.spawnPanel.tier, count }) : original;
+    if (!panel || !panel.stats || ![panel.maxHp, panel.maxMp, panel.maxSp].every(Number.isFinite) || panel.maxHp <= 0 || panel.maxMp < 0 || panel.maxSp < 0) return void 0;
+    const loads = spec.spawnPanel ?? original;
+    const equipment = (id3) => own7(state.items, id3)?.templateId ?? id3;
+    const gear = Object.fromEntries(["mainHand", "offHand", "shield"].map((slot2) => [
+      slot2,
+      equipment(loads[slot2] ?? (slot2 === "mainHand" ? loads.weapon : null)) ?? null
+    ]));
+    gear.gear = (loads.gear ?? []).map(equipment);
+    const items = [...new Set([gear.mainHand, gear.offHand, gear.shield, ...gear.gear].filter(Boolean))];
+    if (items.some((id3) => !itemPlan(state, id3, context))) return void 0;
+    const bodyLengthM = panel.bodyLengthM ?? 1.7;
+    const stats = { ...panel.stats };
+    const maxima = Object.fromEntries(["hp", "mp", "sp"].map((key4) => {
+      const pool = own7(state.pools, own7(panel.pools, key4));
+      const field = `max${capitalize(key4)}`;
+      const contributor = pool?.contributors.find((entry2) => entry2.ownerKind === "unit" && entry2.ownerId === panel.id);
+      return [field, contributor?.maxBase ?? panel[field]];
+    }));
+    return { count, gear, panel: {
+      stats,
+      ...maxima,
+      bodyLengthM,
+      size: panel.size ?? sizeClassFor(bodyLengthM),
+      mc: panel.mc ?? (bodyLengthM >= 10 ? 2 : 1),
+      armor: panel.armor ?? 0,
+      move: panel.move ?? 3,
+      skills: [...loads.skills ?? []],
+      team: actor.team,
+      facing: [...actor.facing ?? [1, 0]],
+      tier: panel.tier ?? actor.tier ?? 1
+    } };
+  }
+  function removeSummon(state, unit) {
+    const shared = ["hp", "mp", "sp"].filter((key4) => own7(state.pools, own7(unit.pools, key4))?.contributors.length > 1);
+    if (shared.length) unlinkPools(state, [unit.id], shared);
+    const ownedItems = values(state.items).filter((item) => item.ownerId === unit.id);
+    for (const carrier4 of [unit, ...ownedItems, ...values(unit.statuses)]) {
+      for (const poolId of values(carrier4.pools)) delete state.pools[poolId];
+    }
+    for (const item of ownedItems) delete state.items[item.id];
+    delete state.units[unit.id];
+    const index = state.order.indexOf(unit.id);
+    if (index !== -1) {
+      state.order.splice(index, 1);
+      if (index < state.turn) state.turn--;
+    }
+  }
+  function spawnUnits({ state, frame, host, context, op, select, push }, center) {
+    const { spec } = op;
+    const actor = context.self;
+    if (!actor || !center) return;
+    const original = spec.copyOf ? select(spec.copyOf).find((unit) => own7(state.units, unit.id) === unit) : own7(state.summonTemplates, spec.templateId);
+    const plan = unitPlan(state, context, spec, original);
+    if (!plan) return;
+    const templateId = spec.templateId ?? original?.templateId ?? original?.id ?? frame.ruleId ?? "summon";
+    const form = spec.copyOf ? "copy" : spec.spawnPanel ? "panel" : "template";
+    const group = JSON.stringify([actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
+    const data = {
+      plan,
+      center: xy(center),
+      out: op.out ?? null,
+      fields: carrier3({
+        ...original,
+        ...spec,
+        tier: spec.spawnPanel ? plan.panel.tier : spec.tier ?? plan.panel.tier,
+        vars: { ...spec.copyOf ? {} : original?.vars, ...spec.vars }
+      }, actor.id, "", templateId, context),
+      group,
+      evictIds: [],
+      pendingId: null
+    };
+    if (original && spec.copyOf) data.fields.vars = { ...original.vars ?? {}, ...data.fields.vars };
+    if (state.vm.stack.some((entry2) => entry2.native === "spatialSpawn" && entry2.data.group === data.group)) return;
+    data.evictIds = Object.keys(state.units).sort().filter((id3) => own7(state.units, id3).summonGroup === data.group && id3 !== actor.id);
+    const leaving = new Set(data.evictIds);
+    const slots2 = [plan.gear.mainHand, plan.gear.offHand, plan.gear.shield, ...plan.gear.gear].filter(Boolean);
+    const keptItems = values(state.items).filter((item) => !leaving.has(item.ownerId)).length;
+    if (values(state.units).length - leaving.size + plan.count > 200 || keptItems + slots2.length * plan.count > 200 || cells(state).filter((cell) => !blocked(state, cell, leaving)).length < plan.count) {
+      host.log(state, actor, "spawn", `${data.fields.name}\u672A\u80FD\u767B\u573A\uFF1A\u53EF\u7528\u6218\u573A\u7A7A\u95F4\u4E0D\u8DB3`);
+      return;
+    }
+    push({ ...inherit(frame), native: "spatialSpawn", data });
+  }
+  function continueSpawn({ state, frame, host, context }) {
+    const { data } = frame;
+    const actor = own7(state.units, frame.ownerId);
+    if (data.pendingId) {
+      const old = own7(state.units, data.pendingId);
+      if (old) {
+        host.log(state, old, "spawn", `${old.name}\u7ED3\u675F\u53EC\u5524\u5E76\u79BB\u573A`, { unitId: old.id, evicted: true });
+        removeSummon(state, old);
+        refreshFollowingZones(state, host);
+      }
+      data.pendingId = null;
+      delete frame.awaitEvent;
+    }
+    while (frame.pc < data.evictIds.length) {
+      const old = own7(state.units, data.evictIds[frame.pc++]);
+      if (!old || old.summonGroup !== data.group) continue;
+      if (!live2(old)) {
+        removeSummon(state, old);
+        refreshFollowingZones(state, host);
+        continue;
+      }
+      data.pendingId = old.id;
+      frame.awaitEvent = newEvent(state, {
+        actorId: actor?.id ?? frame.ownerId,
+        targetId: old.id,
+        sourceId: actor?.id ?? frame.ownerId,
+        summonId: old.id,
+        templateId: old.templateId,
+        center: at(state, old)
+      });
+      scheduleHooks(state, frame, "on_summon_evict", frame.awaitEvent, host);
+      return;
+    }
+    const { plan, center } = data;
+    const landings = cells(state).filter((cell) => !blocked(state, cell)).sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
+    const { gear } = plan;
+    const templateIds = [gear.mainHand, gear.offHand, gear.shield, ...gear.gear].filter(Boolean);
+    const items = new Map(templateIds.map((id3) => [id3, itemPlan(state, id3, context)]));
+    if (landings.length < plan.count || values(state.units).length + plan.count > 200 || [...items.values()].some((item) => !item) || values(state.items).length + templateIds.length * plan.count > 200) {
+      host.log(state, actor, "spawn", `${data.fields.name}\u672A\u80FD\u767B\u573A\uFF1A\u53EF\u7528\u683C\u5B50\u6216\u88C5\u5907\u5B9E\u4F8B\u4E0D\u8DB3`);
+      state.vm.stack.pop();
+      return;
+    }
+    let first;
+    for (const placement of landings.slice(0, plan.count)) {
+      const id3 = nextId3(state, state.units, "summon");
+      const unit = {
+        ...structuredClone(plan.panel),
+        ...structuredClone(data.fields),
+        id: id3,
+        ...placement,
+        altitude: 0,
+        summonGroup: data.group,
+        used: { attack: 0, action: 0 },
+        ap: 0,
+        statuses: {}
+      };
+      unit.hp = unit.maxHp;
+      unit.mp = unit.maxMp;
+      unit.sp = unit.maxSp;
+      state.units[id3] = unit;
+      initializeUnitPools(state, id3);
+      const mint = (templateId) => templateId ? mintItem(state, items.get(templateId), data.fields.sourceId, id3, context) : null;
+      unit.weapon = unit.mainHand = mint(gear.mainHand);
+      unit.offHand = mint(gear.offHand);
+      unit.shield = mint(gear.shield);
+      unit.gear = gear.gear.map(mint);
+      state.order.push(id3);
+      first ??= id3;
+      host.log(state, actor, "spawn", `${unit.name}\u767B\u573A`, { unitId: id3, ...at(state, unit) });
+    }
+    publishOut(state, frame, data.out ?? void 0, first);
+    state.vm.stack.pop();
+  }
+  function spawnZone({ state, frame, host, context, op }, center) {
+    const { spec } = op;
+    const area3 = structuredClone(spec.area);
+    const anchorRef = area3.anchorUnitId;
+    const anchorId = anchorRef?.startsWith("vars.") ? own7(context.vars, anchorRef.slice(5)) : anchorRef;
+    const anchor = own7(state.units, anchorId ?? (spec.follow ? context.self?.id : void 0));
+    if ((anchorRef || spec.follow) && !live2(anchor)) return;
+    const origin = area3.center ?? (anchor ? xy(anchor) : center);
+    if ((area3.shape === "circle" || area3.shape === "ring") && (!point3(origin) || !Number.isFinite(area3.radius))) return;
+    if (origin) area3.center = xy(origin);
+    if (spec.follow) area3.anchorUnitId = anchor.id;
+    else delete area3.anchorUnitId;
+    const id3 = nextId3(state, state.zones ??= {}, "zone");
+    const zone = {
+      ...carrier3(spec, context.self?.id ?? frame.sourceId, id3, spec.templateId ?? id3, context),
+      area: area3,
+      follow: spec.follow === true,
+      persistent: spec.persistent === true,
+      remainingTurns: spec.remainingTurns ?? 1,
+      ...spec.follow ? { anchorPosition: xy(anchor) } : {}
+    };
+    state.zones[id3] = zone;
+    publishOut(state, frame, op.out, id3);
+    host.log(state, context.self, "zone", `\u5C55\u5F00${zone.name}`, { zoneId: id3 });
+  }
+  function removeZone(state, host, zoneId, reason = "\u89E3\u9664") {
+    const zone = own7(state.zones, zoneId);
+    if (!zone) return false;
+    delete state.zones[zoneId];
+    for (const poolId of values(zone.pools)) delete state.pools[poolId];
+    host.log(state, own7(state.units, zone.sourceId), "zone", `${zone.name}${reason}\u540E\u6D88\u6563`, { zoneId, expired: true });
+    return true;
+  }
+  function refreshFollowingZones(state, host) {
+    for (const zone of values(state.zones)) {
+      if (!zone.follow) continue;
+      const anchor = own7(state.units, zone.area.anchorUnitId);
+      if (!live2(anchor)) {
+        removeZone(state, host, zone.id, "\u951A\u70B9\u79BB\u573A");
+        continue;
+      }
+      const previous = zone.anchorPosition ?? anchor;
+      const dx = anchor.x - previous.x, dy = anchor.y - previous.y;
+      const { area: area3 } = zone;
+      area3.center = xy(anchor);
+      zone.anchorPosition = xy(anchor);
+      if (area3.rect) {
+        area3.rect.x1 += dx;
+        area3.rect.x2 += dx;
+        area3.rect.y1 += dy;
+        area3.rect.y2 += dy;
+      }
+      if (area3.cells) for (const cell of area3.cells) {
+        cell.x += dx;
+        cell.y += dy;
+      }
+    }
+  }
+  function terrainTile(tile, spec) {
+    const mode = spec.mode ?? "set";
+    let z = tile.z;
+    if (spec.height !== void 0) {
+      const height2 = Math.trunc(spec.height);
+      z = clamp2(mode === "set" ? height2 : z + (mode === "raise" ? height2 : -height2), -4, 8);
+    }
+    return { ...tile, z, kind: spec.kind ?? tile.kind };
+  }
+  function spawnTerrain({ state, frame, host, context, op }, center) {
+    if (!center) return;
+    const { spec, entityKind } = op;
+    const area3 = spec.area && { ...spec.area, origin: spec.area.origin ?? xy(center) };
+    let selected2 = [center];
+    if (area3?.shape === "rect") {
+      const origin = resolvePoint(area3.origin, context);
+      selected2 = origin ? cells(state).filter((p) => Math.abs(p.x - origin.x) <= (area3.width ?? area3.radius ?? 0) && Math.abs(p.y - origin.y) <= (area3.radius ?? area3.width ?? 0)) : [];
+    } else if (area3) {
+      selected2 = selectVM(state, { from: "cells", area: area3 }, { ...context, target: center }, { pure: true });
+    }
+    const cover = entityKind === "cover";
+    const spots = selected2.filter((p) => cellAt(state, p.x, p.y) && (!(cover || spec.kind === "wall") || !blocked(state, p) && !fixture(state, p)));
+    if (!spots.length || cover && values(state.covers).length + spots.length > 200) return;
+    const effects = state.spatialTerrain ??= {};
+    if (values(effects).length >= 64) return;
+    const id3 = nextId3(state, effects, "terrain");
+    const effect = {
+      id: id3,
+      spec,
+      cells: [],
+      coverIds: [],
+      persistent: spec.persistent ?? spec.remainingTurns === void 0,
+      remainingTurns: spec.remainingTurns ?? 1
+    };
+    effects[id3] = effect;
+    for (const p of spots) {
+      if (cover) {
+        const coverId = nextId3(state, state.covers ??= {}, "cover");
+        const hp = spec.hp ?? 10;
+        state.covers[coverId] = {
+          id: coverId,
+          ...xy(p),
+          name: spec.name ?? "\u63A9\u4F53",
+          hp,
+          maxHp: hp,
+          cover: spec.cover ?? 2,
+          material: spec.material ?? "\u5730\u5F62\u6548\u679C"
+        };
+        effect.coverIds.push(coverId);
+      } else {
+        const before = state.grid[p.y][p.x];
+        effect.cells.push({ ...xy(p), before });
+        state.grid[p.y][p.x] = terrainTile(before, spec);
+      }
+    }
+    const drops = effect.cells.map((p) => ({ ...p, after: state.grid[p.y][p.x] }));
+    scheduleTerrainFalls(state, frame, drops);
+    publishOut(state, frame, op.out, effect.coverIds[0] ?? id3);
+    host.log(
+      state,
+      context.self,
+      "terrain",
+      `${cover ? "\u63A9\u4F53" : "\u5730\u5F62\u53D8\u5316"}\u5F71\u54CD\u4E86 ${spots.length} \u683C`,
+      { terrainId: id3, count: spots.length }
+    );
+  }
+  function scheduleTerrainFalls(state, parent, changes2) {
+    if (!parent) return;
+    const height2 = (tile) => tile.kind === "slope" ? 1 : tile.z;
+    for (const p of changes2.slice().reverse()) {
+      if (p.after.kind === "wall") continue;
+      const drop = height2(p.before) - height2(p.after);
+      const unit = drop > 0 && unitAt(state, p.x, p.y);
+      if (!unit || unit.altitude > 0) continue;
+      scheduleCommit(state, parent, {
+        op: "damage",
+        pool: "hp",
+        damageType: "true",
+        direct: false,
+        amount: drop * 50,
+        targetId: unit.id,
+        sourceId: null,
+        label: "\u5730\u5F62\u9AD8\u5EA6\u4E0B\u964D"
+      });
+    }
+  }
+  function settleRestoredWalls(state, host, walls, parent) {
+    for (const p of walls) {
+      for (const table4 of [state.covers, state.interactives]) {
+        for (const item of values(table4)) if (same2(item, p)) delete table4[item.id];
+      }
+      const unit = unitAt(state, p.x, p.y);
+      if (!unit) continue;
+      const destination = cells(state).filter((cell) => !blocked(state, cell)).sort((a, b) => distance3D(state, p, a) - distance3D(state, p, b))[0];
+      if (destination) {
+        const from = { ...xy(unit), z: p.before.z + (unit.altitude ?? 0) };
+        Object.assign(unit, xy(destination));
+        logMove(state, host, unit, "step", from, [at(state, unit)]);
+      } else if (parent) {
+        scheduleCommit(state, parent, {
+          op: "damage",
+          pool: "hp",
+          damageType: "true",
+          direct: false,
+          amount: unit.hp,
+          targetId: unit.id,
+          sourceId: parent.sourceId,
+          label: "\u5730\u5F62\u6062\u590D\u540E\u65E0\u53EF\u7AD9\u7ACB\u683C"
+        });
+      }
+    }
+  }
+  function expireSpatialEffects(state, host, { advance: advance2 = false, parent = state.vm?.stack.at(-1) } = {}) {
+    refreshFollowingZones(state, host);
+    if (!advance2) return;
+    for (const zone of values(state.zones)) {
+      if (!zone.persistent && --zone.remainingTurns <= 0) removeZone(state, host, zone.id, "\u5230\u671F");
+    }
+    const layers = values(state.spatialTerrain);
+    const changes2 = /* @__PURE__ */ new Map();
+    for (const [index, effect] of layers.entries()) {
+      if (effect.persistent || --effect.remainingTurns > 0) continue;
+      for (const id3 of effect.coverIds) delete state.covers[id3];
+      for (const patch of effect.cells) {
+        const before = state.grid[patch.y][patch.x];
+        let tile = patch.before;
+        for (const later of layers.slice(index + 1)) {
+          const update = later.cells.find((cell) => same2(cell, patch));
+          if (!update) continue;
+          update.before = tile;
+          tile = terrainTile(tile, later.spec);
+        }
+        state.grid[patch.y][patch.x] = tile;
+        const key4 = `${patch.x},${patch.y}`;
+        changes2.set(key4, { ...xy(patch), before: changes2.get(key4)?.before ?? before, after: tile });
+      }
+      delete state.spatialTerrain[effect.id];
+      host.log(state, null, "terrain", "\u5730\u5F62\u6548\u679C\u5230\u671F\u8FD8\u539F", { terrainId: effect.id });
+    }
+    const restored = [...changes2.values()];
+    scheduleTerrainFalls(state, parent, restored);
+    settleRestoredWalls(state, host, restored.filter((p) => p.before.kind !== "wall" && p.after.kind === "wall"), parent);
+    refreshFollowingZones(state, host);
+  }
+  function spawn(env) {
+    const { op, context } = env;
+    if (op.entityKind === "item") {
+      spawnItems(env);
+      return;
+    }
+    const center = op.at === void 0 ? context.center ?? context.target ?? context.self : resolvePoint(op.at, context);
+    if (op.at !== void 0 && !center || center && !point3(center)) return;
+    if (op.entityKind === "unit") spawnUnits(env, center);
+    else if (op.entityKind === "zone") spawnZone(env, center);
+    else spawnTerrain(env, center);
+  }
+  var spatialOps = Object.freeze({ move, spawn });
+  var spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn });
+
+  // src/core/vm-runtime.js
+  var own8 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var values2 = (table4) => Object.values(table4 ?? {});
+  var lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
+  var mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
+  function recordVM(state, unit, type, text5, detail = {}) {
+    const positions = Object.fromEntries(Object.values(state.units).map((unit2) => [unit2.id, { x: unit2.x, y: unit2.y, z: elevation(state, unit2) }]));
+    state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text: text5, detail, positions });
+  }
+  var handlers = {
+    action: continueAction,
+    commit: continueCommit,
+    lethal: continueLethal,
+    check: continueCheck,
+    apply_status: continueApplyStatus,
+    remove_status: continueRemoveStatus,
+    ...spatialContinuations,
+    strike: continueStrike
+  };
+  function initializeVMWorld(state) {
+    state.vm ??= newVM();
+    state.pools ??= {};
+    for (const unit of Object.values(state.units)) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
+    for (const item of Object.values(state.items ?? {})) {
+      for (const [key4, definition] of Object.entries(own8(state.equipment, item.templateId)?.pools ?? {})) {
+        if (!getPool(state, item.id, key4, "item") && Number.isFinite(definition.cap)) createPool(state, {
+          ownerKind: "item",
+          ownerId: item.id,
+          key: key4,
+          max: definition.cap,
+          current: definition.initial ?? 0,
+          reloadable: definition.reloadable ?? false
+        });
+      }
+    }
+  }
+  function advanceVMSpatial(state) {
+    initializeVMWorld(state);
+    if (state.vm.pendingAsk) return;
+    const idle = !state.vm.stack.length;
+    if (idle) state.vm.stepsRemaining = 2e3;
+    const parent = state.vm.stack.at(-1) ?? { ownerId: null, sourceId: null };
+    expireSpatialEffects(state, vmHost, { advance: true, parent });
+    if (idle) stepVM(state, vmHost);
+  }
+  function dispatchVMHook(state, hook2, event) {
+    initializeVMWorld(state);
+    const parent = state.vm.stack.at(-1) ?? { sourceId: event.actorId };
+    const idle = state.vm.stack.length === 0;
+    if (idle) state.vm.stepsRemaining = 2e3;
+    scheduleHooks(state, parent, hook2, newEvent(state, event), vmHost);
+    if (idle) stepVM(state, vmHost);
+  }
+  function commitVMEffect(state, data) {
+    initializeVMWorld(state);
+    const parent = state.vm.stack.at(-1) ?? { ownerId: data.sourceId ?? data.targetId, sourceId: data.sourceId ?? null };
+    const idle = !state.vm.stack.length;
+    if (idle) state.vm.stepsRemaining = 2e3;
+    scheduleCommit(state, parent, { pool: "hp", ...data });
+    if (idle) stepVM(state, vmHost);
+  }
+  var vmHost = {
+    ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
+    log: recordVM,
+    event: newEvent,
+    hooks: (state, frame, hook2, ref2) => scheduleHooks(state, frame, hook2, ref2, vmHost),
+    commit: scheduleCommit,
+    followup(state, frame, weapon2, profile) {
+      pushFrame(state, {
+        native: "strike",
+        ownerId: frame.ownerId,
+        sourceId: frame.sourceId,
+        eventRef: frame.eventRef,
+        data: frame.data,
+        plan: { center: profile, targets: [profile] },
+        weapon: weapon2,
+        followup: true,
+        started: true
+      });
+    },
+    expireStatuses(state, hook2, event) {
+      const ids = /* @__PURE__ */ new Set([event.actorId, event.targetId, ...event.ownerIds ?? []]);
+      for (const id3 of ids) {
+        const unit = own8(state.units, id3);
+        for (const [key4, status] of Object.entries(unit?.statuses ?? {})) {
+          const expires = [status.expireOn].flat().some((rule2) => rule2?.hook === hook2 && (rule2.filter === void 0 || evaluateExpr(rule2.filter, {
+            self: unit,
+            status,
+            event,
+            source: own8(state.units, status.sourceId),
+            target: own8(state.units, event.targetId)
+          })));
+          if (!expires) continue;
+          delete unit.statuses[key4];
+          recordVM(state, unit, "expire", `${unit.name}\u7684${status.name}\u63D0\u524D\u89E3\u9664`, { targetId: id3, statusId: key4, hook: hook2 });
+        }
+      }
+    },
+    rules(state, hook2, event) {
+      const entries3 = collectRules(state, hook2, event);
+      const actor = own8(state.units, event.actorId);
+      const skill2 = own8(state.skills, event.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(event.skillId);
+      return [...entries3, ...(event.rules ?? skill2?.rules ?? []).filter((rule2) => rule2.hook === hook2).map((rule2) => ({
+        rule: rule2,
+        ownerId: event.actorId,
+        sourceId: event.actorId,
+        carrierOrder: -1,
+        useKey: JSON.stringify([event.actorId, event.skillId, rule2.id])
+      }))];
+    },
+    enterRule(state, frame, key4) {
+      const count = own8(state.vm.uses, key4) ?? 0;
+      if (frame.rule.usesPerBattle === void 0) return true;
+      if (count >= frame.rule.usesPerBattle) return false;
+      (state.vm.uses ??= {})[key4] = count + 1;
+      return true;
+    },
+    continue(env) {
+      const handler = own8(handlers, env.frame.native);
+      if (!handler) throw new Error(`\u672A\u77E5\u7ED3\u7B97\u9636\u6BB5 ${env.frame.native}`);
+      handler(env);
+    },
+    resource: (state, unit, key4) => unit && getPool(state, unit.id, key4)?.current,
+    statusTemplate: getStatusTemplate,
+    flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
+    stat: (state, unit, key4) => mod(state, {}, unit.id, key4, unit.stats?.[key4] ?? 0),
+    checkBonus: (state, unit, event) => mod(state, event, unit.id, "checkBonus", 0) + (event.checkKind === "save" ? mod(state, event, unit.id, "resistBonus", 0) : 0),
+    prepareDamage(state, source, target2, data) {
+      const { damageType: damageType2 } = data;
+      const event = {
+        damageType: damageType2,
+        actorId: source?.id ?? null,
+        targetId: target2.id,
+        weaponTemplateId: data.weaponTemplateId ?? null,
+        backstab: data.backstab ?? false,
+        melee: data.melee ?? false,
+        souls: data.souls ?? 0
+      };
+      if (source && vmHost.flag(state, source, "harmless")) return 0;
+      let amount = data.amount;
+      if (source) {
+        amount += mod(state, event, source.id, "damageFlat", 0);
+        amount = mod(state, event, source.id, "damageMult", amount);
+      }
+      if (damageType2 !== "true") {
+        const pierce = data.armorPierce ?? {
+          flat: source ? mod(state, event, source.id, "armorPierce", 0) : 0,
+          percent: source ? mod(state, event, source.id, "armorPiercePercent", 0) : 0
+        };
+        const reduction = mitigation(
+          state,
+          target2,
+          damageType2,
+          data.direct !== false,
+          pierce,
+          { attacker: source, intercepting: data.intercepted, ignoreArmor: data.ignoreArmor }
+        );
+        if (data.direct === false) {
+          const reduced = Math.floor(amount * reduction.multiplier * (1 - reduction.attributeReduction));
+          amount = Math.max(0, reduced - (reduction.multiplier === 1 ? Math.ceil(reduction.armor) : 0));
+        } else {
+          amount *= reduction.multiplier * (1 - reduction.attributeReduction);
+          amount *= reduction.armorMultiplier;
+        }
+        amount = damageAfterFlatReduction(state, target2, amount, source, damageType2, data.intercepted);
+        amount *= 1 - Math.min(1, mod(state, event, target2.id, "dr", 0));
+        if (source) amount *= values2(source.statuses).reduce((mult, status) => status.modifiers?.damageType != null && status.modifiers.damageType !== damageType2 ? mult : mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1), 1);
+      }
+      return Math.max(0, source ? mod(state, event, source.id, "finalDamageMult", amount) : amount);
+    },
+    preserveLife: encounterNonlethal,
+    rejectAction(state, actor, action, error2) {
+      if (error2 !== insufficientHP) return false;
+      recordVM(state, actor, "skill_rejected", error2, { skillId: action.skillId });
+      return true;
+    },
+    prepareHeal(state, source, target2, data) {
+      if (source && vmHost.flag(state, source, "harmless")) return 0;
+      const event = { actorId: source?.id ?? null, targetId: target2.id, actionType: data.actionType ?? null };
+      const scaled = source ? mod(state, event, source.id, "healingMult", data.amount) : data.amount;
+      return Math.max(0, mod(state, event, target2.id, "incomingHealMult", scaled));
+    },
+    planAction(state, actor, action, overrides2) {
+      const unit = { ...actor };
+      if (overrides2.free) Object.assign(unit, { hp: unit.maxHp, mp: unit.maxMp, sp: unit.maxSp });
+      if (overrides2.ignoreSlots) Object.assign(unit, { ap: 2, used: { attack: 0, action: 0 } });
+      const skill2 = own8(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
+      const view = { ...state, turn: state.order.indexOf(actor.id), units: { ...state.units, [actor.id]: unit } };
+      const planned = preview(view, action, { simulateRules: false });
+      if (!planned.ok) return planned;
+      return {
+        ...planned,
+        center: planned.center ?? { x: actor.x, y: actor.y },
+        targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter((row) => row.kind !== "cover").map((row) => row.id),
+        power: skill2?.power ?? 0,
+        isSingle: planned.shape == null || planned.shape === "single",
+        isRanged: (skill2?.range ?? planned.range ?? 1) > 2,
+        damageType: skill2?.damageType ?? skill2?.damage?.type ?? planned.damageType ?? null,
+        weaponTemplateId: action.type === "attack" ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null
+      };
+    },
+    payAction(state, actor, plan, event, overrides2) {
+      if (!overrides2.ignoreSlots) {
+        actor.ap -= plan.ap;
+        for (const slot2 of plan.ap === 2 ? ["attack", "action"] : plan.slot ? [plan.slot] : []) actor.used[slot2]++;
+      }
+      if (overrides2.free) return;
+      for (const key4 of ["hp", "mp", "sp"]) {
+        const cost = Math.max(0, Math.floor((event[`${key4}Cost`] ?? 0) * (event.costScale ?? 1)));
+        if (!cost) continue;
+        const pool = getPool(state, actor.id, key4);
+        const { before, after } = updatePoolCurrent(state, pool.id, "sub", cost, { minRemain: key4 === "hp" ? 1 : 0 });
+        recordVM(
+          state,
+          actor,
+          "resource",
+          `${actor.name}\u56E0${plan.name}\u6D88\u8017${before - after}\u70B9 ${key4.toUpperCase()}`,
+          { targetId: actor.id, resource: key4, amount: before - after, before, after }
+        );
+      }
+    },
+    runAction({ state, frame, actor, plan, event, overrides: overrides2 }) {
+      event.power *= overrides2.scale ?? 1;
+      event.power *= event.damageScale ?? 1;
+      const skill2 = own8(state.skills, event.skillId);
+      if (skill2?.backpackItem) {
+        const before = actor.inventory[event.skillId];
+        actor.inventory[event.skillId] = before - 1;
+        recordVM(
+          state,
+          actor,
+          "item_spent",
+          `${actor.name}\u6D88\u8017${skill2.name}\uFF08\u6570\u91CF ${before} \u2192 ${before - 1}\uFF09`,
+          { itemId: event.skillId, before, after: before - 1 }
+        );
+      }
+      const name = plan.name ?? skill2?.name ?? "\u6280\u80FD";
+      const intent = plan.isSingle ? plan.intent ?? "normal" : "normal";
+      recordVM(state, actor, "action", `${actor.name}\uFF1A${name}`, {
+        action: frame.data.action,
+        targetId: event.targetId,
+        intent,
+        attackSource: name,
+        attackTargets: event.targets.map((id3) => ({ unit: id3 })),
+        ap: plan.ap,
+        mp: plan.mp,
+        sp: plan.sp,
+        remainingAP: actor.ap
+      });
+      const targets2 = event.targets.filter((id3) => id3 !== plan.corpseId).map((id3) => (plan.targets ?? []).find((profile) => profile.id === id3) ?? retargetStrike(state, actor, frame.data.action, state.units[id3], plan));
+      if (!event.redirectTarget && !event.replaceTarget) targets2.push(...(plan.targets ?? []).filter((profile) => profile.kind === "cover"));
+      pushFrame(state, {
+        native: "strike",
+        ownerId: actor.id,
+        sourceId: actor.id,
+        eventRef: frame.eventRef,
+        data: frame.data.action,
+        plan: { ...plan, targets: targets2 },
+        scale: overrides2.scale ?? 1
+      });
+      scheduleHooks(state, frame, "active", frame.eventRef, vmHost);
+    }
+  };
+  function validVmState(state) {
+    const { vm, pools } = state;
+    const plain2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
+    if (!plain2(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain2(vm.events) || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining) || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain2(pools)) return false;
+    for (const unit of Object.values(state.units ?? {})) {
+      for (const [key4, maximum] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
+        const pool = own8(pools, own8(unit.pools, key4));
+        if (!pool || pool.kind !== key4 || pool.current !== unit[key4] || pool.max !== unit[maximum] || !Array.isArray(pool.contributors) || !pool.contributors.some((c) => c.ownerKind === "unit" && c.ownerId === unit.id)) return false;
+      }
+    }
+    return state.tape === void 0 || Array.isArray(state.tape);
+  }
+  function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false, opportunity, weapon: weapon2 } = {}) {
+    if (dryRun) {
+      state = structuredClone(state);
+      actor = own8(state.units, actor?.id);
+    }
+    initializeVMWorld(state);
+    if (action.type === "answer") answerVM(state, action, vmHost);
+    else {
+      if (state.vm.stack.length || state.vm.pendingAsk) throw new Error("\u8BF7\u5148\u56DE\u7B54\u5F53\u524D\u6218\u6597\u9009\u62E9");
+      if (!actor) throw new Error("\u6CA1\u6709\u884C\u52A8\u8005");
+      state.vm.stepsRemaining = 2e3;
+      if (opportunity) pushFrame(state, { native: "strike", ownerId: actor.id, sourceId: actor.id, data: action, plan: opportunity, weapon: weapon2 });
+      else queueVMAction(state, { actorId: actor.id, action, record: true });
+    }
+    const result = stepVM(state, vmHost, { dryRun });
+    refreshFollowingZones(state, vmHost);
+    return dryRun ? { ...result, state } : result;
+  }
 
   // src/core/combat.js
-  function randomUnit(state) {
-    const { rng, value } = nextRng(state.rng);
-    state.rng = rng;
-    return value;
-  }
+  var corpses = (state) => Object.values(state.units).filter((unit) => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
   function randomDie(state, sides) {
     const { rng, value } = rollDie(state.rng, sides);
     state.rng = rng;
     return value;
   }
-  var values2 = (object4) => Object.values(object4 ?? {});
-  var alive = (unit) => unit && unit.hp > 0;
+  var values3 = (object4) => Object.values(object4 ?? {});
+  var alive3 = (unit) => unit && unit.hp > 0;
   var byId2 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  var living = (state) => values2(state.units).filter((unit) => alive(unit) && !unit.fled).sort(byId2);
+  var living = (state) => values3(state.units).filter((unit) => alive3(unit) && !unit.fled).sort(byId2);
   var sameCell = (a, b) => a.x === b.x && a.y === b.y;
   var pos = (x, y) => ({ x, y });
-  var pointAt = (state, at) => ({ x: at.x, y: at.y, z: elevation(state, at) });
-  function changeAltitude(state, actor, node3) {
-    const from = pointAt(state, actor);
-    const altitude = node3.land ? 0 : Math.max(0, Math.min(12, (actor.altitude ?? 0) + (node3.delta ?? 3)));
-    if (altitude === (actor.altitude ?? 0)) return false;
-    actor.altitude = altitude;
-    const to = pointAt(state, actor);
-    record(state, actor, "altitude", `${actor.name}\u9AD8\u5EA6\u4ECE z=${from.z} \u53D8\u4E3A z=${to.z}`, { from, to });
-    return true;
-  }
+  var pointAt = (state, at2) => ({ x: at2.x, y: at2.y, z: elevation(state, at2) });
   var key2 = (x, y) => `${x},${y}`;
-  var stat = (unit, id3) => Number(unit.stats?.[id3] ?? 0) * Math.max(0, 1 + changes(unit, "attributePercent"));
-  var clamp = (number3, min, max) => Math.max(min, Math.min(max, number3));
-  var matchesDamageType = (status2, type) => type == null || status2.modifiers?.damageType == null || status2.modifiers.damageType === type;
-  var statusModifier = (unit, name, damageType2) => values2(unit.statuses).reduce(
-    (sum, status2) => sum + (matchesDamageType(status2, damageType2) ? Number(status2.modifiers?.[name] ?? 0) * (status2.stacks ?? 1) : 0),
+  var stat2 = (unit, id3) => Number(unit.stats?.[id3] ?? 0) * Math.max(0, 1 + changes(unit, "attributePercent"));
+  var clamp3 = (number3, min, max) => Math.max(min, Math.min(max, number3));
+  var matchesDamageType = (status, type) => type == null || status.modifiers?.damageType == null || status.modifiers.damageType === type;
+  var statusModifier = (unit, name, damageType2) => values3(unit.statuses).reduce(
+    (sum, status) => sum + (matchesDamageType(status, damageType2) ? Number(status.modifiers?.[name] ?? 0) * (status.stacks ?? 1) : 0),
     moraleModifiers[unit.moraleState]?.[name] ?? 0
   );
   var changes = statusModifier;
-  var statusOf = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
+  var statusOf2 = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
   var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
-  function record(state, unit, type, text4, detail = {}) {
+  function record(state, unit, type, text5, detail = {}) {
     const actor = typeof unit === "string" ? unit : unit?.id ?? null;
-    const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, pointAt(state, current)]));
-    const event = { round: state.round, actor, text: text4, type, detail, positions };
+    const positions = Object.fromEntries(values3(state.units).map((current) => [current.id, pointAt(state, current)]));
+    const event = { round: state.round, actor, text: text5, type, detail, positions };
     state.logs.push(event);
     return event;
   }
   function tableEntry(table4, id3) {
     return Object.hasOwn(table4 ?? {}, id3) ? table4[id3] : void 0;
   }
-  function getStatusTemplate(state, statusId2) {
-    if (typeof statusId2 !== "string") return void 0;
-    return tableEntry(state?.statusTemplates, statusId2) ?? tableEntry(STATUSES, statusId2);
+  function getStatusTemplate(state, statusId3) {
+    if (typeof statusId3 !== "string") return void 0;
+    return tableEntry(state?.statusTemplates, statusId3) ?? tableEntry(STATUSES, statusId3);
   }
   function equipmentFor(state, instanceId) {
     const instance = tableEntry(state.items, instanceId);
     const template = tableEntry(state.equipment, instance?.templateId);
-    return { instance, template, effects: template?.effects ?? [] };
+    return { instance, template, rules: template?.rules ?? [] };
   }
   var isWeapon = (template) => template?.kind === "weapon" || Boolean(template?.damage && !template.kind);
   var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3)).filter(({ template }) => !isWeapon(template) && template?.kind !== "shield");
@@ -1797,66 +3722,66 @@ var FatedTacticalTavern = (() => {
     });
   }
   var equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map((g) => g.instance?.id)].filter(Boolean))].map((id3) => equipmentFor(state, id3)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
-  var effectiveStat = (state, unit, key4) => dsl.stat(state, unit, key4, stat(unit, key4));
-  var resolveDC = (state, actor, dc) => typeof dc === "number" ? dc : clamp(dc.base + dc.scaleBy.perUnit * effectiveStat(state, actor, dc.scaleBy.stat), dc.min ?? 1, dc.max ?? 50);
-  var finalDamageMultiplier = (unit, type) => values2(unit.statuses).reduce((mult, status2) => matchesDamageType(status2, type) ? mult * (status2.modifiers?.finalDamageMultiplier ?? 1) ** (status2.stacks ?? 1) : mult, 1);
-  var resourcePool = (state, unit, resource3, instance) => {
+  var effectiveStat = (state, unit, key4) => modStat(state, unit, key4, stat2(unit, key4));
+  var resolveDC = (state, actor, dc) => evaluateExpr(dc, { self: actor, source: actor, round: state.round, turn: state.turn }) ?? 12;
+  var finalDamageMultiplier = (unit, type) => values3(unit.statuses).reduce((mult, status) => matchesDamageType(status, type) ? mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1) : mult, 1);
+  var resourcePool = (state, unit, resource2, instance) => {
     for (const item of equipped(state, unit)) {
       if (instance && item.instance !== instance) continue;
-      const effect = resourceDefinitions(item.template, true).find((node3) => node3.resource === resource3);
-      if (effect) return { item, effect, amount: item.instance.counters?.[resource3] ?? effect.initial ?? 0 };
+      const effect = tableEntry(item.template?.pools, resource2);
+      if (effect) return { item, effect, amount: getPool(state, item.instance.id, resource2, "item")?.current ?? effect.initial ?? 0 };
     }
     return null;
   };
   function stealthCheck(state, unit, d20, dc) {
-    const bonus = dsl.check(state, unit, "stealthBonus");
+    const bonus = modCheck(state, unit, "stealthBonus");
     return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
   }
-  var shieldTotal = (unit) => values2(unit.statuses).reduce((total, status2) => total + (status2.amount ?? 0), 0);
-  function statusModifierKeys(statusId2, state) {
-    return Object.keys(getStatusTemplate(state, statusId2)?.modifiers ?? {});
+  var shieldTotal = (unit) => values3(unit.statuses).reduce((total2, status) => total2 + (status.vars?.shieldAmount ?? status.amount ?? 0), 0);
+  function statusModifierKeys(statusId3, state) {
+    return Object.keys(getStatusTemplate(state, statusId3)?.modifiers ?? {});
   }
-  function patchStatus(state, unitId, statusId2, patch) {
+  function patchStatus(state, unitId, statusId3, patch) {
     const unit = tableEntry(state.units, unitId);
-    const status2 = unit && statusOf(unit, statusId2);
-    const template = getStatusTemplate(state, statusId2);
-    if (!status2 || !template) throw new Error(`\u627E\u4E0D\u5230\u72B6\u6001\u5B9E\u4F8B\uFF1A${unitId}/${statusId2}`);
+    const status = unit && statusOf2(unit, statusId3);
+    const template = getStatusTemplate(state, statusId3);
+    if (!status || !template) throw new Error(`\u627E\u4E0D\u5230\u72B6\u6001\u5B9E\u4F8B\uFF1A${unitId}/${statusId3}`);
     if (!patch || Object.getPrototypeOf(patch) !== Object.prototype || !Object.keys(patch).length) throw new Error("\u72B6\u6001\u53C2\u6570\u8865\u4E01\u987B\u4E3A\u975E\u7A7A\u5BF9\u8C61");
-    const { expireOn: expireOn2, ...modifiers3 } = patch;
+    const { expireOn, ...modifiers2 } = patch;
     const patchExpiry = Object.hasOwn(patch, "expireOn");
-    validateStatusModifiers(template, modifiers3);
-    if (patchExpiry && expireOn2 !== null && !validExpireOn(expireOn2)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
-    status2.modifiers = { ...status2.modifiers, ...modifiers3 };
-    if (patchExpiry) status2.expireOn = structuredClone(expireOn2);
-    if (Object.hasOwn(modifiers3, "amount")) status2.amount = clamp(modifiers3.amount, 1, 1e5);
+    validateStatusModifiers(template, modifiers2);
+    if (patchExpiry && expireOn !== null && !validExpiry(expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
+    status.modifiers = { ...status.modifiers, ...modifiers2 };
+    if (patchExpiry) status.expireOn = structuredClone(expireOn);
+    if (Object.hasOwn(modifiers2, "amount")) status.amount = clamp3(modifiers2.amount, 1, 1e5);
     record(
       state,
       unit,
       "status_patch",
-      `${unit.name}\u7684${status2.name}\u53C2\u6570\u5DF2\u66F4\u65B0`,
+      `${unit.name}\u7684${status.name}\u53C2\u6570\u5DF2\u66F4\u65B0`,
       {
-        ...statusLogDetail(unit, status2),
-        effectiveModifiers: { ...status2.modifiers },
-        modifiers: modifiers3,
-        ...patchExpiry ? { expireOn: status2.expireOn } : {}
+        ...statusLogDetail(unit, status),
+        effectiveModifiers: { ...status.modifiers },
+        modifiers: modifiers2,
+        ...patchExpiry ? { expireOn: status.expireOn } : {}
       }
     );
-    return status2;
+    return status;
   }
-  function grantStatus(state, unit, statusId2, options = {}) {
-    const template = getStatusTemplate(state, statusId2);
-    if (!unit || !template) throw new Error(`\u672A\u77E5\u72B6\u6001\uFF1A${statusId2}`);
-    if (!alive(unit) || unit.fled) return null;
+  function grantStatus(state, unit, statusId3, options = {}) {
+    const template = getStatusTemplate(state, statusId3);
+    if (!unit || !template) throw new Error(`\u672A\u77E5\u72B6\u6001\uFF1A${statusId3}`);
+    if (!alive3(unit) || unit.fled) return null;
     if (Object.hasOwn(options, "modifiers")) validateStatusModifiers(template, options.modifiers);
     unit.statuses ??= {};
-    const previous = statusOf(unit, statusId2);
+    const previous = statusOf2(unit, statusId3);
     const stackRule = options.stackRule ?? previous?.stackRule ?? template.stackRule;
     const maxStacks = options.maxStacks ?? previous?.maxStacks ?? template.maxStacks;
     const addedStacks = options.stacks ?? 1;
-    const stacks = clamp(stackRule === "stack" ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
+    const stacks = clamp3(stackRule === "stack" ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
     const remainingTurns = options.remainingTurns ?? options.turns ?? template.remainingTurns;
     const applied = {
-      ...template,
+      ...structuredClone(template),
       stackRule,
       maxStacks,
       stacks,
@@ -1869,11 +3794,12 @@ var FatedTacticalTavern = (() => {
       appliedTurn: state.turn
     };
     if (Object.hasOwn(options, "expireOn")) {
-      if (!validExpireOn(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
+      if (!validExpiry(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
       applied.expireOn = structuredClone(options.expireOn);
     } else if (Object.hasOwn(previous ?? {}, "expireOn")) applied.expireOn = previous.expireOn;
-    if (Object.hasOwn(applied.modifiers, "amount")) applied.amount = options.amount == null ? applied.modifiers.amount : clamp(options.amount, 1, 1e4);
-    unit.statuses[statusId2] = applied;
+    if (Object.hasOwn(applied.modifiers, "amount")) applied.amount = options.amount == null ? applied.modifiers.amount : clamp3(options.amount, 1, 1e4);
+    if (applied.category === "shield" && applied.amount != null) (applied.vars ??= {}).shieldAmount = applied.amount;
+    unit.statuses[statusId3] = applied;
     record(
       state,
       applied.sourceUnitId ?? unit.id,
@@ -1883,24 +3809,31 @@ var FatedTacticalTavern = (() => {
     );
     return applied;
   }
-  function statusLogDetail(unit, status2) {
-    const { id: statusId2, stacks, remainingTurns, durationType, tickTiming, modifiers: modifiers3, amount: amount2, expireOn: expireOn2 } = status2;
+  function statusLogDetail(unit, status) {
+    const { id: statusId3, stacks, remainingTurns, durationType, tickTiming, modifiers: modifiers2, amount, expireOn } = status;
+    const tick3 = status.rules?.find((rule2) => rule2.hook === "turn_start" || rule2.hook === "turn_end");
+    const displayModifiers = { ...modifiers2 };
+    for (const op of tick3?.program ?? []) {
+      const perStack = typeof op.amount === "number" ? op.amount : Number(/^([0-9]+) \* status\.stacks$/.exec(op.amount)?.[1]);
+      if (Number.isFinite(perStack) && (op.op === "damage" || op.op === "heal")) displayModifiers[op.op] = perStack;
+      if (op.op === "damage") displayModifiers.damageType = op.damageType;
+    }
     return {
       targetId: unit.id,
-      statusId: statusId2,
+      statusId: statusId3,
       stacks,
       remainingTurns,
       durationType,
-      tickTiming,
-      modifiers: { ...modifiers3 },
-      ...amount2 == null ? {} : { amount: amount2 },
-      ...expireOn2 ? { expireOn: structuredClone(expireOn2) } : {}
+      ...tickTiming && { tickTiming },
+      modifiers: displayModifiers,
+      ...amount == null ? {} : { amount },
+      ...expireOn ? { expireOn: structuredClone(expireOn) } : {}
     };
   }
-  function grantShield(state, unit, amount2, { stack, ...options } = {}) {
-    const statusId2 = actionStatuses.shield;
-    const previous = stack ? statusOf(unit, statusId2)?.amount ?? 0 : 0;
-    return grantStatus(state, unit, statusId2, { ...options, amount: amount2 + previous });
+  function grantShield(state, unit, amount, { stack, ...options } = {}) {
+    const statusId3 = actionStatuses.shield;
+    const previous = stack ? statusOf2(unit, statusId3)?.amount ?? 0 : 0;
+    return grantStatus(state, unit, statusId3, { ...options, amount: amount + previous });
   }
   function concludeObjective(state, outcome, reason) {
     state.battleConclusion = reason;
@@ -1923,23 +3856,22 @@ var FatedTacticalTavern = (() => {
   function refreshOutcome(state) {
     if (state.battleConclusion) return state.outcome;
     if (["spar", "arena"].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
-    updateTerrainPatches(state, record, terrainDamage);
     let blue = false, red = false;
-    for (const unit of values2(state.units)) if (alive(unit) && !unit.fled) {
+    for (const unit of values3(state.units)) if (alive3(unit) && !unit.fled) {
       blue ||= unit.team === "blue";
       red ||= unit.team === "red";
     }
     if (state.battleType === "suppress") {
       const side2 = state.suppressingTeam, label = side2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
-      const defenders = values2(state.units).filter((u) => u.team !== side2);
-      const present2 = defenders.filter((u) => alive(u) && !u.fled);
-      const dead = defenders.filter((u) => !alive(u));
-      if (!present2.length && defenders.length) return concludeObjective(
+      const defenders = values3(state.units).filter((u) => u.team !== side2);
+      const present = defenders.filter((u) => alive3(u) && !u.fled);
+      const dead = defenders.filter((u) => !alive3(u));
+      if (!present.length && defenders.length) return concludeObjective(
         state,
         side2 === "blue" ? "red" : "blue",
         dead.length === defenders.length ? `${label}\u8FC7\u5931\u81F4\u6B7B\uFF0C\u538B\u5236\u5931\u8D25` : `${label}\u672A\u80FD\u7559\u4F4F\u76EE\u6807\uFF0C\u538B\u5236\u5931\u8D25`
       );
-      if ((side2 === "blue" ? blue : red) && present2.length && present2.every((u) => u.statuses.suppressed?.holdTotal != null))
+      if ((side2 === "blue" ? blue : red) && present.length && present.every((u) => u.statuses.suppressed?.holdTotal != null))
         return concludeObjective(state, side2, `${label}\u538B\u5236\u6210\u529F${dead.length ? "\uFF0C\u8FC7\u5931\u81F4\u6B7B\uFF1A" + dead.map((u) => u.name).join("\u3001") : ""}`);
     }
     if (blue && red && state.battleType === "guard" && state.round > 5) return concludeObjective(state, "blue", "\u5B88\u65B9\u575A\u5B88\u4E94\u8F6E");
@@ -1950,6 +3882,7 @@ var FatedTacticalTavern = (() => {
     }
     return result;
   }
+  var validExpiry = (value) => Boolean(value && (Array.isArray(value) ? value : [value]).every((rule2) => typeof (rule2.hook ?? rule2.trigger) === "string"));
   var eventLabels = {
     on_attack: "\u53D1\u52A8\u653B\u51FB",
     on_hit: "\u653B\u51FB\u547D\u4E2D",
@@ -1965,236 +3898,107 @@ var FatedTacticalTavern = (() => {
     on_ally_death: "\u961F\u53CB\u5012\u4E0B"
   };
   function expireStatuses(state, unit, trigger, { sourceUnitId = null, direct = false } = {}) {
-    for (const status2 of values2(unit.statuses)) {
-      const expiry = Object.hasOwn(status2, "expireOn") ? status2.expireOn : getStatusTemplate(state, status2.id)?.expireOn;
+    for (const status of values3(unit.statuses)) {
+      const expiry = Object.hasOwn(status, "expireOn") ? status.expireOn : getStatusTemplate(state, status.id)?.expireOn;
       if (!expiry) continue;
-      const rule = [].concat(expiry).find((rule2) => rule2.trigger === trigger && (rule2.damageType == null || rule2.damageType === "any" || rule2.damageType === (direct ? "direct" : "indirect")) && (rule2.exceptSource !== "self" || sourceUnitId !== unit.id));
-      if (!rule) continue;
-      delete unit.statuses[status2.id];
+      const rule2 = [].concat(expiry).find((rule3) => rule3.trigger === trigger && (rule3.damageType == null || rule3.damageType === "any" || rule3.damageType === (direct ? "direct" : "indirect")) && (rule3.exceptSource !== "self" || sourceUnitId !== unit.id));
+      if (!rule2) continue;
+      delete unit.statuses[status.id];
       record(
         state,
         unit,
         "expire",
-        `${unit.name}\u7684${status2.name}\u56E0${eventLabels[trigger]}\u63D0\u524D\u89E3\u9664`,
-        { targetId: unit.id, statusId: status2.id, trigger, sourceUnitId, ...trigger === "on_damaged" ? { direct } : {} }
+        `${unit.name}\u7684${status.name}\u56E0${eventLabels[trigger]}\u63D0\u524D\u89E3\u9664`,
+        { targetId: unit.id, statusId: status.id, trigger, sourceUnitId, ...trigger === "on_damaged" ? { direct } : {} }
       );
     }
   }
-  function dispatchEffect(state, actor, trigger, context = {}, extra = []) {
+  function dispatchEffect(state, actor, trigger, context = {}) {
     if (actor && !["on_damaged", "on_heal", "active"].includes(trigger)) {
       expireStatuses(state, actor, trigger, { sourceUnitId: context.sourceUnitId ?? actor.id });
     }
-    dsl.dispatch(state, actor, trigger, context, extra);
-  }
-  function loseHP(state, target2, raw, sourceUnitId, type, label, detail = {}, triggerDamage = true, effectContext = {}) {
-    if (!alive(target2) || target2.fled && !effectContext.forcedDisplacement) return 0;
-    const hpBefore = target2.hp;
-    const source = tableEntry(state.units, sourceUnitId);
-    const preserveLife = encounterNonlethal(state, source) || !effectContext.forcedDisplacement && (effectContext.preserveLife || target2.nonLethal || changes(target2, "preserveLife"));
-    target2.hp = Math.max(preserveLife ? 1 : 0, hpBefore - Math.max(0, Math.floor(raw)));
-    const amount2 = hpBefore - target2.hp;
-    record(
-      state,
-      sourceUnitId,
-      "damage",
-      `${effectContext.damagePrefix ?? ""}${target2.name}\u53D7\u5230${amount2}\u70B9${label}\u4F24\u5BB3`,
-      { ...detail, targetId: target2.id, damageType: type, amount: amount2, hpBefore, hpAfter: target2.hp }
-    );
-    if (retireFromContest(state, target2, source)) return amount2;
-    if (amount2 > 0) expireStatuses(state, target2, "on_damaged", { sourceUnitId, direct: effectContext.direct });
-    if (!alive(target2)) {
-      const allies = living(state).filter((unit) => unit.team === target2.team);
-      target2.diedAt = { round: state.round, turn: state.turn };
-      target2.corpseOf ??= target2.id;
-      record(state, sourceUnitId, "defeat", `${target2.name}\u5012\u4E0B`, { targetId: target2.id });
-      updateTerrainPatches(state, record, terrainDamage);
-      triggerDeathrattle(state, target2, sourceUnitId);
-      dispatchEffect(state, target2, "on_death", { target: source, attacker: source, killed: target2, dealt: amount2, damageType: type, weaponId: detail.weaponId, sourceUnitId });
-      for (const ally of allies) if (alive(ally)) dispatchEffect(state, ally, "on_ally_death", { target: target2, killed: target2, attacker: source, sourceUnitId: target2.id });
-      if (source && source.team !== target2.team) dispatchEffect(state, source, "on_kill", { target: target2, killed: target2, dealt: amount2, damageType: type, weaponId: detail.weaponId });
-    } else if (amount2 > 0 && triggerDamage) {
-      dsl.dispatch(state, target2, "on_damaged", { target: source, attacker: source, dealt: amount2, damageType: type, ...effectContext });
-    }
-    return amount2;
-  }
-  function terrainDamage(state, target2, raw, prefix, detail) {
-    const { forcedDisplacement } = detail;
-    return loseHP(
-      state,
-      target2,
-      raw,
-      null,
-      "true",
-      forcedDisplacement ? "\u574D\u584C" : "\u5760\u843D",
-      { ...detail, raw },
-      true,
-      { direct: false, forcedDisplacement, damagePrefix: prefix }
-    );
-  }
-  function triggerDeathrattle(state, target2, sourceUnitId) {
-    const effect = target2.deathrattle;
-    if (!effect || target2.deathrattleTriggered) return;
-    target2.deathrattleTriggered = true;
-    record(state, target2, "deathrattle", `${target2.name}\u89E6\u53D1\u4EA1\u8BED`, { targetId: target2.id, effect: structuredClone(effect) });
-    const at = { x: target2.x, y: target2.y };
-    if (effect.kind === "damage") {
-      for (const unit of living(state)) if (unit.team !== target2.team && distance3D(state, at, unit) <= (effect.radius ?? 1))
-        damageTarget(state, unit, sourceUnitId, effect.amount ?? 0, effect.damageType ?? "energy", effect.name ?? "\u4EA1\u8BED", { reaction: true });
-    } else if (effect.kind === "status") {
-      for (const unit of living(state)) if (unit.team !== target2.team && distance3D(state, at, unit) <= (effect.radius ?? 1))
-        grantStatus(state, unit, effect.statusId, { turns: effect.turns, sourceUnitId });
-    } else if (effect.kind === "zone") {
-      state.zones ??= {};
-      const id3 = effect.id ?? `deathrattle-${target2.id}-${state.round}-${state.logs.length}`;
-      state.zones[id3] = {
-        id: id3,
-        name: effect.name ?? "\u4EA1\u8BED\u9886\u57DF",
-        x: at.x,
-        y: at.y,
-        radius: effect.radius ?? 1,
-        remainingTurns: effect.remainingTurns ?? 2,
-        damage: effect.amount ?? 0,
-        damageType: effect.damageType ?? "energy",
-        team: effect.team ?? "all"
-      };
-      record(state, target2, "zone", `${effect.name ?? "\u4EA1\u8BED\u9886\u57DF"}\u5F62\u6210`, { zoneId: id3 });
-    } else if (effect.kind === "spawn" && effect.unit && !state.units[effect.unit.id]) {
-      const unit = structuredClone(effect.unit);
-      unit.x = at.x;
-      unit.y = at.y;
-      unit.hp = unit.maxHp;
-      state.units[unit.id] = unit;
-      state.order.push(unit.id);
-      record(state, target2, "spawn", `${unit.name}\u7531\u4EA1\u8BED\u8BDE\u751F`, { unitId: unit.id });
-    }
+    const hook2 = { on_hit: "after_hit", on_damaged: "after_damage", on_heal: "after_heal", on_turn_start: "turn_start", on_turn_end: "turn_end" }[trigger] ?? trigger;
+    if (!actor || !["after_hit", "after_damage", "after_heal", "turn_start", "turn_end", "on_death", "on_ally_death", "on_kill"].includes(hook2)) return;
+    const { target: target2, attacker, killed, weaponId, ...detail } = context;
+    dispatchVMHook(state, hook2, {
+      ...detail,
+      actorId: attacker?.id ?? actor.id,
+      ownerIds: [actor.id],
+      targetId: target2?.id ?? actor.id,
+      ...killed && { killedId: killed.id },
+      ...weaponId && { weaponTemplateId: state.items[weaponId]?.templateId ?? null }
+    });
   }
   function moraleCheck(state) {
     for (const unit of living(state)) {
       if (unit.protagonist || unit.moraleCheckedRound === state.round) continue;
-      const type = unit.moraleType ?? "standard", rule = MORALE[type];
-      const low = unit.hp / unit.maxHp < rule.threshold;
+      const type = unit.moraleType ?? "standard", rule2 = MORALE[type];
+      const low = unit.hp / unit.maxHp < rule2.threshold;
       const impaired = ["shaken", "routed"].includes(unit.moraleState);
       if (low === impaired) continue;
-      const result = moraleResult({ type, hp: unit.hp, maxHp: unit.maxHp, d20: low && rule.check ? randomDie(state, 20) : void 0 });
+      const result = moraleResult({ type, hp: unit.hp, maxHp: unit.maxHp, d20: low && rule2.check ? randomDie(state, 20) : void 0 });
       unit.moraleCheckedRound = state.round;
       unit.moraleState = result.outcome;
       record(state, unit, "morale", `${unit.name}${low ? "\u6218\u610F\uFF1A" + moraleLabels[result.outcome] : "\u91CD\u632F\u6218\u610F"}`, { targetId: unit.id, ...result, recovered: !low });
     }
   }
-  function restoreHP(state, target2, raw, sourceUnitId, label, detail = {}) {
-    if (!alive(target2) || target2.fled) return 0;
-    const healer = tableEntry(state.units, sourceUnitId);
-    const healing = Math.max(0, Math.floor(healer ? dsl.stat(state, healer, "healing", raw, { target: target2, ...detail }) : raw));
-    const hpBefore = target2.hp;
-    const amount2 = Math.min(healing, target2.maxHp - hpBefore);
-    target2.hp += amount2;
-    record(
-      state,
-      sourceUnitId,
-      "heal",
-      `${target2.name}\u56E0${label}\u6062\u590D${amount2}\u70B9\u751F\u547D`,
-      { ...detail, targetId: target2.id, amount: amount2, hpBefore, hpAfter: target2.hp }
-    );
-    if (amount2 > 0) expireStatuses(state, target2, "on_heal", { sourceUnitId });
-    if (healer && healing) dsl.dispatch(state, healer, "on_heal", { target: target2, healing, actionType: detail.actionType });
-    return amount2;
+  function restoreHP(state, target2, amount, sourceId2, label, details = {}) {
+    commitVMEffect(state, { op: "heal", targetId: target2.id, amount, sourceId: sourceId2, label, details });
   }
-  function setResourceTotal(state, target2, resource3, after, sourceUnitId, label) {
-    const before = target2[resource3];
+  function writePoolMirror(state, target2, key4, current) {
+    const pool = target2.pools && getPool(state, target2.id, key4);
+    if (pool) updatePoolCurrent(state, pool.id, "set", current);
+    else target2[key4] = current;
+  }
+  function setResourceTotal(state, target2, resource2, after, sourceUnitId, label) {
+    const before = target2[resource2];
     if (before === after) return;
-    target2[resource3] = after;
-    const amount2 = Math.abs(after - before);
+    writePoolMirror(state, target2, resource2, after);
+    const amount = Math.abs(after - before);
     record(
       state,
       sourceUnitId,
       "resource",
-      `${target2.name}\u56E0${label}${after > before ? "\u6062\u590D" : "\u6D88\u8017"}${amount2}\u70B9 ${resource3.toUpperCase()}`,
-      { targetId: target2.id, resource: resource3, amount: amount2, before, after }
+      `${target2.name}\u56E0${label}${after > before ? "\u6062\u590D" : "\u6D88\u8017"}${amount}\u70B9 ${resource2.toUpperCase()}`,
+      { targetId: target2.id, resource: resource2, amount, before, after }
     );
   }
   function armorOf(state, unit, damageType2, pierce = 0, context = {}) {
     const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0) + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
     const base = unit.armor + equipmentDefense + changes(unit, "armor", damageType2) + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
     const ctx = { ...context, target: context.attacker, damageType: damageType2 };
-    const armor = Math.max(0, dsl.stat(state, unit, "defense", dsl.stat(state, unit, "armor", base, ctx), ctx));
+    const armor = Math.max(0, modStat(state, unit, "defense", modStat(state, unit, "armor", base, ctx), ctx));
     const flat = typeof pierce === "object" ? pierce.flat ?? 0 : pierce;
     const percent2 = typeof pierce === "object" ? pierce.percent ?? 0 : 0;
     const effective = Math.max(0, armor * (1 - percent2) - flat);
     return typedArmor(damageType2, effective);
   }
-  function damageTarget(state, target2, sourceUnitId, amount2, type, label, options = {}) {
-    const { attacker, hit = false, melee = false, armorPierce = 0, reaction = false, details = {}, committedRecipient } = options;
-    let recipient = committedRecipient ?? target2;
-    if (hit && !reaction && !committedRecipient) {
-      recipient = guardFor(state, target2) ?? target2;
-      if (recipient !== target2) record(state, recipient, "guard", `${recipient.name}\u66FF${target2.name}\u627F\u53D7\u6253\u51FB`, { targetId: target2.id });
-    }
-    let parry = null;
-    if (hit && melee && !reaction && recipient !== attacker && recipient?.stance === "greatsword" && recipient.greatswordMode === "defensive" && (recipient.parryQuota ?? 0) > 0) {
-      const defenderRoll = randomDie(state, 20), attackerRoll = randomDie(state, 20);
-      const defenderTotal = effectiveStat(state, recipient, "str") + defenderRoll;
-      const attackerTotal = effectiveStat(state, attacker, "str") + attackerRoll;
-      const success = defenderTotal >= attackerTotal;
-      const perfect = success && (details.ratingMultiplier ?? 0) >= 1.3 && !recipient.parryRefunded;
-      recipient.parryQuota--;
-      if (perfect) {
-        recipient.parryQuota = Math.min(2, recipient.parryQuota + 1);
-        recipient.parryRefunded = true;
-      }
-      parry = { success, perfect, defenderRoll, attackerRoll, defenderTotal, attackerTotal, reduction: perfect ? 1 : success ? 0.6 : 0, quota: recipient.parryQuota };
-      record(state, recipient, "parry", `${recipient.name}${perfect ? "\u5B8C\u7F8E\u5F39\u53CD" : success ? "\u5F39\u53CD\u6210\u529F" : "\u5F39\u53CD\u5931\u8D25"}`, { targetId: attacker?.id ?? null, ...parry });
-      if (perfect) amount2 = 0;
-      else if (success) amount2 *= 0.4;
-    }
-    if (!alive(recipient) || recipient.fled) return { recipient, dealt: 0 };
-    const formula = mitigation(state, recipient, type, hit, armorPierce, { attacker, intercepting: recipient !== target2, ignoreArmor: options.ignoreArmor });
-    const modified = mitigatedDamage(amount2, formula, hit, attacker, type);
-    if (formula.shatter) {
-      record(state, sourceUnitId, "shatter", `${recipient.name}\u53D7\u5230\u788E\u88C2\u589E\u4F24`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
-    }
-    if (hit) expireStatuses(state, recipient, "on_struck", { sourceUnitId });
-    const net = damageAfterFlatReduction(state, recipient, modified, attacker, type, recipient !== target2);
-    let pending = net;
-    for (const shield of values2(recipient.statuses).filter((status2) => status2.amount > 0).sort(byId2)) {
-      if (!pending) break;
-      const absorbed2 = Math.min(pending, shield.amount);
-      pending -= absorbed2;
-      shield.amount -= absorbed2;
-      record(state, recipient, "shield", `${recipient.name}\u7684${shield.name}\u5438\u6536${absorbed2}\u70B9\u4F24\u5BB3`, { absorbed: absorbed2, remaining: shield.amount, statusId: shield.id });
-      if (!shield.amount) {
-        delete recipient.statuses[shield.id];
-        record(state, recipient, "shield_break", `${recipient.name}\u7684${shield.name}\u7834\u88C2`, { targetId: recipient.id, statusId: shield.id });
-      }
-    }
-    const absorbed = net - pending;
-    const dealt = loseHP(
-      state,
-      recipient,
-      pending,
-      sourceUnitId,
-      type,
+  function damageTarget(state, target2, sourceId2, amount, damageType2, label, options = {}) {
+    const source = tableEntry(state.units, sourceId2);
+    commitVMEffect(state, {
+      op: "damage",
+      targetId: target2.id,
+      sourceId: sourceId2,
+      amount,
+      damageType: damageType2,
       label,
-      { ...details, ...formula, ...parry ? { parry } : {}, raw: amount2, absorbed, intendedTargetId: target2.id },
-      true,
-      { preserveLife: options.preserveLife, melee: hit && melee, reaction, intercepting: recipient !== target2, direct: options.direct ?? hit }
-    );
-    if (hit && melee && !reaction && alive(attacker) && attacker.id !== recipient.id) {
-      const reflect = changes(recipient, "reflect", type);
-      if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, "true", "\u68D8\u7532\u53CD\u4F24", { reaction: true });
-    }
-    return { recipient, dealt };
+      direct: options.direct ?? options.hit ?? false,
+      melee: options.melee ?? false,
+      ...options.details && { details: options.details },
+      lethal: !(options.preserveLife || target2.nonLethal || changes(target2, "preserveLife") || encounterNonlethal(state, source))
+    });
   }
-  function damageAfterFlatReduction(state, unit, amount2, attacker, damageType2, intercepting = false) {
-    if (damageType2 === "true") return amount2;
-    return Math.max(0, Math.floor(amount2 - dsl.stat(state, unit, "damageReductionFlat", 0, { target: attacker, damageType: damageType2, intercepting })));
+  function damageAfterFlatReduction(state, unit, amount, attacker, damageType2, intercepting = false) {
+    if (damageType2 === "true") return amount;
+    return Math.max(0, Math.floor(amount - modStat(state, unit, "damageReductionFlat", 0, { target: attacker, damageType: damageType2, intercepting })));
   }
-  function mitigatedDamage(amount2, formula, hit, attacker, type) {
-    return Math.max(0, hit ? Math.floor(amount2 * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker, type) : 1)) : Math.floor(amount2 * formula.multiplier) - Math.floor(formula.armor));
+  function mitigatedDamage(amount, formula2, hit, attacker, type) {
+    return Math.max(0, hit ? Math.floor(amount * formula2.multiplier * formula2.armorMultiplier * (1 - formula2.attributeReduction) * (attacker ? finalDamageMultiplier(attacker, type) : 1)) : Math.floor(amount * formula2.multiplier) - Math.floor(formula2.armor));
   }
   function mitigation(state, unit, type, hit, pierce, ctx = {}) {
     const shatter = hit ? changes(unit, "shatter", type) : 0;
     const vulnerability = changes(unit, "vulnerability", type);
-    const reduction = type === "true" ? 0 : clamp(dsl.stat(state, unit, "damageReduction", changes(unit, "reduction", type), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
+    const reduction = type === "true" ? 0 : clamp3(modStat(state, unit, "damageReduction", changes(unit, "reduction", type), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
     const defense = ctx.ignoreArmor || type === "true" || type === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
     const armorMultiplier = 2e3 / (defense + 2e3);
     const attributeReduction = state.ruleset === "protocol" && type !== "true" ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map((key4) => [key4, effectiveStat(state, unit, key4)]))) : 0;
@@ -2211,75 +4015,55 @@ var FatedTacticalTavern = (() => {
   function guardFor(state, target2) {
     return living(state).find((u) => u !== target2 && u.team === target2.team && changes(u, "intercept") && !changes(u, "skip") && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
   }
-  function tick(state, unit, timing) {
-    for (const status2 of values2(unit.statuses)) {
-      if (!alive(unit)) return;
-      if (unit.statuses[status2.id] !== status2 || status2.tickTiming !== timing) continue;
-      if (status2.appliedRound === state.round && status2.appliedTurn === state.turn) continue;
-      const source = status2.sourceUnitId ?? unit.id;
-      const amount2 = status2.modifiers?.damage;
-      const detail = { statusId: status2.id, tickTiming: timing };
-      if (amount2) damageTarget(state, unit, source, amount2 * status2.stacks, status2.modifiers.damageType ?? "true", status2.name, { details: detail });
-      const heal = status2.modifiers?.heal;
-      if (heal && alive(unit)) restoreHP(state, unit, heal * status2.stacks, source, status2.name, detail);
-    }
-  }
-  function tickZones(state, unit) {
-    for (const zone of values2(state.zones)) {
-      if (zone.remainingTurns <= 0 || distance3D(state, unit, zone) > zone.radius) continue;
-      if (zone.team !== "all" && zone.team !== unit.team) continue;
-      if (zone.damage > 0) damageTarget(state, unit, zone.sourceUnitId ?? null, zone.damage, zone.damageType, zone.name);
-      record(state, zone.sourceUnitId ?? null, "zone", `${unit.name}\u53D7\u5230${zone.name}\u533A\u57DF\u5F71\u54CD`, { zoneId: zone.id, targetId: unit.id, damage: zone.damage });
-    }
-  }
-  function decayZones(state) {
-    for (const zone of values2(state.zones)) if (--zone.remainingTurns <= 0) {
-      delete state.zones[zone.id];
-      record(state, null, "zone_expire", `${zone.name}\u533A\u57DF\u6D88\u6563`, { zoneId: zone.id });
+  function tick2(state, unit, timing) {
+    for (const status of values3(unit.statuses)) {
+      if (!alive3(unit)) return;
+      if (unit.statuses[status.id] !== status || status.tickTiming !== timing) continue;
+      if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
+      const source = status.sourceUnitId ?? unit.id;
+      if (status.rules?.length) continue;
+      const amount = status.modifiers?.damage;
+      const detail = { statusId: status.id, tickTiming: timing };
+      if (amount) damageTarget(state, unit, source, amount * status.stacks, status.modifiers.damageType ?? "true", status.name, { details: detail });
+      const heal = status.modifiers?.heal;
+      if (heal && alive3(unit)) restoreHP(state, unit, heal * status.stacks, source, status.name, detail);
     }
   }
   function endTurn(state, unit) {
     if (!unit) return;
     unit.ap = 0;
-    for (const [id3, modifier] of Object.entries(unit.effectModifiers ?? {})) {
-      if (modifier.round === state.round && modifier.turn === state.turn) continue;
-      if (--modifier.turns <= 0) delete unit.effectModifiers[id3];
-    }
     expireStatuses(state, unit, "on_turn_end", { sourceUnitId: unit.id });
-    tick(state, unit, "onTurnEnd");
-    dsl.dispatch(state, unit, "on_turn_end");
-    for (const status2 of values2(unit.statuses)) {
-      if (status2.durationType !== "battle_turns") continue;
-      if (status2.appliedRound === state.round && status2.appliedTurn === state.turn && (!status2.expireInto || status2.sourceUnitId !== unit.id)) continue;
-      if (--status2.remainingTurns > 0) continue;
-      delete unit.statuses[status2.id];
-      record(state, unit, "expire", `${unit.name}\u7684${status2.name}\u7ED3\u675F`, { targetId: unit.id, statusId: status2.id });
-      if (status2.expireInto && alive(unit) && !refreshOutcome(state)) grantStatus(state, unit, status2.expireInto, { sourceUnitId: unit.id });
+    tick2(state, unit, "onTurnEnd");
+    dispatchEffect(state, unit, "on_turn_end");
+    for (const status of values3(unit.statuses)) {
+      if (status.durationType !== "battle_turns") continue;
+      if (status.appliedRound === state.round && status.appliedTurn === state.turn && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
+      if (--status.remainingTurns > 0) continue;
+      delete unit.statuses[status.id];
+      record(state, unit, "expire", `${unit.name}\u7684${status.name}\u7ED3\u675F`, { targetId: unit.id, statusId: status.id });
+      if (status.expireInto && alive3(unit) && !refreshOutcome(state)) grantStatus(state, unit, status.expireInto, { sourceUnitId: unit.id });
     }
     record(state, unit, "end", `${unit.name}\u7ED3\u675F\u56DE\u5408`);
-    if (unit === state.units[state.order.at(-1)]) decayZones(state);
-    updateTerrainPatches(state, record, terrainDamage, true);
   }
   function settleTurn(state) {
     for (let checked = 0; checked < state.order.length; checked++) {
       const unit = currentUnit(state);
       if (state.outcome) return;
-      if (alive(unit) && !unit.fled) {
+      if (alive3(unit) && !unit.fled) {
         unit.used = { attack: 0, action: 0 };
         unit.reactionAvailable = true;
         unit.ap = 2;
         record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
         const hold = unit.statuses.suppressed;
         if (hold?.holdTotal != null) {
-          const roll = randomDie(state, 20), total = roll + Math.floor(effectiveStat(state, unit, "str") * unit.hp / unit.maxHp);
-          const success = total > hold.holdTotal;
+          const roll = randomDie(state, 20), total2 = roll + Math.floor(effectiveStat(state, unit, "str") * unit.hp / unit.maxHp);
+          const success = total2 > hold.holdTotal;
           if (success) delete unit.statuses.suppressed;
-          record(state, unit, "break_hold", `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total} \u5BF9 ${hold.holdTotal}\uFF09`, { roll, total, threshold: hold.holdTotal, success });
+          record(state, unit, "break_hold", `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total2} \u5BF9 ${hold.holdTotal}\uFF09`, { roll, total: total2, threshold: hold.holdTotal, success });
         }
         expireStatuses(state, unit, "on_turn_start", { sourceUnitId: unit.id });
-        tick(state, unit, "onTurnStart");
-        tickZones(state, unit);
-        dsl.dispatch(state, unit, "on_turn_start");
+        tick2(state, unit, "onTurnStart");
+        dispatchEffect(state, unit, "on_turn_start");
         if (refreshOutcome(state)) {
           unit.ap = 0;
           return;
@@ -2288,8 +4072,8 @@ var FatedTacticalTavern = (() => {
           advanceCursor(state);
           continue;
         }
-        if (alive(unit) && !changes(unit, "skip")) return;
-        if (alive(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
+        if (alive3(unit) && !changes(unit, "skip")) return;
+        if (alive3(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
         endTurn(state, unit);
         if (refreshOutcome(state)) return;
       }
@@ -2301,7 +4085,7 @@ var FatedTacticalTavern = (() => {
   function resetFacing(state) {
     for (const unit of living(state)) {
       const target2 = unit.lockedTargetId ? state.units[unit.lockedTargetId] : null;
-      if (target2 && alive(target2)) unit.facing = facingToward(unit, target2);
+      if (target2 && alive3(target2)) unit.facing = facingToward(unit, target2);
     }
   }
   function advanceCursor(state) {
@@ -2309,14 +4093,15 @@ var FatedTacticalTavern = (() => {
     if (state.turn < state.order.length) return;
     state.turn = 0;
     state.round++;
+    if (state.spatialTerrain || values3(state.zones).length) advanceVMSpatial(state);
     const opening = state.logs.find((log) => log.type === "initiative")?.detail?.initiative;
     const openingRows = opening?.filter((row) => state.order.includes(row.unitId)) ?? [];
-    const hasModifier = living(state).some((unit) => values2(unit.effectModifiers).some((m) => m.stat === "initiative"));
+    const hasModifier = living(state).some((unit) => aggregateModifiers(state, unit.id).stats.initiativeFlat);
     const lastChange = state.logs.findLast((log) => log.type === "initiative_order");
     if (openingRows.length && (hasModifier || lastChange?.detail.modified)) {
       const ranked = openingRows.map((row, index) => {
         const unit = state.units[row.unitId];
-        const delta = dsl.stat(state, unit, "initiative", row.flatInit, {}, true) - row.flatInit;
+        const delta = modStat(state, unit, "initiative", row.flatInit, {}, true) - row.flatInit;
         return { id: row.unitId, total: row.total + delta, index };
       }).sort((a, b) => b.total - a.total || a.index - b.index).map((row) => row.id);
       const included = new Set(ranked);
@@ -2336,31 +4121,27 @@ var FatedTacticalTavern = (() => {
     state.logs ??= [];
     state.round = 1;
     state.turn = 0;
-    for (const unit of values2(state.units)) {
-      delete unit.effectUsage;
-      delete unit.effectModifiers;
-    }
     state.outcome = null;
     syncEquipmentEffects(state);
     const initiative2 = initiativeOrder(state, () => randomDie(state, 20));
-    state.order = initiative2.map((entry) => entry.unitId);
-    for (const unit of values2(state.units)) {
+    state.order = initiative2.map((entry2) => entry2.unitId);
+    for (const unit of values3(state.units)) {
       unit.ap = 0;
       unit.used = { attack: 0, action: 0 };
       unit.reactionAvailable = true;
-      for (const status2 of values2(unit.statuses)) {
-        delete status2.appliedRound;
-        delete status2.appliedTurn;
+      for (const status of values3(unit.statuses)) {
+        delete status.appliedRound;
+        delete status.appliedTurn;
       }
     }
     record(state, null, "initiative", "\u654F\u6377 + d20\uFF1A\u786E\u5B9A\u5148\u653B\u6B21\u5E8F", { initiative: initiative2 });
-    for (const unit of living(state)) for (const status2 of values2(unit.statuses)) {
+    for (const unit of living(state)) for (const status of values3(unit.statuses)) {
       record(
         state,
-        status2.sourceUnitId ?? unit.id,
+        status.sourceUnitId ?? unit.id,
         "status",
-        `${unit.name}\u5F00\u573A\u5DF2\u6709${status2.name} \xD7${status2.stacks}`,
-        { ...statusLogDetail(unit, status2), initial: true }
+        `${unit.name}\u5F00\u573A\u5DF2\u6709${status.name} \xD7${status.stacks}`,
+        { ...statusLogDetail(unit, status), initial: true }
       );
     }
     if (!refreshOutcome(state)) settleTurn(state);
@@ -2368,20 +4149,20 @@ var FatedTacticalTavern = (() => {
   }
   function initiativeOrder(state, rollFor) {
     return living(state).map((unit) => {
-      const roll = rollFor(unit), agility = effectiveStat(state, unit, "agi") + dsl.check(state, unit, "initiativeAgility");
+      const roll = rollFor(unit), agility = effectiveStat(state, unit, "agi") + modCheck(state, unit, "initiativeAgility");
       const agilityPercent = Number(unit.initiativePercent ?? 0);
       const attackInit = Array.isArray(unit.attackInit) ? unit.attackInit : [];
       const actionInit = Array.isArray(unit.actionInit) ? unit.actionInit : [];
-      const flatInit = dsl.stat(state, unit, "initiative", Number(unit.flatInitiative ?? 0) + dsl.check(state, unit, "iniBonus"));
-      const total = initiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
-      return { unitId: unit.id, roll, agility, agilityPercent, attackInit: Math.max(0, ...attackInit, 0), actionInit: Math.max(0, ...actionInit, 0), flatInit, total };
+      const flatInit = modStat(state, unit, "initiative", Number(unit.flatInitiative ?? 0) + modCheck(state, unit, "iniBonus"));
+      const total2 = initiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
+      return { unitId: unit.id, roll, agility, agilityPercent, attackInit: Math.max(0, ...attackInit, 0), actionInit: Math.max(0, ...actionInit, 0), flatInit, total: total2 };
     }).sort((a, b) => b.total - a.total || b.agility - a.agility || (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
   }
   function refreshOpeningInitiative(state) {
-    const [entry, ...following] = state.logs;
+    const [entry2, ...following] = state.logs;
     const turn = following.pop();
-    if (state.round !== 1 || state.turn !== 0 || entry?.type !== "initiative" || turn?.type !== "turn" || following.some((log) => log.type !== "status" || !log.detail.initial)) return;
-    const previous = entry.detail.initiative;
+    if (state.round !== 1 || state.turn !== 0 || entry2?.type !== "initiative" || turn?.type !== "turn" || following.some((log) => log.type !== "status" || !log.detail.initial)) return;
+    const previous = entry2.detail.initiative;
     if (!Array.isArray(previous) || !currentUnit(state)) return;
     const rolls = new Map(previous.filter((row) => row && Number.isInteger(row.roll)).map((row) => [row.unitId, row.roll]));
     if (living(state).some((unit) => !rolls.has(unit.id) || changes(unit, "skip"))) return;
@@ -2389,7 +4170,7 @@ var FatedTacticalTavern = (() => {
     if (initiative2.every((row, i) => row.unitId === previous[i]?.unitId && row.total === previous[i]?.total)) return;
     currentUnit(state).ap = 0;
     state.order = initiative2.map((row) => row.unitId);
-    entry.detail.initiative = initiative2;
+    entry2.detail.initiative = initiative2;
     const first = currentUnit(state);
     first.ap = 2;
     state.logs.pop();
@@ -2397,151 +4178,36 @@ var FatedTacticalTavern = (() => {
   }
   var locateUnit = (state, { x, y }) => unitAt(state, x, y);
   var locateCover = (state, { x, y }) => coverAt(state, x, y);
-  var emptyGround = (state, at) => isGround(state, at) && !locateUnit(state, at) && !locateCover(state, at);
   var allCells = (state) => state.grid.flatMap((row, y) => row.map((_, x) => pos(x, y)));
-  function spawnEffectUnit(state, actor, original, center, scale, corpse) {
-    if (!original || state.order.length >= 200 || Object.keys(state.units).length >= 200) return false;
-    const at = allCells(state).filter((cell) => emptyGround(state, cell)).sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b))[0];
-    if (!at) return false;
-    let index = 1;
-    while (Object.hasOwn(state.units, `summon-${index}`)) index++;
-    const id3 = `summon-${index}`;
-    const scaled = (value, min = 0) => Math.max(min, Math.round(value * scale));
-    const maxHp = scaled(original.maxHp, 1), maxMp = scaled(original.maxMp), maxSp = scaled(original.maxSp);
-    const unit = {
-      id: id3,
-      name: original.name,
-      team: actor.team,
-      ...at,
-      facing: [...actor.facing],
-      hp: maxHp,
-      maxHp,
-      mp: maxMp,
-      maxMp,
-      sp: maxSp,
-      maxSp,
-      ap: 0,
-      used: { attack: 0, action: 0 },
-      stats: Object.fromEntries(Object.entries(original.stats).map(([stat2, value]) => [stat2, Math.round(value * scale)])),
-      armor: scaled(original.armor),
-      size: original.size,
-      move: scaled(original.move, 1),
-      weapon: null,
-      gear: [],
-      skills: [...original.skills],
-      statuses: {},
-      ...original.tier ? { tier: original.tier } : {},
-      ...corpse ? { creatureType: "undead", corpseOf: original.id } : {}
-    };
-    state.units[id3] = unit;
-    state.order.push(id3);
-    if (corpse) original.corpseConsumed = true;
-    record(state, actor, corpse ? "raise_dead" : "spawn", `${unit.name}${corpse ? "\u590D\u751F" : "\u767B\u573A"}`, { unitId: id3, ...corpse ? { corpseId: original.id } : {} });
-    return true;
+  var modifierEvent = (unit, context) => {
+    const { target: target2, attacker, ...rest } = context;
+    return { ...rest, actorId: attacker?.id ?? unit?.id, targetId: target2?.id ?? unit?.id };
+  };
+  function modStat(state, unit, name, base, context = {}) {
+    const statName = { damage: "damageMult", healing: "healingMult", accuracy: "checkBonus", initiative: "initiativeFlat" }[name] ?? name;
+    return applyStatMod(base, aggregateModifiers(state, unit?.id, modifierEvent(unit, context)).stats[statName]);
   }
-  function nextFreeId(table4, prefix) {
-    let n = 1;
-    while (Object.hasOwn(table4, `${prefix}-${n}`)) n++;
-    return `${prefix}-${n}`;
+  function modCheck(state, unit, key4, context = {}) {
+    const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
+    if (key4 === "highGroundRange" || key4 === "highGroundAccuracy") return template?.[key4] ?? 0;
+    return key4 === "advantage" ? modStat(state, unit, "advantage", 0, { checkKind: "attack", ...context }) : 0;
   }
-  function spawnUnitEffect(state, actor, spec, center) {
-    const count = spec.count ?? 1;
-    const reject = (reason) => {
-      record(state, actor, "spawn_unresolved", `\u53EC\u5524${spec.name}\u5931\u8D25\uFF1A${reason}`, { unresolved: true });
-      return false;
-    };
-    if (Object.keys(state.units).length + count > 200 || state.order.length + count > 200) return reject("\u5355\u4F4D\u6570\u91CF\u8FBE\u5230\u4E0A\u9650");
-    const slots = [spec.mainHand, spec.offHand, spec.shield, ...spec.gear ?? []].filter(Boolean);
-    if (Object.keys(state.items).length + slots.length * count > 200) return reject("\u88C5\u5907\u5B9E\u4F8B\u6570\u91CF\u8FBE\u5230\u4E0A\u9650");
-    const panel = spawnPanel(actor, spec);
-    if (!panel || panel.maxHp < 1) return reject("\u53EC\u5524\u8005\u5C5E\u6027\u9884\u7B97\u4E0D\u8DB3");
-    const cells = allCells(state).filter((p) => emptyGround(state, p)).sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
-    if (cells.length < count) return reject("\u53EF\u7528\u7A7A\u683C\u4E0D\u8DB3");
-    const mint = (templateId) => {
-      if (!templateId) return null;
-      const id3 = nextFreeId(state.items, "item");
-      state.items[id3] = { id: id3, templateId, counters: initialCounters(state.equipment[templateId]) };
-      return id3;
-    };
-    for (const at of cells.slice(0, count)) {
-      const id3 = nextFreeId(state.units, "summon"), mainHand = mint(spec.mainHand);
-      state.units[id3] = {
-        ...panel,
-        stats: { ...panel.stats },
-        id: id3,
-        name: spec.name,
-        team: actor.team,
-        ...at,
-        facing: [...actor.facing],
-        hp: panel.maxHp,
-        mp: panel.maxMp,
-        sp: panel.maxSp,
-        ap: 0,
-        used: { attack: 0, action: 0 },
-        weapon: mainHand,
-        mainHand,
-        offHand: mint(spec.offHand),
-        shield: mint(spec.shield),
-        gear: (spec.gear ?? []).map(mint),
-        skills: [...spec.skills ?? []],
-        statuses: {}
-      };
-      state.order.push(id3);
-      record(state, actor, "spawn", `${spec.name}\u767B\u573A`, { unitId: id3 });
-    }
-    return true;
+  function equippedActiveSkills(state, unit) {
+    if (!unit) return [];
+    return equipped(state, unit).flatMap(({ instance, template }) => (template?.skills ?? []).filter((id3) => tableEntry(state.skills, id3)).map((id3) => [id3, state.skills[id3]]));
   }
-  var dsl = createEffectEngine({
-    changeAltitude,
-    spawn: spawnUnitEffect,
-    terrain: (state, actor, node3, ctx) => applyTerrainEffect(state, actor, node3, ctx, record, terrainDamage),
-    equipped,
-    living,
-    resourcePool,
-    distance: distance3D,
-    die: randomDie,
-    random: randomUnit,
-    counter: changeCounter,
-    damage: damageTarget,
-    loseHP,
-    heal: restoreHP,
-    setResourceTotal,
-    grant: grantStatus,
-    grantShield,
-    record,
-    saved: effectSaved,
-    removeStatus,
-    knockback,
-    teleport: teleportBehind,
-    statusModifier: changes,
-    blockRestore: (unit) => changes(unit, "blockResourceRestore"),
-    weaponMatches: (state, actor, instanceId, value) => {
-      const weapon = instanceId ? equipmentFor(state, instanceId).template : weaponInfo(state, actor).template;
-      return weapon?.weaponType === value || (weapon?.weaponClass ?? weapon?.rangeType) === value;
-    },
-    findExpression: (state, ref2) => [...values2(state.equipment), ...values2(state.skills)].flatMap((t) => t.effects).find((e) => isExpression(e) && e.id === ref2),
-    raise: (state, actor, target2, scale) => corpses(state).includes(target2) && spawnEffectUnit(state, actor, target2, target2, scale, true),
-    summon: (state, actor, id3, at, scale, count) => {
-      let spawned = false;
-      for (let i = 0; i < count; i++) spawned = spawnEffectUnit(state, actor, tableEntry(state.summonTemplates, id3) ?? tableEntry(state.units, id3), at, scale, false) || spawned;
-      return spawned;
-    }
-  });
-  var equippedActiveSkills = (state, unit) => dsl.activeSkills(state, unit);
-  function syncEquipmentEffects(state) {
-    for (const unit of living(state)) dispatchEffect(state, unit, "on_equip");
-  }
+  var syncEquipmentEffects = initializeVMWorld;
   function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
-    if (!alive(unit) || changes(unit, "rooted") || changes(unit, "skip")) return [];
+    if (!alive3(unit) || changes(unit, "rooted") || changes(unit, "skip") || aggregateModifiers(state, unit.id).locks.move) return [];
     const limit = distanceLimit ?? Math.max(1, unit.move + changes(unit, "movement")) * (type === "sprint" ? 2 : 1);
     const routes = movementOptions(state, unit, limit);
     const sources = type === "disengage" ? [] : opportunitySources(state, unit).filter((source) => canReact(state, source, unit));
     const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
     if (!sources.length || !routes.length) return routes.map((route) => routeCell(route));
     const threatCache = /* @__PURE__ */ new Map();
-    const threatAt = (at) => {
-      const id3 = key2(at.x, at.y);
-      if (!threatCache.has(id3)) threatCache.set(id3, sources.filter((source) => threatens(state, source, unit, at)));
+    const threatAt = (at2) => {
+      const id3 = key2(at2.x, at2.y);
+      if (!threatCache.has(id3)) threatCache.set(id3, sources.filter((source) => threatens(state, source, unit, at2)));
       return threatCache.get(id3);
     };
     const exits = (from, to) => threatAt(from).filter((source) => !threatAt(to).includes(source));
@@ -2564,33 +4230,24 @@ var FatedTacticalTavern = (() => {
       return routeCell(route, opportunities);
     });
   }
-  function skillExpressions(skill2, id3) {
-    const entries2 = dsl.skillExpressions(skill2, id3);
-    if (!skill2?.damageType) return entries2;
-    return entries2.map((entry) => ({ ...entry, expr: { ...entry.expr, params: { damageType: skill2.damageType, ...entry.expr.params } } }));
-  }
-  function castLimits(skill2, id3) {
-    const entries2 = skill2.entry ? [skill2.entry] : dsl.skillExpressions(skill2, id3);
-    return entries2.filter(({ expr }) => ["active", "on_skill_cast"].includes(expr.trigger) && (expr.params?.usesPerBattle != null || expr.params?.cooldown != null));
-  }
   function skillAvailability(state, actor, skill2, id3) {
-    const entries2 = castLimits(skill2, id3);
-    let usesLeft = null, cooldownRemaining = 0;
-    for (const entry of entries2) {
-      const status2 = dsl.usageStatus(state, actor, entry);
-      if (status2.usesLeft != null) usesLeft = Math.min(usesLeft ?? Infinity, status2.usesLeft);
-      cooldownRemaining = Math.max(cooldownRemaining, status2.cooldownRemaining);
+    let usesLeft = null;
+    for (const rule2 of skill2?.rules ?? []) if (rule2.hook === "active" && rule2.usesPerBattle !== void 0 && rule2.enabled !== false) {
+      const used = state.vm?.uses?.[JSON.stringify([actor.id, id3, rule2.id])] ?? 0;
+      usesLeft = Math.min(usesLeft ?? Infinity, Math.max(0, rule2.usesPerBattle - used));
     }
-    return { usesLeft, cooldownRemaining };
+    return { usesLeft, cooldownRemaining: 0 };
   }
   function actorCost(template) {
     const cost = template.resourceCost;
     return { hp: cost?.hp ?? 0, mp: cost?.mp ?? template.mp ?? 0, sp: cost?.sp ?? template.sp ?? 0 };
   }
   var insufficientHP = "HP \u4E0D\u8DB3\uFF0C\u65E0\u6CD5\u65BD\u653E";
-  function paymentError(state, unit, ap, slot, template = {}) {
+  function paymentError(state, unit, ap, slot2, template = {}) {
+    const { locks } = aggregateModifiers(state, unit.id);
+    if (ap === 2 && (locks.attack || locks.action) || locks[slot2] || template.rules && locks.cast) return "\u5BF9\u5E94\u884C\u52A8\u69FD\u5DF2\u9501\u5B9A";
     if (unit.ap < ap) return `\u9700\u8981 ${ap} AP`;
-    if (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot]) {
+    if (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot2]) {
       return "\u672C\u56DE\u5408\u5BF9\u5E94\u7684\u884C\u52A8\u69FD\u5DF2\u4F7F\u7528";
     }
     const { hp, mp, sp } = actorCost(template);
@@ -2598,76 +4255,71 @@ var FatedTacticalTavern = (() => {
     if (unit.mp < mp) return "\u9B54\u529B\u4E0D\u8DB3";
     if (unit.sp < sp) return "\u4F53\u529B\u4E0D\u8DB3";
     if (template.resourceCost?.resource && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return "\u88C5\u5907\u8D44\u6E90\u4E0D\u8DB3";
-    if (findNode(template, "restoreResource") && changes(unit, "blockResourceRestore")) return "\u5F53\u524D\u72B6\u6001\u7981\u6B62\u88C5\u5907\u8D44\u6E90\u6062\u590D";
     return null;
   }
   var normalAttack = Object.freeze({ name: "\u5F92\u624B", range: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" } });
-  var findNode = (template, kind, predicate = () => true) => (template?.effects ?? []).flatMap((expr) => [...effectNodes(expr.effects, true)]).find((node3) => node3.kind === kind && predicate(node3));
-  var shieldBashEffects = [expression("shield-bash-hit", "on_hit", "hitTarget", [
-    { kind: "knockback", distance: 1 },
-    { kind: "grantStatus", statusId: actionStatuses.shield_bash, turns: 1 }
-  ])];
+  var shieldBashRules = [{ id: "shield-bash-hit", hook: "after_hit", program: [
+    { op: "move", target: "target", mode: "push", distance: 1 },
+    { op: "apply_status", target: "target", statusId: actionStatuses.shield_bash, turns: 1 }
+  ] }];
   var isMelee = (template) => template.rangeType !== "ranged" && !template.ranged && template.weaponClass !== "ranged" && (template.range ?? 1.5) <= 2;
   var weaponAmmo = (template) => {
-    const pools = resourceDefinitions(template, true);
+    const pools = Object.entries(template?.pools ?? {}).map(([resource2, pool]) => ({ resource: resource2, ...pool }));
     return pools.find((pool) => pool.resource === "ammo") ?? pools.find((pool) => pool.reloadable);
   };
   var emptyAmmoMessage = (ammo) => ammo.reloadable ? "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" : "\u5F39\u836F\u5DF2\u8017\u5C3D";
   function weaponInfo(state, unit) {
     const mainId = unit.mainHand ?? unit.weapon;
     const candidate = equipmentFor(state, mainId);
-    const weapon = candidate.template?.boundTo && candidate.template.boundTo !== unit.id ? equipmentFor(state, null) : candidate;
-    const ammo = weaponAmmo(weapon.template);
-    const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon.instance)?.amount : null;
+    const weapon2 = candidate.template?.boundTo && candidate.template.boundTo !== unit.id ? equipmentFor(state, null) : candidate;
+    const ammo = weaponAmmo(weapon2.template);
+    const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon2.instance)?.amount : null;
     const infiniteAmmo = Boolean(ammo && changes(unit, "infiniteAmmo"));
-    const scale = findNode(weapon.template ?? normalAttack, "multiplyDamage", (node3) => node3.local && node3.resourceScale);
-    const souls = scale ? resourcePool(state, unit, scale.resourceScale.resource, weapon.instance)?.amount ?? 0 : 0;
+    const souls = resourcePool(state, unit, "souls", weapon2.instance)?.amount ?? 0;
     const offHand = equipmentFor(state, unit.offHand);
-    const stance = unit.stance ?? stanceFor({ mainHand: weapon.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
+    const stance = unit.stance ?? stanceFor({ mainHand: weapon2.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
     return {
-      ...weapon,
+      ...weapon2,
       ammo,
       ammoCount,
       infiniteAmmo,
       souls,
       offHand,
       stance,
-      template: weapon.template ?? normalAttack,
-      soulMultiplier: 1 + souls * (scale?.resourceScale.perUnit ?? 0)
+      template: weapon2.template ?? normalAttack,
+      soulMultiplier: modStat(state, unit, "damageMult", 1, { souls, weaponTemplateId: weapon2.instance?.templateId })
     };
   }
-  function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
-    const dz = elevation(state, actor) - elevation(state, at);
+  function reaches(state, actor, at2, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
+    const dz = elevation(state, actor) - elevation(state, at2);
     const melee = isMelee(template) && !ammo;
-    const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? ammo?.reloadable ? dsl.check(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
-    return { distance: distance3D(state, actor, at), dz, range: Math.max(0, range), melee };
+    const range2 = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? ammo?.reloadable ? modCheck(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
+    return { distance: distance3D(state, actor, at2), dz, range: Math.max(0, range2), melee };
   }
-  function validReach(state, actor, at, template, ammo, weaponId) {
-    const geometry = reaches(state, actor, at, template, ammo, weaponId);
-    return isGround(state, at) && geometry.distance <= geometry.range + 1e-9 && hasLOS(state, actor, at);
+  function validReach(state, actor, at2, template, ammo, weaponId) {
+    const geometry = reaches(state, actor, at2, template, ammo, weaponId);
+    return isGround(state, at2) && geometry.distance <= geometry.range + 1e-9 && hasLOS(state, actor, at2);
   }
   function visibleEnemy(state, actor, target2) {
     return target2.team !== actor.team && (!changes(target2, "hidden") || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1);
   }
   function tauntFor(state, actor, template, ammo) {
-    const teleport = findNode(template, "teleportBackstab");
-    if (teleport && changes(actor, "rooted")) return null;
-    for (const status2 of values2(actor.statuses).filter((status3) => status3.modifiers.taunted).sort(byId2)) {
-      const source = tableEntry(state.units, status2.sourceUnitId);
-      if (alive(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo) && (!teleport || backCell(state, source))) return source;
+    for (const status of values3(actor.statuses).filter((status2) => status2.modifiers?.taunted).sort(byId2)) {
+      const source = tableEntry(state.units, status.sourceId ?? status.sourceUnitId);
+      if (alive3(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo)) return source;
     }
     return null;
   }
   function opportunitySources(state, mover) {
-    return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !changes(unit, "skip")).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon }) => !weapon.ammo && isMelee(weapon.template) && weapon.template.damage != null);
+    return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !changes(unit, "skip")).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon: weapon2 }) => !weapon2.ammo && isMelee(weapon2.template) && weapon2.template.damage != null);
   }
-  function canReact(state, { unit, weapon }, mover) {
-    if (!alive(unit) || unit.reactionAvailable === false || changes(unit, "skip")) return false;
-    const taunter = tauntFor(state, unit, weapon.template);
+  function canReact(state, { unit, weapon: weapon2 }, mover) {
+    if (!alive3(unit) || unit.reactionAvailable === false || changes(unit, "skip")) return false;
+    const taunter = tauntFor(state, unit, weapon2.template);
     return !taunter || taunter.id === mover.id;
   }
-  function threatens(state, source, mover, at) {
-    return visibleEnemy(state, source.unit, { ...mover, x: at.x, y: at.y }) && validReach(state, source.unit, { ...at, altitude: mover.altitude }, source.weapon.template);
+  function threatens(state, source, mover, at2) {
+    return visibleEnemy(state, source.unit, { ...mover, x: at2.x, y: at2.y }) && validReach(state, source.unit, { ...at2, altitude: mover.altitude }, source.weapon.template);
   }
   var opportunityDetail = (source, from, to) => ({
     unitId: source.id,
@@ -2675,12 +4327,12 @@ var FatedTacticalTavern = (() => {
     from: pos(from.x, from.y),
     to: pos(to.x, to.y)
   });
-  function area(state, actor, center, template, ammo) {
+  function area2(state, actor, center, template, ammo) {
     const selfCentered = template.range === 0 && sameCell(actor, center);
     return aoeCells(state, actor, center, {
       ...template,
       radius: selfCentered ? template.radius ?? 1.5 : template.radius,
-      range: (at) => reaches(state, actor, at, template, ammo).range
+      range: (at2) => reaches(state, actor, at2, template, ammo).range
     });
   }
   function selectionAllows(template, actor, unit) {
@@ -2698,54 +4350,48 @@ var FatedTacticalTavern = (() => {
         return true;
     }
   }
-  function backCell(state, target2) {
-    const [dx, dy] = target2.facing ?? [1, 0];
-    const at = pos(target2.x - dx, target2.y - dy);
-    return emptyGround(state, at) && passableEdge(state, target2, at) ? at : null;
-  }
   function diceFormula(state, spec, actor) {
     if (typeof spec === "number") return { count: 0, sides: 0, bonus: spec };
     const count = spec?.count ?? 1, sides = spec?.sides ?? 1;
     return { count, sides, bonus: Math.floor((spec?.bonus ?? 0) + effectiveStat(state, actor, spec?.stat) * (spec?.multiplier ?? 1)) };
   }
-  function diceBounds(dice3, critical = false) {
-    const count = critical ? dice3.count * 2 : dice3.count;
-    return [Math.max(0, count + dice3.bonus), Math.max(0, count * dice3.sides + dice3.bonus)];
+  function diceBounds(dice4, critical = false) {
+    const count = critical ? dice4.count * 2 : dice4.count;
+    return [Math.max(0, count + dice4.bonus), Math.max(0, count * dice4.sides + dice4.bonus)];
   }
   var oddsCache = /* @__PURE__ */ new Map();
-  function diceAverage(dice3, map, critical = false) {
-    const count = critical ? dice3.count * 2 : dice3.count;
-    const key4 = `${count}d${dice3.sides}`;
+  function diceAverage(dice4, map, critical = false) {
+    const count = critical ? dice4.count * 2 : dice4.count;
+    const key4 = `${count}d${dice4.sides}`;
     let probabilities = oddsCache.get(key4);
     if (!probabilities) {
       probabilities = [1];
       for (let die = 0; die < count; die++) {
-        const next = Array(probabilities.length + dice3.sides).fill(0);
+        const next = Array(probabilities.length + dice4.sides).fill(0);
         let window2 = 0;
         for (let i = 1; i < next.length; i++) {
-          window2 += (probabilities[i - 1] ?? 0) - (probabilities[i - dice3.sides - 1] ?? 0);
-          next[i] = Math.max(0, window2 / dice3.sides);
+          window2 += (probabilities[i - 1] ?? 0) - (probabilities[i - dice4.sides - 1] ?? 0);
+          next[i] = Math.max(0, window2 / dice4.sides);
         }
         probabilities = next;
       }
       if (oddsCache.size >= 64) oddsCache.delete(oddsCache.keys().next().value);
       oddsCache.set(key4, probabilities);
     }
-    return probabilities.reduce((sum, probability2, raw) => sum + probability2 * map(Math.max(0, raw + dice3.bonus)), 0);
+    return probabilities.reduce((sum, probability2, raw) => sum + probability2 * map(Math.max(0, raw + dice4.bonus)), 0);
   }
-  function diceRoll(state, formula, critical = false) {
-    const count = critical ? formula.count * 2 : formula.count;
-    const { rng, rolls, total } = rollDice(state.rng, count, formula.sides);
+  function diceRoll(state, formula2, critical = false) {
+    const count = critical ? formula2.count * 2 : formula2.count;
+    const { rng, rolls, total: total2 } = rollDice(state.rng, count, formula2.sides);
     state.rng = rng;
-    return { rolls, ...formula, value: Math.max(0, total + formula.bonus) };
+    return { rolls, ...formula2, value: Math.max(0, total2 + formula2.bonus) };
   }
-  var fixedDamageOf = (template) => findNode(template, "modifyDamageBase", (node3) => node3.unscaled);
-  var hasStrikeDamage = (template) => template.damage != null || Boolean(fixedDamageOf(template));
+  var hasStrikeDamage = (template) => template.damage != null;
   var flatDice = (value) => ({ rolls: [], count: 0, sides: 0, bonus: value, value });
-  function targetProfile(state, actor, target2, at, template, context = {}) {
-    const { weapon, origin = actor, teleport, cover = false } = context;
-    const geometry = reaches(state, origin, at, template, weapon?.ammo, weapon?.instance?.id);
-    const arrow = Boolean(weapon?.ammo);
+  function targetProfile(state, actor, target2, at2, template, context = {}) {
+    const { weapon: weapon2, origin = actor, teleport: teleport2, cover = false } = context;
+    const geometry = reaches(state, origin, at2, template, weapon2?.ammo, weapon2?.instance?.id);
+    const arrow = Boolean(weapon2?.ammo);
     const arc = target2 && !cover ? facingArc(target2, origin) : "front";
     const backstab = !cover && arc !== "front" && geometry.melee;
     const strike = {
@@ -2754,20 +4400,20 @@ var FatedTacticalTavern = (() => {
       arrow,
       backstab,
       highGround: geometry.dz > 0,
-      weaponId: weapon?.instance?.id,
-      actionType: weapon ? "attack" : "skill",
+      weaponId: weapon2?.instance?.id,
+      actionType: weapon2 ? "attack" : "skill",
       school: template.school,
       damageType: template.damage?.type ?? template.damageType,
-      entries: weapon ? [] : template.entry ? [template.entry] : skillExpressions(template, context.skillId ?? "preview")
+      weaponTemplateId: weapon2?.instance?.templateId,
+      souls: weapon2?.souls ?? 0,
+      checkKind: "attack"
     };
-    const nodes = dsl.passiveNodes(state, actor, strike, strike.entries);
-    const hasNode = (kind, mode) => nodes.some((node3) => node3.kind === kind && (!mode || node3.mode === mode));
-    const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, "guaranteed_crit") || hasNode("forceOutcome", "crit"));
-    const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, "guaranteed_hit") || hasNode("forceOutcome", "hit"));
-    const tierUp = hasStrikeDamage(template) && hasNode("upgradeHitTier");
+    const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, "guaranteed_crit"));
+    const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, "guaranteed_hit"));
+    const tierUp = false;
     const execution = !cover && target2?.team !== actor.team && ["shaken", "routed"].includes(target2?.moraleState) && ["kill", "concept"].includes(context.intent) && hasStrikeDamage(template);
-    const dodge = execution || cover ? 0 : dsl.stat(state, target2, "dodge", dsl.check(state, target2, "dodgeBonus", { target: actor }) + dsl.check(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"), { target: actor });
-    const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? dsl.check(state, actor, "highGroundAccuracy", strike) : 0);
+    const dodge = execution || cover ? 0 : modStat(state, target2, "dodge", modCheck(state, target2, "dodgeBonus", { target: actor }) + modCheck(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"), { target: actor });
+    const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, "highGroundAccuracy", strike) : 0);
     const flanked = target2 && !cover ? isFlanked(state, origin, target2) : false;
     const protectedBy = target2 && !cover && !geometry.melee ? coverBetween(state, origin, target2) : null;
     const penalty = protectedBy?.cover ?? 0;
@@ -2776,62 +4422,58 @@ var FatedTacticalTavern = (() => {
     const sizeAccuracy = size + sizeModifier;
     const distanceModifier = distanceTier(geometry.distance).hit;
     const weaponRangeModifier = distanceTier(Math.max(geometry.distance, geometry.range)).range;
-    const stance = weapon?.stance ?? actor.stance ?? "unarmed";
+    const stance = weapon2?.stance ?? actor.stance ?? "unarmed";
     const rules = stanceRules(stance);
-    const rangedDistance = weapon && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
+    const rangedDistance = weapon2 && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
     const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
-    const accuracy = dsl.stat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (execution || cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + dsl.check(state, actor, "accuracyBonus", strike), strike) - dodge;
+    const accuracy = modStat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (execution || cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + modCheck(state, actor, "accuracyBonus", strike), strike) - dodge;
     const explicitEvasion = execution ? 0 : changes(target2, "incomingAccuracy");
     const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
     const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 10 + explicitEvasion + equipmentDefense;
-    const advantages = changes(actor, "advantage") + dsl.check(state, actor, "advantage", strike) + Number(Boolean(teleport)) + (template.advantage ?? 0);
+    const advantages = changes(actor, "advantage") + modCheck(state, actor, "advantage", strike) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
     const disadvantages = changes(actor, "disadvantage") + (template.disadvantage ?? 0);
     const advantage = Math.sign(advantages - disadvantages);
     const saveStat = !cover && target2 ? template.save : null;
     const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) : null;
     const saveBonus = saveStat ? effectiveStat(state, target2, saveStat) : 0;
     const saveChance2 = saveStat ? saveChance(saveDC, saveBonus) : 0;
-    const automatic = !weapon && (!template.damage || saveStat || template.autoHit);
-    const hitChance2 = automatic || guaranteeHit ? 1 : tierUp || dodge || dsl.check(state, actor, "accuracyBonus", strike) ? saveChance(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveChance(2, 0, advantages, disadvantages) : 0) : hitChance(defense, accuracy, advantages, disadvantages);
+    const automatic = !weapon2 && (!template.damage || saveStat || template.autoHit);
+    const hitChance2 = automatic || guaranteeHit ? 1 : tierUp || dodge || modCheck(state, actor, "accuracyBonus", strike) ? saveChance(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveChance(2, 0, advantages, disadvantages) : 0) : hitChance(defense, accuracy, advantages, disadvantages);
     const critChance2 = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : critChance(advantages, disadvantages);
-    const offHandMultiplier = weapon?.stance === "dual_wield" && weapon.offHand?.template?.damage ? 1.5 : 1;
+    const offHandMultiplier = weapon2?.stance === "dual_wield" && weapon2.offHand?.template?.damage ? 1.5 : 1;
     const intentSpec = INTENTS[context.intent ?? "normal"] ?? INTENTS.normal;
-    const fixed = nodes.find((node3) => node3.kind === "modifyDamageBase");
-    const fixedDamage = fixed?.unscaled ? fixed : null;
-    const fixedAttack = fixed?.unscaled ? null : fixed;
-    const damageType2 = fixed?.damageType ?? template.damage?.type ?? template.damageType ?? "physical";
-    const multiplier = offHandMultiplier * (1 + changes(actor, "damageBonus", damageType2)) * Math.max(0, 1 + changes(actor, "attackPercent", damageType2)) * (teleport ? 1 + (teleport.bonusMultiplier ?? 0.5) : 1);
+    const damageType2 = template.damage?.type ?? template.damageType ?? "physical";
+    const multiplier = offHandMultiplier * (1 + changes(actor, "damageBonus", damageType2)) * Math.max(0, 1 + changes(actor, "attackPercent", damageType2)) * (teleport2 ? 1 + (teleport2.bonusMultiplier ?? 0.5) : 1);
     const tierPower = { 1: 2, 2: 2.8, 3: 4, 4: 8, 5: 15, 6: 35, 7: 80 }[actor.tier ?? 1] ?? 2;
     const attributeBase = () => state.ruleset === "protocol" ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? "str" : "int")) * 10 * tierPower : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
-    const flatAttack = fixedAttack ? Math.max(0, fixedAttack.value + (fixedAttack.ignoreAttributes === false ? attributeBase() : 0)) : null;
-    const protocolInitial = fixedDamage?.value ?? flatAttack ?? (state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + Number(weapon?.template?.attack ?? 0) : null);
-    const armorPierce = { flat: dsl.stat(state, actor, "armorPierce", template.armorPierce ?? 0, { ...strike, damageType: damageType2 }), percent: rules.armorPenetration ?? 0 };
+    const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + Number(weapon2?.template?.attack ?? 0) : null;
+    const armorPierce = { flat: modStat(state, actor, "armorPierce", template.armorPierce ?? 0, { ...strike, damageType: damageType2 }), percent: rules.armorPenetration ?? 0 };
     const recipient = cover || !hasStrikeDamage(template) ? target2 : guardFor(state, target2) ?? target2;
-    const reduction = cover ? { multiplier: 1, armorMultiplier: fixedDamage || fixedAttack ? 1 : void 0, armor: target2.armor ?? 0 } : mitigation(state, recipient, damageType2, true, armorPierce, { attacker: actor, intercepting: recipient !== target2 });
+    const reduction = cover ? { multiplier: 1, armor: target2.armor ?? 0 } : mitigation(state, recipient, damageType2, true, armorPierce, { attacker: actor, intercepting: recipient !== target2 });
     const absorb = cover ? 0 : shieldTotal(recipient);
-    const dice3 = fixedDamage ? flatDice(fixedDamage.value) : template.damage == null ? null : diceFormula(state, template.damage, actor);
+    const dice4 = template.damage == null ? null : diceFormula(state, template.damage, actor);
     const shown = (raw, factor = 1) => {
       const ctx = { ...strike, damageType: damageType2 };
-      const scaled = Math.floor(dsl.stat(state, actor, "damage", raw * (fixedDamage ? 1 : multiplier) * factor * dsl.damageFactor(state, actor, ctx), ctx));
+      const scaled = Math.floor(modStat(state, actor, "damage", raw * multiplier * factor, ctx));
       if (cover) return Math.max(0, scaled - (target2.armor ?? 0));
       const modified = mitigatedDamage(scaled, reduction, true, actor, damageType2);
       return Math.max(0, damageAfterFlatReduction(state, recipient, modified, actor, damageType2, recipient !== target2) - absorb);
     };
-    const flat = fixedAttack || fixedDamage;
-    const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice3, critical)).map((n) => shown(n, factor));
-    const average = (critical = false, factor = 1) => flat ? shown(protocolInitial, factor) : diceAverage(dice3, (n) => shown(n, factor), critical);
+    const flat = protocolInitial !== null;
+    const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice4, critical)).map((n) => shown(n, factor));
+    const average = (critical = false, factor = 1) => flat ? shown(protocolInitial, factor) : diceAverage(dice4, (n) => shown(n, factor), critical);
     const minFactor = execution ? 1.3 : 1;
-    const damage = dice3 ? protocolInitial == null ? bounds(false, minFactor) : [shown(protocolInitial, minFactor), shown(protocolInitial, minFactor)] : [0, 0];
-    const criticalDamage = dice3 && critChance2 > 0 ? bounds(true) : null;
-    const savedDamage = dice3 && saveStat ? bounds(false, 0.5) : null;
-    const expectedDamage = !dice3 ? 0 : Math.max(0, hitChance2 - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
+    const damage = dice4 ? protocolInitial == null ? bounds(false, minFactor) : [shown(protocolInitial, minFactor), shown(protocolInitial, minFactor)] : [0, 0];
+    const criticalDamage = dice4 && critChance2 > 0 ? bounds(true) : null;
+    const savedDamage = dice4 && saveStat ? bounds(false, 0.5) : null;
+    const expectedDamage = !dice4 ? 0 : Math.max(0, hitChance2 - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
     const expectedD20 = saveStat ? 10.5 : automatic ? null : advantage > 0 ? 13.825 : advantage < 0 ? 7.175 : 10.5;
     return {
       id: target2.id,
       targetId: target2.id,
       name: target2.name,
-      x: at.x,
-      y: at.y,
+      x: at2.x,
+      y: at2.y,
       ...geometry,
       recipientId: recipient.id,
       arc,
@@ -2871,21 +4513,21 @@ var FatedTacticalTavern = (() => {
       damageType: damageType2,
       armorPierce,
       protocolInitial,
-      coreBonus: dsl.check(state, actor, "coreBonus", strike),
+      coreBonus: modCheck(state, actor, "coreBonus", strike),
       dodgeBonus: dodge,
-      damageMultiplier: dsl.stat(state, actor, "damage", multiplier * dsl.damageFactor(state, actor, { ...strike, damageType: damageType2 }), { ...strike, damageType: damageType2 }),
-      offHand: Boolean(weapon?.offHand?.template),
+      damageMultiplier: modStat(state, actor, "damage", multiplier, { ...strike, damageType: damageType2 }),
+      offHand: Boolean(weapon2?.offHand?.template),
       armor: reduction.armor,
       damagePipeline: reduction.armorMultiplier,
       shield: absorb,
       damage,
       damageMin: damage[0],
       damageMax: damage[1],
-      fixedDamage: Boolean(fixedDamage),
+      fixedDamage: false,
       criticalDamage,
       savedDamage,
       expectedDamage,
-      dice: dice3
+      dice: dice4
     };
   }
   var ACTIONS = Object.freeze({
@@ -2918,25 +4560,20 @@ var FatedTacticalTavern = (() => {
   var isMovement = (type) => Object.hasOwn(movementNames, type);
   var needsTarget = (type) => isMovement(type) || ["attack", "skill", "shield_bash", "interact", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"].includes(type);
   var fail2 = (error2, extra = {}) => ({ ok: false, error: error2, ...extra });
-  var healMultiplier = (state, actor) => dsl.stat(state, actor, "healing", 1, { actionType: "skill" });
-  var healShieldRatio = (state, actor) => equipped(state, actor).reduce((sum, item) => sum + (findNode(item.template, "shield", (node3) => node3.percentOfHealing != null)?.percentOfHealing ?? 0), 0);
-  function inInteractionRange(state, actor, at) {
-    return gridDistance(actor, at) <= 1 && Math.abs(elevation(state, actor) - elevation(state, at)) <= 1 && hasLOS(state, actor, at);
+  var healMultiplier = (state, actor) => modStat(state, actor, "healing", 1, { actionType: "skill" });
+  function inInteractionRange(state, actor, at2) {
+    return gridDistance(actor, at2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, at2)) <= 1 && hasLOS(state, actor, at2);
   }
-  function nearbyCovers(state, at) {
-    return values2(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at, c)).sort(byId2);
+  function nearbyCovers(state, at2) {
+    return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at2, c)).sort(byId2);
   }
-  function canExecute(state, actor, target2, effect, nonLethal) {
-    return !encounterNonlethal(state, actor) && alive(target2) && !target2.fled && target2.team !== actor.team && visibleEnemy(state, actor, target2) && (effect.strict ? target2.hp / target2.maxHp < effect.threshold : target2.hp / target2.maxHp <= effect.threshold) && !nonLethal && !target2.nonLethal && !changes(target2, "preserveLife") && (!effect.requiresPool || Boolean(resourcePool(state, actor, effect.requiresPool)));
+  function usableTiles(state, actor, template, weapon2) {
+    return allCells(state).filter((at2) => validReach(state, actor, template.target === "cell" ? at2 : locateUnit(state, at2) ?? at2, template, weapon2?.ammo) && !(["line", "cone", "fan"].includes(template.shape) && sameCell(actor, at2) && template.range !== 0));
   }
-  function usableTiles(state, actor, template, weapon, nonLethal) {
-    const execute = findNode(template, "execute", (node3) => node3.requiresPool);
-    return allCells(state).filter((at) => validReach(state, actor, template.target === "cell" ? at : locateUnit(state, at) ?? at, template, weapon?.ammo) && (!execute || canExecute(state, actor, locateUnit(state, at), execute, nonLethal)) && !(["line", "cone", "fan"].includes(template.shape) && sameCell(actor, at) && template.range !== 0));
-  }
-  function shapeTargets(state, actor, cells, template, aim) {
-    const keys = new Set(cells.map((at) => key2(at.x, at.y)));
+  function shapeTargets(state, actor, cells2, template, aim) {
+    const keys = new Set(cells2.map((at2) => key2(at2.x, at2.y)));
     if (template.target === "cell") return [];
-    const areaDamage = (template.shape ?? "single") !== "single" && (hasStrikeDamage(template) || findNode(template, "damage"));
+    const areaDamage = (template.shape ?? "single") !== "single" && hasStrikeDamage(template);
     return living(state).filter((unit) => {
       if (!areaDamage && !selectionAllows(template, actor, unit)) return false;
       if (areaDamage && ["ally", "self"].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
@@ -2949,10 +4586,10 @@ var FatedTacticalTavern = (() => {
       return keys.has(key2(unit.x, unit.y)) && (radius == null ? validReach(state, actor, unit, template) : distance3D(state, actor, unit) <= radius + 1e-9 && hasLOS(state, actor, unit));
     });
   }
-  function preview(state, action) {
+  function preview(state, action, { simulateRules = true } = {}) {
     if (state.outcome) return fail2("\u6218\u6597\u5DF2\u7ECF\u7ED3\u675F");
     const unit = currentUnit(state);
-    if (!alive(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
+    if (!alive3(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
     if (!action || typeof action !== "object" || Array.isArray(action)) return fail2("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
     const { type, x, y, skillId } = action;
     if (!Object.keys(action).every((field) => type === "switch_weapon" && field === "itemId" || ["type", "x", "y", "skillId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
@@ -2962,7 +4599,7 @@ var FatedTacticalTavern = (() => {
     const skill2 = type === "skill" ? equipmentSkill ?? tableEntry(state.skills, skillId) : null;
     if (skill2?.backpackItem) {
       if (!(unit.inventory?.[skillId] > 0)) return fail2("\u80CC\u5305\u7269\u54C1\u6570\u91CF\u4E0D\u8DB3");
-      if (!skill2.damage && !skill2.heal && !skill2.effects.some((e) => ["active", "on_skill_cast"].includes(e.trigger) && e.effects?.some((n) => n.enabled !== false))) return fail2("\u80CC\u5305\u7269\u54C1\u5C1A\u65E0\u53EF\u6267\u884C\u6548\u679C\uFF0C\u8BF7\u5148\u6807\u51C6\u5316");
+      if (!skill2.damage && !skill2.heal && !skill2.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false && rule2.program.length)) return fail2("\u80CC\u5305\u7269\u54C1\u5C1A\u65E0\u53EF\u6267\u884C\u6548\u679C\uFF0C\u8BF7\u5148\u6807\u51C6\u5316");
     } else if (type === "skill" && (!skill2 || !equipmentSkill && !unit.skills.includes(skillId))) return fail2("\u5355\u4F4D\u6CA1\u6709\u6B64\u6280\u80FD");
     const availability = skill2 ? skillAvailability(state, unit, skill2, skillId) : {};
     if (availability.usesLeft === 0) return fail2("\u6280\u80FD\u6B21\u6570\u5DF2\u7528\u5C3D", availability);
@@ -2975,35 +4612,35 @@ var FatedTacticalTavern = (() => {
     if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
     if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
     if (type === "interact" && unplaced) {
-      const cells2 = values2(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
-      return cells2.length ? { ok: true, ap: 1, cost: 1, cells: cells2 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells2 });
+      const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
+      return cells3.length ? { ok: true, ap: 1, cost: 1, cells: cells3 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells3 });
     }
-    const item = !unplaced && (type === "interact" || type === "attack") ? values2(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
+    const item = !unplaced && (type === "interact" || type === "attack") ? values3(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
     const detonate = item?.kind === "barrel";
     const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
-    const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? "action" : detonate ? "attack" : cost.slot;
-    const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost), ...availability };
+    const ap = drawFromBag ? 1 : cost.ap, slot2 = drawFromBag ? "action" : detonate ? "attack" : cost.slot;
+    const common = { ok: true, ap, cost: ap, slot: slot2, ...actorCost(cost), ...availability };
     if (type === "end") return common;
     if (type === "end_encounter") return ["spar", "arena"].includes(state.battleType) ? { ...common, name: state.battleType === "spar" ? "\u53EB\u505C\u5207\u78CB\uFF08\u5E73\u5C40\uFF09" : "\u5168\u961F\u8BA4\u8F93" } : fail2("\u672C\u573A\u4E0D\u80FD\u76F4\u63A5\u53EB\u505C\u6216\u8BA4\u8F93");
     if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
-    const cannotPay = paymentError(state, unit, ap, slot, cost);
+    const cannotPay = paymentError(state, unit, ap, slot2, cost);
     if (cannotPay) return fail2(cannotPay, { ap, ...availability });
     const center = unplaced ? void 0 : pos(x, y);
-    const weapon = weaponInfo(state, unit);
+    const weapon2 = weaponInfo(state, unit);
     if (type === "switch_weapon") {
       if (!switchableWeapons(state, unit).includes(action.itemId)) return fail2("\u6CA1\u6709\u53EF\u5207\u6362\u7684\u6B66\u5668");
       return { ...common, itemId: action.itemId, name: `${unit.bagWeapons?.includes(action.itemId) ? "\u4ECE\u80CC\u5305\u6362\u88C5" : "\u5207\u6362\u6B66\u5668"}\uFF1A${equipmentFor(state, action.itemId).template.name}` };
     }
     if (type === "shield_bash" && !unit.shield) return fail2("\u6CA1\u6709\u76FE\u724C");
     if (type === "reload") {
-      if (!weapon.ammo?.reloadable || weapon.infiniteAmmo) return fail2("\u5F53\u524D\u6B66\u5668\u4E0D\u9700\u8981\u88C5\u586B");
-      if (weapon.ammoCount >= weapon.ammo.cap) return fail2("\u5F39\u4ED3\u5DF2\u6EE1");
-      return { ...common, ammo: weapon.ammoCount, capacity: weapon.ammo.cap };
+      if (!weapon2.ammo?.reloadable || weapon2.infiniteAmmo) return fail2("\u5F53\u524D\u6B66\u5668\u4E0D\u9700\u8981\u88C5\u586B");
+      if (weapon2.ammoCount >= weapon2.ammo.cap) return fail2("\u5F39\u4ED3\u5DF2\u6EE1");
+      return { ...common, ammo: weapon2.ammoCount, capacity: weapon2.ammo.cap };
     }
     if (type === "block") {
-      if (stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
-      const modifiers3 = getStatusTemplate(state, actionStatuses.block).modifiers;
-      return { ...common, name: "\u683C\u6321", reduction: Object.hasOwn(modifiers3, "reduction") ? action.maneuver === "heavy" ? 0.45 : 0.25 : 0, turns: 1 };
+      if (stanceFor({ mainHand: weapon2.template, offHand: weapon2.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
+      const modifiers2 = getStatusTemplate(state, actionStatuses.block).modifiers;
+      return { ...common, name: "\u683C\u6321", reduction: Object.hasOwn(modifiers2, "reduction") ? action.maneuver === "heavy" ? 0.45 : 0.25 : 0, turns: 1 };
     }
     if (type === "brace") {
       const [nearbyCover] = nearbyCovers(state, unit);
@@ -3054,13 +4691,13 @@ var FatedTacticalTavern = (() => {
     }
     if (isMovement(type)) {
       if (changes(unit, "rooted")) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u79FB\u52A8");
-      const cells2 = reachable(state, type, unit);
-      if (unplaced) return { ...common, cells: cells2 };
-      const choice = cells2.find((at) => sameCell(at, center));
-      if (!choice) return fail2("\u65E0\u6CD5\u5230\u8FBE\uFF1A\u8DDD\u79BB\u3001\u5360\u4F4D\u3001\u5899\u4F53\u6216\u9661\u5D16\u963B\u6321", { cells: cells2 });
+      const cells3 = reachable(state, type, unit);
+      if (unplaced) return { ...common, cells: cells3 };
+      const choice = cells3.find((at2) => sameCell(at2, center));
+      if (!choice) return fail2("\u65E0\u6CD5\u5230\u8FBE\uFF1A\u8DDD\u79BB\u3001\u5360\u4F4D\u3001\u5899\u4F53\u6216\u9661\u5D16\u963B\u6321", { cells: cells3 });
       return {
         ...common,
-        cells: cells2,
+        cells: cells3,
         path: choice.path,
         steps: choice.steps,
         opportunities: choice.opportunities,
@@ -3070,15 +4707,15 @@ var FatedTacticalTavern = (() => {
     if (type === "interact" || detonate) {
       if (!item) return fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9");
       if (detonate) {
-        if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon.ammo));
-        if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail2("\u7206\u6876\u8D85\u51FA\u6B66\u5668\u5C04\u7A0B\u6216\u88AB\u5899\u4F53\u963B\u6321");
+        if (weapon2.ammo && !weapon2.infiniteAmmo && weapon2.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon2.ammo));
+        if (!validReach(state, unit, item, weapon2.template, weapon2.ammo)) return fail2("\u7206\u6876\u8D85\u51FA\u6B66\u5668\u5C04\u7A0B\u6216\u88AB\u5899\u4F53\u963B\u6321");
       } else if (distance3D(state, unit, item) > 1.5 || !hasLOS(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
-      const cells2 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: item.radius ?? 1.5 }) : [center];
-      const keyset = new Set(cells2.map((at) => key2(at.x, at.y)));
+      const cells3 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: item.radius ?? 1.5 }) : [center];
+      const keyset = new Set(cells3.map((at2) => key2(at2.x, at2.y)));
       const targets3 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) <= 1.5 + 1e-9).map((u) => {
         const guard = guardFor(state, u) ?? u;
-        const formula = mitigation(state, guard, "energy", true, 0, { attacker: unit, intercepting: guard !== u });
-        const modified = mitigatedDamage(item.damage ?? 12, formula, true, unit, "energy");
+        const formula2 = mitigation(state, guard, "energy", true, 0, { attacker: unit, intercepting: guard !== u });
+        const modified = mitigatedDamage(item.damage ?? 12, formula2, true, unit, "energy");
         const damage = Math.max(0, damageAfterFlatReduction(state, guard, modified, unit, "energy", guard !== u) - shieldTotal(guard));
         return {
           id: u.id,
@@ -3096,46 +4733,44 @@ var FatedTacticalTavern = (() => {
       });
       return {
         ...common,
-        ...detonate ? reaches(state, unit, item, weapon.template, weapon.ammo) : {},
+        ...detonate ? reaches(state, unit, item, weapon2.template, weapon2.ammo) : {},
         name: `${detonate ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`,
         interactiveId: item.id,
         kind: item.kind,
-        cells: cells2,
+        cells: cells3,
         targets: targets3,
         center
       };
     }
     const attack = type === "attack" || type === "shield_bash";
     const shieldBash = type === "shield_bash";
-    const template = shieldBash ? { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, effects: shieldBashEffects } : attack ? weapon.template : skill2;
-    const effect = attack ? void 0 : findNode(template, "teleportBackstab");
-    if (effect && changes(unit, "rooted")) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u77AC\u79FB");
-    if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon.ammo));
-    const triggers = attack && !shieldBash ? weapon.effects.map((e) => ({ ...e })) : (template.effects ?? []).map((e) => ({ ...e }));
+    const template = shieldBash ? { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules } : attack ? weapon2.template : skill2;
+    if (attack && !shieldBash && weapon2.ammo && !weapon2.infiniteAmmo && weapon2.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon2.ammo));
+    const triggers = template.rules ?? [];
     const stance = unit.stance ?? (unit.offHand ? unit.offHand.kind === "consumable" ? "attunement" : "dual_wield" : unit.shield ? "sword_shield" : "light_blade");
     const tuning = {
       name: template.name,
       shape: template.shape ?? "single",
       stance,
-      effects: triggers,
+      rules: triggers,
       ...attack && !shieldBash ? {
-        souls: weapon.souls,
-        multiplier: weapon.soulMultiplier,
-        ammo: weapon.ammoCount,
-        infiniteAmmo: weapon.infiniteAmmo,
-        instanceId: weapon.instance?.id ?? null
+        souls: weapon2.souls,
+        multiplier: weapon2.soulMultiplier,
+        ammo: weapon2.ammoCount,
+        infiniteAmmo: weapon2.infiniteAmmo,
+        instanceId: weapon2.instance?.id ?? null
       } : {}
     };
-    const corpseSkill = template.target === "corpse" || template.effects?.some((e) => isExpression(e) && e.target === "corpse" && ["active", "on_skill_cast"].includes(e.trigger));
+    const corpseSkill = template.target === "corpse";
     if (corpseSkill && unplaced) {
       return { ...common, ...tuning, cells: corpses(state).filter((c) => validReach(state, unit, c, template)).map((c) => pos(c.x, c.y)) };
     }
     if (unplaced) {
-      return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, action.nonLethal ?? unit.nonLethal) };
+      return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon2 : null, action.nonLethal ?? unit.nonLethal) };
     }
     const aimedUnit = locateUnit(state, center);
     const aim = template.target === "cell" ? center : aimedUnit ?? center;
-    const geometry = reaches(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
+    const geometry = reaches(state, unit, aim, template, attack && !shieldBash ? weapon2.ammo : null);
     if (!isGround(state, center)) return fail2("\u5899\u4F53\u65E0\u6CD5\u6307\u5B9A", geometry);
     if (geometry.distance > geometry.range + 1e-9) return fail2("\u76EE\u6807\u8D85\u51FA\u5C04\u7A0B", geometry);
     if (!hasLOS(state, unit, center)) return fail2("\u5899\u4F53\u963B\u65AD\u89C6\u7EBF", geometry);
@@ -3143,13 +4778,11 @@ var FatedTacticalTavern = (() => {
       const corpse = corpses(state).find((c) => sameCell(c, center));
       return corpse ? { ...common, ...geometry, ...tuning, cells: [center], targets: [], center, corpseId: corpse.id } : fail2("\u76EE\u6807\u683C\u6CA1\u6709\u53EF\u7528\u5C38\u4F53");
     }
-    const execute = findNode(template, "execute", (node3) => node3.requiresPool);
-    if (execute && !canExecute(state, unit, aimedUnit, execute, action.nonLethal ?? unit.nonLethal)) return fail2("\u76EE\u6807\u6216\u88C5\u5907\u8D44\u6E90\u4E0D\u6EE1\u8DB3\u65A9\u6740\u6761\u4EF6");
     const solid = locateCover(state, center);
     const coverTarget = Boolean(solid && template.target !== "cell" && (attack || hasStrikeDamage(template)));
-    const cells = area(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
+    const cells2 = area2(state, unit, aim, template, attack && !shieldBash ? weapon2.ammo : null);
     const aoe = (template.shape ?? "single") !== "single";
-    if (!cells.length) return fail2("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", geometry);
+    if (!cells2.length) return fail2("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", geometry);
     if (!aoe) {
       if (!selectionAllows(template, unit, aimedUnit) && !coverTarget && template.target !== "cell") {
         return fail2("\u8BE5\u683C\u6CA1\u6709\u5408\u9002\u7684\u76EE\u6807", geometry);
@@ -3157,25 +4790,23 @@ var FatedTacticalTavern = (() => {
       if (aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, unit, aimedUnit)) return fail2("\u76EE\u6807\u6B63\u5728\u9690\u8EAB", geometry);
     }
     const hostile = attack || template.target === "enemy" || hasStrikeDamage(template) && template.target !== "ally" && template.target !== "self";
-    const taunter = hostile ? tauntFor(state, unit, template, attack && !shieldBash ? weapon.ammo : null) : null;
+    const taunter = hostile ? tauntFor(state, unit, template, attack && !shieldBash ? weapon2.ammo : null) : null;
     if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail2(`\u53D7\u5632\u8BBD\uFF0C\u5FC5\u987B\u6307\u5B9A${taunter.name}`, geometry);
-    const blink = effect && aimedUnit ? backCell(state, aimedUnit) : null;
-    if (effect && !blink) return fail2("\u76EE\u6807\u80CC\u540E\u7684\u77AC\u79FB\u843D\u70B9\u88AB\u963B\u6321", geometry);
-    const origin = blink ? { ...unit, ...blink } : unit;
-    const templateForHit = blink ? { ...template, range: 1.5 } : template;
-    const targetUnits = shapeTargets(state, unit, cells, template, aim);
+    const origin = unit;
+    const templateForHit = template;
+    const targetUnits = shapeTargets(state, unit, cells2, template, aim);
     const areaAttack = (template.shape ?? "single") !== "single";
     const declaredIntent = action.intent ?? unit.intent ?? "normal";
     const resolvedIntent = areaAttack ? "normal" : declaredIntent;
     const targets2 = targetUnits.map((t) => ({
-      ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, teleport: effect, intent: resolvedIntent, skillId: action.skillId }),
+      ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon2 : null, origin, intent: resolvedIntent, skillId: action.skillId }),
       bonusDice: action.bonusDice ?? 0,
       intent: resolvedIntent,
       nonLethal: action.nonLethal ?? unit.nonLethal ?? false
     }));
     if (template.target !== "cell" && hasStrikeDamage(template)) {
-      for (const c of values2(state.covers).filter((c2) => c2.hp > 0 && cells.some((at) => sameCell(at, c2))).sort(byId2)) {
-        targets2.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, cover: true, intent: action.intent ?? unit.intent ?? "normal" }), kind: "cover" });
+      for (const c of values3(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at2) => sameCell(at2, c2))).sort(byId2)) {
+        targets2.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon2 : null, origin, cover: true, intent: action.intent ?? unit.intent ?? "normal" }), kind: "cover" });
       }
     }
     if (template.heal != null) {
@@ -3184,10 +4815,33 @@ var FatedTacticalTavern = (() => {
         target2.heal = healing;
         target2.healMin = healing[0];
         target2.healMax = healing[1];
-        target2.healingShield = healing.map((n) => Math.min(1e4, Math.floor(n * healShieldRatio(state, unit))));
+        if (equipped(state, unit).some(({ template: template2 }) => template2?.mods?.some((mod2) => mod2.stat === "healingMult"))) {
+          target2.healingShield = [Math.floor(healing[1] / 2) - 1, Math.floor(healing[1] / 2) - 1];
+        }
       }
     }
-    const support = type === "skill" ? previewSkillEffects(state, unit, template, skillId, common, targets2, targetUnits, center, action.nonLethal ?? unit.nonLethal) : [];
+    let support;
+    if (simulateRules && type === "skill" && template.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false)) {
+      const result = resolveVMAction(state, action, { dryRun: true, actor: unit });
+      const logs = result.state.logs.slice(state.logs.length);
+      const heals = /* @__PURE__ */ new Map();
+      for (const log of logs) {
+        const { targetId, amount } = log.detail;
+        if (log.type === "heal" && log.actor === unit.id) heals.set(targetId, (heals.get(targetId) ?? 0) + amount);
+      }
+      support = [...heals].map(([id3, heal]) => ({ id: id3, heal, shieldGain: 0 }));
+      for (const profile of targets2) {
+        if (profile.heal && profile.kind !== "cover") {
+          const shieldOps = template.rules.flatMap((rule2) => rule2.program ?? []).filter((op) => op.op === "apply_status" && op.statusId === "shield");
+          if (shieldOps.length) profile.healingShield = [Math.floor(profile.heal[1] / 2), Math.floor(profile.heal[1] / 2)];
+        }
+        if (profile.dice) continue;
+        const dealt = logs.filter((log) => log.type === "damage" && log.actor === unit.id && log.detail.targetId === profile.id).reduce((sum, log) => sum + log.detail.amount, 0);
+        profile.damage = [dealt, dealt];
+        profile.damageMin = profile.damageMax = profile.expectedDamage = dealt;
+        if (result.conditional) profile.conditionalDamage = true;
+      }
+    }
     const first = targets2.find((t) => sameCell(t, center)) ?? targets2[0];
     return {
       ...first,
@@ -3199,115 +4853,12 @@ var FatedTacticalTavern = (() => {
       intent: action.intent ?? unit.intent ?? "normal",
       nonLethal: action.nonLethal ?? unit.nonLethal ?? false,
       dXYZ: geometry.distance,
-      cells,
+      cells: cells2,
       targets: targets2,
       center,
-      ...support.length ? { support } : {},
-      ...blink ? { teleport: blink } : {},
+      ...support?.length ? { support } : {},
       hostile
     };
-  }
-  function previewSkillEffects(state, unit, template, skillId, cost, profiles, units, center, nonLethal) {
-    const entries2 = template.entry ? [template.entry] : skillExpressions(template, skillId);
-    if (!entries2.length) return [];
-    const mainTarget = units[0];
-    const actor = {
-      ...unit,
-      hp: unit.hp - cost.hp,
-      mp: unit.mp - cost.mp,
-      sp: unit.sp - cost.sp,
-      ap: unit.ap - cost.ap,
-      used: { ...unit.used }
-    };
-    if (cost.ap === 2) {
-      actor.used.attack++;
-      actor.used.action++;
-    } else if (cost.slot) actor.used[cost.slot]++;
-    const area2 = template.shape !== "single";
-    const context = {
-      target: mainTarget,
-      attacker: actor,
-      center,
-      entries: entries2,
-      actionType: "skill",
-      school: template.school,
-      weaponId: template.entry?.instance?.id,
-      damageType: template.damage?.type ?? template.damageType,
-      melee: profiles[0]?.melee,
-      nonLethal,
-      power: castPower(state, actor, template),
-      skillScale: castSkillScale(state, actor, template, mainTarget),
-      ...area2 ? { skillArea: new Set(units.map((target2) => target2.id)) } : {}
-    };
-    const perTarget = area2 ? entries2.filter(({ expr }) => expr.target === "hitTarget") : [];
-    const shared = area2 ? entries2.filter((entry) => !perTarget.includes(entry)) : entries2;
-    const support = [];
-    if (!units.length) {
-      dsl.previewEffects(state, actor, null, "on_skill_cast", context, entries2, support);
-      dsl.previewEffects(state, actor, null, "active", context, entries2, support);
-    }
-    for (const [i, unitTarget] of units.entries()) {
-      const target2 = unitTarget.id === actor.id ? actor : unitTarget;
-      const profile = profiles[i];
-      const effects2 = [
-        dsl.previewEffects(state, actor, target2, "on_skill_cast", context, entries2, i === 0 ? support : void 0),
-        dsl.previewEffects(state, actor, target2, "active", context, shared, i === 0 ? support : void 0)
-      ];
-      if (perTarget.length) effects2.push(dsl.previewEffects(state, actor, target2, "active", { ...context, target: target2 }, perTarget, support));
-      const hitContext = {
-        ...context,
-        target: target2,
-        attacker: actor,
-        center: pos(target2.x, target2.y),
-        melee: profile.melee,
-        backstab: profile.backstab,
-        damageType: profile.damageType
-      };
-      const hit = dsl.previewEffects(state, actor, target2, "on_hit", hitContext, entries2);
-      const packets = effects2.flatMap((result) => result.packets).filter((packet) => packet.raw > 0);
-      const conditional = effects2.some((result) => result.conditional) || hit.conditional || hit.packets.some((packet) => packet.raw > 0);
-      if (conditional) profile.conditionalDamage = true;
-      if (!packets.length) returnIfNoDamage(profile);
-      if (!packets.length) continue;
-      let shield = shieldTotal(target2), hp = target2.hp;
-      for (const packet of packets) {
-        const hit2 = Boolean(packet.hit);
-        const formula = mitigation(state, target2, packet.type, hit2, 0, { attacker: actor, ignoreArmor: packet.ignoreArmor });
-        const modified = mitigatedDamage(packet.raw, formula, hit2, actor, packet.type);
-        const net = damageAfterFlatReduction(state, target2, modified, actor, packet.type);
-        const absorbed = Math.min(shield, net);
-        shield -= absorbed;
-        const floor = encounterNonlethal(state, actor) || packet.preserveLife || target2.nonLethal || changes(target2, "preserveLife") ? 1 : 0;
-        hp = Math.max(floor, hp - (net - absorbed));
-        if (hp === 0) break;
-      }
-      const dealt = target2.hp - hp;
-      profile.directEffectDamage = dealt;
-      if (!profile.dice) {
-        profile.damage = [dealt, dealt];
-        profile.damageMin = profile.damageMax = profile.expectedDamage = dealt;
-      } else {
-        profile.damageMax = Math.min(target2.hp, profile.damageMax + dealt);
-        profile.expectedDamage = Math.min(target2.hp, profile.expectedDamage + dealt);
-      }
-    }
-    const recipients = /* @__PURE__ */ new Map();
-    for (const { id: id3, kind, amount: amount2, stack } of support) {
-      const target2 = id3 === actor.id ? actor : state.units[id3];
-      const baseShield = statusOf(target2, actionStatuses.shield)?.amount ?? 0;
-      if (!recipients.has(id3)) recipients.set(id3, { id: id3, heal: 0, shield: baseShield, baseShield });
-      const result = recipients.get(id3);
-      if (kind === "heal") {
-        const healing = dsl.stat(state, actor, "healing", amount2, { target: target2, actionType: "skill" });
-        result.heal = Math.min(target2.maxHp - target2.hp, result.heal + Math.max(0, Math.floor(healing)));
-      } else {
-        result.shield = clamp(amount2 + (stack ? result.shield : 0), 1, 1e4);
-      }
-    }
-    return [...recipients.values()].map(({ id: id3, heal, shield, baseShield }) => ({ id: id3, heal, shieldGain: shield - baseShield }));
-  }
-  function returnIfNoDamage(profile) {
-    if (!profile.dice && profile.conditionalDamage) profile.damage = null;
   }
   function maneuverContest(state, actor, target2, maneuver) {
     const attackStat = maneuver === "grapple" ? "str" : "agi";
@@ -3327,16 +4878,22 @@ var FatedTacticalTavern = (() => {
     });
     return success;
   }
-  function changeCounter(state, actor, weapon, effect, resource3, after) {
-    const before = weapon.instance.counters?.[resource3] ?? effect.initial ?? 0;
-    (weapon.instance.counters ??= {})[resource3] = after;
+  function changeCounter(state, actor, weapon2, effect, resource2, after) {
+    const pool = getPool(state, weapon2.instance.id, resource2, "item");
+    if (!pool) return;
+    const before = pool.current;
+    after = updatePoolCurrent(state, pool.id, "set", after).after;
     record(
       state,
       actor,
       "counter",
-      `${weapon.template.name} \xB7 ${resource3} ${before} \u2192 ${after}`,
-      { instanceId: weapon.instance.id, counterKey: resource3, before, after }
+      `${weapon2.template.name} \xB7 ${resource2} ${before} \u2192 ${after}`,
+      { instanceId: weapon2.instance.id, counterKey: resource2, before, after }
     );
+  }
+  function spendAmmo(state, actor, weapon2, ammo) {
+    const pool = getPool(state, weapon2.instance.id, ammo.resource, "item");
+    if (pool && pool.current > 0) changeCounter(state, actor, weapon2, ammo, ammo.resource, pool.current - 1);
   }
   function resolveCheck(state, actor, profile) {
     const cover = profile.kind === "cover" ? { targetKind: "cover", targetName: profile.name } : {};
@@ -3366,17 +4923,17 @@ var FatedTacticalTavern = (() => {
       return { hit: true, critical: profile.guaranteeCrit, rating: rating2, intent: { success: true, multiplier: 1 }, saved: false };
     }
     const requestedBonus = profile.bonusDice ?? 0;
-    const { rng, rolls: dice3, value: selected } = requestedBonus || actor.penaltyDice ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 }) : rollD20(state.rng, profile.advantages, profile.disadvantages);
+    const { rng, rolls: dice4, value: selected2 } = requestedBonus || actor.penaltyDice ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 }) : rollD20(state.rng, profile.advantages, profile.disadvantages);
     actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus);
     actor.penaltyDice = 0;
     state.rng = rng;
-    const total = selected + profile.accuracy;
-    let rating = ratingFor(total);
+    const total2 = selected2 + profile.accuracy;
+    let rating = ratingFor(total2);
     if (profile.tierUp && rating.multiplier) rating = RATING_TABLE[Math.max(0, RATING_TABLE.indexOf(rating) - 1)];
-    if (profile.guaranteeHit && (selected === 1 || !rating.multiplier)) rating = ratingFor(11);
+    if (profile.guaranteeHit && (selected2 === 1 || !rating.multiplier)) rating = ratingFor(11);
     if (profile.guaranteeCrit && rating.multiplier < 1.3) rating = ratingFor(20);
-    const critical = profile.guaranteeCrit || selected === 20;
-    const hit = Boolean(profile.guaranteeHit || selected !== 1 && rating.multiplier > 0);
+    const critical = profile.guaranteeCrit || selected2 === 20;
+    const hit = Boolean(profile.guaranteeHit || selected2 !== 1 && rating.multiplier > 0);
     if (profile.execution && hit && rating.multiplier < 1.3) rating = ratingFor(20);
     let intent = { required: false, success: true, multiplier: 1 };
     let intentDetail;
@@ -3389,16 +4946,16 @@ var FatedTacticalTavern = (() => {
       const attackerTier = actor.tier ?? 1, defenderTier = defender.tier ?? 1;
       const attackerBase = attackerTier * 5, defenderBase = defenderTier * 5;
       const coreBonus = profile.intent === "core" ? profile.coreBonus : 0;
-      const attackerTotal = attackerBase + selected + ratingBonus + coreBonus;
+      const attackerTotal = attackerBase + selected2 + ratingBonus + coreBonus;
       const defenderTotal = defenderBase + defenderD20 + intentSpec.difficulty;
-      intent = intentCheck(intentSpec, attackerTier, defenderTier, selected, defenderD20, ratingBonus + coreBonus);
+      intent = intentCheck(intentSpec, attackerTier, defenderTier, selected2, defenderD20, ratingBonus + coreBonus);
       intentDetail = {
         targetId: profile.id,
         intent: profile.intent,
         attackerTier,
         defenderTier,
         attackerBase,
-        attackerD20: selected,
+        attackerD20: selected2,
         rating: rating.name,
         ratingBonus,
         ...coreBonus ? { coreBonus } : {},
@@ -3411,12 +4968,12 @@ var FatedTacticalTavern = (() => {
       };
     }
     const effectiveHit = hit;
-    record(state, actor, "roll", `${profile.name}\uFF1A${critical ? "\u66B4\u51FB" : hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D"} (${total}/${profile.defense})`, {
+    record(state, actor, "roll", `${profile.name}\uFF1A${critical ? "\u66B4\u51FB" : hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D"} (${total2}/${profile.defense})`, {
       targetId: profile.id,
       ...cover,
-      dice: dice3,
-      selected,
-      total,
+      dice: dice4,
+      selected: selected2,
+      total: total2,
       accuracy: profile.accuracy,
       defense: profile.defense,
       advantage: profile.advantage,
@@ -3440,9 +4997,9 @@ var FatedTacticalTavern = (() => {
     if (intent.required) record(state, actor, "intent", `${profile.name}${intent.success ? "\u610F\u56FE\u6210\u7ACB" : "\u610F\u56FE\u53D7\u963B"}`, intentDetail);
     return { hit: effectiveHit, critical, rating, intent, saved: false };
   }
-  function coverDamage(state, actor, cover, amount2, details) {
+  function coverDamage(state, actor, cover, amount, details) {
     const before = cover.hp;
-    cover.hp = Math.max(0, before - Math.max(0, amount2 - (cover.armor ?? 0)));
+    cover.hp = Math.max(0, before - Math.max(0, amount - (cover.armor ?? 0)));
     record(
       state,
       actor,
@@ -3457,192 +5014,184 @@ var FatedTacticalTavern = (() => {
     if (!dx && !dy) return;
     const from = pointAt(state, target2);
     for (let i = 0; i < (effect.distance ?? 1); i++) {
-      const at = pos(target2.x + dx, target2.y + dy);
-      if (!canStep(state, target2, at)) {
+      const at2 = pos(target2.x + dx, target2.y + dy);
+      if (!canStep(state, target2, at2)) {
         damageTarget(state, target2, actor.id, effect.collisionDamage ?? 5, "true", "\u649E\u51FB");
-        if (alive(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceUnitId: actor.id });
+        if (alive3(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceUnitId: actor.id });
         break;
       }
-      Object.assign(target2, at);
+      Object.assign(target2, at2);
     }
     record(state, actor, "knockback", `${target2.name}\u906D\u5230\u51FB\u9000`, { targetId: target2.id, from, to: pointAt(state, target2) });
   }
-  function healWithGear(state, actor, target2, spec, name, skillScale = 1) {
-    const dice3 = diceRoll(state, diceFormula(state, spec, actor));
-    restoreHP(state, target2, Math.floor(dice3.value * skillScale), actor.id, name, { dice: dice3, actionType: "skill" });
+  function retargetStrike(state, actor, action, target2, plan) {
+    const weapon2 = action.type === "attack" ? weaponInfo(state, actor) : null;
+    const template = weapon2?.template ?? tableEntry(state.skills, action.skillId) ?? normalAttack;
+    return { ...targetProfile(state, actor, target2, target2, template, { weapon: weapon2, intent: plan.intent }), nonLethal: plan.nonLethal ?? false };
   }
-  function offHandFollowup(state, actor, target2, primaryProfile, primaryRating) {
-    const weapon = weaponInfo(state, actor);
-    if (weapon.stance !== "dual_wield" || !weapon.offHand.template?.damage || !alive(target2) || target2.fled) return;
-    const cost = (actor.tier ?? 1) * 10;
-    if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < 0.8) return;
-    const offTemplate = weapon.offHand.template;
-    const ammo = weaponAmmo(offTemplate);
-    const spendsAmmo = ammo && !changes(actor, "infiniteAmmo");
-    if (spendsAmmo && !(resourcePool(state, actor, ammo.resource, weapon.offHand.instance)?.amount > 0)) return;
-    if (!validReach(state, actor, target2, offTemplate, ammo, actor.offHand)) return;
-    const profile = targetProfile(state, actor, target2, target2, offTemplate, { weapon: { ...weapon.offHand, ammo, stance: "dual_wield" } });
-    profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
-    profile.bonusDice = 0;
-    record(state, actor, "followup", `${actor.name}\u4F7F\u7528${offTemplate.name}\u8FFD\u51FB${target2.name}`, { targetId: target2.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
-    setResourceTotal(state, actor, "sp", actor.sp - cost, actor.id, "\u526F\u624B\u8FFD\u51FB");
-    if (spendsAmmo) dsl.changeResource(state, actor, actor, { kind: "drainResource", resource: ammo.resource, local: true }, 1, "\u526F\u624B\u8FFD\u51FB", { instance: weapon.offHand.instance });
-    const result = resolveCheck(state, actor, profile);
-    if (!result.hit) return;
-    const dice3 = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, result.critical);
-    const scaled = Math.floor(dice3.value * profile.multiplier * (result.rating?.multiplier ?? 1) * 0.5);
-    const { recipient } = damageTarget(state, target2, actor.id, scaled, profile.damageType, "\u526F\u624B\u8FFD\u51FB", {
-      attacker: actor,
-      hit: true,
-      melee: profile.melee,
-      armorPierce: profile.armorPierce,
-      details: { dice: dice3, rating: result.rating?.name, followup: true, cost }
-    });
-    dispatchEffect(state, actor, "on_hit", { target: recipient, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical: result.critical, actionType: "attack", weaponId: weapon.offHand.instance?.id, damageType: profile.damageType });
-  }
-  function effectSaved(state, actor, target2, effect, sourceName2) {
-    const check = (unit, saveStat, saveDC) => {
-      const saveRoll = randomDie(state, 20), saveBonus = effectiveStat(state, unit, saveStat);
-      const saveTotal = saveRoll + saveBonus;
-      return { saveStat, saveRoll, saveBonus, saveTotal, saveDC, saved: saveTotal >= saveDC };
-    };
-    let detail;
-    const dc = resolveDC(state, actor, effect.contest?.dc ?? effect.dc);
-    if (effect.contest) {
-      const { attacker, defender } = effect.contest;
-      const attack = check(actor, attacker, dc), defense = check(target2, defender, dc);
-      detail = { contest: { attack, defense, dc }, saved: attack.saveTotal - defense.saveTotal < dc };
-    } else if (Array.isArray(effect.save)) {
-      const checks = effect.save.map((stat2) => check(target2, stat2, dc));
-      detail = { checks, mode: effect.mode, saved: effect.mode === "all" ? checks.every((x) => x.saved) : checks.some((x) => x.saved) };
-    } else detail = check(target2, effect.save, dc);
-    const { saved } = detail;
-    record(state, actor, "save", `${target2.name}${saved ? "\u901A\u8FC7" : "\u672A\u901A\u8FC7"}\u8C41\u514D`, { targetId: target2.id, sourceName: sourceName2, ...detail });
-    return saved;
-  }
-  function removeStatus(state, actor, target2, effect) {
-    const removed = [];
-    for (const status2 of values2(target2.statuses)) {
-      const categoryMatches = effect.category === "all_negative" ? ["control", "dot", "debuff"].includes(status2.category) : status2.category === effect.category;
-      if (effect.statusId ? effect.statusId !== status2.id : !categoryMatches || status2.durationType === "persistent") continue;
-      delete target2.statuses[status2.id];
-      removed.push(status2.id);
-      record(state, actor, "expire", `${target2.name}\u7684${status2.name}\u88AB\u89E3\u9664`, { targetId: target2.id, statusId: status2.id });
+  function continueStrike({ state, frame, host }) {
+    const { data: action, plan } = frame;
+    const actor = tableEntry(state.units, frame.ownerId);
+    const actionEvent = state.vm.events[frame.eventRef];
+    const weapon2 = frame.weapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
+    const template = action.type === "shield_bash" ? { name: "\u76FE\u51FB", range: 1, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules } : weapon2 ? weapon2.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
+    if (!alive3(actor) || !template) {
+      state.vm.stack.pop();
+      return;
     }
-    if (effect.category) record(state, actor, "cleanse", `${target2.name}\u53D7\u5230\u51C0\u5316`, { targetId: target2.id, removed });
-    return removed.length > 0;
-  }
-  function teleportBehind(state, actor, target2) {
-    const to = backCell(state, target2);
-    if (!to || changes(actor, "rooted")) return false;
-    const from = pointAt(state, actor);
-    Object.assign(actor, to);
-    record(state, actor, "teleport", `${actor.name}\u77AC\u79FB\u81F3\u76EE\u6807\u80CC\u540E`, { from, to: pointAt(state, actor) });
-    return true;
-  }
-  var castPower = (state, actor, template) => template.power ?? template.attack ?? Math.max(0, effectiveStat(state, actor, template.damage?.stat ?? "int") * 10);
-  var castSkillScale = (state, actor, template, target2) => Math.max(
-    0,
-    dsl.stat(state, actor, "skillPower", 1, { target: target2, school: template.school, actionType: "skill" })
-  );
-  function applyStrike(state, actor, action, plan, opportunityWeapon = null, castUses) {
-    const weapon = opportunityWeapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
-    const template = action.type === "shield_bash" ? { name: "\u76FE\u51FB", range: 1, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, effects: shieldBashEffects } : weapon ? weapon.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
-    const skillEntries = template.entry ? [template.entry] : skillExpressions(weapon ? null : template, action.skillId);
-    const mainTarget = state.units[plan.corpseId ?? plan.targets.find((t) => t.kind !== "cover")?.id];
-    const multipliers = [];
-    const skillScale = action.type === "skill" ? castSkillScale(state, actor, template, mainTarget) : 1;
-    const effectContext = {
-      target: mainTarget,
-      attacker: actor,
-      center: plan.center,
-      terrainTarget: template.target === "cell" ? locateUnit(state, plan.center) ?? plan.center : null,
+    if (!frame.started) {
+      frame.started = true;
+      if (plan.hostile || weapon2) expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
+      if (!sameCell(actor, plan.center)) actor.facing = facingToward(actor, plan.center);
+    }
+    const profile = frame.profile ?? plan.targets?.[frame.pc];
+    if (!profile) {
+      state.vm.stack.pop();
+      return;
+    }
+    const target2 = tableEntry(profile.kind === "cover" ? state.covers : state.units, profile.id);
+    const next = () => {
+      frame.pc++;
+      delete frame.phase;
+      delete frame.profile;
+      delete frame.awaitEvent;
+    };
+    const detail = {
+      actorId: actor.id,
+      targetId: target2?.id ?? null,
+      skillId: action.skillId ?? null,
       actionType: action.type,
-      school: template.school,
-      multipliers,
-      skillScale,
-      entries: skillEntries,
-      castUses,
-      weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
-      resourceCost: template.resourceCost?.amount,
-      opportunityAttack: Boolean(opportunityWeapon),
-      melee: plan.targets[0]?.melee,
-      arrow: Boolean(weapon?.ammo),
-      ...action.type === "skill" && template.shape !== "single" ? { skillArea: new Set(plan.targets.map((target2) => target2.id)) } : {},
-      damageType: template.damage?.type ?? template.damageType,
-      power: castPower(state, actor, template),
-      nonLethal: plan.nonLethal
+      melee: profile.melee,
+      backstab: profile.backstab,
+      arrow: profile.arrow,
+      opportunityAttack: Boolean(frame.weapon),
+      weaponTemplateId: weapon2?.instance?.templateId ?? null,
+      damageType: profile.damageType,
+      souls: weapon2?.souls ?? 0
     };
-    if (action.type === "skill") {
-      dispatchEffect(state, actor, "on_skill_cast", effectContext, skillEntries);
-      if (template.shape !== "single" && plan.targets.length) {
-        const perTarget = skillEntries.filter(({ expr }) => expr.target === "hitTarget");
-        dsl.dispatch(state, actor, "active", effectContext, skillEntries.filter((entry) => !perTarget.includes(entry)));
-        for (const target2 of plan.targets) if (target2.kind !== "cover") dsl.dispatch(state, actor, "active", { ...effectContext, target: state.units[target2.id] }, perTarget);
-      } else dsl.dispatch(state, actor, "active", effectContext, skillEntries);
-      if (!alive(actor)) return;
+    if (!frame.phase) {
+      if (!alive3(target2) || target2.fled) {
+        next();
+        return;
+      }
+      frame.phase = "check";
+      frame.awaitEvent = host.event(state, { ...detail, checkKind: profile.saveStat ? "save" : "attack", dc: profile.saveDC ?? profile.defense });
+      host.hooks(state, frame, "before_check", frame.awaitEvent);
+      return;
     }
-    if (plan.hostile && !weapon && action.type !== "shield_bash") expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
-    if (!sameCell(actor, plan.center)) actor.facing = facingToward(actor, plan.center);
-    if (weapon || action.type === "shield_bash") dispatchEffect(state, actor, "on_attack", effectContext);
-    for (const preview2 of plan.targets) {
-      if (!alive(actor)) break;
-      const cover = preview2.kind === "cover";
-      const target2 = (cover ? state.covers : state.units)[preview2.id];
-      if (!alive(target2) || target2.fled) continue;
-      let profile = preview2;
-      if (preview2.saveStat && typeof template.saveDC === "object") {
-        profile = { ...profile, saveDC: resolveDC(state, actor, template.saveDC), saveBonus: effectiveStat(state, target2, preview2.saveStat) };
+    const event = state.vm.events[frame.awaitEvent];
+    if (frame.phase === "check") {
+      const adjusted = {
+        ...profile,
+        accuracy: profile.accuracy + (event.bonusDelta ?? 0) + (event.ignoreDodge ? profile.dodgeBonus : 0),
+        advantage: profile.advantage + (event.advantageDelta ?? 0),
+        saveDC: (profile.saveDC ?? 0) + (event.dcDelta ?? 0),
+        guaranteeHit: profile.guaranteeHit || ["hit", "crit"].includes(event.forceOutcome),
+        guaranteeCrit: profile.guaranteeCrit || event.forceOutcome === "crit"
+      };
+      const result = resolveCheck(state, actor, adjusted);
+      if (event.forceOutcome === "miss") result.hit = false;
+      if (event.forceOutcome === "pass") result.saved = true;
+      if (event.forceOutcome === "fail") result.saved = false;
+      Object.assign(event, { ...result, passed: profile.saveStat ? result.saved : result.hit });
+      frame.phase = "damage";
+      host.hooks(state, frame, "after_check", frame.awaitEvent);
+      return;
+    }
+    if (frame.phase === "damage") {
+      if (!event.hit) {
+        next();
+        return;
       }
-      const { hit, critical, rating, intent, saved } = resolveCheck(state, actor, profile);
-      if (!hit) continue;
-      let recipient = target2, dealt = 0;
-      const hitContext = { ...effectContext, target: target2, attacker: actor, center: pos(target2.x, target2.y), damageType: profile.damageType, hitRating: rating?.name, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical, saved };
-      const factor = (damageType2) => dsl.damageFactor(state, actor, { ...hitContext, damageType: damageType2 }, multipliers);
-      if (profile.dice) {
-        const dice3 = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, critical);
-        const stance = actor.stance ?? stanceLabel[stanceFor({ mainHand: actor.mainHand ?? actor.weapon, offHand: actor.offHand, shield: actor.shield })];
-        const sizeScale = meleeMultiplier(actor);
-        const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
-        const intentScale = intent?.success ? intent.multiplier ?? 1 : 1;
-        const stanceScale = profile.stance === "greatsword" ? actor.greatswordMode === "defensive" ? 1.5 : 1.3 : 1;
-        const offHandScale = profile.stance === "dual_wield" && profile.offHand ? 0.5 : 1;
-        const attackDamage = profile.fixedDamage ? dice3.value : dice3.value * profile.multiplier * sizeScale * ratingScale * intentScale * stanceScale * offHandScale;
-        const scaled = Math.floor(Math.max(0, dsl.stat(state, actor, "damage", attackDamage * skillScale * factor(profile.damageType), hitContext)) * (saved ? 0.5 : 1));
-        const details = { dice: dice3, critical, saved, rating: rating?.name ?? "\u6709\u6548", ratingMultiplier: ratingScale, intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.fixedDamage ? 1 : profile.multiplier * factor(profile.damageType), ...hitContext.weaponId ? { weaponId: hitContext.weaponId } : {}, stanceScale, offHandScale };
-        if (profile.kind === "cover") {
-          coverDamage(state, actor, target2, scaled, details);
-          continue;
-        }
-        ({ recipient, dealt } = damageTarget(
-          state,
-          target2,
-          actor.id,
-          scaled,
-          profile.damageType,
-          template.name,
-          { attacker: actor, hit: true, melee: profile.melee, armorPierce: profile.armorPierce, details, preserveLife: profile.nonLethal }
-        ));
-        if (profile.nonLethal && recipient.hp === 1 && dealt > 0) {
-          record(state, actor, "nonlethal", `${recipient.name}\u88AB\u975E\u81F4\u6B7B\u653B\u51FB\u7559\u6709 1 HP`, { targetId: recipient.id, hpBefore: dealt + 1, hpAfter: 1 });
-        }
+      frame.phase = "heal";
+      const { critical, rating, intent, saved } = event;
+      if (!profile.dice) return;
+      const dice4 = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, critical);
+      const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
+      const stanceScale = profile.stance === "greatsword" ? actor.greatswordMode === "defensive" ? 1.5 : 1.3 : 1;
+      const offHandScale = profile.stance === "dual_wield" && profile.offHand ? 0.5 : 1;
+      const amount = dice4.value * profile.multiplier * meleeMultiplier(actor) * ratingScale * (intent?.success ? intent.multiplier ?? 1 : 1) * stanceScale * offHandScale * (saved ? 0.5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
+      const details = {
+        dice: dice4,
+        critical,
+        saved,
+        rating: rating?.name ?? "\u6709\u6548",
+        ratingMultiplier: ratingScale,
+        intent: intent ?? { success: true, multiplier: 1 },
+        attackMultiplier: profile.multiplier,
+        stanceScale,
+        offHandScale
+      };
+      if (profile.kind === "cover") {
+        coverDamage(state, actor, target2, Math.floor(amount), details);
+        return;
       }
-      if (profile.kind === "cover") continue;
-      dispatchEffect(state, actor, "on_hit", { ...hitContext, target: recipient, dealt, damageFactor: factor }, skillEntries);
-      if (alive(recipient) && template.heal != null) healWithGear(state, actor, recipient, template.heal, template.name, skillScale);
-      if (profile.dice && action.type === "attack" && alive(actor) && alive(recipient) && recipient.team !== actor.team) {
-        offHandFollowup(state, actor, recipient, profile, rating);
+      const recipient = guardFor(state, target2) ?? target2;
+      event.targetId = recipient.id;
+      host.commit(state, frame, {
+        ...detail,
+        op: "damage",
+        pool: "hp",
+        targetId: recipient.id,
+        sourceId: actor.id,
+        amount,
+        label: template.name,
+        direct: true,
+        intercepted: recipient !== target2,
+        armorPierce: profile.armorPierce,
+        details,
+        resultEventRef: frame.awaitEvent,
+        lethal: !(profile.nonLethal || recipient.nonLethal || changes(recipient, "preserveLife") || encounterNonlethal(state, actor))
+      });
+      return;
+    }
+    if (frame.phase === "heal") {
+      frame.phase = "after_hit";
+      const recipient = tableEntry(state.units, event.targetId);
+      if (template.heal != null && alive3(recipient)) host.commit(state, frame, {
+        ...detail,
+        op: "heal",
+        pool: "hp",
+        sourceId: actor.id,
+        targetId: recipient.id,
+        amount: diceRoll(state, diceFormula(state, template.heal, actor)).value,
+        actionType: action.type,
+        skillId: action.skillId ?? null,
+        label: template.name
+      });
+      return;
+    }
+    if (frame.phase === "after_hit" && profile.kind !== "cover") {
+      frame.phase = "followup";
+      if (action.type === "shield_bash") event.rules = shieldBashRules;
+      host.hooks(state, frame, "after_hit", frame.awaitEvent);
+      return;
+    }
+    if (frame.phase === "followup" && action.type === "attack" && !frame.followup && weapon2?.stance === "dual_wield") {
+      const recipient = tableEntry(state.units, event.targetId);
+      const off = weapon2.offHand;
+      const ammo = weaponAmmo(off?.template);
+      const cost = (actor.tier ?? 1) * 10;
+      if (alive3(recipient) && recipient.team !== actor.team && off?.template?.damage && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
+        const followWeapon = { ...off, ammo, stance: "dual_wield" };
+        const follow = targetProfile(state, actor, recipient, recipient, off.template, { weapon: followWeapon });
+        follow.disadvantages = event.rating.multiplier >= 1.3 ? 0 : Math.max(1, follow.disadvantages);
+        record(state, actor, "followup", `${actor.name}\u4F7F\u7528${off.template.name}\u8FFD\u51FB${recipient.name}`, { targetId: recipient.id, cost, weaponId: off.instance.id });
+        setResourceTotal(state, actor, "sp", actor.sp - cost, actor.id, "\u526F\u624B\u8FFD\u51FB");
+        if (ammo && !weapon2.infiniteAmmo) spendAmmo(state, actor, off, ammo);
+        host.followup(state, frame, followWeapon, follow);
       }
     }
+    next();
   }
   function applyMovement(state, actor, type, plan) {
-    const from = pointAt(state, actor), path = [];
-    const canContinue = () => alive(actor) && !actor.fled && !changes(actor, "skip") && !changes(actor, "rooted");
+    const from = pointAt(state, actor), path2 = [];
+    const canContinue = () => alive3(actor) && !actor.fled && !changes(actor, "skip") && !changes(actor, "rooted");
     for (const to2 of plan.path) {
       if (type !== "disengage") {
         const sources = opportunitySources(state, actor);
         for (const source of sources) {
-          const { unit, weapon } = source;
+          const { unit, weapon: weapon2 } = source;
           if (!canReact(state, source, actor) || !threatens(state, source, actor, actor) || threatens(state, source, actor, to2)) continue;
           unit.reactionAvailable = false;
           const center = pos(actor.x, actor.y);
@@ -3650,26 +5199,26 @@ var FatedTacticalTavern = (() => {
             state,
             unit,
             "opportunity",
-            `${unit.name}\u5BF9${actor.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB\uFF08${weapon.template.name}\uFF09`,
+            `${unit.name}\u5BF9${actor.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB\uFF08${weapon2.template.name}\uFF09`,
             { ...opportunityDetail(unit, center, to2), targetId: actor.id }
           );
-          const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
-          applyStrike(state, unit, { type: "attack" }, { center, targets: [profile], hostile: true }, weapon);
+          const profile = targetProfile(state, unit, actor, actor, weapon2.template, { weapon: weapon2 });
+          resolveVMAction(state, { type: "attack", x: center.x, y: center.y }, { actor: unit, opportunity: { center, targets: [profile], hostile: true }, weapon: weapon2 });
           if (!canContinue()) break;
         }
       }
       if (!canContinue() || !canStep(state, actor, to2)) break;
       actor.facing = facingToward(actor, to2);
       Object.assign(actor, pos(to2.x, to2.y));
-      path.push(to2);
+      path2.push(to2);
     }
-    const to = pointAt(state, actor), interrupted = path.length !== plan.path.length;
+    const to = pointAt(state, actor), interrupted = path2.length !== plan.path.length;
     record(
       state,
       actor,
       type,
       `${actor.name}${movementNames[type]}${interrupted ? "\u53D7\u963B\uFF0C\u505C\u5728" : "\u81F3"} (${to.x}, ${to.y}, z=${to.z})`,
-      { from, to, path, steps: path.length, interrupted }
+      { from, to, path: path2, steps: path2.length, interrupted }
     );
   }
   function applyInteraction(state, actor, plan) {
@@ -3680,32 +5229,47 @@ var FatedTacticalTavern = (() => {
     const effect = item.effect ?? (item.kind === "barrel" ? "explode" : "heal");
     if (effect === "explode") {
       expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
-      const weapon = weaponInfo(state, actor);
-      if (weapon.ammo && !weapon.infiniteAmmo) dsl.changeResource(state, actor, actor, { kind: "drainResource", resource: weapon.ammo.resource, local: true }, 1, "\u5F15\u7206", { instance: weapon.instance });
+      const weapon2 = weaponInfo(state, actor);
+      if (weapon2.ammo && !weapon2.infiniteAmmo) spendAmmo(state, actor, weapon2, weapon2.ammo);
       for (const profile of plan.targets) {
         const target2 = state.units[profile.id];
-        if (alive(target2)) damageTarget(state, target2, actor.id, item.damage ?? 12, "energy", item.name, { attacker: actor, hit: true, direct: false });
+        if (alive3(target2)) damageTarget(state, target2, actor.id, item.damage ?? 12, "energy", item.name, { attacker: actor, hit: true, direct: false });
       }
-      for (const cover of values2(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at) => sameCell(at, c))).sort(byId2)) {
+      for (const cover of values3(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at2) => sameCell(at2, c))).sort(byId2)) {
         coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
       }
     } else if (Object.hasOwn(item, "effect") && (effect === "restore" || effect === "heal")) {
-      const amount2 = item.damage ?? 8;
-      restoreHP(state, actor, amount2, actor.id, item.name);
+      const amount = item.damage ?? 8;
+      restoreHP(state, actor, amount, actor.id, item.name);
       if (effect === "restore") {
-        setResourceTotal(state, actor, "mp", Math.min(actor.maxMp, actor.mp + amount2), actor.id, item.name);
-        setResourceTotal(state, actor, "sp", Math.min(actor.maxSp, actor.sp + amount2), actor.id, item.name);
+        setResourceTotal(state, actor, "mp", Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
+        setResourceTotal(state, actor, "sp", Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
       }
     } else if (Object.hasOwn(item, "effect") && effect === "shield") {
       grantShield(state, actor, item.damage ?? 10, { sourceUnitId: actor.id });
     } else {
-      const amount2 = item.damage ?? 8;
-      restoreHP(state, actor, amount2, actor.id, item.name);
+      const amount = item.damage ?? 8;
+      restoreHP(state, actor, amount, actor.id, item.name);
       grantShield(state, actor, 10, { sourceUnitId: actor.id });
       grantStatus(state, actor, actionStatuses.altar, { sourceUnitId: actor.id });
     }
   }
   function applyAction(state, action) {
+    if (action?.type === "answer" || state.vm?.pendingAsk || ["attack", "skill", "shield_bash"].includes(action?.type) && !preview(state, action, { simulateRules: false }).interactiveId) {
+      if (state.vm?.pendingAsk && action.type === "end_encounter") {
+        const concession = preview(state, action);
+        if (!concession.ok) throw new Error(concession.error);
+        state.vm.pendingAsk = null;
+        state.vm.stack.length = 0;
+        state.vm.events = {};
+      } else {
+        const before2 = state.logs.length;
+        const actor2 = currentUnit(state);
+        const result = resolveVMAction(state, action);
+        if (!result.pendingAsk) finishAction(state, actor2, action.type);
+        return state.logs.slice(before2);
+      }
+    }
     const plan = preview(state, action);
     if (!plan.ok) {
       if (plan.error === insufficientHP) {
@@ -3720,13 +5284,6 @@ var FatedTacticalTavern = (() => {
     const before = state.logs.length;
     const moving = ["move", "sprint", "disengage"].includes(type);
     const initialCover = moving ? new Set(nearbyCovers(state, actor).map((c) => c.id)) : null;
-    let castUses;
-    if (type === "skill") {
-      const skill2 = tableEntry(state.skills, skillId) ?? new Map(equippedActiveSkills(state, actor)).get(skillId);
-      const limits = castLimits(skill2, skillId);
-      castUses = new Set(limits.map((entry) => entry.key));
-      for (const entry of limits) dsl.spendUse(state, actor, entry);
-    }
     if (type !== "end") {
       actor.ap -= plan.ap;
       const costSource = plan.name ?? movementNames[type] ?? type;
@@ -3741,7 +5298,7 @@ var FatedTacticalTavern = (() => {
         }
         if (plan.hp) {
           const hpBefore = actor.hp;
-          actor.hp -= plan.hp;
+          writePoolMirror(state, actor, "hp", actor.hp - plan.hp);
           record(
             state,
             actor,
@@ -3751,9 +5308,9 @@ var FatedTacticalTavern = (() => {
           );
         }
         if (skill2?.resourceCost?.resource) {
-          const { resource: resource3, amount: cost } = skill2.resourceCost;
-          const { item, effect, amount: amount2 } = resourcePool(state, actor, resource3);
-          changeCounter(state, actor, item, effect, resource3, amount2 - cost);
+          const { resource: resource2, amount: cost } = skill2.resourceCost;
+          const { item, effect, amount } = resourcePool(state, actor, resource2);
+          changeCounter(state, actor, item, effect, resource2, amount - cost);
         }
       }
       if (plan.ap === 2) {
@@ -3795,13 +5352,7 @@ var FatedTacticalTavern = (() => {
         applyMovement(state, actor, type, plan);
         break;
       case "attack":
-        if (plan.interactiveId) {
-          applyInteraction(state, actor, plan);
-          break;
-        }
-      case "skill":
-      case "shield_bash":
-        applyStrike(state, actor, { type, skillId }, plan, null, castUses);
+        applyInteraction(state, actor, plan);
         break;
       case "end_encounter": {
         concludeObjective(state, state.battleType === "spar" ? "draw" : actor.team === "blue" ? "red" : "blue", state.battleType === "spar" ? "\u53CC\u65B9\u70B9\u5230\u4E3A\u6B62" : `${actor.name}\u4EE3\u8868\u672C\u961F\u8BA4\u8F93`);
@@ -3896,8 +5447,8 @@ var FatedTacticalTavern = (() => {
         record(state, actor, "block", `${actor.name}${actor.blockMode === "heavy" ? "\u91CD" : ""}\u683C\u6321`, { reduction: plan.reduction });
         break;
       case "reload": {
-        const weapon = weaponInfo(state, actor);
-        dsl.changeResource(state, actor, actor, { kind: "produceResource", resource: weapon.ammo.resource, local: true }, weapon.ammo.cap, "\u88C5\u586B", { instance: weapon.instance });
+        const weapon2 = weaponInfo(state, actor);
+        changeCounter(state, actor, weapon2, weapon2.ammo, weapon2.ammo.resource, weapon2.ammo.cap);
         break;
       }
       case "brace":
@@ -3914,86 +5465,192 @@ var FatedTacticalTavern = (() => {
         applyInteraction(state, actor, plan);
         break;
     }
-    if (moving && alive(actor)) {
+    if (moving && alive3(actor)) {
       const stance = actor.stance ?? "unarmed";
       if (type === "move" && stance === "light_blade") actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
       const coverIds = nearbyCovers(state, actor).filter((c) => !initialCover.has(c.id)).map((c) => c.id);
       if (coverIds.length) record(state, actor, "cover_approach", `${actor.name}\u79FB\u81F3\u63A9\u4F53 ${coverIds.join("\u3001")} \u65C1`, { coverIds });
     }
+    finishAction(state, actor, type);
+    return state.logs.slice(before);
+  }
+  function finishAction(state, actor, type) {
+    if (state.vm?.pendingAsk) return;
     if (refreshOutcome(state)) {
       if (actor) actor.ap = 0;
-      return state.logs.slice(before);
+      return;
     }
-    if (type === "end" || !alive(actor) || !actor.ap) {
+    if (type === "end" || !alive3(actor) || !actor.ap) {
       if (!actor.fled) endTurn(state, actor);
       if (!refreshOutcome(state)) {
         advanceCursor(state);
         settleTurn(state);
       }
     }
-    return state.logs.slice(before);
   }
 
   // src/presets/catalog.js
-  var dice = (count, sides, stat2, type, bonus = 0) => ({ count, sides, stat: stat2, type, bonus });
-  var status = (id3, statusId2, extra = {}) => expression(id3, "on_hit", "hitTarget", [{ kind: "grantStatus", statusId: statusId2, ...extra }], { condition: { type: "saved", value: false } });
-  var skill = (name, range, target2, specs = {}) => ({
+  var dice2 = (count, sides, stat3, type, bonus = 0) => ({ count, sides, stat: stat3, type, bonus });
+  var rule = (id3, hook2, program2, filter) => ({ id: id3, hook: hook2, program: program2, ...filter === void 0 ? {} : { filter } });
+  var apply = (statusId3, target2 = "target", options = {}) => ({ op: "apply_status", target: target2, statusId: statusId3, ...options });
+  var onHit = (id3, program2) => rule(id3, "after_hit", program2, "event.actorId == self.id && event.saved != true");
+  var skill = (name, range2, target2, specs = {}) => ({
     name,
     quality: "\u666E\u901A",
     power: 50,
     ap: 1,
     slot: target2 === "enemy" ? "attack" : "action",
     mp: 2,
-    range,
+    range: range2,
     shape: "single",
     target: target2,
-    effects: [],
     ...specs
   });
+  var weapon = (templateId, filter) => `event.weaponTemplateId == '${templateId}' && event.actorId == self.id${filter ? ` && (${filter})` : ""}`;
+  var meleeRetaliation = "event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team";
+  var rangedWeapon = (templateId, ammo, armorPierce, highGroundRange) => ({
+    pools: { ammo: { cap: ammo, initial: ammo, reloadable: true } },
+    vars: { highGroundRange, highGroundAccuracy: 2 },
+    mods: [{ stat: "armorPierce", flat: armorPierce, when: weapon(templateId) }],
+    rules: [rule(`${templateId}-spend`, "before_action", [
+      { op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }
+    ], weapon(templateId, "event.actionType == 'attack' && !has_status(self, 'infinite_ammo')"))]
+  });
   var EQUIPMENT = {
-    soulblade: { name: "\u566C\u9B42\u592A\u5200", kind: "weapon", weaponClass: "light_blade", hand: "one_handed", rangeType: "melee", attack: 120, defense: 0, range: 1, accuracy: 5, damage: dice(2, 6, "str", "physical"), effects: [
-      { id: "soulblade-0", trigger: "passive", target: "self", effects: [{ kind: "produceResource", resource: "souls", cap: 10 }, { kind: "multiplyDamage", local: true, resourceScale: { resource: "souls", perUnit: 0.5 } }], params: { source: "weapon" } },
-      { id: "soulblade-0-kill", trigger: "on_kill", target: "self", effects: [{ kind: "produceResource", resource: "souls", amount: 1, local: true }], params: { source: "weapon" } }
-    ] },
-    frostplate: { name: "\u971C\u7EB9\u8346\u68D8\u91CD\u7532", quality: "\u666E\u901A", kind: "armor", armor: 2, defense: 25, effects: [
-      { id: "frostplate-0", trigger: "on_damaged", target: "attacker", effects: [{ kind: "damage", amount: 3, label: "\u971C\u7EB9\u8346\u68D8" }], condition: [{ type: "melee", value: true }, { type: "reaction", value: false }, { type: "enemy", value: true }] },
-      { id: "frostplate-0-status", trigger: "on_damaged", target: "attacker", effects: [{ kind: "grantStatus", statusId: "chill" }], condition: [{ type: "melee", value: true }, { type: "reaction", value: false }, { type: "enemy", value: true }], roll: { chance: 0.4 }, label: "\u971C\u7EB9\u8346\u68D8" }
-    ] },
-    bloodfang: { name: "\u53CC\u751F\u8840\u7259\u5315\u9996", kind: "weapon", weaponClass: "light_blade", hand: "one_handed", rangeType: "melee", attack: 80, defense: 0, range: 1, accuracy: 3, damage: dice(2, 4, "agi", "physical"), effects: [
-      { id: "bloodfang-0", trigger: "passive", target: "self", effects: [{ kind: "multiplyDamage", factor: 1.4 }, { kind: "modifyCheck", advantage: 1 }], params: { source: "weapon" }, condition: { type: "backstab", value: true } },
-      { id: "bloodfang-0-hit", trigger: "on_hit", target: "hitTarget", effects: [{ kind: "grantStatus", statusId: "bleed", stacks: 2 }, { kind: "damage", amount: 4, inheritDamageType: true, label: "\u53CC\u751F\u8840\u7259\u8FDE\u51FB" }], params: { source: "weapon" }, condition: { type: "or", conditions: [{ type: "backstab", value: true }, { type: "critical", value: true }] } }
-    ] },
-    revolver: { name: "\u730E\u9B54\u5DE6\u8F6E", kind: "weapon", weaponClass: "ranged", hand: "one_handed", ranged: true, rangeType: "ranged", attack: 100, defense: 0, range: 5, accuracy: 3, damage: dice(2, 6, "agi", "physical"), effects: [
-      { id: "revolver-0", trigger: "passive", target: "self", effects: [{ kind: "produceResource", resource: "ammo", cap: 6, initial: 6, reloadable: true }, { kind: "modifyStat", stat: "armorPierce", flat: 3 }, { kind: "modifyCheck", highGroundRange: 1, highGroundAccuracy: 2 }], params: { source: "weapon" } },
-      { id: "revolver-0-spend", trigger: "on_attack", target: "self", effects: [{ kind: "drainResource", resource: "ammo", local: true, amount: 1, requireFull: true }], params: { source: "weapon" }, condition: { type: "not", conditions: [{ type: "selfStatusModifier", key: "infiniteAmmo", value: true }] } }
-    ] },
-    crossbow: { name: "\u7834\u7532\u91CD\u5F29", kind: "weapon", weaponClass: "ranged", hand: "one_handed", ranged: true, attack: 150, defense: 0, rangeType: "ranged", range: 6, accuracy: 1, damage: dice(2, 8, "agi", "physical"), effects: [
-      { id: "crossbow-0", trigger: "passive", target: "self", effects: [{ kind: "produceResource", resource: "ammo", cap: 3, initial: 3, reloadable: true }, { kind: "modifyStat", stat: "armorPierce", flat: 5 }, { kind: "modifyCheck", highGroundRange: 2, highGroundAccuracy: 2 }], params: { source: "weapon" } },
-      { id: "crossbow-0-spend", trigger: "on_attack", target: "self", effects: [{ kind: "drainResource", resource: "ammo", local: true, amount: 1, requireFull: true }], params: { source: "weapon" }, condition: { type: "not", conditions: [{ type: "selfStatusModifier", key: "infiniteAmmo", value: true }] } }
-    ] },
-    hymnal: { name: "\u5723\u548F\u5E87\u62A4\u5FBD\u8BB0", quality: "\u666E\u901A", kind: "accessory", effects: [
-      { id: "hymnal-0", trigger: "passive", target: "self", effects: [{ kind: "modifyStat", stat: "healing", percent: 0.25, condition: { type: "actionType", value: "skill" } }] },
-      { id: "hymnal-0-shield", trigger: "on_heal", target: "hitTarget", condition: { type: "actionType", value: "skill" }, effects: [{ kind: "shield", percentOfHealing: 0.5, stack: true }] }
-    ] },
-    shortblade: { name: "\u526F\u624B\u77ED\u5203", kind: "weapon", weaponClass: "light_blade", hand: "one_handed", rangeType: "melee", attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice(1, 4, "agi", "physical"), effects: [] },
-    potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand", effects: [] },
-    greatsword: { name: "\u7384\u94C1\u91CD\u5251", kind: "weapon", weaponClass: "greatsword", hand: "two_handed", heavy: true, twoHanded: true, attack: 260, defense: 0, rangeType: "melee", range: 1, accuracy: 1, damage: dice(2, 8, "str", "physical"), effects: [] },
-    towerShield: { name: "\u5854\u76FE", kind: "shield", weaponClass: "shield", hand: "off_hand", shield: true, defense: 8, effects: [] },
-    pike: { name: "\u5DE1\u536B\u957F\u621F", kind: "weapon", weaponClass: "greatsword", hand: "two_handed", heavy: true, twoHanded: true, attack: 180, defense: 0, rangeType: "melee", range: 2, accuracy: 2, damage: dice(1, 8, "str", "physical"), effects: [{ id: "pike-0", trigger: "on_hit", target: "hitTarget", effects: [{ kind: "grantStatus", statusId: "root", turns: 1 }], params: { source: "weapon" }, condition: { type: "opportunityAttack", value: true } }] },
-    staff: { name: "\u7075\u7EB9\u6CD5\u6756", kind: "weapon", weaponClass: "staff", hand: "one_handed", attack: 90, defense: 0, rangeType: "ranged", range: 4, accuracy: 2, damage: dice(1, 6, "int", "energy"), effects: [] }
+    soulblade: {
+      name: "\u566C\u9B42\u592A\u5200",
+      kind: "weapon",
+      weaponClass: "light_blade",
+      hand: "one_handed",
+      rangeType: "melee",
+      attack: 120,
+      defense: 0,
+      range: 1,
+      accuracy: 5,
+      damage: dice2(2, 6, "str", "physical"),
+      pools: { souls: { cap: 10, initial: 0, reloadable: false } },
+      mods: [{ stat: "damageMult", mult: "1 + 0.5 * event.souls", when: weapon("soulblade") }],
+      rules: [rule("soulblade-kill", "after_damage", [
+        { op: "resource", target: "self", pool: "souls", mode: "add", amount: 1, local: true }
+      ], weapon("soulblade", "event.direct == true && event.dealt > 0 && !target.alive && target.team != self.team"))]
+    },
+    frostplate: {
+      name: "\u971C\u7EB9\u8346\u68D8\u91CD\u7532",
+      quality: "\u666E\u901A",
+      kind: "armor",
+      armor: 2,
+      defense: 25,
+      rules: [rule("frostplate-retaliate", "after_damage", [
+        { op: "damage", target: "attacker", amount: 3, damageType: "physical", direct: false, label: "\u971C\u7EB9\u8346\u68D8" },
+        { op: "for_each", select: { from: "attacker" }, body: [
+          { op: "check", kind: "chance", dc: 40, onPass: [apply("chill", "target")] }
+        ] }
+      ], meleeRetaliation)]
+    },
+    bloodfang: {
+      name: "\u53CC\u751F\u8840\u7259\u5315\u9996",
+      kind: "weapon",
+      weaponClass: "light_blade",
+      hand: "one_handed",
+      rangeType: "melee",
+      attack: 80,
+      defense: 0,
+      range: 1,
+      accuracy: 3,
+      damage: dice2(2, 4, "agi", "physical"),
+      mods: [
+        { stat: "damageMult", mult: 1.4, when: weapon("bloodfang", "event.backstab == true") },
+        { stat: "advantage", flat: 1, checkKind: "attack", when: weapon("bloodfang", "event.backstab == true") }
+      ],
+      rules: [rule("bloodfang-combo", "after_hit", [
+        apply("bleed", "target", { stacks: 2 }),
+        { op: "damage", target: "target", amount: 4, damageType: "physical", direct: false, label: "\u53CC\u751F\u8840\u7259\u8FDE\u51FB" }
+      ], weapon("bloodfang", "event.backstab == true || event.critical == true"))]
+    },
+    revolver: {
+      name: "\u730E\u9B54\u5DE6\u8F6E",
+      kind: "weapon",
+      weaponClass: "ranged",
+      hand: "one_handed",
+      ranged: true,
+      rangeType: "ranged",
+      attack: 100,
+      defense: 0,
+      range: 5,
+      accuracy: 3,
+      damage: dice2(2, 6, "agi", "physical"),
+      ...rangedWeapon("revolver", 6, 3, 1)
+    },
+    crossbow: {
+      name: "\u7834\u7532\u91CD\u5F29",
+      kind: "weapon",
+      weaponClass: "ranged",
+      hand: "one_handed",
+      ranged: true,
+      rangeType: "ranged",
+      attack: 150,
+      defense: 0,
+      range: 6,
+      accuracy: 1,
+      damage: dice2(2, 8, "agi", "physical"),
+      ...rangedWeapon("crossbow", 3, 5, 2)
+    },
+    hymnal: {
+      name: "\u5723\u548F\u5E87\u62A4\u5FBD\u8BB0",
+      quality: "\u666E\u901A",
+      kind: "accessory",
+      mods: [{ stat: "healingMult", mult: 1.25, when: "event.actionType == 'skill'" }],
+      rules: [rule("hymnal-shield", "after_heal", [
+        { op: "let", name: "existingShield", value: 0 },
+        { op: "for_each", select: { from: "statuses", of: "target", where: "status.id == 'shield'" }, body: [
+          { op: "let", name: "existingShield", value: "status.vars.shieldAmount" }
+        ] },
+        apply("shield", "target", { vars: { shieldAmount: "vars.existingShield + floor(event.healing / 2)" } })
+      ], "event.actorId == self.id && event.actionType == 'skill' && event.healing >= 2")]
+    },
+    shortblade: { name: "\u526F\u624B\u77ED\u5203", kind: "weapon", weaponClass: "light_blade", hand: "one_handed", rangeType: "melee", attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice2(1, 4, "agi", "physical") },
+    potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand" },
+    greatsword: { name: "\u7384\u94C1\u91CD\u5251", kind: "weapon", weaponClass: "greatsword", hand: "two_handed", heavy: true, twoHanded: true, attack: 260, defense: 0, rangeType: "melee", range: 1, accuracy: 1, damage: dice2(2, 8, "str", "physical") },
+    towerShield: { name: "\u5854\u76FE", kind: "shield", weaponClass: "shield", hand: "off_hand", shield: true, defense: 8 },
+    pike: {
+      name: "\u5DE1\u536B\u957F\u621F",
+      kind: "weapon",
+      weaponClass: "greatsword",
+      hand: "two_handed",
+      heavy: true,
+      twoHanded: true,
+      attack: 180,
+      defense: 0,
+      rangeType: "melee",
+      range: 2,
+      accuracy: 2,
+      damage: dice2(1, 8, "str", "physical"),
+      rules: [rule("pike-root", "after_hit", [apply("root", "target", { turns: 1 })], weapon("pike", "event.opportunityAttack == true"))]
+    },
+    staff: { name: "\u7075\u7EB9\u6CD5\u6756", kind: "weapon", weaponClass: "staff", hand: "one_handed", attack: 90, defense: 0, rangeType: "ranged", range: 4, accuracy: 2, damage: dice2(1, 6, "int", "energy") }
   };
   var SKILLS = {
-    brand: skill("\u7130\u5370", 4, "enemy", { damage: dice(1, 4, "int", "energy"), effects: [status("preset-burn-1", "burn"), status("preset-mark-2", "mark")] }),
+    brand: skill("\u7130\u5370", 4, "enemy", { damage: dice2(1, 4, "int", "energy"), rules: [onHit("brand-status", [apply("burn"), apply("mark")])] }),
     surge: skill("\u65AD\u5CB3\u91CD\u65A9", 1, "enemy", {
       ap: 2,
       mp: 0,
       sp: 4,
       accuracy: 3,
-      damage: dice(3, 6, "str", "physical"),
-      effects: [expression("surge-push", "on_hit", "hitTarget", [{ kind: "knockback", distance: 2, collisionDamage: 7 }]), status("preset-sunder-3", "sunder")]
+      damage: dice2(3, 6, "str", "physical"),
+      rules: [
+        rule("surge-push", "after_hit", [{
+          op: "move",
+          target: "target",
+          mode: "push",
+          distance: 2,
+          collisionDamage: 7,
+          onCollide: [apply("stun", "target", { turns: 1 })]
+        }], "event.actorId == self.id"),
+        onHit("surge-sunder", [apply("sunder")])
+      ]
     }),
-    ward: skill("\u5B88\u9635", 2, "ally", { effects: [status("preset-guard-4", "guard"), status("preset-guarded-5", "guarded")] }),
-    challenge: skill("\u6311\u8845", 4, "enemy", { effects: [status("preset-taunt-6", "taunt")] }),
+    ward: skill("\u5B88\u9635", 2, "ally", { rules: [onHit("ward-status", [apply("guard"), apply("guarded")])] }),
+    challenge: skill("\u6311\u8845", 4, "enemy", { rules: [onHit("challenge-taunt", [apply("taunt")])] }),
     frost: skill("\u788E\u971C\u65B0\u661F", 5, "enemy", {
       ap: 2,
       mp: 5,
@@ -4001,63 +5658,68 @@ var FatedTacticalTavern = (() => {
       radius: 2,
       save: "con",
       saveDC: 14,
-      damage: dice(2, 6, "int", "energy"),
-      effects: [status("preset-freeze-7", "freeze")]
+      damage: dice2(2, 6, "int", "energy"),
+      rules: [onHit("frost-freeze", [apply("freeze")])]
     }),
-    fan: skill("\u8840\u7259\u6247\u65A9", 3, "enemy", { shape: "fan", width: 1, damage: dice(1, 6, "agi", "physical"), effects: [status("preset-bleed-8", "bleed")] }),
+    fan: skill("\u8840\u7259\u6247\u65A9", 3, "enemy", { shape: "fan", width: 1, damage: dice2(1, 6, "agi", "physical"), rules: [onHit("fan-bleed", [apply("bleed")])] }),
     toxin: skill("\u6BD2\u96FE\u9525", 4, "enemy", {
       shape: "cone",
       width: 1,
       save: "con",
       saveDC: 13,
-      damage: dice(1, 4, "int", "mental"),
-      effects: [status("preset-poison-9", "poison"), status("preset-blind-10", "blind")]
+      damage: dice2(1, 4, "int", "mental"),
+      rules: [onHit("toxin-status", [apply("poison"), apply("blind")])]
     }),
     beam: skill("\u8D2F\u661F\u76F4\u7EBF", 6, "enemy", {
       ap: 2,
       mp: 4,
       shape: "line",
       width: 0,
-      damage: dice(2, 8, "int", "energy"),
-      effects: [status("preset-root-11", "root")]
+      damage: dice2(2, 8, "int", "energy"),
+      rules: [onHit("beam-root", [apply("root")])]
     }),
-    blink: skill("\u5F71\u6B65\u80CC\u523A", 5, "enemy", { damage: dice(2, 6, "agi", "physical"), effects: [
-      expression("blink-move", "active", "hitTarget", [{ kind: "teleportBackstab", bonusMultiplier: 0.5 }]),
-      status("preset-bleed-12", "bleed"),
-      status("preset-stealth-13", "stealth", { target: "self" })
-    ] }),
+    blink: skill("\u5F71\u6B65\u80CC\u523A", 5, "enemy", {
+      damage: dice2(2, 6, "agi", "physical"),
+      rules: [
+        rule("blink-move", "before_target", [
+          { op: "for_each", select: { from: "cells", where: "candidate.x == event.backX && candidate.y == event.backY" }, bind: "landing", body: [
+            { op: "move", target: "self", mode: "teleport", to: "vars.landing" },
+            { op: "if", cond: "self.x == event.backX && self.y == event.backY", then: [
+              { op: "mutate_event", patch: { damageScale: 1.5 } }
+            ], else: [{ op: "mutate_event", patch: { cancel: true } }] }
+          ] }
+        ]),
+        rule("blink-advantage", "before_check", [{ op: "mutate_event", patch: { advantageDelta: 1 } }], "event.actorId == self.id && event.checkKind == 'attack'"),
+        onHit("blink-status", [apply("bleed"), apply("stealth", "self")])
+      ]
+    }),
     hymn: skill("\u7FA4\u661F\u5723\u548F", 4, "ally", {
       ap: 2,
       mp: 5,
       shape: "circle",
       radius: 2,
-      heal: dice(2, 4, "spi", "true"),
-      effects: [status("preset-regen-14", "regen")]
+      heal: dice2(2, 4, "spi", "true"),
+      rules: [onHit("hymn-regen", [apply("regen")])]
     }),
-    cleanse: skill("\u51C0\u5316\u7977\u8A00", 4, "ally", { heal: dice(1, 4, "spi", "true"), effects: [expression("cleanse-negative", "on_hit", "hitTarget", [{ kind: "removeStatus", category: "all_negative" }])] }),
-    shift: skill("\u8FC5\u5F71", 0, "ally", { effects: [status("preset-haste-15", "haste"), status("preset-stealth-16", "stealth")] }),
-    armor: skill("\u8346\u58C1\u836F\u5242", 0, "ally", { mp: 0, sp: 3, effects: [status("preset-thorns-17", "thorns"), status("preset-shield-18", "shield", { amount: 6 })] }),
+    cleanse: skill("\u51C0\u5316\u7977\u8A00", 4, "ally", {
+      heal: dice2(1, 4, "spi", "true"),
+      rules: [onHit("cleanse-negative", [
+        { op: "remove_status", target: "target", where: "status.category == 'debuff' || status.category == 'control' || status.category == 'dot'", reason: "cleansed" }
+      ])]
+    }),
+    shift: skill("\u8FC5\u5F71", 0, "ally", { rules: [onHit("shift-status", [apply("haste"), apply("stealth")])] }),
+    armor: skill("\u8346\u58C1\u836F\u5242", 0, "ally", {
+      mp: 0,
+      sp: 3,
+      rules: [onHit("armor-status", [apply("thorns"), apply("shield", "target", { vars: { shieldAmount: 6 } })])]
+    }),
     curse: skill("\u8680\u5FC3\u5492", 4, "enemy", {
       save: "spi",
       saveDC: 13,
-      damage: dice(1, 6, "spi", "mental"),
-      effects: [status("preset-vulnerable-19", "vulnerable")]
+      damage: dice2(1, 6, "spi", "mental"),
+      rules: [onHit("curse-vulnerable", [apply("vulnerable")])]
     })
   };
-
-  // src/core/resource_names.js
-  var BUILTIN_RESOURCES = Object.freeze(["hp", "mp", "sp", "ap", "action", "attack"]);
-  var RESOURCE_NAMES = Object.freeze({
-    hp: "\u751F\u547D",
-    mp: "\u6CD5\u529B",
-    sp: "\u4F53\u529B",
-    ap: "\u884C\u52A8\u70B9",
-    action: "\u52A8\u4F5C",
-    attack: "\u653B\u51FB",
-    souls: "\u9B42\u6570",
-    ammo: "\u5F39\u836F"
-  });
-  var resourceLabel = (name) => Object.hasOwn(RESOURCE_NAMES, name) ? RESOURCE_NAMES[name] : name;
 
   // src/core/battle_time.js
   var timeOfDay = (hour, minute) => {
@@ -4084,7 +5746,11 @@ var FatedTacticalTavern = (() => {
   }
 
   // src/api/validation.js
-  var own2 = Object.hasOwn;
+  function validateRules(rules, state) {
+    list2(rules, 200, (rule2) => validVmRule(rule2, { statusTemplates: state?.statusTemplates }), "VM \u89C4\u5219");
+    requireThat(new Set(rules.map((rule2) => rule2.id)).size === rules.length, "VM \u89C4\u5219 ID \u91CD\u590D");
+  }
+  var own9 = Object.hasOwn;
   var error = (message) => {
     throw new Error(message);
   };
@@ -4092,24 +5758,24 @@ var FatedTacticalTavern = (() => {
     if (!yes) error(`\u65E0\u6548\u5B57\u6BB5\uFF1A${name}`);
   };
   var plain = (v) => v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
-  var id2 = (v) => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(v) && !own2(Object.prototype, v) && v !== "prototype";
+  var id2 = (v) => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(v) && !own9(Object.prototype, v) && v !== "prototype";
   var int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
   var num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
-  var text = (v, max = 100) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
+  var text2 = (v, max = 100) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
   var team = (v) => v === "blue" || v === "red";
-  var coord2 = (v) => int(v, 0, 9);
+  var coord = (v) => int(v, 0, 9);
   var attrs2 = ["str", "agi", "con", "int", "spi"];
   var statusDurations = ["battle_turns", "until_removed", "persistent"];
   var statusTickTimings = ["onTurnStart", "onTurnEnd"];
   var statusStackRules = ["refresh", "stack", "replace"];
   var statusLabels = ["name", "icon", "category", "description"];
   var maxStatusTemplates = 64;
-  var has = (record2, key4) => id2(key4) && own2(record2, key4);
+  var has = (record2, key4) => id2(key4) && own9(record2 ?? {}, key4);
   function fields(v, required, optional = []) {
-    requireThat(plain(v) && required.every((k) => own2(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
+    requireThat(plain(v) && required.every((k) => own9(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
   }
   function checkOptional(o, key4, check) {
-    if (own2(o, key4)) requireThat(check(o[key4]), key4);
+    if (own9(o, key4)) requireThat(check(o[key4]), key4);
   }
   function table2(v, test, max = 200) {
     requireThat(plain(v) && Object.keys(v).length <= max, "\u5B9E\u4F53\u8868");
@@ -4118,10 +5784,10 @@ var FatedTacticalTavern = (() => {
       test(value, k);
     }
   }
-  function list(v, max, check, key4) {
+  function list2(v, max, check, key4) {
     requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key4);
   }
-  function dice2(v) {
+  function dice3(v) {
     fields(v, ["count", "sides"], ["bonus", "stat", "multiplier", "type"]);
     requireThat(int(v.count, 0, 1e6) && int(v.sides, 0, 1e6) && (v.count === 0 || v.sides >= 1), "\u4F24\u5BB3\u9AB0");
     checkOptional(v, "bonus", (x) => int(x, -1e9, 1e9));
@@ -4129,85 +5795,99 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "multiplier", (x) => num(x, 0, 8));
     checkOptional(v, "type", (x) => damageTypes.includes(x));
   }
+  var damageEvents = ["on_attack", "on_hit", "on_damaged", "on_kill", "on_death", "on_turn_start", "on_turn_end", "on_skill_cast", "on_equip", "on_heal", "on_ally_death", "on_struck"];
+  function nativeExpiry(value) {
+    const valid2 = (rule2) => plain(rule2) && damageEvents.includes(rule2.trigger) && Object.keys(rule2).every((key4) => ["trigger", "exceptSource", "damageType"].includes(key4)) && (!own9(rule2, "exceptSource") || rule2.exceptSource === "self") && (!own9(rule2, "damageType") || rule2.trigger === "on_damaged" && ["any", "direct", "indirect"].includes(rule2.damageType));
+    return Array.isArray(value) ? value.length <= 12 && Array.from(value).every(valid2) : valid2(value);
+  }
+  var vmExpiry = (value) => plain(value) && vmHooks.includes(value.hook) && Object.keys(value).every((key4) => ["hook", "filter"].includes(key4)) && (!own9(value, "filter") || typeof value.filter === "boolean" || typeof value.filter === "string" && validExpr(value.filter));
+  var stackModes = ["refresh", "stack", "replace", "extend"];
+  var carrierFields = ["tags", "tier", "vars", "mods", "rules"];
+  var numericExpr2 = (value) => Number.isFinite(value) || typeof value === "string" && validExpr(value);
+  function carrierFieldsValue(value, state, resolved = false) {
+    if (own9(value, "tags")) list2(value.tags, 32, resolved ? (tag2) => text2(tag2) : validVmTag, "VM \u6807\u7B7E");
+    checkOptional(value, "tier", (tier) => int(tier, 1, 7));
+    if (own9(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : typeof entry2 === "boolean" || numericExpr2(entry2), "VM \u53D8\u91CF"));
+    if (own9(value, "mods")) list2(value.mods, 200, (mod2) => validVmStatMod(mod2), "VM \u4FEE\u9970");
+    if (own9(value, "rules")) validateRules(value.rules, state);
+  }
+  function poolDefinitions(value) {
+    table2(value, (definition) => {
+      fields(definition, ["cap"], ["initial", "reloadable"]);
+      requireThat(numericExpr2(definition.cap) && (typeof definition.cap !== "number" || definition.cap >= 0), "\u8D44\u6E90\u6C60\u4E0A\u9650");
+      checkOptional(definition, "initial", (initial) => numericExpr2(initial) && (typeof initial !== "number" || initial >= 0 && (typeof definition.cap !== "number" || initial <= definition.cap)));
+      checkOptional(definition, "reloadable", (flag) => typeof flag === "boolean");
+    });
+  }
+  var validPoolId = (value) => typeof value === "string" && /^pool_[A-Za-z0-9_-]{1,250}$/.test(value);
+  function poolBindings(value) {
+    table2(value, (poolId) => requireThat(validPoolId(poolId), "\u8D44\u6E90\u6C60 ID"));
+  }
+  function statusTemplate(value, key4 = value?.id, state) {
+    fields(value, ["id", "name"], ["icon", "category", "description", "remainingTurns", "durationType", "stackMode", "maxStacks", "expireOn", ...carrierFields]);
+    requireThat(id2(key4) && key4 === value.id && text2(value.name), "VM \u72B6\u6001 ID/\u540D\u79F0");
+    checkOptional(value, "icon", (icon) => text2(icon, 24));
+    checkOptional(value, "description", (description) => text2(description, 300));
+    checkOptional(value, "category", (category) => text2(category, 32));
+    checkOptional(value, "remainingTurns", (turns2) => int(turns2, 1, 100));
+    checkOptional(value, "durationType", (duration2) => statusDurations.includes(duration2));
+    checkOptional(value, "stackMode", (mode) => stackModes.includes(mode));
+    checkOptional(value, "maxStacks", (stacks) => int(stacks, 1, 10));
+    checkOptional(value, "expireOn", vmExpiry);
+    carrierFieldsValue(value, state);
+  }
   function statusLifetime(v) {
     return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
   }
-  function statusTemplate(v, key4 = v?.id) {
+  function nativeStatusTemplate(v, key4) {
     fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers"], ["expireInto", "expireOn"]);
     checkOptional(v, "expireInto", id2);
-    checkOptional(v, "expireOn", validExpireOn);
+    checkOptional(v, "expireOn", nativeExpiry);
     requireThat(id2(key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
-    requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
+    requireThat(text2(v.name) && text2(v.icon, 24) && text2(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
     requireThat(statusLifetime(v) && int(v.maxStacks, 1, 10), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
-    requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own2(v.modifiers, "damageType") || own2(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
+    requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own9(v.modifiers, "damageType") || own9(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
     validateStatusModifiers(v, v.modifiers);
-    requireThat(key4 !== actionStatuses.shield || own2(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
+    requireThat(key4 !== actionStatuses.shield || own9(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
   }
   function statusTemplateTable(v) {
-    table2(v, statusTemplate, maxStatusTemplates);
+    const state = { statusTemplates: v };
+    table2(v, (template, key4) => {
+      if (own9(template ?? {}, "modifiers")) nativeStatusTemplate(template, key4);
+      else statusTemplate(template, key4, state);
+    }, maxStatusTemplates);
     for (const t of Object.values(v)) if (t.expireInto) {
       const next = getStatusTemplate({ statusTemplates: v }, t.expireInto);
       requireThat(t.durationType === "battle_turns" && t.remainingTurns === 1 && t.expireInto !== t.id && next && !next.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
     }
   }
   function defineStatus(state, key4, template) {
-    requireThat(plain(template) && (!own2(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
+    requireThat(plain(template) && (!own9(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
     const definition = { ...template, id: key4 };
-    statusTemplate(definition, key4);
-    requireThat(!own2(state.statusTemplates ?? {}, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
+    statusTemplate(definition, key4, { statusTemplates: { ...state.statusTemplates, [key4]: definition } });
+    requireThat(!own9(state.statusTemplates ?? {}, key4) && !own9(STATUSES, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
     requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, "\u81EA\u5B9A\u4E49\u72B6\u6001\u6A21\u677F\u6570\u91CF");
     (state.statusTemplates ??= {})[key4] = structuredClone(definition);
     return structuredClone(definition);
   }
-  var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key4, amount2]) => ["hp", "mp", "sp"].includes(key4) && int(amount2, 0, 25e3)));
-  function validateEffect(e, state) {
-    requireThat(isExpression(e) && validExpression(e), "DSL expression");
-    if (Array.isArray(e.roll?.save)) requireThat(e.roll.mode && new Set(e.roll.save).size === e.roll.save.length, "DSL save mode");
-    else requireThat(!e.roll?.mode, "DSL save mode");
-    for (const node3 of effectNodes(e.effects)) {
-      if (node3.kind === "spawnUnit" && state) {
-        const skills = node3.skills ?? [];
-        requireThat(skills.every((k) => has(state.skills, k)) && new Set(skills).size === skills.length, "spawnUnit \u6280\u80FD\u5F15\u7528");
-        for (const [slot, ids] of [["hand", [node3.mainHand, node3.offHand]], ["shield", [node3.shield]], ["gear", node3.gear ?? []]]) {
-          for (const k of ids.filter(Boolean)) {
-            requireThat(has(state.equipment, k), "spawnUnit \u88C5\u5907\u6A21\u677F\u5F15\u7528");
-            const t = state.equipment[k];
-            requireThat(slot === "shield" ? t.kind === "shield" : slot === "gear" ? ["armor", "accessory", "consumable"].includes(t.kind) : t.kind === "consumable" || (!t.kind || t.kind === "weapon") && !!t.damage, "spawnUnit \u88C5\u5907\u69FD");
-          }
-        }
-      }
-      if (node3.kind === "removeStatus") requireThat(Boolean(node3.statusId) !== Boolean(node3.category), "DSL removeStatus selector");
-      if (node3.statusId) {
-        const template = getStatusTemplate(state, node3.statusId);
-        requireThat(template, `DSL status ${node3.statusId}`);
-        if (node3.modifiers) validateStatusModifiers(template, node3.modifiers);
-        if (node3.stacks && (!has(STATUSES, node3.statusId) || has(state?.statusTemplates ?? {}, node3.statusId))) requireThat(node3.stacks <= template.maxStacks, "DSL status stacks");
-        if (node3.amount != null) requireThat(own2(template.modifiers, "amount") && int(node3.amount, 1, 1e4), "DSL status amount");
-      }
-      if (node3.local && ["produceResource", "restoreResource", "drainResource"].includes(node3.kind)) {
-        requireThat(!BUILTIN_RESOURCES.includes(node3.resource), `DSL \u5B9E\u4F8B\u8BA1\u6570\u5668\u4E0D\u80FD\u4F7F\u7528\u5185\u7F6E\u8D44\u6E90 ${node3.resource}`);
-      }
-      if (node3.initial != null) requireThat(node3.cap != null && node3.initial <= node3.cap, "DSL resource initial");
-    }
-  }
-  function effects(v, state) {
-    requireThat(Array.isArray(v) && v.length <= 24, "effects");
-    const seen = /* @__PURE__ */ new Set();
-    for (const e of v) {
-      validateEffect(e, state);
-      requireThat(!seen.has(e.id), "\u91CD\u590D\u7279\u6548");
-      seen.add(e.id);
-    }
+  var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key4, amount]) => ["hp", "mp", "sp"].includes(key4) && int(amount, 0, 25e3)));
+  function validSaveDC(value) {
+    if (int(value, 1, 50)) return true;
+    return plain(value) && own9(value, "base") && own9(value, "scaleBy") && Object.keys(value).every((key4) => ["base", "scaleBy", "min", "max"].includes(key4)) && num(value.base, -1e9, 1e9) && plain(value.scaleBy) && Object.keys(value.scaleBy).length === 2 && own9(value.scaleBy, "stat") && own9(value.scaleBy, "perUnit") && attrs2.includes(value.scaleBy.stat) && num(value.scaleBy.perUnit, -1e9, 1e9) && (!own9(value, "min") || num(value.min, 1, 1e9)) && (!own9(value, "max") || num(value.max, 1, 1e9)) && (value.min ?? 1) <= (value.max ?? 50);
   }
   function validateAreaDimensions(v) {
     for (const key4 of ["radius", "innerRadius", "width"]) checkOptional(v, key4, (x) => Number.isFinite(x) && x >= 0 && x <= 6);
     checkOptional(v, "angle", (x) => int(x, 1, 360));
   }
   function equipmentTemplate(v, state) {
-    fields(v, ["name", "effects"], ["quality", "kind", "weaponClass", "hand", "rangeType", "ranged", "heavy", "twoHanded", "shield", "range", "accuracy", "attack", "damage", "armor", "defense", "boundTo", "weaponType", "shape", "target", "radius", "innerRadius", "width", "angle"]);
+    fields(v, ["name"], ["quality", "kind", "weaponClass", "hand", "rangeType", "ranged", "heavy", "twoHanded", "shield", "range", "accuracy", "attack", "damage", "armor", "defense", "boundTo", "weaponType", "shape", "target", "radius", "innerRadius", "width", "angle", ...carrierFields, "pools", "skills"]);
+    if (own9(v, "skills")) {
+      list2(v.skills, 32, (skillId) => state ? has(state.skills, skillId) : id2(skillId), "\u88C5\u5907\u6280\u80FD");
+      requireThat(new Set(v.skills).size === v.skills.length, "\u91CD\u590D\u88C5\u5907\u6280\u80FD");
+    }
     checkOptional(v, "boundTo", id2);
-    checkOptional(v, "weaponType", text);
-    requireThat(text(v.name), "name");
+    checkOptional(v, "weaponType", text2);
+    requireThat(text2(v.name), "name");
     checkOptional(v, "quality", (x) => ["\u552F\u4E00", "\u666E\u901A", "\u4F18\u826F", "\u7A00\u6709", "\u53F2\u8BD7", "\u4F20\u8BF4", "\u795E\u8BDD"].includes(x));
     checkOptional(v, "range", (x) => int(x, 1, 15));
     checkOptional(v, "attack", (x) => int(x, 0, 1e9));
@@ -4222,88 +5902,95 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "shape", (x) => ["single", "circle", "ring", "fan", "cone", "line"].includes(x));
     checkOptional(v, "target", (x) => ["enemy", "ally", "self", "any", "cell"].includes(x));
     validateAreaDimensions(v);
-    if (own2(v, "damage")) dice2(v.damage);
-    requireThat(own2(v, "range") === own2(v, "damage"), "\u6B66\u5668 range/damage");
-    effects(v.effects, state);
-    const pools = resourceDefinitions(v);
-    requireThat(new Set(pools.map((pool) => pool.resource)).size === pools.length, "DSL \u91CD\u590D\u8D44\u6E90\u6C60");
+    if (own9(v, "damage")) dice3(v.damage);
+    requireThat(own9(v, "range") === own9(v, "damage"), "\u6B66\u5668 range/damage");
+    carrierFieldsValue(v, state);
+    if (own9(v, "pools")) poolDefinitions(v.pools);
   }
   function skillTemplate(v, state) {
-    fields(v, ["name", "ap", "slot", "range", "shape", "target", "effects"], ["quality", "power", "mp", "sp", "radius", "innerRadius", "width", "angle", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType", "backpackItem"]);
+    fields(v, ["name", "ap", "slot", "range", "shape", "target"], ["quality", "power", "mp", "sp", "radius", "innerRadius", "width", "angle", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType", "backpackItem", ...carrierFields, "pools"]);
+    carrierFieldsValue(v, state);
+    if (own9(v, "pools")) poolDefinitions(v.pools);
     checkOptional(v, "backpackItem", (flag) => flag === true && v.ap === 1 && v.slot === "action");
     checkOptional(v, "damageType", (type) => damageTypes.includes(type));
-    checkOptional(v, "school", text);
+    checkOptional(v, "school", text2);
     checkOptional(v, "resourceCost", resourceCost);
-    requireThat(text(v.name) && int(v.ap, 1, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 15) && ["single", "circle", "ring", "fan", "cone", "line"].includes(v.shape) && ["enemy", "ally", "self", "any", "corpse", "cell"].includes(v.target), "\u6280\u80FD");
+    requireThat(text2(v.name) && int(v.ap, 1, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 15) && ["single", "circle", "ring", "fan", "cone", "line"].includes(v.shape) && ["enemy", "ally", "self", "any", "corpse", "cell"].includes(v.target), "\u6280\u80FD");
     checkOptional(v, "power", (x) => int(x, 0, 1e9));
     for (const k of ["mp", "sp"]) checkOptional(v, k, (x) => int(x, 0, 25e3));
     validateAreaDimensions(v);
     checkOptional(v, "accuracy", (x) => int(x, -20, 30));
     checkOptional(v, "save", (x) => attrs2.includes(x));
-    checkOptional(v, "saveDC", validSaveDC);
-    requireThat(own2(v, "save") === own2(v, "saveDC"), "save/saveDC");
-    for (const k of ["damage", "heal"]) if (own2(v, k)) dice2(v[k]);
-    effects(v.effects, state);
+    checkOptional(v, "saveDC", (dc) => validSaveDC(dc) || typeof dc === "string" && validExpr(dc));
+    requireThat(own9(v, "save") === own9(v, "saveDC"), "save/saveDC");
+    for (const k of ["damage", "heal"]) if (own9(v, k)) dice3(v[k]);
   }
-  function statusValue(v, key4, state) {
+  function statusValue(v, key4, state, ownerId) {
+    if (own9(v ?? {}, "templateId")) {
+      const { templateId, ownerId: owner, sourceId: sourceId2, stacks, pools, ...rest } = v;
+      const template = getStatusTemplate(state, key4);
+      const { vars, modifiers: modifiers2, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
+      if (template?.modifiers) {
+        if (own9(definition, "expireOn") && nativeExpiry(definition.expireOn)) delete definition.expireOn;
+        if (own9(rest, "modifiers")) validateStatusModifiers(template, modifiers2);
+        if (own9(rest, "stackRule")) requireThat(statusStackRules.includes(stackRule), "\u539F\u751F\u72B6\u6001\u53E0\u5C42");
+        if (own9(rest, "tickTiming")) requireThat(statusTickTimings.includes(tickTiming), "\u539F\u751F\u72B6\u6001\u65F6\u673A");
+        if (own9(rest, "expireInto")) requireThat(expireInto === template.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
+        if (own9(rest, "amount")) requireThat(own9(template.modifiers, "amount") && num(amount, 0, 1e9), "\u62A4\u76FE\u6C60");
+      } else requireThat(["modifiers", "stackRule", "tickTiming", "expireInto", "amount"].every((field) => !own9(rest, field)), "VM \u72B6\u6001\u5B57\u6BB5");
+      statusTemplate(definition, key4, state);
+      requireThat(templateId === key4 && template && id2(owner) && (ownerId === void 0 || owner === ownerId) && (sourceId2 === null || id2(sourceId2)) && int(stacks, 1, template.maxStacks ?? 1) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes.includes(v.stackMode), "VM \u72B6\u6001\u5B9E\u4F8B");
+      if (own9(v, "vars")) table2(vars, (entry2) => requireThat(jsonTree(entry2), "VM \u72B6\u6001\u53D8\u91CF"));
+      if (own9(v, "pools")) poolBindings(pools);
+      return;
+    }
     const t = getStatusTemplate(state, key4);
-    requireThat(id2(key4) && t, "\u72B6\u6001 ID");
-    fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers", "stacks", "sourceUnitId"], ["appliedRound", "appliedTurn", "amount", "expireInto", "expireOn", "holdTotal"]);
+    requireThat(id2(key4) && t?.modifiers, "\u72B6\u6001 ID");
+    fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers", "stacks", "sourceUnitId"], ["appliedRound", "appliedTurn", "amount", "expireInto", "expireOn", "holdTotal", "stackMode", ...carrierFields]);
+    checkOptional(v, "stackMode", (mode) => stackModes.includes(mode));
+    carrierFieldsValue(v, state, true);
     checkOptional(v, "holdTotal", (x) => v.id === "suppressed" && Number.isFinite(x));
-    checkOptional(v, "expireOn", (x) => x === null || validExpireOn(x));
+    checkOptional(v, "expireOn", (x) => x === null || nativeExpiry(x));
     requireThat(v.expireInto === t.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
     requireThat(v.id === key4 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, t.maxStacks) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
     fields(v.modifiers, Object.keys(t.modifiers));
     validateStatusModifiers(t, v.modifiers);
     checkOptional(v, "appliedRound", (x) => int(x, 1, 1e6));
     checkOptional(v, "appliedTurn", (x) => int(x, 0, 199));
-    requireThat(own2(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own2(v, "amount"), "\u62A4\u76FE\u6C60");
+    requireThat(own9(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own9(v, "amount"), "\u62A4\u76FE\u6C60");
   }
   function validateCell(v) {
     fields(v, ["kind", "z"]);
     requireThat(["floor", "slope", "wall"].includes(v.kind) && int(v.z, -4, 8), "\u5730\u5F62");
   }
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
-  var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "deathrattle", "deathrattleTriggered", "moraleCheckedRound", "maneuvers"];
+  var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
   function unitValue(v, key4, state) {
-    fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "tags", "resources", "inventory", "bagWeapons", "effectUsage", "effectModifiers", "altitude"]);
-    if (own2(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
+    fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "summonGroup"]);
+    carrierFieldsValue(v, state, true);
+    if (own9(v, "pools")) poolBindings(v.pools);
+    for (const k of ["templateId", "sourceId"]) checkOptional(v, k, id2);
+    checkOptional(v, "summonGroup", (group) => text2(group, 512));
+    if (own9(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
     for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
     checkOptional(v, "corpseOf", id2);
     checkOptional(v, "diedAt", (x) => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
-    checkOptional(v, "creatureType", (x) => text(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every((t) => text(t)));
-    if (own2(v, "tags")) list(v.tags, 32, (x) => text(x), "tags");
-    for (const k of ["resources", "inventory"]) if (own2(v, k)) table2(v[k], (x) => requireThat(int(x, 0, 1e9), k));
-    for (const k of ["effectUsage", "effectModifiers"]) if (own2(v, k)) {
-      requireThat(plain(v[k]) && Object.keys(v[k]).length <= 1e3 && jsonTree(v[k]), k);
-      for (const entry of Object.values(v[k])) {
-        if (k === "effectUsage") {
-          fields(entry, ["count", "round"]);
-          requireThat(int(entry.count, 1, 1e6) && int(entry.round, 1, state.round), k);
-        } else {
-          fields(entry, ["stat", "flat", "percent", "turns", "round", "turn"], ["damageType"]);
-          checkOptional(entry, "damageType", (x) => damageTypes.includes(x));
-          requireThat(int(entry.round, 1, state.round) && int(entry.turn, 0, 199), k);
-          requireThat(text(entry.stat) && num(entry.flat, -1e9, 1e9) && num(entry.percent, -1, 10) && int(entry.turns, 1, 100), k);
-        }
-      }
-    }
+    checkOptional(v, "creatureType", (x) => text2(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every((t) => text2(t)));
+    for (const k of ["resources", "inventory"]) if (own9(v, k)) table2(v[k], (x) => requireThat(int(x, 0, 1e9), k));
     checkOptional(v, "reactionAvailable", (x) => typeof x === "boolean");
-    requireThat(v.id === key4 && text(v.name) && team(v.team) && coord2(v.x) && coord2(v.y), "\u68CB\u5B50");
-    list(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
+    requireThat(v.id === key4 && text2(v.name) && team(v.team) && coord(v.x) && coord(v.y), "\u68CB\u5B50");
+    list2(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
     requireThat(v.facing.length === 2 && v.facing.some(Boolean), "\u671D\u5411");
-    for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat(int(v[max], r === "hp" ? 1 : 0, 1e9) && int(v[r], 0, v[max]), r);
+    for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat((v.pools ? num : int)(v[max], r === "hp" ? 1 : 0, 1e9) && (v.pools ? num : int)(v[r], 0, v[max]), r);
     fields(v.used, ["action", "attack"]);
     fields(v.stats, attrs2);
     requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 1, 10), "\u5355\u4F4D\u6570\u503C");
     requireThat(v.weapon === null || id2(v.weapon), "weapon");
-    for (const slot of ["mainHand", "offHand", "shield"]) checkOptional(v, slot, (x) => x === null || id2(x));
+    for (const slot2 of ["mainHand", "offHand", "shield"]) checkOptional(v, slot2, (x) => x === null || id2(x));
     checkOptional(v, "bodyLengthM", (x) => num(x, 0.01, 1e9));
     checkOptional(v, "tier", (x) => int(x, 1, 7));
     checkOptional(v, "mc", (x) => int(x, 1, 64));
     checkOptional(v, "nonLethal", (x) => typeof x === "boolean");
-    checkOptional(v, "deathrattle", (x) => plain(x) && typeof x.kind === "string");
-    checkOptional(v, "deathrattleTriggered", (x) => typeof x === "boolean");
     checkOptional(v, "moraleCheckedRound", (x) => int(x, 1, 1e6));
     checkOptional(v, "maneuvers", (x) => Array.isArray(x) && x.length <= 32 && x.every(id2));
     checkOptional(v, "initiativePercent", (x) => num(x, -1, 10));
@@ -4322,36 +6009,109 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "parryRefunded", (x) => typeof x === "boolean");
     checkOptional(v, "attunementCharges", (x) => int(x, 0, 2));
     checkOptional(v, "blockMode", (x) => ["normal", "heavy"].includes(x));
-    if (own2(v, "bagWeapons")) list(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
-    list(v.gear, 12, id2, "gear");
-    list(v.skills, 32, id2, "skills");
-    table2(v.statuses, (status2, statusId2) => statusValue(status2, statusId2, state), maxStatusTemplates + Object.keys(STATUSES).length);
+    if (own9(v, "bagWeapons")) list2(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
+    list2(v.gear, 12, id2, "gear");
+    list2(v.skills, 32, id2, "skills");
+    table2(v.statuses, (status, statusId3) => statusValue(status, statusId3, state, key4), maxStatusTemplates + Object.keys(STATUSES).length);
   }
   function jsonTree(v, depth = 0) {
     if (depth > 12) return false;
     if (v === null || ["string", "boolean"].includes(typeof v) || Number.isFinite(v)) return true;
     if (Array.isArray(v)) return v.length <= 500 && Array.from(v).every((x) => jsonTree(x, depth + 1));
-    return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own2(Object.prototype, key4) && jsonTree(x, depth + 1));
+    return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own9(Object.prototype, key4) && jsonTree(x, depth + 1));
+  }
+  function pointValue(value) {
+    return plain(value) && Object.keys(value).length === 2 && coord(value.x) && coord(value.y);
+  }
+  function zoneValue(value, key4, state) {
+    fields(value, ["id", "name", "area", "follow", "persistent", "remainingTurns"], ["templateId", "sourceId", "anchorPosition", "pools", ...carrierFields]);
+    requireThat(id2(key4) && value.id === key4 && text2(value.name), "VM \u533A\u57DF ID/\u540D\u79F0");
+    checkOptional(value, "templateId", id2);
+    checkOptional(value, "sourceId", (source) => source === null || id2(source));
+    carrierFieldsValue(value, state, true);
+    if (own9(value, "pools")) poolBindings(value.pools);
+    const { area: area3, follow, persistent, remainingTurns } = value;
+    requireThat(validVmOpcode({ op: "spawn", entityKind: "zone", spec: { area: area3, follow, persistent, remainingTurns } }), "VM \u533A\u57DF");
+    if (["circle", "ring"].includes(area3.shape)) requireThat(pointValue(area3.center) && Number.isFinite(area3.radius), "VM \u533A\u57DF\u5706\u5FC3/\u534A\u5F84");
+    else checkOptional(area3, "center", pointValue);
+    if (area3.cells) requireThat(area3.cells.length <= 100 && area3.cells.every(pointValue), "VM \u533A\u57DF\u683C");
+    if (area3.rect) requireThat(Object.values(area3.rect).every(coord), "VM \u533A\u57DF\u77E9\u5F62");
+    requireThat(follow ? id2(area3.anchorUnitId) && pointValue(value.anchorPosition) : !own9(area3, "anchorUnitId") && !own9(value, "anchorPosition"), "VM \u533A\u57DF\u951A\u70B9");
+  }
+  function tapeValue(tape, state) {
+    let seq = 0;
+    let round = 1;
+    list2(tape, 1e5, (record2) => {
+      fields(record2, ["seq", "round", "turn", "actorId", "team", "actionType", "skillId", "targetSpec", "origin"]);
+      requireThat(Number.isSafeInteger(record2.seq) && record2.seq === seq + 1 && int(record2.round, round, state.round) && int(record2.turn, 0, 199) && id2(record2.actorId) && team(record2.team) && ["skill", "attack", "move"].includes(record2.actionType) && (record2.actionType === "skill" ? has(state.skills, record2.skillId) : record2.skillId === null), "VM \u78C1\u5E26\u8BB0\u5F55");
+      const { targetSpec } = record2;
+      fields(targetSpec, ["x", "y", "targetId", "answers"], ["z"]);
+      requireThat(coord(targetSpec.x) && coord(targetSpec.y) && (targetSpec.targetId === null || id2(targetSpec.targetId)), "VM \u78C1\u5E26\u76EE\u6807");
+      checkOptional(targetSpec, "z", (z) => int(z, -4, 20));
+      list2(targetSpec.answers, 2e3, (answer) => id2(answer) || Number.isFinite(answer) || pointValue(answer), "VM \u78C1\u5E26\u7B54\u6848");
+      requireThat(pointValue(record2.origin), "VM \u78C1\u5E26\u8D77\u70B9");
+      seq = record2.seq;
+      round = record2.round;
+      return true;
+    }, "VM \u78C1\u5E26");
+  }
+  function validatePools(state) {
+    const bindings = /* @__PURE__ */ new Map();
+    const add = (ownerKind, owner) => {
+      for (const [key4, poolId] of Object.entries(owner.pools ?? {})) {
+        const kind = ownerKind === "unit" && ["hp", "mp", "sp"].includes(key4) ? key4 : "custom";
+        const owners = bindings.get(poolId) ?? /* @__PURE__ */ new Map();
+        const ownerKey = `${ownerKind}/${owner.id}`;
+        requireThat(!owners.has(ownerKey), "\u8D44\u6E90\u6C60\u91CD\u590D\u7ED1\u5B9A");
+        owners.set(ownerKey, kind);
+        bindings.set(poolId, owners);
+      }
+    };
+    for (const unit of Object.values(state.units)) {
+      add("unit", unit);
+      for (const status of Object.values(unit.statuses)) add("status", status);
+    }
+    for (const [kind, collection] of [["item", state.items], ["zone", state.zones ?? {}]]) {
+      for (const owner of Object.values(collection)) add(kind, owner);
+    }
+    const pools = own9(state, "pools") ? state.pools : {};
+    requireThat(plain(pools) && Object.keys(pools).length <= 1e4, "\u8D44\u6E90\u6C60\u8868");
+    for (const [key4, pool] of Object.entries(pools)) {
+      fields(pool, ["id", "kind", "contributors", "current", "max", "reloadable"]);
+      requireThat(validPoolId(key4) && pool.id === key4 && ["hp", "mp", "sp", "custom"].includes(pool.kind) && num(pool.max, 0, Number.MAX_VALUE) && num(pool.current, 0, pool.max) && typeof pool.reloadable === "boolean", "\u8D44\u6E90\u6C60");
+      const owners = bindings.get(key4);
+      requireThat(owners?.size > 0 && (pool.kind !== "custom" || owners.size === 1), "\u8D44\u6E90\u6C60\u5F52\u5C5E");
+      list2(pool.contributors, 200, (contribution) => {
+        fields(contribution, ["ownerKind", "ownerId", "maxBase"]);
+        const ownerKey = `${contribution.ownerKind}/${contribution.ownerId}`;
+        return id2(contribution.ownerId) && owners.get(ownerKey) === pool.kind && num(contribution.maxBase, 0, Number.MAX_VALUE) && owners.delete(ownerKey);
+      }, "\u8D44\u6E90\u6C60\u8D21\u732E\u8005");
+      requireThat(owners.size === 0, "\u8D44\u6E90\u6C60\u7ED1\u5B9A");
+      bindings.delete(key4);
+    }
+    requireThat(bindings.size === 0, "\u8D44\u6E90\u6C60\u5F15\u7528");
+    for (const unit of Object.values(state.units)) {
+      for (const [kind, maxKey] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
+        const pool = pools[unit.pools?.[kind]];
+        if (pool) requireThat(pool.current === unit[kind] && pool.max === unit[maxKey], "\u539F\u751F\u8D44\u6E90\u955C\u50CF");
+      }
+    }
   }
   function validateState(s) {
-    fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "effectTemplates", "summonTemplates", "terrainPatches", "battleType", "battleConclusion", "suppressingTeam"]);
+    fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape"]);
     requireThat(s.battleType === "suppress" ? ["blue", "red"].includes(s.suppressingTeam) : s.suppressingTeam === void 0, "\u538B\u5236\u65B9");
     checkOptional(s, "battleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
     checkOptional(s, "battleConclusion", (x) => typeof x === "string" && x.trim().length > 0 && s.outcome != null);
-    if (own2(s, "time")) {
+    if (own9(s, "time")) {
       fields(s.time, ["raw", "hour", "minute", "timeOfDay", "calendar"]);
-      requireThat(text(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
+      requireThat(text2(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
     }
-    if (own2(s, "effectTemplates")) table2(s.effectTemplates, (e, key4) => {
-      requireThat(isExpression(e) && e.id === key4, "effectTemplates");
-      validateEffect(e, s);
-    });
-    if (own2(s, "summonTemplates")) table2(s.summonTemplates, (u, key4) => {
+    if (own9(s, "summonTemplates")) table2(s.summonTemplates, (u, key4) => {
       unitValue(u, key4, s);
       requireThat(u.skills.every((skill2) => has(s.skills, skill2)), "summon skills");
     });
-    if (own2(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
-    requireThat(id2(s.scenarioId) && text(s.title) && s.mode === "split" && ["protocol", "sandbox"].includes(s.ruleset) && int(s.round, 1, 1e6) && int(s.rng, 0, 4294967295) && [null, "blue", "red", "draw"].includes(s.outcome), "\u6218\u5C40");
+    if (own9(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
+    requireThat(id2(s.scenarioId) && text2(s.title) && s.mode === "split" && ["protocol", "sandbox"].includes(s.ruleset) && int(s.round, 1, 1e6) && int(s.rng, 0, 4294967295) && [null, "blue", "red", "draw"].includes(s.outcome), "\u6218\u5C40");
     requireThat(Array.isArray(s.grid) && s.grid.length === 10, "\u68CB\u76D8");
     for (const row of s.grid) {
       requireThat(Array.isArray(row) && row.length === 10, "\u68CB\u76D8\u884C");
@@ -4359,103 +6119,74 @@ var FatedTacticalTavern = (() => {
     }
     table2(s.equipment, (v) => equipmentTemplate(v, s));
     table2(s.skills, (v) => skillTemplate(v, s));
-    const expressions = [...Object.values(s.effectTemplates ?? {}), ...[...Object.values(s.equipment), ...Object.values(s.skills)].flatMap((t) => t.effects.filter(isExpression))];
-    const byId4 = new Map(expressions.map((expr) => [expr.id, expr]));
-    requireThat(byId4.size === expressions.length, "DSL \u5168\u5C40\u6548\u679C ID \u91CD\u590D");
-    const checked = /* @__PURE__ */ new Set();
-    function checkReferences(expr, path = /* @__PURE__ */ new Set()) {
-      requireThat(!path.has(expr.id), `DSL \u5FAA\u73AF\u5F15\u7528 ${expr.id}`);
-      if (checked.has(expr.id)) return;
-      path.add(expr.id);
-      for (const node3 of effectNodes(expr.effects)) if (node3.kind === "procEffect") {
-        requireThat(byId4.has(node3.ref), `DSL \u672A\u77E5\u5F15\u7528 ${node3.ref}`);
-        checkReferences(byId4.get(node3.ref), path);
-      }
-      path.delete(expr.id);
-      checked.add(expr.id);
-    }
-    expressions.forEach((expr) => checkReferences(expr));
     table2(s.items, (v, k) => {
-      fields(v, ["id", "templateId", "counters"]);
+      fields(v, ["id", "templateId"], ["name", "sourceId", "ownerId", "counters", "pools", ...carrierFields]);
       requireThat(v.id === k && has(s.equipment, v.templateId), "\u88C5\u5907\u5B9E\u4F8B");
-      const counters = resourceDefinitions(s.equipment[v.templateId]);
-      fields(v.counters, counters.map((e) => e.resource));
-      for (const e of counters) requireThat(int(v.counters[e.resource], 0, e.cap), "\u8BA1\u6570\u5668");
+      checkOptional(v, "name", text2);
+      checkOptional(v, "sourceId", (source) => source === null || id2(source));
+      checkOptional(v, "ownerId", (owner) => owner === null || id2(owner));
+      carrierFieldsValue(v, s, true);
+      if (own9(v, "counters")) table2(v.counters, (value) => requireThat(int(value, 0, 1e9), "\u539F\u751F\u8BA1\u6570\u5668"));
+      if (own9(v, "pools")) poolBindings(v.pools);
     });
     table2(s.covers, (v, k) => {
       fields(v, ["id", "name", "x", "y", "material", "hp", "maxHp", "cover"], ["z"]);
-      requireThat(!own2(v, "z") || int(v.z, -4, 8), "\u63A9\u4F53\u9AD8\u5EA6");
-      requireThat(v.id === k && text(v.name) && text(v.material) && coord2(v.x) && coord2(v.y) && s.grid[v.y][v.x].kind !== "wall" && int(v.maxHp, 1, 1e9) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), "\u63A9\u4F53");
+      requireThat(!own9(v, "z") || int(v.z, -4, 8), "\u63A9\u4F53\u9AD8\u5EA6");
+      requireThat(v.id === k && text2(v.name) && text2(v.material) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== "wall" && int(v.maxHp, 1, 1e9) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), "\u63A9\u4F53");
     });
-    table2(s.zones ?? {}, (v, k) => {
-      fields(v, ["id", "name", "x", "y", "radius", "remainingTurns", "damage", "damageType", "team"]);
-      requireThat(v.id === k && text(v.name) && coord2(v.x) && coord2(v.y) && int(v.radius, 0, 10) && int(v.remainingTurns, 1, 100) && int(v.damage, 0, 1e9) && ["physical", "energy", "mental", "true"].includes(v.damageType) && ["blue", "red", "all"].includes(v.team), "\u6301\u7EED\u533A\u57DF");
-    }, 64);
-    table2(s.terrainPatches ?? {}, (v, k) => {
-      fields(v, ["id", "name", "node", "remainingTurns", "persistent", "patch", "covers"], ["anchorUnitId", "center"]);
-      requireThat(v.id === k && text(v.name) && validTerrainNode(v.node) && int(v.remainingTurns, 0, 100) && typeof v.persistent === "boolean", "\u5730\u5F62\u6548\u679C");
-      const point2 = (p) => coord2(p.x) && coord2(p.y);
-      if (v.node.area.follow) {
-        requireThat(id2(v.anchorUnitId), "\u5730\u5F62\u951A\u70B9");
-        fields(v.center, ["x", "y"]);
-        requireThat(point2(v.center), "\u5730\u5F62\u5706\u5FC3");
-      } else requireThat(!own2(v, "anchorUnitId") && !own2(v, "center"), "\u5730\u5F62\u951A\u70B9");
-      list(v.patch, 100, (p) => {
-        fields(p, ["x", "y", "before", "after"]);
-        validateCell(p.before);
-        validateCell(p.after);
-        return point2(p);
+    if (own9(s, "zones")) table2(s.zones, (v, k) => zoneValue(v, k, s), 200);
+    if (own9(s, "spatialSerial")) {
+      fields(s.spatialSerial, [], ["item", "summon", "zone", "terrain", "cover"]);
+      requireThat(Object.values(s.spatialSerial).every((serial) => int(serial, 0, Number.MAX_SAFE_INTEGER)), "\u7A7A\u95F4\u5B9E\u4F8B\u7F16\u53F7");
+    }
+    if (own9(s, "spatialTerrain")) table2(s.spatialTerrain, (v, k) => {
+      fields(v, ["id", "spec", "cells", "coverIds", "persistent", "remainingTurns"]);
+      requireThat(v.id === k && typeof v.persistent === "boolean" && int(v.remainingTurns, 1, 100), "\u5730\u5F62\u6548\u679C");
+      list2(v.cells, 100, (cell) => {
+        fields(cell, ["x", "y", "before"]);
+        validateCell(cell.before);
+        return coord(cell.x) && coord(cell.y);
       }, "\u5730\u5F62\u53D8\u66F4");
-      list(v.covers, 100, (p) => {
-        fields(p, ["id", "x", "y", "before"]);
-        return id2(p.id) && p.id === `${k}-${p.x}-${p.y}` && point2(p) && p.before === null;
-      }, "\u4E34\u65F6\u63A9\u4F53");
+      list2(v.coverIds, 100, id2, "\u4E34\u65F6\u63A9\u4F53");
+      requireThat(!(v.cells.length && v.coverIds.length) && validVmOpcode({ op: "spawn", entityKind: v.coverIds.length ? "cover" : "terrain", spec: v.spec }), "\u5730\u5F62\u58F0\u660E");
     }, 64);
     table2(s.interactives, (v, k) => {
       fields(v, ["id", "name", "x", "y", "kind", "spent"], ["z", "effect", "radius", "damage"]);
-      requireThat(v.id === k && text(v.name) && coord2(v.x) && coord2(v.y) && (!own2(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own2(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own2(v, "radius") || int(v.radius, 0, 10)) && (!own2(v, "damage") || int(v.damage, 0, 1e5)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
+      requireThat(v.id === k && text2(v.name) && coord(v.x) && coord(v.y) && (!own9(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own9(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own9(v, "radius") || int(v.radius, 0, 10)) && (!own9(v, "damage") || int(v.damage, 0, 1e5)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
     });
     const occupied = /* @__PURE__ */ new Set(), equipped2 = /* @__PURE__ */ new Set();
     table2(s.units, (v, k) => {
       unitValue(v, k, s);
-      const point2 = `${v.x},${v.y}`;
+      const point4 = `${v.x},${v.y}`;
       if (v.hp > 0 && !v.fled) {
-        requireThat(!occupied.has(point2) && s.grid[v.y][v.x].kind !== "wall" && !Object.values(s.covers).some((c) => c.hp > 0 && c.x === v.x && c.y === v.y), "\u68CB\u5B50\u4F4D\u7F6E\u91CD\u53E0\u6216\u963B\u6321");
-        occupied.add(point2);
+        requireThat(!occupied.has(point4) && s.grid[v.y][v.x].kind !== "wall" && !Object.values(s.covers).some((c) => c.hp > 0 && c.x === v.x && c.y === v.y), "\u68CB\u5B50\u4F4D\u7F6E\u91CD\u53E0\u6216\u963B\u6321");
+        occupied.add(point4);
       }
-      const slots = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
+      const slots2 = [v.weapon, v.mainHand, v.offHand, v.shield, ...v.gear].filter(Boolean);
       for (const i of v.bagWeapons ?? []) {
         const t = s.equipment[s.items[i]?.templateId];
-        requireThat(t?.damage && !slots.includes(i) && !equipped2.has(i), "\u80CC\u5305\u6B66\u5668\u5F15\u7528\u6216\u5F52\u5C5E");
+        requireThat(t?.damage && !slots2.includes(i) && !equipped2.has(i), "\u80CC\u5305\u6B66\u5668\u5F15\u7528\u6216\u5F52\u5C5E");
         equipped2.add(i);
       }
-      for (const i of new Set(slots)) {
+      for (const i of new Set(slots2)) {
         const template = has(s.items, i) ? s.equipment[s.items[i].templateId] : null;
         const weaponSlot = i === v.weapon || i === v.mainHand || i === v.offHand;
         const isShieldSlot = i === v.shield;
-        const isDamageItem = Boolean(template && own2(template, "damage"));
+        const isDamageItem = Boolean(template && own9(template, "damage"));
         requireThat(has(s.items, i) && !equipped2.has(i) && (weaponSlot ? isDamageItem || template?.kind === "consumable" : isShieldSlot ? template?.kind === "shield" : true), "\u88C5\u5907\u5F15\u7528\u6216\u5F52\u5C5E");
         equipped2.add(i);
       }
       requireThat(v.skills.every((i) => has(s.skills, i)) && new Set(v.skills).size === v.skills.length, "\u6280\u80FD\u5F15\u7528");
-      const visited = /* @__PURE__ */ new Set();
-      function checkSpawnBudget(expr) {
-        if (visited.has(expr.id)) return;
-        visited.add(expr.id);
-        for (const n of effectNodes(expr.effects)) {
-          if (n.kind === "spawnUnit" && n.stats) requireThat(spawnStatsAllowed(v, n), "spawnUnit \u4E94\u7EF4\u9884\u7B97");
-          if (n.kind === "procEffect") checkSpawnBudget(byId4.get(n.ref));
-        }
-      }
-      for (const template of [...v.skills.map((id3) => s.skills[id3]), ...[...new Set(slots)].map((id3) => s.equipment[s.items[id3].templateId])])
-        template.effects.forEach(checkSpawnBudget);
     });
-    list(s.order, 200, (x) => has(s.units, x), "\u5148\u653B\u961F\u5217");
+    if (own9(s, "vm")) requireThat(validVmState(s), "VM \u8FD0\u884C\u72B6\u6001");
+    if (own9(s, "tape")) tapeValue(s.tape, s);
+    validatePools(s);
+    list2(s.order, 200, (x) => has(s.units, x), "\u5148\u653B\u961F\u5217");
     requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1)) && Object.values(s.units).every((u) => u.hp <= 0 || s.order.includes(u.id)), "\u5148\u653B\u7D22\u5F15");
     requireThat(Array.isArray(s.logs) && s.logs.length <= 1e5, "\u65E5\u5FD7");
     for (const log of s.logs) {
       fields(log, ["round", "actor", "type", "text", "detail"], ["positions"]);
-      requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text(log.type, 64) && text(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point2) => plain(point2) && coord2(point2.x) && coord2(point2.y) && (!own2(point2, "z") || int(point2.z, -4, 20)))), "\u65E5\u5FD7\u4E8B\u4EF6");
+      requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text2(log.type, 64) && text2(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point4) => plain(point4) && coord(point4.x) && coord(point4.y) && (!own9(point4, "z") || int(point4.z, -4, 20)))), "\u65E5\u5FD7\u4E8B\u4EF6");
     }
     return s;
   }
@@ -4466,54 +6197,100 @@ var FatedTacticalTavern = (() => {
     altar: { title: "\u9AD8\u53F0\u796D\u575B\u593A\u53D6\u6218", description: "\u5761\u9053\u662F\u4E0A\u53F0\u7684\u6377\u5F84\uFF1B\u6FC0\u6D3B\u796D\u575B\u53EF\u83B7\u5F97\u62A4\u76FE\u4E0E\u75BE\u8D70\uFF0C\u9AD8\u53F0\u8FDC\u5C04\u6709\u989D\u5916\u5C04\u7A0B\u3002", seed: 43 },
     boss: { title: "BOSS \u4E0E\u6742\u5175\u6DF7\u7F16\u6218", description: "\u5B88\u95E8\u5DE8\u50CF\u62A4\u7532\u539A\u3001\u4F53\u578B\u5927\u3002\u5148\u62C6\u63F4\u519B\uFF0C\u518D\u7528\u51C0\u5316\u3001\u7A7F\u7532\u548C\u51FB\u9000\u5206\u644A\u538B\u529B\u3002", seed: 83 }
   });
-  var own3 = (obj, key4) => Object.hasOwn(obj, key4);
+  var own10 = (obj, key4) => Object.hasOwn(obj, key4);
   var object2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
-  var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own3(Object.prototype, id3) && id3 !== "prototype";
-  var entries = (record2) => {
+  var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own10(Object.prototype, id3) && id3 !== "prototype";
+  var entries2 = (record2) => {
     if (!object2(record2) || Object.keys(record2).length > 200 || !Object.keys(record2).every(safeId)) throw new Error("\u8DE8\u6218\u6863\u6848 ID \u65E0\u6548");
     return Object.entries(record2);
   };
+  var gravefire = {
+    name: "\u5893\u706B\u4F59\u70EC",
+    templateId: "gravefire",
+    tags: ["fire"],
+    tier: 1,
+    vars: {},
+    mods: [],
+    area: { shape: "circle", radius: 1 },
+    follow: false,
+    remainingTurns: 2,
+    persistent: false,
+    rules: [{
+      id: "gravefire-tick",
+      hook: "turn_start",
+      program: [{ op: "damage", target: "self", amount: 2, damageType: "energy", direct: false }]
+    }]
+  };
+  var colossusDeath = {
+    id: "colossus-death",
+    hook: "on_death",
+    program: [{ op: "spawn", entityKind: "zone", at: "self", spec: gravefire }]
+  };
+  function equipItem(state, id3, templateId, sourceId2, carriedAmounts = {}) {
+    for (const poolId of Object.values(state.items[id3]?.pools ?? {})) delete state.pools[poolId];
+    const { name, tags = [], tier = 1, vars = {}, mods = [], rules = [], pools = {} } = state.equipment[templateId];
+    state.items[id3] = { id: id3, templateId, sourceId: sourceId2, ...structuredClone({ name, tags, tier, vars, mods, rules }), pools: {} };
+    for (const [key4, { cap, initial = cap, reloadable = false }] of Object.entries(pools)) {
+      createPool(state, { key: key4, ownerKind: "item", ownerId: id3, max: cap, current: carriedAmounts[key4] ?? initial, reloadable });
+    }
+    return id3;
+  }
   function importCarry(state, value) {
-    fields(value, ["kind", "version", "items", "units"], ["statusTemplates"]);
+    fields(value, ["kind", "version", "items", "units"], ["statusTemplates", "pools"]);
     if (value.version !== 1 || value.kind !== "persistent") throw new Error("\u65E0\u6548\u7684\u8DE8\u6218\u6863\u6848");
     const carry = structuredClone(value);
-    if (own3(carry, "statusTemplates")) {
+    if (own10(carry, "statusTemplates")) {
       statusTemplateTable(carry.statusTemplates);
       state.statusTemplates = carry.statusTemplates;
     }
-    for (const [id3, item] of entries(carry.items)) {
-      if (!object2(item) || item.id !== id3 || !own3(state.equipment, item.templateId) || !object2(item.counters)) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u88C5\u5907\uFF1A${id3}`);
-      if (!own3(state.items, id3) || state.items[id3].templateId === item.templateId) state.items[id3] = item;
-      else throw new Error(`\u8DE8\u6218\u88C5\u5907\u6A21\u677F\u51B2\u7A81\uFF1A${id3}`);
+    for (const [id3, item] of entries2(carry.items)) {
+      if (!object2(item) || item.id !== id3 || !own10(state.equipment, item.templateId)) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u88C5\u5907\uFF1A${id3}`);
+      if (own10(state.items, id3) && state.items[id3].templateId !== item.templateId) throw new Error(`\u8DE8\u6218\u88C5\u5907\u6A21\u677F\u51B2\u7A81\uFF1A${id3}`);
+      const amounts = { ...item.counters };
+      for (const [key4, poolId] of Object.entries(item.pools ?? {})) {
+        const amount = carry.pools?.[poolId]?.current;
+        if (Number.isFinite(amount)) amounts[key4] = amount;
+      }
+      equipItem(state, id3, item.templateId, item.sourceId ?? null, amounts);
     }
     const assigned = /* @__PURE__ */ new Set();
     const imported = [];
-    for (const [id3, unit] of entries(carry.units)) {
-      if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot) => own3(unit, slot)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key4) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key4))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
-      const statuses = Object.fromEntries(entries(unit.statuses).map(([key4, status2]) => {
-        if (!object2(status2) || status2.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key4}`);
-        statusValue(status2, key4, state);
-        return [key4, status2];
+    for (const [id3, unit] of entries2(carry.units)) {
+      if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot2) => own10(unit, slot2)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key4) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key4))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
+      const statuses = Object.fromEntries(entries2(unit.statuses).map(([key4, status]) => {
+        if (!object2(status) || status.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key4}`);
+        statusValue(status, key4, state);
+        return [key4, status];
       }));
-      for (const [instanceId, isWeapon2] of [[unit.weapon, true], ...[unit.mainHand, unit.offHand].filter(Boolean).map((i) => [i, true]), ...[unit.shield].filter(Boolean).map((i) => [i, true]), ...unit.gear.map((i) => [i, false])]) {
-        if (instanceId === null && isWeapon2) continue;
-        if (!safeId(instanceId) || !own3(carry.items, instanceId) || assigned.has(instanceId) || own3(state.equipment[state.items[instanceId].templateId], "damage") !== isWeapon2) throw new Error(`\u8DE8\u6218\u88C5\u5907\u5F52\u5C5E\u65E0\u6548\uFF1A${instanceId}`);
+      const mainHand = unit.mainHand ?? unit.weapon;
+      const slots2 = [
+        [mainHand, "mainHand"],
+        [unit.offHand ?? null, "offHand"],
+        [unit.shield ?? null, "shield"],
+        ...unit.gear.map((instanceId) => [instanceId, "gear"])
+      ];
+      for (const [instanceId, slot2] of slots2) {
+        if (instanceId === null && slot2 !== "gear") continue;
+        if (!safeId(instanceId) || !own10(carry.items, instanceId) || assigned.has(instanceId)) throw new Error(`\u8DE8\u6218\u88C5\u5907\u5F52\u5C5E\u65E0\u6548\uFF1A${instanceId}`);
+        const template = state.equipment[state.items[instanceId].templateId];
+        const allowed = slot2 === "shield" ? template.kind === "shield" : slot2 === "gear" ? !own10(template, "damage") : own10(template, "damage") || slot2 === "offHand" && template.kind === "consumable";
+        if (!allowed) throw new Error(`\u8DE8\u6218\u88C5\u5907\u69FD\u4F4D\u65E0\u6548\uFF1A${instanceId}`);
         assigned.add(instanceId);
       }
-      if (own3(state.units, id3)) imported.push([id3, { statuses, weapon: unit.weapon, mainHand: unit.mainHand ?? unit.weapon, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
+      if (own10(state.units, id3)) imported.push([id3, { statuses, weapon: mainHand, mainHand, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
     }
     for (const u of Object.values(state.units)) {
-      for (const slot of ["weapon", "mainHand", "offHand", "shield"]) if (assigned.has(u[slot])) u[slot] = null;
+      for (const slot2 of ["weapon", "mainHand", "offHand", "shield"]) if (assigned.has(u[slot2])) u[slot2] = null;
       u.gear = u.gear.filter((i) => !assigned.has(i));
     }
     for (const [id3, patch] of imported) Object.assign(state.units[id3], patch);
   }
   function buildScenario(request = "ruins") {
-    if (request?.kind === "custom_state" && object2(request.state)) return migrateStateEffects(structuredClone(request.state));
+    if (request?.kind === "custom_state" && object2(request.state)) return structuredClone(request.state);
     if (typeof request === "string") request = { scenarioId: request };
     if (!object2(request) || !Object.keys(request).every((key4) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key4))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
     const { scenarioId = "ruins", ruleset = "protocol", persistentSnapshot } = request;
-    if (typeof scenarioId !== "string" || !own3(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
+    if (typeof scenarioId !== "string" || !own10(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
     const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
     const seed = request.seed ?? defaultSeed;
     if (!Number.isInteger(seed) || seed < 0 || seed > 4294967295 || !["protocol", "sandbox"].includes(ruleset)) throw new Error("\u65E0\u6548\u7684\u79CD\u5B50\u6216\u884C\u52A8\u89C4\u5219");
@@ -4533,21 +6310,34 @@ var FatedTacticalTavern = (() => {
       covers: {},
       interactives: {},
       zones: {},
+      pools: {},
       rng: seed,
       logs: [],
       outcome: null
     };
-    function unit(id3, name, team2, x, y, weapon, skills, options = {}) {
-      const { hp = 32, agi = 5, str = 4, con = 4, int: int2 = 4, spi = 4, armor = 1, size = 1, gear = [], weaponId = `${id3}-weapon`, offHandTemplate = null, shieldTemplate = null } = options;
-      const equip = (id4, templateId) => {
-        const counters = initialCounters(state.equipment[templateId]);
-        state.items[id4] = { id: id4, templateId, counters };
-        return id4;
-      };
+    function unit(id3, name, team2, x, y, weapon2, skills, options = {}) {
+      const {
+        hp = 32,
+        agi = 5,
+        str = 4,
+        con = 4,
+        int: int2 = 4,
+        spi = 4,
+        armor = 1,
+        size = 1,
+        gear = [],
+        weaponId = `${id3}-weapon`,
+        offHandTemplate = null,
+        shieldTemplate = null,
+        bodyLengthM = 1.7,
+        mc = 1,
+        rules = []
+      } = options;
+      const equip = (itemId, templateId) => equipItem(state, itemId, templateId, id3);
       const offHand = offHandTemplate ? equip(`${id3}-offhand`, offHandTemplate) : null;
       const shield = shieldTemplate ? equip(`${id3}-shield`, shieldTemplate) : null;
-      const stance = shield ? "sword_shield" : offHandTemplate === "potion" ? "attunement" : offHand ? "dual_wield" : state.equipment[weapon]?.weaponClass === "greatsword" ? "greatsword" : "light_blade";
-      const resources = ruleset === "protocol" ? calculatePrebattleResources({ stats: { str, agi, con, int: int2, spi }, tier: 1, bodyLengthM: 1.7 }).resources : null;
+      const stance = shield ? "sword_shield" : offHandTemplate === "potion" ? "attunement" : offHand ? "dual_wield" : state.equipment[weapon2]?.weaponClass === "greatsword" ? "greatsword" : "light_blade";
+      const resources = ruleset === "protocol" ? calculatePrebattleResources({ stats: { str, agi, con, int: int2, spi }, tier: 1, bodyLengthM }).resources : null;
       const hpValue = resources?.hp.current ?? hp, mpValue = resources?.mp.current ?? 14, spValue = resources?.sp.current ?? 10;
       state.units[id3] = {
         id: id3,
@@ -4562,8 +6352,13 @@ var FatedTacticalTavern = (() => {
         offHand,
         shield,
         tier: 1,
-        bodyLengthM: 1.7,
-        mc: 1,
+        bodyLengthM,
+        mc,
+        templateId: id3,
+        tags: [],
+        vars: {},
+        mods: [],
+        rules,
         bonusDice: 0,
         penaltyDice: 0,
         intent: "normal",
@@ -4585,7 +6380,7 @@ var FatedTacticalTavern = (() => {
         size,
         move: 3,
         statuses: {},
-        weapon: equip(weaponId, weapon),
+        weapon: equip(weaponId, weapon2),
         gear: gear.map((templateId) => equip(`${id3}-${templateId}`, templateId)),
         skills
       };
@@ -4658,7 +6453,16 @@ var FatedTacticalTavern = (() => {
       interact("I4", 2, 2, "altar");
     } else {
       heroes(1, 4);
-      unit("colossus", "\u94DC\u68FA\u5B88\u95E8\u5DE8\u50CF", "red", 6, 4, "pike", ["surge", "challenge", "armor"], { hp: 140, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, deathrattle: { kind: "zone", name: "\u5893\u706B\u4F59\u70EC", radius: 1, remainingTurns: 2, amount: 2, damageType: "energy", team: "all" } });
+      unit(
+        "colossus",
+        "\u94DC\u68FA\u5B88\u95E8\u5DE8\u50CF",
+        "red",
+        6,
+        4,
+        "pike",
+        ["surge", "challenge", "armor"],
+        { hp: 140, armor: 5, size: 3, str: 9, con: 8, bodyLengthM: 10, mc: 2, rules: [colossusDeath] }
+      );
       unit("acolyte", "\u68FA\u5EAD\u796D\u53F8", "red", 8, 5, "staff", ["ward", "hymn", "curse"], { hp: 32, spi: 7 });
       unit("knife", "\u5893\u9053\u523A\u5BA2", "red", 5, 7, "bloodfang", ["blink", "fan"], { hp: 29, agi: 8 });
       unit("rifle", "\u91CD\u5F29\u4F8D\u4ECE", "red", 8, 2, "crossbow", ["shift"], { hp: 28 });
@@ -4667,13 +6471,20 @@ var FatedTacticalTavern = (() => {
       cover("C2", 5, 2, "\u94A2\u677F", 18, 3);
       cover("C3", 5, 5, "\u6728\u7BB1", 10, 2);
       cover("C4", 8, 6, "\u68FA\u77F3", 20, 3);
-      state.zones["Z1"] = { id: "Z1", name: "\u5893\u706B\u9886\u57DF", x: 7, y: 4, radius: 1, remainingTurns: 99, damage: 2, damageType: "energy", team: "all" };
+      state.zones.Z1 = {
+        ...structuredClone(gravefire),
+        id: "Z1",
+        name: "\u5893\u706B\u9886\u57DF",
+        sourceId: null,
+        area: { ...gravefire.area, center: { x: 7, y: 4 } },
+        remainingTurns: 99
+      };
       interact("I1", 6, 5, "barrel");
       interact("I2", 4, 7, "altar");
       interact("I3", 7, 2, "barrel");
       interact("I4", 2, 4, "altar");
     }
-    state.items["soulblade-spare"] = { id: "soulblade-spare", templateId: "soulblade", counters: { souls: 0 } };
+    equipItem(state, "soulblade-spare", "soulblade", null);
     if (persistentSnapshot !== void 0) {
       importCarry(state, persistentSnapshot);
       state.order = Object.keys(state.units);
@@ -4689,6 +6500,7 @@ var FatedTacticalTavern = (() => {
   var healthGap = (unit) => unit.maxHp - unit.hp;
   var samePosition = (a, b) => a.x === b.x && a.y === b.y;
   function tactics(state, actor, action, plan) {
+    if (!plan?.ok) return -Infinity;
     if (action.type === "interact" && plan.kind === "altar") return 4 + Math.min(8, healthGap(actor)) * 0.95 + Math.min(5, actor.maxMp - actor.mp) * 0.55;
     let score = 0;
     for (const profile of plan.targets ?? []) {
@@ -4703,9 +6515,9 @@ var FatedTacticalTavern = (() => {
       const sign3 = enemy ? 1 : target2 === actor ? -1.5 : -1.15;
       const damage = profile.expectedDamage ?? 0;
       const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage / target2.hp) : 0;
-      const statusValue2 = target2.statuses ? Object.values(target2.statuses).reduce((value, status2) => {
-        const control = status2.modifiers?.skip || status2.modifiers?.root || status2.modifiers?.disadvantage;
-        return value + (control ? enemy ? 8 : -8 : 0) + (status2.durationType === "battle_turns" ? 1 : 0);
+      const statusValue2 = target2.statuses ? Object.values(target2.statuses).reduce((value, status) => {
+        const control = status.modifiers?.skip || status.modifiers?.root || status.modifiers?.disadvantage;
+        return value + (control ? enemy ? 8 : -8 : 0) + (status.durationType === "battle_turns" ? 1 : 0);
       }, 0) : 0;
       score += sign3 * (Math.min(target2.hp, damage) + kill * 6 + statusValue2);
       if (profile.heal) {
@@ -4720,16 +6532,24 @@ var FatedTacticalTavern = (() => {
       score += sign3 * (heal * 0.9 + Math.min(shieldGain, target2.maxHp) * 0.5);
     }
     const skill2 = action.type === "skill" ? state.skills[action.skillId] : null;
-    const effects2 = skill2 ? skill2.effects ?? [] : [];
-    for (const effect of effects2.flatMap((entry) => entry.effects ?? [])) {
-      const target2 = effect.targetId ? state.units[effect.targetId] : actor;
-      const enemy = target2.team !== actor.team;
-      const control = ["grantStatus", "modifyStat", "removeStatus"].includes(effect.kind) && ["stun", "root", "freeze", "taunt", "suppressed"].includes(effect.statusId ?? effect.stat);
-      if (control) score += enemy ? 7 + (target2.used.attack ? 2 : 0) : -7;
-      if (effect.kind === "removeStatus") score += enemy ? -4 : target2.statuses && Object.keys(target2.statuses).length ? 8 : 0;
-      if (effect.kind === "summon" || effect.kind === "spawnUnit") score += enemy ? 2 : 4;
+    const programs = (skill2?.rules ?? []).filter((rule2) => rule2.enabled !== false && ["active", "after_hit"].includes(rule2.hook)).flatMap((rule2) => rule2.program).filter((op) => op.enabled !== false);
+    for (const op of programs) {
+      const targetAtAction = Number.isFinite(action.x) && Number.isFinite(action.y) ? Object.values(state.units).find((unit) => unit.x === action.x && unit.y === action.y) : null;
+      const targets2 = op.target === "self" ? [actor] : (plan.targets ?? []).map((profile) => state.units[profile.recipientId ?? profile.id]).filter(Boolean);
+      if (!targets2.length && targetAtAction) targets2.push(targetAtAction);
+      if (op.op === "spawn") score += op.entityKind === "unit" ? 4 : 2;
+      for (const target2 of targets2) {
+        const enemy = target2.team !== actor.team;
+        const status = getStatusTemplate(state, op.statusId);
+        const control = op.op === "apply_status" && (status?.category === "control" || ["stun", "root", "freeze", "suppressed"].includes(op.statusId));
+        const profile = (plan.targets ?? []).find((row) => (row.recipientId ?? row.id) === target2.id);
+        if (control && profile?.expectedDamage > 0 && !target2.statuses[op.statusId]) {
+          score += enemy ? 7 + (target2.used.attack ? 2 : 0) : -7;
+        }
+        if (op.op === "remove_status" && Object.values(target2.statuses ?? {}).some((value) => ["debuff", "control", "dot"].includes(value.category))) score += enemy ? -4 : 8;
+      }
     }
-    if (skill2?.effects?.some((entry) => entry.effects?.some((effect) => ["modifyTerrain", "setTerrainKind", "addCover"].includes(effect.kind)))) {
+    if (programs.some((op) => ["set_terrain", "modify_terrain", "add_cover"].includes(op.op))) {
       score += Object.values(state.units).some((unit) => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
     }
     return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * 0.35 - plan.sp * 0.25;
@@ -4749,17 +6569,17 @@ var FatedTacticalTavern = (() => {
     for (const skillId of [...templates.keys()].sort()) {
       const skill2 = templates.get(skillId);
       if (!skill2 || attacksOnly && (skill2.slot !== "attack" || skill2.ap > 1)) continue;
-      const query = preview(state, { type: "skill", skillId });
-      if (!query.ok) continue;
+      const query2 = preview(state, { type: "skill", skillId });
+      if (!query2.ok) continue;
       let candidates;
       if (skill2.target === "cell" || skill2.target === "corpse") {
-        candidates = query.cells;
+        candidates = query2.cells;
       } else if (skill2.shape === "single") {
         candidates = skill2.target === "enemy" ? enemies : skill2.target === "self" ? [actor] : units.filter((u) => skill2.target === "any" || u.team === actor.team);
       } else if (attacksOnly) {
         candidates = enemies;
       } else {
-        candidates = query.cells;
+        candidates = query2.cells;
       }
       for (const { x, y } of candidates) consider({ type: "skill", skillId, x, y });
     }
@@ -4771,17 +6591,17 @@ var FatedTacticalTavern = (() => {
     return choices;
   }
   function approach(state, actor, enemies, suppress = false) {
-    const weapon = state.equipment[state.items[actor.weapon]?.templateId];
-    const range = weapon?.range ?? 1.5;
+    const weapon2 = state.equipment[state.items[actor.weapon]?.templateId];
+    const range2 = weapon2?.range ?? 1.5;
     const spots = [{ x: actor.x, y: actor.y, steps: 0 }, ...reachable(state, "move", actor, Infinity)];
     const clearAttackCell = (probe) => enemies.some((target2) => {
       const d = distance3D(state, probe, target2);
       if (suppress) return d <= 1 && hasLOS(state, probe, target2);
-      if (d > range + 1) return false;
+      if (d > range2 + 1) return false;
       const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
       const s = { ...state, units: { ...state.units, [actor.id]: u } };
       const attack = preview(s, { type: "attack", x: target2.x, y: target2.y });
-      if (attack.ok || attack.error === "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" && d <= range && hasLOS(state, probe, target2)) return true;
+      if (attack.ok || attack.error === "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" && d <= range2 && hasLOS(state, probe, target2)) return true;
       return false;
     });
     const pathToAttack = spots.find(clearAttackCell);
@@ -4808,10 +6628,10 @@ var FatedTacticalTavern = (() => {
     if (!enemies.length) return { ...END };
     if (actor.moraleState === "routed") {
       if (atBattleEdge(state, actor)) return preview(state, { type: "flee" }).ok ? { type: "flee" } : { ...END };
-      const move = preview(state, { type: "move" });
-      if (!move.ok) return { ...END };
+      const move2 = preview(state, { type: "move" });
+      if (!move2.ok) return { ...END };
       const exit = reachable(state, "move", actor, Infinity).filter((cell) => atBattleEdge(state, cell)).sort((a, b) => a.steps - b.steps)[0];
-      const dest = exit?.path.slice().reverse().find((p) => move.cells.some((c) => samePosition(c, p)));
+      const dest = exit?.path.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p)));
       return dest ? { type: "move", x: dest.x, y: dest.y } : { ...END };
     }
     if (state.battleType === "suppress" && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
@@ -4821,10 +6641,10 @@ var FatedTacticalTavern = (() => {
         if (preview(state, rescue).ok) return rescue;
       }
       if (held.length) {
-        const move = preview(state, { type: "move" });
-        if (move.ok) {
+        const move2 = preview(state, { type: "move" });
+        if (move2.ok) {
           const route = approach(state, actor, held, true);
-          const dest = route.slice().reverse().find((p) => move.cells.some((c) => samePosition(c, p)));
+          const dest = route.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p)));
           if (dest) return { type: "move", x: dest.x, y: dest.y };
         }
       }
@@ -4835,10 +6655,10 @@ var FatedTacticalTavern = (() => {
         if (preview(state, action).ok) return action;
       }
       const targets2 = enemies.filter((t) => !t.statuses.suppressed && visibleEnemy(state, actor, t));
-      const path = targets2.length && approach(state, actor, targets2, true);
-      if (path?.length) {
-        const move = preview(state, { type: "move" });
-        const dest = path.slice().reverse().find((p) => move.cells?.some((c) => samePosition(c, p)));
+      const path2 = targets2.length && approach(state, actor, targets2, true);
+      if (path2?.length) {
+        const move2 = preview(state, { type: "move" });
+        const dest = path2.slice().reverse().find((p) => move2.cells?.some((c) => samePosition(c, p)));
         if (dest) return { type: "move", x: dest.x, y: dest.y };
       }
       return { ...END };
@@ -4864,7 +6684,7 @@ var FatedTacticalTavern = (() => {
       if (!options.ok) continue;
       for (const cell of options.cells) {
         if (type === "disengage" && !riskyDestinations.has(`${cell.x},${cell.y}`)) continue;
-        const projectedDepth = plannedPath.findIndex((point2) => samePosition(point2, cell)) + 1;
+        const projectedDepth = plannedPath.findIndex((point4) => samePosition(point4, cell)) + 1;
         const distance2 = Math.min(...objectives.map((u) => dist(cell, u)));
         const progress = baseline - distance2;
         const high = elevation(state, cell) - z0;
@@ -4902,23 +6722,29 @@ var FatedTacticalTavern = (() => {
     return table4[key4];
   };
   var nonempty = (patch) => requireThat(plain(patch) && Object.keys(patch).length > 0, "patch");
+  var builtins = ["hp", "mp", "sp"];
+  var deleteOwnedPools = (state, owner) => {
+    for (const poolId of Object.values(owner.pools ?? {})) delete state.pools[poolId];
+  };
+  var statusPatchFields = ["remainingTurns", "durationType", "stackMode", "stacks", "vars", "mods", "expireOn"];
   var commands = {
     set_unit_stat(s, c) {
       fields(c, ["type", "unitId", "patch"]);
       const u = get(s.units, c.unitId, "unitId");
       nonempty(c.patch);
       fields(c.patch, [], ["hp", "mp", "sp", "ap", "x", "y", "team", "stats", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]);
-      for (const k of ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]) if (own2(c.patch, k)) u[k] = c.patch[k];
-      if (own2(c.patch, "stats")) {
+      for (const k of ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]) if (own9(c.patch, k)) u[k] = c.patch[k];
+      if (own9(c.patch, "stats")) {
         nonempty(c.patch.stats);
         fields(c.patch.stats, [], attrs2);
         Object.assign(u.stats, c.patch.stats);
       }
-      if (own2(c.patch, "mainHand")) u.weapon = c.patch.mainHand;
-      if (own2(c.patch, "weapon")) u.mainHand = c.patch.weapon;
-      if (own2(c.patch, "bonusDice")) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
-      if (own2(c.patch, "penaltyDice")) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
+      if (own9(c.patch, "mainHand")) u.weapon = c.patch.mainHand;
+      if (own9(c.patch, "weapon")) u.mainHand = c.patch.weapon;
+      if (own9(c.patch, "bonusDice")) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
+      if (own9(c.patch, "penaltyDice")) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
       unitValue(u, u.id, s);
+      for (const key4 of builtins) if (own9(c.patch, key4) && u.pools?.[key4]) updatePoolCurrent(s, u.pools[key4], "set", u[key4]);
     },
     define_status_template(s, c) {
       fields(c, ["type", "template"]);
@@ -4926,22 +6752,70 @@ var FatedTacticalTavern = (() => {
     },
     patch_status(s, c) {
       fields(c, ["type", "unitId", "statusId", "patch"]);
-      patchStatus(s, c.unitId, c.statusId, c.patch);
+      const unit = get(s.units, c.unitId, "unitId");
+      const status = get(unit.statuses, c.statusId, "statusId");
+      if (!own9(status, "templateId")) return patchStatus(s, c.unitId, c.statusId, c.patch);
+      nonempty(c.patch);
+      fields(c.patch, [], statusPatchFields);
+      const next = { ...status, ...c.patch };
+      if (own9(c.patch, "vars")) {
+        requireThat(plain(c.patch.vars), "VM \u72B6\u6001\u53D8\u91CF");
+        next.vars = { ...status.vars, ...c.patch.vars };
+      }
+      statusValue(next, c.statusId, s, unit.id);
+      unit.statuses[c.statusId] = next;
+      recordVM(s, unit, "status_patch", `${unit.name}\u7684${next.name}\u53C2\u6570\u5DF2\u66F4\u65B0`, { targetId: unit.id, statusId: next.id });
     },
     upsert_status(s, c) {
       fields(c, ["type", "unitId", "statusId"], ["options"]);
-      const u = get(s.units, c.unitId, "unitId"), status2 = getStatusTemplate(s, c.statusId);
-      requireThat(status2, "statusId");
-      const options = own2(c, "options") ? c.options : {};
+      const u = get(s.units, c.unitId, "unitId"), status = getStatusTemplate(s, c.statusId);
+      requireThat(status, "statusId");
+      const options = own9(c, "options") ? c.options : {};
+      if (!own9(status, "modifiers")) {
+        fields(options, [], [...statusPatchFields, "sourceId", "extendTurns"]);
+        checkOptional(options, "sourceId", (source2) => source2 === null || has(s.units, source2));
+        checkOptional(options, "remainingTurns", (turns2) => int(turns2, 1, 100));
+        checkOptional(options, "stacks", (count) => int(count, 1, status.maxStacks ?? 1));
+        checkOptional(options, "extendTurns", (turns2) => int(turns2, 1, 100));
+        if (own9(options, "vars")) requireThat(plain(options.vars), "VM \u72B6\u6001\u53D8\u91CF");
+        const previous = u.statuses[c.statusId];
+        const { extendTurns = 1, ...patch } = options;
+        const sourceId2 = own9(patch, "sourceId") ? patch.sourceId : previous?.sourceId ?? null;
+        const source = s.units[sourceId2];
+        const vars = Object.fromEntries(Object.entries(status.vars ?? {}).flatMap(([key4, expr2]) => {
+          const value = evaluateExpr(expr2, { self: source, source, target: u, event: {} });
+          return value === null ? [] : [[key4, value]];
+        }));
+        const instance = {
+          remainingTurns: 1,
+          durationType: "battle_turns",
+          stackMode: "refresh",
+          stacks: 1,
+          ...status,
+          ...patch,
+          templateId: status.id,
+          ownerId: u.id,
+          sourceId: sourceId2,
+          vars: { ...vars, ...patch.vars }
+        };
+        if (previous && instance.stackMode === "stack") instance.stacks = Math.min(status.maxStacks ?? 1, previous.stacks + instance.stacks);
+        if (previous && instance.stackMode === "extend") instance.remainingTurns = Math.min(100, previous.remainingTurns + extendTurns);
+        if (previous?.pools) instance.pools = previous.pools;
+        statusValue(instance, c.statusId, s, u.id);
+        if (u.hp <= 0 || u.fled) return;
+        u.statuses[c.statusId] = instance;
+        recordVM(s, source ?? u, "status", `${u.name}\u83B7\u5F97${instance.name} \xD7${instance.stacks}`, { targetId: u.id, statusId: instance.id });
+        return;
+      }
       fields(options, [], ["remainingTurns", "durationType", "stacks", "stackRule", "tickTiming", "amount", "sourceUnitId", "modifiers", "expireOn"]);
       checkOptional(options, "remainingTurns", (x) => int(x, 1, 100));
       checkOptional(options, "durationType", (x) => ["battle_turns", "until_removed", "persistent"].includes(x));
-      checkOptional(options, "stacks", (x) => int(x, 1, status2.maxStacks));
+      checkOptional(options, "stacks", (x) => int(x, 1, status.maxStacks));
       checkOptional(options, "stackRule", (x) => ["refresh", "stack", "replace"].includes(x));
       checkOptional(options, "tickTiming", (x) => ["onTurnStart", "onTurnEnd"].includes(x));
-      checkOptional(options, "amount", (x) => own2(status2.modifiers, "amount") && int(x, 1, 1e4));
+      checkOptional(options, "amount", (x) => own9(status.modifiers, "amount") && int(x, 1, 1e4));
       checkOptional(options, "sourceUnitId", (x) => has(s.units, x));
-      if (options.modifiers?.taunted ?? status2.modifiers.taunted) {
+      if (options.modifiers?.taunted ?? status.modifiers.taunted) {
         const sourceId2 = options.sourceUnitId ?? u.statuses[c.statusId]?.sourceUnitId;
         requireThat(has(s.units, sourceId2) && s.units[sourceId2].team !== u.team, "\u5632\u8BBD\u9700\u8981\u654C\u5BF9\u6765\u6E90");
       }
@@ -4950,54 +6824,66 @@ var FatedTacticalTavern = (() => {
     remove_status(s, c) {
       fields(c, ["type", "unitId", "statusId"]);
       requireThat(getStatusTemplate(s, c.statusId), "statusId");
-      delete get(s.units, c.unitId, "unitId").statuses[c.statusId];
+      const unit = get(s.units, c.unitId, "unitId");
+      const status = unit.statuses[c.statusId];
+      if (status) deleteOwnedPools(s, status);
+      delete unit.statuses[c.statusId];
     },
-    adjust_item_counter(s, c) {
-      fields(c, ["type", "instanceId", "counterKey", "operation", "value"]);
-      const item = get(s.items, c.instanceId, "instanceId");
-      requireThat(has(item.counters, c.counterKey) && ["set", "add"].includes(c.operation), "\u8BA1\u6570\u5668\u547D\u4EE4");
-      const effect = resourceDefinitions(s.equipment[item.templateId]).find((e) => e.resource === c.counterKey);
-      const limit = effect.cap;
-      requireThat(int(c.value, -limit, limit), "\u8BA1\u6570\u5668\u547D\u4EE4");
-      const next = c.operation === "set" ? c.value : item.counters[c.counterKey] + c.value;
-      const cap = Math.max(effect.cap, item.counters[c.counterKey]);
-      requireThat(int(next, 0, cap), `\u8BA1\u6570\u7ED3\u679C\u987B\u5728 0\u2013${cap}`);
-      item.counters[c.counterKey] = next;
+    adjust_pool(s, c) {
+      fields(c, ["type", "poolId", "operation", "value"]);
+      const pool = typeof c.poolId === "string" && plain(s.pools) && own9(s.pools, c.poolId) ? s.pools[c.poolId] : void 0;
+      requireThat(pool && ["set", "add"].includes(c.operation) && Number.isFinite(c.value), "\u8D44\u6E90\u6C60\u547D\u4EE4");
+      const next = c.operation === "set" ? c.value : pool.current + c.value;
+      requireThat(Number.isFinite(next) && next >= 0 && next <= pool.max, `\u8D44\u6E90\u6C60\u987B\u5728 0\u2013${pool.max}`);
+      updatePoolCurrent(s, pool.id, "set", next);
     },
     patch_equipment_template(s, c) {
       fields(c, ["type", "templateId", "patch"]);
       const old = get(s.equipment, c.templateId, "templateId");
       nonempty(c.patch);
       const next = { ...old, ...c.patch };
-      if (Array.isArray(c.patch.effects)) next.effects = adaptLegacyEffects(next.effects, "equipment", `legacy-equipment-${c.templateId}`);
       equipmentTemplate(next, s);
-      const counters = (t) => resourceDefinitions(t).map((e) => e.resource).sort().join("|");
-      requireThat(counters(next) === counters(old) && own2(old, "damage") === own2(next, "damage"), "\u4E0D\u80FD\u70ED\u6539\u88C5\u5907\u69FD\u7C7B\u578B\u6216\u5B9E\u4F8B\u8BA1\u6570\u5668\u5B9A\u4E49");
+      const sameSlot = old.kind === next.kind && own9(old, "damage") === own9(next, "damage");
+      const instances = Object.values(s.items).filter((item) => item.templateId === c.templateId);
+      if (instances.length) requireThat(sameSlot && !own9(c.patch, "pools"), "\u4E0D\u80FD\u70ED\u6539\u5DF2\u5B9E\u4F8B\u5316\u88C5\u5907\u7684\u69FD\u7C7B\u578B\u6216\u8D44\u6E90\u6C60\u5B9A\u4E49");
       s.equipment[c.templateId] = next;
+      for (const item of instances) {
+        for (const key4 of ["name", "tags", "tier", "rules", "mods"]) if (own9(c.patch, key4) && own9(item, key4)) item[key4] = structuredClone(next[key4]);
+      }
     },
     patch_skill_template(s, c) {
       fields(c, ["type", "templateId", "patch"]);
       nonempty(c.patch);
       const next = { ...get(s.skills, c.templateId, "templateId"), ...c.patch };
-      if (Array.isArray(c.patch.effects)) next.effects = adaptLegacyEffects(next.effects, "skill", `legacy-skills-${c.templateId}`);
       skillTemplate(next, s);
       s.skills[c.templateId] = next;
     },
     spawn_unit(s, c) {
       fields(c, ["type", "unit"]);
       const v = c.unit;
-      requireThat(plain(v) && id2(v.id) && !own2(s.units, v.id), "unit.id");
+      requireThat(plain(v) && id2(v.id) && !own9(s.units, v.id), "unit.id");
       unitValue(v, v.id, s);
+      requireThat(!own9(v, "pools"), "\u589E\u63F4\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u521D\u59CB\u5316");
       requireThat(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0, "\u589E\u63F4\u987B\u5B58\u6D3B\u4E14\u884C\u52A8\u672A\u5F00\u59CB");
       v.mainHand = v.weapon;
       if (v.offHand === void 0) v.offHand = null;
       if (v.shield === void 0) v.shield = null;
       s.units[v.id] = v;
+      if (s.vm || s.pools) initializeUnitPools(s, v.id);
       s.order.push(v.id);
     },
     remove_unit(s, c) {
       fields(c, ["type", "unitId"]);
-      get(s.units, c.unitId, "unitId");
+      const unit = get(s.units, c.unitId, "unitId");
+      const linked = builtins.filter((key4) => (getPool(s, unit.id, key4)?.contributors.length ?? 0) > 1);
+      if (linked.length) unlinkPools(s, [unit.id], linked);
+      deleteOwnedPools(s, unit);
+      for (const status of Object.values(unit.statuses)) deleteOwnedPools(s, status);
+      for (const item of Object.values(s.items)) if (item.ownerId === unit.id) item.ownerId = null;
+      for (const zone of Object.values(s.zones ?? {})) if (zone.area?.anchorUnitId === unit.id) {
+        deleteOwnedPools(s, zone);
+        delete s.zones[zone.id];
+      }
       const index = s.order.indexOf(c.unitId);
       if (index >= 0) {
         s.order.splice(index, 1);
@@ -5014,11 +6900,12 @@ var FatedTacticalTavern = (() => {
       const instance = get(s.items, c.instanceId, "instanceId");
       const u = c.unitId === null ? null : get(s.units, c.unitId, "unitId");
       for (const v of Object.values(s.units)) {
-        for (const slot of ["weapon", "mainHand", "offHand", "shield"]) if (v[slot] === instance.id) v[slot] = null;
+        for (const slot2 of ["weapon", "mainHand", "offHand", "shield"]) if (v[slot2] === instance.id) v[slot2] = null;
         v.gear = v.gear.filter((i) => i !== instance.id);
       }
+      if (own9(instance, "ownerId")) instance.ownerId = u?.id ?? null;
       if (u) {
-        if (own2(s.equipment[instance.templateId], "damage")) {
+        if (own9(s.equipment[instance.templateId], "damage")) {
           u.weapon = instance.id;
           u.mainHand = instance.id;
         } else u.gear.push(instance.id);
@@ -5027,18 +6914,21 @@ var FatedTacticalTavern = (() => {
     set_zone(s, c) {
       fields(c, ["type", "zone"]);
       const z = structuredClone(c.zone);
-      requireThat(plain(z) && id2(z.id), "\u533A\u57DF ID");
+      zoneValue(z, z?.id, s);
+      requireThat(!own9(z, "pools"), "\u533A\u57DF\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u7ED1\u5B9A");
       const table4 = s.zones ??= {};
+      if (table4[z.id]?.pools) deleteOwnedPools(s, table4[z.id]);
       table4[z.id] = z;
     },
     remove_zone(s, c) {
       fields(c, ["type", "zoneId"]);
-      requireThat(has(s.zones ?? {}, c.zoneId), "\u533A\u57DF ID");
+      const zone = get(s.zones ?? {}, c.zoneId, "\u533A\u57DF ID");
+      deleteOwnedPools(s, zone);
       delete s.zones[c.zoneId];
     },
     set_terrain_cell(s, c) {
       fields(c, ["type", "x", "y", "patch"]);
-      requireThat(coord2(c.x) && coord2(c.y), "\u5750\u6807");
+      requireThat(coord(c.x) && coord(c.y), "\u5750\u6807");
       nonempty(c.patch);
       const next = { ...s.grid[c.y][c.x], ...c.patch };
       validateCell(next);
@@ -5046,7 +6936,7 @@ var FatedTacticalTavern = (() => {
     },
     set_interactive_status(s, c) {
       fields(c, ["type", "id"], ["spent", "hp"]);
-      if (own2(s.covers, c.id)) {
+      if (own9(s.covers, c.id)) {
         fields(c, ["type", "id", "hp"]);
         const cover = get(s.covers, c.id, "\u63A9\u4F53 ID");
         requireThat(int(c.hp, 0, cover.maxHp), "\u63A9\u4F53 HP");
@@ -5062,6 +6952,20 @@ var FatedTacticalTavern = (() => {
     requireThat(plain(command) && has(commands, command.type), "\u547D\u4EE4\u7C7B\u578B");
     commands[command.type](state, structuredClone(command));
   }
+
+  // src/core/resource_names.js
+  var BUILTIN_RESOURCES = Object.freeze(["hp", "mp", "sp", "ap", "action", "attack"]);
+  var RESOURCE_NAMES = Object.freeze({
+    hp: "\u751F\u547D",
+    mp: "\u6CD5\u529B",
+    sp: "\u4F53\u529B",
+    ap: "\u884C\u52A8\u70B9",
+    action: "\u52A8\u4F5C",
+    attack: "\u653B\u51FB",
+    souls: "\u9B42\u6570",
+    ammo: "\u5F39\u836F"
+  });
+  var resourceLabel = (name) => Object.hasOwn(RESOURCE_NAMES, name) ? RESOURCE_NAMES[name] : name;
 
   // src/api/battle_report.js
   var damageNames = { physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" };
@@ -5151,9 +7055,9 @@ var FatedTacticalTavern = (() => {
     if (m.finalDamageMultiplier != null && m.finalDamageMultiplier !== 1) parts.push(`${perLayer}\u6700\u7EC8\u4F24\u5BB3 \xD7${m.finalDamageMultiplier}`);
     for (const [key4, label] of Object.entries(flagModifiers)) if (m[key4]) parts.push(label);
     if (detail.expireOn) {
-      const triggers = [].concat(detail.expireOn).map((rule) => {
-        const qualifier = rule.damageType === "direct" ? "\u53D7\u5230\u76F4\u63A5\u4F24\u5BB3" : rule.damageType === "indirect" ? "\u53D7\u5230\u95F4\u63A5\u4F24\u5BB3" : expiryEvents[rule.trigger];
-        return qualifier + (rule.exceptSource === "self" ? "\uFF08\u81EA\u8EAB\u6765\u6E90\u9664\u5916\uFF09" : "");
+      const triggers = [].concat(detail.expireOn).map((rule2) => {
+        const qualifier = rule2.damageType === "direct" ? "\u53D7\u5230\u76F4\u63A5\u4F24\u5BB3" : rule2.damageType === "indirect" ? "\u53D7\u5230\u95F4\u63A5\u4F24\u5BB3" : expiryEvents[rule2.trigger];
+        return qualifier + (rule2.exceptSource === "self" ? "\uFF08\u81EA\u8EAB\u6765\u6E90\u9664\u5916\uFF09" : "");
       });
       parts.push(`${triggers.join("\u6216")}\u65F6\u89E3\u9664`);
     }
@@ -5166,12 +7070,12 @@ var FatedTacticalTavern = (() => {
     const digits = "\u96F6\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D";
     const roundLabel = (n) => n < 10 ? digits[n] : n < 100 ? `${n >= 20 ? digits[Math.floor(n / 10)] : ""}\u5341${n % 10 ? digits[n % 10] : ""}` : n;
     const position = (event, id3) => {
-      const point2 = event.positions?.[id3] ?? report.units.find((unit) => unit.id === id3);
-      return point2 && Number.isInteger(point2.x) && Number.isInteger(point2.y) ? `(${point2.x}, ${point2.y}${Number.isInteger(point2.z) ? `, z=${point2.z}` : ""})` : "";
+      const point4 = event.positions?.[id3] ?? report.units.find((unit) => unit.id === id3);
+      return point4 && Number.isInteger(point4.x) && Number.isInteger(point4.y) ? `(${point4.x}, ${point4.y}${Number.isInteger(point4.z) ? `, z=${point4.z}` : ""})` : "";
     };
     const name = (event, id3) => `${names.get(id3) ?? id3}${position(event, id3)}`;
-    const replaceUnitNames = (event, text4) => {
-      let result = text4;
+    const replaceUnitNames = (event, text5) => {
+      let result = text5;
       const ordered2 = [...names.entries()].sort((a, b) => b[1].length - a[1].length);
       for (const [id3, unitName] of ordered2) {
         if (!unitName || !result.includes(unitName)) continue;
@@ -5181,23 +7085,23 @@ var FatedTacticalTavern = (() => {
       return result;
     };
     const checkTarget = (event, detail) => detail.targetKind === "cover" ? detail.targetName ?? detail.targetId : name(event, detail.targetId);
-    const change = (resource3, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource3} ${before} \u2192 ${after}\uFF09` : "";
-    for (const { round, events: events2 } of report.rounds) {
+    const change2 = (resource2, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource2} ${before} \u2192 ${after}\uFF09` : "";
+    for (const { round, events } of report.rounds) {
       const rows2 = [];
       let turn = null;
-      const add = (text4) => {
-        if (turn) turn.parts.push(text4);
-        else rows2.push(text4);
+      const add = (text5) => {
+        if (turn) turn.parts.push(text5);
+        else rows2.push(text5);
       };
-      for (const [i, event] of events2.entries()) {
-        const { type, text: text4, actor } = event;
+      for (const [i, event] of events.entries()) {
+        const { type, text: text5, actor } = event;
         const detail = event.detail ?? {};
         switch (type) {
           case "initiative":
             rows2.push(`\u786E\u5B9A\u5148\u653B\u6B21\u5E8F\uFF1A${detail.initiative.map((u) => name(event, u.unitId)).join(" \u2192 ")}`);
             break;
           case "turn":
-            turn = { text: replaceUnitNames(event, text4), actor, parts: [] };
+            turn = { text: replaceUnitNames(event, text5), actor, parts: [] };
             rows2.push(turn);
             break;
           case "end":
@@ -5206,7 +7110,7 @@ var FatedTacticalTavern = (() => {
             break;
           case "action": {
             const action = detail.action?.type;
-            if (["move", "sprint", "disengage", "interact"].includes(action) || action === "brace" && events2[i + 1]?.type === "brace") break;
+            if (["move", "sprint", "disengage", "interact"].includes(action) || action === "brace" && events[i + 1]?.type === "brace") break;
             const actorName = name(event, actor);
             if (detail.attackSource) {
               const targets2 = (detail.attackTargets ?? []).map((t) => t.unit ? name(event, t.unit) : t.cover);
@@ -5218,7 +7122,7 @@ var FatedTacticalTavern = (() => {
             }
             const prefix = `${actorName}\uFF1A`;
             const rawPrefix = `${names.get(actor) ?? actor}\uFF1A`;
-            const label = text4.startsWith(prefix) ? text4.slice(prefix.length) : text4.startsWith(rawPrefix) ? text4.slice(rawPrefix.length) : text4;
+            const label = text5.startsWith(prefix) ? text5.slice(prefix.length) : text5.startsWith(rawPrefix) ? text5.slice(rawPrefix.length) : text5;
             add(action === "attack" || action === "skill" ? `\u4F7F\u7528${replaceUnitNames(event, label)}` : replaceUnitNames(event, label));
             break;
           }
@@ -5245,10 +7149,10 @@ var FatedTacticalTavern = (() => {
               break;
             }
             const checks = detail.checks?.map((check) => `${statNames[check.saveStat]}${checkGrade(check.saved, check.saveRoll)}`);
-            const stat2 = statNames[detail.saveStat] ?? (checks ? "\u591A\u91CD" : "");
+            const stat3 = statNames[detail.saveStat] ?? (checks ? "\u591A\u91CD" : "");
             const result = checks ? [checkGrade(detail.saved), detail.mode === "all" ? "\u987B\u5168\u90E8\u901A\u8FC7" : "\u4EFB\u4E00\u901A\u8FC7\u5373\u53EF", ...checks] : [checkGrade(detail.saved, detail.saveRoll)];
             const source = detail.sourceName ? `\u5BF9${detail.sourceName}\u7684` : "";
-            add(`${target2}${detail.saved ? "\u901A\u8FC7" : "\u672A\u901A\u8FC7"}${source}${stat2}\u8C41\u514D${notes(result)}`);
+            add(`${target2}${detail.saved ? "\u901A\u8FC7" : "\u672A\u901A\u8FC7"}${source}${stat3}\u8C41\u514D${notes(result)}`);
             break;
           }
           case "intent":
@@ -5262,63 +7166,63 @@ var FatedTacticalTavern = (() => {
             break;
           }
           case "parry":
-            add(replaceUnitNames(event, text4) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]));
+            add(replaceUnitNames(event, text5) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]));
             break;
           case "morale":
-            add(replaceUnitNames(event, text4) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
+            add(replaceUnitNames(event, text5) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
             break;
           case "status":
           case "status_patch": {
-            const brace = events2[i - 1];
+            const brace = events[i - 1];
             if (type === "status" && brace?.type === "brace" && brace.actor === detail.targetId && (detail.stacks ?? 1) === 1 && (!detail.durationType || detail.durationType === "battle_turns") && !detail.expireOn && !detail.amount && brace.detail?.turns === detail.remainingTurns && Object.keys(detail.modifiers ?? {}).every((key4) => key4 === "reduction" && detail.modifiers[key4] === brace.detail.reduction)) break;
             const parts = statusNotes(detail);
             if (type === "status_patch" && detail.stacks > 1) parts.unshift(`${detail.stacks} \u5C42`);
             if (type === "status" && actor && detail.targetId && actor !== detail.targetId) parts.push(`\u6765\u6E90 ${name(event, actor)}`);
-            add(replaceUnitNames(event, text4).replace(/ ×1$/, "") + notes(parts));
+            add(replaceUnitNames(event, text5).replace(/ ×1$/, "") + notes(parts));
             break;
           }
           case "stat_modifier": {
-            const stat2 = (damageNames[detail.damageType] ?? "") + statNames[detail.stat];
+            const stat3 = (damageNames[detail.damageType] ?? "") + statNames[detail.stat];
             const parts = [`\u6301\u7EED ${detail.turns} \u56DE\u5408`];
-            if (detail.flat) parts.push(`${stat2} ${signed(detail.flat)}`);
-            if (detail.percent) parts.push(`${stat2} ${signed(percent(detail.percent))}%`);
-            add(replaceUnitNames(event, text4) + notes(parts));
+            if (detail.flat) parts.push(`${stat3} ${signed(detail.flat)}`);
+            if (detail.percent) parts.push(`${stat3} ${signed(percent(detail.percent))}%`);
+            add(replaceUnitNames(event, text5) + notes(parts));
             break;
           }
           case "proc": {
             const target2 = detail.targetId && detail.targetId !== actor ? `\uFF08\u76EE\u6807 ${name(event, detail.targetId)}\uFF09` : "";
             const label = detail.die == null ? "\u89E6\u53D1\u5224\u5B9A" : "\u89E6\u53D1\u68C0\u5B9A";
-            add(`${actor ? `${name(event, actor)}\u7684` : ""}${text4}${label}${checkGrade(detail.triggered, detail.die)}${target2}`);
+            add(`${actor ? `${name(event, actor)}\u7684` : ""}${text5}${label}${checkGrade(detail.triggered, detail.die)}${target2}`);
             break;
           }
           case "damage":
           case "heal":
             if (detail.amount !== 0) {
               const origin = detail.statusId && actor && actor !== detail.targetId ? `\uFF08\u65BD\u52A0\u8005 ${name(event, actor)}\uFF09` : "";
-              add(replaceUnitNames(event, text4) + change("HP", detail.hpBefore, detail.hpAfter) + origin);
+              add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore, detail.hpAfter) + origin);
             }
             break;
           case "skill_cost":
-            add(replaceUnitNames(event, text4) + change("HP", detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
+            add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
             break;
           case "resource":
-            add(replaceUnitNames(event, text4) + change(detail.resource?.toUpperCase(), detail.before, detail.after));
+            add(replaceUnitNames(event, text5) + change2(detail.resource?.toUpperCase(), detail.before, detail.after));
             break;
           case "counter": {
             const { counterKey, before, after } = detail;
             const suffix = ` \xB7 ${counterKey} ${before} \u2192 ${after}`;
-            const label = counterKey && text4.endsWith(suffix) ? `${text4.slice(0, -suffix.length)} \xB7 ${resourceLabel(counterKey)} ${before} \u2192 ${after}` : text4;
+            const label = counterKey && text5.endsWith(suffix) ? `${text5.slice(0, -suffix.length)} \xB7 ${resourceLabel(counterKey)} ${before} \u2192 ${after}` : text5;
             add(replaceUnitNames(event, label));
             break;
           }
           case "outcome":
             turn = null;
-            rows2.push(replaceUnitNames(event, text4));
+            rows2.push(replaceUnitNames(event, text5));
             break;
           default: {
             if (type === "cover_damage" && detail.amount === 0) break;
             const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "altitude", "interact", "skip", "brace", "cover_approach"].includes(type);
-            let label = replaceUnitNames(event, text4);
+            let label = replaceUnitNames(event, text5);
             const actorRaw = names.get(actor) ?? actor;
             if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
             if (["teleport", "knockback"].includes(type) && Number.isInteger(detail.to?.z)) {
@@ -5343,24 +7247,24 @@ var FatedTacticalTavern = (() => {
     throw new Error(message);
   };
   var version = 1;
-  var battleVersion = 10;
+  var battleVersion = 11;
   var maxHistory = 2e3;
   var maxBatch = 32;
-  var own4 = (obj, key4) => Object.hasOwn(obj, key4);
-  var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own4(value, key4));
-  function diff(before, after, path = [], changes2 = []) {
+  var own11 = (obj, key4) => Object.hasOwn(obj, key4);
+  var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own11(value, key4));
+  function diff(before, after, path2 = [], changes2 = []) {
     if (before === after) return changes2;
     if (before && after && typeof before === "object" && typeof after === "object" && Array.isArray(before) === Array.isArray(after) && (!Array.isArray(before) || before.length === after.length)) {
       for (const key4 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
         diff(
-          own4(before, key4) ? before[key4] : void 0,
-          own4(after, key4) ? after[key4] : void 0,
-          [...path, Array.isArray(before) ? Number(key4) : key4],
+          own11(before, key4) ? before[key4] : void 0,
+          own11(after, key4) ? after[key4] : void 0,
+          [...path2, Array.isArray(before) ? Number(key4) : key4],
           changes2
         );
       }
     } else {
-      changes2.push({ path, ...before === void 0 ? {} : { before }, ...after === void 0 ? {} : { after } });
+      changes2.push({ path: path2, ...before === void 0 ? {} : { before }, ...after === void 0 ? {} : { after } });
     }
     return changes2;
   }
@@ -5371,10 +7275,11 @@ var FatedTacticalTavern = (() => {
     const next = copy(base);
     if (transaction.kind === "actions") {
       for (const action of transaction.entries) {
-        if (!action || Object.getPrototypeOf(action) !== Object.prototype || Object.values(action).some((v) => typeof v !== "string" && typeof v !== "boolean" && !Number.isInteger(v))) fail3("\u52A8\u4F5C\u5FC5\u987B\u7531 JSON \u5B57\u6BB5\u7EC4\u6210");
+        if (!action || Object.getPrototypeOf(action) !== Object.prototype || Object.entries(action).some(([key4, value]) => typeof value !== "string" && typeof value !== "boolean" && !(action.type === "answer" && key4 === "value" ? Number.isFinite(value) : Number.isInteger(value)))) fail3("\u52A8\u4F5C\u5FC5\u987B\u7531 JSON \u5B57\u6BB5\u7EC4\u6210");
         applyAction(next, action);
       }
     } else if (transaction.kind === "commands") {
+      if (base.vm?.pendingAsk) fail3("\u8BF7\u5148\u56DE\u7B54\u5F53\u524D\u6218\u6597\u9009\u62E9");
       for (const command of transaction.entries) applyCommand(next, command);
       validateState(next);
       syncEquipmentEffects(next);
@@ -5394,7 +7299,7 @@ var FatedTacticalTavern = (() => {
     function current() {
       return state ?? fail3("\u8BF7\u5148\u521B\u5EFA\u6218\u5C40");
     }
-    function publish() {
+    function publish2() {
       revision++;
       pending.clear();
       for (const listener of listeners) {
@@ -5409,54 +7314,32 @@ var FatedTacticalTavern = (() => {
       if (frames.length >= maxHistory) fail3("\u6218\u5C40\u4E8B\u52A1\u5DF2\u8FBE\u4E0A\u9650\uFF0C\u8BF7\u5BFC\u51FA\u6218\u62A5\u540E\u91CD\u5F00");
       frames.push({ before: current(), transaction });
       state = next;
-      publish();
+      publish2();
       return { ok: true, revision };
     }
     function undo() {
       if (!frames.length) return { ok: false, error: "\u6CA1\u6709\u53EF\u64A4\u9500\u7684\u4E8B\u52A1" };
       state = frames.pop().before;
-      publish();
+      publish2();
       return { ok: true, revision };
     }
     function restore(snapshot) {
-      if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || ![1, 2, 3, 4, 5, 6, 7, 8, 9, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4E0D\u652F\u6301\u7684\u6218\u5C40\u5FEB\u7167\u683C\u5F0F");
-      const needsMigration = snapshot.version < battleVersion;
-      if (needsMigration) {
-        const migrate = (data) => {
-          const next2 = migrateStateEffects(copy(data));
-          next2.mode = "split";
-          for (const unit of Object.values(next2.units ?? {})) {
-            delete unit.statuses?.disarmed;
-            delete unit.disarmedItem;
-          }
-          return next2;
-        };
-        snapshot = { ...snapshot, origin: migrate(snapshot.origin), state: migrate(snapshot.state) };
-      }
+      if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || snapshot.version !== battleVersion || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4EC5\u652F\u6301\u7248\u672C 11 \u7684\u6218\u5C40\u5FEB\u7167");
       validateState(snapshot.origin);
-      validateState(snapshot.state);
-      if (needsMigration) {
-        const resumed = copy(snapshot.state);
-        syncEquipmentEffects(resumed);
-        validateState(resumed);
-        origin = state = resumed;
-        frames = [];
-        publish();
-        return { ...api.getStateSummary(), migratedFrom: snapshot.version };
-      }
+      if (snapshot.origin.vm?.pendingAsk) fail3("\u5FEB\u7167\u8D77\u70B9\u4E0D\u5F97\u5305\u542B\u6302\u8D77\u4E2D\u7684\u52A8\u4F5C");
       const start = copy(snapshot.origin), history = [];
       let next = start;
       for (const transaction of snapshot.journal) {
-        const entry = copy(transaction);
-        const result = simulate(next, entry);
-        history.push({ before: next, transaction: entry });
+        const entry2 = copy(transaction);
+        const result = simulate(next, entry2);
+        history.push({ before: next, transaction: entry2 });
         next = result;
       }
       if (diff(next, snapshot.state).length) fail3("\u5FEB\u7167\u72B6\u6001\u4E0E\u547D\u4EE4\u65E5\u5FD7\u91CD\u653E\u4E0D\u4E00\u81F4");
       origin = start;
       state = next;
       frames = history;
-      publish();
+      publish2();
       return api.getStateSummary();
     }
     function commitStatusCommand(command, reason) {
@@ -5476,7 +7359,7 @@ var FatedTacticalTavern = (() => {
         }
         origin = state = next;
         frames = [];
-        publish();
+        publish2();
         return api.getStateSummary();
       },
       restoreBattleSnapshot: restore,
@@ -5494,6 +7377,7 @@ var FatedTacticalTavern = (() => {
             gear: u.gear
           }])),
           items: s.items,
+          pools: s.pools,
           ...s.statusTemplates && Object.keys(s.statusTemplates).length ? { statusTemplates: s.statusTemplates } : {}
         });
       },
@@ -5509,7 +7393,7 @@ var FatedTacticalTavern = (() => {
           scenarioId: s.scenarioId,
           title: s.title,
           outcome: s.outcome,
-          rounds: [...rounds].map(([round, events2]) => ({ round, events: events2 })),
+          rounds: [...rounds].map(([round, events]) => ({ round, events })),
           units: api.listUnits(),
           journal: frames.map((frame) => frame.transaction),
           summary: `${s.title} \xB7 \u7B2C ${s.round} \u8F6E \xB7 ${outcome} \xB7 ${s.logs.length} \u6761\u4E8B\u4EF6`
@@ -5542,22 +7426,22 @@ var FatedTacticalTavern = (() => {
         const s = current();
         return copy({ ...STATUSES, ...s.statusTemplates });
       },
-      statusModifierKeys(statusId2) {
-        return statusModifierKeys(statusId2, state);
+      statusModifierKeys(statusId3) {
+        return statusModifierKeys(statusId3, state);
       },
       checkStealth(unitId, d20, dc) {
         const s = current();
-        if (!own4(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail3("\u65E0\u6548\u7684\u6F5C\u884C\u68C0\u5B9A\u53C2\u6570");
+        if (!own11(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail3("\u65E0\u6548\u7684\u6F5C\u884C\u68C0\u5B9A\u53C2\u6570");
         return stealthCheck(s, s.units[unitId], d20, dc);
       },
       defineStatus(id3, template) {
-        if (!template || Object.getPrototypeOf(template) !== Object.prototype || own4(template, "id") && template.id !== id3) {
+        if (!template || Object.getPrototypeOf(template) !== Object.prototype || own11(template, "id") && template.id !== id3) {
           return { ok: false, error: "\u65E0\u6548\u72B6\u6001\u6A21\u677F\u6216 ID \u4E0D\u4E00\u81F4" };
         }
         return commitStatusCommand({ type: "define_status_template", template: { ...template, id: id3 } }, "\u6CE8\u518C\u72B6\u6001\u6A21\u677F");
       },
-      patchStatus(unitId, statusId2, patch) {
-        return commitStatusCommand({ type: "patch_status", unitId, statusId: statusId2, patch }, "\u66F4\u65B0\u72B6\u6001\u53C2\u6570");
+      patchStatus(unitId, statusId3, patch) {
+        return commitStatusCommand({ type: "patch_status", unitId, statusId: statusId3, patch }, "\u66F4\u65B0\u72B6\u6001\u53C2\u6570");
       },
       listUnits() {
         return Object.values(current().units).map(({ id: id3, name, team: team2, x, y, hp, maxHp, ap, statuses, mainHand, offHand, shield, stance, moraleState, mc, deathrattle }) => ({
@@ -5582,7 +7466,7 @@ var FatedTacticalTavern = (() => {
       },
       inspectWeaponSlots(unitId) {
         const s = current();
-        if (!own4(s.units, unitId)) return null;
+        if (!own11(s.units, unitId)) return null;
         const u = s.units[unitId];
         const item = (id3) => id3 ? { id: id3, ...s.items[id3], template: s.equipment[s.items[id3]?.templateId] } : null;
         return copy({
@@ -5597,7 +7481,7 @@ var FatedTacticalTavern = (() => {
       },
       setWeaponStance(unitId, stance, options = {}) {
         const s = current();
-        if (!own4(s.units, unitId)) return { ok: false, error: "\u672A\u77E5\u5355\u4F4D" };
+        if (!own11(s.units, unitId)) return { ok: false, error: "\u672A\u77E5\u5355\u4F4D" };
         if (!["light_blade", "dual_wield", "attunement", "greatsword", "sword_shield"].includes(stance)) return { ok: false, error: "\u672A\u77E5\u6301\u68B0\u59FF\u6001" };
         const patch = { stance };
         if (options.greatswordMode !== void 0) patch.greatswordMode = options.greatswordMode;
@@ -5613,7 +7497,7 @@ var FatedTacticalTavern = (() => {
       },
       inspectUnit(unitId) {
         const s = current();
-        if (!own4(s.units, unitId)) return null;
+        if (!own11(s.units, unitId)) return null;
         const unit = s.units[unitId];
         const skills = [...unit.skills, ...Object.keys(unit.inventory ?? {}).filter((id3) => s.skills[id3]?.backpackItem)];
         const templates = [...skills.map((id3) => [id3, s.skills[id3]]), ...equippedActiveSkills(s, unit)];
@@ -5731,7 +7615,11 @@ var FatedTacticalTavern = (() => {
         <p id="battle-status" class="ft-status" role="status"></p>
         <p id="sprint-indicator" class="ft-hint"></p>
         <p id="action-error" class="ft-error" role="alert" hidden></p>
-        <div class="ft-row">
+        <section id="pending-ask" class="ft-ask" aria-labelledby="pending-ask-prompt" hidden>
+          <p id="pending-ask-prompt" tabindex="-1"></p>
+          <div id="pending-ask-choices" class="ft-ask-choices"></div>
+        </section>
+        <div class="ft-row" id="turn-controls">
           <button id="end-turn" type="button" class="game-button primary">\u7ED3\u675F\u56DE\u5408</button>
           <button id="undo-button" type="button" class="game-button">\u64A4\u9500</button>
           <button id="ai-step" type="button" class="game-button">\u654C\u65B9\u5355\u6B65</button>
@@ -5869,24 +7757,24 @@ var FatedTacticalTavern = (() => {
   function statusInfo(state, id3) {
     return table3(state?.statusTemplates, id3) ?? table3(STATUSES, id3) ?? { name: id3 };
   }
-  function diceMode(dice3, kept, { advantages = 0, disadvantages = 0, bonusDice = 0 } = {}) {
-    if (!Array.isArray(dice3) || dice3.length <= 1) return "normal";
-    if (dice3.length === 3) return "middle";
-    const hi = Math.max(...dice3), lo = Math.min(...dice3);
+  function diceMode(dice4, kept, { advantages = 0, disadvantages = 0, bonusDice = 0 } = {}) {
+    if (!Array.isArray(dice4) || dice4.length <= 1) return "normal";
+    if (dice4.length === 3) return "middle";
+    const hi = Math.max(...dice4), lo = Math.min(...dice4);
     if (hi !== lo) return kept === hi ? "advantage" : "disadvantage";
     return advantages + bonusDice > disadvantages ? "advantage" : "disadvantage";
   }
-  function describeDice(dice3, kept, mode) {
-    if (!Array.isArray(dice3) || !dice3.length) return `\u9AB0\u503C ${kept}`;
+  function describeDice(dice4, kept, mode) {
+    if (!Array.isArray(dice4) || !dice4.length) return `\u9AB0\u503C ${kept}`;
     if (mode === "normal") return `\u63B7 d20\uFF0C\u5F97 ${kept}`;
-    const label = { advantage: `\u4F18\u52BF\uFF1A\u63B7 ${dice3.length} \u9897 d20 \u53D6\u9AD8`, disadvantage: `\u52A3\u52BF\uFF1A\u63B7 ${dice3.length} \u9897 d20 \u53D6\u4F4E`, middle: "\u63B7 3 \u9897 d20 \u53D6\u4E2D\u95F4\u503C" }[mode];
-    return `${label}\uFF08${dice3.join("\u3001")}\uFF09\uFF0C\u5F97 ${kept}`;
+    const label = { advantage: `\u4F18\u52BF\uFF1A\u63B7 ${dice4.length} \u9897 d20 \u53D6\u9AD8`, disadvantage: `\u52A3\u52BF\uFF1A\u63B7 ${dice4.length} \u9897 d20 \u53D6\u4F4E`, middle: "\u63B7 3 \u9897 d20 \u53D6\u4E2D\u95F4\u503C" }[mode];
+    return `${label}\uFF08${dice4.join("\u3001")}\uFF09\uFF0C\u5F97 ${kept}`;
   }
-  function ratingLine(total, rating) {
+  function ratingLine(total2, rating) {
     if (!rating) return null;
-    if (!rating.multiplier) return `\u5408\u8BA1 ${total}\uFF0C\u4E0D\u8DB3 4\uFF0C\u5931\u624B`;
+    if (!rating.multiplier) return `\u5408\u8BA1 ${total2}\uFF0C\u4E0D\u8DB3 4\uFF0C\u5931\u624B`;
     const row = RATING_TABLE.find((r) => r.name === rating.name);
-    return `\u5408\u8BA1 ${total}${row?.min != null ? ` \u2265 ${row.min}` : ""}\uFF0C\u8BC4\u7EA7\u300C${rating.name}\u300D\uFF0C\u4F24\u5BB3 \xD7${rating.multiplier}`;
+    return `\u5408\u8BA1 ${total2}${row?.min != null ? ` \u2265 ${row.min}` : ""}\uFF0C\u8BC4\u7EA7\u300C${rating.name}\u300D\uFF0C\u4F24\u5BB3 \xD7${rating.multiplier}`;
   }
   function rollEntry(state, log) {
     const d = log.detail ?? {};
@@ -5936,10 +7824,10 @@ var FatedTacticalTavern = (() => {
     const d = log.detail ?? {};
     const target2 = nameOf(state, d.targetId);
     const lines = [];
-    const dice3 = d.dice;
-    if (dice3 && typeof dice3 === "object") {
-      if (dice3.count) lines.push(`\u57FA\u7840\u4F24\u5BB3 ${dice3.count}d${dice3.sides}\uFF08${dice3.rolls.join(" + ")}\uFF09${dice3.bonus ? ` + ${dice3.bonus}` : ""} = ${dice3.value}`);
-      else if (Number.isFinite(dice3.value)) lines.push(`\u57FA\u7840\u4F24\u5BB3 ${dice3.value}`);
+    const dice4 = d.dice;
+    if (dice4 && typeof dice4 === "object") {
+      if (dice4.count) lines.push(`\u57FA\u7840\u4F24\u5BB3 ${dice4.count}d${dice4.sides}\uFF08${dice4.rolls.join(" + ")}\uFF09${dice4.bonus ? ` + ${dice4.bonus}` : ""} = ${dice4.value}`);
+      else if (Number.isFinite(dice4.value)) lines.push(`\u57FA\u7840\u4F24\u5BB3 ${dice4.value}`);
     }
     const mults = [];
     if (d.ratingMultiplier && d.ratingMultiplier !== 1) mults.push(`\u8BC4\u7EA7\u300C${d.rating}\u300D\xD7${d.ratingMultiplier}`);
@@ -5959,8 +7847,8 @@ var FatedTacticalTavern = (() => {
     return { tone: "damage", icon: "\u{1FA78}", title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0 };
   }
   function saveCheck(state, who, c) {
-    const stat2 = STAT_NAMES[c.saveStat] ?? c.saveStat;
-    return `${who} ${stat2}\u8C41\u514D\uFF1Ad20 \u5F97 ${c.saveRoll} ${sign(c.saveBonus)} = ${c.saveTotal}\uFF0C\u9700\u8981 ${c.saveDC} \u2192 ${c.saved ? "\u901A\u8FC7" : "\u5931\u8D25"}`;
+    const stat3 = STAT_NAMES[c.saveStat] ?? c.saveStat;
+    return `${who} ${stat3}\u8C41\u514D\uFF1Ad20 \u5F97 ${c.saveRoll} ${sign(c.saveBonus)} = ${c.saveTotal}\uFF0C\u9700\u8981 ${c.saveDC} \u2192 ${c.saved ? "\u901A\u8FC7" : "\u5931\u8D25"}`;
   }
   function saveEntry(state, log) {
     const d = log.detail ?? {};
@@ -5999,18 +7887,18 @@ var FatedTacticalTavern = (() => {
         }
       };
     }
-    const stat2 = STAT_NAMES[d.saveStat] ?? d.saveStat ?? "";
+    const stat3 = STAT_NAMES[d.saveStat] ?? d.saveStat ?? "";
     return {
       ...base,
       lines: [saveCheck(state, who, d)],
       roll: {
         kind: "d20",
-        label: `${who} \xB7 ${stat2}\u8C41\u514D`,
+        label: `${who} \xB7 ${stat3}\u8C41\u514D`,
         dice: [d.saveRoll],
         kept: d.saveRoll,
         mode: "normal",
         modifier: d.saveBonus ?? 0,
-        modifierLabel: `${stat2}\u52A0\u503C`,
+        modifierLabel: `${stat3}\u52A0\u503C`,
         total: d.saveTotal,
         target: d.saveDC,
         targetLabel: "\u96BE\u5EA6",
@@ -6222,6 +8110,7 @@ var FatedTacticalTavern = (() => {
   }
 
   // src/ui/render.js
+  var effectLabel = (rule2) => rule2.label ?? rule2.id;
   var STATUS_ICON = { buff: "\u2191", debuff: "\u2193", control: "\u2298", dot: "\u2739", hot: "\u271A", shield: "\u2B21" };
   var STANCES = { light_blade: "\u8F7B\u5251", dual_wield: "\u53CC\u6301", attunement: "\u540C\u8C03", greatsword: "\u91CD\u5251", sword_shield: "\u5251\u76FE" };
   var SHAPES = { circle: "\u5706\u5F62\u8303\u56F4", ring: "\u73AF\u5F62\u8303\u56F4", cone: "\u9525\u5F62\u8303\u56F4", fan: "\u6247\u5F62\u8303\u56F4", line: "\u76F4\u7EBF\u8303\u56F4" };
@@ -6276,24 +8165,24 @@ var FatedTacticalTavern = (() => {
   var pct2 = (n) => `${Math.round(n * 100)}%`;
   var interval = (pair) => pair?.length === 2 ? pair[0] === pair[1] ? `${pair[0]}` : `${pair[0]}\u2013${pair[1]}` : null;
   var side = (team2) => team2 === "blue" ? "\u6211\u65B9" : "\u654C\u65B9";
-  var ratio2 = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
+  var ratio = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
   var has2 = (table4, id3) => table4 && id3 != null && Object.hasOwn(table4, id3);
   var get2 = (table4, id3) => has2(table4, id3) ? table4[id3] : void 0;
-  var values3 = (table4) => Object.values(table4 ?? {});
+  var values4 = (table4) => Object.values(table4 ?? {});
   var key3 = (x, y) => `${x},${y}`;
   var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
   var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
   var terrainLabel = (t) => t.kind === "wall" ? "\u5899\u4F53\uFF0C\u6321\u4F4F\u79FB\u52A8\u548C\u89C6\u7EBF" : t.kind === "slope" ? "\u5761\u9053" : t.z > 0 ? `\u9AD8\u53F0\uFF08\u9AD8 ${t.z}\uFF09` : t.z < 0 ? `\u4F4E\u5730\uFF08${t.z}\uFF09` : "\u5E73\u5730";
-  function createRenderer(root, portraitFor = () => []) {
-    const doc = root.ownerDocument;
-    const $ = (id3) => root.querySelector(`[id="${id3}"]`);
-    const el2 = (tag, cls, text4) => {
-      const n = doc.createElement(tag);
+  function createRenderer(root2, portraitFor = () => []) {
+    const doc = root2.ownerDocument;
+    const $ = (id3) => root2.querySelector(`[id="${id3}"]`);
+    const el2 = (tag2, cls, text5) => {
+      const n = doc.createElement(tag2);
       if (cls) n.className = cls;
-      if (text4 != null) n.textContent = String(text4);
+      if (text5 != null) n.textContent = String(text5);
       return n;
     };
-    const cells = /* @__PURE__ */ new Map();
+    const cells2 = /* @__PURE__ */ new Map();
     let dims = "", last = null, baseline = { move: /* @__PURE__ */ new Set(), attack: /* @__PURE__ */ new Set(), interact: /* @__PURE__ */ new Set() }, logCount = -1;
     function initBoard(state) {
       const h = state.grid.length, w = state.grid[0].length;
@@ -6303,32 +8192,32 @@ var FatedTacticalTavern = (() => {
       frame.style.setProperty("--cols", w);
       frame.style.setProperty("--rows", h);
       board.replaceChildren();
-      cells.clear();
+      cells2.clear();
       for (let y = h - 1; y >= 0; y--) for (let x = 0; x < w; x++) {
         const cell = el2("button", "tactical-cell");
         cell.type = "button";
         Object.assign(cell.dataset, { x, y });
-        const coord3 = el2("span", "tactical-cell-coord", key3(x, y)), z = el2("span", "tactical-cell-tz");
+        const coord2 = el2("span", "tactical-cell-coord", key3(x, y)), z = el2("span", "tactical-cell-tz");
         const units = el2("span", "tactical-cell-units"), features = el2("span", "tactical-cell-features");
-        cell.append(coord3, z, units, features);
-        cells.set(key3(x, y), { cell, z, units, features });
+        cell.append(coord2, z, units, features);
+        cells2.set(key3(x, y), { cell, z, units, features });
         board.append(cell);
       }
     }
     function token(name, initial, z, cls, faction) {
-      const node3 = el2("span", `axis-unit ${cls ?? ""}`.trim());
-      if (faction) node3.dataset.faction = faction;
+      const node = el2("span", `axis-unit ${cls ?? ""}`.trim());
+      if (faction) node.dataset.faction = faction;
       const head = el2("span", "axis-token-head");
       const badge = el2("span", "axis-z-badge", sign2(z));
       badge.dataset.zSign = z > 0 ? "pos" : z < 0 ? "neg" : "zero";
       head.append(el2("span", "axis-unit-fallback-avatar", initial), badge);
-      node3.append(head, el2("span", "axis-unit-name", name));
-      return { node: node3, head };
+      node.append(head, el2("span", "axis-unit-name", name));
+      return { node, head };
     }
     function unitToken(state, unit, z, chosen, isActive) {
-      const { node: node3, head } = token(unit.name, Array.from(unit.name)[0] ?? "?", z, isActive ? "is-active" : "", unit.team);
-      node3.dataset.unitId = unit.id;
-      node3.setAttribute("aria-pressed", String(chosen));
+      const { node, head } = token(unit.name, Array.from(unit.name)[0] ?? "?", z, isActive ? "is-active" : "", unit.team);
+      node.dataset.unitId = unit.id;
+      node.setAttribute("aria-pressed", String(chosen));
       const portraits = portraitFor(unit.id);
       if (portraits.length) {
         const image = el2("img", "axis-unit-portrait");
@@ -6349,28 +8238,28 @@ var FatedTacticalTavern = (() => {
       }
       head.append(el2("span", "axis-facing-pip", ARROWS[unit.facing?.join(",")] ?? "\xB7"));
       const bars = el2("span", "token-meters");
-      for (const stat2 of ["hp", "mp", "sp"]) {
-        const meter = el2("span", `token-meter ${stat2}`), fill = el2("i");
-        fill.style.setProperty("--resource-ratio", ratio2(unit[stat2], unit[`max${stat2[0].toUpperCase()}${stat2[1]}`]));
+      for (const stat3 of ["hp", "mp", "sp"]) {
+        const meter = el2("span", `token-meter ${stat3}`), fill = el2("i");
+        fill.style.setProperty("--resource-ratio", ratio(unit[stat3], unit[`max${stat3[0].toUpperCase()}${stat3[1]}`]));
         meter.append(fill);
         bars.append(meter);
       }
-      node3.append(bars);
-      const marks = values3(unit.statuses);
-      if (marks.length) node3.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : STATUS_ICON[marks[0].category] ?? "\u25C6"));
-      return node3;
+      node.append(bars);
+      const marks = values4(unit.statuses);
+      if (marks.length) node.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : STATUS_ICON[marks[0].category] ?? "\u25C6"));
+      return node;
     }
     function featureToken(f, z, isCover) {
       const initial = Array.from(isCover ? f.material || "\u63A9" : f.kind === "barrel" ? "\u6876" : "\u796D")[0];
-      const { node: node3 } = token(f.name ?? f.id, initial, z, isCover ? `tactical-cover${f.hp ? "" : " is-broken"}` : `tactical-interact${f.spent ? " is-spent" : ""}`);
+      const { node } = token(f.name ?? f.id, initial, z, isCover ? `tactical-cover${f.hp ? "" : " is-broken"}` : `tactical-interact${f.spent ? " is-spent" : ""}`);
       if (isCover) {
-        node3.dataset.cover = f.id;
+        node.dataset.cover = f.id;
         const bar2 = el2("span", "tactical-cover-bar"), fill = el2("i");
-        fill.style.width = pct2(ratio2(f.hp, f.maxHp));
+        fill.style.width = pct2(ratio(f.hp, f.maxHp));
         bar2.append(fill);
-        node3.append(bar2);
-      } else node3.dataset.interact = f.id;
-      return node3;
+        node.append(bar2);
+      } else node.dataset.interact = f.id;
+      return node;
     }
     const coverText = (c) => `${c.name}\uFF1A${c.material}\u63A9\u4F53\uFF0C\u8010\u4E45 ${c.hp}/${c.maxHp}\uFF0C\u8EB2\u5728\u540E\u9762\u547D\u4E2D \u2212${c.cover}${c.hp ? "" : "\uFF08\u5DF2\u574D\u584C\uFF09"}`;
     const interactiveText = (i) => `${i.name}\uFF1A${i.kind === "barrel" ? "\u6B66\u5668\u5C04\u7A0B\u5185\u53EF\u5F15\u7206\uFF08\u653B\u51FB\u69FD\uFF09\uFF0C\u6CE2\u53CA\u5468\u56F4" : "\u76F8\u90BB\u6FC0\u6D3B\uFF08\u52A8\u4F5C\u69FD\uFF09"}${i.spent ? "\uFF08\u5DF2\u7528\u8FC7\uFF09" : ""}`;
@@ -6381,33 +8270,34 @@ var FatedTacticalTavern = (() => {
         return n?.kind === "floor" && Math.abs(n.z - tile.z) >= 2;
       }).map(([d]) => d);
     }
-    function group(list3) {
+    function group(list4) {
       const map = /* @__PURE__ */ new Map();
-      for (const item of list3) {
+      for (const item of list4) {
         const k = key3(item.x, item.y);
         if (!map.has(k)) map.set(k, []);
         map.get(k).push(item);
       }
       return map;
     }
-    function renderBoard(state, { selected, action, hover, preview: preview2, current }) {
+    function renderBoard(state, { selected: selected2, action, hover, preview: preview2, current, askLocked, askCells }) {
       initBoard(state);
       const moving = ["move", "sprint", "disengage"].includes(action?.type);
-      const unitsAt2 = group(values3(state.units).filter((u) => u.hp > 0 && !u.fled));
-      const bodiesAt = group(corpses(state)), coversAt = group(values3(state.covers)), itemsAt = group(values3(state.interactives));
+      const unitsAt = group(values4(state.units).filter((u) => u.hp > 0 && !u.fled));
+      const bodiesAt = group(corpses(state)), coversAt = group(values4(state.covers)), itemsAt = group(values4(state.interactives));
       const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
-      const path = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
+      const path2 = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
       const risks = new Set((moving && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
       const hoverKey = hover ? key3(hover.x, hover.y) : null;
-      const origin = state.units[selected] ?? current;
+      const origin = state.units[selected2] ?? current;
       const originZ = origin ? elevation(state, origin) : 0;
       let inspection = "";
-      for (const [xy, slot] of cells) {
-        const { cell } = slot;
+      for (const [xy2, slot2] of cells2) {
+        const { cell } = slot2;
         const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
-        const unit = unitsAt2.get(xy)?.[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
-        const chosen = !!unit && selected === unit.id, isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
-        const reach = baseline.move.has(xy);
+        const unit = unitsAt.get(xy2)?.[0], cover = coversAt.get(xy2)?.[0], item = itemsAt.get(xy2)?.[0];
+        const chosen = !!unit && selected2 === unit.id, isHover = hoverKey === xy2, edges = cliffs(state, x, y, tile);
+        const reach = baseline.move.has(xy2), answerable = askCells?.has(xy2);
+        cell.disabled = askLocked && !answerable;
         cell.className = [
           "tactical-cell",
           tile.kind !== "floor" ? `terrain-${tile.kind}` : tile.z ? "terrain-plateau" : "",
@@ -6416,11 +8306,12 @@ var FatedTacticalTavern = (() => {
           isHover ? "is-hovered" : "",
           isHover && preview2?.ok === false ? "is-invalid" : "",
           reach ? "is-reachable" : "",
-          (action?.type === "interact" ? baseline.interact : baseline.attack).has(xy) || item && baseline.interact.has(xy) ? "is-in-range" : "",
+          (action?.type === "interact" ? baseline.interact : baseline.attack).has(xy2) || item && baseline.interact.has(xy2) ? "is-in-range" : "",
           reach && (tile.kind === "slope" || tile.z !== originZ) ? "is-elevated-reach" : "",
-          affected.has(xy) ? "axis-covered" : "",
-          path.has(xy) ? "is-path" : "",
-          risks.has(xy) ? "is-opportunity" : ""
+          affected.has(xy2) ? "axis-covered" : "",
+          path2.has(xy2) ? "is-path" : "",
+          risks.has(xy2) ? "is-opportunity" : "",
+          answerable ? "is-ask-option" : ""
         ].filter(Boolean).join(" ");
         cell.dataset.terrainType = tile.kind;
         cell.dataset.terrainZ = tile.z;
@@ -6431,45 +8322,48 @@ var FatedTacticalTavern = (() => {
         }
         cell.setAttribute("aria-pressed", String(chosen));
         const label = [
-          `(${xy}) ${terrainLabel(tile)}`,
+          `(${xy2}) ${terrainLabel(tile)}`,
           edges.length ? "\u9661\u5D16\u8FB9" : "",
-          unit ? `${side(unit.team)}${unit.name}\uFF0C\u751F\u547D ${unit.hp}/${unit.maxHp}${values3(unit.statuses).length ? `\uFF0C${values3(unit.statuses).map((s) => s.name).join("\u3001")}` : ""}` : "",
+          unit ? `${side(unit.team)}${unit.name}\uFF0C\u751F\u547D ${unit.hp}/${unit.maxHp}${values4(unit.statuses).length ? `\uFF0C${values4(unit.statuses).map((s) => s.name).join("\u3001")}` : ""}` : "",
           cover ? coverText(cover) : "",
           item ? interactiveText(item) : "",
-          reach ? "\u53EF\u4EE5\u8D70\u5230\u8FD9\u91CC" : ""
+          reach ? "\u53EF\u4EE5\u8D70\u5230\u8FD9\u91CC" : "",
+          answerable ? "\u53EF\u9009\u62E9\u6B64\u683C" : ""
         ].filter(Boolean).join(" \xB7 ");
         cell.setAttribute("aria-label", label);
+        if (answerable) cell.setAttribute("aria-describedby", "pending-ask-prompt");
+        else cell.removeAttribute("aria-describedby");
         if (isHover) inspection = label;
-        const bodies = bodiesAt.get(xy) ?? [];
+        const bodies = bodiesAt.get(xy2) ?? [];
         const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map((b) => b.id), unit && portraitFor(unit.id)]);
-        if (slot.signature === signature) continue;
-        slot.signature = signature;
-        slot.z.textContent = tile.kind !== "wall" && tile.z ? `z${sign2(tile.z)}` : "";
+        if (slot2.signature === signature) continue;
+        slot2.signature = signature;
+        slot2.z.textContent = tile.kind !== "wall" && tile.z ? `z${sign2(tile.z)}` : "";
         const dead = bodies.map((body) => {
-          const { node: node3 } = token(body.name, "\u2020", tile.z, "tactical-corpse", body.team);
-          node3.dataset.corpseId = body.id;
-          Object.assign(node3.style, { filter: "grayscale(1)", opacity: ".55", pointerEvents: "none" });
-          node3.setAttribute("aria-label", `${body.name}\u7684\u5C38\u4F53`);
-          return node3;
+          const { node } = token(body.name, "\u2020", tile.z, "tactical-corpse", body.team);
+          node.dataset.corpseId = body.id;
+          Object.assign(node.style, { filter: "grayscale(1)", opacity: ".55", pointerEvents: "none" });
+          node.setAttribute("aria-label", `${body.name}\u7684\u5C38\u4F53`);
+          return node;
         });
-        slot.units.replaceChildren(...dead, ...[
+        slot2.units.replaceChildren(...dead, ...[
           unit && unitToken(state, unit, tile.z, chosen, unit.id === current?.id),
           cover && featureToken(cover, tile.z, true),
           item && featureToken(item, tile.z, false)
         ].filter(Boolean));
-        slot.features.replaceChildren(...tile.kind !== "floor" ? [el2("span", "tactical-cell-tag", tile.kind === "wall" ? "#" : "\u5761")] : []);
+        slot2.features.replaceChildren(...tile.kind !== "floor" ? [el2("span", "tactical-cell-tag", tile.kind === "wall" ? "#" : "\u5761")] : []);
       }
       $("terrain-inspector").textContent = inspection;
     }
-    function bar(stat2, cur, max) {
-      const node3 = el2("span", `ft-bar ${stat2}`);
-      node3.style.setProperty("--ratio", ratio2(cur, max));
-      node3.append(el2("i"), el2("span", "", `${stat2.toUpperCase()} ${cur}/${max}`));
-      return node3;
+    function bar(stat3, cur, max) {
+      const node = el2("span", `ft-bar ${stat3}`);
+      node.style.setProperty("--ratio", ratio(cur, max));
+      node.append(el2("i"), el2("span", "", `${stat3.toUpperCase()} ${cur}/${max}`));
+      return node;
     }
-    function renderTurnOrder(state, current, selected) {
-      const node3 = $("turn-order");
-      const old = new Map([...node3.children].map((b) => [b.dataset.unitId, b]));
+    function renderTurnOrder(state, current, selected2) {
+      const node = $("turn-order");
+      const old = new Map([...node.children].map((b) => [b.dataset.unitId, b]));
       const chips = state.order.map((id3) => {
         const u = get2(state.units, id3);
         if (!u) return null;
@@ -6480,20 +8374,20 @@ var FatedTacticalTavern = (() => {
         chip.replaceChildren(el2("span", "chip-face", Array.from(u.name)[0]), el2("span", "", u.name.split(" \xB7 ")[0]));
         chip.title = `${side(u.team)} ${u.name} \xB7 \u751F\u547D ${u.hp}/${u.maxHp}`;
         chip.setAttribute("aria-current", String(id3 === current?.id));
-        chip.setAttribute("aria-pressed", String(id3 === selected));
+        chip.setAttribute("aria-pressed", String(id3 === selected2));
         return chip;
       }).filter(Boolean);
-      node3.replaceChildren(...chips);
-      node3.querySelector('[aria-current="true"]')?.scrollIntoView?.({ block: "nearest", inline: "center" });
+      node.replaceChildren(...chips);
+      node.querySelector('[aria-current="true"]')?.scrollIntoView?.({ block: "nearest", inline: "center" });
     }
     function renderActor(state, u) {
-      const node3 = $("actor-card");
+      const node = $("actor-card");
       if (!u) {
-        node3.replaceChildren(el2("span", "muted", "\u7B49\u5F85\u884C\u52A8"));
-        delete node3.dataset.faction;
+        node.replaceChildren(el2("span", "muted", "\u7B49\u5F85\u884C\u52A8"));
+        delete node.dataset.faction;
         return;
       }
-      node3.dataset.faction = u.team;
+      node.dataset.faction = u.team;
       const name = el2("div", "ft-actor-name");
       name.append(el2("span", "", u.name), el2("small", "", `${side(u.team)} \xB7 \u7B2C ${state.round} \u56DE\u5408`));
       const bars = el2("div", "ft-bars");
@@ -6506,17 +8400,17 @@ var FatedTacticalTavern = (() => {
       meta.append(crystals);
       if (u.moraleState && u.moraleState !== "steady") meta.append(el2("span", "ft-chip", `\u6218\u610F${moraleLabels[u.moraleState]}`));
       meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
-      for (const s of values3(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
-      node3.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
+      for (const s of values4(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
+      node.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
     }
     function renderUnitCard(state, u, inspected) {
-      const node3 = $("unit-card");
+      const node = $("unit-card");
       if (inspected && !u) {
-        node3.replaceChildren(el2("p", "", inspected.material ? coverText(inspected) : interactiveText(inspected)));
+        node.replaceChildren(el2("p", "", inspected.material ? coverText(inspected) : interactiveText(inspected)));
         return;
       }
       if (!u) {
-        node3.replaceChildren(el2("p", "muted", "\u70B9\u51FB\u68CB\u76D8\u4E0A\u7684\u5355\u4F4D\u6216\u9876\u90E8\u7684\u5148\u653B\u5934\u50CF\u67E5\u770B\u60C5\u62A5\u3002"));
+        node.replaceChildren(el2("p", "muted", "\u70B9\u51FB\u68CB\u76D8\u4E0A\u7684\u5355\u4F4D\u6216\u9876\u90E8\u7684\u5148\u653B\u5934\u50CF\u67E5\u770B\u60C5\u62A5\u3002"));
         return;
       }
       const head = el2("div", "ft-card-head");
@@ -6532,14 +8426,14 @@ var FatedTacticalTavern = (() => {
       wrap.append(head);
       const bars = el2("div", "ft-bars");
       bars.append(bar("hp", u.hp, u.maxHp), bar("mp", u.mp, u.maxMp), bar("sp", u.sp, u.maxSp));
-      const stats2 = el2("div", "ft-kv");
+      const stats = el2("div", "ft-kv");
       for (const [id3, label] of Object.entries(STAT_NAMES)) {
         const s = el2("span", "", label);
         s.prepend(el2("b", "", u.stats[id3]));
-        stats2.append(s);
+        stats.append(s);
       }
       const template = get2(state.equipment, get2(state.items, u.weapon)?.templateId);
-      const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some((n) => n.reloadable);
+      const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some((pool) => pool.reloadable);
       const facts = el2("p", "muted", [
         `\u62A4\u7532 ${u.armor}`,
         `\u79FB\u52A8 ${u.move} \u683C`,
@@ -6550,7 +8444,7 @@ var FatedTacticalTavern = (() => {
         u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
       ].filter(Boolean).join(" \xB7 "));
       const statusList = el2("ul", "ft-list");
-      for (const s of values3(u.statuses)) {
+      for (const s of values4(u.statuses)) {
         const li = el2("li");
         li.append(el2("b", "", statusText(s)), document_text(` ${duration(s)}`));
         if (s.description) li.append(el2("p", "", s.description));
@@ -6564,33 +8458,33 @@ var FatedTacticalTavern = (() => {
         const li = el2("li");
         li.dataset.instanceId = id3;
         li.append(el2("b", "", tpl?.name ?? id3));
-        const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${resourceLabel(k)} ${n}`);
+        const counters = Object.entries(inst?.pools ?? {}).map(([k, id4]) => `${resourceLabel(k)} ${state.pools?.[id4]?.current ?? 0}`);
         if (counters.length) li.append(document_text(` \xB7 ${counters.join(" \xB7 ")}`));
-        const text4 = [tpl?.description, ...(tpl?.effects ?? []).map(effectLabel)].filter(Boolean).join("\uFF1B");
-        if (text4) li.append(el2("p", "", text4));
+        const text5 = [tpl?.description, ...(tpl?.rules ?? []).map(effectLabel)].filter(Boolean).join("\uFF1B");
+        if (text5) li.append(el2("p", "", text5));
         gear.append(li);
       }
       if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
-      const zones = values3(state.zones).filter((z) => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius);
-      const parts = [wrap, bars, stats2, facts, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
+      const zones = values4(state.zones).filter((z) => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius);
+      const parts = [wrap, bars, stats, facts, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
       if (zones.length) parts.push(el2("h3", "ft-section", "\u6240\u5904\u533A\u57DF"), el2("p", "", zones.map((z) => `${z.name}\uFF1A\u6BCF\u56DE\u5408 ${z.damage} \u70B9${DAMAGE_TYPES[z.damageType] ?? ""}\u4F24\u5BB3`).join("\uFF1B")));
-      node3.replaceChildren(...parts);
+      node.replaceChildren(...parts);
     }
     const document_text = (t) => doc.createTextNode(t);
     function renderFeatures(state) {
-      const list3 = [...values3(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values3(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
+      const list4 = [...values4(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values4(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
       const ul = el2("ul", "ft-list");
-      for (const [text4, f] of list3) ul.append(el2("li", "", `${text4} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
+      for (const [text5, f] of list4) ul.append(el2("li", "", `${text5} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
       $("feature-cards").replaceChildren(ul);
     }
     function renderLog(state) {
       if (state.logs.length === logCount && last?.state?.scenarioId === state.scenarioId) return false;
-      const node3 = $("combat-log");
-      const stick = node3.parentElement ? node3.parentElement.scrollHeight - node3.parentElement.scrollTop - node3.parentElement.clientHeight < 40 : true;
-      const entries2 = narrateAll(state.logs.slice(-160), state);
+      const node = $("combat-log");
+      const stick = node.parentElement ? node.parentElement.scrollHeight - node.parentElement.scrollTop - node.parentElement.clientHeight < 40 : true;
+      const entries3 = narrateAll(state.logs.slice(-160), state);
       const out = [];
       let round = null;
-      for (const e of entries2) {
+      for (const e of entries3) {
         if (e.round !== round) {
           round = e.round;
           out.push(el2("div", "ft-log-round", `\u7B2C ${round} \u56DE\u5408`));
@@ -6613,38 +8507,38 @@ var FatedTacticalTavern = (() => {
         row.append(summary, ul);
         out.push(row);
       }
-      node3.replaceChildren(...out.length ? out : [el2("p", "muted", "\u6218\u6597\u8FD8\u6CA1\u5F00\u59CB\u3002")]);
-      if (stick && node3.parentElement) node3.parentElement.scrollTop = node3.parentElement.scrollHeight;
+      node.replaceChildren(...out.length ? out : [el2("p", "muted", "\u6218\u6597\u8FD8\u6CA1\u5F00\u59CB\u3002")]);
+      if (stick && node.parentElement) node.parentElement.scrollTop = node.parentElement.scrollHeight;
       const grew = logCount >= 0 && state.logs.length > logCount;
       logCount = state.logs.length;
       return grew;
     }
-    function renderPreview(state, action, hover, range, p, actor) {
-      const node3 = $("tactical-preview");
+    function renderPreview(state, action, hover, range2, p, actor) {
+      const node = $("tactical-preview");
       const lines = [];
-      const line = (text4, cls) => {
+      const line = (text5, cls) => {
         const d = el2("div", `preview-line${cls ? ` ${cls}` : ""}`);
-        if (typeof text4 === "string") d.textContent = text4;
-        else d.append(...text4);
+        if (typeof text5 === "string") d.textContent = text5;
+        else d.append(...text5);
         lines.push(d);
         return d;
       };
       if (!actor || !action) {
-        node3.replaceChildren();
+        node.replaceChildren();
         return;
       }
-      const label = p?.name ?? range?.name ?? ACTION_LABELS[action.type] ?? "\u52A8\u4F5C";
-      const cost = [range?.ap ? `${range.ap} AP` : "", range?.mp ? `${range.mp} MP` : "", range?.sp ? `${range.sp} SP` : ""].filter(Boolean).join(" + ");
+      const label = p?.name ?? range2?.name ?? ACTION_LABELS[action.type] ?? "\u52A8\u4F5C";
+      const cost = [range2?.ap ? `${range2.ap} AP` : "", range2?.mp ? `${range2.mp} MP` : "", range2?.sp ? `${range2.sp} SP` : ""].filter(Boolean).join(" + ");
       const head = [el2("b", "", label)];
       if (cost) head.push(document_text(`\uFF0C\u6D88\u8017 ${cost}`));
-      if (range?.shape && range.shape !== "single") head.push(document_text(`\uFF0C${SHAPES[range.shape] ?? range.shape}`));
+      if (range2?.shape && range2.shape !== "single") head.push(document_text(`\uFF0C${SHAPES[range2.shape] ?? range2.shape}`));
       line(head);
       if (p?.kind === "barrel") line(`\u7206\u70B8\u6CE2\u53CA ${p.cells.length} \u683C\uFF0C\u53EF\u80FD\u4F24\u53CA\u53CB\u65B9\u3002`);
-      if (range?.effects?.length) line(`\u6548\u679C\uFF1A${range.effects.map(effectLabel).join("\uFF1B")}`);
-      if (action.type === "brace" && range?.ok) line(`${range.coverId ? `\u501F\u52A9${get2(state.covers, range.coverId)?.name ?? "\u63A9\u4F53"}` : "\u539F\u5730"}\u9632\u5FA1\uFF1A\u53D7\u5230\u4F24\u5BB3\u51CF\u5C11 ${pct2(range.reduction)}\uFF0C\u6301\u7EED ${range.turns} \u56DE\u5408`);
-      if (range?.ammo != null) line(`\u5F39\u836F ${range.ammo}${range.capacity ? ` / ${range.capacity}` : ""}`);
+      if (range2?.rules?.length) line(`\u6548\u679C\uFF1A${range2.rules.map(effectLabel).join("\uFF1B")}`);
+      if (action.type === "brace" && range2?.ok) line(`${range2.coverId ? `\u501F\u52A9${get2(state.covers, range2.coverId)?.name ?? "\u63A9\u4F53"}` : "\u539F\u5730"}\u9632\u5FA1\uFF1A\u53D7\u5230\u4F24\u5BB3\u51CF\u5C11 ${pct2(range2.reduction)}\uFF0C\u6301\u7EED ${range2.turns} \u56DE\u5408`);
+      if (range2?.ammo != null) line(`\u5F39\u836F ${range2.ammo}${range2.capacity ? ` / ${range2.capacity}` : ""}`);
       if (p?.ok === false) line(`\u2716 ${p.error}`, "is-warning");
-      else if (range?.ok === false) line(`\u2716 ${range.error}`, "is-warning");
+      else if (range2?.ok === false) line(`\u2716 ${range2.error}`, "is-warning");
       if (hover && p) {
         const geo = [];
         if (p.steps) geo.push(`\u8D70 ${p.steps} \u683C`);
@@ -6664,8 +8558,8 @@ var FatedTacticalTavern = (() => {
           } else if (t.automatic) bits.push("\u5FC5\u5B9A\u547D\u4E2D");
           else if (Number.isFinite(t.hitChance)) {
             chance = t.hitChance;
-            const dice3 = t.advantage > 0 ? "\u4F18\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u9AD8\uFF09" : t.advantage < 0 ? "\u52A3\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u4F4E\uFF09" : "d20";
-            bits.push(`\u547D\u4E2D\u7387 ${pct2(t.hitChance)}\uFF1A${dice3} + \u547D\u4E2D ${t.accuracy}\uFF0C\u5BF9\u6297\u9632\u5FA1 ${t.defense}`);
+            const dice4 = t.advantage > 0 ? "\u4F18\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u9AD8\uFF09" : t.advantage < 0 ? "\u52A3\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u4F4E\uFF09" : "d20";
+            bits.push(`\u547D\u4E2D\u7387 ${pct2(t.hitChance)}\uFF1A${dice4} + \u547D\u4E2D ${t.accuracy}\uFF0C\u5BF9\u6297\u9632\u5FA1 ${t.defense}`);
             if (t.accuracySources) bits.push(`\u547D\u4E2D\u4E2D\u7684\u4F53\u578B\u4FEE\u6B63 ${sign2(t.accuracySources.size)}`);
           }
           const mods = [
@@ -6689,20 +8583,20 @@ var FatedTacticalTavern = (() => {
           }
         }
       }
-      node3.replaceChildren(...lines);
+      node.replaceChildren(...lines);
     }
     function render(state, ui = {}) {
       const current = get2(state.units, state.order[state.turn]);
-      const selected = ui.selectedId ?? current?.id;
+      const selected2 = ui.selectedId ?? current?.id;
       const action = ui.action ?? null, hover = ui.hover ?? null;
-      const canAct = !ui.busy && current?.team === "blue" && !state.outcome;
+      const canAct = !ui.busy && !ui.askLocked && current?.team === "blue" && !state.outcome;
       const run = (cmd) => canAct ? preview(state, cmd) : null;
       const fresh = last?.state !== state;
       if (fresh || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
-        const cells2 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
-        baseline = { move: cells2(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells2(run({ type: "attack" })), interact: cells2(run({ type: "interact" })) };
+        const cells3 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
+        baseline = { move: cells3(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells3(run({ type: "attack" })), interact: cells3(run({ type: "interact" })) };
       }
-      const range = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
+      const range2 = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
       const aimed = ["move", "sprint", "disengage", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
       const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
       if (fresh) {
@@ -6711,22 +8605,26 @@ var FatedTacticalTavern = (() => {
         $("round-badge").textContent = `\u7B2C ${state.round} \u56DE\u5408`;
         renderFeatures(state);
       }
-      if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);
+      if (fresh || last?.selected !== selected2) renderTurnOrder(state, current, selected2);
       if (fresh) renderActor(state, current);
       $("sprint-indicator").textContent = ui.sprint ? "\u75BE\u8DD1\u8303\u56F4\u5DF2\u663E\u793A \xB7 \u8D70\u66F4\u8FDC\u9700\u8981 2 AP" : "";
-      renderBoard(state, { selected, action, hover, preview: result, current });
-      if (ui.target) renderPreview(state, action, hover, range, result, current);
-      if (fresh || last?.selected !== selected || last?.inspectedId !== ui.inspectedId) {
+      renderBoard(state, { selected: selected2, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells });
+      if (ui.target) renderPreview(state, action, hover, range2, result, current);
+      if (fresh || last?.selected !== selected2 || last?.inspectedId !== ui.inspectedId) {
         const feature = get2(state.covers, ui.inspectedId) ?? get2(state.interactives, ui.inspectedId);
-        renderUnitCard(state, feature ? null : get2(state.units, selected), feature);
+        renderUnitCard(state, feature ? null : get2(state.units, selected2), feature);
       }
-      $("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F\uFF1A\u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F\uFF1A${state.outcome === "blue" ? "\u6211\u65B9\u80DC\u5229" : "\u654C\u65B9\u80DC\u5229"}` : canAct ? "\u70B9\u51FB\u683C\u5B50\u9009\u62E9\u76EE\u6807\uFF0C\u518D\u9009\u8981\u505A\u7684\u4E8B" : current ? `${current.name} \u6B63\u5728\u884C\u52A8\u2026\u2026` : "";
-      last = { state, canAct, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
+      $("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F\uFF1A\u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F\uFF1A${state.outcome === "blue" ? "\u6211\u65B9\u80DC\u5229" : "\u654C\u65B9\u80DC\u5229"}` : ui.askLocked ? "" : canAct ? "\u70B9\u51FB\u683C\u5B50\u9009\u62E9\u76EE\u6807\uFF0C\u518D\u9009\u8981\u505A\u7684\u4E8B" : current ? `${current.name} \u6B63\u5728\u884C\u52A8\u2026\u2026` : "";
+      last = { state, canAct, selected: selected2, inspectedId: ui.inspectedId, sprint: ui.sprint };
     }
     function renderControls(state) {
       const current = get2(state.units, state.order[state.turn]);
-      $("end-turn").disabled = !(current?.team === "blue" && !state.outcome);
-      $("ai-step").disabled = !!state.outcome || current?.team !== "red";
+      const askLocked = !!state.vm?.pendingAsk;
+      $("turn-controls").hidden = askLocked;
+      $("turn-order").inert = askLocked;
+      for (const button of root2.querySelectorAll("[data-open-drawer]")) button.disabled = askLocked;
+      $("end-turn").disabled = askLocked || !(current?.team === "blue" && !state.outcome);
+      $("ai-step").disabled = askLocked || !!state.outcome || current?.team !== "red";
     }
     return { render, renderControls, renderLog };
   }
@@ -6739,10 +8637,10 @@ var FatedTacticalTavern = (() => {
   var HOLD_MS = 1050;
   var HIT_MS = 420;
   var CAPTION_LIFE = 6500;
-  function createPlayback(root, { show, onIdle } = {}) {
-    const doc = root.ownerDocument, win = doc.defaultView;
-    const $ = (id3) => root.querySelector(`[id="${id3}"]`);
-    const app = root.querySelector(".ft-app") ?? root;
+  function createPlayback(root2, { show, onIdle } = {}) {
+    const doc = root2.ownerDocument, win = doc.defaultView;
+    const $ = (id3) => root2.querySelector(`[id="${id3}"]`);
+    const app = root2.querySelector(".ft-app") ?? root2;
     const queue = [];
     const waiters = /* @__PURE__ */ new Set();
     let running = false, skipping = false, speed = 1, generation = 0, current = null;
@@ -6773,8 +8671,8 @@ var FatedTacticalTavern = (() => {
       }
     }
     const frame = () => $("board-frame");
-    const cellAt2 = (x, y) => root.querySelector(`#board [data-x="${x}"][data-y="${y}"]`);
-    const tokenOf = (id3) => root.querySelector(`#board .axis-unit[data-unit-id="${id3}"]`);
+    const cellAt2 = (x, y) => root2.querySelector(`#board [data-x="${x}"][data-y="${y}"]`);
+    const tokenOf = (id3) => root2.querySelector(`#board .axis-unit[data-unit-id="${id3}"]`);
     const positions = /* @__PURE__ */ new Map();
     const homes = /* @__PURE__ */ new Map();
     function center(x, y) {
@@ -6792,14 +8690,14 @@ var FatedTacticalTavern = (() => {
       const home = homes.get(id3), a = home && center(home.x, home.y), b = center(to.x, to.y);
       return a && b ? `translate(${b.x - a.x}px, ${b.y - a.y}px)` : "none";
     }
-    async function walk(state, id3, path) {
+    async function walk(state, id3, path2) {
       const token = tokenOf(id3);
-      if (!token || !path?.length) return;
+      if (!token || !path2?.length) return;
       if (!homes.has(id3)) homes.set(id3, { ...state.units[id3] });
       token.classList.add("is-moving");
       const cell = token.closest(".tactical-cell");
       if (cell) cell.style.zIndex = "25";
-      for (const step of path) {
+      for (const step of path2) {
         const from = token.style.transform || "none", to = offset(id3, step);
         token.style.transform = to;
         positions.set(id3, { x: step.x, y: step.y });
@@ -6835,15 +8733,15 @@ var FatedTacticalTavern = (() => {
     async function bolt(p, q) {
       const fx = $("board-fx");
       if (!fx || skipping || speed <= 0) return;
-      const dot = doc.createElement("i");
-      dot.className = "ft-bolt";
-      Object.assign(dot.style, { left: `${p.x}px`, top: `${p.y}px` });
-      fx.append(dot);
-      await play(dot, [{ transform: "translate(-50%, -50%) scale(.6)" }, { transform: `translate(calc(${q.x - p.x}px - 50%), calc(${q.y - p.y}px - 50%)) scale(1)` }], { duration: 260, easing: "ease-in" });
-      dot.remove();
+      const dot2 = doc.createElement("i");
+      dot2.className = "ft-bolt";
+      Object.assign(dot2.style, { left: `${p.x}px`, top: `${p.y}px` });
+      fx.append(dot2);
+      await play(dot2, [{ transform: "translate(-50%, -50%) scale(.6)" }, { transform: `translate(calc(${q.x - p.x}px - 50%), calc(${q.y - p.y}px - 50%)) scale(1)` }], { duration: 260, easing: "ease-in" });
+      dot2.remove();
     }
     function shake(id3, heavy) {
-      const token = tokenOf(id3) ?? root.querySelector(`#board [data-cover="${id3}"], #board [data-interact="${id3}"]`);
+      const token = tokenOf(id3) ?? root2.querySelector(`#board [data-cover="${id3}"], #board [data-interact="${id3}"]`);
       if (!token) return Promise.resolve();
       const base = token.style.transform && token.style.transform !== "none" ? `${token.style.transform} ` : "";
       const k = heavy ? 7 : 4;
@@ -6862,77 +8760,77 @@ var FatedTacticalTavern = (() => {
       token.style.filter = "grayscale(1)";
       return play(token, [{ opacity: 1, filter: "grayscale(0)" }, { opacity: 0.4, filter: "grayscale(1)" }], { duration: 520 });
     }
-    function float(state, id3, text4, tone, sub) {
-      const fx = $("board-fx"), at = whereIs(state, id3), c = at && center(at.x, at.y);
+    function float(state, id3, text5, tone, sub) {
+      const fx = $("board-fx"), at2 = whereIs(state, id3), c = at2 && center(at2.x, at2.y);
       if (!fx || !c || skipping || speed <= 0) return;
-      const node3 = doc.createElement("div");
-      node3.className = `ft-float ${tone}`;
-      node3.textContent = text4;
+      const node = doc.createElement("div");
+      node.className = `ft-float ${tone}`;
+      node.textContent = text5;
       if (sub) {
         const s = doc.createElement("small");
         s.textContent = sub;
-        node3.append(s);
+        node.append(s);
       }
       const jitter = (fx.childElementCount % 3 - 1) * 14;
-      Object.assign(node3.style, { left: `${c.x + jitter}px`, top: `${c.y - c.w * 0.2}px` });
-      fx.append(node3);
-      const anim = canAnimate(node3) ? node3.animate([
+      Object.assign(node.style, { left: `${c.x + jitter}px`, top: `${c.y - c.w * 0.2}px` });
+      fx.append(node);
+      const anim = canAnimate(node) ? node.animate([
         { opacity: 0, transform: "translate(-50%, -30%) scale(.6)" },
         { opacity: 1, transform: "translate(-50%, -80%) scale(1.15)", offset: 0.15 },
         { opacity: 1, transform: "translate(-50%, -110%) scale(1)", offset: 0.7 },
         { opacity: 0, transform: "translate(-50%, -160%) scale(.95)" }
       ], { duration: 1300 * Math.max(speed, 0.6), easing: "ease-out", fill: "forwards" }) : null;
-      const remove2 = () => node3.remove();
-      if (anim) anim.finished.then(remove2, remove2);
-      else win.setTimeout(remove2, 1200);
+      const remove = () => node.remove();
+      if (anim) anim.finished.then(remove, remove);
+      else win.setTimeout(remove, 1200);
     }
-    async function banner(text4, sub, faction, ms = BANNER_MS) {
-      const node3 = $("turn-banner");
-      if (!node3 || skipping || speed <= 0) return;
+    async function banner(text5, sub, faction, ms = BANNER_MS) {
+      const node = $("turn-banner");
+      if (!node || skipping || speed <= 0) return;
       const b = doc.createElement("b"), s = doc.createElement("small");
-      b.textContent = text4;
+      b.textContent = text5;
       s.textContent = sub;
-      node3.replaceChildren(b, s);
-      node3.dataset.faction = faction ?? "";
-      node3.hidden = false;
-      await play(node3, [{ opacity: 0, transform: "translateY(-50%) scaleY(.4)" }, { opacity: 1, transform: "translateY(-50%) scaleY(1)" }], { duration: 200, easing: "ease-out" });
+      node.replaceChildren(b, s);
+      node.dataset.faction = faction ?? "";
+      node.hidden = false;
+      await play(node, [{ opacity: 0, transform: "translateY(-50%) scaleY(.4)" }, { opacity: 1, transform: "translateY(-50%) scaleY(1)" }], { duration: 200, easing: "ease-out" });
       await wait(ms);
-      await play(node3, [{ opacity: 1 }, { opacity: 0 }], { duration: 180 });
-      node3.hidden = true;
+      await play(node, [{ opacity: 1 }, { opacity: 0 }], { duration: 180 });
+      node.hidden = true;
     }
-    function ribbon(text4, faction) {
-      const node3 = $("action-ribbon");
-      if (!node3 || skipping || speed <= 0) return;
-      node3.textContent = text4;
-      node3.dataset.faction = faction ?? "";
-      node3.hidden = false;
+    function ribbon(text5, faction) {
+      const node = $("action-ribbon");
+      if (!node || skipping || speed <= 0) return;
+      node.textContent = text5;
+      node.dataset.faction = faction ?? "";
+      node.hidden = false;
       win.clearTimeout(ribbon.timer);
       ribbon.timer = win.setTimeout(() => {
-        node3.hidden = true;
+        node.hidden = true;
       }, Math.max(RIBBON_MS * speed, 600));
     }
-    function caption(entry) {
-      const list3 = $("caption");
-      if (!list3) return;
+    function caption(entry2) {
+      const list4 = $("caption");
+      if (!list4) return;
       const li = doc.createElement("li");
-      li.dataset.tone = entry.tone;
-      const icon = doc.createElement("span"), text4 = doc.createElement("span");
-      icon.textContent = entry.icon;
-      text4.textContent = entry.title;
-      li.append(icon, text4);
-      if (entry.lines?.length && !entry.roll) {
+      li.dataset.tone = entry2.tone;
+      const icon = doc.createElement("span"), text5 = doc.createElement("span");
+      icon.textContent = entry2.icon;
+      text5.textContent = entry2.title;
+      li.append(icon, text5);
+      if (entry2.lines?.length && !entry2.roll) {
         const s = doc.createElement("small");
-        s.textContent = entry.lines.at(-1);
+        s.textContent = entry2.lines.at(-1);
         li.append(s);
       }
-      list3.append(li);
-      while (list3.children.length > 4) list3.firstElementChild.remove();
+      list4.append(li);
+      while (list4.children.length > 4) list4.firstElementChild.remove();
       win.setTimeout(() => li.remove(), CAPTION_LIFE);
     }
-    const el2 = (tag, cls, text4) => {
-      const n = doc.createElement(tag);
+    const el2 = (tag2, cls, text5) => {
+      const n = doc.createElement(tag2);
       if (cls) n.className = cls;
-      if (text4 != null) n.textContent = String(text4);
+      if (text5 != null) n.textContent = String(text5);
       return n;
     };
     const signed2 = (n) => n >= 0 ? `+ ${n}` : `\u2212 ${-n}`;
@@ -6941,30 +8839,30 @@ var FatedTacticalTavern = (() => {
       d.dataset.value = value;
       return d;
     }
-    async function tumble(dice3) {
+    async function tumble(dice4) {
       if (skipping || speed <= 0) return;
       const spin = win.setInterval(() => {
-        for (const d of dice3) d.textContent = 1 + Math.floor(Math.random() * 20);
+        for (const d of dice4) d.textContent = 1 + Math.floor(Math.random() * 20);
       }, 55);
       await wait(ROLL_MS);
       win.clearInterval(spin);
     }
-    function settle(dice3, kept) {
+    function settle(dice4, kept) {
       let marked = false;
-      for (const d of dice3) {
+      for (const d of dice4) {
         const v = Number(d.dataset.value);
         d.classList.remove("is-rolling");
         d.textContent = Number.isFinite(v) ? v : "\u2013";
         if (v === 20) d.classList.add("is-nat20");
         if (v === 1) d.classList.add("is-nat1");
-        if (kept != null && dice3.length > 1) {
+        if (kept != null && dice4.length > 1) {
           const keep = !marked && v === kept;
           if (keep) marked = true;
           d.classList.add(keep ? "is-kept" : "is-dropped");
         } else d.classList.add("is-kept");
       }
     }
-    function formula(parts) {
+    function formula2(parts) {
       const row = el2("div", "ft-formula");
       for (const [value, label, cls] of parts) {
         const cell = el2("span", "");
@@ -6985,23 +8883,23 @@ var FatedTacticalTavern = (() => {
       card.append(el2("div", "ft-dice-label", roll.label));
       const verdict = el2("div", "ft-verdict", roll.verdict);
       verdict.style.visibility = "hidden";
-      let dice3 = [], kept = null, details = [];
+      let dice4 = [], kept = null, details = [];
       if (roll.kind === "d20") {
-        dice3 = (roll.dice?.length ? roll.dice : [roll.kept]).map(die);
+        dice4 = (roll.dice?.length ? roll.dice : [roll.kept]).map(die);
         kept = roll.kept;
         const row = el2("div", "ft-dice-row");
-        row.append(...dice3);
+        row.append(...dice4);
         card.append(row);
         if (roll.mode && roll.mode !== "normal") card.append(el2("div", "ft-dice-mode", { advantage: "\u4F18\u52BF\uFF1A\u53D6\u8F83\u9AD8\u7684\u4E00\u9897", disadvantage: "\u52A3\u52BF\uFF1A\u53D6\u8F83\u4F4E\u7684\u4E00\u9897", middle: "\u63B7\u4E09\u9897\uFF0C\u53D6\u4E2D\u95F4\u503C" }[roll.mode]));
         const parts = [[kept, "\u9AB0\u503C"], op(roll.modifier >= 0 ? "+" : "\u2212"), [Math.abs(roll.modifier ?? 0), roll.modifierLabel ?? "\u52A0\u503C"], op("="), [roll.total, "\u5408\u8BA1", "total"]];
         if (roll.target != null) parts.push(op("vs"), [roll.target, roll.targetLabel ?? "\u76EE\u6807"]);
-        details.push(formula(parts));
+        details.push(formula2(parts));
       } else if (roll.kind === "versus") {
         const box = el2("div", "ft-versus");
         for (const [i, sideRoll] of [roll.left, roll.right].entries()) {
           const sideBox = el2("div", "ft-versus-side");
           const d = die(sideRoll.dice?.[0]);
-          dice3.push(d);
+          dice4.push(d);
           sideBox.append(el2("span", "", sideRoll.name), d);
           const sum = el2("div", "ft-formula");
           sum.append(el2("i", "", sideRoll.bonus ? `${signed2(sideRoll.bonus)} =` : "="), el2("b", "total", sideRoll.total));
@@ -7032,8 +8930,8 @@ var FatedTacticalTavern = (() => {
       if (roll.note) card.append(el2("div", "ft-dice-note", roll.note));
       stage2.replaceChildren(card);
       await play(card, [{ opacity: 0, transform: "translateY(-12px) scale(.94)" }, { opacity: 1, transform: "none" }], { duration: 200, easing: "ease-out" });
-      await tumble(dice3);
-      settle(dice3, kept);
+      await tumble(dice4);
+      settle(dice4, kept);
       await wait(220);
       for (const d of details) d instanceof win.HTMLElement ? d.style.visibility = "" : d.reveal();
       await wait(260);
@@ -7044,7 +8942,7 @@ var FatedTacticalTavern = (() => {
       card.remove();
     }
     async function stage(log, state, ctx) {
-      const entry = narrate(log, state);
+      const entry2 = narrate(log, state);
       const d = log.detail ?? {};
       const unit = state.units?.[log.actor];
       switch (log.type) {
@@ -7058,70 +8956,70 @@ var FatedTacticalTavern = (() => {
         case "move":
         case "sprint":
         case "disengage":
-          caption(entry);
+          caption(entry2);
           await walk(state, log.actor, d.path ?? (d.to ? [d.to] : []));
           return;
         case "knockback":
-          caption(entry);
+          caption(entry2);
           if (d.to) {
             await shake(d.targetId, true);
             await walk(state, d.targetId, [d.to]);
           }
           return;
         case "teleport":
-          caption(entry);
+          caption(entry2);
           if (d.to) await blink(state, d.targetId ?? log.actor, d.to);
           return;
         case "roll":
           ctx.crit = !!d.critical;
-          await Promise.all([lunge(state, log.actor, d.targetId), diceCard(entry.roll)]);
-          caption(entry);
+          await Promise.all([lunge(state, log.actor, d.targetId), diceCard(entry2.roll)]);
+          caption(entry2);
           if (!d.hit) float(state, d.targetId, kept1(d) ? "\u5927\u5931\u624B" : "\u672A\u547D\u4E2D", "miss");
           return;
         case "damage":
-          caption(entry);
-          float(state, d.targetId, `\u2212${entry.amount}`, ctx.crit ? "crit" : "", ctx.crit ? "\u66B4\u51FB" : d.absorbed ? `\u62A4\u76FE\u5438\u6536 ${d.absorbed}` : void 0);
+          caption(entry2);
+          float(state, d.targetId, `\u2212${entry2.amount}`, ctx.crit ? "crit" : "", ctx.crit ? "\u66B4\u51FB" : d.absorbed ? `\u62A4\u76FE\u5438\u6536 ${d.absorbed}` : void 0);
           await shake(d.targetId, ctx.crit);
           await wait(HIT_MS);
           return;
         case "heal":
-          caption(entry);
-          float(state, d.targetId ?? log.actor, `+${entry.amount}`, "heal");
+          caption(entry2);
+          float(state, d.targetId ?? log.actor, `+${entry2.amount}`, "heal");
           await wait(HIT_MS);
           return;
         case "defeat":
-          caption(entry);
+          caption(entry2);
           float(state, d.targetId, "\u5012\u4E0B", "miss");
           await fall(d.targetId);
           return;
         case "status":
-          caption(entry);
-          float(state, d.targetId, entry.statusName ?? entry.title, "status");
+          caption(entry2);
+          float(state, d.targetId, entry2.statusName ?? entry2.title, "status");
           await wait(320);
           return;
         case "shield":
-          caption(entry);
+          caption(entry2);
           float(state, d.targetId ?? log.actor, "\u62A4\u76FE", "heal");
           await wait(300);
           return;
         case "cover_damage":
         case "cover_break":
-          caption(entry);
+          caption(entry2);
           await shake(d.coverId ?? d.targetId, log.type === "cover_break");
           return;
         case "opportunity":
-          caption(entry);
-          ribbon(entry.title, state.units?.[log.actor]?.team);
+          caption(entry2);
+          ribbon(entry2.title, state.units?.[log.actor]?.team);
           await wait(500);
           return;
         default:
-          if (entry.roll) {
-            await diceCard(entry.roll);
-            caption(entry);
+          if (entry2.roll) {
+            await diceCard(entry2.roll);
+            caption(entry2);
             return;
           }
-          if (!entry.quiet && entry.title) {
-            caption(entry);
+          if (!entry2.quiet && entry2.title) {
+            caption(entry2);
             await wait(280);
           }
       }
@@ -7175,11 +9073,11 @@ var FatedTacticalTavern = (() => {
       if (log.type === "defeat" && target2) target2.hp = 0;
     }
     function settleTokens() {
-      for (const t of root.querySelectorAll("#board .axis-unit:not(.tactical-corpse)")) {
+      for (const t of root2.querySelectorAll("#board .axis-unit:not(.tactical-corpse)")) {
         t.classList.remove("is-moving");
         t.style.transform = t.style.opacity = t.style.filter = "";
       }
-      for (const c of root.querySelectorAll("#board .tactical-cell")) c.style.zIndex = "";
+      for (const c of root2.querySelectorAll("#board .tactical-cell")) c.style.zIndex = "";
     }
     function finish() {
       running = false;
@@ -7234,7 +9132,7 @@ var FatedTacticalTavern = (() => {
   }
 
   // src/ui/target_card.js
-  function placeTargetCard(card, anchor2, viewport = window.visualViewport) {
+  function placeTargetCard(card, anchor, viewport = window.visualViewport) {
     const gutter = 8, gap = 6;
     const left = (viewport?.offsetLeft ?? 0) + gutter;
     const top = (viewport?.offsetTop ?? 0) + gutter;
@@ -7242,7 +9140,7 @@ var FatedTacticalTavern = (() => {
     const bottom = top + (viewport?.height ?? window.innerHeight) - 2 * gutter;
     card.style.maxWidth = `${Math.max(0, right - left)}px`;
     card.style.maxHeight = `${Math.max(0, bottom - top)}px`;
-    const a = anchor2.getBoundingClientRect();
+    const a = anchor.getBoundingClientRect();
     const { width, height: height2 } = card.getBoundingClientRect();
     const room = {
       right: right - a.right - gap,
@@ -7250,7 +9148,7 @@ var FatedTacticalTavern = (() => {
       below: bottom - a.bottom - gap,
       above: a.top - top - gap
     };
-    const clamp2 = (v, min, max) => Math.max(min, Math.min(v, max));
+    const clamp4 = (v, min, max) => Math.max(min, Math.min(v, max));
     let x, y;
     if (room.right >= width || room.left >= width) {
       x = room.right >= width ? a.right + gap : a.left - gap - width;
@@ -7265,8 +9163,8 @@ var FatedTacticalTavern = (() => {
         if (!below) y = a.top - gap - available;
       }
     }
-    card.style.left = `${clamp2(x, left, right - width)}px`;
-    card.style.top = `${clamp2(y, top, bottom - card.getBoundingClientRect().height)}px`;
+    card.style.left = `${clamp4(x, left, right - width)}px`;
+    card.style.top = `${clamp4(y, top, bottom - card.getBoundingClientRect().height)}px`;
   }
 
   // src/core/battle-ai.js
@@ -7298,8 +9196,9 @@ var FatedTacticalTavern = (() => {
       power: s.power,
       damageType: s.damageType,
       damage: s.damage,
-      effects: s.effects,
-      usage: state.units[unit.id]?.skillUsage?.[id3]
+      rules: s.rules,
+      mods: s.mods,
+      usage: skillAvailability(state, unit, s, id3)
     };
   }
   function unitView(state, unit) {
@@ -7345,7 +9244,7 @@ var FatedTacticalTavern = (() => {
       statuses: unit.statuses,
       moraleState: unit.moraleState ?? "steady",
       routed: unit.moraleState === "routed",
-      retreatTarget: unit.moraleState === "routed" ? state.grid.flatMap((row, y) => row.map((cell, x) => ({ x, y }))).filter((at) => atBattleEdge(state, at)).sort((a, b) => Math.hypot(a.x - unit.x, a.y - unit.y) - Math.hypot(b.x - unit.x, b.y - unit.y))[0] ?? null : null,
+      retreatTarget: unit.moraleState === "routed" ? state.grid.flatMap((row, y) => row.map((cell, x) => ({ x, y }))).filter((at2) => atBattleEdge(state, at2)).sort((a, b) => Math.hypot(a.x - unit.x, a.y - unit.y) - Math.hypot(b.x - unit.x, b.y - unit.y))[0] ?? null : null,
       mainHand: unit.mainHand ?? unit.weapon,
       offHand: unit.offHand,
       skills,
@@ -7390,9 +9289,9 @@ var FatedTacticalTavern = (() => {
       grid
     }, actorIds: actors.map((u) => u.id) };
   }
-  function parse(text4) {
-    const match = String(text4).match(/\{[\s\S]*\}/);
-    const data = JSON.parse(match?.[0] ?? text4);
+  function parse2(text5) {
+    const match = String(text5).match(/\{[\s\S]*\}/);
+    const data = JSON.parse(match?.[0] ?? text5);
     if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error("\u6218\u6597 AI \u5FC5\u987B\u8FD4\u56DE actions \u6570\u7EC4");
     return data.actions;
   }
@@ -7403,27 +9302,27 @@ var FatedTacticalTavern = (() => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const reply = await request(messages, signal);
       try {
-        const actions = parse(reply);
-        const valid = [];
+        const actions = parse2(reply);
+        const valid2 = [];
         const shadow = copy2(state);
-        for (const entry of actions) {
-          if (!entry || typeof entry.unitId !== "string" || !entry.action || typeof entry.action.type !== "string") throw new Error("\u52A8\u4F5C\u7F3A\u5C11 unitId \u6216 action.type");
-          const actor = shadow.units[entry.unitId];
-          if (!actor || actor.team !== "red") throw new Error(`\u4E0D\u80FD\u63A7\u5236\u5355\u4F4D ${entry.unitId}`);
-          if (shadow.units[shadow.order[shadow.turn]]?.id !== entry.unitId) throw new Error(`\u884C\u52A8\u987A\u5E8F\u9519\u8BEF\uFF0C\u5E94\u8F6E\u5230 ${shadow.order[shadow.turn]}`);
-          if (actor.moraleState === "routed" && !["move", "flee", "end"].includes(entry.action.type)) throw new Error("\u6E83\u9003\u5355\u4F4D\u53EA\u80FD\u64A4\u5411\u8FB9\u754C\u6216\u9003\u8DD1");
-          const action = Object.fromEntries(Object.entries(entry.action).filter(([, value]) => value !== null));
+        for (const entry2 of actions) {
+          if (!entry2 || typeof entry2.unitId !== "string" || !entry2.action || typeof entry2.action.type !== "string") throw new Error("\u52A8\u4F5C\u7F3A\u5C11 unitId \u6216 action.type");
+          const actor = shadow.units[entry2.unitId];
+          if (!actor || actor.team !== "red") throw new Error(`\u4E0D\u80FD\u63A7\u5236\u5355\u4F4D ${entry2.unitId}`);
+          if (shadow.units[shadow.order[shadow.turn]]?.id !== entry2.unitId) throw new Error(`\u884C\u52A8\u987A\u5E8F\u9519\u8BEF\uFF0C\u5E94\u8F6E\u5230 ${shadow.order[shadow.turn]}`);
+          if (actor.moraleState === "routed" && !["move", "flee", "end"].includes(entry2.action.type)) throw new Error("\u6E83\u9003\u5355\u4F4D\u53EA\u80FD\u64A4\u5411\u8FB9\u754C\u6216\u9003\u8DD1");
+          const action = Object.fromEntries(Object.entries(entry2.action).filter(([, value]) => value !== null));
           if (action.type === "skill" && typeof action.skillId !== "string") throw new Error("\u6280\u80FD\u52A8\u4F5C\u5FC5\u987B\u63D0\u4F9B skillId");
           if (action.type !== "skill") delete action.skillId;
           const plan = preview(shadow, action);
-          if (!plan.ok) throw new Error(`${entry.unitId} \u7684 ${entry.action.type} \u4E0D\u5408\u6CD5\uFF1A${plan.error}`);
+          if (!plan.ok) throw new Error(`${entry2.unitId} \u7684 ${entry2.action.type} \u4E0D\u5408\u6CD5\uFF1A${plan.error}`);
           applyAction(shadow, action);
-          valid.push({ ...entry, action });
+          valid2.push({ ...entry2, action });
           const next = shadow.units[shadow.order[shadow.turn]];
           if (!next || next.team !== "red") break;
         }
-        if (!valid.length) throw new Error("actions \u4E3A\u7A7A");
-        return valid;
+        if (!valid2.length) throw new Error("actions \u4E3A\u7A7A");
+        return valid2;
       } catch (error2) {
         if (attempt) throw error2;
         messages = [...messages, { role: "assistant", content: reply }, { role: "user", content: `\u4E0A\u4E00\u4EFD JSON \u6216\u52A8\u4F5C\u65E0\u6548\uFF1A${error2.message}\u3002\u53EA\u8F93\u51FA\u4FEE\u6B63\u540E\u7684\u5B8C\u6574 JSON\u3002` }];
@@ -7441,19 +9340,19 @@ var FatedTacticalTavern = (() => {
     if (result.revision != null && !result.diff) return `\u2714 \u5DF2\u5199\u5165\u6218\u5C40\uFF08\u7248\u672C ${result.revision}\uFF09\u3002`;
     const short = (v) => v == null ? "\u65E0" : typeof v === "object" ? v.name ? `\u300C${v.name}\u300D` : "\u4E00\u7EC4\u6570\u636E" : String(v);
     const lines = (result.diff ?? []).filter((d) => d.path[0] !== "logs").map((d) => {
-      const path = d.path.map((p) => PATH_NAMES[p] ?? p).join(" \u203A ");
-      if (!("before" in d)) return `\uFF0B \u65B0\u589E ${path}\uFF1A${short(d.after)}`;
-      if (!("after" in d)) return `\uFF0D \u79FB\u9664 ${path}`;
-      return `\u2022 ${path}\uFF1A${short(d.before)} \u2192 ${short(d.after)}`;
+      const path2 = d.path.map((p) => PATH_NAMES[p] ?? p).join(" \u203A ");
+      if (!("before" in d)) return `\uFF0B \u65B0\u589E ${path2}\uFF1A${short(d.after)}`;
+      if (!("after" in d)) return `\uFF0D \u79FB\u9664 ${path2}`;
+      return `\u2022 ${path2}\uFF1A${short(d.before)} \u2192 ${short(d.after)}`;
     });
     return [`\u8BD5\u7B97\u901A\u8FC7\uFF0C\u786E\u8BA4\u540E\u4F1A\u6539\u53D8 ${lines.length} \u5904\uFF1A`, ...lines].join("\n");
   }
-  function initializeUI(root, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, onVictory, storage: storageArea, battleAiRequest } = {}) {
-    const document2 = root.ownerDocument, window2 = document2.defaultView;
+  function initializeUI(root2, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, onVictory, storage: storageArea, battleAiRequest } = {}) {
+    const document2 = root2.ownerDocument, window2 = document2.defaultView;
     const localStorage2 = storageArea ?? window2?.localStorage;
-    const $ = (id3) => root.querySelector(`[id="${id3}"]`);
+    const $ = (id3) => root2.querySelector(`[id="${id3}"]`);
     let portraits = {};
-    const view = createRenderer(root, (id3) => Object.hasOwn(portraits, id3) ? portraits[id3] : []);
+    const view = createRenderer(root2, (id3) => Object.hasOwn(portraits, id3) ? portraits[id3] : []);
     const scenario = $("scenario-select"), seed = $("seed-input");
     const storage = {
       getItem: (key4) => {
@@ -7477,13 +9376,15 @@ var FatedTacticalTavern = (() => {
       }
     };
     let bagAim = null;
-    let state, live, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, busy = false;
+    let state, live3, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, busy = false;
     let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
-    const active = (s = state) => s?.units[s.order[s.turn]];
+    let visibleAsk = null, askCells = null;
+    const pendingAsk = () => live3?.vm?.pendingAsk;
+    const active2 = (s = state) => s?.units[s.order[s.turn]];
     const error2 = (value) => {
-      const node3 = $("action-error");
-      node3.hidden = !value;
-      node3.textContent = value ?? "";
+      const node = $("action-error");
+      node.hidden = !value;
+      node.textContent = value ?? "";
     };
     const safely = (fn) => {
       try {
@@ -7494,13 +9395,13 @@ var FatedTacticalTavern = (() => {
         return void 0;
       }
     };
-    const draw = () => view.render(state, { selectedId, action, hover: target2 ?? hover, sprint, target: target2, inspectedId, busy });
-    const app = root.querySelector(".ft-app");
+    const draw = () => view.render(state, { selectedId, action, hover: target2 ?? hover, sprint, target: target2, inspectedId, busy, askLocked: !!pendingAsk(), askCells });
+    const app = root2.querySelector(".ft-app");
     function fitLayout() {
       if (!app) return;
       const box = app.getBoundingClientRect();
       if (!box.width) return;
-      const hud = root.querySelector(".ft-hud-top").getBoundingClientRect(), dock = root.querySelector(".ft-dock").getBoundingClientRect();
+      const hud = root2.querySelector(".ft-hud-top").getBoundingClientRect(), dock = root2.querySelector(".ft-dock").getBoundingClientRect();
       const side2 = dock.height > box.height * 0.7;
       app.style.setProperty("--hud-top", `${Math.round(hud.height)}px`);
       app.style.setProperty("--hud-bottom", side2 ? "0px" : `${Math.round(dock.height)}px`);
@@ -7510,21 +9411,21 @@ var FatedTacticalTavern = (() => {
     }
     const ZOOM_MIN = 0.5, ZOOM_MAX = 3;
     let zoom = 1;
-    function setZoom(next, anchor2) {
+    function setZoom(next, anchor) {
       const value = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 100) / 100;
       const scroller = $("board-scroll"), frame = $("board-frame");
       const view2 = scroller.getBoundingClientRect();
-      const at = anchor2 ?? { x: view2.left + view2.width / 2, y: view2.top + view2.height / 2 };
+      const at2 = anchor ?? { x: view2.left + view2.width / 2, y: view2.top + view2.height / 2 };
       const before = frame.getBoundingClientRect();
-      const rx = (at.x - before.left) / (before.width || 1), ry = (at.y - before.top) / (before.height || 1);
+      const rx = (at2.x - before.left) / (before.width || 1), ry = (at2.y - before.top) / (before.height || 1);
       zoom = value;
       app.style.setProperty("--zoom", String(zoom));
       $("zoom-reset").textContent = `${Math.round(zoom * 100)}%`;
       $("zoom-out").disabled = zoom <= ZOOM_MIN;
       $("zoom-in").disabled = zoom >= ZOOM_MAX;
       const after = frame.getBoundingClientRect();
-      scroller.scrollLeft += after.left + rx * after.width - at.x;
-      scroller.scrollTop += after.top + ry * after.height - at.y;
+      scroller.scrollLeft += after.left + rx * after.width - at2.x;
+      scroller.scrollTop += after.top + ry * after.height - at2.y;
       storage.setItem("fated-tactical/zoom", String(zoom));
       fitLayout();
       layoutTargetCard();
@@ -7587,8 +9488,8 @@ var FatedTacticalTavern = (() => {
       }, { passive: true, signal });
       scroller.addEventListener("gesturestart", (e) => e.preventDefault(), { signal });
       document2.addEventListener("keydown", (e) => {
-        if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.("input, textarea, select, [contenteditable]") || root.querySelector("dialog[open]")) return;
-        if (!root.contains(e.target) && e.target !== document2.body) return;
+        if (e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.("input, textarea, select, [contenteditable]") || root2.querySelector("dialog[open]")) return;
+        if (!root2.contains(e.target) && e.target !== document2.body) return;
         if (e.key === "+" || e.key === "=") setZoom(zoom * ZOOM_STEP);
         else if (e.key === "-" || e.key === "_") setZoom(zoom / ZOOM_STEP);
         else if (e.key === "0") setZoom(1);
@@ -7621,14 +9522,14 @@ var FatedTacticalTavern = (() => {
     let victoryPending = false;
     function finishPlayback() {
       busy = false;
-      show(live);
+      show(live3);
       schedule();
       if (victoryPending) {
         victoryPending = false;
         onVictory?.();
       }
     }
-    const playback = createPlayback(root, {
+    const playback = createPlayback(root2, {
       show(next, opts) {
         busy = !!opts?.busy;
         show(next);
@@ -7638,19 +9539,70 @@ var FatedTacticalTavern = (() => {
     function show(next) {
       const changed = state !== next;
       state = next;
-      if (changed && !target2) selectedId = state.units[selectedId]?.hp > 0 ? selectedId : active()?.id;
+      if (changed && !target2) selectedId = state.units[selectedId]?.hp > 0 ? selectedId : active2()?.id;
+      const askChanged = renderAsk(!busy && state === live3 ? pendingAsk() : null);
       draw();
+      if (askChanged) {
+        const firstCell = $("board").querySelector(".is-ask-option");
+        (firstCell ?? $("pending-ask-prompt")).focus({ preventScroll: true });
+      }
       if (view.renderLog(state) && openDrawer !== "log") $("log-unread").hidden = false;
       refreshMeasurement();
     }
     function resetSelection() {
       bagAim = null;
-      selectedId = active(live ?? state)?.id;
+      selectedId = active2(live3 ?? state)?.id;
       action = null;
       hover = target2 = null;
       sprint = false;
       inspectedId = null;
       $("target-actions").hidden = true;
+    }
+    function answer(ask, fields3) {
+      if (visibleAsk === ask && pendingAsk() === ask && !busy) {
+        execute2({ type: "answer", askId: ask.askId, ...fields3 });
+      }
+    }
+    function renderAsk(ask) {
+      if (visibleAsk === (ask ?? null)) return;
+      visibleAsk = ask ?? null;
+      askCells = null;
+      const panel = $("pending-ask"), prompt2 = $("pending-ask-prompt"), choices = $("pending-ask-choices");
+      choices.replaceChildren();
+      panel.hidden = !ask;
+      if (!ask) return;
+      const chooser = live3.units[ask.chooserId];
+      prompt2.textContent = chooser ? `${chooser.name} \xB7 ${ask.prompt}` : ask.prompt;
+      function addButton(label, getValue, primary = false) {
+        const button = document2.createElement("button");
+        button.type = "button";
+        button.className = primary ? "game-button primary" : "game-button";
+        button.textContent = label;
+        button.addEventListener("click", () => answer(ask, { value: getValue() }), { signal });
+        choices.append(button);
+      }
+      if (ask.kind === "cell") {
+        askCells = new Set(ask.options.map(({ x, y }) => `${x},${y}`));
+        choices.textContent = "\u8BF7\u9009\u62E9\u68CB\u76D8\u4E0A\u9AD8\u4EAE\u7684\u4E00\u683C\u3002";
+      } else if (ask.kind === "option" || ask.kind === "entity") {
+        for (const { id: id3, label } of ask.options) addButton(label, () => id3);
+      } else if (ask.kind === "number") {
+        const { min, max, step = 1 } = ask.options;
+        const slider = document2.createElement("input"), readout = document2.createElement("output");
+        slider.type = "range";
+        slider.id = "pending-ask-number";
+        slider.setAttribute("aria-labelledby", prompt2.id);
+        Object.assign(slider, { min, max, step, value: min });
+        readout.setAttribute("for", slider.id);
+        const updateReadout = () => {
+          readout.value = slider.value;
+        };
+        slider.addEventListener("input", updateReadout, { signal });
+        updateReadout();
+        choices.append(slider, readout);
+        addButton("\u786E\u8BA4\u6570\u503C", () => slider.valueAsNumber, true);
+      }
+      return true;
     }
     const measurement = [$("measure-origin"), $("measure-target")];
     function measure() {
@@ -7675,22 +9627,23 @@ ${height2}\uFF0C${sight}`;
           option.dataset.faction = u.team;
           return option;
         }));
-        input.value = living2.some((u) => u.id === old) ? old : (i ? living2.find((u) => u.team === "red") : active())?.id ?? living2.at(-1)?.id ?? "";
+        input.value = living2.some((u) => u.id === old) ? old : (i ? living2.find((u) => u.team === "red") : active2())?.id ?? living2.at(-1)?.id ?? "";
         input.dataset.faction = state.units[input.value]?.team ?? "";
       }
       measure();
     }
     function setDrawer(name) {
+      if (pendingAsk()) return;
       const same3 = openDrawer === name;
       closeDrawer();
       if (same3 || !name) return;
-      const panel = root.querySelector(`aside[data-drawer="${name}"]`);
+      const panel = root2.querySelector(`aside[data-drawer="${name}"]`);
       if (!panel) return;
       closeTarget();
       panel.hidden = false;
       openDrawer = name;
       $("drawer-scrim").hidden = false;
-      root.querySelector(`[data-open-drawer="${name}"]`)?.setAttribute("aria-pressed", "true");
+      root2.querySelector(`[data-open-drawer="${name}"]`)?.setAttribute("aria-pressed", "true");
       if (name === "log") {
         $("log-unread").hidden = true;
         const scroller = $("combat-log").parentElement;
@@ -7699,12 +9652,12 @@ ${height2}\uFF0C${sight}`;
     }
     function closeDrawer() {
       if (!openDrawer) return;
-      root.querySelector(`aside[data-drawer="${openDrawer}"]`).hidden = true;
-      root.querySelector(`[data-open-drawer="${openDrawer}"]`)?.setAttribute("aria-pressed", "false");
+      root2.querySelector(`aside[data-drawer="${openDrawer}"]`).hidden = true;
+      root2.querySelector(`[data-open-drawer="${openDrawer}"]`)?.setAttribute("aria-pressed", "false");
       $("drawer-scrim").hidden = true;
       openDrawer = null;
     }
-    if (customBattle) for (const node3 of root.querySelectorAll("[data-scenario-only]")) node3.hidden = true;
+    if (customBattle) for (const node of root2.querySelectorAll("[data-scenario-only]")) node.hidden = true;
     else for (const [id3, { title }] of Object.entries(SCENARIOS)) scenario.add(new window2.Option(title, id3));
     function scenarioDescription() {
       $("scenario-preview").textContent = customBattle ? "\u6765\u81EA\u5F53\u524D\u804A\u5929 \xB7 10\xD710" : SCENARIOS[scenario.value].description + (carry ? " \xB7 \u5DF2\u8F7D\u5165\u8DE8\u6218\u88C5\u5907\u4E0E\u72B6\u6001" : "");
@@ -7729,18 +9682,20 @@ ${height2}\uFF0C${sight}`;
       closeDrawer();
     }
     async function runBattleAiTurn() {
-      const initial2 = live;
-      if (!battleAiRequest || !$("llm-enemy-ai")?.checked || battleAiBusy || !initial2 || initial2.outcome || active(initial2)?.team !== "red") return false;
+      const initial2 = live3;
+      if (!battleAiRequest || !$("llm-enemy-ai")?.checked || battleAiBusy || !initial2 || pendingAsk() || initial2.outcome || active2(initial2)?.team !== "red") return false;
       battleAiBusy = true;
       try {
-        const entries2 = await requestBattleAi(initial2, battleAiRequest);
-        let executed = false;
-        for (const entry of entries2) {
-          const current = game.getBattleState(), actor = active(current);
-          if (!actor || actor.team !== "red" || actor.id !== entry.unitId || current.outcome) break;
-          const plan = game.previewAction(entry.action);
+        const entries3 = await requestBattleAi(initial2, battleAiRequest);
+        let executed = false, expected = initial2;
+        for (const entry2 of entries3) {
+          if (signal?.aborted || live3 !== expected || pendingAsk()) break;
+          const actor = active2(live3);
+          if (!actor || actor.team !== "red" || actor.id !== entry2.unitId || live3.outcome) break;
+          const plan = game.previewAction(entry2.action);
           if (!plan.ok) throw new Error(plan.error || "\u5916\u90E8\u6218\u6597 AI \u8FD4\u56DE\u4E86\u975E\u6CD5\u52A8\u4F5C");
-          game.playAction(entry.action);
+          game.playAction(entry2.action);
+          expected = live3;
           executed = true;
         }
         return executed;
@@ -7753,11 +9708,16 @@ ${height2}\uFF0C${sight}`;
     }
     function schedule() {
       window2.clearTimeout(timer);
-      if (busy || playback.busy || live?.outcome || active(live)?.team !== "red" || !$("auto-ai").checked || battleAiBusy) return;
-      timer = window2.setTimeout(() => safely(async () => {
-        const usedExternal = await runBattleAiTurn();
-        if (!usedExternal && !live?.outcome && active(live)?.team === "red") game.stepEnemy();
-      }), Number($("ai-speed").value) || 350);
+      if (busy || playback.busy || pendingAsk() || live3?.outcome || active2(live3)?.team !== "red" || !$("auto-ai").checked || battleAiBusy) return;
+      timer = window2.setTimeout(stepEnemy, Number($("ai-speed").value) || 350);
+    }
+    async function stepEnemy() {
+      if (pendingAsk() || battleAiBusy) return;
+      const before = live3;
+      const usedExternal = await runBattleAiTurn();
+      if (signal?.aborted) return;
+      if (!usedExternal && live3 === before && !pendingAsk() && !live3?.outcome && active2(live3)?.team === "red") safely(() => game.stepEnemy());
+      else if (live3 !== before) schedule();
     }
     function pauseAI() {
       $("auto-ai").checked = false;
@@ -7766,74 +9726,80 @@ ${height2}\uFF0C${sight}`;
     }
     const continues = (a, b) => a && b && b.logs.length > a.logs.length && a.scenarioId === b.scenarioId && JSON.stringify(a.logs.at(-1)) === JSON.stringify(b.logs[a.logs.length - 1]);
     function onChange() {
-      const before = live;
-      live = game.getBattleState();
-      if (!live.outcome) victoryPending = false;
+      const before = live3;
+      live3 = game.getBattleState();
+      if (!live3.outcome) victoryPending = false;
       else if (before && !before.outcome) victoryPending = true;
       try {
         storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
       } catch {
         error2("\u6D4F\u89C8\u5668\u5B58\u50A8\u7A7A\u95F4\u4E0D\u8DB3\u6216\u5DF2\u5173\u95ED\uFF1B\u8BF7\u4E0B\u8F7D\u5FEB\u7167\u4FDD\u5B58\u6218\u5C40\u3002");
       }
-      view.renderControls(live);
+      view.renderControls(live3);
+      if (pendingAsk()) {
+        closeDrawer();
+        for (const dialog of root2.querySelectorAll("dialog[open]")) dialog.close();
+      }
       resetSelection();
-      if (continues(before, live) && playback.enqueue(before, live)) {
+      if (continues(before, live3) && playback.enqueue(before, live3)) {
         window2.clearTimeout(timer);
         return;
       }
       playback.reset();
       finishPlayback();
     }
-    const execute = (command) => safely(() => {
+    const execute2 = (command) => safely(() => {
+      if (pendingAsk() && command.type !== "answer") return;
       const result = game.playAction(command);
       if (result && result.ok === false) error2(result.error);
       return result;
     });
-    const pointFrom = (node3) => {
-      const cell = node3?.closest?.("[data-x][data-y]");
+    const pointFrom = (node) => {
+      const cell = node?.closest?.("[data-x][data-y]");
       return cell && $("board").contains(cell) ? { x: Number(cell.dataset.x), y: Number(cell.dataset.y) } : null;
     };
-    const cellFor = (at) => $("board").querySelector(`[data-x="${at.x}"][data-y="${at.y}"]`);
+    const cellFor = (at2) => $("board").querySelector(`[data-x="${at2.x}"][data-y="${at2.y}"]`);
     function layoutTargetCard() {
       const card = $("target-actions");
       if (!target2 || card.hidden) return;
-      const anchor2 = cellFor(target2);
-      if (!anchor2) return;
-      const r = anchor2.getBoundingClientRect(), clip = $("board-scroll").getBoundingClientRect();
+      const anchor = cellFor(target2);
+      if (!anchor) return;
+      const r = anchor.getBoundingClientRect(), clip = $("board-scroll").getBoundingClientRect();
       if (r.right <= clip.left || r.left >= clip.right || r.bottom <= clip.top || r.top >= clip.bottom) {
         closeTarget();
         return;
       }
-      placeTargetCard(card, anchor2, window2.visualViewport);
+      placeTargetCard(card, anchor, window2.visualViewport);
     }
     function closeTarget(restoreFocus = false) {
-      const at = target2;
-      if (!at && !bagAim && $("target-actions").hidden) return;
+      const at2 = target2;
+      if (!at2 && !bagAim && $("target-actions").hidden) return;
       bagAim = null;
       target2 = action = null;
       $("target-actions").hidden = true;
       draw();
-      if (restoreFocus && at) cellFor(at)?.focus({ preventScroll: true });
+      if (restoreFocus && at2) cellFor(at2)?.focus({ preventScroll: true });
     }
-    function handlePoint(at, input = {}) {
+    function handlePoint(at2, input = {}) {
+      if (pendingAsk()) return;
       error2("");
-      const unit = Object.values(state.units).find((u) => u.hp > 0 && u.x === at.x && u.y === at.y);
-      const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find((v) => v.x === at.x && v.y === at.y);
-      const actor = active();
+      const unit = Object.values(state.units).find((u) => u.hp > 0 && u.x === at2.x && u.y === at2.y);
+      const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find((v) => v.x === at2.x && v.y === at2.y);
+      const actor = active2();
       const canAct = actor?.team === "blue" && !state.outcome;
       const self = canAct && unit?.id === actor.id;
       if (bagAim) {
-        const command = { type: "skill", skillId: bagAim, ...at };
+        const command = { type: "skill", skillId: bagAim, ...at2 };
         const plan = game.previewAction(command);
         if (!plan.ok) {
           error2(plan.error);
           return;
         }
-        target2 = at;
-        hover = at;
+        target2 = at2;
+        hover = at2;
         action = command;
         bagAim = null;
-        $("target-title").textContent = `${plan.name} \xB7 (${at.x}, ${at.y})`;
+        $("target-title").textContent = `${plan.name} \xB7 (${at2.x}, ${at2.y})`;
         $("action-toolbar").replaceChildren();
         $("target-options").hidden = true;
         $("target-actions").hidden = false;
@@ -7850,8 +9816,8 @@ ${height2}\uFF0C${sight}`;
       }
       selectedId = unit?.id ?? actor?.id;
       inspectedId = unit ? null : feature?.id;
-      target2 = at;
-      hover = at;
+      target2 = at2;
+      hover = at2;
       action = null;
       const bonus = $("bonus-dice-select");
       bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
@@ -7859,7 +9825,7 @@ ${height2}\uFF0C${sight}`;
       const add = (type, skill2, itemId, skillName) => {
         const command = {
           type,
-          ...TARGETLESS.includes(type) ? {} : at,
+          ...TARGETLESS.includes(type) ? {} : at2,
           ...skill2 ? { skillId: skill2 } : {},
           ...itemId ? { itemId } : {},
           ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
@@ -7891,7 +9857,7 @@ ${height2}\uFF0C${sight}`;
         }
       }
       const who = unit ? `${unit.team === "blue" ? "\u6211\u65B9" : "\u654C\u65B9"} ${unit.name}` : feature?.name ?? "\u7A7A\u5730";
-      $("target-title").textContent = `${who} \xB7 (${at.x}, ${at.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4" : "" : ""}`;
+      $("target-title").textContent = `${who} \xB7 (${at2.x}, ${at2.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4" : "" : ""}`;
       $("target-options").hidden = !options.some((o) => ["attack", "skill"].includes(o.command.type));
       const toolbar = $("action-toolbar");
       toolbar.replaceChildren();
@@ -7929,6 +9895,7 @@ ${height2}\uFF0C${sight}`;
       if (input.detail === 0) (toolbar.querySelector("button") || $("close-target")).focus({ preventScroll: true });
     }
     function handleAction(button) {
+      if (pendingAsk()) return;
       const choice = menuButtons.get(button);
       if (!choice) return;
       if (choice.bag) {
@@ -7944,7 +9911,7 @@ ${height2}\uFF0C${sight}`;
       const { command, plan, label } = choice;
       error2("");
       if (!(["skill", "attack", "end_encounter"].includes(command.type) || plan.opportunities?.length)) {
-        execute(command);
+        execute2(command);
         return;
       }
       action = command;
@@ -7957,10 +9924,10 @@ ${height2}\uFF0C${sight}`;
     }
     function download(kind, value, format = "json") {
       const link = document2.createElement("a");
-      const text4 = format === "txt";
-      const url = window2.URL.createObjectURL(new window2.Blob([text4 ? value : JSON.stringify(value, null, 2)], { type: text4 ? "text/plain;charset=utf-8" : "application/json" }));
+      const text5 = format === "txt";
+      const url = window2.URL.createObjectURL(new window2.Blob([text5 ? value : JSON.stringify(value, null, 2)], { type: text5 ? "text/plain;charset=utf-8" : "application/json" }));
       link.href = url;
-      link.download = `fated-${live.scenarioId}-${kind}.${format}`;
+      link.download = `fated-${live3.scenarioId}-${kind}.${format}`;
       link.click();
       window2.setTimeout(() => window2.URL.revokeObjectURL(url), 1e3);
     }
@@ -7975,33 +9942,40 @@ ${height2}\uFF0C${sight}`;
         if (target2) handlePoint(target2);
       });
       on("theme-select", "change", () => {
-        root.dataset.dlcTheme = $("theme-select").value;
-        storage.setItem("fated-tactical/theme", root.dataset.dlcTheme);
+        root2.dataset.dlcTheme = $("theme-select").value;
+        storage.setItem("fated-tactical/theme", root2.dataset.dlcTheme);
       });
       on("anim-speed", "change", () => {
         playback.setSpeed(Number($("anim-speed").value));
         storage.setItem("fated-tactical/anim", $("anim-speed").value);
       });
       on("clear-persistent", "click", () => {
+        if (pendingAsk()) return;
         carry = null;
         storage.removeItem(crossedKey);
         scenarioDescription();
       });
-      on("reset-button", "click", () => safely(restart));
+      on("reset-button", "click", () => {
+        if (!pendingAsk()) safely(restart);
+      });
       on("end-turn", "click", () => {
+        if (pendingAsk()) return;
         playback.skip();
-        if (active(live)?.team === "blue") execute({ type: "end" });
+        if (active2(live3)?.team === "blue") execute2({ type: "end" });
       });
       on("undo-button", "click", () => safely(() => {
+        if (pendingAsk()) return;
         pauseAI();
-        const r = game.undoLastCommit();
-        if (!r.ok) error2(r.error);
+        const result = game.undoLastCommit();
+        if (!result.ok) error2(result.error);
       }));
-      on("ai-step", "click", () => safely(async () => {
+      on("ai-step", "click", () => {
+        if (pendingAsk()) return;
         window2.clearTimeout(timer);
         playback.skip();
-        if (!await runBattleAiTurn()) game.stepEnemy();
-      }));
+        window2.clearTimeout(timer);
+        void stepEnemy();
+      });
       on("auto-ai", "change", () => {
         storage.setItem("fated-tactical/auto", String($("auto-ai").checked));
         schedule();
@@ -8026,7 +10000,7 @@ ${height2}\uFF0C${sight}`;
           window2.cancelAnimationFrame(frame);
           frame = window2.requestAnimationFrame(fitLayout);
         });
-        for (const node3 of [app, root.querySelector(".ft-hud-top"), root.querySelector(".ft-dock")]) if (node3) observer.observe(node3);
+        for (const node of [app, root2.querySelector(".ft-hud-top"), root2.querySelector(".ft-dock")]) if (node) observer.observe(node);
         signal?.addEventListener("abort", () => observer.disconnect());
       } else window2.addEventListener("resize", fitLayout, { signal });
       const report = $("report-text"), reportMessage = $("report-message");
@@ -8048,14 +10022,18 @@ ${height2}\uFF0C${sight}`;
       on("download-report", "click", () => download("report", report.value, "txt"));
       on("export-snapshot", "click", () => download("battle", game.exportBattleSnapshot()));
       on("export-persistent", "click", () => download("persistent", game.exportPersistentCarryOver()));
-      on("import-button", "click", () => $("import-snapshot").click());
+      on("import-button", "click", () => {
+        if (!pendingAsk()) $("import-snapshot").click();
+      });
       on("import-snapshot", "change", async (event) => {
         const file = event.target.files[0];
         event.target.value = "";
-        if (!file) return;
+        if (!file || pendingAsk()) return;
+        const before = live3;
         try {
           if (file.size > 8 * 1024 * 1024) throw new Error("\u6587\u4EF6\u5927\u4E8E 8 MiB");
           const data = JSON.parse(await file.text());
+          if (signal?.aborted || live3 !== before || pendingAsk()) return;
           if (data.kind === "persistent") {
             const previous = carry;
             carry = data;
@@ -8090,26 +10068,25 @@ ${height2}\uFF0C${sight}`;
       on("api-sandbox", "click", (event) => {
         const kind = event.target.closest("[data-example]")?.dataset.example;
         if (!kind) return;
-        const unitId = selectedId ?? active(live)?.id;
+        const unitId = selectedId ?? active2(live3)?.id;
         const examples = {
-          counter: () => ({ type: "adjust_item_counter", instanceId: "soulblade-lan", counterKey: "souls", operation: "add", value: 1 }),
+          counter: () => ({ type: "adjust_pool", poolId: game.getBattleState().items["soulblade-lan"]?.pools?.souls ?? "", operation: "add", value: 1 }),
           status: () => ({ type: "upsert_status", unitId, statusId: "haste", options: { durationType: "persistent" } }),
           "custom-status": () => {
-            const id3 = "bone_frost", apply = { type: "upsert_status", unitId, statusId: id3 };
-            if (Object.hasOwn(game.listStatusTemplates(), id3)) return [apply];
+            const id3 = "bone_frost", apply2 = { type: "upsert_status", unitId, statusId: id3 };
+            if (Object.hasOwn(game.listStatusTemplates(), id3)) return [apply2];
             return [{ type: "define_status_template", template: {
               id: id3,
               name: "\u8680\u9AA8\u5BD2\u971C",
               icon: "\u2744\uFE0F",
-              description: "\u56DE\u5408\u521D\u53D7\u5230 3 \u70B9\u80FD\u91CF\u4F24\u5BB3\uFF0C\u79FB\u52A8\u8DDD\u79BB \u22121\u3002",
+              description: "\u56DE\u5408\u521D\u53D7\u5230 3 \u70B9\u80FD\u91CF\u4F24\u5BB3\u3002",
               category: "dot",
               remainingTurns: 2,
               durationType: "battle_turns",
-              tickTiming: "onTurnStart",
-              stackRule: "refresh",
+              stackMode: "refresh",
               maxStacks: 1,
-              modifiers: { damage: 3, damageType: "energy", movement: -1 }
-            } }, apply];
+              rules: [{ id: "bone-frost-tick", hook: "turn_start", program: [{ op: "damage", target: "self", amount: 3, damageType: "energy", direct: false }] }]
+            } }, apply2];
           },
           terrain: () => ({ type: "set_terrain_cell", x: 0, y: 0, patch: { kind: "slope", z: 1 } })
         };
@@ -8118,6 +10095,7 @@ ${height2}\uFF0C${sight}`;
         clearProposal();
       });
       on("sandbox-preview", "click", () => {
+        if (pendingAsk()) return;
         clearProposal();
         let commands2;
         try {
@@ -8134,18 +10112,20 @@ ${height2}\uFF0C${sight}`;
         }
       });
       on("sandbox-commit", "click", () => {
+        if (pendingAsk()) return;
         const result = game.commitProposal(pending);
         clearProposal();
         $("sandbox-output").textContent = describeProposal(result);
       });
       on("sandbox-undo", "click", () => {
+        if (pendingAsk()) return;
         pauseAI();
         const result = game.undoLastCommit();
         clearProposal();
         $("sandbox-output").textContent = result.ok ? `\u21B6 \u5DF2\u64A4\u9500\u4E0A\u4E00\u6B21\u6539\u52A8\uFF08\u7248\u672C ${result.revision}\uFF09\u3002` : `\u2716 ${result.error}`;
       });
       on("resource-button", "click", () => {
-        const unit = state.units[selectedId] ?? active();
+        const unit = state.units[selectedId] ?? active2();
         const previous = unit ? { hp: { current: unit.hp, max: unit.maxHp }, mp: { current: unit.mp, max: unit.maxMp }, sp: { current: unit.sp, max: unit.maxSp } } : void 0;
         $("resource-input").value = JSON.stringify({ stats: unit?.stats ?? { str: 4, agi: 4, con: 4, int: 4, spi: 4 }, tier: 1, previous }, null, 2);
         $("calculate-resources").click();
@@ -8164,13 +10144,14 @@ ${height2}\uFF0C${sight}`;
       });
       on("close-target", "click", () => closeTarget(true));
       on("confirm-action", "click", () => {
-        if (target2 && action) execute(action);
+        if (target2 && action) execute2(action);
       });
       on("action-toolbar", "click", (e) => {
         const button = e.target.closest("[data-action]");
         if (button) handleAction(button);
       });
       on("turn-order", "click", (e) => {
+        if (pendingAsk()) return;
         const button = e.target.closest("[data-unit-id]");
         if (!button) return;
         selectedId = button.dataset.unitId;
@@ -8183,37 +10164,43 @@ ${height2}\uFF0C${sight}`;
         if (target2 && !$("target-actions").contains(e.target) && !pointFrom(e.target)) closeTarget();
       }, { signal });
       document2.addEventListener("keydown", (e) => {
-        if (e.key !== "Escape" || root.querySelector("dialog[open]")) return;
+        if (e.key !== "Escape" || root2.querySelector("dialog[open]")) return;
         if (target2 || bagAim) closeTarget(true);
         else if (openDrawer) closeDrawer();
         else playback.skip();
       }, { signal });
-      for (const [node3, event] of [[window2, "resize"], [window2.visualViewport, "resize"], [window2.visualViewport, "scroll"]]) node3?.addEventListener(event, layoutTargetCard, { signal });
+      for (const [node, event] of [[window2, "resize"], [window2.visualViewport, "resize"], [window2.visualViewport, "scroll"]]) node?.addEventListener(event, layoutTargetCard, { signal });
       window2.addEventListener("scroll", layoutTargetCard, { capture: true, passive: true, signal });
       const board = $("board");
       board.addEventListener("click", (e) => {
-        const at = pointFrom(e.target);
-        if (!at) return;
+        const at2 = pointFrom(e.target);
+        if (!at2) return;
+        if (pendingAsk()) {
+          if (askCells?.has(`${at2.x},${at2.y}`)) answer(visibleAsk, at2);
+          return;
+        }
         if (playback.busy) playback.skip();
-        handlePoint(at, e);
+        handlePoint(at2, e);
       }, { signal });
-      const hoverPoint = (point2) => {
-        hover = point2;
-        if (!target2) draw();
+      const hoverPoint = (point4) => {
+        if (!pendingAsk()) {
+          hover = point4;
+          if (!target2) draw();
+        }
       };
       board.addEventListener("pointerover", (e) => {
-        const at = pointFrom(e.target), before = pointFrom(e.relatedTarget);
-        if (at && (!before || at.x !== before.x || at.y !== before.y)) hoverPoint(at);
+        const at2 = pointFrom(e.target), before = pointFrom(e.relatedTarget);
+        if (at2 && (!before || at2.x !== before.x || at2.y !== before.y)) hoverPoint(at2);
       }, { signal });
       board.addEventListener("pointerleave", () => hoverPoint(null), { signal });
       board.addEventListener("focusin", (e) => {
-        const at = pointFrom(e.target);
-        if (at) hoverPoint(at);
+        const at2 = pointFrom(e.target);
+        if (at2) hoverPoint(at2);
       }, { signal });
       board.addEventListener("focusout", (e) => {
         if (!board.contains(e.relatedTarget)) hoverPoint(null);
       }, { signal });
-      root.addEventListener("click", (e) => {
+      root2.addEventListener("click", (e) => {
         const opener = e.target.closest("[data-open-drawer]");
         if (opener) setDrawer(opener.dataset.openDrawer);
         else if (e.target.closest("[data-close-drawer]") || e.target === $("drawer-scrim")) closeDrawer();
@@ -8233,9 +10220,9 @@ ${height2}\uFF0C${sight}`;
     $("llm-enemy-ai").checked = storage.getItem("fated-tactical/llm-enemy-ai") === "true";
     const theme = storage.getItem("fated-tactical/theme");
     if (THEMES.includes(theme)) {
-      root.dataset.dlcTheme = theme;
+      root2.dataset.dlcTheme = theme;
       $("theme-select").value = theme;
-    } else if (THEMES.includes(root.dataset.dlcTheme)) $("theme-select").value = root.dataset.dlcTheme;
+    } else if (THEMES.includes(root2.dataset.dlcTheme)) $("theme-select").value = root2.dataset.dlcTheme;
     for (const [id3, key4] of [["anim-speed", "fated-tactical/anim"], ["ai-speed", "fated-tactical/ai-speed"]]) {
       const value = storage.getItem(key4);
       if (value != null && [...$(id3).options].some((o) => o.value === value)) $(id3).value = value;
@@ -8274,7 +10261,7 @@ ${height2}\uFF0C${sight}`;
     onChange();
     fitLayout();
     setZoom(Number(storage.getItem("fated-tactical/zoom")) || 1);
-    seenLogs = live.logs.length;
+    seenLogs = live3.logs.length;
     $("log-unread").hidden = seenLogs <= 2;
     return {
       setPortraits(next) {
@@ -9261,6 +11248,8 @@ body { margin: 0; background: var(--ink-2); }
 .battle-axis .tactical-cell.is-opportunity { outline: 2px solid #e5a35e; outline-offset: -3px; }
 .battle-axis .tactical-cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; z-index: 2; }
 .ft-app[data-busy="true"] .battle-axis .tactical-cell:is(.is-reachable, .is-in-range) { background-image: none; background-color: transparent; }
+.battle-axis .tactical-cell:disabled { cursor: default; }
+.battle-axis .tactical-cell.is-ask-option { border-color: var(--gold); box-shadow: inset 0 0 0 2px var(--gold); }
 
 /* \u7279\u6548\u5C42\uFF1A\u6D6E\u5B57\u3001\u5F39\u9053\u3001\u843D\u70B9 */
 .ft-tokens, .ft-fx { position: absolute; inset: 0; pointer-events: none; }
@@ -9351,6 +11340,11 @@ body { margin: 0; background: var(--ink-2); }
 .ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
 
 .ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
+.ft-ask { width: min(100%, 28rem); padding: 8px 10px; border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); }
+.ft-ask p { margin: 0 0 6px; color: var(--accent-text); overflow-wrap: anywhere; }
+.ft-ask-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-height: 24vh; overflow: auto; }
+.ft-ask-choices button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.ft-ask-choices input[type="range"] { max-width: 100%; flex: 1 1 8rem; padding: 0; accent-color: var(--gold); }
 .ft-status { margin: 0; color: var(--accent-label); font-size: 13px; text-align: right; }
 .ft-hint { margin: 0; color: var(--gold-bright); font-size: 12px; }
 .ft-hint:empty { display: none; }
@@ -9675,26 +11669,26 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (existing?.__fatedUnmount) existing.__fatedUnmount();
     const doc = target2.ownerDocument || document;
     injectStyle(doc);
-    const root = doc.createElement("div");
-    root.className = "fated-tactical-root";
-    root.dataset.fatedMounted = "true";
-    root.dataset.dlcTheme = themes.includes(options.theme) ? options.theme : "amethyst";
-    root.innerHTML = TEMPLATE;
-    target2.append(root);
+    const root2 = doc.createElement("div");
+    root2.className = "fated-tactical-root";
+    root2.dataset.fatedMounted = "true";
+    root2.dataset.dlcTheme = themes.includes(options.theme) ? options.theme : "amethyst";
+    root2.innerHTML = TEMPLATE;
+    target2.append(root2);
     const controller = new AbortController();
     const prefix = `fated-tactical/${options.instanceId || "default"}`;
     const storage = storageAdapter(options.storage, prefix);
     const api = options.api || createGameAPI();
-    const ui = initializeUI(root, { ...options, initialState: options.state ?? options.initialState, game: api, storage, signal: controller.signal });
-    let active = true;
+    const ui = initializeUI(root2, { ...options, initialState: options.state ?? options.initialState, game: api, storage, signal: controller.signal });
+    let active2 = true;
     const result = {
       api,
       unmount() {
-        if (!active) return;
-        active = false;
+        if (!active2) return;
+        active2 = false;
         controller.abort();
         ui.destroy?.();
-        root.remove();
+        root2.remove();
       },
       destroy() {
         result.unmount();
@@ -9703,19 +11697,19 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         return ui.loadState(state);
       },
       setPortraits(portraits) {
-        if (active) ui.setPortraits(portraits);
+        if (active2) ui.setPortraits(portraits);
       },
       getState: ui.getState,
       exportBattleReportText: ui.exportBattleReportText,
       exportMvuPatch: ui.exportMvuPatch,
-      root
+      root: root2
     };
-    root.__fatedUnmount = result.unmount;
+    root2.__fatedUnmount = result.unmount;
     return result;
   }
 
   // src/tavern/descriptor.js
-  var identifier = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+  var identifier2 = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
   var unsafeKey = (key4) => Object.hasOwn(Object.prototype, key4) || key4 === "prototype";
   function parseBattleDescriptor(value) {
     if (typeof value !== "string") return null;
@@ -9733,7 +11727,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (moraleType === "suppress" !== !!sideToken) fail4("\u538B\u5236\u6218\u5FC5\u987B\u5728\u6218\u6597\u7C7B\u578B\u540E\u58F0\u660E |\u538B\u5236\u65B9=blue \u6216 |\u538B\u5236\u65B9=red\uFF1B\u5176\u4ED6\u7C7B\u578B\u4E0D\u586B\u538B\u5236\u65B9");
     if (typeToken) options.pop();
     const [seedText, ...extra] = options;
-    if (kind !== "battle" || version2 !== "1" || extra.length || !identifier.test(battleId ?? "") || unsafeKey(battleId) || !sceneTitle || sceneTitle.length > 100 || !["flat", "terrain"].includes(terrainMode)) {
+    if (kind !== "battle" || version2 !== "1" || extra.length || !identifier2.test(battleId ?? "") || unsafeKey(battleId) || !sceneTitle || sceneTitle.length > 100 || !["flat", "terrain"].includes(terrainMode)) {
       fail4("\u9996\u884C\u5E94\u4E3A battle|1|ID|\u573A\u666F\u6807\u9898|flat \u6216 terrain\uFF0C\u53EF\u8FFD\u52A0 |seed");
     }
     if (seedText !== void 0 && (!/^\d+$/.test(seedText) || Number(seedText) > 4294967295)) fail4("seed \u5FC5\u987B\u662F 0\u20134294967295 \u7684\u6574\u6570");
@@ -9741,7 +11735,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const occupied = /* @__PURE__ */ new Set();
     const units = [], covers = [], interactives = [];
     const claim = (id3, x, y, i) => {
-      if (!identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase())) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID`);
+      if (!identifier2.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase())) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID`);
       if (occupied.has(`${x},${y}`)) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u4F4D\u7F6E\u91CD\u590D`);
       occupied.add(`${x},${y}`);
       ids.add(id3.toLowerCase());
@@ -9750,32 +11744,32 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const parts = line.split("|").map((x2) => x2.trim());
       if (parts[0] === "cover" || parts[0] === "interact") {
         if (parts[0] === "cover") {
-          const [row3, id5, kind3, name3, point4] = parts;
-          if (parts.length !== 5 || !name3 || !["\u534A", "\u5168"].includes(kind3) || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point4 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u63A9\u4F53\u683C\u5F0F\u65E0\u6548`);
-          const [x3, y3, z3] = point4.split(",").map(Number);
+          const [row3, id5, kind3, name3, point6] = parts;
+          if (parts.length !== 5 || !name3 || !["\u534A", "\u5168"].includes(kind3) || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point6 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u63A9\u4F53\u683C\u5F0F\u65E0\u6548`);
+          const [x3, y3, z3] = point6.split(",").map(Number);
           claim(id5, x3, y3, i);
           covers.push({ id: id5, name: name3, x: x3, y: y3, z: z3, cover: kind3 === "\u5168" ? 5 : 2, material: kind3 });
           continue;
         }
-        const [row2, id4, kind2, effect, radiusText, damageText, name2, point3] = parts;
+        const [row2, id4, kind2, effect, radiusText, damageText, name2, point5] = parts;
         const radius = Number(radiusText), damage = Number(damageText);
-        if (parts.length !== 8 || !name2 || !["altar", "barrel"].includes(kind2) || !["explode", "heal", "shield", "restore"].includes(effect) || !Number.isInteger(radius) || radius < 0 || radius > 10 || !Number.isInteger(damage) || damage < 0 || damage > 1e5 || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point3 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u4E92\u52A8\u683C\u5F0F\u65E0\u6548`);
-        const [x2, y2, z2] = point3.split(",").map(Number);
+        if (parts.length !== 8 || !name2 || !["altar", "barrel"].includes(kind2) || !["explode", "heal", "shield", "restore"].includes(effect) || !Number.isInteger(radius) || radius < 0 || radius > 10 || !Number.isInteger(damage) || damage < 0 || damage > 1e5 || !/^\d\s*,\s*\d\s*,\s*-?\d+$/.test(point5 ?? "")) fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u4E92\u52A8\u683C\u5F0F\u65E0\u6548`);
+        const [x2, y2, z2] = point5.split(",").map(Number);
         claim(id4, x2, y2, i);
         if (interactives.length === 2) fail4("\u6700\u591A\u4E24\u6761 interact \u8BB0\u5F55");
         interactives.push({ id: id4, name: name2, x: x2, y: y2, z: z2, kind: kind2, effect, radius, damage });
         continue;
       }
-      const [row, id3, team2, source, name, point2, ...tail] = line.split("|").map((x2) => x2.trim());
-      const coordinates = point2?.split(",").map((x2) => x2.trim()) ?? [];
+      const [row, id3, team2, source, name, point4, ...tail] = line.split("|").map((x2) => x2.trim());
+      const coordinates = point4?.split(",").map((x2) => x2.trim()) ?? [];
       const altitudeToken = coordinates[2];
       const altitudeMatch = altitudeToken?.match(/^(?:飞行|悬浮)=(-?\d+)$/);
-      const validPoint = /^\d\s*,\s*\d(?:\s*,\s*(?:-?\d+|(?:飞行|悬浮)=-?\d+))?$/.test(point2 ?? "");
-      if (row !== "unit" || tail.length || !identifier.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase()) || !["blue", "red"].includes(team2) || !name || name.length > 100 || !validPoint) {
+      const validPoint = /^\d\s*,\s*\d(?:\s*,\s*(?:-?\d+|(?:飞行|悬浮)=-?\d+))?$/.test(point4 ?? "");
+      if (row !== "unit" || tail.length || !identifier2.test(id3 ?? "") || unsafeKey(id3) || ids.has(id3.toLowerCase()) || !["blue", "red"].includes(team2) || !name || name.length > 100 || !validPoint) {
         fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u9700\u8981\u552F\u4E00 ID\u3001\u9635\u8425\u3001\u6765\u6E90\u3001\u663E\u793A\u540D\u53CA 0\u20139 \u8303\u56F4\u5185\u7684 x,y`);
       }
-      const path = source?.startsWith("mvu:") ? source.slice(4).split("/") : [];
-      if (source !== "char_info" && (!path.length || path.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4)))) {
+      const path2 = source?.startsWith("mvu:") ? source.slice(4).split("/") : [];
+      if (source !== "char_info" && (!path2.length || path2.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4)))) {
         fail4(`\u7B2C ${i + 2} \u6761\u8BB0\u5F55\u7684\u6765\u6E90\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
       }
       const x = Number(coordinates[0]), y = Number(coordinates[1]);
@@ -9800,12 +11794,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   // src/tavern/terrain.js
   var inBounds = (n) => Number.isInteger(n) && n >= 0 && n <= 9;
   var height = (n) => Math.max(-4, Math.min(8, Math.round(Number(n) || 0)));
-  var list2 = (value) => Array.isArray(value) ? value : [];
+  var list3 = (value) => Array.isArray(value) ? value : [];
   function createBattleGrid(battle, seed, units, warnings) {
     const grid = Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: "floor", z: 0 })));
-    const anchors = battle.version === 1 ? [...list2(battle.units), ...list2(battle.covers), ...list2(battle.interactives)].filter((unit) => Number.isInteger(unit.z)) : [];
-    if (anchors.some((anchor2) => anchor2.z !== 0)) {
-      const reserved = new Set([...battle.units ?? [], ...list2(battle.covers), ...list2(battle.interactives)].map((at) => `${at.x},${at.y}`));
+    const anchors = battle.version === 1 ? [...list3(battle.units), ...list3(battle.covers), ...list3(battle.interactives)].filter((unit) => Number.isInteger(unit.z)) : [];
+    if (anchors.some((anchor) => anchor.z !== 0)) {
+      const reserved2 = new Set([...battle.units ?? [], ...list3(battle.covers), ...list3(battle.interactives)].map((at2) => `${at2.x},${at2.y}`));
       const painted = /* @__PURE__ */ new Set();
       for (const { x, y, z } of anchors) {
         grid[y][x] = { kind: "floor", z };
@@ -9815,7 +11809,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         for (let i = 0; i < offsets.length; i++) {
           const [dx, dy] = offsets[(start + i) % offsets.length];
           const points = [[x + dx, y + dy, z], [x + 2 * dx, y + 2 * dy, Math.abs(z) > 1 ? z - Math.sign(z) : 0]];
-          if (!points.every(([a, b]) => inBounds(a) && inBounds(b) && !reserved.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
+          if (!points.every(([a, b]) => inBounds(a) && inBounds(b) && !reserved2.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
           for (const [a, b, h] of points) {
             grid[b][a] = { kind: h === z ? "floor" : "slope", z: h };
             painted.add(`${a},${b}`);
@@ -9826,7 +11820,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       for (let pass = 0; pass < 4; pass++) {
         const previous = grid.map((row) => row.map((cell) => cell.z));
         grid.forEach((row, y) => row.forEach((cell, x) => {
-          if (reserved.has(`${x},${y}`) || painted.has(`${x},${y}`)) return;
+          if (reserved2.has(`${x},${y}`) || painted.has(`${x},${y}`)) return;
           for (const [a, b] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
             const h = previous[b]?.[a];
             if (h !== void 0 && Math.abs(h) > Math.abs(cell.z) + 2) Object.assign(cell, { kind: "slope", z: h - 2 * Math.sign(h) });
@@ -9840,7 +11834,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (battle.terrainMode === "terrain" || battle.terrainMode == null && legacyTerrain == null) {
       const layout = seed % 8;
       const transform = (x, y) => [layout & 1 ? 9 - x : x, layout & 2 ? 9 - y : y];
-      const occupied = new Set([...units, ...list2(battle.covers), ...list2(battle.interactives)].map((u) => `${u.x},${u.y}`));
+      const occupied = new Set([...units, ...list3(battle.covers), ...list3(battle.interactives)].map((u) => `${u.x},${u.y}`));
       const paint = (x, y, kind, z) => {
         const [a, b] = transform(x, y);
         const [px, py] = layout & 4 ? [b, a] : [a, b];
@@ -9856,7 +11850,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return grid;
     }
     const terrain = legacyTerrain;
-    const place2 = (raw, kind, label) => {
+    const place = (raw, kind, label) => {
       const [x, y, z] = Array.isArray(raw) ? raw : Array.isArray(raw?.xyz) ? raw.xyz : [raw?.x, raw?.y, raw?.z];
       if (!inBounds(x) || !inBounds(y)) {
         warnings.push(`\u5FFD\u7565\u65E0\u6548\u5730\u5F62\u5750\u6807\uFF1A${label}`);
@@ -9866,10 +11860,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     };
     if (Array.isArray(terrain)) {
       if (terrain.length === 10 && terrain.every((row) => Array.isArray(row) && row.length === 10)) {
-        terrain.forEach((row, y) => row.forEach((cell, x) => place2([x, y, cell?.z], cellKind(cell), "grid")));
-      } else terrain.forEach((cell) => place2(cell, cellKind(cell), "terrain"));
+        terrain.forEach((row, y) => row.forEach((cell, x) => place([x, y, cell?.z], cellKind(cell), "grid")));
+      } else terrain.forEach((cell) => place(cell, cellKind(cell), "terrain"));
     } else {
-      for (const region of list2(terrain?.elevation)) {
+      for (const region of list3(terrain?.elevation)) {
         const { x1, y1, x2, y2, z } = region ?? {};
         if (![x1, y1, x2, y2].every(inBounds) || x1 > x2 || y1 > y2) {
           warnings.push("\u5FFD\u7565\u65E0\u6548\u5730\u5F62\u5750\u6807\uFF1Agrid.elevation");
@@ -9877,8 +11871,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         }
         for (let y = y1; y <= y2; y++) for (let x = x1; x <= x2; x++) grid[y][x].z = height(z);
       }
-      for (const slope of list2(terrain?.slopes)) place2(slope, "slope", "grid.slopes");
-      for (const wall of list2(terrain?.walls)) place2(wall, "wall", "grid.walls");
+      for (const slope of list3(terrain?.slopes)) place(slope, "slope", "grid.slopes");
+      for (const wall of list3(terrain?.walls)) place(wall, "wall", "grid.walls");
     }
     return grid;
   }
@@ -9893,17 +11887,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var tiers = "\u8D34\u8EAB|\u8FD1\u7A0B|\u4E2D\u7A0B|\u8FDC\u7A0B|\u8D85\u8DDD";
   var distance = new RegExp(`^(?:(${tiers})\\s*[(\uFF08]\\s*(\\d+)\\s*[)\uFF09]|(\\d+)(?![\\d.]))`);
   function tagEntries(labels) {
-    return [].concat(labels ?? []).flatMap((label) => String(label).split(/[\[\]【】]/u)).map((tag) => tag.trim()).filter(Boolean);
+    return [].concat(labels ?? []).flatMap((label) => String(label).split(/[\[\]【】]/u)).map((tag2) => tag2.trim()).filter(Boolean);
   }
   function parseAreaTags(labels) {
-    const tags2 = tagEntries(labels);
-    const field = (pattern) => tags2.map((tag) => tag.match(pattern)?.[1]).find((value) => value != null) ?? null;
+    const tags = tagEntries(labels);
+    const field = (pattern) => tags.map((tag2) => tag2.match(pattern)?.[1]).find((value) => value != null) ?? null;
     const rangeText = field(/^(?:有效距离|射程)\s*[:：]\s*(.*)$/u);
-    const area2 = field(/^范围\s*[:：]\s*(.*)$/u);
+    const area3 = field(/^范围\s*[:：]\s*(.*)$/u);
     const rangeMatch = rangeText?.match(distance);
-    const areaMatch = area2?.match(distance);
-    const areaShape = area2?.match(/(?:^|[+＋])\s*(圆形?|扇形?|锥形?|环形?|直线|线形?)\s*(?=[(（]|$)/u)?.[1];
-    const filter = area2?.match(/[(（]\s*([^()（）]+?)\s*[)）]\s*$/u)?.[1];
+    const areaMatch = area3?.match(distance);
+    const areaShape = area3?.match(/(?:^|[+＋])\s*(圆形?|扇形?|锥形?|环形?|直线|线形?)\s*(?=[(（]|$)/u)?.[1];
+    const filter = area3?.match(/[(（]\s*([^()（）]+?)\s*[)）]\s*$/u)?.[1];
     const declared = field(/^目标类型\s*[:：]\s*(.*)$/u);
     const number3 = (pattern) => {
       const value = field(pattern);
@@ -9911,21 +11905,21 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     };
     return {
       range: rangeMatch ? Number(rangeMatch[2] ?? rangeMatch[3]) : null,
-      shape: shapes[field(/^(?:形状|范围形状)\s*[:：]\s*(.*)$/u)] ?? shapes[areaShape] ?? shapes[declared] ?? tags2.map((tag) => shapes[tag]).find(Boolean) ?? (area2 != null ? "circle" : null),
-      target: targets[field(/^(?:目标|对象|敌友)\s*[:：]\s*(.*)$/u)] ?? targets[filter] ?? targets[declared] ?? tags2.map((tag) => targets[tag]).find(Boolean) ?? null,
+      shape: shapes[field(/^(?:形状|范围形状)\s*[:：]\s*(.*)$/u)] ?? shapes[areaShape] ?? shapes[declared] ?? tags.map((tag2) => shapes[tag2]).find(Boolean) ?? (area3 != null ? "circle" : null),
+      target: targets[field(/^(?:目标|对象|敌友)\s*[:：]\s*(.*)$/u)] ?? targets[filter] ?? targets[declared] ?? tags.map((tag2) => targets[tag2]).find(Boolean) ?? null,
       radius: number3(/^(?:半径|范围半径)\s*[:：]\s*(\d+(?:\.\d+)?)\s*格?$/u) ?? (areaMatch ? Number(areaMatch[2] ?? areaMatch[3]) : null),
       width: number3(/^(?:宽度|宽)\s*[:：]\s*(\d+(?:\.\d+)?)\s*格?$/u),
       angle: number3(/^(?:角度|扇面角度|张角)\s*[:：]\s*(\d+(?:\.\d+)?)\s*(?:°|度)?$/u),
       innerRadius: number3(/^内圈半径\s*[:：]\s*(\d+(?:\.\d+)?)\s*格?$/u),
       missingRange: rangeText != null && !rangeMatch,
-      missingRadius: area2 != null && !areaMatch,
+      missingRadius: area3 != null && !areaMatch,
       rangeTier: rangeMatch?.[1] ?? null,
-      healing: tags2.some((tag) => /^核心功能\s*[:：]\s*治疗$/u.test(tag))
+      healing: tags.some((tag2) => /^核心功能\s*[:：]\s*治疗$/u.test(tag2))
     };
   }
 
   // src/tavern/converter.js
-  var own5 = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
+  var own12 = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
   var object3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
   var asObject = (v) => object3(v) ? v : {};
   var finite2 = (v) => typeof v === "number" && Number.isFinite(v);
@@ -9935,7 +11929,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return fallback;
   };
   var integer3 = (v, fallback = 0) => Math.round(number2(v, fallback));
-  var text2 = (v) => typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim();
+  var text3 = (v) => typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim();
   var clone = (v) => structuredClone(v);
   function hash(value) {
     let h = 2166136261;
@@ -9946,7 +11940,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return h >>> 0;
   }
   function deterministicId(value, prefix = "unit") {
-    const raw = text2(value) || prefix;
+    const raw = text3(value) || prefix;
     const ascii = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase();
     let id3 = ascii || `${prefix}-${hash(raw).toString(36)}`;
     if (!/^[A-Za-z]/.test(id3)) id3 = `${prefix}-${id3}`;
@@ -9961,8 +11955,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const s = value.trim();
     return !s || blockHeaders.has(s) || /^\{\s*\}$/.test(s);
   }
-  function scalar(value) {
-    const v = text2(value);
+  function scalar2(value) {
+    const v = text3(value);
     if (!v) return "";
     if (v.startsWith('"') && v.endsWith('"') || v.startsWith("'") && v.endsWith("'")) return v.slice(1, -1).replace(/\\n/g, "\n");
     if (v === "true" || v === "false") return v === "true";
@@ -9980,7 +11974,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function parseSimpleYaml(input) {
     if (object3(input) || Array.isArray(input)) return clone(input);
-    const source = text2(input).replace(/^```(?:yaml|yml)?\s*/i, "").replace(/\s*```$/i, "");
+    const source = text3(input).replace(/^```(?:yaml|yml)?\s*/i, "").replace(/\s*```$/i, "");
     const lines = source.split(/\r?\n/).map((raw, index) => ({
       index,
       indent: raw.match(/^\s*/)[0].length,
@@ -9988,8 +11982,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       raw
     })).filter((x) => x.value && !x.value.startsWith("#") && !x.value.startsWith("---") && !x.value.startsWith("..."));
     if (!lines.length) return {};
-    const root = lines[0].value.startsWith("- ") ? [] : {};
-    const stack = [{ indent: -1, value: root }];
+    const root2 = lines[0].value.startsWith("- ") ? [] : {};
+    const stack = [{ indent: -1, value: root2 }];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       while (stack.length > 1 && line.indent <= stack.at(-1).indent) stack.pop();
@@ -10004,13 +11998,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           continue;
         }
         const colon2 = rest.search(/:(?:\s|$)/u);
-        const quoted = /^(?:".*"|'.*')$/u.test(rest);
-        if (colon2 > 0 && !quoted && !rest.startsWith("{")) {
+        const quoted2 = /^(?:".*"|'.*')$/u.test(rest);
+        if (colon2 > 0 && !quoted2 && !rest.startsWith("{")) {
           const child2 = {};
           parent.push(child2);
-          child2[rest.slice(0, colon2).trim()] = scalar(rest.slice(colon2 + 1));
+          child2[rest.slice(0, colon2).trim()] = scalar2(rest.slice(colon2 + 1));
           stack.push({ indent: line.indent, value: child2 });
-        } else parent.push(scalar(rest));
+        } else parent.push(scalar2(rest));
         continue;
       }
       const colon = line.value.search(/[:：]/);
@@ -10027,7 +12021,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         continue;
       }
       if (tail) {
-        parent[key4] = scalar(tail);
+        parent[key4] = scalar2(tail);
         continue;
       }
       const next = lines[i + 1];
@@ -10035,12 +12029,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       parent[key4] = child;
       stack.push({ indent: line.indent, value: child });
     }
-    return root;
+    return root2;
   }
-  function unwrap(value, tag) {
+  function unwrap(value, tag2) {
     if (typeof value !== "string") return value;
-    const re = tag === "battle" ? /<(?:battle_init|battle-in|battle_in)>\s*([\s\S]*?)\s*<\/\s*(?:battle_init|battle-in|battle_in)>/i : /<char_info>\s*([\s\S]*?)\s*<\/char_info>/ig;
-    if (tag === "battle") {
+    const re = tag2 === "battle" ? /<(?:battle_init|battle-in|battle_in)>\s*([\s\S]*?)\s*<\/\s*(?:battle_init|battle-in|battle_in)>/i : /<char_info>\s*([\s\S]*?)\s*<\/char_info>/ig;
+    if (tag2 === "battle") {
       const match = value.match(re);
       if (match) return parseBattleBody(match[1]);
       const legacy = value.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*([\s\S]*?)\s*\{\s*\/\s*(?:battle_in|战术沙盘)\s*\}/i);
@@ -10058,21 +12052,21 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const parsed = JSON.parse(source);
       return object3(parsed) ? parsed : {};
     } catch {
-      let depth = 0, quoted = false, escaped = false;
+      let depth = 0, quoted2 = false, escaped = false;
       for (let start = 0; start < source.length; start++) {
         if (source[start] !== "{") continue;
         depth = 0;
-        quoted = false;
+        quoted2 = false;
         escaped = false;
         for (let i = start; i < source.length; i++) {
           const ch = source[i];
-          if (quoted) {
+          if (quoted2) {
             if (escaped) escaped = false;
             else if (ch === "\\") escaped = true;
-            else if (ch === '"') quoted = false;
+            else if (ch === '"') quoted2 = false;
             continue;
           }
-          if (ch === '"') quoted = true;
+          if (ch === '"') quoted2 = true;
           else if (ch === "{") depth++;
           else if (ch === "}" && --depth === 0) {
             try {
@@ -10098,14 +12092,14 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (Array.isArray(value)) return value.flatMap(parseCharInfo);
     if (object3(value)) return [clone(value)];
     if (typeof value !== "string") return [];
-    const tagged = unwrap(value, "char");
-    return tagged.length ? tagged : [parseSimpleYaml(value)].filter((x) => Object.keys(x).length);
+    const tagged2 = unwrap(value, "char");
+    return tagged2.length ? tagged2 : [parseSimpleYaml(value)].filter((x) => Object.keys(x).length);
   }
   var attrNames = ["str", "agi", "con", "int", "spi"];
   var statAliases = { strength: "str", dexterity: "agi", agility: "agi", constitution: "con", intelligence: "int", spirit: "spi", wisdom: "spi", \u529B\u91CF: "str", \u654F\u6377: "agi", \u4F53\u8D28: "con", \u667A\u529B: "int", \u7CBE\u795E: "spi" };
   function findValue(record2, names, fallback) {
     const r = asObject(record2);
-    for (const name of names) if (own5(r, name)) return r[name];
+    for (const name of names) if (own12(r, name)) return r[name];
     return fallback;
   }
   function statsOf(record2) {
@@ -10114,16 +12108,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     for (const key4 of attrNames) {
       const aliases2 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
       result[key4] = Math.max(-20, Math.min(50, integer3(
-        aliases2.find((alias) => own5(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own5(nested, alias))] : findValue(r, aliases2, 0),
+        aliases2.find((alias) => own12(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own12(nested, alias))] : findValue(r, aliases2, 0),
         0
       )));
     }
     return result;
   }
-  function resource2(record2, key4, fallback) {
+  function resource(record2, key4, fallback) {
     const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
     const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key4] ?? [];
-    const value = own5(r, key4) ? r[key4] : own5(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own5(r, aliases2[1]) ? r[aliases2[1]] : own5(nested, key4) ? nested[key4] : own5(nested, aliases2[0]) ? nested[aliases2[0]] : own5(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
+    const value = own12(r, key4) ? r[key4] : own12(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own12(r, aliases2[1]) ? r[aliases2[1]] : own12(nested, key4) ? nested[key4] : own12(nested, aliases2[0]) ? nested[aliases2[0]] : own12(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
     if (object3(value)) {
       const current2 = integer3(value.current ?? value.\u5F53\u524D ?? value.now ?? value.value, fallback);
       const upper = value.max ?? value.maximum ?? value.\u4E0A\u9650;
@@ -10145,31 +12139,31 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return { current, max };
   }
   function sourceName(record2, key4 = "") {
-    return text2(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key4));
+    return text3(findValue(record2, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key4));
   }
   function tierNumber(value, fallback = 1) {
     if (Number.isFinite(Number(value))) return Number(value);
-    const match = text2(value).match(/[一二三四五六七]层级?/);
+    const match = text3(value).match(/[一二三四五六七]层级?/);
     return match ? "\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03".indexOf(match[0][0]) + 1 : fallback;
   }
   function sourceId(record2, key4 = "") {
-    return text2(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key4));
+    return text3(findValue(record2, ["id", "uid", "characterId", "instanceId", "ID"], key4));
   }
   var protagonistAliases = ["\u4E3B\u89D2", "\u73A9\u5BB6", "\u4E3B\u63A7", "protagonist", "player", "mvu_protagonist"];
   var charSources = ["char_info", "narrative_char_info"];
   var samePath = (a, b) => a.length === b.length && a.every((part, i) => String(part) === b[i]);
   function resolveParticipant(participant, mvuRecords, chars, protagonist) {
-    const source = text2(participant.source), name = text2(participant.name);
+    const source = text3(participant.source), name = text3(participant.name);
     if (source.startsWith("mvu:")) {
-      const path = source.slice(4).split("/");
-      return mvuRecords.find((record2) => samePath(record2.__sourcePath, path));
+      const path2 = source.slice(4).split("/");
+      return mvuRecords.find((record2) => samePath(record2.__sourcePath, path2));
     }
     if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
     const char = chars.find((record2) => sourceName(record2) === name);
     if (charSources.includes(source.toLowerCase())) return char;
     const matches3 = (record2, key4) => [sourceId(record2), sourceName(record2), record2.__sourceKey].includes(key4);
     if (source) return [...mvuRecords, ...chars].find((record2) => matches3(record2, source));
-    const exact = [text2(participant.id ?? participant.uid), name].filter(Boolean);
+    const exact = [text3(participant.id ?? participant.uid), name].filter(Boolean);
     for (const key4 of exact) {
       const record2 = mvuRecords.find((record3) => matches3(record3, key4));
       if (record2) return record2;
@@ -10177,39 +12171,30 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return char;
   }
   function collectMvu(value) {
-    const root = asObject(value?.stat_data ?? value?.statData ?? value);
-    const lengths = asObject(root.\u4E8B\u4EF6?.\u6218\u672F\u6269\u5C55?.\u4F53\u957F);
+    const root2 = asObject(value?.stat_data ?? value?.statData ?? value);
+    const lengths = asObject(root2.\u4E8B\u4EF6?.\u6218\u672F\u6269\u5C55?.\u4F53\u957F);
     const companionLengths = asObject(lengths.\u4F19\u4F34);
     const found = [];
-    const visit = (node3, key4 = "", path = []) => {
-      if (Array.isArray(node3)) return node3.forEach((v, i) => visit(v, String(i), [...path, i]));
-      if (!object3(node3)) return;
-      const name = sourceName(node3, key4), hasStats = node3.stats || node3.attributes || node3.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own5(node3, k));
-      const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own5(node3, k));
+    const visit = (node, key4 = "", path2 = []) => {
+      if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path2, i]));
+      if (!object3(node)) return;
+      const name = sourceName(node, key4), hasStats = node.stats || node.attributes || node.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own12(node, k));
+      const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own12(node, k));
       if (name && (hasStats || hasResource)) {
-        const length = path.length === 1 && protagonistAliases.includes(path[0]) ? lengths.\u4E3B\u89D2 : path.length === 2 && path[0] === "\u5173\u7CFB\u5217\u8868" && own5(companionLengths, key4) ? companionLengths[key4] : void 0;
-        const record2 = clone(node3);
+        const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own12(companionLengths, key4) ? companionLengths[key4] : void 0;
+        const record2 = clone(node);
         if (Number.isFinite(length) && length > 0) record2.bodyLengthM = length;
-        found.push({ ...record2, __sourceKey: key4, __sourcePath: path, __sourceKind: "MVU" });
+        found.push({ ...record2, __sourceKey: key4, __sourcePath: path2, __sourceKind: "MVU" });
       }
-      for (const [k, v] of Object.entries(node3)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path, k]);
+      for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path2, k]);
     };
-    visit(root);
+    visit(root2);
     return found;
   }
-  var effectAliases = {
-    killcharge: "kill_charge_weapon",
-    kill_charge: "kill_charge_weapon",
-    ammo_charge: "ammo",
-    bleed: "backstab",
-    knock_back: "knockback",
-    teleport_backstab: "teleport_backstab",
-    cleanse_status: "cleanse",
-    root: "opportunity_root"
-  };
-  function statusId(value) {
-    const key4 = text2(value);
-    return own5(STATUSES, key4) ? key4 : null;
+  function statusId2(value) {
+    const key4 = text3(value);
+    if (own12(STATUSES, key4)) return key4;
+    return Object.keys(STATUSES).find((id3) => STATUSES[id3].name === key4) ?? null;
   }
   var bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer3(value, fallback)));
   function statusTurns(value, fallback) {
@@ -10219,216 +12204,266 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function warningSink(warnings, unitId, source, scope, originPath) {
     return { push: (message) => warnings.push({ message, unitId, source, scope, ...originPath && { originPath } }) };
   }
-  function convertEffects(effects2, context, warnings, prefix) {
-    let input = Array.isArray(effects2) ? effects2 : effects2 == null ? [] : [effects2];
-    if (object3(effects2) && !["trigger", "kind", "type", "effect", "name", "\u7C7B\u578B"].some((key4) => own5(effects2, key4))) {
-      input = Object.entries(effects2).flatMap(([kind, value]) => {
-        if (!object3(value) && emptyEntry(value)) return [];
-        if (isExpression(value)) return [{ ...value, id: value.id ?? (/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(kind) ? kind : `${prefix}-${hash(kind).toString(36)}`) }];
-        if (object3(value)) return [{ kind, ...value }];
-        warnings.push(`\u4E0D\u652F\u6301\u7684\u63CF\u8FF0\u6027\u6548\u679C\u5DF2\u5FFD\u7565\uFF1A${kind}${text2(value) ? `\uFF1A${text2(value)}` : ""}`);
-        return [];
-      });
-    }
-    const result = [], seen = /* @__PURE__ */ new Set();
-    for (const [index, raw] of input.entries()) {
-      if (emptyEntry(raw)) continue;
-      let entry = raw;
-      if (typeof raw === "string") {
-        const body = raw.trim().replace(/^[|>](?:[-+2])?[^\S\r\n]*\r?\n/, "").trim();
-        const labelled = body.match(/^[^\n:{}]+[:：]\s*([^\n]+)$/);
-        const payload = labelled ? labelled[1].trim() : body;
-        entry = payload;
-        if (payload.startsWith("{")) {
-          try {
-            entry = JSON.parse(payload);
-          } catch {
-          }
-        }
-        if (emptyEntry(entry)) continue;
-      }
-      const source = typeof entry === "string" ? { kind: entry } : asObject(entry);
-      let expressions;
-      if (isExpression(source)) {
-        expressions = validExpression(source) ? [clone(source)] : [];
-      } else {
-        const name = text2(source.kind ?? source.type ?? source.effect ?? source.name ?? source.\u7C7B\u578B).toLowerCase().replace(/[ -]/g, "_");
-        const kind = own5(effectAliases, name) ? effectAliases[name] : name;
-        const legacy = { ...source, kind };
-        const id3 = statusId(source.statusId ?? source.status ?? source.value ?? source.\u72B6\u6001 ?? name);
-        if (kind === "status" && !id3 && !source.statusId) {
-          warnings.push(`\u6548\u679C\u5F15\u7528\u672A\u77E5\u72B6\u6001\uFF0C\u5DF2\u5FFD\u7565\uFF1A${source.status ?? source.value ?? source.\u72B6\u6001 ?? name}`);
-          continue;
-        }
-        if (id3) {
-          legacy.statusId = id3;
-          if (kind === "status" || name === id3 && context === "skill" && kind !== "infinite_ammo") legacy.kind = "status";
-          const turns2 = source.turns ?? source.\u5269\u4F59\u56DE\u5408 ?? source.\u6301\u7EED\u56DE\u5408;
-          const stacks = source.stacks ?? source.\u5C42\u6570;
-          if (turns2 != null) legacy.turns = statusTurns(turns2, STATUSES[id3].remainingTurns);
-          if (stacks != null) legacy.stacks = bound(stacks, 1, STATUSES[id3].maxStacks);
-        }
-        expressions = adaptLegacyEffects([legacy], context, `${prefix.slice(0, 36)}-${index}`);
+  var blockBody = (value) => value.trim().replace(/^[|>](?:[-+2])?[^\S\r\n]*\r?\n/, "").trim();
+  var describe = (value) => typeof value === "string" ? blockBody(value) : JSON.stringify(value);
+  function narrativeEntries(value) {
+    if (emptyEntry(value)) return [];
+    if (Array.isArray(value)) return value.flatMap((entry2) => narrativeEntries(entry2));
+    if (typeof value === "string") {
+      const body = blockBody(value);
+      const labelled = body.match(/^([^\n:{}]+)[:：]\s*(\{[^\n]*\})$/);
+      const payload = labelled?.[2] ?? body;
+      if (payload.startsWith("{") || payload.startsWith("[")) {
         try {
-          for (const expr of expressions) validateEffect(expr);
-        } catch (error2) {
-          warnings.push(`\u6548\u679C ${typeof raw === "string" ? raw.trim() : name || "unknown"} \u5DF2\u62D2\u7EDD\uFF1A${error2.message}`);
-          continue;
+          return narrativeEntries(JSON.parse(payload));
+        } catch {
         }
       }
-      if (!expressions.length || result.length + expressions.length > 24 || expressions.some((expr) => seen.has(expr.id))) {
-        warnings.push(`\u65E0\u6548\u3001\u91CD\u590D\u6216\u8D85\u91CF\u6548\u679C\u5DF2\u5FFD\u7565\uFF1A${source.id ?? source.kind ?? "unknown"}`);
+      return emptyEntry(body) ? [] : [["", body]];
+    }
+    if (object3(value) && Object.values(value).every((entry2) => typeof entry2 === "string" || object3(entry2) || emptyEntry(entry2)) && !["id", "hook", "program", "op", "target", "effects"].some((key4) => own12(value, key4))) {
+      return Object.entries(value).filter(([, entry2]) => !emptyEntry(entry2));
+    }
+    return [["", value]];
+  }
+  function activeRule(id3, program2) {
+    return { id: id3, hook: "active", program: program2 };
+  }
+  function readRules(value, warnings) {
+    if (value == null) return [];
+    if (!Array.isArray(value)) {
+      warnings.push("rules \u5FC5\u987B\u662F Rule \u6570\u7EC4");
+      return [];
+    }
+    const rules = [], ids = /* @__PURE__ */ new Set();
+    for (const [index, rule2] of value.entries()) {
+      const location = `rules[${index}]${rule2?.id ? ` (${rule2.id})` : ""}`;
+      if (!validVmRule(rule2)) warnings.push(`${location} \u4E0D\u7B26\u5408 VM \u89C4\u5219 Schema\uFF1A${describe(rule2)}`);
+      else if (ids.has(rule2.id)) warnings.push(`${location} \u7684\u89C4\u5219 ID \u91CD\u590D`);
+      else if (rules.length === 200) warnings.push(`${location} \u8D85\u8FC7\u89C4\u5219\u6570\u91CF\u4E0A\u9650 200`);
+      else {
+        rules.push(clone(rule2));
+        ids.add(rule2.id);
+      }
+    }
+    return rules;
+  }
+  function appendRules(rules, additions, warnings) {
+    for (const rule2 of additions) {
+      if (rules.some((existing) => existing.id === rule2.id)) warnings.push(`\u751F\u6210\u89C4\u5219 ${rule2.id} \u4E0E\u5DF2\u58F0\u660E\u89C4\u5219 ID \u91CD\u590D`);
+      else if (rules.length === 200) warnings.push(`\u751F\u6210\u89C4\u5219 ${rule2.id} \u8D85\u8FC7\u89C4\u5219\u6570\u91CF\u4E0A\u9650 200`);
+      else rules.push(rule2);
+    }
+  }
+  function readMods(value, warnings) {
+    if (value == null) return [];
+    if (!Array.isArray(value)) {
+      warnings.push("mods \u5FC5\u987B\u662F StatMod \u6570\u7EC4");
+      return [];
+    }
+    return value.flatMap((mod2, index) => {
+      if (index < 200 && validVmStatMod(mod2)) return [clone(mod2)];
+      warnings.push(`mods[${index}] \u65E0\u6548\u6216\u8D85\u51FA\u6570\u91CF\u4E0A\u9650\uFF1A${describe(mod2)}`);
+      return [];
+    });
+  }
+  function readPools(value, warnings) {
+    if (value == null) return {};
+    if (!object3(value)) {
+      warnings.push("pools \u5FC5\u987B\u662F\u8D44\u6E90\u6C60\u58F0\u660E\u5BF9\u8C61");
+      return {};
+    }
+    return Object.fromEntries(Object.entries(value).filter(([key4, pool]) => {
+      const allowed = id2(key4) && object3(pool) && Object.keys(pool).every((k) => ["cap", "initial", "reloadable"].includes(k)) && Number.isInteger(pool.cap) && pool.cap >= 0 && pool.cap <= 1e9 && (!own12(pool, "initial") || Number.isInteger(pool.initial) && pool.initial >= 0 && pool.initial <= pool.cap) && (!own12(pool, "reloadable") || typeof pool.reloadable === "boolean");
+      if (!allowed) warnings.push(`pools.${key4} \u9700\u8981\u6709\u6548\u7684\u8D44\u6E90 ID\u3001\u6574\u6570 cap (0 \u5230 1e9)\u3001\u53EF\u9009\u6574\u6570 initial (0 \u5230 cap) \u548C\u53EF\u9009\u5E03\u5C14 reloadable`);
+      return allowed;
+    }).map(([key4, pool]) => [key4, { initial: pool.cap, ...pool }]));
+  }
+  function readEquipmentNarrative(effects, warnings) {
+    return convertNarrative(effects, warnings, "", { equipment: true });
+  }
+  function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false } = {}) {
+    const rules = [];
+    for (const [index, [label, entry2]] of narrativeEntries(effects).entries()) {
+      if (validVmRule(entry2)) {
+        appendRules(rules, [clone(entry2)], warnings);
         continue;
       }
-      result.push(...expressions);
-      for (const expr of expressions) seen.add(expr.id);
+      const program2 = !equipment && typeof entry2 === "string" ? narrativeDamage(label, entry2, allowPower) : [];
+      if (program2.length && areaDamage) {
+        warnings.push(`\u8303\u56F4\u4F24\u5BB3\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`);
+      } else if (program2.length) appendRules(rules, [activeRule(`${prefix.slice(0, 45)}-narrative-${index}`, program2)], warnings);
+      else warnings.push(`${equipment ? "\u88C5\u5907" : ""}\u6548\u679C\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u63D0\u4F9B VM rules / mods / pools \u4E2D\u5BF9\u5E94\u7684\u884C\u4E3A\u4E0E\u89E6\u53D1\u65F6\u673A`);
     }
-    return result;
+    return rules;
   }
   var damageAliases = new Map(Object.entries({ \u7269\u7406: "physical", \u80FD\u91CF: "energy", \u7CBE\u795E: "mental", \u771F\u5B9E: "true" }));
   var damageTypes2 = ["physical", "energy", "mental", "true"];
   function skillCosts(value) {
-    const cost = object3(value) ? Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(" ") : text2(value);
-    const slots = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
+    const cost = object3(value) ? Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(" ") : text3(value);
+    const slots2 = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
     const resources = {};
     for (const [, n, key4] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key4.toLowerCase()] = Number(n);
-    return { ...resources, slot: slots[0]?.[1] === "\u52A8\u4F5C" ? "action" : "attack", ap: new Set(slots.map((s) => s[1])).size === 2 ? 2 : 1 };
+    return { ...resources, slot: slots2[0]?.[1] === "\u52A8\u4F5C" ? "action" : "attack", ap: new Set(slots2.map((s) => s[1])).size === 2 ? 2 : 1 };
   }
+  var damageOp = (damageType2, amount) => ({ op: "damage", target: "target", damageType: damageType2, amount });
+  var powerAmount = (percent2) => percent2 === 100 ? "event.power" : `event.power * (${percent2} / 100)`;
   function damageTags(value, power) {
     if (!value) return [];
     const single = damageAliases.get(value);
-    if (single) return [{ kind: "damage", percentOfPower: 1, damageType: single }];
+    if (single) return [damageOp(single, "event.power")];
     const parts = value.split(/[/／]/).map((s) => s.trim().match(/^(物理|能量|精神|真实)\s*(\d+(?:\.\d+)?)\s*([%％]?)$/));
-    if (parts.length < 2 || parts.some((p) => !p)) return [];
+    if (parts.length < 2 || parts.some((p) => !p || !finite2(Number(p[2])))) return [];
     const percent2 = parts.every((p) => p[3]);
     if (!percent2 && !(parts.every((p) => !p[3]) && parts.reduce((n, p) => n + Number(p[2]), 0) === Number(power))) return [];
-    return parts.map(([, type, n]) => ({ kind: "damage", damageType: damageAliases.get(type), ...percent2 ? { percentOfPower: Number(n) / 100 } : { flat: Number(n) } }));
+    return parts.map(([, type, n]) => damageOp(damageAliases.get(type), percent2 ? powerAmount(Number(n)) : Number(n)));
   }
-  function legacyPercentDamage(raw) {
-    const entries2 = Array.isArray(raw) ? raw : object3(raw) && !isExpression(raw) ? Object.values(raw) : [raw];
-    if (!entries2.length || entries2.some((entry) => typeof entry !== "string")) return [];
-    const parts = entries2.flatMap((entry) => entry.trim().replace(/^[|>][-+2]?[^\S\r\n]*\r?\n/, "").trim().split(/[/／、+＋]/)).map((part) => part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(物理|能量|精神|真实)(?:伤害)?[。.]?$/));
+  function narrativeDamage(label, entry2, allowPower) {
+    const body = blockBody(entry2);
+    const flat = /^(?:造成\s*)?(\d+)\s*(?:点)?\s*(物理|能量|精神|真实)伤害[。.]?$/.exec(body);
+    if (flat && finite2(Number(flat[1]))) return [damageOp(damageAliases.get(flat[2]), Number(flat[1]))];
+    const typedLabel = /^(物理|能量|精神|真实)伤害$/.exec(label);
+    const labelledFlat = typedLabel && /^造成\s*(\d+)\s*(?:点)?伤害[。.]?$/.exec(body);
+    if (labelledFlat && finite2(Number(labelledFlat[1]))) return [damageOp(damageAliases.get(typedLabel[1]), Number(labelledFlat[1]))];
+    if (!allowPower) return [];
+    const parts = body.split(/[/／、+＋]/).map((part) => part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(物理|能量|精神|真实)(?:伤害)?[。.]?$/));
     if (parts.some((part) => !part || Number(part[1]) <= 0 || Number(part[1]) > 1e3)) return [];
-    return parts.map(([, percent2, type]) => ({ kind: "damage", percentOfPower: Number(percent2) / 100, damageType: damageAliases.get(type) }));
+    return parts.map(([, percent2, type]) => damageOp(damageAliases.get(type), powerAmount(Number(percent2))));
   }
   function normalizeDice(raw) {
-    const dice3 = asObject(raw);
-    const stat2 = own5(statAliases, dice3.stat) ? statAliases[dice3.stat] : dice3.stat;
-    const type = damageAliases.get(dice3.type) ?? dice3.type;
-    const count = bound(dice3.count, 0, 1e6, 1);
+    const dice4 = asObject(raw);
+    const stat3 = own12(statAliases, dice4.stat) ? statAliases[dice4.stat] : dice4.stat;
+    const type = damageAliases.get(dice4.type) ?? dice4.type;
+    const count = bound(dice4.count, 0, 1e6, 1);
     return {
       count,
-      sides: bound(dice3.sides, count ? 1 : 0, 1e6, 4),
-      bonus: bound(dice3.bonus, -1e9, 1e9, 0),
-      ...attrNames.includes(stat2) ? { stat: stat2 } : {},
-      ...finite2(dice3.multiplier) ? { multiplier: Math.max(0, Math.min(8, dice3.multiplier)) } : {},
+      sides: bound(dice4.sides, count ? 1 : 0, 1e6, 4),
+      bonus: bound(dice4.bonus, -1e9, 1e9, 0),
+      ...attrNames.includes(stat3) ? { stat: stat3 } : {},
+      ...finite2(dice4.multiplier) ? { multiplier: Math.max(0, Math.min(8, dice4.multiplier)) } : {},
       type: damageTypes2.includes(type) ? type : "physical"
     };
   }
   function areaFields(raw, warnings, name) {
-    const tags2 = parseAreaTags(raw.tags ?? raw.\u6807\u7B7E);
-    if (tags2.missingRange && raw.range == null && raw.\u6709\u6548\u8DDD\u79BB == null) warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB\u6807\u7B7E\u7F3A\u5C11\u683C\u6570`);
-    if (tags2.missingRadius && tags2.radius == null && raw.radius == null) warnings.push(`\u300C${name}\u300D\u8303\u56F4\u6807\u7B7E\u7F3A\u5C11\u534A\u5F84\u683C\u6570`);
-    const tier = DISTANCE_TABLE.find((row) => row.name === tags2.rangeTier);
-    if (tier && (tags2.range < tier.min || tier.max != null && tags2.range > tier.max)) {
-      warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB ${tags2.range} \u683C\u4E0E\u300C${tier.name}\u300D\u7684\u8DDD\u79BB\u533A\u95F4\u4E0D\u7B26`);
+    const tags = parseAreaTags(raw.tags ?? raw.\u6807\u7B7E);
+    if (tags.missingRange && raw.range == null && raw.\u6709\u6548\u8DDD\u79BB == null) warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB\u6807\u7B7E\u7F3A\u5C11\u683C\u6570`);
+    if (tags.missingRadius && tags.radius == null && raw.radius == null) warnings.push(`\u300C${name}\u300D\u8303\u56F4\u6807\u7B7E\u7F3A\u5C11\u534A\u5F84\u683C\u6570`);
+    const tier = DISTANCE_TABLE.find((row) => row.name === tags.rangeTier);
+    if (tier && (tags.range < tier.min || tier.max != null && tags.range > tier.max)) {
+      warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB ${tags.range} \u683C\u4E0E\u300C${tier.name}\u300D\u7684\u8DDD\u79BB\u533A\u95F4\u4E0D\u7B26`);
     }
-    const shape2 = raw.shape ?? tags2.shape;
+    const shape2 = raw.shape ?? tags.shape;
     return {
-      range: raw.range ?? raw.\u6709\u6548\u8DDD\u79BB ?? tags2.range,
+      range: raw.range ?? raw.\u6709\u6548\u8DDD\u79BB ?? tags.range,
       shape: shape2,
-      target: raw.target ?? tags2.target ?? (raw.heal != null || tags2.healing ? "ally" : null),
-      radius: raw.radius ?? tags2.radius,
-      innerRadius: raw.innerRadius ?? tags2.innerRadius,
-      angle: raw.angle ?? tags2.angle,
-      width: raw.width ?? (tags2.width != null ? tags2.width / 2 : shape2 === "line" ? 0.5 : null)
+      target: raw.target ?? tags.target ?? (raw.heal != null || tags.healing ? "ally" : null),
+      radius: raw.radius ?? tags.radius,
+      innerRadius: raw.innerRadius ?? tags.innerRadius,
+      angle: raw.angle ?? tags.angle,
+      width: raw.width ?? (tags.width != null ? tags.width / 2 : shape2 === "line" ? 0.5 : null)
     };
   }
-  function geometryFields(area2) {
+  var isAreaDamage = (area3) => area3.shape != null && area3.shape !== "single" || area3.target === "cell";
+  function geometryFields(area3) {
     const result = {};
-    for (const key4 of ["shape", "target"]) if (area2[key4] != null) result[key4] = area2[key4];
+    for (const key4 of ["shape", "target"]) if (area3[key4] != null) result[key4] = area3[key4];
     for (const key4 of ["radius", "innerRadius", "width", "angle"]) {
-      if (area2[key4] != null && Number.isFinite(Number(area2[key4]))) {
-        result[key4] = key4 === "angle" ? bound(area2[key4], 1, 360) : Math.max(0, Math.min(6, Number(area2[key4])));
+      if (area3[key4] != null && Number.isFinite(Number(area3[key4]))) {
+        result[key4] = key4 === "angle" ? bound(area3[key4], 1, 360) : Math.max(0, Math.min(6, Number(area3[key4])));
       }
     }
     return result;
   }
   function ammoCapacity(raw) {
-    const match = tagEntries(raw?.tags ?? raw?.\u6807\u7B7E).map((tag) => tag.match(/^弹药\s*[:：]\s*(\d+)$/u)).find(Boolean);
+    const match = tagEntries(raw?.tags ?? raw?.\u6807\u7B7E).map((tag2) => tag2.match(/^弹药\s*[:：]\s*(\d+)$/u)).find(Boolean);
     return match ? bound(match[1], 0, 1e6, 0) : null;
   }
   function attachAmmoPool(item, capacity) {
-    if (!item?.template || capacity == null || item.template.kind !== "weapon" || !item.template.ranged) return;
-    const existing = resourceDefinitions(item.template).find((node3) => node3.resource === "ammo");
-    if (existing) {
-      existing.cap = Math.max(existing.cap ?? 0, capacity);
-      existing.initial = capacity;
-    } else item.template.effects.push({ id: `${item.templateId}-ammo`, trigger: "passive", target: "self", effects: [{ kind: "produceResource", resource: "ammo", cap: Math.max(1, capacity), initial: capacity }] });
-    const spendsAmmo = item.template.effects.some((expr) => expr.trigger === "on_attack" && [...effectNodes(expr.effects)].some((node3) => node3.kind === "drainResource" && node3.resource === "ammo"));
-    if (!spendsAmmo) item.template.effects.push({ id: `${item.templateId}-ammo-spend`, trigger: "on_attack", target: "self", params: { source: "weapon" }, condition: { type: "selfStatusModifier", key: "infiniteAmmo", value: false }, effects: [{ kind: "drainResource", resource: "ammo", local: true, amount: 1, requireFull: true }] });
-    item.counters.ammo = capacity;
+    const { template } = item;
+    if (capacity == null || template.kind !== "weapon" || !template.ranged) return;
+    const declared = template.pools.ammo;
+    template.pools.ammo = { ...declared, initial: capacity, cap: Math.max(declared?.cap ?? 0, capacity) };
   }
-  function normalizeEquipment(raw, slot, owner, index, sink) {
-    const r = asObject(raw), name = text2(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot || "\u88C5\u5907"}${index + 1}`;
-    const isShield = slot === "shield" || r.kind === "shield" || r.shield === true || r.weaponClass === "shield" || /盾/.test(name);
-    const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text2(r.tags ?? r.\u6807\u7B7E);
+  function* instructions(program2) {
+    for (const instruction of program2) {
+      if (instruction.enabled === false) continue;
+      yield instruction;
+      for (const key4 of ["then", "else", "body", "onPass", "onFail", "onCollide"]) {
+        if (instruction[key4]) yield* instructions(instruction[key4]);
+      }
+    }
+  }
+  function finalizeEquipment(item, warnings) {
+    const { template, templateId } = item;
+    const localOperations = template.rules.filter((rule2) => rule2.enabled !== false).flatMap((rule2) => [...instructions(rule2.program)].filter((op) => op.op === "resource" && op.local).map((op) => ({ rule: rule2, op })));
+    for (const { rule: rule2, op } of localOperations) {
+      const missing = [...new Set([].concat(op.pool, op.otherPool ?? []))].filter((key4) => !own12(template.pools, key4));
+      if (missing.length) warnings.push(`\u89C4\u5219\u300C${rule2.id}\u300D\u5F15\u7528\u672A\u58F0\u660E\u7684\u88C5\u5907\u8D44\u6E90\u6C60\uFF1A${missing.join("\u3001")}\u3002\u8BF7\u5728 pools \u4E2D\u58F0\u660E`);
+    }
+    if (template.kind !== "weapon" || !template.ranged || !template.pools.ammo) return;
+    if (localOperations.some(({ op }) => op.mode === "sub" && [].concat(op.pool).includes("ammo"))) return;
+    appendRules(template.rules, [{
+      id: `ammo-${hash(templateId).toString(36)}`,
+      hook: "before_action",
+      filter: `event.actorId == self.id && event.weaponTemplateId == '${templateId}' && event.actionType == 'attack' && !has_status(self, 'infinite_ammo')`,
+      program: [{ op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }]
+    }], warnings);
+  }
+  function normalizeEquipment(raw, slot2, owner, index, sink) {
+    const r = asObject(raw), name = text3(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot2 || "\u88C5\u5907"}${index + 1}`;
+    const isShield = slot2 === "shield" || r.kind === "shield" || r.shield === true || r.weaponClass === "shield" || /盾/.test(name);
+    const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text3(r.tags ?? r.\u6807\u7B7E);
     const kindAliases = /* @__PURE__ */ new Map([["\u6B66\u5668", "weapon"], ["\u9632\u5177", "armor"], ["\u9970\u54C1", "accessory"], ["\u5F39\u836F\u5BB9\u5668", "accessory"], ["\u6D88\u8017\u54C1", "consumable"]]);
     const declaredKind = ["weapon", "armor", "accessory", "consumable"].includes(r.kind) ? r.kind : kindAliases.get(r.\u7C7B\u578B);
-    const kind = isShield ? "shield" : declaredKind || (["mainHand", "offHand", "twoHands"].includes(slot) || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|火枪|投掷武器/.test(`${name} ${labels}`) ? "weapon" : "accessory");
+    const kind = isShield ? "shield" : declaredKind || (["mainHand", "offHand", "twoHands"].includes(slot2) || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|火枪|投掷武器/.test(`${name} ${labels}`) ? "weapon" : "accessory");
     const isWeapon2 = kind === "weapon";
     const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
     const templateId = `template-${idBase}`;
-    const effects2 = convertEffects(r.effects ?? r.effectsList ?? r.\u6548\u679C, "equipment", sink("effect", `/equipment/${templateId}`), `fx-${hash(templateId).toString(36)}`);
-    const template = { name: name.slice(0, 100), kind, effects: effects2 };
+    const warnings = sink("effect", `/equipment/${templateId}`);
+    const rules = readRules(r.rules, warnings);
+    const template = { name: name.slice(0, 100), kind, rules, mods: readMods(r.mods, warnings), pools: readPools(r.pools, warnings) };
+    appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.\u6548\u679C, warnings), warnings);
     const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
     const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? defenseTag?.[1], 0, 1e6, kind === "shield" ? 1 : 0);
     if (kind === "shield") Object.assign(template, { weaponClass: "shield", hand: "off_hand", shield: true, defense });
     else if (isWeapon2) {
-      const area2 = areaFields(r, sink("field", `/equipment/${templateId}`), name);
+      const area3 = areaFields(r, sink("field", `/equipment/${templateId}`), name);
       const classes = ["ranged", "light_blade", "greatsword", "staff", "auxiliary"];
       const weaponClassAlias = /* @__PURE__ */ new Map([["bow", "ranged"], ["crossbow", "ranged"], ["arcane", "staff"]]);
       const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-      const subtype = tagEntries(r.tags ?? r.\u6807\u7B7E).find((tag) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag));
+      const subtype = tagEntries(r.tags ?? r.\u6807\u7B7E).find((tag2) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag2));
       const ranged = r.ranged ?? (r.rangeType ? r.rangeType === "ranged" : Boolean(subtype));
-      const twoHanded = slot === "twoHands" || r.twoHanded === true || r.hand === "two_handed" || explicitClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
+      const twoHanded = slot2 === "twoHands" || r.twoHanded === true || r.hand === "two_handed" || explicitClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
       const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
       const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? "ranged" : twoHanded ? "greatsword" : "light_blade";
       Object.assign(template, {
         ...r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {},
         weaponClass,
-        hand: twoHanded ? "two_handed" : slot === "offHand" ? "off_hand" : "one_handed",
+        hand: twoHanded ? "two_handed" : slot2 === "offHand" ? "off_hand" : "one_handed",
         ranged: Boolean(ranged),
         rangeType: ranged ? "ranged" : "melee",
-        range: bound(area2.range, 1, 15, ranged ? 4 : 1),
+        range: bound(area3.range, 1, 15, ranged ? 4 : 1),
         attack: bound(r.attack ?? r.\u653B\u51FB ?? attackTag?.[1], 0, 1e9),
         accuracy: bound(r.accuracy ?? r.\u547D\u4E2D, -20, 30, 0),
         damage: normalizeDice(r.damage ?? { stat: "str" }),
-        ...geometryFields(area2)
+        ...geometryFields(area3)
       });
       if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
     } else Object.assign(template, { armor: bound(r.armor, 0, 1e6, defense), defense });
-    const declared = new Set(resourceDefinitions(template).map((node3) => node3.resource));
-    const missing = /* @__PURE__ */ new Set();
-    for (const expr of effects2) for (const node3 of effectNodes(expr.effects)) {
-      if (node3.local && ["produceResource", "restoreResource", "drainResource"].includes(node3.kind) && !declared.has(node3.resource)) missing.add(node3.resource);
-    }
-    for (const key4 of missing) sink("effect", `/equipment/${templateId}`).push(`\u88C5\u5907\u300C${name}\u300D\u5F15\u7528\u4E86\u672A\u58F0\u660E\u7684\u5B9E\u4F8B\u8BA1\u6570\u5668 ${key4}\uFF0C\u8FD0\u884C\u65F6\u4F1A\u88AB\u8DF3\u8FC7`);
-    const ammoTag = ammoCapacity(r);
-    const counters = initialCounters(template);
-    attachAmmoPool({ template, templateId, counters }, ammoTag);
-    return { id: idBase, templateId, template, counters, slot, name };
+    const item = { id: idBase, templateId, template, slot: slot2, name };
+    attachAmmoPool(item, ammoCapacity(r));
+    return item;
   }
   function sourceEquipment(record2) {
     const value = record2.equipment ?? record2.equipments ?? record2.items ?? record2.\u88C5\u5907 ?? [];
-    const slots = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
-    const entries2 = Array.isArray(value) ? value.map((v) => ["", v]) : Object.entries(asObject(value));
-    return entries2.filter(([, item]) => object3(item)).map(([key4, item], i) => {
-      const position = [item.slot, item.position, item.\u4F4D\u7F6E].map(text2).find(Boolean);
-      const tags2 = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).map(text2).join(",");
-      const hand = tags2.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
-      const rawSlot = position || (slots.has(key4) ? key4 : hand || key4);
-      return [slots.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.\u540D\u79F0 ?? (slots.has(key4) ? "" : key4) }, i];
+    const slots2 = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
+    const entries3 = Array.isArray(value) ? value.map((v) => ["", v]) : Object.entries(asObject(value));
+    return entries3.filter(([, item]) => object3(item)).map(([key4, item], i) => {
+      const position = [item.slot, item.position, item.\u4F4D\u7F6E].map(text3).find(Boolean);
+      const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).map(text3).join(",");
+      const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
+      const rawSlot = position || (slots2.has(key4) ? key4 : hand || key4);
+      return [slots2.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.\u540D\u79F0 ?? (slots2.has(key4) ? "" : key4) }, i];
     });
   }
   function normalizeBattleDefinition(raw, id3 = "") {
@@ -10442,14 +12477,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (value.rangeType === "melee") value.ranged = false;
     const damageType2 = { "\u7269\u7406": "physical", "\u80FD\u91CF": "energy", "\u7CBE\u795E": "mental", "\u771F\u5B9E": "true" };
     if (object3(value.damage) && damageType2[value.damage.type]) value.damage.type = damageType2[value.damage.type];
-    if (Array.isArray(value.effects)) value.effects = value.effects.map((effect) => typeof effect === "string" ? { kind: effect } : effect);
     return value;
   }
   function battleEquipmentRecord(participant, battle) {
     const definitions = asObject(battle?.equipment), result = {};
-    for (const [field, slot] of [["mainHand", "mainHand"], ["offHand", "offHand"], ["shield", "shield"]]) {
-      const id3 = text2(participant?.[field]), definition = definitions[id3];
-      if (id3 && object3(definition)) result[slot] = normalizeBattleDefinition(definition, id3);
+    for (const [field, slot2] of [["mainHand", "mainHand"], ["offHand", "offHand"], ["shield", "shield"]]) {
+      const id3 = text3(participant?.[field]), definition = definitions[id3];
+      if (id3 && object3(definition)) result[slot2] = normalizeBattleDefinition(definition, id3);
     }
     return Object.keys(result).length ? result : null;
   }
@@ -10460,16 +12494,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var lengthKeys = ["bodyLengthM", "bodyLength", "BL", "bl", "\u4F53\u957F", "\u8EAB\u9AD8"];
   var lengthToken = /(\d+(?:\.\d+)?|\.\d+)\s*(厘米|cm|米|m)?/i;
-  var modifiers2 = "(?:\u5927\u7EA6|\u7EA6|[~\uFF5E])?\\s*";
-  var explicitLength = new RegExp(`^${modifiers2}${lengthToken.source}$`, "i");
-  var describedLength = new RegExp(`(?:\u8EAB\u9AD8|\u4F53\u957F|\u9AD8\u5EA6|\u9AD8\u7EA6|\u957F\u7EA6)\\s*[:\uFF1A]?\\s*${modifiers2}${lengthToken.source}(?![\\d.a-z])`, "gi");
+  var modifiers = "(?:\u5927\u7EA6|\u7EA6|[~\uFF5E])?\\s*";
+  var explicitLength = new RegExp(`^${modifiers}${lengthToken.source}$`, "i");
+  var describedLength = new RegExp(`(?:\u8EAB\u9AD8|\u4F53\u957F|\u9AD8\u5EA6|\u9AD8\u7EA6|\u957F\u7EA6)\\s*[:\uFF1A]?\\s*${modifiers}${lengthToken.source}(?![\\d.a-z])`, "gi");
   function meters(match) {
     if (!match) return null;
     const n = Number(match[1]) / (/^(cm|厘米)$/i.test(match[2]) ? 100 : 1);
     return Number.isFinite(n) && n > 0 ? Math.max(0.01, Math.min(1e9, n)) : null;
   }
   function readBodyLength(record2, warnings) {
-    const keys = lengthKeys.filter((key4) => own5(record2, key4));
+    const keys = lengthKeys.filter((key4) => own12(record2, key4));
     for (const key4 of keys) {
       const raw = record2[key4];
       const length = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.max(0.01, Math.min(1e9, raw)) : typeof raw === "string" ? meters(explicitLength.exec(raw.replace(/\([^()]*\)|（[^（）]*）/g, "").trim())) : null;
@@ -10484,7 +12518,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         if (length !== null) return length;
       }
     }
-    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text2(record2[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`);
+    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text3(record2[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`);
     return 1.7;
   }
   function mergeBattleParticipant(record2, participant, battle) {
@@ -10505,9 +12539,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       sp: ["sp", "SP", "\u4F53\u529B\u503C", "resources", "resource", "\u8D44\u6E90"]
     };
     for (const [field, aliases2] of Object.entries(fields3)) {
-      if (inline[field] != null && !aliases2.some((alias) => own5(merged, alias))) merged[field] = clone(inline[field]);
+      if (inline[field] != null && !aliases2.some((alias) => own12(merged, alias))) merged[field] = clone(inline[field]);
     }
-    for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own5(merged, field) && inline[field] != null) merged[field] = inline[field];
+    for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own12(merged, field) && inline[field] != null) merged[field] = inline[field];
     return merged;
   }
   function sourceSkills(record2) {
@@ -10517,19 +12551,19 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function participantList(battle) {
     const value = Array.isArray(battle.units) ? battle.units : battle.participants ?? battle.roster ?? [];
-    const list3 = Array.isArray(value) ? value : Object.entries(asObject(value)).map(([id3, participant]) => ({ ...asObject(participant), id: participant?.id ?? id3 }));
+    const list4 = Array.isArray(value) ? value : Object.entries(asObject(value)).map(([id3, participant]) => ({ ...asObject(participant), id: participant?.id ?? id3 }));
     const seen = /* @__PURE__ */ new Set();
-    return list3.filter((participant, index) => {
+    return list4.filter((participant, index) => {
       if (!object3(participant)) return false;
-      const source = text2(participant.source);
-      const key4 = text2(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text2(participant?.name) || index}`);
+      const source = text3(participant.source);
+      const key4 = text3(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text3(participant?.name) || index}`);
       if (seen.has(key4)) return false;
       seen.add(key4);
       return true;
     });
   }
   function teamOf(value, fallback = "red") {
-    const t = text2(value).toLowerCase();
+    const t = text3(value).toLowerCase();
     return ["blue", "player", "ally", "\u53CB\u65B9", "\u6211\u65B9"].includes(t) ? "blue" : ["red", "enemy", "foe", "\u654C\u65B9"].includes(t) ? "red" : fallback;
   }
   function xyzOf(value) {
@@ -10546,30 +12580,24 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const id3 = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
       const warnings = sink("effect", `/skills/${id3}`);
       const raw = item.effects ?? item.\u6548\u679C;
-      const tags2 = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).join(" ");
-      const area2 = areaFields(item, warnings, name);
-      const range = bound(area2.range, 0, 15, 3);
-      let effects2;
-      const entries2 = Object.entries(asObject(raw));
-      const simple = entries2.length === 1 && /^(物理|能量|精神|真实)伤害$/.exec(entries2[0][0]);
-      const amount2 = simple && /^造成\s*(\d+)\s*(?:点)?伤害[。.]?$/.exec(entries2[0][1]);
-      if (amount2) effects2 = [{ id: `${id3}-use`, trigger: "active", target: "hitTarget", effects: [{ kind: "damage", damageType: damageAliases.get(simple[1]), flat: bound(amount2[1], 0, 1e9) }] }];
-      else {
-        const notes2 = [];
-        effects2 = convertEffects(raw, "skill", notes2, id3);
-        for (const note of notes2) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\uFF1A${note}`);
-        if (!effects2.length && !notes2.length) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\u7F3A\u5C11\u6548\u679C\uFF1A\u8BF7\u6309\u540D\u79F0\u63A8\u5B9A\u7528\u9014\u3001\u76EE\u6807\u548C\u6570\u503C\uFF0C\u8865\u5168\u53EF\u6267\u884C\u6548\u679C`);
-      }
+      const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).join(" ");
+      const area3 = areaFields(item, warnings, name);
+      const range2 = bound(area3.range, 0, 15, 3);
+      const notes2 = [];
+      const rules = readRules(item.rules, notes2);
+      appendRules(rules, convertNarrative(raw, notes2, id3, { areaDamage: isAreaDamage(area3) }), notes2);
+      for (const note of notes2) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\uFF1A${note}`);
+      if (!rules.length && !notes2.length) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\u7F3A\u5C11\u6548\u679C\uFF1A\u8BF7\u8865\u5168\u7528\u9014\u3001\u76EE\u6807\u548C\u6570\u503C`);
       skills[id3] = {
         name: name.slice(0, 100),
         backpackItem: true,
         ap: 1,
         slot: "action",
-        range,
-        shape: area2.shape ?? "single",
-        target: area2.target ?? "enemy",
-        effects: effects2,
-        ...geometryFields(area2)
+        range: range2,
+        shape: area3.shape ?? "single",
+        target: area3.target ?? "enemy",
+        rules,
+        ...geometryFields(area3)
       };
       inventory[id3] = count;
     }
@@ -10578,20 +12606,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function unitFrom(record2, participant, index, equipment, skills, items, sink, isProtagonist) {
     const resourcesSink = sink("resource"), warnings = sink("status");
     const p = participant ?? {};
-    const name = text2(p.protagonistName || p.name) || sourceName(record2, p.id) || `\u5355\u4F4D ${index + 1}`;
+    const name = text3(p.protagonistName || p.name) || sourceName(record2, p.id) || `\u5355\u4F4D ${index + 1}`;
     const id3 = p.id;
-    const stats2 = statsOf(record2), level = Math.max(1, integer3(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
+    const stats = statsOf(record2), level = Math.max(1, integer3(findValue(record2, ["level", "\u7B49\u7EA7"], 1), 1));
     const tier = Math.max(1, Math.min(7, tierNumber(findValue(record2, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
     const bodyLengthM = readBodyLength(record2, sink("state"));
     const size = sizeClassFor(bodyLengthM);
     const mc = Math.max(1, Math.min(64, integer3(findValue(record2, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
-    const resources = { hp: safeResource(resource2(record2, "hp", Math.max(1, stats2.con * 100)), "hp", resourcesSink), mp: safeResource(resource2(record2, "mp", Math.max(0, (stats2.int + stats2.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource2(record2, "sp", Math.max(0, (stats2.str + stats2.agi) * 10)), "sp", resourcesSink) };
+    const resources = { hp: safeResource(resource(record2, "hp", Math.max(1, stats.con * 100)), "hp", resourcesSink), mp: safeResource(resource(record2, "mp", Math.max(0, (stats.int + stats.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource(record2, "sp", Math.max(0, (stats.str + stats.agi) * 10)), "sp", resourcesSink) };
     const sourceEntries = sourceEquipment(record2);
-    const slotItems = sourceEntries.map(([slot, value, i]) => normalizeEquipment(value, slot, id3, i, sink));
-    for (const item of slotItems) {
-      equipment[item.templateId] ??= item.template;
-      items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
-    }
+    const slotItems = sourceEntries.map(([slot2, value, i]) => normalizeEquipment(value, slot2, id3, i, sink));
     const main = slotItems.find((i) => i.template.kind === "weapon" && i.template.twoHanded) ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot === "mainHand") ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot !== "offHand");
     const off = !main?.template.twoHanded && slotItems.find((i) => i.slot === "offHand" && ["weapon", "consumable"].includes(i.template.kind));
     const shield = !main?.template.twoHanded && slotItems.find((i) => i.template.kind === "shield");
@@ -10600,49 +12624,71 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const containerCounts = [...sourceEntries, ...bagEntries].map(([, raw]) => raw.\u7C7B\u578B === "\u6B66\u5668" || raw.kind === "weapon" ? null : ammoCapacity(raw)).filter((value) => value != null);
     const ammoWeapon = [main, off, ...gear].find((item) => item?.template?.ranged);
     if (ammoWeapon && containerCounts.length) {
-      const ownAmmo = ammoWeapon.counters.ammo ?? 0;
+      const ownAmmo = ammoWeapon.template.pools.ammo?.initial ?? 0;
       attachAmmoPool(ammoWeapon, Math.min(1e9, ownAmmo + containerCounts.reduce((sum, count) => sum + count, 0)));
+    }
+    for (const item of slotItems) {
+      finalizeEquipment(item, sink("effect", `/equipment/${item.templateId}`));
+      equipment[item.templateId] = item.template;
+      items.push(item);
     }
     const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
     const skillInfo = {};
     const normalizedSkills = sourceSkills(record2).slice(0, 32).map(([raw, i]) => {
       const r = asObject(raw), sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${i}`;
-      const skillName = text2(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`;
+      const skillName = text3(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`;
       const labels = [].concat(r.tags ?? r.\u6807\u7B7E ?? [], r.description ?? r.\u63CF\u8FF0 ?? "").join(" ");
       const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
-      const area2 = areaFields(r, sink("effect", `/skills/${sid}`), skillName);
+      const notes2 = sink("effect", `/skills/${sid}`);
+      const area3 = areaFields(r, notes2, skillName);
       const costs = skillCosts(r.cost ?? r.\u6D88\u8017);
-      const tag = labels.match(/伤害\s*[:：]\s*([^\]]+)/)?.[1]?.trim();
+      const tag2 = tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
       const rawEffects = r.effects ?? r.\u6548\u679C;
       const power = r.power ?? taggedPower;
-      const legacyDamage = !r.damage && power != null ? legacyPercentDamage(rawEffects) : [];
-      const damageType2 = r.damageType ?? (legacyDamage.length === 1 ? legacyDamage[0].damageType : damageAliases.get(tag));
-      skillInfo[sid] = { description: text2(r.description ?? r.\u63CF\u8FF0), damageType: damageType2, hp: costs.hp };
+      const numericPower = number2(power, NaN);
+      const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
+      const rules = readRules(r.rules, notes2);
+      const prefix = `fx-${hash(sid).toString(36)}`;
+      const areaDamage = isAreaDamage(area3);
+      appendRules(rules, convertNarrative(rawEffects, notes2, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes2);
+      if (!rules.length && !r.damage && !r.heal && !narrativeEntries(rawEffects).length && tag2) {
+        const program2 = hasPower ? damageTags(tag2, power) : [];
+        if (program2.length && areaDamage) notes2.push(`\u300C${skillName}\u300D\u8303\u56F4\u4F24\u5BB3\u6807\u7B7E\u5F85\u6807\u51C6\u5316\uFF1A${tag2}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`);
+        else if (program2.length) appendRules(rules, [activeRule(`${prefix}-damage`, program2)], notes2);
+        else notes2.push(`\u300C${skillName}\u300D\u4F24\u5BB3\u6807\u7B7E\u65E0\u6CD5\u6362\u7B97\uFF1A${tag2}${hasPower ? "\uFF08\u7C7B\u578B\u6216\u6BD4\u4F8B\u683C\u5F0F\u6709\u6B67\u4E49\uFF09" : "\uFF08\u7F3A\u5C11\u6709\u6548\u5A01\u529B\uFF09"}`);
+      }
+      const damageOps = rules.filter((rule2) => rule2.enabled !== false && rule2.hook === "active").flatMap((rule2) => [...instructions(rule2.program)].filter((op) => op.op === "damage"));
+      const types2 = [...new Set(damageOps.map((op) => op.damageType))];
+      const rawDamageType = r.damageType ?? damageAliases.get(tag2);
+      const damageType2 = damageAliases.get(rawDamageType) ?? rawDamageType ?? (types2.length === 1 ? types2[0] : void 0);
+      skillInfo[sid] = { description: text3(r.description ?? r.\u63CF\u8FF0), damageType: damageType2, hp: costs.hp };
       skills[sid] = {
         name: skillName,
         quality: "\u666E\u901A",
         ap: bound(r.ap ?? costs.ap, 1, 2),
         slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
-        range: bound(area2.range, 0, 15, 1),
-        shape: area2.shape ?? "single",
-        target: area2.target ?? "enemy",
-        ...geometryFields(area2),
-        ...text2(r.school) ? { school: text2(r.school).slice(0, 100) } : {},
-        effects: legacyDamage.length ? [] : convertEffects(rawEffects, "skill", sink("effect", `/skills/${sid}`), `fx-${hash(sid).toString(36)}`)
+        range: bound(area3.range, 0, 15, 1),
+        shape: area3.shape ?? "single",
+        target: area3.target ?? "enemy",
+        ...geometryFields(area3),
+        ...text3(r.school) ? { school: text3(r.school).slice(0, 100) } : {},
+        rules,
+        mods: readMods(r.mods, notes2),
+        pools: readPools(r.pools, notes2)
       };
-      const emptyEffects = Array.isArray(rawEffects) ? rawEffects.every(emptyEntry) : emptyEntry(rawEffects);
-      const nodes = legacyDamage.length ? legacyDamage : emptyEffects && !r.damage && power != null ? damageTags(tag, power) : [];
-      if (nodes.length) {
-        skills[sid].effects.push({ id: `fx-${hash(sid).toString(36)}-damage`, trigger: "active", target: "hitTarget", effects: nodes });
-      }
-      if (damageType2 != null) skills[sid].damageType = damageType2;
+      if (damageTypes2.includes(damageType2)) skills[sid].damageType = damageType2;
+      else if (damageType2 != null) notes2.push(`\u300C${skillName}\u300D\u672A\u77E5\u4F24\u5BB3\u7C7B\u578B\uFF1A${damageType2}`);
       for (const [key4, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["accuracy", -20, 30], ["power", 0, 1e9]]) {
         const value = r[key4] ?? (key4 === "power" ? taggedPower : costs[key4]);
         if (value != null) skills[sid][key4] = bound(value, min, max);
       }
-      if (attrNames.includes(r.save) && r.saveDC != null) {
-        const saveDC = typeof r.saveDC === "object" ? r.saveDC : bound(r.saveDC, 1, 50);
-        if (validSaveDC(saveDC)) Object.assign(skills[sid], { save: r.save, saveDC: structuredClone(saveDC) });
+      if (r.save != null || r.saveDC != null) {
+        const save = statAliases[r.save] ?? r.save;
+        const dc = number2(r.saveDC, NaN);
+        const saveDC = Number.isInteger(dc) && dc >= 1 && dc <= 50 ? dc : typeof r.saveDC === "string" && !Number.isFinite(dc) && validExpr(r.saveDC) ? r.saveDC : null;
+        if (attrNames.includes(save) && saveDC != null && (r.damage || r.heal || !rules.length)) {
+          Object.assign(skills[sid], { save, saveDC });
+        } else notes2.push(`\u300C${skillName}\u300D\u8C41\u514D\u5F85\u6807\u51C6\u5316\uFF1A${describe({ save: r.save, saveDC: r.saveDC })}\u3002\u89C4\u5219\u6548\u679C\u8BF7\u7528 check \u58F0\u660E\u901A\u8FC7\u4E0E\u5931\u8D25\u5206\u652F`);
       }
       if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
       if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
@@ -10655,34 +12701,27 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const statusEntries = Array.isArray(sourceStatuses) ? sourceStatuses.map((s) => [typeof s === "string" ? s : s?.id ?? s?.statusId ?? s?.name ?? s?.\u540D\u79F0, s]) : Object.entries(asObject(sourceStatuses));
     for (const [rawId, rawStatus] of statusEntries) {
       if (Array.isArray(sourceStatuses) && emptyEntry(rawStatus) || typeof rawId === "string" && emptyEntry(rawId)) continue;
-      const sid = statusId(rawStatus?.statusId ?? rawStatus?.id ?? rawId);
-      if (!sid) {
-        const description = text2(rawStatus?.\u6548\u679C ?? rawStatus?.description ?? rawStatus?.\u63CF\u8FF0 ?? (rawStatus !== rawId && typeof rawStatus === "string" ? rawStatus : ""));
+      const sid = statusId2(rawStatus?.statusId ?? rawStatus?.id ?? rawId);
+      const template = STATUSES[sid];
+      const description = text3(rawStatus?.\u6548\u679C ?? rawStatus?.description ?? rawStatus?.\u63CF\u8FF0 ?? (rawStatus !== rawId && typeof rawStatus === "string" ? rawStatus : ""));
+      if (!template || description && description !== template.description) {
         warnings.push(`\u72B6\u6001\u5F85\u6807\u51C6\u5316\uFF1A${rawId ?? "unknown"}${description ? `\uFF1A${description}` : ""}`);
         continue;
       }
-      const template = STATUSES[sid];
       const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.\u5269\u4F59\u56DE\u5408 ?? rawStatus?.\u5269\u4F59\u65F6\u95F4, template.remainingTurns);
       const stacks = bound(rawStatus?.stacks ?? rawStatus?.\u5C42\u6570, 1, template.maxStacks);
-      const modifiers3 = { ...template.modifiers };
-      if (rawStatus && own5(rawStatus, "modifiers") && !emptyEntry(rawStatus.modifiers)) {
-        try {
-          validateStatusModifiers(template, rawStatus.modifiers);
-          Object.assign(modifiers3, rawStatus.modifiers);
-        } catch (error2) {
-          warnings.push(`\u72B6\u6001 ${sid} \u5DF2\u62D2\u7EDD\uFF1A${error2.message}`);
-          continue;
-        }
-      }
+      if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`\u72B6\u6001 ${sid} \u7684 modifiers \u5F85\u6807\u51C6\u5316\uFF1A${describe(rawStatus.modifiers)}\u3002\u8BF7\u5728\u72B6\u6001\u6A21\u677F\u4E0A\u58F0\u660E mods \u6216 rules`);
       const durationType = ["battle_turns", "until_removed", "persistent"].includes(rawStatus?.durationType) ? rawStatus.durationType : template.durationType;
+      const shieldAmount = template.category === "shield" ? bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, template.vars.shieldAmount) : null;
       statuses[sid] = {
-        ...template,
+        ...clone(template),
+        templateId: sid,
+        ownerId: id3,
+        sourceId: null,
         durationType,
         remainingTurns,
         stacks,
-        sourceUnitId: null,
-        modifiers: modifiers3,
-        ...own5(modifiers3, "amount") ? { amount: bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, modifiers3.amount) } : {}
+        ...shieldAmount != null && { vars: { ...template.vars, shieldAmount } }
       };
     }
     const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
@@ -10690,16 +12729,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const rawFacing = Array.isArray(p.facing) ? p.facing : [team2 === "blue" ? 1 : -1, 0];
     const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
-    const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats: stats2, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+    const unit = { id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record2, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record2, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
-      for (const [slot, raw, index2] of sourceEquipment({ \u88C5\u5907: record2.\u80CC\u5305 })) {
+      for (const [slot2, raw, index2] of sourceEquipment({ \u88C5\u5907: record2.\u80CC\u5305 })) {
         if (raw.\u7C7B\u578B !== "\u6B66\u5668" && raw.kind !== "weapon" || bound(raw.\u6570\u91CF ?? raw.count, 0, 1e9, 1) === 0) continue;
-        const item = normalizeEquipment(raw, slot, id3, `bag-${index2}`, sink);
+        const item = normalizeEquipment(raw, slot2, id3, `bag-${index2}`, sink);
         if (item.template.kind === "weapon") {
+          finalizeEquipment(item, sink("effect", `/equipment/${item.templateId}`));
           equipment[item.templateId] = item.template;
-          items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
+          items.push(item);
           bagWeapons.push(item.id);
         }
       }
@@ -10708,11 +12748,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       if (Object.keys(inventory).length) unit.inventory = inventory;
     }
     const creatureType = p.creatureType ?? record2.creatureType;
-    if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text2).filter(Boolean).slice(0, 12);
-    else if (text2(creatureType)) unit.creatureType = text2(creatureType).slice(0, 100);
-    const tags2 = p.tags ?? record2.tags;
-    if (Array.isArray(tags2)) unit.tags = tags2.map((tag) => text2(tag).slice(0, 100)).filter(Boolean).slice(0, 32);
-    return { unit, profile: { id: id3, skillInfo, level, tier, stats: stats2, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record2.__sourcePath ?? null, sourceKind: record2.__sourceKind || "unknown", fieldSources: { numeric: record2.__sourceKind || "unknown", equipment: record2.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record2.__sourceKind || "unknown" } }, participant: p };
+    if (Array.isArray(creatureType)) unit.creatureType = creatureType.map(text3).filter(Boolean).slice(0, 12);
+    else if (text3(creatureType)) unit.creatureType = text3(creatureType).slice(0, 100);
+    const tags = p.tags ?? record2.tags;
+    if (Array.isArray(tags)) unit.tags = tags.map(text3).filter((tag2) => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(tag2)).slice(0, 32);
+    unit.rules = readRules(record2.rules, sink("effect", `/units/${id3}`));
+    unit.mods = readMods(record2.mods, sink("effect", `/units/${id3}`));
+    return { unit, profile: { id: id3, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record2.__sourcePath ?? null, sourceKind: record2.__sourceKind || "unknown", fieldSources: { numeric: record2.__sourceKind || "unknown", equipment: record2.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record2.__sourceKind || "unknown" } }, participant: p };
   }
   function terrainState(battle, state, warnings) {
     state.grid = createBattleGrid(battle, state.rng, Object.values(state.units), warnings);
@@ -10723,7 +12765,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         warnings.push(`\u5FFD\u7565\u4F4D\u4E8E\u5899\u4F53\u5185\u7684\u63A9\u4F53\uFF1A${id3}`);
         continue;
       }
-      state.covers[id3] = { id: id3, name: text2(raw.name) || `\u63A9\u4F53${i + 1}`, x: p.x, y: p.y, z: p.z, material: text2(raw.material) || "\u672A\u77E5\u6750\u6599", hp: Math.max(0, Math.min(1e9, integer3(raw.hp ?? raw.maxHp ?? 10, 10))), maxHp: Math.max(1, Math.min(1e9, integer3(raw.maxHp ?? raw.hp ?? 10, 10))), cover: Math.max(0, Math.min(12, integer3(raw.cover ?? raw.shielding, 2))) };
+      state.covers[id3] = { id: id3, name: text3(raw.name) || `\u63A9\u4F53${i + 1}`, x: p.x, y: p.y, z: p.z, material: text3(raw.material) || "\u672A\u77E5\u6750\u6599", hp: Math.max(0, Math.min(1e9, integer3(raw.hp ?? raw.maxHp ?? 10, 10))), maxHp: Math.max(1, Math.min(1e9, integer3(raw.maxHp ?? raw.hp ?? 10, 10))), cover: Math.max(0, Math.min(12, integer3(raw.cover ?? raw.shielding, 2))) };
       state.covers[id3].hp = Math.min(state.covers[id3].hp, state.covers[id3].maxHp);
     }
     const interactives = battle.interacts ?? battle.interactives;
@@ -10734,9 +12776,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         warnings.push(`\u5FFD\u7565\u4F4D\u4E8E\u5899\u4F53\u5185\u7684\u4E92\u52A8\u70B9\uFF1A${id3}`);
         continue;
       }
-      const declared = text2(raw.kind ?? raw.type).toLowerCase();
-      const kind = ["altar", "barrel"].includes(declared) ? declared : /祭坛|altar/.test(text2(raw.name)) ? "altar" : "barrel";
-      state.interactives[id3] = { id: id3, name: text2(raw.name) || (kind === "altar" ? "\u661F\u8F89\u796D\u575B" : "\u4F59\u70EC\u7206\u6876"), x: p.x, y: p.y, z: p.z, kind, effect: text2(raw.effect) || (kind === "barrel" ? "explode" : "heal"), radius: integer3(raw.radius, 2), damage: integer3(raw.damage, kind === "barrel" ? 12 : 0), spent: Boolean(raw.spent) };
+      const declared = text3(raw.kind ?? raw.type).toLowerCase();
+      const kind = ["altar", "barrel"].includes(declared) ? declared : /祭坛|altar/.test(text3(raw.name)) ? "altar" : "barrel";
+      state.interactives[id3] = { id: id3, name: text3(raw.name) || (kind === "altar" ? "\u661F\u8F89\u796D\u575B" : "\u4F59\u70EC\u7206\u6876"), x: p.x, y: p.y, z: p.z, kind, effect: text3(raw.effect) || (kind === "barrel" ? "explode" : "heal"), radius: integer3(raw.radius, 2), damage: integer3(raw.damage, kind === "barrel" ? 12 : 0), spent: Boolean(raw.spent) };
     }
     return state;
   }
@@ -10755,8 +12797,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function hydrateFromSources(input = {}, options = {}) {
     const source = asObject(input), warnings = [];
-    const sink = (unitId, source2, scope, path) => warningSink(warnings, unitId, source2, scope, path);
-    const protagonistName = text2(source.protagonistName ?? options.protagonistName);
+    const sink = (unitId, source2, scope, path2) => warningSink(warnings, unitId, source2, scope, path2);
+    const protagonistName = text3(source.protagonistName ?? options.protagonistName);
     const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
     const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
     const chars = parseCharInfo(source.charInfo ?? source.char_info ?? "").map((record2) => ({ ...record2, __sourceKind: "char_info" }));
@@ -10766,21 +12808,21 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const participants = participantList(battle);
     const resolved = participants.map((participant) => resolveParticipant(participant, mvuRecords, chars, protagonist));
     if (!descriptor && protagonist && !resolved.includes(protagonist)) {
-      const eligible = (p) => !text2(p.source) && teamOf(p.faction ?? p.team) === "blue";
-      const byPersona = protagonistName ? participants.findIndex((p, i) => eligible(p) && text2(p.name) === protagonistName && resolved[i]?.__sourceKind !== "MVU") : -1;
+      const eligible = (p) => !text3(p.source) && teamOf(p.faction ?? p.team) === "blue";
+      const byPersona = protagonistName ? participants.findIndex((p, i) => eligible(p) && text3(p.name) === protagonistName && resolved[i]?.__sourceKind !== "MVU") : -1;
       const fallbackIndex = byPersona >= 0 ? byPersona : participants.findIndex((p, i) => eligible(p) && !resolved[i]);
       if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
     }
-    const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = {};
+    const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
     const units = {}, profiles = {}, sourceMap = {};
     const add = (participant, record2, index) => {
       const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
       let id3 = base;
-      for (let suffix = 2; own5(units, id3); suffix++) id3 = `${base.slice(0, 52)}-${suffix}`;
+      for (let suffix = 2; own12(units, id3); suffix++) id3 = `${base.slice(0, 52)}-${suffix}`;
       const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
       const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
       if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
-      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { moraleType: battle.moraleType, ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path) => sink(id3, origin, scope, path), record2 === protagonist);
+      const made = unitFrom(mergeBattleParticipant(record2, participant, battle), { moraleType: battle.moraleType, ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record2 === protagonist);
       units[id3] = made.unit;
       profiles[id3] = made.profile;
       sourceMap[id3] = { path: record2?.__sourcePath, sourceId: sourceId(record2), sourceName: sourceName(record2), isProtagonist: record2 === protagonist };
@@ -10790,38 +12832,39 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       add(participant, record2 ?? { __sourceKind: "battle_init" }, i);
     }
     if (!participants.length) {
-      const records = [...mvuRecords, ...chars.filter((char) => !mvuRecords.some((record2) => sourceName(record2, record2.__sourceKey) === sourceName(char)))];
-      for (const [i, record2] of records.entries()) {
+      const records2 = [...mvuRecords, ...chars.filter((char) => !mvuRecords.some((record2) => sourceName(record2, record2.__sourceKey) === sourceName(char)))];
+      for (const [i, record2] of records2.entries()) {
         add({ name: sourceName(record2, record2.__sourceKey), source: sourceId(record2), faction: i ? "red" : "blue", x: i, y: 0 }, record2, i);
       }
     }
-    const title = text2(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
+    const title = text3(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
     const seed = integer3(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items, equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null };
+    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+    initializeVMWorld(state);
     const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
     if (time) state.time = time;
     terrainState(battle, state, sink(null, "terrain", "terrain"));
     uniquePositions(state.units, state);
-    let valid = true;
+    let valid2 = true;
     try {
       validateState(state);
     } catch (error2) {
-      valid = false;
+      valid2 = false;
       sink(null, null, "state").push(`\u8F6C\u6362\u7ED3\u679C\u672A\u901A\u8FC7\u6821\u9A8C\uFF1A${error2.message}`);
       if (options.throwOnValidation) throw error2;
     }
-    if (valid) beginBattle(state);
+    if (valid2) beginBattle(state);
     const roster = Object.values(units).map((unit) => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
     Object.defineProperty(state, "warnings", { value: warnings });
     return { state, roster, warnings, sourceMap, battleInit: battle, seed };
   }
   function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {
     if (!unitIds?.length) return warnings;
-    const selected = new Set(unitIds);
-    return warnings.filter((w) => w.unitId === null ? includeGlobal : selected.has(w.unitId));
+    const selected2 = new Set(unitIds);
+    return warnings.filter((w) => w.unitId === null ? includeGlobal : selected2.has(w.unitId));
   }
-  function pointer(path) {
-    return "/" + path.map((x) => String(x).replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
+  function pointer(path2) {
+    return "/" + path2.map((x) => String(x).replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
   }
   function battleReportToMvuPatch(report, sourceMap = {}, options = {}) {
     const state = report?.state ?? report?.battleState ?? report;
@@ -10829,9 +12872,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const ops = [];
     for (const [id3, unit] of Object.entries(units)) {
       const mapping = sourceMap[id3] ?? {};
-      const path = Array.isArray(mapping.path) ? mapping.path : ["characters", id3];
-      for (const key4 of ["hp", "mp", "sp"]) if (unit && Number.isFinite(unit[key4])) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path, key4]), value: unit[key4] });
-      if (unit?.statuses && options.includeStatuses !== false) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path, "statuses"]), value: clone(unit.statuses) });
+      const path2 = Array.isArray(mapping.path) ? mapping.path : ["characters", id3];
+      for (const key4 of ["hp", "mp", "sp"]) if (unit && Number.isFinite(unit[key4])) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path2, key4]), value: unit[key4] });
+      if (unit?.statuses && options.includeStatuses !== false) ops.push({ op: "replace", path: pointer([options.root ?? "stat_data", ...path2, "statuses"]), value: clone(unit.statuses) });
     }
     return ops;
   }
@@ -10859,28 +12902,28 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       ...notes2.filter((note) => !warnings.some((warning) => describesWarning(note, warning)))
     ];
   }
-  function resolvedDiagnostics(sent, records, patch, reply) {
+  function resolvedDiagnostics(sent, records2, patch, reply) {
     const top = [...strings(reply.resolved), ...strings(reply.resolvedWarnings)];
     const declared = top.length || patch.some((op) => op.resolves != null);
     const identified = (op, warning) => [].concat(op.resolves ?? []).some((receipt) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message);
     const pending = strings(reply.unresolved);
     const isPending = (w) => pending.some((item) => describesWarning(item, w));
     return sent.filter((w) => {
-      if (w.unitId == null || !Object.hasOwn(records, w.unitId) || isPending(w)) return false;
+      if (w.unitId == null || !Object.hasOwn(records2, w.unitId) || isPending(w)) return false;
       const label = subject(w.message);
-      if (top.some((s) => w.message.includes(s) && sent.filter((other) => other.unitId != null && Object.hasOwn(records, other.unitId) && other.message.includes(s)).length === 1)) return true;
+      if (top.some((s) => w.message.includes(s) && sent.filter((other) => other.unitId != null && Object.hasOwn(records2, other.unitId) && other.message.includes(s)).length === 1)) return true;
       return patch.some((op) => {
         const owner = op.path.match(/^\/units\/([^/]+)/)?.[1];
         if (owner && owner !== w.unitId) return false;
-        const path = op.path.split("/").slice(0, 3).join("/");
-        if (w.originPath && path.split("/")[1] === w.originPath.split("/")[1] && path !== w.originPath) return false;
-        if (declared) return identified(op, w) || strings(op.resolves).some((s) => w.message.includes(s) && sent.filter((other) => Object.hasOwn(records, other.unitId) && other.message.includes(s) && (!owner || other.unitId === owner) && (!other.originPath || path.split("/")[1] !== other.originPath.split("/")[1] || path === other.originPath)).length === 1);
+        const path2 = op.path.split("/").slice(0, 3).join("/");
+        if (w.originPath && path2.split("/")[1] === w.originPath.split("/")[1] && path2 !== w.originPath) return false;
+        if (declared) return identified(op, w) || strings(op.resolves).some((s) => w.message.includes(s) && sent.filter((other) => Object.hasOwn(records2, other.unitId) && other.message.includes(s) && (!owner || other.unitId === owner) && (!other.originPath || path2.split("/")[1] !== other.originPath.split("/")[1] || path2 === other.originPath)).length === 1);
         if (!w.originPath) {
-          const [, , , field, statusId2] = op.path.split("/");
-          return owner === w.unitId && field === "statuses" && w.scope === "status" && !!statusId2 && w.message.includes(statusId2);
+          const [, , , field, statusId3] = op.path.split("/");
+          return owner === w.unitId && field === "statuses" && w.scope === "status" && !!statusId3 && w.message.includes(statusId3);
         }
-        if (path !== w.originPath) return false;
-        return sent.filter((other) => other.unitId === w.unitId && other.originPath === path && !isPending(other)).length === 1 || label && JSON.stringify(op.value ?? "").includes(label);
+        if (path2 !== w.originPath) return false;
+        return sent.filter((other) => other.unitId === w.unitId && other.originPath === path2 && !isPending(other)).length === 1 || label && JSON.stringify(op.value ?? "").includes(label);
       });
     });
   }
@@ -11262,10 +13305,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function imageUrl(value, base) {
     if (typeof value !== "string" || !value.trim() || value.includes("{{")) return "";
-    const text4 = value.trim();
-    if (/^data:image\/(png|jpe?g|webp|gif|avif);base64,/i.test(text4)) return text4;
+    const text5 = value.trim();
+    if (/^data:image\/(png|jpe?g|webp|gif|avif);base64,/i.test(text5)) return text5;
     try {
-      const url = new URL(text4, base);
+      const url = new URL(text5, base);
       if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || /\.svgz?$/i.test(url.pathname)) return "";
       return url.href;
     } catch {
@@ -11280,8 +13323,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       try {
         const response = await host.fetch(`https://cdn.poem-of-destiny.com/assets/${candidate}/frontend/assets/data/predefined-avatars.json`, { signal: AbortSignal.timeout(3e3) });
         if (!response.ok) continue;
-        const text4 = await response.text();
-        const fields3 = text4.replace(
+        const text5 = await response.text();
+        const fields3 = text5.replace(
           /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
           (token) => token.startsWith("/") ? "" : token
         );
@@ -11294,7 +13337,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   async function readBattlePortraits(host, units, sourceMap, isCurrent = () => true) {
     const readVariables = hostMethod(host, "getVariables");
     const getCharacterName = hostMethod(host, "getCurrentCharacterName");
-    const entries2 = Object.values(units).map((unit) => {
+    const entries3 = Object.values(units).map((unit) => {
       const source = sourceMap[unit.id];
       const name = source?.path?.[0] === "\u5173\u7CFB\u5217\u8868" ? source.path[1] : source?.sourceName || unit.name;
       return [unit.id, source?.isProtagonist ? "player" : "partner", source?.isProtagonist ? "\u4E3B\u89D2" : name];
@@ -11306,10 +13349,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         return void 0;
       }
     };
-    const [records, persona, chat] = await Promise.all([
+    const [records2, persona, chat] = await Promise.all([
       attempt(async () => readStatusAvatars(host.indexedDB, `status:${await getCharacterName?.() || "unknown-character"}`)),
       attempt(async () => {
-        if (!entries2.some(([, type]) => type === "player")) return "";
+        if (!entries3.some(([, type]) => type === "player")) return "";
         for (const scope of hostScopes(host)) {
           const tavern = scope.SillyTavern;
           const macros = tavern?.substituteParams ? tavern : tavern?.getContext?.();
@@ -11321,11 +13364,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       attempt(() => readVariables?.({ type: "chat" }))
     ]);
     const base = host.location?.href;
-    const overrides = new Map((records ?? []).map((row) => [`${row.owner_type}::${row.owner_name}`, row]));
+    const overrides2 = new Map((records2 ?? []).map((row) => [`${row.owner_type}::${row.owner_name}`, row]));
     const portraits = {};
     const missing = [];
-    for (const [id3, type, name] of entries2) {
-      const record2 = overrides.get(`${type}::${name}`);
+    for (const [id3, type, name] of entries3) {
+      const record2 = overrides2.get(`${type}::${name}`);
       if (record2?.source_type === "removed") continue;
       const fallback = type === "player" ? persona : Object.hasOwn(chat?.status?.externalAvatars?.partners ?? {}, name) ? chat.status.externalAvatars.partners[name]?.url : "";
       const candidates = [...new Set([imageUrl(record2?.value, base), imageUrl(fallback, base)].filter(Boolean))];
@@ -11342,51 +13385,58 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return portraits;
   }
 
-  // src/tavern/effect-protocol.js
-  var { expression: expression2, condition: condition2, node: node2, expireOn } = effectSchema.$defs;
-  function describe(rule) {
-    if (rule.$ref) return rule.$ref.split("/").at(-1);
-    if (rule.oneOf) return rule.oneOf.map(describe).join(" \u6216 ");
-    if (rule.enum) return rule.enum.join(" / ");
-    if (Object.hasOwn(rule, "const")) return JSON.stringify(rule.const);
-    if (rule.type === "array") return `${rule.minItems}\u2026${rule.maxItems} \u9879 ${describe(rule.items)} \u6570\u7EC4`;
-    if (rule.type === "object") return rule.additionalProperties ? `\u952E\u2192${describe(rule.additionalProperties)}` : `{${fields2(rule)}}`;
-    if (rule.type === "integer" || rule.type === "number") return `${rule.type === "integer" ? "\u6574\u6570" : "\u6570\u503C"} ${rule.minimum}\u2026${rule.maximum}`;
-    if (rule.pattern) return `ID (${rule.pattern})`;
-    if (rule.type === "string") return `\u975E\u7A7A\u5B57\u7B26\u4E32\uFF0C\u5B57\u6BB5\u957F\u5EA6 ${rule.minLength}\u2026${rule.maxLength}`;
-    return rule.type;
+  // src/tavern/vm-effect-protocol.js
+  var defs2 = vmSchema.$defs;
+  var range = (schema) => [
+    schema.minimum === void 0 ? "" : `\u2265${schema.minimum}`,
+    schema.maximum === void 0 ? "" : `\u2264${schema.maximum}`,
+    schema.exclusiveMinimum === void 0 ? "" : `>${schema.exclusiveMinimum}`
+  ].filter(Boolean).join(" ");
+  function describe2(schema) {
+    if (schema.format === "tactical-expr") return "Expr \u5B57\u7B26\u4E32";
+    if (schema.format === "tactical-status-id") return "\u5DF2\u5B9A\u4E49\u72B6\u6001 ID";
+    if (schema.$ref) return schema.$ref.split("/").at(-1);
+    if (schema.oneOf || schema.anyOf) return (schema.oneOf ?? schema.anyOf).map(describe2).join(" \u6216 ");
+    if (Object.hasOwn(schema, "const")) return JSON.stringify(schema.const);
+    if (schema.enum) return schema.enum.join(" / ");
+    if (schema.type === "array") return `\u6570\u7EC4<${describe2(schema.items)}>${schema.minItems > 0 ? `\uFF08\u81F3\u5C11 ${schema.minItems} \u9879\uFF09` : ""}`;
+    if (schema.properties) return `{${fields2(schema)}}`;
+    if (schema.type === "object" && schema.propertyNames) return `ID \u2192 ${describe2(schema.additionalProperties)} \u7684\u5BF9\u8C61`;
+    if (schema.pattern) return `\u5B57\u7B26\u4E32\uFF08${schema.pattern}\uFF09`;
+    return [schema.type, range(schema)].filter(Boolean).join(" ");
   }
-  function fields2(rule, skip = []) {
-    return Object.entries(rule.properties).filter(([key4]) => !skip.includes(key4)).map(([key4, value]) => `${key4}${rule.required.includes(key4) ? "" : "?"}=${describe(value)}`).join("\uFF0C");
+  function fields2(schema, omit = []) {
+    return Object.entries(schema.properties).filter(([key4]) => !omit.includes(key4)).map(([key4, value]) => `${key4}${schema.required?.includes(key4) ? "" : "?"}: ${describe2(value)}`).join("\uFF0C");
   }
-  var EFFECT_PROTOCOL = `\u3010\u7EDF\u4E00\u6548\u679C DSL\u3011
-\u573A\u666F\u58F0\u660E\u89C4\u5219\uFF1Abattle_init \u7684 unit \u884C\u53EF\u5199 x,y,z\uFF0Cz \u4E3A\u521D\u59CB\u5730\u5F62\u9AD8\u5EA6\uFF08-4\u20268\uFF09\uFF1B\u7701\u7565 z \u4E3A 0\u3002terrain \u6A21\u5F0F\u4F1A\u56F4\u7ED5\u663E\u5F0F\u9AD8\u7A0B\u5408\u7406\u751F\u6210\u9AD8\u53F0\u548C\u5761\u9053\uFF0Cflat \u6A21\u5F0F\u4ECD\u5168\u4E3A z=0\u3002\u521D\u59CB\u98DE\u884C\u6216\u60AC\u6D6E\u7531 unit \u5750\u6807\u672B\u5C3E\u7684 \u98DE\u884C=n \u6216 \u60AC\u6D6E=n \u58F0\u660E\uFF0C\u8868\u793A\u79BB\u5F00\u811A\u4E0B\u5730\u5F62\u7684\u9AD8\u5EA6\uFF0C\u672A\u6CE8\u660E\u9AD8\u5EA6\u65F6\u6309 3 \u5904\u7406\u3002\u53EF\u9009 0\u20132 \u6761 cover \u884C\uFF0C\u683C\u5F0F\u4E3A cover|\u63A9\u4F53ID|\u534A\u6216\u5168|\u63A9\u4F53\u540D\u79F0|x,y,z\uFF0C\u534A\u63A9\u4F53 cover=2\u3001\u5168\u63A9\u4F53 cover=5\uFF1B\u53EF\u9009 0\u20132 \u6761 interact \u884C\uFF0C\u683C\u5F0F\u4E3A interact|\u4E92\u52A8ID|altar\u6216barrel|\u6548\u679C|\u8303\u56F4|\u4F24\u5BB3\u6570\u503C|\u4E92\u52A8\u540D\u79F0|x,y,z\u3002\u6548\u679C\u679A\u4E3E\u4E3A explode\u3001heal\u3001shield\u3001restore\u3002explode \u7528\u653B\u51FB\u69FD\u5E76\u6309\u6B66\u5668\u5C04\u7A0B\u548C\u89C6\u7EBF\u89E6\u53D1\uFF0C\u8303\u56F4\u4E3A\u534A\u5F84\u3001\u4F24\u5BB3\u6570\u503C\u4E3A\u7206\u70B8\u4F24\u5BB3\uFF1Bheal \u7528\u52A8\u4F5C\u69FD\u76F8\u90BB\u6FC0\u6D3B\u5E76\u56DE\u590D\u4F24\u5BB3\u6570\u503C\u7684 HP\uFF1Bshield \u7528\u52A8\u4F5C\u69FD\u76F8\u90BB\u6FC0\u6D3B\u5E76\u7ED9\u4E88\u4F24\u5BB3\u6570\u503C\u7684\u62A4\u76FE\uFF1Brestore \u7528\u52A8\u4F5C\u69FD\u76F8\u90BB\u6FC0\u6D3B\u5E76\u540C\u65F6\u56DE\u590D\u4F24\u5BB3\u6570\u503C\u7684 HP\u3001MP\u3001SP\u3002
-changeAltitude \u662F\u8F85\u52A9\u6A21\u578B\u7528\u4E8E\u628A\u6280\u80FD\u3001\u88C5\u5907\u6216\u72B6\u6001\u6548\u679C\u6807\u51C6\u5316\u4E3A\u98DE\u884C/\u60AC\u6D6E\u7684 DSL \u8282\u70B9\u3002\u5B83\u4E0D\u5C5E\u4E8E battle_init\u3002\u8282\u70B9\u9ED8\u8BA4 delta \u4E3A 3\uFF0C\u53EF\u7528\u8D1F\u503C\u4E0B\u964D\uFF0Cland:true \u76F4\u63A5\u843D\u5730\u3002\u5355\u4F4D\u79BB\u5730\u9AD8\u5EA6\u4F1A\u8FDB\u5165\u4E09\u7EF4\u8DDD\u79BB\u3001\u79FB\u52A8\u3001\u89C6\u7EBF\u548C\u6218\u62A5 z \u5FEB\u7167\u3002\u5730\u5F62\u8282\u70B9 modifyTerrain\uFF08terrain: raise/lower/set\uFF0C\u6574\u6570 amount\uFF1Bz \u9650 \u22124\u20268\uFF09\u3001setTerrainKind\uFF08terrainKind: floor/wall/slope\uFF09\u3001addCover\uFF08hp\uFF09\u5747\u5FC5\u586B area\u3002area \u56DB\u79CD\u5199\u6CD5\uFF1A{"cells":[{"x":3,"y":4}]}\u3001{"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}\u3001{"center":"hitTarget","radius":1}\uFF08\u4E5F\u53EF self \u6216 {x,y}\uFF09\u3001{"center":"self","radius":1,"follow":true}\u3002\u5706\u4EE5\u68CB\u76D8\u5E73\u9762\u6B27\u6C0F\u8DDD\u79BB\u8BA1\u7B97\u3002\u4E3B\u52A8\u5730\u5F62\u6280\u80FD\u7528\u6280\u80FD\u6A21\u677F target: cell \u9009\u62E9\u5730\u9762\u683C\uFF0C\u8868\u8FBE\u5F0F target: self\uFF0Carea.center: hitTarget \u53D6\u7784\u51C6\u683C\u3002follow \u5FC5\u987B\u6709\u771F\u5B9E\u5355\u4F4D\u951A\u70B9\uFF0C\u56DE\u5408\u7ED3\u675F\u66F4\u65B0\uFF0C\u6B7B\u4EA1\u6216\u79BB\u573A\u6D88\u6563\u3002
-remainingTurns \u4EE5\u5355\u4F4D\u56DE\u5408\u7ED3\u675F\u9012\u51CF\uFF0C\u7701\u7565\u4E3A 1\uFF0Cpersistent:true \u5728\u672C\u573A\u6301\u7EED\uFF08\u8DDF\u968F\u533A\u57DF\u4ECD\u53D7\u951A\u70B9\u751F\u5B58\u9650\u5236\uFF09\u3002\u5230\u671F\u6216\u6D88\u6563\u65F6\u7ACB\u5373\u8FD8\u539F\u539F\u9AD8\u5EA6\u3001\u7C7B\u578B\u5E76\u79FB\u9664\u4E34\u65F6\u63A9\u4F53\uFF0C\u4E0D\u56E0\u5360\u7528\u5EF6\u8FDF\u3002\u65BD\u52A0\u6216\u8FD8\u539F\u5730\u5F62\u65F6\uFF0C\u5761\u7684\u7B49\u6548\u9AD8\u5EA6\u56FA\u5B9A\u4E3A 1\uFF0C\u5176\u4ED6\u683C\u6309 z\uFF1B\u7B49\u6548\u9AD8\u5EA6\u4E0B\u964D\u65F6\uFF0C\u683C\u4E0A\u7684\u5B58\u6D3B\u4E14\u672A\u79BB\u573A\u5355\u4F4D\u6309\u6BCF 1 \u9AD8\u5EA6\u5DEE\u53D7\u5230 50 \u70B9\u56FA\u5B9A\u5760\u843D\u4F24\u5BB3\u3002\u62AC\u9AD8\u65F6\u5355\u4F4D\u968F\u811A\u4E0B\u5730\u5F62\u5347\u9AD8\u3002\u65B0\u9020\u5899\u8DF3\u8FC7\u5360\u7528\u683C\uFF0C\u5168\u90E8\u56E0\u5355\u4F4D\u5360\u7528\u65F6\u8BB0\u5F55\u672A\u89E3\u51B3\u3002\u5DF2\u6709\u63A9\u4F53\u6216\u4E92\u52A8\u70B9\u4E5F\u4F1A\u963B\u6B62\u9020\u5899\u3002
-\u88C5\u5907\u4E0E\u6280\u80FD effects \u90FD\u662F\u8868\u8FBE\u5F0F\u6570\u7EC4\uFF080\u202624 \u9879\uFF09\u3002\u6BCF\u6761\u8868\u8FBE\u5F0F\u4F7F\u7528\u6218\u5C40\u5185\u552F\u4E00 id\uFF0Clabel \u662F\u754C\u9762\u663E\u793A\u540D\u3002\u5916\u5C42\u6CA1\u6709 kind\uFF0C\u5185\u5C42\u8282\u70B9\u5FC5\u987B\u6709 kind\u3002\u4E94\u6BB5\u5199\u6CD5\uFF1AWHEN(trigger) \u2192 IF(condition\uFF0C\u53EF\u7701) \u2192 ROLL(\u53EF\u7701) \u2192 TARGET(target) \u2192 DO(effects)\uFF0CWITH \u4EE5\u8282\u70B9\u5B57\u6BB5\u6216\u5171\u4EAB params \u8868\u8FBE\u3002\u8282\u70B9\u540C\u540D\u5B57\u6BB5\u8986\u76D6 params\u3002\u9664\u8868\u4E2D\u58F0\u660E\u5B57\u6BB5\u5916\u4E0D\u5141\u8BB8\u989D\u5916\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\u3002
-\u8868\u8FBE\u5F0F\u5B57\u6BB5\uFF1A${fields2(expression2)}\u3002
+  var instructions2 = defs2.opcode.oneOf.map((schema) => {
+    const op = schema.properties.op.const;
+    return `\u2022 ${op}\uFF1A${opNotes[op]} {${fields2(schema, ["op", "enabled", "label"])}}`;
+  });
+  var eventPatches = Object.entries(defs2).filter(([key4]) => key4.startsWith("patch_")).map(([key4, schema]) => `\u2022 ${key4.slice("patch_".length)}\uFF1A{${fields2(schema)}}`);
+  var spawnSpecs2 = Object.entries(defs2).filter(([key4]) => key4.startsWith("spawn_")).map(([key4, schema]) => `\u2022 ${key4.slice("spawn_".length)}\uFF1A{${fields2(schema)}}`);
+  var VM_EFFECT_PROTOCOL = `\u3010\u6218\u672F VM \u6548\u679C\u534F\u8BAE\u3011
+rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rule, ["hook"])}\uFF0Chook: \u4EE5\u4E0B\u679A\u4E3E}\u3002
+\u5141\u8BB8 hook\uFF1A${vmHooks.join(" / ")}\u3002
+\u540C\u4E00\u8F7D\u4F53\u5185\u89C4\u5219 ID \u552F\u4E00\u3002\u89C4\u5219\u7531\u9AD8 priority \u5230\u4F4E priority \u6267\u884C\uFF1Bprogram \u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\u3002filter \u5FC5\u987B\u6C42\u5F97 true \u624D\u8FDB\u5165\u89C4\u5219\u3002\u89C4\u5219\u548C\u6307\u4EE4\u5747\u53EF\u5199 enabled:false \u6682\u505C\u6267\u884C\uFF0Clabel \u4E3A\u663E\u793A\u540D\u3002\u53EA\u6709\u4E0E\u4E8B\u4EF6\u76F8\u7B26\u7684\u8F7D\u4F53\u4F1A\u89E6\u53D1\u89C4\u5219\uFF1B\u7528 filter \u533A\u5206\u4E8B\u4EF6\u7684\u65BD\u653E\u8005\u6216\u627F\u53D7\u8005\uFF0C\u4F8B\u5982 "attacker.id == self.id"\u3002
 
-WHEN\uFF1Apassive \u6301\u7EED\u8BFB\u53D6\uFF0C\u5E38\u9A7B\u4FEE\u6B63\u7528 self \u4E14\u7701\u7565 roll\u3002on_attack \u4E3A\u6B66\u5668\u51FA\u624B\u3001\u547D\u4E2D\u524D\u3002on_hit \u4E3A\u5224\u5B9A\u547D\u4E2D\u540E\uFF0C\u5BF9\u5B9E\u9645\u627F\u4F24\u8005\u89E6\u53D1\uFF0C\u82E5\u4E0D\u5E0C\u671B\u8C41\u514D\u6210\u529F\u65F6\u89E6\u53D1\u5219\u52A0 saved=false\u3002on_damaged \u4E3A\u5B9E\u9645\u6263\u8840\u540E\uFF0C\u53EF\u8BFB attacker\u3001\u4F24\u5BB3\u91CF\u548C melee \u7B49\u6807\u7B7E\u3002on_kill \u4E3A\u51FB\u5012\u654C\u4EBA\uFF0Con_death \u4E3A\u81EA\u8EAB\u6B7B\u4EA1\uFF0Con_ally_death \u4E3A\u961F\u53CB\u6B7B\u4EA1\uFF08\u4E8B\u4EF6\u76EE\u6807\u4E3A\u5012\u4E0B\u7684\u961F\u53CB\uFF09\u3002on_turn_start / on_turn_end \u5BF9\u5E94\u81EA\u8EAB\u56DE\u5408\u3002on_skill_cast \u4E3A\u6280\u80FD\u91CA\u653E\uFF0C\u7ED3\u7B97\u4E3B\u51FB\u524D\u3002on_equip \u88C5\u5907\u540C\u6B65\u65F6\u89E6\u53D1\uFF0C\u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\u3002on_heal \u4E3A\u53D1\u51FA\u6CBB\u7597\u540E\uFF0C\u53EF\u8BFB\u6CBB\u7597\u91CF\u3002active \u4E3A\u6280\u80FD\u4E3B\u52A8\u53D1\u52A8\uFF0C\u5199\u5728\u88C5\u5907\u4E0A\u65F6\u72EC\u7ACB\u751F\u6210\u6309\u94AE\uFF0C\u9ED8\u8BA4 1AP \u548C action \u69FD\u3002\u6280\u80FD\u7684 active / on_skill_cast \u8868\u8FBE\u5F0F\u58F0\u660E params.usesPerBattle \u6216 cooldown \u65F6\u9650\u5236\u6574\u62DB\uFF0C\u5408\u6CD5\u65BD\u653E\u5373\u6263\u4E00\u6B21\uFF0C\u5931\u624B\u3001\u8C41\u514D\u6216\u7A7A\u653E\u4E5F\u8BA1\u6570\uFF1B\u88C5\u5907\u751F\u6210\u7684 active \u6280\u80FD\u540C\u7406\u3002\u53EA\u9650\u5236\u547D\u4E2D\u8FFD\u52A0\u6548\u679C\u65F6\u5728 on_hit \u8868\u8FBE\u5F0F\u58F0\u660E\uFF0C\u5B9E\u9645\u751F\u6548\u624D\u8BA1\u6570\u3002usesPerBattle:null \u8868\u793A\u4E0D\u9650\u6B21\u6570\uFF08\u4E5F\u8986\u76D6 on_equip \u9ED8\u8BA4\u6BCF\u6218\u4E00\u6B21\uFF09\uFF0Ccooldown \u4EE5\u6218\u6597\u8F6E\u8BA1\u3002params.source=weapon \u8868\u793A\u53EA\u5728\u672C\u6B21\u4F7F\u7528\u8BE5\u88C5\u5907\u5B9E\u4F8B\u65F6\u751F\u6548\u3002
+\u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF0C\u5176\u503C\u662F\u4E0B\u5217\u540D\u79F0\u3002? \u8868\u793A\u53EF\u7701\uFF0C\u95ED\u5408\u5BF9\u8C61\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\u3002
+${instructions2.join("\n")}
+check \u7684 kind:chance \u7528 dc \u4E0E d100 \u70B9\u6570\u6BD4\u8F83\uFF0C\u4F8B\u5982 dc:25 \u8868\u793A 25% \u6210\u529F\u7387\u3002\u8C41\u514D\u672A\u901A\u8FC7\u65F6\u8FD0\u884C onFail\u3002ask \u7684 kind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0C\u4E3A option \u65F6\u5FC5\u586B options\uFF0C\u4E3A number \u65F6\u5FC5\u586B min/max\u3002perform \u7684 skill \u53EA\u914D skillId\uFF0Creplay \u53EA\u914D tapeRecord\u3002resource \u7684 add/sub/set \u9700\u8981 amount\uFF0Cswap \u9700\u8981\u4E00\u4E2A pool \u548C otherPool\u3002move \u7684 step/teleport \u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002
+mutate_event \u7684 patch \u5FC5\u987B\u81F3\u5C11\u6709\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u53EA\u80FD\u7528\u4E8E\u4E0B\u5217\u53EF\u5199 hook\uFF0C\u5D4C\u5957\u5206\u652F\u4EA6\u7136\uFF1A
+${eventPatches.join("\n")}
+spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF0Cunit \u7684 templateId/copyOf/spawnPanel \u4E09\u9009\u4E00\uFF1Bterrain \u81F3\u5C11\u6709 kind \u6216 height\uFF0C\u63D0\u4F9B mode \u65F6\u5FC5\u987B\u6709 height\uFF1A
+${spawnSpecs2.join("\n")}
+zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002rect \u9700 rect \u5BF9\u8C61\uFF0Ccells \u9700 cells \u6570\u7EC4\u3002
 
-IF\uFF1A\u6570\u7EC4\u7B49\u4EF7\u4E8E AND\uFF0Cor \u4EFB\u4E00\u6210\u7ACB\u3001not \u53D6\u53CD\u3002self \u4E3A\u53D7\u76CA\u8005\u65F6\uFF0C\u76EE\u6807\u6761\u4EF6\u4F18\u5148\u68C0\u67E5\u5F53\u524D\u653B\u51FB\u6216\u6280\u80FD\u5BF9\u8C61\u3002targetHasCategory \u7684 negative \u6307 debuff/dot/control\uFF0Cnone \u6307\u65E0\u4E09\u7C7B\u8D1F\u9762\u72B6\u6001\u3002timeOfDay \u6765\u81EA <tp>\uFF0CtargetLevel \u4E0E\u81EA\u8EAB\u6BD4\u8F83\u3002\u5E03\u5C14\u6761\u4EF6\u7701\u7565 value \u7B49\u540C true\u3002weaponType \u53EF\u5339\u914D\u5B9E\u9645\u51FA\u624B\u6B66\u5668\u7684\u5B50\u7C7B\uFF08\u5F13\u3001\u5F29\u3001\u706B\u67AA\u3001\u6295\u63B7\u6B66\u5668\uFF09\u6216\u5927\u7C7B\uFF08\u5982 ranged\uFF09\u3002\u9970\u54C1\u4EC5\u5F3A\u5316\u5F13\u666E\u653B\u65F6\u7528 condition:[{type:'actionType',value:'attack'},{type:'weaponType',value:'\u5F13'}]\uFF0C\u914D\u5408 on_hit \u8FFD\u52A0\u4F24\u5BB3\uFF1B\u4E0D\u8981\u7528 arrow \u4EE3\u6307\u5F13\uFF0C\u4E5F\u4E0D\u8981\u7ED9\u9970\u54C1\u5199 params.source:'weapon'\u3002skillSchool\u3001\u6807\u7B7E\u53CA\u7269\u79CD\u5B57\u7B26\u4E32\u4E0E\u5FEB\u7167\u4E00\u81F4\u3002
-\u2022 ${condition2.oneOf.map((rule) => rule.type === "array" ? describe(rule) : `${rule.properties.type.const} ${fields2(rule, ["type"])}`).join("\n\u2022 ")}
+\u3010\u8868\u8FBE\u5F0F\u4E0E\u9009\u62E9\u3011
+Expr \u4E3A JSON \u6570\u5B57\u3001\u5E03\u5C14\u503C\u6216\u5B89\u5168\u8868\u8FBE\u5F0F\u5B57\u7B26\u4E32\u3002\u8868\u8FBE\u5F0F\u5185\u7684\u5B57\u7B26\u4E32\u5B57\u9762\u91CF\u7528\u5355\u5F15\u53F7\uFF0C\u4F8B\u5982 "event.damageType == 'physical'"\u3002\u652F\u6301 + - !\u3001\u7B97\u672F\u3001\u6BD4\u8F83\u3001&&\u3001||\u3001\u4E09\u5143\u4E0E\u62EC\u53F7\u3002\u53D8\u91CF\u548C\u67E5\u8BE2\u4E25\u683C\u4F7F\u7528\u6CE8\u518C\u8868\uFF0C\u4E0D\u652F\u6301\u4EFB\u610F\u5C5E\u6027\u8DEF\u5F84\u6216\u526F\u4F5C\u7528\u51FD\u6570\u3002
+\u53D8\u91CF\uFF1A${formulaReference}\u3002
+\u67E5\u8BE2\uFF1A${formulaQueryNames().join("\u3001")}\u3002
+selector\uFF1A${describe2(defs2.selector)}\u3002of \u53EA\u7528\u4E8E statuses\uFF1Bwhere \u9010\u4E2A\u68C0\u67E5 candidate\uFF1Brandom \u4F7F\u7528\u6218\u5C40 RNG\u3002area.origin \u7701\u7565\u65F6\u4EE5 self \u4E3A\u4E2D\u5FC3\u3002
+targetRef\uFF1A${describe2(defs2.targetRef)}\u3002\u7528\u9009\u62E9\u5668\u6307\u5B9A ID \u65F6\uFF0C\u53EF\u7528 {"from":"units","where":"candidate.id == 'p1'"}\uFF0C\u5E76\u5C06 p1 \u66FF\u6362\u4E3A\u5FEB\u7167 ID\u3002
 
-ROLL\uFF1A\u65E0 roll \u65F6\u4E00\u5B9A\u5C1D\u8BD5\u3002chance \u76F4\u63A5\u7528 0\u20261 \u6BD4\u4F8B\uFF0Cd20 \u6BD4\u8F83 >= gte\u3002save \u53D6\u76EE\u6807 d20+\u5C5E\u6027\uFF0C\u8FBE\u5230 dc \u5219\u901A\u8FC7\u5E76\u8DF3\u8FC7\u8282\u70B9\u3002save \u6570\u7EC4\u5FC5\u987B\u63D0\u4F9B mode\uFF0C\u6210\u5458\u552F\u4E00\uFF0C\u6BCF\u9879\u72EC\u7ACB\u63B7\u9AB0\u3002contest \u7684\u653B\u65B9 d20+attacker \u51CF\u5B88\u65B9 d20+defender \u8FBE\u5230 dc \u65F6\u6267\u884C\u8282\u70B9\u3002\u8C41\u514D\u6216\u5BF9\u6297\u53EF\u540C\u65F6\u63D0\u4F9B chance \u4F5C\u4E3A\u524D\u7F6E\u6982\u7387\u95E8\u3002dc \u4E0E\u6280\u80FD saveDC \u5747\u652F\u6301\u516C\u5F0F\uFF0C\u89C1\u4E0A\u8282\u6570\u503C\u534F\u8BAE\u3002
-
-\u751F\u547D\u5468\u671F\uFF1A\u72B6\u6001\u6A21\u677F\u548C grantStatus \u8282\u70B9\u5747\u53EF\u58F0\u660E expireOn = ${describe(expireOn)}\u3002\u4EFB\u4E00\u89C4\u5219\u5339\u914D\u5C31\u7ACB\u5373\u79FB\u9664\u5E76\u8BB0\u5F55\u539F\u56E0\u3002on_struck \u5728\u547D\u4E2D\u7ED3\u7B97\u4E2D\u3001\u8BA1\u7B97\u788E\u88C2\u589E\u4F24\u4E4B\u540E\u4E14\u6263\u51CF\u62A4\u76FE\u4E4B\u524D\u5339\u914D\uFF0C\u5373\u4F7F\u62A4\u76FE\u5B8C\u5168\u5438\u6536\u4E5F\u89E6\u53D1\uFF1Bon_attack \u5728\u53D1\u52A8\u653B\u51FB\u6216\u654C\u5BF9\u6280\u80FD\u65F6\u5339\u914D\u3002on_damaged \u53EA\u5728\u5B9E\u9645\u6263 HP \u65F6\u5339\u914D\uFF1B\u7F3A\u7701\u6216 any \u5339\u914D\u5168\u90E8\uFF0Cdirect \u5339\u914D\u4E3B\u51FB\u6216\u4E3B\u52A8\u547D\u4E2D\u7684\u4F24\u5BB3\uFF0Cindirect \u5339\u914D\u5468\u671F\u3001\u53CD\u4F24\u53CA\u73AF\u5883\u7B49\u975E\u76F4\u63A5\u4F24\u5BB3\u3002on_heal \u5728\u6301\u6709\u8005\u5B9E\u9645\u6062\u590D HP \u65F6\u5339\u914D\uFF1B\u56DE\u5408\u4E8B\u4EF6\u5728\u5468\u671F\u7ED3\u7B97\u524D\u6253\u65AD\u3002exceptSource:self \u6392\u9664\u6765\u6E90\u4E3A\u72B6\u6001\u6301\u6709\u8005\u7684\u4E8B\u4EF6\u3002\u6388\u4E88\u8282\u70B9\u7684\u89C4\u5219\u4F18\u5148\uFF0C\u5176\u6B21\u4FDD\u7559\u5B9E\u4F8B\u89C4\u5219\uFF0C\u6700\u540E\u4F7F\u7528\u6A21\u677F\u89C4\u5219\u3002patchStatus \u53EF\u8986\u76D6\u5B9E\u4F8B expireOn\uFF0C\u4F20 null \u5173\u95ED\u3002
-\u6548\u679C\u5F00\u5173\uFF1A\u6BCF\u4E2A\u8282\u70B9\u53EF\u5199 enabled:true \u6216 enabled:false\uFF0C\u7F3A\u7701\u89C6\u4E3A true\u3002false \u8DF3\u8FC7\u8BE5\u8282\u70B9\uFF08\u5982\u679C\u662F chainEffect\uFF0C\u4E5F\u8DF3\u8FC7\u5176\u5B50\u8282\u70B9\uFF09\uFF0C\u5176\u4ED6\u8282\u70B9\u7167\u5E38\u7ED3\u7B97\u3002\u5267\u60C5/\u8BED\u4E49\u5224\u65AD\u7531\u6A21\u578B\u81EA\u884C\u51B3\u5B9A\uFF0C\u901A\u8FC7 enabled \u5F00\u5173\u8868\u8FBE\uFF0C\u5F15\u64CE\u4E0D\u505A\u6761\u4EF6\u6C42\u503C\u3002\u5DF2\u7ED3\u7B97\u7684\u7ED3\u679C\u6309\u5404\u81EA\u7684\u89C4\u5219\u7EE7\u7EED\u5904\u7406\u3002\u9632\u5FA1\u8282\u70B9 modifyStat(stat:defense) \u4FEE\u6B63\u62A4\u7532\u7ED3\u7B97\uFF0Ccondition:intercepting \u5C06\u5176\u9650\u5236\u5728\u66FF\u961F\u53CB\u627F\u4F24\u65F6\u3002
-
-TARGET\uFF1Aself \u81EA\u8EAB\uFF0ChitTarget \u5F53\u524D\u547D\u4E2D\u6216\u9009\u4E2D\u7684\u5355\u4F4D\uFF0Cattacker \u653B\u51FB\u8005\uFF0CkilledUnit \u88AB\u51FB\u5012\u5355\u4F4D\uFF0Ccorpse \u672A\u88AB\u6D88\u8017\u7684\u5C38\u4F53\u3002enemiesInRadius / alliesInRadius \u4F7F\u7528 params.radius \u6216\u8282\u70B9 radius\uFF08\u9ED8\u8BA41\u683C\uFF09\uFF0C\u65BD\u6CD5\u8303\u56F4\u5185\u4ECE\u8986\u76D6\u683C\u7B5B\u9009\u3002\u8282\u70B9\u53EF\u8986\u5199\u76EE\u6807\u3002\u6280\u80FD\u8303\u56F4\u652F\u6301 single/circle/ring/fan/cone/line\uFF0C\u53EF\u7528 radius\u3001innerRadius\u3001width\u3001angle(1\u2026360)\u3002\u8303\u56F4\u4F24\u5BB3\u9ED8\u8BA4\u6309\u8986\u76D6\u683C\u7B5B\u9009\u654C\u6211\u53CC\u65B9\uFF08\u4F1A\u5403\u53CB\u4F24\uFF09\uFF1B\u5355\u4F53\u6280\u80FD\u5FC5\u987B\u660E\u786E target:enemy/ally/self/any\uFF1Btarget:cell \u53EA\u9009\u5730\u9762\u683C\u3002\u5C38\u4F53\u4E0D\u4F1A\u963B\u6321\u79FB\u52A8\uFF0CraiseDead \u4F1A\u6D88\u8017\u5C38\u4F53\u3002
-
-DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BCF\u4E2A\u8282\u70B9\u5747\u53EF\u52A0 label\u3001target\u3001condition \u548C radius\uFF080\u202615\uFF09\u3002\u6570\u503C\u5B57\u6BB5\u4E5F\u652F\u6301\u5B89\u5168\u7684\u56DB\u5219\u516C\u5F0F\u5B57\u7B26\u4E32\uFF0C\u53EF\u7528\u6570\u5B57\u3001\u62EC\u53F7\u3001+ - * /\uFF0C\u4E0D\u652F\u6301\u51FD\u6570\u8C03\u7528\u3001\u5C5E\u6027\u8BBF\u95EE\u6216\u968F\u673A\u6570\u3002\u53D8\u91CF\u6765\u81EA\u53D7\u63A7\u7684\u516C\u5F0F\u4E0A\u4E0B\u6587\u6CE8\u518C\u8868\uFF0C\u800C\u4E0D\u662F\u4EFB\u610F state \u8DEF\u5F84\u3002\u5F53\u524D\u53EF\u7528\u53D8\u91CF\u4E3A ${formulaReference}\u3002self \u662F\u6548\u679C\u4E3B\u4F53\uFF0Cattacker \u662F\u4E8B\u4EF6\u653B\u51FB\u8005\uFF0Ctarget \u662F\u5F53\u524D\u6548\u679C\u76EE\u6807\u3002\u8D44\u6E90\u548C\u72B6\u6001\u5C42\u6570\u53EA\u80FD\u4F7F\u7528\u6CE8\u518C\u8868\u63D0\u4F9B\u7684 self.resource.<resourceId>\u3001target.resource.<resourceId>\u3001self.stacks.<statusId> \u5F62\u6001\u3002\u4F8B\uFF1A\u547D\u4E2D\u540E\u6309\u653B\u51FB\u8005\u529B\u91CF\u7F29\u653E\uFF0C\u5199 {"kind":"damage","flat":"weapon.attack*(attacker.str-5)/attacker.str","damageType":"physical"}\u3002\u516C\u5F0F\u53EA\u5728\u8BE5\u8282\u70B9\u5B9E\u9645\u7ED3\u7B97\u65F6\u8BFB\u53D6\u5F53\u524D\u4E0A\u4E0B\u6587\uFF0C\u9664\u96F6\u6216\u65E0\u6548\u8FD0\u884C\u65F6\u7ED3\u679C\u4F1A\u8DF3\u8FC7\u8BE5\u8282\u70B9\u5E76\u8BB0\u5F55\u516C\u5F0F\u9519\u8BEF\u3002condition \u53EF\u7528 {"type":"compare","left":"attacker.str-5","op":">=","right":5}\u3002\u53D8\u91CF\u540D\u5927\u5C0F\u5199\u654F\u611F\u3002\u516C\u5F0F\u4E2D\u4E0D\u80FD\u4F7F\u7528\u4E2D\u6587\u53D8\u91CF\u540D\u3001\u4EFB\u610F state \u8DEF\u5F84\u6216\u51FD\u6570\u8C03\u7528\u3002
-\u2022 ${node2.oneOf.map((rule) => `${rule.properties.kind.const}\uFF1A${rule.description} ${fields2(rule, ["kind", "enabled", "label", "target", "condition", "radius"])}`).join("\n\u2022 ")}
-
-\u4F24\u5BB3\u7C7B\u578B\uFF1Aphysical \u4F7F\u7528\u5168\u989D\u62A4\u7532\uFF0Cenergy \u4F7F\u7528\u4E00\u534A\u62A4\u7532\uFF0Cmental \u548C true \u65E0\u89C6\u62A4\u7532\u3002true \u8DF3\u8FC7\u5C5E\u6027\u3001\u6BD4\u4F8B\u4E0E\u56FA\u5B9A\u51CF\u4F24\uFF0C\u4ECD\u6D88\u8017\u62A4\u76FE\u3002\u6D41\u8840\u3001\u4E2D\u6BD2\u53CA\u672A\u6CE8\u660E\u7C7B\u578B\u7684\u72B6\u6001\u5468\u671F\u4F24\u5BB3\u6309 true \u7ED3\u7B97\u3002\u72B6\u6001 modifiers.damageType \u540C\u65F6\u9650\u5B9A\u8BE5\u72B6\u6001\u7684\u4F24\u5BB3\u76F8\u5173\u4FEE\u9970\uFF0C\u901A\u7528\u4FEE\u9970\u72EC\u7ACB\u751F\u6548\u3002
-\u975E\u81F4\u547D\uFF1Adamage \u8282\u70B9 lethal \u9ED8\u8BA4\u4E3A true\u3002lethal:false \u53EA\u4FDD\u62A4\u8BE5\u8282\u70B9\u7684\u5B9E\u9645\u627F\u4F24\u8005\uFF0C\u5141\u8BB8\u7EC4\u5408 resourceMultiplier\u3001strikeBonus\uFF1B\u62B5\u6263\u7ED3\u7B97\u540E\u6700\u4F4E\u7559 1 HP\u3002\u627F\u4F24\u5355\u4F4D nonLethal:true \u6216\u5176\u72B6\u6001 modifiers.preserveLife:true \u4E5F\u4FDD\u547D\uFF0Clethal:true \u4E0D\u80FD\u7ED5\u5F00\u3002\u500D\u7387\u4E0D\u80FD\u4FDD\u8BC1\u4E0D\u81F4\u6B7B\u3002\u72EC\u7ACB\u7684\u4E3B\u51FB\u548C\u5176\u4ED6\u4F24\u5BB3\u8282\u70B9\u4E0D\u81EA\u52A8\u7EE7\u627F\u6B64\u5F00\u5173\u3002
-\u6570\u503C\u4E0E\u7ED3\u7B97\uFF1Aamount/flat \u662F\u7EDD\u5BF9\u91CF\uFF0C\u4E5F\u53EF\u4EE5\u662F\u4E0A\u8FF0\u516C\u5F0F\uFF1B\u767E\u5206\u6BD4\u4EE5\u5C0F\u6570\u8868\u793A\u3002percentOfPrevious \u8BFB\u53D6\u94FE\u5185\u4E0A\u4E00\u6570\u503C\u8282\u70B9\u7684\u5B9E\u9645\u7ED3\u679C\uFF0CpercentOfDamageDealt \u8BFB\u53D6\u672C\u6B21\u5B9E\u9645\u6263\u8840\uFF0CpercentOfPower \u4E58\u6280\u80FD\u57FA\u7840\u5A01\u529B\uFF0CpercentOfHealing \u8BFB\u53D6\u6CBB\u7597\u7ECF\u52A0\u6210\u540E\u7684\u91CF\u3002\u516C\u5F0F\u4F7F\u7528\u672C\u6B21\u4E8B\u4EF6\u4E0A\u4E0B\u6587\uFF1Aevent.dealt \u662F\u5DF2\u7ECF\u5B9E\u9645\u6263\u9664\u7684 HP\uFF0C\u4E0D\u662F\u539F\u59CB\u4F24\u5BB3\uFF1Bevent.power \u662F\u6280\u80FD\u5A01\u529B\uFF1Bevent.previous \u662F\u540C\u4E00\u8282\u70B9\u94FE\u4E0A\u4E00\u6B65\u6570\u503C\uFF1Bevent.healing \u662F\u5B9E\u9645\u6CBB\u7597\u91CF\u3002levelScaling.perLevel \u4ECE 1 \u9636\u57FA\u51C6\u6BCF\u9636\u589E\u957F\uFF0Cmin/max \u5219\u5728 1\u20267 \u9636\u7EBF\u6027\u63D2\u503C\u3002resourceScale \u8BFB\u53D6\u5B58\u91CF\uFF0C\u53EF\u7528 unitSize \u5411\u4E0B\u53D6\u6574\u5206\u7EC4\u3002multiplyDamage \u7684 factor \u662F\u603B\u7CFB\u6570\uFF08+12% \u5199 1.12\uFF09\uFF0Cadditive=true \u5408\u5E76\u5404\u7CFB\u6570\u76F8\u5BF9 1 \u7684\u589E\u91CF\u3002\u4E3B\u51FB\u4E58\u533A\u4F7F\u7528 passive/on_attack/on_skill_cast\u3002modifyDamageBase \u66FF\u6362\u8D77\u4F24\uFF0CignoreAttributes \u7F3A\u7701\u4E3A true\uFF0Cunscaled \u8DF3\u8FC7\u8BC4\u7EA7\u548C\u59FF\u6001\u7B49\u653B\u51FB\u500D\u7387\u3002forceOutcome \u4FDD\u969C\u547D\u4E2D\u6216\u66B4\u51FB\uFF0CupgradeHitTier \u63D0\u9AD8\u5DF2\u547D\u4E2D\u7684\u8BC4\u7EA7\u3002modifyCheck \u7684\u5404\u9879\u5206\u522B\u670D\u52A1\u4E8E\u5148\u653B\u3001\u95EA\u907F\u3001\u6F5C\u884C\u3001\u547D\u4E2D\u3001\u6838\u5FC3\u610F\u56FE\u3001\u9AD8\u5730\u548C\u4F18\u52BF\u3002teleportBackstab \u6821\u9A8C\u80CC\u540E\u7A7A\u683C\u518D\u79FB\u52A8\uFF0C\u63D0\u4F9B\u4F18\u52BF\u548C\u4F24\u5BB3\u500D\u7387\u3002knockback \u78B0\u649E\u9ED8\u8BA4\u4F24\u5BB3 5 \u5E76\u7729\u6655\u3002
-\u8D44\u6E90\uFF1Ahp/mp/sp/ap \u548C attack/action \u4E3A\u5185\u7F6E\u8D44\u6E90\u3002\u5176\u4ED6\u8D44\u6E90\u53EF\u5B58\u4E8E\u5355\u4F4D\uFF0C\u6216\u7531 passive/self \u7684 produceResource(cap,initial) \u58F0\u660E\u4E3A\u88C5\u5907\u5B9E\u4F8B\u8BA1\u6570\uFF0Citems.counters \u5FC5\u987B\u4E0E\u8D44\u6E90\u58F0\u660E\u76F8\u7B26\u3002local=true \u53EA\u8BBF\u95EE\u8BE5\u88C5\u5907\u81EA\u5DF1\u7684\u6C60\u3002reloadable \u58F0\u660E\u53EF\u88C5\u586B\u8D44\u6E90\uFF0C\u914D on_attack \u7684 drainResource \u6D88\u8017\u3002\u65E0\u9650\u5F39\u836F\u662F\u72B6\u6001 infinite_ammo\uFF0C\u6D88\u8017\u6761\u4EF6\u53EF\u7528 selfStatusModifier(key=infiniteAmmo,value=false)\u3002requireFull \u4F59\u989D\u4E0D\u8DB3\u65F6\u505C\u6B62\u5F53\u524D\u8282\u70B9\u5217\u8868\uFF0CminimumRemaining \u8BBE\u7F6E\u6700\u4F4E\u4FDD\u7559\u91CF\u3002\u6280\u80FD resourceCost \u5728\u65BD\u653E\u524D\u6263\u9664\uFF0CpercentPerCost \u6309\u82B1\u8D39\u6062\u590D\u3002execute \u7684 strict \u9009\u62E9\u4E25\u683C\u4F4E\u4E8E\u9608\u503C\uFF0CrequiresPool \u68C0\u67E5\u6307\u5B9A\u88C5\u5907\u6C60\u3002stopOnFailure \u94FE\u4F1A\u5728\u9996\u4E2A\u672A\u4EA7\u751F\u6548\u679C\u7684\u8282\u70B9\u505C\u6B62\u3002
-\u8D44\u6E90\u65B9\u6848\uFF1A\u5148\u5728\u6301\u6709\u88C5\u5907 effects \u52A0\u4E00\u6761 passive/self \u8868\u8FBE\u5F0F\uFF0C\u8282\u70B9 produceResource \u5199 resource\u3001cap \u548C initial\uFF1B\u540C\u6279\u5411\u5BF9\u5E94\u5B9E\u4F8B /items/<id>/counters/<resource> \u6DFB\u52A0\u521D\u503C\u3002\u53EA\u5199\u5B9E\u4F8B\u8BA1\u6570\u4F1A\u88AB\u62D2\u7EDD\u3002\u65A9\u6740\u6280\u80FD\u5148 execute\uFF0C\u6210\u529F\u540E\u5728\u540C\u94FE\u5BF9 self \u4F7F\u7528 produceResource(targetTierBase)\uFF0C\u8BE5\u6570\u503C\u6309\u76EE\u6807\u9636\u7EA7\u8BA1\u7B97\u3002\u81EA\u7528\u6280\u80FD\u8BBE target=self\u3001range=0\uFF0C\u901A\u8FC7\u6A21\u677F resourceCost \u6263\u88C5\u5907\u8D44\u6E90\uFF0C\u6062\u590D\u5404\u9879\u7528 restoreResource \u7684 percentPerCost\u3002\u88C5\u5907\u6210\u957F\u53EF\u5206\u522B\u653E\u4E94\u4E2A\u57FA\u7840\u5C5E\u6027\u8282\u70B9\uFF0C\u6216\u5BF9\u4F24\u5BB3\u7528 modifyStat(stat=damage)\uFF0C\u7528 percent=1 \u4E0E levelScaling:{min,max} \u8868\u793A\u6210\u957F\u6BD4\u4F8B\u8303\u56F4\u3002\u68C0\u5B9A\u52A0\u503C\u7528 modifyCheck\uFF0C\u7BAD\u77E2\u4E0E\u4E00\u822C\u8FDC\u7A0B\u5206\u522B\u7528 arrow=true \u4E0E melee=false\u3002
-\u72B6\u6001\uFF1AgrantStatus \u4F7F\u7528\u5DF2\u6709 ID\uFF0C\u82E5\u9700\u81EA\u5B9A\u4E49\u5148\u5B9A\u4E49 statusTemplates\u3002modifiers \u53EA\u53EF\u8986\u76D6\u6A21\u677F\u5DF2\u6709\u952E\u3002amount \u4EC5\u7528\u4E8E\u6A21\u677F\u58F0\u660E\u4E86 modifiers.amount \u7684\u72B6\u6001\uFF0C\u8303\u56F4 1\u202610000\u3002removeStatus \u5FC5\u987B\u9009 statusId \u6216 category \u4E4B\u4E00\uFF0Call_negative \u6E05\u9664\u975E\u6C38\u4E45 debuff/dot/control\u3002procEffect \u901A\u8FC7 ref \u67E5\u627E\u5DF2\u5B9A\u4E49\u8868\u8FBE\u5F0F\u5E76\u6267\u884C\uFF0C\u5176\u81EA\u8EAB\u95E8\u69DB\u4ECD\u6709\u6548\uFF0C\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002addItem \u6309\u7269\u54C1 ID \u589E\u52A0\u5355\u4F4D\u5E93\u5B58\u3002`;
+\u3010\u58F0\u660E\u5F0F\u4FEE\u9970\u3011
+mods \u662F\u4FEE\u9970\u6570\u7EC4\uFF0C\u6BCF\u9879 ${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u6709 stat\u3001locks\u3001flags \u6216 controlPolicy\uFF1B\u586B\u5199\u6570\u503C\u4FEE\u9970\u65F6\u5FC5\u987B\u6307\u5B9A stat\u3002\u7EC4\u5408\u503C\u4E3A (\u57FA\u7840 + flat \u603B\u548C) \xD7 (1 + additivePercent \u603B\u548C) \xD7 mult \u8FDE\u4E58\u3002when \u5FC5\u987B\u6C42\u5F97 true \u624D\u751F\u6548\u3002controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002`;
 
   // src/tavern/engine-summary.js
   var PROTOCOL_RULES = `\u3010\u5224\u5B9A\uFF5Cprotocol \u5B9E\u6218\u3011
@@ -11400,7 +13450,7 @@ DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BC
 \u3010\u4F24\u5BB3\uFF5C\u8BA1\u7B97\u51FD\u6570\u4E0E\u5B9E\u6218\u4E0D\u53EF\u6DF7\u7528\u3011
 \u534F\u8BAE\u8D77\u4F24\uFF1D\u5173\u8054\u5C5E\u6027\uFF08damage.stat\uFF0C\u7F3A\u7701\u8FD1\u6218str\u3001\u5426\u5219int\uFF09\xD710\xD7\u5C42\u7EA7\u7CFB\u6570(1~7\u9636:2/2.8/4/8/15/35/80)+power(\u9ED8\u8BA420)+\u6B66\u5668attack(\u9ED8\u8BA40)\u3002\u5B9E\u6218\u4E3B\u51FB\u4E58\u653B\u51FB\u589E\u76CA\u3001\u4F53\u578B\u500D\u7387\uFF08\u6B64\u5904\u4E0D\u9650\u8FD1\u6218\uFF09\u3001\u8BC4\u7EA7\u3001\u6210\u529F\u610F\u56FE\u3001\u59FF\u6001/\u526F\u624B\u7CFB\u6570\u3001\u8C41\u514D\u6210\u529F\xD70.5\uFF0C\u518D\u5411\u4E0B\u53D6\u6574\u3002\u8C41\u514D\u4E3A\u5B88d20+\u6307\u5B9A\u5C5E\u6027\u2265saveDC\uFF08\u9ED8\u8BA412+floor(\u653Bint/2)\uFF09\uFF0C\u6210\u529F\u514D\u9664\u8BE5\u6B21\u9644\u5E26\u6548\u679C\u3002
 \u5C5E\u6027\u51CF\u4F24\uFF1Aphysical=(con+str+agi)\xD7.0025\uFF0Cenergy=(spi+int)\xD7.004\uFF0Cmental=spi\xD7.008\uFF0Ctrue=0\u3002
-\u5B9E\u6218\u547D\u4E2D\u8D70\u53E6\u4E00\u7BA1\u7EBF\uFF1A\u53EF\u63F4\u62A4\u66FF\u4F24\u3001\u8FD1\u6218\u91CD\u5251\u5F39\u53CD\uFF1B\u6709\u6548\u7532=max(0,\u603B\u7532\xD7(1\u2212\u767E\u5206\u6BD4\u7A7F\u900F)\u2212\u56FA\u5B9A\u7A7F\u900F)\uFF0C\u7269\u7406\u5168\u7532\u3001\u80FD\u91CF\u534A\u7532\u3001\u5176\u4F590\u3002\u4E58(1+\u788E\u51B0\u52A0\u6210)(1+\u6613\u4F24)(1\u2212\u72B6\u6001\u603B\u51CF\u4F24[0,1])\u3001\u62A4\u7532\u500D\u7387\u548C(1\u2212\u5C5E\u6027\u51CF\u4F24)\uFF0C\u5411\u4E0B\u53D6\u6574\u4E14\u4E0D\u4F4E\u4E8E0\uFF1B\u62A4\u76FE\u5148\u5438\u6536\uFF0C\u4F59\u91CF\u6263HP\u3002\u6301\u7EED\u4F24\u7B49\u975E\u547D\u4E2D\u7C7B\u4F24\u5BB3\u6309\u500D\u7387\u53D6\u6574\u51CF\u6709\u6548\u7532\u3002DSL \u56FA\u5B9A\u51CF\u4F24\u5148\u4E8E\u62A4\u76FE\uFF1BnonLethal \u4FDD\u5E95 1 HP\u3002
+\u5B9E\u6218\u547D\u4E2D\u8D70\u53E6\u4E00\u7BA1\u7EBF\uFF1A\u53EF\u63F4\u62A4\u66FF\u4F24\u3001\u8FD1\u6218\u91CD\u5251\u5F39\u53CD\uFF1B\u6709\u6548\u7532=max(0,\u603B\u7532\xD7(1\u2212\u767E\u5206\u6BD4\u7A7F\u900F)\u2212\u56FA\u5B9A\u7A7F\u900F)\uFF0C\u7269\u7406\u5168\u7532\u3001\u80FD\u91CF\u534A\u7532\u3001\u5176\u4F590\u3002\u4E58(1+\u788E\u51B0\u52A0\u6210)(1+\u6613\u4F24)(1\u2212\u72B6\u6001\u603B\u51CF\u4F24[0,1])\u3001\u62A4\u7532\u500D\u7387\u548C(1\u2212\u5C5E\u6027\u51CF\u4F24)\uFF0C\u5411\u4E0B\u53D6\u6574\u4E14\u4E0D\u4F4E\u4E8E0\uFF1B\u62A4\u76FE\u5148\u5438\u6536\uFF0C\u4F59\u91CF\u6263HP\u3002\u6301\u7EED\u4F24\u7B49\u975E\u547D\u4E2D\u7C7B\u4F24\u5BB3\u6309\u500D\u7387\u53D6\u6574\u51CF\u6709\u6548\u7532\u3002\u56FA\u5B9A\u51CF\u4F24\u5148\u4E8E\u62A4\u76FE\uFF1B\u4FDD\u547D\u6548\u679C\u4FDD\u5E95 1 HP\u3002
 \u8303\u56F4\u6280\u80FD\u6309\u8986\u76D6\u683C\u9010\u76EE\u6807\u7ED3\u7B97\u3002
 
 \u3010\u59FF\u6001\u3011\u76FE\u2192\u5251\u76FE\uFF1B\u6D88\u8017/\u8F85\u52A9\u526F\u624B\u2192\u540C\u8C03\uFF1B\u91CD\u578B/\u53CC\u624B\u4E3B\u624B\u2192\u91CD\u5251\uFF1B\u5176\u4ED6\u526F\u624B\u2192\u53CC\u6301\uFF1B\u4EC5\u4E3B\u624B\u2192\u8F7B\u5251\uFF1B\u7A7A\u624B\u2192\u65E0\u68B0\u3002\u59FF\u6001\u51B3\u5B9A\u7A7F\u7532\u3001\u8FFD\u51FB\u3001\u5F39\u53CD\u548C\u683C\u6321\u3002
@@ -11408,48 +13458,23 @@ DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BC
 \u3010\u58EB\u6C14\u4E0E\u9003\u8DD1\u3011\u5207\u78CB\u65E0\u6761\u4EF6\u975E\u81F4\u6B7B\uFF0C\u4EFB\u4F55\u5355\u4F4D HP \u4F4E\u4E8E 30% \u7ACB\u5373\u5207\u78CB\u9000\u573A\uFF0C\u4E0D\u7B97\u9003\u8DD1\u6216\u51FB\u6740\u3002\u7ADE\u6280\u53CC\u65B9\u975E\u81F4\u6B7B\uFF0C1 HP \u843D\u8D25\u51FA\u5C40\u3002\u538B\u5236\u6218\u53CC\u65B9\u666E\u901A\u653B\u51FB\u4ECD\u53EF\u81F4\u6B7B\uFF0C\u53EA\u6709\u538B\u5236\u65B9\u53EF\u7528\u65E0\u4F24\u5BB3\u76841\u683C\u538B\u5236\u653B\u51FB\uFF1A\u547D\u4E2D\u540E\u4EE5d20+\u529B\u91CF\u5BF9\u6297\uFF0C\u653B\u65B9\u80DC\u4F7F\u5BF9\u624B\u88AB\u538B\u5236\uFF0C\u5B88\u65B9\u80DC\u5219\u653B\u65B9\u7729\u66551\u56DE\u5408\uFF0C\u5E73\u624B\u65E0\u72B6\u6001\uFF1B\u88AB\u538B\u5236\u8005\u56DE\u5408\u5F00\u59CB\u65F6d20+floor(\u529B\u91CF\xD7\u5F53\u524DHP\u6BD4\u4F8B)\u5927\u4E8E\u539F\u653B\u65B9\u603B\u70B9\u6570\u624D\u6323\u8131\uFF1B\u672A\u88AB\u538B\u5236\u7684\u62B5\u6297\u65B9\u961F\u53CB\u53EF\u57281\u683C\u5185\u7528\u653B\u51FB\u69FD\u76F4\u63A5\u89E3\u9664\u538B\u5236\u3002\u573A\u4E0A\u62B5\u6297\u65B9\u5168\u90E8\u88AB\u538B\u5236\u5373\u80DC\uFF0C\u5168\u90E8\u6B7B\u4EA1\u5219\u538B\u5236\u5931\u8D25\u3002\u6362\u8F6E\u68C0\u67E5\u975E\u4E3B\u89D2\u6218\u610F\u3002\u5207\u78CB40%\u3001\u7ADE\u628030%\u3001\u538B\u523650%\u4EE5\u4E0B\u81EA\u52A8\u52A8\u6447\uFF08\u547D\u4E2D\u22122\uFF09\uFF1B\u6807\u51C630%\u3001\u5B88\u536B35%\u3001\u6B7B\u659710%\u4EE5\u4E0B d20<12 \u6E83\u9003\uFF08\u547D\u4E2D\u22124\uFF0CAI \u5C1D\u8BD5\u9003\u8DD1\uFF09\uFF0C\u5426\u5219\u575A\u5B88\u3002\u56DE\u8840\u8FBE\u9608\u503C\u540E\u4E0B\u8F6E\u6062\u590D\u3002\u5BF9\u52A8\u6447\u6216\u6E83\u9003\u8005\u7528\u62B9\u6740/\u6982\u5FF5\u7834\u788E\uFF0C\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u8BC4\u7EA7\u81F3\u5C11\u5E73\u66B4\u51FB\uFF0C\u4E0D\u4FDD\u8BC1\u547D\u4E2D\u3002\u6240\u6709\u6218\u6597\u5747\u987B\u7AD9\u5728\u5730\u56FE\u6700\u5916\u5708\u624D\u80FD\u5C1D\u8BD5\u9003\u8DD1\u3002\u4E3B\u52A8flee\u4EE5\u81EA\u8EAB\u654F+d20\u5BF9\u5B58\u6D3B\u654C\u65B9\u6700\u9AD8\u654F+d20\uFF0C\u5E73\u624B\u53EF\u9003\u3002`;
   var ENGINE_API_SUMMARY = `${PROTOCOL_RULES}
 
-\u3010API \u6620\u5C04\u3011
-\u72B6\u6001\u5148\u67E5\u6218\u5C40 statusTemplates\uFF0C\u518D\u67E5\u9ED8\u8BA4\u6A21\u677F\uFF1B\u62D2\u7EDD\u672A\u77E5 ID\u3002\u81EA\u5B9A\u4E49\u72B6\u6001\u4F7F\u7528\u540C\u4E00\u5957\u4FEE\u9970\u952E\uFF0C\u89C1\u4E0B\u65B9\u72B6\u6001\u76EE\u5F55\u3002
-\u6280\u80FD saveDC\u3001DSL roll.dc \u548C roll.contest.dc \u4F7F\u7528\u540C\u4E00\u89C4\u5219\u3002\u53EF\u4F20 1\u202650 \u7684\u6574\u6570\uFF0C\u6216 {base:6,scaleBy:{stat:'spi',perUnit:0.5},min:1,max:50}\u3002stat \u53EA\u80FD\u4E3A str/con/agi/int/spi\u3002base \u4E0E perUnit \u53EF\u4E3A\u5C0F\u6570\u6216\u8D1F\u6570\uFF0C\u8303\u56F4 \u22121e9\u20261e9\u3002\u8BA1\u7B97\u4E3A base + perUnit \xD7 \u65BD\u672F\u8005\u5F53\u524D\u751F\u6548\u5C5E\u6027\uFF0C\u4FDD\u7559\u5C0F\u6570\u5E76 clamp \u5230 min/max\uFF0C\u7F3A\u7701 1/50\u3002\u663E\u5F0F\u4E0A\u4E0B\u9650\u4E3A 1\u20261e9 \u7684\u6570\u503C\uFF0Cmin \u4E0D\u5F97\u9AD8\u4E8E max\u3002
-\u88C5\u5907\u6A21\u677F equipment \u4E0E\u5B9E\u4F8B items \u7528 templateId \u5173\u8054\uFF1B\u8BA1\u6570\u5728\u5B9E\u4F8B counters\u3002
-
-\u88C5\u5907\u4E0E\u6280\u80FD\u7EDF\u4E00\u4F7F\u7528\u6548\u679C DSL\u3002\u5916\u5C42\u58F0\u660E\u89E6\u53D1\u3001\u6761\u4EF6\u3001\u68C0\u5B9A\u3001\u76EE\u6807\u4E0E\u8282\u70B9\u5217\u8868\u3002\u5B9E\u4F8B\u8BA1\u6570\u7531\u88C5\u5907\u7684\u8D44\u6E90\u58F0\u660E\u51B3\u5B9A\u3002\u5B8C\u6574 DSL \u534F\u8BAE\u89C1\u4E0B\u8282\u3002
-\u4E00\u56DE\u5408 battle_turns \u6A21\u677F\u53EF\u52A0 expireInto \u6307\u5DF2\u5B9A\u4E49\u72B6\u6001\uFF0C\u81EA\u5DF1\u65BD\u52A0\u65F6\u672C\u56DE\u5408\u672B\u5230\u671F\uFF0C\u6218\u6597\u672A\u7ED3\u675F\u624D\u7EED\u63A5\u3002\u5148\u5B9A\u4E49\u7EED\u63A5\u72B6\u6001\uFF0C\u518D\u5B9A\u4E49\u524D\u7F6E\u72B6\u6001\u3002
-
-\u3010\u72B6\u6001\u6570\u503C\u8986\u76D6\u3011
-\u6A21\u677F\u6570\u503C\u662F\u9ED8\u8BA4\u503C\u3002grantStatus \u8282\u70B9\u53EF\u7528 modifiers \u8986\u76D6\u6A21\u677F\u5DF2\u6709\u952E\uFF0C\u6309\u72B6\u6001\u76EE\u5F55\u8303\u56F4\u6821\u9A8C\u3002DoT/HoT \u6BCF\u6B21\u7ED3\u7B97\u53D6\u5B9E\u4F8B\u503C\u4E58\u5C42\u6570\u3002
-\u516C\u5F00 API\uFF1AdefineStatus(state,id,template) \u6CE8\u518C\u6218\u5C40\u6A21\u677F\uFF0C\u53EF\u8986\u76D6\u540C\u540D\u9ED8\u8BA4\u6A21\u677F\uFF0C\u4F46\u4E0D\u80FD\u91CD\u590D\u6CE8\u518C\u6218\u5C40\u5DF2\u6709\u5B9A\u4E49\u3002patchStatus(state,unitId,statusId,{damage:12}) \u66F4\u65B0\u5DF2\u9644\u52A0\u5B9E\u4F8B\u5E76\u5199\u5165\u65E5\u5FD7\u3002statusModifierKeys(statusId,state?) \u67E5\u8BE2\u5408\u6CD5\u952E\u3002GameAPI \u5BF9\u5E94\u7684\u65E0 state \u65B9\u6CD5\u652F\u6301\u8FD0\u884C\u4E2D\u7684\u6218\u5C40\u3002
-damageType \u968F damage\uFF1B\u53D7\u51FB\u788E\u88C2\u7528 shatter \u914D\u5408 expireOn:on_struck\uFF08\u89C4\u5219\u5199\u4E3A {trigger:'on_struck'}\uFF09\u3002`;
+\u3010\u6218\u5C40\u6570\u636E\u4E0E VM\u3011
+\u88C5\u5907\u6A21\u677F equipment \u4E0E\u5B9E\u4F8B items \u7528 templateId \u5173\u8054\u3002\u4E3A\u5DF2\u6709\u88C5\u5907\u5199\u89C4\u5219\u65F6\u4FEE\u6539 equipment \u5185\u5BF9\u5E94\u6A21\u677F\u3002\u6280\u80FD\u6A21\u677F\u5728 skills \u8868\u4E2D\uFF0C\u6301\u6709\u5173\u7CFB\u5728\u5355\u4F4D\u7684 skills \u6570\u7EC4\u4E2D\u3002
+\u4E3B\u52A8\u6280\u80FD\u7528 hook:active \u7684\u89C4\u5219\u6267\u884C\u3002\u6A21\u677F\u7684\u884C\u52A8\u69FD\u3001\u6D88\u8017\u3001\u9009\u53D6\u8303\u56F4\u4E0E\u76EE\u6807\u51B3\u5B9A\u80FD\u5426\u65BD\u653E\u3002\u89C4\u5219\u7684 program \u5B9A\u4E49\u5B9E\u9645\u7ED3\u7B97\u3002\u68C0\u5B9A\u7528 check \u6307\u4EE4\uFF0Cdc \u53EF\u7528\u6570\u503C\u6216\u8868\u8FBE\u5F0F\uFF0C\u4F8B\u5982 "6 + self.spi * 0.5"\u3002\u9700\u8981\u56E0\u8C41\u514D\u7ED3\u679C\u6267\u884C\u4E0D\u540C\u6548\u679C\u65F6\u5206\u522B\u5199\u8FDB onPass \u4E0E onFail\u3002
+\u72B6\u6001\u901A\u8FC7 apply_status \u5F15\u7528\u6A21\u677F\u3002\u5B9A\u4E49\u81EA\u5B9A\u4E49\u72B6\u6001\u540E\u518D\u5728\u540C\u4E00\u8865\u4E01\u4E2D\u5F15\u7528\u3002\u5468\u671F\u4F24\u5BB3\u3001\u6CBB\u7597\u4E0E\u8D44\u6E90\u53D8\u5316\u7528 turn_start \u6216 turn_end \u7684\u89C4\u5219\u8868\u8FBE\u3002`;
 
   // src/tavern/status-catalog.js
-  var rows = Object.values(STATUSES).map((status2) => {
-    const modifiers3 = Object.entries(status2.modifiers).map(([key4, value]) => `${key4}=${value}\uFF08${statusModifierRange(key4, status2)}\uFF09`).join("\uFF0C");
-    const expiry = [].concat(status2.expireOn ?? []).map((rule) => rule.trigger).join("/");
-    return [
-      status2.id,
-      `${status2.icon}${status2.name}`,
-      status2.category,
-      status2.remainingTurns,
-      status2.tickTiming,
-      `${status2.stackRule}/${status2.maxStacks}`,
-      modifiers3,
-      expiry || "\u2014",
-      status2.description
-    ].join(" | ");
-  });
-  var STATUS_CATALOG = [
-    "\u9ED8\u8BA4\u72B6\u6001\u6A21\u677F\uFF1A\u6218\u5C40 statusTemplates \u4F18\u5148\uFF0C\u65E0\u540C\u540D\u5B9A\u4E49\u65F6\u4F7F\u7528\u4EE5\u4E0B\u6A21\u677F\u3002\u672A\u77E5 ID \u5FC5\u987B\u5148\u6CE8\u518C\u3002",
-    "ID | \u540D\u79F0 | \u7C7B\u522B | \u9ED8\u8BA4\u56DE\u5408\u6570 | \u5468\u671F\u65F6\u70B9 | \u53E0\u5C42\u89C4\u5219/\u4E0A\u9650 | \u9ED8\u8BA4\u4FEE\u9970\u952E | \u63D0\u524D\u89E3\u9664\u4E8B\u4EF6 | \u8BF4\u660E",
-    ...rows,
-    `\u6240\u6709\u6A21\u677F\u5171\u7528\u7684\u5408\u6CD5\u4FEE\u9970\u952E\uFF1A${modifierKeys.map((key4) => `${key4}\uFF08${statusModifierRange(key4)}\uFF09`).join("\u3001")}\u3002\u62A4\u7532\u5B9E\u4F8B\u8986\u76D6\u4FDD\u6301\u6A21\u677F\u7684\u6B63\u8D1F\u65B9\u5411\u3002`,
-    "\u6388\u4E88\u548C patchStatus \u53EA\u8986\u76D6\u6A21\u677F\u5DF2\u58F0\u660E\u7684\u4FEE\u9970\u952E\u3002\u58F0\u660E modifiers.amount \u5373\u62E5\u6709\u62A4\u76FE\u6C60\uFF08\u4E0E\u7C7B\u522B\u65E0\u5173\uFF09\uFF1B\u5B9E\u4F8B amount \u662F\u5269\u4F59\u91CF\u3002\u591A\u6C60\u6309\u72B6\u6001 ID \u987A\u5E8F\u6263\u51CF\u3002taunted \u9700\u8981\u654C\u5BF9\u6765\u6E90\u3002",
-    "\u6A21\u677F\u7C7B\u522B\uFF1Abuff/debuff/control/dot/hot/shield\u3002\u6301\u7EED\u7C7B\u578B\uFF1Abattle_turns\uFF08\u81EA\u8EAB\u56DE\u5408\u672B\u9012\u51CF\uFF09/until_removed/persistent\uFF1B\u540E\u4E24\u8005\u4E0D\u9012\u51CF\u3002"
-  ].join("\n");
+  var reservedIds = Object.keys(STATUSES).join("\u3001");
+  var STATUS_CATALOG = `\u3010VM \u72B6\u6001\u3011
+apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u53EF\u6267\u884C\u7684\u72B6\u6001\u3002\u65B0\u72B6\u6001\u5148\u6DFB\u52A0\u6A21\u677F\uFF0C\u518D\u5F15\u7528\uFF0CID \u4E0E\u8868\u952E\u4E00\u81F4\u3002\u539F\u751F\u72B6\u6001 ID \u7559\u7ED9\u5F15\u64CE\u5185\u7F6E\u673A\u5236\uFF1A${reservedIds}\u3002
+\u6A21\u677F\u5FC5\u586B id\u3001name\u3002\u53EF\u9009 icon\u3001category\u3001description\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF09\u3001durationType\uFF08battle_turns/until_removed/persistent\uFF09\u3001stackMode\uFF08refresh/stack/replace/extend\uFF09\u3001maxStacks\uFF08\u6574\u6570 1\u202610\uFF09\u3001tags\u3001tier\u3001vars\u3001mods\u3001rules\u3002expireOn \u53EF\u7701\uFF0C\u683C\u5F0F\u4E3A {hook, filter?}\uFF0Cfilter \u662F\u5E03\u5C14\u8868\u8FBE\u5F0F\u3002\u7701\u7565\u671F\u9650\u548C\u53E0\u5C42\u5B57\u6BB5\u65F6\u9ED8\u8BA4\u4E3A battle_turns\u30011 \u56DE\u5408\u3001refresh\u30011 \u5C42\u3002
+\u5468\u671F\u4F24\u5BB3\u548C\u6CBB\u7597\u7528 turn_start \u6216 turn_end \u89C4\u5219\uFF0C\u6301\u7EED\u9650\u5236\u7528 mods.locks\uFF0C\u6570\u503C\u4FEE\u9970\u7528 mods\uFF0C\u62A4\u76FE\u7528 category:"shield"\uFF0C\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\u3002apply_status \u53EF\u6309\u65BD\u52A0\u4E0A\u4E0B\u6587\u6C42\u503C vars\uFF0C\u5E76\u6307\u5B9A turns\u3001stacks\u3001stackMode\u3001extendTurns \u6216 expireOn\u3002remove_status \u7684 where \u53EF\u8BFB\u53D6 status.id\u3001status.category \u7B49\u6CE8\u518C\u5B57\u6BB5\u3002
+\u9700\u8981\u76F4\u63A5\u6DFB\u52A0\u521D\u59CB\u72B6\u6001\u65F6\uFF0C\u5728 /units/<unitId>/statuses/<statusId> \u5199\u5165\u6A21\u677F\u5B57\u6BB5\uFF0C\u518D\u586B templateId\uFF08\u7B49\u4E8E\u72B6\u6001 ID\uFF09\u3001ownerId\uFF08\u7B49\u4E8E\u5355\u4F4D ID\uFF09\u3001sourceId\uFF08\u5355\u4F4D ID \u6216 null\uFF09\u3001stacks\u3001remainingTurns\u3001durationType\u3001stackMode\u3002\u5B9E\u4F8B vars \u5199\u5DF2\u6C42\u503C\u7684 JSON \u503C\u3002`;
 
   // src/tavern/prompts.js
   var IDENTITY = `\u4F60\u662F\u547D\u5B9A\u6218\u6597\u52A9\u624B\u3002\u4F60\u9700\u8981\u6839\u636E\u7528\u6237\u8F93\u5165\u5BF9\u6218\u5C40\u6570\u503C\u8FDB\u884C\u64CD\u4F5C\uFF0C\u4EE5\u5F53\u524D\u6218\u5C40\u3001\u53C2\u6218\u8005\u4E0E\u88C5\u5907\u5FEB\u7167\u3001\u6218\u6597\u534F\u8BAE\u4E3A\u4F9D\u636E\uFF0C\u6838\u5BF9\u64CD\u4F5C\u5BF9\u8C61\u3001\u5B57\u6BB5\u548C\u53D6\u503C\uFF0C\u4F7F\u7528\u5F15\u64CE\u8BA4\u53EF\u7684\u6807\u8BC6\u7B26\u3002
 
-\u5F53\u300C\u5F85\u5904\u7406\u8B66\u544A\u300D\u975E\u7A7A\u65F6\uFF0C\u4F60\u5FC5\u987B\u9010\u9879\u6807\u51C6\u5316\u5176\u4E2D\u7684\u5185\u5BB9\u3002\u628A\u88C5\u5907\u3001\u6280\u80FD\u6216\u72B6\u6001\u4E2D\u4EE5\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\u7684\u6548\u679C\uFF0C\u8F6C\u6210\u5F15\u64CE\u53EF\u4F7F\u7528\u7684\u7279\u6548\uFF0C\u5E76\u5E94\u7528\u5230\u5BF9\u5E94\u7684\u89D2\u8272\u6216\u6B66\u5668\u4E0A\u3002\u82E5\u5355\u4E2A\u673A\u5236\u4E0D\u8DB3\u4EE5\u8868\u8FBE\uFF0C\u5148\u6309\u534F\u8BAE\u7EC4\u5408\u5DF2\u652F\u6301\u7684\u673A\u5236\uFF0C\u4FDD\u7559\u539F\u6548\u679C\u7684\u89E6\u53D1\u6761\u4EF6\u3001\u4F5C\u7528\u76EE\u6807\u3001\u6301\u7EED\u65F6\u95F4\u548C\u6570\u503C\u3002\u65E0\u6CD5\u5B8C\u6574\u8868\u8FBE\u65F6\uFF0C\u63D0\u4EA4\u80FD\u6267\u884C\u7684\u90E8\u5206\uFF0C\u5E76\u6309\u4EFB\u52A1\u6307\u4EE4\u6807\u660E\u4ECD\u5F85\u5904\u7406\u7684\u6548\u679C\u3002
+\u6807\u51C6\u5316\u4EFB\u52A1\u4E2D\uFF0C\u300C\u5F85\u5904\u7406\u8B66\u544A\u300D\u975E\u7A7A\u65F6\uFF0C\u4F60\u5FC5\u987B\u9010\u9879\u5904\u7406\u3002\u628A\u88C5\u5907\u3001\u6280\u80FD\u6216\u72B6\u6001\u4E2D\u4EE5\u81EA\u7136\u8BED\u8A00\u63CF\u8FF0\u7684\u6548\u679C\u8F6C\u6210\u6218\u672F VM \u89C4\u5219\u3001\u4FEE\u9970\u6216\u6C60\u58F0\u660E\uFF0C\u5199\u5230\u5FEB\u7167\u4E2D\u5BF9\u5E94\u7684\u6A21\u677F\u3002\u5148\u6309\u534F\u8BAE\u7EC4\u5408\u5DF2\u652F\u6301\u7684\u673A\u5236\uFF0C\u4FDD\u7559\u89E6\u53D1\u6761\u4EF6\u3001\u4F5C\u7528\u76EE\u6807\u3001\u6301\u7EED\u65F6\u95F4\u548C\u6570\u503C\u3002\u65E0\u6CD5\u5B8C\u6574\u8868\u8FBE\u65F6\uFF0C\u63D0\u4EA4\u80FD\u6267\u884C\u7684\u90E8\u5206\uFF0C\u5E76\u6309\u4EFB\u52A1\u6307\u4EE4\u6807\u660E\u4ECD\u5F85\u5904\u7406\u7684\u6548\u679C\u3002
 
 \u4E0D\u505A\u53D9\u4E8B\u3001\u4E0D\u626E\u6F14\u89D2\u8272\u3001\u4E0D\u63A8\u8FDB\u5267\u60C5\uFF0C\u53EA\u8F93\u51FA\u5F15\u64CE\u53EF\u6267\u884C\u7684\u6570\u636E\u53D8\u66F4\u3002\u6309\u5F53\u524D\u4EFB\u52A1\u8981\u6C42\u7EC4\u7EC7\u8865\u4E01\u548C\u5F85\u5904\u7406\u9879\uFF0C\u6CBF\u7528\u5FEB\u7167\u4E2D\u7684\u89D2\u8272\u3001\u88C5\u5907\u3001\u6280\u80FD\u548C\u72B6\u6001 ID\uFF0C\u4FDD\u7559\u4E0E\u672C\u6B21\u64CD\u4F5C\u65E0\u5173\u7684\u6570\u636E\u3002\u63D0\u4EA4\u524D\u68C0\u67E5\u8DEF\u5F84\u3001\u53C2\u6570\u548C\u6570\u503C\u8303\u56F4\uFF0C\u786E\u4FDD\u6574\u6279\u53D8\u66F4\u53EF\u4EE5\u5728\u5F53\u524D\u6218\u5C40\u6267\u884C\u3002`;
   var DEFAULT_SLOTS = [
@@ -11460,55 +13485,45 @@ damageType \u968F damage\uFF1B\u53D7\u51FB\u788E\u88C2\u7528 shatter \u914D\u540
     { id: "warnings", label: "\u5F85\u5904\u7406\u8B66\u544A\u6E05\u5355", role: "system", enabled: true, desc: "\u6C99\u76D8\u8F6C\u6362\u65F6\u65E0\u6CD5\u7B49\u4EF7\u6620\u5C04\u7684\u88C5\u5907/\u6280\u80FD/\u6548\u679C\u53CA\u539F\u56E0" },
     { id: "task", label: "\u6807\u51C6\u5316\u4EFB\u52A1\u6307\u4EE4", role: "system", enabled: true, desc: "RFC 6902 \u8865\u4E01\u683C\u5F0F\u7EA6\u675F\u3001\u5141\u8BB8\u8DEF\u5F84\u767D\u540D\u5355\u3001\u7981\u6B62\u9879" },
     { id: "extra", label: "\u81EA\u5B9A\u4E49\u8865\u5145\uFF08\u53EF\u7A7A\uFF09", role: "system", enabled: false, desc: "\u7528\u6237\u81EA\u5DF1\u586B\u7684\u989D\u5916\u63D0\u793A\u8BCD" }
-  ].map((slot) => ({ builtin: true, ...slot, content: slot.content ?? "" }));
-  var TAG_MAPPING = `\u3010\u4E16\u754C\u4E66\u6807\u7B7E \u2192 DSL / API \u6620\u5C04\u3011
-\u2022 [\u5A01\u529B: X] + [\u4F24\u5BB3: \u7C7B\u578B] \u2192 \u4EE5 X \u4E3A\u5A01\u529B\u57FA\u51C6\uFF0Cdamage \u8282\u70B9\u7528 percentOfPower:1.0 \u548C\u5BF9\u5E94\u7684 damageType\u3002[\u5A01\u529B: X \u7269\u7406] \u7B49\u4EF7\u4E8E [\u5A01\u529B: X][\u4F24\u5BB3: \u7269\u7406]\uFF0C\u4E0D\u989D\u5916\u53E0\u52A0\u4F24\u5BB3\u3002
-\u2022 \u65E7\u6863\u300C\u6548\u679C\uFF1A100%\u7269\u7406\u4F24\u5BB3\u300D\u914D\u5408\u5A01\u529B\u6807\u7B7E\uFF0C\u4F7F\u7528 damage \u8282\u70B9 percentOfPower:1\u3001damageType:"physical"\u3002\u6BD4\u4F8B\u6DF7\u5408\u4F24\u5BB3\u6BCF\u79CD\u7C7B\u578B\u7528\u72EC\u7ACB\u8282\u70B9\uFF0C\u4F8B\u5982 60%\u7269\u7406\u4F24\u5BB3/40%\u80FD\u91CF\u4F24\u5BB3\u5199 0.6 \u4E0E 0.4\u3002
-\u2022 \u6DF7\u5408\u4F24\u5BB3\uFF1A[\u5A01\u529B: 60][\u4F24\u5BB3: \u7269\u740640/\u80FD\u91CF20] \u4E2D\u5404\u5206\u91CF\u4E4B\u548C\u7B49\u4E8E\u5A01\u529B\u3002\u5FC5\u987B\u62C6\u6210\u591A\u4E2A damage \u8282\u70B9\uFF0C\u6BCF\u4E2A\u8282\u70B9\u53EA\u5199\u4E00\u4E2A damageType \u548C\u5BF9\u5E94\u6570\u503C\uFF0C\u4E0D\u5F97\u5728\u5355\u8282\u70B9\u91CC\u585E\u591A\u4E2A\u7C7B\u578B\u3002\u4F8B\uFF1A[{"kind":"damage","flat":40,"damageType":"physical"},{"kind":"damage","flat":20,"damageType":"energy"}]\u3002\u4E0D\u5F97\u518D\u53E0\u52A0\u4E00\u6B21\u603B\u5A01\u529B\u3002
-\u2022 [\u5173\u8054\u5C5E\u6027: \u654F\u6377] \u2192 \u6280\u80FD\u7684\u5173\u8054\u68C0\u5B9A\u5C5E\u6027\u4E3A agi\uFF1B\u4E0D\u8981\u628A\u65BD\u672F\u8005\u7684\u5173\u8054\u5C5E\u6027\u8BEF\u4F5C\u76EE\u6807\u7684\u8C41\u514D\u5C5E\u6027\u3002[\u6709\u6548\u8DDD\u79BB: \u4E2D\u7A0B(5)] \u2192 range:5\u3002
-\u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 radius:4\u3001shape:fan\u3001target:enemy\uFF0Crange \u7531\u72EC\u7ACB\u7684\u6709\u6548\u8DDD\u79BB\u6807\u7B7E\u58F0\u660E\uFF1B\u53EF\u52A0 \u89D2\u5EA6:N \u5199 fan/cone \u7684\u5B9E\u9645\u5F20\u89D2\u3002
-\u2022 \u8303\u56F4\u4F24\u5BB3\u9ED8\u8BA4\u5141\u8BB8\u53CB\u4F24\uFF1A\u9664\u975E\u660E\u786E target:ally/self/cell\uFF0C\u5426\u5219\u8303\u56F4 damage \u4F1A\u7B5B\u9009\u8303\u56F4\u5185\u654C\u6211\u53CC\u65B9\uFF1B\u5355\u4F53\u6280\u80FD\u5FC5\u987B\u6309 target:enemy/ally/self/any \u660E\u786E\u654C\u53CB\u3002\u73AF\u5F62\u4F7F\u7528 shape:ring\uFF0C\u53EF\u7528 radius \u4E0E innerRadius \u6392\u9664\u4E2D\u5FC3\u533A\u57DF\uFF1B\u7EBF\u5F62 width \u662F\u4FA7\u5411\u534A\u5BBD\u3002
-\u2022 \u7A7A\u6548\u679C\uFF1A\u76EE\u6807\u5BF9\u8C61\u7684\u6548\u679C\u5B57\u6BB5\u4E3A {} \u6216\u7F3A\u5931\u65F6\uFF0C\u8868\u793A\u8BE5\u5B57\u6BB5\u6CA1\u6709\u53EF\u6267\u884C\u6548\u679C\uFF0C\u4E0D\u4EA7\u751F\u4EFB\u4F55\u8865\u4E01\u64CD\u4F5C\uFF0C\u4E5F\u4E0D\u8BA1\u5165 unresolved\u3002\u7EAF\u4F4D\u79FB\u3001\u7EAF\u72B6\u6001\u6388\u4E88\u7B49\u6280\u80FD\u4ECD\u6709\u53EF\u6267\u884C\u8282\u70B9\uFF0C\u4E0D\u5C5E\u4E8E\u7A7A\u6548\u679C\u3002`;
-  var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002\u65E7\u5F0F\u8BCA\u65AD\u5B57\u7B26\u4E32\u4EC5\u5728\u80FD\u552F\u4E00\u5339\u914D\u65F6\u6709\u6548\u3002\u8FD9\u4E9B\u5B57\u6BB5\u4E0D\u662F DSL \u8282\u70B9\u6216\u6218\u5C40\u5B57\u6BB5\u3002";
-  var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
-  var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次已修复的诊断；未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+  ].map((slot2) => ({ builtin: true, ...slot2, content: slot2.content ?? "" }));
+  var TAG_MAPPING = `\u3010\u4E16\u754C\u4E66\u6807\u7B7E \u2192 VM \u6620\u5C04\u3011
+\u2022 [\u5A01\u529B: X] + [\u4F24\u5BB3: \u7C7B\u578B] \u2192 \u7528 X \u4F5C\u4E3A\u539F\u6587\u7ED9\u51FA\u7684\u4F24\u5BB3\u57FA\u51C6\uFF0C\u5728 damage \u6307\u4EE4\u5199 amount \u548C damageType\u3002[\u5A01\u529B: X \u7269\u7406] \u7B49\u4EF7\u4E8E [\u5A01\u529B: X][\u4F24\u5BB3: \u7269\u7406]\uFF0C\u53EA\u7ED3\u7B97\u4E00\u6B21\u3002
+\u2022 \u6DF7\u5408\u4F24\u5BB3\uFF1A[\u5A01\u529B: 60][\u4F24\u5BB3: \u7269\u740640/\u80FD\u91CF20] \u62C6\u6210\u4E24\u4E2A\u6307\u4EE4\uFF0C\u4F8B\uFF1A[{"op":"damage","target":"target","amount":40,"damageType":"physical"},{"op":"damage","target":"target","amount":20,"damageType":"energy"}]\u3002\u6309\u539F\u6587\u6BD4\u4F8B\u62C6\u5206\u65F6\u5404\u5206\u91CF\u6309\u540C\u4E00\u57FA\u51C6\u6C42\u503C\uFF0C\u4E0D\u518D\u989D\u5916\u9020\u6210\u603B\u5A01\u529B\u4F24\u5BB3\u3002
+\u2022 [\u5173\u8054\u5C5E\u6027: \u654F\u6377] \u2192 \u6307\u5411\u65BD\u672F\u8005\u654F\u6377\uFF1B\u9700\u8981\u5C5E\u6027\u7F29\u653E\u65F6\u8BFB\u53D6 self.agi\u3002\u53EA\u6709\u539F\u6587\u660E\u786E\u8C41\u514D\u65F6\u624D\u4E3A\u9632\u5B88\u65B9\u9009\u62E9\u68C0\u5B9A\u5C5E\u6027\u3002[\u6709\u6548\u8DDD\u79BB: \u4E2D\u7A0B(5)] \u2192 range:5\u3002
+\u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 radius:4\u3001shape:fan\u3001target:enemy\uFF0Crange \u7531\u6709\u6548\u8DDD\u79BB\u53E6\u884C\u786E\u5B9A\u3002\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u5230 angle\u3002
+\u2022 \u539F\u6587\u6548\u679C\u4E3A {} \u6216\u7F3A\u5931\u4E14\u6CA1\u6709\u5176\u4ED6\u53EF\u6267\u884C\u63CF\u8FF0\u65F6\uFF0C\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u8BA1\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u548C\u72B6\u6001\u6388\u4E88\u5747\u53EF\u5F62\u6210\u72EC\u7ACB\u89C4\u5219\uFF1B\u80CC\u5305\u6D88\u8017\u54C1\u6309\u4EFB\u52A1\u7EA6\u5B9A\u5904\u7406\u3002`;
+  var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002";
+  var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
+  var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。backpackItem:true 是背包消耗品的使用模板，不是角色技能。若消耗品没写效果，按物品名、标签主动推定合理的目标、距离、范围和数值，补出可执行的 active DSL；不可仅因原文缺数值而列为 unresolved。按警告路径修改模板，不要改库存、移除 backpackItem 或加入单位 skills。保留 ap:1、slot:action。
-• /items/<id>：道具实例（如 /items/item_01），不是模板属性。
-• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），同名定义覆盖默认模板；已有实例须同时与新模板对齐。普通新增状态使用新 ID。
-• /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
-• /units/<unitId>/armor：单位护甲整数 0…1000000（如 /units/p1/armor）。
-• /units/<unitId>/skills：完整技能 ID 数组，保留原有技能并加入新增技能 ID。
-使用快照 ID，不用显示名、数组下标或 stat_data。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换 effects 时保留无关效果。
+• /skills/<id>：技能模板。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
+• /items/<id>：道具实例。装备模板的规则、修饰与池声明写在 /equipment/<id>。实例已自带 rules 或 mods 时，同批同步相关条目，保留该实例独有的内容。
+• /statusTemplates/<id>：战局的自定义状态模板。新增模板使用新的 ID。
+• /units/<unitId>/statuses：单位状态实例映射。实例形状见状态协议。
+• /units/<unitId>/armor：单位护甲整数 0…1000000。
+• /units/<unitId>/skills：完整技能 ID 数组，保留已有技能并加入新技能 ID。
+使用快照中的 ID。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换模板或数组时保留无关字段与条目。
 
-【值的形状：只用各表已定义的字段】
-装备必有 name、effects。attack 为整数 0…1000000000，accuracy 为 −20…30。武器 range(1…15) 与 damage 骰子成对。
-技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)、effects；范围技能可写 radius、innerRadius、width、angle(1…360)。save(str/agi/con/int/spi) 与 saveDC(1…50 的整数或协议中的公式对象) 必须成对；damage/heal 用 {count,sides}，可加 bonus、stat、multiplier、type。
-所有 effects 使用统一 DSL 表达式。物品仅 {id,templateId,counters}，计数键与模板的资源声明对应，值在 0…cap。没有资源池时用 {}。
-将剧情状态按实际机制标准化。在同一批补丁先定义 /statusTemplates/<id>，再用 grantStatus 或初始状态实例引用该 ID。已有模板的机制完全等价时可以复用。按剧情声明周期伤害的 modifiers.damage 与 modifiers.damageType（physical/energy/mental/true），以及 tickTiming、层数和持续时间。自定义模板最多 64 个，必有 id,name,icon,category,description,remainingTurns,durationType,tickTiming,stackRule,maxStacks,modifiers。category 为 buff/debuff/control/dot/hot；remainingTurns 整数1…100；durationType=battle_turns/until_removed/persistent；tickTiming=onTurnStart/onTurnEnd；stackRule=refresh/stack/replace；maxStacks 整数1…10。
-自定义 modifiers 非空，合法键、范围及 expireInto / expireOn 见协议。单位状态实例复制模板，再加 stacks(1…maxStacks)、sourceUnitId(ID或null)。shield 实例另有 amount。
+【模板值】
+• 装备必有 name。保留已有武器字段，range(1…15) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备提供主动按钮时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。
+• 技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。范围字段 radius、innerRadius、width 为 0…6，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
+• 装备和技能均可声明 rules、mods、tags、tier、vars、pools。rules 和 mods 是数组。tags 是小写标签数组，tier 为整数 1…7，vars 为 ID → Expr 的对象。pools 格式为 {"charge":{"cap":10,"initial":0}}，每池必填 cap，可加 initial、reloadable。cap / initial 优先写非负数，initial 不得超过 cap。已有装备初始化需要数值 cap。通过 resource 指令访问池，装备规则中 local:true 访问该实例的池。
+• 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。
 
-整批须通过 validateState。禁止改阵营、资源及上限、坐标、先攻队列或日志。
-【拆解原则】先尝试拆解，再考虑放弃。可用多状态 + 手动触发技能组合表达复杂效果。仅当引擎没有 kind 或组合可表达时才放入 unresolved，写明原效果并简述尝试过的方向（一句话）。部分可解时提交可解部分。
-拆解后先在内部列出拟用的 kind / status，逐个自查：参数写全了吗？statusId 存在吗？数值在范围内吗？然后只输出最终 {"patch":[],"unresolved":[]}。
-正例（仅当快照确有 p1，且警告明确其护甲应为 6）：
-{"patch":[{"op":"replace","path":"/units/p1/armor","value":6,"resolves":[{"unitId":"p1","originPath":null,"message":"基础护甲缺失"}]}],"unresolved":[]}
-【DSL 正例】先找事件、筛选条件及概率，再确定目标、节点字段与数值。下面每行是一条可放入 effects 的表达式，换成全局唯一 ID。
-• 简单命中附状态：{"id":"hit_burn","label":"灼印","trigger":"on_hit","target":"hitTarget","effects":[{"kind":"grantStatus","statusId":"burn","turns":2}]}
-• 条件加成：{"id":"night_edge","trigger":"passive","target":"self","condition":{"type":"timeOfDay","value":"night"},"effects":[{"kind":"multiplyDamage","factor":1.2}]}
-• 概率反击：{"id":"cold_reply","trigger":"on_damaged","target":"attacker","condition":[{"type":"melee"},{"type":"enemy"}],"roll":{"dice":"d20","gte":16},"effects":[{"kind":"grantStatus","statusId":"chill"}]}
-• 链式支付与回复：{"id":"blood_mana","trigger":"active","target":"self","effects":[{"kind":"chainEffect","stopOnFailure":true,"effects":[{"kind":"drainResource","resource":"hp","amount":12,"minimumRemaining":1,"requireFull":true},{"kind":"restoreResource","resource":"mp","percentOfPrevious":0.5}]}]}
-• 叠加装备资源：{"id":"charge_pool","trigger":"passive","target":"self","effects":[{"kind":"produceResource","resource":"charge","cap":10000,"initial":0},{"kind":"multiplyDamage","resourceScale":{"resource":"charge","perUnit":0.02}}]}。同批在实例 counters 加入 charge:0，再写 on_kill/self 的 produceResource(amount:1) 增加存量。
-• 捧腹失能：先添加 /statusTemplates/laugh_disabled，value 为 {"id":"laugh_disabled","name":"狂笑失能","icon":"😆","category":"control","description":"跳过行动，实际受到直接伤害时解除。","remainingTurns":1,"durationType":"battle_turns","tickTiming":"onTurnStart","stackRule":"refresh","maxStacks":1,"modifiers":{"skip":true},"expireOn":{"trigger":"on_damaged","damageType":"direct"}}。随后引用 {"id":"laugh_on_hit","trigger":"on_hit","target":"hitTarget","roll":{"save":"spi","dc":{"base":6,"scaleBy":{"stat":"spi","perUnit":0.5}}},"effects":[{"kind":"grantStatus","statusId":"laugh_disabled"}]}。
-• 临时土墙（指定格周围半径 1，持续 3 回合）：技能模板 target 为 cell，effects 包含 {"id":"temporary_wall","trigger":"active","target":"self","effects":[{"kind":"setTerrainKind","terrainKind":"wall","area":{"center":"hitTarget","radius":1},"remainingTurns":3}]}。固定矩形则将 area 换为 {"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}。
-• 低伤校准（仅保留最低冲击力、避免致命）：用独立主动技能，不叠加普通武器主击；省略模板 damage，将全部冲击放入 {"id":"calibrated_impact","trigger":"active","target":"hitTarget","effects":[{"kind":"damage","amount":1,"damageType":"physical","lethal":false}]}。不可用减半倍率代替保命。
-• 骑士誓言：{"id":"knight_oath","label":"骑士誓言","trigger":"passive","target":"self","condition":{"type":"intercepting"},"effects":[{"kind":"modifyStat","stat":"defense","percent":0.12,"enabled":true}]}。替队友承伤时防御提高 12%。若根据战局上下文判断誓言已破，使用现有 replace 操作将对应节点的 enabled 改为 false。例如 {"op":"replace","path":"/equipment/oath_armor/effects/0/effects/0/enabled","value":false}。若节点省略了 enabled，则 replace 整个节点并保留原字段，补上 enabled:false。
-【实用组合】在角色已有装备上添加效果，替换整段 effects 时保留旧条目并追加新表达式。写完新技能后把其 ID 追加到持有者的 skills。对同一道具提供多条效果时，每条表达式使用不同 ID。description 是自定义状态模板必填字段。技能和装备模板省略 description。
-• 临时强化与后续虚弱：先定义到期状态，再定义一回合强化状态并以 expireInto 引用前者。强化可用 guaranteed_hit、guaranteed_crit、finalDamageMultiplier；虚弱可用 attributePercent、blockResourceRestore。这些是状态模板的 modifiers 键。技能用 active/self 的 grantStatus 授予强化状态。
-• 判定和成长：把多个检定加值放在同一个 passive/self 的 modifyCheck 节点。基础属性成长拆成五个 modifyStat 节点，每个写 percent:1 与 levelScaling:{min:0.25,max:1}。攻击成长把 stat 写成 damage。可执行的成长与未提供具体对象的合并可分别处理，已有装备未指定合并来源时无需构造新的装备。`;
+【VM 模板正例】用快照 ID 和警告字段，把对应的值写入 patch 操作。技能值可放在 /skills/<id>，装备值可放在 /equipment/<id>，状态值可放在 /statusTemplates/<id>，规则值则放入相关模板的 rules 数组。
+• 技能值：{"name":"低伤校准","ap":1,"slot":"attack","range":1,"shape":"single","target":"enemy","rules":[{"id":"calibrated_impact","hook":"active","program":[{"op":"damage","target":"target","amount":1,"damageType":"physical","lethal":false}]}]}
+• 装备值：{"name":"蓄能徽记","kind":"accessory","pools":{"charge":{"cap":10,"initial":0}},"mods":[{"stat":"armor","flat":2}],"rules":[{"id":"collect_charge","hook":"on_kill","program":[{"op":"resource","target":"self","pool":"charge","mode":"add","amount":1,"local":true}]}]}
+• 状态值：{"id":"laugh_disabled","name":"狂笑失能","category":"control","remainingTurns":1,"mods":[{"locks":["action","attack"]}],"rules":[{"id":"laugh_break","hook":"after_damage","filter":"target.id == self.id && event.direct && event.dealt > 0","program":[{"op":"remove_status","target":"self","where":"status.id == 'laugh_disabled'","reason":"expired"}]}]}
+• 授予上例状态的规则值：{"id":"laugh_on_hit","hook":"after_hit","filter":"attacker.id == self.id","program":[{"op":"check","kind":"save","stat":"spi","dc":"6 + self.spi * 0.5","onFail":[{"op":"apply_status","target":"target","statusId":"laugh_disabled"}]}]}
+• 飞行规则值：{"id":"lift_off","hook":"active","program":[{"op":"move","target":"self","mode":"altitude","deltaZ":3}]}
+
+【完整补丁示例】假设快照已有 /equipment/wing_charm，尚无 skills，且此诊断要求为翼徽加上主动飞行。已有技能 ID 时，在原数组中保留它们。
+{"patch":[{"op":"add","path":"/skills/wing_charm_lift","value":{"name":"翼徽飞行","ap":1,"slot":"action","range":0,"shape":"single","target":"self","rules":[{"id":"lift_off","hook":"active","program":[{"op":"move","target":"self","mode":"altitude","deltaZ":3}]}]}},{"op":"add","path":"/equipment/wing_charm/skills","value":["wing_charm_lift"],"resolves":[{"unitId":"p1","originPath":"/equipment/wing_charm","message":"翼徽缺少主动飞行规则"}]}],"unresolved":[]}
+
+整批须通过 validateState。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，并保留原效果名及简短原因。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 {"patch":[],"unresolved":[]}。`;
   var json = (value) => JSON.stringify(value, null, 2);
   var lastCustomId = 0;
   function makeCustomSlot() {
@@ -11516,23 +13531,23 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
     return { id: `custom_${lastCustomId}`, label: "\u81EA\u5B9A\u4E49\u69FD\u4F4D", role: "system", enabled: true, desc: "", content: "", custom: true };
   }
   function describeSlots(saved) {
-    if (!Array.isArray(saved)) return DEFAULT_SLOTS.map((slot) => ({ ...slot }));
-    const defaults = new Map(DEFAULT_SLOTS.map((slot) => [slot.id, slot]));
-    const entries2 = saved.filter((slot) => typeof slot?.id === "string");
-    const legacy = entries2.length > 0 && entries2.every((slot) => defaults.has(slot.id) && Object.keys(slot).every((key4) => key4 === "id" || key4 === "enabled"));
+    if (!Array.isArray(saved)) return DEFAULT_SLOTS.map((slot2) => ({ ...slot2 }));
+    const defaults = new Map(DEFAULT_SLOTS.map((slot2) => [slot2.id, slot2]));
+    const entries3 = saved.filter((slot2) => typeof slot2?.id === "string");
+    const legacy = entries3.length > 0 && entries3.every((slot2) => defaults.has(slot2.id) && Object.keys(slot2).every((key4) => key4 === "id" || key4 === "enabled"));
     if (legacy) {
-      const overrides = new Map(entries2.map((slot) => [slot.id, slot]));
-      return DEFAULT_SLOTS.map((slot) => ({ ...slot, ...overrides.get(slot.id) }));
+      const overrides2 = new Map(entries3.map((slot2) => [slot2.id, slot2]));
+      return DEFAULT_SLOTS.map((slot2) => ({ ...slot2, ...overrides2.get(slot2.id) }));
     }
-    const needsIdentity = !entries2.some((slot) => slot.id === "identity");
-    const slots = entries2.map((slot) => ({
-      ...defaults.get(slot.id),
-      ...slot,
-      ...needsIdentity && defaults.has(slot.id) && slot.role === "user" ? { role: "system" } : {}
+    const needsIdentity = !entries3.some((slot2) => slot2.id === "identity");
+    const slots2 = entries3.map((slot2) => ({
+      ...defaults.get(slot2.id),
+      ...slot2,
+      ...needsIdentity && defaults.has(slot2.id) && slot2.role === "user" ? { role: "system" } : {}
     }));
-    return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots] : slots;
+    return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots2] : slots2;
   }
-  function resolveSlotContent(slot, ctx = {}) {
+  function resolveSlotContent(slot2, ctx = {}) {
     const { sources = {}, state, instruction = "" } = ctx;
     const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
     const variables2 = {
@@ -11570,8 +13585,8 @@ ${variables2.battle_init()}
 \u5F53\u524D\u6218\u5C40\uFF1A
 ${json(board)}`;
     }
-    if (slot.custom === true || slot.content) return expand(slot.content ?? "");
-    switch (slot.id) {
+    if (slot2.custom === true || slot2.content) return expand(slot2.content ?? "");
+    switch (slot2.id) {
       case "protocol":
         return protocol;
       case "roster":
@@ -11582,7 +13597,7 @@ ${json(board)}`;
         return ctx.warningsText ?? (warnings.length ? `\u5F85\u5904\u7406\u8B66\u544A\uFF1A
 ${variables2.warnings()}` : "");
       case "task":
-        return expand(ctx.taskText ?? (ctx.kind === "chat" ? "\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u8EAB\u4EFD\u58F0\u660E\u4E2D\u7684\u6570\u636E\u8F93\u51FA\u8981\u6C42\u9002\u7528\u4E8E\u6218\u5C40\u53D8\u66F4\u3002\u73A9\u5BB6\u4EC5\u54A8\u8BE2\u65F6\uFF0C\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u6218\u6597\u4E0E\u5F15\u64CE\u95EE\u9898\u3002\u53EA\u6709\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u8C03\u6574\u6218\u5C40\u4E14\u5DF2\u52A0\u8F7D\u6218\u5C40\u65F6\uFF0C\u624D\u8F93\u51FA battle_patch \u6216 unit_patch JSON\u3002\u5F85\u5904\u7406\u8B66\u544A\u7531\u72EC\u7ACB\u7684\u6807\u51C6\u5316\u4EFB\u52A1\u5904\u7406\u3002" : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
+        return expand(ctx.taskText ?? (ctx.kind === "chat" ? '\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u73A9\u5BB6\u54A8\u8BE2\u65F6\uFF0C\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u3002\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u8C03\u6574\u5DF2\u52A0\u8F7D\u7684\u6218\u5C40\u65F6\uFF0C\u8F93\u51FA {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} \u5F62\u72B6\u7684 JSON\uFF0C\u6309\u8BF7\u6C42\u4F7F\u7528\u5FEB\u7167\u4E2D\u7684\u771F\u5B9E\u8DEF\u5F84\u548C\u503C\u3002\u88C5\u5907\u3001\u6280\u80FD\u548C\u72B6\u6001\u7684\u53D8\u66F4\u503C\u9075\u5FAA\u4E0A\u9762\u7684 VM \u534F\u8BAE\u3002\u6807\u51C6\u5316\u4EFB\u52A1\u5355\u72EC\u5904\u7406\u8B66\u544A\u3002' : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
       case "extra":
         return expand(ctx.extraText || "");
       case "assistant":
@@ -11591,21 +13606,21 @@ ${variables2.warnings()}` : "");
         return "";
     }
   }
-  function assembleMessages(slots = DEFAULT_SLOTS, ctx = {}) {
+  function assembleMessages(slots2 = DEFAULT_SLOTS, ctx = {}) {
     const messages = [];
     let previousMergeable = false;
-    for (const slot of slots) {
-      if (!slot || slot.enabled === false) continue;
-      const content = resolveSlotContent(slot, ctx);
+    for (const slot2 of slots2) {
+      if (!slot2 || slot2.enabled === false) continue;
+      const content = resolveSlotContent(slot2, ctx);
       if (!content?.trim()) continue;
-      const role = ["system", "assistant"].includes(slot.role) ? slot.role : "user";
+      const role = ["system", "assistant"].includes(slot2.role) ? slot2.role : "user";
       const previous = messages.at(-1);
-      const mergeable = !slot.custom && role !== "assistant" && slot.id !== "assistant";
+      const mergeable = !slot2.custom && role !== "assistant" && slot2.id !== "assistant";
       if (previous?.role === role && previousMergeable && mergeable) {
         previous.content += "\n\n" + content;
-        previous.slotId += "+" + slot.id;
-        previous.slotLabel += " / " + slot.label;
-      } else messages.push({ role, content, slotId: slot.id, slotLabel: slot.label });
+        previous.slotId += "+" + slot2.id;
+        previous.slotLabel += " / " + slot2.label;
+      } else messages.push({ role, content, slotId: slot2.id, slotLabel: slot2.label });
       previousMergeable = mergeable;
     }
     return messages;
@@ -11625,7 +13640,7 @@ ${variables2.warnings()}` : "");
   }
   function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
     const get3 = (key4) => lookup(host, localWin, key4);
-    const on = get3("eventOn"), remove2 = get3("eventRemoveListener");
+    const on = get3("eventOn"), remove = get3("eventRemoveListener");
     const cleanups = [];
     const stop = () => {
       for (const fn of cleanups.splice(0)) {
@@ -11641,8 +13656,8 @@ ${variables2.warnings()}` : "");
         get3("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
         get3("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
       ])) {
-        const handler = (text4, id3) => {
-          if (typeof text4 === "string" && text4 && (!id3 || id3 === genId)) onStreamChunk?.(text4, false);
+        const handler = (text5, id3) => {
+          if (typeof text5 === "string" && text5 && (!id3 || id3 === genId)) onStreamChunk?.(text5, false);
         };
         const sub = on(name, handler);
         cleanups.push(() => {
@@ -11650,7 +13665,7 @@ ${variables2.warnings()}` : "");
             if (typeof sub === "function") sub();
             else sub?.stop?.();
           } finally {
-            remove2?.(name, handler);
+            remove?.(name, handler);
           }
         });
       }
@@ -11682,23 +13697,23 @@ ${variables2.warnings()}` : "");
       signal?.addEventListener("abort", abort, { once: true });
     });
     try {
-      const text4 = await Promise.race([generate({ generation_id: id3, should_stream: stream, ordered_prompts: messages }), cancelled]);
-      if (typeof text4 !== "string" || !text4.trim()) throw new Error("\u9152\u9986\u6A21\u578B\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u5F53\u524D\u4E3B\u63A5\u53E3");
-      onStreamChunk?.(text4, true);
-      return text4;
+      const text5 = await Promise.race([generate({ generation_id: id3, should_stream: stream, ordered_prompts: messages }), cancelled]);
+      if (typeof text5 !== "string" || !text5.trim()) throw new Error("\u9152\u9986\u6A21\u578B\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u5F53\u524D\u4E3B\u63A5\u53E3");
+      onStreamChunk?.(text5, true);
+      return text5;
     } finally {
       cleanup?.();
       signal?.removeEventListener("abort", abort);
     }
   }
-  function diagnoseApiError(rawText, status2) {
+  function diagnoseApiError(rawText, status) {
     let detail = String(rawText || "").trim();
     try {
       detail = JSON.parse(detail)?.error?.message || detail;
     } catch {
     }
-    const hint = /mixed content/i.test(detail) ? "HTTPS \u9875\u9762\u4E0D\u80FD\u8BF7\u6C42 HTTP \u63A5\u53E3\uFF0C\u8BF7\u4F7F\u7528 HTTPS \u5730\u5740" : { 401: "\u5BC6\u94A5\u65E0\u6548", 403: "\u65E0\u8BBF\u95EE\u6743\u9650", 404: "\u6A21\u578B\u6216\u63A5\u53E3\u5730\u5740\u9519\u8BEF", 429: "\u8BF7\u6C42\u9650\u6D41\u6216\u989D\u5EA6\u4E0D\u8DB3" }[status2] || (status2 >= 500 ? "\u4E0A\u6E38\u670D\u52A1\u6545\u969C" : "API \u8BF7\u6C42\u5931\u8D25");
-    return `${status2 ? `HTTP ${status2}\uFF1A` : ""}${hint}${detail ? `\uFF08${detail.slice(0, 500)}\uFF09` : ""}`;
+    const hint = /mixed content/i.test(detail) ? "HTTPS \u9875\u9762\u4E0D\u80FD\u8BF7\u6C42 HTTP \u63A5\u53E3\uFF0C\u8BF7\u4F7F\u7528 HTTPS \u5730\u5740" : { 401: "\u5BC6\u94A5\u65E0\u6548", 403: "\u65E0\u8BBF\u95EE\u6743\u9650", 404: "\u6A21\u578B\u6216\u63A5\u53E3\u5730\u5740\u9519\u8BEF", 429: "\u8BF7\u6C42\u9650\u6D41\u6216\u989D\u5EA6\u4E0D\u8DB3" }[status] || (status >= 500 ? "\u4E0A\u6E38\u670D\u52A1\u6545\u969C" : "API \u8BF7\u6C42\u5931\u8D25");
+    return `${status ? `HTTP ${status}\uFF1A` : ""}${hint}${detail ? `\uFF08${detail.slice(0, 500)}\uFF09` : ""}`;
   }
   async function readSseStream(readableStream, extractDelta, onStreamChunk, trace = {}) {
     const reader = readableStream.getReader(), decoder = new TextDecoder();
@@ -11765,16 +13780,16 @@ ${variables2.warnings()}` : "");
     }
     const source = settings.apiTransport === "tavern" ? "openai" : settings.apiSource || "openai";
     const headers = { "Content-Type": "application/json" };
-    let root;
-    if (source === "gemini") root = base.replace(/\/v1beta(?:\/.*)?$/i, "") + "/v1beta";
+    let root2;
+    if (source === "gemini") root2 = base.replace(/\/v1beta(?:\/.*)?$/i, "") + "/v1beta";
     else if (source === "claude") {
-      root = base.replace(/\/messages$/i, "").replace(/\/v1$/i, "") + "/v1";
+      root2 = base.replace(/\/messages$/i, "").replace(/\/v1$/i, "") + "/v1";
       Object.assign(headers, { "x-api-key": key4, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
     } else if (source === "openai") {
-      root = base.replace(/\/chat\/completions$/i, "");
+      root2 = base.replace(/\/chat\/completions$/i, "");
       headers.Authorization = `Bearer ${key4}`;
     } else throw new Error(`\u672A\u77E5 API \u7C7B\u578B\uFF1A${source}`);
-    return { root, source, headers, model, key: encodeURIComponent(key4) };
+    return { root: root2, source, headers, model, key: encodeURIComponent(key4) };
   }
   async function send(url, init, { fetchImpl = globalThis.fetch, signal }) {
     const res = await fetchImpl(url, { ...init, signal });
@@ -11782,13 +13797,13 @@ ${variables2.warnings()}` : "");
     return res;
   }
   var json2 = (res) => res.json ? res.json() : res.text().then(JSON.parse);
-  async function sendViaTavernBackend(endpoint, { root, headers }, body, options) {
+  async function sendViaTavernBackend(endpoint, { root: root2, headers }, body, options) {
     const host = options.host ?? globalThis.window;
     const origin = host?.location?.origin;
     if (!origin || !/^https?:\/\//.test(origin)) throw new Error("\u8BF7\u5728\u9152\u9986\u9875\u9762\u5185\u4F7F\u7528\u540E\u7AEF\u8F6C\u53D1");
     let upstream;
     try {
-      upstream = new URL(root);
+      upstream = new URL(root2);
     } catch {
       throw new Error("\u8BF7\u586B\u5199\u5B8C\u6574\u7684 API \u5730\u5740");
     }
@@ -11807,7 +13822,7 @@ ${variables2.warnings()}` : "");
       body: JSON.stringify({
         ...body,
         chat_completion_source: "custom",
-        custom_url: root,
+        custom_url: root2,
         // SillyTavern parses this field as YAML, which also accepts JSON objects.
         custom_include_headers: JSON.stringify({ Authorization: headers.Authorization })
       })
@@ -11815,9 +13830,9 @@ ${variables2.warnings()}` : "");
   }
   async function fetchModels(settings, options = {}) {
     const conn = connection(settings, false);
-    const { root, source, key: key4, headers } = conn;
+    const { root: root2, source, key: key4, headers } = conn;
     const viaTavern = settings.apiTransport === "tavern";
-    const res = viaTavern ? await sendViaTavernBackend("status", conn, {}, options) : await send(`${root}/models${source === "gemini" ? `?key=${key4}` : ""}`, { method: "GET", headers }, options);
+    const res = viaTavern ? await sendViaTavernBackend("status", conn, {}, options) : await send(`${root2}/models${source === "gemini" ? `?key=${key4}` : ""}`, { method: "GET", headers }, options);
     const data = await json2(res);
     if (viaTavern && data.error) throw new Error("\u9152\u9986\u540E\u7AEF\u62C9\u53D6\u6A21\u578B\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC");
     return (source === "gemini" ? data.models : data.data)?.map((m) => source === "gemini" ? m.name?.replace(/^models\//, "") : m.id).filter((id3) => typeof id3 === "string" && id3) || [];
@@ -11837,22 +13852,22 @@ ${variables2.warnings()}` : "");
   }
   async function requestViaCustomApi(settings, messages, options = {}) {
     const conn = connection(settings, true);
-    const { root, source, model, key: key4, headers } = conn;
+    const { root: root2, source, model, key: key4, headers } = conn;
     const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 2400);
     const wireMessages = messages.map(({ role, content }) => ({ role, content }));
     let url, body;
     if (source === "openai") {
-      url = `${root}/chat/completions`;
+      url = `${root2}/chat/completions`;
       body = { model, messages: wireMessages, temperature, max_tokens, stream };
     } else {
       const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
       const chat = wireMessages.filter((m) => m.role !== "system");
       if (!chat.length && system) chat.push({ role: "user", content: "\u8BF7\u6267\u884C\u4E0A\u8FF0\u4EFB\u52A1\u3002" });
       if (source === "claude") {
-        url = `${root}/messages`;
+        url = `${root2}/messages`;
         body = { model, system, messages: chat, temperature, max_tokens, stream };
       } else {
-        url = `${root}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key4}`;
+        url = `${root2}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key4}`;
         body = {
           ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
           contents: chat.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
@@ -11862,7 +13877,7 @@ ${variables2.warnings()}` : "");
       }
     }
     const res = settings.apiTransport === "tavern" ? await sendViaTavernBackend("generate", conn, body, options) : await send(url, { method: "POST", headers, body: JSON.stringify(body) }, options);
-    let text4;
+    let text5;
     const trace = { relay: settings.apiTransport === "tavern", reasoning: 0 };
     const extract = (event) => {
       const choice = event.choices?.[0];
@@ -11872,20 +13887,20 @@ ${variables2.warnings()}` : "");
       return deltas(source, event);
     };
     if (stream && res.body?.getReader && (trace.relay || !/application\/json/i.test(res.headers?.get?.("content-type") || ""))) {
-      text4 = await readSseStream(res.body, extract, options.onStreamChunk, trace);
+      text5 = await readSseStream(res.body, extract, options.onStreamChunk, trace);
     } else {
       const data = await json2(res);
       if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === "tavern" ? "\u9152\u9986\u540E\u7AEF\u672A\u80FD\u751F\u6210\u56DE\u590D\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC" : "")));
       trace.json = true;
       const d = extract(data);
-      text4 = source === "claude" ? (data.content || []).filter((p) => p.type === "text" || !p.type).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || "";
+      text5 = source === "claude" ? (data.content || []).filter((p) => p.type === "text" || !p.type).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || "";
     }
-    if (typeof text4 !== "string" || !text4.trim()) {
+    if (typeof text5 !== "string" || !text5.trim()) {
       const format = trace.json ? "JSON" : `\u6D41\u4E8B\u4EF6 ${trace.events ?? 0} \u4E2A\uFF0C${trace.done ? "\u6536\u5230 [DONE]" : "\u8FDE\u63A5\u5DF2\u7ED3\u675F\uFF0C\u672A\u6536\u5230 [DONE]"}`;
       throw new Error(`\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C\uFF08${trace.relay ? "\u9152\u9986\u540E\u7AEF" : "\u6D4F\u89C8\u5668\u76F4\u8FDE"}\uFF1B${format}\uFF1B\u63A8\u7406 ${trace.reasoning} \u5B57\u7B26\uFF0C\u6B63\u6587 0\uFF1Bfinish_reason=${trace.finish || "\u672A\u63D0\u4F9B"}\uFF09`);
     }
-    options.onStreamChunk?.(text4, true);
-    return text4;
+    options.onStreamChunk?.(text5, true);
+    return text5;
   }
 
   // src/tavern/settings.js
@@ -11950,15 +13965,15 @@ ${variables2.warnings()}` : "");
 `;
   function mount2(page) {
     const doc = page.ownerDocument;
-    const make = (tag, cls, text4) => {
-      const node3 = doc.createElement(tag);
-      if (cls) node3.className = cls;
-      if (text4 != null) node3.textContent = text4;
-      return node3;
+    const make = (tag2, cls, text5) => {
+      const node = doc.createElement(tag2);
+      if (cls) node.className = cls;
+      if (text5 != null) node.textContent = text5;
+      return node;
     };
-    const root = make("div", "fated-settings");
-    page.replaceChildren(make("style", "", css), root);
-    const button = (text4, cls = "pill-btn") => Object.assign(make("button", cls, text4), { type: "button" });
+    const root2 = make("div", "fated-settings");
+    page.replaceChildren(make("style", "", css), root2);
+    const button = (text5, cls = "pill-btn") => Object.assign(make("button", cls, text5), { type: "button" });
     const panel = (title) => {
       const section = make("section", "action-panel form-card");
       const bar = make("div", "panel-header-bar");
@@ -11966,11 +13981,11 @@ ${variables2.warnings()}` : "");
       section.append(bar);
       return { section, bar };
     };
-    return { make, root, button, panel };
+    return { make, root: root2, button, panel };
   }
   function renderPromptTab(page, ctx) {
-    const { make, root, button, panel } = mount2(page);
-    let slots = describeSlots(ctx.slots ?? ctx.settings.slots);
+    const { make, root: root2, button, panel } = mount2(page);
+    let slots2 = describeSlots(ctx.slots ?? ctx.settings.slots);
     let editing = null;
     const editors = /* @__PURE__ */ new Map();
     const field = (title, control, wide = false) => {
@@ -11993,7 +14008,7 @@ ${variables2.warnings()}` : "");
     summary.append(make("span", "panel-title", "\u6700\u7EC8 messages \u9884\u89C8\uFF08JSON\uFF09"));
     const json3 = make("pre");
     preview2.append(summary, json3);
-    root.append(dashboard, pipeline, preview2);
+    root2.append(dashboard, pipeline, preview2);
     const extraText = () => ctx.settings.extraText ?? "";
     const assembly = ctx.assemblyContext;
     const last = make("details", "action-panel form-card preview-panel");
@@ -12001,7 +14016,7 @@ ${variables2.warnings()}` : "");
     lastSummary.append(make("span", "panel-title", "\u4E0A\u6B21\u5B9E\u9645\u53D1\u9001\u7684 messages\uFF08\u7EC4\u88C5\u5FEB\u7167\uFF09"));
     const lastJson = make("pre");
     last.append(lastSummary, lastJson);
-    root.append(last);
+    root2.append(last);
     const showLast = () => {
       const messages = ctx.lastSent();
       last.hidden = !messages;
@@ -12013,13 +14028,13 @@ ${variables2.warnings()}` : "");
       showLast();
     });
     const refresh = () => {
-      hero.textContent = `\u5DF2\u542F\u7528 ${slots.filter((s) => s.enabled !== false).length} / ${slots.length}`;
+      hero.textContent = `\u5DF2\u542F\u7528 ${slots2.filter((s) => s.enabled !== false).length} / ${slots2.length}`;
       ctx.prepareMessages();
     };
     function saveSlots(next, fields3 = {}) {
-      const previous = slots;
-      slots = next;
-      ctx.save({ ...fields3, slots }, previous);
+      const previous = slots2;
+      slots2 = next;
+      ctx.save({ ...fields3, slots: slots2 }, previous);
       refresh();
     }
     const blank = () => {
@@ -12028,31 +14043,31 @@ ${variables2.warnings()}` : "");
     function drawCards() {
       pipeline.replaceChildren();
       editors.clear();
-      if (!slots.length) {
+      if (!slots2.length) {
         refresh();
         return blank();
       }
-      slots.forEach((slot, i) => {
+      slots2.forEach((slot2, i) => {
         const card = make("article", "action-panel wf-card");
         const head = make("div", "slot-head");
         const switchWrap = make("label", "switch");
         const toggle = make("input", "toggle-switch");
         toggle.type = "checkbox";
-        toggle.checked = slot.enabled !== false;
+        toggle.checked = slot2.enabled !== false;
         switchWrap.append(toggle, make("span", "switch-track"));
         const title = make("strong", "slot-title");
-        const badge = make("span", "role-badge", slot.role);
-        badge.dataset.role = slot.role;
+        const badge = make("span", "role-badge", slot2.role);
+        badge.dataset.role = slot2.role;
         const actions = make("div", "slot-actions");
         const edit = button("\u7F16\u8F91");
         const up = button("\u25B2");
         up.title = "\u4E0A\u79FB";
         const down = button("\u25BC");
         down.title = "\u4E0B\u79FB";
-        const remove2 = button("\u2715", "pill-btn danger");
-        remove2.disabled = slot.id === "identity";
-        remove2.title = remove2.disabled ? "\u53EF\u4F7F\u7528\u5F00\u5173\u505C\u7528\u8EAB\u4EFD\u58F0\u660E" : slot.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
-        actions.append(edit, up, down, remove2);
+        const remove = button("\u2715", "pill-btn danger");
+        remove.disabled = slot2.id === "identity";
+        remove.title = remove.disabled ? "\u53EF\u4F7F\u7528\u5F00\u5173\u505C\u7528\u8EAB\u4EFD\u58F0\u660E" : slot2.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
+        actions.append(edit, up, down, remove);
         head.append(title, badge, actions, switchWrap);
         const setTitle = (value) => {
           title.textContent = value.trim() || "\u672A\u547D\u540D\u69FD\u4F4D";
@@ -12060,25 +14075,25 @@ ${variables2.warnings()}` : "");
           toggle.setAttribute("aria-label", `\u542F\u7528\uFF1A${title.textContent}`);
           for (const action of actions.children) action.setAttribute("aria-label", `${action.title}\uFF1A${title.textContent}`);
         };
-        setTitle(slot.label);
-        const desc = slot.desc || (slot.custom ? "\u81EA\u5B9A\u4E49\u69FD\u4F4D" : "");
+        setTitle(slot2.label);
+        const desc = slot2.desc || (slot2.custom ? "\u81EA\u5B9A\u4E49\u69FD\u4F4D" : "");
         const body = make("p", "slot-desc", desc);
-        const editable = slot.custom === true || slot.id === "extra";
+        const editable = slot2.custom === true || slot2.id === "extra";
         const form = make("div", "slot-editor");
-        form.hidden = editing !== slot.id;
+        form.hidden = editing !== slot2.id;
         const labelInput = make("input");
-        labelInput.value = slot.label;
+        labelInput.value = slot2.label;
         labelInput.setAttribute("aria-label", "\u69FD\u4F4D\u6807\u9898");
         const role = make("select");
         role.setAttribute("aria-label", "\u6D88\u606F\u89D2\u8272");
         for (const value of ["system", "user", "assistant"]) role.append(Object.assign(make("option", "", value), { value }));
-        role.value = slot.role;
-        const staticContent = slot.content || (slot.id === "extra" ? extraText() : "");
+        role.value = slot2.role;
+        const staticContent = slot2.content || (slot2.id === "extra" ? extraText() : "");
         const content = editable ? make("textarea") : make("pre", "slot-preview");
         content.setAttribute("aria-label", "\u69FD\u4F4D\u5185\u5BB9");
         if (editable) content.value = staticContent;
         else {
-          content.textContent = resolveSlotContent(slot, assembly());
+          content.textContent = resolveSlotContent(slot2, assembly());
           content.setAttribute("aria-readonly", "true");
           content.tabIndex = 0;
         }
@@ -12088,16 +14103,16 @@ ${variables2.warnings()}` : "");
           form.hidden = !open;
           edit.setAttribute("aria-expanded", String(open));
         };
-        expand(editing === slot.id);
-        editors.set(slot.id, { edit, label: labelInput, content, expand });
+        expand(editing === slot2.id);
+        editors.set(slot2.id, { edit, label: labelInput, content, expand });
         edit.onclick = () => {
           const open = form.hidden;
           editors.get(editing)?.expand(false);
-          editing = open ? slot.id : null;
+          editing = open ? slot2.id : null;
           expand(open);
           if (open) labelInput.focus();
         };
-        const patch = (changes2) => saveSlots(slots.map((s, j) => j === i ? { ...s, ...changes2 } : s));
+        const patch = (changes2) => saveSlots(slots2.map((s, j) => j === i ? { ...s, ...changes2 } : s));
         toggle.onchange = () => patch({ enabled: toggle.checked });
         labelInput.oninput = () => {
           setTitle(labelInput.value);
@@ -12109,26 +14124,26 @@ ${variables2.warnings()}` : "");
         };
         if (editable) {
           content.oninput = () => {
-            if (slot.id === "extra") saveSlots(slots.map((s, j) => j === i ? { ...s, content: content.value } : s), { extraText: "" });
+            if (slot2.id === "extra") saveSlots(slots2.map((s, j) => j === i ? { ...s, content: content.value } : s), { extraText: "" });
             else patch({ content: content.value });
           };
         }
-        const move = (to) => {
-          const next = slots.slice();
+        const move2 = (to) => {
+          const next = slots2.slice();
           [next[i], next[to]] = [next[to], next[i]];
           saveSlots(next);
           drawCards();
-          editors.get(slot.id)?.edit.focus();
+          editors.get(slot2.id)?.edit.focus();
         };
         up.disabled = i === 0;
-        down.disabled = i === slots.length - 1;
-        up.onclick = () => move(i - 1);
-        down.onclick = () => move(i + 1);
-        remove2.onclick = () => {
-          if (editing === slot.id) editing = null;
-          saveSlots(slots.filter((_, j) => j !== i));
+        down.disabled = i === slots2.length - 1;
+        up.onclick = () => move2(i - 1);
+        down.onclick = () => move2(i + 1);
+        remove.onclick = () => {
+          if (editing === slot2.id) editing = null;
+          saveSlots(slots2.filter((_, j) => j !== i));
           drawCards();
-          (editors.get(slots[i]?.id ?? slots[i - 1]?.id)?.edit ?? add).focus();
+          (editors.get(slots2[i]?.id ?? slots2[i - 1]?.id)?.edit ?? add).focus();
         };
         card.append(head, body, form);
         pipeline.append(card);
@@ -12136,11 +14151,11 @@ ${variables2.warnings()}` : "");
       refresh();
     }
     add.onclick = () => {
-      const slot = makeCustomSlot();
-      editing = slot.id;
-      saveSlots([...slots, slot]);
+      const slot2 = makeCustomSlot();
+      editing = slot2.id;
+      saveSlots([...slots2, slot2]);
       drawCards();
-      editors.get(slot.id)?.label.focus();
+      editors.get(slot2.id)?.label.focus();
     };
     reset.onclick = () => {
       editing = null;
@@ -12150,7 +14165,7 @@ ${variables2.warnings()}` : "");
     drawCards();
   }
   function renderApiTab(page, ctx) {
-    const { make, root, button, panel } = mount2(page);
+    const { make, root: root2, button, panel } = mount2(page);
     const settings = ctx.settings;
     const tavern = (settings.apiMode ?? "tavern") === "tavern";
     function card(title) {
@@ -12158,7 +14173,7 @@ ${variables2.warnings()}` : "");
       const grid = make("div", "form-grid");
       section.className = "action-panel form-card api-card";
       section.append(grid);
-      root.append(section);
+      root2.append(section);
       return grid;
     }
     function field(grid, key4, title, input2, fallback, disabled = false, wide = false) {
@@ -12181,7 +14196,7 @@ ${variables2.warnings()}` : "");
     }
     const select = (options) => {
       const input2 = make("select");
-      for (const [value, text4] of options) input2.append(Object.assign(make("option", "", text4), { value }));
+      for (const [value, text5] of options) input2.append(Object.assign(make("option", "", text5), { value }));
       return input2;
     };
     const input = (type, props = {}) => Object.assign(make("input"), { type }, props);
@@ -12207,19 +14222,19 @@ ${variables2.warnings()}` : "");
     const load = button("\u{1F504} \u62C9\u53D6\u6A21\u578B");
     const test = button("\u26A1 \u6D4B\u8BD5\u8FDE\u63A5");
     commands2.append(load, test);
-    const status2 = make("div", "api-status");
-    status2.setAttribute("role", "status");
-    modelField.append(commands2, status2);
+    const status = make("div", "api-status");
+    status.setAttribute("role", "status");
+    modelField.append(commands2, status);
     load.disabled = tavern;
     async function run(pending, action) {
       load.disabled = test.disabled = true;
-      status2.dataset.error = "false";
-      status2.textContent = pending;
+      status.dataset.error = "false";
+      status.textContent = pending;
       try {
-        status2.textContent = await action();
+        status.textContent = await action();
       } catch (err) {
-        status2.dataset.error = "true";
-        status2.textContent = `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || String(err)}`;
+        status.dataset.error = "true";
+        status.textContent = `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || String(err)}`;
       } finally {
         load.disabled = tavern;
         test.disabled = false;
@@ -12286,7 +14301,7 @@ ${variables2.warnings()}` : "");
   function createAiSessions(saved, persist, now = Date.now) {
     const data = { sessions: Array.isArray(saved?.sessions) ? structuredClone(saved.sessions) : [], activeId: saved?.activeId };
     const get3 = (id3) => data.sessions.find((session) => session.id === id3);
-    const active = () => get3(data.activeId);
+    const active2 = () => get3(data.activeId);
     const save = () => persist(data);
     let lastId = 0;
     function create(title = "\u65B0\u5EFA\u4F1A\u8BDD") {
@@ -12299,17 +14314,17 @@ ${variables2.warnings()}` : "");
       data.activeId = session.id;
       return session;
     }
-    if (!active()) {
+    if (!active2()) {
       const first = data.sessions[0] ?? create();
       data.activeId = first.id;
     }
-    function change(session) {
+    function change2(session) {
       session.updatedAt = now();
       save();
     }
     return {
       data,
-      active,
+      active: active2,
       get: get3,
       create() {
         const session = create();
@@ -12326,7 +14341,7 @@ ${variables2.warnings()}` : "");
         const session = get3(id3);
         if (!session || !title.trim()) return;
         session.title = title.trim();
-        change(session);
+        change2(session);
       },
       remove(id3) {
         const index = data.sessions.findIndex((session) => session.id === id3);
@@ -12339,24 +14354,24 @@ ${variables2.warnings()}` : "");
         const session = get3(id3);
         if (!session) return;
         session.messages.length = 0;
-        change(session);
+        change2(session);
       },
       append(id3, ...messages) {
         const session = get3(id3);
         if (!session) return [];
-        const entries2 = messages.map((message) => {
+        const entries3 = messages.map((message) => {
           if (!roles.has(message.role)) throw new TypeError(`\u672A\u77E5\u6D88\u606F\u89D2\u8272\uFF1A${message.role}`);
           return { ts: now(), ...message };
         });
-        session.messages.push(...entries2);
-        change(session);
-        return entries2;
+        session.messages.push(...entries3);
+        change2(session);
+        return entries3;
       },
       update(id3, message, fields3) {
         const session = get3(id3);
         if (!session?.messages.includes(message)) return;
         Object.assign(message, fields3);
-        change(session);
+        change2(session);
       }
     };
   }
@@ -12379,13 +14394,13 @@ ${variables2.warnings()}` : "");
       if (mv) aliases(mv).forEach((name) => names.add(name));
       const char = sources.charInfo?.find(matches3);
       const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
-      const defs = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
+      const defs3 = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
       const raw = {
         ...mv && { mvu: clean(mv) },
         ...char && { char_info: clean(char) },
         battle_init: clean(p),
-        equipment: defs(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
-        skills: defs(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
+        equipment: defs3(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
+        skills: defs3(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
       };
       const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordered(raw))));
       return [unit.id, { raw, sourceKind, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
@@ -12396,19 +14411,22 @@ ${variables2.warnings()}` : "");
   // src/tavern/instance-card.js
   var attributes2 = { str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" };
   var types = { physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" };
-  var when = { passive: "\u88AB\u52A8", active: "\u4E3B\u52A8", on_hit: "\u547D\u4E2D\u65F6", on_attack: "\u653B\u51FB\u65F6", on_skill_cast: "\u65BD\u653E\u65F6", on_damaged: "\u53D7\u4F24\u65F6", on_heal: "\u6CBB\u7597\u65F6", on_turn_start: "\u56DE\u5408\u5F00\u59CB", on_turn_end: "\u56DE\u5408\u7ED3\u675F", on_kill: "\u51FB\u5012\u65F6", on_death: "\u5012\u4E0B\u65F6", on_equip: "\u88C5\u5907\u65F6", on_ally_death: "\u961F\u53CB\u5012\u4E0B\u65F6" };
-  var verbs = { heal: "\u6CBB\u7597", modifyStat: "\u5C5E\u6027\u4FEE\u6B63", modifyCheck: "\u68C0\u5B9A\u4FEE\u6B63", restoreResource: "\u6062\u590D\u8D44\u6E90", drainResource: "\u6D88\u8017\u8D44\u6E90", produceResource: "\u83B7\u5F97\u8D44\u6E90", removeStatus: "\u79FB\u9664\u72B6\u6001", shield: "\u62A4\u76FE", knockback: "\u51FB\u9000", teleportBackstab: "\u77AC\u79FB\u80CC\u523A", execute: "\u65A9\u6740", raiseDead: "\u590D\u751F", chainEffect: "\u6548\u679C\u94FE", procEffect: "\u89E6\u53D1\u6548\u679C", addItem: "\u83B7\u5F97\u7269\u54C1", upgradeHitTier: "\u63D0\u5347\u547D\u4E2D\u8BC4\u7EA7", forceOutcome: "\u5F3A\u5236\u5224\u5B9A", multiplyDamage: "\u4F24\u5BB3\u500D\u7387", modifyDamageBase: "\u57FA\u7840\u4F24\u5BB3", summon: "\u53EC\u5524" };
-  function effectSummary(expr, state) {
-    const status2 = (id3) => state?.statusTemplates?.[id3]?.name ?? STATUSES[id3]?.name ?? id3;
-    const node3 = (n) => (n.enabled === false ? "[\u5DF2\u5173\u95ED] " : "") + (n.kind === "damage" ? ["\u4F24\u5BB3", n.percentOfPower != null ? `\u5A01\u529B${Math.round(n.percentOfPower * 100)}%` : n.amount ?? n.flat, types[n.damageType]].filter((v) => v != null).join(" ") : n.kind === "grantStatus" ? `\u65BD\u52A0 ${status2(n.statusId)}${n.turns ? ` ${n.turns} \u56DE\u5408` : ""}` : n.kind === "chainEffect" ? n.effects.map(node3).join("\uFF0C") : [verbs[n.kind] ?? "\u6548\u679C", n.label ?? attributes2[n.stat] ?? n.stat ?? n.resource ?? "", n.amount ?? n.flat ?? n.factor ?? (n.percent != null ? `${n.percent * 100}%` : "")].filter((v) => v !== "").join(" "));
-    const roll = expr.roll;
-    return `${when[expr.trigger] ?? "\u89E6\u53D1"}${roll?.dice ? ` ${roll.dice}\u2265${roll.gte}` : roll?.save ? " \u8C41\u514D\u5931\u8D25" : roll?.chance != null ? ` ${Math.round(roll.chance * 100)}%` : ""} \u2192 ${(expr.effects ?? []).map(node3).join("\uFF1B")}`;
+  var when2 = { active: "\u4E3B\u52A8", after_hit: "\u547D\u4E2D\u65F6", before_action: "\u884C\u52A8\u524D", after_damage: "\u4F24\u5BB3\u7ED3\u7B97\u540E", after_heal: "\u6CBB\u7597\u540E", turn_start: "\u56DE\u5408\u5F00\u59CB", turn_end: "\u56DE\u5408\u7ED3\u675F", on_kill: "\u51FB\u5012\u65F6", on_death: "\u5012\u4E0B\u65F6" };
+  var verbs = { let: "\u8BB0\u5F55\u6570\u503C", if: "\u6761\u4EF6\u5206\u652F", for_each: "\u9010\u4E2A\u7ED3\u7B97", check: "\u68C0\u5B9A", ask: "\u7B49\u5F85\u9009\u62E9", mutate_event: "\u8C03\u6574\u7ED3\u7B97", damage: "\u4F24\u5BB3", heal: "\u6CBB\u7597", resource: "\u8C03\u6574\u8D44\u6E90", apply_status: "\u65BD\u52A0\u72B6\u6001", remove_status: "\u79FB\u9664\u72B6\u6001", move: "\u4F4D\u79FB", spawn: "\u751F\u6210", remove: "\u79FB\u9664", perform: "\u6267\u884C\u884C\u52A8", link_pool: "\u8C03\u6574\u5171\u4EAB\u8D44\u6E90" };
+  function ruleSummary(rule2, state) {
+    const statusName = (id3) => state?.statusTemplates?.[id3]?.name ?? STATUSES[id3]?.name ?? id3;
+    const describe3 = (op) => {
+      const prefix = op.enabled === false ? "\u5DF2\u5173\u95ED\uFF1A" : "";
+      if (op.op === "apply_status") return `${prefix}\u65BD\u52A0 ${statusName(op.statusId)}${typeof op.turns === "number" ? ` ${op.turns} \u56DE\u5408` : ""}`;
+      return [prefix + (verbs[op.op] ?? "\u6548\u679C"), types[op.damageType], typeof op.amount === "number" ? op.amount : null].filter((value) => value != null).join(" ");
+    };
+    return `${rule2.enabled === false ? "\u5DF2\u5173\u95ED\uFF1A" : ""}${when2[rule2.hook] ?? "\u89E6\u53D1"} \u2192 ${rule2.program.map(describe3).join("\uFF1B")}`;
   }
   var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
   var TEAMS = { blue: "\u6211\u65B9", red: "\u654C\u65B9" };
-  var ratio3 = (v, max) => max ? Math.min(1, Math.max(0, (Number(v) || 0) / max)) : 0;
+  var ratio2 = (v, max) => max ? Math.min(1, Math.max(0, (Number(v) || 0) / max)) : 0;
   function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0 } = {}) {
-    const line = (tag, cls, value) => make(tag, { class: cls }, value);
+    const line = (tag2, cls, value) => make(tag2, { class: cls }, value);
     const name = unit.name ?? unit.id;
     box.classList.add("fated-char-card");
     if (unit.team) box.dataset.team = unit.team;
@@ -12418,13 +14436,13 @@ ${variables2.warnings()}` : "");
     const nameRow = line("div", "fated-char-name-row");
     nameRow.append(line("strong", "fated-char-name", name));
     if (warnings) nameRow.append(make("span", { class: "fated-char-warn", title: `${warnings} \u6761\u8BCA\u65AD` }, `\u26A0 ${warnings}`));
-    const tags2 = line("div", "fated-char-tags");
-    for (const text4 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text4) tags2.append(line("span", "fated-char-tag", text4));
-    title.append(nameRow, tags2);
+    const tags = line("div", "fated-char-tags");
+    for (const text5 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text5) tags.append(line("span", "fated-char-tag", text5));
+    title.append(nameRow, tags);
     const mini = line("div", "fated-char-mini");
     for (const [key4, label, maxKey] of RESOURCES) {
       const bar = make("span", { class: `fated-char-mini-bar is-${key4}`, title: `${label} ${unit[key4] ?? "\u2014"} / ${unit[maxKey] ?? "\u2014"}` });
-      bar.style.setProperty("--ratio", ratio3(unit[key4], unit[maxKey]));
+      bar.style.setProperty("--ratio", ratio2(unit[key4], unit[maxKey]));
       mini.append(bar);
     }
     const toggle = make("button", { type: "button", class: "fated-char-toggle", "aria-expanded": String(!collapsed), "aria-label": `${collapsed ? "\u5C55\u5F00" : "\u6298\u53E0"} ${name}`, title: collapsed ? "\u5C55\u5F00" : "\u6298\u53E0" }, "");
@@ -12449,47 +14467,47 @@ ${variables2.warnings()}` : "");
     for (const [key4, label, maxKey] of RESOURCES) {
       const max = unit[maxKey], v = unit[key4];
       const bar = line("div", `fated-char-bar is-${key4}`);
-      bar.style.setProperty("--ratio", ratio3(v, max));
-      bar.style.setProperty("--fill", `${Math.round(ratio3(v, max) * 100)}%`);
+      bar.style.setProperty("--ratio", ratio2(v, max));
+      bar.style.setProperty("--fill", `${Math.round(ratio2(v, max) * 100)}%`);
       bar.append(make("i"), line("b", "", label), line("span", "", `${v ?? "\u2014"} / ${max ?? "\u2014"}`));
       resources.append(bar);
     }
     body.append(resources);
-    const stats2 = line("dl", "fated-char-stats");
+    const stats = line("dl", "fated-char-stats");
     for (const [key4, label] of Object.entries(attributes2)) {
       const pair = make("div");
       pair.append(make("dt", {}, label), make("dd", {}, unit.stats?.[key4] ?? "\u2014"));
-      stats2.append(pair);
+      stats.append(pair);
     }
-    body.append(stats2);
+    body.append(stats);
     const section = (heading, rows2) => {
       const block = line("section", "fated-char-section");
       block.append(make("h5", {}, `${heading}${rows2.length ? ` \xB7 ${rows2.length}` : ""}`));
       if (!rows2.length) block.append(line("p", "fated-mini", `\u6682\u65E0${heading}`));
       for (const { label, meta, template } of rows2) {
-        const fx = template?.effects ?? [];
+        const fx = template?.rules ?? [];
         const row = make(fx.length ? "details" : "div", { class: "fated-char-row" });
         const head = make(fx.length ? "summary" : "div", { class: "fated-char-row-head" });
         head.append(line("span", "fated-char-row-name", label));
         for (const m of meta) head.append(line("span", "fated-char-chip", m));
         if (fx.length) head.append(line("span", "fated-char-fx", `${fx.length} \u4E2A\u6548\u679C`));
         row.append(head);
-        for (const e of fx) row.append(line("p", "fated-mini", effectSummary(e, state)));
+        for (const e of fx) row.append(line("p", "fated-mini", ruleSummary(e, state)));
         block.append(row);
       }
       body.append(block);
     };
     const wear = [["\u4E3B\u624B", unit.mainHand ?? unit.weapon], ["\u526F\u624B", unit.offHand], ["\u76FE\u724C", unit.shield], ...(unit.gear ?? []).map((id3) => ["\u7A7F\u6234", id3])];
-    const gear = wear.filter(([, id3]) => id3).map(([slot, id3]) => {
+    const gear = wear.filter(([, id3]) => id3).map(([slot2, id3]) => {
       const item = state?.items?.[id3], t = state?.equipment?.[item?.templateId] ?? unit.equipment?.find((e) => e.id === id3)?.template;
       const d = t?.damage;
-      const dice3 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}`.trim() : null;
-      return { label: `[${slot}] ${t?.name ?? id3}`, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice3].filter(Boolean), template: t };
+      const dice4 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}`.trim() : null;
+      return { label: `[${slot2}] ${t?.name ?? id3}`, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice4].filter(Boolean), template: t };
     });
     section("\u88C5\u5907", gear);
     const skills = (unit.skills ?? []).map((id3) => {
       const t = state?.skills?.[id3];
-      const damage = [...new Set([t?.damage?.type, t?.damageType, ...(t?.effects ?? []).flatMap((e) => e.effects.filter((n) => n.kind === "damage").map((n) => n.damageType)), unit.skillInfo?.[id3]?.damageType].filter(Boolean))].map((type) => types[type]).join("/");
+      const damage = [...new Set([t?.damage?.type, t?.damageType, ...(t?.rules ?? []).flatMap((rule2) => rule2.program.filter((op) => op.op === "damage").map((op) => op.damageType)), unit.skillInfo?.[id3]?.damageType].filter(Boolean))].map((type) => types[type]).join("/");
       const cost = [`${t?.resourceCost?.sp ?? t?.sp ?? 0} SP`, t?.resourceCost?.mp ?? t?.mp ? `${t.resourceCost?.mp ?? t.mp} MP` : null, t?.resourceCost?.hp ? `${t.resourceCost.hp} HP` : null].filter(Boolean).join(" / ");
       return { label: t?.name ?? id3, meta: [`\u6D88\u8017 ${cost}`, `\u5A01\u529B ${t?.power ?? "\u2014"}`, damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B", `\u8DDD\u79BB ${t?.range ?? "\u2014"}`], template: t };
     });
@@ -12515,11 +14533,11 @@ ${variables2.warnings()}` : "");
         continue;
       }
       for (const paragraph of block.trim().split(/\n\s*\n/).filter(Boolean)) {
-        const node3 = make("p");
+        const node = make("p");
         for (const [i, part] of paragraph.split(/`([^`\n]+)`/).entries()) {
-          node3.append(i % 2 ? make("code", {}, part) : part);
+          node.append(i % 2 ? make("code", {}, part) : part);
         }
-        target2.append(node3);
+        target2.append(node);
       }
     }
   }
@@ -12527,8 +14545,8 @@ ${variables2.warnings()}` : "");
     const button = (label) => make("button", { type: "button" }, label);
     const toolbar = make("div", { class: "fated-actions" });
     const select = make("select", { "aria-label": "\u5207\u6362\u4F1A\u8BDD" });
-    const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove2 = button("\u5220\u9664"), clear = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
-    toolbar.append(select, create, rename, remove2, clear);
+    const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove = button("\u5220\u9664"), clear = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
+    toolbar.append(select, create, rename, remove, clear);
     const edit = make("form", { class: "fated-actions", hidden: "" });
     const title = make("input", { "aria-label": "\u4F1A\u8BDD\u540D\u79F0", maxlength: "80", required: "" });
     const cancel = button("\u53D6\u6D88");
@@ -12539,8 +14557,8 @@ ${variables2.warnings()}` : "");
     const input = make("textarea", { rows: "3", "aria-label": "\u8F93\u5165\u6D88\u606F", placeholder: "\u8F93\u5165\u6D88\u606F \xB7 Shift+Enter \u6362\u884C" });
     const submit = make("button", { type: "submit" }, "\u53D1\u9001");
     const abort = button("\u505C\u6B62");
-    const status2 = make("span", { role: "status" });
-    composer.append(input, submit, abort, status2);
+    const status = make("span", { role: "status" });
+    composer.append(input, submit, abort, status);
     page.append(make("h3", {}, "\u8F85\u52A9 AI"), toolbar, edit, info, log, composer);
     let shownId, busy = false, pinned = true;
     const rows2 = /* @__PURE__ */ new Map(), drafts = /* @__PURE__ */ new Map();
@@ -12586,9 +14604,9 @@ ${variables2.warnings()}` : "");
       const session = sessions.active();
       info.textContent = `${session.messages.length} \u6761\u6D88\u606F \xB7 \u521B\u5EFA\u4E8E ${formatTime(session.createdAt)}`;
       submit.disabled = busy || !input.value.trim();
-      remove2.disabled = clear.disabled = busy;
+      remove.disabled = clear.disabled = busy;
       abort.hidden = !busy;
-      status2.textContent = busy ? "AI \u6B63\u5728\u56DE\u590D\u2026" : "";
+      status.textContent = busy ? "AI \u6B63\u5728\u56DE\u590D\u2026" : "";
       scrollToEnd();
     }
     function submitMessage() {
@@ -12628,7 +14646,7 @@ ${variables2.warnings()}` : "");
       edit.hidden = true;
       render();
     });
-    on(remove2, "click", () => {
+    on(remove, "click", () => {
       drafts.delete(shownId);
       sessions.remove(shownId);
       render();
@@ -12667,7 +14685,7 @@ ${variables2.warnings()}` : "");
   }
 
   // src/tavern/overlay.js
-  var own6 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+  var own13 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
   var isObject = (v) => v && typeof v === "object" && !Array.isArray(v);
   var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
   var clone2 = (value) => {
@@ -12711,11 +14729,11 @@ ${variables2.warnings()}` : "");
       return null;
     }
   }
-  function text3(value) {
+  function text4(value) {
     return value == null ? "" : String(value);
   }
-  function el(doc, tag, attrs3, content) {
-    const n = doc.createElement(tag);
+  function el(doc, tag2, attrs3, content) {
+    const n = doc.createElement(tag2);
     for (const [key4, value] of Object.entries(attrs3 || {})) {
       if (key4 === "class") n.className = value;
       else if (key4 === "style") n.style.cssText = value;
@@ -12734,21 +14752,21 @@ ${variables2.warnings()}` : "");
     }
   }
   function balancedJSONObjects(source) {
-    const value = text3(source).replaceAll("&quot;", '"').replaceAll("&#34;", '"');
+    const value = text4(source).replaceAll("&quot;", '"').replaceAll("&#34;", '"');
     const results = [];
     for (let start = 0; start < value.length; start++) {
       if (value[start] !== "{") continue;
-      let depth = 0, quoted = false, escaped = false;
+      let depth = 0, quoted2 = false, escaped = false;
       for (let i = start; i < value.length; i++) {
         const ch = value[i];
-        if (quoted) {
+        if (quoted2) {
           if (escaped) escaped = false;
           else if (ch === "\\") escaped = true;
-          else if (ch === '"') quoted = false;
+          else if (ch === '"') quoted2 = false;
           continue;
         }
         if (ch === '"') {
-          quoted = true;
+          quoted2 = true;
           continue;
         }
         if (ch === "{") depth++;
@@ -12774,9 +14792,9 @@ ${variables2.warnings()}` : "");
     }
     return result;
   }
-  function deletePath(object4, path) {
-    if (!path) return;
-    const parts = String(path).trim().replace(/^\$\.?/, "").split(".").filter(Boolean);
+  function deletePath(object4, path2) {
+    if (!path2) return;
+    const parts = String(path2).trim().replace(/^\$\.?/, "").split(".").filter(Boolean);
     if (!parts.length || !parts.every(safeProperty)) return;
     let cursor = object4;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -12797,14 +14815,14 @@ ${variables2.warnings()}` : "");
       ...config.temperature !== "" && config.temperature != null ? { temperature: Number(config.temperature) } : {},
       ...config.max_tokens !== "" && config.max_tokens != null ? { max_tokens: Number(config.max_tokens) } : {}
     }, parseJSON(config.extraBody ?? config.additionalBody ?? config.body, {}));
-    for (const path2 of excludedList(config.excludeParams ?? config.excludedParams ?? config.excludeBodyParams)) deletePath(body, path2);
+    for (const path3 of excludedList(config.excludeParams ?? config.excludedParams ?? config.excludeBodyParams)) deletePath(body, path3);
     const headers = { "Content-Type": "application/json", ...parseJSON(config.headers ?? config.extraHeaders ?? config.additionalHeaders ?? config.requestHeaders, {}) };
     if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
-    let url = text3(config.baseUrl || config.url || "").trim();
+    let url = text4(config.baseUrl || config.url || "").trim();
     if (!url) url = "/v1/chat/completions";
-    const [endpoint, query] = url.split(/\?(.*)/s, 2);
-    const path = endpoint.replace(/\/+$/, "");
-    url = (/\/chat\/completions$/.test(path) ? path : `${path}/chat/completions`) + (query ? `?${query}` : "");
+    const [endpoint, query2] = url.split(/\?(.*)/s, 2);
+    const path2 = endpoint.replace(/\/+$/, "");
+    url = (/\/chat\/completions$/.test(path2) ? path2 : `${path2}/chat/completions`) + (query2 ? `?${query2}` : "");
     return { url, body, headers };
   }
   async function requestAI(config, messages, fetchImpl, signal) {
@@ -12820,7 +14838,7 @@ ${variables2.warnings()}` : "");
   function messageContent(message) {
     if (typeof message === "string") return message;
     if (!message || typeof message !== "object") return "";
-    return text3(message.content ?? message.message ?? message.text ?? message.mes ?? message.data?.content ?? "");
+    return text4(message.content ?? message.message ?? message.text ?? message.mes ?? message.data?.content ?? "");
   }
   function messageMeta(message, index = 0) {
     if (!message || typeof message !== "object") return { messageId: `floor-${index}`, swipeId: "0" };
@@ -12828,16 +14846,16 @@ ${variables2.warnings()}` : "");
     const swipeId = message.swipe_id ?? message.swipeId ?? message.swipe_id_string ?? message.swipe ?? message.data?.swipe_id ?? "0";
     return { messageId: String(messageId), swipeId: String(swipeId) };
   }
-  function safeKey(value) {
-    return text3(value).replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 96) || "unknown";
+  function safeKey2(value) {
+    return text4(value).replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 96) || "unknown";
   }
   function battleKeyFor(chat, message, battle) {
     const meta = messageMeta(message);
     const explicit = battle?.battleId ?? battle?.id ?? "unnamed";
-    return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit)].join("__");
+    return [safeKey2(chat), safeKey2(meta.messageId), safeKey2(meta.swipeId), safeKey2(explicit)].join("__");
   }
   function extractTag(source, names) {
-    const value = text3(source);
+    const value = text4(source);
     for (const name of names) {
       const re = new RegExp(`(?:<${name}[^>]*>|\\{${name}\\s*\\})([\\s\\S]*?)(?:<\\/${name}>|\\{\\/${name}\\s*\\})`, "i");
       const match = value.match(re);
@@ -12848,7 +14866,7 @@ ${variables2.warnings()}` : "");
     return "";
   }
   function extractTags(source, name) {
-    const value = text3(source), result = [];
+    const value = text4(source), result = [];
     const re = new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, "gi");
     for (const match of value.matchAll(re)) result.push(match[1].trim());
     return result;
@@ -12858,9 +14876,9 @@ ${variables2.warnings()}` : "");
       return parseSimpleYaml(value);
     } catch (_) {
     }
-    const output = {};
-    const lines = text3(value).replace(/^```(?:yaml|yml)?\s*|\s*```$/gim, "").split(/\r?\n/);
-    const stack = [{ indent: -1, object: output }];
+    const output2 = {};
+    const lines = text4(value).replace(/^```(?:yaml|yml)?\s*|\s*```$/gim, "").split(/\r?\n/);
+    const stack = [{ indent: -1, object: output2 }];
     for (const line of lines) {
       if (!line.trim() || /^\s*#/.test(line)) continue;
       const match = line.match(/^(\s*)([-\w\u4e00-\u9fff]+)\s*:\s*(.*)$/);
@@ -12877,10 +14895,10 @@ ${variables2.warnings()}` : "");
       stack.at(-1).object[key4] = valueOut;
       if (isObject(valueOut)) stack.push({ indent, object: valueOut });
     }
-    return output;
+    return output2;
   }
   function parseAIResponse(value) {
-    const source = typeof value === "object" ? JSON.stringify(value) : text3(value);
+    const source = typeof value === "object" ? JSON.stringify(value) : text4(value);
     const candidates = [];
     const fenced = source.match(/```(?:json)?\s*([\s\S]*?)```/gi) || [];
     candidates.push(...fenced.map((x) => x.replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim()));
@@ -12913,16 +14931,16 @@ ${variables2.warnings()}` : "");
     if (Array.isArray(parsed?.unitPatch)) return parsed.unitPatch;
     return null;
   }
-  function fingerprintAt(state, path) {
+  function fingerprintAt(state, path2) {
     let value = state;
-    for (const key4 of path.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-      if (value == null || !own6(value, key4)) return void 0;
+    for (const key4 of path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+      if (value == null || !own13(value, key4)) return void 0;
       value = value[key4];
     }
     return JSON.stringify(value);
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.3.2";
+  var TAVERN_VERSION = "0.4.0";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
@@ -12978,7 +14996,7 @@ ${variables2.warnings()}` : "");
       if (id3 != null) return String(id3);
     } catch {
     }
-    return text3(host?.location?.pathname || "default").replace(/[^\w.-]+/g, "_") || "default";
+    return text4(host?.location?.pathname || "default").replace(/[^\w.-]+/g, "_") || "default";
   }
   function tavernIdentity(host) {
     const helper = getGlobal(host, "TavernHelper");
@@ -13012,24 +15030,24 @@ ${variables2.warnings()}` : "");
     if (messages.length) return messages;
     const doc = hostDocument(host);
     const nodes = doc ? [...doc.querySelectorAll(".mes, .chat-msg, [data-message-id], [data-mesid]")] : [];
-    return nodes.map((node3, index) => ({
-      message_id: node3.getAttribute("mesid") ?? node3.dataset.messageId ?? node3.dataset.mesid ?? node3.dataset.id ?? `floor-${index}`,
-      swipe_id: node3.dataset.swipeId ?? node3.dataset.swipe ?? "0",
-      content: node3.querySelector(".mes_text, .message, [data-content]")?.textContent || node3.textContent
+    return nodes.map((node, index) => ({
+      message_id: node.getAttribute("mesid") ?? node.dataset.messageId ?? node.dataset.mesid ?? node.dataset.id ?? `floor-${index}`,
+      swipe_id: node.dataset.swipeId ?? node.dataset.swipe ?? "0",
+      content: node.querySelector(".mes_text, .message, [data-content]")?.textContent || node.textContent
     })).filter((item) => item.content);
   }
   function sourceBundle(variables2, messages, chat = "default", preferredMessageId) {
-    const list3 = Array.isArray(messages) ? messages : [];
-    const latestMessage = list3.at(-1);
+    const list4 = Array.isArray(messages) ? messages : [];
+    const latestMessage = list4.at(-1);
     const latestFloor = messageContent(latestMessage ?? variables2?.latest_floor ?? variables2?.latestFloor ?? "");
-    const eligible = list3.filter((message) => message?.role !== "user" && !message?.is_user && message?.role !== "system" && !message?.is_system && (preferredMessageId == null || messageMeta(message).messageId === String(preferredMessageId)));
-    const tags2 = ["battle_init", "battle_in", "\u6218\u672F\u6C99\u76D8"];
+    const eligible = list4.filter((message) => message?.role !== "user" && !message?.is_user && message?.role !== "system" && !message?.is_system && (preferredMessageId == null || messageMeta(message).messageId === String(preferredMessageId)));
+    const tags = ["battle_init", "battle_in", "\u6218\u672F\u6C99\u76D8"];
     const decodeTags = (value) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"');
-    const battleSource = eligible.findLast((message) => extractTag(decodeTags(messageContent(message)), tags2));
-    const sourceIndex = battleSource ? list3.indexOf(battleSource) : list3.length - 1;
-    const joined = list3.slice(0, sourceIndex + 1).map(messageContent).join("\n");
+    const battleSource = eligible.findLast((message) => extractTag(decodeTags(messageContent(message)), tags));
+    const sourceIndex = battleSource ? list4.indexOf(battleSource) : list4.length - 1;
+    const joined = list4.slice(0, sourceIndex + 1).map(messageContent).join("\n");
     const allText = decodeTags(messageContent(battleSource ?? eligible.at(-1)));
-    let battleRaw = extractTag(allText, tags2);
+    let battleRaw = extractTag(allText, tags);
     if (!battleRaw) {
       const legacy = allText.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*[:：]?\s*([\s\S]+)/i);
       if (legacy) battleRaw = legacy[1].trim();
@@ -13114,37 +15132,37 @@ ${variables2.warnings()}` : "");
     if (isObject(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
       return deepMerge(result, normalizeSemanticPatch(patch.battle_patch || patch));
     }
-    const list3 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
-    if (!Array.isArray(list3)) return result;
-    const pointer2 = (path) => String(path || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
-    for (const operation of list3) {
-      if (!operation || !operation.op) continue;
-      const keys = pointer2(operation.path);
+    const list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
+    if (!Array.isArray(list4)) return result;
+    const pointer2 = (path2) => String(path2 || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
+    for (const operation2 of list4) {
+      if (!operation2 || !operation2.op) continue;
+      const keys = pointer2(operation2.path);
       if (!keys.length || !keys.every(safeProperty)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
       const last = keys.pop();
       let parent = result;
       for (const key4 of keys) {
-        if (!own6(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation.path}`);
+        if (!own13(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
         parent = parent[key4];
       }
-      if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation.path}`);
+      if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
       if (strict) {
         if (Array.isArray(parent)) {
-          const append = last === "-" && operation.op === "add";
-          if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation.path}`);
+          const append = last === "-" && operation2.op === "add";
+          if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation2.path}`);
         }
-        if (operation.op !== "add" && !own6(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation.path}`);
-        if (operation.op === "add" && Array.isArray(parent) && last !== "-") {
-          parent.splice(Number(last), 0, clone2(operation.value));
+        if (operation2.op !== "add" && !own13(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+        if (operation2.op === "add" && Array.isArray(parent) && last !== "-") {
+          parent.splice(Number(last), 0, clone2(operation2.value));
           continue;
         }
       }
-      if (operation.op === "remove") {
+      if (operation2.op === "remove") {
         if (Array.isArray(parent)) parent.splice(Number(last), 1);
         else delete parent[last];
-      } else if (operation.op === "add" || operation.op === "replace") {
-        if (Array.isArray(parent) && last === "-") parent.push(clone2(operation.value));
-        else parent[last] = clone2(operation.value);
+      } else if (operation2.op === "add" || operation2.op === "replace") {
+        if (Array.isArray(parent) && last === "-") parent.push(clone2(operation2.value));
+        else parent[last] = clone2(operation2.value);
       }
     }
     return result;
@@ -13180,18 +15198,18 @@ ${variables2.warnings()}` : "");
     let characters = {}, scanStatus = "";
     const openingSources = /* @__PURE__ */ new Map();
     const enteredBattles = /* @__PURE__ */ new Set();
-    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own6(config.instances, key4));
+    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own13(config.instances, key4));
     const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
-    const operations = (key4) => batches(key4).flatMap((batch) => batch.patch);
+    const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
     let battleObserver = null, diagnostics = { phase: "created" };
     const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
-    const on = (node3, event, fn, opts = {}) => {
-      if (!node3) return;
+    const on = (node, event, fn, opts = {}) => {
+      if (!node) return;
       const options2 = controller ? { ...opts, signal: controller.signal } : opts;
-      node3.addEventListener(event, fn, options2);
-      if (!controller) listeners.push(() => node3.removeEventListener(event, fn, opts));
+      node.addEventListener(event, fn, options2);
+      if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts));
     };
-    const root = el(doc, "div", { "data-fated-tavern-overlay": "" });
+    const root2 = el(doc, "div", { "data-fated-tavern-overlay": "" });
     const launcher = el(doc, "button", { class: "fated-tavern-launcher", title: `\u6253\u5F00\u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0 \xB7 v${TAVERN_VERSION}`, "aria-label": `\u6253\u5F00\u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0 \xB7 v${TAVERN_VERSION}`, type: "button" }, "\u{1FA84}");
     const panel = el(doc, "section", { class: "fated-tavern-panel", role: "dialog", "aria-label": "\u547D\u5B9A\u6218\u672F\u9152\u9986\u63A7\u5236\u53F0", hidden: "" });
     const header = el(doc, "header", { class: "fated-tavern-header" });
@@ -13211,8 +15229,8 @@ ${variables2.warnings()}` : "");
       content.append(page);
       pages[key4] = page;
       on(button, "click", () => {
-        Object.entries(pages).forEach(([name, node3]) => {
-          node3.classList.toggle("active", name === key4);
+        Object.entries(pages).forEach(([name, node]) => {
+          node.classList.toggle("active", name === key4);
         });
         [...tabs.children].forEach((x) => x.setAttribute("aria-selected", String(x === button)));
         if (key4 === "prompt" || key4 === "api") renderSettings(page, key4, settingsContext());
@@ -13246,9 +15264,9 @@ ${variables2.warnings()}` : "");
       rawDetails = null;
       issues.remove();
       if (unresolved.length) {
-        const list3 = el(doc, "ul");
-        for (const issue of unresolved) list3.append(el(doc, "li", {}, issue));
-        issues.replaceChildren(el(doc, "h4", {}, `\u672A\u89E3\u51B3\uFF08${unresolved.length} \u9879\uFF09`), list3);
+        const list4 = el(doc, "ul");
+        for (const issue of unresolved) list4.append(el(doc, "li", {}, issue));
+        issues.replaceChildren(el(doc, "h4", {}, `\u672A\u89E3\u51B3\uFF08${unresolved.length} \u9879\uFF09`), list4);
         toast.insertBefore(issues, actions);
       }
       if (raw) {
@@ -13264,8 +15282,8 @@ ${variables2.warnings()}` : "");
       toast.hidden = false;
     }
     panel.append(header, tabs, content, resizeHandle);
-    root.append(launcher, panel, toast);
-    (doc.body || doc.documentElement)?.append(root);
+    root2.append(launcher, panel, toast);
+    (doc.body || doc.documentElement)?.append(root2);
     const instances = (() => {
       try {
         return parseJSON(storage?.getItem(stateKey)) ?? config.instances;
@@ -13367,8 +15385,8 @@ ${variables2.warnings()}` : "");
         } catch (_) {
         }
       };
-      bind("fated_tactical:open_ui", (entry) => {
-        openBattleEntry(entry?.messageId, text3(entry?.battleText)).catch(showError);
+      bind("fated_tactical:open_ui", (entry2) => {
+        openBattleEntry(entry2?.messageId, text4(entry2?.battleText)).catch(showError);
       });
     }
     function closePanel() {
@@ -13386,8 +15404,8 @@ ${variables2.warnings()}` : "");
     on(close, "click", closePanel);
     on(minimize, "click", hide);
     on(doc, "click", (event) => {
-      const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
-      const trigger = path.find((node3) => node3?.matches?.("[data-fated-battle-open], .fated-battle-enter"));
+      const path2 = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+      const trigger = path2.find((node) => node?.matches?.("[data-fated-battle-open], .fated-battle-enter"));
       if (trigger) {
         event.preventDefault();
         event.stopPropagation();
@@ -13395,12 +15413,12 @@ ${variables2.warnings()}` : "");
         void openBattleEntry(floor?.getAttribute("mesid") ?? floor?.dataset.messageId ?? floor?.dataset.mesid);
       }
     }, { capture: true });
-    function draggable(node3, handle) {
-      const surface = handle || node3;
+    function draggable(node, handle) {
+      const surface = handle || node;
       let drag = null;
       on(surface, "pointerdown", (event) => {
         if (event.button !== 0 || event.target.closest("button")) return;
-        const rect = node3.getBoundingClientRect();
+        const rect = node.getBoundingClientRect();
         drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: rect.left, top: rect.top, moved: false };
       });
       on(surface, "pointermove", (event) => {
@@ -13409,17 +15427,17 @@ ${variables2.warnings()}` : "");
         if (!drag.moved && Math.hypot(dx, dy) < 5) return;
         if (!drag.moved) {
           drag.moved = true;
-          node3.style.right = "auto";
-          node3.style.bottom = "auto";
-          node3.style.left = `${drag.left}px`;
-          node3.style.top = `${drag.top}px`;
+          node.style.right = "auto";
+          node.style.bottom = "auto";
+          node.style.left = `${drag.left}px`;
+          node.style.top = `${drag.top}px`;
           try {
             surface.setPointerCapture?.(event.pointerId);
           } catch (_) {
           }
         }
-        node3.style.left = `${Math.max(0, drag.left + dx)}px`;
-        node3.style.top = `${Math.max(0, drag.top + dy)}px`;
+        node.style.left = `${Math.max(0, drag.left + dx)}px`;
+        node.style.top = `${Math.max(0, drag.top + dy)}px`;
         event.preventDefault();
       });
       const stop = (event) => {
@@ -13440,7 +15458,7 @@ ${variables2.warnings()}` : "");
       on(launcher, "mousedown", (event) => {
         if (!drag) start(event);
       });
-      const move = (event) => {
+      const move2 = (event) => {
         if (!drag || drag.pointerId != null && event.pointerId != null && event.pointerId !== drag.pointerId) return;
         const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
         if (!drag.moved && Math.hypot(dx, dy) <= 5) return;
@@ -13462,8 +15480,8 @@ ${variables2.warnings()}` : "");
         launcher.style.top = `${Math.min(maxY, Math.max(0, drag.top + dy))}px`;
         event.preventDefault();
       };
-      on(doc, "pointermove", move);
-      on(launcher, "pointermove", move);
+      on(doc, "pointermove", move2);
+      on(launcher, "pointermove", move2);
       on(doc, "mousemove", (event) => {
         if (!drag) return;
         const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
@@ -13534,10 +15552,10 @@ ${variables2.warnings()}` : "");
         const rootNode = content2.matches?.(".mes, .chat-msg, [data-message-id], [data-mesid]") ? content2.querySelector(".mes_text, .mes_text_wrap, .message, [data-content]") || content2 : content2;
         if (!rootNode || seen.has(rootNode) || rootNode.closest("[data-fated-tavern-overlay]") || rootNode.dataset.fatedBattleFolded === "true") continue;
         seen.add(rootNode);
-        const tag = rootNode.querySelector?.("battle_init");
-        if (tag) {
-          tag.replaceWith(battleEntry(`<battle_init>
-${tag.textContent || ""}
+        const tag2 = rootNode.querySelector?.("battle_init");
+        if (tag2) {
+          tag2.replaceWith(battleEntry(`<battle_init>
+${tag2.textContent || ""}
 </battle_init>`));
           rootNode.dataset.fatedBattleFolded = "true";
           continue;
@@ -13546,15 +15564,15 @@ ${tag.textContent || ""}
         if (!walker) continue;
         const textNodes = [];
         while (walker.nextNode()) textNodes.push(walker.currentNode);
-        for (const node3 of textNodes) {
-          const raw = node3.nodeValue || "";
+        for (const node of textNodes) {
+          const raw = node.nodeValue || "";
           const match = raw.match(/(?:<|&lt;)battle_init(?:\s[^>]*?)?(?:>|&gt;)[\s\S]*?(?:<|&lt;)\/battle_init(?:>|&gt;)/i);
           if (!match) continue;
           const replacement = doc.createDocumentFragment();
           if (match.index) replacement.append(doc.createTextNode(raw.slice(0, match.index)));
           replacement.append(battleEntry(match[0].replaceAll("&lt;", "<").replaceAll("&gt;", ">")));
           if (match.index + match[0].length < raw.length) replacement.append(doc.createTextNode(raw.slice(match.index + match[0].length)));
-          node3.parentNode?.replaceChild(replacement, node3);
+          node.parentNode?.replaceChild(replacement, node);
           rootNode.dataset.fatedBattleFolded = "true";
           break;
         }
@@ -13618,11 +15636,11 @@ ${tag.textContent || ""}
         });
         toolbar.append(b);
       }
-      const list3 = el(doc, "div");
-      page.append(list3);
-      const entries2 = Object.entries(config.instances);
-      if (!entries2.length) list3.append(el(doc, "p", { class: "fated-mini" }, "\u6682\u65E0\u5B9E\u4F8B\u3002\u6253\u5F00\u6C99\u76D8\u4F1A\u81EA\u52A8\u8BFB\u53D6\u5F53\u524D MVU\u3001char_info \u548C battle_init\u3002"));
-      for (const [key4, instance] of entries2) {
+      const list4 = el(doc, "div");
+      page.append(list4);
+      const entries3 = Object.entries(config.instances);
+      if (!entries3.length) list4.append(el(doc, "p", { class: "fated-mini" }, "\u6682\u65E0\u5B9E\u4F8B\u3002\u6253\u5F00\u6C99\u76D8\u4F1A\u81EA\u52A8\u8BFB\u53D6\u5F53\u524D MVU\u3001char_info \u548C battle_init\u3002"));
+      for (const [key4, instance] of entries3) {
         const box = el(doc, "article", { class: "fated-instance" });
         box.dataset.unitId = key4;
         const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
@@ -13631,7 +15649,7 @@ ${tag.textContent || ""}
         const messages = warningsForUnit(sources.warnings, [key4], false);
         const { body } = fillInstance(
           box,
-          (tag, attrs3, value) => el(doc, tag, attrs3, value),
+          (tag2, attrs3, value) => el(doc, tag2, attrs3, value),
           instance,
           liveState(),
           characters[key4]?.raw,
@@ -13639,18 +15657,18 @@ ${tag.textContent || ""}
           { collapsed: Boolean(collapsed()[key4]), warnings: messages.length, onToggle: (value) => setFolded([key4], value) }
         );
         if (messages.length) {
-          const details = el(doc, "details", { class: "fated-char-diagnostics" }), list4 = el(doc, "ul");
-          for (const { message } of messages) list4.append(el(doc, "li", {}, message));
-          details.append(el(doc, "summary", {}, `\u26A0 ${messages.length} \u6761\u8BCA\u65AD`), list4);
+          const details = el(doc, "details", { class: "fated-char-diagnostics" }), list5 = el(doc, "ul");
+          for (const { message } of messages) list5.append(el(doc, "li", {}, message));
+          details.append(el(doc, "summary", {}, `\u26A0 ${messages.length} \u6761\u8BCA\u65AD`), list5);
           body.append(details);
         }
         const actions2 = el(doc, "div", { class: "fated-actions" });
         const edit = el(doc, "button", { type: "button" }, "\u7F16\u8F91 JSON");
-        const remove2 = el(doc, "button", { type: "button" }, "\u5220\u9664");
-        actions2.append(edit, remove2);
+        const remove = el(doc, "button", { type: "button" }, "\u5220\u9664");
+        actions2.append(edit, remove);
         body.append(actions2);
-        list3.append(box);
-        on(remove2, "click", () => {
+        list4.append(box);
+        on(remove, "click", () => {
           delete config.instances[key4];
           save();
           choose(selectedIds());
@@ -13684,11 +15702,11 @@ ${tag.textContent || ""}
       return messages;
     }
     function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds) {
-      const slots = config.slots;
-      const messages = assembleMessages(slots, assemblyContext(kind, instruction, unitIds));
+      const slots2 = config.slots;
+      const messages = assembleMessages(slots2, assemblyContext(kind, instruction, unitIds));
       if (config.debugPrompts) console.debug("[fated:prompts]", {
         kind,
-        slots: slots.map((s) => ({ id: s.id, enabled: s.enabled })),
+        slots: slots2.map((s) => ({ id: s.id, enabled: s.enabled })),
         messages: messages.map(({ slotId, role, content: content2 }) => ({ slotId, role, chars: content2.length }))
       });
       if (sending && messages.length) lastSent = messages;
@@ -13715,8 +15733,8 @@ ${tag.textContent || ""}
       const eligible = force ? Object.keys(characters) : normalizationCandidates(characters, stored, sources.warnings ?? []);
       const ids = unitIds.filter((id4) => eligible.includes(id4));
       if (!ids.length) return;
-      const records = Object.fromEntries(ids.map((id4) => [id4, { hash: characters[id4].hash, sourceKind: characters[id4].sourceKind }]));
-      return askAI("validate", "", sessionId, records);
+      const records2 = Object.fromEntries(ids.map((id4) => [id4, { hash: characters[id4].hash, sourceKind: characters[id4].sourceKind }]));
+      return askAI("validate", "", sessionId, records2);
     }
     const battleStorageKey = (key4, field) => `fated-tactical/${key4}/${field}`;
     function readBattleStorage(key4, field) {
@@ -13822,7 +15840,7 @@ ${tag.textContent || ""}
       const target2 = pages.sandbox.querySelector("[data-sandbox-mount]");
       const restart = ({ seed }) => {
         const next = hydrateFromSources(battleInput, { seed, throwOnValidation: true }).state;
-        return applyNormalization(next, operations(battleInstanceId));
+        return applyNormalization(next, operations2(battleInstanceId));
       };
       gameMount = (options.mount || mount)(target2, {
         instanceId: battleInstanceId,
@@ -13861,12 +15879,12 @@ ${tag.textContent || ""}
       }
     }
     function showError(error2) {
-      const node3 = pages.sandbox.querySelector("[data-status]");
-      if (node3) node3.textContent = `\u9519\u8BEF\uFF1A${error2?.message || error2}`;
+      const node = pages.sandbox.querySelector("[data-status]");
+      if (node) node.textContent = `\u9519\u8BEF\uFF1A${error2?.message || error2}`;
     }
-    function filterResolved(stored, records, retained = batches(activeBattleKey)) {
+    function filterResolved(stored, records2, retained = batches(activeBattleKey)) {
       const warnings = sources.warnings ??= [];
-      const remaining = remainingDiagnostics(warnings, stored, records, retained);
+      const remaining = remainingDiagnostics(warnings, stored, records2, retained);
       warnings.splice(0, warnings.length, ...remaining);
       diagnostics.warnings = warnings;
     }
@@ -13884,8 +15902,8 @@ ${tag.textContent || ""}
     }
     async function scan({ rehydrate = false } = {}) {
       const epoch = ++scanEpoch;
-      const node3 = pages.sandbox.querySelector("[data-status]");
-      if (node3) node3.textContent = "\u6B63\u5728\u8BFB\u53D6 MVU\u3001\u6700\u65B0\u697C\u5C42\u5E76\u8F6C\u6362\u2026";
+      const node = pages.sandbox.querySelector("[data-status]");
+      if (node) node.textContent = "\u6B63\u5728\u8BFB\u53D6 MVU\u3001\u6700\u65B0\u697C\u5C42\u5E76\u8F6C\u6362\u2026";
       try {
         const chat = chatId(host);
         const messages = await tavernMessages(host);
@@ -13900,7 +15918,7 @@ ${tag.textContent || ""}
         foldBattleEntries();
         if (!rehydrate && key4 && activeBattleKey === key4 && gameMount) {
           refreshPortraits(currentState, epoch);
-          if (node3) node3.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
+          if (node) node.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
           return;
         }
         if ((rehydrate || activeBattleKey !== key4) && aiController) {
@@ -13929,7 +15947,7 @@ ${tag.textContent || ""}
           const sameInput = batch.receipts ? owners.every(matchesHash) : owners.some(matchesHash);
           const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key: key5 }) => fresh[unitId] && rawWarnings.some((w) => w.unitId === unitId && warningKey(w) === key5));
           if (!sameInput && !sameDiagnostics) continue;
-          if (batch.guards && !batch.guards.every(([path, value]) => (fingerprintAt(replay, path) ?? null) === value)) continue;
+          if (batch.guards && !batch.guards.every(([path2, value]) => (fingerprintAt(replay, path2) ?? null) === value)) continue;
           try {
             replay = applyPatch(replay, batch.patch, true);
             kept.push(batch);
@@ -13950,14 +15968,14 @@ ${tag.textContent || ""}
         if (key4 && (rehydrate || changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
         if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
         filterResolved(stored, fresh, kept);
-        const live = liveState();
-        for (const unit of Object.values(live?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
+        const live3 = liveState();
+        for (const unit of Object.values(live3?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
         const firstEntry = !rehydrate && currentState && key4 && !savedBattle && !enteredBattles.has(key4);
         if (key4 && currentState) enteredBattles.add(key4);
         scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
         renderInstances();
         if (firstEntry && changed.length) void runNormalize(changed, { force: false });
-        if (node3) node3.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")} \xB7 ${scanStatus}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
+        if (node) node.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")} \xB7 ${scanStatus}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
         diagnostics = { ...diagnostics, phase: "scan-error", error: e?.stack || e?.message || String(e) };
         try {
@@ -13996,8 +16014,8 @@ ${tag.textContent || ""}
     function renderSandbox() {
       const page = pages.sandbox;
       page.replaceChildren(el(doc, "h3", {}, "\u6C99\u76D8"));
-      const status2 = el(doc, "div", { class: "fated-status", "data-status": "" }, "\u6253\u5F00\u6B64\u9875\u4F1A\u81EA\u52A8\u4FA6\u6D4B\u5F53\u524D\u804A\u5929\u3002");
-      page.append(status2);
+      const status = el(doc, "div", { class: "fated-status", "data-status": "" }, "\u6253\u5F00\u6B64\u9875\u4F1A\u81EA\u52A8\u4FA6\u6D4B\u5F53\u524D\u804A\u5929\u3002");
+      page.append(status);
       const mountTarget = el(doc, "div", { "data-sandbox-mount": "" });
       page.append(mountTarget);
       const actions2 = el(doc, "div", { class: "fated-actions" });
@@ -14023,7 +16041,7 @@ ${tag.textContent || ""}
       on(refresh, "click", () => scan().catch(showError));
       on(report, "click", deliverBattleReport);
     }
-    askAI = async (kind, requestText = "", sessionId = kind === "chat" ? aiSessions.active().id : void 0, records) => {
+    askAI = async (kind, requestText = "", sessionId = kind === "chat" ? aiSessions.active().id : void 0, records2) => {
       if (aiController || kind === "chat" && !requestText) return;
       syncSettings();
       promptKind = kind;
@@ -14034,12 +16052,12 @@ ${tag.textContent || ""}
       const history = !normalize && session ? session.messages.filter(
         (m) => (m.role === "user" || m.role === "assistant") && m.content?.trim() && m.status !== "error" && m.status !== "aborted"
       ).map(({ role, content: content2 }) => ({ role, content: content2 })) : [];
-      const entries2 = session ? aiSessions.append(
+      const entries3 = session ? aiSessions.append(
         session.id,
         { role: "user", content: normalize ? "\u6807\u51C6\u5316" : requestText, status: "ok" },
         { role: "assistant", content: "" }
       ) : [];
-      const assistantMessage = entries2[1];
+      const assistantMessage = entries3[1];
       const feed = (...messages) => {
         if (session) aiPage?.feed(session.id, ...messages);
       };
@@ -14049,10 +16067,10 @@ ${tag.textContent || ""}
         else Object.assign(assistantMessage, fields3);
         feed(assistantMessage);
       };
-      const postStatus = (content2, status2) => {
-        if (session) feed(...aiSessions.append(session.id, { role: "system", content: content2, status: status2 }));
+      const postStatus = (content2, status) => {
+        if (session) feed(...aiSessions.append(session.id, { role: "system", content: content2, status }));
       };
-      feed(...entries2);
+      feed(...entries3);
       const key4 = activeBattleKey;
       const controller2 = new AbortController();
       aiController = controller2;
@@ -14065,11 +16083,11 @@ ${tag.textContent || ""}
       if (normalizeButton) normalizeButton.disabled = true;
       const timeout = setTimeout(() => controller2.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), config.timeoutMs ?? 6e4);
       const label = normalize ? "\u6807\u51C6\u5316" : "AI \u8C03\u6574";
-      const retryRequest = () => normalize ? runNormalize(Object.keys(records), { force: true, sessionId: sessionId ?? null }) : askAI(kind, requestText, sessionId);
+      const retryRequest = () => normalize ? runNormalize(Object.keys(records2), { force: true, sessionId: sessionId ?? null }) : askAI(kind, requestText, sessionId);
       if (normalize) notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", "", null, true);
       else toast.hidden = true;
       let receivedPatch = normalize, replyText = "", unresolved = [], appliedCount = 0;
-      const scopedWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records)) : [];
+      const scopedWarnings = normalize ? warningsForUnit(sources.warnings, Object.keys(records2)) : [];
       try {
         if (normalize && !liveState()) {
           if (!session) {
@@ -14078,7 +16096,7 @@ ${tag.textContent || ""}
           }
           throw new Error("\u6CA1\u6709\u53EF\u6807\u51C6\u5316\u7684\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6C99\u76D8");
         }
-        let prompts = prepareMessages(kind, requestText, true, records && Object.keys(records));
+        let prompts = prepareMessages(kind, requestText, true, records2 && Object.keys(records2));
         const sentWarnings = scopedWarnings.filter((w) => prompts.some((m) => m.content.includes(JSON.stringify(w.message))));
         if (!normalize) {
           prompts = [...prompts, ...history, { role: "user", content: requestText }];
@@ -14123,22 +16141,22 @@ ${tag.textContent || ""}
             if (!liveState()) throw new Error("\u6CA1\u6709\u53EF\u5E94\u7528\u8865\u4E01\u7684\u6218\u5C40\uFF0C\u8BF7\u5148\u626B\u63CF\u6C99\u76D8");
             if (normalize) {
               if (!Array.isArray(patch)) throw new Error("patch \u5FC5\u987B\u662F JSON \u6570\u7EC4");
-              for (const [index, operation] of patch.entries()) {
-                if (!["add", "replace", "remove"].includes(operation?.op) || typeof operation.path !== "string" || !normalizationPath.test(operation.path) || operation.op !== "remove" && !own6(operation, "value")) {
-                  throw new Error(`\u7B2C ${index + 1} \u9879\u8DEF\u5F84\u6216\u64CD\u4F5C\u65E0\u6548\uFF08${text3(operation?.path).slice(0, 120) || "\u7F3A\u5C11 path"}\uFF09`);
+              for (const [index, operation2] of patch.entries()) {
+                if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own13(operation2, "value")) {
+                  throw new Error(`\u7B2C ${index + 1} \u9879\u8DEF\u5F84\u6216\u64CD\u4F5C\u65E0\u6548\uFF08${text4(operation2?.path).slice(0, 120) || "\u7F3A\u5C11 path"}\uFF09`);
                 }
               }
             }
             if (normalize && !patch.length) throw new Error("\u6A21\u578B\u8FD4\u56DE\u7A7A\u8865\u4E01\uFF0C\u6CA1\u6709\u53EF\u6CE8\u5165\u7684\u53D8\u66F4");
             if (normalize) {
-              solved2 = resolvedDiagnostics(sentWarnings, records, patch, { ...parsed.data, unresolved });
-              patch = patch.map(({ resolves, ...operation }) => operation);
+              solved2 = resolvedDiagnostics(sentWarnings, records2, patch, { ...parsed.data, unresolved });
+              patch = patch.map(({ resolves, ...operation2 }) => operation2);
             }
             nextState = (options.applyPatch ?? applyPatch)(liveState(), patch, normalize);
             validate(nextState);
             if (normalize && patch.length) {
               refreshOpeningInitiative(nextState);
-              combined = [...operations(key4), ...patch];
+              combined = [...operations2(key4), ...patch];
               baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
               validate(applyNormalization(baseline, combined));
             }
@@ -14166,20 +16184,20 @@ ${tag.textContent || ""}
         }
         if (combined) {
           const stored = { ...config.charSnapshots[key4] }, hashes = {};
-          for (const [id4, rec] of Object.entries(records)) {
+          for (const [id4, rec] of Object.entries(records2)) {
             const previous = stored[id4]?.hash === rec.hash ? stored[id4].resolvedWarnings ?? [] : [];
             stored[id4] = { ...rec, at: Date.now(), normalized: true, resolvedWarnings: previous };
             hashes[id4] = rec.hash;
           }
-          const before = applyPatch(baseline, operations(key4), true);
+          const before = applyPatch(baseline, operations2(key4), true);
           const additions = solved2.length ? [{
             patch,
             hashes,
             receipts: solved2.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
-            guards: [.../* @__PURE__ */ new Set([...patch.map((op) => op.path.split("/").slice(0, 3).join("/")), ...solved2.map((w) => w.originPath).filter(Boolean)])].map((path) => [path, fingerprintAt(before, path) ?? null])
+            guards: [.../* @__PURE__ */ new Set([...patch.map((op) => op.path.split("/").slice(0, 3).join("/")), ...solved2.map((w) => w.originPath).filter(Boolean)])].map((path2) => [path2, fingerprintAt(before, path2) ?? null])
           }] : patch.map((op) => {
             const [, table4, target2] = op.path.split("/");
-            const owners = Object.keys(records).filter((id4) => {
+            const owners = Object.keys(records2).filter((id4) => {
               const u = nextState.units[id4];
               const items = [u?.weapon, u?.mainHand, u?.offHand, u?.shield, ...u?.gear ?? []];
               if (table4 === "units") return target2 === id4;
@@ -14192,7 +16210,7 @@ ${tag.textContent || ""}
           });
           persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored }, normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] } });
           filterResolved(stored, characters);
-          scanStatus = `\u5DF2\u6807\u51C6\u5316 ${Object.keys(records).length} \u4E2A\u89D2\u8272`;
+          scanStatus = `\u5DF2\u6807\u51C6\u5316 ${Object.keys(records2).length} \u4E2A\u89D2\u8272`;
           renderInstances();
           prepareMessages();
         }
@@ -14210,12 +16228,12 @@ ${tag.textContent || ""}
       } catch (e) {
         if (aiController !== controller2) return;
         const aborted = e?.name === "AbortError";
-        const status2 = aborted ? "aborted" : "error";
+        const status = aborted ? "aborted" : "error";
         const detail = e?.message || String(e);
         if (normalize) unresolved = pendingDiagnostics(appliedCount ? scopedWarnings.filter((w) => !solved?.includes(w)) : scopedWarnings, unresolved);
         const partial = assistantMessage?.content || replyText;
-        updateReply({ status: status2, content: aborted ? partial ?? "" : [partial, `\u9519\u8BEF\uFF1A${detail}`].filter(Boolean).join("\n\n") });
-        if (receivedPatch) postStatus(`${label}${aborted ? "\u5DF2\u4E2D\u6B62" : "\u5931\u8D25"}\uFF1A${detail}${unresolved.length ? `\uFF1B\u672A\u89E3\u51B3\uFF1A${unresolved.join("\uFF1B")}` : ""}`, status2);
+        updateReply({ status, content: aborted ? partial ?? "" : [partial, `\u9519\u8BEF\uFF1A${detail}`].filter(Boolean).join("\n\n") });
+        if (receivedPatch) postStatus(`${label}${aborted ? "\u5DF2\u4E2D\u6B62" : "\u5931\u8D25"}\uFF1A${detail}${unresolved.length ? `\uFF1B\u672A\u89E3\u51B3\uFF1A${unresolved.join("\uFF1B")}` : ""}`, status);
         if (normalize && !disposed) notify(
           `${label}${aborted ? "\u5DF2\u4E2D\u6B62" : "\u5931\u8D25"}`,
           detail,
@@ -14237,19 +16255,19 @@ ${tag.textContent || ""}
       launcher.hidden = Boolean(config.hideLauncher) || !panel.hidden;
       const wand = doc.querySelector("#extensionsMenu, #data_bank_wand_container");
       if (!wand) return;
-      let entry = wand.querySelector("[data-fated-tavern-entry]");
+      let entry2 = wand.querySelector("[data-fated-tavern-entry]");
       if (config.hideLauncher) {
-        if (!entry) {
-          entry = el(doc, "button", { type: "button", "data-fated-tavern-entry": "" }, "\u{1FA84} \u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0");
-          wand.append(entry);
-          on(entry, "click", open);
+        if (!entry2) {
+          entry2 = el(doc, "button", { type: "button", "data-fated-tavern-entry": "" }, "\u{1FA84} \u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0");
+          wand.append(entry2);
+          on(entry2, "click", open);
         }
-      } else entry?.remove();
+      } else entry2?.remove();
     }
     renderInstances();
     renderSandbox();
     aiPage = mountAiPage(pages.ai, {
-      make: (tag, attrs3, content2) => el(doc, tag, attrs3, content2),
+      make: (tag2, attrs3, content2) => el(doc, tag2, attrs3, content2),
       on,
       sessions: aiSessions,
       send: (message) => askAI("chat", message),
@@ -14277,12 +16295,12 @@ ${tag.textContent || ""}
         controller?.abort();
       } catch (_) {
       }
-      for (const remove2 of listeners.splice(0)) remove2();
+      for (const remove of listeners.splice(0)) remove();
       try {
         gameMount?.unmount?.();
       } catch (_) {
       }
-      root.remove();
+      root2.remove();
       try {
         if (host.__fatedTacticalTavern === api) delete host.__fatedTacticalTavern;
       } catch (_) {

@@ -7,4 +7,4 @@ export { BATTLE_INIT_DISPLAY_REGEX, BATTLE_INIT_DISPLAY_REPLACEMENT, BATTLE_INIT
 export { validateState, defineStatus } from './api/validation.js';
 export { corpses, living, patchStatus, statusModifierKeys } from './core/combat.js';
 export { parseBattleTime } from './core/battle_time.js';
-export { effectSchema } from './core/effect_schema.js';
+export { vmSchema, vmOpcodeSchema, vmProgramSchema, vmStatModSchema, vmSelectorSchema } from './core/vm-schema.js';

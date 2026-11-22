@@ -1,10 +1,10 @@
-import { EFFECT_PROTOCOL } from './effect-protocol.js';
+import { VM_EFFECT_PROTOCOL } from './vm-effect-protocol.js';
 import { ENGINE_API_SUMMARY } from './engine-summary.js';
 import { STATUS_CATALOG } from './status-catalog.js';
 
 const IDENTITY = `你是命定战斗助手。你需要根据用户输入对战局数值进行操作，以当前战局、参战者与装备快照、战斗协议为依据，核对操作对象、字段和取值，使用引擎认可的标识符。
 
-当「待处理警告」非空时，你必须逐项标准化其中的内容。把装备、技能或状态中以自然语言描述的效果，转成引擎可使用的特效，并应用到对应的角色或武器上。若单个机制不足以表达，先按协议组合已支持的机制，保留原效果的触发条件、作用目标、持续时间和数值。无法完整表达时，提交能执行的部分，并按任务指令标明仍待处理的效果。
+标准化任务中，「待处理警告」非空时，你必须逐项处理。把装备、技能或状态中以自然语言描述的效果转成战术 VM 规则、修饰或池声明，写到快照中对应的模板。先按协议组合已支持的机制，保留触发条件、作用目标、持续时间和数值。无法完整表达时，提交能执行的部分，并按任务指令标明仍待处理的效果。
 
 不做叙事、不扮演角色、不推进剧情，只输出引擎可执行的数据变更。按当前任务要求组织补丁和待处理项，沿用快照中的角色、装备、技能和状态 ID，保留与本次操作无关的数据。提交前检查路径、参数和数值范围，确保整批变更可以在当前战局执行。`;
 
@@ -20,56 +20,46 @@ export const DEFAULT_SLOTS = [
   { id: 'extra', label: '自定义补充（可空）', role: 'system', enabled: false, desc: '用户自己填的额外提示词' },
 ].map(slot => ({ builtin: true, ...slot, content: slot.content ?? '' }));
 
-const TAG_MAPPING = `【世界书标签 → DSL / API 映射】
-• [威力: X] + [伤害: 类型] → 以 X 为威力基准，damage 节点用 percentOfPower:1.0 和对应的 damageType。[威力: X 物理] 等价于 [威力: X][伤害: 物理]，不额外叠加伤害。
-• 旧档「效果：100%物理伤害」配合威力标签，使用 damage 节点 percentOfPower:1、damageType:"physical"。比例混合伤害每种类型用独立节点，例如 60%物理伤害/40%能量伤害写 0.6 与 0.4。
-• 混合伤害：[威力: 60][伤害: 物理40/能量20] 中各分量之和等于威力。必须拆成多个 damage 节点，每个节点只写一个 damageType 和对应数值，不得在单节点里塞多个类型。例：[{"kind":"damage","flat":40,"damageType":"physical"},{"kind":"damage","flat":20,"damageType":"energy"}]。不得再叠加一次总威力。
-• [关联属性: 敏捷] → 技能的关联检定属性为 agi；不要把施术者的关联属性误作目标的豁免属性。[有效距离: 中程(5)] → range:5。
-• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由独立的有效距离标签声明；可加 角度:N 写 fan/cone 的实际张角。
-• 范围伤害默认允许友伤：除非明确 target:ally/self/cell，否则范围 damage 会筛选范围内敌我双方；单体技能必须按 target:enemy/ally/self/any 明确敌友。环形使用 shape:ring，可用 radius 与 innerRadius 排除中心区域；线形 width 是侧向半宽。
-• 空效果：目标对象的效果字段为 {} 或缺失时，表示该字段没有可执行效果，不产生任何补丁操作，也不计入 unresolved。纯位移、纯状态授予等技能仍有可执行节点，不属于空效果。`;
-const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。旧式诊断字符串仅在能唯一匹配时有效。这些字段不是 DSL 节点或战局字段。';
-const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
+const TAG_MAPPING = `【世界书标签 → VM 映射】
+• [威力: X] + [伤害: 类型] → 用 X 作为原文给出的伤害基准，在 damage 指令写 amount 和 damageType。[威力: X 物理] 等价于 [威力: X][伤害: 物理]，只结算一次。
+• 混合伤害：[威力: 60][伤害: 物理40/能量20] 拆成两个指令，例：[{"op":"damage","target":"target","amount":40,"damageType":"physical"},{"op":"damage","target":"target","amount":20,"damageType":"energy"}]。按原文比例拆分时各分量按同一基准求值，不再额外造成总威力伤害。
+• [关联属性: 敏捷] → 指向施术者敏捷；需要属性缩放时读取 self.agi。只有原文明确豁免时才为防守方选择检定属性。[有效距离: 中程(5)] → range:5。
+• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由有效距离另行确定。角度标签映射到 angle。
+• 原文效果为 {} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则；背包消耗品按任务约定处理。`;
+const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。resolves 只属于补丁操作。';
+const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次已修复的诊断；未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[]}。两个键都是数组。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板（如 /skills/skill_frost_arrow）。backpackItem:true 是背包消耗品的使用模板，不是角色技能。若消耗品没写效果，按物品名、标签主动推定合理的目标、距离、范围和数值，补出可执行的 active DSL；不可仅因原文缺数值而列为 unresolved。按警告路径修改模板，不要改库存、移除 backpackItem 或加入单位 skills。保留 ap:1、slot:action。
-• /items/<id>：道具实例（如 /items/item_01），不是模板属性。
-• /statusTemplates/<id>：战局的自定义状态模板（如 /statusTemplates/status_custom_01），同名定义覆盖默认模板；已有实例须同时与新模板对齐。普通新增状态使用新 ID。
-• /units/<unitId>/statuses：单位状态实例映射（如 /units/p1/statuses）。
-• /units/<unitId>/armor：单位护甲整数 0…1000000（如 /units/p1/armor）。
-• /units/<unitId>/skills：完整技能 ID 数组，保留原有技能并加入新增技能 ID。
-使用快照 ID，不用显示名、数组下标或 stat_data。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换 effects 时保留无关效果。
+• /skills/<id>：技能模板。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
+• /items/<id>：道具实例。装备模板的规则、修饰与池声明写在 /equipment/<id>。实例已自带 rules 或 mods 时，同批同步相关条目，保留该实例独有的内容。
+• /statusTemplates/<id>：战局的自定义状态模板。新增模板使用新的 ID。
+• /units/<unitId>/statuses：单位状态实例映射。实例形状见状态协议。
+• /units/<unitId>/armor：单位护甲整数 0…1000000。
+• /units/<unitId>/skills：完整技能 ID 数组，保留已有技能并加入新技能 ID。
+使用快照中的 ID。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换模板或数组时保留无关字段与条目。
 
-【值的形状：只用各表已定义的字段】
-装备必有 name、effects。attack 为整数 0…1000000000，accuracy 为 −20…30。武器 range(1…15) 与 damage 骰子成对。
-技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)、effects；范围技能可写 radius、innerRadius、width、angle(1…360)。save(str/agi/con/int/spi) 与 saveDC(1…50 的整数或协议中的公式对象) 必须成对；damage/heal 用 {count,sides}，可加 bonus、stat、multiplier、type。
-所有 effects 使用统一 DSL 表达式。物品仅 {id,templateId,counters}，计数键与模板的资源声明对应，值在 0…cap。没有资源池时用 {}。
-将剧情状态按实际机制标准化。在同一批补丁先定义 /statusTemplates/<id>，再用 grantStatus 或初始状态实例引用该 ID。已有模板的机制完全等价时可以复用。按剧情声明周期伤害的 modifiers.damage 与 modifiers.damageType（physical/energy/mental/true），以及 tickTiming、层数和持续时间。自定义模板最多 64 个，必有 id,name,icon,category,description,remainingTurns,durationType,tickTiming,stackRule,maxStacks,modifiers。category 为 buff/debuff/control/dot/hot；remainingTurns 整数1…100；durationType=battle_turns/until_removed/persistent；tickTiming=onTurnStart/onTurnEnd；stackRule=refresh/stack/replace；maxStacks 整数1…10。
-自定义 modifiers 非空，合法键、范围及 expireInto / expireOn 见协议。单位状态实例复制模板，再加 stacks(1…maxStacks)、sourceUnitId(ID或null)。shield 实例另有 amount。
+【模板值】
+• 装备必有 name。保留已有武器字段，range(1…15) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备提供主动按钮时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。
+• 技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。范围字段 radius、innerRadius、width 为 0…6，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
+• 装备和技能均可声明 rules、mods、tags、tier、vars、pools。rules 和 mods 是数组。tags 是小写标签数组，tier 为整数 1…7，vars 为 ID → Expr 的对象。pools 格式为 {"charge":{"cap":10,"initial":0}}，每池必填 cap，可加 initial、reloadable。cap / initial 优先写非负数，initial 不得超过 cap。已有装备初始化需要数值 cap。通过 resource 指令访问池，装备规则中 local:true 访问该实例的池。
+• 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。
 
-整批须通过 validateState。禁止改阵营、资源及上限、坐标、先攻队列或日志。
-【拆解原则】先尝试拆解，再考虑放弃。可用多状态 + 手动触发技能组合表达复杂效果。仅当引擎没有 kind 或组合可表达时才放入 unresolved，写明原效果并简述尝试过的方向（一句话）。部分可解时提交可解部分。
-拆解后先在内部列出拟用的 kind / status，逐个自查：参数写全了吗？statusId 存在吗？数值在范围内吗？然后只输出最终 {"patch":[],"unresolved":[]}。
-正例（仅当快照确有 p1，且警告明确其护甲应为 6）：
-{"patch":[{"op":"replace","path":"/units/p1/armor","value":6,"resolves":[{"unitId":"p1","originPath":null,"message":"基础护甲缺失"}]}],"unresolved":[]}
-【DSL 正例】先找事件、筛选条件及概率，再确定目标、节点字段与数值。下面每行是一条可放入 effects 的表达式，换成全局唯一 ID。
-• 简单命中附状态：{"id":"hit_burn","label":"灼印","trigger":"on_hit","target":"hitTarget","effects":[{"kind":"grantStatus","statusId":"burn","turns":2}]}
-• 条件加成：{"id":"night_edge","trigger":"passive","target":"self","condition":{"type":"timeOfDay","value":"night"},"effects":[{"kind":"multiplyDamage","factor":1.2}]}
-• 概率反击：{"id":"cold_reply","trigger":"on_damaged","target":"attacker","condition":[{"type":"melee"},{"type":"enemy"}],"roll":{"dice":"d20","gte":16},"effects":[{"kind":"grantStatus","statusId":"chill"}]}
-• 链式支付与回复：{"id":"blood_mana","trigger":"active","target":"self","effects":[{"kind":"chainEffect","stopOnFailure":true,"effects":[{"kind":"drainResource","resource":"hp","amount":12,"minimumRemaining":1,"requireFull":true},{"kind":"restoreResource","resource":"mp","percentOfPrevious":0.5}]}]}
-• 叠加装备资源：{"id":"charge_pool","trigger":"passive","target":"self","effects":[{"kind":"produceResource","resource":"charge","cap":10000,"initial":0},{"kind":"multiplyDamage","resourceScale":{"resource":"charge","perUnit":0.02}}]}。同批在实例 counters 加入 charge:0，再写 on_kill/self 的 produceResource(amount:1) 增加存量。
-• 捧腹失能：先添加 /statusTemplates/laugh_disabled，value 为 {"id":"laugh_disabled","name":"狂笑失能","icon":"😆","category":"control","description":"跳过行动，实际受到直接伤害时解除。","remainingTurns":1,"durationType":"battle_turns","tickTiming":"onTurnStart","stackRule":"refresh","maxStacks":1,"modifiers":{"skip":true},"expireOn":{"trigger":"on_damaged","damageType":"direct"}}。随后引用 {"id":"laugh_on_hit","trigger":"on_hit","target":"hitTarget","roll":{"save":"spi","dc":{"base":6,"scaleBy":{"stat":"spi","perUnit":0.5}}},"effects":[{"kind":"grantStatus","statusId":"laugh_disabled"}]}。
-• 临时土墙（指定格周围半径 1，持续 3 回合）：技能模板 target 为 cell，effects 包含 {"id":"temporary_wall","trigger":"active","target":"self","effects":[{"kind":"setTerrainKind","terrainKind":"wall","area":{"center":"hitTarget","radius":1},"remainingTurns":3}]}。固定矩形则将 area 换为 {"rect":{"x1":3,"y1":4,"x2":5,"y2":6}}。
-• 低伤校准（仅保留最低冲击力、避免致命）：用独立主动技能，不叠加普通武器主击；省略模板 damage，将全部冲击放入 {"id":"calibrated_impact","trigger":"active","target":"hitTarget","effects":[{"kind":"damage","amount":1,"damageType":"physical","lethal":false}]}。不可用减半倍率代替保命。
-• 骑士誓言：{"id":"knight_oath","label":"骑士誓言","trigger":"passive","target":"self","condition":{"type":"intercepting"},"effects":[{"kind":"modifyStat","stat":"defense","percent":0.12,"enabled":true}]}。替队友承伤时防御提高 12%。若根据战局上下文判断誓言已破，使用现有 replace 操作将对应节点的 enabled 改为 false。例如 {"op":"replace","path":"/equipment/oath_armor/effects/0/effects/0/enabled","value":false}。若节点省略了 enabled，则 replace 整个节点并保留原字段，补上 enabled:false。
-【实用组合】在角色已有装备上添加效果，替换整段 effects 时保留旧条目并追加新表达式。写完新技能后把其 ID 追加到持有者的 skills。对同一道具提供多条效果时，每条表达式使用不同 ID。description 是自定义状态模板必填字段。技能和装备模板省略 description。
-• 临时强化与后续虚弱：先定义到期状态，再定义一回合强化状态并以 expireInto 引用前者。强化可用 guaranteed_hit、guaranteed_crit、finalDamageMultiplier；虚弱可用 attributePercent、blockResourceRestore。这些是状态模板的 modifiers 键。技能用 active/self 的 grantStatus 授予强化状态。
-• 判定和成长：把多个检定加值放在同一个 passive/self 的 modifyCheck 节点。基础属性成长拆成五个 modifyStat 节点，每个写 percent:1 与 levelScaling:{min:0.25,max:1}。攻击成长把 stat 写成 damage。可执行的成长与未提供具体对象的合并可分别处理，已有装备未指定合并来源时无需构造新的装备。`;
+【VM 模板正例】用快照 ID 和警告字段，把对应的值写入 patch 操作。技能值可放在 /skills/<id>，装备值可放在 /equipment/<id>，状态值可放在 /statusTemplates/<id>，规则值则放入相关模板的 rules 数组。
+• 技能值：{"name":"低伤校准","ap":1,"slot":"attack","range":1,"shape":"single","target":"enemy","rules":[{"id":"calibrated_impact","hook":"active","program":[{"op":"damage","target":"target","amount":1,"damageType":"physical","lethal":false}]}]}
+• 装备值：{"name":"蓄能徽记","kind":"accessory","pools":{"charge":{"cap":10,"initial":0}},"mods":[{"stat":"armor","flat":2}],"rules":[{"id":"collect_charge","hook":"on_kill","program":[{"op":"resource","target":"self","pool":"charge","mode":"add","amount":1,"local":true}]}]}
+• 状态值：{"id":"laugh_disabled","name":"狂笑失能","category":"control","remainingTurns":1,"mods":[{"locks":["action","attack"]}],"rules":[{"id":"laugh_break","hook":"after_damage","filter":"target.id == self.id && event.direct && event.dealt > 0","program":[{"op":"remove_status","target":"self","where":"status.id == 'laugh_disabled'","reason":"expired"}]}]}
+• 授予上例状态的规则值：{"id":"laugh_on_hit","hook":"after_hit","filter":"attacker.id == self.id","program":[{"op":"check","kind":"save","stat":"spi","dc":"6 + self.spi * 0.5","onFail":[{"op":"apply_status","target":"target","statusId":"laugh_disabled"}]}]}
+• 飞行规则值：{"id":"lift_off","hook":"active","program":[{"op":"move","target":"self","mode":"altitude","deltaZ":3}]}
+
+【完整补丁示例】假设快照已有 /equipment/wing_charm，尚无 skills，且此诊断要求为翼徽加上主动飞行。已有技能 ID 时，在原数组中保留它们。
+{"patch":[{"op":"add","path":"/skills/wing_charm_lift","value":{"name":"翼徽飞行","ap":1,"slot":"action","range":0,"shape":"single","target":"self","rules":[{"id":"lift_off","hook":"active","program":[{"op":"move","target":"self","mode":"altitude","deltaZ":3}]}]}},{"op":"add","path":"/equipment/wing_charm/skills","value":["wing_charm_lift"],"resolves":[{"unitId":"p1","originPath":"/equipment/wing_charm","message":"翼徽缺少主动飞行规则"}]}],"unresolved":[]}
+
+整批须通过 validateState。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，并保留原效果名及简短原因。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 {"patch":[],"unresolved":[]}。`;
 const json = value => JSON.stringify(value, null, 2);
 
 let lastCustomId = 0;
@@ -133,7 +123,7 @@ export function resolveSlotContent(slot, ctx = {}) {
     case 'roster': return rosterText();
     case 'battle': return battleText();
     case 'warnings': return ctx.warningsText ?? (warnings.length ? `待处理警告：\n${variables.warnings()}` : '');
-    case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? '【辅助 AI 对话】身份声明中的数据输出要求适用于战局变更。玩家仅咨询时，直接用文字回答战斗与引擎问题。只有玩家明确要求调整战局且已加载战局时，才输出 battle_patch 或 unit_patch JSON。待处理警告由独立的标准化任务处理。' : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
+    case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? '【辅助 AI 对话】玩家咨询时，直接用文字回答。玩家明确要求调整已加载的战局时，输出 {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} 形状的 JSON，按请求使用快照中的真实路径和值。装备、技能和状态的变更值遵循上面的 VM 协议。标准化任务单独处理警告。' : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
     case 'extra': return expand(ctx.extraText || '');
     case 'assistant': return ctx.assistantText || '';
     default: return '';

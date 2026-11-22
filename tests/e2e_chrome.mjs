@@ -107,6 +107,10 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   };
   const select = (selector, value) => run(`(() => { const input = ${get(selector)}; input.value=${JSON.stringify(value)}; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   const state = () => run('window.FatedTacticalGame.getBattleState()');
+  const souls = async () => {
+    const battle = await state();
+    return battle.pools[battle.items['soulblade-lan'].pools.souls].current;
+  };
   const actor = async () => { const s = await state(); return s.units[s.order[s.turn]]; };
   const cell = (x, y) => `#board [data-x="${x}"][data-y="${y}"]`;
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/tavern.html` });
@@ -160,13 +164,23 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         if (!config.ordered_prompts.some(m => m.role === 'system' && m.content.includes(JSON.stringify(id)) && m.content.includes('旧弩'))) return reject(new Error('系统槽位缺少战局装备快照'));
         const warning = state.warnings.find(w => w.message.includes('恒定拉距'));
         const resolves = warning ? [{unitId:warning.unitId, originPath:warning.originPath, message:warning.message}] : [];
-        const patch = [{op:'replace',path:'/equipment/'+id+'/attack',value:10,resolves}];
+        const fixedShot = templateId => ({
+          id:'fixed-shot', hook:'before_commit',
+          filter:"event.actorId == self.id && event.actionType == 'attack' && event.weaponTemplateId == '"+templateId+"' && event.damageType == 'physical'",
+          program:[{op:'mutate_event',patch:{finalAmount:10}}],
+        });
+        const rulePatch = (path, resolves) => {
+          const templateId = path.split('/').at(-1);
+          return {op:'replace',path:path+'/rules',value:[...state.equipment[templateId].rules,fixedShot(templateId)],resolves};
+        };
+        const patch = [rulePatch('/equipment/'+id,resolves)];
         const crossbow = state.warnings.find(w => w.unitId === 'e1' && w.message.includes('恒定发射'));
         if (crossbow) {
           const { unitId, originPath, message } = crossbow;
-          patch.push({op:'replace',path:originPath+'/attack',value:10,resolves:[{unitId,originPath,message}]});
+          patch.push(rulePatch(originPath,[{unitId,originPath,message}]));
         }
-        resolve(JSON.stringify({patch,unresolved:window.extraBowEffects ? ['冰冻箭：控制效果尚未实现'] : []}));
+        const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(w => w.message);
+        resolve(JSON.stringify({patch,unresolved}));
       };
     });
   })()`);
@@ -321,7 +335,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(imported.order[0], 'p1');
   assert.equal(imported.units.p1.ap, 2);
   assert.equal(imported.units.p1.hp, 321);
-  assert.equal(imported.equipment[imported.items[imported.units.p1.mainHand].templateId].attack, 10);
+  const fixedShotRule = state => state.equipment[state.items[state.units.p1.mainHand].templateId].rules.find(rule => rule.id === 'fixed-shot');
+  assert.deepEqual(fixedShotRule(imported)?.program,[{op:'mutate_event',patch:{finalAmount:10}}]);
   assert.equal(await run(`document.querySelector('#scenario-select').options.length`), 0);
   assert.equal(await run(`document.querySelectorAll('#seed-input').length`), 1);
   assert.equal(await run(`document.querySelector('#seed-input').value`), '12');
@@ -331,7 +346,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(restarted.title, imported.title);
   assert.notDeepEqual(restarted.grid, imported.grid);
   assert.equal(restarted.units.p1.ap, 2);
-  assert.equal(restarted.equipment[restarted.items[restarted.units.p1.mainHand].templateId].attack, 10);
+  assert.deepEqual(fixedShotRule(restarted), fixedShotRule(imported));
   assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-tab]'), b => b.dataset.tab)`), ['instances', 'prompt', 'api', 'ai', 'sandbox']);
   assert.deepEqual(await run(`Array.from(document.querySelectorAll('[data-page="sandbox"] > .fated-actions button'), b => b.textContent)`), ['战报交付', '重新扫描']);
   assert.equal(await run(`!!document.querySelector('[data-page="sandbox"] > .fated-chat')`), false);
@@ -474,7 +489,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const requestsBeforeHydrate = await run('hostRequests.length');
   await run(`for (const id of ['p1','e1']) [...document.querySelectorAll('.fated-instance[data-unit-id="'+id+'"] button')].find(b=>b.textContent==='删除').click()`);
   assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 0);
-  await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',effects:[{id:'heal_self',trigger:'active',target:'self',params:{usesPerBattle:1},effects:[{kind:'heal',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
+  await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',rules:[{id:'heal_self',hook:'active',usesPerBattle:1,program:[{op:'heal',target:'self',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
   await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
   const raw = await tavernState();
   assert.equal(raw.units.p1.hp, 245);
@@ -492,7 +507,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
   assert.equal((await tavernState()).units.p1.inventory[bagId],3);
   await click('#confirm-action');
-  assert.equal((await tavernState()).units.p1.inventory[bagId],2);
+  const afterHeal = await tavernState();
+  assert.equal(afterHeal.units.p1.hp, 255);
+  assert.equal(afterHeal.units.p1.inventory[bagId],2);
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
   assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`), true);
   assert.match(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.textContent`), /剩余 0 次.*次数已用尽/);
@@ -558,6 +575,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     Object.assign(fixture.units.swordsman, {x:7,y:9,weapon:'ranger-weapon',mainHand:'ranger-weapon'});
     Object.assign(fixture.units.ranger, {weapon:null,mainHand:null});
     Object.assign(fixture.units.scout, {x:7,y:7,hp:1,armor:0});
+    fixture.pools[fixture.units.scout.pools.hp].current = 1;
     game.createBattle({kind:'custom_state',state:fixture});
   })()`);
   assert.ok(await run(`${get(cell(7,6))}.classList.contains('is-in-range')`));
@@ -594,7 +612,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   })()`);
   assert.deepEqual(corpse, { filter: 'grayscale(1)', pointer: 'none', unit: null, selected: 'false' });
   t.diagnostic(`G57 ${JSON.stringify(corpse)}`);
-  assert.equal((await state()).items['soulblade-lan'].counters.souls, 1);
+  assert.equal(await souls(), 1);
   const returnToSwordsman = async () => {
     for (let step = 0; (await actor()).id !== 'swordsman'; step++) {
     assert.ok(step < 20, '先攻队列应回到剑客');
@@ -616,16 +634,32 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.ok((await state()).units.swordsman.statuses.thorns);
   await click('#api-sandbox summary'); await click('[data-example="counter"]'); await click('#sandbox-preview');
   assert.match(await run(`${get('#sandbox-output')}.textContent`), /souls/);
-  assert.equal((await state()).items['soulblade-lan'].counters.souls, 1);
-  await click('#sandbox-commit'); assert.equal((await state()).items['soulblade-lan'].counters.souls, 2);
-  await click('#sandbox-undo'); assert.equal((await state()).items['soulblade-lan'].counters.souls, 1);
-  await click('[data-example="custom-status"]'); await click('#sandbox-preview');
+  assert.equal(await souls(), 1);
+  await click('#sandbox-commit'); assert.equal(await souls(), 2);
+  await click('#sandbox-undo'); assert.equal(await souls(), 1);
+  await t.test('自定义状态示例可通过 VM 校验', async () => {
+    await click('[data-example="custom-status"]');
+    await click('#sandbox-preview');
+    assert.equal(await run(`${get('#sandbox-commit')}.disabled`), false, await run(`${get('#sandbox-output')}.textContent`));
+  });
+  await run(`(() => {
+    const editor = ${get('#sandbox-editor')};
+    editor.value = JSON.stringify([
+      {type:'define_status_template',template:{id:'bone_frost',name:'蚀骨寒霜',category:'dot',
+        remainingTurns:2,durationType:'battle_turns',stackMode:'refresh',maxStacks:1,
+        rules:[{id:'bone-frost-tick',hook:'turn_start',program:[{op:'damage',target:'self',amount:3,damageType:'energy',direct:false}]}]}},
+      {type:'upsert_status',unitId:'swordsman',statusId:'bone_frost'},
+    ]);
+    editor.dispatchEvent(new Event('input', {bubbles:true}));
+  })()`);
+  await click('#sandbox-preview');
   assert.match(await run(`${get('#sandbox-output')}.textContent`), /bone_frost/);
-  assert.equal((await state()).statusTemplates, undefined);
+  assert.equal((await state()).statusTemplates?.bone_frost, undefined);
   await click('#sandbox-commit');
   assert.equal((await state()).statusTemplates.bone_frost.name, '蚀骨寒霜');
-  assert.ok(Object.values((await state()).units).some(u=>u.statuses.bone_frost));
-  await click('#sandbox-undo'); assert.equal((await state()).statusTemplates, undefined);
+  assert.ok((await state()).units.swordsman.statuses.bone_frost);
+  await click('#sandbox-undo');
+  assert.equal((await state()).statusTemplates?.bone_frost, undefined);
   await send('Browser.setDownloadBehavior', { behavior:'allow', downloadPath: profile });
   await click('#export-report');
   assert.equal(await run(`${get('#report-dialog')}.open`), true);
@@ -645,7 +679,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const { root: { nodeId } } = await send('DOM.getDocument');
   const { nodeId: inputId } = await send('DOM.querySelector', { nodeId, selector:'#import-snapshot' });
   await send('DOM.setFileInputFiles', { nodeId: inputId, files:[download] });
-  await until(async () => (await state()).items['soulblade-lan'].counters.souls === 1, '导入恢复');
+  await until(async () => await souls() === 1, '导入恢复');
   assert.deepEqual(await state(), exported.state);
   await send('Page.reload');
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '刷新恢复');
@@ -662,6 +696,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await select('#anim-speed', '0');
   await click('#auto-ai');
   await send('Browser.setDownloadBehavior', { behavior:'allow', downloadPath: profile });
+  const soulsBeforeCarry = await souls();
+  assert.equal(soulsBeforeCarry, 1);
   await click('#export-persistent');
   const carry = join(profile, 'fated-ruins-persistent.json');
   await until(async () => { try { return JSON.parse(await readFile(carry, 'utf8')); } catch { return null; } }, '跨战文件下载');
@@ -670,7 +706,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const input = await send('DOM.querySelector', { nodeId:doc.root.nodeId, selector:'#import-snapshot' });
   await send('DOM.setFileInputFiles', { nodeId:input.nodeId, files:[carry] });
   await until(async () => (await state()).scenarioId === 'boss', '导入跨战文件').catch(async e => { throw new Error(e.message + ' | ' + await run(`document.querySelector('#action-error').textContent + ' | ' + window.FatedTacticalGame.getBattleState().scenarioId`)); });
-  assert.equal((await state()).items['soulblade-lan'].counters.souls,1);
+  await t.test('跨战存档保留武器灵魂池', async () => {
+    assert.equal(await souls(), soulsBeforeCarry);
+  });
   await run(`(() => {
     const g=window.FatedTacticalGame;
     const p=g.proposeCommands([{type:'set_unit_stat',unitId:'colossus',patch:{x:2,y:4}}],{baseRevision:g.getStateSummary().revision,reason:'测试撤离'});

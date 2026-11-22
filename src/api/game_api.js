@@ -1,5 +1,4 @@
 import { elevation } from '../core/spatial.js';
-import { migrateStateEffects } from '../core/effects.js';
 import { buildScenario } from '../presets/scenarios.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
@@ -12,7 +11,7 @@ import { formatBattleReportText } from './battle_report.js';
 const copy = value => structuredClone(value);
 const fail = message => { throw new Error(message); };
 const version = 1;
-const battleVersion = 10;
+const battleVersion = 11;
 const maxHistory = 2000;
 const maxBatch = 32;
 const own = (obj, key) => Object.hasOwn(obj, key);
@@ -44,10 +43,12 @@ function simulate(base, transaction) {
   if (transaction.kind === 'actions') {
     for (const action of transaction.entries) {
       if (!action || Object.getPrototypeOf(action) !== Object.prototype
-        || Object.values(action).some(v => typeof v !== 'string' && typeof v !== 'boolean' && !Number.isInteger(v))) fail('动作必须由 JSON 字段组成');
+        || Object.entries(action).some(([key, value]) => typeof value !== 'string' && typeof value !== 'boolean'
+          && !(action.type === 'answer' && key === 'value' ? Number.isFinite(value) : Number.isInteger(value)))) fail('动作必须由 JSON 字段组成');
       applyAction(next, action);
     }
   } else if (transaction.kind === 'commands') {
+    if (base.vm?.pendingAsk) fail('请先回答当前战斗选择');
     for (const command of transaction.entries) applyCommand(next, command);
     validateState(next);
     syncEquipmentEffects(next);
@@ -88,33 +89,10 @@ export function createGameAPI() {
   }
   function restore(snapshot) {
     if (!shape(snapshot, ['kind', 'version', 'origin', 'state', 'journal'])
-      || snapshot.kind !== 'battle' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, battleVersion].includes(snapshot.version) || !Array.isArray(snapshot.journal)
-      || snapshot.journal.length > maxHistory) fail('不支持的战局快照格式');
-    const needsMigration = snapshot.version < battleVersion;
-    if (needsMigration) {
-      const migrate = data => {
-        const next = migrateStateEffects(copy(data));
-        next.mode = 'split';
-        for (const unit of Object.values(next.units ?? {})) {
-          delete unit.statuses?.disarmed;
-          delete unit.disarmedItem;
-        }
-        return next;
-      };
-      snapshot = { ...snapshot, origin: migrate(snapshot.origin), state: migrate(snapshot.state) };
-    }
+      || snapshot.kind !== 'battle' || snapshot.version !== battleVersion || !Array.isArray(snapshot.journal)
+      || snapshot.journal.length > maxHistory) fail('仅支持版本 11 的战局快照');
     validateState(snapshot.origin);
-    validateState(snapshot.state);
-    // Changes to the resolver can change the old journal's outcomes and logs.
-    if (needsMigration) {
-      const resumed = copy(snapshot.state);
-      syncEquipmentEffects(resumed);
-      validateState(resumed);
-      origin = state = resumed;
-      frames = [];
-      publish();
-      return { ...api.getStateSummary(), migratedFrom: snapshot.version };
-    }
+    if (snapshot.origin.vm?.pendingAsk) fail('快照起点不得包含挂起中的动作');
     const start = copy(snapshot.origin), history = [];
     let next = start;
     for (const transaction of snapshot.journal) {
@@ -160,7 +138,7 @@ export function createGameAPI() {
         units: Object.fromEntries(Object.values(s.units).map(u => [u.id, {
           statuses: Object.fromEntries(Object.entries(u.statuses).filter(([, v]) => v.durationType === 'persistent')),
           weapon: u.weapon, gear: u.gear,
-        }])), items: s.items,
+        }])), items: s.items, pools: s.pools,
         ...(s.statusTemplates && Object.keys(s.statusTemplates).length ? { statusTemplates: s.statusTemplates } : {}) });
     },
     exportBattleReport() {

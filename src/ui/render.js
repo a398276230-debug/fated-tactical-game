@@ -1,6 +1,6 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
 import { resourceLabel } from '../core/resource_names.js';
-import { effectLabel, resourceDefinitions } from '../core/effects.js';
+const effectLabel = rule => rule.label ?? rule.id;
 import { preview as rulesPreview, corpses } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
 import { bodySizeLabel, moraleLabels, moraleTypes } from '../core/combat_protocol.js';
@@ -134,7 +134,7 @@ export function createRenderer(root, portraitFor = () => []) {
     return map;
   }
 
-  function renderBoard(state, { selected, action, hover, preview, current }) {
+  function renderBoard(state, { selected, action, hover, preview, current, askLocked, askCells }) {
     initBoard(state);
     const moving = ['move', 'sprint', 'disengage'].includes(action?.type);
     const unitsAt = group(values(state.units).filter(u => u.hp > 0 && !u.fled));
@@ -151,12 +151,14 @@ export function createRenderer(root, portraitFor = () => []) {
       const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
       const unit = unitsAt.get(xy)?.[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
       const chosen = !!unit && selected === unit.id, isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
-      const reach = baseline.move.has(xy);
+      const reach = baseline.move.has(xy), answerable = askCells?.has(xy);
+      cell.disabled = askLocked && !answerable;
       cell.className = ['tactical-cell', tile.kind !== 'floor' ? `terrain-${tile.kind}` : tile.z ? 'terrain-plateau' : '', ...edges.map(c => `cliff-${c}`),
         chosen ? 'is-selected' : '', isHover ? 'is-hovered' : '', isHover && preview?.ok === false ? 'is-invalid' : '',
         reach ? 'is-reachable' : '', (action?.type === 'interact' ? baseline.interact : baseline.attack).has(xy) || (item && baseline.interact.has(xy)) ? 'is-in-range' : '',
         reach && (tile.kind === 'slope' || tile.z !== originZ) ? 'is-elevated-reach' : '',
-        affected.has(xy) ? 'axis-covered' : '', path.has(xy) ? 'is-path' : '', risks.has(xy) ? 'is-opportunity' : ''].filter(Boolean).join(' ');
+        affected.has(xy) ? 'axis-covered' : '', path.has(xy) ? 'is-path' : '', risks.has(xy) ? 'is-opportunity' : '',
+        answerable ? 'is-ask-option' : ''].filter(Boolean).join(' ');
       cell.dataset.terrainType = tile.kind;
       cell.dataset.terrainZ = tile.z;
       cell.dataset.terrainElev = tile.z < 0 ? 'neg' : tile.z >= 2 ? 'pos2' : 'pos1';
@@ -166,8 +168,10 @@ export function createRenderer(root, portraitFor = () => []) {
       cell.setAttribute('aria-pressed', String(chosen));
       const label = [`(${xy}) ${terrainLabel(tile)}`, edges.length ? '陡崖边' : '',
         unit ? `${side(unit.team)}${unit.name}，生命 ${unit.hp}/${unit.maxHp}${values(unit.statuses).length ? `，${values(unit.statuses).map(s => s.name).join('、')}` : ''}` : '',
-        cover ? coverText(cover) : '', item ? interactiveText(item) : '', reach ? '可以走到这里' : ''].filter(Boolean).join(' · ');
+        cover ? coverText(cover) : '', item ? interactiveText(item) : '', reach ? '可以走到这里' : '', answerable ? '可选择此格' : ''].filter(Boolean).join(' · ');
       cell.setAttribute('aria-label', label);
+      if (answerable) cell.setAttribute('aria-describedby', 'pending-ask-prompt');
+      else cell.removeAttribute('aria-describedby');
       if (isHover) inspection = label;
       const bodies = bodiesAt.get(xy) ?? [];
       const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map(b => b.id), unit && portraitFor(unit.id)]);
@@ -255,7 +259,7 @@ export function createRenderer(root, portraitFor = () => []) {
     const stats = el('div', 'ft-kv');
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
-    const melee = (template?.range ?? 1.5) <= 2 && !resourceDefinitions(template).some(n => n.reloadable);
+    const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some(pool => pool.reloadable);
     const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${STANCES[u.stance] ?? '轻剑'}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
@@ -271,9 +275,9 @@ export function createRenderer(root, portraitFor = () => []) {
       const inst = get(state.items, id), tpl = get(state.equipment, inst?.templateId);
       const li = el('li'); li.dataset.instanceId = id;
       li.append(el('b', '', tpl?.name ?? id));
-      const counters = Object.entries(inst?.counters ?? {}).map(([k, n]) => `${resourceLabel(k)} ${n}`);
+      const counters = Object.entries(inst?.pools ?? {}).map(([k, id]) => `${resourceLabel(k)} ${state.pools?.[id]?.current ?? 0}`);
       if (counters.length) li.append(document_text(` · ${counters.join(' · ')}`));
-      const text = [tpl?.description, ...(tpl?.effects ?? []).map(effectLabel)].filter(Boolean).join('；');
+      const text = [tpl?.description, ...(tpl?.rules ?? []).map(effectLabel)].filter(Boolean).join('；');
       if (text) li.append(el('p', '', text));
       gear.append(li);
     }
@@ -333,7 +337,7 @@ export function createRenderer(root, portraitFor = () => []) {
     if (range?.shape && range.shape !== 'single') head.push(document_text(`，${SHAPES[range.shape] ?? range.shape}`));
     line(head);
     if (p?.kind === 'barrel') line(`爆炸波及 ${p.cells.length} 格，可能伤及友方。`);
-    if (range?.effects?.length) line(`效果：${range.effects.map(effectLabel).join('；')}`);
+    if (range?.rules?.length) line(`效果：${range.rules.map(effectLabel).join('；')}`);
     if (action.type === 'brace' && range?.ok) line(`${range.coverId ? `借助${get(state.covers, range.coverId)?.name ?? '掩体'}` : '原地'}防御：受到伤害减少 ${pct(range.reduction)}，持续 ${range.turns} 回合`);
     if (range?.ammo != null) line(`弹药 ${range.ammo}${range.capacity ? ` / ${range.capacity}` : ''}`);
     if (p?.ok === false) line(`✖ ${p.error}`, 'is-warning');
@@ -382,7 +386,7 @@ export function createRenderer(root, portraitFor = () => []) {
     const current = get(state.units, state.order[state.turn]);
     const selected = ui.selectedId ?? current?.id;
     const action = ui.action ?? null, hover = ui.hover ?? null;
-    const canAct = !ui.busy && current?.team === 'blue' && !state.outcome;
+    const canAct = !ui.busy && !ui.askLocked && current?.team === 'blue' && !state.outcome;
     const run = cmd => (canAct ? rulesPreview(state, cmd) : null);
     const fresh = last?.state !== state;
     if (fresh || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
@@ -401,7 +405,7 @@ export function createRenderer(root, portraitFor = () => []) {
     if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);
     if (fresh) renderActor(state, current);
     $('sprint-indicator').textContent = ui.sprint ? '疾跑范围已显示 · 走更远需要 2 AP' : '';
-    renderBoard(state, { selected, action, hover, preview: result, current });
+    renderBoard(state, { selected, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells });
     if (ui.target) renderPreview(state, action, hover, range, result, current);
     if (fresh || last?.selected !== selected || last?.inspectedId !== ui.inspectedId) {
       const feature = get(state.covers, ui.inspectedId) ?? get(state.interactives, ui.inspectedId);
@@ -409,15 +413,19 @@ export function createRenderer(root, portraitFor = () => []) {
     }
     $('battle-status').textContent = state.outcome
       ? (state.outcome === 'draw' ? '战斗结束：平局' : `战斗结束：${state.outcome === 'blue' ? '我方胜利' : '敌方胜利'}`)
-      : canAct ? '点击格子选择目标，再选要做的事' : current ? `${current.name} 正在行动……` : '';
+      : ui.askLocked ? '' : canAct ? '点击格子选择目标，再选要做的事' : current ? `${current.name} 正在行动……` : '';
     last = { state, canAct, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
   }
 
   /** 按钮可用性不等动画，总是立刻跟随真实战局。 */
   function renderControls(state) {
     const current = get(state.units, state.order[state.turn]);
-    $('end-turn').disabled = !(current?.team === 'blue' && !state.outcome);
-    $('ai-step').disabled = !!state.outcome || current?.team !== 'red';
+    const askLocked = !!state.vm?.pendingAsk;
+    $('turn-controls').hidden = askLocked;
+    $('turn-order').inert = askLocked;
+    for (const button of root.querySelectorAll('[data-open-drawer]')) button.disabled = askLocked;
+    $('end-turn').disabled = askLocked || !(current?.team === 'blue' && !state.outcome);
+    $('ai-step').disabled = askLocked || !!state.outcome || current?.team !== 'red';
   }
 
   return { render, renderControls, renderLog };
