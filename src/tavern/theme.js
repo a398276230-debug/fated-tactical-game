@@ -142,7 +142,7 @@ export const tavernTheme = `
 .fated-ai-message[data-role=tool] { align-self:flex-start; border-style:dashed; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.84em; }
 .fated-ai-message[data-status=error] { border-color:#d66; }.fated-ai-message[data-status=aborted] { opacity:.7; }
 .fated-ai-message header { display:flex; justify-content:space-between; gap:12px; color:var(--gold); font-size:.72em; margin-bottom:4px; }
-.fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }
+.fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }.fated-ai-msg-actions { display:flex; gap:6px; margin-top:7px; }.fated-ai-icon-btn { min-width:30px; padding-inline:6px !important; }.fated-ai-msg-feedback { margin-top:5px; color:var(--text-soft); white-space:pre-wrap; }.fated-ai-msg-feedback[data-tone=ok] { color:var(--ci-success); }.fated-ai-msg-feedback[data-tone=error] { color:var(--red-text); }
 .fated-ai-info { color:var(--text-muted, var(--blue-text)); font-size:.78em; margin:5px 0; }
 [data-fated-tavern-overlay] { ${ciDark} }
 @media(prefers-color-scheme:light) { [data-fated-tavern-overlay] { ${ciLight} } }
@@ -212,6 +212,7 @@ export const tavernTheme = `
 }
 .fated-toast[data-tone="success"] { --notice-color:var(--accent-text) }
 .fated-toast[data-tone="error"] { --notice-color:var(--red-text) }
+.fated-toast[data-tone="warning"] { --notice-color:var(--gold) }
 .fated-toast header { display:flex; align-items:center; gap:8px; color:var(--notice-color,var(--blue-text)) }
 .fated-toast header span { display:grid; place-items:center; width:1.4em; height:1.4em; border:1px solid currentColor; border-radius:50%; font-weight:bold }
 .fated-toast p { margin:6px 0; white-space:pre-wrap; color:var(--text-soft) }

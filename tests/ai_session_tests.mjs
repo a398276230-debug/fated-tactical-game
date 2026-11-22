@@ -9,7 +9,7 @@ import { applyAction, currentUnit, refreshOpeningInitiative } from '../src/core/
 import { validateState } from '../src/api/validation.js';
 import { dispatchVMHook } from '../src/core/vm-runtime.js';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { applyPatch } from '../src/tavern/overlay.js';
+import { applyPatch, extractJsonBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
 
 test('每个 VM 指令的用法说明进入实际组装的默认助手消息', () => {
   const messages = assembleMessages(DEFAULT_SLOTS, {});
@@ -122,7 +122,7 @@ test('默认天气、磁带重放和资源封印食谱在生产 VM 中结算', (
   assert.equal(state.tape.length, 3);
 });
 
-test('技能先手按槽取最大值并复用开场骰，模板接受 30 格但拒绝 31 格', () => {
+test('技能先手按槽取最大值并复用开场骰，模板上限为射程 64 格、半径 30 格', () => {
   const state = buildScenario('ruins');
   const actor = currentUnit(state);
   for (const [id, slot, initiativeBonus] of [['one', 'attack', 8], ['two', 'attack', 5], ['three', 'action', 6]]) {
@@ -137,7 +137,9 @@ test('技能先手按槽取最大值并复用开场骰，模板接受 30 格但�
   state.skills.one.radius = 31;
   assert.throws(() => validateState(state));
   state.skills.one.radius = 30;
-  state.skills.one.range = 31;
+  state.skills.one.range = 64;
+  validateState(state);
+  state.skills.one.range = 65;
   assert.throws(() => validateState(state));
 });
 
@@ -254,6 +256,55 @@ test('独立 API 的推理字段不会进入回复或流式回调', async () => 
   });
   assert.equal(text, '正式回复');
   assert.deepEqual(chunks, ['正式回复', '正式回复']);
+});
+
+test('JSON 提取器忽略花括号干扰并支持围栏、裸数组和残缺文本', () => {
+  const block = '{"patch":[{"op":"replace","path":"/units/p1/armor","value":9}]}';
+  assert.deepEqual(extractJsonBlocks('说明 `{armor}`，配置如下：```json\n' + block + '\n```'), [JSON.parse(block)]);
+  const bare = extractJsonBlocks('正文 ' + JSON.stringify(JSON.parse(block).patch));
+  assert.deepEqual(bare.find(Array.isArray), JSON.parse(block).patch);
+  assert.deepEqual(extractJsonBlocks('普通聊天或 {"patch":[{"op":'), []);
+});
+
+test('会话重Roll原位替换助手且不重复用户消息', () => {
+  const store = createAiSessions(null, () => {}, () => 100);
+  const [user, assistant] = store.append(store.active().id, { role: 'user', content: '把护甲改成8' }, { role: 'assistant', content: '改成6', status: 'ok' });
+  const turn = store.prepareReroll(store.active().id, assistant);
+  assert.equal(turn.userMessage, user);
+  assert.equal(store.active().messages.filter(message => message.role === 'user').length, 1);
+  assert.equal(store.active().messages.at(-1), turn.assistantMessage);
+});
+
+test('标准化分区放行合法项并保留坏项原因', () => {
+  const state = { skills: { good: { name: '好技能' } }, units: { p1: { name: '主角', armor: 1 } } };
+  const result = partitionNormalizationPatch({ liveState: state, baselineState: state, rawPatch: [
+    { op: 'replace', path: '/units/p1/armor', value: 9 },
+    { op: 'replace', path: '/units/ghost/armor', value: 4 },
+  ], validate: () => {} });
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.rejected.length, 1);
+  assert.match(formatRejectedItem(result.rejected[0], state), /ghost/);
+});
+
+test('标准化分区多轮收敛倒序依赖，并隔离坏项', () => {
+  const state = { equipment: { charm: { name: '翼饰', skills: [] } }, skills: {} };
+  const patch = [
+    { op: 'replace', path: '/equipment/charm/skills', value: ['wing_lift'] },
+    { op: 'add', path: '/skills/wing_lift', value: { id: 'wing_lift', name: '翼升', rules: [] } },
+    { op: 'add', path: '/skills/broken_sk', value: { id: 'broken_sk', name: '坏技能', rules: [{ program: [{ op: 'explode_planet' }] }] } },
+  ];
+  const result = partitionNormalizationPatch({
+    liveState: state, baselineState: state, rawPatch: patch,
+    validate: candidate => {
+      const refs = candidate.equipment.charm?.skills ?? [];
+      for (const id of refs) if (!candidate.skills[id]) throw new Error(`技能 ${id} 尚未定义`);
+      if (candidate.skills.broken_sk) throw new Error('未知 VM 指令 explode_planet');
+    },
+  });
+  assert.deepEqual(result.accepted.map(item => item.index), [1, 0]);
+  assert.deepEqual(result.rejected.map(item => item.index), [2]);
+  assert.equal(result.workLive.equipment.charm.skills[0], 'wing_lift');
+  assert.match(formatRejectedItem(result.rejected[0], result.workLive), /broken_sk.*explode_planet/);
 });
 
 test('会话增删改查、消息追加与持久化保持隔离', () => {

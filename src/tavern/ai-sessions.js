@@ -66,5 +66,24 @@ export function createAiSessions(saved, persist, now = Date.now) {
       Object.assign(message, fields);
       change(session);
     },
+    prepareReroll(id, targetAssistantMessage) {
+      const session = get(id);
+      const idx = session?.messages.indexOf(targetAssistantMessage) ?? -1;
+      if (idx < 0 || targetAssistantMessage.role !== 'assistant') return null;
+      let userIdx = -1;
+      for (let i = idx - 1; i >= 0; i--) {
+        if (session.messages[i].role === 'user') { userIdx = i; break; }
+      }
+      if (userIdx < 0) return null;
+      const historyBeforeUser = session.messages.slice(0, userIdx).filter(message =>
+        ['user', 'assistant'].includes(message.role) && message.content?.trim() && !['error', 'aborted'].includes(message.status)
+      ).map(({ role, content }) => ({ role, content }));
+      const userMessage = session.messages[userIdx];
+      session.messages.splice(userIdx + 1);
+      const assistantMessage = { ts: now(), role: 'assistant', content: '' };
+      session.messages.push(assistantMessage);
+      change(session);
+      return { userMessage, assistantMessage, historyBeforeUser };
+    },
   };
 }

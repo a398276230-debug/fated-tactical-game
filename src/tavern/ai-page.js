@@ -22,7 +22,7 @@ function renderMarkdown(target, content, make) {
   }
 }
 
-export function mountAiPage(page, { make, on, sessions, send, stop }) {
+export function mountAiPage(page, { make, on, sessions, send, stop, reroll, applyJson, extractJson = () => [] }) {
   const button = label => make('button', { type: 'button' }, label);
   const toolbar = make('div', { class: 'fated-actions' });
   const select = make('select', { 'aria-label': '切换会话' });
@@ -55,9 +55,16 @@ export function mountAiPage(page, { make, on, sessions, send, stop }) {
       const badge = make('span');
       heading.append(time, badge);
       const body = make('div', { class: 'fated-ai-body' });
-      bubble.append(heading, body);
+      const actions = make('div', { class: 'fated-ai-msg-actions' });
+      const feedback = make('div', { class: 'fated-ai-msg-feedback' });
+      const rerollButton = make('button', { type: 'button', class: 'fated-ai-icon-btn', 'data-ai-reroll': '', title: '重新生成此回复', 'aria-label': '重新生成此回复' }, '↻');
+      const applyButton = make('button', { type: 'button', 'data-ai-apply': '' }, '应用');
+      actions.append(rerollButton, applyButton);
+      bubble.append(heading, body, actions, feedback);
+      on(rerollButton, 'click', () => reroll?.(message));
+      on(applyButton, 'click', () => applyJson?.(message, extractJson(message.content).at(-1), feedback));
       log.append(bubble);
-      row = { bubble, badge, body };
+      row = { bubble, badge, body, actions, feedback, rerollButton, applyButton };
       rows.set(message, row);
     }
     row.bubble.dataset.status = message.status ?? '';
@@ -66,6 +73,13 @@ export function mountAiPage(page, { make, on, sessions, send, stop }) {
     if (message.role === 'assistant') renderMarkdown(row.body, message.content, make);
     else row.body.textContent = [message.toolName, message.content, message.toolResult == null ? '' :
       typeof message.toolResult === 'string' ? message.toolResult : JSON.stringify(message.toolResult, null, 2)].filter(Boolean).join('\n');
+    if (message.role === 'assistant') {
+      const ready = message.status === 'ok';
+      row.actions.hidden = !message.status;
+      row.rerollButton.disabled = busy;
+      row.applyButton.hidden = !ready || !extractJson(message.content).length;
+      row.applyButton.disabled = busy;
+    } else row.actions.hidden = true;
   }
 
   function render() {
@@ -85,6 +99,10 @@ export function mountAiPage(page, { make, on, sessions, send, stop }) {
   }
 
   function refresh() {
+    for (const row of rows.values()) {
+      row.rerollButton.disabled = busy;
+      row.applyButton.disabled = busy;
+    }
     const session = sessions.active();
     info.textContent = `${session.messages.length} 条消息 · 创建于 ${formatTime(session.createdAt)}`;
     submit.disabled = busy || !input.value.trim();
@@ -123,6 +141,7 @@ export function mountAiPage(page, { make, on, sessions, send, stop }) {
   render();
 
   return {
+    render,
     show: scrollToEnd,
     setBusy(value) { busy = value; refresh(); },
     feed(id, ...messages) {
