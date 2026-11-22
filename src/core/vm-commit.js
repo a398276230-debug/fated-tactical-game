@@ -71,7 +71,7 @@ export const commitOps = {
   },
 };
 
-export function continueCommit({ state, frame, host }) {
+export function continueCommit({ state, frame, host, options }) {
   const { data } = frame;
   const { op, pool: key } = data;
   const target = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
@@ -104,9 +104,11 @@ export function continueCommit({ state, frame, host }) {
       const attacker = authorityFor(state, frame.carrier, data.sourceId);
       const defender = authorityFor(state, conceptProtection, target.id);
       const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target.id }, {
+        preview: options,
         checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : data.sourceId }) ?? 0,
       });
       event.authorityContest = contest;
+      if (contest.conditional) { state.vm.stack.pop(); return; }
       host.log(state, source, 'authority', `${target.name}的概念保护${contest.result < 0 ? '拦截了即死' : '被即死穿透'}${authorityProse(contest)}`, { targetId: target.id, contest });
       if (contest.result < 0) { state.vm.stack.pop(); return; }
     }
@@ -150,9 +152,11 @@ export function continueCommit({ state, frame, host }) {
           const attacker = authorityFor(state, frame.carrier, data.sourceId);
           const defender = authorityFor(state, protection, target.id);
           const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target.id }, {
+            preview: options,
             checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : data.sourceId }) ?? 0,
           });
           event.authorityContest = contest;
+          if (contest.conditional) { state.vm.stack.pop(); return; }
           host.log(state, source, 'authority', `${target.name}的概念保护${contest.result < 0 ? '拦截了上限削减' : '被上限削减穿透'}${authorityProse(contest)}`, { targetId: target.id, contest });
           if (contest.result < 0) { state.vm.stack.pop(); return; }
         }

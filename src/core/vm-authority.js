@@ -60,12 +60,15 @@ export function protectionCarrier(state, target) {
   return refs.reduce((best, ref) => !best || compareAuthority(authorityFor(state, ref), authorityFor(state, best)) > 0 ? ref : best, null);
 }
 
-export function authorityContest(state, attacker, defender, { dryRun = false, attackStat = ['int', 'spi'], defenseStat = ['con', 'spi'], roll = null, checkBonus = null } = {}) {
+export function authorityContest(state, attacker, defender, { dryRun = false, preview, attackStat = ['int', 'spi'], defenseStat = ['con', 'spi'], roll = null, checkBonus = null } = {}) {
   const order = compareAuthority(attacker, defender);
   if (order) return { result: order, contested: false, conditional: false,
     attackRank: attacker.authorityRank, defenderRank: defender.authorityRank,
     attackTier: attacker.unitTier, defenderTier: defender.unitTier };
-  if (dryRun) return { result: 0, contested: true, conditional: true };
+  if (dryRun || preview?.dryRun) {
+    if (preview) preview.conditional = true;
+    return { result: 0, contested: true, conditional: true };
+  }
   const a = own(state.units, attacker.unitId), d = own(state.units, defender.unitId);
   const ar = roll ? { value: roll(20) } : rollDie(state.rng, 20);
   if (!roll) state.rng = ar.rng;

@@ -2201,7 +2201,7 @@ var FatedTactical = (() => {
     }
     return refs.reduce((best, ref2) => !best || compareAuthority(authorityFor(state, ref2), authorityFor(state, best)) > 0 ? ref2 : best, null);
   }
-  function authorityContest(state, attacker, defender, { dryRun = false, attackStat = ["int", "spi"], defenseStat = ["con", "spi"], roll = null, checkBonus = null } = {}) {
+  function authorityContest(state, attacker, defender, { dryRun = false, preview: preview2, attackStat = ["int", "spi"], defenseStat = ["con", "spi"], roll = null, checkBonus = null } = {}) {
     const order = compareAuthority(attacker, defender);
     if (order) return {
       result: order,
@@ -2212,7 +2212,10 @@ var FatedTactical = (() => {
       attackTier: attacker.unitTier,
       defenderTier: defender.unitTier
     };
-    if (dryRun) return { result: 0, contested: true, conditional: true };
+    if (dryRun || preview2?.dryRun) {
+      if (preview2) preview2.conditional = true;
+      return { result: 0, contested: true, conditional: true };
+    }
     const a = own6(state.units, attacker.unitId), d = own6(state.units, defender.unitId);
     const ar = roll ? { value: roll(20) } : rollDie(state.rng, 20);
     if (!roll) state.rng = ar.rng;
@@ -2315,7 +2318,7 @@ var FatedTactical = (() => {
       host.log(state, context.self, "pool_link", `${context.self.name}${op.mode === "link" ? "\u8FDE\u63A5" : "\u62C6\u5206"}\u4E86\u8D44\u6E90\u6C60`);
     }
   };
-  function continueCommit({ state, frame, host }) {
+  function continueCommit({ state, frame, host, options }) {
     const { data } = frame;
     const { op, pool: key4 } = data;
     const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
@@ -2371,9 +2374,14 @@ var FatedTactical = (() => {
         const attacker = authorityFor(state, frame.carrier, data.sourceId);
         const defender = authorityFor(state, conceptProtection, target2.id);
         const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target2.id }, {
+          preview: options,
           checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : data.sourceId }) ?? 0
         });
         event.authorityContest = contest;
+        if (contest.conditional) {
+          state.vm.stack.pop();
+          return;
+        }
         host.log(state, source, "authority", `${target2.name}\u7684\u6982\u5FF5\u4FDD\u62A4${contest.result < 0 ? "\u62E6\u622A\u4E86\u5373\u6B7B" : "\u88AB\u5373\u6B7B\u7A7F\u900F"}${authorityProse(contest)}`, { targetId: target2.id, contest });
         if (contest.result < 0) {
           state.vm.stack.pop();
@@ -2424,9 +2432,14 @@ var FatedTactical = (() => {
             const attacker = authorityFor(state, frame.carrier, data.sourceId);
             const defender = authorityFor(state, protection, target2.id);
             const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target2.id }, {
+              preview: options,
               checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : data.sourceId }) ?? 0
             });
             event.authorityContest = contest;
+            if (contest.conditional) {
+              state.vm.stack.pop();
+              return;
+            }
             host.log(state, source, "authority", `${target2.name}\u7684\u6982\u5FF5\u4FDD\u62A4${contest.result < 0 ? "\u62E6\u622A\u4E86\u4E0A\u9650\u524A\u51CF" : "\u88AB\u4E0A\u9650\u524A\u51CF\u7A7F\u900F"}${authorityProse(contest)}`, { targetId: target2.id, contest });
             if (contest.result < 0) {
               state.vm.stack.pop();
@@ -3162,7 +3175,7 @@ var FatedTactical = (() => {
       });
     }
   }
-  function continueApplyStatus({ state, frame, host, context }) {
+  function continueApplyStatus({ state, frame, host, context, options }) {
     const { data: op } = frame;
     const target2 = context.target;
     const template = host.statusTemplate?.(state, op.statusId);
@@ -3191,9 +3204,14 @@ var FatedTactical = (() => {
         const defenderRef = event.immunityCarrier ?? { type: "unit", id: target2.id };
         const defender = authorityFor(state, defenderRef, event.immunityOwnerId ?? target2.id);
         const contest = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target2.id }, {
+          preview: options,
           checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : context.self?.id }) ?? 0
         });
         event.authorityContest = contest;
+        if (contest.conditional) {
+          state.vm.stack.pop();
+          return;
+        }
         host.log(state, context.self, "authority", `${target2.name}\u7684\u72B6\u6001\u514D\u75AB${contest.result > 0 ? "\u88AB\u7A7F\u900F" : "\u751F\u6548"}${authorityProse(contest)}`, { targetId: target2.id, contest });
         if (contest.result > 0) event.cancel = false;
       }
@@ -3246,7 +3264,7 @@ var FatedTactical = (() => {
     }
     state.vm.stack.pop();
   }
-  function continueRemoveStatus({ state, frame, host, context }) {
+  function continueRemoveStatus({ state, frame, host, context, options }) {
     const { data: op } = frame;
     const target2 = context.target;
     if (!target2) {
@@ -3268,8 +3286,10 @@ var FatedTactical = (() => {
       const attacker = authorityFor(state, frame.carrier, context.self?.id);
       const defender = Number.isFinite(status.authorityRank) && Number.isFinite(status.sourceTier) ? { authorityRank: status.authorityRank, unitTier: status.sourceTier } : authorityFor(state, status.sourceCarrier ?? { type: "unit", id: status.sourceId ?? target2.id }, status.sourceId ?? target2.id);
       authorityContestDetail = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target2.id }, {
+        preview: options,
         checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : context.self?.id }) ?? 0
       });
+      if (authorityContestDetail.conditional) return;
       host.log(state, context.self, "authority", `${status.name}${authorityContestDetail.result > 0 ? "\u88AB\u5F3A\u5236\u79FB\u9664" : "\u62B5\u6297\u4E86\u5F3A\u5236\u79FB\u9664"}${authorityProse(authorityContestDetail)}`, { targetId: target2.id, contest: authorityContestDetail });
       if (authorityContestDetail.result <= 0) return;
     }

@@ -157,7 +157,7 @@ export function continueCheck({ state, frame, host, context }) {
   }
 }
 
-export function continueApplyStatus({ state, frame, host, context }) {
+export function continueApplyStatus({ state, frame, host, context, options }) {
   const { data: op } = frame;
   const target = context.target;
   const template = host.statusTemplate?.(state, op.statusId);
@@ -177,9 +177,11 @@ export function continueApplyStatus({ state, frame, host, context }) {
       const defenderRef = event.immunityCarrier ?? { type: 'unit', id: target.id };
       const defender = authorityFor(state, defenderRef, event.immunityOwnerId ?? target.id);
       const contest = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target.id }, {
+        preview: options,
         checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : context.self?.id }) ?? 0,
       });
       event.authorityContest = contest;
+      if (contest.conditional) { state.vm.stack.pop(); return; }
       host.log(state, context.self, 'authority', `${target.name}的状态免疫${contest.result > 0 ? '被穿透' : '生效'}${authorityProse(contest)}`, { targetId: target.id, contest });
       if (contest.result > 0) event.cancel = false;
     }
@@ -216,7 +218,7 @@ export function continueApplyStatus({ state, frame, host, context }) {
   state.vm.stack.pop();
 }
 
-export function continueRemoveStatus({ state, frame, host, context }) {
+export function continueRemoveStatus({ state, frame, host, context, options }) {
   const { data: op } = frame;
   const target = context.target;
   if (!target) { state.vm.stack.pop(); return; }
@@ -238,8 +240,10 @@ export function continueRemoveStatus({ state, frame, host, context }) {
       ? { authorityRank: status.authorityRank, unitTier: status.sourceTier }
       : authorityFor(state, status.sourceCarrier ?? { type: 'unit', id: status.sourceId ?? target.id }, status.sourceId ?? target.id);
     authorityContestDetail = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target.id }, {
+      preview: options,
       checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : context.self?.id }) ?? 0,
     });
+    if (authorityContestDetail.conditional) return;
     host.log(state, context.self, 'authority', `${status.name}${authorityContestDetail.result > 0 ? '被强制移除' : '抵抗了强制移除'}${authorityProse(authorityContestDetail)}`, { targetId: target.id, contest: authorityContestDetail });
     if (authorityContestDetail.result <= 0) return;
   }
