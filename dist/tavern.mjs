@@ -4166,6 +4166,10 @@ var spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpa
 
 // src/core/log-attribution.js
 var own10 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+function movementProgressText(progressPermille) {
+  const approximate = Math.round(progressPermille / 100) * 10;
+  return approximate === 0 ? "\u4E0D\u5230 10%" : approximate === 100 ? "\u63A5\u8FD1 100%" : `\u7EA6 ${approximate}%`;
+}
 function vmAttribution(state) {
   const stack = state.vm?.stack ?? [];
   const ruleFrame = [...stack].reverse().find((frame) => frame.ruleId);
@@ -5199,7 +5203,7 @@ function reachable(state, type = "move", unit = currentUnit(state), distanceLimi
   const limit = distanceLimit ?? (unit.moveM == null ? remainingMove * mult : Math.max(0, scale.limit - (unit.moved ?? 0) * mult + changes(unit, "movement") * mult));
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === "disengage" });
   if (!routes.length && scale.limit === 0 && distanceLimit === void 0) {
-    return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [] }];
+    return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
   }
   const sources = type === "disengage" ? [] : opportunitySources(state, unit).filter((source) => canReact(state, source, unit));
   const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
@@ -5747,6 +5751,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
       path: choice.path,
       steps: choice.steps,
       opportunities: choice.opportunities,
+      ...choice.bankedProgress != null && { bankedProgress: choice.bankedProgress },
       dz: elevation(state, center) - elevation(state, unit)
     };
   }
@@ -7848,12 +7853,13 @@ function chooseAction(state) {
   if (!actor || !actor.hp || !actor.ap) return { ...END };
   const enemies = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId3);
   if (!enemies.length) return { ...END };
+  const bankStep = (move2) => move2.cells?.find((cell) => cell.bankedProgress > (actor.moveCarryPermille ?? 0));
   if (actor.moraleState === "routed") {
     if (atBattleEdge(state, actor)) return preview(state, { type: "flee" }).ok ? { type: "flee" } : { ...END };
     const move2 = preview(state, { type: "move" });
     if (!move2.ok) return { ...END };
     const exit = reachable(state, "move", actor, Infinity).filter((cell) => atBattleEdge(state, cell)).sort((a, b) => a.steps - b.steps)[0];
-    const dest = exit?.path.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p)));
+    const dest = exit && (exit.path.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p))) ?? bankStep(move2));
     return dest ? { type: "move", x: dest.x, y: dest.y } : { ...END };
   }
   if (state.battleType === "suppress" && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
@@ -7866,7 +7872,7 @@ function chooseAction(state) {
       const move2 = preview(state, { type: "move" });
       if (move2.ok) {
         const route = approach(state, actor, held, true);
-        const dest = route.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p)));
+        const dest = route.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p))) ?? (route.length ? bankStep(move2) : void 0);
         if (dest) return { type: "move", x: dest.x, y: dest.y };
       }
     }
@@ -7880,7 +7886,7 @@ function chooseAction(state) {
     const path2 = targets2.length && approach(state, actor, targets2, true);
     if (path2?.length) {
       const move2 = preview(state, { type: "move" });
-      const dest = path2.slice().reverse().find((p) => move2.cells?.some((c) => samePosition(c, p)));
+      const dest = path2.slice().reverse().find((p) => move2.cells?.some((c) => samePosition(c, p))) ?? bankStep(move2);
       if (dest) return { type: "move", x: dest.x, y: dest.y };
     }
     return { ...END };
@@ -7913,8 +7919,11 @@ function chooseAction(state) {
       const high = elevation(state, cell) - z0;
       const cover = coverQuality(state, cell, objectives) - startingCover;
       let score = (projectedDepth ? 1.8 + projectedDepth * 0.55 : progress * 0.35) + high * 0.8 + cover;
-      if (cell.steps === 0 && actor.moveM > 0 && baseline > 0) score += 1;
-      if (type === "sprint") score = score * 0.82 - 1.2;
+      if (cell.bankedProgress != null) {
+        const gain = cell.bankedProgress - (actor.moveCarryPermille ?? 0);
+        if (gain <= 0 || !plannedPath.length) continue;
+        score = 1.6 + cell.bankedProgress / 1e3 + gain / 1e3 - (type === "sprint" ? 0.6 : 0);
+      } else if (type === "sprint") score = score * 0.82 - 1.2;
       score -= (cell.opportunities?.length ?? 0) * 3.5;
       if (type === "disengage") score -= 0.2;
       movements.push({ type, cell, score, available: actor.ap - options.ap });
@@ -7929,7 +7938,7 @@ function chooseAction(state) {
         x: cell.x,
         y: cell.y,
         ap: available,
-        facing: facingToward(cell.path.at(-2) ?? actor, cell),
+        facing: cell.steps === 0 ? actor.facing : facingToward(cell.path.at(-2) ?? actor, cell),
         used: { ...actor.used, action: actor.used.action + 1 }
       };
       const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
@@ -8470,9 +8479,11 @@ function formatBattleReportText(report, unitNames = {}) {
         default: {
           if (type === "cover_damage" && detail.amount === 0) break;
           const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "altitude", "interact", "skip", "brace", "cover_approach"].includes(type);
-          let label = replaceUnitNames(event, text5);
+          const banked = Number.isFinite(detail.progressPermille) && ["move", "sprint", "disengage"].includes(type);
+          const verb = type === "sprint" ? "\u75BE\u8DD1\u63A8\u8FDB" : "\u84C4\u6B65\u63A8\u8FDB";
+          let label = banked ? `${ownAction ? "" : name(event, actor)}${verb}\uFF0C\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(detail.progressPermille)}` : replaceUnitNames(event, text5);
           const actorRaw = names.get(actor) ?? actor;
-          if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
+          if (!banked && ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
           if (["teleport", "knockback"].includes(type) && Number.isInteger(detail.to?.z)) {
             const destination = `(${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
             if (!text5.includes(`\u81F3 ${destination}`)) label += `\uFF0C\u81F3 ${destination}`;
@@ -9246,6 +9257,10 @@ function narrate(log, state) {
     case "move":
     case "sprint":
     case "disengage": {
+      if (Number.isFinite(d.progressPermille)) {
+        const verb = log.type === "sprint" ? "\u75BE\u8DD1\u63A8\u8FDB" : "\u84C4\u6B65\u63A8\u8FDB";
+        return out({ tone: "move", icon: "\u{1F463}", title: `${actor}${verb}\uFF0C\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(d.progressPermille)}` });
+      }
       const steps = d.steps ?? d.path?.length ?? 0;
       return out({
         tone: "move",
@@ -9654,11 +9669,17 @@ function createRenderer(root2, portraitFor = () => []) {
     }
     $("terrain-inspector").textContent = inspection;
   }
-  function bar(stat3, cur, max) {
+  function bar(stat3, cur, max, label = `${stat3.toUpperCase()} ${cur}/${max}`) {
     const node = el2("span", `ft-bar ${stat3}`);
     node.style.setProperty("--ratio", ratio(cur, max));
-    node.append(el2("i"), el2("span", "", `${stat3.toUpperCase()} ${cur}/${max}`));
+    node.append(el2("i"), el2("span", "", label));
     return node;
+  }
+  function appendMovementCarry(bars, unit, state) {
+    const carry = unit.moveCarryPermille ?? 0;
+    if (carry || unit.moveM != null && unit.moveM < state.scale?.cellM) {
+      bars.append(bar("sp", carry, 1e3, `\u84C4\u6B65 ${carry / 10}%`));
+    }
   }
   function renderTurnOrder(state, current, selected2) {
     const node = $("turn-order");
@@ -9691,6 +9712,7 @@ function createRenderer(root2, portraitFor = () => []) {
     name.append(el2("span", "", u.name), el2("small", "", `${side(u.team)} \xB7 \u7B2C ${state.round} \u56DE\u5408`));
     const bars = el2("div", "ft-bars");
     bars.append(bar("hp", u.hp, u.maxHp), bar("mp", u.mp, u.maxMp), bar("sp", u.sp, u.maxSp));
+    appendMovementCarry(bars, u, state);
     const meta = el2("div", "ft-actor-meta");
     const ap = state.outcome ? 0 : u.ap;
     const crystals = el2("span", "", "");
@@ -9725,6 +9747,7 @@ function createRenderer(root2, portraitFor = () => []) {
     wrap.append(head);
     const bars = el2("div", "ft-bars");
     bars.append(bar("hp", u.hp, u.maxHp), bar("mp", u.mp, u.maxMp), bar("sp", u.sp, u.maxSp));
+    appendMovementCarry(bars, u, state);
     const stats = el2("div", "ft-kv");
     for (const [id3, label] of Object.entries(STAT_NAMES)) {
       const s = el2("span", "", label);
@@ -9840,7 +9863,8 @@ function createRenderer(root2, portraitFor = () => []) {
     else if (range2?.ok === false) line(`\u2716 ${range2.error}`, "is-warning");
     if (hover && p) {
       const geo = [];
-      if (p.steps) geo.push(`\u8D70 ${p.steps} \u683C`);
+      if (p.bankedProgress != null) geo.push(`\u84C4\u6B65\u8FDB\u5EA6\u5C06\u8FBE\u5230 ${p.bankedProgress / 10}%`);
+      else if (p.steps) geo.push(`\u8D70 ${p.steps} \u683C`);
       if (Number.isFinite(p.distance)) geo.push(`\u8DDD\u79BB ${p.distance.toFixed(1)} \u683C${p.range != null ? `\uFF08\u5C04\u7A0B ${p.range}\uFF09` : ""}`);
       if (p.dz) geo.push(p.dz > 0 ? `\u76EE\u6807\u9AD8\u51FA ${p.dz}` : `\u76EE\u6807\u4F4E ${-p.dz}`);
       if (p.teleport) geo.push(`\u77AC\u79FB\u5230 (${p.teleport.x}, ${p.teleport.y})`);
@@ -10473,6 +10497,7 @@ function placeTargetCard(card, anchor, viewport = window.visualViewport) {
 // src/core/battle-ai.js
 var RULES = `\u4F60\u662F\u547D\u5B9A\u6218\u672F\u6C99\u76D8\u7684\u654C\u65B9\u966A\u73A9 AI\u3002\u4F60\u7684\u8EAB\u4EFD\u662F user \u4E00\u65B9\u7684\u5BF9\u624B\uFF0C\u53EA\u63A7\u5236\u5F53\u524D\u8FDE\u7EED\u884C\u52A8\u7684\u654C\u65B9\u89D2\u8272\uFF0C\u4E0D\u66FF\u73A9\u5BB6\u505A\u51B3\u5B9A\u3002
 \u884C\u52A8\uFF1A\u6BCF\u56DE\u5408\u6BCF\u4E2A\u89D2\u8272\u67091\u4E2A\u653B\u51FB\u69FD\u548C1\u4E2A\u52A8\u4F5C\u69FD\u3002\u79FB\u52A8\u3001\u88C5\u586B\u3001\u4E92\u52A8\u3001\u6362\u88C5\u3001\u67B6\u52BF\u548C\u9003\u8DD1\u4F7F\u7528\u52A8\u4F5C\u69FD\uFF0C\u666E\u901A\u653B\u51FB\u3001\u6280\u80FD\u653B\u51FB\u3001\u538B\u5236\u548C\u89E3\u9664\u538B\u5236\u4F7F\u7528\u653B\u51FB\u69FD\uFF0C\u91CD\u578B\u6280\u80FD\u53EF\u540C\u65F6\u4F7F\u7528\u4E24\u69FD\u3002\u4E00\u4E2A\u52A8\u4F5C\u53EA\u80FD\u4F7F\u7528\u5F53\u524D\u884C\u52A8\u8005\u81EA\u5DF1\u7684\u69FD\u4F4D\u3002\u52A8\u4F5C\u3001\u6280\u80FD\u548C\u80CC\u5305\u7269\u54C1\u7684\u5B9E\u9645 ap\u3001slot\u3001\u8D44\u6E90\u3001\u6B21\u6570\u4E0E\u51B7\u5374\u4EE5\u8F93\u5165\u6570\u636E\u4E3A\u51C6\u3002
+\u84C4\u6B65\uFF1AmovementCarry \u6309\u5355\u4F4D\u5217\u51FA\u5DF2\u79EF\u7D2F\u7684\u767E\u5206\u6BD4\uFF0C\u4EE5\u53CA\u539F\u5730 move \u6216 sprint \u540E\u53EF\u8FBE\u5230\u7684\u767E\u5206\u6BD4\u3002\u82E5\u6709\u6B63\u6536\u76CA\u4E14\u9700\u8981\u63A5\u8FD1\u76EE\u6807\uFF0C\u53EF\u5728\u81EA\u5DF1\u5F53\u524D\u5750\u6807\u6267\u884C\u8BE5\u79FB\u52A8\u6765\u79EF\u7D2F\u8FDB\u5EA6\uFF0C\u6512\u591F\u540E\u518D\u9009\u62E9\u5B9E\u9645\u843D\u70B9\u3002
 \u8DDD\u79BB\u4E0E\u9AD8\u5EA6\uFF1A\u653B\u51FB\u548C\u6280\u80FD\u6309\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB sqrt(dx\xB2+dy\xB2+dz\xB2) \u68C0\u67E5\u5C04\u7A0B\u3002z \u662F\u683C\u5B50\u9AD8\u5EA6\u52A0\u5355\u4F4D\u79BB\u5730\u9AD8\u5EA6\u3002\u9AD8\u5904\u653B\u51FB\u4F4E\u5904\u65F6\uFF0C\u8FDC\u7A0B\u653B\u51FB\u901A\u5E38\u83B7\u5F97\u6700\u591A+1\u683C\u5C04\u7A0B\uFF0C\u4F4E\u5904\u653B\u51FB\u9AD8\u5904\u65F6\u901A\u5E38\u51CF\u5C111\u683C\u5C04\u7A0B\uFF0C\u5B9E\u9645\u503C\u4EE5\u6280\u80FD/\u88C5\u5907\u6570\u636E\u548C\u9884\u89C8\u89C4\u5219\u4E3A\u51C6\u3002\u79FB\u52A8\u6BCF\u8DE8\u4E00\u683C\u6709\u9AD8\u5EA6\u9650\u5236\uFF0C\u5E73\u5730\u901A\u5E38\u53EA\u80FD\u8DE81\u7EA7\u9AD8\u5EA6\uFF0C\u5761\u5730\u53EF\u8DE82\u7EA7\uFF0C\u5899\u4E0D\u80FD\u901A\u884C\u3002\u79FB\u52A8\u5230\u9AD8\u5904\u6216\u4F4E\u5904\u4F1A\u6D88\u8017\u8DEF\u5F84\u5141\u8BB8\u7684\u52A8\u4F5C\u9884\u7B97\uFF0C\u4E0D\u80FD\u628A\u4E8C\u7EF4\u76F8\u90BB\u5F53\u4F5C\u4E00\u5B9A\u53EF\u8FBE\u3002
 \u89C6\u7EBF\u4E0E\u9694\u65AD\uFF1A\u5899\u4F53\u548C\u975E\u53EF\u7AD9\u7ACB\u683C\u4F1A\u963B\u65AD\u89C6\u7EBF\u3002\u653B\u51FB\u3001\u8FDC\u7A0B\u6280\u80FD\u3001\u7206\u6876\u5F15\u7206\u548C\u8303\u56F4\u6548\u679C\u90FD\u8981\u6709\u901A\u7545\u89C6\u7EBF\u3002\u8303\u56F4\u6280\u80FD\u4EE5\u5B9E\u9645\u5F62\u72B6\u3001\u534A\u5F84\u3001\u5BBD\u5EA6\u3001\u89D2\u5EA6\u548C\u4E09\u7EF4\u8DDD\u79BB\u53D6\u683C\uFF0C\u4E0D\u80FD\u7A7F\u5899\u6216\u9694\u65AD\u3002\u73AF\u5F62\u4EE5\u843D\u70B9\u4E3A\u4E2D\u5FC3\u5E76\u6392\u9664\u4E2D\u5FC3\u683C\uFF0C\u8303\u56F4\u4F24\u5BB3\u53EF\u80FD\u6CE2\u53CA\u53CB\u519B\u3002\u5C04\u7A0B\u4E3A 0 \u7684\u6247\u5F62\u3001\u9525\u5F62\u548C\u76F4\u7EBF\u6CBF\u65BD\u672F\u8005\u5F53\u524D\u671D\u5411\u5C55\u5F00\u3002
 \u63A9\u4F53\uFF1A\u63A9\u4F53\u4F4D\u4E8E\u653B\u51FB\u8005\u4E0E\u76EE\u6807\u7684\u5C04\u7EBF\u6216\u76EE\u6807\u8FCE\u51FB\u4FA7\u65F6\u751F\u6548\uFF0C\u6309\u63A9\u4F53 cover \u6570\u503C\u964D\u4F4E\u547D\u4E2D\u6216\u4FDD\u62A4\u76EE\u6807\u3002\u653B\u51FB\u8005\u6216\u76EE\u6807\u6BD4\u63A9\u4F53\u9AD8\u81F3\u5C112\u7EA7\u65F6\u53EF\u4EE5\u8D8A\u8FC7\u8BE5\u63A9\u4F53\uFF0C\u63A9\u4F53\u4E0D\u518D\u63D0\u4F9B\u906E\u6321\u3002\u63A9\u4F53\u6709\u81EA\u5DF1\u7684 HP\uFF0C\u53EF\u4EE5\u88AB\u653B\u51FB\u6216\u7206\u70B8\u7834\u574F\uFF0C\u7834\u574F\u540E\u4E0D\u518D\u906E\u6321\u3002\u4E0D\u8981\u628A\u63A9\u4F53\u5F53\u6210\u5899\uFF0C\u63A9\u4F53\u901A\u5E38\u4E0D\u963B\u65AD\u89C6\u7EBF\uFF0C\u53EA\u6539\u53D8\u547D\u4E2D\u4E0E\u4F24\u5BB3\u6761\u4EF6\u3002
@@ -10566,13 +10591,21 @@ function battleAiPayload(state) {
     if (unit.team === "red") actors.push(unitView(state, unit));
   }
   const grid = state.grid.map((row) => row.map((cell) => cell.kind === "wall" ? "#" : cell.kind === "slope" ? `^${cell.z ?? 0}` : cell.kind === "floor" ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(" "));
-  const movement = {};
+  const movement = {}, movementCarry = {};
   for (const unit of Object.values(state.units)) {
     if (unit.hp <= 0 || unit.fled) continue;
     const shadow = copy2(state);
     shadow.turn = shadow.order.indexOf(unit.id);
     const plan = preview(shadow, { type: "move" });
     movement[unit.id] = (plan.cells ?? []).map(({ x, y, z }) => [x, y, z ?? elevation(state, { x, y })]);
+    const carry = unit.moveCarryPermille ?? 0;
+    const move2 = plan.cells?.find((cell) => cell.bankedProgress > carry);
+    const sprint = move2 && preview(shadow, { type: "sprint" }).cells?.find((cell) => cell.bankedProgress > carry);
+    if (carry || move2 || sprint) movementCarry[unit.id] = {
+      currentPercent: carry / 10,
+      ...move2 && { movePercent: move2.bankedProgress / 10 },
+      ...sprint && { sprintPercent: sprint.bankedProgress / 10 }
+    };
   }
   return { rules: RULES, battle: {
     title: state.title,
@@ -10585,6 +10618,7 @@ function battleAiPayload(state) {
     covers: Object.values(state.covers).map((c) => ({ id: c.id, name: c.name, x: c.x, y: c.y, z: elevation(state, c), hp: c.hp, maxHp: c.maxHp, cover: c.cover, material: c.material })),
     interactives: Object.values(state.interactives).map((i) => ({ id: i.id, name: i.name, kind: i.kind, effect: i.effect, radius: i.radius ?? 0, damage: i.damage ?? 0, x: i.x, y: i.y, z: elevation(state, i), spent: !!i.spent })),
     movement,
+    movementCarry,
     grid
   }, actorIds: actors.map((u) => u.id) };
 }
@@ -11158,6 +11192,7 @@ ${height2}\uFF0C${sight}`;
     const actor = active2();
     const canAct = actor?.team === "blue" && !state.outcome;
     const self = canAct && unit?.id === actor.id;
+    const onActorCell = canAct && actor.x === at2.x && actor.y === at2.y;
     if (bagAim) {
       const command = { type: "skill", skillId: bagAim, ...at2, ...unit?.id ? { targetId: unit.id } : {} };
       const plan = game.previewAction(command);
@@ -11202,15 +11237,20 @@ ${height2}\uFF0C${sight}`;
         ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
       };
       const plan = game.previewAction(command);
+      if (onActorCell && ["move", "sprint"].includes(type) && !(plan.bankedProgress > (actor.moveCarryPermille ?? 0))) return;
       const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
       if ((plan.ok || limited || type === "flee" && plan.error?.includes("\u8FB9\u754C")) && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) {
-        const label = skillName ?? (skill2 || itemId || plan.interactiveId || type === "end_encounter" ? plan.name : ACTION_LABELS[type]);
+        const label = plan.bankedProgress != null ? type === "sprint" ? "\u75BE\u8DD1\u63A8\u8FDB" : "\u84C4\u6B65\u63A8\u8FDB" : skillName ?? (skill2 || itemId || plan.interactiveId || type === "end_encounter" ? plan.name : ACTION_LABELS[type]);
         options.push({ command, plan, label });
       }
     };
     if (canAct) {
+      if (onActorCell) {
+        add("move");
+        add("sprint");
+      }
       if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
-      else for (const t of [sprint ? "sprint" : "move", "disengage", "attack", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
+      else for (const t of [...onActorCell ? [] : [sprint ? "sprint" : "move"], "disengage", "attack", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add("switch_weapon", null, itemId);
       add("interact");
       const skills = new Map([...actor.skills.map((id3) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, actor)]);
@@ -13906,7 +13946,7 @@ function normalizeEquipment(raw, slot2, owner, index, sink) {
       ranged: Boolean(ranged),
       rangeType: ranged ? "ranged" : "melee",
       range: bound(area3.range, 0, 64, ranged ? 4 : 1),
-      ...area3.range != null ? { rawRange: area3.range } : {},
+      rawRange: area3.range ?? (ranged ? 4 : 1),
       attack: bound(r.attack ?? r.\u653B\u51FB ?? attackTag?.[1], 0, 1e9),
       accuracy: bound(r.accuracy ?? r.\u547D\u4E2D, -20, 30, 0),
       damage: normalizeDice(r.damage ?? { stat: "str" }),
@@ -14132,7 +14172,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
       name: skillName,
       ...qualityOf(r) ? { quality: qualityOf(r) } : {},
       ...rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {},
-      ...area3.range != null ? { rawRange: area3.range } : {},
+      rawRange: area3.range ?? 1,
       ...passive && { passive: true },
       ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2),
       slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
