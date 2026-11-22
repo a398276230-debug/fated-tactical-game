@@ -26,16 +26,16 @@ const TAG_MAPPING = `【世界书标签 → VM 映射】
 • [关联属性: 敏捷] → 指向施术者敏捷；需要属性缩放时读取 self.agi。只有原文明确豁免时才为防守方选择检定属性。[有效距离: 中程(5)] → range:5。
 • [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由有效距离另行确定。角度标签映射到 angle。
 • 原文效果为 {} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则；背包消耗品按任务约定处理。`;
-const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。resolves 只属于补丁操作。';
+const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。每项待处理警告必须有归属：实际生效补丁的 resolves、带原因的 unresolved 或纯叙事 narrative。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，可附可选顶层 existing 数组。每项给 {unitId,originPath,effectName,path,value}，path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个键都是数组，只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送或元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个必需键都是数组；已有实现可另附 existing 证据数组。只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。同一技能或装备有两条已实现、另一条仍 unresolved 时，写入该模板的操作须在 resolves 分别列出两条已实现诊断的完整引用。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送、非战斗储物空间或次元背包容器（如 1km³ 储物戒）、元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
+• /skills/<id>：技能模板。其任意合法模板字段都可单独 patch，不限 rules/mods；缺键用 add，已有键用 replace。例如新增先手：{"op":"add","path":"/skills/<id>/initiativeBonus","value":8}（范围 -100…100）；新增主击骰：{"op":"add","path":"/skills/<id>/damage","value":{"count":1,"sides":6,"type":"physical"}}，骰子数值按原文及模板决定。check.statusId 与状态施加/移除事件均提供 event.statusId，无需等待引擎确认；不要据此推断普通伤害事件也携带状态 ID。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
 • /items/<id>：道具实例。装备模板的规则、修饰与池声明写在 /equipment/<id>。实例已自带 rules 或 mods 时，同批同步相关条目，保留该实例独有的内容。
 • /statusTemplates/<id>：战局的自定义状态模板。新增模板使用新的 ID。
 • /units/<unitId>/statuses：单位状态实例映射。实例形状见状态协议。
@@ -61,7 +61,11 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 • 天气规则值：{"id":"place_zone","hook":"active","program":[{"op":"spawn","entityKind":"zone","spec":{"name":"雪域","tags":["dark_snow"],"remainingTurns":2,"area":{"shape":"circle","center":"center","radius":10},"rules":[{"id":"snow_tick","hook":"turn_start","filter":"self.team != source.team","program":[{"op":"damage","target":"self","amount":10,"damageType":"true","direct":false}]}]}}]}
 Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合的覆盖单位，source 是区域来源。其他规则用 in_zone(self, 'dark_snow') 查询天气。
 • 本回合重放规则值：{"id":"repeat_skills","hook":"active","program":[{"op":"for_each","select":{"from":"tape","where":"candidate.actorId == self.id && candidate.round == round && candidate.turn == turn && (candidate.actionType == 'attack' || (candidate.actionType == 'skill' && candidate.skillId != event.skillId))"},"bind":"entry","body":[{"op":"perform","actor":"self","actionKind":"replay","tapeRecord":"vars.entry"}]}]}
-磁带按记录顺序遍历。重放会重新结算，目标仍须合法，可重新要求玩家输入。排除重放技能本身以免递归。
+磁带按记录顺序遍历。若须等到持有者回合结束才重放，使用 turn_end，不是 after_action；只重放已录制的攻击/技能，不宣称包含普通移动、互动或尚未结算的动作。重放会重新结算，目标仍须合法，可重新要求玩家输入。排除重放技能本身以免递归。
+• 裂隙投射：先 ask(cell) 保存落点，再 perform(skillId:"vars.chosenSkill", overrides:{origin:"vars.cell"})；origin 改的是施放起点，不是指定目标。
+• 冰晶封印：在 on_lethal_p2 判断 self.hp == 0 && self.mp == 0 && self.sp == 0，通过才 mutate_event(preventDeath:true) 并施加冰封。这是 HP 归零时检查另外两池，不是任意顺序的三池监听器。
+• 战帅直觉：before_commit 里 ask 得到 vars.kept，先 let 记下 event.finalAmount - vars.kept，再 mutate_event 改 finalAmount。若 vars.rest > 0，apply_status 的 stacks 写 vars.rest，不必等 after_damage 的 event.dealt。
+• 状态联动：after_status_applied 读取 event.statusId；先 let 存为 vars.sid，再用 remove_status.where:"status.id == vars.sid" 筛选目标现有状态。before_target 可用 redirectTarget 重定向到当前棋盘上确实存在的单位，不要凭空创造一个不存在的魔宠。
 • 封印资源规则值：{"id":"seal_resources","hook":"before_commit","filter":"event.targetId == self.id && (event.pool == 'hp' || event.pool == 'mp' || event.pool == 'sp') && event.sourceRuleId != 'seal_release'","program":[{"op":"mutate_event","patch":{"cancel":true}}]}
 这会拦截 VM 的 damage、heal、resource 提交，并放行指定解封规则。模板技能支付走行动路径，按原文需要另用 before_action 拦截。
 • 召唤规则值：{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]}
@@ -70,7 +74,7 @@ Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合
 【完整补丁示例】假设快照中 /skills/call_guard/rules 已是数组。
 {"patch":[{"op":"add","path":"/statusTemplates/guard_chill","value":{"id":"guard_chill","name":"星霜","category":"control","remainingTurns":2,"mods":[{"locks":["move"]}]}},{"op":"add","path":"/skills/guard_slash","value":{"name":"亡卫斩","ap":1,"slot":"attack","range":2,"shape":"single","target":"enemy","power":20,"damage":{"count":1,"sides":4,"type":"physical"},"rules":[{"id":"chill_on_hit","hook":"after_hit","program":[{"op":"apply_status","target":"target","statusId":"guard_chill"}]}]}},{"op":"add","path":"/skills/call_guard/rules/-","value":{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]},"resolves":[{"unitId":"p1","originPath":"/skills/call_guard","message":"亡卫缺少召唤和专属技能规则"}]}],"unresolved":[],"narrative":[]}
 
-同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 {"patch":[],"unresolved":[],"narrative":[]}。`;
+同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 JSON，必有 {"patch":[],"unresolved":[],"narrative":[]} 三个数组，有已实现证据时另附 existing。`;
 const json = value => JSON.stringify(value, null, 2);
 
 let lastCustomId = 0;

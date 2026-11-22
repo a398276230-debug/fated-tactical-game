@@ -69,23 +69,67 @@ export function pendingDiagnostics(warnings, notes) {
 }
 
 export const identifiesWarning = (receipt, warning) => receipt && typeof receipt === 'object'
-  && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message;
+  && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null)
+  && (receipt.message !== undefined ? receipt.message === warning.message : nonempty(receipt.effectName))
+  && (receipt.effectName === undefined || receipt.effectName === subject(warning.message));
 
-export function resolvedDiagnostics(sent, records, patch, notes = []) {
-  const pending = new Set(notes.map(({ warning }) => warning));
-  return sent.filter(warning => {
+// Check coverage of this request, not the number of patch operations. Never manufacture receipts.
+export function missingDispositions(sent, solved, notes, narrative) {
+  const accounted = new Set([...solved, ...notes.filter(note => note.detail).map(note => note.warning), ...narrative.map(entry => entry.warning)]);
+  return sent.filter(warning => !accounted.has(warning));
+}
+export const diagnosticTitle = warning => subject(warning.message) ?? diagnosticText(warning.message);
+
+// A verifier may attest to a previous normalization write, never to an
+// unchanged baseline or a merely similar name. The exact leaf is guarded on replay.
+export function existingEffectReceipts(refs = [], sent, baseline, before, current, fingerprintAt) {
+  if (!Array.isArray(refs)) throw new Error('existing 必须是数组');
+  return refs.map(ref => {
+    const matches = sent.filter(w => identifiesWarning(ref, w));
+    const origin = matches[0]?.originPath;
+    if (matches.length !== 1 || !/^\/(equipment|skills|items)\/[\w-]+$/.test(origin ?? '')
+      || typeof ref.path !== 'string' || !ref.path.startsWith(`${origin}/`)
+      || !/^(rules|mods)\/(0|[1-9]\d*)$/.test(ref.path.slice(origin.length + 1))) {
+      throw new Error('existing 需要唯一的本批诊断及其模板内具体 rules/N 或 mods/N 路径');
+    }
+    const live = fingerprintAt(current, ref.path), normalized = fingerprintAt(before, ref.path);
+    if (live === undefined || live !== normalized || fingerprintAt(baseline, ref.path) === normalized
+      || JSON.stringify(ref.value) !== live || ref.value?.enabled === false) {
+      throw new Error(`已有实现未通过校验：${ref.path} 必须是先前标准化写入、当前仍有效的同一条规则或修饰`);
+    }
+    return { warning: matches[0], path: ref.path, fingerprint: live };
+  });
+}
+
+export function resolvedDiagnostics(sent, records, patch, notes = [], { narrative = [], inferPartial = false } = {}) {
+  const pending = new Set([...notes, ...narrative].map(({ warning }) => warning));
+  const explicit = sent.filter(warning => {
     if (warning.unitId == null || !Object.hasOwn(records, warning.unitId) || pending.has(warning)) return false;
     return patch.some(op => {
       if (!Array.isArray(op.resolves)) return false;
       const owner = op.path.match(/^\/units\/([^/]+)/)?.[1];
       if (owner && owner !== warning.unitId) return false;
-      // A declaration for another template with the same effect name must not clear this one.
       const path = op.path.split('/').slice(0, 3).join('/');
       const origin = warning.originPath?.split('/').slice(0, 3).join('/');
       if (origin && path.split('/')[1] === origin.split('/')[1] && path !== origin) return false;
       return op.resolves.some(receipt => identifiesWarning(receipt, warning)
         && sent.filter(candidate => identifiesWarning(receipt, candidate)).length === 1);
     });
+  });
+  if (!inferPartial || notes.some(note => !note.warning)) return explicit;
+  const solved = new Set(explicit);
+  return sent.filter(warning => {
+    if (warning.unitId == null || !Object.hasOwn(records, warning.unitId) || pending.has(warning)) return false;
+    if (solved.has(warning)) return true;
+    const path = warning.originPath;
+    if (!/^\/(?:skills|equipment|items|statusTemplates)\/[^/]+$/.test(path ?? '')) return false;
+    const siblings = sent.filter(candidate => candidate.unitId === warning.unitId && candidate.originPath === path);
+    // Partial attribution requires an explicit pending/exempt sibling and an actual mechanic write.
+    return siblings.some(candidate => pending.has(candidate)) && patch.some(op => op.op !== 'remove'
+      && (op.path === `${path}/rules` || op.path.startsWith(`${path}/rules/`)
+        || op.path === `${path}/mods` || op.path.startsWith(`${path}/mods/`)
+        || op.path === `${path}/pools` || op.path.startsWith(`${path}/pools/`)
+        || (op.path === path && op.mechanicsChanged === true)));
   });
 }
 

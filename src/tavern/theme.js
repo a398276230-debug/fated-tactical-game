@@ -193,6 +193,8 @@ export const tavernTheme = `
 .fated-char-chip { padding:0 6px; border-radius:8px; background:var(--ci-surface-soft); color:var(--ci-text-secondary); font-size:.75em; line-height:1.6 }
 .fated-char-fx { margin-inline-start:auto; color:var(--ci-primary); font-size:.75em }
 .fated-char-fx::after { content:" ▾" }.fated-char-row[open] .fated-char-fx::after { content:" ▴" }
+.fated-entry-discard { margin-inline-start:auto; padding:2px 6px; color:var(--ci-warning); font-size:.72em; opacity:.8 }
+.fated-entry-discard:hover { color:var(--ci-danger); border-color:var(--ci-danger) }
 .fated-char-row > p { margin:5px 0 0; padding-top:5px; border-top:1px dashed var(--ci-border) }
 .fated-instance .fated-mini { color:var(--ci-text-muted); font-size:.82em }.fated-instance summary { cursor:pointer }
 .fated-char-diagnostics { padding:6px 9px; border:1px solid rgb(210 173 113 / 45%); border-radius:7px; background:rgb(210 173 113 / 8%); color:var(--ci-warning) }

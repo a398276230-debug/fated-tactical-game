@@ -167,7 +167,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         const fixedShot = templateId => ({
           id:'fixed-shot', hook:'before_commit',
           filter:"event.actorId == self.id && event.actionType == 'attack' && event.weaponTemplateId == '"+templateId+"' && event.damageType == 'physical'",
-          program:[{op:'mutate_event',patch:{finalAmount:10}}],
+          program:[{op:'mutate_event',patch:{finalAmount:hostRequests.length === 6 ? 14 : 10}}],
         });
         const rulePatch = (path, resolves) => {
           const templateId = path.split('/').at(-1);
@@ -181,7 +181,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         }
         const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(({unitId,originPath,message}) =>
           ({unitId,originPath,message,effectName:'冰冻箭',reason:'仍缺冰冻持续时间'}));
-        resolve(JSON.stringify({patch,unresolved}));
+        resolve(JSON.stringify({patch: [4,5].includes(hostRequests.length) ? [] : patch, unresolved}));
       };
     });
   })()`);
@@ -202,7 +202,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   });
   assert.match(await run(`${get('article.fated-instance')}.textContent`), /体型 中型 \(1\.7m\)/);
   const cardWarnings = '.fated-instance[data-unit-id="p1"] .fated-char-diagnostics';
-  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*恒定拉距/);
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /待标准化（1 项）.*恒定拉距/);
+  assert.doesNotMatch(await run(`${get(cardWarnings)}.textContent`), /请用 VM|\/statusTemplates/);
   // 实例卡：三色资源条、折叠后只剩卡头，状态刷新后保留
   const card = '.fated-instance[data-unit-id="p1"]';
   assert.deepEqual(await run(`[...document.querySelectorAll('${card} .fated-char-bar')].map(b => b.className.split(' ').pop())`), ['is-hp', 'is-mp', 'is-sp']);
@@ -226,8 +227,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化失败'`), '错误提示');
   assert.match(await run(`document.querySelector('.fated-toast > p:not(.fated-toast-summary)').textContent`), /模型未返回有效的战局补丁/);
-  assert.equal(await run(`document.querySelector('.fated-toast-summary').textContent`), '已应用 0 项补丁 · 剩余 2 项未解决');
-  assert.match(await run(`document.querySelector('.fated-toast-issues').textContent`), /恒定拉距.*恒定发射/);
+  assert.equal(await run(`document.querySelector('.fated-toast-summary').textContent`), '已应用 0 项补丁');
+  assert.match(await run(`document.querySelector('.fated-toast-issues').textContent`), /待标准化（2 项）.*恒定拉距.*恒定发射/);
   assert.equal(await run(`!!document.querySelector('.fated-toast-raw')`), false);
   await run('window.__fatedTacticalTavern.scan()');
   assert.equal(await run('hostRequests.length'), 2);
@@ -271,12 +272,28 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(() => run('hostRequests.length === 4'), '新战场发起首次自动标准化');
   assert.equal((await tavernState()).units.p1.hp, 123);
   await run('window.completeHostAI()');
-  await until(() => run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`), '新战场标准化完成');
-  assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
-  assert.match(await run(`document.querySelector('.fated-toast-summary').textContent`), /剩余 1 项未解决/);
-  const pending = await run(`document.querySelector('.fated-toast-issues').textContent`);
-  assert.match(pending, /冰冻箭.*模型说明：仍缺冰冻持续时间/);
-  assert.doesNotMatch(pending, /"unitId"|"originPath"|"reason"/);
+  await until(() => run('hostRequests.length === 5'), '漏交诊断归属自动修正');
+  assert.match(await run('hostRequests[4].ordered_prompts.at(-1).content'), /本批漏答.*恒定拉距/);
+  await run('window.completeHostAI()');
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent==='标准化部分完成'`), '保留部分结果与漏答警告');
+  const reviewedSelector = '[data-normalization-diagnostics="reviewed"]';
+  const pendingSelector = '[data-normalization-diagnostics="pending"]';
+  const toastIssues = await run(`document.querySelector('.fated-toast-issues').textContent`);
+  assert.match(toastIssues, /待标准化（1 项）.*恒定拉距/);
+  assert.doesNotMatch(toastIssues, /恒定发射/);
+  assert.match(toastIssues, /模型说明：受限 \/ 部分实现（1 项）.*「冰冻箭」 — 仍缺冰冻持续时间/);
+  assert.doesNotMatch(toastIssues, /"unitId"|"originPath"|"reason"|请用 VM/);
+  const playerCard = '.fated-instance[data-unit-id="p1"]';
+  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /待标准化（1 项）.*恒定拉距/);
+  assert.match(await run(`${get(`${playerCard} ${reviewedSelector}`)}.textContent`), /「冰冻箭」 — 仍缺冰冻持续时间/);
+  assert.doesNotMatch(await run(`${get(`${playerCard} ${reviewedSelector} li`)}.title`), /请用 VM|\/statusTemplates/);
+  await run(`(async () => { const frame = document.createElement('iframe'); frame.hidden = true;
+    document.body.append(frame); frame.contentWindow.eval(overlayBundle); overlayFrame.remove(); window.overlayFrame = frame;
+    await window.__fatedTacticalTavern.open(); await window.__fatedTacticalTavern.scan(); })()`);
+  assert.match(await run(`${get(`${playerCard} ${reviewedSelector}`)}.textContent`), /「冰冻箭」 — 仍缺冰冻持续时间/);
+  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /待标准化（1 项）.*恒定拉距/);
+  assert.equal(await run('hostRequests.length'), 5);
+
   await run(`(() => {
     const { renderBattleInitEntry } = overlayFrame.contentWindow.FatedTacticalTavern;
     const frame = document.createElement('iframe');
@@ -292,7 +309,37 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   })()`);
   await until(async () => (await tavernState())?.scenarioId === halfBattle.scenarioId, '旧楼入口恢复原战场');
   assert.deepEqual(await tavernState(), halfBattle);
-  assert.equal(await run('hostRequests.length'), 4);
+  assert.equal(await run('hostRequests.length'), 5);
+  assert.equal(await run(`!!${get(`${playerCard} ${reviewedSelector}`)}`), false);
+  // Whole-entry reset and reroll: restore the raw warning and only this
+  // equipment root; sibling entries and combat progress remain intact.
+  const rerollEntry = '.fated-instance[data-unit-id="p1"] .fated-entry-discard';
+  assert.equal(await run(`document.querySelectorAll('${rerollEntry}').length`), 1);
+  const combatBeforeReset = await tavernState();
+  await run(`document.querySelector('${rerollEntry}').click()`);
+  await until(() => run(`document.querySelector('${cardWarnings}').textContent.includes('恒定拉距')`), '重置后恢复原始警告');
+  const afterReset = await tavernState();
+  assert.equal(afterReset.logs.length, combatBeforeReset.logs.length);
+  assert.equal(afterReset.units.p1.hp, combatBeforeReset.units.p1.hp);
+  const itemTemplateId = afterReset.items[afterReset.units.p1.mainHand].templateId;
+  assert.equal(afterReset.equipment[itemTemplateId].rules.length, 0);
+  await run(`(async () => { const frame = document.createElement('iframe'); frame.hidden = true;
+    document.body.append(frame); frame.contentWindow.eval(overlayBundle); overlayFrame.remove(); window.overlayFrame = frame;
+    hostEvents.get('fated_tactical:open_ui')({messageId: 0}); })()`);
+  await until(async () => (await tavernState())?.scenarioId === afterReset.scenarioId, '重载所选旧楼战场');
+  assert.deepEqual(await tavernState(), afterReset);
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /恒定拉距/);
+  assert.equal(await run(`document.querySelectorAll('${rerollEntry}').length`), 0);
+  await run(`document.querySelector('[data-normalize]').click()`);
+  await until(() => run('hostRequests.length === 6'), '重roll请求');
+  await run('window.completeHostAI()');
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化部分完成' || document.querySelector('.fated-toast strong').textContent === '标准化完成'`), '重roll应用补丁');
+  assert.doesNotMatch(await run(`document.querySelector('${cardWarnings}')?.textContent ?? ''`), /恒定拉距/);
+  const rerolled = await tavernState();
+  assert.equal(rerolled.logs.length, combatBeforeReset.logs.length);
+  assert.deepEqual(rerolled.equipment[itemTemplateId].rules.map(rule => rule.program[0].patch.finalAmount), [14]);
+  assert.equal(await run('hostRequests.length'), 6);
+  await click('.fated-toast footer button:last-child');
   await run(`document.querySelector('#reset-button').click(); document.querySelector('[data-tab="instances"]').click();`);
   const panelBefore = await run(`(() => { const r=document.querySelector('.fated-tavern-panel').getBoundingClientRect(); return {left:r.left,top:r.top,width:r.width,height:r.height}; })()`);
   await click('.fated-tavern-fullscreen');
@@ -345,7 +392,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(imported.units.p1.ap, 2);
   assert.equal(imported.units.p1.hp, 321);
   const fixedShotRule = state => state.equipment[state.items[state.units.p1.mainHand].templateId].rules.find(rule => rule.id === 'fixed-shot');
-  assert.deepEqual(fixedShotRule(imported)?.program,[{op:'mutate_event',patch:{finalAmount:10}}]);
+  assert.deepEqual(fixedShotRule(imported)?.program,[{op:'mutate_event',patch:{finalAmount:14}}]);
   assert.equal(await run(`document.querySelector('#scenario-select').options.length`), 0);
   assert.equal(await run(`document.querySelectorAll('#seed-input').length`), 1);
   assert.equal(await run(`document.querySelector('#seed-input').value`), '12');
@@ -377,6 +424,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.aiProbe = null;
   `);
   await click('[data-tab="ai"]');
+  await run(`aiButton('清空当前会话').click()`);
   const selectSession = id => select('[aria-label="切换会话"]', id);
   const aiData = () => run(`window.__fatedTacticalTavern.getConfig().aiSessions`);
   const bubble = () => run(`(() => { const b = [...document.querySelectorAll('.fated-ai-message[data-role="assistant"]')].at(-1); return b && {status:b.dataset.status, body:b.querySelector('.fated-ai-body').textContent}; })()`);

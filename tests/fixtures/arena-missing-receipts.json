@@ -1,0 +1,55 @@
+{
+  "armorPatch": [
+    {
+      "op": "add",
+      "path": "/equipment/template-item-2-a1-7t47mv-1/rules",
+      "value": [
+        {
+          "id": "adamant_bulwark",
+          "label": "精金壁垒",
+          "hook": "before_commit",
+          "filter": "event.commitKind == 'damage' && event.targetId == self.id",
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "max(0, event.finalAmount - 800)"
+              }
+            }
+          ]
+        },
+        {
+          "id": "black_mist_phase",
+          "label": "黑雾虚化",
+          "hook": "before_commit",
+          "filter": "event.commitKind == 'damage' && event.targetId == self.id",
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "event.finalAmount * 0.7"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "op": "add",
+      "path": "/equipment/template-item-2-a1-7t47mv-1/mods",
+      "value": [
+        {
+          "stat": "dr",
+          "flat": 0.15
+        }
+      ]
+    }
+  ],
+  "templateOnlyPaths": [
+    "/statusTemplates/frozen_coffin",
+    "/statusTemplates/ice_control_immunity",
+    "/statusTemplates/frost_storm_shatter",
+    "/statusTemplates/mist_veil",
+    "/statusTemplates/mist_phantom"
+  ]
+}

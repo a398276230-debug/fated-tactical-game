@@ -53,7 +53,7 @@ const ratio=(v,max)=>max?Math.min(1,Math.max(0,(Number(v)||0)/max)):0;
  * 渲染一张角色实例卡。卡头（头像、名字、标签、迷你资源条、选择框、折叠按钮）始终可见，
  * 其余内容放进返回的 body，折叠时隐藏。调用方可以把诊断和操作按钮追加进 body。
  */
-export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onToggle,warnings=0,narrative=[]}={}) {
+export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onToggle,warnings=0,narrative=[],onDiscardEntry,canDiscardEntry}={}) {
   const line=(tag,cls,value)=>make(tag,{class:cls},value);
   const name=unit.name??unit.id;
   box.classList.add('fated-char-card');
@@ -114,6 +114,11 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
       head.append(line('span','fated-char-row-name',label));
       for(const m of meta) head.append(line('span','fated-char-chip',m));
       if(effectCount) head.append(line('span','fated-char-fx',`${effectCount} 个效果`));
+      if (onDiscardEntry && path && (!canDiscardEntry || canDiscardEntry(path))) {
+        const discard = make('button', { type: 'button', class: 'fated-entry-discard', title: '删除此标准化大词条并重新标准化' }, '删除并重roll');
+        discard.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); onDiscardEntry({ path, label }); });
+        head.append(discard);
+      }
       row.append(head);
       for(const rule of fx) row.append(line('p','fated-mini',`${rule.label?`${rule.label} · `:''}${ruleSummary(rule,state)}`));
       for(const mod of mods) row.append(line('p','fated-mini',modSummary(mod)));

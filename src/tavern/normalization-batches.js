@@ -77,6 +77,22 @@ export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings
   return result;
 }
 
+// The first validated shared definition wins within a run; external edits still require a rebase.
+export function normalizationOperations(operations, snapshot, current, created, fingerprintAt) {
+  return operations.filter(operation => {
+    const { op, path } = operation;
+    const root = path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
+    const live = fingerprintAt(current, root);
+    const original = fingerprintAt(snapshot, root);
+    if (live === original) return true;
+    if (op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path)
+      && original === undefined && created.has(path) && live === created.get(path)) {
+      return false;
+    }
+    throw new Error('补丁目标已被更早的批次或战局操作修改');
+  });
+}
+
 // Keep a bounded window of requests in flight and commit in plan order. A new
 // request sees all changes committed before it starts, including serial mode.
 export async function runOrderedBatches(batches, concurrency, request, commit, signal) {

@@ -711,14 +711,16 @@ test('instance-card rule formatter displays the trigger and status duration', ()
   assert.equal(ruleSummary({hook:'after_hit',program:[{op:'apply_status',statusId:'bleed',turns:2}]}),'命中时 → 施加 流血 2 回合');
 });
 
-function cardSections(state, unit, narrative) {
+function cardSections(state, unit, narrative, options = {}) {
   const make = (tag, attrs = {}, value = '') => ({
     tag, attrs, value, children: [], dataset: {},
-    style: { setProperty() {} }, classList: { add() {} }, addEventListener() {},
+    style: { setProperty() {} }, classList: { add() {} }, listeners: {},
+    addEventListener(type, fn) { (this.listeners[type] ??= []).push(fn); },
+    dispatchEvent(event) { for (const fn of this.listeners[event.type ?? 'click'] ?? []) fn(event); },
     append(...nodes) { this.children.push(...nodes); },
     get textContent() { return [this.value, ...this.children.map(node => node.textContent)].join('\n'); },
   });
-  const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'), { narrative });
+  const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'), { narrative, ...options });
   return body.children.filter(node => node.tag === 'section').map(section => section.children.slice(1));
 }
 
@@ -751,6 +753,21 @@ test('instance card counts and describes equipment mods, rules and granted skill
   assert.equal(skills.length, 2);
   assert.match(skills[0].textContent, /战帅本能\s+被动/);
   assert.match(skills[1].textContent, /星光偏转\s+装备附带/);
+});
+
+test('instance card offers one whole-entry reroll control, not one control per effect', () => {
+  const unit = { id: 'a1', gear: ['ring'], skills: [] };
+  const state = { items: { ring: { id: 'ring', templateId: 'accessory' } }, equipment: {
+    accessory: { name: '星弧裂空之戒', rules: [{ id: 'step', hook: 'active', program: [] }], mods: [{ stat: 'dr', flat: 0.3 }] },
+  }, skills: {} };
+  const calls = [];
+  const [equipment] = cardSections(state, unit, [], { onDiscardEntry: ref => calls.push(ref) });
+  assert.match(equipment[0].textContent, /删除并重roll/);
+  const buttons = equipment[0].children.filter(node => node.tag === 'summary')[0].children.filter(node => node.tag === 'button');
+  assert.equal(buttons.length, 1);
+  buttons[0].dispatchEvent({ type: 'click', preventDefault() {}, stopPropagation() {} });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, '/equipment/accessory');
 });
 
 test('instance card lists virtual equipment actives once and excludes disabled rules', () => {

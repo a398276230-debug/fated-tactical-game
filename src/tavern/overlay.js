@@ -1,6 +1,6 @@
-import { diagnosticText, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
+import { diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
-import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
+import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -263,7 +263,7 @@ const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
   battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
-  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {},
+  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {}, unresolvedNotes: {},
   ...Object.fromEntries(Object.entries(normalizationLimits).map(([key, { fallback }]) => [key, fallback])),
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
 };
@@ -486,22 +486,53 @@ export function mountTavernOverlay(options = {}) {
   toast.append(heading, noticeBody, summary, actions);
   on(retry, 'click', () => retryAI?.());
   on(dismiss, 'click', () => { toast.hidden = true; });
+  const warningDisplay = message => diagnosticText(
+    message.replace(/[。\s]*请(?:用|提供)\s*VM\s+rules\s*\/\s*mods\s*\/\s*pools[\s\S]*$/, ''),
+    '原诊断包含结构化数据，未提供文字说明');
+  const pendingTitle = count => `⏳ 待标准化（${count} 项）`;
+  const modelTitle = count => `ℹ️ 模型说明：受限 / 部分实现（${count} 项）`;
+  const modelLine = ({ effectName, reason }) => `「${effectName}」 — ${reason}`;
+  function warningGroups(warnings = sources.warnings ?? []) {
+    const pending = [], reviewed = [];
+    const notes = config.unresolvedNotes[activeBattleKey] ?? {};
+    const sourceFor = narrativeSourceFor(characters);
+    for (const warning of warnings) {
+      const note = notes[warning.unitId ?? '']?.[warningKey(warning)];
+      if (note?.source === sourceFor(warning.unitId) && note?.reason) reviewed.push({ warning, ...note });
+      else pending.push(warning);
+    }
+    return { pending, reviewed };
+  }
+  function appendWarningGroups(container, { pending, reviewed }, expandable = false) {
+    const add = (kind, label, rows) => {
+      if (!rows.length) return;
+      const group = el(doc, expandable ? 'details' : 'div', { class: 'fated-char-diagnostics', 'data-normalization-diagnostics': kind });
+      const list = el(doc, 'ul');
+      for (const [text, original] of rows) list.append(el(doc, 'li', original ? { title: original } : {}, text));
+      group.append(el(doc, expandable ? 'summary' : 'h4', {}, label), list);
+      container.append(group);
+    };
+    add('pending', pendingTitle(pending.length), pending.map(warning => [warningDisplay(warning.message)]));
+    add('reviewed', modelTitle(reviewed.length), reviewed.map(note => [modelLine(note), warningDisplay(note.warning.message)]));
+  }
   let rawDetails;
-  function notify(title, detail = '', onRetry = null, busy = false, { tone = 'neutral', applied, unresolved = [], raw = '' } = {}) {
+  function notify(title, detail = '', onRetry = null, busy = false, { tone = 'neutral', applied, unresolved = [], warningGroups: groups, raw = '' } = {}) {
     retryAI = onRetry;
     toast.dataset.tone = tone;
     icon.textContent = busy ? '…' : tone === 'success' ? '✓' : tone === 'error' ? '!' : 'ⓘ';
     summary.hidden = applied == null;
-    summary.textContent = applied == null ? '' : `已应用 ${applied} 项补丁 · 剩余 ${unresolved.length} 项未解决`;
+    summary.textContent = applied == null ? '' : `已应用 ${applied} 项补丁${groups ? '' : ` · 剩余 ${unresolved.length} 项未解决`}`;
     rawDetails?.remove();
     rawDetails = null;
     issues.remove();
+    issues.replaceChildren();
+    if (groups) appendWarningGroups(issues, groups);
     if (unresolved.length) {
       const list = el(doc, 'ul');
       for (const issue of unresolved) list.append(el(doc, 'li', {}, issue));
-      issues.replaceChildren(el(doc, 'h4', {}, `未解决（${unresolved.length} 项）`), list);
-      toast.insertBefore(issues, actions);
+      issues.append(el(doc, 'h4', {}, `未解决（${unresolved.length} 项）`), list);
     }
+    if (issues.childElementCount) toast.insertBefore(issues, actions);
     if (raw) {
       rawDetails = el(doc, 'details', { class: 'fated-toast-raw' });
       rawDetails.append(el(doc, 'summary', {}, `模型返回结果（已应用 ${applied ?? 0} 项）`), el(doc, 'pre', {}, raw));
@@ -780,16 +811,12 @@ export function mountTavernOverlay(options = {}) {
       const select = el(doc,'input',{type:'checkbox','aria-label':`选择 ${instance.name || key}`});
       select.checked = selectedIds().includes(key);
       on(select,'change',()=>choose(select.checked?[...new Set([...selectedIds(),key])]:selectedIds().filter(k=>k!==key)));
-      const messages = warningsForUnit(sources.warnings, [key], false);
+      const groups = warningGroups(warningsForUnit(sources.warnings, [key], false));
       const { body } = fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select,
-        { collapsed: Boolean(collapsed()[key]), warnings: messages.length,
-          narrative: (diagnostics.narrativeExemptions ?? []).filter(entry => entry.unitId === key), onToggle: value => setFolded([key], value) });
-      if (messages.length) {
-        const details = el(doc,'details',{class:'fated-char-diagnostics'}), list = el(doc,'ul');
-        for (const { message } of messages) list.append(el(doc,'li',{},diagnosticText(message, '原诊断包含结构化数据，未提供文字说明')));
-        details.append(el(doc,'summary',{},`⚠ ${messages.length} 条诊断`),list);
-        body.append(details);
-      }
+        { collapsed: Boolean(collapsed()[key]), warnings: groups.pending.length,
+          narrative: (diagnostics.narrativeExemptions ?? []).filter(entry => entry.unitId === key), canDiscardEntry: path => operations(activeBattleKey).some(operation => operation.path === path || operation.path.startsWith(`${path}/`)) ||
+            (diagnostics.inputWarnings ?? []).some(warning => warning.originPath === path && warning.unitId === key && !warningGroups([warning]).pending.includes(warning)), onDiscardEntry: ref => discardStandardizedEntry(activeBattleKey, { ...ref, unitId: key }), onToggle: value => setFolded([key], value) });
+      appendWarningGroups(body, groups, true);
       const actions = el(doc, 'div', { class: 'fated-actions' }); const edit = el(doc, 'button', { type: 'button' }, '编辑 JSON'); const remove = el(doc, 'button', { type: 'button' }, '删除');
       actions.append(edit, remove); body.append(actions); list.append(box);
       on(remove, 'click', () => { delete config.instances[key]; save(); choose(selectedIds()); });
@@ -835,9 +862,14 @@ export function mountTavernOverlay(options = {}) {
     const key = activeBattleKey;
     const requestConfig = { ...config };
     const stored = config.charSnapshots[key] ?? {};
-    const eligible = force ? Object.keys(characters) : normalizationCandidates(characters, stored, sources.warnings ?? []);
-    const ids = unitIds.filter(id => eligible.includes(id));
-    const queue = planNormalizationBatches(ids, sources.warnings ?? [], liveState(), {
+    const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
+    const ids = unitIds.filter(id => eligible.has(id));
+    if (!ids.length) return;
+    const scoped = warningsForUnit(sources.warnings, ids);
+    const { pending } = warningGroups(scoped);
+    const pendingIds = new Set(pending.map(warning => warning.unitId));
+    const queueIds = pending.length && !pendingIds.has(null) ? ids.filter(id => pendingIds.has(id)) : ids;
+    const queue = planNormalizationBatches(queueIds, pending, liveState(), {
       maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'),
     });
     if (!queue.length) return;
@@ -854,6 +886,7 @@ export function mountTavernOverlay(options = {}) {
     renderInstances();
     let applied = 0, completed = 0, failure;
     const replies = [], notes = [];
+    const createdTemplates = new Map();
     const progress = detail => notify('正在标准化中…', detail ?? `已完成 ${completed} / ${queue.length} 批`, null, true);
     const request = async (batch, index, correction) => {
       const snapshot = clone(liveState());
@@ -885,12 +918,19 @@ export function mountTavernOverlay(options = {}) {
         try {
           if (result.error) throw result.error;
           let accepted;
-          try { accepted = commitNormalization(key, batch, result.value); }
+          try { accepted = commitNormalization(key, batch, result.value, createdTemplates); }
           catch (error) {
             progress(`第 ${index + 1} 批正在修正输出`);
-            const revised = await request(batch, index, error);
-            controller.signal.throwIfAborted();
-            accepted = commitNormalization(key, batch, revised);
+            try {
+              const revised = await request(batch, index, error);
+              controller.signal.throwIfAborted();
+              accepted = commitNormalization(key, batch, revised, createdTemplates, { acceptPartial: true });
+            } catch (retryError) {
+              controller.signal.throwIfAborted();
+              if (!error.missingCoverage || key !== activeBattleKey) throw retryError;
+              // Revalidate the initial response before preserving usable partial work.
+              accepted = commitNormalization(key, batch, result.value, createdTemplates, { acceptPartial: true });
+            }
           }
           applied += accepted.applied;
           replies.push(accepted.data);
@@ -906,22 +946,24 @@ export function mountTavernOverlay(options = {}) {
       }, controller.signal);
     } catch (error) { failure ??= error; }
     finally {
-      const remaining = queue.flatMap(batch => batch.warnings).filter(warning => sources.warnings.includes(warning));
-      const unresolved = pendingDiagnostics(remaining, notes);
+      const groups = warningGroups(warningsForUnit(sources.warnings, ids));
+      const unresolved = pendingDiagnostics([], notes);
+      const hasRemaining = groups.pending.length || groups.reviewed.length || unresolved.length;
+      const lines = [...groups.pending.map(warning => warningDisplay(warning.message)), ...groups.reviewed.map(modelLine), ...unresolved];
       const raw = replies.length ? JSON.stringify(replies.length === 1 ? replies[0] : replies, null, 2) : failure?.raw ?? '';
       const aborted = failure?.name === 'AbortError';
       const status = aborted ? 'aborted' : failure ? 'error' : 'ok';
-      const title = aborted ? '标准化已中止' : failure ? '标准化失败' : '标准化完成';
+      const title = aborted ? '标准化已中止' : failure ? '标准化失败' : groups.pending.length ? '标准化部分完成' : '标准化完成';
       const detail = failure ? diagnosticText(failure.message ?? failure, '请求或补丁校验失败，未返回可读的错误说明') : '';
       if (!disposed && key === activeBattleKey) {
         const retry = () => key === activeBattleKey && runNormalize(ids, { force: true, sessionId: sessionId ?? null });
-        notify(title, detail, !aborted && (failure || unresolved.length) ? retry : null,
-          false, { tone: aborted ? 'neutral' : failure ? 'error' : 'success', applied, unresolved, raw });
+        notify(title, detail, !aborted && (failure || hasRemaining) ? retry : null,
+          false, { tone: aborted ? 'neutral' : failure ? 'error' : 'success', applied, unresolved, warningGroups: groups, raw });
       }
       if (session) {
         aiSessions.update(session.id, entries[1], { content: raw, status });
         feed(entries[1], ...aiSessions.append(session.id, { role: 'system', status,
-          content: `${title} · 已应用 ${applied} 项补丁${detail ? ` · ${detail}` : ''}${unresolved.length ? ` · 待处理：${unresolved.join('；')}` : ''}` }));
+          content: `${title} · 已应用 ${applied} 项补丁${detail ? ` · ${detail}` : ''}${lines.length ? ` · ${lines.join('；')}` : ''}` }));
       }
       aiController = null;
       if (!disposed) { aiPage?.setBusy(false); renderInstances(); }
@@ -1071,7 +1113,83 @@ export function mountTavernOverlay(options = {}) {
     diagnostics.warnings = warnings;
     diagnostics.narrativeExemptions = exempt.map(({ warning, receipt }) => ({ ...warningReference(warning), reason: receipt.reason }));
   }
+  function reconcileUnresolvedNotes(key, records, warnings, additions = [], { reset = false } = {}) {
+    const previous = config.unresolvedNotes[key] ?? {};
+    const next = {};
+    const sourceFor = narrativeSourceFor(records);
+    for (const warning of warnings) {
+      const unitId = warning.unitId ?? '';
+      const id = warningKey(warning);
+      const source = sourceFor(warning.unitId);
+      if (!source) continue;
+      const details = [...new Set(additions.filter(note => note.warning === warning).map(note => note.detail).filter(Boolean))];
+      const old = reset ? undefined : previous[unitId]?.[id];
+      const note = details.length ? {
+        source,
+        effectName: warning.message.match(/待标准化「([^」]+)」/)?.[1]?.trim() || warningDisplay(warning.message),
+        reason: details.join('；'),
+      } : old?.source === source ? old : undefined;
+      if (note) (next[unitId] ??= {})[id] = note;
+    }
+    if (JSON.stringify(previous) === JSON.stringify(next)) return;
+    const unresolvedNotes = { ...config.unresolvedNotes };
+    if (Object.keys(next).length) unresolvedNotes[key] = next;
+    else delete unresolvedNotes[key];
+    persistSettings({ unresolvedNotes });
+  }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
+  function pathUnder(path, root) { return path === root || path?.startsWith(`${root}/`); }
+  function discardStandardizedEntry(key, ref) {
+    const source = ref.path;
+    if (!source || !/^\/(?:equipment|skills|items|statusTemplates)\/[^/]+$/.test(source)) return;
+    const [, table, id] = source.split('/');
+    const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+    const current = liveState();
+    if (!current?.[table] || !Object.hasOwn(current[table], id)) return;
+    if (aiController) { notify('标准化进行中', '请等待当前批次完成后再重置大词条。'); return; }
+    const rawWarnings = diagnostics.inputWarnings ?? [];
+    // The reset changes the shared template, so reopen its diagnostics for every holder.
+    const matchedKeys = new Set(rawWarnings.filter(warning => pathUnder(warning.originPath, source)).map(warningKey));
+    const retained = [];
+    for (const batch of batches(key)) {
+      const patch = (batch.patch ?? []).filter(operation => !pathUnder(operation.path, source));
+      const guards = (batch.guards ?? []).filter(([path]) => !pathUnder(path, source));
+      const receipts = (batch.receipts ?? []).filter(receipt => !matchedKeys.has(receipt.key));
+      if (patch.length || receipts.length || guards.length) retained.push({ ...batch, patch, guards, receipts });
+    }
+    // Restore exactly this named entry from the immutable hydrated snapshot. The
+    // live state supplies combat progress and every unrelated entry, so this is
+    // additive rollback rather than a battle rewind.
+    const next = clone(current);
+    next[table] = { ...next[table] };
+    if (baseline[table][id] === undefined) delete next[table][id];
+    else next[table][id] = clone(baseline[table][id]);
+    try { (options.validateState || defaultValidateState)(next); } catch (error) { showError(error); return; }
+    gameMount?.loadState?.(next);
+    currentState = next;
+    const exemptions = (config.narrativeExemptions[key] ?? []).filter(receipt => !matchedKeys.has(receipt.key));
+    const notes = clone(config.unresolvedNotes[key] ?? {});
+    for (const [unitId, entries] of Object.entries(notes)) {
+      for (const warningId of Object.keys(entries)) if (matchedKeys.has(warningId)) delete entries[warningId];
+      if (!Object.keys(entries).length) delete notes[unitId];
+    }
+    const snapshots = clone(config.charSnapshots);
+    for (const snapshot of Object.values(snapshots[key] ?? {})) {
+      if (snapshot.resolvedWarnings) snapshot.resolvedWarnings = snapshot.resolvedWarnings.filter(item => !matchedKeys.has(item.key ?? item));
+    }
+    const nextWarnings = [...rawWarnings];
+    sources.warnings = nextWarnings;
+    diagnostics.warnings = nextWarnings;
+    persistSettings({
+      normalizationBatches: { ...config.normalizationBatches, [key]: retained },
+      narrativeExemptions: { ...config.narrativeExemptions, [key]: exemptions },
+      unresolvedNotes: { ...config.unresolvedNotes, [key]: notes },
+      charSnapshots: snapshots,
+    });
+    filterResolved(snapshots[key] ?? {}, characters, retained);
+    reconcileUnresolvedNotes(key, characters, sources.warnings, [], { reset: false });
+    renderInstances();
+  }
   function applyNormalization(state, patch) {
     if (!patch?.length) return state;
     const next = applyPatch(state, patch, true);
@@ -1140,7 +1258,6 @@ export function mountTavernOverlay(options = {}) {
       const exempt = new Set(activeNarrativeExemptions(rawWarnings, config.narrativeExemptions[key] ?? [], narrativeSourceFor(fresh))
         .map(({ warning }) => warning));
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
-      const changed = normalizationCandidates(fresh, stored, remaining);
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
       if (invalid) persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
@@ -1148,10 +1265,12 @@ export function mountTavernOverlay(options = {}) {
       refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
+      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending);
       for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
       if(key && (rehydrate||changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
       if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
       filterResolved(stored, fresh, kept);
+      if (key) reconcileUnresolvedNotes(key, fresh, sources.warnings, [], { reset: rehydrate });
       const live=liveState();
       for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
       const firstEntry = !rehydrate && currentState && key && !savedBattle && !enteredBattles.has(key);
@@ -1213,7 +1332,7 @@ export function mountTavernOverlay(options = {}) {
     on(refresh, 'click', () => scan().catch(showError));
     on(report, 'click', deliverBattleReport);
   }
-  function commitNormalization(key, { unitIds }, { snapshot, sent, reply }) {
+  function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const { data } = parseAIResponse(reply);
     if (!Array.isArray(data?.patch)) throw new Error('模型未返回有效的战局补丁');
     const raw = JSON.stringify(data, null, 2);
@@ -1230,14 +1349,12 @@ export function mountTavernOverlay(options = {}) {
       const records = Object.fromEntries(unitIds.map(id => [id, { hash: characters[id].hash, sourceKind: characters[id].sourceKind }]));
       const current = liveState();
       const rootPath = path => path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
-      const paths = [...new Set(data.patch.map(operation => rootPath(operation.path)))];
-      if (paths.some(path => fingerprintAt(current, path) !== fingerprintAt(snapshot, path))) {
-        throw new Error('补丁目标已被更早的批次或战局操作修改');
-      }
+      const operationsToApply = normalizationOperations(data.patch, snapshot, current, createdTemplates, fingerprintAt);
+      const paths = [...new Set(operationsToApply.map(operation => rootPath(operation.path)))];
       const apply = options.applyPatch ?? applyPatch;
       let next = current;
       const changedAtApply = new Map();
-      for (const operation of data.patch) {
+      for (const operation of operationsToApply) {
         const parentPath = operation.path.slice(0, operation.path.lastIndexOf('/'));
         // Inserting/removing array entries also shifts the values at other indexes.
         const path = operation.op === 'replace' || !fingerprintAt(next, parentPath)?.startsWith('[')
@@ -1247,43 +1364,69 @@ export function mountTavernOverlay(options = {}) {
         if (fingerprintAt(next, path) !== before) changedAtApply.set(operation, path);
       }
       const changed = new Set(paths.filter(path => fingerprintAt(next, path) !== fingerprintAt(current, path)));
-      const effective = data.patch.filter(operation => changed.has(rootPath(operation.path)));
+      const effective = operationsToApply.filter(operation => changed.has(rootPath(operation.path)));
       const patch = effective.map(({ resolves, ...operation }) => operation);
       const changedOperations = effective.filter(operation => {
         const path = changedAtApply.get(operation);
         return path && fingerprintAt(current, path) !== fingerprintAt(next, path);
       });
-      const solved = resolvedDiagnostics(sent, records, changedOperations, notes);
-      const narrative = readNarrativeExemptions(data.narrative, sent, narrativeSourceFor(records), { solved, unresolved: notes });
+      const narrative = readNarrativeExemptions(data.narrative, sent, narrativeSourceFor(records), { unresolved: notes });
+      const solved = resolvedDiagnostics(sent, records, changedOperations.map(operation => ({
+        ...operation,
+        mechanicsChanged: ['rules', 'mods', 'pools'].some(field => {
+          const after = fingerprintAt(next, `${operation.path}/${field}`);
+          return after !== undefined && after !== '[]' && after !== '{}'
+            && after !== fingerprintAt(current, `${operation.path}/${field}`);
+        }),
+      })), notes, { narrative, inferPartial: true });
       for (const { warning } of narrative) {
         if (data.patch.some(operation => Array.isArray(operation.resolves) && operation.resolves.some(reference => identifiesWarning(reference, warning)))) {
           throw new Error('narrative 警告不能同时声明为补丁已解决');
         }
       }
-      if (data.patch.length && !patch.length && !narrative.length) throw new Error('模型返回的补丁没有改变战局');
+      if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes.some(note => note.warning && note.detail)) {
+        throw new Error('模型返回的补丁没有改变战局');
+      }
+      let baseline, before;
+      if (patch.length || data.existing?.length) {
+        baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+        before = applyPatch(baseline, operations(key), true);
+      }
+      const verified = existingEffectReceipts(data.existing, sent, baseline, before, current, fingerprintAt);
+      for (const { warning, path, fingerprint } of verified) {
+        if (notes.some(note => note.warning === warning) || narrative.some(note => note.warning === warning)
+          || fingerprintAt(next, path) !== fingerprint) throw new Error('已有实现收据与本批补丁或未解决说明冲突');
+        if (!solved.includes(warning)) solved.push(warning);
+      }
+      const missing = missingDispositions(sent, solved, notes, narrative);
+      if (missing.length && !acceptPartial) {
+        const error = new Error(`本批漏答 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}。本批尚未写入；保留已完成的补丁，重新提交完整结果。已实现的效果请在实际修改的操作上补 resolves；只创建依赖模板还须接回原技能。其余逐项写 unresolved 并说明原因，纯叙事才写 narrative。`);
+        error.missingCoverage = true;
+        throw error;
+      }
       const additions = [];
-      if (patch.length) {
+      if (patch.length || verified.length) {
         const validate = options.validateState || defaultValidateState;
         validate(next);
-        const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
         const previous = operations(key);
-        const before = applyPatch(baseline, previous, true);
         validate(applyNormalization(baseline, [...previous, ...patch]));
         additions.push({
           patch, hashes: Object.fromEntries(unitIds.map(id => [id, records[id].hash])),
           receipts: solved.map(w => ({ unitId: w.unitId, key: warningKey(w) })),
-          guards: [...new Set([...changed, ...solved.map(w => w.originPath).filter(Boolean)])]
+          guards: [...new Set([...changed, ...verified.map(entry => entry.path), ...solved.map(w => w.originPath).filter(Boolean)])]
             .map(path => [path, fingerprintAt(before, path) ?? null]),
         });
-        refreshOpeningInitiative(next);
-        syncEquipmentEffects(next);
-        refreshOutcome(next);
-        validate(next);
-        if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
-        gameMount.loadState(next);
-        currentState = next;
-        for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
-        save();
+        if (patch.length) {
+          refreshOpeningInitiative(next);
+          syncEquipmentEffects(next);
+          refreshOutcome(next);
+          validate(next);
+          if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
+          gameMount.loadState(next);
+          currentState = next;
+          for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
+          save();
+        }
       }
       const stored = { ...config.charSnapshots[key] };
       for (const [id, record] of Object.entries(records)) {
@@ -1298,7 +1441,14 @@ export function mountTavernOverlay(options = {}) {
         normalizationBatches: { ...config.normalizationBatches, [key]: [...batches(key), ...additions] },
         narrativeExemptions: { ...config.narrativeExemptions, [key]: [...previousExemptions.filter(previous => !receipts.some(receipt => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] },
       });
+      for (const { op, path } of effective) {
+        if (op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path) && fingerprintAt(current, path) === undefined) {
+          const fingerprint = fingerprintAt(next, path);
+          if (fingerprint !== undefined) createdTemplates.set(path, fingerprint);
+        }
+      }
       filterResolved(stored, characters);
+      reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
       scanStatus = `已标准化 ${unitIds.length} 个角色`;
       renderInstances();
       return { applied: patch.length, data, notes };
