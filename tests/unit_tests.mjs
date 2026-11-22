@@ -43,6 +43,9 @@ import './vm_spatial_tests.mjs';
 import './vm_corpus_tests.mjs';
 import './skill_carrier_tests.mjs';
 import './log_attribution_tests.mjs';
+import './scale_grid_tavern_tests.mjs';
+import './scale_runtime_tests.mjs';
+import './vm_authority_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };
@@ -418,7 +421,8 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
   assert.equal(a.stepEnemy().ok,true); assert.notDeepEqual(a.exportBattleSnapshot(),before);
 });
 
-for (const scenarioId of ['ruins','altar','boss']) {
+// Shared-cell routes and point-blank actions change fixed-seed tactics.
+for (const [scenarioId, winner] of [['ruins', 'blue'], ['altar', 'red'], ['boss', 'red']]) {
   test(`${scenarioId} 打到胜负并完整重放战报和 JSON 日志`, () => {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {
@@ -428,6 +432,6 @@ for (const scenarioId of ['ruins','altar','boss']) {
     const b=createGameAPI(); b.createBattle(snapshot);
     assert.deepEqual(b.exportBattleSnapshot(),snapshot);
     assert.deepEqual(b.exportBattleReport(),a.exportBattleReport());
-    assert.equal(a.getStateSummary().outcome,'blue',scenarioId);
+    assert.equal(a.getStateSummary().outcome, winner, scenarioId);
   });
 }

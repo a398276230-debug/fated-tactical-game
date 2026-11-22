@@ -35,13 +35,14 @@ export function createPlayback(root, { show, onIdle } = {}) {
   // ---------- 棋盘坐标 ----------
   const frame = () => $('board-frame');
   const cellAt = (x, y) => root.querySelector(`#board [data-x="${x}"][data-y="${y}"]`);
-  const tokenOf = id => root.querySelector(`#board .axis-unit[data-unit-id="${id}"]`);
+  const tokenOf = id => [...root.querySelectorAll('#board .axis-unit[data-unit-id]')].find(node => node.dataset.unitId === id);
   const positions = new Map(); // 演出中单位的“视觉位置”
   const homes = new Map();     // token 原本所在格
-  function center(x, y) {
+  function center(x, y, id) {
     const cell = cellAt(x, y), box = frame()?.getBoundingClientRect();
     if (!cell || !box) return null;
-    const r = cell.getBoundingClientRect();
+    const token = id && [...cell.querySelectorAll('.axis-unit[data-unit-id]')].find(node => node.dataset.unitId === id);
+    const r = (token ?? cell).getBoundingClientRect();
     return { x: r.left - box.left + r.width / 2, y: r.top - box.top + r.height / 2, w: r.width };
   }
   function whereIs(state, id) {
@@ -50,7 +51,7 @@ export function createPlayback(root, { show, onIdle } = {}) {
     return thing ? { x: thing.x, y: thing.y } : null;
   }
   function offset(id, to) {
-    const home = homes.get(id), a = home && center(home.x, home.y), b = center(to.x, to.y);
+    const home = homes.get(id), a = home && center(home.x, home.y, id), b = center(to.x, to.y);
     return a && b ? `translate(${b.x - a.x}px, ${b.y - a.y}px)` : 'none';
   }
 
@@ -81,7 +82,7 @@ export function createPlayback(root, { show, onIdle } = {}) {
   async function lunge(state, attackerId, targetId) {
     const token = tokenOf(attackerId), a = whereIs(state, attackerId), b = whereIs(state, targetId);
     if (!token || !a || !b) return;
-    const p = center(a.x, a.y), q = center(b.x, b.y);
+    const p = center(a.x, a.y, attackerId), q = center(b.x, b.y, targetId);
     if (!p || !q) return;
     const far = Math.hypot(q.x - p.x, q.y - p.y) > p.w * 1.6;
     const base = token.style.transform && token.style.transform !== 'none' ? `${token.style.transform} ` : '';
@@ -116,7 +117,7 @@ export function createPlayback(root, { show, onIdle } = {}) {
     return play(token, [{ opacity: 1, filter: 'grayscale(0)' }, { opacity: .4, filter: 'grayscale(1)' }], { duration: 520 });
   }
   function float(state, id, text, tone, sub) {
-    const fx = $('board-fx'), at = whereIs(state, id), c = at && center(at.x, at.y);
+    const fx = $('board-fx'), at = whereIs(state, id), c = at && center(at.x, at.y, id);
     if (!fx || !c || skipping || speed <= 0) return;
     const node = doc.createElement('div');
     node.className = `ft-float ${tone}`;

@@ -46,6 +46,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
 
   const pendingAsk = () => live?.vm?.pendingAsk;
   const active = (s = state) => s?.units[s.order[s.turn]];
+  const TARGETED = new Set(['attack', 'skill', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
   const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
   const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy,
@@ -445,16 +446,36 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function handlePoint(at, input = {}) {
     if (pendingAsk()) return;
     error('');
-    const unit = Object.values(state.units).find(u => u.hp > 0 && u.x === at.x && u.y === at.y);
+    const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.x === at.x && u.y === at.y);
+    const unit = units.find(u => u.id === action?.targetId) ?? units[0];
+    let chosenTargetId = unit?.id;
+    const selectTarget = id => {
+      const chosen = units.find(u => u.id === id);
+      if (!chosen) return;
+      chosenTargetId = chosen.id;
+      target = { ...at, targetId: chosen.id }; hover = target;
+      if (action) action = { ...action, targetId: chosen.id, x: at.x, y: at.y };
+      for (const button of menuButtons.keys()) {
+        const choice = menuButtons.get(button);
+        if (!choice || !TARGETED.has(choice.command.type)) continue;
+        choice.command = { ...choice.command, targetId: chosen.id, x: at.x, y: at.y };
+        button.setAttribute('aria-pressed', String(choice.command.targetId === chosen.id));
+      }
+      for (const button of targetOptions?.querySelectorAll('[data-target-id]') ?? []) {
+        button.setAttribute('aria-pressed', String(button.dataset.targetId === chosen.id));
+      }
+      $('target-title').textContent = `${chosen.team === 'blue' ? '我方' : '敌方'} ${chosen.name} · (${at.x}, ${at.y})`;
+      draw(); layoutTargetCard();
+    };
     const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find(v => v.x === at.x && v.y === at.y);
     const actor = active();
     const canAct = actor?.team === 'blue' && !state.outcome;
     const self = canAct && unit?.id === actor.id;
     if (bagAim) {
-      const command = { type:'skill', skillId:bagAim, ...at };
+      const command = { type:'skill', skillId:bagAim, ...at, ...(unit?.id ? { targetId: unit.id } : {}) };
       const plan = game.previewAction(command);
       if (!plan.ok) { error(plan.error); return; }
-      target = at; hover = at; action = command; bagAim = null;
+      target = { ...at, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = command; bagAim = null;
       $('target-title').textContent = `${plan.name} · (${at.x}, ${at.y})`;
       $('action-toolbar').replaceChildren(); $('target-options').hidden = true;
       $('target-actions').hidden = false; $('confirm-action').hidden = false;
@@ -468,12 +489,13 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     }
     selectedId = unit?.id ?? actor?.id;
     inspectedId = unit ? null : feature?.id;
-    target = at; hover = at; action = null;
+    target = { ...at, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = null;
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [];
     const add = (type, skill, itemId, skillName) => {
       const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
+        ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
       const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
@@ -506,6 +528,17 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     }
     const who = unit ? `${unit.team === 'blue' ? '我方' : '敌方'} ${unit.name}` : feature?.name ?? '空地';
     $('target-title').textContent = `${who} · (${at.x}, ${at.y})${self ? (sprint ? ' · 疾跑范围' : '') : ''}`;
+    const targetOptions = $('target-unit-options');
+    targetOptions.replaceChildren();
+    targetOptions.hidden = units.length < 2;
+    for (const candidate of units) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'ft-target-unit'; button.dataset.targetId = candidate.id;
+      button.dataset.faction = candidate.team; button.setAttribute('aria-pressed', String(candidate.id === unit?.id));
+      button.textContent = `${candidate.name} · ${Math.round((candidate.hp / Math.max(1, candidate.maxHp)) * 100)}%`;
+      button.addEventListener('click', () => selectTarget(candidate.id), { signal });
+      targetOptions.append(button);
+    }
     $('target-options').hidden = !options.some(o => ['attack', 'skill'].includes(o.command.type));
     const toolbar = $('action-toolbar');
     toolbar.replaceChildren();

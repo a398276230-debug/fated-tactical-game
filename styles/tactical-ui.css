@@ -48,6 +48,13 @@ body { margin: 0; background: var(--ink-2); }
 }
 .ft-board .tactical-cell-coord { opacity: .45; font-size: 8px; }
 .ft-board .tactical-cell-units { display: flex; justify-content: center; align-items: center; flex: 1; min-height: 0; margin: 0; gap: 2px; flex-wrap: nowrap; }
+.ft-board .tactical-cell-units[data-stack="2"], .ft-board .tactical-cell-units[data-stack="3"], .ft-board .tactical-cell-units[data-stack="4"] { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; align-content: center; }
+.ft-board .tactical-cell-units[data-stack="2"] .axis-unit, .ft-board .tactical-cell-units[data-stack="3"] .axis-unit, .ft-board .tactical-cell-units[data-stack="4"] .axis-unit { width: 100%; min-width: 0; padding: 1px; }
+.ft-target-unit-options { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.ft-target-unit { flex: 1 1 48%; min-width: 0; padding: 5px 7px; border: 1px solid var(--line-mid); border-radius: 7px; background: var(--raised-b); color: var(--text); text-align: left; cursor: pointer; }
+.ft-target-unit[data-faction="blue"] { border-color: var(--blue-line); }
+.ft-target-unit[data-faction="red"] { border-color: var(--red-line); }
+.ft-target-unit[aria-pressed="true"] { outline: 2px solid var(--gold-bright); }
 .ft-board .tactical-cell-features { position: absolute; top: 1px; right: 3px; margin: 0; }
 .ft-board.battle-axis .tactical-cell .axis-unit { width: calc(var(--cell) - 10px); max-width: 100%; padding: 2px; pointer-events: none; transform: none; transition: none; will-change: transform; }
 .ft-board.battle-axis .axis-token-head, .ft-board.battle-axis .axis-unit-fallback-avatar { width: calc(var(--cell) * .42); height: calc(var(--cell) * .42); }

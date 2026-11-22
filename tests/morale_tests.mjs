@@ -78,7 +78,7 @@ test('抵抗方移动后可花攻击槽解救相邻队友，不掷骰、不赠�
   const s=fixture(),{e,f}=s.units;s.battleType='suppress';s.suppressingTeam='blue';
   s.turn=s.order.indexOf('f');f.ap=2;f.used={attack:0,action:0};f.x=4;
   grantStatus(s,e,'suppressed',{sourceUnitId:'p'}).holdTotal=25;
-  const rescue={type:'free_ally',x:e.x,y:e.y};assert.equal(preview(s,rescue).ok,false);
+  const rescue={type:'free_ally',targetId:e.id,x:e.x,y:e.y};assert.equal(preview(s,rescue).ok,false);
   const move=chooseAction(s);assert.equal(move.type,'move');applyAction(s,move);
   assert.deepEqual(chooseAction(s),rescue);assert.equal(preview(s,rescue).slot,'attack');
   const rng=s.rng, ap=e.ap;applyAction(s,rescue);assert.equal(e.statuses.suppressed,undefined);assert.equal(e.ap,ap);assert.equal(s.rng,rng);assert.equal(f.used.attack,1);

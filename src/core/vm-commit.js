@@ -1,6 +1,7 @@
 import { getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { evaluateExpr } from './formula.js';
+import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
 const entry = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
@@ -84,8 +85,10 @@ export function continueCommit({ state, frame, host }) {
     if (!alive(target) && !(op === 'resource' && dying && !target.fled)) { state.vm.stack.pop(); return; }
     const amount = op === 'damage' ? host.prepareDamage?.(state, source, target, data) ?? data.amount
       : op === 'heal' ? host.prepareHeal?.(state, source, target, data) ?? data.amount : data.amount;
+    const authority = authorityFor(state, frame.carrier, data.sourceId);
     frame.eventRef = newEvent(state, { commitKind: op, actorId: data.sourceId, targetId: target.id, pool: key,
-      poolId: pool.id, damageType: data.damageType ?? null, rawAmount: data.amount, finalAmount: amount,
+      authorityRank: authority.authorityRank, sourceTier: authority.unitTier,
+      ...(data.instantDeath === true && { instantDeath: true }), poolId: pool.id, damageType: data.damageType ?? null, rawAmount: data.amount, finalAmount: amount,
       sourceRuleId: frame.ruleId, direct: data.direct ?? true, preserveLife: data.lethal === false || Boolean(target.nonLethal || host.flag?.(state, target, 'preserveLife') || host.preserveLife?.(state, source)),
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, weaponTemplateId: data.weaponTemplateId ?? null,
       melee: data.melee ?? false, backstab: data.backstab ?? false });
@@ -96,6 +99,17 @@ export function continueCommit({ state, frame, host }) {
   if (frame.pc === 1) {
     frame.pc++;
     if (event.cancel || !Number.isFinite(event.finalAmount)) { state.vm.stack.pop(); return; }
+    const conceptProtection = op === 'damage' && event.instantDeath === true ? protectionCarrier(state, target) : null;
+    if (conceptProtection) {
+      const attacker = authorityFor(state, frame.carrier, data.sourceId);
+      const defender = authorityFor(state, conceptProtection, target.id);
+      const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target.id }, {
+        checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : data.sourceId }) ?? 0,
+      });
+      event.authorityContest = contest;
+      host.log(state, source, 'authority', `${target.name}的概念保护${contest.result < 0 ? '拦截了即死' : '被即死穿透'}${authorityProse(contest)}`, { targetId: target.id, contest });
+      if (contest.result < 0) { state.vm.stack.pop(); return; }
+    }
     const before = pool.current, beforeMax = pool.max;
     let absorbed = 0;
     if (op === 'damage') {
@@ -130,6 +144,18 @@ export function continueCommit({ state, frame, host }) {
           state.vm.stack.pop(); return;
         }
         const amount = data.mode === 'sub' ? Math.max(0, event.finalAmount) : event.finalAmount;
+        const reducesMax = data.mode === 'sub_max' && amount > 0 || data.mode === 'set_max' && amount < pool.max;
+        const protection = reducesMax ? protectionCarrier(state, target) : null;
+        if (protection) {
+          const attacker = authorityFor(state, frame.carrier, data.sourceId);
+          const defender = authorityFor(state, protection, target.id);
+          const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target.id }, {
+            checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : data.sourceId }) ?? 0,
+          });
+          event.authorityContest = contest;
+          host.log(state, source, 'authority', `${target.name}的概念保护${contest.result < 0 ? '拦截了上限削减' : '被上限削减穿透'}${authorityProse(contest)}`, { targetId: target.id, contest });
+          if (contest.result < 0) { state.vm.stack.pop(); return; }
+        }
         const changed = ['add_max', 'sub_max', 'set_max'].includes(data.mode)
           ? updatePoolMax(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain) })
           : updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });

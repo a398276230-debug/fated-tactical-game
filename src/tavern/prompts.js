@@ -44,10 +44,11 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 引用已有对象时使用快照中的 ID。新增模板时自行命名，同批先 add 再引用，包括召唤物专属技能。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换模板或数组时保留无关字段与条目。
 
 【模板值】
-• 装备必有 name。保留已有武器字段，range(1…30) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备自身的 hook:"active" 规则直接提供 0 AP、自身目标的按钮，用 label 命名并用 usesPerTurn、usesPerBattle 或 cooldownTurns 限次。需要自定义射程、目标或消耗时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。同一效果只用一种方式挂载。
-• 技能必有 name、ap(0/1/2，0 不占行动槽)、slot(attack/action)、range(0…30)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。纯被动技能标记 passive:true、ap:0，不写 active 规则。持有技能的 mods 和非 active 规则常驻生效。仅限自身施放时触发的钩子，须用 event.actorId == self.id 和 event.skillId 过滤。可选 initiativeBonus（按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值）；规则 usesPerTurn:N 限每个战斗回合 N 次，cooldownTurns:N 使该规则到第 N 轮后再次可用。范围字段 radius、innerRadius、width 为 0…30，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
+• 装备必有 name。保留已有武器字段，range(0…64) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备自身的 hook:"active" 规则直接提供 0 AP、自身目标的按钮，用 label 命名并用 usesPerTurn、usesPerBattle 或 cooldownTurns 限次。需要自定义射程、目标或消耗时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。同一效果只用一种方式挂载。
+• 技能必有 name、ap(0/1/2，0 不占行动槽)、slot(attack/action)、range(0…64)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。纯被动技能标记 passive:true、ap:0，不写 active 规则。持有技能的 mods 和非 active 规则常驻生效。仅限自身施放时触发的钩子，须用 event.actorId == self.id 和 event.skillId 过滤。可选 initiativeBonus（按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值）；规则 usesPerTurn:N 限每个战斗回合 N 次，cooldownTurns:N 使该规则到第 N 轮后再次可用。范围字段 radius、innerRadius、width 为 0…30，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
 • 装备和技能均可声明 rules、mods、tags、tier、vars、pools。rules 和 mods 是数组。tags 是小写标签数组，tier 为整数 1…7，vars 为 ID → Expr 的对象。pools 格式为 {"charge":{"cap":10,"initial":0}}，每池必填 cap，可加 initial、reloadable。cap / initial 优先写非负数，initial 不得超过 cap。已有装备初始化需要数值 cap。通过 resource 指令访问池，装备规则中 local:true 访问该实例的池。
-• 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。
+• 原卡档位距离用 rawRange、rawRadius、rawInnerRadius、rawWidth，运行时会按施放者、载体品质与比例尺换算。range、radius 等普通字段可声明固定格数。位移标签 [位移: X] 转成 move 的 distance:X 与 distanceUnit:"position"。武器斜杠射程第一项对应普攻，后续各项对应相应的装备主动技能。
+• 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。概念保护载体声明 flags:["concept_immune"]，拦截明确标记 instantDeath 的伤害、资源上限削减以及抹杀或概念破碎意图。
 
 【VM 模板正例】用快照 ID 和警告字段，把对应的值写入 patch 操作。技能值可放在 /skills/<id>，装备值可放在 /equipment/<id>，状态值可放在 /statusTemplates/<id>，规则值则放入相关模板的 rules 数组。
 • 技能值：{"name":"低伤校准","ap":1,"slot":"attack","range":1,"shape":"single","target":"enemy","rules":[{"id":"calibrated_impact","hook":"active","program":[{"op":"damage","target":"target","amount":1,"damageType":"physical","lethal":false}]}]}

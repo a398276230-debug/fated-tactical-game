@@ -90,6 +90,7 @@ function contextFor(state, frame, host) {
     item: frame.carrier?.type === 'item' ? { vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,
     tape: resolveEntity(state, frame.scope?.tape), center: event.center, pool: frame.scope?.pool,
     round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units), zones: state.zones,
+    cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),
     inZone: (entity, key) => Object.values(state.zones ?? {}).some(zone => (zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, entity)),

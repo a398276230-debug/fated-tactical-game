@@ -364,7 +364,7 @@ for (const source of ['learned', 'equipment', 'backpack']) test(`AI considers VM
     }
   }
   const before = structuredClone(state);
-  assert.deepEqual(chooseAction(state), cast);
+  assert.deepEqual(chooseAction(state), { ...cast, targetId: actor.id });
   assert.deepEqual(state, before);
   applyAction(state, cast);
   assert.equal(actor.hp, actor.maxHp);

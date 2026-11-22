@@ -29,7 +29,9 @@ export function perform({ state, context, select, op }) {
     if (!tape || op.target || tape.aimed !== false) {
       const point = op.target ? select(op.target)[0] : tape?.targetSpec ?? context.target ?? actor;
       if (!Number.isInteger(point?.x) || !Number.isInteger(point?.y)) continue;
+      const targetId = op.target ? point.id : tape?.targetSpec?.targetId ?? point.id;
       Object.assign(action, { x: point.x, y: point.y });
+      if (targetId && ['attack', 'skill', 'suppress', 'free_ally'].includes(action.type)) action.targetId = targetId;
     }
     const overrides = tape ? { free: true, ignoreSlots: true, ...op.overrides,
       ...(tape.interactiveId && { interactiveId: tape.interactiveId }) } : { ...op.overrides };

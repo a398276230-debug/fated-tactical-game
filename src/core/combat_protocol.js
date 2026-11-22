@@ -14,6 +14,31 @@ export const RATING_TABLE = Object.freeze([
   { min: 8, name: '勉强', multiplier: .8 }, { min: 4, name: '擦伤', multiplier: .3 },
   { min: null, name: '失手', multiplier: 0 },
 ]);
+export const TIER_CELL_M = Object.freeze([null, 2, 2, 5, 15, 50, 250, 1000]);
+export const QUALITY_TIER = Object.freeze({ 普通: 1, 优良: 2, 稀有: 3, 史诗: 4, 传说: 5, 神话: 6 });
+export const QUALITY_AUTHORITY = Object.freeze({ ...QUALITY_TIER, 唯一: 8 });
+const clampTier = tier => Math.max(1, Math.min(7, Math.trunc(Number(tier) || 1)));
+export function resolveEffectiveTier(carrierKind, quality, unitTier) {
+  const actorTier = clampTier(unitTier);
+  if (!quality || quality === '唯一') return actorTier;
+  const qualityTier = QUALITY_TIER[quality];
+  if (!qualityTier) return actorTier;
+  return carrierKind === 'skill' ? Math.max(qualityTier, actorTier) : Math.min(qualityTier, actorTier);
+}
+export function resolveAuthorityRank(carrier = {}, ownerUnit = {}) {
+  const unitTier = clampTier(ownerUnit.tier ?? carrier.sourceTier ?? 1);
+  const authorityRank = carrier.quality === '唯一' ? 8
+    : QUALITY_AUTHORITY[carrier.quality] ?? Math.max(1, Math.min(7, Math.trunc(Number(carrier.authorityRank ?? carrier.tier ?? unitTier) || unitTier)));
+  return { authorityRank, unitTier };
+}
+export function scaledMeters(raw, effectiveTier) { return Number(raw || 0) * (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]); }
+export function scaledCells(raw, effectiveTier, cellM, { max = Infinity, floor = false } = {}) {
+  const cells = scaledMeters(raw, effectiveTier) / Math.max(1e-9, Number(cellM) || 1);
+  return Math.max(0, Math.min(max, floor ? Math.floor(cells + 1e-9) : cells));
+}
+export const effectiveMeters = scaledMeters;
+export const sandboxCells = scaledCells;
+export const scaledMoveCells = (raw, effectiveTier, cellM) => scaledCells(raw, effectiveTier, cellM, { floor: true });
 export const DISTANCE_TABLE = Object.freeze([
   { name: '贴身', min: 0, max: 0, hit: 4, range: 6 }, { name: '近程', min: 1, max: 2, hit: 0, range: 2 },
   { name: '中程', min: 3, max: 5, hit: -2, range: 0 }, { name: '远程', min: 6, max: 10, hit: -4, range: 0 },
@@ -47,6 +72,13 @@ export function sizeFor(bodyLengthM) { return BL_SIZE_TABLE.find(x => Number.isF
 export function sizeClassFor(bodyLengthM) { return Math.min(5, 3 - sizeFor(bodyLengthM).value); }
 export function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
 export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
+export function resolveAuthorityContest(attacker, defender, contest = false) {
+  const a = resolveAuthorityRank(attacker?.carrier ?? attacker, attacker?.unit ?? attacker);
+  const d = resolveAuthorityRank(defender?.carrier ?? defender, defender?.unit ?? defender);
+  if (a.authorityRank !== d.authorityRank) return { winner: a.authorityRank > d.authorityRank ? 'attacker' : 'defender', ...a, defender: d, conditional: false };
+  if (a.unitTier !== d.unitTier) return { winner: a.unitTier > d.unitTier ? 'attacker' : 'defender', ...a, defender: d, conditional: false };
+  return { winner: contest ? null : 'contest', ...a, defender: d, conditional: true };
+}
 export function ratingFor(total) { return RATING_TABLE.find(x => x.min === null || total >= x.min); }
 export function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) { return agility * (1 + percent) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat; }
 export function bodySizeLabel(unit) {

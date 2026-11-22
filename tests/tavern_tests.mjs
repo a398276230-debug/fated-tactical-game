@@ -365,9 +365,12 @@ unit|e2|red|char_info|木偶|8,7`;
   assert.ok(result.warnings.some(w => w.message.includes('mvu:不存在/队友A')));
 });
 
-test('battle_init 描述符拒绝重复起点与模糊 MVU 来源', () => {
+test('battle_init 允许单位共用起点，拒绝超员与模糊 MVU 来源', () => {
   assert.throws(() => parseBattleInit('battle|1|x|场景|flat\nunit|p1|blue|mvu:主角|主角|1,1\nunit|e1|red|mvu|敌人|1,1'), /battle_init 描述符/);
-  assert.throws(() => parseBattleInit('battle|1|x|场景|flat\nunit|p1|blue|mvu:主角|主角|1,1\nunit|e1|red|char_info|敌人|1,1'), /位置重复/);
+  const header = 'battle|1|x|场景|flat';
+  const units = Array.from({ length: 5 }, (_, index) => `unit|u${index}|blue|char_info|角色${index}|1,1`);
+  assert.equal(parseBattleInit([header, ...units.slice(0, 4)].join('\n')).units.length, 4);
+  assert.throws(() => parseBattleInit([header, ...units].join('\n')), /同格单位超过容量/);
   assert.throws(() => parseBattleInit('battle|1|x|场景|flat|4294967296'), /seed/);
 });
 

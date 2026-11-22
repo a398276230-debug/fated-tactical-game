@@ -1,4 +1,4 @@
-import { actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
@@ -76,7 +76,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     if (plan.ok) choices.push({ action, score: tactics(state, actor, action, plan) });
   }
   const enemies = units.filter(u => visibleEnemy(state, actor, u));
-  for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y });
+  for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y, ...(target.id ? { targetId: target.id } : {}) });
   const items = Object.entries(actor.inventory ?? {}).filter(([id, count]) => count > 0 && state.skills[id]?.backpackItem);
   const templates = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...items.map(([id]) => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
   for (const skillId of [...templates.keys()].sort()) {
@@ -98,7 +98,10 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     } else {
       candidates = query.cells;
     }
-    for (const { x, y } of candidates) consider({ type: 'skill', skillId, x, y });
+    for (const candidate of candidates) {
+      const { x, y } = candidate;
+      consider({ type: 'skill', skillId, x, y, ...(candidate.id ? { targetId: candidate.id } : {}) });
+    }
   }
   for (const { x, y, kind, spent } of Object.values(state.interactives).sort(byId)) {
     if (spent) continue;
@@ -111,8 +114,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
 // Obstacle-aware objective distances. Firing positions include cells facing ranged targets,
 // while melee units pursue the boundary around their opponents rather than the occupied tile.
 function approach(state, actor, enemies, suppress = false) {
-  const weapon = state.equipment[state.items[actor.weapon]?.templateId];
-  const range = weapon?.range ?? 1.5;
+  const range = weaponInfo(state, actor).template.range ?? 0;
   const spots = [{ x: actor.x, y: actor.y, steps: 0 }, ...reachable(state, 'move', actor, Infinity)];
   const clearAttackCell = probe => enemies.some(target => {
     const d = distance3D(state, probe, target);
@@ -120,7 +122,7 @@ function approach(state, actor, enemies, suppress = false) {
     if (d > range + 1) return false;
     const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
-    const attack = preview(s, { type: 'attack', x: target.x, y: target.y });
+    const attack = preview(s, { type: 'attack', targetId: target.id, x: target.x, y: target.y });
     if (attack.ok || attack.error === '弹仓已空，请装填' && d <= range && hasLOS(state, probe, target)) return true;
     return false;
   });
@@ -158,7 +160,7 @@ export function chooseAction(state) {
   if (state.battleType === 'suppress' && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
     const held = Object.values(state.units).filter(t=>t.team===actor.team && t.hp>0 && !t.fled && t.statuses.suppressed).sort(byId);
     for (const ally of held) {
-      const rescue={type:'free_ally',x:ally.x,y:ally.y};
+      const rescue={type:'free_ally',targetId:ally.id,x:ally.x,y:ally.y};
       if (preview(state,rescue).ok) return rescue;
     }
     if (held.length) {
@@ -172,7 +174,7 @@ export function chooseAction(state) {
   }
   if (state.battleType === 'suppress' && state.suppressingTeam === actor.team) {
     for (const enemy of enemies) {
-      const action={type:'suppress',x:enemy.x,y:enemy.y};
+      const action={type:'suppress',targetId:enemy.id,x:enemy.x,y:enemy.y};
       if (preview(state,action).ok) return action;
     }
     const targets=enemies.filter(t=>!t.statuses.suppressed && visibleEnemy(state,actor,t));
@@ -210,6 +212,7 @@ export function chooseAction(state) {
       const high = elevation(state, cell) - z0;
       const cover = coverQuality(state, cell, objectives) - startingCover;
       let score = (projectedDepth ? 1.8 + projectedDepth * .55 : progress * .35) + high * .8 + cover;
+      if (cell.steps === 0 && actor.moveM > 0 && baseline > 0) score += 1;
       if (type === 'sprint') score = score * .82 - 1.2;
       score -= (cell.opportunities?.length ?? 0) * 3.5;
       if (type === 'disengage') score -= .2;

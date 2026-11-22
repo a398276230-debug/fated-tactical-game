@@ -88,6 +88,7 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
     item: row.carrier.type === 'item' ? row.entity : undefined,
     center: event.center, round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay,
     units: state.units, zones: state.zones,
+    cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     ...(state.grid && { distance: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
       && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null }),
     resource: (unit, key) => key === 'move' ? Math.max(0, (unit?.move ?? 0) - (unit?.moved ?? 0))

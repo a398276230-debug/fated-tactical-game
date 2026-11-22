@@ -1,9 +1,11 @@
-const inBounds = n => Number.isInteger(n) && n >= 0 && n <= 9;
+const inBounds = (n, limit = 10) => Number.isInteger(n) && n >= 0 && n < limit;
 const height = n => Math.max(-4, Math.min(8, Math.round(Number(n) || 0)));
 const list = value => Array.isArray(value) ? value : [];
 
 export function createBattleGrid(battle, seed, units, warnings) {
-  const grid = Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 })));
+  const width = battle.width ?? 10, boardHeight = battle.height ?? 10;
+  const grid = Array.from({ length: boardHeight }, () => Array.from({ length: width }, () => ({ kind: 'floor', z: 0 })));
+  const inGrid = (x, y) => inBounds(x, width) && inBounds(y, boardHeight);
   const anchors = battle.version === 1
     ? [...list(battle.units), ...list(battle.covers), ...list(battle.interactives)].filter(unit => Number.isInteger(unit.z))
     : [];
@@ -18,7 +20,7 @@ export function createBattleGrid(battle, seed, units, warnings) {
       for (let i = 0; i < offsets.length; i++) {
         const [dx,dy] = offsets[(start+i)%offsets.length];
         const points = [[x+dx,y+dy,z],[x+2*dx,y+2*dy,Math.abs(z)>1 ? z-Math.sign(z) : 0]];
-        if (!points.every(([a,b]) => inBounds(a) && inBounds(b) && !reserved.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
+        if (!points.every(([a,b]) => inGrid(a,b) && !reserved.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
         for (const [a,b,h] of points) {
           grid[b][a] = { kind:h === z ? 'floor' : 'slope', z:h };
           painted.add(`${a},${b}`);
@@ -45,37 +47,38 @@ export function createBattleGrid(battle, seed, units, warnings) {
     // A compact raised platform with ramps, plus two separated walls.
     // Rotate or reflect the layout using the initial seed without consuming combat RNG.
     const layout = seed % 8;
-    const transform = (x, y) => [layout & 1 ? 9 - x : x, layout & 2 ? 9 - y : y];
+    const transform = (x, y) => [layout & 1 ? width - 1 - x : x, layout & 2 ? boardHeight - 1 - y : y];
     const occupied = new Set([...units,...list(battle.covers),...list(battle.interactives)].map(u => `${u.x},${u.y}`));
     const paint = (x, y, kind, z) => {
       const [a, b] = transform(x, y);
       const [px, py] = layout & 4 ? [b, a] : [a, b];
       if (kind !== 'wall' || !occupied.has(`${px},${py}`)) grid[py][px] = { kind, z };
     };
-    for (let y = 3; y <= 5; y++) {
-      for (let x = 2; x <= 4; x++) paint(x, y, 'floor', 2);
-      paint(1, y, 'slope', 1);
-      paint(5, y, 'slope', 1);
+    const cx = Math.floor(width / 2), cy = Math.floor(boardHeight / 2);
+    for (let y = cy - 2; y <= cy; y++) {
+      for (let x = cx - 2; x <= cx; x++) paint(x, y, 'floor', 2);
+      paint(cx - 3, y, 'slope', 1);
+      paint(cx + 1, y, 'slope', 1);
     }
-    paint(6, 2, 'wall', 0);
-    paint(7, 6, 'wall', 0);
+    paint(cx + 2, cy - 3, 'wall', 0);
+    paint(cx + 3, cy + 1, 'wall', 0);
     return grid;
   }
 
   const terrain = legacyTerrain;
   const place = (raw, kind, label) => {
     const [x, y, z] = Array.isArray(raw) ? raw : Array.isArray(raw?.xyz) ? raw.xyz : [raw?.x, raw?.y, raw?.z];
-    if (!inBounds(x) || !inBounds(y)) { warnings.push(`忽略无效地形坐标：${label}`); return; }
+    if (!inGrid(x, y)) { warnings.push(`忽略无效地形坐标：${label}`); return; }
     grid[y][x] = { kind, z: z == null ? grid[y][x].z : height(z) };
   };
   if (Array.isArray(terrain)) {
-    if (terrain.length === 10 && terrain.every(row => Array.isArray(row) && row.length === 10)) {
+    if (terrain.length === boardHeight && terrain.every(row => Array.isArray(row) && row.length === width)) {
       terrain.forEach((row, y) => row.forEach((cell, x) => place([x, y, cell?.z], cellKind(cell), 'grid')));
     } else terrain.forEach(cell => place(cell, cellKind(cell), 'terrain'));
   } else {
     for (const region of list(terrain?.elevation)) {
       const { x1, y1, x2, y2, z } = region ?? {};
-      if (![x1, y1, x2, y2].every(inBounds) || x1 > x2 || y1 > y2) {
+      if (![x1, x2].every(x => inBounds(x, width)) || ![y1, y2].every(y => inBounds(y, boardHeight)) || x1 > x2 || y1 > y2) {
         warnings.push('忽略无效地形坐标：grid.elevation');
         continue;
       }

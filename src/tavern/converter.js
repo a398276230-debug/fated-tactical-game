@@ -1,6 +1,6 @@
 import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { id as validId, validateState } from '../api/validation.js';
-import { DISTANCE_TABLE, sizeClassFor, stanceFor, moraleTypeFor } from '../core/combat_protocol.js';
+import { DISTANCE_TABLE, sizeClassFor, stanceFor, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells } from '../core/combat_protocol.js';
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
@@ -28,6 +28,25 @@ const number = (v, fallback = 0) => {
 const integer = (v, fallback = 0) => Math.round(number(v, fallback));
 const text = v => typeof v === 'string' ? v.trim() : v == null ? '' : String(v).trim();
 const clone = v => structuredClone(v);
+export { resolveEffectiveTier };
+const QUALITY_NAMES = new Set([...Object.keys(QUALITY_TIER), '唯一']);
+export function defaultCoverHp(cellM, isFullCover = false) {
+  const base = isFullCover ? 25 : 10;
+  // Calibrated to the explicit acceptance point: 50m full cover = 2500 HP.
+  // This intentionally supersedes the inconsistent prose values for 250m/1000m.
+  const factor = cellM <= 2 ? 1 : Math.round(Math.pow(cellM / 2, Math.log(100) / Math.log(25)));
+  return base * factor;
+}
+function qualityOf(raw) {
+  const direct = text(raw?.quality ?? raw?.品质);
+  if (QUALITY_NAMES.has(direct)) return direct;
+  const meta = [].concat(raw?.meta ?? raw?.元数据 ?? []).map(text);
+  return meta.find(value => QUALITY_NAMES.has(value));
+}
+function rawTagValues(raw) {
+  return [].concat(raw?.tags ?? raw?.标签 ?? []).map(text)
+    .filter(tag => /^[a-z0-9][a-z0-9_-]{0,31}$/u.test(tag));
+}
 
 function hash(value) {
   let h = 2166136261;
@@ -430,11 +449,15 @@ function areaFields(raw, warnings, name) {
     warnings.push(`「${name}」有效距离 ${tags.range} 格与「${tier.name}」的距离区间不符`);
   }
   const shape = raw.shape ?? tags.shape;
-  return { range: raw.range ?? raw.有效距离 ?? tags.range, shape,
+  const range = raw.range ?? raw.有效距离 ?? tags.range;
+  const radius = raw.radius ?? tags.radius;
+  const innerRadius = raw.innerRadius ?? tags.innerRadius;
+  const width = raw.width ?? (tags.width != null ? tags.width / 2 : shape === 'line' ? 0.5 : null);
+  return { range, ...(range != null ? { rawRange: range } : {}), shape,
     target: raw.target ?? tags.target ?? (raw.heal != null || tags.healing ? 'ally' : null),
-    radius: raw.radius ?? tags.radius, innerRadius: raw.innerRadius ?? tags.innerRadius,
-    angle: raw.angle ?? tags.angle,
-    width: raw.width ?? (tags.width != null ? tags.width / 2 : shape === 'line' ? 0.5 : null) };
+    radius, ...(radius != null ? { rawRadius: radius } : {}), innerRadius, ...(innerRadius != null ? { rawInnerRadius: innerRadius } : {}),
+    angle: raw.angle ?? tags.angle, moveDistance: tags.moveDistance,
+    width, ...(width != null ? { rawWidth: width } : {}) };
 }
 
 // VM `target` is one unit, so a generated target opcode cannot reuse the full aim set.
@@ -446,8 +469,10 @@ function geometryFields(area) {
   for (const key of ['radius', 'innerRadius', 'width', 'angle']) {
     if (area[key] != null && Number.isFinite(Number(area[key]))) {
       result[key] = key === 'angle' ? bound(area[key], 1, 360) : Math.max(0, Math.min(30, Number(area[key])));
+      if (key !== 'angle') result[`raw${key[0].toUpperCase()}${key.slice(1)}`] = Math.max(0, Number(area[key]));
     }
   }
+  if (area.moveDistance != null) result.rawMoveDistance = area.moveDistance;
   return result;
 }
 
@@ -502,13 +527,26 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
   const templateId = `template-${idBase}`;
   const warnings = sink('effect', `/equipment/${templateId}`);
   const rules = readRules(r.rules, warnings);
-  const template = { name: name.slice(0, 100), kind, rules, mods: readMods(r.mods, warnings), pools: readPools(r.pools, warnings) };
-  appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, warnings), warnings);
+  const template = { name: name.slice(0, 100), kind, rules, mods: readMods(r.mods, warnings), pools: readPools(r.pools, warnings), ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}) };
+  const effectEntries = narrativeEntries(r.effects ?? r.effectsList ?? r.效果);
+  const { rangeValues, radius, shape, target } = parseAreaTags(r.tags ?? r.标签);
+  const equipmentWarnings = !isWeapon || rangeValues.length < 2 ? warnings : {
+    push(message) {
+      const effectIndex = effectEntries.findIndex(([label, value]) => label ? message.includes(`「${label}」`) : message.includes(describe(value)));
+      const rawRange = rangeValues[effectIndex + 1];
+      const suffix = effectIndex >= 0 && rawRange != null
+        ? `。该装备主动效果的原始距离为 rawRange:${rawRange}${radius != null ? `、rawRadius:${radius}` : ''}${shape ? `、shape:${shape}` : ''}${target ? `、target:${target}` : ''}，请写到装备挂载的技能模板中`
+        : '';
+      warnings.push(message + suffix);
+    },
+  };
+  appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, equipmentWarnings), warnings);
   const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
   const defense = bound(r.defense ?? r.防御 ?? defenseTag?.[1], 0, 1000000, kind === 'shield' ? 1 : 0);
   if (kind === 'shield') Object.assign(template, { weaponClass: 'shield', hand: 'off_hand', shield: true, defense });
   else if (isWeapon) {
     const area = areaFields(r, sink('field', `/equipment/${templateId}`), name);
+    if (rangeValues.length > 1) { area.shape = 'single'; area.target = 'enemy'; area.radius = area.innerRadius = area.width = null; }
     const classes = ['ranged', 'light_blade', 'greatsword', 'staff', 'auxiliary'];
     const weaponClassAlias = new Map([['bow', 'ranged'], ['crossbow', 'ranged'], ['arcane', 'staff']]);
     const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
@@ -522,7 +560,7 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
       ...(r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {}),
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
-      range: bound(area.range, 1, 30, ranged ? 4 : 1),
+      range: bound(area.range, 0, 64, ranged ? 4 : 1), ...(area.range != null ? { rawRange: area.range } : {}),
       attack: bound(r.attack ?? r.攻击 ?? attackTag?.[1], 0, 1e9), accuracy: bound(r.accuracy ?? r.命中, -20, 30, 0),
       damage: normalizeDice(r.damage ?? { stat: 'str' }),
       ...geometryFields(area),
@@ -752,7 +790,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
-      quality: '普通', ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
+      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), ...(area.range != null ? { rawRange: area.range } : {}), ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(area.range, 0, 30, 1), shape: area.shape ?? 'single',
       target: area.target ?? 'enemy', ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
@@ -809,7 +847,9 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const rawFacing = Array.isArray(p.facing) ? p.facing : [team === 'blue' ? 1 : -1, 0];
   const facing = rawFacing.slice(0, 2).map(n => Math.sign(integer(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
-  const unit = { id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
+  const rawMove = number(findValue(record, ['move','movement','移动'], null), NaN);
+  const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
+  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
   if (p.moraleType && !moraleTypeFor(p.moraleType)) sink('state').push(`未知战斗类型「${p.moraleType}」，按标准处理`);
   if (isProtagonist) {
     const bagWeapons = [];
@@ -846,7 +886,9 @@ function terrainState(battle, state, warnings) {
       warnings.push(`忽略位于墙体内的掩体：${id}`);
       continue;
     }
-    state.covers[id] = { id, name: text(raw.name) || `掩体${i + 1}`, x: p.x, y: p.y, z: p.z, material: text(raw.material) || '未知材料', hp: Math.max(0, Math.min(1000000000, integer(raw.hp ?? raw.maxHp ?? 10, 10))), maxHp: Math.max(1, Math.min(1000000000, integer(raw.maxHp ?? raw.hp ?? 10, 10))), cover: Math.max(0, Math.min(12, integer(raw.cover ?? raw.shielding, 2))) };
+    const full = Number(raw.cover ?? raw.shielding) >= 5 || raw.material === '全';
+    const defaultHp = defaultCoverHp(state.scale?.cellM ?? 2, full);
+    state.covers[id] = { id, name: text(raw.name) || `掩体${i + 1}`, x: p.x, y: p.y, z: p.z, material: text(raw.material) || '未知材料', hp: Math.max(0, Math.min(1000000000, integer(raw.hp ?? raw.maxHp ?? defaultHp, defaultHp))), maxHp: Math.max(1, Math.min(1000000000, integer(raw.maxHp ?? raw.hp ?? defaultHp, defaultHp))), cover: Math.max(0, Math.min(12, integer(raw.cover ?? raw.shielding, 2))) };
     state.covers[id].hp = Math.min(state.covers[id].hp, state.covers[id].maxHp);
   }
   const interactives = battle.interacts ?? battle.interactives;
@@ -923,10 +965,17 @@ export function hydrateFromSources(input = {}, options = {}) {
   }
   const title = text(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || '酒馆战术战局';
   const seed = integer(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+  const anchorTier = Math.max(1, ...Object.values(units).map(unit => unit.tier ?? 1));
+  const cellM = battle.cellM ?? TIER_CELL_M[anchorTier];
+  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: battle.explicitScale === true }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
+  for (const unit of Object.values(units)) {
+    unit.moveM = unit.rawMove * TIER_CELL_M[unit.tier];
+    unit.move = scaledCells(unit.rawMove, unit.tier, cellM, { floor: true });
+    unit.moveCarryPermille = 0;
+  }
   terrainState(battle, state, sink(null, 'terrain', 'terrain'));
   uniquePositions(state.units, state);
   let valid = true;

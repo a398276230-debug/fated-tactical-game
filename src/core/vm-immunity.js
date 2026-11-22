@@ -65,8 +65,13 @@ export function isStatusImmune(state, target, statusId, source = null, dependenc
     if (!usesLeft || cooldownRemaining) continue;
     const context = ruleContext(state, entry, event, carrierScope);
     if (entry.rule.filter !== undefined && evaluateExpr(entry.rule.filter, context) !== true) continue;
-    if (cancelProgram(entry.rule.program, context)) event.cancel = context.event.cancel;
-    else event.cancel = undefined;
+    if (cancelProgram(entry.rule.program, context)) {
+      event.cancel = context.event.cancel;
+      if (event.cancel === true) {
+        event.immunityCarrier = entry.carrier ?? { type: 'unit', id: entry.ownerId };
+        event.immunityOwnerId = entry.ownerId;
+      }
+    } else event.cancel = undefined;
   }
   return event.cancel === true;
 }

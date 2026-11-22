@@ -149,11 +149,11 @@ export function createRenderer(root, portraitFor = () => []) {
     for (const [xy, slot] of cells) {
       const { cell } = slot;
       const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
-      const unit = unitsAt.get(xy)?.[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
-      const chosen = !!unit && selected === unit.id, isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
+      const stack = unitsAt.get(xy) ?? [], unit = stack[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
+      const chosen = stack.some(u => selected === u.id || action?.targetId === u.id), isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
       const reach = baseline.move.has(xy);
-      const entityOption = entityChoices?.eligible.has(unit?.id);
-      const entitySelected = entityChoices?.selected.has(unit?.id);
+      const entityOption = stack.some(u => entityChoices?.eligible.has(u.id));
+      const entitySelected = stack.some(u => entityChoices?.selected.has(u.id));
       const answerable = askCells?.has(xy) || entityOption;
       cell.disabled = askLocked && (!answerable || entityOption && !entitySelected && entityChoices.selected.size >= entityChoices.limit);
       cell.className = ['tactical-cell', tile.kind !== 'floor' ? `terrain-${tile.kind}` : tile.z ? 'terrain-plateau' : '', ...edges.map(c => `cliff-${c}`),
@@ -170,14 +170,14 @@ export function createRenderer(root, portraitFor = () => []) {
       }
       cell.setAttribute('aria-pressed', String(entityChoices ? !!entitySelected : chosen));
       const label = [`(${xy}) ${terrainLabel(tile)}`, edges.length ? '陡崖边' : '',
-        unit ? `${side(unit.team)}${unit.name}，生命 ${unit.hp}/${unit.maxHp}${values(unit.statuses).length ? `，${values(unit.statuses).map(s => s.name).join('、')}` : ''}` : '',
+        stack.length ? stack.map(u => `${side(u.team)}${u.name}，生命 ${u.hp}/${u.maxHp}`).join('；') : '',
         cover ? coverText(cover) : '', item ? interactiveText(item) : '', reach ? '可以走到这里' : '', answerable ? '可选择此格' : ''].filter(Boolean).join(' · ');
       cell.setAttribute('aria-label', label);
       if (answerable) cell.setAttribute('aria-describedby', 'pending-ask-prompt');
       else cell.removeAttribute('aria-describedby');
       if (isHover) inspection = label;
       const bodies = bodiesAt.get(xy) ?? [];
-      const signature = JSON.stringify([tile, unit, cover, item, chosen, unit?.id === current?.id, bodies.map(b => b.id), unit && portraitFor(unit.id)]);
+      const signature = JSON.stringify([tile, stack, cover, item, chosen, action?.targetId, stack.some(u => u.id === current?.id), bodies.map(b => b.id), stack.map(u => [u.id, portraitFor(u.id)])]);
       if (slot.signature === signature) continue;
       slot.signature = signature;
       slot.z.textContent = tile.kind !== 'wall' && tile.z ? `z${sign(tile.z)}` : '';
@@ -188,8 +188,9 @@ export function createRenderer(root, portraitFor = () => []) {
         node.setAttribute('aria-label', `${body.name}的尸体`);
         return node;
       });
-      slot.units.replaceChildren(...dead, ...[unit && unitToken(state, unit, tile.z, chosen, unit.id === current?.id),
-        cover && featureToken(cover, tile.z, true), item && featureToken(item, tile.z, false)].filter(Boolean));
+      slot.units.dataset.stack = String(stack.length);
+      slot.units.replaceChildren(...dead, ...stack.map(u => unitToken(state, u, tile.z, action ? action.targetId === u.id : selected === u.id, u.id === current?.id)),
+        ...[cover && featureToken(cover, tile.z, true), item && featureToken(item, tile.z, false)].filter(Boolean));
       slot.features.replaceChildren(...(tile.kind !== 'floor' ? [el('span', 'tactical-cell-tag', tile.kind === 'wall' ? '#' : '坡')] : []));
     }
     $('terrain-inspector').textContent = inspection;
@@ -402,7 +403,10 @@ export function createRenderer(root, portraitFor = () => []) {
     if (fresh) {
       const battleKind = Object.keys(moraleTypes).find(k => moraleTypes[k] === state.battleType);
       $('battle-title').textContent = battleKind ? `${state.title} · ${battleKind}${state.battleType === 'guard' ? '（蓝方坚守五轮）' : ''}` : state.title;
-      $('round-badge').textContent = `第 ${state.round} 回合`;
+      const scale = state.scale ?? {};
+      const formatM = value => value >= 1000 ? `${value / 1000}km` : `${value}m`;
+      const width = scale.width ?? state.grid[0].length, height = scale.height ?? state.grid.length, cellM = scale.cellM ?? 2;
+      $('round-badge').textContent = `第 ${state.round} 回合 · ${width}×${height} · 1格=${formatM(cellM)} (${formatM(width * cellM)}×${formatM(height * cellM)})`;
       renderFeatures(state);
     }
     if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);

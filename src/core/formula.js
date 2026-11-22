@@ -133,6 +133,11 @@ register('turn', '当前行动者在先攻顺序中的索引（从 0 开始）',
 register('timeOfDay', '战场时段（dawn/day/dusk/night）', context => own(context, 'timeOfDay'));
 register('pool', '资源指令当前处理的资源池键', context => own(context, 'pool'));
 register('distance', '效果主体到当前目标的三维距离', context => readDistance(context, own(context, 'self'), own(context, 'target')), true);
+register('cellM', '单格边长（米）', context => own(context, 'cellM') ?? 2);
+register('boardW', '棋盘列数', context => own(context, 'boardW') ?? 10);
+register('boardH', '棋盘行数', context => own(context, 'boardH') ?? 10);
+register('distanceM', '效果主体到当前目标的三维米距', context => numeric((a, b) => a * b,
+  readDistance(context, own(context, 'self'), own(context, 'target')), own(context, 'cellM') ?? 2));
 register('weapon.attack', '事件武器模板的攻击力', context => own(callback(context, 'weapon'), 'attack'), true);
 register('weapon.range', '事件武器模板的基础射程', context => own(callback(context, 'weapon'), 'range'), true);
 for (const [name, description] of Object.entries({
@@ -141,6 +146,8 @@ for (const [name, description] of Object.entries({
 })) register(`event.${name}`, description, context => path(context, 'event', name), true);
 // Existing authored check filters used event.kind before checkKind was documented.
 register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));
+register('event.authorityRank', '提交效果的来源载体位格，唯一为 8', context => path(context, 'event', 'authorityRank'));
+register('event.sourceTier', '提交效果的来源角色层级', context => path(context, 'event', 'sourceTier'));
 register('event.sourceSkillId', 'on_summon_evict 中旧召唤物的来源技能 ID（无记录时为 null）', context => path(context, 'event', 'sourceSkillId'));
 family('event.<field>', /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, '活跃事件的自有标量字段', (context, key) => path(context, 'event', key));
 
@@ -160,6 +167,8 @@ query('max', ['value', 'value'], 'max(a, b)', '取两个数的较大值', ([a, b
 query('floor', ['value'], 'floor(value)', '向下取整', ([value]) => numeric(Math.floor, value));
 query('ceil', ['value'], 'ceil(value)', '向上取整', ([value]) => numeric(Math.ceil, value));
 query('abs', ['value'], 'abs(value)', '取绝对值', ([value]) => numeric(Math.abs, value));
+query('cells_m', ['value'], 'cells_m(meters)', '按战场比例尺把米数换算为格数，保留小数', ([meters], context) =>
+  numeric((a, b) => a / b, meters, own(context, 'cellM') ?? 2));
 query('clamp', ['value', 'value', 'value'], 'clamp(value, lo, hi)', '将数值钳制在上下限之间', ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
 query('distance', ['unit', 'unit'], 'distance() / distance(unitA, unitB)', '读取两单位的三维距离，无参时默认 self 到 target', ([a, b], context) => readDistance(context, a, b));
 

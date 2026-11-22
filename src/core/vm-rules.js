@@ -4,6 +4,7 @@ import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { validVmOpcode } from './vm-schema.js';
 import { resolvePoint } from './vm-select.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
+import { authorityContest, authorityFor, compareAuthority, authorityProse } from './vm-authority.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
@@ -75,6 +76,17 @@ export const ruleOps = {
       else value = evaluateExpr(expression, context);
       if (value == null || (key === 'replaceTarget' && (!value.from || !value.to))) continue;
       event[key] = value;
+      if (frame.hook === 'before_status' && key === 'cancel') {
+        if (!value) { delete event.immunityCarrier; delete event.immunityOwnerId; }
+        else {
+          const carrier = frame.carrier ?? { type: 'unit', id: frame.ownerId };
+          if (!event.immunityCarrier || compareAuthority(authorityFor(state, carrier, frame.ownerId),
+            authorityFor(state, event.immunityCarrier, event.immunityOwnerId)) > 0) {
+            event.immunityCarrier = carrier;
+            event.immunityOwnerId = frame.ownerId;
+          }
+        }
+      }
       if (key === 'redirectTarget') host.log(state, context.self, 'redirect', `${context.self.name}重定向了目标`, { targetId: value });
       else if (key === 'cancel' && value) host.log(state, context.self, 'intercept', `${context.self.name}拦截了本次结算`, { targetId: event.targetId });
     }
@@ -160,8 +172,19 @@ export function continueApplyStatus({ state, frame, host, context }) {
   if (frame.pc === 1) {
     frame.pc++;
     const event = state.vm.events[frame.awaitEvent];
+    if (event.cancel && op.ignoreImmunity === true) {
+      const attacker = authorityFor(state, frame.carrier, context.self?.id);
+      const defenderRef = event.immunityCarrier ?? { type: 'unit', id: target.id };
+      const defender = authorityFor(state, defenderRef, event.immunityOwnerId ?? target.id);
+      const contest = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target.id }, {
+        checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : context.self?.id }) ?? 0,
+      });
+      event.authorityContest = contest;
+      host.log(state, context.self, 'authority', `${target.name}的状态免疫${contest.result > 0 ? '被穿透' : '生效'}${authorityProse(contest)}`, { targetId: target.id, contest });
+      if (contest.result > 0) event.cancel = false;
+    }
     if (event.cancel) {
-      host.log(state, target, 'status_immune', `${target.name}免疫了${template.name}`, { targetId: target.id, statusId: op.statusId });
+      host.log(state, target, 'status_immune', `${target.name}免疫了${template.name}`, { targetId: target.id, statusId: op.statusId, ...(event.authorityContest ? { contest: event.authorityContest } : {}) });
       scheduleHooks(state, frame, 'on_status_immunized', frame.awaitEvent, host);
       return;
     }
@@ -176,8 +199,10 @@ export function continueApplyStatus({ state, frame, host, context }) {
     const extension = evaluate(op.extendTurns, context, 1);
     if (![cap, duration, count, extension].every(Number.isFinite)) return;
     const maxStacks = bounded(cap, 1, 999999);
+    const sourceCarrier = frame.carrier ?? null;
+    const sourceAuthority = authorityFor(state, sourceCarrier, context.self?.id);
     const status = { ...structuredClone(template), id: op.statusId, templateId: op.statusId, ownerId: target.id,
-      sourceId: context.self?.id ?? null, vars, tags: template.tags ?? [], flags: template.flags ?? [], tier: template.tier ?? 1,
+      sourceId: context.self?.id ?? null, sourceCarrier, authorityRank: sourceAuthority.authorityRank, sourceTier: sourceAuthority.unitTier, vars, tags: template.tags ?? [], flags: template.flags ?? [], tier: template.tier ?? 1,
       mods: template.mods ?? [], rules: template.rules ?? [], stackMode, maxStacks, stacks: bounded(count, 1, maxStacks),
       durationType: template.durationType ?? 'battle_turns', remainingTurns: bounded(duration, 1, 100) };
     if (op.expireOn) status.expireOn = op.expireOn;
@@ -203,12 +228,26 @@ export function continueRemoveStatus({ state, frame, host, context }) {
   }
   const statusId = frame.statusKeys[frame.pc++];
   const status = own(target.statuses, statusId);
-  if (!status || status.durationType === 'persistent' || status.flags?.includes('undispellable')
+  if (!status || status.durationType === 'persistent'
     || evaluateExpr(op.where, { ...context, status }) !== true) return;
+  let authorityContestDetail;
+  if (status.flags?.includes('undispellable')) {
+    if (op.force !== true) return;
+    const attacker = authorityFor(state, frame.carrier, context.self?.id);
+    const defender = Number.isFinite(status.authorityRank) && Number.isFinite(status.sourceTier)
+      ? { authorityRank: status.authorityRank, unitTier: status.sourceTier }
+      : authorityFor(state, status.sourceCarrier ?? { type: 'unit', id: status.sourceId ?? target.id }, status.sourceId ?? target.id);
+    authorityContestDetail = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target.id }, {
+      checkBonus: (unit, side) => host.checkBonus?.(state, unit, { checkKind: 'authority', targetId: side === 'attacker' ? target.id : context.self?.id }) ?? 0,
+    });
+    host.log(state, context.self, 'authority', `${status.name}${authorityContestDetail.result > 0 ? '被强制移除' : '抵抗了强制移除'}${authorityProse(authorityContestDetail)}`, { targetId: target.id, contest: authorityContestDetail });
+    if (authorityContestDetail.result <= 0) return;
+  }
   delete target.statuses[statusId];
   frame.removed = (frame.removed ?? 0) + 1;
   const reason = op.reason ?? 'dispelled';
   frame.eventRef = newEvent(state, { actorId: context.self?.id ?? null, targetId: target.id, statusId, removeReason: reason, reason });
-  host.log(state, context.self, reason === 'expired' ? 'expire' : 'cleanse', `${target.name}失去${status.name}`, { targetId: target.id, statusId });
+  host.log(state, context.self, reason === 'expired' ? 'expire' : 'cleanse', `${target.name}失去${status.name}`, {
+    targetId: target.id, statusId, ...(authorityContestDetail ? { contest: authorityContestDetail } : {}) });
   scheduleHooks(state, frame, 'after_status_removed', frame.eventRef, host);
 }

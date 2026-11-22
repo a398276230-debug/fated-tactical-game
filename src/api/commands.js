@@ -2,7 +2,7 @@ import { getStatusTemplate, grantStatus, patchStatus } from '../core/combat.js';
 import { evaluateExpr } from '../core/formula.js';
 import { getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
 import { recordVM } from '../core/vm-runtime.js';
-import { attrs, checkOptional, coord, defineStatus, equipmentTemplate, fields, has, id, int, own,
+import { attrs, checkOptional, inGrid, defineStatus, equipmentTemplate, fields, has, id, int, own,
   plain, requireThat as check, skillTemplate, statusValue, unitValue, validateCell, zoneValue } from './validation.js';
 
 const get = (table, key, label) => { check(has(table, key), label); return table[key]; };
@@ -200,7 +200,7 @@ const commands = {
   },
   set_terrain_cell(s, c) {
     fields(c, ['type','x','y','patch']);
-    check(coord(c.x) && coord(c.y), '坐标');
+    check(inGrid(s, c.x, c.y), '坐标');
     nonempty(c.patch);
     const next = { ...s.grid[c.y][c.x], ...c.patch };
     validateCell(next);

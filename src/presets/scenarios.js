@@ -101,6 +101,7 @@ export function buildScenario(request = 'ruins') {
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !['protocol','sandbox'].includes(ruleset)) throw new Error('无效的种子或行动规则');
   const state = { scenarioId, title, mode:'split', ruleset, round: 1, turn: 0, order: [], units: {}, items: {},
     equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS),
+    scale: { cellM: 2, width: 10, height: 10, anchorTier: 1, explicit: false },
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
     covers: {}, interactives: {}, zones: {}, pools: {}, rng: seed, logs: [], outcome: null };
   function unit(id, name, team, x, y, weapon, skills, options = {}) {

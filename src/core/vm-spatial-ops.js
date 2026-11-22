@@ -1,6 +1,6 @@
-import { sizeClassFor } from './combat_protocol.js';
+import { resolveEffectiveTier, scaledMoveCells, sizeClassFor } from './combat_protocol.js';
 import { evaluateExpr } from './formula.js';
-import { cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt } from './spatial.js';
+import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
 import { spawnPanel } from './spawn-unit.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { scheduleCommit } from './vm-commit.js';
@@ -17,8 +17,9 @@ const same = (a, b) => a.x === b.x && a.y === b.y;
 const cellKey = ({ x, y }) => `${x},${y}`;
 const at = (state, entity) => ({ ...xy(entity), z: elevation(state, entity) });
 const cells = state => state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })));
-const blocked = (state, p, ignored = new Set()) => !isGround(state, p) || coverAt(state, p.x, p.y)
-  || values(state.units).some(unit => live(unit) && !ignored.has(unit.id) && same(unit, p));
+const blocked = (state, p, ignored = new Set(), occupants = []) => !isGround(state, p) || (state.scale?.cellM ?? 2) < 10 && coverAt(state, p.x, p.y)
+  || occupants.some(unit => !canOccupy(state, p.x, p.y, unit, ignored.has(unit.id) ? unit.id : undefined))
+  || (!occupants.length && unitsAt(state, p.x, p.y).some(unit => live(unit) && !ignored.has(unit.id)));
 const fixture = (state, p) => values(state.interactives).some(item => same(item, p));
 const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
 const capitalize = key => key[0].toUpperCase() + key.slice(1);
@@ -78,7 +79,17 @@ function logMove(state, host, unit, mode, from, path, collision) {
   host.log(state, unit, types[mode], text, { targetId: unit.id, from, to, path, ...(collision ? { collision } : {}) });
 }
 
-function teleport({ state, host, context, op }, targets) {
+function moveDistance(state, frame, context, op) {
+  const distance = op.distance === undefined ? 1 : evaluateExpr(op.distance, context);
+  if (!Number.isFinite(distance) || op.distanceUnit !== 'position') return distance;
+  const ref = frame.carrier;
+  const item = ref?.type === 'item' ? own(state.items, ref.id) : null;
+  const template = item ? own(state.equipment, item.templateId) : ref?.type === 'skill' ? own(state.skills, ref.id) : context.status;
+  const kind = ref?.type === 'skill' && !template?.backpackItem ? 'skill' : 'item';
+  return scaledMoveCells(distance, resolveEffectiveTier(kind, template?.quality, context.self?.tier), state.scale?.cellM ?? 2);
+}
+
+function teleport({ state, frame, host, context, op }, targets) {
   const anchor = targets[0];
   if (targets.some(unit => aggregateModifiers(state, unit.id).locks.teleport)) return;
   const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
@@ -86,7 +97,20 @@ function teleport({ state, host, context, op }, targets) {
   const ignored = new Set(targets.map(unit => unit.id));
   const landings = targets.map(unit => ({ unit, from: at(state, unit),
     to: { x: destination.x + unit.x - anchor.x, y: destination.y + unit.y - anchor.y } }));
-  if (landings.some(({ to }) => blocked(state, to, ignored))) return;
+  const arrivals = new Map();
+  for (const { unit, to } of landings) {
+    if (op.distance !== undefined) {
+      const limit = moveDistance(state, frame, { ...context, target: unit }, op);
+      if (!Number.isFinite(limit) || distance3D(state, unit, { ...unit, ...to }) > limit + 1e-9) return;
+    }
+    if (!isGround(state, to) || (state.scale?.cellM ?? 2) < 10 && coverAt(state, to.x, to.y)) return;
+    const key = cellKey(to);
+    const residentCost = () => unitsAt(state, to.x, to.y).filter(other => !ignored.has(other.id))
+      .reduce((sum, other) => sum + unitCellCost(state, other), 0);
+    const cost = (arrivals.get(key) ?? residentCost()) + unitCellCost(state, unit);
+    if (cost > MAX_CELL_CAPACITY) return;
+    arrivals.set(key, cost);
+  }
   for (const { unit, to } of landings) Object.assign(unit, to);
   refreshFollowingZones(state, host);
   for (const { unit, from } of landings) if (!same(unit, from)) logMove(state, host, unit, 'teleport', from, []);
@@ -117,7 +141,7 @@ function continueMove({ state, frame, host, context }) {
     unit.altitude = altitude;
   } else if (op.mode === 'step') {
     const to = resolvePoint(op.to, scope);
-    const distance = op.distance === undefined ? 1 : evaluateExpr(op.distance, scope);
+    const distance = moveDistance(state, frame, scope, op);
     if (!point(to) || !Number.isFinite(distance)) return;
     const steps = findPath(state, unit, to, Math.floor(distance));
     if (!steps?.length) return;
@@ -125,7 +149,7 @@ function continueMove({ state, frame, host, context }) {
     Object.assign(unit, xy(to));
   } else {
     const origin = op.to === undefined ? context.self ?? context.source : resolvePoint(op.to, scope);
-    const distance = op.distance === undefined ? 1 : evaluateExpr(op.distance, scope);
+    const distance = moveDistance(state, frame, scope, op);
     if (!point(origin) || !Number.isFinite(distance)) return;
     const away = facingToward(origin, unit);
     if (!away.some(Boolean)) return;

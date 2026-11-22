@@ -8,6 +8,21 @@ const key = ({ x, y }) => `${x},${y}`;
 const same = (a, b) => a.x === b.x && a.y === b.y;
 const byId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 const table = collection => Object.values(collection ?? {});
+export const MAX_CELL_CAPACITY = 4;
+export function unitCellCost(state, unit = {}) {
+  const ratio = (Number(unit.bodyLengthM) || 1.7) / Math.max(1, Number(state.scale?.cellM) || 2);
+  return ratio > 0.5 ? ratio <= 1 ? 2 : 4 : 1;
+}
+export function unitsAt(state, x, y, exceptId) {
+  return table(state.units).filter(unit => unit.hp > 0 && !unit.fled && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId);
+}
+export function cellCapacity(state, x, y, exceptId) {
+  return unitsAt(state, x, y, exceptId).reduce((sum, unit) => sum + unitCellCost(state, unit), 0);
+}
+export function canOccupy(state, x, y, unit, exceptId = unit?.id) {
+  if (!isGround(state, { x, y }) || (state.scale?.cellM ?? 2) < 10 && coverAt(state, x, y)) return false;
+  return cellCapacity(state, x, y, exceptId) + unitCellCost(state, unit) <= MAX_CELL_CAPACITY;
+}
 
 export const atBattleEdge = (state, {x, y}) => x === 0 || y === 0 || y === state.grid.length - 1 || x === state.grid[y]?.length - 1;
 
@@ -20,8 +35,7 @@ export const isGround = (state, at) => {
   const cell = cellAt(state, at.x, at.y);
   return Boolean(cell && cell.kind !== 'wall');
 };
-export const unitAt = (state, x, y, exceptId) => table(state.units)
-  .filter(unit => unit.hp > 0 && !unit.fled && unit.x === x && unit.y === y && unit.id !== exceptId).sort(byId)[0];
+export const unitAt = (state, x, y, exceptId) => unitsAt(state, x, y, exceptId)[0];
 export const coverAt = (state, x, y) => table(state.covers)
   .filter(cover => cover.hp > 0 && cover.x === x && cover.y === y).sort(byId)[0];
 export const gridDistance = (a, b) => Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
@@ -38,7 +52,10 @@ export function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = tr
   const dx = to.x - from.x, dy = to.y - from.y;
   const passable = at => from.altitude > 0 ? isGround(state, at) : passableEdge(state, from, at);
   if (gridDistance(from, to) !== 1 || !passable(to)) return false;
-  const vacant = at => !unitAt(state, at.x, at.y, ignoreUnitId) && !coverAt(state, at.x, at.y);
+  const mover = state.units?.[ignoreUnitId] ?? from;
+  const vacant = at => state.units?.[ignoreUnitId]
+    ? canOccupy(state, at.x, at.y, mover, ignoreUnitId)
+    : isGround(state, at) && !unitsAt(state, at.x, at.y).length && ((state.scale?.cellM ?? 2) >= 10 || !coverAt(state, at.x, at.y));
   if (!vacant(to)) return false;
   if (!dx || !dy) return true;
   // A diagonal must not cut a corner made by a wall, cover, unit or cliff.
@@ -55,6 +72,11 @@ function search(state, unit, limit, options, target) {
     const from = queue[i];
     if (target && same(from, target)) return [from];
     if (from.cost + 1 > limit) continue;
+    // Ground movement may enter an enemy-occupied cell, but that cell is a
+    // mandatory stopping point (ZOC). Teleport/flight callers do not use this
+    // BFS path, and altitude-separated enemies do not exert ground ZOC.
+    if (from.cost > 0 && !options?.ignoreZoc && unitsAt(state, from.x, from.y, unit.id)
+      .some(other => other.team !== unit.team && Math.abs(elevation(state, other) - elevation(state, from)) < 2)) continue;
     for (const [dx, dy] of stepOptions.diagonal === false ? CARDINAL : NEIGHBORS) {
       const to = { x: from.x + dx, y: from.y + dy, altitude:unit.altitude };
       const id = key(to);
@@ -134,7 +156,7 @@ export function aoeCells(state, origin, target, options = {}) {
   const inRange = at => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
   const canSee = (from, to) => ignoreLOS ? isGround(state, to) : hasLOS(state, from, to);
   if (!canSee(origin, target) || (!ignoreAimRange && !inRange(target))) return [];
-  if (shape === 'single') return [{ x: target.x, y: target.y, z: elevation(state, target) }];
+  if (shape === 'single' || radius < .5) return [{ x: target.x, y: target.y, z: elevation(state, target) }];
   const [dx, dy] = same(origin, target) ? (facing ?? [1, 0]) : [target.x - origin.x, target.y - origin.y];
   const aimLength = Math.hypot(dx, dy);
   if (shape !== 'circle' && shape !== 'ring' && (!aimLength || !['line', 'fan', 'cone'].includes(shape))) return [];
@@ -167,7 +189,15 @@ export function coverBetween(state, from, to) {
   const targetZ = elevation(state, to), sourceZ = elevation(state, from);
   const dx = from.x - to.x, dy = from.y - to.y, squaredLength = dx * dx + dy * dy;
   const covers = table(state.covers).filter(cover => {
-    if (cover.hp <= 0 || !(cover.cover > 0) || same(cover, from) || same(cover, to) || !isGround(state, cover)) return false;
+    if (cover.hp <= 0 || !(cover.cover > 0) || same(cover, from) || !isGround(state, cover)) return false;
+    // At large scales a cover entry is regional terrain, not a solid blocker;
+    // it protects occupants of its own cell and rays crossing the region.
+    const cellM = Number(state.scale?.cellM) || 2;
+    if (cellM >= 10 && same(cover, to)) {
+      const limit = cellM * (cover.cover >= 5 ? 1 : .5);
+      return Number(to.bodyLengthM ?? 1.7) <= limit ? cover : false;
+    }
+    if (same(cover, to)) return false;
     const cx = cover.x - to.x, cy = cover.y - to.y;
     const fraction = (cx * dx + cy * dy) / squaredLength;
     if (fraction <= 0 || fraction >= 1) return false;

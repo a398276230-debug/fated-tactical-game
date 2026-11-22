@@ -68,6 +68,7 @@ export const TEMPLATE = `<div class="ft-app" data-busy="false">
       <strong id="target-title"></strong>
       <button type="button" id="close-target" class="ft-close" aria-label="关闭">×</button>
     </div>
+    <div id="target-unit-options" class="ft-target-unit-options" aria-label="同格目标" hidden></div>
     <div id="target-options" class="ft-target-options" hidden>
       <label>意图 <select id="intent-select"><option value="normal">常规</option><option value="function">机能限制</option><option value="core">核心要害</option><option value="kill">抹杀</option><option value="concept">概念破碎</option></select></label>
       <label><input id="nonlethal-toggle" type="checkbox"> 非致死</label>
