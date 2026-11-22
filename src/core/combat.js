@@ -341,8 +341,8 @@ function guardFor(state, target) {
     clearSight(state, u, target));
 }
 
-function tick(state, unit, timing) {
-  for (const status of values(unit.statuses)) {
+function tick(state, unit, timing, statuses = values(unit.statuses)) {
+  for (const [index, status] of statuses.entries()) {
     if (!alive(unit)) return;
     if (unit.statuses[status.id] !== status || status.tickTiming !== timing) continue;
     if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
@@ -353,14 +353,22 @@ function tick(state, unit, timing) {
     if (amount) damageTarget(state, unit, source, amount * status.stacks, status.modifiers.damageType ?? 'true', status.name, { details: detail });
     const heal = status.modifiers?.heal;
     if (heal && alive(unit)) restoreHP(state, unit, heal * status.stacks, source, status.name, detail);
+    if (timing === 'onTurnEnd' && state.vm?.pendingAsk) return statuses.slice(index + 1).map(status => status.id);
   }
 }
 
-function endTurn(state, unit) {
+function endTurn(state, unit, remainingTicks) {
   if (!unit) return;
-  unit.ap = 0;
-  expireStatuses(state, unit, 'on_turn_end', { sourceUnitId: unit.id });
-  tick(state, unit, 'onTurnEnd');
+  if (remainingTicks === undefined) {
+    unit.ap = 0;
+    expireStatuses(state, unit, 'on_turn_end', { sourceUnitId: unit.id });
+  }
+  const pendingTicks = tick(state, unit, 'onTurnEnd', remainingTicks?.map(id => tableEntry(unit.statuses, id)).filter(Boolean));
+  if (pendingTicks) {
+    state.vm.endingTurn = unit.id;
+    state.vm.endingTicks = pendingTicks;
+    return;
+  }
   dispatchEffect(state, unit, 'on_turn_end');
   if (state.vm?.pendingAsk) {
     state.vm.endingTurn = unit.id;
@@ -905,7 +913,9 @@ const ACTIONS = Object.freeze({
 });
 const movementNames = Object.freeze({ move: '移动', sprint: '疾跑', disengage: '撤离' });
 const isMovement = type => Object.hasOwn(movementNames, type);
-const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
+export const isTapeAction = type => type === 'skill' || (Object.hasOwn(ACTIONS, type) && type !== 'end' && type !== 'end_encounter');
+export const isStrikeAction = (action, plan) => ['attack', 'skill', 'shield_bash'].includes(action.type) && !plan.interactiveId;
+export const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 const healMultiplier = (state, actor) => modStat(state, actor, 'healing', 1, { actionType: 'skill' });
 function inInteractionRange(state, actor, at) {
@@ -1398,75 +1408,91 @@ export function continueStrike({ state, frame, host }) {
   next();
 }
 
-function applyMovement(state, actor, type, plan) {
-  const from = pointAt(state, actor), path = [];
-  const canContinue = () => alive(actor) && !actor.fled && !changes(actor, 'skip') && !changes(actor, 'rooted');
-  for (const to of plan.path) {
-    if (type !== 'disengage') {
-      // Snapshot the reactor order, but recheck eligibility before each strike:
-      // interception, retaliation and status effects can change the live board.
-      const sources = opportunitySources(state, actor);
-      for (const source of sources) {
-        const { unit, weapon } = source;
-        if (!canReact(state, source, actor) || !threatens(state, source, actor, actor) ||
-          threatens(state, source, actor, to)) continue;
-        unit.reactionAvailable = false;
-        const center = pos(actor.x, actor.y);
-        record(state, unit, 'opportunity', `${unit.name}对${actor.name}发动借机攻击（${weapon.template.name}）`,
-          { ...opportunityDetail(unit, center, to), targetId: actor.id });
-        const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
-        resolveVMAction(state, { type: 'attack', x: center.x, y: center.y }, { actor: unit, opportunity: { center, targets: [profile], hostile: true }, weapon });
-        if (!canContinue()) break;
-      }
+function continueMovement(state, actor, type, plan, progress, host) {
+  progress.from ??= pointAt(state, actor);
+  progress.path ??= [];
+  progress.initialCover ??= nearbyCovers(state, actor).map(c => c.id);
+  const path = progress.path;
+  const to = plan.path[path.length];
+  if (to && alive(actor) && !actor.fled && !changes(actor, 'skip') && !changes(actor, 'rooted')) {
+    progress.reactors ??= type === 'disengage' ? [] : opportunitySources(state, actor).map(({ unit }) => unit.id);
+    while (progress.reactors.length) {
+      const unit = tableEntry(state.units, progress.reactors.shift());
+      if (!alive(unit)) continue;
+      const weapon = weaponInfo(state, unit);
+      const source = { unit, weapon };
+      if (!canReact(state, source, actor) || !threatens(state, source, actor, actor) || threatens(state, source, actor, to)) continue;
+      unit.reactionAvailable = false;
+      const center = pos(actor.x, actor.y);
+      record(state, unit, 'opportunity', `${unit.name}对${actor.name}发动借机攻击（${weapon.template.name}）`,
+        { ...opportunityDetail(unit, center, to), targetId: actor.id });
+      const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
+      host.opportunity(state, unit, center, profile, weapon);
+      return false;
     }
-    if (!canContinue() || !canStep(state, actor, to)) break;
-    actor.facing = signFacing(actor, to);
-    Object.assign(actor, pos(to.x, to.y));
-    path.push(to);
+    if (canStep(state, actor, to)) {
+      actor.facing = signFacing(actor, to);
+      Object.assign(actor, pos(to.x, to.y));
+      path.push(to);
+      delete progress.reactors;
+      return false;
+    }
   }
-  const to = pointAt(state, actor), interrupted = path.length !== plan.path.length;
-  // Native movement consumes the action slot; `moved` is reserved for the
-  // VM pseudo-pool so explicit movement confiscation/refunds remain distinct.
-  record(state, actor, type, `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${to.x}, ${to.y}, z=${to.z})`,
-    { from, to, path, steps: path.length, interrupted });
+  const landing = pointAt(state, actor), interrupted = path.length !== plan.path.length;
+  // Native movement leaves the VM pseudo-pool `moved` alone.
+  record(state, actor, type, `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${landing.x}, ${landing.y}, z=${landing.z})`,
+    { from: progress.from, to: landing, path, steps: path.length, interrupted });
+  if (alive(actor)) {
+    if (type === 'move' && actor.stance === 'light_blade') actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
+    const coverIds = nearbyCovers(state, actor).filter(c => !progress.initialCover.includes(c.id)).map(c => c.id);
+    if (coverIds.length) record(state, actor, 'cover_approach', `${actor.name}移至掩体 ${coverIds.join('、')} 旁`, { coverIds });
+  }
+  return true;
 }
 
-function applyInteraction(state, actor, plan) {
+function continueInteraction(state, actor, plan, progress) {
   const item = state.interactives[plan.interactiveId];
-  item.spent = true;
-  if (!sameCell(actor, item)) actor.facing = signFacing(actor, item);
-  record(state, actor, 'interact', `${actor.name}${item.kind === 'barrel' ? '引爆' : '激活'}${item.name}`, { interactiveId: item.id });
-  const effect = item.effect ?? (item.kind === 'barrel' ? 'explode' : 'heal');
+  const effect = item.effect ?? (item.kind === 'barrel' ? 'explode' : null);
+  if (!progress.started) {
+    progress.started = true;
+    item.spent = true;
+    if (!sameCell(actor, item)) actor.facing = signFacing(actor, item);
+    record(state, actor, 'interact', `${actor.name}${item.kind === 'barrel' ? '引爆' : '激活'}${item.name}`, { interactiveId: item.id });
+    if (effect === 'explode') {
+      expireStatuses(state, actor, 'on_attack', { sourceUnitId: actor.id });
+      const weapon = weaponInfo(state, actor);
+      if (weapon.ammo && !weapon.infiniteAmmo) spendAmmo(state, actor, weapon, weapon.ammo);
+      progress.targets = plan.targets.map(profile => profile.id);
+    } else if (effect !== 'shield') {
+      restoreHP(state, actor, item.damage ?? 8, actor.id, item.name);
+      return false;
+    }
+  }
   if (effect === 'explode') {
-    expireStatuses(state, actor, 'on_attack', { sourceUnitId: actor.id });
-    const weapon = weaponInfo(state, actor);
-    if (weapon.ammo && !weapon.infiniteAmmo) spendAmmo(state, actor, weapon, weapon.ammo);
-    for (const profile of plan.targets) {
-      const target = state.units[profile.id];
-      if (alive(target)) damageTarget(state, target, actor.id, item.damage ?? 12, 'energy', item.name, { attacker: actor, hit: true, direct: false });
+    while (progress.targets.length) {
+      const target = state.units[progress.targets.shift()];
+      if (!alive(target)) continue;
+      damageTarget(state, target, actor.id, item.damage ?? 12, 'energy', item.name, { direct: false });
+      return false;
     }
     for (const cover of values(state.covers).filter(c => c.hp > 0 && plan.cells.some(at => sameCell(at, c))).sort(byId)) {
       coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
-  } else if (Object.hasOwn(item, 'effect') && (effect === 'restore' || effect === 'heal')) {
+  } else if (effect === 'restore') {
     const amount = item.damage ?? 8;
-    restoreHP(state, actor, amount, actor.id, item.name);
-    if (effect === 'restore') {
-      setResourceTotal(state, actor, 'mp', Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
-      setResourceTotal(state, actor, 'sp', Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
-    }
-  } else if (Object.hasOwn(item, 'effect') && effect === 'shield') {
+    setResourceTotal(state, actor, 'mp', Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
+    setResourceTotal(state, actor, 'sp', Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
+  } else if (effect === 'shield') {
     grantShield(state, actor, item.damage ?? 10, { sourceUnitId: actor.id });
-  } else {
-    const amount = item.damage ?? 8;
-    restoreHP(state, actor, amount, actor.id, item.name);
+  } else if (effect !== 'heal') {
     grantShield(state, actor, 10, { sourceUnitId: actor.id });
     grantStatus(state, actor, actionStatuses.altar, { sourceUnitId: actor.id });
   }
+  return true;
 }
 
 export function applyAction(state, action) {
-  if (action?.type === 'answer' || state.vm?.pendingAsk || ['attack', 'skill', 'shield_bash'].includes(action?.type) && !preview(state, action, { simulateRules: false }).interactiveId) {
+  if (action?.type === 'answer' || state.vm?.pendingAsk || action?.type && !['end', 'end_encounter'].includes(action.type)) {
     if (state.vm?.pendingAsk && action.type === 'end_encounter') {
       const concession = preview(state, action);
       if (!concession.ok) throw new Error(concession.error);
@@ -1474,15 +1500,19 @@ export function applyAction(state, action) {
       state.vm.stack.length = 0;
       state.vm.events = {};
       delete state.vm.endingTurn;
+      delete state.vm.endingTicks;
     } else {
       const before = state.logs.length;
       const actor = currentUnit(state);
       const result = resolveVMAction(state, action);
       if (!result.pendingAsk && state.vm.endingTurn) {
         const endingUnit = state.units[state.vm.endingTurn];
+        const remainingTicks = state.vm.endingTicks;
         delete state.vm.endingTurn;
-        completeTurnEnd(state, endingUnit);
-        if (!refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
+        delete state.vm.endingTicks;
+        if (remainingTicks) endTurn(state, endingUnit, remainingTicks);
+        else completeTurnEnd(state, endingUnit);
+        if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
       } else if (!result.pendingAsk) finishAction(state, actor, action.type);
       return state.logs.slice(before);
     }
@@ -1496,61 +1526,32 @@ export function applyAction(state, action) {
     }
     throw new Error(plan.error);
   }
-  const { type, x, y, skillId } = action;
-  if (needsTarget(type) && x === undefined) throw new Error('缺少目标坐标');
   const actor = currentUnit(state);
   const before = state.logs.length;
-  const moving = ['move', 'sprint', 'disengage'].includes(type);
-  const initialCover = moving ? new Set(nearbyCovers(state, actor).map(c => c.id)) : null;
-  if (type !== 'end') {
-    actor.ap -= plan.ap;
-    const costSource = plan.name ?? movementNames[type] ?? type;
-    if (plan.mp) setResourceTotal(state, actor, 'mp', actor.mp - plan.mp, actor.id, costSource);
-    if (plan.sp) setResourceTotal(state, actor, 'sp', actor.sp - plan.sp, actor.id, costSource);
-    if (type === 'skill') {
-      const skill = tableEntry(state.skills, skillId);
-      if (skill?.backpackItem) {
-        const before = actor.inventory[skillId];
-        actor.inventory[skillId] = before - 1;
-        record(state, actor, 'item_spent', `${actor.name}消耗${skill.name}（数量 ${before} → ${before - 1}）`, {itemId:skillId,before,after:before-1});
-      }
-      if (plan.hp) {
-        const hpBefore = actor.hp;
-        writePoolMirror(state, actor, 'hp', actor.hp - plan.hp);
-        record(state, actor, 'skill_cost', `施放 ${skill.name} 消耗 ${plan.hp} HP`,
-          { skillId, hp: plan.hp, remainingHP: actor.hp, hpBefore, hpAfter: actor.hp });
-      }
-      if (skill?.resourceCost?.resource) {
-        const { resource, amount: cost } = skill.resourceCost;
-        const { item, effect, amount } = resourcePool(state, actor, resource);
-        changeCounter(state, actor, item, effect, resource, amount - cost);
-      }
-    }
-    if (plan.ap === 2) { actor.used.attack++; actor.used.action++; }
-    else if (plan.slot) actor.used[plan.slot]++;
-    const actionIntent = ['attack', 'skill'].includes(type) && plan.intent && plan.intent !== 'normal' && plan.shape === 'single' ? plan.intent : 'normal';
-    const targetId = plan.targets?.find(target => target.kind !== 'cover')?.id ?? null;
-    const intentNames = { function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
-    const actionLabel = plan.name ?? (movementNames[type] ?? ({ reload: '装填', brace: '依托防御', interact: '互动' })[type]);
-    const strike = ['attack','skill','shield_bash'].includes(type) && !plan.interactiveId;
-    const actionText = actionIntent !== 'normal'
-      ? `${actor.name}：${actionLabel}以意图：${intentNames[actionIntent]}攻击${state.units[targetId]?.name ?? '目标'}`
-      : `${actor.name}：${actionLabel}`;
-    record(state, actor, 'action', actionText,
-      { action: { type, ...(x === undefined ? {} : { x, y }), ...(skillId === undefined ? {} : { skillId }) }, intent: actionIntent, targetId,
-        ...(strike ? { attackSource: type === 'shield_bash' ? `${equipmentFor(state, actor.shield).template?.name ?? '盾牌'}盾击` : actionLabel,
-          attackTargets: (plan.targets ?? []).map(t => t.kind === 'cover' ? {cover:t.name} : {unit:t.id}),
-          ...(plan.corpseId ? {corpseId:plan.corpseId} : {}) } : {}),
+  if (action.type === 'end_encounter') {
+    record(state, actor, 'action', `${actor.name}：${plan.name}`,
+      { action: { type: action.type }, intent: 'normal', targetId: null, ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
+    concludeObjective(state,state.battleType === 'spar' ? 'draw' : actor.team === 'blue' ? 'red' : 'blue', state.battleType === 'spar' ? '双方点到为止' : `${actor.name}代表本队认输`);
+  }
+  finishAction(state, actor, action.type);
+  return state.logs.slice(before);
+}
+
+export function continueNativeAction({ state, frame, actor, plan, event, overrides, host }) {
+  const { action } = frame.data;
+  const { type, x, y } = action;
+  if (!frame.nativeProgress) {
+    frame.nativeProgress = {};
+    host.payAction(state, actor, plan, event, overrides);
+    const label = plan.name ?? movementNames[type] ?? (type === 'reload' ? '装填' : '互动');
+    record(state, actor, 'action', `${actor.name}：${label}`,
+      { action: { type, ...(x === undefined ? {} : { x, y }) }, intent: 'normal',
+        targetId: plan.targets?.find(target => target.kind !== 'cover')?.id ?? null,
         ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
   }
-  if (type === 'skill' && plan.hp) retireFromContest(state, actor);
-  if (!actor.fled) switch (type) {
-    case 'move': case 'sprint': case 'disengage': applyMovement(state, actor, type, plan); break;
-    case 'attack': applyInteraction(state, actor, plan); break;
-    case 'end_encounter': {
-      concludeObjective(state,state.battleType === 'spar' ? 'draw' : actor.team === 'blue' ? 'red' : 'blue', state.battleType === 'spar' ? '双方点到为止' : `${actor.name}代表本队认输`);
-      break;
-    }
+  if (isMovement(type)) return continueMovement(state, actor, type, plan, frame.nativeProgress, host);
+  if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress);
+  switch (type) {
     case 'switch_weapon': {
       const old = actor.mainHand ?? actor.weapon;
       const fromOff = plan.itemId === actor.offHand;
@@ -1626,16 +1627,8 @@ export function applyAction(state, action) {
         { coverId: plan.coverId, reduction: plan.reduction, turns: plan.turns });
       grantStatus(state, actor, actionStatuses.brace, { sourceUnitId: actor.id, turns: plan.turns });
       break;
-    case 'interact': applyInteraction(state, actor, plan); break;
   }
-  if (moving && alive(actor)) {
-    const stance = actor.stance ?? 'unarmed';
-    if (type === 'move' && stance === 'light_blade') actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
-    const coverIds = nearbyCovers(state, actor).filter(c => !initialCover.has(c.id)).map(c => c.id);
-    if (coverIds.length) record(state, actor, 'cover_approach', `${actor.name}移至掩体 ${coverIds.join('、')} 旁`, { coverIds });
-  }
-  finishAction(state, actor, type);
-  return state.logs.slice(before);
+  return true;
 }
 
 function finishAction(state, actor, type) {

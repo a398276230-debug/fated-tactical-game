@@ -18,6 +18,7 @@ const text = { type: 'string', pattern: '\\S' };
 const reserved = [...Object.getOwnPropertyNames(Object.prototype), 'prototype'];
 const idPattern = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}';
 const id = { type: 'string', pattern: `^${idPattern}$`, not: enumOf(...reserved) };
+const sourceSkillId = either(id, { type: 'string', pattern: `^equip:${idPattern}:${idPattern}$` });
 const variable = { type: 'string', pattern: `^vars\\.${idPattern}$`, not: enumOf(...reserved.map(key => `vars.${key}`)) };
 const tag = { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' };
 const statusId = { ...id, format: 'tactical-status-id' };
@@ -66,7 +67,7 @@ export const opNotes = Object.freeze({
   ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择。选格和选实体用 select，选项用 options，数值用 min/max。entity 的 maxSelect 开启多选，将 ID 数组写入 out，for_each 以 {from:"vars.<名称>"} 遍历。out 写裸名称，单选实体可用 vars.<名称> 作目标。',
   damage: '走完整伤害和致死管线，out 记录实际扣血量，写裸名称、读 vars.<名称>。裸扣资源使用 resource。',
   heal: '仅治疗存活且允许受疗的单位，经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
-  resource: '直接改资源池并经过落盘拦截。pool 可写 hp/mp/sp 或伪池 attack/action/move：前两者表示本回合未用槽位，move 表示剩余移动格；mode 用 add/sub/set。add_max/sub_max/set_max 改 HP/MP/SP 上限并同步镜像，minRemain 可限制最低上限；swap 使用单个 pool 和 otherPool。',
+  resource: '直接改资源池并经过落盘拦截。pool 与 otherPool 支持池 ID 或 vars.<名称>，pool 也可用引用数组；数值表达式用 resource(self, vars.<名称>) 读取动态余额。内置池 hp/mp/sp 或伪池 attack/action/move：前两者表示本回合未用槽位，move 表示剩余移动格；mode 用 add/sub/set。add_max/sub_max/set_max 改 HP/MP/SP 上限并同步镜像，minRemain 可限制最低上限；swap 使用单个 pool 和 otherPool。',
   link_pool: '用 units 选择单位，将指定的 HP/MP/SP 池合并共享或拆回独立池。',
   apply_status: '施加已注册的状态模板，vars 求值后存入状态。护盾使用 shield 状态与 shieldAmount 变量。flags:["undispellable"] 的状态不能被 dispelled 或 cleansed，只能自然 expired。',
   remove_status: '在目标持有的状态中用 where 筛选可移除项。outCount 写裸名称（如 lostStacks），后续读 vars.lostStacks，表示成功移除的数量。',
@@ -150,9 +151,9 @@ const opcodeSchemas = [
   when('kind', literal('number'), withRules(needs('min', 'max'), { not: either(needs('options'), needs('select')) }))),
   opcode('damage', { target, amount: numericExpr, damageType, ignoreArmor: bool, lethal: bool, direct: bool, out: id }, ['target', 'amount', 'damageType']),
   opcode('heal', { target, amount: numericExpr, out: id }, ['target', 'amount']),
-  opcode('resource', { target, pool: either(id, list(id, 1)), mode: enumOf('add', 'sub', 'set', 'swap', 'add_max', 'sub_max', 'set_max'), amount: numericExpr, otherPool: id,
+  opcode('resource', { target, pool: either(entityId, list(entityId, 1)), mode: enumOf('add', 'sub', 'set', 'swap', 'add_max', 'sub_max', 'set_max'), amount: numericExpr, otherPool: entityId,
     local: bool, minRemain: numericExpr, requireFull: bool, out: id }, ['target', 'pool', 'mode'],
-  when('mode', literal('swap'), withRules({ ...needs('otherPool'), properties: { pool: id } }, { not: needs('amount') })),
+  when('mode', literal('swap'), withRules({ ...needs('otherPool'), properties: { pool: entityId } }, { not: needs('amount') })),
   when('mode', enumOf('add', 'sub', 'set', 'add_max', 'sub_max', 'set_max'), { ...needs('amount'), not: needs('otherPool') })),
   opcode('link_pool', { units: selector, pools: list(enumOf('hp', 'mp', 'sp'), 1), mode: enumOf('link', 'unlink') }, ['units', 'pools', 'mode']),
   opcode('apply_status', { target, statusId, turns: numericExpr, stacks: numericExpr, stackMode: enumOf('refresh', 'stack', 'replace', 'extend'),
@@ -260,6 +261,38 @@ const validHook = (value, options, guard) => options.hook === undefined || (vmHo
 export const validVmOpcode = (value, options = {}) => valid(value, 'opcode', options) && validHook(value, options, hookGuard);
 export const validVmProgram = (value, options = {}) => valid(value, 'program', options) && validHook(value, options, guardedProgram);
 export const validVmRule = (value, options = {}) => valid(value, 'rule', options);
+
+export function vmRuleError(rule, options = {}) {
+  if (validVmRule(rule, options)) return undefined;
+  const settings = { ...options, hook: rule?.hook };
+  function invalidInstruction(program, path, depth = 0) {
+    if (!Array.isArray(program) || depth > 64) return path;
+    for (const [index, instruction] of program.entries()) {
+      if (validVmOpcode(instruction, settings)) continue;
+      const at = `${path}/${index}`;
+      const schema = opcodeSchemas.find(schema => schema.properties.op.const === instruction?.op);
+      if (!schema) return `${at}/op`;
+      for (const field of schema.required) if (!Object.hasOwn(instruction, field)) return `${at}/${field}`;
+      for (const [field, value] of Object.entries(instruction)) {
+        if (instructionBranches.includes(field) && Object.hasOwn(schema.properties, field)) {
+          if (!validVmProgram(value, settings)) return invalidInstruction(value, `${at}/${field}`, depth + 1);
+        } else if (!Object.hasOwn(schema.properties, field) || !matches(value, schema.properties[field], options)) {
+          return `${at}/${field}${field === 'statusId' && matches(value, id, options) ? `（状态 ${value} 未注册）` : ''}`;
+        }
+      }
+      if (instruction.op === 'mutate_event') return `${at}/patch（当前 hook 不允许此改写）`;
+      return `${at}（${instruction.op} 字段组合无效）`;
+    }
+    return path;
+  }
+  const schema = defs.rule;
+  for (const field of schema.required) if (!rule || !Object.hasOwn(rule, field)) return field;
+  for (const [field, value] of Object.entries(rule)) {
+    if (field === 'program') continue;
+    if (!Object.hasOwn(schema.properties, field) || !matches(value, schema.properties[field], options)) return field;
+  }
+  return invalidInstruction(rule.program, 'program');
+}
 export const validVmSelector = (value, options = {}) => valid(value, 'selector', options);
 export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options);
 export function vmStatModError(mod) {
@@ -275,3 +308,4 @@ export function vmStatModError(mod) {
 }
 export const validVmTargetRef = (value, options = {}) => valid(value, 'targetRef', options);
 export const validVmTag = value => valid(value, 'tag', {});
+export const validVmSourceSkillId = value => matches(value, sourceSkillId, {});

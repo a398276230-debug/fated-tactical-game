@@ -65,7 +65,8 @@ function resolveSpawnSpec(spec, context, kind) {
 function inherit(frame) {
   return { ownerId: frame.ownerId, sourceId: frame.sourceId, ruleId: frame.ruleId, eventRef: frame.eventRef,
     carrier: frame.carrier ?? null, scope: frame.scope ?? {}, hook: frame.hook ?? null,
-    localsRef: frame.localsRef ?? frame.frameId };
+    localsRef: frame.localsRef ?? frame.frameId,
+    ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
 }
 
 function logMove(state, host, unit, mode, from, path, collision) {
@@ -276,7 +277,8 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
     host.log(state, actor, 'spawn', `${data.fields.name}未能登场：可用战场空间不足`);
     return;
   }
-  push({ ...inherit(frame), native: 'spatialSpawn', data });
+  const sourceSkillId = frame.sourceSkillId ?? (frame.carrier?.type === 'skill' ? frame.carrier.id : undefined);
+  push({ ...inherit(frame), native: 'spatialSpawn', data, ...(sourceSkillId && { sourceSkillId }) });
 }
 
 function continueSpawn({ state, frame, host, context }) {
@@ -302,7 +304,8 @@ function continueSpawn({ state, frame, host, context }) {
     }
     data.pendingId = old.id;
     frame.awaitEvent = newEvent(state, { actorId: actor?.id ?? frame.ownerId, targetId: old.id,
-      sourceId: actor?.id ?? frame.ownerId, summonId: old.id, templateId: old.templateId, center: at(state, old) });
+      sourceId: actor?.id ?? frame.ownerId, summonId: old.id, templateId: old.templateId, center: at(state, old),
+      ...(old.sourceSkillId && { sourceSkillId: old.sourceSkillId }) });
     scheduleHooks(state, frame, 'on_summon_evict', frame.awaitEvent, host);
     return;
   }
@@ -322,7 +325,8 @@ function continueSpawn({ state, frame, host, context }) {
   for (const placement of landings.slice(0, plan.count)) {
     const id = nextId(state, state.units, 'summon');
     const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement, altitude: 0,
-      summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {} };
+      summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
+      ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
     unit.hp = unit.maxHp;
     unit.mp = unit.maxMp;
     unit.sp = unit.maxSp;

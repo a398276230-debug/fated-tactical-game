@@ -140,7 +140,8 @@ export function continueCheck({ state, frame, host, context }) {
     const parent = state.vm.stack.find(entry => entry.frameId === frame.branchFrameId);
     pushFrame(state, { kind: parent.kind === 'loop' ? 'action' : parent.kind, hook: parent.hook ?? null, carrier: parent.carrier ?? null,
       ownerId: parent.ownerId, sourceId: parent.sourceId, ruleId: parent.ruleId, eventRef: parent.eventRef,
-      scope: parent.scope ?? null, localsRef: frame.callerId, program });
+      scope: parent.scope ?? null, localsRef: frame.callerId,
+      ...(parent.sourceSkillId && { sourceSkillId: parent.sourceSkillId }), program });
   }
 }
 

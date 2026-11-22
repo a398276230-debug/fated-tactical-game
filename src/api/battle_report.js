@@ -26,7 +26,7 @@ const expiryEvents = {
 };
 const checkGrade = (success, roll) => success ? (roll === 20 ? '大成功' : '成功') : (roll === 1 ? '大失败' : '失败');
 const maneuvers = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
-import { proseNumber, attributionLine } from '../core/log-attribution.js';
+import { proseNumber, attributionLine, choiceProse } from '../core/log-attribution.js';
 const signed = value => `${value > 0 ? '+' : ''}${proseNumber(value)}`;
 const percent = value => Number((value * 100).toFixed(4));
 const notes = parts => parts.length ? `（${parts.join('，')}）` : '';
@@ -165,6 +165,12 @@ export function formatBattleReportText(report, unitNames = {}) {
             : [checkGrade(detail.saved, detail.saveRoll)];
           const source = detail.sourceName ? `对${detail.sourceName}的` : '';
           add(`${target}${detail.saved ? '通过' : '未通过'}${source}${stat}豁免${notes(result)}${attributionText(detail)}`);
+          break;
+        }
+        case 'choice': {
+          if (!detail.choice) { add(replaceUnitNames(event, text) + attributionText(detail)); break; }
+          const { title, lines } = choiceProse(detail.choice, name(event, actor), id => name(event, id));
+          add(title + notes(lines) + attributionText(detail));
           break;
         }
         case 'intent':

@@ -21,7 +21,8 @@ const unitFields = {
 };
 const vmUnitFields = {
   id: '实体 ID', armor: '护甲', x: '横坐标', y: '纵坐标', z: '实际高度',
-  altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营', summoned: '是否为召唤物'
+  altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营', summoned: '是否为召唤物',
+  sourceSkillId: '生成该召唤物的技能 ID（无记录时为 null）'
 };
 const unitScopes = { self: '效果主体', attacker: '事件攻击者', target: '当前目标', source: '效果来源', candidate: '当前筛选实体' };
 const legacyScopes = new Set(['self', 'attacker', 'target']);
@@ -140,6 +141,7 @@ for (const [name, description] of Object.entries({
 })) register(`event.${name}`, description, context => path(context, 'event', name), true);
 // Existing authored check filters used event.kind before checkKind was documented.
 register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));
+register('event.sourceSkillId', 'on_summon_evict 中旧召唤物的来源技能 ID（无记录时为 null）', context => path(context, 'event', 'sourceSkillId'));
 family('event.<field>', /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, '活跃事件的自有标量字段', (context, key) => path(context, 'event', key));
 
 function readDistance(context, from, to) {
@@ -170,6 +172,8 @@ function tagged(entity, tag) {
   return false;
 }
 const withId = read => ([entity, id], context) => typeof id === 'string' && safeKey(id) ? booleanQuery(read(context, entity, id)) : null;
+query('resource', ['unit', 'value'], 'resource(unit, poolId)', '读资源池当前余额，池 ID 可为字符串或 vars.<名称>', ([entity, id], context) =>
+  typeof id === 'string' && safeKey(id) ? entityFamilies.resource[1](context, entity, id) : null);
 query('has_status', ['unit', 'value'], "has_status(unit, 'statusId')", '查询单位是否持有状态', withId(statusPresent));
 query('has_tag', ['entity', 'value'], "has_tag(entity, 'tag')", '查询实体是否带有标签', withId((context, entity, tag) => callback(context, 'hasTag', entity, tag) ?? tagged(entity, tag)));
 query('in_zone', ['unit', 'value'], "in_zone(unit, 'tagOrTemplateId')", '查询单位是否在指定区域内', withId((context, entity, id) => callback(context, 'inZone', entity, id)));

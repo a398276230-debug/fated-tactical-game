@@ -36,9 +36,14 @@ function commitOp(env) {
   const { state, frame, op, context, select } = env;
   const targets = select(op.target).filter(unit => entry(state.units, unit.id) === unit);
   const sourceId = context.self?.id ?? frame.sourceId;
+  const poolId = ref => ref?.startsWith('vars.') ? entry(context.vars, ref.slice(5)) : ref;
+  const validPoolId = key => typeof key === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(key);
+  const pools = op.op === 'resource' ? [op.pool].flat().map(poolId).reverse() : ['hp'];
+  const otherPool = poolId(op.otherPool);
+  if (op.mode === 'swap' && !validPoolId(otherPool)) return;
   for (const target of targets.reverse()) {
-    const pools = op.op === 'resource' ? [op.pool].flat() : ['hp'];
-    for (const pool of pools.reverse()) {
+    for (const pool of pools) {
+      if (!validPoolId(pool)) continue;
       const amount = op.amount === undefined ? 0 : evaluateExpr(op.amount, { ...context, target, pool });
       const minRemain = op.minRemain === undefined ? 0 : evaluateExpr(op.minRemain, { ...context, target, pool });
       if (!Number.isFinite(amount) || !Number.isFinite(minRemain)) continue;
@@ -48,6 +53,7 @@ function commitOp(env) {
         ?? (frame.carrier?.type === 'skill' ? entry(state.skills, frame.carrier.id)?.name : undefined)
         ?? entry(state.equipment, item?.templateId)?.name ?? entry(state.skills, action?.skillId)?.name;
       scheduleCommit(state, frame, { ...op, sourceId, targetId: target.id, pool, amount, minRemain,
+        ...(op.mode === 'swap' && { otherPool }),
         ...(label && { label }), actionType: action?.actionType ?? null, skillId: action?.skillId ?? null,
         ...(frame.carrier?.type === 'item' ? { carrierId: frame.carrier.id } : {}) });
     }

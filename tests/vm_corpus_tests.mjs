@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { commitVMEffect, resolveVMAction } from '../src/core/vm-runtime.js';
+import { commitVMEffect, dispatchVMHook, resolveVMAction } from '../src/core/vm-runtime.js';
+import { applyPatch } from '../src/tavern/overlay.js';
 import { test } from 'node:test';
 import { validVmRule } from '../src/core/vm-schema.js';
 import { createGameAPI } from '../src/api/game_api.js';
+import { validateState } from '../src/api/validation.js';
 
 const skill = (name, program, shape = 'single') => ({ name, ap: 1, slot: 'attack', range: 10, shape,
   target: 'any', rules: [{ id: 'active', hook: 'active', program }] });
@@ -34,6 +36,80 @@ test('VM save exposes both original and effective DC to the after_check hook', (
   resolveVMAction(state,{type:'skill',skillId:'test_save',x:second.x,y:second.y});
   assert.equal(first.mp,1);
 });
+test('summon provenance distinguishes same-group specs from different active skills and survives eviction replay', () => {
+  const { state, first } = fixture();
+  const evict = { id: 'evict', hook: 'on_summon_evict',
+    filter: "event.sourceSkillId == 'summon_a' && self.sourceSkillId == event.sourceSkillId && target.sourceSkillId == self.sourceSkillId",
+    program: [{ op: 'ask', chooser: 'source', kind: 'number', min: 0, max: 1, prompt: '确认消散', out: 'choice', aiPolicy: 'min' }] };
+  const spawn = { op: 'spawn', entityKind: 'unit', out: 'created', spec: { name: '同名召唤物', rules: [evict] } };
+  const a = { ...skill('召唤甲', [spawn, {
+    op: 'for_each', bind: 'matched', select: { from: 'units', where: "candidate.sourceSkillId == 'summon_a' && candidate.id == vars.created" },
+    body: [{ op: 'if', cond: "vars.matched.sourceSkillId == 'summon_a' && vars.created.sourceSkillId == 'summon_a'",
+      then: [{ op: 'let', scope: 'owner', name: 'verified', value: true }] }],
+  }]), ap: 0, slot: 'action', target: 'self' };
+  state.skills.summon_a = a;
+  state.skills.summon_b = { ...a, name: '召唤乙', rules: [{ id: 'active', hook: 'active', program: [spawn] }] };
+  first.skills = ['summon_a', 'summon_b'];
+  const game = createGameAPI();
+  game.createBattle({ kind: 'custom_state', state });
+  const cast = skillId => game.playAction({ type: 'skill', skillId, x: first.x, y: first.y });
+  cast('summon_a');
+  cast('summon_b');
+  const summoned = api => Object.values(api.getBattleState().units).filter(unit => unit.summoned);
+  assert.deepEqual(summoned(game).map(unit => [unit.id, unit.sourceSkillId]), [['summon-1', 'summon_a'], ['summon-2', 'summon_b']]);
+  assert.equal(game.getBattleState().vm.skillVars[JSON.stringify([first.id, 'summon_a'])].verified, true);
+  cast('summon_a');
+  const pending = game.getBattleState().vm.pendingAsk;
+  assert.equal(pending.prompt, '确认消散');
+  const snapshot = JSON.parse(JSON.stringify(game.exportBattleSnapshot()));
+  validateState(snapshot.state);
+  const malformed = structuredClone(snapshot.state);
+  malformed.units['summon-1'].sourceSkillId = 'equip:bad';
+  assert.throws(() => validateState(malformed), /sourceSkillId/);
+  const restored = createGameAPI();
+  const legacyPending = structuredClone(snapshot);
+  for (const record of [...Object.values(legacyPending.state.units), ...legacyPending.state.vm.stack,
+    ...Object.values(legacyPending.state.vm.events)]) delete record.sourceSkillId;
+  restored.restoreBattleSnapshot(legacyPending);
+  assert.deepEqual(restored.getBattleState(), game.getBattleState());
+  restored.restoreBattleSnapshot(snapshot);
+  const answer = { type: 'answer', askId: pending.askId, value: 1 };
+  game.playAction(answer);
+  restored.playAction(answer);
+  assert.deepEqual(restored.getBattleState(), game.getBattleState());
+  assert.deepEqual(summoned(game).map(unit => [unit.id, unit.sourceSkillId]), [['summon-2', 'summon_b'], ['summon-3', 'summon_a']]);
+  const older = JSON.parse(JSON.stringify(game.exportBattleSnapshot()));
+  for (const unit of Object.values(older.state.units)) delete unit.sourceSkillId;
+  restored.restoreBattleSnapshot(older);
+  assert.deepEqual(restored.getBattleState(), game.getBattleState());
+  older.state.units['summon-3'].sourceSkillId = 'summon_b';
+  assert.throws(() => restored.restoreBattleSnapshot(older), /重放不一致/);
+});
+
+test('summon provenance follows nested equipment rules and passive skill carriers', () => {
+  const { state, first } = fixture();
+  const equipId = first.mainHand ?? first.weapon;
+  const template = state.equipment[state.items[equipId].templateId];
+  const spawn = name => ({ op: 'spawn', entityKind: 'unit', spec: { name } });
+  template.rules = [{ id: 'call', hook: 'active', program: [{ op: 'check', kind: 'chance', dc: 100, onPass: [
+    { op: 'if', cond: true, then: [spawn('装备召唤')] },
+  ] }] }];
+  const equipSkillId = `equip:${equipId}:call`;
+  state.skills.summon_passive = { ...skill('应召', []), passive: true, rules: [{ id: 'react', hook: 'after_action',
+    filter: `event.skillId == '${equipSkillId}'`, program: [spawn('被动召唤')] }] };
+  first.skills = ['summon_passive'];
+  first.rules = [{ id: 'react_unit', hook: 'after_action', filter: `event.skillId == '${equipSkillId}'`, program: [spawn('单位规则召唤')] }];
+  resolveVMAction(state, { type: 'skill', skillId: equipSkillId, x: first.x, y: first.y });
+  const summoning = Object.fromEntries(Object.values(state.units).filter(unit => unit.summoned).map(unit => [unit.name, unit.sourceSkillId]));
+  assert.deepEqual(summoning, { 装备召唤: equipSkillId, 被动召唤: 'summon_passive', 单位规则召唤: undefined });
+  // Provenance remains valid if the actual producing item is no longer available.
+  for (const slot of ['mainHand', 'weapon', 'offHand', 'shield']) if (first[slot] === equipId) first[slot] = null;
+  for (const poolId of Object.values(state.items[equipId].pools ?? {})) delete state.pools[poolId];
+  delete state.items[equipId];
+  state.tape = []; // This fixture exercises unit provenance independently of tape validation.
+  validateState(state);
+});
+
 test('turn_end choice holds the current turn through snapshot replay and advances exactly once', () => {
   const { state, first, second } = fixture();
   first.mp = 0;
@@ -58,6 +134,116 @@ test('turn_end choice holds the current turn through snapshot replay and advance
   assert.equal(result.logs.filter(log => log.type === 'end' && log.actor === first.id).length, 1);
   assert.deepEqual(restored.getBattleState(), result);
 });
+test('turn tape preserves native movement, interaction and combat order across replay and snapshot suspension', () => {
+  const { state, first, second } = fixture();
+  Object.assign(first, { x: 1, y: 1, move: 4, hp: 40, reactionAvailable: false });
+  Object.assign(second, { x: 4, y: 1, reactionAvailable: false });
+  state.interactives = { altar: { id: 'altar', name: '祭坛', kind: 'altar', effect: 'heal', damage: 2, x: 3, y: 1, spent: false } };
+  first.skills = ['tape_strike'];
+  state.skills.tape_strike = skill('重演测试', [
+    { op: 'ask', chooser: 'self', kind: 'number', prompt: '重演伤害', min: 1, max: 3, out: 'amount', aiPolicy: 'min' },
+    damage('target', 'vars.amount'),
+    { op: 'if', cond: 'self.resource.action == 0 && self.resource.attack == 0', then: [
+      { op: 'resource', target: 'self', pool: 'action', mode: 'set', amount: 1 },
+    ] },
+  ]);
+  first.rules = [{ id: 'repeat_turn', hook: 'turn_end', usesPerBattle: 1,
+    filter: 'self.resource.attack == 0 && self.resource.action == 0', program: [
+      { op: 'move', target: 'self', mode: 'teleport', to: { x: 1, y: 1 } },
+      { op: 'for_each', select: { from: 'tape', where: 'candidate.actorId == self.id && candidate.round == round && candidate.turn == turn' },
+        bind: 'entry', body: [{ op: 'perform', actor: 'self', actionKind: 'replay', tapeRecord: 'vars.entry' }] },
+    ] }];
+  const game = createGameAPI();
+  game.createBattle({ kind: 'custom_state', state });
+  const askAnswer = (api, value) => ({ type: 'answer', askId: api.getBattleState().vm.pendingAsk.askId, value });
+  game.playAction({ type: 'move', x: 3, y: 1 });
+  game.playAction({ type: 'skill', skillId: 'tape_strike', x: 4, y: 1 });
+  game.playAction(askAnswer(game, 1));
+  game.playAction({ type: 'interact', x: 3, y: 1 });
+  const pending = game.getBattleState();
+  assert.deepEqual(pending.tape.map(row => [row.seq, row.actionType]), [[1, 'move'], [2, 'skill'], [3, 'interact']]);
+  assert.deepEqual(pending.logs.filter(log => log.type === 'action').map(log => log.detail.action.type), ['move', 'skill', 'interact', 'move', 'skill']);
+  assert.equal(pending.order[pending.turn], first.id);
+  assert.equal(pending.units[first.id].x, 3);
+  assert.equal(pending.logs.filter(log => log.type === 'end').length, 0);
+  const restored = createGameAPI();
+  restored.restoreBattleSnapshot(JSON.parse(JSON.stringify(game.exportBattleSnapshot())));
+  assert.deepEqual(restored.getBattleState(), pending);
+  const answer = askAnswer(game, 3);
+  game.playAction(answer);
+  restored.playAction(answer);
+  const result = game.getBattleState();
+  assert.deepEqual(restored.getBattleState(), result);
+  assert.deepEqual(result.tape, pending.tape);
+  assert.equal(result.order[result.turn], second.id);
+  assert.equal(result.logs.filter(log => log.actor === first.id && log.type === 'end').length, 1);
+  assert.equal(result.logs.filter(log => log.type === 'interact').length, 1);
+  assert.equal(result.units[second.id].hp, second.hp - 4);
+  game.playAction({ type: 'end' });
+  game.playAction({ type: 'sprint', x: 2, y: 1 });
+  const next = game.getBattleState();
+  assert.equal(next.vm.pendingAsk, null);
+  assert.equal(next.order[next.turn], second.id);
+  assert.equal(next.units[first.id].x, 2);
+  assert.deepEqual(next.tape.map(row => row.actionType), ['move', 'skill', 'interact', 'sprint']);
+});
+
+test('a native interaction resumes its remaining effects before recording and ending the turn', () => {
+  const { state, first } = fixture();
+  Object.assign(first, { hp: 30, mp: 0, sp: 0, used: { attack: 1, action: 0 }, ap: 1 });
+  state.interactives = { altar: { id: 'altar', name: '恢复点', kind: 'altar', effect: 'restore', damage: 5, x: 1, y: 1, spent: false } };
+  first.rules = [{ id: 'choose_heal', hook: 'before_commit', filter: "target.id == self.id && event.commitKind == 'heal'", program: [
+    { op: 'ask', chooser: 'self', kind: 'number', prompt: '选择治疗量', min: 1, max: 5, out: 'amount', aiPolicy: 'max' },
+    { op: 'mutate_event', patch: { finalAmount: 'vars.amount' } },
+  ] }];
+  const game = createGameAPI();
+  game.createBattle({ kind: 'custom_state', state });
+  game.playAction({ type: 'interact', x: 1, y: 1 });
+  const pending = game.getBattleState();
+  assert.ok(pending.vm.pendingAsk);
+  assert.equal(pending.tape?.length ?? 0, 0);
+  assert.equal(pending.units[first.id].mp, 0);
+  assert.equal(pending.logs.filter(log => log.type === 'end').length, 0);
+  const restored = createGameAPI();
+  restored.restoreBattleSnapshot(JSON.parse(JSON.stringify(game.exportBattleSnapshot())));
+  const answer = { type: 'answer', askId: pending.vm.pendingAsk.askId, value: 2 };
+  game.playAction(answer);
+  restored.playAction(answer);
+  const result = game.getBattleState();
+  assert.deepEqual(restored.getBattleState(), result);
+  assert.deepEqual([result.units[first.id].hp, result.units[first.id].mp, result.units[first.id].sp], [32, 5, 5]);
+  assert.deepEqual(result.tape.map(row => [row.actionType, row.targetSpec.answers]), [['interact', [2]]]);
+  assert.equal(result.logs.filter(log => log.type === 'interact').length, 1);
+  assert.equal(result.logs.filter(log => log.type === 'end').length, 1);
+});
+
+test('normalization locates invalid expressions and runs a dynamic resource conversion through the production VM', () => {
+  const { state, first } = fixture();
+  Object.assign(first, { mp: 12, maxMp: 20, sp: 3, maxSp: 20 });
+  const skillId = 'skill-a1-7t47mv-18';
+  first.skills.push(skillId);
+  state.skills[skillId] = { name: '三相魂炉的流转', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', passive: true, rules: [] };
+  const rule = { id: 'tri_phase_shift', hook: 'turn_start', program: [
+    { op: 'let', name: 'fromPool', value: "'mp'" },
+    { op: 'let', name: 'toPool', value: "'sp'" },
+    { op: 'if', cond: 'vars.fromPool != vars.toPool', then: [
+      { op: 'ask', chooser: 'self', kind: 'number', prompt: '选择转移数值', min: 0, max: 'self.resource[vars.fromPool]', out: 'amount', aiPolicy: 'min' },
+      { op: 'resource', target: 'self', pool: 'vars.fromPool', mode: 'sub', amount: 'vars.amount' },
+      { op: 'resource', target: 'self', pool: 'vars.toPool', mode: 'add', amount: 'vars.amount' },
+    ] },
+  ] };
+  const patched = () => applyPatch(state, [{ op: 'add', path: `/skills/${skillId}/rules/-`, value: rule }], true);
+  assert.throws(() => validateState(patched()), /VM 规则 rules\/0（tri_phase_shift）\/program\/2\/then\/0\/max/);
+  assert.equal(state.skills[skillId].rules.length, 0);
+  rule.program[2].then[0].max = 'resource(self, vars.fromPool)';
+  const next = patched();
+  validateState(next);
+  dispatchVMHook(next, 'turn_start', { actorId: first.id });
+  assert.equal(next.vm.pendingAsk.options.max, 12);
+  resolveVMAction(next, { type: 'answer', askId: next.vm.pendingAsk.askId, value: 5 });
+  assert.deepEqual([next.units[first.id].mp, next.units[first.id].sp], [7, 8]);
+});
+
 function fixture() {
   const state = buildScenario('ruins');
   const first = Object.values(state.units).find(unit => unit.team === 'blue');

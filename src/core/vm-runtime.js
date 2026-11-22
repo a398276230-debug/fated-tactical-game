@@ -1,4 +1,4 @@
-import { actionSkill, continueStrike, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost } from './combat.js';
+import { actionSkill, continueStrike, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
@@ -10,6 +10,7 @@ import { spatialOps, spatialContinuations, refreshFollowingZones, expireSpatialE
 import { elevation } from './spatial.js';
 import { evaluateExpr } from './formula.js';
 import { ruleAvailability } from './vm-rule-limits.js';
+import { validVmSourceSkillId } from './vm-schema.js';
 import { vmAttribution, normalizeProse } from './log-attribution.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
@@ -80,6 +81,10 @@ export const vmHost = {
   event: newEvent,
   hooks: (state, frame, hook, ref) => scheduleHooks(state, frame, hook, ref, vmHost),
   commit: scheduleCommit,
+  opportunity(state, unit, center, profile, weapon) {
+    pushFrame(state, { native: 'strike', ownerId: unit.id, sourceId: unit.id,
+      data: { type: 'attack', x: center.x, y: center.y }, plan: { center, targets: [profile], hostile: true }, weapon });
+  },
   followup(state, frame, weapon, profile) {
     pushFrame(state, { native: 'strike', ownerId: frame.ownerId, sourceId: frame.sourceId,
       eventRef: frame.eventRef, data: frame.data, plan: { center: profile, targets: [profile] }, weapon, followup: true, started: true });
@@ -108,6 +113,7 @@ export const vmHost = {
       : isHeld ? { type: 'skill', id: event.skillId, ownerId: actor.id } : null;
     return [...entries, ...(event.rules ?? actionRules ?? []).filter(rule => rule.hook === hook).map(rule => ({
       rule, ownerId: event.actorId, sourceId: event.actorId, carrierOrder: -1, carrier,
+      ...(skill && !event.rules && { sourceSkillId: event.skillId }),
       useKey: JSON.stringify([event.actorId, event.skillId, rule.id]),
     }))];
   },
@@ -200,7 +206,9 @@ export const vmHost = {
       ignoreRange: overrides.ignoreRange === true, ignoreLOS: overrides.ignoreLOS === true,
       deferGeometry: overrides.deferGeometry === true, limitClock: state });
     if (!planned.ok) return planned;
-    return { ...planned, center: planned.center ?? { x: actor.x, y: actor.y }, targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter(row => row.kind !== 'cover').map(row => row.id),
+    if (needsTarget(action.type) && action.x === undefined && !planned.center) return { ok: false, error: '缺少目标坐标' };
+    if (overrides.interactiveId && planned.interactiveId !== overrides.interactiveId) return { ok: false, error: '原互动点已不可用' };
+    return { ...planned, center: planned.center ?? { x: action.x ?? actor.x, y: action.y ?? actor.y }, targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter(row => row.kind !== 'cover').map(row => row.id),
       power: skill?.power ?? 0, initiativeBonus: skill?.initiativeBonus ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
       damageType: skill?.damageType ?? skill?.damage?.type ?? planned.damageType ?? null,
       weaponTemplateId: action.type === 'attack' ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null };
@@ -256,6 +264,11 @@ export function validVmState(state) {
       || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain(pools)) return false;
   if (vm.endingTurn !== undefined && (!vm.pendingAsk || typeof vm.endingTurn !== 'string'
       || vm.endingTurn !== state.order?.[state.turn] || !own(state.units, vm.endingTurn))) return false;
+  if (vm.endingTicks !== undefined && (!vm.endingTurn || !Array.isArray(vm.endingTicks)
+      || !vm.endingTicks.every(id => typeof id === 'string'))) return false;
+  for (const record of [...vm.stack, ...Object.values(vm.events)]) {
+    if (!plain(record) || (Object.hasOwn(record, 'sourceSkillId') && !validVmSourceSkillId(record.sourceSkillId))) return false;
+  }
   for (const unit of Object.values(state.units ?? {})) {
     for (const [key, maximum] of [['hp', 'maxHp'], ['mp', 'maxMp'], ['sp', 'maxSp']]) {
       const pool = own(pools, own(unit.pools, key));
@@ -266,7 +279,7 @@ export function validVmState(state) {
   return state.tape === undefined || Array.isArray(state.tape);
 }
 
-export function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false, opportunity, weapon } = {}) {
+export function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false } = {}) {
   if (dryRun) {
     state = structuredClone(state);
     actor = own(state.units, actor?.id);
@@ -277,8 +290,7 @@ export function resolveVMAction(state, action, { actor = currentUnit(state), dry
     if (state.vm.stack.length || state.vm.pendingAsk) throw new Error('请先回答当前战斗选择');
     if (!actor) throw new Error('没有行动者');
     state.vm.stepsRemaining = 2000;
-    if (opportunity) pushFrame(state, { native: 'strike', ownerId: actor.id, sourceId: actor.id, data: action, plan: opportunity, weapon });
-    else queueVMAction(state, { actorId: actor.id, action, record: true });
+    queueVMAction(state, { actorId: actor.id, action, record: true });
   }
   const result = stepVM(state, vmHost, { dryRun });
   refreshFollowingZones(state, vmHost);

@@ -1,4 +1,5 @@
 import { evaluateExpr } from './formula.js';
+import { isTapeAction, isStrikeAction, continueNativeAction } from './combat.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { resolvePoint } from './vm-select.js';
 
@@ -17,18 +18,21 @@ export function perform({ state, context, select, op }) {
     const tapeRef = tapeKey === null ? undefined : own(context.vars, tapeKey);
     const tape = op.actionKind === 'replay'
       ? (tapeRef === undefined ? context.tape : context.resolveEntity(tapeRef)) : undefined;
-    if (op.actionKind === 'replay' && !tape?.actionType) continue;
-    const action = { type: tape?.actionType ?? op.actionKind };
+    if (op.actionKind === 'replay' && !isTapeAction(tape?.actionType)) continue;
+    const action = { type: tape?.actionType ?? op.actionKind, ...tape?.parameters };
     if (action.type === 'skill') {
       const ref = tape?.skillId ?? op.skillId;
       const skillId = typeof ref === 'string' && ref.startsWith('vars.') ? own(context.vars, ref.slice(5)) : ref;
       if (typeof skillId !== 'string' || !skillId) continue;
       action.skillId = skillId;
     }
-    const point = op.target ? select(op.target)[0] : tape?.targetSpec ?? context.target ?? actor;
-    if (!Number.isInteger(point?.x) || !Number.isInteger(point?.y)) continue;
-    Object.assign(action, { x: point.x, y: point.y });
-    const overrides = tape ? { free: true, ignoreSlots: true, ...op.overrides } : { ...op.overrides };
+    if (!tape || op.target || tape.aimed !== false) {
+      const point = op.target ? select(op.target)[0] : tape?.targetSpec ?? context.target ?? actor;
+      if (!Number.isInteger(point?.x) || !Number.isInteger(point?.y)) continue;
+      Object.assign(action, { x: point.x, y: point.y });
+    }
+    const overrides = tape ? { free: true, ignoreSlots: true, ...op.overrides,
+      ...(tape.interactiveId && { interactiveId: tape.interactiveId }) } : { ...op.overrides };
     if (overrides.scale !== undefined) {
       overrides.scale = evaluateExpr(overrides.scale, context);
       if (!Number.isFinite(overrides.scale)) continue;
@@ -46,7 +50,7 @@ export function perform({ state, context, select, op }) {
 export function continueAction({ state, frame, host }) {
   const actor = own(state.units, frame.ownerId);
   const { action, overrides, record } = frame.data;
-  if (!actor || actor.hp <= 0 || actor.fled) { state.vm.stack.pop(); return; }
+  if (!actor || (frame.pc !== 5 && (actor.hp <= 0 || actor.fled))) { state.vm.stack.pop(); return; }
   if (frame.pc === 0) {
     let plan = host.planAction(state, actor, action, overrides);
     if (!plan?.ok && plan?.originSensitive) {
@@ -64,6 +68,10 @@ export function continueAction({ state, frame, host }) {
       targetId: plan.targetIds[0] ?? null, center: plan.center, origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
       mpCost: plan.mp ?? 0, spCost: plan.sp ?? 0, hpCost: plan.hp ?? 0, power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,
       weaponTemplateId: plan.weaponTemplateId ?? null });
+    if (!isStrikeAction(action, plan)) {
+      frame.pc = 5;
+      return;
+    }
     frame.pc++;
     scheduleHooks(state, frame, 'before_action', frame.eventRef, host);
     return;
@@ -111,12 +119,18 @@ export function continueAction({ state, frame, host }) {
     scheduleHooks(state, frame, 'after_action', frame.eventRef, host);
     return;
   }
-  if (record && ['skill', 'attack', 'move'].includes(action.type)) {
+  if (frame.pc === 5 && !continueNativeAction({ state, frame, actor, plan, event, overrides, host })) return;
+  if (record && isTapeAction(action.type)) {
+    const parameters = Object.fromEntries(['itemId', 'maneuver', 'intent', 'nonLethal', 'bonusDice']
+      .filter(key => Object.hasOwn(action, key)).map(key => [key, action[key]]));
     state.tape ??= [];
     state.tape.push({ seq: (state.tape.at(-1)?.seq ?? 0) + 1, round: state.round, turn: state.turn,
       actorId: actor.id, team: actor.team, actionType: action.type, skillId: action.skillId ?? null,
       targetSpec: { ...event.center, targetId: event.targetId, answers: frame.answers },
-      origin: { x: event.origin.x, y: event.origin.y } });
+      origin: { x: event.origin.x, y: event.origin.y },
+      ...(action.x === undefined && !isStrikeAction(action, plan) && { aimed: false }),
+      ...(plan.interactiveId && { interactiveId: plan.interactiveId }),
+      ...(Object.keys(parameters).length && { parameters }) });
   }
   state.vm.stack.pop();
 }

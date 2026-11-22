@@ -45,6 +45,24 @@ export function attributionLine(detail) {
   return `触发来源：${source}${source ? '·' : ''}${a.ruleName ?? a.ruleId}${action ? `（源行动：${action}）` : ''}`;
 }
 
+export function choiceProse(choice, chooser, targetName) {
+  const answer = choice.kind === 'number' ? proseNumber(choice.value) : choice.label;
+  const title = `${chooser}${choice.automatic ? '自动选择' : '选择'}「${choice.prompt}」：${answer}`;
+  const { commit } = choice;
+  const lines = [];
+  if (commit) {
+    const kind = { damage: '伤害', heal: '治疗', resource: '资源变动' }[commit.kind];
+    if (kind) {
+      const target = commit.targetId && targetName(commit.targetId);
+      const resource = commit.kind === 'resource' && commit.pool ? ` · ${commit.pool.toUpperCase()}` : '';
+      const amount = Number.isFinite(commit.amount) ? `，待结算 ${proseNumber(commit.amount)}` : '';
+      lines.push(`${target ? `对${target}的` : ''}${kind}${resource}${amount}`);
+    }
+  }
+  if (choice.kind === 'number') lines.push(`可选范围 ${proseNumber(choice.min)} 至 ${proseNumber(choice.max)}`);
+  return { title, lines };
+}
+
 export function proseNumber(value) {
   if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
   return Number(value.toFixed(6)).toString();

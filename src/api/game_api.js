@@ -7,6 +7,7 @@ import { chooseAction } from '../core/ai.js';
 import { applyCommand } from './commands.js';
 import { validateState } from './validation.js';
 import { formatBattleReportText } from './battle_report.js';
+import { normalizeProse } from '../core/log-attribution.js';
 
 const copy = value => structuredClone(value);
 const fail = message => { throw new Error(message); };
@@ -32,6 +33,40 @@ function diff(before, after, path = [], changes = []) {
     changes.push({ path, ...(before === undefined ? {} : { before }), ...(after === undefined ? {} : { after }) });
   }
   return changes;
+}
+
+function isMissingSummonProvenance({ path, before, after }) {
+  if (after !== undefined || typeof before !== 'string' || path.at(-1) !== 'sourceSkillId') return false;
+  return (path.length === 3 && path[0] === 'units')
+    || (path.length === 4 && path[0] === 'vm' && ['stack', 'events'].includes(path[1]));
+}
+
+function restoreChoiceDetails(replayed, saved) {
+  if (!Array.isArray(saved.logs) || saved.logs.length !== replayed.logs.length) return saved;
+  const logs = saved.logs.map((log, index) => {
+    const current = replayed.logs[index];
+    const choice = current.detail?.choice;
+    if (log?.type !== 'choice' || current.type !== 'choice' || !choice || own(log.detail ?? {}, 'choice')) return log;
+    const prefix = current.text.split(choice.automatic ? '自动选择「' : '选择「')[0];
+    if (log.text !== normalizeProse(`${prefix}选择了${choice.label}`)) return log;
+    return { ...log, text: current.text, detail: { ...log.detail, choice } };
+  });
+  return { ...saved, logs };
+}
+
+function upgradeLegacyTape(replayed, saved, origin) {
+  if (saved.vm?.stack?.length || replayed.vm?.stack?.length || !Array.isArray(replayed.tape)) return saved;
+  const originCount = origin.tape?.length ?? 0;
+  const newRecords = replayed.tape.slice(originCount);
+  const legacyRecords = newRecords.filter(record => !record.interactiveId && ['attack', 'skill'].includes(record.actionType));
+  if (legacyRecords.length === newRecords.length && !legacyRecords.some(record => record.parameters)) return saved;
+  const legacyTape = [...replayed.tape.slice(0, originCount), ...legacyRecords.map((record, i) => {
+    const { parameters, seq, ...legacy } = record;
+    return { seq: originCount + i + 1, ...legacy };
+  })];
+  if (diff(legacyTape.length ? legacyTape : origin.tape, saved.tape).length) return saved;
+  if (!Number.isSafeInteger(saved.vm?.serial) || saved.vm.serial < 0 || !Number.isInteger(saved.vm.stepsRemaining)) return saved;
+  return { ...saved, tape: replayed.tape, vm: { ...saved.vm, serial: replayed.vm.serial, stepsRemaining: replayed.vm.stepsRemaining } };
 }
 
 function simulate(base, transaction) {
@@ -103,7 +138,9 @@ export function createGameAPI() {
       history.push({ before: next, transaction: entry });
       next = result;
     }
-    if (diff(next, snapshot.state).length) fail('快照状态与命令日志重放不一致');
+    // Earlier snapshots may omit metadata that replay can reconstruct.
+    const saved = upgradeLegacyTape(next, restoreChoiceDetails(next, snapshot.state), start);
+    if (diff(next, saved).some(change => !isMissingSummonProvenance(change))) fail('快照状态与命令日志重放不一致');
     origin = start;
     state = next;
     frames = history;

@@ -1,15 +1,19 @@
-import { getStatusTemplate } from '../core/combat.js';
+import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.js';
 import { validExpr } from '../core/formula.js';
 
 import { MORALE, moraleLabels } from '../core/combat_protocol.js';
 import { timeOfDay } from '../core/battle_time.js';
-import { validVmOpcode, validVmRule, vmStatModError, validVmTag, vmHooks } from '../core/vm-schema.js';
+import { validVmOpcode, vmRuleError, vmStatModError, validVmTag, validVmSourceSkillId, vmHooks } from '../core/vm-schema.js';
 import { validVmState } from '../core/vm-runtime.js';
 
 function validateRules(rules, state) {
-  list(rules, 200, rule => validVmRule(rule, { statusTemplates: state?.statusTemplates }), 'VM 规则');
+  list(rules, 200, () => true, 'VM 规则');
+  for (const [index, rule] of rules.entries()) {
+    const issue = vmRuleError(rule, { statusTemplates: state?.statusTemplates });
+    requireThat(!issue, `VM 规则 rules/${index}${typeof rule?.id === 'string' ? `（${rule.id}）` : ''}/${issue}`);
+  }
   requireThat(new Set(rules.map(rule => rule.id)).size === rules.length, 'VM 规则 ID 重复');
 }
 
@@ -245,10 +249,11 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','moved','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'summonGroup', 'summoned']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','moved','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
+  checkOptional(v, 'sourceSkillId', skillId => v.summoned === true && validVmSourceSkillId(skillId));
   checkOptional(v, 'summonGroup', group => text(group, 512));
   if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
   checkOptional(v, 'summoned', x => x === true);
@@ -316,16 +321,29 @@ function tapeValue(tape, state) {
   let seq = 0;
   let round = 1;
   list(tape, 100000, record => {
-    fields(record, ['seq', 'round', 'turn', 'actorId', 'team', 'actionType', 'skillId', 'targetSpec', 'origin']);
+    fields(record, ['seq', 'round', 'turn', 'actorId', 'team', 'actionType', 'skillId', 'targetSpec', 'origin'],
+      ['aimed', 'interactiveId', 'parameters']);
     requireThat(Number.isSafeInteger(record.seq) && record.seq === seq + 1 && int(record.round, round, state.round)
       && int(record.turn, 0, 199) && id(record.actorId) && team(record.team)
-      && ['skill', 'attack', 'move'].includes(record.actionType)
-      && (record.actionType === 'skill' ? has(state.skills, record.skillId) : record.skillId === null), 'VM 磁带记录');
+      && isTapeAction(record.actionType)
+      && (record.actionType === 'skill' ? validVmSourceSkillId(record.skillId) : record.skillId === null), 'VM 磁带记录');
+    checkOptional(record, 'aimed', value => value === false);
+    checkOptional(record, 'interactiveId', value => id(value) && ['attack', 'interact'].includes(record.actionType));
+    if (own(record, 'parameters')) {
+      const { parameters } = record;
+      fields(parameters, [], ['itemId', 'maneuver', 'intent', 'nonLethal', 'bonusDice']);
+      checkOptional(parameters, 'itemId', value => record.actionType === 'switch_weapon' && id(value));
+      checkOptional(parameters, 'maneuver', value => typeof value === 'string');
+      checkOptional(parameters, 'intent', value => ['normal', 'function', 'core', 'kill', 'concept'].includes(value));
+      checkOptional(parameters, 'nonLethal', value => typeof value === 'boolean');
+      checkOptional(parameters, 'bonusDice', value => int(value, 0, 2));
+    }
     const { targetSpec } = record;
     fields(targetSpec, ['x', 'y', 'targetId', 'answers'], ['z']);
     requireThat(coord(targetSpec.x) && coord(targetSpec.y) && (targetSpec.targetId === null || id(targetSpec.targetId)), 'VM 磁带目标');
     checkOptional(targetSpec, 'z', z => int(z, -4, 20));
-    list(targetSpec.answers, 2000, answer => id(answer) || Number.isFinite(answer) || pointValue(answer), 'VM 磁带答案');
+    list(targetSpec.answers, 2000, answer => id(answer) || Number.isFinite(answer) || pointValue(answer)
+      || Array.isArray(answer) && answer.length > 0 && answer.length <= 200 && answer.every(id), 'VM 磁带答案');
     requireThat(pointValue(record.origin), 'VM 磁带起点');
     seq = record.seq;
     round = record.round;

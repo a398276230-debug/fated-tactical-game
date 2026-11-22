@@ -58,7 +58,8 @@ export function startVM(state, spec) {
 
 function childFrame(state, frame, patch) {
   return pushFrame(state, { kind: frame.kind, ownerId: frame.ownerId, sourceId: frame.sourceId, ruleId: frame.ruleId,
-    eventRef: frame.eventRef, carrier: frame.carrier ?? null, attribution: frame.attribution ?? null, scope: frame.scope ?? null, hook: frame.hook ?? null, localsRef: frame.localsRef ?? frame.frameId, ...patch });
+    eventRef: frame.eventRef, carrier: frame.carrier ?? null, attribution: frame.attribution ?? null, scope: frame.scope ?? null, hook: frame.hook ?? null, localsRef: frame.localsRef ?? frame.frameId,
+    ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }), ...patch });
 }
 
 function registers(state, frame) {
@@ -112,6 +113,7 @@ export function scheduleHooks(state, parent, hook, eventRef, host) {
   // Evaluate filters when the rule is reached so they can observe earlier event mutations.
   for (const entry of ordered.reverse()) pushFrame(state, { kind: 'hook', hook, eventRef, ownerId: entry.ownerId,
     sourceId: entry.sourceId ?? parent.sourceId, ruleId: entry.rule.id, carrier: entry.carrier ?? null,
+    ...(entry.sourceSkillId && { sourceSkillId: entry.sourceSkillId }),
     rule: entry.rule, useKey: entry.useKey ?? `${entry.ownerId}:${entry.rule.dedupeKey ?? entry.rule.id}`, program: entry.rule.program });
 }
 
@@ -121,7 +123,7 @@ function pruneEvents(vm) {
   }
 }
 
-function writeChoice(state, frame, ask, value, host) {
+function writeChoice(state, frame, ask, value, host, automatic = false) {
   const multi = ask.maxSelect !== undefined;
   const choiceRef = ask.kind === 'entity' ? own(frame.choiceRefs, value) : undefined;
   registers(state, frame)[ask.outVar] = multi ? value.map(id => own(frame.choiceRefs, id)) : choiceRef ?? value;
@@ -132,7 +134,16 @@ function writeChoice(state, frame, ask, value, host) {
   const labelFor = id => ask.options.find(option => option.id === id)?.label ?? id;
   const label = multi ? value.map(labelFor).join('、')
     : coordinate(value) ? `(${value.x}, ${value.y})` : Array.isArray(ask.options) ? labelFor(value) : value;
-  host.log(state, unit, 'choice', `${unit.name}选择了${label}`);
+  const event = own(state.vm.events, frame.eventRef);
+  const commit = event?.commitKind ? {
+    kind: event.commitKind, targetId: event.targetId, pool: event.pool,
+    ...(Number.isFinite(event.finalAmount) ? { amount: event.finalAmount } : {}),
+  } : null;
+  host.log(state, unit, 'choice', `${unit.name}${automatic ? '自动选择' : '选择'}「${ask.prompt}」：${label}`, {
+    choice: { kind: ask.kind, prompt: ask.prompt, value, label, automatic,
+      ...(ask.kind === 'number' ? { min: ask.options.min, max: ask.options.max } : {}),
+      ...(commit ? { commit } : {}) },
+  });
 }
 
 function automaticChoice(state, ask, host) {
@@ -169,7 +180,7 @@ function askInstruction(state, frame, op, context, host, options) {
     if (options.dryRun) options.conditional = true;
     const choice = automaticChoice(state, ask, host);
     const value = ask.maxSelect !== undefined ? [choice.id] : ask.kind === 'entity' || ask.kind === 'option' ? choice.id : choice;
-    writeChoice(state, frame, ask, value, host);
+    writeChoice(state, frame, ask, value, host, true);
   } else state.vm.pendingAsk = ask;
 }
 
