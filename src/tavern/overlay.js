@@ -260,12 +260,12 @@ export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\
 export const TAVERN_VERSION = '0.4.0';
 
 const DEFAULT_CONFIG = {
-  apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
+  apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 32000,
   battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
   charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {}, unresolvedNotes: {},
   ...Object.fromEntries(Object.entries(normalizationLimits).map(([key, { fallback }]) => [key, fallback])),
-  slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
+  slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 240000,
 };
 function configFor(storage, key) {
   try {
@@ -902,7 +902,7 @@ export function mountTavernOverlay(options = {}) {
       const timeout = new AbortController();
       const signal = AbortSignal.any([controller.signal, timeout.signal]);
       signal.throwIfAborted();
-      const timer = setTimeout(() => timeout.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), requestConfig.timeoutMs ?? 60000);
+      const timer = setTimeout(() => timeout.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), requestConfig.timeoutMs ?? 240000);
       try {
         const reply = await requestTavernAI(host, requestConfig, prompts, options.fetch, signal, (text, done, info) => {
           if (!disposed && !signal.aborted) progress(`第 ${index + 1} 批${info?.isHeartbeat ? `已等待 ${info.elapsedSec} 秒` : done ? '已收到响应，等待校验' : `已收到 ${text.length} 字符`}`);
@@ -1077,8 +1077,8 @@ export function mountTavernOverlay(options = {}) {
         syncSettings();
         const battleConfig = config.battleAiMode === 'custom'
           ? { ...config, apiMode: 'custom', baseUrl: config.battleAiBaseUrl, apiKey: config.battleAiApiKey, model: config.battleAiModel,
-              apiTransport: config.battleAiApiTransport, apiSource: config.battleAiApiSource, stream: false, max_tokens: 2400 }
-          : { ...config, stream: false, max_tokens: 2400 };
+              apiTransport: config.battleAiApiTransport, apiSource: config.battleAiApiSource, stream: false, max_tokens: 32000 }
+          : { ...config, stream: false, max_tokens: 32000 };
         return requestTavernAI(host, battleConfig, messages, options.fetch, signal);
       },
       onVictory() {
@@ -1489,7 +1489,7 @@ export function mountTavernOverlay(options = {}) {
       aiPage?.setBusy(true);
       const normalizeButton = pages.instances.querySelector('[data-normalize]');
       if (normalizeButton) normalizeButton.disabled = true;
-      const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), config.timeoutMs ?? 60000);
+      const timeout = setTimeout(() => controller.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), config.timeoutMs ?? 240000);
       const label = normalize ? '标准化' : 'AI 调整';
       const retryRequest = () => normalize ? runNormalize(Object.keys(records),{force:true, sessionId:sessionId??null}) : askAI(kind, requestText, sessionId);
       if (normalize) notify('正在标准化中…', '', null, true);

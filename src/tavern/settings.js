@@ -368,7 +368,7 @@ export function renderApiTab(page, ctx) {
   battle.append(battleHelp);
   const sampling = card('⚙ 采样参数');
   field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.8);
-  field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 2400);
+  field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 32000);
   for (const [key, label] of [['normalizationConcurrency', '标准化最大并发请求数'], ['normalizationWarningsPerBatch', '标准化每批警告数']]) {
     const { fallback, max } = normalizationLimits[key];
     field(sampling, key, label, input('number', { min: '1', max: String(max), step: '1', required: true }), fallback);
@@ -382,7 +382,7 @@ export function renderApiTab(page, ctx) {
   sampling.append(streamField);
   const timeoutField = make('div', 'field');
   const timeoutLabel = make('label', '', '请求超时（秒）');
-  const timeout = input('number', { name: 'timeoutMs', min: '5', max: '3600', step: '5', required: true, value: (settings.timeoutMs ?? 60000) / 1000 });
+  const timeout = input('number', { name: 'timeoutMs', min: '5', max: '3600', step: '5', required: true, value: (settings.timeoutMs ?? 240000) / 1000 });
   timeout.onchange = () => {
     if (Number.isFinite(timeout.valueAsNumber)) timeout.value = Math.min(3600, Math.max(5, timeout.valueAsNumber));
     if (timeout.reportValidity()) ctx.save({ timeoutMs: timeout.valueAsNumber * 1000 });

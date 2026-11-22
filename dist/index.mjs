@@ -14997,7 +14997,7 @@ function deltas(source, event) {
 async function requestViaCustomApi(settings, messages, options = {}) {
   const conn = connection(settings, true);
   const { root: root2, source, model, key: key4, headers } = conn;
-  const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 2400);
+  const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 32e3);
   const wireMessages = messages.map(({ role, content }) => ({ role, content }));
   let url, body;
   if (source === "openai") {
@@ -15416,7 +15416,7 @@ function renderApiTab(page, ctx) {
   battle.append(battleHelp);
   const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
   field(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.8);
-  field(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 2400);
+  field(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 32e3);
   for (const [key4, label] of [["normalizationConcurrency", "\u6807\u51C6\u5316\u6700\u5927\u5E76\u53D1\u8BF7\u6C42\u6570"], ["normalizationWarningsPerBatch", "\u6807\u51C6\u5316\u6BCF\u6279\u8B66\u544A\u6570"]]) {
     const { fallback, max } = normalizationLimits[key4];
     field(sampling, key4, label, input("number", { min: "1", max: String(max), step: "1", required: true }), fallback);
@@ -15430,7 +15430,7 @@ function renderApiTab(page, ctx) {
   sampling.append(streamField);
   const timeoutField = make("div", "field");
   const timeoutLabel = make("label", "", "\u8BF7\u6C42\u8D85\u65F6\uFF08\u79D2\uFF09");
-  const timeout = input("number", { name: "timeoutMs", min: "5", max: "3600", step: "5", required: true, value: (settings.timeoutMs ?? 6e4) / 1e3 });
+  const timeout = input("number", { name: "timeoutMs", min: "5", max: "3600", step: "5", required: true, value: (settings.timeoutMs ?? 24e4) / 1e3 });
   timeout.onchange = () => {
     if (Number.isFinite(timeout.valueAsNumber)) timeout.value = Math.min(3600, Math.max(5, timeout.valueAsNumber));
     if (timeout.reportValidity()) ctx.save({ timeoutMs: timeout.valueAsNumber * 1e3 });
@@ -16167,7 +16167,7 @@ var DEFAULT_CONFIG = {
   apiKey: "",
   model: "",
   temperature: 0.8,
-  max_tokens: 2400,
+  max_tokens: 32e3,
   battleAiEnabled: false,
   battleAiMode: "same",
   battleAiBaseUrl: "",
@@ -16193,7 +16193,7 @@ var DEFAULT_CONFIG = {
   debugPrompts: false,
   apiSource: "openai",
   stream: true,
-  timeoutMs: 6e4
+  timeoutMs: 24e4
 };
 function configFor(storage, key4) {
   try {
@@ -17041,7 +17041,7 @@ ${tag2.textContent || ""}
       const timeout = new AbortController();
       const signal = AbortSignal.any([controller2.signal, timeout.signal]);
       signal.throwIfAborted();
-      const timer = setTimeout(() => timeout.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), requestConfig.timeoutMs ?? 6e4);
+      const timer = setTimeout(() => timeout.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), requestConfig.timeoutMs ?? 24e4);
       try {
         const reply = await requestTavernAI(host, requestConfig, prompts, options.fetch, signal, (text5, done, info) => {
           if (!disposed && !signal.aborted) progress(`\u7B2C ${index + 1} \u6279${info?.isHeartbeat ? `\u5DF2\u7B49\u5F85 ${info.elapsedSec} \u79D2` : done ? "\u5DF2\u6536\u5230\u54CD\u5E94\uFF0C\u7B49\u5F85\u6821\u9A8C" : `\u5DF2\u6536\u5230 ${text5.length} \u5B57\u7B26`}`);
@@ -17245,8 +17245,8 @@ ${tag2.textContent || ""}
           apiTransport: config.battleAiApiTransport,
           apiSource: config.battleAiApiSource,
           stream: false,
-          max_tokens: 2400
-        } : { ...config, stream: false, max_tokens: 2400 };
+          max_tokens: 32e3
+        } : { ...config, stream: false, max_tokens: 32e3 };
         return requestTavernAI(host, battleConfig, messages, options.fetch, signal);
       },
       onVictory() {
@@ -17684,7 +17684,7 @@ ${tag2.textContent || ""}
     aiPage?.setBusy(true);
     const normalizeButton = pages.instances.querySelector("[data-normalize]");
     if (normalizeButton) normalizeButton.disabled = true;
-    const timeout = setTimeout(() => controller2.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), config.timeoutMs ?? 6e4);
+    const timeout = setTimeout(() => controller2.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), config.timeoutMs ?? 24e4);
     const label = normalize ? "\u6807\u51C6\u5316" : "AI \u8C03\u6574";
     const retryRequest = () => normalize ? runNormalize(Object.keys(records2), { force: true, sessionId: sessionId ?? null }) : askAI(kind, requestText, sessionId);
     if (normalize) notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", "", null, true);

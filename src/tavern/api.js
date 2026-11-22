@@ -200,7 +200,7 @@ function deltas(source, event) {
 export async function requestViaCustomApi(settings, messages, options = {}) {
   const conn = connection(settings, true);
   const { root, source, model, key, headers } = conn;
-  const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 2400);
+  const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 32000);
   // Strict native APIs reject UI-only provenance keys on individual messages.
   const wireMessages = messages.map(({ role, content }) => ({ role, content }));
   let url, body;
