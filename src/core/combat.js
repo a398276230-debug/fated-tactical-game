@@ -1307,7 +1307,7 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
   if (cost.ap === 2) { actor.used.attack++; actor.used.action++; }
   else if (cost.slot) actor.used[cost.slot]++;
   const area = template.shape !== 'single';
-  const context = { target: mainTarget, center, entries, actionType: 'skill', school: template.school,
+  const context = { target: mainTarget, attacker: actor, center, entries, actionType: 'skill', school: template.school,
     weaponId: template.entry?.instance?.id, damageType: template.damage?.type ?? template.damageType,
     melee: profiles[0]?.melee, nonLethal, power: castPower(state, actor, template),
     skillScale: castSkillScale(state, actor, template, mainTarget),
@@ -1325,7 +1325,7 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
     const effects = [dsl.previewEffects(state, actor, target, 'on_skill_cast', context, entries, i === 0 ? support : undefined),
       dsl.previewEffects(state, actor, target, 'active', context, shared, i === 0 ? support : undefined)];
     if (perTarget.length) effects.push(dsl.previewEffects(state, actor, target, 'active', { ...context, target }, perTarget, support));
-    const hitContext = { ...context, target, center: pos(target.x, target.y), melee: profile.melee,
+    const hitContext = { ...context, target, attacker: actor, center: pos(target.x, target.y), melee: profile.melee,
       backstab: profile.backstab, damageType: profile.damageType };
     const hit = dsl.previewEffects(state, actor, target, 'on_hit', hitContext, entries);
     const packets = effects.flatMap(result => result.packets).filter(packet => packet.raw > 0);
@@ -1570,7 +1570,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null, castU
   const mainTarget = state.units[plan.corpseId ?? plan.targets.find(t => t.kind !== 'cover')?.id];
   const multipliers = [];
   const skillScale = action.type === 'skill' ? castSkillScale(state, actor, template, mainTarget) : 1;
-  const effectContext = { target: mainTarget, center: plan.center, terrainTarget: template.target === 'cell' ? locateUnit(state, plan.center) ?? plan.center : null,
+  const effectContext = { target: mainTarget, attacker: actor, center: plan.center, terrainTarget: template.target === 'cell' ? locateUnit(state, plan.center) ?? plan.center : null,
     actionType: action.type, school: template.school, multipliers, skillScale, entries: skillEntries, castUses, weaponId: weapon?.instance?.id ?? template.entry?.instance?.id,
     resourceCost: template.resourceCost?.amount, opportunityAttack: Boolean(opportunityWeapon),
     melee: plan.targets[0]?.melee, arrow: Boolean(weapon?.ammo),
@@ -1600,7 +1600,7 @@ function applyStrike(state, actor, action, plan, opportunityWeapon = null, castU
     const { hit, critical, rating, intent, saved } = resolveCheck(state, actor, profile);
     if (!hit) continue;
     let recipient = target, dealt = 0;
-    const hitContext = { ...effectContext, target, center: pos(target.x, target.y), damageType: profile.damageType, hitRating: rating?.name, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical, saved };
+    const hitContext = { ...effectContext, target, attacker: actor, center: pos(target.x, target.y), damageType: profile.damageType, hitRating: rating?.name, melee: profile.melee, arrow: profile.arrow, backstab: profile.backstab, critical, saved };
     const factor = damageType => dsl.damageFactor(state, actor, { ...hitContext, damageType }, multipliers);
     if (profile.dice) {
       const dice = profile.protocolInitial != null

@@ -139,20 +139,30 @@ export function createEffectEngine(io) {
   }
   function operand(state, actor, target, ctx, value) {
     if (typeof value !== 'string') return value;
-    return evaluateFormula(value, path => {
-      const [scope,key] = path.split('.');
-        if (scope === 'event') return ctx[key] ?? 0;
-      if (scope === 'weapon') return state.equipment[state.items[ctx.weaponId ?? actor.mainHand]?.templateId]?.attack ?? 0;
-      const unit = scope === 'self' ? actor : target;
-      return unit?.stats?.[key] ?? unit?.[key];
+    return evaluateFormula(value, {
+      self: actor,
+      attacker: ctx.attacker,
+      target,
+      event: ctx,
+      weapon: () => state.equipment[state.items[ctx.weaponId ?? actor.mainHand]?.templateId],
+      resource: (unit, name) => resource(state, unit, name),
+      distance: () => target ? io.distance(state, actor, target) : 0,
+      round: state.round ?? 0,
+      turn: state.turn ?? 0
     });
+  }
+  function formulaOperand(state, actor, target, ctx, value, label) {
+    const result = operand(state, actor, target, ctx, value);
+    if (result === null && !ctx.preview) io.record(state, actor, 'formula_error', `${label ?? '效果'}公式无法求值`, { formula: value });
+    return result;
   }
   function operands(state, actor, target, ctx, node) {
     let resolved = node;
     for (const key of formulaFields[node.kind] ?? []) if (typeof node[key] === 'string') {
       if (resolved === node) resolved = {...node};
       const bounds = formulaBounds.get(`${node.kind}.${key}`);
-      const value = operand(state,actor,target,ctx,node[key]);
+      const value = formulaOperand(state,actor,target,ctx,node[key], node.label ?? node.kind);
+      if (value === null) return null;
       resolved[key] = bounds ? Math.max(bounds.minimum, Math.min(bounds.maximum, value)) : value;
     }
     return resolved;
@@ -163,7 +173,11 @@ export function createEffectEngine(io) {
     if (Array.isArray(rule)) return rule.every(check);
     const { type, value, op } = rule;
     switch (type) {
-      case 'compare': return compare(operand(state,actor,subject,ctx,rule.left),rule.op,operand(state,actor,subject,ctx,rule.right));
+      case 'compare': {
+        const left = operand(state,actor,subject,ctx,rule.left);
+        const right = operand(state,actor,subject,ctx,rule.right);
+        return left !== null && right !== null && compare(left, rule.op, right);
+      }
       case 'and': return rule.conditions.every(check);
       case 'or': return rule.conditions.some(check);
       case 'not': return !check(rule.conditions[0]);
@@ -265,6 +279,7 @@ export function createEffectEngine(io) {
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
         if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing || hasEventFormula(p, 'dealt') || hasEventFormula(p, 'previous') || hasEventFormula(p, 'healing')) { conditional = true; continue; }
         const resolved = operands(state,actor,target,ctx,p);
+        if (resolved === null) { conditional = true; continue; }
         packets.push(damagePacket(state, actor, target, resolved, ctx, nodeAmount(state, actor, target, resolved, ctx)));
       }
     }
@@ -299,7 +314,7 @@ export function createEffectEngine(io) {
         ? targets(state, actor, node.target, ctx, raw.radius ?? 1) : [inherited];
       for (const target of recipients) {
         const p = operands(state,actor,target,ctx,raw);
-        if (target?.fled) continue;
+        if (p === null || target?.fled) continue;
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
         const label = node.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
         const amount = nodeAmount(state, actor, target, p, ctx);
@@ -443,7 +458,8 @@ export function createEffectEngine(io) {
           seen.delete(ref.id);
           return resolved;
         }
-        return [operands(state,actor,ctx.target ?? actor,ctx,{ ...owner.params, ...node, instance: entry.instance })];
+        const resolved = operands(state,actor,ctx.target ?? actor,ctx,{ ...owner.params, ...node, instance: entry.instance });
+        return resolved === null ? [] : [resolved];
       });
       return collect(expr.effects);
     });

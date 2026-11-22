@@ -1,4 +1,5 @@
 import { effectSchema } from '../core/effect_schema.js';
+import { formulaReference } from '../core/formula.js';
 
 const { expression, condition, node, expireOn } = effectSchema.$defs;
 function describe(rule) {
@@ -37,7 +38,7 @@ ROLL：无 roll 时一定尝试。chance 直接用 0…1 比例，d20 比较 >= 
 
 TARGET：self 自身，hitTarget 当前命中或选中的单位，attacker 攻击者，killedUnit 被击倒单位，corpse 未被消耗的尸体。enemiesInRadius / alliesInRadius 使用 params.radius 或节点 radius（默认1格），施法范围内从覆盖格筛选。节点可覆写目标。技能范围支持 single/circle/ring/fan/cone/line，可用 radius、innerRadius、width、angle(1…360)。范围伤害默认按覆盖格筛选敌我双方（会吃友伤）；单体技能必须明确 target:enemy/ally/self/any；target:cell 只选地面格。尸体不会阻挡移动，raiseDead 会消耗尸体。
 
-DO / WITH：节点按数组顺序执行，每个节点均可加 label、target、condition 和 radius（0…15）。数值字段也支持安全的四则公式字符串，可用数字、括号、+ - * /，不支持函数调用、属性访问或随机数。可引用 self.str/agi/con/int/spi、target.str/agi/con/int/spi、weapon.attack、event.power、event.dealt、event.previous、event.healing；也接受「我方力量」「目标生命值」「攻击」「本次伤害」等中文别名。例：命中后攻击力按我方力量缩放，写 {"kind":"damage","flat":"攻击*(我方力量-5)/我方力量","damageType":"physical"}。公式只在该节点实际结算时读取当前上下文，除零结果为 0，并按字段原有上下限截断。condition 可用 {"type":"compare","left":"我方力量-5","op":">=","right":5}。
+DO / WITH：节点按数组顺序执行，每个节点均可加 label、target、condition 和 radius（0…15）。数值字段也支持安全的四则公式字符串，可用数字、括号、+ - * /，不支持函数调用、属性访问或随机数。变量来自受控的公式上下文注册表，而不是任意 state 路径。当前可用变量为 ${formulaReference}。self 是效果主体，attacker 是事件攻击者，target 是当前效果目标。资源和状态层数只能使用注册表提供的 self.resource.<resourceId>、target.resource.<resourceId>、self.stacks.<statusId> 形态。例：命中后按攻击者力量缩放，写 {"kind":"damage","flat":"weapon.attack*(attacker.str-5)/attacker.str","damageType":"physical"}。公式只在该节点实际结算时读取当前上下文，除零或无效运行时结果会跳过该节点并记录公式错误。condition 可用 {"type":"compare","left":"attacker.str-5","op":">=","right":5}。变量名大小写敏感。公式中不能使用中文变量名、任意 state 路径或函数调用。
 • ${node.oneOf.map(rule => `${rule.properties.kind.const}：${rule.description} ${fields(rule, ['kind','enabled','label','target','condition','radius'])}`).join('\n• ')}
 
 伤害类型：physical 使用全额护甲，energy 使用一半护甲，mental 和 true 无视护甲。true 跳过属性、比例与固定减伤，仍消耗护盾。流血、中毒及未注明类型的状态周期伤害按 true 结算。状态 modifiers.damageType 同时限定该状态的伤害相关修饰，通用修饰独立生效。

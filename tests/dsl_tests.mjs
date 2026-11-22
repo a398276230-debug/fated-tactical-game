@@ -7,6 +7,7 @@ import { buildScenario } from '../src/presets/scenarios.js';
 import { validateState } from '../src/api/validation.js';
 import { hydrateFromSources, mapEffects } from '../src/tavern/converter.js';
 import { parseBattleTime } from '../src/core/battle_time.js';
+import { validFormula, evaluateFormula } from '../src/core/formula.js';
 
 const expr = (id, trigger, target, effects, extra = {}) => ({ id, trigger, target, effects, ...extra });
 const strike = { type: 'attack', x: 3, y: 2 };
@@ -19,22 +20,28 @@ function setup(effects = []) {
   return { state, actor, enemy, weapon };
 }
 
-test('四则公式支持中文属性、括号和除法，并用于命中后伤害', () => {
+test('四则公式支持受控变量、括号和除法，并用于命中后伤害', () => {
   const {state, actor, enemy} = setup();
   actor.stats.str = 10;
   state.equipment.v10_weapon.effects.push(expr('formula-bonus','on_hit','hitTarget',[
-    {kind:'damage', flat:'(我方力量-5)/我方力量*20', damageType:'true'}
+    {kind:'damage', flat:'(attacker.str-5)/attacker.str*20', damageType:'true'}
   ]));
   const before = enemy.hp;
   applyAction(state, strike);
   assert.equal(before - enemy.hp, 36, '26 主击 + 10 附伤');
 });
 
+test('公式变量是闭集，中文名、任意路径和除零均被拒绝或跳过', () => {
+  assert.equal(validFormula('我方力量+1'), false);
+  assert.equal(validFormula('state.units.e1.hp'), false);
+  assert.equal(evaluateFormula('10/0', {}), null);
+});
+
 test('条件也支持运行时公式比较', () => {
   const {state, actor, enemy} = setup();
   actor.stats.str = 10;
   const effect = expr('conditional-formula','on_hit','hitTarget', [{kind:'damage',flat:7}], {
-    condition:{type:'compare',left:'我方力量-5',op:'>=',right:5}
+    condition:{type:'compare',left:'attacker.str-5',op:'>=',right:5}
   });
   state.equipment.v10_weapon.effects.push(effect);
   applyAction(state, strike);
