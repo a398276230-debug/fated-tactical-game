@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { applyAction, corpses, currentUnit, equippedActiveSkills, living, preview } from '../src/core/combat.js';
-import { chooseAction } from '../src/core/ai.js';
+import { aimedOptions, chooseAction } from '../src/core/ai.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { validateState } from '../src/api/validation.js';
 import { hydrateFromSources } from '../src/tavern/converter.js';
@@ -341,6 +341,25 @@ test('an area rule damages each enemy it selects once and spends one use', () =>
   actor.ap = 2;
   actor.used = { attack: 0, action: 0 };
   assert.equal(preview(state, cast).usesLeft, 0);
+});
+
+test('AI values a costly cell skill that damages an enemy outside its native target list', () => {
+  const fixture = battle();
+  const { state, actor, enemy } = fixture;
+  updatePoolCurrent(state, getPool(state, actor.id, 'mp').id, 'set', actor.maxMp);
+  actor.ap = 1;
+  actor.used.action = 1;
+  const cast = learn(fixture, 'cell-strike', [damage(enemy.maxHp, { from: 'units', where: `candidate.id == '${enemy.id}'` })],
+    { slot: 'attack', target: 'cell', range: 8, mp: Math.floor(actor.mp / 2) });
+  const before = structuredClone(state);
+  const plan = preview(state, cast);
+  assert.deepEqual(plan.targets, []);
+  const choices = aimedOptions(state, actor).filter(choice => choice.action.skillId === cast.skillId);
+  assert.ok(choices.length > 0 && choices.length <= 6);
+  assert.equal(chooseAction(state).skillId, cast.skillId);
+  assert.deepEqual(state, before);
+  applyAction(state, chooseAction(state));
+  assert.equal(enemy.hp, 0);
 });
 
 for (const source of ['learned', 'equipment', 'backpack']) test(`AI considers VM healing from ${source} without mutating state`, () => {

@@ -1204,10 +1204,31 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
       }
     }
   }
-  let support;
+  let support, ruleImpact;
   if (simulateRules && type === 'skill' && template.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false)) {
     const result = resolveVMAction(state, action, { dryRun: true, actor: unit });
     const logs = result.state.logs.slice(state.logs.length);
+    // Report actual recipients too: an active VM program may select units outside
+    // the native template footprint, including when the target is an empty cell.
+    ruleImpact = { conditional: Boolean(result.conditional), units: [], summons: 0 };
+    const strikeDamage = new Map();
+    for (const log of logs) {
+      const { targetId, amount, dice } = log.detail;
+      if (log.type === 'damage' && log.actor === unit.id && dice) {
+        strikeDamage.set(targetId, (strikeDamage.get(targetId) ?? 0) + amount);
+      }
+    }
+    for (const [id, before] of Object.entries(state.units)) {
+      const after = result.state.units[id];
+      if (!after) continue;
+      const control = Object.entries(after.statuses ?? {}).filter(([key, status]) =>
+        !before.statuses?.[key] && (status.category === 'control' || getStatusTemplate(state, key)?.category === 'control')).length;
+      const cleared = Object.entries(before.statuses ?? {}).filter(([key, status]) =>
+        !after.statuses?.[key] && ['control', 'debuff', 'dot'].includes(status.category ?? getStatusTemplate(state, key)?.category)).length;
+      const hp = after.hp - before.hp, shield = shieldTotal(after) - shieldTotal(before);
+      if (hp || shield || control || cleared) ruleImpact.units.push({ id, hp, strikeDamage: strikeDamage.get(id) ?? 0, shield, control, cleared });
+    }
+    ruleImpact.summons = Object.values(result.state.units).filter(other => !Object.hasOwn(state.units, other.id) && other.team === unit.team && alive(other)).length;
     const heals = new Map();
     for (const log of logs) {
       const { targetId, amount } = log.detail;
@@ -1231,7 +1252,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   const first = targets.find(t => sameCell(t, center)) ?? targets[0];
   return { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.damageMultiplier } : {}),
     bonusDice: action.bonusDice ?? 0, intent: resolvedIntent, nonLethal: action.nonLethal ?? unit.nonLethal ?? false,
-    dXYZ: geometry.distance, cells, targets, center, ...(support?.length ? { support } : {}), hostile };
+    dXYZ: geometry.distance, cells, targets, center, ...(support?.length ? { support } : {}), ...(ruleImpact ? { ruleImpact } : {}), hostile };
 }
 
 function maneuverContest(state, actor, target, maneuver) {

@@ -67,13 +67,59 @@ export function tactics(state, actor, action, plan) {
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
 }
 
+function protocolTactics(state, actor, plan) {
+  const impact = plan.ruleImpact;
+  const nativeRecipients = new Set();
+  let score = 0;
+  for (const profile of plan.targets ?? []) {
+    if (profile.kind === 'cover') {
+      const cover = state.covers[profile.id];
+      if (cover) score += Math.min(2, 2 * (profile.expectedDamage ?? 0) / cover.hp);
+      continue;
+    }
+    if (!profile.dice && impact) continue;
+    const target = state.units[profile.recipientId ?? profile.id];
+    if (!target) continue;
+    nativeRecipients.add(target.id);
+    const enemy = target.team !== actor.team;
+    const hit = profile.hitChance ?? 1;
+    const damage = Math.min(target.hp * hit, profile.expectedDamage ?? 0);
+    const defeat = (profile.damageMin ?? 0) >= target.hp ? hit : 0;
+    score += (enemy ? 1 : -1.5) * (20 * damage / target.maxHp + 6 * defeat);
+    if (!impact && profile.heal) {
+      const healing = Math.min(healthGap(target), (profile.heal[0] + profile.heal[1]) / 2);
+      score += (enemy ? -1 : 1) * 28 * healing / target.maxHp;
+    }
+  }
+  const confidence = impact?.conditional ? .8 : 1;
+  for (const effect of impact?.units ?? []) {
+    const target = state.units[effect.id];
+    const direction = target.team === actor.team ? 1 : -1;
+    const hp = effect.hp + (target === actor ? plan.hp ?? 0 : 0)
+      + (nativeRecipients.has(effect.id) ? effect.strikeDamage : 0);
+    const survived = target.hp + effect.hp > 0;
+    score += confidence * direction * ((hp > 0 ? 28 : 20) * hp / target.maxHp + 8 * effect.shield / target.maxHp
+      + (survived ? 3 * (effect.cleared - effect.control) : 0) - (target.hp > 0 && hp <= -target.hp ? 6 : 0));
+  }
+  if (impact?.summons) {
+    const defeated = new Set(impact.units.filter(effect => state.units[effect.id].hp + effect.hp <= 0).map(effect => effect.id));
+    const remainingEnemy = Object.values(state.units).some(unit => unit.team !== actor.team && unit.hp > 0 && !unit.fled && !defeated.has(unit.id));
+    if (remainingEnemy) score += confidence * Math.min(12, 4 * impact.summons);
+  }
+  const fraction = (cost, pool) => (cost ?? 0) / Math.max(1, pool ?? 0);
+  const cost = 12 * fraction(plan.hp, actor.hp) + 5 * (fraction(plan.mp, actor.mp) + fraction(plan.sp, actor.sp));
+  return score / (plan.ap === 2 ? 1.35 : 1) - cost;
+}
+
 export function aimedOptions(state, actor, attacksOnly = false) {
   const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled).sort(byId);
   const covers = Object.values(state.covers).filter(c => c.hp > 0).sort(byId);
   const choices = [];
-  function consider(action) {
-    const plan = preview(state, action);
-    if (plan.ok) choices.push({ action, score: tactics(state, actor, action, plan) });
+  const protocol = state.ruleset === 'protocol';
+  const vmAimBudget = attacksOnly ? 2 : 6;
+  const score = (action, plan) => protocol && plan.kind !== 'altar' ? protocolTactics(state, actor, plan) : tactics(state, actor, action, plan);
+  function consider(action, plan = preview(state, action)) {
+    if (plan.ok) choices.push({ action, score: score(action, plan) });
   }
   const enemies = units.filter(u => visibleEnemy(state, actor, u));
   for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y, ...(target.id ? { targetId: target.id } : {}) });
@@ -98,10 +144,20 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     } else {
       candidates = query.cells;
     }
-    for (const candidate of candidates) {
-      const { x, y } = candidate;
-      consider({ type: 'skill', skillId, x, y, ...(candidate.id ? { targetId: candidate.id } : {}) });
+    const actionAt = ({ x, y, id }) => ({ type: 'skill', skillId, x, y, ...(id ? { targetId: id } : {}) });
+    const runsVm = skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false);
+    if (protocol && runsVm && candidates.length > vmAimBudget) {
+      // Preview geometry and native strikes for every legal aim. Spend the VM
+      // budget on the strongest aims and cells closest to relevant units.
+      const objectives = skill.target === 'ally' || skill.slot === 'action' ? units : enemies;
+      candidates = candidates.map(candidate => {
+        const action = actionAt(candidate);
+        const plan = preview(state, action, { simulateRules: false });
+        const proximity = Math.min(Infinity, ...objectives.map(target => dist(candidate, target)));
+        return { candidate, rank: plan.ok ? score(action, plan) + (1 / (1 + proximity)) : -Infinity };
+      }).filter(entry => Number.isFinite(entry.rank)).sort((a, b) => b.rank - a.rank).slice(0, vmAimBudget).map(entry => entry.candidate);
     }
+    for (const candidate of candidates) consider(actionAt(candidate));
   }
   for (const { x, y, kind, spent } of Object.values(state.interactives).sort(byId)) {
     if (spent) continue;
@@ -142,7 +198,7 @@ function coverQuality(state, destination, enemies) {
   return Math.max(0, ...enemies.map(enemy => (coverBetween(state, enemy, destination)?.cover ?? 0) * .35));
 }
 
-/** Choose a legal command without RNG, mutations, hidden rolls or lookahead simulation of rolls. */
+/** Choose a legal command without consuming the live battle's RNG or mutating its state. */
 export function chooseAction(state) {
   if (state.outcome) return null;
   const actor = currentUnit(state);
@@ -200,6 +256,7 @@ export function chooseAction(state) {
   const baseline = Math.min(...objectives.map(u => dist(actor, u)));
   const ordinary = preview(state, { type: 'move' });
   const riskyDestinations = new Set((ordinary.cells ?? []).filter(c => c.opportunities?.length).map(c => `${c.x},${c.y}`));
+  const movements = [];
   for (const type of ['move', 'sprint', 'disengage']) {
     if (type === 'disengage' && !riskyDestinations.size) continue;
     const options = type === 'move' ? ordinary : preview(state, { type });
@@ -216,20 +273,24 @@ export function chooseAction(state) {
       if (type === 'sprint') score = score * .82 - 1.2;
       score -= (cell.opportunities?.length ?? 0) * 3.5;
       if (type === 'disengage') score -= .2;
-      const available = actor.ap - options.ap;
-      if (available > 0) {
-        const moved = { ...actor, x: cell.x, y: cell.y, ap: available,
-          facing: facingToward(cell.path.at(-2) ?? actor, cell),
-          used: { ...actor.used, action: actor.used.action + 1 } };
-        const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
-        const followup = Math.max(0, ...aimedOptions(shadow, moved, true).map(choice => choice.score));
-        if (followup > 0) score += followup * .84;
-        // Reload and wait instead of charging blindly with an empty weapon.
-        if (followup === 0 && canReload.ok && canReload.ammo === 0) score -= 3;
-      }
-      // No movement should beat already having a good shot unless the new position pays off.
-      consider({ action: { type, x: cell.x, y: cell.y }, score });
+      movements.push({ type, cell, score, available: actor.ap - options.ap });
     }
+  }
+  const evaluatedMoves = state.ruleset === 'protocol'
+    ? movements.sort((a, b) => b.score - a.score).slice(0, 3) : movements;
+  for (const { type, cell, available, score: movementScore } of evaluatedMoves) {
+    let score = movementScore;
+    if (available > 0 && !actor.used.attack) {
+      const moved = { ...actor, x: cell.x, y: cell.y, ap: available,
+        facing: facingToward(cell.path.at(-2) ?? actor, cell),
+        used: { ...actor.used, action: actor.used.action + 1 } };
+      const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
+      const followup = Math.max(0, ...aimedOptions(shadow, moved, true).map(choice => choice.score));
+      if (followup > 0) score += followup * .84;
+      // Reload and wait instead of charging blindly with an empty weapon.
+      if (followup === 0 && canReload.ok && canReload.ammo === 0) score -= 3;
+    }
+    consider({ action: { type, x: cell.x, y: cell.y }, score });
   }
   const bracing = preview(state, { type: 'brace' });
   if (bracing.ok && !statusModifier(actor, 'reduction') && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
