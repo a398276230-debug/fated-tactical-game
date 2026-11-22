@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { resolveVMAction } from '../src/core/vm-runtime.js';
+import { commitVMEffect, resolveVMAction } from '../src/core/vm-runtime.js';
+import { test } from 'node:test';
 import { validVmRule } from '../src/core/vm-schema.js';
 import { createGameAPI } from '../src/api/game_api.js';
 
@@ -8,6 +9,55 @@ const skill = (name, program, shape = 'single') => ({ name, ap: 1, slot: 'attack
   target: 'any', rules: [{ id: 'active', hook: 'active', program }] });
 const resource = (pool, amount) => ({ op: 'resource', target: 'self', pool, mode: 'set', amount });
 const damage = (target, amount) => ({ op: 'damage', target, amount, damageType: 'true' });
+
+test('held three-pool last chance intercepts exactly once; only real death triggers killer passive', () => {
+  const { state, first, second } = fixture();
+  Object.assign(first, { mp: 0, sp: 0 });
+  second.mp = 0;
+  first.skills = ['ice_coffin'];
+  second.skills = ['reward'];
+  state.skills.ice_coffin = { ...skill('冰棺', []), passive: true, rules: [{ id: 'survive', hook: 'on_lethal_p2', usesPerBattle: 1,
+    filter: 'self.hp == 0 && self.mp == 0 && self.sp == 0', program: [{ op: 'mutate_event', patch: { preventDeath: true } }] }] };
+  state.skills.reward = { ...skill('击杀奖励', []), passive: true, rules: [{ id: 'reward_kill', hook: 'on_kill',
+    program: [{ op: 'resource', target: 'self', pool: 'mp', mode: 'add', amount: 1 }] }] };
+  const strike = () => commitVMEffect(state, { op: 'damage', amount: 500000, damageType: 'true', sourceId: second.id, targetId: first.id });
+  strike(); assert.equal(first.hp, 1); assert.equal(second.mp, 0);
+  strike(); assert.equal(first.hp, 0); assert.equal(second.mp, 1);
+});
+test('VM save exposes both original and effective DC to the after_check hook', () => {
+  const { state, first, second } = fixture();
+  first.skills = ['test_save'];
+  first.mp = 0;
+  first.mods = [{stat:'dcBonus',flat:5}];
+  first.rules = [{id:'observe',hook:'after_check',filter:'event.baseDC == 30 && event.finalDC == 35',program:[resource('mp',1)]}];
+  state.skills.test_save = skill('检定', [{op:'check',kind:'save',target:'target',stat:'con',dc:30}]);
+  resolveVMAction(state,{type:'skill',skillId:'test_save',x:second.x,y:second.y});
+  assert.equal(first.mp,1);
+});
+test('turn_end choice holds the current turn through snapshot replay and advances exactly once', () => {
+  const { state, first, second } = fixture();
+  first.mp = 0;
+  first.rules = [{ id: 'closing_choice', hook: 'turn_end', program: [
+    { op: 'ask', chooser: 'self', kind: 'number', prompt: '回合末恢复量', min: 0, max: 5, out: 'amount', aiPolicy: 'max' },
+    resource('mp', 'vars.amount'),
+  ] }];
+  const game = createGameAPI();
+  game.createBattle({ kind: 'custom_state', state });
+  game.playAction({ type: 'end' });
+  const pending = game.getBattleState();
+  assert.equal(pending.order[pending.turn], first.id);
+  assert.ok(pending.vm.pendingAsk);
+  const restored = createGameAPI();
+  restored.restoreBattleSnapshot(JSON.parse(JSON.stringify(game.exportBattleSnapshot())));
+  const answer = { type: 'answer', askId: pending.vm.pendingAsk.askId, value: 3 };
+  game.playAction(answer);
+  restored.playAction(answer);
+  const result = game.getBattleState();
+  assert.equal(result.order[result.turn], second.id);
+  assert.equal(result.units[first.id].mp, 3);
+  assert.equal(result.logs.filter(log => log.type === 'end' && log.actor === first.id).length, 1);
+  assert.deepEqual(restored.getBattleState(), result);
+});
 function fixture() {
   const state = buildScenario('ruins');
   const first = Object.values(state.units).find(unit => unit.team === 'blue');

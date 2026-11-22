@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   createPool, getPool, initializeUnitPools, linkPools, refreshPoolMax,
-  swapPoolCurrents, unlinkPools, updatePoolCurrent,
+  swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax,
 } from '../src/core/vm-pools.js';
 
 const resources = ['hp', 'mp', 'sp'];
@@ -29,15 +29,15 @@ test('creates JSON pools and binds built-in and item-local resources', () => {
   const state = setup();
   assert.deepEqual(state.units.a.pools, { hp: 'pool_a_hp', mp: 'pool_a_mp', sp: 'pool_a_sp' });
   assert.deepEqual(getPool(state, 'a', 'hp'), {
-    id: 'pool_a_hp', kind: 'hp', contributors: [{ ownerKind: 'unit', ownerId: 'a', maxBase: 100 }],
-    current: 30, max: 100, reloadable: false,
+    id: 'pool_a_hp', kind: 'hp', contributors: [{ ownerKind: 'unit', ownerId: 'a', maxBase: 100, initialMaxBase: 100 }],
+    current: 30, max: 100, initialMax: 100, reloadable: false,
   });
   const ammoId = createPool(state, { ownerKind: 'item', ownerId: 'ammoBox', key: 'ammo', max: 12,
     current: 20, reloadable: true });
   assert.equal(getPool(state, 'ammoBox', 'ammo', 'item').id, ammoId);
   assert.deepEqual(state.pools[ammoId], {
-    id: ammoId, kind: 'custom', contributors: [{ ownerKind: 'item', ownerId: 'ammoBox', maxBase: 12 }],
-    current: 12, max: 12, reloadable: true,
+    id: ammoId, kind: 'custom', contributors: [{ ownerKind: 'item', ownerId: 'ammoBox', maxBase: 12, initialMaxBase: 12 }],
+    current: 12, max: 12, initialMax: 12, reloadable: true,
   });
   assert.deepEqual(JSON.parse(JSON.stringify(state)), state);
 });
@@ -132,6 +132,26 @@ test('refresh uses effective maxima and does not change contributor bases', () =
   unlinkPools(state, ['a'], ['hp'], { effectiveMax });
   assertMirrors(state, 'a', 'hp', 50, 50);
   assertMirrors(state, 'b', 'hp', 0, 0);
+});
+
+test('max updates clamp current, preserve initialMax, and repartition shared maxBase', () => {
+  const state = setup();
+  linkPools(state, ['a', 'b'], ['hp']);
+  const pool = getPool(state, 'a', 'hp');
+  updatePoolCurrent(state, pool.id, 'set', 250);
+  const result = updatePoolMax(state, pool.id, 'add_max', 200);
+  assert.equal(result.afterMax, 600);
+  assert.equal(state.pools[pool.id].initialMax, 400);
+  assert.equal(state.units.a.initialMaxHp, 100);
+  assert.equal(state.units.b.initialMaxHp, 300);
+  assert.equal(state.pools[pool.id].contributors.reduce((sum, c) => sum + c.maxBase, 0), 600);
+  assert.equal(state.units.a.maxHp, 600);
+  assert.equal(state.units.b.maxHp, 600);
+  updatePoolMax(state, pool.id, 'sub_max', 500, { minRemain: 180 });
+  assert.equal(state.pools[pool.id].max, 180);
+  assert.equal(state.pools[pool.id].current, 180);
+  assert.equal(state.units.a.hp, 180);
+  assert.equal(state.units.b.hp, 180);
 });
 
 test('failed initialization, multi-kind topology changes, updates and swaps publish nothing', () => {

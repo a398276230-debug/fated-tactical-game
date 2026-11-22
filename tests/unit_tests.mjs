@@ -42,6 +42,7 @@ import './vm_carriers_tests.mjs';
 import './vm_spatial_tests.mjs';
 import './vm_corpus_tests.mjs';
 import './skill_carrier_tests.mjs';
+import './log_attribution_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };

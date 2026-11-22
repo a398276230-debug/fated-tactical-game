@@ -8,6 +8,8 @@ import { hydrateFromSources } from '../src/tavern/converter.js';
 import { parseBattleTime } from '../src/core/battle_time.js';
 import { validExpr, evaluateExpr } from '../src/core/formula.js';
 import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
+import { isStatusImmune } from '../src/core/vm-immunity.js';
+import { carrierScope, collectRules } from '../src/core/vm-carriers.js';
 
 function battle() {
   const state = buildScenario('ruins');
@@ -23,6 +25,58 @@ function learn({ state, actor, enemy }, id, program, fields = {}, rule = {}) {
   return { type: 'skill', skillId: id, x: point.x, y: point.y };
 }
 const damage = (amount, target = 'target') => ({ op: 'damage', target, amount, damageType: 'true' });
+
+test('status immunity queries drive deterministic 1.3x modifiers on native and VM damage', () => {
+  const makeFixture = () => {
+    const fixture = battle();
+    const { state, actor, enemy } = fixture;
+    const statusId = 'freeze-test';
+    state.statusTemplates = { [statusId]: { id: statusId, name: '测试冻结', category: 'control', remainingTurns: 1 } };
+    enemy.skills = ['immune-skill'];
+    state.skills['immune-skill'] = { name: '免疫测试', passive: true, rules: [{ id: 'immune-freeze', hook: 'before_status',
+      filter: "event.statusId == 'freeze-test' && event.targetId == self.id",
+      program: [{ op: 'mutate_event', patch: { cancel: true } }] }] };
+    actor.mods = [{ stat: 'finalDamageMult', mult: "is_immune(target, 'freeze-test') ? 1.3 : 1" }];
+    const weapon = state.equipment[state.items[actor.mainHand ?? actor.weapon].templateId];
+    Object.assign(weapon, { range: 3, damage: { count: 0, sides: 0, bonus: 10, type: 'true' } });
+    return { state, actor, enemy, statusId };
+  };
+
+  const native = makeFixture();
+  const nativeBefore = native.enemy.hp;
+  native.actor.ap = 2; native.actor.used = { attack: 0, action: 0 };
+  applyAction(native.state, { type: 'attack', x: native.enemy.x, y: native.enemy.y });
+  const immuneNativeDamage = nativeBefore - native.enemy.hp;
+  const normalNative = makeFixture();
+  normalNative.enemy.skills = [];
+  const normalBefore = normalNative.enemy.hp;
+  normalNative.actor.ap = 2; normalNative.actor.used = { attack: 0, action: 0 };
+  applyAction(normalNative.state, { type: 'attack', x: normalNative.enemy.x, y: normalNative.enemy.y });
+  assert.equal(immuneNativeDamage, Math.round((normalBefore - normalNative.enemy.hp) * 1.3), 'native damage sees target immunity through carrierScope');
+  assert.equal(isStatusImmune(native.state, native.enemy, native.statusId, native.actor, { collectRules, carrierScope }), true);
+  const nativeSnapshot = structuredClone(native.state);
+  assert.equal(isStatusImmune(native.state, native.enemy, native.statusId, native.actor, { collectRules, carrierScope }), true);
+  assert.deepEqual(native.state, nativeSnapshot, 'immunity query is read-only');
+
+  const vm = makeFixture();
+  vm.enemy.skills = [];
+  vm.state.skills.vm_hit = { name: 'VM伤害', range: 3, ap: 1, slot: 'action', shape: 'single', target: 'enemy',
+    rules: [{ id: 'vm-hit', hook: 'active', program: [{ op: 'damage', target: 'target', amount: 10, damageType: 'true' }] }] };
+  vm.actor.skills.push('vm_hit');
+  const ordinaryBefore = vm.enemy.hp;
+  vm.actor.ap = 2; vm.actor.used = { attack: 0, action: 0 };
+  applyAction(vm.state, { type: 'skill', skillId: 'vm_hit', x: vm.enemy.x, y: vm.enemy.y });
+  assert.equal(ordinaryBefore - vm.enemy.hp, 10, 'ordinary target keeps the base VM damage');
+  assert.equal(isStatusImmune(vm.state, vm.enemy, vm.statusId, vm.actor, { collectRules, carrierScope }), false);
+
+  const vmImmune = makeFixture();
+  vmImmune.state.skills.vm_hit = vm.state.skills.vm_hit;
+  vmImmune.actor.skills.push('vm_hit');
+  const vmImmuneBefore = vmImmune.enemy.hp;
+  vmImmune.actor.ap = 2; vmImmune.actor.used = { attack: 0, action: 0 };
+  applyAction(vmImmune.state, { type: 'skill', skillId: 'vm_hit', x: vmImmune.enemy.x, y: vmImmune.enemy.y });
+  assert.equal(vmImmuneBefore - vmImmune.enemy.hp, 13, 'immune target receives the 1.3x VM damage');
+});
 
 test('VM expressions use caster stats, arithmetic and runtime comparisons', () => {
   const fixture = battle();
@@ -180,6 +234,20 @@ test('VM modifiers reject percentage-point and multiplier field mistakes', () =>
     enemy.mods = [mod];
     assert.throws(() => validateState(state), error);
   }
+});
+
+test('defender dodge modifier reduces the weapon attack accuracy used in settlement', () => {
+  const { state, actor, enemy } = battle();
+  const weapon = state.equipment[state.items[actor.mainHand ?? actor.weapon].templateId];
+  weapon.range = 3;
+  const attack = { type: 'attack', x: enemy.x, y: enemy.y };
+  const original = preview(state, attack).targets[0].accuracy;
+  enemy.mods = [{ stat: 'dodge', flat: 10 }];
+  validateState(state);
+  const profile = preview(state, attack).targets[0];
+  assert.equal(profile.accuracy, original - 10);
+  applyAction(state, attack);
+  assert.ok(state.logs.some(log => log.detail?.accuracy === profile.accuracy));
 });
 
 test('native weapon and VM damage share flat and separate percentage mitigation', () => {

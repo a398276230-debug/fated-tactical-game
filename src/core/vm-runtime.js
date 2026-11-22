@@ -1,6 +1,7 @@
 import { actionSkill, continueStrike, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
-import { aggregateModifiers, applyStatMod, collectRules } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, collectRules, carrierScope } from './vm-carriers.js';
+import { isStatusImmune } from './vm-immunity.js';
 import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
 import { continueApplyStatus, continueCheck, continueRemoveStatus, ruleOps } from './vm-rules.js';
 import { continueAction, perform, queueVMAction } from './vm-action.js';
@@ -9,15 +10,19 @@ import { spatialOps, spatialContinuations, refreshFollowingZones, expireSpatialE
 import { elevation } from './spatial.js';
 import { evaluateExpr } from './formula.js';
 import { ruleAvailability } from './vm-rule-limits.js';
+import { vmAttribution, normalizeProse } from './log-attribution.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
 const lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
 const mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
 
+
 export function recordVM(state, unit, type, text, detail = {}) {
   const positions = Object.fromEntries(Object.values(state.units).map(unit => [unit.id, { x: unit.x, y: unit.y, z: elevation(state, unit) }]));
-  state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text, detail, positions });
+  const cause = vmAttribution(state);
+  const loggedDetail = cause ? { ...detail, attribution: cause } : detail;
+  state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text: normalizeProse(text), detail: loggedDetail, positions });
 }
 
 const handlers = {
@@ -121,12 +126,24 @@ export const vmHost = {
     if (!handler) throw new Error(`未知结算阶段 ${env.frame.native}`);
     handler(env);
   },
-  resource: (state, unit, key) => unit && getPool(state, unit.id, key)?.current,
+  resource: (state, unit, key) => {
+    if (!unit) return undefined;
+    if (key === 'move') return Math.max(0, unit.move - (unit.moved ?? 0));
+    if (key === 'attack' || key === 'action') return Math.max(0, 1 - (unit.used?.[key] ?? 0));
+    return getPool(state, unit.id, key)?.current;
+  },
   statusTemplate: getStatusTemplate,
   statusLogDetail,
   flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
   stat: (state, unit, key) => mod(state, {}, unit.id, key, unit.stats?.[key] ?? 0),
-  checkBonus: (state, unit, event) => mod(state, event, unit.id, 'checkBonus', 0) + (event.checkKind === 'save' ? mod(state, event, unit.id, 'resistBonus', 0) : 0),
+  checkBonus: (state, unit, event) => mod(state, event, unit.id, 'checkBonus', 0)
+    + (event.checkKind === 'save' ? mod(state, event, unit.id, 'resistBonus', 0) : 0),
+  dcBonus: (state, unit, event) => mod(state, event, unit.id, 'dcBonus', 0),
+  isImmune: (state, unit, key, frame) => {
+    const event = frame?.eventRef ? state.vm?.events?.[frame.eventRef] : undefined;
+    const source = own(state.units, event?.actorId ?? event?.sourceId ?? frame?.sourceId);
+    return isStatusImmune(state, unit, key, source, { collectRules, carrierScope });
+  },
   prepareDamage(state, source, target, data) {
     const { damageType } = data;
     const event = { damageType, actorId: source?.id ?? null, targetId: target.id, weaponTemplateId: data.weaponTemplateId ?? null,
@@ -237,6 +254,8 @@ export function validVmState(state) {
   if (!plain(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain(vm.events)
       || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining)
       || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain(pools)) return false;
+  if (vm.endingTurn !== undefined && (!vm.pendingAsk || typeof vm.endingTurn !== 'string'
+      || vm.endingTurn !== state.order?.[state.turn] || !own(state.units, vm.endingTurn))) return false;
   for (const unit of Object.values(state.units ?? {})) {
     for (const [key, maximum] of [['hp', 'maxHp'], ['mp', 'maxMp'], ['sp', 'maxSp']]) {
       const pool = own(pools, own(unit.pools, key));

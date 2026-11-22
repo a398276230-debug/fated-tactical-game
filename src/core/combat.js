@@ -136,6 +136,7 @@ export function grantStatus(state, unit, statusId, options = {}) {
       ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
     tickTiming: options.tickTiming ?? template.tickTiming,
     modifiers: { ...template.modifiers, ...(options.modifiers ?? {}) },
+    flags: [...new Set([...(template.flags ?? []), ...(options.flags ?? [])])],
     sourceUnitId: options.sourceUnitId ?? previous?.sourceUnitId ?? null,
     appliedRound: state.round, appliedTurn: state.turn };
   if (Object.hasOwn(options, 'expireOn')) {
@@ -361,6 +362,14 @@ function endTurn(state, unit) {
   expireStatuses(state, unit, 'on_turn_end', { sourceUnitId: unit.id });
   tick(state, unit, 'onTurnEnd');
   dispatchEffect(state, unit, 'on_turn_end');
+  if (state.vm?.pendingAsk) {
+    state.vm.endingTurn = unit.id;
+    return;
+  }
+  completeTurnEnd(state, unit);
+}
+
+function completeTurnEnd(state, unit) {
   for (const status of values(unit.statuses)) {
     if (status.durationType !== 'battle_turns') continue;
     if (status.appliedRound === state.round && status.appliedTurn === state.turn
@@ -380,6 +389,7 @@ export function settleTurn(state) {
     if (state.outcome) return;
     if (alive(unit) && !unit.fled) {
       unit.used = { attack: 0, action: 0 };
+      unit.moved = 0;
       unit.reactionAvailable = true;
       unit.ap = 2;
       record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
@@ -398,7 +408,7 @@ export function settleTurn(state) {
       if (alive(unit) && !changes(unit, 'skip')) return;
       if (alive(unit)) record(state, unit, 'skip', `${unit.name}因控制跳过行动`);
       endTurn(state, unit);
-      if (refreshOutcome(state)) return;
+      if (state.vm?.pendingAsk || refreshOutcome(state)) return;
     }
     advanceCursor(state);
   }
@@ -455,6 +465,7 @@ export function beginBattle(state) {
   for (const unit of values(state.units)) {
     unit.ap = 0;
     unit.used = { attack: 0, action: 0 };
+    unit.moved = 0;
     unit.reactionAvailable = true;
     for (const status of values(unit.statuses)) {
       delete status.appliedRound;
@@ -526,7 +537,8 @@ function modStat(state, unit, name, base, context = {}) {
 function modCheck(state, unit, key, context = {}) {
   const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
   if (key === 'highGroundRange' || key === 'highGroundAccuracy') return template?.[key] ?? 0;
-  return key === 'advantage' ? modStat(state, unit, 'advantage', 0, { checkKind: 'attack', ...context }) : 0;
+  if (key === 'advantage') return modStat(state, unit, 'advantage', 0, { checkKind: 'attack', ...context });
+  return 0;
 }
 
 const activeRule = rule => rule.hook === 'active' && rule.enabled !== false;
@@ -551,7 +563,9 @@ export function equippedActiveSkills(state, unit) {
     }
     for (const rule of itemRules(template, instance).filter(activeRule)) {
       result.set(`equip:${id}:${rule.id}`, { name: rule.label || `${template.name}·${rule.id}`, ap: 0,
-        slot: 'action', range: 0, shape: 'single', target: 'self', rules: [rule], itemId: id });
+        slot: 'action', range: 0, shape: 'single', target: 'self', rules: [rule], itemId: id,
+        ...Object.fromEntries(['usesPerBattle', 'usesPerTurn', 'cooldownTurns']
+          .filter(key => rule[key] !== undefined).map(key => [key, rule[key]])) });
     }
   }
   return [...result];
@@ -564,7 +578,8 @@ export const syncEquipmentEffects = initializeVMWorld;
 
 export function reachable(state, type = 'move', unit = currentUnit(state), distanceLimit = undefined) {
   if (!alive(unit) || changes(unit, 'rooted') || changes(unit, 'skip') || aggregateModifiers(state, unit.id).locks.move) return [];
-  const limit = distanceLimit ?? Math.max(1, unit.move + changes(unit, 'movement')) * (type === 'sprint' ? 2 : 1);
+  const remainingMove = Math.max(0, unit.move - (unit.moved ?? 0) + changes(unit, 'movement'));
+  const limit = distanceLimit ?? remainingMove * (type === 'sprint' ? 2 : 1);
   const routes = movementOptions(state, unit, limit);
   const sources = type === 'disengage' ? [] : opportunitySources(state, unit).filter(source => canReact(state, source, unit));
   const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
@@ -781,7 +796,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const tierUp = false;
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
   const dodge = execution || cover ? 0 : modStat(state, target, 'dodge', modCheck(state, target, 'dodgeBonus', { target: actor })
-    + modCheck(state, target, 'dodgeAgility', { target: actor }) + changes(target, 'dodgeBonus'), { target: actor });
+    + modCheck(state, target, 'dodgeAgility', { target: actor }) + changes(target, 'dodgeBonus'),
+    { ...strike, attacker: actor, checkKind: 'dodge' });
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, 'highGroundAccuracy', strike) : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;
   const protectedBy = target && !cover && !geometry.melee ? coverBetween(state, origin, target) : null;
@@ -812,8 +828,10 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const disadvantages = changes(actor, 'disadvantage') + (template.disadvantage ?? 0);
   const advantage = Math.sign(advantages - disadvantages);
   const saveStat = !cover && target ? template.save : null;
-  const saveDC = saveStat ? (resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, 'int') / 2))) : null;
-  const saveBonus = saveStat ? effectiveStat(state, target, saveStat) : 0;
+  const saveDC = saveStat ? (resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, 'int') / 2))
+    + modStat(state, actor, 'dcBonus', 0, { target, checkKind: 'save' })) : null;
+  const saveBonus = saveStat ? effectiveStat(state, target, saveStat)
+    + modStat(state, target, 'resistBonus', 0, { target: actor, checkKind: 'save' }) : 0;
   const saveChance = saveStat ? saveOdds(saveDC, saveBonus) : 0;
   const automatic = !weapon && (!template.damage || saveStat || template.autoHit);
   const hitChance = automatic || guaranteeHit ? 1 : tierUp || dodge || modCheck(state, actor, 'accuracyBonus', strike)
@@ -1407,6 +1425,8 @@ function applyMovement(state, actor, type, plan) {
     path.push(to);
   }
   const to = pointAt(state, actor), interrupted = path.length !== plan.path.length;
+  // Native movement consumes the action slot; `moved` is reserved for the
+  // VM pseudo-pool so explicit movement confiscation/refunds remain distinct.
   record(state, actor, type, `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${to.x}, ${to.y}, z=${to.z})`,
     { from, to, path, steps: path.length, interrupted });
 }
@@ -1453,11 +1473,17 @@ export function applyAction(state, action) {
       state.vm.pendingAsk = null;
       state.vm.stack.length = 0;
       state.vm.events = {};
+      delete state.vm.endingTurn;
     } else {
       const before = state.logs.length;
       const actor = currentUnit(state);
       const result = resolveVMAction(state, action);
-      if (!result.pendingAsk) finishAction(state, actor, action.type);
+      if (!result.pendingAsk && state.vm.endingTurn) {
+        const endingUnit = state.units[state.vm.endingTurn];
+        delete state.vm.endingTurn;
+        completeTurnEnd(state, endingUnit);
+        if (!refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
+      } else if (!result.pendingAsk) finishAction(state, actor, action.type);
       return state.logs.slice(before);
     }
   }
@@ -1617,6 +1643,6 @@ function finishAction(state, actor, type) {
   if (refreshOutcome(state)) { if (actor) actor.ap = 0; return; }
   if (type === 'end' || !alive(actor) || !actor.ap) {
     if (!actor.fled) endTurn(state, actor);
-    if (!refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
+    if (!state.vm?.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
   }
 }

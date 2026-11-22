@@ -26,9 +26,14 @@ const expiryEvents = {
 };
 const checkGrade = (success, roll) => success ? (roll === 20 ? '大成功' : '成功') : (roll === 1 ? '大失败' : '失败');
 const maneuvers = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
-const signed = value => `${value > 0 ? '+' : ''}${value}`;
+import { proseNumber, attributionLine } from '../core/log-attribution.js';
+const signed = value => `${value > 0 ? '+' : ''}${proseNumber(value)}`;
 const percent = value => Number((value * 100).toFixed(4));
 const notes = parts => parts.length ? `（${parts.join('，')}）` : '';
+const attributionText = detail => {
+  const cause = attributionLine(detail);
+  return cause ? `（${cause}）` : '';
+};
 
 function statusNotes(detail) {
   const parts = [];
@@ -85,7 +90,7 @@ export function formatBattleReportText(report, unitNames = {}) {
     if (!unitPattern) return text;
     const target = event.detail?.targetId;
     const contextIds = targetNarration.has(event.type) ? [target, event.actor] : [event.actor, target];
-    return text.replace(unitPattern, label => {
+    return cleanProse(text).replace(unitPattern, label => {
       const ids = idsByName.get(label);
       const id = contextIds.find(candidate => ids.includes(candidate)) ?? (ids.length === 1 ? ids[0] : undefined);
       return id === undefined ? label : name(event, id);
@@ -94,7 +99,9 @@ export function formatBattleReportText(report, unitNames = {}) {
   const checkTarget = (event, detail) => detail.targetKind === 'cover'
     ? detail.targetName ?? detail.targetId : name(event, detail.targetId);
   const change = (resource, before, after) => Number.isFinite(before) && Number.isFinite(after)
-    ? `（${resource} ${before} → ${after}）` : '';
+    ? `（${resource} ${proseNumber(before)} → ${proseNumber(after)}）` : '';
+  const cleanProse = text => typeof text === 'string'
+    ? text.replace(/-?\d+\.\d{3,}/g, value => proseNumber(Number(value))) : text;
   for (const { round, events } of report.rounds) {
     const rows = [];
     let turn = null;
@@ -157,7 +164,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           const result = checks ? [checkGrade(detail.saved), detail.mode === 'all' ? '须全部通过' : '任一通过即可', ...checks]
             : [checkGrade(detail.saved, detail.saveRoll)];
           const source = detail.sourceName ? `对${detail.sourceName}的` : '';
-          add(`${target}${detail.saved ? '通过' : '未通过'}${source}${stat}豁免${notes(result)}`);
+          add(`${target}${detail.saved ? '通过' : '未通过'}${source}${stat}豁免${notes(result)}${attributionText(detail)}`);
           break;
         }
         case 'intent':
@@ -170,7 +177,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           break;
         }
         case 'parry':
-          add(replaceUnitNames(event, text) + notes([detail.perfect ? '大成功' : checkGrade(detail.success, detail.defenderRoll)]));
+          add(replaceUnitNames(event, text) + notes([detail.perfect ? '大成功' : checkGrade(detail.success, detail.defenderRoll)]) + attributionText(detail));
           break;
         case 'morale':
           add(replaceUnitNames(event, text) + (Number.isFinite(detail.roll) ? notes([`战意检定${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ''));
@@ -184,7 +191,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           const parts = statusNotes(detail);
           if (type === 'status_patch' && detail.stacks > 1) parts.unshift(`${detail.stacks} 层`);
           if (type === 'status' && actor && detail.targetId && actor !== detail.targetId) parts.push(`来源 ${name(event, actor)}`);
-          add(replaceUnitNames(event, text).replace(/ ×1$/, '') + notes(parts));
+          add(replaceUnitNames(event, text).replace(/ ×1$/, '') + notes(parts) + attributionText(detail));
           break;
         }
         case 'stat_modifier': {
@@ -196,26 +203,26 @@ export function formatBattleReportText(report, unitNames = {}) {
           break;
         }
         case 'vm_check':
-          add(replaceUnitNames(event, text) + (detail.targetId && detail.targetId !== actor ? `（目标 ${name(event, detail.targetId)}）` : ''));
+          add(replaceUnitNames(event, text) + (detail.targetId && detail.targetId !== actor ? `（目标 ${name(event, detail.targetId)}）` : '') + attributionText(detail));
           break;
         case 'damage': case 'heal':
           if (detail.amount !== 0) {
             const origin = detail.statusId && actor && actor !== detail.targetId ? `（施加者 ${name(event, actor)}）` : '';
-            add(replaceUnitNames(event, text) + change('HP', detail.hpBefore, detail.hpAfter) + origin);
+            add(replaceUnitNames(event, text) + change('HP', detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
           }
           break;
         case 'skill_cost':
           add(replaceUnitNames(event, text) + change('HP', detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
           break;
         case 'resource':
-          add(replaceUnitNames(event, text) + change(detail.resource?.toUpperCase(), detail.before, detail.after));
+          add(replaceUnitNames(event, text) + change(detail.resourceLabel ?? detail.resource?.toUpperCase(), detail.before, detail.after) + attributionText(detail));
           break;
         case 'counter': {
           const { counterKey, before, after } = detail;
           const suffix = ` · ${counterKey} ${before} → ${after}`;
           const label = counterKey && text.endsWith(suffix)
             ? `${text.slice(0, -suffix.length)} · ${resourceLabel(counterKey)} ${before} → ${after}` : text;
-          add(replaceUnitNames(event, label));
+          add(replaceUnitNames(event, label) + attributionText(detail));
           break;
         }
         case 'outcome':

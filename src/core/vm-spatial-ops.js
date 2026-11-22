@@ -6,6 +6,7 @@ import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { scheduleCommit } from './vm-commit.js';
 import { createPool, initializeUnitPools, unlinkPools } from './vm-pools.js';
 import { resolvePoint, selectVM } from './vm-select.js';
+import { aggregateModifiers } from './vm-carriers.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
@@ -78,7 +79,7 @@ function logMove(state, host, unit, mode, from, path, collision) {
 
 function teleport({ state, host, context, op }, targets) {
   const anchor = targets[0];
-  if (targets.some(unit => unit.locks?.move)) return;
+  if (targets.some(unit => aggregateModifiers(state, unit.id).locks.teleport)) return;
   const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
   if (!point(destination)) return;
   const ignored = new Set(targets.map(unit => unit.id));
@@ -102,7 +103,7 @@ function continueMove({ state, frame, host, context }) {
   const { op, unitIds } = frame.data;
   if (frame.pc >= unitIds.length) { state.vm.stack.pop(); return; }
   const unit = own(state.units, unitIds[frame.pc++]);
-  if (!live(unit) || (op.mode !== 'push' && op.mode !== 'pull' && unit.locks?.move)) return;
+  if (!live(unit) || (op.mode !== 'push' && op.mode !== 'pull' && aggregateModifiers(state, unit.id).locks.move)) return;
   const scope = { ...context, target: unit };
   const from = at(state, unit);
   const path = [];
@@ -111,7 +112,7 @@ function continueMove({ state, frame, host, context }) {
     const delta = op.deltaZ === undefined ? 3 : evaluateExpr(op.deltaZ, scope);
     if (!op.land && !Number.isFinite(delta)) return;
     const altitude = op.land ? 0 : clamp((unit.altitude ?? 0) + Math.trunc(delta), 0, 12);
-    if (altitude === (unit.altitude ?? 0)) return;
+    if (altitude === (unit.altitude ?? 0) || altitude > (unit.altitude ?? 0) && aggregateModifiers(state, unit.id).locks.fly) return;
     unit.altitude = altitude;
   } else if (op.mode === 'step') {
     const to = resolvePoint(op.to, scope);
@@ -321,7 +322,7 @@ function continueSpawn({ state, frame, host, context }) {
   for (const placement of landings.slice(0, plan.count)) {
     const id = nextId(state, state.units, 'summon');
     const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement, altitude: 0,
-      summonGroup: data.group, used: { attack: 0, action: 0 }, ap: 0, statuses: {} };
+      summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {} };
     unit.hp = unit.maxHp;
     unit.mp = unit.maxMp;
     unit.sp = unit.maxSp;
@@ -355,7 +356,7 @@ function spawnZone({ state, frame, host, context, op }, center) {
   if (spec.follow) area.anchorUnitId = anchor.id;
   else delete area.anchorUnitId;
   const id = nextId(state, state.zones ??= {}, 'zone');
-  const zone = { ...carrier(spec, context.self?.id ?? frame.sourceId, id, spec.templateId ?? id, context),
+  const zone = { ...carrier(spec, context.self?.id ?? frame.sourceId, id, spec.templateId ?? id, context), team: context.self?.team ?? null,
     area, follow: spec.follow === true, persistent: spec.persistent === true, remainingTurns: spec.remainingTurns ?? 1,
     ...(spec.follow ? { anchorPosition: xy(anchor) } : {}) };
   state.zones[id] = zone;
@@ -555,6 +556,11 @@ function despawn({ state, frame, host, context, op, select }) {
   } else if (op.entityKind === 'terrain') {
     const layers = [...targets].filter(layer => own(state.spatialTerrain, layer.id) === layer && layer.cells.length);
     removeTerrainLayers(state, host, frame, new Set(layers.map(layer => layer.id)), '解除后');
+  } else if (op.entityKind === 'unit') {
+    for (const unit of [...targets].filter(unit => own(state.units, unit.id) === unit && unit.summoned === true)) {
+      removeSummon(state, unit);
+      host.log(state, context.self, 'despawn', `${unit.name}被移除`, { unitId: unit.id, summoned: true });
+    }
   }
 }
 

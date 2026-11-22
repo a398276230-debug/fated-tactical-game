@@ -1,4 +1,5 @@
 import { evaluateExpr } from './formula.js';
+import { isStatusImmune } from './vm-immunity.js';
 import { distance3D } from './spatial.js';
 import { selectVM, zoneContains } from './vm-select.js';
 
@@ -9,7 +10,7 @@ const alive = unit => Boolean(unit && !unit.fled && (unit.alive ?? unit.hp > 0))
 const active = entity => entity.persistent || entity.durationType === 'persistent'
   || entity.durationType === 'until_removed' || !(entity.remainingTurns <= 0);
 const idOf = ref => typeof ref === 'string' ? ref : ref?.id;
-const slots = ['attack', 'action', 'move', 'cast', 'reaction'];
+const slots = ['attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport'];
 
 export function itemRules(template, item) {
   return [...new Map([...(template?.rules ?? []), ...(item?.rules ?? [])].map(rule => [rule.id, rule])).values()];
@@ -69,8 +70,11 @@ function sourceIdOf(row, ownerId, event) {
   return row.entity.sourceId ?? row.nativeOwnerId ?? event.sourceId ?? idOf(event.source) ?? ownerId;
 }
 
-function scopeFor(state, row, ownerId, event, queries) {
+export function carrierScope(state, row, ownerId, event, queries = {}) {
   const self = own(state.units, ownerId);
+  const immunity = queries.isImmune ?? ((currentState, unit, key, context) => isStatusImmune(
+    currentState, unit, key, context?.source ?? own(currentState.units, event.sourceId ?? event.actorId),
+    { collectRules, carrierScope }));
   const source = eventUnit(state, sourceIdOf(row, ownerId, event));
   const target = eventUnit(state, event.targetId ?? event.target);
   const attacker = eventUnit(state, event.actorId ?? event.actor ?? event.attackerId ?? event.attacker
@@ -83,13 +87,15 @@ function scopeFor(state, row, ownerId, event, queries) {
     skill: row.carrier.type === 'skill' ? row.entity : undefined,
     item: row.carrier.type === 'item' ? row.entity : undefined,
     center: event.center, round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay,
-    units: state.units,
+    units: state.units, zones: state.zones,
     ...(state.grid && { distance: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
       && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null }),
-    resource: (unit, key) => own(state.pools, own(unit?.pools, key))?.current ?? own(unit, key),
+    resource: (unit, key) => key === 'move' ? Math.max(0, (unit?.move ?? 0) - (unit?.moved ?? 0))
+      : key === 'attack' || key === 'action' ? Math.max(0, 1 - (unit?.used?.[key] ?? 0))
+      : own(state.pools, own(unit?.pools, key))?.current ?? own(unit, key),
     inZone: (unit, key) => entries(state.zones).some(([, zone]) => active(zone)
       && (zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, unit)),
-    isImmune: queries.isImmune && ((unit, key) => queries.isImmune(state, unit, key)),
+    isImmune: (unit, key, context) => immunity(state, unit, key, context ?? { source }),
     select: (key, context) => selectVM(state, own(queries.selectors, key), context, { pure: true }),
   };
 }
@@ -97,7 +103,7 @@ function scopeFor(state, row, ownerId, event, queries) {
 function recipients(state, row, unitIds, event, queries) {
   const { entity, carrier, nativeOwnerId } = row;
   const shared = entity.shareRulesTo ? new Set(selectVM(state, entity.shareRulesTo,
-    scopeFor(state, row, nativeOwnerId, event, queries), { pure: true })) : null;
+    carrierScope(state, row, nativeOwnerId, event, queries), { pure: true })) : null;
   return unitIds.filter(id => {
     const unit = own(state.units, id);
     return carrier.type === 'zone' ? zoneContains(state, entity, unit) || shared?.has(unit)
@@ -142,8 +148,10 @@ export function collectRules(state, hook, event = {}, queries = {}) {
   if (!unitIds.length) return [];
   const candidates = [];
   for (const [carrierOrder, row] of carriers(state).entries()) {
-    // The death hook must still see the just-deceased owner's skills.
-    if (row.carrier.type === 'skill' && hook !== 'on_death' && !alive(own(state.units, row.nativeOwnerId))) continue;
+    // The HP pool has already hit zero during lethal interception; the owner
+    // still gets their own last-chance skills before they become a corpse.
+    if (row.carrier.type === 'skill' && !['on_lethal_p1', 'on_lethal_p2', 'on_death'].includes(hook)
+      && !alive(own(state.units, row.nativeOwnerId))) continue;
     const rules = row.entity.rules?.filter(rule => rule.enabled !== false && rule.hook === hook);
     if (!rules?.length) continue;
     for (const ownerId of recipients(state, row, unitIds, event, queries)) {
@@ -168,6 +176,7 @@ export function collectRules(state, hook, event = {}, queries = {}) {
 
 function matchesModifier(mod, event) {
   return (mod.damageType === undefined || mod.damageType === event.damageType)
+    && (mod.statusId === undefined || mod.statusId === event.statusId)
     && (mod.checkKind === undefined || mod.checkKind === event.checkKind
       || mod.checkKind === event.statusId || event.tags?.includes(mod.checkKind));
 }
@@ -189,7 +198,7 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
     for (const row of carriers(state)) {
       if (row.carrier.type === 'skill' && !alive(own(state.units, row.nativeOwnerId))) continue;
       if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries).length) continue;
-      const context = scopeFor(state, row, unitId, event, queries);
+      const context = carrierScope(state, row, unitId, event, queries);
       for (const [index, mod] of row.entity.mods.entries()) {
         const key = JSON.stringify([templateKey(row), index]);
         if (seen.has(key) || !matchesModifier(mod, event)

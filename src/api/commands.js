@@ -102,6 +102,7 @@ const commands = {
     check(getStatusTemplate(s, c.statusId), 'statusId');
     const unit = get(s.units, c.unitId, 'unitId');
     const status = unit.statuses[c.statusId];
+    check(!status?.flags?.includes('undispellable'), '该状态不可驱散');
     if (status) deleteOwnedPools(s, status);
     delete unit.statuses[c.statusId];
   },

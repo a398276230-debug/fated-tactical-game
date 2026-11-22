@@ -103,7 +103,7 @@ test('following zones update modifiers, locks, flags and control policy from cur
       { locks: ['move'], controlPolicy: { allegiance: 'all_hostile', allowFriendlyTarget: true } },
     ] };
   const mods = aggregateModifiers(state, 'b');
-  assert.deepEqual(mods.locks, { attack: true, action: false, move: true, cast: false, reaction: false });
+  assert.deepEqual(mods.locks, { attack: true, action: false, move: true, cast: false, reaction: false, fly: false, teleport: false });
   assert.deepEqual(mods.flags, { blockRevive: true });
   assert.deepEqual(mods.controlPolicy, { controller: 'ai', allegiance: 'friendly_only', forcedActionKinds: ['attack'], allowFriendlyTarget: true });
   assert.equal(mods.stats.incomingHealMult.mult, 0.5);

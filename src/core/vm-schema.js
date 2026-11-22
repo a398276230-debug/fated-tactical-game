@@ -28,7 +28,7 @@ const booleanExpr = either(bool, formula);
 const entityId = either(id, variable);
 const damageType = enumOf('physical', 'energy', 'mental', 'true');
 const attribute = enumOf('str', 'agi', 'con', 'int', 'spi');
-const slot = enumOf('attack', 'action', 'move', 'cast', 'reaction');
+const slot = enumOf('attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport');
 const point2 = object({ x: number, y: number }, ['x', 'y']);
 const point = object({ x: number, y: number, z: number }, ['x', 'y']);
 const scopes = ['self', 'source', 'target', 'attacker'];
@@ -66,14 +66,14 @@ export const opNotes = Object.freeze({
   ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择。选格和选实体用 select，选项用 options，数值用 min/max。entity 的 maxSelect 开启多选，将 ID 数组写入 out，for_each 以 {from:"vars.<名称>"} 遍历。out 写裸名称，单选实体可用 vars.<名称> 作目标。',
   damage: '走完整伤害和致死管线，out 记录实际扣血量，写裸名称、读 vars.<名称>。裸扣资源使用 resource。',
   heal: '仅治疗存活且允许受疗的单位，经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
-  resource: '直接改资源池并经过落盘拦截。swap 使用单个 pool 和 otherPool；cap/initial 在模板上声明。',
+  resource: '直接改资源池并经过落盘拦截。pool 可写 hp/mp/sp 或伪池 attack/action/move：前两者表示本回合未用槽位，move 表示剩余移动格；mode 用 add/sub/set。add_max/sub_max/set_max 改 HP/MP/SP 上限并同步镜像，minRemain 可限制最低上限；swap 使用单个 pool 和 otherPool。',
   link_pool: '用 units 选择单位，将指定的 HP/MP/SP 池合并共享或拆回独立池。',
-  apply_status: '施加已注册的状态模板，vars 求值后存入状态。护盾使用 shield 状态与 shieldAmount 变量。',
+  apply_status: '施加已注册的状态模板，vars 求值后存入状态。护盾使用 shield 状态与 shieldAmount 变量。flags:["undispellable"] 的状态不能被 dispelled 或 cleansed，只能自然 expired。',
   remove_status: '在目标持有的状态中用 where 筛选可移除项。outCount 写裸名称（如 lostStacks），后续读 vars.lostStacks，表示成功移除的数量。',
   mutate_event: '仅在有可写字段的拦截钩子改写当前事件。patch 的键必须属于当前 Rule.hook。',
   move: '统一移动、瞬移、推拉与高度变化。push/pull 逐格判碰撞，altitude 可用 deltaZ 或 land。',
   spawn: '按 entityKind 提供对应的 spec 生成单位、结界、地形、掩体或库存物品；at 指定落点。',
-  despawn: '用 select 清除指定的 zone、cover 或 terrain；terrain 只清除 VM 生成的地形层。',
+  despawn: '用 select 清除指定的 zone、cover、terrain 或 unit；unit 通常配 where: "candidate.summoned == true" 只移除召唤物，不触发死亡/亡语。筛选敌方区域时用 candidate.team != null && candidate.team != self.team；terrain 只清除 VM 生成的地形层。',
   revive: '只对未被 blockRevive 禁止的阵亡单位生效；hpPercent/mpPercent/spPercent 以 1 为满额。',
   perform: '压入独立子动作；skill 用技能 ID 或 vars.<名称>，replay 用 tapeRecord 引用磁带记录。overrides.origin 可改生效原点；跨距离或阻隔需显式设置 ignoreRange 或 ignoreLOS。',
 });
@@ -89,12 +89,12 @@ const controlPolicy = object({
 });
 const stat = enumOf(...attribute.enum, 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'advantage', 'initiativeFlat');
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat');
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent');
 const multiplierStats = enumOf('damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
-  stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: text,
+  stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: text, statusId: id,
   locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless'), 1),
   controlPolicy, when: booleanExpr,
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
@@ -118,7 +118,7 @@ const zoneArea = withRules(object({
   radius: spawnRadius, innerRadius: { type: 'number', minimum: 0 },
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
-const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), mods: list(ref('statMod')), rules: list(ref('rule')) };
+const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), flags: list(enumOf('undispellable'), 1), mods: list(ref('statMod')), rules: list(ref('rule')) };
 const spawnSpecs = {
   unit: withRules(object({
     ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula),
@@ -150,10 +150,10 @@ const opcodeSchemas = [
   when('kind', literal('number'), withRules(needs('min', 'max'), { not: either(needs('options'), needs('select')) }))),
   opcode('damage', { target, amount: numericExpr, damageType, ignoreArmor: bool, lethal: bool, direct: bool, out: id }, ['target', 'amount', 'damageType']),
   opcode('heal', { target, amount: numericExpr, out: id }, ['target', 'amount']),
-  opcode('resource', { target, pool: either(id, list(id, 1)), mode: enumOf('add', 'sub', 'set', 'swap'), amount: numericExpr, otherPool: id,
+  opcode('resource', { target, pool: either(id, list(id, 1)), mode: enumOf('add', 'sub', 'set', 'swap', 'add_max', 'sub_max', 'set_max'), amount: numericExpr, otherPool: id,
     local: bool, minRemain: numericExpr, requireFull: bool, out: id }, ['target', 'pool', 'mode'],
   when('mode', literal('swap'), withRules({ ...needs('otherPool'), properties: { pool: id } }, { not: needs('amount') })),
-  when('mode', enumOf('add', 'sub', 'set'), { ...needs('amount'), not: needs('otherPool') })),
+  when('mode', enumOf('add', 'sub', 'set', 'add_max', 'sub_max', 'set_max'), { ...needs('amount'), not: needs('otherPool') })),
   opcode('link_pool', { units: selector, pools: list(enumOf('hp', 'mp', 'sp'), 1), mode: enumOf('link', 'unlink') }, ['units', 'pools', 'mode']),
   opcode('apply_status', { target, statusId, turns: numericExpr, stacks: numericExpr, stackMode: enumOf('refresh', 'stack', 'replace', 'extend'),
     extendTurns: numericExpr, vars: mapOf(id, expr), expireOn: ref('expireRule') }, ['target', 'statusId']),
@@ -163,7 +163,7 @@ const opcodeSchemas = [
     to: pointRef, distance: numericExpr, deltaZ: numericExpr, land: bool, collisionDamage: numericExpr, onCollide: program }, ['target', 'mode']),
   opcode('spawn', { entityKind: enumOf(...Object.keys(spawnSpecs)), spec: { type: 'object' }, at: pointRef, out: id }, ['entityKind', 'spec'],
   ...Object.keys(spawnSpecs).map(kind => when('entityKind', literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))),
-  opcode('despawn', { entityKind: enumOf('zone', 'cover', 'terrain'), select: selector }, ['entityKind', 'select']),
+  opcode('despawn', { entityKind: enumOf('zone', 'cover', 'terrain', 'unit'), select: selector }, ['entityKind', 'select']),
   opcode('revive', { target, hpPercent: numericExpr, mpPercent: numericExpr, spPercent: numericExpr, hpFlat: numericExpr }, ['target']),
   opcode('perform', { actor: target, actionKind: enumOf('skill', 'attack', 'replay'), skillId: entityId, tapeRecord: variable, target, overrides }, ['actor', 'actionKind'],
   when('actionKind', literal('skill'), { ...needs('skillId'), not: needs('tapeRecord') }),

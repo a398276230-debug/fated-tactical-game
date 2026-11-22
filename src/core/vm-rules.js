@@ -15,6 +15,7 @@ function operation({ state, frame, op, context, select }, native, selector) {
   for (const target of targets.reverse()) {
     if (!target || own(state.units, target.id) !== target) continue;
     pushFrame(state, { native, ownerId: frame.ownerId, sourceId: frame.sourceId, ruleId: frame.ruleId,
+      carrier: frame.carrier ?? null, attribution: frame.attribution ?? null,
       scope: { ...frame.scope, target: { type: 'unit', id: target.id } },
       eventRef: frame.eventRef, localsRef: frame.localsRef ?? frame.frameId,
       callerId: frame.localsRef ?? frame.frameId, branchFrameId: frame.frameId, data: op });
@@ -86,7 +87,7 @@ export function continueCheck({ state, frame, host, context }) {
     const dc = evaluate(op.dc, context, op.kind === 'chance' ? 0 : 10);
     if (!Number.isFinite(dc)) { state.vm.stack.pop(); return; }
     frame.eventRef = newEvent(state, { checkKind: op.kind, actorId: context.self.id, targetId: context.target.id,
-      dc, stat: op.stat ?? null, statusId: op.statusId ?? null, tags: op.tags ?? [] });
+      dc, baseDC: dc, stat: op.stat ?? null, statusId: op.statusId ?? null, tags: op.tags ?? [] });
     frame.pc++;
     scheduleHooks(state, frame, 'before_check', frame.eventRef, host);
     return;
@@ -99,7 +100,7 @@ export function continueCheck({ state, frame, host, context }) {
     const stat = (unit, key) => host.stat?.(state, unit, key) ?? unit.stats?.[key] ?? 0;
     const stats = [op.stat ?? null].flat();
     const checkBonus = host.checkBonus?.(state, subject, event) ?? 0;
-    const dc = event.dc + (event.dcDelta ?? 0);
+    const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
     const outcomes = stats.map(key => {
       let roll = dice(state, kind === 'chance' ? 100 : 20);
       if (event.advantageDelta > 0) roll = Math.max(roll, dice(state, 20));
@@ -112,7 +113,7 @@ export function continueCheck({ state, frame, host, context }) {
     const { roll, total } = outcomes[0];
     const passed = ['pass', 'hit', 'crit'].includes(event.forceOutcome) ? true : ['fail', 'miss'].includes(event.forceOutcome) ? false
       : op.mode === 'any' ? outcomes.some(outcome => outcome.passed) : outcomes.every(outcome => outcome.passed);
-    Object.assign(event, { roll, total, dc, passed, rating: event.forceOutcome === 'crit' ? 'crit' : event.minRating ?? (passed ? 'hit' : 'miss') });
+    Object.assign(event, { roll, total, dc, finalDC: dc, passed, rating: event.forceOutcome === 'crit' ? 'crit' : event.minRating ?? (passed ? 'hit' : 'miss') });
     const verdict = passed ? '成功' : '失败';
     const label = { save: '豁免', chance: '概率判定', d20: '检定', contest: '对抗检定', attack: '攻击检定' }[kind];
     const text = `${subject.name}${label}${verdict}（${outcomes.map(outcome => kind === 'chance'
@@ -175,7 +176,7 @@ export function continueApplyStatus({ state, frame, host, context }) {
     if (![cap, duration, count, extension].every(Number.isFinite)) return;
     const maxStacks = bounded(cap, 1, 999999);
     const status = { ...structuredClone(template), id: op.statusId, templateId: op.statusId, ownerId: target.id,
-      sourceId: context.self?.id ?? null, vars, tags: template.tags ?? [], tier: template.tier ?? 1,
+      sourceId: context.self?.id ?? null, vars, tags: template.tags ?? [], flags: template.flags ?? [], tier: template.tier ?? 1,
       mods: template.mods ?? [], rules: template.rules ?? [], stackMode, maxStacks, stacks: bounded(count, 1, maxStacks),
       durationType: template.durationType ?? 'battle_turns', remainingTurns: bounded(duration, 1, 100) };
     if (op.expireOn) status.expireOn = op.expireOn;
@@ -201,7 +202,8 @@ export function continueRemoveStatus({ state, frame, host, context }) {
   }
   const statusId = frame.statusKeys[frame.pc++];
   const status = own(target.statuses, statusId);
-  if (!status || status.durationType === 'persistent' || evaluateExpr(op.where, { ...context, status }) !== true) return;
+  if (!status || status.durationType === 'persistent' || status.flags?.includes('undispellable')
+    || evaluateExpr(op.where, { ...context, status }) !== true) return;
   delete target.statuses[statusId];
   frame.removed = (frame.removed ?? 0) + 1;
   const reason = op.reason ?? 'dispelled';

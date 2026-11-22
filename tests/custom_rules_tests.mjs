@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { applyAction, currentUnit, preview, refreshOpeningInitiative } from '../src/core/combat.js';
+import { applyAction, currentUnit, preview, reachable, refreshOpeningInitiative } from '../src/core/combat.js';
 import { validateState } from '../src/api/validation.js';
 import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 
@@ -58,6 +58,49 @@ test('strict execute threshold credits souls by target tier and updates weapon p
     updatePoolCurrent(state, pool.id, 'set', 8);
     assert.equal(preview(state, strike).damageMultiplier, kills ? 5 : 1);
   }
+});
+
+test('on_kill can refund the consumed attack slot through the pseudo resource pool', () => {
+  const { state, actor, target } = battle();
+  target.hp = 1;
+  getPool(state, target.id, 'hp').current = 1;
+  const id = 'execute-and-refund';
+  state.skills[id] = { name: id, ap: 0, range: 6, shape: 'single', target: 'enemy', slot: 'action',
+    rules: [
+      { id: 'strike', hook: 'active', program: [{ op: 'damage', target: 'target', amount: 10, damageType: 'true' }] },
+      { id: 'refund', hook: 'on_kill', filter: 'event.killerId == self.id', program: [
+        { op: 'resource', target: 'self', pool: 'attack', mode: 'add', amount: 1 },
+      ] },
+    ] };
+  actor.skills.push(id);
+  validateState(state);
+  // The free action is performed after the attack slot was already spent;
+  // its on_kill rule must refund that depleted slot.
+  actor.used.attack = 1;
+  actor.ap = 1;
+  assert.equal(preview(state, { type: 'skill', skillId: id, x: target.x, y: target.y }).ok, true);
+  applyAction(state, { type: 'skill', skillId: id, x: target.x, y: target.y });
+  assert.equal(target.hp, 0);
+  assert.equal(actor.used.attack, 0);
+  assert.equal(actor.ap, 2, 'refund restores the aggregate AP budget');
+  assert.ok(state.logs.some(log => log.type === 'resource' && log.detail.resource === 'attack'));
+  const secondTarget = target;
+  const secondPool = getPool(state, secondTarget.id, 'hp');
+  secondPool.current = secondTarget.hp = secondTarget.maxHp;
+  const second = { type: 'attack', x: secondTarget.x, y: secondTarget.y };
+  assert.equal(preview(state, second).ok, true, `refunded attack slot is executable again: ${preview(state, second).error ?? 'unknown'}`);
+  applyAction(state, second);
+  assert.equal(state.units[actor.id].used.attack, 1);
+});
+
+test('move pseudo pool reaches zero and native preview honors the exhausted budget', () => {
+  const { state, actor } = battle();
+  actor.moved = actor.move;
+  assert.equal(reachable(state, 'move', actor).length, 0);
+  assert.equal(preview(state, { type: 'move' }).cells?.length ?? 0, 0);
+  assert.equal(preview(state, { type: 'move', x: actor.x + 1, y: actor.y }).ok, false);
+  actor.moved = 0;
+  assert.ok(reachable(state, 'move', actor).length > 0);
 });
 
 test('equipment initiative and attribute modifiers reuse the opening roll', () => {

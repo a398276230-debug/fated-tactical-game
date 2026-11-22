@@ -1,4 +1,5 @@
 const mirrors = { hp: 'maxHp', mp: 'maxMp', sp: 'maxSp' };
+const initialMirrors = { hp: 'initialMaxHp', mp: 'initialMaxMp', sp: 'initialMaxSp' };
 const carrierTables = { unit: 'units', item: 'items', status: 'statuses', zone: 'zones' };
 
 function own(record, key) {
@@ -37,11 +38,16 @@ function nextId(state, reserved, base) {
 function syncMirrors(state, pool) {
   const maxField = own(mirrors, pool.kind);
   if (!maxField) return;
+  const initialField = own(initialMirrors, pool.kind);
   for (const { ownerKind, ownerId } of pool.contributors) {
     const unit = ownerKind === 'unit' && own(state.units, ownerId);
     if (unit && own(unit.pools, pool.kind) === pool.id) {
       unit[pool.kind] = pool.current;
       unit[maxField] = pool.max;
+      if (initialField) {
+        const contributor = pool.contributors.find(row => row.ownerKind === 'unit' && row.ownerId === ownerId);
+        unit[initialField] = contributor?.initialMaxBase ?? pool.initialMax ?? unit[initialField] ?? pool.max;
+      }
     }
   }
 }
@@ -63,17 +69,18 @@ export function getPool(state, ownerId, key, ownerKind = 'unit') {
   return own(state.pools, own(owner?.pools, key));
 }
 
-function planPool(state, reserved, { ownerKind = 'unit', ownerId, key, max, current = max, reloadable = false }) {
+function planPool(state, reserved, { ownerKind = 'unit', ownerId, key, max, current = max, initialMax = max, reloadable = false }) {
   const owner = carrier(state, ownerKind, ownerId);
   if (typeof key !== 'string' || key.length === 0) throw new TypeError('Pool key must be a nonempty string');
   if (own(owner.pools, key) !== undefined) throw new RangeError(`Pool already bound: ${ownerId}.${key}`);
   nonnegative(max, 'Pool max');
+  nonnegative(initialMax, 'Pool initial max');
   if (!Number.isFinite(current)) throw new RangeError('Pool current must be finite');
   if (typeof reloadable !== 'boolean') throw new TypeError('Pool reloadable must be boolean');
   const id = nextId(state, reserved, `pool_${ownerKind === 'unit' ? '' : `${ownerKind}_`}${ownerId}_${key}`);
   const kind = ownerKind === 'unit' && Object.hasOwn(mirrors, key) ? key : 'custom';
-  const pool = { id, kind, contributors: [{ ownerKind, ownerId, maxBase: max }],
-    current: clamp(current, max), max, reloadable };
+  const pool = { id, kind, contributors: [{ ownerKind, ownerId, maxBase: max, initialMaxBase: initialMax }],
+    current: clamp(current, max), max, initialMax, reloadable };
   return { pool, binding: { owner, key, poolId: id } };
 }
 
@@ -90,6 +97,7 @@ export function initializeUnitPools(state, unitId, resources) {
   const reserved = new Set();
   const plans = Object.entries(mirrors).map(([key, maxField]) => planPool(state, reserved, {
     max: resources ? own(resources, key)?.max : unit[maxField],
+    initialMax: resources ? own(resources, key)?.initialMax ?? own(resources, key)?.max : unit[initialMirrors[key]] ?? unit[maxField],
     current: resources ? own(resources, key)?.current : unit[key],
     ownerId: unitId, key,
   }));
@@ -148,10 +156,11 @@ export function linkPools(state, unitIds, kinds, { effectiveMax } = {}) {
     members.sort((a, b) => a.contributor.ownerId < b.contributor.ownerId ? -1 :
       a.contributor.ownerId > b.contributor.ownerId ? 1 : 0);
     const contributors = members.map(member => member.contributor);
-    const max = total(contributors.map(c => maxFor(state, c, effectiveMax)), 'Shared pool max');
+      const max = total(contributors.map(c => maxFor(state, c, effectiveMax)), 'Shared pool max');
+    const initialMax = total(contributors.map(c => c.initialMaxBase ?? c.maxBase), 'Shared pool initial max');
     const current = clamp(total(sources.map(pool => pool.current), 'Shared pool current'), max);
     const id = nextId(state, plan.reserved, `pool_shared_${kind}`);
-    plan.pools.push({ id, kind, contributors, current, max, reloadable: sources.every(pool => pool.reloadable) });
+    plan.pools.push({ id, kind, contributors, current, max, initialMax, reloadable: sources.every(pool => pool.reloadable) });
     for (const { owner } of members) plan.bindings.push({ owner, key: kind, poolId: id });
     for (const pool of sources) plan.removed.push(pool.id);
   }, effectiveMax);
@@ -182,7 +191,8 @@ export function unlinkPools(state, unitIds, kinds, { effectiveMax } = {}) {
         currentLeft -= current;
         const keepId = members === remaining;
         const id = keepId ? pool.id : nextId(state, plan.reserved, `pool_${members[0].contributor.ownerId}_${pool.kind}`);
-        plan.pools.push({ ...pool, id, contributors: members.map(member => member.contributor), current, max });
+          const initialMax = total(members.map(({ contributor }) => contributor.initialMaxBase ?? contributor.maxBase), 'Unlinked pool initial max');
+        plan.pools.push({ ...pool, id, contributors: members.map(member => member.contributor), current, max, initialMax });
         if (!keepId) plan.bindings.push({ owner: members[0].owner, key: pool.kind, poolId: id });
       }
       if (!remaining.length) plan.removed.push(pool.id);
@@ -211,6 +221,27 @@ export function refreshPoolMax(state, poolId, { effectiveMax } = {}) {
 }
 
 /** Apply a clamped numeric change. minRemain and requireFull apply to subtraction. */
+export function updatePoolMax(state, poolId, mode, amount, { minRemain = 0 } = {}) {
+  const pool = requirePool(state, poolId);
+  if (!Number.isFinite(amount)) throw new RangeError('Pool max amount must be finite');
+  const before = pool.max;
+  if (!Number.isFinite(amount) || amount < 0) throw new RangeError('Pool max amount must be nonnegative');
+  const floor = Math.max(pool.kind === 'hp' ? 1 : 0, Number(minRemain) || 0);
+  const max = mode === 'add_max' ? before + amount : mode === 'sub_max' ? Math.max(floor, before - amount) : mode === 'set_max' ? Math.max(floor, amount) : NaN;
+  if (!Number.isFinite(max)) throw new RangeError(`Unknown pool max update mode: ${mode}`);
+  const members = pool.contributors;
+  const totalBase = members.reduce((sum, c) => sum + c.maxBase, 0);
+  let remaining = max;
+  const nextBase = members.map((c, index) => {
+    const share = index === members.length - 1 ? remaining : Math.min(remaining, totalBase > 0 ? (c.maxBase / totalBase) * max : max / members.length);
+    remaining -= share;
+    return { ...c, initialMaxBase: c.initialMaxBase ?? c.maxBase, maxBase: share };
+  });
+  const next = { ...pool, initialMax: pool.initialMax ?? before, contributors: nextBase, max, current: clamp(pool.current, max) };
+  publish(state, [next]);
+  return { ...change(next, pool.current), beforeMax: before, afterMax: max };
+}
+
 export function updatePoolCurrent(state, poolId, mode, amount, { minRemain = 0, requireFull = false } = {}) {
   const pool = requirePool(state, poolId);
   if (!Number.isFinite(amount)) throw new RangeError('Pool amount must be finite');

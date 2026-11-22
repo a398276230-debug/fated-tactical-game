@@ -17,11 +17,11 @@ const callback = (context, key, ...args) => {
 };
 const unitFields = {
   str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神', tier: '层级',
-  hp: '当前生命', maxHp: '生命上限', mp: '当前法力', maxMp: '法力上限', sp: '当前体力', maxSp: '体力上限'
+  hp: '当前生命', maxHp: '生命上限', initialMaxHp: '初始生命上限', mp: '当前法力', maxMp: '法力上限', initialMaxMp: '初始法力上限', sp: '当前体力', maxSp: '体力上限', initialMaxSp: '初始体力上限'
 };
 const vmUnitFields = {
   id: '实体 ID', armor: '护甲', x: '横坐标', y: '纵坐标', z: '实际高度',
-  altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营'
+  altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营', summoned: '是否为召唤物'
 };
 const unitScopes = { self: '效果主体', attacker: '事件攻击者', target: '当前目标', source: '效果来源', candidate: '当前筛选实体' };
 const legacyScopes = new Set(['self', 'attacker', 'target']);
@@ -114,6 +114,9 @@ for (const [field, [meaning, read]] of Object.entries(entityFamilies)) {
 for (const [scope, label] of Object.entries({ status: '状态', zone: '区域', skill: '持有技能', item: '装备' })) {
   dynamicFamily(`${scope}.vars`, `${label}实例的变量`, (context, id) => path(context, scope, 'vars', id));
 }
+register('zone.team', '区域创建时的阵营；无阵营时为 null', context => path(context, 'zone', 'team'));
+register('zone.sourceId', '区域创建者 ID', context => path(context, 'zone', 'sourceId'));
+register('candidate.sourceId', '当前候选实体的创建者 ID', context => path(context, 'candidate', 'sourceId'));
 for (const [scope, fields] of Object.entries({ status: statusFields, tape: tapeFields })) {
   for (const [field, description] of Object.entries(fields)) {
     register(`${scope}.${field}`, description, context => path(context, scope, field));
@@ -133,7 +136,7 @@ register('weapon.attack', '事件武器模板的攻击力', context => own(callb
 register('weapon.range', '事件武器模板的基础射程', context => own(callback(context, 'weapon'), 'range'), true);
 for (const [name, description] of Object.entries({
   power: '技能威力', dealt: '本次实际扣除的 HP', absorbed: '本次被护盾吸收的伤害',
-  previous: '当前效果链上一步实际数值', healing: '本次治疗量', checkKind: '检定类型（如 attack/save/contest）'
+  previous: '当前效果链上一步实际数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID', checkKind: '检定类型（如 attack/save/contest）', baseDC: 'VM 检定初始 DC', finalDC: 'VM 检定完成时计入修饰后的 DC'
 })) register(`event.${name}`, description, context => path(context, 'event', name), true);
 // Existing authored check filters used event.kind before checkKind was documented.
 register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));

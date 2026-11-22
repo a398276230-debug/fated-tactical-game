@@ -38,6 +38,47 @@ function run(state, program, scope, event) {
 }
 const self = { type: 'unit', id: 'other' };
 
+test('zones retain creator team after allegiance changes and enemy despawn filters zone and candidate', () => {
+  const state = board();
+  const spawn = { op: 'spawn', entityKind: 'zone', spec: { area: { shape: 'single' } } };
+  run(state, [spawn]);
+  state.units.other.team = 'red';
+  startVM(state, { ownerId: 'other', sourceId: 'other', program: [spawn] });
+  stepVM(state, host);
+  assert.equal(state.zones['zone-2'].team, 'red');
+  state.units.other.team = 'blue';
+  run(state, [{ op: 'despawn', entityKind: 'zone', select: { from: 'zones', where: "zone.team != self.team && candidate.team == 'red' && zone.sourceId == candidate.sourceId && zone.sourceId == 'other'" } }]);
+  assert.deepEqual(Object.keys(state.zones), ['zone-1']);
+});
+
+test('gravity locks block teleport and ascent but allow forced landing; dispel cannot forge expiry', () => {
+  const state = board(), unit = state.units.actor;
+  unit.mods = [{ locks: ['fly','teleport'] }];
+  run(state, [{ op: 'move', target: 'self', mode: 'teleport', to: {x:3,y:1} },
+    { op: 'move', target: 'self', mode: 'altitude', deltaZ: 2 }]);
+  assert.deepEqual([unit.x,unit.y,unit.altitude ?? 0], [0,1,0]);
+  unit.altitude = 3;
+  run(state, [{ op: 'move', target: 'self', mode: 'altitude', land: true }]);
+  assert.equal(unit.altitude, 0);
+  unit.statuses.form = { id:'form', name:'形态', flags:['undispellable'], remainingTurns: 1 };
+  for (const reason of ['dispelled','cleansed','expired']) {
+    startVM(state, { ownerId: unit.id, sourceId: unit.id, program: [{ op:'remove_status', target:'self', where:'true', reason }] });
+    stepVM(state, vmHost);
+    assert.ok(unit.statuses.form);
+  }
+});
+
+test('unit despawn removes only summons, not native units, without death or kill credit', () => {
+  const state = board();
+  run(state, [{ op:'spawn', entityKind:'unit', spec:{ name:'召唤物' } }]);
+  assert.ok(Object.values(state.units).some(unit => unit.summoned));
+  run(state, [{ op:'despawn', entityKind:'unit', select:{from:'units', where:'candidate.summoned == true'} }]);
+  assert.deepEqual(Object.keys(state.units).sort(), ['actor','other']);
+  run(state, [{ op:'despawn', entityKind:'unit', select:{from:'units'} }]);
+  assert.deepEqual(state.order, ['actor','other']);
+  assert.equal(state.logs.some(log => log.type === 'defeat'), false);
+});
+
 test('group teleport is atomic, preserves spacing, and crosses intervening walls', () => {
   const state = board();
   state.grid[1][2].kind = 'wall';

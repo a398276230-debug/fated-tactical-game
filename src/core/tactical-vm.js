@@ -58,7 +58,7 @@ export function startVM(state, spec) {
 
 function childFrame(state, frame, patch) {
   return pushFrame(state, { kind: frame.kind, ownerId: frame.ownerId, sourceId: frame.sourceId, ruleId: frame.ruleId,
-    eventRef: frame.eventRef, carrier: frame.carrier ?? null, scope: frame.scope ?? null, hook: frame.hook ?? null, localsRef: frame.localsRef ?? frame.frameId, ...patch });
+    eventRef: frame.eventRef, carrier: frame.carrier ?? null, attribution: frame.attribution ?? null, scope: frame.scope ?? null, hook: frame.hook ?? null, localsRef: frame.localsRef ?? frame.frameId, ...patch });
 }
 
 function registers(state, frame) {
@@ -88,7 +88,7 @@ function contextFor(state, frame, host) {
     skill: frame.carrier?.type === 'skill' ? { vars: skillCarrierVars(state, frame.carrier) } : undefined,
     item: frame.carrier?.type === 'item' ? { vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,
     tape: resolveEntity(state, frame.scope?.tape), center: event.center, pool: frame.scope?.pool,
-    round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units),
+    round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units), zones: state.zones,
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),
     inZone: (entity, key) => Object.values(state.zones ?? {}).some(zone => (zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, entity)),

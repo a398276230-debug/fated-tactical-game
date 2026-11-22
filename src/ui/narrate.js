@@ -12,6 +12,7 @@ export const STAT_NAMES = Object.freeze({ str: '力量', agi: '敏捷', con: '�
 const MANEUVERS = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
 const INTENT_NAMES = { normal: '常规', function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
 import { resourceLabel } from '../core/resource_names.js';
+import { proseNumber, attributionLine } from '../core/log-attribution.js';
 
 const sign = n => (n > 0 ? `+${n}` : `${n}`);
 const pct = n => `${Math.round(n * 100)}%`;
@@ -106,7 +107,7 @@ function damageEntry(state, log) {
   if (d.armorMultiplier && d.armorMultiplier < .995) mults.push(`护甲 −${pct(1 - d.armorMultiplier)}`);
   if (mults.length) lines.push(`倍率：${mults.join('，')}`);
   if (d.absorbed) lines.push(`护盾吸收 ${d.absorbed} 点`);
-  if (Number.isFinite(d.hpBefore)) lines.push(`生命 ${d.hpBefore} → ${d.hpAfter}`);
+  if (Number.isFinite(d.hpBefore)) lines.push(`生命 ${proseNumber(d.hpBefore)} → ${proseNumber(d.hpAfter)}`);
   return { tone: 'damage', icon: '🩸', title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0 };
 }
 
@@ -160,7 +161,8 @@ export function narrate(log, state) {
   const d = log?.detail ?? {};
   const actor = nameOf(state, log?.actor);
   const base = { type: log?.type, tone: 'info', icon: '◆', title: log?.text ?? '', lines: [], quiet: false, actorId: log?.actor ?? null, targetId: d.targetId ?? null };
-  const out = extra => ({ ...base, ...extra });
+  const cause = attributionLine(d);
+  const out = extra => ({ ...base, ...extra, ...(cause ? { lines: [...(extra.lines ?? []), cause] } : {}) });
   switch (log?.type) {
     case 'initiative': {
       const rows = [...(d.initiative ?? [])].sort((a, b) => b.total - a.total);
@@ -183,8 +185,10 @@ export function narrate(log, state) {
     case 'roll': return out(rollEntry(state, log));
     case 'damage': return out(damageEntry(state, log));
     case 'defeat': return out({ tone: 'defeat', icon: '☠️', title: `${nameOf(state, d.targetId)} 倒下了` });
-    case 'heal': return out({ tone: 'heal', icon: '💚', amount: d.amount ?? 0,
-      lines: d.dice?.count ? [`治疗量 ${d.dice.count}d${d.dice.sides}（${d.dice.rolls.join(' + ')}）${d.dice.bonus ? ` + ${d.dice.bonus}` : ''}`] : [] });
+    case 'heal': {
+      const lines = d.dice?.count ? [`治疗量 ${d.dice.count}d${d.dice.sides}（${d.dice.rolls.join(' + ')}）${d.dice.bonus ? ` + ${d.dice.bonus}` : ''}`] : [];
+      return out({ tone: 'heal', icon: '💚', amount: d.amount ?? 0, lines });
+    }
     case 'status': {
       const s = statusInfo(state, d.statusId);
       return out({ tone: 'status', icon: s.icon ?? '◆',

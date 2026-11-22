@@ -58,10 +58,11 @@ const vmExpiry = value => plain(value) && vmHooks.includes(value.hook)
   && Object.keys(value).every(key => ['hook', 'filter'].includes(key))
   && (!own(value, 'filter') || typeof value.filter === 'boolean' || typeof value.filter === 'string' && validExpr(value.filter));
 const stackModes = ['refresh', 'stack', 'replace', 'extend'];
-const carrierFields = ['tags', 'tier', 'vars', 'mods', 'rules'];
+const carrierFields = ['tags', 'tier', 'vars', 'flags', 'mods', 'rules'];
 const numericExpr = value => Number.isFinite(value) || typeof value === 'string' && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
   if (own(value, 'tags')) list(value.tags, 32, resolved ? tag => text(tag) : validVmTag, 'VM 标签');
+  if (own(value, 'flags')) list(value.flags, 8, flag => flag === 'undispellable', 'VM 标记');
   checkOptional(value, 'tier', tier => int(tier, 1, 7));
   if (own(value, 'vars')) table(value.vars, entry => requireThat(resolved ? jsonTree(entry)
     : typeof entry === 'boolean' || numericExpr(entry), 'VM 变量'));
@@ -244,12 +245,15 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'summonGroup']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','moved','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'summonGroup', 'summoned']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
   checkOptional(v, 'summonGroup', group => text(group, 512));
   if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
+  checkOptional(v, 'summoned', x => x === true);
+  for (const key of ['initialMaxHp', 'initialMaxMp', 'initialMaxSp']) checkOptional(v, key, x => int(x, 0, 1000000000));
+  checkOptional(v, 'moved', x => int(x, 0, 1000000000));
   for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
   checkOptional(v, 'corpseOf', id);
   checkOptional(v, 'diedAt', x => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
@@ -262,7 +266,7 @@ export function unitValue(v, key, state) {
   for (const [r, max] of [['hp','maxHp'], ['mp','maxMp'], ['sp','maxSp']]) requireThat((v.pools ? num : int)(v[max], r === 'hp' ? 1 : 0, 1000000000) && (v.pools ? num : int)(v[r], 0, v[max]), r);
   fields(v.used, ['action', 'attack']); fields(v.stats, attrs);
   requireThat(attrs.every(k => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2)
-    && int(v.armor, 0, 1000000) && int(v.size, 1, 5) && int(v.move, 1, 10), '单位数值');
+    && (!own(v, 'moved') || num(v.moved, 0, v.move)) && int(v.armor, 0, 1000000) && int(v.size, 1, 5) && int(v.move, 1, 10), '单位数值');
   requireThat(v.weapon === null || id(v.weapon), 'weapon');
   for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
@@ -290,7 +294,8 @@ function pointValue(value) {
   return plain(value) && Object.keys(value).length === 2 && coord(value.x) && coord(value.y);
 }
 export function zoneValue(value, key, state) {
-  fields(value, ['id', 'name', 'area', 'follow', 'persistent', 'remainingTurns'], ['templateId', 'sourceId', 'anchorPosition', 'pools', ...carrierFields]);
+  fields(value, ['id', 'name', 'area', 'follow', 'persistent', 'remainingTurns'], ['templateId', 'sourceId', 'team', 'anchorPosition', 'pools', ...carrierFields]);
+  checkOptional(value, 'team', value => value === null || team(value));
   requireThat(id(key) && value.id === key && text(value.name), 'VM 区域 ID/名称');
   checkOptional(value, 'templateId', id);
   checkOptional(value, 'sourceId', source => source === null || id(source));
@@ -349,25 +354,36 @@ function validatePools(state) {
   const pools = own(state, 'pools') ? state.pools : {};
   requireThat(plain(pools) && Object.keys(pools).length <= 10000, '资源池表');
   for (const [key, pool] of Object.entries(pools)) {
-    fields(pool, ['id', 'kind', 'contributors', 'current', 'max', 'reloadable']);
+    fields(pool, ['id', 'kind', 'contributors', 'current', 'max', 'reloadable'], ['initialMax']);
     requireThat(validPoolId(key) && pool.id === key && ['hp', 'mp', 'sp', 'custom'].includes(pool.kind)
-      && num(pool.max, 0, Number.MAX_VALUE) && num(pool.current, 0, pool.max) && typeof pool.reloadable === 'boolean', '资源池');
+      && num(pool.max, 0, Number.MAX_VALUE) && (!own(pool, 'initialMax') || num(pool.initialMax, 0, Number.MAX_VALUE))
+      && num(pool.current, 0, pool.max) && typeof pool.reloadable === 'boolean', '资源池');
     const owners = bindings.get(key);
     requireThat(owners?.size > 0 && (pool.kind !== 'custom' || owners.size === 1), '资源池归属');
     list(pool.contributors, 200, contribution => {
-      fields(contribution, ['ownerKind', 'ownerId', 'maxBase']);
+      fields(contribution, ['ownerKind', 'ownerId', 'maxBase'], ['initialMaxBase']);
       const ownerKey = `${contribution.ownerKind}/${contribution.ownerId}`;
       return id(contribution.ownerId) && owners.get(ownerKey) === pool.kind
-        && num(contribution.maxBase, 0, Number.MAX_VALUE) && owners.delete(ownerKey);
+        && num(contribution.maxBase, 0, Number.MAX_VALUE)
+        && (!own(contribution, 'initialMaxBase') || num(contribution.initialMaxBase, 0, Number.MAX_VALUE)) && owners.delete(ownerKey);
     }, '资源池贡献者');
     requireThat(owners.size === 0, '资源池绑定');
+    if (own(pool, 'initialMax')) {
+      const initialTotal = pool.contributors.reduce((sum, contribution) => sum + (contribution.initialMaxBase ?? contribution.maxBase), 0);
+      requireThat(pool.initialMax === initialTotal, '资源池初始上限');
+    }
     bindings.delete(key);
   }
   requireThat(bindings.size === 0, '资源池引用');
   for (const unit of Object.values(state.units)) {
     for (const [kind, maxKey] of [['hp', 'maxHp'], ['mp', 'maxMp'], ['sp', 'maxSp']]) {
       const pool = pools[unit.pools?.[kind]];
-      if (pool) requireThat(pool.current === unit[kind] && pool.max === unit[maxKey], '原生资源镜像');
+      if (pool) {
+        const initialKey = `initialMax${kind[0].toUpperCase()}${kind.slice(1)}`;
+        const contributor = pool.contributors.find(row => row.ownerKind === 'unit' && row.ownerId === unit.id);
+        requireThat(pool.current === unit[kind] && pool.max === unit[maxKey]
+          && (!own(unit, initialKey) || unit[initialKey] === (contributor?.initialMaxBase ?? pool.initialMax ?? pool.max)), '原生资源镜像');
+      }
     }
   }
 }

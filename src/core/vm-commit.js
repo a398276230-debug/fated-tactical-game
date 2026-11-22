@@ -1,13 +1,35 @@
-import { getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent } from './vm-pools.js';
+import { getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { evaluateExpr } from './formula.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
 const entry = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
+const pseudoPool = new Set(['attack', 'action', 'move']);
+function pseudoState(unit, key) {
+  if (key === 'move') return { current: Math.max(0, unit.move - (unit.moved ?? 0)), max: unit.move };
+  return { current: Math.max(0, 1 - (unit.used?.[key] ?? 0)), max: 1 };
+}
+function applyPseudo(unit, key, mode, amount) {
+  if (!Number.isInteger(amount)) return false;
+  const before = pseudoState(unit, key).current;
+  let current = mode === 'set' ? amount : mode === 'add' ? before + amount : mode === 'sub' ? before - amount : NaN;
+  if (mode === 'add_max' || mode === 'sub_max' || mode === 'set_max') return false;
+  if (!Number.isFinite(current)) return false;
+  current = Math.max(0, Math.min(pseudoState(unit, key).max, current));
+  if (key === 'move') unit.moved = unit.move - current;
+  else {
+    unit.used[key] = 1 - current;
+    // `ap` is the aggregate remaining split-slot budget. Keep it in sync
+    // with slot refunds/confiscations; movement is deliberately not AP.
+    unit.ap = Math.max(0, Math.min(2, unit.ap + current - before));
+  }
+  return true;
+}
 
 export function scheduleCommit(state, parent, data) {
   return pushFrame(state, { native: 'commit', ownerId: parent.ownerId, sourceId: parent.sourceId,
-    ruleId: parent.ruleId, callerId: parent.localsRef ?? parent.frameId, data });
+    ruleId: parent.ruleId, carrier: parent.carrier ?? null, attribution: parent.attribution ?? null,
+    callerId: parent.localsRef ?? parent.frameId, data });
 }
 
 function commitOp(env) {
@@ -21,7 +43,10 @@ function commitOp(env) {
       const minRemain = op.minRemain === undefined ? 0 : evaluateExpr(op.minRemain, { ...context, target, pool });
       if (!Number.isFinite(amount) || !Number.isFinite(minRemain)) continue;
       const action = context.event;
-      const label = context.status?.name ?? entry(state.skills, action?.skillId)?.name;
+      const item = frame.carrier?.type === 'item' ? entry(state.items, frame.carrier.id) : null;
+      const label = op.label ?? context.status?.name ?? context.zone?.name
+        ?? (frame.carrier?.type === 'skill' ? entry(state.skills, frame.carrier.id)?.name : undefined)
+        ?? entry(state.equipment, item?.templateId)?.name ?? entry(state.skills, action?.skillId)?.name;
       scheduleCommit(state, frame, { ...op, sourceId, targetId: target.id, pool, amount, minRemain,
         ...(label && { label }), actionType: action?.actionType ?? null, skillId: action?.skillId ?? null,
         ...(frame.carrier?.type === 'item' ? { carrierId: frame.carrier.id } : {}) });
@@ -44,8 +69,9 @@ export function continueCommit({ state, frame, host }) {
   const { op, pool: key } = data;
   const target = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
   const localOwner = data.local && frame.data.carrierId;
-  const pool = getPool(state, localOwner || data.targetId, key, localOwner ? 'item' : 'unit');
-  if (!pool || !target) { state.vm.stack.pop(); return; }
+  const pseudo = !localOwner && pseudoPool.has(key);
+  const pool = pseudo ? pseudoState(target, key) : getPool(state, localOwner || data.targetId, key, localOwner ? 'item' : 'unit');
+  if ((!pool && !pseudo) || !target) { state.vm.stack.pop(); return; }
   let event = entry(state.vm.events, frame.eventRef);
   if (frame.pc === 0) {
     const dying = state.vm.stack.some(parent => parent.native === 'lethal' && parent.data.poolId === target.pools?.hp);
@@ -64,7 +90,7 @@ export function continueCommit({ state, frame, host }) {
   if (frame.pc === 1) {
     frame.pc++;
     if (event.cancel || !Number.isFinite(event.finalAmount)) { state.vm.stack.pop(); return; }
-    const before = pool.current;
+    const before = pool.current, beforeMax = pool.max;
     let absorbed = 0;
     if (op === 'damage') {
       let pending = Math.max(0, Math.floor(event.finalAmount));
@@ -88,12 +114,19 @@ export function continueCommit({ state, frame, host }) {
       event.healing = target.hp - before;
       host.log(state, source, 'heal', `${target.name}${data.label ? `因${data.label}` : ''}恢复${event.healing}点生命`, { ...data.details, targetId: target.id, amount: event.healing, hpBefore: before, hpAfter: target.hp });
     } else {
-      if (data.mode === 'swap') {
+      if (pseudo) {
+        if (!applyPseudo(target, key, data.mode, event.finalAmount)) { state.vm.stack.pop(); return; }
+      } else if (data.mode === 'swap') {
         const other = getPool(state, localOwner || target.id, data.otherPool, localOwner ? 'item' : 'unit');
         if (other) swapPoolCurrents(state, pool.id, other.id);
       } else {
+        if (['add_max', 'sub_max', 'set_max'].includes(data.mode) && !['hp', 'mp', 'sp'].includes(key)) {
+          state.vm.stack.pop(); return;
+        }
         const amount = data.mode === 'sub' ? Math.max(0, event.finalAmount) : event.finalAmount;
-        const changed = updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
+        const changed = ['add_max', 'sub_max', 'set_max'].includes(data.mode)
+          ? updatePoolMax(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain) })
+          : updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
         if (!changed.applied) {
           const caller = state.vm.stack.find(parent => parent.frameId === frame.callerId);
           if (caller) caller.pc = caller.program.length;
@@ -101,9 +134,13 @@ export function continueCommit({ state, frame, host }) {
           return;
         }
       }
-      const after = entry(state.pools, pool.id).current;
-      event.change = after - before;
-      host.log(state, source, 'resource', `${target.name}${data.label ? `因${data.label}` : ''}${after >= before ? '恢复' : '消耗'}${Math.abs(after - before)}点 ${key.toUpperCase()}`, { targetId: target.id, resource: key, before, after });
+      const after = pseudo ? pseudoState(target, key).current : entry(state.pools, pool.id).current;
+      const maxChange = data.mode.endsWith('_max');
+      const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
+      const label = ({attack:'攻击槽',action:'动作槽',move:'剩余移动格'})[key] ?? key.toUpperCase();
+      const field = label + (maxChange ? '上限' : '');
+      event.change = to - from;
+      host.log(state, source, 'resource', `${target.name}${data.label ? `因${data.label}` : ''}${maxChange ? (to >= from ? '提高' : '降低') : (to >= from ? '恢复' : '消耗')}${Math.abs(event.change)}点 ${field}`, { targetId: target.id, resource: key, resourceLabel: field, before: from, after: to });
     }
     const result = entry(state.vm.events, data.resultEventRef);
     if (result) for (const key of ['dealt', 'absorbed', 'healing']) if (event[key] !== undefined) result[key] = event[key];
@@ -155,6 +192,14 @@ export function continueLethal({ state, frame, host }) {
       unit.diedAt = { round: state.round, turn: state.turn };
       unit.corpseOf ??= unit.id;
       host.log(state, entry(state.units, frame.sourceId), 'defeat', `${unit.name}倒下`, { targetId: unit.id });
+    }
+    // Stack order: settle death before crediting each confirmed victim. A
+    // prevented death or a self-inflicted depletion never earns a kill.
+    for (const unitId of [...event.units].reverse()) {
+      const victim = entry(state.units, unitId), killer = entry(state.units, frame.sourceId);
+      if (!victim || victim.pools?.hp !== pool.id || !killer || killer.id === victim.id) continue;
+      const killRef = newEvent(state, { ...event, targetId: victim.id, deadId: victim.id, killerId: killer.id });
+      scheduleHooks(state, frame, 'on_kill', killRef, host);
     }
     scheduleHooks(state, frame, 'on_death', frame.eventRef, host);
     return;

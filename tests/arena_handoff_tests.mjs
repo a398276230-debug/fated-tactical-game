@@ -12,6 +12,21 @@ import { hydrateFromSources } from '../src/tavern/converter.js';
 // Verbatim origin skill/item records from fated-sim-arena-test-battle.json.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/arena-a1.json', import.meta.url), 'utf8'));
 
+test('status-tagged saves read DC from caster and resistance from defender only for matching status', () => {
+  const state = buildScenario('ruins');
+  const [caster, defender] = Object.values(state.units);
+  const when = "event.statusId == 'freeze'";
+  caster.mods = [{ stat: 'dcBonus', flat: 10, when }];
+  defender.mods = [{ stat: 'resistBonus', flat: 10, when }];
+  for (const statusId of ['freeze', 'burn']) {
+    startVM(state, { ownerId: caster.id, sourceId: caster.id, scope: { target: { type: 'unit', id: defender.id } },
+      program: [{ op: 'check', kind: 'save', dc: 12, statusId }] });
+    stepVM(state, vmHost);
+    const { saveDC, saveBonus } = state.logs.findLast(log => log.type === 'save').detail;
+    assert.deepEqual([saveDC, saveBonus], statusId === 'freeze' ? [22, 10] : [12, 0]);
+  }
+});
+
 test('arena export: held skills contribute passive checks and damage rules without casting', () => {
   const battle = buildScenario('ruins');
   const actor = { ...battle.units[battle.order[0]], id: 'a1', skills: Object.keys(fixture.skills) };
@@ -50,6 +65,7 @@ test('arena export: the equipped ring appears in inspection and teleports at zer
   state.equipment[fixture.item.templateId] = fixture.equipment;
   const skillId = `equip:${fixture.item.id}:void_step`;
   assert.equal(new Map(equippedActiveSkills(state, actor)).get(skillId)?.name, '虚空折跃');
+  assert.equal(new Map(equippedActiveSkills(state, actor)).get(skillId)?.usesPerTurn, 1);
   const api = createGameAPI();
   api.createBattle({ kind: 'custom_state', state });
   assert.equal(api.inspectUnit(actor.id).skillUsage[skillId]?.usesLeft, 1);
