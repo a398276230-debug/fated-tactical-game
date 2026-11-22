@@ -1,4 +1,4 @@
-import { resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
+import { diagnosticText, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
@@ -786,7 +786,7 @@ export function mountTavernOverlay(options = {}) {
           narrative: (diagnostics.narrativeExemptions ?? []).filter(entry => entry.unitId === key), onToggle: value => setFolded([key], value) });
       if (messages.length) {
         const details = el(doc,'details',{class:'fated-char-diagnostics'}), list = el(doc,'ul');
-        for (const { message } of messages) list.append(el(doc,'li',{},message));
+        for (const { message } of messages) list.append(el(doc,'li',{},diagnosticText(message, '原诊断包含结构化数据，未提供文字说明')));
         details.append(el(doc,'summary',{},`⚠ ${messages.length} 条诊断`),list);
         body.append(details);
       }
@@ -912,15 +912,16 @@ export function mountTavernOverlay(options = {}) {
       const aborted = failure?.name === 'AbortError';
       const status = aborted ? 'aborted' : failure ? 'error' : 'ok';
       const title = aborted ? '标准化已中止' : failure ? '标准化失败' : '标准化完成';
+      const detail = failure ? diagnosticText(failure.message ?? failure, '请求或补丁校验失败，未返回可读的错误说明') : '';
       if (!disposed && key === activeBattleKey) {
         const retry = () => key === activeBattleKey && runNormalize(ids, { force: true, sessionId: sessionId ?? null });
-        notify(title, failure?.message ?? '', !aborted && (failure || unresolved.length) ? retry : null,
+        notify(title, detail, !aborted && (failure || unresolved.length) ? retry : null,
           false, { tone: aborted ? 'neutral' : failure ? 'error' : 'success', applied, unresolved, raw });
       }
       if (session) {
         aiSessions.update(session.id, entries[1], { content: raw, status });
         feed(entries[1], ...aiSessions.append(session.id, { role: 'system', status,
-          content: `${title} · 已应用 ${applied} 项补丁${failure ? ` · ${failure.message}` : ''}${unresolved.length ? ` · 待处理：${unresolved.join('；')}` : ''}` }));
+          content: `${title} · 已应用 ${applied} 项补丁${detail ? ` · ${detail}` : ''}${unresolved.length ? ` · 待处理：${unresolved.join('；')}` : ''}` }));
       }
       aiController = null;
       if (!disposed) { aiPage?.setBusy(false); renderInstances(); }
@@ -1217,12 +1218,11 @@ export function mountTavernOverlay(options = {}) {
     if (!Array.isArray(data?.patch)) throw new Error('模型未返回有效的战局补丁');
     const raw = JSON.stringify(data, null, 2);
     try {
-      if (!Array.isArray(data.unresolved)) throw new Error('unresolved 必须是 JSON 数组');
-      const notes = data.unresolved.map(item => typeof item === 'string' ? item : JSON.stringify(item));
+      const notes = readUnresolvedDiagnostics(data.unresolved, sent);
       for (const [index, operation] of data.patch.entries()) {
         if (!['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
             !normalizationPath.test(operation.path) || (operation.op !== 'remove' && !own(operation, 'value'))) {
-          throw new Error(`第 ${index + 1} 项路径或操作无效（${text(operation?.path).slice(0, 120) || '缺少 path'}）`);
+          throw new Error(`第 ${index + 1} 项补丁的操作、路径或值无效`);
         }
         const [, table, id] = operation.path.split('/');
         if (table === 'units' && !unitIds.includes(id)) throw new Error(`补丁单位不在本批：${id}`);
@@ -1234,18 +1234,29 @@ export function mountTavernOverlay(options = {}) {
       if (paths.some(path => fingerprintAt(current, path) !== fingerprintAt(snapshot, path))) {
         throw new Error('补丁目标已被更早的批次或战局操作修改');
       }
-      const next = data.patch.length ? (options.applyPatch ?? applyPatch)(current, data.patch, true) : current;
+      const apply = options.applyPatch ?? applyPatch;
+      let next = current;
+      const changedAtApply = new Map();
+      for (const operation of data.patch) {
+        const parentPath = operation.path.slice(0, operation.path.lastIndexOf('/'));
+        // Inserting/removing array entries also shifts the values at other indexes.
+        const path = operation.op === 'replace' || !fingerprintAt(next, parentPath)?.startsWith('[')
+          ? operation.path : parentPath;
+        const before = fingerprintAt(next, path);
+        next = apply(next, [operation], true);
+        if (fingerprintAt(next, path) !== before) changedAtApply.set(operation, path);
+      }
       const changed = new Set(paths.filter(path => fingerprintAt(next, path) !== fingerprintAt(current, path)));
       const effective = data.patch.filter(operation => changed.has(rootPath(operation.path)));
       const patch = effective.map(({ resolves, ...operation }) => operation);
-      // A surrounding template change must not make an individual no-op count as a fix.
-      const changedOperations = effective.filter(operation => operation.op !== 'replace' ||
-        fingerprintAt(current, operation.path) !== fingerprintAt(next, operation.path));
-      const solved = changedOperations.length ? resolvedDiagnostics(sent, records, changedOperations, { unresolved: notes }) : [];
+      const changedOperations = effective.filter(operation => {
+        const path = changedAtApply.get(operation);
+        return path && fingerprintAt(current, path) !== fingerprintAt(next, path);
+      });
+      const solved = resolvedDiagnostics(sent, records, changedOperations, notes);
       const narrative = readNarrativeExemptions(data.narrative, sent, narrativeSourceFor(records), { solved, unresolved: notes });
       for (const { warning } of narrative) {
-        if (data.patch.some(operation => [].concat(operation.resolves ?? []).some(reference => reference &&
-          reference.unitId === warning.unitId && reference.originPath === (warning.originPath ?? null) && reference.message === warning.message))) {
+        if (data.patch.some(operation => Array.isArray(operation.resolves) && operation.resolves.some(reference => identifiesWarning(reference, warning)))) {
           throw new Error('narrative 警告不能同时声明为补丁已解决');
         }
       }
@@ -1376,8 +1387,8 @@ export function mountTavernOverlay(options = {}) {
             // untagged reasoning directly in content, which cannot be identified reliably.
             replyText = normalize ? (patch ? JSON.stringify(parsed.data, null, 2) : '') : reply;
             const pending = parsed.data?.unresolved ?? [];
-            if (!Array.isArray(pending) && normalize) throw new Error('unresolved 必须是 JSON 数组');
-            unresolved = Array.isArray(pending) ? pending.map(item => typeof item === 'string' ? item : JSON.stringify(item)) : [];
+            unresolved = normalize ? readUnresolvedDiagnostics(pending, sentWarnings)
+              : Array.isArray(pending) ? pendingDiagnostics([], readUnresolvedDiagnostics(pending.filter(item => typeof item === 'string' && item.trim()), [])) : [];
             receivedPatch = normalize || patch != null || ['patch', 'battle_patch', 'unit_patch'].some(field => Object.hasOwn(parsed.data ?? {}, field));
             if (!receivedPatch) { updateReply({ content: reply, status: 'ok' }); return; }
             if (!patch) throw new Error('模型未返回有效的战局补丁');
@@ -1387,13 +1398,13 @@ export function mountTavernOverlay(options = {}) {
               for (const [index, operation] of patch.entries()) {
                 if (!['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
                     !normalizationPath.test(operation.path) || (operation.op !== 'remove' && !own(operation, 'value'))) {
-                  throw new Error(`第 ${index + 1} 项路径或操作无效（${text(operation?.path).slice(0, 120) || '缺少 path'}）`);
+                  throw new Error(`第 ${index + 1} 项补丁的操作、路径或值无效`);
                 }
               }
             }
             if (normalize && !patch.length) throw new Error('模型返回空补丁，没有可注入的变更');
             if (normalize) {
-              solved = resolvedDiagnostics(sentWarnings, records, patch, {...parsed.data, unresolved});
+              solved = resolvedDiagnostics(sentWarnings, records, patch, unresolved);
               patch = patch.map(({resolves, ...operation}) => operation);
             }
             nextState = (options.applyPatch ?? applyPatch)(liveState(), patch, normalize);
@@ -1464,7 +1475,7 @@ export function mountTavernOverlay(options = {}) {
         if (aiController !== controller) return;
         const aborted = e?.name === 'AbortError';
         const status = aborted ? 'aborted' : 'error';
-        const detail = e?.message || String(e);
+        const detail = diagnosticText(e?.message ?? e, '请求或补丁校验失败，未返回可读的错误说明');
         if (normalize) unresolved = pendingDiagnostics(appliedCount ? scopedWarnings.filter(w => !solved?.includes(w)) : scopedWarnings, unresolved);
         const partial = assistantMessage?.content || replyText;
         updateReply({ status, content: aborted ? partial ?? '' : [partial, `错误：${detail}`].filter(Boolean).join('\n\n') });

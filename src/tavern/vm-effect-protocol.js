@@ -63,4 +63,9 @@ pointRef 可写 {x,y,z?}、self/source/target/attacker/center 或 vars.<名称>�
 targetRef：${describe(defs.targetRef)}。for_each.bind 或 ask(kind:entity) 取得的实体直接用 vars.<名称>。用选择器指定 ID 时，可用 {"from":"units","where":"candidate.id == 'p1'"}，并将 p1 替换为快照 ID。
 
 【声明式修饰】
-mods 是修饰数组，每项 ${describe(defs.statMod)}。至少有 stat、locks、flags 或 controlPolicy；填写数值修饰时必须指定 stat。组合值为 (基础 + flat 总和) × (1 + additivePercent 总和) × mult 连乘。when 必须求得 true 才生效。controlPolicy：${describe(defs.controlPolicy)}。恒定坚守用 moraleLock:"steady"；allowFriendlyTarget:true 允许原本指定 enemy 的攻击选择友军或自己，仍受射程与其他合法性约束。`;
+mods 是修饰数组，每项 ${describe(defs.statMod)}。至少有 stat、locks、flags 或 controlPolicy；填写数值修饰时必须指定 stat。组合值为 (基础 + flat 总和) × (1 + additivePercent 总和) × mult 连乘。when 必须求得 true 才生效。
+• 输出方（自己打别人）：damageFlat 输出固定加伤，基值 0，用 flat；damageMult 输出倍率、finalDamageMult 最终伤害倍率，基值 1，用 mult:1.3 或 additivePercent:0.3 表示 +30%；armorPierce 固定穿甲，基值为已有穿甲，用 flat；armorPiercePercent 百分比穿甲，基值 0（武器姿态可自带穿甲），用 flat:0.2 表示 +20%。
+• 承伤方（自己挨打）：damageReductionFlat 受击固定减伤，基值 0，用正数 flat:800（不要写成负的 damageFlat）；damageReduction / dr 受击百分比减伤，基值 0，用 flat:0.3 表示 +30%。damageReduction 先算，dr 在固定减伤之后另乘；真实伤害无视这些减伤。
+• 其余：healingMult 施疗倍率、incomingHealMult 受疗倍率、costMult 技能消耗倍率，基值 1，用 mult（如技能资源消耗 -30% 写 mult:0.7）；checkBonus 检定加值、dcBonus 难度加值、resistBonus 豁免加值、advantage 优势、initiativeFlat 先手加值，基值 0（initiativeFlat 叠加已有先手加值），用 flat；str/agi/con/int/spi/armor 叠加所在载体持有者的已有属性／护甲值。
+• 比例型 damageReduction、dr、armorPiercePercent 不允许 additivePercent；flat 数字必须在 -1..1，负数表示降低该比例。倍率型 damageMult、finalDamageMult、healingMult、incomingHealMult、costMult 不允许 flat。
+controlPolicy：${describe(defs.controlPolicy)}。恒定坚守用 moraleLock:"steady"；allowFriendlyTarget:true 允许原本指定 enemy 的攻击选择友军或自己，仍受射程与其他合法性约束。`;

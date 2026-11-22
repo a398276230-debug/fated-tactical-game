@@ -1,4 +1,4 @@
-import { warningKey } from './resolved-warnings.js';
+import { diagnosticText, warningKey } from './resolved-warnings.js';
 
 export const warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
 const referenceKey = warning => JSON.stringify(Object.values(warningReference(warning)));
@@ -122,13 +122,13 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
     if (matches?.length !== 1 || seen.has(reference)) throw new Error('narrative 必须唯一匹配本批警告');
     const [warning] = matches;
     if (entry.originPath !== (warning.originPath ?? null) || solved.some(item => referenceKey(item) === reference)
-      || unresolved.some(item => typeof item === 'string' && item.includes(warning.message))) {
+      || unresolved.some(item => item.warning === warning)) {
       throw new Error('narrative 警告与本批处理结果冲突');
     }
     seen.add(reference);
     const source = sourceFor(warning.unitId);
     if (!source) throw new Error('narrative 警告缺少来源');
-    return { warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason: entry.reason.trim() } };
+    return { warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason: diagnosticText(entry.reason) } };
   });
 }
 

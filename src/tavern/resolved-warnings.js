@@ -1,57 +1,90 @@
 // Receipts identify an individual conversion diagnostic, not every warning on a unit.
 export const warningKey = w => JSON.stringify([w.source, w.scope, w.originPath ?? '', w.message]);
-const strings = v => (Array.isArray(v) ? v : [v]).filter(s => typeof s === 'string' && s.trim()).map(s => s.trim());
-const matches = (message, s) => message.includes(s) || s.includes(message);
-const subject = message => message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim()
+const subject = message => message.match(/待标准化「([^」]+)」/)?.[1]?.trim()
+  ?? message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim()
   ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
+const nonempty = value => typeof value === 'string' && value.trim() !== '';
 
-const describesWarning = (item, warning) => {
-  const label = subject(warning.message);
-  return matches(warning.message, item) || Boolean(label && item.includes(label));
-};
+// The expandable model response is for debugging; diagnostic lines are always prose.
+export function diagnosticText(value, fallback = '模型返回了结构化数据，未提供文字说明') {
+  if (!nonempty(value)) return fallback;
+  const text = value.trim();
+  const payload = text.search(/```|\{\s*(?:["'}]|$)|\[\s*(?:["{\[]|\]|(?:-?\d|true|false|null)[^\]]*\s*,)/);
+  if (payload !== -1) {
+    const prefix = text.slice(0, payload).trim().replace(/[（(：:]\s*$/, '').trim();
+    return prefix ? `${prefix}（结构化详情已省略）` : fallback;
+  }
+  try { if (typeof JSON.parse(text) === 'object') return fallback; } catch { /* prose */ }
+  return text;
+}
 
-export function pendingDiagnostics(warnings, unresolved) {
-  const notes = [...new Set(strings(unresolved))];
+function readTextNote(text, sent) {
+  const exact = sent.filter(warning => text === warning.message);
+  if (exact.length) return exact.map(warning => ({ warning }));
+  const match = sent.flatMap(warning => {
+    const title = subject(warning.message);
+    if (!title) return [];
+    for (const label of [title, `「${title}」`]) {
+      if (text === label) return [{ warning }];
+      const tail = text.slice(label.length);
+      if (text.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1)) }];
+    }
+    return [];
+  });
+  // A short title can be ambiguous. Keep all matching warnings pending, but do
+  // not attribute the explanation to the wrong unit or template.
+  if (match.length > 1) return match.map(({ warning }) => ({ warning }));
+  return match.length ? match : [{ detail: diagnosticText(text) }];
+}
+
+export function readUnresolvedDiagnostics(value, sent) {
+  if (!Array.isArray(value)) throw new Error('unresolved 必须是 JSON 数组');
+  return value.flatMap((item, index) => {
+    if (nonempty(item)) return readTextNote(item.trim(), sent);
+    const label = `unresolved 第 ${index + 1} 项`;
+    if (!item || typeof item !== 'object' || Array.isArray(item)
+      || !(item.unitId === null || nonempty(item.unitId)) || !(item.originPath === null || nonempty(item.originPath))
+      || !(nonempty(item.effectName) || nonempty(item.message)) || !nonempty(item.reason)
+      || (Object.hasOwn(item, 'effectName') && !nonempty(item.effectName))
+      || (Object.hasOwn(item, 'message') && !nonempty(item.message))) {
+      throw new Error(`${label}须包含单位 ID、来源路径、效果名或诊断原文，以及原因`);
+    }
+    const matches = sent.filter(warning => item.unitId === warning.unitId && item.originPath === (warning.originPath ?? null)
+      && (item.effectName === undefined || item.effectName === subject(warning.message))
+      && (item.message === undefined || item.message === warning.message));
+    if (matches.length !== 1) throw new Error(`${label}必须唯一匹配本批警告`);
+    return [{ warning: matches[0], detail: diagnosticText(item.reason) }];
+  });
+}
+
+export function pendingDiagnostics(warnings, notes) {
   return [
     ...warnings.map(warning => {
-      const details = notes.filter(note => note !== warning.message && describesWarning(note, warning));
-      return details.length ? `${warning.message}（模型说明：${details.join('；')}）` : warning.message;
+      const details = [...new Set(notes.filter(note => note.warning === warning).map(note => note.detail).filter(Boolean))];
+      const message = diagnosticText(warning.message, '原诊断包含结构化数据，未提供文字说明');
+      return details.length ? `${message}（模型说明：${details.join('；')}）` : message;
     }),
-    ...notes.filter(note => !warnings.some(warning => describesWarning(note, warning))),
+    ...new Set(notes.filter(note => !note.warning && note.detail).map(note => note.detail)),
   ];
 }
 
-export function resolvedDiagnostics(sent, records, patch, reply) {
-  const top = [...strings(reply.resolved), ...strings(reply.resolvedWarnings)];
-  const declared = top.length || patch.some(op => op.resolves != null);
-  const identified = (op, warning) => [].concat(op.resolves ?? []).some(receipt =>
-    receipt && typeof receipt === 'object' && receipt.unitId === warning.unitId
-    && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message);
-  const pending = strings(reply.unresolved);
-  const isPending = w => pending.some(item => describesWarning(item, w));
-  return sent.filter(w => {
-    if (w.unitId == null || !Object.hasOwn(records, w.unitId) || isPending(w)) return false;
-    const label = subject(w.message);
-    if (top.some(s => w.message.includes(s) && sent.filter(other => other.unitId != null
-      && Object.hasOwn(records, other.unitId) && other.message.includes(s)).length === 1)) return true;
+export const identifiesWarning = (receipt, warning) => receipt && typeof receipt === 'object'
+  && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message;
+
+export function resolvedDiagnostics(sent, records, patch, notes = []) {
+  const pending = new Set(notes.map(({ warning }) => warning));
+  return sent.filter(warning => {
+    if (warning.unitId == null || !Object.hasOwn(records, warning.unitId) || pending.has(warning)) return false;
     return patch.some(op => {
+      if (!Array.isArray(op.resolves)) return false;
       const owner = op.path.match(/^\/units\/([^/]+)/)?.[1];
-      if (owner && owner !== w.unitId) return false;
+      if (owner && owner !== warning.unitId) return false;
       // A declaration for another template with the same effect name must not clear this one.
-      const path = op.path.split('/').slice(0,3).join('/');
-      if (w.originPath && path.split('/')[1] === w.originPath.split('/')[1] && path !== w.originPath) return false;
-      if (declared) return identified(op, w) || strings(op.resolves).some(s => w.message.includes(s)
-        && sent.filter(other => Object.hasOwn(records, other.unitId) && other.message.includes(s)
-          && (!owner || other.unitId === owner)
-          && (!other.originPath || path.split('/')[1] !== other.originPath.split('/')[1] || path === other.originPath)).length === 1);
-      // Older responses: infer only an unambiguous diagnosis on the actual patched object.
-      if (!w.originPath) {
-        const [, , , field, statusId] = op.path.split('/');
-        return owner === w.unitId && field === 'statuses' && w.scope === 'status' && !!statusId && w.message.includes(statusId);
-      }
-      if (path !== w.originPath) return false;
-      return sent.filter(other => other.unitId === w.unitId && other.originPath === path && !isPending(other)).length === 1
-        || (label && JSON.stringify(op.value ?? '').includes(label));
+      const path = op.path.split('/').slice(0, 3).join('/');
+      const origin = warning.originPath?.split('/').slice(0, 3).join('/');
+      if (origin && path.split('/')[1] === origin.split('/')[1] && path !== origin) return false;
+      return op.resolves.some(receipt => identifiesWarning(receipt, warning)
+        && sent.filter(candidate => identifiesWarning(receipt, candidate)).length === 1);
     });
   });
 }

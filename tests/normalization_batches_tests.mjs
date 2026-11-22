@@ -42,6 +42,9 @@ test('narrative exemptions must uniquely match sent warnings and persist only fo
   assert.equal(activeNarrativeExemptions([w], entries.map(item => item.receipt), id => source[id]).length, 0);
   assert.throws(() => readNarrativeExemptions([{ ...w, reason: 'ignored' }], [], id => source[id]), /唯一匹配/);
   assert.throws(() => readNarrativeExemptions([{ ...w, reason: 'ignored' }], [w], id => source[id], { solved: [w] }), /冲突/);
+  assert.throws(() => readNarrativeExemptions([{ ...w, reason: 'ignored' }], [w], id => source[id], { unresolved: [{ warning: w }] }), /冲突/);
+  const other = { ...w, unitId: 'p2' };
+  assert.equal(readNarrativeExemptions([{ ...w, reason: 'ignored' }], [w, other], id => source[id], { unresolved: [{ warning: other }] }).length, 1);
   assert.throws(() => readNarrativeExemptions([{ ...w, reason: ' ' }], [w], id => source[id]), /非空/);
 });
 

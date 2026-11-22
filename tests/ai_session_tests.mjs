@@ -68,7 +68,7 @@ gate('G45', '任务拆解、自查与 VM 示例', () => {
   }
   assert.match(task, /低伤校准[^\n]+"lethal":false/);
   assert.match(task, /飞行规则值[^\n]+"mode":"altitude","deltaZ":3/);
-  for (const text of ['先尝试拆解，再考虑放弃', '未解决或仅部分解决', '简短原因', '检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围']) assert.ok(task.includes(text));
+  for (const text of ['先尝试拆解，再考虑放弃', '未解决或仅部分解决', '{unitId, originPath, message}，附简短中文 reason', '检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围']) assert.ok(task.includes(text));
   assert.doesNotMatch(task, /卡在哪一步/);
 });
 

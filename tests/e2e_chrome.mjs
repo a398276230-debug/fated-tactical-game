@@ -179,7 +179,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
           const { unitId, originPath, message } = crossbow;
           patch.push(rulePatch(originPath,[{unitId,originPath,message}]));
         }
-        const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(w => w.message);
+        const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(({unitId,originPath,message}) =>
+          ({unitId,originPath,message,effectName:'冰冻箭',reason:'仍缺冰冻持续时间'}));
         resolve(JSON.stringify({patch,unresolved}));
       };
     });
@@ -273,6 +274,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(() => run(`document.querySelector('.fated-toast strong').textContent==='标准化完成'`), '新战场标准化完成');
   assert.match(await run(`${get(cardWarnings)}.textContent`), /⚠ 1 条诊断.*冰冻箭/);
   assert.match(await run(`document.querySelector('.fated-toast-summary').textContent`), /剩余 1 项未解决/);
+  const pending = await run(`document.querySelector('.fated-toast-issues').textContent`);
+  assert.match(pending, /冰冻箭.*模型说明：仍缺冰冻持续时间/);
+  assert.doesNotMatch(pending, /"unitId"|"originPath"|"reason"/);
   await run(`(() => {
     const { renderBattleInitEntry } = overlayFrame.contentWindow.FatedTacticalTavern;
     const frame = document.createElement('iframe');

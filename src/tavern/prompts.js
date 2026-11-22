@@ -30,7 +30,7 @@ const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填�
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个键都是数组，只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。未解决或仅部分解决的条目仍列在 unresolved 并保留原效果名。仅纯叙事、非战斗传送或元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个键都是数组，只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送或元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
@@ -44,8 +44,8 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 引用已有对象时使用快照中的 ID。新增模板时自行命名，同批先 add 再引用，包括召唤物专属技能。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换模板或数组时保留无关字段与条目。
 
 【模板值】
-• 装备必有 name。保留已有武器字段，range(1…30) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备提供主动按钮时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。
-• 技能必有 name、ap(0/1/2，0 不占行动槽)、slot(attack/action)、range(0…30)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。可选 initiativeBonus（按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值）；规则 usesPerTurn:N 限每个战斗回合 N 次，cooldownTurns:N 使该规则到第 N 轮后再次可用。范围字段 radius、innerRadius、width 为 0…30，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
+• 装备必有 name。保留已有武器字段，range(1…30) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备自身的 hook:"active" 规则直接提供 0 AP、自身目标的按钮，用 label 命名并用 usesPerTurn、usesPerBattle 或 cooldownTurns 限次。需要自定义射程、目标或消耗时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。同一效果只用一种方式挂载。
+• 技能必有 name、ap(0/1/2，0 不占行动槽)、slot(attack/action)、range(0…30)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。纯被动技能标记 passive:true、ap:0，不写 active 规则。持有技能的 mods 和非 active 规则常驻生效。仅限自身施放时触发的钩子，须用 event.actorId == self.id 和 event.skillId 过滤。可选 initiativeBonus（按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值）；规则 usesPerTurn:N 限每个战斗回合 N 次，cooldownTurns:N 使该规则到第 N 轮后再次可用。范围字段 radius、innerRadius、width 为 0…30，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
 • 装备和技能均可声明 rules、mods、tags、tier、vars、pools。rules 和 mods 是数组。tags 是小写标签数组，tier 为整数 1…7，vars 为 ID → Expr 的对象。pools 格式为 {"charge":{"cap":10,"initial":0}}，每池必填 cap，可加 initial、reloadable。cap / initial 优先写非负数，initial 不得超过 cap。已有装备初始化需要数值 cap。通过 resource 指令访问池，装备规则中 local:true 访问该实例的池。
 • 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。
 
@@ -70,7 +70,7 @@ Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合
 【完整补丁示例】假设快照中 /skills/call_guard/rules 已是数组。
 {"patch":[{"op":"add","path":"/statusTemplates/guard_chill","value":{"id":"guard_chill","name":"星霜","category":"control","remainingTurns":2,"mods":[{"locks":["move"]}]}},{"op":"add","path":"/skills/guard_slash","value":{"name":"亡卫斩","ap":1,"slot":"attack","range":2,"shape":"single","target":"enemy","power":20,"damage":{"count":1,"sides":4,"type":"physical"},"rules":[{"id":"chill_on_hit","hook":"after_hit","program":[{"op":"apply_status","target":"target","statusId":"guard_chill"}]}]}},{"op":"add","path":"/skills/call_guard/rules/-","value":{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]},"resolves":[{"unitId":"p1","originPath":"/skills/call_guard","message":"亡卫缺少召唤和专属技能规则"}]}],"unresolved":[],"narrative":[]}
 
-同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，并保留原效果名及简短原因。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 {"patch":[],"unresolved":[],"narrative":[]}。`;
+同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 {"patch":[],"unresolved":[],"narrative":[]}。`;
 const json = value => JSON.stringify(value, null, 2);
 
 let lastCustomId = 0;

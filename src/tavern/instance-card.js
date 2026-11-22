@@ -1,5 +1,5 @@
 import { bodySizeLabel } from '../core/combat_protocol.js';
-import { STATUSES } from '../core/combat.js';
+import { equippedActiveSkills, STATUSES } from '../core/combat.js';
 const attributes = {str:'力量',agi:'敏捷',con:'体质',int:'智力',spi:'精神'};
 const types = {physical:'物理',energy:'能量',mental:'精神',true:'真实'};
 const when = { active: '主动', after_hit: '命中时', before_action: '行动前', after_damage: '伤害结算后', after_heal: '治疗后', turn_start: '回合开始', turn_end: '回合结束', on_kill: '击倒时', on_death: '倒下时' };
@@ -12,6 +12,38 @@ export function ruleSummary(rule, state) {
     return [prefix + (verbs[op.op] ?? '效果'), types[op.damageType], typeof op.amount === 'number' ? op.amount : null].filter(value => value != null).join(' ');
   };
   return `${rule.enabled === false ? '已关闭：' : ''}${when[rule.hook] ?? '触发'} → ${rule.program.map(describe).join('；')}`;
+}
+const modLabels = {
+  ...attributes, armor:'护甲', armorPierce:'固定穿甲', armorPiercePercent:'百分比穿甲',
+  damageFlat:'输出固定伤害', damageMult:'全伤害倍率', finalDamageMult:'最终伤害倍率',
+  damageReductionFlat:'受击固定减伤', damageReduction:'受击伤害减免', dr:'受击伤害减免',
+  healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率',
+  checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻',
+};
+const ratioStats = new Set(['armorPiercePercent','damageReduction','dr']);
+const percent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:10});
+const slots = {action:'动作',attack:'攻击',move:'移动',cast:'施法',reaction:'反应'};
+const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害'};
+const checks = {attack:'攻击',save:'豁免',contest:'对抗',d20:'普通',chance:'概率'};
+const signed = (n, asPercent) => typeof n === 'number' ? `${n>=0?'+':''}${asPercent?percent.format(n):n}` : `按公式 ${n}`;
+function modSummary(mod) {
+  const parts = [];
+  if(mod.stat){
+    const values = [mod.flat!=null?signed(mod.flat,ratioStats.has(mod.stat)):null,
+      mod.mult!=null?`×${typeof mod.mult==='number'?mod.mult:`（${mod.mult}）`}`:null,
+      mod.additivePercent!=null?signed(mod.additivePercent,true):null].filter(Boolean);
+    parts.push([modLabels[mod.stat],...values].join(' '));
+  }
+  if(mod.locks?.length) parts.push(`禁止${mod.locks.map(slot=>slots[slot]).join('、')}`);
+  if(mod.flags?.length) parts.push(...mod.flags.map(flag=>flags[flag]));
+  const policy = mod.controlPolicy;
+  if(policy?.controller) parts.push(policy.controller==='ai'?'由 AI 控制':'恢复默认控制');
+  if(policy?.allegiance) parts.push(({normal:'正常阵营关系',friendly_only:'仅友方',all_hostile:'所有单位视为敌方'})[policy.allegiance]);
+  if(policy?.forcedActionKinds?.length) parts.push(`强制行动类型：${policy.forcedActionKinds.map(kind=>kind==='attack'?'攻击':'技能').join('、')}`);
+  if(policy?.allowFriendlyTarget != null) parts.push(policy.allowFriendlyTarget?'可选友方为目标':'不可选友方为目标');
+  if(policy?.moraleLock==='steady') parts.push('士气恒定坚守');
+  const scope = [mod.damageType?`${types[mod.damageType]}伤害`:null,mod.checkKind?`${checks[mod.checkKind]??mod.checkKind}检定`:null].filter(Boolean);
+  return `${parts.filter(Boolean).join('；')||'修饰'}${scope.length?`（${scope.join('、')}）`:''}${mod.when!=null?` · 条件：${mod.when===true?'始终':mod.when===false?'从不':mod.when}`:''}`;
 }
 const RESOURCES = [['hp','HP','maxHp'],['mp','MP','maxMp'],['sp','SP','maxSp']];
 const TEAMS = {blue:'我方',red:'敌方'};
@@ -70,34 +102,45 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
     const block=line('section','fated-char-section');
     block.append(make('h5',{},`${heading}${rows.length?` · ${rows.length}`:''}`));
     if(!rows.length) block.append(line('p','fated-mini',`暂无${heading}`));
-    for(const {label,meta,template,path} of rows){
-      const fx = template?.rules ?? [];
+    for(const {label,meta,template,path,item} of rows){
+      const fx = [...(template?.rules ?? []),...(item?.rules ?? [])];
+      const mods = [...(template?.mods ?? []),...(item?.mods ?? [])];
+      const grantedSkills = template?.skills ?? [];
+      const effectCount = fx.length + mods.length + grantedSkills.length;
       const story = path ? narrative.filter(entry => entry.originPath === path || entry.originPath?.startsWith(`${path}/`)) : [];
-      const expandable = fx.length || story.length;
+      const expandable = effectCount || story.length;
       const row=make(expandable?'details':'div',{class:'fated-char-row'});
       const head=make(expandable?'summary':'div',{class:'fated-char-row-head'});
       head.append(line('span','fated-char-row-name',label));
       for(const m of meta) head.append(line('span','fated-char-chip',m));
-      if(fx.length) head.append(line('span','fated-char-fx',`${fx.length} 个效果`));
+      if(effectCount) head.append(line('span','fated-char-fx',`${effectCount} 个效果`));
       row.append(head);
-      for(const e of fx) row.append(line('p','fated-mini',ruleSummary(e,state)));
+      for(const rule of fx) row.append(line('p','fated-mini',`${rule.label?`${rule.label} · `:''}${ruleSummary(rule,state)}`));
+      for(const mod of mods) row.append(line('p','fated-mini',modSummary(mod)));
+      for(const id of grantedSkills) row.append(line('p','fated-mini',`附带技能 · ${state?.skills?.[id]?.name??id}`));
       for(const { message, reason } of story) row.append(make('p',{class:'fated-mini',title:reason},`仅叙事 · ${message}`));
       block.append(row);
     }
     body.append(block);
   };
   const wear=[['主手',unit.mainHand??unit.weapon],['副手',unit.offHand],['盾牌',unit.shield],...(unit.gear??[]).map(id=>['穿戴',id])];
-  const gear=wear.filter(([,id])=>id).map(([slot,id])=>{
+  const shownItems = new Set();
+  const gear=[];
+  for(const [slot,id] of wear){
+    if(!id||shownItems.has(id)) continue;
+    shownItems.add(id);
     const item=state?.items?.[id],t=state?.equipment?.[item?.templateId]??unit.equipment?.find(e=>e.id===id)?.template;const d=t?.damage;
     const dice=d?`${d.count}d${d.sides}${d.bonus?` ${d.bonus>0?'+':''}${d.bonus}`:''}${d.stat?` + ${attributes[d.stat]??d.stat}`:''} ${types[d.type]??''}`.trim():null;
-    return {label:`[${slot}] ${t?.name??id}`,path:item?.templateId ? `/equipment/${item.templateId}` : null,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t};
-  });
+    gear.push({label:`[${slot}] ${t?.name??id}`,path:item?.templateId ? `/equipment/${item.templateId}` : null,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t,item});
+  }
   section('装备',gear);
-  const skills=(unit.skills??[]).map(id=>{
-    const t=state?.skills?.[id];
+  const innate = new Set(unit.skills??[]);
+  const skillTemplates = new Map([...innate].map(id=>[id,state?.skills?.[id]]));
+  if(state) for(const [id,template] of equippedActiveSkills(state,unit)) if(!skillTemplates.has(id)) skillTemplates.set(id,template);
+  const skills=[...skillTemplates].map(([id,t])=>{
     const damage=[...new Set([t?.damage?.type,t?.damageType,...(t?.rules ?? []).flatMap(rule => rule.program.filter(op => op.op === 'damage').map(op => op.damageType)),unit.skillInfo?.[id]?.damageType].filter(Boolean))].map(type=>types[type]).join('/');
     const cost=[`${t?.resourceCost?.sp??t?.sp??0} SP`,(t?.resourceCost?.mp??t?.mp)?`${t.resourceCost?.mp??t.mp} MP`:null,t?.resourceCost?.hp?`${t.resourceCost.hp} HP`:null].filter(Boolean).join(' / ');
-    return {label:t?.name??id,path:`/skills/${id}`,meta:[`消耗 ${cost}`,`威力 ${t?.power??'—'}`,damage||'无伤害类型',`距离 ${t?.range??'—'}`],template:t};
+    return {label:t?.name??id,path:innate.has(id)||state?.skills?.[id]?`/skills/${id}`:null,meta:[!innate.has(id)?'装备附带':null,t?.passive&&!t.rules?.some(rule=>rule.hook==='active')?'被动':null,`消耗 ${cost}`,`威力 ${t?.power??'—'}`,damage||'无伤害类型',`距离 ${t?.range??'—'}`].filter(Boolean),template:t};
   });
   section('技能',skills);
   const details=make('details',{class:'fated-char-raw'});

@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { validateState } from '../src/api/validation.js';
 import { getPool, refreshPoolMax, updatePoolCurrent } from '../src/core/vm-pools.js';
 import { applyAction, preview, switchableWeapons } from '../src/core/combat.js';
-import { resolvedDiagnostics, remainingDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
+import { diagnosticText, pendingDiagnostics, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
-import { ruleSummary } from '../src/tavern/instance-card.js';
+import { fillInstance, ruleSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
@@ -415,7 +415,8 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   assert.equal(p.offHand, null);
   assert.equal(state.equipment[state.items[p.mainHand].templateId].name, '匕首');
   assert.equal(state.equipment[state.items[p.shield].templateId].name, '木盾');
-  assert.equal(state.equipment[state.items[p.gear[0]].templateId].armor, 6);
+  assert.equal(state.equipment[state.items[p.gear[0]].templateId].defense, 6);
+  assert.equal(state.equipment[state.items[p.gear[0]].templateId].armor, undefined);
   assert.deepEqual(state.skills[p.skills[0]].rules, []);
   const skillWarnings = warnings.filter(w => w.originPath === `/skills/${p.skills[0]}`);
   assert.ok(skillWarnings.some(w => /statusId.*freeze/.test(w.message)));
@@ -644,23 +645,51 @@ test('G134/G137/G141 结构化诊断保留角色归属和全局地形',()=>{
   for(const slot of [{id:'warnings'},{id:'custom',custom:true,content:'{{warnings}}'}]){const msg=resolveSlotContent(slot,{sources:result,onlyUnitIds:['monster-1']});assert.ok(msg.includes('低伤校准')&&msg.includes('grid.walls')&&!msg.includes('主角被动'));}
 });
 
-test('诊断收据：操作声明和顶层别名只消除已发送、已解决的目标角色诊断',()=>{
-  const mk=(name,id='p')=>({message:`不支持的描述性效果已忽略：${name}：原描述`,unitId:id,originPath:'/skills/ice',source:'mvu',scope:'effect'});
-  const ice=mk('冰冻箭'),fire=mk('火矢'),enemy=mk('冰冻箭','e'), warnings=[ice,fire,enemy];
-  const records={p:{hash:'h'}};
-  const op={op:'replace',path:'/skills/ice/rules',value:[{id:'freeze-target',hook:'active',program:[{op:'apply_status',target:'target',statusId:'freeze',turns:1}]}]};
-  for(const [patch,reply] of [[[ {...op,resolves:'冰冻箭'} ],{}],[[op],{resolved:[ice.message]}],[[op],{resolvedWarnings:['冰冻箭']}],[[{...op,resolves:['冰冻箭','火矢']}],{unresolved:['火矢：尚不能转换']}]]) {
-    assert.deepEqual(resolvedDiagnostics(warnings,records,patch,reply),[ice]);
-  }
-  assert.deepEqual(resolvedDiagnostics(warnings,records,[op],{}),[]);
-  assert.deepEqual(resolvedDiagnostics([ice],records,[op],{}),[ice]);
-  assert.deepEqual(resolvedDiagnostics([ice],records,[{...op,path:'/skills/other/rules'}],{}),[]);
-  const explicit = { ...op, resolves: [{ unitId:'p', originPath:ice.originPath, message:ice.message }] };
-  assert.deepEqual(resolvedDiagnostics(warnings, {...records,e:{hash:'e'}}, [explicit], {}), [ice]);
-  assert.deepEqual(resolvedDiagnostics(warnings, {...records,e:{hash:'e'}}, [{...op,resolves:'冰冻箭'}], {}), []);
-  const snapshots={p:{hash:'h',resolvedWarnings:[warningKey(ice)]}};
-  assert.deepEqual(remainingDiagnostics(warnings,snapshots,records),[fire,enemy]);
-  assert.deepEqual(remainingDiagnostics(warnings,snapshots,{p:{hash:'changed'}}),warnings);
+const effectWarning = (name, unitId = 'p', originPath = '/equipment/bow') => ({
+  message: `装备效果待标准化「${name}」：原描述`, unitId, originPath, source: 'mvu', scope: 'effect',
+});
+const referenceFor = ({ unitId, originPath, message }) => ({ unitId, originPath, message });
+
+test('诊断收据：只能核销唯一匹配已发送警告的结构化操作收据，不猜测最后一项', () => {
+  const ice = effectWarning('冰冻箭'), fire = effectWarning('火矢'), enemy = effectWarning('冰冻箭', 'e');
+  const warnings = [ice, fire, enemy];
+  const records = { p: { hash:'h' }, e: { hash:'e' } };
+  const op = { op:'replace', path:'/equipment/bow/rules', value:[{ id:'冰冻箭', hook:'after_hit', program:[] }] };
+  const explicit = { ...op, resolves:[referenceFor(ice)] };
+  assert.deepEqual(resolvedDiagnostics([ice], records, [op]), []);
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [op], readUnresolvedDiagnostics(['火矢'], warnings)), []);
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [{ ...op, resolves:['冰冻箭'] }]), []);
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [{ ...explicit, path:'/equipment/other/rules' }]), []);
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [explicit]), [ice]);
+  const snapshots = { p:{ hash:'h', resolvedWarnings:[warningKey(ice)] } };
+  assert.deepEqual(remainingDiagnostics(warnings, snapshots, records), [fire, enemy]);
+  assert.deepEqual(remainingDiagnostics(warnings, snapshots, { p:{ hash:'changed' } }), warnings);
+});
+
+test('未解决诊断：结构化引用精确关联角色、路径与主题，阻止冲突的核销且不泄漏 JSON', () => {
+  const title = '微弱法则[XXX]';
+  const first = effectWarning(title), next = effectWarning(`${title}扩展`), otherTemplate = effectWarning(title, 'p', '/equipment/other');
+  const otherUnit = effectWarning(title, 'e');
+  const warnings = [first, next, otherTemplate, otherUnit];
+  const unresolved = { unitId: 'p', originPath: '/equipment/bow', effectName: title, reason: '仍缺触发时机' };
+  const notes = readUnresolvedDiagnostics([unresolved, { ...referenceFor(otherUnit), reason: '对手的数值未确定' },
+    '{"bad":"raw model object"}', { ...referenceFor(next), reason: '{"nested":2}' }], warnings);
+  const [a, b, c, d, extra] = pendingDiagnostics(warnings, notes);
+  assert.match(a, /模型说明：仍缺触发时机/);
+  assert.match(b, /未提供文字说明/);
+  assert.equal(c, otherTemplate.message);
+  assert.match(d, /模型说明：对手的数值未确定/);
+  assert.match(extra, /未提供文字说明/);
+  assert.doesNotMatch([a, b, c, d, extra].join(' '), /raw model object|nested|unitId|originPath/);
+  assert.doesNotMatch(diagnosticText('HTTP 502：上游失败（{"error": "secret"}）'), /secret/);
+  assert.deepEqual(pendingDiagnostics([first], readUnresolvedDiagnostics([`${title}：仍缺目标`], [first])),
+    [`${first.message}（模型说明：仍缺目标）`]);
+  const records = { p:{hash:'h'}, e:{hash:'e'} };
+  const op = { path:'/equipment/bow/rules', resolves:[referenceFor(first), referenceFor(otherUnit)] };
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [op], readUnresolvedDiagnostics([unresolved], warnings)), [otherUnit]);
+  assert.throws(() => readUnresolvedDiagnostics([{ ...unresolved, originPath:'/equipment/wrong' }], warnings), /唯一匹配/);
+  assert.throws(() => readUnresolvedDiagnostics([{ ...unresolved, message:next.message }], warnings), /唯一匹配/);
+  assert.throws(() => readUnresolvedDiagnostics([{ ...unresolved, reason:{ bad:true } }], warnings), /以及原因/);
 });
 
 test('char fingerprint merges raw sources without hashing placement or actor AP', async () => {
@@ -678,8 +707,67 @@ test('scoped roster omits other units and their item/skill templates', () => {
   const row=JSON.parse(resolveSlotContent({id:'roster'},ctx)); for(const [key,id] of Object.entries({units:'p',items:'i',equipment:'t',skills:'a',raw:'p'}))assert.deepEqual(Object.keys(row[key]),[id]);
 });
 
-test('instance-card formatter displays legacy roll and duration text', () => {
+test('instance-card rule formatter displays the trigger and status duration', () => {
   assert.equal(ruleSummary({hook:'after_hit',program:[{op:'apply_status',statusId:'bleed',turns:2}]}),'命中时 → 施加 流血 2 回合');
+});
+
+function cardSections(state, unit, narrative) {
+  const make = (tag, attrs = {}, value = '') => ({
+    tag, attrs, value, children: [], dataset: {},
+    style: { setProperty() {} }, classList: { add() {} }, addEventListener() {},
+    append(...nodes) { this.children.push(...nodes); },
+    get textContent() { return [this.value, ...this.children.map(node => node.textContent)].join('\n'); },
+  });
+  const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'), { narrative });
+  return body.children.filter(node => node.tag === 'section').map(section => section.children.slice(1));
+}
+
+test('instance card counts and describes equipment mods, rules and granted skills', () => {
+  const unit = { id: 'a1', gear: ['mail', 'ring'], skills: ['guard'] };
+  const state = {
+    items: { mail: { id: 'mail', templateId: 'armor' }, ring: { id: 'ring', templateId: 'accessory' } },
+    equipment: {
+      armor: { name: '冥甲', mods: [
+        { stat: 'damageReductionFlat', flat: 800 }, { stat: 'damageReduction', flat: 0.3 },
+        { stat: 'damageMult', mult: 1.3 }, { stat: 'armorPiercePercent', flat: 0.2 },
+        { stat: 'armor', flat: 'self.con', when: 'self.hp > 0' }, { locks: ['move', 'cast'] },
+      ] },
+      accessory: { name: '星弧裂空之戒', skills: ['deflect'], mods: [{ stat: 'checkBonus', flat: 2 }], rules: [
+        { id: 'bleed', hook: 'after_hit', program: [{ op: 'apply_status', statusId: 'bleed', turns: 2 }] },
+      ] },
+    },
+    skills: { guard: { name: '战帅本能', passive: true }, deflect: { name: '星光偏转' } },
+  };
+  const [equipment, skills] = cardSections(state, unit, [{ originPath: '/equipment/accessory', message: '星界储藏', reason: '仅影响剧情' }]);
+  const [armor, ring] = equipment;
+  assert.equal(armor.tag, 'details');
+  assert.equal(armor.children[0].children.find(node => node.attrs.class === 'fated-char-fx').value, '6 个效果');
+  for (const summary of ['受击固定减伤 +800', '受击伤害减免 +30%', '全伤害倍率 ×1.3', '百分比穿甲 +20%',
+    '护甲 按公式 self.con · 条件：self.hp > 0', '禁止移动、施法']) assert.ok(armor.textContent.includes(summary), summary);
+  assert.match(ring.textContent, /3 个效果/);
+  assert.match(ring.textContent, /命中时 → 施加 流血 2 回合/);
+  assert.match(ring.textContent, /附带技能 · 星光偏转/);
+  assert.match(ring.textContent, /仅叙事 · 星界储藏/);
+  assert.equal(skills.length, 2);
+  assert.match(skills[0].textContent, /战帅本能\s+被动/);
+  assert.match(skills[1].textContent, /星光偏转\s+装备附带/);
+});
+
+test('instance card lists virtual equipment actives once and excludes disabled rules', () => {
+  const active = (id, label, enabled) => ({ id, label, hook: 'active', enabled, program: [{ op: 'move', kind: 'teleport', target: 'self', to: { x: 3, y: 2 } }] });
+  const unit = { id: 'a1', mainHand: 'ring', gear: ['ring'], skills: [] };
+  const state = {
+    items: { ring: { id: 'ring', templateId: 'accessory', rules: [active('instance_step', '实例折跃', true)] } },
+    equipment: { accessory: { name: '星弧裂空之戒', rules: [active('void_step', '虚空折跃', true), active('disabled', '已禁用法则', false)] } },
+    skills: {},
+  };
+  const [equipment, skills] = cardSections(state, unit);
+  assert.equal(equipment.length, 1);
+  assert.equal(equipment[0].tag, 'details');
+  assert.match(equipment[0].textContent, /3 个效果/);
+  assert.match(equipment[0].textContent, /已禁用法则 · 已关闭：主动/);
+  assert.deepEqual(skills.map(row => row.children[0].children[0].value).sort(), ['实例折跃', '虚空折跃'].sort());
+  assert.ok(skills.every(row => row.textContent.includes('装备附带')));
 });
 
 test('battle_init 配套正则输出可点击入口', () => {
