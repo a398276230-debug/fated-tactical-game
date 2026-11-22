@@ -143,6 +143,10 @@ export const tavernTheme = `
 .fated-ai-message[data-status=error] { border-color:#d66; }.fated-ai-message[data-status=aborted] { opacity:.7; }
 .fated-ai-message header { display:flex; justify-content:space-between; gap:12px; color:var(--gold); font-size:.72em; margin-bottom:4px; }
 .fated-ai-message header time { color:var(--text-muted, var(--blue-text)); font-weight:400; }.fated-ai-body p { margin:0 0 6px; }.fated-ai-body p:last-child { margin-bottom:0; }.fated-ai-body pre { margin:5px 0; padding:6px; overflow:auto; background:#0005; border-radius:5px; }.fated-ai-msg-actions { display:flex; gap:6px; margin-top:7px; }.fated-ai-icon-btn { min-width:30px; padding-inline:6px !important; }.fated-ai-msg-feedback { margin-top:5px; color:var(--text-soft); white-space:pre-wrap; }.fated-ai-msg-feedback[data-tone=ok] { color:var(--ci-success); }.fated-ai-msg-feedback[data-tone=error] { color:var(--red-text); }
+.fated-ai-msg-actions { flex-wrap:wrap; align-items:center; }
+.fated-ai-msg-actions [data-ai-versions] { color:var(--text-muted, var(--blue-text)); font-size:.78em; }
+.fated-ai-editor { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.fated-ai-editor textarea { flex-basis:100%; min-width:0; }
 .fated-ai-info { color:var(--text-muted, var(--blue-text)); font-size:.78em; margin:5px 0; }
 [data-fated-tavern-overlay] { ${ciDark} }
 @media(prefers-color-scheme:light) { [data-fated-tavern-overlay] { ${ciLight} } }

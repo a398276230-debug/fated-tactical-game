@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAiSessions } from '../src/tavern/ai-sessions.js';
+import { chatUndoChanges, chatInversePatch } from '../src/tavern/ai-patch-undo.js';
 import { fetchModels, requestViaCustomApi } from '../src/tavern/api.js';
 import { assembleMessages, DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from '../src/tavern/prompts.js';
 
@@ -273,6 +274,46 @@ test('会话重Roll原位替换助手且不重复用户消息', () => {
   assert.equal(turn.userMessage, user);
   assert.equal(store.active().messages.filter(message => message.role === 'user').length, 1);
   assert.equal(store.active().messages.at(-1), turn.assistantMessage);
+});
+
+test('重生成保留旧版本及后续消息，编辑仅替换最后一轮且保留原上下文', () => {
+  let saved;
+  let store = createAiSessions(null, data => { saved = JSON.parse(JSON.stringify(data)); });
+  const id = store.active().id;
+  const [, first, last, lastReply] = store.append(id, { role: 'user', content: '第一问' },
+    { role: 'assistant', content: '原答', status: 'ok' }, { role: 'user', content: '第二问' },
+    { role: 'assistant', content: '第二答', status: 'ok', undoReceipt: { battleKey: 'battle' } });
+  const { assistantMessage } = store.prepareReroll(id, first);
+  assert.equal(store.active().messages.at(-1), lastReply);
+  store.update(id, assistantMessage, { content: '再答', status: 'ok' });
+  store = createAiSessions(saved, () => {});
+  store.selectVersion(id, store.active().messages[1], 0);
+  assert.equal(store.active().messages[1].content, '原答');
+  store.selectVersion(id, store.active().messages[1], 1);
+  assert.equal(store.active().messages[1].content, '再答');
+  assert.equal(store.prepareEdit(id, store.active().messages[0], '不能改'), null);
+  assert.equal(store.prepareEdit(id, last, '旧引用不能改'), null);
+  const latestUser = store.active().messages[2];
+  assert.throws(() => store.prepareEdit(id, latestUser, '编辑'), /先撤销/);
+  store.update(id, store.active().messages[3], { undoReceipt: null });
+  const edited = store.prepareEdit(id, latestUser, ' 编辑后 ');
+  assert.equal(edited.userMessage.content, '编辑后');
+  assert.deepEqual(edited.historyBeforeUser, [{ role: 'user', content: '第一问' }, { role: 'assistant', content: '再答' }]);
+  assert.equal(store.active().messages.length, 4);
+});
+
+test('聊天补丁按实际改动生成逆补丁，保留无关字段并拒绝冲突', () => {
+  const before = { units: { 'a/b': { armor: 1, hp: 50, statuses: ['old'] } }, skills: { old: {} } };
+  const after = { units: { 'a/b': { armor: 6, hp: 50, statuses: ['new'] } }, skills: { new: {} } };
+  const changes = JSON.parse(JSON.stringify(chatUndoChanges(before, after)));
+  const current = structuredClone(after);
+  current.units['a/b'].hp = 40;
+  assert.deepEqual(applyPatch(current, chatInversePatch(current, changes), true), {
+    ...before, units: { 'a/b': { ...before.units['a/b'], hp: 40 } },
+  });
+  current.units['a/b'].armor = 8;
+  assert.throws(() => chatInversePatch(current, changes), /\/units\/a~1b\/armor/);
+  assert.equal(current.units['a/b'].armor, 8);
 });
 
 test('标准化分区放行合法项并保留坏项原因', () => {

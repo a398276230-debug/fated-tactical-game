@@ -26,6 +26,12 @@ export function createAiSessions(saved, persist, now = Date.now) {
     save();
   }
 
+  const historyBefore = (session, index) => session.messages.slice(0, index).filter(message =>
+    ['user', 'assistant'].includes(message.role) && message.content?.trim() && !['error', 'aborted'].includes(message.status)
+  ).map(({ role, content }) => ({ role, content }));
+  const blankReply = () => ({ ts: now(), role: 'assistant', content: '' });
+  const versionOf = ({ versions, versionIndex, ...reply }) => reply;
+
   return {
     data, active, get,
     create() { const session = create(); save(); return session; },
@@ -75,15 +81,41 @@ export function createAiSessions(saved, persist, now = Date.now) {
         if (session.messages[i].role === 'user') { userIdx = i; break; }
       }
       if (userIdx < 0) return null;
-      const historyBeforeUser = session.messages.slice(0, userIdx).filter(message =>
-        ['user', 'assistant'].includes(message.role) && message.content?.trim() && !['error', 'aborted'].includes(message.status)
-      ).map(({ role, content }) => ({ role, content }));
-      const userMessage = session.messages[userIdx];
-      session.messages.splice(userIdx + 1);
-      const assistantMessage = { ts: now(), role: 'assistant', content: '' };
-      session.messages.push(assistantMessage);
+      const historyBeforeUser = historyBefore(session, userIdx);
+      const versions = [...(targetAssistantMessage.versions ?? [])];
+      versions[targetAssistantMessage.versionIndex ?? 0] = versionOf(targetAssistantMessage);
+      const versionIndex = versions.length;
+      versions.push(null);
+      const assistantMessage = { ...blankReply(), versions, versionIndex };
+      session.messages[idx] = assistantMessage;
       change(session);
-      return { userMessage, assistantMessage, historyBeforeUser };
+      return { userMessage: session.messages[userIdx], assistantMessage, historyBeforeUser };
+    },
+    selectVersion(id, message, index) {
+      const session = get(id);
+      const slot = session?.messages.indexOf(message) ?? -1;
+      if (slot < 0 || !message.versions?.[index] || message.versionIndex === index) return;
+      const versions = [...message.versions];
+      versions[message.versionIndex] = versionOf(message);
+      const selected = versions[index];
+      versions[index] = null;
+      session.messages[slot] = { ...selected, versions, versionIndex: index };
+      change(session);
+    },
+    prepareEdit(id, message, input) {
+      const session = get(id);
+      const index = session?.messages.findLastIndex(entry => entry.role === 'user') ?? -1;
+      const content = input.trim();
+      if (index < 0 || session.messages[index] !== message || !content) return null;
+      if (session.messages.slice(index + 1).some(reply => reply.undoReceipt || reply.versions?.some(version => version?.undoReceipt))) {
+        throw new Error('请先撤销此轮回复已应用的补丁，再编辑提问');
+      }
+      const historyBeforeUser = historyBefore(session, index);
+      const assistantMessage = blankReply();
+      message.content = content;
+      session.messages.splice(index + 1, Infinity, assistantMessage);
+      change(session);
+      return { userMessage: message, assistantMessage, historyBeforeUser };
     },
   };
 }

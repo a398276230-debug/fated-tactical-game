@@ -22,7 +22,7 @@ function renderMarkdown(target, content, make) {
   }
 }
 
-export function mountAiPage(page, { make, on, sessions, send, stop, reroll, applyJson, extractJson = () => [] }) {
+export function mountAiPage(page, { make, on, sessions, send, stop, reroll, editMessage, applyJson, undoJson, copyText, extractJson = () => [] }) {
   const button = label => make('button', { type: 'button' }, label);
   const toolbar = make('div', { class: 'fated-actions' });
   const select = make('select', { 'aria-label': '切换会话' });
@@ -59,12 +59,59 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, appl
       const feedback = make('div', { class: 'fated-ai-msg-feedback' });
       const rerollButton = make('button', { type: 'button', class: 'fated-ai-icon-btn', 'data-ai-reroll': '', title: '重新生成此回复', 'aria-label': '重新生成此回复' }, '↻');
       const applyButton = make('button', { type: 'button', 'data-ai-apply': '' }, '应用');
-      actions.append(rerollButton, applyButton);
-      bubble.append(heading, body, actions, feedback);
+      const undoButton = make('button', { type: 'button', 'data-ai-undo': '' }, '撤销应用');
+      const copyButton = make('button', { type: 'button', 'data-ai-copy': '' }, '复制');
+      const editButton = make('button', { type: 'button', 'data-ai-edit': '' }, '编辑');
+      const previous = make('button', { type: 'button', 'aria-label': '上一个回复版本' }, '‹');
+      const next = make('button', { type: 'button', 'aria-label': '下一个回复版本' }, '›');
+      const counter = make('span', { 'data-ai-versions': '' });
+      const editor = make('form', { class: 'fated-ai-editor', hidden: '' });
+      const text = make('textarea', { rows: '4', 'aria-label': '编辑上一条提问', required: '' });
+      const saveEdit = make('button', { type: 'submit' }, '保存并重新生成');
+      const cancelEdit = button('取消');
+      editor.append(text, saveEdit, cancelEdit);
+      actions.append(editButton, rerollButton, applyButton, undoButton, copyButton, previous, counter, next);
+      feedback.setAttribute('role', 'status');
+      bubble.append(heading, body, editor, actions, feedback);
+      const report = (value, tone) => { feedback.textContent = value; feedback.dataset.tone = tone; };
       on(rerollButton, 'click', () => reroll?.(message));
-      on(applyButton, 'click', () => applyJson?.(message, extractJson(message.content).at(-1), feedback));
+      on(applyButton, 'click', () => applyJson?.(message, extractJson(message.content).at(-1)));
+      on(undoButton, 'click', () => undoJson?.(message));
+      on(copyButton, 'click', async () => {
+        try { await copyText(message.content); report('已复制回复', 'ok'); }
+        catch { report('无法写入剪贴板，可选中回复正文手动复制', 'error'); }
+      });
+      function switchVersion(offset) {
+        sessions.selectVersion(shownId, message, message.versionIndex + offset);
+        render();
+        rows.get(sessions.active().messages[messageIndex])?.[offset < 0 ? 'previous' : 'next'].focus();
+      }
+      const messageIndex = sessions.active().messages.indexOf(message);
+      on(previous, 'click', () => switchVersion(-1));
+      on(next, 'click', () => switchVersion(1));
+      on(editButton, 'click', () => {
+        editor.hidden = false;
+        body.hidden = true;
+        refresh();
+        text.value = message.content;
+        text.focus();
+        text.setSelectionRange(text.value.length, text.value.length);
+      });
+      on(cancelEdit, 'click', () => {
+        editor.hidden = true;
+        body.hidden = false;
+        report('', '');
+        refresh();
+        editButton.focus();
+      });
+      on(editor, 'submit', event => {
+        event.preventDefault();
+        if (busy || !text.value.trim()) return;
+        try { editMessage?.(message, text.value); }
+        catch (error) { report(error.message, 'error'); }
+      });
       log.append(bubble);
-      row = { bubble, badge, body, actions, feedback, rerollButton, applyButton };
+      row = { bubble, badge, body, actions, feedback, editor, saveEdit, editButton, rerollButton, applyButton, undoButton, copyButton, previous, counter, next };
       rows.set(message, row);
     }
     row.bubble.dataset.status = message.status ?? '';
@@ -73,19 +120,23 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, appl
     if (message.role === 'assistant') renderMarkdown(row.body, message.content, make);
     else row.body.textContent = [message.toolName, message.content, message.toolResult == null ? '' :
       typeof message.toolResult === 'string' ? message.toolResult : JSON.stringify(message.toolResult, null, 2)].filter(Boolean).join('\n');
-    if (message.role === 'assistant') {
-      const ready = message.status === 'ok';
-      row.actions.hidden = !message.status;
-      row.rerollButton.disabled = busy;
-      row.applyButton.hidden = !ready || !extractJson(message.content).length;
-      row.applyButton.disabled = busy;
-    } else row.actions.hidden = true;
+    const assistant = message.role === 'assistant';
+    const versionCount = message.versions?.length ?? 1;
+    row.rerollButton.hidden = !assistant;
+    row.applyButton.hidden = !assistant || !!message.undoReceipt || message.status !== 'ok' || !extractJson(message.content).length;
+    row.undoButton.hidden = !assistant || !message.undoReceipt;
+    row.copyButton.hidden = !assistant || !message.content.trim();
+    row.previous.hidden = row.next.hidden = row.counter.hidden = versionCount < 2;
+    row.counter.textContent = `${(message.versionIndex ?? 0) + 1} / ${versionCount}`;
+    row.feedback.dataset.tone = message.applyError ? 'error' : 'ok';
+    row.feedback.textContent = message.applyError ?? message.applyNotice ?? '';
   }
 
   function render() {
     const session = sessions.active();
     select.replaceChildren(...sessions.data.sessions.map(s => make('option', { value: s.id }, s.title)));
     select.value = session.id;
+    const scrollTop = shownId === session.id && !pinned ? log.scrollTop : null;
     if (shownId !== session.id) {
       shownId = session.id;
       edit.hidden = true;
@@ -95,17 +146,24 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, appl
     rows.clear();
     log.replaceChildren();
     for (const message of session.messages) updateMessage(message);
+    if (scrollTop !== null) log.scrollTop = scrollTop;
     refresh();
   }
 
   function refresh() {
-    for (const row of rows.values()) {
-      row.rerollButton.disabled = busy;
-      row.applyButton.disabled = busy;
-    }
     const session = sessions.active();
+    const lastUser = session.messages.findLast(message => message.role === 'user');
+    const editing = lastUser && rows.has(lastUser) && !rows.get(lastUser).editor.hidden;
+    for (const [message, row] of rows) {
+      row.editButton.hidden = message !== lastUser || editing;
+      row.actions.hidden = message.role === 'user' ? row.editButton.hidden : message.role !== 'assistant' || !message.status;
+      row.editButton.disabled = row.saveEdit.disabled = row.applyButton.disabled = row.undoButton.disabled = busy;
+      row.rerollButton.disabled = busy || editing;
+      row.previous.disabled = busy || !message.versions?.[message.versionIndex - 1];
+      row.next.disabled = busy || !message.versions?.[message.versionIndex + 1];
+    }
     info.textContent = `${session.messages.length} 条消息 · 创建于 ${formatTime(session.createdAt)}`;
-    submit.disabled = busy || !input.value.trim();
+    submit.disabled = busy || !input.value.trim() || editing;
     remove.disabled = clear.disabled = busy;
     abort.hidden = !busy;
     status.textContent = busy ? 'AI 正在回复…' : '';
@@ -114,7 +172,7 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, appl
 
   function submitMessage() {
     const value = input.value.trim();
-    if (busy || !value) return;
+    if (submit.disabled || !value) return;
     input.value = '';
     drafts.delete(shownId);
     pinned = true;

@@ -14,6 +14,7 @@ import { createAiSessions } from './ai-sessions.js';
 import { characterRecords } from './char-snapshots.js';
 import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
+import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
 
 /*
  * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
@@ -1578,25 +1579,72 @@ export function mountTavernOverlay(options = {}) {
       throw error;
     }
   }
-  async function applyChatJson(sessionId, message, payload, feedback) {
-    try {
-      if (!liveState() || typeof gameMount?.loadState !== 'function') throw new Error('当前没有已加载的沙盘战局，请先扫描或进入战局');
-      const current = liveState();
-      const patch = chatPatch(current, payload);
-      const next = applyPatch(current, patch, Array.isArray(patch));
-      syncEquipmentEffects(next);
-      refreshOutcome(next);
-      (options.validateState || defaultValidateState)(next);
-      gameMount.loadState(next);
-      currentState = next;
-      for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
-      save(); renderInstances(); prepareMessages();
-      aiSessions.update(sessionId, message, { appliedAt: Date.now(), applyError: null });
-      feedback.dataset.tone = 'ok'; feedback.textContent = `✓ 已应用至当前战局（变更 ${Array.isArray(patch) ? patch.length : 1} 项）`;
-    } catch (error) {
-      feedback.dataset.tone = 'error'; feedback.textContent = `应用失败：${error.message}`;
-      aiSessions.update(sessionId, message, { applyError: error.message });
+  function installChatState(next, previous) {
+    (options.validateState || defaultValidateState)(next);
+    gameMount.loadState(next);
+    currentState = liveState();
+    for (const id of Object.keys(previous.units)) if (!own(currentState.units, id)) delete config.instances[id];
+    for (const unit of Object.values(currentState.units)) {
+      const metadata = { ...config.instances[unit.id] };
+      for (const key of Object.keys(previous.units[unit.id] ?? {})) delete metadata[key];
+      config.instances[unit.id] = { ...metadata, ...clone(unit) };
     }
+    save(); renderInstances(); prepareMessages();
+  }
+
+  function changeChatPatch(message, payload, undo = false) {
+    if (aiController) return;
+    const sessionId = aiSessions.active().id;
+    if (!aiSessions.active().messages.includes(message) || message.status !== 'ok' || Boolean(message.undoReceipt) !== undo) return;
+    try {
+      const current = liveState();
+      if (!activeBattleKey || !current || typeof gameMount?.loadState !== 'function') throw new Error('当前没有已加载的沙盘战局，请先扫描或进入战局');
+      if (undo && message.undoReceipt.battleKey !== activeBattleKey) throw new Error('请返回应用补丁时的战局');
+      const patch = undo ? chatInversePatch(current, message.undoReceipt.changes) : chatPatch(current, payload);
+      const next = applyPatch(current, patch, Array.isArray(patch));
+      if (!undo) {
+        syncEquipmentEffects(next);
+        refreshOutcome(next);
+        if (!chatUndoChanges(current, next).length) throw new Error('此补丁没有改变当前战局');
+      }
+      installChatState(next, current);
+      const undoReceipt = undo ? null : { battleKey: activeBattleKey, changes: chatUndoChanges(current, currentState) };
+      aiSessions.update(sessionId, message, { undoReceipt, applyError: null,
+        applyNotice: undo ? '✓ 已撤销' : `✓ 已应用至当前战局（变更 ${undoReceipt.changes.length} 处）` });
+    } catch (error) {
+      aiSessions.update(sessionId, message, { applyError: `${undo ? '撤销' : '应用'}失败：${error.message}` });
+    }
+    aiPage.feed(sessionId, message);
+  }
+
+  async function copyChatText(text) {
+    try {
+      await doc.defaultView.navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // SillyTavern may be opened over plain HTTP on a LAN address.
+    }
+    const previousFocus = doc.activeElement;
+    const field = el(doc, 'textarea', { readonly: '', tabindex: '-1' });
+    field.value = text;
+    field.style.cssText = 'position:fixed;inset:0 auto auto 0;width:1px;height:1px;opacity:0';
+    doc.body.append(field);
+    try {
+      field.select();
+      if (!doc.execCommand?.('copy')) throw new Error('无法访问剪贴板');
+    } finally {
+      field.remove();
+      previousFocus?.focus?.({ preventScroll: true });
+    }
+  }
+
+  function regenerateChat(prepare) {
+    if (aiController) return;
+    const id = aiSessions.active().id;
+    const turn = prepare(id);
+    if (!turn) return;
+    aiPage.render();
+    askChat(turn.userMessage.content, id, turn);
   }
   async function askChat(requestText, sessionId = aiSessions.active().id, rerollTurn) {
     const session = aiSessions.get(sessionId);
@@ -1659,8 +1707,11 @@ export function mountTavernOverlay(options = {}) {
   renderInstances(); renderSandbox();
   aiPage = mountAiPage(pages.ai, { make: (tag, attrs, content) => el(doc, tag, attrs, content), on, sessions: aiSessions,
     send: message => askChat(message),
-    reroll: message => { const turn = aiSessions.prepareReroll(aiSessions.active().id, message); if (turn) { aiPage.render?.(); askChat(turn.userMessage.content, aiSessions.active().id, turn); } },
-    applyJson: (message, payload, feedback) => applyChatJson(aiSessions.active().id, message, payload, feedback),
+    reroll: message => regenerateChat(id => aiSessions.prepareReroll(id, message)),
+    editMessage: (message, content) => regenerateChat(id => aiSessions.prepareEdit(id, message, content)),
+    applyJson: changeChatPatch,
+    undoJson: message => changeChatPatch(message, undefined, true),
+    copyText: copyChatText,
     extractJson: text => { const candidate = preferredJson(text); return candidate ? [candidate] : []; }, stop: () => aiController?.abort(new DOMException('已取消', 'AbortError')) });
   updateMagic();
   bindEventBus();
