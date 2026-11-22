@@ -2,6 +2,7 @@ import { evaluateExpr } from './formula.js';
 import { rollDie } from './rng.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { validVmOpcode } from './vm-schema.js';
+import { resolvePoint } from './vm-select.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
@@ -58,11 +59,18 @@ export const ruleOps = {
     const event = own(state.vm.events, frame.eventRef);
     if (!event || !frame.hook || !validVmOpcode(op, { hook: frame.hook })) throw new Error('事件改写不符合当前拦截钩子');
     for (const [key, expression] of Object.entries(op.patch)) {
-      const resolveId = id => id.startsWith('vars.') ? own(context.vars, id.slice(5)) : id;
+      const resolveId = id => {
+        if (!id.startsWith('vars.')) return id;
+        const value = own(context.vars, id.slice(5));
+        return context.resolveEntity(value, 'unit')?.id;
+      };
       let value;
       if (key === 'redirectTarget') value = resolveId(expression);
       else if (key === 'replaceTarget') value = { from: resolveId(expression.from), to: resolveId(expression.to) };
-      else if (typeof expression === 'object' || ['minRating', 'forceOutcome'].includes(key)) value = expression;
+      else if (key === 'origin') {
+        const point = resolvePoint(expression, context);
+        if (point) value = { x: point.x, y: point.y, ...(Number.isFinite(point.z) && { z: point.z }) };
+      } else if (typeof expression === 'object' || ['minRating', 'forceOutcome'].includes(key)) value = expression;
       else value = evaluateExpr(expression, context);
       if (value == null || (key === 'replaceTarget' && (!value.from || !value.to))) continue;
       event[key] = value;
@@ -105,9 +113,22 @@ export function continueCheck({ state, frame, host, context }) {
     const passed = ['pass', 'hit', 'crit'].includes(event.forceOutcome) ? true : ['fail', 'miss'].includes(event.forceOutcome) ? false
       : op.mode === 'any' ? outcomes.some(outcome => outcome.passed) : outcomes.every(outcome => outcome.passed);
     Object.assign(event, { roll, total, dc, passed, rating: event.forceOutcome === 'crit' ? 'crit' : event.minRating ?? (passed ? 'hit' : 'miss') });
-    host.log(state, subject, kind === 'save' ? 'save' : kind === 'attack' ? 'attack_roll' : 'proc',
-      `${subject.name}检定${passed ? '成功' : '失败'}（${outcomes.map(outcome => `${outcome.roll}点，合计${outcome.total}对${outcome.difficulty}`).join('；')}）`,
-      { targetId: context.target.id, roll, total, dc, success: passed });
+    const verdict = passed ? '成功' : '失败';
+    const label = { save: '豁免', chance: '概率判定', d20: '检定', contest: '对抗检定', attack: '攻击检定' }[kind];
+    const text = `${subject.name}${label}${verdict}（${outcomes.map(outcome => kind === 'chance'
+      ? `d100 掷出 ${outcome.roll}，阈值 ${outcome.difficulty}`
+      : `d20 掷出 ${outcome.roll}，合计 ${outcome.total} 对 ${outcome.difficulty}`).join('；')}）`;
+    const targetId = context.target.id;
+    if (kind === 'save') {
+      const checks = outcomes.map((outcome, index) => ({
+        saveStat: stats[index], saveRoll: outcome.roll, saveBonus: outcome.total - outcome.roll,
+        saveTotal: outcome.total, saveDC: outcome.difficulty, saved: outcome.passed,
+      }));
+      const detail = checks.length > 1 ? { checks, mode: op.mode ?? 'all' } : checks[0];
+      host.log(state, subject, 'save', text, { targetId, ...detail, saved: passed });
+    } else {
+      host.log(state, subject, 'vm_check', text, { targetId, kind, outcomes, success: passed });
+    }
     scheduleHooks(state, frame, 'after_check', frame.eventRef, host);
     return;
   }
@@ -147,20 +168,21 @@ export function continueApplyStatus({ state, frame, host, context }) {
     const stackMode = op.stackMode ?? template.stackMode ?? 'refresh';
     const values = { ...template.vars, ...op.vars };
     const vars = Object.fromEntries(Object.entries(values).map(([key, expr]) => [key, evaluateExpr(expr, context)]).filter(([, value]) => value !== null));
-    const maxStacks = template.maxStacks ?? 1;
+    const cap = evaluate(template.maxStacks, context, 1);
     const duration = evaluate(op.turns, context, template.remainingTurns ?? 1);
     const count = evaluate(op.stacks, context, 1);
     const extension = evaluate(op.extendTurns, context, 1);
-    if (![duration, count, extension].every(Number.isFinite)) return;
+    if (![cap, duration, count, extension].every(Number.isFinite)) return;
+    const maxStacks = bounded(cap, 1, 999999);
     const status = { ...structuredClone(template), id: op.statusId, templateId: op.statusId, ownerId: target.id,
       sourceId: context.self?.id ?? null, vars, tags: template.tags ?? [], tier: template.tier ?? 1,
-      mods: template.mods ?? [], rules: template.rules ?? [], stackMode, stacks: bounded(count, 1, maxStacks),
+      mods: template.mods ?? [], rules: template.rules ?? [], stackMode, maxStacks, stacks: bounded(count, 1, maxStacks),
       durationType: template.durationType ?? 'battle_turns', remainingTurns: bounded(duration, 1, 100) };
     if (op.expireOn) status.expireOn = op.expireOn;
     if (previous && stackMode === 'stack') status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
     if (previous && stackMode === 'extend') status.remainingTurns = bounded(previous.remainingTurns + extension, 1, 100);
     target.statuses[op.statusId] = status;
-    host.log(state, context.self, status.category === 'shield' ? 'shield' : 'status', `${target.name}获得${status.name}（${status.stacks}层）`, { targetId: target.id, statusId: op.statusId });
+    host.log(state, context.self, 'status', `${target.name}获得${status.name}（${status.stacks}层）`, host.statusLogDetail(target, status));
     scheduleHooks(state, frame, 'after_status_applied', frame.awaitEvent, host);
     return;
   }

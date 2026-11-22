@@ -21,7 +21,15 @@ function resolveEntity(state, ref) {
     : ref.value;
 }
 
-function entityRef(state, value, from, owner) {
+function entityRef(state, value, from, owner, context) {
+  if (from.startsWith('vars.')) {
+    const register = own(context.vars, from.slice(5));
+    const refs = Array.isArray(register) ? register : [register];
+    const ref = refs.find(entry => entry && typeof entry === 'object' && resolveEntity(state, entry) === value);
+    if (ref) return ref;
+    if (own(state.zones, value.id) === value) return { type: 'zone', id: value.id };
+    if (own(state.items, value.id) === value) return { type: 'item', id: value.id };
+  }
   if (from === 'statuses') return { type: 'status', ownerId: owner.id, id: Object.keys(owner.statuses).find(key => owner.statuses[key] === value) };
   if (from === 'tape' || from === 'cells') return { type: 'literal', value };
   if (from === 'zones') return { type: 'zone', id: value.id };
@@ -64,10 +72,16 @@ function contextFor(state, frame, host) {
   const attacker = own(state.units, event.actorId) ?? source;
   const vars = { ...registers(state, frame) };
   const bound = resolveEntity(state, frame.scope?.bound);
-  if (frame.scope?.bind && bound !== undefined) vars[frame.scope.bind] = bound;
+  Object.assign(vars, frame.scope?.bindings);
   const carrier = resolveEntity(state, frame.carrier);
   return {
     self, source, target, attacker, candidate: bound, vars, event: { ...event, actor: attacker, source, target },
+    resolveEntity: (value, kind) => {
+      const entity = typeof value === 'string' ? own(state.units, value) ?? own(state.zones, value) ?? own(state.items, value)
+        : value?.type && (value.type === 'literal' ? Object.hasOwn(value, 'value') : Object.hasOwn(value, 'id'))
+          ? resolveEntity(state, value) : value;
+      return kind === 'unit' && own(state.units, entity?.id) !== entity ? undefined : entity;
+    },
     status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === 'status' ? carrier : undefined),
     zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === 'zone' ? carrier : undefined),
     tape: resolveEntity(state, frame.scope?.tape), center: event.center, pool: frame.scope?.pool,
@@ -105,12 +119,16 @@ function pruneEvents(vm) {
 }
 
 function writeChoice(state, frame, ask, value, host) {
-  registers(state, frame)[ask.outVar] = value;
+  const multi = ask.maxSelect !== undefined;
+  const choiceRef = ask.kind === 'entity' ? own(frame.choiceRefs, value) : undefined;
+  registers(state, frame)[ask.outVar] = multi ? value.map(id => own(frame.choiceRefs, id)) : choiceRef ?? value;
+  delete frame.choiceRefs;
   const action = state.vm.stack.findLast(entry => entry.native === 'action');
   if (action) action.answers.push(value);
   const unit = own(state.units, ask.chooserId);
-  const option = Array.isArray(ask.options) && ask.options.find(option => option.id === value);
-  const label = coordinate(value) ? `(${value.x}, ${value.y})` : option?.label ?? value;
+  const labelFor = id => ask.options.find(option => option.id === id)?.label ?? id;
+  const label = multi ? value.map(labelFor).join('、')
+    : coordinate(value) ? `(${value.x}, ${value.y})` : Array.isArray(ask.options) ? labelFor(value) : value;
   host.log(state, unit, 'choice', `${unit.name}选择了${label}`);
 }
 
@@ -128,16 +146,27 @@ function askInstruction(state, frame, op, context, host, options) {
     if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return;
     choices = { min, max, step: Number.isInteger(min) && Number.isInteger(max) ? 1 : 'any' };
   } else if (op.kind === 'option') choices = op.options;
-  else if (op.kind === 'entity') choices = selectVM(state, op.select, context).map(({id, name}) => ({id, label: name ?? id}));
+  else if (op.kind === 'entity') {
+    const { from, of = 'target' } = op.select;
+    const entities = new Map();
+    for (const entity of selectVM(state, op.select, context)) {
+      if (typeof entity.id === 'string' && !entities.has(entity.id)) entities.set(entity.id, entity);
+    }
+    choices = [...entities.values()].map(({ id, name }) => ({ id, label: name ?? id }));
+    if (choices.length) frame.choiceRefs = Object.fromEntries([...entities].map(([id, entity]) =>
+      [id, entityRef(state, entity, from, context[of], context)]));
+  }
   else choices = selectVM(state, op.select, context).filter(cell => coordinate(cell) && !unitAt(state, cell.x, cell.y, chooser.id))
     .map(({x, y}) => ({x, y}));
   if (!choices || choices.length === 0) return;
   const ask = { askId: nextId(state.vm, 'ask'), chooserId: chooser.id, prompt: op.prompt, kind: op.kind,
-    options: choices, outVar: op.out, aiPolicy: op.aiPolicy };
+    options: choices, outVar: op.out, aiPolicy: op.aiPolicy,
+    ...(op.maxSelect === undefined ? {} : { maxSelect: op.maxSelect }) };
   if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.controlPolicy?.controller === 'ai' || chooser.team === 'red'))) {
     if (options.dryRun) options.conditional = true;
     const choice = automaticChoice(state, ask, host);
-    writeChoice(state, frame, ask, ask.kind === 'entity' || ask.kind === 'option' ? choice.id : choice, host);
+    const value = ask.maxSelect !== undefined ? [choice.id] : ask.kind === 'entity' || ask.kind === 'option' ? choice.id : choice;
+    writeChoice(state, frame, ask, value, host);
   } else state.vm.pendingAsk = ask;
 }
 
@@ -156,6 +185,12 @@ export function answerVM(state, action, host) {
     if (ask.kind === 'number') {
       const { min, max, step } = ask.options;
       if (!Number.isFinite(value) || value < min || value > max || (step === 1 && !Number.isInteger(value))) throw new Error('数值超出选择范围');
+    } else if (ask.maxSelect !== undefined) {
+      if (!Array.isArray(value) || value.length < 1 || value.length > ask.maxSelect) throw new Error(`请选择 1–${ask.maxSelect} 个实体`);
+      const requested = new Set(value);
+      const ordered = ask.options.filter(option => requested.has(option.id));
+      if (ordered.length !== value.length) throw new Error('请选择不同的有效实体');
+      value = ordered.map(option => option.id);
     } else if (!ask.options.some(option => option.id === value)) throw new Error('请选择有效选项');
   }
   writeChoice(state, frame, ask, value, host);
@@ -167,14 +202,11 @@ function stepLoop(state, frame) {
   const entity = resolveEntity(state, ref);
   if (!entity) return;
   const scope = { ...frame.scope, bound: ref };
-  if (frame.from === 'statuses') scope.status = ref;
-  if (frame.from === 'zones') scope.zone = ref;
+  if (ref.type === 'status') scope.status = ref;
+  if (ref.type === 'zone') scope.zone = ref;
   if (frame.from === 'tape') scope.tape = ref;
-  if (frame.bind) scope.bind = frame.bind;
-  else {
-    delete scope.bind;
-    if (ref.type === 'unit') scope.target = ref;
-  }
+  if (frame.bind) scope.bindings = { ...scope.bindings, [frame.bind]: ref };
+  else if (ref.type === 'unit') scope.target = ref;
   childFrame(state, frame, { kind: frame.hook ? 'hook' : 'action', scope, program: frame.program });
 }
 
@@ -202,7 +234,7 @@ function execute(state, frame, op, host, options) {
       const entities = selectVM(state, op.select, context);
       if (!entities.length) return;
       const { from, of = 'target' } = op.select;
-      const items = entities.map(entity => entityRef(state, entity, from, context[of]));
+      const items = entities.map(entity => entityRef(state, entity, from, context[of], context));
       childFrame(state, frame, { kind: 'loop', from, bind: op.bind ?? null, items, program: op.body });
       return;
     }

@@ -134,7 +134,7 @@ export function createRenderer(root, portraitFor = () => []) {
     return map;
   }
 
-  function renderBoard(state, { selected, action, hover, preview, current, askLocked, askCells }) {
+  function renderBoard(state, { selected, action, hover, preview, current, askLocked, askCells, entityChoices }) {
     initBoard(state);
     const moving = ['move', 'sprint', 'disengage'].includes(action?.type);
     const unitsAt = group(values(state.units).filter(u => u.hp > 0 && !u.fled));
@@ -151,21 +151,24 @@ export function createRenderer(root, portraitFor = () => []) {
       const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
       const unit = unitsAt.get(xy)?.[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
       const chosen = !!unit && selected === unit.id, isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
-      const reach = baseline.move.has(xy), answerable = askCells?.has(xy);
-      cell.disabled = askLocked && !answerable;
+      const reach = baseline.move.has(xy);
+      const entityOption = entityChoices?.eligible.has(unit?.id);
+      const entitySelected = entityChoices?.selected.has(unit?.id);
+      const answerable = askCells?.has(xy) || entityOption;
+      cell.disabled = askLocked && (!answerable || entityOption && !entitySelected && entityChoices.selected.size >= entityChoices.limit);
       cell.className = ['tactical-cell', tile.kind !== 'floor' ? `terrain-${tile.kind}` : tile.z ? 'terrain-plateau' : '', ...edges.map(c => `cliff-${c}`),
         chosen ? 'is-selected' : '', isHover ? 'is-hovered' : '', isHover && preview?.ok === false ? 'is-invalid' : '',
         reach ? 'is-reachable' : '', (action?.type === 'interact' ? baseline.interact : baseline.attack).has(xy) || (item && baseline.interact.has(xy)) ? 'is-in-range' : '',
         reach && (tile.kind === 'slope' || tile.z !== originZ) ? 'is-elevated-reach' : '',
         affected.has(xy) ? 'axis-covered' : '', path.has(xy) ? 'is-path' : '', risks.has(xy) ? 'is-opportunity' : '',
-        answerable ? 'is-ask-option' : ''].filter(Boolean).join(' ');
+        answerable ? 'is-ask-option' : '', entitySelected ? 'is-ask-selected' : ''].filter(Boolean).join(' ');
       cell.dataset.terrainType = tile.kind;
       cell.dataset.terrainZ = tile.z;
       cell.dataset.terrainElev = tile.z < 0 ? 'neg' : tile.z >= 2 ? 'pos2' : 'pos1';
       for (const [name, v] of [['unitId', unit?.id], ['coverId', cover?.id], ['interactiveId', item?.id]]) {
         if (v) cell.dataset[name] = v; else delete cell.dataset[name];
       }
-      cell.setAttribute('aria-pressed', String(chosen));
+      cell.setAttribute('aria-pressed', String(entityChoices ? !!entitySelected : chosen));
       const label = [`(${xy}) ${terrainLabel(tile)}`, edges.length ? '陡崖边' : '',
         unit ? `${side(unit.team)}${unit.name}，生命 ${unit.hp}/${unit.maxHp}${values(unit.statuses).length ? `，${values(unit.statuses).map(s => s.name).join('、')}` : ''}` : '',
         cover ? coverText(cover) : '', item ? interactiveText(item) : '', reach ? '可以走到这里' : '', answerable ? '可选择此格' : ''].filter(Boolean).join(' · ');
@@ -405,7 +408,7 @@ export function createRenderer(root, portraitFor = () => []) {
     if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);
     if (fresh) renderActor(state, current);
     $('sprint-indicator').textContent = ui.sprint ? '疾跑范围已显示 · 走更远需要 2 AP' : '';
-    renderBoard(state, { selected, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells });
+    renderBoard(state, { selected, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells, entityChoices: ui.entityChoices });
     if (ui.target) renderPreview(state, action, hover, range, result, current);
     if (fresh || last?.selected !== selected || last?.inspectedId !== ui.inspectedId) {
       const feature = get(state.covers, ui.inspectedId) ?? get(state.interactives, ui.inspectedId);

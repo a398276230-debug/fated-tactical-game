@@ -16,6 +16,32 @@ function battle(program) {
 
 const stun = { op: 'apply_status', target: 'target', statusId: 'stun' };
 
+test('free skills leave both slots untouched and consume only the configured turn and cooldown limits', () => {
+  const { state, actor, action } = battle([{ op: 'damage', target: 'target', amount: 1, damageType: 'true' }]);
+  const skill = state.skills.probe;
+  skill.ap = 0;
+  skill.initiativeBonus = 8;
+  skill.rules[0].usesPerTurn = 1;
+  skill.rules[0].filter = 'event.initiativeBonus == 8';
+  skill.rules[0].cooldownTurns = 2;
+  actor.used = { attack: 1, action: 1 };
+  actor.ap = 0;
+  validateState(state);
+  const initialRound = state.round;
+  assert.equal(preview(state, action).ap, 0);
+  assert.equal(preview(state, action).usesLeft, 1);
+  actor.used = { attack: 1, action: 0 };
+  actor.ap = 1;
+  applyAction(state, action);
+  assert.deepEqual(actor.used, { attack: 1, action: 0 });
+  assert.equal(actor.ap, 1);
+  assert.equal(preview(state, action).usesLeft, 0);
+  for (let i = 0; i < state.order.length * 3 && !(currentUnit(state)?.id === actor.id && state.round === initialRound + 1); i++) applyAction(state, { type: 'end' });
+  assert.equal(preview(state, action).cooldownRemaining, 1);
+  for (let i = 0; i < state.order.length * 3 && !(currentUnit(state)?.id === actor.id && state.round === initialRound + 2); i++) applyAction(state, { type: 'end' });
+  assert.equal(preview(state, action).ok, true);
+});
+
 test('save DC reads the current caster stat and applies expression bounds with fractions', () => {
   const dc = 'max(4, min(24, 6 + self.spi * 0.5))';
   for (const [spirit, expectedDC] of [[-10, 4], [10, 11], [11, 11.5], [20, 16], [50, 24]]) {
@@ -23,7 +49,7 @@ test('save DC reads the current caster stat and applies expression bounds with f
     actor.stats.spi = spirit;
     validateState(state);
     const log = applyAction(state, action).find(entry => entry.type === 'save');
-    assert.equal(log?.detail.dc, expectedDC);
+    assert.equal(log?.detail.saveDC, expectedDC);
   }
 });
 
@@ -37,8 +63,15 @@ test('combined and opposed checks execute distinct branches', () => {
     actor.stats.str = target.stats.str = 50;
     target.stats.con = -20;
     validateState(state);
-    applyAction(state, action);
+    const logs = applyAction(state, action);
     assert.equal(Boolean(target.statuses.stun), succeeds);
+    if (fields.kind === 'save') {
+      const { detail } = logs.find(log => log.type === 'save');
+      assert.equal(detail.mode, fields.mode);
+      assert.equal(detail.saved, succeeds);
+      assert.deepEqual(detail.checks.map(check => [check.saveStat, check.saveDC, check.saved]), [['str', 20, true], ['con', 20, false]]);
+      for (const check of detail.checks) assert.equal(check.saveTotal, check.saveRoll + check.saveBonus);
+    }
   }
 });
 

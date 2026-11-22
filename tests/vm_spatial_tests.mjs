@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { answerVM, startVM, stepVM } from '../src/core/tactical-vm.js';
+import { answerVM, newEvent, startVM, stepVM } from '../src/core/tactical-vm.js';
+import { continueAction, perform, queueVMAction } from '../src/core/vm-action.js';
+import { ruleOps } from '../src/core/vm-rules.js';
 import { commitOps, continueCommit } from '../src/core/vm-commit.js';
 import { initializeUnitPools } from '../src/core/vm-pools.js';
 import { expireSpatialEffects, spatialContinuations, spatialOps } from '../src/core/vm-spatial-ops.js';
 import { vmHost } from '../src/core/vm-runtime.js';
 import { zoneContains } from '../src/core/vm-select.js';
+import { preview } from '../src/core/combat.js';
 
 const unit = (id, x, y) => ({ id, name: id, x, y, hp: 30, maxHp: 30, mp: 10, maxMp: 10, sp: 10, maxSp: 10,
   team: 'blue', facing: [1, 0], tier: 3, stats: { str: 10, agi: 10, con: 10, int: 10, spi: 10 }, statuses: {} });
@@ -27,8 +30,9 @@ const host = {
     return old.rules.filter(rule => rule.hook === hook).map(rule => ({ ownerId: old.id, carrierOrder: 0, rule }));
   },
 };
-function run(state, program, scope) {
+function run(state, program, scope, event) {
   const frame = startVM(state, { ownerId: 'actor', sourceId: 'actor', program, ...(scope ? { scope } : {}) });
+  if (event) frame.eventRef = newEvent(state, event);
   stepVM(state, host);
   return frame.vars;
 }
@@ -165,6 +169,316 @@ test('terrain layers replay on expiry, and cover and inventory instances have de
   assert.equal(state.covers['cover-1'], undefined);
   expireSpatialEffects(state, host, { advance: true });
   assert.equal(state.grid[2][2].z, 0);
+});
+
+const spawnSpatial = (entityKind, x, y, spec, out) => ({ op: 'spawn', entityKind, at: { x, y }, spec, ...(out && { out }) });
+const despawn = (entityKind, select) => ({ op: 'despawn', entityKind, select });
+const singleArea = (x, y) => ({ shape: 'single', origin: { x, y } });
+
+test('despawn selects zones by footprint and removes their pools', () => {
+  const state = board();
+  run(state, [
+    spawnSpatial('zone', 2, 2, { templateId: 'ward', persistent: true, area: { shape: 'circle', radius: 1 } }),
+    spawnSpatial('zone', 3, 2, { templateId: 'other-ward', persistent: true, area: { shape: 'single' } }),
+    spawnSpatial('zone', 5, 4, { templateId: 'ward', persistent: true, area: { shape: 'single' } }),
+  ]);
+  const zone = state.zones['zone-1'];
+  zone.pools = { charge: 'zone-charge' };
+  state.pools['zone-charge'] = { current: 1 };
+  run(state, [despawn('zone', { from: 'zones', where: "candidate.id != 'zone-2'", area: singleArea(3, 2) })]);
+  assert.deepEqual(Object.keys(state.zones), ['zone-2', 'zone-3']);
+  assert.equal(state.pools['zone-charge'], undefined);
+  assert.match(state.logs.at(-1).text, /ward解除后消散/);
+});
+
+test('despawn removes selected cover independently and leaves siblings to expire', () => {
+  const state = board();
+  state.covers.native = { id: 'native', name: '天然掩体', x: 5, y: 4, cover: 2, hp: 10 };
+  run(state, [spawnSpatial('cover', 3, 3, { remainingTurns: 1, area: { shape: 'circle', radius: 1 } }, 'cover'),
+    despawn('terrain', 'terrain'), despawn('cover', { from: 'covers', where: "candidate.id == 'cover-1'" })]);
+  assert.deepEqual(Object.keys(state.covers), ['native', 'cover-2', 'cover-3', 'cover-4', 'cover-5']);
+  assert.deepEqual(state.spatialTerrain['terrain-1'].coverIds, ['cover-2', 'cover-3', 'cover-4', 'cover-5']);
+  run(state, [despawn('cover', { from: 'covers', where: "candidate.id == 'native'", area: singleArea(5, 4) })]);
+  assert.equal(state.covers.native, undefined);
+  expireSpatialEffects(state, host, { advance: true });
+  assert.deepEqual(state.covers, {});
+  assert.deepEqual(state.spatialTerrain, {});
+});
+
+test('despawn restores overlapping terrain across the whole selected footprint and preserves native tiles', () => {
+  const state = board();
+  state.grid[2][3] = { kind: 'slope', z: 1 };
+  state.grid[4][5] = { kind: 'wall', z: 6 };
+  const spawn = [
+    spawnSpatial('terrain', 2, 2, { height: 2, mode: 'raise', area: { shape: 'rect', width: 1, radius: 0 } }),
+    spawnSpatial('terrain', 3, 2, { height: 3, mode: 'raise', remainingTurns: 1 }),
+  ];
+  run(state, spawn);
+  assert.equal(state.grid[2][3].z, 6);
+  run(state, [despawn('terrain', { from: 'terrain', area: singleArea(3, 2), pick: { first: 1 } }),
+    despawn('terrain', { from: 'cells', where: 'candidate.x == 5 && candidate.y == 4' })]);
+  assert.deepEqual(Object.keys(state.spatialTerrain), ['terrain-2']);
+  assert.deepEqual(state.grid[2][2], { kind: 'floor', z: 0 });
+  assert.deepEqual(state.grid[2][3], { kind: 'slope', z: 4 });
+  assert.deepEqual(state.grid[4][5], { kind: 'wall', z: 6 });
+  expireSpatialEffects(state, host, { advance: true });
+  assert.deepEqual(state.grid[2][3], { kind: 'slope', z: 1 });
+});
+
+test('despawn targets spawned wall layers while preserving native terrain', () => {
+  const state = board();
+  state.grid[4][5] = { kind: 'wall', z: 6 };
+  run(state, [spawnSpatial('terrain', 3, 2, { kind: 'wall' }),
+    spawnSpatial('terrain', 4, 2, { kind: 'wall' })]);
+  run(state, [despawn('terrain', { from: 'terrain', area: singleArea(5, 4) }),
+    despawn('terrain', { from: 'terrain', area: singleArea(3, 2) })]);
+  assert.equal(state.grid[2][3].kind, 'floor');
+  assert.equal(state.grid[2][4].kind, 'wall');
+  assert.deepEqual(state.grid[4][5], { kind: 'wall', z: 6 });
+});
+
+test('despawn applies one net change per tile without falling through intermediate heights', () => {
+  const state = board();
+  run(state, [
+    spawnSpatial('terrain', 3, 2, { height: 4, mode: 'raise' }),
+    spawnSpatial('terrain', 3, 2, { height: 4, mode: 'lower' }),
+    { op: 'move', mode: 'teleport', target: 'target', to: { x: 3, y: 2 } },
+    despawn('terrain', 'terrain'),
+  ], { target: self });
+  assert.deepEqual(state.spatialTerrain, {});
+  assert.equal(state.grid[2][3].z, 0);
+  assert.equal(state.units.other.hp, 30);
+  assert.equal(state.logs.some(log => log.type === 'damage'), false);
+});
+
+test('despawn commits one fall against the final height and preserves a newer layer across JSON replay', () => {
+  const state = board();
+  const hp = state.pools[state.units.other.pools.hp];
+  state.units.other.hp = state.units.other.maxHp = hp.current = hp.max = hp.contributors[0].maxBase = 300;
+  run(state, [
+    spawnSpatial('terrain', 1, 1, { height: 1, mode: 'raise' }),
+    spawnSpatial('terrain', 1, 1, { height: 2, mode: 'raise' }),
+    spawnSpatial('terrain', 1, 1, { height: 1, mode: 'raise', remainingTurns: 1 }),
+  ]);
+  const saved = JSON.parse(JSON.stringify(state));
+  for (const battle of [state, saved]) {
+    run(battle, [despawn('terrain', { from: 'terrain', where: "candidate.id != 'terrain-3'" })]);
+    assert.equal(battle.grid[1][1].z, 1);
+    assert.equal(battle.units.other.hp, 150);
+    assert.equal(battle.logs.filter(log => log.type === 'damage').length, 1);
+    const parent = startVM(battle, { ownerId: 'actor', sourceId: 'actor' });
+    expireSpatialEffects(battle, host, { advance: true, parent });
+    stepVM(battle, host);
+    assert.equal(battle.grid[1][1].z, 0);
+    assert.equal(battle.units.other.hp, 100);
+  }
+  assert.deepEqual(saved, state);
+});
+
+test('despawn restores a native wall, clears obstacles and relocates its occupant', () => {
+  const state = board();
+  state.grid[2][2] = { kind: 'wall', z: 2 };
+  run(state, [spawnSpatial('terrain', 2, 2, { kind: 'floor', height: 0 }),
+    despawn('terrain', { from: 'terrain' })]);
+  assert.deepEqual(state.grid[2][2], { kind: 'wall', z: 2 });
+  assert.deepEqual(state.covers, {});
+  assert.deepEqual(state.spatialTerrain, {});
+
+  run(state, [spawnSpatial('terrain', 2, 2, { kind: 'floor', height: 0 }),
+    { op: 'move', mode: 'teleport', target: 'target', to: { x: 2, y: 2 } },
+    despawn('terrain', { from: 'terrain' })], { target: self });
+  assert.deepEqual(state.grid[2][2], { kind: 'wall', z: 2 });
+  assert.notDeepEqual(position(state.units.other), [2, 2]);
+  assert.equal(state.grid[state.units.other.y][state.units.other.x].kind, 'floor');
+  assert.equal(state.units.other.hp, 30);
+});
+
+test('generated units resolve count and tier before calculating a panel', () => {
+  const state = board();
+  const spawn = spec => ({ op: 'spawn', entityKind: 'unit', at: { x: 3, y: 3 }, out: 'unit', spec });
+  const { unit: id } = run(state, [spawn({ name: '默认面板', count: 'self.tier + 20', tier: 'self.tier / 2' })]);
+  assert.equal(state.order.length, 12);
+  assert.equal(state.units[id].tier, 1);
+  assert.ok(state.units[id].maxHp > 0);
+  const { unit: custom } = run(state, [spawn({ name: '指定面板', count: '-4', spawnPanel: { tier: 'self.tier - 1' } })]);
+  assert.equal(state.order.length, 13);
+  assert.equal(state.units[custom].tier, 2);
+  const { unit: capped } = run(state, [spawn({ name: '超出层级', tier: '99', spawnPanel: { tier: '1' } })]);
+  assert.equal(state.units[capped].tier, state.units.actor.tier);
+  assert.deepEqual(run(state, [spawn({ count: 'vars.missing' })]), {});
+  assert.equal(state.order.length, 14);
+});
+
+test('items, zones, terrain and cover store resolved spawn quantities', () => {
+  const state = board();
+  const registers = run(state, [
+    { op: 'spawn', entityKind: 'item', out: 'item', spec: { templateId: 'sword', count: 'self.tier - 0.2' } },
+    { op: 'spawn', entityKind: 'zone', out: 'zone', spec: { tier: 'self.tier + 15', remainingTurns: 'self.tier * 50',
+      area: { shape: 'circle', center: 'target', radius: 'self.tier / 2' } } },
+    { op: 'spawn', entityKind: 'terrain', out: 'terrain', at: { x: 4, y: 1 }, spec: { height: 1,
+      remainingTurns: 'self.tier - 10', area: { shape: 'circle', radius: '-1' } } },
+    { op: 'spawn', entityKind: 'cover', out: 'cover', at: { x: 4, y: 3 }, spec: { remainingTurns: 'self.tier / 1.5' } },
+  ], { target: self });
+  assert.deepEqual(registers, { item: 'item-1', zone: 'zone-1', terrain: 'terrain-1', cover: 'cover-1' });
+  assert.equal(state.units.other.inventory.sword, 2);
+  assert.equal(state.zones[registers.zone].tier, 7);
+  assert.equal(state.zones[registers.zone].remainingTurns, 100);
+  assert.deepEqual(state.zones[registers.zone].area, { shape: 'circle', center: { x: 1, y: 1 }, radius: 1.5 });
+  assert.equal(state.spatialTerrain[registers.terrain].remainingTurns, 1);
+  assert.equal(state.spatialTerrain[registers.terrain].spec.area.radius, 0);
+  assert.equal(state.spatialTerrain['terrain-2'].remainingTurns, 2);
+  expireSpatialEffects(state, host, { advance: true });
+  assert.equal(state.grid[1][4].z, 0);
+  assert.ok(state.covers[registers.cover]);
+  expireSpatialEffects(state, host, { advance: true });
+  assert.equal(state.covers[registers.cover], undefined);
+});
+
+test('area origin point references use VM scope for both selectors and terrain', () => {
+  for (const [origin, x, y] of [['self', 0, 1], ['target', 1, 1], ['center', 2, 2], ['vars.cell', 3, 3]]) {
+    const state = board();
+    const area = { shape: 'single', origin };
+    const vars = run(state, [
+      { op: 'ask', chooser: 'self', kind: 'cell', select: { from: 'cells' }, out: 'cell', aiPolicy: 'first', prompt: '选格' },
+      { op: 'for_each', select: { from: 'cells', area }, bind: 'matched', body: [
+        { op: 'let', name: 'matchedX', value: 'vars.matched.x' },
+        { op: 'let', name: 'matchedY', value: 'vars.matched.y' },
+      ] },
+      { op: 'spawn', entityKind: 'terrain', at: { x: 5, y: 0 }, spec: { height: 2, area } },
+      { op: 'spawn', entityKind: 'zone', spec: { area: { shape: 'single', center: origin } } },
+    ], { target: self }, { center: { x: 2, y: 2 } });
+    answerVM(state, { askId: state.vm.pendingAsk.askId, x: 3, y: 3 }, host);
+    stepVM(state, host);
+    assert.deepEqual([vars.matchedX, vars.matchedY], [x, y], origin);
+    assert.equal(state.grid[y][x].z, 2, origin);
+    assert.equal(state.grid[0][5].z, 0, origin);
+    const zone = state.zones['zone-1'];
+    assert.deepEqual(zone.area.center, { x, y });
+    assert.ok(zoneContains(state, zone, { x, y }));
+    assert.equal(zoneContains(state, zone, { x: x + 1, y }), false);
+  }
+});
+
+test('perform resolves an entity choice used as the action origin', () => {
+  const state = board();
+  const origins = [];
+  const actionHost = {
+    ...host, rules: () => [], ops: { perform }, continue: continueAction,
+    planAction: () => ({ ok: true, targetIds: [], center: { x: 2, y: 2 } }),
+    payAction() {}, runAction: ({ event }) => origins.push(event.origin),
+  };
+  startVM(state, { ownerId: 'actor', sourceId: 'actor', program: [
+    { op: 'ask', chooser: 'self', kind: 'entity', select: { from: 'units' }, out: 'origin', aiPolicy: 'first', prompt: '选单位' },
+    { op: 'perform', actor: 'self', actionKind: 'attack', overrides: { origin: 'vars.origin' } },
+  ] });
+  stepVM(state, actionHost);
+  answerVM(state, { askId: state.vm.pendingAsk.askId, value: 'other' }, actionHost);
+  stepVM(state, actionHost);
+  assert.deepEqual(origins, [{ x: 1, y: 1 }]);
+});
+
+test('zone follow resolves an entity choice and rejects a missing explicit anchor', () => {
+  const state = board();
+  const spawn = anchorUnitId => ({ op: 'spawn', entityKind: 'zone', spec: { follow: true, area: { shape: 'single', anchorUnitId } } });
+  run(state, [
+    { op: 'ask', chooser: 'self', kind: 'entity', select: { from: 'units' }, out: 'anchor', aiPolicy: 'first', prompt: '选锚点' },
+    spawn('vars.anchor'), spawn('vars.missing'),
+  ]);
+  answerVM(state, { askId: state.vm.pendingAsk.askId, value: 'other' }, host);
+  stepVM(state, host);
+  assert.deepEqual(Object.keys(state.zones), ['zone-1']);
+  assert.equal(state.zones['zone-1'].area.anchorUnitId, 'other');
+  run(state, [{ op: 'move', target: 'target', mode: 'teleport', to: { x: 4, y: 2 } }], { target: self });
+  assert.deepEqual(state.zones['zone-1'].area.center, { x: 4, y: 2 });
+});
+
+test('perform replay unwraps a bound tape record and falls back only for a missing register', () => {
+  const state = board();
+  state.tape = [{ actionType: 'attack', targetSpec: { x: 2, y: 3 } }];
+  const actions = [];
+  const actionHost = {
+    ...host, rules: () => [], ops: { perform }, continue: continueAction,
+    planAction: (_, actor, action) => {
+      actions.push(action);
+      return { ok: true, targetIds: [], center: { x: action.x, y: action.y } };
+    },
+    payAction() {}, runAction() {},
+  };
+  const replay = tapeRecord => ({ op: 'perform', actor: 'self', actionKind: 'replay', tapeRecord });
+  startVM(state, { ownerId: 'actor', sourceId: 'actor', program: [
+    { op: 'for_each', select: { from: 'tape' }, bind: 'record', body: [
+      replay('vars.record'), replay('vars.missing'),
+      { op: 'let', name: 'wrong', value: "'other'" }, replay('vars.wrong'),
+    ] },
+  ] });
+  stepVM(state, actionHost);
+  assert.deepEqual(actions, Array(2).fill({ type: 'attack', x: 2, y: 3 }));
+});
+
+test('before_action resolves origin in the hook scope and records the point on tape', () => {
+  const state = board();
+  const origins = [];
+  const actionHost = {
+    ...host, ops: ruleOps, continue: continueAction,
+    rules: (_, hook) => hook === 'before_action' ? [{ ownerId: 'other', carrierOrder: 0, rule: {
+      id: 'origin-override', hook, program: [{ op: 'mutate_event', patch: { origin: 'self' } }],
+    } }] : [],
+    planAction: () => ({ ok: true, targetIds: [], center: { x: 2, y: 2 } }),
+    payAction() {}, runAction: ({ event }) => origins.push(event.origin),
+  };
+  startVM(state, { ownerId: 'actor', sourceId: 'actor' });
+  queueVMAction(state, { actorId: 'actor', action: { type: 'attack' }, record: true });
+  stepVM(state, actionHost);
+  assert.deepEqual(origins, [{ x: 1, y: 1 }]);
+  assert.deepEqual(state.tape[0].origin, { x: 1, y: 1 });
+});
+
+test('perform resolves a vars skillId and replay tape var through real combat planning', () => {
+  const state = board();
+  Object.assign(state.units.actor, { skills: ['ranged'], ap: 2, used: { attack: 0, action: 0 }, mainHand: null, weapon: null });
+  Object.assign(state.units.other, { team: 'red' });
+  state.skills = { ranged: { name: '远射', ap: 1, slot: 'attack', range: 5, target: 'enemy', damage: { count: 0, sides: 0, bonus: 1 } } };
+  state.tape = [{ actionType: 'skill', skillId: 'ranged', targetSpec: { x: 1, y: 1 } }];
+  const frame = startVM(state, { ownerId: 'actor', sourceId: 'actor', program: [
+    { op: 'let', name: 'chosen', value: "'ranged'" },
+    { op: 'for_each', select: { from: 'tape' }, bind: 't', body: [
+      { op: 'perform', actor: 'self', actionKind: 'skill', skillId: 'vars.chosen', target: 'target', overrides: { free: true, ignoreSlots: true } },
+      { op: 'perform', actor: 'self', actionKind: 'replay', tapeRecord: 'vars.t', overrides: { free: true, ignoreSlots: true } },
+    ] },
+  ], scope: { target: self } });
+  stepVM(state, vmHost);
+  assert.equal(state.logs.filter(log => log.type === 'action').length, 2);
+  assert.ok(state.logs.filter(log => log.type === 'action').every(log => log.detail.action.skillId === 'ranged'));
+  assert.equal(frame.vars.chosen, 'ranged');
+});
+
+test('perform origin and opt-in range/LOS bypass affect real targeting and geometry', () => {
+  const state = board();
+  Object.assign(state.units.actor, { skills: ['ranged'], ap: 2, used: { attack: 0, action: 0 } });
+  Object.assign(state.units.other, { team: 'red', x: 5, y: 1 });
+  state.skills = { ranged: { name: '远射', ap: 1, slot: 'attack', range: 2, target: 'enemy', damage: { count: 0, sides: 0, bonus: 1 } } };
+  state.grid[1][1].kind = 'wall';
+  state.units.actor.rules = [{ id: 'origin-change', hook: 'before_action', program: [
+    { op: 'mutate_event', patch: { origin: { x: 3, y: 1 } } },
+  ] }];
+  const action = { type: 'skill', skillId: 'ranged', x: 5, y: 1 };
+  const actionTarget = { type: 'skill', skillId: 'ranged', x: 5, y: 1 };
+  const actorPlan = preview(state, actionTarget, { simulateRules: false });
+  const alternateOriginPlan = preview(state, actionTarget, { simulateRules: false, actionOrigin: { x: 3, y: 1 } });
+  assert.equal(actorPlan.ok, false, 'actor origin is blocked by range and LOS');
+  assert.equal(alternateOriginPlan.ok, true, 'alternate origin is close enough and has clear LOS');
+  assert.equal(preview(state, actionTarget, { simulateRules: false, actionOrigin: { x: 0, y: 1 }, ignoreRange: true }).ok, false,
+    'range bypass does not also bypass LOS');
+  assert.equal(preview(state, actionTarget, { simulateRules: false, actionOrigin: { x: 0, y: 1 }, ignoreRange: true, ignoreLOS: true }).ok, true);
+
+  const before = state.logs.length;
+  state.units.actor.ap = 2;
+  const start = startVM(state, { ownerId: 'actor', sourceId: 'actor', program: [
+    { op: 'perform', actor: 'self', actionKind: 'skill', skillId: 'ranged', target: 'target', overrides: { free: true, ignoreSlots: true } },
+  ], scope: { target: self } });
+  stepVM(state, vmHost);
+  assert.equal(state.logs.slice(before).filter(log => log.type === 'action').length, 1,
+    'before_action origin change is replanned before action resolves');
 });
 
 test('runtime host wires spatial movement and commits terrain falls through damage', () => {

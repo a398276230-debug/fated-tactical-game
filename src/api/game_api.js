@@ -44,7 +44,9 @@ function simulate(base, transaction) {
     for (const action of transaction.entries) {
       if (!action || Object.getPrototypeOf(action) !== Object.prototype
         || Object.entries(action).some(([key, value]) => typeof value !== 'string' && typeof value !== 'boolean'
-          && !(action.type === 'answer' && key === 'value' ? Number.isFinite(value) : Number.isInteger(value)))) fail('动作必须由 JSON 字段组成');
+          && !(action.type === 'answer' && key === 'value'
+            ? Number.isFinite(value) || Array.isArray(value) && value.length <= 200 && [...value].every(id => typeof id === 'string')
+            : Number.isInteger(value)))) fail('动作必须由 JSON 字段组成');
       applyAction(next, action);
     }
   } else if (transaction.kind === 'commands') {

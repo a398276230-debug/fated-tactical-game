@@ -10,6 +10,7 @@ import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod } from './vm-carriers.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
+import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial } from './vm-runtime.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 export { STATUSES };
@@ -150,9 +151,11 @@ export function grantStatus(state, unit, statusId, options = {}) {
   return applied;
 }
 
-function statusLogDetail(unit, status) {
-  const { id: statusId, stacks, remainingTurns, durationType, tickTiming, modifiers, amount, expireOn } = status;
+export function statusLogDetail(unit, status) {
+  const { id: statusId, stacks, remainingTurns, durationType, modifiers, expireOn } = status;
+  const amount = status.category === 'shield' ? status.vars?.shieldAmount ?? status.amount : status.amount;
   const tick = status.rules?.find(rule => rule.hook === 'turn_start' || rule.hook === 'turn_end');
+  const tickTiming = status.tickTiming ?? (tick ? tick.hook === 'turn_end' ? 'onTurnEnd' : 'onTurnStart' : undefined);
   const displayModifiers = { ...modifiers };
   for (const op of tick?.program ?? []) {
     const perStack = typeof op.amount === 'number' ? op.amount : Number(/^([0-9]+) \* status\.stacks$/.exec(op.amount)?.[1]);
@@ -250,6 +253,13 @@ function dispatchEffect(state, actor, trigger, context = {}) {
 
 function moraleCheck(state) {
   for (const unit of living(state)) {
+    if (aggregateModifiers(state, unit.id).controlPolicy.moraleLock === 'steady') {
+      if (unit.moraleState && unit.moraleState !== 'steady') {
+        unit.moraleState = 'steady';
+        record(state, unit, 'morale', `${unit.name}恢复坚守`, { targetId: unit.id, outcome: 'steady', locked: true });
+      }
+      continue;
+    }
     if (unit.protagonist || unit.moraleCheckedRound === state.round) continue;
     const type = unit.moraleType ?? 'standard', rule = MORALE[type];
     const low = unit.hp / unit.maxHp < rule.threshold;
@@ -467,8 +477,13 @@ function initiativeOrder(state, rollFor) {
   return living(state).map(unit => {
     const roll = rollFor(unit), agility = effectiveStat(state, unit, 'agi') + modCheck(state, unit, 'initiativeAgility');
     const agilityPercent = Number(unit.initiativePercent ?? 0);
-    const attackInit = Array.isArray(unit.attackInit) ? unit.attackInit : [];
-    const actionInit = Array.isArray(unit.actionInit) ? unit.actionInit : [];
+    const attackInit = [...(unit.attackInit ?? [])];
+    const actionInit = [...(unit.actionInit ?? [])];
+    const skills = [...unit.skills.map(id => tableEntry(state.skills, id)), ...equippedActiveSkills(state, unit).map(([, skill]) => skill)];
+    for (const skill of skills) {
+      if (skill?.initiativeBonus === undefined) continue;
+      (skill.slot === 'attack' ? attackInit : actionInit).push(skill.initiativeBonus);
+    }
     const flatInit = modStat(state, unit, 'initiative', Number(unit.flatInitiative ?? 0) + modCheck(state, unit, 'iniBonus'));
     const total = protocolInitiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
     return { unitId: unit.id, roll, agility, agilityPercent, attackInit:Math.max(0,...attackInit,0), actionInit:Math.max(0,...actionInit,0), flatInit, total };
@@ -487,7 +502,8 @@ export function refreshOpeningInitiative(state) {
   const rolls = new Map(previous.filter(row => row && Number.isInteger(row.roll)).map(row => [row.unitId, row.roll]));
   if (living(state).some(unit => !rolls.has(unit.id) || changes(unit, 'skip'))) return;
   const initiative = initiativeOrder(state, unit => rolls.get(unit.id));
-  if (initiative.every((row, i) => row.unitId === previous[i]?.unitId && row.total === previous[i]?.total)) return;
+  if (initiative.every((row, i) => row.unitId === previous[i]?.unitId && row.total === previous[i]?.total
+      && row.attackInit === previous[i]?.attackInit && row.actionInit === previous[i]?.actionInit)) return;
   currentUnit(state).ap = 0;
   state.order = initiative.map(row => row.unitId);
   entry.detail.initiative = initiative;
@@ -559,12 +575,13 @@ export function reachable(state, type = 'move', unit = currentUnit(state), dista
 }
 
 export function skillAvailability(state, actor, skill, id) {
-  let usesLeft = null;
-  for (const rule of skill?.rules ?? []) if (rule.hook === 'active' && rule.usesPerBattle !== undefined && rule.enabled !== false) {
-    const used = state.vm?.uses?.[JSON.stringify([actor.id, id, rule.id])] ?? 0;
-    usesLeft = Math.min(usesLeft ?? Infinity, Math.max(0, rule.usesPerBattle - used));
+  let usesLeft = Infinity, cooldownRemaining = 0;
+  for (const rule of skill?.rules ?? []) if (rule.hook === 'active' && rule.enabled !== false) {
+    const limits = ruleAvailability(state, rule, JSON.stringify([actor.id, id, rule.id]));
+    usesLeft = Math.min(usesLeft, limits.usesLeft);
+    cooldownRemaining = Math.max(cooldownRemaining, limits.cooldownRemaining);
   }
-  return { usesLeft, cooldownRemaining: 0 };
+  return { usesLeft: Number.isFinite(usesLeft) ? usesLeft : null, cooldownRemaining };
 }
 function actorCost(template) {
   const cost = template.resourceCost;
@@ -662,19 +679,21 @@ function threatens(state, source, mover, at) {
 const opportunityDetail = (source, from, to) => ({ unitId: source.id, name: source.name,
   from: pos(from.x, from.y), to: pos(to.x, to.y) });
 
-function area(state, actor, center, template, ammo) {
+function area(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, deferGeometry }) {
   const selfCentered = template.range === 0 && sameCell(actor, center);
   return aoeCells(state, actor, center, {
     ...template,
     radius: selfCentered ? template.radius ?? 1.5 : template.radius,
-    range: at => reaches(state, actor, at, template, ammo).range,
+    range: at => ignoreRange || deferGeometry ? Infinity : reaches(state, actor, at, template, ammo).range,
+    ignoreAimRange: ignoreRange || deferGeometry,
+    ignoreLOS: ignoreLOS || deferGeometry,
   });
 }
 
-function selectionAllows(template, actor, unit) {
+function selectionAllows(template, actor, unit, allowFriendlyTarget = false) {
   if (!unit) return false;
   switch (template.target ?? 'enemy') {
-    case 'enemy': return actor.team !== unit.team;
+    case 'enemy': return allowFriendlyTarget || actor.team !== unit.team;
     case 'ally': return actor.team === unit.team;
     case 'self': return actor.id === unit.id;
     case 'cell': return false;
@@ -850,28 +869,29 @@ function usableTiles(state, actor, template, weapon) {
   return allCells(state).filter(at => validReach(state, actor, template.target === 'cell' ? at : locateUnit(state, at) ?? at, template, weapon?.ammo) &&
     !(['line','cone','fan'].includes(template.shape) && sameCell(actor, at) && template.range !== 0));
 }
-function shapeTargets(state, actor, cells, template, aim) {
+function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget) {
   const keys = new Set(cells.map(at => key(at.x, at.y)));
   if (template.target === 'cell') return [];
   const areaDamage = (template.shape ?? 'single') !== 'single' && hasStrikeDamage(template);
   return living(state).filter(unit => {
     // Area damage defaults to friendly fire unless the author explicitly narrows it to allies/self.
-    if (!areaDamage && !selectionAllows(template, actor, unit)) return false;
+    if (!areaDamage && !selectionAllows(template, actor, unit, allowFriendlyTarget)) return false;
     if (areaDamage && ['ally', 'self'].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
     if ((template.shape ?? 'single') === 'single') return sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
       const distanceFromCenter = distance(state, aim, unit);
-      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && clearSight(state, aim, unit)
+      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || clearSight(state, aim, unit))
         && (template.shape !== 'ring' || (!sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9));
     }
     const radius = template.radius ?? (template.range === 0 ? 1.5 : null);
-    return keys.has(key(unit.x, unit.y)) && (radius == null ? validReach(state, actor, unit, template)
-      : distance(state, actor, unit) <= radius + 1e-9 && clearSight(state, actor, unit));
+    const geometry = reaches(state, origin, unit, template, ammo);
+    return keys.has(key(unit.x, unit.y)) && (ignoreLOS || clearSight(state, origin, unit))
+      && (radius == null ? ignoreRange || geometry.distance <= geometry.range + 1e-9 : geometry.distance <= radius + 1e-9);
   });
 }
 
 /** With no x/y, queries highlighting. With both coordinates, validates one executable action. */
-export function preview(state, action, { simulateRules = true } = {}) {
+export function preview(state, action, { simulateRules = true, actionOrigin, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
   if (state.outcome) return fail('战斗已经结束');
   const unit = currentUnit(state);
   if (!alive(unit) && action?.type !== 'end') return fail('当前单位不能行动');
@@ -886,7 +906,7 @@ export function preview(state, action, { simulateRules = true } = {}) {
     if (!(unit.inventory?.[skillId] > 0)) return fail('背包物品数量不足');
     if (!skill.damage && !skill.heal && !skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false && rule.program.length)) return fail('背包物品尚无可执行效果，请先标准化');
   } else if (type === 'skill' && (!skill || (!equipmentSkill && !unit.skills.includes(skillId)))) return fail('单位没有此技能');
-  const availability = skill ? skillAvailability(state, unit, skill, skillId) : {};
+  const availability = skill ? skillAvailability(limitClock, unit, skill, skillId) : {};
   if (availability.usesLeft === 0) return fail('技能次数已用尽', availability);
   if (availability.cooldownRemaining > 0) return fail(`技能冷却中，还需 ${availability.cooldownRemaining} 轮`, availability);
   if (type === 'flee' && !atBattleEdge(state,unit)) return fail('须先移动到战场边界才能逃跑');
@@ -903,7 +923,7 @@ export function preview(state, action, { simulateRules = true } = {}) {
   const item = !unplaced && (type === 'interact' || type === 'attack') ? values(state.interactives).find(v => !v.spent && v.x === x && v.y === y) : null;
   const detonate = item?.kind === 'barrel';
   const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
-  const ap = drawFromBag ? 1 : cost.ap, slot = drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
+  const ap = drawFromBag ? 1 : cost.ap, slot = ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
   const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost), ...availability };
   if (type === 'end') return common;
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
@@ -1018,31 +1038,38 @@ export function preview(state, action, { simulateRules = true } = {}) {
   }
   const aimedUnit = locateUnit(state, center);
   const aim = template.target === 'cell' ? center : aimedUnit ?? center;
-  const geometry = reaches(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
+  const origin = actionOrigin ? { ...unit, x: actionOrigin.x, y: actionOrigin.y,
+    altitude: actionOrigin.altitude ?? (actionOrigin.z === undefined ? 0 : actionOrigin.z - elevation(state, actionOrigin)) } : unit;
+  const ammo = attack && !shieldBash ? weapon.ammo : null;
+  const geometry = reaches(state, origin, aim, template, ammo);
   if (!ground(state, center)) return fail('墙体无法指定', geometry);
-  if (geometry.distance > geometry.range + 1e-9) return fail('目标超出射程', geometry);
-  if (!clearSight(state, unit, center)) return fail('墙体阻断视线', geometry);
+  if (!deferGeometry) {
+    if (!ground(state, origin)) return fail('动作起点无效', { ...geometry, originSensitive: true });
+    if (!ignoreRange && geometry.distance > geometry.range + 1e-9) return fail('目标超出射程', { ...geometry, originSensitive: true });
+    if (!ignoreLOS && !clearSight(state, origin, center)) return fail('墙体阻断视线', { ...geometry, originSensitive: true });
+  }
   if (corpseSkill) {
     const corpse = corpses(state).find(c => sameCell(c, center));
     return corpse ? { ...common, ...geometry, ...tuning, cells: [center], targets: [], center, corpseId: corpse.id } : fail('目标格没有可用尸体');
   }
   const solid = locateCover(state, center);
   const coverTarget = Boolean(solid && template.target !== 'cell' && (attack || hasStrikeDamage(template)));
-  const cells = area(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
+  const cells = area(state, origin, aim, template, ammo, { ignoreRange, ignoreLOS, deferGeometry });
   const aoe = (template.shape ?? 'single') !== 'single';
-  if (!cells.length) return fail('请选择一个方向', geometry);
+  if (!cells.length && !deferGeometry) return fail('请选择一个方向', { ...geometry, originSensitive: true });
+  const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
   if (!aoe) {
-    if (!selectionAllows(template, unit, aimedUnit) && !coverTarget && template.target !== 'cell') {
+    if (!selectionAllows(template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== 'cell') {
       return fail('该格没有合适的目标', geometry);
     }
-    if (aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, unit, aimedUnit)) return fail('目标正在隐身', geometry);
+    if (!deferGeometry && aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, origin, aimedUnit)) return fail('目标正在隐身', { ...geometry, originSensitive: true });
   }
   const hostile = attack || template.target === 'enemy' || (hasStrikeDamage(template) && template.target !== 'ally' && template.target !== 'self');
-  const taunter = hostile ? tauntFor(state, unit, template, attack && !shieldBash ? weapon.ammo : null) : null;
-  if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail(`受嘲讽，必须指定${taunter.name}`, geometry);
-  const origin = unit;
+  const taunter = hostile && !deferGeometry ? tauntFor(state, origin, template, ammo) : null;
+  if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail(`受嘲讽，必须指定${taunter.name}`, { ...geometry, originSensitive: true });
   const templateForHit = template;
-  const targetUnits = shapeTargets(state, unit, cells, template, aim);
+  const targetUnits = shapeTargets(state, unit, cells, template, aim, origin, ammo,
+    ignoreRange || deferGeometry, ignoreLOS || deferGeometry, allowFriendlyTarget);
   const areaAttack = (template.shape ?? 'single') !== 'single';
   const declaredIntent = action.intent ?? unit.intent ?? 'normal';
   const resolvedIntent = areaAttack ? 'normal' : declaredIntent;

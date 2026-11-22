@@ -24,14 +24,15 @@ const minimal = {
   mutate_event: { patch: { preventDeath: true } },
   move: { target: 'self', mode: 'teleport', to: 'vars.choice' },
   spawn: { entityKind: 'unit', spec: { copyOf: 'self', tags: ['illusion', 'harmless'] } },
+  despawn: { entityKind: 'zone', select: { from: 'zones' } },
   revive: { target: 'target', hpPercent: 1 },
   perform: { actor: 'self', actionKind: 'skill', skillId: 'winter_sword', overrides: { free: true } },
 };
 
-test('all 16 opcodes have closed shapes and generated Chinese descriptions', () => {
+test('all 17 opcodes have closed shapes and generated Chinese descriptions', () => {
   assert.deepEqual(vmOpcodes, Object.keys(minimal));
   assert.deepEqual(Object.keys(opNotes), vmOpcodes);
-  assert.equal(vmOpcodes.length, 16);
+  assert.equal(vmOpcodes.length, 17);
   for (const schema of vmOpcodeSchema.$defs.opcode.oneOf) {
     const op = schema.properties.op.const;
     assert.equal(schema.additionalProperties, false);

@@ -41,13 +41,15 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   let bagAim = null;
   let state, live, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, busy = false;
   let menuButtons = new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
-  let visibleAsk = null, askCells = null;
+  let visibleAsk = null, askCells = null, entityChoices = null;
+  let toggleEntityChoice;
 
   const pendingAsk = () => live?.vm?.pendingAsk;
   const active = (s = state) => s?.units[s.order[s.turn]];
   const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
-  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy, askLocked: !!pendingAsk(), askCells });
+  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy,
+    askLocked: !!pendingAsk(), askCells, entityChoices });
 
   // ---------- 屏幕适配 ----------
   // HUD 高度随换行、横竖屏变化，实测后写回 CSS 变量，棋盘据此留白并计算格子尺寸。
@@ -197,6 +199,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (visibleAsk === (ask ?? null)) return;
     visibleAsk = ask ?? null;
     askCells = null;
+    entityChoices = null;
+    toggleEntityChoice = undefined;
     const panel = $('pending-ask'), prompt = $('pending-ask-prompt'), choices = $('pending-ask-choices');
     choices.replaceChildren();
     panel.hidden = !ask;
@@ -216,6 +220,40 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (ask.kind === 'cell') {
       askCells = new Set(ask.options.map(({ x, y }) => `${x},${y}`));
       choices.textContent = '请选择棋盘上高亮的一格。';
+    } else if (ask.kind === 'entity' && ask.maxSelect !== undefined) {
+      const selected = new Set(), buttons = new Map();
+      const limit = Math.min(ask.maxSelect, ask.options.length);
+      entityChoices = { selected, eligible: new Set(ask.options.map(option => option.id)), limit };
+      const count = document.createElement('output');
+      count.setAttribute('aria-live', 'polite');
+      choices.append(count);
+      for (const { id, label } of ask.options) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'game-button';
+        button.dataset.askEntity = id;
+        button.textContent = label;
+        button.addEventListener('click', () => toggleEntityChoice?.(id), { signal });
+        choices.append(button);
+        buttons.set(id, button);
+      }
+      addButton('确认选择', () => ask.options.filter(({ id }) => selected.has(id)).map(({ id }) => id), true);
+      const confirm = choices.lastElementChild;
+      const sync = () => {
+        count.textContent = `已选 ${selected.size} / ${limit}`;
+        confirm.disabled = selected.size === 0;
+        for (const [id, button] of buttons) {
+          button.setAttribute('aria-pressed', String(selected.has(id)));
+          button.disabled = !selected.has(id) && selected.size >= limit;
+        }
+      };
+      toggleEntityChoice = id => {
+        if (visibleAsk !== ask || pendingAsk() !== ask || busy || !buttons.has(id)) return;
+        if (!selected.delete(id) && selected.size < limit) selected.add(id);
+        sync();
+        draw();
+      };
+      sync();
     } else if (ask.kind === 'option' || ask.kind === 'entity') {
       for (const { id, label } of ask.options) addButton(label, () => id);
     } else if (ask.kind === 'number') {
@@ -705,6 +743,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       if (!at) return;
       if (pendingAsk()) {
         if (askCells?.has(`${at.x},${at.y}`)) answer(visibleAsk, at);
+        else toggleEntityChoice?.(e.target.closest('.tactical-cell')?.dataset.unitId);
         return;
       }
       if (playback.busy) playback.skip(); // 演出中点棋盘 = 跳过演出

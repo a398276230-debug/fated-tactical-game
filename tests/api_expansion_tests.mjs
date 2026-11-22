@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI, buildScenario, defineStatus } from '../src/index.js';
 import { grantStatus } from '../src/core/combat.js';
+import { narrate } from '../src/ui/narrate.js';
 import { createPool, getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 
 const onHit = (id, program) => ({ id, hook: 'after_hit', filter: "event.actorId == self.id && event.weaponTemplateId == 'crossbow'", program });
@@ -47,8 +48,17 @@ test('冰冻箭仅在命中、触发且豁免失败时施加一回合冰冻', ()
       s.equipment.crossbow.accuracy = accuracy;
     });
     api.playAction(shot);
-    const check = api.getBattleState().logs.find(log => log.type === 'save');
-    assert.equal(check?.detail.success, expected);
+    const state = api.getBattleState();
+    const check = state.logs.find(log => log.type === 'save');
+    if (expected !== undefined) {
+      assert.ok(check);
+      const entry = narrate(check, state);
+      const verdict = expected ? '通过' : '失败';
+      assert.match(entry.lines[0], new RegExp(`智力豁免：d20 得 \\d+ [+-]?\\d+ = -?\\d+，需要 14 → ${verdict}`));
+      assert.equal(entry.roll.total, entry.roll.kept + entry.roll.modifier);
+      assert.match(api.exportBattleReportText(), expected ? /通过智力豁免（(?:大)?成功/ : /未通过智力豁免（(?:大)?失败/);
+    }
+    assert.equal(check?.detail.saved, expected);
     assert.equal(api.inspectUnit('scout').statuses.freeze?.remainingTurns, expected === false ? 1 : undefined);
     if (expected === false) {
       const skipped = () => api.getBattleState().logs.some(log => log.actor === 'scout' && log.type === 'skip');

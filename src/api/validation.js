@@ -28,6 +28,7 @@ const statusDurations = ['battle_turns', 'until_removed', 'persistent'];
 const statusTickTimings = ['onTurnStart', 'onTurnEnd'];
 const statusStackRules = ['refresh', 'stack', 'replace'];
 const statusLabels = ['name', 'icon', 'category', 'description'];
+const maxStatusStacks = 999999;
 export const maxStatusTemplates = 64;
 export const has = (record, key) => id(key) && own(record ?? {}, key);
 export function fields(v, required, optional = []) {
@@ -80,6 +81,9 @@ const validPoolId = value => typeof value === 'string' && /^pool_[A-Za-z0-9_-]{1
 function poolBindings(value) {
   table(value, poolId => requireThat(validPoolId(poolId), '资源池 ID'));
 }
+const validStackCap = value => int(value, 1, maxStatusStacks) || typeof value === 'string' && validExpr(value);
+const stackCapLimit = template => typeof template.maxStacks === 'string' ? maxStatusStacks : template.maxStacks ?? 1;
+
 export function statusTemplate(value, key = value?.id, state) {
   fields(value, ['id', 'name'], ['icon', 'category', 'description', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'expireOn', ...carrierFields]);
   requireThat(id(key) && key === value.id && text(value.name), 'VM 状态 ID/名称');
@@ -89,7 +93,7 @@ export function statusTemplate(value, key = value?.id, state) {
   checkOptional(value, 'remainingTurns', turns => int(turns, 1, 100));
   checkOptional(value, 'durationType', duration => statusDurations.includes(duration));
   checkOptional(value, 'stackMode', mode => stackModes.includes(mode));
-  checkOptional(value, 'maxStacks', stacks => int(stacks, 1, 10));
+  checkOptional(value, 'maxStacks', validStackCap);
   checkOptional(value, 'expireOn', vmExpiry);
   carrierFieldsValue(value, state);
 }
@@ -104,7 +108,7 @@ function nativeStatusTemplate(v, key) {
   requireThat(id(key) && v.id === key, '自定义状态 ID');
   requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300)
     && ['buff', 'debuff', 'control', 'dot', 'hot', 'shield'].includes(v.category), '状态名/图标/描述/类别');
-  requireThat(statusLifetime(v) && int(v.maxStacks, 1, 10), '状态时长/层数');
+  requireThat(statusLifetime(v) && validStackCap(v.maxStacks), '状态时长/层数');
   requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own(v.modifiers, 'damageType') || own(v.modifiers, 'damage')), '状态特效');
   validateStatusModifiers(v, v.modifiers);
   requireThat(key !== actionStatuses.shield || own(v.modifiers, 'amount'), '默认护盾模板需要 amount');
@@ -145,7 +149,7 @@ export function validSaveDC(value) {
     && (value.min ?? 1) <= (value.max ?? 50);
 }
 function validateAreaDimensions(v) {
-  for (const key of ['radius', 'innerRadius', 'width']) checkOptional(v, key, x => Number.isFinite(x) && x >= 0 && x <= 6);
+  for (const key of ['radius', 'innerRadius', 'width']) checkOptional(v, key, x => Number.isFinite(x) && x >= 0 && x <= 30);
   checkOptional(v, 'angle', x => int(x, 1, 360));
 }
 export function equipmentTemplate(v, state) {
@@ -157,7 +161,7 @@ export function equipmentTemplate(v, state) {
   checkOptional(v, 'boundTo', id); checkOptional(v, 'weaponType', text);
   requireThat(text(v.name), 'name');
   checkOptional(v, 'quality', x => ['唯一','普通','优良','稀有','史诗','传说','神话'].includes(x));
-  checkOptional(v, 'range', x => int(x, 1, 15)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
+  checkOptional(v, 'range', x => int(x, 1, 30)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
   checkOptional(v, 'armor', x => int(x, 0, 1000000)); checkOptional(v, 'defense', x => int(x, 0, 1000000));
   checkOptional(v, 'kind', x => ['weapon','shield','armor','accessory','consumable'].includes(x));
   checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
@@ -172,14 +176,15 @@ export function equipmentTemplate(v, state) {
   if (own(v, 'pools')) poolDefinitions(v.pools);
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', ...carrierFields, 'pools']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', ...carrierFields, 'pools']);
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
   checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
   checkOptional(v, 'damageType', type => damageTypes.includes(type));
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);
-  requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)
+  checkOptional(v, 'initiativeBonus', value => int(value, -100, 100));
+  requireThat(text(v.name) && int(v.ap, 0, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 30)
     && ['single', 'circle', 'ring', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(v.target), '技能');
   checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
@@ -203,9 +208,10 @@ export function statusValue(v, key, state, ownerId) {
       if (own(rest, 'amount')) requireThat(own(template.modifiers, 'amount') && num(amount, 0, 1e9), '护盾池');
     } else requireThat(['modifiers', 'stackRule', 'tickTiming', 'expireInto', 'amount'].every(field => !own(rest, field)), 'VM 状态字段');
     statusTemplate(definition, key, state);
+    const maxStacks = v.maxStacks ?? template?.maxStacks ?? 1;
     requireThat(templateId === key && template && id(owner) && (ownerId === undefined || owner === ownerId) && (sourceId === null || id(sourceId))
-      && int(stacks, 1, template.maxStacks ?? 1) && int(v.remainingTurns, 1, 100)
-      && statusDurations.includes(v.durationType) && stackModes.includes(v.stackMode), 'VM 状态实例');
+      && int(maxStacks, 1, stackCapLimit(template)) && int(stacks, 1, maxStacks)
+      && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes.includes(v.stackMode), 'VM 状态实例');
     if (own(v, 'vars')) table(vars, entry => requireThat(jsonTree(entry), 'VM 状态变量'));
     if (own(v, 'pools')) poolBindings(pools);
     return;
@@ -219,7 +225,7 @@ export function statusValue(v, key, state, ownerId) {
   checkOptional(v, 'expireOn', x => x === null || nativeExpiry(x));
   requireThat(v.expireInto === t.expireInto, '状态到期目标');
   requireThat(v.id === key && statusLabels.every(k => v[k] === t[k]) && statusLifetime(v)
-    && int(v.maxStacks, 1, t.maxStacks) && int(v.stacks, 1, v.maxStacks)
+    && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks)
     && (v.sourceUnitId === null || id(v.sourceUnitId)), '状态实例');
   fields(v.modifiers, Object.keys(t.modifiers));
   validateStatusModifiers(t, v.modifiers);
@@ -287,8 +293,11 @@ export function zoneValue(value, key, state) {
   if (own(value, 'pools')) poolBindings(value.pools);
   const { area, follow, persistent, remainingTurns } = value;
   requireThat(validVmOpcode({ op: 'spawn', entityKind: 'zone', spec: { area, follow, persistent, remainingTurns } }), 'VM 区域');
-  if (['circle', 'ring'].includes(area.shape)) requireThat(pointValue(area.center) && Number.isFinite(area.radius), 'VM 区域圆心/半径');
+  requireThat(int(remainingTurns, 1, 100), 'VM 区域持续回合');
+  if (['single', 'circle', 'ring'].includes(area.shape)) requireThat(pointValue(area.center), 'VM 区域中心');
   else checkOptional(area, 'center', pointValue);
+  if (['circle', 'ring'].includes(area.shape)) requireThat(Number.isFinite(area.radius) && area.radius >= 0, 'VM 区域半径');
+  else checkOptional(area, 'radius', radius => Number.isFinite(radius) && radius >= 0);
   if (area.cells) requireThat(area.cells.length <= 100 && area.cells.every(pointValue), 'VM 区域格');
   if (area.rect) requireThat(Object.values(area.rect).every(coord), 'VM 区域矩形');
   requireThat(follow ? id(area.anchorUnitId) && pointValue(value.anchorPosition) : !own(area, 'anchorUnitId') && !own(value, 'anchorPosition'), 'VM 区域锚点');

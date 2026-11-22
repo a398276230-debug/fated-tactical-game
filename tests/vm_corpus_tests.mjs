@@ -121,4 +121,87 @@ function fixture() {
   assert.deepEqual([game.getBattleState().units[actor.id].x, game.getBattleState().units[actor.id].y], [3, 4]);
 }
 
-console.log('ok VM corpus: 复燃, before_commit suspension, and API replay');
+{
+  const { state, first, second } = fixture();
+  Object.assign(first, { hp: 50, maxHp: 100 });
+  Object.assign(second, { hp: 100, maxHp: 100 });
+  const enemies = { from: 'units', where: 'candidate.team != self.team' };
+  const program = [{ op: 'for_each', select: enemies, bind: 'victim', body: [
+    { op: 'apply_status', target: 'vars.victim', statusId: 'stun' },
+    { op: 'ask', chooser: 'self', kind: 'entity', prompt: '选择受术者', out: 'chosen', aiPolicy: 'first', select: enemies },
+    { op: 'for_each', select: { from: 'self' }, bind: 'other', body: [
+      { op: 'if', cond: "vars.other.id == self.id && vars.chosen.id == vars.victim.id && vars.victim.hp == 100 && has_status(vars.chosen, 'stun')", then: [
+        damage('vars.victim', 3), damage('vars.chosen', 4),
+      ] },
+    ] },
+  ] }];
+  state.skills = { refs: skill('实体引用', program) };
+  first.skills.push('refs');
+  assert.ok(validVmRule(state.skills.refs.rules[0]));
+  const { pendingAsk } = resolveVMAction(state, { type: 'skill', skillId: 'refs', x: second.x, y: second.y });
+  assert.ok(pendingAsk.options.some(option => option.id === second.id));
+  const saved = JSON.parse(JSON.stringify(state));
+  const answer = { type: 'answer', askId: pendingAsk.askId, value: second.id };
+  resolveVMAction(state, answer);
+  resolveVMAction(saved, answer);
+  assert.equal(second.hp, 93);
+  assert.equal(first.hp, 50);
+  assert.deepEqual(saved, state);
+}
+
+{
+  const game = createGameAPI();
+  const state = buildScenario('ruins');
+  const actor = state.units[state.order[state.turn]];
+  const select = { from: 'units', where: 'candidate.team != self.team' };
+  const multi = { op: 'ask', chooser: 'self', kind: 'entity', prompt: '选多个目标', out: 'chosen', aiPolicy: 'first', select, maxSelect: 2 };
+  state.skills.multi = { ...skill('多选', [multi,
+    { op: 'for_each', select: { from: 'vars.chosen' }, bind: 'victim', body: [damage('vars.victim', 1)] },
+  ]), target: 'self' };
+  actor.skills.push('multi');
+  const action = { type: 'skill', skillId: 'multi', x: actor.x, y: actor.y };
+  assert.ok(validVmRule(state.skills.multi.rules[0]));
+  for (const maxSelect of [0, 201, 1.5]) {
+    assert.equal(validVmRule({ id: 'invalid', hook: 'active', program: [{ ...multi, maxSelect }] }), false);
+  }
+  assert.equal(validVmRule({ id: 'invalid', hook: 'active', program: [{ ...multi, kind: 'cell' }] }), false);
+  game.createBattle({ kind: 'custom_state', state });
+  const before = game.getBattleState();
+  const preview = resolveVMAction(before, action, { dryRun: true });
+  assert.equal(preview.conditional, true);
+  assert.equal(preview.pendingAsk, null);
+  const automaticId = preview.state.tape.at(-1).targetSpec.answers[0][0];
+  assert.equal(preview.state.units[automaticId].hp, before.units[automaticId].hp - 1);
+
+  game.playAction(action);
+  const serialize = () => JSON.stringify(game.exportBattleSnapshot());
+  const suspended = serialize();
+  const pendingSnapshot = JSON.parse(suspended);
+  const ask = pendingSnapshot.state.vm.pendingAsk;
+  assert.equal(ask.maxSelect, 2);
+  const [first, second, third] = ask.options;
+  assert.equal(automaticId, first.id);
+  for (const value of [first.id, [], [first.id, first.id], [first.id, 'unknown'], [first.id, 3], [first.id, second.id, third.id]]) {
+    assert.throws(() => game.playAction({ type: 'answer', askId: ask.askId, value }));
+  }
+  assert.throws(() => game.playAction({ type: 'answer', askId: 'stale', value: [first.id] }));
+  assert.equal(serialize(), suspended);
+  const restored = createGameAPI();
+  restored.restoreBattleSnapshot(pendingSnapshot);
+  const answer = { type: 'answer', askId: ask.askId, value: [second.id, first.id] };
+  game.playAction(answer);
+  restored.playAction(answer);
+  const after = game.getBattleState();
+  assert.equal(after.vm.pendingAsk, null);
+  assert.equal(after.units[first.id].hp, before.units[first.id].hp - 1);
+  assert.equal(after.units[second.id].hp, before.units[second.id].hp - 1);
+  assert.equal(after.units[third.id].hp, before.units[third.id].hp);
+  assert.deepEqual(after.tape.at(-1).targetSpec.answers, [[first.id, second.id]]);
+  assert.ok(after.logs.some(log => log.type === 'choice' && log.text.includes(`${first.label}、${second.label}`)));
+  const completed = JSON.parse(JSON.stringify(game.exportBattleSnapshot()));
+  assert.deepEqual(restored.exportBattleSnapshot(), game.exportBattleSnapshot());
+  restored.restoreBattleSnapshot(completed);
+  assert.deepEqual(restored.getBattleState(), after);
+}
+
+console.log('ok VM corpus: 复燃, suspension, entity references, multi-selection, and API replay');

@@ -188,7 +188,9 @@ export function narrate(log, state) {
     case 'status': {
       const s = statusInfo(state, d.statusId);
       return out({ tone: 'status', icon: s.icon ?? '◆',
-        lines: [s.description, Number.isInteger(d.remainingTurns) ? `持续 ${d.remainingTurns} 回合` : null].filter(Boolean), statusName: s.name });
+        lines: [s.description, d.durationType === 'persistent' ? '跨战斗持续' : d.durationType === 'until_removed' ? '持续至解除'
+          : Number.isInteger(d.remainingTurns) ? `持续 ${d.remainingTurns} 回合` : null,
+          Number.isFinite(d.amount) ? `护盾 ${d.amount} 点` : null].filter(Boolean), statusName: s.name });
     }
     case 'expire': return out({ icon: '⌛', quiet: true });
     case 'status_patch': return out({ icon: '✎', quiet: true });
@@ -210,14 +212,19 @@ export function narrate(log, state) {
     case 'contest': return out(versus(state, log, `${MANEUVERS[d.maneuver] ?? '对抗'}检定`, d.success, `${MANEUVERS[d.maneuver] ?? ''}成功`, `${MANEUVERS[d.maneuver] ?? ''}失败`));
     case 'flee': return out(versus(state, log, '逃跑检定', d.success, '逃跑成功', '逃跑失败'));
     case 'morale': return out({ tone: (d.outcome ?? (d.shaken ? 'shaken' : 'routed')) === 'routed' ? 'defeat' : 'status', icon: '🏳️',
-      lines: [log.text, `${d.recovered ? '生命恢复至阈值' : '生命低于阈值'} ${pct(d.threshold ?? 0)}`],
+      lines: d.locked ? [log.text] : [log.text, `${d.recovered ? '生命恢复至阈值' : '生命低于阈值'} ${pct(d.threshold ?? 0)}`],
       roll: Number.isFinite(d.roll) ? { kind: 'd20', label: `${nameOf(state, d.targetId)} · 士气检定`, dice: [d.roll], kept: d.roll, mode: 'normal', modifier: 0, total: d.roll,
         verdict: d.outcome ? (d.roll >= 12 ? '坚守' : '溃逃') : (d.shaken ? '动摇' : '溃逃'), tone: d.roll >= 12 ? 'hit' : 'miss' } : undefined });
-    case 'proc': {
-      const hit = d.triggered;
-      return out({ tone: hit ? 'status' : 'info', icon: '🎲', title: `${log.text}${hit ? ' 触发' : ' 未触发'}`, quiet: !hit,
-        lines: Number.isFinite(d.chance) ? [`触发几率 ${pct(d.chance)}，掷出 ${pct(d.roll)} → ${hit ? '触发' : '未触发'}`] : [],
-        roll: Number.isFinite(d.chance) && hit ? { kind: 'chance', label: `${log.text} · 几率判定`, chance: d.chance, rolled: d.roll, verdict: '触发！', tone: 'status' } : undefined });
+    case 'vm_check': {
+      const tone = d.success ? 'hit' : 'miss';
+      const [first] = d.outcomes;
+      const verdict = d.success ? '成功' : '失败';
+      const roll = d.outcomes.length !== 1 ? undefined : d.kind === 'chance'
+        ? { kind: 'chance', label: `${actor} · 概率判定`, chance: first.difficulty / 100, rolled: first.roll / 100, verdict, tone }
+        : { kind: 'd20', label: `${actor} · ${d.kind === 'contest' ? '对抗检定' : '检定'}`, dice: [first.roll], kept: first.roll,
+          mode: 'normal', modifier: first.total - first.roll, total: first.total, target: first.difficulty,
+          targetLabel: d.kind === 'contest' ? '对手合计' : '难度', verdict, tone };
+      return out({ tone, icon: '🎲', roll });
     }
     case 'opportunity': return out({ tone: 'crit', icon: '⚡', title: `借机攻击！${log.text}` });
     case 'counter': {

@@ -51,7 +51,8 @@ function statusNotes(detail) {
   for (const [key, label] of Object.entries(flagModifiers)) if (m[key]) parts.push(label);
   if (detail.expireOn) {
     const triggers = [].concat(detail.expireOn).map(rule => {
-      const qualifier = rule.damageType === 'direct' ? '受到直接伤害' : rule.damageType === 'indirect' ? '受到间接伤害' : expiryEvents[rule.trigger];
+      const qualifier = rule.damageType === 'direct' ? '受到直接伤害' : rule.damageType === 'indirect' ? '受到间接伤害'
+        : expiryEvents[rule.trigger] ?? { after_damage: '受到伤害', after_hit: '命中', turn_start: '回合开始', turn_end: '回合结束' }[rule.hook] ?? '满足条件';
       return qualifier + (rule.exceptSource === 'self' ? '（自身来源除外）' : '');
     });
     parts.push(`${triggers.join('或')}时解除`);
@@ -72,15 +73,23 @@ export function formatBattleReportText(report, unitNames = {}) {
     return point && Number.isInteger(point.x) && Number.isInteger(point.y) ? `(${point.x}, ${point.y}${Number.isInteger(point.z) ? `, z=${point.z}` : ''})` : '';
   };
   const name = (event, id) => `${names.get(id) ?? id}${position(event, id)}`;
+  const idsByName = new Map();
+  for (const [id, label] of names) if (label) {
+    if (!idsByName.has(label)) idsByName.set(label, []);
+    idsByName.get(label).push(id);
+  }
+  const labels = [...idsByName.keys()].sort((a, b) => b.length - a.length);
+  const unitPattern = labels.length ? new RegExp(labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g') : null;
+  const targetNarration = new Set(['status', 'status_patch', 'damage', 'heal', 'resource', 'shield', 'defeat', 'expire', 'cleanse', 'teleport', 'knockback', 'revive']);
   const replaceUnitNames = (event, text) => {
-    let result = text;
-    const ordered = [...names.entries()].sort((a, b) => b[1].length - a[1].length);
-    for (const [id, unitName] of ordered) {
-      if (!unitName || !result.includes(unitName)) continue;
-      const replacement = `${unitName}${position(event, id)}`;
-      result = result.split(unitName).join(replacement);
-    }
-    return result;
+    if (!unitPattern) return text;
+    const target = event.detail?.targetId;
+    const contextIds = targetNarration.has(event.type) ? [target, event.actor] : [event.actor, target];
+    return text.replace(unitPattern, label => {
+      const ids = idsByName.get(label);
+      const id = contextIds.find(candidate => ids.includes(candidate)) ?? (ids.length === 1 ? ids[0] : undefined);
+      return id === undefined ? label : name(event, id);
+    });
   };
   const checkTarget = (event, detail) => detail.targetKind === 'cover'
     ? detail.targetName ?? detail.targetId : name(event, detail.targetId);
@@ -186,12 +195,9 @@ export function formatBattleReportText(report, unitNames = {}) {
           add(replaceUnitNames(event, text) + notes(parts));
           break;
         }
-        case 'proc': {
-          const target = detail.targetId && detail.targetId !== actor ? `（目标 ${name(event, detail.targetId)}）` : '';
-          const label = detail.die == null ? '触发判定' : '触发检定';
-          add(`${actor ? `${name(event, actor)}的` : ''}${text}${label}${checkGrade(detail.triggered, detail.die)}${target}`);
+        case 'vm_check':
+          add(replaceUnitNames(event, text) + (detail.targetId && detail.targetId !== actor ? `（目标 ${name(event, detail.targetId)}）` : ''));
           break;
-        }
         case 'damage': case 'heal':
           if (detail.amount !== 0) {
             const origin = detail.statusId && actor && actor !== detail.targetId ? `（施加者 ${name(event, actor)}）` : '';
@@ -222,7 +228,8 @@ export function formatBattleReportText(report, unitNames = {}) {
           const actorRaw = names.get(actor) ?? actor;
           if (ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
           if (['teleport','knockback'].includes(type) && Number.isInteger(detail.to?.z)) {
-            label += `，至 (${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
+            const destination = `(${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
+            if (!text.includes(`至 ${destination}`)) label += `，至 ${destination}`;
           }
           add(label.replace(/ ×1$/, ''));
         }

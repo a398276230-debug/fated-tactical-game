@@ -16,6 +16,24 @@ test('整场类型传入，主角豁免，自动动摇与恢复均不耗骰、�
   e.hp=e.maxHp;nextRound(s);const logs=s.logs.filter(l=>l.type==='morale');assert.deepEqual(logs.map(l=>[l.detail.outcome,l.detail.roll]),[['shaken',null],['steady',null]]);assert.equal(s.rng,rng);
   e.moraleType='未知';assert.throws(()=>validateState(s));e.moraleType='standard';e.moraleState='panic';assert.throws(()=>validateState(s));
 });
+test('control policy locks morale and permits friendly and self attack targets', () => {
+  const state = fixture();
+  const { p, e } = state.units;
+  const selfAttack = { type: 'attack', x: p.x, y: p.y };
+  assert.equal(preview(state, selfAttack).ok, false);
+  p.mods = [{ controlPolicy: { allowFriendlyTarget: true } }];
+  const result = preview(state, selfAttack);
+  assert.equal(result.ok, true);
+  assert.equal(result.targets[0]?.id, p.id);
+  e.mods = [{ controlPolicy: { moraleLock: 'steady' } }];
+  e.hp = 35;
+  e.moraleState = 'shaken';
+  nextRound(state);
+  assert.equal(e.moraleState, 'steady');
+  nextRound(state);
+  assert.equal(state.logs.filter(log => log.type === 'morale' && log.actor === e.id).length, 1);
+});
+
 test('切磋严格低于三成才退场，包含主角，保留实际余血且不重复记录',()=>{
   const s=fixture(),{p,e}=s.units;
   p.hp=30;e.hp=29;refreshOutcome(s);assert.ok(!p.fled);assert.equal(e.fled,true);assert.equal(e.hp,29);assert.equal(s.outcome,null);

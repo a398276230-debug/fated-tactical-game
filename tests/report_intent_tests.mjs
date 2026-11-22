@@ -1,12 +1,85 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
-import { beginBattle } from '../src/core/combat.js';
+import { beginBattle, currentUnit } from '../src/core/combat.js';
+import { buildScenario } from '../src/presets/scenarios.js';
+import { narrate } from '../src/ui/narrate.js';
 import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 import { formatBattleReportText } from '../src/api/battle_report.js';
 import { RATING_TABLE } from '../src/core/combat_protocol.js';
 
 const boot = () => { const a = createGameAPI(); a.createBattle({scenarioId:'ruins', ruleset:'sandbox'}); return a; };
+
+function castProbe(program, configure = () => {}) {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state), target = state.units.scout;
+  actor.skills.push('probe');
+  state.skills.probe = { name: '试验', range: 3, ap: 1, slot: 'action', shape: 'single', target: 'enemy',
+    rules: [{ id: 'probe', hook: 'active', program }] };
+  configure(state, actor, target);
+  const api = createGameAPI();
+  api.createBattle({ kind: 'custom_state', state });
+  api.playAction({ type: 'skill', skillId: 'probe', x: target.x, y: target.y });
+  return api;
+}
+
+test('VM 概率、普通、对抗与攻击检定的显示服从实际分支', () => {
+  for (const [kind, dc, success] of [['chance', 100, true], ['chance', 0, false], ['d20', 1, true], ['contest', 1, true], ['attack', 1, true]]) {
+    const api = castProbe([{ op: 'check', kind, dc, stat: 'str', onPass: [{ op: 'apply_status', target: 'target', statusId: 'stun' }] }],
+      (_state, actor, target) => { actor.stats.str = 50; target.stats.str = -20; });
+    const state = api.getBattleState();
+    const log = state.logs.find(entry => entry.type === 'vm_check');
+    assert.equal(log?.detail.success, success);
+    assert.equal(Boolean(state.units.scout.statuses.stun), success);
+    const entry = narrate(log, state);
+    const verdict = success ? '成功' : '失败';
+    assert.equal(entry.roll.verdict, verdict);
+    assert.match(entry.title, new RegExp(`${verdict}（${kind === 'chance' ? 'd100' : 'd20'} 掷出`));
+    assert.ok(api.exportBattleReportText().includes(entry.title.slice(state.units.swordsman.name.length)));
+    assert.doesNotMatch(api.exportBattleReportText(), /触发判定失败|undefined/);
+  }
+});
+
+test('VM 状态与护盾记录施加当时的数值，同名单位各用自己的坐标', () => {
+  const api = castProbe([
+    { op: 'apply_status', target: 'target', statusId: 'freeze', turns: 3 },
+    { op: 'apply_status', target: 'self', statusId: 'probe_shield', turns: 3 },
+  ], (state, actor, target) => {
+    actor.name = target.name = '同名';
+    state.skills.probe.mp = 2;
+    state.statusTemplates = { ...state.statusTemplates, probe_shield: { id: 'probe_shield', name: '试验护盾', category: 'shield', vars: { shieldAmount: 40 } } };
+  });
+  const state = api.getBattleState();
+  const logs = state.logs.filter(log => log.type === 'status');
+  for (const id of ['freeze', 'probe_shield']) {
+    const log = logs.find(entry => entry.detail.statusId === id);
+    const entry = narrate(log, state);
+    assert.ok(entry.lines.includes('持续 3 回合'));
+    if (id === 'probe_shield') assert.ok(entry.lines.includes('护盾 40 点'));
+  }
+  const report = api.exportBattleReportText();
+  assert.match(report, /同名\(3, 2, z=0\)获得冰冻[^；]*持续 3 回合[^；]*来源 同名\(1, 2, z=0\)/);
+  assert.match(report, /同名\(1, 2, z=0\)获得试验护盾[^；]*护盾 40 点/);
+  assert.match(report, /同名\(1, 2, z=0\)因试验消耗/);
+  assert.doesNotMatch(report, /同名\([^)]+\)\(/);
+});
+
+test('VM 瞬移和拉拽的落点只写一次，掩体攻击摘要显示名称', () => {
+  const vm = castProbe([
+    { op: 'move', target: 'target', mode: 'pull', to: { x: 2, y: 2 }, distance: 1 },
+    { op: 'move', target: 'self', mode: 'teleport', to: { x: 3, y: 1 } },
+  ]);
+  const report = vm.exportBattleReportText();
+  assert.match(report, /被拉近至 \(2, 2, z=0\)(?=；|\n|$)/);
+  assert.match(report, /瞬移至 \(3, 1, z=0\)(?=；|\n|$)/);
+  const state = buildScenario('ruins');
+  state.covers.C1.x = 2;
+  const api = createGameAPI();
+  api.createBattle({ kind: 'custom_state', state });
+  api.playAction({ type: 'attack', x: 2, y: 2 });
+  assert.match(api.exportBattleReportText(), /攻击砂岩掩体/);
+  assert.doesNotMatch(api.exportBattleReportText(), /攻击格子 \(2, 2\)/);
+});
 
 test('单体攻击战报明确显示意图，范围攻击不显示部位意图', () => {
   const a = boot();

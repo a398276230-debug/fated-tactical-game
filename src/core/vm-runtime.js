@@ -1,4 +1,4 @@
-import { continueStrike, currentUnit, equippedActiveSkills, getStatusTemplate, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP } from './combat.js';
+import { continueStrike, currentUnit, equippedActiveSkills, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules } from './vm-carriers.js';
 import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
@@ -8,6 +8,7 @@ import { createPool, getPool, initializeUnitPools, updatePoolCurrent } from './v
 import { spatialOps, spatialContinuations, refreshFollowingZones, expireSpatialEffects } from './vm-spatial-ops.js';
 import { elevation } from './spatial.js';
 import { evaluateExpr } from './formula.js';
+import { ruleAvailability } from './vm-rule-limits.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
@@ -101,10 +102,13 @@ export const vmHost = {
     }))];
   },
   enterRule(state, frame, key) {
-    const count = own(state.vm.uses, key) ?? 0;
-    if (frame.rule.usesPerBattle === undefined) return true;
-    if (count >= frame.rule.usesPerBattle) return false;
-    (state.vm.uses ??= {})[key] = count + 1;
+    const { rule } = frame;
+    const { usesLeft, cooldownRemaining, sameTurn, stamp } = ruleAvailability(state, rule, key);
+    if (usesLeft <= 0 || cooldownRemaining > 0) return false;
+    if (rule.usesPerBattle !== undefined) (state.vm.uses ??= {})[key] = (own(state.vm.uses, key) ?? 0) + 1;
+    if (rule.usesPerTurn !== undefined || rule.cooldownTurns !== undefined) {
+      (state.vm.ruleTurns ??= {})[key] = { round: state.round, turn: state.turn, count: sameTurn ? stamp.count + 1 : 1 };
+    }
     return true;
   },
   continue(env) {
@@ -114,6 +118,7 @@ export const vmHost = {
   },
   resource: (state, unit, key) => unit && getPool(state, unit.id, key)?.current,
   statusTemplate: getStatusTemplate,
+  statusLogDetail,
   flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
   stat: (state, unit, key) => mod(state, {}, unit.id, key, unit.stats?.[key] ?? 0),
   checkBonus: (state, unit, event) => mod(state, event, unit.id, 'checkBonus', 0) + (event.checkKind === 'save' ? mod(state, event, unit.id, 'resistBonus', 0) : 0),
@@ -168,10 +173,12 @@ export const vmHost = {
     if (overrides.ignoreSlots) Object.assign(unit, { ap: 2, used: { attack: 0, action: 0 } });
     const skill = own(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
     const view = { ...state, turn: state.order.indexOf(actor.id), units: { ...state.units, [actor.id]: unit } };
-    const planned = preview(view, action, { simulateRules: false });
+    const planned = preview(view, action, { simulateRules: false, actionOrigin: overrides.origin,
+      ignoreRange: overrides.ignoreRange === true, ignoreLOS: overrides.ignoreLOS === true,
+      deferGeometry: overrides.deferGeometry === true, limitClock: state });
     if (!planned.ok) return planned;
     return { ...planned, center: planned.center ?? { x: actor.x, y: actor.y }, targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter(row => row.kind !== 'cover').map(row => row.id),
-      power: skill?.power ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
+      power: skill?.power ?? 0, initiativeBonus: skill?.initiativeBonus ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
       damageType: skill?.damageType ?? skill?.damage?.type ?? planned.damageType ?? null,
       weaponTemplateId: action.type === 'attack' ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null };
   },
@@ -202,13 +209,15 @@ export const vmHost = {
     }
     const name = plan.name ?? skill?.name ?? '技能';
     const intent = plan.isSingle ? plan.intent ?? 'normal' : 'normal';
+    const covers = !event.redirectTarget && !event.replaceTarget ? (plan.targets ?? []).filter(profile => profile.kind === 'cover') : [];
     recordVM(state, actor, 'action', `${actor.name}：${name}`, {
       action: frame.data.action, targetId: event.targetId, intent, attackSource: name,
-      attackTargets: event.targets.map(id => ({ unit: id })), ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap,
+      attackTargets: [...event.targets.map(id => ({ unit: id })), ...covers.map(profile => ({ cover: profile.name }))],
+      ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap,
     });
     const targets = event.targets.filter(id => id !== plan.corpseId).map(id => (plan.targets ?? []).find(profile => profile.id === id)
       ?? retargetStrike(state, actor, frame.data.action, state.units[id], plan));
-    if (!event.redirectTarget && !event.replaceTarget) targets.push(...(plan.targets ?? []).filter(profile => profile.kind === 'cover'));
+    targets.push(...covers);
     pushFrame(state, { native: 'strike', ownerId: actor.id, sourceId: actor.id, eventRef: frame.eventRef,
       data: frame.data.action, plan: { ...plan, targets }, scale: overrides.scale ?? 1 });
     scheduleHooks(state, frame, 'active', frame.eventRef, vmHost);

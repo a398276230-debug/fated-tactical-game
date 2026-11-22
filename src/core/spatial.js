@@ -129,10 +129,11 @@ export function hasLOS(state, from, to) {
  */
 export function aoeCells(state, origin, target, options = {}) {
   const { shape = 'single', radius = 1.5, width = .6, angle = shape === 'fan' ? 100 : 60,
-    innerRadius = 0, facing = origin.facing, range = distance3D(state, origin, target) } = options;
+    innerRadius = 0, facing = origin.facing, range = distance3D(state, origin, target), ignoreLOS = false, ignoreAimRange = false } = options;
   const limitAt = typeof range === 'function' ? range : () => range;
   const inRange = at => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
-  if (!hasLOS(state, origin, target) || !inRange(target)) return [];
+  const canSee = (from, to) => ignoreLOS ? isGround(state, to) : hasLOS(state, from, to);
+  if (!canSee(origin, target) || (!ignoreAimRange && !inRange(target))) return [];
   if (shape === 'single') return [{ x: target.x, y: target.y, z: elevation(state, target) }];
   const [dx, dy] = same(origin, target) ? (facing ?? [1, 0]) : [target.x - origin.x, target.y - origin.y];
   const aimLength = Math.hypot(dx, dy);
@@ -143,7 +144,7 @@ export function aoeCells(state, origin, target, options = {}) {
     const at = { x, y, z: cell.z };
     if (shape === 'circle' || shape === 'ring') {
       const distance = distance3D(state, target, at);
-      if (distance <= radius + EPSILON && (shape !== 'ring' || (!same(target, at) && distance >= innerRadius - EPSILON)) && hasLOS(state, target, at)) result.push(at);
+      if (distance <= radius + EPSILON && (shape !== 'ring' || (!same(target, at) && distance >= innerRadius - EPSILON)) && canSee(target, at)) result.push(at);
       return;
     }
     if (same(origin, at) || (options.radius == null ? !inRange(at) : distance3D(state, origin, at) > radius + EPSILON)) return;
@@ -152,7 +153,7 @@ export function aoeCells(state, origin, target, options = {}) {
     const inside = shape === 'line'
       ? forward > 0 && Math.abs(vx * dy - vy * dx) / aimLength <= width + EPSILON
       : forward / Math.hypot(vx, vy) >= minCosine - EPSILON;
-    if (inside && hasLOS(state, origin, at)) result.push(at);
+    if (inside && canSee(origin, at)) result.push(at);
   }));
   return result;
 }

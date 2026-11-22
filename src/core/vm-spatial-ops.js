@@ -5,7 +5,7 @@ import { spawnPanel } from './spawn-unit.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { scheduleCommit } from './vm-commit.js';
 import { createPool, initializeUnitPools, unlinkPools } from './vm-pools.js';
-import { selectVM } from './vm-select.js';
+import { resolvePoint, selectVM } from './vm-select.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
@@ -13,6 +13,7 @@ const live = unit => unit && unit.hp > 0 && !unit.fled;
 const point = value => Number.isSafeInteger(value?.x) && Number.isSafeInteger(value?.y);
 const xy = ({ x, y }) => ({ x, y });
 const same = (a, b) => a.x === b.x && a.y === b.y;
+const cellKey = ({ x, y }) => `${x},${y}`;
 const at = (state, entity) => ({ ...xy(entity), z: elevation(state, entity) });
 const cells = state => state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })));
 const blocked = (state, p, ignored = new Set()) => !isGround(state, p) || coverAt(state, p.x, p.y)
@@ -33,16 +34,31 @@ function nextId(state, table, prefix) {
   return `${prefix}-${serial + 1}`;
 }
 
-function resolvePoint(value, context) {
-  if (point(value)) return value;
-  if (typeof value !== 'string') return undefined;
-  const resolved = ['self', 'source', 'target', 'attacker', 'center'].includes(value) ? context[value]
-    : value.startsWith('vars.') ? own(context.vars, value.slice(5)) : evaluateExpr(value, context);
-  if (point(resolved)) return resolved;
-  if (typeof resolved === 'string') {
-    const unit = context.units.find(unit => unit.id === resolved);
-    if (point(unit)) return unit;
+function spawnNumber(expression, context, min, max = Infinity, integer = true) {
+  const value = evaluateExpr(expression, context);
+  if (!Number.isFinite(value)) return undefined;
+  return clamp(integer ? Math.floor(value) : value, min, max);
+}
+
+function resolveSpawnSpec(spec, context, kind) {
+  const resolved = { ...spec };
+  const bounds = { tier: [1, 7], count: [1, kind === 'unit' ? 10 : Infinity], remainingTurns: [1, 100] };
+  for (const [key, [min, max]] of Object.entries(bounds)) {
+    if (spec[key] === undefined) continue;
+    resolved[key] = spawnNumber(spec[key], context, min, max);
+    if (resolved[key] === undefined) return;
   }
+  if (spec.spawnPanel?.tier !== undefined) {
+    const tier = spawnNumber(spec.spawnPanel.tier, context, 1, 7);
+    if (tier === undefined) return;
+    resolved.spawnPanel = { ...spec.spawnPanel, tier };
+  }
+  if (spec.area?.radius !== undefined) {
+    const radius = spawnNumber(spec.area.radius, context, 0, Infinity, false);
+    if (radius === undefined) return;
+    resolved.area = { ...spec.area, radius };
+  }
+  return resolved;
 }
 
 function inherit(frame) {
@@ -64,7 +80,7 @@ function teleport({ state, host, context, op }, targets) {
   const anchor = targets[0];
   if (targets.some(unit => unit.locks?.move)) return;
   const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
-  if (!destination) return;
+  if (!point(destination)) return;
   const ignored = new Set(targets.map(unit => unit.id));
   const landings = targets.map(unit => ({ unit, from: at(state, unit),
     to: { x: destination.x + unit.x - anchor.x, y: destination.y + unit.y - anchor.y } }));
@@ -100,7 +116,7 @@ function continueMove({ state, frame, host, context }) {
   } else if (op.mode === 'step') {
     const to = resolvePoint(op.to, scope);
     const distance = op.distance === undefined ? 1 : evaluateExpr(op.distance, scope);
-    if (!to || !Number.isFinite(distance)) return;
+    if (!point(to) || !Number.isFinite(distance)) return;
     const steps = findPath(state, unit, to, Math.floor(distance));
     if (!steps?.length) return;
     path.push(...steps);
@@ -232,9 +248,10 @@ function removeSummon(state, unit) {
 }
 
 function spawnUnits({ state, frame, host, context, op, select, push }, center) {
-  const { spec } = op;
   const actor = context.self;
   if (!actor || !center) return;
+  const spec = op.spec.templateId === undefined && op.spec.copyOf === undefined
+    ? { ...op.spec, spawnPanel: op.spec.spawnPanel ?? {} } : op.spec;
   const original = spec.copyOf ? select(spec.copyOf).find(unit => own(state.units, unit.id) === unit)
     : own(state.summonTemplates, spec.templateId);
   const plan = unitPlan(state, context, spec, original);
@@ -327,11 +344,13 @@ function spawnZone({ state, frame, host, context, op }, center) {
   const { spec } = op;
   const area = structuredClone(spec.area);
   const anchorRef = area.anchorUnitId;
-  const anchorId = anchorRef?.startsWith('vars.') ? own(context.vars, anchorRef.slice(5)) : anchorRef;
-  const anchor = own(state.units, anchorId ?? (spec.follow ? context.self?.id : undefined));
+  const anchorId = anchorRef?.startsWith('vars.')
+    ? context.resolveEntity(own(context.vars, anchorRef.slice(5)), 'unit')?.id : anchorRef;
+  const anchor = own(state.units, anchorRef === undefined && spec.follow ? context.self?.id : anchorId);
   if ((anchorRef || spec.follow) && !live(anchor)) return;
-  const origin = area.center ?? (anchor ? xy(anchor) : center);
-  if ((area.shape === 'circle' || area.shape === 'ring') && (!point(origin) || !Number.isFinite(area.radius))) return;
+  const origin = area.center === undefined ? anchor ?? center : resolvePoint(area.center, context);
+  if ((area.center !== undefined || ['circle', 'ring', 'single'].includes(area.shape)) && !point(origin)) return;
+  if (['circle', 'ring'].includes(area.shape) && !Number.isFinite(area.radius)) return;
   if (origin) area.center = xy(origin);
   if (spec.follow) area.anchorUnitId = anchor.id;
   else delete area.anchorUnitId;
@@ -386,14 +405,15 @@ function terrainTile(tile, spec) {
 function spawnTerrain({ state, frame, host, context, op }, center) {
   if (!center) return;
   const { spec, entityKind } = op;
-  const area = spec.area && { ...spec.area, origin: spec.area.origin ?? xy(center) };
+  const area = spec.area;
+  const origin = area?.origin === undefined ? center : resolvePoint(area.origin, context);
+  if (!origin) return;
   let selected = [center];
   if (area?.shape === 'rect') {
-    const origin = resolvePoint(area.origin, context);
-    selected = origin ? cells(state).filter(p => Math.abs(p.x - origin.x) <= (area.width ?? area.radius ?? 0)
-      && Math.abs(p.y - origin.y) <= (area.radius ?? area.width ?? 0)) : [];
+    selected = cells(state).filter(p => Math.abs(p.x - origin.x) <= (area.width ?? area.radius ?? 0)
+      && Math.abs(p.y - origin.y) <= (area.radius ?? area.width ?? 0));
   } else if (area) {
-    selected = selectVM(state, { from: 'cells', area }, { ...context, target: center }, { pure: true });
+    selected = selectVM(state, { from: 'cells', area: { ...area, origin } }, { ...context, target: center }, { pure: true });
   }
   const cover = entityKind === 'cover';
   const spots = selected.filter(p => cellAt(state, p.x, p.y) && (!(cover || spec.kind === 'wall')
@@ -402,7 +422,8 @@ function spawnTerrain({ state, frame, host, context, op }, center) {
   const effects = state.spatialTerrain ??= {};
   if (values(effects).length >= 64) return;
   const id = nextId(state, effects, 'terrain');
-  const effect = { id, spec, cells: [], coverIds: [], persistent: spec.persistent ?? spec.remainingTurns === undefined,
+  const effect = { id, spec: area ? { ...spec, area: { ...area, origin: xy(origin) } } : spec,
+    cells: [], coverIds: [], persistent: spec.persistent ?? spec.remainingTurns === undefined,
     remainingTurns: spec.remainingTurns ?? 1 };
   effects[id] = effect;
   for (const p of spots) {
@@ -438,11 +459,22 @@ function scheduleTerrainFalls(state, parent, changes) {
   }
 }
 
+function removeCovers(state, ids) {
+  if (!ids.size) return;
+  for (const id of ids) delete state.covers[id];
+  for (const effect of values(state.spatialTerrain)) {
+    if (!effect.coverIds.some(id => ids.has(id))) continue;
+    effect.coverIds = effect.coverIds.filter(id => !ids.has(id));
+  }
+}
+
 function settleRestoredWalls(state, host, walls, parent) {
+  const wallKeys = new Set(walls.map(cellKey));
+  removeCovers(state, new Set(values(state.covers).filter(cover => wallKeys.has(cellKey(cover))).map(cover => cover.id)));
+  for (const item of values(state.interactives)) {
+    if (wallKeys.has(cellKey(item))) delete state.interactives[item.id];
+  }
   for (const p of walls) {
-    for (const table of [state.covers, state.interactives]) {
-      for (const item of values(table)) if (same(item, p)) delete table[item.id];
-    }
     const unit = unitAt(state, p.x, p.y);
     if (!unit) continue;
     const destination = cells(state).filter(cell => !blocked(state, cell))
@@ -458,6 +490,44 @@ function settleRestoredWalls(state, host, walls, parent) {
   }
 }
 
+function removeTerrainLayers(state, host, parent, ids, reason) {
+  if (!ids.size) return;
+  const layers = values(state.spatialTerrain);
+  const removed = layers.filter(layer => ids.has(layer.id));
+  const affected = new Set(removed.flatMap(layer => layer.cells.map(cellKey)));
+  const changes = new Map();
+  // Each cell's oldest patch holds its native tile. Replay surviving layers in creation order.
+  for (const layer of layers) {
+    for (const patch of layer.cells) {
+      const key = cellKey(patch);
+      if (!affected.has(key)) continue;
+      let change = changes.get(key);
+      if (!change) {
+        change = { ...xy(patch), before: state.grid[patch.y][patch.x], after: patch.before };
+        changes.set(key, change);
+      }
+      if (!ids.has(layer.id)) {
+        if (!change.firstSurvivor) {
+          patch.before = change.after;
+          change.firstSurvivor = true;
+        }
+        change.after = terrainTile(change.after, layer.spec);
+      }
+    }
+  }
+  for (const { x, y, after } of changes.values()) state.grid[y][x] = after;
+  for (const layer of removed) delete state.spatialTerrain[layer.id];
+  removeCovers(state, new Set(removed.flatMap(layer => layer.coverIds)));
+
+  const restored = [...changes.values()];
+  scheduleTerrainFalls(state, parent, restored);
+  settleRestoredWalls(state, host, restored.filter(p => p.before.kind !== 'wall' && p.after.kind === 'wall'), parent);
+  refreshFollowingZones(state, host);
+  for (const layer of removed) {
+    host.log(state, null, 'terrain', `地形效果${reason}还原`, { terrainId: layer.id });
+  }
+}
+
 /** Call on lifecycle boundaries. Set advance once per round after round-end hooks. */
 export function expireSpatialEffects(state, host, { advance = false, parent = state.vm?.stack.at(-1) } = {}) {
   refreshFollowingZones(state, host);
@@ -465,42 +535,41 @@ export function expireSpatialEffects(state, host, { advance = false, parent = st
   for (const zone of values(state.zones)) {
     if (!zone.persistent && --zone.remainingTurns <= 0) removeZone(state, host, zone.id, '到期');
   }
-  const layers = values(state.spatialTerrain);
-  const changes = new Map();
-  for (const [index, effect] of layers.entries()) {
-    if (effect.persistent || --effect.remainingTurns > 0) continue;
-    for (const id of effect.coverIds) delete state.covers[id];
-    for (const patch of effect.cells) {
-      const before = state.grid[patch.y][patch.x];
-      let tile = patch.before;
-      for (const later of layers.slice(index + 1)) {
-        const update = later.cells.find(cell => same(cell, patch));
-        if (!update) continue;
-        update.before = tile;
-        tile = terrainTile(tile, later.spec);
-      }
-      state.grid[patch.y][patch.x] = tile;
-      const key = `${patch.x},${patch.y}`;
-      changes.set(key, { ...xy(patch), before: changes.get(key)?.before ?? before, after: tile });
+  const expired = values(state.spatialTerrain).filter(layer => !layer.persistent && --layer.remainingTurns <= 0);
+  removeTerrainLayers(state, host, parent, new Set(expired.map(layer => layer.id)), '到期');
+}
+
+function despawn({ state, frame, host, context, op, select }) {
+  const targets = new Set(select(op.select));
+  if (!targets.size) return;
+  if (op.entityKind === 'zone') {
+    for (const zone of targets) {
+      if (own(state.zones, zone.id) === zone) removeZone(state, host, zone.id);
     }
-    delete state.spatialTerrain[effect.id];
-    host.log(state, null, 'terrain', '地形效果到期还原', { terrainId: effect.id });
+  } else if (op.entityKind === 'cover') {
+    const covers = [...targets].filter(cover => own(state.covers, cover.id) === cover);
+    removeCovers(state, new Set(covers.map(cover => cover.id)));
+    for (const cover of covers) {
+      host.log(state, context.self, 'terrain', `${cover.name ?? '掩体'}被移除`, { coverId: cover.id });
+    }
+  } else if (op.entityKind === 'terrain') {
+    const layers = [...targets].filter(layer => own(state.spatialTerrain, layer.id) === layer && layer.cells.length);
+    removeTerrainLayers(state, host, frame, new Set(layers.map(layer => layer.id)), '解除后');
   }
-  const restored = [...changes.values()];
-  scheduleTerrainFalls(state, parent, restored);
-  settleRestoredWalls(state, host, restored.filter(p => p.before.kind !== 'wall' && p.after.kind === 'wall'), parent);
-  refreshFollowingZones(state, host);
 }
 
 function spawn(env) {
   const { op, context } = env;
-  if (op.entityKind === 'item') { spawnItems(env); return; }
+  const spec = resolveSpawnSpec(op.spec, context, op.entityKind);
+  if (!spec) return;
+  const resolved = { ...env, op: { ...op, spec } };
+  if (op.entityKind === 'item') { spawnItems(resolved); return; }
   const center = op.at === undefined ? context.center ?? context.target ?? context.self : resolvePoint(op.at, context);
   if ((op.at !== undefined && !center) || (center && !point(center))) return;
-  if (op.entityKind === 'unit') spawnUnits(env, center);
-  else if (op.entityKind === 'zone') spawnZone(env, center);
-  else spawnTerrain(env, center);
+  if (op.entityKind === 'unit') spawnUnits(resolved, center);
+  else if (op.entityKind === 'zone') spawnZone(resolved, center);
+  else spawnTerrain(resolved, center);
 }
 
-export const spatialOps = Object.freeze({ move, spawn });
+export const spatialOps = Object.freeze({ move, spawn, despawn });
 export const spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn });

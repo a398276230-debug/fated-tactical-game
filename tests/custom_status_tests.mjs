@@ -53,6 +53,56 @@ test('a skill stacks a registered status, locks movement, and ticks on its owner
   assert.equal(api.inspectUnit('scout').statuses['slow-venom'].remainingTurns, 1);
 });
 
+test('VM status caps resolve from the applying unit and persist as concrete replayable integers', () => {
+  const api = boot();
+  const before = api.getBattleState();
+  const cap = before.units.swordsman.maxHp;
+  assert.ok(cap > 10);
+  assert.notEqual(cap, before.units.scout.maxHp);
+  commit(api, define({ maxStacks: 'self.maxHp' }), skill({ id: 'dynamic-cap', hook: 'active', program: [
+    applyVenom({ stacks: 'self.maxHp - 1' }), applyVenom({ stacks: 2 }),
+  ] }));
+  assert.equal(api.playAction({ type: 'skill', skillId: 'challenge', x: 3, y: 2 }).ok, true);
+  const status = api.inspectUnit('scout').statuses['slow-venom'];
+  assert.equal(status.maxStacks, cap);
+  assert.equal(status.stacks, cap);
+  const snapshot = JSON.parse(JSON.stringify(api.exportBattleSnapshot()));
+  assert.equal(snapshot.state.statusTemplates['slow-venom'].maxStacks, 'self.maxHp');
+  assert.deepEqual(boot(snapshot).exportBattleSnapshot(), snapshot);
+  commit(api, { type: 'patch_status', unitId: 'scout', statusId: 'slow-venom', patch: { stacks: cap - 1 } });
+  assert.equal(propose(api, { type: 'patch_status', unitId: 'scout', statusId: 'slow-venom', patch: { stacks: cap + 1 } }).ok, false);
+  for (const maxStacks of ['self.maxHp', Number.MAX_SAFE_INTEGER + 1]) {
+    const invalid = structuredClone(snapshot);
+    invalid.state.units.scout.statuses['slow-venom'].maxStacks = maxStacks;
+    assert.throws(() => boot(invalid));
+  }
+});
+
+test('VM status stacks saturate at the supported ceiling for large numeric and expression caps', () => {
+  for (const maxStacks of [999999, 'self.maxHp * 1e20']) {
+    const api = boot();
+    commit(api, define({ maxStacks }), skill({ id: 'high-cap', hook: 'active', program: [
+      applyVenom({ stacks: 900000 }), applyVenom({ stacks: 1e20 }),
+    ] }));
+    assert.equal(api.playAction({ type: 'skill', skillId: 'challenge', x: 3, y: 2 }).ok, true);
+    const status = api.inspectUnit('scout').statuses['slow-venom'];
+    assert.equal(status.maxStacks, 999999);
+    assert.equal(status.stacks, 999999);
+  }
+});
+
+test('an expression that cannot resolve to a numeric cap leaves the current status intact', () => {
+  const api = boot();
+  commit(api, define({ maxStacks: 'vars.cap' }), skill({ id: 'conditional-cap', hook: 'active', program: [
+    { op: 'let', name: 'cap', value: 2500.75 }, applyVenom({ stacks: 2000 }),
+    { op: 'let', name: 'cap', value: true }, applyVenom({ stacks: 9999 }),
+  ] }));
+  assert.equal(api.playAction({ type: 'skill', skillId: 'challenge', x: 3, y: 2 }).ok, true);
+  const status = api.inspectUnit('scout').statuses['slow-venom'];
+  assert.equal(status.maxStacks, 2500);
+  assert.equal(status.stacks, 2000);
+});
+
 test('a patched equipment reaction applies its registered status to the melee attacker', () => {
   const api = boot();
   commit(api, define(), { type: 'patch_equipment_template', templateId: 'frostplate', patch: { rules: [
@@ -120,7 +170,8 @@ test('status templates and rules reject malformed data and unknown references at
   const api = boot(), start = api.exportBattleSnapshot();
   for (const command of [
     define({ id: 'shield' }), define({ id: '__proto__' }), define({ id: 'constructor' }),
-    define({ script: 'arbitrary code' }), define({ maxStacks: 11 }), define({ remainingTurns: 0 }),
+    define({ script: 'arbitrary code' }), define({ maxStacks: 1000000 }), define({ maxStacks: 1.5 }),
+    define({ maxStacks: 'self.unknown' }), define({ remainingTurns: 0 }),
     define({ mods: [{ stat: 'move', flat: -1 }] }), define({ mods: [{ stat: 'str', flat: Infinity }] }),
     define({ mods: [{ stat: 'str', flat: 'state.units.scout.hp' }] }), upsert('scout'),
     skill({ id: 'missing-status', hook: 'active', program: [applyVenom()] }),

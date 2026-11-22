@@ -36,12 +36,11 @@ const pointRef = either(point, enumOf(...scopes, 'center'), variable);
 const selector = ref('selector');
 const target = ref('targetRef');
 const program = ref('program');
-const turns = integer(1, 100);
 const chooseOptions = list(object({ id, label: text }, ['id', 'label']), 1);
 const mapOf = (key, value) => ({ type: 'object', propertyNames: key, additionalProperties: value });
 
 const eventPatchFields = {
-  before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: point2, ignoreLOS: booleanExpr },
+  before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
   before_target: { cancel: booleanExpr, redirectTarget: entityId, replaceTarget: object({ from: entityId, to: entityId }, ['from', 'to']), skipColossusArea: booleanExpr, damageScale: numericExpr },
   before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, minRating: text, forceOutcome: enumOf('pass', 'fail', 'hit', 'miss', 'crit') },
   before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
@@ -60,22 +59,23 @@ const patchSchemas = Object.fromEntries(Object.entries(eventPatchFields).map(([n
 ]));
 
 export const opNotes = Object.freeze({
-  let: '将表达式结果写入 vars.<名称>。默认写当前帧，scope:owner 写规则宿主。',
+  let: 'name 写裸名称（如 bonus），读取写 vars.bonus。默认写当前帧，scope:owner 写规则宿主（用 self.vars.bonus 或对应载体变量读取）。',
   if: '按 cond 选择 then 或 else 指令序列。未提供 else 时为假即跳过。',
-  for_each: '对 Selector 的结果快照逐项执行 body。省略 bind 时子帧的 target 是当前项。',
-  check: '走统一检定和随机数管线，按结果进入 onPass 或 onFail；out 写入帧变量。',
-  ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择。选格和选实体用 select，选项用 options，数值用 min/max。',
-  damage: '走完整伤害和致死管线，out 记录实际扣血量。裸扣资源使用 resource。',
+  for_each: '对 Selector 的结果快照逐项执行 body。bind 写裸名称，如 victim；body 内通过 vars.victim 选实体、vars.victim.hp 读字段。省略 bind 时，遍历单位的子帧 target 是当前单位。',
+  check: '走统一检定和随机数管线，按结果进入 onPass 或 onFail；out 写裸名称；后续通过 vars.<名称> 读取。',
+  ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择。选格和选实体用 select，选项用 options，数值用 min/max。entity 的 maxSelect 开启多选，将 ID 数组写入 out，for_each 以 {from:"vars.<名称>"} 遍历。out 写裸名称，单选实体可用 vars.<名称> 作目标。',
+  damage: '走完整伤害和致死管线，out 记录实际扣血量，写裸名称、读 vars.<名称>。裸扣资源使用 resource。',
   heal: '仅治疗存活且允许受疗的单位，经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
   resource: '直接改资源池并经过落盘拦截。swap 使用单个 pool 和 otherPool；cap/initial 在模板上声明。',
   link_pool: '用 units 选择单位，将指定的 HP/MP/SP 池合并共享或拆回独立池。',
   apply_status: '施加已注册的状态模板，vars 求值后存入状态。护盾使用 shield 状态与 shieldAmount 变量。',
-  remove_status: '在目标持有的状态中用 where 筛选可移除项。outCount 记录成功移除的数量。',
+  remove_status: '在目标持有的状态中用 where 筛选可移除项。outCount 写裸名称（如 lostStacks），后续读 vars.lostStacks，表示成功移除的数量。',
   mutate_event: '仅在有可写字段的拦截钩子改写当前事件。patch 的键必须属于当前 Rule.hook。',
   move: '统一移动、瞬移、推拉与高度变化。push/pull 逐格判碰撞，altitude 可用 deltaZ 或 land。',
   spawn: '按 entityKind 提供对应的 spec 生成单位、结界、地形、掩体或库存物品；at 指定落点。',
+  despawn: '用 select 清除指定的 zone、cover 或 terrain；terrain 只清除 VM 生成的地形层。',
   revive: '只对未被 blockRevive 禁止的阵亡单位生效；hpPercent/mpPercent/spPercent 以 1 为满额。',
-  perform: '压入独立子动作；skill 用 skillId，replay 用 tapeRecord 引用磁带记录，必要时用 overrides 显式覆写。',
+  perform: '压入独立子动作；skill 用技能 ID 或 vars.<名称>，replay 用 tapeRecord 引用磁带记录。overrides.origin 可改生效原点；跨距离或阻隔需显式设置 ignoreRange 或 ignoreLOS。',
 });
 function opcode(op, properties, required, ...conditions) {
   if (!Object.hasOwn(opNotes, op) || !opNotes[op].trim()) throw new Error(`VM 指令 ${op} 缺少用法说明`);
@@ -96,34 +96,38 @@ const statMod = withRules(object({
   controlPolicy, when: booleanExpr,
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')));
-const overrides = object({ free: bool, ignoreSlots: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
+const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
 const area = object({
   shape: enumOf('single', 'circle', 'ring', 'fan', 'cone', 'line', 'rect'),
-  origin: either(enumOf('self', 'target', 'center'), point2),
+  origin: pointRef,
   radius: { type: 'number', minimum: 0 }, innerRadius: { type: 'number', minimum: 0 },
   width: { type: 'number', minimum: 0 }, angle: { type: 'number', minimum: 0 },
 }, ['shape']);
+const spawnTier = either(integer(1, 7), formula);
+const spawnTurns = either(integer(1, 100), formula);
+const spawnRadius = either({ type: 'number', minimum: 0 }, formula);
+const spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
 const zoneArea = withRules(object({
-  shape: enumOf('circle', 'ring', 'rect', 'cells', 'board'), anchorUnitId: entityId, center: point2,
-  radius: { type: 'number', minimum: 0 }, innerRadius: { type: 'number', minimum: 0 },
+  shape: enumOf('single', 'circle', 'ring', 'rect', 'cells', 'board'), anchorUnitId: entityId, center: pointRef,
+  radius: spawnRadius, innerRadius: { type: 'number', minimum: 0 },
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
 const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), mods: list(ref('statMod')), rules: list(ref('rule')) };
 const spawnSpecs = {
   unit: withRules(object({
-    ...carrier, templateId: id, copyOf: target, count: integer(1, 10),
+    ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula),
     spawnPanel: object({
-      attribute, tier: integer(1, 7), stats: object(Object.fromEntries(attribute.enum.map(name => [name, integer(0, 20)])), attribute.enum),
+      attribute, tier: spawnTier, stats: object(Object.fromEntries(attribute.enum.map(name => [name, integer(0, 20)])), attribute.enum),
       maxHp: integer(1), maxMp: integer(0), maxSp: integer(0), armor: integer(0), size: integer(1, 5),
       bodyLengthM: { type: 'number', exclusiveMinimum: 0 }, mc: integer(1), move: integer(0),
       skills: list(id), gear: list(id), mainHand: id, offHand: id, shield: id,
     }),
-  }), variants(needs('templateId'), needs('copyOf'), needs('spawnPanel'))),
-  zone: object({ ...carrier, templateId: id, area: zoneArea, follow: bool, remainingTurns: turns, persistent: bool }, ['area']),
-  terrain: withRules(object({ kind: enumOf('floor', 'wall', 'slope'), height: number, mode: enumOf('set', 'raise', 'lower'), area, remainingTurns: turns, persistent: bool }), either(needs('kind'), needs('height')), when('mode', {}, needs('height'))),
-  cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area, remainingTurns: turns, persistent: bool }),
-  item: object({ templateId: id, count: integer(1) }, ['templateId']),
+  }), variants(needs('templateId'), needs('copyOf'), needs('spawnPanel'), { not: either(needs('templateId'), needs('copyOf'), needs('spawnPanel')) })),
+  zone: object({ ...carrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
+  terrain: withRules(object({ kind: enumOf('floor', 'wall', 'slope'), height: number, mode: enumOf('set', 'raise', 'lower'), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs('kind'), needs('height')), when('mode', {}, needs('height'))),
+  cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
+  item: object({ templateId: id, count: either(integer(1), formula) }, ['templateId']),
 };
 
 const opcodeSchemas = [
@@ -134,7 +138,8 @@ const opcodeSchemas = [
     dc: numericExpr, mode: enumOf('all', 'any'), statusId, tags: list(tag), onPass: program, onFail: program, out: id }, ['kind']),
   opcode('ask', { chooser: target, kind: enumOf('cell', 'entity', 'option', 'number'), prompt: text, out: id,
     aiPolicy: enumOf('max', 'min', 'best_offensive_cell', 'safest_cell', 'highest_threat', 'first'), select: selector,
-    options: chooseOptions, min: numericExpr, max: numericExpr }, ['chooser', 'kind', 'prompt', 'out', 'aiPolicy'],
+    options: chooseOptions, min: numericExpr, max: numericExpr, maxSelect: integer(1, 200) }, ['chooser', 'kind', 'prompt', 'out', 'aiPolicy'],
+  when('maxSelect', {}, { properties: { kind: literal('entity') } }),
   when('kind', enumOf('cell', 'entity'), withRules(needs('select'), { not: either(needs('options'), needs('min'), needs('max')) })),
   when('kind', literal('option'), withRules(needs('options'), { not: either(needs('select'), needs('min'), needs('max')) })),
   when('kind', literal('number'), withRules(needs('min', 'max'), { not: either(needs('options'), needs('select')) }))),
@@ -150,11 +155,12 @@ const opcodeSchemas = [
   opcode('remove_status', { target, where: booleanExpr, reason: enumOf('dispelled', 'cleansed', 'expired'), outCount: id }, ['target', 'where']),
   opcode('mutate_event', { patch: either(...Object.keys(patchSchemas).map(name => ref(`patch_${name}`))) }, ['patch']),
   opcode('move', { target, mode: enumOf('teleport', 'step', 'push', 'pull', 'altitude'),
-    to: either(point, formula), distance: numericExpr, deltaZ: numericExpr, land: bool, collisionDamage: numericExpr, onCollide: program }, ['target', 'mode']),
+    to: pointRef, distance: numericExpr, deltaZ: numericExpr, land: bool, collisionDamage: numericExpr, onCollide: program }, ['target', 'mode']),
   opcode('spawn', { entityKind: enumOf(...Object.keys(spawnSpecs)), spec: { type: 'object' }, at: pointRef, out: id }, ['entityKind', 'spec'],
   ...Object.keys(spawnSpecs).map(kind => when('entityKind', literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))),
+  opcode('despawn', { entityKind: enumOf('zone', 'cover', 'terrain'), select: selector }, ['entityKind', 'select']),
   opcode('revive', { target, hpPercent: numericExpr, mpPercent: numericExpr, spPercent: numericExpr, hpFlat: numericExpr }, ['target']),
-  opcode('perform', { actor: target, actionKind: enumOf('skill', 'attack', 'replay'), skillId: id, tapeRecord: variable, target, overrides }, ['actor', 'actionKind'],
+  opcode('perform', { actor: target, actionKind: enumOf('skill', 'attack', 'replay'), skillId: entityId, tapeRecord: variable, target, overrides }, ['actor', 'actionKind'],
   when('actionKind', literal('skill'), { ...needs('skillId'), not: needs('tapeRecord') }),
   when('actionKind', literal('replay'), { ...needs('tapeRecord'), not: needs('skillId') }),
   when('actionKind', literal('attack'), { not: either(needs('skillId'), needs('tapeRecord')) })),
@@ -170,10 +176,10 @@ const defs = {
   expr: either(number, bool, formula),
   tag,
   selector: withRules(object({
-    from: enumOf(...scopes, 'units', 'statuses', 'zones', 'cells', 'tape'), of: enumOf(...scopes),
+    from: either(enumOf(...scopes, 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable), of: enumOf(...scopes),
     area, where: booleanExpr, pick: variants(literal('all'), ...['first', 'random', 'nearest'].map(key => object({ [key]: integer(1) }, [key]))),
   }, ['from']), when('of', {}, { properties: { from: literal('statuses') } })),
-  targetRef: either(enumOf(...scopes), selector),
+  targetRef: either(enumOf(...scopes), variable, selector),
   expireRule,
   statMod,
   controlPolicy,
@@ -188,7 +194,7 @@ const defs = {
   opcode: variants(...opcodeSchemas),
   program: list(ref('opcode')),
   rule: withRules(object({ id, hook, program, label: text, enabled: { ...bool, default: true },
-    priority: { type: 'integer' }, dedupeKey: text, usesPerBattle: integer(1), filter: booleanExpr }, ['id', 'hook', 'program']),
+    priority: { type: 'integer' }, dedupeKey: text, usesPerBattle: integer(1), usesPerTurn: integer(1), cooldownTurns: integer(1, 100), filter: booleanExpr }, ['id', 'hook', 'program']),
   ...Object.keys(patchSchemas).map(name => when('hook', literal(name), { properties: { program: guardedProgram(name) } })),
   when('hook', { not: enumOf(...Object.keys(patchSchemas)) }, { properties: { program: guardedProgram('readOnly') } })),
 };
