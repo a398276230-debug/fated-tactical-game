@@ -1,3 +1,4 @@
+import { validFormula } from './formula.js';
 const enumOf = (...values) => ({ enum: values });
 const number = (minimum, maximum, type = 'number') => ({ type, minimum, maximum });
 const integer = (min, max) => number(min, max, 'integer');
@@ -49,7 +50,23 @@ const nodeNotes = {
   chainEffect: '依次执行子节点；前一步没有生效就应停止时写 stopOnFailure:true。',
   procEffect: '通过 ref 调用已有表达式的 ID，仍需通过其触发门槛；禁止循环引用。',
 };
+// Only runtime operands, never persisted capacities, costs or template geometry.
+export const formulaFields = {
+  damage:['amount','flat','percent','percentOfDamageDealt','percentOfPrevious','percentOfTargetMaxHp','percentOfSelfMaxHp','percentOfPower','perLevel'],
+  heal:['amount','percent','percentOfDamageDealt','percentOfPrevious','percentOfMaxHp','perLevel'],
+  shield:['amount','percent','percentOfDamageDealt','percentOfPrevious','percentOfHealing','perLevel'],
+  restoreResource:['amount','percent','percentOfPrevious','percentPerCost','perLevel'],
+  drainResource:['amount','percent','percentOfPrevious','percentPerCost','perLevel'],
+  produceResource:['amount','percent','perLevel'], multiplyDamage:['factor'],
+  modifyStat:['flat','percent'], modifyDamageBase:['value'], execute:['threshold']
+};
+export const formulaBounds = new Map();
 const node = (kind, properties, required = []) => {
+  for (const key of formulaFields[kind] ?? []) {
+    if (!properties[key]) continue;
+    formulaBounds.set(`${kind}.${key}`, properties[key]);
+    properties[key] = union(properties[key], ref('formula'));
+  }
   if (!Object.hasOwn(nodeNotes, kind) || !nodeNotes[kind].trim()) throw new Error(`DSL 节点 ${kind} 缺少用法说明`);
   return { ...object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref('condition'), radius: number(0, 15), ...properties }, ['kind', ...required]), description: nodeNotes[kind] };
 };
@@ -77,8 +94,10 @@ export const effectSchema = {
     saveDC: union(integer(1, 50), object({ base: number(-1e9, 1e9),
       scaleBy: object({ stat: attribute, perUnit: number(-1e9, 1e9) }, ['stat','perUnit']),
       min: number(1, 1e9), max: number(1, 1e9) }, ['base','scaleBy'])),
+    formula: {type:'string', minLength:1, maxLength:200, format:'combat-formula'},
     expireOn: union(expireRule, array(expireRule, 12)),
     condition: union(array(ref('condition'), 12), ...['and','or','not'].map(type => condition(type, { conditions: array(ref('condition'), type === 'not' ? 1 : 12) })),
+      condition('compare', { left:union(number(-1e9,1e9),ref('formula')), op:compare, right:union(number(-1e9,1e9),ref('formula')) }),
       ...['selfHp','targetHp'].map(type => comparison(type, fraction)), comparison('distance', number(0, 20)), comparison('targetLevel', enumOf('self')),
       ...tags.map(type => condition(type, { value: string })), condition('timeOfDay', { value: enumOf('dawn','day','dusk','night') }),
       ...['duel','usesLeft','intercepting','melee','arrow','backstab','critical','opportunityAttack','saved','enemy','reaction','highGround'].map(type => condition(type, { value: { type: 'boolean' } }, [])),
@@ -136,7 +155,8 @@ function matches(value, schema, depth = 0) {
           : schema.additionalProperties && next(item, schema.additionalProperties)));
     case 'array': return Array.isArray(value) && value.length >= schema.minItems && value.length <= schema.maxItems
       && Array.from(value).every(item => next(item, schema.items));
-    case 'string': return typeof value === 'string' && value.trim().length >= (schema.minLength ?? 1)
+    case 'string': if (schema.format === 'combat-formula') return validFormula(value);
+      return typeof value === 'string' && value.trim().length >= (schema.minLength ?? 1)
       && value.length <= (schema.maxLength ?? 100) && (!schema.pattern || (new RegExp(schema.pattern).test(value) && !Object.hasOwn(Object.prototype, value) && value !== 'prototype'));
     case 'integer': if (!Number.isInteger(value)) return false;
     // fall through

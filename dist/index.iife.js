@@ -214,6 +214,90 @@ var FatedTactical = (() => {
     return table(state.units).some((ally) => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
   }
 
+  // src/core/formula.js
+  var aliases = {
+    "\u6211\u65B9\u529B\u91CF": "self.str",
+    "\u6211\u65B9\u654F\u6377": "self.agi",
+    "\u6211\u65B9\u4F53\u8D28": "self.con",
+    "\u6211\u65B9\u667A\u529B": "self.int",
+    "\u6211\u65B9\u7CBE\u795E": "self.spi",
+    "\u76EE\u6807\u529B\u91CF": "target.str",
+    "\u76EE\u6807\u654F\u6377": "target.agi",
+    "\u76EE\u6807\u4F53\u8D28": "target.con",
+    "\u76EE\u6807\u667A\u529B": "target.int",
+    "\u76EE\u6807\u7CBE\u795E": "target.spi",
+    "\u6211\u65B9\u751F\u547D\u503C": "self.hp",
+    "\u6211\u65B9\u751F\u547D\u4E0A\u9650": "self.maxHp",
+    "\u76EE\u6807\u751F\u547D\u503C": "target.hp",
+    "\u76EE\u6807\u751F\u547D\u4E0A\u9650": "target.maxHp",
+    "\u653B\u51FB": "weapon.attack",
+    "\u6B66\u5668\u653B\u51FB": "weapon.attack",
+    "\u672C\u6B21\u5A01\u529B": "event.power",
+    "\u672C\u6B21\u4F24\u5BB3": "event.dealt",
+    "\u4E0A\u4E00\u6B65\u6570\u503C": "event.previous",
+    "\u6CBB\u7597\u91CF": "event.healing"
+  };
+  var variable = /^(?:(?:self|target)\.(?:str|agi|con|int|spi|tier|hp|maxHp|mp|maxMp|sp|maxSp)|weapon\.attack|event\.(?:power|dealt|previous|healing))$/;
+  var canonical = (token) => aliases[token] ?? token;
+  var cache = /* @__PURE__ */ new Map();
+  function compile(text4) {
+    if (typeof text4 !== "string" || !text4.length || text4.length > 200) return null;
+    if (cache.has(text4)) return cache.get(text4);
+    return parse(text4);
+  }
+  function parse(text4) {
+    const tokens = text4.match(/\d+(?:\.\d+)?|[\p{L}_][\p{L}\w.]*|[^\s]/gu) ?? [];
+    if (tokens.length > 80) return null;
+    let i = 0;
+    function atom() {
+      const t = tokens[i++];
+      if (t === "-") return ["neg", atom()];
+      if (t === "+") return atom();
+      if (t === "(") {
+        const a = sum();
+        if (tokens[i++] !== ")") throw 0;
+        return a;
+      }
+      if (t && /^\d/.test(t) && Number.isFinite(+t)) return +t;
+      const name = canonical(t);
+      if (variable.test(name)) return name;
+      throw 0;
+    }
+    function product() {
+      let a = atom();
+      while (["*", "/"].includes(tokens[i])) a = [tokens[i++], a, atom()];
+      return a;
+    }
+    function sum() {
+      let a = product();
+      while (["+", "-"].includes(tokens[i])) a = [tokens[i++], a, product()];
+      return a;
+    }
+    let tree = null;
+    try {
+      const a = sum();
+      if (i === tokens.length) tree = a;
+    } catch {
+    }
+    if (cache.size >= 512) cache.clear();
+    cache.set(text4, tree);
+    return tree;
+  }
+  var validFormula = (text4) => compile(text4) !== null;
+  var formulaUses = (text4, name) => typeof text4 === "string" && text4.includes(name);
+  function evaluateFormula(text4, lookup2) {
+    function visit(a) {
+      if (typeof a === "number") return a;
+      if (typeof a === "string") return lookup2(a) ?? 0;
+      const [op, x, y] = a, l = visit(x);
+      if (op === "neg") return -l;
+      const r = visit(y);
+      return op === "+" ? l + r : op === "-" ? l - r : op === "*" ? l * r : r === 0 ? NaN : l / r;
+    }
+    const tree = compile(text4), n = tree === null ? NaN : visit(tree);
+    return Number.isFinite(n) ? n : 0;
+  }
+
   // src/core/effect_schema.js
   var enumOf = (...values4) => ({ enum: values4 });
   var number = (minimum, maximum, type = "number") => ({ type, minimum, maximum });
@@ -270,7 +354,25 @@ var FatedTactical = (() => {
     chainEffect: "\u4F9D\u6B21\u6267\u884C\u5B50\u8282\u70B9\uFF1B\u524D\u4E00\u6B65\u6CA1\u6709\u751F\u6548\u5C31\u5E94\u505C\u6B62\u65F6\u5199 stopOnFailure:true\u3002",
     procEffect: "\u901A\u8FC7 ref \u8C03\u7528\u5DF2\u6709\u8868\u8FBE\u5F0F\u7684 ID\uFF0C\u4ECD\u9700\u901A\u8FC7\u5176\u89E6\u53D1\u95E8\u69DB\uFF1B\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002"
   };
+  var formulaFields = {
+    damage: ["amount", "flat", "percent", "percentOfDamageDealt", "percentOfPrevious", "percentOfTargetMaxHp", "percentOfSelfMaxHp", "percentOfPower", "perLevel"],
+    heal: ["amount", "percent", "percentOfDamageDealt", "percentOfPrevious", "percentOfMaxHp", "perLevel"],
+    shield: ["amount", "percent", "percentOfDamageDealt", "percentOfPrevious", "percentOfHealing", "perLevel"],
+    restoreResource: ["amount", "percent", "percentOfPrevious", "percentPerCost", "perLevel"],
+    drainResource: ["amount", "percent", "percentOfPrevious", "percentPerCost", "perLevel"],
+    produceResource: ["amount", "percent", "perLevel"],
+    multiplyDamage: ["factor"],
+    modifyStat: ["flat", "percent"],
+    modifyDamageBase: ["value"],
+    execute: ["threshold"]
+  };
+  var formulaBounds = /* @__PURE__ */ new Map();
   var node = (kind, properties, required = []) => {
+    for (const key4 of formulaFields[kind] ?? []) {
+      if (!properties[key4]) continue;
+      formulaBounds.set(`${kind}.${key4}`, properties[key4]);
+      properties[key4] = union(properties[key4], ref("formula"));
+    }
     if (!Object.hasOwn(nodeNotes, kind) || !nodeNotes[kind].trim()) throw new Error(`DSL \u8282\u70B9 ${kind} \u7F3A\u5C11\u7528\u6CD5\u8BF4\u660E`);
     return { ...object({ kind: { const: kind }, enabled: { ...bool, default: true }, label: string, target, condition: ref("condition"), radius: number(0, 15), ...properties }, ["kind", ...required]), description: nodeNotes[kind] };
   };
@@ -304,10 +406,12 @@ var FatedTactical = (() => {
         min: number(1, 1e9),
         max: number(1, 1e9)
       }, ["base", "scaleBy"])),
+      formula: { type: "string", minLength: 1, maxLength: 200, format: "combat-formula" },
       expireOn: union(expireRule, array(expireRule, 12)),
       condition: union(
         array(ref("condition"), 12),
         ...["and", "or", "not"].map((type) => condition(type, { conditions: array(ref("condition"), type === "not" ? 1 : 12) })),
+        condition("compare", { left: union(number(-1e9, 1e9), ref("formula")), op: compare, right: union(number(-1e9, 1e9), ref("formula")) }),
         ...["selfHp", "targetHp"].map((type) => comparison(type, fraction)),
         comparison("distance", number(0, 20)),
         comparison("targetLevel", enumOf("self")),
@@ -407,6 +511,7 @@ var FatedTactical = (() => {
       case "array":
         return Array.isArray(value) && value.length >= schema.minItems && value.length <= schema.maxItems && Array.from(value).every((item) => next(item, schema.items));
       case "string":
+        if (schema.format === "combat-formula") return validFormula(value);
         return typeof value === "string" && value.trim().length >= (schema.minLength ?? 1) && value.length <= (schema.maxLength ?? 100) && (!schema.pattern || new RegExp(schema.pattern).test(value) && !Object.hasOwn(Object.prototype, value) && value !== "prototype");
       case "integer":
         if (!Number.isInteger(value)) return false;
@@ -621,12 +726,34 @@ var FatedTactical = (() => {
       const usage = actor.effectUsage ??= {};
       usage[key4] = { count: (own(usage, key4)?.count ?? 0) + 1, round: state.round };
     }
+    function operand(state, actor, target2, ctx, value) {
+      if (typeof value !== "string") return value;
+      return evaluateFormula(value, (path) => {
+        const [scope, key4] = path.split(".");
+        if (scope === "event") return ctx[key4] ?? 0;
+        if (scope === "weapon") return state.equipment[state.items[ctx.weaponId ?? actor.mainHand]?.templateId]?.attack ?? 0;
+        const unit = scope === "self" ? actor : target2;
+        return unit?.stats?.[key4] ?? unit?.[key4];
+      });
+    }
+    function operands(state, actor, target2, ctx, node3) {
+      let resolved = node3;
+      for (const key4 of formulaFields[node3.kind] ?? []) if (typeof node3[key4] === "string") {
+        if (resolved === node3) resolved = { ...node3 };
+        const bounds = formulaBounds.get(`${node3.kind}.${key4}`);
+        const value = operand(state, actor, target2, ctx, node3[key4]);
+        resolved[key4] = bounds ? Math.max(bounds.minimum, Math.min(bounds.maximum, value)) : value;
+      }
+      return resolved;
+    }
     function condition3(state, actor, subject3, rule, ctx, entry) {
       if (!rule) return true;
       const check2 = (child) => condition3(state, actor, subject3, child, ctx, entry);
       if (Array.isArray(rule)) return rule.every(check2);
       const { type, value, op } = rule;
       switch (type) {
+        case "compare":
+          return compare2(operand(state, actor, subject3, ctx, rule.left), rule.op, operand(state, actor, subject3, ctx, rule.right));
         case "and":
           return rule.conditions.every(check2);
         case "or":
@@ -720,6 +847,9 @@ var FatedTactical = (() => {
       const scaled = (p.amount ?? 0) * level + (p.perLevel ?? 0) * tier + (rs ? (rs.unitSize ? Math.floor(units) : units) * rs.perUnit : 0);
       return scaled + (p.flat ?? 0) + (p.percentOfHealing ?? 0) * (ctx.healing ?? 0) + (p.targetTierBase ? p.targetTierBase ** ((ctx.target?.tier ?? 1) - 1) : 0) + (p.percentOfDamageDealt ?? 0) * (ctx.dealt ?? 0) + (p.percentOfPrevious ?? 0) * (ctx.previous ?? 0) + (p.percentOfSelfMaxHp ?? 0) * actor.maxHp + (p.percentOfTargetMaxHp ?? p.percentOfMaxHp ?? 0) * target2.maxHp + (p.percentOfPower ?? 0) * (ctx.power ?? 0);
     }
+    function hasEventFormula(node3, eventName) {
+      return (formulaFields[node3.kind] ?? []).some((key4) => formulaUses(node3[key4], `event.${eventName}`));
+    }
     function nodeAmount(state, actor, target2, p, ctx) {
       const extra = ["heal", "shield", "damage"].includes(p.kind) ? (p.percent ?? 0) * target2.maxHp : 0;
       return Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target2, p, ctx) + extra) * (ctx.skillScale ?? 1))));
@@ -751,18 +881,19 @@ var FatedTactical = (() => {
             if (!support || expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) continue;
             for (const recipient of recipients) {
               if (!livingUnit(recipient) || !condition3(state, actor, subject2(actor, recipient, ctx), p.condition, ctx, entry)) continue;
-              const amount2 = nodeAmount(state, actor, recipient, p, ctx);
+              const amount2 = nodeAmount(state, actor, recipient, operands(state, actor, recipient, ctx, p), ctx);
               if (amount2 > 0) support.push({ id: recipient.id, kind: node3.kind, amount: amount2, stack: p.stack });
             }
             continue;
           }
           if (!target2 || !recipients.some((unit) => unit.id === target2.id) || p.excludeHitTarget && target2.id === ctx.target?.id) continue;
           if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
-          if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) {
+          if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing || hasEventFormula(p, "dealt") || hasEventFormula(p, "previous") || hasEventFormula(p, "healing")) {
             conditional = true;
             continue;
           }
-          packets.push(damagePacket(state, actor, target2, p, ctx, nodeAmount(state, actor, target2, p, ctx)));
+          const resolved = operands(state, actor, target2, ctx, p);
+          packets.push(damagePacket(state, actor, target2, resolved, ctx, nodeAmount(state, actor, target2, resolved, ctx)));
         }
       }
       return { packets, conditional };
@@ -791,9 +922,10 @@ var FatedTactical = (() => {
       for (const node3 of nodes) {
         if (actor.fled) break;
         if (node3.enabled === false) continue;
-        const p = { ...entry.expr.params, ...node3 };
-        const recipients = node3.target && node3.target !== exprTarget ? targets2(state, actor, node3.target, ctx, p.radius ?? 1) : [inherited];
+        const raw = { ...entry.expr.params, ...node3 };
+        const recipients = node3.target && node3.target !== exprTarget ? targets2(state, actor, node3.target, ctx, raw.radius ?? 1) : [inherited];
         for (const target2 of recipients) {
+          const p = operands(state, actor, target2, ctx, raw);
           if (target2?.fled) continue;
           if (!condition3(state, actor, subject2(actor, target2, ctx), p.condition, ctx, entry)) continue;
           const label = node3.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
@@ -837,8 +969,8 @@ var FatedTactical = (() => {
               switch (node3.kind) {
                 case "damage":
                   if (!(p.excludeHitTarget && target2 === ctx.target) && amount2 > 0) {
-                    const { type, raw, hit, ignoreArmor, preserveLife } = damagePacket(state, actor, target2, p, ctx, amount2);
-                    result = io.damage(state, target2, actor.id, raw, type, label, {
+                    const { type, raw: raw2, hit, ignoreArmor, preserveLife } = damagePacket(state, actor, target2, p, ctx, amount2);
+                    result = io.damage(state, target2, actor.id, raw2, type, label, {
                       attacker: actor,
                       hit,
                       melee: ctx.melee,
@@ -989,7 +1121,7 @@ var FatedTactical = (() => {
             seen.delete(ref2.id);
             return resolved;
           }
-          return [{ ...owner.params, ...node3, instance: entry.instance }];
+          return [operands(state, actor, ctx.target ?? actor, ctx, { ...owner.params, ...node3, instance: entry.instance })];
         });
         return collect(expr.effects);
       });
@@ -7215,7 +7347,7 @@ var FatedTactical = (() => {
       grid
     }, actorIds: actors.map((u) => u.id) };
   }
-  function parse(text4) {
+  function parse2(text4) {
     const match = String(text4).match(/\{[\s\S]*\}/);
     const data = JSON.parse(match?.[0] ?? text4);
     if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error("\u6218\u6597 AI \u5FC5\u987B\u8FD4\u56DE actions \u6570\u7EC4");
@@ -7228,7 +7360,7 @@ var FatedTactical = (() => {
     for (let attempt = 0; attempt < 2; attempt++) {
       const reply = await request(messages, signal);
       try {
-        const actions = parse(reply);
+        const actions = parse2(reply);
         const valid = [];
         const shadow = copy2(state);
         for (const entry of actions) {
@@ -9940,9 +10072,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const r = asObject(record2), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
     const result = {};
     for (const key4 of attrNames) {
-      const aliases2 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
+      const aliases3 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
       result[key4] = Math.max(-20, Math.min(50, integer3(
-        aliases2.find((alias) => own5(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own5(nested, alias))] : findValue(r, aliases2, 0),
+        aliases3.find((alias) => own5(nested, alias)) !== void 0 ? nested[aliases3.find((alias) => own5(nested, alias))] : findValue(r, aliases3, 0),
         0
       )));
     }
@@ -9950,8 +10082,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function resource2(record2, key4, fallback) {
     const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
-    const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key4] ?? [];
-    const value = own5(r, key4) ? r[key4] : own5(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own5(r, aliases2[1]) ? r[aliases2[1]] : own5(nested, key4) ? nested[key4] : own5(nested, aliases2[0]) ? nested[aliases2[0]] : own5(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
+    const aliases3 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key4] ?? [];
+    const value = own5(r, key4) ? r[key4] : own5(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own5(r, aliases3[1]) ? r[aliases3[1]] : own5(nested, key4) ? nested[key4] : own5(nested, aliases3[0]) ? nested[aliases3[0]] : own5(nested, aliases3[1]) ? nested[aliases3[1]] : void 0;
     if (object3(value)) {
       const current2 = integer3(value.current ?? value.\u5F53\u524D ?? value.now ?? value.value, fallback);
       const upper = value.max ?? value.maximum ?? value.\u4E0A\u9650;
@@ -9959,7 +10091,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return { current: current2, max: max2 };
     }
     const current = integer3(value, fallback);
-    const maxValue = findValue(r, [`max${key4[0].toUpperCase()}${key4.slice(1)}`, `${key4}Max`, `${aliases2[1]}\u4E0A\u9650`], current);
+    const maxValue = findValue(r, [`max${key4[0].toUpperCase()}${key4.slice(1)}`, `${key4}Max`, `${aliases3[1]}\u4E0A\u9650`], current);
     const max = integer3(maxValue, current);
     return { current, max };
   }
@@ -10335,8 +10467,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       mp: ["mp", "MP", "\u6CD5\u529B\u503C", "resources", "resource", "\u8D44\u6E90"],
       sp: ["sp", "SP", "\u4F53\u529B\u503C", "resources", "resource", "\u8D44\u6E90"]
     };
-    for (const [field, aliases2] of Object.entries(fields3)) {
-      if (inline[field] != null && !aliases2.some((alias) => own5(merged, alias))) merged[field] = clone(inline[field]);
+    for (const [field, aliases3] of Object.entries(fields3)) {
+      if (inline[field] != null && !aliases3.some((alias) => own5(merged, alias))) merged[field] = clone(inline[field]);
     }
     for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own5(merged, field) && inline[field] != null) merged[field] = inline[field];
     return merged;
@@ -11211,12 +11343,12 @@ ROLL\uFF1A\u65E0 roll \u65F6\u4E00\u5B9A\u5C1D\u8BD5\u3002chance \u76F4\u63A5\u7
 
 TARGET\uFF1Aself \u81EA\u8EAB\uFF0ChitTarget \u5F53\u524D\u547D\u4E2D\u6216\u9009\u4E2D\u7684\u5355\u4F4D\uFF0Cattacker \u653B\u51FB\u8005\uFF0CkilledUnit \u88AB\u51FB\u5012\u5355\u4F4D\uFF0Ccorpse \u672A\u88AB\u6D88\u8017\u7684\u5C38\u4F53\u3002enemiesInRadius / alliesInRadius \u4F7F\u7528 params.radius \u6216\u8282\u70B9 radius\uFF08\u9ED8\u8BA41\u683C\uFF09\uFF0C\u65BD\u6CD5\u8303\u56F4\u5185\u4ECE\u8986\u76D6\u683C\u7B5B\u9009\u3002\u8282\u70B9\u53EF\u8986\u5199\u76EE\u6807\u3002\u6280\u80FD\u8303\u56F4\u652F\u6301 single/circle/ring/fan/cone/line\uFF0C\u53EF\u7528 radius\u3001innerRadius\u3001width\u3001angle(1\u2026360)\u3002\u8303\u56F4\u4F24\u5BB3\u9ED8\u8BA4\u6309\u8986\u76D6\u683C\u7B5B\u9009\u654C\u6211\u53CC\u65B9\uFF08\u4F1A\u5403\u53CB\u4F24\uFF09\uFF1B\u5355\u4F53\u6280\u80FD\u5FC5\u987B\u660E\u786E target:enemy/ally/self/any\uFF1Btarget:cell \u53EA\u9009\u5730\u9762\u683C\u3002\u5C38\u4F53\u4E0D\u4F1A\u963B\u6321\u79FB\u52A8\uFF0CraiseDead \u4F1A\u6D88\u8017\u5C38\u4F53\u3002
 
-DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BCF\u4E2A\u8282\u70B9\u5747\u53EF\u52A0 label\u3001target\u3001condition \u548C radius\uFF080\u202615\uFF09\u3002
+DO / WITH\uFF1A\u8282\u70B9\u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF0C\u6BCF\u4E2A\u8282\u70B9\u5747\u53EF\u52A0 label\u3001target\u3001condition \u548C radius\uFF080\u202615\uFF09\u3002\u6570\u503C\u5B57\u6BB5\u4E5F\u652F\u6301\u5B89\u5168\u7684\u56DB\u5219\u516C\u5F0F\u5B57\u7B26\u4E32\uFF0C\u53EF\u7528\u6570\u5B57\u3001\u62EC\u53F7\u3001+ - * /\uFF0C\u4E0D\u652F\u6301\u51FD\u6570\u8C03\u7528\u3001\u5C5E\u6027\u8BBF\u95EE\u6216\u968F\u673A\u6570\u3002\u53EF\u5F15\u7528 self.str/agi/con/int/spi\u3001target.str/agi/con/int/spi\u3001weapon.attack\u3001event.power\u3001event.dealt\u3001event.previous\u3001event.healing\uFF1B\u4E5F\u63A5\u53D7\u300C\u6211\u65B9\u529B\u91CF\u300D\u300C\u76EE\u6807\u751F\u547D\u503C\u300D\u300C\u653B\u51FB\u300D\u300C\u672C\u6B21\u4F24\u5BB3\u300D\u7B49\u4E2D\u6587\u522B\u540D\u3002\u4F8B\uFF1A\u547D\u4E2D\u540E\u653B\u51FB\u529B\u6309\u6211\u65B9\u529B\u91CF\u7F29\u653E\uFF0C\u5199 {"kind":"damage","flat":"\u653B\u51FB*(\u6211\u65B9\u529B\u91CF-5)/\u6211\u65B9\u529B\u91CF","damageType":"physical"}\u3002\u516C\u5F0F\u53EA\u5728\u8BE5\u8282\u70B9\u5B9E\u9645\u7ED3\u7B97\u65F6\u8BFB\u53D6\u5F53\u524D\u4E0A\u4E0B\u6587\uFF0C\u9664\u96F6\u7ED3\u679C\u4E3A 0\uFF0C\u5E76\u6309\u5B57\u6BB5\u539F\u6709\u4E0A\u4E0B\u9650\u622A\u65AD\u3002condition \u53EF\u7528 {"type":"compare","left":"\u6211\u65B9\u529B\u91CF-5","op":">=","right":5}\u3002
 \u2022 ${node2.oneOf.map((rule) => `${rule.properties.kind.const}\uFF1A${rule.description} ${fields2(rule, ["kind", "enabled", "label", "target", "condition", "radius"])}`).join("\n\u2022 ")}
 
 \u4F24\u5BB3\u7C7B\u578B\uFF1Aphysical \u4F7F\u7528\u5168\u989D\u62A4\u7532\uFF0Cenergy \u4F7F\u7528\u4E00\u534A\u62A4\u7532\uFF0Cmental \u548C true \u65E0\u89C6\u62A4\u7532\u3002true \u8DF3\u8FC7\u5C5E\u6027\u3001\u6BD4\u4F8B\u4E0E\u56FA\u5B9A\u51CF\u4F24\uFF0C\u4ECD\u6D88\u8017\u62A4\u76FE\u3002\u6D41\u8840\u3001\u4E2D\u6BD2\u53CA\u672A\u6CE8\u660E\u7C7B\u578B\u7684\u72B6\u6001\u5468\u671F\u4F24\u5BB3\u6309 true \u7ED3\u7B97\u3002\u72B6\u6001 modifiers.damageType \u540C\u65F6\u9650\u5B9A\u8BE5\u72B6\u6001\u7684\u4F24\u5BB3\u76F8\u5173\u4FEE\u9970\uFF0C\u901A\u7528\u4FEE\u9970\u72EC\u7ACB\u751F\u6548\u3002
 \u975E\u81F4\u547D\uFF1Adamage \u8282\u70B9 lethal \u9ED8\u8BA4\u4E3A true\u3002lethal:false \u53EA\u4FDD\u62A4\u8BE5\u8282\u70B9\u7684\u5B9E\u9645\u627F\u4F24\u8005\uFF0C\u5141\u8BB8\u7EC4\u5408 resourceMultiplier\u3001strikeBonus\uFF1B\u62B5\u6263\u7ED3\u7B97\u540E\u6700\u4F4E\u7559 1 HP\u3002\u627F\u4F24\u5355\u4F4D nonLethal:true \u6216\u5176\u72B6\u6001 modifiers.preserveLife:true \u4E5F\u4FDD\u547D\uFF0Clethal:true \u4E0D\u80FD\u7ED5\u5F00\u3002\u500D\u7387\u4E0D\u80FD\u4FDD\u8BC1\u4E0D\u81F4\u6B7B\u3002\u72EC\u7ACB\u7684\u4E3B\u51FB\u548C\u5176\u4ED6\u4F24\u5BB3\u8282\u70B9\u4E0D\u81EA\u52A8\u7EE7\u627F\u6B64\u5F00\u5173\u3002
-\u6570\u503C\u4E0E\u7ED3\u7B97\uFF1Aamount/flat \u662F\u7EDD\u5BF9\u91CF\u3002\u767E\u5206\u6BD4\u4EE5\u5C0F\u6570\u8868\u793A\u3002percentOfPrevious \u8BFB\u53D6\u94FE\u5185\u4E0A\u4E00\u6570\u503C\u8282\u70B9\u7684\u5B9E\u9645\u7ED3\u679C\uFF0CpercentOfDamageDealt \u8BFB\u53D6\u672C\u6B21\u5B9E\u9645\u6263\u8840\uFF0CpercentOfPower \u4E58\u6280\u80FD\u57FA\u7840\u5A01\u529B\uFF0CpercentOfHealing \u8BFB\u53D6\u6CBB\u7597\u7ECF\u52A0\u6210\u540E\u7684\u91CF\u3002levelScaling.perLevel \u4ECE 1 \u9636\u57FA\u51C6\u6BCF\u9636\u589E\u957F\uFF0Cmin/max \u5219\u5728 1\u20267 \u9636\u7EBF\u6027\u63D2\u503C\u3002resourceScale \u8BFB\u53D6\u5B58\u91CF\uFF0C\u53EF\u7528 unitSize \u5411\u4E0B\u53D6\u6574\u5206\u7EC4\u3002multiplyDamage \u7684 factor \u662F\u603B\u7CFB\u6570\uFF08+12% \u5199 1.12\uFF09\uFF0Cadditive=true \u5408\u5E76\u5404\u7CFB\u6570\u76F8\u5BF9 1 \u7684\u589E\u91CF\u3002\u4E3B\u51FB\u4E58\u533A\u4F7F\u7528 passive/on_attack/on_skill_cast\u3002modifyDamageBase \u66FF\u6362\u8D77\u4F24\uFF0CignoreAttributes \u7F3A\u7701\u4E3A true\uFF0Cunscaled \u8DF3\u8FC7\u8BC4\u7EA7\u548C\u59FF\u6001\u7B49\u653B\u51FB\u500D\u7387\u3002forceOutcome \u4FDD\u969C\u547D\u4E2D\u6216\u66B4\u51FB\uFF0CupgradeHitTier \u63D0\u9AD8\u5DF2\u547D\u4E2D\u7684\u8BC4\u7EA7\u3002modifyCheck \u7684\u5404\u9879\u5206\u522B\u670D\u52A1\u4E8E\u5148\u653B\u3001\u95EA\u907F\u3001\u6F5C\u884C\u3001\u547D\u4E2D\u3001\u6838\u5FC3\u610F\u56FE\u3001\u9AD8\u5730\u548C\u4F18\u52BF\u3002teleportBackstab \u6821\u9A8C\u80CC\u540E\u7A7A\u683C\u518D\u79FB\u52A8\uFF0C\u63D0\u4F9B\u4F18\u52BF\u548C\u4F24\u5BB3\u500D\u7387\u3002knockback \u78B0\u649E\u9ED8\u8BA4\u4F24\u5BB3 5 \u5E76\u7729\u6655\u3002
+\u6570\u503C\u4E0E\u7ED3\u7B97\uFF1Aamount/flat \u662F\u7EDD\u5BF9\u91CF\uFF0C\u4E5F\u53EF\u4EE5\u662F\u4E0A\u8FF0\u516C\u5F0F\uFF1B\u767E\u5206\u6BD4\u4EE5\u5C0F\u6570\u8868\u793A\u3002percentOfPrevious \u8BFB\u53D6\u94FE\u5185\u4E0A\u4E00\u6570\u503C\u8282\u70B9\u7684\u5B9E\u9645\u7ED3\u679C\uFF0CpercentOfDamageDealt \u8BFB\u53D6\u672C\u6B21\u5B9E\u9645\u6263\u8840\uFF0CpercentOfPower \u4E58\u6280\u80FD\u57FA\u7840\u5A01\u529B\uFF0CpercentOfHealing \u8BFB\u53D6\u6CBB\u7597\u7ECF\u52A0\u6210\u540E\u7684\u91CF\u3002\u516C\u5F0F\u4F7F\u7528\u672C\u6B21\u4E8B\u4EF6\u4E0A\u4E0B\u6587\uFF1Aevent.dealt \u662F\u5DF2\u7ECF\u5B9E\u9645\u6263\u9664\u7684 HP\uFF0C\u4E0D\u662F\u539F\u59CB\u4F24\u5BB3\uFF1Bevent.power \u662F\u6280\u80FD\u5A01\u529B\uFF1Bevent.previous \u662F\u540C\u4E00\u8282\u70B9\u94FE\u4E0A\u4E00\u6B65\u6570\u503C\uFF1Bevent.healing \u662F\u5B9E\u9645\u6CBB\u7597\u91CF\u3002levelScaling.perLevel \u4ECE 1 \u9636\u57FA\u51C6\u6BCF\u9636\u589E\u957F\uFF0Cmin/max \u5219\u5728 1\u20267 \u9636\u7EBF\u6027\u63D2\u503C\u3002resourceScale \u8BFB\u53D6\u5B58\u91CF\uFF0C\u53EF\u7528 unitSize \u5411\u4E0B\u53D6\u6574\u5206\u7EC4\u3002multiplyDamage \u7684 factor \u662F\u603B\u7CFB\u6570\uFF08+12% \u5199 1.12\uFF09\uFF0Cadditive=true \u5408\u5E76\u5404\u7CFB\u6570\u76F8\u5BF9 1 \u7684\u589E\u91CF\u3002\u4E3B\u51FB\u4E58\u533A\u4F7F\u7528 passive/on_attack/on_skill_cast\u3002modifyDamageBase \u66FF\u6362\u8D77\u4F24\uFF0CignoreAttributes \u7F3A\u7701\u4E3A true\uFF0Cunscaled \u8DF3\u8FC7\u8BC4\u7EA7\u548C\u59FF\u6001\u7B49\u653B\u51FB\u500D\u7387\u3002forceOutcome \u4FDD\u969C\u547D\u4E2D\u6216\u66B4\u51FB\uFF0CupgradeHitTier \u63D0\u9AD8\u5DF2\u547D\u4E2D\u7684\u8BC4\u7EA7\u3002modifyCheck \u7684\u5404\u9879\u5206\u522B\u670D\u52A1\u4E8E\u5148\u653B\u3001\u95EA\u907F\u3001\u6F5C\u884C\u3001\u547D\u4E2D\u3001\u6838\u5FC3\u610F\u56FE\u3001\u9AD8\u5730\u548C\u4F18\u52BF\u3002teleportBackstab \u6821\u9A8C\u80CC\u540E\u7A7A\u683C\u518D\u79FB\u52A8\uFF0C\u63D0\u4F9B\u4F18\u52BF\u548C\u4F24\u5BB3\u500D\u7387\u3002knockback \u78B0\u649E\u9ED8\u8BA4\u4F24\u5BB3 5 \u5E76\u7729\u6655\u3002
 \u8D44\u6E90\uFF1Ahp/mp/sp/ap \u548C attack/action \u4E3A\u5185\u7F6E\u8D44\u6E90\u3002\u5176\u4ED6\u8D44\u6E90\u53EF\u5B58\u4E8E\u5355\u4F4D\uFF0C\u6216\u7531 passive/self \u7684 produceResource(cap,initial) \u58F0\u660E\u4E3A\u88C5\u5907\u5B9E\u4F8B\u8BA1\u6570\uFF0Citems.counters \u5FC5\u987B\u4E0E\u8D44\u6E90\u58F0\u660E\u76F8\u7B26\u3002local=true \u53EA\u8BBF\u95EE\u8BE5\u88C5\u5907\u81EA\u5DF1\u7684\u6C60\u3002reloadable \u58F0\u660E\u53EF\u88C5\u586B\u8D44\u6E90\uFF0C\u914D on_attack \u7684 drainResource \u6D88\u8017\u3002\u65E0\u9650\u5F39\u836F\u662F\u72B6\u6001 infinite_ammo\uFF0C\u6D88\u8017\u6761\u4EF6\u53EF\u7528 selfStatusModifier(key=infiniteAmmo,value=false)\u3002requireFull \u4F59\u989D\u4E0D\u8DB3\u65F6\u505C\u6B62\u5F53\u524D\u8282\u70B9\u5217\u8868\uFF0CminimumRemaining \u8BBE\u7F6E\u6700\u4F4E\u4FDD\u7559\u91CF\u3002\u6280\u80FD resourceCost \u5728\u65BD\u653E\u524D\u6263\u9664\uFF0CpercentPerCost \u6309\u82B1\u8D39\u6062\u590D\u3002execute \u7684 strict \u9009\u62E9\u4E25\u683C\u4F4E\u4E8E\u9608\u503C\uFF0CrequiresPool \u68C0\u67E5\u6307\u5B9A\u88C5\u5907\u6C60\u3002stopOnFailure \u94FE\u4F1A\u5728\u9996\u4E2A\u672A\u4EA7\u751F\u6548\u679C\u7684\u8282\u70B9\u505C\u6B62\u3002
 \u8D44\u6E90\u65B9\u6848\uFF1A\u5148\u5728\u6301\u6709\u88C5\u5907 effects \u52A0\u4E00\u6761 passive/self \u8868\u8FBE\u5F0F\uFF0C\u8282\u70B9 produceResource \u5199 resource\u3001cap \u548C initial\uFF1B\u540C\u6279\u5411\u5BF9\u5E94\u5B9E\u4F8B /items/<id>/counters/<resource> \u6DFB\u52A0\u521D\u503C\u3002\u53EA\u5199\u5B9E\u4F8B\u8BA1\u6570\u4F1A\u88AB\u62D2\u7EDD\u3002\u65A9\u6740\u6280\u80FD\u5148 execute\uFF0C\u6210\u529F\u540E\u5728\u540C\u94FE\u5BF9 self \u4F7F\u7528 produceResource(targetTierBase)\uFF0C\u8BE5\u6570\u503C\u6309\u76EE\u6807\u9636\u7EA7\u8BA1\u7B97\u3002\u81EA\u7528\u6280\u80FD\u8BBE target=self\u3001range=0\uFF0C\u901A\u8FC7\u6A21\u677F resourceCost \u6263\u88C5\u5907\u8D44\u6E90\uFF0C\u6062\u590D\u5404\u9879\u7528 restoreResource \u7684 percentPerCost\u3002\u88C5\u5907\u6210\u957F\u53EF\u5206\u522B\u653E\u4E94\u4E2A\u57FA\u7840\u5C5E\u6027\u8282\u70B9\uFF0C\u6216\u5BF9\u4F24\u5BB3\u7528 modifyStat(stat=damage)\uFF0C\u7528 percent=1 \u4E0E levelScaling:{min,max} \u8868\u793A\u6210\u957F\u6BD4\u4F8B\u8303\u56F4\u3002\u68C0\u5B9A\u52A0\u503C\u7528 modifyCheck\uFF0C\u7BAD\u77E2\u4E0E\u4E00\u822C\u8FDC\u7A0B\u5206\u522B\u7528 arrow=true \u4E0E melee=false\u3002
 \u72B6\u6001\uFF1AgrantStatus \u4F7F\u7528\u5DF2\u6709 ID\uFF0C\u82E5\u9700\u81EA\u5B9A\u4E49\u5148\u5B9A\u4E49 statusTemplates\u3002modifiers \u53EA\u53EF\u8986\u76D6\u6A21\u677F\u5DF2\u6709\u952E\u3002amount \u4EC5\u7528\u4E8E\u6A21\u677F\u58F0\u660E\u4E86 modifiers.amount \u7684\u72B6\u6001\uFF0C\u8303\u56F4 1\u202610000\u3002removeStatus \u5FC5\u987B\u9009 statusId \u6216 category \u4E4B\u4E00\uFF0Call_negative \u6E05\u9664\u975E\u6C38\u4E45 debuff/dot/control\u3002procEffect \u901A\u8FC7 ref \u67E5\u627E\u5DF2\u5B9A\u4E49\u8868\u8FBE\u5F0F\u5E76\u6267\u884C\uFF0C\u5176\u81EA\u8EAB\u95E8\u69DB\u4ECD\u6709\u6548\uFF0C\u7981\u6B62\u5FAA\u73AF\u5F15\u7528\u3002addItem \u6309\u7269\u54C1 ID \u589E\u52A0\u5355\u4F4D\u5E93\u5B58\u3002`;
@@ -12198,7 +12330,7 @@ ${variables.warnings()}` : "");
   var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
   var clean = (record2) => Object.fromEntries(Object.entries(record2 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
   var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
-  var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
+  var aliases2 = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
   async function characterRecords(sources, hydrated) {
     const mvu = collectMvu(sources.mvuData), battle = sources.battleInit;
     const participants = battle.units ?? battle.participants ?? [];
@@ -12206,10 +12338,10 @@ ${variables.warnings()}` : "");
       const mapping = hydrated.sourceMap?.[unit.id] ?? {};
       const p = participants.find?.((p2) => p2.id === unit.id) ?? participants[unit.id] ?? participants[i];
       const names = new Set([unit.id, unit.name, p?.name, mapping.sourceId, mapping.sourceName].filter(Boolean));
-      const matches3 = (r) => aliases(r).some((x) => names.has(x));
+      const matches3 = (r) => aliases2(r).some((x) => names.has(x));
       const samePath2 = mvu.find((r) => mapping.path && JSON.stringify(r.__sourcePath) === JSON.stringify(mapping.path));
       const mv = samePath2 ?? mvu.find(matches3);
-      if (mv) aliases(mv).forEach((name) => names.add(name));
+      if (mv) aliases2(mv).forEach((name) => names.add(name));
       const char = sources.charInfo?.find(matches3);
       const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
       const defs = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));

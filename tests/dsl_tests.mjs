@@ -19,6 +19,28 @@ function setup(effects = []) {
   return { state, actor, enemy, weapon };
 }
 
+test('四则公式支持中文属性、括号和除法，并用于命中后伤害', () => {
+  const {state, actor, enemy} = setup();
+  actor.stats.str = 10;
+  state.equipment.v10_weapon.effects.push(expr('formula-bonus','on_hit','hitTarget',[
+    {kind:'damage', flat:'(我方力量-5)/我方力量*20', damageType:'true'}
+  ]));
+  const before = enemy.hp;
+  applyAction(state, strike);
+  assert.equal(before - enemy.hp, 36, '26 主击 + 10 附伤');
+});
+
+test('条件也支持运行时公式比较', () => {
+  const {state, actor, enemy} = setup();
+  actor.stats.str = 10;
+  const effect = expr('conditional-formula','on_hit','hitTarget', [{kind:'damage',flat:7}], {
+    condition:{type:'compare',left:'我方力量-5',op:'>=',right:5}
+  });
+  state.equipment.v10_weapon.effects.push(effect);
+  applyAction(state, strike);
+  assert.equal(enemy.hp, 967);
+});
+
 test('主动限次技能即使满血空放也消耗次数，并限制基础治疗', () => {
   const {state, actor} = setup();
   actor.hp = actor.maxHp;

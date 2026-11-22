@@ -1,4 +1,5 @@
-import { effectNodes, isExpression } from './effect_schema.js';
+import { evaluateFormula, formulaUses } from './formula.js';
+import { effectNodes, formulaFields, formulaBounds, isExpression } from './effect_schema.js';
 
 const levelScale = (ls, tier) => ls?.perLevel != null ? 1 + ls.perLevel * (tier - 1)
   : ls ? ls.min + (ls.max - ls.min) * (tier - 1) / 6 : 1;
@@ -136,12 +137,33 @@ export function createEffectEngine(io) {
     const usage = actor.effectUsage ??= {};
     usage[key] = { count: (own(usage, key)?.count ?? 0) + 1, round: state.round };
   }
+  function operand(state, actor, target, ctx, value) {
+    if (typeof value !== 'string') return value;
+    return evaluateFormula(value, path => {
+      const [scope,key] = path.split('.');
+        if (scope === 'event') return ctx[key] ?? 0;
+      if (scope === 'weapon') return state.equipment[state.items[ctx.weaponId ?? actor.mainHand]?.templateId]?.attack ?? 0;
+      const unit = scope === 'self' ? actor : target;
+      return unit?.stats?.[key] ?? unit?.[key];
+    });
+  }
+  function operands(state, actor, target, ctx, node) {
+    let resolved = node;
+    for (const key of formulaFields[node.kind] ?? []) if (typeof node[key] === 'string') {
+      if (resolved === node) resolved = {...node};
+      const bounds = formulaBounds.get(`${node.kind}.${key}`);
+      const value = operand(state,actor,target,ctx,node[key]);
+      resolved[key] = bounds ? Math.max(bounds.minimum, Math.min(bounds.maximum, value)) : value;
+    }
+    return resolved;
+  }
   function condition(state, actor, subject, rule, ctx, entry) {
     if (!rule) return true;
     const check = child => condition(state, actor, subject, child, ctx, entry);
     if (Array.isArray(rule)) return rule.every(check);
     const { type, value, op } = rule;
     switch (type) {
+      case 'compare': return compare(operand(state,actor,subject,ctx,rule.left),rule.op,operand(state,actor,subject,ctx,rule.right));
       case 'and': return rule.conditions.every(check);
       case 'or': return rule.conditions.some(check);
       case 'not': return !check(rule.conditions[0]);
@@ -201,6 +223,9 @@ export function createEffectEngine(io) {
       + (p.percentOfSelfMaxHp ?? 0) * actor.maxHp + (p.percentOfTargetMaxHp ?? p.percentOfMaxHp ?? 0) * target.maxHp
       + (p.percentOfPower ?? 0) * (ctx.power ?? 0);
   }
+  function hasEventFormula(node, eventName) {
+    return (formulaFields[node.kind] ?? []).some(key => formulaUses(node[key], `event.${eventName}`));
+  }
   function nodeAmount(state, actor, target, p, ctx) {
     const extra = ['heal', 'shield', 'damage'].includes(p.kind) ? (p.percent ?? 0) * target.maxHp : 0;
     return Math.max(0, Math.min(1e9, Math.floor((magnitude(state, actor, target, p, ctx) + extra) * (ctx.skillScale ?? 1))));
@@ -231,15 +256,16 @@ export function createEffectEngine(io) {
           if (!support || expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) continue;
           for (const recipient of recipients) {
             if (!livingUnit(recipient) || !condition(state, actor, subject(actor, recipient, ctx), p.condition, ctx, entry)) continue;
-            const amount = nodeAmount(state, actor, recipient, p, ctx);
+            const amount = nodeAmount(state, actor, recipient, operands(state,actor,recipient,ctx,p), ctx);
             if (amount > 0) support.push({ id: recipient.id, kind: node.kind, amount, stack: p.stack });
           }
           continue;
         }
         if (!target || !recipients.some(unit => unit.id === target.id) || (p.excludeHitTarget && target.id === ctx.target?.id)) continue;
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
-        if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing) { conditional = true; continue; }
-        packets.push(damagePacket(state, actor, target, p, ctx, nodeAmount(state, actor, target, p, ctx)));
+        if (expr.roll || p.percentOfPrevious || p.percentOfDamageDealt || p.percentOfHealing || hasEventFormula(p, 'dealt') || hasEventFormula(p, 'previous') || hasEventFormula(p, 'healing')) { conditional = true; continue; }
+        const resolved = operands(state,actor,target,ctx,p);
+        packets.push(damagePacket(state, actor, target, resolved, ctx, nodeAmount(state, actor, target, resolved, ctx)));
       }
     }
     return { packets, conditional };
@@ -268,10 +294,11 @@ export function createEffectEngine(io) {
     for (const node of nodes) {
       if (actor.fled) break;
       if (node.enabled === false) continue;
-      const p = { ...entry.expr.params, ...node };
+      const raw = { ...entry.expr.params, ...node };
       const recipients = node.target && node.target !== exprTarget
-        ? targets(state, actor, node.target, ctx, p.radius ?? 1) : [inherited];
+        ? targets(state, actor, node.target, ctx, raw.radius ?? 1) : [inherited];
       for (const target of recipients) {
+        const p = operands(state,actor,target,ctx,raw);
         if (target?.fled) continue;
         if (!condition(state, actor, subject(actor, target, ctx), p.condition, ctx, entry)) continue;
         const label = node.label ?? entry.expr.label ?? entry.sourceName ?? entry.expr.id;
@@ -416,7 +443,7 @@ export function createEffectEngine(io) {
           seen.delete(ref.id);
           return resolved;
         }
-        return [{ ...owner.params, ...node, instance: entry.instance }];
+        return [operands(state,actor,ctx.target ?? actor,ctx,{ ...owner.params, ...node, instance: entry.instance })];
       });
       return collect(expr.effects);
     });
