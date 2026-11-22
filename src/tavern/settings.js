@@ -1,5 +1,6 @@
 import { DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from './prompts.js';
 import { fetchModels, requestViaCustomApi, requestViaTavern } from './api.js';
+import { normalizationLimits } from './normalization-batches.js';
 
 // Only prompt-tab layout lives here; palette, panels, fields, buttons and the
 // switch come from theme.js, which mirrors styles/battle-theme.css.
@@ -368,6 +369,10 @@ export function renderApiTab(page, ctx) {
   const sampling = card('⚙ 采样参数');
   field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.8);
   field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 2400);
+  for (const [key, label] of [['normalizationConcurrency', '标准化最大并发请求数'], ['normalizationWarningsPerBatch', '标准化每批警告数']]) {
+    const { fallback, max } = normalizationLimits[key];
+    field(sampling, key, label, input('number', { min: '1', max: String(max), step: '1', required: true }), fallback);
+  }
   const streamField = make('div', 'field switch-field');
   const streamSwitch = make('label', 'switch');
   const streamInput = Object.assign(make('input'), { type: 'checkbox', name: 'stream', checked: settings.stream ?? true });

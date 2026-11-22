@@ -1,5 +1,6 @@
 import { resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
+import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -262,7 +263,8 @@ const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 2400,
   battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
-  charSnapshots: {}, rosterSelection: null, normalizationBatches: {},
+  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {},
+  ...Object.fromEntries(Object.entries(normalizationLimits).map(([key, { fallback }]) => [key, fallback])),
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 60000,
 };
 function configFor(storage, key) {
@@ -780,7 +782,8 @@ export function mountTavernOverlay(options = {}) {
       on(select,'change',()=>choose(select.checked?[...new Set([...selectedIds(),key])]:selectedIds().filter(k=>k!==key)));
       const messages = warningsForUnit(sources.warnings, [key], false);
       const { body } = fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select,
-        { collapsed: Boolean(collapsed()[key]), warnings: messages.length, onToggle: value => setFolded([key], value) });
+        { collapsed: Boolean(collapsed()[key]), warnings: messages.length,
+          narrative: (diagnostics.narrativeExemptions ?? []).filter(entry => entry.unitId === key), onToggle: value => setFolded([key], value) });
       if (messages.length) {
         const details = el(doc,'details',{class:'fated-char-diagnostics'}), list = el(doc,'ul');
         for (const { message } of messages) list.append(el(doc,'li',{},message));
@@ -811,9 +814,11 @@ export function mountTavernOverlay(options = {}) {
     previewSink?.(messages, kind);
     return messages;
   }
-  function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds) {
+  function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds, warnings) {
     const slots = config.slots;
-    const messages = assembleMessages(slots, assemblyContext(kind, instruction,unitIds));
+    const context = assemblyContext(kind, instruction, unitIds);
+    if (warnings) context.sources = { ...sources, warnings };
+    const messages = assembleMessages(slots, context);
     if (config.debugPrompts) console.debug('[fated:prompts]', { kind, slots: slots.map(s => ({ id: s.id, enabled: s.enabled })),
       messages: messages.map(({ slotId, role, content }) => ({ slotId, role, chars: content.length })) });
     if (sending && messages.length) lastSent = messages;
@@ -824,13 +829,103 @@ export function mountTavernOverlay(options = {}) {
     return { host, settings: config, slots: config.slots, assemblyContext, prepareMessages, lastSent: () => lastSent,
       onPreview(fn) { previewSink = fn; }, fetchImpl: options.fetch, save: persistSettings };
   }
-  function runNormalize(unitIds = Object.keys(characters), {force=false, sessionId=force?aiSessions.active().id:undefined} = {}) {
-    const stored=config.charSnapshots[activeBattleKey]??{};
+  async function runNormalize(unitIds = Object.keys(characters), { force = false, sessionId = force ? aiSessions.active().id : undefined } = {}) {
+    if (aiController || !activeBattleKey || !liveState()) return;
+    syncSettings();
+    const key = activeBattleKey;
+    const requestConfig = { ...config };
+    const stored = config.charSnapshots[key] ?? {};
     const eligible = force ? Object.keys(characters) : normalizationCandidates(characters, stored, sources.warnings ?? []);
     const ids = unitIds.filter(id => eligible.includes(id));
-    if (!ids.length) return;
-    const records=Object.fromEntries(ids.map(id=>[id,{hash:characters[id].hash,sourceKind:characters[id].sourceKind}]));
-    return askAI('validate','',sessionId,records);
+    const queue = planNormalizationBatches(ids, sources.warnings ?? [], liveState(), {
+      maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'),
+    });
+    if (!queue.length) return;
+    const controller = new AbortController();
+    aiController = controller;
+    let finish;
+    aiFinished = new Promise(resolve => { finish = resolve; });
+    const session = aiSessions.get(sessionId);
+    const feed = (...entries) => { if (session) aiPage?.feed(session.id, ...entries); };
+    const entries = session ? aiSessions.append(session.id,
+      { role: 'user', content: '标准化', status: 'ok' }, { role: 'assistant', content: '' }) : [];
+    feed(...entries);
+    aiPage?.setBusy(true);
+    renderInstances();
+    let applied = 0, completed = 0, failure;
+    const replies = [], notes = [];
+    const progress = detail => notify('正在标准化中…', detail ?? `已完成 ${completed} / ${queue.length} 批`, null, true);
+    const request = async (batch, index, correction) => {
+      const snapshot = clone(liveState());
+      const warnings = batch.warnings.filter(warning => sources.warnings.includes(warning));
+      let prompts = prepareMessages('validate', '', true, batch.unitIds, warnings);
+      const sent = warnings.filter(warning => prompts.some(message => message.content.includes(JSON.stringify(warning.message))));
+      if (!prompts.length) throw new Error('没有可发送的提示词，请在提示词组装页启用有内容的槽位');
+      if (correction) {
+        prompts = [...prompts, { role: 'user', content: `上一条输出无法应用（${correction.message}）。请根据此消息中的最新快照调整，重新输出完整 JSON 对象。${correction.raw ? `\n上一条输出：${correction.raw.slice(0, 3500)}` : ''}` }];
+        lastSent = prompts;
+        publishMessages(prompts, 'validate');
+      }
+      const timeout = new AbortController();
+      const signal = AbortSignal.any([controller.signal, timeout.signal]);
+      signal.throwIfAborted();
+      const timer = setTimeout(() => timeout.abort(new Error('请求超时，请检查酒馆主接口或独立 API')), requestConfig.timeoutMs ?? 60000);
+      try {
+        const reply = await requestTavernAI(host, requestConfig, prompts, options.fetch, signal, (text, done, info) => {
+          if (!disposed && !signal.aborted) progress(`第 ${index + 1} 批${info?.isHeartbeat ? `已等待 ${info.elapsedSec} 秒` : done ? '已收到响应，等待校验' : `已收到 ${text.length} 字符`}`);
+        });
+        signal.throwIfAborted();
+        return { snapshot, sent, reply };
+      } finally { clearTimeout(timer); }
+    };
+    progress();
+    try {
+      await runOrderedBatches(queue, normalizationLimit(requestConfig, 'normalizationConcurrency'), request, async (result, batch, index) => {
+        controller.signal.throwIfAborted();
+        try {
+          if (result.error) throw result.error;
+          let accepted;
+          try { accepted = commitNormalization(key, batch, result.value); }
+          catch (error) {
+            progress(`第 ${index + 1} 批正在修正输出`);
+            const revised = await request(batch, index, error);
+            controller.signal.throwIfAborted();
+            accepted = commitNormalization(key, batch, revised);
+          }
+          applied += accepted.applied;
+          replies.push(accepted.data);
+          notes.push(...accepted.notes);
+          completed++;
+          progress();
+        } catch (error) {
+          failure ??= error;
+          if (controller.signal.aborted) throw error;
+          completed++;
+          progress(`第 ${index + 1} 批失败；继续处理其余批次`);
+        }
+      }, controller.signal);
+    } catch (error) { failure ??= error; }
+    finally {
+      const remaining = queue.flatMap(batch => batch.warnings).filter(warning => sources.warnings.includes(warning));
+      const unresolved = pendingDiagnostics(remaining, notes);
+      const raw = replies.length ? JSON.stringify(replies.length === 1 ? replies[0] : replies, null, 2) : failure?.raw ?? '';
+      const aborted = failure?.name === 'AbortError';
+      const status = aborted ? 'aborted' : failure ? 'error' : 'ok';
+      const title = aborted ? '标准化已中止' : failure ? '标准化失败' : '标准化完成';
+      if (!disposed && key === activeBattleKey) {
+        const retry = () => key === activeBattleKey && runNormalize(ids, { force: true, sessionId: sessionId ?? null });
+        notify(title, failure?.message ?? '', !aborted && (failure || unresolved.length) ? retry : null,
+          false, { tone: aborted ? 'neutral' : failure ? 'error' : 'success', applied, unresolved, raw });
+      }
+      if (session) {
+        aiSessions.update(session.id, entries[1], { content: raw, status });
+        feed(entries[1], ...aiSessions.append(session.id, { role: 'system', status,
+          content: `${title} · 已应用 ${applied} 项补丁${failure ? ` · ${failure.message}` : ''}${unresolved.length ? ` · 待处理：${unresolved.join('；')}` : ''}` }));
+      }
+      aiController = null;
+      if (!disposed) { aiPage?.setBusy(false); renderInstances(); }
+      finish();
+    }
   }
 
   const battleStorageKey = (key, field) => `fated-tactical/${key}/${field}`;
@@ -960,11 +1055,20 @@ export function mountTavernOverlay(options = {}) {
     }
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
+  function narrativeSourceFor(records) {
+    // Global diagnostics have no character source. Bind them to the entire opening input.
+    const globalSource = JSON.stringify([sources.battleRaw, sources.mvuData, sources.charInfo]);
+    return id => id === null ? globalSource : records[id]?.hash;
+  }
   function filterResolved(stored, records, retained = batches(activeBattleKey)) {
     const warnings = sources.warnings ??= [];
+    const exempt = activeNarrativeExemptions(diagnostics.inputWarnings ?? warnings,
+      config.narrativeExemptions[activeBattleKey] ?? [], narrativeSourceFor(records));
+    const excluded = new Set(exempt.map(({ warning }) => warning));
     const remaining = remainingDiagnostics(warnings, stored, records, retained);
-    warnings.splice(0, warnings.length, ...remaining);
+    warnings.splice(0, warnings.length, ...remaining.filter(warning => !excluded.has(warning)));
     diagnostics.warnings = warnings;
+    diagnostics.narrativeExemptions = exempt.map(({ warning, receipt }) => ({ ...warningReference(warning), reason: receipt.reason }));
   }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
   function applyNormalization(state, patch) {
@@ -1015,6 +1119,7 @@ export function mountTavernOverlay(options = {}) {
       diagnostics.removedCharacters=removed;
       for(const id of removed) delete stored[id];
       const rawWarnings = sources.warnings ?? [];
+      diagnostics.inputWarnings = [...rawWarnings];
       const kept = [];
       let replay = nextState;
       for (const batch of rehydrate ? [] : batches(key)) {
@@ -1031,7 +1136,9 @@ export function mountTavernOverlay(options = {}) {
         } catch (_) { /* a previous patch or its target is no longer available */ }
       }
       const invalid = batches(key).length !== kept.length;
-      const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
+      const exempt = new Set(activeNarrativeExemptions(rawWarnings, config.narrativeExemptions[key] ?? [], narrativeSourceFor(fresh))
+        .map(({ warning }) => warning));
+      const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
       const changed = normalizationCandidates(fresh, stored, remaining);
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
@@ -1104,6 +1211,90 @@ export function mountTavernOverlay(options = {}) {
     on(hideLauncher, 'change', () => { persistSettings({ hideLauncher: hideLauncher.checked }); updateMagic(); });
     on(refresh, 'click', () => scan().catch(showError));
     on(report, 'click', deliverBattleReport);
+  }
+  function commitNormalization(key, { unitIds }, { snapshot, sent, reply }) {
+    const { data } = parseAIResponse(reply);
+    if (!Array.isArray(data?.patch)) throw new Error('模型未返回有效的战局补丁');
+    const raw = JSON.stringify(data, null, 2);
+    try {
+      if (!Array.isArray(data.unresolved)) throw new Error('unresolved 必须是 JSON 数组');
+      const notes = data.unresolved.map(item => typeof item === 'string' ? item : JSON.stringify(item));
+      for (const [index, operation] of data.patch.entries()) {
+        if (!['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
+            !normalizationPath.test(operation.path) || (operation.op !== 'remove' && !own(operation, 'value'))) {
+          throw new Error(`第 ${index + 1} 项路径或操作无效（${text(operation?.path).slice(0, 120) || '缺少 path'}）`);
+        }
+        const [, table, id] = operation.path.split('/');
+        if (table === 'units' && !unitIds.includes(id)) throw new Error(`补丁单位不在本批：${id}`);
+      }
+      const records = Object.fromEntries(unitIds.map(id => [id, { hash: characters[id].hash, sourceKind: characters[id].sourceKind }]));
+      const current = liveState();
+      const rootPath = path => path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
+      const paths = [...new Set(data.patch.map(operation => rootPath(operation.path)))];
+      if (paths.some(path => fingerprintAt(current, path) !== fingerprintAt(snapshot, path))) {
+        throw new Error('补丁目标已被更早的批次或战局操作修改');
+      }
+      const next = data.patch.length ? (options.applyPatch ?? applyPatch)(current, data.patch, true) : current;
+      const changed = new Set(paths.filter(path => fingerprintAt(next, path) !== fingerprintAt(current, path)));
+      const effective = data.patch.filter(operation => changed.has(rootPath(operation.path)));
+      const patch = effective.map(({ resolves, ...operation }) => operation);
+      // A surrounding template change must not make an individual no-op count as a fix.
+      const changedOperations = effective.filter(operation => operation.op !== 'replace' ||
+        fingerprintAt(current, operation.path) !== fingerprintAt(next, operation.path));
+      const solved = changedOperations.length ? resolvedDiagnostics(sent, records, changedOperations, { unresolved: notes }) : [];
+      const narrative = readNarrativeExemptions(data.narrative, sent, narrativeSourceFor(records), { solved, unresolved: notes });
+      for (const { warning } of narrative) {
+        if (data.patch.some(operation => [].concat(operation.resolves ?? []).some(reference => reference &&
+          reference.unitId === warning.unitId && reference.originPath === (warning.originPath ?? null) && reference.message === warning.message))) {
+          throw new Error('narrative 警告不能同时声明为补丁已解决');
+        }
+      }
+      if (data.patch.length && !patch.length && !narrative.length) throw new Error('模型返回的补丁没有改变战局');
+      const additions = [];
+      if (patch.length) {
+        const validate = options.validateState || defaultValidateState;
+        validate(next);
+        const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+        const previous = operations(key);
+        const before = applyPatch(baseline, previous, true);
+        validate(applyNormalization(baseline, [...previous, ...patch]));
+        additions.push({
+          patch, hashes: Object.fromEntries(unitIds.map(id => [id, records[id].hash])),
+          receipts: solved.map(w => ({ unitId: w.unitId, key: warningKey(w) })),
+          guards: [...new Set([...changed, ...solved.map(w => w.originPath).filter(Boolean)])]
+            .map(path => [path, fingerprintAt(before, path) ?? null]),
+        });
+        refreshOpeningInitiative(next);
+        syncEquipmentEffects(next);
+        refreshOutcome(next);
+        validate(next);
+        if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
+        gameMount.loadState(next);
+        currentState = next;
+        for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
+        save();
+      }
+      const stored = { ...config.charSnapshots[key] };
+      for (const [id, record] of Object.entries(records)) {
+        const previous = stored[id]?.hash === record.hash ? stored[id].resolvedWarnings ?? [] : [];
+        stored[id] = { ...record, at: Date.now(), normalized: true, resolvedWarnings: previous };
+      }
+      syncSettings();
+      const receipts = narrative.map(({ receipt }) => receipt);
+      const previousExemptions = config.narrativeExemptions[key] ?? [];
+      persistSettings({
+        charSnapshots: { ...config.charSnapshots, [key]: stored },
+        normalizationBatches: { ...config.normalizationBatches, [key]: [...batches(key), ...additions] },
+        narrativeExemptions: { ...config.narrativeExemptions, [key]: [...previousExemptions.filter(previous => !receipts.some(receipt => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] },
+      });
+      filterResolved(stored, characters);
+      scanStatus = `已标准化 ${unitIds.length} 个角色`;
+      renderInstances();
+      return { applied: patch.length, data, notes };
+    } catch (error) {
+      error.raw = raw;
+      throw error;
+    }
   }
   askAI = async (kind, requestText = '', sessionId = kind === 'chat' ? aiSessions.active().id : undefined, records) => {
       if (aiController || (kind === 'chat' && !requestText)) return;

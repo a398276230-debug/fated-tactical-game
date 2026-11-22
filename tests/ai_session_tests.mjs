@@ -5,6 +5,11 @@ import { fetchModels, requestViaCustomApi } from '../src/tavern/api.js';
 import { assembleMessages, DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from '../src/tavern/prompts.js';
 
 import { validVmRule, vmSchema } from '../src/core/vm-schema.js';
+import { applyAction, currentUnit, refreshOpeningInitiative } from '../src/core/combat.js';
+import { validateState } from '../src/api/validation.js';
+import { dispatchVMHook } from '../src/core/vm-runtime.js';
+import { buildScenario } from '../src/presets/scenarios.js';
+import { applyPatch } from '../src/tavern/overlay.js';
 
 test('每个 VM 指令的用法说明进入实际组装的默认助手消息', () => {
   const messages = assembleMessages(DEFAULT_SLOTS, {});
@@ -56,7 +61,7 @@ gate('G44', '旧内置 user 一次迁移，自定义 role 保留', () => {
 gate('G45', '任务拆解、自查与 VM 示例', () => {
   const task = resolveSlotContent({ id: 'task' });
   const examples = [...task.matchAll(/^• [^\n：]+值：(\{.*\})$/gm)].map(([, json]) => JSON.parse(json));
-  assert.equal(examples.length, 5);
+  assert.equal(examples.length, 11);
   const statusTemplates = { laugh_disabled: examples.find(example => example.id === 'laugh_disabled') };
   for (const example of examples) {
     for (const rule of example.rules ?? [example]) assert.equal(validVmRule(rule, { statusTemplates }), true, rule.id);
@@ -67,6 +72,74 @@ gate('G45', '任务拆解、自查与 VM 示例', () => {
   assert.doesNotMatch(task, /卡在哪一步/);
 });
 
+test('默认发送的召唤食谱可直接应用，生成的亡卫持有同批新增的专属技能', () => {
+  const message = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(row => row.content).join('\n');
+  assert.doesNotMatch(message, /平暴击×1\.3|切磋40%/);
+  const { patch } = JSON.parse(message.match(/^\{"patch":.*$/m)[0]);
+  const initial = buildScenario('ruins');
+  initial.statusTemplates ??= {};
+  initial.skills.call_guard = { name: '召唤亡卫', ap: 1, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [] };
+  currentUnit(initial).skills.push('call_guard');
+  const state = validateState(applyPatch(initial, patch, true));
+  const actor = currentUnit(state);
+  applyAction(state, { type: 'skill', skillId: 'call_guard', x: actor.x, y: actor.y });
+  const guard = Object.values(state.units).find(unit => unit.name === '亡卫');
+  assert.deepEqual(guard?.skills, ['guard_slash']);
+  assert.equal(state.statusTemplates.guard_chill.name, '星霜');
+});
+
+test('默认天气、磁带重放和资源封印食谱在生产 VM 中结算', () => {
+  const task = resolveSlotContent({ id: 'task' });
+  const recipe = label => JSON.parse(task.match(new RegExp(`^• ${label}规则值：(.*)$`, 'm'))[1]);
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  const enemy = Object.values(state.units).find(unit => unit.team !== actor.team);
+  actor.rules = [recipe('封印资源')];
+  state.skills.weather = { name: '天气', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [recipe('天气')] };
+  state.skills.probe = { name: '资源探针', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [{
+    id: 'probe_changes', hook: 'active', program: [
+      { op: 'damage', target: 'self', amount: 3, damageType: 'true' },
+      { op: 'heal', target: 'self', amount: 2 },
+      { op: 'resource', target: 'self', pool: ['mp', 'sp'], mode: 'set', amount: 0 },
+    ],
+  }] };
+  state.skills.reprise = { name: '重放', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [recipe('本回合重放')] };
+  actor.skills.push('weather', 'probe', 'reprise');
+  const cast = skillId => applyAction(state, { type: 'skill', skillId, x: actor.x, y: actor.y });
+  const probe = structuredClone(state);
+  delete probe.units[actor.id].rules;
+  applyAction(probe, { type: 'skill', skillId: 'probe', x: actor.x, y: actor.y });
+  assert.notEqual(probe.units[actor.id].hp, actor.hp);
+  const resources = [actor.hp, actor.mp, actor.sp];
+  assert.ok(actor.mp > 0 && actor.sp > 0);
+  cast('probe');
+  assert.deepEqual([actor.hp, actor.mp, actor.sp], resources);
+  assert.deepEqual(cast('reprise').filter(row => row.type === 'action').map(row => row.detail.action.skillId), ['reprise', 'probe']);
+  cast('weather');
+  const hp = enemy.hp;
+  dispatchVMHook(state, 'turn_start', { actorId: enemy.id, targetId: enemy.id, ownerIds: [enemy.id] });
+  assert.equal(enemy.hp, hp - 10);
+});
+
+test('技能先手按槽取最大值并复用开场骰，模板接受 30 格但拒绝 31 格', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  for (const [id, slot, initiativeBonus] of [['one', 'attack', 8], ['two', 'attack', 5], ['three', 'action', 6]]) {
+    state.skills[id] = { name: id, ap: 0, slot, initiativeBonus, range: 30, radius: 30, shape: 'circle', target: 'cell' };
+    actor.skills.push(id);
+  }
+  validateState(state);
+  const opening = () => state.logs[0].detail.initiative.find(row => row.unitId === actor.id);
+  const { roll, total } = opening();
+  refreshOpeningInitiative(state);
+  assert.deepEqual([opening().roll, opening().total, opening().attackInit, opening().actionInit], [roll, total + 14, 8, 6]);
+  state.skills.one.radius = 31;
+  assert.throws(() => validateState(state));
+  state.skills.one.radius = 30;
+  state.skills.one.range = 31;
+  assert.throws(() => validateState(state));
+});
+
 test('G97 protocol maps mixed damage, empty effects and worldbook tags', () => {
   const protocol = resolveSlotContent({ id: 'protocol' });
   assert.match(protocol, /混合伤害：.*拆成两个指令.*不再额外造成总威力伤害/);
@@ -74,6 +147,15 @@ test('G97 protocol maps mixed damage, empty effects and worldbook tags', () => {
   assert.deepEqual(program, [{ op: 'damage', target: 'target', amount: 40, damageType: 'physical' }, { op: 'damage', target: 'target', amount: 20, damageType: 'energy' }]);
   assert.match(protocol, /原文效果为 \{\} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则/);
   for (const tag of ['[威力: X 物理]', '[关联属性: 敏捷]', '[有效距离: 中程(5)]', '[单体]', '[范围: 中程(4)+扇(敌方)]']) assert.ok(protocol.includes(tag), tag);
+});
+
+test('默认标准化消息教模型读实体寄存器、动态生成和使用带签名的查询', () => {
+  const text = assembleMessages(DEFAULT_SLOTS, {}).map(message => message.content).join('\n');
+  for (const snippet of ['target:"vars.victim"', 'vars.victim.id', "has_status(vars.victim, 'taunt')",
+    'vars.lostStacks', 'self.vars.cooldown == null', 'min(a, b)', 'clamp(value, lo, hi)', 'count_units(predicate)',
+    'tier:"max(1, self.tier - 1)"', 'single 只覆盖中心格', '都不写时按施术者预算自动生成面板']) {
+    assert.ok(text.includes(snippet), snippet);
+  }
 });
 
 test('纯 system 提示词可发送给 Claude 和 Gemini', async () => {

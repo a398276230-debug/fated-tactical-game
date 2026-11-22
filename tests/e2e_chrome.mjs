@@ -192,7 +192,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run('document.querySelector(".fated-tavern-panel").hidden'), true);
   await run('document.querySelector(".fated-tavern-launcher").removeAttribute("data-dragged")');
   await click('.fated-tavern-launcher');
-  await until(() => run('window.hostRequests?.length === 1'), '有警告自动调用酒馆助手');
+  await until(() => run('window.hostRequests?.length === 1'), '有警告自动调用酒馆助手').catch(async error => { throw new Error(`${error.message}: ${await run('window.__fatedTacticalTavern.getDiagnostics().error')} / ${pageErrors.join('\n')} / ${consoleErrors.join('\n')}`); });
   await until(() => run(`['p1', 'e1'].every(id => {
     const image = document.querySelector('#board [data-unit-id="' + id + '"] .axis-unit-portrait');
     return image && !image.hidden && image.naturalWidth > 0 && getComputedStyle(image.nextElementSibling).visibility === 'hidden';
@@ -313,6 +313,11 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/')))).slots.find(s => s.id === 'protocol').enabled`), false);
   await click('[data-tab="api"]');
   assert.equal(await run(`document.querySelector('[name="apiSource"]').disabled`), true);
+  const batchFields = `['normalizationConcurrency','normalizationWarningsPerBatch'].map(name => Number(document.querySelector('[name="'+name+'"]').value))`;
+  assert.deepEqual(await run(batchFields), [1, 6]);
+  await select('[name="normalizationConcurrency"]', '3');
+  await select('[name="normalizationWarningsPerBatch"]', '4');
+  assert.deepEqual(await run(`(() => { const c = window.__fatedTacticalTavern.getConfig(); return [c.normalizationConcurrency, c.normalizationWarningsPerBatch]; })()`), [3, 4]);
   await select('[name="apiMode"]', 'custom');
   await select('[name="apiTransport"]', 'tavern');
   await select('[name="baseUrl"]', 'https://upstream.example.test/v1');
@@ -543,6 +548,42 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('#auto-ai');
   // 逐格断言 DOM 的步骤关闭演出；演出本身在自动敌方回合处单独验证
   await select('#anim-speed', '0');
+  const multi = await run(`(() => {
+    const game = window.FatedTacticalGame, fixture = game.getBattleState();
+    const actor = fixture.units[fixture.order[fixture.turn]];
+    fixture.skills.multi_choice = { name:'多选测试', ap:1, slot:'attack', range:0, shape:'single', target:'self',
+      rules:[{ id:'multi_choice', hook:'active', program:[
+        { op:'ask', chooser:'self', kind:'entity', prompt:'选择多个单位', out:'chosen', aiPolicy:'first',
+          maxSelect:2, select:{ from:'units', where:'candidate.team != self.team' } },
+        { op:'for_each', select:{ from:'vars.chosen' }, bind:'victim', body:[
+          { op:'damage', target:'vars.victim', amount:1, damageType:'true' },
+        ] },
+      ] }] };
+    actor.skills.push('multi_choice');
+    game.createBattle({ kind:'custom_state', state:fixture });
+    game.playAction({ type:'skill', skillId:'multi_choice', x:actor.x, y:actor.y });
+    return game.getBattleState().vm.pendingAsk.options.map(({id}) => ({id, hp:fixture.units[id].hp}));
+  })()`);
+  const choice = id => `#pending-ask [data-ask-entity="${id}"]`;
+  const unitCell = id => `#board .tactical-cell[data-unit-id="${id}"]`;
+  const confirmChoices = '#pending-ask .primary';
+  await until(() => run(`!${get('#pending-ask')}.hidden`), '多选面板打开');
+  assert.equal(await run(`${get(confirmChoices)}.disabled`), true);
+  await click(unitCell(multi[1].id));
+  assert.equal(await run(`${get(choice(multi[1].id))}.getAttribute('aria-pressed')`), 'true');
+  await click(choice(multi[0].id));
+  assert.equal(await run(`${get(unitCell(multi[0].id))}.classList.contains('is-ask-selected')`), true);
+  assert.equal(await run(`${get(choice(multi[2].id))}.disabled`), true);
+  assert.match(await run(`${get('#pending-ask output')}.textContent`), /2 \/ 2/);
+  assert.ok((await state()).vm.pendingAsk);
+  await click(choice(multi[1].id));
+  assert.equal(await run(`${get(choice(multi[2].id))}.disabled`), false);
+  await click(unitCell(multi[2].id));
+  await click(confirmChoices);
+  const chosenState = await state();
+  assert.equal(chosenState.vm.pendingAsk, null);
+  assert.deepEqual(multi.map(({id, hp}) => chosenState.units[id].hp - hp), [-1, 0, -1]);
+  await click('#reset-button');
   // 桌面：100% 时整盘放满舞台；滚轮以指针为锚点缩放
   const wheelAt = async (deltaY) => { const b = await run(`(() => { const r=${get('#board')}.getBoundingClientRect(); return {x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2)}; })()`);
     await send('Input.dispatchMouseEvent', { type:'mouseWheel', x:b.x, y:b.y, deltaX:0, deltaY }); await pause(120); };

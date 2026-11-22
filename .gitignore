@@ -13,3 +13,5 @@ coverage/
 test-results/
 playwright-report/
 specs/
+tests/corpus/
+_scratch/

@@ -1,26 +1,8 @@
-// Static prompt reference, not executable combat logic. Keep the table helpers
-// distinct from the paths actually taken by combat.js during a strike.
-export const PROTOCOL_RULES = `【判定｜protocol 实战】
-行动规则固定为每回合 1 动作槽 + 1 攻击槽；2 AP 行动同时用两槽。祭坛相邻激活耗动作槽；爆桶在武器射程及视线内引爆耗攻击槽，爆炸可伤及友方。
-先攻＝agi×(1+initiativePercent)+d20+max(0,...attackInit)+max(0,...actionInit)+flatInitiative；总分降序，同分先比敏捷，再按 ID 升序。
-普通攻击按所取 d20+accuracy 分档（下限含等号）：<4 失手×0，4 擦伤×0.3，8 勉强×0.8，11 有效×1，20 平暴击×1.3，25 强暴击×1.6，30 超暴击×2。自然1必失；自然20标记 critical，但仍须总分≥4。实战不以预览 defense 为命中门槛；attack 是伤害，不是 accuracy。无默认力/敏命中或敏捷防御。通常净优势/劣势掷2取高/低；协议奖励骰0~2、惩罚骰0~1，相等取1骰，奖励占优且有2奖励取3骰中位。
-射程取三维欧氏距离；命中计体型、高差、距离、射程、状态、夹击、掩体。体型命中加值＝目标基础项＋攻守档差，合计只加一次；打掩体为0。基础项=max(0,目标size−1)（旧字符串large为+2、small为−1，其余0）。按体长依次分微/小/中/大/巨/超巨，分界为0.6/1.3/2.6/5.5/10米（等于分界进下一档），档值依次为2/1/0/−1/−2/−4。目标MC<2时档差=攻击者档值−目标档值；目标MC≥2时改用攻击者档值＋2×(目标MC−1)。
+// The auxiliary model needs the editable contract, not the engine's arithmetic.
+export const PROTOCOL_RULES = `【战斗协议｜模板与规则的分工】
+• 每回合有 1 动作槽和 1 攻击槽。ap:1 占对应 slot，ap:2 占双槽，ap:0 不占槽。initiativeBonus 按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值。
+• 常规主击写技能模板的 power 和 damage；治疗写 heal。引擎结算命中评级、体型、高差、护甲、暴击、意图和士气。power 单独填写不会开启主击，须配合 damage 骰子对象。伤害拆分或额外效果才写 rules，避免重复打出主击。
+• range 是施放射程，radius 是覆盖半径。技能模板的 range、radius、innerRadius、width 上限为 30 格。
+• 装备模板 equipment 和实例 items 通过 templateId 关联。技能模板在 skills，已有单位的技能由 units.<id>.skills 引用。状态模板在 statusTemplates。主动技能的额外程序写 hook:active。`;
 
-【意图｜难度/成功倍率】normal 常规0/1，function 机能限制5/1.1，core 核心要害10/1.4，kill 抹杀15/1.7，concept 概念破碎20/2。范围攻击对单位固定常规。命中后，难度取max(0,基础+守方intentDifficulty)，为0直接成立；否则攻比守低≥2级必败。攻阶×5+原攻击骰+评级奖（平/强/超暴击+10/20/30）≥守阶×5+守d20+难度才成立；失败保留原命中，意图倍率回到1。自动命中及豁免分支不作该对抗。
-
-【伤害｜计算函数与实战不可混用】
-协议起伤＝关联属性（damage.stat，缺省近战str、否则int）×10×层级系数(1~7阶:2/2.8/4/8/15/35/80)+power(默认20)+武器attack(默认0)。实战主击乘攻击增益、体型倍率（此处不限近战）、评级、成功意图、姿态/副手系数、豁免成功×0.5，再向下取整。豁免为守d20+指定属性≥saveDC（默认12+floor(攻int/2)），成功免除该次附带效果。
-属性减伤：physical=(con+str+agi)×.0025，energy=(spi+int)×.004，mental=spi×.008，true=0。
-实战命中走另一管线：可援护替伤、近战重剑弹反；有效甲=max(0,总甲×(1−百分比穿透)−固定穿透)，物理全甲、能量半甲、其余0。乘(1+碎冰加成)(1+易伤)(1−状态总减伤[0,1])、护甲倍率和(1−属性减伤)，向下取整且不低于0；护盾先吸收，余量扣HP。持续伤等非命中类伤害按倍率取整减有效甲。固定减伤先于护盾；保命效果保底 1 HP。
-范围技能按覆盖格逐目标结算。
-
-【姿态】盾→剑盾；消耗/辅助副手→同调；重型/双手主手→重剑；其他副手→双持；仅主手→轻剑；空手→无械。姿态决定穿甲、追击、弹反和格挡。
-
-【士气与逃跑】切磋无条件非致死，任何单位 HP 低于 30% 立即切磋退场，不算逃跑或击杀。竞技双方非致死，1 HP 落败出局。压制战双方普通攻击仍可致死，只有压制方可用无伤害的1格压制攻击：命中后以d20+力量对抗，攻方胜使对手被压制，守方胜则攻方眩晕1回合，平手无状态；被压制者回合开始时d20+floor(力量×当前HP比例)大于原攻方总点数才挣脱；未被压制的抵抗方队友可在1格内用攻击槽直接解除压制。场上抵抗方全部被压制即胜，全部死亡则压制失败。换轮检查非主角战意。切磋40%、竞技30%、压制50%以下自动动摇（命中−2）；标准30%、守卫35%、死斗10%以下 d20<12 溃逃（命中−4，AI 尝试逃跑），否则坚守。回血达阈值后下轮恢复。对动摇或溃逃者用抹杀/概念破碎，忽略闪避，命中评级至少平暴击，不保证命中。所有战斗均须站在地图最外圈才能尝试逃跑。主动flee以自身敏+d20对存活敌方最高敏+d20，平手可逃。`;
-
-export const ENGINE_API_SUMMARY = `${PROTOCOL_RULES}
-
-【战局数据与 VM】
-装备模板 equipment 与实例 items 用 templateId 关联。为已有装备写规则时修改 equipment 内对应模板。技能模板在 skills 表中，持有关系在单位的 skills 数组中。
-主动技能用 hook:active 的规则执行。模板的行动槽、消耗、选取范围与目标决定能否施放。规则的 program 定义实际结算。检定用 check 指令，dc 可用数值或表达式，例如 "6 + self.spi * 0.5"。需要因豁免结果执行不同效果时分别写进 onPass 与 onFail。
-状态通过 apply_status 引用模板。定义自定义状态后再在同一补丁中引用。周期伤害、治疗与资源变化用 turn_start 或 turn_end 的规则表达。`;
+export const ENGINE_API_SUMMARY = PROTOCOL_RULES;

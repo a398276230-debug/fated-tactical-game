@@ -1,4 +1,4 @@
-import { formulaReference, formulaQueryNames } from '../core/formula.js';
+import { formulaReference, formulaFunctionReference } from '../core/formula.js';
 import { opNotes, vmHooks, vmSchema } from '../core/vm-schema.js';
 
 const defs = vmSchema.$defs;
@@ -39,6 +39,9 @@ const spawnSpecs = Object.entries(defs).filter(([key]) => key.startsWith('spawn_
 export const VM_EFFECT_PROTOCOL = `【战术 VM 效果协议】
 rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下枚举}。
 允许 hook：${vmHooks.join(' / ')}。
+选时机：active 主动施放；before_action 行动执行前扣费与取消控制；before_target 目标确定后重定向；before_check / after_check 检定前改判与检定后读结果；after_hit 命中后；after_damage / after_heal 实际伤害／治疗后；after_action 行动完成。
+生命周期：before_status 施加状态前拦截；after_status_applied / after_status_removed 状态施加／移除后；on_status_immunized 状态被免疫；on_summon_evict 同源旧召唤物被替换、消散前（target 为旧召唤物）；on_lethal_p1 濒死先处理遗言，生命仍归零才进入 on_lethal_p2 处理免死等拦截；on_death / on_ally_death / on_kill 倒下／友方倒下／击杀；turn_start / turn_end 单位回合首尾；round_start / round_end 整轮首尾。
+before_commit 在 damage、heal、resource 提交前触发，区分 event.commitKind，读取 event.targetId、event.pool、event.sourceRuleId，可用 cancel 或 finalAmount 改写本笔提交。
 同一载体内规则 ID 唯一。规则由高 priority 到低 priority 执行；program 按数组顺序执行。filter 必须求得 true 才进入规则。规则和指令均可写 enabled:false 暂停执行，label 为显示名。只有与事件相符的载体会触发规则；用 filter 区分事件的施放者或承受者，例如 "attacker.id == self.id"。
 
 【Opcode】每个指令对象必填 op，其值是下列名称。? 表示可省，闭合对象只接受列出的字段。
@@ -46,16 +49,18 @@ ${instructions.join('\n')}
 check 的 kind:chance 用 dc 与 d100 点数比较，例如 dc:25 表示 25% 成功率。豁免未通过时运行 onFail。ask 的 kind 为 cell/entity 时必填 select，为 option 时必填 options，为 number 时必填 min/max。perform 的 skill 只配 skillId，replay 只配 tapeRecord。resource 的 add/sub/set 需要 amount，swap 需要一个 pool 和 otherPool。move 的 step/teleport 用 to，push/pull 用 distance，altitude 用 deltaZ 或 land:true。
 mutate_event 的 patch 必须至少有一个字段，只能用于下列可写 hook，嵌套分支亦然：
 ${eventPatches.join('\n')}
-spawn 的 spec 由 entityKind 决定，unit 的 templateId/copyOf/spawnPanel 三选一；terrain 至少有 kind 或 height，提供 mode 时必须有 height：
+spawn 的 spec 由 entityKind 决定，unit 的 templateId/copyOf/spawnPanel 至多选一个；都不写时按施术者预算自动生成面板。生成规格中的 tier、count、remainingTurns、area.radius 可写数值表达式，例如 tier:"max(1, self.tier - 1)"。terrain 至少有 kind 或 height，提供 mode 时必须有 height：
 ${spawnSpecs.join('\n')}
-zoneArea：${describe(defs.spawn_zone.properties.area)}。rect 需 rect 对象，cells 需 cells 数组。
+zoneArea：${describe(defs.spawn_zone.properties.area)}。single 只覆盖中心格；rect 需 rect 对象，cells 需 cells 数组。
 
 【表达式与选择】
-Expr 为 JSON 数字、布尔值或安全表达式字符串。表达式内的字符串字面量用单引号，例如 "event.damageType == 'physical'"。支持 + - !、算术、比较、&&、||、三元与括号。变量和查询严格使用注册表，不支持任意属性路径或副作用函数。
+Expr 为 JSON 数字、布尔值或安全表达式字符串。表达式内支持单双引号字面量和 null，例如 "event.damageType == 'physical'"、"self.vars.cooldown == null"。支持 + - !、算术、比较、&&、||、三元与括号。变量和查询严格使用注册表，不支持任意属性路径或副作用函数。
+let.name、bind、out、outCount 写裸名称；读取一律带作用域，例如 vars.lostStacks，不能裸写 lostStacks。实体绑定可作为 target:"vars.victim"、通过 vars.victim.id 读字段，或传给 has_status(vars.victim, 'taunt')。
 变量：${formulaReference}。
-查询：${formulaQueryNames().join('、')}。
-selector：${describe(defs.selector)}。of 只用于 statuses；where 逐个检查 candidate；random 使用战局 RNG。area.origin 省略时以 self 为中心。
-targetRef：${describe(defs.targetRef)}。用选择器指定 ID 时，可用 {"from":"units","where":"candidate.id == 'p1'"}，并将 p1 替换为快照 ID。
+函数签名：${formulaFunctionReference}。count_units 的 predicate 可直接写 candidate.team != self.team，也可传表达式文本，如 count_units("candidate.id == 'p1'")；整条表达式放进 JSON 字符串时按 JSON 规则转义内部双引号。
+selector：${describe(defs.selector)}。of 只用于 statuses；where 逐个检查 candidate。statuses 行可读 candidate.id/category/stacks/remainingTurns；tape 行可读 candidate.round/turn/actorId/team/actionType/skillId，保留记录顺序。random 使用战局 RNG。area.origin 省略时以 self 为中心。
+pointRef 可写 {x,y,z?}、self/source/target/attacker/center 或 vars.<名称>（格子或实体位置）。
+targetRef：${describe(defs.targetRef)}。for_each.bind 或 ask(kind:entity) 取得的实体直接用 vars.<名称>。用选择器指定 ID 时，可用 {"from":"units","where":"candidate.id == 'p1'"}，并将 p1 替换为快照 ID。
 
 【声明式修饰】
-mods 是修饰数组，每项 ${describe(defs.statMod)}。至少有 stat、locks、flags 或 controlPolicy；填写数值修饰时必须指定 stat。组合值为 (基础 + flat 总和) × (1 + additivePercent 总和) × mult 连乘。when 必须求得 true 才生效。controlPolicy：${describe(defs.controlPolicy)}。`;
+mods 是修饰数组，每项 ${describe(defs.statMod)}。至少有 stat、locks、flags 或 controlPolicy；填写数值修饰时必须指定 stat。组合值为 (基础 + flat 总和) × (1 + additivePercent 总和) × mult 连乘。when 必须求得 true 才生效。controlPolicy：${describe(defs.controlPolicy)}。恒定坚守用 moraleLock:"steady"；allowFriendlyTarget:true 允许原本指定 enemy 的攻击选择友军或自己，仍受射程与其他合法性约束。`;

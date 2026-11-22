@@ -21,7 +21,7 @@ const ratio=(v,max)=>max?Math.min(1,Math.max(0,(Number(v)||0)/max)):0;
  * 渲染一张角色实例卡。卡头（头像、名字、标签、迷你资源条、选择框、折叠按钮）始终可见，
  * 其余内容放进返回的 body，折叠时隐藏。调用方可以把诊断和操作按钮追加进 body。
  */
-export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onToggle,warnings=0}={}) {
+export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onToggle,warnings=0,narrative=[]}={}) {
   const line=(tag,cls,value)=>make(tag,{class:cls},value);
   const name=unit.name??unit.id;
   box.classList.add('fated-char-card');
@@ -70,15 +70,18 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
     const block=line('section','fated-char-section');
     block.append(make('h5',{},`${heading}${rows.length?` · ${rows.length}`:''}`));
     if(!rows.length) block.append(line('p','fated-mini',`暂无${heading}`));
-    for(const {label,meta,template} of rows){
+    for(const {label,meta,template,path} of rows){
       const fx = template?.rules ?? [];
-      const row=make(fx.length?'details':'div',{class:'fated-char-row'});
-      const head=make(fx.length?'summary':'div',{class:'fated-char-row-head'});
+      const story = path ? narrative.filter(entry => entry.originPath === path || entry.originPath?.startsWith(`${path}/`)) : [];
+      const expandable = fx.length || story.length;
+      const row=make(expandable?'details':'div',{class:'fated-char-row'});
+      const head=make(expandable?'summary':'div',{class:'fated-char-row-head'});
       head.append(line('span','fated-char-row-name',label));
       for(const m of meta) head.append(line('span','fated-char-chip',m));
       if(fx.length) head.append(line('span','fated-char-fx',`${fx.length} 个效果`));
       row.append(head);
       for(const e of fx) row.append(line('p','fated-mini',ruleSummary(e,state)));
+      for(const { message, reason } of story) row.append(make('p',{class:'fated-mini',title:reason},`仅叙事 · ${message}`));
       block.append(row);
     }
     body.append(block);
@@ -87,14 +90,14 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
   const gear=wear.filter(([,id])=>id).map(([slot,id])=>{
     const item=state?.items?.[id],t=state?.equipment?.[item?.templateId]??unit.equipment?.find(e=>e.id===id)?.template;const d=t?.damage;
     const dice=d?`${d.count}d${d.sides}${d.bonus?` ${d.bonus>0?'+':''}${d.bonus}`:''}${d.stat?` + ${attributes[d.stat]??d.stat}`:''} ${types[d.type]??''}`.trim():null;
-    return {label:`[${slot}] ${t?.name??id}`,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t};
+    return {label:`[${slot}] ${t?.name??id}`,path:item?.templateId ? `/equipment/${item.templateId}` : null,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t};
   });
   section('装备',gear);
   const skills=(unit.skills??[]).map(id=>{
     const t=state?.skills?.[id];
     const damage=[...new Set([t?.damage?.type,t?.damageType,...(t?.rules ?? []).flatMap(rule => rule.program.filter(op => op.op === 'damage').map(op => op.damageType)),unit.skillInfo?.[id]?.damageType].filter(Boolean))].map(type=>types[type]).join('/');
     const cost=[`${t?.resourceCost?.sp??t?.sp??0} SP`,(t?.resourceCost?.mp??t?.mp)?`${t.resourceCost?.mp??t.mp} MP`:null,t?.resourceCost?.hp?`${t.resourceCost.hp} HP`:null].filter(Boolean).join(' / ');
-    return {label:t?.name??id,meta:[`消耗 ${cost}`,`威力 ${t?.power??'—'}`,damage||'无伤害类型',`距离 ${t?.range??'—'}`],template:t};
+    return {label:t?.name??id,path:`/skills/${id}`,meta:[`消耗 ${cost}`,`威力 ${t?.power??'—'}`,damage||'无伤害类型',`距离 ${t?.range??'—'}`],template:t};
   });
   section('技能',skills);
   const details=make('details',{class:'fated-char-raw'});

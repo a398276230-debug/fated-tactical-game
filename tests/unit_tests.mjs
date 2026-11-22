@@ -35,6 +35,7 @@ import './tavern_tests.mjs';
 import './ai_session_tests.mjs';
 import './vm_expr_tests.mjs';
 import './vm_schema_tests.mjs';
+import './normalization_batches_tests.mjs';
 import './vm_pools_tests.mjs';
 import './vm_carriers_tests.mjs';
 import './vm_spatial_tests.mjs';

@@ -369,7 +369,7 @@ function convertNarrative(effects, warnings, prefix, { allowPower = false, equip
     if (program.length && areaDamage) {
       warnings.push(`范围伤害待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请为规则声明精确的目标选择器`);
     } else if (program.length) appendRules(rules, [activeRule(`${prefix.slice(0, 45)}-narrative-${index}`, program)], warnings);
-    else warnings.push(`${equipment ? '装备' : ''}效果待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请提供 VM rules / mods / pools 中对应的行为与触发时机`);
+    else warnings.push(`${equipment ? '装备' : ''}效果待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请用 VM rules / mods / pools 实现行为与触发时机；缺少状态或召唤物专属技能时，同批新增 /statusTemplates/<id> 或 /skills/<id> 后引用`);
   }
   return rules;
 }
@@ -381,7 +381,7 @@ function skillCosts(value) {
   const slots = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
   const resources = {};
   for (const [,n,key] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key.toLowerCase()] = Number(n);
-  return { ...resources, slot: slots[0]?.[1] === '动作' ? 'action' : 'attack', ap: new Set(slots.map(s => s[1])).size === 2 ? 2 : 1 };
+  return { ...resources, slot: slots[0]?.[1] === '动作' ? 'action' : 'attack', ap: /^(?:消耗\s*[:：]\s*)?(?:无|无消耗|none|0)$/i.test(cost.trim()) ? 0 : new Set(slots.map(s => s[1])).size === 2 ? 2 : 1 };
 }
 const damageOp = (damageType, amount) => ({ op: 'damage', target: 'target', damageType, amount });
 const powerAmount = percent => percent === 100 ? 'event.power' : `event.power * (${percent} / 100)`;
@@ -445,7 +445,7 @@ function geometryFields(area) {
   for (const key of ['shape', 'target']) if (area[key] != null) result[key] = area[key];
   for (const key of ['radius', 'innerRadius', 'width', 'angle']) {
     if (area[key] != null && Number.isFinite(Number(area[key]))) {
-      result[key] = key === 'angle' ? bound(area[key], 1, 360) : Math.max(0, Math.min(6, Number(area[key])));
+      result[key] = key === 'angle' ? bound(area[key], 1, 360) : Math.max(0, Math.min(30, Number(area[key])));
     }
   }
   return result;
@@ -522,7 +522,7 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
       ...(r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {}),
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
-      range: bound(area.range, 1, 15, ranged ? 4 : 1),
+      range: bound(area.range, 1, 30, ranged ? 4 : 1),
       attack: bound(r.attack ?? r.攻击 ?? attackTag?.[1], 0, 1e9), accuracy: bound(r.accuracy ?? r.命中, -20, 30, 0),
       damage: normalizeDice(r.damage ?? { stat: 'str' }),
       ...geometryFields(area),
@@ -672,7 +672,7 @@ function importBackpack(bag, owner, skills, sink) {
     const raw = item.effects ?? item.效果;
     const tags = [].concat(item.tags ?? item.标签 ?? []).join(' ');
     const area = areaFields(item, warnings, name);
-    const range = bound(area.range, 0, 15, 3);
+    const range = bound(area.range, 0, 30, 3);
     const notes = [];
     const rules = readRules(item.rules, notes);
     appendRules(rules, convertNarrative(raw, notes, id, { areaDamage: isAreaDamage(area) }), notes);
@@ -750,15 +750,15 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
-      quality: '普通', ap: bound(r.ap ?? costs.ap, 1, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
-      range: bound(area.range, 0, 15, 1), shape: area.shape ?? 'single',
+      quality: '普通', ap: bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
+      range: bound(area.range, 0, 30, 1), shape: area.shape ?? 'single',
       target: area.target ?? 'enemy', ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       rules, mods: readMods(r.mods, notes), pools: readPools(r.pools, notes),
     };
     if (damageTypes.includes(damageType)) skills[sid].damageType = damageType;
     else if (damageType != null) notes.push(`「${skillName}」未知伤害类型：${damageType}`);
-    for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['accuracy', -20, 30], ['power', 0, 1e9]]) {
+    for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['accuracy', -20, 30], ['initiativeBonus', -100, 100], ['power', 0, 1e9]]) {
       const value = r[key] ?? (key === 'power' ? taggedPower : costs[key]);
       if (value != null) skills[sid][key] = bound(value, min, max);
     }
