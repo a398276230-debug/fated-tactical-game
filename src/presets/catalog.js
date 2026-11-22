@@ -6,6 +6,13 @@ const skill = (name, range, target, specs = {}) => ({
   name, quality: '普通', power: 50, ap: 1, slot: target === 'enemy' ? 'attack' : 'action', mp: 2,
   range, shape: 'single', target, ...specs,
 });
+
+// These preset hooks are effects of casting that specific skill, not passives.
+function onCast(id, template) {
+  return { ...template, passive: false, rules: (template.rules ?? []).map(entry => ({ ...entry,
+    filter: `event.skillId == '${id}' && event.actorId == self.id${entry.filter ? ` && (${entry.filter})` : ''}`,
+  })) };
+}
 const weapon = (templateId, filter) => `event.weaponTemplateId == '${templateId}' && event.actorId == self.id${filter ? ` && (${filter})` : ''}`;
 const meleeRetaliation = 'event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team';
 const rangedWeapon = (templateId, ammo, armorPierce, highGroundRange) => ({
@@ -79,7 +86,7 @@ export const EQUIPMENT = {
   staff: { name: '灵纹法杖', kind: 'weapon', weaponClass: 'staff', hand: 'one_handed', attack: 90, defense: 0, rangeType: 'ranged', range: 4, accuracy: 2, damage: dice(1, 6, 'int', 'energy') },
 };
 
-export const SKILLS = {
+const skillPresets = {
   brand: skill('焰印', 4, 'enemy', { damage: dice(1, 4, 'int', 'energy'), rules: [onHit('brand-status', [apply('burn'), apply('mark')])] }),
   surge: skill('断岳重斩', 1, 'enemy', {
     ap: 2, mp: 0, sp: 4, accuracy: 3, damage: dice(3, 6, 'str', 'physical'),
@@ -132,3 +139,4 @@ export const SKILLS = {
     save: 'spi', saveDC: 13, damage: dice(1, 6, 'spi', 'mental'), rules: [onHit('curse-vulnerable', [apply('vulnerable')])],
   }),
 };
+export const SKILLS = Object.fromEntries(Object.entries(skillPresets).map(([id, template]) => [id, onCast(id, template)]));

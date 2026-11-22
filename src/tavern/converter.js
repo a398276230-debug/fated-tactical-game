@@ -528,7 +528,7 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
       ...geometryFields(area),
     });
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
-  } else Object.assign(template, { armor: bound(r.armor, 0, 1000000, defense), defense });
+  } else Object.assign(template, { defense, ...(own(r, 'armor') ? { armor: bound(r.armor, 0, 1000000, 0) } : {}) });
   const item = { id: idBase, templateId, template, slot, name };
   attachAmmoPool(item, ammoCapacity(r));
   return item;
@@ -727,6 +727,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const notes = sink('effect', `/skills/${sid}`);
     const area = areaFields(r, notes, skillName);
     const costs = skillCosts(r.cost ?? r.消耗);
+    const mode = text(r.模式 ?? r.mode);
+    const passive = r.passive === true || mode.includes('被动') && !mode.includes('主动');
     const tag = tagEntries(r.tags ?? r.标签).map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
     const rawEffects = r.effects ?? r.效果;
     const power = r.power ?? taggedPower;
@@ -750,7 +752,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
-      quality: '普通', ap: bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
+      quality: '普通', ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(area.range, 0, 30, 1), shape: area.shape ?? 'single',
       target: area.target ?? 'enemy', ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),

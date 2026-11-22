@@ -11,8 +11,15 @@ const active = entity => entity.persistent || entity.durationType === 'persisten
 const idOf = ref => typeof ref === 'string' ? ref : ref?.id;
 const slots = ['attack', 'action', 'move', 'cast', 'reaction'];
 
-// Enumeration order is unit, nested status, equipped item, zone. Keys within
-// each kind are lexical (status keys are ordered within their owning unit).
+export function itemRules(template, item) {
+  return [...new Map([...(template?.rules ?? []), ...(item?.rules ?? [])].map(rule => [rule.id, rule])).values()];
+}
+
+export function skillCarrierVars(state, { id, ownerId }) {
+  return { ...own(state.skills, id)?.vars, ...own(state.vm?.skillVars, JSON.stringify([ownerId, id])) };
+}
+
+// Enumeration order is unit, nested status, held skill, item, zone.
 // References use table keys so VM owner writes reach the original instance.
 function carriers(state) {
   const units = entries(state.units);
@@ -29,11 +36,20 @@ function carriers(state) {
       if (active(entity)) result.push({ entity, carrier: { type: 'status', id, ownerId }, nativeOwnerId: ownerId });
     }
   }
+  for (const [ownerId, unit] of units) {
+    if (unit.fled) continue;
+    for (const id of [...new Set(unit.skills ?? [])].sort()) {
+      const skill = own(state.skills, id);
+      if (!skill) continue;
+      const carrier = { type: 'skill', id, ownerId };
+      result.push({ entity: { ...skill, vars: skillCarrierVars(state, carrier) }, carrier, nativeOwnerId: ownerId });
+    }
+  }
   for (const [id, entity] of entries(state.items)) {
     const nativeOwnerId = equippedBy.get(id) ?? entity.ownerId;
     const template = own(state.equipment, entity.templateId);
     if (own(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
-      result.push({ entity: { ...template, ...entity }, carrier: { type: 'item', id }, nativeOwnerId });
+      result.push({ entity: { ...template, ...entity, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: 'item', id }, nativeOwnerId });
     }
   }
   for (const [id, entity] of entries(state.zones)) {
@@ -64,6 +80,8 @@ function scopeFor(state, row, ownerId, event, queries) {
     vars: row.entity.vars,
     status: row.carrier.type === 'status' ? row.entity : undefined,
     zone: row.carrier.type === 'zone' ? row.entity : undefined,
+    skill: row.carrier.type === 'skill' ? row.entity : undefined,
+    item: row.carrier.type === 'item' ? row.entity : undefined,
     center: event.center, round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay,
     units: state.units,
     ...(state.grid && { distance: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
@@ -119,10 +137,13 @@ function templateKey({ entity, carrier }) {
  * Filters and battle-use counters are evaluated by the VM on frame entry.
  */
 export function collectRules(state, hook, event = {}, queries = {}) {
+  if (hook === 'active') return [];
   const unitIds = eventOwners(state, hook, event);
   if (!unitIds.length) return [];
   const candidates = [];
   for (const [carrierOrder, row] of carriers(state).entries()) {
+    // The death hook must still see the just-deceased owner's skills.
+    if (row.carrier.type === 'skill' && hook !== 'on_death' && !alive(own(state.units, row.nativeOwnerId))) continue;
     const rules = row.entity.rules?.filter(rule => rule.enabled !== false && rule.hook === hook);
     if (!rules?.length) continue;
     for (const ownerId of recipients(state, row, unitIds, event, queries)) {
@@ -166,6 +187,7 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
   const seen = new Set();
   if (own(state.units, unitId)) {
     for (const row of carriers(state)) {
+      if (row.carrier.type === 'skill' && !alive(own(state.units, row.nativeOwnerId))) continue;
       if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries).length) continue;
       const context = scopeFor(state, row, unitId, event, queries);
       for (const [index, mod] of row.entity.mods.entries()) {

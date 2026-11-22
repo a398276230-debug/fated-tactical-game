@@ -36,10 +36,12 @@ import './ai_session_tests.mjs';
 import './vm_expr_tests.mjs';
 import './vm_schema_tests.mjs';
 import './normalization_batches_tests.mjs';
+import './arena_handoff_tests.mjs';
 import './vm_pools_tests.mjs';
 import './vm_carriers_tests.mjs';
 import './vm_spatial_tests.mjs';
 import './vm_corpus_tests.mjs';
+import './skill_carrier_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };

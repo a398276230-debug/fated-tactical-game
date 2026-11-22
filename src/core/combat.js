@@ -8,7 +8,7 @@ import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitMo
 import { validateStatusModifiers } from './status_modifiers.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
-import { aggregateModifiers, applyStatMod } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, itemRules } from './vm-carriers.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial } from './vm-runtime.js';
@@ -76,7 +76,7 @@ export function switchableWeapons(state, unit) {
 const equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map(g => g.instance?.id)].filter(Boolean))].map(id => equipmentFor(state, id)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
 const effectiveStat = (state, unit, key) => modStat(state, unit, key, stat(unit, key));
 const resolveDC = (state, actor, dc) => evaluateExpr(dc, { self: actor, source: actor, round: state.round, turn: state.turn }) ?? 12;
-const finalDamageMultiplier = (unit, type) => values(unit.statuses).reduce((mult, status) =>
+export const statusFinalDamageMultiplier = (unit, type) => values(unit.statuses).reduce((mult, status) =>
   matchesDamageType(status, type) ? mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1) : mult, 1);
 const resourcePool = (state, unit, resource, instance) => {
   for (const item of equipped(state, unit)) {
@@ -299,7 +299,7 @@ function armorOf(state, unit, damageType, pierce = 0, context = {}) {
   const ctx = { ...context, target: context.attacker, damageType };
   const armor = Math.max(0, modStat(state, unit, 'defense', modStat(state, unit, 'armor', base, ctx), ctx));
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
-  const percent = typeof pierce === 'object' ? (pierce.percent ?? 0) : 0;
+  const percent = typeof pierce === 'object' ? clamp(pierce.percent ?? 0, -1, 1) : 0;
   const effective = Math.max(0, armor * (1 - percent) - flat);
   return typedArmor(damageType, effective);
 }
@@ -312,27 +312,24 @@ function damageTarget(state, target, sourceId, amount, damageType, label, option
     lethal: !(options.preserveLife || target.nonLethal || changes(target, 'preserveLife') || encounterNonlethal(state, source)) });
 }
 
-export function damageAfterFlatReduction(state, unit, amount, attacker, damageType, intercepting = false) {
+export function damageAfterFlatReduction(state, unit, amount, context) {
+  const { attacker, damageType } = context;
   if (damageType === 'true') return amount;
-  return Math.max(0, Math.floor(amount - modStat(state, unit, 'damageReductionFlat', 0, { target: attacker, damageType, intercepting })));
-}
-
-function mitigatedDamage(amount, formula, hit, attacker, type) {
-  return Math.max(0, hit
-    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker, type) : 1))
-    : Math.floor(amount * formula.multiplier) - Math.floor(formula.armor));
+  return Math.max(0, Math.floor(amount - modStat(state, unit, 'damageReductionFlat', 0, { ...context, target: attacker })));
 }
 
 export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const shatter = hit ? changes(unit, 'shatter', type) : 0;
   const vulnerability = changes(unit, 'vulnerability', type);
-  const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', changes(unit, 'reduction', type), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
+  const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
+  const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', changes(unit, 'reduction', type), defensiveContext), -1, 1);
+  const dr = type === 'true' ? 0 : clamp(modStat(state, unit, 'dr', 0, defensiveContext), -1, 1);
   const defense = ctx.ignoreArmor || type === 'true' || type === 'mental' ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2000 / (defense + 2000);
   const attributeReduction = state.ruleset === 'protocol' && type !== 'true'
     ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map(key => [key, effectiveStat(state, unit, key)])))
     : 0;
-  return { shatter, vulnerability, reduction, attributeReduction,
+  return { shatter, vulnerability, reduction, dr, attributeReduction,
     multiplier: (1 + shatter) * (1 + vulnerability) * (1 - reduction),
     armor: defense, armorMultiplier };
 }
@@ -520,7 +517,7 @@ const allCells = state => state.grid.flatMap((row, y) => row.map((_, x) => pos(x
 
 const modifierEvent = (unit, context) => {
   const { target, attacker, ...rest } = context;
-  return { ...rest, actorId: attacker?.id ?? unit?.id, targetId: target?.id ?? unit?.id };
+  return { ...rest, actorId: attacker?.id ?? rest.actorId ?? unit?.id, targetId: rest.targetId ?? target?.id ?? unit?.id };
 };
 function modStat(state, unit, name, base, context = {}) {
   const statName = { damage: 'damageMult', healing: 'healingMult', accuracy: 'checkBonus', initiative: 'initiativeFlat' }[name] ?? name;
@@ -532,10 +529,36 @@ function modCheck(state, unit, key, context = {}) {
   return key === 'advantage' ? modStat(state, unit, 'advantage', 0, { checkKind: 'attack', ...context }) : 0;
 }
 
+const activeRule = rule => rule.hook === 'active' && rule.enabled !== false;
+export function isPassiveSkill(skill) {
+  if (!skill || skill.rules?.some(activeRule)) return false;
+  if (skill.passive !== undefined) return skill.passive;
+  // Previously exported skills did not carry a mode. Infer only from hooks,
+  // never from an empty rules array (unstandardized active placeholders).
+  return skill.damage == null && skill.heal == null && Boolean(skill.rules?.some(rule => rule.hook !== 'active'));
+}
+
 export function equippedActiveSkills(state, unit) {
   if (!unit) return [];
-  return equipped(state, unit).flatMap(({ instance, template }) => (template?.skills ?? [])
-    .filter(id => tableEntry(state.skills, id)).map(id => [id, state.skills[id]]));
+  const ids = new Set([unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...(unit.gear ?? [])].filter(Boolean));
+  const result = new Map();
+  for (const id of ids) {
+    const { instance, template } = equipmentFor(state, id);
+    if (!template || (template.boundTo && template.boundTo !== unit.id)) continue;
+    for (const skillId of template.skills ?? []) {
+      const skill = tableEntry(state.skills, skillId);
+      if (skill && !isPassiveSkill(skill) && !result.has(skillId)) result.set(skillId, skill);
+    }
+    for (const rule of itemRules(template, instance).filter(activeRule)) {
+      result.set(`equip:${id}:${rule.id}`, { name: rule.label || `${template.name}·${rule.id}`, ap: 0,
+        slot: 'action', range: 0, shape: 'single', target: 'self', rules: [rule], itemId: id });
+    }
+  }
+  return [...result];
+}
+
+export function actionSkill(state, unit, id) {
+  return tableEntry(state.skills, id) ?? new Map(equippedActiveSkills(state, unit)).get(id);
 }
 export const syncEquipmentEffects = initializeVMWorld;
 
@@ -583,21 +606,22 @@ export function skillAvailability(state, actor, skill, id) {
   }
   return { usesLeft: Number.isFinite(usesLeft) ? usesLeft : null, cooldownRemaining };
 }
-function actorCost(template) {
+function actorCost(state, unit, template, skillId) {
   const cost = template.resourceCost;
-  return { hp: cost?.hp ?? 0, mp: cost?.mp ?? template.mp ?? 0, sp: cost?.sp ?? template.sp ?? 0 };
+  const mult = skillId === undefined ? 1 : Math.max(0, modStat(state, unit, 'costMult', 1, { actionType: 'skill', skillId }));
+  const scaled = amount => Math.floor(amount * mult);
+  return { hp: scaled(cost?.hp ?? 0), mp: scaled(cost?.mp ?? template.mp ?? 0), sp: scaled(cost?.sp ?? template.sp ?? 0) };
 }
 export const insufficientHP = 'HP 不足，无法施放';
 
 // Split mode assigns an AP to each slot. Two-AP actions occupy both slots.
-function paymentError(state, unit, ap, slot, template = {}) {
+function paymentError(state, unit, ap, slot, template, { hp, mp, sp }, skill = false) {
   const { locks } = aggregateModifiers(state, unit.id);
-  if ((ap === 2 && (locks.attack || locks.action)) || locks[slot] || (template.rules && locks.cast)) return '对应行动槽已锁定';
-  if (unit.ap < ap) return `需要 ${ap} AP`;
-  if (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot]) {
+  if ((ap === 2 && (locks.attack || locks.action)) || locks[slot] || (skill && (locks.cast || (ap === 0 && locks.action)))) return '对应行动槽已锁定';
+  if (ap > 0 && unit.ap < ap) return `需要 ${ap} AP`;
+  if (ap > 0 && (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot])) {
     return '本回合对应的行动槽已使用';
   }
-  const {hp,mp,sp} = actorCost(template);
   if (hp > 0 && hp >= unit.hp) return insufficientHP;
   if (unit.mp < mp) return '魔力不足';
   if (unit.sp < sp) return '体力不足';
@@ -807,18 +831,26 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
   const protocolInitial = state.ruleset === 'protocol' && template.damage
     ? attributeBase() + Number(template.power ?? 20) + Number(weapon?.template?.attack ?? 0) : null;
-  const armorPierce = { flat: modStat(state, actor, 'armorPierce', template.armorPierce ?? 0, { ...strike, damageType }), percent: rules.armorPenetration ?? 0 };
+  const armorPierce = { flat: modStat(state, actor, 'armorPierce', template.armorPierce ?? 0, { ...strike, damageType }),
+    percent: clamp(modStat(state, actor, 'armorPiercePercent', rules.armorPenetration ?? 0, { ...strike, damageType }), -1, 1) };
   const recipient = cover || !hasStrikeDamage(template) ? target : guardFor(state, target) ?? target;
   const reduction = cover ? { multiplier: 1, armor: target.armor ?? 0 }
-    : mitigation(state, recipient, damageType, true, armorPierce, { attacker: actor, intercepting: recipient !== target });
+    : mitigation(state, recipient, damageType, true, armorPierce,
+      { ...strike, attacker: actor, targetId: recipient.id, intercepting: recipient !== target });
   const absorb = cover ? 0 : shieldTotal(recipient);
   const dice = template.damage == null ? null : diceFormula(state, template.damage, actor);
+  const strikeEvent = { ...strike, damageType };
+  const outgoing = aggregateModifiers(state, actor.id, modifierEvent(actor, strikeEvent)).stats;
+  const flatDamage = applyStatMod(0, outgoing.damageFlat);
+  const flatReduction = cover || damageType === 'true' ? 0 : modStat(state, recipient, 'damageReductionFlat', 0,
+    { ...strikeEvent, attacker: actor, target: recipient, intercepting: recipient !== target });
+  const statusFinal = statusFinalDamageMultiplier(actor, damageType);
   const shown = (raw, factor = 1) => {
-    const ctx = { ...strike, damageType };
-    const scaled = Math.floor(modStat(state, actor, 'damage', raw * multiplier * factor, ctx));
+    const scaled = Math.floor(applyStatMod(raw * multiplier * factor + flatDamage, outgoing.damageMult));
     if (cover) return Math.max(0, scaled - (target.armor ?? 0));
-    const modified = mitigatedDamage(scaled, reduction, true, actor, damageType);
-    return Math.max(0, damageAfterFlatReduction(state, recipient, modified, actor, damageType, recipient !== target) - absorb);
+    const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction) * statusFinal));
+    const mitigated = Math.max(0, Math.floor(modified - flatReduction)) * (1 - reduction.dr);
+    return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) - absorb);
   };
   const flat = protocolInitial !== null;
   const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice, critical)).map(n => shown(n, factor));
@@ -896,7 +928,8 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   const unit = currentUnit(state);
   if (!alive(unit) && action?.type !== 'end') return fail('当前单位不能行动');
   if (!action || typeof action !== 'object' || Array.isArray(action)) return fail('动作格式错误');
-  const { type, x, y, skillId } = action;
+  const { type, skillId } = action;
+  let { x, y } = action;
   if (!Object.keys(action).every(field => (type === 'switch_weapon' && field === 'itemId') || ['type', 'x', 'y', 'skillId', 'bonusDice', 'intent', 'nonLethal', 'maneuver'].includes(field))) return fail('动作含未知字段');
   if (action.bonusDice !== undefined && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail('奖励骰储备不足');
   if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
@@ -906,6 +939,8 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     if (!(unit.inventory?.[skillId] > 0)) return fail('背包物品数量不足');
     if (!skill.damage && !skill.heal && !skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false && rule.program.length)) return fail('背包物品尚无可执行效果，请先标准化');
   } else if (type === 'skill' && (!skill || (!equipmentSkill && !unit.skills.includes(skillId)))) return fail('单位没有此技能');
+  if (isPassiveSkill(skill)) return fail('被动技能不能主动施放');
+  if (skill?.itemId && x === undefined && y === undefined) ({ x, y } = unit);
   const availability = skill ? skillAvailability(limitClock, unit, skill, skillId) : {};
   if (availability.usesLeft === 0) return fail('技能次数已用尽', availability);
   if (availability.cooldownRemaining > 0) return fail(`技能冷却中，还需 ${availability.cooldownRemaining} 轮`, availability);
@@ -924,12 +959,13 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   const detonate = item?.kind === 'barrel';
   const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
   const ap = drawFromBag ? 1 : cost.ap, slot = ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
-  const common = { ok: true, ap, cost: ap, slot, ...actorCost(cost), ...availability };
+  const resourceCosts = actorCost(state, unit, cost, type === 'skill' ? skillId : undefined);
+  const common = { ok: true, ap, cost: ap, slot, ...resourceCosts, ...availability };
   if (type === 'end') return common;
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
     ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
   if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
-  const cannotPay = paymentError(state, unit, ap, slot, cost);
+  const cannotPay = paymentError(state, unit, ap, slot, cost, resourceCosts, type === 'skill');
   if (cannotPay) return fail(cannotPay, { ap, ...availability });
   const center = unplaced ? undefined : pos(x, y);
   const weapon = weaponInfo(state, unit);
@@ -1011,9 +1047,11 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }]
       : living(state).filter(u => keyset.has(key(u.x, u.y)) && distance(state, center, u) <= 1.5 + 1e-9).map(u => {
         const guard = guardFor(state, u) ?? u;
-        const formula = mitigation(state, guard, 'energy', true, 0, { attacker:unit, intercepting:guard !== u });
-        const modified = mitigatedDamage(item.damage ?? 12, formula, true, unit, 'energy');
-        const damage = Math.max(0, damageAfterFlatReduction(state, guard, modified, unit, 'energy', guard !== u) - shieldTotal(guard));
+        const context = { attacker: unit, targetId: guard.id, damageType: 'energy', intercepting: guard !== u };
+        const formula = mitigation(state, guard, 'energy', true, 0, context);
+        const modified = Math.floor((item.damage ?? 12) * formula.multiplier * formula.armorMultiplier
+          * (1 - formula.attributeReduction) * statusFinalDamageMultiplier(unit, 'energy'));
+        const damage = Math.max(0, Math.floor(damageAfterFlatReduction(state, guard, modified, context) * (1 - formula.dr)) - shieldTotal(guard));
         return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y,
           damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
       });
@@ -1140,6 +1178,13 @@ function changeCounter(state, actor, weapon, effect, resource, after) {
     { instanceId: weapon.instance.id, counterKey: resource, before, after });
 }
 
+export function paySkillEquipmentCost(state, actor, skill) {
+  const { resource, amount: cost } = skill?.resourceCost ?? {};
+  if (!resource || !cost) return;
+  const pool = resourcePool(state, actor, resource);
+  if (pool) changeCounter(state, actor, pool.item, pool.effect, resource, pool.amount - cost);
+}
+
 function spendAmmo(state, actor, weapon, ammo) {
   const pool = getPool(state, weapon.instance.id, ammo.resource, 'item');
   if (pool && pool.current > 0) changeCounter(state, actor, weapon, ammo, ammo.resource, pool.current - 1);
@@ -1234,7 +1279,7 @@ function knockback(state, actor, target, effect) {
 
 export function retargetStrike(state, actor, action, target, plan) {
   const weapon = action.type === 'attack' ? weaponInfo(state, actor) : null;
-  const template = weapon?.template ?? tableEntry(state.skills, action.skillId) ?? normalAttack;
+  const template = weapon?.template ?? actionSkill(state, actor, action.skillId) ?? normalAttack;
   return { ...targetProfile(state, actor, target, target, template, { weapon, intent: plan.intent }), nonLethal: plan.nonLethal ?? false };
 }
 
@@ -1245,7 +1290,7 @@ export function continueStrike({ state, frame, host }) {
   const weapon = frame.weapon ?? (action.type === 'attack' ? weaponInfo(state, actor) : null);
   const template = action.type === 'shield_bash'
     ? { name: '盾击', range: 1, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: shieldBashRules }
-    : weapon ? weapon.template : tableEntry(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
+    : weapon ? weapon.template : actionSkill(state, actor, action.skillId);
   if (!alive(actor) || !template) { state.vm.stack.pop(); return; }
   if (!frame.started) {
     frame.started = true;

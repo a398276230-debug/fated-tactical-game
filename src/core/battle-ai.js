@@ -1,4 +1,4 @@
-import { applyAction, equippedActiveSkills, preview, skillAvailability, switchableWeapons } from './combat.js';
+import { applyAction, equippedActiveSkills, isPassiveSkill, preview, skillAvailability, switchableWeapons } from './combat.js';
 import { elevation, atBattleEdge } from './spatial.js';
 const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user 一方的对手，只控制当前连续行动的敌方角色，不替玩家做决定。
 行动：每回合每个角色有1个攻击槽和1个动作槽。移动、装填、互动、换装、架势和逃跑使用动作槽，普通攻击、技能攻击、压制和解除压制使用攻击槽，重型技能可同时使用两槽。一个动作只能使用当前行动者自己的槽位。动作、技能和背包物品的实际 ap、slot、资源、次数与冷却以输入数据为准。
@@ -12,18 +12,17 @@ const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user
 
 const own = (o, k) => o != null && Object.hasOwn(o, k);
 const copy = value => structuredClone(value);
-function compactSkill(state, unit, id) {
-  const s = state.skills[id];
-  if (!s) return null;
+function compactSkill(state, unit, id, s) {
+  if (!s || isPassiveSkill(s)) return null;
   return { id, name: s.name, slot: s.slot, ap: s.ap, range: s.range, shape: s.shape, target: s.target,
     radius: s.radius, innerRadius: s.innerRadius, width: s.width, angle: s.angle,
     power: s.power, damageType: s.damageType, damage: s.damage, rules: s.rules, mods: s.mods,
     usage: skillAvailability(state, unit, s, id) };
 }
 function unitView(state, unit) {
-  const skills = [...new Set([...(unit.skills ?? []), ...Object.keys(unit.inventory ?? {}), ...Object.keys(state.skills).filter(id => state.skills[id]?.backpackItem),
-    ...equippedActiveSkills(state, unit).map(([id]) => id)])]
-    .map(id => compactSkill(state, unit, id)).filter(Boolean);
+  const ids = [...(unit.skills ?? []), ...Object.keys(unit.inventory ?? {}), ...Object.keys(state.skills).filter(id => state.skills[id]?.backpackItem)];
+  const templates = new Map([...ids.map(id => [id, state.skills[id]]), ...equippedActiveSkills(state, unit)]);
+  const skills = [...templates].map(([id, template]) => compactSkill(state, unit, id, template)).filter(Boolean);
   const equipment = {};
   for (const instanceId of [...new Set([unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...(unit.gear ?? [])].filter(Boolean))]) {
     const instance = state.items[instanceId];

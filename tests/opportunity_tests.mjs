@@ -163,7 +163,7 @@ test('knockback and teleport bypass reactions even when leaving melee threat', (
   const s = state(['......', '......', '......'], [enemy('caster', 0, 1, { ap: 2, skills: ['push'] }),
     mover(1, 1), unit('watch', 'red', 1, 2)]);
   s.skills.push = { name: 'push', ap: 1, slot: 'attack', range: 1, shape: 'single', target: 'enemy', rules: [
-    { id: 'push', hook: 'after_hit', program: [{ op: 'move', target: 'target', mode: 'push', distance: 3 }] },
+    { id: 'push', hook: 'active', program: [{ op: 'move', target: 'target', mode: 'push', distance: 3 }] },
   ] };
   const push = applyAction(s, { type: 'skill', skillId: 'push', x: 1, y: 1 });
   assert.equal(s.units.mover.x, 4);

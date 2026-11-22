@@ -5,7 +5,7 @@ import { validExpr } from '../core/formula.js';
 
 import { MORALE, moraleLabels } from '../core/combat_protocol.js';
 import { timeOfDay } from '../core/battle_time.js';
-import { validVmOpcode, validVmRule, validVmStatMod, validVmTag, vmHooks } from '../core/vm-schema.js';
+import { validVmOpcode, validVmRule, vmStatModError, validVmTag, vmHooks } from '../core/vm-schema.js';
 import { validVmState } from '../core/vm-runtime.js';
 
 function validateRules(rules, state) {
@@ -65,7 +65,11 @@ function carrierFieldsValue(value, state, resolved = false) {
   checkOptional(value, 'tier', tier => int(tier, 1, 7));
   if (own(value, 'vars')) table(value.vars, entry => requireThat(resolved ? jsonTree(entry)
     : typeof entry === 'boolean' || numericExpr(entry), 'VM 变量'));
-  if (own(value, 'mods')) list(value.mods, 200, mod => validVmStatMod(mod), 'VM 修饰');
+  if (own(value, 'mods')) list(value.mods, 200, mod => {
+    const error = vmStatModError(mod);
+    requireThat(!error, error);
+    return true;
+  }, 'VM 修饰');
   if (own(value, 'rules')) validateRules(value.rules, state);
 }
 function poolDefinitions(value) {
@@ -176,7 +180,7 @@ export function equipmentTemplate(v, state) {
   if (own(v, 'pools')) poolDefinitions(v.pools);
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', ...carrierFields, 'pools']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', 'passive', ...carrierFields, 'pools']);
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
   checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
@@ -184,6 +188,7 @@ export function skillTemplate(v, state) {
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);
   checkOptional(v, 'initiativeBonus', value => int(value, -100, 100));
+  checkOptional(v, 'passive', value => typeof value === 'boolean');
   requireThat(text(v.name) && int(v.ap, 0, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 30)
     && ['single', 'circle', 'ring', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(v.target), '技能');
   checkOptional(v, 'power', x => int(x, 0, 1000000000));

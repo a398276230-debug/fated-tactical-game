@@ -111,8 +111,8 @@ for (const [field, [meaning, read]] of Object.entries(entityFamilies)) {
     return entity == null ? undefined : read(context, entity, key);
   });
 }
-for (const scope of ['status', 'zone']) {
-  dynamicFamily(`${scope}.vars`, `${scope === 'status' ? '状态' : '区域'}实例的变量`, (context, id) => path(context, scope, 'vars', id));
+for (const [scope, label] of Object.entries({ status: '状态', zone: '区域', skill: '持有技能', item: '装备' })) {
+  dynamicFamily(`${scope}.vars`, `${label}实例的变量`, (context, id) => path(context, scope, 'vars', id));
 }
 for (const [scope, fields] of Object.entries({ status: statusFields, tape: tapeFields })) {
   for (const [field, description] of Object.entries(fields)) {
@@ -133,8 +133,10 @@ register('weapon.attack', '事件武器模板的攻击力', context => own(callb
 register('weapon.range', '事件武器模板的基础射程', context => own(callback(context, 'weapon'), 'range'), true);
 for (const [name, description] of Object.entries({
   power: '技能威力', dealt: '本次实际扣除的 HP', absorbed: '本次被护盾吸收的伤害',
-  previous: '当前效果链上一步实际数值', healing: '本次治疗量'
+  previous: '当前效果链上一步实际数值', healing: '本次治疗量', checkKind: '检定类型（如 attack/save/contest）'
 })) register(`event.${name}`, description, context => path(context, 'event', name), true);
+// Existing authored check filters used event.kind before checkKind was documented.
+register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));
 family('event.<field>', /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, '活跃事件的自有标量字段', (context, key) => path(context, 'event', key));
 
 function readDistance(context, from, to) {

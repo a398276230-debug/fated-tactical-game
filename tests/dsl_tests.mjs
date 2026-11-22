@@ -170,6 +170,90 @@ test('qualified damage reduction affects only its type and shields still absorb 
   }
 });
 
+test('VM modifiers reject percentage-point and multiplier field mistakes', () => {
+  for (const [mod, error] of [
+    [{ stat: 'damageReduction', additivePercent: 0.3 }, /基值为 0.*flat.*0.3/],
+    [{ stat: 'armorPiercePercent', flat: 20 }, /基值为 0.*flat.*-1\.\.1/],
+    [{ stat: 'damageMult', flat: 0.3 }, /基值为 1.*mult/],
+  ]) {
+    const { state, enemy } = battle();
+    enemy.mods = [mod];
+    assert.throws(() => validateState(state), error);
+  }
+});
+
+test('native weapon and VM damage share flat and separate percentage mitigation', () => {
+  const mods = [
+    { stat: 'damageReduction', flat: 0.3 },
+    { stat: 'damageReductionFlat', flat: 8 },
+    { stat: 'dr', flat: 0.15, when: 'event.targetId == self.id && attacker.id != self.id' },
+  ];
+  const reduced = raw => Math.floor(Math.max(0, Math.floor(raw * 0.7 - 8)) * 0.85);
+  for (const damageType of ['physical', 'true']) {
+    const fixture = battle();
+    const { state, actor, enemy } = fixture;
+    state.ruleset = 'sandbox';
+    actor.skills = [];
+    enemy.skills = [];
+    enemy.armor = 0;
+    const weapon = state.equipment[state.items[actor.mainHand ?? actor.weapon].templateId];
+    Object.assign(weapon, { range: 3, damage: { count: 0, sides: 0, bonus: 100, type: damageType } });
+    actor.rules = [{ id: 'guaranteed-strike', hook: 'before_check', program: [{ op: 'mutate_event', patch: { forceOutcome: 'hit' } }] }];
+    const attack = { type: 'attack', x: enemy.x, y: enemy.y };
+    const baseline = preview(state, attack).targets[0].damage[0];
+    enemy.mods = mods;
+    const spell = learn(fixture, 'typed-mitigation', [{ op: 'damage', target: 'target', amount: 100, damageType }]);
+    validateState(state);
+    const expected = damageType === 'physical' ? reduced : raw => raw;
+    assert.equal(preview(state, attack).targets[0].damage[0], expected(baseline));
+    assert.equal(preview(state, spell).targets[0].damage[0], expected(100));
+    const before = enemy.hp;
+    applyAction(state, attack);
+    const { dice, ratingMultiplier, attackMultiplier, intent, stanceScale, offHandScale } = state.logs.findLast(entry => entry.type === 'damage').detail;
+    assert.equal(before - enemy.hp, expected(dice.value * ratingMultiplier * attackMultiplier * intent.multiplier * stanceScale * offHandScale));
+    const then = enemy.hp;
+    applyAction(state, spell);
+    assert.equal(then - enemy.hp, expected(100));
+  }
+});
+
+test('percentage piercing uses decimal fractions and clamps dynamic values on both damage paths', () => {
+  for (const [flat, effectivePercent] of [[0.2, 0.2], ['self.maxHp', 1]]) {
+    const fixture = battle();
+    const { state, actor, enemy } = fixture;
+    state.ruleset = 'sandbox';
+    actor.skills = [];
+    enemy.skills = [];
+    enemy.armor = 2000;
+    state.equipment[state.items[actor.mainHand ?? actor.weapon].templateId].range = 3;
+    actor.mods = [{ stat: 'armorPiercePercent', flat }];
+    const attack = { type: 'attack', x: enemy.x, y: enemy.y };
+    const plan = preview(state, attack);
+    assert.ok(plan.ok, plan.error);
+    assert.equal(plan.targets[0].armorPierce.percent, Math.min(1, (plan.targets[0].stanceRules.armorPenetration ?? 0) + effectivePercent));
+    const spell = learn(fixture, 'piercing', [{ op: 'damage', target: 'target', amount: 180, damageType: 'physical' }]);
+    validateState(state);
+    const before = enemy.hp;
+    applyAction(state, spell);
+    assert.equal(before - enemy.hp, Math.floor(180 * (2000 / (2000 + 2000 * (1 - effectivePercent)))));
+  }
+});
+
+test('costMult reduces shown, required, and paid skill resources but not AP', () => {
+  const fixture = battle();
+  const { state, actor } = fixture;
+  actor.mods = [{ stat: 'costMult', mult: 0.7, when: "event.skillId == 'discounted'" }];
+  updatePoolCurrent(state, getPool(state, actor.id, 'mp').id, 'set', 7);
+  const cast = learn(fixture, 'discounted', [], { target: 'self', range: 0, mp: 10 });
+  const plan = preview(state, cast);
+  assert.equal(plan.ok, true, plan.error);
+  assert.equal(plan.mp, 7);
+  assert.equal(plan.ap, 1);
+  applyAction(state, cast);
+  assert.equal(actor.mp, 0);
+  assert.equal(actor.ap, 1);
+});
+
 test('an area rule damages each enemy it selects once and spends one use', () => {
   const fixture = battle();
   const { state, actor, enemy } = fixture;

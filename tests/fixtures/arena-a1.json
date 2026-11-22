@@ -1,0 +1,353 @@
+{
+  "skills": {
+    "skill-a1-7t47mv-16": {
+      "name": "三极绝狱的统御",
+      "quality": "普通",
+      "ap": 1,
+      "slot": "attack",
+      "range": 1,
+      "shape": "single",
+      "target": "self",
+      "rules": [
+        {
+          "id": "winter_dominion_boost",
+          "hook": "before_check",
+          "filter": "self.id == 'a1' && event.kind == 'save' && (event.statusId == 'ice_gnaw' || event.statusId == 'frozen_solid')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "winter_dominion_resist",
+          "hook": "before_check",
+          "filter": "target.id == 'a1' && event.kind == 'save' && (event.statusId == 'ice_gnaw' || event.statusId == 'frozen_solid')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "winter_dominion_immune_amp",
+          "hook": "before_commit",
+          "filter": "attacker.id == 'a1' && event.commitKind == 'damage' && (is_immune(target, 'ice_gnaw') || is_immune(target, 'frozen_solid'))",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "floor(event.finalAmount * 1.3)"
+              }
+            }
+          ]
+        },
+        {
+          "id": "night_dominion_boost",
+          "hook": "before_check",
+          "filter": "self.id == 'a1' && event.kind == 'save' && (event.statusId == 'night_gnaw' || event.statusId == 'night_press')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "night_dominion_resist",
+          "hook": "before_check",
+          "filter": "target.id == 'a1' && event.kind == 'save' && (event.statusId == 'night_gnaw' || event.statusId == 'night_press')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "night_dominion_immune_amp",
+          "hook": "before_commit",
+          "filter": "attacker.id == 'a1' && event.commitKind == 'damage' && (is_immune(target, 'night_gnaw') || is_immune(target, 'night_press'))",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "floor(event.finalAmount * 1.3)"
+              }
+            }
+          ]
+        },
+        {
+          "id": "dream_dominion_boost",
+          "hook": "before_check",
+          "filter": "self.id == 'a1' && event.kind == 'save' && (event.statusId == 'nightmare_gnaw' || event.statusId == 'dread')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "dream_dominion_resist",
+          "hook": "before_check",
+          "filter": "target.id == 'a1' && event.kind == 'save' && (event.statusId == 'nightmare_gnaw' || event.statusId == 'dread')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "dream_dominion_immune_amp",
+          "hook": "before_commit",
+          "filter": "attacker.id == 'a1' && event.commitKind == 'damage' && (is_immune(target, 'nightmare_gnaw') || is_immune(target, 'dread'))",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "floor(event.finalAmount * 1.3)"
+              }
+            }
+          ]
+        }
+      ],
+      "mods": [
+        {
+          "stat": "checkBonus",
+          "flat": 6
+        },
+        {
+          "stat": "initiativeFlat",
+          "flat": 8
+        },
+        {
+          "stat": "checkBonus",
+          "flat": 10,
+          "checkKind": "attack"
+        },
+        {
+          "stat": "checkBonus",
+          "flat": 10,
+          "checkKind": "dodge"
+        },
+        {
+          "stat": "checkBonus",
+          "flat": 8,
+          "checkKind": "status"
+        }
+      ],
+      "pools": {}
+    },
+    "skill-a1-7t47mv-17": {
+      "name": "千年战帅的本能",
+      "quality": "普通",
+      "ap": 1,
+      "slot": "attack",
+      "range": 1,
+      "shape": "single",
+      "target": "self",
+      "rules": [
+        {
+          "id": "mind_pierce_boost",
+          "hook": "before_check",
+          "filter": "self.id == 'a1' && event.kind == 'save' && event.statusId == 'chaos_confusion'",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "mind_pierce_resist",
+          "hook": "before_check",
+          "filter": "target.id == 'a1' && event.kind == 'save' && event.statusId == 'chaos_confusion'",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "bonusDelta": 10
+              }
+            }
+          ]
+        },
+        {
+          "id": "mind_pierce_immune_amp",
+          "hook": "before_commit",
+          "filter": "attacker.id == 'a1' && event.commitKind == 'damage' && is_immune(target, 'chaos_confusion')",
+          "priority": 40,
+          "program": [
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "floor(event.finalAmount * 1.3)"
+              }
+            }
+          ]
+        },
+        {
+          "id": "veteran_instinct_dodge",
+          "hook": "before_check",
+          "filter": "target.id == 'a1' && event.kind == 'attack' && attacker.team != self.team",
+          "priority": 70,
+          "program": [
+            {
+              "op": "check",
+              "kind": "contest",
+              "stat": "agi",
+              "defenderStat": "agi",
+              "onFail": [
+                {
+                  "op": "mutate_event",
+                  "patch": {
+                    "forceOutcome": "miss"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "veteran_instinct_redirect",
+          "hook": "before_commit",
+          "filter": "attacker.id == 'a1' && (event.commitKind == 'damage' || event.commitKind == 'heal')",
+          "priority": 60,
+          "program": [
+            {
+              "op": "ask",
+              "chooser": "self",
+              "kind": "number",
+              "prompt": "选择按原方向生效的数值",
+              "out": "committedAmount",
+              "aiPolicy": "max",
+              "min": 0,
+              "max": "event.finalAmount"
+            },
+            {
+              "op": "let",
+              "name": "soulAshGain",
+              "value": "floor(abs(event.finalAmount - vars.committedAmount))"
+            },
+            {
+              "op": "mutate_event",
+              "patch": {
+                "finalAmount": "vars.committedAmount"
+              }
+            },
+            {
+              "op": "apply_status",
+              "target": "self",
+              "statusId": "pain_echo",
+              "turns": 6,
+              "stacks": "vars.soulAshGain",
+              "stackMode": "stack"
+            }
+          ]
+        }
+      ],
+      "mods": [
+        {
+          "stat": "checkBonus",
+          "flat": 6
+        },
+        {
+          "stat": "initiativeFlat",
+          "flat": 8
+        },
+        {
+          "stat": "checkBonus",
+          "flat": 10,
+          "checkKind": "attack"
+        },
+        {
+          "stat": "checkBonus",
+          "flat": 10,
+          "checkKind": "dodge"
+        },
+        {
+          "stat": "checkBonus",
+          "flat": 8,
+          "checkKind": "status"
+        }
+      ],
+      "pools": {}
+    }
+  },
+  "item": {
+    "id": "item-2-a1-7t47mv-0",
+    "templateId": "template-item-2-a1-7t47mv-0",
+    "pools": {
+      "void_step": "pool_item_item-2-a1-7t47mv-0_void_step"
+    }
+  },
+  "equipment": {
+    "name": "星弧裂空之戒",
+    "kind": "accessory",
+    "rules": [
+      {
+        "id": "void_step",
+        "hook": "active",
+        "label": "虚空折跃",
+        "usesPerTurn": 1,
+        "program": [
+          {
+            "op": "ask",
+            "chooser": "self",
+            "kind": "cell",
+            "prompt": "选择折跃落点",
+            "out": "voidStepLanding",
+            "aiPolicy": "safest_cell",
+            "select": {
+              "from": "cells",
+              "where": "distance(self, candidate) <= 6"
+            }
+          },
+          {
+            "op": "move",
+            "target": "self",
+            "mode": "teleport",
+            "to": "vars.voidStepLanding"
+          }
+        ]
+      }
+    ],
+    "mods": [],
+    "pools": {
+      "void_step": {
+        "cap": 1,
+        "initial": 0
+      }
+    },
+    "armor": 2500,
+    "defense": 2500
+  }
+}

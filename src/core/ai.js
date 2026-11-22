@@ -1,4 +1,4 @@
-import { currentUnit, equippedActiveSkills, getStatusTemplate, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
@@ -40,7 +40,7 @@ export function tactics(state, actor, action, plan) {
     const sign = target.team === actor.team ? 1 : -1;
     score += sign * (heal * .9 + Math.min(shieldGain, target.maxHp) * .5);
   }
-  const skill = action.type === 'skill' ? state.skills[action.skillId] : null;
+  const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
   const programs = (skill?.rules ?? []).filter(rule => rule.enabled !== false && ['active', 'after_hit'].includes(rule.hook))
     .flatMap(rule => rule.program).filter(op => op.enabled !== false);
   for (const op of programs) {
@@ -81,7 +81,11 @@ export function aimedOptions(state, actor, attacksOnly = false) {
   const templates = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...items.map(([id]) => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
   for (const skillId of [...templates.keys()].sort()) {
     const skill = templates.get(skillId);
-    if (!skill || attacksOnly && (skill.slot !== 'attack' || skill.ap > 1)) continue;
+    if (!skill || isPassiveSkill(skill) || attacksOnly && (skill.slot !== 'attack' || skill.ap > 1)) continue;
+    // The greedy planner cannot guarantee progress on a free skill unless it
+    // exhausts a budget. Filters could skip consumption, so do not rely on them.
+    if (skill.ap === 0 && !skill.backpackItem && !skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false
+      && (rule.filter === undefined || rule.filter === true) && (rule.usesPerTurn || rule.usesPerBattle || rule.cooldownTurns))) continue;
     const query = preview(state, { type: 'skill', skillId });
     if (!query.ok) continue;
     let candidates;

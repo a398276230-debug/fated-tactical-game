@@ -223,9 +223,10 @@ export function createGameAPI() {
       if (!own(s.units, unitId)) return null;
       const unit = s.units[unitId];
       const skills = [...unit.skills, ...Object.keys(unit.inventory ?? {}).filter(id => s.skills[id]?.backpackItem)];
-      const templates = [...skills.map(id => [id, s.skills[id]]), ...equippedActiveSkills(s, unit)];
+      const equippedSkills = equippedActiveSkills(s, unit).map(([id, template]) => ({ id, ...template }));
+      const templates = [...skills.map(id => [id, s.skills[id]]), ...equippedSkills.map(template => [template.id, template])];
       const skillUsage = Object.fromEntries(templates.filter(([, template]) => template).map(([id, template]) => [id, skillAvailability(s, unit, template, id)]));
-      return copy({ ...unit, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id, i, all) => all.indexOf(id) === i).map(id => ({
+      return copy({ ...unit, equippedSkills, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id, i, all) => all.indexOf(id) === i).map(id => ({
         ...s.items[id], template: s.equipment[s.items[id].templateId],
       })) });
     },

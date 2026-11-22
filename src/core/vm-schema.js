@@ -90,12 +90,17 @@ const controlPolicy = object({
 const stat = enumOf(...attribute.enum, 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
   'checkBonus', 'dcBonus', 'resistBonus', 'advantage', 'initiativeFlat');
+const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent');
+const multiplierStats = enumOf('damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
+const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
   stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: text,
   locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless'), 1),
   controlPolicy, when: booleanExpr,
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
-when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')));
+when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),
+when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additivePercent') }),
+when('stat', multiplierStats, { not: needs('flat') }));
 const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
 const area = object({
@@ -257,5 +262,16 @@ export const validVmProgram = (value, options = {}) => valid(value, 'program', o
 export const validVmRule = (value, options = {}) => valid(value, 'rule', options);
 export const validVmSelector = (value, options = {}) => valid(value, 'selector', options);
 export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options);
+export function vmStatModError(mod) {
+  if (validVmStatMod(mod)) return undefined;
+  if (mod && ratioStats.enum.includes(mod.stat) && (Object.hasOwn(mod, 'additivePercent')
+    || typeof mod.flat === 'number' && !matches(mod.flat, ratioFlat, {}))) {
+    return `VM 修饰 ${mod.stat} 基值为 0，不能用 additivePercent；请用 flat 填写 -1..1 的小数（如 0.3 代表 30%）或数值表达式`;
+  }
+  if (mod && multiplierStats.enum.includes(mod.stat) && Object.hasOwn(mod, 'flat')) {
+    return `VM 修饰 ${mod.stat} 基值为 1，不能用 flat；请用 mult（如 1.3）或 additivePercent（如 0.3）`;
+  }
+  return 'VM 修饰';
+}
 export const validVmTargetRef = (value, options = {}) => valid(value, 'targetRef', options);
 export const validVmTag = value => valid(value, 'tag', {});

@@ -1,4 +1,4 @@
-import { continueStrike, currentUnit, equippedActiveSkills, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP } from './combat.js';
+import { actionSkill, continueStrike, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules } from './vm-carriers.js';
 import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
@@ -96,9 +96,14 @@ export const vmHost = {
   rules(state, hook, event) {
     const entries = collectRules(state, hook, event);
     const actor = own(state.units, event.actorId);
-    const skill = own(state.skills, event.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(event.skillId);
-    return [...entries, ...(event.rules ?? skill?.rules ?? []).filter(rule => rule.hook === hook).map(rule => ({
-      rule, ownerId: event.actorId, sourceId: event.actorId, carrierOrder: -1, useKey: JSON.stringify([event.actorId, event.skillId, rule.id]),
+    const skill = actionSkill(state, actor, event.skillId);
+    const isHeld = actor?.skills?.includes(event.skillId);
+    const actionRules = hook === 'active' || !isHeld ? skill?.rules : undefined;
+    const carrier = skill?.itemId ? { type: 'item', id: skill.itemId }
+      : isHeld ? { type: 'skill', id: event.skillId, ownerId: actor.id } : null;
+    return [...entries, ...(event.rules ?? actionRules ?? []).filter(rule => rule.hook === hook).map(rule => ({
+      rule, ownerId: event.actorId, sourceId: event.actorId, carrierOrder: -1, carrier,
+      useKey: JSON.stringify([event.actorId, event.skillId, rule.id]),
     }))];
   },
   enterRule(state, frame, key) {
@@ -125,7 +130,8 @@ export const vmHost = {
   prepareDamage(state, source, target, data) {
     const { damageType } = data;
     const event = { damageType, actorId: source?.id ?? null, targetId: target.id, weaponTemplateId: data.weaponTemplateId ?? null,
-      backstab: data.backstab ?? false, melee: data.melee ?? false, souls: data.souls ?? 0 };
+      actionType: data.actionType ?? null, skillId: data.skillId ?? null, backstab: data.backstab ?? false,
+      melee: data.melee ?? false, souls: data.souls ?? 0 };
     if (source && vmHost.flag(state, source, 'harmless')) return 0;
     let amount = data.amount;
     if (source) {
@@ -135,8 +141,8 @@ export const vmHost = {
     if (damageType !== 'true') {
       const pierce = data.armorPierce ?? { flat: source ? mod(state, event, source.id, 'armorPierce', 0) : 0,
         percent: source ? mod(state, event, source.id, 'armorPiercePercent', 0) : 0 };
-      const reduction = mitigation(state, target, damageType, data.direct !== false, pierce,
-        { attacker: source, intercepting: data.intercepted, ignoreArmor: data.ignoreArmor });
+      const context = { ...event, attacker: source, intercepting: data.intercepted, ignoreArmor: data.ignoreArmor };
+      const reduction = mitigation(state, target, damageType, data.direct !== false, pierce, context);
       if (data.direct === false) {
         const reduced = Math.floor(amount * reduction.multiplier * (1 - reduction.attributeReduction));
         amount = Math.max(0, reduced - (reduction.multiplier === 1 ? Math.ceil(reduction.armor) : 0));
@@ -144,8 +150,8 @@ export const vmHost = {
         amount *= reduction.multiplier * (1 - reduction.attributeReduction);
         amount *= reduction.armorMultiplier;
       }
-      amount = damageAfterFlatReduction(state, target, amount, source, damageType, data.intercepted);
-      amount *= 1 - Math.min(1, mod(state, event, target.id, 'dr', 0));
+      amount = damageAfterFlatReduction(state, target, amount, context);
+      amount *= 1 - reduction.dr;
       // Damage from a carrier/status still uses the attacker's final multiplier;
       // VM commits must not bypass the same terminal damage modifier as native hits.
       if (source) amount *= values(source.statuses).reduce((mult, status) =>
@@ -171,7 +177,7 @@ export const vmHost = {
     const unit = { ...actor };
     if (overrides.free) Object.assign(unit, { hp: unit.maxHp, mp: unit.maxMp, sp: unit.maxSp });
     if (overrides.ignoreSlots) Object.assign(unit, { ap: 2, used: { attack: 0, action: 0 } });
-    const skill = own(state.skills, action.skillId) ?? new Map(equippedActiveSkills(state, actor)).get(action.skillId);
+    const skill = actionSkill(state, actor, action.skillId);
     const view = { ...state, turn: state.order.indexOf(actor.id), units: { ...state.units, [actor.id]: unit } };
     const planned = preview(view, action, { simulateRules: false, actionOrigin: overrides.origin,
       ignoreRange: overrides.ignoreRange === true, ignoreLOS: overrides.ignoreLOS === true,
@@ -183,11 +189,12 @@ export const vmHost = {
       weaponTemplateId: action.type === 'attack' ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null };
   },
   payAction(state, actor, plan, event, overrides) {
-    if (!overrides.ignoreSlots) {
+    if (!overrides.ignoreSlots && plan.ap > 0) {
       actor.ap -= plan.ap;
       for (const slot of plan.ap === 2 ? ['attack', 'action'] : plan.slot ? [plan.slot] : []) actor.used[slot]++;
     }
     if (overrides.free) return;
+    paySkillEquipmentCost(state, actor, actionSkill(state, actor, event.skillId));
     for (const key of ['hp', 'mp', 'sp']) {
       const cost = Math.max(0, Math.floor((event[`${key}Cost`] ?? 0) * (event.costScale ?? 1)));
       if (!cost) continue;

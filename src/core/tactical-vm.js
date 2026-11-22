@@ -1,6 +1,7 @@
 import { evaluateExpr } from './formula.js';
 import { distance3D, unitAt } from './spatial.js';
 import { selectVM, zoneContains } from './vm-select.js';
+import { skillCarrierVars } from './vm-carriers.js';
 
 const maxSteps = 2000;
 const maxDepth = 64;
@@ -84,6 +85,8 @@ function contextFor(state, frame, host) {
     },
     status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === 'status' ? carrier : undefined),
     zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === 'zone' ? carrier : undefined),
+    skill: frame.carrier?.type === 'skill' ? { vars: skillCarrierVars(state, frame.carrier) } : undefined,
+    item: frame.carrier?.type === 'item' ? { vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,
     tape: resolveEntity(state, frame.scope?.tape), center: event.center, pool: frame.scope?.pool,
     round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units),
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
@@ -217,10 +220,13 @@ function execute(state, frame, op, host, options) {
   switch (op.op) {
     case 'let': {
       const owner = frame.carrier ? resolveEntity(state, frame.carrier) : context.self;
-      if (op.scope === 'owner' && !owner) return;
+      const skill = frame.carrier?.type === 'skill' ? frame.carrier : null;
+      if (op.scope === 'owner' && !owner && !skill) return;
       const value = evaluate(op.value);
       if (value !== null && ['number', 'string', 'boolean'].includes(typeof value)) {
-        const record = op.scope === 'owner' ? (owner.vars ??= {}) : vars;
+        const record = op.scope !== 'owner' ? vars : skill
+          ? ((state.vm.skillVars ??= {})[JSON.stringify([skill.ownerId, skill.id])] ??= skillCarrierVars(state, skill))
+          : (owner.vars ??= {});
         Object.defineProperty(record, op.name, { value, writable: true, enumerable: true, configurable: true });
       }
       return;

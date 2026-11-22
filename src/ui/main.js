@@ -2,7 +2,7 @@ import { createGameAPI } from '../api/game_api.js';
 import { SCENARIOS } from '../presets/scenarios.js';
 import { createRenderer, ACTION_LABELS, ACTION_HINTS } from './render.js';
 import { createPlayback } from './animation.js';
-import { equippedActiveSkills, switchableWeapons } from '../core/combat.js';
+import { equippedActiveSkills, isPassiveSkill, switchableWeapons } from '../core/combat.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 import { requestBattleAi } from '../core/battle-ai.js';
@@ -487,8 +487,11 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       else for (const t of [sprint ? 'sprint' : 'move', 'disengage', 'attack', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
       if (self) for (const itemId of switchableWeapons(state, actor)) add('switch_weapon', null, itemId);
       add('interact');
-      for (const skill of actor.skills) add('skill', skill, undefined, state.skills[skill]?.name);
-      for (const [skill, template] of equippedActiveSkills(state, actor)) add('skill', skill, undefined, template.name);
+      const skills = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
+      for (const [skill, template] of skills) {
+        if (!template || isPassiveSkill(template) || (template.itemId && !self)) continue;
+        add('skill', skill, undefined, template.name);
+      }
       if (self) {
         for (const [skillId, count] of Object.entries(actor.inventory ?? {})) {
           const item = state.skills[skillId];
