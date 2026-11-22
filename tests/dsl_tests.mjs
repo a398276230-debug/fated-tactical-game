@@ -165,6 +165,33 @@ test('DSL active damage is included in skill preview and matches execution', () 
   assert.equal(damageLog.detail.amount, plan.targets[0].damage[0]);
 });
 
+test('伤害类型限定状态减伤，真伤穿过减伤但仍消耗护盾', () => {
+  for (const [type, expected] of [['physical', 9], ['energy', 67], ['mental', 67], ['true', 97]]) {
+    const { state, actor, enemy } = setup();
+    enemy.armor = 0;
+    enemy.statuses.typed = { modifiers: { damageType: 'physical', armor: 8, reduction: .5 }, stacks: 1 };
+    enemy.statuses.general = { modifiers: { reduction: .2 }, stacks: 1 };
+    enemy.statuses.shield = { id: 'shield', name: '护盾', modifiers: {}, amount: 3, stacks: 1 };
+    enemy.gear.push('test-armor');
+    state.items['test-armor'] = { id: 'test-armor', templateId: 'test-armor', counters: {} };
+    state.equipment['test-armor'] = { name: '测试护甲', effects: [expr('flat-reduction', 'passive', 'self', [{ kind: 'modifyStat', stat: 'damageReductionFlat', flat: 10 }])] };
+    state.skills.typed_damage = {
+      name: '伤害类型测试', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy',
+      effects: [expr('typed-packet', 'active', 'hitTarget', [{ kind: 'damage', flat: 100, damageType: type }])],
+    };
+    actor.skills.push('typed_damage');
+    actor.x = enemy.x; actor.y = enemy.y - 1;
+    const action = { type: 'skill', skillId: 'typed_damage', x: enemy.x, y: enemy.y };
+    const plan = preview(state, action);
+    assert.equal(plan.ok, true, plan.error);
+    assert.deepEqual(plan.targets[0].damage, [expected, expected], type);
+    const before = enemy.hp;
+    applyAction(state, action);
+    assert.equal(before - enemy.hp, expected, type);
+    assert.equal(enemy.statuses.shield, undefined);
+  }
+});
+
 test('AI considers DSL healing and shields across learned, equipment and backpack skills', () => {
   for (const source of ['learned', 'equipment', 'backpack']) {
     const node = source === 'equipment' ? {kind:'shield',amount:1000} : {kind:'heal',amount:1000};

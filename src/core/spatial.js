@@ -129,22 +129,24 @@ export function hasLOS(state, from, to) {
  */
 export function aoeCells(state, origin, target, options = {}) {
   const { shape = 'single', radius = 1.5, width = .6, angle = shape === 'fan' ? 100 : 60,
-    range = distance3D(state, origin, target) } = options;
+    innerRadius = 0, facing = origin.facing, range = distance3D(state, origin, target) } = options;
   const limitAt = typeof range === 'function' ? range : () => range;
   const inRange = at => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
   if (!hasLOS(state, origin, target) || !inRange(target)) return [];
   if (shape === 'single') return [{ x: target.x, y: target.y, z: elevation(state, target) }];
-  const dx = target.x - origin.x, dy = target.y - origin.y, aimLength = Math.hypot(dx, dy);
-  if (shape !== 'circle' && (!aimLength || !['line', 'fan', 'cone'].includes(shape))) return [];
+  const [dx, dy] = same(origin, target) ? (facing ?? [1, 0]) : [target.x - origin.x, target.y - origin.y];
+  const aimLength = Math.hypot(dx, dy);
+  if (shape !== 'circle' && shape !== 'ring' && (!aimLength || !['line', 'fan', 'cone'].includes(shape))) return [];
   const minCosine = Math.cos(Math.max(0, Math.min(360, angle)) * Math.PI / 360);
   const result = [];
   state.grid.forEach((row, y) => row.forEach((cell, x) => {
     const at = { x, y, z: cell.z };
-    if (shape === 'circle') {
-      if (distance3D(state, target, at) <= radius + EPSILON && hasLOS(state, target, at)) result.push(at);
+    if (shape === 'circle' || shape === 'ring') {
+      const distance = distance3D(state, target, at);
+      if (distance <= radius + EPSILON && (shape !== 'ring' || (!same(target, at) && distance >= innerRadius - EPSILON)) && hasLOS(state, target, at)) result.push(at);
       return;
     }
-    if (same(origin, at) || !inRange(at)) return;
+    if (same(origin, at) || (options.radius == null ? !inRange(at) : distance3D(state, origin, at) > radius + EPSILON)) return;
     const vx = x - origin.x, vy = y - origin.y;
     const forward = (vx * dx + vy * dy) / aimLength;
     const inside = shape === 'line'

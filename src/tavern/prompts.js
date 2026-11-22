@@ -25,7 +25,8 @@ const TAG_MAPPING = `【世界书标签 → DSL / API 映射】
 • 旧档「效果：100%物理伤害」配合威力标签，使用 damage 节点 percentOfPower:1、damageType:"physical"。比例混合伤害每种类型用独立节点，例如 60%物理伤害/40%能量伤害写 0.6 与 0.4。
 • 混合伤害：[威力: 60][伤害: 物理40/能量20] 中各分量之和等于威力。必须拆成多个 damage 节点，每个节点只写一个 damageType 和对应数值，不得在单节点里塞多个类型。例：[{"kind":"damage","flat":40,"damageType":"physical"},{"kind":"damage","flat":20,"damageType":"energy"}]。不得再叠加一次总威力。
 • [关联属性: 敏捷] → 技能的关联检定属性为 agi；不要把施术者的关联属性误作目标的豁免属性。[有效距离: 中程(5)] → range:5。
-• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → range:4、shape:fan、target:enemy，radius 按实际覆盖半径填写，不把射程当半径。
+• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由独立的有效距离标签声明；可加 角度:N 写 fan/cone 的实际张角。
+• 范围伤害默认允许友伤：除非明确 target:ally/self/cell，否则范围 damage 会筛选范围内敌我双方；单体技能必须按 target:enemy/ally/self/any 明确敌友。环形使用 shape:ring，可用 radius 与 innerRadius 排除中心区域；线形 width 是侧向半宽。
 • 空效果：目标对象的效果字段为 {} 或缺失时，表示该字段没有可执行效果，不产生任何补丁操作，也不计入 unresolved。纯位移、纯状态授予等技能仍有可执行节点，不属于空效果。`;
 const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。旧式诊断字符串仅在能唯一匹配时有效。这些字段不是 DSL 节点或战局字段。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
@@ -46,9 +47,9 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 
 【值的形状：只用各表已定义的字段】
 装备必有 name、effects。attack 为整数 0…1000000000，accuracy 为 −20…30。武器 range(1…15) 与 damage 骰子成对。
-技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/fan/cone/line)、target(enemy/ally/self/any/corpse)、effects。save(str/agi/con/int/spi) 与 saveDC(1…50 的整数或协议中的公式对象) 必须成对；damage/heal 用 {count,sides}，可加 bonus、stat、multiplier、type。
+技能必有 name、ap(1或2)、slot(attack/action)、range(0…15)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)、effects；范围技能可写 radius、innerRadius、width、angle(1…360)。save(str/agi/con/int/spi) 与 saveDC(1…50 的整数或协议中的公式对象) 必须成对；damage/heal 用 {count,sides}，可加 bonus、stat、multiplier、type。
 所有 effects 使用统一 DSL 表达式。物品仅 {id,templateId,counters}，计数键与模板的资源声明对应，值在 0…cap。没有资源池时用 {}。
-内置状态只认协议表 ID；另可引用当前已合法定义的自定义模板。自定义模板最多 64 个，必有 id,name,icon,category,description,remainingTurns,durationType,tickTiming,stackRule,maxStacks,modifiers。category 为 buff/debuff/control/dot/hot；remainingTurns 整数1…100；durationType=battle_turns/until_removed/persistent；tickTiming=onTurnStart/onTurnEnd；stackRule=refresh/stack/replace；maxStacks 整数1…10。
+将剧情状态按实际机制标准化。在同一批补丁先定义 /statusTemplates/<id>，再用 grantStatus 或初始状态实例引用该 ID。已有模板的机制完全等价时可以复用。按剧情声明周期伤害的 modifiers.damage 与 modifiers.damageType（physical/energy/mental/true），以及 tickTiming、层数和持续时间。自定义模板最多 64 个，必有 id,name,icon,category,description,remainingTurns,durationType,tickTiming,stackRule,maxStacks,modifiers。category 为 buff/debuff/control/dot/hot；remainingTurns 整数1…100；durationType=battle_turns/until_removed/persistent；tickTiming=onTurnStart/onTurnEnd；stackRule=refresh/stack/replace；maxStacks 整数1…10。
 自定义 modifiers 非空，合法键、范围及 expireInto / expireOn 见协议。单位状态实例复制模板，再加 stacks(1…maxStacks)、sourceUnitId(ID或null)。shield 实例另有 amount。
 
 整批须通过 validateState。禁止改阵营、资源及上限、坐标、先攻队列或日志。

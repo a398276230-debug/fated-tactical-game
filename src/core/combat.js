@@ -3,7 +3,7 @@ import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetwee
   isFlanked as flank, isGround as ground, movementOptions, passableEdge as fitsHeight, unitAt } from './spatial.js';
 import { critChance as criticalOdds, hitChance as hitOdds, nextRng, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative } from './combat_protocol.js';
+import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction } from './combat_protocol.js';
 
 import { validateStatusModifiers } from './status_modifiers.js';
 import { applyTerrainEffect, updateTerrainPatches } from './terrain-effects.js';
@@ -44,8 +44,10 @@ function changeAltitude(state, actor, node) {
 const key = (x, y) => `${x},${y}`;
 const stat = (unit, id) => Number(unit.stats?.[id] ?? 0) * Math.max(0, 1 + changes(unit, 'attributePercent'));
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
-export const statusModifier = (unit, name) => values(unit.statuses).reduce((sum, s) =>
-  sum + Number(s.modifiers?.[name] ?? 0) * (s.stacks ?? 1), moraleModifiers[unit.moraleState]?.[name] ?? 0);
+const matchesDamageType = (status, type) => type == null || status.modifiers?.damageType == null || status.modifiers.damageType === type;
+export const statusModifier = (unit, name, damageType) => values(unit.statuses).reduce((sum, status) =>
+  sum + (matchesDamageType(status, damageType) ? Number(status.modifiers?.[name] ?? 0) * (status.stacks ?? 1) : 0),
+  moraleModifiers[unit.moraleState]?.[name] ?? 0);
 const changes = statusModifier;
 const statusOf = (unit, id) => Object.hasOwn(unit.statuses ?? {}, id) ? unit.statuses[id] : undefined;
 export const currentUnit = state => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : undefined;
@@ -86,7 +88,8 @@ const equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, uni
 const effectiveStat = (state, unit, key) => dsl.stat(state, unit, key, stat(unit, key));
 const resolveDC = (state, actor, dc) => typeof dc === 'number' ? dc
   : clamp(dc.base + dc.scaleBy.perUnit * effectiveStat(state, actor, dc.scaleBy.stat), dc.min ?? 1, dc.max ?? 50);
-const finalDamageMultiplier = unit => values(unit.statuses).reduce((mult, s) => mult * (s.modifiers?.finalDamageMultiplier ?? 1) ** (s.stacks ?? 1), 1);
+const finalDamageMultiplier = (unit, type) => values(unit.statuses).reduce((mult, status) =>
+  matchesDamageType(status, type) ? mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1) : mult, 1);
 const resourcePool = (state, unit, resource, instance) => {
   for (const item of equipped(state, unit)) {
     if (instance && item.instance !== instance) continue;
@@ -341,14 +344,14 @@ function setResourceTotal(state, target, resource, after, sourceUnitId, label) {
 function armorOf(state, unit, damageType, pierce = 0, context = {}) {
   const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0)
     + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
-  const base = unit.armor + equipmentDefense + changes(unit, 'armor')
+  const base = unit.armor + equipmentDefense + changes(unit, 'armor', damageType)
     + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
   const ctx = { ...context, target: context.attacker, damageType };
   const armor = Math.max(0, dsl.stat(state, unit, 'defense', dsl.stat(state, unit, 'armor', base, ctx), ctx));
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
   const percent = typeof pierce === 'object' ? (pierce.percent ?? 0) : 0;
   const effective = Math.max(0, armor * (1 - percent) - flat);
-  return damageType === 'physical' ? effective : damageType === 'energy' ? effective / 2 : 0;
+  return typedArmor(damageType, effective);
 }
 
 function damageTarget(state, target, sourceUnitId, amount, type, label, options = {}) {
@@ -375,7 +378,7 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
   }
   if (!alive(recipient) || recipient.fled) return { recipient, dealt: 0 };
   const formula = mitigation(state, recipient, type, hit, armorPierce, { attacker, intercepting: recipient !== target, ignoreArmor: options.ignoreArmor });
-  const modified = mitigatedDamage(amount, formula, hit, attacker);
+  const modified = mitigatedDamage(amount, formula, hit, attacker, type);
   if (formula.shatter) {
     record(state, sourceUnitId, 'shatter', `${recipient.name}受到碎裂增伤`, { targetId: recipient.id, multiplier: 1 + formula.shatter });
   }
@@ -398,37 +401,31 @@ function damageTarget(state, target, sourceUnitId, amount, type, label, options 
     { ...details, ...formula, ...(parry ? { parry } : {}), raw: amount, absorbed, intendedTargetId: target.id }, true,
     { preserveLife: options.preserveLife, melee: hit && melee, reaction, intercepting: recipient !== target, direct: options.direct ?? hit });
   if (hit && melee && !reaction && alive(attacker) && attacker.id !== recipient.id) {
-    const reflect = changes(recipient, 'reflect');
+    const reflect = changes(recipient, 'reflect', type);
     if (reflect > 0) damageTarget(state, attacker, recipient.id, reflect, 'true', '棘甲反伤', { reaction: true });
   }
   return { recipient, dealt };
 }
 
 function damageAfterFlatReduction(state, unit, amount, attacker, damageType, intercepting = false) {
+  if (damageType === 'true') return amount;
   return Math.max(0, Math.floor(amount - dsl.stat(state, unit, 'damageReductionFlat', 0, { target: attacker, damageType, intercepting })));
 }
 
-function mitigatedDamage(amount, formula, hit, attacker) {
+function mitigatedDamage(amount, formula, hit, attacker, type) {
   return Math.max(0, hit
-    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker) : 1))
+    ? Math.floor(amount * formula.multiplier * formula.armorMultiplier * (1 - formula.attributeReduction) * (attacker ? finalDamageMultiplier(attacker, type) : 1))
     : Math.floor(amount * formula.multiplier) - Math.floor(formula.armor));
 }
 
 function mitigation(state, unit, type, hit, pierce, ctx = {}) {
-  const shatter = hit ? changes(unit, 'shatter') : 0;
-  const vulnerability = changes(unit, 'vulnerability');
-  const reduction = clamp(dsl.stat(state, unit, 'damageReduction', changes(unit, 'reduction'), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
-  const defense = ctx.ignoreArmor ? 0 : armorOf(state, unit, type, pierce, ctx);
-  const armorMultiplier = type === 'true' ? 1 : 2000 / (defense + 2000);
-  const attributes = Object.fromEntries(Object.keys(unit.stats ?? {}).map(key => [key, effectiveStat(state, unit, key)]));
-  const attributeReduction = state.ruleset === 'protocol'
-    ? type === 'physical'
-      ? (Number(attributes.con ?? 0) + Number(attributes.str ?? 0) + Number(attributes.agi ?? 0)) * .0025
-      : type === 'energy'
-        ? (Number(attributes.spi ?? 0) + Number(attributes.int ?? 0)) * .004
-        : type === 'mental'
-          ? Number(attributes.spi ?? 0) * .008
-          : 0
+  const shatter = hit ? changes(unit, 'shatter', type) : 0;
+  const vulnerability = changes(unit, 'vulnerability', type);
+  const reduction = type === 'true' ? 0 : clamp(dsl.stat(state, unit, 'damageReduction', changes(unit, 'reduction', type), { ...ctx, target: ctx.attacker, damageType: type }), 0, 1);
+  const defense = ctx.ignoreArmor || type === 'true' || type === 'mental' ? 0 : armorOf(state, unit, type, pierce, ctx);
+  const armorMultiplier = 2000 / (defense + 2000);
+  const attributeReduction = state.ruleset === 'protocol' && type !== 'true'
+    ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map(key => [key, effectiveStat(state, unit, key)])))
     : 0;
   return { shatter, vulnerability, reduction, attributeReduction,
     multiplier: (1 + shatter) * (1 + vulnerability) * (1 - reduction),
@@ -789,12 +786,17 @@ const shieldBashEffects = [expression('shield-bash-hit', 'on_hit', 'hitTarget', 
 ])];
 const isMelee = template => template.rangeType !== 'ranged' && !template.ranged && template.weaponClass !== 'ranged' && (template.range ?? 1.5) <= 2;
 
+const weaponAmmo = template => {
+  const pools = resourceDefinitions(template, true);
+  return pools.find(pool => pool.resource === 'ammo') ?? pools.find(pool => pool.reloadable);
+};
+const emptyAmmoMessage = ammo => ammo.reloadable ? '弹仓已空，请装填' : '弹药已耗尽';
+
 function weaponInfo(state, unit) {
   const mainId = unit.mainHand ?? unit.weapon;
   const candidate = equipmentFor(state, mainId);
   const weapon = candidate.template?.boundTo && candidate.template.boundTo !== unit.id ? equipmentFor(state, null) : candidate;
-  const pools = resourceDefinitions(weapon.template, true);
-  const ammo = pools.find(node => node.reloadable);
+  const ammo = weaponAmmo(weapon.template);
   const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon.instance)?.amount : null;
   const infiniteAmmo = Boolean(ammo && changes(unit, 'infiniteAmmo'));
   const scale = findNode(weapon.template ?? normalAttack, 'multiplyDamage', node => node.local && node.resourceScale);
@@ -808,7 +810,7 @@ function weaponInfo(state, unit) {
 function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
   const dz = elevation(state, actor) - elevation(state, at);
   const melee = isMelee(template) && !ammo;
-  const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? (ammo ? dsl.check(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
+  const range = (template.range ?? 1.5) + (melee || !dz ? 0 : dz > 0 ? (ammo?.reloadable ? dsl.check(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
   return { distance: distance(state, actor, at), dz, range: Math.max(0, range), melee };
 }
 
@@ -856,7 +858,12 @@ const opportunityDetail = (source, from, to) => ({ unitId: source.id, name: sour
   from: pos(from.x, from.y), to: pos(to.x, to.y) });
 
 function area(state, actor, center, template, ammo) {
-  return aoeCells(state, actor, center, { ...template, range: at => reaches(state, actor, at, template, ammo).range });
+  const selfCentered = template.range === 0 && sameCell(actor, center);
+  return aoeCells(state, actor, center, {
+    ...template,
+    radius: selfCentered ? template.radius ?? 1.5 : template.radius,
+    range: at => reaches(state, actor, at, template, ammo).range,
+  });
 }
 
 function selectionAllows(template, actor, unit) {
@@ -865,6 +872,7 @@ function selectionAllows(template, actor, unit) {
     case 'enemy': return actor.team !== unit.team;
     case 'ally': return actor.team === unit.team;
     case 'self': return actor.id === unit.id;
+    case 'cell': return false;
     default: return true;
   }
 }
@@ -974,12 +982,12 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
   const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
   // Intent is applied once in applyStrike after the intent contest; do not fold it into this preview multiplier.
-  const multiplier = offHandMultiplier * (1 + changes(actor, 'damageBonus')) * Math.max(0, 1 + changes(actor, 'attackPercent'))
-    * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const fixed = nodes.find(node => node.kind === 'modifyDamageBase');
   const fixedDamage = fixed?.unscaled ? fixed : null;
   const fixedAttack = fixed?.unscaled ? null : fixed;
-  const damageType = fixedDamage?.damageType ?? template.damage?.type ?? template.damageType ?? 'physical';
+  const damageType = fixed?.damageType ?? template.damage?.type ?? template.damageType ?? 'physical';
+  const multiplier = offHandMultiplier * (1 + changes(actor, 'damageBonus', damageType)) * Math.max(0, 1 + changes(actor, 'attackPercent', damageType))
+    * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const tierPower = ({1:2, 2:2.8, 3:4, 4:8, 5:15, 6:35, 7:80})[actor.tier ?? 1] ?? 2;
   const attributeBase = () => state.ruleset === 'protocol'
     ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? 'str' : 'int')) * 10 * tierPower
@@ -994,8 +1002,13 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     : mitigation(state, recipient, damageType, true, armorPierce, { attacker: actor, intercepting: recipient !== target });
   const absorb = cover ? 0 : shieldTotal(recipient);
   const dice = fixedDamage ? flatDice(fixedDamage.value) : template.damage == null ? null : diceFormula(state, template.damage, actor);
-  const shown = (raw, factor = 1) => Math.max(0, Math.floor(Math.floor(dsl.stat(state, actor, 'damage', raw * (fixedDamage ? 1 : multiplier) * factor * dsl.damageFactor(state, actor, { ...strike, damageType }), { ...strike, damageType }))
-    * reduction.multiplier * reduction.armorMultiplier * finalDamageMultiplier(actor) * (fixedDamage ? 1 - (reduction.attributeReduction ?? 0) : 1)) - absorb);
+  const shown = (raw, factor = 1) => {
+    const ctx = { ...strike, damageType };
+    const scaled = Math.floor(dsl.stat(state, actor, 'damage', raw * (fixedDamage ? 1 : multiplier) * factor * dsl.damageFactor(state, actor, ctx), ctx));
+    if (cover) return Math.max(0, scaled - (target.armor ?? 0));
+    const modified = mitigatedDamage(scaled, reduction, true, actor, damageType);
+    return Math.max(0, damageAfterFlatReduction(state, recipient, modified, actor, damageType, recipient !== target) - absorb);
+  };
   const flat = fixedAttack || fixedDamage;
   const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice, critical)).map(n => shown(n, factor));
   const average = (critical = false, factor = 1) => flat ? shown(protocolInitial, factor) : diceAverage(dice, n => shown(n, factor), critical);
@@ -1054,15 +1067,25 @@ function usableTiles(state, actor, template, weapon, nonLethal) {
   const execute = findNode(template, 'execute', node => node.requiresPool);
   return allCells(state).filter(at => validReach(state, actor, template.target === 'cell' ? at : locateUnit(state, at) ?? at, template, weapon?.ammo) &&
     (!execute || canExecute(state, actor, locateUnit(state, at), execute, nonLethal)) &&
-    !((template.shape === 'line' || template.shape === 'cone' || template.shape === 'fan') && sameCell(actor, at)));
+    !(['line','cone','fan'].includes(template.shape) && sameCell(actor, at) && template.range !== 0));
 }
 function shapeTargets(state, actor, cells, template, aim) {
   const keys = new Set(cells.map(at => key(at.x, at.y)));
+  if (template.target === 'cell') return [];
+  const areaDamage = (template.shape ?? 'single') !== 'single' && (hasStrikeDamage(template) || findNode(template, 'damage'));
   return living(state).filter(unit => {
-    if (!selectionAllows(template, actor, unit)) return false;
+    // Area damage defaults to friendly fire unless the author explicitly narrows it to allies/self.
+    if (!areaDamage && !selectionAllows(template, actor, unit)) return false;
+    if (areaDamage && ['ally', 'self'].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
     if ((template.shape ?? 'single') === 'single') return sameCell(unit, aim);
-    if (template.shape === 'circle') return distance(state, aim, unit) <= (template.radius ?? 1.5) + 1e-9 && clearSight(state, aim, unit);
-    return keys.has(key(unit.x, unit.y)) && validReach(state, actor, unit, template);
+    if (template.shape === 'circle' || template.shape === 'ring') {
+      const distanceFromCenter = distance(state, aim, unit);
+      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && clearSight(state, aim, unit)
+        && (template.shape !== 'ring' || (!sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9));
+    }
+    const radius = template.radius ?? (template.range === 0 ? 1.5 : null);
+    return keys.has(key(unit.x, unit.y)) && (radius == null ? validReach(state, actor, unit, template)
+      : distance(state, actor, unit) <= radius + 1e-9 && clearSight(state, actor, unit));
   });
 }
 
@@ -1115,7 +1138,7 @@ export function preview(state, action) {
   }
   if (type === 'shield_bash' && !unit.shield) return fail('没有盾牌');
   if (type === 'reload') {
-    if (!weapon.ammo || weapon.infiniteAmmo) return fail('当前武器不需要装填');
+    if (!weapon.ammo?.reloadable || weapon.infiniteAmmo) return fail('当前武器不需要装填');
     if (weapon.ammoCount >= weapon.ammo.cap) return fail('弹仓已满');
     return { ...common, ammo: weapon.ammoCount, capacity: weapon.ammo.cap };
   }
@@ -1179,7 +1202,7 @@ export function preview(state, action) {
   if (type === 'interact' || detonate) {
     if (!item) return fail('没有可用的互动点');
     if (detonate) {
-      if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail('弹仓已空，请装填');
+      if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail(emptyAmmoMessage(weapon.ammo));
       if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail('爆桶超出武器射程或被墙体阻挡');
     } else if (distance(state,unit,item) > 1.5 || !clearSight(state,unit,item)) return fail('需要靠近互动点');
     const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: item.radius ?? 1.5 }) : [center];
@@ -1188,7 +1211,8 @@ export function preview(state, action) {
       : living(state).filter(u => keyset.has(key(u.x, u.y)) && distance(state, center, u) <= 1.5 + 1e-9).map(u => {
         const guard = guardFor(state, u) ?? u;
         const formula = mitigation(state, guard, 'energy', true, 0, { attacker:unit, intercepting:guard !== u });
-        const damage = Math.max(0, mitigatedDamage(item.damage ?? 12, formula, true, unit) - shieldTotal(guard));
+        const modified = mitigatedDamage(item.damage ?? 12, formula, true, unit, 'energy');
+        const damage = Math.max(0, damageAfterFlatReduction(state, guard, modified, unit, 'energy', guard !== u) - shieldTotal(guard));
         return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y,
           damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
       });
@@ -1200,7 +1224,7 @@ export function preview(state, action) {
   const template = shieldBash ? { name: '盾击', range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, effects: shieldBashEffects } : attack ? weapon.template : skill;
   const effect = attack ? undefined : findNode(template, 'teleportBackstab');
   if (effect && changes(unit, 'rooted')) return fail('定身时不能瞬移');
-  if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail('弹仓已空，请装填');
+  if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail(emptyAmmoMessage(weapon.ammo));
   const triggers = attack && !shieldBash ? weapon.effects.map(e => ({ ...e })) : (template.effects ?? []).map(e => ({ ...e }));
   const stance = unit.stance ?? (unit.offHand ? (unit.offHand.kind === 'consumable' ? 'attunement' : 'dual_wield') : unit.shield ? 'sword_shield' : 'light_blade');
   const tuning = { name: template.name, shape: template.shape ?? 'single', stance, effects: triggers,
@@ -1226,12 +1250,12 @@ export function preview(state, action) {
   const execute = findNode(template, 'execute', node => node.requiresPool);
   if (execute && !canExecute(state, unit, aimedUnit, execute, action.nonLethal ?? unit.nonLethal)) return fail('目标或装备资源不满足斩杀条件');
   const solid = locateCover(state, center);
-  const coverTarget = Boolean(solid && (attack || hasStrikeDamage(template)));
+  const coverTarget = Boolean(solid && template.target !== 'cell' && (attack || hasStrikeDamage(template)));
   const cells = area(state, unit, aim, template, attack && !shieldBash ? weapon.ammo : null);
   const aoe = (template.shape ?? 'single') !== 'single';
   if (!cells.length) return fail('请选择一个方向', geometry);
   if (!aoe) {
-    if (!(attack ? aimedUnit && aimedUnit.team !== unit.team : selectionAllows(template, unit, aimedUnit)) && !coverTarget && template.target !== 'cell') {
+    if (!selectionAllows(template, unit, aimedUnit) && !coverTarget && template.target !== 'cell') {
       return fail('该格没有合适的目标', geometry);
     }
     if (aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, unit, aimedUnit)) return fail('目标正在隐身', geometry);
@@ -1243,13 +1267,13 @@ export function preview(state, action) {
   if (effect && !blink) return fail('目标背后的瞬移落点被阻挡', geometry);
   const origin = blink ? { ...unit, ...blink } : unit;
   const templateForHit = blink ? { ...template, range: 1.5 } : template;
-  const targetUnits = attack ? aimedUnit ? [aimedUnit] : [] : shapeTargets(state, unit, cells, template, aim);
+  const targetUnits = shapeTargets(state, unit, cells, template, aim);
   const areaAttack = (template.shape ?? 'single') !== 'single';
   const declaredIntent = action.intent ?? unit.intent ?? 'normal';
   const resolvedIntent = areaAttack ? 'normal' : declaredIntent;
   const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, teleport: effect, intent: resolvedIntent, skillId: action.skillId }),
     bonusDice: action.bonusDice ?? 0, intent: resolvedIntent, nonLethal: action.nonLethal ?? unit.nonLethal ?? false }));
-  if (hasStrikeDamage(template)) {
+  if (template.target !== 'cell' && hasStrikeDamage(template)) {
     for (const c of values(state.covers).filter(c => c.hp > 0 && cells.some(at => sameCell(at, c))).sort(byId)) {
       targets.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, cover: true, intent: action.intent ?? unit.intent ?? 'normal' }), kind: 'cover' });
     }
@@ -1310,7 +1334,7 @@ function previewSkillEffects(state, unit, template, skillId, cost, profiles, uni
     for (const packet of packets) {
       const hit = Boolean(packet.hit);
       const formula = mitigation(state, target, packet.type, hit, 0, { attacker: actor, ignoreArmor: packet.ignoreArmor });
-      const modified = mitigatedDamage(packet.raw, formula, hit, actor);
+      const modified = mitigatedDamage(packet.raw, formula, hit, actor, packet.type);
       const net = damageAfterFlatReduction(state, target, modified, actor, packet.type);
       const absorbed = Math.min(shield, net);
       shield -= absorbed;
@@ -1464,13 +1488,16 @@ function offHandFollowup(state, actor, target, primaryProfile, primaryRating) {
   const cost = (actor.tier ?? 1) * 10;
   if ((actor.sp ?? 0) < cost || (primaryRating?.multiplier ?? 0) < .8) return;
   const offTemplate = weapon.offHand.template;
-  const ammo = resourceDefinitions(offTemplate, true).find(node => node.reloadable);
+  const ammo = weaponAmmo(offTemplate);
+  const spendsAmmo = ammo && !changes(actor, 'infiniteAmmo');
+  if (spendsAmmo && !(resourcePool(state, actor, ammo.resource, weapon.offHand.instance)?.amount > 0)) return;
   if (!validReach(state, actor, target, offTemplate, ammo, actor.offHand)) return;
   const profile = targetProfile(state, actor, target, target, offTemplate, { weapon: { ...weapon.offHand, ammo, stance: 'dual_wield' } });
   profile.disadvantages = primaryRating?.multiplier >= 1.3 ? 0 : Math.max(1, profile.disadvantages ?? 0);
   profile.bonusDice = 0;
   record(state, actor, 'followup', `${actor.name}使用${offTemplate.name}追击${target.name}`, { targetId: target.id, cost, weaponId: weapon.offHand.instance?.id ?? null });
   setResourceTotal(state, actor, 'sp', actor.sp - cost, actor.id, '副手追击');
+  if (spendsAmmo) dsl.changeResource(state, actor, actor, {kind:'drainResource',resource:ammo.resource,local:true}, 1, '副手追击', {instance:weapon.offHand.instance});
   const result = resolveCheck(state, actor, profile);
   if (!result.hit) return;
   const dice = profile.protocolInitial != null

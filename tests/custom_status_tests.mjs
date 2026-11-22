@@ -49,6 +49,20 @@ test('a skill applies composed DoT and movement modifiers with bounded stacks an
   assert.equal(a.inspectUnit('scout').statuses['slow-venom'], undefined);
 });
 
+test('自定义状态按模板声明结算周期伤害，缺省真实伤害', () => {
+  for (const type of ['physical', 'energy', 'mental', 'true', undefined]) {
+    const a = boot();
+    const modifiers = type == null ? { damage: 10 } : { damage: 10, damageType: type };
+    commit(a, define({ name: '星屑侵蚀', modifiers }), upsert('oracle', 'slow-venom'), upsert('oracle', 'guarded'));
+    const before = a.inspectUnit('oracle').hp;
+    turn(a, 'oracle');
+    const log = a.getBattleState().logs.find(entry => entry.type === 'damage' && entry.detail.statusId === 'slow-venom');
+    assert.equal(log?.detail.damageType, type ?? 'true');
+    const expected = { physical: 5, energy: 6, mental: 6, true: 10 }[type ?? 'true'];
+    assert.equal(before - a.inspectUnit('oracle').hp, expected, type);
+  }
+});
+
 test('existing frost_thorns equipment hook resolves a custom status on melee hit', () => {
   const a = boot();
   commit(a, define(), gear(fx('venom-reaction', 'on_damaged', 'attacker', [{ kind: 'grantStatus', statusId: 'slow-venom' }], { condition: { type: 'melee' }, roll: { chance: 1 } })),

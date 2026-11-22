@@ -119,8 +119,12 @@ function effects(v, state) {
     seen.add(e.id);
   }
 }
+function validateAreaDimensions(v) {
+  for (const key of ['radius', 'innerRadius', 'width']) checkOptional(v, key, x => Number.isFinite(x) && x >= 0 && x <= 6);
+  checkOptional(v, 'angle', x => int(x, 1, 360));
+}
 export function equipmentTemplate(v, state) {
-  fields(v, ['name', 'effects'], ['quality','kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense', 'boundTo', 'weaponType']);
+  fields(v, ['name', 'effects'], ['quality','kind','weaponClass','hand','rangeType','ranged','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense', 'boundTo', 'weaponType', 'shape', 'target', 'radius', 'innerRadius', 'width', 'angle']);
   checkOptional(v, 'boundTo', id); checkOptional(v, 'weaponType', text);
   requireThat(text(v.name), 'name');
   checkOptional(v, 'quality', x => ['唯一','普通','优良','稀有','史诗','传说','神话'].includes(x));
@@ -130,6 +134,9 @@ export function equipmentTemplate(v, state) {
   checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
   checkOptional(v, 'hand', x => ['one_handed','two_handed','off_hand'].includes(x)); checkOptional(v, 'rangeType', x => ['melee','ranged'].includes(x));
   for (const field of ['ranged','heavy','twoHanded','shield']) checkOptional(v, field, x => typeof x === 'boolean');
+  checkOptional(v, 'shape', x => ['single','circle','ring','fan','cone','line'].includes(x));
+  checkOptional(v, 'target', x => ['enemy','ally','self','any','cell'].includes(x));
+  validateAreaDimensions(v);
   if (own(v, 'damage')) dice(v.damage);
   requireThat(own(v, 'range') === own(v, 'damage'), '武器 range/damage');
   effects(v.effects, state);
@@ -137,16 +144,16 @@ export function equipmentTemplate(v, state) {
   requireThat(new Set(pools.map(pool => pool.resource)).size === pools.length, 'DSL 重复资源池');
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'width', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target', 'effects'], ['quality','power','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem']);
   checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
   checkOptional(v, 'damageType', type => damageTypes.includes(type));
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);
   requireThat(text(v.name) && int(v.ap, 1, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 15)
-    && ['single', 'circle', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(v.target), '技能');
+    && ['single', 'circle', 'ring', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(v.target), '技能');
   checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
-  for (const k of ['radius', 'width']) checkOptional(v, k, x => int(x, 0, 6));
+  validateAreaDimensions(v);
   checkOptional(v, 'accuracy', x => int(x, -20, 30)); checkOptional(v, 'save', x => attrs.includes(x));
   checkOptional(v, 'saveDC', validSaveDC);
   requireThat(own(v, 'save') === own(v, 'saveDC'), 'save/saveDC');

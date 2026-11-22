@@ -21,6 +21,118 @@ const mvu = {
   },
 };
 
+test('面积标签解析角度、环形和敌友，范围伤害允许友伤', () => {
+  const damage = {count:1,sides:4,type:'physical',bonus:10};
+  const {state}=hydrateFromSources({
+    mvu:{主角:{...mvu.主角,技能:{
+      扇击:{标签:['[范围: 中程(4)+扇(敌方)] [有效距离: 中程(4)] [角度:120°]'],effects:[{
+        id:'fan-damage', trigger:'active', target:'hitTarget', effects:[{kind:'damage',flat:10,damageType:'true'}],
+      }]},
+      环击:{标签:['范围:近程(2)+环(所有)','有效距离:近程(2)'],damage},
+      横扫:{标签:['范围:近程(2)+线(敌方)','有效距离:0'],damage},
+      治疗:{标签:['单体','核心功能:治疗','有效距离:2'],heal:{count:1,sides:4}},
+      环境:{标签:['范围:近程(2)+圆(环境)','有效距离:2'],damage},
+    }}},
+    charInfo:[{name:'木偶',hp:500},{name:'友军',hp:500}],
+    battleInit:{terrain:'flat',units:[{id:'p',source:'mvu:主角',team:'blue',x:1,y:1},{id:'e',source:'char_info:木偶',team:'red',x:3,y:1},{id:'f',source:'char_info:友军',team:'blue',x:2,y:1}]},
+  },{throwOnValidation:true});
+  state.turn = state.order.indexOf('p');
+  const actor = state.units.p;
+  actor.ap = 2;
+  actor.used = {attack:0,action:0};
+  actor.facing = [1,0];
+  const [fan, ring, line, heal, ground] = actor.skills;
+  assert.deepEqual([state.skills[fan].shape,state.skills[fan].radius,state.skills[fan].angle], ['fan',4,120]);
+  const aim = (skillId,x,y) => preview(state,{type:'skill',skillId,x,y});
+  const fanPlan = aim(fan,3,1);
+  assert.ok(fanPlan.ok && fanPlan.cells.length > 1);
+  assert.ok(fanPlan.targets.some(target => target.id === 'f'));
+  const ringPlan = aim(ring,3,1);
+  assert.ok(ringPlan.ok && ringPlan.cells.some(cell => cell.x === 2 && cell.y === 1));
+  assert.ok(!ringPlan.cells.some(cell => cell.x === 3 && cell.y === 1));
+  assert.ok(!ringPlan.targets.some(target => target.id === 'e'));
+  assert.equal(state.skills[line].width, 0.5);
+  assert.ok(aim(line,1,1).targets.some(target => target.id === 'e'));
+  assert.ok(aim(heal,2,1).ok);
+  assert.equal(aim(heal,3,1).ok, false);
+  assert.deepEqual(aim(ground,3,1).targets, []);
+  state.units.f.maxHp = state.units.f.hp = 100;
+  const allyHp = state.units.f.hp;
+  applyAction(state,{type:'skill',skillId:fan,x:3,y:1});
+  assert.equal(state.units.f.hp, allyHp - 10);
+});
+
+test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
+  const input = {
+    mvu: { 主角: { ...mvu.主角, 装备: mvu.主角.装备, 背包:{箭筒:{类型:'弹药容器',标签:['弹药:20'],位置:'饰品'}} } },
+    charInfo: `<char_info>
+姓名: 发条木偶
+生命层级: 第一层级
+等级: 1
+体长: 1.75
+属性:
+  力量: 1 + 0 + 0 = 1
+  敏捷: 1 + 0 + 0 = 1
+  体质: 6 + 0 + 0 = 6
+  智力: 1 + 0 + 0 = 1
+  精神: 1 + 0 + 0 = 1
+资源:
+  HP: 610
+  MP: 100
+  SP: 100
+技能: []
+装备:
+  - 名称: 木弩臂
+    类型: 武器
+    标签:
+      - 弩
+      - 主手
+      - "攻击: 10"
+      - "有效距离: 中程(5)"
+    位置: 主手
+  - 名称: 木矢筒
+    类型: 弹药容器
+    标签:
+      - "弹药: 20"
+    位置: 饰品
+道具: []
+</char_info>`,
+    battleInit:'<battle_init>\nbattle|1|ammo-test|弹药测试|flat|123\nunit|p|blue|mvu:主角|主角|1,1\nunit|e|red|char_info|发条木偶|4,1\n</battle_init>'
+  };
+  const {state}=hydrateFromSources(input,{throwOnValidation:true});
+  for (const [id, range, hp, stats] of [['p',4,628,[6,6,6,5,5]],['e',5,610,[1,1,6,1,1]]]) {
+    const unit = state.units[id], item = state.items[unit.mainHand], template = state.equipment[item.templateId];
+    assert.equal(template.weaponClass, 'ranged');
+    assert.equal(template.range, range);
+    assert.deepEqual([unit.hp, unit.maxHp, unit.mp, unit.sp, unit.tier], [hp, hp, ...(id === 'p' ? [500,600,1] : [100,100,1])]);
+    assert.equal(template.name, id === 'p' ? '冰霜之弓' : '木弩臂');
+    assert.deepEqual(unit.skills, []);
+    assert.deepEqual(Object.values(unit.stats), stats);
+    assert.equal(item.counters.ammo, 20);
+  }
+  assert.notEqual(state.units.p.mainHand,state.units.e.mainHand);
+  state.turn = state.order.indexOf('p');
+  const actor = state.units.p, item = state.items[actor.mainHand];
+  actor.ap = 2;
+  actor.used = {attack:0, action:0};
+  const attack = {type:'attack', x:4, y:1};
+  const shot = preview(state, attack);
+  assert.ok(shot.ok, shot.error);
+  assert.equal(shot.ammo, 20);
+  applyAction(state, attack);
+  assert.equal(item.counters.ammo, 19);
+  item.counters.ammo = 1;
+  actor.ap = 2;
+  actor.used = {attack:0, action:0};
+  applyAction(state, attack);
+  assert.equal(item.counters.ammo, 0);
+  actor.ap = 2;
+  actor.used = {attack:0, action:0};
+  assert.equal(preview(state, attack).error, '弹药已耗尽');
+  assert.equal(preview(state, {type:'reload'}).ok, false);
+  assert.deepEqual(input.mvu.主角.背包.箭筒.标签,['弹药:20']);
+});
+
 test('主角背包消耗品扣库存、未知用途进入标准化，装备优先双手', () => {
   const bag = {手榴弹:{类型:'消耗品',数量:3,标签:['攻击：100'],效果:{物理伤害:'造成100伤害'}},小红瓶:{类型:'消耗品',数量:1},藏刀:{类型:'武器',标签:['主手']}};
   const input={mvu:{主角:{...mvu.主角,装备:{刀:{类型:'武器',标签:['主手']},匕首:{类型:'武器',标签:['副手']},战杖:{类型:'武器',标签:['双手']}},背包:bag}},charInfo:{name:'木偶',hp:500,背包:bag},battleInit:{units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:2,y:1}]}};
@@ -45,7 +157,7 @@ test('主角背包消耗品扣库存、未知用途进入标准化，装备优�
 
 test('主手弓命中后，小刀只在自己射程内追击和扣 SP', () => {
   for (const dist of [1,4]) {
-    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',位置:'主手',effects:[{id:'guarantee',trigger:'passive',target:'self',effects:[{kind:'forceOutcome',mode:'crit'}]}]},小刀:{类型:'武器',位置:'副手'}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
+    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',标签:['弓'],位置:'主手',effects:[{id:'guarantee',trigger:'passive',target:'self',effects:[{kind:'forceOutcome',mode:'crit'}]}]},小刀:{类型:'武器',位置:'副手'}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
     const {p,e}=state.units;state.turn=state.order.indexOf('p');p.used={attack:0,action:0};p.ap=2;e.hp=e.maxHp=99999;const sp=p.sp;
     applyAction(state,{type:'attack',x:e.x,y:e.y});assert.ok(e.hp<99999);
     assert.equal(state.logs.some(l=>l.type==='followup'),dist===1);assert.equal(sp-p.sp,dist===1?10:0);
@@ -227,13 +339,13 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   const battleInit = 'battle|1|x|场景|flat\nunit|p1|blue|mvu:主角|主角|1,1\nunit|e1|red|char_info|敌人|7,7';
   const result = hydrateFromSources({ battleInit, charInfo: { name: '敌人' }, mvu: { 主角: {
     ...mvu.主角,
-    状态效果: { 定身: { 层数: 1, 剩余时间: '3回合' }, 场地弹药补给: {} },
+    状态效果: { root: { 层数: 1, 剩余时间: '3回合' }, 中毒: { 描述: '每回合受到能量伤害' }, 场地弹药补给: {} },
     装备: {
       匕首: { 类型: '武器', 位置: '主手' },
       木盾: { 类型: '防具', 位置: '副手' },
       皮甲: { 类型: '防具', 位置: '躯干', 标签: ['防御：6'], 效果: { 轻便: '描述文字' } },
     },
-    技能: { 冰箭: { 效果: [{ kind: 'status', status: '冰冻' }, { kind: 'status', status: '不存在' }] } },
+    技能: { 冰箭: { 效果: [{ kind: 'status', statusId: 'freeze' }, { kind: 'status', status: '冰冻' }, { kind: 'status', status: '不存在' }] } },
   } } }, { throwOnValidation: true });
   const { state, warnings } = result;
   const p = state.units.p1;
@@ -243,7 +355,8 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   assert.equal(state.equipment[state.items[p.gear[0]].templateId].armor, 6);
   assert.equal(p.statuses.root.remainingTurns, 3);
   assert.deepEqual(state.skills[p.skills[0]].effects.map(e => e.effects), [[{ kind: 'grantStatus', statusId: 'freeze' }]]);
-  for (const label of ['场地弹药补给', '轻便', '不存在']) assert.ok(warnings.some(w => w.message.includes(label)));
+  assert.equal(p.statuses.poison, undefined);
+  for (const label of ['场地弹药补给', '轻便', '不存在', '冰冻', '中毒：每回合受到能量伤害']) assert.ok(warnings.some(w => w.message.includes(label)));
 });
 
 const shooterYaml = `技能:

@@ -5,16 +5,16 @@
 | 文档 | 覆盖 |
 | --- | --- |
 | [architecture.md](architecture.md) | 入口与产物、五层依赖方向、45 个源文件归属、战局状态模型、事务/撤销/快照、动作与命令、预览结构、日志事件、结算顺序、酒馆数据流、容量上限 |
-| [dsl.md](dsl.md) | 效果 DSL 的三级结构、表达式字段、13 触发器、4 种检定、33 种条件、7 种目标、25 个节点 kind、passive/exec 两条路径、数值与资源语义、地形节点、校验链、旧 kind 迁移表 |
-| [status.md](status.md) | 25 条默认模板、实例与修饰键、护盾池、生命周期及覆盖规则 |
+| [dsl.md](dsl.md) | 效果 DSL 的三级结构、表达式字段、13 触发器、4 种检定、33 种条件、7 种目标、27 个节点 kind、passive/exec 两条路径、数值与资源语义、地形节点、校验链、旧 kind 迁移表 |
+| [status.md](status.md) | 26 条默认模板、实例与修饰键、护盾池、生命周期及覆盖规则 |
 
 ## 速查
 
 | 项 | 数量 | 权威位置 |
 | --- | --- | --- |
-| 默认状态 | 25 | `src/presets/status-defaults.js` 的 `STATUSES` |
+| 默认状态 | 26 | `src/presets/status-defaults.js` 的 `STATUSES` |
 | 默认与自定义模板的修饰键 | 19 数值键 + 10 布尔标志 + 1 枚举（`damageType`） | `src/core/status_modifiers.js` |
-| DSL 节点 kind | 25（26 个 schema 分支） | `src/core/effect_schema.js` 的 `$defs.node` |
+| DSL 节点 kind | 27（28 个 schema 分支） | `src/core/effect_schema.js` 的 `$defs.node` |
 | DSL 触发器 | 13 | 同上 `$defs.expression` |
 | DSL 条件 | 33 个具名 type（数组形式等价 AND） | 同上 `$defs.condition` |
 | DSL 目标 | 7 | 同上 |
@@ -24,7 +24,7 @@
 | 动作类型 | 20 + `skill` | `src/core/combat.js` 的 `ACTIONS` + 技能模板 |
 | 日志事件 type | 52 字面量 + 4 变量（move/sprint/disengage/raise_dead） | `src/core/combat.js`、`terrain-effects.js` |
 | 源文件 | 45（core 11 / api 4 / presets 2 / tavern 18 / ui 9 / 根 1） | `src/` |
-| 源码行数 | 9251（含 `src/index.js`） | `wc -l src/*.js src/*/*.js` |
+| 源码行数 | 11000（含 `src/index.js`） | `wc -l src/*.js src/*/*.js` |
 
 ## 复核方式
 

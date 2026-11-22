@@ -1,6 +1,6 @@
 # 状态系统
 
-`src/presets/status-defaults.js` 提供 25 个默认模板和内建动作的授予映射。`state.statusTemplates` 中的同名定义优先；未知 ID 必须先注册。`src/core/status_modifiers.js` 是修饰键类型与范围的唯一来源。酒馆辅助模型的状态目录从这两份数据实时生成。
+`src/presets/status-defaults.js` 提供 26 个默认模板和内建动作的授予映射。`state.statusTemplates` 中的同名定义优先；未知 ID 必须先注册。`src/core/status_modifiers.js` 是修饰键类型与范围的唯一来源。酒馆辅助模型的状态目录从这两份数据实时生成。
 
 ## 模板和实例
 
@@ -15,6 +15,8 @@
 - `hidden` 控制敌方远距直接锁定，AI 与玩家共用可见性判定。`rooted` 禁止移动或瞬移；`skip` 跳过行动。`taunted` 使用声明该标记的状态实例的 `sourceUnitId`，有多个有效来源时按状态 ID 顺序选择第一个可攻击来源。
 - 多数数值修饰键按各实例值乘层数后求和。`finalDamageMultiplier` 使用独立乘区。`shatter` 在命中时加到碎裂乘区；需要碎裂后移除的模板声明 `expireOn: {trigger:'on_struck'}`。
 - 模板声明 `modifiers.amount` 就会创建护盾池。实例 `amount` 保存当前余量；`modifiers.amount` 保存授予值。结算按状态 ID 顺序依次扣池，耗尽即移除该实例。预览读取所有池的总量。`shield` 节点是向默认护盾模板授予/叠加的简写；自定义护盾用 `grantStatus`。
+- `modifiers.damageType` 指定周期伤害的类型，省略时周期伤害按真实伤害结算。它也会限定同一状态的护甲、比例减伤、易伤、碎裂、反伤触发和主击增伤修饰。移动、控制和护盾池等通用修饰独立生效。
+- 流血和中毒是真实伤害，跳过护甲、属性减伤、比例减伤和固定减伤，护盾仍可吸收。灼烧是能量伤害。周期伤害直接结算，不进行命中或弹反检定。
 - 缴械动作直接清空主手，不再另挂装饰状态。
 
 ## 提前解除

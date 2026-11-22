@@ -154,7 +154,7 @@ test('旧战局按末态续接，不将新规则反算到旧撤销记录', () =>
   const b=createGameAPI(); assert.equal(b.restoreBattleSnapshot(saved).migratedFrom,1);
   assert.deepEqual(b.getBattleState(),saved.state);
   assert.equal(b.undoLastCommit().ok,false);
-  assert.equal(b.exportBattleSnapshot().version,8);
+  assert.equal(b.exportBattleSnapshot().version,10);
 });
 
 test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移动', () => {
@@ -220,6 +220,20 @@ test('DoT / HoT、叠层及持续：开头灼烧中毒再生，回合末流血',
   end(a); assert.equal(u(a,'oracle').hp,16);
   assert.equal(u(a,'oracle').statuses.bleed.remainingTurns,2);
   assert.equal(a.getBattleState().items['soulblade-lan'].counters.souls,0);
+});
+
+test('流血和中毒跳过护甲与架势减伤，灼烧仍受减伤', () => {
+  const a = boot();
+  commit(a, stats('oracle', { hp: 25 }), status('oracle', 'guarded'),
+    status('oracle', 'burn'), status('oracle', 'poison'), status('oracle', 'bleed'));
+  turn(a, 'oracle');
+  assert.equal(u(a, 'oracle').hp, 19);
+  end(a);
+  assert.equal(u(a, 'oracle').hp, 16);
+  const ticks = events(a).filter(event => event.type === 'damage' && event.detail.targetId === 'oracle' && event.detail.tickTiming);
+  assert.deepEqual(ticks.map(({ detail }) => [detail.statusId, detail.damageType, detail.amount]), [
+    ['burn', 'energy', 3], ['poison', 'true', 3], ['bleed', 'true', 3],
+  ]);
 });
 
 test('护盾、冻伤碎冰、棘甲反伤、援护在同一笔伤害事务中正确归因', () => {
@@ -378,7 +392,7 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
 });
 
 test('三个预设均可打到胜负；完整战报和 JSON 日志可重放', () => {
-  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','red']]) {
+  for (const [scenarioId, expected] of [['ruins','blue'],['altar','blue'],['boss','blue']]) {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {
       a.playAction(chooseAction(a.getBattleState()));

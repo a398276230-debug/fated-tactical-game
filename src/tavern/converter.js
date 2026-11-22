@@ -2,13 +2,14 @@ import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { validateEffect, validateState } from '../api/validation.js';
 import { validSaveDC } from '../core/effect_schema.js';
 import { validateStatusModifiers } from '../core/status_modifiers.js';
-import { sizeClassFor, stanceFor, moraleTypeFor } from '../core/combat_protocol.js';
+import { DISTANCE_TABLE, sizeClassFor, stanceFor, moraleTypeFor } from '../core/combat_protocol.js';
 import { adaptLegacyEffects, initialCounters, resourceDefinitions } from '../core/effects.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { effectNodes, isExpression, validExpression } from '../core/effect_schema.js';
 import { parseBattleTime } from '../core/battle_time.js';
+import { parseAreaTags, tagEntries } from './area-tags.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -91,8 +92,9 @@ export function parseSimpleYaml(input) {
       if (!Array.isArray(parent)) continue;
       const rest = line.value.slice(2).trim();
       if (!rest) { const child = {}; parent.push(child); stack.push({ indent: line.indent, value: child }); continue; }
-      const colon = rest.indexOf(':');
-      if (colon > 0 && !rest.startsWith('{')) {
+      const colon = rest.search(/:(?:\s|$)/u);
+      const quoted = /^(?:".*"|'.*')$/u.test(rest);
+      if (colon > 0 && !quoted && !rest.startsWith('{')) {
         const child = {}; parent.push(child);
         child[rest.slice(0, colon).trim()] = scalar(rest.slice(colon + 1));
         stack.push({ indent: line.indent, value: child });
@@ -265,11 +267,9 @@ const effectAliases = {
   killcharge: 'kill_charge_weapon', kill_charge: 'kill_charge_weapon', ammo_charge: 'ammo', bleed: 'backstab',
   knock_back: 'knockback', teleport_backstab: 'teleport_backstab', cleanse_status: 'cleanse', root: 'opportunity_root',
 };
-const statusAliases = { burning: 'burn', fire: 'burn', bleeding: 'bleed', frozen: 'freeze', immobilize: 'root', 燃烧: 'burn', 冻结: 'freeze', 晕眩: 'stun', 加速: 'haste' };
-const statusNames = new Map(Object.values(STATUSES).map(status => [status.name, status.id]));
 function statusId(value) {
-  const key = text(value).toLowerCase();
-  return own(STATUSES, key) ? key : statusNames.get(key) ?? (own(statusAliases, key) ? statusAliases[key] : null);
+  const key = text(value);
+  return own(STATUSES, key) ? key : null;
 }
 const bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer(value, fallback)));
 function statusTurns(value, fallback) {
@@ -391,14 +391,56 @@ function normalizeDice(raw) {
   };
 }
 
+function areaFields(raw, warnings, name) {
+  const tags = parseAreaTags(raw.tags ?? raw.标签);
+  if (tags.missingRange && raw.range == null && raw.有效距离 == null) warnings.push(`「${name}」有效距离标签缺少格数`);
+  if (tags.missingRadius && tags.radius == null && raw.radius == null) warnings.push(`「${name}」范围标签缺少半径格数`);
+  const tier = DISTANCE_TABLE.find(row => row.name === tags.rangeTier);
+  if (tier && (tags.range < tier.min || (tier.max != null && tags.range > tier.max))) {
+    warnings.push(`「${name}」有效距离 ${tags.range} 格与「${tier.name}」的距离区间不符`);
+  }
+  const shape = raw.shape ?? tags.shape;
+  return { range: raw.range ?? raw.有效距离 ?? tags.range, shape,
+    target: raw.target ?? tags.target ?? (raw.heal != null || tags.healing ? 'ally' : null),
+    radius: raw.radius ?? tags.radius, innerRadius: raw.innerRadius ?? tags.innerRadius,
+    angle: raw.angle ?? tags.angle,
+    width: raw.width ?? (tags.width != null ? tags.width / 2 : shape === 'line' ? 0.5 : null) };
+}
+
+function geometryFields(area) {
+  const result = {};
+  for (const key of ['shape', 'target']) if (area[key] != null) result[key] = area[key];
+  for (const key of ['radius', 'innerRadius', 'width', 'angle']) {
+    if (area[key] != null && Number.isFinite(Number(area[key]))) {
+      result[key] = key === 'angle' ? bound(area[key], 1, 360) : Math.max(0, Math.min(6, Number(area[key])));
+    }
+  }
+  return result;
+}
+
+function ammoCapacity(raw) {
+  const match = tagEntries(raw?.tags ?? raw?.标签).map(tag => tag.match(/^弹药\s*[:：]\s*(\d+)$/u)).find(Boolean);
+  return match ? bound(match[1], 0, 1000000, 0) : null;
+}
+function attachAmmoPool(item, capacity) {
+  if (!item?.template || capacity == null || item.template.kind !== 'weapon' || !item.template.ranged) return;
+  const existing = resourceDefinitions(item.template).find(node => node.resource === 'ammo');
+  if (existing) {
+    existing.cap = Math.max(existing.cap ?? 0, capacity);
+    existing.initial = capacity;
+  } else item.template.effects.push({ id: `${item.templateId}-ammo`, trigger: 'passive', target: 'self', effects: [{ kind: 'produceResource', resource: 'ammo', cap: Math.max(1, capacity), initial: capacity }] });
+  const spendsAmmo = item.template.effects.some(expr => expr.trigger === 'on_attack' && effectNodes(expr.effects).some(node => node.kind === 'drainResource' && node.resource === 'ammo'));
+  if (!spendsAmmo) item.template.effects.push({ id: `${item.templateId}-ammo-spend`, trigger: 'on_attack', target: 'self', params: {source:'weapon'}, condition: {type:'selfStatusModifier',key:'infiniteAmmo',value:false}, effects: [{ kind: 'drainResource', resource: 'ammo', local: true, amount: 1, requireFull: true }] });
+  item.counters.ammo = capacity;
+}
 function normalizeEquipment(raw, slot, owner, index, sink) {
   const r = asObject(raw), name = text(r.name ?? r.名称 ?? r.itemName) || `${slot || '装备'}${index + 1}`;
   const isShield = slot === 'shield' || r.kind === 'shield' || r.shield === true || r.weaponClass === 'shield' || /盾/.test(name);
   const labels = Array.isArray(r.tags ?? r.标签) ? (r.tags ?? r.标签).join(' ') : text(r.tags ?? r.标签);
-  const kindAliases = new Map([['武器', 'weapon'], ['防具', 'armor'], ['饰品', 'accessory'], ['消耗品', 'consumable']]);
+  const kindAliases = new Map([['武器', 'weapon'], ['防具', 'armor'], ['饰品', 'accessory'], ['弹药容器', 'accessory'], ['消耗品', 'consumable']]);
   const declaredKind = ['weapon', 'armor', 'accessory', 'consumable'].includes(r.kind) ? r.kind : kindAliases.get(r.类型);
   const kind = isShield ? 'shield' : declaredKind || (['mainHand', 'offHand', 'twoHands'].includes(slot)
-    || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|法杖|发射器/.test(`${name} ${labels}`) ? 'weapon' : 'accessory');
+    || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|火枪|投掷武器/.test(`${name} ${labels}`) ? 'weapon' : 'accessory');
   const isWeapon = kind === 'weapon';
   const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
   const templateId = `template-${idBase}`;
@@ -408,20 +450,22 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
   const defense = bound(r.defense ?? r.防御 ?? defenseTag?.[1], 0, 1000000, kind === 'shield' ? 1 : 0);
   if (kind === 'shield') Object.assign(template, { weaponClass: 'shield', hand: 'off_hand', shield: true, defense });
   else if (isWeapon) {
+    const area = areaFields(r, sink('field', `/equipment/${templateId}`), name);
     const classes = ['ranged', 'light_blade', 'greatsword', 'staff', 'auxiliary'];
     const weaponClassAlias = new Map([['bow', 'ranged'], ['crossbow', 'ranged'], ['arcane', 'staff']]);
     const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-    const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : ['ranged', 'staff'].includes(explicitClass) || /弓|弩|法杖|远程|发射器/.test(`${name} ${labels}`));
+    const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : tagEntries(r.tags ?? r.标签).some(tag => ['弓','弩','火枪','投掷武器'].includes(tag)));
     const twoHanded = slot === 'twoHands' || r.twoHanded === true || r.hand === 'two_handed' || explicitClass === 'greatsword'
       || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
-    const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i), rangeTag = labels.match(/(?:有效距离|射程)[^\d]*(\d+)/i);
+    const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
     const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? 'ranged' : twoHanded ? 'greatsword' : 'light_blade';
     Object.assign(template, {
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
-      range: bound(r.range ?? r.有效距离 ?? rangeTag?.[1], 1, 15, ranged ? 4 : 1),
+      range: bound(area.range, 1, 15, ranged ? 4 : 1),
       attack: bound(r.attack ?? r.攻击 ?? attackTag?.[1], 0, 1e9), accuracy: bound(r.accuracy ?? r.命中, -20, 30, 0),
       damage: normalizeDice(r.damage ?? { stat: 'str' }),
+      ...geometryFields(area),
     });
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
   } else Object.assign(template, { armor: bound(r.armor, 0, 1000000, defense), defense });
@@ -431,7 +475,9 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
     if (node.local && ['produceResource','restoreResource','drainResource'].includes(node.kind) && !declared.has(node.resource)) missing.add(node.resource);
   }
   for (const key of missing) sink('effect', `/equipment/${templateId}`).push(`装备「${name}」引用了未声明的实例计数器 ${key}，运行时会被跳过`);
+  const ammoTag = ammoCapacity(r);
   const counters = initialCounters(template);
+  attachAmmoPool({template, templateId, counters}, ammoTag);
   return { id: idBase, templateId, template, counters, slot, name };
 }
 
@@ -573,7 +619,8 @@ function importBackpack(bag, owner, skills, sink) {
     const warnings = sink('effect', `/skills/${id}`);
     const raw = item.effects ?? item.效果;
     const tags = [].concat(item.tags ?? item.标签 ?? []).join(' ');
-    const range = bound(item.range ?? tags.match(/(?:射程|有效距离)\s*[:：][^\d]*(\d+)/)?.[1], 0, 15, 3);
+    const area = areaFields(item, warnings, name);
+    const range = bound(area.range, 0, 15, 3);
     let effects;
     const entries = Object.entries(asObject(raw));
     const simple = entries.length === 1 && /^(物理|能量|精神|真实)伤害$/.exec(entries[0][0]);
@@ -585,10 +632,8 @@ function importBackpack(bag, owner, skills, sink) {
       for (const note of notes) warnings.push(`背包消耗品「${name}」：${note}`);
       if (!effects.length && !notes.length) warnings.push(`背包消耗品「${name}」缺少效果：请按名称推定用途、目标和数值，补全可执行效果`);
     }
-    const target = ['enemy','ally','self','any','cell','corpse'].includes(item.target) ? item.target : 'enemy';
-    const shape = ['circle','line','fan','cone'].includes(item.shape) ? item.shape : 'single';
-    skills[id] = {name:name.slice(0,100),backpackItem:true,ap:1,slot:'action',range,shape,target,effects,
-      ...(item.radius != null && {radius:bound(item.radius,0,6)}), ...(item.width != null && {width:bound(item.width,0,6)})};
+    skills[id] = {name:name.slice(0,100),backpackItem:true,ap:1,slot:'action',range,
+      shape:area.shape ?? 'single',target:area.target ?? 'enemy',effects,...geometryFields(area)};
     inventory[id] = count;
   }
   return inventory;
@@ -605,7 +650,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const size = sizeClassFor(bodyLengthM);
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
-  const slotItems = sourceEquipment(record).map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, sink));
+  const sourceEntries = sourceEquipment(record);
+  const slotItems = sourceEntries.map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, sink));
   for (const item of slotItems) {
     equipment[item.templateId] ??= item.template;
     items[item.id] = { id: item.id, templateId: item.templateId, counters: item.counters };
@@ -616,13 +662,22 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const off = !main?.template.twoHanded && slotItems.find(i => i.slot === 'offHand' && ['weapon', 'consumable'].includes(i.template.kind));
   const shield = !main?.template.twoHanded && slotItems.find(i => i.template.kind === 'shield');
   const gear = slotItems.filter(i => ![main, off, shield].includes(i));
+  const bagEntries = record.__sourceKind === 'MVU' ? sourceEquipment({装备:record.背包}) : [];
+  const containerCounts = [...sourceEntries, ...bagEntries].map(([, raw]) =>
+    raw.类型 === '武器' || raw.kind === 'weapon' ? null : ammoCapacity(raw)).filter(value => value != null);
+  const ammoWeapon = [main, off, ...gear].find(item => item?.template?.ranged);
+  if (ammoWeapon && containerCounts.length) {
+    const ownAmmo = ammoWeapon.counters.ammo ?? 0;
+    attachAmmoPool(ammoWeapon, Math.min(1e9, ownAmmo + containerCounts.reduce((sum, count) => sum + count, 0)));
+  }
   const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
   const skillInfo = {};
   const normalizedSkills = sourceSkills(record).slice(0, 32).map(([raw, i]) => {
     const r = asObject(raw), sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${i}`;
+    const skillName = text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`;
     const labels = [].concat(r.tags ?? r.标签 ?? [], r.description ?? r.描述 ?? '').join(' ');
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
-    const taggedRange = labels.match(/有效距离\s*[:：][^\d\]]*(\d+)/)?.[1];
+    const area = areaFields(r, sink('effect', `/skills/${sid}`), skillName);
     const costs = skillCosts(r.cost ?? r.消耗);
     const tag = labels.match(/伤害\s*[:：]\s*([^\]]+)/)?.[1]?.trim();
     const rawEffects = r.effects ?? r.效果;
@@ -631,10 +686,10 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const damageType = r.damageType ?? (legacyDamage.length === 1 ? legacyDamage[0].damageType : damageAliases.get(tag));
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
-      name: text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`,
+      name: skillName,
       quality: '普通', ap: bound(r.ap ?? costs.ap, 1, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
-      range: bound(r.range ?? taggedRange, 0, 15, 1), shape: ['single', 'circle', 'fan', 'cone', 'line'].includes(r.shape) ? r.shape : 'single',
-      target: ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(r.target) ? r.target : 'enemy',
+      range: bound(area.range, 0, 15, 1), shape: area.shape ?? 'single',
+      target: area.target ?? 'enemy', ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       effects: legacyDamage.length ? [] : convertEffects(rawEffects, 'skill', sink('effect', `/skills/${sid}`), `fx-${hash(sid).toString(36)}`),
     };
@@ -644,7 +699,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       skills[sid].effects.push({id:`fx-${hash(sid).toString(36)}-damage`,trigger:'active',target:'hitTarget',effects:nodes});
     }
     if (damageType != null) skills[sid].damageType = damageType;
-    for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['radius', 0, 6], ['width', 0, 6], ['accuracy', -20, 30], ['power', 0, 1e9]]) {
+    for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['accuracy', -20, 30], ['power', 0, 1e9]]) {
       const value = r[key] ?? (key === 'power' ? taggedPower : costs[key]);
       if (value != null) skills[sid][key] = bound(value, min, max);
     }
@@ -665,10 +720,10 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     : Object.entries(asObject(sourceStatuses));
   for (const [rawId, rawStatus] of statusEntries) {
     if ((Array.isArray(sourceStatuses) && emptyEntry(rawStatus)) || (typeof rawId === 'string' && emptyEntry(rawId))) continue;
-    const sid = statusId(rawId) || statusId(rawStatus?.id ?? rawStatus?.name ?? rawStatus?.名称);
+    const sid = statusId(rawStatus?.statusId ?? rawStatus?.id ?? rawId);
     if (!sid) {
-      const description = text(rawStatus?.效果 ?? rawStatus?.description);
-      warnings.push(`忽略未知状态：${rawId ?? 'unknown'}${description ? `：${description}` : ''}`);
+      const description = text(rawStatus?.效果 ?? rawStatus?.description ?? rawStatus?.描述 ?? (rawStatus !== rawId && typeof rawStatus === 'string' ? rawStatus : ''));
+      warnings.push(`状态待标准化：${rawId ?? 'unknown'}${description ? `：${description}` : ''}`);
       continue;
     }
     const template = STATUSES[sid];
@@ -702,10 +757,11 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     for (const [slot, raw, index] of sourceEquipment({装备:record.背包})) {
       if ((raw.类型 !== '武器' && raw.kind !== 'weapon') || bound(raw.数量 ?? raw.count, 0, 1e9, 1) === 0) continue;
       const item = normalizeEquipment(raw, slot, id, `bag-${index}`, sink);
-      if (item.template.kind !== 'weapon') continue;
-      equipment[item.templateId] = item.template;
-      items[item.id] = {id:item.id,templateId:item.templateId,counters:item.counters};
-      bagWeapons.push(item.id);
+      if (item.template.kind === 'weapon') {
+        equipment[item.templateId] = item.template;
+        items[item.id] = {id:item.id,templateId:item.templateId,counters:item.counters};
+        bagWeapons.push(item.id);
+      }
     }
     if (bagWeapons.length) unit.bagWeapons = bagWeapons;
     const inventory = importBackpack(record.背包, id, skills, sink);

@@ -41,7 +41,7 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 
 ## 3. 文件归属
 
-### 3.1 L0 `src/core/`（11 个文件，2825 行）
+### 3.1 L0 `src/core/`（14 个文件，3475 行）
 
 | 文件 | 行 | 职责 | 关键导出 |
 | --- | --- | --- | --- |
@@ -59,7 +59,7 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 
 `combat.js` 内部按段落组织，没有拆子模块：
 
-1. 读取战局状态模板，缺省使用 `src/presets/status-defaults.js` 的 25 条默认模板（见 status.md）
+1. 读取战局状态模板，缺省使用 `src/presets/status-defaults.js` 的 26 条默认模板（见 status.md）
 2. `record()` 日志写入与 `randomUnit`/`randomDie`
 3. 状态生命周期：`grantStatus`、`patchStatus`、`expireStatuses`、`tick`、`endTurn` 中的时长递减
 4. 伤害管线：`loseHP`、`armorOf`、`damageTarget`、`mitigation`、`guardFor`、`coverDamage`
@@ -153,7 +153,7 @@ L3 对 L4 的两条出边是 `tavern/main.js → ui/mount.js` 与 `tavern/overla
 
 - `facing` 是 `[-1|0|1, -1|0|1]`，至少一个非零。
 - `used: {action, attack}` 记录本回合两个槽的使用情况，`ap` 每回合补到 2。
-- `gear` ≤12、`skills` ≤32、`statuses` 条数上限 `64 + 25`。
+- `gear` ≤12、`skills` ≤32、`statuses` 条数上限 `64 + 26`。
 - `resources`/`inventory` 是整数表；`effectUsage` 记录 `{count, round}`；`effectModifiers` 记录临时属性修正 `{stat, flat, percent, turns, round, turn, damageType?}`。
 - 同一格不能有多个 `hp > 0` 的单位，也不能压墙或压存活掩体。
 

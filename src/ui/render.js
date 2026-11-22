@@ -8,7 +8,7 @@ import { narrateAll, STAT_NAMES, DAMAGE_TYPES } from './narrate.js';
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
 const STANCES = { light_blade: '轻剑', dual_wield: '双持', attunement: '同调', greatsword: '重剑', sword_shield: '剑盾' };
-const SHAPES = { circle: '圆形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
+const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
 const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' };
 export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', attack: '普攻', interact: '互动', brace: '架势防御',
   free_ally: '解除压制', suppress: '压制', block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',

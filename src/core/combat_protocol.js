@@ -62,15 +62,23 @@ export function intentCheck(intent = 'normal', attackerTier = 1, defenderTier = 
   if (attackerTier < defenderTier - 1) return { required: true, success: false, forced: true, ...spec };
   return { required: true, success: attackerTier * 5 + attackerD20 + ratingBonus >= defenderTier * 5 + defenderD20 + spec.difficulty, ...spec };
 }
+export function typedArmor(type, defense) {
+  return type === 'physical' ? defense : type === 'energy' ? defense / 2 : 0;
+}
+export function damageAttributeReduction(type, { con = 0, str = 0, agi = 0, spi = 0, int = 0 } = {}) {
+  if (type === 'physical') return (con + str + agi) * .0025;
+  if (type === 'energy') return (spi + int) * .004;
+  return type === 'mental' ? spi * .008 : 0;
+}
 export function damagePipeline({ initial = 0, bonus = 0, reductions = [], type = 'physical', defense = 0, penetration = 0, attributes = {}, flatReduction = 0, dr = 0, damageMultiplier = 1 } = {}) {
-  const reduction = Math.min(1, reductions.slice().sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0));
-  const effectiveDefense = Math.max(0, defense * (1 - penetration));
-  const armor = type === 'true' ? 1 : 2000 / (effectiveDefense + 2000);
-  const attributeReduction = type === 'physical' ? (attributes.con + attributes.str + attributes.agi) * .0025 : type === 'energy' ? (attributes.spi + attributes.int) * .004 : type === 'mental' ? attributes.spi * .008 : 0;
+  const reduction = type === 'true' ? 0 : Math.min(1, reductions.slice().sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0));
+  const effectiveDefense = typedArmor(type, Math.max(0, defense * (1 - penetration)));
+  const armor = 2000 / (effectiveDefense + 2000);
+  const attributeReduction = damageAttributeReduction(type, attributes);
   const composed = (initial + bonus) * damageMultiplier * (1 - reduction);
   const afterArmor = type === 'true' ? composed : composed * armor;
   const result = Math.max(0, afterArmor * (1 - attributeReduction) - (type === 'true' ? 0 : flatReduction));
-  return { initial, bonus, reduction, effectiveDefense, armorMultiplier: armor, attributeReduction, beforeDR: result, damage: result * (1 - Math.max(0, Math.min(1, dr))) };
+  return { initial, bonus, reduction, effectiveDefense, armorMultiplier: armor, attributeReduction, beforeDR: result, damage: result * (1 - (type === 'true' ? 0 : Math.max(0, Math.min(1, dr)))) };
 }
 export function areaResolution({ baseDamage, mc = 1, coverage = 1, rangeTier = 1, members = 1, colossus = false } = {}) {
   const nHit = Math.max(1, Math.min(members, Math.ceil(members * Math.min(rangeTier, 10) / 10 * coverage)));

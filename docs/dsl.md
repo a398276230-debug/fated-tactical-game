@@ -120,9 +120,9 @@
 
 ---
 
-## 7. 节点表（25 种 kind / 26 个 schema 分支）
+## 7. 节点表（27 种 kind / 28 个 schema 分支）
 
-`modifyTerrain` 有两个 schema 分支（`raise|lower` 与 `set`），运行时是同一个 kind。
+`modifyTerrain` 有两个 schema 分支（`raise|lower` 与 `set`），运行时是同一个 kind。资源三兄弟（`restoreResource`/`drainResource`/`produceResource`）由同一个 `node()` 批量注册，字段集相同、必填项同为 `resource`。
 
 **新增节点规范：** 在 `src/core/effect_schema.js` 的 `nodeNotes` 为每个新 `kind` 写一句给辅助助手看的中文说明：它解决什么问题，以及最容易写错的引用、结算时机或与相邻节点的区别。同一 `kind` 的多个 schema 分支共用说明。`node()` 会把说明写入 JSON Schema 的 `description`；默认 `protocol` 槽自动渲染它，不另抄提示词。缺少说明会报错。
 
@@ -144,6 +144,7 @@
 | `upgradeHitTier` | — | passive | 已命中后提升一档评级 |
 | `multiplyDamage` | `factor, damageType, additive, resourceScale, local` | exec + passive | exec 时把节点推入 `ctx.multipliers`（主击统一再算）；passive 时参与 `damageFactor` |
 | `knockback` | `distance 1…5, collisionDamage` | exec | 逐格推；受阻时结算碰撞伤害（默认 5，`effect.collisionDamage ?? 5`）并施加 `stun` |
+| `changeAltitude` | `delta −12…12, land` | exec | 改施术者自身的离地高度：`land:true` 直接落地，否则 `altitude + (delta ?? 3)` 并 clamp 0…12；写 `altitude` 日志。高度存在 `unit.altitude`，保持到下次改变，不参与 grid 地形 |
 | `teleportBackstab` | `bonusMultiplier` | exec | 目标背后空格校验；预览阶段同时改写命中上下文 |
 | `shield` | `amount, percent, percentOfHealing, turns, stack` | exec | 授予默认护盾模板；`stack` 时叠加该模板对应的现有池 |
 | `execute` | `threshold, strict, requiresPool` | exec | 直接清空 HP；`nonLethal`/`preserveLife` 可阻断；`requiresPool` 要求该资源池存在 |
