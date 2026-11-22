@@ -458,10 +458,13 @@ var FatedTacticalTavern = (() => {
     tier: "\u5C42\u7EA7",
     hp: "\u5F53\u524D\u751F\u547D",
     maxHp: "\u751F\u547D\u4E0A\u9650",
+    initialMaxHp: "\u521D\u59CB\u751F\u547D\u4E0A\u9650",
     mp: "\u5F53\u524D\u6CD5\u529B",
     maxMp: "\u6CD5\u529B\u4E0A\u9650",
+    initialMaxMp: "\u521D\u59CB\u6CD5\u529B\u4E0A\u9650",
     sp: "\u5F53\u524D\u4F53\u529B",
-    maxSp: "\u4F53\u529B\u4E0A\u9650"
+    maxSp: "\u4F53\u529B\u4E0A\u9650",
+    initialMaxSp: "\u521D\u59CB\u4F53\u529B\u4E0A\u9650"
   };
   var vmUnitFields = {
     id: "\u5B9E\u4F53 ID",
@@ -472,7 +475,8 @@ var FatedTacticalTavern = (() => {
     altitude: "\u79BB\u5730\u9AD8\u5EA6",
     mc: "\u5DE8\u578B\u7CFB\u6570",
     alive: "\u662F\u5426\u5B58\u6D3B\u4E14\u5728\u573A",
-    team: "\u9635\u8425"
+    team: "\u9635\u8425",
+    summoned: "\u662F\u5426\u4E3A\u53EC\u5524\u7269"
   };
   var unitScopes = { self: "\u6548\u679C\u4E3B\u4F53", attacker: "\u4E8B\u4EF6\u653B\u51FB\u8005", target: "\u5F53\u524D\u76EE\u6807", source: "\u6548\u679C\u6765\u6E90", candidate: "\u5F53\u524D\u7B5B\u9009\u5B9E\u4F53" };
   var legacyScopes = /* @__PURE__ */ new Set(["self", "attacker", "target"]);
@@ -557,6 +561,9 @@ var FatedTacticalTavern = (() => {
   for (const [scope, label] of Object.entries({ status: "\u72B6\u6001", zone: "\u533A\u57DF", skill: "\u6301\u6709\u6280\u80FD", item: "\u88C5\u5907" })) {
     dynamicFamily(`${scope}.vars`, `${label}\u5B9E\u4F8B\u7684\u53D8\u91CF`, (context, id3) => path(context, scope, "vars", id3));
   }
+  register("zone.team", "\u533A\u57DF\u521B\u5EFA\u65F6\u7684\u9635\u8425\uFF1B\u65E0\u9635\u8425\u65F6\u4E3A null", (context) => path(context, "zone", "team"));
+  register("zone.sourceId", "\u533A\u57DF\u521B\u5EFA\u8005 ID", (context) => path(context, "zone", "sourceId"));
+  register("candidate.sourceId", "\u5F53\u524D\u5019\u9009\u5B9E\u4F53\u7684\u521B\u5EFA\u8005 ID", (context) => path(context, "candidate", "sourceId"));
   for (const [scope, fields3] of Object.entries({ status: statusFields, tape: tapeFields })) {
     for (const [field, description] of Object.entries(fields3)) {
       register(`${scope}.${field}`, description, (context) => path(context, scope, field));
@@ -578,7 +585,10 @@ var FatedTacticalTavern = (() => {
     absorbed: "\u672C\u6B21\u88AB\u62A4\u76FE\u5438\u6536\u7684\u4F24\u5BB3",
     previous: "\u5F53\u524D\u6548\u679C\u94FE\u4E0A\u4E00\u6B65\u5B9E\u9645\u6570\u503C",
     healing: "\u672C\u6B21\u6CBB\u7597\u91CF",
-    checkKind: "\u68C0\u5B9A\u7C7B\u578B\uFF08\u5982 attack/save/contest\uFF09"
+    statusId: "\u89E6\u53D1\u672C\u6B21\u68C0\u5B9A\u6216\u4E8B\u4EF6\u7684\u72B6\u6001 ID",
+    checkKind: "\u68C0\u5B9A\u7C7B\u578B\uFF08\u5982 attack/save/contest\uFF09",
+    baseDC: "VM \u68C0\u5B9A\u521D\u59CB DC",
+    finalDC: "VM \u68C0\u5B9A\u5B8C\u6210\u65F6\u8BA1\u5165\u4FEE\u9970\u540E\u7684 DC"
   })) register(`event.${name}`, description, (context) => path(context, "event", name), true);
   register("event.kind", "\u4E8B\u4EF6\u7C7B\u578B\uFF0C\u68C0\u5B9A\u4E2D\u7B49\u540C\u4E8E event.checkKind", (context) => path(context, "event", "kind") ?? path(context, "event", "checkKind"));
   family("event.<field>", /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, "\u6D3B\u8DC3\u4E8B\u4EF6\u7684\u81EA\u6709\u6807\u91CF\u5B57\u6BB5", (context, key4) => path(context, "event", key4));
@@ -1000,19 +1010,92 @@ var FatedTacticalTavern = (() => {
     return [];
   }
 
-  // src/core/vm-carriers.js
+  // src/core/vm-rule-limits.js
+  function ruleAvailability(state, rule2, key4) {
+    const vm = state.vm;
+    const stamp = vm?.ruleTurns?.[key4];
+    const sameTurn = Boolean(stamp && stamp.round === state.round && stamp.turn === state.turn);
+    const usesLeft = Math.min(
+      rule2.usesPerBattle === void 0 ? Infinity : Math.max(0, rule2.usesPerBattle - (vm?.uses?.[key4] ?? 0)),
+      rule2.usesPerTurn === void 0 ? Infinity : Math.max(0, rule2.usesPerTurn - (sameTurn ? stamp.count : 0))
+    );
+    const cooldownRemaining = rule2.cooldownTurns === void 0 || !stamp ? 0 : Math.max(0, stamp.round + rule2.cooldownTurns - state.round);
+    return { usesLeft, cooldownRemaining, sameTurn, stamp };
+  }
+
+  // src/core/vm-immunity.js
   var own2 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  function carrierEntity(state, carrier4) {
+    if (!carrier4) return void 0;
+    if (carrier4.type === "status") return own2(own2(state.units, carrier4.ownerId)?.statuses, carrier4.id);
+    if (carrier4.type === "skill") return own2(state.skills, carrier4.id);
+    if (carrier4.type === "item") {
+      const item = own2(state.items, carrier4.id);
+      const template = own2(state.equipment, item?.templateId);
+      return { ...template, ...item, vars: { ...template?.vars, ...item?.vars } };
+    }
+    if (carrier4.type === "zone") return own2(state.zones, carrier4.id);
+    if (carrier4.type === "unit") return own2(state.units, carrier4.id);
+  }
+  function ruleContext(state, entry2, event, carrierScope2) {
+    const entity = carrierEntity(state, entry2.carrier);
+    const row = { entity: entity ?? {}, carrier: entry2.carrier ?? { type: "unit", id: entry2.ownerId }, nativeOwnerId: entry2.ownerId };
+    return carrierScope2(state, row, entry2.ownerId, event, {
+      // Immunity checks are deliberately non-recursive. A before_status rule may
+      // ask about the candidate status, but cannot trigger another immunity walk.
+      isImmune: () => null
+    });
+  }
+  function cancelProgram(program2, context) {
+    for (const op of program2 ?? []) {
+      if (op.op === "if") {
+        const condition = evaluateExpr(op.cond, context);
+        if (typeof condition !== "boolean") return false;
+        if (!cancelProgram(condition ? op.then : op.else, context)) return false;
+      } else if (op.op === "mutate_event" && Object.keys(op.patch).every((key4) => key4 === "cancel")) {
+        const cancel = evaluateExpr(op.patch.cancel, context);
+        if (typeof cancel !== "boolean") return false;
+        context.event.cancel = cancel;
+      } else return false;
+    }
+    return true;
+  }
+  function isStatusImmune(state, target2, statusId3, source = null, dependencies2 = {}) {
+    if (!target2?.id || typeof statusId3 !== "string") return null;
+    const event = {
+      actorId: source?.id ?? null,
+      sourceId: source?.id ?? null,
+      targetId: target2.id,
+      statusId: statusId3,
+      tags: own2(state.statusTemplates, statusId3)?.tags ?? []
+    };
+    const { collectRules: collectRules2, carrierScope: carrierScope2 } = dependencies2;
+    if (typeof collectRules2 !== "function" || typeof carrierScope2 !== "function") return null;
+    const entries3 = collectRules2(state, "before_status", event, { isImmune: () => null });
+    for (const entry2 of entries3) {
+      const { usesLeft, cooldownRemaining } = ruleAvailability(state, entry2.rule, entry2.useKey);
+      if (!usesLeft || cooldownRemaining) continue;
+      const context = ruleContext(state, entry2, event, carrierScope2);
+      if (entry2.rule.filter !== void 0 && evaluateExpr(entry2.rule.filter, context) !== true) continue;
+      if (cancelProgram(entry2.rule.program, context)) event.cancel = context.event.cancel;
+      else event.cancel = void 0;
+    }
+    return event.cancel === true;
+  }
+
+  // src/core/vm-carriers.js
+  var own3 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var entries = (table4) => Object.keys(table4 ?? {}).sort().map((key4) => [key4, table4[key4]]);
   var compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   var alive = (unit) => Boolean(unit && !unit.fled && (unit.alive ?? unit.hp > 0));
   var active = (entity) => entity.persistent || entity.durationType === "persistent" || entity.durationType === "until_removed" || !(entity.remainingTurns <= 0);
   var idOf = (ref2) => typeof ref2 === "string" ? ref2 : ref2?.id;
-  var slots = ["attack", "action", "move", "cast", "reaction"];
+  var slots = ["attack", "action", "move", "cast", "reaction", "fly", "teleport"];
   function itemRules(template, item) {
     return [...new Map([...template?.rules ?? [], ...item?.rules ?? []].map((rule2) => [rule2.id, rule2])).values()];
   }
   function skillCarrierVars(state, { id: id3, ownerId }) {
-    return { ...own2(state.skills, id3)?.vars, ...own2(state.vm?.skillVars, JSON.stringify([ownerId, id3])) };
+    return { ...own3(state.skills, id3)?.vars, ...own3(state.vm?.skillVars, JSON.stringify([ownerId, id3])) };
   }
   function carriers(state) {
     const units = entries(state.units);
@@ -1032,7 +1115,7 @@ var FatedTacticalTavern = (() => {
     for (const [ownerId, unit] of units) {
       if (unit.fled) continue;
       for (const id3 of [...new Set(unit.skills ?? [])].sort()) {
-        const skill2 = own2(state.skills, id3);
+        const skill2 = own3(state.skills, id3);
         if (!skill2) continue;
         const carrier4 = { type: "skill", id: id3, ownerId };
         result.push({ entity: { ...skill2, vars: skillCarrierVars(state, carrier4) }, carrier: carrier4, nativeOwnerId: ownerId });
@@ -1040,27 +1123,34 @@ var FatedTacticalTavern = (() => {
     }
     for (const [id3, entity] of entries(state.items)) {
       const nativeOwnerId = equippedBy.get(id3) ?? entity.ownerId;
-      const template = own2(state.equipment, entity.templateId);
-      if (own2(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
+      const template = own3(state.equipment, entity.templateId);
+      if (own3(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
         result.push({ entity: { ...template, ...entity, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: "item", id: id3 }, nativeOwnerId });
       }
     }
     for (const [id3, entity] of entries(state.zones)) {
       if (!entity.area) continue;
       const anchorId = entity.area.anchorUnitId;
-      if (!active(entity) || entity.follow && anchorId && !alive(own2(state.units, anchorId))) continue;
+      if (!active(entity) || entity.follow && anchorId && !alive(own3(state.units, anchorId))) continue;
       result.push({ entity, carrier: { type: "zone", id: id3 }, nativeOwnerId: anchorId ?? entity.sourceId });
     }
     return result;
   }
   function eventUnit(state, ref2) {
-    return own2(state.units, idOf(ref2));
+    return own3(state.units, idOf(ref2));
   }
   function sourceIdOf(row, ownerId, event) {
     return row.entity.sourceId ?? row.nativeOwnerId ?? event.sourceId ?? idOf(event.source) ?? ownerId;
   }
-  function scopeFor(state, row, ownerId, event, queries2) {
-    const self = own2(state.units, ownerId);
+  function carrierScope(state, row, ownerId, event, queries2 = {}) {
+    const self = own3(state.units, ownerId);
+    const immunity = queries2.isImmune ?? ((currentState, unit, key4, context) => isStatusImmune(
+      currentState,
+      unit,
+      key4,
+      context?.source ?? own3(currentState.units, event.sourceId ?? event.actorId),
+      { collectRules, carrierScope }
+    ));
     const source = eventUnit(state, sourceIdOf(row, ownerId, event));
     const target2 = eventUnit(state, event.targetId ?? event.target);
     const attacker = eventUnit(state, event.actorId ?? event.actor ?? event.attackerId ?? event.attacker ?? event.sourceId ?? event.source ?? event.killerId ?? event.killer) ?? source;
@@ -1080,11 +1170,12 @@ var FatedTacticalTavern = (() => {
       turn: state.turn,
       timeOfDay: state.time?.timeOfDay,
       units: state.units,
+      zones: state.zones,
       ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
-      resource: (unit, key4) => own2(state.pools, own2(unit?.pools, key4))?.current ?? own2(unit, key4),
+      resource: (unit, key4) => key4 === "move" ? Math.max(0, (unit?.move ?? 0) - (unit?.moved ?? 0)) : key4 === "attack" || key4 === "action" ? Math.max(0, 1 - (unit?.used?.[key4] ?? 0)) : own3(state.pools, own3(unit?.pools, key4))?.current ?? own3(unit, key4),
       inZone: (unit, key4) => entries(state.zones).some(([, zone]) => active(zone) && (zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, unit)),
-      isImmune: queries2.isImmune && ((unit, key4) => queries2.isImmune(state, unit, key4)),
-      select: (key4, context) => selectVM(state, own2(queries2.selectors, key4), context, { pure: true })
+      isImmune: (unit, key4, context) => immunity(state, unit, key4, context ?? { source }),
+      select: (key4, context) => selectVM(state, own3(queries2.selectors, key4), context, { pure: true })
     };
   }
   function recipients(state, row, unitIds, event, queries2) {
@@ -1092,11 +1183,11 @@ var FatedTacticalTavern = (() => {
     const shared = entity.shareRulesTo ? new Set(selectVM(
       state,
       entity.shareRulesTo,
-      scopeFor(state, row, nativeOwnerId, event, queries2),
+      carrierScope(state, row, nativeOwnerId, event, queries2),
       { pure: true }
     )) : null;
     return unitIds.filter((id3) => {
-      const unit = own2(state.units, id3);
+      const unit = own3(state.units, id3);
       return carrier4.type === "zone" ? zoneContains(state, entity, unit) || shared?.has(unit) : id3 === nativeOwnerId || shared?.has(unit);
     });
   }
@@ -1117,7 +1208,7 @@ var FatedTacticalTavern = (() => {
     else if (hook2 === "on_kill") refs = [killer];
     else if (hook2 === "turn_start" || hook2 === "turn_end") refs = [event.unitId ?? event.unit ?? actor ?? target2];
     else refs = [actor, event.sourceId ?? event.source, target2, ...event.targets ?? []];
-    return [...new Set(refs.map(idOf).filter((id3) => id3 != null && own2(state.units, id3)))].sort();
+    return [...new Set(refs.map(idOf).filter((id3) => id3 != null && own3(state.units, id3)))].sort();
   }
   function templateKey({ entity, carrier: carrier4 }) {
     return entity.templateId ?? JSON.stringify([carrier4.type, carrier4.ownerId, carrier4.id]);
@@ -1128,7 +1219,7 @@ var FatedTacticalTavern = (() => {
     if (!unitIds.length) return [];
     const candidates = [];
     for (const [carrierOrder, row] of carriers(state).entries()) {
-      if (row.carrier.type === "skill" && hook2 !== "on_death" && !alive(own2(state.units, row.nativeOwnerId))) continue;
+      if (row.carrier.type === "skill" && !["on_lethal_p1", "on_lethal_p2", "on_death"].includes(hook2) && !alive(own3(state.units, row.nativeOwnerId))) continue;
       const rules = row.entity.rules?.filter((rule2) => rule2.enabled !== false && rule2.hook === hook2);
       if (!rules?.length) continue;
       for (const ownerId of recipients(state, row, unitIds, event, queries2)) {
@@ -1150,7 +1241,7 @@ var FatedTacticalTavern = (() => {
     });
   }
   function matchesModifier(mod2, event) {
-    return (mod2.damageType === void 0 || mod2.damageType === event.damageType) && (mod2.checkKind === void 0 || mod2.checkKind === event.checkKind || mod2.checkKind === event.statusId || event.tags?.includes(mod2.checkKind));
+    return (mod2.damageType === void 0 || mod2.damageType === event.damageType) && (mod2.statusId === void 0 || mod2.statusId === event.statusId) && (mod2.checkKind === void 0 || mod2.checkKind === event.checkKind || mod2.checkKind === event.statusId || event.tags?.includes(mod2.checkKind));
   }
   function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
     const stats = /* @__PURE__ */ new Map();
@@ -1158,11 +1249,11 @@ var FatedTacticalTavern = (() => {
     const flags3 = /* @__PURE__ */ new Set();
     const policy = /* @__PURE__ */ new Map();
     const seen = /* @__PURE__ */ new Set();
-    if (own2(state.units, unitId)) {
+    if (own3(state.units, unitId)) {
       for (const row of carriers(state)) {
-        if (row.carrier.type === "skill" && !alive(own2(state.units, row.nativeOwnerId))) continue;
+        if (row.carrier.type === "skill" && !alive(own3(state.units, row.nativeOwnerId))) continue;
         if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries2).length) continue;
-        const context = scopeFor(state, row, unitId, event, queries2);
+        const context = carrierScope(state, row, unitId, event, queries2);
         for (const [index, mod2] of row.entity.mods.entries()) {
           const key4 = JSON.stringify([templateKey(row), index]);
           if (seen.has(key4) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
@@ -1382,23 +1473,10 @@ var FatedTacticalTavern = (() => {
     infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
   }).map(([id3, status]) => [id3, Object.freeze({ id: id3, ...status })])));
 
-  // src/core/vm-rule-limits.js
-  function ruleAvailability(state, rule2, key4) {
-    const vm = state.vm;
-    const stamp = vm?.ruleTurns?.[key4];
-    const sameTurn = Boolean(stamp && stamp.round === state.round && stamp.turn === state.turn);
-    const usesLeft = Math.min(
-      rule2.usesPerBattle === void 0 ? Infinity : Math.max(0, rule2.usesPerBattle - (vm?.uses?.[key4] ?? 0)),
-      rule2.usesPerTurn === void 0 ? Infinity : Math.max(0, rule2.usesPerTurn - (sameTurn ? stamp.count : 0))
-    );
-    const cooldownRemaining = rule2.cooldownTurns === void 0 || !stamp ? 0 : Math.max(0, stamp.round + rule2.cooldownTurns - state.round);
-    return { usesLeft, cooldownRemaining, sameTurn, stamp };
-  }
-
   // src/core/tactical-vm.js
   var maxSteps = 2e3;
   var maxDepth = 64;
-  var own3 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var own4 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   var coordinate2 = (value) => Number.isInteger(value?.x) && Number.isInteger(value?.y);
   var samePoint = (a, b) => a.x === b.x && a.y === b.y;
@@ -1406,21 +1484,21 @@ var FatedTacticalTavern = (() => {
   var nextId = (vm, prefix) => `${prefix}_${++vm.serial}`;
   function resolveEntity(state, ref2) {
     if (!ref2) return void 0;
-    return ref2.type === "status" ? own3(own3(state.units, ref2.ownerId)?.statuses, ref2.id) : ref2.type === "unit" ? own3(state.units, ref2.id) : ref2.type === "zone" ? own3(state.zones, ref2.id) : ref2.type === "item" ? own3(state.items, ref2.id) : ref2.value;
+    return ref2.type === "status" ? own4(own4(state.units, ref2.ownerId)?.statuses, ref2.id) : ref2.type === "unit" ? own4(state.units, ref2.id) : ref2.type === "zone" ? own4(state.zones, ref2.id) : ref2.type === "item" ? own4(state.items, ref2.id) : ref2.value;
   }
   function entityRef(state, value, from, owner, context) {
     if (from.startsWith("vars.")) {
-      const register2 = own3(context.vars, from.slice(5));
+      const register2 = own4(context.vars, from.slice(5));
       const refs = Array.isArray(register2) ? register2 : [register2];
       const ref2 = refs.find((entry2) => entry2 && typeof entry2 === "object" && resolveEntity(state, entry2) === value);
       if (ref2) return ref2;
-      if (own3(state.zones, value.id) === value) return { type: "zone", id: value.id };
-      if (own3(state.items, value.id) === value) return { type: "item", id: value.id };
+      if (own4(state.zones, value.id) === value) return { type: "zone", id: value.id };
+      if (own4(state.items, value.id) === value) return { type: "item", id: value.id };
     }
     if (from === "statuses") return { type: "status", ownerId: owner.id, id: Object.keys(owner.statuses).find((key4) => owner.statuses[key4] === value) };
     if (from === "tape" || from === "cells") return { type: "literal", value };
     if (from === "zones") return { type: "zone", id: value.id };
-    if (own3(state.units, value.id) === value) return { type: "unit", id: value.id };
+    if (own4(state.units, value.id) === value) return { type: "unit", id: value.id };
     return { type: "literal", value };
   }
   function makeFrame(vm, spec) {
@@ -1450,6 +1528,7 @@ var FatedTacticalTavern = (() => {
       ruleId: frame.ruleId,
       eventRef: frame.eventRef,
       carrier: frame.carrier ?? null,
+      attribution: frame.attribution ?? null,
       scope: frame.scope ?? null,
       hook: frame.hook ?? null,
       localsRef: frame.localsRef ?? frame.frameId,
@@ -1460,11 +1539,11 @@ var FatedTacticalTavern = (() => {
     return (state.vm.stack.find((entry2) => entry2.frameId === frame.localsRef) ?? frame).vars;
   }
   function contextFor(state, frame, host) {
-    const event = own3(state.vm.events, frame.eventRef) ?? {};
-    const self = own3(state.units, frame.ownerId);
-    const source = own3(state.units, frame.sourceId);
-    const target2 = resolveEntity(state, frame.scope?.target) ?? own3(state.units, event.targetId);
-    const attacker = own3(state.units, event.actorId) ?? source;
+    const event = own4(state.vm.events, frame.eventRef) ?? {};
+    const self = own4(state.units, frame.ownerId);
+    const source = own4(state.units, frame.sourceId);
+    const target2 = resolveEntity(state, frame.scope?.target) ?? own4(state.units, event.targetId);
+    const attacker = own4(state.units, event.actorId) ?? source;
     const vars = { ...registers(state, frame) };
     const bound2 = resolveEntity(state, frame.scope?.bound);
     Object.assign(vars, frame.scope?.bindings);
@@ -1478,13 +1557,13 @@ var FatedTacticalTavern = (() => {
       vars,
       event: { ...event, actor: attacker, source, target: target2 },
       resolveEntity: (value, kind) => {
-        const entity = typeof value === "string" ? own3(state.units, value) ?? own3(state.zones, value) ?? own3(state.items, value) : value?.type && (value.type === "literal" ? Object.hasOwn(value, "value") : Object.hasOwn(value, "id")) ? resolveEntity(state, value) : value;
-        return kind === "unit" && own3(state.units, entity?.id) !== entity ? void 0 : entity;
+        const entity = typeof value === "string" ? own4(state.units, value) ?? own4(state.zones, value) ?? own4(state.items, value) : value?.type && (value.type === "literal" ? Object.hasOwn(value, "value") : Object.hasOwn(value, "id")) ? resolveEntity(state, value) : value;
+        return kind === "unit" && own4(state.units, entity?.id) !== entity ? void 0 : entity;
       },
       status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
       zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === "zone" ? carrier4 : void 0),
       skill: frame.carrier?.type === "skill" ? { vars: skillCarrierVars(state, frame.carrier) } : void 0,
-      item: frame.carrier?.type === "item" ? { vars: { ...own3(state.equipment, carrier4?.templateId)?.vars, ...carrier4?.vars } } : void 0,
+      item: frame.carrier?.type === "item" ? { vars: { ...own4(state.equipment, carrier4?.templateId)?.vars, ...carrier4?.vars } } : void 0,
       tape: resolveEntity(state, frame.scope?.tape),
       center: event.center,
       pool: frame.scope?.pool,
@@ -1492,8 +1571,9 @@ var FatedTacticalTavern = (() => {
       turn: state.turn,
       timeOfDay: state.time?.timeOfDay,
       units: Object.values(state.units),
+      zones: state.zones,
       distance: (a = self, b = target2) => coordinate2(a) && coordinate2(b) ? distance3D(state, a, b) : null,
-      resource: (entity, key4) => host.resource?.(state, entity, key4) ?? own3(entity, key4),
+      resource: (entity, key4) => host.resource?.(state, entity, key4) ?? own4(entity, key4),
       inZone: (entity, key4) => Object.values(state.zones ?? {}).some((zone) => (zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, entity)),
       isImmune: (unit, key4) => host.isImmune?.(state, unit, key4, frame) ?? false,
       select: (selector2) => selectVM(state, selector2, contextFor(state, frame, host), { pure: true })
@@ -1505,7 +1585,7 @@ var FatedTacticalTavern = (() => {
     return eventRef;
   }
   function scheduleHooks(state, parent, hook2, eventRef, host) {
-    const event = own3(state.vm.events, eventRef);
+    const event = own4(state.vm.events, eventRef);
     host.expireStatuses?.(state, hook2, event);
     const entries3 = host.rules?.(state, hook2, event) ?? [];
     const ordered2 = entries3.filter(({ rule: rule2 }) => rule2.enabled !== false).sort((a, b) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compareId(a.rule.id, b.rule.id));
@@ -1529,12 +1609,12 @@ var FatedTacticalTavern = (() => {
   }
   function writeChoice(state, frame, ask, value, host) {
     const multi = ask.maxSelect !== void 0;
-    const choiceRef = ask.kind === "entity" ? own3(frame.choiceRefs, value) : void 0;
-    registers(state, frame)[ask.outVar] = multi ? value.map((id3) => own3(frame.choiceRefs, id3)) : choiceRef ?? value;
+    const choiceRef = ask.kind === "entity" ? own4(frame.choiceRefs, value) : void 0;
+    registers(state, frame)[ask.outVar] = multi ? value.map((id3) => own4(frame.choiceRefs, id3)) : choiceRef ?? value;
     delete frame.choiceRefs;
     const action = state.vm.stack.findLast((entry2) => entry2.native === "action");
     if (action) action.answers.push(value);
-    const unit = own3(state.units, ask.chooserId);
+    const unit = own4(state.units, ask.chooserId);
     const labelFor = (id3) => ask.options.find((option) => option.id === id3)?.label ?? id3;
     const label = multi ? value.map(labelFor).join("\u3001") : coordinate2(value) ? `(${value.x}, ${value.y})` : Array.isArray(ask.options) ? labelFor(value) : value;
     host.log(state, unit, "choice", `${unit.name}\u9009\u62E9\u4E86${label}`);
@@ -1672,7 +1752,7 @@ var FatedTacticalTavern = (() => {
     while (vm.stack.length && !vm.pendingAsk) {
       const frame = vm.stack.at(-1);
       if (vm.stepsRemaining-- <= 0 || vm.stack.length > maxDepth) {
-        host.log(state, own3(state.units, frame.ownerId), "vm_halt", "\u7ED3\u7B97\u8D85\u8FC7\u6307\u4EE4\u6B65\u6570\u6216\u6808\u6DF1\u9650\u5236\uFF0C\u5DF2\u4E2D\u6B62\u672C\u6B21\u7ED3\u7B97");
+        host.log(state, own4(state.units, frame.ownerId), "vm_halt", "\u7ED3\u7B97\u8D85\u8FC7\u6307\u4EE4\u6B65\u6570\u6216\u6808\u6DF1\u9650\u5236\uFF0C\u5DF2\u4E2D\u6B62\u672C\u6B21\u7ED3\u7B97");
         vm.stack.length = 0;
         break;
       }
@@ -1706,18 +1786,19 @@ var FatedTacticalTavern = (() => {
 
   // src/core/vm-pools.js
   var mirrors = { hp: "maxHp", mp: "maxMp", sp: "maxSp" };
+  var initialMirrors = { hp: "initialMaxHp", mp: "initialMaxMp", sp: "initialMaxSp" };
   var carrierTables = { unit: "units", item: "items", status: "statuses", zone: "zones" };
-  function own4(record2, key4) {
+  function own5(record2, key4) {
     return record2 && Object.hasOwn(record2, key4) ? record2[key4] : void 0;
   }
   function carrier(state, ownerKind, ownerId) {
-    const table4 = own4(carrierTables, ownerKind);
-    const owner = table4 && own4(state[table4], ownerId);
+    const table4 = own5(carrierTables, ownerKind);
+    const owner = table4 && own5(state[table4], ownerId);
     if (!owner) throw new RangeError(`Unknown ${ownerKind} pool owner: ${ownerId}`);
     return owner;
   }
   function requirePool(state, poolId) {
-    const pool = own4(state.pools, poolId);
+    const pool = own5(state.pools, poolId);
     if (!pool) throw new RangeError(`Unknown pool: ${poolId}`);
     return pool;
   }
@@ -1730,18 +1811,23 @@ var FatedTacticalTavern = (() => {
   }
   function nextId2(state, reserved2, base) {
     let id3 = base;
-    for (let suffix = 2; own4(state.pools, id3) || reserved2.has(id3); suffix++) id3 = `${base}_${suffix}`;
+    for (let suffix = 2; own5(state.pools, id3) || reserved2.has(id3); suffix++) id3 = `${base}_${suffix}`;
     reserved2.add(id3);
     return id3;
   }
   function syncMirrors(state, pool) {
-    const maxField = own4(mirrors, pool.kind);
+    const maxField = own5(mirrors, pool.kind);
     if (!maxField) return;
+    const initialField = own5(initialMirrors, pool.kind);
     for (const { ownerKind, ownerId } of pool.contributors) {
-      const unit = ownerKind === "unit" && own4(state.units, ownerId);
-      if (unit && own4(unit.pools, pool.kind) === pool.id) {
+      const unit = ownerKind === "unit" && own5(state.units, ownerId);
+      if (unit && own5(unit.pools, pool.kind) === pool.id) {
         unit[pool.kind] = pool.current;
         unit[maxField] = pool.max;
+        if (initialField) {
+          const contributor = pool.contributors.find((row) => row.ownerKind === "unit" && row.ownerId === ownerId);
+          unit[initialField] = contributor?.initialMaxBase ?? pool.initialMax ?? unit[initialField] ?? pool.max;
+        }
       }
     }
   }
@@ -1754,15 +1840,16 @@ var FatedTacticalTavern = (() => {
     for (const pool of pools) syncMirrors(state, pool);
   }
   function getPool(state, ownerId, key4, ownerKind = "unit") {
-    const table4 = own4(carrierTables, ownerKind);
-    const owner = table4 && own4(state[table4], ownerId);
-    return own4(state.pools, own4(owner?.pools, key4));
+    const table4 = own5(carrierTables, ownerKind);
+    const owner = table4 && own5(state[table4], ownerId);
+    return own5(state.pools, own5(owner?.pools, key4));
   }
-  function planPool(state, reserved2, { ownerKind = "unit", ownerId, key: key4, max, current = max, reloadable = false }) {
+  function planPool(state, reserved2, { ownerKind = "unit", ownerId, key: key4, max, current = max, initialMax = max, reloadable = false }) {
     const owner = carrier(state, ownerKind, ownerId);
     if (typeof key4 !== "string" || key4.length === 0) throw new TypeError("Pool key must be a nonempty string");
-    if (own4(owner.pools, key4) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key4}`);
+    if (own5(owner.pools, key4) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key4}`);
     nonnegative(max, "Pool max");
+    nonnegative(initialMax, "Pool initial max");
     if (!Number.isFinite(current)) throw new RangeError("Pool current must be finite");
     if (typeof reloadable !== "boolean") throw new TypeError("Pool reloadable must be boolean");
     const id3 = nextId2(state, reserved2, `pool_${ownerKind === "unit" ? "" : `${ownerKind}_`}${ownerId}_${key4}`);
@@ -1770,9 +1857,10 @@ var FatedTacticalTavern = (() => {
     const pool = {
       id: id3,
       kind,
-      contributors: [{ ownerKind, ownerId, maxBase: max }],
+      contributors: [{ ownerKind, ownerId, maxBase: max, initialMaxBase: initialMax }],
       current: clamp(current, max),
       max,
+      initialMax,
       reloadable
     };
     return { pool, binding: { owner, key: key4, poolId: id3 } };
@@ -1786,8 +1874,9 @@ var FatedTacticalTavern = (() => {
     const unit = carrier(state, "unit", unitId);
     const reserved2 = /* @__PURE__ */ new Set();
     const plans = Object.entries(mirrors).map(([key4, maxField]) => planPool(state, reserved2, {
-      max: resources ? own4(resources, key4)?.max : unit[maxField],
-      current: resources ? own4(resources, key4)?.current : unit[key4],
+      max: resources ? own5(resources, key4)?.max : unit[maxField],
+      initialMax: resources ? own5(resources, key4)?.initialMax ?? own5(resources, key4)?.max : unit[initialMirrors[key4]] ?? unit[maxField],
+      current: resources ? own5(resources, key4)?.current : unit[key4],
       ownerId: unitId,
       key: key4
     }));
@@ -1842,9 +1931,10 @@ var FatedTacticalTavern = (() => {
       members.sort((a, b) => a.contributor.ownerId < b.contributor.ownerId ? -1 : a.contributor.ownerId > b.contributor.ownerId ? 1 : 0);
       const contributors = members.map((member) => member.contributor);
       const max = total(contributors.map((c) => maxFor(state2, c, effectiveMax2)), "Shared pool max");
+      const initialMax = total(contributors.map((c) => c.initialMaxBase ?? c.maxBase), "Shared pool initial max");
       const current = clamp(total(sources.map((pool) => pool.current), "Shared pool current"), max);
       const id3 = nextId2(state2, plan.reserved, `pool_shared_${kind}`);
-      plan.pools.push({ id: id3, kind, contributors, current, max, reloadable: sources.every((pool) => pool.reloadable) });
+      plan.pools.push({ id: id3, kind, contributors, current, max, initialMax, reloadable: sources.every((pool) => pool.reloadable) });
       for (const { owner } of members) plan.bindings.push({ owner, key: kind, poolId: id3 });
       for (const pool of sources) plan.removed.push(pool.id);
     }, effectiveMax);
@@ -1872,7 +1962,8 @@ var FatedTacticalTavern = (() => {
           currentLeft -= current;
           const keepId = members === remaining;
           const id3 = keepId ? pool.id : nextId2(state2, plan.reserved, `pool_${members[0].contributor.ownerId}_${pool.kind}`);
-          plan.pools.push({ ...pool, id: id3, contributors: members.map((member) => member.contributor), current, max });
+          const initialMax = total(members.map(({ contributor }) => contributor.initialMaxBase ?? contributor.maxBase), "Unlinked pool initial max");
+          plan.pools.push({ ...pool, id: id3, contributors: members.map((member) => member.contributor), current, max, initialMax });
           if (!keepId) plan.bindings.push({ owner: members[0].owner, key: pool.kind, poolId: id3 });
         }
         if (!remaining.length) plan.removed.push(pool.id);
@@ -1882,6 +1973,26 @@ var FatedTacticalTavern = (() => {
   function change(pool, before, applied = true) {
     const lethal = pool.kind === "hp" && before > 0 && pool.current === 0 ? { poolId: pool.id, units: pool.contributors.map((c) => c.ownerId) } : null;
     return { poolId: pool.id, before, after: pool.current, applied, lethal };
+  }
+  function updatePoolMax(state, poolId, mode, amount, { minRemain = 0 } = {}) {
+    const pool = requirePool(state, poolId);
+    if (!Number.isFinite(amount)) throw new RangeError("Pool max amount must be finite");
+    const before = pool.max;
+    if (!Number.isFinite(amount) || amount < 0) throw new RangeError("Pool max amount must be nonnegative");
+    const floor = Math.max(pool.kind === "hp" ? 1 : 0, Number(minRemain) || 0);
+    const max = mode === "add_max" ? before + amount : mode === "sub_max" ? Math.max(floor, before - amount) : mode === "set_max" ? Math.max(floor, amount) : NaN;
+    if (!Number.isFinite(max)) throw new RangeError(`Unknown pool max update mode: ${mode}`);
+    const members = pool.contributors;
+    const totalBase = members.reduce((sum, c) => sum + c.maxBase, 0);
+    let remaining = max;
+    const nextBase = members.map((c, index) => {
+      const share = index === members.length - 1 ? remaining : Math.min(remaining, totalBase > 0 ? c.maxBase / totalBase * max : max / members.length);
+      remaining -= share;
+      return { ...c, initialMaxBase: c.initialMaxBase ?? c.maxBase, maxBase: share };
+    });
+    const next = { ...pool, initialMax: pool.initialMax ?? before, contributors: nextBase, max, current: clamp(pool.current, max) };
+    publish(state, [next]);
+    return { ...change(next, pool.current), beforeMax: before, afterMax: max };
   }
   function updatePoolCurrent(state, poolId, mode, amount, { minRemain = 0, requireFull = false } = {}) {
     const pool = requirePool(state, poolId);
@@ -1924,12 +2035,33 @@ var FatedTacticalTavern = (() => {
   // src/core/vm-commit.js
   var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
   var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var pseudoPool = /* @__PURE__ */ new Set(["attack", "action", "move"]);
+  function pseudoState(unit, key4) {
+    if (key4 === "move") return { current: Math.max(0, unit.move - (unit.moved ?? 0)), max: unit.move };
+    return { current: Math.max(0, 1 - (unit.used?.[key4] ?? 0)), max: 1 };
+  }
+  function applyPseudo(unit, key4, mode, amount) {
+    if (!Number.isInteger(amount)) return false;
+    const before = pseudoState(unit, key4).current;
+    let current = mode === "set" ? amount : mode === "add" ? before + amount : mode === "sub" ? before - amount : NaN;
+    if (mode === "add_max" || mode === "sub_max" || mode === "set_max") return false;
+    if (!Number.isFinite(current)) return false;
+    current = Math.max(0, Math.min(pseudoState(unit, key4).max, current));
+    if (key4 === "move") unit.moved = unit.move - current;
+    else {
+      unit.used[key4] = 1 - current;
+      unit.ap = Math.max(0, Math.min(2, unit.ap + current - before));
+    }
+    return true;
+  }
   function scheduleCommit(state, parent, data) {
     return pushFrame(state, {
       native: "commit",
       ownerId: parent.ownerId,
       sourceId: parent.sourceId,
       ruleId: parent.ruleId,
+      carrier: parent.carrier ?? null,
+      attribution: parent.attribution ?? null,
       callerId: parent.localsRef ?? parent.frameId,
       data
     });
@@ -1945,7 +2077,8 @@ var FatedTacticalTavern = (() => {
         const minRemain = op.minRemain === void 0 ? 0 : evaluateExpr(op.minRemain, { ...context, target: target2, pool });
         if (!Number.isFinite(amount) || !Number.isFinite(minRemain)) continue;
         const action = context.event;
-        const label = context.status?.name ?? entry(state.skills, action?.skillId)?.name;
+        const item = frame.carrier?.type === "item" ? entry(state.items, frame.carrier.id) : null;
+        const label = op.label ?? context.status?.name ?? context.zone?.name ?? (frame.carrier?.type === "skill" ? entry(state.skills, frame.carrier.id)?.name : void 0) ?? entry(state.equipment, item?.templateId)?.name ?? entry(state.skills, action?.skillId)?.name;
         scheduleCommit(state, frame, {
           ...op,
           sourceId: sourceId2,
@@ -1977,8 +2110,9 @@ var FatedTacticalTavern = (() => {
     const { op, pool: key4 } = data;
     const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
     const localOwner = data.local && frame.data.carrierId;
-    const pool = getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
-    if (!pool || !target2) {
+    const pseudo = !localOwner && pseudoPool.has(key4);
+    const pool = pseudo ? pseudoState(target2, key4) : getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
+    if (!pool && !pseudo || !target2) {
       state.vm.stack.pop();
       return;
     }
@@ -2018,7 +2152,7 @@ var FatedTacticalTavern = (() => {
         state.vm.stack.pop();
         return;
       }
-      const before = pool.current;
+      const before = pool.current, beforeMax = pool.max;
       let absorbed = 0;
       if (op === "damage") {
         let pending = Math.max(0, Math.floor(event.finalAmount));
@@ -2042,12 +2176,21 @@ var FatedTacticalTavern = (() => {
         event.healing = target2.hp - before;
         host.log(state, source, "heal", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}\u6062\u590D${event.healing}\u70B9\u751F\u547D`, { ...data.details, targetId: target2.id, amount: event.healing, hpBefore: before, hpAfter: target2.hp });
       } else {
-        if (data.mode === "swap") {
+        if (pseudo) {
+          if (!applyPseudo(target2, key4, data.mode, event.finalAmount)) {
+            state.vm.stack.pop();
+            return;
+          }
+        } else if (data.mode === "swap") {
           const other = getPool(state, localOwner || target2.id, data.otherPool, localOwner ? "item" : "unit");
           if (other) swapPoolCurrents(state, pool.id, other.id);
         } else {
+          if (["add_max", "sub_max", "set_max"].includes(data.mode) && !["hp", "mp", "sp"].includes(key4)) {
+            state.vm.stack.pop();
+            return;
+          }
           const amount = data.mode === "sub" ? Math.max(0, event.finalAmount) : event.finalAmount;
-          const changed = updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
+          const changed = ["add_max", "sub_max", "set_max"].includes(data.mode) ? updatePoolMax(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain) }) : updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
           if (!changed.applied) {
             const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
             if (caller) caller.pc = caller.program.length;
@@ -2055,9 +2198,13 @@ var FatedTacticalTavern = (() => {
             return;
           }
         }
-        const after = entry(state.pools, pool.id).current;
-        event.change = after - before;
-        host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${after >= before ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(after - before)}\u70B9 ${key4.toUpperCase()}`, { targetId: target2.id, resource: key4, before, after });
+        const after = pseudo ? pseudoState(target2, key4).current : entry(state.pools, pool.id).current;
+        const maxChange = data.mode.endsWith("_max");
+        const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
+        const label = { attack: "\u653B\u51FB\u69FD", action: "\u52A8\u4F5C\u69FD", move: "\u5269\u4F59\u79FB\u52A8\u683C" }[key4] ?? key4.toUpperCase();
+        const field = label + (maxChange ? "\u4E0A\u9650" : "");
+        event.change = to - from;
+        host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${maxChange ? to >= from ? "\u63D0\u9AD8" : "\u964D\u4F4E" : to >= from ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(event.change)}\u70B9 ${field}`, { targetId: target2.id, resource: key4, resourceLabel: field, before: from, after: to });
       }
       const result = entry(state.vm.events, data.resultEventRef);
       if (result) {
@@ -2127,6 +2274,12 @@ var FatedTacticalTavern = (() => {
         unit.corpseOf ??= unit.id;
         host.log(state, entry(state.units, frame.sourceId), "defeat", `${unit.name}\u5012\u4E0B`, { targetId: unit.id });
       }
+      for (const unitId of [...event.units].reverse()) {
+        const victim = entry(state.units, unitId), killer = entry(state.units, frame.sourceId);
+        if (!victim || victim.pools?.hp !== pool.id || !killer || killer.id === victim.id) continue;
+        const killRef = newEvent(state, { ...event, targetId: victim.id, deadId: victim.id, killerId: killer.id });
+        scheduleHooks(state, frame, "on_kill", killRef, host);
+      }
       scheduleHooks(state, frame, "on_death", frame.eventRef, host);
       return;
     }
@@ -2161,7 +2314,7 @@ var FatedTacticalTavern = (() => {
   var entityId = either(id, variable);
   var damageType = enumOf("physical", "energy", "mental", "true");
   var attribute = enumOf("str", "agi", "con", "int", "spi");
-  var slot = enumOf("attack", "action", "move", "cast", "reaction");
+  var slot = enumOf("attack", "action", "move", "cast", "reaction", "fly", "teleport");
   var point2 = object({ x: number, y: number }, ["x", "y"]);
   var point = object({ x: number, y: number, z: number }, ["x", "y"]);
   var scopes = ["self", "source", "target", "attacker"];
@@ -2218,14 +2371,14 @@ var FatedTacticalTavern = (() => {
     ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
     damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\uFF0C\u5199\u88F8\u540D\u79F0\u3001\u8BFB vars.<\u540D\u79F0>\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
     heal: "\u4EC5\u6CBB\u7597\u5B58\u6D3B\u4E14\u5141\u8BB8\u53D7\u7597\u7684\u5355\u4F4D\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
-    resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002swap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\uFF1Bcap/initial \u5728\u6A21\u677F\u4E0A\u58F0\u660E\u3002",
+    resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002pool \u53EF\u5199 hp/mp/sp \u6216\u4F2A\u6C60 attack/action/move\uFF1A\u524D\u4E24\u8005\u8868\u793A\u672C\u56DE\u5408\u672A\u7528\u69FD\u4F4D\uFF0Cmove \u8868\u793A\u5269\u4F59\u79FB\u52A8\u683C\uFF1Bmode \u7528 add/sub/set\u3002add_max/sub_max/set_max \u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u955C\u50CF\uFF0CminRemain \u53EF\u9650\u5236\u6700\u4F4E\u4E0A\u9650\uFF1Bswap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\u3002",
     link_pool: "\u7528 units \u9009\u62E9\u5355\u4F4D\uFF0C\u5C06\u6307\u5B9A\u7684 HP/MP/SP \u6C60\u5408\u5E76\u5171\u4EAB\u6216\u62C6\u56DE\u72EC\u7ACB\u6C60\u3002",
-    apply_status: "\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002\u62A4\u76FE\u4F7F\u7528 shield \u72B6\u6001\u4E0E shieldAmount \u53D8\u91CF\u3002",
+    apply_status: '\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002\u62A4\u76FE\u4F7F\u7528 shield \u72B6\u6001\u4E0E shieldAmount \u53D8\u91CF\u3002flags:["undispellable"] \u7684\u72B6\u6001\u4E0D\u80FD\u88AB dispelled \u6216 cleansed\uFF0C\u53EA\u80FD\u81EA\u7136 expired\u3002',
     remove_status: "\u5728\u76EE\u6807\u6301\u6709\u7684\u72B6\u6001\u4E2D\u7528 where \u7B5B\u9009\u53EF\u79FB\u9664\u9879\u3002outCount \u5199\u88F8\u540D\u79F0\uFF08\u5982 lostStacks\uFF09\uFF0C\u540E\u7EED\u8BFB vars.lostStacks\uFF0C\u8868\u793A\u6210\u529F\u79FB\u9664\u7684\u6570\u91CF\u3002",
     mutate_event: "\u4EC5\u5728\u6709\u53EF\u5199\u5B57\u6BB5\u7684\u62E6\u622A\u94A9\u5B50\u6539\u5199\u5F53\u524D\u4E8B\u4EF6\u3002patch \u7684\u952E\u5FC5\u987B\u5C5E\u4E8E\u5F53\u524D Rule.hook\u3002",
     move: "\u7EDF\u4E00\u79FB\u52A8\u3001\u77AC\u79FB\u3001\u63A8\u62C9\u4E0E\u9AD8\u5EA6\u53D8\u5316\u3002push/pull \u9010\u683C\u5224\u78B0\u649E\uFF0Caltitude \u53EF\u7528 deltaZ \u6216 land\u3002",
     spawn: "\u6309 entityKind \u63D0\u4F9B\u5BF9\u5E94\u7684 spec \u751F\u6210\u5355\u4F4D\u3001\u7ED3\u754C\u3001\u5730\u5F62\u3001\u63A9\u4F53\u6216\u5E93\u5B58\u7269\u54C1\uFF1Bat \u6307\u5B9A\u843D\u70B9\u3002",
-    despawn: "\u7528 select \u6E05\u9664\u6307\u5B9A\u7684 zone\u3001cover \u6216 terrain\uFF1Bterrain \u53EA\u6E05\u9664 VM \u751F\u6210\u7684\u5730\u5F62\u5C42\u3002",
+    despawn: '\u7528 select \u6E05\u9664\u6307\u5B9A\u7684 zone\u3001cover\u3001terrain \u6216 unit\uFF1Bunit \u901A\u5E38\u914D where: "candidate.summoned == true" \u53EA\u79FB\u9664\u53EC\u5524\u7269\uFF0C\u4E0D\u89E6\u53D1\u6B7B\u4EA1/\u4EA1\u8BED\u3002\u7B5B\u9009\u654C\u65B9\u533A\u57DF\u65F6\u7528 candidate.team != null && candidate.team != self.team\uFF1Bterrain \u53EA\u6E05\u9664 VM \u751F\u6210\u7684\u5730\u5F62\u5C42\u3002',
     revive: "\u53EA\u5BF9\u672A\u88AB blockRevive \u7981\u6B62\u7684\u9635\u4EA1\u5355\u4F4D\u751F\u6548\uFF1BhpPercent/mpPercent/spPercent \u4EE5 1 \u4E3A\u6EE1\u989D\u3002",
     perform: "\u538B\u5165\u72EC\u7ACB\u5B50\u52A8\u4F5C\uFF1Bskill \u7528\u6280\u80FD ID \u6216 vars.<\u540D\u79F0>\uFF0Creplay \u7528 tapeRecord \u5F15\u7528\u78C1\u5E26\u8BB0\u5F55\u3002overrides.origin \u53EF\u6539\u751F\u6548\u539F\u70B9\uFF1B\u8DE8\u8DDD\u79BB\u6216\u963B\u9694\u9700\u663E\u5F0F\u8BBE\u7F6E ignoreRange \u6216 ignoreLOS\u3002"
   });
@@ -2258,6 +2411,7 @@ var FatedTacticalTavern = (() => {
     "checkBonus",
     "dcBonus",
     "resistBonus",
+    "dodge",
     "advantage",
     "initiativeFlat"
   );
@@ -2272,6 +2426,7 @@ var FatedTacticalTavern = (() => {
       additivePercent: numericExpr,
       damageType,
       checkKind: text,
+      statusId: id,
       locks: list(slot, 1),
       flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless"), 1),
       controlPolicy,
@@ -2307,7 +2462,7 @@ var FatedTacticalTavern = (() => {
     rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
     cells: list(point2, 1)
   }, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
-  var carrier2 = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), mods: list(ref("statMod")), rules: list(ref("rule")) };
+  var carrier2 = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), flags: list(enumOf("undispellable"), 1), mods: list(ref("statMod")), rules: list(ref("rule")) };
   var spawnSpecs = {
     unit: withRules(object({
       ...carrier2,
@@ -2382,7 +2537,7 @@ var FatedTacticalTavern = (() => {
       {
         target,
         pool: either(id, list(id, 1)),
-        mode: enumOf("add", "sub", "set", "swap"),
+        mode: enumOf("add", "sub", "set", "swap", "add_max", "sub_max", "set_max"),
         amount: numericExpr,
         otherPool: id,
         local: bool,
@@ -2392,7 +2547,7 @@ var FatedTacticalTavern = (() => {
       },
       ["target", "pool", "mode"],
       when("mode", literal("swap"), withRules({ ...needs("otherPool"), properties: { pool: id } }, { not: needs("amount") })),
-      when("mode", enumOf("add", "sub", "set"), { ...needs("amount"), not: needs("otherPool") })
+      when("mode", enumOf("add", "sub", "set", "add_max", "sub_max", "set_max"), { ...needs("amount"), not: needs("otherPool") })
     ),
     opcode("link_pool", { units: selector, pools: list(enumOf("hp", "mp", "sp"), 1), mode: enumOf("link", "unlink") }, ["units", "pools", "mode"]),
     opcode("apply_status", {
@@ -2423,7 +2578,7 @@ var FatedTacticalTavern = (() => {
       ["entityKind", "spec"],
       ...Object.keys(spawnSpecs).map((kind) => when("entityKind", literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))
     ),
-    opcode("despawn", { entityKind: enumOf("zone", "cover", "terrain"), select: selector }, ["entityKind", "select"]),
+    opcode("despawn", { entityKind: enumOf("zone", "cover", "terrain", "unit"), select: selector }, ["entityKind", "select"]),
     opcode("revive", { target, hpPercent: numericExpr, mpPercent: numericExpr, spPercent: numericExpr, hpFlat: numericExpr }, ["target"]),
     opcode(
       "perform",
@@ -2542,19 +2697,21 @@ var FatedTacticalTavern = (() => {
   var validVmTag = (value) => valid(value, "tag", {});
 
   // src/core/vm-rules.js
-  var own5 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var own6 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
   var evaluate2 = (expression, context, fallback) => expression === void 0 ? fallback : evaluateExpr(expression, context);
   var live = (unit) => unit?.hp > 0 && !unit.fled;
   function operation({ state, frame, op, context, select }, native, selector2) {
     const targets2 = selector2 === void 0 ? [context.target ?? context.self] : select(selector2);
     for (const target2 of targets2.reverse()) {
-      if (!target2 || own5(state.units, target2.id) !== target2) continue;
+      if (!target2 || own6(state.units, target2.id) !== target2) continue;
       pushFrame(state, {
         native,
         ownerId: frame.ownerId,
         sourceId: frame.sourceId,
         ruleId: frame.ruleId,
+        carrier: frame.carrier ?? null,
+        attribution: frame.attribution ?? null,
         scope: { ...frame.scope, target: { type: "unit", id: target2.id } },
         eventRef: frame.eventRef,
         localsRef: frame.localsRef ?? frame.frameId,
@@ -2603,12 +2760,12 @@ var FatedTacticalTavern = (() => {
       }
     },
     mutate_event({ state, frame, op, context, host }) {
-      const event = own5(state.vm.events, frame.eventRef);
+      const event = own6(state.vm.events, frame.eventRef);
       if (!event || !frame.hook || !validVmOpcode(op, { hook: frame.hook })) throw new Error("\u4E8B\u4EF6\u6539\u5199\u4E0D\u7B26\u5408\u5F53\u524D\u62E6\u622A\u94A9\u5B50");
       for (const [key4, expression] of Object.entries(op.patch)) {
         const resolveId = (id3) => {
           if (!id3.startsWith("vars.")) return id3;
-          const value2 = own5(context.vars, id3.slice(5));
+          const value2 = own6(context.vars, id3.slice(5));
           return context.resolveEntity(value2, "unit")?.id;
         };
         let value;
@@ -2639,6 +2796,7 @@ var FatedTacticalTavern = (() => {
         actorId: context.self.id,
         targetId: context.target.id,
         dc,
+        baseDC: dc,
         stat: op.stat ?? null,
         statusId: op.statusId ?? null,
         tags: op.tags ?? []
@@ -2655,7 +2813,7 @@ var FatedTacticalTavern = (() => {
       const stat3 = (unit, key4) => host.stat?.(state, unit, key4) ?? unit.stats?.[key4] ?? 0;
       const stats = [op.stat ?? null].flat();
       const checkBonus = host.checkBonus?.(state, subject2, event) ?? 0;
-      const dc = event.dc + (event.dcDelta ?? 0);
+      const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
       const outcomes = stats.map((key4) => {
         let roll2 = dice(state, kind === "chance" ? 100 : 20);
         if (event.advantageDelta > 0) roll2 = Math.max(roll2, dice(state, 20));
@@ -2667,7 +2825,7 @@ var FatedTacticalTavern = (() => {
       });
       const { roll, total: total2 } = outcomes[0];
       const passed = ["pass", "hit", "crit"].includes(event.forceOutcome) ? true : ["fail", "miss"].includes(event.forceOutcome) ? false : op.mode === "any" ? outcomes.some((outcome) => outcome.passed) : outcomes.every((outcome) => outcome.passed);
-      Object.assign(event, { roll, total: total2, dc, passed, rating: event.forceOutcome === "crit" ? "crit" : event.minRating ?? (passed ? "hit" : "miss") });
+      Object.assign(event, { roll, total: total2, dc, finalDC: dc, passed, rating: event.forceOutcome === "crit" ? "crit" : event.minRating ?? (passed ? "hit" : "miss") });
       const verdict = passed ? "\u6210\u529F" : "\u5931\u8D25";
       const label = { save: "\u8C41\u514D", chance: "\u6982\u7387\u5224\u5B9A", d20: "\u68C0\u5B9A", contest: "\u5BF9\u6297\u68C0\u5B9A", attack: "\u653B\u51FB\u68C0\u5B9A" }[kind];
       const text5 = `${subject2.name}${label}${verdict}\uFF08${outcomes.map((outcome) => kind === "chance" ? `d100 \u63B7\u51FA ${outcome.roll}\uFF0C\u9608\u503C ${outcome.difficulty}` : `d20 \u63B7\u51FA ${outcome.roll}\uFF0C\u5408\u8BA1 ${outcome.total} \u5BF9 ${outcome.difficulty}`).join("\uFF1B")}\uFF09`;
@@ -2738,7 +2896,7 @@ var FatedTacticalTavern = (() => {
         return;
       }
       if (!live(target2)) return;
-      const previous = own5(target2.statuses, op.statusId);
+      const previous = own6(target2.statuses, op.statusId);
       const stackMode = op.stackMode ?? template.stackMode ?? "refresh";
       const values5 = { ...template.vars, ...op.vars };
       const vars = Object.fromEntries(Object.entries(values5).map(([key4, expr2]) => [key4, evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
@@ -2756,6 +2914,7 @@ var FatedTacticalTavern = (() => {
         sourceId: context.self?.id ?? null,
         vars,
         tags: template.tags ?? [],
+        flags: template.flags ?? [],
         tier: template.tier ?? 1,
         mods: template.mods ?? [],
         rules: template.rules ?? [],
@@ -2789,8 +2948,8 @@ var FatedTacticalTavern = (() => {
       return;
     }
     const statusId3 = frame.statusKeys[frame.pc++];
-    const status = own5(target2.statuses, statusId3);
-    if (!status || status.durationType === "persistent" || evaluateExpr(op.where, { ...context, status }) !== true) return;
+    const status = own6(target2.statuses, statusId3);
+    if (!status || status.durationType === "persistent" || status.flags?.includes("undispellable") || evaluateExpr(op.where, { ...context, status }) !== true) return;
     delete target2.statuses[statusId3];
     frame.removed = (frame.removed ?? 0) + 1;
     const reason = op.reason ?? "dispelled";
@@ -2800,7 +2959,7 @@ var FatedTacticalTavern = (() => {
   }
 
   // src/core/vm-action.js
-  var own6 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var own7 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record2 = false }) {
     return pushFrame(state, {
       native: "action",
@@ -2815,13 +2974,13 @@ var FatedTacticalTavern = (() => {
     for (const actor of actors.reverse()) {
       if (actor.hp <= 0 || actor.fled) continue;
       const tapeKey = typeof op.tapeRecord === "string" ? op.tapeRecord.replace(/^vars\./, "") : null;
-      const tapeRef = tapeKey === null ? void 0 : own6(context.vars, tapeKey);
+      const tapeRef = tapeKey === null ? void 0 : own7(context.vars, tapeKey);
       const tape = op.actionKind === "replay" ? tapeRef === void 0 ? context.tape : context.resolveEntity(tapeRef) : void 0;
       if (op.actionKind === "replay" && !tape?.actionType) continue;
       const action = { type: tape?.actionType ?? op.actionKind };
       if (action.type === "skill") {
         const ref2 = tape?.skillId ?? op.skillId;
-        const skillId = typeof ref2 === "string" && ref2.startsWith("vars.") ? own6(context.vars, ref2.slice(5)) : ref2;
+        const skillId = typeof ref2 === "string" && ref2.startsWith("vars.") ? own7(context.vars, ref2.slice(5)) : ref2;
         if (typeof skillId !== "string" || !skillId) continue;
         action.skillId = skillId;
       }
@@ -2846,7 +3005,7 @@ var FatedTacticalTavern = (() => {
     }
   }
   function continueAction({ state, frame, host }) {
-    const actor = own6(state.units, frame.ownerId);
+    const actor = own7(state.units, frame.ownerId);
     const { action, overrides: overrides2, record: record2 } = frame.data;
     if (!actor || actor.hp <= 0 || actor.fled) {
       state.vm.stack.pop();
@@ -2925,7 +3084,7 @@ var FatedTacticalTavern = (() => {
       }
       if (event.redirectTarget) event.targets = [event.redirectTarget];
       if (event.replaceTarget) event.targets = event.targets.map((id3) => id3 === event.replaceTarget.from ? event.replaceTarget.to : id3);
-      event.targets = [...new Set(event.targets)].filter((id3) => own6(state.units, id3));
+      event.targets = [...new Set(event.targets)].filter((id3) => own7(state.units, id3));
       event.targetId = event.targets[0] ?? null;
       host.runAction({ state, frame, actor, plan, event, overrides: overrides2 });
       return;
@@ -3022,7 +3181,7 @@ var FatedTacticalTavern = (() => {
   }
 
   // src/core/vm-spatial-ops.js
-  var own7 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var own8 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var values = (table4) => Object.values(table4 ?? {});
   var live2 = (unit) => unit && unit.hp > 0 && !unit.fled;
   var point3 = (value) => Number.isSafeInteger(value?.x) && Number.isSafeInteger(value?.y);
@@ -3093,7 +3252,7 @@ var FatedTacticalTavern = (() => {
   }
   function teleport({ state, host, context, op }, targets2) {
     const anchor = targets2[0];
-    if (targets2.some((unit) => unit.locks?.move)) return;
+    if (targets2.some((unit) => aggregateModifiers(state, unit.id).locks.teleport)) return;
     const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
     if (!point3(destination)) return;
     const ignored = new Set(targets2.map((unit) => unit.id));
@@ -3109,7 +3268,7 @@ var FatedTacticalTavern = (() => {
   }
   function move(env) {
     const { state, frame, op, context, select, push } = env;
-    const targets2 = select(op.target).filter((unit) => own7(state.units, unit.id) === unit && live2(unit));
+    const targets2 = select(op.target).filter((unit) => own8(state.units, unit.id) === unit && live2(unit));
     if (!targets2.length) return;
     if (op.mode === "teleport") {
       teleport(env, targets2);
@@ -3123,8 +3282,8 @@ var FatedTacticalTavern = (() => {
       state.vm.stack.pop();
       return;
     }
-    const unit = own7(state.units, unitIds[frame.pc++]);
-    if (!live2(unit) || op.mode !== "push" && op.mode !== "pull" && unit.locks?.move) return;
+    const unit = own8(state.units, unitIds[frame.pc++]);
+    if (!live2(unit) || op.mode !== "push" && op.mode !== "pull" && aggregateModifiers(state, unit.id).locks.move) return;
     const scope = { ...context, target: unit };
     const from = at(state, unit);
     const path2 = [];
@@ -3133,7 +3292,7 @@ var FatedTacticalTavern = (() => {
       const delta = op.deltaZ === void 0 ? 3 : evaluateExpr(op.deltaZ, scope);
       if (!op.land && !Number.isFinite(delta)) return;
       const altitude = op.land ? 0 : clamp2((unit.altitude ?? 0) + Math.trunc(delta), 0, 12);
-      if (altitude === (unit.altitude ?? 0)) return;
+      if (altitude === (unit.altitude ?? 0) || altitude > (unit.altitude ?? 0) && aggregateModifiers(state, unit.id).locks.fly) return;
       unit.altitude = altitude;
     } else if (op.mode === "step") {
       const to = resolvePoint(op.to, scope);
@@ -3208,7 +3367,7 @@ var FatedTacticalTavern = (() => {
     Object.defineProperty(registers2.vars, out, { value: id3, writable: true, enumerable: true, configurable: true });
   }
   function itemPlan(state, templateId, context) {
-    const template = own7(state.equipment, templateId);
+    const template = own8(state.equipment, templateId);
     if (!template) return void 0;
     const pools = Object.entries(template.pools ?? {}).map(([key4, definition]) => {
       const max = evaluateExpr(definition.cap, context);
@@ -3227,7 +3386,7 @@ var FatedTacticalTavern = (() => {
     return id3;
   }
   function spawnItems({ state, frame, host, context, op }) {
-    const owner = context.target && own7(state.units, context.target.id) === context.target ? context.target : context.self;
+    const owner = context.target && own8(state.units, context.target.id) === context.target ? context.target : context.self;
     if (!live2(owner)) return;
     const { templateId, count = 1 } = op.spec;
     const plan = itemPlan(state, templateId, { ...context, target: owner });
@@ -3235,7 +3394,7 @@ var FatedTacticalTavern = (() => {
     let first;
     for (let i = 0; i < count; i++) {
       const id3 = mintItem(state, plan, context.self?.id ?? frame.sourceId, owner.id, context);
-      (owner.inventory ??= {})[templateId] = (own7(owner.inventory, templateId) ?? 0) + 1;
+      (owner.inventory ??= {})[templateId] = (own8(owner.inventory, templateId) ?? 0) + 1;
       first ??= id3;
     }
     publishOut(state, frame, op.out, first);
@@ -3247,7 +3406,7 @@ var FatedTacticalTavern = (() => {
     const panel = spec.spawnPanel ? spawnPanel(actor, { ...spec.spawnPanel, tier: spec.tier ?? spec.spawnPanel.tier, count }) : original;
     if (!panel || !panel.stats || ![panel.maxHp, panel.maxMp, panel.maxSp].every(Number.isFinite) || panel.maxHp <= 0 || panel.maxMp < 0 || panel.maxSp < 0) return void 0;
     const loads = spec.spawnPanel ?? original;
-    const equipment = (id3) => own7(state.items, id3)?.templateId ?? id3;
+    const equipment = (id3) => own8(state.items, id3)?.templateId ?? id3;
     const gear = Object.fromEntries(["mainHand", "offHand", "shield"].map((slot2) => [
       slot2,
       equipment(loads[slot2] ?? (slot2 === "mainHand" ? loads.weapon : null)) ?? null
@@ -3258,7 +3417,7 @@ var FatedTacticalTavern = (() => {
     const bodyLengthM = panel.bodyLengthM ?? 1.7;
     const stats = { ...panel.stats };
     const maxima = Object.fromEntries(["hp", "mp", "sp"].map((key4) => {
-      const pool = own7(state.pools, own7(panel.pools, key4));
+      const pool = own8(state.pools, own8(panel.pools, key4));
       const field = `max${capitalize(key4)}`;
       const contributor = pool?.contributors.find((entry2) => entry2.ownerKind === "unit" && entry2.ownerId === panel.id);
       return [field, contributor?.maxBase ?? panel[field]];
@@ -3278,7 +3437,7 @@ var FatedTacticalTavern = (() => {
     } };
   }
   function removeSummon(state, unit) {
-    const shared = ["hp", "mp", "sp"].filter((key4) => own7(state.pools, own7(unit.pools, key4))?.contributors.length > 1);
+    const shared = ["hp", "mp", "sp"].filter((key4) => own8(state.pools, own8(unit.pools, key4))?.contributors.length > 1);
     if (shared.length) unlinkPools(state, [unit.id], shared);
     const ownedItems = values(state.items).filter((item) => item.ownerId === unit.id);
     for (const carrier4 of [unit, ...ownedItems, ...values(unit.statuses)]) {
@@ -3296,7 +3455,7 @@ var FatedTacticalTavern = (() => {
     const actor = context.self;
     if (!actor || !center) return;
     const spec = op.spec.templateId === void 0 && op.spec.copyOf === void 0 ? { ...op.spec, spawnPanel: op.spec.spawnPanel ?? {} } : op.spec;
-    const original = spec.copyOf ? select(spec.copyOf).find((unit) => own7(state.units, unit.id) === unit) : own7(state.summonTemplates, spec.templateId);
+    const original = spec.copyOf ? select(spec.copyOf).find((unit) => own8(state.units, unit.id) === unit) : own8(state.summonTemplates, spec.templateId);
     const plan = unitPlan(state, context, spec, original);
     if (!plan) return;
     const templateId = spec.templateId ?? original?.templateId ?? original?.id ?? frame.ruleId ?? "summon";
@@ -3318,7 +3477,7 @@ var FatedTacticalTavern = (() => {
     };
     if (original && spec.copyOf) data.fields.vars = { ...original.vars ?? {}, ...data.fields.vars };
     if (state.vm.stack.some((entry2) => entry2.native === "spatialSpawn" && entry2.data.group === data.group)) return;
-    data.evictIds = Object.keys(state.units).sort().filter((id3) => own7(state.units, id3).summonGroup === data.group && id3 !== actor.id);
+    data.evictIds = Object.keys(state.units).sort().filter((id3) => own8(state.units, id3).summonGroup === data.group && id3 !== actor.id);
     const leaving = new Set(data.evictIds);
     const slots3 = [plan.gear.mainHand, plan.gear.offHand, plan.gear.shield, ...plan.gear.gear].filter(Boolean);
     const keptItems = values(state.items).filter((item) => !leaving.has(item.ownerId)).length;
@@ -3330,9 +3489,9 @@ var FatedTacticalTavern = (() => {
   }
   function continueSpawn({ state, frame, host, context }) {
     const { data } = frame;
-    const actor = own7(state.units, frame.ownerId);
+    const actor = own8(state.units, frame.ownerId);
     if (data.pendingId) {
-      const old = own7(state.units, data.pendingId);
+      const old = own8(state.units, data.pendingId);
       if (old) {
         host.log(state, old, "spawn", `${old.name}\u7ED3\u675F\u53EC\u5524\u5E76\u79BB\u573A`, { unitId: old.id, evicted: true });
         removeSummon(state, old);
@@ -3342,7 +3501,7 @@ var FatedTacticalTavern = (() => {
       delete frame.awaitEvent;
     }
     while (frame.pc < data.evictIds.length) {
-      const old = own7(state.units, data.evictIds[frame.pc++]);
+      const old = own8(state.units, data.evictIds[frame.pc++]);
       if (!old || old.summonGroup !== data.group) continue;
       if (!live2(old)) {
         removeSummon(state, old);
@@ -3381,6 +3540,7 @@ var FatedTacticalTavern = (() => {
         ...placement,
         altitude: 0,
         summonGroup: data.group,
+        summoned: true,
         used: { attack: 0, action: 0 },
         ap: 0,
         statuses: {}
@@ -3406,8 +3566,8 @@ var FatedTacticalTavern = (() => {
     const { spec } = op;
     const area3 = structuredClone(spec.area);
     const anchorRef = area3.anchorUnitId;
-    const anchorId = anchorRef?.startsWith("vars.") ? context.resolveEntity(own7(context.vars, anchorRef.slice(5)), "unit")?.id : anchorRef;
-    const anchor = own7(state.units, anchorRef === void 0 && spec.follow ? context.self?.id : anchorId);
+    const anchorId = anchorRef?.startsWith("vars.") ? context.resolveEntity(own8(context.vars, anchorRef.slice(5)), "unit")?.id : anchorRef;
+    const anchor = own8(state.units, anchorRef === void 0 && spec.follow ? context.self?.id : anchorId);
     if ((anchorRef || spec.follow) && !live2(anchor)) return;
     const origin = area3.center === void 0 ? anchor ?? center : resolvePoint(area3.center, context);
     if ((area3.center !== void 0 || ["circle", "ring", "single"].includes(area3.shape)) && !point3(origin)) return;
@@ -3418,6 +3578,7 @@ var FatedTacticalTavern = (() => {
     const id3 = nextId3(state, state.zones ??= {}, "zone");
     const zone = {
       ...carrier3(spec, context.self?.id ?? frame.sourceId, id3, spec.templateId ?? id3, context),
+      team: context.self?.team ?? null,
       area: area3,
       follow: spec.follow === true,
       persistent: spec.persistent === true,
@@ -3429,17 +3590,17 @@ var FatedTacticalTavern = (() => {
     host.log(state, context.self, "zone", `\u5C55\u5F00${zone.name}`, { zoneId: id3 });
   }
   function removeZone(state, host, zoneId, reason = "\u89E3\u9664") {
-    const zone = own7(state.zones, zoneId);
+    const zone = own8(state.zones, zoneId);
     if (!zone) return false;
     delete state.zones[zoneId];
     for (const poolId of values(zone.pools)) delete state.pools[poolId];
-    host.log(state, own7(state.units, zone.sourceId), "zone", `${zone.name}${reason}\u540E\u6D88\u6563`, { zoneId, expired: true });
+    host.log(state, own8(state.units, zone.sourceId), "zone", `${zone.name}${reason}\u540E\u6D88\u6563`, { zoneId, expired: true });
     return true;
   }
   function refreshFollowingZones(state, host) {
     for (const zone of values(state.zones)) {
       if (!zone.follow) continue;
-      const anchor = own7(state.units, zone.area.anchorUnitId);
+      const anchor = own8(state.units, zone.area.anchorUnitId);
       if (!live2(anchor)) {
         removeZone(state, host, zone.id, "\u951A\u70B9\u79BB\u573A");
         continue;
@@ -3633,17 +3794,22 @@ var FatedTacticalTavern = (() => {
     if (!targets2.size) return;
     if (op.entityKind === "zone") {
       for (const zone of targets2) {
-        if (own7(state.zones, zone.id) === zone) removeZone(state, host, zone.id);
+        if (own8(state.zones, zone.id) === zone) removeZone(state, host, zone.id);
       }
     } else if (op.entityKind === "cover") {
-      const covers = [...targets2].filter((cover) => own7(state.covers, cover.id) === cover);
+      const covers = [...targets2].filter((cover) => own8(state.covers, cover.id) === cover);
       removeCovers(state, new Set(covers.map((cover) => cover.id)));
       for (const cover of covers) {
         host.log(state, context.self, "terrain", `${cover.name ?? "\u63A9\u4F53"}\u88AB\u79FB\u9664`, { coverId: cover.id });
       }
     } else if (op.entityKind === "terrain") {
-      const layers = [...targets2].filter((layer) => own7(state.spatialTerrain, layer.id) === layer && layer.cells.length);
+      const layers = [...targets2].filter((layer) => own8(state.spatialTerrain, layer.id) === layer && layer.cells.length);
       removeTerrainLayers(state, host, frame, new Set(layers.map((layer) => layer.id)), "\u89E3\u9664\u540E");
+    } else if (op.entityKind === "unit") {
+      for (const unit of [...targets2].filter((unit2) => own8(state.units, unit2.id) === unit2 && unit2.summoned === true)) {
+        removeSummon(state, unit);
+        host.log(state, context.self, "despawn", `${unit.name}\u88AB\u79FB\u9664`, { unitId: unit.id, summoned: true });
+      }
     }
   }
   function spawn(env) {
@@ -3664,14 +3830,66 @@ var FatedTacticalTavern = (() => {
   var spatialOps = Object.freeze({ move, spawn, despawn });
   var spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn });
 
+  // src/core/log-attribution.js
+  var own9 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  function vmAttribution(state) {
+    const stack = state.vm?.stack ?? [];
+    const ruleFrame = [...stack].reverse().find((frame) => frame.ruleId);
+    if (!ruleFrame) return null;
+    const carrier4 = ruleFrame.carrier;
+    const skillId = carrier4?.type === "skill" ? carrier4.id : null;
+    const skill2 = skillId ? own9(state.skills, skillId) : null;
+    const ruleId = ruleFrame.ruleId;
+    const item = carrier4?.type === "item" ? own9(state.items, carrier4.id) : null;
+    const template = own9(state.equipment, item?.templateId);
+    const status = carrier4?.type === "status" ? own9(own9(state.units, carrier4.ownerId)?.statuses, carrier4.id) : null;
+    const zone = carrier4?.type === "zone" ? own9(state.zones, carrier4.id) : null;
+    const rule2 = stack.findLast((frame) => frame.ruleId === ruleId && frame.rule)?.rule ?? [skill2, item, template, status, zone].flatMap((entity) => entity?.rules ?? []).find((rule3) => rule3.id === ruleId);
+    const carrierName = template?.name ?? status?.name ?? zone?.name;
+    const actionFrame = stack.find((frame) => {
+      const event = own9(state.vm.events, frame.eventRef);
+      return ["attack", "skill", "move"].includes(event?.actionType);
+    });
+    const actionEvent = actionFrame ? own9(state.vm.events, actionFrame.eventRef) : null;
+    return {
+      carrierType: carrier4?.type ?? "rule",
+      ...skillId ? { skillId, skillName: skill2?.name ?? skillId } : {},
+      ...carrierName ? { carrierName } : {},
+      ruleId,
+      ...rule2?.label || rule2?.name ? { ruleName: rule2.label ?? rule2.name } : {},
+      ...actionEvent ? {
+        action: {
+          type: actionEvent.actionType,
+          ...actionEvent.skillId ? { skillId: actionEvent.skillId, skillName: own9(state.skills, actionEvent.skillId)?.name ?? actionEvent.skillId } : {}
+        }
+      } : {}
+    };
+  }
+  function attributionLine(detail) {
+    const a = detail?.attribution;
+    if (!a) return "";
+    const source = a.skillName ? `\u6280\u80FD\u300C${a.skillName}\u300D` : a.carrierName ? `${{ item: "\u88C5\u5907", status: "\u72B6\u6001", zone: "\u533A\u57DF" }[a.carrierType] ?? "\u6548\u679C"}\u300C${a.carrierName}\u300D` : "";
+    const action = a.action?.skillName ?? { attack: "\u666E\u901A\u653B\u51FB", move: "\u79FB\u52A8", skill: "\u6280\u80FD\u65BD\u653E" }[a.action?.type];
+    return `\u89E6\u53D1\u6765\u6E90\uFF1A${source}${source ? "\xB7" : ""}${a.ruleName ?? a.ruleId}${action ? `\uFF08\u6E90\u884C\u52A8\uFF1A${action}\uFF09` : ""}`;
+  }
+  function proseNumber(value) {
+    if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
+    return Number(value.toFixed(6)).toString();
+  }
+  function normalizeProse(text5) {
+    return typeof text5 === "string" ? text5.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text5;
+  }
+
   // src/core/vm-runtime.js
-  var own8 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+  var own10 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var values2 = (table4) => Object.values(table4 ?? {});
   var lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
   var mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
   function recordVM(state, unit, type, text5, detail = {}) {
     const positions = Object.fromEntries(Object.values(state.units).map((unit2) => [unit2.id, { x: unit2.x, y: unit2.y, z: elevation(state, unit2) }]));
-    state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text: text5, detail, positions });
+    const cause = vmAttribution(state);
+    const loggedDetail = cause ? { ...detail, attribution: cause } : detail;
+    state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text: normalizeProse(text5), detail: loggedDetail, positions });
   }
   var handlers = {
     action: continueAction,
@@ -3688,7 +3906,7 @@ var FatedTacticalTavern = (() => {
     state.pools ??= {};
     for (const unit of Object.values(state.units)) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
     for (const item of Object.values(state.items ?? {})) {
-      for (const [key4, definition] of Object.entries(own8(state.equipment, item.templateId)?.pools ?? {})) {
+      for (const [key4, definition] of Object.entries(own10(state.equipment, item.templateId)?.pools ?? {})) {
         if (!getPool(state, item.id, key4, "item") && Number.isFinite(definition.cap)) createPool(state, {
           ownerKind: "item",
           ownerId: item.id,
@@ -3747,14 +3965,14 @@ var FatedTacticalTavern = (() => {
     expireStatuses(state, hook2, event) {
       const ids = /* @__PURE__ */ new Set([event.actorId, event.targetId, ...event.ownerIds ?? []]);
       for (const id3 of ids) {
-        const unit = own8(state.units, id3);
+        const unit = own10(state.units, id3);
         for (const [key4, status] of Object.entries(unit?.statuses ?? {})) {
           const expires = [status.expireOn].flat().some((rule2) => rule2?.hook === hook2 && (rule2.filter === void 0 || evaluateExpr(rule2.filter, {
             self: unit,
             status,
             event,
-            source: own8(state.units, status.sourceId),
-            target: own8(state.units, event.targetId)
+            source: own10(state.units, status.sourceId),
+            target: own10(state.units, event.targetId)
           })));
           if (!expires) continue;
           delete unit.statuses[key4];
@@ -3764,7 +3982,7 @@ var FatedTacticalTavern = (() => {
     },
     rules(state, hook2, event) {
       const entries3 = collectRules(state, hook2, event);
-      const actor = own8(state.units, event.actorId);
+      const actor = own10(state.units, event.actorId);
       const skill2 = actionSkill(state, actor, event.skillId);
       const isHeld = actor?.skills?.includes(event.skillId);
       const actionRules = hook2 === "active" || !isHeld ? skill2?.rules : void 0;
@@ -3782,23 +4000,34 @@ var FatedTacticalTavern = (() => {
       const { rule: rule2 } = frame;
       const { usesLeft, cooldownRemaining, sameTurn, stamp } = ruleAvailability(state, rule2, key4);
       if (usesLeft <= 0 || cooldownRemaining > 0) return false;
-      if (rule2.usesPerBattle !== void 0) (state.vm.uses ??= {})[key4] = (own8(state.vm.uses, key4) ?? 0) + 1;
+      if (rule2.usesPerBattle !== void 0) (state.vm.uses ??= {})[key4] = (own10(state.vm.uses, key4) ?? 0) + 1;
       if (rule2.usesPerTurn !== void 0 || rule2.cooldownTurns !== void 0) {
         (state.vm.ruleTurns ??= {})[key4] = { round: state.round, turn: state.turn, count: sameTurn ? stamp.count + 1 : 1 };
       }
       return true;
     },
     continue(env) {
-      const handler = own8(handlers, env.frame.native);
+      const handler = own10(handlers, env.frame.native);
       if (!handler) throw new Error(`\u672A\u77E5\u7ED3\u7B97\u9636\u6BB5 ${env.frame.native}`);
       handler(env);
     },
-    resource: (state, unit, key4) => unit && getPool(state, unit.id, key4)?.current,
+    resource: (state, unit, key4) => {
+      if (!unit) return void 0;
+      if (key4 === "move") return Math.max(0, unit.move - (unit.moved ?? 0));
+      if (key4 === "attack" || key4 === "action") return Math.max(0, 1 - (unit.used?.[key4] ?? 0));
+      return getPool(state, unit.id, key4)?.current;
+    },
     statusTemplate: getStatusTemplate,
     statusLogDetail,
     flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
     stat: (state, unit, key4) => mod(state, {}, unit.id, key4, unit.stats?.[key4] ?? 0),
     checkBonus: (state, unit, event) => mod(state, event, unit.id, "checkBonus", 0) + (event.checkKind === "save" ? mod(state, event, unit.id, "resistBonus", 0) : 0),
+    dcBonus: (state, unit, event) => mod(state, event, unit.id, "dcBonus", 0),
+    isImmune: (state, unit, key4, frame) => {
+      const event = frame?.eventRef ? state.vm?.events?.[frame.eventRef] : void 0;
+      const source = own10(state.units, event?.actorId ?? event?.sourceId ?? frame?.sourceId);
+      return isStatusImmune(state, unit, key4, source, { collectRules, carrierScope });
+    },
     prepareDamage(state, source, target2, data) {
       const { damageType: damageType2 } = data;
       const event = {
@@ -3901,7 +4130,7 @@ var FatedTacticalTavern = (() => {
     runAction({ state, frame, actor, plan, event, overrides: overrides2 }) {
       event.power *= overrides2.scale ?? 1;
       event.power *= event.damageScale ?? 1;
-      const skill2 = own8(state.skills, event.skillId);
+      const skill2 = own10(state.skills, event.skillId);
       if (skill2?.backpackItem) {
         const before = actor.inventory[event.skillId];
         actor.inventory[event.skillId] = before - 1;
@@ -3945,9 +4174,10 @@ var FatedTacticalTavern = (() => {
     const { vm, pools } = state;
     const plain2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
     if (!plain2(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain2(vm.events) || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining) || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain2(pools)) return false;
+    if (vm.endingTurn !== void 0 && (!vm.pendingAsk || typeof vm.endingTurn !== "string" || vm.endingTurn !== state.order?.[state.turn] || !own10(state.units, vm.endingTurn))) return false;
     for (const unit of Object.values(state.units ?? {})) {
       for (const [key4, maximum] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
-        const pool = own8(pools, own8(unit.pools, key4));
+        const pool = own10(pools, own10(unit.pools, key4));
         if (!pool || pool.kind !== key4 || pool.current !== unit[key4] || pool.max !== unit[maximum] || !Array.isArray(pool.contributors) || !pool.contributors.some((c) => c.ownerKind === "unit" && c.ownerId === unit.id)) return false;
       }
     }
@@ -3956,7 +4186,7 @@ var FatedTacticalTavern = (() => {
   function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false, opportunity, weapon: weapon2 } = {}) {
     if (dryRun) {
       state = structuredClone(state);
-      actor = own8(state.units, actor?.id);
+      actor = own10(state.units, actor?.id);
     }
     initializeVMWorld(state);
     if (action.type === "answer") answerVM(state, action, vmHost);
@@ -4095,6 +4325,7 @@ var FatedTacticalTavern = (() => {
       remainingTurns: stackRule === "stack" && options.remainingTurns == null && options.turns == null ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
       tickTiming: options.tickTiming ?? template.tickTiming,
       modifiers: { ...template.modifiers, ...options.modifiers ?? {} },
+      flags: [.../* @__PURE__ */ new Set([...template.flags ?? [], ...options.flags ?? []])],
       sourceUnitId: options.sourceUnitId ?? previous?.sourceUnitId ?? null,
       appliedRound: state.round,
       appliedTurn: state.turn
@@ -4351,6 +4582,13 @@ var FatedTacticalTavern = (() => {
     expireStatuses(state, unit, "on_turn_end", { sourceUnitId: unit.id });
     tick2(state, unit, "onTurnEnd");
     dispatchEffect(state, unit, "on_turn_end");
+    if (state.vm?.pendingAsk) {
+      state.vm.endingTurn = unit.id;
+      return;
+    }
+    completeTurnEnd(state, unit);
+  }
+  function completeTurnEnd(state, unit) {
     for (const status of values3(unit.statuses)) {
       if (status.durationType !== "battle_turns") continue;
       if (status.appliedRound === state.round && status.appliedTurn === state.turn && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
@@ -4367,6 +4605,7 @@ var FatedTacticalTavern = (() => {
       if (state.outcome) return;
       if (alive3(unit) && !unit.fled) {
         unit.used = { attack: 0, action: 0 };
+        unit.moved = 0;
         unit.reactionAvailable = true;
         unit.ap = 2;
         record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
@@ -4391,7 +4630,7 @@ var FatedTacticalTavern = (() => {
         if (alive3(unit) && !changes(unit, "skip")) return;
         if (alive3(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
         endTurn(state, unit);
-        if (refreshOutcome(state)) return;
+        if (state.vm?.pendingAsk || refreshOutcome(state)) return;
       }
       advanceCursor(state);
     }
@@ -4444,6 +4683,7 @@ var FatedTacticalTavern = (() => {
     for (const unit of values3(state.units)) {
       unit.ap = 0;
       unit.used = { attack: 0, action: 0 };
+      unit.moved = 0;
       unit.reactionAvailable = true;
       for (const status of values3(unit.statuses)) {
         delete status.appliedRound;
@@ -4511,7 +4751,8 @@ var FatedTacticalTavern = (() => {
   function modCheck(state, unit, key4, context = {}) {
     const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
     if (key4 === "highGroundRange" || key4 === "highGroundAccuracy") return template?.[key4] ?? 0;
-    return key4 === "advantage" ? modStat(state, unit, "advantage", 0, { checkKind: "attack", ...context }) : 0;
+    if (key4 === "advantage") return modStat(state, unit, "advantage", 0, { checkKind: "attack", ...context });
+    return 0;
   }
   var activeRule = (rule2) => rule2.hook === "active" && rule2.enabled !== false;
   function isPassiveSkill(skill2) {
@@ -4539,7 +4780,8 @@ var FatedTacticalTavern = (() => {
           shape: "single",
           target: "self",
           rules: [rule2],
-          itemId: id3
+          itemId: id3,
+          ...Object.fromEntries(["usesPerBattle", "usesPerTurn", "cooldownTurns"].filter((key4) => rule2[key4] !== void 0).map((key4) => [key4, rule2[key4]]))
         });
       }
     }
@@ -4551,7 +4793,8 @@ var FatedTacticalTavern = (() => {
   var syncEquipmentEffects = initializeVMWorld;
   function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
     if (!alive3(unit) || changes(unit, "rooted") || changes(unit, "skip") || aggregateModifiers(state, unit.id).locks.move) return [];
-    const limit = distanceLimit ?? Math.max(1, unit.move + changes(unit, "movement")) * (type === "sprint" ? 2 : 1);
+    const remainingMove = Math.max(0, unit.move - (unit.moved ?? 0) + changes(unit, "movement"));
+    const limit = distanceLimit ?? remainingMove * (type === "sprint" ? 2 : 1);
     const routes = movementOptions(state, unit, limit);
     const sources = type === "disengage" ? [] : opportunitySources(state, unit).filter((source) => canReact(state, source, unit));
     const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
@@ -4768,7 +5011,13 @@ var FatedTacticalTavern = (() => {
     const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, "guaranteed_hit"));
     const tierUp = false;
     const execution = !cover && target2?.team !== actor.team && ["shaken", "routed"].includes(target2?.moraleState) && ["kill", "concept"].includes(context.intent) && hasStrikeDamage(template);
-    const dodge = execution || cover ? 0 : modStat(state, target2, "dodge", modCheck(state, target2, "dodgeBonus", { target: actor }) + modCheck(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"), { target: actor });
+    const dodge = execution || cover ? 0 : modStat(
+      state,
+      target2,
+      "dodge",
+      modCheck(state, target2, "dodgeBonus", { target: actor }) + modCheck(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"),
+      { ...strike, attacker: actor, checkKind: "dodge" }
+    );
     const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, "highGroundAccuracy", strike) : 0);
     const flanked = target2 && !cover ? isFlanked(state, origin, target2) : false;
     const protectedBy = target2 && !cover && !geometry.melee ? coverBetween(state, origin, target2) : null;
@@ -4790,8 +5039,8 @@ var FatedTacticalTavern = (() => {
     const disadvantages = changes(actor, "disadvantage") + (template.disadvantage ?? 0);
     const advantage = Math.sign(advantages - disadvantages);
     const saveStat = !cover && target2 ? template.save : null;
-    const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) : null;
-    const saveBonus = saveStat ? effectiveStat(state, target2, saveStat) : 0;
+    const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) + modStat(state, actor, "dcBonus", 0, { target: target2, checkKind: "save" }) : null;
+    const saveBonus = saveStat ? effectiveStat(state, target2, saveStat) + modStat(state, target2, "resistBonus", 0, { target: actor, checkKind: "save" }) : 0;
     const saveChance2 = saveStat ? saveChance(saveDC, saveBonus) : 0;
     const automatic = !weapon2 && (!template.damage || saveStat || template.autoHit);
     const hitChance2 = automatic || guaranteeHit ? 1 : tierUp || dodge || modCheck(state, actor, "accuracyBonus", strike) ? saveChance(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveChance(2, 0, advantages, disadvantages) : 0) : hitChance(defense, accuracy, advantages, disadvantages);
@@ -5672,11 +5921,20 @@ var FatedTacticalTavern = (() => {
         state.vm.pendingAsk = null;
         state.vm.stack.length = 0;
         state.vm.events = {};
+        delete state.vm.endingTurn;
       } else {
         const before2 = state.logs.length;
         const actor2 = currentUnit(state);
         const result = resolveVMAction(state, action);
-        if (!result.pendingAsk) finishAction(state, actor2, action.type);
+        if (!result.pendingAsk && state.vm.endingTurn) {
+          const endingUnit = state.units[state.vm.endingTurn];
+          delete state.vm.endingTurn;
+          completeTurnEnd(state, endingUnit);
+          if (!refreshOutcome(state)) {
+            advanceCursor(state);
+            settleTurn(state);
+          }
+        } else if (!result.pendingAsk) finishAction(state, actor2, action.type);
         return state.logs.slice(before2);
       }
     }
@@ -5892,7 +6150,7 @@ var FatedTacticalTavern = (() => {
     }
     if (type === "end" || !alive3(actor) || !actor.ap) {
       if (!actor.fled) endTurn(state, actor);
-      if (!refreshOutcome(state)) {
+      if (!state.vm?.pendingAsk && !refreshOutcome(state)) {
         advanceCursor(state);
         settleTurn(state);
       }
@@ -6167,7 +6425,7 @@ var FatedTacticalTavern = (() => {
     list2(rules, 200, (rule2) => validVmRule(rule2, { statusTemplates: state?.statusTemplates }), "VM \u89C4\u5219");
     requireThat(new Set(rules.map((rule2) => rule2.id)).size === rules.length, "VM \u89C4\u5219 ID \u91CD\u590D");
   }
-  var own9 = Object.hasOwn;
+  var own11 = Object.hasOwn;
   var error = (message) => {
     throw new Error(message);
   };
@@ -6175,7 +6433,7 @@ var FatedTacticalTavern = (() => {
     if (!yes) error(`\u65E0\u6548\u5B57\u6BB5\uFF1A${name}`);
   };
   var plain = (v) => v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype;
-  var id2 = (v) => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(v) && !own9(Object.prototype, v) && v !== "prototype";
+  var id2 = (v) => typeof v === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(v) && !own11(Object.prototype, v) && v !== "prototype";
   var int = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
   var num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
   var text2 = (v, max = 100) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
@@ -6188,12 +6446,12 @@ var FatedTacticalTavern = (() => {
   var statusLabels = ["name", "icon", "category", "description"];
   var maxStatusStacks = 999999;
   var maxStatusTemplates = 64;
-  var has = (record2, key4) => id2(key4) && own9(record2 ?? {}, key4);
+  var has = (record2, key4) => id2(key4) && own11(record2 ?? {}, key4);
   function fields(v, required, optional = []) {
-    requireThat(plain(v) && required.every((k) => own9(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
+    requireThat(plain(v) && required.every((k) => own11(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
   }
   function checkOptional(o, key4, check) {
-    if (own9(o, key4)) requireThat(check(o[key4]), key4);
+    if (own11(o, key4)) requireThat(check(o[key4]), key4);
   }
   function table2(v, test, max = 200) {
     requireThat(plain(v) && Object.keys(v).length <= max, "\u5B9E\u4F53\u8868");
@@ -6215,23 +6473,24 @@ var FatedTacticalTavern = (() => {
   }
   var damageEvents = ["on_attack", "on_hit", "on_damaged", "on_kill", "on_death", "on_turn_start", "on_turn_end", "on_skill_cast", "on_equip", "on_heal", "on_ally_death", "on_struck"];
   function nativeExpiry(value) {
-    const valid2 = (rule2) => plain(rule2) && damageEvents.includes(rule2.trigger) && Object.keys(rule2).every((key4) => ["trigger", "exceptSource", "damageType"].includes(key4)) && (!own9(rule2, "exceptSource") || rule2.exceptSource === "self") && (!own9(rule2, "damageType") || rule2.trigger === "on_damaged" && ["any", "direct", "indirect"].includes(rule2.damageType));
+    const valid2 = (rule2) => plain(rule2) && damageEvents.includes(rule2.trigger) && Object.keys(rule2).every((key4) => ["trigger", "exceptSource", "damageType"].includes(key4)) && (!own11(rule2, "exceptSource") || rule2.exceptSource === "self") && (!own11(rule2, "damageType") || rule2.trigger === "on_damaged" && ["any", "direct", "indirect"].includes(rule2.damageType));
     return Array.isArray(value) ? value.length <= 12 && Array.from(value).every(valid2) : valid2(value);
   }
-  var vmExpiry = (value) => plain(value) && vmHooks.includes(value.hook) && Object.keys(value).every((key4) => ["hook", "filter"].includes(key4)) && (!own9(value, "filter") || typeof value.filter === "boolean" || typeof value.filter === "string" && validExpr(value.filter));
+  var vmExpiry = (value) => plain(value) && vmHooks.includes(value.hook) && Object.keys(value).every((key4) => ["hook", "filter"].includes(key4)) && (!own11(value, "filter") || typeof value.filter === "boolean" || typeof value.filter === "string" && validExpr(value.filter));
   var stackModes = ["refresh", "stack", "replace", "extend"];
-  var carrierFields = ["tags", "tier", "vars", "mods", "rules"];
+  var carrierFields = ["tags", "tier", "vars", "flags", "mods", "rules"];
   var numericExpr2 = (value) => Number.isFinite(value) || typeof value === "string" && validExpr(value);
   function carrierFieldsValue(value, state, resolved = false) {
-    if (own9(value, "tags")) list2(value.tags, 32, resolved ? (tag2) => text2(tag2) : validVmTag, "VM \u6807\u7B7E");
+    if (own11(value, "tags")) list2(value.tags, 32, resolved ? (tag2) => text2(tag2) : validVmTag, "VM \u6807\u7B7E");
+    if (own11(value, "flags")) list2(value.flags, 8, (flag) => flag === "undispellable", "VM \u6807\u8BB0");
     checkOptional(value, "tier", (tier) => int(tier, 1, 7));
-    if (own9(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : typeof entry2 === "boolean" || numericExpr2(entry2), "VM \u53D8\u91CF"));
-    if (own9(value, "mods")) list2(value.mods, 200, (mod2) => {
+    if (own11(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : typeof entry2 === "boolean" || numericExpr2(entry2), "VM \u53D8\u91CF"));
+    if (own11(value, "mods")) list2(value.mods, 200, (mod2) => {
       const error2 = vmStatModError(mod2);
       requireThat(!error2, error2);
       return true;
     }, "VM \u4FEE\u9970");
-    if (own9(value, "rules")) validateRules(value.rules, state);
+    if (own11(value, "rules")) validateRules(value.rules, state);
   }
   function poolDefinitions(value) {
     table2(value, (definition) => {
@@ -6270,14 +6529,14 @@ var FatedTacticalTavern = (() => {
     requireThat(id2(key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
     requireThat(text2(v.name) && text2(v.icon, 24) && text2(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
     requireThat(statusLifetime(v) && validStackCap(v.maxStacks), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
-    requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own9(v.modifiers, "damageType") || own9(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
+    requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own11(v.modifiers, "damageType") || own11(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
     validateStatusModifiers(v, v.modifiers);
-    requireThat(key4 !== actionStatuses.shield || own9(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
+    requireThat(key4 !== actionStatuses.shield || own11(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
   }
   function statusTemplateTable(v) {
     const state = { statusTemplates: v };
     table2(v, (template, key4) => {
-      if (own9(template ?? {}, "modifiers")) nativeStatusTemplate(template, key4);
+      if (own11(template ?? {}, "modifiers")) nativeStatusTemplate(template, key4);
       else statusTemplate(template, key4, state);
     }, maxStatusTemplates);
     for (const t of Object.values(v)) if (t.expireInto) {
@@ -6286,10 +6545,10 @@ var FatedTacticalTavern = (() => {
     }
   }
   function defineStatus(state, key4, template) {
-    requireThat(plain(template) && (!own9(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
+    requireThat(plain(template) && (!own11(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
     const definition = { ...template, id: key4 };
     statusTemplate(definition, key4, { statusTemplates: { ...state.statusTemplates, [key4]: definition } });
-    requireThat(!own9(state.statusTemplates ?? {}, key4) && !own9(STATUSES, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
+    requireThat(!own11(state.statusTemplates ?? {}, key4) && !own11(STATUSES, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
     requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, "\u81EA\u5B9A\u4E49\u72B6\u6001\u6A21\u677F\u6570\u91CF");
     (state.statusTemplates ??= {})[key4] = structuredClone(definition);
     return structuredClone(definition);
@@ -6297,7 +6556,7 @@ var FatedTacticalTavern = (() => {
   var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key4, amount]) => ["hp", "mp", "sp"].includes(key4) && int(amount, 0, 25e3)));
   function validSaveDC(value) {
     if (int(value, 1, 50)) return true;
-    return plain(value) && own9(value, "base") && own9(value, "scaleBy") && Object.keys(value).every((key4) => ["base", "scaleBy", "min", "max"].includes(key4)) && num(value.base, -1e9, 1e9) && plain(value.scaleBy) && Object.keys(value.scaleBy).length === 2 && own9(value.scaleBy, "stat") && own9(value.scaleBy, "perUnit") && attrs2.includes(value.scaleBy.stat) && num(value.scaleBy.perUnit, -1e9, 1e9) && (!own9(value, "min") || num(value.min, 1, 1e9)) && (!own9(value, "max") || num(value.max, 1, 1e9)) && (value.min ?? 1) <= (value.max ?? 50);
+    return plain(value) && own11(value, "base") && own11(value, "scaleBy") && Object.keys(value).every((key4) => ["base", "scaleBy", "min", "max"].includes(key4)) && num(value.base, -1e9, 1e9) && plain(value.scaleBy) && Object.keys(value.scaleBy).length === 2 && own11(value.scaleBy, "stat") && own11(value.scaleBy, "perUnit") && attrs2.includes(value.scaleBy.stat) && num(value.scaleBy.perUnit, -1e9, 1e9) && (!own11(value, "min") || num(value.min, 1, 1e9)) && (!own11(value, "max") || num(value.max, 1, 1e9)) && (value.min ?? 1) <= (value.max ?? 50);
   }
   function validateAreaDimensions(v) {
     for (const key4 of ["radius", "innerRadius", "width"]) checkOptional(v, key4, (x) => Number.isFinite(x) && x >= 0 && x <= 30);
@@ -6305,7 +6564,7 @@ var FatedTacticalTavern = (() => {
   }
   function equipmentTemplate(v, state) {
     fields(v, ["name"], ["quality", "kind", "weaponClass", "hand", "rangeType", "ranged", "heavy", "twoHanded", "shield", "range", "accuracy", "attack", "damage", "armor", "defense", "boundTo", "weaponType", "shape", "target", "radius", "innerRadius", "width", "angle", ...carrierFields, "pools", "skills"]);
-    if (own9(v, "skills")) {
+    if (own11(v, "skills")) {
       list2(v.skills, 32, (skillId) => state ? has(state.skills, skillId) : id2(skillId), "\u88C5\u5907\u6280\u80FD");
       requireThat(new Set(v.skills).size === v.skills.length, "\u91CD\u590D\u88C5\u5907\u6280\u80FD");
     }
@@ -6326,15 +6585,15 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "shape", (x) => ["single", "circle", "ring", "fan", "cone", "line"].includes(x));
     checkOptional(v, "target", (x) => ["enemy", "ally", "self", "any", "cell"].includes(x));
     validateAreaDimensions(v);
-    if (own9(v, "damage")) dice3(v.damage);
-    requireThat(own9(v, "range") === own9(v, "damage"), "\u6B66\u5668 range/damage");
+    if (own11(v, "damage")) dice3(v.damage);
+    requireThat(own11(v, "range") === own11(v, "damage"), "\u6B66\u5668 range/damage");
     carrierFieldsValue(v, state);
-    if (own9(v, "pools")) poolDefinitions(v.pools);
+    if (own11(v, "pools")) poolDefinitions(v.pools);
   }
   function skillTemplate(v, state) {
     fields(v, ["name", "ap", "slot", "range", "shape", "target"], ["quality", "power", "mp", "sp", "radius", "innerRadius", "width", "angle", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType", "backpackItem", "initiativeBonus", "passive", ...carrierFields, "pools"]);
     carrierFieldsValue(v, state);
-    if (own9(v, "pools")) poolDefinitions(v.pools);
+    if (own11(v, "pools")) poolDefinitions(v.pools);
     checkOptional(v, "backpackItem", (flag) => flag === true && v.ap === 1 && v.slot === "action");
     checkOptional(v, "damageType", (type) => damageTypes.includes(type));
     checkOptional(v, "school", text2);
@@ -6348,27 +6607,27 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "accuracy", (x) => int(x, -20, 30));
     checkOptional(v, "save", (x) => attrs2.includes(x));
     checkOptional(v, "saveDC", (dc) => validSaveDC(dc) || typeof dc === "string" && validExpr(dc));
-    requireThat(own9(v, "save") === own9(v, "saveDC"), "save/saveDC");
-    for (const k of ["damage", "heal"]) if (own9(v, k)) dice3(v[k]);
+    requireThat(own11(v, "save") === own11(v, "saveDC"), "save/saveDC");
+    for (const k of ["damage", "heal"]) if (own11(v, k)) dice3(v[k]);
   }
   function statusValue(v, key4, state, ownerId) {
-    if (own9(v ?? {}, "templateId")) {
+    if (own11(v ?? {}, "templateId")) {
       const { templateId, ownerId: owner, sourceId: sourceId2, stacks, pools, ...rest } = v;
       const template = getStatusTemplate(state, key4);
       const { vars, modifiers: modifiers2, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
       if (template?.modifiers) {
-        if (own9(definition, "expireOn") && nativeExpiry(definition.expireOn)) delete definition.expireOn;
-        if (own9(rest, "modifiers")) validateStatusModifiers(template, modifiers2);
-        if (own9(rest, "stackRule")) requireThat(statusStackRules.includes(stackRule), "\u539F\u751F\u72B6\u6001\u53E0\u5C42");
-        if (own9(rest, "tickTiming")) requireThat(statusTickTimings.includes(tickTiming), "\u539F\u751F\u72B6\u6001\u65F6\u673A");
-        if (own9(rest, "expireInto")) requireThat(expireInto === template.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
-        if (own9(rest, "amount")) requireThat(own9(template.modifiers, "amount") && num(amount, 0, 1e9), "\u62A4\u76FE\u6C60");
-      } else requireThat(["modifiers", "stackRule", "tickTiming", "expireInto", "amount"].every((field) => !own9(rest, field)), "VM \u72B6\u6001\u5B57\u6BB5");
+        if (own11(definition, "expireOn") && nativeExpiry(definition.expireOn)) delete definition.expireOn;
+        if (own11(rest, "modifiers")) validateStatusModifiers(template, modifiers2);
+        if (own11(rest, "stackRule")) requireThat(statusStackRules.includes(stackRule), "\u539F\u751F\u72B6\u6001\u53E0\u5C42");
+        if (own11(rest, "tickTiming")) requireThat(statusTickTimings.includes(tickTiming), "\u539F\u751F\u72B6\u6001\u65F6\u673A");
+        if (own11(rest, "expireInto")) requireThat(expireInto === template.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
+        if (own11(rest, "amount")) requireThat(own11(template.modifiers, "amount") && num(amount, 0, 1e9), "\u62A4\u76FE\u6C60");
+      } else requireThat(["modifiers", "stackRule", "tickTiming", "expireInto", "amount"].every((field) => !own11(rest, field)), "VM \u72B6\u6001\u5B57\u6BB5");
       statusTemplate(definition, key4, state);
       const maxStacks = v.maxStacks ?? template?.maxStacks ?? 1;
       requireThat(templateId === key4 && template && id2(owner) && (ownerId === void 0 || owner === ownerId) && (sourceId2 === null || id2(sourceId2)) && int(maxStacks, 1, stackCapLimit(template)) && int(stacks, 1, maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes.includes(v.stackMode), "VM \u72B6\u6001\u5B9E\u4F8B");
-      if (own9(v, "vars")) table2(vars, (entry2) => requireThat(jsonTree(entry2), "VM \u72B6\u6001\u53D8\u91CF"));
-      if (own9(v, "pools")) poolBindings(pools);
+      if (own11(v, "vars")) table2(vars, (entry2) => requireThat(jsonTree(entry2), "VM \u72B6\u6001\u53D8\u91CF"));
+      if (own11(v, "pools")) poolBindings(pools);
       return;
     }
     const t = getStatusTemplate(state, key4);
@@ -6384,7 +6643,7 @@ var FatedTacticalTavern = (() => {
     validateStatusModifiers(t, v.modifiers);
     checkOptional(v, "appliedRound", (x) => int(x, 1, 1e6));
     checkOptional(v, "appliedTurn", (x) => int(x, 0, 199));
-    requireThat(own9(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own9(v, "amount"), "\u62A4\u76FE\u6C60");
+    requireThat(own11(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own11(v, "amount"), "\u62A4\u76FE\u6C60");
   }
   function validateCell(v) {
     fields(v, ["kind", "z"]);
@@ -6393,17 +6652,20 @@ var FatedTacticalTavern = (() => {
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
   var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
   function unitValue(v, key4, state) {
-    fields(v, unitKeys, ["reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "summonGroup"]);
+    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "moved", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "summonGroup", "summoned"]);
     carrierFieldsValue(v, state, true);
-    if (own9(v, "pools")) poolBindings(v.pools);
+    if (own11(v, "pools")) poolBindings(v.pools);
     for (const k of ["templateId", "sourceId"]) checkOptional(v, k, id2);
     checkOptional(v, "summonGroup", (group) => text2(group, 512));
-    if (own9(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
+    if (own11(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
+    checkOptional(v, "summoned", (x) => x === true);
+    for (const key5 of ["initialMaxHp", "initialMaxMp", "initialMaxSp"]) checkOptional(v, key5, (x) => int(x, 0, 1e9));
+    checkOptional(v, "moved", (x) => int(x, 0, 1e9));
     for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
     checkOptional(v, "corpseOf", id2);
     checkOptional(v, "diedAt", (x) => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
     checkOptional(v, "creatureType", (x) => text2(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every((t) => text2(t)));
-    for (const k of ["resources", "inventory"]) if (own9(v, k)) table2(v[k], (x) => requireThat(int(x, 0, 1e9), k));
+    for (const k of ["resources", "inventory"]) if (own11(v, k)) table2(v[k], (x) => requireThat(int(x, 0, 1e9), k));
     checkOptional(v, "reactionAvailable", (x) => typeof x === "boolean");
     requireThat(v.id === key4 && text2(v.name) && team(v.team) && coord(v.x) && coord(v.y), "\u68CB\u5B50");
     list2(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
@@ -6411,7 +6673,7 @@ var FatedTacticalTavern = (() => {
     for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat((v.pools ? num : int)(v[max], r === "hp" ? 1 : 0, 1e9) && (v.pools ? num : int)(v[r], 0, v[max]), r);
     fields(v.used, ["action", "attack"]);
     fields(v.stats, attrs2);
-    requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 1, 10), "\u5355\u4F4D\u6570\u503C");
+    requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && (!own11(v, "moved") || num(v.moved, 0, v.move)) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 1, 10), "\u5355\u4F4D\u6570\u503C");
     requireThat(v.weapon === null || id2(v.weapon), "weapon");
     for (const slot2 of ["mainHand", "offHand", "shield"]) checkOptional(v, slot2, (x) => x === null || id2(x));
     checkOptional(v, "bodyLengthM", (x) => num(x, 0.01, 1e9));
@@ -6436,7 +6698,7 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "parryRefunded", (x) => typeof x === "boolean");
     checkOptional(v, "attunementCharges", (x) => int(x, 0, 2));
     checkOptional(v, "blockMode", (x) => ["normal", "heavy"].includes(x));
-    if (own9(v, "bagWeapons")) list2(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
+    if (own11(v, "bagWeapons")) list2(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
     list2(v.gear, 12, id2, "gear");
     list2(v.skills, 32, id2, "skills");
     table2(v.statuses, (status, statusId3) => statusValue(status, statusId3, state, key4), maxStatusTemplates + Object.keys(STATUSES).length);
@@ -6445,18 +6707,19 @@ var FatedTacticalTavern = (() => {
     if (depth > 12) return false;
     if (v === null || ["string", "boolean"].includes(typeof v) || Number.isFinite(v)) return true;
     if (Array.isArray(v)) return v.length <= 500 && Array.from(v).every((x) => jsonTree(x, depth + 1));
-    return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own9(Object.prototype, key4) && jsonTree(x, depth + 1));
+    return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own11(Object.prototype, key4) && jsonTree(x, depth + 1));
   }
   function pointValue(value) {
     return plain(value) && Object.keys(value).length === 2 && coord(value.x) && coord(value.y);
   }
   function zoneValue(value, key4, state) {
-    fields(value, ["id", "name", "area", "follow", "persistent", "remainingTurns"], ["templateId", "sourceId", "anchorPosition", "pools", ...carrierFields]);
+    fields(value, ["id", "name", "area", "follow", "persistent", "remainingTurns"], ["templateId", "sourceId", "team", "anchorPosition", "pools", ...carrierFields]);
+    checkOptional(value, "team", (value2) => value2 === null || team(value2));
     requireThat(id2(key4) && value.id === key4 && text2(value.name), "VM \u533A\u57DF ID/\u540D\u79F0");
     checkOptional(value, "templateId", id2);
     checkOptional(value, "sourceId", (source) => source === null || id2(source));
     carrierFieldsValue(value, state, true);
-    if (own9(value, "pools")) poolBindings(value.pools);
+    if (own11(value, "pools")) poolBindings(value.pools);
     const { area: area3, follow, persistent, remainingTurns } = value;
     requireThat(validVmOpcode({ op: "spawn", entityKind: "zone", spec: { area: area3, follow, persistent, remainingTurns } }), "VM \u533A\u57DF");
     requireThat(int(remainingTurns, 1, 100), "VM \u533A\u57DF\u6301\u7EED\u56DE\u5408");
@@ -6466,7 +6729,7 @@ var FatedTacticalTavern = (() => {
     else checkOptional(area3, "radius", (radius) => Number.isFinite(radius) && radius >= 0);
     if (area3.cells) requireThat(area3.cells.length <= 100 && area3.cells.every(pointValue), "VM \u533A\u57DF\u683C");
     if (area3.rect) requireThat(Object.values(area3.rect).every(coord), "VM \u533A\u57DF\u77E9\u5F62");
-    requireThat(follow ? id2(area3.anchorUnitId) && pointValue(value.anchorPosition) : !own9(area3, "anchorUnitId") && !own9(value, "anchorPosition"), "VM \u533A\u57DF\u951A\u70B9");
+    requireThat(follow ? id2(area3.anchorUnitId) && pointValue(value.anchorPosition) : !own11(area3, "anchorUnitId") && !own11(value, "anchorPosition"), "VM \u533A\u57DF\u951A\u70B9");
   }
   function tapeValue(tape, state) {
     let seq = 0;
@@ -6504,26 +6767,34 @@ var FatedTacticalTavern = (() => {
     for (const [kind, collection] of [["item", state.items], ["zone", state.zones ?? {}]]) {
       for (const owner of Object.values(collection)) add(kind, owner);
     }
-    const pools = own9(state, "pools") ? state.pools : {};
+    const pools = own11(state, "pools") ? state.pools : {};
     requireThat(plain(pools) && Object.keys(pools).length <= 1e4, "\u8D44\u6E90\u6C60\u8868");
     for (const [key4, pool] of Object.entries(pools)) {
-      fields(pool, ["id", "kind", "contributors", "current", "max", "reloadable"]);
-      requireThat(validPoolId(key4) && pool.id === key4 && ["hp", "mp", "sp", "custom"].includes(pool.kind) && num(pool.max, 0, Number.MAX_VALUE) && num(pool.current, 0, pool.max) && typeof pool.reloadable === "boolean", "\u8D44\u6E90\u6C60");
+      fields(pool, ["id", "kind", "contributors", "current", "max", "reloadable"], ["initialMax"]);
+      requireThat(validPoolId(key4) && pool.id === key4 && ["hp", "mp", "sp", "custom"].includes(pool.kind) && num(pool.max, 0, Number.MAX_VALUE) && (!own11(pool, "initialMax") || num(pool.initialMax, 0, Number.MAX_VALUE)) && num(pool.current, 0, pool.max) && typeof pool.reloadable === "boolean", "\u8D44\u6E90\u6C60");
       const owners = bindings.get(key4);
       requireThat(owners?.size > 0 && (pool.kind !== "custom" || owners.size === 1), "\u8D44\u6E90\u6C60\u5F52\u5C5E");
       list2(pool.contributors, 200, (contribution) => {
-        fields(contribution, ["ownerKind", "ownerId", "maxBase"]);
+        fields(contribution, ["ownerKind", "ownerId", "maxBase"], ["initialMaxBase"]);
         const ownerKey = `${contribution.ownerKind}/${contribution.ownerId}`;
-        return id2(contribution.ownerId) && owners.get(ownerKey) === pool.kind && num(contribution.maxBase, 0, Number.MAX_VALUE) && owners.delete(ownerKey);
+        return id2(contribution.ownerId) && owners.get(ownerKey) === pool.kind && num(contribution.maxBase, 0, Number.MAX_VALUE) && (!own11(contribution, "initialMaxBase") || num(contribution.initialMaxBase, 0, Number.MAX_VALUE)) && owners.delete(ownerKey);
       }, "\u8D44\u6E90\u6C60\u8D21\u732E\u8005");
       requireThat(owners.size === 0, "\u8D44\u6E90\u6C60\u7ED1\u5B9A");
+      if (own11(pool, "initialMax")) {
+        const initialTotal = pool.contributors.reduce((sum, contribution) => sum + (contribution.initialMaxBase ?? contribution.maxBase), 0);
+        requireThat(pool.initialMax === initialTotal, "\u8D44\u6E90\u6C60\u521D\u59CB\u4E0A\u9650");
+      }
       bindings.delete(key4);
     }
     requireThat(bindings.size === 0, "\u8D44\u6E90\u6C60\u5F15\u7528");
     for (const unit of Object.values(state.units)) {
       for (const [kind, maxKey] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
         const pool = pools[unit.pools?.[kind]];
-        if (pool) requireThat(pool.current === unit[kind] && pool.max === unit[maxKey], "\u539F\u751F\u8D44\u6E90\u955C\u50CF");
+        if (pool) {
+          const initialKey = `initialMax${kind[0].toUpperCase()}${kind.slice(1)}`;
+          const contributor = pool.contributors.find((row) => row.ownerKind === "unit" && row.ownerId === unit.id);
+          requireThat(pool.current === unit[kind] && pool.max === unit[maxKey] && (!own11(unit, initialKey) || unit[initialKey] === (contributor?.initialMaxBase ?? pool.initialMax ?? pool.max)), "\u539F\u751F\u8D44\u6E90\u955C\u50CF");
+        }
       }
     }
   }
@@ -6532,15 +6803,15 @@ var FatedTacticalTavern = (() => {
     requireThat(s.battleType === "suppress" ? ["blue", "red"].includes(s.suppressingTeam) : s.suppressingTeam === void 0, "\u538B\u5236\u65B9");
     checkOptional(s, "battleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
     checkOptional(s, "battleConclusion", (x) => typeof x === "string" && x.trim().length > 0 && s.outcome != null);
-    if (own9(s, "time")) {
+    if (own11(s, "time")) {
       fields(s.time, ["raw", "hour", "minute", "timeOfDay", "calendar"]);
       requireThat(text2(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
     }
-    if (own9(s, "summonTemplates")) table2(s.summonTemplates, (u, key4) => {
+    if (own11(s, "summonTemplates")) table2(s.summonTemplates, (u, key4) => {
       unitValue(u, key4, s);
       requireThat(u.skills.every((skill2) => has(s.skills, skill2)), "summon skills");
     });
-    if (own9(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
+    if (own11(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
     requireThat(id2(s.scenarioId) && text2(s.title) && s.mode === "split" && ["protocol", "sandbox"].includes(s.ruleset) && int(s.round, 1, 1e6) && int(s.rng, 0, 4294967295) && [null, "blue", "red", "draw"].includes(s.outcome), "\u6218\u5C40");
     requireThat(Array.isArray(s.grid) && s.grid.length === 10, "\u68CB\u76D8");
     for (const row of s.grid) {
@@ -6556,20 +6827,20 @@ var FatedTacticalTavern = (() => {
       checkOptional(v, "sourceId", (source) => source === null || id2(source));
       checkOptional(v, "ownerId", (owner) => owner === null || id2(owner));
       carrierFieldsValue(v, s, true);
-      if (own9(v, "counters")) table2(v.counters, (value) => requireThat(int(value, 0, 1e9), "\u539F\u751F\u8BA1\u6570\u5668"));
-      if (own9(v, "pools")) poolBindings(v.pools);
+      if (own11(v, "counters")) table2(v.counters, (value) => requireThat(int(value, 0, 1e9), "\u539F\u751F\u8BA1\u6570\u5668"));
+      if (own11(v, "pools")) poolBindings(v.pools);
     });
     table2(s.covers, (v, k) => {
       fields(v, ["id", "name", "x", "y", "material", "hp", "maxHp", "cover"], ["z"]);
-      requireThat(!own9(v, "z") || int(v.z, -4, 8), "\u63A9\u4F53\u9AD8\u5EA6");
+      requireThat(!own11(v, "z") || int(v.z, -4, 8), "\u63A9\u4F53\u9AD8\u5EA6");
       requireThat(v.id === k && text2(v.name) && text2(v.material) && coord(v.x) && coord(v.y) && s.grid[v.y][v.x].kind !== "wall" && int(v.maxHp, 1, 1e9) && int(v.hp, 0, v.maxHp) && int(v.cover, 0, 12), "\u63A9\u4F53");
     });
-    if (own9(s, "zones")) table2(s.zones, (v, k) => zoneValue(v, k, s), 200);
-    if (own9(s, "spatialSerial")) {
+    if (own11(s, "zones")) table2(s.zones, (v, k) => zoneValue(v, k, s), 200);
+    if (own11(s, "spatialSerial")) {
       fields(s.spatialSerial, [], ["item", "summon", "zone", "terrain", "cover"]);
       requireThat(Object.values(s.spatialSerial).every((serial) => int(serial, 0, Number.MAX_SAFE_INTEGER)), "\u7A7A\u95F4\u5B9E\u4F8B\u7F16\u53F7");
     }
-    if (own9(s, "spatialTerrain")) table2(s.spatialTerrain, (v, k) => {
+    if (own11(s, "spatialTerrain")) table2(s.spatialTerrain, (v, k) => {
       fields(v, ["id", "spec", "cells", "coverIds", "persistent", "remainingTurns"]);
       requireThat(v.id === k && typeof v.persistent === "boolean" && int(v.remainingTurns, 1, 100), "\u5730\u5F62\u6548\u679C");
       list2(v.cells, 100, (cell) => {
@@ -6582,7 +6853,7 @@ var FatedTacticalTavern = (() => {
     }, 64);
     table2(s.interactives, (v, k) => {
       fields(v, ["id", "name", "x", "y", "kind", "spent"], ["z", "effect", "radius", "damage"]);
-      requireThat(v.id === k && text2(v.name) && coord(v.x) && coord(v.y) && (!own9(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own9(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own9(v, "radius") || int(v.radius, 0, 10)) && (!own9(v, "damage") || int(v.damage, 0, 1e5)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
+      requireThat(v.id === k && text2(v.name) && coord(v.x) && coord(v.y) && (!own11(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own11(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own11(v, "radius") || int(v.radius, 0, 10)) && (!own11(v, "damage") || int(v.damage, 0, 1e5)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
     });
     const occupied = /* @__PURE__ */ new Set(), equipped2 = /* @__PURE__ */ new Set();
     table2(s.units, (v, k) => {
@@ -6602,21 +6873,21 @@ var FatedTacticalTavern = (() => {
         const template = has(s.items, i) ? s.equipment[s.items[i].templateId] : null;
         const weaponSlot = i === v.weapon || i === v.mainHand || i === v.offHand;
         const isShieldSlot = i === v.shield;
-        const isDamageItem = Boolean(template && own9(template, "damage"));
+        const isDamageItem = Boolean(template && own11(template, "damage"));
         requireThat(has(s.items, i) && !equipped2.has(i) && (weaponSlot ? isDamageItem || template?.kind === "consumable" : isShieldSlot ? template?.kind === "shield" : true), "\u88C5\u5907\u5F15\u7528\u6216\u5F52\u5C5E");
         equipped2.add(i);
       }
       requireThat(v.skills.every((i) => has(s.skills, i)) && new Set(v.skills).size === v.skills.length, "\u6280\u80FD\u5F15\u7528");
     });
-    if (own9(s, "vm")) requireThat(validVmState(s), "VM \u8FD0\u884C\u72B6\u6001");
-    if (own9(s, "tape")) tapeValue(s.tape, s);
+    if (own11(s, "vm")) requireThat(validVmState(s), "VM \u8FD0\u884C\u72B6\u6001");
+    if (own11(s, "tape")) tapeValue(s.tape, s);
     validatePools(s);
     list2(s.order, 200, (x) => has(s.units, x), "\u5148\u653B\u961F\u5217");
     requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1)) && Object.values(s.units).every((u) => u.hp <= 0 || s.order.includes(u.id)), "\u5148\u653B\u7D22\u5F15");
     requireThat(Array.isArray(s.logs) && s.logs.length <= 1e5, "\u65E5\u5FD7");
     for (const log of s.logs) {
       fields(log, ["round", "actor", "type", "text", "detail"], ["positions"]);
-      requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text2(log.type, 64) && text2(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point4) => plain(point4) && coord(point4.x) && coord(point4.y) && (!own9(point4, "z") || int(point4.z, -4, 20)))), "\u65E5\u5FD7\u4E8B\u4EF6");
+      requireThat(int(log.round, 1, s.round) && (log.actor === null || id2(log.actor)) && text2(log.type, 64) && text2(log.text, 1e3) && jsonTree(log.detail) && (!log.positions || plain(log.positions) && Object.values(log.positions).every((point4) => plain(point4) && coord(point4.x) && coord(point4.y) && (!own11(point4, "z") || int(point4.z, -4, 20)))), "\u65E5\u5FD7\u4E8B\u4EF6");
     }
     return s;
   }
@@ -6627,9 +6898,9 @@ var FatedTacticalTavern = (() => {
     altar: { title: "\u9AD8\u53F0\u796D\u575B\u593A\u53D6\u6218", description: "\u5761\u9053\u662F\u4E0A\u53F0\u7684\u6377\u5F84\uFF1B\u6FC0\u6D3B\u796D\u575B\u53EF\u83B7\u5F97\u62A4\u76FE\u4E0E\u75BE\u8D70\uFF0C\u9AD8\u53F0\u8FDC\u5C04\u6709\u989D\u5916\u5C04\u7A0B\u3002", seed: 43 },
     boss: { title: "BOSS \u4E0E\u6742\u5175\u6DF7\u7F16\u6218", description: "\u5B88\u95E8\u5DE8\u50CF\u62A4\u7532\u539A\u3001\u4F53\u578B\u5927\u3002\u5148\u62C6\u63F4\u519B\uFF0C\u518D\u7528\u51C0\u5316\u3001\u7A7F\u7532\u548C\u51FB\u9000\u5206\u644A\u538B\u529B\u3002", seed: 83 }
   });
-  var own10 = (obj, key4) => Object.hasOwn(obj, key4);
+  var own12 = (obj, key4) => Object.hasOwn(obj, key4);
   var object2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
-  var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own10(Object.prototype, id3) && id3 !== "prototype";
+  var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own12(Object.prototype, id3) && id3 !== "prototype";
   var entries2 = (record2) => {
     if (!object2(record2) || Object.keys(record2).length > 200 || !Object.keys(record2).every(safeId)) throw new Error("\u8DE8\u6218\u6863\u6848 ID \u65E0\u6548");
     return Object.entries(record2);
@@ -6669,13 +6940,13 @@ var FatedTacticalTavern = (() => {
     fields(value, ["kind", "version", "items", "units"], ["statusTemplates", "pools"]);
     if (value.version !== 1 || value.kind !== "persistent") throw new Error("\u65E0\u6548\u7684\u8DE8\u6218\u6863\u6848");
     const carry = structuredClone(value);
-    if (own10(carry, "statusTemplates")) {
+    if (own12(carry, "statusTemplates")) {
       statusTemplateTable(carry.statusTemplates);
       state.statusTemplates = carry.statusTemplates;
     }
     for (const [id3, item] of entries2(carry.items)) {
-      if (!object2(item) || item.id !== id3 || !own10(state.equipment, item.templateId)) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u88C5\u5907\uFF1A${id3}`);
-      if (own10(state.items, id3) && state.items[id3].templateId !== item.templateId) throw new Error(`\u8DE8\u6218\u88C5\u5907\u6A21\u677F\u51B2\u7A81\uFF1A${id3}`);
+      if (!object2(item) || item.id !== id3 || !own12(state.equipment, item.templateId)) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u88C5\u5907\uFF1A${id3}`);
+      if (own12(state.items, id3) && state.items[id3].templateId !== item.templateId) throw new Error(`\u8DE8\u6218\u88C5\u5907\u6A21\u677F\u51B2\u7A81\uFF1A${id3}`);
       const amounts = { ...item.counters };
       for (const [key4, poolId] of Object.entries(item.pools ?? {})) {
         const amount = carry.pools?.[poolId]?.current;
@@ -6686,7 +6957,7 @@ var FatedTacticalTavern = (() => {
     const assigned = /* @__PURE__ */ new Set();
     const imported = [];
     for (const [id3, unit] of entries2(carry.units)) {
-      if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot2) => own10(unit, slot2)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key4) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key4))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
+      if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot2) => own12(unit, slot2)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key4) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key4))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
       const statuses = Object.fromEntries(entries2(unit.statuses).map(([key4, status]) => {
         if (!object2(status) || status.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key4}`);
         statusValue(status, key4, state);
@@ -6701,13 +6972,13 @@ var FatedTacticalTavern = (() => {
       ];
       for (const [instanceId, slot2] of slots3) {
         if (instanceId === null && slot2 !== "gear") continue;
-        if (!safeId(instanceId) || !own10(carry.items, instanceId) || assigned.has(instanceId)) throw new Error(`\u8DE8\u6218\u88C5\u5907\u5F52\u5C5E\u65E0\u6548\uFF1A${instanceId}`);
+        if (!safeId(instanceId) || !own12(carry.items, instanceId) || assigned.has(instanceId)) throw new Error(`\u8DE8\u6218\u88C5\u5907\u5F52\u5C5E\u65E0\u6548\uFF1A${instanceId}`);
         const template = state.equipment[state.items[instanceId].templateId];
-        const allowed = slot2 === "shield" ? template.kind === "shield" : slot2 === "gear" ? !own10(template, "damage") : own10(template, "damage") || slot2 === "offHand" && template.kind === "consumable";
+        const allowed = slot2 === "shield" ? template.kind === "shield" : slot2 === "gear" ? !own12(template, "damage") : own12(template, "damage") || slot2 === "offHand" && template.kind === "consumable";
         if (!allowed) throw new Error(`\u8DE8\u6218\u88C5\u5907\u69FD\u4F4D\u65E0\u6548\uFF1A${instanceId}`);
         assigned.add(instanceId);
       }
-      if (own10(state.units, id3)) imported.push([id3, { statuses, weapon: mainHand, mainHand, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
+      if (own12(state.units, id3)) imported.push([id3, { statuses, weapon: mainHand, mainHand, offHand: unit.offHand ?? null, shield: unit.shield ?? null, gear: unit.gear }]);
     }
     for (const u of Object.values(state.units)) {
       for (const slot2 of ["weapon", "mainHand", "offHand", "shield"]) if (assigned.has(u[slot2])) u[slot2] = null;
@@ -6720,7 +6991,7 @@ var FatedTacticalTavern = (() => {
     if (typeof request === "string") request = { scenarioId: request };
     if (!object2(request) || !Object.keys(request).every((key4) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key4))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
     const { scenarioId = "ruins", ruleset = "protocol", persistentSnapshot } = request;
-    if (typeof scenarioId !== "string" || !own10(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
+    if (typeof scenarioId !== "string" || !own12(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
     const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
     const seed = request.seed ?? defaultSeed;
     if (!Number.isInteger(seed) || seed < 0 || seed > 4294967295 || !["protocol", "sandbox"].includes(ruleset)) throw new Error("\u65E0\u6548\u7684\u79CD\u5B50\u6216\u884C\u52A8\u89C4\u5219");
@@ -7164,18 +7435,18 @@ var FatedTacticalTavern = (() => {
       const u = get(s.units, c.unitId, "unitId");
       nonempty(c.patch);
       fields(c.patch, [], ["hp", "mp", "sp", "ap", "x", "y", "team", "stats", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]);
-      for (const k of ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]) if (own9(c.patch, k)) u[k] = c.patch[k];
-      if (own9(c.patch, "stats")) {
+      for (const k of ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]) if (own11(c.patch, k)) u[k] = c.patch[k];
+      if (own11(c.patch, "stats")) {
         nonempty(c.patch.stats);
         fields(c.patch.stats, [], attrs2);
         Object.assign(u.stats, c.patch.stats);
       }
-      if (own9(c.patch, "mainHand")) u.weapon = c.patch.mainHand;
-      if (own9(c.patch, "weapon")) u.mainHand = c.patch.weapon;
-      if (own9(c.patch, "bonusDice")) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
-      if (own9(c.patch, "penaltyDice")) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
+      if (own11(c.patch, "mainHand")) u.weapon = c.patch.mainHand;
+      if (own11(c.patch, "weapon")) u.mainHand = c.patch.weapon;
+      if (own11(c.patch, "bonusDice")) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
+      if (own11(c.patch, "penaltyDice")) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
       unitValue(u, u.id, s);
-      for (const key4 of builtins) if (own9(c.patch, key4) && u.pools?.[key4]) updatePoolCurrent(s, u.pools[key4], "set", u[key4]);
+      for (const key4 of builtins) if (own11(c.patch, key4) && u.pools?.[key4]) updatePoolCurrent(s, u.pools[key4], "set", u[key4]);
     },
     define_status_template(s, c) {
       fields(c, ["type", "template"]);
@@ -7185,11 +7456,11 @@ var FatedTacticalTavern = (() => {
       fields(c, ["type", "unitId", "statusId", "patch"]);
       const unit = get(s.units, c.unitId, "unitId");
       const status = get(unit.statuses, c.statusId, "statusId");
-      if (!own9(status, "templateId")) return patchStatus(s, c.unitId, c.statusId, c.patch);
+      if (!own11(status, "templateId")) return patchStatus(s, c.unitId, c.statusId, c.patch);
       nonempty(c.patch);
       fields(c.patch, [], statusPatchFields);
       const next = { ...status, ...c.patch };
-      if (own9(c.patch, "vars")) {
+      if (own11(c.patch, "vars")) {
         requireThat(plain(c.patch.vars), "VM \u72B6\u6001\u53D8\u91CF");
         next.vars = { ...status.vars, ...c.patch.vars };
       }
@@ -7201,17 +7472,17 @@ var FatedTacticalTavern = (() => {
       fields(c, ["type", "unitId", "statusId"], ["options"]);
       const u = get(s.units, c.unitId, "unitId"), status = getStatusTemplate(s, c.statusId);
       requireThat(status, "statusId");
-      const options = own9(c, "options") ? c.options : {};
-      if (!own9(status, "modifiers")) {
+      const options = own11(c, "options") ? c.options : {};
+      if (!own11(status, "modifiers")) {
         fields(options, [], [...statusPatchFields, "sourceId", "extendTurns"]);
         checkOptional(options, "sourceId", (source2) => source2 === null || has(s.units, source2));
         checkOptional(options, "remainingTurns", (turns) => int(turns, 1, 100));
         checkOptional(options, "stacks", (count) => int(count, 1, status.maxStacks ?? 1));
         checkOptional(options, "extendTurns", (turns) => int(turns, 1, 100));
-        if (own9(options, "vars")) requireThat(plain(options.vars), "VM \u72B6\u6001\u53D8\u91CF");
+        if (own11(options, "vars")) requireThat(plain(options.vars), "VM \u72B6\u6001\u53D8\u91CF");
         const previous = u.statuses[c.statusId];
         const { extendTurns = 1, ...patch } = options;
-        const sourceId2 = own9(patch, "sourceId") ? patch.sourceId : previous?.sourceId ?? null;
+        const sourceId2 = own11(patch, "sourceId") ? patch.sourceId : previous?.sourceId ?? null;
         const source = s.units[sourceId2];
         const vars = Object.fromEntries(Object.entries(status.vars ?? {}).flatMap(([key4, expr2]) => {
           const value = evaluateExpr(expr2, { self: source, source, target: u, event: {} });
@@ -7244,7 +7515,7 @@ var FatedTacticalTavern = (() => {
       checkOptional(options, "stacks", (x) => int(x, 1, status.maxStacks));
       checkOptional(options, "stackRule", (x) => ["refresh", "stack", "replace"].includes(x));
       checkOptional(options, "tickTiming", (x) => ["onTurnStart", "onTurnEnd"].includes(x));
-      checkOptional(options, "amount", (x) => own9(status.modifiers, "amount") && int(x, 1, 1e4));
+      checkOptional(options, "amount", (x) => own11(status.modifiers, "amount") && int(x, 1, 1e4));
       checkOptional(options, "sourceUnitId", (x) => has(s.units, x));
       if (options.modifiers?.taunted ?? status.modifiers.taunted) {
         const sourceId2 = options.sourceUnitId ?? u.statuses[c.statusId]?.sourceUnitId;
@@ -7257,12 +7528,13 @@ var FatedTacticalTavern = (() => {
       requireThat(getStatusTemplate(s, c.statusId), "statusId");
       const unit = get(s.units, c.unitId, "unitId");
       const status = unit.statuses[c.statusId];
+      requireThat(!status?.flags?.includes("undispellable"), "\u8BE5\u72B6\u6001\u4E0D\u53EF\u9A71\u6563");
       if (status) deleteOwnedPools(s, status);
       delete unit.statuses[c.statusId];
     },
     adjust_pool(s, c) {
       fields(c, ["type", "poolId", "operation", "value"]);
-      const pool = typeof c.poolId === "string" && plain(s.pools) && own9(s.pools, c.poolId) ? s.pools[c.poolId] : void 0;
+      const pool = typeof c.poolId === "string" && plain(s.pools) && own11(s.pools, c.poolId) ? s.pools[c.poolId] : void 0;
       requireThat(pool && ["set", "add"].includes(c.operation) && Number.isFinite(c.value), "\u8D44\u6E90\u6C60\u547D\u4EE4");
       const next = c.operation === "set" ? c.value : pool.current + c.value;
       requireThat(Number.isFinite(next) && next >= 0 && next <= pool.max, `\u8D44\u6E90\u6C60\u987B\u5728 0\u2013${pool.max}`);
@@ -7274,12 +7546,12 @@ var FatedTacticalTavern = (() => {
       nonempty(c.patch);
       const next = { ...old, ...c.patch };
       equipmentTemplate(next, s);
-      const sameSlot = old.kind === next.kind && own9(old, "damage") === own9(next, "damage");
+      const sameSlot = old.kind === next.kind && own11(old, "damage") === own11(next, "damage");
       const instances = Object.values(s.items).filter((item) => item.templateId === c.templateId);
-      if (instances.length) requireThat(sameSlot && !own9(c.patch, "pools"), "\u4E0D\u80FD\u70ED\u6539\u5DF2\u5B9E\u4F8B\u5316\u88C5\u5907\u7684\u69FD\u7C7B\u578B\u6216\u8D44\u6E90\u6C60\u5B9A\u4E49");
+      if (instances.length) requireThat(sameSlot && !own11(c.patch, "pools"), "\u4E0D\u80FD\u70ED\u6539\u5DF2\u5B9E\u4F8B\u5316\u88C5\u5907\u7684\u69FD\u7C7B\u578B\u6216\u8D44\u6E90\u6C60\u5B9A\u4E49");
       s.equipment[c.templateId] = next;
       for (const item of instances) {
-        for (const key4 of ["name", "tags", "tier", "rules", "mods"]) if (own9(c.patch, key4) && own9(item, key4)) item[key4] = structuredClone(next[key4]);
+        for (const key4 of ["name", "tags", "tier", "rules", "mods"]) if (own11(c.patch, key4) && own11(item, key4)) item[key4] = structuredClone(next[key4]);
       }
     },
     patch_skill_template(s, c) {
@@ -7292,9 +7564,9 @@ var FatedTacticalTavern = (() => {
     spawn_unit(s, c) {
       fields(c, ["type", "unit"]);
       const v = c.unit;
-      requireThat(plain(v) && id2(v.id) && !own9(s.units, v.id), "unit.id");
+      requireThat(plain(v) && id2(v.id) && !own11(s.units, v.id), "unit.id");
       unitValue(v, v.id, s);
-      requireThat(!own9(v, "pools"), "\u589E\u63F4\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u521D\u59CB\u5316");
+      requireThat(!own11(v, "pools"), "\u589E\u63F4\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u521D\u59CB\u5316");
       requireThat(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0, "\u589E\u63F4\u987B\u5B58\u6D3B\u4E14\u884C\u52A8\u672A\u5F00\u59CB");
       v.mainHand = v.weapon;
       if (v.offHand === void 0) v.offHand = null;
@@ -7334,9 +7606,9 @@ var FatedTacticalTavern = (() => {
         for (const slot2 of ["weapon", "mainHand", "offHand", "shield"]) if (v[slot2] === instance.id) v[slot2] = null;
         v.gear = v.gear.filter((i) => i !== instance.id);
       }
-      if (own9(instance, "ownerId")) instance.ownerId = u?.id ?? null;
+      if (own11(instance, "ownerId")) instance.ownerId = u?.id ?? null;
       if (u) {
-        if (own9(s.equipment[instance.templateId], "damage")) {
+        if (own11(s.equipment[instance.templateId], "damage")) {
           u.weapon = instance.id;
           u.mainHand = instance.id;
         } else u.gear.push(instance.id);
@@ -7346,7 +7618,7 @@ var FatedTacticalTavern = (() => {
       fields(c, ["type", "zone"]);
       const z = structuredClone(c.zone);
       zoneValue(z, z?.id, s);
-      requireThat(!own9(z, "pools"), "\u533A\u57DF\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u7ED1\u5B9A");
+      requireThat(!own11(z, "pools"), "\u533A\u57DF\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u7ED1\u5B9A");
       const table4 = s.zones ??= {};
       if (table4[z.id]?.pools) deleteOwnedPools(s, table4[z.id]);
       table4[z.id] = z;
@@ -7367,7 +7639,7 @@ var FatedTacticalTavern = (() => {
     },
     set_interactive_status(s, c) {
       fields(c, ["type", "id"], ["spent", "hp"]);
-      if (own9(s.covers, c.id)) {
+      if (own11(s.covers, c.id)) {
         fields(c, ["type", "id", "hp"]);
         const cover = get(s.covers, c.id, "\u63A9\u4F53 ID");
         requireThat(int(c.hp, 0, cover.maxHp), "\u63A9\u4F53 HP");
@@ -7464,9 +7736,13 @@ var FatedTacticalTavern = (() => {
   };
   var checkGrade = (success, roll) => success ? roll === 20 ? "\u5927\u6210\u529F" : "\u6210\u529F" : roll === 1 ? "\u5927\u5931\u8D25" : "\u5931\u8D25";
   var maneuvers = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
-  var signed = (value) => `${value > 0 ? "+" : ""}${value}`;
+  var signed = (value) => `${value > 0 ? "+" : ""}${proseNumber(value)}`;
   var percent = (value) => Number((value * 100).toFixed(4));
   var notes = (parts) => parts.length ? `\uFF08${parts.join("\uFF0C")}\uFF09` : "";
+  var attributionText = (detail) => {
+    const cause = attributionLine(detail);
+    return cause ? `\uFF08${cause}\uFF09` : "";
+  };
   function statusNotes(detail) {
     const parts = [];
     if (detail.durationType === "persistent") parts.push("\u8DE8\u6218\u6597\u6301\u7EED");
@@ -7517,14 +7793,15 @@ var FatedTacticalTavern = (() => {
       if (!unitPattern) return text5;
       const target2 = event.detail?.targetId;
       const contextIds = targetNarration.has(event.type) ? [target2, event.actor] : [event.actor, target2];
-      return text5.replace(unitPattern, (label) => {
+      return cleanProse(text5).replace(unitPattern, (label) => {
         const ids = idsByName.get(label);
         const id3 = contextIds.find((candidate) => ids.includes(candidate)) ?? (ids.length === 1 ? ids[0] : void 0);
         return id3 === void 0 ? label : name(event, id3);
       });
     };
     const checkTarget = (event, detail) => detail.targetKind === "cover" ? detail.targetName ?? detail.targetId : name(event, detail.targetId);
-    const change2 = (resource2, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource2} ${before} \u2192 ${after}\uFF09` : "";
+    const change2 = (resource2, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource2} ${proseNumber(before)} \u2192 ${proseNumber(after)}\uFF09` : "";
+    const cleanProse = (text5) => typeof text5 === "string" ? text5.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text5;
     for (const { round, events } of report.rounds) {
       const rows2 = [];
       let turn = null;
@@ -7591,7 +7868,7 @@ var FatedTacticalTavern = (() => {
             const stat3 = statNames[detail.saveStat] ?? (checks2 ? "\u591A\u91CD" : "");
             const result = checks2 ? [checkGrade(detail.saved), detail.mode === "all" ? "\u987B\u5168\u90E8\u901A\u8FC7" : "\u4EFB\u4E00\u901A\u8FC7\u5373\u53EF", ...checks2] : [checkGrade(detail.saved, detail.saveRoll)];
             const source = detail.sourceName ? `\u5BF9${detail.sourceName}\u7684` : "";
-            add(`${target2}${detail.saved ? "\u901A\u8FC7" : "\u672A\u901A\u8FC7"}${source}${stat3}\u8C41\u514D${notes(result)}`);
+            add(`${target2}${detail.saved ? "\u901A\u8FC7" : "\u672A\u901A\u8FC7"}${source}${stat3}\u8C41\u514D${notes(result)}${attributionText(detail)}`);
             break;
           }
           case "intent":
@@ -7605,7 +7882,7 @@ var FatedTacticalTavern = (() => {
             break;
           }
           case "parry":
-            add(replaceUnitNames(event, text5) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]));
+            add(replaceUnitNames(event, text5) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]) + attributionText(detail));
             break;
           case "morale":
             add(replaceUnitNames(event, text5) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
@@ -7617,7 +7894,7 @@ var FatedTacticalTavern = (() => {
             const parts = statusNotes(detail);
             if (type === "status_patch" && detail.stacks > 1) parts.unshift(`${detail.stacks} \u5C42`);
             if (type === "status" && actor && detail.targetId && actor !== detail.targetId) parts.push(`\u6765\u6E90 ${name(event, actor)}`);
-            add(replaceUnitNames(event, text5).replace(/ ×1$/, "") + notes(parts));
+            add(replaceUnitNames(event, text5).replace(/ ×1$/, "") + notes(parts) + attributionText(detail));
             break;
           }
           case "stat_modifier": {
@@ -7629,26 +7906,26 @@ var FatedTacticalTavern = (() => {
             break;
           }
           case "vm_check":
-            add(replaceUnitNames(event, text5) + (detail.targetId && detail.targetId !== actor ? `\uFF08\u76EE\u6807 ${name(event, detail.targetId)}\uFF09` : ""));
+            add(replaceUnitNames(event, text5) + (detail.targetId && detail.targetId !== actor ? `\uFF08\u76EE\u6807 ${name(event, detail.targetId)}\uFF09` : "") + attributionText(detail));
             break;
           case "damage":
           case "heal":
             if (detail.amount !== 0) {
               const origin = detail.statusId && actor && actor !== detail.targetId ? `\uFF08\u65BD\u52A0\u8005 ${name(event, actor)}\uFF09` : "";
-              add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore, detail.hpAfter) + origin);
+              add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
             }
             break;
           case "skill_cost":
             add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
             break;
           case "resource":
-            add(replaceUnitNames(event, text5) + change2(detail.resource?.toUpperCase(), detail.before, detail.after));
+            add(replaceUnitNames(event, text5) + change2(detail.resourceLabel ?? detail.resource?.toUpperCase(), detail.before, detail.after) + attributionText(detail));
             break;
           case "counter": {
             const { counterKey, before, after } = detail;
             const suffix = ` \xB7 ${counterKey} ${before} \u2192 ${after}`;
             const label = counterKey && text5.endsWith(suffix) ? `${text5.slice(0, -suffix.length)} \xB7 ${resourceLabel(counterKey)} ${before} \u2192 ${after}` : text5;
-            add(replaceUnitNames(event, label));
+            add(replaceUnitNames(event, label) + attributionText(detail));
             break;
           }
           case "outcome":
@@ -7687,15 +7964,15 @@ var FatedTacticalTavern = (() => {
   var battleVersion = 11;
   var maxHistory = 2e3;
   var maxBatch = 32;
-  var own11 = (obj, key4) => Object.hasOwn(obj, key4);
-  var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own11(value, key4));
+  var own13 = (obj, key4) => Object.hasOwn(obj, key4);
+  var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own13(value, key4));
   function diff(before, after, path2 = [], changes2 = []) {
     if (before === after) return changes2;
     if (before && after && typeof before === "object" && typeof after === "object" && Array.isArray(before) === Array.isArray(after) && (!Array.isArray(before) || before.length === after.length)) {
       for (const key4 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
         diff(
-          own11(before, key4) ? before[key4] : void 0,
-          own11(after, key4) ? after[key4] : void 0,
+          own13(before, key4) ? before[key4] : void 0,
+          own13(after, key4) ? after[key4] : void 0,
           [...path2, Array.isArray(before) ? Number(key4) : key4],
           changes2
         );
@@ -7868,11 +8145,11 @@ var FatedTacticalTavern = (() => {
       },
       checkStealth(unitId, d20, dc) {
         const s = current();
-        if (!own11(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail3("\u65E0\u6548\u7684\u6F5C\u884C\u68C0\u5B9A\u53C2\u6570");
+        if (!own13(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail3("\u65E0\u6548\u7684\u6F5C\u884C\u68C0\u5B9A\u53C2\u6570");
         return stealthCheck(s, s.units[unitId], d20, dc);
       },
       defineStatus(id3, template) {
-        if (!template || Object.getPrototypeOf(template) !== Object.prototype || own11(template, "id") && template.id !== id3) {
+        if (!template || Object.getPrototypeOf(template) !== Object.prototype || own13(template, "id") && template.id !== id3) {
           return { ok: false, error: "\u65E0\u6548\u72B6\u6001\u6A21\u677F\u6216 ID \u4E0D\u4E00\u81F4" };
         }
         return commitStatusCommand({ type: "define_status_template", template: { ...template, id: id3 } }, "\u6CE8\u518C\u72B6\u6001\u6A21\u677F");
@@ -7903,7 +8180,7 @@ var FatedTacticalTavern = (() => {
       },
       inspectWeaponSlots(unitId) {
         const s = current();
-        if (!own11(s.units, unitId)) return null;
+        if (!own13(s.units, unitId)) return null;
         const u = s.units[unitId];
         const item = (id3) => id3 ? { id: id3, ...s.items[id3], template: s.equipment[s.items[id3]?.templateId] } : null;
         return copy({
@@ -7918,7 +8195,7 @@ var FatedTacticalTavern = (() => {
       },
       setWeaponStance(unitId, stance, options = {}) {
         const s = current();
-        if (!own11(s.units, unitId)) return { ok: false, error: "\u672A\u77E5\u5355\u4F4D" };
+        if (!own13(s.units, unitId)) return { ok: false, error: "\u672A\u77E5\u5355\u4F4D" };
         if (!["light_blade", "dual_wield", "attunement", "greatsword", "sword_shield"].includes(stance)) return { ok: false, error: "\u672A\u77E5\u6301\u68B0\u59FF\u6001" };
         const patch = { stance };
         if (options.greatswordMode !== void 0) patch.greatswordMode = options.greatswordMode;
@@ -7934,7 +8211,7 @@ var FatedTacticalTavern = (() => {
       },
       inspectUnit(unitId) {
         const s = current();
-        if (!own11(s.units, unitId)) return null;
+        if (!own13(s.units, unitId)) return null;
         const unit = s.units[unitId];
         const skills = [...unit.skills, ...Object.keys(unit.inventory ?? {}).filter((id3) => s.skills[id3]?.backpackItem)];
         const equippedSkills = equippedActiveSkills(s, unit).map(([id3, template]) => ({ id: id3, ...template }));
@@ -8281,7 +8558,7 @@ var FatedTacticalTavern = (() => {
     if (d.armorMultiplier && d.armorMultiplier < 0.995) mults.push(`\u62A4\u7532 \u2212${pct(1 - d.armorMultiplier)}`);
     if (mults.length) lines.push(`\u500D\u7387\uFF1A${mults.join("\uFF0C")}`);
     if (d.absorbed) lines.push(`\u62A4\u76FE\u5438\u6536 ${d.absorbed} \u70B9`);
-    if (Number.isFinite(d.hpBefore)) lines.push(`\u751F\u547D ${d.hpBefore} \u2192 ${d.hpAfter}`);
+    if (Number.isFinite(d.hpBefore)) lines.push(`\u751F\u547D ${proseNumber(d.hpBefore)} \u2192 ${proseNumber(d.hpAfter)}`);
     return { tone: "damage", icon: "\u{1FA78}", title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0 };
   }
   function saveCheck(state, who, c) {
@@ -8375,7 +8652,8 @@ var FatedTacticalTavern = (() => {
     const d = log?.detail ?? {};
     const actor = nameOf(state, log?.actor);
     const base = { type: log?.type, tone: "info", icon: "\u25C6", title: log?.text ?? "", lines: [], quiet: false, actorId: log?.actor ?? null, targetId: d.targetId ?? null };
-    const out = (extra) => ({ ...base, ...extra });
+    const cause = attributionLine(d);
+    const out = (extra) => ({ ...base, ...extra, ...cause ? { lines: [...extra.lines ?? [], cause] } : {} });
     switch (log?.type) {
       case "initiative": {
         const rows2 = [...d.initiative ?? []].sort((a, b) => b.total - a.total);
@@ -8417,13 +8695,10 @@ var FatedTacticalTavern = (() => {
         return out(damageEntry(state, log));
       case "defeat":
         return out({ tone: "defeat", icon: "\u2620\uFE0F", title: `${nameOf(state, d.targetId)} \u5012\u4E0B\u4E86` });
-      case "heal":
-        return out({
-          tone: "heal",
-          icon: "\u{1F49A}",
-          amount: d.amount ?? 0,
-          lines: d.dice?.count ? [`\u6CBB\u7597\u91CF ${d.dice.count}d${d.dice.sides}\uFF08${d.dice.rolls.join(" + ")}\uFF09${d.dice.bonus ? ` + ${d.dice.bonus}` : ""}`] : []
-        });
+      case "heal": {
+        const lines = d.dice?.count ? [`\u6CBB\u7597\u91CF ${d.dice.count}d${d.dice.sides}\uFF08${d.dice.rolls.join(" + ")}\uFF09${d.dice.bonus ? ` + ${d.dice.bonus}` : ""}`] : [];
+        return out({ tone: "heal", icon: "\u{1F49A}", amount: d.amount ?? 0, lines });
+      }
       case "status": {
         const s = statusInfo(state, d.statusId);
         return out({
@@ -12424,7 +12699,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
 
   // src/tavern/converter.js
-  var own12 = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
+  var own14 = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
   var object3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
   var asObject = (v) => object3(v) ? v : {};
   var finite2 = (v) => typeof v === "number" && Number.isFinite(v);
@@ -12604,7 +12879,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var statAliases = { strength: "str", dexterity: "agi", agility: "agi", constitution: "con", intelligence: "int", spirit: "spi", wisdom: "spi", \u529B\u91CF: "str", \u654F\u6377: "agi", \u4F53\u8D28: "con", \u667A\u529B: "int", \u7CBE\u795E: "spi" };
   function findValue(record2, names, fallback) {
     const r = asObject(record2);
-    for (const name of names) if (own12(r, name)) return r[name];
+    for (const name of names) if (own14(r, name)) return r[name];
     return fallback;
   }
   function statsOf(record2) {
@@ -12613,7 +12888,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     for (const key4 of attrNames) {
       const aliases2 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
       result[key4] = Math.max(-20, Math.min(50, integer3(
-        aliases2.find((alias) => own12(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own12(nested, alias))] : findValue(r, aliases2, 0),
+        aliases2.find((alias) => own14(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own14(nested, alias))] : findValue(r, aliases2, 0),
         0
       )));
     }
@@ -12622,7 +12897,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function resource(record2, key4, fallback) {
     const r = asObject(record2), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
     const aliases2 = { hp: ["HP", "\u751F\u547D\u503C"], mp: ["MP", "\u6CD5\u529B\u503C"], sp: ["SP", "\u4F53\u529B\u503C"] }[key4] ?? [];
-    const value = own12(r, key4) ? r[key4] : own12(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own12(r, aliases2[1]) ? r[aliases2[1]] : own12(nested, key4) ? nested[key4] : own12(nested, aliases2[0]) ? nested[aliases2[0]] : own12(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
+    const value = own14(r, key4) ? r[key4] : own14(r, key4.toUpperCase()) ? r[key4.toUpperCase()] : own14(r, aliases2[1]) ? r[aliases2[1]] : own14(nested, key4) ? nested[key4] : own14(nested, aliases2[0]) ? nested[aliases2[0]] : own14(nested, aliases2[1]) ? nested[aliases2[1]] : void 0;
     if (object3(value)) {
       const current2 = integer3(value.current ?? value.\u5F53\u524D ?? value.now ?? value.value, fallback);
       const upper = value.max ?? value.maximum ?? value.\u4E0A\u9650;
@@ -12683,10 +12958,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const visit = (node, key4 = "", path2 = []) => {
       if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path2, i]));
       if (!object3(node)) return;
-      const name = sourceName(node, key4), hasStats = node.stats || node.attributes || node.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own12(node, k));
-      const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own12(node, k));
+      const name = sourceName(node, key4), hasStats = node.stats || node.attributes || node.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own14(node, k));
+      const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own14(node, k));
       if (name && (hasStats || hasResource)) {
-        const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own12(companionLengths, key4) ? companionLengths[key4] : void 0;
+        const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own14(companionLengths, key4) ? companionLengths[key4] : void 0;
         const record2 = clone(node);
         if (Number.isFinite(length) && length > 0) record2.bodyLengthM = length;
         found.push({ ...record2, __sourceKey: key4, __sourcePath: path2, __sourceKind: "MVU" });
@@ -12698,7 +12973,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function statusId2(value) {
     const key4 = text3(value);
-    if (own12(STATUSES, key4)) return key4;
+    if (own14(STATUSES, key4)) return key4;
     return Object.keys(STATUSES).find((id3) => STATUSES[id3].name === key4) ?? null;
   }
   var bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer3(value, fallback)));
@@ -12726,7 +13001,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       return emptyEntry(body) ? [] : [["", body]];
     }
-    if (object3(value) && Object.values(value).every((entry2) => typeof entry2 === "string" || object3(entry2) || emptyEntry(entry2)) && !["id", "hook", "program", "op", "target", "effects"].some((key4) => own12(value, key4))) {
+    if (object3(value) && Object.values(value).every((entry2) => typeof entry2 === "string" || object3(entry2) || emptyEntry(entry2)) && !["id", "hook", "program", "op", "target", "effects"].some((key4) => own14(value, key4))) {
       return Object.entries(value).filter(([, entry2]) => !emptyEntry(entry2));
     }
     return [["", value]];
@@ -12779,7 +13054,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return {};
     }
     return Object.fromEntries(Object.entries(value).filter(([key4, pool]) => {
-      const allowed = id2(key4) && object3(pool) && Object.keys(pool).every((k) => ["cap", "initial", "reloadable"].includes(k)) && Number.isInteger(pool.cap) && pool.cap >= 0 && pool.cap <= 1e9 && (!own12(pool, "initial") || Number.isInteger(pool.initial) && pool.initial >= 0 && pool.initial <= pool.cap) && (!own12(pool, "reloadable") || typeof pool.reloadable === "boolean");
+      const allowed = id2(key4) && object3(pool) && Object.keys(pool).every((k) => ["cap", "initial", "reloadable"].includes(k)) && Number.isInteger(pool.cap) && pool.cap >= 0 && pool.cap <= 1e9 && (!own14(pool, "initial") || Number.isInteger(pool.initial) && pool.initial >= 0 && pool.initial <= pool.cap) && (!own14(pool, "reloadable") || typeof pool.reloadable === "boolean");
       if (!allowed) warnings.push(`pools.${key4} \u9700\u8981\u6709\u6548\u7684\u8D44\u6E90 ID\u3001\u6574\u6570 cap (0 \u5230 1e9)\u3001\u53EF\u9009\u6574\u6570 initial (0 \u5230 cap) \u548C\u53EF\u9009\u5E03\u5C14 reloadable`);
       return allowed;
     }).map(([key4, pool]) => [key4, { initial: pool.cap, ...pool }]));
@@ -12837,7 +13112,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   function normalizeDice(raw) {
     const dice4 = asObject(raw);
-    const stat3 = own12(statAliases, dice4.stat) ? statAliases[dice4.stat] : dice4.stat;
+    const stat3 = own14(statAliases, dice4.stat) ? statAliases[dice4.stat] : dice4.stat;
     const type = damageAliases.get(dice4.type) ?? dice4.type;
     const count = bound(dice4.count, 0, 1e6, 1);
     return {
@@ -12902,7 +13177,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const { template, templateId } = item;
     const localOperations = template.rules.filter((rule2) => rule2.enabled !== false).flatMap((rule2) => [...instructions(rule2.program)].filter((op) => op.op === "resource" && op.local).map((op) => ({ rule: rule2, op })));
     for (const { rule: rule2, op } of localOperations) {
-      const missing = [...new Set([].concat(op.pool, op.otherPool ?? []))].filter((key4) => !own12(template.pools, key4));
+      const missing = [...new Set([].concat(op.pool, op.otherPool ?? []))].filter((key4) => !own14(template.pools, key4));
       if (missing.length) warnings.push(`\u89C4\u5219\u300C${rule2.id}\u300D\u5F15\u7528\u672A\u58F0\u660E\u7684\u88C5\u5907\u8D44\u6E90\u6C60\uFF1A${missing.join("\u3001")}\u3002\u8BF7\u5728 pools \u4E2D\u58F0\u660E`);
     }
     if (template.kind !== "weapon" || !template.ranged || !template.pools.ammo) return;
@@ -12954,7 +13229,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         ...geometryFields(area3)
       });
       if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
-    } else Object.assign(template, { defense, ...own12(r, "armor") ? { armor: bound(r.armor, 0, 1e6, 0) } : {} });
+    } else Object.assign(template, { defense, ...own14(r, "armor") ? { armor: bound(r.armor, 0, 1e6, 0) } : {} });
     const item = { id: idBase, templateId, template, slot: slot2, name };
     attachAmmoPool(item, ammoCapacity(r));
     return item;
@@ -13008,7 +13283,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return Number.isFinite(n) && n > 0 ? Math.max(0.01, Math.min(1e9, n)) : null;
   }
   function readBodyLength(record2, warnings) {
-    const keys = lengthKeys.filter((key4) => own12(record2, key4));
+    const keys = lengthKeys.filter((key4) => own14(record2, key4));
     for (const key4 of keys) {
       const raw = record2[key4];
       const length = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.max(0.01, Math.min(1e9, raw)) : typeof raw === "string" ? meters(explicitLength.exec(raw.replace(/\([^()]*\)|（[^（）]*）/g, "").trim())) : null;
@@ -13044,9 +13319,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       sp: ["sp", "SP", "\u4F53\u529B\u503C", "resources", "resource", "\u8D44\u6E90"]
     };
     for (const [field, aliases2] of Object.entries(fields3)) {
-      if (inline[field] != null && !aliases2.some((alias) => own12(merged, alias))) merged[field] = clone(inline[field]);
+      if (inline[field] != null && !aliases2.some((alias) => own14(merged, alias))) merged[field] = clone(inline[field]);
     }
-    for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own12(merged, field) && inline[field] != null) merged[field] = inline[field];
+    for (const field of ["maxHp", "maxMp", "maxSp"]) if (!own14(merged, field) && inline[field] != null) merged[field] = inline[field];
     return merged;
   }
   function sourceSkills(record2) {
@@ -13326,7 +13601,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const add = (participant, record2, index) => {
       const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
       let id3 = base;
-      for (let suffix = 2; own12(units, id3); suffix++) id3 = `${base.slice(0, 52)}-${suffix}`;
+      for (let suffix = 2; own14(units, id3); suffix++) id3 = `${base.slice(0, 52)}-${suffix}`;
       const persona = !descriptor && record2 === protagonist && protagonistName ? { protagonistName } : {};
       const origin = record2.__sourceKind?.toLowerCase() ?? "battle_init";
       if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
@@ -13448,10 +13723,30 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       ...new Set(notes2.filter((note) => !note.warning && note.detail).map((note) => note.detail))
     ];
   }
-  var identifiesWarning = (receipt, warning) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && receipt.message === warning.message;
-  function resolvedDiagnostics(sent, records2, patch, notes2 = []) {
-    const pending = new Set(notes2.map(({ warning }) => warning));
-    return sent.filter((warning) => {
+  var identifiesWarning = (receipt, warning) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && (receipt.message !== void 0 ? receipt.message === warning.message : nonempty2(receipt.effectName)) && (receipt.effectName === void 0 || receipt.effectName === subject(warning.message));
+  function missingDispositions(sent, solved2, notes2, narrative) {
+    const accounted = /* @__PURE__ */ new Set([...solved2, ...notes2.filter((note) => note.detail).map((note) => note.warning), ...narrative.map((entry2) => entry2.warning)]);
+    return sent.filter((warning) => !accounted.has(warning));
+  }
+  var diagnosticTitle = (warning) => subject(warning.message) ?? diagnosticText(warning.message);
+  function existingEffectReceipts(refs = [], sent, baseline, before, current, fingerprintAt2) {
+    if (!Array.isArray(refs)) throw new Error("existing \u5FC5\u987B\u662F\u6570\u7EC4");
+    return refs.map((ref2) => {
+      const matches2 = sent.filter((w) => identifiesWarning(ref2, w));
+      const origin = matches2[0]?.originPath;
+      if (matches2.length !== 1 || !/^\/(equipment|skills|items)\/[\w-]+$/.test(origin ?? "") || typeof ref2.path !== "string" || !ref2.path.startsWith(`${origin}/`) || !/^(rules|mods)\/(0|[1-9]\d*)$/.test(ref2.path.slice(origin.length + 1))) {
+        throw new Error("existing \u9700\u8981\u552F\u4E00\u7684\u672C\u6279\u8BCA\u65AD\u53CA\u5176\u6A21\u677F\u5185\u5177\u4F53 rules/N \u6216 mods/N \u8DEF\u5F84");
+      }
+      const live3 = fingerprintAt2(current, ref2.path), normalized = fingerprintAt2(before, ref2.path);
+      if (live3 === void 0 || live3 !== normalized || fingerprintAt2(baseline, ref2.path) === normalized || JSON.stringify(ref2.value) !== live3 || ref2.value?.enabled === false) {
+        throw new Error(`\u5DF2\u6709\u5B9E\u73B0\u672A\u901A\u8FC7\u6821\u9A8C\uFF1A${ref2.path} \u5FC5\u987B\u662F\u5148\u524D\u6807\u51C6\u5316\u5199\u5165\u3001\u5F53\u524D\u4ECD\u6709\u6548\u7684\u540C\u4E00\u6761\u89C4\u5219\u6216\u4FEE\u9970`);
+      }
+      return { warning: matches2[0], path: ref2.path, fingerprint: live3 };
+    });
+  }
+  function resolvedDiagnostics(sent, records2, patch, notes2 = [], { narrative = [], inferPartial = false } = {}) {
+    const pending = new Set([...notes2, ...narrative].map(({ warning }) => warning));
+    const explicit = sent.filter((warning) => {
       if (warning.unitId == null || !Object.hasOwn(records2, warning.unitId) || pending.has(warning)) return false;
       return patch.some((op) => {
         if (!Array.isArray(op.resolves)) return false;
@@ -13462,6 +13757,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         if (origin && path2.split("/")[1] === origin.split("/")[1] && path2 !== origin) return false;
         return op.resolves.some((receipt) => identifiesWarning(receipt, warning) && sent.filter((candidate) => identifiesWarning(receipt, candidate)).length === 1);
       });
+    });
+    if (!inferPartial || notes2.some((note) => !note.warning)) return explicit;
+    const solved2 = new Set(explicit);
+    return sent.filter((warning) => {
+      if (warning.unitId == null || !Object.hasOwn(records2, warning.unitId) || pending.has(warning)) return false;
+      if (solved2.has(warning)) return true;
+      const path2 = warning.originPath;
+      if (!/^\/(?:skills|equipment|items|statusTemplates)\/[^/]+$/.test(path2 ?? "")) return false;
+      const siblings = sent.filter((candidate) => candidate.unitId === warning.unitId && candidate.originPath === path2);
+      return siblings.some((candidate) => pending.has(candidate)) && patch.some((op) => op.op !== "remove" && (op.path === `${path2}/rules` || op.path.startsWith(`${path2}/rules/`) || op.path === `${path2}/mods` || op.path.startsWith(`${path2}/mods/`) || op.path === `${path2}/pools` || op.path.startsWith(`${path2}/pools/`) || op.path === path2 && op.mechanicsChanged === true));
     });
   }
   function activeWarningReceipts(batches) {
@@ -13556,6 +13861,19 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     if (current.unitIds.length) result.push(current);
     return result;
+  }
+  function normalizationOperations(operations2, snapshot, current, created, fingerprintAt2) {
+    return operations2.filter((operation2) => {
+      const { op, path: path2 } = operation2;
+      const root2 = path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
+      const live3 = fingerprintAt2(current, root2);
+      const original = fingerprintAt2(snapshot, root2);
+      if (live3 === original) return true;
+      if (op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path2) && original === void 0 && created.has(path2) && live3 === created.get(path2)) {
+        return false;
+      }
+      throw new Error("\u8865\u4E01\u76EE\u6807\u5DF2\u88AB\u66F4\u65E9\u7684\u6279\u6B21\u6216\u6218\u5C40\u64CD\u4F5C\u4FEE\u6539");
+    });
   }
   async function runOrderedBatches(batches, concurrency, request, commit, signal) {
     const pending = /* @__PURE__ */ new Map();
@@ -13885,6 +14203,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 .fated-char-chip { padding:0 6px; border-radius:8px; background:var(--ci-surface-soft); color:var(--ci-text-secondary); font-size:.75em; line-height:1.6 }
 .fated-char-fx { margin-inline-start:auto; color:var(--ci-primary); font-size:.75em }
 .fated-char-fx::after { content:" \u25BE" }.fated-char-row[open] .fated-char-fx::after { content:" \u25B4" }
+.fated-entry-discard { margin-inline-start:auto; padding:2px 6px; color:var(--ci-warning); font-size:.72em; opacity:.8 }
+.fated-entry-discard:hover { color:var(--ci-danger); border-color:var(--ci-danger) }
 .fated-char-row > p { margin:5px 0 0; padding-top:5px; border-top:1px dashed var(--ci-border) }
 .fated-instance .fated-mini { color:var(--ci-text-muted); font-size:.82em }.fated-instance summary { cursor:pointer }
 .fated-char-diagnostics { padding:6px 9px; border:1px solid rgb(210 173 113 / 45%); border-radius:7px; background:rgb(210 173 113 / 8%); color:var(--ci-warning) }
@@ -14091,10 +14411,10 @@ before_commit \u5728 damage\u3001heal\u3001resource \u63D0\u4EA4\u524D\u89E6\u53
 
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF0C\u5176\u503C\u662F\u4E0B\u5217\u540D\u79F0\u3002? \u8868\u793A\u53EF\u7701\uFF0C\u95ED\u5408\u5BF9\u8C61\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\u3002
 ${instructions2.join("\n")}
-check \u7684 kind:chance \u7528 dc \u4E0E d100 \u70B9\u6570\u6BD4\u8F83\uFF0C\u4F8B\u5982 dc:25 \u8868\u793A 25% \u6210\u529F\u7387\u3002\u8C41\u514D\u672A\u901A\u8FC7\u65F6\u8FD0\u884C onFail\u3002ask \u7684 kind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0C\u4E3A option \u65F6\u5FC5\u586B options\uFF0C\u4E3A number \u65F6\u5FC5\u586B min/max\u3002perform \u7684 skill \u53EA\u914D skillId\uFF0Creplay \u53EA\u914D tapeRecord\u3002resource \u7684 add/sub/set \u9700\u8981 amount\uFF0Cswap \u9700\u8981\u4E00\u4E2A pool \u548C otherPool\u3002move \u7684 step/teleport \u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002
+check \u7684 kind:chance \u7528 dc \u4E0E d100 \u70B9\u6570\u6BD4\u8F83\uFF0C\u4F8B\u5982 dc:25 \u8868\u793A 25% \u6210\u529F\u7387\u3002\u8C41\u514D\u672A\u901A\u8FC7\u65F6\u8FD0\u884C onFail\u3002\u72B6\u6001\u8C41\u514D\u7528 kind:"save"\u3001statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF1B\u68C0\u5B9A\u94A9\u5B50\u53EF\u8BFB\u53D6 event.statusId\u3002ask \u7684 kind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0C\u4E3A option \u65F6\u5FC5\u586B options\uFF0C\u4E3A number \u65F6\u5FC5\u586B min/max\u3002perform \u7684 skill \u53EA\u914D skillId\uFF0Creplay \u53EA\u914D tapeRecord\u3002resource \u7684 add/sub/set \u9700\u8981 amount\uFF0Cswap \u9700\u8981\u4E00\u4E2A pool \u548C otherPool\uFF1Bpool \u53EF\u5199 hp/mp/sp\uFF0C\u6216\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF0C\u4E5F\u652F\u6301 add_max/sub_max/set_max \u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u81EA\u52A8\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF1BminRemain \u53EF\u9650\u5236\u6700\u5927\u503C\u4E0B\u9650\u3002move \u7684 step/teleport \u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u5347\u7A7A/\u77AC\u79FB\uFF0C\u5DF2\u5728\u7A7A\u4E2D\u987B\u53E6\u7528 land:true \u5F3A\u5236\u843D\u5730\uFF1B\u9501\u4E0D\u963B\u6B62\u964D\u843D\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\uFF0C\u800C\u4E0D\u662F\u6301\u6709\u8005\u7684 mods.flags\uFF1B\u5230\u671F\u4ECD\u4F1A\u81EA\u7136\u7ED3\u675F\u3002despawn \u7684 entityKind:"unit" \u53EA\u79FB\u9664\u53EC\u5524\u7269\uFF0C\u4E0D\u8BA1\u51FB\u6740\u3002
 mutate_event \u7684 patch \u5FC5\u987B\u81F3\u5C11\u6709\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u53EA\u80FD\u7528\u4E8E\u4E0B\u5217\u53EF\u5199 hook\uFF0C\u5D4C\u5957\u5206\u652F\u4EA6\u7136\uFF1A
 ${eventPatches.join("\n")}
-spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF0Cunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\u4E2A\uFF1B\u90FD\u4E0D\u5199\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\u3002\u751F\u6210\u89C4\u683C\u4E2D\u7684 tier\u3001count\u3001remainingTurns\u3001area.radius \u53EF\u5199\u6570\u503C\u8868\u8FBE\u5F0F\uFF0C\u4F8B\u5982 tier:"max(1, self.tier - 1)"\u3002terrain \u81F3\u5C11\u6709 kind \u6216 height\uFF0C\u63D0\u4F9B mode \u65F6\u5FC5\u987B\u6709 height\uFF1A
+\u6E05\u9664\u654C\u65B9\u533A\u57DF\u7528 {"op":"despawn","entityKind":"zone","select":{"from":"zones","where":"zone.team != null && zone.team != self.team"}}\u3002zone.team \u548C candidate.team \u8BFB\u53D6\u521B\u5EFA\u65F6\u7684\u9635\u8425\uFF1Bzone.sourceId \u548C candidate.sourceId \u8BFB\u53D6\u521B\u5EFA\u8005 ID\u3002\u82E5\u9700\u9650\u5B9A\u8303\u56F4\uFF0C\u7528 select.area \u7B5B\u9009\u533A\u57DF\u8986\u76D6\u683C\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF0Cunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\u4E2A\uFF1B\u90FD\u4E0D\u5199\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\u3002\u751F\u6210\u89C4\u683C\u4E2D\u7684 tier\u3001count\u3001remainingTurns\u3001area.radius \u53EF\u5199\u6570\u503C\u8868\u8FBE\u5F0F\uFF0C\u4F8B\u5982 tier:"max(1, self.tier - 1)"\u3002terrain \u81F3\u5C11\u6709 kind \u6216 height\uFF0C\u63D0\u4F9B mode \u65F6\u5FC5\u987B\u6709 height\uFF1A
 ${spawnSpecs2.join("\n")}
 zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002single \u53EA\u8986\u76D6\u4E2D\u5FC3\u683C\uFF1Brect \u9700 rect \u5BF9\u8C61\uFF0Ccells \u9700 cells \u6570\u7EC4\u3002
 
@@ -14111,6 +14431,7 @@ targetRef\uFF1A${describe2(defs2.targetRef)}\u3002for_each.bind \u6216 ask(kind:
 mods \u662F\u4FEE\u9970\u6570\u7EC4\uFF0C\u6BCF\u9879 ${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u6709 stat\u3001locks\u3001flags \u6216 controlPolicy\uFF1B\u586B\u5199\u6570\u503C\u4FEE\u9970\u65F6\u5FC5\u987B\u6307\u5B9A stat\u3002\u7EC4\u5408\u503C\u4E3A (\u57FA\u7840 + flat \u603B\u548C) \xD7 (1 + additivePercent \u603B\u548C) \xD7 mult \u8FDE\u4E58\u3002when \u5FC5\u987B\u6C42\u5F97 true \u624D\u751F\u6548\u3002
 \u2022 \u8F93\u51FA\u65B9\uFF08\u81EA\u5DF1\u6253\u522B\u4EBA\uFF09\uFF1AdamageFlat \u8F93\u51FA\u56FA\u5B9A\u52A0\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528 flat\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF0C\u57FA\u503C 1\uFF0C\u7528 mult:1.3 \u6216 additivePercent:0.3 \u8868\u793A +30%\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF0C\u57FA\u503C\u4E3A\u5DF2\u6709\u7A7F\u7532\uFF0C\u7528 flat\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF0C\u57FA\u503C 0\uFF08\u6B66\u5668\u59FF\u6001\u53EF\u81EA\u5E26\u7A7F\u7532\uFF09\uFF0C\u7528 flat:0.2 \u8868\u793A +20%\u3002
 \u2022 \u627F\u4F24\u65B9\uFF08\u81EA\u5DF1\u6328\u6253\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat:800\uFF08\u4E0D\u8981\u5199\u6210\u8D1F\u7684 damageFlat\uFF09\uFF1BdamageReduction / dr \u53D7\u51FB\u767E\u5206\u6BD4\u51CF\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528 flat:0.3 \u8868\u793A +30%\u3002damageReduction \u5148\u7B97\uFF0Cdr \u5728\u56FA\u5B9A\u51CF\u4F24\u4E4B\u540E\u53E6\u4E58\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u8FD9\u4E9B\u51CF\u4F24\u3002
+\u2022 \u95EA\u907F\uFF1A\u5728\u53D7\u51FB\u65B9\u5199 {"stat":"dodge","flat":4}\uFF0C\u666E\u901A\u653B\u51FB\u68C0\u5B9A\u6263\u9664 4 \u70B9\u547D\u4E2D\u3002\u95EA\u907F\u3001\u8C41\u514D\u96BE\u5EA6\u4E0E\u62B5\u6297\u52A0\u503C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\u3002check.statusId \u4F1A\u900F\u4F20\u5230 event.statusId\uFF0C\u4F8B\u5982 mods: [{"stat":"dcBonus","flat":10,"when":"event.statusId == 'freeze'"},{"stat":"resistBonus","flat":10,"when":"event.statusId == 'freeze'"}]\uFF1B\u524D\u8005\u8BFB\u53D6\u65BD\u52A0\u8005\uFF0C\u540E\u8005\u8BFB\u53D6\u8C41\u514D\u8005\u3002
 \u2022 \u5176\u4F59\uFF1AhealingMult \u65BD\u7597\u500D\u7387\u3001incomingHealMult \u53D7\u7597\u500D\u7387\u3001costMult \u6280\u80FD\u6D88\u8017\u500D\u7387\uFF0C\u57FA\u503C 1\uFF0C\u7528 mult\uFF08\u5982\u6280\u80FD\u8D44\u6E90\u6D88\u8017 -30% \u5199 mult:0.7\uFF09\uFF1BcheckBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u96BE\u5EA6\u52A0\u503C\u3001resistBonus \u8C41\u514D\u52A0\u503C\u3001advantage \u4F18\u52BF\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C 0\uFF08initiativeFlat \u53E0\u52A0\u5DF2\u6709\u5148\u624B\u52A0\u503C\uFF09\uFF0C\u7528 flat\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6240\u5728\u8F7D\u4F53\u6301\u6709\u8005\u7684\u5DF2\u6709\u5C5E\u6027\uFF0F\u62A4\u7532\u503C\u3002
 \u2022 \u6BD4\u4F8B\u578B damageReduction\u3001dr\u3001armorPiercePercent \u4E0D\u5141\u8BB8 additivePercent\uFF1Bflat \u6570\u5B57\u5FC5\u987B\u5728 -1..1\uFF0C\u8D1F\u6570\u8868\u793A\u964D\u4F4E\u8BE5\u6BD4\u4F8B\u3002\u500D\u7387\u578B damageMult\u3001finalDamageMult\u3001healingMult\u3001incomingHealMult\u3001costMult \u4E0D\u5141\u8BB8 flat\u3002
 controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002\u6052\u5B9A\u575A\u5B88\u7528 moraleLock:"steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u539F\u672C\u6307\u5B9A enemy \u7684\u653B\u51FB\u9009\u62E9\u53CB\u519B\u6216\u81EA\u5DF1\uFF0C\u4ECD\u53D7\u5C04\u7A0B\u4E0E\u5176\u4ED6\u5408\u6CD5\u6027\u7EA6\u675F\u3002`;
@@ -14152,14 +14473,14 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
 \u2022 [\u5173\u8054\u5C5E\u6027: \u654F\u6377] \u2192 \u6307\u5411\u65BD\u672F\u8005\u654F\u6377\uFF1B\u9700\u8981\u5C5E\u6027\u7F29\u653E\u65F6\u8BFB\u53D6 self.agi\u3002\u53EA\u6709\u539F\u6587\u660E\u786E\u8C41\u514D\u65F6\u624D\u4E3A\u9632\u5B88\u65B9\u9009\u62E9\u68C0\u5B9A\u5C5E\u6027\u3002[\u6709\u6548\u8DDD\u79BB: \u4E2D\u7A0B(5)] \u2192 range:5\u3002
 \u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 radius:4\u3001shape:fan\u3001target:enemy\uFF0Crange \u7531\u6709\u6548\u8DDD\u79BB\u53E6\u884C\u786E\u5B9A\u3002\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u5230 angle\u3002
 \u2022 \u539F\u6587\u6548\u679C\u4E3A {} \u6216\u7F3A\u5931\u4E14\u6CA1\u6709\u5176\u4ED6\u53EF\u6267\u884C\u63CF\u8FF0\u65F6\uFF0C\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u8BA1\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u548C\u72B6\u6001\u6388\u4E88\u5747\u53EF\u5F62\u6210\u72EC\u7ACB\u89C4\u5219\uFF1B\u80CC\u5305\u6D88\u8017\u54C1\u6309\u4EFB\u52A1\u7EA6\u5B9A\u5904\u7406\u3002`;
-  var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002";
+  var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002\u540C\u4E00\u8DEF\u5F84\u5185\u6807\u9898\u552F\u4E00\u65F6\u4E5F\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF0CeffectName \u9010\u5B57\u590D\u5236\u300C\u300D\u5185\u6807\u9898\uFF08\u5305\u62EC\u5FAE\u5F31\u6CD5\u5219\u53CA\u65B9\u62EC\u53F7\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002\u6BCF\u9879\u5F85\u5904\u7406\u8B66\u544A\u5FC5\u987B\u6709\u5F52\u5C5E\uFF1A\u5B9E\u9645\u751F\u6548\u8865\u4E01\u7684 resolves\u3001\u5E26\u539F\u56E0\u7684 unresolved \u6216\u7EAF\u53D9\u4E8B narrative\u3002\u53EA\u521B\u5EFA\u72B6\u6001\u6A21\u677F\u800C\u672A\u63A5\u56DE\u539F\u6280\u80FD\u4E0D\u7B97\u5B8C\u6210\u3002\u5DF2\u6709\u89C4\u5219\u4E0D\u662F VM \u7F3A\u53E3\uFF1A\u5982\u679C\u8BE5\u884C\u4E3A\u5DF2\u7531\u5148\u524D\u6807\u51C6\u5316\u8865\u4E01\u5B9E\u73B0\uFF0C\u672C\u6B21\u4E0D\u518D\u6539\u52A8\uFF0C\u53EF\u9644\u53EF\u9009\u9876\u5C42 existing \u6570\u7EC4\u3002\u6BCF\u9879\u7ED9 {unitId,originPath,effectName,path,value}\uFF0Cpath \u6307\u5411\u8BE5\u6A21\u677F\u7684\u5177\u4F53 rules/N \u6216 mods/N\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u6761\u89C4\u5219\u6216\u4FEE\u9970\u3002\u5F15\u64CE\u4F1A\u6838\u5BF9\u65E2\u6709\u5199\u5165\u548C\u5F53\u524D\u503C\uFF1B\u4E0D\u51C6\u7528\u540C\u8DEF\u5F84\u65E0\u5173\u6761\u76EE\u5192\u5145\u8BC1\u636E\uFF0C\u4E0D\u8981\u91CD\u590D add \u6216\u62A5 unresolved\u3002";
   var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
-  var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个键都是数组，只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送或元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+  var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个必需键都是数组；已有实现可另附 existing 证据数组。只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。同一技能或装备有两条已实现、另一条仍 unresolved 时，写入该模板的操作须在 resolves 分别列出两条已实现诊断的完整引用。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送、非战斗储物空间或次元背包容器（如 1km³ 储物戒）、元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
 
 【patch：有序的 RFC 6902 操作】
 add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
 • /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
+• /skills/<id>：技能模板。其任意合法模板字段都可单独 patch，不限 rules/mods；缺键用 add，已有键用 replace。例如新增先手：{"op":"add","path":"/skills/<id>/initiativeBonus","value":8}（范围 -100…100）；新增主击骰：{"op":"add","path":"/skills/<id>/damage","value":{"count":1,"sides":6,"type":"physical"}}，骰子数值按原文及模板决定。check.statusId 与状态施加/移除事件均提供 event.statusId，无需等待引擎确认；不要据此推断普通伤害事件也携带状态 ID。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
 • /items/<id>：道具实例。装备模板的规则、修饰与池声明写在 /equipment/<id>。实例已自带 rules 或 mods 时，同批同步相关条目，保留该实例独有的内容。
 • /statusTemplates/<id>：战局的自定义状态模板。新增模板使用新的 ID。
 • /units/<unitId>/statuses：单位状态实例映射。实例形状见状态协议。
@@ -14185,7 +14506,11 @@ add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}
 • 天气规则值：{"id":"place_zone","hook":"active","program":[{"op":"spawn","entityKind":"zone","spec":{"name":"雪域","tags":["dark_snow"],"remainingTurns":2,"area":{"shape":"circle","center":"center","radius":10},"rules":[{"id":"snow_tick","hook":"turn_start","filter":"self.team != source.team","program":[{"op":"damage","target":"self","amount":10,"damageType":"true","direct":false}]}]}}]}
 Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合的覆盖单位，source 是区域来源。其他规则用 in_zone(self, 'dark_snow') 查询天气。
 • 本回合重放规则值：{"id":"repeat_skills","hook":"active","program":[{"op":"for_each","select":{"from":"tape","where":"candidate.actorId == self.id && candidate.round == round && candidate.turn == turn && (candidate.actionType == 'attack' || (candidate.actionType == 'skill' && candidate.skillId != event.skillId))"},"bind":"entry","body":[{"op":"perform","actor":"self","actionKind":"replay","tapeRecord":"vars.entry"}]}]}
-磁带按记录顺序遍历。重放会重新结算，目标仍须合法，可重新要求玩家输入。排除重放技能本身以免递归。
+磁带按记录顺序遍历。若须等到持有者回合结束才重放，使用 turn_end，不是 after_action；只重放已录制的攻击/技能，不宣称包含普通移动、互动或尚未结算的动作。重放会重新结算，目标仍须合法，可重新要求玩家输入。排除重放技能本身以免递归。
+• 裂隙投射：先 ask(cell) 保存落点，再 perform(skillId:"vars.chosenSkill", overrides:{origin:"vars.cell"})；origin 改的是施放起点，不是指定目标。
+• 冰晶封印：在 on_lethal_p2 判断 self.hp == 0 && self.mp == 0 && self.sp == 0，通过才 mutate_event(preventDeath:true) 并施加冰封。这是 HP 归零时检查另外两池，不是任意顺序的三池监听器。
+• 战帅直觉：before_commit 里 ask 得到 vars.kept，先 let 记下 event.finalAmount - vars.kept，再 mutate_event 改 finalAmount。若 vars.rest > 0，apply_status 的 stacks 写 vars.rest，不必等 after_damage 的 event.dealt。
+• 状态联动：after_status_applied 读取 event.statusId；先 let 存为 vars.sid，再用 remove_status.where:"status.id == vars.sid" 筛选目标现有状态。before_target 可用 redirectTarget 重定向到当前棋盘上确实存在的单位，不要凭空创造一个不存在的魔宠。
 • 封印资源规则值：{"id":"seal_resources","hook":"before_commit","filter":"event.targetId == self.id && (event.pool == 'hp' || event.pool == 'mp' || event.pool == 'sp') && event.sourceRuleId != 'seal_release'","program":[{"op":"mutate_event","patch":{"cancel":true}}]}
 这会拦截 VM 的 damage、heal、resource 提交，并放行指定解封规则。模板技能支付走行动路径，按原文需要另用 before_action 拦截。
 • 召唤规则值：{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]}
@@ -14194,7 +14519,7 @@ Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合
 【完整补丁示例】假设快照中 /skills/call_guard/rules 已是数组。
 {"patch":[{"op":"add","path":"/statusTemplates/guard_chill","value":{"id":"guard_chill","name":"星霜","category":"control","remainingTurns":2,"mods":[{"locks":["move"]}]}},{"op":"add","path":"/skills/guard_slash","value":{"name":"亡卫斩","ap":1,"slot":"attack","range":2,"shape":"single","target":"enemy","power":20,"damage":{"count":1,"sides":4,"type":"physical"},"rules":[{"id":"chill_on_hit","hook":"after_hit","program":[{"op":"apply_status","target":"target","statusId":"guard_chill"}]}]}},{"op":"add","path":"/skills/call_guard/rules/-","value":{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]},"resolves":[{"unitId":"p1","originPath":"/skills/call_guard","message":"亡卫缺少召唤和专属技能规则"}]}],"unresolved":[],"narrative":[]}
 
-同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 {"patch":[],"unresolved":[],"narrative":[]}。`;
+同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 JSON，必有 {"patch":[],"unresolved":[],"narrative":[]} 三个数组，有已实现证据时另附 existing。`;
   var json = (value) => JSON.stringify(value, null, 2);
   var lastCustomId = 0;
   function makeCustomSlot() {
@@ -15147,7 +15472,7 @@ ${variables2.warnings()}` : "");
   var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
   var TEAMS = { blue: "\u6211\u65B9", red: "\u654C\u65B9" };
   var ratio2 = (v, max) => max ? Math.min(1, Math.max(0, (Number(v) || 0) / max)) : 0;
-  function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0, narrative = [] } = {}) {
+  function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0, narrative = [], onDiscardEntry, canDiscardEntry } = {}) {
     const line = (tag2, cls, value) => make(tag2, { class: cls }, value);
     const name = unit.name ?? unit.id;
     box.classList.add("fated-char-card");
@@ -15218,6 +15543,15 @@ ${variables2.warnings()}` : "");
         head.append(line("span", "fated-char-row-name", label));
         for (const m of meta) head.append(line("span", "fated-char-chip", m));
         if (effectCount) head.append(line("span", "fated-char-fx", `${effectCount} \u4E2A\u6548\u679C`));
+        if (onDiscardEntry && path2 && (!canDiscardEntry || canDiscardEntry(path2))) {
+          const discard = make("button", { type: "button", class: "fated-entry-discard", title: "\u5220\u9664\u6B64\u6807\u51C6\u5316\u5927\u8BCD\u6761\u5E76\u91CD\u65B0\u6807\u51C6\u5316" }, "\u5220\u9664\u5E76\u91CDroll");
+          discard.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onDiscardEntry({ path: path2, label });
+          });
+          head.append(discard);
+        }
         row.append(head);
         for (const rule2 of fx) row.append(line("p", "fated-mini", `${rule2.label ? `${rule2.label} \xB7 ` : ""}${ruleSummary(rule2, state)}`));
         for (const mod2 of mods) row.append(line("p", "fated-mini", modSummary(mod2)));
@@ -15423,7 +15757,7 @@ ${variables2.warnings()}` : "");
   }
 
   // src/tavern/overlay.js
-  var own13 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+  var own15 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
   var isObject2 = (v) => v && typeof v === "object" && !Array.isArray(v);
   var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
   var clone2 = (value) => {
@@ -15672,7 +16006,7 @@ ${variables2.warnings()}` : "");
   function fingerprintAt(state, path2) {
     let value = state;
     for (const key4 of path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"))) {
-      if (value == null || !own13(value, key4)) return void 0;
+      if (value == null || !own15(value, key4)) return void 0;
       value = value[key4];
     }
     return JSON.stringify(value);
@@ -15703,6 +16037,7 @@ ${variables2.warnings()}` : "");
     rosterSelection: null,
     normalizationBatches: {},
     narrativeExemptions: {},
+    unresolvedNotes: {},
     ...Object.fromEntries(Object.entries(normalizationLimits).map(([key4, { fallback }]) => [key4, fallback])),
     slots: describeSlots(),
     extraText: "",
@@ -15882,7 +16217,7 @@ ${variables2.warnings()}` : "");
       const last = keys.pop();
       let parent = result;
       for (const key4 of keys) {
-        if (!own13(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+        if (!own15(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
         parent = parent[key4];
       }
       if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
@@ -15891,7 +16226,7 @@ ${variables2.warnings()}` : "");
           const append = last === "-" && operation2.op === "add";
           if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation2.path}`);
         }
-        if (operation2.op !== "add" && !own13(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+        if (operation2.op !== "add" && !own15(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
         if (operation2.op === "add" && Array.isArray(parent) && last !== "-") {
           parent.splice(Number(last), 0, clone2(operation2.value));
           continue;
@@ -15938,7 +16273,7 @@ ${variables2.warnings()}` : "");
     let characters = {}, scanStatus = "";
     const openingSources = /* @__PURE__ */ new Map();
     const enteredBattles = /* @__PURE__ */ new Set();
-    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own13(config.instances, key4));
+    const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own15(config.instances, key4));
     const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
     const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
     let battleObserver = null, diagnostics = { phase: "created" };
@@ -15993,22 +16328,54 @@ ${variables2.warnings()}` : "");
     on(dismiss, "click", () => {
       toast.hidden = true;
     });
+    const warningDisplay = (message) => diagnosticText(
+      message.replace(/[。\s]*请(?:用|提供)\s*VM\s+rules\s*\/\s*mods\s*\/\s*pools[\s\S]*$/, ""),
+      "\u539F\u8BCA\u65AD\u5305\u542B\u7ED3\u6784\u5316\u6570\u636E\uFF0C\u672A\u63D0\u4F9B\u6587\u5B57\u8BF4\u660E"
+    );
+    const pendingTitle = (count) => `\u23F3 \u5F85\u6807\u51C6\u5316\uFF08${count} \u9879\uFF09`;
+    const modelTitle = (count) => `\u2139\uFE0F \u6A21\u578B\u8BF4\u660E\uFF1A\u53D7\u9650 / \u90E8\u5206\u5B9E\u73B0\uFF08${count} \u9879\uFF09`;
+    const modelLine = ({ effectName, reason }) => `\u300C${effectName}\u300D \u2014 ${reason}`;
+    function warningGroups(warnings = sources.warnings ?? []) {
+      const pending = [], reviewed = [];
+      const notes2 = config.unresolvedNotes[activeBattleKey] ?? {};
+      const sourceFor = narrativeSourceFor(characters);
+      for (const warning of warnings) {
+        const note = notes2[warning.unitId ?? ""]?.[warningKey(warning)];
+        if (note?.source === sourceFor(warning.unitId) && note?.reason) reviewed.push({ warning, ...note });
+        else pending.push(warning);
+      }
+      return { pending, reviewed };
+    }
+    function appendWarningGroups(container, { pending, reviewed }, expandable = false) {
+      const add = (kind, label, rows2) => {
+        if (!rows2.length) return;
+        const group = el(doc, expandable ? "details" : "div", { class: "fated-char-diagnostics", "data-normalization-diagnostics": kind });
+        const list4 = el(doc, "ul");
+        for (const [text5, original] of rows2) list4.append(el(doc, "li", original ? { title: original } : {}, text5));
+        group.append(el(doc, expandable ? "summary" : "h4", {}, label), list4);
+        container.append(group);
+      };
+      add("pending", pendingTitle(pending.length), pending.map((warning) => [warningDisplay(warning.message)]));
+      add("reviewed", modelTitle(reviewed.length), reviewed.map((note) => [modelLine(note), warningDisplay(note.warning.message)]));
+    }
     let rawDetails;
-    function notify(title2, detail = "", onRetry = null, busy = false, { tone = "neutral", applied, unresolved = [], raw = "" } = {}) {
+    function notify(title2, detail = "", onRetry = null, busy = false, { tone = "neutral", applied, unresolved = [], warningGroups: groups, raw = "" } = {}) {
       retryAI = onRetry;
       toast.dataset.tone = tone;
       icon.textContent = busy ? "\u2026" : tone === "success" ? "\u2713" : tone === "error" ? "!" : "\u24D8";
       summary.hidden = applied == null;
-      summary.textContent = applied == null ? "" : `\u5DF2\u5E94\u7528 ${applied} \u9879\u8865\u4E01 \xB7 \u5269\u4F59 ${unresolved.length} \u9879\u672A\u89E3\u51B3`;
+      summary.textContent = applied == null ? "" : `\u5DF2\u5E94\u7528 ${applied} \u9879\u8865\u4E01${groups ? "" : ` \xB7 \u5269\u4F59 ${unresolved.length} \u9879\u672A\u89E3\u51B3`}`;
       rawDetails?.remove();
       rawDetails = null;
       issues.remove();
+      issues.replaceChildren();
+      if (groups) appendWarningGroups(issues, groups);
       if (unresolved.length) {
         const list4 = el(doc, "ul");
         for (const issue of unresolved) list4.append(el(doc, "li", {}, issue));
-        issues.replaceChildren(el(doc, "h4", {}, `\u672A\u89E3\u51B3\uFF08${unresolved.length} \u9879\uFF09`), list4);
-        toast.insertBefore(issues, actions);
+        issues.append(el(doc, "h4", {}, `\u672A\u89E3\u51B3\uFF08${unresolved.length} \u9879\uFF09`), list4);
       }
+      if (issues.childElementCount) toast.insertBefore(issues, actions);
       if (raw) {
         rawDetails = el(doc, "details", { class: "fated-toast-raw" });
         rawDetails.append(el(doc, "summary", {}, `\u6A21\u578B\u8FD4\u56DE\u7ED3\u679C\uFF08\u5DF2\u5E94\u7528 ${applied ?? 0} \u9879\uFF09`), el(doc, "pre", {}, raw));
@@ -16386,7 +16753,7 @@ ${tag2.textContent || ""}
         const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
         select.checked = selectedIds().includes(key4);
         on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key4])] : selectedIds().filter((k) => k !== key4)));
-        const messages = warningsForUnit(sources.warnings, [key4], false);
+        const groups = warningGroups(warningsForUnit(sources.warnings, [key4], false));
         const { body } = fillInstance(
           box,
           (tag2, attrs3, value) => el(doc, tag2, attrs3, value),
@@ -16396,17 +16763,14 @@ ${tag2.textContent || ""}
           select,
           {
             collapsed: Boolean(collapsed()[key4]),
-            warnings: messages.length,
+            warnings: groups.pending.length,
             narrative: (diagnostics.narrativeExemptions ?? []).filter((entry2) => entry2.unitId === key4),
+            canDiscardEntry: (path2) => operations2(activeBattleKey).some((operation2) => operation2.path === path2 || operation2.path.startsWith(`${path2}/`)) || (diagnostics.inputWarnings ?? []).some((warning) => warning.originPath === path2 && warning.unitId === key4 && !warningGroups([warning]).pending.includes(warning)),
+            onDiscardEntry: (ref2) => discardStandardizedEntry(activeBattleKey, { ...ref2, unitId: key4 }),
             onToggle: (value) => setFolded([key4], value)
           }
         );
-        if (messages.length) {
-          const details = el(doc, "details", { class: "fated-char-diagnostics" }), list5 = el(doc, "ul");
-          for (const { message } of messages) list5.append(el(doc, "li", {}, diagnosticText(message, "\u539F\u8BCA\u65AD\u5305\u542B\u7ED3\u6784\u5316\u6570\u636E\uFF0C\u672A\u63D0\u4F9B\u6587\u5B57\u8BF4\u660E")));
-          details.append(el(doc, "summary", {}, `\u26A0 ${messages.length} \u6761\u8BCA\u65AD`), list5);
-          body.append(details);
-        }
+        appendWarningGroups(body, groups, true);
         const actions2 = el(doc, "div", { class: "fated-actions" });
         const edit = el(doc, "button", { type: "button" }, "\u7F16\u8F91 JSON");
         const remove = el(doc, "button", { type: "button" }, "\u5220\u9664");
@@ -16481,9 +16845,14 @@ ${tag2.textContent || ""}
       const key4 = activeBattleKey;
       const requestConfig = { ...config };
       const stored = config.charSnapshots[key4] ?? {};
-      const eligible = force ? Object.keys(characters) : normalizationCandidates(characters, stored, sources.warnings ?? []);
-      const ids = unitIds.filter((id4) => eligible.includes(id4));
-      const queue = planNormalizationBatches(ids, sources.warnings ?? [], liveState(), {
+      const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
+      const ids = unitIds.filter((id4) => eligible.has(id4));
+      if (!ids.length) return;
+      const scoped = warningsForUnit(sources.warnings, ids);
+      const { pending } = warningGroups(scoped);
+      const pendingIds = new Set(pending.map((warning) => warning.unitId));
+      const queueIds = pending.length && !pendingIds.has(null) ? ids.filter((id4) => pendingIds.has(id4)) : ids;
+      const queue = planNormalizationBatches(queueIds, pending, liveState(), {
         maxWarnings: normalizationLimit(requestConfig, "normalizationWarningsPerBatch")
       });
       if (!queue.length) return;
@@ -16507,6 +16876,7 @@ ${tag2.textContent || ""}
       renderInstances();
       let applied = 0, completed = 0, failure;
       const replies = [], notes2 = [];
+      const createdTemplates = /* @__PURE__ */ new Map();
       const progress = (detail) => notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", detail ?? `\u5DF2\u5B8C\u6210 ${completed} / ${queue.length} \u6279`, null, true);
       const request = async (batch, index, correction) => {
         const snapshot = clone2(liveState());
@@ -16542,12 +16912,18 @@ ${tag2.textContent || ""}
             if (result.error) throw result.error;
             let accepted;
             try {
-              accepted = commitNormalization(key4, batch, result.value);
+              accepted = commitNormalization(key4, batch, result.value, createdTemplates);
             } catch (error2) {
               progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728\u4FEE\u6B63\u8F93\u51FA`);
-              const revised = await request(batch, index, error2);
-              controller2.signal.throwIfAborted();
-              accepted = commitNormalization(key4, batch, revised);
+              try {
+                const revised = await request(batch, index, error2);
+                controller2.signal.throwIfAborted();
+                accepted = commitNormalization(key4, batch, revised, createdTemplates, { acceptPartial: true });
+              } catch (retryError) {
+                controller2.signal.throwIfAborted();
+                if (!error2.missingCoverage || key4 !== activeBattleKey) throw retryError;
+                accepted = commitNormalization(key4, batch, result.value, createdTemplates, { acceptPartial: true });
+              }
             }
             applied += accepted.applied;
             replies.push(accepted.data);
@@ -16564,21 +16940,23 @@ ${tag2.textContent || ""}
       } catch (error2) {
         failure ??= error2;
       } finally {
-        const remaining = queue.flatMap((batch) => batch.warnings).filter((warning) => sources.warnings.includes(warning));
-        const unresolved = pendingDiagnostics(remaining, notes2);
+        const groups = warningGroups(warningsForUnit(sources.warnings, ids));
+        const unresolved = pendingDiagnostics([], notes2);
+        const hasRemaining = groups.pending.length || groups.reviewed.length || unresolved.length;
+        const lines = [...groups.pending.map((warning) => warningDisplay(warning.message)), ...groups.reviewed.map(modelLine), ...unresolved];
         const raw = replies.length ? JSON.stringify(replies.length === 1 ? replies[0] : replies, null, 2) : failure?.raw ?? "";
         const aborted = failure?.name === "AbortError";
         const status = aborted ? "aborted" : failure ? "error" : "ok";
-        const title2 = aborted ? "\u6807\u51C6\u5316\u5DF2\u4E2D\u6B62" : failure ? "\u6807\u51C6\u5316\u5931\u8D25" : "\u6807\u51C6\u5316\u5B8C\u6210";
+        const title2 = aborted ? "\u6807\u51C6\u5316\u5DF2\u4E2D\u6B62" : failure ? "\u6807\u51C6\u5316\u5931\u8D25" : groups.pending.length ? "\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210" : "\u6807\u51C6\u5316\u5B8C\u6210";
         const detail = failure ? diagnosticText(failure.message ?? failure, "\u8BF7\u6C42\u6216\u8865\u4E01\u6821\u9A8C\u5931\u8D25\uFF0C\u672A\u8FD4\u56DE\u53EF\u8BFB\u7684\u9519\u8BEF\u8BF4\u660E") : "";
         if (!disposed && key4 === activeBattleKey) {
           const retry2 = () => key4 === activeBattleKey && runNormalize(ids, { force: true, sessionId: sessionId ?? null });
           notify(
             title2,
             detail,
-            !aborted && (failure || unresolved.length) ? retry2 : null,
+            !aborted && (failure || hasRemaining) ? retry2 : null,
             false,
-            { tone: aborted ? "neutral" : failure ? "error" : "success", applied, unresolved, raw }
+            { tone: aborted ? "neutral" : failure ? "error" : "success", applied, unresolved, warningGroups: groups, raw }
           );
         }
         if (session) {
@@ -16586,7 +16964,7 @@ ${tag2.textContent || ""}
           feed(entries3[1], ...aiSessions.append(session.id, {
             role: "system",
             status,
-            content: `${title2} \xB7 \u5DF2\u5E94\u7528 ${applied} \u9879\u8865\u4E01${detail ? ` \xB7 ${detail}` : ""}${unresolved.length ? ` \xB7 \u5F85\u5904\u7406\uFF1A${unresolved.join("\uFF1B")}` : ""}`
+            content: `${title2} \xB7 \u5DF2\u5E94\u7528 ${applied} \u9879\u8865\u4E01${detail ? ` \xB7 ${detail}` : ""}${lines.length ? ` \xB7 ${lines.join("\uFF1B")}` : ""}`
           }));
         }
         aiController = null;
@@ -16760,8 +17138,90 @@ ${tag2.textContent || ""}
       diagnostics.warnings = warnings;
       diagnostics.narrativeExemptions = exempt.map(({ warning, receipt }) => ({ ...warningReference(warning), reason: receipt.reason }));
     }
+    function reconcileUnresolvedNotes(key4, records2, warnings, additions = [], { reset = false } = {}) {
+      const previous = config.unresolvedNotes[key4] ?? {};
+      const next = {};
+      const sourceFor = narrativeSourceFor(records2);
+      for (const warning of warnings) {
+        const unitId = warning.unitId ?? "";
+        const id4 = warningKey(warning);
+        const source = sourceFor(warning.unitId);
+        if (!source) continue;
+        const details = [...new Set(additions.filter((note2) => note2.warning === warning).map((note2) => note2.detail).filter(Boolean))];
+        const old = reset ? void 0 : previous[unitId]?.[id4];
+        const note = details.length ? {
+          source,
+          effectName: warning.message.match(/待标准化「([^」]+)」/)?.[1]?.trim() || warningDisplay(warning.message),
+          reason: details.join("\uFF1B")
+        } : old?.source === source ? old : void 0;
+        if (note) (next[unitId] ??= {})[id4] = note;
+      }
+      if (JSON.stringify(previous) === JSON.stringify(next)) return;
+      const unresolvedNotes = { ...config.unresolvedNotes };
+      if (Object.keys(next).length) unresolvedNotes[key4] = next;
+      else delete unresolvedNotes[key4];
+      persistSettings({ unresolvedNotes });
+    }
     function liveState() {
       return gameMount?.getState?.() ?? currentState;
+    }
+    function pathUnder(path2, root3) {
+      return path2 === root3 || path2?.startsWith(`${root3}/`);
+    }
+    function discardStandardizedEntry(key4, ref2) {
+      const source = ref2.path;
+      if (!source || !/^\/(?:equipment|skills|items|statusTemplates)\/[^/]+$/.test(source)) return;
+      const [, table4, id4] = source.split("/");
+      const baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
+      const current = liveState();
+      if (!current?.[table4] || !Object.hasOwn(current[table4], id4)) return;
+      if (aiController) {
+        notify("\u6807\u51C6\u5316\u8FDB\u884C\u4E2D", "\u8BF7\u7B49\u5F85\u5F53\u524D\u6279\u6B21\u5B8C\u6210\u540E\u518D\u91CD\u7F6E\u5927\u8BCD\u6761\u3002");
+        return;
+      }
+      const rawWarnings = diagnostics.inputWarnings ?? [];
+      const matchedKeys = new Set(rawWarnings.filter((warning) => pathUnder(warning.originPath, source)).map(warningKey));
+      const retained = [];
+      for (const batch of batches(key4)) {
+        const patch = (batch.patch ?? []).filter((operation2) => !pathUnder(operation2.path, source));
+        const guards = (batch.guards ?? []).filter(([path2]) => !pathUnder(path2, source));
+        const receipts = (batch.receipts ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
+        if (patch.length || receipts.length || guards.length) retained.push({ ...batch, patch, guards, receipts });
+      }
+      const next = clone2(current);
+      next[table4] = { ...next[table4] };
+      if (baseline[table4][id4] === void 0) delete next[table4][id4];
+      else next[table4][id4] = clone2(baseline[table4][id4]);
+      try {
+        (options.validateState || validateState)(next);
+      } catch (error2) {
+        showError(error2);
+        return;
+      }
+      gameMount?.loadState?.(next);
+      currentState = next;
+      const exemptions = (config.narrativeExemptions[key4] ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
+      const notes2 = clone2(config.unresolvedNotes[key4] ?? {});
+      for (const [unitId, entries3] of Object.entries(notes2)) {
+        for (const warningId of Object.keys(entries3)) if (matchedKeys.has(warningId)) delete entries3[warningId];
+        if (!Object.keys(entries3).length) delete notes2[unitId];
+      }
+      const snapshots = clone2(config.charSnapshots);
+      for (const snapshot of Object.values(snapshots[key4] ?? {})) {
+        if (snapshot.resolvedWarnings) snapshot.resolvedWarnings = snapshot.resolvedWarnings.filter((item) => !matchedKeys.has(item.key ?? item));
+      }
+      const nextWarnings = [...rawWarnings];
+      sources.warnings = nextWarnings;
+      diagnostics.warnings = nextWarnings;
+      persistSettings({
+        normalizationBatches: { ...config.normalizationBatches, [key4]: retained },
+        narrativeExemptions: { ...config.narrativeExemptions, [key4]: exemptions },
+        unresolvedNotes: { ...config.unresolvedNotes, [key4]: notes2 },
+        charSnapshots: snapshots
+      });
+      filterResolved(snapshots[key4] ?? {}, characters, retained);
+      reconcileUnresolvedNotes(key4, characters, sources.warnings, [], { reset: false });
+      renderInstances();
     }
     function applyNormalization(state, patch) {
       if (!patch?.length) return state;
@@ -16830,7 +17290,6 @@ ${tag2.textContent || ""}
         const invalid = batches(key4).length !== kept.length;
         const exempt = new Set(activeNarrativeExemptions(rawWarnings, config.narrativeExemptions[key4] ?? [], narrativeSourceFor(fresh)).map(({ warning }) => warning));
         const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter((warning) => !exempt.has(warning));
-        const changed = normalizationCandidates(fresh, stored, remaining);
         toast.hidden = true;
         currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
         if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
@@ -16838,10 +17297,12 @@ ${tag2.textContent || ""}
         refreshPortraits(currentState, epoch);
         activeBattleKey = key4;
         characters = fresh;
+        const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending);
         for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
         if (key4 && (rehydrate || changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
         if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
         filterResolved(stored, fresh, kept);
+        if (key4) reconcileUnresolvedNotes(key4, fresh, sources.warnings, [], { reset: rehydrate });
         const live3 = liveState();
         for (const unit of Object.values(live3?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
         const firstEntry = !rehydrate && currentState && key4 && !savedBattle && !enteredBattles.has(key4);
@@ -16915,14 +17376,14 @@ ${tag2.textContent || ""}
       on(refresh, "click", () => scan().catch(showError));
       on(report, "click", deliverBattleReport);
     }
-    function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }) {
+    function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
       const { data } = parseAIResponse(reply);
       if (!Array.isArray(data?.patch)) throw new Error("\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01");
       const raw = JSON.stringify(data, null, 2);
       try {
         const notes2 = readUnresolvedDiagnostics(data.unresolved, sent);
         for (const [index, operation2] of data.patch.entries()) {
-          if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own13(operation2, "value")) {
+          if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own15(operation2, "value")) {
             throw new Error(`\u7B2C ${index + 1} \u9879\u8865\u4E01\u7684\u64CD\u4F5C\u3001\u8DEF\u5F84\u6216\u503C\u65E0\u6548`);
           }
           const [, table4, id4] = operation2.path.split("/");
@@ -16931,58 +17392,80 @@ ${tag2.textContent || ""}
         const records2 = Object.fromEntries(unitIds.map((id4) => [id4, { hash: characters[id4].hash, sourceKind: characters[id4].sourceKind }]));
         const current = liveState();
         const rootPath = (path2) => path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
-        const paths = [...new Set(data.patch.map((operation2) => rootPath(operation2.path)))];
-        if (paths.some((path2) => fingerprintAt(current, path2) !== fingerprintAt(snapshot, path2))) {
-          throw new Error("\u8865\u4E01\u76EE\u6807\u5DF2\u88AB\u66F4\u65E9\u7684\u6279\u6B21\u6216\u6218\u5C40\u64CD\u4F5C\u4FEE\u6539");
-        }
+        const operationsToApply = normalizationOperations(data.patch, snapshot, current, createdTemplates, fingerprintAt);
+        const paths = [...new Set(operationsToApply.map((operation2) => rootPath(operation2.path)))];
         const apply2 = options.applyPatch ?? applyPatch;
         let next = current;
         const changedAtApply = /* @__PURE__ */ new Map();
-        for (const operation2 of data.patch) {
+        for (const operation2 of operationsToApply) {
           const parentPath = operation2.path.slice(0, operation2.path.lastIndexOf("/"));
           const path2 = operation2.op === "replace" || !fingerprintAt(next, parentPath)?.startsWith("[") ? operation2.path : parentPath;
-          const before = fingerprintAt(next, path2);
+          const before2 = fingerprintAt(next, path2);
           next = apply2(next, [operation2], true);
-          if (fingerprintAt(next, path2) !== before) changedAtApply.set(operation2, path2);
+          if (fingerprintAt(next, path2) !== before2) changedAtApply.set(operation2, path2);
         }
         const changed = new Set(paths.filter((path2) => fingerprintAt(next, path2) !== fingerprintAt(current, path2)));
-        const effective = data.patch.filter((operation2) => changed.has(rootPath(operation2.path)));
+        const effective = operationsToApply.filter((operation2) => changed.has(rootPath(operation2.path)));
         const patch = effective.map(({ resolves, ...operation2 }) => operation2);
         const changedOperations = effective.filter((operation2) => {
           const path2 = changedAtApply.get(operation2);
           return path2 && fingerprintAt(current, path2) !== fingerprintAt(next, path2);
         });
-        const solved2 = resolvedDiagnostics(sent, records2, changedOperations, notes2);
-        const narrative = readNarrativeExemptions(data.narrative, sent, narrativeSourceFor(records2), { solved: solved2, unresolved: notes2 });
+        const narrative = readNarrativeExemptions(data.narrative, sent, narrativeSourceFor(records2), { unresolved: notes2 });
+        const solved2 = resolvedDiagnostics(sent, records2, changedOperations.map((operation2) => ({
+          ...operation2,
+          mechanicsChanged: ["rules", "mods", "pools"].some((field) => {
+            const after = fingerprintAt(next, `${operation2.path}/${field}`);
+            return after !== void 0 && after !== "[]" && after !== "{}" && after !== fingerprintAt(current, `${operation2.path}/${field}`);
+          })
+        })), notes2, { narrative, inferPartial: true });
         for (const { warning } of narrative) {
           if (data.patch.some((operation2) => Array.isArray(operation2.resolves) && operation2.resolves.some((reference) => identifiesWarning(reference, warning)))) {
             throw new Error("narrative \u8B66\u544A\u4E0D\u80FD\u540C\u65F6\u58F0\u660E\u4E3A\u8865\u4E01\u5DF2\u89E3\u51B3");
           }
         }
-        if (data.patch.length && !patch.length && !narrative.length) throw new Error("\u6A21\u578B\u8FD4\u56DE\u7684\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
+        if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes2.some((note) => note.warning && note.detail)) {
+          throw new Error("\u6A21\u578B\u8FD4\u56DE\u7684\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
+        }
+        let baseline, before;
+        if (patch.length || data.existing?.length) {
+          baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
+          before = applyPatch(baseline, operations2(key4), true);
+        }
+        const verified = existingEffectReceipts(data.existing, sent, baseline, before, current, fingerprintAt);
+        for (const { warning, path: path2, fingerprint } of verified) {
+          if (notes2.some((note) => note.warning === warning) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) throw new Error("\u5DF2\u6709\u5B9E\u73B0\u6536\u636E\u4E0E\u672C\u6279\u8865\u4E01\u6216\u672A\u89E3\u51B3\u8BF4\u660E\u51B2\u7A81");
+          if (!solved2.includes(warning)) solved2.push(warning);
+        }
+        const missing = missingDispositions(sent, solved2, notes2, narrative);
+        if (missing.length && !acceptPartial) {
+          const error2 = new Error(`\u672C\u6279\u6F0F\u7B54 ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}\u3002\u672C\u6279\u5C1A\u672A\u5199\u5165\uFF1B\u4FDD\u7559\u5DF2\u5B8C\u6210\u7684\u8865\u4E01\uFF0C\u91CD\u65B0\u63D0\u4EA4\u5B8C\u6574\u7ED3\u679C\u3002\u5DF2\u5B9E\u73B0\u7684\u6548\u679C\u8BF7\u5728\u5B9E\u9645\u4FEE\u6539\u7684\u64CD\u4F5C\u4E0A\u8865 resolves\uFF1B\u53EA\u521B\u5EFA\u4F9D\u8D56\u6A21\u677F\u8FD8\u987B\u63A5\u56DE\u539F\u6280\u80FD\u3002\u5176\u4F59\u9010\u9879\u5199 unresolved \u5E76\u8BF4\u660E\u539F\u56E0\uFF0C\u7EAF\u53D9\u4E8B\u624D\u5199 narrative\u3002`);
+          error2.missingCoverage = true;
+          throw error2;
+        }
         const additions = [];
-        if (patch.length) {
+        if (patch.length || verified.length) {
           const validate = options.validateState || validateState;
           validate(next);
-          const baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
           const previous = operations2(key4);
-          const before = applyPatch(baseline, previous, true);
           validate(applyNormalization(baseline, [...previous, ...patch]));
           additions.push({
             patch,
             hashes: Object.fromEntries(unitIds.map((id4) => [id4, records2[id4].hash])),
             receipts: solved2.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
-            guards: [.../* @__PURE__ */ new Set([...changed, ...solved2.map((w) => w.originPath).filter(Boolean)])].map((path2) => [path2, fingerprintAt(before, path2) ?? null])
+            guards: [.../* @__PURE__ */ new Set([...changed, ...verified.map((entry2) => entry2.path), ...solved2.map((w) => w.originPath).filter(Boolean)])].map((path2) => [path2, fingerprintAt(before, path2) ?? null])
           });
-          refreshOpeningInitiative(next);
-          syncEquipmentEffects(next);
-          refreshOutcome(next);
-          validate(next);
-          if (typeof gameMount?.loadState !== "function") throw new Error("\u6C99\u76D8\u672A\u5C31\u7EEA\uFF0C\u65E0\u6CD5\u6CE8\u5165\u8865\u4E01");
-          gameMount.loadState(next);
-          currentState = next;
-          for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
-          save();
+          if (patch.length) {
+            refreshOpeningInitiative(next);
+            syncEquipmentEffects(next);
+            refreshOutcome(next);
+            validate(next);
+            if (typeof gameMount?.loadState !== "function") throw new Error("\u6C99\u76D8\u672A\u5C31\u7EEA\uFF0C\u65E0\u6CD5\u6CE8\u5165\u8865\u4E01");
+            gameMount.loadState(next);
+            currentState = next;
+            for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
+            save();
+          }
         }
         const stored = { ...config.charSnapshots[key4] };
         for (const [id4, record2] of Object.entries(records2)) {
@@ -16997,7 +17480,14 @@ ${tag2.textContent || ""}
           normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] },
           narrativeExemptions: { ...config.narrativeExemptions, [key4]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
         });
+        for (const { op, path: path2 } of effective) {
+          if (op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path2) && fingerprintAt(current, path2) === void 0) {
+            const fingerprint = fingerprintAt(next, path2);
+            if (fingerprint !== void 0) createdTemplates.set(path2, fingerprint);
+          }
+        }
         filterResolved(stored, characters);
+        reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
         scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272`;
         renderInstances();
         return { applied: patch.length, data, notes: notes2 };
@@ -17106,7 +17596,7 @@ ${tag2.textContent || ""}
             if (normalize) {
               if (!Array.isArray(patch)) throw new Error("patch \u5FC5\u987B\u662F JSON \u6570\u7EC4");
               for (const [index, operation2] of patch.entries()) {
-                if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own13(operation2, "value")) {
+                if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own15(operation2, "value")) {
                   throw new Error(`\u7B2C ${index + 1} \u9879\u8865\u4E01\u7684\u64CD\u4F5C\u3001\u8DEF\u5F84\u6216\u503C\u65E0\u6548`);
                 }
               }
