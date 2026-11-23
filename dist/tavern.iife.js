@@ -5849,9 +5849,9 @@ var FatedTacticalTavern = (() => {
     const keys = new Set(cells2.map((at2) => key2(at2.x, at2.y)));
     if (template.target === "cell") return [];
     const areaDamage = (template.shape ?? "single") !== "single" && hasStrikeDamage(template);
+    const targeting = areaDamage && template.target == null ? { target: "any" } : template;
     return living(state).filter((unit) => {
-      if (!areaDamage && !selectionAllows(template, actor, unit, allowFriendlyTarget)) return false;
-      if (areaDamage && ["ally", "self"].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
+      if (!selectionAllows(targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
       if ((template.shape ?? "single") === "single") return targetId ? unit.id === targetId : sameCell(unit, aim);
       if (template.shape === "circle" || template.shape === "ring") {
         const distanceFromCenter = distance3D(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: "attack" });
@@ -12942,8 +12942,6 @@ body { margin: 0; background: var(--ink-2); }
 }
 .ft-board .tactical-cell-coord { opacity: .45; font-size: 8px; }
 .ft-board .tactical-cell-units { display: flex; justify-content: center; align-items: center; flex: 1; min-height: 0; margin: 0; gap: 2px; flex-wrap: nowrap; }
-.ft-board .tactical-cell-units[data-stack="2"], .ft-board .tactical-cell-units[data-stack="3"], .ft-board .tactical-cell-units[data-stack="4"] { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; align-content: center; }
-.ft-board .tactical-cell-units[data-stack="2"] .axis-unit, .ft-board .tactical-cell-units[data-stack="3"] .axis-unit, .ft-board .tactical-cell-units[data-stack="4"] .axis-unit { width: 100%; min-width: 0; padding: 1px; }
 .ft-target-unit-options { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .ft-target-unit { flex: 1 1 48%; min-width: 0; padding: 5px 7px; border: 1px solid var(--line-mid); border-radius: 7px; background: var(--raised-b); color: var(--text); text-align: left; cursor: pointer; }
 .ft-target-unit[data-faction="blue"] { border-color: var(--blue-line); }
@@ -12956,6 +12954,37 @@ body { margin: 0; background: var(--ink-2); }
 .ft-board.battle-axis .axis-unit-name { max-width: 100%; font-size: max(9px, calc(var(--cell) * .14)); }
 .ft-board.battle-axis .axis-z-badge { min-width: 13px; height: 13px; right: -5px; padding-inline: 2px; font-size: 8px; line-height: 11px; }
 .ft-board.battle-axis .axis-facing-pip { min-width: 12px; height: 12px; font-size: 8px; line-height: 10px; }
+
+/* All visible pieces in a cell share the same layout, including terrain features. */
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: clamp(1px, calc(var(--cell) * .04), 2px);
+  align-items: stretch;
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) > .axis-unit {
+  width: 100%;
+  min-height: 0;
+  padding: clamp(0px, calc((var(--cell) - 20px) * .08), 1px);
+  overflow: clip;
+}
+.ft-board.battle-axis .tactical-cell-units > .axis-unit:nth-child(3):last-child { grid-column: span 2; }
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-token-head {
+  max-width: 100%;
+  min-height: 0;
+  flex-shrink: 1;
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-unit-fallback-avatar {
+  width: 100%;
+  height: 100%;
+  font-size: min(12px, calc(var(--cell) * .18));
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-token-head {
+  width: calc(var(--cell) * .27);
+  height: calc(var(--cell) * .27);
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-unit-name { font-size: 9px; }
 .ft-board .axis-unit.is-active { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 16px rgb(var(--gold-rgb) / .55); animation: ft-breathe 1.8s ease-in-out infinite; }
 .ft-board .axis-unit.is-moving { z-index: 30; }
 @keyframes ft-breathe { 50% { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 4px rgb(var(--gold-rgb) / .2); } }
@@ -14491,7 +14520,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
         range: bound(area3.range, 0, 30, 1),
         shape: area3.shape ?? "single",
-        target: area3.target ?? "enemy",
+        target: area3.target ?? (areaDamage && object3(r.damage) ? "any" : "enemy"),
         ...geometryFields(area3),
         ...text3(r.school) ? { school: text3(r.school).slice(0, 100) } : {},
         rules,
@@ -15568,7 +15597,7 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
 \u2022 \u5E38\u89C4\u8BC4\u7EA7\u4E3B\u51FB\u7528\u6A21\u677F power \u548C damage\u3002[\u5A01\u529B: X \u7269\u7406] \u7B49\u4EF7\u4E8E [\u5A01\u529B: X][\u4F24\u5BB3: \u7269\u7406]\u3002\u539F\u6587\u660E\u786E\u7ED9\u7684\u662F\u56FA\u5B9A\u4F24\u5BB3\u5305\u6216\u72EC\u7ACB\u9644\u4F24\u65F6\uFF0C\u7528 damage \u6307\u4EE4\u5199 amount \u548C damageType\uFF0C\u540C\u4E00\u7B14\u4F24\u5BB3\u53EA\u7ED3\u7B97\u4E00\u6B21\u3002
 \u2022 \u6DF7\u5408\u4F24\u5BB3\uFF1A[\u5A01\u529B: 60][\u4F24\u5BB3: \u7269\u740640/\u80FD\u91CF20] \u62C6\u6210\u4E24\u4E2A\u6307\u4EE4\uFF0C\u4F8B\uFF1A[{"op":"damage","target":"target","amount":40,"damageType":"physical"},{"op":"damage","target":"target","amount":20,"damageType":"energy"}]\u3002\u6309\u539F\u6587\u6BD4\u4F8B\u62C6\u5206\u65F6\u5404\u5206\u91CF\u6309\u540C\u4E00\u57FA\u51C6\u6C42\u503C\uFF0C\u4E0D\u518D\u989D\u5916\u9020\u6210\u603B\u5A01\u529B\u4F24\u5BB3\u3002
 \u2022 [\u5173\u8054\u5C5E\u6027: \u654F\u6377] \u2192 \u6307\u5411\u65BD\u672F\u8005\u654F\u6377\uFF1B\u9700\u8981\u5C5E\u6027\u7F29\u653E\u65F6\u8BFB\u53D6 self.agi\u3002\u53EA\u6709\u539F\u6587\u660E\u786E\u8C41\u514D\u65F6\u624D\u4E3A\u9632\u5B88\u65B9\u9009\u62E9\u68C0\u5B9A\u5C5E\u6027\u3002[\u6709\u6548\u8DDD\u79BB: \u4E2D\u7A0B(5)] \u2192 range:5\u3002
-\u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 radius:4\u3001shape:fan\u3001target:enemy\uFF0Crange \u7531\u6709\u6548\u8DDD\u79BB\u53E6\u884C\u786E\u5B9A\u3002\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u5230 angle\u3002
+\u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 radius:4\u3001shape:fan\u3001target:enemy\uFF0Crange \u7531\u6709\u6548\u8DDD\u79BB\u53E6\u884C\u786E\u5B9A\u3002\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u5230 angle\u3002\u539F\u751F\u8303\u56F4\u4F24\u5BB3\u7528 target:enemy \u9650\u5B9A\u654C\u65B9\uFF0C\u7528 target:any \u8868\u793A\u65E0\u5DEE\u522B\uFF08\u8986\u76D6\u65BD\u672F\u8005\u65F6\u4E5F\u4F1A\u547D\u4E2D\uFF09\u3002VM \u81EA\u5EFA\u9009\u62E9\u5668\u8981\u5728 where \u4E2D\u5199\u660E\u76F8\u540C\u7684\u654C\u53CB\u9650\u5236\uFF0C\u4F8B\u5982 candidate.team != self.team\uFF1B\u82E5\u53EA\u6392\u9664\u65BD\u672F\u8005\uFF0C\u5199 candidate.id != self.id\u3002
 \u2022 \u539F\u6587\u6548\u679C\u4E3A {} \u6216\u7F3A\u5931\u4E14\u6CA1\u6709\u5176\u4ED6\u53EF\u6267\u884C\u63CF\u8FF0\u65F6\uFF0C\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u8BA1\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u548C\u72B6\u6001\u6388\u4E88\u5747\u53EF\u5F62\u6210\u72EC\u7ACB\u89C4\u5219\uFF1B\u80CC\u5305\u6D88\u8017\u54C1\u6309\u4EFB\u52A1\u7EA6\u5B9A\u5904\u7406\u3002`;
   var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002\u540C\u4E00\u8DEF\u5F84\u5185\u6807\u9898\u552F\u4E00\u65F6\u4E5F\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF0CeffectName \u9010\u5B57\u590D\u5236\u300C\u300D\u5185\u6807\u9898\uFF08\u5305\u62EC\u5FAE\u5F31\u6CD5\u5219\u53CA\u65B9\u62EC\u53F7\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002\u6BCF\u9879\u5F85\u5904\u7406\u8B66\u544A\u5FC5\u987B\u6709\u5F52\u5C5E\uFF1A\u5B9E\u9645\u751F\u6548\u8865\u4E01\u7684 resolves\u3001\u5E26\u539F\u56E0\u7684 unresolved \u6216\u7EAF\u53D9\u4E8B narrative\u3002\u53EA\u521B\u5EFA\u72B6\u6001\u6A21\u677F\u800C\u672A\u63A5\u56DE\u539F\u6280\u80FD\u4E0D\u7B97\u5B8C\u6210\u3002\u5DF2\u6709\u89C4\u5219\u4E0D\u662F VM \u7F3A\u53E3\uFF1A\u5982\u679C\u8BE5\u884C\u4E3A\u5DF2\u7531\u5148\u524D\u6807\u51C6\u5316\u8865\u4E01\u5B9E\u73B0\uFF0C\u672C\u6B21\u4E0D\u518D\u6539\u52A8\uFF0C\u53EF\u9644\u53EF\u9009\u9876\u5C42 existing \u6570\u7EC4\u3002\u6BCF\u9879\u7ED9 {unitId,originPath,effectName,path,value}\uFF0Cpath \u6307\u5411\u8BE5\u6A21\u677F\u7684\u5177\u4F53 rules/N \u6216 mods/N\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u6761\u89C4\u5219\u6216\u4FEE\u9970\u3002\u5F15\u64CE\u4F1A\u6838\u5BF9\u65E2\u6709\u5199\u5165\u548C\u5F53\u524D\u503C\uFF1B\u4E0D\u51C6\u7528\u540C\u8DEF\u5F84\u65E0\u5173\u6761\u76EE\u5192\u5145\u8BC1\u636E\uFF0C\u4E0D\u8981\u91CD\u590D add \u6216\u62A5 unresolved\u3002";
   var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
