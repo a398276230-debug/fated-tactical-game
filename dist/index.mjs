@@ -18721,8 +18721,11 @@ ${tag2.textContent || ""}
     const battleInput = sources.input;
     const target2 = pages.sandbox.querySelector("[data-sandbox-mount]");
     const restart = ({ seed }) => {
-      const next = hydrateFromSources(battleInput, { seed, throwOnValidation: true }).state;
-      return applyNormalization(next, operations2(battleInstanceId));
+      const opening = hydrateFromSources(battleInput, { seed, throwOnValidation: true }).state;
+      const normalized = applyNormalization(opening, operations2(battleInstanceId));
+      const next = restoreChatOpening(normalized, battleInstanceId);
+      updateChatInstances(next, liveState());
+      return next;
     };
     gameMount = (options.mount || mount)(target2, {
       instanceId: battleInstanceId,
@@ -18880,6 +18883,34 @@ ${tag2.textContent || ""}
     refreshOutcome(next);
     return next;
   }
+  function chatOpeningPatches(key4) {
+    const stored = readBattleStorage(key4, "chat-opening-patches");
+    return Array.isArray(stored) ? stored : [];
+  }
+  function replayChatPatches(state, entries3, onConflict) {
+    let applied = false;
+    for (const { patch } of entries3) {
+      try {
+        const next = applyPatch(state, patch, Array.isArray(patch));
+        syncEquipmentEffects(next);
+        refreshOutcome(next);
+        (options.validateState || validateState)(next);
+        state = next;
+        applied = true;
+      } catch (error2) {
+        if (!onConflict) throw error2;
+        onConflict(error2);
+      }
+    }
+    if (applied) refreshOpeningInitiative(state);
+    return state;
+  }
+  function restoreChatOpening(state, key4) {
+    const conflicts = [];
+    const next = replayChatPatches(state, chatOpeningPatches(key4), (error2) => conflicts.push(error2.message));
+    if (conflicts.length) notify("\u90E8\u5206\u8F85\u52A9 AI \u8865\u4E01\u672A\u80FD\u91CD\u653E", "", null, false, { tone: "warning", unresolved: conflicts });
+    return next;
+  }
   async function scan({ rehydrate = false } = {}) {
     const epoch = ++scanEpoch;
     const node = pages.sandbox.querySelector("[data-status]");
@@ -18945,9 +18976,11 @@ ${tag2.textContent || ""}
       } });
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter((warning) => !exempt.has(warning));
       toast.hidden = true;
+      const restoreSaved = savedBattle && (!rehydrate || unchangedOpening && !invalid);
       currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
+      if (currentState && !restoreSaved) currentState = restoreChatOpening(currentState, key4);
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
-      mountState(currentState, savedBattle && (!rehydrate || unchangedOpening && !invalid));
+      mountState(currentState, restoreSaved);
       refreshPortraits(currentState, epoch);
       activeBattleKey = key4;
       characters = fresh;
@@ -18963,7 +18996,7 @@ ${tag2.textContent || ""}
       filterResolved(stored, fresh, kept);
       if (key4) reconcileUnresolvedNotes(key4, fresh, sources.warnings, [], { reset: false });
       const live3 = liveState();
-      for (const unit of Object.values(live3?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
+      if (live3) updateChatInstances(live3, nextState);
       if (key4 && currentState) enteredBattles.add(key4);
       scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
       renderInstances();
@@ -19203,19 +19236,14 @@ ${tag2.textContent || ""}
       throw error2;
     }
   }
-  function installChatState(next, previous) {
-    (options.validateState || validateState)(next);
-    gameMount.loadState(next);
-    currentState = liveState();
-    for (const id4 of Object.keys(previous.units)) if (!own17(currentState.units, id4)) delete config.instances[id4];
-    for (const unit of Object.values(currentState.units)) {
+  function updateChatInstances(next, previous) {
+    for (const id4 of Object.keys(previous?.units ?? {})) if (!own17(next.units, id4)) delete config.instances[id4];
+    for (const unit of Object.values(next.units)) {
       const metadata = { ...config.instances[unit.id] };
-      for (const key4 of Object.keys(previous.units[unit.id] ?? {})) delete metadata[key4];
+      for (const key4 of Object.keys(previous?.units?.[unit.id] ?? {})) delete metadata[key4];
       config.instances[unit.id] = { ...metadata, ...clone2(unit) };
     }
     save();
-    renderInstances();
-    prepareMessages();
   }
   function changeChatPatch(message, payload, undo = false) {
     if (aiController) return;
@@ -19232,13 +19260,47 @@ ${tag2.textContent || ""}
         refreshOutcome(next);
         if (!chatUndoChanges(current, next).length) throw new Error("\u6B64\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u5F53\u524D\u6218\u5C40");
       }
-      installChatState(next, current);
-      const undoReceipt = undo ? null : { battleKey: activeBattleKey, changes: chatUndoChanges(current, currentState) };
-      aiSessions.update(sessionId, message, {
-        undoReceipt,
-        applyError: null,
-        applyNotice: undo ? "\u2713 \u5DF2\u64A4\u9500" : `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF08\u53D8\u66F4 ${undoReceipt.changes.length} \u5904\uFF09`
-      });
+      (options.validateState || validateState)(next);
+      const key4 = activeBattleKey;
+      const entries3 = chatOpeningPatches(key4);
+      let nextEntries = entries3;
+      let openingId = null;
+      let openingError;
+      const validateOpening = (records2) => {
+        const savedSeed = storage?.getItem(battleStorageKey(key4, "fated-tactical/battle-v1/seed"));
+        const seed = savedSeed != null && /^\d+$/.test(savedSeed) ? Number(savedSeed) : sources.seed;
+        const source = hydrateFromSources(sources.input, { seed, throwOnValidation: true }).state;
+        return replayChatPatches(applyNormalization(source, operations2(key4)), records2);
+      };
+      if (undo && message.undoReceipt.openingId) {
+        nextEntries = entries3.filter((entry2) => entry2.id !== message.undoReceipt.openingId);
+        validateOpening(nextEntries);
+      } else if (!undo) {
+        try {
+          openingId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+          nextEntries = [...entries3, { id: openingId, patch }];
+          validateOpening(nextEntries);
+        } catch (error2) {
+          nextEntries = entries3;
+          openingId = null;
+          openingError = error2.message;
+        }
+      }
+      const storageKey = battleStorageKey(key4, "chat-opening-patches");
+      if (nextEntries !== entries3 && !putConfig(storage, storageKey, nextEntries)) throw new Error("\u65E0\u6CD5\u4FDD\u5B58\u6218\u5C40\u8865\u4E01");
+      try {
+        gameMount.loadState(next);
+      } catch (error2) {
+        if (nextEntries !== entries3) putConfig(storage, storageKey, entries3);
+        throw error2;
+      }
+      currentState = liveState();
+      updateChatInstances(currentState, current);
+      renderInstances();
+      prepareMessages();
+      const undoReceipt = undo ? null : { battleKey: key4, changes: chatUndoChanges(current, currentState), openingId };
+      const applyNotice = undo ? "\u2713 \u5DF2\u64A4\u9500" : openingError ? `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u91CD\u7F6E\uFF08${openingError}\uFF09` : "\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u4FDD\u7559";
+      aiSessions.update(sessionId, message, { undoReceipt, applyError: null, applyNotice });
     } catch (error2) {
       aiSessions.update(sessionId, message, { applyError: `${undo ? "\u64A4\u9500" : "\u5E94\u7528"}\u5931\u8D25\uFF1A${error2.message}` });
     }
