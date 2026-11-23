@@ -15856,6 +15856,18 @@ async function sendViaTavernBackend(endpoint, { root: root2, headers }, body, op
     })
   }, transport);
 }
+function normalizationApiConfig(settings) {
+  if (settings.normalizationAiMode !== "custom") return { ...settings };
+  return {
+    ...settings,
+    apiMode: "custom",
+    baseUrl: settings.normalizationAiBaseUrl,
+    apiKey: settings.normalizationAiApiKey,
+    model: settings.normalizationAiModel,
+    apiTransport: settings.normalizationAiApiTransport,
+    apiSource: settings.normalizationAiApiSource
+  };
+}
 async function fetchModels(settings, options = {}) {
   const conn = connection(settings, false);
   const { root: root2, source, key: key4, headers } = conn;
@@ -16215,7 +16227,7 @@ function renderApiTab(page, ctx) {
     input2.onchange = () => {
       if (input2.type === "number" && (!input2.reportValidity() || !Number.isFinite(input2.valueAsNumber))) return;
       ctx.save({ [key4]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
-      if (key4 === "apiMode" || key4 === "apiTransport") renderApiTab(page, ctx);
+      if (["apiMode", "apiTransport", "normalizationAiMode", "normalizationAiApiTransport", "battleAiMode"].includes(key4)) renderApiTab(page, ctx);
     };
     label.append(input2);
     wrap.append(label);
@@ -16228,7 +16240,7 @@ function renderApiTab(page, ctx) {
     return input2;
   };
   const input = (type, props = {}) => Object.assign(make("input"), { type }, props);
-  const api = card("\u{1F50C} \u72EC\u7ACB API \u63A5\u53E3\u914D\u7F6E\uFF08\u4E0E\u4E3B\u804A\u5929\u5B8C\u5168\u89E3\u8026\uFF09");
+  const api = card("\u{1F50C} \u8F85\u52A9 AI\uFF08\u804A\u5929\uFF09");
   field(api, "apiMode", "\u63A5\u53E3\u8C03\u7528\u65B9\u5F0F", select([
     ["custom", "\u{1F680} \u72EC\u7ACB\u81EA\u5B9A\u4E49 API"],
     ["tavern", "\u{1F37A} \u9152\u9986\u5F53\u524D\u8FDE\u63A5 API (TavernHelper.generateRaw)"]
@@ -16246,53 +16258,78 @@ function renderApiTab(page, ctx) {
   field(api, "apiKey", "API \u5BC6\u94A5 (API Key)", input("password", { className: "masked-key-input", autocomplete: "off" }), "", tavern);
   const model = input("text");
   const modelField = field(api, "model", "\u6A21\u578B\u540D\u79F0", model, "", tavern, true);
-  const commands2 = make("div", "cmd-row");
-  const load = button("\u{1F504} \u62C9\u53D6\u6A21\u578B");
-  const test = button("\u26A1 \u6D4B\u8BD5\u8FDE\u63A5");
-  commands2.append(load, test);
-  const status = make("div", "api-status");
-  status.setAttribute("role", "status");
-  modelField.append(commands2, status);
-  load.disabled = tavern;
-  async function run(pending, action) {
-    load.disabled = test.disabled = true;
-    status.dataset.error = "false";
-    status.textContent = pending;
-    try {
-      status.textContent = await action();
-    } catch (err) {
-      status.dataset.error = "true";
-      status.textContent = `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || String(err)}`;
-    } finally {
-      load.disabled = tavern;
-      test.disabled = false;
+  function modelCommands(modelField2, model2, getSettings, { viaTavern = false, pickerLabel = "\u53EF\u7528\u6A21\u578B" } = {}) {
+    const commands2 = make("div", "cmd-row");
+    const load = button("\u{1F504} \u62C9\u53D6\u6A21\u578B");
+    const test = button("\u26A1 \u6D4B\u8BD5\u8FDE\u63A5");
+    commands2.append(load, test);
+    const status = make("div", "api-status");
+    status.setAttribute("role", "status");
+    modelField2.append(commands2, status);
+    load.disabled = viaTavern;
+    const requestOptions = { host: ctx.host, fetchImpl: ctx.fetchImpl };
+    async function run(pending, action) {
+      load.disabled = test.disabled = true;
+      status.dataset.error = "false";
+      status.textContent = pending;
+      try {
+        status.textContent = await action();
+      } catch (err) {
+        status.dataset.error = "true";
+        status.textContent = `\u8BF7\u6C42\u5931\u8D25\uFF1A${err?.message || String(err)}`;
+      } finally {
+        load.disabled = viaTavern;
+        test.disabled = false;
+      }
     }
+    let picker;
+    load.onclick = () => run("\u6B63\u5728\u62C9\u53D6\u6A21\u578B\u2026", async () => {
+      picker?.remove();
+      const names = await fetchModels(getSettings(), requestOptions);
+      if (!names.length) throw new Error("\u63A5\u53E3\u672A\u8FD4\u56DE\u53EF\u7528\u6A21\u578B");
+      picker = select([["", "\u8BF7\u9009\u62E9\u6A21\u578B"], ...names.map((name) => [name, name])]);
+      picker.setAttribute("aria-label", pickerLabel);
+      picker.onchange = () => {
+        if (!picker.value) return;
+        model2.value = picker.value;
+        ctx.save({ [model2.name]: model2.value });
+      };
+      modelField2.append(picker);
+      return `\u5DF2\u62C9\u53D6 ${names.length} \u4E2A\u6A21\u578B`;
+    });
+    test.onclick = () => run("\u6B63\u5728\u6D4B\u8BD5\u8FDE\u63A5\u2026", async () => {
+      const probe = { ...getSettings(), max_tokens: 8 };
+      const messages = [{ role: "user", content: "\u53EA\u56DE\u590D OK" }];
+      if (viaTavern) await requestViaTavern(ctx.host, probe, messages, {});
+      else await requestViaCustomApi(probe, messages, requestOptions);
+      return "\u6D4B\u8BD5\u8FDE\u63A5\u6210\u529F";
+    });
   }
-  let picker;
-  load.onclick = () => run("\u6B63\u5728\u62C9\u53D6\u6A21\u578B\u2026", async () => {
-    picker?.remove();
-    const names = await fetchModels({ ...ctx.settings }, { host: ctx.host, fetchImpl: ctx.fetchImpl });
-    if (!names.length) throw new Error("\u63A5\u53E3\u672A\u8FD4\u56DE\u53EF\u7528\u6A21\u578B");
-    picker = select([["", "\u8BF7\u9009\u62E9\u6A21\u578B"], ...names.map((name) => [name, name])]);
-    picker.setAttribute("aria-label", "\u53EF\u7528\u6A21\u578B");
-    picker.onchange = () => {
-      if (!picker.value) return;
-      model.value = picker.value;
-      ctx.save({ model: model.value });
-    };
-    modelField.append(picker);
-    return `\u5DF2\u62C9\u53D6 ${names.length} \u4E2A\u6A21\u578B`;
-  });
-  test.onclick = () => run("\u6B63\u5728\u6D4B\u8BD5\u8FDE\u63A5\u2026", async () => {
-    const probe = { ...ctx.settings, max_tokens: 8 };
-    const messages = [{ role: "user", content: "\u53EA\u56DE\u590D OK" }];
-    if (tavern) await requestViaTavern(ctx.host, probe, messages, {});
-    else await requestViaCustomApi(probe, messages, { host: ctx.host, fetchImpl: ctx.fetchImpl });
-    return "\u6D4B\u8BD5\u8FDE\u63A5\u6210\u529F";
-  });
+  modelCommands(modelField, model, () => ctx.settings, { viaTavern: tavern });
+  const normalization = card("\u{1F6E0}\uFE0F \u6807\u51C6\u5316 AI");
+  field(normalization, "normalizationAiMode", "\u8C03\u7528\u901A\u9053", select([
+    ["same", "\u590D\u7528\u8F85\u52A9 AI \u914D\u7F6E"],
+    ["custom", "\u72EC\u7ACB\u6807\u51C6\u5316 AI API"]
+  ]), "same");
+  const separate = settings.normalizationAiMode === "custom";
+  field(normalization, "normalizationAiApiTransport", "\u72EC\u7ACB API \u8BF7\u6C42\u8DEF\u5F84", select([
+    ["direct", "\u6D4F\u89C8\u5668\u76F4\u8FDE"],
+    ["tavern", "\u7ECF\u9152\u9986\u540E\u7AEF\uFF08OpenAI \u517C\u5BB9\uFF09"]
+  ]), "direct", !separate);
+  if (settings.normalizationAiApiTransport !== "tavern") field(normalization, "normalizationAiApiSource", "\u72EC\u7ACB API \u534F\u8BAE\u7C7B\u578B", select([
+    ["openai", "OpenAI \u517C\u5BB9\u63A5\u53E3"],
+    ["gemini", "Google Gemini \u539F\u751F\u63A5\u53E3"],
+    ["claude", "Anthropic Claude \u539F\u751F\u63A5\u53E3"]
+  ]), "openai", !separate);
+  field(normalization, "normalizationAiBaseUrl", "\u6807\u51C6\u5316 AI API \u5730\u5740", input("text", { placeholder: "https://\u4F60\u7684\u53CD\u4EE3\u57DF\u540D/v1" }), "", !separate);
+  field(normalization, "normalizationAiApiKey", "\u6807\u51C6\u5316 AI API \u5BC6\u94A5", input("password", { autocomplete: "off" }), "", !separate);
+  const normalizationModel = input("text");
+  const normalizationModelField = field(normalization, "normalizationAiModel", "\u6807\u51C6\u5316 AI \u6A21\u578B", normalizationModel, "", !separate, true);
+  if (separate) modelCommands(normalizationModelField, normalizationModel, () => normalizationApiConfig(ctx.settings), { pickerLabel: "\u6807\u51C6\u5316\u53EF\u7528\u6A21\u578B" });
+  normalization.append(make("p", "hint wide", "\u81EA\u52A8\u6807\u51C6\u5316\u3001\u624B\u52A8\u6807\u51C6\u5316\u548C\u5931\u8D25\u8865\u4E01\u7684\u4FEE\u590D\u8BF7\u6C42\u5171\u7528\u6B64\u901A\u9053\u3002"));
   const battle = card("\u2694\uFE0F \u6218\u6597 AI\uFF08\u654C\u65B9\u966A\u73A9\uFF09");
   field(battle, "battleAiEnabled", "\u542F\u7528\u6218\u6597 AI", Object.assign(input("checkbox"), { type: "checkbox" }), false);
-  field(battle, "battleAiMode", "\u8C03\u7528\u901A\u9053", select([["same", "\u590D\u7528\u4E0A\u65B9 API \u914D\u7F6E"], ["custom", "\u72EC\u7ACB\u6218\u6597 AI API"]]), "same");
+  field(battle, "battleAiMode", "\u8C03\u7528\u901A\u9053", select([["same", "\u590D\u7528\u8F85\u52A9 AI \u914D\u7F6E"], ["custom", "\u72EC\u7ACB\u6218\u6597 AI API"]]), "same");
   field(battle, "battleAiBaseUrl", "\u6218\u6597 AI API \u5730\u5740", input("text", { placeholder: "http://127.0.0.1:8317/v1" }), "", settings.battleAiMode !== "custom");
   field(battle, "battleAiApiKey", "\u6218\u6597 AI API \u5BC6\u94A5", input("password", { autocomplete: "off" }), "", settings.battleAiMode !== "custom");
   field(battle, "battleAiModel", "\u6218\u6597 AI \u6A21\u578B", input("text", { placeholder: "deepseek-v4.1-flash" }), "", settings.battleAiMode !== "custom");
@@ -17322,7 +17359,7 @@ function formatRejectedItem(item, state = {}) {
   return `[\u672A\u5E94\u7528] ${table4 === "skills" ? "\u6280\u80FD" : table4 === "equipment" ? "\u88C5\u5907" : "\u6761\u76EE"}\u300C${entity}\u300D(${item.path || "\u65E0\u8DEF\u5F84"})\uFF1A${item.reason || "\u8865\u4E01\u6821\u9A8C\u5931\u8D25"}`;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.4.1";
+var TAVERN_VERSION = "0.4.2";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
@@ -17330,6 +17367,12 @@ var DEFAULT_CONFIG = {
   model: "",
   temperature: 0.8,
   max_tokens: 32e3,
+  normalizationAiMode: "same",
+  normalizationAiBaseUrl: "",
+  normalizationAiApiKey: "",
+  normalizationAiModel: "",
+  normalizationAiApiTransport: "direct",
+  normalizationAiApiSource: "openai",
   battleAiEnabled: false,
   battleAiMode: "same",
   battleAiBaseUrl: "",
@@ -18187,7 +18230,7 @@ ${tag2.textContent || ""}
     if (aiController || !activeBattleKey || !liveState()) return;
     syncSettings();
     const key4 = activeBattleKey;
-    const requestConfig = { ...config };
+    const requestConfig = normalizationApiConfig(config);
     const stored = config.charSnapshots[key4] ?? {};
     const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
     const ids = unitIds.filter((id4) => eligible.has(id4));
