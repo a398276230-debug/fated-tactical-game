@@ -881,3 +881,16 @@ test('battle_init 配套正则输出可点击入口', () => {
   assert.match(output, /<pre class="fated-battle-source">/);
   assert.doesNotMatch(output, /<battle_init>/);
 });
+
+test('含威力与伤害标签且附带叙事效果的技能在警告中提示补齐模板主击 damage', () => {
+  const crabSkillYaml = `技能:\n  - 名称: 断铁巨螯夹击\n    消耗: 攻击: 80 SP\n    标签: [力量][单体][有效距离: 近程(1)][伤害][威力: 190][伤害: 物理]\n    效果:\n      重钳撕裂: 命中后额外造成 55 点物理伤害`;
+  const { state, warnings } = hydrateDummy(crabSkillYaml);
+  const sid = state.units.e1.skills[0];
+  assert.equal(state.skills[sid].power, 190);
+  assert.equal(state.skills[sid].damage, undefined);
+  const diag = warnings.find(w => w.originPath === `/skills/${sid}`);
+  assert.ok(diag, '应产生待标准化诊断');
+  assert.match(diag.message, /效果待标准化「重钳撕裂」/);
+  assert.match(diag.message, new RegExp(`已声明威力 190、伤害「物理」、关联属性 str.*缺少 damage 骰子对象.*/skills/${sid}/damage`));
+});
+

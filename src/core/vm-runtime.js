@@ -110,7 +110,7 @@ export const vmHost = {
     const isHeld = actor?.skills?.includes(event.skillId);
     const actionRules = hook === 'active' || !isHeld ? skill?.rules : undefined;
     const carrier = skill?.itemId ? { type: 'item', id: skill.itemId }
-      : isHeld ? { type: 'skill', id: event.skillId, ownerId: actor.id } : null;
+      : skill ? { type: 'skill', id: event.skillId, ownerId: actor?.id } : null;
     return [...entries, ...(event.rules ?? actionRules ?? []).filter(rule => rule.hook === hook).map(rule => ({
       rule, ownerId: event.actorId, sourceId: event.actorId, carrierOrder: -1, carrier,
       ...(skill && !event.rules && { sourceSkillId: event.skillId }),

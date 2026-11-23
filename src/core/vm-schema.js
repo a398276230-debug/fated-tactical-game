@@ -87,9 +87,10 @@ function opcode(op, properties, required, ...conditions) {
   return conditions.length ? withRules(schema, ...conditions) : schema;
 }
 
+const intentEnum = enumOf('normal', 'function', 'core', 'kill', 'concept');
 const controlPolicy = object({
   controller: enumOf('default', 'ai'), allegiance: enumOf('normal', 'friendly_only', 'all_hostile'),
-  forcedActionKinds: list(enumOf('attack', 'skill')), intentLock: enumOf('normal', 'function', 'core', 'kill', 'concept'), allowFriendlyTarget: bool, moraleLock: literal('steady'),
+  forcedActionKinds: list(enumOf('attack', 'skill')), intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady'),
 });
 const stat = enumOf(...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
@@ -105,7 +106,7 @@ const statMod = withRules(object({
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),
 when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additivePercent') }),
 when('stat', multiplierStats, { not: needs('flat') }));
-const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
+const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
 const spawnRadius = either({ type: 'number', minimum: 0 }, formula);
 const area = object({

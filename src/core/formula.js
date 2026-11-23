@@ -23,9 +23,10 @@ const unitFields = {
 };
 const vmUnitFields = {
   id: '实体 ID', armor: '护甲', x: '横坐标', y: '纵坐标', z: '实际高度',
-  altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营', summoned: '是否为召唤物',
+  altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营（blue/red）', summoned: '是否为召唤物',
   sourceSkillId: '生成该召唤物的技能 ID（无记录时为 null）',
   name: '单位名称', templateId: '模板 ID', moved: '本回合累计位移格数',
+  moraleState: '士气状态（steady/shaken/routed）',
   facing: '当前朝向 N/S/E/W', lastMoveDir: '最近一次水平位移主方向 N/S/E/W，无记录时为 null'
 };
 const unitScopes = { self: '效果主体', attacker: '事件攻击者', target: '当前目标', source: '效果来源', candidate: '当前筛选实体' };
@@ -125,6 +126,9 @@ for (const [field, [meaning, read]] of Object.entries(entityFamilies)) {
 for (const [scope, label] of Object.entries({ status: '状态', zone: '区域', skill: '持有技能', item: '装备' })) {
   dynamicFamily(`${scope}.vars`, `${label}实例的变量`, (context, id) => path(context, scope, 'vars', id));
 }
+register('skill.id', '当前规则所属技能的 ID（非技能载体时为 null；限定本技能触发写 event.skillId == skill.id）', context => path(context, 'skill', 'id'));
+register('item.id', '当前规则所属装备实例的 ID（非装备载体时为 null）', context => path(context, 'item', 'id'));
+register('item.templateId', '当前规则所属装备模板的 ID（非装备载体时为 null）', context => path(context, 'item', 'templateId'));
 register('zone.team', '区域创建时的阵营；无阵营时为 null', context => path(context, 'zone', 'team'));
 register('zone.sourceId', '区域创建者 ID', context => path(context, 'zone', 'sourceId'));
 register('candidate.sourceId', '当前候选实体的创建者 ID', context => path(context, 'candidate', 'sourceId'));
@@ -151,15 +155,30 @@ register('distanceM', '效果主体到当前目标的三维米距', context => n
 register('weapon.attack', '事件武器模板的攻击力', context => own(callback(context, 'weapon'), 'attack'), true);
 register('weapon.range', '事件武器模板的基础射程', context => own(callback(context, 'weapon'), 'range'), true);
 for (const [name, description] of Object.entries({
+  skillId: '本次行动施放的技能 ID（普攻或非技能事件为 null；限定本技能触发写 event.skillId == skill.id）',
+  actionType: '本次行动类型（attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item）',
+  actorId: '本次事件的发起单位 ID', targetId: '本次事件的主目标单位 ID',
+  damageType: '伤害类型（physical/energy/mental/true）', direct: '是否为直接伤害（true/false）',
+  commitKind: 'before_commit 提交类别（damage/heal/resource）', pool: 'before_commit 目标资源池键（hp/mp/sp 等）',
+  rawAmount: 'before_commit 减免前原始数值', finalAmount: 'before_commit 当前待提交数值',
+  sourceRuleId: '产生本笔提交的 VM 规则 ID（不是技能 ID）',
   power: '技能威力', dealt: '本次实际扣除的 HP', absorbed: '本次被护盾吸收的伤害',
-  previous: '当前效果链上一步实际数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID', checkKind: '检定类型（如 attack/save/contest）', baseDC: 'VM 检定初始 DC', finalDC: 'VM 检定完成时计入修饰后的 DC'
+  previous: '当前效果链上一步实际数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID',
+  checkKind: '检定类型（attack/save/contest/skill/chance/d20/dodge/authority）',
+  passed: '检定是否通过（true/false）', hit: '攻击检定是否命中（true/false）', critical: '是否暴击（true/false）', saved: '豁免是否通过（true/false）',
+  baseDC: 'VM 检定初始 DC', finalDC: 'VM 检定完成时计入修饰后的 DC'
 })) register(`event.${name}`, description, context => path(context, 'event', name), true);
+register('event.rating', '命中或检定评级（攻击检定为 超暴击/强暴击/平暴击/有效/勉强/擦伤/失手；VM check 为 hit/miss/crit）', context => {
+  const rating = path(context, 'event', 'rating');
+  return typeof rating === 'string' ? rating : own(rating, 'name');
+}, true);
+register('event.ratingMultiplier', '攻击命中评级倍率（2/1.6/1.3/1/0.8/0.3/0）', context => own(path(context, 'event', 'rating'), 'multiplier'), true);
 // Existing authored check filters used event.kind before checkKind was documented.
 register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));
 register('event.authorityRank', '提交效果的来源载体位格，唯一为 8', context => path(context, 'event', 'authorityRank'));
 register('event.naturalRoll', '未经替换的自然骰面，适用于 after_natural_roll', context => path(context, 'event', 'naturalRoll'));
 register('event.sourceTier', '提交效果的来源角色层级', context => path(context, 'event', 'sourceTier'));
-register('event.sourceSkillId', 'on_summon_evict 中旧召唤物的来源技能 ID（无记录时为 null）', context => path(context, 'event', 'sourceSkillId'));
+register('event.sourceSkillId', '仅限 on_summon_evict 中旧召唤物的来源技能 ID（普通伤害／命中事件不用此字段，用 event.skillId）', context => path(context, 'event', 'sourceSkillId'));
 family('event.<field>', /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, '活跃事件的自有标量字段', (context, key) => path(context, 'event', key));
 
 function readDistance(context, from, to) {

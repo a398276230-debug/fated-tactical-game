@@ -5,7 +5,7 @@ import { chatUndoChanges, chatInversePatch } from '../src/tavern/ai-patch-undo.j
 import { fetchModels, requestViaCustomApi } from '../src/tavern/api.js';
 import { assembleMessages, DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from '../src/tavern/prompts.js';
 
-import { validVmRule, vmSchema } from '../src/core/vm-schema.js';
+import { validVmRule, vmHooks, vmSchema } from '../src/core/vm-schema.js';
 import { applyAction, currentUnit, refreshOpeningInitiative } from '../src/core/combat.js';
 import { validateState } from '../src/api/validation.js';
 import { dispatchVMHook } from '../src/core/vm-runtime.js';
@@ -59,24 +59,103 @@ gate('G44', '旧内置 user 一次迁移，自定义 role 保留', () => {
   assert.deepEqual(describeSlots(migrated), migrated);
 });
 
-gate('G45', '任务拆解、自查与 VM 示例', () => {
+gate('G45', '去样板化协议全貌、四步编译流与闭合枚举披露', () => {
+  const protocol = resolveSlotContent({ id: 'protocol' });
   const task = resolveSlotContent({ id: 'task' });
-  const examples = [...task.matchAll(/^• [^\n：]+值：(\{.*\})$/gm)].map(([, json]) => JSON.parse(json));
-  assert.equal(examples.length, 11);
-  const statusTemplates = { laugh_disabled: examples.find(example => example.id === 'laugh_disabled') };
-  for (const example of examples) {
-    for (const rule of example.rules ?? [example]) assert.equal(validVmRule(rule, { statusTemplates }), true, rule.id);
+  const combined = `${protocol}\n${task}`;
+  // Zero concrete business JSON recipes or character-specific templates may remain
+  for (const boilerplate of ['低伤校准', '蓄能徽记', '狂笑失能', '雪域', '亡卫斩', '星霜', '裂隙投射', '汲血打击', '旋风横扫', '物理40/能量20']) {
+    assert.ok(!combined.includes(boilerplate), `提示词不应残留具体业务样板：${boilerplate}`);
   }
-  assert.match(task, /低伤校准[^\n]+"lethal":false/);
-  assert.match(task, /飞行规则值[^\n]+"mode":"altitude","deltaZ":3/);
-  for (const text of ['先尝试拆解，再考虑放弃', '未解决或仅部分解决', '{unitId, originPath, message}，附简短中文 reason', '检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围']) assert.ok(task.includes(text));
+  // Neutral envelope skeleton parses cleanly as valid JSON with the three required top-level arrays
+  const envelope = JSON.parse(task.match(/^\s*(\{"patch":\[\{.*\}\],"unresolved":\[\],"narrative":\[\]\})/m)[1]);
+  assert.deepEqual(Object.keys(envelope), ['patch', 'unresolved', 'narrative']);
+  // Complete VM hook & opcode & closed template enum disclosure
+  for (const hook of vmHooks) assert.ok(protocol.includes(hook), `协议漏披露 hook：${hook}`);
+  for (const schema of vmSchema.$defs.opcode.oneOf) {
+    const op = schema.properties.op.const;
+    assert.ok(protocol.includes(`• ${op}：`), `协议漏披露指令：${op}`);
+  }
+  for (const token of [
+    'event.skillId == skill.id', 'candidate.alive && candidate.team != self.team',
+    'light_blade / ranged / greatsword / staff / shield / auxiliary',
+    'one_handed / two_handed / off_hand', 'single / circle / ring / fan / cone / line',
+    'enemy / ally / self / any / corpse / cell', 'battle_turns / until_removed / persistent',
+    'refresh / stack / replace / extend', 'undispellable / concept_immune',
+    'normal / function / core / kill / concept', '超暴击 / 强暴击 / 平暴击 / 有效 / 勉强 / 擦伤 / 失手',
+    'physical / energy / mental / true', '缺少 damage 骰子对象时，主击伤害为 0',
+    '先尝试用正交原语拆解组合，再考虑放弃', '仍无法表达的部分列入 unresolved', '检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围',
+  ]) assert.ok(combined.includes(token), `提示词漏披露关键语义或枚举：${token}`);
+  assert.doesNotMatch(protocol, /spirit/);
   assert.doesNotMatch(task, /卡在哪一步/);
 });
 
-test('默认发送的召唤食谱可直接应用，生成的亡卫持有同批新增的专属技能', () => {
+test('主动吸血 out 链、周身选敌与 skill.id 作用域隔离在生产 VM 中互不串味且不误伤自身', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  const ally = Object.values(state.units).find(u => u.team === actor.team && u.id !== actor.id);
+  const enemy = Object.values(state.units).find(u => u.team !== actor.team);
+  ally.x = actor.x; ally.y = actor.y;
+  const adj = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+    .map(([dx, dy]) => ({ x: actor.x + dx, y: actor.y + dy }))
+    .find(at => state.grid[at.y]?.[at.x]?.kind === 'floor');
+  enemy.x = adj.x; enemy.y = adj.y;
+  if (state.pools?.[enemy.pools?.hp]) {
+    state.pools[enemy.pools.hp].contributors[0].maxBase = state.pools[enemy.pools.hp].max = state.pools[enemy.pools.hp].current = 300;
+  }
+  enemy.hp = enemy.maxHp = 300;
+  const damagedHp = Math.max(1, actor.maxHp - 50);
+  if (state.pools?.[actor.pools?.hp]) state.pools[actor.pools.hp].current = damagedHp;
+  actor.hp = damagedHp;
+  const startActorHp = actor.hp, startAllyHp = ally.hp, startEnemyHp = enemy.hp;
+
+  state.statusTemplates ??= {};
+  state.statusTemplates.kiss_mark = { id: 'kiss_mark', name: '血印', category: 'debuff', remainingTurns: 2 };
+  state.skills.blood_kiss = {
+    name: '汲血之吻', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy',
+    rules: [
+      { id: 'blood_kiss', hook: 'active', program: [
+        { op: 'damage', target: 'target', amount: '40 + self.spi', damageType: 'energy', out: 'dealt' },
+        { op: 'if', cond: 'vars.dealt > 0', then: [{ op: 'heal', target: 'self', amount: 'floor(vars.dealt * 0.5)' }] },
+      ] },
+      { id: 'kiss_mark_on_damage', hook: 'after_damage', filter: 'attacker.id == self.id && event.skillId == skill.id && event.dealt > 0',
+        program: [{ op: 'apply_status', target: 'target', statusId: 'kiss_mark' }] },
+    ],
+  };
+  state.skills.dark_realm = {
+    name: '蒂露万暗界M', ap: 1, slot: 'action', range: 0, shape: 'single', target: 'self',
+    rules: [{ id: 'whirl_cut', hook: 'active', program: [
+      { op: 'for_each', select: { from: 'units', area: { shape: 'circle', origin: 'self', radius: 'scale_cells(2)' }, where: 'candidate.alive && candidate.team != self.team' },
+        bind: 'foe', body: [{ op: 'damage', target: 'vars.foe', amount: '30 + self.str', damageType: 'physical' }] },
+    ] }],
+  };
+  actor.skills.push('blood_kiss', 'dark_realm');
+  validateState(state);
+
+  applyAction(state, { type: 'skill', skillId: 'dark_realm', x: actor.x, y: actor.y });
+  assert.equal(actor.hp, startActorHp, 'AoE 选敌不得误伤自身，且不得触发汲血之吻回血');
+  assert.equal(ally.hp, startAllyHp, 'AoE 选敌不得误伤同格友军');
+  assert.ok(enemy.hp < startEnemyHp, 'AoE 选敌应命中范围内敌军');
+  assert.equal(enemy.statuses?.kiss_mark, undefined, '其他技能造成伤害不得触发锁了 skill.id 的汲血之吻钩子');
+
+  const beforeKissEnemyHp = enemy.hp;
+  applyAction(state, { type: 'skill', skillId: 'blood_kiss', x: enemy.x, y: enemy.y, targetId: enemy.id });
+  const dealt = beforeKissEnemyHp - enemy.hp;
+  assert.ok(dealt > 0);
+  assert.equal(actor.hp, Math.min(actor.maxHp, startActorHp + Math.floor(dealt * 0.5)));
+  assert.ok(enemy.statuses?.kiss_mark, '施放汲血之吻本体时触发 skill.id 匹配的钩子');
+});
+
+test('同批新增状态与召唤物专属技能补丁在生产战局中按拓扑序直接执行', () => {
   const message = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(row => row.content).join('\n');
   assert.doesNotMatch(message, /平暴击×1\.3|切磋40%/);
-  const { patch } = JSON.parse(message.match(/^\{"patch":.*$/m)[0]);
+  const patch = [
+    { op: 'add', path: '/statusTemplates/guard_chill', value: { id: 'guard_chill', name: '星霜', category: 'control', remainingTurns: 2, mods: [{ locks: ['move'] }] } },
+    { op: 'add', path: '/skills/guard_slash', value: { name: '亡卫斩', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy', power: 20,
+      damage: { count: 1, sides: 4, type: 'physical' },
+      rules: [{ id: 'chill_on_hit', hook: 'after_hit', filter: 'attacker.id == self.id && event.skillId == skill.id', program: [{ op: 'apply_status', target: 'target', statusId: 'guard_chill' }] }] } },
+    { op: 'add', path: '/skills/call_guard/rules/-', value: { id: 'summon_guard', hook: 'active', program: [{ op: 'spawn', entityKind: 'unit', spec: { name: '亡卫', spawnPanel: { skills: ['guard_slash'] } } }] } },
+  ];
   const initial = buildScenario('ruins');
   initial.statusTemplates ??= {};
   initial.skills.call_guard = { name: '召唤亡卫', ap: 1, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [] };
@@ -89,14 +168,23 @@ test('默认发送的召唤食谱可直接应用，生成的亡卫持有同批�
   assert.equal(state.statusTemplates.guard_chill.name, '星霜');
 });
 
-test('默认天气、磁带重放和资源封印食谱在生产 VM 中结算', () => {
-  const task = resolveSlotContent({ id: 'task' });
-  const recipe = label => JSON.parse(task.match(new RegExp(`^• ${label}规则值：(.*)$`, 'm'))[1]);
+test('结界生成、磁带重放与资源落盘拦截在生产 VM 中结算', () => {
   const state = buildScenario('ruins');
   const actor = currentUnit(state);
   const enemy = Object.values(state.units).find(unit => unit.team !== actor.team);
-  actor.rules = [recipe('封印资源'), recipe('本回合重放')];
-  state.skills.weather = { name: '天气', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [recipe('天气')] };
+  actor.rules = [
+    { id: 'seal_resources', hook: 'before_commit', filter: "event.targetId == self.id && (event.pool == 'hp' || event.pool == 'mp' || event.pool == 'sp') && event.sourceRuleId != 'seal_release'",
+      program: [{ op: 'mutate_event', patch: { cancel: true } }] },
+    { id: 'repeat_turn', hook: 'turn_end', usesPerBattle: 1, filter: 'self.resource.attack == 0 && self.resource.action == 0',
+      program: [{ op: 'for_each', select: { from: 'tape', where: 'candidate.actorId == self.id && candidate.round == round && candidate.turn == turn' },
+        bind: 'entry', body: [{ op: 'perform', actor: 'self', actionKind: 'replay', tapeRecord: 'vars.entry' }] }] },
+  ];
+  state.skills.weather = { name: '天气', ap: 0, slot: 'action', range: 0, shape: 'single', target: 'self', rules: [{
+    id: 'place_zone', hook: 'active', program: [{ op: 'spawn', entityKind: 'zone', spec: {
+      name: '结界', tags: ['frost_zone'], remainingTurns: 2, area: { shape: 'circle', center: 'center', radius: 10 },
+      rules: [{ id: 'zone_tick', hook: 'turn_start', filter: 'self.team != source.team', program: [{ op: 'damage', target: 'self', amount: 10, damageType: 'true', direct: false }] }],
+    } }],
+  }] };
   state.skills.probe = { name: '资源探针', ap: 1, slot: 'attack', range: 0, shape: 'single', target: 'self', rules: [{
     id: 'probe_changes', hook: 'active', program: [
       { op: 'damage', target: 'self', amount: 3, damageType: 'true' },
@@ -144,20 +232,19 @@ test('技能先手按槽取最大值并复用开场骰，模板上限为射程 6
   assert.throws(() => validateState(state));
 });
 
-test('G97 protocol maps mixed damage, empty effects and worldbook tags', () => {
+test('G97 protocol maps mixed damage, empty effects and worldbook tags without concrete number anchoring', () => {
   const protocol = resolveSlotContent({ id: 'protocol' });
-  assert.match(protocol, /混合伤害：.*拆成两个指令.*不再额外造成总威力伤害/);
-  const program = JSON.parse(protocol.match(/混合伤害：.*?例：(\[.*?\])。/)[1]);
-  assert.deepEqual(program, [{ op: 'damage', target: 'target', amount: 40, damageType: 'physical' }, { op: 'damage', target: 'target', amount: 20, damageType: 'energy' }]);
-  assert.match(protocol, /原文效果为 \{\} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则/);
-  for (const tag of ['[威力: X 物理]', '[关联属性: 敏捷]', '[有效距离: 中程(5)]', '[单体]', '[范围: 中程(4)+扇(敌方)]']) assert.ok(protocol.includes(tag), tag);
+  assert.match(protocol, /混合伤害.*拆为多条按序执行的 damage 指令.*不再额外叠加模板总威力主击/);
+  assert.match(protocol, /单独填写 power 不会开启主击/);
+  assert.match(protocol, /原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved/);
+  for (const tag of ['[威力: X 物理]', '[关联属性: <属性>]', '[单体]', '[范围: <档位>(N)+<形状>(<阵营>)]']) assert.ok(protocol.includes(tag), tag);
 });
 
 test('默认标准化消息教模型读实体寄存器、动态生成和使用带签名的查询', () => {
   const text = assembleMessages(DEFAULT_SLOTS, {}).map(message => message.content).join('\n');
-  for (const snippet of ['target:"vars.victim"', 'vars.victim.id', "has_status(vars.victim, 'taunt')",
-    'vars.lostStacks', 'self.vars.cooldown == null', 'min(a, b)', 'clamp(value, lo, hi)', 'count_units(predicate)',
-    'tier:"max(1, self.tier - 1)"', 'single 只覆盖中心格', '都不写时按施术者预算自动生成面板']) {
+  for (const snippet of ['target:"vars.<名>"', 'vars.<名>.hp', 'vars.victim.hp',
+    '加 vars. 前缀', '空值用 null', 'min(a, b)', 'clamp(value, lo, hi)', 'count_units(predicate)',
+    'tier、count、remainingTurns、area.radius 支持数值表达式', 'single 仅中心格', '均省略时按施术者预算自动生成面板']) {
     assert.ok(text.includes(snippet), snippet);
   }
 });

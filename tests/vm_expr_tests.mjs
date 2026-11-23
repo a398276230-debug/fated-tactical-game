@@ -178,3 +178,15 @@ test('legacy numeric formulas retain syntax, zero defaults and dependency checks
   assert.equal(validFormula('source.hp'), false);
   assert.equal(evaluateFormula('10/0', {}), null);
 });
+
+test('event.rating 与 event.ratingMultiplier 兼容原生 RATING_TABLE 对象与 VM 字符串评级，perform.overrides.intent 校验枚举', async () => {
+  const { validVmOpcode } = await import('../src/core/vm-schema.js');
+  assert.equal(evaluateExpr("event.rating == '勉强' && event.ratingMultiplier >= 0.8", {
+    event: { rating: { min: 8, name: '勉强', multiplier: 0.8 } },
+  }), true);
+  assert.equal(evaluateExpr("event.rating == 'crit'", { event: { rating: 'crit' } }), true);
+  assert.equal(evaluateExpr("self.moraleState == 'shaken'", { self: { moraleState: 'shaken' } }), true);
+  assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'attack', target: 'target', overrides: { free: true, intent: 'kill' } }), true);
+  assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'attack', target: 'target', overrides: { free: true, intent: '龙矢' } }), false);
+});
+

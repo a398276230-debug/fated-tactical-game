@@ -1,6 +1,6 @@
 import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D as distance,
   elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS as clearSight,
-  isFlanked as flank, isGround as ground, movementOptions, unitAt } from './spatial.js';
+  isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, hitChance as hitOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
 import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, resolveEffectiveTier, scaledCells } from './combat_protocol.js';
@@ -535,7 +535,9 @@ export function refreshOpeningInitiative(state) {
   record(state, first, 'turn', `${first.name}开始回合`, { turn: 0 });
 }
 
-const locateUnit = (state, { x, y }, targetId) => targetId ? tableEntry(state.units, targetId) : unitAt(state, x, y);
+const locateUnit = (state, { x, y }, targetId, match) => targetId
+  ? tableEntry(state.units, targetId)
+  : (match ? unitsAt(state, x, y).find(match) : undefined) ?? unitAt(state, x, y);
 const locateCover = (state, { x, y }) => coverAt(state, x, y);
 const emptyGround = (state, at) => ground(state, at) && !locateUnit(state, at)
   && ((state.scale?.cellM ?? 2) >= 10 || !locateCover(state, at));
@@ -983,8 +985,10 @@ function nearbyCovers(state, at) {
 }
 
 function usableTiles(state, actor, template, weapon) {
+  const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
   return allCells(state).filter(at => validReach(state, actor,
-    template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at : locateUnit(state, at) ?? at,
+    template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at
+      : locateUnit(state, at, null, u => selectionAllows(template, actor, u, allowFriendlyTarget)) ?? at,
     template, weapon?.ammo) &&
     !(['line','cone','fan'].includes(template.shape) && sameCell(actor, at) && template.range !== 0));
 }
@@ -1087,7 +1091,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (type === 'flee') return { ...common, name: '逃跑', maneuver: 'flee' };
   if (type === 'detour') return { ...common, name: '绕行', maneuver: 'detour' };
   if (type === 'lock_on') {
-    const target = locateUnit(state, center, action.targetId);
+    const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
     if (!target || target.team === unit.team || !sameCell(target, center)) return fail('定位必须指定敌方单位');
     return { ...common, name: '定位', maneuver: 'lock_on', targetId: target.id };
   }
@@ -1108,7 +1112,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     return {...common,name:'压制',targetId:target.id,targets:[{...profile,damage:null,expectedDamage:0}]};
   }
   if (['grapple','disarm','trip','push'].includes(type)) {
-    const target = locateUnit(state, center, action.targetId);
+    const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
     if (!target || target.team === unit.team || !sameCell(target, center)) return fail('战术对抗必须指定敌方单位');
     if (near(unit, target) > 1 || !clearSight(state, unit, target)) return fail('战术对抗需要贴身且视线畅通');
     return { ...common, name: ({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[type], maneuver: type, targetId: target.id };
@@ -1161,9 +1165,11 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (unplaced) {
     return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, action.nonLethal ?? unit.nonLethal) };
   }
-  const aimedUnit = locateUnit(state, center, action.targetId);
+  const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
+  const aoe = (template.shape ?? 'single') !== 'single';
+  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? u => selectionAllows(template, unit, u, allowFriendlyTarget) : null);
   if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail('目标单位不在指定格');
-  const aim = template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? center : aimedUnit ?? center;
+  const aim = template.target === 'cell' || aoe ? center : aimedUnit ?? center;
   const origin = actionOrigin ? { ...unit, x: actionOrigin.x, y: actionOrigin.y,
     altitude: actionOrigin.altitude ?? (actionOrigin.z === undefined ? 0 : actionOrigin.z - elevation(state, actionOrigin)) } : unit;
   const ammo = attack && !shieldBash ? weapon.ammo : null;
@@ -1181,9 +1187,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   const solid = locateCover(state, center);
   const coverTarget = Boolean(solid && template.target !== 'cell' && (attack || hasStrikeDamage(template)));
   const cells = area(state, origin, aim, template, ammo, { ignoreRange, ignoreLOS, deferGeometry });
-  const aoe = (template.shape ?? 'single') !== 'single';
   if (!cells.length && !deferGeometry) return fail('请选择一个方向', { ...geometry, originSensitive: true });
-  const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
   if (!aoe) {
     if (!selectionAllows(template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== 'cell') {
       return fail('该格没有合适的目标', geometry);
@@ -1195,7 +1199,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail(`受嘲讽，必须指定${taunter.name}`, { ...geometry, originSensitive: true });
   const templateForHit = template;
   const targetUnits = shapeTargets(state, unit, cells, template, aim, origin, ammo,
-    ignoreRange || deferGeometry, ignoreLOS || deferGeometry, allowFriendlyTarget, action.targetId);
+    ignoreRange || deferGeometry, ignoreLOS || deferGeometry, allowFriendlyTarget, action.targetId ?? (!aoe ? aimedUnit?.id : undefined));
   const areaAttack = (template.shape ?? 'single') !== 'single';
   const declaredIntent = action.intent ?? unit.intent ?? 'normal';
   const intentLock = aggregateModifiers(state, unit.id).controlPolicy.intentLock;

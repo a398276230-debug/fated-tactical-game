@@ -522,12 +522,13 @@ var FatedTacticalTavern = (() => {
     altitude: "\u79BB\u5730\u9AD8\u5EA6",
     mc: "\u5DE8\u578B\u7CFB\u6570",
     alive: "\u662F\u5426\u5B58\u6D3B\u4E14\u5728\u573A",
-    team: "\u9635\u8425",
+    team: "\u9635\u8425\uFF08blue/red\uFF09",
     summoned: "\u662F\u5426\u4E3A\u53EC\u5524\u7269",
     sourceSkillId: "\u751F\u6210\u8BE5\u53EC\u5524\u7269\u7684\u6280\u80FD ID\uFF08\u65E0\u8BB0\u5F55\u65F6\u4E3A null\uFF09",
     name: "\u5355\u4F4D\u540D\u79F0",
     templateId: "\u6A21\u677F ID",
     moved: "\u672C\u56DE\u5408\u7D2F\u8BA1\u4F4D\u79FB\u683C\u6570",
+    moraleState: "\u58EB\u6C14\u72B6\u6001\uFF08steady/shaken/routed\uFF09",
     facing: "\u5F53\u524D\u671D\u5411 N/S/E/W",
     lastMoveDir: "\u6700\u8FD1\u4E00\u6B21\u6C34\u5E73\u4F4D\u79FB\u4E3B\u65B9\u5411 N/S/E/W\uFF0C\u65E0\u8BB0\u5F55\u65F6\u4E3A null"
   };
@@ -620,6 +621,9 @@ var FatedTacticalTavern = (() => {
   for (const [scope, label] of Object.entries({ status: "\u72B6\u6001", zone: "\u533A\u57DF", skill: "\u6301\u6709\u6280\u80FD", item: "\u88C5\u5907" })) {
     dynamicFamily(`${scope}.vars`, `${label}\u5B9E\u4F8B\u7684\u53D8\u91CF`, (context, id3) => path(context, scope, "vars", id3));
   }
+  register("skill.id", "\u5F53\u524D\u89C4\u5219\u6240\u5C5E\u6280\u80FD\u7684 ID\uFF08\u975E\u6280\u80FD\u8F7D\u4F53\u65F6\u4E3A null\uFF1B\u9650\u5B9A\u672C\u6280\u80FD\u89E6\u53D1\u5199 event.skillId == skill.id\uFF09", (context) => path(context, "skill", "id"));
+  register("item.id", "\u5F53\u524D\u89C4\u5219\u6240\u5C5E\u88C5\u5907\u5B9E\u4F8B\u7684 ID\uFF08\u975E\u88C5\u5907\u8F7D\u4F53\u65F6\u4E3A null\uFF09", (context) => path(context, "item", "id"));
+  register("item.templateId", "\u5F53\u524D\u89C4\u5219\u6240\u5C5E\u88C5\u5907\u6A21\u677F\u7684 ID\uFF08\u975E\u88C5\u5907\u8F7D\u4F53\u65F6\u4E3A null\uFF09", (context) => path(context, "item", "templateId"));
   register("zone.team", "\u533A\u57DF\u521B\u5EFA\u65F6\u7684\u9635\u8425\uFF1B\u65E0\u9635\u8425\u65F6\u4E3A null", (context) => path(context, "zone", "team"));
   register("zone.sourceId", "\u533A\u57DF\u521B\u5EFA\u8005 ID", (context) => path(context, "zone", "sourceId"));
   register("candidate.sourceId", "\u5F53\u524D\u5019\u9009\u5B9E\u4F53\u7684\u521B\u5EFA\u8005 ID", (context) => path(context, "candidate", "sourceId"));
@@ -647,21 +651,41 @@ var FatedTacticalTavern = (() => {
   register("weapon.attack", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u653B\u51FB\u529B", (context) => own(callback(context, "weapon"), "attack"), true);
   register("weapon.range", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u57FA\u7840\u5C04\u7A0B", (context) => own(callback(context, "weapon"), "range"), true);
   for (const [name, description] of Object.entries({
+    skillId: "\u672C\u6B21\u884C\u52A8\u65BD\u653E\u7684\u6280\u80FD ID\uFF08\u666E\u653B\u6216\u975E\u6280\u80FD\u4E8B\u4EF6\u4E3A null\uFF1B\u9650\u5B9A\u672C\u6280\u80FD\u89E6\u53D1\u5199 event.skillId == skill.id\uFF09",
+    actionType: "\u672C\u6B21\u884C\u52A8\u7C7B\u578B\uFF08attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item\uFF09",
+    actorId: "\u672C\u6B21\u4E8B\u4EF6\u7684\u53D1\u8D77\u5355\u4F4D ID",
+    targetId: "\u672C\u6B21\u4E8B\u4EF6\u7684\u4E3B\u76EE\u6807\u5355\u4F4D ID",
+    damageType: "\u4F24\u5BB3\u7C7B\u578B\uFF08physical/energy/mental/true\uFF09",
+    direct: "\u662F\u5426\u4E3A\u76F4\u63A5\u4F24\u5BB3\uFF08true/false\uFF09",
+    commitKind: "before_commit \u63D0\u4EA4\u7C7B\u522B\uFF08damage/heal/resource\uFF09",
+    pool: "before_commit \u76EE\u6807\u8D44\u6E90\u6C60\u952E\uFF08hp/mp/sp \u7B49\uFF09",
+    rawAmount: "before_commit \u51CF\u514D\u524D\u539F\u59CB\u6570\u503C",
+    finalAmount: "before_commit \u5F53\u524D\u5F85\u63D0\u4EA4\u6570\u503C",
+    sourceRuleId: "\u4EA7\u751F\u672C\u7B14\u63D0\u4EA4\u7684 VM \u89C4\u5219 ID\uFF08\u4E0D\u662F\u6280\u80FD ID\uFF09",
     power: "\u6280\u80FD\u5A01\u529B",
     dealt: "\u672C\u6B21\u5B9E\u9645\u6263\u9664\u7684 HP",
     absorbed: "\u672C\u6B21\u88AB\u62A4\u76FE\u5438\u6536\u7684\u4F24\u5BB3",
     previous: "\u5F53\u524D\u6548\u679C\u94FE\u4E0A\u4E00\u6B65\u5B9E\u9645\u6570\u503C",
     healing: "\u672C\u6B21\u6CBB\u7597\u91CF",
     statusId: "\u89E6\u53D1\u672C\u6B21\u68C0\u5B9A\u6216\u4E8B\u4EF6\u7684\u72B6\u6001 ID",
-    checkKind: "\u68C0\u5B9A\u7C7B\u578B\uFF08\u5982 attack/save/contest\uFF09",
+    checkKind: "\u68C0\u5B9A\u7C7B\u578B\uFF08attack/save/contest/skill/chance/d20/dodge/authority\uFF09",
+    passed: "\u68C0\u5B9A\u662F\u5426\u901A\u8FC7\uFF08true/false\uFF09",
+    hit: "\u653B\u51FB\u68C0\u5B9A\u662F\u5426\u547D\u4E2D\uFF08true/false\uFF09",
+    critical: "\u662F\u5426\u66B4\u51FB\uFF08true/false\uFF09",
+    saved: "\u8C41\u514D\u662F\u5426\u901A\u8FC7\uFF08true/false\uFF09",
     baseDC: "VM \u68C0\u5B9A\u521D\u59CB DC",
     finalDC: "VM \u68C0\u5B9A\u5B8C\u6210\u65F6\u8BA1\u5165\u4FEE\u9970\u540E\u7684 DC"
   })) register(`event.${name}`, description, (context) => path(context, "event", name), true);
+  register("event.rating", "\u547D\u4E2D\u6216\u68C0\u5B9A\u8BC4\u7EA7\uFF08\u653B\u51FB\u68C0\u5B9A\u4E3A \u8D85\u66B4\u51FB/\u5F3A\u66B4\u51FB/\u5E73\u66B4\u51FB/\u6709\u6548/\u52C9\u5F3A/\u64E6\u4F24/\u5931\u624B\uFF1BVM check \u4E3A hit/miss/crit\uFF09", (context) => {
+    const rating = path(context, "event", "rating");
+    return typeof rating === "string" ? rating : own(rating, "name");
+  }, true);
+  register("event.ratingMultiplier", "\u653B\u51FB\u547D\u4E2D\u8BC4\u7EA7\u500D\u7387\uFF082/1.6/1.3/1/0.8/0.3/0\uFF09", (context) => own(path(context, "event", "rating"), "multiplier"), true);
   register("event.kind", "\u4E8B\u4EF6\u7C7B\u578B\uFF0C\u68C0\u5B9A\u4E2D\u7B49\u540C\u4E8E event.checkKind", (context) => path(context, "event", "kind") ?? path(context, "event", "checkKind"));
   register("event.authorityRank", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u8F7D\u4F53\u4F4D\u683C\uFF0C\u552F\u4E00\u4E3A 8", (context) => path(context, "event", "authorityRank"));
   register("event.naturalRoll", "\u672A\u7ECF\u66FF\u6362\u7684\u81EA\u7136\u9AB0\u9762\uFF0C\u9002\u7528\u4E8E after_natural_roll", (context) => path(context, "event", "naturalRoll"));
   register("event.sourceTier", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u89D2\u8272\u5C42\u7EA7", (context) => path(context, "event", "sourceTier"));
-  register("event.sourceSkillId", "on_summon_evict \u4E2D\u65E7\u53EC\u5524\u7269\u7684\u6765\u6E90\u6280\u80FD ID\uFF08\u65E0\u8BB0\u5F55\u65F6\u4E3A null\uFF09", (context) => path(context, "event", "sourceSkillId"));
+  register("event.sourceSkillId", "\u4EC5\u9650 on_summon_evict \u4E2D\u65E7\u53EC\u5524\u7269\u7684\u6765\u6E90\u6280\u80FD ID\uFF08\u666E\u901A\u4F24\u5BB3\uFF0F\u547D\u4E2D\u4E8B\u4EF6\u4E0D\u7528\u6B64\u5B57\u6BB5\uFF0C\u7528 event.skillId\uFF09", (context) => path(context, "event", "sourceSkillId"));
   family("event.<field>", /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, "\u6D3B\u8DC3\u4E8B\u4EF6\u7684\u81EA\u6709\u6807\u91CF\u5B57\u6BB5", (context, key4) => path(context, "event", key4));
   function readDistance(context, from, to) {
     if (typeof own(context, "distance") === "function") return callback(context, "distance", from, to);
@@ -1215,14 +1239,14 @@ var FatedTacticalTavern = (() => {
         const skill2 = own3(state.skills, id3);
         if (!skill2) continue;
         const carrier4 = { type: "skill", id: id3, ownerId };
-        result.push({ entity: { ...skill2, vars: skillCarrierVars(state, carrier4) }, carrier: carrier4, nativeOwnerId: ownerId });
+        result.push({ entity: { ...skill2, id: id3, vars: skillCarrierVars(state, carrier4) }, carrier: carrier4, nativeOwnerId: ownerId });
       }
     }
     for (const [id3, entity] of entries(state.items)) {
       const nativeOwnerId = equippedBy.get(id3) ?? entity.ownerId;
       const template = own3(state.equipment, entity.templateId);
       if (own3(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
-        result.push({ entity: { ...template, ...entity, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: "item", id: id3 }, nativeOwnerId });
+        result.push({ entity: { ...template, ...entity, id: id3, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: "item", id: id3 }, nativeOwnerId });
       }
     }
     for (const [id3, entity] of entries(state.zones)) {
@@ -1691,8 +1715,8 @@ var FatedTacticalTavern = (() => {
       },
       status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
       zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === "zone" ? carrier4 : void 0),
-      skill: frame.carrier?.type === "skill" ? { vars: skillCarrierVars(state, frame.carrier) } : void 0,
-      item: frame.carrier?.type === "item" ? { vars: { ...own4(state.equipment, carrier4?.templateId)?.vars, ...carrier4?.vars } } : void 0,
+      skill: frame.carrier?.type === "skill" ? { id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : void 0,
+      item: frame.carrier?.type === "item" ? { id: frame.carrier.id, templateId: carrier4?.templateId, vars: { ...own4(state.equipment, carrier4?.templateId)?.vars, ...carrier4?.vars } } : void 0,
       tape: resolveEntity(state, frame.scope?.tape),
       center: event.center,
       pool: frame.scope?.pool,
@@ -2687,11 +2711,12 @@ var FatedTacticalTavern = (() => {
     const schema = { ...object({ op: literal(op), enabled: { ...bool, default: true }, label: text, ...properties }, ["op", ...required]), description: opNotes[op] };
     return conditions.length ? withRules(schema, ...conditions) : schema;
   }
+  var intentEnum = enumOf("normal", "function", "core", "kill", "concept");
   var controlPolicy = object({
     controller: enumOf("default", "ai"),
     allegiance: enumOf("normal", "friendly_only", "all_hostile"),
     forcedActionKinds: list(enumOf("attack", "skill")),
-    intentLock: enumOf("normal", "function", "core", "kill", "concept"),
+    intentLock: intentEnum,
     allowFriendlyTarget: bool,
     moraleLock: literal("steady")
   });
@@ -2742,7 +2767,7 @@ var FatedTacticalTavern = (() => {
     when("stat", ratioStats, { properties: { flat: ratioFlat }, not: needs("additivePercent") }),
     when("stat", multiplierStats, { not: needs("flat") })
   );
-  var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
+  var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
   var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
   var spawnRadius = either({ type: "number", minimum: 0 }, formula);
   var area = object({
@@ -4562,7 +4587,7 @@ var FatedTacticalTavern = (() => {
       const skill2 = actionSkill(state, actor, event.skillId);
       const isHeld = actor?.skills?.includes(event.skillId);
       const actionRules = hook2 === "active" || !isHeld ? skill2?.rules : void 0;
-      const carrier4 = skill2?.itemId ? { type: "item", id: skill2.itemId } : isHeld ? { type: "skill", id: event.skillId, ownerId: actor.id } : null;
+      const carrier4 = skill2?.itemId ? { type: "item", id: skill2.itemId } : skill2 ? { type: "skill", id: event.skillId, ownerId: actor?.id } : null;
       return [...entries3, ...(event.rules ?? actionRules ?? []).filter((rule2) => rule2.hook === hook2).map((rule2) => ({
         rule: rule2,
         ownerId: event.actorId,
@@ -5334,7 +5359,7 @@ var FatedTacticalTavern = (() => {
     state.logs.pop();
     record(state, first, "turn", `${first.name}\u5F00\u59CB\u56DE\u5408`, { turn: 0 });
   }
-  var locateUnit = (state, { x, y }, targetId) => targetId ? tableEntry(state.units, targetId) : unitAt(state, x, y);
+  var locateUnit = (state, { x, y }, targetId, match) => targetId ? tableEntry(state.units, targetId) : (match ? unitsAt(state, x, y).find(match) : void 0) ?? unitAt(state, x, y);
   var locateCover = (state, { x, y }) => coverAt(state, x, y);
   var allCells = (state) => state.grid.flatMap((row, y) => row.map((_, x) => pos(x, y)));
   var modifierEvent = (unit, context) => {
@@ -5837,10 +5862,11 @@ var FatedTacticalTavern = (() => {
     return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at2, c)).sort(byId2);
   }
   function usableTiles(state, actor, template, weapon2) {
+    const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
     return allCells(state).filter((at2) => validReach(
       state,
       actor,
-      template.target === "cell" || (template.shape ?? "single") !== "single" ? at2 : locateUnit(state, at2) ?? at2,
+      template.target === "cell" || (template.shape ?? "single") !== "single" ? at2 : locateUnit(state, at2, null, (u) => selectionAllows(template, actor, u, allowFriendlyTarget)) ?? at2,
       template,
       weapon2?.ammo
     ) && !(["line", "cone", "fan"].includes(template.shape) && sameCell(actor, at2) && template.range !== 0));
@@ -5943,7 +5969,7 @@ var FatedTacticalTavern = (() => {
     if (type === "flee") return { ...common, name: "\u9003\u8DD1", maneuver: "flee" };
     if (type === "detour") return { ...common, name: "\u7ED5\u884C", maneuver: "detour" };
     if (type === "lock_on") {
-      const target2 = locateUnit(state, center, action.targetId);
+      const target2 = locateUnit(state, center, action.targetId, (u) => u.team !== unit.team);
       if (!target2 || target2.team === unit.team || !sameCell(target2, center)) return fail2("\u5B9A\u4F4D\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
       return { ...common, name: "\u5B9A\u4F4D", maneuver: "lock_on", targetId: target2.id };
     }
@@ -5964,7 +5990,7 @@ var FatedTacticalTavern = (() => {
       return { ...common, name: "\u538B\u5236", targetId: target2.id, targets: [{ ...profile, damage: null, expectedDamage: 0 }] };
     }
     if (["grapple", "disarm", "trip", "push"].includes(type)) {
-      const target2 = locateUnit(state, center, action.targetId);
+      const target2 = locateUnit(state, center, action.targetId, (u) => u.team !== unit.team);
       if (!target2 || target2.team === unit.team || !sameCell(target2, center)) return fail2("\u6218\u672F\u5BF9\u6297\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
       if (gridDistance(unit, target2) > 1 || !hasLOS(state, unit, target2)) return fail2("\u6218\u672F\u5BF9\u6297\u9700\u8981\u8D34\u8EAB\u4E14\u89C6\u7EBF\u7545\u901A");
       return { ...common, name: { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" }[type], maneuver: type, targetId: target2.id };
@@ -6050,9 +6076,11 @@ var FatedTacticalTavern = (() => {
     if (unplaced) {
       return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon2 : null, action.nonLethal ?? unit.nonLethal) };
     }
-    const aimedUnit = locateUnit(state, center, action.targetId);
+    const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
+    const aoe = (template.shape ?? "single") !== "single";
+    const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? (u) => selectionAllows(template, unit, u, allowFriendlyTarget) : null);
     if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail2("\u76EE\u6807\u5355\u4F4D\u4E0D\u5728\u6307\u5B9A\u683C");
-    const aim = template.target === "cell" || (template.shape ?? "single") !== "single" ? center : aimedUnit ?? center;
+    const aim = template.target === "cell" || aoe ? center : aimedUnit ?? center;
     const origin = actionOrigin ? {
       ...unit,
       x: actionOrigin.x,
@@ -6074,9 +6102,7 @@ var FatedTacticalTavern = (() => {
     const solid = locateCover(state, center);
     const coverTarget = Boolean(solid && template.target !== "cell" && (attack || hasStrikeDamage(template)));
     const cells2 = area2(state, origin, aim, template, ammo, { ignoreRange, ignoreLOS, deferGeometry });
-    const aoe = (template.shape ?? "single") !== "single";
     if (!cells2.length && !deferGeometry) return fail2("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", { ...geometry, originSensitive: true });
-    const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
     if (!aoe) {
       if (!selectionAllows(template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== "cell") {
         return fail2("\u8BE5\u683C\u6CA1\u6709\u5408\u9002\u7684\u76EE\u6807", geometry);
@@ -6098,7 +6124,7 @@ var FatedTacticalTavern = (() => {
       ignoreRange || deferGeometry,
       ignoreLOS || deferGeometry,
       allowFriendlyTarget,
-      action.targetId
+      action.targetId ?? (!aoe ? aimedUnit?.id : void 0)
     );
     const areaAttack = (template.shape ?? "single") !== "single";
     const declaredIntent = action.intent ?? unit.intent ?? "normal";
@@ -14495,10 +14521,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const power = r.power ?? taggedPower;
       const numericPower = number2(power, NaN);
       const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
+      const statTag = tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
       const rules = readRules(r.rules, notes2);
       const prefix = `fx-${hash(sid).toString(36)}`;
       const areaDamage = isAreaDamage(area3);
-      appendRules(rules, convertNarrative(rawEffects, notes2, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes2);
+      const narrativeNotes = [];
+      appendRules(rules, convertNarrative(rawEffects, { push: (msg) => narrativeNotes.push(msg) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes2);
+      const missingMainStrike = !rules.length && !r.damage && !r.heal && !passive && hasPower && tag2;
+      for (const [index2, message] of narrativeNotes.entries()) {
+        const strikeHint = index2 === 0 && missingMainStrike ? `\uFF1B\u672C\u6280\u80FD\u5DF2\u58F0\u660E\u5A01\u529B ${numericPower}\u3001\u4F24\u5BB3\u300C${tag2}\u300D${statTag ? `\u3001\u5173\u8054\u5C5E\u6027 ${statTag}` : ""}\uFF0C\u4F46\u6A21\u677F\u5F53\u524D\u7F3A\u5C11 damage \u9AB0\u5B50\u5BF9\u8C61\uFF0C\u8BF7\u540C\u6279\u8865\u5145 /skills/${sid}/damage \u6216\u5728 active \u89C4\u5219\u5185\u7ED3\u7B97\u4E3B\u51FB` : "";
+        notes2.push(message + strikeHint);
+      }
       if (!rules.length && !r.damage && !r.heal && !narrativeEntries(rawEffects).length && tag2) {
         const program2 = hasPower ? damageTags(tag2, power) : [];
         if (program2.length && areaDamage) notes2.push(`\u300C${skillName}\u300D\u8303\u56F4\u4F24\u5BB3\u6807\u7B7E\u5F85\u6807\u51C6\u5316\uFF1A${tag2}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`);
@@ -14518,7 +14551,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         ...passive && { passive: true },
         ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2),
         slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
-        range: bound(area3.range, 0, 30, 1),
+        range: bound(area3.range, 0, 64, 1),
         shape: area3.shape ?? "single",
         target: area3.target ?? (areaDamage && object3(r.damage) ? "any" : "enemy"),
         ...geometryFields(area3),
@@ -15503,7 +15536,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function describe2(schema) {
     if (schema.format === "tactical-expr") return "Expr \u5B57\u7B26\u4E32";
     if (schema.format === "tactical-status-id") return "\u5DF2\u5B9A\u4E49\u72B6\u6001 ID";
-    if (schema.$ref) return schema.$ref.split("/").at(-1);
+    if (schema.$ref) {
+      const name = schema.$ref.split("/").at(-1);
+      return name === "expireRule" ? `{${fields2(defs2.expireRule)}}` : name;
+    }
     if (schema.oneOf || schema.anyOf) return (schema.oneOf ?? schema.anyOf).map(describe2).join(" \u6216 ");
     if (Object.hasOwn(schema, "const")) return JSON.stringify(schema.const);
     if (schema.enum) return schema.enum.join(" / ");
@@ -15524,49 +15560,53 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var spawnSpecs2 = Object.entries(defs2).filter(([key4]) => key4.startsWith("spawn_")).map(([key4, schema]) => `\u2022 ${key4.slice("spawn_".length)}\uFF1A{${fields2(schema)}}`);
   var VM_EFFECT_PROTOCOL = `\u3010\u6218\u672F VM \u6548\u679C\u534F\u8BAE\u3011
 rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rule, ["hook"])}\uFF0Chook: \u4EE5\u4E0B\u679A\u4E3E}\u3002
-\u5141\u8BB8 hook\uFF1A${vmHooks.join(" / ")}\u3002
-\u9009\u65F6\u673A\uFF1Aactive \u4E3B\u52A8\u65BD\u653E\uFF1Bbefore_action \u884C\u52A8\u6267\u884C\u524D\u6263\u8D39\u4E0E\u53D6\u6D88\u63A7\u5236\uFF1Bbefore_target \u76EE\u6807\u786E\u5B9A\u540E\u91CD\u5B9A\u5411\uFF1Bbefore_check / after_check \u68C0\u5B9A\u524D\u6539\u5224\u4E0E\u68C0\u5B9A\u540E\u8BFB\u7ED3\u679C\uFF1Bafter_natural_roll \u81EA\u7136 d20 \u51FA\u9AB0\u540E\u3001\u5224\u5B9A\u524D\uFF0C\u8BFB event.naturalRoll \u5E76\u7528 replaceNaturalRoll \u66FF\u6362\uFF1Bafter_hit \u547D\u4E2D\u540E\uFF1Bafter_damage / after_heal \u5B9E\u9645\u4F24\u5BB3\uFF0F\u6CBB\u7597\u540E\uFF1Bafter_action \u884C\u52A8\u5B8C\u6210\u3002
-\u751F\u547D\u5468\u671F\uFF1Abefore_status \u65BD\u52A0\u72B6\u6001\u524D\u62E6\u622A\uFF1Bafter_status_applied / after_status_removed \u72B6\u6001\u65BD\u52A0\uFF0F\u79FB\u9664\u540E\uFF1Bon_status_immunized \u72B6\u6001\u88AB\u514D\u75AB\uFF1Bon_summon_evict \u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u66FF\u6362\u3001\u6D88\u6563\u524D\uFF08target \u4E3A\u65E7\u53EC\u5524\u7269\uFF09\uFF1Bon_lethal_p1 \u6FD2\u6B7B\u5148\u5904\u7406\u9057\u8A00\uFF0C\u751F\u547D\u4ECD\u5F52\u96F6\u624D\u8FDB\u5165 on_lethal_p2 \u5904\u7406\u514D\u6B7B\u7B49\u62E6\u622A\uFF1Bon_death / on_ally_death / on_kill \u5012\u4E0B\uFF0F\u53CB\u65B9\u5012\u4E0B\uFF0F\u51FB\u6740\uFF1Bturn_start / turn_end \u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF1Bround_start / round_end \u6574\u8F6E\u9996\u5C3E\u3002
-before_commit \u5728 damage\u3001heal\u3001resource \u63D0\u4EA4\u524D\u89E6\u53D1\uFF0C\u533A\u5206 event.commitKind\uFF0C\u8BFB\u53D6 event.targetId\u3001event.pool\u3001event.sourceRuleId\uFF0C\u53EF\u7528 cancel \u6216 finalAmount \u6539\u5199\u672C\u7B14\u63D0\u4EA4\u3002
-\u540C\u4E00\u8F7D\u4F53\u5185\u89C4\u5219 ID \u552F\u4E00\u3002\u89C4\u5219\u7531\u9AD8 priority \u5230\u4F4E priority \u6267\u884C\uFF1Bprogram \u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\u3002filter \u5FC5\u987B\u6C42\u5F97 true \u624D\u8FDB\u5165\u89C4\u5219\u3002\u89C4\u5219\u548C\u6307\u4EE4\u5747\u53EF\u5199 enabled:false \u6682\u505C\u6267\u884C\uFF0Clabel \u4E3A\u663E\u793A\u540D\u3002\u53EA\u6709\u4E0E\u4E8B\u4EF6\u76F8\u7B26\u7684\u8F7D\u4F53\u4F1A\u89E6\u53D1\u89C4\u5219\uFF1B\u7528 filter \u533A\u5206\u4E8B\u4EF6\u7684\u65BD\u653E\u8005\u6216\u627F\u53D7\u8005\uFF0C\u4F8B\u5982 "attacker.id == self.id"\u3002
+\u5141\u8BB8 hook \u679A\u4E3E\uFF1A${vmHooks.join(" / ")}\u3002
+\u6807\u8BC6\u7B26\u683C\u5F0F\uFF1A\u89C4\u5219\uFF0F\u6A21\u677F\uFF0F\u53D8\u91CF ID \u5339\u914D ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$\uFF1Btag \u5339\u914D ^[a-z0-9][a-z0-9_-]{0,31}$\uFF1B\u72B6\u6001\u4E0E\u8F7D\u4F53\u9876\u5C42 flags \u679A\u4E3E\u4E3A undispellable / concept_immune\u3002
 
-after_move \u5728\u5355\u4F4D\u5B9E\u9645\u79FB\u52A8\u6216\u53D8\u66F4\u9AD8\u5EA6\u540E\u89E6\u53D1\u3002attacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0Cevent.fromX/fromY\u3001event.toX/toY\u3001event.steps\u3001event.moveKind \u63CF\u8FF0\u672C\u6B21\u4F4D\u79FB\u3002\u8F7D\u5177\u540C\u6B65\u65F6\u4EC5\u79FB\u52A8\u5C1A\u672A\u540C\u683C\u7684\u4E58\u5BA2\uFF0C\u4E58\u5BA2\u53EA\u54CD\u5E94\u8BB0\u5F55\u7684\u8F7D\u5177 ID\u3002
+\u3010\u5168\u5C40\u4E8B\u4EF6\u7BA1\u7EBF\u4E0E\u8F7D\u4F53\u4F5C\u7528\u57DF\u3011
+\u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u8D77\u70B9\u4E0E\u65E0\u89C6\u89C6\u7EBF\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001\u91CD\u5B9A\u5411\u6216\u66FF\u6362\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/rawAmount/finalAmount/sourceRuleId\uFF0C\u652F\u6301 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 preventDeath \u514D\u6B7B\u9501\u8840 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
+\u2022 \u72EC\u7ACB\u751F\u547D\u5468\u671F\u94A9\u5B50\uFF1Aafter_move\uFF08\u5B9E\u9645\u4F4D\u79FB\u6216\u9AD8\u5EA6\u53D8\u5316\u540E\u89E6\u53D1\uFF0Cattacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0C\u53EF\u8BFB event.fromX/fromY/toX/toY/steps/moveKind\uFF09\uFF1Bbefore_status / after_status_applied / after_status_removed / on_status_immunized\uFF08\u72B6\u6001\u62E6\u622A\u3001\u65BD\u52A0\u3001\u79FB\u9664\u3001\u88AB\u514D\u75AB\uFF09\uFF1Bon_summon_evict\uFF08\u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u9876\u66FF\u6D88\u6563\u524D\uFF0Ctarget \u4E3A\u65E7\u53EC\u5524\u7269\uFF0Cevent.sourceSkillId \u4E3A\u5176\u6765\u6E90\u6280\u80FD\uFF09\uFF1Bturn_start / turn_end\uFF08\u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF09\uFF1Bround_start / round_end\uFF08\u5927\u8F6E\u9996\u5C3E\uFF09\u3002\u4EFB\u610F\u94A9\u5B50\u5747\u53EF\u4F7F\u7528 ask \u6302\u8D77\u7B49\u5F85\u9009\u62E9\u3002
+\u2022 \u4E94\u7C7B\u8F7D\u4F53\u4F5C\u7528\u57DF\u77E9\u9635\uFF1A
+  1. unit / item\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF08\u88C5\u5907\u89C4\u5219\u5185 item.id / item.templateId \u6307\u5411\u5F53\u524D\u88C5\u5907\u5B9E\u4F8B\u4E0E\u6A21\u677F\uFF09\uFF0C\u6301\u6709\u6216\u7A7F\u6234\u671F\u95F4 mods \u4E0E\u975E active \u89C4\u5219\u5168\u5C40\u5E38\u9A7B\u3002
+  2. skill\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF0Cskill.id \u4E3A\u672C\u6280\u80FD\u81EA\u8EAB ID\u3002hook:"active" \u4EC5\u5728\u4E3B\u52A8\u65BD\u653E\u672C\u6280\u80FD\u65F6\u6309\u5E8F\u6267\u884C\uFF1B\u5176\u4F59\u6240\u6709\u975E active \u94A9\u5B50\u4E0E mods \u5728\u5355\u4F4D\u6301\u6709\u8BE5\u6280\u80FD\u671F\u95F4\u5168\u5C40\u5E38\u9A7B\u76D1\u542C\u5168\u573A\uFF01\u82E5\u67D0\u6761\u975E active \u89C4\u5219\u4EC5\u5728\u65BD\u653E\u672C\u6280\u80FD\u65F6\u751F\u6548\uFF0Cfilter \u5FC5\u987B\u5305\u542B event.skillId == skill.id\uFF08\u666E\u901A\u884C\u52A8\uFF0F\u547D\u4E2D\uFF0F\u4F24\u5BB3\u4E8B\u4EF6\u4E00\u5F8B\u8BFB event.skillId\uFF0C\u52FF\u7528\u4EC5\u5C5E\u53EC\u5524\u7269\u9876\u66FF\u4E8B\u4EF6\u7684 event.sourceSkillId\uFF09\u3002\u5355\u6B21\u4E3B\u52A8\u65BD\u653E\u5185\u7684\u987A\u5E8F\u56E0\u679C\u94FE\uFF08\u5982\u9020\u6210\u4F24\u5BB3\u540E\u6309\u5B9E\u6263\u91CF\u56DE\u8840\uFF0F\u56DE\u80FD\uFF0F\u4E8C\u6BB5\u5224\u5B9A\uFF09\u5E94\u76F4\u63A5\u5199\u5728 hook:"active" \u5185\u7528 out \u53D8\u91CF\u4E32\u8054\uFF0C\u65E0\u9700\u62C6\u6210\u5E38\u9A7B\u4E8B\u4EF6\u94A9\u5B50\u3002
+  3. status\uFF1Aself \u4E3A\u72B6\u6001\u643A\u5E26\u8005\uFF0Csource \u4E3A\u65BD\u52A0\u8005\uFF0Cstatus \u4E3A\u5F53\u524D\u72B6\u6001\u5B9E\u4F8B\u3002
+  4. zone\uFF1A\u533A\u57DF\u81EA\u8EAB\u53EF\u6302 tags / vars / mods / rules\uFF1B\u5728\u533A\u57DF\u5185\u7684\u5355\u4F4D\u94A9\u5B50\uFF08\u5982 turn_start\uFF09\u4E2D self \u4E3A\u5904\u4E8E\u533A\u57DF\u5185\u7684\u5355\u4F4D\uFF0Csource \u4E3A\u533A\u57DF\u521B\u5EFA\u8005\uFF1B\u5176\u4ED6\u89C4\u5219\u53EF\u7528 in_zone(unit, tagOrId) \u67E5\u8BE2\u3002
+\u2022 \u540C\u4E00\u8F7D\u4F53\u5185\u89C4\u5219 ID \u552F\u4E00\u3002\u89C4\u5219\u6309 priority \u4ECE\u9AD8\u5230\u4F4E\u6267\u884C\uFF0Cprogram \u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF1Bfilter \u6C42\u503C\u4E3A true \u624D\u8FDB\u5165\u89C4\u5219\u3002
 
-\u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF0C\u5176\u503C\u662F\u4E0B\u5217\u540D\u79F0\u3002? \u8868\u793A\u53EF\u7701\uFF0C\u95ED\u5408\u5BF9\u8C61\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\u3002
+\u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF08\u95ED\u5408\u679A\u4E3E\uFF0C\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\uFF09\uFF1A
 ${instructions2.join("\n")}
-check \u7684 kind:chance \u7528 dc \u4E0E d100 \u70B9\u6570\u6BD4\u8F83\uFF0C\u4F8B\u5982 dc:25 \u8868\u793A 25% \u6210\u529F\u7387\u3002\u8C41\u514D\u672A\u901A\u8FC7\u65F6\u8FD0\u884C onFail\u3002\u72B6\u6001\u8C41\u514D\u7528 kind:"save"\u3001statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF1B\u68C0\u5B9A\u94A9\u5B50\u53EF\u8BFB\u53D6 event.statusId\u3002ask \u7684 kind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0C\u4E3A option \u65F6\u5FC5\u586B options\uFF0C\u4E3A number \u65F6\u5FC5\u586B min/max\u3002perform \u7684 skill \u53EA\u914D skillId\uFF0Creplay \u53EA\u914D tapeRecord\u3002resource \u7684 add/sub/set \u9700\u8981 amount\uFF0Cswap \u9700\u8981\u4E00\u4E2A pool \u548C otherPool\uFF1Bpool \u53EF\u5199 hp/mp/sp\uFF0C\u6216\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF0C\u4E5F\u652F\u6301 add_max/sub_max/set_max \u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u81EA\u52A8\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF1BminRemain \u53EF\u9650\u5236\u6700\u5927\u503C\u4E0B\u9650\u3002move \u7684 step/teleport \u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u5347\u7A7A/\u77AC\u79FB\uFF0C\u5DF2\u5728\u7A7A\u4E2D\u987B\u53E6\u7528 land:true \u5F3A\u5236\u843D\u5730\uFF1B\u9501\u4E0D\u963B\u6B62\u964D\u843D\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\uFF0C\u800C\u4E0D\u662F\u6301\u6709\u8005\u7684 mods.flags\uFF1B\u5230\u671F\u4ECD\u4F1A\u81EA\u7136\u7ED3\u675F\u3002despawn \u7684 entityKind:"unit" \u53EA\u79FB\u9664\u53EC\u5524\u7269\uFF0C\u4E0D\u8BA1\u51FB\u6740\u3002
-mutate_event \u7684 patch \u5FC5\u987B\u81F3\u5C11\u6709\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u53EA\u80FD\u7528\u4E8E\u4E0B\u5217\u53EF\u5199 hook\uFF0C\u5D4C\u5957\u5206\u652F\u4EA6\u7136\uFF1A
+check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
+mutate_event \u7684 patch \u81F3\u5C11\u542B\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u4EC5\u9650\u4E0B\u5217\u53EF\u5199 hook\uFF08before_check.minRating \u53D6\u503C\u679A\u4E3E\uFF1A\u8D85\u66B4\u51FB / \u5F3A\u66B4\u51FB / \u5E73\u66B4\u51FB / \u6709\u6548 / \u52C9\u5F3A / \u64E6\u4F24 / \u5931\u624B\uFF09\uFF1A
 ${eventPatches.join("\n")}
-\u6E05\u9664\u654C\u65B9\u533A\u57DF\u7528 {"op":"despawn","entityKind":"zone","select":{"from":"zones","where":"zone.team != null && zone.team != self.team"}}\u3002zone.team \u548C candidate.team \u8BFB\u53D6\u521B\u5EFA\u65F6\u7684\u9635\u8425\uFF1Bzone.sourceId \u548C candidate.sourceId \u8BFB\u53D6\u521B\u5EFA\u8005 ID\u3002\u82E5\u9700\u9650\u5B9A\u8303\u56F4\uFF0C\u7528 select.area \u7B5B\u9009\u533A\u57DF\u8986\u76D6\u683C\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF0Cunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\u4E2A\uFF1B\u90FD\u4E0D\u5199\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\u3002\u751F\u6210\u89C4\u683C\u4E2D\u7684 tier\u3001count\u3001remainingTurns\u3001area.radius \u53EF\u5199\u6570\u503C\u8868\u8FBE\u5F0F\uFF0C\u4F8B\u5982 tier:"max(1, self.tier - 1)"\u3002terrain \u81F3\u5C11\u6709 kind \u6216 height\uFF0C\u63D0\u4F9B mode \u65F6\u5FC5\u987B\u6709 height\uFF1A
+\u6E05\u9664\u654C\u65B9\u533A\u57DF\u65F6 where \u53EF\u5199 "zone.team != null && zone.team != self.team"\uFF08zone.team / candidate.team \u8BFB\u521B\u5EFA\u9635\u8425\uFF0Czone.sourceId / candidate.sourceId \u8BFB\u521B\u5EFA\u8005 ID\uFF09\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF1Bunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\uFF0C\u5747\u7701\u7565\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\uFF1Btier\u3001count\u3001remainingTurns\u3001area.radius \u652F\u6301\u6570\u503C\u8868\u8FBE\u5F0F\uFF1Bterrain \u81F3\u5C11\u542B kind \u6216 height\uFF0C\u586B mode \u65F6\u5FC5\u586B height\uFF1A
 ${spawnSpecs2.join("\n")}
-\u53EC\u5524\u7269\u7684 sourceSkillId \u7531\u5F15\u64CE\u8BB0\u5F55\u5B9E\u9645\u751F\u6210\u5B83\u7684\u6280\u80FD ID\uFF0C\u652F\u6301\u4E3B\u52A8\u3001\u88AB\u52A8\u548C\u88C5\u5907\u865A\u62DF\u6280\u80FD\uFF08equip:<\u5B9E\u4F8BID>:<\u89C4\u5219ID>\uFF09\u3002\u7528 self.sourceSkillId\u3001target.sourceSkillId\u3001candidate.sourceSkillId \u6216 vars.<\u5C40\u90E8\u5B9E\u4F53>.sourceSkillId \u8BFB\u53D6\u3002on_summon_evict \u7684 event.sourceSkillId \u8BFB\u53D6\u5373\u5C06\u6D88\u6563\u7684\u65E7\u53EC\u5524\u7269\u7684\u6765\u6E90\u6280\u80FD\u3002\u65E0\u6280\u80FD\u6765\u6E90\u6216\u65E7\u5B58\u6863\u7F3A\u5C11\u8BB0\u5F55\u65F6\u8BFB\u5230 null\u3002\u6B64\u5B57\u6BB5\u53EA\u8BFB\u3002
-zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002single \u53EA\u8986\u76D6\u4E2D\u5FC3\u683C\uFF1Brect \u9700 rect \u5BF9\u8C61\uFF0Ccells \u9700 cells \u6570\u7EC4\u3002
+\u53EC\u5524\u7269 sourceSkillId \u7531\u5F15\u64CE\u53EA\u8BFB\u8BB0\u5F55\u751F\u6210\u5B83\u7684\u6280\u80FD ID\uFF08\u542B\u88C5\u5907\u865A\u62DF\u6280\u80FD equip:<\u5B9E\u4F8BID>:<\u89C4\u5219ID>\uFF09\uFF0C\u53EF\u901A\u8FC7 self/target/candidate/vars.<\u5B9E\u4F53>.sourceSkillId \u8BFB\u53D6\u3002
+zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002single \u4EC5\u4E2D\u5FC3\u683C\uFF1Brect \u5FC5\u586B rect \u5BF9\u8C61\uFF1Bcells \u5FC5\u586B cells \u6570\u7EC4\u3002
 
-\u3010\u8868\u8FBE\u5F0F\u4E0E\u9009\u62E9\u3011
-Expr \u4E3A JSON \u6570\u5B57\u3001\u5E03\u5C14\u503C\u6216\u5B89\u5168\u8868\u8FBE\u5F0F\u5B57\u7B26\u4E32\u3002\u8868\u8FBE\u5F0F\u5185\u652F\u6301\u5355\u53CC\u5F15\u53F7\u5B57\u9762\u91CF\u548C null\uFF0C\u4F8B\u5982 "event.damageType == 'physical'"\u3001"self.vars.cooldown == null"\u3002\u652F\u6301 + - !\u3001\u7B97\u672F\u3001\u6BD4\u8F83\u3001&&\u3001||\u3001\u4E09\u5143\u4E0E\u62EC\u53F7\u3002\u53D8\u91CF\u548C\u67E5\u8BE2\u4E25\u683C\u4F7F\u7528\u6CE8\u518C\u8868\uFF0C\u4E0D\u652F\u6301\u4EFB\u610F\u5C5E\u6027\u8DEF\u5F84\u6216\u526F\u4F5C\u7528\u51FD\u6570\u3002
-let.name\u3001bind\u3001out\u3001outCount \u5199\u88F8\u540D\u79F0\uFF1B\u8BFB\u53D6\u4E00\u5F8B\u5E26\u4F5C\u7528\u57DF\uFF0C\u4F8B\u5982 vars.lostStacks\uFF0C\u4E0D\u80FD\u88F8\u5199 lostStacks\u3002\u5B9E\u4F53\u7ED1\u5B9A\u53EF\u4F5C\u4E3A target:"vars.victim"\u3001\u901A\u8FC7 vars.victim.id \u8BFB\u5B57\u6BB5\uFF0C\u6216\u4F20\u7ED9 has_status(vars.victim, 'taunt')\u3002
+\u3010\u8868\u8FBE\u5F0F\u4E0E\u9009\u62E9\u5668\u3011
+Expr \u4E3A JSON \u6570\u5B57\u3001\u5E03\u5C14\u503C\u6216\u5B89\u5168\u8868\u8FBE\u5F0F\u5B57\u7B26\u4E32\u3002\u5B57\u7B26\u4E32\u5B57\u9762\u91CF\u652F\u6301\u5355\u53CC\u5F15\u53F7\uFF0C\u7A7A\u503C\u7528 null\uFF0C\u652F\u6301 + - !\u3001\u7B97\u672F\u3001\u6BD4\u8F83\u3001&&\u3001||\u3001?: \u4E09\u5143\u4E0E\u62EC\u53F7\u3002\u4E25\u683C\u4F7F\u7528\u6CE8\u518C\u53D8\u91CF\u4E0E\u51FD\u6570\u7B7E\u540D\uFF0C\u65E0\u6570\u7EC4\u5B57\u9762\u91CF\u6216\u4EFB\u610F\u5C5E\u6027\u8DEF\u5F84\u3002
+let.name\u3001bind\u3001out\u3001outCount \u5B9A\u4E49\u65F6\u5199\u88F8\u540D\u79F0\uFF0C\u8BFB\u53D6\u65F6\u4E00\u5F8B\u52A0 vars. \u524D\u7F00\uFF08scope:"owner" \u5199\u5165\u5BBF\u4E3B\u53D8\u91CF\uFF0C\u7528 self.vars.<\u540D> \u8BFB\u53D6\uFF09\u3002\u5B9E\u4F53\u5F15\u7528\u53EF\u76F4\u63A5\u4F5C target:"vars.<\u540D>"\u3001\u8BFB\u5B57\u6BB5 vars.<\u540D>.hp \u6216\u4F20\u5165\u67E5\u8BE2\u51FD\u6570\u3002
 \u53D8\u91CF\uFF1A${formulaReference}\u3002
-\u51FD\u6570\u7B7E\u540D\uFF1A${formulaFunctionReference}\u3002count_units \u7684 predicate \u53EF\u76F4\u63A5\u5199 candidate.team != self.team\uFF0C\u4E5F\u53EF\u4F20\u8868\u8FBE\u5F0F\u6587\u672C\uFF0C\u5982 count_units("candidate.id == 'p1'")\uFF1B\u6574\u6761\u8868\u8FBE\u5F0F\u653E\u8FDB JSON \u5B57\u7B26\u4E32\u65F6\u6309 JSON \u89C4\u5219\u8F6C\u4E49\u5185\u90E8\u53CC\u5F15\u53F7\u3002
-selector\uFF1A${describe2(defs2.selector)}\u3002of \u53EA\u7528\u4E8E statuses\uFF1Bwhere \u9010\u4E2A\u68C0\u67E5 candidate\u3002statuses \u884C\u53EF\u8BFB candidate.id/category/stacks/remainingTurns\uFF1Btape \u884C\u53EF\u8BFB candidate.round/turn/actorId/team/actionType/skillId\uFF0C\u4FDD\u7559\u8BB0\u5F55\u987A\u5E8F\u3002random \u4F7F\u7528\u6218\u5C40 RNG\uFF0C\u4E0D\u653E\u56DE\u62BD\u6837\u3002area.origin \u6216 area.center \u6307\u5B9A\u4E2D\u5FC3\uFF0C\u5747\u7F3A\u7701\u65F6\u4EE5 self \u4E3A\u4E2D\u5FC3\u3002\u8BCD\u6761\u76F8\u5BF9\u8DDD\u79BB\u7528 scale_cells(n)\uFF0C\u660E\u786E\u7C73\u6570\u7528 cells_m(meters)\u3002
-\u968F\u673A\u5F02\u5E38\u793A\u4F8B\uFF1A{"op":"for_each","select":{"options":["poison","burn","freeze","stun"],"pick":{"random":2}},"bind":"sid","body":[{"op":"apply_status","target":"target","statusId":"vars.sid","turns":2}]}\u3002
-pointRef \u53EF\u5199 {x,y,z?}\u3001self/source/target/attacker/center \u6216 vars.<\u540D\u79F0>\uFF08\u683C\u5B50\u6216\u5B9E\u4F53\u4F4D\u7F6E\uFF09\u3002
-targetRef\uFF1A${describe2(defs2.targetRef)}\u3002for_each.bind \u6216 ask(kind:entity) \u53D6\u5F97\u7684\u5B9E\u4F53\u76F4\u63A5\u7528 vars.<\u540D\u79F0>\u3002\u7528\u9009\u62E9\u5668\u6307\u5B9A ID \u65F6\uFF0C\u53EF\u7528 {"from":"units","where":"candidate.id == 'p1'"}\uFF0C\u5E76\u5C06 p1 \u66FF\u6362\u4E3A\u5FEB\u7167 ID\u3002
+\u51FD\u6570\u7B7E\u540D\uFF1A${formulaFunctionReference}\u3002count_units \u7684\u6761\u4EF6\u53EF\u76F4\u63A5\u5199\u5E03\u5C14\u8868\u8FBE\u5F0F\u6216\u5B57\u7B26\u4E32\u5B57\u9762\u91CF\uFF08JSON \u5B57\u7B26\u4E32\u5185\u53CC\u5F15\u53F7\u9700\u8F6C\u4E49\uFF09\u3002
+selector\uFF1A${describe2(defs2.selector)}\u3002
+\u2022 \u96C6\u5408\u5168\u96C6\u8BED\u4E49\uFF1Afrom:"units" \u9ED8\u8BA4\u5305\u542B\u5168\u573A\u5B58\u6D3B\u8005\u3001\u9635\u4EA1\u5C38\u4F53\u3001\u53CB\u519B\u4E0E self \u81EA\u8EAB\uFF0C\u4E0D\u4F1A\u81EA\u52A8\u8FC7\u6EE4\u654C\u6211\u6216\u751F\u6B7B\uFF01\u5FC5\u987B\u5728 where \u4E2D\u6309\u539F\u63CF\u8FF0\u663E\u5F0F\u7EC4\u5408 candidate.alive\u3001candidate.team\uFF08blue/red\uFF0C\u6BD4\u8F83 self.team\uFF09\u4E0E candidate.id != self.id\u3002of \u4EC5\u7528\u4E8E from:"statuses"\uFF1Bstatuses \u5019\u9009\u53EF\u8BFB candidate.id/category/tier/stacks/remainingTurns\uFF1Bzones \u5019\u9009\u53EF\u8BFB candidate.id/team/sourceId\uFF1Btape \u5019\u9009\u6309\u65F6\u95F4\u5E8F\u4FDD\u7559\u8BB0\u5F55\uFF0C\u53EF\u8BFB candidate.round/turn/actorId/team/actionType/skillId\uFF1Boptions \u4F20\u5165\u5019\u9009 ID \u5B57\u7B26\u4E32\u6570\u7EC4\u914D\u5408 pick:{random:N} \u505A\u786E\u5B9A\u6027\u4E0D\u653E\u56DE\u62BD\u6837\uFF0Cfor_each \u4EE5 bind \u53D6\u51FA\u6240\u9009 ID \u8D4B\u7ED9 statusId:"vars.<\u540D>" \u6216 skillId:"vars.<\u540D>"\u3002
+\u2022 \u51E0\u4F55\u4E0E\u5C3A\u5EA6\uFF1Aarea.origin \u6216 area.center \u6307\u5B9A\u4E2D\u5FC3\uFF08\u7F3A\u7701\u4E3A self\uFF09\uFF1B\u8BCD\u6761\u76F8\u5BF9\u6863\u4F4D\u8DDD\u79BB\uFF0F\u534A\u5F84\u7528 scale_cells(n)\uFF0C\u660E\u786E\u7C73\u6570\u7528 cells_m(meters)\u3002
+pointRef\uFF1A\u53EF\u5199 {x,y,z?}\u3001\u4F5C\u7528\u57DF\u679A\u4E3E self / source / target / attacker / center \u6216 vars.<\u540D\u79F0>\u3002
+targetRef\uFF1A${describe2(defs2.targetRef)}\u3002\u7279\u5B9A\u5FEB\u7167\u5B9E\u4F53\u53EF\u7528\u9009\u62E9\u5668 {"from":"units","where":"candidate.id == '<\u5FEB\u7167ID>'"}\u3002
 
-\u3010\u58F0\u660E\u5F0F\u4FEE\u9970\u3011
-mods \u662F\u4FEE\u9970\u6570\u7EC4\uFF0C\u6BCF\u9879 ${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u6709 stat\u3001locks\u3001flags \u6216 controlPolicy\uFF1B\u586B\u5199\u6570\u503C\u4FEE\u9970\u65F6\u5FC5\u987B\u6307\u5B9A stat\u3002\u7EC4\u5408\u503C\u4E3A (\u57FA\u7840 + flat \u603B\u548C) \xD7 (1 + additivePercent \u603B\u548C) \xD7 mult \u8FDE\u4E58\u3002when \u5FC5\u987B\u6C42\u5F97 true \u624D\u751F\u6548\u3002
-\u2022 \u8F93\u51FA\u65B9\uFF08\u81EA\u5DF1\u6253\u522B\u4EBA\uFF09\uFF1AdamageFlat \u8F93\u51FA\u56FA\u5B9A\u52A0\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528 flat\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF0C\u57FA\u503C 1\uFF0C\u7528 mult:1.3 \u6216 additivePercent:0.3 \u8868\u793A +30%\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF0C\u57FA\u503C\u4E3A\u5DF2\u6709\u7A7F\u7532\uFF0C\u7528 flat\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF0C\u57FA\u503C 0\uFF08\u6B66\u5668\u59FF\u6001\u53EF\u81EA\u5E26\u7A7F\u7532\uFF09\uFF0C\u7528 flat:0.2 \u8868\u793A +20%\u3002
-\u2022 \u627F\u4F24\u65B9\uFF08\u81EA\u5DF1\u6328\u6253\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat:800\uFF08\u4E0D\u8981\u5199\u6210\u8D1F\u7684 damageFlat\uFF09\uFF1BdamageReduction / dr \u53D7\u51FB\u767E\u5206\u6BD4\u51CF\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528 flat:0.3 \u8868\u793A +30%\u3002damageReduction \u5148\u7B97\uFF0Cdr \u5728\u56FA\u5B9A\u51CF\u4F24\u4E4B\u540E\u53E6\u4E58\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u8FD9\u4E9B\u51CF\u4F24\u3002
-\u2022 \u79FB\u52A8\uFF1Amovement \u7528 flat \u5199\u5C42\u7EA7\u5185\u7684\u79FB\u52A8\u589E\u51CF\uFF0C\u5F15\u64CE\u518D\u6362\u6210\u6218\u573A\u683C\u6570\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u5BF9\u6765\u6E90\u8BA1\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u547D\u4E2D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF0C\u53EF\u7528 scale_cells(n) \u6362\u7B97\u3002
-\u2022 \u95EA\u907F\uFF1A\u5728\u53D7\u51FB\u65B9\u5199 {"stat":"dodge","flat":4}\uFF0C\u666E\u901A\u653B\u51FB\u68C0\u5B9A\u6263\u9664 4 \u70B9\u547D\u4E2D\u3002\u95EA\u907F\u3001\u8C41\u514D\u96BE\u5EA6\u4E0E\u62B5\u6297\u52A0\u503C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\u3002check.statusId \u4F1A\u900F\u4F20\u5230 event.statusId\uFF0C\u4F8B\u5982 mods: [{"stat":"dcBonus","flat":10,"when":"event.statusId == 'freeze'"},{"stat":"resistBonus","flat":10,"when":"event.statusId == 'freeze'"}]\uFF1B\u524D\u8005\u8BFB\u53D6\u65BD\u52A0\u8005\uFF0C\u540E\u8005\u8BFB\u53D6\u8C41\u514D\u8005\u3002
-\u2022 \u5176\u4F59\uFF1AhealingMult \u65BD\u7597\u500D\u7387\u3001incomingHealMult \u53D7\u7597\u500D\u7387\u3001costMult \u6280\u80FD\u6D88\u8017\u500D\u7387\uFF0C\u57FA\u503C 1\uFF0C\u7528 mult\uFF08\u5982\u6280\u80FD\u8D44\u6E90\u6D88\u8017 -30% \u5199 mult:0.7\uFF09\uFF1BcheckBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u96BE\u5EA6\u52A0\u503C\u3001resistBonus \u8C41\u514D\u52A0\u503C\u3001advantage \u4F18\u52BF\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C 0\uFF08initiativeFlat \u53E0\u52A0\u5DF2\u6709\u5148\u624B\u52A0\u503C\uFF09\uFF0C\u7528 flat\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6240\u5728\u8F7D\u4F53\u6301\u6709\u8005\u7684\u5DF2\u6709\u5C5E\u6027\uFF0F\u62A4\u7532\u503C\u3002
-\u2022 \u6BD4\u4F8B\u578B damageReduction\u3001dr\u3001armorPiercePercent \u4E0D\u5141\u8BB8 additivePercent\uFF1Bflat \u6570\u5B57\u5FC5\u987B\u5728 -1..1\uFF0C\u8D1F\u6570\u8868\u793A\u964D\u4F4E\u8BE5\u6BD4\u4F8B\u3002\u500D\u7387\u578B damageMult\u3001finalDamageMult\u3001healingMult\u3001incomingHealMult\u3001costMult \u4E0D\u5141\u8BB8 flat\u3002
-controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002\u6052\u5B9A\u575A\u5B88\u7528 moraleLock:"steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u539F\u672C\u6307\u5B9A enemy \u7684\u653B\u51FB\u9009\u62E9\u53CB\u519B\u6216\u81EA\u5DF1\uFF0C\u4ECD\u53D7\u5C04\u7A0B\u4E0E\u5176\u4ED6\u5408\u6CD5\u6027\u7EA6\u675F\u3002`;
+\u3010\u58F0\u660E\u5F0F\u4FEE\u9970 mods\u3011
+mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u542B stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00\uFF1B\u6570\u503C\u4FEE\u9970\u5FC5\u6307\u5B9A stat\u3002\u8BA1\u7B97\u516C\u5F0F\u4E3A (\u57FA\u503C + flat \u4E4B\u548C) \xD7 (1 + additivePercent \u4E4B\u548C) \xD7 mult \u8FDE\u4E58\uFF1Bwhen \u6C42\u503C\u4E3A true \u65F6\u751F\u6548\uFF1BcheckKind \u53EF\u9650\u5B9A\u68C0\u5B9A\u7C7B\u522B\uFF08attack / save / contest / skill / chance / d20 / dodge / authority \u6216\u72B6\u6001 ID\uFF0F\u6807\u7B7E\uFF09\u3002
+\u2022 \u8F93\u51FA\u4FA7\uFF08\u6301\u6709\u8005\u8FDB\u653B\uFF09\uFF1AdamageFlat \u56FA\u5B9A\u52A0\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat\uFF09\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF08\u57FA\u503C 1\uFF0C\u7528 mult \u6216 additivePercent\uFF0C\u7981\u7528 flat\uFF09\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF08\u7528 flat\uFF09\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF09\u3002
+\u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
+\u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7528 flat \u5199\u540C\u9636\u79FB\u52A8\u589E\u51CF\uFF08\u5F15\u64CE\u81EA\u52A8\u6298\u7B97\u6218\u573A\u683C\u6570\uFF09\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
+\u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002
+controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002moraleLock \u4EC5\u679A\u4E3E\u503C "steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u654C\u65B9\u6307\u5411\u52A8\u4F5C\u5408\u6CD5\u9009\u4E2D\u53CB\u519B\u6216\u81EA\u8EAB\u3002`;
 
   // src/tavern/engine-summary.js
   var PROTOCOL_RULES = `\u3010\u6218\u6597\u534F\u8BAE\uFF5C\u6A21\u677F\u4E0E\u89C4\u5219\u7684\u5206\u5DE5\u3011
 \u2022 \u6BCF\u56DE\u5408\u6709 1 \u52A8\u4F5C\u69FD\u548C 1 \u653B\u51FB\u69FD\u3002ap:1 \u5360\u5BF9\u5E94 slot\uFF0Cap:2 \u5360\u53CC\u69FD\uFF0Cap:0 \u4E0D\u5360\u69FD\u3002initiativeBonus \u6309 slot \u8BA1\u5165\u5F00\u573A attackInit \u6216 actionInit\uFF0C\u6BCF\u69FD\u53D6\u6700\u9AD8\u975E\u8D1F\u503C\u3002
 \u2022 \u5E38\u89C4\u4E3B\u51FB\u5199\u6280\u80FD\u6A21\u677F\u7684 power \u548C damage\uFF1B\u6CBB\u7597\u5199 heal\u3002\u5F15\u64CE\u7ED3\u7B97\u547D\u4E2D\u8BC4\u7EA7\u3001\u4F53\u578B\u3001\u9AD8\u5DEE\u3001\u62A4\u7532\u3001\u66B4\u51FB\u3001\u610F\u56FE\u548C\u58EB\u6C14\u3002power \u5355\u72EC\u586B\u5199\u4E0D\u4F1A\u5F00\u542F\u4E3B\u51FB\uFF0C\u987B\u914D\u5408 damage \u9AB0\u5B50\u5BF9\u8C61\u3002\u4F24\u5BB3\u62C6\u5206\u6216\u989D\u5916\u6548\u679C\u624D\u5199 rules\uFF0C\u907F\u514D\u91CD\u590D\u6253\u51FA\u4E3B\u51FB\u3002
-\u2022 range \u662F\u65BD\u653E\u5C04\u7A0B\uFF0Cradius \u662F\u8986\u76D6\u534A\u5F84\u3002\u6280\u80FD\u6A21\u677F\u7684 range\u3001radius\u3001innerRadius\u3001width \u4E0A\u9650\u4E3A 30 \u683C\u3002
+\u2022 range \u662F\u65BD\u653E\u5C04\u7A0B\uFF08\u4E0A\u9650 64 \u683C\uFF09\uFF0Cradius \u662F\u8986\u76D6\u534A\u5F84\uFF08radius\u3001innerRadius\u3001width \u4E0A\u9650\u4E3A 30 \u683C\uFF09\u3002
 \u2022 \u88C5\u5907\u6A21\u677F equipment \u548C\u5B9E\u4F8B items \u901A\u8FC7 templateId \u5173\u8054\u3002\u6280\u80FD\u6A21\u677F\u5728 skills\uFF0C\u5DF2\u6709\u5355\u4F4D\u7684\u6280\u80FD\u7531 units.<id>.skills \u5F15\u7528\u3002\u72B6\u6001\u6A21\u677F\u5728 statusTemplates\u3002\u4E3B\u52A8\u6280\u80FD\u7684\u989D\u5916\u7A0B\u5E8F\u5199 hook:active\u3002`;
   var ENGINE_API_SUMMARY = PROTOCOL_RULES;
 
@@ -15574,7 +15614,7 @@ controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002\u6052\u5B9A\u575A\u5B
   var reservedIds = Object.keys(STATUSES).join("\u3001");
   var STATUS_CATALOG = `\u3010VM \u72B6\u6001\u3011
 apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u53EF\u6267\u884C\u7684\u72B6\u6001\u3002\u65B0\u72B6\u6001\u5148\u6DFB\u52A0\u6A21\u677F\uFF0C\u518D\u5F15\u7528\uFF0CID \u4E0E\u8868\u952E\u4E00\u81F4\u3002\u539F\u751F\u72B6\u6001 ID \u53EF\u76F4\u63A5\u5F15\u7528\u4F46\u4E0D\u80FD\u8986\u76D6\uFF1A${reservedIds}\u3002\u82E5\u540C\u540D\u6548\u679C\u673A\u5236\u4E0D\u540C\uFF08\u4F8B\u5982\u4E0D\u4F1A\u788E\u51B0\u7684\u51BB\u7ED3\uFF09\uFF0C\u53E6\u8D77\u82F1\u6587 ID \u5982 permafrost_freeze\uFF1B\u540C\u6279\u5148 add /statusTemplates/permafrost_freeze\uFF0C\u518D\u7528 apply_status \u5F15\u7528\u5B83\u3002
-\u6A21\u677F\u5FC5\u586B id\u3001name\u3002\u53EF\u9009 icon\u3001category\u3001description\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF09\u3001durationType\uFF08battle_turns/until_removed/persistent\uFF09\u3001stackMode\uFF08refresh/stack/replace/extend\uFF09\u3001maxStacks\uFF08\u6574\u6570 1\u2026999999 \u6216\u6570\u503C\u8868\u8FBE\u5F0F\uFF1B\u65BD\u52A0\u65F6\u5728\u65BD\u672F\u8005\u4E0A\u4E0B\u6587\u6C42\u503C\uFF0C\u5982 self.maxHp\uFF09\u3001tags\u3001tier\u3001vars\u3001mods\u3001rules\u3002expireOn \u53EF\u7701\uFF0C\u683C\u5F0F\u4E3A {hook, filter?}\uFF0Cfilter \u662F\u5E03\u5C14\u8868\u8FBE\u5F0F\u3002\u7701\u7565\u671F\u9650\u548C\u53E0\u5C42\u5B57\u6BB5\u65F6\u9ED8\u8BA4\u4E3A battle_turns\u30011 \u56DE\u5408\u3001refresh\u30011 \u5C42\u3002
+\u6A21\u677F\u5FC5\u586B id\u3001name\u3002\u53EF\u9009 icon\uFF08\u226424 \u5B57\u7B26\uFF09\u3001category\uFF08\u63A8\u8350\u679A\u4E3E\uFF1Abuff / debuff / control / dot / hot / shield\uFF1B\u62A4\u76FE\u5438\u6536\u673A\u5236\u5FC5\u987B\u5199 category:"shield" \u5E76\u5C06\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\uFF09\u3001description\uFF08\u2264300 \u5B57\u7B26\uFF09\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF09\u3001durationType\uFF08\u679A\u4E3E\uFF1Abattle_turns / until_removed / persistent\uFF09\u3001stackMode\uFF08\u679A\u4E3E\uFF1Arefresh / stack / replace / extend\uFF09\u3001maxStacks\uFF08\u6574\u6570 1\u2026999999 \u6216\u6570\u503C\u8868\u8FBE\u5F0F\uFF1B\u65BD\u52A0\u65F6\u5728\u65BD\u672F\u8005\u4E0A\u4E0B\u6587\u6C42\u503C\uFF09\u3001expireOn\uFF08{hook, filter?}\uFF0Chook \u53D6\u5141\u8BB8\u94A9\u5B50\u679A\u4E3E\uFF0Cfilter \u4E3A\u5E03\u5C14\u8868\u8FBE\u5F0F\uFF09\u3001flags\uFF08\u679A\u4E3E\u6570\u7EC4\uFF1Aundispellable / concept_immune\uFF09\u3001tags\uFF08\u5C0F\u5199\u6807\u7B7E\u6570\u7EC4\uFF09\u3001tier\uFF08\u6574\u6570 1\u20267\uFF09\u3001vars\u3001mods\u3001rules\u3002\u7701\u7565\u671F\u9650\u548C\u53E0\u5C42\u5B57\u6BB5\u65F6\u9ED8\u8BA4\u4E3A battle_turns\u30011 \u56DE\u5408\u3001refresh\u30011 \u5C42\u3002
 \u5468\u671F\u4F24\u5BB3\u548C\u6CBB\u7597\u7528 turn_start \u6216 turn_end \u89C4\u5219\uFF0C\u6301\u7EED\u9650\u5236\u7528 mods.locks\uFF0C\u6570\u503C\u4FEE\u9970\u7528 mods\uFF0C\u62A4\u76FE\u7528 category:"shield"\uFF0C\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\u3002apply_status \u53EF\u6309\u65BD\u52A0\u4E0A\u4E0B\u6587\u6C42\u503C vars\uFF0C\u5E76\u6307\u5B9A turns\u3001stacks\u3001stackMode\u3001extendTurns \u6216 expireOn\u3002remove_status \u7684 where \u53EF\u8BFB\u53D6 status.id\u3001status.category \u7B49\u6CE8\u518C\u5B57\u6BB5\u3002
 \u9700\u8981\u76F4\u63A5\u6DFB\u52A0\u521D\u59CB\u72B6\u6001\u65F6\uFF0C\u5728 /units/<unitId>/statuses/<statusId> \u5199\u5165\u6A21\u677F\u5B57\u6BB5\uFF0C\u518D\u586B templateId\uFF08\u7B49\u4E8E\u72B6\u6001 ID\uFF09\u3001ownerId\uFF08\u7B49\u4E8E\u5355\u4F4D ID\uFF09\u3001sourceId\uFF08\u5355\u4F4D ID \u6216 null\uFF09\u3001stacks\u3001remainingTurns\u3001durationType\u3001stackMode\u3002\u5B9E\u4F8B vars \u5199\u5DF2\u6C42\u503C\u7684 JSON \u503C\u3002`;
 
@@ -15594,62 +15634,52 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
     { id: "extra", label: "\u81EA\u5B9A\u4E49\u8865\u5145\uFF08\u53EF\u7A7A\uFF09", role: "system", enabled: false, desc: "\u7528\u6237\u81EA\u5DF1\u586B\u7684\u989D\u5916\u63D0\u793A\u8BCD" }
   ].map((slot2) => ({ builtin: true, ...slot2, content: slot2.content ?? "" }));
   var TAG_MAPPING = `\u3010\u4E16\u754C\u4E66\u6807\u7B7E \u2192 VM \u6620\u5C04\u3011
-\u2022 \u5E38\u89C4\u8BC4\u7EA7\u4E3B\u51FB\u7528\u6A21\u677F power \u548C damage\u3002[\u5A01\u529B: X \u7269\u7406] \u7B49\u4EF7\u4E8E [\u5A01\u529B: X][\u4F24\u5BB3: \u7269\u7406]\u3002\u539F\u6587\u660E\u786E\u7ED9\u7684\u662F\u56FA\u5B9A\u4F24\u5BB3\u5305\u6216\u72EC\u7ACB\u9644\u4F24\u65F6\uFF0C\u7528 damage \u6307\u4EE4\u5199 amount \u548C damageType\uFF0C\u540C\u4E00\u7B14\u4F24\u5BB3\u53EA\u7ED3\u7B97\u4E00\u6B21\u3002
-\u2022 \u6DF7\u5408\u4F24\u5BB3\uFF1A[\u5A01\u529B: 60][\u4F24\u5BB3: \u7269\u740640/\u80FD\u91CF20] \u62C6\u6210\u4E24\u4E2A\u6307\u4EE4\uFF0C\u4F8B\uFF1A[{"op":"damage","target":"target","amount":40,"damageType":"physical"},{"op":"damage","target":"target","amount":20,"damageType":"energy"}]\u3002\u6309\u539F\u6587\u6BD4\u4F8B\u62C6\u5206\u65F6\u5404\u5206\u91CF\u6309\u540C\u4E00\u57FA\u51C6\u6C42\u503C\uFF0C\u4E0D\u518D\u989D\u5916\u9020\u6210\u603B\u5A01\u529B\u4F24\u5BB3\u3002
-\u2022 [\u5173\u8054\u5C5E\u6027: \u654F\u6377] \u2192 \u6307\u5411\u65BD\u672F\u8005\u654F\u6377\uFF1B\u9700\u8981\u5C5E\u6027\u7F29\u653E\u65F6\u8BFB\u53D6 self.agi\u3002\u53EA\u6709\u539F\u6587\u660E\u786E\u8C41\u514D\u65F6\u624D\u4E3A\u9632\u5B88\u65B9\u9009\u62E9\u68C0\u5B9A\u5C5E\u6027\u3002[\u6709\u6548\u8DDD\u79BB: \u4E2D\u7A0B(5)] \u2192 range:5\u3002
-\u2022 [\u5355\u4F53] \u2192 shape:single\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: \u4E2D\u7A0B(4)+\u6247(\u654C\u65B9)] \u2192 radius:4\u3001shape:fan\u3001target:enemy\uFF0Crange \u7531\u6709\u6548\u8DDD\u79BB\u53E6\u884C\u786E\u5B9A\u3002\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u5230 angle\u3002\u539F\u751F\u8303\u56F4\u4F24\u5BB3\u7528 target:enemy \u9650\u5B9A\u654C\u65B9\uFF0C\u7528 target:any \u8868\u793A\u65E0\u5DEE\u522B\uFF08\u8986\u76D6\u65BD\u672F\u8005\u65F6\u4E5F\u4F1A\u547D\u4E2D\uFF09\u3002VM \u81EA\u5EFA\u9009\u62E9\u5668\u8981\u5728 where \u4E2D\u5199\u660E\u76F8\u540C\u7684\u654C\u53CB\u9650\u5236\uFF0C\u4F8B\u5982 candidate.team != self.team\uFF1B\u82E5\u53EA\u6392\u9664\u65BD\u672F\u8005\uFF0C\u5199 candidate.id != self.id\u3002
-\u2022 \u539F\u6587\u6548\u679C\u4E3A {} \u6216\u7F3A\u5931\u4E14\u6CA1\u6709\u5176\u4ED6\u53EF\u6267\u884C\u63CF\u8FF0\u65F6\uFF0C\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u8BA1\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u548C\u72B6\u6001\u6388\u4E88\u5747\u53EF\u5F62\u6210\u72EC\u7ACB\u89C4\u5219\uFF1B\u80CC\u5305\u6D88\u8017\u54C1\u6309\u4EFB\u52A1\u7EA6\u5B9A\u5904\u7406\u3002`;
+\u2022 \u5E38\u89C4\u8BC4\u7EA7\u4E3B\u51FB\u7528\u6A21\u677F power \u914D\u5408 damage \u9AB0\u5B50\u5BF9\u8C61\uFF08\u5355\u72EC\u586B\u5199 power \u4E0D\u4F1A\u5F00\u542F\u4E3B\u51FB\uFF01\uFF09\u3002[\u5A01\u529B: X \u7269\u7406] \u7B49\u4EF7\u4E8E [\u5A01\u529B: X][\u4F24\u5BB3: \u7269\u7406]\u3002\u539F\u6587\u660E\u786E\u7ED9\u7684\u662F\u56FA\u5B9A\u4F24\u5BB3\u5305\u6216\u72EC\u7ACB\u9644\u4F24\u65F6\uFF0C\u7528 damage \u6307\u4EE4\u5199 amount \u548C damageType\uFF0C\u540C\u4E00\u7B14\u4F24\u5BB3\u53EA\u7ED3\u7B97\u4E00\u6B21\u3002
+\u2022 \u6DF7\u5408\u4F24\u5BB3\uFF08\u5982\u7269\u7406\u4E0E\u80FD\u91CF\u6309\u6570\u503C\u6216\u767E\u5206\u6BD4\u5E76\u5217\uFF09\u5728 hook:"active" \u5185\u62C6\u4E3A\u591A\u6761\u6309\u5E8F\u6267\u884C\u7684 damage \u6307\u4EE4\uFF0C\u5404\u5206\u91CF\u6309\u540C\u4E00\u57FA\u51C6\u6C42\u503C\uFF0C\u4E0D\u518D\u989D\u5916\u53E0\u52A0\u6A21\u677F\u603B\u5A01\u529B\u4E3B\u51FB\u3002
+\u2022 [\u5173\u8054\u5C5E\u6027: <\u5C5E\u6027>] \u6216\u6807\u7B7E\u4E2D\u7684\u4E94\u7EF4\u540D\u79F0\u6307\u5411\u65BD\u672F\u8005\u4E3B\u5C5E\u6027\uFF08str / agi / con / int / spi\uFF09\uFF0C\u9700\u5C5E\u6027\u7F29\u653E\u65F6\u5199\u5165 damage.stat \u6216\u5728\u516C\u5F0F\u4E2D\u8BFB self.<stat>\uFF1B\u4EC5\u5F53\u539F\u6587\u660E\u786E\u8981\u6C42\u9632\u5B88\u65B9\u8C41\u514D\u68C0\u5B9A\u65F6\u624D\u8BBE\u7F6E\u9632\u5B88\u65B9\u8C41\u514D\u68C0\u5B9A\u3002
+\u2022 [\u5355\u4F53] \u2192 shape:"single"\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: <\u6863\u4F4D>(N)+<\u5F62\u72B6>(<\u9635\u8425>)] \u2192 rawRadius:N\u3001shape \u5BF9\u5E94\u679A\u4E3E\u3001target \u5BF9\u5E94\u679A\u4E3E\uFF0C\u6709\u6548\u8DDD\u79BB\u53E6\u6620\u5C04\u81F3 rawRange\uFF1B\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u81F3 angle\u3002\u539F\u751F\u8303\u56F4\u4F24\u5BB3\u7528 target:"enemy" \u9650\u5B9A\u654C\u65B9\uFF0Ctarget:"any" \u4E3A\u65E0\u5DEE\u522B\u6CE2\u53CA\uFF08\u8986\u76D6\u81EA\u8EAB\u683C\u65F6\u4E5F\u4F1A\u547D\u4E2D\u81EA\u8EAB\uFF09\u3002VM \u9009\u62E9\u5668 from:"units" \u4E3A\u672A\u8FC7\u6EE4\u5168\u96C6\uFF0C\u5FC5\u987B\u5728 where \u4E2D\u6309\u539F\u63CF\u8FF0\u663E\u5F0F\u58F0\u660E\u5B58\u6D3B\u4E0E\u654C\u6211\u6761\u4EF6\u3002
+\u2022 \u539F\u6587\u6548\u679C\u4E3A\u7A7A\u4E14\u65E0\u5176\u4ED6\u5F85\u5B9E\u73B0\u6218\u6597\u63CF\u8FF0\u65F6\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u5217\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u6062\u590D\u3001\u72B6\u6001\u6388\u4E88\u4E0E\u573A\u5730\u751F\u6210\u5747\u6309\u539F\u63CF\u8FF0\u62C6\u89E3\u4E3A\u5BF9\u5E94\u6307\u4EE4\u3002`;
   var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002\u540C\u4E00\u8DEF\u5F84\u5185\u6807\u9898\u552F\u4E00\u65F6\u4E5F\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF0CeffectName \u9010\u5B57\u590D\u5236\u300C\u300D\u5185\u6807\u9898\uFF08\u5305\u62EC\u5FAE\u5F31\u6CD5\u5219\u53CA\u65B9\u62EC\u53F7\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002\u6BCF\u9879\u5F85\u5904\u7406\u8B66\u544A\u5FC5\u987B\u6709\u5F52\u5C5E\uFF1A\u5B9E\u9645\u751F\u6548\u8865\u4E01\u7684 resolves\u3001\u5E26\u539F\u56E0\u7684 unresolved \u6216\u7EAF\u53D9\u4E8B narrative\u3002\u53EA\u521B\u5EFA\u72B6\u6001\u6A21\u677F\u800C\u672A\u63A5\u56DE\u539F\u6280\u80FD\u4E0D\u7B97\u5B8C\u6210\u3002\u5DF2\u6709\u89C4\u5219\u4E0D\u662F VM \u7F3A\u53E3\uFF1A\u5982\u679C\u8BE5\u884C\u4E3A\u5DF2\u7531\u5148\u524D\u6807\u51C6\u5316\u8865\u4E01\u5B9E\u73B0\uFF0C\u672C\u6B21\u4E0D\u518D\u6539\u52A8\uFF0C\u53EF\u9644\u53EF\u9009\u9876\u5C42 existing \u6570\u7EC4\u3002\u6BCF\u9879\u7ED9 {unitId,originPath,effectName,path,value}\uFF0Cpath \u6307\u5411\u8BE5\u6A21\u677F\u7684\u5177\u4F53 rules/N \u6216 mods/N\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u6761\u89C4\u5219\u6216\u4FEE\u9970\u3002\u5F15\u64CE\u4F1A\u6838\u5BF9\u65E2\u6709\u5199\u5165\u548C\u5F53\u524D\u503C\uFF1B\u4E0D\u51C6\u7528\u540C\u8DEF\u5F84\u65E0\u5173\u6761\u76EE\u5192\u5145\u8BC1\u636E\uFF0C\u4E0D\u8981\u91CD\u590D add \u6216\u62A5 unresolved\u3002";
   var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
-  var PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个必需键都是数组；已有实现可另附 existing 证据数组。只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。同一技能或装备有两条已实现、另一条仍 unresolved 时，写入该模板的操作须在 resolves 分别列出两条已实现诊断的完整引用。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送、非战斗储物空间或次元背包容器（如 1km³ 储物戒）、元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+  var PATCH_RULES = String.raw`【四步编译工作流（提交前逐条自检）】
+1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
+   • 主击完备性：引擎中技能仅填 power 而缺少 damage 骰子对象时，主击伤害为 0！若快照技能已有 power（原卡声明了 [威力] 与单一 [伤害]）但无 damage 字段，单一常规主击必须同批补充 /skills/<id>/damage（填 count、sides、stat、type）；混合伤害或自定义公式主伤则在 hook:"active" 内用 damage 指令结算。二者必居其一：严禁只写附加效果漏掉主击，也严禁在模板已有 power + damage 时再写同额主击 damage 导致双倍结算。
+   • 模式与入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗资源的装备主动技，先 add /skills/<id> 再将该 ID 加入装备模板 skills 数组，同一效果只用一种方式挂载。
+2. 选择机制落点（mods vs active 顺序链 vs 常驻事件 hook）：
+   • 常驻属性、加减伤、穿甲、行动锁、先手、敌方测距偏移 → 写声明式 mods（动态条件写 when）。
+   • 单次主动施放内的因果链（结算伤害 → 按实扣量回血／回能／推拉／二段检定） → 全部按序写在同一个 hook:"active" 内，用指令的 out / outCount 把实际结算结果存入 vars.<名> 供后续指令读取，不要拆成事件钩子。
+   • 跨行动触发或配合模板 power + damage 主击的附加效果 → 挂对应事件 hook。单位持有的所有技能的非 active 规则默认全局常驻，若某规则仅在施放本主动技能时触发，filter 必须包含 event.skillId == skill.id（命中／伤害事件配 attacker.id == self.id && event.skillId == skill.id；切勿误用仅属召唤物顶替事件的 event.sourceSkillId）。
+3. 显式声明集合边界与跨阶尺度：
+   • select.from == "units" 包含全场存活者、阵亡尸体、友军与 self 自身！选敌写 where:"candidate.alive && candidate.team != self.team"；无差别波及但排除自身写 where:"candidate.alive && candidate.id != self.id"；选友军写 where:"candidate.alive && candidate.team == self.team"。原生范围模板若不应波及施术者，勿设 target:"any"。
+   • 词条相对档位距离／半径在模板上写 rawRange / rawRadius / rawInnerRadius / rawWidth，在 VM 选择器与公式中写 scale_cells(n)；位移标签 [位移: X] 写 move 的 distance:X 与 distanceUnit:"position"。
+4. 同批拓扑顺序与交互完整性：
+   • 新建的 /statusTemplates/<id> 与 /skills/<id>（含召唤物专属技能）排在 patch 数组前部先 add，后部再引用。任意主动或被动钩子需要玩家点选格子／目标／分支／数值时直接使用 ask（配 aiPolicy），不得以“需要交互”为由放弃。
 
-【patch：有序的 RFC 6902 操作】
-add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
-• /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板。其任意合法模板字段都可单独 patch，不限 rules/mods；缺键用 add，已有键用 replace。例如新增先手：{"op":"add","path":"/skills/<id>/initiativeBonus","value":8}（范围 -100…100）；新增主击骰：{"op":"add","path":"/skills/<id>/damage","value":{"count":1,"sides":6,"type":"physical"}}，骰子数值按原文及模板决定。check.statusId 与状态施加/移除事件均提供 event.statusId，无需等待引擎确认；不要据此推断普通伤害事件也携带状态 ID。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
-• /items/<id>：道具实例。装备模板的规则、修饰与池声明写在 /equipment/<id>。实例已自带 rules 或 mods 时，同批同步相关条目，保留该实例独有的内容。
-• /statusTemplates/<id>：战局的自定义状态模板。新增模板使用新的 ID。
-• /units/<unitId>/statuses：单位状态实例映射。实例形状见状态协议。
-• /units/<unitId>/armor：单位护甲整数 0…1000000。
-• /units/<unitId>/skills：完整技能 ID 数组，保留已有技能并加入新技能 ID。
-引用已有对象时使用快照中的 ID。新增模板时自行命名，同批先 add 再引用，包括召唤物专属技能。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换模板或数组时保留无关字段与条目。
+【宿主模板闭合字段与枚举全表】
+所有模板对象均为闭合结构，禁止写入未列出的键；缺键用 add，已有键用 replace：
+• 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
+• 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义装备池 {"resource":"<池ID>", "amount":1…1000000}。
+• 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}（已有装备初始化需数值 cap；装备规则内用 resource 的 local:true 读写本实例池）。
+• 通用载体字段（装备、技能、状态模板均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（整数 1…7）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）、pools（装备与技能支持）。
+• 技能模板 /skills/<id>：
+  - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
+  - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（枚举：physical / energy / mental / true）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
+• 装备模板 /equipment/<id>：
+  - 必填：name。武器若声明 range（整数 0…64）则必须同时声明 damage（dice 对象），二者成对出现；武器斜杠分段距离第一项归模板普攻，后续项依次归挂载的装备主动技能。
+  - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
+  - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。
 
-【模板值】
-• 装备必有 name。保留已有武器字段，range(0…64) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备自身的 hook:"active" 规则直接提供 0 AP、自身目标的按钮，用 label 命名并用 usesPerTurn、usesPerBattle 或 cooldownTurns 限次。需要自定义射程、目标或消耗时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。同一效果只用一种方式挂载。
-• 技能必有 name、ap(0/1/2，0 不占行动槽)、slot(attack/action)、range(0…64)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。纯被动技能标记 passive:true、ap:0，不写 active 规则。持有技能的 mods 和非 active 规则常驻生效。仅限自身施放时触发的钩子，须用 event.actorId == self.id 和 event.skillId 过滤。可选 initiativeBonus（按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值）；规则 usesPerTurn:N 限每个战斗回合 N 次，cooldownTurns:N 使该规则到第 N 轮后再次可用。范围字段 radius、innerRadius、width 为 0…30，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
-• 装备和技能均可声明 rules、mods、tags、tier、vars、pools。rules 和 mods 是数组。tags 是小写标签数组，tier 为整数 1…7，vars 为 ID → Expr 的对象。pools 格式为 {"charge":{"cap":10,"initial":0}}，每池必填 cap，可加 initial、reloadable。cap / initial 优先写非负数，initial 不得超过 cap。已有装备初始化需要数值 cap。通过 resource 指令访问池，装备规则中 local:true 访问该实例的池。
-• 原卡档位距离用 rawRange、rawRadius、rawInnerRadius、rawWidth，运行时会按施放者、载体品质与比例尺换算。range、radius 等普通字段可声明固定格数。位移标签 [位移: X] 转成 move 的 distance:X 与 distanceUnit:"position"。武器斜杠射程第一项对应普攻，后续各项对应相应的装备主动技能。
-• 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。概念保护载体声明 flags:["concept_immune"]，拦截明确标记 instantDeath 的伤害、资源上限削减以及抹杀或概念破碎意图。
-
-【VM 模板正例】用快照 ID 和警告字段，把对应的值写入 patch 操作。技能值可放在 /skills/<id>，装备值可放在 /equipment/<id>，状态值可放在 /statusTemplates/<id>，规则值则放入相关模板的 rules 数组。
-• 技能值：{"name":"低伤校准","ap":1,"slot":"attack","range":1,"shape":"single","target":"enemy","rules":[{"id":"calibrated_impact","hook":"active","program":[{"op":"damage","target":"target","amount":1,"damageType":"physical","lethal":false}]}]}
-• 装备值：{"name":"蓄能徽记","kind":"accessory","pools":{"charge":{"cap":10,"initial":0}},"mods":[{"stat":"armor","flat":2}],"rules":[{"id":"collect_charge","hook":"on_kill","program":[{"op":"resource","target":"self","pool":"charge","mode":"add","amount":1,"local":true}]}]}
-• 状态值：{"id":"laugh_disabled","name":"狂笑失能","category":"control","remainingTurns":1,"mods":[{"locks":["action","attack"]}],"rules":[{"id":"laugh_break","hook":"after_damage","filter":"target.id == self.id && event.direct && event.dealt > 0","program":[{"op":"remove_status","target":"self","where":"status.id == 'laugh_disabled'","reason":"expired"}]}]}
-• 授予上例状态的规则值：{"id":"laugh_on_hit","hook":"after_hit","filter":"attacker.id == self.id","program":[{"op":"check","kind":"save","stat":"spi","dc":"6 + self.spi * 0.5","onFail":[{"op":"apply_status","target":"target","statusId":"laugh_disabled"}]}]}
-• 飞行规则值：{"id":"lift_off","hook":"active","program":[{"op":"move","target":"self","mode":"altitude","deltaZ":3}]}
-• 选格瞬移规则值：{"id":"choose_blink","hook":"active","usesPerTurn":1,"program":[{"op":"ask","chooser":"self","kind":"cell","prompt":"选择落点","out":"landing","aiPolicy":"first","select":{"from":"cells","where":"distance(self, candidate) <= 4"}},{"op":"move","target":"self","mode":"teleport","to":"vars.landing"}]}
-• 结算中选择伤害规则值：{"id":"choose_damage","hook":"before_commit","filter":"event.commitKind == 'damage' && target.id == self.id","program":[{"op":"ask","chooser":"self","kind":"number","prompt":"选择承受伤害","out":"amount","aiPolicy":"min","min":0,"max":"event.finalAmount"},{"op":"mutate_event","patch":{"finalAmount":"vars.amount"}}]}
-【机制拼装 Cookbook】上面的选格瞬移和结算前选数是交互范式。选分支用 ask kind:option，随后用 if 比较 vars.<out> 与选项 ID。
-• 天气规则值：{"id":"place_zone","hook":"active","program":[{"op":"spawn","entityKind":"zone","spec":{"name":"雪域","tags":["dark_snow"],"remainingTurns":2,"area":{"shape":"circle","center":"center","radius":10},"rules":[{"id":"snow_tick","hook":"turn_start","filter":"self.team != source.team","program":[{"op":"damage","target":"self","amount":10,"damageType":"true","direct":false}]}]}}]}
-Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合的覆盖单位，source 是区域来源。其他规则用 in_zone(self, 'dark_snow') 查询天气。
-• 本回合重放规则值：{"id":"repeat_turn","hook":"turn_end","usesPerBattle":1,"filter":"self.resource.attack == 0 && self.resource.action == 0","program":[{"op":"for_each","select":{"from":"tape","where":"candidate.actorId == self.id && candidate.round == round && candidate.turn == turn"},"bind":"entry","body":[{"op":"perform","actor":"self","actionKind":"replay","tapeRecord":"vars.entry"}]}]}
-两个伪池各表示一个行动槽的剩余量。磁带按结算顺序遍历，包含移动、疾跑、撤离、互动、攻击、技能、换武器及道具使用等棋盘行动。重放默认不再消耗槽位和技能资源费用，按当前棋盘重新结算，可再次提问。已用掉的互动点、不可到达的落点等非法记录会跳过。重放产生的子行动不会再次写入磁带。
-• 裂隙投射：先 ask(cell) 保存落点，再 perform(skillId:"vars.chosenSkill", overrides:{origin:"vars.cell"})；origin 改的是施放起点，不是指定目标。
-• 冰晶封印：在 on_lethal_p2 判断 self.hp == 0 && self.mp == 0 && self.sp == 0，通过才 mutate_event(preventDeath:true) 并施加冰封。这是 HP 归零时检查另外两池，不是任意顺序的三池监听器。
-• 战帅直觉：before_commit 里 ask 得到 vars.kept，先 let 记下 event.finalAmount - vars.kept，再 mutate_event 改 finalAmount。若 vars.rest > 0，apply_status 的 stacks 写 vars.rest，不必等 after_damage 的 event.dealt。
-• 动态换池：ask(option) 选出 hp/mp/sp 后，resource 的 pool 可直接填 "vars.fromPool" 或 "vars.toPool"。余额表达式用 "resource(self, vars.fromPool)"，固定池可用 self.mp 等字段。数值上限同时考虑来源余额和目的池可用容量，扣款成功后按实际扣量转入。表达式只支持注册路径与函数。
-• 可消耗状态：长期保留且可消费的标记用 durationType:"until_removed" 与 maxStacks:"self.maxHp"。部分消费用 stackMode:"replace" 写剩余层数，归零用 remove_status。persistent 状态受移除保护。
-• 濒死换池：on_lethal_p1 在 HP 已归零时执行。用一个 if 的 then/else 依序选择 SP、MP，随后只 swap 一次。换入正 HP 会自动跳过 on_lethal_p2。swap 受两池各自上限约束。
-• 状态联动：after_status_applied 读取 event.statusId；先 let 存为 vars.sid，再用 remove_status.where:"status.id == vars.sid" 筛选目标现有状态。before_target 可用 redirectTarget 重定向到当前棋盘上确实存在的单位，不要凭空创造一个不存在的魔宠。
-• 封印资源规则值：{"id":"seal_resources","hook":"before_commit","filter":"event.targetId == self.id && (event.pool == 'hp' || event.pool == 'mp' || event.pool == 'sp') && event.sourceRuleId != 'seal_release'","program":[{"op":"mutate_event","patch":{"cancel":true}}]}
-这会拦截 VM 的 damage、heal、resource 提交，并放行指定解封规则。模板技能支付走行动路径，按原文需要另用 before_action 拦截。
-• 召唤规则值：{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]}
-同一补丁先 add /statusTemplates/guard_chill，再 add /skills/guard_slash（在 after_hit 中 apply_status 引用 guard_chill），最后写上面的召唤规则。面板召唤用 spawnPanel.skills 持有专属技能。
-
-【完整补丁示例】假设快照中 /skills/call_guard/rules 已是数组。
-{"patch":[{"op":"add","path":"/statusTemplates/guard_chill","value":{"id":"guard_chill","name":"星霜","category":"control","remainingTurns":2,"mods":[{"locks":["move"]}]}},{"op":"add","path":"/skills/guard_slash","value":{"name":"亡卫斩","ap":1,"slot":"attack","range":2,"shape":"single","target":"enemy","power":20,"damage":{"count":1,"sides":4,"type":"physical"},"rules":[{"id":"chill_on_hit","hook":"after_hit","program":[{"op":"apply_status","target":"target","statusId":"guard_chill"}]}]}},{"op":"add","path":"/skills/call_guard/rules/-","value":{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]},"resolves":[{"unitId":"p1","originPath":"/skills/call_guard","message":"亡卫缺少召唤和专属技能规则"}]}],"unresolved":[],"narrative":[]}
-
-同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 JSON，必有 {"patch":[],"unresolved":[],"narrative":[]} 三个数组，有已实现证据时另附 existing。`;
+【输出与 RFC 6902 补丁协议】
+• 只输出一个顶层 JSON 对象，结构固定为：
+  {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
+  三个顶层数组键必填；如引用先前批次已落地的规则作为证据可另附 existing 数组。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
+• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
+  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。
+  - /skills/<id>：技能模板或其合法子字段（如 /skills/<id>/damage、/skills/<id>/rules/-）。
+  - /statusTemplates/<id>：自定义状态模板（新英文 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$，不覆盖内置状态名）。
+  - /units/<unitId>/statuses、/units/<unitId>/armor（整数 0…1000000）、/units/<unitId>/skills（完整技能 ID 数组，保留原有项）。
+• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；仅纯叙事、日常储物空间（如 1km³ 次元戒）、跨位面非战斗传送或元设定可列入 narrative（附完整引用与 reason），含任何战斗机制的条目严禁豁免。
+• 禁止直接修改运行时资源池当前值、单位当前 HP/MP/SP、阵营、坐标、先攻队列或日志。先尝试用正交原语拆解组合，再考虑放弃；提交前逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围。`;
   var json = (value) => JSON.stringify(value, null, 2);
   var lastCustomId = 0;
   function makeCustomSlot() {

@@ -21,64 +21,54 @@ export const DEFAULT_SLOTS = [
 ].map(slot => ({ builtin: true, ...slot, content: slot.content ?? '' }));
 
 const TAG_MAPPING = `【世界书标签 → VM 映射】
-• 常规评级主击用模板 power 和 damage。[威力: X 物理] 等价于 [威力: X][伤害: 物理]。原文明确给的是固定伤害包或独立附伤时，用 damage 指令写 amount 和 damageType，同一笔伤害只结算一次。
-• 混合伤害：[威力: 60][伤害: 物理40/能量20] 拆成两个指令，例：[{"op":"damage","target":"target","amount":40,"damageType":"physical"},{"op":"damage","target":"target","amount":20,"damageType":"energy"}]。按原文比例拆分时各分量按同一基准求值，不再额外造成总威力伤害。
-• [关联属性: 敏捷] → 指向施术者敏捷；需要属性缩放时读取 self.agi。只有原文明确豁免时才为防守方选择检定属性。[有效距离: 中程(5)] → range:5。
-• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由有效距离另行确定。角度标签映射到 angle。原生范围伤害用 target:enemy 限定敌方，用 target:any 表示无差别（覆盖施术者时也会命中）。VM 自建选择器要在 where 中写明相同的敌友限制，例如 candidate.team != self.team；若只排除施术者，写 candidate.id != self.id。
-• 原文效果为 {} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则；背包消耗品按任务约定处理。`;
+• 常规评级主击用模板 power 配合 damage 骰子对象（单独填写 power 不会开启主击！）。[威力: X 物理] 等价于 [威力: X][伤害: 物理]。原文明确给的是固定伤害包或独立附伤时，用 damage 指令写 amount 和 damageType，同一笔伤害只结算一次。
+• 混合伤害（如物理与能量按数值或百分比并列）在 hook:"active" 内拆为多条按序执行的 damage 指令，各分量按同一基准求值，不再额外叠加模板总威力主击。
+• [关联属性: <属性>] 或标签中的五维名称指向施术者主属性（str / agi / con / int / spi），需属性缩放时写入 damage.stat 或在公式中读 self.<stat>；仅当原文明确要求防守方豁免检定时才设置防守方豁免检定。
+• [单体] → shape:"single"，target 依描述选取；[范围: <档位>(N)+<形状>(<阵营>)] → rawRadius:N、shape 对应枚举、target 对应枚举，有效距离另映射至 rawRange；角度标签映射至 angle。原生范围伤害用 target:"enemy" 限定敌方，target:"any" 为无差别波及（覆盖自身格时也会命中自身）。VM 选择器 from:"units" 为未过滤全集，必须在 where 中按原描述显式声明存活与敌我条件。
+• 原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved。位移、治疗、资源恢复、状态授予与场地生成均按原描述拆解为对应指令。`;
 const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。每项待处理警告必须有归属：实际生效补丁的 resolves、带原因的 unresolved 或纯叙事 narrative。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，可附可选顶层 existing 数组。每项给 {unitId,originPath,effectName,path,value}，path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【输出】逐项对照本战局警告、快照和战斗协议。只输出一个 JSON 对象：{"patch":[],"unresolved":[],"narrative":[]}。三个必需键都是数组；已有实现可另附 existing 证据数组。只处理本批警告。针对警告生成补丁时，在操作的 resolves 数组中复制已解决警告的 {unitId, originPath, message}。只声明本次确实改变并修复的诊断。同一技能或装备有两条已实现、另一条仍 unresolved 时，写入该模板的操作须在 resolves 分别列出两条已实现诊断的完整引用。未解决或仅部分解决的条目仍列在 unresolved，每项复制原警告的 {unitId, originPath, message}，附简短中文 reason（可另带精确的 effectName）；不要只写短标题。仅纯叙事、非战斗传送、非战斗储物空间或次元背包容器（如 1km³ 储物戒）、元设定可放入 narrative，每项复制警告的 {unitId, originPath, message} 并附 reason；含任何待实现战斗机制的条目不得豁免。不要解释、注释、Markdown 代码块、JS 调用或 battle_patch 包装。
+export const PATCH_RULES = String.raw`【四步编译工作流（提交前逐条自检）】
+1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
+   • 主击完备性：引擎中技能仅填 power 而缺少 damage 骰子对象时，主击伤害为 0！若快照技能已有 power（原卡声明了 [威力] 与单一 [伤害]）但无 damage 字段，单一常规主击必须同批补充 /skills/<id>/damage（填 count、sides、stat、type）；混合伤害或自定义公式主伤则在 hook:"active" 内用 damage 指令结算。二者必居其一：严禁只写附加效果漏掉主击，也严禁在模板已有 power + damage 时再写同额主击 damage 导致双倍结算。
+   • 模式与入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗资源的装备主动技，先 add /skills/<id> 再将该 ID 加入装备模板 skills 数组，同一效果只用一种方式挂载。
+2. 选择机制落点（mods vs active 顺序链 vs 常驻事件 hook）：
+   • 常驻属性、加减伤、穿甲、行动锁、先手、敌方测距偏移 → 写声明式 mods（动态条件写 when）。
+   • 单次主动施放内的因果链（结算伤害 → 按实扣量回血／回能／推拉／二段检定） → 全部按序写在同一个 hook:"active" 内，用指令的 out / outCount 把实际结算结果存入 vars.<名> 供后续指令读取，不要拆成事件钩子。
+   • 跨行动触发或配合模板 power + damage 主击的附加效果 → 挂对应事件 hook。单位持有的所有技能的非 active 规则默认全局常驻，若某规则仅在施放本主动技能时触发，filter 必须包含 event.skillId == skill.id（命中／伤害事件配 attacker.id == self.id && event.skillId == skill.id；切勿误用仅属召唤物顶替事件的 event.sourceSkillId）。
+3. 显式声明集合边界与跨阶尺度：
+   • select.from == "units" 包含全场存活者、阵亡尸体、友军与 self 自身！选敌写 where:"candidate.alive && candidate.team != self.team"；无差别波及但排除自身写 where:"candidate.alive && candidate.id != self.id"；选友军写 where:"candidate.alive && candidate.team == self.team"。原生范围模板若不应波及施术者，勿设 target:"any"。
+   • 词条相对档位距离／半径在模板上写 rawRange / rawRadius / rawInnerRadius / rawWidth，在 VM 选择器与公式中写 scale_cells(n)；位移标签 [位移: X] 写 move 的 distance:X 与 distanceUnit:"position"。
+4. 同批拓扑顺序与交互完整性：
+   • 新建的 /statusTemplates/<id> 与 /skills/<id>（含召唤物专属技能）排在 patch 数组前部先 add，后部再引用。任意主动或被动钩子需要玩家点选格子／目标／分支／数值时直接使用 ask（配 aiPolicy），不得以“需要交互”为由放弃。
 
-【patch：有序的 RFC 6902 操作】
-add 新增、replace 替换现有值：{"op":"replace","path":"…","value":值}；remove 删除现有值：{"op":"remove","path":"…"}。只允许这三种 op。路径以一个 / 开头。白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
-• /equipment/<id>：装备模板（如 /equipment/mainHand_dagger_01）；不是持有的道具实例。
-• /skills/<id>：技能模板。其任意合法模板字段都可单独 patch，不限 rules/mods；缺键用 add，已有键用 replace。例如新增先手：{"op":"add","path":"/skills/<id>/initiativeBonus","value":8}（范围 -100…100）；新增主击骰：{"op":"add","path":"/skills/<id>/damage","value":{"count":1,"sides":6,"type":"physical"}}，骰子数值按原文及模板决定。check.statusId 与状态施加/移除事件均提供 event.statusId，无需等待引擎确认；不要据此推断普通伤害事件也携带状态 ID。backpackItem:true 是背包消耗品的使用模板。若消耗品没写效果，按名称和标签推定合理的目标、距离、范围和数值，补出可执行的 active 规则。保留 backpackItem:true、ap:1、slot:"action" 及库存，且不把消耗品加入单位 skills。
-• /items/<id>：道具实例。装备模板的规则、修饰与池声明写在 /equipment/<id>。实例已自带 rules 或 mods 时，同批同步相关条目，保留该实例独有的内容。
-• /statusTemplates/<id>：战局的自定义状态模板。新增模板使用新的 ID。
-• /units/<unitId>/statuses：单位状态实例映射。实例形状见状态协议。
-• /units/<unitId>/armor：单位护甲整数 0…1000000。
-• /units/<unitId>/skills：完整技能 ID 数组，保留已有技能并加入新技能 ID。
-引用已有对象时使用快照中的 ID。新增模板时自行命名，同批先 add 再引用，包括召唤物专属技能。新 ID 为英数开头，后续英数、_、-，≤64 字符。父对象须存在。替换模板或数组时保留无关字段与条目。
+【宿主模板闭合字段与枚举全表】
+所有模板对象均为闭合结构，禁止写入未列出的键；缺键用 add，已有键用 replace：
+• 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
+• 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义装备池 {"resource":"<池ID>", "amount":1…1000000}。
+• 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}（已有装备初始化需数值 cap；装备规则内用 resource 的 local:true 读写本实例池）。
+• 通用载体字段（装备、技能、状态模板均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（整数 1…7）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）、pools（装备与技能支持）。
+• 技能模板 /skills/<id>：
+  - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
+  - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（枚举：physical / energy / mental / true）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
+• 装备模板 /equipment/<id>：
+  - 必填：name。武器若声明 range（整数 0…64）则必须同时声明 damage（dice 对象），二者成对出现；武器斜杠分段距离第一项归模板普攻，后续项依次归挂载的装备主动技能。
+  - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
+  - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。
 
-【模板值】
-• 装备必有 name。保留已有武器字段，range(0…64) 与 damage 骰子成对。attack 为整数 0…1000000000，accuracy 为 −20…30。装备自身的 hook:"active" 规则直接提供 0 AP、自身目标的按钮，用 label 命名并用 usesPerTurn、usesPerBattle 或 cooldownTurns 限次。需要自定义射程、目标或消耗时，在技能表定义技能，并将技能 ID 写入装备模板的 skills 数组。同一效果只用一种方式挂载。
-• 技能必有 name、ap(0/1/2，0 不占行动槽)、slot(attack/action)、range(0…64)、shape(single/circle/ring/fan/cone/line)、target(enemy/ally/self/any/corpse/cell)。纯被动技能标记 passive:true、ap:0，不写 active 规则。持有技能的 mods 和非 active 规则常驻生效。仅限自身施放时触发的钩子，须用 event.actorId == self.id 和 event.skillId 过滤。可选 initiativeBonus（按 slot 计入开场 attackInit 或 actionInit，每槽取最高非负值）；规则 usesPerTurn:N 限每个战斗回合 N 次，cooldownTurns:N 使该规则到第 N 轮后再次可用。范围字段 radius、innerRadius、width 为 0…30，angle 为整数 1…360。新主动效果写入 rules 的 active 规则，避免与模板原有主击或治疗重复结算。
-• 装备和技能均可声明 rules、mods、tags、tier、vars、pools。rules 和 mods 是数组。tags 是小写标签数组，tier 为整数 1…7，vars 为 ID → Expr 的对象。pools 格式为 {"charge":{"cap":10,"initial":0}}，每池必填 cap，可加 initial、reloadable。cap / initial 优先写非负数，initial 不得超过 cap。已有装备初始化需要数值 cap。通过 resource 指令访问池，装备规则中 local:true 访问该实例的池。
-• 原卡档位距离用 rawRange、rawRadius、rawInnerRadius、rawWidth，运行时会按施放者、载体品质与比例尺换算。range、radius 等普通字段可声明固定格数。位移标签 [位移: X] 转成 move 的 distance:X 与 distanceUnit:"position"。武器斜杠射程第一项对应普攻，后续各项对应相应的装备主动技能。
-• 自定义状态先定义模板，再通过 apply_status 或初始状态实例引用，见状态协议。概念保护载体声明 flags:["concept_immune"]，拦截明确标记 instantDeath 的伤害、资源上限削减以及抹杀或概念破碎意图。
-
-【VM 模板正例】用快照 ID 和警告字段，把对应的值写入 patch 操作。技能值可放在 /skills/<id>，装备值可放在 /equipment/<id>，状态值可放在 /statusTemplates/<id>，规则值则放入相关模板的 rules 数组。
-• 技能值：{"name":"低伤校准","ap":1,"slot":"attack","range":1,"shape":"single","target":"enemy","rules":[{"id":"calibrated_impact","hook":"active","program":[{"op":"damage","target":"target","amount":1,"damageType":"physical","lethal":false}]}]}
-• 装备值：{"name":"蓄能徽记","kind":"accessory","pools":{"charge":{"cap":10,"initial":0}},"mods":[{"stat":"armor","flat":2}],"rules":[{"id":"collect_charge","hook":"on_kill","program":[{"op":"resource","target":"self","pool":"charge","mode":"add","amount":1,"local":true}]}]}
-• 状态值：{"id":"laugh_disabled","name":"狂笑失能","category":"control","remainingTurns":1,"mods":[{"locks":["action","attack"]}],"rules":[{"id":"laugh_break","hook":"after_damage","filter":"target.id == self.id && event.direct && event.dealt > 0","program":[{"op":"remove_status","target":"self","where":"status.id == 'laugh_disabled'","reason":"expired"}]}]}
-• 授予上例状态的规则值：{"id":"laugh_on_hit","hook":"after_hit","filter":"attacker.id == self.id","program":[{"op":"check","kind":"save","stat":"spi","dc":"6 + self.spi * 0.5","onFail":[{"op":"apply_status","target":"target","statusId":"laugh_disabled"}]}]}
-• 飞行规则值：{"id":"lift_off","hook":"active","program":[{"op":"move","target":"self","mode":"altitude","deltaZ":3}]}
-• 选格瞬移规则值：{"id":"choose_blink","hook":"active","usesPerTurn":1,"program":[{"op":"ask","chooser":"self","kind":"cell","prompt":"选择落点","out":"landing","aiPolicy":"first","select":{"from":"cells","where":"distance(self, candidate) <= 4"}},{"op":"move","target":"self","mode":"teleport","to":"vars.landing"}]}
-• 结算中选择伤害规则值：{"id":"choose_damage","hook":"before_commit","filter":"event.commitKind == 'damage' && target.id == self.id","program":[{"op":"ask","chooser":"self","kind":"number","prompt":"选择承受伤害","out":"amount","aiPolicy":"min","min":0,"max":"event.finalAmount"},{"op":"mutate_event","patch":{"finalAmount":"vars.amount"}}]}
-【机制拼装 Cookbook】上面的选格瞬移和结算前选数是交互范式。选分支用 ask kind:option，随后用 if 比较 vars.<out> 与选项 ID。
-• 天气规则值：{"id":"place_zone","hook":"active","program":[{"op":"spawn","entityKind":"zone","spec":{"name":"雪域","tags":["dark_snow"],"remainingTurns":2,"area":{"shape":"circle","center":"center","radius":10},"rules":[{"id":"snow_tick","hook":"turn_start","filter":"self.team != source.team","program":[{"op":"damage","target":"self","amount":10,"damageType":"true","direct":false}]}]}}]}
-Zone 自身是规则载体。区域的 turn_start 中 self 是正在开始回合的覆盖单位，source 是区域来源。其他规则用 in_zone(self, 'dark_snow') 查询天气。
-• 本回合重放规则值：{"id":"repeat_turn","hook":"turn_end","usesPerBattle":1,"filter":"self.resource.attack == 0 && self.resource.action == 0","program":[{"op":"for_each","select":{"from":"tape","where":"candidate.actorId == self.id && candidate.round == round && candidate.turn == turn"},"bind":"entry","body":[{"op":"perform","actor":"self","actionKind":"replay","tapeRecord":"vars.entry"}]}]}
-两个伪池各表示一个行动槽的剩余量。磁带按结算顺序遍历，包含移动、疾跑、撤离、互动、攻击、技能、换武器及道具使用等棋盘行动。重放默认不再消耗槽位和技能资源费用，按当前棋盘重新结算，可再次提问。已用掉的互动点、不可到达的落点等非法记录会跳过。重放产生的子行动不会再次写入磁带。
-• 裂隙投射：先 ask(cell) 保存落点，再 perform(skillId:"vars.chosenSkill", overrides:{origin:"vars.cell"})；origin 改的是施放起点，不是指定目标。
-• 冰晶封印：在 on_lethal_p2 判断 self.hp == 0 && self.mp == 0 && self.sp == 0，通过才 mutate_event(preventDeath:true) 并施加冰封。这是 HP 归零时检查另外两池，不是任意顺序的三池监听器。
-• 战帅直觉：before_commit 里 ask 得到 vars.kept，先 let 记下 event.finalAmount - vars.kept，再 mutate_event 改 finalAmount。若 vars.rest > 0，apply_status 的 stacks 写 vars.rest，不必等 after_damage 的 event.dealt。
-• 动态换池：ask(option) 选出 hp/mp/sp 后，resource 的 pool 可直接填 "vars.fromPool" 或 "vars.toPool"。余额表达式用 "resource(self, vars.fromPool)"，固定池可用 self.mp 等字段。数值上限同时考虑来源余额和目的池可用容量，扣款成功后按实际扣量转入。表达式只支持注册路径与函数。
-• 可消耗状态：长期保留且可消费的标记用 durationType:"until_removed" 与 maxStacks:"self.maxHp"。部分消费用 stackMode:"replace" 写剩余层数，归零用 remove_status。persistent 状态受移除保护。
-• 濒死换池：on_lethal_p1 在 HP 已归零时执行。用一个 if 的 then/else 依序选择 SP、MP，随后只 swap 一次。换入正 HP 会自动跳过 on_lethal_p2。swap 受两池各自上限约束。
-• 状态联动：after_status_applied 读取 event.statusId；先 let 存为 vars.sid，再用 remove_status.where:"status.id == vars.sid" 筛选目标现有状态。before_target 可用 redirectTarget 重定向到当前棋盘上确实存在的单位，不要凭空创造一个不存在的魔宠。
-• 封印资源规则值：{"id":"seal_resources","hook":"before_commit","filter":"event.targetId == self.id && (event.pool == 'hp' || event.pool == 'mp' || event.pool == 'sp') && event.sourceRuleId != 'seal_release'","program":[{"op":"mutate_event","patch":{"cancel":true}}]}
-这会拦截 VM 的 damage、heal、resource 提交，并放行指定解封规则。模板技能支付走行动路径，按原文需要另用 before_action 拦截。
-• 召唤规则值：{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]}
-同一补丁先 add /statusTemplates/guard_chill，再 add /skills/guard_slash（在 after_hit 中 apply_status 引用 guard_chill），最后写上面的召唤规则。面板召唤用 spawnPanel.skills 持有专属技能。
-
-【完整补丁示例】假设快照中 /skills/call_guard/rules 已是数组。
-{"patch":[{"op":"add","path":"/statusTemplates/guard_chill","value":{"id":"guard_chill","name":"星霜","category":"control","remainingTurns":2,"mods":[{"locks":["move"]}]}},{"op":"add","path":"/skills/guard_slash","value":{"name":"亡卫斩","ap":1,"slot":"attack","range":2,"shape":"single","target":"enemy","power":20,"damage":{"count":1,"sides":4,"type":"physical"},"rules":[{"id":"chill_on_hit","hook":"after_hit","program":[{"op":"apply_status","target":"target","statusId":"guard_chill"}]}]}},{"op":"add","path":"/skills/call_guard/rules/-","value":{"id":"summon_guard","hook":"active","program":[{"op":"spawn","entityKind":"unit","spec":{"name":"亡卫","spawnPanel":{"skills":["guard_slash"]}}}]},"resolves":[{"unitId":"p1","originPath":"/skills/call_guard","message":"亡卫缺少召唤和专属技能规则"}]}],"unresolved":[],"narrative":[]}
-
-同一效果的模板、引用和规则放在本批，确保补丁通过校验。主动规则和被动钩子都可用 ask 挂起等待玩家输入；不要以“需要输入”为由放弃。禁止直接改运行时池、当前资源及上限、阵营、坐标、先攻队列或日志。先尝试拆解，再考虑放弃。只有仍无法表达的部分列入 unresolved，使用警告的完整引用和简短中文 reason。检查 hook 和 op 字段、目标引用、池名称、状态 ID 与数值范围。最后只输出 JSON，必有 {"patch":[],"unresolved":[],"narrative":[]} 三个数组，有已实现证据时另附 existing。`;
+【输出与 RFC 6902 补丁协议】
+• 只输出一个顶层 JSON 对象，结构固定为：
+  {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
+  三个顶层数组键必填；如引用先前批次已落地的规则作为证据可另附 existing 数组。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
+• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
+  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。
+  - /skills/<id>：技能模板或其合法子字段（如 /skills/<id>/damage、/skills/<id>/rules/-）。
+  - /statusTemplates/<id>：自定义状态模板（新英文 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$，不覆盖内置状态名）。
+  - /units/<unitId>/statuses、/units/<unitId>/armor（整数 0…1000000）、/units/<unitId>/skills（完整技能 ID 数组，保留原有项）。
+• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；仅纯叙事、日常储物空间（如 1km³ 次元戒）、跨位面非战斗传送或元设定可列入 narrative（附完整引用与 reason），含任何战斗机制的条目严禁豁免。
+• 禁止直接修改运行时资源池当前值、单位当前 HP/MP/SP、阵营、坐标、先攻队列或日志。先尝试用正交原语拆解组合，再考虑放弃；提交前逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围。`;
 const json = value => JSON.stringify(value, null, 2);
 
 let lastCustomId = 0;

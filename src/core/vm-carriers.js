@@ -44,14 +44,14 @@ function carriers(state) {
       const skill = own(state.skills, id);
       if (!skill) continue;
       const carrier = { type: 'skill', id, ownerId };
-      result.push({ entity: { ...skill, vars: skillCarrierVars(state, carrier) }, carrier, nativeOwnerId: ownerId });
+      result.push({ entity: { ...skill, id, vars: skillCarrierVars(state, carrier) }, carrier, nativeOwnerId: ownerId });
     }
   }
   for (const [id, entity] of entries(state.items)) {
     const nativeOwnerId = equippedBy.get(id) ?? entity.ownerId;
     const template = own(state.equipment, entity.templateId);
     if (own(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
-      result.push({ entity: { ...template, ...entity, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: 'item', id }, nativeOwnerId });
+      result.push({ entity: { ...template, ...entity, id, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: 'item', id }, nativeOwnerId });
     }
   }
   for (const [id, entity] of entries(state.zones)) {

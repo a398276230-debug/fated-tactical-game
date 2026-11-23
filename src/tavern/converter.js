@@ -790,10 +790,20 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const power = r.power ?? taggedPower;
     const numericPower = number(power, NaN);
     const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
+    const statTag = tagEntries(r.tags ?? r.标签)
+      .map(label => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
     const rules = readRules(r.rules, notes);
     const prefix = `fx-${hash(sid).toString(36)}`;
     const areaDamage = isAreaDamage(area);
-    appendRules(rules, convertNarrative(rawEffects, notes, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
+    const narrativeNotes = [];
+    appendRules(rules, convertNarrative(rawEffects, { push: msg => narrativeNotes.push(msg) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
+    const missingMainStrike = !rules.length && !r.damage && !r.heal && !passive && hasPower && tag;
+    for (const [index, message] of narrativeNotes.entries()) {
+      const strikeHint = index === 0 && missingMainStrike
+        ? `；本技能已声明威力 ${numericPower}、伤害「${tag}」${statTag ? `、关联属性 ${statTag}` : ''}，但模板当前缺少 damage 骰子对象，请同批补充 /skills/${sid}/damage 或在 active 规则内结算主击`
+        : '';
+      notes.push(message + strikeHint);
+    }
     if (!rules.length && !r.damage && !r.heal && !narrativeEntries(rawEffects).length && tag) {
       const program = hasPower ? damageTags(tag, power) : [];
       if (program.length && areaDamage) notes.push(`「${skillName}」范围伤害标签待标准化：${tag}。请为规则声明精确的目标选择器`);
@@ -809,7 +819,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skills[sid] = {
       name: skillName,
       ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), rawRange: area.range ?? 1, ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
-      range: bound(area.range, 0, 30, 1), shape: area.shape ?? 'single',
+      range: bound(area.range, 0, 64, 1), shape: area.shape ?? 'single',
       target: area.target ?? (areaDamage && object(r.damage) ? 'any' : 'enemy'), ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       rules, mods: readMods(r.mods, notes), pools: readPools(r.pools, notes),
