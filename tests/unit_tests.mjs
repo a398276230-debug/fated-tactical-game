@@ -46,6 +46,10 @@ import './log_attribution_tests.mjs';
 import './scale_grid_tavern_tests.mjs';
 import './scale_runtime_tests.mjs';
 import './vm_authority_tests.mjs';
+import './vm_risc_symmetry_tests.mjs';
+import './bellica_movement_tests.mjs';
+import './bellica_spatial_tests.mjs';
+import './vm_natural_roll_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };

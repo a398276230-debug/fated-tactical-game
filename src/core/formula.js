@@ -1,4 +1,6 @@
 // Expression identifiers and queries expose a bounded, read-only combat context.
+import { TIER_CELL_M, resolveEffectiveTier } from './combat_protocol.js';
+
 const variables = new Map();
 const families = [];
 const queries = new Map();
@@ -22,7 +24,9 @@ const unitFields = {
 const vmUnitFields = {
   id: '实体 ID', armor: '护甲', x: '横坐标', y: '纵坐标', z: '实际高度',
   altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营', summoned: '是否为召唤物',
-  sourceSkillId: '生成该召唤物的技能 ID（无记录时为 null）'
+  sourceSkillId: '生成该召唤物的技能 ID（无记录时为 null）',
+  name: '单位名称', templateId: '模板 ID', moved: '本回合累计位移格数',
+  facing: '当前朝向 N/S/E/W', lastMoveDir: '最近一次水平位移主方向 N/S/E/W，无记录时为 null'
 };
 const unitScopes = { self: '效果主体', attacker: '事件攻击者', target: '当前目标', source: '效果来源', candidate: '当前筛选实体' };
 const legacyScopes = new Set(['self', 'attacker', 'target']);
@@ -48,6 +52,11 @@ function unitField(context, unit, field) {
   if (field === 'alive') {
     const hp = own(unit, 'hp');
     return value ?? (Number.isFinite(hp) ? hp > 0 && !own(unit, 'fled') : undefined);
+  }
+  if (field === 'moved' && unit != null) return value ?? 0;
+  if (field === 'facing' && Array.isArray(value)) {
+    const [x, y] = value;
+    return Math.abs(x) >= Math.abs(y) && x ? (x > 0 ? 'E' : 'W') : y ? (y > 0 ? 'S' : 'N') : null;
   }
   if (field === 'z' && unit != null) return callback(context, 'elevation', unit) ?? value;
   return path(unit, 'stats', field) ?? value;
@@ -95,9 +104,10 @@ for (const [scope, label] of Object.entries(unitScopes)) {
 
 dynamicFamily('vars', '当前栈帧的局部变量，带 ID 的实体引用返回其 ID', (context, id) => {
   const value = frameValue(context, id);
-  return refTypes.has(own(value, 'type')) ? own(value, 'id') : value;
+  const type = own(value, 'type');
+  return type === 'literal' ? own(value, 'value') : refTypes.has(type) ? own(value, 'id') : value;
 });
-const frameEntityFields = { ...statusFields, ...tapeFields, ...allUnitFields, hpRatio: '生命比例（0…1）', name: '名称', templateId: '模板 ID' };
+const frameEntityFields = { ...statusFields, ...tapeFields, ...allUnitFields, hpRatio: '生命比例（0…1）' };
 for (const [field, meaning] of Object.entries(frameEntityFields)) {
   family(`vars.<id>.${field}`, new RegExp(`^vars\\.(${idPattern})\\.${field}$`), `局部实体的${meaning}`, (context, id) => {
     const entity = frameEntity(context, id);
@@ -147,6 +157,7 @@ for (const [name, description] of Object.entries({
 // Existing authored check filters used event.kind before checkKind was documented.
 register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));
 register('event.authorityRank', '提交效果的来源载体位格，唯一为 8', context => path(context, 'event', 'authorityRank'));
+register('event.naturalRoll', '未经替换的自然骰面，适用于 after_natural_roll', context => path(context, 'event', 'naturalRoll'));
 register('event.sourceTier', '提交效果的来源角色层级', context => path(context, 'event', 'sourceTier'));
 register('event.sourceSkillId', 'on_summon_evict 中旧召唤物的来源技能 ID（无记录时为 null）', context => path(context, 'event', 'sourceSkillId'));
 family('event.<field>', /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, '活跃事件的自有标量字段', (context, key) => path(context, 'event', key));
@@ -169,6 +180,10 @@ query('ceil', ['value'], 'ceil(value)', '向上取整', ([value]) => numeric(Mat
 query('abs', ['value'], 'abs(value)', '取绝对值', ([value]) => numeric(Math.abs, value));
 query('cells_m', ['value'], 'cells_m(meters)', '按战场比例尺把米数换算为格数，保留小数', ([meters], context) =>
   numeric((a, b) => a / b, meters, own(context, 'cellM') ?? 2));
+query('scale_cells', ['value'], 'scale_cells(n)', '把词条小数值按规则载体的有效层级换算为格数，保留小数', ([n], context) => {
+  const tier = own(context, 'effectiveTier') ?? resolveEffectiveTier('unit', null, path(context, 'self', 'tier'));
+  return numeric((value, tierMeters, cellMeters) => value * tierMeters / cellMeters, n, TIER_CELL_M[tier], own(context, 'cellM') ?? 2);
+});
 query('clamp', ['value', 'value', 'value'], 'clamp(value, lo, hi)', '将数值钳制在上下限之间', ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
 query('distance', ['unit', 'unit'], 'distance() / distance(unitA, unitB)', '读取两单位的三维距离，无参时默认 self 到 target', ([a, b], context) => readDistance(context, a, b));
 

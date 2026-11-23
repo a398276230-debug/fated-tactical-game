@@ -1,6 +1,7 @@
 import { evaluateExpr } from './formula.js';
 import { isStatusImmune } from './vm-immunity.js';
 import { distance3D } from './spatial.js';
+import { resolveEffectiveTier } from './combat_protocol.js';
 import { selectVM, zoneContains } from './vm-select.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
@@ -62,6 +63,31 @@ function carriers(state) {
   return result;
 }
 
+export function incomingDistanceOffset(state, actor, target, event = {}) {
+  if (!actor?.team || !target?.team || actor.team === target.team || !own(state.units, target.id)) return 0;
+  return Math.max(0, applyStatMod(0, aggregateModifiers(state, target.id, {
+    ...event, actorId: actor.id, targetId: target.id,
+  }).stats.incomingDistanceOffset));
+}
+
+export function carrierEffectiveTier(state, ref, owner) {
+  const nativeOwner = own(state.units, ref?.ownerId) ?? owner;
+  if (ref?.type === 'status') {
+    const status = own(nativeOwner?.statuses, ref.id);
+    return status?.effectiveTier ?? resolveEffectiveTier('unit', null, status?.sourceTier ?? nativeOwner?.tier);
+  }
+  if (ref?.type === 'skill') {
+    const skill = own(state.skills, ref.id);
+    return resolveEffectiveTier(skill?.backpackItem ? 'item' : 'skill', skill?.quality, nativeOwner?.tier);
+  }
+  if (ref?.type === 'item') {
+    const item = own(state.items, ref.id);
+    return resolveEffectiveTier('item', own(state.equipment, item?.templateId)?.quality, nativeOwner?.tier);
+  }
+  if (ref?.type === 'zone') return own(state.zones, ref.id)?.effectiveTier ?? resolveEffectiveTier('unit', null, nativeOwner?.tier);
+  return resolveEffectiveTier('unit', null, nativeOwner?.tier);
+}
+
 function eventUnit(state, ref) {
   return own(state.units, idOf(ref));
 }
@@ -88,10 +114,11 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
     item: row.carrier.type === 'item' ? row.entity : undefined,
     center: event.center, round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay,
     units: state.units, zones: state.zones,
+    effectiveTier: carrierEffectiveTier(state, row.carrier, own(state.units, row.nativeOwnerId) ?? self),
     cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     ...(state.grid && { distance: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
       && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null }),
-    resource: (unit, key) => key === 'move' ? Math.max(0, (unit?.move ?? 0) - (unit?.moved ?? 0))
+    resource: (unit, key) => key === 'move' ? Math.max(0, (unit?.move ?? 0) - (unit?.moveSpent ?? 0))
       : key === 'attack' || key === 'action' ? Math.max(0, 1 - (unit?.used?.[key] ?? 0))
       : own(state.pools, own(unit?.pools, key))?.current ?? own(unit, key),
     inZone: (unit, key) => entries(state.zones).some(([, zone]) => active(zone)
@@ -119,7 +146,7 @@ function eventOwners(state, hook, event) {
   const dead = event.deadId ?? event.killedId ?? (typeof event.killed === 'boolean' ? undefined : event.killed) ?? target;
   let refs;
   if (event.ownerIds) refs = event.ownerIds;
-  else if (hook === 'round_start' || hook === 'round_end') refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id]) => id);
+  else if (hook === 'after_move' || hook === 'round_start' || hook === 'round_end') refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id]) => id);
   else if (hook === 'on_lethal_p1' || hook === 'on_lethal_p2') {
     refs = event.units ?? entries(state.units).filter(([, unit]) => event.poolId != null && unit.pools?.hp === event.poolId).map(([id]) => id);
   } else if (hook === 'on_ally_death') {
@@ -151,6 +178,7 @@ export function collectRules(state, hook, event = {}, queries = {}) {
   for (const [carrierOrder, row] of carriers(state).entries()) {
     // The HP pool has already hit zero during lethal interception; the owner
     // still gets their own last-chance skills before they become a corpse.
+    if (hook === 'after_move' && row.nativeOwnerId && !alive(own(state.units, row.nativeOwnerId))) continue;
     if (row.carrier.type === 'skill' && !['on_lethal_p1', 'on_lethal_p2', 'on_death'].includes(hook)
       && !alive(own(state.units, row.nativeOwnerId))) continue;
     const rules = row.entity.rules?.filter(rule => rule.enabled !== false && rule.hook === hook);

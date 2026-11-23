@@ -1,11 +1,12 @@
 import { evaluateExpr } from './formula.js';
 import { distance3D, unitAt } from './spatial.js';
-import { selectVM, zoneContains } from './vm-select.js';
-import { skillCarrierVars } from './vm-carriers.js';
+import { selectVM, selectorOwner, zoneContains } from './vm-select.js';
+import { carrierEffectiveTier, skillCarrierVars, incomingDistanceOffset } from './vm-carriers.js';
 
 const maxSteps = 2000;
 const maxDepth = 64;
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
+const readRegister = (context, key) => own(context.vars, key);
 const compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const coordinate = value => Number.isInteger(value?.x) && Number.isInteger(value?.y);
 const samePoint = (a, b) => a.x === b.x && a.y === b.y;
@@ -90,6 +91,8 @@ function contextFor(state, frame, host) {
     item: frame.carrier?.type === 'item' ? { vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,
     tape: resolveEntity(state, frame.scope?.tape), center: event.center, pool: frame.scope?.pool,
     round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units), zones: state.zones,
+    effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
+    hostileAreaDistance: (origin, unit) => distance3D(state, origin, unit) + incomingDistanceOffset(state, self ?? source, unit, event),
     cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),
@@ -162,14 +165,14 @@ function askInstruction(state, frame, op, context, host, options) {
     choices = { min, max, step: Number.isInteger(min) && Number.isInteger(max) ? 1 : 'any' };
   } else if (op.kind === 'option') choices = op.options;
   else if (op.kind === 'entity') {
-    const { from, of = 'target' } = op.select;
+    const { from } = op.select;
     const entities = new Map();
     for (const entity of selectVM(state, op.select, context)) {
       if (typeof entity.id === 'string' && !entities.has(entity.id)) entities.set(entity.id, entity);
     }
     choices = [...entities.values()].map(({ id, name }) => ({ id, label: name ?? id }));
     if (choices.length) frame.choiceRefs = Object.fromEntries([...entities].map(([id, entity]) =>
-      [id, entityRef(state, entity, from, context[of], context)]));
+      [id, entityRef(state, entity, from, selectorOwner(op.select, context), context)]));
   }
   else choices = selectVM(state, op.select, context).filter(cell => coordinate(cell) && !unitAt(state, cell.x, cell.y, chooser.id))
     .map(({x, y}) => ({x, y}));
@@ -215,9 +218,10 @@ export function answerVM(state, action, host) {
 function stepLoop(state, frame) {
   const ref = frame.items[frame.pc++];
   const entity = resolveEntity(state, ref);
-  if (!entity) return;
+  if (entity === undefined || entity === null) return;
   const scope = { ...frame.scope, bound: ref };
   if (ref.type === 'status') scope.status = ref;
+  if (ref.type === 'literal') scope.literal = ref;
   if (ref.type === 'zone') scope.zone = ref;
   if (frame.from === 'tape') scope.tape = ref;
   if (frame.bind) scope.bindings = { ...scope.bindings, [frame.bind]: ref };
@@ -234,12 +238,15 @@ function execute(state, frame, op, host, options) {
       const owner = frame.carrier ? resolveEntity(state, frame.carrier) : context.self;
       const skill = frame.carrier?.type === 'skill' ? frame.carrier : null;
       if (op.scope === 'owner' && !owner && !skill) return;
-      const value = evaluate(op.value);
-      if (value !== null && ['number', 'string', 'boolean'].includes(typeof value)) {
+      const entityName = ['self', 'source', 'target', 'attacker'].includes(op.value) ? op.value : null;
+      const entity = entityName ? context[entityName] : typeof op.value === 'string' && op.value.startsWith('vars.')
+        ? context.resolveEntity(readRegister(context, op.value.slice(5))) : null;
+      const value = entity ? entityRef(state, entity, entityName ?? op.value, context.self, context) : evaluate(op.value);
+      if (value !== null && value !== undefined && (typeof value === 'object' || ['number', 'string', 'boolean'].includes(typeof value))) {
         const record = op.scope !== 'owner' ? vars : skill
           ? ((state.vm.skillVars ??= {})[JSON.stringify([skill.ownerId, skill.id])] ??= skillCarrierVars(state, skill))
           : (owner.vars ??= {});
-        Object.defineProperty(record, op.name, { value, writable: true, enumerable: true, configurable: true });
+        Object.defineProperty(record, op.name, { value: op.scope === 'owner' && value?.id ? value.id : value, writable: true, enumerable: true, configurable: true });
       }
       return;
     }
@@ -251,15 +258,19 @@ function execute(state, frame, op, host, options) {
     case 'for_each': {
       const entities = selectVM(state, op.select, context);
       if (!entities.length) return;
-      const { from, of = 'target' } = op.select;
-      const items = entities.map(entity => entityRef(state, entity, from, context[of], context));
+      const { from = 'options' } = op.select;
+      const items = entities.map(entity => typeof entity === 'object'
+        ? entityRef(state, entity, from, selectorOwner(op.select, context), context) : { type: 'literal', value: entity });
       childFrame(state, frame, { kind: 'loop', from, bind: op.bind ?? null, items, program: op.body });
       return;
     }
     case 'ask': askInstruction(state, frame, op, context, host, options); return;
     default: {
       if (!Object.hasOwn(host.ops, op.op)) throw new Error(`未知 Opcode ${op.op}`);
-      host.ops[op.op]({ state, frame, op, context, evaluate, vars, options, host,
+      const runtimeOp = ['apply_status', 'check'].includes(op.op) && op.statusId?.startsWith?.('vars.')
+        ? { ...op, statusId: context.vars[op.statusId.slice(5)]?.type === 'literal'
+          ? context.vars[op.statusId.slice(5)].value : context.vars[op.statusId.slice(5)]?.id ?? context.vars[op.statusId.slice(5)] } : op;
+      host.ops[op.op]({ state, frame, op: runtimeOp, context, evaluate, vars, options, host,
         select: selector => selectVM(state, selector, context),
         push: spec => pushFrame(state, spec), branch: program => childFrame(state, frame, { program }),
       });

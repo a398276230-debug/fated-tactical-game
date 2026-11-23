@@ -1,4 +1,4 @@
-import { evaluateExpr } from './formula.js';
+import { evaluateExpr, validExpr } from './formula.js';
 import { rollDie } from './rng.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { validVmOpcode } from './vm-schema.js';
@@ -62,9 +62,12 @@ export const ruleOps = {
     if (!event || !frame.hook || !validVmOpcode(op, { hook: frame.hook })) throw new Error('事件改写不符合当前拦截钩子');
     for (const [key, expression] of Object.entries(op.patch)) {
       const resolveId = id => {
-        if (!id.startsWith('vars.')) return id;
-        const value = own(context.vars, id.slice(5));
-        return context.resolveEntity(value, 'unit')?.id;
+        if (['self', 'source', 'target', 'attacker'].includes(id)) return context[id]?.id;
+        if (id.startsWith('vars.')) {
+          const value = own(context.vars, id.slice(5));
+          return context.resolveEntity(value, 'unit')?.id ?? (typeof value === 'string' ? value : undefined);
+        }
+        return own(state.units, id)?.id ?? evaluateExpr(id, context);
       };
       let value;
       if (key === 'redirectTarget') value = resolveId(expression);
@@ -106,6 +109,30 @@ export function continueCheck({ state, frame, host, context }) {
   }
   const event = state.vm.events[frame.eventRef];
   if (frame.pc === 1) {
+    const stats = [op.stat ?? null].flat();
+    const outcomes = frame.naturalOutcomes ??= [];
+    if (frame.pendingNatural) {
+      const replacement = event.replaceNaturalRoll;
+      outcomes.push({ ...frame.pendingNatural, roll: Number.isFinite(replacement) ? bounded(replacement, 1, 20) : event.naturalRoll });
+      delete frame.pendingNatural;
+      delete event.replaceNaturalRoll;
+    }
+    if (outcomes.length === stats.length) { frame.pc++; return; }
+    const key = stats[outcomes.length];
+    const sides = op.kind === 'chance' ? 100 : 20;
+    let roll = dice(state, sides);
+    if (event.advantageDelta > 0) roll = Math.max(roll, dice(state, 20));
+    if (event.advantageDelta < 0) roll = Math.min(roll, dice(state, 20));
+    const defenderRoll = op.kind === 'contest' ? dice(state, 20) : null;
+    event.naturalRoll = roll;
+    if (op.rawNatural || sides !== 20) outcomes.push({ key, roll, defenderRoll });
+    else {
+      frame.pendingNatural = { key, defenderRoll };
+      scheduleHooks(state, frame, 'after_natural_roll', frame.eventRef, host);
+    }
+    return;
+  }
+  if (frame.pc === 2) {
     frame.pc++;
     const kind = op.kind;
     const subject = kind === 'save' ? context.target : context.self;
@@ -113,12 +140,9 @@ export function continueCheck({ state, frame, host, context }) {
     const stats = [op.stat ?? null].flat();
     const checkBonus = host.checkBonus?.(state, subject, event) ?? 0;
     const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
-    const outcomes = stats.map(key => {
-      let roll = dice(state, kind === 'chance' ? 100 : 20);
-      if (event.advantageDelta > 0) roll = Math.max(roll, dice(state, 20));
-      if (event.advantageDelta < 0) roll = Math.min(roll, dice(state, 20));
+    const outcomes = frame.naturalOutcomes.map(({ key, roll, defenderRoll }) => {
       const total = roll + (key ? stat(subject, key) : 0) + checkBonus + (event.bonusDelta ?? 0);
-      const difficulty = kind === 'contest' ? dice(state, 20) + stat(context.target, op.defenderStat ?? key) : dc;
+      const difficulty = kind === 'contest' ? defenderRoll + stat(context.target, op.defenderStat ?? key) : dc;
       const passed = kind === 'chance' ? roll <= difficulty : total >= difficulty;
       return { roll, total, difficulty, passed };
     });
@@ -194,7 +218,7 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
     const previous = own(target.statuses, op.statusId);
     const stackMode = op.stackMode ?? template.stackMode ?? 'refresh';
     const values = { ...template.vars, ...op.vars };
-    const vars = Object.fromEntries(Object.entries(values).map(([key, expr]) => [key, evaluateExpr(expr, context)]).filter(([, value]) => value !== null));
+    const vars = Object.fromEntries(Object.entries(values).map(([key, expr]) => [key, typeof expr === 'string' && !validExpr(expr) ? expr : evaluateExpr(expr, context)]).filter(([, value]) => value !== null));
     const cap = evaluate(template.maxStacks, context, 1);
     const duration = evaluate(op.turns, context, template.remainingTurns ?? 1);
     const count = evaluate(op.stacks, context, 1);
@@ -204,7 +228,7 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
     const sourceCarrier = frame.carrier ?? null;
     const sourceAuthority = authorityFor(state, sourceCarrier, context.self?.id);
     const status = { ...structuredClone(template), id: op.statusId, templateId: op.statusId, ownerId: target.id,
-      sourceId: context.self?.id ?? null, sourceCarrier, authorityRank: sourceAuthority.authorityRank, sourceTier: sourceAuthority.unitTier, vars, tags: template.tags ?? [], flags: template.flags ?? [], tier: template.tier ?? 1,
+      sourceId: context.self?.id ?? null, sourceCarrier, authorityRank: sourceAuthority.authorityRank, sourceTier: sourceAuthority.unitTier, ...(context.effectiveTier !== sourceAuthority.unitTier && { effectiveTier: context.effectiveTier }), vars, tags: template.tags ?? [], flags: template.flags ?? [], tier: template.tier ?? 1,
       mods: template.mods ?? [], rules: template.rules ?? [], stackMode, maxStacks, stacks: bounded(count, 1, maxStacks),
       durationType: template.durationType ?? 'battle_turns', remainingTurns: bounded(duration, 1, 100) };
     if (op.expireOn) status.expireOn = op.expireOn;

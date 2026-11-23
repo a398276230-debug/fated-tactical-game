@@ -8,7 +8,7 @@ import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitMo
 import { validateStatusModifiers } from './status_modifiers.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
-import { aggregateModifiers, applyStatMod, itemRules } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset } from './vm-carriers.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial } from './vm-runtime.js';
@@ -393,12 +393,15 @@ function completeTurnEnd(state, unit) {
 
 // Automatic skips are bounded even if sandbox commands make every living unit permanently stunned.
 export function settleTurn(state) {
+  if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; }
+  if (state.vm) delete state.vm.settlingTurn;
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
     if (state.outcome) return;
     if (alive(unit) && !unit.fled) {
       unit.used = { attack: 0, action: 0 };
       unit.moved = 0;
+      delete unit.moveSpent;
       unit.reactionAvailable = true;
       unit.ap = 2;
       record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
@@ -436,7 +439,7 @@ function advanceCursor(state) {
   if (state.turn < state.order.length) return;
   state.turn = 0;
   state.round++;
-  if (state.spatialTerrain || values(state.zones).length) advanceVMSpatial(state);
+  if (state.spatialTerrain || values(state.zones).length || values(state.units).some(unit => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
   const opening = state.logs.find(log => log.type === 'initiative')?.detail?.initiative;
   // A temporary initiative modifier changes the next round's order. Reuse the
   // opening scores and leave summoned units at the end in their join order.
@@ -475,6 +478,7 @@ export function beginBattle(state) {
     unit.ap = 0;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
+    delete unit.moveSpent;
     unit.reactionAvailable = true;
     for (const status of values(unit.statuses)) {
       delete status.appliedRound;
@@ -606,19 +610,23 @@ export const syncEquipmentEffects = initializeVMWorld;
 function movementScale(state, unit, type) {
   const rawMove = Number(unit.rawMove ?? unit.move ?? 3);
   const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit.tier) || 1)));
-  const moveM = unit.moveM ?? rawMove * (TIER_CELL_M[tier] ?? TIER_CELL_M[1]);
+  const baseMoveM = unit.moveM ?? rawMove * (TIER_CELL_M[tier] ?? TIER_CELL_M[1]);
+  const bonus = modStat(state, unit, 'movement', 0);
+  const movementBonus = bonus * TIER_CELL_M[tier];
+  const moveM = Math.max(0, baseMoveM + movementBonus);
   const mult = type === 'sprint' ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
   const total = carry + Math.round(mult * moveM / Math.max(1e-9, Number(state.scale?.cellM) || 2) * 1000);
-  return { rawMove, moveM, total, limit: Math.floor(total / 1000) };
+  return { rawMove, moveM, bonus, total, limit: Math.floor(total / 1000) };
 }
 export function reachable(state, type = 'move', unit = currentUnit(state), distanceLimit = undefined) {
   if (!alive(unit) || changes(unit, 'rooted') || changes(unit, 'skip') || aggregateModifiers(state, unit.id).locks.move) return [];
   const scale = movementScale(state, unit, type);
-  const remainingMove = Math.max(0, unit.move - (unit.moved ?? 0) + changes(unit, 'movement'));
+  const spent = unit.moveSpent ?? 0;
+  const remainingMove = Math.max(0, unit.move - spent + scale.bonus);
   const mult = type === 'sprint' ? 2 : 1;
-  const limit = distanceLimit ?? (unit.moveM == null ? remainingMove * mult
-    : Math.max(0, scale.limit - (unit.moved ?? 0) * mult + changes(unit, 'movement') * mult));
+  const limit = distanceLimit ?? (unit.moveM == null ? Math.floor(remainingMove * mult)
+    : Math.max(0, scale.limit - spent * mult));
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === 'disengage' });
   if (!routes.length && scale.limit === 0 && distanceLimit === undefined) {
     return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
@@ -719,7 +727,8 @@ function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? 
   const melee = isMelee(template) && !ammo;
   const baseRange = template.range ?? 1.5;
   const range = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? (ammo?.reloadable ? modCheck(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
-  return { distance: distance(state, actor, at), dz, range: Math.max(0, range), melee };
+  const offset = incomingDistanceOffset(state, actor, at, { checkKind: 'attack' });
+  return { distance: distance(state, actor, at) + offset, dz, range: Math.max(0, range), melee };
 }
 
 function validReach(state, actor, at, template, ammo, weaponId) {
@@ -972,7 +981,9 @@ function nearbyCovers(state, at) {
 }
 
 function usableTiles(state, actor, template, weapon) {
-  return allCells(state).filter(at => validReach(state, actor, template.target === 'cell' ? at : locateUnit(state, at) ?? at, template, weapon?.ammo) &&
+  return allCells(state).filter(at => validReach(state, actor,
+    template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at : locateUnit(state, at) ?? at,
+    template, weapon?.ammo) &&
     !(['line','cone','fan'].includes(template.shape) && sameCell(actor, at) && template.range !== 0));
 }
 function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
@@ -985,7 +996,7 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
     if (areaDamage && ['ally', 'self'].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
     if ((template.shape ?? 'single') === 'single') return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
-      const distanceFromCenter = distance(state, aim, unit);
+      const distanceFromCenter = distance(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: 'attack' });
       return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || clearSight(state, aim, unit))
         && (template.shape !== 'ring' || (!sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9));
     }
@@ -1120,7 +1131,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: item.radius ?? 1.5 }) : [center];
     const keyset = new Set(cells.map(at => key(at.x, at.y)));
     const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }]
-      : living(state).filter(u => keyset.has(key(u.x, u.y)) && distance(state, center, u) <= 1.5 + 1e-9).map(u => {
+      : living(state).filter(u => keyset.has(key(u.x, u.y)) && distance(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: 'attack' }) <= (item.radius ?? 1.5) + 1e-9).map(u => {
         const guard = guardFor(state, u) ?? u;
         const context = { attacker: unit, targetId: guard.id, damageType: 'energy', intercepting: guard !== u };
         const formula = mitigation(state, guard, 'energy', true, 0, context);
@@ -1151,7 +1162,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   }
   const aimedUnit = locateUnit(state, center, action.targetId);
   if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail('目标单位不在指定格');
-  const aim = template.target === 'cell' ? center : aimedUnit ?? center;
+  const aim = template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? center : aimedUnit ?? center;
   const origin = actionOrigin ? { ...unit, x: actionOrigin.x, y: actionOrigin.y,
     altitude: actionOrigin.altitude ?? (actionOrigin.z === undefined ? 0 : actionOrigin.z - elevation(state, actionOrigin)) } : unit;
   const ammo = attack && !shieldBash ? weapon.ammo : null;
@@ -1288,10 +1299,11 @@ function spendAmmo(state, actor, weapon, ammo) {
   if (pool && pool.current > 0) changeCounter(state, actor, weapon, ammo, ammo.resource, pool.current - 1);
 }
 
-function resolveCheck(state, actor, profile) {
+function resolveCheck(state, actor, profile, event = {}) {
   const cover = profile.kind === 'cover' ? { targetKind: 'cover', targetName: profile.name } : {};
   if (profile.saveStat) {
-    const saveRoll = randomDie(state, 20), saveTotal = saveRoll + profile.saveBonus;
+    const saveRoll = event.replaceNaturalRoll ?? event.naturalRoll ?? randomDie(state, 20);
+    const saveTotal = saveRoll + profile.saveBonus;
     const saved = saveTotal >= profile.saveDC;
     record(state, actor, 'save', `${profile.name}${saved ? '通过' : '未通过'}豁免 (${saveTotal}/${profile.saveDC})`,
       { targetId: profile.id, ...cover, saveStat: profile.saveStat, saveRoll, saveBonus: profile.saveBonus, saveTotal, saveDC: profile.saveDC, saved });
@@ -1305,11 +1317,16 @@ function resolveCheck(state, actor, profile) {
     return { hit: true, critical: profile.guaranteeCrit, rating, intent: { success: true, multiplier: 1 }, saved: false };
   }
   const requestedBonus = profile.bonusDice ?? 0;
-  const { rng, rolls: dice, value: selected } = requestedBonus || actor.penaltyDice
+  const rolled = event.preRolled ?? (requestedBonus || actor.penaltyDice
     ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 })
-    : rollD20(state.rng, profile.advantages, profile.disadvantages);
-  actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus); actor.penaltyDice = 0;
-  state.rng = rng;
+    : rollD20(state.rng, profile.advantages, profile.disadvantages));
+  const dice = rolled.rolls;
+  const rawNatural = event.rawNatural ?? rolled.value;
+  const selected = event.replaceNaturalRoll ?? rawNatural;
+  if (!event.preRolled) {
+    actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus); actor.penaltyDice = 0;
+    state.rng = rolled.rng;
+  }
   const total = selected + profile.accuracy;
   let rating = ratingFor(total);
   if (profile.tierUp && rating.multiplier) rating = RATING_TABLE[Math.max(0, RATING_TABLE.indexOf(rating) - 1)];
@@ -1411,7 +1428,7 @@ export function continueStrike({ state, frame, host }) {
   const profile = frame.profile ?? plan.targets?.[frame.pc];
   if (!profile) { state.vm.stack.pop(); return; }
   const target = tableEntry(profile.kind === 'cover' ? state.covers : state.units, profile.id);
-  const next = () => { frame.pc++; delete frame.phase; delete frame.profile; delete frame.awaitEvent; };
+  const next = () => { frame.pc++; delete frame.phase; delete frame.profile; delete frame.awaitEvent; delete frame.preRolled; };
   const detail = { actorId: actor.id, targetId: target?.id ?? null, skillId: action.skillId ?? null, actionType: action.type,
     melee: profile.melee, backstab: profile.backstab, arrow: profile.arrow, opportunityAttack: Boolean(frame.weapon),
     weaponTemplateId: weapon?.instance?.templateId ?? null, damageType: profile.damageType, souls: weapon?.souls ?? 0 };
@@ -1424,10 +1441,30 @@ export function continueStrike({ state, frame, host }) {
   }
   const event = state.vm.events[frame.awaitEvent];
   if (frame.phase === 'check') {
+    frame.phase = 'natural';
+    if (profile.automatic && !profile.saveStat) return;
+    if (profile.saveStat) event.naturalRoll = randomDie(state, 20);
+    else {
+      const bonus = profile.bonusDice ?? 0;
+      const penalty = actor.penaltyDice ?? 0;
+      const rolled = bonus || penalty ? rollProtocolD20(state.rng, { bonus, penalty })
+        : rollD20(state.rng, profile.advantages, profile.disadvantages);
+      state.rng = rolled.rng;
+      actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - bonus);
+      actor.penaltyDice = 0;
+      frame.preRolled = rolled;
+      event.naturalRoll = rolled.value;
+    }
+    host.hooks(state, frame, 'after_natural_roll', frame.awaitEvent);
+    return;
+  }
+  if (frame.phase === 'natural') {
     const adjusted = { ...profile, accuracy: profile.accuracy + (event.bonusDelta ?? 0) + (event.ignoreDodge ? profile.dodgeBonus : 0),
       advantage: profile.advantage + (event.advantageDelta ?? 0), saveDC: (profile.saveDC ?? 0) + (event.dcDelta ?? 0),
       guaranteeHit: profile.guaranteeHit || ['hit', 'crit'].includes(event.forceOutcome), guaranteeCrit: profile.guaranteeCrit || event.forceOutcome === 'crit' };
-    const result = resolveCheck(state, actor, adjusted);
+    const replacement = Number.isFinite(event.replaceNaturalRoll) ? clamp(Math.trunc(event.replaceNaturalRoll), 1, 20) : undefined;
+    const result = resolveCheck(state, actor, adjusted, { ...event, replaceNaturalRoll: replacement,
+      preRolled: frame.preRolled, rawNatural: event.naturalRoll });
     if (event.forceOutcome === 'miss') result.hit = false;
     if (event.forceOutcome === 'pass') result.saved = true;
     if (event.forceOutcome === 'fail') result.saved = false;
@@ -1491,6 +1528,13 @@ export function continueStrike({ state, frame, host }) {
   next();
 }
 
+function movementDirection(from, to, previous) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  if (!dx && !dy) return previous ?? null;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? 'W' : 'E';
+  return dy < 0 ? 'N' : 'S';
+}
+
 function continueMovement(state, actor, type, plan, progress, host) {
   progress.from ??= pointAt(state, actor);
   progress.path ??= [];
@@ -1526,9 +1570,17 @@ function continueMovement(state, actor, type, plan, progress, host) {
   const scale = movementScale(state, actor, type);
   const consumed = Math.min(scale.total, path.length * 1000);
   if (actor.moveM != null || scale.limit === 0) actor.moveCarryPermille = (scale.total - consumed) % 1000;
-  // Native movement leaves the VM pseudo-pool `moved` alone.
+  // Actual displacement is tracked independently of explicit movement-pool changes.
   const carryText = path.length === 0 && scale.limit === 0
     ? `在广袤战区中奋力推进 ${Math.round((type === 'sprint' ? 2 : 1) * scale.moveM)}m（跨区进度 ${Math.round(scale.total / 10)}%）` : null;
+  const movedCells = path.length;
+  actor.moved = (actor.moved ?? 0) + movedCells;
+  if (movedCells || progress.from.z !== landing.z) {
+    actor.lastMoveDir = movementDirection(progress.from, landing, actor.lastMoveDir);
+    progress.moveEvent = { actorId: actor.id, targetId: actor.id,
+      fromX: progress.from.x, fromY: progress.from.y, toX: landing.x, toY: landing.y,
+      steps: movedCells, moveKind: type };
+  }
   record(state, actor, type, carryText ?? `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${landing.x}, ${landing.y}, z=${landing.z})`,
     { from: progress.from, to: landing, path, steps: path.length, interrupted, ...(actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }), ...(carryText ? { moveM: scale.moveM, progressPermille: scale.total } : {}) });
   if (alive(actor)) {
@@ -1602,6 +1654,9 @@ export function applyAction(state, action) {
         if (remainingTicks) endTurn(state, endingUnit, remainingTicks);
         else completeTurnEnd(state, endingUnit);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
+      } else if (!result.pendingAsk && state.vm.settlingTurn) {
+        if (!refreshOutcome(state)) settleTurn(state);
+        else delete state.vm.settlingTurn;
       } else if (!result.pendingAsk) finishAction(state, actor, action.type);
       return state.logs.slice(before);
     }
@@ -1638,7 +1693,15 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
         targetId: action.targetId ?? plan.targets?.find(target => target.kind !== 'cover')?.id ?? null,
         ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
   }
-  if (isMovement(type)) return continueMovement(state, actor, type, plan, frame.nativeProgress, host);
+  if (isMovement(type)) {
+    const progress = frame.nativeProgress;
+    if (progress.movementSettled) return true;
+    if (!continueMovement(state, actor, type, plan, progress, host)) return false;
+    progress.movementSettled = true;
+    if (!progress.moveEvent) return true;
+    dispatchVMHook(state, 'after_move', progress.moveEvent);
+    return false;
+  }
   if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress);
   switch (type) {
     case 'switch_weapon': {

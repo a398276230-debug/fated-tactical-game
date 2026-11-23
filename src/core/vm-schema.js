@@ -22,6 +22,7 @@ const sourceSkillId = either(id, { type: 'string', pattern: `^equip:${idPattern}
 const variable = { type: 'string', pattern: `^vars\\.${idPattern}$`, not: enumOf(...reserved.map(key => `vars.${key}`)) };
 const tag = { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]{0,31}$' };
 const statusId = { ...id, format: 'tactical-status-id' };
+const dynamicStatusId = either(statusId, variable);
 const formula = { ...text, format: 'tactical-expr' };
 const expr = ref('expr');
 const numericExpr = either(number, formula);
@@ -33,7 +34,8 @@ const slot = enumOf('attack', 'action', 'move', 'cast', 'reaction', 'fly', 'tele
 const point2 = object({ x: number, y: number }, ['x', 'y']);
 const point = object({ x: number, y: number, z: number }, ['x', 'y']);
 const scopes = ['self', 'source', 'target', 'attacker'];
-const pointRef = either(point, enumOf(...scopes, 'center'), variable);
+const pointRef = either(object({ x: numericExpr, y: numericExpr, z: numericExpr }, ['x', 'y']), enumOf(...scopes, 'center'), variable);
+const redirectRef = either(entityId, formula);
 const selector = ref('selector');
 const target = ref('targetRef');
 const program = ref('program');
@@ -42,15 +44,16 @@ const mapOf = (key, value) => ({ type: 'object', propertyNames: key, additionalP
 
 const eventPatchFields = {
   before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
-  before_target: { cancel: booleanExpr, redirectTarget: entityId, replaceTarget: object({ from: entityId, to: entityId }, ['from', 'to']), skipColossusArea: booleanExpr, damageScale: numericExpr },
+  before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ['from', 'to']), skipColossusArea: booleanExpr, damageScale: numericExpr },
   before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, minRating: text, forceOutcome: enumOf('pass', 'fail', 'hit', 'miss', 'crit') },
+  after_natural_roll: { replaceNaturalRoll: numericExpr },
   before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
   before_status: { cancel: booleanExpr },
   on_lethal_p2: { preventDeath: booleanExpr },
 };
 export const vmHooks = Object.freeze([
-  'active', 'before_action', 'before_target', 'before_check', 'after_check', 'before_commit', 'before_status',
-  'on_lethal_p1', 'on_lethal_p2', 'after_action', 'after_hit', 'after_damage', 'after_heal',
+  'active', 'before_action', 'before_target', 'before_check', 'after_natural_roll', 'after_check', 'before_commit', 'before_status',
+  'on_lethal_p1', 'on_lethal_p2', 'after_action', 'after_move', 'after_hit', 'after_damage', 'after_heal',
   'after_status_applied', 'after_status_removed', 'on_status_immunized', 'on_summon_evict',
   'on_death', 'on_ally_death', 'on_kill', 'turn_start', 'turn_end', 'round_start', 'round_end',
 ]);
@@ -63,7 +66,7 @@ export const opNotes = Object.freeze({
   let: 'name 写裸名称（如 bonus），读取写 vars.bonus。默认写当前帧，scope:owner 写规则宿主（用 self.vars.bonus 或对应载体变量读取）。',
   if: '按 cond 选择 then 或 else 指令序列。未提供 else 时为假即跳过。',
   for_each: '对 Selector 的结果快照逐项执行 body。bind 写裸名称，如 victim；body 内通过 vars.victim 选实体、vars.victim.hp 读字段。省略 bind 时，遍历单位的子帧 target 是当前单位。',
-  check: '走统一检定和随机数管线，按结果进入 onPass 或 onFail；out 写裸名称；后续通过 vars.<名称> 读取。',
+  check: '走统一检定和随机数管线，按结果进入 onPass 或 onFail；out 写裸名称；后续通过 vars.<名称> 读取。rawNatural:true 使用原始自然骰，忽略 after_natural_roll 的骰面替换。',
   ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择。选格和选实体用 select，选项用 options，数值用 min/max。entity 的 maxSelect 开启多选，将 ID 数组写入 out，for_each 以 {from:"vars.<名称>"} 遍历。out 写裸名称，单选实体可用 vars.<名称> 作目标。',
   damage: '走完整伤害和致死管线，out 记录实际扣血量，写裸名称、读 vars.<名称>。裸扣资源使用 resource。',
   heal: '仅治疗存活且允许受疗的单位，经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
@@ -88,7 +91,7 @@ const controlPolicy = object({
   controller: enumOf('default', 'ai'), allegiance: enumOf('normal', 'friendly_only', 'all_hostile'),
   forcedActionKinds: list(enumOf('attack', 'skill')), intentLock: enumOf('normal', 'function', 'core', 'kill', 'concept'), allowFriendlyTarget: bool, moraleLock: literal('steady'),
 });
-const stat = enumOf(...attribute.enum, 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
+const stat = enumOf(...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
   'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat');
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent');
@@ -104,29 +107,29 @@ when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additive
 when('stat', multiplierStats, { not: needs('flat') }));
 const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
+const spawnRadius = either({ type: 'number', minimum: 0 }, formula);
 const area = object({
   shape: enumOf('single', 'circle', 'ring', 'fan', 'cone', 'line', 'rect'),
-  origin: pointRef,
-  radius: { type: 'number', minimum: 0 }, innerRadius: { type: 'number', minimum: 0 },
-  width: { type: 'number', minimum: 0 }, angle: { type: 'number', minimum: 0 },
+  origin: pointRef, center: pointRef,
+  radius: spawnRadius, innerRadius: spawnRadius,
+  width: spawnRadius, angle: { type: 'number', minimum: 0 },
 }, ['shape']);
 const spawnTier = either(integer(1, 7), formula);
 const spawnTurns = either(integer(1, 100), formula);
-const spawnRadius = either({ type: 'number', minimum: 0 }, formula);
 const spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
 const zoneArea = withRules(object({
-  shape: enumOf('single', 'circle', 'ring', 'rect', 'cells', 'board'), anchorUnitId: entityId, center: pointRef,
-  radius: spawnRadius, innerRadius: { type: 'number', minimum: 0 },
+  shape: enumOf('single', 'circle', 'ring', 'rect', 'cells', 'board'), anchorUnitId: entityId, origin: pointRef, center: pointRef,
+  radius: spawnRadius, innerRadius: spawnRadius,
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
 const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')) };
 const spawnSpecs = {
   unit: withRules(object({
-    ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula),
+    ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula), remainingTurns: spawnTurns,
     spawnPanel: object({
       attribute, tier: spawnTier, stats: object(Object.fromEntries(attribute.enum.map(name => [name, integer(0, 20)])), attribute.enum),
-      maxHp: integer(1), maxMp: integer(0), maxSp: integer(0), armor: integer(0), size: integer(1, 5),
-      bodyLengthM: { type: 'number', exclusiveMinimum: 0 }, mc: integer(1), move: integer(0),
+      maxHp: numericExpr, maxMp: numericExpr, maxSp: numericExpr, armor: numericExpr, size: integer(1, 5),
+      bodyLengthM: { type: 'number', exclusiveMinimum: 0 }, mc: integer(1), move: numericExpr,
       skills: list(id), gear: list(id), mainHand: id, offHand: id, shield: id,
     }),
   }), variants(needs('templateId'), needs('copyOf'), needs('spawnPanel'), { not: either(needs('templateId'), needs('copyOf'), needs('spawnPanel')) })),
@@ -137,11 +140,11 @@ const spawnSpecs = {
 };
 
 const opcodeSchemas = [
-  opcode('let', { name: id, value: expr, scope: enumOf('frame', 'owner') }, ['name', 'value']),
+  opcode('let', { name: id, value: either(expr, enumOf(...scopes), variable), scope: enumOf('frame', 'owner') }, ['name', 'value']),
   opcode('if', { cond: booleanExpr, then: program, else: program }, ['cond', 'then']),
   opcode('for_each', { select: selector, bind: id, body: program }, ['select', 'body']),
   opcode('check', { kind: enumOf('save', 'contest', 'd20', 'chance', 'attack'), stat: either(attribute, list(attribute, 1)), defenderStat: attribute,
-    dc: numericExpr, mode: enumOf('all', 'any'), statusId, tags: list(tag), onPass: program, onFail: program, out: id }, ['kind']),
+    dc: numericExpr, mode: enumOf('all', 'any'), statusId: dynamicStatusId, rawNatural: bool, tags: list(tag), onPass: program, onFail: program, out: id }, ['kind']),
   opcode('ask', { chooser: target, kind: enumOf('cell', 'entity', 'option', 'number'), prompt: text, out: id,
     aiPolicy: enumOf('max', 'min', 'best_offensive_cell', 'safest_cell', 'highest_threat', 'first'), select: selector,
     options: chooseOptions, min: numericExpr, max: numericExpr, maxSelect: integer(1, 200) }, ['chooser', 'kind', 'prompt', 'out', 'aiPolicy'],
@@ -156,8 +159,8 @@ const opcodeSchemas = [
   when('mode', literal('swap'), withRules({ ...needs('otherPool'), properties: { pool: entityId } }, { not: needs('amount') })),
   when('mode', enumOf('add', 'sub', 'set', 'add_max', 'sub_max', 'set_max'), { ...needs('amount'), not: needs('otherPool') })),
   opcode('link_pool', { units: selector, pools: list(enumOf('hp', 'mp', 'sp'), 1), mode: enumOf('link', 'unlink') }, ['units', 'pools', 'mode']),
-  opcode('apply_status', { target, statusId, ignoreImmunity: bool, turns: numericExpr, stacks: numericExpr, stackMode: enumOf('refresh', 'stack', 'replace', 'extend'),
-    extendTurns: numericExpr, vars: mapOf(id, expr), expireOn: ref('expireRule') }, ['target', 'statusId']),
+  opcode('apply_status', { target, statusId: dynamicStatusId, ignoreImmunity: bool, turns: numericExpr, stacks: numericExpr, stackMode: enumOf('refresh', 'stack', 'replace', 'extend'),
+    extendTurns: numericExpr, vars: mapOf(id, either(expr, { type: 'string', pattern: '^[A-Za-z0-9_\\u4e00-\\u9fa5-]{1,64}$' })), expireOn: ref('expireRule') }, ['target', 'statusId']),
   opcode('remove_status', { target, where: booleanExpr, force: bool, reason: enumOf('dispelled', 'cleansed', 'expired'), outCount: id }, ['target', 'where']),
   opcode('mutate_event', { patch: either(...Object.keys(patchSchemas).map(name => ref(`patch_${name}`))) }, ['patch']),
   opcode('move', { target, mode: enumOf('teleport', 'step', 'push', 'pull', 'altitude'),
@@ -182,9 +185,10 @@ const defs = {
   expr: either(number, bool, formula),
   tag,
   selector: withRules(object({
-    from: either(enumOf(...scopes, 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable), of: enumOf(...scopes),
+    from: either(enumOf(...scopes, 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable), options: list(id, 1), of: either(enumOf(...scopes), variable),
     area, where: booleanExpr, pick: variants(literal('all'), ...['first', 'random', 'nearest'].map(key => object({ [key]: integer(1) }, [key]))),
-  }, ['from']), when('of', {}, { properties: { from: literal('statuses') } })),
+  }), either(needs('from'), needs('options')), when('of', {}, { properties: { from: literal('statuses') } })),
+
   targetRef: either(enumOf(...scopes), variable, selector),
   expireRule,
   statMod,

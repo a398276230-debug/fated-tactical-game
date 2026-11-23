@@ -210,7 +210,7 @@ export function skillTemplate(v, state) {
 }
 export function statusValue(v, key, state, ownerId) {
   if (own(v ?? {}, 'templateId')) {
-    const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, stacks, pools, ...rest } = v;
+    const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, ...rest } = v;
     const template = getStatusTemplate(state, key);
     const { vars, modifiers, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
     if (template?.modifiers) {
@@ -227,6 +227,7 @@ export function statusValue(v, key, state, ownerId) {
         && validVmSourceSkillId(sourceCarrier.id), '状态来源载体');
       checkOptional(sourceCarrier, 'ownerId', id);
     }
+    checkOptional(v, 'effectiveTier', x => int(x, 1, 7));
     if (own(v, 'authorityRank') || own(v, 'sourceTier')) requireThat(int(authorityRank, 1, 8) && int(sourceTier, 1, 7), '状态来源位格');
     statusTemplate(definition, key, state);
     const maxStacks = v.maxStacks ?? template?.maxStacks ?? 1;
@@ -260,7 +261,7 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','moved','rawMove','moveM','moveCarryPermille','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
@@ -273,6 +274,9 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'rawMove', x => num(x, 0, 1000));
   checkOptional(v, 'moveM', x => num(x, 0, 1000000));
   checkOptional(v, 'moveCarryPermille', x => int(x, 0, 999));
+  checkOptional(v, 'lastMoveDir', x => x === null || ['N', 'S', 'E', 'W'].includes(x));
+  checkOptional(v, 'remainingTurns', x => int(x, 1, 100));
+  checkOptional(v, 'moveSpent', x => int(x, 0, 1000000000));
   for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
   checkOptional(v, 'corpseOf', id);
   checkOptional(v, 'diedAt', x => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
@@ -285,7 +289,7 @@ export function unitValue(v, key, state) {
   for (const [r, max] of [['hp','maxHp'], ['mp','maxMp'], ['sp','maxSp']]) requireThat((v.pools ? num : int)(v[max], r === 'hp' ? 1 : 0, 1000000000) && (v.pools ? num : int)(v[r], 0, v[max]), r);
   fields(v.used, ['action', 'attack']); fields(v.stats, attrs);
   requireThat(attrs.every(k => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2)
-    && (!own(v, 'moved') || num(v.moved, 0, v.move)) && int(v.armor, 0, 1000000) && int(v.size, 1, 5) && int(v.move, 0, 1000000), '单位数值');
+    && int(v.armor, 0, 1000000) && int(v.size, 1, 5) && int(v.move, 0, 1000000), '单位数值');
   requireThat(v.weapon === null || id(v.weapon), 'weapon');
   for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));

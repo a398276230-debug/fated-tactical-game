@@ -39,10 +39,12 @@ const spawnSpecs = Object.entries(defs).filter(([key]) => key.startsWith('spawn_
 export const VM_EFFECT_PROTOCOL = `【战术 VM 效果协议】
 rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下枚举}。
 允许 hook：${vmHooks.join(' / ')}。
-选时机：active 主动施放；before_action 行动执行前扣费与取消控制；before_target 目标确定后重定向；before_check / after_check 检定前改判与检定后读结果；after_hit 命中后；after_damage / after_heal 实际伤害／治疗后；after_action 行动完成。
+选时机：active 主动施放；before_action 行动执行前扣费与取消控制；before_target 目标确定后重定向；before_check / after_check 检定前改判与检定后读结果；after_natural_roll 自然 d20 出骰后、判定前，读 event.naturalRoll 并用 replaceNaturalRoll 替换；after_hit 命中后；after_damage / after_heal 实际伤害／治疗后；after_action 行动完成。
 生命周期：before_status 施加状态前拦截；after_status_applied / after_status_removed 状态施加／移除后；on_status_immunized 状态被免疫；on_summon_evict 同源旧召唤物被替换、消散前（target 为旧召唤物）；on_lethal_p1 濒死先处理遗言，生命仍归零才进入 on_lethal_p2 处理免死等拦截；on_death / on_ally_death / on_kill 倒下／友方倒下／击杀；turn_start / turn_end 单位回合首尾；round_start / round_end 整轮首尾。
 before_commit 在 damage、heal、resource 提交前触发，区分 event.commitKind，读取 event.targetId、event.pool、event.sourceRuleId，可用 cancel 或 finalAmount 改写本笔提交。
 同一载体内规则 ID 唯一。规则由高 priority 到低 priority 执行；program 按数组顺序执行。filter 必须求得 true 才进入规则。规则和指令均可写 enabled:false 暂停执行，label 为显示名。只有与事件相符的载体会触发规则；用 filter 区分事件的施放者或承受者，例如 "attacker.id == self.id"。
+
+after_move 在单位实际移动或变更高度后触发。attacker/target 指移动单位，event.fromX/fromY、event.toX/toY、event.steps、event.moveKind 描述本次位移。载具同步时仅移动尚未同格的乘客，乘客只响应记录的载具 ID。
 
 【Opcode】每个指令对象必填 op，其值是下列名称。? 表示可省，闭合对象只接受列出的字段。
 ${instructions.join('\n')}
@@ -59,7 +61,8 @@ Expr 为 JSON 数字、布尔值或安全表达式字符串。表达式内支持
 let.name、bind、out、outCount 写裸名称；读取一律带作用域，例如 vars.lostStacks，不能裸写 lostStacks。实体绑定可作为 target:"vars.victim"、通过 vars.victim.id 读字段，或传给 has_status(vars.victim, 'taunt')。
 变量：${formulaReference}。
 函数签名：${formulaFunctionReference}。count_units 的 predicate 可直接写 candidate.team != self.team，也可传表达式文本，如 count_units("candidate.id == 'p1'")；整条表达式放进 JSON 字符串时按 JSON 规则转义内部双引号。
-selector：${describe(defs.selector)}。of 只用于 statuses；where 逐个检查 candidate。statuses 行可读 candidate.id/category/stacks/remainingTurns；tape 行可读 candidate.round/turn/actorId/team/actionType/skillId，保留记录顺序。random 使用战局 RNG。area.origin 省略时以 self 为中心。
+selector：${describe(defs.selector)}。of 只用于 statuses；where 逐个检查 candidate。statuses 行可读 candidate.id/category/stacks/remainingTurns；tape 行可读 candidate.round/turn/actorId/team/actionType/skillId，保留记录顺序。random 使用战局 RNG，不放回抽样。area.origin 或 area.center 指定中心，均缺省时以 self 为中心。词条相对距离用 scale_cells(n)，明确米数用 cells_m(meters)。
+随机异常示例：{"op":"for_each","select":{"options":["poison","burn","freeze","stun"],"pick":{"random":2}},"bind":"sid","body":[{"op":"apply_status","target":"target","statusId":"vars.sid","turns":2}]}。
 pointRef 可写 {x,y,z?}、self/source/target/attacker/center 或 vars.<名称>（格子或实体位置）。
 targetRef：${describe(defs.targetRef)}。for_each.bind 或 ask(kind:entity) 取得的实体直接用 vars.<名称>。用选择器指定 ID 时，可用 {"from":"units","where":"candidate.id == 'p1'"}，并将 p1 替换为快照 ID。
 
@@ -67,6 +70,7 @@ targetRef：${describe(defs.targetRef)}。for_each.bind 或 ask(kind:entity) 取
 mods 是修饰数组，每项 ${describe(defs.statMod)}。至少有 stat、locks、flags 或 controlPolicy；填写数值修饰时必须指定 stat。组合值为 (基础 + flat 总和) × (1 + additivePercent 总和) × mult 连乘。when 必须求得 true 才生效。
 • 输出方（自己打别人）：damageFlat 输出固定加伤，基值 0，用 flat；damageMult 输出倍率、finalDamageMult 最终伤害倍率，基值 1，用 mult:1.3 或 additivePercent:0.3 表示 +30%；armorPierce 固定穿甲，基值为已有穿甲，用 flat；armorPiercePercent 百分比穿甲，基值 0（武器姿态可自带穿甲），用 flat:0.2 表示 +20%。
 • 承伤方（自己挨打）：damageReductionFlat 受击固定减伤，基值 0，用正数 flat:800（不要写成负的 damageFlat）；damageReduction / dr 受击百分比减伤，基值 0，用 flat:0.3 表示 +30%。damageReduction 先算，dr 在固定减伤之后另乘；真实伤害无视这些减伤。
+• 移动：movement 用 flat 写层级内的移动增减，引擎再换成战场格数；incomingDistanceOffset 用 flat 写敌对来源计算射程、范围与命中时的表观距离增量，可用 scale_cells(n) 换算。
 • 闪避：在受击方写 {"stat":"dodge","flat":4}，普通攻击检定扣除 4 点命中。闪避、豁免难度与抵抗加值基值均为 0，用 flat。check.statusId 会透传到 event.statusId，例如 mods: [{"stat":"dcBonus","flat":10,"when":"event.statusId == 'freeze'"},{"stat":"resistBonus","flat":10,"when":"event.statusId == 'freeze'"}]；前者读取施加者，后者读取豁免者。
 • 其余：healingMult 施疗倍率、incomingHealMult 受疗倍率、costMult 技能消耗倍率，基值 1，用 mult（如技能资源消耗 -30% 写 mult:0.7）；checkBonus 检定加值、dcBonus 难度加值、resistBonus 豁免加值、advantage 优势、initiativeFlat 先手加值，基值 0（initiativeFlat 叠加已有先手加值），用 flat；str/agi/con/int/spi/armor 叠加所在载体持有者的已有属性／护甲值。
 • 比例型 damageReduction、dr、armorPiercePercent 不允许 additivePercent；flat 数字必须在 -1..1，负数表示降低该比例。倍率型 damageMult、finalDamageMult、healingMult、incomingHealMult、costMult 不允许 flat。

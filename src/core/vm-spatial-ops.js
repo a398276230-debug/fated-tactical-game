@@ -50,15 +50,23 @@ function resolveSpawnSpec(spec, context, kind) {
     resolved[key] = spawnNumber(spec[key], context, min, max);
     if (resolved[key] === undefined) return;
   }
-  if (spec.spawnPanel?.tier !== undefined) {
-    const tier = spawnNumber(spec.spawnPanel.tier, context, 1, 7);
-    if (tier === undefined) return;
-    resolved.spawnPanel = { ...spec.spawnPanel, tier };
+  if (spec.spawnPanel) {
+    resolved.spawnPanel = { ...spec.spawnPanel };
+    for (const key of ['tier', 'maxHp', 'maxMp', 'maxSp', 'armor', 'move']) {
+      if (spec.spawnPanel[key] === undefined) continue;
+      const value = spawnNumber(spec.spawnPanel[key], context, key === 'tier' ? 1 : 0, key === 'tier' ? 7 : 1000000000);
+      if (value === undefined) return;
+      resolved.spawnPanel[key] = value;
+    }
   }
-  if (spec.area?.radius !== undefined) {
-    const radius = spawnNumber(spec.area.radius, context, 0, Infinity, false);
-    if (radius === undefined) return;
-    resolved.area = { ...spec.area, radius };
+  if (spec.area) {
+    resolved.area = { ...spec.area };
+    for (const key of ['radius', 'innerRadius', 'width']) {
+      if (spec.area[key] === undefined) continue;
+      const value = spawnNumber(spec.area[key], context, 0, Infinity, false);
+      if (value === undefined) return;
+      resolved.area[key] = value;
+    }
   }
   return resolved;
 }
@@ -113,7 +121,15 @@ function teleport({ state, frame, host, context, op }, targets) {
   }
   for (const { unit, to } of landings) Object.assign(unit, to);
   refreshFollowingZones(state, host);
-  for (const { unit, from } of landings) if (!same(unit, from)) logMove(state, host, unit, 'teleport', from, []);
+  for (const { unit, from } of landings) if (!same(unit, from)) {
+    const dx = unit.x - from.x, dy = unit.y - from.y;
+    if (dx || dy) unit.lastMoveDir = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'W' : 'E') : (dy < 0 ? 'N' : 'S');
+    unit.moved = (unit.moved ?? 0) + Math.max(Math.abs(dx), Math.abs(dy));
+    host.hooks?.(state, frame, 'after_move', newEvent(state, { actorId: unit.id, targetId: unit.id,
+      fromX: from.x, fromY: from.y, toX: unit.x, toY: unit.y,
+      steps: Math.max(Math.abs(dx), Math.abs(dy)), moveKind: 'teleport' }));
+    logMove(state, host, unit, 'teleport', from, []);
+  }
 }
 
 function move(env) {
@@ -164,6 +180,14 @@ function continueMove({ state, frame, host, context }) {
     if (!path.length && !collision) return;
   }
   refreshFollowingZones(state, host);
+  if (!same(unit, from) || (op.mode === 'altitude' && at(state, unit).z !== from.z)) {
+    const dx = unit.x - from.x, dy = unit.y - from.y;
+    if (dx || dy) unit.lastMoveDir = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? 'W' : 'E') : (dy < 0 ? 'N' : 'S');
+    unit.moved = (unit.moved ?? 0) + path.length;
+    host.hooks?.(state, frame, 'after_move', newEvent(state, { actorId: unit.id, targetId: unit.id,
+      fromX: from.x, fromY: from.y, toX: unit.x, toY: unit.y, steps: path.length,
+      moveKind: op.mode }));
+  }
   logMove(state, host, unit, op.mode, from, path, collision);
   if (!collision) return;
   const target = { type: 'unit', id: unit.id };
@@ -285,7 +309,7 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
   const templateId = spec.templateId ?? original?.templateId ?? original?.id ?? frame.ruleId ?? 'summon';
   const form = spec.copyOf ? 'copy' : spec.spawnPanel ? 'panel' : 'template';
   const group = JSON.stringify([actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
-  const data = { plan, center: xy(center), out: op.out ?? null,
+  const data = { plan, center: xy(center), out: op.out ?? null, remainingTurns: spec.remainingTurns,
     fields: carrier({ ...original, ...spec, tier: spec.spawnPanel ? plan.panel.tier : spec.tier ?? plan.panel.tier,
       vars: { ...(spec.copyOf ? {} : original?.vars), ...spec.vars } }, actor.id, '', templateId, context),
     group, evictIds: [], pendingId: null };
@@ -350,6 +374,7 @@ function continueSpawn({ state, frame, host, context }) {
     const id = nextId(state, state.units, 'summon');
     const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement, altitude: 0,
       summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
+      ...(data.remainingTurns !== undefined && { remainingTurns: data.remainingTurns }),
       ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
     unit.hp = unit.maxHp;
     unit.mp = unit.maxMp;
@@ -377,8 +402,10 @@ function spawnZone({ state, frame, host, context, op }, center) {
     ? context.resolveEntity(own(context.vars, anchorRef.slice(5)), 'unit')?.id : anchorRef;
   const anchor = own(state.units, anchorRef === undefined && spec.follow ? context.self?.id : anchorId);
   if ((anchorRef || spec.follow) && !live(anchor)) return;
-  const origin = area.center === undefined ? anchor ?? center : resolvePoint(area.center, context);
-  if ((area.center !== undefined || ['circle', 'ring', 'single'].includes(area.shape)) && !point(origin)) return;
+  const centerRef = area.origin ?? area.center;
+  const origin = centerRef === undefined ? anchor ?? center : resolvePoint(centerRef, context);
+  if ((centerRef !== undefined || ['circle', 'ring', 'single'].includes(area.shape)) && !point(origin)) return;
+  delete area.origin;
   if (['circle', 'ring'].includes(area.shape) && !Number.isFinite(area.radius)) return;
   if (origin) area.center = xy(origin);
   if (spec.follow) area.anchorUnitId = anchor.id;
@@ -435,7 +462,7 @@ function spawnTerrain({ state, frame, host, context, op }, center) {
   if (!center) return;
   const { spec, entityKind } = op;
   const area = spec.area;
-  const origin = area?.origin === undefined ? center : resolvePoint(area.origin, context);
+  const origin = area?.origin == null && area?.center == null ? center : resolvePoint(area.origin ?? area.center, context);
   if (!origin) return;
   let selected = [center];
   if (area?.shape === 'rect') {
@@ -561,6 +588,11 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
 export function expireSpatialEffects(state, host, { advance = false, parent = state.vm?.stack.at(-1) } = {}) {
   refreshFollowingZones(state, host);
   if (!advance) return;
+  const expiring = values(state.units).filter(unit => unit.summoned && unit.remainingTurns != null && --unit.remainingTurns === 0);
+  for (const unit of expiring.reverse()) {
+    unit.remainingTurns = 1;
+    pushFrame(state, { kind: 'action', native: 'expireSummon', ownerId: unit.id, sourceId: unit.sourceId ?? unit.id });
+  }
   for (const zone of values(state.zones)) {
     if (!zone.persistent && --zone.remainingTurns <= 0) removeZone(state, host, zone.id, '到期');
   }
@@ -606,4 +638,26 @@ function spawn(env) {
 }
 
 export const spatialOps = Object.freeze({ move, spawn, despawn });
-export const spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn });
+function continueExpireSummon({ state, frame, host }) {
+  const unit = own(state.units, frame.ownerId);
+  if (unit && frame.pc === 0 && live(unit)) {
+    frame.pc++;
+    frame.awaitEvent = newEvent(state, { actorId: unit.id, targetId: unit.id, deadId: unit.id, sourceId: unit.sourceId ?? null,
+      summonId: unit.id, templateId: unit.templateId ?? null, sourceSkillId: unit.sourceSkillId ?? null, center: at(state, unit), reason: 'expired' });
+    scheduleHooks(state, frame, 'on_summon_evict', frame.awaitEvent, host);
+    return;
+  }
+  if (unit && frame.pc === 1 && live(unit)) {
+    frame.pc++;
+    scheduleHooks(state, frame, 'on_death', frame.awaitEvent, host);
+    return;
+  }
+  if (unit) {
+    host.log(state, unit, 'despawn', `${unit.name}召唤期限结束`, { unitId: unit.id, summoned: true, expired: true });
+    removeSummon(state, unit);
+    if (state.turn >= state.order.length) state.turn = 0;
+  }
+  state.vm.stack.pop();
+}
+
+export const spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn, expireSummon: continueExpireSummon });

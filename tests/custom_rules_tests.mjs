@@ -95,11 +95,12 @@ test('on_kill can refund the consumed attack slot through the pseudo resource po
 
 test('move pseudo pool reaches zero and native preview honors the exhausted budget', () => {
   const { state, actor } = battle();
-  actor.moved = actor.move;
+  actor.moveSpent = actor.move;
   assert.equal(reachable(state, 'move', actor).length, 0);
   assert.equal(preview(state, { type: 'move' }).cells?.length ?? 0, 0);
   assert.equal(preview(state, { type: 'move', x: actor.x + 1, y: actor.y }).ok, false);
-  actor.moved = 0;
+  actor.moveSpent = 0;
+  actor.moved = actor.move;
   assert.ok(reachable(state, 'move', actor).length > 0);
 });
 

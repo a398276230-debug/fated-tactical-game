@@ -15,7 +15,13 @@ const resolveRegister = (context, key) => {
 export function resolvePoint(value, context) {
   const point = typeof value !== 'string' ? value : value.startsWith('vars.')
     ? resolveRegister(context, value.slice(5)) : context[value];
-  return coordinate(point) ? point : null;
+  if (!point || typeof point !== 'object') return null;
+  if (typeof value === 'string') return coordinate(point) ? point : null;
+  const x = evaluateExpr(point.x, context), y = evaluateExpr(point.y, context);
+  const z = point.z === undefined ? undefined : evaluateExpr(point.z, context);
+  if (![x, y].every(Number.isFinite) || (z !== undefined && !Number.isFinite(z))) return null;
+  const axis = (n, size) => Math.max(0, Math.min((size ?? Infinity) - 1, Math.round(n)));
+  return { x: axis(x, context.boardW), y: axis(y, context.boardH), ...(z === undefined ? {} : { z }) };
 }
 
 export function zoneContains(state, zone, at) {
@@ -34,14 +40,20 @@ export function zoneContains(state, zone, at) {
   return distance <= radius && (shape === 'circle' || (shape === 'ring' && distance >= (innerRadius ?? 0)));
 }
 
+export function selectorOwner(selector, context) {
+  const of = selector.of ?? 'target';
+  return of.startsWith('vars.') ? resolveRegister(context, of.slice(5)) : context[of];
+}
+
 function rows(state, selector, context) {
+  if (selector.options) return [...new Set(selector.options)];
   switch (selector.from) {
     case 'units': return sortedValues(state.units);
     case 'zones': return sortedValues(state.zones);
     case 'covers': return sortedValues(state.covers);
     case 'terrain': return sortedValues(state.spatialTerrain);
     case 'tape': return state.tape ?? [];
-    case 'statuses': return sortedValues(context[selector.of ?? 'target']?.statuses);
+    case 'statuses': return sortedValues(selectorOwner(selector, context)?.statuses);
     case 'cells': return state.grid.flatMap((row, y) => row.map(({z}, x) => ({x, y, z})));
     case 'self': case 'source': case 'target': case 'attacker': return [context[selector.from]].filter(Boolean);
     default: {
@@ -67,19 +79,25 @@ export function selectVM(state, selector, context, { pure = false } = {}) {
   if (!selector) return [];
   let candidates = rows(state, selector, context);
   if (selector.area) {
-    const { origin: from = 'self', shape, radius, innerRadius, width, angle } = selector.area;
+    const { origin: from = selector.area.center ?? 'self', shape, radius, innerRadius, width, angle } = selector.area;
     const origin = resolvePoint(from, context);
     if (!coordinate(origin)) return [];
     const aim = ['line', 'fan', 'cone'].includes(shape) && coordinate(context.target) ? context.target : origin;
+    const resolvedRadius = typeof radius === 'string' ? evaluateExpr(radius, context) : radius;
+    const resolvedInnerRadius = typeof innerRadius === 'string' ? evaluateExpr(innerRadius, context) : innerRadius;
+    const resolvedWidth = typeof width === 'string' ? evaluateExpr(width, context) : width;
+    const resolvedAngle = typeof angle === 'string' ? evaluateExpr(angle, context) : angle;
     const cells = new Set(selector.from === 'terrain' && shape === 'single' && coordinate(origin)
       ? [cellKey(origin)]
-      : aoeCells(state, origin, aim, { shape, radius, innerRadius, width, angle, range: Infinity,
+      : aoeCells(state, origin, aim, { shape, radius: resolvedRadius, innerRadius: resolvedInnerRadius, width: resolvedWidth, angle: resolvedAngle, range: Infinity,
         ignoreLOS: selector.from === 'terrain' }).map(cellKey));
     const withinArea = candidate => {
       const points = selector.from === 'terrain' ? candidate.cells ?? []
         : selector.from === 'zones' ? state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })))
           .filter(point => zoneContains(state, candidate, point)) : [candidate];
-      return points.some(point => coordinate(point) && cells.has(cellKey(point)));
+      return points.some(point => coordinate(point) && cells.has(cellKey(point)) && (
+        !context.hostileAreaDistance || !['circle', 'ring', 'single'].includes(shape)
+        || (context.hostileAreaDistance(origin, point) ?? 0) <= (shape === 'single' ? 0 : resolvedRadius ?? 1.5) + 1e-9));
     };
     candidates = candidates.filter(withinArea);
   }

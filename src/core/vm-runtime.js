@@ -134,7 +134,7 @@ export const vmHost = {
   },
   resource: (state, unit, key) => {
     if (!unit) return undefined;
-    if (key === 'move') return Math.max(0, unit.move - (unit.moved ?? 0));
+    if (key === 'move') return Math.max(0, unit.move - (unit.moveSpent ?? 0));
     if (key === 'attack' || key === 'action') return Math.max(0, 1 - (unit.used?.[key] ?? 0));
     return getPool(state, unit.id, key)?.current;
   },

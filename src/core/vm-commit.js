@@ -7,7 +7,7 @@ const alive = unit => unit?.hp > 0 && !unit.fled;
 const entry = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const pseudoPool = new Set(['attack', 'action', 'move']);
 function pseudoState(unit, key) {
-  if (key === 'move') return { current: Math.max(0, unit.move - (unit.moved ?? 0)), max: unit.move };
+  if (key === 'move') return { current: Math.max(0, unit.move - (unit.moveSpent ?? 0)), max: unit.move };
   return { current: Math.max(0, 1 - (unit.used?.[key] ?? 0)), max: 1 };
 }
 function applyPseudo(unit, key, mode, amount) {
@@ -17,7 +17,7 @@ function applyPseudo(unit, key, mode, amount) {
   if (mode === 'add_max' || mode === 'sub_max' || mode === 'set_max') return false;
   if (!Number.isFinite(current)) return false;
   current = Math.max(0, Math.min(pseudoState(unit, key).max, current));
-  if (key === 'move') unit.moved = unit.move - current;
+  if (key === 'move') unit.moveSpent = unit.move - current;
   else {
     unit.used[key] = 1 - current;
     // `ap` is the aggregate remaining split-slot budget. Keep it in sync
