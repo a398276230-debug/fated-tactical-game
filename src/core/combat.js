@@ -899,7 +899,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const saveBonus = saveStat ? effectiveStat(state, target, saveStat)
     + modStat(state, target, 'resistBonus', 0, { target: actor, checkKind: 'save' }) : 0;
   const saveChance = saveStat ? saveOdds(saveDC, saveBonus) : 0;
-  const automatic = !weapon && (!template.damage || saveStat || template.autoHit);
+  const areaStrike = hasStrikeDamage(template) && (template.shape ?? 'single') !== 'single';
+  const automatic = areaStrike || !weapon && (!template.damage || saveStat || template.autoHit);
   const hitChance = automatic || guaranteeHit ? 1 : tierUp || dodge || modCheck(state, actor, 'accuracyBonus', strike)
     ? saveOdds(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveOdds(2, 0, advantages, disadvantages) : 0) : hitOdds(defense, accuracy, advantages, disadvantages);
   const critChance = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : criticalOdds(advantages, disadvantages);
@@ -954,7 +955,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     ...(context.skillId && { skillId: context.skillId }), ...(weapon?.instance?.id && { weaponId: weapon.instance.id }),
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
-    automatic: Boolean(automatic), execution, guaranteeHit, guaranteeCrit, tierUp, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
+    automatic: Boolean(automatic), ...(areaStrike && !saveStat && { skipHitCheck: true }), execution, guaranteeHit, guaranteeCrit, tierUp, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
     coreBonus: modCheck(state, actor, 'coreBonus', strike), dodgeBonus: dodge,
     damageMultiplier: modStat(state, actor, 'damage', multiplier, { ...strike, damageType }),
     offHand: Boolean(weapon?.offHand?.template), armor: reduction.armor, damagePipeline: reduction.armorMultiplier,
@@ -989,8 +990,7 @@ function usableTiles(state, actor, template, weapon) {
   return allCells(state).filter(at => validReach(state, actor,
     template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at
       : locateUnit(state, at, null, u => selectionAllows(template, actor, u, allowFriendlyTarget)) ?? at,
-    template, weapon?.ammo) &&
-    !(['line','cone','fan'].includes(template.shape) && sameCell(actor, at) && template.range !== 0));
+    template, weapon?.ammo));
 }
 function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
   const keys = new Set(cells.map(at => key(at.x, at.y)));
@@ -1439,6 +1439,12 @@ export function continueStrike({ state, frame, host }) {
     weaponTemplateId: weapon?.instance?.templateId ?? null, damageType: profile.damageType, souls: weapon?.souls ?? 0 };
   if (!frame.phase) {
     if (!alive(target) || target.fled) { next(); return; }
+    if (profile.skipHitCheck) {
+      const result = resolveCheck(state, actor, profile);
+      frame.awaitEvent = host.event(state, { ...detail, ...result, passed: result.hit });
+      frame.phase = 'damage';
+      return;
+    }
     frame.phase = 'check';
     frame.awaitEvent = host.event(state, { ...detail, checkKind: profile.saveStat ? 'save' : 'attack', dc: profile.saveDC ?? profile.defense });
     host.hooks(state, frame, 'before_check', frame.awaitEvent);

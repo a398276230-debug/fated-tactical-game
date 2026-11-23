@@ -343,6 +343,47 @@ test('an area rule damages each enemy it selects once and spends one use', () =>
   assert.equal(preview(state, cast).usesLeft, 0);
 });
 
+test('single-target hit gates radial and forward splash, with saves rolled by splash targets', () => {
+  for (const shape of ['circle', 'line', 'fan', 'cone']) {
+    for (const forceOutcome of ['hit', 'miss']) {
+      const fixture = battle();
+      const { state, actor, enemy } = fixture;
+      const behind = state.units.raider;
+      const flank = Object.values(state.units).find(unit => unit.team === enemy.team && unit !== enemy && unit !== behind);
+      assert.ok(flank);
+      state.grid = state.grid.map(row => row.map(() => ({ kind: 'floor', z: 0 })));
+      state.covers = {};
+      Object.assign(actor, { x: 1, y: 2 });
+      Object.assign(enemy, { x: 3, y: 2, facing: [0, 1] });
+      Object.assign(behind, { x: 4, y: 2 });
+      Object.assign(flank, { x: 3, y: 3 });
+      const skillId = 'impact-splash';
+      const filter = 'attacker.id == self.id && event.skillId == skill.id';
+      const cast = learn(fixture, skillId, [], {
+        damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: [
+          { id: 'primary-check', hook: 'before_check', filter: `${filter} && event.checkKind == 'attack'`,
+            program: [{ op: 'mutate_event', patch: { forceOutcome } }] },
+          { id: 'splash', hook: 'after_hit', filter, program: [{
+            op: 'for_each', select: { from: 'units', area: { shape, center: 'target', radius: 'scale_cells(2)' },
+              where: 'candidate.alive && candidate.team != self.team && candidate.id != target.id' },
+            body: [damage(7), { op: 'check', kind: 'save', stat: 'con', dc: 12 }],
+          }] },
+        ],
+      });
+      validateState(state);
+      assert.equal(preview(state, cast).ok, true);
+      const logStart = state.logs.length;
+      applyAction(state, cast);
+      const logs = state.logs.slice(logStart);
+      assert.equal(logs.filter(log => log.type === 'roll').length, 1, `${shape}: only the primary attack rolls to hit`);
+      const expected = forceOutcome === 'miss' ? [] : shape === 'circle' ? [behind.id, flank.id].sort() : [behind.id];
+      assert.deepEqual(logs.filter(log => log.type === 'damage' && log.detail.targetId !== enemy.id).map(log => log.detail.targetId).sort(), expected);
+      assert.deepEqual(logs.filter(log => log.type === 'save').map(log => log.detail.targetId).sort(), expected);
+      assert.equal(logs.filter(log => log.type === 'damage' && log.detail.targetId === enemy.id).length, Number(forceOutcome === 'hit'));
+    }
+  }
+});
+
 test('AI values a costly cell skill that damages an enemy outside its native target list', () => {
   const fixture = battle();
   const { state, actor, enemy } = fixture;

@@ -83,13 +83,17 @@ export function selectVM(state, selector, context, { pure = false } = {}) {
     const origin = resolvePoint(from, context);
     if (!coordinate(origin)) return [];
     const aim = ['line', 'fan', 'cone'].includes(shape) && coordinate(context.target) ? context.target : origin;
+    const attacker = context.attacker ?? context.self;
+    // At the impact point, continue along the incoming ray instead of the target's facing.
+    const facing = aim === context.target && aim.x === origin.x && aim.y === origin.y && coordinate(attacker)
+      && (attacker.x !== aim.x || attacker.y !== aim.y) ? [aim.x - attacker.x, aim.y - attacker.y] : origin.facing;
     const resolvedRadius = typeof radius === 'string' ? evaluateExpr(radius, context) : radius;
     const resolvedInnerRadius = typeof innerRadius === 'string' ? evaluateExpr(innerRadius, context) : innerRadius;
     const resolvedWidth = typeof width === 'string' ? evaluateExpr(width, context) : width;
     const resolvedAngle = typeof angle === 'string' ? evaluateExpr(angle, context) : angle;
     const cells = new Set(selector.from === 'terrain' && shape === 'single' && coordinate(origin)
       ? [cellKey(origin)]
-      : aoeCells(state, origin, aim, { shape, radius: resolvedRadius, innerRadius: resolvedInnerRadius, width: resolvedWidth, angle: resolvedAngle, range: Infinity,
+      : aoeCells(state, origin, aim, { shape, radius: resolvedRadius, innerRadius: resolvedInnerRadius, width: resolvedWidth, angle: resolvedAngle, facing, range: Infinity,
         ignoreLOS: selector.from === 'terrain' }).map(cellKey));
     const withinArea = candidate => {
       const points = selector.from === 'terrain' ? candidate.cells ?? []

@@ -76,7 +76,10 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
       }]},
       环击:{标签:['范围:近程(2)+环(所有)','有效距离:近程(2)'],damage},
       横扫:{标签:['范围:近程(2)+线(敌方)','有效距离:0'],damage},
-      敌方圆击:{标签:['范围:近程(2)+圆(敌方)','有效距离:2'],damage},
+      敌方圆击:{标签:['范围:近程(2)+圆(敌方)','有效距离:2','威力:50','伤害:物理'],rules:[
+        {id:'no-attack-check',hook:'before_check',filter:"event.checkKind == 'attack' && event.skillId == skill.id",program:[{op:'mutate_event',patch:{forceOutcome:'miss'}}]},
+        {id:'effect-save',hook:'after_hit',filter:'event.skillId == skill.id',program:[{op:'check',kind:'save',stat:'con',dc:12}]},
+      ]},
       无差别:{shape:'circle',radius:2,range:2,damage},
       治疗:{标签:['单体','核心功能:治疗','有效距离:2'],heal:{count:1,sides:4}},
       环境:{标签:['范围:近程(2)+圆(环境)','有效距离:2'],damage},
@@ -95,6 +98,13 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
   const fanPlan = aim(fan,3,1);
   assert.ok(fanPlan.ok && fanPlan.cells.length > 1);
   assert.ok(fanPlan.targets.some(target => target.id === 'e'));
+  state.units.e.x = state.units.p.x;
+  state.units.e.y = state.units.p.y;
+  const closeFan = aim(fan,2,1);
+  assert.ok(closeFan.ok, 'directed area skills remain aimable beside a same-cell enemy');
+  assert.ok(closeFan.targets.some(target => target.id === 'e'), 'fan includes a hostile unit sharing the caster cell');
+  state.units.e.x = 3;
+  state.units.e.y = 1;
   const ringPlan = aim(ring,3,1);
   assert.ok(ringPlan.ok && ringPlan.cells.some(cell => cell.x === 2 && cell.y === 1));
   assert.ok(!ringPlan.cells.some(cell => cell.x === 3 && cell.y === 1));
@@ -103,11 +113,16 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
   assert.ok(aim(line,1,1).targets.some(target => target.id === 'e'));
   assert.deepEqual(aim(ring,2,1).targets.map(target => target.id), ['e','p']);
   for (const [skillId, targetIds] of [[enemyArea, ['e']], [defaultArea, ['e','f','p']]]) {
-    assert.deepEqual(aim(skillId,2,1).targets.map(target => target.id), targetIds);
+    const { targets } = aim(skillId,2,1);
+    assert.deepEqual(targets.map(target => target.id), targetIds);
+    assert.ok(targets.every(target => target.hitChance === 1 && target.expectedD20 === null));
     const native = structuredClone(state);
     applyAction(native,{type:'skill',skillId,x:2,y:1});
-    const checks = native.logs.slice(state.logs.length).filter(log => ['roll', 'hit_result'].includes(log.type));
-    assert.deepEqual(checks.map(log => log.detail.targetId), targetIds);
+    const logs = native.logs.slice(state.logs.length);
+    assert.ok(!logs.some(log => log.type === 'roll'));
+    assert.deepEqual(logs.filter(log => log.type === 'hit_result').map(log => log.detail.targetId), targetIds);
+    assert.deepEqual(logs.filter(log => log.type === 'damage').map(log => log.detail.targetId), targetIds);
+    assert.deepEqual(logs.filter(log => log.type === 'save').map(log => log.detail.targetId), skillId === enemyArea ? ['e'] : []);
   }
   assert.ok(aim(heal,2,1).ok);
   assert.equal(aim(heal,3,1).ok, false);
@@ -568,7 +583,7 @@ test('G102/G103 original YAML and rejected effects retain the referenced skill t
   const skill = state.skills[id];
   assert.deepEqual([skill.name,skill.rules,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
   const rejected = hydrateDummy(shooterYaml.replace('效果: |','效果: 不认识的动作'));
-  assert.deepEqual(rejected.state.skills[id], { ...skill, damageType:'physical' });
+  assert.deepEqual(rejected.state.skills[id], { ...skill, damage: { count: 1, sides: 4, stat: 'agi', type: 'physical' }, damageType:'physical' });
   assert.ok(rejected.warnings.some(w => w.originPath === `/skills/${id}` && w.message.includes('不认识的动作')));
 });
 
@@ -587,6 +602,49 @@ test('G124–G126/G129/G130 原文标签生成独立伤害节点，实际施放�
     assert.equal(logs.find(log=>log.type==='damage').detail.damageType,type);
   }
 });
+test('只有威力标签也生成无 type 的协议主击，并保留效果类型兜底', () => {
+  const result = hydrateDummy(shooterYaml.replace('[伤害: 物理]', ''));
+  const id = result.state.units.e1.skills[0];
+  assert.deepEqual(result.state.skills[id].damage, { count: 1, sides: 4, stat: 'agi' });
+  assert.equal(result.state.skills[id].damageType, undefined);
+  assert.deepEqual(result.warnings, []);
+  const natural = hydrateDummy(shooterYaml.replace('[伤害: 物理]', '').replace('效果: |', '效果：挥出能量斩并造成额外效果'));
+  const naturalId = natural.state.units.e1.skills[0];
+  assert.deepEqual(natural.state.skills[naturalId].damage, { count: 1, sides: 4, stat: 'agi' });
+  const path = `/skills/${naturalId}`;
+  const diagnostic = natural.warnings.find(w => w.originPath === path && w.message.includes('主击伤害类型待标准化'));
+  assert.ok(diagnostic);
+  assert.ok(diagnostic.message.includes(`${path}/damage/type`));
+  const operation = { op: 'add', path: `${path}/damage/type`, value: 'energy', resolves: [referenceFor(diagnostic)] };
+  const patched = applyPatch(natural.state, [operation], true);
+  validateState(patched);
+  assert.deepEqual(resolvedDiagnostics(natural.warnings, { e1: {} }, [operation]), [diagnostic]);
+  const actor = patched.units.e1, target = patched.units.p1;
+  patched.turn = patched.order.indexOf(actor.id);
+  Object.assign(actor, { ap: 2, used: { attack: 0, action: 0 }, x: 1, y: 1 });
+  Object.assign(target, { x: 2, y: 1 });
+  setMaxResource(patched, actor, 'sp', 40);
+  const cast = { type: 'skill', skillId: naturalId, x: target.x, y: target.y, targetId: target.id };
+  assert.equal(preview(patched, cast).targets[0].damageType, 'energy');
+  assert.deepEqual(patched.skills[naturalId].rules, []);
+  const typedEffect = hydrateDummy(shooterYaml.replace('[伤害: 物理]', '').replace('效果: |', '效果：100%能量伤害'));
+  const typedId = typedEffect.state.units.e1.skills[0];
+  assert.equal(typedEffect.state.skills[typedId].damage, undefined);
+  assert.deepEqual(typedEffect.state.skills[typedId].rules[0].program, [damageOp('energy', 'event.power')]);
+});
+
+test('单一伤害标签与效果主击不会双倍结算，旧格式仍从效果生成伤害', () => {
+  const tagged = hydrateDummy(shooterYaml.replace('效果: |', '效果：100%物理伤害'));
+  const taggedId = tagged.state.units.e1.skills[0];
+  assert.equal(tagged.state.skills[taggedId].damage, undefined, '效果已生成 active 主击时不再自动生成模板 damage');
+  assert.equal(tagged.state.skills[taggedId].rules.filter(rule => rule.hook === 'active').length, 1);
+  assert.deepEqual(tagged.state.skills[taggedId].rules[0].program, [damageOp('physical', 'event.power')]);
+  const legacy = hydrateDummy(shooterYaml.replace('[伤害: 物理]', '').replace('效果: |', '效果：100%物理伤害'));
+  const legacyId = legacy.state.units.e1.skills[0];
+  assert.equal(legacy.state.skills[legacyId].damage, undefined);
+  assert.deepEqual(legacy.state.skills[legacyId].rules[0].program, [damageOp('physical', 'event.power')]);
+});
+
 test('旧技能效果中的百分比伤害按威力结算一次，混合类型独立结算', () => {
   for (const [effect, expected] of [
     ['100%物理伤害', [['physical', 'event.power', 50]]],
@@ -882,15 +940,15 @@ test('battle_init 配套正则输出可点击入口', () => {
   assert.doesNotMatch(output, /<battle_init>/);
 });
 
-test('含威力与伤害标签且附带叙事效果的技能在警告中提示补齐模板主击 damage', () => {
+test('含威力与单一伤害标签的技能由转换器确定性生成协议主击 damage', () => {
   const crabSkillYaml = `技能:\n  - 名称: 断铁巨螯夹击\n    消耗: 攻击: 80 SP\n    标签: [力量][单体][有效距离: 近程(1)][伤害][威力: 190][伤害: 物理]\n    效果:\n      重钳撕裂: 命中后额外造成 55 点物理伤害`;
   const { state, warnings } = hydrateDummy(crabSkillYaml);
   const sid = state.units.e1.skills[0];
   assert.equal(state.skills[sid].power, 190);
-  assert.equal(state.skills[sid].damage, undefined);
+  assert.deepEqual(state.skills[sid].damage, { count: 1, sides: 4, stat: 'str', type: 'physical' });
   const diag = warnings.find(w => w.originPath === `/skills/${sid}`);
-  assert.ok(diag, '应产生待标准化诊断');
+  assert.ok(diag, '附加效果仍应产生待标准化诊断');
   assert.match(diag.message, /效果待标准化「重钳撕裂」/);
-  assert.match(diag.message, new RegExp(`已声明威力 190、伤害「物理」、关联属性 str.*缺少 damage 骰子对象.*/skills/${sid}/damage`));
+  assert.doesNotMatch(diag.message, /缺少 damage 骰子对象/);
 });
 

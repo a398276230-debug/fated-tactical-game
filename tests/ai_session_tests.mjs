@@ -235,7 +235,7 @@ test('技能先手按槽取最大值并复用开场骰，模板上限为射程 6
 test('G97 protocol maps mixed damage, empty effects and worldbook tags without concrete number anchoring', () => {
   const protocol = resolveSlotContent({ id: 'protocol' });
   assert.match(protocol, /混合伤害.*拆为多条按序执行的 damage 指令.*不再额外叠加模板总威力主击/);
-  assert.match(protocol, /单独填写 power 不会开启主击/);
+  assert.match(protocol, /转换器遇到 \[威力: X\].*自动生成 damage/);
   assert.match(protocol, /原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved/);
   for (const tag of ['[威力: X 物理]', '[关联属性: <属性>]', '[单体]', '[范围: <档位>(N)+<形状>(<阵营>)]']) assert.ok(protocol.includes(tag), tag);
 });

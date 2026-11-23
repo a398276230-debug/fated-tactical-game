@@ -797,24 +797,30 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const areaDamage = isAreaDamage(area);
     const narrativeNotes = [];
     appendRules(rules, convertNarrative(rawEffects, { push: msg => narrativeNotes.push(msg) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
-    const missingMainStrike = !rules.length && !r.damage && !r.heal && !passive && hasPower && tag;
-    for (const [index, message] of narrativeNotes.entries()) {
-      const strikeHint = index === 0 && missingMainStrike
-        ? `；本技能已声明威力 ${numericPower}、伤害「${tag}」${statTag ? `、关联属性 ${statTag}` : ''}，但模板当前缺少 damage 骰子对象，请同批补充 /skills/${sid}/damage 或在 active 规则内结算主击`
-        : '';
-      notes.push(message + strikeHint);
-    }
+    const singleTaggedType = damageAliases.get(tag);
+    for (const message of narrativeNotes) notes.push(message);
     if (!rules.length && !r.damage && !r.heal && !narrativeEntries(rawEffects).length && tag) {
       const program = hasPower ? damageTags(tag, power) : [];
       if (program.length && areaDamage) notes.push(`「${skillName}」范围伤害标签待标准化：${tag}。请为规则声明精确的目标选择器`);
       else if (program.length) appendRules(rules, [activeRule(`${prefix}-damage`, program)], notes);
       else notes.push(`「${skillName}」伤害标签无法换算：${tag}${hasPower ? '（类型或比例格式有歧义）' : '（缺少有效威力）'}`);
     }
+    if (hasPower && tag && !damageAliases.has(tag) && !object(r.damage) && !passive) {
+      notes.push(`「${skillName}」混合伤害主击待标准化：已声明威力 ${numericPower}、伤害「${tag}」，请在 active 规则中按各分量写 damage，或提供明确的替代主击公式`);
+    }
     const damageOps = rules.filter(rule => rule.enabled !== false && rule.hook === 'active')
       .flatMap(rule => [...instructions(rule.program)].filter(op => op.op === 'damage'));
     const types = [...new Set(damageOps.map(op => op.damageType))];
     const rawDamageType = r.damageType ?? damageAliases.get(tag);
-    const damageType = damageAliases.get(rawDamageType) ?? rawDamageType ?? (types.length === 1 ? types[0] : undefined);
+    const explicitDamageType = damageAliases.get(rawDamageType) ?? rawDamageType;
+    const generatedDamageType = singleTaggedType ?? (damageTypes.includes(explicitDamageType) ? explicitDamageType : undefined);
+    const generatedMainDamage = hasPower && !passive && !r.damage && !r.heal && !damageOps.length && (!tag || singleTaggedType)
+      ? { count: 1, sides: 4, ...(statTag ? { stat: statTag } : {}), ...(generatedDamageType ? { type: generatedDamageType } : {}) }
+      : null;
+    if (generatedMainDamage && !generatedDamageType && narrativeNotes.length) {
+      notes.push(`主击伤害类型待标准化「主击伤害类型」：根据原始效果补全 /skills/${sid}/damage/type；若原文明确以混合伤害或独立公式替代主击，请移除模板 damage 并以 active 规则结算。`);
+    }
+    const damageType = explicitDamageType ?? (types.length === 1 ? types[0] : undefined);
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
@@ -822,6 +828,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       range: bound(area.range, 0, 64, 1), shape: area.shape ?? 'single',
       target: area.target ?? (areaDamage && object(r.damage) ? 'any' : 'enemy'), ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
+      ...(generatedMainDamage ? { damage: generatedMainDamage } : {}),
       rules, mods: readMods(r.mods, notes), pools: readPools(r.pools, notes),
     };
     if (damageTypes.includes(damageType)) skills[sid].damageType = damageType;

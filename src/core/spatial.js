@@ -146,7 +146,7 @@ export function hasLOS(state, from, to) {
 }
 
 /** Row-major masks. Circles spread from impact; directed shapes spread from
- * origin, which is excluded. Angle is full aperture in degrees, line width
+ * origin, which is included for directed close-quarters effects. Angle is full aperture in degrees, line width
  * is the lateral half-width in cells. Range can also be a per-cell function.
  */
 export function aoeCells(state, origin, target, options = {}) {
@@ -169,7 +169,11 @@ export function aoeCells(state, origin, target, options = {}) {
       if (distance <= radius + EPSILON && (shape !== 'ring' || (!same(target, at) && distance >= innerRadius - EPSILON)) && canSee(target, at)) result.push(at);
       return;
     }
-    if (same(origin, at) || (options.radius == null ? !inRange(at) : distance3D(state, origin, at) > radius + EPSILON)) return;
+    if (options.radius == null ? !inRange(at) : distance3D(state, origin, at) > radius + EPSILON) return;
+    if (same(origin, at)) {
+      result.push(at);
+      return;
+    }
     const vx = x - origin.x, vy = y - origin.y;
     const forward = (vx * dx + vy * dy) / aimLength;
     const inside = shape === 'line'

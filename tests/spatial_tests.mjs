@@ -55,7 +55,7 @@ export function runSpatialTests() {
     const state = grid(), origin = p(0, 2), target = p(1, 2);
     wall(state, 3, 2);
     const line = aoeCells(state, origin, target, { shape: 'line', range: 9, width: 0 });
-    assert.deepEqual(line, [{ x: 1, y: 2, z: 0 }, { x: 2, y: 2, z: 0 }]);
+    assert.deepEqual(line, [{ x: 0, y: 2, z: 0 }, { x: 1, y: 2, z: 0 }, { x: 2, y: 2, z: 0 }]);
     const circle = aoeCells(state, origin, p(2, 2), { shape: 'circle', radius: 3, range: 3 });
     assert(includes(circle, 2, 3));
     assert(!includes(circle, 4, 2));

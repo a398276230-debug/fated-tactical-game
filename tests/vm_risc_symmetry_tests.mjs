@@ -29,6 +29,20 @@ test('selector area accepts center alias and expression-valued dimensions', () =
   assert.deepEqual(selectVM(state, selector, context), [unit]);
 });
 
+test('directional selectors keep their aim and same-cell facing fallback', () => {
+  const grid = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => ({ kind: 'floor', z: 0 })));
+  const target = { x: 2, y: 2, facing: [0, 1] };
+  const self = { x: 2, y: 2, facing: [0, 1] };
+  const attacker = { x: 0, y: 1 };
+  const alongRay = { x: 4, y: 3 }, south = { x: 2, y: 3 };
+  const state = { grid, units: { alongRay, south } };
+  const selector = { from: 'units', area: { shape: 'line', origin: 'target', radius: 3, width: 0 } };
+  assert.deepEqual(selectVM(state, selector, { target, self, attacker }), [alongRay]);
+  assert.deepEqual(selectVM(state, selector, { target, self }), [south]);
+  const fromSelf = { from: 'units', area: { shape: 'line', origin: 'self', radius: 5, width: 0 } };
+  assert.deepEqual(selectVM(state, fromSelf, { target, self: attacker, attacker }), [alongRay]);
+});
+
 test('entity registers and random status application survive battle journal replay', () => {
   const state = buildScenario('ruins');
   const actor = state.units[state.order[state.turn]];
