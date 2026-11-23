@@ -159,7 +159,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.hostEvents = new Map();
     window.eventOn = (name, fn) => { hostEvents.set(name, fn); return () => hostEvents.delete(name); };
     iframe.contentWindow.eval(bundle);
-    const battle = '<battle_init>\\nbattle|1|chrome-host|酒馆联调|terrain|12\\nunit|p1|blue|mvu:主角|玩家|2,2\\nunit|e1|red|char_info|对手|7,7\\n</battle_init>';
+    const battle = '<battle_init>\\nbattle|1|chrome-host|酒馆联调|terrain|1\\nunit|p1|blue|mvu:主角|玩家|2,2\\nunit|e1|red|char_info|对手|7,7\\nunit|e2|red|char_info|对手|8,7\\n</battle_init>';
     window.battleFixture = battle;
     window.overlayFrame = iframe;
     window.overlayBundle = bundle;
@@ -225,6 +225,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   })`), '主角酒馆头像与对手本地立绘显示在兵牌上').catch(async error => {
     throw new Error(`${error.message} ${await run(`JSON.stringify([...document.querySelectorAll('#board [data-unit-id]')].map(n => [n.dataset.unitId, n.querySelector('img')?.outerHTML]))`)}`);
   });
+  assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 2);
+  assert.match(await run(`${get('.fated-instance[data-unit-id="e1"]')}.textContent`), /×2/);
+  assert.equal(await run(`window.__fatedTacticalTavern.getDiagnostics().warnings.filter(w => w.message.includes('恒定发射')).length`), 1);
   assert.match(await run(`${get('article.fated-instance')}.textContent`), /体型 中型 \(1\.7m\)/);
   const cardWarnings = '.fated-instance[data-unit-id="p1"] .fated-char-diagnostics';
   assert.match(await run(`${get(cardWarnings)}.textContent`), /待标准化（1 项）.*恒定拉距/);
@@ -434,10 +437,16 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(imported.units.p1.ap, 2);
   assert.equal(imported.units.p1.hp, 321);
   const fixedShotRule = state => state.equipment[state.items[state.units.p1.mainHand].templateId].rules.find(rule => rule.id === 'fixed-shot');
+  assert.notEqual(imported.units.e1.mainHand, imported.units.e2.mainHand);
+  for (const id of ['e1', 'e2']) {
+    const templateId = imported.items[imported.units[id].mainHand].templateId;
+    const rule = imported.equipment[templateId].rules.find(rule => rule.id === 'fixed-shot');
+    assert.ok(rule?.filter.includes(`'${templateId}'`), `standardized crossbow on ${id}`);
+  }
   assert.deepEqual(fixedShotRule(imported)?.program,[{op:'mutate_event',patch:{finalAmount:14}}]);
   assert.equal(await run(`document.querySelector('#scenario-select').options.length`), 0);
   assert.equal(await run(`document.querySelectorAll('#seed-input').length`), 1);
-  assert.equal(await run(`document.querySelector('#seed-input').value`), '12');
+  assert.equal(await run(`document.querySelector('#seed-input').value`), '1');
   await select('#seed-input', '13');
   await click('#reset-button');
   const restarted = await tavernState();
@@ -587,7 +596,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   })()`);
   const winBattle = () => run(`(() => {
     document.querySelector('#sandbox-editor').value = JSON.stringify([
-      {type:'set_unit_stat', unitId:'e1', patch:{hp:0}}
+      {type:'set_unit_stat', unitId:'e1', patch:{hp:0}},
+      {type:'set_unit_stat', unitId:'e2', patch:{hp:0}}
     ]);
     document.querySelector('#sandbox-preview').click();
     document.querySelector('#sandbox-commit').click();

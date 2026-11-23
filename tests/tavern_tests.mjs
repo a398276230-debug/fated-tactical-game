@@ -5,6 +5,7 @@ import { getPool, refreshPoolMax, updatePoolCurrent } from '../src/core/vm-pools
 import { applyAction, preview, switchableWeapons } from '../src/core/combat.js';
 import { diagnosticText, pendingDiagnostics, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
+import { duplicateMappings, duplicateOperations, instanceGroups } from '../src/tavern/instance-groups.js';
 import { fillInstance, ruleSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
@@ -37,6 +38,30 @@ const guaranteeHit = {
   id: 'guarantee', hook: 'before_check', filter: "event.actorId == self.id && event.actionType == 'attack'",
   program: [{ op: 'mutate_event', patch: { forceOutcome: 'crit' } }],
 };
+
+test('char_info 数量与重复卡只产生一组标准化诊断，不合并战斗实例', () => {
+  const grunt = { name:'卫兵', hp:100, 技能:[{名称:'突刺', 效果:'刺中后引发特殊效果'}], 装备:{弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 10']}} };
+  const player = { 主角:{name:'玩家', hp:500} };
+  for (const charInfo of [[{...grunt, 数量:3}], [grunt, structuredClone(grunt), structuredClone(grunt)]]) {
+    const { roster, state, warnings } = hydrateFromSources({mvu:player, charInfo}, {throwOnValidation:true});
+    const [[hero], [first, ...copies]] = instanceGroups(Object.fromEntries(roster.map(unit => [unit.id, unit])));
+    assert.ok(hero);
+    assert.equal(copies.length, 2);
+    assert.equal(new Set([first, ...copies].map(id => state.units[id].mainHand)).size, 3);
+    assert.equal(warnings.filter(w => w.scope === 'effect').length, 1);
+    const mappings = duplicateMappings(roster, state);
+    const weapon = id => state.items[state.units[id].mainHand].templateId;
+    const path = `/equipment/${weapon(first)}/rules`;
+    const rule = { id:'probe', hook:'before_action', filter:`event.actorId == '${first}' && event.weaponTemplateId == '${weapon(first)}'`, program:[] };
+    const ops = duplicateOperations({ op:'replace', path, value:[rule] }, mappings);
+    assert.deepEqual(ops.map(op => [op.path, op.value[0].filter]), copies.map(id => [
+      `/equipment/${weapon(id)}/rules`, `event.actorId == '${id}' && event.weaponTemplateId == '${weapon(id)}'`,
+    ]));
+  }
+  const variant = {...grunt, hp:200};
+  const { roster } = hydrateFromSources({mvu:player, charInfo:[grunt, variant]}, {throwOnValidation:true});
+  assert.equal(new Set(roster.filter(unit => unit.source === 'char_info').map(unit => unit.archetypeId)).size, 2);
+});
 
 test('面积标签解析角度、环形和敌友，范围伤害允许友伤', () => {
   const damage = {count:1,sides:4,type:'physical',bonus:10};

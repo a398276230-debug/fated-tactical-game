@@ -13906,7 +13906,7 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist) {
     return mvuRecords.find((record3) => samePath(record3.__sourcePath, path2));
   }
   if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
-  const char = chars.find((record3) => sourceName(record3) === name);
+  const char = chars.find((record3) => sourceId(record3) && sourceId(record3) === text3(participant.id ?? participant.uid)) ?? chars.find((record3) => sourceName(record3) === name);
   if (charSources.includes(source.toLowerCase())) return char;
   const matches2 = (record3, key4) => [sourceId(record3), sourceName(record3), record3.__sourceKey].includes(key4);
   if (source) return [...mvuRecords, ...chars].find((record3) => matches2(record3, source));
@@ -14335,7 +14335,7 @@ function participantList(battle) {
   return list4.filter((participant, index) => {
     if (!object3(participant)) return false;
     const source = text3(participant.source);
-    const key4 = text3(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text3(participant?.name) || index}`);
+    const key4 = text3(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text3(participant?.name) || index}|${index}`);
     if (seen.has(key4)) return false;
     seen.add(key4);
     return true;
@@ -14602,7 +14602,7 @@ function hydrateFromSources(input = {}, options = {}) {
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
-  const units = {}, profiles = {}, sourceMap = {};
+  const units = {}, profiles = {}, sourceMap = {}, archetypes = /* @__PURE__ */ new Map();
   const add = (participant, record3, index) => {
     const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
     let id3 = base;
@@ -14610,19 +14610,37 @@ function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record3 === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record3.__sourceKind?.toLowerCase() ?? "battle_init";
     if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
-    const made = unitFrom(mergeBattleParticipant(record3, participant, battle), { moraleType: battle.moraleType, ...participant, ...persona, id: id3 }, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist);
+    const merged = mergeBattleParticipant(record3, participant, battle);
+    const placement = { moraleType: battle.moraleType, ...participant, ...persona, id: id3 };
+    const startWarnings = warnings.length;
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist);
+    if (origin === "char_info") {
+      const { \u6570\u91CF: _quantity, count: _count, ...definition } = merged;
+      const signature = JSON.stringify([definition, made.unit.tags, made.unit.creatureType, made.unit.nonLethal, made.unit.moraleType]);
+      if (!archetypes.has(signature)) archetypes.set(signature, id3);
+      made.profile.archetypeId = archetypes.get(signature);
+      if (made.profile.archetypeId !== id3) warnings.splice(startWarnings);
+    }
     units[id3] = made.unit;
     profiles[id3] = made.profile;
     sourceMap[id3] = { path: record3?.__sourcePath, sourceId: sourceId(record3), sourceName: sourceName(record3), isProtagonist: record3 === protagonist };
   };
   for (const [i, participant] of participants.entries()) {
     const record3 = resolved[i];
-    add(participant, record3 ?? { __sourceKind: "battle_init" }, i);
+    const count = record3?.__sourceKind === "char_info" ? bound(record3.\u6570\u91CF ?? record3.count, 1, 100, 1) : 1;
+    for (let copy3 = 0; copy3 < count; copy3++) {
+      const placement = copy3 ? { ...participant, id: `${participant.id ?? participant.uid ?? participant.name}-${copy3 + 1}` } : participant;
+      add(placement, record3 ?? { __sourceKind: "battle_init" }, i * count + copy3);
+    }
   }
   if (!participants.length) {
     const records2 = [...mvuRecords, ...chars.filter((char) => !mvuRecords.some((record3) => sourceName(record3, record3.__sourceKey) === sourceName(char)))];
+    let index = 0;
     for (const [i, record3] of records2.entries()) {
-      add({ name: sourceName(record3, record3.__sourceKey), source: sourceId(record3), faction: i ? "red" : "blue", x: i, y: 0 }, record3, i);
+      const count = record3.__sourceKind === "char_info" ? bound(record3.\u6570\u91CF ?? record3.count, 1, 100, 1) : 1;
+      for (let copy3 = 0; copy3 < count; copy3++, index++) {
+        add({ name: sourceName(record3, record3.__sourceKey), source: sourceId(record3), faction: i ? "red" : "blue", x: index % 10, y: Math.floor(index / 10) % 10 }, record3, index);
+      }
     }
   }
   const title = text3(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
@@ -16530,6 +16548,57 @@ async function characterRecords(sources, hydrated) {
   return Object.fromEntries(rows2);
 }
 
+// src/tavern/instance-groups.js
+function instanceGroups(instances) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const [id3, unit] of Object.entries(instances)) {
+    const key4 = unit.archetypeId ?? id3;
+    if (!groups.has(key4)) groups.set(key4, []);
+    groups.get(key4).push(id3);
+  }
+  return [...groups.values()];
+}
+function duplicateMappings(roster, state) {
+  const groups = instanceGroups(Object.fromEntries(roster.map((unit) => [unit.id, unit])));
+  const paths = /* @__PURE__ */ new Map();
+  for (const [first, ...copies] of groups) {
+    const representative = roster.find((unit) => unit.id === first);
+    for (const id3 of copies) {
+      const copy3 = roster.find((unit) => unit.id === id3);
+      const ids = /* @__PURE__ */ new Map();
+      const pairs = [["units", first, id3]];
+      representative.skills.forEach((skill2, i) => pairs.push(["skills", skill2, copy3.skills[i]]));
+      representative.equipment.forEach((item, i) => {
+        const other = copy3.equipment[i];
+        pairs.push(["items", item.id, other.id], ["equipment", state.items[item.id].templateId, state.items[other.id].templateId]);
+      });
+      for (const [, from, to] of pairs) if (from && to && from !== to) ids.set(from, to);
+      for (const [table4, from, to] of pairs) {
+        if (!ids.has(from)) continue;
+        const path2 = `/${table4}/${from}`;
+        if (!paths.has(path2)) paths.set(path2, []);
+        paths.get(path2).push({ path: `/${table4}/${to}`, ids, unitId: id3 });
+      }
+    }
+  }
+  return paths;
+}
+function replaceReferences(value, ids) {
+  if (typeof value === "string") return ids.get(value) ?? value.replace(/(['"])([^'"\n]+)\1/g, (match, quote, id3) => ids.has(id3) ? `${quote}${ids.get(id3)}${quote}` : match);
+  if (Array.isArray(value)) return value.map((entry2) => replaceReferences(entry2, ids));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key4, entry2]) => [ids.get(key4) ?? key4, replaceReferences(entry2, ids)]));
+  return value;
+}
+function duplicateOperations(operation2, mappings) {
+  const root2 = [...mappings.keys()].filter((key4) => operation2.path === key4 || operation2.path.startsWith(`${key4}/`)).sort((a, b) => b.length - a.length)[0];
+  if (!root2) return [];
+  return (mappings.get(root2) ?? []).map(({ path: path2, ids }) => ({
+    op: operation2.op,
+    path: path2 + operation2.path.slice(root2.length),
+    ...Object.hasOwn(operation2, "value") && { value: replaceReferences(operation2.value, ids) }
+  }));
+}
+
 // src/tavern/instance-card.js
 var attributes2 = { str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" };
 var types = { physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" };
@@ -16594,7 +16663,7 @@ function modSummary(mod2) {
 var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
 var TEAMS = { blue: "\u6211\u65B9", red: "\u654C\u65B9" };
 var ratio2 = (v, max) => max ? Math.min(1, Math.max(0, (Number(v) || 0) / max)) : 0;
-function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0, narrative = [], onDiscardEntry, canDiscardEntry } = {}) {
+function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0, count = 1, narrative = [], onDiscardEntry, canDiscardEntry } = {}) {
   const line = (tag2, cls, value) => make(tag2, { class: cls }, value);
   const name = unit.name ?? unit.id;
   box.classList.add("fated-char-card");
@@ -16604,6 +16673,7 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
   const title = line("div", "fated-char-title");
   const nameRow = line("div", "fated-char-name-row");
   nameRow.append(line("strong", "fated-char-name", name));
+  if (count > 1) nameRow.append(line("span", "fated-char-tag", `\xD7${count}`));
   if (warnings) nameRow.append(make("span", { class: "fated-char-warn", title: `${warnings} \u6761\u8BCA\u65AD` }, `\u26A0 ${warnings}`));
   const tags = line("div", "fated-char-tags");
   for (const text5 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text5) tags.append(line("span", "fated-char-tag", text5));
@@ -17301,7 +17371,7 @@ function fingerprintAt(state, path2) {
   return JSON.stringify(value);
 }
 function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], validate = () => {
-}, apply: apply2 = applyPatch, normalize = (state) => state, allowedUnitIds }) {
+}, apply: apply2 = applyPatch, normalize = (state) => state, allowedUnitIds, expand = (operation2) => [operation2] }) {
   const candidates = [], rejected = [];
   for (const [index, operation2] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
     const unitId = typeof operation2?.path === "string" ? operation2.path.match(/^\/units\/([^/]+)/)?.[1] : void 0;
@@ -17314,7 +17384,7 @@ function partitionNormalizationPatch({ liveState, baselineState, existingOps = [
     return operation2;
   };
   const trial = (live3, base, items) => {
-    const operations2 = items.map(strip);
+    const operations2 = items.flatMap((item) => expand(strip(item)));
     const nextLive = apply2(clone2(live3), operations2, true);
     const nextBase = apply2(clone2(base), operations2, true);
     for (const state of [nextLive, nextBase]) {
@@ -17656,10 +17726,11 @@ function mountTavernOverlay(options = {}) {
   const aiSessions = createAiSessions(config.aiSessions, (value) => persistSettings({ aiSessions: value }));
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
   let selectedMessageId = null, selectedBattleText = "", aiController = null, aiFinished, retryAI = null, aiPage = null;
-  let characters = {}, scanStatus = "";
+  let characters = {}, scanStatus = "", duplicatePaths = /* @__PURE__ */ new Map();
+  const groupId = (id4) => config.instances[id4]?.archetypeId ?? characters[id4]?.archetypeId ?? id4;
   const openingSources = /* @__PURE__ */ new Map();
   const enteredBattles = /* @__PURE__ */ new Set();
-  const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own17(config.instances, key4));
+  const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own17(config.instances, key4)).map(groupId))];
   const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
   const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
   let battleObserver = null, diagnostics = { phase: "created" };
@@ -18131,9 +18202,11 @@ ${tag2.textContent || ""}
     }
     const list4 = el(doc, "div");
     page.append(list4);
-    const entries3 = Object.entries(config.instances);
+    const entries3 = instanceGroups(config.instances);
     if (!entries3.length) list4.append(el(doc, "p", { class: "fated-mini" }, "\u6682\u65E0\u5B9E\u4F8B\u3002\u6253\u5F00\u6C99\u76D8\u4F1A\u81EA\u52A8\u8BFB\u53D6\u5F53\u524D MVU\u3001char_info \u548C battle_init\u3002"));
-    for (const [key4, instance] of entries3) {
+    for (const members of entries3) {
+      const [key4] = members;
+      const instance = config.instances[key4];
       const box = el(doc, "article", { class: "fated-instance" });
       box.dataset.unitId = key4;
       const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
@@ -18150,6 +18223,7 @@ ${tag2.textContent || ""}
         {
           collapsed: Boolean(collapsed()[key4]),
           warnings: groups.pending.length,
+          count: members.length,
           narrative: (diagnostics.narrativeExemptions ?? []).filter((entry2) => entry2.unitId === key4),
           canDiscardEntry: (path2) => operations2(activeBattleKey).some((operation2) => operation2.path === path2 || operation2.path.startsWith(`${path2}/`)) || (diagnostics.inputWarnings ?? []).some((warning) => warning.originPath === path2 && warning.unitId === key4 && !warningGroups([warning]).pending.includes(warning)),
           onDiscardEntry: (ref2) => discardStandardizedEntry(activeBattleKey, { ...ref2, unitId: key4 }),
@@ -18164,7 +18238,7 @@ ${tag2.textContent || ""}
       body.append(actions2);
       list4.append(box);
       on(remove, "click", () => {
-        delete config.instances[key4];
+        for (const id4 of members) delete config.instances[id4];
         save();
         choose(selectedIds());
       });
@@ -18233,7 +18307,7 @@ ${tag2.textContent || ""}
     const requestConfig = normalizationApiConfig(config);
     const stored = config.charSnapshots[key4] ?? {};
     const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
-    const ids = unitIds.filter((id4) => eligible.has(id4));
+    const ids = [...new Set(unitIds.filter((id4) => eligible.has(id4)).map(groupId))];
     if (!ids.length) return;
     const scoped = warningsForUnit(sources.warnings, ids);
     const { pending } = warningGroups(scoped);
@@ -18419,6 +18493,7 @@ ${tag2.textContent || ""}
     sources = nextSources;
     sources.warnings = hydrated?.warnings ?? [];
     sources.sourceMap = hydrated?.sourceMap ?? {};
+    duplicatePaths = hydrated?.roster && hydrated.state ? duplicateMappings(hydrated.roster, hydrated.state) : /* @__PURE__ */ new Map();
     sources.seed = hydrated?.seed ?? hydrated?.state?.rng;
     sources.input = { mvu: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, latestFloor: sources.latestFloor, battleText: sources.battleRaw, protagonistName: sources.protagonistName };
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
@@ -18574,18 +18649,23 @@ ${tag2.textContent || ""}
       return;
     }
     const rawWarnings = diagnostics.inputWarnings ?? [];
-    const matchedKeys = new Set(rawWarnings.filter((warning) => pathUnder(warning.originPath, source)).map(warningKey));
+    const targets2 = [source, ...(duplicatePaths.get(source) ?? []).map((copy3) => copy3.path)];
+    const matchesTarget = (path2) => targets2.some((target2) => pathUnder(path2, target2));
+    const matchedKeys = new Set(rawWarnings.filter((warning) => matchesTarget(warning.originPath)).map(warningKey));
     const retained = [];
     for (const batch of batches(key4)) {
-      const patch = (batch.patch ?? []).filter((operation2) => !pathUnder(operation2.path, source));
-      const guards = (batch.guards ?? []).filter(([path2]) => !pathUnder(path2, source));
+      const patch = (batch.patch ?? []).filter((operation2) => !matchesTarget(operation2.path));
+      const guards = (batch.guards ?? []).filter(([path2]) => !matchesTarget(path2));
       const receipts = (batch.receipts ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
       if (patch.length || receipts.length || guards.length) retained.push({ ...batch, patch, guards, receipts });
     }
     const next = clone2(current);
     next[table4] = { ...next[table4] };
-    if (baseline[table4][id4] === void 0) delete next[table4][id4];
-    else next[table4][id4] = clone2(baseline[table4][id4]);
+    for (const target2 of targets2) {
+      const targetId = target2.split("/")[2];
+      if (baseline[table4][targetId] === void 0) delete next[table4][targetId];
+      else next[table4][targetId] = clone2(baseline[table4][targetId]);
+    }
     try {
       (options.validateState || validateState)(next);
     } catch (error2) {
@@ -18691,7 +18771,7 @@ ${tag2.textContent || ""}
       refreshPortraits(currentState, epoch);
       activeBattleKey = key4;
       characters = fresh;
-      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending);
+      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter((id4) => groupId(id4) === id4);
       for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
       if (key4 && (rehydrate || changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
       if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
@@ -18792,12 +18872,15 @@ ${tag2.textContent || ""}
       const rebasedPatch = data.patch.flatMap((operation2, index) => {
         if (typeof operation2?.path !== "string") return [operation2];
         try {
-          return normalizationOperations([operation2], snapshot, current, createdTemplates, fingerprintAt);
+          const accepted = normalizationOperations([operation2], snapshot, current, createdTemplates, fingerprintAt);
+          if (accepted.length) normalizationOperations(duplicateOperations(operation2, duplicatePaths), snapshot, current, createdTemplates, fingerprintAt);
+          return accepted;
         } catch (error2) {
           conflicts.push({ index, op: operation2, path: operation2.path, reason: error2.message });
           return [];
         }
       });
+      const expanded = (operation2) => [operation2, ...duplicateOperations(operation2, duplicatePaths)];
       const baselineForPartition = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
       const partition = partitionNormalizationPatch({
         liveState: current,
@@ -18805,6 +18888,7 @@ ${tag2.textContent || ""}
         existingOps: operations2(key4),
         rawPatch: rebasedPatch,
         allowedUnitIds: unitIds,
+        expand: expanded,
         apply: options.applyPatch ?? applyPatch,
         validate: options.validateState || validateState,
         normalize: (state) => {
@@ -18823,7 +18907,7 @@ ${tag2.textContent || ""}
       data.patch = partition.accepted.map((item) => item.op);
       const rootPath = (path2) => path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
       const operationsToApply = data.patch;
-      const paths = [...new Set(operationsToApply.map((operation2) => rootPath(operation2.path)))];
+      const paths = [...new Set(operationsToApply.flatMap(expanded).map((operation2) => rootPath(operation2.path)))];
       const apply2 = options.applyPatch ?? applyPatch;
       let next = current;
       const changedAtApply = /* @__PURE__ */ new Map();
@@ -18831,12 +18915,12 @@ ${tag2.textContent || ""}
         const parentPath = operation2.path.slice(0, operation2.path.lastIndexOf("/"));
         const path2 = operation2.op === "replace" || !fingerprintAt(next, parentPath)?.startsWith("[") ? operation2.path : parentPath;
         const before2 = fingerprintAt(next, path2);
-        next = apply2(next, [operation2], true);
+        next = apply2(next, expanded(operation2), true);
         if (fingerprintAt(next, path2) !== before2) changedAtApply.set(operation2, path2);
       }
       const changed = new Set(paths.filter((path2) => fingerprintAt(next, path2) !== fingerprintAt(current, path2)));
-      const effective = operationsToApply.filter((operation2) => changed.has(rootPath(operation2.path)));
-      const patch = effective.map(({ resolves, ...operation2 }) => operation2);
+      const effective = operationsToApply.filter((operation2) => expanded(operation2).some((copy3) => changed.has(rootPath(copy3.path))));
+      const patch = effective.flatMap(({ resolves, ...operation2 }) => expanded(operation2));
       const changedOperations = effective.filter((operation2) => {
         const path2 = changedAtApply.get(operation2);
         return path2 && fingerprintAt(current, path2) !== fingerprintAt(next, path2);
@@ -18882,7 +18966,7 @@ ${tag2.textContent || ""}
         validate(applyNormalization(baseline, [...previous, ...patch]));
         additions.push({
           patch,
-          hashes: Object.fromEntries(unitIds.map((id4) => [id4, records2[id4].hash])),
+          hashes: Object.fromEntries(Object.keys(characters).filter((id4) => unitIds.includes(groupId(id4))).map((id4) => [id4, characters[id4].hash])),
           receipts: solved.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
           guards: [.../* @__PURE__ */ new Set([...changed, ...verified.map((entry2) => entry2.path), ...solved.map((w) => w.originPath).filter(Boolean)])].map((path2) => [path2, fingerprintAt(before, path2) ?? null])
         });
@@ -18926,7 +19010,7 @@ ${tag2.textContent || ""}
       reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
       scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272`;
       renderInstances();
-      return { applied: patch.length, data, notes: notes2, rejected, missing, repairWarnings, repairError };
+      return { applied: effective.length, data, notes: notes2, rejected, missing, repairWarnings, repairError };
     } catch (error2) {
       error2.raw ??= raw;
       throw error2;

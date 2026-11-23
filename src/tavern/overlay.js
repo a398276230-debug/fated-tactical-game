@@ -12,6 +12,7 @@ import { normalizationApiConfig, requestViaTavern, requestViaCustomApi } from '.
 import { renderSettings } from './settings.js';
 import { createAiSessions } from './ai-sessions.js';
 import { characterRecords } from './char-snapshots.js';
+import { duplicateMappings, duplicateOperations, instanceGroups } from './instance-groups.js';
 import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
 import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
@@ -283,7 +284,7 @@ function fingerprintAt(state, path) {
 }
 
 export { deepMerge, applyPatch };
-export function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], validate = () => {}, apply = applyPatch, normalize = state => state, allowedUnitIds }) {
+export function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], validate = () => {}, apply = applyPatch, normalize = state => state, allowedUnitIds, expand = operation => [operation] }) {
   const candidates = [], rejected = [];
   for (const [index, operation] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
     const unitId = typeof operation?.path === 'string' ? operation.path.match(/^\/units\/([^/]+)/)?.[1] : undefined;
@@ -295,7 +296,7 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
   }
   const strip = item => { const { resolves, ...operation } = item.op; return operation; };
   const trial = (live, base, items) => {
-    const operations = items.map(strip);
+    const operations = items.flatMap(item => expand(strip(item)));
     const nextLive = apply(clone(live), operations, true);
     const nextBase = apply(clone(base), operations, true);
     for (const state of [nextLive, nextBase]) { normalize(state); validate(state); }
@@ -557,10 +558,11 @@ export function mountTavernOverlay(options = {}) {
 
   let disposed = false, gameMount = null, sources = {}, currentState = null, scanEpoch = 0, activeBattleKey = null;
   let selectedMessageId = null, selectedBattleText = '', aiController = null, aiFinished, retryAI = null, aiPage = null;
-  let characters = {}, scanStatus = '';
+  let characters = {}, scanStatus = '', duplicatePaths = new Map();
+  const groupId = id => config.instances[id]?.archetypeId ?? characters[id]?.archetypeId ?? id;
   const openingSources = new Map();
   const enteredBattles = new Set();
-  const selectedIds = () => (config.rosterSelection ?? Object.keys(config.instances)).filter(key => own(config.instances,key));
+  const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter(key => own(config.instances,key)).map(groupId))];
   const batches = key => config.normalizationBatches?.[key] ?? [];
   const operations = key => batches(key).flatMap(batch=>batch.patch);
   let battleObserver = null, diagnostics = { phase: 'created' };
@@ -914,9 +916,11 @@ export function mountTavernOverlay(options = {}) {
     const setFolded = (ids, value) => { const next = { ...collapsed() }; for (const id of ids) { if (value) next[id] = true; else delete next[id]; } persistSettings({ collapsedInstances: next }); };
     for (const [label,value] of [['全部折叠',true],['全部展开',false]]) { const b=el(doc,'button',{type:'button','data-fold-all':String(value)},label); on(b,'click',()=>{ setFolded(Object.keys(config.instances),value); renderInstances(); }); toolbar.append(b); }
     const list = el(doc, 'div'); page.append(list);
-    const entries = Object.entries(config.instances);
+    const entries = instanceGroups(config.instances);
     if (!entries.length) list.append(el(doc, 'p', { class: 'fated-mini' }, '暂无实例。打开沙盘会自动读取当前 MVU、char_info 和 battle_init。'));
-    for (const [key, instance] of entries) {
+    for (const members of entries) {
+      const [key] = members;
+      const instance = config.instances[key];
       const box = el(doc, 'article', { class: 'fated-instance' });
       box.dataset.unitId = key;
       const select = el(doc,'input',{type:'checkbox','aria-label':`选择 ${instance.name || key}`});
@@ -924,13 +928,13 @@ export function mountTavernOverlay(options = {}) {
       on(select,'change',()=>choose(select.checked?[...new Set([...selectedIds(),key])]:selectedIds().filter(k=>k!==key)));
       const groups = warningGroups(warningsForUnit(sources.warnings, [key], false));
       const { body } = fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select,
-        { collapsed: Boolean(collapsed()[key]), warnings: groups.pending.length,
+        { collapsed: Boolean(collapsed()[key]), warnings: groups.pending.length, count: members.length,
           narrative: (diagnostics.narrativeExemptions ?? []).filter(entry => entry.unitId === key), canDiscardEntry: path => operations(activeBattleKey).some(operation => operation.path === path || operation.path.startsWith(`${path}/`)) ||
             (diagnostics.inputWarnings ?? []).some(warning => warning.originPath === path && warning.unitId === key && !warningGroups([warning]).pending.includes(warning)), onDiscardEntry: ref => discardStandardizedEntry(activeBattleKey, { ...ref, unitId: key }), onToggle: value => setFolded([key], value) });
       appendWarningGroups(body, groups, true);
       const actions = el(doc, 'div', { class: 'fated-actions' }); const edit = el(doc, 'button', { type: 'button' }, '编辑 JSON'); const remove = el(doc, 'button', { type: 'button' }, '删除');
       actions.append(edit, remove); body.append(actions); list.append(box);
-      on(remove, 'click', () => { delete config.instances[key]; save(); choose(selectedIds()); });
+      on(remove, 'click', () => { for (const id of members) delete config.instances[id]; save(); choose(selectedIds()); });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
     on(refresh, 'click', () => {
@@ -975,7 +979,7 @@ export function mountTavernOverlay(options = {}) {
     const requestConfig = normalizationApiConfig(config);
     const stored = config.charSnapshots[key] ?? {};
     const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
-    const ids = unitIds.filter(id => eligible.has(id));
+    const ids = [...new Set(unitIds.filter(id => eligible.has(id)).map(groupId))];
     if (!ids.length) return;
     const scoped = warningsForUnit(sources.warnings, ids);
     const { pending } = warningGroups(scoped);
@@ -1143,6 +1147,7 @@ export function mountTavernOverlay(options = {}) {
     sources = nextSources;
     sources.warnings = hydrated?.warnings ?? [];
     sources.sourceMap = hydrated?.sourceMap ?? {};
+    duplicatePaths = hydrated?.roster && hydrated.state ? duplicateMappings(hydrated.roster, hydrated.state) : new Map();
     sources.seed = hydrated?.seed ?? hydrated?.state?.rng;
     sources.input = { mvu: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, latestFloor: sources.latestFloor, battleText: sources.battleRaw, protagonistName: sources.protagonistName };
     if (hydrated?.roster) sources.roster = JSON.stringify(hydrated.roster, null, 2);
@@ -1279,12 +1284,13 @@ export function mountTavernOverlay(options = {}) {
     if (!current?.[table] || !Object.hasOwn(current[table], id)) return;
     if (aiController) { notify('标准化进行中', '请等待当前批次完成后再重置大词条。'); return; }
     const rawWarnings = diagnostics.inputWarnings ?? [];
-    // The reset changes the shared template, so reopen its diagnostics for every holder.
-    const matchedKeys = new Set(rawWarnings.filter(warning => pathUnder(warning.originPath, source)).map(warningKey));
+    const targets = [source, ...(duplicatePaths.get(source) ?? []).map(copy => copy.path)];
+    const matchesTarget = path => targets.some(target => pathUnder(path, target));
+    const matchedKeys = new Set(rawWarnings.filter(warning => matchesTarget(warning.originPath)).map(warningKey));
     const retained = [];
     for (const batch of batches(key)) {
-      const patch = (batch.patch ?? []).filter(operation => !pathUnder(operation.path, source));
-      const guards = (batch.guards ?? []).filter(([path]) => !pathUnder(path, source));
+      const patch = (batch.patch ?? []).filter(operation => !matchesTarget(operation.path));
+      const guards = (batch.guards ?? []).filter(([path]) => !matchesTarget(path));
       const receipts = (batch.receipts ?? []).filter(receipt => !matchedKeys.has(receipt.key));
       if (patch.length || receipts.length || guards.length) retained.push({ ...batch, patch, guards, receipts });
     }
@@ -1293,8 +1299,11 @@ export function mountTavernOverlay(options = {}) {
     // additive rollback rather than a battle rewind.
     const next = clone(current);
     next[table] = { ...next[table] };
-    if (baseline[table][id] === undefined) delete next[table][id];
-    else next[table][id] = clone(baseline[table][id]);
+    for (const target of targets) {
+      const targetId = target.split('/')[2];
+      if (baseline[table][targetId] === undefined) delete next[table][targetId];
+      else next[table][targetId] = clone(baseline[table][targetId]);
+    }
     try { (options.validateState || defaultValidateState)(next); } catch (error) { showError(error); return; }
     gameMount?.loadState?.(next);
     currentState = next;
@@ -1396,7 +1405,7 @@ export function mountTavernOverlay(options = {}) {
       refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
-      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending);
+      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter(id => groupId(id) === id);
       for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
       if(key && (rehydrate||changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
       if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
@@ -1485,13 +1494,18 @@ export function mountTavernOverlay(options = {}) {
       const conflicts = [];
       const rebasedPatch = data.patch.flatMap((operation, index) => {
         if (typeof operation?.path !== 'string') return [operation];
-        try { return normalizationOperations([operation], snapshot, current, createdTemplates, fingerprintAt); }
+        try {
+          const accepted = normalizationOperations([operation], snapshot, current, createdTemplates, fingerprintAt);
+          if (accepted.length) normalizationOperations(duplicateOperations(operation, duplicatePaths), snapshot, current, createdTemplates, fingerprintAt);
+          return accepted;
+        }
         catch (error) { conflicts.push({ index, op: operation, path: operation.path, reason: error.message }); return []; }
       });
+      const expanded = operation => [operation, ...duplicateOperations(operation, duplicatePaths)];
       const baselineForPartition = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
       const partition = partitionNormalizationPatch({
         liveState: current, baselineState: baselineForPartition, existingOps: operations(key), rawPatch: rebasedPatch,
-        allowedUnitIds: unitIds, apply: options.applyPatch ?? applyPatch, validate: options.validateState || defaultValidateState,
+        allowedUnitIds: unitIds, expand: expanded, apply: options.applyPatch ?? applyPatch, validate: options.validateState || defaultValidateState,
         normalize: state => { refreshOpeningInitiative(state); syncEquipmentEffects(state); refreshOutcome(state); },
       });
       const rejected = [...conflicts, ...partition.rejected];
@@ -1505,7 +1519,7 @@ export function mountTavernOverlay(options = {}) {
       data.patch = partition.accepted.map(item => item.op);
       const rootPath = path => path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
       const operationsToApply = data.patch;
-      const paths = [...new Set(operationsToApply.map(operation => rootPath(operation.path)))];
+      const paths = [...new Set(operationsToApply.flatMap(expanded).map(operation => rootPath(operation.path)))];
       const apply = options.applyPatch ?? applyPatch;
       let next = current;
       const changedAtApply = new Map();
@@ -1515,12 +1529,12 @@ export function mountTavernOverlay(options = {}) {
         const path = operation.op === 'replace' || !fingerprintAt(next, parentPath)?.startsWith('[')
           ? operation.path : parentPath;
         const before = fingerprintAt(next, path);
-        next = apply(next, [operation], true);
+        next = apply(next, expanded(operation), true);
         if (fingerprintAt(next, path) !== before) changedAtApply.set(operation, path);
       }
       const changed = new Set(paths.filter(path => fingerprintAt(next, path) !== fingerprintAt(current, path)));
-      const effective = operationsToApply.filter(operation => changed.has(rootPath(operation.path)));
-      const patch = effective.map(({ resolves, ...operation }) => operation);
+      const effective = operationsToApply.filter(operation => expanded(operation).some(copy => changed.has(rootPath(copy.path))));
+      const patch = effective.flatMap(({ resolves, ...operation }) => expanded(operation));
       const changedOperations = effective.filter(operation => {
         const path = changedAtApply.get(operation);
         return path && fingerprintAt(current, path) !== fingerprintAt(next, path);
@@ -1568,7 +1582,7 @@ export function mountTavernOverlay(options = {}) {
         const previous = operations(key);
         validate(applyNormalization(baseline, [...previous, ...patch]));
         additions.push({
-          patch, hashes: Object.fromEntries(unitIds.map(id => [id, records[id].hash])),
+          patch, hashes: Object.fromEntries(Object.keys(characters).filter(id => unitIds.includes(groupId(id))).map(id => [id, characters[id].hash])),
           receipts: solved.map(w => ({ unitId: w.unitId, key: warningKey(w) })),
           guards: [...new Set([...changed, ...verified.map(entry => entry.path), ...solved.map(w => w.originPath).filter(Boolean)])]
             .map(path => [path, fingerprintAt(before, path) ?? null]),
@@ -1613,7 +1627,7 @@ export function mountTavernOverlay(options = {}) {
       reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
       scanStatus = `已标准化 ${unitIds.length} 个角色`;
       renderInstances();
-      return { applied: patch.length, data, notes, rejected, missing, repairWarnings, repairError };
+      return { applied: effective.length, data, notes, rejected, missing, repairWarnings, repairError };
     } catch (error) {
       error.raw ??= raw;
       throw error;

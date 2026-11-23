@@ -244,7 +244,8 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist) {
     return mvuRecords.find(record => samePath(record.__sourcePath, path));
   }
   if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
-  const char = chars.find(record => sourceName(record) === name);
+  const char = chars.find(record => sourceId(record) && sourceId(record) === text(participant.id ?? participant.uid))
+    ?? chars.find(record => sourceName(record) === name);
   if (charSources.includes(source.toLowerCase())) return char;
   const matches = (record, key) => [sourceId(record), sourceName(record), record.__sourceKey].includes(key);
   if (source) return [...mvuRecords, ...chars].find(record => matches(record, source));
@@ -691,7 +692,7 @@ function participantList(battle) {
     if (!object(participant)) return false;
     const source = text(participant.source);
     const key = text(participant?.id || participant?.uid)
-      || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text(participant?.name) || index}`);
+      || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text(participant?.name) || index}|${index}`);
     if (seen.has(key)) return false;
     seen.add(key); return true;
   });
@@ -939,7 +940,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
-  const units = {}, profiles = {}, sourceMap = {};
+  const units = {}, profiles = {}, sourceMap = {}, archetypes = new Map();
   const add = (participant, record, index) => {
     const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, 'unit');
     let id = base;
@@ -947,20 +948,39 @@ export function hydrateFromSources(input = {}, options = {}) {
     const persona = !descriptor && record === protagonist && protagonistName ? { protagonistName } : {};
     const origin = record.__sourceKind?.toLowerCase() ?? 'battle_init';
     if (index < participants.length && !resolved[index] && participant.source) sink(id, 'battle_init', 'state').push(`未找到参战来源：${participant.source}（${participant.name ?? participant.id}）`);
-    const made = unitFrom(mergeBattleParticipant(record, participant, battle), { moraleType:battle.moraleType, ...participant, ...persona, id }, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist);
+    const merged = mergeBattleParticipant(record, participant, battle);
+    const placement = { moraleType:battle.moraleType, ...participant, ...persona, id };
+    const startWarnings = warnings.length;
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist);
+    if (origin === 'char_info') {
+      // Preserve source order: it can decide which weapon is selected as main hand.
+      const { 数量: _quantity, count: _count, ...definition } = merged;
+      const signature = JSON.stringify([definition, made.unit.tags, made.unit.creatureType, made.unit.nonLethal, made.unit.moraleType]);
+      if (!archetypes.has(signature)) archetypes.set(signature, id);
+      made.profile.archetypeId = archetypes.get(signature);
+      if (made.profile.archetypeId !== id) warnings.splice(startWarnings);
+    }
     units[id] = made.unit;
     profiles[id] = made.profile;
     sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist };
   };
   for (const [i, participant] of participants.entries()) {
     const record = resolved[i];
-    add(participant, record ?? { __sourceKind: 'battle_init' }, i);
+    const count = record?.__sourceKind === 'char_info' ? bound(record.数量 ?? record.count, 1, 100, 1) : 1;
+    for (let copy = 0; copy < count; copy++) {
+      const placement = copy ? { ...participant, id: `${participant.id ?? participant.uid ?? participant.name}-${copy + 1}` } : participant;
+      add(placement, record ?? { __sourceKind: 'battle_init' }, i * count + copy);
+    }
   }
   // Older battles without an explicit roster retain the discovered characters.
   if (!participants.length) {
     const records = [...mvuRecords, ...chars.filter(char => !mvuRecords.some(record => sourceName(record, record.__sourceKey) === sourceName(char)))];
+    let index = 0;
     for (const [i, record] of records.entries()) {
-      add({ name: sourceName(record, record.__sourceKey), source: sourceId(record), faction: i ? 'red' : 'blue', x: i, y: 0 }, record, i);
+      const count = record.__sourceKind === 'char_info' ? bound(record.数量 ?? record.count, 1, 100, 1) : 1;
+      for (let copy = 0; copy < count; copy++, index++) {
+        add({ name: sourceName(record, record.__sourceKey), source: sourceId(record), faction: i ? 'red' : 'blue', x: index % 10, y: Math.floor(index / 10) % 10 }, record, index);
+      }
     }
   }
   const title = text(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || '酒馆战术战局';
