@@ -14228,15 +14228,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       program: [{ op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }]
     }], warnings);
   }
-  function normalizeEquipment(raw, slot2, owner, index, sink) {
-    const r = asObject(raw), name = text3(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot2 || "\u88C5\u5907"}${index + 1}`;
+  function normalizeEquipment(raw, slot2, owner, key4, sink) {
+    const r = asObject(raw), name = text3(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot2 || "\u88C5\u5907"}${key4}`;
     const isShield = slot2 === "shield" || r.kind === "shield" || r.shield === true || r.weaponClass === "shield" || /盾/.test(name);
     const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text3(r.tags ?? r.\u6807\u7B7E);
     const kindAliases = /* @__PURE__ */ new Map([["\u6B66\u5668", "weapon"], ["\u9632\u5177", "armor"], ["\u9970\u54C1", "accessory"], ["\u5F39\u836F\u5BB9\u5668", "accessory"], ["\u6D88\u8017\u54C1", "consumable"]]);
     const declaredKind = ["weapon", "armor", "accessory", "consumable"].includes(r.kind) ? r.kind : kindAliases.get(r.\u7C7B\u578B);
     const kind = isShield ? "shield" : declaredKind || (["mainHand", "offHand", "twoHands"].includes(slot2) || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|火枪|投掷武器/.test(`${name} ${labels}`) ? "weapon" : "accessory");
     const isWeapon2 = kind === "weapon";
-    const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
+    const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${key4}`;
     const templateId = `template-${idBase}`;
     const warnings = sink("effect", `/equipment/${templateId}`);
     const rules = readRules(r.rules, warnings);
@@ -14298,7 +14298,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).map(text3).join(",");
       const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
       const rawSlot = position || (slots3.has(key4) ? key4 : hand || key4);
-      return [slots3.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.\u540D\u79F0 ?? (slots3.has(key4) ? "" : key4) }, i];
+      const name = item.name ?? item.\u540D\u79F0 ?? (slots3.has(key4) ? "" : key4);
+      return [slots3.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`)];
     });
   }
   function normalizeBattleDefinition(raw, id3 = "") {
@@ -14450,7 +14451,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const mc = Math.max(1, Math.min(64, integer3(findValue(record3, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
     const resources = { hp: safeResource(resource(record3, "hp", Math.max(1, stats.con * 100)), "hp", resourcesSink), mp: safeResource(resource(record3, "mp", Math.max(0, (stats.int + stats.spi) * 10)), "mp", resourcesSink), sp: safeResource(resource(record3, "sp", Math.max(0, (stats.str + stats.agi) * 10)), "sp", resourcesSink) };
     const sourceEntries = sourceEquipment(record3);
-    const slotItems = sourceEntries.map(([slot2, value, i]) => normalizeEquipment(value, slot2, id3, i, sink));
+    const entrySources = {}, equipmentKeys = /* @__PURE__ */ new Map();
+    const equipmentEntry = ([slot2, raw, identity]) => {
+      const key4 = hash(String(identity)).toString(36);
+      const occurrence = equipmentKeys.get(key4) ?? 0;
+      equipmentKeys.set(key4, occurrence + 1);
+      const item = normalizeEquipment(raw, slot2, id3, occurrence ? `${key4}-${occurrence}` : key4, sink);
+      const { slot: _slot, position: _position, \u4F4D\u7F6E: _placement, count: _count, \u6570\u91CF: _quantity, ...definition } = raw;
+      entrySources[`equipment:${item.templateId}`] = definition;
+      return item;
+    };
+    const slotItems = sourceEntries.map(equipmentEntry);
     const main = slotItems.find((i) => i.template.kind === "weapon" && i.template.twoHanded) ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot === "mainHand") ?? slotItems.find((i) => i.template.kind === "weapon" && i.slot !== "offHand");
     const off = !main?.template.twoHanded && slotItems.find((i) => i.slot === "offHand" && ["weapon", "consumable"].includes(i.template.kind));
     const shield = !main?.template.twoHanded && slotItems.find((i) => i.template.kind === "shield");
@@ -14469,9 +14480,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
     const skillInfo = {};
+    const skillKeys = /* @__PURE__ */ new Map();
     const normalizedSkills = sourceSkills(record3).slice(0, 32).map(([raw, i]) => {
-      const r = asObject(raw), sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${i}`;
+      const r = asObject(raw);
       const skillName = text3(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`;
+      const key4 = hash(String(r.id ?? r.ID ?? skillName)).toString(36);
+      const occurrence = skillKeys.get(key4) ?? 0;
+      skillKeys.set(key4, occurrence + 1);
+      const sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${key4}${occurrence ? `-${occurrence}` : ""}`;
+      entrySources[`skills:${sid}`] = r;
       const labels = [].concat(r.tags ?? r.\u6807\u7B7E ?? [], r.description ?? r.\u63CF\u8FF0 ?? "").join(" ");
       const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
       const notes2 = sink("effect", `/skills/${sid}`);
@@ -14518,9 +14535,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       };
       if (damageTypes2.includes(damageType2)) skills[sid].damageType = damageType2;
       else if (damageType2 != null) notes2.push(`\u300C${skillName}\u300D\u672A\u77E5\u4F24\u5BB3\u7C7B\u578B\uFF1A${damageType2}`);
-      for (const [key4, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["accuracy", -20, 30], ["initiativeBonus", -100, 100], ["power", 0, 1e9]]) {
-        const value = r[key4] ?? (key4 === "power" ? taggedPower : costs[key4]);
-        if (value != null) skills[sid][key4] = bound(value, min, max);
+      for (const [key5, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["accuracy", -20, 30], ["initiativeBonus", -100, 100], ["power", 0, 1e9]]) {
+        const value = r[key5] ?? (key5 === "power" ? taggedPower : costs[key5]);
+        if (value != null) skills[sid][key5] = bound(value, min, max);
       }
       if (r.save != null || r.saveDC != null) {
         const save = statAliases[r.save] ?? r.save;
@@ -14532,7 +14549,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
       if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
-      for (const key4 of ["damage", "heal"]) if (object3(r[key4])) skills[sid][key4] = normalizeDice(r[key4]);
+      for (const key5 of ["damage", "heal"]) if (object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5]);
       return sid;
     });
     const pos2 = xyzOf(p.xyz ?? p);
@@ -14575,9 +14592,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
-      for (const [slot2, raw, index2] of sourceEquipment({ \u88C5\u5907: record3.\u80CC\u5305 })) {
+      for (const [slot2, raw, identity] of sourceEquipment({ \u88C5\u5907: record3.\u80CC\u5305 })) {
         if (raw.\u7C7B\u578B !== "\u6B66\u5668" && raw.kind !== "weapon" || bound(raw.\u6570\u91CF ?? raw.count, 0, 1e9, 1) === 0) continue;
-        const item = normalizeEquipment(raw, slot2, id3, `bag-${index2}`, sink);
+        const item = equipmentEntry([slot2, raw, identity]);
         if (item.template.kind === "weapon") {
           finalizeEquipment(item, sink("effect", `/equipment/${item.templateId}`));
           equipment[item.templateId] = item.template;
@@ -14596,7 +14613,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (Array.isArray(tags)) unit.tags = tags.map(text3).filter((tag2) => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(tag2)).slice(0, 32);
     unit.rules = readRules(record3.rules, sink("effect", `/units/${id3}`));
     unit.mods = readMods(record3.mods, sink("effect", `/units/${id3}`));
-    return { unit, profile: { id: id3, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record3.__sourcePath ?? null, sourceKind: record3.__sourceKind || "unknown", fieldSources: { numeric: record3.__sourceKind || "unknown", equipment: record3.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record3.__sourceKind || "unknown" } }, participant: p };
+    return { unit, entrySources, profile: { id: id3, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record3.__sourcePath ?? null, sourceKind: record3.__sourceKind || "unknown", fieldSources: { numeric: record3.__sourceKind || "unknown", equipment: record3.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record3.__sourceKind || "unknown" } }, participant: p };
   }
   function terrainState(battle, state, warnings) {
     state.grid = createBattleGrid(battle, state.rng, Object.values(state.units), warnings);
@@ -14658,7 +14675,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
     }
     const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
-    const units = {}, profiles = {}, sourceMap = {}, archetypes = /* @__PURE__ */ new Map();
+    const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = /* @__PURE__ */ new Map();
     const add = (participant, record3, index) => {
       const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
       let id3 = base;
@@ -14679,6 +14696,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       units[id3] = made.unit;
       profiles[id3] = made.profile;
+      entrySources[id3] = made.entrySources;
       sourceMap[id3] = { path: record3?.__sourcePath, sourceId: sourceId(record3), sourceName: sourceName(record3), isProtagonist: record3 === protagonist };
     };
     for (const [i, participant] of participants.entries()) {
@@ -14725,7 +14743,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (valid2) beginBattle(state);
     const roster = Object.values(units).map((unit) => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
     Object.defineProperty(state, "warnings", { value: warnings });
-    return { state, roster, warnings, sourceMap, battleInit: battle, seed };
+    return { state, roster, warnings, sourceMap, entrySources, battleInit: battle, seed };
   }
   function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {
     if (!unitIds?.length) return warnings;
@@ -14865,16 +14883,30 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return receipts;
   }
+  function warningEntryKey(warning) {
+    const path2 = warning?.originPath ?? "";
+    const match = path2.match(/^\/(equipment|skills|items|statusTemplates)\/([^/]+)/);
+    if (match) return `${match[1]}:${match[2]}`;
+    return "unit";
+  }
+  function changedEntryKeys(snapshot, current) {
+    if (!snapshot || !current) return /* @__PURE__ */ new Set(["unit"]);
+    const previous = snapshot.entryHashes ?? {};
+    const next = current.entryHashes ?? {};
+    return new Set([...Object.keys(previous), ...Object.keys(next)].filter((key4) => previous[key4] !== next[key4]));
+  }
   function normalizationCandidates(characters, snapshots, warnings) {
     const pending = new Set(warnings.map((w) => w.unitId));
-    return Object.keys(characters).filter((id3) => pending.has(id3) || !snapshots[id3]?.normalized || snapshots[id3].hash !== characters[id3].hash);
+    return Object.keys(characters).filter((id3) => pending.has(id3) || pending.has(null));
   }
   function remainingDiagnostics(warnings, snapshots, characters, batches = []) {
     const receipts = activeWarningReceipts(batches);
     return warnings.filter((w) => {
       const snapshot = snapshots[w.unitId];
       const key4 = warningKey(w);
-      return !receipts.get(w.unitId)?.has(key4) && (!snapshot || snapshot.hash !== characters[w.unitId]?.hash || !snapshot.resolvedWarnings?.includes(key4));
+      const current = characters[w.unitId];
+      const entryChanged = snapshot && !snapshot.entryHashes ? snapshot.hash !== current?.hash : changedEntryKeys(snapshot, current).has(warningEntryKey(w));
+      return !receipts.get(w.unitId)?.has(key4) && (!snapshot || entryChanged || !snapshot.resolvedWarnings?.includes(key4));
     });
   }
 
@@ -15012,14 +15044,14 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         throw new Error("narrative \u8B66\u544A\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81");
       }
       seen.add(reference);
-      const source = sourceFor(warning.unitId);
+      const source = sourceFor(warning.unitId, warningEntryKey(warning));
       if (!source) throw new Error("narrative \u8B66\u544A\u7F3A\u5C11\u6765\u6E90");
       return { warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason: diagnosticText(entry2.reason) } };
     });
   }
   function activeNarrativeExemptions(warnings, receipts, sourceFor) {
     return warnings.flatMap((warning) => {
-      const source = sourceFor(warning.unitId);
+      const source = sourceFor(warning.unitId, warningEntryKey(warning));
       const receipt = source && receipts.find((item) => item.unitId === warning.unitId && item.key === warningKey(warning) && item.source === source);
       return receipt ? [{ warning, receipt }] : [];
     });
@@ -16576,6 +16608,7 @@ ${variables2.warnings()}` : "");
   var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
   var clean = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
   var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
+  var stableSourceJson = (value) => JSON.stringify(ordered(value));
   var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
   async function characterRecords(sources, hydrated) {
     const mvu = collectMvu(sources.mvuData), battle = sources.battleInit;
@@ -16598,10 +16631,122 @@ ${variables2.warnings()}` : "");
         equipment: defs3(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
         skills: defs3(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
       };
+      const stripEntries = (source) => Object.fromEntries(Object.entries(source ?? {}).filter(([key4]) => !["equipment", "equipments", "items", "\u88C5\u5907", "skills", "abilities", "\u6280\u80FD", "\u80CC\u5305", "mainHand", "offHand", "shield", "gear"].includes(key4)));
+      const entryValues = {
+        unit: [stripEntries(raw.mvu), stripEntries(raw.char_info), stripEntries(raw.battle_init)],
+        ...hydrated?.entrySources?.[unit.id] ?? {}
+      };
+      const entryHashes = {};
+      for (const [entryKey, value] of Object.entries(entryValues)) {
+        const bytes2 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordered(value))));
+        entryHashes[entryKey] = Array.from(new Uint8Array(bytes2), (b) => b.toString(16).padStart(2, "0")).join("");
+      }
       const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordered(raw))));
-      return [unit.id, { raw, sourceKind, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
+      return [unit.id, { raw, sourceKind, entryHashes, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
     }));
     return Object.fromEntries(rows2);
+  }
+
+  // src/tavern/normalization-replay.js
+  var entryRoot = (path2) => path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
+  var tableKey = (path2) => path2.split("/").slice(1, 3).join(":");
+  var under = (path2, root2) => path2 === root2 || path2.startsWith(`${root2}/`);
+  function normalizationTransactions({ patch, solved, verified, records: records2, before, fingerprint, linkedRoots = [] }) {
+    const groups = /* @__PURE__ */ new Map();
+    const group = (path2) => {
+      if (!groups.has(path2)) groups.set(path2, { roots: /* @__PURE__ */ new Set([path2]), guards: /* @__PURE__ */ new Set(), warnings: [] });
+      return groups.get(path2);
+    };
+    for (const op of patch) {
+      const root2 = entryRoot(op.path);
+      const guard = op.path.split("/").slice(0, root2.split("/").length + 1).join("/");
+      group(root2).guards.add(guard);
+    }
+    const rootForWarning = (warning) => {
+      const path2 = warning.originPath;
+      return path2 && [...groups.keys()].find((root2) => under(root2, path2) || under(path2, root2));
+    };
+    for (const warning of solved) {
+      const evidence = verified.find((item) => item.warning === warning);
+      const root2 = evidence ? entryRoot(evidence.path) : rootForWarning(warning);
+      if (!root2) continue;
+      const target2 = group(root2);
+      if (evidence) target2.guards.add(evidence.path);
+      target2.warnings.push(warning);
+    }
+    const join = (left, right) => {
+      const a = groups.get(left), b = groups.get(right);
+      if (a === b) return;
+      for (const root2 of b.roots) {
+        a.roots.add(root2);
+        groups.set(root2, a);
+      }
+      for (const guard of b.guards) a.guards.add(guard);
+      a.warnings.push(...b.warnings);
+    };
+    for (const paths of linkedRoots) {
+      const roots = [...new Set(paths.map(entryRoot))].filter((root2) => groups.has(root2));
+      for (const root2 of roots.slice(1)) join(roots[0], root2);
+    }
+    const definitions = /* @__PURE__ */ new Map();
+    for (const root2 of groups.keys()) {
+      if (/^\/(skills|statusTemplates|equipment|items)\//.test(root2)) {
+        const id3 = root2.split("/")[2];
+        definitions.set(id3, [...definitions.get(id3) ?? [], root2]);
+      }
+    }
+    const visit = (value, root2) => {
+      if (typeof value === "string") {
+        for (const dependency of definitions.get(value) ?? []) join(root2, dependency);
+      } else if (value && typeof value === "object") {
+        for (const [key4, child] of Object.entries(value)) {
+          visit(key4, root2);
+          visit(child, root2);
+        }
+      }
+    };
+    for (const op of patch) visit(op.value, entryRoot(op.path));
+    return [...new Set(groups.values())].map(({ roots, guards, warnings }) => {
+      const refs = /* @__PURE__ */ new Map();
+      const addRef = (id3, key4) => {
+        const hash2 = records2[id3]?.entryHashes?.[key4];
+        if (hash2) refs.set(JSON.stringify([id3, key4]), [id3, key4, hash2]);
+      };
+      for (const root2 of roots) {
+        if (root2.startsWith("/units/")) addRef(root2.split("/")[2], "unit");
+        else for (const id3 of Object.keys(records2)) addRef(id3, tableKey(root2));
+      }
+      for (const warning of warnings) addRef(warning.unitId, warningEntryKey(warning));
+      return {
+        patch: patch.filter((op) => roots.has(entryRoot(op.path))),
+        entries: [...refs.values()],
+        receipts: warnings.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
+        guards: [...guards].map((path2) => [path2, fingerprint(before, path2) ?? null])
+      };
+    });
+  }
+  function replayNormalization(state, batches, records2, warnings, { apply: apply2, validate, fingerprint }) {
+    const kept = [];
+    const diagnosticKeys = new Set(warnings.map((w) => JSON.stringify([w.unitId, warningKey(w)])));
+    for (const batch of batches) {
+      const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key: key4 }) => diagnosticKeys.has(JSON.stringify([unitId, key4])));
+      if (batch.entries) {
+        if (!batch.entries.every(([id3, entry2, hash2]) => records2[id3]?.entryHashes?.[entry2] === hash2)) continue;
+        if (batch.receipts?.length && !sameDiagnostics) continue;
+      } else {
+        const owners = Object.entries(batch.hashes ?? {});
+        if (!sameDiagnostics && (!owners.length || !owners.every(([id3, hash2]) => records2[id3]?.hash === hash2))) continue;
+      }
+      if (batch.guards?.some(([path2, value]) => (fingerprint(state, path2) ?? null) !== value)) continue;
+      try {
+        const next = apply2(state, batch.patch, true);
+        validate(next);
+        state = next;
+        kept.push(batch);
+      } catch (_) {
+      }
+    }
+    return { state, kept };
   }
 
   // src/tavern/instance-groups.js
@@ -17485,7 +17630,7 @@ ${variables2.warnings()}` : "");
     return `[\u672A\u5E94\u7528] ${table4 === "skills" ? "\u6280\u80FD" : table4 === "equipment" ? "\u88C5\u5907" : "\u6761\u76EE"}\u300C${entity}\u300D(${item.path || "\u65E0\u8DEF\u5F84"})\uFF1A${item.reason || "\u8865\u4E01\u6821\u9A8C\u5931\u8D25"}`;
   }
   var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-  var TAVERN_VERSION = "0.4.2";
+  var TAVERN_VERSION = "0.4.3";
   var DEFAULT_CONFIG = {
     apiMode: "tavern",
     baseUrl: "",
@@ -17854,7 +17999,7 @@ ${variables2.warnings()}` : "");
       const sourceFor = narrativeSourceFor(characters);
       for (const warning of warnings) {
         const note = notes2[warning.unitId ?? ""]?.[warningKey(warning)];
-        if (note?.source === sourceFor(warning.unitId) && note?.reason) reviewed.push({ warning, ...note });
+        if (note?.source === sourceFor(warning.unitId, warningEntryKey(warning)) && note?.reason) reviewed.push({ warning, ...note });
         else pending.push(warning);
       }
       return { pending, reviewed };
@@ -18309,7 +18454,7 @@ ${tag2.textContent || ""}
         });
       }
       on(refresh, "click", () => {
-        if (!host.confirm("\u4ECE\u5F53\u524D\u804A\u5929\u91CD\u65B0\u8BFB\u53D6\u672C\u573A\u53C2\u6218\u8005\uFF1F\u8FD9\u4F1A\u91CD\u7F6E\u672C\u573A\u6218\u6597\u8FDB\u5EA6\u3001\u6E05\u9664\u672C\u573A\u6807\u51C6\u5316\u8865\u4E01\u5E76\u6062\u590D\u539F\u59CB\u8BCA\u65AD\u3002\u4E0D\u4F1A\u8BF7\u6C42 AI\uFF0C\u4E5F\u4E0D\u5F71\u54CD\u5176\u4ED6\u6218\u573A\u3002")) return;
+        if (!host.confirm("\u4ECE\u5F53\u524D\u804A\u5929\u91CD\u65B0\u8BFB\u53D6\u672C\u573A\u53C2\u6218\u8005\uFF1F\u6765\u6E90\u65E0\u53D8\u5316\u65F6\u4FDD\u7559\u6218\u6597\u8FDB\u5EA6\uFF1B\u6709\u53D8\u5316\u65F6\u91CD\u5EFA\u5F00\u573A\uFF0C\u5E76\u4FDD\u7559\u672A\u53D8\u5316\u6761\u76EE\u7684\u6807\u51C6\u5316\u7ED3\u679C\u3002\u4E0D\u4F1A\u8BF7\u6C42 AI\uFF0C\u4E5F\u4E0D\u5F71\u54CD\u5176\u4ED6\u6218\u573A\u3002")) return;
         void scan({ rehydrate: true });
       });
     }
@@ -18648,7 +18793,7 @@ ${tag2.textContent || ""}
     }
     function narrativeSourceFor(records2) {
       const globalSource = JSON.stringify([sources.battleRaw, sources.mvuData, sources.charInfo]);
-      return (id4) => id4 === null ? globalSource : records2[id4]?.hash;
+      return (id4, entryKey) => id4 === null ? globalSource : records2[id4]?.entryHashes?.[entryKey] ?? records2[id4]?.hash;
     }
     function filterResolved(stored, records2, retained = batches(activeBattleKey)) {
       const warnings = sources.warnings ??= [];
@@ -18670,7 +18815,7 @@ ${tag2.textContent || ""}
       for (const warning of warnings) {
         const unitId = warning.unitId ?? "";
         const id4 = warningKey(warning);
-        const source = sourceFor(warning.unitId);
+        const source = sourceFor(warning.unitId, warningEntryKey(warning));
         if (!source) continue;
         const details = [...new Set(additions.filter((note2) => note2.warning === warning).map((note2) => note2.detail).filter(Boolean))];
         const old = reset ? void 0 : previous[unitId]?.[id4];
@@ -18790,52 +18935,62 @@ ${tag2.textContent || ""}
           if (epoch !== scanEpoch || disposed) return;
         }
         const savedBattle = Boolean(key4 && readBattleStorage(key4, "fated-tactical/battle-v1")?.kind === "battle");
+        const previousOpening = rehydrate && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
         const hydrated = await hydrate(epoch, candidate, rehydrate);
+        const latestOpening = key4 && openingSources.get(key4);
+        const openingInput = (opening) => [opening.battleInit, opening.mvuData, opening.charInfo, opening.protagonistName];
+        const unchangedOpening = previousOpening && latestOpening && stableSourceJson(openingInput(previousOpening)) === stableSourceJson(openingInput(latestOpening));
         if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
         const nextState = hydrated?.state ?? null;
         const fresh = key4 ? await characterRecords(sources, hydrated) : {};
         if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
         syncSettings();
-        const ids = Object.keys(fresh), stored = rehydrate ? {} : { ...config.charSnapshots[key4] ?? {} };
+        const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key4] ?? {} };
         const removed = Object.keys(stored).filter((id4) => !fresh[id4]);
         diagnostics.removedCharacters = removed;
         for (const id4 of removed) delete stored[id4];
         const rawWarnings = sources.warnings ?? [];
         diagnostics.inputWarnings = [...rawWarnings];
-        const kept = [];
-        let replay = nextState;
-        for (const batch of rehydrate ? [] : batches(key4)) {
-          const owners = Object.entries(batch.hashes);
-          const matchesHash = ([id4, hash2]) => fresh[id4]?.hash === hash2;
-          const sameInput = batch.receipts ? owners.every(matchesHash) : owners.some(matchesHash);
-          const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key: key5 }) => fresh[unitId] && rawWarnings.some((w) => w.unitId === unitId && warningKey(w) === key5));
-          if (!sameInput && !sameDiagnostics) continue;
-          if (batch.guards && !batch.guards.every(([path2, value]) => (fingerprintAt(replay, path2) ?? null) === value)) continue;
-          try {
-            replay = applyPatch(replay, batch.patch, true);
-            kept.push(batch);
-          } catch (_) {
-          }
-        }
-        const invalid = batches(key4).length !== kept.length;
-        const exempt = new Set(activeNarrativeExemptions(rawWarnings, config.narrativeExemptions[key4] ?? [], narrativeSourceFor(fresh)).map(({ warning }) => warning));
+        const firstEntry = !rehydrate && nextState && key4 && !savedBattle && !enteredBattles.has(key4);
+        const chatPrefix = `${safeKey2(chat)}__`;
+        const ownBatches = batches(key4);
+        const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, transactions]) => transactions.filter((batch) => batch.entries?.length)) : ownBatches;
+        const { kept } = nextState ? replayNormalization(nextState, candidates, fresh, rawWarnings, {
+          apply: applyPatch,
+          validate: options.validateState || validateState,
+          fingerprint: fingerprintAt
+        }) : { kept: [] };
+        const imported = candidates !== ownBatches;
+        const invalid = ownBatches.length !== kept.length || imported || kept.some((batch, i) => batch !== ownBatches[i]);
+        const ownExemptions = config.narrativeExemptions[key4] ?? [];
+        const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, receipts]) => receipts.filter((receipt) => receipt.unitId != null))] : ownExemptions;
+        const activeExemptions = activeNarrativeExemptions(rawWarnings, exemptionCandidates, narrativeSourceFor(fresh));
+        const exempt = new Set(activeExemptions.map(({ warning }) => warning));
+        if (imported && activeExemptions.length) persistSettings({ narrativeExemptions: {
+          ...config.narrativeExemptions,
+          [key4]: activeExemptions.map(({ receipt }) => receipt)
+        } });
         const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter((warning) => !exempt.has(warning));
         toast.hidden = true;
         currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
         if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
-        mountState(currentState, savedBattle && !rehydrate);
+        mountState(currentState, savedBattle && (!rehydrate || unchangedOpening && !invalid));
         refreshPortraits(currentState, epoch);
         activeBattleKey = key4;
         characters = fresh;
         const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter((id4) => groupId(id4) === id4);
-        for (const id4 of changed) if (stored[id4]?.hash !== fresh[id4].hash) stored[id4] = { hash: fresh[id4].hash, sourceKind: fresh[id4].sourceKind, at: Date.now(), normalized: false };
-        if (key4 && (rehydrate || changed.length || removed.length)) persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
+        if (key4 && (rehydrate || changed.length || removed.length)) {
+          for (const id4 of ids) {
+            const previous = stored[id4];
+            stored[id4] = { ...fresh[id4], resolvedWarnings: rawWarnings.filter((w) => w.unitId === id4 && previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id4]: previous }, fresh).length).map(warningKey) };
+          }
+          persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
+        }
         if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
         filterResolved(stored, fresh, kept);
-        if (key4) reconcileUnresolvedNotes(key4, fresh, sources.warnings, [], { reset: rehydrate });
+        if (key4) reconcileUnresolvedNotes(key4, fresh, sources.warnings, [], { reset: false });
         const live3 = liveState();
         for (const unit of Object.values(live3?.units ?? {})) if (config.instances[unit.id]) Object.assign(config.instances[unit.id], unit);
-        const firstEntry = !rehydrate && currentState && key4 && !savedBattle && !enteredBattles.has(key4);
         if (key4 && currentState) enteredBattles.add(key4);
         scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
         renderInstances();
@@ -18922,7 +19077,7 @@ ${tag2.textContent || ""}
       const raw = JSON.stringify(data, null, 2);
       try {
         const notes2 = readUnresolvedDiagnostics(data.unresolved, sent);
-        const records2 = Object.fromEntries(unitIds.map((id4) => [id4, { hash: characters[id4].hash, sourceKind: characters[id4].sourceKind }]));
+        const records2 = Object.fromEntries(unitIds.map((id4) => [id4, characters[id4]]));
         const current = liveState();
         const conflicts = [];
         const rebasedPatch = data.patch.flatMap((operation2, index) => {
@@ -18961,7 +19116,7 @@ ${tag2.textContent || ""}
           raw: JSON.stringify(rejected.map((item) => item.op))
         }) : null;
         data.patch = partition.accepted.map((item) => item.op);
-        const rootPath = (path2) => path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
+        const rootPath = entryRoot;
         const operationsToApply = data.patch;
         const paths = [...new Set(operationsToApply.flatMap(expanded).map((operation2) => rootPath(operation2.path)))];
         const apply2 = options.applyPatch ?? applyPatch;
@@ -19020,12 +19175,15 @@ ${tag2.textContent || ""}
           validate(next);
           const previous = operations2(key4);
           validate(applyNormalization(baseline, [...previous, ...patch]));
-          additions.push({
+          additions.push(...normalizationTransactions({
             patch,
-            hashes: Object.fromEntries(Object.keys(characters).filter((id4) => unitIds.includes(groupId(id4))).map((id4) => [id4, characters[id4].hash])),
-            receipts: solved.map((w) => ({ unitId: w.unitId, key: warningKey(w) })),
-            guards: [.../* @__PURE__ */ new Set([...changed, ...verified.map((entry2) => entry2.path), ...solved.map((w) => w.originPath).filter(Boolean)])].map((path2) => [path2, fingerprintAt(before, path2) ?? null])
-          });
+            solved,
+            verified,
+            records: characters,
+            before,
+            fingerprint: fingerprintAt,
+            linkedRoots: effective.map((operation2) => expanded(operation2).map((copy3) => copy3.path))
+          }));
           if (patch.length) {
             refreshOpeningInitiative(next);
             syncEquipmentEffects(next);
