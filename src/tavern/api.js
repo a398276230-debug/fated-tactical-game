@@ -171,6 +171,19 @@ async function sendViaTavernBackend(endpoint, { root, headers }, body, options) 
   }, transport);
 }
 
+export function normalizationApiConfig(settings) {
+  if (settings.normalizationAiMode !== 'custom') return { ...settings };
+  return {
+    ...settings,
+    apiMode: 'custom',
+    baseUrl: settings.normalizationAiBaseUrl,
+    apiKey: settings.normalizationAiApiKey,
+    model: settings.normalizationAiModel,
+    apiTransport: settings.normalizationAiApiTransport,
+    apiSource: settings.normalizationAiApiSource,
+  };
+}
+
 export async function fetchModels(settings, options = {}) {
   const conn = connection(settings, false);
   const { root, source, key, headers } = conn;

@@ -8,7 +8,7 @@ import { hostMethod, readBattleVariables, readChatMessages, statData } from './h
 import { tavernTheme } from './theme.js';
 import { readBattlePortraits } from './portraits.js';
 import { assembleMessages, describeSlots } from './prompts.js';
-import { requestViaTavern, requestViaCustomApi } from './api.js';
+import { normalizationApiConfig, requestViaTavern, requestViaCustomApi } from './api.js';
 import { renderSettings } from './settings.js';
 import { createAiSessions } from './ai-sessions.js';
 import { characterRecords } from './char-snapshots.js';
@@ -331,6 +331,8 @@ export const TAVERN_VERSION = '0.4.1';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 32000,
+  normalizationAiMode: 'same', normalizationAiBaseUrl: '', normalizationAiApiKey: '', normalizationAiModel: '',
+  normalizationAiApiTransport: 'direct', normalizationAiApiSource: 'openai',
   battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
   charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {}, unresolvedNotes: {},
@@ -970,7 +972,7 @@ export function mountTavernOverlay(options = {}) {
     if (aiController || !activeBattleKey || !liveState()) return;
     syncSettings();
     const key = activeBattleKey;
-    const requestConfig = { ...config };
+    const requestConfig = normalizationApiConfig(config);
     const stored = config.charSnapshots[key] ?? {};
     const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
     const ids = unitIds.filter(id => eligible.has(id));

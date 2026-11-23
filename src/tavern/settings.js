@@ -1,5 +1,5 @@
 import { DEFAULT_SLOTS, describeSlots, makeCustomSlot, resolveSlotContent } from './prompts.js';
-import { fetchModels, requestViaCustomApi, requestViaTavern } from './api.js';
+import { fetchModels, normalizationApiConfig, requestViaCustomApi, requestViaTavern } from './api.js';
 import { normalizationLimits } from './normalization-batches.js';
 
 // Only prompt-tab layout lives here; palette, panels, fields, buttons and the
@@ -288,7 +288,7 @@ export function renderApiTab(page, ctx) {
     input.onchange = () => {
       if (input.type === 'number' && (!input.reportValidity() || !Number.isFinite(input.valueAsNumber))) return;
       ctx.save({ [key]: checkbox ? input.checked : input.type === 'number' ? input.valueAsNumber : input.value });
-      if (key === 'apiMode' || key === 'apiTransport') renderApiTab(page, ctx);
+      if (['apiMode', 'apiTransport', 'normalizationAiMode', 'normalizationAiApiTransport', 'battleAiMode'].includes(key)) renderApiTab(page, ctx);
     };
     label.append(input);
     wrap.append(label);
@@ -301,7 +301,7 @@ export function renderApiTab(page, ctx) {
     return input;
   };
   const input = (type, props = {}) => Object.assign(make('input'), { type }, props);
-  const api = card('🔌 独立 API 接口配置（与主聊天完全解耦）');
+  const api = card('🔌 辅助 AI（聊天）');
   field(api, 'apiMode', '接口调用方式', select([
     ['custom', '🚀 独立自定义 API'],
     ['tavern', '🍺 酒馆当前连接 API (TavernHelper.generateRaw)'],
@@ -318,49 +318,71 @@ export function renderApiTab(page, ctx) {
   field(api, 'apiKey', 'API 密钥 (API Key)', input('password', { className: 'masked-key-input', autocomplete: 'off' }), '', tavern);
   const model = input('text');
   const modelField = field(api, 'model', '模型名称', model, '', tavern, true);
-  const commands = make('div', 'cmd-row');
-  const load = button('🔄 拉取模型');
-  const test = button('⚡ 测试连接');
-  commands.append(load, test);
-  const status = make('div', 'api-status');
-  status.setAttribute('role', 'status');
-  modelField.append(commands, status);
-  load.disabled = tavern;
-  async function run(pending, action) {
-    load.disabled = test.disabled = true;
-    status.dataset.error = 'false';
-    status.textContent = pending;
-    try { status.textContent = await action(); }
-    catch (err) {
-      status.dataset.error = 'true';
-      status.textContent = `请求失败：${err?.message || String(err)}`;
-    } finally { load.disabled = tavern; test.disabled = false; }
+  function modelCommands(modelField, model, getSettings, { viaTavern = false, pickerLabel = '可用模型' } = {}) {
+    const commands = make('div', 'cmd-row');
+    const load = button('🔄 拉取模型');
+    const test = button('⚡ 测试连接');
+    commands.append(load, test);
+    const status = make('div', 'api-status');
+    status.setAttribute('role', 'status');
+    modelField.append(commands, status);
+    load.disabled = viaTavern;
+    const requestOptions = { host: ctx.host, fetchImpl: ctx.fetchImpl };
+    async function run(pending, action) {
+      load.disabled = test.disabled = true;
+      status.dataset.error = 'false';
+      status.textContent = pending;
+      try { status.textContent = await action(); }
+      catch (err) {
+        status.dataset.error = 'true';
+        status.textContent = `请求失败：${err?.message || String(err)}`;
+      } finally { load.disabled = viaTavern; test.disabled = false; }
+    }
+    let picker;
+    load.onclick = () => run('正在拉取模型…', async () => {
+      picker?.remove();
+      const names = await fetchModels(getSettings(), requestOptions);
+      if (!names.length) throw new Error('接口未返回可用模型');
+      picker = select([['', '请选择模型'], ...names.map(name => [name, name])]);
+      picker.setAttribute('aria-label', pickerLabel);
+      picker.onchange = () => {
+        if (!picker.value) return;
+        model.value = picker.value;
+        ctx.save({ [model.name]: model.value });
+      };
+      modelField.append(picker);
+      return `已拉取 ${names.length} 个模型`;
+    });
+    test.onclick = () => run('正在测试连接…', async () => {
+      const probe = { ...getSettings(), max_tokens: 8 };
+      const messages = [{ role: 'user', content: '只回复 OK' }];
+      if (viaTavern) await requestViaTavern(ctx.host, probe, messages, {});
+      else await requestViaCustomApi(probe, messages, requestOptions);
+      return '测试连接成功';
+    });
   }
-  let picker;
-  load.onclick = () => run('正在拉取模型…', async () => {
-    picker?.remove();
-    const names = await fetchModels({ ...ctx.settings }, { host: ctx.host, fetchImpl: ctx.fetchImpl });
-    if (!names.length) throw new Error('接口未返回可用模型');
-    picker = select([['', '请选择模型'], ...names.map(name => [name, name])]);
-    picker.setAttribute('aria-label', '可用模型');
-    picker.onchange = () => {
-      if (!picker.value) return;
-      model.value = picker.value;
-      ctx.save({ model: model.value });
-    };
-    modelField.append(picker);
-    return `已拉取 ${names.length} 个模型`;
-  });
-  test.onclick = () => run('正在测试连接…', async () => {
-    const probe = { ...ctx.settings, max_tokens: 8 };
-    const messages = [{ role: 'user', content: '只回复 OK' }];
-    if (tavern) await requestViaTavern(ctx.host, probe, messages, {});
-    else await requestViaCustomApi(probe, messages, { host: ctx.host, fetchImpl: ctx.fetchImpl });
-    return '测试连接成功';
-  });
+  modelCommands(modelField, model, () => ctx.settings, { viaTavern: tavern });
+
+  const normalization = card('🛠️ 标准化 AI');
+  field(normalization, 'normalizationAiMode', '调用通道', select([
+    ['same', '复用辅助 AI 配置'], ['custom', '独立标准化 AI API'],
+  ]), 'same');
+  const separate = settings.normalizationAiMode === 'custom';
+  field(normalization, 'normalizationAiApiTransport', '独立 API 请求路径', select([
+    ['direct', '浏览器直连'], ['tavern', '经酒馆后端（OpenAI 兼容）'],
+  ]), 'direct', !separate);
+  if (settings.normalizationAiApiTransport !== 'tavern') field(normalization, 'normalizationAiApiSource', '独立 API 协议类型', select([
+    ['openai', 'OpenAI 兼容接口'], ['gemini', 'Google Gemini 原生接口'], ['claude', 'Anthropic Claude 原生接口'],
+  ]), 'openai', !separate);
+  field(normalization, 'normalizationAiBaseUrl', '标准化 AI API 地址', input('text', { placeholder: 'https://你的反代域名/v1' }), '', !separate);
+  field(normalization, 'normalizationAiApiKey', '标准化 AI API 密钥', input('password', { autocomplete: 'off' }), '', !separate);
+  const normalizationModel = input('text');
+  const normalizationModelField = field(normalization, 'normalizationAiModel', '标准化 AI 模型', normalizationModel, '', !separate, true);
+  if (separate) modelCommands(normalizationModelField, normalizationModel, () => normalizationApiConfig(ctx.settings), { pickerLabel: '标准化可用模型' });
+  normalization.append(make('p', 'hint wide', '自动标准化、手动标准化和失败补丁的修复请求共用此通道。'));
   const battle = card('⚔️ 战斗 AI（敌方陪玩）');
   field(battle, 'battleAiEnabled', '启用战斗 AI', Object.assign(input('checkbox'), { type:'checkbox' }), false);
-  field(battle, 'battleAiMode', '调用通道', select([['same','复用上方 API 配置'],['custom','独立战斗 AI API']]), 'same');
+  field(battle, 'battleAiMode', '调用通道', select([['same','复用辅助 AI 配置'],['custom','独立战斗 AI API']]), 'same');
   field(battle, 'battleAiBaseUrl', '战斗 AI API 地址', input('text', {placeholder:'http://127.0.0.1:8317/v1'}), '', settings.battleAiMode !== 'custom');
   field(battle, 'battleAiApiKey', '战斗 AI API 密钥', input('password', {autocomplete:'off'}), '', settings.battleAiMode !== 'custom');
   field(battle, 'battleAiModel', '战斗 AI 模型', input('text', {placeholder:'deepseek-v4.1-flash'}), '', settings.battleAiMode !== 'custom');

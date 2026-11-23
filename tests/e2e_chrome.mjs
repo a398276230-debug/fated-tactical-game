@@ -20,6 +20,7 @@ const until = async (probe, description) => {
 };
 
 test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒、下载/导入、窄屏与刷新', { timeout: 45000 }, async t => {
+  const normalizationRequests = [];
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -31,6 +32,26 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         let raw = '';
         for await (const chunk of req) raw += chunk;
         const body = JSON.parse(raw);
+        if (body.custom_url === 'https://normalization.example.test/v1') {
+          const valid = req.method === 'POST' && req.headers['x-csrf-token'] === 'test-csrf'
+            && body.chat_completion_source === 'custom'
+            && JSON.parse(body.custom_include_headers).Authorization === 'Bearer normalization-test';
+          let data;
+          if (!valid) data = { error: { message: 'unexpected normalization credentials' } };
+          else if (url.pathname.endsWith('/status')) data = { data: [{ id: 'normalization-model' }] };
+          else if (body.model !== 'normalization-model') data = { error: { message: 'unexpected normalization model' } };
+          else if (body.messages.at(-1).content === '只回复 OK') data = { choices: [{ message: { content: 'OK' } }] };
+          else {
+            normalizationRequests.push(body.messages);
+            const content = JSON.stringify({ patch: [
+              { op: 'replace', path: '/units/p1/armor', value: 7 },
+              { op: 'replace', path: '/skills/missing/rules', value: [{ op: 'bad_op' }] },
+            ], unresolved: ['模拟待处理项'] });
+            data = { choices: [{ message: { content } }] };
+          }
+          res.writeHead(data.error ? 400 : 200, { 'Content-Type': 'application/json' }).end(JSON.stringify(data));
+          return;
+        }
         const valid = req.method === 'POST' && req.headers['x-csrf-token'] === 'test-csrf'
           && body.chat_completion_source === 'custom' && body.custom_url === 'https://upstream.example.test/v1'
           && JSON.parse(body.custom_include_headers).Authorization === 'Bearer aux-test';
@@ -389,6 +410,19 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(() => run(`document.querySelector('.api-status').textContent === '测试连接成功'`), '经酒馆后端测试生成');
   await select('[name="apiTransport"]', 'direct');
   await select('[name="apiMode"]', 'tavern');
+  assert.equal(await run(`document.querySelector('[name="normalizationAiMode"]').value`), 'same');
+  assert.equal(await run(`document.querySelector('[name="normalizationAiModel"]').disabled`), true);
+  await select('[name="normalizationAiMode"]', 'custom');
+  await select('[name="normalizationAiApiTransport"]', 'tavern');
+  await select('[name="normalizationAiBaseUrl"]', 'https://normalization.example.test/v1');
+  await select('[name="normalizationAiApiKey"]', 'normalization-test');
+  const normalizationCard = `document.querySelector('[name="normalizationAiModel"]').closest('.api-card')`;
+  const normalizationButton = text => run(`Array.from(${normalizationCard}.querySelectorAll('.cmd-row button')).find(b => b.textContent.includes(${JSON.stringify(text)})).click()`);
+  await normalizationButton('拉取模型');
+  await until(() => run(`!!document.querySelector('[aria-label="标准化可用模型"]')`), '标准化通道返回独立模型列表');
+  await select('[aria-label="标准化可用模型"]', 'normalization-model');
+  await normalizationButton('测试连接');
+  await until(() => run(`${normalizationCard}.querySelector('.api-status').textContent === '测试连接成功'`), '标准化通道测试生成');
   await click('[data-tab="prompt"]');
   assert.equal(await run(`${get(toggle)}.checked`), false);
   await click(toggle);
@@ -509,9 +543,10 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal((await aiData()).sessions.at(-1).messages.at(-2).content, '编辑后的护甲问题');
   const beforeNormalize = await aiData();
   await run(`document.querySelector('[data-tab="instances"]').click(); document.querySelector('[data-normalize]').click(); document.querySelector('[data-tab="ai"]').click();`);
-  assert.doesNotMatch(await run(`JSON.stringify(aiProbe.args.ordered_prompts)`), /编辑后的护甲问题|调整错误路径/);
-  await run(`aiProbe.resolve(JSON.stringify({ patch: [{op:'replace',path:'/units/p1/armor',value:7},{op:'replace',path:'/skills/missing/rules',value:[{op:'bad_op'}]}], unresolved: ['模拟待处理项'] }))`);
-  await until(async () => (await tavernState()).units.p1.armor === 7, '手动标准化独立写入');
+  await until(async () => (await tavernState()).units.p1.armor === 7, '手动标准化通过独立 API 写入');
+  assert.equal(normalizationRequests.length, 1);
+  assert.doesNotMatch(JSON.stringify(normalizationRequests[0]), /编辑后的护甲问题|调整错误路径/);
+  assert.equal(await run('aiProbe.args.ordered_prompts.at(-1).content'), '编辑后的护甲问题');
   assert.deepEqual(await aiData(), beforeNormalize);
   assert.match(await run(`document.querySelector('.fated-toast[data-tone="warning"]').textContent`), /1 项报错未应用.*\/skills\/missing\/rules/s);
   await run(`aiSend('Markdown 测试'); aiProbe.resolve(${JSON.stringify('一段 `行内代码`。\n\n```js\nconst n = 1;\n```\n\n下一段。')})`);
