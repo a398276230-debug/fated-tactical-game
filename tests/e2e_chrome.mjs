@@ -527,14 +527,28 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(async () => (await bubble())?.status === 'error', '气泡显示失败');
   assert.deepEqual(await bubble(), { status: 'error', body: '错误：模拟网络断开' });
   t.diagnostic(`G52 ${JSON.stringify(await bubble())}`);
-  await run(`aiSend('调整护甲'); aiProbe.resolve(JSON.stringify({ patch: [{ op: 'replace', path: '/units/p1/armor', value: 6 }] }))`);
+  const chatPatch = { patch: [
+    { op: 'replace', path: '/units/p1/armor', value: 6 },
+    { op: 'replace', path: '/units/p1/name', value: '补丁即时刷新验证' },
+  ] };
+  const currentBoard = 'document.querySelector(".fated-tavern-panel #board")';
+  const boardUnitName = () => run(`${currentBoard}.querySelector('.axis-unit[data-unit-id="p1"] .axis-unit-name').textContent`);
+  const originalName = await boardUnitName();
+  await run(`window.boardBeforeChatPatch = ${currentBoard}; aiSend('调整护甲'); aiProbe.resolve(${JSON.stringify(JSON.stringify(chatPatch))})`);
   await until(async () => (await bubble())?.status === 'ok', '会话补丁到达');
   const lastAssistant = `[...document.querySelectorAll('.fated-ai-message[data-role="assistant"]')].at(-1)`;
   const originalArmor = (await tavernState()).units.p1.armor;
   assert.notEqual(originalArmor, 6);
+  assert.equal(await boardUnitName(), originalName, '收到回复后仍等待手动应用');
   await run(`${lastAssistant}.querySelector('[data-ai-apply]').click()`);
   await until(async () => (await tavernState()).units.p1.armor === 6, '点击应用才写入护甲');
+  await until(async () => (await boardUnitName()) === '补丁即时刷新验证', '当前棋盘原位刷新');
+  assert.equal(await run(`${currentBoard} === window.boardBeforeChatPatch`), true);
   assert.match(await run(`${lastAssistant}.querySelector('.fated-ai-msg-feedback').textContent`), /已应用/);
+  await run(`document.querySelector('[data-tab="sandbox"]').click(); document.querySelector('.fated-tavern-panel #reset-button').click();`);
+  assert.equal((await tavernState()).units.p1.armor, 6, '重开保留已应用的辅助 AI 补丁');
+  assert.equal(await boardUnitName(), '补丁即时刷新验证');
+  await run(`document.querySelector('[data-tab="ai"]').click()`);
   const beforeReroll = await aiData();
   await run(`${lastAssistant}.querySelector('[data-ai-reroll]').click(); aiProbe.resolve(JSON.stringify([{op:'replace',path:'/units/missing/armor',value:9}]))`);
   await until(() => run(`Boolean(${lastAssistant}.querySelector('[data-ai-apply]:not(:disabled)'))`), '重生成原位显示应用按钮');
@@ -547,9 +561,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await send('Browser.grantPermissions', { permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'], origin: `http://127.0.0.1:${server.address().port}` });
   await run(`${lastAssistant}.querySelector('[data-ai-copy]').click()`);
   await until(() => run(`${lastAssistant}.querySelector('.fated-ai-msg-feedback').textContent === '已复制回复'`), '复制回复完成');
-  assert.deepEqual(JSON.parse(await run('navigator.clipboard.readText()')), { patch: [{ op: 'replace', path: '/units/p1/armor', value: 6 }] });
+  assert.deepEqual(JSON.parse(await run('navigator.clipboard.readText()')), chatPatch);
   await run(`${lastAssistant}.querySelector('[data-ai-undo]').click()`);
   assert.equal((await tavernState()).units.p1.armor, originalArmor);
+  await until(async () => (await boardUnitName()) === originalName, '撤销后当前棋盘原位刷新');
+  await run(`document.querySelector('[data-tab="sandbox"]').click(); document.querySelector('.fated-tavern-panel #reset-button').click();`);
+  assert.equal((await tavernState()).units.p1.armor, originalArmor, '重开不会恢复已撤销的补丁');
+  assert.equal(await boardUnitName(), originalName);
+  await run(`document.querySelector('[data-tab="ai"]').click()`);
   await run(`document.querySelector('[data-ai-edit]:not([hidden])').click()`);
   const editor = `document.querySelector('.fated-ai-editor:not([hidden])')`;
   assert.equal(await run(`${editor}.querySelector('textarea').value`), '调整护甲');

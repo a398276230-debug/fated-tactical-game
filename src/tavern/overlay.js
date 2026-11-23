@@ -1205,8 +1205,11 @@ export function mountTavernOverlay(options = {}) {
     const battleInput = sources.input;
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
     const restart = ({ seed }) => {
-      const next = hydrateBattleState(battleInput, { seed, throwOnValidation: true }).state;
-      return applyNormalization(next, operations(battleInstanceId));
+      const opening = hydrateBattleState(battleInput, { seed, throwOnValidation: true }).state;
+      const normalized = applyNormalization(opening, operations(battleInstanceId));
+      const next = restoreChatOpening(normalized, battleInstanceId);
+      updateChatInstances(next, liveState());
+      return next;
     };
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
@@ -1340,6 +1343,34 @@ export function mountTavernOverlay(options = {}) {
     refreshOutcome(next);
     return next;
   }
+  function chatOpeningPatches(key) {
+    const stored = readBattleStorage(key, 'chat-opening-patches');
+    return Array.isArray(stored) ? stored : [];
+  }
+  function replayChatPatches(state, entries, onConflict) {
+    let applied = false;
+    for (const { patch } of entries) {
+      try {
+        const next = applyPatch(state, patch, Array.isArray(patch));
+        syncEquipmentEffects(next);
+        refreshOutcome(next);
+        (options.validateState || defaultValidateState)(next);
+        state = next;
+        applied = true;
+      } catch (error) {
+        if (!onConflict) throw error;
+        onConflict(error);
+      }
+    }
+    if (applied) refreshOpeningInitiative(state);
+    return state;
+  }
+  function restoreChatOpening(state, key) {
+    const conflicts = [];
+    const next = replayChatPatches(state, chatOpeningPatches(key), error => conflicts.push(error.message));
+    if (conflicts.length) notify('部分辅助 AI 补丁未能重放', '', null, false, { tone: 'warning', unresolved: conflicts });
+    return next;
+  }
   async function scan({ rehydrate = false } = {}) {
     const epoch = ++scanEpoch;
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
@@ -1408,9 +1439,11 @@ export function mountTavernOverlay(options = {}) {
       } });
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
       toast.hidden = true;
+      const restoreSaved = savedBattle && (!rehydrate || (unchangedOpening && !invalid));
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
+      if (currentState && !restoreSaved) currentState = restoreChatOpening(currentState, key);
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key]: kept } });
-      mountState(currentState, savedBattle && (!rehydrate || (unchangedOpening && !invalid)));
+      mountState(currentState, restoreSaved);
       refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
@@ -1426,8 +1459,8 @@ export function mountTavernOverlay(options = {}) {
       if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
       filterResolved(stored, fresh, kept);
       if (key) reconcileUnresolvedNotes(key, fresh, sources.warnings, [], { reset: false });
-      const live=liveState();
-      for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
+      const live = liveState();
+      if (live) updateChatInstances(live, nextState);
       if (key && currentState) enteredBattles.add(key);
       scanStatus = firstEntry && changed.length ? `待标准化 ${changed.length} 个角色` : '可手动标准化所选角色';
       renderInstances();
@@ -1643,17 +1676,14 @@ export function mountTavernOverlay(options = {}) {
       throw error;
     }
   }
-  function installChatState(next, previous) {
-    (options.validateState || defaultValidateState)(next);
-    gameMount.loadState(next);
-    currentState = liveState();
-    for (const id of Object.keys(previous.units)) if (!own(currentState.units, id)) delete config.instances[id];
-    for (const unit of Object.values(currentState.units)) {
+  function updateChatInstances(next, previous) {
+    for (const id of Object.keys(previous?.units ?? {})) if (!own(next.units, id)) delete config.instances[id];
+    for (const unit of Object.values(next.units)) {
       const metadata = { ...config.instances[unit.id] };
-      for (const key of Object.keys(previous.units[unit.id] ?? {})) delete metadata[key];
+      for (const key of Object.keys(previous?.units?.[unit.id] ?? {})) delete metadata[key];
       config.instances[unit.id] = { ...metadata, ...clone(unit) };
     }
-    save(); renderInstances(); prepareMessages();
+    save();
   }
 
   function changeChatPatch(message, payload, undo = false) {
@@ -1671,10 +1701,48 @@ export function mountTavernOverlay(options = {}) {
         refreshOutcome(next);
         if (!chatUndoChanges(current, next).length) throw new Error('此补丁没有改变当前战局');
       }
-      installChatState(next, current);
-      const undoReceipt = undo ? null : { battleKey: activeBattleKey, changes: chatUndoChanges(current, currentState) };
-      aiSessions.update(sessionId, message, { undoReceipt, applyError: null,
-        applyNotice: undo ? '✓ 已撤销' : `✓ 已应用至当前战局（变更 ${undoReceipt.changes.length} 处）` });
+      (options.validateState || defaultValidateState)(next);
+      const key = activeBattleKey;
+      const entries = chatOpeningPatches(key);
+      let nextEntries = entries;
+      let openingId = null;
+      let openingError;
+      const validateOpening = records => {
+        const savedSeed = storage?.getItem(battleStorageKey(key, 'fated-tactical/battle-v1/seed'));
+        const seed = savedSeed != null && /^\d+$/.test(savedSeed) ? Number(savedSeed) : sources.seed;
+        const source = hydrateBattleState(sources.input, { seed, throwOnValidation: true }).state;
+        return replayChatPatches(applyNormalization(source, operations(key)), records);
+      };
+      if (undo && message.undoReceipt.openingId) {
+        nextEntries = entries.filter(entry => entry.id !== message.undoReceipt.openingId);
+        // Later patches may depend on a template or unit added by this one.
+        validateOpening(nextEntries);
+      } else if (!undo) {
+        try {
+          openingId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+          nextEntries = [...entries, { id: openingId, patch }];
+          validateOpening(nextEntries);
+        } catch (error) {
+          nextEntries = entries;
+          openingId = null;
+          openingError = error.message;
+        }
+      }
+      const storageKey = battleStorageKey(key, 'chat-opening-patches');
+      if (nextEntries !== entries && !putConfig(storage, storageKey, nextEntries)) throw new Error('无法保存战局补丁');
+      try { gameMount.loadState(next); }
+      catch (error) {
+        if (nextEntries !== entries) putConfig(storage, storageKey, entries);
+        throw error;
+      }
+      currentState = liveState();
+      updateChatInstances(currentState, current);
+      renderInstances(); prepareMessages();
+      const undoReceipt = undo ? null : { battleKey: key, changes: chatUndoChanges(current, currentState), openingId };
+      const applyNotice = undo ? '✓ 已撤销' : openingError
+        ? `✓ 已应用至当前战局，重开时重置（${openingError}）`
+        : '✓ 已应用至当前战局，重开时保留';
+      aiSessions.update(sessionId, message, { undoReceipt, applyError: null, applyNotice });
     } catch (error) {
       aiSessions.update(sessionId, message, { applyError: `${undo ? '撤销' : '应用'}失败：${error.message}` });
     }
