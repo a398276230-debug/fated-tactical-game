@@ -48,8 +48,6 @@ body { margin: 0; background: var(--ink-2); }
 }
 .ft-board .tactical-cell-coord { opacity: .45; font-size: 8px; }
 .ft-board .tactical-cell-units { display: flex; justify-content: center; align-items: center; flex: 1; min-height: 0; margin: 0; gap: 2px; flex-wrap: nowrap; }
-.ft-board .tactical-cell-units[data-stack="2"], .ft-board .tactical-cell-units[data-stack="3"], .ft-board .tactical-cell-units[data-stack="4"] { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; align-content: center; }
-.ft-board .tactical-cell-units[data-stack="2"] .axis-unit, .ft-board .tactical-cell-units[data-stack="3"] .axis-unit, .ft-board .tactical-cell-units[data-stack="4"] .axis-unit { width: 100%; min-width: 0; padding: 1px; }
 .ft-target-unit-options { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .ft-target-unit { flex: 1 1 48%; min-width: 0; padding: 5px 7px; border: 1px solid var(--line-mid); border-radius: 7px; background: var(--raised-b); color: var(--text); text-align: left; cursor: pointer; }
 .ft-target-unit[data-faction="blue"] { border-color: var(--blue-line); }
@@ -62,6 +60,37 @@ body { margin: 0; background: var(--ink-2); }
 .ft-board.battle-axis .axis-unit-name { max-width: 100%; font-size: max(9px, calc(var(--cell) * .14)); }
 .ft-board.battle-axis .axis-z-badge { min-width: 13px; height: 13px; right: -5px; padding-inline: 2px; font-size: 8px; line-height: 11px; }
 .ft-board.battle-axis .axis-facing-pip { min-width: 12px; height: 12px; font-size: 8px; line-height: 10px; }
+
+/* All visible pieces in a cell share the same layout, including terrain features. */
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: clamp(1px, calc(var(--cell) * .04), 2px);
+  align-items: stretch;
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) > .axis-unit {
+  width: 100%;
+  min-height: 0;
+  padding: clamp(0px, calc((var(--cell) - 20px) * .08), 1px);
+  overflow: clip;
+}
+.ft-board.battle-axis .tactical-cell-units > .axis-unit:nth-child(3):last-child { grid-column: span 2; }
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-token-head {
+  max-width: 100%;
+  min-height: 0;
+  flex-shrink: 1;
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-unit-fallback-avatar {
+  width: 100%;
+  height: 100%;
+  font-size: min(12px, calc(var(--cell) * .18));
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-token-head {
+  width: calc(var(--cell) * .27);
+  height: calc(var(--cell) * .27);
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-unit-name { font-size: 9px; }
 .ft-board .axis-unit.is-active { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 16px rgb(var(--gold-rgb) / .55); animation: ft-breathe 1.8s ease-in-out infinite; }
 .ft-board .axis-unit.is-moving { z-index: 30; }
 @keyframes ft-breathe { 50% { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 4px rgb(var(--gold-rgb) / .2); } }

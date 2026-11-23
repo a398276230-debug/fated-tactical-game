@@ -72,6 +72,44 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   assert.equal(await run('document.querySelector("#target-unit-options [aria-pressed=\\"true\\"]")?.dataset.targetId'), targetId);
   assert.equal(await run('document.querySelector("#board .tactical-cell[data-x=\\"3\\"][data-y=\\"2\\"] [data-unit-id][aria-pressed=\\"true\\"]")?.dataset.unitId'), targetId);
 
+  for (const [count, withInteractive] of [[2, false], [3, false], [4, false], [1, true], [2, true]]) {
+    const layout = await run(`(() => {
+      const game = window.FatedTacticalGame;
+      const state = game.getBattleState();
+      const actorId = state.order[state.turn];
+      const others = Object.values(state.units).filter(unit => unit.id !== actorId);
+      others.forEach((unit, index) => {
+        if (index < ${count}) Object.assign(unit, { x: 3, y: 2 });
+        else if (unit.x === 3 && unit.y === 2) Object.assign(unit, { x: 10, y: 9 });
+      });
+      if (${withInteractive}) Object.assign(Object.values(state.interactives)[0], { x: 3, y: 2 });
+      game.createBattle({ kind: 'custom_state', state });
+      const stack = document.querySelector('#board .tactical-cell[data-x="3"][data-y="2"] .tactical-cell-units');
+      const rect = element => {
+        const { left, top, right, bottom, width, height } = element.getBoundingClientRect();
+        return { left, top, right, bottom, width, height };
+      };
+      const cards = [...stack.children].map(rect);
+      const hitCell = cards.every(card => document.elementFromPoint(card.left + card.width / 2, card.top + card.height / 2)?.closest('.tactical-cell') === stack.parentElement);
+      return { box: rect(stack), cards, hitCell };
+    })()`);
+    const { box, cards } = layout;
+    assert.equal(cards.length, count + Number(withInteractive));
+    assert.ok(layout.hitCell, 'clicking a shared card still activates its cell');
+    for (const card of cards) {
+      assert.ok(card.width > 0 && card.height > 0 && card.left >= box.left - 1 && card.top >= box.top - 1
+        && card.right <= box.right + 1 && card.bottom <= box.bottom + 1, `stack ${count} exceeds its cell: ${JSON.stringify(layout)}`);
+    }
+    for (const [i, card] of cards.entries()) {
+      for (const other of cards.slice(i + 1)) {
+        assert.ok(card.right <= other.left + 1 || card.bottom <= other.top + 1, `stack ${count} cards overlap`);
+      }
+    }
+    assert.ok(Math.abs(cards[0].left - box.left) < 1 && Math.abs(cards[1].right - box.right) < 1);
+    assert.ok(Math.abs(cards.at(-1).bottom - box.bottom) < 1);
+    if (cards.length === 3) assert.ok(Math.abs(cards[2].width - box.width) < 1);
+  }
+
   const openMovementMenu = anchorTier => run(`(() => {
     const game = window.FatedTacticalGame;
     const state = game.getBattleState();
