@@ -13,5 +13,8 @@ coverage/
 test-results/
 playwright-report/
 specs/
-tests/corpus/
+tests/corpus/*
+!tests/corpus/load.mjs
+!tests/corpus/standardize.mjs
+!tests/corpus/standardize_tests.mjs
 _scratch/

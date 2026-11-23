@@ -25,6 +25,11 @@ function dependencies(state, warning) {
 }
 
 // Keep related diagnostics adjacent but respect the configured request ceiling.
+export const MAX_NORMALIZATION_REPAIRS = 1;
+export function normalizationRepairAllowed({ attempts = 0, explicitUnresolved = false } = {}) {
+  return !explicitUnresolved && attempts < MAX_NORMALIZATION_REPAIRS;
+}
+
 export const normalizationLimits = {
   normalizationConcurrency: { fallback: 1, max: 8 },
   normalizationWarningsPerBatch: { fallback: 6, max: 30 },

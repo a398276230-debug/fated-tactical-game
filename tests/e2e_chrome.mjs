@@ -181,7 +181,11 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         }
         const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(({unitId,originPath,message}) =>
           ({unitId,originPath,message,effectName:'冰冻箭',reason:'仍缺冰冻持续时间'}));
-        resolve(JSON.stringify({patch: [4,5].includes(hostRequests.length) ? [] : patch, unresolved}));
+        if (hostRequests.length === 4) {
+          patch[0].value.at(-1).program = [{op:'mutate_event'}];
+          patch.push({op:'add',path:'/statusTemplates/repair_probe',value:{id:'repair_probe',name:'校验探针',category:'special'}});
+        }
+        resolve(JSON.stringify({patch: hostRequests.length === 5 ? [] : patch, unresolved}));
       };
     });
   })()`);
@@ -272,10 +276,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(() => run('hostRequests.length === 4'), '新战场发起首次自动标准化');
   assert.equal((await tavernState()).units.p1.hp, 123);
   await run('window.completeHostAI()');
-  await until(() => run('hostRequests.length === 5'), '漏交诊断归属自动修正');
-  assert.match(await run('hostRequests[4].ordered_prompts.at(-1).content'), /本批漏答.*恒定拉距/);
+  await until(() => run('hostRequests.length === 5'), '拒收项自动修复');
+  const repairPrompt = await run('hostRequests[4].ordered_prompts.at(-1).content');
+  assert.match(repairPrompt, /mutate_event/);
+  assert.match(repairPrompt, /patch/);
+  const partialState = await tavernState();
+  assert.equal(partialState.statusTemplates?.repair_probe?.name, '校验探针', '合法的同批补丁在修复请求发出前已生效');
   await run('window.completeHostAI()');
-  await until(() => run(`document.querySelector('.fated-toast strong').textContent==='标准化部分完成'`), '保留部分结果与漏答警告');
+  await until(() => run(`document.querySelector('.fated-toast strong').textContent.startsWith('标准化部分完成')`), '保留部分结果与漏答警告');
   const reviewedSelector = '[data-normalization-diagnostics="reviewed"]';
   const pendingSelector = '[data-normalization-diagnostics="pending"]';
   const toastIssues = await run(`document.querySelector('.fated-toast-issues').textContent`);

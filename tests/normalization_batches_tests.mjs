@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activeNarrativeExemptions, normalizationLimit, planNormalizationBatches,
-  normalizationOperations, readNarrativeExemptions, runOrderedBatches,
+  activeNarrativeExemptions, MAX_NORMALIZATION_REPAIRS, normalizationLimit, normalizationRepairAllowed,
+  planNormalizationBatches, normalizationOperations, readNarrativeExemptions, runOrderedBatches,
 } from '../src/tavern/normalization-batches.js';
 
 import { applyPatch } from '../src/tavern/overlay.js';
@@ -10,6 +10,13 @@ import { readFileSync } from 'node:fs';
 import { existingEffectReceipts, missingDispositions, resolvedDiagnostics } from '../src/tavern/resolved-warnings.js';
 
 const warning = (unitId, originPath, message) => ({ unitId, originPath, message, source: 'mvu', scope: 'effect' });
+
+test('normalization repair policy is exactly one pass and never repairs explicit unresolved output', () => {
+  assert.equal(MAX_NORMALIZATION_REPAIRS, 1);
+  assert.equal(normalizationRepairAllowed(), true);
+  assert.equal(normalizationRepairAllowed({ attempts: 1 }), false);
+  assert.equal(normalizationRepairAllowed({ explicitUnresolved: true }), false);
+});
 
 test('real armor operations with no receipts are incomplete, unique scoped receipts account for them without guessing', () => {
   const { armorPatch, templateOnlyPaths } = JSON.parse(readFileSync(new URL('./fixtures/arena-missing-receipts.json', import.meta.url)));

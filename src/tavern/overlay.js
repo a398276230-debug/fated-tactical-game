@@ -1,6 +1,6 @@
 import { diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
-import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
+import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -1023,11 +1023,16 @@ export function mountTavernOverlay(options = {}) {
         try {
           if (result.error) throw result.error;
           let accepted;
+          let repairAttempts = 0;
           try { accepted = commitNormalization(key, batch, result.value, createdTemplates); }
           catch (error) {
+            // A batch gets one repair request at most. Explicit unresolved/narrative
+            // dispositions are an intentional model decision, not syntax to repair.
+            if (!normalizationRepairAllowed({ attempts: repairAttempts, explicitUnresolved: error.noRepair || result.value?.explicitUnresolved })) throw error;
+            repairAttempts++;
             progress(`第 ${index + 1} 批正在修正输出`);
             try {
-              const revised = await request(batch, index, error);
+              const revised = await request(error.missingWarnings ? { ...batch, warnings: error.missingWarnings } : batch, index, error);
               controller.signal.throwIfAborted();
               accepted = commitNormalization(key, batch, revised, createdTemplates, { acceptPartial: true });
             } catch (retryError) {
@@ -1035,6 +1040,27 @@ export function mountTavernOverlay(options = {}) {
               if (!error.missingCoverage || key !== activeBattleKey) throw retryError;
               // Revalidate the initial response before preserving usable partial work.
               accepted = commitNormalization(key, batch, result.value, createdTemplates, { acceptPartial: true });
+            }
+          }
+          if (!repairAttempts && accepted.repairWarnings?.length) {
+            repairAttempts++;
+            progress(`第 ${index + 1} 批正在修复拒收项`);
+            try {
+              const revisedBatch = { ...batch, warnings: accepted.repairWarnings };
+              const revised = await request(revisedBatch, index, accepted.repairError);
+              controller.signal.throwIfAborted();
+              const repaired = commitNormalization(key, revisedBatch, revised, createdTemplates, { acceptPartial: true });
+              applied += repaired.applied;
+              replies.push(repaired.data);
+              notes.push(...repaired.notes);
+              rejectedItems.push(...repaired.rejected);
+              const outstanding = new Set(repaired.missing);
+              accepted.rejected = accepted.rejected.filter(item => {
+                const related = accepted.repairWarnings.filter(warning => rejectedWarning(item, warning));
+                return !related.length || related.some(warning => outstanding.has(warning));
+              });
+            } catch (error) {
+              controller.signal.throwIfAborted();
             }
           }
           applied += accepted.applied;
@@ -1435,9 +1461,20 @@ export function mountTavernOverlay(options = {}) {
     on(refresh, 'click', () => scan().catch(showError));
     on(report, 'click', deliverBattleReport);
   }
+  function rejectedWarning(item, warning) {
+    return (Array.isArray(item.op?.resolves) && item.op.resolves.some(reference => identifiesWarning(reference, warning)))
+      || (warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`)));
+  }
   function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const { data } = parseAIResponse(reply);
-    if (!Array.isArray(data?.patch)) throw new Error('模型未返回有效的战局补丁');
+    const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
+    if (!Array.isArray(data?.patch)) {
+      const error = new Error('模型未返回有效的战局补丁');
+      const source = typeof reply === 'string' ? reply.trim() : '';
+      error.raw = source.startsWith('{') || source.startsWith('[') ? source : source.match(/```json\s*([\s\S]*?)(?:```|$)/i)?.[1];
+      if (explicitUnresolved) error.noRepair = true;
+      throw error;
+    }
     const raw = JSON.stringify(data, null, 2);
     try {
       const notes = readUnresolvedDiagnostics(data.unresolved, sent);
@@ -1456,13 +1493,13 @@ export function mountTavernOverlay(options = {}) {
         normalize: state => { refreshOpeningInitiative(state); syncEquipmentEffects(state); refreshOutcome(state); },
       });
       const rejected = [...conflicts, ...partition.rejected];
-      const blockedWarnings = new Set(sent.filter(warning => rejected.some(item =>
-        (Array.isArray(item.op?.resolves) && item.op.resolves.some(reference => identifiesWarning(reference, warning)))
-        || (warning.originPath && (item.path === warning.originPath || item.path.startsWith(`${warning.originPath}/`))))));
+      const blockedWarnings = new Set(sent.filter(warning => rejected.some(item => rejectedWarning(item, warning))));
       const eligibleWarnings = sent.filter(warning => !blockedWarnings.has(warning));
-      if (rejected.length && !partition.accepted.length) {
-        throw new Error(rejected.map(item => formatRejectedItem(item, current)).join('；') || '所有补丁均未通过校验');
-      }
+      const repairWarnings = sent.filter(warning => blockedWarnings.has(warning) && !notes.some(note => note.warning === warning)
+        && !data.narrative?.some?.(reference => identifiesWarning(reference, warning)));
+      const repairError = rejected.length ? Object.assign(new Error(rejected.map(item => formatRejectedItem(item, current)).join('；')), {
+        raw: JSON.stringify(rejected.map(item => item.op)),
+      }) : null;
       data.patch = partition.accepted.map(item => item.op);
       const rootPath = path => path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
       const operationsToApply = data.patch;
@@ -1516,9 +1553,10 @@ export function mountTavernOverlay(options = {}) {
         if (!solved.includes(warning)) solved.push(warning);
       }
       const missing = missingDispositions(sent, solved, notes, narrative);
-      if (missing.length && !acceptPartial && !patch.length) {
+      if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length) {
         const error = new Error(`本批漏答 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}。本批尚未写入；保留已完成的补丁，重新提交完整结果。已实现的效果请在实际修改的操作上补 resolves；只创建依赖模板还须接回原技能。其余逐项写 unresolved 并说明原因，纯叙事才写 narrative。`);
         error.missingCoverage = true;
+        error.missingWarnings = missing;
         throw error;
       }
       const additions = [];
@@ -1573,9 +1611,9 @@ export function mountTavernOverlay(options = {}) {
       reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
       scanStatus = `已标准化 ${unitIds.length} 个角色`;
       renderInstances();
-      return { applied: patch.length, data, notes, rejected };
+      return { applied: patch.length, data, notes, rejected, missing, repairWarnings, repairError };
     } catch (error) {
-      error.raw = raw;
+      error.raw ??= raw;
       throw error;
     }
   }
