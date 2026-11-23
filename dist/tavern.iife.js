@@ -5425,6 +5425,7 @@ var FatedTacticalTavern = (() => {
     const limit = distanceLimit ?? (unit.moveM == null ? Math.floor(remainingMove * mult) : Math.max(0, scale.limit - spent * mult));
     const routes = movementOptions(state, unit, limit, { ignoreZoc: type === "disengage" });
     if (!routes.length && scale.limit === 0 && distanceLimit === void 0) {
+      if (state.scale?.anchorTier >= 5) return [];
       return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
     }
     const sources = type === "disengage" ? [] : opportunitySources(state, unit).filter((source) => canReact(state, source, unit));
@@ -6604,7 +6605,7 @@ var FatedTacticalTavern = (() => {
     const scale = movementScale(state, actor, type);
     const consumed = Math.min(scale.total, path2.length * 1e3);
     if (actor.moveM != null || scale.limit === 0) actor.moveCarryPermille = (scale.total - consumed) % 1e3;
-    const carryText = path2.length === 0 && scale.limit === 0 ? `\u5728\u5E7F\u88A4\u6218\u533A\u4E2D\u594B\u529B\u63A8\u8FDB ${Math.round((type === "sprint" ? 2 : 1) * scale.moveM)}m\uFF08\u8DE8\u533A\u8FDB\u5EA6 ${Math.round(scale.total / 10)}%\uFF09` : null;
+    const carryText = path2.length === 0 && scale.limit === 0 ? `\u5728\u5E7F\u88A4\u6218\u533A\u4E2D\u594B\u529B\u84C4\u6B65\u63A8\u8FDB\uFF08\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(scale.total)}\uFF09` : null;
     const movedCells = path2.length;
     actor.moved = (actor.moved ?? 0) + movedCells;
     if (movedCells || progress.from.z !== landing.z) {
