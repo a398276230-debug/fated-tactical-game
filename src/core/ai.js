@@ -246,7 +246,13 @@ export function chooseAction(state) {
   const visible = enemies.filter(u => visibleEnemy(state, actor, u));
   const objectives = visible.length ? visible : enemies;
   let best = { action: END, score: .6 };
-  function consider(choice) { if (choice.score > best.score + 1e-8) best = choice; }
+  const attackChoices = [];
+  function consider(choice) {
+    if (choice.action.type === 'attack' || choice.action.type === 'skill' && actionSkill(state, actor, choice.action.skillId)?.slot === 'attack') {
+      attackChoices.push(choice);
+    }
+    if (choice.score > best.score + 1e-8) best = choice;
+  }
   for (const choice of aimedOptions(state, actor)) consider(choice);
   const canReload = preview(state, { type: 'reload' });
   if (canReload.ok) consider({ action: { type: 'reload' }, score: canReload.ammo === 0 ? 7.5 : (canReload.capacity - canReload.ammo) * .5 });
@@ -298,5 +304,11 @@ export function chooseAction(state) {
   }
   const bracing = preview(state, { type: 'brace' });
   if (bracing.ok && !statusModifier(actor, 'reduction') && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
+  // Ending while a legal attack slot is still available throws away a whole
+  // resource. Keep higher-value movement, brace, reload, or skill choices,
+  // but use the best legal attack whenever END would otherwise win.
+  if (best.action.type === 'end' && !actor.used.attack && attackChoices.length) {
+    best = attackChoices.reduce((choice, current) => choice.score > current.score ? choice : current);
+  }
   return { ...best.action };
 }

@@ -384,6 +384,25 @@ test('single-target hit gates radial and forward splash, with saves rolled by sp
   }
 });
 
+test('AI spends an unused attack slot instead of ending on a low-value attack', () => {
+  const state = buildScenario('ruins');
+  const actor = state.units.scout;
+  const target = state.units.swordsman;
+  state.turn = state.order.indexOf(actor.id);
+  actor.x = target.x - 1;
+  actor.y = target.y;
+  actor.ap = 1;
+  actor.used = { attack: 0, action: 1 };
+  target.maxHp = 10000;
+  target.hp = 10000;
+  target.stats.agi = 1000;
+  actor.skills = []; // Isolate the low-value basic attack from higher-value area skills.
+  const action = chooseAction(state);
+  assert.equal(action.type, 'attack');
+  assert.ok(action.targetId);
+  assert.equal(preview(state, action).ok, true);
+});
+
 test('AI values a costly cell skill that damages an enemy outside its native target list', () => {
   const fixture = battle();
   const { state, actor, enemy } = fixture;
