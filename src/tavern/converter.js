@@ -515,8 +515,8 @@ function finalizeEquipment(item, warnings) {
     program: [{ op: 'resource', target: 'self', pool: 'ammo', mode: 'sub', amount: 1, local: true, requireFull: true }],
   }], warnings);
 }
-function normalizeEquipment(raw, slot, owner, index, sink) {
-  const r = asObject(raw), name = text(r.name ?? r.名称 ?? r.itemName) || `${slot || '装备'}${index + 1}`;
+function normalizeEquipment(raw, slot, owner, key, sink) {
+  const r = asObject(raw), name = text(r.name ?? r.名称 ?? r.itemName) || `${slot || '装备'}${key}`;
   const isShield = slot === 'shield' || r.kind === 'shield' || r.shield === true || r.weaponClass === 'shield' || /盾/.test(name);
   const labels = Array.isArray(r.tags ?? r.标签) ? (r.tags ?? r.标签).join(' ') : text(r.tags ?? r.标签);
   const kindAliases = new Map([['武器', 'weapon'], ['防具', 'armor'], ['饰品', 'accessory'], ['弹药容器', 'accessory'], ['消耗品', 'consumable']]);
@@ -524,7 +524,7 @@ function normalizeEquipment(raw, slot, owner, index, sink) {
   const kind = isShield ? 'shield' : declaredKind || (['mainHand', 'offHand', 'twoHands'].includes(slot)
     || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|火枪|投掷武器/.test(`${name} ${labels}`) ? 'weapon' : 'accessory');
   const isWeapon = kind === 'weapon';
-  const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${index}`;
+  const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${key}`;
   const templateId = `template-${idBase}`;
   const warnings = sink('effect', `/equipment/${templateId}`);
   const rules = readRules(r.rules, warnings);
@@ -583,7 +583,8 @@ function sourceEquipment(record) {
     const tags = [].concat(item.tags ?? item.标签 ?? []).map(text).join(',');
     const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
     const rawSlot = position || (slots.has(key) ? key : hand || key);
-    return [slots.get(rawSlot) ?? rawSlot, { ...item, name: item.name ?? item.名称 ?? (slots.has(key) ? '' : key) }, i];
+    const name = item.name ?? item.名称 ?? (slots.has(key) ? '' : key);
+    return [slots.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`)];
   });
 }
 function normalizeBattleDefinition(raw, id = '') {
@@ -736,7 +737,17 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
   const sourceEntries = sourceEquipment(record);
-  const slotItems = sourceEntries.map(([slot, value, i]) => normalizeEquipment(value, slot, id, i, sink));
+  const entrySources = {}, equipmentKeys = new Map();
+  const equipmentEntry = ([slot, raw, identity]) => {
+    const key = hash(String(identity)).toString(36);
+    const occurrence = equipmentKeys.get(key) ?? 0;
+    equipmentKeys.set(key, occurrence + 1);
+    const item = normalizeEquipment(raw, slot, id, occurrence ? `${key}-${occurrence}` : key, sink);
+    const { slot: _slot, position: _position, 位置: _placement, count: _count, 数量: _quantity, ...definition } = raw;
+    entrySources[`equipment:${item.templateId}`] = definition;
+    return item;
+  };
+  const slotItems = sourceEntries.map(equipmentEntry);
   const main = slotItems.find(i => i.template.kind === 'weapon' && i.template.twoHanded)
     ?? slotItems.find(i => i.template.kind === 'weapon' && i.slot === 'mainHand')
     ?? slotItems.find(i => i.template.kind === 'weapon' && i.slot !== 'offHand');
@@ -758,9 +769,15 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   }
   const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
   const skillInfo = {};
+  const skillKeys = new Map();
   const normalizedSkills = sourceSkills(record).slice(0, 32).map(([raw, i]) => {
-    const r = asObject(raw), sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${i}`;
+    const r = asObject(raw);
     const skillName = text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`;
+    const key = hash(String(r.id ?? r.ID ?? skillName)).toString(36);
+    const occurrence = skillKeys.get(key) ?? 0;
+    skillKeys.set(key, occurrence + 1);
+    const sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${key}${occurrence ? `-${occurrence}` : ''}`;
+    entrySources[`skills:${sid}`] = r;
     const labels = [].concat(r.tags ?? r.标签 ?? [], r.description ?? r.描述 ?? '').join(' ');
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const notes = sink('effect', `/skills/${sid}`);
@@ -854,9 +871,9 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   if (p.moraleType && !moraleTypeFor(p.moraleType)) sink('state').push(`未知战斗类型「${p.moraleType}」，按标准处理`);
   if (isProtagonist) {
     const bagWeapons = [];
-    for (const [slot, raw, index] of sourceEquipment({装备:record.背包})) {
+    for (const [slot, raw, identity] of sourceEquipment({装备:record.背包})) {
       if ((raw.类型 !== '武器' && raw.kind !== 'weapon') || bound(raw.数量 ?? raw.count, 0, 1e9, 1) === 0) continue;
-      const item = normalizeEquipment(raw, slot, id, `bag-${index}`, sink);
+      const item = equipmentEntry([slot, raw, identity]);
       if (item.template.kind === 'weapon') {
         finalizeEquipment(item, sink('effect', `/equipment/${item.templateId}`));
         equipment[item.templateId] = item.template;
@@ -875,7 +892,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   if (Array.isArray(tags)) unit.tags = tags.map(text).filter(tag => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(tag)).slice(0, 32);
   unit.rules = readRules(record.rules, sink('effect', `/units/${id}`));
   unit.mods = readMods(record.mods, sink('effect', `/units/${id}`));
-  return { unit, profile: { id, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
+  return { unit, entrySources, profile: { id, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
 }
 
 function terrainState(battle, state, warnings) {
@@ -940,7 +957,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
-  const units = {}, profiles = {}, sourceMap = {}, archetypes = new Map();
+  const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = new Map();
   const add = (participant, record, index) => {
     const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, 'unit');
     let id = base;
@@ -962,6 +979,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     }
     units[id] = made.unit;
     profiles[id] = made.profile;
+    entrySources[id] = made.entrySources;
     sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist };
   };
   for (const [i, participant] of participants.entries()) {
@@ -1008,7 +1026,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   const roster = Object.values(units).map(unit => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
   // Keep conversion diagnostics out of serialized engine state (which has a strict schema).
   Object.defineProperty(state, 'warnings', { value: warnings });
-  return { state, roster, warnings, sourceMap, battleInit: battle, seed };
+  return { state, roster, warnings, sourceMap, entrySources, battleInit: battle, seed };
 }
 
 export function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {

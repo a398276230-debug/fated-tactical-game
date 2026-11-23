@@ -273,6 +273,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   }
   const tavernState = () => run('window.__fatedTacticalTavern.getState()');
   const opening = await tavernState();
+  const openingBow = state => state.equipment[state.items[state.units.p1.mainHand].templateId];
+  await run(`hostMessages.push({message_id:8,role:'assistant',message:battleFixture.replace('chrome-host','chrome-reuse')});
+    window.__fatedTacticalTavern.open()`);
+  await until(async () => (await tavernState())?.scenarioId === 'chrome-reuse', '新战场复用同一聊天的条目补丁');
+  assert.deepEqual(openingBow(await tavernState()), openingBow(opening));
+  assert.equal(await run('hostRequests.length'), 3);
+  await run(`hostMessages.pop(); window.__fatedTacticalTavern.open()`);
+  await until(async () => (await tavernState())?.scenarioId === opening.scenarioId, '返回原战场');
   await run(`document.querySelector('[data-tab="sandbox"]').click();
     const auto = document.querySelector('#auto-ai'); if (auto.checked) auto.click();
     document.querySelector('#end-turn').click();`);

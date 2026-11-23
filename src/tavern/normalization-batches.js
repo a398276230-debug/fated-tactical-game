@@ -1,4 +1,4 @@
-import { diagnosticText, warningKey } from './resolved-warnings.js';
+import { diagnosticText, warningEntryKey, warningKey } from './resolved-warnings.js';
 
 export const warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
 const referenceKey = warning => JSON.stringify(Object.values(warningReference(warning)));
@@ -147,7 +147,7 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
       throw new Error('narrative 警告与本批处理结果冲突');
     }
     seen.add(reference);
-    const source = sourceFor(warning.unitId);
+    const source = sourceFor(warning.unitId, warningEntryKey(warning));
     if (!source) throw new Error('narrative 警告缺少来源');
     return { warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason: diagnosticText(entry.reason) } };
   });
@@ -155,7 +155,7 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
 
 export function activeNarrativeExemptions(warnings, receipts, sourceFor) {
   return warnings.flatMap(warning => {
-    const source = sourceFor(warning.unitId);
+    const source = sourceFor(warning.unitId, warningEntryKey(warning));
     const receipt = source && receipts.find(item => item.unitId === warning.unitId && item.key === warningKey(warning) && item.source === source);
     return receipt ? [{ warning, receipt }] : [];
   });

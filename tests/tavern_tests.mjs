@@ -3,8 +3,10 @@ import { test } from 'node:test';
 import { validateState } from '../src/api/validation.js';
 import { getPool, refreshPoolMax, updatePoolCurrent } from '../src/core/vm-pools.js';
 import { applyAction, preview, switchableWeapons } from '../src/core/combat.js';
-import { diagnosticText, pendingDiagnostics, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
+import { changedEntryKeys, diagnosticText, normalizationCandidates, pendingDiagnostics, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, warningEntryKey, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
+import { normalizationTransactions, replayNormalization } from '../src/tavern/normalization-replay.js';
+import { applyPatch } from '../src/tavern/overlay.js';
 import { duplicateMappings, duplicateOperations, instanceGroups } from '../src/tavern/instance-groups.js';
 import { fillInstance, ruleSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
@@ -551,7 +553,7 @@ test('G101 status placeholders are silent without hiding invalid modifier overri
 test('G102/G103 original YAML and rejected effects retain the referenced skill template', () => {
   const {state,warnings} = hydrateDummy(shooterYaml.replace('[伤害: 物理]',''));
   const [id] = state.units.e1.skills;
-  assert.equal(id, 'skill-e1-10nk26b-0');
+  assert.equal(hydrateDummy(shooterYaml).state.units.e1.skills[0], id);
   assert.deepEqual(warnings, []);
   const skill = state.skills[id];
   assert.deepEqual([skill.name,skill.rules,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
@@ -677,6 +679,53 @@ const effectWarning = (name, unitId = 'p', originPath = '/equipment/bow') => ({
   message: `装备效果待标准化「${name}」：原描述`, unitId, originPath, source: 'mvu', scope: 'effect',
 });
 const referenceFor = ({ unitId, originPath, message }) => ({ unitId, originPath, message });
+
+test('快照按条目对比：新增技能效果不重置已标准化装备', () => {
+  const before = { raw:{}, hash:'whole-old', entryHashes:{unit:'u', 'equipment:bow':'b', 'skills:old':'s'} };
+  const after = { raw:{}, hash:'whole-new', entryHashes:{unit:'u', 'equipment:bow':'b', 'skills:old':'s', 'skills:new':'n'} };
+  assert.deepEqual([...changedEntryKeys(before, after)], ['skills:new']);
+  assert.equal(warningEntryKey(effectWarning('弩弦', 'p', '/equipment/bow')), 'equipment:bow');
+  assert.deepEqual(normalizationCandidates({p:after}, {p:before}, []), []);
+  const warnings = [effectWarning('弩弦', 'p', '/equipment/bow'), effectWarning('新技能', 'p', '/skills/new')];
+  const snapshots = {p:{...after, resolvedWarnings:[warningKey(warnings[0])]}};
+  assert.deepEqual(remainingDiagnostics(warnings, snapshots, {p:after}), [warnings[1]]);
+});
+
+test('水合回放：同批不同条目独立复用，回包保留武器，删除移除原条目和收据', async () => {
+  const dagger = { 类型:'武器', 位置:'副手', 标签:['匕首','攻击: 14'], 效果:{ 断刃:'命中后折断自己的利刃' } };
+  const spell = { 效果:{ 回响:'将这次施法回响至时间尽头' } };
+  async function hydrate(moved, changed, removed) {
+    const mvuData = { 主角:{ ...mvu.主角, 装备: moved ? {} : { 小刀:dagger },
+      背包: moved && !removed ? { 小刀:{ ...dagger, 位置:'' } } : {},
+      技能: removed ? {} : { 回响: changed ? { 效果:{ ...spell.效果, 扩展:'触发另一个法则' } } : spell } } };
+    const hydrated = hydrateFromSources({ mvu:mvuData, battleInit:'battle|1|cache|测试|flat|42\nunit|p|blue|mvu:主角|玩家|1,1\nunit|e|red|char_info|守卫|2,1', charInfo:[{ 名称:'守卫', hp:100 }] }, { throwOnValidation:true });
+    return { ...hydrated, records:await characterRecords({ mvuData, battleInit:hydrated.battleInit }, hydrated) };
+  }
+  const first = await hydrate(false, false, false);
+  const unit = first.state.units.p;
+  const itemId = unit.offHand, templateId = first.state.items[itemId].templateId, [skillId] = unit.skills;
+  const bowPath = `/equipment/${templateId}`, skillPath = `/skills/${skillId}`;
+  const solved = first.warnings.filter(w => [bowPath, skillPath].includes(w.originPath));
+  assert.equal(solved.length, 2);
+  const patch = [{ op:'add', path:`${bowPath}/attack`, value:28 }, { op:'add', path:`${skillPath}/power`, value:17 }];
+  const fingerprint = (state, path) => JSON.stringify(path.split('/').slice(1).reduce((node, key) => node?.[key], state));
+  const transactions = normalizationTransactions({ patch, solved, verified:[], before:first.state, records:first.records, fingerprint });
+  assert.equal(transactions.length, 2);
+  const replay = input => replayNormalization(input.state, transactions, input.records, input.warnings, { apply:applyPatch, validate:validateState, fingerprint });
+  assert.equal(replay(await hydrate(false, false, false)).kept.length, 2);
+  const changed = await hydrate(true, true, false);
+  const after = replay(changed);
+  assert.equal(after.kept.length, 1);
+  assert.deepEqual(after.state.units.p.bagWeapons, [itemId]);
+  assert.equal(after.state.units.p.offHand, null);
+  assert.equal(after.state.equipment[templateId].attack, 28);
+  assert.deepEqual(remainingDiagnostics(changed.warnings, {}, changed.records, after.kept).map(w => w.originPath), [skillPath, skillPath]);
+  const removed = replay(await hydrate(true, false, true));
+  assert.equal(removed.kept.length, 0);
+  assert.equal(removed.state.items[itemId], undefined);
+  assert.equal(removed.state.equipment[templateId], undefined);
+  assert.equal(removed.state.skills[skillId], undefined);
+});
 
 test('诊断收据：只能核销唯一匹配已发送警告的结构化操作收据，不猜测最后一项', () => {
   const ice = effectWarning('冰冻箭'), fire = effectWarning('火矢'), enemy = effectWarning('冰冻箭', 'e');

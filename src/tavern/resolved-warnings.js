@@ -143,9 +143,23 @@ export function activeWarningReceipts(batches) {
   return receipts;
 }
 
+export function warningEntryKey(warning) {
+  const path = warning?.originPath ?? '';
+  const match = path.match(/^\/(equipment|skills|items|statusTemplates)\/([^/]+)/);
+  if (match) return `${match[1]}:${match[2]}`;
+  return 'unit';
+}
+
+export function changedEntryKeys(snapshot, current) {
+  if (!snapshot || !current) return new Set(['unit']);
+  const previous = snapshot.entryHashes ?? {};
+  const next = current.entryHashes ?? {};
+  return new Set([...Object.keys(previous), ...Object.keys(next)].filter(key => previous[key] !== next[key]));
+}
+
 export function normalizationCandidates(characters, snapshots, warnings) {
   const pending = new Set(warnings.map(w => w.unitId));
-  return Object.keys(characters).filter(id => pending.has(id) || !snapshots[id]?.normalized || snapshots[id].hash !== characters[id].hash);
+  return Object.keys(characters).filter(id => pending.has(id) || pending.has(null));
 }
 
 export function remainingDiagnostics(warnings, snapshots, characters, batches = []) {
@@ -153,7 +167,11 @@ export function remainingDiagnostics(warnings, snapshots, characters, batches = 
   return warnings.filter(w => {
     const snapshot = snapshots[w.unitId];
     const key = warningKey(w);
+    const current = characters[w.unitId];
+    const entryChanged = snapshot && !snapshot.entryHashes
+      ? snapshot.hash !== current?.hash
+      : changedEntryKeys(snapshot, current).has(warningEntryKey(w));
     return !receipts.get(w.unitId)?.has(key)
-      && (!snapshot || snapshot.hash !== characters[w.unitId]?.hash || !snapshot.resolvedWarnings?.includes(key));
+      && (!snapshot || entryChanged || !snapshot.resolvedWarnings?.includes(key));
   });
 }

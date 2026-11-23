@@ -1,4 +1,4 @@
-import { diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningKey } from './resolved-warnings.js';
+import { diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
@@ -11,7 +11,8 @@ import { assembleMessages, describeSlots } from './prompts.js';
 import { normalizationApiConfig, requestViaTavern, requestViaCustomApi } from './api.js';
 import { renderSettings } from './settings.js';
 import { createAiSessions } from './ai-sessions.js';
-import { characterRecords } from './char-snapshots.js';
+import { characterRecords, stableSourceJson } from './char-snapshots.js';
+import { entryRoot, normalizationTransactions, replayNormalization } from './normalization-replay.js';
 import { duplicateMappings, duplicateOperations, instanceGroups } from './instance-groups.js';
 import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
@@ -328,7 +329,7 @@ export function formatRejectedItem(item, state = {}) {
 }
 export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
-export const TAVERN_VERSION = '0.4.2';
+export const TAVERN_VERSION = '0.4.3';
 
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 32000,
@@ -611,7 +612,7 @@ export function mountTavernOverlay(options = {}) {
     const sourceFor = narrativeSourceFor(characters);
     for (const warning of warnings) {
       const note = notes[warning.unitId ?? '']?.[warningKey(warning)];
-      if (note?.source === sourceFor(warning.unitId) && note?.reason) reviewed.push({ warning, ...note });
+      if (note?.source === sourceFor(warning.unitId, warningEntryKey(warning)) && note?.reason) reviewed.push({ warning, ...note });
       else pending.push(warning);
     }
     return { pending, reviewed };
@@ -938,7 +939,7 @@ export function mountTavernOverlay(options = {}) {
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
     on(refresh, 'click', () => {
-      if (!host.confirm('从当前聊天重新读取本场参战者？这会重置本场战斗进度、清除本场标准化补丁并恢复原始诊断。不会请求 AI，也不影响其他战场。')) return;
+      if (!host.confirm('从当前聊天重新读取本场参战者？来源无变化时保留战斗进度；有变化时重建开场，并保留未变化条目的标准化结果。不会请求 AI，也不影响其他战场。')) return;
       void scan({ rehydrate: true });
     });
   }
@@ -1237,7 +1238,7 @@ export function mountTavernOverlay(options = {}) {
   function narrativeSourceFor(records) {
     // Global diagnostics have no character source. Bind them to the entire opening input.
     const globalSource = JSON.stringify([sources.battleRaw, sources.mvuData, sources.charInfo]);
-    return id => id === null ? globalSource : records[id]?.hash;
+    return (id, entryKey) => id === null ? globalSource : records[id]?.entryHashes?.[entryKey] ?? records[id]?.hash;
   }
   function filterResolved(stored, records, retained = batches(activeBattleKey)) {
     const warnings = sources.warnings ??= [];
@@ -1256,7 +1257,7 @@ export function mountTavernOverlay(options = {}) {
     for (const warning of warnings) {
       const unitId = warning.unitId ?? '';
       const id = warningKey(warning);
-      const source = sourceFor(warning.unitId);
+      const source = sourceFor(warning.unitId, warningEntryKey(warning));
       if (!source) continue;
       const details = [...new Set(additions.filter(note => note.warning === warning).map(note => note.detail).filter(Boolean))];
       const old = reset ? undefined : previous[unitId]?.[id];
@@ -1367,53 +1368,66 @@ export function mountTavernOverlay(options = {}) {
         if (epoch !== scanEpoch || disposed) return;
       }
       const savedBattle = Boolean(key && readBattleStorage(key, 'fated-tactical/battle-v1')?.kind === 'battle');
+      const previousOpening = rehydrate && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
       const hydrated = await hydrate(epoch, candidate, rehydrate);
+      const latestOpening = key && openingSources.get(key);
+      const openingInput = opening => [opening.battleInit, opening.mvuData, opening.charInfo, opening.protagonistName];
+      const unchangedOpening = previousOpening && latestOpening && stableSourceJson(openingInput(previousOpening)) === stableSourceJson(openingInput(latestOpening));
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       const nextState = hydrated?.state ?? null;
       const fresh=key ? await characterRecords(sources,hydrated) : {};
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       syncSettings();
-      const ids=Object.keys(fresh), stored=rehydrate ? {} : {...(config.charSnapshots[key]??{})};
+      const ids=Object.keys(fresh), stored={...(config.charSnapshots[key]??{})};
       const removed=Object.keys(stored).filter(id=>!fresh[id]);
       diagnostics.removedCharacters=removed;
       for(const id of removed) delete stored[id];
       const rawWarnings = sources.warnings ?? [];
       diagnostics.inputWarnings = [...rawWarnings];
-      const kept = [];
-      let replay = nextState;
-      for (const batch of rehydrate ? [] : batches(key)) {
-        const owners = Object.entries(batch.hashes);
-        const matchesHash = ([id, hash]) => fresh[id]?.hash === hash;
-        const sameInput = batch.receipts ? owners.every(matchesHash) : owners.some(matchesHash);
-        const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key }) => fresh[unitId]
-          && rawWarnings.some(w => w.unitId === unitId && warningKey(w) === key));
-        if (!sameInput && !sameDiagnostics) continue;
-        if (batch.guards && !batch.guards.every(([path, value]) => (fingerprintAt(replay, path) ?? null) === value)) continue;
-        try {
-          replay = applyPatch(replay, batch.patch, true);
-          kept.push(batch);
-        } catch (_) { /* a previous patch or its target is no longer available */ }
-      }
-      const invalid = batches(key).length !== kept.length;
-      const exempt = new Set(activeNarrativeExemptions(rawWarnings, config.narrativeExemptions[key] ?? [], narrativeSourceFor(fresh))
-        .map(({ warning }) => warning));
+      // Reuse only source-bound transactions from this chat. Existing battles
+      // keep their own history, including deliberate entry resets.
+      const firstEntry = !rehydrate && nextState && key && !savedBattle && !enteredBattles.has(key);
+      const chatPrefix = `${safeKey(chat)}__`;
+      const ownBatches = batches(key);
+      const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches)
+        .filter(([other]) => other !== key && other.startsWith(chatPrefix))
+        .reverse().flatMap(([, transactions]) => transactions.filter(batch => batch.entries?.length)) : ownBatches;
+      const { kept } = nextState ? replayNormalization(nextState, candidates, fresh, rawWarnings, {
+        apply: applyPatch, validate: options.validateState || defaultValidateState, fingerprint: fingerprintAt,
+      }) : { kept: [] };
+      const imported = candidates !== ownBatches;
+      const invalid = ownBatches.length !== kept.length || imported || kept.some((batch, i) => batch !== ownBatches[i]);
+      const ownExemptions = config.narrativeExemptions[key] ?? [];
+      const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions)
+        .filter(([other]) => other !== key && other.startsWith(chatPrefix)).reverse()
+        .flatMap(([, receipts]) => receipts.filter(receipt => receipt.unitId != null))] : ownExemptions;
+      const activeExemptions = activeNarrativeExemptions(rawWarnings, exemptionCandidates, narrativeSourceFor(fresh));
+      const exempt = new Set(activeExemptions.map(({ warning }) => warning));
+      if (imported && activeExemptions.length) persistSettings({ narrativeExemptions: {
+        ...config.narrativeExemptions, [key]: activeExemptions.map(({ receipt }) => receipt),
+      } });
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
-      if (invalid) persistSettings({normalizationBatches:{...config.normalizationBatches,[key]:kept}});
-      mountState(currentState, savedBattle && !rehydrate);
+      if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key]: kept } });
+      mountState(currentState, savedBattle && (!rehydrate || (unchangedOpening && !invalid)));
       refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
       const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter(id => groupId(id) === id);
-      for(const id of changed) if(stored[id]?.hash!==fresh[id].hash) stored[id]={hash:fresh[id].hash,sourceKind:fresh[id].sourceKind,at:Date.now(),normalized:false};
-      if(key && (rehydrate||changed.length||removed.length)) persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
+      if(key && (rehydrate||changed.length||removed.length)) {
+        for (const id of ids) {
+          const previous = stored[id];
+          stored[id] = { ...fresh[id], resolvedWarnings: rawWarnings.filter(w => w.unitId === id &&
+            previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id]: previous }, fresh).length).map(warningKey) };
+        }
+        persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
+      }
       if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
       filterResolved(stored, fresh, kept);
-      if (key) reconcileUnresolvedNotes(key, fresh, sources.warnings, [], { reset: rehydrate });
+      if (key) reconcileUnresolvedNotes(key, fresh, sources.warnings, [], { reset: false });
       const live=liveState();
       for(const unit of Object.values(live?.units??{})) if(config.instances[unit.id]) Object.assign(config.instances[unit.id],unit);
-      const firstEntry = !rehydrate && currentState && key && !savedBattle && !enteredBattles.has(key);
       if (key && currentState) enteredBattles.add(key);
       scanStatus = firstEntry && changed.length ? `待标准化 ${changed.length} 个角色` : '可手动标准化所选角色';
       renderInstances();
@@ -1489,7 +1503,7 @@ export function mountTavernOverlay(options = {}) {
     const raw = JSON.stringify(data, null, 2);
     try {
       const notes = readUnresolvedDiagnostics(data.unresolved, sent);
-      const records = Object.fromEntries(unitIds.map(id => [id, { hash: characters[id].hash, sourceKind: characters[id].sourceKind }]));
+      const records = Object.fromEntries(unitIds.map(id => [id, characters[id]]));
       const current = liveState();
       const conflicts = [];
       const rebasedPatch = data.patch.flatMap((operation, index) => {
@@ -1517,7 +1531,7 @@ export function mountTavernOverlay(options = {}) {
         raw: JSON.stringify(rejected.map(item => item.op)),
       }) : null;
       data.patch = partition.accepted.map(item => item.op);
-      const rootPath = path => path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
+      const rootPath = entryRoot;
       const operationsToApply = data.patch;
       const paths = [...new Set(operationsToApply.flatMap(expanded).map(operation => rootPath(operation.path)))];
       const apply = options.applyPatch ?? applyPatch;
@@ -1581,12 +1595,8 @@ export function mountTavernOverlay(options = {}) {
         validate(next);
         const previous = operations(key);
         validate(applyNormalization(baseline, [...previous, ...patch]));
-        additions.push({
-          patch, hashes: Object.fromEntries(Object.keys(characters).filter(id => unitIds.includes(groupId(id))).map(id => [id, characters[id].hash])),
-          receipts: solved.map(w => ({ unitId: w.unitId, key: warningKey(w) })),
-          guards: [...new Set([...changed, ...verified.map(entry => entry.path), ...solved.map(w => w.originPath).filter(Boolean)])]
-            .map(path => [path, fingerprintAt(before, path) ?? null]),
-        });
+        additions.push(...normalizationTransactions({ patch, solved, verified, records: characters, before, fingerprint: fingerprintAt,
+          linkedRoots: effective.map(operation => expanded(operation).map(copy => copy.path)) }));
         if (patch.length) {
           refreshOpeningInitiative(next);
           syncEquipmentEffects(next);

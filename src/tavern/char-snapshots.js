@@ -4,6 +4,7 @@ import { collectMvu } from './converter.js';
 const transient = new Set(['x','y','z','xyz','position','pos','coordinates','facing','ap','used','round','turn','initiativeRoll','reactionAvailable','位置','坐标','行动点','回合','朝向']);
 const clean = record => Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => !transient.has(key) && !key.startsWith('__source')));
 const ordered = v => Array.isArray(v) ? v.map(ordered) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, ordered(v[k])])) : v;
+export const stableSourceJson = value => JSON.stringify(ordered(value));
 const aliases = r => [r?.id,r?.uid,r?.characterId,r?.instanceId,r?.ID,r?.name,r?.displayName,r?.characterName,r?.名称,r?.姓名,r?.角色名,r?.__sourceKey].filter(Boolean);
 export async function characterRecords(sources, hydrated) {
   const mvu = collectMvu(sources.mvuData), battle = sources.battleInit;
@@ -21,8 +22,17 @@ export async function characterRecords(sources, hydrated) {
     const defs = (table, ids) => Object.fromEntries(ids.filter(id => typeof id === 'string' && Object.hasOwn(table ?? {}, id)).map(id => [id,table[id]]));
     const raw = { ...(mv && {mvu:clean(mv)}), ...(char && {char_info:clean(char)}), battle_init: clean(p),
       equipment: defs(battle.equipment,[p?.mainHand,p?.offHand,p?.shield,...(Array.isArray(p?.gear)?p.gear:[])]), skills: defs(battle.skills,Array.isArray(p?.skills)?p.skills:[]) };
+    const stripEntries = source => Object.fromEntries(Object.entries(source ?? {})
+      .filter(([key]) => !['equipment', 'equipments', 'items', '装备', 'skills', 'abilities', '技能', '背包', 'mainHand', 'offHand', 'shield', 'gear'].includes(key)));
+    const entryValues = { unit: [stripEntries(raw.mvu), stripEntries(raw.char_info), stripEntries(raw.battle_init)],
+      ...(hydrated?.entrySources?.[unit.id] ?? {}) };
+    const entryHashes = {};
+    for (const [entryKey, value] of Object.entries(entryValues)) {
+      const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(ordered(value))));
+      entryHashes[entryKey] = Array.from(new Uint8Array(bytes), b=>b.toString(16).padStart(2,'0')).join('');
+    }
     const bytes = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(ordered(raw))));
-    return [unit.id,{raw,sourceKind,hash:Array.from(new Uint8Array(bytes), b=>b.toString(16).padStart(2,'0')).join('')}];
+    return [unit.id,{raw,sourceKind,entryHashes,hash:Array.from(new Uint8Array(bytes), b=>b.toString(16).padStart(2,'0')).join('')}];
   }));
   return Object.fromEntries(rows);
 }
