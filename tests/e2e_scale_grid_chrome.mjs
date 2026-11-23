@@ -110,6 +110,57 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
     if (cards.length === 3) assert.ok(Math.abs(cards[2].width - box.width) < 1);
   }
 
+  // Co-located actor + enemy in the SAME cell:
+  // 1) clicking the cell edge defaults to the enemy so melee attack appears immediately;
+  // 2) clicking actor's sub-card directly or clicking actor in #target-unit-options switches to self menu (brace/end);
+  // 3) switching back to enemy restores attack/disengage without needing pixel-perfect aim.
+  await run(`(() => {
+    const game = window.FatedTacticalGame;
+    const state = game.getBattleState();
+    document.querySelector('#auto-ai').checked = false;
+    state.turn = 0;
+    const actorId = state.order[0];
+    const actor = state.units[actorId];
+    actor.x = 2; actor.y = 2; actor.team = 'blue';
+    const [enemy, ...rest] = Object.values(state.units).filter(u => u.id !== actor.id);
+    enemy.x = 2; enemy.y = 2; enemy.team = 'red';
+    for (const u of rest) { u.x = 10; u.y = 9; }
+    for (const item of Object.values(state.interactives)) { item.x = 11; item.y = 9; }
+    window.__colocatedIds = { actorId: actor.id, enemyId: enemy.id };
+    game.createBattle({ kind: 'custom_state', state });
+    return true;
+  })()`);
+  const { actorId: coActorId, enemyId: coEnemyId } = await run('window.__colocatedIds');
+  const sharedStack = await run(`(() => {
+    const stack = document.querySelector('#board .tactical-cell[data-x="2"][data-y="2"] .tactical-cell-units');
+    const r = el => { const b = el.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height }; };
+    return { cell: r(stack.parentElement), box: r(stack), cards: [...stack.children].map(r) };
+  })()`);
+  assert.equal(sharedStack.cards.length, 2, 'two unit tokens in the same cell');
+  for (const card of sharedStack.cards) {
+    assert.ok(card.left >= sharedStack.cell.left - 1 && card.right <= sharedStack.cell.right + 1
+      && card.top >= sharedStack.cell.top - 1 && card.bottom <= sharedStack.cell.bottom + 1,
+      `two unit tokens must shrink inside the cell without overflowing: ${JSON.stringify(sharedStack)}`);
+  }
+  assert.ok(sharedStack.cards[0].right <= sharedStack.cards[1].left + 1, 'two unit tokens sit side-by-side without overlapping');
+
+  // Click cell container directly -> defaults to enemy, attack option is immediately visible!
+  await run('document.querySelector("#board .tactical-cell[data-x=\\"2\\"][data-y=\\"2\\"]").click(); true');
+  await waitFor('!document.querySelector("#target-actions").hidden');
+  assert.equal(await run('document.querySelector("#target-unit-options [aria-pressed=\\"true\\"]")?.dataset.targetId'), coEnemyId);
+  assert.ok(await run('!!document.querySelector("#action-toolbar [data-action=\\"attack\\"]")'), 'attack is shown immediately on shared enemy cell');
+
+  // Switch to self via #target-unit-options -> rebuilds toolbar with self actions (brace / end)
+  await run(`document.querySelector('#target-unit-options [data-target-id="${coActorId}"]').click(); true`);
+  assert.equal(await run('document.querySelector("#target-unit-options [aria-pressed=\\"true\\"]")?.dataset.targetId'), coActorId);
+  assert.ok(await run('!!document.querySelector("#action-toolbar [data-action=\\"brace\\"]")'), 'switching to self rebuilds self actions');
+  assert.equal(await run('document.querySelector("#action-toolbar [data-action=\\"attack\\"]")'), null);
+
+  // Direct click on enemy sub-card on the board -> selects enemy directly and shows attack again
+  await run(`document.querySelector('#board .tactical-cell[data-x="2"][data-y="2"] [data-unit-id="${coEnemyId}"]').click(); true`);
+  assert.equal(await run('document.querySelector("#target-unit-options [aria-pressed=\\"true\\"]")?.dataset.targetId'), coEnemyId);
+  assert.ok(await run('!!document.querySelector("#action-toolbar [data-action=\\"attack\\"]")'), 'clicking enemy sub-card directly shows attack');
+
   const openMovementMenu = anchorTier => run(`(() => {
     const game = window.FatedTacticalGame;
     const state = game.getBattleState();

@@ -446,56 +446,48 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function handlePoint(at, input = {}) {
     if (pendingAsk()) return;
     error('');
-    const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.x === at.x && u.y === at.y);
-    const unit = units.find(u => u.id === action?.targetId) ?? units[0];
-    let chosenTargetId = unit?.id;
-    const selectTarget = id => {
-      const chosen = units.find(u => u.id === id);
-      if (!chosen) return;
-      chosenTargetId = chosen.id;
-      target = { ...at, targetId: chosen.id }; hover = target;
-      if (action) action = { ...action, targetId: chosen.id, x: at.x, y: at.y };
-      for (const button of menuButtons.keys()) {
-        const choice = menuButtons.get(button);
-        if (!choice || !TARGETED.has(choice.command.type)) continue;
-        choice.command = { ...choice.command, targetId: chosen.id, x: at.x, y: at.y };
-        button.setAttribute('aria-pressed', String(choice.command.targetId === chosen.id));
-      }
-      for (const button of targetOptions?.querySelectorAll('[data-target-id]') ?? []) {
-        button.setAttribute('aria-pressed', String(button.dataset.targetId === chosen.id));
-      }
-      $('target-title').textContent = `${chosen.team === 'blue' ? '我方' : '敌方'} ${chosen.name} · (${at.x}, ${at.y})`;
-      draw(); layoutTargetCard();
-    };
-    const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find(v => v.x === at.x && v.y === at.y);
     const actor = active();
     const canAct = actor?.team === 'blue' && !state.outcome;
+    const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.x === at.x && u.y === at.y);
+    const clickedToken = input?.target?.closest?.('.tactical-cell-units > [data-unit-id]');
+    const clickedUnitId = clickedToken?.dataset.unitId;
+    const preferredUnit = units.find(u => u.id === (at.targetId ?? clickedUnitId))
+      ?? units.find(u => u.id === action?.targetId)
+      ?? (canAct ? units.find(u => u.team !== actor.team) : null)
+      ?? units[0];
+    const unit = preferredUnit;
+    const chosenTargetId = unit?.id;
+    const selectTarget = id => {
+      if (!units.some(u => u.id === id)) return;
+      handlePoint({ x: at.x, y: at.y, targetId: id }, { preserveSprint: true });
+    };
+    const feature = [...Object.values(state.covers), ...Object.values(state.interactives)].find(v => v.x === at.x && v.y === at.y);
     const self = canAct && unit?.id === actor.id;
     const onActorCell = canAct && actor.x === at.x && actor.y === at.y;
     if (bagAim) {
-      const command = { type:'skill', skillId:bagAim, ...at, ...(unit?.id ? { targetId: unit.id } : {}) };
+      const command = { type:'skill', skillId:bagAim, x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) };
       const plan = game.previewAction(command);
       if (!plan.ok) { error(plan.error); return; }
-      target = { ...at, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = command; bagAim = null;
+      target = { x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = command; bagAim = null;
       $('target-title').textContent = `${plan.name} · (${at.x}, ${at.y})`;
       $('action-toolbar').replaceChildren(); $('target-options').hidden = true;
       $('target-actions').hidden = false; $('confirm-action').hidden = false;
       $('confirm-action').textContent = `确认使用${plan.name}`;
       draw(); layoutTargetCard(); return;
     }
-    if (self) {
+    if (self && !input.preserveSprint) {
       const check = game.previewAction({ type: 'sprint' });
       sprint = !sprint && check.ok;
       if (!check.ok) error(`不能疾跑：${check.error}`);
     }
     selectedId = unit?.id ?? actor?.id;
     inspectedId = unit ? null : feature?.id;
-    target = { ...at, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = null;
+    target = { x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = null;
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [];
     const add = (type, skill, itemId, skillName) => {
-      const command = { type, ...(TARGETLESS.includes(type) ? {} : at), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
+      const command = { type, ...(TARGETLESS.includes(type) ? {} : { x: at.x, y: at.y }), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
@@ -613,7 +605,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function bindControls() {
     for (const input of measurement) input.addEventListener('change', () => { input.dataset.faction = state.units[input.value]?.team ?? ''; measure(); }, { signal });
     on('scenario-select', 'change', () => configure(scenario.value));
-    for (const id of ['intent-select', 'nonlethal-toggle', 'bonus-dice-select']) on(id, 'change', () => { if (target) handlePoint(target); });
+    for (const id of ['intent-select', 'nonlethal-toggle', 'bonus-dice-select']) on(id, 'change', () => { if (target) handlePoint(target, { preserveSprint: true }); });
     on('theme-select', 'change', () => { root.dataset.dlcTheme = $('theme-select').value; storage.setItem('fated-tactical/theme', root.dataset.dlcTheme); });
     on('anim-speed', 'change', () => { playback.setSpeed(Number($('anim-speed').value)); storage.setItem('fated-tactical/anim', $('anim-speed').value); });
     on('clear-persistent', 'click', () => {
@@ -783,7 +775,12 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       if (!at) return;
       if (pendingAsk()) {
         if (askCells?.has(`${at.x},${at.y}`)) answer(visibleAsk, at);
-        else toggleEntityChoice?.(e.target.closest('.tactical-cell')?.dataset.unitId);
+        else {
+          const picked = e.target.closest?.('.tactical-cell-units > [data-unit-id]')?.dataset.unitId
+            ?? Object.values(state.units).find(u => u.hp > 0 && !u.fled && u.x === at.x && u.y === at.y && entityChoices?.eligible.has(u.id))?.id
+            ?? e.target.closest('.tactical-cell')?.dataset.unitId;
+          toggleEntityChoice?.(picked);
+        }
         return;
       }
       if (playback.busy) playback.skip(); // 演出中点棋盘 = 跳过演出

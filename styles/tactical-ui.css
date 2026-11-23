@@ -54,7 +54,8 @@ body { margin: 0; background: var(--ink-2); }
 .ft-target-unit[data-faction="red"] { border-color: var(--red-line); }
 .ft-target-unit[aria-pressed="true"] { outline: 2px solid var(--gold-bright); }
 .ft-board .tactical-cell-features { position: absolute; top: 1px; right: 3px; margin: 0; }
-.ft-board.battle-axis .tactical-cell .axis-unit { width: calc(var(--cell) - 10px); max-width: 100%; padding: 2px; pointer-events: none; transform: none; transition: none; will-change: transform; }
+.ft-board.battle-axis .tactical-cell .axis-unit { width: calc(var(--cell) - 10px); max-width: 100%; padding: 2px; cursor: pointer; transform: none; transition: none; will-change: transform; }
+.ft-board.battle-axis .tactical-cell .axis-unit:hover { transform: none; }
 .ft-board.battle-axis .axis-token-head, .ft-board.battle-axis .axis-unit-fallback-avatar { width: calc(var(--cell) * .42); height: calc(var(--cell) * .42); }
 .ft-board.battle-axis .axis-unit-fallback-avatar { font-size: calc(var(--cell) * .2); }
 .ft-board.battle-axis .axis-unit-name { max-width: 100%; font-size: max(9px, calc(var(--cell) * .14)); }
@@ -66,31 +67,52 @@ body { margin: 0; background: var(--ink-2); }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-auto-rows: minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
   gap: clamp(1px, calc(var(--cell) * .04), 2px);
   align-items: stretch;
 }
 .ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) > .axis-unit {
   width: 100%;
+  height: 100%;
+  min-width: 0;
   min-height: 0;
   padding: clamp(0px, calc((var(--cell) - 20px) * .08), 1px);
   overflow: clip;
 }
 .ft-board.battle-axis .tactical-cell-units > .axis-unit:nth-child(3):last-child { grid-column: span 2; }
 .ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-token-head {
+  width: calc(var(--cell) * .27);
+  height: calc(var(--cell) * .27);
   max-width: 100%;
+  max-height: 100%;
   min-height: 0;
   flex-shrink: 1;
 }
 .ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-unit-fallback-avatar {
   width: 100%;
   height: 100%;
-  font-size: min(12px, calc(var(--cell) * .18));
+  font-size: min(11px, calc(var(--cell) * .16));
 }
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .axis-unit-name {
+  font-size: clamp(8px, calc(var(--cell) * .11), 9px);
+  line-height: 1.05;
+}
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .token-meters { flex: none; }
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .token-meter,
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(2)) .token-meter > i { height: 2px; }
 .ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-token-head {
-  width: calc(var(--cell) * .27);
-  height: calc(var(--cell) * .27);
+  width: calc(var(--cell) * .22);
+  height: calc(var(--cell) * .22);
 }
-.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-unit-name { font-size: 9px; }
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-unit-name { display: none; }
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-z-badge,
+.ft-board.battle-axis .tactical-cell-units:has(> :nth-child(3)) .axis-facing-pip {
+  min-width: 10px;
+  height: 10px;
+  font-size: 7px;
+  line-height: 8px;
+}
 .ft-board .axis-unit.is-active { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 16px rgb(var(--gold-rgb) / .55); animation: ft-breathe 1.8s ease-in-out infinite; }
 .ft-board .axis-unit.is-moving { z-index: 30; }
 @keyframes ft-breathe { 50% { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 4px rgb(var(--gold-rgb) / .2); } }
