@@ -26,16 +26,19 @@ const TAG_MAPPING = `【世界书标签 → VM 映射】
 • [关联属性: <属性>] 或标签中的五维名称指向施术者主属性（str / agi / con / int / spi），需属性缩放时写入 damage.stat 或在公式中读 self.<stat>；仅当原文明确要求防守方豁免检定时才设置防守方豁免检定。
 • [单体] → shape:"single"，target 依描述选取；[范围: <档位>(N)+<形状>(<阵营>)] → rawRadius:N、shape 对应枚举、target 对应枚举，有效距离另映射至 rawRange；角度标签映射至 angle。原生范围伤害用 target:"enemy" 限定敌方，target:"any" 为无差别波及（覆盖自身格时也会命中自身）。VM 选择器 from:"units" 为未过滤全集，必须在 where 中按原描述显式声明存活与敌我条件。
 • 原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved。位移、治疗、资源恢复、状态授予与场地生成均按原描述拆解为对应指令。`;
-const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。每项待处理警告必须有归属：实际生效补丁的 resolves、带原因的 unresolved 或纯叙事 narrative。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，可附可选顶层 existing 数组。每项给 {unitId,originPath,effectName,path,value}，path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
+const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。逐条交代警告：实现的用实际补丁的 resolves 或已有实现的 existing；未实现的用带原因的 unresolved；纯叙事用 narrative。若同一条警告只实现了一部分，在实现该部分的操作上写 resolves，并在 unresolved 里用同一引用说明还缺什么。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，必须附顶层 existing 数组。若警告为合并描述，复制完整 message；只有带唯一「效果名」的警告可用 effectName 代替 message。每项给 {unitId,originPath,message,path,value}，也可按上述规则用 effectName 替代 message；path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【四步编译工作流（提交前逐条自检）】
+export const PATCH_RULES = String.raw`【输出目标】
+输出一个 JSON 对象。patch、unresolved、narrative 是数组，已有实现的证据用 existing 数组。补丁路径以当前战局快照为准。快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条。禁止写 /effects/... 或修改来源资料，写入对应模板的 rules / mods / pools 等合法字段。narrative 数组每项为 {unitId,originPath,message,reason}，只收录纯叙事条目。无法实现的战斗机制用同样形状写进 unresolved。
+
+【四步编译工作流（提交前逐条自检）】
 1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
    • 主击完备性：引擎中技能仅填 power 而缺少 damage 骰子对象时，主击伤害为 0！若快照技能已有 power（原卡声明了 [威力] 与单一 [伤害]）但无 damage 字段，单一常规主击必须同批补充 /skills/<id>/damage（填 count、sides、stat、type）；混合伤害或自定义公式主伤则在 hook:"active" 内用 damage 指令结算。二者必居其一：严禁只写附加效果漏掉主击，也严禁在模板已有 power + damage 时再写同额主击 damage 导致双倍结算。
    • 模式与入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗资源的装备主动技，先 add /skills/<id> 再将该 ID 加入装备模板 skills 数组，同一效果只用一种方式挂载。
 2. 选择机制落点（mods vs active 顺序链 vs 常驻事件 hook）：
-   • 常驻属性、加减伤、穿甲、行动锁、先手、敌方测距偏移 → 写声明式 mods（动态条件写 when）。
+   • 常驻属性、加减伤、穿甲、行动锁、先手、敌方测距偏移 → 写声明式 mods（动态条件写 when，stat 必须取协议枚举）。HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat。若来源数值已计入快照的资源上限，保留当前面板，避免叠加；若还需装备联动且没有等价实现，逐项写 unresolved 并说明原因。
    • 单次主动施放内的因果链（结算伤害 → 按实扣量回血／回能／推拉／二段检定） → 全部按序写在同一个 hook:"active" 内，用指令的 out / outCount 把实际结算结果存入 vars.<名> 供后续指令读取，不要拆成事件钩子。
    • 跨行动触发或配合模板 power + damage 主击的附加效果 → 挂对应事件 hook。单位持有的所有技能的非 active 规则默认全局常驻，若某规则仅在施放本主动技能时触发，filter 必须包含 event.skillId == skill.id（命中／伤害事件配 attacker.id == self.id && event.skillId == skill.id；切勿误用仅属召唤物顶替事件的 event.sourceSkillId）。
 3. 显式声明集合边界与跨阶尺度：
@@ -61,7 +64,7 @@ export const PATCH_RULES = String.raw`【四步编译工作流（提交前逐条
 【输出与 RFC 6902 补丁协议】
 • 只输出一个顶层 JSON 对象，结构固定为：
   {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
-  三个顶层数组键必填；如引用先前批次已落地的规则作为证据可另附 existing 数组。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
+  三个顶层数组键必填；如引用先前批次已落地的规则作为证据，必须另附 existing 数组，逐项填写 {unitId,originPath,message,path,value}；带唯一效果名时可用 effectName 替代 message。正文声称“已完成”而 JSON 没有对应 patch.resolves 或 existing 收据，视为未核销，不能用空 patch 代替。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
 • 允许 op 枚举：add / replace / remove。允许 path 白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
   - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。
   - /skills/<id>：技能模板或其合法子字段（如 /skills/<id>/damage、/skills/<id>/rules/-）。

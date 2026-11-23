@@ -610,10 +610,13 @@ export function mountTavernOverlay(options = {}) {
     const pending = [], reviewed = [];
     const notes = config.unresolvedNotes[activeBattleKey] ?? {};
     const sourceFor = narrativeSourceFor(characters);
+    const live = liveState();
     for (const warning of warnings) {
       const note = notes[warning.unitId ?? '']?.[warningKey(warning)];
-      if (note?.source === sourceFor(warning.unitId, warningEntryKey(warning)) && note?.reason) reviewed.push({ warning, ...note });
-      else pending.push(warning);
+      const explained = note?.reason && note.source === sourceFor(warning.unitId, warningEntryKey(warning));
+      if (explained) reviewed.push({ warning, ...note });
+      const implemented = explained && note.evidence?.some(([path, value]) => fingerprintAt(live, path) === value);
+      if (!implemented) pending.push(warning);
     }
     return { pending, reviewed };
   }
@@ -1262,13 +1265,16 @@ export function mountTavernOverlay(options = {}) {
       const id = warningKey(warning);
       const source = sourceFor(warning.unitId, warningEntryKey(warning));
       if (!source) continue;
-      const details = [...new Set(additions.filter(note => note.warning === warning).map(note => note.detail).filter(Boolean))];
-      const old = reset ? undefined : previous[unitId]?.[id];
+      const matching = additions.filter(note => note.warning === warning);
+      const details = [...new Set(matching.map(note => note.detail).filter(Boolean))];
+      const old = reset || previous[unitId]?.[id]?.source !== source ? undefined : previous[unitId][id];
+      const evidence = [...(old?.evidence ?? []), ...matching.flatMap(note => note.evidence ?? [])];
       const note = details.length ? {
         source,
         effectName: warning.message.match(/待标准化「([^」]+)」/)?.[1]?.trim() || warningDisplay(warning.message),
         reason: details.join('；'),
-      } : old?.source === source ? old : undefined;
+        ...(evidence.length ? { evidence: [...new Map(evidence)] } : {}),
+      } : old;
       if (note) (next[unitId] ??= {})[id] = note;
     }
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
@@ -1587,14 +1593,7 @@ export function mountTavernOverlay(options = {}) {
         return path && fingerprintAt(current, path) !== fingerprintAt(next, path);
       });
       const narrative = readNarrativeExemptions(data.narrative, eligibleWarnings, narrativeSourceFor(records), { unresolved: notes });
-      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations.map(operation => ({
-        ...operation,
-        mechanicsChanged: ['rules', 'mods', 'pools'].some(field => {
-          const after = fingerprintAt(next, `${operation.path}/${field}`);
-          return after !== undefined && after !== '[]' && after !== '{}'
-            && after !== fingerprintAt(current, `${operation.path}/${field}`);
-        }),
-      })), notes, { narrative, inferPartial: true });
+      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations, notes, { narrative });
       for (const { warning } of narrative) {
         if (data.patch.some(operation => Array.isArray(operation.resolves) && operation.resolves.some(reference => identifiesWarning(reference, warning)))) {
           throw new Error('narrative 警告不能同时声明为补丁已解决');
@@ -1616,6 +1615,15 @@ export function mountTavernOverlay(options = {}) {
         if (!solved.includes(warning)) solved.push(warning);
       }
       const missing = missingDispositions(sent, solved, notes, narrative);
+      // A repair response with no patch, receipt, explanation, or exemption made
+      // no progress. Never commit it as an empty successful batch.
+      if (missing.length && !patch.length && !verified.length && !notes.length && !narrative.length && !rejected.length) {
+        const error = new Error(`模型没有提交任何可核销结果，仍缺 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}`);
+        error.missingCoverage = true;
+        error.missingWarnings = missing;
+        error.noRepair = Boolean(acceptPartial);
+        throw error;
+      }
       if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length) {
         const error = new Error(`本批漏答 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}。本批尚未写入；保留已完成的补丁，重新提交完整结果。已实现的效果请在实际修改的操作上补 resolves；只创建依赖模板还须接回原技能。其余逐项写 unresolved 并说明原因，纯叙事才写 narrative。`);
         error.missingCoverage = true;
@@ -1667,6 +1675,24 @@ export function mountTavernOverlay(options = {}) {
         }
       }
       filterResolved(stored, characters);
+      for (const note of notes) {
+        const path = note.warning?.originPath;
+        if (!note.detail || !path) continue;
+        // Partial work requires a receipt for this warning and a change to its own mechanics.
+        note.evidence = changedOperations.flatMap(operation => {
+          if (operation.op === 'remove' || !Array.isArray(operation.resolves)
+            || !operation.resolves.some(ref => identifiesWarning(ref, note.warning)
+              && sent.filter(warning => identifiesWarning(ref, warning)).length === 1)) return [];
+          const fields = ['rules', 'mods', 'pools', 'damage', 'heal'];
+          return fields.flatMap(field => {
+            const fieldPath = `${path}/${field}`;
+            if (!pathUnder(operation.path, fieldPath) && operation.path !== path) return [];
+            const value = fingerprintAt(next, fieldPath);
+            return value !== undefined && value !== '[]' && value !== '{}' && value !== fingerprintAt(current, fieldPath)
+              ? [[fieldPath, value]] : [];
+          });
+        });
+      }
       reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
       scanStatus = `已标准化 ${unitIds.length} 个角色`;
       renderInstances();

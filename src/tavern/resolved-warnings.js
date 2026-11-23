@@ -101,9 +101,9 @@ export function existingEffectReceipts(refs = [], sent, baseline, before, curren
   });
 }
 
-export function resolvedDiagnostics(sent, records, patch, notes = [], { narrative = [], inferPartial = false } = {}) {
+export function resolvedDiagnostics(sent, records, patch, notes = [], { narrative = [] } = {}) {
   const pending = new Set([...notes, ...narrative].map(({ warning }) => warning));
-  const explicit = sent.filter(warning => {
+  return sent.filter(warning => {
     if (warning.unitId == null || !Object.hasOwn(records, warning.unitId) || pending.has(warning)) return false;
     return patch.some(op => {
       if (!Array.isArray(op.resolves)) return false;
@@ -115,21 +115,6 @@ export function resolvedDiagnostics(sent, records, patch, notes = [], { narrativ
       return op.resolves.some(receipt => identifiesWarning(receipt, warning)
         && sent.filter(candidate => identifiesWarning(receipt, candidate)).length === 1);
     });
-  });
-  if (!inferPartial || notes.some(note => !note.warning)) return explicit;
-  const solved = new Set(explicit);
-  return sent.filter(warning => {
-    if (warning.unitId == null || !Object.hasOwn(records, warning.unitId) || pending.has(warning)) return false;
-    if (solved.has(warning)) return true;
-    const path = warning.originPath;
-    if (!/^\/(?:skills|equipment|items|statusTemplates)\/[^/]+$/.test(path ?? '')) return false;
-    const siblings = sent.filter(candidate => candidate.unitId === warning.unitId && candidate.originPath === path);
-    // Partial attribution requires an explicit pending/exempt sibling and an actual mechanic write.
-    return siblings.some(candidate => pending.has(candidate)) && patch.some(op => op.op !== 'remove'
-      && (op.path === `${path}/rules` || op.path.startsWith(`${path}/rules/`)
-        || op.path === `${path}/mods` || op.path.startsWith(`${path}/mods/`)
-        || op.path === `${path}/pools` || op.path.startsWith(`${path}/pools/`)
-        || (op.path === path && op.mechanicsChanged === true)));
   });
 }
 

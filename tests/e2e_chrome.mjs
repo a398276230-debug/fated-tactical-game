@@ -202,6 +202,13 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
         }
         const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(({unitId,originPath,message}) =>
           ({unitId,originPath,message,effectName:'冰冻箭',reason:'仍缺冰冻持续时间'}));
+        if (hostRequests.length === 4 && unresolved.length) {
+          const {unitId,originPath,message} = unresolved[0];
+          patch.push({op:'add',path:originPath+'/rules/-',resolves:[{unitId,originPath,message}],value:{
+            id:'ice-partial',hook:'after_hit',filter:'attacker.id == self.id',
+            program:[{op:'apply_status',target:'target',statusId:'freeze'}],
+          }});
+        }
         if (hostRequests.length === 4) {
           patch[0].value.at(-1).program = [{op:'mutate_event'}];
           patch.push({op:'add',path:'/statusTemplates/repair_probe',value:{id:'repair_probe',name:'校验探针',category:'special'}});
@@ -320,7 +327,6 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const pendingSelector = '[data-normalization-diagnostics="pending"]';
   const toastIssues = await run(`document.querySelector('.fated-toast-issues').textContent`);
   assert.match(toastIssues, /待标准化（1 项）.*恒定拉距/);
-  assert.doesNotMatch(toastIssues, /恒定发射/);
   assert.match(toastIssues, /模型说明：受限 \/ 部分实现（1 项）.*「冰冻箭」 — 仍缺冰冻持续时间/);
   assert.doesNotMatch(toastIssues, /"unitId"|"originPath"|"reason"|请用 VM/);
   const playerCard = '.fated-instance[data-unit-id="p1"]';

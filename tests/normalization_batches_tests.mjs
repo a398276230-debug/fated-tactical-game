@@ -5,11 +5,20 @@ import {
   planNormalizationBatches, normalizationOperations, readNarrativeExemptions, runOrderedBatches,
 } from '../src/tavern/normalization-batches.js';
 
-import { applyPatch } from '../src/tavern/overlay.js';
+import { applyPatch, parseAIResponse } from '../src/tavern/overlay.js';
 import { readFileSync } from 'node:fs';
 import { existingEffectReceipts, missingDispositions, resolvedDiagnostics } from '../src/tavern/resolved-warnings.js';
 
 const warning = (unitId, originPath, message) => ({ unitId, originPath, message, source: 'mvu', scope: 'effect' });
+
+test('empty patch with prose claiming existing work has no machine-readable coverage', () => {
+  const response = parseAIResponse(JSON.stringify({ patch: [], unresolved: [], narrative: [],
+    text: '已完成标准化，无需重复写入。' }));
+  const sent = [warning('e2', '/equipment/crossbow', '装备效果待标准化：强劲弓弦与精准照门')];
+  const solved = resolvedDiagnostics(sent, { e2: {} }, response.data.patch);
+  assert.equal(response.data.existing, undefined);
+  assert.deepEqual(missingDispositions(sent, solved, [], []), sent);
+});
 
 test('normalization repair policy is exactly one pass and never repairs explicit unresolved output', () => {
   assert.equal(MAX_NORMALIZATION_REPAIRS, 1);
@@ -23,7 +32,7 @@ test('real armor operations with no receipts are incomplete, unique scoped recei
   const path = armorPatch[0].path.split('/').slice(0, 3).join('/');
   const titles = ['微弱法则[精金壁垒]', '微弱法则[黑雾虚化]', '微弱法则[不朽骨座]'];
   const sent = titles.map(t => warning('a1', path, `装备效果待标准化「${t}」：描述。请用 VM rules / mods / pools 实现`));
-  const solve = (ops, list = sent) => resolvedDiagnostics(list, { a1: {} }, ops, [], { inferPartial: true });
+  const solve = (ops, list = sent) => resolvedDiagnostics(list, { a1: {} }, ops);
   assert.deepEqual(missingDispositions(sent, solve(armorPatch), [], []), sent);
   const refs = titles.map(effectName => ({ unitId: 'a1', originPath: path, effectName }));
   const fixed = armorPatch.map((op,i) => ({ ...op, resolves: i ? refs.slice(2) : refs.slice(0,2) }));
@@ -111,13 +120,14 @@ test('simultaneous batches reuse the first shared definition and retain both ski
   assert.deepEqual(Object.keys(live.skills), ['a','b']);
 });
 
-test('partial receipts require a real mechanism write, exclude unresolved/narrative siblings and unrelated paths', () => {
+test('a mechanic write cannot implicitly resolve sibling warnings on the same template', () => {
   const sent = ['A','B','C','D'].map(name => warning('u', '/skills/ice', name));
   sent.push(warning('u', '/skills/fire', 'E'));
-  const options = { inferPartial: true, narrative: [{ warning: sent[3] }] };
+  const options = { narrative: [{ warning: sent[3] }] };
   const solve = patch => resolvedDiagnostics(sent, { u: {} }, patch, [{ warning: sent[2] }], options);
-  assert.deepEqual(solve([{ op: 'add', path: '/skills/ice/rules/-' }]), sent.slice(0,2));
-  assert.deepEqual(solve([{ op: 'replace', path: '/skills/ice/name' }]), []);
+  const operation = { op: 'add', path: '/skills/ice/rules/-' };
+  assert.deepEqual(solve([operation]), []);
+  assert.deepEqual(solve([{ ...operation, resolves: sent }]), [sent[0], sent[1]]);
 });
 
 test('concurrent requests commit deterministically by batch order', async () => {

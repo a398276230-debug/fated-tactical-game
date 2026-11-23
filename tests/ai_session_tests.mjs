@@ -240,6 +240,14 @@ test('G97 protocol maps mixed damage, empty effects and worldbook tags without c
   for (const tag of ['[威力: X 物理]', '[关联属性: <属性>]', '[单体]', '[范围: <档位>(N)+<形状>(<阵营>)]']) assert.ok(protocol.includes(tag), tag);
 });
 
+test('标准化发送的任务区分只读来源、输出数组和部分实现收据', () => {
+  const text = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(message => message.content).join('\n');
+  assert.match(text, /raw、MVU 和 char_info 是只读来源/);
+  assert.match(text, /narrative 数组每项为 \{unitId,originPath,message,reason\}/);
+  assert.match(text, /sp、maxSp 等不是 mods\.stat/);
+  assert.match(text, /只实现了一部分.*写 resolves.*在 unresolved 里用同一引用/);
+});
+
 test('默认标准化消息教模型读实体寄存器、动态生成和使用带签名的查询', () => {
   const text = assembleMessages(DEFAULT_SLOTS, {}).map(message => message.content).join('\n');
   for (const snippet of ['target:"vars.<名>"', 'vars.<名>.hp', 'vars.victim.hp',
