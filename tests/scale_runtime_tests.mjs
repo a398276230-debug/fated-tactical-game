@@ -32,16 +32,17 @@ test('shared-cell occupancy, precise single-target aim, and scaled regional cove
 
 test('subcell movement banks 600 permille then spends a step and retains 200', () => {
   const state = buildScenario('ruins');
-  state.scale.cellM = 1000;
+  Object.assign(state.scale, { anchorTier: 4, cellM: 15 });
   const actor = currentUnit(state);
-  actor.moveM = 600;
+  actor.moveM = 9;
   actor.move = 0;
   const { x, y } = actor;
   applyAction(state, { type: 'move', x, y });
   assert.equal(actor.moveCarryPermille, 600);
   const bankLog = state.logs.find(log => log.detail.progressPermille === 600);
+  assert.match(bankLog.text, /蓄步推进（跨区进度约 60%）$/);
   assert.match(narrate(bankLog, state).title, /蓄步推进.*约 60%/);
-  assert.doesNotMatch(narrate(bankLog, state).title, /600m|移动 0 格/);
+  assert.doesNotMatch(narrate(bankLog, state).title, /\d+m|移动 0 格/);
   actor.ap = 2;
   actor.used.action = 0;
   const destination = preview(state, { type: 'move' }).cells.find(cell => cell.steps === 1);
@@ -49,6 +50,28 @@ test('subcell movement banks 600 permille then spends a step and retains 200', (
   applyAction(state, { type: 'move', x: destination.x, y: destination.y });
   assert.equal(actor.moveCarryPermille, 200);
   assert.deepEqual([actor.x, actor.y], [destination.x, destination.y]);
+});
+
+test('T5 and higher reject subcell movement and sprint while allowing full steps', () => {
+  for (const [anchorTier, cellM] of [[5, 50], [6, 250], [7, 1000]]) {
+    const state = buildScenario('ruins');
+    Object.assign(state.scale, { anchorTier, cellM });
+    const actor = currentUnit(state);
+    actor.moveM = 6;
+    actor.move = 0;
+    const { x, y } = actor;
+    for (const type of ['move', 'sprint']) {
+      assert.deepEqual(preview(state, { type }).cells, []);
+      assert.equal(preview(state, { type, x, y }).ok, false);
+      assert.throws(() => applyAction(structuredClone(state), { type, x, y }), /无法到达/);
+    }
+    assert.equal(actor.moveCarryPermille ?? 0, 0);
+    actor.moveM = cellM;
+    const step = preview(state, { type: 'move' }).cells.find(cell => cell.steps === 1);
+    assert.ok(step);
+    applyAction(state, { type: 'move', x: step.x, y: step.y });
+    assert.deepEqual([actor.x, actor.y], [step.x, step.y]);
+  }
 });
 
 test('enemy AI banks movement on a reachable route and spends it on a later turn', () => {

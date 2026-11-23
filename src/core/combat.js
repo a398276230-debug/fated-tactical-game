@@ -13,6 +13,7 @@ import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial } from './vm-runtime.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
+import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 export { STATUSES };
 export const corpses = state => Object.values(state.units).filter(unit => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
@@ -629,6 +630,7 @@ export function reachable(state, type = 'move', unit = currentUnit(state), dista
     : Math.max(0, scale.limit - spent * mult));
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === 'disengage' });
   if (!routes.length && scale.limit === 0 && distanceLimit === undefined) {
+    if (state.scale?.anchorTier >= 5) return [];
     return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
   }
   const sources = type === 'disengage' ? [] : opportunitySources(state, unit).filter(source => canReact(state, source, unit));
@@ -1572,7 +1574,7 @@ function continueMovement(state, actor, type, plan, progress, host) {
   if (actor.moveM != null || scale.limit === 0) actor.moveCarryPermille = (scale.total - consumed) % 1000;
   // Actual displacement is tracked independently of explicit movement-pool changes.
   const carryText = path.length === 0 && scale.limit === 0
-    ? `在广袤战区中奋力推进 ${Math.round((type === 'sprint' ? 2 : 1) * scale.moveM)}m（跨区进度 ${Math.round(scale.total / 10)}%）` : null;
+    ? `在广袤战区中奋力蓄步推进（跨区进度${movementProgressText(scale.total)}）` : null;
   const movedCells = path.length;
   actor.moved = (actor.moved ?? 0) + movedCells;
   if (movedCells || progress.from.z !== landing.z) {

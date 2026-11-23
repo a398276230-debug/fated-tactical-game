@@ -72,17 +72,20 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   assert.equal(await run('document.querySelector("#target-unit-options [aria-pressed=\\"true\\"]")?.dataset.targetId'), targetId);
   assert.equal(await run('document.querySelector("#board .tactical-cell[data-x=\\"3\\"][data-y=\\"2\\"] [data-unit-id][aria-pressed=\\"true\\"]")?.dataset.unitId'), targetId);
 
-  await run(`(() => {
+  const openMovementMenu = anchorTier => run(`(() => {
     const game = window.FatedTacticalGame;
     const state = game.getBattleState();
-    state.scale.cellM = 1000;
+    Object.assign(state.scale, { anchorTier: ${anchorTier}, cellM: ${anchorTier === 5 ? 50 : 15} });
     const actor = state.units[state.order[state.turn]];
-    actor.moveM = 300;
+    actor.moveM = state.scale.cellM * 0.3;
     actor.moveCarryPermille = 0;
     game.createBattle({ kind: 'custom_state', state });
     document.querySelector('#board .tactical-cell[data-x="2"][data-y="2"]').click();
     return true;
   })()`);
+  await openMovementMenu(5);
+  assert.equal(await run('document.querySelectorAll("#action-toolbar [data-action=move], #action-toolbar [data-action=sprint]").length'), 0);
+  await openMovementMenu(4);
   assert.match(await run('document.querySelector("#action-toolbar [data-action=move]")?.textContent ?? ""'), /蓄步推进/);
   assert.match(await run('document.querySelector("#action-toolbar [data-action=sprint]")?.textContent ?? ""'), /疾跑推进/);
   await run('document.querySelector("#action-toolbar [data-action=move]").click(); true');
@@ -96,7 +99,7 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   assert.deepEqual(banked, [2, 2, 300, 1]);
   const report = await run('window.FatedTacticalGame.exportBattleReportText()');
   assert.match(report, /约 30%/);
-  assert.doesNotMatch(report, /300m|移动 0 格/);
+  assert.doesNotMatch(report, /\d+(?:\.\d+)?\s*m\b|移动 0 格/);
 
   await run(`(() => {
     const game = window.FatedTacticalGame;
