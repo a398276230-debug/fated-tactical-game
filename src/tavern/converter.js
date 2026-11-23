@@ -810,7 +810,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       name: skillName,
       ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), rawRange: area.range ?? 1, ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(area.range, 0, 30, 1), shape: area.shape ?? 'single',
-      target: area.target ?? 'enemy', ...geometryFields(area),
+      target: area.target ?? (areaDamage && object(r.damage) ? 'any' : 'enemy'), ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       rules, mods: readMods(r.mods, notes), pools: readPools(r.pools, notes),
     };

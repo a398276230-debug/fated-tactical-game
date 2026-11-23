@@ -24,7 +24,7 @@ const TAG_MAPPING = `【世界书标签 → VM 映射】
 • 常规评级主击用模板 power 和 damage。[威力: X 物理] 等价于 [威力: X][伤害: 物理]。原文明确给的是固定伤害包或独立附伤时，用 damage 指令写 amount 和 damageType，同一笔伤害只结算一次。
 • 混合伤害：[威力: 60][伤害: 物理40/能量20] 拆成两个指令，例：[{"op":"damage","target":"target","amount":40,"damageType":"physical"},{"op":"damage","target":"target","amount":20,"damageType":"energy"}]。按原文比例拆分时各分量按同一基准求值，不再额外造成总威力伤害。
 • [关联属性: 敏捷] → 指向施术者敏捷；需要属性缩放时读取 self.agi。只有原文明确豁免时才为防守方选择检定属性。[有效距离: 中程(5)] → range:5。
-• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由有效距离另行确定。角度标签映射到 angle。
+• [单体] → shape:single，target 依描述选取；[范围: 中程(4)+扇(敌方)] → radius:4、shape:fan、target:enemy，range 由有效距离另行确定。角度标签映射到 angle。原生范围伤害用 target:enemy 限定敌方，用 target:any 表示无差别（覆盖施术者时也会命中）。VM 自建选择器要在 where 中写明相同的敌友限制，例如 candidate.team != self.team；若只排除施术者，写 candidate.id != self.id。
 • 原文效果为 {} 或缺失且没有其他可执行描述时，无需补丁，也不计入 unresolved。位移、治疗、资源和状态授予均可形成独立规则；背包消耗品按任务约定处理。`;
 const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。每项待处理警告必须有归属：实际生效补丁的 resolves、带原因的 unresolved 或纯叙事 narrative。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，可附可选顶层 existing 数组。每项给 {unitId,originPath,effectName,path,value}，path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');

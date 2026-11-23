@@ -992,10 +992,9 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
   const keys = new Set(cells.map(at => key(at.x, at.y)));
   if (template.target === 'cell') return [];
   const areaDamage = (template.shape ?? 'single') !== 'single' && hasStrikeDamage(template);
+  const targeting = areaDamage && template.target == null ? { target: 'any' } : template;
   return living(state).filter(unit => {
-    // Area damage defaults to friendly fire unless the author explicitly narrows it to allies/self.
-    if (!areaDamage && !selectionAllows(template, actor, unit, allowFriendlyTarget)) return false;
-    if (areaDamage && ['ally', 'self'].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
+    if (!selectionAllows(targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
     if ((template.shape ?? 'single') === 'single') return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
       const distanceFromCenter = distance(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: 'attack' });

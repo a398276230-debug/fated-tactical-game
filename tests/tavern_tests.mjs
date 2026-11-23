@@ -76,6 +76,8 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
       }]},
       环击:{标签:['范围:近程(2)+环(所有)','有效距离:近程(2)'],damage},
       横扫:{标签:['范围:近程(2)+线(敌方)','有效距离:0'],damage},
+      敌方圆击:{标签:['范围:近程(2)+圆(敌方)','有效距离:2'],damage},
+      无差别:{shape:'circle',radius:2,range:2,damage},
       治疗:{标签:['单体','核心功能:治疗','有效距离:2'],heal:{count:1,sides:4}},
       环境:{标签:['范围:近程(2)+圆(环境)','有效距离:2'],damage},
     }}},
@@ -87,7 +89,7 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
   actor.ap = 2;
   actor.used = {attack:0,action:0};
   actor.facing = [1,0];
-  const [fan, ring, line, heal, ground] = actor.skills;
+  const [fan, ring, line, enemyArea, defaultArea, heal, ground] = actor.skills;
   assert.deepEqual([state.skills[fan].shape,state.skills[fan].radius,state.skills[fan].angle], ['fan',4,120]);
   const aim = (skillId,x,y) => preview(state,{type:'skill',skillId,x,y});
   const fanPlan = aim(fan,3,1);
@@ -99,6 +101,14 @@ test('面积标签解析角度、环形和敌友，范围伤害允许友伤', ()
   assert.ok(!ringPlan.targets.some(target => target.id === 'e'));
   assert.equal(state.skills[line].width, 0.5);
   assert.ok(aim(line,1,1).targets.some(target => target.id === 'e'));
+  assert.deepEqual(aim(ring,2,1).targets.map(target => target.id), ['e','p']);
+  for (const [skillId, targetIds] of [[enemyArea, ['e']], [defaultArea, ['e','f','p']]]) {
+    assert.deepEqual(aim(skillId,2,1).targets.map(target => target.id), targetIds);
+    const native = structuredClone(state);
+    applyAction(native,{type:'skill',skillId,x:2,y:1});
+    const checks = native.logs.slice(state.logs.length).filter(log => ['roll', 'hit_result'].includes(log.type));
+    assert.deepEqual(checks.map(log => log.detail.targetId), targetIds);
+  }
   assert.ok(aim(heal,2,1).ok);
   assert.equal(aim(heal,3,1).ok, false);
   assert.deepEqual(aim(ground,3,1).targets, []);
