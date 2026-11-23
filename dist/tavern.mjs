@@ -17312,7 +17312,7 @@ function formatRejectedItem(item, state = {}) {
   return `[\u672A\u5E94\u7528] ${table4 === "skills" ? "\u6280\u80FD" : table4 === "equipment" ? "\u88C5\u5907" : "\u6761\u76EE"}\u300C${entity}\u300D(${item.path || "\u65E0\u8DEF\u5F84"})\uFF1A${item.reason || "\u8865\u4E01\u6821\u9A8C\u5931\u8D25"}`;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.4.0";
+var TAVERN_VERSION = "0.4.1";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
