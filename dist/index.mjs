@@ -495,7 +495,12 @@ var vmUnitFields = {
   alive: "\u662F\u5426\u5B58\u6D3B\u4E14\u5728\u573A",
   team: "\u9635\u8425",
   summoned: "\u662F\u5426\u4E3A\u53EC\u5524\u7269",
-  sourceSkillId: "\u751F\u6210\u8BE5\u53EC\u5524\u7269\u7684\u6280\u80FD ID\uFF08\u65E0\u8BB0\u5F55\u65F6\u4E3A null\uFF09"
+  sourceSkillId: "\u751F\u6210\u8BE5\u53EC\u5524\u7269\u7684\u6280\u80FD ID\uFF08\u65E0\u8BB0\u5F55\u65F6\u4E3A null\uFF09",
+  name: "\u5355\u4F4D\u540D\u79F0",
+  templateId: "\u6A21\u677F ID",
+  moved: "\u672C\u56DE\u5408\u7D2F\u8BA1\u4F4D\u79FB\u683C\u6570",
+  facing: "\u5F53\u524D\u671D\u5411 N/S/E/W",
+  lastMoveDir: "\u6700\u8FD1\u4E00\u6B21\u6C34\u5E73\u4F4D\u79FB\u4E3B\u65B9\u5411 N/S/E/W\uFF0C\u65E0\u8BB0\u5F55\u65F6\u4E3A null"
 };
 var unitScopes = { self: "\u6548\u679C\u4E3B\u4F53", attacker: "\u4E8B\u4EF6\u653B\u51FB\u8005", target: "\u5F53\u524D\u76EE\u6807", source: "\u6548\u679C\u6765\u6E90", candidate: "\u5F53\u524D\u7B5B\u9009\u5B9E\u4F53" };
 var legacyScopes = /* @__PURE__ */ new Set(["self", "attacker", "target"]);
@@ -519,6 +524,11 @@ function unitField(context, unit, field) {
   if (field === "alive") {
     const hp = own(unit, "hp");
     return value ?? (Number.isFinite(hp) ? hp > 0 && !own(unit, "fled") : void 0);
+  }
+  if (field === "moved" && unit != null) return value ?? 0;
+  if (field === "facing" && Array.isArray(value)) {
+    const [x, y] = value;
+    return Math.abs(x) >= Math.abs(y) && x ? x > 0 ? "E" : "W" : y ? y > 0 ? "S" : "N" : null;
   }
   if (field === "z" && unit != null) return callback(context, "elevation", unit) ?? value;
   return path(unit, "stats", field) ?? value;
@@ -560,9 +570,10 @@ for (const [scope, label] of Object.entries(unitScopes)) {
 }
 dynamicFamily("vars", "\u5F53\u524D\u6808\u5E27\u7684\u5C40\u90E8\u53D8\u91CF\uFF0C\u5E26 ID \u7684\u5B9E\u4F53\u5F15\u7528\u8FD4\u56DE\u5176 ID", (context, id3) => {
   const value = frameValue(context, id3);
-  return refTypes.has(own(value, "type")) ? own(value, "id") : value;
+  const type = own(value, "type");
+  return type === "literal" ? own(value, "value") : refTypes.has(type) ? own(value, "id") : value;
 });
-var frameEntityFields = { ...statusFields, ...tapeFields, ...allUnitFields, hpRatio: "\u751F\u547D\u6BD4\u4F8B\uFF080\u20261\uFF09", name: "\u540D\u79F0", templateId: "\u6A21\u677F ID" };
+var frameEntityFields = { ...statusFields, ...tapeFields, ...allUnitFields, hpRatio: "\u751F\u547D\u6BD4\u4F8B\uFF080\u20261\uFF09" };
 for (const [field, meaning] of Object.entries(frameEntityFields)) {
   family(`vars.<id>.${field}`, new RegExp(`^vars\\.(${idPattern})\\.${field}$`), `\u5C40\u90E8\u5B9E\u4F53\u7684${meaning}`, (context, id3) => {
     const entity = frameEntity(context, id3);
@@ -619,6 +630,7 @@ for (const [name, description] of Object.entries({
 })) register(`event.${name}`, description, (context) => path(context, "event", name), true);
 register("event.kind", "\u4E8B\u4EF6\u7C7B\u578B\uFF0C\u68C0\u5B9A\u4E2D\u7B49\u540C\u4E8E event.checkKind", (context) => path(context, "event", "kind") ?? path(context, "event", "checkKind"));
 register("event.authorityRank", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u8F7D\u4F53\u4F4D\u683C\uFF0C\u552F\u4E00\u4E3A 8", (context) => path(context, "event", "authorityRank"));
+register("event.naturalRoll", "\u672A\u7ECF\u66FF\u6362\u7684\u81EA\u7136\u9AB0\u9762\uFF0C\u9002\u7528\u4E8E after_natural_roll", (context) => path(context, "event", "naturalRoll"));
 register("event.sourceTier", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u89D2\u8272\u5C42\u7EA7", (context) => path(context, "event", "sourceTier"));
 register("event.sourceSkillId", "on_summon_evict \u4E2D\u65E7\u53EC\u5524\u7269\u7684\u6765\u6E90\u6280\u80FD ID\uFF08\u65E0\u8BB0\u5F55\u65F6\u4E3A null\uFF09", (context) => path(context, "event", "sourceSkillId"));
 family("event.<field>", /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, "\u6D3B\u8DC3\u4E8B\u4EF6\u7684\u81EA\u6709\u6807\u91CF\u5B57\u6BB5", (context, key4) => path(context, "event", key4));
@@ -636,6 +648,10 @@ query("floor", ["value"], "floor(value)", "\u5411\u4E0B\u53D6\u6574", ([value]) 
 query("ceil", ["value"], "ceil(value)", "\u5411\u4E0A\u53D6\u6574", ([value]) => numeric(Math.ceil, value));
 query("abs", ["value"], "abs(value)", "\u53D6\u7EDD\u5BF9\u503C", ([value]) => numeric(Math.abs, value));
 query("cells_m", ["value"], "cells_m(meters)", "\u6309\u6218\u573A\u6BD4\u4F8B\u5C3A\u628A\u7C73\u6570\u6362\u7B97\u4E3A\u683C\u6570\uFF0C\u4FDD\u7559\u5C0F\u6570", ([meters2], context) => numeric((a, b) => a / b, meters2, own(context, "cellM") ?? 2));
+query("scale_cells", ["value"], "scale_cells(n)", "\u628A\u8BCD\u6761\u5C0F\u6570\u503C\u6309\u89C4\u5219\u8F7D\u4F53\u7684\u6709\u6548\u5C42\u7EA7\u6362\u7B97\u4E3A\u683C\u6570\uFF0C\u4FDD\u7559\u5C0F\u6570", ([n], context) => {
+  const tier = own(context, "effectiveTier") ?? resolveEffectiveTier("unit", null, path(context, "self", "tier"));
+  return numeric((value, tierMeters, cellMeters) => value * tierMeters / cellMeters, n, TIER_CELL_M[tier], own(context, "cellM") ?? 2);
+});
 query("clamp", ["value", "value", "value"], "clamp(value, lo, hi)", "\u5C06\u6570\u503C\u94B3\u5236\u5728\u4E0A\u4E0B\u9650\u4E4B\u95F4", ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
 query("distance", ["unit", "unit"], "distance() / distance(unitA, unitB)", "\u8BFB\u53D6\u4E24\u5355\u4F4D\u7684\u4E09\u7EF4\u8DDD\u79BB\uFF0C\u65E0\u53C2\u65F6\u9ED8\u8BA4 self \u5230 target", ([a, b], context) => readDistance(context, a, b));
 var booleanQuery = (value) => typeof value === "boolean" ? value : null;
@@ -937,7 +953,13 @@ var resolveRegister = (context, key4) => {
 };
 function resolvePoint(value, context) {
   const point4 = typeof value !== "string" ? value : value.startsWith("vars.") ? resolveRegister(context, value.slice(5)) : context[value];
-  return coordinate(point4) ? point4 : null;
+  if (!point4 || typeof point4 !== "object") return null;
+  if (typeof value === "string") return coordinate(point4) ? point4 : null;
+  const x = evaluateExpr(point4.x, context), y = evaluateExpr(point4.y, context);
+  const z = point4.z === void 0 ? void 0 : evaluateExpr(point4.z, context);
+  if (![x, y].every(Number.isFinite) || z !== void 0 && !Number.isFinite(z)) return null;
+  const axis = (n, size) => Math.max(0, Math.min((size ?? Infinity) - 1, Math.round(n)));
+  return { x: axis(x, context.boardW), y: axis(y, context.boardH), ...z === void 0 ? {} : { z } };
 }
 function zoneContains(state, zone, at2) {
   if (!coordinate(at2)) return false;
@@ -953,7 +975,12 @@ function zoneContains(state, zone, at2) {
   const distance2 = distance3D(state, origin, at2);
   return distance2 <= radius && (shape2 === "circle" || shape2 === "ring" && distance2 >= (innerRadius ?? 0));
 }
+function selectorOwner(selector2, context) {
+  const of = selector2.of ?? "target";
+  return of.startsWith("vars.") ? resolveRegister(context, of.slice(5)) : context[of];
+}
 function rows(state, selector2, context) {
+  if (selector2.options) return [...new Set(selector2.options)];
   switch (selector2.from) {
     case "units":
       return sortedValues(state.units);
@@ -966,7 +993,7 @@ function rows(state, selector2, context) {
     case "tape":
       return state.tape ?? [];
     case "statuses":
-      return sortedValues(context[selector2.of ?? "target"]?.statuses);
+      return sortedValues(selectorOwner(selector2, context)?.statuses);
     case "cells":
       return state.grid.flatMap((row, y) => row.map(({ z }, x) => ({ x, y, z })));
     case "self":
@@ -994,22 +1021,26 @@ function selectVM(state, selector2, context, { pure = false } = {}) {
   if (!selector2) return [];
   let candidates = rows(state, selector2, context);
   if (selector2.area) {
-    const { origin: from = "self", shape: shape2, radius, innerRadius, width, angle } = selector2.area;
+    const { origin: from = selector2.area.center ?? "self", shape: shape2, radius, innerRadius, width, angle } = selector2.area;
     const origin = resolvePoint(from, context);
     if (!coordinate(origin)) return [];
     const aim = ["line", "fan", "cone"].includes(shape2) && coordinate(context.target) ? context.target : origin;
+    const resolvedRadius = typeof radius === "string" ? evaluateExpr(radius, context) : radius;
+    const resolvedInnerRadius = typeof innerRadius === "string" ? evaluateExpr(innerRadius, context) : innerRadius;
+    const resolvedWidth = typeof width === "string" ? evaluateExpr(width, context) : width;
+    const resolvedAngle = typeof angle === "string" ? evaluateExpr(angle, context) : angle;
     const cells2 = new Set(selector2.from === "terrain" && shape2 === "single" && coordinate(origin) ? [cellKey(origin)] : aoeCells(state, origin, aim, {
       shape: shape2,
-      radius,
-      innerRadius,
-      width,
-      angle,
+      radius: resolvedRadius,
+      innerRadius: resolvedInnerRadius,
+      width: resolvedWidth,
+      angle: resolvedAngle,
       range: Infinity,
       ignoreLOS: selector2.from === "terrain"
     }).map(cellKey));
     const withinArea = (candidate) => {
       const points = selector2.from === "terrain" ? candidate.cells ?? [] : selector2.from === "zones" ? state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y }))).filter((point4) => zoneContains(state, candidate, point4)) : [candidate];
-      return points.some((point4) => coordinate(point4) && cells2.has(cellKey(point4)));
+      return points.some((point4) => coordinate(point4) && cells2.has(cellKey(point4)) && (!context.hostileAreaDistance || !["circle", "ring", "single"].includes(shape2) || (context.hostileAreaDistance(origin, point4) ?? 0) <= (shape2 === "single" ? 0 : resolvedRadius ?? 1.5) + 1e-9));
     };
     candidates = candidates.filter(withinArea);
   }
@@ -1173,6 +1204,31 @@ function carriers(state) {
   }
   return result;
 }
+function incomingDistanceOffset(state, actor, target2, event = {}) {
+  if (!actor?.team || !target2?.team || actor.team === target2.team || !own3(state.units, target2.id)) return 0;
+  return Math.max(0, applyStatMod(0, aggregateModifiers(state, target2.id, {
+    ...event,
+    actorId: actor.id,
+    targetId: target2.id
+  }).stats.incomingDistanceOffset));
+}
+function carrierEffectiveTier(state, ref2, owner) {
+  const nativeOwner = own3(state.units, ref2?.ownerId) ?? owner;
+  if (ref2?.type === "status") {
+    const status = own3(nativeOwner?.statuses, ref2.id);
+    return status?.effectiveTier ?? resolveEffectiveTier("unit", null, status?.sourceTier ?? nativeOwner?.tier);
+  }
+  if (ref2?.type === "skill") {
+    const skill2 = own3(state.skills, ref2.id);
+    return resolveEffectiveTier(skill2?.backpackItem ? "item" : "skill", skill2?.quality, nativeOwner?.tier);
+  }
+  if (ref2?.type === "item") {
+    const item = own3(state.items, ref2.id);
+    return resolveEffectiveTier("item", own3(state.equipment, item?.templateId)?.quality, nativeOwner?.tier);
+  }
+  if (ref2?.type === "zone") return own3(state.zones, ref2.id)?.effectiveTier ?? resolveEffectiveTier("unit", null, nativeOwner?.tier);
+  return resolveEffectiveTier("unit", null, nativeOwner?.tier);
+}
 function eventUnit(state, ref2) {
   return own3(state.units, idOf(ref2));
 }
@@ -1208,11 +1264,12 @@ function carrierScope(state, row, ownerId, event, queries2 = {}) {
     timeOfDay: state.time?.timeOfDay,
     units: state.units,
     zones: state.zones,
+    effectiveTier: carrierEffectiveTier(state, row.carrier, own3(state.units, row.nativeOwnerId) ?? self),
     cellM: state.scale?.cellM ?? 2,
     boardW: state.grid?.[0]?.length,
     boardH: state.grid?.length,
     ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
-    resource: (unit, key4) => key4 === "move" ? Math.max(0, (unit?.move ?? 0) - (unit?.moved ?? 0)) : key4 === "attack" || key4 === "action" ? Math.max(0, 1 - (unit?.used?.[key4] ?? 0)) : own3(state.pools, own3(unit?.pools, key4))?.current ?? own3(unit, key4),
+    resource: (unit, key4) => key4 === "move" ? Math.max(0, (unit?.move ?? 0) - (unit?.moveSpent ?? 0)) : key4 === "attack" || key4 === "action" ? Math.max(0, 1 - (unit?.used?.[key4] ?? 0)) : own3(state.pools, own3(unit?.pools, key4))?.current ?? own3(unit, key4),
     inZone: (unit, key4) => entries(state.zones).some(([, zone]) => active(zone) && (zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, unit)),
     isImmune: (unit, key4, context) => immunity(state, unit, key4, context ?? { source }),
     select: (key4, context) => selectVM(state, own3(queries2.selectors, key4), context, { pure: true })
@@ -1238,7 +1295,7 @@ function eventOwners(state, hook2, event) {
   const dead = event.deadId ?? event.killedId ?? (typeof event.killed === "boolean" ? void 0 : event.killed) ?? target2;
   let refs;
   if (event.ownerIds) refs = event.ownerIds;
-  else if (hook2 === "round_start" || hook2 === "round_end") refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
+  else if (hook2 === "after_move" || hook2 === "round_start" || hook2 === "round_end") refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
   else if (hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2") {
     refs = event.units ?? entries(state.units).filter(([, unit]) => event.poolId != null && unit.pools?.hp === event.poolId).map(([id3]) => id3);
   } else if (hook2 === "on_ally_death") {
@@ -1259,6 +1316,7 @@ function collectRules(state, hook2, event = {}, queries2 = {}) {
   if (!unitIds.length) return [];
   const candidates = [];
   for (const [carrierOrder, row] of carriers(state).entries()) {
+    if (hook2 === "after_move" && row.nativeOwnerId && !alive(own3(state.units, row.nativeOwnerId))) continue;
     if (row.carrier.type === "skill" && !["on_lethal_p1", "on_lethal_p2", "on_death"].includes(hook2) && !alive(own3(state.units, row.nativeOwnerId))) continue;
     const rules = row.entity.rules?.filter((rule2) => rule2.enabled !== false && rule2.hook === hook2);
     if (!rules?.length) continue;
@@ -1517,6 +1575,7 @@ var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
 var maxSteps = 2e3;
 var maxDepth = 64;
 var own4 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var readRegister2 = (context, key4) => own4(context.vars, key4);
 var compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 var coordinate2 = (value) => Number.isInteger(value?.x) && Number.isInteger(value?.y);
 var samePoint = (a, b) => a.x === b.x && a.y === b.y;
@@ -1613,6 +1672,8 @@ function contextFor(state, frame, host) {
     timeOfDay: state.time?.timeOfDay,
     units: Object.values(state.units),
     zones: state.zones,
+    effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
+    hostileAreaDistance: (origin, unit) => distance3D(state, origin, unit) + incomingDistanceOffset(state, self ?? source, unit, event),
     cellM: state.scale?.cellM ?? 2,
     boardW: state.grid?.[0]?.length,
     boardH: state.grid?.length,
@@ -1695,13 +1756,13 @@ function askInstruction(state, frame, op, context, host, options) {
     choices = { min, max, step: Number.isInteger(min) && Number.isInteger(max) ? 1 : "any" };
   } else if (op.kind === "option") choices = op.options;
   else if (op.kind === "entity") {
-    const { from, of = "target" } = op.select;
+    const { from } = op.select;
     const entities = /* @__PURE__ */ new Map();
     for (const entity of selectVM(state, op.select, context)) {
       if (typeof entity.id === "string" && !entities.has(entity.id)) entities.set(entity.id, entity);
     }
     choices = [...entities.values()].map(({ id: id3, name }) => ({ id: id3, label: name ?? id3 }));
-    if (choices.length) frame.choiceRefs = Object.fromEntries([...entities].map(([id3, entity]) => [id3, entityRef(state, entity, from, context[of], context)]));
+    if (choices.length) frame.choiceRefs = Object.fromEntries([...entities].map(([id3, entity]) => [id3, entityRef(state, entity, from, selectorOwner(op.select, context), context)]));
   } else choices = selectVM(state, op.select, context).filter((cell) => coordinate2(cell) && !unitAt(state, cell.x, cell.y, chooser.id)).map(({ x, y }) => ({ x, y }));
   if (!choices || choices.length === 0) return;
   const ask = {
@@ -1750,9 +1811,10 @@ function answerVM(state, action, host) {
 function stepLoop(state, frame) {
   const ref2 = frame.items[frame.pc++];
   const entity = resolveEntity(state, ref2);
-  if (!entity) return;
+  if (entity === void 0 || entity === null) return;
   const scope = { ...frame.scope, bound: ref2 };
   if (ref2.type === "status") scope.status = ref2;
+  if (ref2.type === "literal") scope.literal = ref2;
   if (ref2.type === "zone") scope.zone = ref2;
   if (frame.from === "tape") scope.tape = ref2;
   if (frame.bind) scope.bindings = { ...scope.bindings, [frame.bind]: ref2 };
@@ -1768,10 +1830,12 @@ function execute(state, frame, op, host, options) {
       const owner = frame.carrier ? resolveEntity(state, frame.carrier) : context.self;
       const skill2 = frame.carrier?.type === "skill" ? frame.carrier : null;
       if (op.scope === "owner" && !owner && !skill2) return;
-      const value = evaluate3(op.value);
-      if (value !== null && ["number", "string", "boolean"].includes(typeof value)) {
+      const entityName = ["self", "source", "target", "attacker"].includes(op.value) ? op.value : null;
+      const entity = entityName ? context[entityName] : typeof op.value === "string" && op.value.startsWith("vars.") ? context.resolveEntity(readRegister2(context, op.value.slice(5))) : null;
+      const value = entity ? entityRef(state, entity, entityName ?? op.value, context.self, context) : evaluate3(op.value);
+      if (value !== null && value !== void 0 && (typeof value === "object" || ["number", "string", "boolean"].includes(typeof value))) {
         const record3 = op.scope !== "owner" ? vars : skill2 ? (state.vm.skillVars ??= {})[JSON.stringify([skill2.ownerId, skill2.id])] ??= skillCarrierVars(state, skill2) : owner.vars ??= {};
-        Object.defineProperty(record3, op.name, { value, writable: true, enumerable: true, configurable: true });
+        Object.defineProperty(record3, op.name, { value: op.scope === "owner" && value?.id ? value.id : value, writable: true, enumerable: true, configurable: true });
       }
       return;
     }
@@ -1783,8 +1847,8 @@ function execute(state, frame, op, host, options) {
     case "for_each": {
       const entities = selectVM(state, op.select, context);
       if (!entities.length) return;
-      const { from, of = "target" } = op.select;
-      const items = entities.map((entity) => entityRef(state, entity, from, context[of], context));
+      const { from = "options" } = op.select;
+      const items = entities.map((entity) => typeof entity === "object" ? entityRef(state, entity, from, selectorOwner(op.select, context), context) : { type: "literal", value: entity });
       childFrame(state, frame, { kind: "loop", from, bind: op.bind ?? null, items, program: op.body });
       return;
     }
@@ -1793,10 +1857,11 @@ function execute(state, frame, op, host, options) {
       return;
     default: {
       if (!Object.hasOwn(host.ops, op.op)) throw new Error(`\u672A\u77E5 Opcode ${op.op}`);
+      const runtimeOp = ["apply_status", "check"].includes(op.op) && op.statusId?.startsWith?.("vars.") ? { ...op, statusId: context.vars[op.statusId.slice(5)]?.type === "literal" ? context.vars[op.statusId.slice(5)].value : context.vars[op.statusId.slice(5)]?.id ?? context.vars[op.statusId.slice(5)] } : op;
       host.ops[op.op]({
         state,
         frame,
-        op,
+        op: runtimeOp,
         context,
         evaluate: evaluate3,
         vars,
@@ -2188,7 +2253,7 @@ var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
 var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
 var pseudoPool = /* @__PURE__ */ new Set(["attack", "action", "move"]);
 function pseudoState(unit, key4) {
-  if (key4 === "move") return { current: Math.max(0, unit.move - (unit.moved ?? 0)), max: unit.move };
+  if (key4 === "move") return { current: Math.max(0, unit.move - (unit.moveSpent ?? 0)), max: unit.move };
   return { current: Math.max(0, 1 - (unit.used?.[key4] ?? 0)), max: 1 };
 }
 function applyPseudo(unit, key4, mode, amount) {
@@ -2198,7 +2263,7 @@ function applyPseudo(unit, key4, mode, amount) {
   if (mode === "add_max" || mode === "sub_max" || mode === "set_max") return false;
   if (!Number.isFinite(current)) return false;
   current = Math.max(0, Math.min(pseudoState(unit, key4).max, current));
-  if (key4 === "move") unit.moved = unit.move - current;
+  if (key4 === "move") unit.moveSpent = unit.move - current;
   else {
     unit.used[key4] = 1 - current;
     unit.ap = Math.max(0, Math.min(2, unit.ap + current - before));
@@ -2508,6 +2573,7 @@ var sourceSkillId = either(id, { type: "string", pattern: `^equip:${idPattern2}:
 var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved.map((key4) => `vars.${key4}`)) };
 var tag = { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" };
 var statusId = { ...id, format: "tactical-status-id" };
+var dynamicStatusId = either(statusId, variable);
 var formula = { ...text, format: "tactical-expr" };
 var expr = ref("expr");
 var numericExpr = either(number, formula);
@@ -2519,7 +2585,8 @@ var slot = enumOf("attack", "action", "move", "cast", "reaction", "fly", "telepo
 var point2 = object({ x: number, y: number }, ["x", "y"]);
 var point = object({ x: number, y: number, z: number }, ["x", "y"]);
 var scopes = ["self", "source", "target", "attacker"];
-var pointRef = either(point, enumOf(...scopes, "center"), variable);
+var pointRef = either(object({ x: numericExpr, y: numericExpr, z: numericExpr }, ["x", "y"]), enumOf(...scopes, "center"), variable);
+var redirectRef = either(entityId, formula);
 var selector = ref("selector");
 var target = ref("targetRef");
 var program = ref("program");
@@ -2527,8 +2594,9 @@ var chooseOptions = list(object({ id, label: text }, ["id", "label"]), 1);
 var mapOf = (key4, value) => ({ type: "object", propertyNames: key4, additionalProperties: value });
 var eventPatchFields = {
   before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
-  before_target: { cancel: booleanExpr, redirectTarget: entityId, replaceTarget: object({ from: entityId, to: entityId }, ["from", "to"]), skipColossusArea: booleanExpr, damageScale: numericExpr },
+  before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), skipColossusArea: booleanExpr, damageScale: numericExpr },
   before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
+  after_natural_roll: { replaceNaturalRoll: numericExpr },
   before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
   before_status: { cancel: booleanExpr },
   on_lethal_p2: { preventDeath: booleanExpr }
@@ -2538,12 +2606,14 @@ var vmHooks = Object.freeze([
   "before_action",
   "before_target",
   "before_check",
+  "after_natural_roll",
   "after_check",
   "before_commit",
   "before_status",
   "on_lethal_p1",
   "on_lethal_p2",
   "after_action",
+  "after_move",
   "after_hit",
   "after_damage",
   "after_heal",
@@ -2568,7 +2638,7 @@ var opNotes = Object.freeze({
   let: "name \u5199\u88F8\u540D\u79F0\uFF08\u5982 bonus\uFF09\uFF0C\u8BFB\u53D6\u5199 vars.bonus\u3002\u9ED8\u8BA4\u5199\u5F53\u524D\u5E27\uFF0Cscope:owner \u5199\u89C4\u5219\u5BBF\u4E3B\uFF08\u7528 self.vars.bonus \u6216\u5BF9\u5E94\u8F7D\u4F53\u53D8\u91CF\u8BFB\u53D6\uFF09\u3002",
   if: "\u6309 cond \u9009\u62E9 then \u6216 else \u6307\u4EE4\u5E8F\u5217\u3002\u672A\u63D0\u4F9B else \u65F6\u4E3A\u5047\u5373\u8DF3\u8FC7\u3002",
   for_each: "\u5BF9 Selector \u7684\u7ED3\u679C\u5FEB\u7167\u9010\u9879\u6267\u884C body\u3002bind \u5199\u88F8\u540D\u79F0\uFF0C\u5982 victim\uFF1Bbody \u5185\u901A\u8FC7 vars.victim \u9009\u5B9E\u4F53\u3001vars.victim.hp \u8BFB\u5B57\u6BB5\u3002\u7701\u7565 bind \u65F6\uFF0C\u904D\u5386\u5355\u4F4D\u7684\u5B50\u5E27 target \u662F\u5F53\u524D\u5355\u4F4D\u3002",
-  check: "\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u88F8\u540D\u79F0\uFF1B\u540E\u7EED\u901A\u8FC7 vars.<\u540D\u79F0> \u8BFB\u53D6\u3002",
+  check: "\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u88F8\u540D\u79F0\uFF1B\u540E\u7EED\u901A\u8FC7 vars.<\u540D\u79F0> \u8BFB\u53D6\u3002rawNatural:true \u4F7F\u7528\u539F\u59CB\u81EA\u7136\u9AB0\uFF0C\u5FFD\u7565 after_natural_roll \u7684\u9AB0\u9762\u66FF\u6362\u3002",
   ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
   damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\uFF0C\u5199\u88F8\u540D\u79F0\u3001\u8BFB vars.<\u540D\u79F0>\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
   heal: "\u4EC5\u6CBB\u7597\u5B58\u6D3B\u4E14\u5141\u8BB8\u53D7\u7597\u7684\u5355\u4F4D\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
@@ -2598,6 +2668,8 @@ var controlPolicy = object({
 });
 var stat = enumOf(
   ...attribute.enum,
+  "movement",
+  "incomingDistanceOffset",
   "armor",
   "armorPierce",
   "armorPiercePercent",
@@ -2643,24 +2715,26 @@ var statMod = withRules(
 );
 var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: text, charged: bool, scale: numericExpr, origin: pointRef });
 var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
+var spawnRadius = either({ type: "number", minimum: 0 }, formula);
 var area = object({
   shape: enumOf("single", "circle", "ring", "fan", "cone", "line", "rect"),
   origin: pointRef,
-  radius: { type: "number", minimum: 0 },
-  innerRadius: { type: "number", minimum: 0 },
-  width: { type: "number", minimum: 0 },
+  center: pointRef,
+  radius: spawnRadius,
+  innerRadius: spawnRadius,
+  width: spawnRadius,
   angle: { type: "number", minimum: 0 }
 }, ["shape"]);
 var spawnTier = either(integer(1, 7), formula);
 var spawnTurns = either(integer(1, 100), formula);
-var spawnRadius = either({ type: "number", minimum: 0 }, formula);
 var spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
 var zoneArea = withRules(object({
   shape: enumOf("single", "circle", "ring", "rect", "cells", "board"),
   anchorUnitId: entityId,
+  origin: pointRef,
   center: pointRef,
   radius: spawnRadius,
-  innerRadius: { type: "number", minimum: 0 },
+  innerRadius: spawnRadius,
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
   cells: list(point2, 1)
 }, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
@@ -2672,18 +2746,19 @@ var spawnSpecs = {
     templateId: id,
     copyOf: target,
     count: either(integer(1, 10), formula),
+    remainingTurns: spawnTurns,
     spawnPanel: object({
       attribute,
       tier: spawnTier,
       stats: object(Object.fromEntries(attribute.enum.map((name) => [name, integer(0, 20)])), attribute.enum),
-      maxHp: integer(1),
-      maxMp: integer(0),
-      maxSp: integer(0),
-      armor: integer(0),
+      maxHp: numericExpr,
+      maxMp: numericExpr,
+      maxSp: numericExpr,
+      armor: numericExpr,
       size: integer(1, 5),
       bodyLengthM: { type: "number", exclusiveMinimum: 0 },
       mc: integer(1),
-      move: integer(0),
+      move: numericExpr,
       skills: list(id),
       gear: list(id),
       mainHand: id,
@@ -2697,7 +2772,7 @@ var spawnSpecs = {
   item: object({ templateId: id, count: either(integer(1), formula) }, ["templateId"])
 };
 var opcodeSchemas = [
-  opcode("let", { name: id, value: expr, scope: enumOf("frame", "owner") }, ["name", "value"]),
+  opcode("let", { name: id, value: either(expr, enumOf(...scopes), variable), scope: enumOf("frame", "owner") }, ["name", "value"]),
   opcode("if", { cond: booleanExpr, then: program, else: program }, ["cond", "then"]),
   opcode("for_each", { select: selector, bind: id, body: program }, ["select", "body"]),
   opcode("check", {
@@ -2706,7 +2781,8 @@ var opcodeSchemas = [
     defenderStat: attribute,
     dc: numericExpr,
     mode: enumOf("all", "any"),
-    statusId,
+    statusId: dynamicStatusId,
+    rawNatural: bool,
     tags: list(tag),
     onPass: program,
     onFail: program,
@@ -2754,13 +2830,13 @@ var opcodeSchemas = [
   opcode("link_pool", { units: selector, pools: list(enumOf("hp", "mp", "sp"), 1), mode: enumOf("link", "unlink") }, ["units", "pools", "mode"]),
   opcode("apply_status", {
     target,
-    statusId,
+    statusId: dynamicStatusId,
     ignoreImmunity: bool,
     turns: numericExpr,
     stacks: numericExpr,
     stackMode: enumOf("refresh", "stack", "replace", "extend"),
     extendTurns: numericExpr,
-    vars: mapOf(id, expr),
+    vars: mapOf(id, either(expr, { type: "string", pattern: "^[A-Za-z0-9_\\u4e00-\\u9fa5-]{1,64}$" })),
     expireOn: ref("expireRule")
   }, ["target", "statusId"]),
   opcode("remove_status", { target, where: booleanExpr, force: bool, reason: enumOf("dispelled", "cleansed", "expired"), outCount: id }, ["target", "where"]),
@@ -2803,11 +2879,12 @@ var defs = {
   tag,
   selector: withRules(object({
     from: either(enumOf(...scopes, "units", "statuses", "zones", "covers", "terrain", "cells", "tape"), variable),
-    of: enumOf(...scopes),
+    options: list(id, 1),
+    of: either(enumOf(...scopes), variable),
     area,
     where: booleanExpr,
     pick: variants(literal("all"), ...["first", "random", "nearest"].map((key4) => object({ [key4]: integer(1) }, [key4])))
-  }, ["from"]), when("of", {}, { properties: { from: literal("statuses") } })),
+  }), either(needs("from"), needs("options")), when("of", {}, { properties: { from: literal("statuses") } })),
   targetRef: either(enumOf(...scopes), variable, selector),
   expireRule,
   statMod,
@@ -3001,9 +3078,12 @@ var ruleOps = {
     if (!event || !frame.hook || !validVmOpcode(op, { hook: frame.hook })) throw new Error("\u4E8B\u4EF6\u6539\u5199\u4E0D\u7B26\u5408\u5F53\u524D\u62E6\u622A\u94A9\u5B50");
     for (const [key4, expression] of Object.entries(op.patch)) {
       const resolveId = (id3) => {
-        if (!id3.startsWith("vars.")) return id3;
-        const value2 = own7(context.vars, id3.slice(5));
-        return context.resolveEntity(value2, "unit")?.id;
+        if (["self", "source", "target", "attacker"].includes(id3)) return context[id3]?.id;
+        if (id3.startsWith("vars.")) {
+          const value2 = own7(context.vars, id3.slice(5));
+          return context.resolveEntity(value2, "unit")?.id ?? (typeof value2 === "string" ? value2 : void 0);
+        }
+        return own7(state.units, id3)?.id ?? evaluateExpr(id3, context);
       };
       let value;
       if (key4 === "redirectTarget") value = resolveId(expression);
@@ -3059,6 +3139,33 @@ function continueCheck({ state, frame, host, context }) {
   }
   const event = state.vm.events[frame.eventRef];
   if (frame.pc === 1) {
+    const stats = [op.stat ?? null].flat();
+    const outcomes = frame.naturalOutcomes ??= [];
+    if (frame.pendingNatural) {
+      const replacement = event.replaceNaturalRoll;
+      outcomes.push({ ...frame.pendingNatural, roll: Number.isFinite(replacement) ? bounded(replacement, 1, 20) : event.naturalRoll });
+      delete frame.pendingNatural;
+      delete event.replaceNaturalRoll;
+    }
+    if (outcomes.length === stats.length) {
+      frame.pc++;
+      return;
+    }
+    const key4 = stats[outcomes.length];
+    const sides = op.kind === "chance" ? 100 : 20;
+    let roll = dice(state, sides);
+    if (event.advantageDelta > 0) roll = Math.max(roll, dice(state, 20));
+    if (event.advantageDelta < 0) roll = Math.min(roll, dice(state, 20));
+    const defenderRoll = op.kind === "contest" ? dice(state, 20) : null;
+    event.naturalRoll = roll;
+    if (op.rawNatural || sides !== 20) outcomes.push({ key: key4, roll, defenderRoll });
+    else {
+      frame.pendingNatural = { key: key4, defenderRoll };
+      scheduleHooks(state, frame, "after_natural_roll", frame.eventRef, host);
+    }
+    return;
+  }
+  if (frame.pc === 2) {
     frame.pc++;
     const kind = op.kind;
     const subject2 = kind === "save" ? context.target : context.self;
@@ -3066,12 +3173,9 @@ function continueCheck({ state, frame, host, context }) {
     const stats = [op.stat ?? null].flat();
     const checkBonus = host.checkBonus?.(state, subject2, event) ?? 0;
     const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
-    const outcomes = stats.map((key4) => {
-      let roll2 = dice(state, kind === "chance" ? 100 : 20);
-      if (event.advantageDelta > 0) roll2 = Math.max(roll2, dice(state, 20));
-      if (event.advantageDelta < 0) roll2 = Math.min(roll2, dice(state, 20));
+    const outcomes = frame.naturalOutcomes.map(({ key: key4, roll: roll2, defenderRoll }) => {
       const total3 = roll2 + (key4 ? stat3(subject2, key4) : 0) + checkBonus + (event.bonusDelta ?? 0);
-      const difficulty = kind === "contest" ? dice(state, 20) + stat3(context.target, op.defenderStat ?? key4) : dc;
+      const difficulty = kind === "contest" ? defenderRoll + stat3(context.target, op.defenderStat ?? key4) : dc;
       const passed2 = kind === "chance" ? roll2 <= difficulty : total3 >= difficulty;
       return { roll: roll2, total: total3, difficulty, passed: passed2 };
     });
@@ -3168,7 +3272,7 @@ function continueApplyStatus({ state, frame, host, context, options }) {
     const previous = own7(target2.statuses, op.statusId);
     const stackMode = op.stackMode ?? template.stackMode ?? "refresh";
     const values5 = { ...template.vars, ...op.vars };
-    const vars = Object.fromEntries(Object.entries(values5).map(([key4, expr2]) => [key4, evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
+    const vars = Object.fromEntries(Object.entries(values5).map(([key4, expr2]) => [key4, typeof expr2 === "string" && !validExpr(expr2) ? expr2 : evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
     const cap = evaluate2(template.maxStacks, context, 1);
     const duration2 = evaluate2(op.turns, context, template.remainingTurns ?? 1);
     const count = evaluate2(op.stacks, context, 1);
@@ -3186,6 +3290,7 @@ function continueApplyStatus({ state, frame, host, context, options }) {
       sourceCarrier,
       authorityRank: sourceAuthority.authorityRank,
       sourceTier: sourceAuthority.unitTier,
+      ...context.effectiveTier !== sourceAuthority.unitTier && { effectiveTier: context.effectiveTier },
       vars,
       tags: template.tags ?? [],
       flags: template.flags ?? [],
@@ -3527,15 +3632,23 @@ function resolveSpawnSpec(spec, context, kind) {
     resolved[key4] = spawnNumber(spec[key4], context, min, max);
     if (resolved[key4] === void 0) return;
   }
-  if (spec.spawnPanel?.tier !== void 0) {
-    const tier = spawnNumber(spec.spawnPanel.tier, context, 1, 7);
-    if (tier === void 0) return;
-    resolved.spawnPanel = { ...spec.spawnPanel, tier };
+  if (spec.spawnPanel) {
+    resolved.spawnPanel = { ...spec.spawnPanel };
+    for (const key4 of ["tier", "maxHp", "maxMp", "maxSp", "armor", "move"]) {
+      if (spec.spawnPanel[key4] === void 0) continue;
+      const value = spawnNumber(spec.spawnPanel[key4], context, key4 === "tier" ? 1 : 0, key4 === "tier" ? 7 : 1e9);
+      if (value === void 0) return;
+      resolved.spawnPanel[key4] = value;
+    }
   }
-  if (spec.area?.radius !== void 0) {
-    const radius = spawnNumber(spec.area.radius, context, 0, Infinity, false);
-    if (radius === void 0) return;
-    resolved.area = { ...spec.area, radius };
+  if (spec.area) {
+    resolved.area = { ...spec.area };
+    for (const key4 of ["radius", "innerRadius", "width"]) {
+      if (spec.area[key4] === void 0) continue;
+      const value = spawnNumber(spec.area[key4], context, 0, Infinity, false);
+      if (value === void 0) return;
+      resolved.area[key4] = value;
+    }
   }
   return resolved;
 }
@@ -3595,7 +3708,22 @@ function teleport({ state, frame, host, context, op }, targets2) {
   }
   for (const { unit, to } of landings) Object.assign(unit, to);
   refreshFollowingZones(state, host);
-  for (const { unit, from } of landings) if (!same2(unit, from)) logMove(state, host, unit, "teleport", from, []);
+  for (const { unit, from } of landings) if (!same2(unit, from)) {
+    const dx = unit.x - from.x, dy = unit.y - from.y;
+    if (dx || dy) unit.lastMoveDir = Math.abs(dx) >= Math.abs(dy) ? dx < 0 ? "W" : "E" : dy < 0 ? "N" : "S";
+    unit.moved = (unit.moved ?? 0) + Math.max(Math.abs(dx), Math.abs(dy));
+    host.hooks?.(state, frame, "after_move", newEvent(state, {
+      actorId: unit.id,
+      targetId: unit.id,
+      fromX: from.x,
+      fromY: from.y,
+      toX: unit.x,
+      toY: unit.y,
+      steps: Math.max(Math.abs(dx), Math.abs(dy)),
+      moveKind: "teleport"
+    }));
+    logMove(state, host, unit, "teleport", from, []);
+  }
 }
 function move(env) {
   const { state, frame, op, context, select, push } = env;
@@ -3653,6 +3781,21 @@ function continueMove({ state, frame, host, context }) {
     if (!path2.length && !collision) return;
   }
   refreshFollowingZones(state, host);
+  if (!same2(unit, from) || op.mode === "altitude" && at(state, unit).z !== from.z) {
+    const dx = unit.x - from.x, dy = unit.y - from.y;
+    if (dx || dy) unit.lastMoveDir = Math.abs(dx) >= Math.abs(dy) ? dx < 0 ? "W" : "E" : dy < 0 ? "N" : "S";
+    unit.moved = (unit.moved ?? 0) + path2.length;
+    host.hooks?.(state, frame, "after_move", newEvent(state, {
+      actorId: unit.id,
+      targetId: unit.id,
+      fromX: from.x,
+      fromY: from.y,
+      toX: unit.x,
+      toY: unit.y,
+      steps: path2.length,
+      moveKind: op.mode
+    }));
+  }
   logMove(state, host, unit, op.mode, from, path2, collision);
   if (!collision) return;
   const target2 = { type: "unit", id: unit.id };
@@ -3796,6 +3939,7 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
     plan,
     center: xy(center),
     out: op.out ?? null,
+    remainingTurns: spec.remainingTurns,
     fields: carrier3({
       ...original,
       ...spec,
@@ -3877,6 +4021,7 @@ function continueSpawn({ state, frame, host, context }) {
       used: { attack: 0, action: 0 },
       ap: 0,
       statuses: {},
+      ...data.remainingTurns !== void 0 && { remainingTurns: data.remainingTurns },
       ...frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }
     };
     unit.hp = unit.maxHp;
@@ -3903,8 +4048,10 @@ function spawnZone({ state, frame, host, context, op }, center) {
   const anchorId = anchorRef?.startsWith("vars.") ? context.resolveEntity(own9(context.vars, anchorRef.slice(5)), "unit")?.id : anchorRef;
   const anchor = own9(state.units, anchorRef === void 0 && spec.follow ? context.self?.id : anchorId);
   if ((anchorRef || spec.follow) && !live2(anchor)) return;
-  const origin = area3.center === void 0 ? anchor ?? center : resolvePoint(area3.center, context);
-  if ((area3.center !== void 0 || ["circle", "ring", "single"].includes(area3.shape)) && !point3(origin)) return;
+  const centerRef = area3.origin ?? area3.center;
+  const origin = centerRef === void 0 ? anchor ?? center : resolvePoint(centerRef, context);
+  if ((centerRef !== void 0 || ["circle", "ring", "single"].includes(area3.shape)) && !point3(origin)) return;
+  delete area3.origin;
   if (["circle", "ring"].includes(area3.shape) && !Number.isFinite(area3.radius)) return;
   if (origin) area3.center = xy(origin);
   if (spec.follow) area3.anchorUnitId = anchor.id;
@@ -3969,7 +4116,7 @@ function spawnTerrain({ state, frame, host, context, op }, center) {
   if (!center) return;
   const { spec, entityKind } = op;
   const area3 = spec.area;
-  const origin = area3?.origin === void 0 ? center : resolvePoint(area3.origin, context);
+  const origin = area3?.origin == null && area3?.center == null ? center : resolvePoint(area3.origin ?? area3.center, context);
   if (!origin) return;
   let selected2 = [center];
   if (area3?.shape === "rect") {
@@ -4117,6 +4264,11 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
 function expireSpatialEffects(state, host, { advance: advance2 = false, parent = state.vm?.stack.at(-1) } = {}) {
   refreshFollowingZones(state, host);
   if (!advance2) return;
+  const expiring = values(state.units).filter((unit) => unit.summoned && unit.remainingTurns != null && --unit.remainingTurns === 0);
+  for (const unit of expiring.reverse()) {
+    unit.remainingTurns = 1;
+    pushFrame(state, { kind: "action", native: "expireSummon", ownerId: unit.id, sourceId: unit.sourceId ?? unit.id });
+  }
   for (const zone of values(state.zones)) {
     if (!zone.persistent && --zone.remainingTurns <= 0) removeZone(state, host, zone.id, "\u5230\u671F");
   }
@@ -4162,7 +4314,37 @@ function spawn(env) {
   else spawnTerrain(resolved, center);
 }
 var spatialOps = Object.freeze({ move, spawn, despawn });
-var spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn });
+function continueExpireSummon({ state, frame, host }) {
+  const unit = own9(state.units, frame.ownerId);
+  if (unit && frame.pc === 0 && live2(unit)) {
+    frame.pc++;
+    frame.awaitEvent = newEvent(state, {
+      actorId: unit.id,
+      targetId: unit.id,
+      deadId: unit.id,
+      sourceId: unit.sourceId ?? null,
+      summonId: unit.id,
+      templateId: unit.templateId ?? null,
+      sourceSkillId: unit.sourceSkillId ?? null,
+      center: at(state, unit),
+      reason: "expired"
+    });
+    scheduleHooks(state, frame, "on_summon_evict", frame.awaitEvent, host);
+    return;
+  }
+  if (unit && frame.pc === 1 && live2(unit)) {
+    frame.pc++;
+    scheduleHooks(state, frame, "on_death", frame.awaitEvent, host);
+    return;
+  }
+  if (unit) {
+    host.log(state, unit, "despawn", `${unit.name}\u53EC\u5524\u671F\u9650\u7ED3\u675F`, { unitId: unit.id, summoned: true, expired: true });
+    removeSummon(state, unit);
+    if (state.turn >= state.order.length) state.turn = 0;
+  }
+  state.vm.stack.pop();
+}
+var spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpawn: continueSpawn, expireSummon: continueExpireSummon });
 
 // src/core/log-attribution.js
 var own10 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
@@ -4379,7 +4561,7 @@ var vmHost = {
   },
   resource: (state, unit, key4) => {
     if (!unit) return void 0;
-    if (key4 === "move") return Math.max(0, unit.move - (unit.moved ?? 0));
+    if (key4 === "move") return Math.max(0, unit.move - (unit.moveSpent ?? 0));
     if (key4 === "attack" || key4 === "action") return Math.max(0, 1 - (unit.used?.[key4] ?? 0));
     return getPool(state, unit.id, key4)?.current;
   },
@@ -4979,12 +5161,18 @@ function completeTurnEnd(state, unit) {
   record(state, unit, "end", `${unit.name}\u7ED3\u675F\u56DE\u5408`);
 }
 function settleTurn(state) {
+  if (state.vm?.pendingAsk) {
+    state.vm.settlingTurn = true;
+    return;
+  }
+  if (state.vm) delete state.vm.settlingTurn;
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
     if (state.outcome) return;
     if (alive3(unit) && !unit.fled) {
       unit.used = { attack: 0, action: 0 };
       unit.moved = 0;
+      delete unit.moveSpent;
       unit.reactionAvailable = true;
       unit.ap = 2;
       record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
@@ -5027,7 +5215,7 @@ function advanceCursor(state) {
   if (state.turn < state.order.length) return;
   state.turn = 0;
   state.round++;
-  if (state.spatialTerrain || values3(state.zones).length) advanceVMSpatial(state);
+  if (state.spatialTerrain || values3(state.zones).length || values3(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
   const opening = state.logs.find((log) => log.type === "initiative")?.detail?.initiative;
   const openingRows = opening?.filter((row) => state.order.includes(row.unitId)) ?? [];
   const hasModifier = living(state).some((unit) => aggregateModifiers(state, unit.id).stats.initiativeFlat);
@@ -5063,6 +5251,7 @@ function beginBattle(state) {
     unit.ap = 0;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
+    delete unit.moveSpent;
     unit.reactionAvailable = true;
     for (const status of values3(unit.statuses)) {
       delete status.appliedRound;
@@ -5189,18 +5378,22 @@ var syncEquipmentEffects = initializeVMWorld;
 function movementScale(state, unit, type) {
   const rawMove = Number(unit.rawMove ?? unit.move ?? 3);
   const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit.tier) || 1)));
-  const moveM = unit.moveM ?? rawMove * (TIER_CELL_M[tier] ?? TIER_CELL_M[1]);
+  const baseMoveM = unit.moveM ?? rawMove * (TIER_CELL_M[tier] ?? TIER_CELL_M[1]);
+  const bonus = modStat(state, unit, "movement", 0);
+  const movementBonus = bonus * TIER_CELL_M[tier];
+  const moveM = Math.max(0, baseMoveM + movementBonus);
   const mult = type === "sprint" ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
   const total2 = carry + Math.round(mult * moveM / Math.max(1e-9, Number(state.scale?.cellM) || 2) * 1e3);
-  return { rawMove, moveM, total: total2, limit: Math.floor(total2 / 1e3) };
+  return { rawMove, moveM, bonus, total: total2, limit: Math.floor(total2 / 1e3) };
 }
 function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
   if (!alive3(unit) || changes(unit, "rooted") || changes(unit, "skip") || aggregateModifiers(state, unit.id).locks.move) return [];
   const scale = movementScale(state, unit, type);
-  const remainingMove = Math.max(0, unit.move - (unit.moved ?? 0) + changes(unit, "movement"));
+  const spent = unit.moveSpent ?? 0;
+  const remainingMove = Math.max(0, unit.move - spent + scale.bonus);
   const mult = type === "sprint" ? 2 : 1;
-  const limit = distanceLimit ?? (unit.moveM == null ? remainingMove * mult : Math.max(0, scale.limit - (unit.moved ?? 0) * mult + changes(unit, "movement") * mult));
+  const limit = distanceLimit ?? (unit.moveM == null ? Math.floor(remainingMove * mult) : Math.max(0, scale.limit - spent * mult));
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === "disengage" });
   if (!routes.length && scale.limit === 0 && distanceLimit === void 0) {
     return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
@@ -5221,12 +5414,12 @@ function reachable(state, type = "move", unit = currentUnit(state), distanceLimi
   return routes.map((route) => {
     const alternate = safe.get(key2(route.x, route.y));
     if (alternate) return routeCell(alternate);
-    const spent = /* @__PURE__ */ new Set(), opportunities = [];
+    const spent2 = /* @__PURE__ */ new Set(), opportunities = [];
     let from = unit;
     for (const to of route.path) {
       for (const { unit: source } of exits(from, to)) {
-        if (spent.has(source.id)) continue;
-        spent.add(source.id);
+        if (spent2.has(source.id)) continue;
+        spent2.add(source.id);
         opportunities.push(opportunityDetail(source, from, to));
       }
       from = to;
@@ -5302,7 +5495,8 @@ function reaches(state, actor, at2, template, ammo, weaponId = actor.mainHand ??
   const melee = isMelee(template) && !ammo;
   const baseRange = template.range ?? 1.5;
   const range2 = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? ammo?.reloadable ? modCheck(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
-  return { distance: distance3D(state, actor, at2), dz, range: Math.max(0, range2), melee };
+  const offset = incomingDistanceOffset(state, actor, at2, { checkKind: "attack" });
+  return { distance: distance3D(state, actor, at2) + offset, dz, range: Math.max(0, range2), melee };
 }
 function validReach(state, actor, at2, template, ammo, weaponId) {
   const geometry = reaches(state, actor, at2, template, ammo, weaponId);
@@ -5613,7 +5807,13 @@ function nearbyCovers(state, at2) {
   return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at2, c)).sort(byId2);
 }
 function usableTiles(state, actor, template, weapon2) {
-  return allCells(state).filter((at2) => validReach(state, actor, template.target === "cell" ? at2 : locateUnit(state, at2) ?? at2, template, weapon2?.ammo) && !(["line", "cone", "fan"].includes(template.shape) && sameCell(actor, at2) && template.range !== 0));
+  return allCells(state).filter((at2) => validReach(
+    state,
+    actor,
+    template.target === "cell" || (template.shape ?? "single") !== "single" ? at2 : locateUnit(state, at2) ?? at2,
+    template,
+    weapon2?.ammo
+  ) && !(["line", "cone", "fan"].includes(template.shape) && sameCell(actor, at2) && template.range !== 0));
 }
 function shapeTargets(state, actor, cells2, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
   const keys = new Set(cells2.map((at2) => key2(at2.x, at2.y)));
@@ -5624,7 +5824,7 @@ function shapeTargets(state, actor, cells2, template, aim, origin, ammo, ignoreR
     if (areaDamage && ["ally", "self"].includes(template.target) && !selectionAllows(template, actor, unit)) return false;
     if ((template.shape ?? "single") === "single") return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === "circle" || template.shape === "ring") {
-      const distanceFromCenter = distance3D(state, aim, unit);
+      const distanceFromCenter = distance3D(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: "attack" });
       return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || hasLOS(state, aim, unit)) && (template.shape !== "ring" || !sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9);
     }
     const radius = template.radius ?? (template.range === 0 ? 1.5 : null);
@@ -5763,7 +5963,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     } else if (distance3D(state, unit, item) > 1.5 || !hasLOS(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
     const cells3 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: item.radius ?? 1.5 }) : [center];
     const keyset = new Set(cells3.map((at2) => key2(at2.x, at2.y)));
-    const targets3 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) <= 1.5 + 1e-9).map((u) => {
+    const targets3 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: "attack" }) <= (item.radius ?? 1.5) + 1e-9).map((u) => {
       const guard = guardFor(state, u) ?? u;
       const context = { attacker: unit, targetId: guard.id, damageType: "energy", intercepting: guard !== u };
       const formula2 = mitigation(state, guard, "energy", true, 0, context);
@@ -5822,7 +6022,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   }
   const aimedUnit = locateUnit(state, center, action.targetId);
   if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail2("\u76EE\u6807\u5355\u4F4D\u4E0D\u5728\u6307\u5B9A\u683C");
-  const aim = template.target === "cell" ? center : aimedUnit ?? center;
+  const aim = template.target === "cell" || (template.shape ?? "single") !== "single" ? center : aimedUnit ?? center;
   const origin = actionOrigin ? {
     ...unit,
     x: actionOrigin.x,
@@ -5995,10 +6195,11 @@ function spendAmmo(state, actor, weapon2, ammo) {
   const pool = getPool(state, weapon2.instance.id, ammo.resource, "item");
   if (pool && pool.current > 0) changeCounter(state, actor, weapon2, ammo, ammo.resource, pool.current - 1);
 }
-function resolveCheck(state, actor, profile) {
+function resolveCheck(state, actor, profile, event = {}) {
   const cover = profile.kind === "cover" ? { targetKind: "cover", targetName: profile.name } : {};
   if (profile.saveStat) {
-    const saveRoll = randomDie(state, 20), saveTotal = saveRoll + profile.saveBonus;
+    const saveRoll = event.replaceNaturalRoll ?? event.naturalRoll ?? randomDie(state, 20);
+    const saveTotal = saveRoll + profile.saveBonus;
     const saved = saveTotal >= profile.saveDC;
     record(
       state,
@@ -6023,10 +6224,15 @@ function resolveCheck(state, actor, profile) {
     return { hit: true, critical: profile.guaranteeCrit, rating: rating2, intent: { success: true, multiplier: 1 }, saved: false };
   }
   const requestedBonus = profile.bonusDice ?? 0;
-  const { rng, rolls: dice4, value: selected2 } = requestedBonus || actor.penaltyDice ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 }) : rollD20(state.rng, profile.advantages, profile.disadvantages);
-  actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus);
-  actor.penaltyDice = 0;
-  state.rng = rng;
+  const rolled = event.preRolled ?? (requestedBonus || actor.penaltyDice ? rollProtocolD20(state.rng, { bonus: requestedBonus, penalty: actor.penaltyDice ?? 0 }) : rollD20(state.rng, profile.advantages, profile.disadvantages));
+  const dice4 = rolled.rolls;
+  const rawNatural = event.rawNatural ?? rolled.value;
+  const selected2 = event.replaceNaturalRoll ?? rawNatural;
+  if (!event.preRolled) {
+    actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - requestedBonus);
+    actor.penaltyDice = 0;
+    state.rng = rolled.rng;
+  }
   const total2 = selected2 + profile.accuracy;
   let rating = ratingFor(total2);
   if (profile.tierUp && rating.multiplier) rating = RATING_TABLE[Math.max(0, RATING_TABLE.indexOf(rating) - 1)];
@@ -6171,6 +6377,7 @@ function continueStrike({ state, frame, host }) {
     delete frame.phase;
     delete frame.profile;
     delete frame.awaitEvent;
+    delete frame.preRolled;
   };
   const detail = {
     actorId: actor.id,
@@ -6197,6 +6404,23 @@ function continueStrike({ state, frame, host }) {
   }
   const event = state.vm.events[frame.awaitEvent];
   if (frame.phase === "check") {
+    frame.phase = "natural";
+    if (profile.automatic && !profile.saveStat) return;
+    if (profile.saveStat) event.naturalRoll = randomDie(state, 20);
+    else {
+      const bonus = profile.bonusDice ?? 0;
+      const penalty = actor.penaltyDice ?? 0;
+      const rolled = bonus || penalty ? rollProtocolD20(state.rng, { bonus, penalty }) : rollD20(state.rng, profile.advantages, profile.disadvantages);
+      state.rng = rolled.rng;
+      actor.bonusDice = Math.max(0, (actor.bonusDice ?? 0) - bonus);
+      actor.penaltyDice = 0;
+      frame.preRolled = rolled;
+      event.naturalRoll = rolled.value;
+    }
+    host.hooks(state, frame, "after_natural_roll", frame.awaitEvent);
+    return;
+  }
+  if (frame.phase === "natural") {
     const adjusted = {
       ...profile,
       accuracy: profile.accuracy + (event.bonusDelta ?? 0) + (event.ignoreDodge ? profile.dodgeBonus : 0),
@@ -6205,7 +6429,13 @@ function continueStrike({ state, frame, host }) {
       guaranteeHit: profile.guaranteeHit || ["hit", "crit"].includes(event.forceOutcome),
       guaranteeCrit: profile.guaranteeCrit || event.forceOutcome === "crit"
     };
-    const result = resolveCheck(state, actor, adjusted);
+    const replacement = Number.isFinite(event.replaceNaturalRoll) ? clamp3(Math.trunc(event.replaceNaturalRoll), 1, 20) : void 0;
+    const result = resolveCheck(state, actor, adjusted, {
+      ...event,
+      replaceNaturalRoll: replacement,
+      preRolled: frame.preRolled,
+      rawNatural: event.naturalRoll
+    });
     if (event.forceOutcome === "miss") result.hit = false;
     if (event.forceOutcome === "pass") result.saved = true;
     if (event.forceOutcome === "fail") result.saved = false;
@@ -6300,6 +6530,12 @@ function continueStrike({ state, frame, host }) {
   }
   next();
 }
+function movementDirection(from, to, previous) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  if (!dx && !dy) return previous ?? null;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? "W" : "E";
+  return dy < 0 ? "N" : "S";
+}
 function continueMovement(state, actor, type, plan, progress, host) {
   progress.from ??= pointAt(state, actor);
   progress.path ??= [];
@@ -6340,6 +6576,21 @@ function continueMovement(state, actor, type, plan, progress, host) {
   const consumed = Math.min(scale.total, path2.length * 1e3);
   if (actor.moveM != null || scale.limit === 0) actor.moveCarryPermille = (scale.total - consumed) % 1e3;
   const carryText = path2.length === 0 && scale.limit === 0 ? `\u5728\u5E7F\u88A4\u6218\u533A\u4E2D\u594B\u529B\u63A8\u8FDB ${Math.round((type === "sprint" ? 2 : 1) * scale.moveM)}m\uFF08\u8DE8\u533A\u8FDB\u5EA6 ${Math.round(scale.total / 10)}%\uFF09` : null;
+  const movedCells = path2.length;
+  actor.moved = (actor.moved ?? 0) + movedCells;
+  if (movedCells || progress.from.z !== landing.z) {
+    actor.lastMoveDir = movementDirection(progress.from, landing, actor.lastMoveDir);
+    progress.moveEvent = {
+      actorId: actor.id,
+      targetId: actor.id,
+      fromX: progress.from.x,
+      fromY: progress.from.y,
+      toX: landing.x,
+      toY: landing.y,
+      steps: movedCells,
+      moveKind: type
+    };
+  }
   record(
     state,
     actor,
@@ -6419,6 +6670,9 @@ function applyAction(state, action) {
           advanceCursor(state);
           settleTurn(state);
         }
+      } else if (!result.pendingAsk && state.vm.settlingTurn) {
+        if (!refreshOutcome(state)) settleTurn(state);
+        else delete state.vm.settlingTurn;
       } else if (!result.pendingAsk) finishAction(state, actor2, action.type);
       return state.logs.slice(before2);
     }
@@ -6469,7 +6723,15 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       }
     );
   }
-  if (isMovement(type)) return continueMovement(state, actor, type, plan, frame.nativeProgress, host);
+  if (isMovement(type)) {
+    const progress = frame.nativeProgress;
+    if (progress.movementSettled) return true;
+    if (!continueMovement(state, actor, type, plan, progress, host)) return false;
+    progress.movementSettled = true;
+    if (!progress.moveEvent) return true;
+    dispatchVMHook(state, "after_move", progress.moveEvent);
+    return false;
+  }
   if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress);
   switch (type) {
     case "switch_weapon": {
@@ -7054,7 +7316,7 @@ function skillTemplate(v, state) {
 }
 function statusValue(v, key4, state, ownerId) {
   if (own12(v ?? {}, "templateId")) {
-    const { templateId, ownerId: owner, sourceId: sourceId2, sourceCarrier, authorityRank, sourceTier, stacks, pools, ...rest } = v;
+    const { templateId, ownerId: owner, sourceId: sourceId2, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, ...rest } = v;
     const template = getStatusTemplate(state, key4);
     const { vars, modifiers: modifiers2, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
     if (template?.modifiers) {
@@ -7070,6 +7332,7 @@ function statusValue(v, key4, state, ownerId) {
       requireThat(["unit", "skill", "status", "item", "zone"].includes(sourceCarrier.type) && validVmSourceSkillId(sourceCarrier.id), "\u72B6\u6001\u6765\u6E90\u8F7D\u4F53");
       checkOptional(sourceCarrier, "ownerId", id2);
     }
+    checkOptional(v, "effectiveTier", (x) => int(x, 1, 7));
     if (own12(v, "authorityRank") || own12(v, "sourceTier")) requireThat(int(authorityRank, 1, 8) && int(sourceTier, 1, 7), "\u72B6\u6001\u6765\u6E90\u4F4D\u683C");
     statusTemplate(definition, key4, state);
     const maxStacks = v.maxStacks ?? template?.maxStacks ?? 1;
@@ -7100,7 +7363,7 @@ function validateCell(v) {
 var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
 var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
 function unitValue(v, key4, state) {
-  fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "moved", "rawMove", "moveM", "moveCarryPermille", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
+  fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
   carrierFieldsValue(v, state, true);
   if (own12(v, "pools")) poolBindings(v.pools);
   for (const k of ["templateId", "sourceId"]) checkOptional(v, k, id2);
@@ -7113,6 +7376,9 @@ function unitValue(v, key4, state) {
   checkOptional(v, "rawMove", (x) => num(x, 0, 1e3));
   checkOptional(v, "moveM", (x) => num(x, 0, 1e6));
   checkOptional(v, "moveCarryPermille", (x) => int(x, 0, 999));
+  checkOptional(v, "lastMoveDir", (x) => x === null || ["N", "S", "E", "W"].includes(x));
+  checkOptional(v, "remainingTurns", (x) => int(x, 1, 100));
+  checkOptional(v, "moveSpent", (x) => int(x, 0, 1e9));
   for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
   checkOptional(v, "corpseOf", id2);
   checkOptional(v, "diedAt", (x) => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
@@ -7125,7 +7391,7 @@ function unitValue(v, key4, state) {
   for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat((v.pools ? num : int)(v[max], r === "hp" ? 1 : 0, 1e9) && (v.pools ? num : int)(v[r], 0, v[max]), r);
   fields(v.used, ["action", "attack"]);
   fields(v.stats, attrs2);
-  requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && (!own12(v, "moved") || num(v.moved, 0, v.move)) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 0, 1e6), "\u5355\u4F4D\u6570\u503C");
+  requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 0, 1e6), "\u5355\u4F4D\u6570\u503C");
   requireThat(v.weapon === null || id2(v.weapon), "weapon");
   for (const slot2 of ["mainHand", "offHand", "shield"]) checkOptional(v, slot2, (x) => x === null || id2(x));
   checkOptional(v, "bodyLengthM", (x) => num(x, 0.01, 1e9));
@@ -14560,6 +14826,10 @@ function dependencies(state, warning) {
   }
   return keys;
 }
+var MAX_NORMALIZATION_REPAIRS = 1;
+function normalizationRepairAllowed({ attempts = 0, explicitUnresolved = false } = {}) {
+  return !explicitUnresolved && attempts < MAX_NORMALIZATION_REPAIRS;
+}
 var normalizationLimits = {
   normalizationConcurrency: { fallback: 1, max: 8 },
   normalizationWarningsPerBatch: { fallback: 6, max: 30 }
@@ -15156,10 +15426,12 @@ var spawnSpecs2 = Object.entries(defs2).filter(([key4]) => key4.startsWith("spaw
 var VM_EFFECT_PROTOCOL = `\u3010\u6218\u672F VM \u6548\u679C\u534F\u8BAE\u3011
 rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rule, ["hook"])}\uFF0Chook: \u4EE5\u4E0B\u679A\u4E3E}\u3002
 \u5141\u8BB8 hook\uFF1A${vmHooks.join(" / ")}\u3002
-\u9009\u65F6\u673A\uFF1Aactive \u4E3B\u52A8\u65BD\u653E\uFF1Bbefore_action \u884C\u52A8\u6267\u884C\u524D\u6263\u8D39\u4E0E\u53D6\u6D88\u63A7\u5236\uFF1Bbefore_target \u76EE\u6807\u786E\u5B9A\u540E\u91CD\u5B9A\u5411\uFF1Bbefore_check / after_check \u68C0\u5B9A\u524D\u6539\u5224\u4E0E\u68C0\u5B9A\u540E\u8BFB\u7ED3\u679C\uFF1Bafter_hit \u547D\u4E2D\u540E\uFF1Bafter_damage / after_heal \u5B9E\u9645\u4F24\u5BB3\uFF0F\u6CBB\u7597\u540E\uFF1Bafter_action \u884C\u52A8\u5B8C\u6210\u3002
+\u9009\u65F6\u673A\uFF1Aactive \u4E3B\u52A8\u65BD\u653E\uFF1Bbefore_action \u884C\u52A8\u6267\u884C\u524D\u6263\u8D39\u4E0E\u53D6\u6D88\u63A7\u5236\uFF1Bbefore_target \u76EE\u6807\u786E\u5B9A\u540E\u91CD\u5B9A\u5411\uFF1Bbefore_check / after_check \u68C0\u5B9A\u524D\u6539\u5224\u4E0E\u68C0\u5B9A\u540E\u8BFB\u7ED3\u679C\uFF1Bafter_natural_roll \u81EA\u7136 d20 \u51FA\u9AB0\u540E\u3001\u5224\u5B9A\u524D\uFF0C\u8BFB event.naturalRoll \u5E76\u7528 replaceNaturalRoll \u66FF\u6362\uFF1Bafter_hit \u547D\u4E2D\u540E\uFF1Bafter_damage / after_heal \u5B9E\u9645\u4F24\u5BB3\uFF0F\u6CBB\u7597\u540E\uFF1Bafter_action \u884C\u52A8\u5B8C\u6210\u3002
 \u751F\u547D\u5468\u671F\uFF1Abefore_status \u65BD\u52A0\u72B6\u6001\u524D\u62E6\u622A\uFF1Bafter_status_applied / after_status_removed \u72B6\u6001\u65BD\u52A0\uFF0F\u79FB\u9664\u540E\uFF1Bon_status_immunized \u72B6\u6001\u88AB\u514D\u75AB\uFF1Bon_summon_evict \u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u66FF\u6362\u3001\u6D88\u6563\u524D\uFF08target \u4E3A\u65E7\u53EC\u5524\u7269\uFF09\uFF1Bon_lethal_p1 \u6FD2\u6B7B\u5148\u5904\u7406\u9057\u8A00\uFF0C\u751F\u547D\u4ECD\u5F52\u96F6\u624D\u8FDB\u5165 on_lethal_p2 \u5904\u7406\u514D\u6B7B\u7B49\u62E6\u622A\uFF1Bon_death / on_ally_death / on_kill \u5012\u4E0B\uFF0F\u53CB\u65B9\u5012\u4E0B\uFF0F\u51FB\u6740\uFF1Bturn_start / turn_end \u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF1Bround_start / round_end \u6574\u8F6E\u9996\u5C3E\u3002
 before_commit \u5728 damage\u3001heal\u3001resource \u63D0\u4EA4\u524D\u89E6\u53D1\uFF0C\u533A\u5206 event.commitKind\uFF0C\u8BFB\u53D6 event.targetId\u3001event.pool\u3001event.sourceRuleId\uFF0C\u53EF\u7528 cancel \u6216 finalAmount \u6539\u5199\u672C\u7B14\u63D0\u4EA4\u3002
 \u540C\u4E00\u8F7D\u4F53\u5185\u89C4\u5219 ID \u552F\u4E00\u3002\u89C4\u5219\u7531\u9AD8 priority \u5230\u4F4E priority \u6267\u884C\uFF1Bprogram \u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\u3002filter \u5FC5\u987B\u6C42\u5F97 true \u624D\u8FDB\u5165\u89C4\u5219\u3002\u89C4\u5219\u548C\u6307\u4EE4\u5747\u53EF\u5199 enabled:false \u6682\u505C\u6267\u884C\uFF0Clabel \u4E3A\u663E\u793A\u540D\u3002\u53EA\u6709\u4E0E\u4E8B\u4EF6\u76F8\u7B26\u7684\u8F7D\u4F53\u4F1A\u89E6\u53D1\u89C4\u5219\uFF1B\u7528 filter \u533A\u5206\u4E8B\u4EF6\u7684\u65BD\u653E\u8005\u6216\u627F\u53D7\u8005\uFF0C\u4F8B\u5982 "attacker.id == self.id"\u3002
+
+after_move \u5728\u5355\u4F4D\u5B9E\u9645\u79FB\u52A8\u6216\u53D8\u66F4\u9AD8\u5EA6\u540E\u89E6\u53D1\u3002attacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0Cevent.fromX/fromY\u3001event.toX/toY\u3001event.steps\u3001event.moveKind \u63CF\u8FF0\u672C\u6B21\u4F4D\u79FB\u3002\u8F7D\u5177\u540C\u6B65\u65F6\u4EC5\u79FB\u52A8\u5C1A\u672A\u540C\u683C\u7684\u4E58\u5BA2\uFF0C\u4E58\u5BA2\u53EA\u54CD\u5E94\u8BB0\u5F55\u7684\u8F7D\u5177 ID\u3002
 
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF0C\u5176\u503C\u662F\u4E0B\u5217\u540D\u79F0\u3002? \u8868\u793A\u53EF\u7701\uFF0C\u95ED\u5408\u5BF9\u8C61\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\u3002
 ${instructions2.join("\n")}
@@ -15176,7 +15448,8 @@ Expr \u4E3A JSON \u6570\u5B57\u3001\u5E03\u5C14\u503C\u6216\u5B89\u5168\u8868\u8
 let.name\u3001bind\u3001out\u3001outCount \u5199\u88F8\u540D\u79F0\uFF1B\u8BFB\u53D6\u4E00\u5F8B\u5E26\u4F5C\u7528\u57DF\uFF0C\u4F8B\u5982 vars.lostStacks\uFF0C\u4E0D\u80FD\u88F8\u5199 lostStacks\u3002\u5B9E\u4F53\u7ED1\u5B9A\u53EF\u4F5C\u4E3A target:"vars.victim"\u3001\u901A\u8FC7 vars.victim.id \u8BFB\u5B57\u6BB5\uFF0C\u6216\u4F20\u7ED9 has_status(vars.victim, 'taunt')\u3002
 \u53D8\u91CF\uFF1A${formulaReference}\u3002
 \u51FD\u6570\u7B7E\u540D\uFF1A${formulaFunctionReference}\u3002count_units \u7684 predicate \u53EF\u76F4\u63A5\u5199 candidate.team != self.team\uFF0C\u4E5F\u53EF\u4F20\u8868\u8FBE\u5F0F\u6587\u672C\uFF0C\u5982 count_units("candidate.id == 'p1'")\uFF1B\u6574\u6761\u8868\u8FBE\u5F0F\u653E\u8FDB JSON \u5B57\u7B26\u4E32\u65F6\u6309 JSON \u89C4\u5219\u8F6C\u4E49\u5185\u90E8\u53CC\u5F15\u53F7\u3002
-selector\uFF1A${describe2(defs2.selector)}\u3002of \u53EA\u7528\u4E8E statuses\uFF1Bwhere \u9010\u4E2A\u68C0\u67E5 candidate\u3002statuses \u884C\u53EF\u8BFB candidate.id/category/stacks/remainingTurns\uFF1Btape \u884C\u53EF\u8BFB candidate.round/turn/actorId/team/actionType/skillId\uFF0C\u4FDD\u7559\u8BB0\u5F55\u987A\u5E8F\u3002random \u4F7F\u7528\u6218\u5C40 RNG\u3002area.origin \u7701\u7565\u65F6\u4EE5 self \u4E3A\u4E2D\u5FC3\u3002
+selector\uFF1A${describe2(defs2.selector)}\u3002of \u53EA\u7528\u4E8E statuses\uFF1Bwhere \u9010\u4E2A\u68C0\u67E5 candidate\u3002statuses \u884C\u53EF\u8BFB candidate.id/category/stacks/remainingTurns\uFF1Btape \u884C\u53EF\u8BFB candidate.round/turn/actorId/team/actionType/skillId\uFF0C\u4FDD\u7559\u8BB0\u5F55\u987A\u5E8F\u3002random \u4F7F\u7528\u6218\u5C40 RNG\uFF0C\u4E0D\u653E\u56DE\u62BD\u6837\u3002area.origin \u6216 area.center \u6307\u5B9A\u4E2D\u5FC3\uFF0C\u5747\u7F3A\u7701\u65F6\u4EE5 self \u4E3A\u4E2D\u5FC3\u3002\u8BCD\u6761\u76F8\u5BF9\u8DDD\u79BB\u7528 scale_cells(n)\uFF0C\u660E\u786E\u7C73\u6570\u7528 cells_m(meters)\u3002
+\u968F\u673A\u5F02\u5E38\u793A\u4F8B\uFF1A{"op":"for_each","select":{"options":["poison","burn","freeze","stun"],"pick":{"random":2}},"bind":"sid","body":[{"op":"apply_status","target":"target","statusId":"vars.sid","turns":2}]}\u3002
 pointRef \u53EF\u5199 {x,y,z?}\u3001self/source/target/attacker/center \u6216 vars.<\u540D\u79F0>\uFF08\u683C\u5B50\u6216\u5B9E\u4F53\u4F4D\u7F6E\uFF09\u3002
 targetRef\uFF1A${describe2(defs2.targetRef)}\u3002for_each.bind \u6216 ask(kind:entity) \u53D6\u5F97\u7684\u5B9E\u4F53\u76F4\u63A5\u7528 vars.<\u540D\u79F0>\u3002\u7528\u9009\u62E9\u5668\u6307\u5B9A ID \u65F6\uFF0C\u53EF\u7528 {"from":"units","where":"candidate.id == 'p1'"}\uFF0C\u5E76\u5C06 p1 \u66FF\u6362\u4E3A\u5FEB\u7167 ID\u3002
 
@@ -15184,6 +15457,7 @@ targetRef\uFF1A${describe2(defs2.targetRef)}\u3002for_each.bind \u6216 ask(kind:
 mods \u662F\u4FEE\u9970\u6570\u7EC4\uFF0C\u6BCF\u9879 ${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u6709 stat\u3001locks\u3001flags \u6216 controlPolicy\uFF1B\u586B\u5199\u6570\u503C\u4FEE\u9970\u65F6\u5FC5\u987B\u6307\u5B9A stat\u3002\u7EC4\u5408\u503C\u4E3A (\u57FA\u7840 + flat \u603B\u548C) \xD7 (1 + additivePercent \u603B\u548C) \xD7 mult \u8FDE\u4E58\u3002when \u5FC5\u987B\u6C42\u5F97 true \u624D\u751F\u6548\u3002
 \u2022 \u8F93\u51FA\u65B9\uFF08\u81EA\u5DF1\u6253\u522B\u4EBA\uFF09\uFF1AdamageFlat \u8F93\u51FA\u56FA\u5B9A\u52A0\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528 flat\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF0C\u57FA\u503C 1\uFF0C\u7528 mult:1.3 \u6216 additivePercent:0.3 \u8868\u793A +30%\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF0C\u57FA\u503C\u4E3A\u5DF2\u6709\u7A7F\u7532\uFF0C\u7528 flat\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF0C\u57FA\u503C 0\uFF08\u6B66\u5668\u59FF\u6001\u53EF\u81EA\u5E26\u7A7F\u7532\uFF09\uFF0C\u7528 flat:0.2 \u8868\u793A +20%\u3002
 \u2022 \u627F\u4F24\u65B9\uFF08\u81EA\u5DF1\u6328\u6253\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat:800\uFF08\u4E0D\u8981\u5199\u6210\u8D1F\u7684 damageFlat\uFF09\uFF1BdamageReduction / dr \u53D7\u51FB\u767E\u5206\u6BD4\u51CF\u4F24\uFF0C\u57FA\u503C 0\uFF0C\u7528 flat:0.3 \u8868\u793A +30%\u3002damageReduction \u5148\u7B97\uFF0Cdr \u5728\u56FA\u5B9A\u51CF\u4F24\u4E4B\u540E\u53E6\u4E58\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u8FD9\u4E9B\u51CF\u4F24\u3002
+\u2022 \u79FB\u52A8\uFF1Amovement \u7528 flat \u5199\u5C42\u7EA7\u5185\u7684\u79FB\u52A8\u589E\u51CF\uFF0C\u5F15\u64CE\u518D\u6362\u6210\u6218\u573A\u683C\u6570\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u5BF9\u6765\u6E90\u8BA1\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u547D\u4E2D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF0C\u53EF\u7528 scale_cells(n) \u6362\u7B97\u3002
 \u2022 \u95EA\u907F\uFF1A\u5728\u53D7\u51FB\u65B9\u5199 {"stat":"dodge","flat":4}\uFF0C\u666E\u901A\u653B\u51FB\u68C0\u5B9A\u6263\u9664 4 \u70B9\u547D\u4E2D\u3002\u95EA\u907F\u3001\u8C41\u514D\u96BE\u5EA6\u4E0E\u62B5\u6297\u52A0\u503C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\u3002check.statusId \u4F1A\u900F\u4F20\u5230 event.statusId\uFF0C\u4F8B\u5982 mods: [{"stat":"dcBonus","flat":10,"when":"event.statusId == 'freeze'"},{"stat":"resistBonus","flat":10,"when":"event.statusId == 'freeze'"}]\uFF1B\u524D\u8005\u8BFB\u53D6\u65BD\u52A0\u8005\uFF0C\u540E\u8005\u8BFB\u53D6\u8C41\u514D\u8005\u3002
 \u2022 \u5176\u4F59\uFF1AhealingMult \u65BD\u7597\u500D\u7387\u3001incomingHealMult \u53D7\u7597\u500D\u7387\u3001costMult \u6280\u80FD\u6D88\u8017\u500D\u7387\uFF0C\u57FA\u503C 1\uFF0C\u7528 mult\uFF08\u5982\u6280\u80FD\u8D44\u6E90\u6D88\u8017 -30% \u5199 mult:0.7\uFF09\uFF1BcheckBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u96BE\u5EA6\u52A0\u503C\u3001resistBonus \u8C41\u514D\u52A0\u503C\u3001advantage \u4F18\u52BF\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C 0\uFF08initiativeFlat \u53E0\u52A0\u5DF2\u6709\u5148\u624B\u52A0\u503C\uFF09\uFF0C\u7528 flat\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6240\u5728\u8F7D\u4F53\u6301\u6709\u8005\u7684\u5DF2\u6709\u5C5E\u6027\uFF0F\u62A4\u7532\u503C\u3002
 \u2022 \u6BD4\u4F8B\u578B damageReduction\u3001dr\u3001armorPiercePercent \u4E0D\u5141\u8BB8 additivePercent\uFF1Bflat \u6570\u5B57\u5FC5\u987B\u5728 -1..1\uFF0C\u8D1F\u6570\u8868\u793A\u964D\u4F4E\u8BE5\u6BD4\u4F8B\u3002\u500D\u7387\u578B damageMult\u3001finalDamageMult\u3001healingMult\u3001incomingHealMult\u3001costMult \u4E0D\u5141\u8BB8 flat\u3002
@@ -17970,18 +18244,42 @@ ${tag2.textContent || ""}
         try {
           if (result.error) throw result.error;
           let accepted;
+          let repairAttempts = 0;
           try {
             accepted = commitNormalization(key4, batch, result.value, createdTemplates);
           } catch (error2) {
+            if (!normalizationRepairAllowed({ attempts: repairAttempts, explicitUnresolved: error2.noRepair || result.value?.explicitUnresolved })) throw error2;
+            repairAttempts++;
             progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728\u4FEE\u6B63\u8F93\u51FA`);
             try {
-              const revised = await request(batch, index, error2);
+              const revised = await request(error2.missingWarnings ? { ...batch, warnings: error2.missingWarnings } : batch, index, error2);
               controller2.signal.throwIfAborted();
               accepted = commitNormalization(key4, batch, revised, createdTemplates, { acceptPartial: true });
             } catch (retryError) {
               controller2.signal.throwIfAborted();
               if (!error2.missingCoverage || key4 !== activeBattleKey) throw retryError;
               accepted = commitNormalization(key4, batch, result.value, createdTemplates, { acceptPartial: true });
+            }
+          }
+          if (!repairAttempts && accepted.repairWarnings?.length) {
+            repairAttempts++;
+            progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728\u4FEE\u590D\u62D2\u6536\u9879`);
+            try {
+              const revisedBatch = { ...batch, warnings: accepted.repairWarnings };
+              const revised = await request(revisedBatch, index, accepted.repairError);
+              controller2.signal.throwIfAborted();
+              const repaired = commitNormalization(key4, revisedBatch, revised, createdTemplates, { acceptPartial: true });
+              applied += repaired.applied;
+              replies.push(repaired.data);
+              notes2.push(...repaired.notes);
+              rejectedItems.push(...repaired.rejected);
+              const outstanding = new Set(repaired.missing);
+              accepted.rejected = accepted.rejected.filter((item) => {
+                const related = accepted.repairWarnings.filter((warning) => rejectedWarning(item, warning));
+                return !related.length || related.some((warning) => outstanding.has(warning));
+              });
+            } catch (error2) {
+              controller2.signal.throwIfAborted();
             }
           }
           applied += accepted.applied;
@@ -18428,9 +18726,19 @@ ${tag2.textContent || ""}
     on(refresh, "click", () => scan().catch(showError));
     on(report, "click", deliverBattleReport);
   }
+  function rejectedWarning(item, warning) {
+    return Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`));
+  }
   function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const { data } = parseAIResponse(reply);
-    if (!Array.isArray(data?.patch)) throw new Error("\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01");
+    const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
+    if (!Array.isArray(data?.patch)) {
+      const error2 = new Error("\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01");
+      const source = typeof reply === "string" ? reply.trim() : "";
+      error2.raw = source.startsWith("{") || source.startsWith("[") ? source : source.match(/```json\s*([\s\S]*?)(?:```|$)/i)?.[1];
+      if (explicitUnresolved) error2.noRepair = true;
+      throw error2;
+    }
     const raw = JSON.stringify(data, null, 2);
     try {
       const notes2 = readUnresolvedDiagnostics(data.unresolved, sent);
@@ -18462,11 +18770,12 @@ ${tag2.textContent || ""}
         }
       });
       const rejected = [...conflicts, ...partition.rejected];
-      const blockedWarnings = new Set(sent.filter((warning) => rejected.some((item) => Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path.startsWith(`${warning.originPath}/`)))));
+      const blockedWarnings = new Set(sent.filter((warning) => rejected.some((item) => rejectedWarning(item, warning))));
       const eligibleWarnings = sent.filter((warning) => !blockedWarnings.has(warning));
-      if (rejected.length && !partition.accepted.length) {
-        throw new Error(rejected.map((item) => formatRejectedItem(item, current)).join("\uFF1B") || "\u6240\u6709\u8865\u4E01\u5747\u672A\u901A\u8FC7\u6821\u9A8C");
-      }
+      const repairWarnings = sent.filter((warning) => blockedWarnings.has(warning) && !notes2.some((note) => note.warning === warning) && !data.narrative?.some?.((reference) => identifiesWarning(reference, warning)));
+      const repairError = rejected.length ? Object.assign(new Error(rejected.map((item) => formatRejectedItem(item, current)).join("\uFF1B")), {
+        raw: JSON.stringify(rejected.map((item) => item.op))
+      }) : null;
       data.patch = partition.accepted.map((item) => item.op);
       const rootPath = (path2) => path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
       const operationsToApply = data.patch;
@@ -18515,9 +18824,10 @@ ${tag2.textContent || ""}
         if (!solved.includes(warning)) solved.push(warning);
       }
       const missing = missingDispositions(sent, solved, notes2, narrative);
-      if (missing.length && !acceptPartial && !patch.length) {
+      if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length) {
         const error2 = new Error(`\u672C\u6279\u6F0F\u7B54 ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}\u3002\u672C\u6279\u5C1A\u672A\u5199\u5165\uFF1B\u4FDD\u7559\u5DF2\u5B8C\u6210\u7684\u8865\u4E01\uFF0C\u91CD\u65B0\u63D0\u4EA4\u5B8C\u6574\u7ED3\u679C\u3002\u5DF2\u5B9E\u73B0\u7684\u6548\u679C\u8BF7\u5728\u5B9E\u9645\u4FEE\u6539\u7684\u64CD\u4F5C\u4E0A\u8865 resolves\uFF1B\u53EA\u521B\u5EFA\u4F9D\u8D56\u6A21\u677F\u8FD8\u987B\u63A5\u56DE\u539F\u6280\u80FD\u3002\u5176\u4F59\u9010\u9879\u5199 unresolved \u5E76\u8BF4\u660E\u539F\u56E0\uFF0C\u7EAF\u53D9\u4E8B\u624D\u5199 narrative\u3002`);
         error2.missingCoverage = true;
+        error2.missingWarnings = missing;
         throw error2;
       }
       const additions = [];
@@ -18572,9 +18882,9 @@ ${tag2.textContent || ""}
       reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
       scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272`;
       renderInstances();
-      return { applied: patch.length, data, notes: notes2, rejected };
+      return { applied: patch.length, data, notes: notes2, rejected, missing, repairWarnings, repairError };
     } catch (error2) {
-      error2.raw = raw;
+      error2.raw ??= raw;
       throw error2;
     }
   }
