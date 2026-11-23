@@ -353,7 +353,9 @@ export function createPlayback(root, { show, onIdle } = {}) {
   }
   function applyVisualLog(state, log) {
     const detail = log.detail ?? {};
-    const target = state.units?.[detail.targetId ?? log.actor];
+    // Cover damage records its own HP and identifies the cover, not a unit.
+    const target = detail.coverId != null || detail.targetKind === 'cover'
+      ? null : state.units?.[detail.targetId ?? log.actor];
     if (target) {
       if (Number.isFinite(detail.hpAfter)) target.hp = detail.hpAfter;
       if (Number.isFinite(detail.mpAfter)) target.mp = detail.mpAfter;
