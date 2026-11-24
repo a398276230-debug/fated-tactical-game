@@ -1,12 +1,12 @@
 import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
-import { damageTypes, validateStatusModifiers } from '../core/status_modifiers.js';
+import { damageTypes, validateStatusModifiers } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 
 import { MORALE, moraleLabels } from '../core/combat_protocol.js';
 import { timeOfDay } from '../core/battle_time.js';
-import { validVmOpcode, vmRuleError, vmStatModError, validVmTag, validVmSourceSkillId, vmHooks } from '../core/vm-schema.js';
+import { validVmOpcode, vmRuleError, vmStatModError, validVmTag, validVmSourceSkillId, vmHooks, carrierFields, validCarrierScalar } from '../core/vm-schema.js';
 import { validVmState } from '../core/vm-runtime.js';
 
 function validateRules(rules, state) {
@@ -37,8 +37,12 @@ const statusLabels = ['name', 'icon', 'category', 'description'];
 const maxStatusStacks = 999999;
 export const maxStatusTemplates = 64;
 export const has = (record, key) => id(key) && own(record ?? {}, key);
-export function fields(v, required, optional = []) {
-  requireThat(plain(v) && required.every(k => own(v, k)) && Object.keys(v).every(k => required.includes(k) || optional.includes(k)), required.join('/') || '对象键');
+export function fields(v, required, optional = [], entityLabel = '对象') {
+  requireThat(plain(v), entityLabel);
+  const missing = required.filter(key => !own(v, key));
+  const unsupported = Object.keys(v).filter(key => !required.includes(key) && !optional.includes(key));
+  if (missing.length) error(`${entityLabel}缺少必填字段：${missing.join('、')}`);
+  if (unsupported.length) error(`${entityLabel}包含不支持的字段：${unsupported.join('、')}`);
 }
 export function checkOptional(o, key, check) { if (own(o, key)) requireThat(check(o[key]), key); }
 export function table(v, test, max = 200) {
@@ -52,26 +56,20 @@ function dice(v) {
   checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
   checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
 }
-const damageEvents = ['on_attack','on_hit','on_damaged','on_kill','on_death','on_turn_start','on_turn_end','on_skill_cast','on_equip','on_heal','on_ally_death','on_struck'];
-function nativeExpiry(value) {
-  const valid = rule => plain(rule) && damageEvents.includes(rule.trigger)
-    && Object.keys(rule).every(key => ['trigger', 'exceptSource', 'damageType'].includes(key))
-    && (!own(rule, 'exceptSource') || rule.exceptSource === 'self')
-    && (!own(rule, 'damageType') || rule.trigger === 'on_damaged' && ['any', 'direct', 'indirect'].includes(rule.damageType));
-  return Array.isArray(value) ? value.length <= 12 && Array.from(value).every(valid) : valid(value);
+function vmExpiry(value) {
+  const rules = Array.isArray(value) ? value : [value];
+  return rules.length > 0 && rules.every(rule => plain(rule) && vmHooks.includes(rule.hook)
+    && Object.keys(rule).every(key => ['hook', 'filter'].includes(key))
+    && (!own(rule, 'filter') || typeof rule.filter === 'boolean' || typeof rule.filter === 'string' && validExpr(rule.filter)));
 }
-const vmExpiry = value => plain(value) && vmHooks.includes(value.hook)
-  && Object.keys(value).every(key => ['hook', 'filter'].includes(key))
-  && (!own(value, 'filter') || typeof value.filter === 'boolean' || typeof value.filter === 'string' && validExpr(value.filter));
 const stackModes = ['refresh', 'stack', 'replace', 'extend'];
-const carrierFields = ['tags', 'tier', 'vars', 'flags', 'mods', 'rules'];
 const numericExpr = value => Number.isFinite(value) || typeof value === 'string' && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
   if (own(value, 'tags')) list(value.tags, 32, resolved ? tag => text(tag) : validVmTag, 'VM 标签');
   if (own(value, 'flags')) list(value.flags, 8, flag => ['undispellable', 'concept_immune'].includes(flag), 'VM 标记');
   checkOptional(value, 'tier', tier => int(tier, 1, 7));
   if (own(value, 'vars')) table(value.vars, entry => requireThat(resolved ? jsonTree(entry)
-    : typeof entry === 'boolean' || numericExpr(entry), 'VM 变量'));
+    : validCarrierScalar(entry), 'VM 变量'));
   if (own(value, 'mods')) list(value.mods, 200, mod => {
     const error = vmStatModError(mod);
     requireThat(!error, error);
@@ -115,7 +113,7 @@ function statusLifetime(v) {
 function nativeStatusTemplate(v, key) {
   fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers'], ['expireInto', 'expireOn']);
   checkOptional(v, 'expireInto', id);
-  checkOptional(v, 'expireOn', nativeExpiry);
+  checkOptional(v, 'expireOn', vmExpiry);
   requireThat(id(key) && v.id === key, '自定义状态 ID');
   requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300)
     && ['buff', 'debuff', 'control', 'dot', 'hot', 'shield'].includes(v.category), '状态名/图标/描述/类别');
@@ -214,7 +212,6 @@ export function statusValue(v, key, state, ownerId) {
     const template = getStatusTemplate(state, key);
     const { vars, modifiers, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
     if (template?.modifiers) {
-      if (own(definition, 'expireOn') && nativeExpiry(definition.expireOn)) delete definition.expireOn;
       if (own(rest, 'modifiers')) validateStatusModifiers(template, modifiers);
       if (own(rest, 'stackRule')) requireThat(statusStackRules.includes(stackRule), '原生状态叠层');
       if (own(rest, 'tickTiming')) requireThat(statusTickTimings.includes(tickTiming), '原生状态时机');
@@ -245,7 +242,7 @@ export function statusValue(v, key, state, ownerId) {
   checkOptional(v, 'stackMode', mode => stackModes.includes(mode));
   carrierFieldsValue(v, state, true);
   checkOptional(v,'holdTotal',x=>v.id==='suppressed' && Number.isFinite(x));
-  checkOptional(v, 'expireOn', x => x === null || nativeExpiry(x));
+  checkOptional(v, 'expireOn', x => x === null || vmExpiry(x));
   requireThat(v.expireInto === t.expireInto, '状态到期目标');
   requireThat(v.id === key && statusLabels.every(k => v[k] === t[k]) && statusLifetime(v)
     && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks)
@@ -289,7 +286,7 @@ export function unitValue(v, key, state) {
   requireThat(v.facing.length === 2 && v.facing.some(Boolean), '朝向');
   for (const [r, max] of [['hp','maxHp'], ['mp','maxMp'], ['sp','maxSp']]) requireThat((v.pools ? num : int)(v[max], r === 'hp' ? 1 : 0, 1000000000) && (v.pools ? num : int)(v[r], 0, v[max]), r);
   fields(v.used, ['action', 'attack']); fields(v.stats, attrs);
-  requireThat(attrs.every(k => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2)
+  requireThat(attrs.every(k => int(v.stats[k], -20, 50)) && int(v.ap, 0, v.apMax ?? 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2)
     && int(v.armor, 0, 1000000) && int(v.size, 1, 5) && int(v.move, 0, 1000000), '单位数值');
   requireThat(v.weapon === null || id(v.weapon), 'weapon');
   for (const slot of ['mainHand','offHand','shield']) checkOptional(v, slot, x => x === null || id(x));
@@ -370,7 +367,7 @@ function tapeValue(tape, state) {
     return true;
   }, 'VM 磁带');
 }
-function validatePools(state) {
+export function validatePools(state) {
   const bindings = new Map();
   const add = (ownerKind, owner) => {
     for (const [key, poolId] of Object.entries(owner.pools ?? {})) {
@@ -397,7 +394,10 @@ function validatePools(state) {
       && num(pool.max, 0, Number.MAX_VALUE) && (!own(pool, 'initialMax') || num(pool.initialMax, 0, Number.MAX_VALUE))
       && num(pool.current, 0, pool.max) && typeof pool.reloadable === 'boolean', '资源池');
     const owners = bindings.get(key);
-    requireThat(owners?.size > 0 && (pool.kind !== 'custom' || owners.size === 1), '资源池归属');
+    if (!owners?.size) error(`资源池 ${key} 是无人引用的孤儿池`);
+    if (pool.kind === 'custom' && owners.size > 1) {
+      error(`自定义资源池 ${key} 被多个实体重复绑定（${[...owners.keys()].join('、')}）。请在模板 /equipment/<id>/pools 或 /skills/<id>/pools 声明自定义池，实例 /units/.../pools 或 /items/.../pools 只保存绑定。`);
+    }
     list(pool.contributors, 200, contribution => {
       fields(contribution, ['ownerKind', 'ownerId', 'maxBase'], ['initialMaxBase']);
       const ownerKey = `${contribution.ownerKind}/${contribution.ownerId}`;
@@ -405,14 +405,14 @@ function validatePools(state) {
         && num(contribution.maxBase, 0, Number.MAX_VALUE)
         && (!own(contribution, 'initialMaxBase') || num(contribution.initialMaxBase, 0, Number.MAX_VALUE)) && owners.delete(ownerKey);
     }, '资源池贡献者');
-    requireThat(owners.size === 0, '资源池绑定');
+    if (owners.size) error(`资源池 ${key} 的贡献者未完整匹配：${[...owners.keys()].join('、')}`);
     if (own(pool, 'initialMax')) {
       const initialTotal = pool.contributors.reduce((sum, contribution) => sum + (contribution.initialMaxBase ?? contribution.maxBase), 0);
       requireThat(pool.initialMax === initialTotal, '资源池初始上限');
     }
     bindings.delete(key);
   }
-  requireThat(bindings.size === 0, '资源池引用');
+  if (bindings.size) error(`资源池引用错误：${[...bindings.keys()].join('、')} 未在资源池表中声明（或存在无效 poolId）`);
   for (const unit of Object.values(state.units)) {
     for (const [kind, maxKey] of [['hp', 'maxHp'], ['mp', 'maxMp'], ['sp', 'maxSp']]) {
       const pool = pools[unit.pools?.[kind]];

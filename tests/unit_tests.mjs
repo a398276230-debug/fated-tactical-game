@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { createGameAPI, calculatePrebattleResources, protocolDistance } from '../src/api/game_api.js';
 import { bodySizeLabel } from '../src/core/combat_protocol.js';
 import { preview } from '../src/core/combat.js';
-import { validateState } from '../src/api/validation.js';
+import { validateState, validatePools } from '../src/api/validation.js';
 import { getPool } from '../src/core/vm-pools.js';
 import { validVmRule } from '../src/core/vm-schema.js';
 import { resourceLabel } from '../src/core/resource_names.js';
@@ -62,6 +62,13 @@ test('实例资源池声明、命名、转换诊断与战报标签', () => {
   const {current, max} = getPool(state, 'soulblade-lan', 'souls', 'item');
   assert.deepEqual({current, max}, {current:0, max:10});
   validateState(state);
+  const orphan = structuredClone(state);
+  orphan.pools.pool_orphan = { id: 'pool_orphan', kind: 'custom', contributors: [], current: 0, max: 1, reloadable: false };
+  assert.throws(() => validateState(orphan), /资源池 pool_orphan 是无人引用的孤儿池/);
+  const missing = structuredClone(state);
+  const missingPoolId = missing.units.swordsman.pools.hp;
+  delete missing.pools[missingPoolId];
+  assert.throws(() => validatePools(missing), new RegExp(`资源池引用错误：${missingPoolId}`));
   for (const mode of ['add', 'set', 'sub']) {
     for (const key of ['魂数','has space','','constructor','prototype']) assert.equal(validVmRule(rule(key, mode)), false, key);
     assert.equal(validVmRule(rule('kill-charge_2', mode)), true);

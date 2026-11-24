@@ -28,7 +28,27 @@ const expr = ref('expr');
 const numericExpr = either(number, formula);
 const booleanExpr = either(bool, formula);
 const entityId = either(id, variable);
-const damageType = enumOf('physical', 'energy', 'mental', 'true');
+export const damageTypes = Object.freeze(['physical', 'energy', 'mental', 'true']);
+const damageType = enumOf(...damageTypes);
+const modifierRanges = {
+  damage: [1, 100000], heal: [1, 100000], amount: [1, 100000], reflect: [1, 100000], armor: [1, 100000],
+  movement: [-3, 3], accuracy: [-10, 10], incomingAccuracy: [-10, 10], advantage: [1, 3], disadvantage: [1, 3], intentDifficulty: [-10, 10],
+  reduction: [0, 1], vulnerability: [0, 1], shatter: [0, 1], damageBonus: [0, 1], dodgeBonus: [-30, 30], attackPercent: [-1, 4],
+  attributePercent: [-1, 4], finalDamageMultiplier: [0, 8],
+};
+Object.assign(modifierRanges, { armor: [-100000, 100000] });
+const modifierRatios = new Set(['reduction', 'vulnerability', 'shatter', 'damageBonus', 'attackPercent', 'attributePercent', 'finalDamageMultiplier']);
+const modifierFlags = new Set(['taunted', 'intercept', 'skip', 'rooted', 'hidden', 'infiniteAmmo', 'guaranteed_hit', 'guaranteed_crit', 'blockResourceRestore', 'preserveLife']);
+export function validateStatusModifiers(template, modifiers) {
+  if (!modifiers || Object.getPrototypeOf(modifiers) !== Object.prototype) throw new Error('modifiers 必须为对象');
+  for (const [key, value] of Object.entries(modifiers)) {
+    if (!Object.hasOwn(template.modifiers, key)) throw new Error(`${template.id} 不允许覆盖状态参数 ${key}`);
+    const range = modifierRanges[key];
+    const valid = range ? (modifierRatios.has(key) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range[0] && value <= range[1]
+      : key === 'damageType' ? damageTypes.includes(value) : modifierFlags.has(key) && typeof value === 'boolean';
+    if (!valid) throw new Error(`无效状态参数 ${template.id}.${key}`);
+  }
+}
 const attribute = enumOf('str', 'agi', 'con', 'int', 'spi');
 const slot = enumOf('attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport');
 const point2 = object({ x: number, y: number }, ['x', 'y']);
@@ -69,7 +89,7 @@ export const opNotes = Object.freeze({
   check: 'chance 必填 dc（d100 不高于阈值即通过）。走统一检定和随机数管线，按结果进入 onPass 或 onFail；out 写裸名称；后续通过 vars.<名称> 读取。rawNatural:true 使用原始自然骰，忽略 after_natural_roll 的骰面替换。',
   ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择：first 保留候选顺序，数值 max/min 取端点；进攻格/安全格分别靠近/远离最近存活敌人；highest_threat 优先存活敌人，同类按最高进攻属性排序；多选取排序前 maxSelect 个。选格和选实体用 select，选项用 options，数值用 min/max。entity 的 maxSelect 开启多选，将 ID 数组写入 out，for_each 以 {from:"vars.<名称>"} 遍历。out 写裸名称，单选实体可用 vars.<名称> 作目标。',
   damage: '走完整伤害和致死管线，out 记录实际扣血量，写裸名称、读 vars.<名称>。裸扣资源使用 resource。',
-  heal: '仅治疗存活且允许受疗的单位，经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
+  heal: '治疗存活或仍在 on_lethal_p1/p2 结算中的单位，经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
   resource: '直接改资源池并经过落盘拦截。pool 与 otherPool 支持池 ID 或 vars.<名称>，pool 也可用引用数组；数值表达式用 resource(self, vars.<名称>) 读取动态余额。内置池 hp/mp/sp 或伪池 attack/action/move：前两者表示本回合未用槽位，move 表示剩余移动格；mode 用 add/sub/set。add_max/sub_max/set_max 改 HP/MP/SP 上限并同步镜像，minRemain 可限制最低上限；swap 使用单个 pool 和 otherPool。',
   link_pool: '用 units 选择单位，将指定的 HP/MP/SP 池合并共享或拆回独立池。',
   apply_status: '施加已注册的状态模板，vars 求值后存入状态。ignoreImmunity:true 明确激活免疫穿透，并按载体位格、角色层级、同层 contest 裁定；否则 before_status 免疫始终生效。',
@@ -109,6 +129,7 @@ when('stat', multiplierStats, { not: needs('flat') }),
 when('stat', enumOf('checkBonus', 'initiativeFlat'), { not: { anyOf: [needs('mult'), needs('additivePercent')] } }));
 const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
+export const vmExpiry = either(expireRule, list(expireRule, 1));
 const spawnRadius = either({ type: 'number', minimum: 0 }, formula);
 const area = object({
   shape: enumOf('single', 'circle', 'ring', 'fan', 'cone', 'line', 'rect'),
@@ -124,7 +145,11 @@ const zoneArea = withRules(object({
   radius: spawnRadius, innerRadius: spawnRadius,
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
-const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')) };
+const scalarOrExpr = either(number, bool, { type: 'string', maxLength: 1024 });
+const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')) };
+export const carrierFields = Object.freeze(Object.keys(carrier).filter(key => key !== 'name'));
+export const statusPatchFields = Object.freeze(['remainingTurns', 'durationType', 'stackMode', 'stacks', 'expireOn', ...carrierFields]);
+export const validCarrierScalar = value => Number.isFinite(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= scalarOrExpr.anyOf[2].maxLength);
 const spawnSpecs = {
   unit: withRules(object({
     ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula), remainingTurns: spawnTurns,
@@ -162,7 +187,7 @@ const opcodeSchemas = [
   when('mode', enumOf('add', 'sub', 'set', 'add_max', 'sub_max', 'set_max'), { ...needs('amount'), not: needs('otherPool') })),
   opcode('link_pool', { units: selector, pools: list(enumOf('hp', 'mp', 'sp'), 1), mode: enumOf('link', 'unlink') }, ['units', 'pools', 'mode']),
   opcode('apply_status', { target, statusId: dynamicStatusId, ignoreImmunity: bool, turns: numericExpr, stacks: numericExpr, stackMode: enumOf('refresh', 'stack', 'replace', 'extend'),
-    extendTurns: numericExpr, vars: mapOf(id, either(expr, { type: 'string', pattern: '^[A-Za-z0-9_\\u4e00-\\u9fa5-]{1,64}$' })), expireOn: ref('expireRule') }, ['target', 'statusId']),
+    extendTurns: numericExpr, vars: carrier.vars, expireOn: ref('expiry') }, ['target', 'statusId']),
   opcode('remove_status', { target, where: booleanExpr, force: bool, reason: enumOf('dispelled', 'cleansed', 'expired'), outCount: id }, ['target', 'where']),
   opcode('mutate_event', { patch: either(...Object.keys(patchSchemas).map(name => ref(`patch_${name}`))) }, ['patch']),
   opcode('move', { target, mode: enumOf('teleport', 'step', 'push', 'pull', 'altitude'),
@@ -193,6 +218,7 @@ const defs = {
 
   targetRef: either(enumOf(...scopes), variable, selector),
   expireRule,
+  expiry: either(ref('expireRule'), list(ref('expireRule'), 1)),
   statMod,
   controlPolicy,
   ...Object.fromEntries(Object.entries(patchSchemas).map(([name, schema]) => [`patch_${name}`, schema])),

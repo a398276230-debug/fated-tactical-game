@@ -57,7 +57,8 @@ function statusNotes(detail) {
   if (detail.expireOn) {
     const triggers = [].concat(detail.expireOn).map(rule => {
       const qualifier = rule.damageType === 'direct' ? '受到直接伤害' : rule.damageType === 'indirect' ? '受到间接伤害'
-        : expiryEvents[rule.trigger] ?? { after_damage: '受到伤害', after_hit: '命中', turn_start: '回合开始', turn_end: '回合结束' }[rule.hook] ?? '满足条件';
+        : expiryEvents[rule.trigger] ?? { after_damage: '受到伤害', after_hit: rule.filter?.includes?.('target.id == self.id') ? '受到命中' : '命中',
+          after_action: '行动结束', turn_start: '回合开始', turn_end: '回合结束' }[rule.hook] ?? '满足条件';
       return qualifier + (rule.exceptSource === 'self' ? '（自身来源除外）' : '');
     });
     parts.push(`${triggers.join('或')}时解除`);
