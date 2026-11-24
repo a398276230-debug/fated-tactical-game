@@ -34,7 +34,7 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 | `check` | 概率/DC 检定，分流 `onPass/onFail` |
 | `ask` | 可挂起的玩家/AI 选择，结果写入 `vars` |
 | `damage` | 走统一伤害和致死管线 |
-| `heal` | 走治疗倍率、拦截和 `on_heal` |
+| `heal` | 走治疗倍率、拦截和 `after_heal` |
 | `resource` | 资源池 add/sub/set 及 max 操作 |
 | `link_pool` | 合并或拆分单位资源池 |
 | `apply_status` | 施加 VM 状态，支持免疫穿透裁定 |
@@ -62,7 +62,7 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 
 ## 5. Selector、spawn 和状态引用
 
-selector 用 `where`、`team`、`kind`、`area`、`limit` 和排序字段选择实体；纯 selector 才能用于载体共享规则。`spawn` 的 `entityKind` 决定 spec：unit 支持 `templateId/copyOf/spawnPanel/count`，zone/terrain/cover 使用区域和剩余回合，item 支持模板与数量。生成 ID 由已用数字后缀确定性递增。
+selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`、`origin`、`sort` 等 schema 字段；纯 selector 才能用于载体共享规则。`event.<field>` 只允许 `vm-schema.js` 导出的 `EVENT_SCALAR_KEYS` 闭合白名单，未知字段在 schema 阶段拒绝；表达式运行时仍对缺失字段返回 `null`。`spawn` 的 `entityKind` 决定 spec：unit 支持 `templateId/copyOf/spawnPanel/count`，zone/terrain/cover 使用区域和剩余回合，item 支持模板与数量。生成 ID 由已用数字后缀确定性递增。
 
 状态引用使用 `statusId`、`status.vars.<key>`、`status.stacks` 和 `status.remainingTurns`。所有入口生成同一种 VM 状态实例；状态效果不再使用原生修饰对象。
 
@@ -78,8 +78,9 @@ selector 用 `where`、`team`、`kind`、`area`、`limit` 和排序字段选择�
 
 1. `vm-schema.js` 进行闭合字段、枚举、范围、hook 和 opcode 结构校验。
 2. `validation.js` 校验模板、实例、单位、资源池和完整 state。
-3. `vm-runtime.js` 收集当前 hook 的规则并创建可序列化 frame。
-4. `vm-rules.js` 逐步执行 frame；`ask` 可挂起且恢复不会重掷或重复扣费。
+3. `tactical-vm.js` 负责 frame、hook 调度和可序列化 VM host。
+4. `vm-runtime.js` 收集当前 hook 的规则并创建 frame。
+5. `vm-rules.js` 逐步执行 frame；`ask` 可挂起且恢复不会重掷或重复扣费。
 5. `vm-commit.js` 事务性写回并记录日志。
 
 旧的 `effect_schema.js`、`effects.js`、`effect-protocol.js` 不属于现行 DSL；旧输入只在酒馆 converter 的兼容摄取路径中转成 VM 结构。

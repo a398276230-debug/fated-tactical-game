@@ -13,7 +13,7 @@
 
 ## 2. 分层
 
-- `src/core/`：纯战术规则、VM schema/runtime、空间、随机数、战斗流程；不依赖 API、酒馆或 DOM。
+- `src/core/`：纯战术规则、VM schema/runtime、空间、随机数、战斗流程；`util.js` 是零依赖工具叶子，`status-application.js` 统一状态施加；不依赖 API、酒馆或 DOM。
 - `src/api/`：状态校验、命令事务、快照、战报文本投影。
 - `src/presets/`：场景、装备、技能和内置 VM 状态模板。
 - `src/tavern/`：MVU/char_info/battle_init 摄取、辅助 AI、标准化、overlay 和宿主桥。
@@ -25,13 +25,9 @@
 
 ### Combat
 
-`src/core/combat.js` 是公共 barrel facade，完整实现位于 `src/core/combat-actions.js`。职责入口如下：
+`src/core/combat.js` 是公共 barrel facade，当前完整实现位于 `src/core/combat-actions.js`。四个历史空壳 combat 子模块已删除；`combat-actions.js` 与 `vm-runtime.js` 仍有待后续解耦的跨层入口，当前不宣称核心层完全无环。职责入口如下：
 
-- `combat-modifiers.js`：伤害减免、装备/武器、护盾和 VM 修饰结果导出。
-- `combat-status.js`：状态模板、授予、日志快照、存活/结果导出。
-- `combat-turn.js`：开局、先攻、回合和轮次推进。
-- `combat-geo-preview.js`：可达性、可见性、目标和预览。
-- `combat-actions.js`：动作执行和上述实现的统一依赖节点。
+- `combat-actions.js`：状态、修饰、几何预览、回合推进和动作执行的当前统一实现节点。
 
 所有旧调用仍从 `combat.js` 加载；门面不得改变导出名或 DOM/宿主契约。
 
@@ -47,11 +43,12 @@ MVU 是数值、装备和技能权威；battle_init 只负责站位、朝向、�
 
 ### Tavern overlay
 
-`src/tavern/overlay.js` 是宿主挂载门面，浏览器实现位于 `overlay-sources.js`：
+`src/tavern/overlay.js` 是宿主挂载门面，浏览器实现按职责拆在以下模块：
 
 - `overlay-ai.js`：请求、流式响应、JSON/JSON Patch 解析。
 - `overlay-patch.js`：patch 应用、标准化分区和聊天 patch。
 - `overlay-diagnostics-view.js`：来源包和诊断导出。
+- `overlay-mount.js`：宿主挂载与 DOM 编排。
 
 拆分不改变既有元素 `id`、`class`、`data-*` 选择器、宿主事件总线事件名或入口正则。
 

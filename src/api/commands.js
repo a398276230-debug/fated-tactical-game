@@ -187,6 +187,8 @@ const commands = {
     }
   },
 };
+export const COMMAND_TYPES = Object.freeze(Object.keys(commands));
+
 export function applyCommand(state, command) {
   check(plain(command) && has(commands, command.type), '命令类型');
   // Transactions retain the original command. Never insert reference-bearing input into mutable battle state.

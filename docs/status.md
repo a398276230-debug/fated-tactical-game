@@ -1,6 +1,6 @@
 # VM 状态系统
 
-权威模板位于 `src/presets/status-defaults.js` 的 `STATUSES`，校验位于 `src/api/validation.js`，运行时载体和 modifier 聚合位于 `src/core/vm-carriers.js`。当前共有 27 个内置状态。
+权威模板位于 `src/presets/status-defaults.js` 的 `STATUSES`，校验位于 `src/api/validation.js`，运行时载体和 modifier 聚合位于 `src/core/vm-carriers.js`。当前共有 26 个内置状态。
 
 ## 1. 统一模板和实例
 

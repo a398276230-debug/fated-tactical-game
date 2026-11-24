@@ -32,7 +32,7 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 - **装备槽位与姿态**：`mainHand` / `offHand` / `shield`，兼容旧 `weapon`；装备模板声明武器类别、单双手、远程、盾牌和消耗品；预设包含轻剑、双持、同调、重剑与剑盾示例。
 - **意图与骰池**：单体攻击可声明机能限制、核心要害、抹杀或概念破碎；记录意图对抗结果，失败回退普通伤害；范围攻击不使用身体部位意图。奖励骰上限 2，惩罚骰上限 1，支持 3d20 取中、确定性 RNG、快照重放。
 - **战术动作**：蓄力、定位、探察、擒抱、缴械、绊摔、推撞、逃跑、绕行、格挡和盾击有真实 AP/检定/状态/日志路径。倒地和擒抱阻止移动但不阻止攻击；缴械后攻击回退徒手。
-- **生命周期**：持续区域回合开始结算，亡语基础触发，战意和逃跑基础结算，非致死将 HP 保持在 1，快照 v2 保存这些状态。
+- **生命周期**：持续区域回合开始结算，亡语基础触发，战意和逃跑基础结算，非致死将 HP 保持在 1；战局快照使用 `battleVersion = 11`，不跨版本恢复。
 - **姿态细则**：轻剑移动攒奖励骰；同调副手消耗品两次免费使用；重剑防御姿态弹反额度、60%减伤和一次完美弹反返还；剑盾格挡/重格挡入口；双持副手追击基础路径。
 
 ### 明确不做或仍有限制
@@ -95,7 +95,7 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 | 接口 | 含义 |
 |---|---|
 | `createBattle('ruins')` | 支持 `ruins/altar/boss`，或 `{scenarioId,seed,mode,persistentSnapshot}`；也接受完整 `kind:'battle'` 快照。 |
-| `exportBattleSnapshot()` / `restoreBattleSnapshot(snapshot)` | v2 格式 `{kind:'battle',version,origin,state,journal}`。恢复时校验状态并逐笔重放，不符则拒绝。v1 旧档按最终棋盘续打，不反算借机规则、不迁移旧撤销历史。 |
+| `exportBattleSnapshot()` / `restoreBattleSnapshot(snapshot)` | `version: 11` 格式 `{kind:'battle',version,origin,state,journal}`。恢复时校验状态并逐笔重放；版本不等于 11 时拒绝，不提供 v1/v2 续打兼容。 |
 | `exportPersistentCarryOver()` | `{kind:'persistent',version,units,items,statusTemplates?}`。常驻状态以单位 ID 匹配；装备实例和计数保留，无对应单位的装备进入库存。它不是整局存档或酒馆正式结算包。 |
 | `exportBattleReport()` / `exportBattleReportText()` | 前者保留分轮事件、公式、命令和修正理由；后者返回供 AI 扩写的纯文本，只保留战况事实。 |
 | `getStateSummary()` / `listUnits()` / `inspectUnit(id)` / `listStatusTemplates()` / `listActionLogs(limit)` | 轻量查询；克隆输出。日志 `limit` 为 0–200，缺省 10。UI 可用 `getBattleState()` 获取完整数据。 |
@@ -103,29 +103,31 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 | `proposeCommands(commands,{baseRevision,reason})` | 1–32 条原子试算。成功返回 `{ok:true,dryRun:true,proposalId,baseRevision,reason,diff}`；失败返回错误，不改状态、RNG 或日志。`diff` 的 `path` 为键／数组下标列表，增删省略一侧。 |
 | `commitProposal(proposalId)` / `undoLastCommit()` | 只提交基准 revision 仍有效的提案，提交后即失效。撤销还原完整事务（含 RNG、日志、装备和规则），但 API revision 继续递增，旧提案不能复活。 |
 
-命令白名单（未列出的键拒绝；`patch` 不可为空；模板数组整体替换，模板内仍有独立字段校验）：
+命令白名单（共 15 项；未列出的键拒绝；`patch` 不可为空；模板数组整体替换，模板内仍有独立字段校验）：
 
 | `type` | 附加字段 |
 |---|---|
 | `set_unit_stat` | `unitId, patch`；可设 `hp/mp/sp/ap/x/y/team` 和 `stats:{str,agi,con,int,spi}` 的子集。 |
 | `define_status_template` | `template`（新 ID，不覆盖内置或已登记模板）；登记后可在同一批里挂到单位或引用到已有模板。 |
-| `upsert_status` / `remove_status` | `unitId,statusId`；前者可选 `options:{remainingTurns,durationType,stacks,stackRule,tickTiming,amount,sourceUnitId}`。`amount` 仅用于护盾，嘲讽需要敌对来源。 |
-| `adjust_item_counter` | `instanceId,counterKey,operation:'add'|'set',value`。 |
+| `patch_status` | `unitId,statusId,patch`；只修改现行 VM 字段。 |
+| `upsert_status` / `remove_status` | `unitId,statusId`；前者可选 `options:{remainingTurns,durationType,stacks,stackMode,amount,sourceId,vars}`。`amount` 仅用于护盾，嘲讽需要敌对来源。 |
+| `adjust_pool` | `ownerKind,ownerId,key,operation:'add'|'set'|'swap',value`。 |
 | `patch_equipment_template` / `patch_skill_template` | `templateId,patch`；字段见 `src/presets/catalog.js`，不能更换装备槽类型或计数器定义。 |
 | `spawn_unit` / `remove_unit` | `unit`（完整战斗实例，可从 `getBattleState().units` 中参考）／`unitId`。增援进入队列末尾。 |
 | `equip_item` | `instanceId,unitId`，`unitId:null` 表示卸下到库存。 |
 | `set_terrain_cell` / `set_interactive_status` | `{x,y,patch:{kind?,z?}}`／掩体 `{id,hp}` 或互动点 `{id,spent}`。 |
+| `set_zone` / `remove_zone` | `zone`／`zoneId`；区域只能通过 VM 合法结构进入战局。 |
 | `replay_or_undo` | 唯一命令 `{operation:'undo'}`，先试算再撤销；全局重放由快照恢复完成。 |
 
 例如在右侧沙盒选择「装备计数」，或粘以下 JSON，点「试算 Diff 预览」再「确认提交」，之后可点「撤销」：
 
 ```json
-[{"type":"adjust_item_counter","instanceId":"soulblade-lan","counterKey":"souls","operation":"add","value":1}]
+[{"type":"adjust_pool","ownerKind":"item","ownerId":"soulblade-lan","key":"souls","operation":"add","value":1}]
 ```
 
 沙盒「自定义状态」会填入一批 `define_status_template` + `upsert_status`，定义「蚀骨寒霜」（回合初 3 点能量伤害＋移动 −1）并施加到选中单位。自定义模板可以组合持续伤害／治疗、移动、护甲、命中、优势／劣势、增减伤和反伤等现有算子；不接收脚本、新触发器或任意公式。已有技能通过 `effects:[{kind:'status',statusId:'bone_frost'}]` 引用；例如反伤装备可把既有 `frost_thorns` 的 `statusId` 改为该 ID。定义与实例都参与试算、快照和撤销；跨战携带定义以及标记为 `persistent` 的状态实例。
 
-第 2 层接入应通过 `GameAPI` 读写，不绕过校验修改引擎内部状态。先在目标酒馆的测试聊天验证扩展载入、聊天/分支/消息定位、独立存取和战报填入输入框（不自动发送）；再验证世界书与 MVU 的读写、消息继承和幂等写回。具体门禁见 [阶段性报告](STAGE_REPORT.md#第-2-层开工门禁)。第 3 层辅助 AI 继续走轻量查询与命令试算，不应直接改内部对象。当前没有宿主写回、持久战役库或辅助模型。
+第 2 层接入应通过 `GameAPI` 读写，不绕过校验修改引擎内部状态。先在目标酒馆的测试聊天验证扩展载入、聊天/分支/消息定位、独立存取和战报填入输入框（不自动发送）；再验证世界书与 MVU 的读写、消息继承和幂等写回。具体门禁见 [阶段性报告](STAGE_REPORT.md#第-2-层开工门禁)。第 3 层辅助 AI 继续走轻量查询与命令试算，不应直接改内部对象；酒馆辅助标准化与敌方战术 AI 均已接入现行协议。
 
 ## 实测
 

@@ -6,7 +6,7 @@
 | --- | --- |
 | [architecture.md](architecture.md) | 架构分层、入口、状态模型、事务、酒馆数据流和拆分后的模块边界 |
 | [dsl.md](dsl.md) | Tactical VM 的 hooks、opcodes、selectors、stat mods、表达式和公式 |
-| [status.md](status.md) | 27 个内置 VM 状态、实例结构、生命周期、战报投影 |
+| [status.md](status.md) | 26 个内置 VM 状态、实例结构、生命周期、战报投影 |
 | [battle-types.md](battle-types.md) | `battle_init`、棋盘、比例尺和战场声明格式 |
 
 ## 当前规模
@@ -15,8 +15,8 @@
 
 - `src/core/vm-schema.js`：26 个 `vmHooks`、17 个 `vmOpcodes`。
 - `src/core/vm-carriers.js`：7 个控制槽位：`attack`、`action`、`move`、`cast`、`reaction`、`fly`、`teleport`。
-- `src/presets/status-defaults.js`：27 个内置状态。
-- `src/core/combat.js`、`src/tavern/converter.js`、`src/tavern/overlay.js` 是稳定公共门面；实现分别位于 `combat-actions.js`、`converter-unit.js`、`overlay-sources.js`，并由职责模块提供分组导出。
+- `src/presets/status-defaults.js`：26 个内置状态。
+- `src/core/combat.js` 是公共门面，当前实现位于 `combat-actions.js`；`src/tavern/converter.js` 聚合 `converter-parse.js`、`converter-effects.js`、`converter-unit.js`、`converter-patch.js`；`src/tavern/overlay.js` 聚合 AI、patch、sources、diagnostics-view 和 mount 实现。
 - `src/core/formula.js` 提供安全表达式解析器，不使用 JavaScript `eval`。
 
 ## 运行与验证
