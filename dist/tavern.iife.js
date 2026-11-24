@@ -16284,9 +16284,16 @@ ${variables2.warnings()}` : "");
     const trace = { relay: settings.apiTransport === "tavern", reasoning: 0 };
     const extract = (event) => {
       const choice = event.choices?.[0];
+      const candidate = event.candidates?.[0];
       const reasoning = (choice?.delta || choice?.message)?.reasoning_content;
       if (typeof reasoning === "string") trace.reasoning += reasoning.length;
-      if (choice?.finish_reason) trace.finish = choice.finish_reason;
+      for (const part of candidate?.content?.parts ?? []) {
+        if (part.thought && typeof part.text === "string") trace.reasoning += part.text.length;
+      }
+      for (const block of Array.isArray(event.content) ? event.content : [event.delta ?? event.content_block]) {
+        if (["thinking", "thinking_delta"].includes(block?.type) && typeof block.thinking === "string") trace.reasoning += block.thinking.length;
+      }
+      trace.finish = choice?.finish_reason ?? candidate?.finishReason ?? event.stop_reason ?? event.delta?.stop_reason ?? trace.finish;
       return deltas(source, event);
     };
     if (stream && res.body?.getReader && (trace.relay || !/application\/json/i.test(res.headers?.get?.("content-type") || ""))) {
