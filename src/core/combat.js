@@ -850,7 +850,6 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     souls: weapon?.souls ?? 0, checkKind: 'attack' };
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, 'guaranteed_crit'));
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, 'guaranteed_hit'));
-  const tierUp = false;
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
   const dodge = execution || cover ? 0 : modStat(state, target, 'dodge', modCheck(state, target, 'dodgeBonus', { target: actor })
     + modCheck(state, target, 'dodgeAgility', { target: actor }) + changes(target, 'dodgeBonus'),
@@ -901,7 +900,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const saveChance = saveStat ? saveOdds(saveDC, saveBonus) : 0;
   const areaStrike = hasStrikeDamage(template) && (template.shape ?? 'single') !== 'single';
   const automatic = areaStrike || !weapon && (!template.damage || saveStat || template.autoHit);
-  const hitChance = automatic || guaranteeHit ? 1 : tierUp || dodge || modCheck(state, actor, 'accuracyBonus', strike)
+  const hitChance = automatic || guaranteeHit ? 1 : dodge || modCheck(state, actor, 'accuracyBonus', strike)
     ? saveOdds(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveOdds(2, 0, advantages, disadvantages) : 0) : hitOdds(defense, accuracy, advantages, disadvantages);
   const critChance = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : criticalOdds(advantages, disadvantages);
   const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
@@ -955,7 +954,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     ...(context.skillId && { skillId: context.skillId }), ...(weapon?.instance?.id && { weaponId: weapon.instance.id }),
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
-    automatic: Boolean(automatic), ...(areaStrike && !saveStat && { skipHitCheck: true }), execution, guaranteeHit, guaranteeCrit, tierUp, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
+    automatic: Boolean(automatic), ...(areaStrike && !saveStat && { skipHitCheck: true }), execution, guaranteeHit, guaranteeCrit, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
     coreBonus: modCheck(state, actor, 'coreBonus', strike), dodgeBonus: dodge,
     damageMultiplier: modStat(state, actor, 'damage', multiplier, { ...strike, damageType }),
     offHand: Boolean(weapon?.offHand?.template), armor: reduction.armor, damagePipeline: reduction.armorMultiplier,
@@ -1304,6 +1303,13 @@ function spendAmmo(state, actor, weapon, ammo) {
   if (pool && pool.current > 0) changeCounter(state, actor, weapon, ammo, ammo.resource, pool.current - 1);
 }
 
+function adjustedRating(base, event) {
+  const delta = Number.isFinite(event.ratingDelta) ? Math.trunc(event.ratingDelta) : 0;
+  const rating = RATING_TABLE[clamp(RATING_TABLE.indexOf(base) - delta, 0, RATING_TABLE.length - 1)];
+  const floor = event.minRating && RATING_TABLE.find(row => row.name === event.minRating);
+  return floor && floor.multiplier > rating.multiplier ? floor : rating;
+}
+
 function resolveCheck(state, actor, profile, event = {}) {
   const cover = profile.kind === 'cover' ? { targetKind: 'cover', targetName: profile.name } : {};
   if (profile.saveStat) {
@@ -1315,7 +1321,7 @@ function resolveCheck(state, actor, profile, event = {}) {
     return { hit: true, critical: false, saved };
   }
   if (profile.automatic) {
-    const rating = ratingFor(profile.guaranteeCrit || profile.execution ? 20 : 11);
+    const rating = adjustedRating(ratingFor(profile.guaranteeCrit || profile.execution ? 20 : 11), event);
     if (profile.dice) record(state, actor, 'hit_result', `${profile.name}：自动命中`, {
       targetId: profile.id, ...cover, automatic: true, hit: true, critical: Boolean(profile.guaranteeCrit), ...(profile.execution && {execution:true}), rating,
     });
@@ -1334,8 +1340,8 @@ function resolveCheck(state, actor, profile, event = {}) {
   }
   const total = selected + profile.accuracy;
   let rating = ratingFor(total);
-  if (profile.tierUp && rating.multiplier) rating = RATING_TABLE[Math.max(0, RATING_TABLE.indexOf(rating) - 1)];
-  if (profile.guaranteeHit && (selected === 1 || !rating.multiplier)) rating = ratingFor(11);
+  if (selected !== 1 || profile.guaranteeHit) rating = adjustedRating(rating, event);
+  if (profile.guaranteeHit && (!rating.multiplier || selected === 1 && rating.multiplier < 1)) rating = ratingFor(11);
   if (profile.guaranteeCrit && rating.multiplier < 1.3) rating = ratingFor(20);
   const critical = profile.guaranteeCrit || selected === 20;
   const hit = Boolean(profile.guaranteeHit || selected !== 1 && rating.multiplier > 0);

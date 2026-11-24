@@ -45,7 +45,7 @@ const mapOf = (key, value) => ({ type: 'object', propertyNames: key, additionalP
 const eventPatchFields = {
   before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
   before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ['from', 'to']), skipColossusArea: booleanExpr, damageScale: numericExpr },
-  before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, minRating: text, forceOutcome: enumOf('pass', 'fail', 'hit', 'miss', 'crit') },
+  before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf('pass', 'fail', 'hit', 'miss', 'crit') },
   after_natural_roll: { replaceNaturalRoll: numericExpr },
   before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
   before_status: { cancel: booleanExpr },
