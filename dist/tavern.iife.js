@@ -6595,7 +6595,7 @@ var FatedTacticalTavern = (() => {
       const off = weapon2.offHand;
       const ammo = weaponAmmo(off?.template);
       const cost = (actor.tier ?? 1) * 10;
-      if (alive3(recipient) && recipient.team !== actor.team && off?.template?.damage && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
+      if (alive3(recipient) && recipient.team !== actor.team && off?.template?.hand === "off_hand" && off.template.damage && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
         const followWeapon = { ...off, ammo, stance: "dual_wield" };
         const follow = targetProfile(state, actor, recipient, recipient, off.template, { weapon: followWeapon });
         follow.disadvantages = event.rating.multiplier >= 1.3 ? 0 : Math.max(1, follow.disadvantages);
@@ -7057,7 +7057,7 @@ var FatedTacticalTavern = (() => {
         apply("shield", "target", { vars: { shieldAmount: "vars.existingShield + floor(event.healing / 2)" } })
       ], "event.actorId == self.id && event.actionType == 'skill' && event.healing >= 2")]
     },
-    shortblade: { name: "\u526F\u624B\u77ED\u5203", kind: "weapon", weaponClass: "light_blade", hand: "one_handed", rangeType: "melee", attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice2(1, 4, "agi", "physical") },
+    shortblade: { name: "\u526F\u624B\u77ED\u5203", kind: "weapon", weaponClass: "light_blade", hand: "off_hand", rangeType: "melee", attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice2(1, 4, "agi", "physical") },
     potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand" },
     greatsword: { name: "\u7384\u94C1\u91CD\u5251", kind: "weapon", weaponClass: "greatsword", hand: "two_handed", heavy: true, twoHanded: true, attack: 260, defense: 0, rangeType: "melee", range: 1, accuracy: 1, damage: dice2(2, 8, "str", "physical") },
     towerShield: { name: "\u5854\u76FE", kind: "shield", weaponClass: "shield", hand: "off_hand", shield: true, defense: 8 },

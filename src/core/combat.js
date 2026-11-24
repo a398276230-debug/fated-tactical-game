@@ -1530,7 +1530,7 @@ export function continueStrike({ state, frame, host }) {
     const off = weapon.offHand;
     const ammo = weaponAmmo(off?.template);
     const cost = (actor.tier ?? 1) * 10;
-    if (alive(recipient) && recipient.team !== actor.team && off?.template?.damage && actor.sp >= cost
+    if (alive(recipient) && recipient.team !== actor.team && off?.template?.hand === 'off_hand' && off.template.damage && actor.sp >= cost
       && (event.rating?.multiplier ?? 0) >= .8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id)
       && (!ammo || weapon.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
       const followWeapon = { ...off, ammo, stance: 'dual_wield' };

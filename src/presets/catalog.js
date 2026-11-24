@@ -74,7 +74,7 @@ export const EQUIPMENT = {
       apply('shield', 'target', { vars: { shieldAmount: 'vars.existingShield + floor(event.healing / 2)' } }),
     ], "event.actorId == self.id && event.actionType == 'skill' && event.healing >= 2")],
   },
-  shortblade: { name: '副手短刃', kind: 'weapon', weaponClass: 'light_blade', hand: 'one_handed', rangeType: 'melee', attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice(1, 4, 'agi', 'physical') },
+  shortblade: { name: '副手短刃', kind: 'weapon', weaponClass: 'light_blade', hand: 'off_hand', rangeType: 'melee', attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice(1, 4, 'agi', 'physical') },
   potion: { name: '调和药剂', kind: 'consumable', weaponClass: 'auxiliary', hand: 'off_hand' },
   greatsword: { name: '玄铁重剑', kind: 'weapon', weaponClass: 'greatsword', hand: 'two_handed', heavy: true, twoHanded: true, attack: 260, defense: 0, rangeType: 'melee', range: 1, accuracy: 1, damage: dice(2, 8, 'str', 'physical') },
   towerShield: { name: '塔盾', kind: 'shield', weaponClass: 'shield', hand: 'off_hand', shield: true, defense: 8 },

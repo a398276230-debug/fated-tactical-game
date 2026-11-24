@@ -264,7 +264,7 @@ test('主角背包消耗品扣库存、未知用途进入标准化，装备优�
   assert.ok(logs.some(log=>log.text.includes('手榴弹（数量 3 → 2）')));
 });
 
-test('主手弓命中后，小刀只在自己射程内追击和扣 SP', () => {
+test('只有副手标记的小刀能追击；切刀主攻后主手弓不追击也不扣 SP', () => {
   const followups = [];
   for (const [dist, swap] of [[1,false],[4,false],[1,true]]) {
     const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',标签:['弓'],位置:'主手',rules:[guaranteeHit]},小刀:{类型:'武器',位置:'副手',rules:[guaranteeHit]}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
@@ -281,9 +281,9 @@ test('主手弓命中后，小刀只在自己射程内追击和扣 SP', () => {
     const logs=applyAction(state,{type:'attack',x:e.x,y:e.y});
     assert.ok(e.hp<hp);
     followups.push([dist,logs.find(l=>l.type==='followup')?.detail.weaponId,sp-p.sp]);
-    assert.equal(followups.at(-1)[1], dist === 4 ? undefined : swap ? mainHand : offHand);
+    assert.equal(followups.at(-1)[1], dist === 4 || swap ? undefined : offHand);
   }
-  assert.deepEqual(followups.map(([dist, id, sp]) => [dist, Boolean(id), sp]), [[1,true,10],[4,false,0],[1,true,10]]);
+  assert.deepEqual(followups.map(([dist, id, sp]) => [dist, Boolean(id), sp]), [[1,true,10],[4,false,0],[1,false,0]]);
 });
 
 test('MVU 和 char_info 可用装备标签声明初始主副手；剧情位置优先', () => {
