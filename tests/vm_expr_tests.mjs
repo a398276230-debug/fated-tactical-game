@@ -9,8 +9,8 @@ test('off-board literal and register points never retarget the edge', () => {
   assert.equal(messages.length, 2);
 });
 import {
-  compileExpr, evaluateExpr, evaluateFormula, exprUses, formulaQueryNames,
-  formulaFunctionReference, formulaReference, formulaUses, formulaVariableNames, validExpr, validFormula
+  compileExpr, evaluateExpr, exprUses, formulaQueryNames,
+  formulaFunctionReference, formulaReference, formulaVariableNames, validExpr
 } from '../src/core/formula.js';
 
 test('Expr supports scalar literals, precedence, associativity and lazy branches', () => {
@@ -97,7 +97,6 @@ test('null equality recognizes missing values while preserving invalid operation
   assert.equal(evaluateExpr('null == event.targets', context), null);
   assert.equal(evaluateExpr('null == 1 / 0', context), null);
   assert.equal(evaluateExpr('null + 1', context), null);
-  assert.equal(validFormula('null'), false);
 });
 
 test('both string delimiters support escaped quotes, backslashes and control characters', () => {
@@ -176,15 +175,12 @@ test('Expr rejects unknown paths, malformed input and inherited or accessor valu
   assert.equal(evaluateExpr('count_units(true)', aggregateContext), 1);
 });
 
-test('legacy numeric formulas retain syntax, zero defaults and dependency checks', () => {
-  assert.equal(evaluateFormula('self.str + event.dealt * 2', { event: { dealt: 4 } }), 8);
-  assert.equal(evaluateFormula('distance+weapon.attack', { distance: () => 3, weapon: () => ({ attack: 4 }) }), 7);
-  assert.equal(evaluateFormula('self.resource.soul-ash - 2', { resource: (entity, id) => id === 'soul-ash' ? 5 : 0 }), 3);
-  assert.equal(formulaUses('self.str + event.dealt * 2', 'event.dealt'), true);
-  assert.equal(validFormula('true'), false);
-  assert.equal(validFormula('floor(2)'), false);
-  assert.equal(validFormula('source.hp'), false);
-  assert.equal(evaluateFormula('10/0', {}), null);
+test('variadic bounds, status presence and zone coordinates use the expression parser', () => {
+  const context = { self: { statuses: { burn: { id: 'burn' } } }, zone: { area: { center: { x: 4, y: 5 } } } };
+  assert.equal(evaluateExpr('max(2, 3, min(7, zone.x + zone.y, 8))', context), 7);
+  assert.equal(validExpr('min(1)'), false);
+  assert.equal(evaluateExpr("has_status(self, 'burn') && !has_status(self, 'blind')", context), true);
+  assert.equal(evaluateExpr('zone.x', { zone: { area: {} } }), null);
 });
 
 test('event.rating 与 event.ratingMultiplier 兼容原生 RATING_TABLE 对象与 VM 字符串评级，perform.overrides.intent 校验枚举', async () => {

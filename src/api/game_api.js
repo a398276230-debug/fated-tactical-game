@@ -129,7 +129,8 @@ export function createGameAPI() {
       || snapshot.kind !== 'battle' || snapshot.version !== battleVersion || !Array.isArray(snapshot.journal)
       || snapshot.journal.length > maxHistory) fail('仅支持版本 11 的战局快照');
     validateState(snapshot.origin);
-    if (snapshot.origin.vm?.pendingAsk) fail('快照起点不得包含挂起中的动作');
+    if (snapshot.origin.vm?.pendingAsk && !snapshot.origin.vm.startingTurn && !snapshot.origin.vm.settlingTurn && !snapshot.origin.vm.endingTurn)
+      fail('快照起点仅允许挂起的回合结算');
     const start = copy(snapshot.origin), history = [];
     let next = start;
     for (const transaction of snapshot.journal) {

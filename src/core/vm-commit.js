@@ -1,6 +1,7 @@
-import { deleteOwnedPools, getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
+import { getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { evaluateExpr } from './formula.js';
+import { removeStatus } from './vm-rules.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
@@ -124,15 +125,9 @@ export function continueCommit({ state, frame, host, options }) {
         pending -= amount;
         absorbed += amount;
         status.vars.shieldAmount -= amount;
-        status.amount = status.vars.shieldAmount;
+        if (Object.hasOwn(status, 'amount')) status.amount = status.vars.shieldAmount;
         host.log(state, target, 'shield', `${target.name}的${status.name}吸收${amount}点伤害`, { targetId: target.id, statusId: status.id ?? status.templateId ?? null });
-        if (!status.vars.shieldAmount) {
-          delete target.statuses[statusKey];
-          deleteOwnedPools(state, status);
-          const removedRef = newEvent(state, { actorId: data.sourceId ?? null, targetId: target.id, statusId: statusKey,
-            reason: 'shield_depleted', removeReason: 'shield_depleted', removedStatus: structuredClone(status) });
-          scheduleHooks(state, frame, 'after_status_removed', removedRef, host);
-        }
+        if (!status.vars.shieldAmount) removeStatus(state, target, status, 'shield_depleted', source, host, frame);
       }
       updatePoolCurrent(state, pool.id, 'sub', pending, { minRemain: event.preserveLife ? 1 : 0 });
       event.dealt = before - getPool(state, target.id, key).current;

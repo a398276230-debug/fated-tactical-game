@@ -251,7 +251,7 @@ test('标准化发送的任务区分只读来源、输出数组和部分实现�
 test('默认标准化消息教模型读实体寄存器、动态生成和使用带签名的查询', () => {
   const text = assembleMessages(DEFAULT_SLOTS, {}).map(message => message.content).join('\n');
   for (const snippet of ['target:"vars.<名>"', 'vars.<名>.hp', 'vars.victim.hp',
-    '加 vars. 前缀', '空值用 null', 'min(a, b)', 'clamp(value, lo, hi)', 'count_units(predicate)',
+    '加 vars. 前缀', '空值用 null', 'min(a, b, ...)', 'max(a, b, ...)', 'clamp(value, lo, hi)', 'count_units(predicate)',
     'tier、count、remainingTurns、area.radius 支持数值表达式', 'single 仅中心格', '均省略时按施术者预算自动生成面板']) {
     assert.ok(text.includes(snippet), snippet);
   }

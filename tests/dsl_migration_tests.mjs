@@ -35,7 +35,7 @@ test('native VM soulblade applies stored souls, credits its own kill and caps th
 test('removed effects are rejected at the state and snapshot boundaries', () => {
   const state = battle(0);
   state.equipment.soulblade.effects = [{ kind: 'kill_charge_weapon' }];
-  assert.throws(() => validateState(state), /无效字段/);
+  assert.throws(() => validateState(state), /包含不支持的字段：effects/);
   const api = createGameAPI();
   assert.throws(() => api.restoreBattleSnapshot({ kind: 'battle', version: 2, origin: state, state, journal: [] }));
 });

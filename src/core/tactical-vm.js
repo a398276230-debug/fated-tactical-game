@@ -85,8 +85,8 @@ function contextFor(state, frame, host) {
           ? resolveEntity(state, value) : value;
       return kind === 'unit' && own(state.units, entity?.id) !== entity ? undefined : entity;
     },
-    status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === 'status' ? carrier : undefined)
-      ?? (frame.hook === 'after_status_removed' ? event.removedStatus : undefined),
+    status: resolveEntity(state, frame.scope?.status) ?? event.removedStatus
+      ?? (frame.carrier?.type === 'status' ? carrier : undefined),
     zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === 'zone' ? carrier : undefined),
     skill: frame.carrier?.type === 'skill' ? { id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : undefined,
     item: frame.carrier?.type === 'item' ? { id: frame.carrier.id, templateId: carrier?.templateId, vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,
@@ -112,7 +112,7 @@ export function newEvent(state, initial) {
 
 export function scheduleHooks(state, parent, hook, eventRef, host) {
   const event = own(state.vm.events, eventRef);
-  host.expireStatuses?.(state, hook, event);
+  host.expireMatchingStatuses?.(state, hook, event);
   const entries = host.rules?.(state, hook, event) ?? [];
   const ordered = entries.filter(({ rule }) => rule.enabled !== false).sort((a, b) =>
     (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compareId(a.rule.id, b.rule.id));

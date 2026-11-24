@@ -28,6 +28,39 @@ test('held three-pool last chance intercepts exactly once; only real death trigg
   strike(); assert.equal(first.hp, 1); assert.equal(second.mp, 0);
   strike(); assert.equal(first.hp, 0); assert.equal(second.mp, 1);
 });
+for (const hook of ['on_lethal_p1', 'on_lethal_p2']) {
+  test(`${hook} can heal a dying unit before death is recorded`, () => {
+    const { state, first, second } = fixture();
+    first.rules = [{ id: 'rescue', hook, program: [{ op: 'heal', target: 'self', amount: 7 }] }];
+    commitVMEffect(state, { op: 'damage', amount: first.hp, damageType: 'true', sourceId: second.id, targetId: first.id });
+    assert.equal(first.hp, 7);
+    assert.equal(first.diedAt, undefined);
+  });
+}
+
+for (const stunned of [false, true]) {
+  test(`turn_start resumes without restarting the turn (stunned: ${stunned})`, () => {
+    const { state } = fixture();
+    const opening = beginBattle(structuredClone(state));
+    const actor = state.units[opening.order[opening.turn]];
+    state.logs = [];
+    actor.mods = [{ stat: 'apMax', flat: 1 }, ...(stunned ? [{ locks: ['attack', 'action', 'move', 'cast'] }] : [])];
+    actor.rules = [{ id: 'question', hook: 'turn_start', program: [damage('self', 1),
+      { op: 'ask', chooser: 'self', kind: 'number', out: 'n', min: 0, max: 1, prompt: '回合开始', aiPolicy: 'min' }] }];
+    actor.protagonist = true;
+    const hp = actor.hp;
+    beginBattle(state);
+    assert.ok(state.vm.pendingAsk);
+    assert.equal(actor.hp, hp - 1);
+    assert.equal(actor.ap, 3);
+    const resumed = JSON.parse(JSON.stringify(state));
+    applyAction(resumed, { type: 'answer', askId: resumed.vm.pendingAsk.askId, value: 1 });
+    assert.equal(resumed.units[actor.id].hp, hp - 1);
+    assert.equal(resumed.logs.filter(log => log.type === 'turn' && log.actor === actor.id).length, 1);
+    assert.equal(resumed.order[resumed.turn] === actor.id, !stunned);
+  });
+}
+
 test('round-end choice pauses the cursor; round-start runs once at opening and after resume', () => {
   const {state, first} = fixture();
   first.rules = [{id:'start', hook:'round_start', program:[{op:'let',name:'started',scope:'owner',value:'round'}]},
@@ -40,10 +73,47 @@ test('round-end choice pauses the cursor; round-start runs once at opening and a
   assert.equal(resumed.round, 2); assert.equal(resumed.turn, 0); assert.equal(resumed.units[first.id].vars.started, 2);
 });
 
+test('natural expiry removes the pool and runs the status rule with its final snapshot', () => {
+  const { state, first } = fixture();
+  const api = createGameAPI();
+  const rule = { id: 'last_words', hook: 'after_status_removed',
+    program: [resource('mp', 'status.vars.value * status.stacks')] };
+  state.statusTemplates = { farewell: { id: 'farewell', name: '告别', maxStacks: 2, rules: [rule] } };
+  first.statuses.farewell = { ...state.statusTemplates.farewell, templateId: 'farewell', ownerId: first.id, sourceId: first.id,
+    remainingTurns: 1, durationType: 'battle_turns', stackMode: 'refresh', stacks: 2, vars: { value: 4 }, pools: { marker: 'pool_marker' } };
+  state.pools = { pool_marker: { id: 'pool_marker', kind: 'custom', current: 2, max: 2, reloadable: false,
+    contributors: [{ ownerKind: 'status', ownerId: 'farewell', maxBase: 2 }] } };
+  first.rules = [{ ...rule, id: 'observe_removal', filter: "status.id == 'farewell'",
+    program: [{ op: 'let', scope: 'owner', name: 'observed', value: 'status.vars.value * status.stacks' }] }];
+  api.createBattle({ kind: 'custom_state', state });
+  api.playAction({ type: 'end' });
+  const snapshot = api.exportBattleSnapshot();
+  assert.equal(snapshot.state.pools.pool_marker, undefined);
+  assert.equal(snapshot.state.units[first.id].vars.observed, 8);
+  assert.equal(snapshot.state.units[first.id].mp, 8);
+  assert.equal(snapshot.state.units[first.id].statuses.farewell, undefined);
+  const restored = createGameAPI();
+  restored.restoreBattleSnapshot(snapshot);
+  assert.deepEqual(restored.exportBattleSnapshot(), snapshot);
+});
+
+test('perform recursion reaches its own depth limit and finishes the outer action', () => {
+  const { state, first } = fixture();
+  first.skills = ['echo'];
+  state.skills.echo = { ...skill('回声', []), ap: 0, target: 'self' };
+  first.rules = [{ id: 'repeat', hook: 'after_action', program: [
+    { op: 'perform', actor: 'self', actionKind: 'skill', skillId: 'echo', target: 'self', overrides: { free: true, ignoreSlots: true } },
+  ] }];
+  resolveVMAction(state, { type: 'skill', skillId: 'echo', x: first.x, y: first.y });
+  assert.equal(state.logs.filter(log => log.type === 'warning' && log.text.includes('perform')).length, 1);
+  assert.equal(state.logs.some(log => log.type === 'vm_halt'), false);
+  assert.equal(state.tape.at(-1).skillId, 'echo');
+});
+
 test('confirmed ally death reaches living allies without crediting self-kills', () => {
   const {state,first,second} = fixture();
   const ally = state.units.witness = {...structuredClone(first), id:'witness', rules:[{id:'notice',hook:'on_ally_death',program:[{op:'let',scope:'owner',name:'dead',value:'target.id'}]}]};
-  grantStatus(state, first, 'mark', { expireOn: {trigger:'on_damaged',damageType:'indirect'} });
+  grantStatus(state, first, 'mark', { expireOn: {hook:'after_damage',filter:'target.id == self.id && event.direct == false && event.dealt > 0'} });
   const hit = (amount,direct) => commitVMEffect(state,{op:'damage',amount,damageType:'true',direct,sourceId:second.id,targetId:first.id});
   hit(1,true); assert.ok(first.statuses.mark); hit(1,false); assert.equal(first.statuses.mark,undefined);
   hit(500000,true); assert.equal(ally.vars.dead,first.id); assert.equal(second.vars?.dead,undefined);

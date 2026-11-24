@@ -1,9 +1,9 @@
-import { actionSkill, continueStrike, continueRound, expireStatuses, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
+import { actionSkill, continueStrike, continueRound, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
 import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
-import { continueApplyStatus, continueCheck, continueRemoveStatus, ruleOps } from './vm-rules.js';
+import { continueApplyStatus, continueCheck, continueRemoveStatus, removeStatus, ruleOps } from './vm-rules.js';
 import { continueAction, perform, queueVMAction } from './vm-action.js';
 import { createPool, getPool, initializeUnitPools, updatePoolCurrent } from './vm-pools.js';
 import { spatialOps, spatialContinuations, refreshFollowingZones, expireSpatialEffects } from './vm-spatial-ops.js';
@@ -74,6 +74,16 @@ export function dispatchVMHook(state, hook, event) {
   if (idle) stepVM(state, vmHost);
 }
 
+export function removeVMStatus(state, target, status, reason, actor, detail) {
+  initializeVMWorld(state);
+  const parent = state.vm.stack.at(-1) ?? { sourceId: actor?.id };
+  const idle = state.vm.stack.length === 0;
+  if (idle) state.vm.stepsRemaining = 2000;
+  const removed = removeStatus(state, target, status, reason, actor, vmHost, parent, detail);
+  if (idle) stepVM(state, vmHost);
+  return removed;
+}
+
 export function commitVMEffect(state, data) {
   initializeVMWorld(state);
   const parent = state.vm.stack.at(-1) ?? { ownerId: data.sourceId ?? data.targetId, sourceId: data.sourceId ?? null };
@@ -97,26 +107,17 @@ export const vmHost = {
     pushFrame(state, { native: 'strike', ownerId: frame.ownerId, sourceId: frame.sourceId,
       eventRef: frame.eventRef, data: frame.data, plan: { center: profile, targets: [profile] }, weapon, followup: true, started: true });
   },
-  expireStatuses(state, hook, event) {
-    const native = (id, trigger) => {
-      const unit = own(state.units, id);
-      if (unit) expireStatuses(state, unit, trigger, { sourceUnitId: event.actorId, direct: event.direct });
-    };
-    if (hook === 'after_damage' && event.dealt > 0) native(event.targetId, 'on_damaged');
-    if (hook === 'after_heal' && event.healing > 0) native(event.targetId, 'on_heal');
-    if (hook === 'on_death') for (const id of event.units ?? [event.targetId]) native(id, 'on_death');
-    if (hook === 'on_kill') native(event.killerId, 'on_kill');
-    if (hook === 'on_ally_death') for (const id of eventOwners(state, hook, event)) native(id, 'on_ally_death');
+  expireMatchingStatuses(state, hook, event) {
     const ids = new Set([event.actorId, event.targetId, ...eventOwners(state, hook, event)]);
     for (const id of ids) {
       const unit = own(state.units, id);
-      for (const [key, status] of Object.entries(unit?.statuses ?? {})) {
+      for (const status of Object.values(unit?.statuses ?? {})) {
         const expires = [status.expireOn].flat().some(rule => rule?.hook === hook &&
           (rule.filter === undefined || evaluateExpr(rule.filter, { self: unit, status, event,
-            source: own(state.units, status.sourceId), target: own(state.units, event.targetId) })));
+            source: own(state.units, status.sourceId ?? status.sourceUnitId), target: own(state.units, event.targetId),
+            attacker: own(state.units, event.actorId) })));
         if (!expires) continue;
-        delete unit.statuses[key];
-        recordVM(state, unit, 'expire', `${unit.name}的${status.name}提前解除`, { targetId: id, statusId: key, hook });
+        removeStatus(state, unit, status, 'expired', unit, vmHost, { sourceId: id }, { hook });
       }
     }
   },
@@ -161,6 +162,8 @@ export const vmHost = {
   stat: (state, unit, key) => mod(state, {}, unit.id, key, unit.stats?.[key] ?? 0),
   checkBonus: (state, unit, event) => mod(state, event, unit.id, 'checkBonus', 0)
     + (event.checkKind === 'save' ? mod(state, event, unit.id, 'resistBonus', 0) : 0),
+  advantage: (state, unit, event) => mod(state, event, unit.id, 'advantage', 0),
+  resistBonus: (state, unit, event) => mod(state, event, unit.id, 'resistBonus', 0),
   dcBonus: (state, unit, event) => mod(state, event, unit.id, 'dcBonus', 0),
   isImmune: (state, unit, key, frame) => {
     const event = frame?.eventRef ? state.vm?.events?.[frame.eventRef] : undefined;
@@ -178,7 +181,8 @@ export const vmHost = {
       amount += mod(state, event, source.id, 'damageFlat', 0);
       amount = mod(state, event, source.id, 'damageMult', amount);
     }
-    if (damageType !== 'true') {
+    if (damageType === 'true') amount = mod(state, event, target.id, 'incomingDamageMult', amount);
+    else {
       const pierce = data.armorPierce ?? { flat: source ? mod(state, event, source.id, 'armorPierce', 0) : 0,
         percent: source ? mod(state, event, source.id, 'armorPiercePercent', 0) : 0 };
       const context = { ...event, attacker: source, intercepting: data.intercepted, ignoreArmor: data.ignoreArmor };
@@ -247,7 +251,6 @@ export const vmHost = {
     }
   },
   runAction({ state, frame, actor, plan, event, overrides }) {
-    if (event.actionType === 'skill') expireStatuses(state, actor, 'on_skill_cast', { sourceUnitId: actor.id });
     event.power *= overrides.scale ?? 1;
     event.power *= event.damageScale ?? 1;
     const skill = own(state.skills, event.skillId);
@@ -280,10 +283,14 @@ export function validVmState(state) {
   if (!plain(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain(vm.events)
       || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining)
       || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain(pools)) return false;
+  if (vm.startingTurn !== undefined && (!vm.pendingAsk || vm.endingTurn !== undefined
+      || vm.startingTurn !== state.order?.[state.turn] || !own(state.units, vm.startingTurn))) return false;
   if (vm.endingTurn !== undefined && (!vm.pendingAsk || typeof vm.endingTurn !== 'string'
       || vm.endingTurn !== state.order?.[state.turn] || !own(state.units, vm.endingTurn))) return false;
-  if (vm.endingTicks !== undefined && (!vm.endingTurn || !Array.isArray(vm.endingTicks)
-      || !vm.endingTicks.every(id => typeof id === 'string'))) return false;
+  for (const remaining of [vm.endingTicks, vm.endingStatuses]) {
+    if (remaining !== undefined && (!vm.endingTurn || !Array.isArray(remaining)
+        || !remaining.every(id => typeof id === 'string'))) return false;
+  }
   for (const record of [...vm.stack, ...Object.values(vm.events)]) {
     if (!plain(record) || (Object.hasOwn(record, 'sourceSkillId') && !validVmSourceSkillId(record.sourceSkillId))) return false;
   }

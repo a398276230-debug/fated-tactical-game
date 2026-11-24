@@ -8,10 +8,15 @@ const MAX_ACTION_CHAIN_DEPTH = 3;
 
 export function queueVMAction(state, { actorId, action, overrides = {}, record = false, chainDepth = 0 }) {
   return pushFrame(state, { native: 'action', ownerId: actorId, sourceId: actorId, chainDepth,
-    data: { action, overrides, record, chainDepth }, answers: [] });
+    data: { action, overrides, record }, answers: [] });
 }
 
 export function perform({ state, context, select, op }) {
+  const chainDepth = (state.vm.stack.findLast(frame => frame.native === 'action')?.chainDepth ?? 0) + 1;
+  if (chainDepth > MAX_ACTION_CHAIN_DEPTH) {
+    context.warn?.(`perform 嵌套超过 ${MAX_ACTION_CHAIN_DEPTH} 层，已截断`);
+    return;
+  }
   const actors = select(op.actor);
   for (const actor of actors.reverse()) {
     if (actor.hp <= 0 || actor.fled) continue;
@@ -45,11 +50,6 @@ export function perform({ state, context, select, op }) {
       if (!Number.isSafeInteger(origin?.x) || !Number.isSafeInteger(origin?.y)) continue;
       overrides.origin = { x: origin.x, y: origin.y,
         ...(Number.isFinite(origin.z) ? { z: origin.z } : Number.isFinite(origin.altitude) ? { altitude: origin.altitude } : {}) };
-    }
-    const chainDepth = (context.event?.chainDepth ?? context.frame?.chainDepth ?? 0) + 1;
-    if (chainDepth > MAX_ACTION_CHAIN_DEPTH) {
-      context.warn?.(`perform 嵌套超过 ${MAX_ACTION_CHAIN_DEPTH} 层，已截断`);
-      continue;
     }
     queueVMAction(state, { actorId: actor.id, action, overrides, chainDepth });
   }

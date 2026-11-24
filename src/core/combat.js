@@ -5,14 +5,14 @@ import { critChance as criticalOdds, hitChance as hitOdds, rollD20, rollProtocol
   saveChance as saveOdds } from './rng.js';
 import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, resolveEffectiveTier, scaledCells } from './combat_protocol.js';
 
-import { validateStatusModifiers } from './status_modifiers.js';
+import { validateStatusModifiers } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
-import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
-import { deleteOwnedPools, getPool, updatePoolCurrent } from './vm-pools.js';
+import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
+import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 export { STATUSES };
@@ -223,36 +223,7 @@ export function refreshOutcome(state) {
   return result;
 }
 
-const validExpiry = value => Boolean(value && (Array.isArray(value) ? value : [value]).every(rule => typeof (rule.hook ?? rule.trigger) === 'string'));
-const eventLabels = { on_attack: '发动攻击', on_hit: '攻击命中', on_struck: '受到命中', on_damaged: '受到伤害', on_kill: '击杀',
-  on_death: '倒下', on_turn_start: '回合开始', on_turn_end: '回合结束', on_skill_cast: '施放技能',
-  on_equip: '装备生效', on_heal: '受到治疗', on_ally_death: '队友倒下' };
-
-export function expireStatuses(state, unit, trigger, { sourceUnitId = null, direct = false } = {}) {
-  for (const status of values(unit.statuses)) {
-    const expiry = Object.hasOwn(status, 'expireOn') ? status.expireOn : getStatusTemplate(state, status.id)?.expireOn;
-    if (!expiry) continue;
-    const rule = [].concat(expiry).find(rule => rule.trigger === trigger
-      && (rule.damageType == null || rule.damageType === 'any' || rule.damageType === (direct ? 'direct' : 'indirect'))
-      && (rule.exceptSource !== 'self' || sourceUnitId !== unit.id));
-    if (!rule) continue;
-    delete unit.statuses[status.id];
-    record(state, unit, 'expire', `${unit.name}的${status.name}因${eventLabels[trigger]}提前解除`,
-      { targetId: unit.id, statusId: status.id, trigger, sourceUnitId, ...(trigger === 'on_damaged' ? { direct } : {}) });
-  }
-}
-
-function dispatchEffect(state, actor, trigger, context = {}) {
-  if (actor && !['on_damaged','on_heal','active'].includes(trigger)) {
-    expireStatuses(state, actor, trigger, { sourceUnitId: context.sourceUnitId ?? actor.id });
-  }
-  const hook = { on_hit: 'after_hit', on_damaged: 'after_damage', on_heal: 'after_heal', on_turn_start: 'turn_start', on_turn_end: 'turn_end' }[trigger] ?? trigger;
-  if (!actor || !['after_hit','after_damage','after_heal','turn_start','turn_end','on_death','on_ally_death','on_kill'].includes(hook)) return;
-  const { target, attacker, killed, weaponId, ...detail } = context;
-  dispatchVMHook(state, hook, { ...detail, actorId: attacker?.id ?? actor.id, ownerIds: [actor.id],
-    targetId: target?.id ?? actor.id, ...(killed && { killedId: killed.id }),
-    ...(weaponId && { weaponTemplateId: state.items[weaponId]?.templateId ?? null }) });
-}
+const validExpiry = value => Boolean(value && (Array.isArray(value) ? value : [value]).every(rule => typeof rule?.hook === 'string'));
 
 function moraleCheck(state) {
   for (const unit of living(state)) {
@@ -363,7 +334,6 @@ function endTurn(state, unit, remainingTicks) {
   if (!unit) return;
   if (remainingTicks === undefined) {
     unit.ap = 0;
-    expireStatuses(state, unit, 'on_turn_end', { sourceUnitId: unit.id });
   }
   const pendingTicks = tick(state, unit, 'onTurnEnd', remainingTicks?.map(id => tableEntry(unit.statuses, id)).filter(Boolean));
   if (pendingTicks) {
@@ -371,7 +341,7 @@ function endTurn(state, unit, remainingTicks) {
     state.vm.endingTicks = pendingTicks;
     return;
   }
-  dispatchEffect(state, unit, 'on_turn_end');
+  dispatchVMHook(state, 'turn_end', { actorId: unit.id, targetId: unit.id });
   if (state.vm?.pendingAsk) {
     state.vm.endingTurn = unit.id;
     return;
@@ -379,18 +349,21 @@ function endTurn(state, unit, remainingTicks) {
   completeTurnEnd(state, unit);
 }
 
-function completeTurnEnd(state, unit) {
-  for (const status of values(unit.statuses)) {
+function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
+  for (const [index, id] of remaining.entries()) {
+    const status = statusOf(unit, id);
+    if (!status) continue;
     if (status.durationType !== 'battle_turns') continue;
     if (status.appliedRound === state.round && status.appliedTurn === state.turn
       && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
     if (--status.remainingTurns > 0) continue;
-    delete unit.statuses[status.id];
-    deleteOwnedPools(state, status);
-    dispatchVMHook(state, 'after_status_removed', { actorId: unit.id, targetId: unit.id, statusId: status.id,
-      reason: 'expired', removeReason: 'expired', removedStatus: structuredClone(status) });
-    record(state, unit, 'expire', `${unit.name}的${status.name}结束`, { targetId: unit.id, statusId: status.id, reason: 'expired' });
+    removeVMStatus(state, unit, status, 'expired', unit);
     if (status.expireInto && alive(unit) && !refreshOutcome(state)) grantStatus(state, unit, status.expireInto, { sourceUnitId: unit.id });
+    if (state.vm.pendingAsk) {
+      state.vm.endingTurn = unit.id;
+      state.vm.endingStatuses = remaining.slice(index + 1);
+      return;
+    }
   }
   record(state, unit, 'end', `${unit.name}结束回合`);
 }
@@ -402,24 +375,15 @@ export function settleTurn(state) {
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
     if (state.outcome) return;
-    if (alive(unit) && !unit.fled) {
-      unit.used = { attack: 0, action: 0 };
-      unit.moved = 0;
-      delete unit.moveSpent;
-      unit.reactionAvailable = true;
-      unit.apMax = Math.max(1, Math.floor(modStat(state, unit, 'apMax', 2)));
-      unit.ap = unit.apMax;
-      record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
-      const hold = unit.statuses.suppressed;
-      if (hold?.holdTotal != null) {
-        const roll = randomDie(state,20), total = roll + Math.floor(effectiveStat(state,unit,'str') * unit.hp / unit.maxHp);
-        const success = total > hold.holdTotal;
-        if (success) delete unit.statuses.suppressed;
-        record(state,unit,'break_hold',`${unit.name}挣脱检定${success ? '成功，解除被压制' : '失败，仍被压制'}（${total} 对 ${hold.holdTotal}）`,{roll,total,threshold:hold.holdTotal,success});
+    if (unit && (state.vm?.startingTurn === unit.id || (alive(unit) && !unit.fled))) {
+      if (state.vm?.startingTurn !== unit.id) {
+        beginUnitTurn(state, unit);
+        if (state.vm.pendingAsk) {
+          state.vm.startingTurn = unit.id;
+          return;
+        }
       }
-      expireStatuses(state, unit, 'on_turn_start', { sourceUnitId: unit.id });
-      tick(state, unit, 'onTurnStart');
-      dispatchEffect(state, unit, 'on_turn_start');
+      delete state.vm.startingTurn;
       if (refreshOutcome(state)) { unit.ap = 0; return; }
       if (unit.fled) { advanceCursor(state); if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; } continue; }
       if (alive(unit) && !unitSkipped(state, unit)) return;
@@ -432,6 +396,30 @@ export function settleTurn(state) {
   }
   const stalled = currentUnit(state);
   if (stalled) stalled.ap = 0;
+}
+
+function beginUnitTurn(state, unit) {
+  unit.used = { attack: 0, action: 0 };
+  unit.moved = 0;
+  delete unit.moveSpent;
+  unit.reactionAvailable = true;
+  unit.ap = unit.apMax = turnAP(state, unit);
+  record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
+  const hold = unit.statuses.suppressed;
+  if (hold?.holdTotal != null) {
+    const roll = randomDie(state, 20);
+    const total = roll + Math.floor(effectiveStat(state, unit, 'str') * unit.hp / unit.maxHp);
+    const success = total > hold.holdTotal;
+    if (success) removeVMStatus(state, unit, hold, 'escaped', unit);
+    record(state, unit, 'break_hold', `${unit.name}挣脱检定${success ? '成功，解除被压制' : '失败，仍被压制'}（${total} 对 ${hold.holdTotal}）`,
+      { roll, total, threshold: hold.holdTotal, success });
+  }
+  tick(state, unit, 'onTurnStart');
+  dispatchVMHook(state, 'turn_start', { actorId: unit.id, targetId: unit.id });
+}
+
+function turnAP(state, unit) {
+  return clamp(Math.floor(modStat(state, unit, 'apMax', 2)), 0, 1000000000);
 }
 
 function resetFacing(state) {
@@ -525,7 +513,7 @@ function initiativeOrder(state, rollFor) {
       if (skill?.initiativeBonus === undefined) continue;
       (skill.slot === 'attack' ? attackInit : actionInit).push(skill.initiativeBonus);
     }
-    const flatInit = modStat(state, unit, 'initiative', Number(unit.flatInitiative ?? 0) + modCheck(state, unit, 'iniBonus'));
+    const flatInit = modStat(state, unit, 'initiative', Number(unit.flatInitiative ?? 0));
     const total = protocolInitiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
     return { unitId: unit.id, roll, agility, agilityPercent, attackInit:Math.max(0,...attackInit,0), actionInit:Math.max(0,...actionInit,0), flatInit, total };
   }).sort((a, b) => b.total - a.total || b.agility - a.agility ||
@@ -549,7 +537,7 @@ export function refreshOpeningInitiative(state) {
   state.order = initiative.map(row => row.unitId);
   entry.detail.initiative = initiative;
   const first = currentUnit(state);
-  first.ap = 2;
+  first.ap = first.apMax = turnAP(state, first);
   state.logs.pop();
   record(state, first, 'turn', `${first.name}开始回合`, { turn: 0 });
 }
@@ -1452,7 +1440,6 @@ export function continueStrike({ state, frame, host }) {
   if (!alive(actor) || !template) { state.vm.stack.pop(); return; }
   if (!frame.started) {
     frame.started = true;
-    if (plan.hostile || weapon) expireStatuses(state, actor, 'on_attack', { sourceUnitId: actor.id });
     if (!sameCell(actor, plan.center)) actor.facing = signFacing(actor, plan.center);
   }
   const profile = frame.profile ?? plan.targets?.[frame.pc];
@@ -1540,11 +1527,6 @@ export function continueStrike({ state, frame, host }) {
   }
   if (frame.phase === 'after_hit' && profile.kind !== 'cover') {
     frame.phase = 'followup';
-    if (plan.hostile || weapon || action.type === 'shield_bash') {
-      expireStatuses(state, actor, 'on_hit', { sourceUnitId: actor.id });
-      const struck = state.units[event.targetId];
-      if (struck) expireStatuses(state, struck, 'on_struck', { sourceUnitId: actor.id });
-    }
     if (action.type === 'shield_bash') event.rules = shieldBashRules;
     host.hooks(state, frame, 'after_hit', frame.awaitEvent);
     return;
@@ -1641,7 +1623,6 @@ function continueInteraction(state, actor, plan, progress) {
     if (!sameCell(actor, item)) actor.facing = signFacing(actor, item);
     record(state, actor, 'interact', `${actor.name}${item.kind === 'barrel' ? '引爆' : '激活'}${item.name}`, { interactiveId: item.id });
     if (effect === 'explode') {
-      expireStatuses(state, actor, 'on_attack', { sourceUnitId: actor.id });
       const weapon = weaponInfo(state, actor);
       if (weapon.ammo && !weapon.infiniteAmmo) spendAmmo(state, actor, weapon, weapon.ammo);
       progress.targets = plan.targets.map(profile => profile.id);
@@ -1683,6 +1664,9 @@ export function applyAction(state, action) {
       state.vm.events = {};
       delete state.vm.endingTurn;
       delete state.vm.endingTicks;
+      delete state.vm.endingStatuses;
+      delete state.vm.startingTurn;
+      delete state.vm.settlingTurn;
     } else {
       const before = state.logs.length;
       const actor = currentUnit(state);
@@ -1690,11 +1674,15 @@ export function applyAction(state, action) {
       if (!result.pendingAsk && state.vm.endingTurn) {
         const endingUnit = state.units[state.vm.endingTurn];
         const remainingTicks = state.vm.endingTicks;
+        const remainingStatuses = state.vm.endingStatuses;
         delete state.vm.endingTurn;
         delete state.vm.endingTicks;
+        delete state.vm.endingStatuses;
         if (remainingTicks) endTurn(state, endingUnit, remainingTicks);
-        else completeTurnEnd(state, endingUnit);
+        else completeTurnEnd(state, endingUnit, remainingStatuses);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
+      } else if (!result.pendingAsk && state.vm.startingTurn) {
+        settleTurn(state);
       } else if (!result.pendingAsk && state.vm.settlingTurn) {
         if (!refreshOutcome(state)) settleTurn(state);
         else delete state.vm.settlingTurn;
@@ -1754,7 +1742,6 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       actor.mainHand = actor.weapon = plan.itemId;
       actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
       if (actor.stance === 'attunement' && !actor.attunementCharges) actor.stance = 'light_blade';
-      if (!fromOff) dispatchEffect(state, actor, 'on_equip', { equippedItemId: plan.itemId, weaponId: plan.itemId });
       break;
     }
     case 'use_item': {
@@ -1778,7 +1765,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     case 'detour': record(state, actor, 'maneuver', `${actor.name}选择绕行`, { maneuver: 'detour' }); break;
     case 'free_ally': {
       const ally = state.units[plan.targetId];
-      delete ally.statuses.suppressed;
+      removeVMStatus(state, ally, ally.statuses.suppressed, 'freed', actor);
       record(state,actor,'free_ally',`${actor.name}为${ally.name}解除压制`,{targetId:ally.id});
       break;
     }

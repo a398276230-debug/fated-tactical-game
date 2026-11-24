@@ -240,17 +240,42 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
     if (op.expireOn) status.expireOn = op.expireOn;
     if (previous && stackMode === 'stack') {
       status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
-      if (status.category === 'shield') status.vars.shieldAmount += previous.vars?.shieldAmount ?? 0;
+      if (status.category === 'shield') status.vars.shieldAmount = (status.vars.shieldAmount ?? 0) + (previous.vars?.shieldAmount ?? 0);
     }
     status.appliedRound = state.round;
     status.appliedTurn = state.turn;
     if (previous && stackMode === 'extend') status.remainingTurns = bounded(previous.remainingTurns + extension, 1, 100);
+    frame.appliedStatus = status;
+    if (previous && stackMode === 'replace') removeStatus(state, target, previous, 'replaced', context.self, host, frame);
+    else if (previous?.pools) status.pools = previous.pools;
+    return;
+  }
+  if (frame.pc === 2 && frame.appliedStatus) {
+    frame.pc++;
+    if (!live(target)) return;
+    const status = frame.appliedStatus;
+    const displaced = own(target.statuses, op.statusId);
+    if (displaced?.pools) status.pools = displaced.pools;
     target.statuses[op.statusId] = status;
     host.log(state, context.self, 'status', `${target.name}获得${status.name}（${status.stacks}层）`, host.statusLogDetail(target, status));
     scheduleHooks(state, frame, 'after_status_applied', frame.awaitEvent, host);
     return;
   }
   state.vm.stack.pop();
+}
+
+export function removeStatus(state, target, status, reason, actor, host, parent, detail = {}) {
+  const statusId = status.id;
+  if (own(target.statuses, statusId) !== status) return false;
+  const eventRef = newEvent(state, { actorId: actor?.id ?? null, targetId: target.id, statusId,
+    reason, removeReason: reason, removedStatus: status });
+  delete target.statuses[statusId];
+  deleteOwnedPools(state, status);
+  const text = reason === 'expired' ? `${target.name}的${status.name}结束` : `${target.name}失去${status.name}`;
+  host.log(state, actor, reason === 'expired' ? 'expire' : 'cleanse', text,
+    { targetId: target.id, statusId, reason, ...detail });
+  scheduleHooks(state, parent, 'after_status_removed', eventRef, host);
+  return true;
 }
 
 export function continueRemoveStatus({ state, frame, host, context, options }) {
@@ -282,12 +307,6 @@ export function continueRemoveStatus({ state, frame, host, context, options }) {
     host.log(state, context.self, 'authority', `${status.name}${authorityContestDetail.result > 0 ? '被强制移除' : '抵抗了强制移除'}${authorityProse(authorityContestDetail)}`, { targetId: target.id, contest: authorityContestDetail });
     if (authorityContestDetail.result <= 0) return;
   }
-  delete target.statuses[statusId];
-  deleteOwnedPools(state, status);
-  frame.removed = (frame.removed ?? 0) + 1;
-  const reason = op.reason ?? 'dispelled';
-  frame.eventRef = newEvent(state, { actorId: context.self?.id ?? null, targetId: target.id, statusId, removeReason: reason, reason, removedStatus: structuredClone(status) });
-  host.log(state, context.self, reason === 'expired' ? 'expire' : 'cleanse', `${target.name}失去${status.name}`, {
-    targetId: target.id, statusId, ...(authorityContestDetail ? { contest: authorityContestDetail } : {}) });
-  scheduleHooks(state, frame, 'after_status_removed', frame.eventRef, host);
+  if (removeStatus(state, target, status, op.reason ?? 'dispelled', context.self, host, frame,
+    authorityContestDetail ? { contest: authorityContestDetail } : {})) frame.removed = (frame.removed ?? 0) + 1;
 }

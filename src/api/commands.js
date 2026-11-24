@@ -1,17 +1,14 @@
 import { getStatusTemplate, grantStatus, patchStatus } from '../core/combat.js';
 import { evaluateExpr } from '../core/formula.js';
-import { getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
-import { recordVM } from '../core/vm-runtime.js';
+import { statusPatchFields } from '../core/vm-schema.js';
+import { deleteOwnedPools, getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
+import { recordVM, removeVMStatus } from '../core/vm-runtime.js';
 import { attrs, checkOptional, inGrid, defineStatus, equipmentTemplate, fields, has, id, int, own,
   plain, requireThat as check, skillTemplate, statusValue, unitValue, validateCell, zoneValue } from './validation.js';
 
 const get = (table, key, label) => { check(has(table, key), label); return table[key]; };
 const nonempty = patch => check(plain(patch) && Object.keys(patch).length > 0, 'patch');
 const builtins = ['hp', 'mp', 'sp'];
-const deleteOwnedPools = (state, owner) => {
-  for (const poolId of Object.values(owner.pools ?? {})) delete state.pools[poolId];
-};
-const statusPatchFields = ['remainingTurns', 'durationType', 'stackMode', 'stacks', 'vars', 'mods', 'expireOn'];
 
 const commands = {
   set_unit_stat(s, c) {
@@ -103,8 +100,7 @@ const commands = {
     const unit = get(s.units, c.unitId, 'unitId');
     const status = unit.statuses[c.statusId];
     check(!status?.flags?.includes('undispellable'), '该状态不可驱散');
-    if (status) deleteOwnedPools(s, status);
-    delete unit.statuses[c.statusId];
+    if (status) removeVMStatus(s, unit, status, 'dispelled', unit);
   },
   adjust_pool(s, c) {
     fields(c, ['type', 'poolId', 'operation', 'value']);
