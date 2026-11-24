@@ -717,7 +717,7 @@ export function mountTavernOverlay(options = {}) {
     }
     const settingsSaved = putConfig(storage, configKey, settings);
     localOnly = !allSaved || !settingsSaved;
-    if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储；请清理旧战局缓存后重载。');
+    if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储。请先下载战局备份；如需彻底初始化，可在实例维护点「清理脚本缓存」。');
   }
   if (!config.aiSessions?.sessions?.length || config.aiSessions.activeId !== aiSessions.data.activeId) {
     persistSettings({ aiSessions: aiSessions.data });
@@ -944,6 +944,15 @@ export function mountTavernOverlay(options = {}) {
     on(loadBattle, 'click', async () => { switchTab('sandbox'); await scan(); });
     const toolbar = el(doc, 'div', { class: 'fated-actions' });
     const refresh = el(doc, 'button', { type: 'button' }, '从当前聊天重新水合'); toolbar.append(refresh); page.append(toolbar);
+    const cleanup = el(doc,'button',{type:'button','data-script-reset':''},'清理脚本缓存'); toolbar.append(cleanup);
+    on(cleanup,'click',()=>{
+      if (!host.confirm('彻底初始化本浏览器当前站点的命定战术脚本？将删除所有聊天的沙盘战局（含当前进度）、实例、标准化结果、辅助 AI 会话与补丁、API 密钥和设置。不会删除酒馆聊天、MVU、世界书或其他脚本数据。此操作不可撤销，建议先下载快照。')) return;
+      try {
+        const keys = Array.from({length:storage.length},(_,i)=>storage.key(i)).filter(k=>k?.startsWith('fated-tactical/'));
+        for (const key of keys) storage.removeItem(key);
+      } catch { notify('未完成初始化','浏览器拒绝清理存储；未重新加载。'); return; }
+      dispose(); host.location.reload();
+    });
     const choose = ids => { persistSettings({rosterSelection:ids}); renderInstances(); };
     for (const [label,all] of [['全选',true],['取消全选',false]]) { const b=el(doc,'button',{type:'button'},label); on(b,'click',()=>choose(all?Object.keys(config.instances):[])); toolbar.append(b); }
     // 折叠状态按实例 ID 保存，人多时可以只展开正在看的那几张
@@ -969,7 +978,22 @@ export function mountTavernOverlay(options = {}) {
       appendWarningGroups(body, groups, true);
       const actions = el(doc, 'div', { class: 'fated-actions' }); const edit = el(doc, 'button', { type: 'button' }, '编辑 JSON'); const remove = el(doc, 'button', { type: 'button' }, '删除');
       actions.append(edit, remove); body.append(actions); list.append(box);
-      on(remove, 'click', () => { for (const id of members) delete config.instances[id]; save(); choose(selectedIds()); });
+      remove.title = '删除本场该角色及其标准化结果；重新水合时从源数据重读';
+      on(remove, 'click', () => {
+        const battle = activeBattleKey;
+        if (!battle || aiController) { notify('暂不可删除','请先加载战局并等待当前 AI 请求结束。'); return; }
+        const deleting = new Set(members);
+        const omit = record => Object.fromEntries(Object.entries(record ?? {}).filter(([id])=>!deleting.has(id)));
+        const retained = batches(battle).filter(batch => ![...(batch.entries ?? []).map(([id])=>id),
+          ...(batch.receipts ?? []).map(r=>r.unitId), ...(batch.ownerIds ?? []), ...Object.keys(batch.hashes ?? {})].some(id=>deleting.has(id)));
+        for (const id of members) delete config.instances[id];
+        save(); persistSettings({ rosterSelection:selectedIds(), normalizationBatches:{...config.normalizationBatches,[battle]:retained},
+          charSnapshots:{...config.charSnapshots,[battle]:omit(config.charSnapshots[battle])},
+          narrativeExemptions:{...config.narrativeExemptions,[battle]:(config.narrativeExemptions[battle]??[]).filter(r=>!deleting.has(r.unitId))},
+          unresolvedNotes:{...config.unresolvedNotes,[battle]:omit(config.unresolvedNotes[battle])},
+          pendingInstanceResets:{...config.pendingInstanceResets,[battle]:true} });
+        renderInstances();
+      });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
     on(refresh, 'click', () => {
@@ -1455,7 +1479,8 @@ export function mountTavernOverlay(options = {}) {
       diagnostics.inputWarnings = [...rawWarnings];
       // Reuse only source-bound transactions from this chat. Existing battles
       // keep their own history, including deliberate entry resets.
-      const firstEntry = !rehydrate && nextState && key && !savedBattle && !enteredBattles.has(key);
+      const resetDeleted = Boolean(config.pendingInstanceResets?.[key]);
+      const firstEntry = !resetDeleted && !rehydrate && nextState && key && !savedBattle && !enteredBattles.has(key);
       const chatPrefix = `${safeKey(chat)}__`;
       const ownBatches = batches(key);
       const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches)
@@ -1478,13 +1503,17 @@ export function mountTavernOverlay(options = {}) {
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
-      if (currentState && (rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key);
+      if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key);
       // Identical raw text can produce different skill mechanics after a converter fix.
       // Compare effective opening templates, not the board after turns have been played.
-      const restoreSaved = savedBattle && (!rehydrate || (unchangedOpening && !invalid &&
+      const restoreSaved = !resetDeleted && savedBattle && (!rehydrate || (unchangedOpening && !invalid &&
         stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills)));
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key]: kept } });
       mountState(currentState, restoreSaved);
+      if (currentState && resetDeleted) {
+        const pendingInstanceResets = {...config.pendingInstanceResets}; delete pendingInstanceResets[key];
+        persistSettings({pendingInstanceResets});
+      }
       refreshPortraits(currentState, epoch);
       activeBattleKey = key;
       characters = fresh;
@@ -1672,7 +1701,8 @@ export function mountTavernOverlay(options = {}) {
         const previous = operations(key);
         validate(applyNormalization(baseline, [...previous, ...patch]));
         additions.push(...normalizationTransactions({ patch, solved, verified, records: characters, before, fingerprint: fingerprintAt,
-          linkedRoots: effective.map(operation => expanded(operation).map(copy => copy.path)) }));
+          linkedRoots: effective.map(operation => expanded(operation).map(copy => copy.path)) }).map(batch =>
+          batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
         if (patch.length) {
           refreshOpeningInitiative(next);
           syncEquipmentEffects(next);

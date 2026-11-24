@@ -18284,7 +18284,7 @@ ${variables2.warnings()}` : "");
       }
       const settingsSaved = putConfig(storage, configKey, settings);
       localOnly = !allSaved || !settingsSaved;
-      if (localOnly) notify("\u8BBE\u7F6E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\uFF1B\u8BF7\u6E05\u7406\u65E7\u6218\u5C40\u7F13\u5B58\u540E\u91CD\u8F7D\u3002");
+      if (localOnly) notify("\u8BBE\u7F6E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\u3002\u8BF7\u5148\u4E0B\u8F7D\u6218\u5C40\u5907\u4EFD\uFF1B\u5982\u9700\u5F7B\u5E95\u521D\u59CB\u5316\uFF0C\u53EF\u5728\u5B9E\u4F8B\u7EF4\u62A4\u70B9\u300C\u6E05\u7406\u811A\u672C\u7F13\u5B58\u300D\u3002");
     }
     if (!config.aiSessions?.sessions?.length || config.aiSessions.activeId !== aiSessions.data.activeId) {
       persistSettings({ aiSessions: aiSessions.data });
@@ -18579,6 +18579,20 @@ ${tag2.textContent || ""}
       const refresh = el(doc, "button", { type: "button" }, "\u4ECE\u5F53\u524D\u804A\u5929\u91CD\u65B0\u6C34\u5408");
       toolbar.append(refresh);
       page.append(toolbar);
+      const cleanup = el(doc, "button", { type: "button", "data-script-reset": "" }, "\u6E05\u7406\u811A\u672C\u7F13\u5B58");
+      toolbar.append(cleanup);
+      on(cleanup, "click", () => {
+        if (!host.confirm("\u5F7B\u5E95\u521D\u59CB\u5316\u672C\u6D4F\u89C8\u5668\u5F53\u524D\u7AD9\u70B9\u7684\u547D\u5B9A\u6218\u672F\u811A\u672C\uFF1F\u5C06\u5220\u9664\u6240\u6709\u804A\u5929\u7684\u6C99\u76D8\u6218\u5C40\uFF08\u542B\u5F53\u524D\u8FDB\u5EA6\uFF09\u3001\u5B9E\u4F8B\u3001\u6807\u51C6\u5316\u7ED3\u679C\u3001\u8F85\u52A9 AI \u4F1A\u8BDD\u4E0E\u8865\u4E01\u3001API \u5BC6\u94A5\u548C\u8BBE\u7F6E\u3002\u4E0D\u4F1A\u5220\u9664\u9152\u9986\u804A\u5929\u3001MVU\u3001\u4E16\u754C\u4E66\u6216\u5176\u4ED6\u811A\u672C\u6570\u636E\u3002\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\uFF0C\u5EFA\u8BAE\u5148\u4E0B\u8F7D\u5FEB\u7167\u3002")) return;
+        try {
+          const keys = Array.from({ length: storage.length }, (_, i) => storage.key(i)).filter((k) => k?.startsWith("fated-tactical/"));
+          for (const key4 of keys) storage.removeItem(key4);
+        } catch {
+          notify("\u672A\u5B8C\u6210\u521D\u59CB\u5316", "\u6D4F\u89C8\u5668\u62D2\u7EDD\u6E05\u7406\u5B58\u50A8\uFF1B\u672A\u91CD\u65B0\u52A0\u8F7D\u3002");
+          return;
+        }
+        dispose();
+        host.location.reload();
+      });
       const choose = (ids) => {
         persistSettings({ rosterSelection: ids });
         renderInstances();
@@ -18642,10 +18656,32 @@ ${tag2.textContent || ""}
         actions2.append(edit, remove);
         body.append(actions2);
         list4.append(box);
+        remove.title = "\u5220\u9664\u672C\u573A\u8BE5\u89D2\u8272\u53CA\u5176\u6807\u51C6\u5316\u7ED3\u679C\uFF1B\u91CD\u65B0\u6C34\u5408\u65F6\u4ECE\u6E90\u6570\u636E\u91CD\u8BFB";
         on(remove, "click", () => {
+          const battle2 = activeBattleKey;
+          if (!battle2 || aiController) {
+            notify("\u6682\u4E0D\u53EF\u5220\u9664", "\u8BF7\u5148\u52A0\u8F7D\u6218\u5C40\u5E76\u7B49\u5F85\u5F53\u524D AI \u8BF7\u6C42\u7ED3\u675F\u3002");
+            return;
+          }
+          const deleting = new Set(members);
+          const omit = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([id4]) => !deleting.has(id4)));
+          const retained = batches(battle2).filter((batch) => ![
+            ...(batch.entries ?? []).map(([id4]) => id4),
+            ...(batch.receipts ?? []).map((r) => r.unitId),
+            ...batch.ownerIds ?? [],
+            ...Object.keys(batch.hashes ?? {})
+          ].some((id4) => deleting.has(id4)));
           for (const id4 of members) delete config.instances[id4];
           save();
-          choose(selectedIds());
+          persistSettings({
+            rosterSelection: selectedIds(),
+            normalizationBatches: { ...config.normalizationBatches, [battle2]: retained },
+            charSnapshots: { ...config.charSnapshots, [battle2]: omit(config.charSnapshots[battle2]) },
+            narrativeExemptions: { ...config.narrativeExemptions, [battle2]: (config.narrativeExemptions[battle2] ?? []).filter((r) => !deleting.has(r.unitId)) },
+            unresolvedNotes: { ...config.unresolvedNotes, [battle2]: omit(config.unresolvedNotes[battle2]) },
+            pendingInstanceResets: { ...config.pendingInstanceResets, [battle2]: true }
+          });
+          renderInstances();
         });
         on(edit, "click", () => {
           const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
@@ -19190,7 +19226,8 @@ ${tag2.textContent || ""}
         for (const id4 of removed) delete stored[id4];
         const rawWarnings = sources.warnings ?? [];
         diagnostics.inputWarnings = [...rawWarnings];
-        const firstEntry = !rehydrate && nextState && key4 && !savedBattle && !enteredBattles.has(key4);
+        const resetDeleted = Boolean(config.pendingInstanceResets?.[key4]);
+        const firstEntry = !resetDeleted && !rehydrate && nextState && key4 && !savedBattle && !enteredBattles.has(key4);
         const chatPrefix = `${safeKey2(chat)}__`;
         const ownBatches = batches(key4);
         const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, transactions]) => transactions.filter((batch) => batch.entries?.length)) : ownBatches;
@@ -19212,10 +19249,15 @@ ${tag2.textContent || ""}
         const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter((warning) => !exempt.has(warning));
         toast.hidden = true;
         currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
-        if (currentState && (rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
-        const restoreSaved = savedBattle && (!rehydrate || unchangedOpening && !invalid && stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills));
+        if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
+        const restoreSaved = !resetDeleted && savedBattle && (!rehydrate || unchangedOpening && !invalid && stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills));
         if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
         mountState(currentState, restoreSaved);
+        if (currentState && resetDeleted) {
+          const pendingInstanceResets = { ...config.pendingInstanceResets };
+          delete pendingInstanceResets[key4];
+          persistSettings({ pendingInstanceResets });
+        }
         refreshPortraits(currentState, epoch);
         activeBattleKey = key4;
         characters = fresh;
@@ -19425,7 +19467,7 @@ ${tag2.textContent || ""}
             before,
             fingerprint: fingerprintAt,
             linkedRoots: effective.map((operation2) => expanded(operation2).map((copy3) => copy3.path))
-          }));
+          }).map((batch) => batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
           if (patch.length) {
             refreshOpeningInitiative(next);
             syncEquipmentEffects(next);

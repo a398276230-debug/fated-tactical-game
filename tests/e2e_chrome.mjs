@@ -658,11 +658,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run(`window.__fatedTacticalTavern.open()`);
   await click('[data-tab="instances"]');
   const requestsBeforeHydrate = await run('hostRequests.length');
+  const resetKey=await run('window.__fatedTacticalTavern.getSources().battleKey');
+  assert.ok(await run(`window.__fatedTacticalTavern.getConfig().normalizationBatches[${JSON.stringify(resetKey)}].length`));
   await run(`for (const id of ['p1','e1']) [...document.querySelectorAll('.fated-instance[data-unit-id="'+id+'"] button')].find(b=>b.textContent==='删除').click()`);
   assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 0);
   await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',rules:[{id:'heal_self',hook:'active',usesPerBattle:1,program:[{op:'heal',target:'self',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
   await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
   const raw = await tavernState();
+  assert.deepEqual(await run(`window.__fatedTacticalTavern.getConfig().normalizationBatches[${JSON.stringify(resetKey)}]`),[],'删除角色后重读不会回放旧标准化');
   assert.equal(raw.units.p1.hp, 245);
   const staleSkillId = Object.keys(raw.units.p1.inventory)[0];
   await run(`(() => {
@@ -723,6 +726,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.match(await run(`document.querySelector('.fated-ai-message[data-role="tool"]').textContent`), /test[\s\S]*占位/);
   assert.equal(await run(`getComputedStyle(document.querySelector('.fated-ai-message[data-role="tool"]')).borderTopStyle`), 'dashed');
   t.diagnostic('G47–G54 通过，刷新后恢复会话与工具占位');
+  await click('[data-tab="instances"]');
+  assert.equal(await run(`document.querySelector('[data-script-reset]').previousElementSibling.textContent`),'从当前聊天重新水合');
+  await run(`localStorage.setItem('other-script/probe','keep'); localStorage.setItem('fated-tactical/reset-probe','old'); window.confirm=()=>false`);
+  await click('[data-script-reset]'); assert.equal(await run(`localStorage.getItem('fated-tactical/reset-probe')`),'old');
+  await run(`window.confirm=()=>true; document.querySelector('[data-script-reset]').click()`);
+  await until(()=>run(`!!window.__fatedTacticalTavern && !localStorage.getItem('fated-tactical/reset-probe')`),'清理脚本缓存后重新初始化');
+  assert.equal(await run(`localStorage.getItem('other-script/probe')`),'keep');
+  assert.deepEqual(await run('window.__fatedTacticalTavern.getConfig().normalizationBatches'),{});
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '100 格棋盘加载');
   await click('#auto-ai');
