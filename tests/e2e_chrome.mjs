@@ -210,10 +210,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
           }});
         }
         if (hostRequests.length === 4) {
+          const missing = state.warnings.find(w => w.message.includes('震荡尾音'));
+          if (missing) unresolved.push({unitId:missing.unitId,originPath:missing.originPath,message:missing.message,
+            reason:'原文没有写持续时间',kind:'missing_info'});
           patch[0].value.at(-1).program = [{op:'mutate_event'}];
           patch.push({op:'add',path:'/statusTemplates/repair_probe',value:{id:'repair_probe',name:'校验探针',category:'special'}});
+          unresolved.push({unitId:'p1',originPath:'/equipment/typo',effectName:'写错引用',reason:'缺少细节'});
         }
-        resolve(JSON.stringify({patch: hostRequests.length === 5 ? [] : patch, unresolved}));
+        resolve(JSON.stringify(hostRequests.length === 5 ? {unresolved:[{unitId:'p1',originPath:'/equipment/typo',effectName:'写错引用',reason:'缺少细节'}]} : {patch, unresolved}));
       };
     });
   })()`);
@@ -237,7 +241,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`window.__fatedTacticalTavern.getDiagnostics().warnings.filter(w => w.message.includes('恒定发射')).length`), 1);
   assert.match(await run(`${get('article.fated-instance')}.textContent`), /体型 中型 \(1\.7m\)/);
   const cardWarnings = '.fated-instance[data-unit-id="p1"] .fated-char-diagnostics';
-  assert.match(await run(`${get(cardWarnings)}.textContent`), /待标准化（1 项）.*恒定拉距/);
+  assert.match(await run(`${get(cardWarnings)}.textContent`), /待编译词条（1 项）.*恒定拉距/);
   assert.doesNotMatch(await run(`${get(cardWarnings)}.textContent`), /请用 VM|\/statusTemplates/);
   // 实例卡：三色资源条、折叠后只剩卡头，状态刷新后保留
   const card = '.fated-instance[data-unit-id="p1"]';
@@ -263,7 +267,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(() => run(`document.querySelector('.fated-toast strong').textContent === '标准化失败'`), '错误提示');
   assert.match(await run(`document.querySelector('.fated-toast > p:not(.fated-toast-summary)').textContent`), /模型未返回有效的战局补丁/);
   assert.equal(await run(`document.querySelector('.fated-toast-summary').textContent`), '已应用 0 项补丁');
-  assert.match(await run(`document.querySelector('.fated-toast-issues').textContent`), /待标准化（2 项）.*恒定拉距.*恒定发射/);
+  assert.match(await run(`document.querySelector('.fated-toast-issues').textContent`), /待编译词条（2 项）.*恒定拉距.*恒定发射/);
   assert.equal(await run(`!!document.querySelector('.fated-toast-raw')`), false);
   await run('window.__fatedTacticalTavern.scan()');
   assert.equal(await run('hostRequests.length'), 2);
@@ -297,7 +301,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     document.querySelector('[data-page="sandbox"] > .fated-actions button').click();`);
   assert.match(await run(`document.querySelector('#send_textarea').value`), /战斗尚未结束/);
   assert.equal(await run(`document.querySelector('.fated-tavern-panel').hidden`), true);
-  await run(`window.narrativeHp=123; window.extraBowEffects={冰冻箭:'命中后冰冻目标'};
+  await run(`window.narrativeHp=123; window.extraBowEffects={冰冻箭:'命中后冰冻目标',震荡尾音:'命中后令目标晕眩'};
     hostMessages.push({message_id:2,role:'user',message:document.querySelector('#send_textarea').value},
       {message_id:3,role:'assistant',message:'续写<char_info>{"name":"对手","stats":{"agi":99}}</char_info>'});
     document.querySelector('#send_textarea').remove(); window.emitMvuUpdate();
@@ -320,24 +324,49 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.match(repairPrompt, /mutate_event/);
   assert.match(repairPrompt, /patch/);
   const partialState = await tavernState();
-  assert.equal(partialState.statusTemplates?.repair_probe?.name, '校验探针', '合法的同批补丁在修复请求发出前已生效');
+  assert.equal(partialState.statusTemplates?.repair_probe?.name, '校验探针', '坏收据未回滚同批模板');
+  assert.ok(openingBow(partialState).rules.some(rule => rule.id === 'ice-partial'), '坏收据未回滚同批战斗规则');
   await run('window.completeHostAI()');
   await until(() => run(`document.querySelector('.fated-toast strong').textContent.startsWith('标准化部分完成')`), '保留部分结果与漏答警告');
-  const reviewedSelector = '[data-normalization-diagnostics="reviewed"]';
+  const reviewedSelector = '[data-normalization-diagnostics="approximated"]';
   const pendingSelector = '[data-normalization-diagnostics="pending"]';
   const toastIssues = await run(`document.querySelector('.fated-toast-issues').textContent`);
-  assert.match(toastIssues, /待标准化（1 项）.*恒定拉距/);
-  assert.match(toastIssues, /模型说明：受限 \/ 部分实现（1 项）.*「冰冻箭」 — 仍缺冰冻持续时间/);
+  assert.match(toastIssues, /待编译词条（1 项）.*恒定拉距/);
+  assert.match(toastIssues, /已近似实装（1 项）.*「冰冻箭」.*仍缺冰冻持续时间/);
+  assert.match(toastIssues, /无法唯一匹配本批词条/);
+  assert.equal(toastIssues.match(/「冰冻箭」/g)?.length, 1);
   assert.doesNotMatch(toastIssues, /"unitId"|"originPath"|"reason"|请用 VM/);
   const playerCard = '.fated-instance[data-unit-id="p1"]';
-  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /待标准化（1 项）.*恒定拉距/);
-  assert.match(await run(`${get(`${playerCard} ${reviewedSelector}`)}.textContent`), /「冰冻箭」 — 仍缺冰冻持续时间/);
+  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /待编译词条（1 项）.*恒定拉距/);
+  assert.match(await run(`${get(`${playerCard} ${reviewedSelector}`)}.textContent`), /「冰冻箭」.*仍缺冰冻持续时间/);
   assert.doesNotMatch(await run(`${get(`${playerCard} ${reviewedSelector} li`)}.title`), /请用 VM|\/statusTemplates/);
   await run(`(async () => { const frame = document.createElement('iframe'); frame.hidden = true;
     document.body.append(frame); frame.contentWindow.eval(overlayBundle); overlayFrame.remove(); window.overlayFrame = frame;
     await window.__fatedTacticalTavern.open(); await window.__fatedTacticalTavern.scan(); })()`);
-  assert.match(await run(`${get(`${playerCard} ${reviewedSelector}`)}.textContent`), /「冰冻箭」 — 仍缺冰冻持续时间/);
-  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /待标准化（1 项）.*恒定拉距/);
+  assert.match(await run(`${get(`${playerCard} ${reviewedSelector}`)}.textContent`), /「冰冻箭」.*仍缺冰冻持续时间/);
+  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /待编译词条（1 项）.*恒定拉距/);
+  assert.equal(await run('hostRequests.length'), 5);
+  const attention = `${playerCard} [data-normalization-diagnostics="needsAttention"]`;
+  const ignored = `${playerCard} [data-normalization-diagnostics="nonCombat"]`;
+  assert.match(await run(`${get(attention)}.textContent`), /震荡尾音.*原文缺参/);
+  assert.doesNotMatch(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /震荡尾音/);
+  const repairMessages = await run('hostRequests[4].ordered_prompts.map(prompt => prompt.content)');
+  const reviewedMessage = await run(`window.__fatedTacticalTavern.getDiagnostics().warnings.find(w => w.message.includes('震荡尾音')).message`);
+  assert.ok(repairMessages.every(content => !content.includes(JSON.stringify(reviewedMessage))), '已审阅词条不进修复批次');
+  await run(`${get(`${attention} [data-warning-action="supplement"]`)}.click()`);
+  assert.equal(await run(`${get('[data-tab="ai"]')}.getAttribute('aria-selected')`), 'true');
+  assert.match(await run(`${get('[data-page="ai"] textarea[aria-label="输入消息"]')}.value`), /震荡尾音[\s\S]*原文没有写持续时间/);
+  await run(`${get('[data-page="ai"] textarea[aria-label="输入消息"]')}.value = ''; ${get('[data-page="ai"] textarea[aria-label="输入消息"]')}.dispatchEvent(new Event('input')); ${get('[data-tab="instances"]')}.click()`);
+  await run(`${get(`${attention} [data-warning-action="ignore"]`)}.click()`);
+  assert.equal(await run(`!!${get(attention)}`), false);
+  assert.match(await run(`${get(ignored)}.textContent`), /震荡尾音.*玩家已设为非战斗忽略/);
+  await run(`(async () => { const frame = document.createElement('iframe'); frame.hidden = true;
+    document.body.append(frame); frame.contentWindow.eval(overlayBundle); overlayFrame.remove(); window.overlayFrame = frame;
+    await window.__fatedTacticalTavern.open(); })()`);
+  assert.match(await run(`${get(ignored)}.textContent`), /震荡尾音/);
+  await run(`${get(`${ignored} [data-warning-action="restore"]`)}.click()`);
+  assert.equal(await run(`!!${get(ignored)}`), false);
+  assert.match(await run(`${get(`${playerCard} ${pendingSelector}`)}.textContent`), /震荡尾音/);
   assert.equal(await run('hostRequests.length'), 5);
 
   await run(`(() => {
@@ -584,7 +613,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(async () => (await bubble())?.body === '编辑后回复', '编辑后重新生成完成');
   assert.equal((await aiData()).sessions.at(-1).messages.at(-2).content, '编辑后的护甲问题');
   const beforeNormalize = await aiData();
-  await run(`document.querySelector('[data-tab="instances"]').click(); document.querySelector('[data-normalize]').click(); document.querySelector('[data-tab="ai"]').click();`);
+  await run(`document.querySelector('[data-tab="instances"]').click();`);
+  assert.equal(await run(`${get('[data-normalize]')}.disabled`), true, '没有待编译词条时不发送空批次');
+  await run(`${get(rerollEntry)}.click(); document.querySelector('[data-normalize]').click(); document.querySelector('[data-tab="ai"]').click();`);
   await until(async () => (await tavernState()).units.p1.armor === 7, '手动标准化通过独立 API 写入');
   assert.equal(normalizationRequests.length, 1);
   assert.doesNotMatch(JSON.stringify(normalizationRequests[0]), /编辑后的护甲问题|调整错误路径/);

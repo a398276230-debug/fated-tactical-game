@@ -3,6 +3,12 @@ import { test } from 'node:test';
 import { createGameAPI, buildScenario, defineStatus } from '../src/index.js';
 import { grantStatus } from '../src/core/combat.js';
 import { narrate } from '../src/ui/narrate.js';
+import { fields } from '../src/api/validation.js';
+
+test('template field errors name the missing or unexpected key', () => {
+  assert.throws(() => fields({ name: '试验技能' }, ['name', 'slot']), /缺少必填字段：slot$/);
+  assert.throws(() => fields({ name: '试验技能', slot: 'action', cooldown: 2 }, ['name', 'slot']), /包含不支持的字段：cooldown$/);
+});
 import { createPool, getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 
 const onHit = (id, program) => ({ id, hook: 'after_hit', filter: "event.actorId == self.id && event.weaponTemplateId == 'crossbow'", program });
