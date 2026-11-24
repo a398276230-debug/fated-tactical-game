@@ -336,6 +336,18 @@ var FatedTacticalTavern = (() => {
     return Math.max(0, Math.min(max, floor ? Math.floor(cells2 + 1e-9) : cells2));
   }
   var scaledMoveCells = (raw, effectiveTier, cellM) => scaledCells(raw, effectiveTier, cellM, { floor: true });
+  function scaledTemplate(state, unit, template, kind) {
+    if (!template) return template;
+    const tier = resolveEffectiveTier(kind, template.quality, unit.tier);
+    const cellM = state.scale?.cellM ?? 2;
+    const result = { ...template };
+    if (template.target === "self") result.range = 0;
+    else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
+    for (const [rawKey, key4] of [["rawRadius", "radius"], ["rawInnerRadius", "innerRadius"], ["rawWidth", "width"]]) {
+      if (template[rawKey] != null) result[key4] = scaledCells(template[rawKey], tier, cellM, { max: 30 });
+    }
+    return result;
+  }
   var DISTANCE_TABLE = Object.freeze([
     { name: "\u8D34\u8EAB", min: 0, max: 0, hit: 4, range: 6 },
     { name: "\u8FD1\u7A0B", min: 1, max: 2, hit: 0, range: 2 },
@@ -5524,18 +5536,6 @@ var FatedTacticalTavern = (() => {
       }
     }
     return [...result];
-  }
-  function scaledTemplate(state, unit, template, kind) {
-    if (!template) return template;
-    const tier = resolveEffectiveTier(kind, template.quality, unit.tier);
-    const cellM = state.scale?.cellM ?? 2;
-    const result = { ...template };
-    if (template.target === "self") result.range = 0;
-    else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
-    for (const key4 of ["Radius", "InnerRadius", "Width"]) {
-      if (template[`raw${key4}`] != null) result[key4[0].toLowerCase() + key4.slice(1)] = scaledCells(template[`raw${key4}`], tier, cellM, { max: 30 });
-    }
-    return result;
   }
   function actionSkill(state, unit, id3) {
     const equipped2 = new Map(equippedActiveSkills(state, unit)).get(id3);
@@ -14128,7 +14128,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function safeResource(pair, key4, warnings) {
     let max = Math.max(key4 === "hp" ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));
     if (max > 1e9 || pair.current > 1e9) {
-      warnings.push(`${key4} \u8D85\u51FA\u5F15\u64CE\u4E0A\u9650\uFF0C\u5DF2\u622A\u5230 1e9`);
+      warnings.push(`${key4} \u8D85\u51FA\u5F15\u64CE\u4E0A\u9650\uFF0C\u5DF2\u622A\u5230 1e9`, { kind: "auto_adjusted" });
       max = Math.min(max, 1e9);
       current = Math.min(current, max);
     }
@@ -14198,7 +14198,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return bound(turns, 1, 100, fallback);
   }
   function warningSink(warnings, unitId, source, scope, originPath) {
-    return { push: (message) => warnings.push({ message, unitId, source, scope, ...originPath && { originPath } }) };
+    return { push: (message, metadata) => warnings.push({ message, unitId, source, scope, ...originPath && { originPath }, ...metadata }) };
   }
   var blockBody = (value) => value.trim().replace(/^[|>](?:[-+2])?[^\S\r\n]*\r?\n/, "").trim();
   var describe = (value) => typeof value === "string" ? blockBody(value) : JSON.stringify(value);
@@ -14286,10 +14286,14 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         continue;
       }
       const program2 = !equipment && typeof entry2 === "string" ? narrativeDamage(label, entry2, allowPower) : [];
+      const rawExcerpt = [entry2].flat().map((value) => typeof value === "string" ? blockBody(value) : text3(value?.\u63CF\u8FF0 ?? value?.description ?? value?.\u6548\u679C ?? value?.effect)).filter(Boolean).join("\uFF1B");
+      const excerpt = [...rawExcerpt];
+      const summary = excerpt.length ? `${excerpt.slice(0, 80).join("")}${excerpt.length > 80 ? "\u2026" : ""}` : "\u5F85\u8F6C\u6362\u4E3A\u6218\u6597\u89C4\u5219";
+      const metadata = { rawExcerpt, userSummary: `${label ? `\u300C${label}\u300D` : "\u6548\u679C"}\uFF1A${summary}` };
       if (program2.length && areaDamage) {
-        warnings.push(`\u8303\u56F4\u4F24\u5BB3\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`);
+        warnings.push(`\u8303\u56F4\u4F24\u5BB3\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`, metadata);
       } else if (program2.length) appendRules(rules, [activeRule2(`${prefix.slice(0, 45)}-narrative-${index}`, program2)], warnings);
-      else warnings.push(`${equipment ? "\u88C5\u5907" : ""}\u6548\u679C\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u7528 VM rules / mods / pools \u5B9E\u73B0\u884C\u4E3A\u4E0E\u89E6\u53D1\u65F6\u673A\uFF1B\u7F3A\u5C11\u72B6\u6001\u6216\u53EC\u5524\u7269\u4E13\u5C5E\u6280\u80FD\u65F6\uFF0C\u540C\u6279\u65B0\u589E /statusTemplates/<id> \u6216 /skills/<id> \u540E\u5F15\u7528`);
+      else warnings.push(`${equipment ? "\u88C5\u5907" : ""}\u6548\u679C\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u7528 VM rules / mods / pools \u5B9E\u73B0\u884C\u4E3A\u4E0E\u89E6\u53D1\u65F6\u673A\uFF1B\u7F3A\u5C11\u72B6\u6001\u6216\u53EC\u5524\u7269\u4E13\u5C5E\u6280\u80FD\u65F6\uFF0C\u540C\u6279\u65B0\u589E /statusTemplates/<id> \u6216 /skills/<id> \u540E\u5F15\u7528`, metadata);
     }
     return rules;
   }
@@ -14432,11 +14436,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const effectEntries = narrativeEntries(r.effects ?? r.effectsList ?? r.\u6548\u679C);
     const { rangeValues, radius, shape: shape2, target: target2 } = parseAreaTags(r.tags ?? r.\u6807\u7B7E);
     const equipmentWarnings = !isWeapon2 || rangeValues.length < 2 ? warnings : {
-      push(message) {
+      push(message, metadata) {
         const effectIndex = effectEntries.findIndex(([label, value]) => label ? message.includes(`\u300C${label}\u300D`) : message.includes(describe(value)));
         const rawRange = rangeValues[effectIndex + 1];
         const suffix = effectIndex >= 0 && rawRange != null ? `\u3002\u8BE5\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u7684\u539F\u59CB\u8DDD\u79BB\u4E3A rawRange:${rawRange}${radius != null ? `\u3001rawRadius:${radius}` : ""}${shape2 ? `\u3001shape:${shape2}` : ""}${target2 ? `\u3001target:${target2}` : ""}\uFF0C\u8BF7\u5199\u5230\u88C5\u5907\u6302\u8F7D\u7684\u6280\u80FD\u6A21\u677F\u4E2D` : "";
-        warnings.push(message + suffix);
+        warnings.push(message + suffix, metadata);
       }
     };
     appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.\u6548\u679C, equipmentWarnings), warnings);
@@ -14542,7 +14546,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         if (length !== null) return length;
       }
     }
-    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text3(record3[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`);
+    if (keys.length) warnings.push(`\u4F53\u957F\u300C${text3(record3[keys[0]])}\u300D\u65E0\u6CD5\u89E3\u6790\uFF0C\u5DF2\u6309\u9ED8\u8BA4 1.7 \u7C73\u5904\u7406`, { kind: "auto_adjusted" });
     return 1.7;
   }
   function mergeBattleParticipant(record3, participant, battle) {
@@ -14595,7 +14599,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const x = integer3(xyz[0]), y = integer3(xyz[1]);
     const boundedX = Math.max(0, Math.min((board.width ?? 10) - 1, x));
     const boundedY = Math.max(0, Math.min((board.height ?? 10) - 1, y));
-    if (x !== boundedX || y !== boundedY) warnings.push(`\u5750\u6807 (${x},${y}) \u8D8A\u754C\uFF0C\u8C03\u6574\u4E3A (${boundedX},${boundedY})`);
+    if (x !== boundedX || y !== boundedY) warnings.push(`\u5750\u6807 (${x},${y}) \u8D8A\u754C\uFF0C\u8C03\u6574\u4E3A (${boundedX},${boundedY})`, { kind: "auto_adjusted" });
     return { x: boundedX, y: boundedY, z: integer3(xyz[2]) };
   }
   function importBackpack(bag, owner, skills, sink) {
@@ -14610,11 +14614,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).join(" ");
       const area3 = areaFields(item, warnings, name);
       const range2 = bound(area3.range, 0, 30, 3);
-      const notes2 = [];
+      const entries3 = [];
+      const notes2 = { push: (message, metadata) => entries3.push({ message, metadata }) };
       const rules = readRules(item.rules, notes2);
       appendRules(rules, convertNarrative(raw, notes2, id3, { areaDamage: isAreaDamage(area3) }), notes2);
-      for (const note of notes2) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\uFF1A${note}`);
-      if (!rules.length && !notes2.length) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\u7F3A\u5C11\u6548\u679C\uFF1A\u8BF7\u8865\u5168\u7528\u9014\u3001\u76EE\u6807\u548C\u6570\u503C`);
+      for (const { message, metadata } of entries3) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\uFF1A${message}`, metadata);
+      if (!rules.length && !entries3.length) warnings.push(`\u80CC\u5305\u6D88\u8017\u54C1\u300C${name}\u300D\u7F3A\u5C11\u6548\u679C\uFF1A\u8BF7\u8865\u5168\u7528\u9014\u3001\u76EE\u6807\u548C\u6570\u503C`);
       skills[id3] = {
         name: name.slice(0, 100),
         backpackItem: true,
@@ -14697,7 +14702,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const prefix = `fx-${hash(sid).toString(36)}`;
       const areaDamage = isAreaDamage(area3);
       const narrativeNotes = [];
-      appendRules(rules, convertNarrative(rawEffects, { push: (msg) => narrativeNotes.push(msg) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes2);
+      appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes2);
       const singleTaggedType = damageAliases.get(tag2);
       const hasActiveDamage = rules.some((rule2) => rule2.enabled !== false && rule2.hook === "active" && [...instructions(rule2.program)].some((op) => op.op === "damage"));
       if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag2) {
@@ -14718,10 +14723,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const generatedDamageType = singleTaggedType ?? (damageTypes2.includes(explicitDamageType) ? explicitDamageType : void 0);
       const generatedMainDamage = hasPower && !passive && !r.damage && !r.heal && !damageOps.length && (!tag2 || singleTaggedType) ? { count: 1, sides: 4, ...statTag ? { stat: statTag } : {}, ...generatedDamageType ? { type: generatedDamageType } : {} } : null;
       if (generatedMainDamage && !generatedDamageType && narrativeNotes.length) {
-        notes2.push(`\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u5F85\u6807\u51C6\u5316\u300C\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u300D\uFF1A\u6839\u636E\u539F\u59CB\u6548\u679C\u8865\u5168 /skills/${sid}/damage/type\uFF1B\u82E5\u539F\u6587\u660E\u786E\u4EE5\u6DF7\u5408\u4F24\u5BB3\u6216\u72EC\u7ACB\u516C\u5F0F\u66FF\u4EE3\u4E3B\u51FB\uFF0C\u8BF7\u79FB\u9664\u6A21\u677F damage \u5E76\u4EE5 active \u89C4\u5219\u7ED3\u7B97\u3002`);
+        notes2.push(`\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u5F85\u6807\u51C6\u5316\u300C\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u300D\uFF1A\u6839\u636E\u539F\u59CB\u6548\u679C\u8865\u5168 /skills/${sid}/damage/type\uFF1B\u82E5\u539F\u6587\u660E\u786E\u4EE5\u6DF7\u5408\u4F24\u5BB3\u6216\u72EC\u7ACB\u516C\u5F0F\u66FF\u4EE3\u4E3B\u51FB\uFF0C\u8BF7\u79FB\u9664\u6A21\u677F damage \u5E76\u4EE5 active \u89C4\u5219\u7ED3\u7B97\u3002`, { userSummary: `\u6280\u80FD\u300C${skillName}\u300D\uFF1A\u5F85\u4ECE\u539F\u6587\u8BC6\u522B\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B` });
       }
       const mainParsed = hasPower && (generatedMainDamage || damageOps.length);
-      for (const message of narrativeNotes) notes2.push(mainParsed ? `${message}\u3002\u4E3B\u51FB\u4E0E\u5A01\u529B ${numericPower} \u5DF2\u89E3\u6790\uFF0C\u53EA\u8865\u672C\u6761\u5C1A\u672A\u5B9E\u73B0\u7684\u6548\u679C\uFF0C\u4E0D\u8981\u91CD\u590D\u6DFB\u52A0\u4E3B\u51FB\u3002` : message);
+      for (const { message, metadata } of narrativeNotes) notes2.push(mainParsed ? `${message}\u3002\u4E3B\u51FB\u4E0E\u5A01\u529B ${numericPower} \u5DF2\u89E3\u6790\uFF0C\u53EA\u8865\u672C\u6761\u5C1A\u672A\u5B9E\u73B0\u7684\u6548\u679C\uFF0C\u4E0D\u8981\u91CD\u590D\u6DFB\u52A0\u4E3B\u51FB\u3002` : message, metadata);
       const damageType2 = explicitDamageType ?? (types2.length === 1 ? types2[0] : void 0);
       skillInfo[sid] = { description: text3(r.description ?? r.\u63CF\u8FF0), damageType: damageType2, hp: costs.hp };
       skills[sid] = {
@@ -14754,7 +14759,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         const saveDC = Number.isInteger(dc) && dc >= 1 && dc <= 50 ? dc : typeof r.saveDC === "string" && !Number.isFinite(dc) && validExpr(r.saveDC) ? r.saveDC : null;
         if (attrNames.includes(save) && saveDC != null && (r.damage || r.heal || !rules.length)) {
           Object.assign(skills[sid], { save, saveDC });
-        } else notes2.push(`\u300C${skillName}\u300D\u8C41\u514D\u5F85\u6807\u51C6\u5316\uFF1A${describe({ save: r.save, saveDC: r.saveDC })}\u3002\u89C4\u5219\u6548\u679C\u8BF7\u7528 check \u58F0\u660E\u901A\u8FC7\u4E0E\u5931\u8D25\u5206\u652F`);
+        } else notes2.push(`\u300C${skillName}\u300D\u8C41\u514D\u5F85\u6807\u51C6\u5316\uFF1A${describe({ save: r.save, saveDC: r.saveDC })}\u3002\u89C4\u5219\u6548\u679C\u8BF7\u7528 check \u58F0\u660E\u901A\u8FC7\u4E0E\u5931\u8D25\u5206\u652F`, { userSummary: `\u6280\u80FD\u300C${skillName}\u300D\uFF1A\u5F85\u786E\u8BA4\u62B5\u6297\u68C0\u5B9A\u7684\u5C5E\u6027\u548C\u96BE\u5EA6` });
       }
       if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
       if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
@@ -14776,7 +14781,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.\u5269\u4F59\u56DE\u5408 ?? rawStatus?.\u5269\u4F59\u65F6\u95F4, template.remainingTurns);
       const stacks = bound(rawStatus?.stacks ?? rawStatus?.\u5C42\u6570, 1, template.maxStacks);
-      if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`\u72B6\u6001 ${sid} \u7684 modifiers \u5F85\u6807\u51C6\u5316\uFF1A${describe(rawStatus.modifiers)}\u3002\u8BF7\u5728\u72B6\u6001\u6A21\u677F\u4E0A\u58F0\u660E mods \u6216 rules`);
+      if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`\u72B6\u6001 ${sid} \u7684 modifiers \u5F85\u6807\u51C6\u5316\uFF1A${describe(rawStatus.modifiers)}\u3002\u8BF7\u5728\u72B6\u6001\u6A21\u677F\u4E0A\u58F0\u660E mods \u6216 rules`, { userSummary: `\u72B6\u6001\u300C${template.name}\u300D\uFF1A\u9644\u5E26\u6548\u679C\u5F85\u8F6C\u6362` });
       const durationType = ["battle_turns", "until_removed", "persistent"].includes(rawStatus?.durationType) ? rawStatus.durationType : template.durationType;
       const shieldAmount = template.category === "shield" ? bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, template.vars.shieldAmount) : null;
       statuses[sid] = {
@@ -14942,8 +14947,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       unit.move = scaledCells(unit.rawMove, unit.tier, cellM, { floor: true });
       unit.moveCarryPermille = 0;
     }
-    terrainState(battle, state, sink(null, "terrain", "terrain"));
-    placeUnits(state, sink(null, "battle_init", "state"));
+    const adjustmentSink = (source2, scope) => ({ push: (message) => sink(null, source2, scope).push(message, { kind: "auto_adjusted" }) });
+    terrainState(battle, state, adjustmentSink("terrain", "terrain"));
+    placeUnits(state, adjustmentSink("battle_init", "state"));
     let valid2 = true;
     try {
       validateState(state);
@@ -15009,35 +15015,64 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       for (const label of [title, `\u300C${title}\u300D`]) {
         if (text5 === label) return [{ warning }];
         const tail = text5.slice(label.length);
-        if (text5.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1)) }];
+        if (text5.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1), "") }];
       }
       return [];
     });
     if (match.length > 1) return match.map(({ warning }) => ({ warning }));
-    return match.length ? match : [{ detail: diagnosticText(text5) }];
+    return match;
   }
-  function readUnresolvedDiagnostics(value, sent) {
-    if (!Array.isArray(value)) throw new Error("unresolved \u5FC5\u987B\u662F JSON \u6570\u7EC4");
-    return value.flatMap((item, index) => {
-      if (nonempty2(item)) return readTextNote(item.trim(), sent);
+  function readUnresolvedDiagnostics(value = [], sent) {
+    const matched = [], invalid = [];
+    if (!Array.isArray(value)) return { matched, invalid: ["\u672A\u80FD\u8BFB\u53D6\u6A21\u578B\u7684\u672A\u8F6C\u6362\u8BF4\u660E"] };
+    for (const [index, item] of value.entries()) {
+      if (nonempty2(item)) {
+        const notes2 = readTextNote(item.trim(), sent);
+        if (notes2.length === 1 && notes2[0].warning && notes2[0].detail) matched.push(notes2[0]);
+        else {
+          matched.push(...notes2.filter((note) => note.warning));
+          invalid.push(`\u7B2C ${index + 1} \u6761\u672A\u8F6C\u6362\u8BF4\u660E\u7F3A\u5C11\u53EF\u552F\u4E00\u5339\u914D\u7684\u8BCD\u6761\u6216\u539F\u56E0`);
+        }
+        continue;
+      }
       const label = `unresolved \u7B2C ${index + 1} \u9879`;
       if (!item || typeof item !== "object" || Array.isArray(item) || !(item.unitId === null || nonempty2(item.unitId)) || !(item.originPath === null || nonempty2(item.originPath)) || !(nonempty2(item.effectName) || nonempty2(item.message)) || !nonempty2(item.reason) || Object.hasOwn(item, "effectName") && !nonempty2(item.effectName) || Object.hasOwn(item, "message") && !nonempty2(item.message)) {
-        throw new Error(`${label}\u987B\u5305\u542B\u5355\u4F4D ID\u3001\u6765\u6E90\u8DEF\u5F84\u3001\u6548\u679C\u540D\u6216\u8BCA\u65AD\u539F\u6587\uFF0C\u4EE5\u53CA\u539F\u56E0`);
+        invalid.push(`${label}\u7F3A\u5C11\u6709\u6548\u7684\u8BCD\u6761\u5F15\u7528\u6216\u539F\u56E0`);
+        continue;
       }
-      const matches2 = sent.filter((warning) => item.unitId === warning.unitId && item.originPath === (warning.originPath ?? null) && (item.effectName === void 0 || item.effectName === subject(warning.message)) && (item.message === void 0 || item.message === warning.message));
-      if (matches2.length !== 1) throw new Error(`${label}\u5FC5\u987B\u552F\u4E00\u5339\u914D\u672C\u6279\u8B66\u544A`);
-      return [{ warning: matches2[0], detail: diagnosticText(item.reason) }];
-    });
+      const matches2 = sent.filter((warning) => identifiesWarning(item, warning));
+      if (matches2.length !== 1) {
+        invalid.push(`${label}\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u672C\u6279\u8BCD\u6761`);
+        continue;
+      }
+      const detail = diagnosticText(item.reason, "");
+      if (!detail) {
+        invalid.push(`${label}\u7F3A\u5C11\u53EF\u8BFB\u539F\u56E0`);
+        continue;
+      }
+      const kind = ["missing_info", "engine_limit"].includes(item.kind) ? item.kind : void 0;
+      matched.push({ warning: matches2[0], detail, ...kind && { kind } });
+    }
+    return { matched, invalid };
   }
-  function pendingDiagnostics(warnings, notes2) {
-    return [
-      ...warnings.map((warning) => {
-        const details = [...new Set(notes2.filter((note) => note.warning === warning).map((note) => note.detail).filter(Boolean))];
-        const message = diagnosticText(warning.message, "\u539F\u8BCA\u65AD\u5305\u542B\u7ED3\u6784\u5316\u6570\u636E\uFF0C\u672A\u63D0\u4F9B\u6587\u5B57\u8BF4\u660E");
-        return details.length ? `${message}\uFF08\u6A21\u578B\u8BF4\u660E\uFF1A${details.join("\uFF1B")}\uFF09` : message;
-      }),
-      ...new Set(notes2.filter((note) => !note.warning && note.detail).map((note) => note.detail))
-    ];
+  function classifyWarnings(warnings, { notes: notes2 = {}, exemptions = [], sourceFor, fingerprint = () => void 0 }) {
+    const groups = { autoAdjusted: [], pending: [], approximated: [], needsAttention: [], nonCombat: [] };
+    for (const warning of warnings) {
+      if (warning.kind === "auto_adjusted") {
+        groups.autoAdjusted.push(warning);
+        continue;
+      }
+      const key4 = warningKey(warning);
+      const source = sourceFor(warning.unitId, warningEntryKey(warning));
+      const exempt = source && exemptions.find((entry2) => entry2.unitId === warning.unitId && entry2.key === key4 && entry2.source === source);
+      const note = notes2[warning.unitId ?? ""]?.[key4];
+      if (exempt) groups.nonCombat.push({ ...exempt, warning });
+      else if (source && note?.source === source && note.reason && !note.evidence?.length) groups.needsAttention.push({ ...note, warning });
+      else if (source && note?.source === source && note.reason && note.evidence?.some(([path2, value]) => fingerprint(path2) === value)) {
+        groups.approximated.push({ ...note, warning });
+      } else groups.pending.push(warning);
+    }
+    return groups;
   }
   var identifiesWarning = (receipt, warning) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && (receipt.message !== void 0 ? receipt.message === warning.message : nonempty2(receipt.effectName)) && (receipt.effectName === void 0 || receipt.effectName === subject(warning.message));
   function missingDispositions(sent, solved, notes2, narrative) {
@@ -15096,7 +15131,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return new Set([...Object.keys(previous), ...Object.keys(next)].filter((key4) => previous[key4] !== next[key4]));
   }
   function normalizationCandidates(characters, snapshots, warnings) {
-    const pending = new Set(warnings.map((w) => w.unitId));
+    const pending = new Set(warnings.filter((w) => w.kind !== "auto_adjusted").map((w) => w.unitId));
     return Object.keys(characters).filter((id3) => pending.has(id3) || pending.has(null));
   }
   function remainingDiagnostics(warnings, snapshots, characters, batches = []) {
@@ -15111,6 +15146,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
 
   // src/tavern/normalization-batches.js
+  var normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
   var warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
   var referenceKey = (warning) => JSON.stringify(Object.values(warningReference(warning)));
   var targetPath = (path2) => path2?.split("/").slice(0, 3).join("/");
@@ -15149,10 +15185,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 3 } = {}) {
     const units = [...new Set(unitIds)];
     const selected2 = new Set(units);
-    const assigned = /* @__PURE__ */ new Set();
     const groups = [];
     for (const warning of warnings) {
-      if (!units.length || warning.unitId !== null && !selected2.has(warning.unitId)) continue;
+      if (warning.kind === "auto_adjusted" || !units.length || warning.unitId !== null && !selected2.has(warning.unitId)) continue;
       const keys = new Set(dependencies(state, warning));
       const group = { keys, unitIds: new Set(warning.unitId === null ? [units[0]] : [warning.unitId]), warnings: [warning] };
       for (let index = groups.length - 1; index >= 0; index--) {
@@ -15163,10 +15198,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         group.warnings.unshift(...previous.warnings);
         groups.splice(index, 1);
       }
-      for (const id3 of group.unitIds) assigned.add(id3);
       groups.push(group);
     }
-    for (const id3 of units) if (!assigned.has(id3)) groups.push({ unitIds: /* @__PURE__ */ new Set([id3]), warnings: [] });
     const result = [];
     let current = { unitIds: [], warnings: [] };
     const append = (ids, diagnostics) => {
@@ -15223,7 +15256,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
   }
   function readNarrativeExemptions(value = [], sent, sourceFor, { solved = [], unresolved = [] } = {}) {
-    if (!Array.isArray(value)) throw new Error("narrative \u5FC5\u987B\u662F JSON \u6570\u7EC4");
+    const matched = [], invalid = [];
+    if (!Array.isArray(value)) return { matched, invalid: ["\u672A\u80FD\u8BFB\u53D6\u6A21\u578B\u7684\u975E\u6218\u6597\u8BF4\u660E"] };
     const index = /* @__PURE__ */ new Map();
     for (const warning of sent) {
       const key4 = referenceKey(warning);
@@ -15232,22 +15266,33 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       index.set(key4, matches2);
     }
     const seen = /* @__PURE__ */ new Set();
-    return value.map((entry2) => {
-      if (!entry2 || typeof entry2.reason !== "string" || !entry2.reason.trim() || !Object.hasOwn(entry2, "originPath")) {
-        throw new Error("narrative \u6BCF\u9879\u5FC5\u987B\u5305\u542B\u5B8C\u6574\u8B66\u544A\u5F15\u7528\u548C\u975E\u7A7A reason");
+    for (const [i, entry2] of value.entries()) {
+      const label = `\u7B2C ${i + 1} \u6761\u975E\u6218\u6597\u8BF4\u660E`;
+      const reason = diagnosticText(entry2?.reason, "");
+      if (!reason || !Object.hasOwn(entry2, "originPath")) {
+        invalid.push(`${label}\u7F3A\u5C11\u8BCD\u6761\u5F15\u7528\u6216\u539F\u56E0`);
+        continue;
       }
       const reference = referenceKey(entry2);
       const matches2 = index.get(reference);
-      if (matches2?.length !== 1 || seen.has(reference)) throw new Error("narrative \u5FC5\u987B\u552F\u4E00\u5339\u914D\u672C\u6279\u8B66\u544A");
+      if (matches2?.length !== 1 || seen.has(reference)) {
+        invalid.push(`${label}\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u672C\u6279\u8BCD\u6761`);
+        continue;
+      }
       const [warning] = matches2;
       if (entry2.originPath !== (warning.originPath ?? null) || solved.some((item) => referenceKey(item) === reference) || unresolved.some((item) => item.warning === warning)) {
-        throw new Error("narrative \u8B66\u544A\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81");
+        invalid.push(`${label}\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81`);
+        continue;
+      }
+      const source = sourceFor(warning.unitId, warningEntryKey(warning));
+      if (!source) {
+        invalid.push(`${label}\u7F3A\u5C11\u8BCD\u6761\u6765\u6E90`);
+        continue;
       }
       seen.add(reference);
-      const source = sourceFor(warning.unitId, warningEntryKey(warning));
-      if (!source) throw new Error("narrative \u8B66\u544A\u7F3A\u5C11\u6765\u6E90");
-      return { warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason: diagnosticText(entry2.reason) } };
-    });
+      matched.push({ warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason } });
+    }
+    return { matched, invalid };
   }
   function activeNarrativeExemptions(warnings, receipts, sourceFor) {
     return warnings.flatMap((warning) => {
@@ -15535,7 +15580,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 .fated-entry-discard:hover { color:var(--ci-danger); border-color:var(--ci-danger) }
 .fated-char-row > p { margin:5px 0 0; padding-top:5px; border-top:1px dashed var(--ci-border) }
 .fated-instance .fated-mini { color:var(--ci-text-muted); font-size:.82em }.fated-instance summary { cursor:pointer }
-.fated-char-diagnostics { padding:6px 9px; border:1px solid rgb(210 173 113 / 45%); border-radius:7px; background:rgb(210 173 113 / 8%); color:var(--ci-warning) }
+.fated-char-diagnostics { padding:6px 9px; border:1px solid currentColor; border-radius:7px; background:rgb(160 180 200 / 8%); color:var(--ci-text-secondary) }
+.fated-char-diagnostics[data-normalization-diagnostics="pending"] { background:rgb(210 173 113 / 8%); color:var(--ci-warning) }
+.fated-char-diagnostics[data-normalization-diagnostics="approximated"] { color:var(--ci-success, #86c8b0) }
+.fated-char-diagnostics[data-normalization-diagnostics="autoAdjusted"] { color:#a9bfd5 }
 .fated-char-diagnostics ul { margin:5px 0 0; padding-inline-start:18px; color:var(--ci-text-secondary) }
 .fated-char-raw { padding:6px 9px; border:1px dashed var(--ci-border); border-radius:7px; background:var(--ci-input); color:var(--ci-text-secondary); font-size:.85em }.fated-char-raw pre { max-height:12rem; overflow:auto; color:inherit }
 .fated-char-body > .fated-actions { justify-content:flex-end; margin:0 }
@@ -15703,6 +15751,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
 
   // src/tavern/vm-effect-protocol.js
   var defs2 = vmSchema.$defs;
+  var statusFlags = defs2.spawn_zone.properties.flags.items.enum;
   var range = (schema) => [
     schema.minimum === void 0 ? "" : `\u2265${schema.minimum}`,
     schema.maximum === void 0 ? "" : `\u2264${schema.maximum}`,
@@ -15736,10 +15785,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var VM_EFFECT_PROTOCOL = `\u3010\u6218\u672F VM \u6548\u679C\u534F\u8BAE\u3011
 rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rule, ["hook"])}\uFF0Chook: \u4EE5\u4E0B\u679A\u4E3E}\u3002
 \u5141\u8BB8 hook \u679A\u4E3E\uFF1A${vmHooks.join(" / ")}\u3002
-\u6807\u8BC6\u7B26\u683C\u5F0F\uFF1A\u89C4\u5219\uFF0F\u6A21\u677F\uFF0F\u53D8\u91CF ID \u5339\u914D ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$\uFF1Btag \u5339\u914D ^[a-z0-9][a-z0-9_-]{0,31}$\uFF1B\u72B6\u6001\u4E0E\u8F7D\u4F53\u9876\u5C42 flags \u679A\u4E3E\u4E3A undispellable / concept_immune\u3002
+\u6807\u8BC6\u7B26\u683C\u5F0F\uFF1A\u89C4\u5219\uFF0F\u6A21\u677F\uFF0F\u53D8\u91CF ID \u5339\u914D ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$\uFF1Btag \u5339\u914D ^[a-z0-9][a-z0-9_-]{0,31}$\uFF1B\u72B6\u6001\u4E0E\u8F7D\u4F53\u9876\u5C42 flags \u679A\u4E3E\u4E3A ${statusFlags.join(" / ")}\u3002
 
 \u3010\u5168\u5C40\u4E8B\u4EF6\u7BA1\u7EBF\u4E0E\u8F7D\u4F53\u4F5C\u7528\u57DF\u3011
-\u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u8D77\u70B9\u4E0E\u65E0\u89C6\u89C6\u7EBF\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001\u91CD\u5B9A\u5411\u6216\u66FF\u6362\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/rawAmount/finalAmount/sourceRuleId\uFF0C\u652F\u6301 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 preventDeath \u514D\u6B7B\u9501\u8840 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
+\u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u8D77\u70B9\u4E0E\u65E0\u89C6\u89C6\u7EBF\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001\u91CD\u5B9A\u5411\u6216\u66FF\u6362\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/rawAmount/finalAmount/sourceRuleId\uFF0C\u652F\u6301 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u3001\u6CBB\u7597\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 heal \u6CBB\u7597\u6216 preventDeath \u514D\u6B7B\u9501\u8840 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
 \u2022 \u72EC\u7ACB\u751F\u547D\u5468\u671F\u94A9\u5B50\uFF1Aafter_move\uFF08\u5B9E\u9645\u4F4D\u79FB\u6216\u9AD8\u5EA6\u53D8\u5316\u540E\u89E6\u53D1\uFF0Cattacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0C\u53EF\u8BFB event.fromX/fromY/toX/toY/steps/moveKind\uFF09\uFF1Bbefore_status / after_status_applied / after_status_removed / on_status_immunized\uFF08\u72B6\u6001\u62E6\u622A\u3001\u65BD\u52A0\u3001\u79FB\u9664\u3001\u88AB\u514D\u75AB\uFF09\uFF1Bon_summon_evict\uFF08\u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u9876\u66FF\u6D88\u6563\u524D\uFF0Ctarget \u4E3A\u65E7\u53EC\u5524\u7269\uFF0Cevent.sourceSkillId \u4E3A\u5176\u6765\u6E90\u6280\u80FD\uFF09\uFF1Bturn_start / turn_end\uFF08\u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF09\uFF1Bround_start / round_end\uFF08\u5927\u8F6E\u9996\u5C3E\uFF09\u3002\u4EFB\u610F\u94A9\u5B50\u5747\u53EF\u4F7F\u7528 ask \u6302\u8D77\u7B49\u5F85\u9009\u62E9\u3002
 \u2022 \u4E94\u7C7B\u8F7D\u4F53\u4F5C\u7528\u57DF\u77E9\u9635\uFF1A
   1. unit / item\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF08\u88C5\u5907\u89C4\u5219\u5185 item.id / item.templateId \u6307\u5411\u5F53\u524D\u88C5\u5907\u5B9E\u4F8B\u4E0E\u6A21\u677F\uFF09\uFF0C\u6301\u6709\u6216\u7A7F\u6234\u671F\u95F4 mods \u4E0E\u975E active \u89C4\u5219\u5168\u5C40\u5E38\u9A7B\u3002
@@ -15750,7 +15799,7 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
 
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF08\u95ED\u5408\u679A\u4E3E\uFF0C\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\uFF09\uFF1A
 ${instructions2.join("\n")}
-check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
+check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
 \u539F\u751F\u653B\u51FB\u5728 before_check \u53EF\u5199 ratingDelta\uFF08\u6574\u6570\u6863\u6570\uFF0C\u53EF\u7528\u516C\u5F0F\uFF0C\u6B63\u5347\u8D1F\u964D\uFF09\uFF1A\u5148\u4ECE\u57FA\u7840\u8BC4\u7EA7\u79FB\u52A8\u5E76\u5728\u8868\u4E24\u7AEF\u5C01\u9876\uFF0C\u518D\u6309 minRating \u4FDD\u5E95\u3002\u7CBE\u51C6\u7C7B\u8FDC\u7A0B\u653B\u51FB\u5728\u672C\u89C4\u5219\u7684\u8FDC\u7A0B\u8FC7\u6EE4\u6761\u4EF6\u4E0B\u5199 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"\u6709\u6548","forceOutcome":"hit"}}\uFF1B\u6700\u540E\u4E00\u9879\u7528\u4E8E\u539F\u6587\u660E\u8BF4\u5FC5\u4E2D\u3001\u8FDE\u5929\u71361\u4E5F\u4E0D\u80FD\u5931\u624B\u7684\u60C5\u5F62\uFF0C\u4E0D\u8981\u6C42\u5FC5\u4E2D\u5219\u7701\u7565\u3002
 mutate_event \u7684 patch \u81F3\u5C11\u542B\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u4EC5\u9650\u4E0B\u5217\u53EF\u5199 hook\uFF08before_check.minRating \u53D6\u503C\u679A\u4E3E\uFF1A\u8D85\u66B4\u51FB / \u5F3A\u66B4\u51FB / \u5E73\u66B4\u51FB / \u6709\u6548 / \u52C9\u5F3A / \u64E6\u4F24 / \u5931\u624B\uFF09\uFF1A
 ${eventPatches.join("\n")}
@@ -15777,7 +15826,13 @@ mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11
 \u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
 \u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7684\u57FA\u503C\u4E0E flat \u5747\u4E3A\u540C\u9636\u79FB\u52A8\u5355\u4F4D\uFF0C\u53E0\u52A0\u540E\u5E94\u7528\u500D\u7387\uFF0C\u518D\u6309\u5C42\u7EA7\u7C73\u6570\u6298\u7B97\u4E3A\u683C\uFF1BcheckBonus\u3001initiativeFlat \u4EC5\u63A5\u53D7 flat \u6570\u503C\u52A0\u503C\uFF0C\u4E0D\u4E58\u68C0\u5B9A\u6216\u5148\u653B\u603B\u503C\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
 \u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002
-controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002moraleLock \u4EC5\u679A\u4E3E\u503C "steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u654C\u65B9\u6307\u5411\u52A8\u4F5C\u5408\u6CD5\u9009\u4E2D\u53CB\u519B\u6216\u81EA\u8EAB\u3002`;
+controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002moraleLock \u4EC5\u679A\u4E3E\u503C "steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u654C\u65B9\u6307\u5411\u52A8\u4F5C\u5408\u6CD5\u9009\u4E2D\u53CB\u519B\u6216\u81EA\u8EAB\u3002
+
+\u3010\u5E38\u89C1\u8BEF\u5199\u3011
+\u2022 \u6280\u80FD\u51B7\u5374\u5199\u5728 rules[i].cooldownTurns\uFF1B\u6263\u51CF\u5269\u4F59\u884C\u52A8\u69FD\u7528 resource\uFF0C\u8C03\u6574\u884C\u52A8\u70B9\u4E0A\u9650\u7528 stat:"apMax"\u3002
+\u2022 \u4E0D\u53EF\u9A71\u6563\u662F\u8F7D\u4F53\u9876\u5C42 flags\uFF0C\u52FF\u5199\u5165 mods[i].flags\uFF1B\u5F3A\u5236\u9A71\u6563\u4F7F\u7528 remove_status \u7684 force\u3002
+\u2022 vars \u4E2D\u7684\u503C\u53EF\u4EE5\u662F\u8868\u8FBE\u5F0F\u6216\u6807\u91CF\uFF1B\u8868\u8FBE\u5F0F\u91CC\u7684\u5B57\u7B26\u4E32\u5B57\u9762\u91CF\u9700\u8981\u5F15\u53F7\u3002
+\u2022 expireOn \u6709\u591A\u4E2A\u6761\u4EF6\u65F6\u5199\u5BF9\u8C61\u6570\u7EC4\uFF1B\u52FF\u628A\u4E8B\u4EF6\u540D\u62FC\u6210\u4E00\u4E2A\u5B57\u7B26\u4E32\u3002`;
 
   // src/tavern/engine-summary.js
   var PROTOCOL_RULES = `\u3010\u6218\u6597\u534F\u8BAE\uFF5C\u6A21\u677F\u4E0E\u89C4\u5219\u7684\u5206\u5DE5\u3011
@@ -15816,10 +15871,10 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
 \u2022 [\u5173\u8054\u5C5E\u6027: <\u5C5E\u6027>] \u6216\u6807\u7B7E\u4E2D\u7684\u4E94\u7EF4\u540D\u79F0\u6307\u5411\u65BD\u672F\u8005\u4E3B\u5C5E\u6027\uFF08str / agi / con / int / spi\uFF09\uFF0C\u9700\u5C5E\u6027\u7F29\u653E\u65F6\u5199\u5165 damage.stat \u6216\u5728\u516C\u5F0F\u4E2D\u8BFB self.<stat>\uFF1B\u539F\u6587\u8981\u6C42\u62B5\u6297\u8303\u56F4\u6280\u80FD\u7684\u9644\u5E26\u6548\u679C\u65F6\uFF0C\u5728 after_hit \u89C4\u5219\u91CC\u7528 check(kind:"save")\uFF0C\u5E76\u5728 onPass/onFail \u4E2D\u7ED3\u7B97\u9644\u5E26\u6548\u679C\u3002\u7528 event.skillId == skill.id \u9650\u5B9A\u6765\u6E90\u3002
 \u2022 [\u5355\u4F53] \u2192 shape:"single"\uFF0Ctarget \u4F9D\u63CF\u8FF0\u9009\u53D6\uFF1B[\u8303\u56F4: <\u6863\u4F4D>(N)+<\u5F62\u72B6>(<\u9635\u8425>)] \u2192 rawRadius:N\u3001shape \u5BF9\u5E94\u679A\u4E3E\u3001target \u5BF9\u5E94\u679A\u4E3E\uFF0C\u6709\u6548\u8DDD\u79BB\u53E6\u6620\u5C04\u81F3 rawRange\uFF1B\u89D2\u5EA6\u6807\u7B7E\u6620\u5C04\u81F3 angle\u3002\u539F\u751F\u8303\u56F4\u4E3B\u51FB\u6309 shape \u81EA\u52A8\u547D\u4E2D\uFF0C\u65E0\u9700\u989D\u5916\u914D\u7F6E\u547D\u4E2D\u68C0\u5B9A\u3002\u9644\u5E26\u6548\u679C\u7684\u8C41\u514D\u5199 DSL\uFF0C\u4E0D\u8981\u7528\u6A21\u677F save/saveDC \u8868\u8FBE\u9644\u5E26\u6548\u679C\u3002\u539F\u751F\u8303\u56F4\u4F24\u5BB3\u7528 target:"enemy" \u9650\u5B9A\u654C\u65B9\uFF0Ctarget:"any" \u4E3A\u65E0\u5DEE\u522B\u6CE2\u53CA\uFF08\u8986\u76D6\u81EA\u8EAB\u683C\u65F6\u4E5F\u4F1A\u547D\u4E2D\u81EA\u8EAB\uFF09\u3002VM \u9009\u62E9\u5668 from:"units" \u4E3A\u672A\u8FC7\u6EE4\u5168\u96C6\uFF0C\u5FC5\u987B\u5728 where \u4E2D\u6309\u539F\u63CF\u8FF0\u663E\u5F0F\u58F0\u660E\u5B58\u6D3B\u4E0E\u654C\u6211\u6761\u4EF6\u3002
 \u2022 \u539F\u6587\u6548\u679C\u4E3A\u7A7A\u4E14\u65E0\u5176\u4ED6\u5F85\u5B9E\u73B0\u6218\u6597\u63CF\u8FF0\u65F6\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u5217\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u6062\u590D\u3001\u72B6\u6001\u6388\u4E88\u4E0E\u573A\u5730\u751F\u6210\u5747\u6309\u539F\u63CF\u8FF0\u62C6\u89E3\u4E3A\u5BF9\u5E94\u6307\u4EE4\u3002`;
-  var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002\u540C\u4E00\u8DEF\u5F84\u5185\u6807\u9898\u552F\u4E00\u65F6\u4E5F\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF0CeffectName \u9010\u5B57\u590D\u5236\u300C\u300D\u5185\u6807\u9898\uFF08\u5305\u62EC\u5FAE\u5F31\u6CD5\u5219\u53CA\u65B9\u62EC\u53F7\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002\u9010\u6761\u4EA4\u4EE3\u8B66\u544A\uFF1A\u5B9E\u73B0\u7684\u7528\u5B9E\u9645\u8865\u4E01\u7684 resolves \u6216\u5DF2\u6709\u5B9E\u73B0\u7684 existing\uFF1B\u672A\u5B9E\u73B0\u7684\u7528\u5E26\u539F\u56E0\u7684 unresolved\uFF1B\u7EAF\u53D9\u4E8B\u7528 narrative\u3002\u82E5\u540C\u4E00\u6761\u8B66\u544A\u53EA\u5B9E\u73B0\u4E86\u4E00\u90E8\u5206\uFF0C\u5728\u5B9E\u73B0\u8BE5\u90E8\u5206\u7684\u64CD\u4F5C\u4E0A\u5199 resolves\uFF0C\u5E76\u5728 unresolved \u91CC\u7528\u540C\u4E00\u5F15\u7528\u8BF4\u660E\u8FD8\u7F3A\u4EC0\u4E48\u3002\u53EA\u521B\u5EFA\u72B6\u6001\u6A21\u677F\u800C\u672A\u63A5\u56DE\u539F\u6280\u80FD\u4E0D\u7B97\u5B8C\u6210\u3002\u5DF2\u6709\u89C4\u5219\u4E0D\u662F VM \u7F3A\u53E3\uFF1A\u5982\u679C\u8BE5\u884C\u4E3A\u5DF2\u7531\u5148\u524D\u6807\u51C6\u5316\u8865\u4E01\u5B9E\u73B0\uFF0C\u672C\u6B21\u4E0D\u518D\u6539\u52A8\uFF0C\u5FC5\u987B\u9644\u9876\u5C42 existing \u6570\u7EC4\u3002\u82E5\u8B66\u544A\u4E3A\u5408\u5E76\u63CF\u8FF0\uFF0C\u590D\u5236\u5B8C\u6574 message\uFF1B\u53EA\u6709\u5E26\u552F\u4E00\u300C\u6548\u679C\u540D\u300D\u7684\u8B66\u544A\u53EF\u7528 effectName \u4EE3\u66FF message\u3002\u6BCF\u9879\u7ED9 {unitId,originPath,message,path,value}\uFF0C\u4E5F\u53EF\u6309\u4E0A\u8FF0\u89C4\u5219\u7528 effectName \u66FF\u4EE3 message\uFF1Bpath \u6307\u5411\u8BE5\u6A21\u677F\u7684\u5177\u4F53 rules/N \u6216 mods/N\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u6761\u89C4\u5219\u6216\u4FEE\u9970\u3002\u5F15\u64CE\u4F1A\u6838\u5BF9\u65E2\u6709\u5199\u5165\u548C\u5F53\u524D\u503C\uFF1B\u4E0D\u51C6\u7528\u540C\u8DEF\u5F84\u65E0\u5173\u6761\u76EE\u5192\u5145\u8BC1\u636E\uFF0C\u4E0D\u8981\u91CD\u590D add \u6216\u62A5 unresolved\u3002";
+  var diagnosisProtocol = "\u8BCA\u65AD\u5F52\u5C5E\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u4E0A\u586B\u5199 resolves \u6570\u7EC4\uFF0C\u6BCF\u9879\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\u3002\u540C\u4E00\u8DEF\u5F84\u5185\u6807\u9898\u552F\u4E00\u65F6\u4E5F\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF0CeffectName \u9010\u5B57\u590D\u5236\u300C\u300D\u5185\u6807\u9898\uFF08\u5305\u62EC\u5FAE\u5F31\u6CD5\u5219\u53CA\u65B9\u62EC\u53F7\uFF09\u3002resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\u3002\u9010\u6761\u4EA4\u4EE3\u8B66\u544A\uFF1A\u5B9E\u73B0\u7684\u7528\u5B9E\u9645\u8865\u4E01\u7684 resolves \u6216\u5DF2\u6709\u5B9E\u73B0\u7684 existing\uFF1B\u672A\u5B9E\u73B0\u7684\u7528\u5E26\u539F\u56E0\u7684 unresolved\uFF1B\u53D9\u4E8B\u6216\u975E\u6218\u68CB\u5916\u56F4\u673A\u5236\u7528 narrative\u3002\u82E5\u540C\u4E00\u6761\u8B66\u544A\u53EA\u5B9E\u73B0\u4E86\u4E00\u90E8\u5206\uFF0C\u5728\u5B9E\u73B0\u8BE5\u90E8\u5206\u7684\u64CD\u4F5C\u4E0A\u5199 resolves\uFF0C\u5E76\u5728 unresolved \u91CC\u7528\u540C\u4E00\u5F15\u7528\u8BF4\u660E\u8FD8\u7F3A\u4EC0\u4E48\u3002\u53EA\u521B\u5EFA\u72B6\u6001\u6A21\u677F\u800C\u672A\u63A5\u56DE\u539F\u6280\u80FD\u4E0D\u7B97\u5B8C\u6210\u3002\u5DF2\u6709\u89C4\u5219\u4E0D\u662F VM \u7F3A\u53E3\uFF1A\u5982\u679C\u8BE5\u884C\u4E3A\u5DF2\u7531\u5148\u524D\u6807\u51C6\u5316\u8865\u4E01\u5B9E\u73B0\uFF0C\u672C\u6B21\u4E0D\u518D\u6539\u52A8\uFF0C\u5FC5\u987B\u9644\u9876\u5C42 existing \u6570\u7EC4\u3002\u82E5\u8B66\u544A\u4E3A\u5408\u5E76\u63CF\u8FF0\uFF0C\u590D\u5236\u5B8C\u6574 message\uFF1B\u53EA\u6709\u5E26\u552F\u4E00\u300C\u6548\u679C\u540D\u300D\u7684\u8B66\u544A\u53EF\u7528 effectName \u4EE3\u66FF message\u3002\u6BCF\u9879\u7ED9 {unitId,originPath,message,path,value}\uFF0C\u4E5F\u53EF\u6309\u4E0A\u8FF0\u89C4\u5219\u7528 effectName \u66FF\u4EE3 message\uFF1Bpath \u6307\u5411\u8BE5\u6A21\u677F\u7684\u5177\u4F53 rules/N \u6216 mods/N\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u6761\u89C4\u5219\u6216\u4FEE\u9970\u3002\u5F15\u64CE\u4F1A\u6838\u5BF9\u65E2\u6709\u5199\u5165\u548C\u5F53\u524D\u503C\uFF1B\u4E0D\u51C6\u7528\u540C\u8DEF\u5F84\u65E0\u5173\u6761\u76EE\u5192\u5145\u8BC1\u636E\uFF0C\u4E0D\u8981\u91CD\u590D add \u6216\u62A5 unresolved\u3002";
   var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
   var PATCH_RULES = String.raw`【输出目标】
-输出一个 JSON 对象。patch、unresolved、narrative 是数组，已有实现的证据用 existing 数组。补丁路径以当前战局快照为准。快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条。禁止写 /effects/... 或修改来源资料，写入对应模板的 rules / mods / pools 等合法字段。narrative 数组每项为 {unitId,originPath,message,reason}，只收录纯叙事条目。无法实现的战斗机制用同样形状写进 unresolved。
+输出一个 JSON 对象。patch、unresolved、narrative 是数组，已有实现的证据用 existing 数组。补丁路径以当前战局快照为准。快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条。禁止写 /effects/... 或修改来源资料，写入对应模板的 rules / mods / pools 等合法字段。narrative 数组每项为 {unitId,originPath,message,reason}，收录叙事及非战棋外围机制。无法实现的战斗机制用同样形状写进 unresolved，可附 kind:"missing_info"（原文缺参）或 kind:"engine_limit"（机制暂不支持）。reason 用玩家能理解的简短中文，避免 JSON 路径和内部字段名。
 
 【四步编译工作流（提交前逐条自检）】
 1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
@@ -15852,13 +15907,13 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
 【输出与 RFC 6902 补丁协议】
 • 只输出一个顶层 JSON 对象，结构固定为：
   {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
-  三个顶层数组键必填；如引用先前批次已落地的规则作为证据，必须另附 existing 数组，逐项填写 {unitId,originPath,message,path,value}；带唯一效果名时可用 effectName 替代 message。正文声称“已完成”而 JSON 没有对应 patch.resolves 或 existing 收据，视为未核销，不能用空 patch 代替。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
-• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
-  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。
+  请提供三个顶层数组；整批只有 unresolved 或 narrative 说明时，提交空 patch 数组。如引用先前批次已落地的规则作为证据，必须另附 existing 数组，逐项填写 {unitId,originPath,message,path,value}；带唯一效果名时可用 effectName 替代 message。正文声称“已完成”而 JSON 没有对应 patch.resolves 或 existing 收据，视为未核销，不能用空 patch 代替。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
+• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：${normalizationPath}
+  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。模板的自定义池只在 /equipment/<id>/pools 或 /skills/<id>/pools 声明；装备规则用 resource + local:true 读写。禁止补丁直接写 /units/<id>/pools 或 /items/<id>/pools，替换整个道具实例时也不得写入或改动池绑定。
   - /skills/<id>：技能模板或其合法子字段（如 /skills/<id>/damage、/skills/<id>/rules/-）。
   - /statusTemplates/<id>：自定义状态模板（新英文 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$，不覆盖内置状态名）。
   - /units/<unitId>/statuses、/units/<unitId>/armor（整数 0…1000000）、/units/<unitId>/skills（完整技能 ID 数组，保留原有项）。
-• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；仅纯叙事、日常储物空间（如 1km³ 次元戒）、跨位面非战斗传送或元设定可列入 narrative（附完整引用与 reason），含任何战斗机制的条目严禁豁免。
+• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；纯叙事、日常储物、生产制作、商业交易、好感度、战后掉落、非战斗传送等外围内容可列入 narrative（附完整引用与 reason）。影响沙盘行动或回合结算的战斗机制必须单独交代。
 • 禁止直接修改运行时资源池当前值、单位当前 HP/MP/SP、阵营、坐标、先攻队列或日志。先尝试用正交原语拆解组合，再考虑放弃；提交前逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围。`;
   var json = (value) => JSON.stringify(value, null, 2);
   var lastCustomId = 0;
@@ -16245,7 +16300,8 @@ ${variables2.warnings()}` : "");
     }
     if (typeof text5 !== "string" || !text5.trim()) {
       const format = trace.json ? "JSON" : `\u6D41\u4E8B\u4EF6 ${trace.events ?? 0} \u4E2A\uFF0C${trace.done ? "\u6536\u5230 [DONE]" : "\u8FDE\u63A5\u5DF2\u7ED3\u675F\uFF0C\u672A\u6536\u5230 [DONE]"}`;
-      throw new Error(`\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C\uFF08${trace.relay ? "\u9152\u9986\u540E\u7AEF" : "\u6D4F\u89C8\u5668\u76F4\u8FDE"}\uFF1B${format}\uFF1B\u63A8\u7406 ${trace.reasoning} \u5B57\u7B26\uFF0C\u6B63\u6587 0\uFF1Bfinish_reason=${trace.finish || "\u672A\u63D0\u4F9B"}\uFF09`);
+      const explanation = trace.reasoning > 0 ? "\u6A21\u578B\u53EA\u8FD4\u56DE\u4E86\u601D\u8003\u5185\u5BB9\uFF0C\u53EF\u80FD\u5DF2\u7528\u5B8C\u6700\u5927\u8F93\u51FA\u957F\u5EA6\u3002\u8BF7\u5728\u300CAPI \u8BBE\u7F6E\u300D\u8C03\u5927 max_tokens\uFF0C\u6216\u8C03\u5C0F\u6BCF\u6279\u8B66\u544A\u6761\u6570\u540E\u91CD\u8BD5\u3002" : "\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C";
+      throw new Error(`${explanation}\uFF08${trace.relay ? "\u9152\u9986\u540E\u7AEF" : "\u6D4F\u89C8\u5668\u76F4\u8FDE"}\uFF1B${format}\uFF1B\u63A8\u7406 ${trace.reasoning} \u5B57\u7B26\uFF0C\u6B63\u6587 0\uFF1Bfinish_reason=${trace.finish || "\u672A\u63D0\u4F9B"}\uFF09`);
     }
     options.onStreamChunk?.(text5, true);
     return text5;
@@ -17108,7 +17164,7 @@ ${variables2.warnings()}` : "");
   var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
   var TEAMS = { blue: "\u6211\u65B9", red: "\u654C\u65B9" };
   var ratio2 = (v, max) => max ? Math.min(1, Math.max(0, (Number(v) || 0) / max)) : 0;
-  function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0, count = 1, narrative = [], onDiscardEntry, canDiscardEntry } = {}) {
+  function fillInstance(box, make, unit, state, raw, select, { collapsed = false, onToggle, warnings = 0, attention = 0, count = 1, onDiscardEntry, canDiscardEntry } = {}) {
     const line = (tag2, cls, value) => make(tag2, { class: cls }, value);
     const name = unit.name ?? unit.id;
     box.classList.add("fated-char-card");
@@ -17119,7 +17175,8 @@ ${variables2.warnings()}` : "");
     const nameRow = line("div", "fated-char-name-row");
     nameRow.append(line("strong", "fated-char-name", name));
     if (count > 1) nameRow.append(line("span", "fated-char-tag", `\xD7${count}`));
-    if (warnings) nameRow.append(make("span", { class: "fated-char-warn", title: `${warnings} \u6761\u8BCA\u65AD` }, `\u26A0 ${warnings}`));
+    if (warnings) nameRow.append(make("span", { class: "fated-char-warn", title: `${warnings} \u6761\u8BCD\u6761\u5F85\u7F16\u8BD1` }, `\u23F3 ${warnings}`));
+    if (attention) nameRow.append(make("span", { class: "fated-char-tag", title: `${attention} \u6761\u8BCD\u6761\u9700\u786E\u8BA4` }, `\u24D8 ${attention}`));
     const tags = line("div", "fated-char-tags");
     for (const text5 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text5) tags.append(line("span", "fated-char-tag", text5));
     title.append(nameRow, tags);
@@ -17173,8 +17230,7 @@ ${variables2.warnings()}` : "");
         const mods = [...template?.mods ?? [], ...item?.mods ?? []];
         const grantedSkills = template?.skills ?? [];
         const effectCount = fx.length + mods.length + grantedSkills.length;
-        const story = path2 ? narrative.filter((entry2) => entry2.originPath === path2 || entry2.originPath?.startsWith(`${path2}/`)) : [];
-        const expandable = effectCount || story.length;
+        const expandable = effectCount > 0;
         const row = make(expandable ? "details" : "div", { class: "fated-char-row" });
         const head = make(expandable ? "summary" : "div", { class: "fated-char-row-head" });
         head.append(line("span", "fated-char-row-name", label));
@@ -17193,7 +17249,6 @@ ${variables2.warnings()}` : "");
         for (const rule2 of fx) row.append(line("p", "fated-mini", `${rule2.label ? `${rule2.label} \xB7 ` : ""}${ruleSummary(rule2, state)}`));
         for (const mod2 of mods) row.append(line("p", "fated-mini", modSummary(mod2)));
         for (const id3 of grantedSkills) row.append(line("p", "fated-mini", `\u9644\u5E26\u6280\u80FD \xB7 ${state?.skills?.[id3]?.name ?? id3}`));
-        for (const { message, reason } of story) row.append(make("p", { class: "fated-mini", title: reason }, `\u4EC5\u53D9\u4E8B \xB7 ${message}`));
         block.append(row);
       }
       body.append(block);
@@ -17468,6 +17523,12 @@ ${variables2.warnings()}` : "");
     return {
       render,
       show: scrollToEnd,
+      prefill(text5) {
+        input.value = [input.value.trim(), text5].filter(Boolean).join("\n\n");
+        drafts.set(shownId, input.value);
+        refresh();
+        input.focus();
+      },
       setBusy(value) {
         busy = value;
         refresh();
@@ -17820,7 +17881,9 @@ ${variables2.warnings()}` : "");
     const candidates = [], rejected = [];
     for (const [index, operation2] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
       const unitId = typeof operation2?.path === "string" ? operation2.path.match(/^\/units\/([^/]+)/)?.[1] : void 0;
-      if (!["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own17(operation2, "value") || unitId && allowedUnitIds && !allowedUnitIds.includes(unitId)) {
+      const itemRoot = typeof operation2?.path === "string" ? operation2.path.match(/^\/items\/([^/]+)$/)?.[1] : void 0;
+      const writesPoolBindings = itemRoot && operation2?.op !== "remove" && (own17(operation2?.value ?? {}, "pools") || Boolean(liveState?.items?.[itemRoot]?.pools) || Boolean(baselineState?.items?.[itemRoot]?.pools));
+      if (writesPoolBindings || !["add", "replace", "remove"].includes(operation2?.op) || typeof operation2.path !== "string" || !normalizationPath.test(operation2.path) || operation2.op !== "remove" && !own17(operation2, "value") || unitId && allowedUnitIds && !allowedUnitIds.includes(unitId)) {
         rejected.push({ index, op: operation2, path: typeof operation2?.path === "string" ? operation2.path : "", reason: "\u8DEF\u5F84\u6216\u64CD\u4F5C\u4E0D\u5728\u5141\u8BB8\u767D\u540D\u5355\u5185" });
       } else candidates.push({ index, op: operation2, lastError: "" });
     }
@@ -17873,7 +17936,6 @@ ${variables2.warnings()}` : "");
     const entity = item.op?.value?.name || state?.[table4]?.[id3]?.name || id3 || "\u672A\u77E5\u6761\u76EE";
     return `[\u672A\u5E94\u7528] ${table4 === "skills" ? "\u6280\u80FD" : table4 === "equipment" ? "\u88C5\u5907" : "\u6761\u76EE"}\u300C${entity}\u300D(${item.path || "\u65E0\u8DEF\u5F84"})\uFF1A${item.reason || "\u8865\u4E01\u6821\u9A8C\u5931\u8D25"}`;
   }
-  var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
   var TAVERN_VERSION = "0.4.7";
   var LARGE_CONFIG_KEYS = ["charSnapshots", "normalizationBatches", "narrativeExemptions", "unresolvedNotes"];
   var separateConfigKey = (key4, field) => `${key4}/${field}`;
@@ -18243,38 +18305,86 @@ ${variables2.warnings()}` : "");
     on(dismiss, "click", () => {
       toast.hidden = true;
     });
-    const warningDisplay = (message) => diagnosticText(
-      message.replace(/[。\s]*请(?:用|提供)\s*VM\s+rules\s*\/\s*mods\s*\/\s*pools[\s\S]*$/, ""),
-      "\u539F\u8BCA\u65AD\u5305\u542B\u7ED3\u6784\u5316\u6570\u636E\uFF0C\u672A\u63D0\u4F9B\u6587\u5B57\u8BF4\u660E"
-    );
-    const pendingTitle = (count) => `\u23F3 \u5F85\u6807\u51C6\u5316\uFF08${count} \u9879\uFF09`;
-    const modelTitle = (count) => `\u2139\uFE0F \u6A21\u578B\u8BF4\u660E\uFF1A\u53D7\u9650 / \u90E8\u5206\u5B9E\u73B0\uFF08${count} \u9879\uFF09`;
-    const modelLine = ({ effectName, reason }) => `\u300C${effectName}\u300D \u2014 ${reason}`;
+    const warningDisplay = (warning) => warning.userSummary || diagnosticText(warning.message);
     function warningGroups(warnings = sources.warnings ?? []) {
-      const pending = [], reviewed = [];
-      const notes2 = config.unresolvedNotes[activeBattleKey] ?? {};
-      const sourceFor = narrativeSourceFor(characters);
       const live3 = liveState();
-      for (const warning of warnings) {
-        const note = notes2[warning.unitId ?? ""]?.[warningKey(warning)];
-        const explained = note?.reason && note.source === sourceFor(warning.unitId, warningEntryKey(warning));
-        if (explained) reviewed.push({ warning, ...note });
-        const implemented = explained && note.evidence?.some(([path2, value]) => fingerprintAt(live3, path2) === value);
-        if (!implemented) pending.push(warning);
-      }
-      return { pending, reviewed };
+      return classifyWarnings(warnings, {
+        notes: config.unresolvedNotes[activeBattleKey],
+        exemptions: config.narrativeExemptions[activeBattleKey],
+        sourceFor: narrativeSourceFor(characters),
+        fingerprint: (path2) => fingerprintAt(live3, path2)
+      });
     }
-    function appendWarningGroups(container, { pending, reviewed }, expandable = false) {
-      const add = (kind, label, rows2) => {
-        if (!rows2.length) return;
+    function updateWarningExemption(warning, ignore) {
+      if (!activeBattleKey || aiController) return;
+      syncSettings();
+      const battle = activeBattleKey;
+      const key4 = warningKey(warning), { unitId } = warning;
+      const receipts = (config.narrativeExemptions[battle] ?? []).filter((entry2) => entry2.key !== key4 || entry2.unitId !== unitId);
+      const notes2 = { ...config.unresolvedNotes[battle] };
+      const bucket = unitId ?? "";
+      notes2[bucket] = { ...notes2[bucket] };
+      delete notes2[bucket][key4];
+      if (!Object.keys(notes2[bucket]).length) delete notes2[bucket];
+      if (ignore) {
+        const source = narrativeSourceFor(characters)(unitId, warningEntryKey(warning));
+        if (!source) return;
+        receipts.push({ unitId, key: key4, source, reason: "\u73A9\u5BB6\u5DF2\u8BBE\u4E3A\u975E\u6218\u6597\u5FFD\u7565", dismissed: true });
+      }
+      persistSettings({
+        narrativeExemptions: { ...config.narrativeExemptions, [battle]: receipts },
+        unresolvedNotes: { ...config.unresolvedNotes, [battle]: notes2 }
+      });
+      filterResolved(config.charSnapshots[battle] ?? {}, characters);
+      toast.hidden = true;
+      renderInstances();
+    }
+    function openWarningComposer(warning, reason) {
+      const name = liveState()?.units?.[warning.unitId]?.name ?? characters[warning.unitId]?.raw?.name ?? "\u672C\u573A\u6218\u6597";
+      tabs.querySelector('[data-tab="ai"]').click();
+      toast.hidden = true;
+      const original = warning.rawExcerpt ? `
+\u539F\u6587\uFF1A${warning.rawExcerpt}` : "";
+      aiPage?.prefill(`\u8BF7\u534F\u52A9\u8865\u5145 ${name} \u7684\u6218\u6597\u8BCD\u6761\u3002
+\u8BCD\u6761\uFF1A${warningDisplay(warning)}${original}
+\u5F53\u524D\u7F3A\u53E3\uFF1A${reason}
+\u6211\u7684\u8865\u5145\uFF1A`);
+    }
+    function appendWarningGroups(container, groups, expandable = false) {
+      for (const [kind, label] of [
+        ["autoAdjusted", "\u{1F9ED} \u6218\u573A\u81EA\u52A8\u9002\u914D"],
+        ["pending", "\u23F3 \u5F85\u7F16\u8BD1\u8BCD\u6761"],
+        ["approximated", "\u2728 \u5DF2\u8FD1\u4F3C\u5B9E\u88C5"],
+        ["needsAttention", "\u24D8 \u672A\u80FD\u81EA\u52A8\u8F6C\u6362"],
+        ["nonCombat", "\u{1F4D6} \u975E\u6218\u6597\u8BCD\u6761 \xB7 \u672C\u573A\u8DF3\u8FC7"]
+      ]) {
+        const rows2 = groups[kind];
+        if (!rows2.length) continue;
         const group = el(doc, expandable ? "details" : "div", { class: "fated-char-diagnostics", "data-normalization-diagnostics": kind });
         const list4 = el(doc, "ul");
-        for (const [text5, original] of rows2) list4.append(el(doc, "li", original ? { title: original } : {}, text5));
-        group.append(el(doc, expandable ? "summary" : "h4", {}, label), list4);
+        for (const row of rows2) {
+          const warning = row.warning ?? row;
+          const category = row.kind === "missing_info" ? "\u539F\u6587\u7F3A\u53C2 \xB7 " : row.kind === "engine_limit" ? "\u673A\u5236\u6682\u4E0D\u652F\u6301 \xB7 " : "";
+          const item = el(
+            doc,
+            "li",
+            { title: warning.rawExcerpt || warningDisplay(warning) },
+            `${warningDisplay(warning)}${row.reason ? ` \u2014 ${category}${row.reason}` : ""}`
+          );
+          const action = (name, label2, handler) => {
+            const button = el(doc, "button", { type: "button", "data-warning-action": name }, label2);
+            button.disabled = Boolean(aiController) && expandable;
+            on(button, "click", handler);
+            item.append(" ", button);
+          };
+          if (kind === "needsAttention") action("ignore", "\u8BBE\u4E3A\u975E\u6218\u6597\u5FFD\u7565", () => updateWarningExemption(warning, true));
+          if (kind === "needsAttention" || kind === "approximated") action("supplement", "\u53BB\u8F85\u52A9 AI \u8865\u5145", () => openWarningComposer(warning, row.reason));
+          if (kind === "nonCombat") action("restore", "\u6062\u590D\u4E3A\u5F85\u7F16\u8BD1", () => updateWarningExemption(warning, false));
+          list4.append(item);
+        }
+        group.append(el(doc, expandable ? "summary" : "h4", {}, `${label}\uFF08${rows2.length} \u9879\uFF09`), list4);
         container.append(group);
-      };
-      add("pending", pendingTitle(pending.length), pending.map((warning) => [warningDisplay(warning.message)]));
-      add("reviewed", modelTitle(reviewed.length), reviewed.map((note) => [modelLine(note), warningDisplay(note.warning.message)]));
+      }
     }
     let rawDetails;
     function notify(title2, detail = "", onRetry = null, busy = false, { tone = "neutral", applied, unresolved = [], warningGroups: groups, raw = "" } = {}) {
@@ -18643,10 +18753,13 @@ ${tag2.textContent || ""}
       const showSource = el(doc, "details", { class: "fated-battle-source-box" });
       showSource.append(el(doc, "summary", {}, "\u67E5\u770B\u539F\u59CB battle_init"), el(doc, "pre", { class: "fated-battle-source" }, sources.battleRaw || "\u6682\u65E0\u539F\u59CB\u6570\u636E"));
       const normalize = el(doc, "button", { type: "button", "data-normalize": "" }, "\u6807\u51C6\u5316");
-      normalize.disabled = !selectedIds().length || !activeBattleKey || !!aiController;
-      const hint = !selectedIds().length ? [scanStatus, "\u8BF7\u5148\u52FE\u9009\u8981\u6807\u51C6\u5316\u7684\u89D2\u8272"].filter(Boolean).join(" \xB7 ") : scanStatus;
+      const selected2 = selectedIds();
+      const canNormalize = selected2.length && warningGroups(warningsForUnit(sources.warnings, selected2)).pending.length;
+      normalize.disabled = !canNormalize || !activeBattleKey || !!aiController;
+      const hint = !selected2.length ? "\u8BF7\u5148\u52FE\u9009\u8981\u6807\u51C6\u5316\u7684\u89D2\u8272" : !canNormalize ? "\u6240\u9009\u89D2\u8272\u6CA1\u6709\u5F85\u7F16\u8BD1\u8BCD\u6761" : scanStatus;
       normalize.title = hint;
-      on(normalize, "click", () => runNormalize(selectedIds(), { force: true }));
+      on(normalize, "click", () => runNormalize(selected2));
+      appendWarningGroups(battleCard, warningGroups((sources.warnings ?? []).filter((w) => w.unitId === null)), true);
       battleActions.append(loadBattle, normalize);
       battleCard.append(battleActions, el(doc, "p", { class: "fated-mini", "data-normalize-status": "" }, hint), showSource);
       page.append(battleCard);
@@ -18725,9 +18838,9 @@ ${tag2.textContent || ""}
           {
             collapsed: Boolean(collapsed()[key4]),
             warnings: groups.pending.length,
+            attention: groups.needsAttention.length,
             count: members.length,
-            narrative: (diagnostics.narrativeExemptions ?? []).filter((entry2) => entry2.unitId === key4),
-            canDiscardEntry: (path2) => operations2(activeBattleKey).some((operation2) => operation2.path === path2 || operation2.path.startsWith(`${path2}/`)) || (diagnostics.inputWarnings ?? []).some((warning) => warning.originPath === path2 && warning.unitId === key4 && !warningGroups([warning]).pending.includes(warning)),
+            canDiscardEntry: (path2) => operations2(activeBattleKey).some((operation2) => operation2.path === path2 || operation2.path.startsWith(`${path2}/`)) || groups.approximated.some(({ warning }) => warning.originPath === path2),
             onDiscardEntry: (ref2) => discardStandardizedEntry(activeBattleKey, { ...ref2, unitId: key4 }),
             onToggle: (value) => setFolded([key4], value)
           }
@@ -18798,7 +18911,7 @@ ${tag2.textContent || ""}
       const slots3 = config.slots;
       const context = assemblyContext(kind, instruction, unitIds);
       if (kind === "chat") context.sources = { ...sources, warnings: [] };
-      else if (warnings) context.sources = { ...sources, warnings };
+      else context.sources = { ...sources, warnings: warnings ?? warningGroups().pending };
       const messages = assembleMessages(slots3, context);
       if (config.debugPrompts) console.debug("[fated:prompts]", {
         kind,
@@ -18824,20 +18937,15 @@ ${tag2.textContent || ""}
         save: persistSettings
       };
     }
-    async function runNormalize(unitIds = Object.keys(characters), { force = false } = {}) {
+    async function runNormalize(unitIds = Object.keys(characters)) {
       if (aiController || !activeBattleKey || !liveState()) return;
       syncSettings();
       const key4 = activeBattleKey;
       const requestConfig = normalizationApiConfig(config);
-      const stored = config.charSnapshots[key4] ?? {};
-      const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
-      const ids = [...new Set(unitIds.filter((id4) => eligible.has(id4)).map(groupId))];
+      const pending = warningGroups().pending;
+      const ids = [...new Set(unitIds.map(groupId))].filter((id4) => own17(characters, id4));
       if (!ids.length) return;
-      const scoped = warningsForUnit(sources.warnings, ids);
-      const { pending } = warningGroups(scoped);
-      const pendingIds = new Set(pending.map((warning) => warning.unitId));
-      const queueIds = pending.length && !pendingIds.has(null) ? ids.filter((id4) => pendingIds.has(id4)) : ids;
-      const queue = planNormalizationBatches(queueIds, pending, liveState(), {
+      const queue = planNormalizationBatches(ids, pending, liveState(), {
         maxWarnings: normalizationLimit(requestConfig, "normalizationWarningsPerBatch")
       });
       if (!queue.length) return;
@@ -18850,7 +18958,7 @@ ${tag2.textContent || ""}
       aiPage?.setBusy(true);
       renderInstances();
       let applied = 0, completed = 0, failure;
-      const replies = [], notes2 = [], rejectedItems = [];
+      const replies = [], unmatchedNotes = [], rejectedItems = [];
       const createdTemplates = /* @__PURE__ */ new Map();
       const progress = (detail) => notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", detail ?? `\u5DF2\u5B8C\u6210 ${completed} / ${queue.length} \u6279`, null, true);
       const request = async (batch, index, correction) => {
@@ -18913,7 +19021,7 @@ ${tag2.textContent || ""}
                 const repaired = commitNormalization(key4, revisedBatch, revised, createdTemplates, { acceptPartial: true });
                 applied += repaired.applied;
                 replies.push(repaired.data);
-                notes2.push(...repaired.notes);
+                unmatchedNotes.push(...repaired.unmatchedNotes);
                 rejectedItems.push(...repaired.rejected);
                 const outstanding = new Set(repaired.missing);
                 accepted.rejected = accepted.rejected.filter((item) => {
@@ -18926,7 +19034,7 @@ ${tag2.textContent || ""}
             }
             applied += accepted.applied;
             replies.push(accepted.data);
-            notes2.push(...accepted.notes);
+            unmatchedNotes.push(...accepted.unmatchedNotes);
             rejectedItems.push(...accepted.rejected);
             completed++;
             progress();
@@ -18941,20 +19049,19 @@ ${tag2.textContent || ""}
         failure ??= error2;
       } finally {
         const groups = warningGroups(warningsForUnit(sources.warnings, ids));
-        const unresolved = [...rejectedItems.map((item) => formatRejectedItem(item, liveState())), ...pendingDiagnostics([], notes2)];
-        const hasRemaining = groups.pending.length || groups.reviewed.length || unresolved.length;
+        const unresolved = [...rejectedItems.map((item) => formatRejectedItem(item, liveState())), ...new Set(unmatchedNotes)];
+        const followUp = groups.needsAttention.length + groups.nonCombat.length;
         const raw = replies.length ? JSON.stringify(replies.length === 1 ? replies[0] : replies, null, 2) : failure?.raw ?? "";
         const aborted = failure?.name === "AbortError";
         const partial = applied > 0 && (rejectedItems.length || failure || groups.pending.length);
-        const title2 = aborted ? "\u6807\u51C6\u5316\u5DF2\u4E2D\u6B62" : partial && rejectedItems.length ? `\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210\uFF08\u5DF2\u751F\u6548 ${applied} \u9879\uFF0C${rejectedItems.length} \u9879\u62A5\u9519\u672A\u5E94\u7528\uFF09` : partial || !failure && groups.pending.length ? "\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210" : failure ? "\u6807\u51C6\u5316\u5931\u8D25" : "\u6807\u51C6\u5316\u5B8C\u6210";
+        const title2 = aborted ? "\u6807\u51C6\u5316\u5DF2\u4E2D\u6B62" : partial && rejectedItems.length ? `\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210\uFF08\u5DF2\u751F\u6548 ${applied} \u9879\uFF0C${rejectedItems.length} \u9879\u62A5\u9519\u672A\u5E94\u7528\uFF09` : partial || !failure && groups.pending.length ? "\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210" : failure ? "\u6807\u51C6\u5316\u5931\u8D25" : followUp ? `\u6807\u51C6\u5316\u5DF2\u5B8C\u6210\uFF08${followUp} \u9879\u9700\u786E\u8BA4\u6216\u5DF2\u8DF3\u8FC7\uFF09` : "\u6807\u51C6\u5316\u5B8C\u6210";
         const detail = failure ? diagnosticText(failure.message ?? failure, "\u8BF7\u6C42\u6216\u8865\u4E01\u6821\u9A8C\u5931\u8D25\uFF0C\u672A\u8FD4\u56DE\u53EF\u8BFB\u7684\u9519\u8BEF\u8BF4\u660E") : "";
         if (!disposed && key4 === activeBattleKey) {
-          const remainingIds = [...new Set([...groups.pending, ...groups.reviewed].map((warning) => warning.unitId).filter((id4) => ids.includes(id4)))];
-          const retry2 = () => key4 === activeBattleKey && runNormalize(remainingIds.length && !groups.pending.some((w) => !w.unitId) ? remainingIds : ids, { force: true });
+          const retry2 = () => key4 === activeBattleKey && runNormalize(ids);
           notify(
             title2,
             detail,
-            !aborted && (failure || hasRemaining) ? retry2 : null,
+            !aborted && groups.pending.length ? retry2 : null,
             false,
             { tone: aborted ? "neutral" : partial || groups.pending.length && !failure ? "warning" : failure ? "error" : "success", applied, unresolved, warningGroups: groups, raw }
           );
@@ -19123,14 +19230,14 @@ ${tag2.textContent || ""}
     }
     function filterResolved(stored, records2, retained = batches(activeBattleKey)) {
       const warnings = sources.warnings ??= [];
+      const raw = diagnostics.inputWarnings ?? warnings;
       const exempt = activeNarrativeExemptions(
-        diagnostics.inputWarnings ?? warnings,
+        raw,
         config.narrativeExemptions[activeBattleKey] ?? [],
         narrativeSourceFor(records2)
       );
-      const excluded = new Set(exempt.map(({ warning }) => warning));
-      const remaining = remainingDiagnostics(warnings, stored, records2, retained);
-      warnings.splice(0, warnings.length, ...remaining.filter((warning) => !excluded.has(warning)));
+      const remaining = remainingDiagnostics(raw, stored, records2, retained);
+      warnings.splice(0, warnings.length, ...remaining);
       diagnostics.warnings = warnings;
       diagnostics.narrativeExemptions = exempt.map(({ warning, receipt }) => ({ ...warningReference(warning), reason: receipt.reason }));
     }
@@ -19149,8 +19256,9 @@ ${tag2.textContent || ""}
         const evidence = [...old?.evidence ?? [], ...matching.flatMap((note2) => note2.evidence ?? [])];
         const note = details.length ? {
           source,
-          effectName: warning.message.match(/待标准化「([^」]+)」/)?.[1]?.trim() || warningDisplay(warning.message),
+          effectName: diagnosticTitle(warning),
           reason: details.join("\uFF1B"),
+          kind: matching.find((note2) => note2.kind)?.kind,
           ...evidence.length ? { evidence: [...new Map(evidence)] } : {}
         } : old;
         if (note) (next[unitId] ??= {})[id4] = note;
@@ -19322,14 +19430,13 @@ ${tag2.textContent || ""}
         const imported = candidates !== ownBatches;
         const invalid = ownBatches.length !== kept.length || imported || kept.some((batch, i) => batch !== ownBatches[i]);
         const ownExemptions = config.narrativeExemptions[key4] ?? [];
-        const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, receipts]) => receipts.filter((receipt) => receipt.unitId != null))] : ownExemptions;
+        const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, receipts]) => receipts.filter((receipt) => receipt.unitId != null && !receipt.dismissed))] : ownExemptions;
         const activeExemptions = activeNarrativeExemptions(rawWarnings, exemptionCandidates, narrativeSourceFor(fresh));
-        const exempt = new Set(activeExemptions.map(({ warning }) => warning));
         if (imported && activeExemptions.length) persistSettings({ narrativeExemptions: {
           ...config.narrativeExemptions,
           [key4]: activeExemptions.map(({ receipt }) => receipt)
         } });
-        const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter((warning) => !exempt.has(warning));
+        const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
         toast.hidden = true;
         currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
         if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
@@ -19360,7 +19467,7 @@ ${tag2.textContent || ""}
         if (key4 && currentState) enteredBattles.add(key4);
         scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
         renderInstances();
-        if (firstEntry && changed.length) void runNormalize(changed, { force: false });
+        if (firstEntry && changed.length) void runNormalize(changed);
         if (node) node.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")} \xB7 ${scanStatus}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
         diagnostics = { ...diagnostics, phase: "scan-error", error: e?.stack || e?.message || String(e) };
@@ -19433,6 +19540,8 @@ ${tag2.textContent || ""}
     function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
       const { data } = parseAIResponse(reply);
       const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
+      const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
+      if (isObject2(data) && !own17(data, "patch") && (explicitUnresolved || explicitNarrative)) data.patch = [];
       if (!Array.isArray(data?.patch)) {
         const error2 = new Error("\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01");
         const source = typeof reply === "string" ? reply.trim() : "";
@@ -19442,7 +19551,7 @@ ${tag2.textContent || ""}
       }
       const raw = JSON.stringify(data, null, 2);
       try {
-        const notes2 = readUnresolvedDiagnostics(data.unresolved, sent);
+        const { matched: notes2, invalid: unmatchedNotes } = readUnresolvedDiagnostics(data.unresolved, sent);
         const records2 = Object.fromEntries(unitIds.map((id4) => [id4, characters[id4]]));
         const current = liveState();
         const conflicts = [];
@@ -19477,7 +19586,7 @@ ${tag2.textContent || ""}
         const rejected = [...conflicts, ...partition.rejected];
         const blockedWarnings = new Set(sent.filter((warning) => rejected.some((item) => rejectedWarning(item, warning))));
         const eligibleWarnings = sent.filter((warning) => !blockedWarnings.has(warning));
-        const repairWarnings = sent.filter((warning) => blockedWarnings.has(warning) && !notes2.some((note) => note.warning === warning) && !data.narrative?.some?.((reference) => identifiesWarning(reference, warning)));
+        const repairWarnings = sent.filter((warning) => blockedWarnings.has(warning) && !notes2.some((note) => note.warning === warning && note.detail));
         const repairError = rejected.length ? Object.assign(new Error(rejected.map((item) => formatRejectedItem(item, current)).join("\uFF1B")), {
           raw: JSON.stringify(rejected.map((item) => item.op))
         }) : null;
@@ -19502,13 +19611,14 @@ ${tag2.textContent || ""}
           const path2 = changedAtApply.get(operation2);
           return path2 && fingerprintAt(current, path2) !== fingerprintAt(next, path2);
         });
-        const narrative = readNarrativeExemptions(data.narrative, eligibleWarnings, narrativeSourceFor(records2), { unresolved: notes2 });
-        const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2, { narrative });
-        for (const { warning } of narrative) {
-          if (data.patch.some((operation2) => Array.isArray(operation2.resolves) && operation2.resolves.some((reference) => identifiesWarning(reference, warning)))) {
-            throw new Error("narrative \u8B66\u544A\u4E0D\u80FD\u540C\u65F6\u58F0\u660E\u4E3A\u8865\u4E01\u5DF2\u89E3\u51B3");
-          }
-        }
+        const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2.filter((note) => note.detail));
+        const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(
+          data.narrative,
+          eligibleWarnings,
+          narrativeSourceFor(records2),
+          { solved, unresolved: notes2.filter((note) => note.detail) }
+        );
+        unmatchedNotes.push(...invalidNarrative);
         if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes2.some((note) => note.warning && note.detail)) {
           throw new Error("\u6A21\u578B\u8FD4\u56DE\u7684\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
         }
@@ -19517,20 +19627,30 @@ ${tag2.textContent || ""}
           baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
           before = applyPatch(baseline, operations2(key4), true);
         }
-        const verified = existingEffectReceipts(data.existing, sent, baseline, before, current, fingerprintAt).filter(({ warning }) => !blockedWarnings.has(warning));
-        for (const { warning, path: path2, fingerprint } of verified) {
-          if (notes2.some((note) => note.warning === warning) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) throw new Error("\u5DF2\u6709\u5B9E\u73B0\u6536\u636E\u4E0E\u672C\u6279\u8865\u4E01\u6216\u672A\u89E3\u51B3\u8BF4\u660E\u51B2\u7A81");
-          if (!solved.includes(warning)) solved.push(warning);
-        }
+        const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
+          try {
+            const [entry2] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
+            const { warning, path: path2, fingerprint } = entry2;
+            if (blockedWarnings.has(warning) || notes2.some((note) => note.warning === warning && note.detail) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) {
+              throw new Error("\u5DF2\u6709\u5B9E\u73B0\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81");
+            }
+            if (!solved.includes(warning)) solved.push(warning);
+            return [entry2];
+          } catch {
+            unmatchedNotes.push(`\u7B2C ${index + 1} \u6761\u5DF2\u6709\u5B9E\u73B0\u8BF4\u660E\u672A\u901A\u8FC7\u6838\u5BF9`);
+            return [];
+          }
+        });
+        if (data.existing !== void 0 && !Array.isArray(data.existing)) unmatchedNotes.push("\u672A\u80FD\u8BFB\u53D6\u6A21\u578B\u7684\u5DF2\u6709\u5B9E\u73B0\u8BF4\u660E");
         const missing = missingDispositions(sent, solved, notes2, narrative);
-        if (missing.length && !patch.length && !verified.length && !notes2.length && !narrative.length && !rejected.length) {
+        if (missing.length && !patch.length && !verified.length && !notes2.some((note) => note.detail) && !narrative.length && !rejected.length && !unmatchedNotes.length) {
           const error2 = new Error(`\u6A21\u578B\u6CA1\u6709\u63D0\u4EA4\u4EFB\u4F55\u53EF\u6838\u9500\u7ED3\u679C\uFF0C\u4ECD\u7F3A ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}`);
           error2.missingCoverage = true;
           error2.missingWarnings = missing;
           error2.noRepair = Boolean(acceptPartial);
           throw error2;
         }
-        if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length) {
+        if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length && !unmatchedNotes.length && !verified.length && !notes2.some((note) => note.detail) && !narrative.length) {
           const error2 = new Error(`\u672C\u6279\u6F0F\u7B54 ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}\u3002\u672C\u6279\u5C1A\u672A\u5199\u5165\uFF1B\u4FDD\u7559\u5DF2\u5B8C\u6210\u7684\u8865\u4E01\uFF0C\u91CD\u65B0\u63D0\u4EA4\u5B8C\u6574\u7ED3\u679C\u3002\u5DF2\u5B9E\u73B0\u7684\u6548\u679C\u8BF7\u5728\u5B9E\u9645\u4FEE\u6539\u7684\u64CD\u4F5C\u4E0A\u8865 resolves\uFF1B\u53EA\u521B\u5EFA\u4F9D\u8D56\u6A21\u677F\u8FD8\u987B\u63A5\u56DE\u539F\u6280\u80FD\u3002\u5176\u4F59\u9010\u9879\u5199 unresolved \u5E76\u8BF4\u660E\u539F\u56E0\uFF0C\u7EAF\u53D9\u4E8B\u624D\u5199 narrative\u3002`);
           error2.missingCoverage = true;
           error2.missingWarnings = missing;
@@ -19605,7 +19725,7 @@ ${tag2.textContent || ""}
         reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
         scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272`;
         renderInstances();
-        return { applied: effective.length, data, notes: notes2, rejected, missing, repairWarnings, repairError };
+        return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings, repairError };
       } catch (error2) {
         error2.raw ??= raw;
         throw error2;
