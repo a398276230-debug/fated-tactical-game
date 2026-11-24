@@ -31,13 +31,11 @@ export function resolveAuthorityRank(carrier = {}, ownerUnit = {}) {
     : QUALITY_AUTHORITY[carrier.quality] ?? Math.max(1, Math.min(7, Math.trunc(Number(carrier.authorityRank ?? carrier.tier ?? unitTier) || unitTier)));
   return { authorityRank, unitTier };
 }
-export function scaledMeters(raw, effectiveTier) { return Number(raw || 0) * (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]); }
+function scaledMeters(raw, effectiveTier) { return Number(raw || 0) * (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]); }
 export function scaledCells(raw, effectiveTier, cellM, { max = Infinity, floor = false } = {}) {
   const cells = scaledMeters(raw, effectiveTier) / Math.max(1e-9, Number(cellM) || 1);
   return Math.max(0, Math.min(max, floor ? Math.floor(cells + 1e-9) : cells));
 }
-export const effectiveMeters = scaledMeters;
-export const sandboxCells = scaledCells;
 export const scaledMoveCells = (raw, effectiveTier, cellM) => scaledCells(raw, effectiveTier, cellM, { floor: true });
 export const DISTANCE_TABLE = Object.freeze([
   { name: '贴身', min: 0, max: 0, hit: 4, range: 6 }, { name: '近程', min: 1, max: 2, hit: 0, range: 2 },
@@ -70,15 +68,8 @@ export const STANCE_RULES = Object.freeze({
 export function stanceRules(stance) { return STANCE_RULES[stance] ?? STANCE_RULES.unarmed; }
 export function sizeFor(bodyLengthM) { return BL_SIZE_TABLE.find(x => Number.isFinite(bodyLengthM) && bodyLengthM < x.max) ?? BL_SIZE_TABLE[2]; }
 export function sizeClassFor(bodyLengthM) { return Math.min(5, 3 - sizeFor(bodyLengthM).value); }
-export function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
+function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
 export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
-export function resolveAuthorityContest(attacker, defender, contest = false) {
-  const a = resolveAuthorityRank(attacker?.carrier ?? attacker, attacker?.unit ?? attacker);
-  const d = resolveAuthorityRank(defender?.carrier ?? defender, defender?.unit ?? defender);
-  if (a.authorityRank !== d.authorityRank) return { winner: a.authorityRank > d.authorityRank ? 'attacker' : 'defender', ...a, defender: d, conditional: false };
-  if (a.unitTier !== d.unitTier) return { winner: a.unitTier > d.unitTier ? 'attacker' : 'defender', ...a, defender: d, conditional: false };
-  return { winner: contest ? null : 'contest', ...a, defender: d, conditional: true };
-}
 export function ratingFor(total) { return RATING_TABLE.find(x => x.min === null || total >= x.min); }
 export function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) { return agility * (1 + percent) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat; }
 export function bodySizeLabel(unit) {
@@ -86,7 +77,6 @@ export function bodySizeLabel(unit) {
   return `${sizeFor(meters).name} (${meters}m${unit.mc >= 2 ? ` · MC ${unit.mc}` : ''})`;
 }
 export function sizeHitModifier(attacker, defender) { const a = sizeForUnit(attacker), d = sizeForUnit(defender); return (defender.mc ?? 1) >= 2 ? a.value + 2 * ((defender.mc ?? 1) - 1) : a.value - d.value; }
-export function martialContest(attacker, defender, attackerRoll, defenderRoll) { return attackerRoll + (attacker.martial ?? sizeForUnit(attacker).martial) >= defenderRoll + (defender.martial ?? sizeForUnit(defender).martial); }
 export function meleeMultiplier(unit = {}) { const s = sizeForUnit(unit); return (unit.mc ?? 1) >= 2 ? 1 : s.melee; }
 export function intentCheck(intent = 'normal', attackerTier = 1, defenderTier = 1, attackerD20 = 10, defenderD20 = 10, ratingBonus = 0) {
   const spec = typeof intent === 'string' ? INTENTS[intent] ?? INTENTS.normal : intent;
