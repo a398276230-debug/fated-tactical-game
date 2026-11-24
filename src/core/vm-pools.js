@@ -1,10 +1,9 @@
+import { clamp, own } from './util.js';
+
 const mirrors = { hp: 'maxHp', mp: 'maxMp', sp: 'maxSp' };
 const initialMirrors = { hp: 'initialMaxHp', mp: 'initialMaxMp', sp: 'initialMaxSp' };
 const carrierTables = { unit: 'units', item: 'items', status: 'statuses', zone: 'zones' };
 
-function own(record, key) {
-  return record && Object.hasOwn(record, key) ? record[key] : undefined;
-}
 
 function carrier(state, ownerKind, ownerId) {
   const table = own(carrierTables, ownerKind);
@@ -24,9 +23,6 @@ function nonnegative(value, name) {
   return value;
 }
 
-function clamp(value, max) {
-  return Math.max(0, Math.min(value, max));
-}
 
 function nextId(state, reserved, base) {
   let id = base;
@@ -85,7 +81,7 @@ function planPool(state, reserved, { ownerKind = 'unit', ownerId, key, max, curr
   const id = nextId(state, reserved, `pool_${ownerKind === 'unit' ? '' : `${ownerKind}_`}${ownerId}_${key}`);
   const kind = ownerKind === 'unit' && Object.hasOwn(mirrors, key) ? key : 'custom';
   const pool = { id, kind, contributors: [{ ownerKind, ownerId, maxBase: max, initialMaxBase: initialMax }],
-    current: clamp(current, max), max, initialMax, reloadable };
+    current: clamp(current, 0, max), max, initialMax, reloadable };
   return { pool, binding: { owner, key, poolId: id } };
 }
 
@@ -163,7 +159,7 @@ export function linkPools(state, unitIds, kinds, { effectiveMax } = {}) {
     const contributors = members.map(member => member.contributor);
       const max = total(contributors.map(c => maxFor(state, c, effectiveMax)), 'Shared pool max');
     const initialMax = total(contributors.map(c => c.initialMaxBase ?? c.maxBase), 'Shared pool initial max');
-    const current = clamp(total(sources.map(pool => pool.current), 'Shared pool current'), max);
+    const current = clamp(total(sources.map(pool => pool.current), 'Shared pool current'), 0, max);
     const id = nextId(state, plan.reserved, `pool_shared_${kind}`);
     plan.pools.push({ id, kind, contributors, current, max, initialMax, reloadable: sources.every(pool => pool.reloadable) });
     for (const { owner } of members) plan.bindings.push({ owner, key: kind, poolId: id });
@@ -185,14 +181,14 @@ export function unlinkPools(state, unitIds, kinds, { effectiveMax } = {}) {
       const capacities = groups.map(group => total(group.map(({ contributor }) =>
         maxFor(state, contributor, effectiveMax)), 'Unlinked pool max'));
       const maxTotal = total(capacities, 'Unlinked total max');
-      const currentTotal = clamp(pool.current, maxTotal);
+      const currentTotal = clamp(pool.current, 0, maxTotal);
       const full = currentTotal === maxTotal;
       const ratio = full ? 1 : currentTotal / maxTotal;
       let currentLeft = currentTotal;
       for (const [index, members] of groups.entries()) {
         const max = capacities[index];
         const share = index === groups.length - 1 ? currentLeft : max * ratio;
-        const current = full ? max : Math.min(currentLeft, clamp(share, max));
+        const current = full ? max : Math.min(currentLeft, clamp(share, 0, max));
         currentLeft -= current;
         const keepId = members === remaining;
         const id = keepId ? pool.id : nextId(state, plan.reserved, `pool_${members[0].contributor.ownerId}_${pool.kind}`);
@@ -220,7 +216,7 @@ function change(pool, before, applied = true) {
 export function refreshPoolMax(state, poolId, { effectiveMax } = {}) {
   const pool = requirePool(state, poolId);
   const max = total(pool.contributors.map(c => maxFor(state, c, effectiveMax)), 'Pool max');
-  const next = { ...pool, max, current: clamp(pool.current, max) };
+  const next = { ...pool, max, current: clamp(pool.current, 0, max) };
   publish(state, [next]);
   return change(next, pool.current);
 }
@@ -242,7 +238,7 @@ export function updatePoolMax(state, poolId, mode, amount, { minRemain = 0 } = {
     remaining -= share;
     return { ...c, initialMaxBase: c.initialMaxBase ?? c.maxBase, maxBase: share };
   });
-  const next = { ...pool, initialMax: pool.initialMax ?? before, contributors: nextBase, max, current: clamp(pool.current, max) };
+  const next = { ...pool, initialMax: pool.initialMax ?? before, contributors: nextBase, max, current: clamp(pool.current, 0, max) };
   publish(state, [next]);
   return { ...change(next, pool.current), beforeMax: before, afterMax: max };
 }
@@ -266,7 +262,7 @@ export function updatePoolCurrent(state, poolId, mode, amount, { minRemain = 0, 
     default: throw new RangeError(`Unknown pool update mode: ${mode}`);
   }
   if (!Number.isFinite(current)) throw new RangeError('Pool update must produce a finite current');
-  const next = { ...pool, current: clamp(current, pool.max) };
+  const next = { ...pool, current: clamp(current, 0, pool.max) };
   publish(state, [next]);
   return change(next, before);
 }
@@ -276,8 +272,8 @@ export function swapPoolCurrents(state, firstId, secondId) {
   const first = requirePool(state, firstId);
   const second = requirePool(state, secondId);
   if (firstId === secondId) return [];
-  const nextFirst = { ...first, current: clamp(second.current, first.max) };
-  const nextSecond = { ...second, current: clamp(first.current, second.max) };
+  const nextFirst = { ...first, current: clamp(second.current, 0, first.max) };
+  const nextSecond = { ...second, current: clamp(first.current, 0, second.max) };
   publish(state, [nextFirst, nextSecond]);
   return [change(nextFirst, first.current), change(nextSecond, second.current)];
 }

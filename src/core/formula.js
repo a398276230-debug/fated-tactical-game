@@ -1,5 +1,6 @@
 // Expression identifiers and queries expose a bounded, read-only combat context.
 import { TIER_CELL_M, resolveEffectiveTier } from './combat_protocol.js';
+import { ownDataValue } from './util.js';
 
 const variables = new Map();
 const families = [];
@@ -7,7 +8,7 @@ const queries = new Map();
 const register = (name, description, read) => variables.set(name, { description, read });
 const family = (name, pattern, description, read) => families.push({ name, pattern, description, read });
 const query = (name, args, signature, description, read) => queries.set(name, { args, signature, description, read });
-const own = (record, key) => record == null ? undefined : Object.getOwnPropertyDescriptor(record, key)?.value;
+const own = ownDataValue;
 const path = (record, ...keys) => keys.reduce(own, record);
 const scalar = value => Number.isFinite(value) || typeof value === 'boolean' || typeof value === 'string' ? value : null;
 const idPattern = '[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}';
