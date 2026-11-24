@@ -407,7 +407,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click(toggle);
   assert.deepEqual((await preview()).map(m => m.role), ['system']);
   assert.ok(!(await preview())[0].slotId.split('+').includes('protocol'));
-  assert.equal(await run(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/')))).slots.find(s => s.id === 'protocol').enabled`), false);
+  assert.equal(await run(`JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/') && k.split('/').length === 3))).slots.find(s => s.id === 'protocol').enabled`), false);
   await click('[data-tab="api"]');
   assert.equal(await run(`document.querySelector('[name="apiSource"]').disabled`), true);
   const batchFields = `['normalizationConcurrency','normalizationWarningsPerBatch'].map(name => Number(document.querySelector('[name="'+name+'"]').value))`;
@@ -694,10 +694,10 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(switched.equipment[switched.items[switched.units.p1.mainHand].templateId].name, '黑灵');
   assert.deepEqual(switched.units.p1.used,{action:0,attack:0});
   await run(`(() => {
-    const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/'));
-    const config = JSON.parse(localStorage.getItem(key));
-    config.aiSessions.sessions[0].messages.push({role:'tool', content:'占位', ts:Date.now(), toolName:'test', toolResult:{ok:true}});
-    localStorage.setItem(key, JSON.stringify(config));
+    const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/') && k.endsWith('/ai-sessions'));
+    const data = JSON.parse(localStorage.getItem(key));
+    data.sessions[0].messages.push({role:'tool', content:'占位', ts:Date.now(), toolName:'test', toolResult:{ok:true}});
+    localStorage.setItem(key, JSON.stringify(data));
   })()`);
   await send('Page.reload');
   await until(() => run(`window.__fatedTacticalTavern?.getConfig().aiSessions.activeId === ${JSON.stringify(sessions[0])}`), '刷新恢复会话');
@@ -710,8 +710,11 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`getComputedStyle(document.querySelector('.fated-ai-message[data-role="tool"]')).borderTopStyle`), 'dashed');
   t.diagnostic('G47–G54 通过，刷新后恢复会话与工具占位');
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
+  const storedBatches = await run('window.__fatedTacticalTavern.getConfig().normalizationBatches');
+  assert.ok(Object.values(storedBatches).some(batches => batches.length), '刷新前确有标准化批次');
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '100 格棋盘加载');
   await click('#auto-ai');
+  assert.deepEqual(await run('window.__fatedTacticalTavern.getConfig().normalizationBatches'), storedBatches, '刷新逐批恢复标准化补丁');
   // 逐格断言 DOM 的步骤关闭演出；演出本身在自动敌方回合处单独验证
   await select('#anim-speed', '0');
   const multi = await run(`(() => {

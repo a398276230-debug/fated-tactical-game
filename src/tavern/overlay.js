@@ -331,6 +331,8 @@ export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\
 
 export const TAVERN_VERSION = '0.4.7';
 
+const LARGE_CONFIG_KEYS = ['charSnapshots', 'normalizationBatches', 'narrativeExemptions', 'unresolvedNotes'];
+const separateConfigKey = (key, field) => `${key}/${field}`;
 const DEFAULT_CONFIG = {
   apiMode: 'tavern', baseUrl: '', apiKey: '', model: '', temperature: 0.8, max_tokens: 32000,
   normalizationAiMode: 'same', normalizationAiBaseUrl: '', normalizationAiApiKey: '', normalizationAiModel: '',
@@ -344,8 +346,19 @@ const DEFAULT_CONFIG = {
 function configFor(storage, key) {
   try {
     const saved = parseJSON(storage?.getItem(key), {});
+    const separateSessions = parseJSON(storage?.getItem(`${key}/ai-sessions`), null);
+    const separateLarge = Object.fromEntries(LARGE_CONFIG_KEYS.flatMap(field => {
+      const value = parseJSON(storage?.getItem(separateConfigKey(key, field)), null);
+      return value == null ? [] : [[field, value]];
+    }));
     const mode = saved?.apiMode ?? (saved?.baseUrl ? 'direct' : 'tavern');
-    return deepMerge(DEFAULT_CONFIG, { ...saved, apiMode: mode === 'direct' ? 'custom' : mode, slots: describeSlots(saved?.slots) });
+    return deepMerge(DEFAULT_CONFIG, {
+      ...saved,
+      ...separateLarge,
+      ...(separateSessions ? { aiSessions: separateSessions } : {}),
+      apiMode: mode === 'direct' ? 'custom' : mode,
+      slots: describeSlots(saved?.slots),
+    });
   } catch { return clone(DEFAULT_CONFIG); }
 }
 function putConfig(storage, key, value) {
@@ -682,11 +695,29 @@ export function mountTavernOverlay(options = {}) {
       return;
     }
     Object.assign(config, patch);
-    const { instances, ...settings } = config;
-    // Older configs embedded the instance table. Preserve it before splitting the keys.
+    const { instances, aiSessions, ...settingsWithLarge } = config;
+    const settings = Object.fromEntries(Object.entries(settingsWithLarge).filter(([key]) => !LARGE_CONFIG_KEYS.includes(key)));
+    // Older configs embedded the instance table and growing payloads. Preserve
+    // the old record for migration, then write each large payload separately so
+    // one full record cannot invalidate unrelated standardization data.
     try { if (storage && storage.getItem(stateKey) == null) putConfig(storage, stateKey, instances); } catch { /* unavailable */ }
-    localOnly = !putConfig(storage, configKey, settings);
-    if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储；重载后可能丢失。');
+    const legacy = (() => { try { return parseJSON(storage?.getItem(configKey), {}); } catch { return {}; } })();
+    const fields = [['aiSessions', `${configKey}/ai-sessions`, aiSessions],
+      ...LARGE_CONFIG_KEYS.map(field => [field, separateConfigKey(configKey, field), config[field]])];
+    let allSaved = true;
+    for (const [field, key, value] of fields) {
+      if (!localOnly && !Object.hasOwn(patch, field) && !Object.hasOwn(legacy ?? {}, field)) continue;
+      if (putConfig(storage, key, value)) continue;
+      allSaved = false;
+      if (Object.hasOwn(legacy ?? {}, field)) settings[field] = legacy[field];
+    }
+    if (Object.hasOwn(legacy ?? {}, 'instances')) {
+      try { if (storage?.getItem(stateKey) == null) settings.instances = legacy.instances; }
+      catch { settings.instances = legacy.instances; }
+    }
+    const settingsSaved = putConfig(storage, configKey, settings);
+    localOnly = !allSaved || !settingsSaved;
+    if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储；请清理旧战局缓存后重载。');
   }
   if (!config.aiSessions?.sessions?.length || config.aiSessions.activeId !== aiSessions.data.activeId) {
     persistSettings({ aiSessions: aiSessions.data });
