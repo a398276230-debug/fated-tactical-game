@@ -207,3 +207,20 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
   return { mvuData, latestFloor: battleSource ? messageContent(battleSource) : latestFloor, battleInit, charInfo, battleRaw, charRaw, roster: '', protagonistName: '', battleKey,
     source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null };
 }
+
+export function sourceMessageRange(messages, source) {
+  const list = Array.isArray(messages) ? messages : [];
+  const index = source ? list.indexOf(source) : -1;
+  return index < 0 ? [] : list.slice(0, index + 1);
+}
+
+export function sourceSummary(bundle = {}) {
+  return {
+    battleKey: bundle.battleKey ?? null,
+    messageId: bundle.source?.messageId ?? null,
+    swipeId: bundle.source?.swipeId ?? null,
+    protagonistName: bundle.protagonistName ?? '',
+    hasBattleInit: Boolean(bundle.battleInit),
+    charCount: Array.isArray(bundle.charInfo) ? bundle.charInfo.length : 0,
+  };
+}
