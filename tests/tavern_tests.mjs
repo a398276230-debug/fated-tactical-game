@@ -266,17 +266,24 @@ test('主角背包消耗品扣库存、未知用途进入标准化，装备优�
 
 test('主手弓命中后，小刀只在自己射程内追击和扣 SP', () => {
   const followups = [];
-  for (const dist of [1,4]) {
-    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',标签:['弓'],位置:'主手',rules:[guaranteeHit]},小刀:{类型:'武器',位置:'副手'}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
+  for (const [dist, swap] of [[1,false],[4,false],[1,true]]) {
+    const {state}=hydrateFromSources({mvu:{主角:{...mvu.主角,装备:{弓:{类型:'武器',标签:['弓'],位置:'主手',rules:[guaranteeHit]},小刀:{类型:'武器',位置:'副手',rules:[guaranteeHit]}}}},charInfo:{name:'木偶',hp:99999},battleInit:{terrainMode:'flat',units:[{id:'p',source:'mvu:主角',name:'主角',team:'blue',x:1,y:1},{id:'e',source:'char_info',name:'木偶',team:'red',x:1+dist,y:1}]}},{throwOnValidation:true});
     const {p,e}=state.units;state.turn=state.order.indexOf('p');p.used={attack:0,action:0};p.ap=2;const sp=p.sp, hp=e.hp;
     validateState(state);
     assert.equal(state.equipment[state.items[p.offHand].templateId].name,'小刀');
     assert.equal(p.stance,'dual_wield');
+    const { mainHand, offHand } = p;
+    if (swap) {
+      applyAction(state, { type:'switch_weapon', itemId:offHand });
+      assert.deepEqual([p.mainHand, p.offHand, p.stance], [offHand, mainHand, 'dual_wield']);
+      assert.equal(preview(state, { type:'attack', x:e.x, y:e.y }).targets[0].weaponId, offHand);
+    }
     const logs=applyAction(state,{type:'attack',x:e.x,y:e.y});
     assert.ok(e.hp<hp);
-    followups.push([dist,logs.some(l=>l.type==='followup'),sp-p.sp]);
+    followups.push([dist,logs.find(l=>l.type==='followup')?.detail.weaponId,sp-p.sp]);
+    assert.equal(followups.at(-1)[1], dist === 4 ? undefined : swap ? mainHand : offHand);
   }
-  assert.deepEqual(followups,[[1,true,10],[4,false,0]]);
+  assert.deepEqual(followups.map(([dist, id, sp]) => [dist, Boolean(id), sp]), [[1,true,10],[4,false,0],[1,true,10]]);
 });
 
 test('MVU 和 char_info 可用装备标签声明初始主副手；剧情位置优先', () => {
