@@ -767,7 +767,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       else playback.skip();
     }, { signal });
     for (const [node, event] of [[window, 'resize'], [window.visualViewport, 'resize'], [window.visualViewport, 'scroll']]) node?.addEventListener(event, layoutTargetCard, { signal });
-    window.addEventListener('scroll', layoutTargetCard, { capture: true, passive: true, signal });
+    window.addEventListener('scroll', event => {
+      // Scrolling inside the card does not move the board anchor.
+      if (!(event.target instanceof window.Node && $('target-actions').contains(event.target))) layoutTargetCard();
+    }, { capture: true, passive: true, signal });
 
     const board = $('board');
     board.addEventListener('click', e => {

@@ -710,8 +710,11 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     data.sessions[0].messages.push({role:'tool', content:'占位', ts:Date.now(), toolName:'test', toolResult:{ok:true}});
     localStorage.setItem(key, JSON.stringify(data));
   })()`);
+  const storedBatches = await run('window.__fatedTacticalTavern.getConfig().normalizationBatches');
+  assert.ok(Object.values(storedBatches).some(batches => batches.length), '刷新前确有标准化批次');
   await send('Page.reload');
   await until(() => run(`window.__fatedTacticalTavern?.getConfig().aiSessions.activeId === ${JSON.stringify(sessions[0])}`), '刷新恢复会话');
+  assert.deepEqual(await run('window.__fatedTacticalTavern.getConfig().normalizationBatches'), storedBatches, '刷新逐批恢复标准化补丁');
   assert.equal(await run(`${get(reportToggle)}.checked`), false);
   await click('.fated-tavern-launcher');
   await click('[data-tab="ai"]');
@@ -721,11 +724,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`getComputedStyle(document.querySelector('.fated-ai-message[data-role="tool"]')).borderTopStyle`), 'dashed');
   t.diagnostic('G47–G54 通过，刷新后恢复会话与工具占位');
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
-  const storedBatches = await run('window.__fatedTacticalTavern.getConfig().normalizationBatches');
-  assert.ok(Object.values(storedBatches).some(batches => batches.length), '刷新前确有标准化批次');
   await until(() => run('!!window.FatedTacticalGame && document.querySelectorAll("#board .tactical-cell").length === 100'), '100 格棋盘加载');
   await click('#auto-ai');
-  assert.deepEqual(await run('window.__fatedTacticalTavern.getConfig().normalizationBatches'), storedBatches, '刷新逐批恢复标准化补丁');
   // 逐格断言 DOM 的步骤关闭演出；演出本身在自动敌方回合处单独验证
   await select('#anim-speed', '0');
   const multi = await run(`(() => {
@@ -985,12 +985,28 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`Boolean(${get(actions('brace'))})`), false);
   await click('#end-turn');
   await returnToSwordsman();
+  await run(`(() => {
+    const game = window.FatedTacticalGame, fixture = game.getBattleState();
+    for (let i=0; i<24; i++) {
+      const id='mobile-armor-'+i;
+      fixture.skills[id]={...fixture.skills.armor,name:'竖屏护甲 '+i};
+      fixture.units.swordsman.skills.push(id);
+    }
+    game.createBattle({kind:'custom_state',state:fixture});
+  })()`);
   const rested = (await state()).units.swordsman;
   await tap(cell(rested.x, rested.y));
   await until(() => run(`Boolean(${get(actions('brace'))})`), '下一回合恢复动作槽');
   assert.ok(await run(`${get(actions('brace'))}.getBoundingClientRect().height>=44`));
-  await tap(actions('brace'));
-  await until(async () => (await state()).units.swordsman.statuses.guarded, '触屏施放架势');
+  const armorButton = '#action-toolbar [data-skill-id="armor"]';
+  await tap(armorButton);
+  await until(() => run(`!${get('#confirm-action')}.hidden`), '触屏选择技能等待确认');
+  const offset = await run(`(() => { const card=${get('#target-actions')}; card.scrollTop=card.scrollHeight; return card.scrollTop; })()`);
+  assert.ok(offset > 0, '竖屏长菜单确实需要滚动');
+  await run('new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))');
+  assert.equal(await run(`${get('#target-actions')}.scrollTop`), offset, '浮卡滚动不能把确认按钮刷走');
+  await tap('#confirm-action');
+  await until(async () => (await state()).units.swordsman.statuses.thorns, '触屏滚动后确认技能');
   await click('#resource-button');
   await run(`${get('#resource-input')}.value = JSON.stringify({stats:{str:7,agi:21,con:6,int:4,spi:4},tier:1,previous:{hp:{current:22,max:44}}})`);
   await click('#calculate-resources');

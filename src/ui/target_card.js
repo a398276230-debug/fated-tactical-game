@@ -6,9 +6,13 @@ export function placeTargetCard(card, anchor, viewport = window.visualViewport) 
   const right = left + (viewport?.width ?? document.documentElement.clientWidth) - 2 * gutter;
   const bottom = top + (viewport?.height ?? window.innerHeight) - 2 * gutter;
   card.style.maxWidth = `${Math.max(0, right - left)}px`;
-  card.style.maxHeight = `${Math.max(0, bottom - top)}px`;
+  const viewportHeight = Math.max(0, bottom - top);
   const a = anchor.getBoundingClientRect();
-  const { width, height } = card.getBoundingClientRect();
+  const { width, height: renderedHeight } = card.getBoundingClientRect();
+  // Measure the content without temporarily expanding the scroll container:
+  // expanding then shrinking clamps scrollTop on every captured scroll event.
+  const height = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight);
+  let maxHeight = viewportHeight;
   const room = { right: right - a.right - gap, left: a.left - left - gap,
     below: bottom - a.bottom - gap, above: a.top - top - gap };
   const clamp = (v, min, max) => Math.max(min, Math.min(v, max));
@@ -22,10 +26,11 @@ export function placeTargetCard(card, anchor, viewport = window.visualViewport) 
     y = below ? a.bottom + gap : a.top - gap - height;
     const available = below ? room.below : room.above;
     if (available < height && available >= 80) {
-      card.style.maxHeight = `${available}px`;
+      maxHeight = available;
       if (!below) y = a.top - gap - available;
     }
   }
+  card.style.maxHeight = `${maxHeight}px`;
   card.style.left = `${clamp(x, left, right - width)}px`;
   card.style.top = `${clamp(y, top, bottom - card.getBoundingClientRect().height)}px`;
 }
