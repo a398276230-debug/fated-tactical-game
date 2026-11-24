@@ -19374,11 +19374,11 @@ ${tag2.textContent || ""}
         }
       }
       const storageKey = battleStorageKey(key4, "chat-opening-patches");
-      if (nextEntries !== entries3 && !putConfig(storage, storageKey, nextEntries)) throw new Error("\u65E0\u6CD5\u4FDD\u5B58\u6218\u5C40\u8865\u4E01");
+      const persisted = nextEntries === entries3 || putConfig(storage, storageKey, nextEntries);
       try {
         gameMount.loadState(next);
       } catch (error2) {
-        if (nextEntries !== entries3) putConfig(storage, storageKey, entries3);
+        if (nextEntries !== entries3 && persisted) putConfig(storage, storageKey, entries3);
         throw error2;
       }
       currentState = liveState();
@@ -19386,7 +19386,7 @@ ${tag2.textContent || ""}
       renderInstances();
       prepareMessages();
       const undoReceipt = undo ? null : { battleKey: key4, changes: chatUndoChanges(current, currentState), openingId };
-      const applyNotice = undo ? "\u2713 \u5DF2\u64A4\u9500" : openingError ? `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u91CD\u7F6E\uFF08${openingError}\uFF09` : "\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u4FDD\u7559";
+      const applyNotice = undo ? "\u2713 \u5DF2\u64A4\u9500" : openingError ? `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u91CD\u7F6E\uFF08${openingError}\uFF09` : persisted ? "\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u4FDD\u7559" : "\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u4F46\u6D4F\u89C8\u5668\u5B58\u50A8\u5931\u8D25\uFF0C\u91CD\u8F7D\u6216\u91CD\u5F00\u540E\u53EF\u80FD\u4E22\u5931";
       aiSessions.update(sessionId, message, { undoReceipt, applyError: null, applyNotice });
     } catch (error2) {
       aiSessions.update(sessionId, message, { applyError: `${undo ? "\u64A4\u9500" : "\u5E94\u7528"}\u5931\u8D25\uFF1A${error2.message}` });

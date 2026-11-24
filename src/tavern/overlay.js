@@ -1755,10 +1755,10 @@ export function mountTavernOverlay(options = {}) {
         }
       }
       const storageKey = battleStorageKey(key, 'chat-opening-patches');
-      if (nextEntries !== entries && !putConfig(storage, storageKey, nextEntries)) throw new Error('无法保存战局补丁');
+      const persisted = nextEntries === entries || putConfig(storage, storageKey, nextEntries);
       try { gameMount.loadState(next); }
       catch (error) {
-        if (nextEntries !== entries) putConfig(storage, storageKey, entries);
+        if (nextEntries !== entries && persisted) putConfig(storage, storageKey, entries);
         throw error;
       }
       currentState = liveState();
@@ -1767,7 +1767,9 @@ export function mountTavernOverlay(options = {}) {
       const undoReceipt = undo ? null : { battleKey: key, changes: chatUndoChanges(current, currentState), openingId };
       const applyNotice = undo ? '✓ 已撤销' : openingError
         ? `✓ 已应用至当前战局，重开时重置（${openingError}）`
-        : '✓ 已应用至当前战局，重开时保留';
+        : persisted
+          ? '✓ 已应用至当前战局，重开时保留'
+          : '✓ 已应用至当前战局，但浏览器存储失败，重载或重开后可能丢失';
       aiSessions.update(sessionId, message, { undoReceipt, applyError: null, applyNotice });
     } catch (error) {
       aiSessions.update(sessionId, message, { applyError: `${undo ? '撤销' : '应用'}失败：${error.message}` });
