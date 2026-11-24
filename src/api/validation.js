@@ -6,7 +6,7 @@ import { validExpr } from '../core/formula.js';
 
 import { MORALE, moraleLabels } from '../core/combat_protocol.js';
 import { timeOfDay } from '../core/battle_time.js';
-import { validVmOpcode, vmRuleError, vmStatModError, validVmTag, validVmSourceSkillId, vmHooks, carrierFields, validCarrierScalar } from '../core/vm-schema.js';
+import { validVmOpcode, vmRuleError, vmStatModError, validVmTag, validVmSourceSkillId, validVmExpiry, validVmPureSelector, carrierFields, validCarrierScalar } from '../core/vm-schema.js';
 import { validVmState } from '../core/vm-runtime.js';
 
 function validateRules(rules, state) {
@@ -56,12 +56,6 @@ function dice(v) {
   checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
   checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
 }
-function vmExpiry(value) {
-  const rules = Array.isArray(value) ? value : [value];
-  return rules.length > 0 && rules.every(rule => plain(rule) && vmHooks.includes(rule.hook)
-    && Object.keys(rule).every(key => ['hook', 'filter'].includes(key))
-    && (!own(rule, 'filter') || typeof rule.filter === 'boolean' || typeof rule.filter === 'string' && validExpr(rule.filter)));
-}
 const stackModes = ['refresh', 'stack', 'replace', 'extend'];
 const numericExpr = value => Number.isFinite(value) || typeof value === 'string' && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
@@ -76,6 +70,7 @@ function carrierFieldsValue(value, state, resolved = false) {
     return true;
   }, 'VM 修饰');
   if (own(value, 'rules')) validateRules(value.rules, state);
+  checkOptional(value, 'shareRulesTo', validVmPureSelector);
 }
 function poolDefinitions(value) {
   table(value, definition => {
@@ -103,7 +98,7 @@ export function statusTemplate(value, key = value?.id, state) {
   checkOptional(value, 'durationType', duration => statusDurations.includes(duration));
   checkOptional(value, 'stackMode', mode => stackModes.includes(mode));
   checkOptional(value, 'maxStacks', validStackCap);
-  checkOptional(value, 'expireOn', vmExpiry);
+  checkOptional(value, 'expireOn', validVmExpiry);
   carrierFieldsValue(value, state);
 }
 function statusLifetime(v) {
@@ -113,7 +108,7 @@ function statusLifetime(v) {
 function nativeStatusTemplate(v, key) {
   fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers'], ['expireInto', 'expireOn']);
   checkOptional(v, 'expireInto', id);
-  checkOptional(v, 'expireOn', vmExpiry);
+  checkOptional(v, 'expireOn', validVmExpiry);
   requireThat(id(key) && v.id === key, '自定义状态 ID');
   requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300)
     && ['buff', 'debuff', 'control', 'dot', 'hot', 'shield'].includes(v.category), '状态名/图标/描述/类别');
@@ -242,7 +237,7 @@ export function statusValue(v, key, state, ownerId) {
   checkOptional(v, 'stackMode', mode => stackModes.includes(mode));
   carrierFieldsValue(v, state, true);
   checkOptional(v,'holdTotal',x=>v.id==='suppressed' && Number.isFinite(x));
-  checkOptional(v, 'expireOn', x => x === null || vmExpiry(x));
+  checkOptional(v, 'expireOn', x => x === null || validVmExpiry(x));
   requireThat(v.expireInto === t.expireInto, '状态到期目标');
   requireThat(v.id === key && statusLabels.every(k => v[k] === t[k]) && statusLifetime(v)
     && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks)

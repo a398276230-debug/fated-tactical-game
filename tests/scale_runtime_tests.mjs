@@ -1,11 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { actionSkill, applyAction, currentUnit, preview } from '../src/core/combat.js';
+import { actionSkill, applyAction, currentUnit, grantStatus, preview } from '../src/core/combat.js';
 import { canStep, coverBetween, unitsAt } from '../src/core/spatial.js';
 import { chooseAction } from '../src/core/ai.js';
 import { battleAiPayload } from '../src/core/battle-ai.js';
 import { narrate } from '../src/ui/narrate.js';
+
+test('heavy armor leaves native rating odds intact and exposure improves those odds', () => {
+  const state = buildScenario({ scenarioId: 'ruins', ruleset: 'protocol' });
+  const actor = currentUnit(state), target = Object.values(state.units).find(unit => unit.team !== actor.team);
+  Object.assign(actor, { x: 2, y: 2 });
+  Object.assign(target, { x: 3, y: 2 });
+  state.skills.probe = { name: '试射', ap: 1, slot: 'attack', range: 3, shape: 'single', target: 'enemy',
+    accuracy: -6, damage: { count: 1, sides: 4, type: 'physical' } };
+  actor.skills.push('probe');
+  target.gear.push('plate');
+  state.items.plate = { id: 'plate', templateId: 'plate' };
+  state.equipment.plate = { name: '重甲', defense: 2500 };
+  const profile = () => preview(state, { type: 'skill', skillId: 'probe', targetId: target.id, x: target.x, y: target.y }).targets[0];
+  const base = profile();
+  assert.equal(base.defense, 4);
+  assert.ok(base.hitChance > .05 && base.hitChance < .95);
+  const expected = Array.from({ length: 20 }, (_, i) => i + 1).filter(roll => roll !== 1 && roll + base.accuracy >= 4).length / 20;
+  assert.ok(Math.abs(base.hitChance - expected) < 1e-10);
+  grantStatus(state, target, 'mark');
+  assert.ok(profile().hitChance > base.hitChance);
+});
+
+test('single-target protection rejects hostile attacks but allows allies and area skills', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state), target = Object.values(state.units).find(unit => unit.team !== actor.team);
+  const ally = Object.values(state.units).find(unit => unit.team === actor.team && unit.id !== actor.id);
+  Object.assign(actor, { x: 2, y: 2 });
+  Object.assign(target, { x: 3, y: 2, mods: [{ flags: ['untargetableSingle'] }] });
+  Object.assign(ally, { x: 2, y: 3, mods: [{ flags: ['untargetableSingle'] }] });
+  const skill = { name: '试射', ap: 1, slot: 'attack', range: 3, shape: 'single', target: 'enemy' };
+  Object.assign(state.skills, { single: skill, area: { ...skill, shape: 'circle', radius: 1 }, aid: { ...skill, target: 'ally' } });
+  actor.skills.push('single', 'area', 'aid');
+  const aim = (unit, skillId) => preview(state, { type: skillId ? 'skill' : 'attack', skillId, x: unit.x, y: unit.y, targetId: unit.id });
+  assert.equal(aim(target).ok, false);
+  assert.equal(aim(target, 'single').ok, false);
+  assert.equal(aim(ally, 'aid').ok, true);
+  assert.ok(aim(target, 'area').targets?.some(entry => entry.id === target.id));
+});
 
 test('shared-cell occupancy, precise single-target aim, and scaled regional cover', () => {
   const state = buildScenario('ruins');

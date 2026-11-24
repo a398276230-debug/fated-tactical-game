@@ -34,6 +34,13 @@ test('rules collect actual carrier instances, order ties deterministically, and 
   assert.deepEqual(collectRules(state, 'after_check', event), []);
 });
 
+test('two worn instances of one template each contribute rules and modifiers', () => {
+  const state = stateOf(unit('a', { mainHand: 'first', offHand: 'second', gear: ['first'] }));
+  for (const id of ['first', 'second']) state.items[id] = { templateId: 'shared', rules: [rule('edge')], mods: [{ stat: 'str', flat: 4 }] };
+  assert.equal(aggregateModifiers(state, 'a').stats.str.flat, 8);
+  assert.deepEqual(collectRules(state, 'before_check', { actorId: 'a' }).map(entry => entry.carrier.id).sort(), ['first', 'second']);
+});
+
 test('sharing dedupes default and explicit keys per recipient and leaves nonrecipients alone', () => {
   const passive = { templateId: 'link', rules: [rule('passive'), rule('other', { dedupeKey: 'explicit' })],
     mods: [{ stat: 'str', flat: 2 }, { stat: 'str', flat: 3 }], shareRulesTo: peerSelector() };

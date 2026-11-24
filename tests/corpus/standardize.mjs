@@ -62,7 +62,7 @@ const SYSTEM = `你是「命定战术沙盘」的 VM 规则编译器。把中文
 3. 状态 ID 只能从这份已注册表里选：${STATUS_LIST}。描述里出现表外状态名时，用最接近的已注册状态近似，并在 rule.label 里写原名。
 4. 无法精确表达的机制，用现有 opcode 近似，并把近似点写进 label，不要发明新 opcode 或新字段。
 5. 数值用协议允许的形式：数字或表达式字符串（如 "3 + self.tier"）。表达式里的字符串字面量用单引号。
-6. 描述里没有数量的（如「高额」「少量」），按下列基准取整：一次攻击的一击 ≈ 目标 10% 最大 HP；"固定伤害+N" 写成 damage.amount 的常量 N；"减伤 X%" 写成 statMod(dr, additivePercent)；"伤害提高 X%" 写成 statMod(damageMult, mult: 1+X)。`;
+6. 描述里没有数量的（如「高额」「少量」），按下列基准取整：一次攻击的一击 ≈ 目标 10% 最大 HP；"固定伤害+N" 写成 damage.amount 的常量 N；"减伤 X%" 写成 statMod(dr, flat: X/100)；"伤害提高 X%" 写成 statMod(damageMult, mult: 1+X)。`;
 
 const userPrompt = ({ row, effects }) => {
   const item = row.item;

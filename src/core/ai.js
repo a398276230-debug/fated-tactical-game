@@ -62,7 +62,7 @@ export function tactics(state, actor, action, plan) {
       if (op.op === 'remove_status' && Object.values(target.statuses ?? {}).some(value => ['debuff', 'control', 'dot'].includes(value.category))) score += enemy ? -4 : 8;
     }
   }
-  if (programs.some(op => ['set_terrain', 'modify_terrain', 'add_cover'].includes(op.op))) {
+  if (programs.some(op => op.op === 'spawn' && ['zone', 'terrain', 'cover'].includes(op.entityKind))) {
     score += Object.values(state.units).some(unit => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;

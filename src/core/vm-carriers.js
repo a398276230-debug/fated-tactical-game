@@ -159,7 +159,8 @@ export function eventOwners(state, hook, event) {
   return [...new Set(refs.map(idOf).filter(id => id != null && own(state.units, id)))].sort();
 }
 
-function templateKey({ entity, carrier }) {
+function carrierDedupePrefix({ entity, carrier, nativeOwnerId }, ownerId, pooled = false) {
+  if (!pooled && ownerId === nativeOwnerId && carrier.type === 'item') return `item:${carrier.id}`;
   return entity.templateId ?? JSON.stringify([carrier.type, carrier.ownerId, carrier.id]);
 }
 
@@ -175,6 +176,7 @@ export function collectRules(state, hook, event = {}, queries = {}) {
   const unitIds = eventOwners(state, hook, event);
   if (!unitIds.length) return [];
   const candidates = [];
+  const pooled = hook === 'on_lethal_p1' || hook === 'on_lethal_p2';
   const carrierRows = carriers(state);
   if (hook === 'after_status_removed' && event.removedStatus?.rules?.length) {
     const removed = event.removedStatus;
@@ -190,7 +192,7 @@ export function collectRules(state, hook, event = {}, queries = {}) {
     if (!rules?.length) continue;
     for (const ownerId of recipients(state, row, unitIds, event, queries)) {
       for (const rule of rules) {
-        const dedupeKey = rule.dedupeKey ?? `${templateKey(row)}:${rule.id}`;
+        const dedupeKey = rule.dedupeKey ?? `${carrierDedupePrefix(row, ownerId, pooled)}:${rule.id}`;
         const useKey = JSON.stringify([ownerId, dedupeKey]);
         candidates.push({ dedupeKey, entry: { rule, carrierOrder, ownerId, sourceId: sourceIdOf(row, ownerId, event), carrier: row.carrier, useKey } });
       }
@@ -198,7 +200,6 @@ export function collectRules(state, hook, event = {}, queries = {}) {
   }
   candidates.sort(({ entry: a }, { entry: b }) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0)
     || a.carrierOrder - b.carrierOrder || compare(a.rule.id, b.rule.id) || compare(a.ownerId, b.ownerId));
-  const pooled = hook === 'on_lethal_p1' || hook === 'on_lethal_p2';
   const seen = new Set();
   return candidates.flatMap(({ dedupeKey, entry }) => {
     const key = pooled ? dedupeKey : entry.useKey;
@@ -234,7 +235,7 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
       if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries).length) continue;
       const context = carrierScope(state, row, unitId, event, queries);
       for (const [index, mod] of row.entity.mods.entries()) {
-        const key = JSON.stringify([templateKey(row), index]);
+        const key = JSON.stringify([carrierDedupePrefix(row, unitId), index]);
         if (seen.has(key) || !matchesModifier(mod, event)
           || (mod.when !== undefined && evaluateExpr(mod.when, context) !== true)) continue;
         const values = {};

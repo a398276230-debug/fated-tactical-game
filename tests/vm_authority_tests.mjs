@@ -96,3 +96,27 @@ test('actual VM force removal uses the source carrier rank and records an exact 
     defender: cleanse.detail.contest.defenderRank ?? cleanse.detail.contest.defender?.authorityRank,
     result: cleanse.detail.contest.result }, { attacker: 8, defender: 1, result: 1 });
 });
+
+test('persistent status resists routine dispel and yields to stronger authority or its owner', () => {
+  const state = buildScenario('ruins');
+  initializeVMWorld(state);
+  const [caster, target] = state.order.map(id => state.units[id]);
+  const ward = { id: 'ward', templateId: 'ward', ownerId: target.id, sourceId: target.id,
+    name: '常驻守护', stacks: 1, durationType: 'persistent', authorityRank: 4, sourceTier: 4 };
+  target.statuses.ward = ward;
+  const purge = (owner, quality, force) => {
+    state.skills.purge = { quality };
+    run(state, { ownerId: owner.id, sourceId: owner.id, carrier: { type: 'skill', id: 'purge', ownerId: owner.id },
+      scope: { target: { type: 'unit', id: target.id } },
+      program: [{ op: 'remove_status', target: 'target', where: "status.id == 'ward'", force }] });
+  };
+  purge(caster, '唯一', false);
+  assert.equal(target.statuses.ward, ward);
+  purge(caster, '普通', true);
+  assert.equal(target.statuses.ward, ward);
+  purge(caster, '唯一', true);
+  assert.equal(target.statuses.ward, undefined);
+  target.statuses.ward = ward;
+  purge(target, '普通', true);
+  assert.equal(target.statuses.ward, undefined);
+});

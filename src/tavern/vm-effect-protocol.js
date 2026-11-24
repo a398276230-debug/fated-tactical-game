@@ -1,5 +1,5 @@
 import { formulaReference, formulaFunctionReference } from '../core/formula.js';
-import { opNotes, vmHooks, vmSchema } from '../core/vm-schema.js';
+import { askPolicies, flatOnlyStats, opNotes, vmHooks, vmSchema } from '../core/vm-schema.js';
 
 const defs = vmSchema.$defs;
 const statusFlags = defs.spawn_zone.properties.flags.items.enum;
@@ -53,10 +53,12 @@ rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下�
   2. skill：self 为持有者，skill.id 为本技能自身 ID。hook:"active" 仅在主动施放本技能时按序执行；其余所有非 active 钩子与 mods 在单位持有该技能期间全局常驻监听全场！若某条非 active 规则仅在施放本技能时生效，filter 必须包含 event.skillId == skill.id（普通行动／命中／伤害事件一律读 event.skillId，勿用仅属召唤物顶替事件的 event.sourceSkillId）。单次主动施放内的顺序因果链（如造成伤害后按实扣量回血／回能／二段判定）应直接写在 hook:"active" 内用 out 变量串联，无需拆成常驻事件钩子。
   3. status：self 为状态携带者，source 为施加者，status 为当前状态实例。
   4. zone：区域自身可挂 tags / vars / mods / rules；在区域内的单位钩子（如 turn_start）中 self 为处于区域内的单位，source 为区域创建者；其他规则可用 in_zone(unit, tagOrId) 查询。
+• shareRulesTo 将作用域共享给选择器得到的单位。使用纯选择器，pick 只接受 all、{first:N} 或 {nearest:N}，不接受 random。
 • 同一载体内规则 ID 唯一。规则按 priority 从高到低执行，program 按数组顺序执行；filter 求值为 true 才进入规则。
 
 【Opcode】每个指令对象必填 op（闭合枚举，只接受列出的字段，? 表示可省）：
 ${instructions.join('\n')}
+ask 的 kind 与 aiPolicy 对应关系：${Object.entries(askPolicies).map(([kind, policies]) => `${kind} → ${policies.join(' / ')}`).join('；')}。
 check：kind 为 chance 时用 dc 与 d100 比较（如 dc:25 为 25%）；豁免未通过进入 onFail；状态豁免写 kind:"save" 与 statusId:"已声明状态ID"（检定钩子与 mods 可读 event.statusId）。ask：kind 为 cell/entity 时必填 select，option 必填 options，number 必填 min/max；必填 aiPolicy 供 AI 与预览自动决策。damage / heal / resource / check / ask / spawn 均支持 out:"裸变量名"（remove_status 用 outCount:"裸变量名"）将本次实际结算值或实体引用写入当前帧，后续指令通过 vars.<变量名> 读取。perform：actionKind 为 skill 时只配 skillId，replay 时只配 tapeRecord（磁带重放默认免槽免耗并跳过已失效目标，子行动不再入带）。resource：mode 为 add/sub/set 时需 amount，swap 时需单个 pool 与 otherPool；pool 支持内置池 hp/mp/sp、自定义池 ID 或行动伪池 attack/action/move（本回合剩余攻击槽、动作槽、移动格）；mode 为 add_max/sub_max/set_max 时修改 HP/MP/SP 上限并同步当前值与 initialMax 镜像，minRemain 限制最低上限。move：mode 为 step/teleport 时用 to，push/pull 用 distance，altitude 用 deltaZ 或 land:true。mods:[{locks:["fly","teleport"]}] 禁止升空与瞬移（已在空中需另用 land:true 强制降落）。不可驱散写在状态模板顶层 flags:["undispellable"]。expireOn 接受单个条件或非空条件数组，任一条件满足即可过期。despawn：entityKind:"unit" 用于移除召唤物且不计击杀。
 原生攻击在 before_check 可写 ratingDelta（整数档数，可用公式，正升负降）：先从基础评级移动并在表两端封顶，再按 minRating 保底。精准类远程攻击在本规则的远程过滤条件下写 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"有效","forceOutcome":"hit"}}；最后一项用于原文明说必中、连天然1也不能失手的情形，不要求必中则省略。\nmutate_event 的 patch 至少含一个字段，仅限下列可写 hook（before_check.minRating 取值枚举：超暴击 / 强暴击 / 平暴击 / 有效 / 勉强 / 擦伤 / 失手）：
 ${eventPatches.join('\n')}
@@ -79,6 +81,7 @@ targetRef：${describe(defs.targetRef)}。特定快照实体可用选择器 {"fr
 
 【声明式修饰 mods】
 mods 数组每项：${describe(defs.statMod)}。至少含 stat、locks、flags 或 controlPolicy 之一；数值修饰必指定 stat。计算公式为 (基值 + flat 之和) × (1 + additivePercent 之和) × mult 连乘；when 求值为 true 时生效；checkKind 可限定检定类别（attack / save / contest / skill / chance / d20 / dodge / authority 或状态 ID／标签）。
+• 以下修饰只接受 flat 加值：${flatOnlyStats.filter(name => defs.statMod.properties.stat.enum.includes(name)).join(' / ')}。
 • 输出侧（持有者进攻）：damageFlat 固定加伤（基值 0，用 flat）；damageMult 输出倍率、finalDamageMult 最终伤害倍率（基值 1，用 mult 或 additivePercent，禁用 flat）；armorPierce 固定穿甲（用 flat）；armorPiercePercent 百分比穿甲（基值 0，用 flat:-1..1，禁用 additivePercent）。
 • 承伤侧（持有者受击）：damageReductionFlat 受击固定减伤（基值 0，用正数 flat，勿写成负 damageFlat）；damageReduction 与 dr 受击比例减伤（基值 0，用 flat:-1..1，禁用 additivePercent；damageReduction 在固减前乘算，dr 在固减后乘算；真实伤害无视减伤）。
 • 机动与距离：movement 的基值与 flat 均为同阶移动单位，叠加后应用倍率，再按层级米数折算为格；checkBonus、initiativeFlat 仅接受 flat 数值加值，不乘检定或先攻总值；incomingDistanceOffset 用 flat 写敌方测算射程、范围与距离档位时的表观距离增量（可用 scale_cells(n)）。

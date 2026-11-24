@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { validateState } from '../src/api/validation.js';
+import { buildScenario } from '../src/presets/scenarios.js';
 import {
   opNotes, vmHooks, vmOpcodes, vmSchema, vmOpcodeSchema, vmProgramSchema, vmSelectorSchema, vmStatModSchema,
-  validVmRule, validVmOpcode, validVmProgram, validVmSelector, validVmStatMod, validVmTargetRef, validVmTag,
+  flatOnlyStats, askPolicies, validVmExpiry, validVmRule, validVmOpcode, validVmProgram, validVmSelector, validVmStatMod, validVmTargetRef, validVmTag,
 } from '../src/core/vm-schema.js';
 
 const mutation = patch => ({ op: 'mutate_event', patch });
@@ -28,6 +30,31 @@ const minimal = {
   revive: { target: 'target', hpPercent: 1 },
   perform: { actor: 'self', actionKind: 'skill', skillId: 'winter_sword', overrides: { free: true } },
 };
+
+test('carrier sharing permits only pure selectors in validated state', () => {
+  const state = buildScenario('ruins');
+  const unit = state.units[state.order[0]];
+  unit.shareRulesTo = { from: 'units', pick: { first: 1 } };
+  assert.doesNotThrow(() => validateState(state));
+  unit.shareRulesTo.pick = { random: 1 };
+  assert.throws(() => validateState(state), /shareRulesTo/);
+});
+
+test('expiry, flat-only modifiers and ask policies enforce their schema contracts', () => {
+  assert.equal(validVmExpiry([{ hook: 'turn_end' }, { hook: 'after_hit', filter: 'target.id == self.id' }]), true);
+  for (const invalid of [[], { hook: 'missing' }, { hook: 'turn_end', extra: true }]) assert.equal(validVmExpiry(invalid), false);
+  for (const stat of flatOnlyStats.filter(name => vmStatModSchema.$defs.statMod.properties.stat.enum.includes(name))) {
+    assert.equal(validVmStatMod({ stat, flat: 1 }), true);
+    assert.equal(validVmStatMod({ stat, mult: 2 }), false);
+    assert.equal(validVmStatMod({ stat, additivePercent: .2 }), false);
+  }
+  const specs = { number: { min: 0, max: 2 }, cell: { select: { from: 'cells' } }, entity: { select }, option: { options: [{ id: 'yes', label: '确认' }] } };
+  for (const [kind, fields] of Object.entries(specs)) {
+    for (const aiPolicy of new Set(Object.values(askPolicies).flat())) {
+      assert.equal(validVmOpcode({ ...ask, ...fields, kind, aiPolicy }), askPolicies[kind].includes(aiPolicy), `${kind}/${aiPolicy}`);
+    }
+  }
+});
 
 test('all 17 opcodes have closed shapes and generated Chinese descriptions', () => {
   assert.deepEqual(vmOpcodes, Object.keys(minimal));

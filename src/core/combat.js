@@ -1,11 +1,11 @@
 import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D as distance,
   elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS as clearSight,
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
-import { critChance as criticalOdds, hitChance as hitOdds, rollD20, rollProtocolD20, rollDice, rollDie,
+import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
 import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledTemplate } from './combat_protocol.js';
 
-import { validateStatusModifiers } from './vm-schema.js';
+import { validateStatusModifiers, validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, unitSkipped, reactionBlocked } from './vm-carriers.js';
@@ -223,7 +223,6 @@ export function refreshOutcome(state) {
   return result;
 }
 
-const validExpiry = value => Boolean(value && (Array.isArray(value) ? value : [value]).every(rule => typeof rule?.hook === 'string'));
 
 function moraleCheck(state) {
   for (const unit of living(state)) {
@@ -778,8 +777,10 @@ function area(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, de
   });
 }
 
-function selectionAllows(template, actor, unit, allowFriendlyTarget = false) {
+function selectionAllows(state, template, actor, unit, allowFriendlyTarget = false) {
   if (!unit) return false;
+  if ((template.shape ?? 'single') === 'single' && unit.team !== actor.team &&
+    aggregateModifiers(state, unit.id, modifierEvent(unit, { attacker: actor, target: unit })).flags.untargetableSingle) return false;
   switch (template.target ?? 'enemy') {
     case 'enemy': return allowFriendlyTarget || actor.team !== unit.team;
     case 'ally': return actor.team === unit.team;
@@ -875,13 +876,12 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     + high + sizeAccuracy + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + changes(actor, 'accuracy')
     + (execution || cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty
     + modCheck(state, actor, 'accuracyBonus', strike), strike) - dodge;
-  const explicitEvasion = execution ? 0 : changes(target, 'incomingAccuracy');
   const equipmentDefense = gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0)
     + (target.shield ? equipmentFor(state, target.shield).template?.defense ?? 0 : 0);
   // Protocol mode has no implicit AGI-to-defense; sandbox keeps its legacy balance only for regression fixtures.
   const defense = cover ? 8 : state.ruleset === 'sandbox'
     ? 10 + Math.floor(effectiveStat(state, target, 'agi') / 2) + equipmentDefense
-    : 10 + explicitEvasion + equipmentDefense;
+    : 4;
   const delta = modCheck(state, actor, 'advantage', strike);
   const advantages = Math.max(0, delta) + Number(Boolean(teleport)) + (template.advantage ?? 0);
   const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
@@ -894,8 +894,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const saveChance = saveStat ? saveOdds(saveDC, saveBonus) : 0;
   const areaStrike = hasStrikeDamage(template) && (template.shape ?? 'single') !== 'single';
   const automatic = areaStrike || !weapon && (!template.damage || saveStat || template.autoHit);
-  const hitChance = automatic || guaranteeHit ? 1 : dodge || modCheck(state, actor, 'accuracyBonus', strike)
-    ? saveOdds(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveOdds(2, 0, advantages, disadvantages) : 0) : hitOdds(defense, accuracy, advantages, disadvantages);
+  const hitChance = automatic || guaranteeHit ? 1 : saveOdds(4, accuracy, advantages, disadvantages)
+    - (accuracy + 1 >= 4 ? 1 - saveOdds(2, 0, advantages, disadvantages) : 0);
   const critChance = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : criticalOdds(advantages, disadvantages);
   const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
   const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
@@ -982,7 +982,7 @@ function usableTiles(state, actor, template, weapon) {
   const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
   return allCells(state).filter(at => validReach(state, actor,
     template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at
-      : locateUnit(state, at, null, u => selectionAllows(template, actor, u, allowFriendlyTarget)) ?? at,
+      : locateUnit(state, at, null, u => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at,
     template, weapon?.ammo));
 }
 function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
@@ -991,7 +991,7 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
   const areaDamage = (template.shape ?? 'single') !== 'single' && hasStrikeDamage(template);
   const targeting = areaDamage && template.target == null ? { target: 'any' } : template;
   return living(state).filter(unit => {
-    if (!selectionAllows(targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
+    if (!selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
     if ((template.shape ?? 'single') === 'single') return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
       const distanceFromCenter = distance(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: 'attack' });
@@ -1160,7 +1160,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   }
   const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
   const aoe = (template.shape ?? 'single') !== 'single';
-  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? u => selectionAllows(template, unit, u, allowFriendlyTarget) : null);
+  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? u => selectionAllows(state, template, unit, u, allowFriendlyTarget) : null);
   if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail('目标单位不在指定格');
   const aim = template.target === 'cell' || aoe ? center : aimedUnit ?? center;
   const origin = actionOrigin ? { ...unit, x: actionOrigin.x, y: actionOrigin.y,
@@ -1182,7 +1182,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   const cells = area(state, origin, aim, template, ammo, { ignoreRange, ignoreLOS, deferGeometry });
   if (!cells.length && !deferGeometry) return fail('请选择一个方向', { ...geometry, originSensitive: true });
   if (!aoe) {
-    if (!selectionAllows(template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== 'cell') {
+    if (!selectionAllows(state, template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== 'cell') {
       return fail('该格没有合适的目标', geometry);
     }
     if (!deferGeometry && aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, origin, aimedUnit)) return fail('目标正在隐身', { ...geometry, originSensitive: true });

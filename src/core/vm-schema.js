@@ -116,6 +116,8 @@ const stat = enumOf(...attribute.enum, 'movement', 'incomingDistanceOffset', 'ar
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
   'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax');
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent');
+export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
+  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'incomingAccuracy', 'intentDifficulty']);
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
@@ -126,7 +128,7 @@ const statMod = withRules(object({
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),
 when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additivePercent') }),
 when('stat', multiplierStats, { not: needs('flat') }),
-when('stat', enumOf('checkBonus', 'initiativeFlat'), { not: { anyOf: [needs('mult'), needs('additivePercent')] } }));
+when('stat', enumOf(...flatOnlyStats), { not: { anyOf: [needs('mult'), needs('additivePercent')] } }));
 const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
 export const vmExpiry = either(expireRule, list(expireRule, 1));
@@ -146,7 +148,7 @@ const zoneArea = withRules(object({
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
 const scalarOrExpr = either(number, bool, { type: 'string', maxLength: 1024 });
-const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')) };
+const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')), shareRulesTo: ref('pureSelector') };
 export const carrierFields = Object.freeze(Object.keys(carrier).filter(key => key !== 'name'));
 export const statusPatchFields = Object.freeze(['remainingTurns', 'durationType', 'stackMode', 'stacks', 'expireOn', ...carrierFields]);
 export const validCarrierScalar = value => Number.isFinite(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= scalarOrExpr.anyOf[2].maxLength);
@@ -166,6 +168,12 @@ const spawnSpecs = {
   item: object({ templateId: id, count: either(integer(1), formula) }, ['templateId']),
 };
 
+export const askPolicies = Object.freeze({
+  number: Object.freeze(['min', 'max', 'first']),
+  cell: Object.freeze(['best_offensive_cell', 'safest_cell', 'first']),
+  entity: Object.freeze(['highest_threat', 'first']),
+  option: Object.freeze(['first']),
+});
 const opcodeSchemas = [
   opcode('let', { name: id, value: either(expr, enumOf(...scopes), variable), scope: enumOf('frame', 'owner') }, ['name', 'value']),
   opcode('if', { cond: booleanExpr, then: program, else: program }, ['cond', 'then']),
@@ -176,6 +184,7 @@ const opcodeSchemas = [
     aiPolicy: enumOf('max', 'min', 'best_offensive_cell', 'safest_cell', 'highest_threat', 'first'), select: selector,
     options: chooseOptions, min: numericExpr, max: numericExpr, maxSelect: integer(1, 200) }, ['chooser', 'kind', 'prompt', 'out', 'aiPolicy'],
   when('maxSelect', {}, { properties: { kind: literal('entity') } }),
+  ...Object.entries(askPolicies).map(([kind, policies]) => when('kind', literal(kind), { properties: { aiPolicy: enumOf(...policies) } })),
   when('kind', enumOf('cell', 'entity'), withRules(needs('select'), { not: either(needs('options'), needs('min'), needs('max')) })),
   when('kind', literal('option'), withRules(needs('options'), { not: either(needs('select'), needs('min'), needs('max')) })),
   when('kind', literal('number'), withRules(needs('min', 'max'), { not: either(needs('options'), needs('select')) }))),
@@ -208,13 +217,16 @@ const instructionBranches = ['then', 'else', 'body', 'onPass', 'onFail', 'onColl
 const guardedHooks = [...Object.keys(patchSchemas), 'readOnly'];
 const hookGuard = name => ref(`opcodeGuard_${name}`);
 const guardedProgram = name => list(hookGuard(name));
+const selectorSpec = picks => withRules(object({
+  from: either(enumOf(...scopes, 'action_targets', 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable),
+  options: list(id, 1), of: either(enumOf(...scopes), variable), area, where: booleanExpr,
+  pick: variants(literal('all'), ...picks.map(key => object({ [key]: integer(1) }, [key]))),
+}), either(needs('from'), needs('options')), when('of', {}, { properties: { from: literal('statuses') } }));
 const defs = {
   expr: either(number, bool, formula),
   tag,
-  selector: withRules(object({
-    from: either(enumOf(...scopes, 'action_targets', 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable), options: list(id, 1), of: either(enumOf(...scopes), variable),
-    area, where: booleanExpr, pick: variants(literal('all'), ...['first', 'random', 'nearest'].map(key => object({ [key]: integer(1) }, [key]))),
-  }), either(needs('from'), needs('options')), when('of', {}, { properties: { from: literal('statuses') } })),
+  selector: selectorSpec(['first', 'random', 'nearest']),
+  pureSelector: selectorSpec(['first', 'nearest']),
 
   targetRef: either(enumOf(...scopes), variable, selector),
   expireRule,
@@ -325,6 +337,8 @@ export function vmRuleError(rule, options = {}) {
   }
   return invalidInstruction(rule.program, 'program');
 }
+export const validVmExpiry = (value, options = {}) => valid(value, 'expiry', options);
+export const validVmPureSelector = (value, options = {}) => valid(value, 'pureSelector', options);
 export const validVmSelector = (value, options = {}) => valid(value, 'selector', options);
 export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options);
 export function vmStatModError(mod) {
@@ -335,6 +349,9 @@ export function vmStatModError(mod) {
   }
   if (mod && multiplierStats.enum.includes(mod.stat) && Object.hasOwn(mod, 'flat')) {
     return `VM 修饰 ${mod.stat} 基值为 1，不能用 flat；请用 mult（如 1.3）或 additivePercent（如 0.3）`;
+  }
+  if (mod && flatOnlyStats.includes(mod.stat) && (Object.hasOwn(mod, 'mult') || Object.hasOwn(mod, 'additivePercent'))) {
+    return `VM 修饰 ${mod.stat} 只接受 flat 加值`;
   }
   return 'VM 修饰';
 }

@@ -290,11 +290,12 @@ export function continueRemoveStatus({ state, frame, host, context, options }) {
   }
   const statusId = frame.statusKeys[frame.pc++];
   const status = own(target.statuses, statusId);
-  if (!status || status.durationType === 'persistent'
-    || evaluateExpr(op.where, { ...context, status }) !== true) return;
+  if (!status || evaluateExpr(op.where, { ...context, status }) !== true) return;
+  const protectedStatus = status.durationType === 'persistent' || status.flags?.includes('undispellable');
+  if (protectedStatus && op.force !== true) return;
+  const releaseOwnStatus = context.self?.id === target.id && (status.sourceId ?? target.id) === target.id;
   let authorityContestDetail;
-  if (status.flags?.includes('undispellable')) {
-    if (op.force !== true) return;
+  if (protectedStatus && !releaseOwnStatus) {
     const attacker = authorityFor(state, frame.carrier, context.self?.id);
     const defender = Number.isFinite(status.authorityRank) && Number.isFinite(status.sourceTier)
       ? { authorityRank: status.authorityRank, unitTier: status.sourceTier }
