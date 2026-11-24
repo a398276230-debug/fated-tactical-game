@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { applyAction, currentUnit, preview, reachable } from '../src/core/combat.js';
+import { applyAction, currentUnit, grantStatus, mitigation, preview, reachable } from '../src/core/combat.js';
 import { advanceVMSpatial } from '../src/core/vm-runtime.js';
 import { evaluateExpr } from '../src/core/formula.js';
 
@@ -42,6 +42,19 @@ test('a vehicle observes boarding, moves its passenger, and reads actual moved d
   applyAction(state, { type: 'move', x: 6, y: 1 });
   assert.deepEqual([passenger.x, passenger.y, vehicle.lastMoveDir, vehicle.vars.distance], [6, 1, 'E', 4]);
   assert.equal(state.logs.filter(log => log.type === 'opportunity').length, 0);
+});
+
+test('sunder counts once; movement combines native flat and VM multipliers before cell conversion', () => {
+  const {state, actor} = field();
+  actor.armor = 20;
+  const armor = () => mitigation(state, actor, 'physical', true).armor;
+  const initial = armor(); grantStatus(state, actor, 'sunder'); assert.equal(armor(), initial - 4);
+  Object.assign(actor, { tier:3, moveM:20 }); state.scale.cellM = 5;
+  const steps = () => Math.max(...reachable(state).map(c => c.steps));
+  grantStatus(state, actor, 'chill'); assert.equal(steps(), 3);
+  delete actor.statuses.chill; grantStatus(state, actor, 'haste'); assert.equal(steps(), 5);
+  actor.mods = [{stat:'movement', mult:0.5}]; assert.equal(steps(), 2);
+  state.scale.cellM = 2; assert.equal(steps(), 6);
 });
 
 test('movement modifiers scale in metres and hover protects only from hostile reach', () => {

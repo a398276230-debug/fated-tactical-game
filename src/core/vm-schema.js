@@ -105,7 +105,8 @@ const statMod = withRules(object({
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),
 when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additivePercent') }),
-when('stat', multiplierStats, { not: needs('flat') }));
+when('stat', multiplierStats, { not: needs('flat') }),
+when('stat', enumOf('checkBonus', 'initiativeFlat'), { not: { anyOf: [needs('mult'), needs('additivePercent')] } }));
 const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
 const spawnRadius = either({ type: 'number', minimum: 0 }, formula);

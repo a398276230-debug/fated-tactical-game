@@ -611,25 +611,23 @@ export function actionSkill(state, unit, id) {
 export const syncEquipmentEffects = initializeVMWorld;
 
 function movementScale(state, unit, type) {
-  const rawMove = Number(unit.rawMove ?? unit.move ?? 3);
   const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit.tier) || 1)));
-  const baseMoveM = unit.moveM ?? rawMove * (TIER_CELL_M[tier] ?? TIER_CELL_M[1]);
-  const bonus = modStat(state, unit, 'movement', 0);
-  const movementBonus = bonus * TIER_CELL_M[tier];
-  const moveM = Math.max(0, baseMoveM + movementBonus);
+  const cellM = state.scale?.cellM ?? 2;
+  const tierM = TIER_CELL_M[tier];
+  // Presets store cells; scaled units store metres. Apply all modifiers once in tier units.
+  const base = (unit.moveM ?? unit.move * cellM) / tierM;
+  const moveM = Math.max(0, modStat(state, unit, 'movement', base + changes(unit, 'movement'))) * tierM;
   const mult = type === 'sprint' ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
-  const total = carry + Math.round(mult * moveM / Math.max(1e-9, Number(state.scale?.cellM) || 2) * 1000);
-  return { rawMove, moveM, bonus, total, limit: Math.floor(total / 1000) };
+  const total = carry + Math.round(mult * moveM / cellM * 1000);
+  return { moveM, total, limit: Math.floor(total / 1000) };
 }
 export function reachable(state, type = 'move', unit = currentUnit(state), distanceLimit = undefined) {
   if (!alive(unit) || changes(unit, 'rooted') || changes(unit, 'skip') || aggregateModifiers(state, unit.id).locks.move) return [];
   const scale = movementScale(state, unit, type);
   const spent = unit.moveSpent ?? 0;
-  const remainingMove = Math.max(0, unit.move - spent + scale.bonus);
   const mult = type === 'sprint' ? 2 : 1;
-  const limit = distanceLimit ?? (unit.moveM == null ? Math.floor(remainingMove * mult)
-    : Math.max(0, scale.limit - spent * mult));
+  const limit = distanceLimit ?? Math.max(0, scale.limit - spent * mult);
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === 'disengage' });
   if (!routes.length && scale.limit === 0 && distanceLimit === undefined) {
     if (state.scale?.anchorTier >= 5) return [];

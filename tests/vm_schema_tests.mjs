@@ -52,6 +52,11 @@ test('all 17 opcodes have closed shapes and generated Chinese descriptions', () 
   assert.equal(validVmOpcode({ op: 'damage', ...minimal.damage, amount: Infinity }), false);
   assert.equal(validVmOpcode({ op: 'damage', ...minimal.damage, amount: { ref: 'power' } }), false);
   assert.equal(validVmOpcode({ op: 'damage', ...minimal.damage, amount: '   ' }), false);
+  for (const stat of ['checkBonus', 'initiativeFlat']) {
+    assert.ok(validVmStatMod({ stat, flat: 3 }));
+    assert.equal(validVmStatMod({ stat, mult: 2 }), false);
+    assert.equal(validVmStatMod({ stat, additivePercent: 0.5 }), false);
+  }
   assert.equal(validVmProgram(Array(1)), false);
   const cycle = { op: 'if', cond: true, then: [] };
   cycle.then.push(cycle);

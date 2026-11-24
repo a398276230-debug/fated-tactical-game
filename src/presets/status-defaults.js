@@ -49,7 +49,7 @@ export const STATUSES = Object.freeze(Object.fromEntries(Object.entries({
   vulnerable: def('易伤', '💢', 'debuff', 2, '受到的伤害增加 35%。', { vulnerability: .35 },
     { rules: [{ id: 'vulnerable-damage', hook: 'before_commit', filter: "event.commitKind == 'damage' && event.targetId == self.id",
       program: [{ op: 'mutate_event', patch: { finalAmount: 'event.finalAmount * 1.35' } }] }] }),
-  sunder: def('破甲', '🔨', 'debuff', 2, '护甲降低 4 点。', { armor: -4 }, { mods: [{ stat: 'armor', flat: -4 }] }),
+  sunder: def('破甲', '🔨', 'debuff', 2, '护甲降低 4 点。', { armor: -4 }),
   mark: def('标记', '🎯', 'debuff', 2, '攻击此单位的命中加 2。', { incomingAccuracy: 2 }),
   stealth: def('隐身', '👤', 'buff', 2, '无法被敌方远距直接锁定；发动进攻或遭攻击伤害时现形。', { hidden: true, advantage: 1 },
     { tags: ['stealth'], mods: [{ stat: 'advantage', flat: 1, checkKind: 'attack' }],
