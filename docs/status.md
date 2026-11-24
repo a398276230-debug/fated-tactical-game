@@ -1,29 +1,95 @@
-# 状态系统
+# VM 状态系统
 
-`src/presets/status-defaults.js` 提供 26 个默认模板和内建动作的授予映射。`state.statusTemplates` 中的同名定义优先；未知 ID 必须先注册。`src/core/status_modifiers.js` 是修饰键类型与范围的唯一来源。酒馆辅助模型的状态目录从这两份数据实时生成。
+权威模板位于 `src/presets/status-defaults.js` 的 `STATUSES`，校验位于 `src/api/validation.js`，运行时载体和 modifier 聚合位于 `src/core/vm-carriers.js`。当前共有 27 个内置状态。
 
-## 模板和实例
+## 1. 统一模板和实例
 
-- 模板字段：`id`、`name`、`icon`、`description`、`category`、`durationType`、`remainingTurns`、`tickTiming`、`stackRule`、`maxStacks`、`modifiers`，以及可选的 `expireOn`、`expireInto`。战局模板最多 64 条，`defineStatus` 不重复注册已有战局定义。
-- `category` 可为 `buff`、`debuff`、`control`、`dot`、`hot`、`shield`，用于展示及按类别移除。它不决定状态实际效果。
-- 每个单位以 `unit.statuses[id]` 保存一个实例，包括模板展示字段、当前修饰键值、层数、来源单位 ID、剩余时长。修改模板时，已有实例的字段必须仍与有效模板相符。
-- DSL `grantStatus`、命令 `upsert_status` 和 `patchStatus` 使用同一套模板数据；数值覆盖只能修改模板已声明的修饰键。`refresh` 和 `replace` 不累计层数，`stack` 累计到实例上限。
-- `battle_turns` 按持有者回合末递减，`until_removed` 与 `persistent` 不递减。仅 `persistent` 纳入跨战档案。`damage` 和 `heal` 按 `tickTiming` 结算，乘以层数。`expireInto` 声明普通时长耗尽后接续的状态，不参与提前解除。
+模板使用以下现行字段：
 
-## 通用结算
+- 展示：`id`、`name`、`icon`、`category`、`description`。
+- 时长：`durationType`、`remainingTurns`、`stackMode`、`maxStacks`。
+- VM：`vars`、`mods`、`rules`、`flags`、`expireOn`、`tags`、`tier`。
 
-- `hidden` 控制敌方远距直接锁定，AI 与玩家共用可见性判定。`rooted` 禁止移动或瞬移；`skip` 跳过行动。`taunted` 使用声明该标记的状态实例的 `sourceUnitId`，有多个有效来源时按状态 ID 顺序选择第一个可攻击来源。
-- 多数数值修饰键按各实例值乘层数后求和。`finalDamageMultiplier` 使用独立乘区。`shatter` 在命中时加到碎裂乘区；需要碎裂后移除的模板声明 `expireOn: {trigger:'on_struck'}`。
-- 模板声明 `modifiers.amount` 就会创建护盾池。实例 `amount` 保存当前余量；`modifiers.amount` 保存授予值。结算按状态 ID 顺序依次扣池，耗尽即移除该实例。预览读取所有池的总量。`shield` 节点是向默认护盾模板授予/叠加的简写；自定义护盾用 `grantStatus`。
-- `modifiers.damageType` 指定周期伤害的类型，省略时周期伤害按真实伤害结算。它也会限定同一状态的护甲、比例减伤、易伤、碎裂、反伤触发和主击增伤修饰。移动、控制和护盾池等通用修饰独立生效。
-- 流血和中毒是真实伤害，跳过护甲、属性减伤、比例减伤和固定减伤，护盾仍可吸收。灼烧是能量伤害。周期伤害直接结算，不进行命中或弹反检定。
-- 缴械动作直接清空主手，不再另挂装饰状态。
+实例在 `unit.statuses[id]` 中保存模板身份和运行时字段：`id`、`templateId`、`ownerId`、`sourceId`、`sourceCarrier`、`vars`、`mods`、`rules`、`flags`、`stacks`、`maxStacks`、`remainingTurns`、`durationType`、`stackMode`、`expireOn` 以及可选的 authority/applied 字段。
 
-## 提前解除
+所有状态入口——`grantStatus`、VM `apply_status`、`upsert_status`、converter——都生成该结构。模板和实例均使用 VM 校验。表达式型 `maxStacks` 在命令入口以当前 source/target scope 安全求值。
 
-`expireOn` 可为单条规则或数组，任意一条匹配即移除并记录原因。授予指定的规则优先；未指定时保留已有实例规则，否则使用模板规则。`patchStatus` 可将其设为 `null`，关闭该实例的提前解除。
+现行状态系统不使用 `modifiers`、`stackRule`、`tickTiming` 或 `expireInto`。这些字段是已删除的旧双轨格式；外部脏输入只能被 converter 标记为待标准化。
 
-- `on_struck`：命中结算计算碎裂倍率之后、扣除护盾之前，完整吸收也触发。默认冰冻与潜行使用它。
-- `on_damaged`：只有实际扣除 HP 才触发。可用 `damageType: 'direct' | 'indirect' | 'any'` 筛选；不填等同 `any`。
-- `on_attack`：发起攻击或敌对技能时触发。默认潜行用它声明主动现形。此处描述的是状态生命周期；武器的 DSL 攻击钩子仍按攻击类型派发。
-- 其余解除事件包括 `on_hit`、`on_kill`、`on_death`、`on_turn_start`、`on_turn_end`、`on_skill_cast`、`on_equip`、`on_heal`、`on_ally_death`。`exceptSource:'self'` 可排除来自持有者自身的事件。
+## 2. 内置状态目录
+
+| 状态 | 类别 | VM 语义 |
+| --- | --- | --- |
+| `suppressed` | control | 全部行动槽锁定；`vars.holdTotal` 保存挣脱阈值 |
+| `burn` | dot | `turn_start` 能量伤害 |
+| `bleed` | dot | `turn_end` 每层真实伤害 |
+| `poison` | dot | `turn_start` 每层真实伤害 |
+| `regen` | hot | `turn_start` 治疗 |
+| `shield` | shield | `vars.shieldAmount` 吸收伤害 |
+| `guarded` | buff | `vars.reduction` 驱动 `damageReduction` |
+| `taunt` | control | `mods.flags: taunted` 强制敌方目标 |
+| `guard` | buff | `mods.flags: intercept` 拦截伤害 |
+| `thorns` | buff | `after_damage` 反伤规则 |
+| `stun` | control | 全部行动槽锁定 |
+| `freeze` | control | 全部行动槽锁定并提供 `shatter`，命中后解除 |
+| `root` | control | 锁 `move` 和 `teleport` |
+| `blind` | debuff | 攻击检定劣势 |
+| `vulnerable` | debuff | `incomingDamageMult` 增加承伤 |
+| `sunder` | debuff | armor flat 降低 |
+| `mark` | debuff | `incomingAccuracy` 增加 |
+| `stealth` | buff | `hidden`、攻击优势，敌对攻击/行动后解除 |
+| `haste` | buff | `movement` 增加 |
+| `chill` | debuff | `movement` 和攻击 `checkBonus` 降低 |
+| `charge` | buff | `damageMult` additivePercent |
+| `lock_on` | buff | 对攻击目标 `checkBonus` 增加 |
+| `weakness` | buff | `intentDifficulty` 每层降低 |
+| `grappled` | control | 锁 `move` |
+| `prone` | debuff | 锁 `move` 并增加 `incomingAccuracy` |
+| `infinite_ammo` | buff | `infiniteAmmo` flag |
+
+动作映射由 `actionStatuses` 管理；状态本身仍是普通 VM 模板，不是引擎特例。
+
+## 3. 聚合与结算
+
+`aggregateModifiers(state, unitId, event)` 遍历单位、状态、技能、装备和区域载体：
+
+- `mods.stat` 进入 `stats`，支持 `flat`、`mult`、`additivePercent`。
+- `mods.locks` 进入七个行动槽的布尔表。
+- `mods.flags` 进入 flags 集合。
+- `mods.controlPolicy` 使用字段首次声明值并保留默认策略。
+- `when`、`damageType`、`checkKind`、`statusId` 和事件上下文决定某条 modifier 是否适用。
+
+伤害顺序由 combat 与 VM runtime 统一处理：护盾先按状态实例吸收，减伤/护甲/穿透/碎裂/易伤遵循统一管线；`shatter` 是独立比例 stat，`incomingAccuracy` 不等同自身 dodge，避免 `ignoreDodge` 时错误清除受击暴露修正。
+
+## 4. 生命周期
+
+- `battle_turns` 在持有者回合结算时递减。
+- `until_removed` 直到显式移除或 `expireOn` 命中。
+- `persistent` 跨战快照保留。
+- `stackMode` 为 `refresh`、`replace`、`stack` 或 `extend` 时，分别刷新时长、替换、累加层数或延长时长；`maxStacks` 约束累加。
+- `ask` 或 VM action 挂起时，状态 frame 序列化保存；恢复不重掷、不重复扣资源、不重复推进回合。
+- `persistent`、`undispellable` 等保护由 VM authority/force 规则判断，不由旧状态字段分支实现。
+
+## 5. 提前解除
+
+`expireOn` 是单条或数组规则，每条包含 `hook` 和可选 `filter`。当前 hook 由 `vmHooks` 校验，常见规则包括：
+
+- `after_hit`：受到命中或命中目标后解除。
+- `after_damage`：受到伤害后按事件过滤。
+- `after_action`：行动结束解除。
+- `turn_start` / `turn_end`：回合边界解除。
+- `on_death` / `on_kill`：死亡或击杀事件解除。
+
+状态移除使用 `removeVMStatus`，并产生结构化 `after_status_removed` 日志。没有 unit 匹配时，战报按日志中的 `targetId` 解析，不回退到施法者。
+
+## 6. 战报投影
+
+`statusLogDetail(unit, status)` 只输出 VM 快照：`targetId`、状态标识、层数/时长、`vars`、`mods`、`rules`、`flags` 和 `expireOn`。`src/api/battle_report.js` 将其投影为中文：
+
+- `mods.flat`、`mult`、`additivePercent` 显示数值或每层数值。
+- `locks` 显示“跳过行动”“无法移动”或具体封锁槽。
+- flags 显示隐身、嘲讽、拦截、无限弹药、不可被单体选中等语义。
+- 周期 `rules` 显示回合开始/结束的伤害或治疗。
+- `expireOn` 显示 hook 和过滤条件。
+
+战报是结构化日志的纯文本投影，不写回状态，也不重新计算战斗结果。
