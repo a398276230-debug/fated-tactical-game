@@ -55,6 +55,10 @@ export const DISTANCE_TABLE = Object.freeze([
   { name: '中程', min: 3, max: 5, hit: -2, range: 0 }, { name: '远程', min: 6, max: 10, hit: -4, range: 0 },
   { name: '超距', min: 11, max: null, hit: -6, range: 0 },
 ]);
+export const UNIT_STATS = Object.freeze(['str', 'agi', 'con', 'int', 'spi']);
+export const DAMAGE_TYPES = Object.freeze(['physical', 'energy', 'mental', 'true']);
+export const STANCES = Object.freeze(['light_blade', 'dual_wield', 'attunement', 'greatsword', 'sword_shield', 'unarmed']);
+export const MORALE_STATES = Object.freeze(['steady', 'shaken', 'routed']);
 export const INTENTS = Object.freeze({ normal: { name: '常规', difficulty: 0, multiplier: 1 },
   function: { name: '机能限制', difficulty: 5, multiplier: 1.1 }, core: { name: '核心要害', difficulty: 10, multiplier: 1.4 },
   kill: { name: '抹杀', difficulty: 15, multiplier: 1.7 }, concept: { name: '概念破碎', difficulty: 20, multiplier: 2 } });

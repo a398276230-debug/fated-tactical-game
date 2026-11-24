@@ -1,5 +1,5 @@
 import { STATUSES } from '../presets/status-defaults.js';
-import { validExpr } from './formula.js';
+import { compileExpr, validExpr } from './formula.js';
 
 const enumOf = (...values) => ({ enum: values });
 const ref = name => ({ $ref: `#/$defs/${name}` });
@@ -28,6 +28,18 @@ const expr = ref('expr');
 const numericExpr = either(number, formula);
 const booleanExpr = either(bool, formula);
 const entityId = either(id, variable);
+export const EVENT_SCALAR_KEYS = Object.freeze([
+  'actionType', 'actorId', 'absorbed', 'advantageDelta', 'attackerId', 'authorityRank', 'backstab', 'baseDC',
+  'bonusDelta', 'backX', 'backY', 'cancel', 'canceled', 'chainDepth', 'change', 'checkKind', 'commitKind', 'consumeCostOnCancel',
+  'costScale', 'critical', 'damageScale', 'damageType', 'dc', 'dcDelta', 'deadId', 'dealt', 'defenderId', 'delta',
+  'direct', 'distance', 'finalAmount', 'finalDC', 'flank', 'forceOutcome', 'fromX', 'fromY', 'healing', 'hit',
+  'hostile', 'ignoreDodge', 'ignoreLOS', 'immunityOwnerId', 'initiativeBonus', 'instantDeath', 'killed', 'killedId',
+  'killerId', 'kind', 'melee', 'minRating', 'naturalRoll', 'opportunityAttack', 'other', 'passed', 'pool', 'poolId',
+  'power', 'preRolled', 'preserveLife', 'preventDeath', 'rating', 'ratingDelta', 'ratingMultiplier', 'rawNatural',
+  'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'souls', 'sourceId',
+  'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
+  'unitId', 'weaponTemplateId', 'dealt', 'finalAmount', 'eventRef',
+]);
 export const damageTypes = Object.freeze(['physical', 'energy', 'mental', 'true']);
 const damageType = enumOf(...damageTypes);
 const attribute = enumOf('str', 'agi', 'con', 'int', 'spi');
@@ -93,9 +105,19 @@ const controlPolicy = object({
   controller: enumOf('default', 'ai'), allegiance: enumOf('normal', 'friendly_only', 'all_hostile'),
   forcedActionKinds: list(enumOf('attack', 'skill')), intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady'),
 });
-const stat = enumOf(...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
+export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax', 'incomingAccuracy', 'intentDifficulty', 'shatter');
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax', 'incomingAccuracy', 'intentDifficulty', 'shatter']);
+const stat = enumOf(...statNames);
+export const skillShapes = Object.freeze(['single', 'circle', 'ring', 'fan', 'cone', 'line']);
+export const selectorAreaShapes = Object.freeze([...skillShapes, 'rect']);
+export const zoneAreaShapes = Object.freeze(['single', 'circle', 'ring', 'rect', 'cells', 'board']);
+export const skillTargets = Object.freeze(['enemy', 'ally', 'self', 'any', 'corpse', 'cell']);
+export const lockSlots = Object.freeze(['attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport']);
+export const carrierFlags = Object.freeze(['undispellable', 'concept_immune']);
+export const statModFlags = Object.freeze(['preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo']);
+export const stackModes = Object.freeze(['refresh', 'stack', 'replace', 'extend']);
+export const durationTypes = Object.freeze(['battle_turns', 'until_removed', 'persistent']);
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
 export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
   'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'incomingAccuracy', 'intentDifficulty']);
@@ -280,7 +302,19 @@ function matches(value, schema, context, depth = 0) {
   return true;
 }
 
-const valid = (value, name, options) => Boolean(matches(value, defs[name], options));
+function exprCheck(value, options = {}) {
+  if (typeof value === 'string') {
+    const compiled = compileExpr(value);
+    if (compiled && [...compiled.dependencies].some(path => path.startsWith('event.')
+      && !EVENT_SCALAR_KEYS.includes(path.slice('event.'.length))
+      && !(options.extraEventKeys ?? []).includes(path.slice('event.'.length)))) return false;
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(item => exprCheck(item, options));
+  if (value && typeof value === 'object') return Object.values(value).every(item => exprCheck(item, options));
+  return true;
+}
+const valid = (value, name, options) => Boolean(matches(value, defs[name], options) && exprCheck(value, options));
 const validHook = (value, options, guard) => options.hook === undefined || (vmHooks.includes(options.hook)
   && matches(value, guard(Object.hasOwn(patchSchemas, options.hook) ? options.hook : 'readOnly'), options));
 export const validVmOpcode = (value, options = {}) => valid(value, 'opcode', options) && validHook(value, options, hookGuard);
@@ -289,6 +323,8 @@ export const validVmRule = (value, options = {}) => valid(value, 'rule', options
 
 export function vmRuleError(rule, options = {}) {
   if (validVmRule(rule, options)) return undefined;
+  const unknownEvent = typeof rule === 'object' && rule ? JSON.stringify(rule).match(/event\.([A-Za-z_][A-Za-z0-9_]*)/) : null;
+  if (unknownEvent && !EVENT_SCALAR_KEYS.includes(unknownEvent[1]) && !(options.extraEventKeys ?? []).includes(unknownEvent[1])) return `未知事件字段 event.${unknownEvent[1]}`;
   const settings = { ...options, hook: rule?.hook };
   function invalidInstruction(program, path, depth = 0) {
     if (!Array.isArray(program) || depth > 64) return path;
