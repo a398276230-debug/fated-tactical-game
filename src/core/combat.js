@@ -3,7 +3,7 @@ import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetwee
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, hitChance as hitOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, resolveEffectiveTier, scaledCells } from './combat_protocol.js';
+import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledTemplate } from './combat_protocol.js';
 
 import { validateStatusModifiers } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
@@ -595,19 +595,6 @@ export function equippedActiveSkills(state, unit) {
     }
   }
   return [...result];
-}
-
-function scaledTemplate(state, unit, template, kind) {
-  if (!template) return template;
-  const tier = resolveEffectiveTier(kind, template.quality, unit.tier);
-  const cellM = state.scale?.cellM ?? 2;
-  const result = { ...template };
-  if (template.target === 'self') result.range = 0;
-  else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
-  for (const key of ['Radius', 'InnerRadius', 'Width']) {
-    if (template[`raw${key}`] != null) result[key[0].toLowerCase() + key.slice(1)] = scaledCells(template[`raw${key}`], tier, cellM, { max: 30 });
-  }
-  return result;
 }
 
 export function actionSkill(state, unit, id) {

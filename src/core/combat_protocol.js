@@ -37,6 +37,19 @@ export function scaledCells(raw, effectiveTier, cellM, { max = Infinity, floor =
   return Math.max(0, Math.min(max, floor ? Math.floor(cells + 1e-9) : cells));
 }
 export const scaledMoveCells = (raw, effectiveTier, cellM) => scaledCells(raw, effectiveTier, cellM, { floor: true });
+
+export function scaledTemplate(state, unit, template, kind) {
+  if (!template) return template;
+  const tier = resolveEffectiveTier(kind, template.quality, unit.tier);
+  const cellM = state.scale?.cellM ?? 2;
+  const result = { ...template };
+  if (template.target === 'self') result.range = 0;
+  else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
+  for (const [rawKey, key] of [['rawRadius', 'radius'], ['rawInnerRadius', 'innerRadius'], ['rawWidth', 'width']]) {
+    if (template[rawKey] != null) result[key] = scaledCells(template[rawKey], tier, cellM, { max: 30 });
+  }
+  return result;
+}
 export const DISTANCE_TABLE = Object.freeze([
   { name: '贴身', min: 0, max: 0, hit: 4, range: 6 }, { name: '近程', min: 1, max: 2, hit: 0, range: 2 },
   { name: '中程', min: 3, max: 5, hit: -2, range: 0 }, { name: '远程', min: 6, max: 10, hit: -4, range: 0 },

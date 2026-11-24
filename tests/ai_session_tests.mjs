@@ -71,11 +71,18 @@ gate('G45', '去样板化协议全貌、四步编译流与闭合枚举披露', (
   const envelope = JSON.parse(task.match(/^\s*(\{"patch":\[\{.*\}\],"unresolved":\[\],"narrative":\[\]\})/m)[1]);
   assert.deepEqual(Object.keys(envelope), ['patch', 'unresolved', 'narrative']);
   // Complete VM hook & opcode & closed template enum disclosure
-  for (const hook of vmHooks) assert.ok(protocol.includes(hook), `协议漏披露 hook：${hook}`);
-  for (const schema of vmSchema.$defs.opcode.oneOf) {
-    const op = schema.properties.op.const;
-    assert.ok(protocol.includes(`• ${op}：`), `协议漏披露指令：${op}`);
-  }
+  assert.deepEqual(protocol.match(/^允许 hook 枚举：(.+)。$/m)[1].split(' / '), vmHooks);
+  const opcodeSection = protocol.split('【Opcode】')[1].split('\ncheck：')[0];
+  const defs = vmSchema.$defs;
+  assert.deepEqual([...opcodeSection.matchAll(/^• (\w+)：(.+?) (?=\{[A-Za-z]+\??: )/gm)].map(match => match.slice(1)),
+    defs.opcode.oneOf.map(schema => [schema.properties.op.const, schema.description]));
+  const askLine = opcodeSection.match(/^• ask：.*$/m)[0];
+  assert.deepEqual(askLine.match(/aiPolicy: ([^，}]+)/)[1].split(' / '),
+    defs.opcode.oneOf.find(schema => schema.properties.op.const === 'ask').properties.aiPolicy.enum);
+  const modsLine = protocol.match(/^mods 数组每项：.*$/m)[0];
+  assert.deepEqual(modsLine.match(/stat\?: ([^，}]+)/)[1].split(' / '), defs.statMod.properties.stat.enum);
+  assert.deepEqual(modsLine.match(/flags\?: 数组<([^>]+)>/)[1].split(' / '), defs.statMod.properties.flags.items.enum);
+  assert.deepEqual(protocol.match(/顶层 flags 枚举为 (.+?)。/)[1].split(' / '), defs.spawn_zone.properties.flags.items.enum);
   for (const token of [
     'event.skillId == skill.id', 'candidate.alive && candidate.team != self.team',
     'light_blade / ranged / greatsword / staff / shield / auxiliary',

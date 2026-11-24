@@ -2,6 +2,7 @@ import { formulaReference, formulaFunctionReference } from '../core/formula.js';
 import { opNotes, vmHooks, vmSchema } from '../core/vm-schema.js';
 
 const defs = vmSchema.$defs;
+const statusFlags = defs.spawn_zone.properties.flags.items.enum;
 const range = schema => [
   schema.minimum === undefined ? '' : `≥${schema.minimum}`,
   schema.maximum === undefined ? '' : `≤${schema.maximum}`,
@@ -42,10 +43,10 @@ const spawnSpecs = Object.entries(defs).filter(([key]) => key.startsWith('spawn_
 export const VM_EFFECT_PROTOCOL = `【战术 VM 效果协议】
 rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下枚举}。
 允许 hook 枚举：${vmHooks.join(' / ')}。
-标识符格式：规则／模板／变量 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$；tag 匹配 ^[a-z0-9][a-z0-9_-]{0,31}$；状态与载体顶层 flags 枚举为 undispellable / concept_immune。
+标识符格式：规则／模板／变量 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$；tag 匹配 ^[a-z0-9][a-z0-9_-]{0,31}$；状态与载体顶层 flags 枚举为 ${statusFlags.join(' / ')}。
 
 【全局事件管线与载体作用域】
-• 单次行动结算序：before_action（扣费缩放、取消行动、改写起点与无视视线）→ before_target（取消指向、重定向或替换目标、伤害倍率缩放）→ before_check（改 DC/加值/优劣势、无视闪避、保底评级、强制判定结果）→ after_natural_roll（自然 d20 出骰后读 event.naturalRoll 并可用 replaceNaturalRoll 改骰）→ after_check → [模板主击/治疗 或 hook:"active" 规则执行] → before_commit（在 damage/heal/resource 实际落盘前统一拦截，通过 event.commitKind 区分类型，可读 event.targetId/pool/rawAmount/finalAmount/sourceRuleId，支持 cancel/finalAmount/preserveLife）→ [HP 归零时：先跑 on_lethal_p1 处理遗言或换池 → 仍 ≤0 再跑 on_lethal_p2 处理 preventDeath 免死锁血 → 仍 ≤0 才结算 on_death / on_ally_death / on_kill] → after_damage / after_heal → after_hit → after_action。
+• 单次行动结算序：before_action（扣费缩放、取消行动、改写起点与无视视线）→ before_target（取消指向、重定向或替换目标、伤害倍率缩放）→ before_check（改 DC/加值/优劣势、无视闪避、保底评级、强制判定结果）→ after_natural_roll（自然 d20 出骰后读 event.naturalRoll 并可用 replaceNaturalRoll 改骰）→ after_check → [模板主击/治疗 或 hook:"active" 规则执行] → before_commit（在 damage/heal/resource 实际落盘前统一拦截，通过 event.commitKind 区分类型，可读 event.targetId/pool/rawAmount/finalAmount/sourceRuleId，支持 cancel/finalAmount/preserveLife）→ [HP 归零时：先跑 on_lethal_p1 处理遗言、治疗或换池 → 仍 ≤0 再跑 on_lethal_p2 处理 heal 治疗或 preventDeath 免死锁血 → 仍 ≤0 才结算 on_death / on_ally_death / on_kill] → after_damage / after_heal → after_hit → after_action。
 • 独立生命周期钩子：after_move（实际位移或高度变化后触发，attacker/target 指移动单位，可读 event.fromX/fromY/toX/toY/steps/moveKind）；before_status / after_status_applied / after_status_removed / on_status_immunized（状态拦截、施加、移除、被免疫）；on_summon_evict（同源旧召唤物被顶替消散前，target 为旧召唤物，event.sourceSkillId 为其来源技能）；turn_start / turn_end（单位回合首尾）；round_start / round_end（大轮首尾）。任意钩子均可使用 ask 挂起等待选择。
 • 五类载体作用域矩阵：
   1. unit / item：self 为持有者（装备规则内 item.id / item.templateId 指向当前装备实例与模板），持有或穿戴期间 mods 与非 active 规则全局常驻。
@@ -56,7 +57,7 @@ rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下�
 
 【Opcode】每个指令对象必填 op（闭合枚举，只接受列出的字段，? 表示可省）：
 ${instructions.join('\n')}
-check：kind 为 chance 时用 dc 与 d100 比较（如 dc:25 为 25%）；豁免未通过进入 onFail；状态豁免写 kind:"save" 与 statusId:"已声明状态ID"（检定钩子与 mods 可读 event.statusId）。ask：kind 为 cell/entity 时必填 select，option 必填 options，number 必填 min/max；必填 aiPolicy 供 AI 与预览自动决策。damage / heal / resource / check / ask / spawn 均支持 out:"裸变量名"（remove_status 用 outCount:"裸变量名"）将本次实际结算值或实体引用写入当前帧，后续指令通过 vars.<变量名> 读取。perform：actionKind 为 skill 时只配 skillId，replay 时只配 tapeRecord（磁带重放默认免槽免耗并跳过已失效目标，子行动不再入带）。resource：mode 为 add/sub/set 时需 amount，swap 时需单个 pool 与 otherPool；pool 支持内置池 hp/mp/sp、自定义池 ID 或行动伪池 attack/action/move（本回合剩余攻击槽、动作槽、移动格）；mode 为 add_max/sub_max/set_max 时修改 HP/MP/SP 上限并同步当前值与 initialMax 镜像，minRemain 限制最低上限。move：mode 为 step/teleport 时用 to，push/pull 用 distance，altitude 用 deltaZ 或 land:true。mods:[{locks:["fly","teleport"]}] 禁止升空与瞬移（已在空中需另用 land:true 强制降落）。不可驱散写在状态模板顶层 flags:["undispellable"]。despawn：entityKind:"unit" 用于移除召唤物且不计击杀。
+check：kind 为 chance 时用 dc 与 d100 比较（如 dc:25 为 25%）；豁免未通过进入 onFail；状态豁免写 kind:"save" 与 statusId:"已声明状态ID"（检定钩子与 mods 可读 event.statusId）。ask：kind 为 cell/entity 时必填 select，option 必填 options，number 必填 min/max；必填 aiPolicy 供 AI 与预览自动决策。damage / heal / resource / check / ask / spawn 均支持 out:"裸变量名"（remove_status 用 outCount:"裸变量名"）将本次实际结算值或实体引用写入当前帧，后续指令通过 vars.<变量名> 读取。perform：actionKind 为 skill 时只配 skillId，replay 时只配 tapeRecord（磁带重放默认免槽免耗并跳过已失效目标，子行动不再入带）。resource：mode 为 add/sub/set 时需 amount，swap 时需单个 pool 与 otherPool；pool 支持内置池 hp/mp/sp、自定义池 ID 或行动伪池 attack/action/move（本回合剩余攻击槽、动作槽、移动格）；mode 为 add_max/sub_max/set_max 时修改 HP/MP/SP 上限并同步当前值与 initialMax 镜像，minRemain 限制最低上限。move：mode 为 step/teleport 时用 to，push/pull 用 distance，altitude 用 deltaZ 或 land:true。mods:[{locks:["fly","teleport"]}] 禁止升空与瞬移（已在空中需另用 land:true 强制降落）。不可驱散写在状态模板顶层 flags:["undispellable"]。expireOn 接受单个条件或非空条件数组，任一条件满足即可过期。despawn：entityKind:"unit" 用于移除召唤物且不计击杀。
 原生攻击在 before_check 可写 ratingDelta（整数档数，可用公式，正升负降）：先从基础评级移动并在表两端封顶，再按 minRating 保底。精准类远程攻击在本规则的远程过滤条件下写 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"有效","forceOutcome":"hit"}}；最后一项用于原文明说必中、连天然1也不能失手的情形，不要求必中则省略。\nmutate_event 的 patch 至少含一个字段，仅限下列可写 hook（before_check.minRating 取值枚举：超暴击 / 强暴击 / 平暴击 / 有效 / 勉强 / 擦伤 / 失手）：
 ${eventPatches.join('\n')}
 清除敌方区域时 where 可写 "zone.team != null && zone.team != self.team"（zone.team / candidate.team 读创建阵营，zone.sourceId / candidate.sourceId 读创建者 ID）。spawn 的 spec 由 entityKind 决定；unit 的 templateId/copyOf/spawnPanel 至多选一，均省略时按施术者预算自动生成面板；tier、count、remainingTurns、area.radius 支持数值表达式；terrain 至少含 kind 或 height，填 mode 时必填 height：
@@ -82,4 +83,10 @@ mods 数组每项：${describe(defs.statMod)}。至少含 stat、locks、flags �
 • 承伤侧（持有者受击）：damageReductionFlat 受击固定减伤（基值 0，用正数 flat，勿写成负 damageFlat）；damageReduction 与 dr 受击比例减伤（基值 0，用 flat:-1..1，禁用 additivePercent；damageReduction 在固减前乘算，dr 在固减后乘算；真实伤害无视减伤）。
 • 机动与距离：movement 的基值与 flat 均为同阶移动单位，叠加后应用倍率，再按层级米数折算为格；checkBonus、initiativeFlat 仅接受 flat 数值加值，不乘检定或先攻总值；incomingDistanceOffset 用 flat 写敌方测算射程、范围与距离档位时的表观距离增量（可用 scale_cells(n)）。
 • 检定与属性：dodge 受击闪避（基值 0，用正数 flat 扣敌方命中）、checkBonus 检定加值、dcBonus 豁免难度加值（挂施加者）、resistBonus 豁免抵抗加值（挂豁免者）、advantage 优劣势骰数、initiativeFlat 先手加值，基值均为 0，用 flat；healingMult / incomingHealMult / costMult 基值均为 1，用 mult 或 additivePercent（禁用 flat）；str/agi/con/int/spi/armor 叠加持有者对应面板值。
-controlPolicy：${describe(defs.controlPolicy)}。moraleLock 仅枚举值 "steady"；allowFriendlyTarget:true 允许敌方指向动作合法选中友军或自身。`;
+controlPolicy：${describe(defs.controlPolicy)}。moraleLock 仅枚举值 "steady"；allowFriendlyTarget:true 允许敌方指向动作合法选中友军或自身。
+
+【常见误写】
+• 技能冷却写在 rules[i].cooldownTurns；扣减剩余行动槽用 resource，调整行动点上限用 stat:"apMax"。
+• 不可驱散是载体顶层 flags，勿写入 mods[i].flags；强制驱散使用 remove_status 的 force。
+• vars 中的值可以是表达式或标量；表达式里的字符串字面量需要引号。
+• expireOn 有多个条件时写对象数组；勿把事件名拼成一个字符串。`;

@@ -45,6 +45,24 @@ test('untagged equipment and skill default ranges use the battle scale', () => {
   assert.equal(actionSkill(state, unit, unit.skills[0]).range, 0);
 });
 
+test('parsed and structured battle declarations resolve identical cross-tier action geometry', () => {
+  const declaration = 'battle|1|cross-tier|断桥|flat|比例尺=5m\nunit|p1|blue|char_info|甲|1,1';
+  const charInfo = [{ name: '甲', tier: 3,
+    equipment: [{ name: '剑', kind: 'weapon', slot: 'mainHand', quality: '普通', range: 4 }],
+    skills: [{ name: '史诗波', quality: '史诗', range: 4, radius: 2, shape: 'circle' },
+      { name: '唯一波', quality: '唯一', range: 4, radius: 2, shape: 'circle' }],
+  }];
+  for (const battleInit of [declaration, parseBattleDescriptor(declaration)]) {
+    const { state } = hydrateFromSources({ charInfo, battleInit }, { throwOnValidation: true });
+    const unit = state.units.p1;
+    assert.equal(weaponInfo(state, unit).template.range, 1);
+    assert.deepEqual(unit.skills.map(id => {
+      const { range, radius } = actionSkill(state, unit, id);
+      return [range, radius];
+    }), [[12, 6], [4, 2]]);
+  }
+});
+
 test('effective tier and cover HP follow scale acceptance', () => {
   assert.equal(resolveEffectiveTier('skill', '神话', 2), 6);
   assert.equal(resolveEffectiveTier('item', '神话', 2), 2);
