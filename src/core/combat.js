@@ -33,13 +33,9 @@ const sameCell = (a, b) => a.x === b.x && a.y === b.y;
 const pos = (x, y) => ({ x, y });
 const pointAt = (state, at) => ({ x:at.x, y:at.y, z:elevation(state, at) });
 const key = (x, y) => `${x},${y}`;
-const stat = (unit, id) => Number(unit.stats?.[id] ?? 0) * Math.max(0, 1 + changes(unit, 'attributePercent'));
+const stat = (unit, id) => Number(unit.stats?.[id] ?? 0);
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
-const matchesDamageType = (status, type) => type == null || status.modifiers?.damageType == null || status.modifiers.damageType === type;
-export const statusModifier = (unit, name, damageType) => values(unit.statuses).reduce((sum, status) =>
-  sum + (matchesDamageType(status, damageType) ? Number(status.modifiers?.[name] ?? 0) * (status.stacks ?? 1) : 0),
-  moraleModifiers[unit.moraleState]?.[name] ?? 0);
-const changes = statusModifier;
+const vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
 const statusOf = (unit, id) => Object.hasOwn(unit.statuses ?? {}, id) ? unit.statuses[id] : undefined;
 export const currentUnit = state => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : undefined;
 
@@ -78,8 +74,7 @@ export function switchableWeapons(state, unit) {
 const equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map(g => g.instance?.id)].filter(Boolean))].map(id => equipmentFor(state, id)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
 const effectiveStat = (state, unit, key) => modStat(state, unit, key, stat(unit, key));
 const resolveDC = (state, actor, dc) => evaluateExpr(dc, { self: actor, source: actor, round: state.round, turn: state.turn }) ?? 12;
-export const statusFinalDamageMultiplier = (unit, type) => values(unit.statuses).reduce((mult, status) =>
-  matchesDamageType(status, type) ? mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1) : mult, 1);
+
 const resourcePool = (state, unit, resource, instance) => {
   for (const item of equipped(state, unit)) {
     if (instance && item.instance !== instance) continue;
@@ -94,80 +89,52 @@ export function stealthCheck(state, unit, d20, dc) {
   return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
 }
 
-export const shieldTotal = unit => values(unit.statuses).reduce((total, status) => total + (status.vars?.shieldAmount ?? status.amount ?? 0), 0);
-
-export function statusModifierKeys(statusId, state) {
-  return Object.keys(getStatusTemplate(state, statusId)?.modifiers ?? {});
-}
-
-// patch 直接传入要更新的 modifier 键值，保留实例时长及层数。
-export function patchStatus(state, unitId, statusId, patch) {
-  const unit = tableEntry(state.units, unitId);
-  const status = unit && statusOf(unit, statusId);
-  const template = getStatusTemplate(state, statusId);
-  if (!status || !template) throw new Error(`找不到状态实例：${unitId}/${statusId}`);
-  if (!patch || Object.getPrototypeOf(patch) !== Object.prototype || !Object.keys(patch).length) throw new Error('状态参数补丁须为非空对象');
-  const { expireOn, ...modifiers } = patch;
-  const patchExpiry = Object.hasOwn(patch, 'expireOn');
-  validateStatusModifiers(template, modifiers);
-  if (patchExpiry && expireOn !== null && !validExpiry(expireOn)) throw new Error('无效字段：expireOn');
-  status.modifiers = { ...status.modifiers, ...modifiers };
-  if (patchExpiry) status.expireOn = structuredClone(expireOn);
-  if (Object.hasOwn(modifiers, 'amount')) status.amount = clamp(modifiers.amount, 1, 100000);
-  record(state, unit, 'status_patch', `${unit.name}的${status.name}参数已更新`,
-    { ...statusLogDetail(unit, status), effectiveModifiers: { ...status.modifiers }, modifiers,
-      ...(patchExpiry ? { expireOn: status.expireOn } : {}) });
-  return status;
-}
+export const shieldTotal = unit => values(unit.statuses).reduce((total, status) => total + (status.category === 'shield' ? status.vars?.shieldAmount ?? 0 : 0), 0);
 
 export function grantStatus(state, unit, statusId, options = {}) {
   const template = getStatusTemplate(state, statusId);
   if (!unit || !template) throw new Error(`未知状态：${statusId}`);
   if (!alive(unit) || unit.fled) return null;
-  if (Object.hasOwn(options, 'modifiers')) validateStatusModifiers(template, options.modifiers);
   unit.statuses ??= {};
   const previous = statusOf(unit, statusId);
-  const stackRule = options.stackRule ?? previous?.stackRule ?? template.stackRule;
-  const maxStacks = options.maxStacks ?? previous?.maxStacks ?? template.maxStacks;
-  const addedStacks = options.stacks ?? 1;
-  const stacks = clamp(stackRule === 'stack' ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
-  const remainingTurns = options.remainingTurns ?? options.turns ?? template.remainingTurns;
-  const applied = { ...structuredClone(template), stackRule, maxStacks, stacks,
-    durationType: options.durationType ?? previous?.durationType ?? template.durationType,
-    remainingTurns: stackRule === 'stack' && options.remainingTurns == null && options.turns == null
-      ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
-    tickTiming: options.tickTiming ?? template.tickTiming,
-    modifiers: { ...template.modifiers, ...(options.modifiers ?? {}) },
-    flags: [...new Set([...(template.flags ?? []), ...(options.flags ?? [])])],
-    sourceUnitId: options.sourceUnitId ?? previous?.sourceUnitId ?? null,
+  const stackMode = options.stackMode ?? previous?.stackMode ?? template.stackMode ?? 'refresh';
+  const sourceId = Object.hasOwn(options, 'sourceId') ? options.sourceId : previous?.sourceId ?? null;
+  const source = tableEntry(state.units, sourceId) ?? unit;
+  const scope = { self: source, source, target: unit, event: {} };
+  const cap = evaluateExpr(template.maxStacks ?? 1, scope);
+  if (!Number.isFinite(cap)) throw new Error('无效状态层数上限');
+  const maxStacks = clamp(Math.floor(cap), 1, 999999);
+  const addedStacks = Math.floor(evaluateExpr(options.stacks ?? (stackMode === 'extend' ? previous?.stacks ?? 1 : 1), scope) ?? NaN);
+  if (!Number.isFinite(addedStacks)) throw new Error('无效状态层数');
+  const stacks = clamp(stackMode === 'stack' ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
+  const remainingTurns = options.remainingTurns ?? options.turns ?? template.remainingTurns ?? 1;
+  const vars = { ...Object.fromEntries(Object.entries(template.vars ?? {}).map(([key, value]) => [key, evaluateExpr(value, scope) ?? value])), ...structuredClone(options.vars ?? {}) };
+  const applied = { ...structuredClone(template), id: statusId, templateId: statusId, ownerId: unit.id,
+    stackMode, maxStacks, stacks, vars,
+    durationType: options.durationType ?? previous?.durationType ?? template.durationType ?? 'battle_turns',
+    remainingTurns: previous && stackMode === 'extend' ? Math.min(100, previous.remainingTurns + (options.extendTurns ?? 1))
+      : stackMode === 'stack' && options.remainingTurns == null && options.turns == null
+        ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
+    ...(previous?.pools && { pools: previous.pools }), sourceId,
     appliedRound: state.round, appliedTurn: state.turn };
   if (Object.hasOwn(options, 'expireOn')) {
-    if (!validExpiry(options.expireOn)) throw new Error('无效字段：expireOn');
+    if (options.expireOn !== null && !validExpiry(options.expireOn)) throw new Error('无效字段：expireOn');
     applied.expireOn = structuredClone(options.expireOn);
   } else if (Object.hasOwn(previous ?? {}, 'expireOn')) applied.expireOn = previous.expireOn;
-  if (Object.hasOwn(applied.modifiers, 'amount')) applied.amount = options.amount == null
-    ? applied.modifiers.amount : clamp(options.amount, 1, 10000);
-  if (applied.category === 'shield' && applied.amount != null) (applied.vars ??= {}).shieldAmount = applied.amount;
+  if (options.amount != null) applied.vars.shieldAmount = clamp(options.amount, 1, 10000);
   unit.statuses[statusId] = applied;
-  record(state, applied.sourceUnitId ?? unit.id, 'status', `${unit.name}获得${template.name} ×${stacks}`,
+  record(state, applied.sourceId ?? unit.id, 'status', `${unit.name}获得${template.name} ×${stacks}`,
     statusLogDetail(unit, applied));
   return applied;
 }
 
 export function statusLogDetail(unit, status) {
-  const { id: statusId, stacks, remainingTurns, durationType, modifiers, expireOn } = status;
-  const amount = status.category === 'shield' ? status.vars?.shieldAmount ?? status.amount : status.amount;
-  const tick = status.rules?.find(rule => rule.hook === 'turn_start' || rule.hook === 'turn_end');
-  const tickTiming = status.tickTiming ?? (tick ? tick.hook === 'turn_end' ? 'onTurnEnd' : 'onTurnStart' : undefined);
-  const displayModifiers = { ...modifiers };
-  for (const op of tick?.program ?? []) {
-    const perStack = typeof op.amount === 'number' ? op.amount : Number(/^([0-9]+) \* status\.stacks$/.exec(op.amount)?.[1]);
-    if (Number.isFinite(perStack) && (op.op === 'damage' || op.op === 'heal')) displayModifiers[op.op] = perStack;
-    if (op.op === 'damage') displayModifiers.damageType = op.damageType;
-  }
-  return { targetId: unit.id, statusId, stacks, remainingTurns, durationType,
-    ...(tickTiming && { tickTiming }), modifiers: displayModifiers,
-    ...(amount == null ? {} : { amount }), ...(expireOn ? { expireOn: structuredClone(expireOn) } : {}) };
+  const { id: statusId, category, stacks, remainingTurns, durationType, vars, mods, rules, flags, expireOn } = status;
+  const amount = category === 'shield' ? vars?.shieldAmount : undefined;
+  return { targetId: unit.id, statusId, ...(category && { category }), stacks, remainingTurns, durationType,
+    ...(amount === undefined ? {} : { amount }), ...(vars && Object.keys(vars).length ? { vars: structuredClone(vars) } : {}),
+    ...(mods?.length ? { mods: structuredClone(mods) } : {}), ...(rules?.length ? { rules: structuredClone(rules) } : {}),
+    ...(flags?.length ? { flags: [...flags] } : {}), ...(expireOn ? { expireOn: structuredClone(expireOn) } : {}) };
 }
 
 function grantShield(state, unit, amount, { stack, ...options } = {}) {
@@ -211,7 +178,7 @@ export function refreshOutcome(state) {
     const dead = defenders.filter(u => !alive(u));
     if (!present.length && defenders.length) return concludeObjective(state,side === 'blue' ? 'red' : 'blue',
       dead.length === defenders.length ? `${label}过失致死，压制失败` : `${label}未能留住目标，压制失败`);
-    if ((side === 'blue' ? blue : red) && present.length && present.every(u => u.statuses.suppressed?.holdTotal != null))
+    if ((side === 'blue' ? blue : red) && present.length && present.every(u => u.statuses.suppressed?.vars?.holdTotal != null))
       return concludeObjective(state,side,`${label}压制成功${dead.length ? '，过失致死：'+dead.map(u=>u.name).join('、') : ''}`);
   }
   if (blue && red && state.battleType === 'guard' && state.round > 5) return concludeObjective(state,'blue','守方坚守五轮');
@@ -267,8 +234,7 @@ function setResourceTotal(state, target, resource, after, sourceUnitId, label) {
 function armorOf(state, unit, damageType, pierce = 0, context = {}) {
   const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0)
     + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
-  const base = unit.armor + equipmentDefense + changes(unit, 'armor', damageType)
-    + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
+  const base = unit.armor + equipmentDefense + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
   const ctx = { ...context, target: context.attacker, damageType };
   const armor = Math.max(0, modStat(state, unit, 'defense', modStat(state, unit, 'armor', base, ctx), ctx));
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
@@ -282,7 +248,7 @@ function damageTarget(state, target, sourceId, amount, damageType, label, option
   commitVMEffect(state, { op: 'damage', targetId: target.id, sourceId, amount, damageType, label,
     direct: options.direct ?? options.hit ?? false, melee: options.melee ?? false,
     ...(options.details && { details: options.details }),
-    lethal: !(options.preserveLife || target.nonLethal || changes(target, 'preserveLife') || encounterNonlethal(state, source)) });
+    lethal: !(options.preserveLife || target.nonLethal || vmFlag(state, target, 'preserveLife') || encounterNonlethal(state, source)) });
 }
 
 export function damageAfterFlatReduction(state, unit, amount, context) {
@@ -292,10 +258,10 @@ export function damageAfterFlatReduction(state, unit, amount, context) {
 }
 
 export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
-  const shatter = hit ? changes(unit, 'shatter', type) : 0;
+  const shatter = hit ? modStat(state, unit, 'shatter', 0, { damageType: type }) : 0;
   const vulnerability = modStat(state, unit, 'incomingDamageMult', 1, { ...ctx, damageType: type }) - 1;
   const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
-  const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', changes(unit, 'reduction', type), defensiveContext), -1, 1);
+  const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', 0, defensiveContext), -1, 1);
   const dr = type === 'true' ? 0 : clamp(modStat(state, unit, 'dr', 0, defensiveContext), -1, 1);
   const defense = ctx.ignoreArmor || type === 'true' || type === 'mental' ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2000 / (defense + 2000);
@@ -308,38 +274,14 @@ export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
 }
 
 function guardFor(state, target) {
-  return living(state).find(u => u !== target && u.team === target.team && changes(u, 'intercept') &&
+  return living(state).find(u => u !== target && u.team === target.team && vmFlag(state, u, 'intercept', { target }) &&
     !reactionBlocked(state, u) && near(u, target) <= 1 && Math.abs(elevation(state, u) - elevation(state, target)) <= 1 &&
     clearSight(state, u, target));
 }
 
-function tick(state, unit, timing, statuses = values(unit.statuses)) {
-  for (const [index, status] of statuses.entries()) {
-    if (!alive(unit)) return;
-    if (unit.statuses[status.id] !== status || status.tickTiming !== timing) continue;
-    if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
-    const source = status.sourceUnitId ?? unit.id;
-    if (status.rules?.length) continue;
-    const amount = status.modifiers?.damage;
-    const detail = { statusId: status.id, tickTiming: timing };
-    if (amount) damageTarget(state, unit, source, amount * status.stacks, status.modifiers.damageType ?? 'true', status.name, { details: detail });
-    const heal = status.modifiers?.heal;
-    if (heal && alive(unit)) restoreHP(state, unit, heal * status.stacks, source, status.name, detail);
-    if (timing === 'onTurnEnd' && state.vm?.pendingAsk) return statuses.slice(index + 1).map(status => status.id);
-  }
-}
-
-function endTurn(state, unit, remainingTicks) {
+function endTurn(state, unit) {
   if (!unit) return;
-  if (remainingTicks === undefined) {
-    unit.ap = 0;
-  }
-  const pendingTicks = tick(state, unit, 'onTurnEnd', remainingTicks?.map(id => tableEntry(unit.statuses, id)).filter(Boolean));
-  if (pendingTicks) {
-    state.vm.endingTurn = unit.id;
-    state.vm.endingTicks = pendingTicks;
-    return;
-  }
+  unit.ap = 0;
   dispatchVMHook(state, 'turn_end', { actorId: unit.id, targetId: unit.id });
   if (state.vm?.pendingAsk) {
     state.vm.endingTurn = unit.id;
@@ -353,11 +295,9 @@ function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
     const status = statusOf(unit, id);
     if (!status) continue;
     if (status.durationType !== 'battle_turns') continue;
-    if (status.appliedRound === state.round && status.appliedTurn === state.turn
-      && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
+    if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
     if (--status.remainingTurns > 0) continue;
     removeVMStatus(state, unit, status, 'expired', unit);
-    if (status.expireInto && alive(unit) && !refreshOutcome(state)) grantStatus(state, unit, status.expireInto, { sourceUnitId: unit.id });
     if (state.vm.pendingAsk) {
       state.vm.endingTurn = unit.id;
       state.vm.endingStatuses = remaining.slice(index + 1);
@@ -405,15 +345,14 @@ function beginUnitTurn(state, unit) {
   unit.ap = unit.apMax = turnAP(state, unit);
   record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
   const hold = unit.statuses.suppressed;
-  if (hold?.holdTotal != null) {
+  if (hold?.vars?.holdTotal != null) {
     const roll = randomDie(state, 20);
     const total = roll + Math.floor(effectiveStat(state, unit, 'str') * unit.hp / unit.maxHp);
-    const success = total > hold.holdTotal;
+    const success = total > hold.vars.holdTotal;
     if (success) removeVMStatus(state, unit, hold, 'escaped', unit);
-    record(state, unit, 'break_hold', `${unit.name}挣脱检定${success ? '成功，解除被压制' : '失败，仍被压制'}（${total} 对 ${hold.holdTotal}）`,
-      { roll, total, threshold: hold.holdTotal, success });
+    record(state, unit, 'break_hold', `${unit.name}挣脱检定${success ? '成功，解除被压制' : '失败，仍被压制'}（${total} 对 ${hold.vars.holdTotal}）`,
+      { roll, total, threshold: hold.vars.holdTotal, success });
   }
-  tick(state, unit, 'onTurnStart');
   dispatchVMHook(state, 'turn_start', { actorId: unit.id, targetId: unit.id });
 }
 
@@ -491,7 +430,7 @@ export function beginBattle(state) {
   }
   record(state, null, 'initiative', '敏捷 + d20：确定先攻次序', { initiative });
   for (const unit of living(state)) for (const status of values(unit.statuses)) {
-    record(state, status.sourceUnitId ?? unit.id, 'status', `${unit.name}开场已有${status.name} ×${status.stacks}`,
+    record(state, status.sourceId ?? unit.id, 'status', `${unit.name}开场已有${status.name} ×${status.stacks}`,
       { ...statusLogDetail(unit, status), initial: true });
   }
   if (!refreshOutcome(state)) {
@@ -609,7 +548,7 @@ function movementScale(state, unit, type) {
   const tierM = TIER_CELL_M[tier];
   // Presets store cells; scaled units store metres. Apply all modifiers once in tier units.
   const base = (unit.moveM ?? unit.move * cellM) / tierM;
-  const moveM = Math.max(0, modStat(state, unit, 'movement', base + changes(unit, 'movement'))) * tierM;
+  const moveM = Math.max(0, modStat(state, unit, 'movement', base)) * tierM;
   const mult = type === 'sprint' ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
   const total = carry + Math.round(mult * moveM / cellM * 1000);
@@ -709,7 +648,7 @@ export function weaponInfo(state, unit) {
   weapon.template = scaledTemplate(state, unit, weapon.template, 'weapon');
   const ammo = weaponAmmo(weapon.template);
   const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon.instance)?.amount : null;
-  const infiniteAmmo = Boolean(ammo && changes(unit, 'infiniteAmmo'));
+  const infiniteAmmo = Boolean(ammo && vmFlag(state, unit, 'infiniteAmmo'));
   const souls = resourcePool(state, unit, 'souls', weapon.instance)?.amount ?? 0;
   const offHand = equipmentFor(state, unit.offHand);
   const stance = unit.stance ?? stanceFor({ mainHand: weapon.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
@@ -732,12 +671,12 @@ function validReach(state, actor, at, template, ammo, weaponId) {
 }
 
 export function visibleEnemy(state, actor, target) {
-  return target.team !== actor.team && (!changes(target, 'hidden') || (near(actor, target) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target)) <= 1));
+  return target.team !== actor.team && (!vmFlag(state, target, 'hidden', { attacker: actor }) || (near(actor, target) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target)) <= 1));
 }
 
 function tauntFor(state, actor, template, ammo) {
-  for (const status of values(actor.statuses).filter(status => status.modifiers?.taunted).sort(byId)) {
-    const source = tableEntry(state.units, status.sourceId ?? status.sourceUnitId);
+  for (const status of values(actor.statuses).filter(status => status.mods?.some(mod => mod.flags?.includes('taunted'))).sort(byId)) {
+    const source = tableEntry(state.units, status.sourceId);
     if (alive(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo)) return source;
   }
   return null;
@@ -846,7 +785,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags.guaranteed_hit);
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
   const dodge = execution || cover ? 0 : modStat(state, target, 'dodge', modCheck(state, target, 'dodgeBonus', { target: actor })
-    + modCheck(state, target, 'dodgeAgility', { target: actor }) + changes(target, 'dodgeBonus'),
+    + modCheck(state, target, 'dodgeAgility', { target: actor }),
     { ...strike, attacker: actor, checkKind: 'dodge' });
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, 'highGroundAccuracy', strike) : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;
@@ -873,8 +812,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   // The protocol does not grant an implicit STR/AGI-to-hit bonus. Associated attributes
   // belong in the damage formula; hit comes from explicit weapon/skill and combat modifiers.
   const accuracy = modStat(state, actor, 'accuracy', (template.accuracy ?? 0) + (state.ruleset === 'sandbox' ? effectiveStat(state, actor, geometry.melee ? 'str' : 'agi') : 0)
-    + high + sizeAccuracy + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + changes(actor, 'accuracy')
-    + (execution || cover || !target ? 0 : changes(target, 'incomingAccuracy')) + (flanked ? 2 : 0) - penalty
+    + high + sizeAccuracy + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0)
+    + (execution || cover || !target ? 0 : modStat(state, target, 'incomingAccuracy', 0, { attacker: actor })) + (flanked ? 2 : 0) - penalty
     + modCheck(state, actor, 'accuracyBonus', strike), strike) - dodge;
   const equipmentDefense = gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0)
     + (target.shield ? equipmentFor(state, target.shield).template?.defense ?? 0 : 0);
@@ -901,7 +840,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
   // Intent is applied once in applyStrike after the intent contest; do not fold it into this preview multiplier.
   const damageType = template.damage?.type ?? template.damageType ?? 'physical';
-  const multiplier = offHandMultiplier * (1 + changes(actor, 'damageBonus', damageType)) * Math.max(0, 1 + changes(actor, 'attackPercent', damageType))
+  const multiplier = offHandMultiplier
     * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const tierPower = ({1:2, 2:2.8, 3:4, 4:8, 5:15, 6:35, 7:80})[actor.tier ?? 1] ?? 2;
   const attributeBase = () => state.ruleset === 'protocol'
@@ -922,11 +861,10 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const flatDamage = applyStatMod(0, outgoing.damageFlat);
   const flatReduction = cover || damageType === 'true' ? 0 : modStat(state, recipient, 'damageReductionFlat', 0,
     { ...strikeEvent, attacker: actor, target: recipient, intercepting: recipient !== target });
-  const statusFinal = statusFinalDamageMultiplier(actor, damageType);
   const shown = (raw, factor = 1) => {
     const scaled = Math.floor(applyStatMod(raw * multiplier * factor + flatDamage, outgoing.damageMult));
     if (cover) return Math.max(0, scaled - (target.armor ?? 0));
-    const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction) * statusFinal));
+    const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction)));
     const mitigated = Math.max(0, Math.floor(modified - flatReduction)) * (1 - reduction.dr);
     return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) - absorb);
   };
@@ -944,7 +882,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   return { id: target.id, targetId: target.id, name: target.name, x: at.x, y: at.y, ...geometry,
     recipientId: recipient.id, arc, backstab: Boolean(backstab), flanked, accuracy, defense, highGround: high,
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
-    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, 'accuracy') },
+    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: modStat(state, actor, 'accuracy', 0, strike) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) },
     ...(context.skillId && { skillId: context.skillId }), ...(weapon?.instance?.id && { weaponId: weapon.instance.id }),
     intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
@@ -1064,12 +1002,11 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   }
   if (type === 'block') {
     if (stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== 'sword_shield') return fail('只有剑盾姿态可格挡');
-    const modifiers = getStatusTemplate(state, actionStatuses.block).modifiers;
-    return { ...common, name: '格挡', reduction: Object.hasOwn(modifiers, 'reduction') ? (action.maneuver === 'heavy' ? .45 : .25) : 0, turns: 1 };
+      return { ...common, name: '格挡', reduction: action.maneuver === 'heavy' ? .45 : .25, turns: 1 };
   }
   if (type === 'brace') {
     const [nearbyCover] = nearbyCovers(state, unit);
-    return { ...common, name: '架势防御', coverId: nearbyCover?.id ?? null, reduction: getStatusTemplate(state, actionStatuses.brace).modifiers.reduction ?? 0,
+    return { ...common, name: '架势防御', coverId: nearbyCover?.id ?? null, reduction: getStatusTemplate(state, actionStatuses.brace).vars?.reduction ?? 0,
       turns: nearbyCover ? 2 : 1 };
   }
   if (type === 'use_item') {
@@ -1097,7 +1034,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   }
   if (type === 'suppress') {
     if (state.battleType !== 'suppress' || unit.team !== state.suppressingTeam) return fail('仅压制方可以使用压制');
-    const available = living(state).filter(t => t.team !== unit.team && t.statuses.suppressed?.holdTotal == null && distance(state,unit,t)<=1 && visibleEnemy(state,unit,t) && clearSight(state,unit,t));
+    const available = living(state).filter(t => t.team !== unit.team && t.statuses.suppressed?.vars?.holdTotal == null && distance(state,unit,t)<=1 && visibleEnemy(state,unit,t) && clearSight(state,unit,t));
     if (!center) return {...common,cells:available.map(t=>pos(t.x,t.y))};
     const target = available.find(t=>t.id === action.targetId && sameCell(t,center)) ?? available.find(t=>sameCell(t,center));
     if (!target) return fail('压制需要一格内可见且未被压制的敌人');
@@ -1134,7 +1071,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
         const context = { attacker: unit, targetId: guard.id, damageType: 'energy', intercepting: guard !== u };
         const formula = mitigation(state, guard, 'energy', true, 0, context);
         const modified = Math.floor((item.damage ?? 12) * formula.multiplier * formula.armorMultiplier
-          * (1 - formula.attributeReduction) * statusFinalDamageMultiplier(unit, 'energy'));
+          * (1 - formula.attributeReduction) * modStat(state, unit, 'finalDamageMult', 1, { target: guard, damageType: 'energy' }));
         const damage = Math.max(0, Math.floor(damageAfterFlatReduction(state, guard, modified, context) * (1 - formula.dr)) - shieldTotal(guard));
         return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y,
           damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
@@ -1358,7 +1295,7 @@ function resolveCheck(state, actor, profile, event = {}) {
       }
     }
     const defenderD20 = randomDie(state, 20);
-    const weakness = changes(defender, 'intentDifficulty');
+    const weakness = modStat(state, defender, 'intentDifficulty', 0, { attacker: actor });
     const intentSpec = { ...(INTENTS[profile.intent] ?? INTENTS.normal), difficulty: Math.max(0, (INTENTS[profile.intent]?.difficulty ?? 0) + weakness) };
     const ratingBonus = { 平暴击: 10, 强暴击: 20, 超暴击: 30 }[rating.name] ?? 0;
     const attackerTier = actor.tier ?? 1, defenderTier = defender.tier ?? 1;
@@ -1402,7 +1339,7 @@ function knockback(state, actor, target, effect) {
     const at = pos(target.x + dx, target.y + dy);
     if (!canStep(state, target, at)) {
       damageTarget(state, target, actor.id, effect.collisionDamage ?? 5, 'true', '撞击');
-      if (alive(target)) grantStatus(state, target, effect.statusId ?? actionStatuses.collision, { sourceUnitId: actor.id });
+      if (alive(target)) grantStatus(state, target, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
       break;
     }
     Object.assign(target, at);
@@ -1501,7 +1438,7 @@ export function continueStrike({ state, frame, host }) {
     event.targetId = recipient.id;
     host.commit(state, frame, { ...detail, op: 'damage', pool: 'hp', targetId: recipient.id, sourceId: actor.id,
       amount, label: template.name, direct: true, intercepted: recipient !== target, armorPierce: profile.armorPierce, details, resultEventRef: frame.awaitEvent,
-      lethal: !(profile.nonLethal || recipient.nonLethal || changes(recipient, 'preserveLife') || encounterNonlethal(state, actor)) });
+      lethal: !(profile.nonLethal || recipient.nonLethal || vmFlag(state, recipient, 'preserveLife') || encounterNonlethal(state, actor)) });
     return;
   }
   if (frame.phase === 'heal') {
@@ -1633,10 +1570,10 @@ function continueInteraction(state, actor, plan, progress) {
     setResourceTotal(state, actor, 'mp', Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
     setResourceTotal(state, actor, 'sp', Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
   } else if (effect === 'shield') {
-    grantShield(state, actor, item.damage ?? 10, { sourceUnitId: actor.id });
+    grantShield(state, actor, item.damage ?? 10, { sourceId: actor.id });
   } else if (effect !== 'heal') {
-    grantShield(state, actor, 10, { sourceUnitId: actor.id });
-    grantStatus(state, actor, actionStatuses.altar, { sourceUnitId: actor.id });
+    grantShield(state, actor, 10, { sourceId: actor.id });
+    grantStatus(state, actor, actionStatuses.altar, { sourceId: actor.id });
   }
   return true;
 }
@@ -1650,7 +1587,6 @@ export function applyAction(state, action) {
       state.vm.stack.length = 0;
       state.vm.events = {};
       delete state.vm.endingTurn;
-      delete state.vm.endingTicks;
       delete state.vm.endingStatuses;
       delete state.vm.startingTurn;
       delete state.vm.settlingTurn;
@@ -1660,13 +1596,10 @@ export function applyAction(state, action) {
       const result = resolveVMAction(state, action);
       if (!result.pendingAsk && state.vm.endingTurn) {
         const endingUnit = state.units[state.vm.endingTurn];
-        const remainingTicks = state.vm.endingTicks;
         const remainingStatuses = state.vm.endingStatuses;
         delete state.vm.endingTurn;
-        delete state.vm.endingTicks;
         delete state.vm.endingStatuses;
-        if (remainingTicks) endTurn(state, endingUnit, remainingTicks);
-        else completeTurnEnd(state, endingUnit, remainingStatuses);
+        completeTurnEnd(state, endingUnit, remainingStatuses);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
       } else if (!result.pendingAsk && state.vm.startingTurn) {
         settleTurn(state);
@@ -1734,13 +1667,13 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     case 'use_item': {
       actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
       record(state, actor, 'item', `${actor.name}使用同调副手道具`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-      grantStatus(state, actor, actionStatuses.use_item, { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.use_item, { sourceId: actor.id });
       if (!actor.attunementCharges) actor.stance = 'light_blade';
       break;
     }
-    case 'charge': grantStatus(state, actor, actionStatuses.charge, { sourceUnitId: actor.id }); break;
-    case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, actionStatuses.lock_on, { sourceUnitId: actor.id }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
-    case 'scan': grantStatus(state, actor, actionStatuses.scan, { sourceUnitId: actor.id, stacks: 3 }); break;
+    case 'charge': grantStatus(state, actor, actionStatuses.charge, { sourceId: actor.id }); break;
+    case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
+    case 'scan': grantStatus(state, actor, actionStatuses.scan, { sourceId: actor.id, stacks: 3 }); break;
     case 'flee': {
       const enemies = living(state).filter(u => u.team !== actor.team).sort((a,b) => effectiveStat(state, b, 'agi') - effectiveStat(state, a, 'agi') || byId(a,b));
       const target = enemies[0]; const attackerRoll = randomDie(state,20), defenderRoll = randomDie(state,20);
@@ -1764,24 +1697,24 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       const attackerTotal=attackerRoll+effectiveStat(state,actor,'str'), defenderTotal=defenderRoll+effectiveStat(state,target,'str');
       const success=attackerTotal>defenderTotal;
       record(state,actor,'suppress_check',`${actor.name}对${target.name}力量对抗${success?'成功':'失败'}（${attackerTotal} 对 ${defenderTotal}）`,{targetId:target.id,attackerRoll,defenderRoll,attackerTotal,defenderTotal,success});
-      if (success) grantStatus(state,target,'suppressed',{sourceUnitId:actor.id}).holdTotal=attackerTotal;
-      else if (defenderTotal > attackerTotal) grantStatus(state,actor,'stun',{sourceUnitId:target.id,turns:1});
+      if (success) grantStatus(state, target, 'suppressed', { sourceId: actor.id, vars: { holdTotal: attackerTotal } });
+      else if (defenderTotal > attackerTotal) grantStatus(state,actor,'stun',{sourceId:target.id,turns:1});
       break;
     }
     case 'grapple': case 'disarm': case 'trip': case 'push': {
       const target = state.units[plan.targetId];
       if (target && maneuverContest(state, actor, target, type)) {
-        if (type === 'grapple') grantStatus(state, target, actionStatuses.grapple, { sourceUnitId: actor.id });
+        if (type === 'grapple') grantStatus(state, target, actionStatuses.grapple, { sourceId: actor.id });
         if (type === 'disarm') { target.mainHand = null; target.weapon = null; }
-        if (type === 'trip') grantStatus(state, target, actionStatuses.trip, { sourceUnitId: actor.id });
+        if (type === 'trip') grantStatus(state, target, actionStatuses.trip, { sourceId: actor.id });
         if (type === 'push') knockback(state, actor, target, { distance: 1, collisionDamage: 3 });
       }
       break;
     }
     case 'block':
       actor.blockMode = action.maneuver === 'heavy' ? 'heavy' : 'normal';
-      grantStatus(state, actor, actionStatuses.block, { sourceUnitId: actor.id, turns: 1,
-        ...(Object.hasOwn(getStatusTemplate(state, actionStatuses.block).modifiers, 'reduction') && { modifiers: { reduction: plan.reduction } }) });
+      grantStatus(state, actor, actionStatuses.block, { sourceId: actor.id, remainingTurns: 1,
+        vars: { reduction: plan.reduction } });
       record(state, actor, 'block', `${actor.name}${actor.blockMode === 'heavy' ? '重' : ''}格挡`, { reduction: plan.reduction });
       break;
     case 'reload': {
@@ -1792,7 +1725,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     case 'brace':
       record(state, actor, 'brace', `${actor.name}${plan.coverId ? `借 ${plan.coverId} ` : '原地'}架势防御（减伤 ${Math.round(plan.reduction * 100)}%，${plan.turns} 回合）`,
         { coverId: plan.coverId, reduction: plan.reduction, turns: plan.turns });
-      grantStatus(state, actor, actionStatuses.brace, { sourceUnitId: actor.id, turns: plan.turns });
+      grantStatus(state, actor, actionStatuses.brace, { sourceId: actor.id, turns: plan.turns });
       break;
   }
   return true;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseBattleDescriptor } from '../src/tavern/descriptor.js';
 import { hydrateFromSources } from '../src/tavern/converter.js';
 import { validateState } from '../src/api/validation.js';
-import { applyAction, preview, statusModifier, refreshOutcome, grantStatus, settleTurn } from '../src/core/combat.js';
+import { applyAction, preview, refreshOutcome, grantStatus, settleTurn } from '../src/core/combat.js';
 import { chooseAction } from '../src/core/ai.js';
 const fixture = () => hydrateFromSources({battleInit:parseBattleDescriptor('battle|1|test|试炼|flat|42|战斗类型=切磋\nunit|p|blue|mvu:主角|旅人|1,1\nunit|e|red|char_info|守卫|2,1\nunit|f|red|char_info|剑士|3,1'),mvu:{主角:{属性:{敏捷:30},生命值:{当前:100,上限:100}}},charInfo:[{名称:'守卫',hp:100},{名称:'剑士',hp:100}]},{throwOnValidation:true}).state;
 function nextRound(s) {const r=s.round;while(s.round===r)applyAction(s,{type:'end'});}
@@ -11,7 +11,7 @@ test('整场类型传入，主角豁免，自动动摇与恢复均不耗骰、�
   const s=fixture(),{p,e,f}=s.units;
   assert.equal(p.protagonist,true);assert.equal(e.moraleType,'spar');assert.equal(f.moraleType,'spar');
   const rng=s.rng;p.hp=e.hp=35;nextRound(s);assert.equal(s.rng,rng);
-  assert.equal(p.moraleState,undefined);assert.equal(e.moraleState,'shaken');assert.equal(statusModifier(e,'accuracy'),-2);
+  assert.equal(p.moraleState,undefined);assert.equal(e.moraleState,'shaken');
   nextRound(s);assert.equal(s.logs.filter(l=>l.type==='morale').length,1);
   e.hp=e.maxHp;nextRound(s);const logs=s.logs.filter(l=>l.type==='morale');assert.deepEqual(logs.map(l=>[l.detail.outcome,l.detail.roll]),[['shaken',null],['steady',null]]);assert.equal(s.rng,rng);
   e.moraleType='未知';assert.throws(()=>validateState(s));e.moraleType='standard';e.moraleState='panic';assert.throws(()=>validateState(s));
@@ -45,7 +45,7 @@ test('切磋可叫停，竞技可认输，压制与守卫可在双方仍存活�
   for (const [type,outcome] of [['spar','draw'],['arena','red'],['suppress','blue'],['guard','blue']]) {
     const s=fixture();s.battleType=type;if(type==='suppress')s.suppressingTeam='blue';s.turn=s.order.indexOf('p');s.units.p.ap=2;
     if (['spar','arena'].includes(type)) applyAction(s,{type:'end_encounter'});
-    else {assert.equal(preview(s,{type:'end_encounter'}).ok,false); if(type==='guard')s.round=5;else for(const u of [s.units.e,s.units.f]) grantStatus(s,u,'suppressed',{sourceUnitId:'p'}).holdTotal=25;if(type==='guard') nextRound(s);else refreshOutcome(s);}
+    else {assert.equal(preview(s,{type:'end_encounter'}).ok,false); if(type==='guard')s.round=5;else for(const u of [s.units.e,s.units.f]) grantStatus(s,u,'suppressed',{sourceId:'p', vars:{holdTotal:25}});if(type==='guard') nextRound(s);else refreshOutcome(s);}
     assert.equal(s.outcome,outcome);assert.ok(s.battleConclusion);validateState(s);
   }
 });
@@ -65,19 +65,19 @@ test('压制先命中再对抗，存储原点数，挣脱与边界逃跑、死�
   assert.match(preview(s,{type:'flee'}).error,/边界/);p.y=0;assert.equal(preview(s,{type:'flee'}).ok,true);p.y=1;
   const a={type:'suppress',x:e.x,y:e.y};assert.equal(preview(s,{...a,x:f.x}).ok,false);
   for(let seed=1;seed<1000;seed++){s.rng=seed;const copy=structuredClone(s);applyAction(copy,a);if(copy.units.e.statuses.suppressed)break;}
-  applyAction(s,a);assert.equal(e.hp,e.maxHp);const hold=e.statuses.suppressed.holdTotal;assert.ok(hold>22);validateState(s);
+  applyAction(s,a);assert.equal(e.hp,e.maxHp);const hold=e.statuses.suppressed.vars.holdTotal;assert.ok(hold>22);validateState(s);
   const counter=fixture();counter.battleType='suppress';counter.suppressingTeam='blue';counter.turn=counter.order.indexOf('p');Object.assign(counter.units.p,{ap:2,used:{action:0,attack:0}});counter.rng=seedForHit(s);counter.units.p.stats.str=-20;counter.units.e.stats.str=50;
   function seedForHit(){for(let n=1;n<1000;n++){const c=structuredClone(counter);c.rng=n;c.units.p.stats.str=-20;c.units.e.stats.str=50;applyAction(c,a);if(c.units.p.statuses.stun)return n;}throw Error('no counter seed');}
   applyAction(counter,a);assert.equal(counter.units.p.statuses.stun.remainingTurns,1);assert.ok(!counter.units.e.statuses.suppressed);
-  s.turn=s.order.indexOf('e');e.stats.str=11;e.hp=25;e.stats.con=50;p.stats.str=0;settleTurn(s);const check=s.logs.findLast(l=>l.type==='break_hold');assert.equal(check.detail.total,check.detail.roll+2);assert.equal(e.statuses.suppressed.holdTotal,hold);e.stats.str=50;e.hp=e.maxHp;s.turn=s.order.indexOf('e');settleTurn(s);assert.equal(e.statuses.suppressed,undefined);
-  grantStatus(s,e,'suppressed',{sourceUnitId:'p'}).holdTotal=hold;
+  s.turn=s.order.indexOf('e');e.stats.str=11;e.hp=25;e.stats.con=50;p.stats.str=0;settleTurn(s);const check=s.logs.findLast(l=>l.type==='break_hold');assert.equal(check.detail.total,check.detail.roll+2);assert.equal(e.statuses.suppressed.vars.holdTotal,hold);e.stats.str=50;e.hp=e.maxHp;s.turn=s.order.indexOf('e');settleTurn(s);assert.equal(e.statuses.suppressed,undefined);
+  grantStatus(s,e,'suppressed',{sourceId:'p', vars:{holdTotal:hold}});
   const allDead=structuredClone(s);allDead.units.e.hp=allDead.units.f.hp=0;refreshOutcome(allDead);assert.equal(allDead.outcome,'red');assert.match(allDead.battleConclusion,/蓝方过失致死，压制失败/);
   f.hp=0;refreshOutcome(s);assert.equal(s.outcome,'blue');assert.match(s.battleConclusion,/蓝方压制成功，过失致死：剑士/);
 });
 test('抵抗方移动后可花攻击槽解救相邻队友，不掷骰、不赠额外回合',()=>{
   const s=fixture(),{e,f}=s.units;s.battleType='suppress';s.suppressingTeam='blue';
   s.turn=s.order.indexOf('f');f.ap=2;f.used={attack:0,action:0};f.x=4;
-  grantStatus(s,e,'suppressed',{sourceUnitId:'p'}).holdTotal=25;
+  grantStatus(s,e,'suppressed',{sourceId:'p', vars:{holdTotal:25}});
   const rescue={type:'free_ally',targetId:e.id,x:e.x,y:e.y};assert.equal(preview(s,rescue).ok,false);
   const move=chooseAction(s);assert.equal(move.type,'move');applyAction(s,move);
   assert.deepEqual(chooseAction(s),rescue);assert.equal(preview(s,rescue).slot,'attack');

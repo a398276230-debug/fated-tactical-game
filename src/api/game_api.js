@@ -2,7 +2,7 @@ import { elevation } from '../core/spatial.js';
 import { buildScenario } from '../presets/scenarios.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
-import { applyAction, currentUnit, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, statusModifierKeys, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
+import { applyAction, currentUnit, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
 import { chooseAction } from '../core/ai.js';
 import { applyCommand } from './commands.js';
 import { validateState } from './validation.js';
@@ -211,7 +211,6 @@ export function createGameAPI() {
       const s = current();
       return copy({ ...STATUSES, ...s.statusTemplates });
     },
-    statusModifierKeys(statusId) { return statusModifierKeys(statusId, state); },
     checkStealth(unitId, d20, dc) {
       const s = current();
       if (!own(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail('无效的潜行检定参数');

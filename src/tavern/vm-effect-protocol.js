@@ -85,6 +85,7 @@ mods 数组每项：${describe(defs.statMod)}。至少含 stat、locks、flags �
 • 输出侧（持有者进攻）：damageFlat 固定加伤（基值 0，用 flat）；damageMult 输出倍率、finalDamageMult 最终伤害倍率（基值 1，用 mult 或 additivePercent，禁用 flat）；armorPierce 固定穿甲（用 flat）；armorPiercePercent 百分比穿甲（基值 0，用 flat:-1..1，禁用 additivePercent）。
 • 承伤侧（持有者受击）：damageReductionFlat 受击固定减伤（基值 0，用正数 flat，勿写成负 damageFlat）；damageReduction 与 dr 受击比例减伤（基值 0，用 flat:-1..1，禁用 additivePercent；damageReduction 在固减前乘算，dr 在固减后乘算；真实伤害无视减伤）。
 • 机动与距离：movement 的基值与 flat 均为同阶移动单位，叠加后应用倍率，再按层级米数折算为格；checkBonus、initiativeFlat 仅接受 flat 数值加值，不乘检定或先攻总值；incomingDistanceOffset 用 flat 写敌方测算射程、范围与距离档位时的表观距离增量（可用 scale_cells(n)）。
+• 状态扩展：incomingAccuracy（被命中修正）、intentDifficulty（意图难度）、shatter（碎裂增伤）均使用 stat flat；hidden、intercept、taunted、infiniteAmmo 使用 mods.flags。
 • 检定与属性：dodge 受击闪避（基值 0，用正数 flat 扣敌方命中）、checkBonus 检定加值、dcBonus 豁免难度加值（挂施加者）、resistBonus 豁免抵抗加值（挂豁免者）、advantage 优劣势骰数、initiativeFlat 先手加值，基值均为 0，用 flat；healingMult / incomingHealMult / costMult 基值均为 1，用 mult 或 additivePercent（禁用 flat）；str/agi/con/int/spi/armor 叠加持有者对应面板值。
 controlPolicy：${describe(defs.controlPolicy)}。moraleLock 仅枚举值 "steady"；allowFriendlyTarget:true 允许敌方指向动作合法选中友军或自身。
 

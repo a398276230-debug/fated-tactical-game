@@ -577,9 +577,9 @@ test('G100 populated YAML blocks keep VM rules and diagnose unstandardized text'
 test('G101 status placeholders are silent without hiding invalid modifier overrides', () => {
   const {state,warnings} = hydrateDummy({ 状态: ['|', '>-', {}, null, {id:'stun',modifiers:'|'}] });
   assert.deepEqual(warnings, []);
-  assert.equal(state.units.e1.statuses.stun.modifiers.skip, true);
+  assert.ok(state.units.e1.statuses.stun.mods.some(mod => mod.locks?.includes('action')));
   const bad = hydrateDummy({ 状态: [{id:'stun',modifiers:{badKey:2}}] });
-  assert.equal(bad.state.units.e1.statuses.stun.modifiers.skip, true);
+  assert.ok(bad.state.units.e1.statuses.stun.mods.some(mod => mod.locks?.includes('action')));
   assert.ok(bad.warnings.some(w => w.message.includes('状态 stun 的 modifiers 待标准化') && w.message.includes('badKey')));
 });
 test('G102/G103 original YAML and rejected effects retain the referenced skill template', () => {

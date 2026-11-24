@@ -1,28 +1,36 @@
 import { resourceLabel } from '../core/resource_names.js';
 
+import { evaluateExpr } from '../core/formula.js';
+
 const damageNames = { physical: '物理', energy: '能量', mental: '精神', true: '真实' };
 const statNames = {
   str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神', accuracy: '命中', dodge: '闪避',
-  defense: '防御', initiative: '先攻', armor: '护甲', armorPierce: '穿甲', damageReduction: '减伤比例',
+  defense: '防御', initiative: '先攻', armor: '护甲', armorPierce: '穿甲', incomingAccuracy: '被命中修正', intentDifficulty: '意图难度', shatter: '碎裂增伤', damageReduction: '减伤比例',
   damageReductionFlat: '固定减伤', damage: '伤害', healing: '治疗', skillPower: '技能威力',
 };
-const flatModifiers = {
-  armor: '护甲', movement: '移动距离', accuracy: '命中', incomingAccuracy: '被命中修正',
-  advantage: '优势骰', disadvantage: '劣势骰', intentDifficulty: '意图难度', dodgeBonus: '闪避',
+const modifierNames = {
+  ...statNames, movement: '移动距离', apMax: '行动点上限', incomingDistanceOffset: '表观距离',
+  checkBonus: '检定加值', initiativeFlat: '先攻', dcBonus: '豁免难度', resistBonus: '豁免加值',
+  damageFlat: '固定增伤', damageMult: '增伤', finalDamageMult: '最终伤害', incomingDamageMult: '易伤',
+  healingMult: '治疗', incomingHealMult: '受治疗', costMult: '消耗',
+  damageReduction: '减伤', dr: '最终减伤', armorPiercePercent: '穿甲比例',
 };
-const ratioModifiers = {
-  reduction: '减伤', vulnerability: '易伤', shatter: '碎裂增伤', damageBonus: '增伤',
-  attackPercent: '攻击', attributePercent: '属性',
-};
+const ratios = new Set(['damageReduction', 'dr', 'armorPiercePercent', 'shatter']);
 const flagModifiers = {
-  taunted: '被嘲讽', intercept: '可拦截攻击', skip: '跳过行动', rooted: '无法移动', hidden: '隐身',
-  infiniteAmmo: '弹药不限', guaranteed_hit: '必定命中', guaranteed_crit: '必定暴击',
-  blockResourceRestore: '禁止资源恢复', preserveLife: '保留至少 1 HP',
+  taunted: '被嘲讽', intercept: '可拦截攻击', hidden: '隐身', infiniteAmmo: '弹药不限',
+  guaranteed_hit: '必定命中', guaranteed_crit: '必定暴击', untargetableSingle: '不可被单体选中',
+  blockResourceRestore: '禁止资源恢复', preserveLife: '保留至少 1 HP', blockRevive: '禁止复活',
+  harmless: '无害', undispellable: '不可驱散', concept_immune: '概念免疫',
 };
-const expiryEvents = {
-  on_attack: '发动攻击', on_hit: '命中', on_struck: '受到命中', on_damaged: '受到伤害', on_kill: '击杀',
-  on_death: '倒下', on_turn_start: '回合开始', on_turn_end: '回合结束', on_skill_cast: '施放技能',
-  on_equip: '装备生效', on_heal: '受到治疗', on_ally_death: '队友倒下',
+const slotNames = { action: '动作', move: '移动', attack: '攻击', cast: '施法', reaction: '反应', fly: '飞行', teleport: '瞬移' };
+const hookNames = {
+  active: '主动使用', before_action: '行动前', before_target: '选定目标前', before_check: '检定前',
+  after_natural_roll: '掷出自然骰后', after_check: '检定后', before_commit: '结算前', before_status: '施加状态前',
+  on_lethal_p1: '首次致命结算', on_lethal_p2: '二次致命结算', after_action: '行动结束', after_move: '移动后',
+  after_hit: '命中', after_damage: '受到伤害', after_heal: '受到治疗', after_status_applied: '施加状态后',
+  after_status_removed: '移除状态后', on_status_immunized: '免疫状态', on_summon_evict: '召唤物退场',
+  on_death: '倒下', on_ally_death: '队友倒下', on_kill: '击杀', turn_start: '回合开始', turn_end: '回合结束',
+  round_start: '轮次开始', round_end: '轮次结束',
 };
 const checkGrade = (success, roll) => success ? (roll === 20 ? '大成功' : '成功') : (roll === 1 ? '大失败' : '失败');
 const maneuvers = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
@@ -40,26 +48,48 @@ function statusNotes(detail) {
   if (detail.durationType === 'persistent') parts.push('跨战斗持续');
   else if (detail.durationType === 'until_removed') parts.push('持续至解除');
   else if (Number.isInteger(detail.remainingTurns)) parts.push(`持续 ${detail.remainingTurns} 回合`);
-  const m = detail.effectiveModifiers ?? detail.modifiers ?? {};
-  if (Number.isFinite(detail.amount ?? m.amount)) parts.push(`护盾 ${detail.amount ?? m.amount} 点`);
-  const ticks = [];
-  const tickAmount = (value, label) => `每层 ${value} 点${label}`
-    + (detail.stacks > 1 ? `（当前合计 ${value * detail.stacks} 点）` : '');
-  if (m.damage) ticks.push(tickAmount(m.damage, `${damageNames[m.damageType ?? 'true']}伤害`));
-  if (m.heal) ticks.push(tickAmount(m.heal, '治疗'));
-  if (ticks.length) parts.push(`持有者回合${detail.tickTiming === 'onTurnEnd' ? '结束' : '开始'}：${ticks.join('、')}`);
-  if (m.reflect) parts.push(`反伤 ${m.reflect} 点`);
-  const perLayer = detail.stacks > 1 ? '每层' : '';
-  for (const [key, label] of Object.entries(flatModifiers)) if (m[key]) parts.push(`${perLayer}${label} ${signed(m[key])}`);
-  for (const [key, label] of Object.entries(ratioModifiers)) if (m[key]) parts.push(`${perLayer}${label} ${signed(percent(m[key]))}%`);
-  if (m.finalDamageMultiplier != null && m.finalDamageMultiplier !== 1) parts.push(`${perLayer}最终伤害 ×${m.finalDamageMultiplier}`);
-  for (const [key, label] of Object.entries(flagModifiers)) if (m[key]) parts.push(label);
+  const mods = detail.mods ?? [];
+  const vars = detail.vars ?? {};
+  const resolve = (value, stacks = detail.stacks ?? 1) => evaluateExpr(value, { status: { ...detail, stacks, vars }, vars });
+  const scaled = value => typeof value === 'string' && /\bstatus\.stacks\b/.test(value);
+  const shield = detail.category === 'shield' ? vars.shieldAmount : undefined;
+  if (Number.isFinite(shield)) parts.push(`护盾 ${shield} 点`);
+  for (const hook of ['turn_start', 'turn_end']) {
+    const effects = (detail.rules ?? []).filter(rule => rule.hook === hook).flatMap(rule => rule.program).flatMap(op => {
+      if (op.op !== 'damage' && op.op !== 'heal') return [];
+      const perLayer = scaled(op.amount);
+      const amount = resolve(op.amount, perLayer ? 1 : undefined);
+      const label = op.op === 'heal' ? '治疗' : `${damageNames[op.damageType ?? 'true']}伤害`;
+      if (!Number.isFinite(amount)) return [`${label}（${op.amount}）`];
+      const total = perLayer && detail.stacks > 1 ? `（当前合计 ${proseNumber(resolve(op.amount))} 点）` : '';
+      return [`${perLayer || detail.stacks === 1 ? '每层 ' : ''}${proseNumber(amount)} 点${label}${total}`];
+    });
+    if (effects.length) parts.push(`持有者${hookNames[hook]}：${effects.join('、')}`);
+  }
+  for (const mod of mods) for (const field of ['flat', 'additivePercent', 'mult']) {
+    if (mod[field] === undefined) continue;
+    const perLayer = scaled(mod[field]);
+    const value = resolve(mod[field], perLayer ? 1 : undefined);
+    let label = mod.stat === 'checkBonus' && mod.checkKind === 'attack' ? '命中' : modifierNames[mod.stat];
+    if (mod.stat === 'advantage') label = value < 0 ? '劣势骰' : '优势骰';
+    const ratio = ratios.has(mod.stat) && field === 'flat' || field === 'additivePercent';
+    const shown = !Number.isFinite(value) ? `（${mod[field]}）` : field === 'mult' ? `×${proseNumber(value)}`
+      : ratio ? `${signed(percent(value))}%` : signed(mod.stat === 'advantage' ? Math.abs(value) : value);
+    parts.push(`${perLayer && detail.stacks > 1 ? '每层' : ''}${label} ${shown}`);
+  }
+  const flags = new Set([...(detail.flags ?? []), ...mods.flatMap(mod => mod.flags ?? [])]);
+  for (const flag of flags) if (flagModifiers[flag]) parts.push(flagModifiers[flag]);
+  const locks = new Set(mods.flatMap(mod => mod.locks ?? []));
+  if (Object.keys(slotNames).every(slot => locks.has(slot))) parts.push('跳过行动');
+  else if (locks.size === 1 && locks.has('move')) parts.push('无法移动');
+  else if (locks.size) parts.push(`封锁：${[...locks].map(slot => slotNames[slot]).join('、')}`);
   if (detail.expireOn) {
     const triggers = [].concat(detail.expireOn).map(rule => {
-      const qualifier = rule.damageType === 'direct' ? '受到直接伤害' : rule.damageType === 'indirect' ? '受到间接伤害'
-        : expiryEvents[rule.trigger] ?? { after_damage: '受到伤害', after_hit: rule.filter?.includes?.('target.id == self.id') ? '受到命中' : '命中',
-          after_action: '行动结束', turn_start: '回合开始', turn_end: '回合结束' }[rule.hook] ?? '满足条件';
-      return qualifier + (rule.exceptSource === 'self' ? '（自身来源除外）' : '');
+      const filter = rule.filter ?? '';
+      const qualifier = rule.hook === 'after_hit' && /target\.id\s*==\s*self\.id/.test(filter) ? '受到命中'
+        : rule.hook === 'after_damage' && /event\.direct\s*==\s*(true|false)\b/.test(filter)
+          ? (/event\.direct\s*==\s*true\b/.test(filter) ? '受到直接伤害' : '受到间接伤害') : hookNames[rule.hook];
+      return qualifier + (/source\.id\s*!=\s*self\.id/.test(filter) ? '（自身来源除外）' : '');
     });
     parts.push(`${triggers.join('或')}时解除`);
   }
@@ -199,7 +229,7 @@ export function formatBattleReportText(report, unitNames = {}) {
           if (type === 'status' && brace?.type === 'brace' && brace.actor === detail.targetId
             && (detail.stacks ?? 1) === 1 && (!detail.durationType || detail.durationType === 'battle_turns')
             && !detail.expireOn && !detail.amount && brace.detail?.turns === detail.remainingTurns
-            && Object.keys(detail.modifiers ?? {}).every(key => key === 'reduction' && detail.modifiers[key] === brace.detail.reduction)) break;
+            && detail.mods?.length === 1 && detail.mods[0].stat === 'damageReduction' && detail.vars?.reduction === brace.detail.reduction) break;
           const parts = statusNotes(detail);
           if (type === 'status_patch' && detail.stacks > 1) parts.unshift(`${detail.stacks} 层`);
           if (type === 'status' && actor && detail.targetId && actor !== detail.targetId) parts.push(`来源 ${name(event, actor)}`);

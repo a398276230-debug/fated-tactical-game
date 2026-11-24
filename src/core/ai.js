@@ -1,4 +1,4 @@
-import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, visibleEnemy } from './combat.js';
 import { aggregateModifiers } from './vm-carriers.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
@@ -26,7 +26,7 @@ export function tactics(state, actor, action, plan) {
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target.hp ? Math.min(profile.hitChance ?? 1, damage / target.hp) : 0;
     const locks = aggregateModifiers(state, target.id).locks;
-    const controlled = Object.values(locks).some(Boolean) || ['skip','rooted','disadvantage'].some(key => statusModifier(target, key) > 0);
+    const controlled = Object.values(locks).some(Boolean) || ['skip','rooted','disadvantage'].some(key => locks[key] || aggregateModifiers(state, target.id).stats[key]?.flat > 0);
     const statusValue = (controlled ? (enemy ? 8 : -8) : 0)
       + Object.values(target.statuses ?? {}).filter(status => status.durationType === 'battle_turns').length;
     score += sign * (Math.min(target.hp, damage) + kill * 6 + statusValue);
@@ -304,7 +304,7 @@ export function chooseAction(state) {
     consider({ action: { type, x: cell.x, y: cell.y }, score });
   }
   const bracing = preview(state, { type: 'brace' });
-  if (bracing.ok && !statusModifier(actor, 'reduction') && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
+  if (bracing.ok && !aggregateModifiers(state, actor.id).stats.damageReduction?.flat && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
   // Ending while a legal attack slot is still available throws away a whole
   // resource. Keep higher-value movement, brace, reload, or skill choices,
   // but use the best legal attack whenever END would otherwise win.

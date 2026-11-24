@@ -428,91 +428,66 @@ var actionStatuses = Object.freeze({
   collision: "stun",
   shield_bash: "stun"
 });
-var def = (name, icon, category, remainingTurns, description, modifiers2 = {}, options = {}) => {
-  const { stackMode = "refresh", tags = [], vars = {}, mods = [], rules = [], ...rest } = options;
-  return Object.freeze({
-    name,
-    icon,
-    category,
-    description,
-    remainingTurns,
-    durationType: "battle_turns",
-    tickTiming: "onTurnStart",
-    stackMode,
-    stackRule: stackMode,
-    maxStacks: 1,
-    tier: 1,
-    tags: Object.freeze(tags),
-    vars: Object.freeze(vars),
-    mods: Object.freeze(mods),
-    rules: Object.freeze(rules),
-    modifiers: Object.freeze(modifiers2),
-    ...rest
-  });
-};
-var allSlots = ["attack", "action", "move", "cast", "reaction"];
+var allSlots = ["attack", "action", "move", "cast", "reaction", "fly", "teleport"];
+var def = (id3, name, icon, category, remainingTurns, description, options = {}) => Object.freeze({
+  id: id3,
+  name,
+  icon,
+  category,
+  description,
+  remainingTurns,
+  durationType: "battle_turns",
+  stackMode: "refresh",
+  maxStacks: 1,
+  tier: 1,
+  tags: Object.freeze([]),
+  vars: Object.freeze({}),
+  mods: Object.freeze([]),
+  rules: Object.freeze([]),
+  ...options
+});
 var tick = (id3, hook2, op) => ({ id: id3, hook: hook2, program: [{ target: "self", ...op }] });
 var dot = (id3, hook2, amount, damageType2) => tick(id3, hook2, { op: "damage", amount, damageType: damageType2, direct: false });
-var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
-  // Native combat reads modifiers for reporting and its movement, action, and strike calculations.
-  suppressed: def(
-    "\u88AB\u538B\u5236",
-    "\u26D3\uFE0F",
-    "control",
-    1,
-    "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002",
-    { skip: true },
-    { durationType: "until_removed", tags: ["control"], mods: [{ locks: allSlots }] }
-  ),
-  burn: def(
-    "\u707C\u70E7",
-    "\u{1F525}",
-    "dot",
-    2,
-    "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002",
-    {},
-    { tags: ["fire"], rules: [dot("burn-tick", "turn_start", 5, "energy")] }
-  ),
-  bleed: def(
-    "\u6D41\u8840",
-    "\u{1FA78}",
-    "dot",
-    3,
-    "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
-    {},
-    { stackMode: "stack", maxStacks: 5, tickTiming: "onTurnEnd", rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")] }
-  ),
-  poison: def(
-    "\u4E2D\u6BD2",
-    "\u2620\uFE0F",
-    "dot",
-    3,
-    "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
-    {},
-    { stackMode: "stack", maxStacks: 4, tags: ["poison"], rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")] }
-  ),
-  regen: def(
-    "\u518D\u751F",
-    "\u{1F49A}",
-    "hot",
-    3,
-    "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002",
-    {},
-    { rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })] }
-  ),
-  shield: def(
-    "\u62A4\u76FE",
-    "\u{1F6E1}\uFE0F",
-    "shield",
-    2,
-    "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002",
-    { amount: 8 },
-    { stackMode: "replace", vars: { shieldAmount: 8 } }
-  ),
-  guarded: def("\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", { reduction: 0.35 }),
-  taunt: def("\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", { taunted: true }),
-  guard: def("\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", { intercept: true }),
-  thorns: def("\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {}, {
+var STATUSES = Object.freeze({
+  suppressed: def("suppressed", "\u88AB\u538B\u5236", "\u26D3\uFE0F", "control", 1, "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002", {
+    durationType: "until_removed",
+    tags: ["control"],
+    vars: { holdTotal: 0 },
+    mods: [{ locks: allSlots }]
+  }),
+  burn: def("burn", "\u707C\u70E7", "\u{1F525}", "dot", 2, "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002", {
+    tags: ["fire"],
+    rules: [dot("burn-tick", "turn_start", 5, "energy")]
+  }),
+  bleed: def("bleed", "\u6D41\u8840", "\u{1FA78}", "dot", 3, "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002", {
+    stackMode: "stack",
+    maxStacks: 5,
+    rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")]
+  }),
+  poison: def("poison", "\u4E2D\u6BD2", "\u2620\uFE0F", "dot", 3, "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002", {
+    stackMode: "stack",
+    maxStacks: 4,
+    tags: ["poison"],
+    rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")]
+  }),
+  regen: def("regen", "\u518D\u751F", "\u{1F49A}", "hot", 3, "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002", {
+    rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })]
+  }),
+  shield: def("shield", "\u62A4\u76FE", "\u{1F6E1}\uFE0F", "shield", 2, "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002", {
+    stackMode: "replace",
+    vars: { shieldAmount: 8 }
+  }),
+  guarded: def("guarded", "\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", {
+    vars: { reduction: 0.35 },
+    mods: [{ stat: "damageReduction", flat: "status.vars.reduction" }]
+  }),
+  taunt: def("taunt", "\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", {
+    mods: [{ flags: ["taunted"] }]
+  }),
+  guard: def("guard", "\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", {
+    mods: [{ flags: ["intercept"] }]
+  }),
+  thorns: def("thorns", "\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {
     rules: [{
       id: "thorns-retaliate",
       hook: "after_damage",
@@ -520,78 +495,67 @@ var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
       program: [{ op: "damage", target: "attacker", amount: 5, damageType: "true", direct: false }]
     }]
   }),
-  stun: def("\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", { skip: true }, { tags: ["control"], mods: [{ locks: allSlots }] }),
-  freeze: def(
-    "\u51B0\u51BB",
-    "\u{1F9CA}",
-    "control",
-    1,
-    "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002",
-    { skip: true, shatter: 0.5 },
-    { tags: ["control", "ice"], mods: [{ locks: allSlots }], expireOn: { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" } }
-  ),
-  root: def(
-    "\u5B9A\u8EAB",
-    "\u26D3\uFE0F",
-    "control",
-    2,
-    "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002",
-    { rooted: true },
-    { tags: ["control"], mods: [{ locks: ["move"] }] }
-  ),
-  blind: def(
-    "\u81F4\u76F2",
-    "\u{1F311}",
-    "debuff",
-    2,
-    "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002",
-    {},
-    { mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }] }
-  ),
-  vulnerable: def(
-    "\u6613\u4F24",
-    "\u{1F4A2}",
-    "debuff",
-    2,
-    "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002",
-    {},
-    { mods: [{ stat: "incomingDamageMult", mult: 1.35 }] }
-  ),
-  sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", {}, { mods: [{ stat: "armor", flat: -4 }] }),
-  mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
-  stealth: def(
-    "\u9690\u8EAB",
-    "\u{1F464}",
-    "buff",
-    2,
-    "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002",
-    { hidden: true },
-    {
-      tags: ["stealth"],
-      mods: [{ stat: "advantage", flat: 1, checkKind: "attack" }],
-      expireOn: [
-        { hook: "after_action", filter: "attacker.id == self.id && event.hostile == true" },
-        { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
-      ]
-    }
-  ),
-  haste: def("\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002", { movement: 1 }),
-  chill: def("\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", { movement: -1, accuracy: -2 }),
-  charge: def("\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", { damageBonus: 0.15 }),
-  lock_on: def("\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", { accuracy: 1 }),
-  weakness: def("\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", { intentDifficulty: -2 }, { stackMode: "stack", maxStacks: 3 }),
-  grappled: def(
-    "\u64D2\u62B1",
-    "\u26D3",
-    "control",
-    1,
-    "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002",
-    { rooted: true },
-    { tags: ["control"], mods: [{ locks: ["move"] }] }
-  ),
-  prone: def("\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", { incomingAccuracy: 2, rooted: true }, { mods: [{ locks: ["move"] }] }),
-  infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
-}).map(([id3, status]) => [id3, Object.freeze({ id: id3, ...status })])));
+  stun: def("stun", "\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", {
+    tags: ["control"],
+    mods: [{ locks: allSlots }]
+  }),
+  freeze: def("freeze", "\u51B0\u51BB", "\u{1F9CA}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002", {
+    tags: ["control", "ice"],
+    mods: [{ locks: allSlots }, { stat: "shatter", flat: 0.5 }],
+    expireOn: { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
+  }),
+  root: def("root", "\u5B9A\u8EAB", "\u26D3\uFE0F", "control", 2, "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002", {
+    tags: ["control"],
+    mods: [{ locks: ["move", "teleport"] }]
+  }),
+  blind: def("blind", "\u81F4\u76F2", "\u{1F311}", "debuff", 2, "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002", {
+    mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }]
+  }),
+  vulnerable: def("vulnerable", "\u6613\u4F24", "\u{1F4A2}", "debuff", 2, "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002", {
+    mods: [{ stat: "incomingDamageMult", mult: 1.35 }]
+  }),
+  sunder: def("sunder", "\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", {
+    mods: [{ stat: "armor", flat: -4 }]
+  }),
+  mark: def("mark", "\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", {
+    mods: [{ stat: "incomingAccuracy", flat: "2 * status.stacks" }]
+  }),
+  stealth: def("stealth", "\u9690\u8EAB", "\u{1F464}", "buff", 2, "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002", {
+    tags: ["stealth"],
+    mods: [{ flags: ["hidden"] }, { stat: "advantage", flat: 2, checkKind: "attack" }],
+    expireOn: [
+      { hook: "after_action", filter: "attacker.id == self.id && event.hostile == true" },
+      { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
+    ]
+  }),
+  haste: def("haste", "\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1.", {
+    mods: [{ stat: "movement", flat: "1 * status.stacks" }]
+  }),
+  chill: def("chill", "\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", {
+    mods: [{ stat: "movement", flat: "-1 * status.stacks" }, { stat: "checkBonus", checkKind: "attack", flat: "-2 * status.stacks" }]
+  }),
+  charge: def("charge", "\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", {
+    mods: [{ stat: "damageMult", additivePercent: "0.15 * status.stacks", when: 'event.actionType == "attack"' }]
+  }),
+  lock_on: def("lock_on", "\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", {
+    mods: [{ stat: "checkBonus", checkKind: "attack", flat: "1 * status.stacks" }]
+  }),
+  weakness: def("weakness", "\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", {
+    stackMode: "stack",
+    maxStacks: 3,
+    mods: [{ stat: "intentDifficulty", flat: "-2 * status.stacks" }]
+  }),
+  grappled: def("grappled", "\u64D2\u62B1", "\u26D3", "control", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002", {
+    tags: ["control"],
+    mods: [{ locks: ["move"] }]
+  }),
+  prone: def("prone", "\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", {
+    mods: [{ locks: ["move"] }, { stat: "incomingAccuracy", flat: "2 * status.stacks" }]
+  }),
+  infinite_ammo: def("infinite_ammo", "\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", {
+    mods: [{ flags: ["infiniteAmmo"] }]
+  })
+});
 
 // src/core/formula.js
 var variables = /* @__PURE__ */ new Map();
@@ -1101,7 +1065,7 @@ function evaluateExpr(value, context) {
 }
 
 // src/core/vm-schema.js
-var enumOf = (...values5) => ({ enum: values5 });
+var enumOf = (...values4) => ({ enum: values4 });
 var ref = (name) => ({ $ref: `#/$defs/${name}` });
 var either = (...anyOf) => ({ anyOf });
 var variants = (...oneOf) => ({ oneOf });
@@ -1130,39 +1094,6 @@ var booleanExpr = either(bool, formula);
 var entityId = either(id, variable);
 var damageTypes = Object.freeze(["physical", "energy", "mental", "true"]);
 var damageType = enumOf(...damageTypes);
-var modifierRanges = {
-  damage: [1, 1e5],
-  heal: [1, 1e5],
-  amount: [1, 1e5],
-  reflect: [1, 1e5],
-  armor: [1, 1e5],
-  movement: [-3, 3],
-  accuracy: [-10, 10],
-  incomingAccuracy: [-10, 10],
-  advantage: [1, 3],
-  disadvantage: [1, 3],
-  intentDifficulty: [-10, 10],
-  reduction: [0, 1],
-  vulnerability: [0, 1],
-  shatter: [0, 1],
-  damageBonus: [0, 1],
-  dodgeBonus: [-30, 30],
-  attackPercent: [-1, 4],
-  attributePercent: [-1, 4],
-  finalDamageMultiplier: [0, 8]
-};
-Object.assign(modifierRanges, { armor: [-1e5, 1e5] });
-var modifierRatios = /* @__PURE__ */ new Set(["reduction", "vulnerability", "shatter", "damageBonus", "attackPercent", "attributePercent", "finalDamageMultiplier"]);
-var modifierFlags = /* @__PURE__ */ new Set(["taunted", "intercept", "skip", "rooted", "hidden", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"]);
-function validateStatusModifiers2(template, modifiers2) {
-  if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
-  for (const [key4, value] of Object.entries(modifiers2)) {
-    if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
-    const range2 = modifierRanges[key4];
-    const valid2 = range2 ? (modifierRatios.has(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range2[0] && value <= range2[1] : key4 === "damageType" ? damageTypes.includes(value) : modifierFlags.has(key4) && typeof value === "boolean";
-    if (!valid2) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key4}`);
-  }
-}
 var attribute = enumOf("str", "agi", "con", "int", "spi");
 var slot = enumOf("attack", "action", "move", "cast", "reaction", "fly", "teleport");
 var point2 = object({ x: number, y: number }, ["x", "y"]);
@@ -1273,9 +1204,12 @@ var stat = enumOf(
   "dodge",
   "advantage",
   "initiativeFlat",
-  "apMax"
+  "apMax",
+  "incomingAccuracy",
+  "intentDifficulty",
+  "shatter"
 );
-var ratioStats = enumOf("damageReduction", "dr", "armorPiercePercent");
+var ratioStats = enumOf("damageReduction", "dr", "armorPiercePercent", "shatter");
 var flatOnlyStats = Object.freeze([
   "incomingDistanceOffset",
   "armorPierce",
@@ -1302,7 +1236,7 @@ var statMod = withRules(
     checkKind: text,
     statusId: id,
     locks: list(slot, 1),
-    flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless", "guaranteed_hit", "guaranteed_crit"), 1),
+    flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless", "guaranteed_hit", "guaranteed_crit", "hidden", "intercept", "taunted", "infiniteAmmo"), 1),
     controlPolicy,
     when: booleanExpr
   }),
@@ -2060,19 +1994,19 @@ function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
       for (const [index, mod2] of row.entity.mods.entries()) {
         const key4 = JSON.stringify([carrierDedupePrefix(row, unitId), index]);
         if (seen.has(key4) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
-        const values5 = {};
+        const values4 = {};
         for (const field of ["flat", "mult", "additivePercent"]) {
           if (mod2[field] === void 0) continue;
           const value = evaluateExpr(mod2[field], context);
-          if (Number.isFinite(value)) values5[field] = value;
+          if (Number.isFinite(value)) values4[field] = value;
         }
-        if (!Object.keys(values5).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length) continue;
+        if (!Object.keys(values4).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length) continue;
         seen.add(key4);
-        if (mod2.stat && Object.keys(values5).length) {
+        if (mod2.stat && Object.keys(values4).length) {
           const total2 = stats.get(mod2.stat) ?? { flat: 0, mult: 1, additivePercent: 0 };
-          total2.flat += values5.flat ?? 0;
-          total2.mult *= values5.mult ?? 1;
-          total2.additivePercent += values5.additivePercent ?? 0;
+          total2.flat += values4.flat ?? 0;
+          total2.mult *= values4.mult ?? 1;
+          total2.additivePercent += values4.additivePercent ?? 0;
           stats.set(mod2.stat, total2);
         }
         for (const lock of mod2.locks ?? []) if (Object.hasOwn(locks, lock)) locks[lock] = true;
@@ -2562,8 +2496,8 @@ function initializeUnitPools(state, unitId, resources) {
 function maxFor(state, contributor, effectiveMax) {
   return nonnegative(effectiveMax ? effectiveMax(contributor, state) : contributor.maxBase, "Contributor max");
 }
-function total(values5, name) {
-  return nonnegative(values5.reduce((sum, value) => sum + value, 0), name);
+function total(values4, name) {
+  return nonnegative(values4.reduce((sum, value) => sum + value, 0), name);
 }
 function unitBindings(state, pool) {
   return pool.contributors.map((contributor) => {
@@ -2847,14 +2781,14 @@ var ruleOps = {
       const hp = getPool(state, target2.id, "hp");
       if (!hp || live(target2) || target2.fled || target2.corpseConsumed || host.flag?.(state, target2, "blockRevive")) continue;
       if (hp.contributors.length !== 1) continue;
-      const values5 = ["hp", "mp", "sp"].map((key4) => {
+      const values4 = ["hp", "mp", "sp"].map((key4) => {
         const pool = getPool(state, target2.id, key4);
         const fraction = evaluate2(op[`${key4}Percent`], { ...context, target: target2 }, key4 === "hp" ? 1 : 0);
         const flat = key4 === "hp" && op.hpFlat !== void 0 ? evaluateExpr(op.hpFlat, { ...context, target: target2 }) : fraction * pool.max;
         return { pool, flat };
       });
-      if (values5.some(({ flat }) => !Number.isFinite(flat))) continue;
-      for (const { pool, flat } of values5) updatePoolCurrent(state, pool.id, "set", bounded(flat, pool.kind === "hp" ? 1 : 0, pool.max));
+      if (values4.some(({ flat }) => !Number.isFinite(flat))) continue;
+      for (const { pool, flat } of values4) updatePoolCurrent(state, pool.id, "set", bounded(flat, pool.kind === "hp" ? 1 : 0, pool.max));
       delete target2.diedAt;
       if (!state.order.includes(target2.id)) state.order.push(target2.id);
       host.log(state, context.self, "revive", `${target2.name}\u590D\u6D3B\uFF0C\u6062\u590D\u81F3${target2.hp}\u70B9\u751F\u547D`, { targetId: target2.id });
@@ -3062,8 +2996,8 @@ function continueApplyStatus({ state, frame, host, context, options }) {
     if (!live(target2)) return;
     const previous = own7(target2.statuses, op.statusId);
     const stackMode = op.stackMode ?? template.stackMode ?? "refresh";
-    const values5 = { ...template.vars, ...op.vars };
-    const vars = Object.fromEntries(Object.entries(values5).map(([key4, expr2]) => [key4, typeof expr2 === "string" && !validExpr(expr2) ? expr2 : evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
+    const values4 = { ...template.vars, ...op.vars };
+    const vars = Object.fromEntries(Object.entries(values4).map(([key4, expr2]) => [key4, typeof expr2 === "string" && !validExpr(expr2) ? expr2 : evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
     const cap = evaluate2(template.maxStacks, context, 1);
     const duration2 = evaluate2(op.turns, context, template.remainingTurns ?? 1);
     const count = evaluate2(op.stacks, context, stackMode === "extend" ? previous?.stacks ?? 1 : 1);
@@ -3348,7 +3282,6 @@ function continueCommit({ state, frame, host, options }) {
         pending -= amount;
         absorbed += amount;
         status.vars.shieldAmount -= amount;
-        if (Object.hasOwn(status, "amount")) status.amount = status.vars.shieldAmount;
         host.log(state, target2, "shield", `${target2.name}\u7684${status.name}\u5438\u6536${amount}\u70B9\u4F24\u5BB3`, { targetId: target2.id, statusId: status.id ?? status.templateId ?? null });
         if (!status.vars.shieldAmount) removeStatus(state, target2, status, "shield_depleted", source, host, frame);
       }
@@ -4320,10 +4253,10 @@ function spawnTerrain({ state, frame, host, context, op }, center) {
     { terrainId: id3, count: spots.length }
   );
 }
-function scheduleTerrainFalls(state, parent, changes2) {
+function scheduleTerrainFalls(state, parent, changes) {
   if (!parent) return;
   const height2 = (tile) => tile.kind === "slope" ? 1 : tile.z;
-  for (const p of changes2.slice().reverse()) {
+  for (const p of changes.slice().reverse()) {
     if (p.after.kind === "wall") continue;
     const drop = height2(p.before) - height2(p.after);
     const unit = drop > 0 && unitAt(state, p.x, p.y);
@@ -4381,15 +4314,15 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
   const layers = values(state.spatialTerrain);
   const removed = layers.filter((layer) => ids.has(layer.id));
   const affected = new Set(removed.flatMap((layer) => layer.cells.map(cellKey2)));
-  const changes2 = /* @__PURE__ */ new Map();
+  const changes = /* @__PURE__ */ new Map();
   for (const layer of layers) {
     for (const patch of layer.cells) {
       const key4 = cellKey2(patch);
       if (!affected.has(key4)) continue;
-      let change2 = changes2.get(key4);
+      let change2 = changes.get(key4);
       if (!change2) {
         change2 = { ...xy(patch), before: state.grid[patch.y][patch.x], after: patch.before };
-        changes2.set(key4, change2);
+        changes.set(key4, change2);
       }
       if (!ids.has(layer.id)) {
         if (!change2.firstSurvivor) {
@@ -4400,10 +4333,10 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
       }
     }
   }
-  for (const { x, y, after } of changes2.values()) state.grid[y][x] = after;
+  for (const { x, y, after } of changes.values()) state.grid[y][x] = after;
   for (const layer of removed) delete state.spatialTerrain[layer.id];
   removeCovers(state, new Set(removed.flatMap((layer) => layer.coverIds)));
-  const restored = [...changes2.values()];
+  const restored = [...changes.values()];
   scheduleTerrainFalls(state, parent, restored);
   settleRestoredWalls(state, host, restored.filter((p) => p.before.kind !== "wall" && p.after.kind === "wall"), parent);
   refreshFollowingZones(state, host);
@@ -4569,7 +4502,6 @@ function normalizeProse(text5) {
 
 // src/core/vm-runtime.js
 var own11 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-var values2 = (table4) => Object.values(table4 ?? {});
 var lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
 var mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
 function recordVM(state, unit, type, text5, detail = {}) {
@@ -4684,7 +4616,7 @@ var vmHost = {
           self: unit,
           status,
           event,
-          source: own11(state.units, status.sourceId ?? status.sourceUnitId),
+          source: own11(state.units, status.sourceId),
           target: own11(state.units, event.targetId),
           attacker: own11(state.units, event.actorId)
         })));
@@ -4733,7 +4665,7 @@ var vmHost = {
   },
   statusTemplate: getStatusTemplate,
   statusLogDetail,
-  flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
+  flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true,
   stat: (state, unit, key4) => mod(state, {}, unit.id, key4, unit.stats?.[key4] ?? 0),
   checkBonus: (state, unit, event) => mod(state, event, unit.id, "checkBonus", 0) + (event.checkKind === "save" ? mod(state, event, unit.id, "resistBonus", 0) : 0),
   advantage: (state, unit, event) => mod(state, event, unit.id, "advantage", 0),
@@ -4780,7 +4712,6 @@ var vmHost = {
       }
       amount = damageAfterFlatReduction(state, target2, amount, context);
       amount *= 1 - reduction.dr;
-      if (source) amount *= values2(source.statuses).reduce((mult, status) => status.modifiers?.damageType != null && status.modifiers.damageType !== damageType2 ? mult : mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1), 1);
     }
     return Math.max(0, source ? mod(state, event, source.id, "finalDamageMult", amount) : amount);
   },
@@ -4895,9 +4826,8 @@ function validVmState(state) {
   if (!plain2(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain2(vm.events) || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining) || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain2(pools)) return false;
   if (vm.startingTurn !== void 0 && (!vm.pendingAsk || vm.endingTurn !== void 0 || vm.startingTurn !== state.order?.[state.turn] || !own11(state.units, vm.startingTurn))) return false;
   if (vm.endingTurn !== void 0 && (!vm.pendingAsk || typeof vm.endingTurn !== "string" || vm.endingTurn !== state.order?.[state.turn] || !own11(state.units, vm.endingTurn))) return false;
-  for (const remaining of [vm.endingTicks, vm.endingStatuses]) {
-    if (remaining !== void 0 && (!vm.endingTurn || !Array.isArray(remaining) || !remaining.every((id3) => typeof id3 === "string"))) return false;
-  }
+  const remaining = vm.endingStatuses;
+  if (remaining !== void 0 && (!vm.endingTurn || !Array.isArray(remaining) || !remaining.every((id3) => typeof id3 === "string"))) return false;
   for (const record3 of [...vm.stack, ...Object.values(vm.events)]) {
     if (!plain2(record3) || Object.hasOwn(record3, "sourceSkillId") && !validVmSourceSkillId(record3.sourceSkillId)) return false;
   }
@@ -4934,27 +4864,22 @@ function randomDie(state, sides) {
   state.rng = rng;
   return value;
 }
-var values3 = (object4) => Object.values(object4 ?? {});
+var values2 = (object4) => Object.values(object4 ?? {});
 var alive3 = (unit) => unit && unit.hp > 0;
 var byId2 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-var living = (state) => values3(state.units).filter((unit) => alive3(unit) && !unit.fled).sort(byId2);
+var living = (state) => values2(state.units).filter((unit) => alive3(unit) && !unit.fled).sort(byId2);
 var sameCell = (a, b) => a.x === b.x && a.y === b.y;
 var pos = (x, y) => ({ x, y });
 var pointAt = (state, at2) => ({ x: at2.x, y: at2.y, z: elevation(state, at2) });
 var key2 = (x, y) => `${x},${y}`;
-var stat2 = (unit, id3) => Number(unit.stats?.[id3] ?? 0) * Math.max(0, 1 + changes(unit, "attributePercent"));
+var stat2 = (unit, id3) => Number(unit.stats?.[id3] ?? 0);
 var clamp3 = (number3, min, max) => Math.max(min, Math.min(max, number3));
-var matchesDamageType = (status, type) => type == null || status.modifiers?.damageType == null || status.modifiers.damageType === type;
-var statusModifier = (unit, name, damageType2) => values3(unit.statuses).reduce(
-  (sum, status) => sum + (matchesDamageType(status, damageType2) ? Number(status.modifiers?.[name] ?? 0) * (status.stacks ?? 1) : 0),
-  moraleModifiers[unit.moraleState]?.[name] ?? 0
-);
-var changes = statusModifier;
+var vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
 var statusOf2 = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
 function record(state, unit, type, text5, detail = {}) {
   const actor = typeof unit === "string" ? unit : unit?.id ?? null;
-  const positions = Object.fromEntries(values3(state.units).map((current) => [current.id, pointAt(state, current)]));
+  const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, pointAt(state, current)]));
   const event = { round: state.round, actor, text: text5, type, detail, positions };
   state.logs.push(event);
   return event;
@@ -4985,7 +4910,6 @@ function switchableWeapons(state, unit) {
 var equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map((g) => g.instance?.id)].filter(Boolean))].map((id3) => equipmentFor(state, id3)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
 var effectiveStat = (state, unit, key4) => modStat(state, unit, key4, stat2(unit, key4));
 var resolveDC = (state, actor, dc) => evaluateExpr(dc, { self: actor, source: actor, round: state.round, turn: state.turn }) ?? 12;
-var statusFinalDamageMultiplier = (unit, type) => values3(unit.statuses).reduce((mult, status) => matchesDamageType(status, type) ? mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1) : mult, 1);
 var resourcePool = (state, unit, resource2, instance) => {
   for (const item of equipped(state, unit)) {
     if (instance && item.instance !== instance) continue;
@@ -4998,73 +4922,50 @@ function stealthCheck(state, unit, d20, dc) {
   const bonus = modCheck(state, unit, "stealthBonus");
   return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
 }
-var shieldTotal = (unit) => values3(unit.statuses).reduce((total2, status) => total2 + (status.vars?.shieldAmount ?? status.amount ?? 0), 0);
-function statusModifierKeys(statusId3, state) {
-  return Object.keys(getStatusTemplate(state, statusId3)?.modifiers ?? {});
-}
-function patchStatus(state, unitId, statusId3, patch) {
-  const unit = tableEntry(state.units, unitId);
-  const status = unit && statusOf2(unit, statusId3);
-  const template = getStatusTemplate(state, statusId3);
-  if (!status || !template) throw new Error(`\u627E\u4E0D\u5230\u72B6\u6001\u5B9E\u4F8B\uFF1A${unitId}/${statusId3}`);
-  if (!patch || Object.getPrototypeOf(patch) !== Object.prototype || !Object.keys(patch).length) throw new Error("\u72B6\u6001\u53C2\u6570\u8865\u4E01\u987B\u4E3A\u975E\u7A7A\u5BF9\u8C61");
-  const { expireOn, ...modifiers2 } = patch;
-  const patchExpiry = Object.hasOwn(patch, "expireOn");
-  validateStatusModifiers(template, modifiers2);
-  if (patchExpiry && expireOn !== null && !validVmExpiry(expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
-  status.modifiers = { ...status.modifiers, ...modifiers2 };
-  if (patchExpiry) status.expireOn = structuredClone(expireOn);
-  if (Object.hasOwn(modifiers2, "amount")) status.amount = clamp3(modifiers2.amount, 1, 1e5);
-  record(
-    state,
-    unit,
-    "status_patch",
-    `${unit.name}\u7684${status.name}\u53C2\u6570\u5DF2\u66F4\u65B0`,
-    {
-      ...statusLogDetail(unit, status),
-      effectiveModifiers: { ...status.modifiers },
-      modifiers: modifiers2,
-      ...patchExpiry ? { expireOn: status.expireOn } : {}
-    }
-  );
-  return status;
-}
+var shieldTotal = (unit) => values2(unit.statuses).reduce((total2, status) => total2 + (status.category === "shield" ? status.vars?.shieldAmount ?? 0 : 0), 0);
 function grantStatus(state, unit, statusId3, options = {}) {
   const template = getStatusTemplate(state, statusId3);
   if (!unit || !template) throw new Error(`\u672A\u77E5\u72B6\u6001\uFF1A${statusId3}`);
   if (!alive3(unit) || unit.fled) return null;
-  if (Object.hasOwn(options, "modifiers")) validateStatusModifiers(template, options.modifiers);
   unit.statuses ??= {};
   const previous = statusOf2(unit, statusId3);
-  const stackRule = options.stackRule ?? previous?.stackRule ?? template.stackRule;
-  const maxStacks = options.maxStacks ?? previous?.maxStacks ?? template.maxStacks;
-  const addedStacks = options.stacks ?? 1;
-  const stacks = clamp3(stackRule === "stack" ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
-  const remainingTurns = options.remainingTurns ?? options.turns ?? template.remainingTurns;
+  const stackMode = options.stackMode ?? previous?.stackMode ?? template.stackMode ?? "refresh";
+  const sourceId2 = Object.hasOwn(options, "sourceId") ? options.sourceId : previous?.sourceId ?? null;
+  const source = tableEntry(state.units, sourceId2) ?? unit;
+  const scope = { self: source, source, target: unit, event: {} };
+  const cap = evaluateExpr(template.maxStacks ?? 1, scope);
+  if (!Number.isFinite(cap)) throw new Error("\u65E0\u6548\u72B6\u6001\u5C42\u6570\u4E0A\u9650");
+  const maxStacks = clamp3(Math.floor(cap), 1, 999999);
+  const addedStacks = Math.floor(evaluateExpr(options.stacks ?? (stackMode === "extend" ? previous?.stacks ?? 1 : 1), scope) ?? NaN);
+  if (!Number.isFinite(addedStacks)) throw new Error("\u65E0\u6548\u72B6\u6001\u5C42\u6570");
+  const stacks = clamp3(stackMode === "stack" ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
+  const remainingTurns = options.remainingTurns ?? options.turns ?? template.remainingTurns ?? 1;
+  const vars = { ...Object.fromEntries(Object.entries(template.vars ?? {}).map(([key4, value]) => [key4, evaluateExpr(value, scope) ?? value])), ...structuredClone(options.vars ?? {}) };
   const applied = {
     ...structuredClone(template),
-    stackRule,
+    id: statusId3,
+    templateId: statusId3,
+    ownerId: unit.id,
+    stackMode,
     maxStacks,
     stacks,
-    durationType: options.durationType ?? previous?.durationType ?? template.durationType,
-    remainingTurns: stackRule === "stack" && options.remainingTurns == null && options.turns == null ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
-    tickTiming: options.tickTiming ?? template.tickTiming,
-    modifiers: { ...template.modifiers, ...options.modifiers ?? {} },
-    flags: [.../* @__PURE__ */ new Set([...template.flags ?? [], ...options.flags ?? []])],
-    sourceUnitId: options.sourceUnitId ?? previous?.sourceUnitId ?? null,
+    vars,
+    durationType: options.durationType ?? previous?.durationType ?? template.durationType ?? "battle_turns",
+    remainingTurns: previous && stackMode === "extend" ? Math.min(100, previous.remainingTurns + (options.extendTurns ?? 1)) : stackMode === "stack" && options.remainingTurns == null && options.turns == null ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
+    ...previous?.pools && { pools: previous.pools },
+    sourceId: sourceId2,
     appliedRound: state.round,
     appliedTurn: state.turn
   };
   if (Object.hasOwn(options, "expireOn")) {
-    if (!validVmExpiry(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
+    if (options.expireOn !== null && !validVmExpiry(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
     applied.expireOn = structuredClone(options.expireOn);
   } else if (Object.hasOwn(previous ?? {}, "expireOn")) applied.expireOn = previous.expireOn;
-  if (Object.hasOwn(applied.modifiers, "amount")) applied.amount = options.amount == null ? applied.modifiers.amount : clamp3(options.amount, 1, 1e4);
-  if (applied.category === "shield" && applied.amount != null) (applied.vars ??= {}).shieldAmount = applied.amount;
+  if (options.amount != null) applied.vars.shieldAmount = clamp3(options.amount, 1, 1e4);
   unit.statuses[statusId3] = applied;
   record(
     state,
-    applied.sourceUnitId ?? unit.id,
+    applied.sourceId ?? unit.id,
     "status",
     `${unit.name}\u83B7\u5F97${template.name} \xD7${stacks}`,
     statusLogDetail(unit, applied)
@@ -5072,25 +4973,20 @@ function grantStatus(state, unit, statusId3, options = {}) {
   return applied;
 }
 function statusLogDetail(unit, status) {
-  const { id: statusId3, stacks, remainingTurns, durationType, modifiers: modifiers2, expireOn } = status;
-  const amount = status.category === "shield" ? status.vars?.shieldAmount ?? status.amount : status.amount;
-  const tick3 = status.rules?.find((rule2) => rule2.hook === "turn_start" || rule2.hook === "turn_end");
-  const tickTiming = status.tickTiming ?? (tick3 ? tick3.hook === "turn_end" ? "onTurnEnd" : "onTurnStart" : void 0);
-  const displayModifiers = { ...modifiers2 };
-  for (const op of tick3?.program ?? []) {
-    const perStack = typeof op.amount === "number" ? op.amount : Number(/^([0-9]+) \* status\.stacks$/.exec(op.amount)?.[1]);
-    if (Number.isFinite(perStack) && (op.op === "damage" || op.op === "heal")) displayModifiers[op.op] = perStack;
-    if (op.op === "damage") displayModifiers.damageType = op.damageType;
-  }
+  const { id: statusId3, category, stacks, remainingTurns, durationType, vars, mods, rules, flags: flags2, expireOn } = status;
+  const amount = category === "shield" ? vars?.shieldAmount : void 0;
   return {
     targetId: unit.id,
     statusId: statusId3,
+    ...category && { category },
     stacks,
     remainingTurns,
     durationType,
-    ...tickTiming && { tickTiming },
-    modifiers: displayModifiers,
-    ...amount == null ? {} : { amount },
+    ...amount === void 0 ? {} : { amount },
+    ...vars && Object.keys(vars).length ? { vars: structuredClone(vars) } : {},
+    ...mods?.length ? { mods: structuredClone(mods) } : {},
+    ...rules?.length ? { rules: structuredClone(rules) } : {},
+    ...flags2?.length ? { flags: [...flags2] } : {},
     ...expireOn ? { expireOn: structuredClone(expireOn) } : {}
   };
 }
@@ -5121,13 +5017,13 @@ function refreshOutcome(state) {
   if (state.battleConclusion) return state.outcome;
   if (["spar", "arena"].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
   let blue = false, red = false;
-  for (const unit of values3(state.units)) if (alive3(unit) && !unit.fled) {
+  for (const unit of values2(state.units)) if (alive3(unit) && !unit.fled) {
     blue ||= unit.team === "blue";
     red ||= unit.team === "red";
   }
   if (state.battleType === "suppress") {
     const side2 = state.suppressingTeam, label = side2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
-    const defenders = values3(state.units).filter((u) => u.team !== side2);
+    const defenders = values2(state.units).filter((u) => u.team !== side2);
     const present = defenders.filter((u) => alive3(u) && !u.fled);
     const dead = defenders.filter((u) => !alive3(u));
     if (!present.length && defenders.length) return concludeObjective(
@@ -5135,7 +5031,7 @@ function refreshOutcome(state) {
       side2 === "blue" ? "red" : "blue",
       dead.length === defenders.length ? `${label}\u8FC7\u5931\u81F4\u6B7B\uFF0C\u538B\u5236\u5931\u8D25` : `${label}\u672A\u80FD\u7559\u4F4F\u76EE\u6807\uFF0C\u538B\u5236\u5931\u8D25`
     );
-    if ((side2 === "blue" ? blue : red) && present.length && present.every((u) => u.statuses.suppressed?.holdTotal != null))
+    if ((side2 === "blue" ? blue : red) && present.length && present.every((u) => u.statuses.suppressed?.vars?.holdTotal != null))
       return concludeObjective(state, side2, `${label}\u538B\u5236\u6210\u529F${dead.length ? "\uFF0C\u8FC7\u5931\u81F4\u6B7B\uFF1A" + dead.map((u) => u.name).join("\u3001") : ""}`);
   }
   if (blue && red && state.battleType === "guard" && state.round > 5) return concludeObjective(state, "blue", "\u5B88\u65B9\u575A\u5B88\u4E94\u8F6E");
@@ -5189,7 +5085,7 @@ function setResourceTotal(state, target2, resource2, after, sourceUnitId, label)
 }
 function armorOf(state, unit, damageType2, pierce = 0, context = {}) {
   const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0) + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
-  const base = unit.armor + equipmentDefense + changes(unit, "armor", damageType2) + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
+  const base = unit.armor + equipmentDefense + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
   const ctx = { ...context, target: context.attacker, damageType: damageType2 };
   const armor = Math.max(0, modStat(state, unit, "defense", modStat(state, unit, "armor", base, ctx), ctx));
   const flat = typeof pierce === "object" ? pierce.flat ?? 0 : pierce;
@@ -5209,7 +5105,7 @@ function damageTarget(state, target2, sourceId2, amount, damageType2, label, opt
     direct: options.direct ?? options.hit ?? false,
     melee: options.melee ?? false,
     ...options.details && { details: options.details },
-    lethal: !(options.preserveLife || target2.nonLethal || changes(target2, "preserveLife") || encounterNonlethal(state, source))
+    lethal: !(options.preserveLife || target2.nonLethal || vmFlag(state, target2, "preserveLife") || encounterNonlethal(state, source))
   });
 }
 function damageAfterFlatReduction(state, unit, amount, context) {
@@ -5218,10 +5114,10 @@ function damageAfterFlatReduction(state, unit, amount, context) {
   return Math.max(0, Math.floor(amount - modStat(state, unit, "damageReductionFlat", 0, { ...context, target: attacker })));
 }
 function mitigation(state, unit, type, hit, pierce, ctx = {}) {
-  const shatter = hit ? changes(unit, "shatter", type) : 0;
+  const shatter = hit ? modStat(state, unit, "shatter", 0, { damageType: type }) : 0;
   const vulnerability = modStat(state, unit, "incomingDamageMult", 1, { ...ctx, damageType: type }) - 1;
   const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
-  const reduction = type === "true" ? 0 : clamp3(modStat(state, unit, "damageReduction", changes(unit, "reduction", type), defensiveContext), -1, 1);
+  const reduction = type === "true" ? 0 : clamp3(modStat(state, unit, "damageReduction", 0, defensiveContext), -1, 1);
   const dr = type === "true" ? 0 : clamp3(modStat(state, unit, "dr", 0, defensiveContext), -1, 1);
   const defense = ctx.ignoreArmor || type === "true" || type === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2e3 / (defense + 2e3);
@@ -5238,34 +5134,11 @@ function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   };
 }
 function guardFor(state, target2) {
-  return living(state).find((u) => u !== target2 && u.team === target2.team && changes(u, "intercept") && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
+  return living(state).find((u) => u !== target2 && u.team === target2.team && vmFlag(state, u, "intercept", { target: target2 }) && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
 }
-function tick2(state, unit, timing, statuses = values3(unit.statuses)) {
-  for (const [index, status] of statuses.entries()) {
-    if (!alive3(unit)) return;
-    if (unit.statuses[status.id] !== status || status.tickTiming !== timing) continue;
-    if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
-    const source = status.sourceUnitId ?? unit.id;
-    if (status.rules?.length) continue;
-    const amount = status.modifiers?.damage;
-    const detail = { statusId: status.id, tickTiming: timing };
-    if (amount) damageTarget(state, unit, source, amount * status.stacks, status.modifiers.damageType ?? "true", status.name, { details: detail });
-    const heal = status.modifiers?.heal;
-    if (heal && alive3(unit)) restoreHP(state, unit, heal * status.stacks, source, status.name, detail);
-    if (timing === "onTurnEnd" && state.vm?.pendingAsk) return statuses.slice(index + 1).map((status2) => status2.id);
-  }
-}
-function endTurn(state, unit, remainingTicks) {
+function endTurn(state, unit) {
   if (!unit) return;
-  if (remainingTicks === void 0) {
-    unit.ap = 0;
-  }
-  const pendingTicks = tick2(state, unit, "onTurnEnd", remainingTicks?.map((id3) => tableEntry(unit.statuses, id3)).filter(Boolean));
-  if (pendingTicks) {
-    state.vm.endingTurn = unit.id;
-    state.vm.endingTicks = pendingTicks;
-    return;
-  }
+  unit.ap = 0;
   dispatchVMHook(state, "turn_end", { actorId: unit.id, targetId: unit.id });
   if (state.vm?.pendingAsk) {
     state.vm.endingTurn = unit.id;
@@ -5278,10 +5151,9 @@ function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
     const status = statusOf2(unit, id3);
     if (!status) continue;
     if (status.durationType !== "battle_turns") continue;
-    if (status.appliedRound === state.round && status.appliedTurn === state.turn && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
+    if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
     if (--status.remainingTurns > 0) continue;
     removeVMStatus(state, unit, status, "expired", unit);
-    if (status.expireInto && alive3(unit) && !refreshOutcome(state)) grantStatus(state, unit, status.expireInto, { sourceUnitId: unit.id });
     if (state.vm.pendingAsk) {
       state.vm.endingTurn = unit.id;
       state.vm.endingStatuses = remaining.slice(index + 1);
@@ -5342,20 +5214,19 @@ function beginUnitTurn(state, unit) {
   unit.ap = unit.apMax = turnAP(state, unit);
   record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
   const hold = unit.statuses.suppressed;
-  if (hold?.holdTotal != null) {
+  if (hold?.vars?.holdTotal != null) {
     const roll = randomDie(state, 20);
     const total2 = roll + Math.floor(effectiveStat(state, unit, "str") * unit.hp / unit.maxHp);
-    const success = total2 > hold.holdTotal;
+    const success = total2 > hold.vars.holdTotal;
     if (success) removeVMStatus(state, unit, hold, "escaped", unit);
     record(
       state,
       unit,
       "break_hold",
-      `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total2} \u5BF9 ${hold.holdTotal}\uFF09`,
-      { roll, total: total2, threshold: hold.holdTotal, success }
+      `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total2} \u5BF9 ${hold.vars.holdTotal}\uFF09`,
+      { roll, total: total2, threshold: hold.vars.holdTotal, success }
     );
   }
-  tick2(state, unit, "onTurnStart");
   dispatchVMHook(state, "turn_start", { actorId: unit.id, targetId: unit.id });
 }
 function turnAP(state, unit) {
@@ -5386,7 +5257,7 @@ function continueRound({ state, frame, host }) {
     }
     state.turn = 0;
     state.round++;
-    if (state.spatialTerrain || values3(state.zones).length || values3(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
+    if (state.spatialTerrain || values2(state.zones).length || values2(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
     return;
   }
   state.vm.stack.pop();
@@ -5421,22 +5292,22 @@ function beginBattle(state) {
   syncEquipmentEffects(state);
   const initiative2 = initiativeOrder(state, () => randomDie(state, 20));
   state.order = initiative2.map((entry2) => entry2.unitId);
-  for (const unit of values3(state.units)) {
+  for (const unit of values2(state.units)) {
     unit.ap = 0;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
     delete unit.moveSpent;
     unit.reactionAvailable = true;
-    for (const status of values3(unit.statuses)) {
+    for (const status of values2(unit.statuses)) {
       delete status.appliedRound;
       delete status.appliedTurn;
     }
   }
   record(state, null, "initiative", "\u654F\u6377 + d20\uFF1A\u786E\u5B9A\u5148\u653B\u6B21\u5E8F", { initiative: initiative2 });
-  for (const unit of living(state)) for (const status of values3(unit.statuses)) {
+  for (const unit of living(state)) for (const status of values2(unit.statuses)) {
     record(
       state,
-      status.sourceUnitId ?? unit.id,
+      status.sourceId ?? unit.id,
       "status",
       `${unit.name}\u5F00\u573A\u5DF2\u6709${status.name} \xD7${status.stacks}`,
       { ...statusLogDetail(unit, status), initial: true }
@@ -5545,7 +5416,7 @@ function movementScale(state, unit, type) {
   const cellM = state.scale?.cellM ?? 2;
   const tierM = TIER_CELL_M[tier];
   const base = (unit.moveM ?? unit.move * cellM) / tierM;
-  const moveM = Math.max(0, modStat(state, unit, "movement", base + changes(unit, "movement"))) * tierM;
+  const moveM = Math.max(0, modStat(state, unit, "movement", base)) * tierM;
   const mult = type === "sprint" ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
   const total2 = carry + Math.round(mult * moveM / cellM * 1e3);
@@ -5638,7 +5509,7 @@ function weaponInfo(state, unit) {
   weapon2.template = scaledTemplate(state, unit, weapon2.template, "weapon");
   const ammo = weaponAmmo(weapon2.template);
   const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon2.instance)?.amount : null;
-  const infiniteAmmo = Boolean(ammo && changes(unit, "infiniteAmmo"));
+  const infiniteAmmo = Boolean(ammo && vmFlag(state, unit, "infiniteAmmo"));
   const souls = resourcePool(state, unit, "souls", weapon2.instance)?.amount ?? 0;
   const offHand = equipmentFor(state, unit.offHand);
   const stance = unit.stance ?? stanceFor({ mainHand: weapon2.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
@@ -5667,11 +5538,11 @@ function validReach(state, actor, at2, template, ammo, weaponId) {
   return isGround(state, at2) && geometry.distance <= geometry.range + 1e-9 && hasLOS(state, actor, at2);
 }
 function visibleEnemy(state, actor, target2) {
-  return target2.team !== actor.team && (!changes(target2, "hidden") || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1);
+  return target2.team !== actor.team && (!vmFlag(state, target2, "hidden", { attacker: actor }) || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1);
 }
 function tauntFor(state, actor, template, ammo) {
-  for (const status of values3(actor.statuses).filter((status2) => status2.modifiers?.taunted).sort(byId2)) {
-    const source = tableEntry(state.units, status.sourceId ?? status.sourceUnitId);
+  for (const status of values2(actor.statuses).filter((status2) => status2.mods?.some((mod2) => mod2.flags?.includes("taunted"))).sort(byId2)) {
+    const source = tableEntry(state.units, status.sourceId);
     if (alive3(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo)) return source;
   }
   return null;
@@ -5785,7 +5656,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
     state,
     target2,
     "dodge",
-    modCheck(state, target2, "dodgeBonus", { target: actor }) + modCheck(state, target2, "dodgeAgility", { target: actor }) + changes(target2, "dodgeBonus"),
+    modCheck(state, target2, "dodgeBonus", { target: actor }) + modCheck(state, target2, "dodgeAgility", { target: actor }),
     { ...strike, attacker: actor, checkKind: "dodge" }
   );
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, "highGroundAccuracy", strike) : 0);
@@ -5805,7 +5676,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
   const rules = stanceRules(stance);
   const rangedDistance = weapon2 && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
-  const accuracy = modStat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (execution || cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + modCheck(state, actor, "accuracyBonus", strike), strike) - dodge;
+  const accuracy = modStat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) + (execution || cover || !target2 ? 0 : modStat(state, target2, "incomingAccuracy", 0, { attacker: actor })) + (flanked ? 2 : 0) - penalty + modCheck(state, actor, "accuracyBonus", strike), strike) - dodge;
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
   const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 4;
   const delta = modCheck(state, actor, "advantage", strike);
@@ -5823,7 +5694,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
   const offHandMultiplier = weapon2?.stance === "dual_wield" && weapon2.offHand?.template?.damage ? 1.5 : 1;
   const intentSpec = INTENTS[context.intent ?? "normal"] ?? INTENTS.normal;
   const damageType2 = template.damage?.type ?? template.damageType ?? "physical";
-  const multiplier = offHandMultiplier * (1 + changes(actor, "damageBonus", damageType2)) * Math.max(0, 1 + changes(actor, "attackPercent", damageType2)) * (teleport2 ? 1 + (teleport2.bonusMultiplier ?? 0.5) : 1);
+  const multiplier = offHandMultiplier * (teleport2 ? 1 + (teleport2.bonusMultiplier ?? 0.5) : 1);
   const tierPower = { 1: 2, 2: 2.8, 3: 4, 4: 8, 5: 15, 6: 35, 7: 80 }[actor.tier ?? 1] ?? 2;
   const attributeBase = () => state.ruleset === "protocol" ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? "str" : "int")) * 10 * tierPower : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
   const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + Number(weapon2?.template?.attack ?? 0) : null;
@@ -5852,11 +5723,10 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
     0,
     { ...strikeEvent, attacker: actor, target: recipient, intercepting: recipient !== target2 }
   );
-  const statusFinal = statusFinalDamageMultiplier(actor, damageType2);
   const shown = (raw, factor = 1) => {
     const scaled = Math.floor(applyStatMod(raw * multiplier * factor + flatDamage, outgoing.damageMult));
     if (cover) return Math.max(0, scaled - (target2.armor ?? 0));
-    const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction) * statusFinal));
+    const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction)));
     const mitigated = Math.max(0, Math.floor(modified - flatReduction)) * (1 - reduction.dr);
     return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) - absorb);
   };
@@ -5888,7 +5758,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
     weaponRangeModifier,
     stance,
     stanceRules: rules,
-    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: changes(actor, "accuracy") },
+    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: modStat(state, actor, "accuracy", 0, strike) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) },
     ...context.skillId && { skillId: context.skillId },
     ...weapon2?.instance?.id && { weaponId: weapon2.instance.id },
     intent: context.intent ?? "normal",
@@ -5970,7 +5840,7 @@ function inInteractionRange(state, actor, at2) {
   return gridDistance(actor, at2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, at2)) <= 1 && hasLOS(state, actor, at2);
 }
 function nearbyCovers(state, at2) {
-  return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at2, c)).sort(byId2);
+  return values2(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at2, c)).sort(byId2);
 }
 function usableTiles(state, actor, template, weapon2) {
   const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
@@ -6028,10 +5898,10 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
   if (type === "interact" && unplaced) {
-    const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
+    const cells3 = values2(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
     return cells3.length ? { ok: true, ap: 1, cost: 1, cells: cells3 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells3 });
   }
-  const item = !unplaced && (type === "interact" || type === "attack") ? values3(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
+  const item = !unplaced && (type === "interact" || type === "attack") ? values2(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
   const detonate = item?.kind === "barrel";
   const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
   const ap = drawFromBag ? 1 : cost.ap, slot2 = ap === 0 ? null : drawFromBag ? "action" : detonate ? "attack" : cost.slot;
@@ -6056,8 +5926,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   }
   if (type === "block") {
     if (stanceFor({ mainHand: weapon2.template, offHand: weapon2.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
-    const modifiers2 = getStatusTemplate(state, actionStatuses.block).modifiers;
-    return { ...common, name: "\u683C\u6321", reduction: Object.hasOwn(modifiers2, "reduction") ? action.maneuver === "heavy" ? 0.45 : 0.25 : 0, turns: 1 };
+    return { ...common, name: "\u683C\u6321", reduction: action.maneuver === "heavy" ? 0.45 : 0.25, turns: 1 };
   }
   if (type === "brace") {
     const [nearbyCover] = nearbyCovers(state, unit);
@@ -6065,7 +5934,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
       ...common,
       name: "\u67B6\u52BF\u9632\u5FA1",
       coverId: nearbyCover?.id ?? null,
-      reduction: getStatusTemplate(state, actionStatuses.brace).modifiers.reduction ?? 0,
+      reduction: getStatusTemplate(state, actionStatuses.brace).vars?.reduction ?? 0,
       turns: nearbyCover ? 2 : 1
     };
   }
@@ -6093,7 +5962,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   }
   if (type === "suppress") {
     if (state.battleType !== "suppress" || unit.team !== state.suppressingTeam) return fail2("\u4EC5\u538B\u5236\u65B9\u53EF\u4EE5\u4F7F\u7528\u538B\u5236");
-    const available = living(state).filter((t) => t.team !== unit.team && t.statuses.suppressed?.holdTotal == null && distance3D(state, unit, t) <= 1 && visibleEnemy(state, unit, t) && hasLOS(state, unit, t));
+    const available = living(state).filter((t) => t.team !== unit.team && t.statuses.suppressed?.vars?.holdTotal == null && distance3D(state, unit, t) <= 1 && visibleEnemy(state, unit, t) && hasLOS(state, unit, t));
     if (!center) return { ...common, cells: available.map((t) => pos(t.x, t.y)) };
     const target2 = available.find((t) => t.id === action.targetId && sameCell(t, center)) ?? available.find((t) => sameCell(t, center));
     if (!target2) return fail2("\u538B\u5236\u9700\u8981\u4E00\u683C\u5185\u53EF\u89C1\u4E14\u672A\u88AB\u538B\u5236\u7684\u654C\u4EBA");
@@ -6134,7 +6003,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
       const guard = guardFor(state, u) ?? u;
       const context = { attacker: unit, targetId: guard.id, damageType: "energy", intercepting: guard !== u };
       const formula2 = mitigation(state, guard, "energy", true, 0, context);
-      const modified = Math.floor((item.damage ?? 12) * formula2.multiplier * formula2.armorMultiplier * (1 - formula2.attributeReduction) * statusFinalDamageMultiplier(unit, "energy"));
+      const modified = Math.floor((item.damage ?? 12) * formula2.multiplier * formula2.armorMultiplier * (1 - formula2.attributeReduction) * modStat(state, unit, "finalDamageMult", 1, { target: guard, damageType: "energy" }));
       const damage = Math.max(0, Math.floor(damageAfterFlatReduction(state, guard, modified, context) * (1 - formula2.dr)) - shieldTotal(guard));
       return {
         id: u.id,
@@ -6248,7 +6117,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     nonLethal: action.nonLethal ?? unit.nonLethal ?? false
   }));
   if (template.target !== "cell" && hasStrikeDamage(template)) {
-    for (const c of values3(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at2) => sameCell(at2, c2))).sort(byId2)) {
+    for (const c of values2(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at2) => sameCell(at2, c2))).sort(byId2)) {
       targets2.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon2 : null, origin, cover: true, intent: resolvedIntent }), kind: "cover" });
     }
   }
@@ -6435,7 +6304,7 @@ function resolveCheck(state, actor, profile, event = {}) {
       }
     }
     const defenderD20 = randomDie(state, 20);
-    const weakness = changes(defender, "intentDifficulty");
+    const weakness = modStat(state, defender, "intentDifficulty", 0, { attacker: actor });
     const intentSpec = { ...INTENTS[profile.intent] ?? INTENTS.normal, difficulty: Math.max(0, (INTENTS[profile.intent]?.difficulty ?? 0) + weakness) };
     const ratingBonus = { \u5E73\u66B4\u51FB: 10, \u5F3A\u66B4\u51FB: 20, \u8D85\u66B4\u51FB: 30 }[rating.name] ?? 0;
     const attackerTier = actor.tier ?? 1, defenderTier = defender.tier ?? 1;
@@ -6512,7 +6381,7 @@ function knockback(state, actor, target2, effect) {
     const at2 = pos(target2.x + dx, target2.y + dy);
     if (!canStep(state, target2, at2)) {
       damageTarget(state, target2, actor.id, effect.collisionDamage ?? 5, "true", "\u649E\u51FB");
-      if (alive3(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceUnitId: actor.id });
+      if (alive3(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
       break;
     }
     Object.assign(target2, at2);
@@ -6665,7 +6534,7 @@ function continueStrike({ state, frame, host }) {
       armorPierce: profile.armorPierce,
       details,
       resultEventRef: frame.awaitEvent,
-      lethal: !(profile.nonLethal || recipient.nonLethal || changes(recipient, "preserveLife") || encounterNonlethal(state, actor))
+      lethal: !(profile.nonLethal || recipient.nonLethal || vmFlag(state, recipient, "preserveLife") || encounterNonlethal(state, actor))
     });
     return;
   }
@@ -6807,7 +6676,7 @@ function continueInteraction(state, actor, plan, progress) {
       damageTarget(state, target2, actor.id, item.damage ?? 12, "energy", item.name, { direct: false });
       return false;
     }
-    for (const cover of values3(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at2) => sameCell(at2, c))).sort(byId2)) {
+    for (const cover of values2(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at2) => sameCell(at2, c))).sort(byId2)) {
       coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
   } else if (effect === "restore") {
@@ -6815,10 +6684,10 @@ function continueInteraction(state, actor, plan, progress) {
     setResourceTotal(state, actor, "mp", Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
     setResourceTotal(state, actor, "sp", Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
   } else if (effect === "shield") {
-    grantShield(state, actor, item.damage ?? 10, { sourceUnitId: actor.id });
+    grantShield(state, actor, item.damage ?? 10, { sourceId: actor.id });
   } else if (effect !== "heal") {
-    grantShield(state, actor, 10, { sourceUnitId: actor.id });
-    grantStatus(state, actor, actionStatuses.altar, { sourceUnitId: actor.id });
+    grantShield(state, actor, 10, { sourceId: actor.id });
+    grantStatus(state, actor, actionStatuses.altar, { sourceId: actor.id });
   }
   return true;
 }
@@ -6831,7 +6700,6 @@ function applyAction(state, action) {
       state.vm.stack.length = 0;
       state.vm.events = {};
       delete state.vm.endingTurn;
-      delete state.vm.endingTicks;
       delete state.vm.endingStatuses;
       delete state.vm.startingTurn;
       delete state.vm.settlingTurn;
@@ -6841,13 +6709,10 @@ function applyAction(state, action) {
       const result = resolveVMAction(state, action);
       if (!result.pendingAsk && state.vm.endingTurn) {
         const endingUnit = state.units[state.vm.endingTurn];
-        const remainingTicks = state.vm.endingTicks;
         const remainingStatuses = state.vm.endingStatuses;
         delete state.vm.endingTurn;
-        delete state.vm.endingTicks;
         delete state.vm.endingStatuses;
-        if (remainingTicks) endTurn(state, endingUnit, remainingTicks);
-        else completeTurnEnd(state, endingUnit, remainingStatuses);
+        completeTurnEnd(state, endingUnit, remainingStatuses);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) {
           advanceCursor(state);
           settleTurn(state);
@@ -6932,20 +6797,20 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
     case "use_item": {
       actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
       record(state, actor, "item", `${actor.name}\u4F7F\u7528\u540C\u8C03\u526F\u624B\u9053\u5177`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-      grantStatus(state, actor, actionStatuses.use_item, { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.use_item, { sourceId: actor.id });
       if (!actor.attunementCharges) actor.stance = "light_blade";
       break;
     }
     case "charge":
-      grantStatus(state, actor, actionStatuses.charge, { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.charge, { sourceId: actor.id });
       break;
     case "lock_on":
       actor.lockedTargetId = plan.targetId;
-      grantStatus(state, actor, actionStatuses.lock_on, { sourceUnitId: actor.id });
+      grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id });
       record(state, actor, "maneuver", `${actor.name}\u9501\u5B9A${state.units[plan.targetId].name}`, { targetId: plan.targetId });
       break;
     case "scan":
-      grantStatus(state, actor, actionStatuses.scan, { sourceUnitId: actor.id, stacks: 3 });
+      grantStatus(state, actor, actionStatuses.scan, { sourceId: actor.id, stacks: 3 });
       break;
     case "flee": {
       const enemies = living(state).filter((u) => u.team !== actor.team).sort((a, b) => effectiveStat(state, b, "agi") - effectiveStat(state, a, "agi") || byId2(a, b));
@@ -6976,8 +6841,8 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       const attackerTotal = attackerRoll + effectiveStat(state, actor, "str"), defenderTotal = defenderRoll + effectiveStat(state, target2, "str");
       const success = attackerTotal > defenderTotal;
       record(state, actor, "suppress_check", `${actor.name}\u5BF9${target2.name}\u529B\u91CF\u5BF9\u6297${success ? "\u6210\u529F" : "\u5931\u8D25"}\uFF08${attackerTotal} \u5BF9 ${defenderTotal}\uFF09`, { targetId: target2.id, attackerRoll, defenderRoll, attackerTotal, defenderTotal, success });
-      if (success) grantStatus(state, target2, "suppressed", { sourceUnitId: actor.id }).holdTotal = attackerTotal;
-      else if (defenderTotal > attackerTotal) grantStatus(state, actor, "stun", { sourceUnitId: target2.id, turns: 1 });
+      if (success) grantStatus(state, target2, "suppressed", { sourceId: actor.id, vars: { holdTotal: attackerTotal } });
+      else if (defenderTotal > attackerTotal) grantStatus(state, actor, "stun", { sourceId: target2.id, turns: 1 });
       break;
     }
     case "grapple":
@@ -6986,12 +6851,12 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
     case "push": {
       const target2 = state.units[plan.targetId];
       if (target2 && maneuverContest(state, actor, target2, type)) {
-        if (type === "grapple") grantStatus(state, target2, actionStatuses.grapple, { sourceUnitId: actor.id });
+        if (type === "grapple") grantStatus(state, target2, actionStatuses.grapple, { sourceId: actor.id });
         if (type === "disarm") {
           target2.mainHand = null;
           target2.weapon = null;
         }
-        if (type === "trip") grantStatus(state, target2, actionStatuses.trip, { sourceUnitId: actor.id });
+        if (type === "trip") grantStatus(state, target2, actionStatuses.trip, { sourceId: actor.id });
         if (type === "push") knockback(state, actor, target2, { distance: 1, collisionDamage: 3 });
       }
       break;
@@ -6999,9 +6864,9 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
     case "block":
       actor.blockMode = action.maneuver === "heavy" ? "heavy" : "normal";
       grantStatus(state, actor, actionStatuses.block, {
-        sourceUnitId: actor.id,
-        turns: 1,
-        ...Object.hasOwn(getStatusTemplate(state, actionStatuses.block).modifiers, "reduction") && { modifiers: { reduction: plan.reduction } }
+        sourceId: actor.id,
+        remainingTurns: 1,
+        vars: { reduction: plan.reduction }
       });
       record(state, actor, "block", `${actor.name}${actor.blockMode === "heavy" ? "\u91CD" : ""}\u683C\u6321`, { reduction: plan.reduction });
       break;
@@ -7018,7 +6883,7 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
         `${actor.name}${plan.coverId ? `\u501F ${plan.coverId} ` : "\u539F\u5730"}\u67B6\u52BF\u9632\u5FA1\uFF08\u51CF\u4F24 ${Math.round(plan.reduction * 100)}%\uFF0C${plan.turns} \u56DE\u5408\uFF09`,
         { coverId: plan.coverId, reduction: plan.reduction, turns: plan.turns }
       );
-      grantStatus(state, actor, actionStatuses.brace, { sourceUnitId: actor.id, turns: plan.turns });
+      grantStatus(state, actor, actionStatuses.brace, { sourceId: actor.id, turns: plan.turns });
       break;
   }
   return true;
@@ -7326,9 +7191,6 @@ var team = (v) => v === "blue" || v === "red";
 var inGrid = (state, x, y) => int(y, 0, (state.grid?.length ?? 0) - 1) && int(x, 0, (state.grid[y]?.length ?? 0) - 1);
 var attrs2 = ["str", "agi", "con", "int", "spi"];
 var statusDurations = ["battle_turns", "until_removed", "persistent"];
-var statusTickTimings = ["onTurnStart", "onTurnEnd"];
-var statusStackRules = ["refresh", "stack", "replace"];
-var statusLabels = ["name", "icon", "category", "description"];
 var maxStatusStacks = 999999;
 var maxStatusTemplates = 64;
 var has = (record3, key4) => id2(key4) && own12(record3 ?? {}, key4);
@@ -7402,30 +7264,9 @@ function statusTemplate(value, key4 = value?.id, state) {
   checkOptional(value, "expireOn", validVmExpiry);
   carrierFieldsValue(value, state);
 }
-function statusLifetime(v) {
-  return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
-}
-function nativeStatusTemplate(v, key4) {
-  fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers"], ["expireInto", "expireOn"]);
-  checkOptional(v, "expireInto", id2);
-  checkOptional(v, "expireOn", validVmExpiry);
-  requireThat(id2(key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
-  requireThat(text2(v.name) && text2(v.icon, 24) && text2(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
-  requireThat(statusLifetime(v) && validStackCap(v.maxStacks), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
-  requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own12(v.modifiers, "damageType") || own12(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
-  validateStatusModifiers2(v, v.modifiers);
-  requireThat(key4 !== actionStatuses.shield || own12(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
-}
 function statusTemplateTable(v) {
   const state = { statusTemplates: v };
-  table2(v, (template, key4) => {
-    if (own12(template ?? {}, "modifiers")) nativeStatusTemplate(template, key4);
-    else statusTemplate(template, key4, state);
-  }, maxStatusTemplates);
-  for (const t of Object.values(v)) if (t.expireInto) {
-    const next = getStatusTemplate({ statusTemplates: v }, t.expireInto);
-    requireThat(t.durationType === "battle_turns" && t.remainingTurns === 1 && t.expireInto !== t.id && next && !next.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
-  }
+  table2(v, (template, key4) => statusTemplate(template, key4, state), maxStatusTemplates);
 }
 function defineStatus(state, key4, template) {
   requireThat(plain(template) && (!own12(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
@@ -7499,14 +7340,7 @@ function statusValue(v, key4, state, ownerId) {
   if (own12(v ?? {}, "templateId")) {
     const { templateId, ownerId: owner, sourceId: sourceId2, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, ...rest } = v;
     const template = getStatusTemplate(state, key4);
-    const { vars, modifiers: modifiers2, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
-    if (template?.modifiers) {
-      if (own12(rest, "modifiers")) validateStatusModifiers2(template, modifiers2);
-      if (own12(rest, "stackRule")) requireThat(statusStackRules.includes(stackRule), "\u539F\u751F\u72B6\u6001\u53E0\u5C42");
-      if (own12(rest, "tickTiming")) requireThat(statusTickTimings.includes(tickTiming), "\u539F\u751F\u72B6\u6001\u65F6\u673A");
-      if (own12(rest, "expireInto")) requireThat(expireInto === template.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
-      if (own12(rest, "amount")) requireThat(own12(template.modifiers, "amount") && num(amount, 0, 1e9), "\u62A4\u76FE\u6C60");
-    } else requireThat(["modifiers", "stackRule", "tickTiming", "expireInto", "amount"].every((field) => !own12(rest, field)), "VM \u72B6\u6001\u5B57\u6BB5");
+    const { vars, ...definition } = rest;
     if (sourceCarrier != null) {
       fields(sourceCarrier, ["type", "id"], ["ownerId"]);
       requireThat(["unit", "skill", "status", "item", "zone"].includes(sourceCarrier.type) && validVmSourceSkillId(sourceCarrier.id), "\u72B6\u6001\u6765\u6E90\u8F7D\u4F53");
@@ -7523,19 +7357,12 @@ function statusValue(v, key4, state, ownerId) {
     return;
   }
   const t = getStatusTemplate(state, key4);
-  requireThat(id2(key4) && t?.modifiers, "\u72B6\u6001 ID");
-  fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers", "stacks", "sourceUnitId"], ["appliedRound", "appliedTurn", "amount", "expireInto", "expireOn", "holdTotal", "stackMode", ...carrierFields]);
-  checkOptional(v, "stackMode", (mode) => stackModes.includes(mode));
+  requireThat(id2(key4) && t, "\u72B6\u6001 ID");
+  fields(v, ["id", "templateId", "ownerId", "name", "remainingTurns", "durationType", "stackMode", "maxStacks", "stacks"], ["icon", "category", "description", "sourceId", "sourceCarrier", "authorityRank", "sourceTier", "effectiveTier", "appliedRound", "appliedTurn", "expireOn", ...carrierFields]);
   carrierFieldsValue(v, state, true);
-  checkOptional(v, "holdTotal", (x) => v.id === "suppressed" && Number.isFinite(x));
   checkOptional(v, "expireOn", (x) => x === null || validVmExpiry(x));
-  requireThat(v.expireInto === t.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
-  requireThat(v.id === key4 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
-  fields(v.modifiers, Object.keys(t.modifiers));
-  validateStatusModifiers2(t, v.modifiers);
-  checkOptional(v, "appliedRound", (x) => int(x, 1, 1e6));
-  checkOptional(v, "appliedTurn", (x) => int(x, 0, 199));
-  requireThat(own12(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own12(v, "amount"), "\u62A4\u76FE\u6C60");
+  requireThat(v.id === key4 && v.templateId === key4 && v.name === t.name && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes.includes(v.stackMode) && id2(v.ownerId) && (ownerId === void 0 || v.ownerId === ownerId) && (v.sourceId === null || v.sourceId === void 0 || id2(v.sourceId)), "VM \u72B6\u6001\u5B9E\u4F8B");
+  if (own12(v, "vars")) table2(v.vars, (entry2) => requireThat(jsonTree(entry2), "VM \u72B6\u6001\u53D8\u91CF"));
 }
 function validateCell(v) {
   fields(v, ["kind", "z"]);
@@ -8139,7 +7966,7 @@ function tactics(state, actor, action, plan) {
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage / target2.hp) : 0;
     const locks = aggregateModifiers(state, target2.id).locks;
-    const controlled = Object.values(locks).some(Boolean) || ["skip", "rooted", "disadvantage"].some((key4) => statusModifier(target2, key4) > 0);
+    const controlled = Object.values(locks).some(Boolean) || ["skip", "rooted", "disadvantage"].some((key4) => locks[key4] || aggregateModifiers(state, target2.id).stats[key4]?.flat > 0);
     const statusValue2 = (controlled ? enemy ? 8 : -8 : 0) + Object.values(target2.statuses ?? {}).filter((status) => status.durationType === "battle_turns").length;
     score += sign3 * (Math.min(target2.hp, damage) + kill * 6 + statusValue2);
     if (profile.heal) {
@@ -8402,7 +8229,7 @@ function chooseAction(state) {
     consider({ action: { type, x: cell.x, y: cell.y }, score });
   }
   const bracing = preview(state, { type: "brace" });
-  if (bracing.ok && !statusModifier(actor, "reduction") && baseline <= 5) consider({ action: { type: "brace" }, score: bracing.coverId ? 2.5 : 1.4 });
+  if (bracing.ok && !aggregateModifiers(state, actor.id).stats.damageReduction?.flat && baseline <= 5) consider({ action: { type: "brace" }, score: bracing.coverId ? 2.5 : 1.4 });
   if (best.action.type === "end" && !actor.used.attack && attackChoices.length) {
     best = attackChoices.reduce((choice, current) => choice.score > current.score ? choice : current);
   }
@@ -8443,7 +8270,6 @@ var commands = {
     fields(c, ["type", "unitId", "statusId", "patch"]);
     const unit = get(s.units, c.unitId, "unitId");
     const status = get(unit.statuses, c.statusId, "statusId");
-    if (!own12(status, "templateId")) return patchStatus(s, c.unitId, c.statusId, c.patch);
     nonempty(c.patch);
     fields(c.patch, [], statusPatchFields);
     const next = { ...status, ...c.patch };
@@ -8453,62 +8279,25 @@ var commands = {
     }
     statusValue(next, c.statusId, s, unit.id);
     unit.statuses[c.statusId] = next;
-    recordVM(s, unit, "status_patch", `${unit.name}\u7684${next.name}\u53C2\u6570\u5DF2\u66F4\u65B0`, { targetId: unit.id, statusId: next.id });
+    recordVM(s, unit, "status_patch", `${unit.name}\u7684${next.name}\u53C2\u6570\u5DF2\u66F4\u65B0`, statusLogDetail(unit, next));
   },
   upsert_status(s, c) {
     fields(c, ["type", "unitId", "statusId"], ["options"]);
     const u = get(s.units, c.unitId, "unitId"), status = getStatusTemplate(s, c.statusId);
     requireThat(status, "statusId");
     const options = own12(c, "options") ? c.options : {};
-    if (!own12(status, "modifiers")) {
-      fields(options, [], [...statusPatchFields, "sourceId", "extendTurns"]);
-      checkOptional(options, "sourceId", (source2) => source2 === null || has(s.units, source2));
-      checkOptional(options, "remainingTurns", (turns) => int(turns, 1, 100));
-      checkOptional(options, "stacks", (count) => int(count, 1, status.maxStacks ?? 1));
-      checkOptional(options, "extendTurns", (turns) => int(turns, 1, 100));
-      if (own12(options, "vars")) requireThat(plain(options.vars), "VM \u72B6\u6001\u53D8\u91CF");
-      const previous = u.statuses[c.statusId];
-      const { extendTurns = 1, ...patch } = options;
-      const sourceId2 = own12(patch, "sourceId") ? patch.sourceId : previous?.sourceId ?? null;
-      const source = s.units[sourceId2];
-      const vars = Object.fromEntries(Object.entries(status.vars ?? {}).flatMap(([key4, expr2]) => {
-        const value = evaluateExpr(expr2, { self: source, source, target: u, event: {} });
-        return value === null ? [] : [[key4, value]];
-      }));
-      const instance = {
-        remainingTurns: 1,
-        durationType: "battle_turns",
-        stackMode: "refresh",
-        stacks: 1,
-        ...status,
-        ...patch,
-        templateId: status.id,
-        ownerId: u.id,
-        sourceId: sourceId2,
-        vars: { ...vars, ...patch.vars }
-      };
-      if (previous && instance.stackMode === "stack") instance.stacks = Math.min(status.maxStacks ?? 1, previous.stacks + instance.stacks);
-      if (previous && instance.stackMode === "extend") instance.remainingTurns = Math.min(100, previous.remainingTurns + extendTurns);
-      if (previous?.pools) instance.pools = previous.pools;
-      statusValue(instance, c.statusId, s, u.id);
-      if (u.hp <= 0 || u.fled) return;
-      u.statuses[c.statusId] = instance;
-      recordVM(s, source ?? u, "status", `${u.name}\u83B7\u5F97${instance.name} \xD7${instance.stacks}`, { targetId: u.id, statusId: instance.id });
-      return;
-    }
-    fields(options, [], ["remainingTurns", "durationType", "stacks", "stackRule", "tickTiming", "amount", "sourceUnitId", "modifiers", "expireOn"]);
-    checkOptional(options, "remainingTurns", (x) => int(x, 1, 100));
-    checkOptional(options, "durationType", (x) => ["battle_turns", "until_removed", "persistent"].includes(x));
-    checkOptional(options, "stacks", (x) => int(x, 1, status.maxStacks));
-    checkOptional(options, "stackRule", (x) => ["refresh", "stack", "replace"].includes(x));
-    checkOptional(options, "tickTiming", (x) => ["onTurnStart", "onTurnEnd"].includes(x));
-    checkOptional(options, "amount", (x) => own12(status.modifiers, "amount") && int(x, 1, 1e4));
-    checkOptional(options, "sourceUnitId", (x) => has(s.units, x));
-    if (options.modifiers?.taunted ?? status.modifiers.taunted) {
-      const sourceId2 = options.sourceUnitId ?? u.statuses[c.statusId]?.sourceUnitId;
-      requireThat(has(s.units, sourceId2) && s.units[sourceId2].team !== u.team, "\u5632\u8BBD\u9700\u8981\u654C\u5BF9\u6765\u6E90");
-    }
-    grantStatus(s, u, c.statusId, options);
+    fields(options, [], [...statusPatchFields, "sourceId", "extendTurns", "amount", "turns"]);
+    checkOptional(options, "sourceId", (source) => source === null || has(s.units, source));
+    checkOptional(options, "remainingTurns", (turns) => int(turns, 1, 100));
+    checkOptional(options, "turns", (turns) => int(turns, 1, 100));
+    checkOptional(options, "extendTurns", (turns) => int(turns, 1, 100));
+    checkOptional(options, "stacks", (count) => int(count, 1, 999999));
+    if (own12(options, "vars")) requireThat(plain(options.vars), "VM \u72B6\u6001\u53D8\u91CF");
+    if (options.amount !== void 0) requireThat(Number.isFinite(options.amount) && options.amount > 0, "\u62A4\u76FE\u6C60");
+    const sourceId2 = options.sourceId ?? u.statuses[c.statusId]?.sourceId;
+    if ((status.mods ?? []).some((mod2) => mod2.flags?.includes("taunted"))) requireThat(has(s.units, sourceId2) && s.units[sourceId2].team !== u.team, "\u5632\u8BBD\u9700\u8981\u654C\u5BF9\u6765\u6E90");
+    const instance = grantStatus(s, u, c.statusId, options);
+    if (instance) statusValue(instance, c.statusId, s, u.id);
   },
   remove_status(s, c) {
     fields(c, ["type", "unitId", "statusId"]);
@@ -8670,55 +8459,79 @@ var statNames = {
   initiative: "\u5148\u653B",
   armor: "\u62A4\u7532",
   armorPierce: "\u7A7F\u7532",
+  incomingAccuracy: "\u88AB\u547D\u4E2D\u4FEE\u6B63",
+  intentDifficulty: "\u610F\u56FE\u96BE\u5EA6",
+  shatter: "\u788E\u88C2\u589E\u4F24",
   damageReduction: "\u51CF\u4F24\u6BD4\u4F8B",
   damageReductionFlat: "\u56FA\u5B9A\u51CF\u4F24",
   damage: "\u4F24\u5BB3",
   healing: "\u6CBB\u7597",
   skillPower: "\u6280\u80FD\u5A01\u529B"
 };
-var flatModifiers = {
-  armor: "\u62A4\u7532",
+var modifierNames = {
+  ...statNames,
   movement: "\u79FB\u52A8\u8DDD\u79BB",
-  accuracy: "\u547D\u4E2D",
-  incomingAccuracy: "\u88AB\u547D\u4E2D\u4FEE\u6B63",
-  advantage: "\u4F18\u52BF\u9AB0",
-  disadvantage: "\u52A3\u52BF\u9AB0",
-  intentDifficulty: "\u610F\u56FE\u96BE\u5EA6",
-  dodgeBonus: "\u95EA\u907F"
+  apMax: "\u884C\u52A8\u70B9\u4E0A\u9650",
+  incomingDistanceOffset: "\u8868\u89C2\u8DDD\u79BB",
+  checkBonus: "\u68C0\u5B9A\u52A0\u503C",
+  initiativeFlat: "\u5148\u653B",
+  dcBonus: "\u8C41\u514D\u96BE\u5EA6",
+  resistBonus: "\u8C41\u514D\u52A0\u503C",
+  damageFlat: "\u56FA\u5B9A\u589E\u4F24",
+  damageMult: "\u589E\u4F24",
+  finalDamageMult: "\u6700\u7EC8\u4F24\u5BB3",
+  incomingDamageMult: "\u6613\u4F24",
+  healingMult: "\u6CBB\u7597",
+  incomingHealMult: "\u53D7\u6CBB\u7597",
+  costMult: "\u6D88\u8017",
+  damageReduction: "\u51CF\u4F24",
+  dr: "\u6700\u7EC8\u51CF\u4F24",
+  armorPiercePercent: "\u7A7F\u7532\u6BD4\u4F8B"
 };
-var ratioModifiers = {
-  reduction: "\u51CF\u4F24",
-  vulnerability: "\u6613\u4F24",
-  shatter: "\u788E\u88C2\u589E\u4F24",
-  damageBonus: "\u589E\u4F24",
-  attackPercent: "\u653B\u51FB",
-  attributePercent: "\u5C5E\u6027"
-};
+var ratios = /* @__PURE__ */ new Set(["damageReduction", "dr", "armorPiercePercent", "shatter"]);
 var flagModifiers = {
   taunted: "\u88AB\u5632\u8BBD",
   intercept: "\u53EF\u62E6\u622A\u653B\u51FB",
-  skip: "\u8DF3\u8FC7\u884C\u52A8",
-  rooted: "\u65E0\u6CD5\u79FB\u52A8",
   hidden: "\u9690\u8EAB",
   infiniteAmmo: "\u5F39\u836F\u4E0D\u9650",
   guaranteed_hit: "\u5FC5\u5B9A\u547D\u4E2D",
   guaranteed_crit: "\u5FC5\u5B9A\u66B4\u51FB",
+  untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D",
   blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D",
-  preserveLife: "\u4FDD\u7559\u81F3\u5C11 1 HP"
+  preserveLife: "\u4FDD\u7559\u81F3\u5C11 1 HP",
+  blockRevive: "\u7981\u6B62\u590D\u6D3B",
+  harmless: "\u65E0\u5BB3",
+  undispellable: "\u4E0D\u53EF\u9A71\u6563",
+  concept_immune: "\u6982\u5FF5\u514D\u75AB"
 };
-var expiryEvents = {
-  on_attack: "\u53D1\u52A8\u653B\u51FB",
-  on_hit: "\u547D\u4E2D",
-  on_struck: "\u53D7\u5230\u547D\u4E2D",
-  on_damaged: "\u53D7\u5230\u4F24\u5BB3",
-  on_kill: "\u51FB\u6740",
+var slotNames = { action: "\u52A8\u4F5C", move: "\u79FB\u52A8", attack: "\u653B\u51FB", cast: "\u65BD\u6CD5", reaction: "\u53CD\u5E94", fly: "\u98DE\u884C", teleport: "\u77AC\u79FB" };
+var hookNames = {
+  active: "\u4E3B\u52A8\u4F7F\u7528",
+  before_action: "\u884C\u52A8\u524D",
+  before_target: "\u9009\u5B9A\u76EE\u6807\u524D",
+  before_check: "\u68C0\u5B9A\u524D",
+  after_natural_roll: "\u63B7\u51FA\u81EA\u7136\u9AB0\u540E",
+  after_check: "\u68C0\u5B9A\u540E",
+  before_commit: "\u7ED3\u7B97\u524D",
+  before_status: "\u65BD\u52A0\u72B6\u6001\u524D",
+  on_lethal_p1: "\u9996\u6B21\u81F4\u547D\u7ED3\u7B97",
+  on_lethal_p2: "\u4E8C\u6B21\u81F4\u547D\u7ED3\u7B97",
+  after_action: "\u884C\u52A8\u7ED3\u675F",
+  after_move: "\u79FB\u52A8\u540E",
+  after_hit: "\u547D\u4E2D",
+  after_damage: "\u53D7\u5230\u4F24\u5BB3",
+  after_heal: "\u53D7\u5230\u6CBB\u7597",
+  after_status_applied: "\u65BD\u52A0\u72B6\u6001\u540E",
+  after_status_removed: "\u79FB\u9664\u72B6\u6001\u540E",
+  on_status_immunized: "\u514D\u75AB\u72B6\u6001",
+  on_summon_evict: "\u53EC\u5524\u7269\u9000\u573A",
   on_death: "\u5012\u4E0B",
-  on_turn_start: "\u56DE\u5408\u5F00\u59CB",
-  on_turn_end: "\u56DE\u5408\u7ED3\u675F",
-  on_skill_cast: "\u65BD\u653E\u6280\u80FD",
-  on_equip: "\u88C5\u5907\u751F\u6548",
-  on_heal: "\u53D7\u5230\u6CBB\u7597",
-  on_ally_death: "\u961F\u53CB\u5012\u4E0B"
+  on_ally_death: "\u961F\u53CB\u5012\u4E0B",
+  on_kill: "\u51FB\u6740",
+  turn_start: "\u56DE\u5408\u5F00\u59CB",
+  turn_end: "\u56DE\u5408\u7ED3\u675F",
+  round_start: "\u8F6E\u6B21\u5F00\u59CB",
+  round_end: "\u8F6E\u6B21\u7ED3\u675F"
 };
 var checkGrade = (success, roll) => success ? roll === 20 ? "\u5927\u6210\u529F" : "\u6210\u529F" : roll === 1 ? "\u5927\u5931\u8D25" : "\u5931\u8D25";
 var maneuvers = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
@@ -8734,29 +8547,45 @@ function statusNotes(detail) {
   if (detail.durationType === "persistent") parts.push("\u8DE8\u6218\u6597\u6301\u7EED");
   else if (detail.durationType === "until_removed") parts.push("\u6301\u7EED\u81F3\u89E3\u9664");
   else if (Number.isInteger(detail.remainingTurns)) parts.push(`\u6301\u7EED ${detail.remainingTurns} \u56DE\u5408`);
-  const m = detail.effectiveModifiers ?? detail.modifiers ?? {};
-  if (Number.isFinite(detail.amount ?? m.amount)) parts.push(`\u62A4\u76FE ${detail.amount ?? m.amount} \u70B9`);
-  const ticks = [];
-  const tickAmount = (value, label) => `\u6BCF\u5C42 ${value} \u70B9${label}` + (detail.stacks > 1 ? `\uFF08\u5F53\u524D\u5408\u8BA1 ${value * detail.stacks} \u70B9\uFF09` : "");
-  if (m.damage) ticks.push(tickAmount(m.damage, `${damageNames[m.damageType ?? "true"]}\u4F24\u5BB3`));
-  if (m.heal) ticks.push(tickAmount(m.heal, "\u6CBB\u7597"));
-  if (ticks.length) parts.push(`\u6301\u6709\u8005\u56DE\u5408${detail.tickTiming === "onTurnEnd" ? "\u7ED3\u675F" : "\u5F00\u59CB"}\uFF1A${ticks.join("\u3001")}`);
-  if (m.reflect) parts.push(`\u53CD\u4F24 ${m.reflect} \u70B9`);
-  const perLayer = detail.stacks > 1 ? "\u6BCF\u5C42" : "";
-  for (const [key4, label] of Object.entries(flatModifiers)) if (m[key4]) parts.push(`${perLayer}${label} ${signed(m[key4])}`);
-  for (const [key4, label] of Object.entries(ratioModifiers)) if (m[key4]) parts.push(`${perLayer}${label} ${signed(percent(m[key4]))}%`);
-  if (m.finalDamageMultiplier != null && m.finalDamageMultiplier !== 1) parts.push(`${perLayer}\u6700\u7EC8\u4F24\u5BB3 \xD7${m.finalDamageMultiplier}`);
-  for (const [key4, label] of Object.entries(flagModifiers)) if (m[key4]) parts.push(label);
+  const mods = detail.mods ?? [];
+  const vars = detail.vars ?? {};
+  const resolve = (value, stacks = detail.stacks ?? 1) => evaluateExpr(value, { status: { ...detail, stacks, vars }, vars });
+  const scaled = (value) => typeof value === "string" && /\bstatus\.stacks\b/.test(value);
+  const shield = detail.category === "shield" ? vars.shieldAmount : void 0;
+  if (Number.isFinite(shield)) parts.push(`\u62A4\u76FE ${shield} \u70B9`);
+  for (const hook2 of ["turn_start", "turn_end"]) {
+    const effects = (detail.rules ?? []).filter((rule2) => rule2.hook === hook2).flatMap((rule2) => rule2.program).flatMap((op) => {
+      if (op.op !== "damage" && op.op !== "heal") return [];
+      const perLayer = scaled(op.amount);
+      const amount = resolve(op.amount, perLayer ? 1 : void 0);
+      const label = op.op === "heal" ? "\u6CBB\u7597" : `${damageNames[op.damageType ?? "true"]}\u4F24\u5BB3`;
+      if (!Number.isFinite(amount)) return [`${label}\uFF08${op.amount}\uFF09`];
+      const total2 = perLayer && detail.stacks > 1 ? `\uFF08\u5F53\u524D\u5408\u8BA1 ${proseNumber(resolve(op.amount))} \u70B9\uFF09` : "";
+      return [`${perLayer || detail.stacks === 1 ? "\u6BCF\u5C42 " : ""}${proseNumber(amount)} \u70B9${label}${total2}`];
+    });
+    if (effects.length) parts.push(`\u6301\u6709\u8005${hookNames[hook2]}\uFF1A${effects.join("\u3001")}`);
+  }
+  for (const mod2 of mods) for (const field of ["flat", "additivePercent", "mult"]) {
+    if (mod2[field] === void 0) continue;
+    const perLayer = scaled(mod2[field]);
+    const value = resolve(mod2[field], perLayer ? 1 : void 0);
+    let label = mod2.stat === "checkBonus" && mod2.checkKind === "attack" ? "\u547D\u4E2D" : modifierNames[mod2.stat];
+    if (mod2.stat === "advantage") label = value < 0 ? "\u52A3\u52BF\u9AB0" : "\u4F18\u52BF\u9AB0";
+    const ratio3 = ratios.has(mod2.stat) && field === "flat" || field === "additivePercent";
+    const shown = !Number.isFinite(value) ? `\uFF08${mod2[field]}\uFF09` : field === "mult" ? `\xD7${proseNumber(value)}` : ratio3 ? `${signed(percent(value))}%` : signed(mod2.stat === "advantage" ? Math.abs(value) : value);
+    parts.push(`${perLayer && detail.stacks > 1 ? "\u6BCF\u5C42" : ""}${label} ${shown}`);
+  }
+  const flags2 = /* @__PURE__ */ new Set([...detail.flags ?? [], ...mods.flatMap((mod2) => mod2.flags ?? [])]);
+  for (const flag of flags2) if (flagModifiers[flag]) parts.push(flagModifiers[flag]);
+  const locks = new Set(mods.flatMap((mod2) => mod2.locks ?? []));
+  if (Object.keys(slotNames).every((slot2) => locks.has(slot2))) parts.push("\u8DF3\u8FC7\u884C\u52A8");
+  else if (locks.size === 1 && locks.has("move")) parts.push("\u65E0\u6CD5\u79FB\u52A8");
+  else if (locks.size) parts.push(`\u5C01\u9501\uFF1A${[...locks].map((slot2) => slotNames[slot2]).join("\u3001")}`);
   if (detail.expireOn) {
     const triggers = [].concat(detail.expireOn).map((rule2) => {
-      const qualifier = rule2.damageType === "direct" ? "\u53D7\u5230\u76F4\u63A5\u4F24\u5BB3" : rule2.damageType === "indirect" ? "\u53D7\u5230\u95F4\u63A5\u4F24\u5BB3" : expiryEvents[rule2.trigger] ?? {
-        after_damage: "\u53D7\u5230\u4F24\u5BB3",
-        after_hit: rule2.filter?.includes?.("target.id == self.id") ? "\u53D7\u5230\u547D\u4E2D" : "\u547D\u4E2D",
-        after_action: "\u884C\u52A8\u7ED3\u675F",
-        turn_start: "\u56DE\u5408\u5F00\u59CB",
-        turn_end: "\u56DE\u5408\u7ED3\u675F"
-      }[rule2.hook] ?? "\u6EE1\u8DB3\u6761\u4EF6";
-      return qualifier + (rule2.exceptSource === "self" ? "\uFF08\u81EA\u8EAB\u6765\u6E90\u9664\u5916\uFF09" : "");
+      const filter = rule2.filter ?? "";
+      const qualifier = rule2.hook === "after_hit" && /target\.id\s*==\s*self\.id/.test(filter) ? "\u53D7\u5230\u547D\u4E2D" : rule2.hook === "after_damage" && /event\.direct\s*==\s*(true|false)\b/.test(filter) ? /event\.direct\s*==\s*true\b/.test(filter) ? "\u53D7\u5230\u76F4\u63A5\u4F24\u5BB3" : "\u53D7\u5230\u95F4\u63A5\u4F24\u5BB3" : hookNames[rule2.hook];
+      return qualifier + (/source\.id\s*!=\s*self\.id/.test(filter) ? "\uFF08\u81EA\u8EAB\u6765\u6E90\u9664\u5916\uFF09" : "");
     });
     parts.push(`${triggers.join("\u6216")}\u65F6\u89E3\u9664`);
   }
@@ -8896,7 +8725,7 @@ function formatBattleReportText(report, unitNames = {}) {
         case "status":
         case "status_patch": {
           const brace = events[i - 1];
-          if (type === "status" && brace?.type === "brace" && brace.actor === detail.targetId && (detail.stacks ?? 1) === 1 && (!detail.durationType || detail.durationType === "battle_turns") && !detail.expireOn && !detail.amount && brace.detail?.turns === detail.remainingTurns && Object.keys(detail.modifiers ?? {}).every((key4) => key4 === "reduction" && detail.modifiers[key4] === brace.detail.reduction)) break;
+          if (type === "status" && brace?.type === "brace" && brace.actor === detail.targetId && (detail.stacks ?? 1) === 1 && (!detail.durationType || detail.durationType === "battle_turns") && !detail.expireOn && !detail.amount && brace.detail?.turns === detail.remainingTurns && detail.mods?.length === 1 && detail.mods[0].stat === "damageReduction" && detail.vars?.reduction === brace.detail.reduction) break;
           const parts = statusNotes(detail);
           if (type === "status_patch" && detail.stacks > 1) parts.unshift(`${detail.stacks} \u5C42`);
           if (type === "status" && actor && detail.targetId && actor !== detail.targetId) parts.push(`\u6765\u6E90 ${name(event, actor)}`);
@@ -8974,21 +8803,21 @@ var maxHistory = 2e3;
 var maxBatch = 32;
 var own14 = (obj, key4) => Object.hasOwn(obj, key4);
 var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own14(value, key4));
-function diff(before, after, path2 = [], changes2 = []) {
-  if (before === after) return changes2;
+function diff(before, after, path2 = [], changes = []) {
+  if (before === after) return changes;
   if (before && after && typeof before === "object" && typeof after === "object" && Array.isArray(before) === Array.isArray(after) && (!Array.isArray(before) || before.length === after.length)) {
     for (const key4 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
       diff(
         own14(before, key4) ? before[key4] : void 0,
         own14(after, key4) ? after[key4] : void 0,
         [...path2, Array.isArray(before) ? Number(key4) : key4],
-        changes2
+        changes
       );
     }
   } else {
-    changes2.push({ path: path2, ...before === void 0 ? {} : { before }, ...after === void 0 ? {} : { after } });
+    changes.push({ path: path2, ...before === void 0 ? {} : { before }, ...after === void 0 ? {} : { after } });
   }
-  return changes2;
+  return changes;
 }
 function isMissingSummonProvenance({ path: path2, before, after }) {
   if (after !== void 0 || typeof before !== "string" || path2.at(-1) !== "sourceSkillId") return false;
@@ -9180,9 +9009,6 @@ function createGameAPI() {
       const s = current();
       return copy({ ...STATUSES, ...s.statusTemplates });
     },
-    statusModifierKeys(statusId3) {
-      return statusModifierKeys(statusId3, state);
-    },
     checkStealth(unitId, d20, dc) {
       const s = current();
       if (!own14(s.units, unitId) || !Number.isInteger(d20) || d20 < 1 || d20 > 20 || !Number.isFinite(dc)) fail3("\u65E0\u6548\u7684\u6F5C\u884C\u68C0\u5B9A\u53C2\u6570");
@@ -9296,12 +9122,12 @@ function createGameAPI() {
         const isUndo = commands2.length === 1 && shape(commands2[0], ["type", "operation"]) && commands2[0].type === "replay_or_undo" && commands2[0].operation === "undo";
         const transaction = { kind: "commands", entries: copy(commands2), reason: options.reason };
         const next = isUndo ? frames.at(-1)?.before ?? fail3("\u6CA1\u6709\u53EF\u64A4\u9500\u7684\u4E8B\u52A1") : simulate(s, transaction);
-        const changes2 = diff(s, next);
-        if (!changes2.length) fail3("\u547D\u4EE4\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
+        const changes = diff(s, next);
+        if (!changes.length) fail3("\u547D\u4EE4\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
         const proposalId = `p${++serial}`;
         if (pending.size >= 16) pending.delete(pending.keys().next().value);
         pending.set(proposalId, { transaction, next, isUndo, revision });
-        return copy({ ok: true, dryRun: true, proposalId, baseRevision: revision, reason: options.reason, diff: changes2 });
+        return copy({ ok: true, dryRun: true, proposalId, baseRevision: revision, reason: options.reason, diff: changes });
       } catch (error2) {
         return { ok: false, dryRun: true, error: error2.message };
       }
@@ -9944,7 +9770,7 @@ var side = (team2) => team2 === "blue" ? "\u6211\u65B9" : "\u654C\u65B9";
 var ratio = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
 var has2 = (table4, id3) => table4 && id3 != null && Object.hasOwn(table4, id3);
 var get2 = (table4, id3) => has2(table4, id3) ? table4[id3] : void 0;
-var values4 = (table4) => Object.values(table4 ?? {});
+var values3 = (table4) => Object.values(table4 ?? {});
 var key3 = (x, y) => `${x},${y}`;
 var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
 var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
@@ -10021,7 +9847,7 @@ function createRenderer(root2, portraitFor = () => []) {
       bars.append(meter);
     }
     node.append(bars);
-    const marks = values4(unit.statuses);
+    const marks = values3(unit.statuses);
     if (marks.length) node.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : STATUS_ICON[marks[0].category] ?? "\u25C6"));
     return node;
   }
@@ -10058,8 +9884,8 @@ function createRenderer(root2, portraitFor = () => []) {
   function renderBoard(state, { selected: selected2, action, hover, preview: preview2, current, askLocked, askCells, entityChoices }) {
     initBoard(state);
     const moving = ["move", "sprint", "disengage"].includes(action?.type);
-    const unitsAt2 = group(values4(state.units).filter((u) => u.hp > 0 && !u.fled));
-    const bodiesAt = group(corpses(state)), coversAt = group(values4(state.covers)), itemsAt = group(values4(state.interactives));
+    const unitsAt2 = group(values3(state.units).filter((u) => u.hp > 0 && !u.fled));
+    const bodiesAt = group(corpses(state)), coversAt = group(values3(state.covers)), itemsAt = group(values3(state.interactives));
     const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
     const path2 = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
     const risks = new Set((moving && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
@@ -10188,7 +10014,7 @@ function createRenderer(root2, portraitFor = () => []) {
     meta.append(crystals);
     if (u.moraleState && u.moraleState !== "steady") meta.append(el2("span", "ft-chip", `\u6218\u610F${moraleLabels[u.moraleState]}`));
     meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
-    for (const s of values4(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
+    for (const s of values3(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
     node.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
   }
   function renderUnitCard(state, u, inspected) {
@@ -10233,7 +10059,7 @@ function createRenderer(root2, portraitFor = () => []) {
       u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
     ].filter(Boolean).join(" \xB7 "));
     const statusList = el2("ul", "ft-list");
-    for (const s of values4(u.statuses)) {
+    for (const s of values3(u.statuses)) {
       const li = el2("li");
       li.append(el2("b", "", statusText(s)), document_text(` ${duration(s)}`));
       if (s.description) li.append(el2("p", "", s.description));
@@ -10254,14 +10080,14 @@ function createRenderer(root2, portraitFor = () => []) {
       gear.append(li);
     }
     if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
-    const zones = values4(state.zones).filter((z) => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius);
+    const zones = values3(state.zones).filter((z) => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius);
     const parts = [wrap, bars, stats, facts, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
     if (zones.length) parts.push(el2("h3", "ft-section", "\u6240\u5904\u533A\u57DF"), el2("p", "", zones.map((z) => `${z.name}\uFF1A\u6BCF\u56DE\u5408 ${z.damage} \u70B9${DAMAGE_TYPES[z.damageType] ?? ""}\u4F24\u5BB3`).join("\uFF1B")));
     node.replaceChildren(...parts);
   }
   const document_text = (t) => doc.createTextNode(t);
   function renderFeatures(state) {
-    const list4 = [...values4(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values4(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
+    const list4 = [...values3(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values3(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
     const ul = el2("ul", "ft-list");
     for (const [text5, f] of list4) ul.append(el2("li", "", `${text5} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
     $("feature-cards").replaceChildren(ul);
@@ -15821,6 +15647,7 @@ mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11
 \u2022 \u8F93\u51FA\u4FA7\uFF08\u6301\u6709\u8005\u8FDB\u653B\uFF09\uFF1AdamageFlat \u56FA\u5B9A\u52A0\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat\uFF09\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF08\u57FA\u503C 1\uFF0C\u7528 mult \u6216 additivePercent\uFF0C\u7981\u7528 flat\uFF09\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF08\u7528 flat\uFF09\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF09\u3002
 \u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
 \u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7684\u57FA\u503C\u4E0E flat \u5747\u4E3A\u540C\u9636\u79FB\u52A8\u5355\u4F4D\uFF0C\u53E0\u52A0\u540E\u5E94\u7528\u500D\u7387\uFF0C\u518D\u6309\u5C42\u7EA7\u7C73\u6570\u6298\u7B97\u4E3A\u683C\uFF1BcheckBonus\u3001initiativeFlat \u4EC5\u63A5\u53D7 flat \u6570\u503C\u52A0\u503C\uFF0C\u4E0D\u4E58\u68C0\u5B9A\u6216\u5148\u653B\u603B\u503C\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
+\u2022 \u72B6\u6001\u6269\u5C55\uFF1AincomingAccuracy\uFF08\u88AB\u547D\u4E2D\u4FEE\u6B63\uFF09\u3001intentDifficulty\uFF08\u610F\u56FE\u96BE\u5EA6\uFF09\u3001shatter\uFF08\u788E\u88C2\u589E\u4F24\uFF09\u5747\u4F7F\u7528 stat flat\uFF1Bhidden\u3001intercept\u3001taunted\u3001infiniteAmmo \u4F7F\u7528 mods.flags\u3002
 \u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002
 controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002moraleLock \u4EC5\u679A\u4E3E\u503C "steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u654C\u65B9\u6307\u5411\u52A8\u4F5C\u5408\u6CD5\u9009\u4E2D\u53CB\u519B\u6216\u81EA\u8EAB\u3002
 
@@ -16519,7 +16346,7 @@ function renderPromptTab(page, ctx) {
         expand(open);
         if (open) labelInput.focus();
       };
-      const patch = (changes2) => saveSlots(slots3.map((s, j) => j === i ? { ...s, ...changes2 } : s));
+      const patch = (changes) => saveSlots(slots3.map((s, j) => j === i ? { ...s, ...changes } : s));
       toggle.onchange = () => patch({ enabled: toggle.checked });
       labelInput.oninput = () => {
         setTitle(labelInput.value);
@@ -17135,23 +16962,26 @@ var modLabels = {
   dcBonus: "\u68C0\u5B9A\u96BE\u5EA6",
   resistBonus: "\u8C41\u514D\u52A0\u503C",
   advantage: "\u68C0\u5B9A\u4F18\u52BF",
-  initiativeFlat: "\u5148\u653B"
+  initiativeFlat: "\u5148\u653B",
+  incomingAccuracy: "\u88AB\u547D\u4E2D\u4FEE\u6B63",
+  intentDifficulty: "\u610F\u56FE\u96BE\u5EA6",
+  shatter: "\u788E\u88C2\u589E\u4F24"
 };
 var ratioStats2 = /* @__PURE__ */ new Set(["armorPiercePercent", "damageReduction", "dr"]);
 var percent2 = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 10 });
 var slots2 = { action: "\u52A8\u4F5C", attack: "\u653B\u51FB", move: "\u79FB\u52A8", cast: "\u65BD\u6CD5", reaction: "\u53CD\u5E94" };
-var flags = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3" };
+var flags = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3", hidden: "\u9690\u8EAB", intercept: "\u53EF\u62E6\u622A\u653B\u51FB", taunted: "\u88AB\u5632\u8BBD", infiniteAmmo: "\u5F39\u836F\u4E0D\u9650" };
 var checks = { attack: "\u653B\u51FB", save: "\u8C41\u514D", contest: "\u5BF9\u6297", d20: "\u666E\u901A", chance: "\u6982\u7387" };
 var signed2 = (n, asPercent) => typeof n === "number" ? `${n >= 0 ? "+" : ""}${asPercent ? percent2.format(n) : n}` : `\u6309\u516C\u5F0F ${n}`;
 function modSummary(mod2) {
   const parts = [];
   if (mod2.stat) {
-    const values5 = [
+    const values4 = [
       mod2.flat != null ? signed2(mod2.flat, ratioStats2.has(mod2.stat)) : null,
       mod2.mult != null ? `\xD7${typeof mod2.mult === "number" ? mod2.mult : `\uFF08${mod2.mult}\uFF09`}` : null,
       mod2.additivePercent != null ? signed2(mod2.additivePercent, true) : null
     ].filter(Boolean);
-    parts.push([modLabels[mod2.stat], ...values5].join(" "));
+    parts.push([modLabels[mod2.stat], ...values4].join(" "));
   }
   if (mod2.locks?.length) parts.push(`\u7981\u6B62${mod2.locks.map((slot2) => slots2[slot2]).join("\u3001")}`);
   if (mod2.flags?.length) parts.push(...mod2.flags.map((flag) => flags[flag]));
@@ -17288,7 +17118,7 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
 
 // src/tavern/ai-page.js
 var roleLabels = { user: "\u73A9\u5BB6", assistant: "\u8F85\u52A9 AI", system: "\u7CFB\u7EDF", tool: "\u5DE5\u5177" };
-var statusLabels2 = { ok: "\u5B8C\u6210", error: "\u5931\u8D25", aborted: "\u5DF2\u4E2D\u6B62" };
+var statusLabels = { ok: "\u5B8C\u6210", error: "\u5931\u8D25", aborted: "\u5DF2\u4E2D\u6B62" };
 var formatTime = (ts) => new Date(ts).toLocaleString();
 function renderMarkdown(target2, content, make) {
   const blocks = content.split(/^```[^\n]*\n|^```[ \t]*(?:\n|$)/m);
@@ -17411,7 +17241,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
       rows2.set(message, row);
     }
     row.bubble.dataset.status = message.status ?? "";
-    row.badge.textContent = statusLabels2[message.status] ?? "";
+    row.badge.textContent = statusLabels[message.status] ?? "";
     row.body.replaceChildren();
     if (message.role === "assistant") renderMarkdown(row.body, message.content, make);
     else row.body.textContent = [message.toolName, message.content, message.toolResult == null ? "" : typeof message.toolResult === "string" ? message.toolResult : JSON.stringify(message.toolResult, null, 2)].filter(Boolean).join("\n");
@@ -17556,22 +17386,22 @@ function equal(a, b) {
   return keys.length === Object.keys(b).length && keys.every((key4) => own16(b, key4) && equal(a[key4], b[key4]));
 }
 function chatUndoChanges(before, after) {
-  const changes2 = [];
+  const changes = [];
   function visit(a, b, path2) {
     for (const key4 of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
       const next = `${path2}/${pointer2(key4)}`;
       const had = own16(a, key4), has3 = own16(b, key4);
       if (had && has3 && record2(a[key4]) && record2(b[key4])) visit(a[key4], b[key4], next);
       else if (had !== has3 || !equal(a[key4], b[key4])) {
-        changes2.push({ path: next, has: has3, ...has3 ? { expected: b[key4] } : {}, inverse: had ? { op: has3 ? "replace" : "add", path: next, value: a[key4] } : { op: "remove", path: next } });
+        changes.push({ path: next, has: has3, ...has3 ? { expected: b[key4] } : {}, inverse: had ? { op: has3 ? "replace" : "add", path: next, value: a[key4] } : { op: "remove", path: next } });
       }
     }
   }
   visit(before, after, "");
-  return changes2;
+  return changes;
 }
-function chatInversePatch(state, changes2) {
-  return changes2.map(({ path: path2, has: has3, expected, inverse }) => {
+function chatInversePatch(state, changes) {
+  return changes.map(({ path: path2, has: has3, expected, inverse }) => {
     const keys = path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"));
     const key4 = keys.pop();
     let parent = state;

@@ -1,7 +1,7 @@
 import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
-import { damageTypes, validateStatusModifiers } from '../core/vm-schema.js';
+import { damageTypes } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 
 import { MORALE, moraleLabels } from '../core/combat_protocol.js';
@@ -31,8 +31,6 @@ export const inGrid = (state, x, y) => int(y, 0, (state.grid?.length ?? 0) - 1)
   && int(x, 0, (state.grid[y]?.length ?? 0) - 1);
 export const attrs = ['str', 'agi', 'con', 'int', 'spi'];
 const statusDurations = ['battle_turns', 'until_removed', 'persistent'];
-const statusTickTimings = ['onTurnStart', 'onTurnEnd'];
-const statusStackRules = ['refresh', 'stack', 'replace'];
 const statusLabels = ['name', 'icon', 'category', 'description'];
 const maxStatusStacks = 999999;
 export const maxStatusTemplates = 64;
@@ -101,33 +99,9 @@ export function statusTemplate(value, key = value?.id, state) {
   checkOptional(value, 'expireOn', validVmExpiry);
   carrierFieldsValue(value, state);
 }
-function statusLifetime(v) {
-  return int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType)
-    && statusTickTimings.includes(v.tickTiming) && statusStackRules.includes(v.stackRule);
-}
-function nativeStatusTemplate(v, key) {
-  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers'], ['expireInto', 'expireOn']);
-  checkOptional(v, 'expireInto', id);
-  checkOptional(v, 'expireOn', validVmExpiry);
-  requireThat(id(key) && v.id === key, '自定义状态 ID');
-  requireThat(text(v.name) && text(v.icon, 24) && text(v.description, 300)
-    && ['buff', 'debuff', 'control', 'dot', 'hot', 'shield'].includes(v.category), '状态名/图标/描述/类别');
-  requireThat(statusLifetime(v) && validStackCap(v.maxStacks), '状态时长/层数');
-  requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own(v.modifiers, 'damageType') || own(v.modifiers, 'damage')), '状态特效');
-  validateStatusModifiers(v, v.modifiers);
-  requireThat(key !== actionStatuses.shield || own(v.modifiers, 'amount'), '默认护盾模板需要 amount');
-}
 export function statusTemplateTable(v) {
   const state = { statusTemplates: v };
-  table(v, (template, key) => {
-    if (own(template ?? {}, 'modifiers')) nativeStatusTemplate(template, key);
-    else statusTemplate(template, key, state);
-  }, maxStatusTemplates);
-  for (const t of Object.values(v)) if (t.expireInto) {
-    const next = getStatusTemplate({ statusTemplates: v }, t.expireInto);
-    requireThat(t.durationType === 'battle_turns' && t.remainingTurns === 1 && t.expireInto !== t.id
-      && next && !next.expireInto, '状态到期目标');
-  }
+  table(v, (template, key) => statusTemplate(template, key, state), maxStatusTemplates);
 }
 
 export function defineStatus(state, key, template) {
@@ -205,14 +179,7 @@ export function statusValue(v, key, state, ownerId) {
   if (own(v ?? {}, 'templateId')) {
     const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, ...rest } = v;
     const template = getStatusTemplate(state, key);
-    const { vars, modifiers, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
-    if (template?.modifiers) {
-      if (own(rest, 'modifiers')) validateStatusModifiers(template, modifiers);
-      if (own(rest, 'stackRule')) requireThat(statusStackRules.includes(stackRule), '原生状态叠层');
-      if (own(rest, 'tickTiming')) requireThat(statusTickTimings.includes(tickTiming), '原生状态时机');
-      if (own(rest, 'expireInto')) requireThat(expireInto === template.expireInto, '状态到期目标');
-      if (own(rest, 'amount')) requireThat(own(template.modifiers, 'amount') && num(amount, 0, 1e9), '护盾池');
-    } else requireThat(['modifiers', 'stackRule', 'tickTiming', 'expireInto', 'amount'].every(field => !own(rest, field)), 'VM 状态字段');
+    const { vars, ...definition } = rest;
     if (sourceCarrier != null) {
       fields(sourceCarrier, ['type', 'id'], ['ownerId']);
       requireThat(['unit', 'skill', 'status', 'item', 'zone'].includes(sourceCarrier.type)
@@ -232,20 +199,15 @@ export function statusValue(v, key, state, ownerId) {
     return;
   }
   const t = getStatusTemplate(state, key);
-  requireThat(id(key) && t?.modifiers, '状态 ID');
-  fields(v, ['id', ...statusLabels, 'remainingTurns', 'durationType', 'tickTiming', 'stackRule', 'maxStacks', 'modifiers', 'stacks', 'sourceUnitId'], ['appliedRound', 'appliedTurn', 'amount', 'expireInto', 'expireOn', 'holdTotal', 'stackMode', ...carrierFields]);
-  checkOptional(v, 'stackMode', mode => stackModes.includes(mode));
+  requireThat(id(key) && t, '状态 ID');
+  fields(v, ['id', 'templateId', 'ownerId', 'name', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'stacks'], ['icon', 'category', 'description', 'sourceId', 'sourceCarrier', 'authorityRank', 'sourceTier', 'effectiveTier', 'appliedRound', 'appliedTurn', 'expireOn', ...carrierFields]);
   carrierFieldsValue(v, state, true);
-  checkOptional(v,'holdTotal',x=>v.id==='suppressed' && Number.isFinite(x));
   checkOptional(v, 'expireOn', x => x === null || validVmExpiry(x));
-  requireThat(v.expireInto === t.expireInto, '状态到期目标');
-  requireThat(v.id === key && statusLabels.every(k => v[k] === t[k]) && statusLifetime(v)
-    && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks)
-    && (v.sourceUnitId === null || id(v.sourceUnitId)), '状态实例');
-  fields(v.modifiers, Object.keys(t.modifiers));
-  validateStatusModifiers(t, v.modifiers);
-  checkOptional(v, 'appliedRound', x => int(x, 1, 1000000)); checkOptional(v, 'appliedTurn', x => int(x, 0, 199));
-  requireThat(own(t.modifiers, 'amount') ? int(v.amount, 1, 1000000000) : !own(v, 'amount'), '护盾池');
+  requireThat(v.id === key && v.templateId === key && v.name === t.name && int(v.maxStacks, 1, stackCapLimit(t))
+    && int(v.stacks, 1, v.maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType)
+    && stackModes.includes(v.stackMode) && id(v.ownerId) && (ownerId === undefined || v.ownerId === ownerId)
+    && (v.sourceId === null || v.sourceId === undefined || id(v.sourceId)), 'VM 状态实例');
+  if (own(v, 'vars')) table(v.vars, entry => requireThat(jsonTree(entry), 'VM 状态变量'));
 }
 export function validateCell(v) {
   fields(v, ['kind', 'z']);

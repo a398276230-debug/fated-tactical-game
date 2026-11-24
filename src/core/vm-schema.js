@@ -30,25 +30,6 @@ const booleanExpr = either(bool, formula);
 const entityId = either(id, variable);
 export const damageTypes = Object.freeze(['physical', 'energy', 'mental', 'true']);
 const damageType = enumOf(...damageTypes);
-const modifierRanges = {
-  damage: [1, 100000], heal: [1, 100000], amount: [1, 100000], reflect: [1, 100000], armor: [1, 100000],
-  movement: [-3, 3], accuracy: [-10, 10], incomingAccuracy: [-10, 10], advantage: [1, 3], disadvantage: [1, 3], intentDifficulty: [-10, 10],
-  reduction: [0, 1], vulnerability: [0, 1], shatter: [0, 1], damageBonus: [0, 1], dodgeBonus: [-30, 30], attackPercent: [-1, 4],
-  attributePercent: [-1, 4], finalDamageMultiplier: [0, 8],
-};
-Object.assign(modifierRanges, { armor: [-100000, 100000] });
-const modifierRatios = new Set(['reduction', 'vulnerability', 'shatter', 'damageBonus', 'attackPercent', 'attributePercent', 'finalDamageMultiplier']);
-const modifierFlags = new Set(['taunted', 'intercept', 'skip', 'rooted', 'hidden', 'infiniteAmmo', 'guaranteed_hit', 'guaranteed_crit', 'blockResourceRestore', 'preserveLife']);
-export function validateStatusModifiers(template, modifiers) {
-  if (!modifiers || Object.getPrototypeOf(modifiers) !== Object.prototype) throw new Error('modifiers 必须为对象');
-  for (const [key, value] of Object.entries(modifiers)) {
-    if (!Object.hasOwn(template.modifiers, key)) throw new Error(`${template.id} 不允许覆盖状态参数 ${key}`);
-    const range = modifierRanges[key];
-    const valid = range ? (modifierRatios.has(key) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range[0] && value <= range[1]
-      : key === 'damageType' ? damageTypes.includes(value) : modifierFlags.has(key) && typeof value === 'boolean';
-    if (!valid) throw new Error(`无效状态参数 ${template.id}.${key}`);
-  }
-}
 const attribute = enumOf('str', 'agi', 'con', 'int', 'spi');
 const slot = enumOf('attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport');
 const point2 = object({ x: number, y: number }, ['x', 'y']);
@@ -114,15 +95,15 @@ const controlPolicy = object({
 });
 const stat = enumOf(...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax');
-const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent');
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax', 'incomingAccuracy', 'intentDifficulty', 'shatter');
+const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
 export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
   'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'incomingAccuracy', 'intentDifficulty']);
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
   stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: text, statusId: id,
-  locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit'), 1),
+  locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo'), 1),
   controlPolicy, when: booleanExpr,
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),

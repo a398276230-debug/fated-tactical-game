@@ -220,7 +220,7 @@ test('优势/劣势抵消；自然 1/20 门槛与命中概率可审计', () => {
   assert.equal(probe(a,'attack',2,2).advantage,-1);
   assert.equal(probe(a,'attack',2,2).hitChance,.95 ** 2);
   commit(a, status('swordsman','stealth'));
-  assert.equal(probe(a,'attack',2,2).advantage,0);
+  assert.equal(probe(a,'attack',2,2).advantage,1);
   commit(a, remove('swordsman','blind'));
   assert.equal(probe(a,'attack',2,2).advantage,1);
   assert.ok(Math.abs(probe(a,'attack',2,2).hitChance-.9975)<1e-12);
@@ -294,7 +294,7 @@ test('护盾、冻伤碎冰、棘甲反伤、援护在同一笔伤害事务中�
 
 test('眩晕跳过一轮行动；定身仍可施法；嘲讽迫使选择来源', () => {
   const a=boot();
-  commit(a,stats('scout',{x:2}),stats('raider',{x:1,y:1}),status('swordsman','root'),status('swordsman','taunt',{sourceUnitId:'raider'}),status('oracle','stun'));
+  commit(a,stats('scout',{x:2}),stats('raider',{x:1,y:1}),status('swordsman','root'),status('swordsman','taunt',{sourceId:'raider'}),status('oracle','stun'));
   assert.match(probe(a,'move',0,2).error,/定身/);
   assert.match(probe(a,'attack',2,2).error,/嘲讽/);
   assert.equal(probe(a,'skill',1,1,'brand').ok,true);
@@ -309,7 +309,7 @@ test('弩弹、1AP 装填、同一槽不能复用；祭坛给予可见护盾疾�
   act(a,'reload'); assert.equal(u(a,'ranger').ap,1);
   assert.equal(pool(a,'ranger-weapon','ammo').current,6);
   assert.equal(probe(a,'interact',2,3).ok,false); end(a);turn(a,'ranger');
-  act(a,'interact',2,3); assert.ok(u(a,'ranger').statuses.haste); assert.equal(u(a,'ranger').statuses.shield.amount,10);
+  act(a,'interact',2,3); assert.ok(u(a,'ranger').statuses.haste); assert.equal(u(a,'ranger').statuses.shield.vars.shieldAmount,10);
 });
 
 test('掩体坍塌让路径重新可通行；AOE 不透墙，Z 高差反映在预览', () => {

@@ -1,5 +1,4 @@
-import { getStatusTemplate, grantStatus, patchStatus } from '../core/combat.js';
-import { evaluateExpr } from '../core/formula.js';
+import { getStatusTemplate, grantStatus, statusLogDetail } from '../core/combat.js';
 import { statusPatchFields } from '../core/vm-schema.js';
 import { deleteOwnedPools, getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
 import { recordVM, removeVMStatus } from '../core/vm-runtime.js';
@@ -37,7 +36,6 @@ const commands = {
     fields(c, ['type','unitId','statusId','patch']);
     const unit = get(s.units, c.unitId, 'unitId');
     const status = get(unit.statuses, c.statusId, 'statusId');
-    if (!own(status, 'templateId')) return patchStatus(s, c.unitId, c.statusId, c.patch);
     nonempty(c.patch);
     fields(c.patch, [], statusPatchFields);
     const next = { ...status, ...c.patch };
@@ -47,52 +45,25 @@ const commands = {
     }
     statusValue(next, c.statusId, s, unit.id);
     unit.statuses[c.statusId] = next;
-    recordVM(s, unit, 'status_patch', `${unit.name}的${next.name}参数已更新`, { targetId: unit.id, statusId: next.id });
+    recordVM(s, unit, 'status_patch', `${unit.name}的${next.name}参数已更新`, statusLogDetail(unit, next));
   },
   upsert_status(s, c) {
     fields(c, ['type','unitId','statusId'], ['options']);
     const u = get(s.units, c.unitId, 'unitId'), status = getStatusTemplate(s, c.statusId);
     check(status, 'statusId');
     const options = own(c, 'options') ? c.options : {};
-    if (!own(status, 'modifiers')) {
-      fields(options, [], [...statusPatchFields, 'sourceId', 'extendTurns']);
-      checkOptional(options, 'sourceId', source => source === null || has(s.units, source));
-      checkOptional(options, 'remainingTurns', turns => int(turns, 1, 100));
-      checkOptional(options, 'stacks', count => int(count, 1, status.maxStacks ?? 1));
-      checkOptional(options, 'extendTurns', turns => int(turns, 1, 100));
-      if (own(options, 'vars')) check(plain(options.vars), 'VM 状态变量');
-      const previous = u.statuses[c.statusId];
-      const { extendTurns = 1, ...patch } = options;
-      const sourceId = own(patch, 'sourceId') ? patch.sourceId : previous?.sourceId ?? null;
-      const source = s.units[sourceId];
-      const vars = Object.fromEntries(Object.entries(status.vars ?? {}).flatMap(([key, expr]) => {
-        const value = evaluateExpr(expr, { self: source, source, target: u, event: {} });
-        return value === null ? [] : [[key, value]];
-      }));
-      const instance = { remainingTurns: 1, durationType: 'battle_turns', stackMode: 'refresh', stacks: 1,
-        ...status, ...patch, templateId: status.id, ownerId: u.id, sourceId, vars: { ...vars, ...patch.vars } };
-      if (previous && instance.stackMode === 'stack') instance.stacks = Math.min(status.maxStacks ?? 1, previous.stacks + instance.stacks);
-      if (previous && instance.stackMode === 'extend') instance.remainingTurns = Math.min(100, previous.remainingTurns + extendTurns);
-      if (previous?.pools) instance.pools = previous.pools;
-      statusValue(instance, c.statusId, s, u.id);
-      if (u.hp <= 0 || u.fled) return;
-      u.statuses[c.statusId] = instance;
-      recordVM(s, source ?? u, 'status', `${u.name}获得${instance.name} ×${instance.stacks}`, { targetId: u.id, statusId: instance.id });
-      return;
-    }
-    fields(options, [], ['remainingTurns','durationType','stacks','stackRule','tickTiming','amount','sourceUnitId','modifiers','expireOn']);
-    checkOptional(options, 'remainingTurns', x => int(x, 1, 100));
-    checkOptional(options, 'durationType', x => ['battle_turns','until_removed','persistent'].includes(x));
-    checkOptional(options, 'stacks', x => int(x, 1, status.maxStacks));
-    checkOptional(options, 'stackRule', x => ['refresh','stack','replace'].includes(x));
-    checkOptional(options, 'tickTiming', x => ['onTurnStart','onTurnEnd'].includes(x));
-    checkOptional(options, 'amount', x => own(status.modifiers, 'amount') && int(x, 1, 10000));
-    checkOptional(options, 'sourceUnitId', x => has(s.units, x));
-    if (options.modifiers?.taunted ?? status.modifiers.taunted) {
-      const sourceId = options.sourceUnitId ?? u.statuses[c.statusId]?.sourceUnitId;
-      check(has(s.units, sourceId) && s.units[sourceId].team !== u.team, '嘲讽需要敌对来源');
-    }
-    grantStatus(s, u, c.statusId, options);
+    fields(options, [], [...statusPatchFields, 'sourceId', 'extendTurns', 'amount', 'turns']);
+    checkOptional(options, 'sourceId', source => source === null || has(s.units, source));
+    checkOptional(options, 'remainingTurns', turns => int(turns, 1, 100));
+    checkOptional(options, 'turns', turns => int(turns, 1, 100));
+    checkOptional(options, 'extendTurns', turns => int(turns, 1, 100));
+    checkOptional(options, 'stacks', count => int(count, 1, 999999));
+    if (own(options, 'vars')) check(plain(options.vars), 'VM 状态变量');
+    if (options.amount !== undefined) check(Number.isFinite(options.amount) && options.amount > 0, '护盾池');
+    const sourceId = options.sourceId ?? u.statuses[c.statusId]?.sourceId;
+    if ((status.mods ?? []).some(mod => mod.flags?.includes('taunted'))) check(has(s.units, sourceId) && s.units[sourceId].team !== u.team, '嘲讽需要敌对来源');
+    const instance = grantStatus(s, u, c.statusId, options);
+    if (instance) statusValue(instance, c.statusId, s, u.id);
   },
   remove_status(s, c) {
     fields(c, ['type','unitId','statusId']);

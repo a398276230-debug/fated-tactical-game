@@ -175,10 +175,10 @@ test('战报用施加时的状态实例呈现层数、护盾、解除条件和�
   const sourceId = state.order[state.turn];
   const id = state.order[(state.turn + 1) % state.order.length];
   const proposal = a.proposeCommands([
-    { statusId: 'bleed', options: { sourceUnitId: sourceId, stacks: 2, remainingTurns: 4 } },
+    { statusId: 'bleed', options: { sourceId, stacks: 2, remainingTurns: 4 } },
     { statusId: 'shield', options: { amount: 12, durationType: 'until_removed' } },
     { statusId: 'haste', options: { durationType: 'persistent' } },
-    { statusId: 'freeze', options: { sourceUnitId: sourceId } },
+    { statusId: 'freeze', options: { sourceId } },
     { statusId: 'weakness', options: { stacks: 3 } },
   ].map(command => ({ type: 'upsert_status', unitId: id, ...command })), {
     baseRevision: a.getStateSummary().revision, reason: '测试状态战报',

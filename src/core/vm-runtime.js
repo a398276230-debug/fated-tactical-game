@@ -1,4 +1,4 @@
-import { actionSkill, continueStrike, continueRound, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
+import { actionSkill, continueStrike, continueRound, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
@@ -114,7 +114,7 @@ export const vmHost = {
       for (const status of Object.values(unit?.statuses ?? {})) {
         const expires = [status.expireOn].flat().some(rule => rule?.hook === hook &&
           (rule.filter === undefined || evaluateExpr(rule.filter, { self: unit, status, event,
-            source: own(state.units, status.sourceId ?? status.sourceUnitId), target: own(state.units, event.targetId),
+            source: own(state.units, status.sourceId), target: own(state.units, event.targetId),
             attacker: own(state.units, event.actorId) })));
         if (!expires) continue;
         removeStatus(state, unit, status, 'expired', unit, vmHost, { sourceId: id }, { hook });
@@ -158,7 +158,7 @@ export const vmHost = {
   },
   statusTemplate: getStatusTemplate,
   statusLogDetail,
-  flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
+  flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true,
   stat: (state, unit, key) => mod(state, {}, unit.id, key, unit.stats?.[key] ?? 0),
   checkBonus: (state, unit, event) => mod(state, event, unit.id, 'checkBonus', 0)
     + (event.checkKind === 'save' ? mod(state, event, unit.id, 'resistBonus', 0) : 0),
@@ -196,11 +196,6 @@ export const vmHost = {
       }
       amount = damageAfterFlatReduction(state, target, amount, context);
       amount *= 1 - reduction.dr;
-      // Damage from a carrier/status still uses the attacker's final multiplier;
-      // VM commits must not bypass the same terminal damage modifier as native hits.
-      if (source) amount *= values(source.statuses).reduce((mult, status) =>
-        status.modifiers?.damageType != null && status.modifiers.damageType !== damageType
-          ? mult : mult * (status.modifiers?.finalDamageMultiplier ?? 1) ** (status.stacks ?? 1), 1);
     }
     return Math.max(0, source ? mod(state, event, source.id, 'finalDamageMult', amount) : amount);
   },
@@ -287,10 +282,9 @@ export function validVmState(state) {
       || vm.startingTurn !== state.order?.[state.turn] || !own(state.units, vm.startingTurn))) return false;
   if (vm.endingTurn !== undefined && (!vm.pendingAsk || typeof vm.endingTurn !== 'string'
       || vm.endingTurn !== state.order?.[state.turn] || !own(state.units, vm.endingTurn))) return false;
-  for (const remaining of [vm.endingTicks, vm.endingStatuses]) {
-    if (remaining !== undefined && (!vm.endingTurn || !Array.isArray(remaining)
-        || !remaining.every(id => typeof id === 'string'))) return false;
-  }
+  const remaining = vm.endingStatuses;
+  if (remaining !== undefined && (!vm.endingTurn || !Array.isArray(remaining)
+      || !remaining.every(id => typeof id === 'string'))) return false;
   for (const record of [...vm.stack, ...Object.values(vm.events)]) {
     if (!plain(record) || (Object.hasOwn(record, 'sourceSkillId') && !validVmSourceSkillId(record.sourceSkillId))) return false;
   }

@@ -125,7 +125,6 @@ export function continueCommit({ state, frame, host, options }) {
         pending -= amount;
         absorbed += amount;
         status.vars.shieldAmount -= amount;
-        if (Object.hasOwn(status, 'amount')) status.amount = status.vars.shieldAmount;
         host.log(state, target, 'shield', `${target.name}的${status.name}吸收${amount}点伤害`, { targetId: target.id, statusId: status.id ?? status.templateId ?? null });
         if (!status.vars.shieldAmount) removeStatus(state, target, status, 'shield_depleted', source, host, frame);
       }

@@ -63,12 +63,12 @@ const modLabels = {
   damageFlat:'输出固定伤害', damageMult:'全伤害倍率', finalDamageMult:'最终伤害倍率',
   damageReductionFlat:'受击固定减伤', damageReduction:'受击伤害减免', dr:'受击伤害减免',
   healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率',
-  checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻',
+  checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻', incomingAccuracy:'被命中修正', intentDifficulty:'意图难度', shatter:'碎裂增伤',
 };
 const ratioStats = new Set(['armorPiercePercent','damageReduction','dr']);
 const percent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:10});
 const slots = {action:'动作',attack:'攻击',move:'移动',cast:'施法',reaction:'反应'};
-const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害'};
+const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害',hidden:'隐身',intercept:'可拦截攻击',taunted:'被嘲讽',infiniteAmmo:'弹药不限'};
 const checks = {attack:'攻击',save:'豁免',contest:'对抗',d20:'普通',chance:'概率'};
 const signed = (n, asPercent) => typeof n === 'number' ? `${n>=0?'+':''}${asPercent?percent.format(n):n}` : `按公式 ${n}`;
 function modSummary(mod) {
