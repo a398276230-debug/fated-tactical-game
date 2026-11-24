@@ -275,10 +275,13 @@ test('护盾、冻伤碎冰、棘甲反伤、援护在同一笔伤害事务中�
   assert.equal(u(a,'gunner').statuses.shield,undefined);
   assert.ok(u(a,'gunner').hp<27);
   const b=boot(), baseline=boot();
-  commit(b,stats('gunner',{x:2,y:2}),status('gunner','freeze'));
+  commit(b,stats('gunner',{x:2,y:2}),status('gunner','freeze'),status('gunner','stealth'));
   commit(baseline,stats('gunner',{x:2,y:2}));
   act(b,'attack',2,2);
   act(baseline,'attack',2,2);
+  assert.equal(u(b,'gunner').statuses.stealth,undefined);
+  assert.equal(u(b,'gunner').statuses.freeze,undefined);
+  assert.ok(u(a,'scout').statuses.freeze,'援护时未受击的原目标不碎冰');
   assert.ok(u(b,'gunner').hp<u(baseline,'gunner').hp,'冻伤碎冰应增加实际伤害');
 });
 

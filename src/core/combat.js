@@ -11,7 +11,7 @@ import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset } from './vm-carriers.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
-import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial } from './vm-runtime.js';
+import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
@@ -228,7 +228,7 @@ const eventLabels = { on_attack: '发动攻击', on_hit: '攻击命中', on_stru
   on_death: '倒下', on_turn_start: '回合开始', on_turn_end: '回合结束', on_skill_cast: '施放技能',
   on_equip: '装备生效', on_heal: '受到治疗', on_ally_death: '队友倒下' };
 
-function expireStatuses(state, unit, trigger, { sourceUnitId = null, direct = false } = {}) {
+export function expireStatuses(state, unit, trigger, { sourceUnitId = null, direct = false } = {}) {
   for (const status of values(unit.statuses)) {
     const expiry = Object.hasOwn(status, 'expireOn') ? status.expireOn : getStatusTemplate(state, status.id)?.expireOn;
     if (!expiry) continue;
@@ -417,13 +417,14 @@ export function settleTurn(state) {
       tick(state, unit, 'onTurnStart');
       dispatchEffect(state, unit, 'on_turn_start');
       if (refreshOutcome(state)) { unit.ap = 0; return; }
-      if (unit.fled) { advanceCursor(state); continue; }
+      if (unit.fled) { advanceCursor(state); if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; } continue; }
       if (alive(unit) && !changes(unit, 'skip')) return;
       if (alive(unit)) record(state, unit, 'skip', `${unit.name}因控制跳过行动`);
       endTurn(state, unit);
       if (state.vm?.pendingAsk || refreshOutcome(state)) return;
     }
     advanceCursor(state);
+    if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; }
   }
   const stalled = currentUnit(state);
   if (stalled) stalled.ap = 0;
@@ -436,11 +437,22 @@ function resetFacing(state) {
   }
 }
 function advanceCursor(state) {
-  state.turn++;
-  if (state.turn < state.order.length) return;
-  state.turn = 0;
-  state.round++;
-  if (state.spatialTerrain || values(state.zones).length || values(state.units).some(unit => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
+  if (state.turn + 1 < state.order.length) { state.turn++; return; }
+  advanceVMRound(state);
+}
+
+export function continueRound({ state, frame, host }) {
+  if (frame.pc++ === 0) {
+    host.hooks(state, frame, 'round_end', host.event(state, { round: state.round }));
+    return;
+  }
+  if (frame.pc === 2) {
+    if (refreshOutcome(state)) { state.vm.stack.pop(); return; }
+    state.turn = 0; state.round++;
+    if (state.spatialTerrain || values(state.zones).length || values(state.units).some(unit => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
+    return;
+  }
+  state.vm.stack.pop();
   const opening = state.logs.find(log => log.type === 'initiative')?.detail?.initiative;
   // A temporary initiative modifier changes the next round's order. Reuse the
   // opening scores and leave summoned units at the end in their join order.
@@ -464,7 +476,7 @@ function advanceCursor(state) {
   }
   resetFacing(state);
   moraleCheck(state);
-  refreshOutcome(state);
+  if (!refreshOutcome(state)) host.hooks(state, frame, 'round_start', host.event(state, { round: state.round }));
 }
 
 export function beginBattle(state) {
@@ -491,7 +503,10 @@ export function beginBattle(state) {
     record(state, status.sourceUnitId ?? unit.id, 'status', `${unit.name}开场已有${status.name} ×${status.stacks}`,
       { ...statusLogDetail(unit, status), initial: true });
   }
-  if (!refreshOutcome(state)) settleTurn(state);
+  if (!refreshOutcome(state)) {
+    dispatchVMHook(state, 'round_start', { round: state.round });
+    if (!refreshOutcome(state)) settleTurn(state);
+  }
   return state;
 }
 
@@ -1519,6 +1534,11 @@ export function continueStrike({ state, frame, host }) {
   }
   if (frame.phase === 'after_hit' && profile.kind !== 'cover') {
     frame.phase = 'followup';
+    if (plan.hostile || weapon || action.type === 'shield_bash') {
+      expireStatuses(state, actor, 'on_hit', { sourceUnitId: actor.id });
+      const struck = state.units[event.targetId];
+      if (struck) expireStatuses(state, struck, 'on_struck', { sourceUnitId: actor.id });
+    }
     if (action.type === 'shield_bash') event.rules = shieldBashRules;
     host.hooks(state, frame, 'after_hit', frame.awaitEvent);
     return;

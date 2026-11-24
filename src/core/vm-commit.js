@@ -229,16 +229,16 @@ export function continueLethal({ state, frame, host }) {
       unit.corpseOf ??= unit.id;
       host.log(state, entry(state.units, frame.sourceId), 'defeat', `${unit.name}倒下`, { targetId: unit.id });
     }
-    // Stack order: settle death before crediting each confirmed victim. A
-    // prevented death or a self-inflicted depletion never earns a kill.
-    for (const unitId of [...event.units].reverse()) {
-      const victim = entry(state.units, unitId), killer = entry(state.units, frame.sourceId);
-      if (!victim || victim.pools?.hp !== pool.id || !killer || killer.id === victim.id) continue;
-      const killRef = newEvent(state, { ...event, targetId: victim.id, deadId: victim.id, killerId: killer.id });
-      scheduleHooks(state, frame, 'on_kill', killRef, host);
-    }
+    data.victims = event.units.filter(id => entry(state.units, id)?.pools?.hp === pool.id);
     scheduleHooks(state, frame, 'on_death', frame.eventRef, host);
     return;
   }
-  state.vm.stack.pop();
+  // One phase at a time: an ally's pending choice must finish before kill credit.
+  const index = Math.floor((frame.pc - 3) / 2), deadId = data.victims?.[index];
+  if (!deadId) { state.vm.stack.pop(); return; }
+  const allyPhase = frame.pc++ % 2 === 1, killerId = frame.sourceId;
+  if (allyPhase || (killerId !== deadId && entry(state.units, killerId))) {
+    const ref = newEvent(state, { ...state.vm.events[frame.eventRef], targetId: deadId, deadId, killerId });
+    scheduleHooks(state, frame, allyPhase ? 'on_ally_death' : 'on_kill', ref, host);
+  }
 }

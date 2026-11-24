@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { commitVMEffect, dispatchVMHook, resolveVMAction } from '../src/core/vm-runtime.js';
+import { applyAction, beginBattle, grantStatus } from '../src/core/combat.js';
 import { applyPatch } from '../src/tavern/overlay.js';
 import { test } from 'node:test';
 import { validVmRule } from '../src/core/vm-schema.js';
@@ -26,6 +27,27 @@ test('held three-pool last chance intercepts exactly once; only real death trigg
   strike(); assert.equal(first.hp, 1); assert.equal(second.mp, 0);
   strike(); assert.equal(first.hp, 0); assert.equal(second.mp, 1);
 });
+test('round-end choice pauses the cursor; round-start runs once at opening and after resume', () => {
+  const {state, first} = fixture();
+  first.rules = [{id:'start', hook:'round_start', program:[{op:'let',name:'started',scope:'owner',value:'round'}]},
+    {id:'end', hook:'round_end', program:[{op:'ask',chooser:'self',kind:'number',out:'n',min:0,max:1,prompt:'轮末',aiPolicy:'min'}]}];
+  beginBattle(state); assert.equal(first.vars.started, 1);
+  state.turn = state.order.length - 1; applyAction(state, {type:'end'});
+  assert.equal(state.round, 1); assert.equal(state.vm.pendingAsk.prompt, '轮末');
+  const resumed = JSON.parse(JSON.stringify(state));
+  applyAction(resumed, {type:'answer',askId:resumed.vm.pendingAsk.askId,value:1});
+  assert.equal(resumed.round, 2); assert.equal(resumed.turn, 0); assert.equal(resumed.units[first.id].vars.started, 2);
+});
+
+test('confirmed ally death reaches living allies without crediting self-kills', () => {
+  const {state,first,second} = fixture();
+  const ally = state.units.witness = {...structuredClone(first), id:'witness', rules:[{id:'notice',hook:'on_ally_death',program:[{op:'let',scope:'owner',name:'dead',value:'target.id'}]}]};
+  grantStatus(state, first, 'mark', { expireOn: {trigger:'on_damaged',damageType:'indirect'} });
+  const hit = (amount,direct) => commitVMEffect(state,{op:'damage',amount,damageType:'true',direct,sourceId:second.id,targetId:first.id});
+  hit(1,true); assert.ok(first.statuses.mark); hit(1,false); assert.equal(first.statuses.mark,undefined);
+  hit(500000,true); assert.equal(ally.vars.dead,first.id); assert.equal(second.vars?.dead,undefined);
+});
+
 test('VM save exposes both original and effective DC to the after_check hook', () => {
   const { state, first, second } = fixture();
   first.skills = ['test_save'];

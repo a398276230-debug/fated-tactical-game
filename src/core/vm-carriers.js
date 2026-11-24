@@ -139,7 +139,7 @@ function recipients(state, row, unitIds, event, queries) {
   });
 }
 
-function eventOwners(state, hook, event) {
+export function eventOwners(state, hook, event) {
   const actor = event.actorId ?? event.actor ?? event.sourceId ?? event.source;
   const target = event.targetId ?? event.target;
   const killer = event.killerId ?? event.killer ?? actor;

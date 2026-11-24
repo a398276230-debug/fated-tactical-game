@@ -1,6 +1,6 @@
-import { actionSkill, continueStrike, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
+import { actionSkill, continueStrike, continueRound, expireStatuses, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, statusModifier, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
-import { aggregateModifiers, applyStatMod, collectRules, carrierScope } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
 import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
 import { continueApplyStatus, continueCheck, continueRemoveStatus, ruleOps } from './vm-rules.js';
@@ -31,6 +31,7 @@ const handlers = {
   apply_status: continueApplyStatus, remove_status: continueRemoveStatus,
   ...spatialContinuations,
   strike: continueStrike,
+  round: continueRound,
 };
 
 export function initializeVMWorld(state) {
@@ -45,6 +46,13 @@ export function initializeVMWorld(state) {
       });
     }
   }
+}
+
+export function advanceVMRound(state) {
+  initializeVMWorld(state);
+  state.vm.stepsRemaining = 2000;
+  pushFrame(state, { native: 'round', ownerId: null, sourceId: null });
+  stepVM(state, vmHost);
 }
 
 export function advanceVMSpatial(state) {
@@ -90,7 +98,16 @@ export const vmHost = {
       eventRef: frame.eventRef, data: frame.data, plan: { center: profile, targets: [profile] }, weapon, followup: true, started: true });
   },
   expireStatuses(state, hook, event) {
-    const ids = new Set([event.actorId, event.targetId, ...(event.ownerIds ?? [])]);
+    const native = (id, trigger) => {
+      const unit = own(state.units, id);
+      if (unit) expireStatuses(state, unit, trigger, { sourceUnitId: event.actorId, direct: event.direct });
+    };
+    if (hook === 'after_damage' && event.dealt > 0) native(event.targetId, 'on_damaged');
+    if (hook === 'after_heal' && event.healing > 0) native(event.targetId, 'on_heal');
+    if (hook === 'on_death') for (const id of event.units ?? [event.targetId]) native(id, 'on_death');
+    if (hook === 'on_kill') native(event.killerId, 'on_kill');
+    if (hook === 'on_ally_death') for (const id of eventOwners(state, hook, event)) native(id, 'on_ally_death');
+    const ids = new Set([event.actorId, event.targetId, ...eventOwners(state, hook, event)]);
     for (const id of ids) {
       const unit = own(state.units, id);
       for (const [key, status] of Object.entries(unit?.statuses ?? {})) {
@@ -230,6 +247,7 @@ export const vmHost = {
     }
   },
   runAction({ state, frame, actor, plan, event, overrides }) {
+    if (event.actionType === 'skill') expireStatuses(state, actor, 'on_skill_cast', { sourceUnitId: actor.id });
     event.power *= overrides.scale ?? 1;
     event.power *= event.damageScale ?? 1;
     const skill = own(state.skills, event.skillId);
