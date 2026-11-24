@@ -12,3 +12,10 @@
 
 ## 待架构汇合确认
 列入本轮的运行时缺陷没有因等待架构而搁置。未将三种空间/威胁策略扩展为完整的装备、视线、地形、技能杀伤预测；当前是明确且确定性的启发式。原生 modifiers 与 VM mods 的整体迁移、模板表与标准化协议重整仍交由架构分支，本轮不删旧协议。
+
+## Phase 3A 收尾提交
+- `cc56480`：VM 生命周期、回合恢复、状态移除统一化、状态池清理与相关语料测试；提交前 `npm test` 360/360。
+- `cd87528`：VM schema/formula/validation 集中化；`validatePools` 增加带 poolId 的孤儿池、贡献者不匹配、缺失引用诊断，并新增单测；提交前 `npm test` 360/360。
+- `d8f068d`：确认 `src/core/status_modifiers.js` 全仓无保留调用，将校验迁入 `vm-schema.js` 后删除旧模块；清理 `combat_protocol.js` 中无调用的比例尺别名导出与死导出，保留 `sizeForUnit` 函数体及 `protocolDistance` 公开链路；提交前 `npm test` 360/360。
+- `53298b0`：执行 `npm run build`，单独提交 `dist/index.mjs`、`dist/index.iife.js`、`dist/tavern.mjs`、`dist/tavern.iife.js`；构建后再次 `npm test` 360/360。
+- 最终核验：旧 `status_modifiers.js` 已删除，协议距离仍由 `prebattle_resources.js` 经 `game_api.js` 公开，工作树清理后无未提交文件；未 push。
