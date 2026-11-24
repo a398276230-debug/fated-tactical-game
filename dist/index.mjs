@@ -18322,6 +18322,13 @@ function style(doc) {
   node.textContent = tavernTheme;
   (doc.head || doc.documentElement)?.append(node);
 }
+var DIAGNOSTIC_GROUPS = Object.freeze([
+  ["autoAdjusted", "\u81EA\u52A8\u9002\u914D"],
+  ["pending", "\u5F85\u5904\u7406"],
+  ["approximated", "\u8FD1\u4F3C"],
+  ["needsAttention", "\u9700\u5173\u6CE8"],
+  ["nonCombat", "\u975E\u6218\u6597"]
+]);
 
 // src/tavern/overlay-mount.js
 var own19 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
