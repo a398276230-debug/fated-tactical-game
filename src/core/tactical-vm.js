@@ -93,6 +93,7 @@ function contextFor(state, frame, host) {
     round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units), zones: state.zones,
     effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
     hostileAreaDistance: (origin, unit) => distance3D(state, origin, unit) + incomingDistanceOffset(state, self ?? source, unit, event),
+    warn: message => host.log?.(state, self, 'warning', message, { ruleId: frame.ruleId }),
     cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),

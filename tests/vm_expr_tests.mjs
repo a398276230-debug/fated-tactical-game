@@ -1,5 +1,13 @@
+import { resolvePoint } from '../src/core/vm-select.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+test('off-board literal and register points never retarget the edge', () => {
+  const messages = [], context = { boardW: 20, boardH: 8, vars: { p: {x:0,y:-1} }, warn: m => messages.push(m) };
+  assert.deepEqual(resolvePoint({x:19,y:7}, context), {x:19,y:7});
+  assert.equal(resolvePoint({x:20,y:7}, context), null);
+  assert.equal(resolvePoint('vars.p', context), null);
+  assert.equal(messages.length, 2);
+});
 import {
   compileExpr, evaluateExpr, evaluateFormula, exprUses, formulaQueryNames,
   formulaFunctionReference, formulaReference, formulaUses, formulaVariableNames, validExpr, validFormula

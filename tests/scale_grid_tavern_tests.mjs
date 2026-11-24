@@ -14,6 +14,16 @@ test('battle_init parses rectangular board, scale units, and stacked units', () 
   assert.throws(() => parseBattleDescriptor(overCapacity), /同格单位超过容量/);
 });
 
+test('hydrate preserves the far corner, legal stacks and rectangular wraparound', () => {
+  const { state, warnings } = hydrateFromSources({ battleInit: `battle|1|edge|边界|flat|棋盘=20x12
+unit|a|blue|char_info|甲|19,11
+unit|b|red|char_info|乙|19,11
+unit|c|red|char_info|丙|19,11
+cover|wall|全|石墙|18,11,0` }, { throwOnValidation: true });
+  assert.deepEqual([state.units.a,state.units.b,state.units.c,state.covers.wall].map(({x,y}) => [x,y]), [[19,11],[19,11],[0,0],[18,11]]);
+  assert.match(JSON.stringify(warnings), /起点不可用/);
+});
+
 test('area tags preserve zero/fractional raw distances and slash components', () => {
   const area = parseAreaTags(['[范围: 近程(2)+圆(敌方)]', '[有效距离: 贴身(0)/中程(4)]', '[位移: 3]']);
   assert.deepEqual(area.rangeValues, [0, 4]);

@@ -5,6 +5,7 @@ import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
+import { canOccupy } from '../core/spatial.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
@@ -699,7 +700,14 @@ function participantList(battle) {
   });
 }
 function teamOf(value, fallback = 'red') { const t = text(value).toLowerCase(); return ['blue','player','ally','友方','我方'].includes(t) ? 'blue' : ['red','enemy','foe','敌方'].includes(t) ? 'red' : fallback; }
-function xyzOf(value) { const p = asObject(value); const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z]; return { x: Math.max(0, Math.min(9, integer(xyz[0], 0))), y: Math.max(0, Math.min(9, integer(xyz[1], 0))), z: integer(xyz[2], 0) }; }
+function xyzOf(value, board, warnings) {
+  const xyz = Array.isArray(value) ? value : [value.x, value.y, value.z];
+  const x = integer(xyz[0]), y = integer(xyz[1]);
+  const boundedX = Math.max(0, Math.min((board.width ?? 10) - 1, x));
+  const boundedY = Math.max(0, Math.min((board.height ?? 10) - 1, y));
+  if (x !== boundedX || y !== boundedY) warnings.push(`坐标 (${x},${y}) 越界，调整为 (${boundedX},${boundedY})`);
+  return { x: boundedX, y: boundedY, z: integer(xyz[2]) };
+}
 
 function importBackpack(bag, owner, skills, sink) {
   const inventory = {};
@@ -725,7 +733,7 @@ function importBackpack(bag, owner, skills, sink) {
   return inventory;
 }
 
-function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist) {
+function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist, board) {
   const resourcesSink = sink('resource'), warnings = sink('status');
   const p = participant ?? {};
   const name = text(p.protagonistName || p.name) || sourceName(record, p.id) || `单位 ${index + 1}`;
@@ -856,7 +864,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     for (const key of ['damage', 'heal']) if (object(r[key])) skills[sid][key] = normalizeDice(r[key]);
     return sid;
   });
-  const pos = xyzOf(p.xyz ?? p);
+  const pos = xyzOf(p.xyz ?? p, board, sink('state'));
   const sourceStatuses = record.statuses ?? record.状态效果 ?? record.状态 ?? record.effects;
   const statuses = {};
   const statusEntries = Array.isArray(sourceStatuses)
@@ -921,7 +929,7 @@ function terrainState(battle, state, warnings) {
   state.grid = createBattleGrid(battle, state.rng, Object.values(state.units), warnings);
   for (const [i, raw] of (Array.isArray(battle.covers) ? battle.covers : []).entries()) {
     if (!object(raw)) continue;
-    const p = xyzOf(raw.xyz ?? raw), id = deterministicId(raw.id ?? `cover-${i}`, 'cover');
+    const p = xyzOf(raw.xyz ?? raw, battle, warnings), id = deterministicId(raw.id ?? `cover-${i}`, 'cover');
     if (state.grid[p.y][p.x].kind === 'wall') {
       warnings.push(`忽略位于墙体内的掩体：${id}`);
       continue;
@@ -934,7 +942,7 @@ function terrainState(battle, state, warnings) {
   const interactives = battle.interacts ?? battle.interactives;
   for (const [i, raw] of (Array.isArray(interactives) ? interactives : []).entries()) {
     if (!object(raw)) continue;
-    const p = xyzOf(raw.xyz ?? raw), id = deterministicId(raw.id ?? `interactive-${i}`, 'interactive');
+    const p = xyzOf(raw.xyz ?? raw, battle, warnings), id = deterministicId(raw.id ?? `interactive-${i}`, 'interactive');
     if (state.grid[p.y][p.x].kind === 'wall') {
       warnings.push(`忽略位于墙体内的互动点：${id}`);
       continue;
@@ -946,12 +954,19 @@ function terrainState(battle, state, warnings) {
   return state;
 }
 
-function uniquePositions(units, state) {
-  const used = new Set();
-  for (const unit of Object.values(units)) {
-    let x = unit.x, y = unit.y;
-    for (let n = 0; n < 100 && (used.has(`${x},${y}`) || state.grid[y][x].kind === 'wall' || Object.values(state.covers).some(c => c.x === x && c.y === y && c.hp > 0)); n++) { x = (x + 1) % 10; if (x === 0) y = (y + 1) % 10; }
-    unit.x = x; unit.y = y; used.add(`${x},${y}`);
+function placeUnits(state, warnings) {
+  const placed = { ...state, units: {} };
+  const { width, height } = state.scale;
+  for (const unit of Object.values(state.units)) {
+    const start = unit.y * width + unit.x;
+    for (let n = 0; ; n++) {
+      if (n === width * height) throw new Error(`棋盘没有可放置 ${unit.id} 的位置`);
+      const index = (start + n) % (width * height), x = index % width, y = Math.floor(index / width);
+      if (!canOccupy(placed, x, y, unit)) continue;
+      if (n) warnings.push(`${unit.id} 起点不可用，从 (${unit.x},${unit.y}) 移至 (${x},${y})`);
+      Object.assign(unit, { x, y }); placed.units[unit.id] = unit;
+      break;
+    }
   }
 }
 
@@ -990,7 +1005,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const merged = mergeBattleParticipant(record, participant, battle);
     const placement = { moraleType:battle.moraleType, ...participant, ...persona, id };
     const startWarnings = warnings.length;
-    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist);
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist, battle);
     if (origin === 'char_info') {
       // Preserve source order: it can decide which weapon is selected as main hand.
       const { 数量: _quantity, count: _count, ...definition } = merged;
@@ -1019,7 +1034,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     for (const [i, record] of records.entries()) {
       const count = record.__sourceKind === 'char_info' ? bound(record.数量 ?? record.count, 1, 100, 1) : 1;
       for (let copy = 0; copy < count; copy++, index++) {
-        add({ name: sourceName(record, record.__sourceKey), source: sourceId(record), faction: i ? 'red' : 'blue', x: index % 10, y: Math.floor(index / 10) % 10 }, record, index);
+        add({ name: sourceName(record, record.__sourceKey), source: sourceId(record), faction: i ? 'red' : 'blue', x: index % (battle.width ?? 10), y: Math.floor(index / (battle.width ?? 10)) % (battle.height ?? 10) }, record, index);
       }
     }
   }
@@ -1037,7 +1052,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     unit.moveCarryPermille = 0;
   }
   terrainState(battle, state, sink(null, 'terrain', 'terrain'));
-  uniquePositions(state.units, state);
+  placeUnits(state, sink(null, 'battle_init', 'state'));
   let valid = true;
   try { validateState(state); } catch (error) {
     valid = false;

@@ -16,12 +16,17 @@ export function resolvePoint(value, context) {
   const point = typeof value !== 'string' ? value : value.startsWith('vars.')
     ? resolveRegister(context, value.slice(5)) : context[value];
   if (!point || typeof point !== 'object') return null;
-  if (typeof value === 'string') return coordinate(point) ? point : null;
+  const inside = (x, y) => {
+    if (x >= 0 && x < (context.boardW ?? Infinity) && y >= 0 && y < (context.boardH ?? Infinity)) return true;
+    context.warn?.(`坐标 (${x},${y}) 越界，忽略该落点`);
+    return false;
+  };
+  if (typeof value === 'string') return coordinate(point) && inside(point.x, point.y) ? point : null;
   const x = evaluateExpr(point.x, context), y = evaluateExpr(point.y, context);
   const z = point.z === undefined ? undefined : evaluateExpr(point.z, context);
   if (![x, y].every(Number.isFinite) || (z !== undefined && !Number.isFinite(z))) return null;
-  const axis = (n, size) => Math.max(0, Math.min((size ?? Infinity) - 1, Math.round(n)));
-  return { x: axis(x, context.boardW), y: axis(y, context.boardH), ...(z === undefined ? {} : { z }) };
+  const col = Math.round(x), row = Math.round(y);
+  return inside(col, row) ? { x: col, y: row, ...(z === undefined ? {} : { z }) } : null;
 }
 
 export function zoneContains(state, zone, at) {
