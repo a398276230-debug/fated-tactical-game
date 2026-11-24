@@ -10,6 +10,15 @@ import { RATING_TABLE } from '../src/core/combat_protocol.js';
 
 const boot = () => { const a = createGameAPI(); a.createBattle({scenarioId:'ruins', ruleset:'sandbox'}); return a; };
 
+test('寄居蟹攻击瑞吉：合计 19 判有效，不把防御 150 当作命中 DC', () => {
+  const detail = { targetId:'p1', dice:[14], selected:14, accuracy:5, total:19, defense:150,
+    rating:{min:11,name:'有效',multiplier:1}, hit:true, critical:false };
+  const entry = narrate({type:'roll',actor:'e2',detail}, {units:{e2:{name:'刺壳寄居蟹'},p1:{name:'瑞吉'}}});
+  assert.deepEqual([entry.roll.kept, entry.roll.modifier, entry.roll.total, entry.roll.verdict], [14,5,19,'命中「有效」']);
+  assert.equal(entry.roll.target, undefined, '卡片不能渲染 vs 防御');
+  assert.match(entry.roll.label, /命中评级/);
+});
+
 function castProbe(program, configure = () => {}) {
   const state = buildScenario('ruins');
   const actor = currentUnit(state), target = state.units.scout;

@@ -5,7 +5,7 @@
 //   { kind:'versus', label, left:{name,dice,bonus,total}, right:{...}, verdict, tone }
 //   { kind:'chance', label, chance, rolled, verdict, tone }
 import { STATUSES } from '../core/combat.js';
-import { RATING_TABLE } from '../core/combat_protocol.js';
+import { ratingFor } from '../core/combat_protocol.js';
 
 export const DAMAGE_TYPES = Object.freeze({ physical: '物理', energy: '能量', mental: '精神', true: '真实' });
 export const STAT_NAMES = Object.freeze({ str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神' });
@@ -54,9 +54,9 @@ export function describeDice(dice, kept, mode) {
 
 function ratingLine(total, rating) {
   if (!rating) return null;
-  if (!rating.multiplier) return `合计 ${total}，不足 4，失手`;
-  const row = RATING_TABLE.find(r => r.name === rating.name);
-  return `合计 ${total}${row?.min != null ? ` ≥ ${row.min}` : ''}，评级「${rating.name}」，伤害 ×${rating.multiplier}`;
+  const base = ratingFor(total);
+  const result = base.name === rating.name ? `评级「${rating.name}」` : `基础评级「${base.name}」，最终评级「${rating.name}」`;
+  return `合计 ${total}，${result}，伤害 ×${rating.multiplier}`;
 }
 
 function rollEntry(state, log) {
@@ -75,7 +75,7 @@ function rollEntry(state, log) {
   if (d.flanked) factors.push('夹击 +2');
   if (d.arc === 'back') factors.push('从背后出手');
   if (factors.length) lines.push(`修正来源：${factors.join('，')}`);
-  if (kept === 1) lines.push('天然 1：无论加值多少，必定失手');
+  if (kept === 1) lines.push(d.hit ? '天然 1：本次仍命中' : '天然 1：失手');
   else if (kept === 20) lines.push('天然 20：必定暴击');
   const rl = ratingLine(d.total, d.rating);
   if (rl && kept !== 1) lines.push(rl);
@@ -84,8 +84,8 @@ function rollEntry(state, log) {
     tone, icon: d.critical ? '💥' : d.hit ? '⚔️' : '💨',
     title: `${attacker} 攻击 ${target}：${verdict}${d.hit && d.rating?.name && !d.critical ? `（${d.rating.name}）` : ''}`,
     lines, targetId: d.targetId,
-    roll: { kind: 'd20', label: `${attacker} → ${target} · 命中检定`, dice: d.dice ?? [kept], kept, mode, modifier: d.accuracy ?? 0,
-      modifierLabel: '命中修正', total: d.total, target: d.defense, targetLabel: '防御', verdict: d.critical ? `暴击！${d.rating?.name ? `「${d.rating.name}」` : ''}` : d.hit ? `命中「${d.rating?.name ?? '有效'}」` : kept === 1 ? '天然 1 · 失手' : '未命中', tone,
+    roll: { kind: 'd20', label: `${attacker} → ${target} · 命中评级`, dice: d.dice ?? [kept], kept, mode, modifier: d.accuracy ?? 0,
+      modifierLabel: '命中修正', total: d.total, verdict: d.critical ? `暴击！${d.rating?.name ? `「${d.rating.name}」` : ''}` : d.hit ? `命中「${d.rating?.name ?? '有效'}」` : kept === 1 ? '天然 1 · 失手' : '未命中', tone,
       note: d.rating?.multiplier && d.hit ? `伤害 ×${d.rating.multiplier}` : null },
   };
 }
