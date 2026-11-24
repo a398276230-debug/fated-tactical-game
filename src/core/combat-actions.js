@@ -15,6 +15,7 @@ import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, com
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
+import { resolveStatusApplication } from './status-application.js';
 export { STATUSES };
 export const corpses = state => Object.values(state.units).filter(unit => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
 
@@ -96,36 +97,12 @@ export function grantStatus(state, unit, statusId, options = {}) {
   if (!unit || !template) throw new Error(`未知状态：${statusId}`);
   if (!alive(unit) || unit.fled) return null;
   unit.statuses ??= {};
-  const previous = statusOf(unit, statusId);
-  const stackMode = options.stackMode ?? previous?.stackMode ?? template.stackMode ?? 'refresh';
-  const sourceId = Object.hasOwn(options, 'sourceId') ? options.sourceId : previous?.sourceId ?? null;
-  const source = tableEntry(state.units, sourceId) ?? unit;
-  const scope = { self: source, source, target: unit, event: {} };
-  const cap = evaluateExpr(template.maxStacks ?? 1, scope);
-  if (!Number.isFinite(cap)) throw new Error('无效状态层数上限');
-  const maxStacks = clamp(Math.floor(cap), 1, 999999);
-  const addedStacks = Math.floor(evaluateExpr(options.stacks ?? (stackMode === 'extend' ? previous?.stacks ?? 1 : 1), scope) ?? NaN);
-  if (!Number.isFinite(addedStacks)) throw new Error('无效状态层数');
-  const stacks = clamp(stackMode === 'stack' ? (previous?.stacks ?? 0) + addedStacks : addedStacks, 1, maxStacks);
-  const remainingTurns = options.remainingTurns ?? options.turns ?? template.remainingTurns ?? 1;
-  const vars = { ...Object.fromEntries(Object.entries(template.vars ?? {}).map(([key, value]) => [key, evaluateExpr(value, scope) ?? value])), ...structuredClone(options.vars ?? {}) };
-  const applied = { ...structuredClone(template), id: statusId, templateId: statusId, ownerId: unit.id,
-    stackMode, maxStacks, stacks, vars,
-    durationType: options.durationType ?? previous?.durationType ?? template.durationType ?? 'battle_turns',
-    remainingTurns: previous && stackMode === 'extend' ? Math.min(100, previous.remainingTurns + (options.extendTurns ?? 1))
-      : stackMode === 'stack' && options.remainingTurns == null && options.turns == null
-        ? Math.max(previous?.remainingTurns ?? 0, remainingTurns) : remainingTurns,
-    ...(previous?.pools && { pools: previous.pools }), sourceId,
-    appliedRound: state.round, appliedTurn: state.turn };
-  if (Object.hasOwn(options, 'expireOn')) {
-    if (options.expireOn !== null && !validExpiry(options.expireOn)) throw new Error('无效字段：expireOn');
-    applied.expireOn = structuredClone(options.expireOn);
-  } else if (Object.hasOwn(previous ?? {}, 'expireOn')) applied.expireOn = previous.expireOn;
-  if (options.amount != null) applied.vars.shieldAmount = clamp(options.amount, 1, 10000);
-  unit.statuses[statusId] = applied;
-  record(state, applied.sourceId ?? unit.id, 'status', `${unit.name}获得${template.name} ×${stacks}`,
-    statusLogDetail(unit, applied));
-  return applied;
+  const result = resolveStatusApplication({ ...state, statusTemplates: { ...state.statusTemplates, [statusId]: template } }, unit, statusId, options, { strict: true });
+  if (!result) return null;
+  unit.statuses[statusId] = result.nextStatus;
+  record(state, result.nextStatus.sourceId ?? unit.id, 'status', `${unit.name}获得${template.name} ×${result.nextStatus.stacks}`,
+    statusLogDetail(unit, result.nextStatus));
+  return result.nextStatus;
 }
 
 export function statusLogDetail(unit, status) {

@@ -79,6 +79,9 @@ export function continueCommit({ state, frame, host, options }) {
   const localOwner = data.local && frame.data.carrierId;
   const pseudo = !localOwner && pseudoPool.has(key);
   const pool = pseudo ? pseudoState(target, key) : getPool(state, localOwner || data.targetId, key, localOwner ? 'item' : 'unit');
+  const other = op === 'resource' && data.mode === 'swap'
+    ? getPool(state, localOwner || data.targetId, data.otherPool, localOwner ? 'item' : 'unit') : null;
+  const otherBefore = other?.current ?? 0;
   if ((!pool && !pseudo) || !target) { state.vm.stack.pop(); return; }
   let event = entry(state.vm.events, frame.eventRef);
   if (frame.pc === 0) {
@@ -140,7 +143,6 @@ export function continueCommit({ state, frame, host, options }) {
       if (pseudo) {
         if (!applyPseudo(target, key, data.mode, Math.floor(event.finalAmount))) { state.vm.stack.pop(); return; }
       } else if (data.mode === 'swap') {
-        const other = getPool(state, localOwner || target.id, data.otherPool, localOwner ? 'item' : 'unit');
         if (other) swapPoolCurrents(state, pool.id, other.id);
       } else {
         if (['add_max', 'sub_max', 'set_max'].includes(data.mode) && !['hp', 'mp', 'sp'].includes(key)) {
@@ -186,7 +188,7 @@ export function continueCommit({ state, frame, host, options }) {
       if (caller) caller.vars[data.out] = event.dealt ?? event.healing ?? event.change;
     }
     const depletion = Object.values(state.pools).filter(candidate => candidate.kind === 'hp' && candidate.current === 0 &&
-      (candidate.id === pool.id && before > 0 || op === 'resource' && data.mode === 'swap' && candidate.id === target.pools?.[data.otherPool]) &&
+      (candidate.id === pool.id && before > 0 || other && candidate.id === other.id && otherBefore > 0) &&
       !state.vm.stack.some(parent => parent.native === 'lethal' && parent.data.poolId === candidate.id));
     for (const depleted of depletion.reverse()) pushFrame(state, { native: 'lethal', ownerId: target.id, sourceId: data.sourceId,
       data: { poolId: depleted.id, damageType: event.damageType, targetId: target.id,

@@ -5,6 +5,7 @@ import { validVmOpcode } from './vm-schema.js';
 import { resolvePoint } from './vm-select.js';
 import { deleteOwnedPools, getPool, updatePoolCurrent } from './vm-pools.js';
 import { authorityContest, authorityFor, compareAuthority, authorityProse } from './vm-authority.js';
+import { resolveStatusApplication } from './status-application.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
@@ -221,33 +222,14 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
       return;
     }
     if (!live(target)) return;
-    const previous = own(target.statuses, op.statusId);
-    const stackMode = op.stackMode ?? template.stackMode ?? 'refresh';
-    const values = { ...template.vars, ...op.vars };
-    const vars = Object.fromEntries(Object.entries(values).map(([key, expr]) => [key, typeof expr === 'string' && !validExpr(expr) ? expr : evaluateExpr(expr, context)]).filter(([, value]) => value !== null));
-    const cap = evaluate(template.maxStacks, context, 1);
-    const duration = evaluate(op.turns, context, template.remainingTurns ?? 1);
-    const count = evaluate(op.stacks, context, stackMode === 'extend' ? previous?.stacks ?? 1 : 1);
-    const extension = evaluate(op.extendTurns, context, 1);
-    if (![cap, duration, count, extension].every(Number.isFinite)) return;
-    const maxStacks = bounded(cap, 1, 999999);
-    const sourceCarrier = frame.carrier ?? null;
-    const sourceAuthority = authorityFor(state, sourceCarrier, context.self?.id);
-    const status = { ...structuredClone(template), id: op.statusId, templateId: op.statusId, ownerId: target.id,
-      sourceId: context.self?.id ?? null, sourceCarrier, authorityRank: sourceAuthority.authorityRank, sourceTier: sourceAuthority.unitTier, ...(context.effectiveTier !== sourceAuthority.unitTier && { effectiveTier: context.effectiveTier }), vars, tags: template.tags ?? [], flags: template.flags ?? [], tier: template.tier ?? 1,
-      mods: template.mods ?? [], rules: template.rules ?? [], stackMode, maxStacks, stacks: bounded(count, 1, maxStacks),
-      durationType: template.durationType ?? 'battle_turns', remainingTurns: bounded(duration, 1, 100) };
-    if (op.expireOn) status.expireOn = op.expireOn;
-    if (previous && stackMode === 'stack') {
-      status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
-      if (status.category === 'shield') status.vars.shieldAmount = (status.vars.shieldAmount ?? 0) + (previous.vars?.shieldAmount ?? 0);
-    }
-    status.appliedRound = state.round;
-    status.appliedTurn = state.turn;
-    if (previous && stackMode === 'extend') status.remainingTurns = bounded(previous.remainingTurns + extension, 1, 100);
-    frame.appliedStatus = status;
-    if (previous && stackMode === 'replace') removeStatus(state, target, previous, 'replaced', context.self, host, frame);
-    else if (previous?.pools) status.pools = previous.pools;
+    const evaluatedVars = Object.fromEntries(Object.entries(op.vars ?? {}).map(([key, value]) => [key, typeof value === 'string' && !validExpr(value) ? value : evaluateExpr(value, context)]).filter(([, value]) => value !== null));
+    const result = resolveStatusApplication(state, target, op.statusId, {
+      ...op, vars: evaluatedVars, contextVars: context.vars, sourceId: context.self?.id ?? null, sourceCarrier: frame.carrier ?? null,
+      effectiveTier: context.effectiveTier,
+    }, { strict: false });
+    if (!result) return;
+    if (result.replacePrevious) removeStatus(state, target, result.previous, 'replaced', context.self, host, frame);
+    frame.appliedStatus = result.nextStatus;
     return;
   }
   if (frame.pc === 2 && frame.appliedStatus) {
