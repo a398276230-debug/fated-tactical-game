@@ -59,3 +59,10 @@
 - `e436198`：新增 `EVENT_SCALAR_KEYS` 闭合事件字段校验，并补齐 VM schema 枚举导出（stat、skill shape、selector/zone shape、target、flags、locks、stack/duration 集合）和 combat protocol 基础枚举。
 - `e4f1931`：本地 tactical AI 新增基于 VM `zones` 的区域利弊评分，移动/疾跑/撤离/走位后攻击纳入脱离危险区收益；LLM battle AI payload 携带 zones 摘要并提示规避敌方危险区域。
 - 最终验证：`npm test` 372/372；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。构建已更新四份 `dist/`。
+
+## Round 3 Phase 5C-1 完成
+
+- `3538f10`：validation 接入 VM/combat protocol 权威枚举，补事件字段、技能/区域形状和 corpse 目标回归。
+- `122a30a`：converter 真物理拆为 parse/effects/unit/patch 四个实心模块，入口保持 barrel，Tavern/scale/terrain 56/56。
+- 本轮 overlay 真物理拆为 AI、patch、sources、diagnostics-view、mount 五个实心模块；入口保持 barrel，DOM id/class/data 选择器和消息事件名未改，Tavern 模块静态依赖环为 0。
+- 最终验证：`npm test` 374/374；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。
