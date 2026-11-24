@@ -69,6 +69,11 @@ export function getPool(state, ownerId, key, ownerKind = 'unit') {
   return own(state.pools, own(owner?.pools, key));
 }
 
+export function deleteOwnedPools(state, owner) {
+  for (const poolId of Object.values(owner?.pools ?? {})) delete state.pools[poolId];
+  if (owner?.pools) owner.pools = {};
+}
+
 function planPool(state, reserved, { ownerKind = 'unit', ownerId, key, max, current = max, initialMax = max, reloadable = false }) {
   const owner = carrier(state, ownerKind, ownerId);
   if (typeof key !== 'string' || key.length === 0) throw new TypeError('Pool key must be a nonempty string');

@@ -4,10 +4,11 @@ import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { resolvePoint } from './vm-select.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
+const MAX_ACTION_CHAIN_DEPTH = 3;
 
-export function queueVMAction(state, { actorId, action, overrides = {}, record = false }) {
-  return pushFrame(state, { native: 'action', ownerId: actorId, sourceId: actorId,
-    data: { action, overrides, record }, answers: [] });
+export function queueVMAction(state, { actorId, action, overrides = {}, record = false, chainDepth = 0 }) {
+  return pushFrame(state, { native: 'action', ownerId: actorId, sourceId: actorId, chainDepth,
+    data: { action, overrides, record, chainDepth }, answers: [] });
 }
 
 export function perform({ state, context, select, op }) {
@@ -45,7 +46,12 @@ export function perform({ state, context, select, op }) {
       overrides.origin = { x: origin.x, y: origin.y,
         ...(Number.isFinite(origin.z) ? { z: origin.z } : Number.isFinite(origin.altitude) ? { altitude: origin.altitude } : {}) };
     }
-    queueVMAction(state, { actorId: actor.id, action, overrides });
+    const chainDepth = (context.event?.chainDepth ?? context.frame?.chainDepth ?? 0) + 1;
+    if (chainDepth > MAX_ACTION_CHAIN_DEPTH) {
+      context.warn?.(`perform 嵌套超过 ${MAX_ACTION_CHAIN_DEPTH} 层，已截断`);
+      continue;
+    }
+    queueVMAction(state, { actorId: actor.id, action, overrides, chainDepth });
   }
 }
 
@@ -69,7 +75,8 @@ export function continueAction({ state, frame, host }) {
     frame.eventRef = newEvent(state, { actorId: actor.id, actionType: action.type, skillId: action.skillId ?? null,
       targetId: plan.targetIds[0] ?? null, center: plan.center, origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
       mpCost: plan.mp ?? 0, spCost: plan.sp ?? 0, hpCost: plan.hp ?? 0, power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,
-      weaponTemplateId: plan.weaponTemplateId ?? null });
+      weaponTemplateId: plan.weaponTemplateId ?? null, chainDepth: frame.chainDepth ?? 0,
+      triggered: (frame.chainDepth ?? 0) > 0 });
     if (!isStrikeAction(action, plan)) {
       frame.pc = 5;
       return;

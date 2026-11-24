@@ -1,4 +1,4 @@
-import { getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
+import { deleteOwnedPools, getPool, linkPools, swapPoolCurrents, unlinkPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { evaluateExpr } from './formula.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
@@ -22,7 +22,7 @@ function applyPseudo(unit, key, mode, amount) {
     unit.used[key] = 1 - current;
     // `ap` is the aggregate remaining split-slot budget. Keep it in sync
     // with slot refunds/confiscations; movement is deliberately not AP.
-    unit.ap = Math.max(0, Math.min(2, unit.ap + current - before));
+    unit.ap = Math.max(0, Math.min(unit.apMax ?? 2, unit.ap + current - before));
   }
   return true;
 }
@@ -82,7 +82,7 @@ export function continueCommit({ state, frame, host, options }) {
   let event = entry(state.vm.events, frame.eventRef);
   if (frame.pc === 0) {
     const dying = state.vm.stack.some(parent => parent.native === 'lethal' && parent.data.poolId === target.pools?.hp);
-    if (!alive(target) && !(op === 'resource' && dying && !target.fled)) { state.vm.stack.pop(); return; }
+    if (!alive(target) && !((op === 'resource' || op === 'heal') && dying && !target.fled)) { state.vm.stack.pop(); return; }
     const amount = op === 'damage' ? host.prepareDamage?.(state, source, target, data) ?? data.amount
       : op === 'heal' ? host.prepareHeal?.(state, source, target, data) ?? data.amount : data.amount;
     const authority = authorityFor(state, frame.carrier, data.sourceId);
@@ -124,8 +124,15 @@ export function continueCommit({ state, frame, host, options }) {
         pending -= amount;
         absorbed += amount;
         status.vars.shieldAmount -= amount;
+        status.amount = status.vars.shieldAmount;
         host.log(state, target, 'shield', `${target.name}的${status.name}吸收${amount}点伤害`, { targetId: target.id, statusId: status.id ?? status.templateId ?? null });
-        if (!status.vars.shieldAmount) delete target.statuses[statusKey];
+        if (!status.vars.shieldAmount) {
+          delete target.statuses[statusKey];
+          deleteOwnedPools(state, status);
+          const removedRef = newEvent(state, { actorId: data.sourceId ?? null, targetId: target.id, statusId: statusKey,
+            reason: 'shield_depleted', removeReason: 'shield_depleted', removedStatus: structuredClone(status) });
+          scheduleHooks(state, frame, 'after_status_removed', removedRef, host);
+        }
       }
       updatePoolCurrent(state, pool.id, 'sub', pending, { minRemain: event.preserveLife ? 1 : 0 });
       event.dealt = before - getPool(state, target.id, key).current;
@@ -137,7 +144,7 @@ export function continueCommit({ state, frame, host, options }) {
       host.log(state, source, 'heal', `${target.name}${data.label ? `因${data.label}` : ''}恢复${event.healing}点生命`, { ...data.details, targetId: target.id, amount: event.healing, hpBefore: before, hpAfter: target.hp });
     } else {
       if (pseudo) {
-        if (!applyPseudo(target, key, data.mode, event.finalAmount)) { state.vm.stack.pop(); return; }
+        if (!applyPseudo(target, key, data.mode, Math.floor(event.finalAmount))) { state.vm.stack.pop(); return; }
       } else if (data.mode === 'swap') {
         const other = getPool(state, localOwner || target.id, data.otherPool, localOwner ? 'item' : 'unit');
         if (other) swapPoolCurrents(state, pool.id, other.id);

@@ -3,7 +3,7 @@ import { rollDie } from './rng.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { validVmOpcode } from './vm-schema.js';
 import { resolvePoint } from './vm-select.js';
-import { getPool, updatePoolCurrent } from './vm-pools.js';
+import { deleteOwnedPools, getPool, updatePoolCurrent } from './vm-pools.js';
 import { authorityContest, authorityFor, compareAuthority, authorityProse } from './vm-authority.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
@@ -121,10 +121,13 @@ export function continueCheck({ state, frame, host, context }) {
     if (outcomes.length === stats.length) { frame.pc++; return; }
     const key = stats[outcomes.length];
     const sides = op.kind === 'chance' ? 100 : 20;
-    let roll = dice(state, sides);
-    if (event.advantageDelta > 0) roll = Math.max(roll, dice(state, 20));
-    if (event.advantageDelta < 0) roll = Math.min(roll, dice(state, 20));
-    const defenderRoll = op.kind === 'contest' ? dice(state, 20) : null;
+    const rollWith = delta => {
+      const first = dice(state, sides);
+      return delta > 0 ? Math.max(first, dice(state, sides)) : delta < 0 ? Math.min(first, dice(state, sides)) : first;
+    };
+    const subject = op.kind === 'save' ? context.target : context.self;
+    const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject, event) ?? 0 : 0));
+    const defenderRoll = op.kind === 'contest' ? rollWith(host.advantage?.(state, context.target, event) ?? 0) : null;
     event.naturalRoll = roll;
     if (op.rawNatural || sides !== 20) outcomes.push({ key, roll, defenderRoll });
     else {
@@ -143,7 +146,9 @@ export function continueCheck({ state, frame, host, context }) {
     const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
     const outcomes = frame.naturalOutcomes.map(({ key, roll, defenderRoll }) => {
       const total = roll + (key ? stat(subject, key) : 0) + checkBonus + (event.bonusDelta ?? 0);
-      const difficulty = kind === 'contest' ? defenderRoll + stat(context.target, op.defenderStat ?? key) : dc;
+      const difficulty = kind === 'contest' ? defenderRoll + stat(context.target, op.defenderStat ?? key)
+        + (host.checkBonus?.(state, context.target, event) ?? 0) + (host.resistBonus?.(state, context.target, event) ?? 0)
+        - (host.dcBonus?.(state, context.self, event) ?? 0) : dc;
       const passed = kind === 'chance' ? roll <= difficulty : total >= difficulty;
       return { roll, total, difficulty, passed };
     });
@@ -222,7 +227,7 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
     const vars = Object.fromEntries(Object.entries(values).map(([key, expr]) => [key, typeof expr === 'string' && !validExpr(expr) ? expr : evaluateExpr(expr, context)]).filter(([, value]) => value !== null));
     const cap = evaluate(template.maxStacks, context, 1);
     const duration = evaluate(op.turns, context, template.remainingTurns ?? 1);
-    const count = evaluate(op.stacks, context, 1);
+    const count = evaluate(op.stacks, context, stackMode === 'extend' ? previous?.stacks ?? 1 : 1);
     const extension = evaluate(op.extendTurns, context, 1);
     if (![cap, duration, count, extension].every(Number.isFinite)) return;
     const maxStacks = bounded(cap, 1, 999999);
@@ -233,7 +238,12 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
       mods: template.mods ?? [], rules: template.rules ?? [], stackMode, maxStacks, stacks: bounded(count, 1, maxStacks),
       durationType: template.durationType ?? 'battle_turns', remainingTurns: bounded(duration, 1, 100) };
     if (op.expireOn) status.expireOn = op.expireOn;
-    if (previous && stackMode === 'stack') status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
+    if (previous && stackMode === 'stack') {
+      status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
+      if (status.category === 'shield') status.vars.shieldAmount += previous.vars?.shieldAmount ?? 0;
+    }
+    status.appliedRound = state.round;
+    status.appliedTurn = state.turn;
     if (previous && stackMode === 'extend') status.remainingTurns = bounded(previous.remainingTurns + extension, 1, 100);
     target.statuses[op.statusId] = status;
     host.log(state, context.self, 'status', `${target.name}获得${status.name}（${status.stacks}层）`, host.statusLogDetail(target, status));
@@ -273,9 +283,10 @@ export function continueRemoveStatus({ state, frame, host, context, options }) {
     if (authorityContestDetail.result <= 0) return;
   }
   delete target.statuses[statusId];
+  deleteOwnedPools(state, status);
   frame.removed = (frame.removed ?? 0) + 1;
   const reason = op.reason ?? 'dispelled';
-  frame.eventRef = newEvent(state, { actorId: context.self?.id ?? null, targetId: target.id, statusId, removeReason: reason, reason });
+  frame.eventRef = newEvent(state, { actorId: context.self?.id ?? null, targetId: target.id, statusId, removeReason: reason, reason, removedStatus: structuredClone(status) });
   host.log(state, context.self, reason === 'expired' ? 'expire' : 'cleanse', `${target.name}失去${status.name}`, {
     targetId: target.id, statusId, ...(authorityContestDetail ? { contest: authorityContestDetail } : {}) });
   scheduleHooks(state, frame, 'after_status_removed', frame.eventRef, host);

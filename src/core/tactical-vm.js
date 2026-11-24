@@ -85,7 +85,8 @@ function contextFor(state, frame, host) {
           ? resolveEntity(state, value) : value;
       return kind === 'unit' && own(state.units, entity?.id) !== entity ? undefined : entity;
     },
-    status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === 'status' ? carrier : undefined),
+    status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === 'status' ? carrier : undefined)
+      ?? (frame.hook === 'after_status_removed' ? event.removedStatus : undefined),
     zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === 'zone' ? carrier : undefined),
     skill: frame.carrier?.type === 'skill' ? { id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : undefined,
     item: frame.carrier?.type === 'item' ? { id: frame.carrier.id, templateId: carrier?.templateId, vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,

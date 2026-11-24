@@ -8,11 +8,11 @@ import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitMo
 import { validateStatusModifiers } from './status_modifiers.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
-import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
-import { getPool, updatePoolCurrent } from './vm-pools.js';
+import { deleteOwnedPools, getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 export { STATUSES };
@@ -172,7 +172,7 @@ export function statusLogDetail(unit, status) {
 
 function grantShield(state, unit, amount, { stack, ...options } = {}) {
   const statusId = actionStatuses.shield;
-  const previous = stack ? statusOf(unit, statusId)?.amount ?? 0 : 0;
+  const previous = stack ? statusOf(unit, statusId)?.vars?.shieldAmount ?? 0 : 0;
   return grantStatus(state, unit, statusId, { ...options, amount: amount + previous });
 }
 
@@ -323,7 +323,7 @@ export function damageAfterFlatReduction(state, unit, amount, context) {
 
 export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const shatter = hit ? changes(unit, 'shatter', type) : 0;
-  const vulnerability = changes(unit, 'vulnerability', type);
+  const vulnerability = modStat(state, unit, 'incomingDamageMult', 1, { ...ctx, damageType: type }) - 1;
   const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
   const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', changes(unit, 'reduction', type), defensiveContext), -1, 1);
   const dr = type === 'true' ? 0 : clamp(modStat(state, unit, 'dr', 0, defensiveContext), -1, 1);
@@ -339,7 +339,7 @@ export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
 
 function guardFor(state, target) {
   return living(state).find(u => u !== target && u.team === target.team && changes(u, 'intercept') &&
-    !changes(u, 'skip') && near(u, target) <= 1 && Math.abs(elevation(state, u) - elevation(state, target)) <= 1 &&
+    !reactionBlocked(state, u) && near(u, target) <= 1 && Math.abs(elevation(state, u) - elevation(state, target)) <= 1 &&
     clearSight(state, u, target));
 }
 
@@ -386,7 +386,10 @@ function completeTurnEnd(state, unit) {
       && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
     if (--status.remainingTurns > 0) continue;
     delete unit.statuses[status.id];
-    record(state, unit, 'expire', `${unit.name}的${status.name}结束`, { targetId: unit.id, statusId: status.id });
+    deleteOwnedPools(state, status);
+    dispatchVMHook(state, 'after_status_removed', { actorId: unit.id, targetId: unit.id, statusId: status.id,
+      reason: 'expired', removeReason: 'expired', removedStatus: structuredClone(status) });
+    record(state, unit, 'expire', `${unit.name}的${status.name}结束`, { targetId: unit.id, statusId: status.id, reason: 'expired' });
     if (status.expireInto && alive(unit) && !refreshOutcome(state)) grantStatus(state, unit, status.expireInto, { sourceUnitId: unit.id });
   }
   record(state, unit, 'end', `${unit.name}结束回合`);
@@ -404,7 +407,8 @@ export function settleTurn(state) {
       unit.moved = 0;
       delete unit.moveSpent;
       unit.reactionAvailable = true;
-      unit.ap = 2;
+      unit.apMax = Math.max(1, Math.floor(modStat(state, unit, 'apMax', 2)));
+      unit.ap = unit.apMax;
       record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
       const hold = unit.statuses.suppressed;
       if (hold?.holdTotal != null) {
@@ -418,7 +422,7 @@ export function settleTurn(state) {
       dispatchEffect(state, unit, 'on_turn_start');
       if (refreshOutcome(state)) { unit.ap = 0; return; }
       if (unit.fled) { advanceCursor(state); if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; } continue; }
-      if (alive(unit) && !changes(unit, 'skip')) return;
+      if (alive(unit) && !unitSkipped(state, unit)) return;
       if (alive(unit)) record(state, unit, 'skip', `${unit.name}因控制跳过行动`);
       endTurn(state, unit);
       if (state.vm?.pendingAsk || refreshOutcome(state)) return;
@@ -537,7 +541,7 @@ export function refreshOpeningInitiative(state) {
   const previous = entry.detail.initiative;
   if (!Array.isArray(previous) || !currentUnit(state)) return;
   const rolls = new Map(previous.filter(row => row && Number.isInteger(row.roll)).map(row => [row.unitId, row.roll]));
-  if (living(state).some(unit => !rolls.has(unit.id) || changes(unit, 'skip'))) return;
+  if (living(state).some(unit => !rolls.has(unit.id) || unitSkipped(state, unit))) return;
   const initiative = initiativeOrder(state, unit => rolls.get(unit.id));
   if (initiative.every((row, i) => row.unitId === previous[i]?.unitId && row.total === previous[i]?.total
       && row.attackInit === previous[i]?.attackInit && row.actionInit === previous[i]?.actionInit)) return;
@@ -638,7 +642,7 @@ function movementScale(state, unit, type) {
   return { moveM, total, limit: Math.floor(total / 1000) };
 }
 export function reachable(state, type = 'move', unit = currentUnit(state), distanceLimit = undefined) {
-  if (!alive(unit) || changes(unit, 'rooted') || changes(unit, 'skip') || aggregateModifiers(state, unit.id).locks.move) return [];
+  if (!alive(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
   const scale = movementScale(state, unit, type);
   const spent = unit.moveSpent ?? 0;
   const mult = type === 'sprint' ? 2 : 1;
@@ -769,13 +773,13 @@ function tauntFor(state, actor, template, ammo) {
 // Root does not prevent attacking; stun and freeze do. A missing charge means ready
 // for snapshots written before opportunity attacks existed.
 function opportunitySources(state, mover) {
-  return living(state).filter(unit => unit.team !== mover.team && unit.reactionAvailable !== false && !changes(unit, 'skip'))
+  return living(state).filter(unit => unit.team !== mover.team && unit.reactionAvailable !== false && !reactionBlocked(state, unit))
     .map(unit => ({ unit, weapon: weaponInfo(state, unit) }))
     .filter(({ weapon }) => !weapon.ammo && isMelee(weapon.template) && weapon.template.damage != null);
 }
 
 function canReact(state, { unit, weapon }, mover) {
-  if (!alive(unit) || unit.reactionAvailable === false || changes(unit, 'skip')) return false;
+  if (!alive(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit)) return false;
   const taunter = tauntFor(state, unit, weapon.template);
   return !taunter || taunter.id === mover.id;
 }
@@ -861,8 +865,9 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     weaponId: weapon?.instance?.id, actionType: weapon ? 'attack' : 'skill', school: template.school,
     damageType: template.damage?.type ?? template.damageType, weaponTemplateId: weapon?.instance?.templateId,
     souls: weapon?.souls ?? 0, checkKind: 'attack' };
-  const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, 'guaranteed_crit'));
-  const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, 'guaranteed_hit'));
+  const flags = aggregateModifiers(state, actor.id, modifierEvent(actor, strike)).flags;
+  const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags.guaranteed_crit);
+  const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags.guaranteed_hit);
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
   const dodge = execution || cover ? 0 : modStat(state, target, 'dodge', modCheck(state, target, 'dodgeBonus', { target: actor })
     + modCheck(state, target, 'dodgeAgility', { target: actor }) + changes(target, 'dodgeBonus'),
@@ -902,8 +907,9 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const defense = cover ? 8 : state.ruleset === 'sandbox'
     ? 10 + Math.floor(effectiveStat(state, target, 'agi') / 2) + equipmentDefense
     : 10 + explicitEvasion + equipmentDefense;
-  const advantages = changes(actor, 'advantage') + modCheck(state, actor, 'advantage', strike) + Number(Boolean(teleport)) + (template.advantage ?? 0);
-  const disadvantages = changes(actor, 'disadvantage') + (template.disadvantage ?? 0);
+  const delta = modCheck(state, actor, 'advantage', strike);
+  const advantages = Math.max(0, delta) + Number(Boolean(teleport)) + (template.advantage ?? 0);
+  const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
   const advantage = Math.sign(advantages - disadvantages);
   const saveStat = !cover && target ? template.save : null;
   const saveDC = saveStat ? (resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, 'int') / 2))
@@ -1066,7 +1072,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (type === 'end') return common;
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
     ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
-  if (changes(unit, 'skip')) return fail('当前单位受控制，只能结束回合');
+  if (unitSkipped(state, unit)) return fail('当前单位受控制，只能结束回合');
   const cannotPay = paymentError(state, unit, ap, slot, cost, resourceCosts, type === 'skill');
   if (cannotPay) return fail(cannotPay, { ap, ...availability });
   const center = unplaced ? undefined : pos(x, y);
@@ -1130,7 +1136,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     return { ...common, name: ({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[type], maneuver: type, targetId: target.id };
   }
   if (isMovement(type)) {
-    if (changes(unit, 'rooted')) return fail('定身时不能移动');
+    if (aggregateModifiers(state, unit.id).locks.move) return fail('定身时不能移动');
     const cells = reachable(state, type, unit);
     if (unplaced) return { ...common, cells };
     const choice = cells.find(at => sameCell(at, center));
@@ -1576,7 +1582,7 @@ function continueMovement(state, actor, type, plan, progress, host) {
   progress.initialCover ??= nearbyCovers(state, actor).map(c => c.id);
   const path = progress.path;
   const to = plan.path[path.length];
-  if (to && alive(actor) && !actor.fled && !changes(actor, 'skip') && !changes(actor, 'rooted')) {
+  if (to && alive(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move) {
     progress.reactors ??= type === 'disengage' ? [] : opportunitySources(state, actor).map(({ unit }) => unit.id);
     while (progress.reactors.length) {
       const unit = tableEntry(state.units, progress.reactors.shift());

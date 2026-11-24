@@ -210,7 +210,7 @@ export function skillTemplate(v, state) {
 }
 export function statusValue(v, key, state, ownerId) {
   if (own(v ?? {}, 'templateId')) {
-    const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, ...rest } = v;
+    const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, ...rest } = v;
     const template = getStatusTemplate(state, key);
     const { vars, modifiers, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
     if (template?.modifiers) {
@@ -227,6 +227,7 @@ export function statusValue(v, key, state, ownerId) {
         && validVmSourceSkillId(sourceCarrier.id), '状态来源载体');
       checkOptional(sourceCarrier, 'ownerId', id);
     }
+    if (appliedRound !== undefined || appliedTurn !== undefined) requireThat(int(appliedRound, 1, 1000000) && int(appliedTurn, 0, 199), '状态施加回合');
     checkOptional(v, 'effectiveTier', x => int(x, 1, 7));
     if (own(v, 'authorityRank') || own(v, 'sourceTier')) requireThat(int(authorityRank, 1, 8) && int(sourceTier, 1, 7), '状态来源位格');
     statusTemplate(definition, key, state);
@@ -261,7 +262,7 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
@@ -269,7 +270,7 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'summonGroup', group => text(group, 512));
   if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
   checkOptional(v, 'summoned', x => x === true);
-  for (const key of ['initialMaxHp', 'initialMaxMp', 'initialMaxSp']) checkOptional(v, key, x => int(x, 0, 1000000000));
+  for (const key of ['initialMaxHp', 'initialMaxMp', 'initialMaxSp', 'apMax']) checkOptional(v, key, x => int(x, 0, 1000000000));
   checkOptional(v, 'moved', x => int(x, 0, 1000000000));
   checkOptional(v, 'rawMove', x => num(x, 0, 1000));
   checkOptional(v, 'moveM', x => num(x, 0, 1000000));

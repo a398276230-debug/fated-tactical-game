@@ -175,7 +175,12 @@ export function collectRules(state, hook, event = {}, queries = {}) {
   const unitIds = eventOwners(state, hook, event);
   if (!unitIds.length) return [];
   const candidates = [];
-  for (const [carrierOrder, row] of carriers(state).entries()) {
+  const carrierRows = carriers(state);
+  if (hook === 'after_status_removed' && event.removedStatus?.rules?.length) {
+    const removed = event.removedStatus;
+    carrierRows.push({ entity: removed, carrier: { type: 'status', id: removed.id, ownerId: event.targetId }, nativeOwnerId: event.targetId });
+  }
+  for (const [carrierOrder, row] of carrierRows.entries()) {
     // The HP pool has already hit zero during lethal interception; the owner
     // still gets their own last-chance skills before they become a corpse.
     if (hook === 'after_move' && row.nativeOwnerId && !alive(own(state.units, row.nativeOwnerId))) continue;
@@ -259,6 +264,16 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
     stats: Object.fromEntries(stats), locks, flags: Object.fromEntries([...flags].map(flag => [flag, true])),
     controlPolicy: { controller: 'default', allegiance: 'normal', ...Object.fromEntries(policy) },
   };
+}
+
+export function unitSkipped(state, unit) {
+  const { locks } = aggregateModifiers(state, unit.id);
+  return locks.attack && locks.action && locks.move && locks.cast;
+}
+
+export function reactionBlocked(state, unit) {
+  const { locks } = aggregateModifiers(state, unit.id);
+  return locks.reaction || locks.attack;
 }
 
 /** Combine a base stat with the corresponding entry in aggregateModifiers().stats. */

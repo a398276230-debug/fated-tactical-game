@@ -93,14 +93,14 @@ const controlPolicy = object({
   forcedActionKinds: list(enumOf('attack', 'skill')), intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady'),
 });
 const stat = enumOf(...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
-  'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat');
+  'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax');
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent');
-const multiplierStats = enumOf('damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
+const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
   stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: text, statusId: id,
-  locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless'), 1),
+  locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit'), 1),
   controlPolicy, when: booleanExpr,
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),
