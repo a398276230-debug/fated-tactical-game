@@ -49,6 +49,7 @@ function rows(state, selector, context) {
   if (selector.options) return [...new Set(selector.options)];
   switch (selector.from) {
     case 'units': return sortedValues(state.units);
+    case 'action_targets': return (context.event?.targets ?? []).map(id => state.units[id]).filter(Boolean);
     case 'zones': return sortedValues(state.zones);
     case 'covers': return sortedValues(state.covers);
     case 'terrain': return sortedValues(state.spatialTerrain);

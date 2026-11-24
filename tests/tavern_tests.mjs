@@ -730,6 +730,51 @@ test('G125-c/d 组合资源与双槽，以及原文 1 HP',()=>{
   for(const bad of [{},{hp:-1},{hp:25001},{hp:1,foo:1},{hp:1.1}]){skill.resourceCost=bad;assert.throws(()=>validateState(state),/resourceCost/);}
 });
 
+test('刺壳寄居蟹：叙事附效不阻断标签主击，贴身起扇逐人结算能量45/真实30', () => {
+  const crab = `姓名: 刺壳寄居蟹
+生命层级: 第一层级
+等级: 3
+体长: 1.35
+属性:
+  力量: 5 + 0 + 1 = 6
+  敏捷: 2 + 0 + 0 = 2
+  体质: 6 + 0 + 1 = 7
+  智力: 1 + 0 + 0 = 1
+  精神: 3 + 0 + 0 = 3
+资源:
+  HP: 719
+  MP: 200
+  SP: 400
+技能:
+  - 名称: 重螯钳击
+    品质: 普通
+    类型: 主动
+    消耗: [攻击: 45 SP]
+    标签: [力量][单体][有效距离: 贴身(0)][伤害][威力: 85][伤害: 物理]
+    效果: |
+      碎骨锯齿: 额外造成18点穿刺与钝击物理伤害
+  - 名称: 蚀壳酸沫
+    品质: 普通
+    类型: 主动
+    消耗: [攻击: 60 MP]
+    标签: [精神][范围: 近程(2)+扇(敌方)][有效距离: 贴身(0)][伤害][威力: 75][伤害: 能量45/真实30]
+    效果: |
+      缩壳蓄守: 施放后至下回合开始前自身受到的物理伤害固定减少10点`;
+  const {state, roster, warnings}=hydrateFromSources({charInfo:crab,mvu:{主角:mvu.主角},battleInit:{terrainMode:'flat',units:[
+    {id:'e',name:'刺壳寄居蟹',source:'char_info',team:'red',x:2,y:2},
+    {id:'p',source:'mvu:主角',team:'blue',x:3,y:2}, {id:'q',source:'mvu:主角',team:'blue',x:4,y:2}]}},{throwOnValidation:true});
+  const actor=state.units.e, [claw, acid]=actor.skills.map(id=>state.skills[id]);
+  assert.deepEqual([actor.stats,actor.hp,actor.maxHp,actor.mp,actor.sp,actor.tier,actor.bodyLengthM,roster.find(r=>r.id==='e').level],
+    [{str:6,agi:2,con:7,int:1,spi:3},719,719,200,400,1,1.35,3]);
+  assert.deepEqual([claw.power,claw.damage.type,claw.range,claw.sp,acid.power,acid.range,acid.radius,acid.mp],[85,'physical',0,45,75,0,2,60]);
+  assert.deepEqual(warnings.filter(w=>w.unitId==='e').map(w=>w.message.includes('碎骨锯齿')||w.message.includes('缩壳蓄守')),[true,true]);
+  state.turn=state.order.indexOf(actor.id); Object.assign(actor,{ap:2,used:{attack:0,action:0},facing:[1,0]});
+  const logs=applyAction(state,{type:'skill',skillId:actor.skills[1],x:actor.x,y:actor.y});
+  assert.deepEqual(logs.filter(l=>l.type==='damage').map(l=>[l.detail.targetId,l.detail.damageType]),[['p','energy'],['p','true'],['q','energy'],['q','true']]);
+  assert.deepEqual(acid.rules[0].program[0].body,[damageOp('energy',45),damageOp('true',30)]);
+  assert.equal(actor.mp,140);
+});
+
 test('G127 混合伤害区分绝对值和百分比；动作、MP 和双槽消耗', () => {
   for(const [tag,amounts,cost,expected] of [['物理40/能量20',[40,20],'攻击: 1 动作: 1',{ap:2,slot:'attack'}],['物理40%/能量20%',['event.power * (40 / 100)','event.power * (20 / 100)'],'动作: 1',{ap:1,slot:'action'}],['物理40/能量20',[40,20],'20 MP',{mp:20}]]){
     const {state}=hydrateDummy(shooterYaml.replace('威力: 50','威力: 60').replace('伤害: 物理',`伤害: ${tag}`).replace('攻击: 20 SP',cost));const s=state.skills[state.units.e1.skills[0]];

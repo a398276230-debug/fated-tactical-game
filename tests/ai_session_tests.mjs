@@ -83,7 +83,7 @@ gate('G45', '去样板化协议全貌、四步编译流与闭合枚举披露', (
     'enemy / ally / self / any / corpse / cell', 'battle_turns / until_removed / persistent',
     'refresh / stack / replace / extend', 'undispellable / concept_immune',
     'normal / function / core / kill / concept', '超暴击 / 强暴击 / 平暴击 / 有效 / 勉强 / 擦伤 / 失手',
-    'physical / energy / mental / true', '缺少 damage 骰子对象时，主击伤害为 0',
+    'physical / energy / mental / true', '同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击',
     '先尝试用正交原语拆解组合，再考虑放弃', '仍无法表达的部分列入 unresolved', '检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围',
   ]) assert.ok(combined.includes(token), `提示词漏披露关键语义或枚举：${token}`);
   assert.doesNotMatch(protocol, /spirit/);

@@ -798,15 +798,17 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const narrativeNotes = [];
     appendRules(rules, convertNarrative(rawEffects, { push: msg => narrativeNotes.push(msg) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
     const singleTaggedType = damageAliases.get(tag);
-    for (const message of narrativeNotes) notes.push(message);
-    if (!rules.length && !r.damage && !r.heal && !narrativeEntries(rawEffects).length && tag) {
-      const program = hasPower ? damageTags(tag, power) : [];
-      if (program.length && areaDamage) notes.push(`「${skillName}」范围伤害标签待标准化：${tag}。请为规则声明精确的目标选择器`);
-      else if (program.length) appendRules(rules, [activeRule(`${prefix}-damage`, program)], notes);
-      else notes.push(`「${skillName}」伤害标签无法换算：${tag}${hasPower ? '（类型或比例格式有歧义）' : '（缺少有效威力）'}`);
-    }
-    if (hasPower && tag && !damageAliases.has(tag) && !object(r.damage) && !passive) {
-      notes.push(`「${skillName}」混合伤害主击待标准化：已声明威力 ${numericPower}、伤害「${tag}」，请在 active 规则中按各分量写 damage，或提供明确的替代主击公式`);
+    const hasActiveDamage = rules.some(rule => rule.enabled !== false && rule.hook === 'active' && [...instructions(rule.program)].some(op => op.op === 'damage'));
+    if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag) {
+      const packets = hasPower ? damageTags(tag, power) : [];
+      if (!singleTaggedType && packets.length && area.target !== 'cell') {
+        const program = areaDamage ? [{ op: 'for_each', select: { from: 'action_targets' }, body: packets }] : packets;
+        appendRules(rules, [activeRule(`${prefix}-damage`, program)], notes);
+      } else if (!singleTaggedType || !hasPower) {
+        notes.push(`「${skillName}」伤害标签待标准化：威力 ${power ?? '未声明'}、伤害「${tag}」（缺少明确分量或受击对象）`);
+      } else if (!areaDamage && !rules.length && !narrativeEntries(rawEffects).length) {
+        appendRules(rules, [activeRule(`${prefix}-damage`, packets)], notes);
+      }
     }
     const damageOps = rules.filter(rule => rule.enabled !== false && rule.hook === 'active')
       .flatMap(rule => [...instructions(rule.program)].filter(op => op.op === 'damage'));
@@ -820,6 +822,9 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     if (generatedMainDamage && !generatedDamageType && narrativeNotes.length) {
       notes.push(`主击伤害类型待标准化「主击伤害类型」：根据原始效果补全 /skills/${sid}/damage/type；若原文明确以混合伤害或独立公式替代主击，请移除模板 damage 并以 active 规则结算。`);
     }
+    const mainParsed = hasPower && (generatedMainDamage || damageOps.length);
+    for (const message of narrativeNotes) notes.push(mainParsed
+      ? `${message}。主击与威力 ${numericPower} 已解析，只补本条尚未实现的效果，不要重复添加主击。` : message);
     const damageType = explicitDamageType ?? (types.length === 1 ? types[0] : undefined);
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {

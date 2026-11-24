@@ -125,3 +125,33 @@ test('skill geometry is resolved for the individual caster and preserves fractio
   actor.tier = 7;
   assert.equal(actionSkill(state, actor, 'scaled').range, 4);
 });
+
+test('zero-range fan resolves its own cell, radius-two neighbors, and real hover distance', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  const enemies = Object.values(state.units).filter(unit => unit !== actor);
+  const [sameCell, near, outside] = enemies;
+  state.grid = state.grid.map(row => row.map(() => ({ kind: 'floor', z: 0 })));
+  state.covers = {};
+  state.skills.point_fan = {
+    name: '贴身扇形', ap: 1, slot: 'attack', target: 'enemy', shape: 'fan', range: 0, radius: 2,
+    facing: [1, 0], damage: { count: 1, sides: 1, stat: 'str', type: 'physical' },
+  };
+  actor.skills = ['point_fan'];
+  Object.assign(actor, { x: 4, y: 4, altitude: 0 });
+  Object.assign(sameCell, { x: 4, y: 4, altitude: 0 });
+  Object.assign(near, { x: 6, y: 4, altitude: 0 });
+  Object.assign(outside, { x: 7, y: 4, altitude: 0 });
+  for (const enemy of enemies) enemy.team = actor.team === 'blue' ? 'red' : 'blue';
+
+  assert.equal(preview(state, { type: 'skill', skillId: 'point_fan', x: actor.x, y: actor.y - 1 }).ok, false,
+    'range zero cannot aim one cell away');
+  const sameCellPlan = preview(state, { type: 'skill', skillId: 'point_fan', x: actor.x, y: actor.y });
+  assert.equal(sameCellPlan.ok, true, sameCellPlan.error);
+  assert.deepEqual(sameCellPlan.targets.filter(row => row.kind !== 'cover').map(row => row.id).sort(), [sameCell.id, near.id].sort());
+  assert.equal(sameCellPlan.targets.some(row => row.id === outside.id), false);
+
+  sameCell.altitude = 3;
+  const hoveringPlan = preview(state, { type: 'skill', skillId: 'point_fan', x: actor.x, y: actor.y });
+  assert.equal(hoveringPlan.targets.some(row => row.id === sameCell.id), false);
+});

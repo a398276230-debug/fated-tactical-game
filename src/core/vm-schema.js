@@ -186,7 +186,7 @@ const defs = {
   expr: either(number, bool, formula),
   tag,
   selector: withRules(object({
-    from: either(enumOf(...scopes, 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable), options: list(id, 1), of: either(enumOf(...scopes), variable),
+    from: either(enumOf(...scopes, 'action_targets', 'units', 'statuses', 'zones', 'covers', 'terrain', 'cells', 'tape'), variable), options: list(id, 1), of: either(enumOf(...scopes), variable),
     area, where: booleanExpr, pick: variants(literal('all'), ...['first', 'random', 'nearest'].map(key => object({ [key]: integer(1) }, [key]))),
   }), either(needs('from'), needs('options')), when('of', {}, { properties: { from: literal('statuses') } })),
 

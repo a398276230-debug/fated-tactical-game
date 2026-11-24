@@ -22,7 +22,7 @@ export const DEFAULT_SLOTS = [
 
 const TAG_MAPPING = `【世界书标签 → VM 映射】
 • 常规评级主击用模板 power 配合 damage 骰子对象。[威力: X 物理] 等价于 [威力: X][伤害: 物理]。转换器遇到 [威力: X] 且没有自定义 active 主伤规则时，会自动生成 damage:{count:1,sides:4,stat}，单一伤害标签存在时再写入 type。只有混合伤害或明确的独立公式才由 active 规则替代模板主击，不要重复添加主击。混合伤害、固定伤害包或独立公式才由 active 规则写 damage 指令，同一笔伤害只结算一次。
-• 混合伤害（如物理与能量按数值或百分比并列）在 hook:"active" 内拆为多条按序执行的 damage 指令，各分量按同一基准求值，不再额外叠加模板总威力主击。
+• 混合伤害（如物理与能量按数值或百分比并列）在 hook:"active" 内拆为多条按序执行的 damage 指令，各分量按同一基准求值，不再额外叠加模板总威力主击。标准伤害标签如 [威力:75][伤害:能量45/真实30] 即使另有叙事效果，也已自动解析威力与主击；范围规则用 for_each 的 from:"action_targets" 逐个处理本次行动已圈定的单位。保留已生成的规则，只补尚未实现的附加效果，不要再按总威力或各分量重复添加伤害。
 • [关联属性: <属性>] 或标签中的五维名称指向施术者主属性（str / agi / con / int / spi），需属性缩放时写入 damage.stat 或在公式中读 self.<stat>；原文要求抵抗范围技能的附带效果时，在 after_hit 规则里用 check(kind:"save")，并在 onPass/onFail 中结算附带效果。用 event.skillId == skill.id 限定来源。
 • [单体] → shape:"single"，target 依描述选取；[范围: <档位>(N)+<形状>(<阵营>)] → rawRadius:N、shape 对应枚举、target 对应枚举，有效距离另映射至 rawRange；角度标签映射至 angle。原生范围主击按 shape 自动命中，无需额外配置命中检定。附带效果的豁免写 DSL，不要用模板 save/saveDC 表达附带效果。原生范围伤害用 target:"enemy" 限定敌方，target:"any" 为无差别波及（覆盖自身格时也会命中自身）。VM 选择器 from:"units" 为未过滤全集，必须在 where 中按原描述显式声明存活与敌我条件。
 • 原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved。位移、治疗、资源恢复、状态授予与场地生成均按原描述拆解为对应指令。`;
@@ -35,7 +35,7 @@ export const PATCH_RULES = String.raw`【输出目标】
 
 【四步编译工作流（提交前逐条自检）】
 1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
-   • 主击完备性：缺少 damage 骰子对象时，主击伤害为 0。转换器会为 [威力: X] 自动写入 damage。若伤害类型没有结构化标签，转换器会保留 damage 主击并单独产生“主击伤害类型待标准化”警告，若原始效果明确给出单一主击类型，用 add 写入缺失的 /skills/<id>/damage/type（已有该字段才用 replace），保留原生主击。若原文明确要求混合伤害或独立公式替代主击，同批 remove /skills/<id>/damage 并写 active 规则。原文无法确认类型时写 unresolved 并说明原因。若快照仍是旧数据、已有 power 但缺 damage，只有在确认原文是单一常规主击时才补 damage。混合伤害或明确自定义公式主伤在 hook:"active" 内替代模板主击。二者必居其一，严禁重复结算。
+   • 主击完备性：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage。若伤害类型没有结构化标签，转换器会保留 damage 主击并单独产生“主击伤害类型待标准化”警告，若原始效果明确给出单一主击类型，用 add 写入缺失的 /skills/<id>/damage/type（已有该字段才用 replace），保留原生主击。若原文明确要求混合伤害或独立公式替代主击，同批 remove /skills/<id>/damage 并写 active 规则。原文无法确认类型时写 unresolved 并说明原因。若快照仍是旧数据、已有 power 但缺 damage，只有在确认原文是单一常规主击时才补 damage。混合伤害或明确自定义公式主伤在 hook:"active" 内替代模板主击。二者必居其一，严禁重复结算。
    • 模式与入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗资源的装备主动技，先 add /skills/<id> 再将该 ID 加入装备模板 skills 数组，同一效果只用一种方式挂载。
 2. 选择机制落点（mods vs active 顺序链 vs 常驻事件 hook）：
    • 常驻属性、加减伤、穿甲、行动锁、先手、敌方测距偏移 → 写声明式 mods（动态条件写 when，stat 必须取协议枚举）。HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat。若来源数值已计入快照的资源上限，保留当前面板，避免叠加；若还需装备联动且没有等价实现，逐项写 unresolved 并说明原因。

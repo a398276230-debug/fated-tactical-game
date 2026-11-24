@@ -2,7 +2,52 @@ import { bodySizeLabel } from '../core/combat_protocol.js';
 import { equippedActiveSkills, STATUSES } from '../core/combat.js';
 const attributes = {str:'力量',agi:'敏捷',con:'体质',int:'智力',spi:'精神'};
 const types = {physical:'物理',energy:'能量',mental:'精神',true:'真实'};
+const shapes = {single:'单体',circle:'圆形',ring:'环形',cone:'锥形',fan:'扇形',line:'直线'};
 const when = { active: '主动', after_hit: '命中时', before_action: '行动前', after_damage: '伤害结算后', after_heal: '治疗后', turn_start: '回合开始', turn_end: '回合结束', on_kill: '击倒时', on_death: '倒下时' };
+
+const displayNumber = value => typeof value === 'number' ? String(value) : typeof value === 'string' ? `按公式 ${value}` : null;
+function diceLabel(dice) {
+  if (!dice) return null;
+  const count = displayNumber(dice.count), sides = displayNumber(dice.sides);
+  if (!count || !sides) return null;
+  const bonus = dice.bonus ? `${dice.bonus > 0 ? '+' : ''}${dice.bonus}` : '';
+  return `${count}d${sides}${bonus}${dice.stat ? ` + ${attributes[dice.stat] ?? dice.stat}` : ''}`;
+}
+function collectDamageOps(value, result = []) {
+  if (!value || typeof value !== 'object') return result;
+  if (Array.isArray(value)) { for (const child of value) collectDamageOps(child, result); return result; }
+  if (value.op === 'damage') result.push(value);
+  for (const [key, child] of Object.entries(value)) if (key !== 'damage') collectDamageOps(child, result);
+  return result;
+}
+
+/** Derive only facts that the skill card can prove from the stored template. */
+export function skillDisplay(template = {}, skillInfo = {}) {
+  const components = [];
+  const add = (type, amount, formatted = false) => {
+    if (!type || !types[type]) return;
+    const suffix = amount == null ? null : formatted ? amount : displayNumber(amount);
+    const text = `${types[type]}${suffix ? ` ${suffix}` : ''}`;
+    if (!components.includes(text)) components.push(text);
+  };
+  if (template.damage) add(template.damage.type ?? template.damageType, diceLabel(template.damage), true);
+  else if (template.damageType) add(template.damageType);
+  for (const rule of template.rules ?? []) {
+    if (rule.enabled !== false && rule.hook === 'active') for (const op of collectDamageOps(rule.program)) add(op.damageType, op.amount);
+  }
+  if (!components.length && skillInfo.damageType && types[skillInfo.damageType]) add(skillInfo.damageType);
+  const costs = [['sp', 'SP'], ['mp', 'MP'], ['hp', 'HP']]
+    .map(([key, label]) => [label, template.resourceCost?.[key] ?? template[key]])
+    .filter(([, value]) => value !== undefined && value !== null && value !== 0 && value !== '0')
+    .map(([label, value]) => `${displayNumber(value) ?? value} ${label}`);
+  const area = [];
+  if (template.shape && template.shape !== 'single') area.push(shapes[template.shape] ?? template.shape);
+  if (template.radius != null) area.push(`半径 ${template.radius}`);
+  if (template.innerRadius != null) area.push(`内径 ${template.innerRadius}`);
+  if (template.width != null) area.push(`宽度 ${template.width}`);
+  if (template.angle != null) area.push(`角度 ${template.angle}`);
+  return { damage: components.join('、'), costs, range: template.range ?? '—', area: area.join('，') || '单体' };
+}
 const verbs = { let: '记录数值', if: '条件分支', for_each: '逐个结算', check: '检定', ask: '等待选择', mutate_event: '调整结算', damage: '伤害', heal: '治疗', resource: '调整资源', apply_status: '施加状态', remove_status: '移除状态', move: '位移', spawn: '生成', remove: '移除', perform: '执行行动', link_pool: '调整共享资源' };
 export function ruleSummary(rule, state) {
   const statusName = id => state?.statusTemplates?.[id]?.name ?? STATUSES[id]?.name ?? id;
@@ -144,9 +189,9 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
   const skillTemplates = new Map([...innate].map(id=>[id,state?.skills?.[id]]));
   if(state) for(const [id,template] of equippedActiveSkills(state,unit)) if(!skillTemplates.has(id)) skillTemplates.set(id,template);
   const skills=[...skillTemplates].map(([id,t])=>{
-    const damage=[...new Set([t?.damage?.type,t?.damageType,...(t?.rules ?? []).flatMap(rule => rule.program.filter(op => op.op === 'damage').map(op => op.damageType)),unit.skillInfo?.[id]?.damageType].filter(Boolean))].map(type=>types[type]).join('/');
-    const cost=[`${t?.resourceCost?.sp??t?.sp??0} SP`,(t?.resourceCost?.mp??t?.mp)?`${t.resourceCost?.mp??t.mp} MP`:null,t?.resourceCost?.hp?`${t.resourceCost.hp} HP`:null].filter(Boolean).join(' / ');
-    return {label:t?.name??id,path:innate.has(id)||state?.skills?.[id]?`/skills/${id}`:null,meta:[!innate.has(id)?'装备附带':null,t?.passive&&!t.rules?.some(rule=>rule.hook==='active')?'被动':null,`消耗 ${cost}`,`威力 ${t?.power??'—'}`,damage||'无伤害类型',`距离 ${t?.range??'—'}`].filter(Boolean),template:t};
+    const display=skillDisplay(t,unit.skillInfo?.[id]);
+    const cost=display.costs.join(' / ');
+    return {label:t?.name??id,path:innate.has(id)||state?.skills?.[id]?`/skills/${id}`:null,meta:[!innate.has(id)?'装备附带':null,t?.passive&&!t.rules?.some(rule=>rule.hook==='active')?'被动':null,cost?`消耗 ${cost}`:'无资源消耗',t?.power!=null?`威力 ${t.power}`:null,display.damage||'无伤害类型',`射程 ${display.range}`,`范围 ${display.area}`].filter(Boolean),template:t};
   });
   section('技能',skills);
   const details=make('details',{class:'fated-char-raw'});
