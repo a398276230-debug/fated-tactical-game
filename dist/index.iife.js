@@ -4911,7 +4911,7 @@ var FatedTactical = (() => {
     return dryRun ? { ...result, state } : result;
   }
 
-  // src/core/combat.js
+  // src/core/combat-actions.js
   var corpses = (state) => Object.values(state.units).filter((unit) => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
   function randomDie(state, sides) {
     const { rng, value } = rollDie(state.rng, sides);
@@ -13776,7 +13776,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     };
   }
 
-  // src/tavern/converter.js
+  // src/tavern/converter-unit.js
   var own15 = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
   var object3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
   var asObject = (v) => object3(v) ? v : {};
@@ -17477,7 +17477,7 @@ ${variables2.warnings()}` : "");
     });
   }
 
-  // src/tavern/overlay.js
+  // src/tavern/overlay-sources.js
   var own17 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
   var isObject2 = (v) => v && typeof v === "object" && !Array.isArray(v);
   var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
