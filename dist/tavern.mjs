@@ -405,61 +405,192 @@ function moraleResult({ type = "standard", hp, maxHp, d20 } = {}) {
   return { threshold, check, triggered, roll, outcome: !triggered ? "steady" : !check ? "shaken" : roll !== null && roll < 12 ? "routed" : "steady" };
 }
 
-// src/core/status_modifiers.js
-var damageTypes = Object.freeze(["physical", "energy", "mental", "true"]);
-var ranges = {
-  damage: [1, 1e5],
-  heal: [1, 1e5],
-  amount: [1, 1e5],
-  reflect: [1, 1e5],
-  armor: [1, 1e5],
-  movement: [-3, 3],
-  accuracy: [-10, 10],
-  incomingAccuracy: [-10, 10],
-  advantage: [1, 3],
-  disadvantage: [1, 3],
-  intentDifficulty: [-10, 10],
-  reduction: [0, 1],
-  vulnerability: [0, 1],
-  shatter: [0, 1],
-  damageBonus: [0, 1]
+// src/presets/status-defaults.js
+var actionStatuses = Object.freeze({
+  brace: "guarded",
+  block: "guarded",
+  charge: "charge",
+  lock_on: "lock_on",
+  scan: "weakness",
+  grapple: "grappled",
+  trip: "prone",
+  use_item: "haste",
+  altar: "haste",
+  shield: "shield",
+  collision: "stun",
+  shield_bash: "stun"
+});
+var def = (name, icon, category, remainingTurns, description, modifiers2 = {}, options = {}) => {
+  const { stackMode = "refresh", tags = [], vars = {}, mods = [], rules = [], ...rest } = options;
+  return Object.freeze({
+    name,
+    icon,
+    category,
+    description,
+    remainingTurns,
+    durationType: "battle_turns",
+    tickTiming: "onTurnStart",
+    stackMode,
+    stackRule: stackMode,
+    maxStacks: 1,
+    tier: 1,
+    tags: Object.freeze(tags),
+    vars: Object.freeze(vars),
+    mods: Object.freeze(mods),
+    rules: Object.freeze(rules),
+    modifiers: Object.freeze(modifiers2),
+    ...rest
+  });
 };
-Object.assign(ranges, { dodgeBonus: [-30, 30], attackPercent: [-1, 4], attributePercent: [-1, 4], finalDamageMultiplier: [0, 8] });
-var ratios = ["reduction", "vulnerability", "shatter", "damageBonus", "attackPercent", "attributePercent", "finalDamageMultiplier"];
-var flags = ["taunted", "intercept", "skip", "rooted", "hidden", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"];
-function rangeFor(key4, template) {
-  if (key4 === "armor") {
-    const base = template?.modifiers.armor;
-    if (base == null) return [-1e5, 1e5];
-    if (base < 0) return [-1e5, -1];
-    if (base === 0) return [0, 1e5];
-  }
-  return Object.hasOwn(ranges, key4) ? ranges[key4] : void 0;
-}
-function statusModifierRange(key4, template) {
-  const range2 = rangeFor(key4, template);
-  if (range2) return range2.join("\u2013");
-  if (key4 === "damageType") return damageTypes.join("/");
-  if (flags.includes(key4)) return "true/false";
-  throw new Error(`\u672A\u77E5\u72B6\u6001\u53C2\u6570\uFF1A${key4}`);
-}
-var modifierKeys = Object.freeze([...Object.keys(ranges), "damageType", ...flags]);
-function validateStatusModifiers(template, modifiers2) {
-  if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
-  for (const [key4, value] of Object.entries(modifiers2)) {
-    if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
-    const range2 = rangeFor(key4, template);
-    const valid2 = range2 ? (ratios.includes(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range2[0] && value <= range2[1] : key4 === "damageType" ? damageTypes.includes(value) : flags.includes(key4) && typeof value === "boolean";
-    if (!valid2) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key4}\uFF0C\u5408\u6CD5\u8303\u56F4\uFF1A${statusModifierRange(key4, template)}`);
-  }
-}
+var allSlots = ["attack", "action", "move", "cast", "reaction"];
+var tick = (id3, hook2, op) => ({ id: id3, hook: hook2, program: [{ target: "self", ...op }] });
+var dot = (id3, hook2, amount, damageType2) => tick(id3, hook2, { op: "damage", amount, damageType: damageType2, direct: false });
+var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
+  // Native combat reads modifiers for reporting and its movement, action, and strike calculations.
+  suppressed: def(
+    "\u88AB\u538B\u5236",
+    "\u26D3\uFE0F",
+    "control",
+    1,
+    "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002",
+    { skip: true },
+    { durationType: "until_removed", tags: ["control"], mods: [{ locks: allSlots }] }
+  ),
+  burn: def(
+    "\u707C\u70E7",
+    "\u{1F525}",
+    "dot",
+    2,
+    "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002",
+    {},
+    { tags: ["fire"], rules: [dot("burn-tick", "turn_start", 5, "energy")] }
+  ),
+  bleed: def(
+    "\u6D41\u8840",
+    "\u{1FA78}",
+    "dot",
+    3,
+    "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
+    {},
+    { stackMode: "stack", maxStacks: 5, tickTiming: "onTurnEnd", rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")] }
+  ),
+  poison: def(
+    "\u4E2D\u6BD2",
+    "\u2620\uFE0F",
+    "dot",
+    3,
+    "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
+    {},
+    { stackMode: "stack", maxStacks: 4, tags: ["poison"], rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")] }
+  ),
+  regen: def(
+    "\u518D\u751F",
+    "\u{1F49A}",
+    "hot",
+    3,
+    "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002",
+    {},
+    { rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })] }
+  ),
+  shield: def(
+    "\u62A4\u76FE",
+    "\u{1F6E1}\uFE0F",
+    "shield",
+    2,
+    "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002",
+    { amount: 8 },
+    { stackMode: "replace", vars: { shieldAmount: 8 } }
+  ),
+  guarded: def("\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", { reduction: 0.35 }),
+  taunt: def("\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", { taunted: true }),
+  guard: def("\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", { intercept: true }),
+  thorns: def("\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {}, {
+    rules: [{
+      id: "thorns-retaliate",
+      hook: "after_damage",
+      filter: "event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team",
+      program: [{ op: "damage", target: "attacker", amount: 5, damageType: "true", direct: false }]
+    }]
+  }),
+  stun: def("\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", { skip: true }, { tags: ["control"], mods: [{ locks: allSlots }] }),
+  freeze: def(
+    "\u51B0\u51BB",
+    "\u{1F9CA}",
+    "control",
+    1,
+    "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002",
+    { skip: true, shatter: 0.5 },
+    { tags: ["control", "ice"], mods: [{ locks: allSlots }], expireOn: { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" } }
+  ),
+  root: def(
+    "\u5B9A\u8EAB",
+    "\u26D3\uFE0F",
+    "control",
+    2,
+    "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002",
+    { rooted: true },
+    { tags: ["control"], mods: [{ locks: ["move"] }] }
+  ),
+  blind: def(
+    "\u81F4\u76F2",
+    "\u{1F311}",
+    "debuff",
+    2,
+    "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002",
+    {},
+    { mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }] }
+  ),
+  vulnerable: def(
+    "\u6613\u4F24",
+    "\u{1F4A2}",
+    "debuff",
+    2,
+    "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002",
+    {},
+    { mods: [{ stat: "incomingDamageMult", mult: 1.35 }] }
+  ),
+  sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", {}, { mods: [{ stat: "armor", flat: -4 }] }),
+  mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
+  stealth: def(
+    "\u9690\u8EAB",
+    "\u{1F464}",
+    "buff",
+    2,
+    "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002",
+    { hidden: true },
+    {
+      tags: ["stealth"],
+      mods: [{ stat: "advantage", flat: 1, checkKind: "attack" }],
+      expireOn: [
+        { hook: "after_action", filter: "attacker.id == self.id && event.hostile == true" },
+        { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
+      ]
+    }
+  ),
+  haste: def("\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002", { movement: 1 }),
+  chill: def("\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", { movement: -1, accuracy: -2 }),
+  charge: def("\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", { damageBonus: 0.15 }),
+  lock_on: def("\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", { accuracy: 1 }),
+  weakness: def("\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", { intentDifficulty: -2 }, { stackMode: "stack", maxStacks: 3 }),
+  grappled: def(
+    "\u64D2\u62B1",
+    "\u26D3",
+    "control",
+    1,
+    "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002",
+    { rooted: true },
+    { tags: ["control"], mods: [{ locks: ["move"] }] }
+  ),
+  prone: def("\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", { incomingAccuracy: 2, rooted: true }, { mods: [{ locks: ["move"] }] }),
+  infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
+}).map(([id3, status]) => [id3, Object.freeze({ id: id3, ...status })])));
 
 // src/core/formula.js
 var variables = /* @__PURE__ */ new Map();
 var families = [];
 var queries = /* @__PURE__ */ new Map();
-var register = (name, description, read, legacy = false) => variables.set(name, { description, read, legacy });
-var family = (name, pattern, description, read, legacy = false) => families.push({ name, pattern, description, read, legacy });
+var register = (name, description, read) => variables.set(name, { description, read });
+var family = (name, pattern, description, read) => families.push({ name, pattern, description, read });
 var query = (name, args, signature, description, read) => queries.set(name, { args, signature, description, read });
 var own = (record3, key4) => record3 == null ? void 0 : Object.getOwnPropertyDescriptor(record3, key4)?.value;
 var path = (record3, ...keys) => keys.reduce(own, record3);
@@ -508,7 +639,6 @@ var vmUnitFields = {
   lastMoveDir: "\u6700\u8FD1\u4E00\u6B21\u6C34\u5E73\u4F4D\u79FB\u4E3B\u65B9\u5411 N/S/E/W\uFF0C\u65E0\u8BB0\u5F55\u65F6\u4E3A null"
 };
 var unitScopes = { self: "\u6548\u679C\u4E3B\u4F53", attacker: "\u4E8B\u4EF6\u653B\u51FB\u8005", target: "\u5F53\u524D\u76EE\u6807", source: "\u6548\u679C\u6765\u6E90", candidate: "\u5F53\u524D\u7B5B\u9009\u5B9E\u4F53" };
-var legacyScopes = /* @__PURE__ */ new Set(["self", "attacker", "target"]);
 var entityScopes = /* @__PURE__ */ new Set([...Object.keys(unitScopes), "status", "zone"]);
 var statusFields = { id: "\u72B6\u6001 ID", category: "\u72B6\u6001\u7C7B\u522B", tier: "\u72B6\u6001\u5C42\u7EA7", stacks: "\u72B6\u6001\u5C42\u6570", remainingTurns: "\u5269\u4F59\u56DE\u5408" };
 var tapeFields = { round: "\u8BB0\u5F55\u8F6E\u6570", turn: "\u8BB0\u5F55\u65F6\u7684\u884C\u52A8\u8005\u7D22\u5F15", actorId: "\u884C\u52A8\u8005 ID", team: "\u884C\u52A8\u8005\u9635\u8425", actionType: "\u884C\u52A8\u7C7B\u578B", skillId: "\u6280\u80FD ID" };
@@ -550,8 +680,8 @@ function statusOf(unit, id3) {
   }
   return void 0;
 }
-function dynamicFamily(prefix, description, read, legacy = false) {
-  family(`${prefix}.<id>`, new RegExp(`^${prefix.replaceAll(".", "\\.")}\\.(${idPattern})$`), description, read, legacy);
+function dynamicFamily(prefix, description, read) {
+  family(`${prefix}.<id>`, new RegExp(`^${prefix.replaceAll(".", "\\.")}\\.(${idPattern})$`), description, read);
 }
 function hpRatio(unit) {
   const maxHp = own(unit, "maxHp");
@@ -564,13 +694,12 @@ var entityFamilies = {
 };
 var allUnitFields = { ...unitFields, ...vmUnitFields };
 for (const [scope, label] of Object.entries(unitScopes)) {
-  const legacy = legacyScopes.has(scope);
   for (const [field, meaning] of Object.entries(allUnitFields)) {
-    register(`${scope}.${field}`, `${label}\u7684${meaning}`, (context) => unitField(context, own(context, scope), field), legacy && Object.hasOwn(unitFields, field));
+    register(`${scope}.${field}`, `${label}\u7684${meaning}`, (context) => unitField(context, own(context, scope), field));
   }
-  register(`${scope}.hpRatio`, `${label}\u7684\u751F\u547D\u6BD4\u4F8B\uFF080\u20261\uFF09`, (context) => hpRatio(own(context, scope)), legacy);
+  register(`${scope}.hpRatio`, `${label}\u7684\u751F\u547D\u6BD4\u4F8B\uFF080\u20261\uFF09`, (context) => hpRatio(own(context, scope)));
   for (const [field, [meaning, read]] of Object.entries(entityFamilies)) {
-    dynamicFamily(`${scope}.${field}`, `${label}\u7684${meaning}`, (context, id3) => read(context, own(context, scope), id3), legacy && field !== "vars");
+    dynamicFamily(`${scope}.${field}`, `${label}\u7684${meaning}`, (context, id3) => read(context, own(context, scope), id3));
   }
 }
 dynamicFamily("vars", "\u5F53\u524D\u6808\u5E27\u7684\u5C40\u90E8\u53D8\u91CF\uFF0C\u5E26 ID \u7684\u5B9E\u4F53\u5F15\u7528\u8FD4\u56DE\u5176 ID", (context, id3) => {
@@ -599,6 +728,10 @@ for (const [scope, label] of Object.entries({ status: "\u72B6\u6001", zone: "\u5
 register("skill.id", "\u5F53\u524D\u89C4\u5219\u6240\u5C5E\u6280\u80FD\u7684 ID\uFF08\u975E\u6280\u80FD\u8F7D\u4F53\u65F6\u4E3A null\uFF1B\u9650\u5B9A\u672C\u6280\u80FD\u89E6\u53D1\u5199 event.skillId == skill.id\uFF09", (context) => path(context, "skill", "id"));
 register("item.id", "\u5F53\u524D\u89C4\u5219\u6240\u5C5E\u88C5\u5907\u5B9E\u4F8B\u7684 ID\uFF08\u975E\u88C5\u5907\u8F7D\u4F53\u65F6\u4E3A null\uFF09", (context) => path(context, "item", "id"));
 register("item.templateId", "\u5F53\u524D\u89C4\u5219\u6240\u5C5E\u88C5\u5907\u6A21\u677F\u7684 ID\uFF08\u975E\u88C5\u5907\u8F7D\u4F53\u65F6\u4E3A null\uFF09", (context) => path(context, "item", "templateId"));
+register("zone.x", "\u533A\u57DF\u4E2D\u5FC3\u6A2A\u5750\u6807", (context) => path(context, "zone", "area", "center", "x"));
+register("zone.y", "\u533A\u57DF\u4E2D\u5FC3\u7EB5\u5750\u6807", (context) => path(context, "zone", "area", "center", "y"));
+register("event.triggered", "\u52A8\u4F5C\u662F\u5426\u7531 perform \u89E6\u53D1", (context) => path(context, "event", "triggered"));
+register("event.chainDepth", "perform \u52A8\u4F5C\u5D4C\u5957\u5C42\u6570", (context) => path(context, "event", "chainDepth"));
 register("zone.team", "\u533A\u57DF\u521B\u5EFA\u65F6\u7684\u9635\u8425\uFF1B\u65E0\u9635\u8425\u65F6\u4E3A null", (context) => path(context, "zone", "team"));
 register("zone.sourceId", "\u533A\u57DF\u521B\u5EFA\u8005 ID", (context) => path(context, "zone", "sourceId"));
 register("candidate.sourceId", "\u5F53\u524D\u5019\u9009\u5B9E\u4F53\u7684\u521B\u5EFA\u8005 ID", (context) => path(context, "candidate", "sourceId"));
@@ -610,11 +743,11 @@ for (const [scope, fields3] of Object.entries({ status: statusFields, tape: tape
     }
   }
 }
-register("round", "\u5F53\u524D\u8F6E\u6570", (context) => own(context, "round"), true);
-register("turn", "\u5F53\u524D\u884C\u52A8\u8005\u5728\u5148\u653B\u987A\u5E8F\u4E2D\u7684\u7D22\u5F15\uFF08\u4ECE 0 \u5F00\u59CB\uFF09", (context) => own(context, "turn"), true);
+register("round", "\u5F53\u524D\u8F6E\u6570", (context) => own(context, "round"));
+register("turn", "\u5F53\u524D\u884C\u52A8\u8005\u5728\u5148\u653B\u987A\u5E8F\u4E2D\u7684\u7D22\u5F15\uFF08\u4ECE 0 \u5F00\u59CB\uFF09", (context) => own(context, "turn"));
 register("timeOfDay", "\u6218\u573A\u65F6\u6BB5\uFF08dawn/day/dusk/night\uFF09", (context) => own(context, "timeOfDay"));
 register("pool", "\u8D44\u6E90\u6307\u4EE4\u5F53\u524D\u5904\u7406\u7684\u8D44\u6E90\u6C60\u952E", (context) => own(context, "pool"));
-register("distance", "\u6548\u679C\u4E3B\u4F53\u5230\u5F53\u524D\u76EE\u6807\u7684\u4E09\u7EF4\u8DDD\u79BB", (context) => readDistance(context, own(context, "self"), own(context, "target")), true);
+register("distance", "\u6548\u679C\u4E3B\u4F53\u5230\u5F53\u524D\u76EE\u6807\u7684\u4E09\u7EF4\u8DDD\u79BB", (context) => readDistance(context, own(context, "self"), own(context, "target")));
 register("cellM", "\u5355\u683C\u8FB9\u957F\uFF08\u7C73\uFF09", (context) => own(context, "cellM") ?? 2);
 register("boardW", "\u68CB\u76D8\u5217\u6570", (context) => own(context, "boardW") ?? 10);
 register("boardH", "\u68CB\u76D8\u884C\u6570", (context) => own(context, "boardH") ?? 10);
@@ -623,8 +756,8 @@ register("distanceM", "\u6548\u679C\u4E3B\u4F53\u5230\u5F53\u524D\u76EE\u6807\u7
   readDistance(context, own(context, "self"), own(context, "target")),
   own(context, "cellM") ?? 2
 ));
-register("weapon.attack", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u653B\u51FB\u529B", (context) => own(callback(context, "weapon"), "attack"), true);
-register("weapon.range", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u57FA\u7840\u5C04\u7A0B", (context) => own(callback(context, "weapon"), "range"), true);
+register("weapon.attack", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u653B\u51FB\u529B", (context) => own(callback(context, "weapon"), "attack"));
+register("weapon.range", "\u4E8B\u4EF6\u6B66\u5668\u6A21\u677F\u7684\u57FA\u7840\u5C04\u7A0B", (context) => own(callback(context, "weapon"), "range"));
 for (const [name, description] of Object.entries({
   skillId: "\u672C\u6B21\u884C\u52A8\u65BD\u653E\u7684\u6280\u80FD ID\uFF08\u666E\u653B\u6216\u975E\u6280\u80FD\u4E8B\u4EF6\u4E3A null\uFF1B\u9650\u5B9A\u672C\u6280\u80FD\u89E6\u53D1\u5199 event.skillId == skill.id\uFF09",
   actionType: "\u672C\u6B21\u884C\u52A8\u7C7B\u578B\uFF08attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item\uFF09",
@@ -650,12 +783,12 @@ for (const [name, description] of Object.entries({
   saved: "\u8C41\u514D\u662F\u5426\u901A\u8FC7\uFF08true/false\uFF09",
   baseDC: "VM \u68C0\u5B9A\u521D\u59CB DC",
   finalDC: "VM \u68C0\u5B9A\u5B8C\u6210\u65F6\u8BA1\u5165\u4FEE\u9970\u540E\u7684 DC"
-})) register(`event.${name}`, description, (context) => path(context, "event", name), true);
+})) register(`event.${name}`, description, (context) => path(context, "event", name));
 register("event.rating", "\u547D\u4E2D\u6216\u68C0\u5B9A\u8BC4\u7EA7\uFF08\u653B\u51FB\u68C0\u5B9A\u4E3A \u8D85\u66B4\u51FB/\u5F3A\u66B4\u51FB/\u5E73\u66B4\u51FB/\u6709\u6548/\u52C9\u5F3A/\u64E6\u4F24/\u5931\u624B\uFF1BVM check \u4E3A hit/miss/crit\uFF09", (context) => {
   const rating = path(context, "event", "rating");
   return typeof rating === "string" ? rating : own(rating, "name");
-}, true);
-register("event.ratingMultiplier", "\u653B\u51FB\u547D\u4E2D\u8BC4\u7EA7\u500D\u7387\uFF082/1.6/1.3/1/0.8/0.3/0\uFF09", (context) => own(path(context, "event", "rating"), "multiplier"), true);
+});
+register("event.ratingMultiplier", "\u653B\u51FB\u547D\u4E2D\u8BC4\u7EA7\u500D\u7387\uFF082/1.6/1.3/1/0.8/0.3/0\uFF09", (context) => own(path(context, "event", "rating"), "multiplier"));
 register("event.kind", "\u4E8B\u4EF6\u7C7B\u578B\uFF0C\u68C0\u5B9A\u4E2D\u7B49\u540C\u4E8E event.checkKind", (context) => path(context, "event", "kind") ?? path(context, "event", "checkKind"));
 register("event.authorityRank", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u8F7D\u4F53\u4F4D\u683C\uFF0C\u552F\u4E00\u4E3A 8", (context) => path(context, "event", "authorityRank"));
 register("event.naturalRoll", "\u672A\u7ECF\u66FF\u6362\u7684\u81EA\u7136\u9AB0\u9762\uFF0C\u9002\u7528\u4E8E after_natural_roll", (context) => path(context, "event", "naturalRoll"));
@@ -670,8 +803,8 @@ function readDistance(context, from, to) {
   return a.every(Number.isFinite) && b.every(Number.isFinite) ? Math.hypot(...b.map((value, i) => value - a[i])) : null;
 }
 var numeric = (fn, ...args) => args.every(Number.isFinite) ? scalar(fn(...args)) : null;
-query("min", ["value", "value"], "min(a, b)", "\u53D6\u4E24\u4E2A\u6570\u7684\u8F83\u5C0F\u503C", ([a, b]) => numeric(Math.min, a, b));
-query("max", ["value", "value"], "max(a, b)", "\u53D6\u4E24\u4E2A\u6570\u7684\u8F83\u5927\u503C", ([a, b]) => numeric(Math.max, a, b));
+query("min", ["value", "value"], "min(a, b, ...)", "\u53D6\u81F3\u5C11\u4E24\u4E2A\u6570\u4E2D\u7684\u6700\u5C0F\u503C", (args) => numeric(Math.min, ...args));
+query("max", ["value", "value"], "max(a, b, ...)", "\u53D6\u81F3\u5C11\u4E24\u4E2A\u6570\u4E2D\u7684\u6700\u5927\u503C", (args) => numeric(Math.max, ...args));
 query("floor", ["value"], "floor(value)", "\u5411\u4E0B\u53D6\u6574", ([value]) => numeric(Math.floor, value));
 query("ceil", ["value"], "ceil(value)", "\u5411\u4E0A\u53D6\u6574", ([value]) => numeric(Math.ceil, value));
 query("abs", ["value"], "abs(value)", "\u53D6\u7EDD\u5BF9\u503C", ([value]) => numeric(Math.abs, value));
@@ -738,11 +871,10 @@ function aggregate(collection, expr2, context, runtime, sum) {
 }
 var formulaReference = [...variables].map(([name, { description }]) => `${name}\uFF08${description}\uFF09`).concat(families.map(({ name, description }) => `${name}\uFF08${description}\uFF09`)).join("\uFF0C");
 var formulaFunctionReference = [...queries.values()].map(({ signature, description }) => `${signature}\uFF08${description}\uFF09`).join("\uFF0C");
-function resolveVariable(name, legacy) {
+function resolveVariable(name) {
   const exact = variables.get(name);
-  if (exact && (!legacy || exact.legacy)) return exact.read;
-  for (const { pattern, read, legacy: supported } of families) {
-    if (legacy && !supported) continue;
+  if (exact) return exact.read;
+  for (const { pattern, read } of families) {
     const match = pattern.exec(name);
     const keys = match?.slice(1);
     if (keys?.every(safeKey)) return (context) => read(context, ...keys);
@@ -753,7 +885,6 @@ var numericLiteral = /(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
 var frameVariable = new RegExp(`^vars\\.(${idPattern})$`);
 var frameIdentifier = new RegExp(`vars\\.${idPattern}(?:\\.(?:(?:resource|stacks|vars)\\.${idPattern}|[A-Za-z_][\\w.]*))?`);
 var dynamicIdentifier = new RegExp(`[A-Za-z]+\\.(?:resource|stacks|vars)\\.${idPattern}`);
-var legacyIdentifier = /[A-Za-z]+\.(?:resource|stacks)\.[A-Za-z0-9][A-Za-z0-9_-]{0,63}/;
 var identifier = /[A-Za-z_][\w.]*/;
 var quoted = /'(?:[^'\\\r\n]|\\(?:['"\\/bfnrt]|u[0-9a-fA-F]{4}))*'|"(?:[^"\\\r\n]|\\(?:['"\\/bfnrt]|u[0-9a-fA-F]{4}))*"/;
 var quotedToken = new RegExp(`^(?:${quoted.source})$`);
@@ -761,7 +892,6 @@ var escapedCharacters = { b: "\b", f: "\f", n: "\n", r: "\r", t: "	" };
 var decodeString = (token) => token.slice(1, -1).replace(/\\(u[0-9a-fA-F]{4}|.)/g, (_, escape) => escape.length > 1 ? String.fromCharCode(Number.parseInt(escape.slice(1), 16)) : escapedCharacters[escape] ?? escape);
 var lexer = (...patterns) => new RegExp([...patterns.map((pattern) => pattern.source), "[^\\s]"].join("|"), "g");
 var vmTokens = lexer(frameIdentifier, dynamicIdentifier, numericLiteral, identifier, quoted, /&&|\|\||<=|>=|==|!=/);
-var legacyTokens = lexer(legacyIdentifier, /\d+(?:\.\d+)?/, identifier);
 var precedence = /* @__PURE__ */ new Map([
   ["||", 1],
   ["&&", 2],
@@ -777,14 +907,11 @@ var precedence = /* @__PURE__ */ new Map([
   ["/", 6],
   ["%", 6]
 ]);
-var legacyOperators = /* @__PURE__ */ new Set(["+", "-", "*", "/"]);
 var VM_LIMITS = { length: 1024, tokens: 256 };
-var LEGACY_LIMITS = { length: 200, tokens: 80 };
-function parse(text5, legacy, dependencies2) {
-  const limits = legacy ? LEGACY_LIMITS : VM_LIMITS;
-  if (!text5.length || text5.length > limits.length) throw new SyntaxError("Invalid expression length");
-  const tokens = text5.match(legacy ? legacyTokens : vmTokens) ?? [];
-  if (tokens.length > limits.tokens) throw new SyntaxError("Too many expression tokens");
+function parse(text5, dependencies2) {
+  if (!text5.length || text5.length > VM_LIMITS.length) throw new SyntaxError("Invalid expression length");
+  const tokens = text5.match(vmTokens) ?? [];
+  if (tokens.length > VM_LIMITS.tokens) throw new SyntaxError("Too many expression tokens");
   let index = 0;
   const take = (token) => {
     if (tokens[index] !== token) return false;
@@ -809,10 +936,11 @@ function parse(text5, legacy, dependencies2) {
         }
         let expr2 = expression();
         if (kind === "predicate" && expr2[0] === "literal" && typeof expr2[1] === "string") {
-          expr2 = parse(expr2[1], false, dependencies2);
+          expr2 = parse(expr2[1], dependencies2);
         }
         args.push(kind === "value" ? expr2 : ["deferred", expr2]);
       }
+      if (name === "min" || name === "max") while (take(",")) args.push(expression());
       expect(")");
     }
     return ["call", entry2.read, args];
@@ -830,20 +958,18 @@ function parse(text5, legacy, dependencies2) {
   }
   function atom() {
     const token = tokens[index++];
-    if (token === "-" || token === "+" || !legacy && token === "!") return ["unary", token, atom()];
+    if (token === "-" || token === "+" || token === "!") return ["unary", token, atom()];
     if (token === "(") {
       const inner = expression();
       expect(")");
       return inner;
     }
     if (token && /^(?:\d|\.\d)/.test(token) && Number.isFinite(Number(token))) return ["literal", Number(token)];
-    if (!legacy) {
-      if (token === "true" || token === "false") return ["literal", token === "true"];
-      if (token === "null") return ["literal", explicitNull];
-      if (token && quotedToken.test(token)) return ["literal", decodeString(token)];
-      if (take("(")) return readCall(token);
-    }
-    const read = resolveVariable(token, legacy);
+    if (token === "true" || token === "false") return ["literal", token === "true"];
+    if (token === "null") return ["literal", explicitNull];
+    if (token && quotedToken.test(token)) return ["literal", decodeString(token)];
+    if (take("(")) return readCall(token);
+    const read = resolveVariable(token);
     if (!read) throw new SyntaxError(`Unknown expression operand: ${token}`);
     dependencies2.add(token);
     return ["variable", read];
@@ -853,11 +979,11 @@ function parse(text5, legacy, dependencies2) {
     for (; ; ) {
       const op = tokens[index];
       const level = precedence.get(op);
-      if (level === void 0 || level < min || legacy && !legacyOperators.has(op)) break;
+      if (level === void 0 || level < min) break;
       index++;
       left = ["binary", op, left, expression(level + 1)];
     }
-    if (min === 0 && !legacy && take("?")) {
+    if (min === 0 && take("?")) {
       const yes = expression();
       expect(":");
       return ["conditional", left, yes, expression()];
@@ -881,7 +1007,7 @@ var operations = {
 };
 var explicitNull = Symbol("explicit null");
 var unavailable = (value) => value == null || value === explicitNull;
-function evaluate(tree, context, legacy) {
+function evaluate(tree, context) {
   let remaining = 1e5;
   const step = () => remaining-- > 0;
   const runtime = { visit, step };
@@ -899,7 +1025,6 @@ function evaluate(tree, context, legacy) {
         return first;
       case "variable": {
         const value = first(current);
-        if (legacy) return scalar(value ?? 0);
         if (value === null) return explicitNull;
         return value === void 0 ? void 0 : scalar(value);
       }
@@ -920,7 +1045,6 @@ function evaluate(tree, context, legacy) {
         const value = visit(second, current);
         if (unavailable(value)) return null;
         if (first === "!") return !value;
-        if (legacy && first === "+") return value;
         return numeric(first === "-" ? (x) => -x : (x) => +x, value);
       }
       case "binary": {
@@ -946,17 +1070,15 @@ function evaluate(tree, context, legacy) {
   }
   return scalar(visit(tree, context));
 }
-var legacyCache = /* @__PURE__ */ new Map();
-var exprCache = /* @__PURE__ */ new Map();
-function compile(value, legacy) {
-  if (typeof value !== "string") return !legacy && (value === null || scalar(value) !== null) ? { tree: ["literal", value === null ? explicitNull : value], dependencies: /* @__PURE__ */ new Set() } : null;
-  const cache = legacy ? legacyCache : exprCache;
-  if (value.length > (legacy ? LEGACY_LIMITS : VM_LIMITS).length) return null;
+var cache = /* @__PURE__ */ new Map();
+function compile(value) {
+  if (typeof value !== "string") return value === null || scalar(value) !== null ? { tree: ["literal", value === null ? explicitNull : value], dependencies: /* @__PURE__ */ new Set() } : null;
+  if (value.length > VM_LIMITS.length) return null;
   if (cache.has(value)) return cache.get(value);
   const dependencies2 = /* @__PURE__ */ new Set();
   let compiled = null;
   try {
-    compiled = { tree: parse(value, legacy, dependencies2), dependencies: dependencies2 };
+    compiled = { tree: parse(value, dependencies2), dependencies: dependencies2 };
   } catch (error2) {
     if (!(error2 instanceof SyntaxError)) throw error2;
   }
@@ -964,11 +1086,514 @@ function compile(value, legacy) {
   cache.set(value, compiled);
   return compiled;
 }
-var validExpr = (value) => compile(value, false) !== null;
+var validExpr = (value) => compile(value) !== null;
 function evaluateExpr(value, context) {
-  const compiled = compile(value, false);
-  return compiled ? evaluate(compiled.tree, context, false) : null;
+  const compiled = compile(value);
+  return compiled ? evaluate(compiled.tree, context) : null;
 }
+
+// src/core/vm-schema.js
+var enumOf = (...values5) => ({ enum: values5 });
+var ref = (name) => ({ $ref: `#/$defs/${name}` });
+var either = (...anyOf) => ({ anyOf });
+var variants = (...oneOf) => ({ oneOf });
+var object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
+var list = (items, minItems = 0) => ({ type: "array", items, minItems });
+var needs = (...required) => ({ required });
+var when = (field, condition, then) => ({ if: { properties: { [field]: condition }, required: [field] }, then });
+var withRules = (schema, ...allOf) => ({ ...schema, allOf });
+var literal = (value) => ({ const: value });
+var integer = (minimum, maximum) => ({ type: "integer", minimum, ...maximum === void 0 ? {} : { maximum } });
+var number = { type: "number" };
+var bool = { type: "boolean" };
+var text = { type: "string", pattern: "\\S" };
+var reserved = [...Object.getOwnPropertyNames(Object.prototype), "prototype"];
+var idPattern2 = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
+var id = { type: "string", pattern: `^${idPattern2}$`, not: enumOf(...reserved) };
+var sourceSkillId = either(id, { type: "string", pattern: `^equip:${idPattern2}:${idPattern2}$` });
+var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved.map((key4) => `vars.${key4}`)) };
+var tag = { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" };
+var statusId = { ...id, format: "tactical-status-id" };
+var dynamicStatusId = either(statusId, variable);
+var formula = { ...text, format: "tactical-expr" };
+var expr = ref("expr");
+var numericExpr = either(number, formula);
+var booleanExpr = either(bool, formula);
+var entityId = either(id, variable);
+var damageTypes = Object.freeze(["physical", "energy", "mental", "true"]);
+var damageType = enumOf(...damageTypes);
+var modifierRanges = {
+  damage: [1, 1e5],
+  heal: [1, 1e5],
+  amount: [1, 1e5],
+  reflect: [1, 1e5],
+  armor: [1, 1e5],
+  movement: [-3, 3],
+  accuracy: [-10, 10],
+  incomingAccuracy: [-10, 10],
+  advantage: [1, 3],
+  disadvantage: [1, 3],
+  intentDifficulty: [-10, 10],
+  reduction: [0, 1],
+  vulnerability: [0, 1],
+  shatter: [0, 1],
+  damageBonus: [0, 1],
+  dodgeBonus: [-30, 30],
+  attackPercent: [-1, 4],
+  attributePercent: [-1, 4],
+  finalDamageMultiplier: [0, 8]
+};
+Object.assign(modifierRanges, { armor: [-1e5, 1e5] });
+var modifierRatios = /* @__PURE__ */ new Set(["reduction", "vulnerability", "shatter", "damageBonus", "attackPercent", "attributePercent", "finalDamageMultiplier"]);
+var modifierFlags = /* @__PURE__ */ new Set(["taunted", "intercept", "skip", "rooted", "hidden", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"]);
+function validateStatusModifiers(template, modifiers2) {
+  if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
+  for (const [key4, value] of Object.entries(modifiers2)) {
+    if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
+    const range2 = modifierRanges[key4];
+    const valid2 = range2 ? (modifierRatios.has(key4) ? Number.isFinite(value) : Number.isInteger(value)) && value >= range2[0] && value <= range2[1] : key4 === "damageType" ? damageTypes.includes(value) : modifierFlags.has(key4) && typeof value === "boolean";
+    if (!valid2) throw new Error(`\u65E0\u6548\u72B6\u6001\u53C2\u6570 ${template.id}.${key4}`);
+  }
+}
+var attribute = enumOf("str", "agi", "con", "int", "spi");
+var slot = enumOf("attack", "action", "move", "cast", "reaction", "fly", "teleport");
+var point2 = object({ x: number, y: number }, ["x", "y"]);
+var point = object({ x: number, y: number, z: number }, ["x", "y"]);
+var scopes = ["self", "source", "target", "attacker"];
+var pointRef = either(object({ x: numericExpr, y: numericExpr, z: numericExpr }, ["x", "y"]), enumOf(...scopes, "center"), variable);
+var redirectRef = either(entityId, formula);
+var selector = ref("selector");
+var target = ref("targetRef");
+var program = ref("program");
+var chooseOptions = list(object({ id, label: text }, ["id", "label"]), 1);
+var mapOf = (key4, value) => ({ type: "object", propertyNames: key4, additionalProperties: value });
+var eventPatchFields = {
+  before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
+  before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), skipColossusArea: booleanExpr, damageScale: numericExpr },
+  before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
+  after_natural_roll: { replaceNaturalRoll: numericExpr },
+  before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
+  before_status: { cancel: booleanExpr },
+  on_lethal_p2: { preventDeath: booleanExpr }
+};
+var vmHooks = Object.freeze([
+  "active",
+  "before_action",
+  "before_target",
+  "before_check",
+  "after_natural_roll",
+  "after_check",
+  "before_commit",
+  "before_status",
+  "on_lethal_p1",
+  "on_lethal_p2",
+  "after_action",
+  "after_move",
+  "after_hit",
+  "after_damage",
+  "after_heal",
+  "after_status_applied",
+  "after_status_removed",
+  "on_status_immunized",
+  "on_summon_evict",
+  "on_death",
+  "on_ally_death",
+  "on_kill",
+  "turn_start",
+  "turn_end",
+  "round_start",
+  "round_end"
+]);
+var hook = enumOf(...vmHooks);
+var patchSchemas = Object.fromEntries(Object.entries(eventPatchFields).map(([name, fields3]) => [
+  name,
+  { ...object(fields3), minProperties: 1 }
+]));
+var opNotes = Object.freeze({
+  let: "name \u5199\u88F8\u540D\u79F0\uFF08\u5982 bonus\uFF09\uFF0C\u8BFB\u53D6\u5199 vars.bonus\u3002\u9ED8\u8BA4\u5199\u5F53\u524D\u5E27\uFF0Cscope:owner \u5199\u89C4\u5219\u5BBF\u4E3B\uFF08\u7528 self.vars.bonus \u6216\u5BF9\u5E94\u8F7D\u4F53\u53D8\u91CF\u8BFB\u53D6\uFF09\u3002",
+  if: "\u6309 cond \u9009\u62E9 then \u6216 else \u6307\u4EE4\u5E8F\u5217\u3002\u672A\u63D0\u4F9B else \u65F6\u4E3A\u5047\u5373\u8DF3\u8FC7\u3002",
+  for_each: "\u5BF9 Selector \u7684\u7ED3\u679C\u5FEB\u7167\u9010\u9879\u6267\u884C body\u3002bind \u5199\u88F8\u540D\u79F0\uFF0C\u5982 victim\uFF1Bbody \u5185\u901A\u8FC7 vars.victim \u9009\u5B9E\u4F53\u3001vars.victim.hp \u8BFB\u5B57\u6BB5\u3002\u7701\u7565 bind \u65F6\uFF0C\u904D\u5386\u5355\u4F4D\u7684\u5B50\u5E27 target \u662F\u5F53\u524D\u5355\u4F4D\u3002",
+  check: "chance \u5FC5\u586B dc\uFF08d100 \u4E0D\u9AD8\u4E8E\u9608\u503C\u5373\u901A\u8FC7\uFF09\u3002\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u88F8\u540D\u79F0\uFF1B\u540E\u7EED\u901A\u8FC7 vars.<\u540D\u79F0> \u8BFB\u53D6\u3002rawNatural:true \u4F7F\u7528\u539F\u59CB\u81EA\u7136\u9AB0\uFF0C\u5FFD\u7565 after_natural_roll \u7684\u9AB0\u9762\u66FF\u6362\u3002",
+  ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\uFF1Afirst \u4FDD\u7559\u5019\u9009\u987A\u5E8F\uFF0C\u6570\u503C max/min \u53D6\u7AEF\u70B9\uFF1B\u8FDB\u653B\u683C/\u5B89\u5168\u683C\u5206\u522B\u9760\u8FD1/\u8FDC\u79BB\u6700\u8FD1\u5B58\u6D3B\u654C\u4EBA\uFF1Bhighest_threat \u4F18\u5148\u5B58\u6D3B\u654C\u4EBA\uFF0C\u540C\u7C7B\u6309\u6700\u9AD8\u8FDB\u653B\u5C5E\u6027\u6392\u5E8F\uFF1B\u591A\u9009\u53D6\u6392\u5E8F\u524D maxSelect \u4E2A\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
+  damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\uFF0C\u5199\u88F8\u540D\u79F0\u3001\u8BFB vars.<\u540D\u79F0>\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
+  heal: "\u6CBB\u7597\u5B58\u6D3B\u6216\u4ECD\u5728 on_lethal_p1/p2 \u7ED3\u7B97\u4E2D\u7684\u5355\u4F4D\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
+  resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002pool \u4E0E otherPool \u652F\u6301\u6C60 ID \u6216 vars.<\u540D\u79F0>\uFF0Cpool \u4E5F\u53EF\u7528\u5F15\u7528\u6570\u7EC4\uFF1B\u6570\u503C\u8868\u8FBE\u5F0F\u7528 resource(self, vars.<\u540D\u79F0>) \u8BFB\u53D6\u52A8\u6001\u4F59\u989D\u3002\u5185\u7F6E\u6C60 hp/mp/sp \u6216\u4F2A\u6C60 attack/action/move\uFF1A\u524D\u4E24\u8005\u8868\u793A\u672C\u56DE\u5408\u672A\u7528\u69FD\u4F4D\uFF0Cmove \u8868\u793A\u5269\u4F59\u79FB\u52A8\u683C\uFF1Bmode \u7528 add/sub/set\u3002add_max/sub_max/set_max \u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u955C\u50CF\uFF0CminRemain \u53EF\u9650\u5236\u6700\u4F4E\u4E0A\u9650\uFF1Bswap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\u3002",
+  link_pool: "\u7528 units \u9009\u62E9\u5355\u4F4D\uFF0C\u5C06\u6307\u5B9A\u7684 HP/MP/SP \u6C60\u5408\u5E76\u5171\u4EAB\u6216\u62C6\u56DE\u72EC\u7ACB\u6C60\u3002",
+  apply_status: "\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002ignoreImmunity:true \u660E\u786E\u6FC0\u6D3B\u514D\u75AB\u7A7F\u900F\uFF0C\u5E76\u6309\u8F7D\u4F53\u4F4D\u683C\u3001\u89D2\u8272\u5C42\u7EA7\u3001\u540C\u5C42 contest \u88C1\u5B9A\uFF1B\u5426\u5219 before_status \u514D\u75AB\u59CB\u7EC8\u751F\u6548\u3002",
+  remove_status: "\u5728\u76EE\u6807\u6301\u6709\u7684\u72B6\u6001\u4E2D\u7528 where \u7B5B\u9009\u53EF\u79FB\u9664\u9879\u3002force:true \u660E\u786E\u6FC0\u6D3B\u5BF9 undispellable \u72B6\u6001\u7684\u5F3A\u5236\u9A71\u6563\uFF0C\u5E76\u6309\u6765\u6E90\u4F4D\u683C\u88C1\u5B9A\uFF1BoutCount \u5199\u88F8\u540D\u79F0\u3002",
+  mutate_event: "\u4EC5\u5728\u6709\u53EF\u5199\u5B57\u6BB5\u7684\u62E6\u622A\u94A9\u5B50\u6539\u5199\u5F53\u524D\u4E8B\u4EF6\u3002patch \u7684\u952E\u5FC5\u987B\u5C5E\u4E8E\u5F53\u524D Rule.hook\u3002",
+  move: '\u7EDF\u4E00\u79FB\u52A8\u3001\u77AC\u79FB\u3001\u63A8\u62C9\u4E0E\u9AD8\u5EA6\u53D8\u5316\u3002push/pull \u9010\u683C\u5224\u78B0\u649E\uFF0Caltitude \u53EF\u7528 deltaZ \u6216 land\u3002distance \u9ED8\u8BA4\u7528\u683C\uFF1B\u539F\u8BCD\u6761 [\u4F4D\u79FB: X] \u7528 distance:X\u3001distanceUnit:"position"\uFF0C\u6309\u65BD\u653E\u8F7D\u4F53\u6362\u7B97\u3002teleport \u58F0\u660E distance \u65F6\u4E5F\u6821\u9A8C\u4F4D\u79FB\u4E0A\u9650\u3002',
+  spawn: "\u6309 entityKind \u63D0\u4F9B\u5BF9\u5E94\u7684 spec \u751F\u6210\u5355\u4F4D\u3001\u7ED3\u754C\u3001\u5730\u5F62\u3001\u63A9\u4F53\u6216\u5E93\u5B58\u7269\u54C1\uFF1Bat \u6307\u5B9A\u843D\u70B9\u3002",
+  despawn: '\u7528 select \u6E05\u9664\u6307\u5B9A\u7684 zone\u3001cover\u3001terrain \u6216 unit\uFF1Bunit \u901A\u5E38\u914D where: "candidate.summoned == true" \u53EA\u79FB\u9664\u53EC\u5524\u7269\uFF0C\u4E0D\u89E6\u53D1\u6B7B\u4EA1/\u4EA1\u8BED\u3002\u7B5B\u9009\u654C\u65B9\u533A\u57DF\u65F6\u7528 candidate.team != null && candidate.team != self.team\uFF1Bterrain \u53EA\u6E05\u9664 VM \u751F\u6210\u7684\u5730\u5F62\u5C42\u3002',
+  revive: "\u53EA\u5BF9\u672A\u88AB blockRevive \u7981\u6B62\u7684\u9635\u4EA1\u5355\u4F4D\u751F\u6548\uFF1BhpPercent/mpPercent/spPercent \u4EE5 1 \u4E3A\u6EE1\u989D\u3002",
+  perform: "\u538B\u5165\u72EC\u7ACB\u5B50\u52A8\u4F5C\uFF1Bskill \u7528\u6280\u80FD ID \u6216 vars.<\u540D\u79F0>\uFF0Creplay \u7528 tapeRecord \u5F15\u7528\u78C1\u5E26\u8BB0\u5F55\u3002overrides.origin \u53EF\u6539\u751F\u6548\u539F\u70B9\uFF1B\u8DE8\u8DDD\u79BB\u6216\u963B\u9694\u9700\u663E\u5F0F\u8BBE\u7F6E ignoreRange \u6216 ignoreLOS\u3002"
+});
+function opcode(op, properties, required, ...conditions) {
+  if (!Object.hasOwn(opNotes, op) || !opNotes[op].trim()) throw new Error(`VM \u6307\u4EE4 ${op} \u7F3A\u5C11\u7528\u6CD5\u8BF4\u660E`);
+  const schema = { ...object({ op: literal(op), enabled: { ...bool, default: true }, label: text, ...properties }, ["op", ...required]), description: opNotes[op] };
+  return conditions.length ? withRules(schema, ...conditions) : schema;
+}
+var intentEnum = enumOf("normal", "function", "core", "kill", "concept");
+var controlPolicy = object({
+  controller: enumOf("default", "ai"),
+  allegiance: enumOf("normal", "friendly_only", "all_hostile"),
+  forcedActionKinds: list(enumOf("attack", "skill")),
+  intentLock: intentEnum,
+  allowFriendlyTarget: bool,
+  moraleLock: literal("steady")
+});
+var stat = enumOf(
+  ...attribute.enum,
+  "movement",
+  "incomingDistanceOffset",
+  "armor",
+  "armorPierce",
+  "armorPiercePercent",
+  "damageMult",
+  "finalDamageMult",
+  "incomingDamageMult",
+  "damageFlat",
+  "damageReduction",
+  "damageReductionFlat",
+  "dr",
+  "healingMult",
+  "incomingHealMult",
+  "costMult",
+  "checkBonus",
+  "dcBonus",
+  "resistBonus",
+  "dodge",
+  "advantage",
+  "initiativeFlat",
+  "apMax"
+);
+var ratioStats = enumOf("damageReduction", "dr", "armorPiercePercent");
+var multiplierStats = enumOf("incomingDamageMult", "damageMult", "finalDamageMult", "healingMult", "incomingHealMult", "costMult");
+var ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
+var statMod = withRules(
+  object({
+    stat,
+    flat: numericExpr,
+    mult: numericExpr,
+    additivePercent: numericExpr,
+    damageType,
+    checkKind: text,
+    statusId: id,
+    locks: list(slot, 1),
+    flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless", "guaranteed_hit", "guaranteed_crit"), 1),
+    controlPolicy,
+    when: booleanExpr
+  }),
+  either(needs("stat"), needs("locks"), needs("flags"), needs("controlPolicy")),
+  when("flat", {}, needs("stat")),
+  when("mult", {}, needs("stat")),
+  when("additivePercent", {}, needs("stat")),
+  when("stat", ratioStats, { properties: { flat: ratioFlat }, not: needs("additivePercent") }),
+  when("stat", multiplierStats, { not: needs("flat") }),
+  when("stat", enumOf("checkBonus", "initiativeFlat"), { not: { anyOf: [needs("mult"), needs("additivePercent")] } })
+);
+var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
+var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
+var vmExpiry = either(expireRule, list(expireRule, 1));
+var spawnRadius = either({ type: "number", minimum: 0 }, formula);
+var area = object({
+  shape: enumOf("single", "circle", "ring", "fan", "cone", "line", "rect"),
+  origin: pointRef,
+  center: pointRef,
+  radius: spawnRadius,
+  innerRadius: spawnRadius,
+  width: spawnRadius,
+  angle: { type: "number", minimum: 0 }
+}, ["shape"]);
+var spawnTier = either(integer(1, 7), formula);
+var spawnTurns = either(integer(1, 100), formula);
+var spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
+var zoneArea = withRules(object({
+  shape: enumOf("single", "circle", "ring", "rect", "cells", "board"),
+  anchorUnitId: entityId,
+  origin: pointRef,
+  center: pointRef,
+  radius: spawnRadius,
+  innerRadius: spawnRadius,
+  rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
+  cells: list(point2, 1)
+}, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
+var scalarOrExpr = either(number, bool, { type: "string", maxLength: 1024 });
+var carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")) };
+var carrierFields = Object.freeze(Object.keys(carrier).filter((key4) => key4 !== "name"));
+var statusPatchFields = Object.freeze(["remainingTurns", "durationType", "stackMode", "stacks", "expireOn", ...carrierFields]);
+var validCarrierScalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" && value.length <= scalarOrExpr.anyOf[2].maxLength;
+var spawnSpecs = {
+  unit: withRules(object({
+    ...carrier,
+    tier: spawnTier,
+    templateId: id,
+    copyOf: target,
+    count: either(integer(1, 10), formula),
+    remainingTurns: spawnTurns,
+    spawnPanel: object({
+      attribute,
+      tier: spawnTier,
+      stats: object(Object.fromEntries(attribute.enum.map((name) => [name, integer(0, 20)])), attribute.enum),
+      maxHp: numericExpr,
+      maxMp: numericExpr,
+      maxSp: numericExpr,
+      armor: numericExpr,
+      size: integer(1, 5),
+      bodyLengthM: { type: "number", exclusiveMinimum: 0 },
+      mc: integer(1),
+      move: numericExpr,
+      skills: list(id),
+      gear: list(id),
+      mainHand: id,
+      offHand: id,
+      shield: id
+    })
+  }), variants(needs("templateId"), needs("copyOf"), needs("spawnPanel"), { not: either(needs("templateId"), needs("copyOf"), needs("spawnPanel")) })),
+  zone: object({ ...carrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ["area"]),
+  terrain: withRules(object({ kind: enumOf("floor", "wall", "slope"), height: number, mode: enumOf("set", "raise", "lower"), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs("kind"), needs("height")), when("mode", {}, needs("height"))),
+  cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
+  item: object({ templateId: id, count: either(integer(1), formula) }, ["templateId"])
+};
+var opcodeSchemas = [
+  opcode("let", { name: id, value: either(expr, enumOf(...scopes), variable), scope: enumOf("frame", "owner") }, ["name", "value"]),
+  opcode("if", { cond: booleanExpr, then: program, else: program }, ["cond", "then"]),
+  opcode("for_each", { select: selector, bind: id, body: program }, ["select", "body"]),
+  opcode("check", {
+    kind: enumOf("save", "contest", "d20", "chance", "attack"),
+    stat: either(attribute, list(attribute, 1)),
+    defenderStat: attribute,
+    dc: numericExpr,
+    mode: enumOf("all", "any"),
+    statusId: dynamicStatusId,
+    rawNatural: bool,
+    tags: list(tag),
+    onPass: program,
+    onFail: program,
+    out: id
+  }, ["kind"], when("kind", literal("chance"), needs("dc"))),
+  opcode(
+    "ask",
+    {
+      chooser: target,
+      kind: enumOf("cell", "entity", "option", "number"),
+      prompt: text,
+      out: id,
+      aiPolicy: enumOf("max", "min", "best_offensive_cell", "safest_cell", "highest_threat", "first"),
+      select: selector,
+      options: chooseOptions,
+      min: numericExpr,
+      max: numericExpr,
+      maxSelect: integer(1, 200)
+    },
+    ["chooser", "kind", "prompt", "out", "aiPolicy"],
+    when("maxSelect", {}, { properties: { kind: literal("entity") } }),
+    when("kind", enumOf("cell", "entity"), withRules(needs("select"), { not: either(needs("options"), needs("min"), needs("max")) })),
+    when("kind", literal("option"), withRules(needs("options"), { not: either(needs("select"), needs("min"), needs("max")) })),
+    when("kind", literal("number"), withRules(needs("min", "max"), { not: either(needs("options"), needs("select")) }))
+  ),
+  opcode("damage", { target, amount: numericExpr, damageType, ignoreArmor: bool, lethal: bool, instantDeath: bool, direct: bool, out: id }, ["target", "amount", "damageType"]),
+  opcode("heal", { target, amount: numericExpr, out: id }, ["target", "amount"]),
+  opcode(
+    "resource",
+    {
+      target,
+      pool: either(entityId, list(entityId, 1)),
+      mode: enumOf("add", "sub", "set", "swap", "add_max", "sub_max", "set_max"),
+      amount: numericExpr,
+      otherPool: entityId,
+      local: bool,
+      minRemain: numericExpr,
+      requireFull: bool,
+      out: id
+    },
+    ["target", "pool", "mode"],
+    when("mode", literal("swap"), withRules({ ...needs("otherPool"), properties: { pool: entityId } }, { not: needs("amount") })),
+    when("mode", enumOf("add", "sub", "set", "add_max", "sub_max", "set_max"), { ...needs("amount"), not: needs("otherPool") })
+  ),
+  opcode("link_pool", { units: selector, pools: list(enumOf("hp", "mp", "sp"), 1), mode: enumOf("link", "unlink") }, ["units", "pools", "mode"]),
+  opcode("apply_status", {
+    target,
+    statusId: dynamicStatusId,
+    ignoreImmunity: bool,
+    turns: numericExpr,
+    stacks: numericExpr,
+    stackMode: enumOf("refresh", "stack", "replace", "extend"),
+    extendTurns: numericExpr,
+    vars: carrier.vars,
+    expireOn: ref("expiry")
+  }, ["target", "statusId"]),
+  opcode("remove_status", { target, where: booleanExpr, force: bool, reason: enumOf("dispelled", "cleansed", "expired"), outCount: id }, ["target", "where"]),
+  opcode("mutate_event", { patch: either(...Object.keys(patchSchemas).map((name) => ref(`patch_${name}`))) }, ["patch"]),
+  opcode("move", {
+    target,
+    mode: enumOf("teleport", "step", "push", "pull", "altitude"),
+    to: pointRef,
+    distance: numericExpr,
+    distanceUnit: enumOf("cell", "position"),
+    deltaZ: numericExpr,
+    land: bool,
+    collisionDamage: numericExpr,
+    onCollide: program
+  }, ["target", "mode"]),
+  opcode(
+    "spawn",
+    { entityKind: enumOf(...Object.keys(spawnSpecs)), spec: { type: "object" }, at: pointRef, out: id },
+    ["entityKind", "spec"],
+    ...Object.keys(spawnSpecs).map((kind) => when("entityKind", literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))
+  ),
+  opcode("despawn", { entityKind: enumOf("zone", "cover", "terrain", "unit"), select: selector }, ["entityKind", "select"]),
+  opcode("revive", { target, hpPercent: numericExpr, mpPercent: numericExpr, spPercent: numericExpr, hpFlat: numericExpr }, ["target"]),
+  opcode(
+    "perform",
+    { actor: target, actionKind: enumOf("skill", "attack", "replay"), skillId: entityId, tapeRecord: variable, target, overrides },
+    ["actor", "actionKind"],
+    when("actionKind", literal("skill"), { ...needs("skillId"), not: needs("tapeRecord") }),
+    when("actionKind", literal("replay"), { ...needs("tapeRecord"), not: needs("skillId") }),
+    when("actionKind", literal("attack"), { not: either(needs("skillId"), needs("tapeRecord")) })
+  )
+];
+var vmOpcodes = Object.freeze(opcodeSchemas.map((schema) => schema.properties.op.const));
+var instructionBranches = ["then", "else", "body", "onPass", "onFail", "onCollide"];
+var guardedHooks = [...Object.keys(patchSchemas), "readOnly"];
+var hookGuard = (name) => ref(`opcodeGuard_${name}`);
+var guardedProgram = (name) => list(hookGuard(name));
+var defs = {
+  expr: either(number, bool, formula),
+  tag,
+  selector: withRules(object({
+    from: either(enumOf(...scopes, "action_targets", "units", "statuses", "zones", "covers", "terrain", "cells", "tape"), variable),
+    options: list(id, 1),
+    of: either(enumOf(...scopes), variable),
+    area,
+    where: booleanExpr,
+    pick: variants(literal("all"), ...["first", "random", "nearest"].map((key4) => object({ [key4]: integer(1) }, [key4])))
+  }), either(needs("from"), needs("options")), when("of", {}, { properties: { from: literal("statuses") } })),
+  targetRef: either(enumOf(...scopes), variable, selector),
+  expireRule,
+  expiry: either(ref("expireRule"), list(ref("expireRule"), 1)),
+  statMod,
+  controlPolicy,
+  ...Object.fromEntries(Object.entries(patchSchemas).map(([name, schema]) => [`patch_${name}`, schema])),
+  ...Object.fromEntries(Object.entries(spawnSpecs).map(([name, schema]) => [`spawn_${name}`, schema])),
+  ...Object.fromEntries(guardedHooks.map((name) => {
+    const properties = Object.fromEntries(instructionBranches.map((branch) => [branch, guardedProgram(name)]));
+    return [`opcodeGuard_${name}`, name === "readOnly" ? { properties, not: needs("patch") } : { properties: { ...properties, patch: ref(`patch_${name}`) } }];
+  })),
+  opcode: variants(...opcodeSchemas),
+  program: list(ref("opcode")),
+  rule: withRules(
+    object({
+      id,
+      hook,
+      program,
+      label: text,
+      enabled: { ...bool, default: true },
+      priority: { type: "integer" },
+      dedupeKey: text,
+      usesPerBattle: integer(1),
+      usesPerTurn: integer(1),
+      cooldownTurns: integer(1, 100),
+      filter: booleanExpr
+    }, ["id", "hook", "program"]),
+    ...Object.keys(patchSchemas).map((name) => when("hook", literal(name), { properties: { program: guardedProgram(name) } })),
+    when("hook", { not: enumOf(...Object.keys(patchSchemas)) }, { properties: { program: guardedProgram("readOnly") } })
+  )
+};
+var root = (title, name) => ({ $schema: "https://json-schema.org/draft/2020-12/schema", title, ...ref(name), $defs: defs });
+var vmSchema = root("Fated Tactical VM Rule", "rule");
+var vmOpcodeSchema = root("Fated Tactical VM Opcode", "opcode");
+var vmProgramSchema = root("Fated Tactical VM Program", "program");
+var vmSelectorSchema = root("Fated Tactical VM Selector", "selector");
+var vmStatModSchema = root("Fated Tactical VM StatMod", "statMod");
+function matches(value, schema, context, depth = 0) {
+  if (depth > 512) return false;
+  const next = (item, rule2) => matches(item, rule2, context, depth + 1);
+  if (schema.$ref && !next(value, defs[schema.$ref.split("/").at(-1)])) return false;
+  if (Object.hasOwn(schema, "const") && value !== schema.const) return false;
+  if (schema.enum && !schema.enum.includes(value)) return false;
+  if (schema.not && next(value, schema.not)) return false;
+  if (schema.anyOf && !schema.anyOf.some((rule2) => next(value, rule2))) return false;
+  if (schema.oneOf && schema.oneOf.filter((rule2) => next(value, rule2)).length !== 1) return false;
+  if (schema.allOf && !schema.allOf.every((rule2) => next(value, rule2))) return false;
+  if (schema.if && next(value, schema.if) && !next(value, schema.then)) return false;
+  if (schema.type === "boolean") return typeof value === "boolean";
+  if (schema.type === "number" || schema.type === "integer") {
+    return Number.isFinite(value) && (schema.type !== "integer" || Number.isInteger(value)) && (schema.minimum === void 0 || value >= schema.minimum) && (schema.maximum === void 0 || value <= schema.maximum) && (schema.exclusiveMinimum === void 0 || value > schema.exclusiveMinimum);
+  }
+  if (schema.type === "string") {
+    if (typeof value !== "string" || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
+    if (schema.format === "tactical-expr") return validExpr(value);
+    if (schema.format === "tactical-status-id") return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
+    return true;
+  }
+  if (schema.type === "array") {
+    return Array.isArray(value) && value.length >= schema.minItems && Array.from(value).every((item) => next(item, schema.items));
+  }
+  const plainObject = value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
+  if (schema.type === "object" && !plainObject) return false;
+  if (plainObject) {
+    if (schema.required?.some((key4) => !Object.hasOwn(value, key4))) return false;
+    const entries3 = Object.entries(value);
+    if (entries3.length < (schema.minProperties ?? 0)) return false;
+    return entries3.every(([key4, item]) => {
+      if (schema.propertyNames && !next(key4, schema.propertyNames)) return false;
+      if (Object.hasOwn(schema.properties ?? {}, key4)) return next(item, schema.properties[key4]);
+      if (schema.additionalProperties === false) return false;
+      return !schema.additionalProperties || next(item, schema.additionalProperties);
+    });
+  }
+  return true;
+}
+var valid = (value, name, options) => Boolean(matches(value, defs[name], options));
+var validHook = (value, options, guard) => options.hook === void 0 || vmHooks.includes(options.hook) && matches(value, guard(Object.hasOwn(patchSchemas, options.hook) ? options.hook : "readOnly"), options);
+var validVmOpcode = (value, options = {}) => valid(value, "opcode", options) && validHook(value, options, hookGuard);
+var validVmProgram = (value, options = {}) => valid(value, "program", options) && validHook(value, options, guardedProgram);
+var validVmRule = (value, options = {}) => valid(value, "rule", options);
+function vmRuleError(rule2, options = {}) {
+  if (validVmRule(rule2, options)) return void 0;
+  const settings = { ...options, hook: rule2?.hook };
+  function invalidInstruction(program2, path2, depth = 0) {
+    if (!Array.isArray(program2) || depth > 64) return path2;
+    for (const [index, instruction] of program2.entries()) {
+      if (validVmOpcode(instruction, settings)) continue;
+      const at2 = `${path2}/${index}`;
+      const schema2 = opcodeSchemas.find((schema3) => schema3.properties.op.const === instruction?.op);
+      if (!schema2) return `${at2}/op`;
+      for (const field of schema2.required) if (!Object.hasOwn(instruction, field)) return `${at2}/${field}`;
+      for (const [field, value] of Object.entries(instruction)) {
+        if (instructionBranches.includes(field) && Object.hasOwn(schema2.properties, field)) {
+          if (!validVmProgram(value, settings)) return invalidInstruction(value, `${at2}/${field}`, depth + 1);
+        } else if (!Object.hasOwn(schema2.properties, field) || !matches(value, schema2.properties[field], options)) {
+          return `${at2}/${field}${field === "statusId" && matches(value, id, options) ? `\uFF08\u72B6\u6001 ${value} \u672A\u6CE8\u518C\uFF09` : ""}`;
+        }
+      }
+      if (instruction.op === "mutate_event") return `${at2}/patch\uFF08\u5F53\u524D hook \u4E0D\u5141\u8BB8\u6B64\u6539\u5199\uFF09`;
+      return `${at2}\uFF08${instruction.op} \u5B57\u6BB5\u7EC4\u5408\u65E0\u6548\uFF09`;
+    }
+    return path2;
+  }
+  const schema = defs.rule;
+  for (const field of schema.required) if (!rule2 || !Object.hasOwn(rule2, field)) return field;
+  for (const [field, value] of Object.entries(rule2)) {
+    if (field === "program") continue;
+    if (!Object.hasOwn(schema.properties, field) || !matches(value, schema.properties[field], options)) return field;
+  }
+  return invalidInstruction(rule2.program, "program");
+}
+var validVmStatMod = (value, options = {}) => valid(value, "statMod", options);
+function vmStatModError(mod2) {
+  if (validVmStatMod(mod2)) return void 0;
+  if (mod2 && ratioStats.enum.includes(mod2.stat) && (Object.hasOwn(mod2, "additivePercent") || typeof mod2.flat === "number" && !matches(mod2.flat, ratioFlat, {}))) {
+    return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 0\uFF0C\u4E0D\u80FD\u7528 additivePercent\uFF1B\u8BF7\u7528 flat \u586B\u5199 -1..1 \u7684\u5C0F\u6570\uFF08\u5982 0.3 \u4EE3\u8868 30%\uFF09\u6216\u6570\u503C\u8868\u8FBE\u5F0F`;
+  }
+  if (mod2 && multiplierStats.enum.includes(mod2.stat) && Object.hasOwn(mod2, "flat")) {
+    return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 1\uFF0C\u4E0D\u80FD\u7528 flat\uFF1B\u8BF7\u7528 mult\uFF08\u5982 1.3\uFF09\u6216 additivePercent\uFF08\u5982 0.3\uFF09`;
+  }
+  return "VM \u4FEE\u9970";
+}
+var validVmTag = (value) => valid(value, "tag", {});
+var validVmSourceSkillId = (value) => matches(value, sourceSkillId, {});
 
 // src/core/vm-select.js
 var coordinate = (value) => Number.isFinite(value?.x) && Number.isFinite(value?.y);
@@ -1353,7 +1978,12 @@ function collectRules(state, hook2, event = {}, queries2 = {}) {
   const unitIds = eventOwners(state, hook2, event);
   if (!unitIds.length) return [];
   const candidates = [];
-  for (const [carrierOrder, row] of carriers(state).entries()) {
+  const carrierRows = carriers(state);
+  if (hook2 === "after_status_removed" && event.removedStatus?.rules?.length) {
+    const removed = event.removedStatus;
+    carrierRows.push({ entity: removed, carrier: { type: "status", id: removed.id, ownerId: event.targetId }, nativeOwnerId: event.targetId });
+  }
+  for (const [carrierOrder, row] of carrierRows.entries()) {
     if (hook2 === "after_move" && row.nativeOwnerId && !alive(own3(state.units, row.nativeOwnerId))) continue;
     if (row.carrier.type === "skill" && !["on_lethal_p1", "on_lethal_p2", "on_death"].includes(hook2) && !alive(own3(state.units, row.nativeOwnerId))) continue;
     const rules = row.entity.rules?.filter((rule2) => rule2.enabled !== false && rule2.hook === hook2);
@@ -1382,7 +2012,7 @@ function matchesModifier(mod2, event) {
 function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
   const stats = /* @__PURE__ */ new Map();
   const locks = Object.fromEntries(slots.map((slot2) => [slot2, false]));
-  const flags3 = /* @__PURE__ */ new Set();
+  const flags2 = /* @__PURE__ */ new Set();
   const policy = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Set();
   if (own3(state.units, unitId)) {
@@ -1409,7 +2039,7 @@ function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
           stats.set(mod2.stat, total2);
         }
         for (const lock of mod2.locks ?? []) if (Object.hasOwn(locks, lock)) locks[lock] = true;
-        for (const flag of mod2.flags ?? []) flags3.add(flag);
+        for (const flag of mod2.flags ?? []) flags2.add(flag);
         for (const [field, value] of Object.entries(mod2.controlPolicy ?? {})) {
           if (!policy.has(field)) policy.set(field, Array.isArray(value) ? [...value] : value);
         }
@@ -1419,195 +2049,21 @@ function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
   return {
     stats: Object.fromEntries(stats),
     locks,
-    flags: Object.fromEntries([...flags3].map((flag) => [flag, true])),
+    flags: Object.fromEntries([...flags2].map((flag) => [flag, true])),
     controlPolicy: { controller: "default", allegiance: "normal", ...Object.fromEntries(policy) }
   };
+}
+function unitSkipped(state, unit) {
+  const { locks } = aggregateModifiers(state, unit.id);
+  return locks.attack && locks.action && locks.move && locks.cast;
+}
+function reactionBlocked(state, unit) {
+  const { locks } = aggregateModifiers(state, unit.id);
+  return locks.reaction || locks.attack;
 }
 function applyStatMod(base, { flat = 0, mult = 1, additivePercent = 0 } = {}) {
   return (base + flat) * (1 + additivePercent) * mult;
 }
-
-// src/presets/status-defaults.js
-var actionStatuses = Object.freeze({
-  brace: "guarded",
-  block: "guarded",
-  charge: "charge",
-  lock_on: "lock_on",
-  scan: "weakness",
-  grapple: "grappled",
-  trip: "prone",
-  use_item: "haste",
-  altar: "haste",
-  shield: "shield",
-  collision: "stun",
-  shield_bash: "stun"
-});
-var def = (name, icon, category, remainingTurns, description, modifiers2 = {}, options = {}) => {
-  const { stackMode = "refresh", tags = [], vars = {}, mods = [], rules = [], ...rest } = options;
-  return Object.freeze({
-    name,
-    icon,
-    category,
-    description,
-    remainingTurns,
-    durationType: "battle_turns",
-    tickTiming: "onTurnStart",
-    stackMode,
-    stackRule: stackMode,
-    maxStacks: 1,
-    tier: 1,
-    tags: Object.freeze(tags),
-    vars: Object.freeze(vars),
-    mods: Object.freeze(mods),
-    rules: Object.freeze(rules),
-    modifiers: Object.freeze(modifiers2),
-    ...rest
-  });
-};
-var allSlots = ["attack", "action", "move", "cast", "reaction"];
-var tick = (id3, hook2, op) => ({ id: id3, hook: hook2, program: [{ target: "self", ...op }] });
-var dot = (id3, hook2, amount, damageType2) => tick(id3, hook2, { op: "damage", amount, damageType: damageType2, direct: false });
-var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
-  // Native combat reads modifiers for reporting and its movement, action, and strike calculations.
-  suppressed: def(
-    "\u88AB\u538B\u5236",
-    "\u26D3\uFE0F",
-    "control",
-    1,
-    "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002",
-    { skip: true },
-    { durationType: "until_removed", tags: ["control"], mods: [{ locks: allSlots }] }
-  ),
-  burn: def(
-    "\u707C\u70E7",
-    "\u{1F525}",
-    "dot",
-    2,
-    "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002",
-    {},
-    { tags: ["fire"], rules: [dot("burn-tick", "turn_start", 5, "energy")] }
-  ),
-  bleed: def(
-    "\u6D41\u8840",
-    "\u{1FA78}",
-    "dot",
-    3,
-    "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
-    {},
-    { stackMode: "stack", maxStacks: 5, tickTiming: "onTurnEnd", rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")] }
-  ),
-  poison: def(
-    "\u4E2D\u6BD2",
-    "\u2620\uFE0F",
-    "dot",
-    3,
-    "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002",
-    {},
-    { stackMode: "stack", maxStacks: 4, tags: ["poison"], rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")] }
-  ),
-  regen: def(
-    "\u518D\u751F",
-    "\u{1F49A}",
-    "hot",
-    3,
-    "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002",
-    {},
-    { rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })] }
-  ),
-  shield: def(
-    "\u62A4\u76FE",
-    "\u{1F6E1}\uFE0F",
-    "shield",
-    2,
-    "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002",
-    { amount: 8 },
-    { stackMode: "replace", vars: { shieldAmount: 8 } }
-  ),
-  guarded: def("\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", { reduction: 0.35 }),
-  taunt: def("\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", { taunted: true }),
-  guard: def("\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", { intercept: true }),
-  thorns: def("\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {}, {
-    rules: [{
-      id: "thorns-retaliate",
-      hook: "after_damage",
-      filter: "event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team",
-      program: [{ op: "damage", target: "attacker", amount: 5, damageType: "true", direct: false }]
-    }]
-  }),
-  stun: def("\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", { skip: true }, { tags: ["control"], mods: [{ locks: allSlots }] }),
-  freeze: def(
-    "\u51B0\u51BB",
-    "\u{1F9CA}",
-    "control",
-    1,
-    "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002",
-    { skip: true, shatter: 0.5 },
-    { tags: ["control", "ice"], mods: [{ locks: allSlots }], expireOn: Object.freeze({ trigger: "on_struck" }) }
-  ),
-  root: def(
-    "\u5B9A\u8EAB",
-    "\u26D3\uFE0F",
-    "control",
-    2,
-    "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002",
-    { rooted: true },
-    { tags: ["control"], mods: [{ locks: ["move"] }] }
-  ),
-  blind: def(
-    "\u81F4\u76F2",
-    "\u{1F311}",
-    "debuff",
-    2,
-    "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002",
-    { disadvantage: 1 },
-    { mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }] }
-  ),
-  vulnerable: def(
-    "\u6613\u4F24",
-    "\u{1F4A2}",
-    "debuff",
-    2,
-    "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002",
-    { vulnerability: 0.35 },
-    { rules: [{
-      id: "vulnerable-damage",
-      hook: "before_commit",
-      filter: "event.commitKind == 'damage' && event.targetId == self.id",
-      program: [{ op: "mutate_event", patch: { finalAmount: "event.finalAmount * 1.35" } }]
-    }] }
-  ),
-  sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", { armor: -4 }),
-  mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
-  stealth: def(
-    "\u9690\u8EAB",
-    "\u{1F464}",
-    "buff",
-    2,
-    "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002",
-    { hidden: true, advantage: 1 },
-    {
-      tags: ["stealth"],
-      mods: [{ stat: "advantage", flat: 1, checkKind: "attack" }],
-      expireOn: Object.freeze([Object.freeze({ trigger: "on_attack" }), Object.freeze({ trigger: "on_struck" })])
-    }
-  ),
-  haste: def("\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1\u3002", { movement: 1 }),
-  chill: def("\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", { movement: -1, accuracy: -2 }),
-  charge: def("\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", { damageBonus: 0.15 }),
-  lock_on: def("\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", { accuracy: 1 }),
-  weakness: def("\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", { intentDifficulty: -2 }, { stackMode: "stack", maxStacks: 3 }),
-  grappled: def(
-    "\u64D2\u62B1",
-    "\u26D3",
-    "control",
-    1,
-    "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002",
-    { rooted: true },
-    { tags: ["control"], mods: [{ locks: ["move"] }] }
-  ),
-  prone: def("\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", { incomingAccuracy: 2, rooted: true }, { mods: [{ locks: ["move"] }] }),
-  infinite_ammo: def("\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", { infiniteAmmo: true })
-}).map(([id3, status]) => [id3, Object.freeze({ id: id3, ...status })])));
 
 // src/core/tactical-vm.js
 var maxSteps = 2e3;
@@ -1698,7 +2154,7 @@ function contextFor(state, frame, host) {
       const entity = typeof value === "string" ? own4(state.units, value) ?? own4(state.zones, value) ?? own4(state.items, value) : value?.type && (value.type === "literal" ? Object.hasOwn(value, "value") : Object.hasOwn(value, "id")) ? resolveEntity(state, value) : value;
       return kind === "unit" && own4(state.units, entity?.id) !== entity ? void 0 : entity;
     },
-    status: resolveEntity(state, frame.scope?.status) ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
+    status: resolveEntity(state, frame.scope?.status) ?? event.removedStatus ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
     zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === "zone" ? carrier4 : void 0),
     skill: frame.carrier?.type === "skill" ? { id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : void 0,
     item: frame.carrier?.type === "item" ? { id: frame.carrier.id, templateId: carrier4?.templateId, vars: { ...own4(state.equipment, carrier4?.templateId)?.vars, ...carrier4?.vars } } : void 0,
@@ -1730,7 +2186,7 @@ function newEvent(state, initial) {
 }
 function scheduleHooks(state, parent, hook2, eventRef, host) {
   const event = own4(state.vm.events, eventRef);
-  host.expireStatuses?.(state, hook2, event);
+  host.expireMatchingStatuses?.(state, hook2, event);
   const entries3 = host.rules?.(state, hook2, event) ?? [];
   const ordered2 = entries3.filter(({ rule: rule2 }) => rule2.enabled !== false).sort((a, b) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compareId(a.rule.id, b.rule.id));
   for (const entry2 of ordered2.reverse()) pushFrame(state, {
@@ -1970,7 +2426,7 @@ var carrierTables = { unit: "units", item: "items", status: "statuses", zone: "z
 function own5(record3, key4) {
   return record3 && Object.hasOwn(record3, key4) ? record3[key4] : void 0;
 }
-function carrier(state, ownerKind, ownerId) {
+function carrier2(state, ownerKind, ownerId) {
   const table4 = own5(carrierTables, ownerKind);
   const owner = table4 && own5(state[table4], ownerId);
   if (!owner) throw new RangeError(`Unknown ${ownerKind} pool owner: ${ownerId}`);
@@ -2023,8 +2479,12 @@ function getPool(state, ownerId, key4, ownerKind = "unit") {
   const owner = table4 && own5(state[table4], ownerId);
   return own5(state.pools, own5(owner?.pools, key4));
 }
+function deleteOwnedPools(state, owner) {
+  for (const poolId of Object.values(owner?.pools ?? {})) delete state.pools[poolId];
+  if (owner?.pools) owner.pools = {};
+}
 function planPool(state, reserved2, { ownerKind = "unit", ownerId, key: key4, max, current = max, initialMax = max, reloadable = false }) {
-  const owner = carrier(state, ownerKind, ownerId);
+  const owner = carrier2(state, ownerKind, ownerId);
   if (typeof key4 !== "string" || key4.length === 0) throw new TypeError("Pool key must be a nonempty string");
   if (own5(owner.pools, key4) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key4}`);
   nonnegative(max, "Pool max");
@@ -2050,7 +2510,7 @@ function createPool(state, spec) {
   return pool.id;
 }
 function initializeUnitPools(state, unitId, resources) {
-  const unit = carrier(state, "unit", unitId);
+  const unit = carrier2(state, "unit", unitId);
   const reserved2 = /* @__PURE__ */ new Set();
   const plans = Object.entries(mirrors).map(([key4, maxField]) => planPool(state, reserved2, {
     max: resources ? own5(resources, key4)?.max : unit[maxField],
@@ -2071,7 +2531,7 @@ function total(values5, name) {
 function unitBindings(state, pool) {
   return pool.contributors.map((contributor) => {
     const { ownerKind, ownerId } = contributor;
-    const owner = carrier(state, ownerKind, ownerId);
+    const owner = carrier2(state, ownerKind, ownerId);
     if (ownerKind !== "unit" || getPool(state, ownerId, pool.kind) !== pool) {
       throw new RangeError(`Invalid contributor binding: ${pool.id}/${ownerId}`);
     }
@@ -2300,774 +2760,6 @@ function authorityContest(state, attacker, defender, { dryRun = false, preview: 
   };
 }
 
-// src/core/vm-commit.js
-var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
-var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-var pseudoPool = /* @__PURE__ */ new Set(["attack", "action", "move"]);
-function pseudoState(unit, key4) {
-  if (key4 === "move") return { current: Math.max(0, unit.move - (unit.moveSpent ?? 0)), max: unit.move };
-  return { current: Math.max(0, 1 - (unit.used?.[key4] ?? 0)), max: 1 };
-}
-function applyPseudo(unit, key4, mode, amount) {
-  if (!Number.isInteger(amount)) return false;
-  const before = pseudoState(unit, key4).current;
-  let current = mode === "set" ? amount : mode === "add" ? before + amount : mode === "sub" ? before - amount : NaN;
-  if (mode === "add_max" || mode === "sub_max" || mode === "set_max") return false;
-  if (!Number.isFinite(current)) return false;
-  current = Math.max(0, Math.min(pseudoState(unit, key4).max, current));
-  if (key4 === "move") unit.moveSpent = unit.move - current;
-  else {
-    unit.used[key4] = 1 - current;
-    unit.ap = Math.max(0, Math.min(2, unit.ap + current - before));
-  }
-  return true;
-}
-function scheduleCommit(state, parent, data) {
-  return pushFrame(state, {
-    native: "commit",
-    ownerId: parent.ownerId,
-    sourceId: parent.sourceId,
-    ruleId: parent.ruleId,
-    carrier: parent.carrier ?? null,
-    attribution: parent.attribution ?? null,
-    callerId: parent.localsRef ?? parent.frameId,
-    data
-  });
-}
-function commitOp(env) {
-  const { state, frame, op, context, select } = env;
-  const targets2 = select(op.target).filter((unit) => entry(state.units, unit.id) === unit);
-  const sourceId2 = context.self?.id ?? frame.sourceId;
-  const poolId = (ref2) => ref2?.startsWith("vars.") ? entry(context.vars, ref2.slice(5)) : ref2;
-  const validPoolId2 = (key4) => typeof key4 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(key4);
-  const pools = op.op === "resource" ? [op.pool].flat().map(poolId).reverse() : ["hp"];
-  const otherPool = poolId(op.otherPool);
-  if (op.mode === "swap" && !validPoolId2(otherPool)) return;
-  for (const target2 of targets2.reverse()) {
-    for (const pool of pools) {
-      if (!validPoolId2(pool)) continue;
-      const amount = op.amount === void 0 ? 0 : evaluateExpr(op.amount, { ...context, target: target2, pool });
-      const minRemain = op.minRemain === void 0 ? 0 : evaluateExpr(op.minRemain, { ...context, target: target2, pool });
-      if (!Number.isFinite(amount) || !Number.isFinite(minRemain)) continue;
-      const action = context.event;
-      const item = frame.carrier?.type === "item" ? entry(state.items, frame.carrier.id) : null;
-      const label = op.label ?? context.status?.name ?? context.zone?.name ?? (frame.carrier?.type === "skill" ? entry(state.skills, frame.carrier.id)?.name : void 0) ?? entry(state.equipment, item?.templateId)?.name ?? entry(state.skills, action?.skillId)?.name;
-      scheduleCommit(state, frame, {
-        ...op,
-        sourceId: sourceId2,
-        targetId: target2.id,
-        pool,
-        amount,
-        minRemain,
-        ...op.mode === "swap" && { otherPool },
-        ...label && { label },
-        actionType: action?.actionType ?? null,
-        skillId: action?.skillId ?? null,
-        ...frame.carrier?.type === "item" ? { carrierId: frame.carrier.id } : {}
-      });
-    }
-  }
-}
-var commitOps = {
-  damage: commitOp,
-  heal: commitOp,
-  resource: commitOp,
-  link_pool({ state, context, select, op, host }) {
-    const ids = select(op.units).filter((unit) => entry(state.units, unit.id) === unit).map((unit) => unit.id);
-    if (ids.length < (op.mode === "link" ? 2 : 1)) return;
-    (op.mode === "link" ? linkPools : unlinkPools)(state, ids, op.pools);
-    host.log(state, context.self, "pool_link", `${context.self.name}${op.mode === "link" ? "\u8FDE\u63A5" : "\u62C6\u5206"}\u4E86\u8D44\u6E90\u6C60`);
-  }
-};
-function continueCommit({ state, frame, host, options }) {
-  const { data } = frame;
-  const { op, pool: key4 } = data;
-  const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
-  const localOwner = data.local && frame.data.carrierId;
-  const pseudo = !localOwner && pseudoPool.has(key4);
-  const pool = pseudo ? pseudoState(target2, key4) : getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
-  if (!pool && !pseudo || !target2) {
-    state.vm.stack.pop();
-    return;
-  }
-  let event = entry(state.vm.events, frame.eventRef);
-  if (frame.pc === 0) {
-    const dying = state.vm.stack.some((parent) => parent.native === "lethal" && parent.data.poolId === target2.pools?.hp);
-    if (!alive2(target2) && !(op === "resource" && dying && !target2.fled)) {
-      state.vm.stack.pop();
-      return;
-    }
-    const amount = op === "damage" ? host.prepareDamage?.(state, source, target2, data) ?? data.amount : op === "heal" ? host.prepareHeal?.(state, source, target2, data) ?? data.amount : data.amount;
-    const authority = authorityFor(state, frame.carrier, data.sourceId);
-    frame.eventRef = newEvent(state, {
-      commitKind: op,
-      actorId: data.sourceId,
-      targetId: target2.id,
-      pool: key4,
-      authorityRank: authority.authorityRank,
-      sourceTier: authority.unitTier,
-      ...data.instantDeath === true && { instantDeath: true },
-      poolId: pool.id,
-      damageType: data.damageType ?? null,
-      rawAmount: data.amount,
-      finalAmount: amount,
-      sourceRuleId: frame.ruleId,
-      direct: data.direct ?? true,
-      preserveLife: data.lethal === false || Boolean(target2.nonLethal || host.flag?.(state, target2, "preserveLife") || host.preserveLife?.(state, source)),
-      actionType: data.actionType ?? null,
-      skillId: data.skillId ?? null,
-      weaponTemplateId: data.weaponTemplateId ?? null,
-      melee: data.melee ?? false,
-      backstab: data.backstab ?? false
-    });
-    frame.pc++;
-    scheduleHooks(state, frame, "before_commit", frame.eventRef, host);
-    return;
-  }
-  if (frame.pc === 1) {
-    frame.pc++;
-    if (event.cancel || !Number.isFinite(event.finalAmount)) {
-      state.vm.stack.pop();
-      return;
-    }
-    const conceptProtection = op === "damage" && event.instantDeath === true ? protectionCarrier(state, target2) : null;
-    if (conceptProtection) {
-      const attacker = authorityFor(state, frame.carrier, data.sourceId);
-      const defender = authorityFor(state, conceptProtection, target2.id);
-      const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target2.id }, {
-        preview: options,
-        checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : data.sourceId }) ?? 0
-      });
-      event.authorityContest = contest;
-      if (contest.conditional) {
-        state.vm.stack.pop();
-        return;
-      }
-      host.log(state, source, "authority", `${target2.name}\u7684\u6982\u5FF5\u4FDD\u62A4${contest.result < 0 ? "\u62E6\u622A\u4E86\u5373\u6B7B" : "\u88AB\u5373\u6B7B\u7A7F\u900F"}${authorityProse(contest)}`, { targetId: target2.id, contest });
-      if (contest.result < 0) {
-        state.vm.stack.pop();
-        return;
-      }
-    }
-    const before = pool.current, beforeMax = pool.max;
-    let absorbed = 0;
-    if (op === "damage") {
-      let pending = Math.max(0, Math.floor(event.finalAmount));
-      for (const statusKey of Object.keys(target2.statuses ?? {}).sort()) {
-        const status = target2.statuses[statusKey];
-        const shield = status.category === "shield" ? status.vars?.shieldAmount : 0;
-        if (!(shield > 0) || !pending) continue;
-        const amount = Math.min(shield, pending);
-        pending -= amount;
-        absorbed += amount;
-        status.vars.shieldAmount -= amount;
-        host.log(state, target2, "shield", `${target2.name}\u7684${status.name}\u5438\u6536${amount}\u70B9\u4F24\u5BB3`, { targetId: target2.id, statusId: status.id ?? status.templateId ?? null });
-        if (!status.vars.shieldAmount) delete target2.statuses[statusKey];
-      }
-      updatePoolCurrent(state, pool.id, "sub", pending, { minRemain: event.preserveLife ? 1 : 0 });
-      event.dealt = before - getPool(state, target2.id, key4).current;
-      event.absorbed = absorbed;
-      host.log(state, source, "damage", `${target2.name}\u53D7\u5230${event.dealt}\u70B9${data.label ?? ""}\u4F24\u5BB3`, { ...data.details, targetId: target2.id, damageType: event.damageType, amount: event.dealt, absorbed, hpBefore: before, hpAfter: target2.hp });
-    } else if (op === "heal") {
-      updatePoolCurrent(state, pool.id, "add", Math.max(0, Math.floor(event.finalAmount)));
-      event.healing = target2.hp - before;
-      host.log(state, source, "heal", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}\u6062\u590D${event.healing}\u70B9\u751F\u547D`, { ...data.details, targetId: target2.id, amount: event.healing, hpBefore: before, hpAfter: target2.hp });
-    } else {
-      if (pseudo) {
-        if (!applyPseudo(target2, key4, data.mode, event.finalAmount)) {
-          state.vm.stack.pop();
-          return;
-        }
-      } else if (data.mode === "swap") {
-        const other = getPool(state, localOwner || target2.id, data.otherPool, localOwner ? "item" : "unit");
-        if (other) swapPoolCurrents(state, pool.id, other.id);
-      } else {
-        if (["add_max", "sub_max", "set_max"].includes(data.mode) && !["hp", "mp", "sp"].includes(key4)) {
-          state.vm.stack.pop();
-          return;
-        }
-        const amount = data.mode === "sub" ? Math.max(0, event.finalAmount) : event.finalAmount;
-        const reducesMax = data.mode === "sub_max" && amount > 0 || data.mode === "set_max" && amount < pool.max;
-        const protection = reducesMax ? protectionCarrier(state, target2) : null;
-        if (protection) {
-          const attacker = authorityFor(state, frame.carrier, data.sourceId);
-          const defender = authorityFor(state, protection, target2.id);
-          const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target2.id }, {
-            preview: options,
-            checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : data.sourceId }) ?? 0
-          });
-          event.authorityContest = contest;
-          if (contest.conditional) {
-            state.vm.stack.pop();
-            return;
-          }
-          host.log(state, source, "authority", `${target2.name}\u7684\u6982\u5FF5\u4FDD\u62A4${contest.result < 0 ? "\u62E6\u622A\u4E86\u4E0A\u9650\u524A\u51CF" : "\u88AB\u4E0A\u9650\u524A\u51CF\u7A7F\u900F"}${authorityProse(contest)}`, { targetId: target2.id, contest });
-          if (contest.result < 0) {
-            state.vm.stack.pop();
-            return;
-          }
-        }
-        const changed = ["add_max", "sub_max", "set_max"].includes(data.mode) ? updatePoolMax(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain) }) : updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
-        if (!changed.applied) {
-          const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
-          if (caller) caller.pc = caller.program.length;
-          state.vm.stack.pop();
-          return;
-        }
-      }
-      const after = pseudo ? pseudoState(target2, key4).current : entry(state.pools, pool.id).current;
-      const maxChange = data.mode.endsWith("_max");
-      const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
-      const label = { attack: "\u653B\u51FB\u69FD", action: "\u52A8\u4F5C\u69FD", move: "\u5269\u4F59\u79FB\u52A8\u683C" }[key4] ?? key4.toUpperCase();
-      const field = label + (maxChange ? "\u4E0A\u9650" : "");
-      event.change = to - from;
-      host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${maxChange ? to >= from ? "\u63D0\u9AD8" : "\u964D\u4F4E" : to >= from ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(event.change)}\u70B9 ${field}`, { targetId: target2.id, resource: key4, resourceLabel: field, before: from, after: to });
-    }
-    const result = entry(state.vm.events, data.resultEventRef);
-    if (result) {
-      for (const key5 of ["dealt", "absorbed", "healing"]) if (event[key5] !== void 0) result[key5] = event[key5];
-    }
-    if (data.out) {
-      const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
-      if (caller) caller.vars[data.out] = event.dealt ?? event.healing ?? event.change;
-    }
-    const depletion = Object.values(state.pools).filter((candidate) => candidate.kind === "hp" && candidate.current === 0 && (candidate.id === pool.id && before > 0 || op === "resource" && data.mode === "swap" && candidate.id === target2.pools?.[data.otherPool]) && !state.vm.stack.some((parent) => parent.native === "lethal" && parent.data.poolId === candidate.id));
-    for (const depleted of depletion.reverse()) pushFrame(state, {
-      native: "lethal",
-      ownerId: target2.id,
-      sourceId: data.sourceId,
-      data: {
-        poolId: depleted.id,
-        damageType: event.damageType,
-        targetId: target2.id,
-        overkill: Math.max(0, event.finalAmount - absorbed - before)
-      }
-    });
-    return;
-  }
-  if (frame.pc === 2) {
-    frame.pc++;
-    const hook2 = op === "damage" ? "after_damage" : op === "heal" ? "after_heal" : null;
-    if (hook2) scheduleHooks(state, frame, hook2, frame.eventRef, host);
-    return;
-  }
-  state.vm.stack.pop();
-}
-function continueLethal({ state, frame, host }) {
-  const { data } = frame;
-  const pool = entry(state.pools, data.poolId);
-  if (!pool) {
-    state.vm.stack.pop();
-    return;
-  }
-  if (frame.pc === 0) {
-    frame.eventRef = newEvent(state, {
-      ...data,
-      actorId: frame.sourceId,
-      killer: frame.sourceId,
-      units: pool.contributors.filter((c) => c.ownerKind === "unit").map((c) => c.ownerId).sort()
-    });
-    frame.pc++;
-    scheduleHooks(state, frame, "on_lethal_p1", frame.eventRef, host);
-    return;
-  }
-  if (frame.pc === 1) {
-    frame.pc++;
-    if (pool.current <= 0) scheduleHooks(state, frame, "on_lethal_p2", frame.eventRef, host);
-    return;
-  }
-  if (frame.pc === 2) {
-    frame.pc++;
-    const event = state.vm.events[frame.eventRef];
-    if (pool.current > 0) return;
-    if (event.preventDeath) {
-      updatePoolCurrent(state, pool.id, "set", 1);
-      return;
-    }
-    for (const unitId of event.units) {
-      const unit = entry(state.units, unitId);
-      if (!unit || unit.pools?.hp !== pool.id) continue;
-      unit.diedAt = { round: state.round, turn: state.turn };
-      unit.corpseOf ??= unit.id;
-      host.log(state, entry(state.units, frame.sourceId), "defeat", `${unit.name}\u5012\u4E0B`, { targetId: unit.id });
-    }
-    data.victims = event.units.filter((id3) => entry(state.units, id3)?.pools?.hp === pool.id);
-    scheduleHooks(state, frame, "on_death", frame.eventRef, host);
-    return;
-  }
-  const index = Math.floor((frame.pc - 3) / 2), deadId = data.victims?.[index];
-  if (!deadId) {
-    state.vm.stack.pop();
-    return;
-  }
-  const allyPhase = frame.pc++ % 2 === 1, killerId = frame.sourceId;
-  if (allyPhase || killerId !== deadId && entry(state.units, killerId)) {
-    const ref2 = newEvent(state, { ...state.vm.events[frame.eventRef], targetId: deadId, deadId, killerId });
-    scheduleHooks(state, frame, allyPhase ? "on_ally_death" : "on_kill", ref2, host);
-  }
-}
-
-// src/core/vm-schema.js
-var enumOf = (...values5) => ({ enum: values5 });
-var ref = (name) => ({ $ref: `#/$defs/${name}` });
-var either = (...anyOf) => ({ anyOf });
-var variants = (...oneOf) => ({ oneOf });
-var object = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
-var list = (items, minItems = 0) => ({ type: "array", items, minItems });
-var needs = (...required) => ({ required });
-var when = (field, condition, then) => ({ if: { properties: { [field]: condition }, required: [field] }, then });
-var withRules = (schema, ...allOf) => ({ ...schema, allOf });
-var literal = (value) => ({ const: value });
-var integer = (minimum, maximum) => ({ type: "integer", minimum, ...maximum === void 0 ? {} : { maximum } });
-var number = { type: "number" };
-var bool = { type: "boolean" };
-var text = { type: "string", pattern: "\\S" };
-var reserved = [...Object.getOwnPropertyNames(Object.prototype), "prototype"];
-var idPattern2 = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
-var id = { type: "string", pattern: `^${idPattern2}$`, not: enumOf(...reserved) };
-var sourceSkillId = either(id, { type: "string", pattern: `^equip:${idPattern2}:${idPattern2}$` });
-var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved.map((key4) => `vars.${key4}`)) };
-var tag = { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" };
-var statusId = { ...id, format: "tactical-status-id" };
-var dynamicStatusId = either(statusId, variable);
-var formula = { ...text, format: "tactical-expr" };
-var expr = ref("expr");
-var numericExpr = either(number, formula);
-var booleanExpr = either(bool, formula);
-var entityId = either(id, variable);
-var damageType = enumOf("physical", "energy", "mental", "true");
-var attribute = enumOf("str", "agi", "con", "int", "spi");
-var slot = enumOf("attack", "action", "move", "cast", "reaction", "fly", "teleport");
-var point2 = object({ x: number, y: number }, ["x", "y"]);
-var point = object({ x: number, y: number, z: number }, ["x", "y"]);
-var scopes = ["self", "source", "target", "attacker"];
-var pointRef = either(object({ x: numericExpr, y: numericExpr, z: numericExpr }, ["x", "y"]), enumOf(...scopes, "center"), variable);
-var redirectRef = either(entityId, formula);
-var selector = ref("selector");
-var target = ref("targetRef");
-var program = ref("program");
-var chooseOptions = list(object({ id, label: text }, ["id", "label"]), 1);
-var mapOf = (key4, value) => ({ type: "object", propertyNames: key4, additionalProperties: value });
-var eventPatchFields = {
-  before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
-  before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), skipColossusArea: booleanExpr, damageScale: numericExpr },
-  before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
-  after_natural_roll: { replaceNaturalRoll: numericExpr },
-  before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
-  before_status: { cancel: booleanExpr },
-  on_lethal_p2: { preventDeath: booleanExpr }
-};
-var vmHooks = Object.freeze([
-  "active",
-  "before_action",
-  "before_target",
-  "before_check",
-  "after_natural_roll",
-  "after_check",
-  "before_commit",
-  "before_status",
-  "on_lethal_p1",
-  "on_lethal_p2",
-  "after_action",
-  "after_move",
-  "after_hit",
-  "after_damage",
-  "after_heal",
-  "after_status_applied",
-  "after_status_removed",
-  "on_status_immunized",
-  "on_summon_evict",
-  "on_death",
-  "on_ally_death",
-  "on_kill",
-  "turn_start",
-  "turn_end",
-  "round_start",
-  "round_end"
-]);
-var hook = enumOf(...vmHooks);
-var patchSchemas = Object.fromEntries(Object.entries(eventPatchFields).map(([name, fields3]) => [
-  name,
-  { ...object(fields3), minProperties: 1 }
-]));
-var opNotes = Object.freeze({
-  let: "name \u5199\u88F8\u540D\u79F0\uFF08\u5982 bonus\uFF09\uFF0C\u8BFB\u53D6\u5199 vars.bonus\u3002\u9ED8\u8BA4\u5199\u5F53\u524D\u5E27\uFF0Cscope:owner \u5199\u89C4\u5219\u5BBF\u4E3B\uFF08\u7528 self.vars.bonus \u6216\u5BF9\u5E94\u8F7D\u4F53\u53D8\u91CF\u8BFB\u53D6\uFF09\u3002",
-  if: "\u6309 cond \u9009\u62E9 then \u6216 else \u6307\u4EE4\u5E8F\u5217\u3002\u672A\u63D0\u4F9B else \u65F6\u4E3A\u5047\u5373\u8DF3\u8FC7\u3002",
-  for_each: "\u5BF9 Selector \u7684\u7ED3\u679C\u5FEB\u7167\u9010\u9879\u6267\u884C body\u3002bind \u5199\u88F8\u540D\u79F0\uFF0C\u5982 victim\uFF1Bbody \u5185\u901A\u8FC7 vars.victim \u9009\u5B9E\u4F53\u3001vars.victim.hp \u8BFB\u5B57\u6BB5\u3002\u7701\u7565 bind \u65F6\uFF0C\u904D\u5386\u5355\u4F4D\u7684\u5B50\u5E27 target \u662F\u5F53\u524D\u5355\u4F4D\u3002",
-  check: "chance \u5FC5\u586B dc\uFF08d100 \u4E0D\u9AD8\u4E8E\u9608\u503C\u5373\u901A\u8FC7\uFF09\u3002\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u88F8\u540D\u79F0\uFF1B\u540E\u7EED\u901A\u8FC7 vars.<\u540D\u79F0> \u8BFB\u53D6\u3002rawNatural:true \u4F7F\u7528\u539F\u59CB\u81EA\u7136\u9AB0\uFF0C\u5FFD\u7565 after_natural_roll \u7684\u9AB0\u9762\u66FF\u6362\u3002",
-  ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\uFF1Afirst \u4FDD\u7559\u5019\u9009\u987A\u5E8F\uFF0C\u6570\u503C max/min \u53D6\u7AEF\u70B9\uFF1B\u8FDB\u653B\u683C/\u5B89\u5168\u683C\u5206\u522B\u9760\u8FD1/\u8FDC\u79BB\u6700\u8FD1\u5B58\u6D3B\u654C\u4EBA\uFF1Bhighest_threat \u4F18\u5148\u5B58\u6D3B\u654C\u4EBA\uFF0C\u540C\u7C7B\u6309\u6700\u9AD8\u8FDB\u653B\u5C5E\u6027\u6392\u5E8F\uFF1B\u591A\u9009\u53D6\u6392\u5E8F\u524D maxSelect \u4E2A\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
-  damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\uFF0C\u5199\u88F8\u540D\u79F0\u3001\u8BFB vars.<\u540D\u79F0>\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
-  heal: "\u4EC5\u6CBB\u7597\u5B58\u6D3B\u4E14\u5141\u8BB8\u53D7\u7597\u7684\u5355\u4F4D\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
-  resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002pool \u4E0E otherPool \u652F\u6301\u6C60 ID \u6216 vars.<\u540D\u79F0>\uFF0Cpool \u4E5F\u53EF\u7528\u5F15\u7528\u6570\u7EC4\uFF1B\u6570\u503C\u8868\u8FBE\u5F0F\u7528 resource(self, vars.<\u540D\u79F0>) \u8BFB\u53D6\u52A8\u6001\u4F59\u989D\u3002\u5185\u7F6E\u6C60 hp/mp/sp \u6216\u4F2A\u6C60 attack/action/move\uFF1A\u524D\u4E24\u8005\u8868\u793A\u672C\u56DE\u5408\u672A\u7528\u69FD\u4F4D\uFF0Cmove \u8868\u793A\u5269\u4F59\u79FB\u52A8\u683C\uFF1Bmode \u7528 add/sub/set\u3002add_max/sub_max/set_max \u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u955C\u50CF\uFF0CminRemain \u53EF\u9650\u5236\u6700\u4F4E\u4E0A\u9650\uFF1Bswap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\u3002",
-  link_pool: "\u7528 units \u9009\u62E9\u5355\u4F4D\uFF0C\u5C06\u6307\u5B9A\u7684 HP/MP/SP \u6C60\u5408\u5E76\u5171\u4EAB\u6216\u62C6\u56DE\u72EC\u7ACB\u6C60\u3002",
-  apply_status: "\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002ignoreImmunity:true \u660E\u786E\u6FC0\u6D3B\u514D\u75AB\u7A7F\u900F\uFF0C\u5E76\u6309\u8F7D\u4F53\u4F4D\u683C\u3001\u89D2\u8272\u5C42\u7EA7\u3001\u540C\u5C42 contest \u88C1\u5B9A\uFF1B\u5426\u5219 before_status \u514D\u75AB\u59CB\u7EC8\u751F\u6548\u3002",
-  remove_status: "\u5728\u76EE\u6807\u6301\u6709\u7684\u72B6\u6001\u4E2D\u7528 where \u7B5B\u9009\u53EF\u79FB\u9664\u9879\u3002force:true \u660E\u786E\u6FC0\u6D3B\u5BF9 undispellable \u72B6\u6001\u7684\u5F3A\u5236\u9A71\u6563\uFF0C\u5E76\u6309\u6765\u6E90\u4F4D\u683C\u88C1\u5B9A\uFF1BoutCount \u5199\u88F8\u540D\u79F0\u3002",
-  mutate_event: "\u4EC5\u5728\u6709\u53EF\u5199\u5B57\u6BB5\u7684\u62E6\u622A\u94A9\u5B50\u6539\u5199\u5F53\u524D\u4E8B\u4EF6\u3002patch \u7684\u952E\u5FC5\u987B\u5C5E\u4E8E\u5F53\u524D Rule.hook\u3002",
-  move: '\u7EDF\u4E00\u79FB\u52A8\u3001\u77AC\u79FB\u3001\u63A8\u62C9\u4E0E\u9AD8\u5EA6\u53D8\u5316\u3002push/pull \u9010\u683C\u5224\u78B0\u649E\uFF0Caltitude \u53EF\u7528 deltaZ \u6216 land\u3002distance \u9ED8\u8BA4\u7528\u683C\uFF1B\u539F\u8BCD\u6761 [\u4F4D\u79FB: X] \u7528 distance:X\u3001distanceUnit:"position"\uFF0C\u6309\u65BD\u653E\u8F7D\u4F53\u6362\u7B97\u3002teleport \u58F0\u660E distance \u65F6\u4E5F\u6821\u9A8C\u4F4D\u79FB\u4E0A\u9650\u3002',
-  spawn: "\u6309 entityKind \u63D0\u4F9B\u5BF9\u5E94\u7684 spec \u751F\u6210\u5355\u4F4D\u3001\u7ED3\u754C\u3001\u5730\u5F62\u3001\u63A9\u4F53\u6216\u5E93\u5B58\u7269\u54C1\uFF1Bat \u6307\u5B9A\u843D\u70B9\u3002",
-  despawn: '\u7528 select \u6E05\u9664\u6307\u5B9A\u7684 zone\u3001cover\u3001terrain \u6216 unit\uFF1Bunit \u901A\u5E38\u914D where: "candidate.summoned == true" \u53EA\u79FB\u9664\u53EC\u5524\u7269\uFF0C\u4E0D\u89E6\u53D1\u6B7B\u4EA1/\u4EA1\u8BED\u3002\u7B5B\u9009\u654C\u65B9\u533A\u57DF\u65F6\u7528 candidate.team != null && candidate.team != self.team\uFF1Bterrain \u53EA\u6E05\u9664 VM \u751F\u6210\u7684\u5730\u5F62\u5C42\u3002',
-  revive: "\u53EA\u5BF9\u672A\u88AB blockRevive \u7981\u6B62\u7684\u9635\u4EA1\u5355\u4F4D\u751F\u6548\uFF1BhpPercent/mpPercent/spPercent \u4EE5 1 \u4E3A\u6EE1\u989D\u3002",
-  perform: "\u538B\u5165\u72EC\u7ACB\u5B50\u52A8\u4F5C\uFF1Bskill \u7528\u6280\u80FD ID \u6216 vars.<\u540D\u79F0>\uFF0Creplay \u7528 tapeRecord \u5F15\u7528\u78C1\u5E26\u8BB0\u5F55\u3002overrides.origin \u53EF\u6539\u751F\u6548\u539F\u70B9\uFF1B\u8DE8\u8DDD\u79BB\u6216\u963B\u9694\u9700\u663E\u5F0F\u8BBE\u7F6E ignoreRange \u6216 ignoreLOS\u3002"
-});
-function opcode(op, properties, required, ...conditions) {
-  if (!Object.hasOwn(opNotes, op) || !opNotes[op].trim()) throw new Error(`VM \u6307\u4EE4 ${op} \u7F3A\u5C11\u7528\u6CD5\u8BF4\u660E`);
-  const schema = { ...object({ op: literal(op), enabled: { ...bool, default: true }, label: text, ...properties }, ["op", ...required]), description: opNotes[op] };
-  return conditions.length ? withRules(schema, ...conditions) : schema;
-}
-var intentEnum = enumOf("normal", "function", "core", "kill", "concept");
-var controlPolicy = object({
-  controller: enumOf("default", "ai"),
-  allegiance: enumOf("normal", "friendly_only", "all_hostile"),
-  forcedActionKinds: list(enumOf("attack", "skill")),
-  intentLock: intentEnum,
-  allowFriendlyTarget: bool,
-  moraleLock: literal("steady")
-});
-var stat = enumOf(
-  ...attribute.enum,
-  "movement",
-  "incomingDistanceOffset",
-  "armor",
-  "armorPierce",
-  "armorPiercePercent",
-  "damageMult",
-  "finalDamageMult",
-  "damageFlat",
-  "damageReduction",
-  "damageReductionFlat",
-  "dr",
-  "healingMult",
-  "incomingHealMult",
-  "costMult",
-  "checkBonus",
-  "dcBonus",
-  "resistBonus",
-  "dodge",
-  "advantage",
-  "initiativeFlat"
-);
-var ratioStats = enumOf("damageReduction", "dr", "armorPiercePercent");
-var multiplierStats = enumOf("damageMult", "finalDamageMult", "healingMult", "incomingHealMult", "costMult");
-var ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
-var statMod = withRules(
-  object({
-    stat,
-    flat: numericExpr,
-    mult: numericExpr,
-    additivePercent: numericExpr,
-    damageType,
-    checkKind: text,
-    statusId: id,
-    locks: list(slot, 1),
-    flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless"), 1),
-    controlPolicy,
-    when: booleanExpr
-  }),
-  either(needs("stat"), needs("locks"), needs("flags"), needs("controlPolicy")),
-  when("flat", {}, needs("stat")),
-  when("mult", {}, needs("stat")),
-  when("additivePercent", {}, needs("stat")),
-  when("stat", ratioStats, { properties: { flat: ratioFlat }, not: needs("additivePercent") }),
-  when("stat", multiplierStats, { not: needs("flat") }),
-  when("stat", enumOf("checkBonus", "initiativeFlat"), { not: { anyOf: [needs("mult"), needs("additivePercent")] } })
-);
-var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
-var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
-var spawnRadius = either({ type: "number", minimum: 0 }, formula);
-var area = object({
-  shape: enumOf("single", "circle", "ring", "fan", "cone", "line", "rect"),
-  origin: pointRef,
-  center: pointRef,
-  radius: spawnRadius,
-  innerRadius: spawnRadius,
-  width: spawnRadius,
-  angle: { type: "number", minimum: 0 }
-}, ["shape"]);
-var spawnTier = either(integer(1, 7), formula);
-var spawnTurns = either(integer(1, 100), formula);
-var spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
-var zoneArea = withRules(object({
-  shape: enumOf("single", "circle", "ring", "rect", "cells", "board"),
-  anchorUnitId: entityId,
-  origin: pointRef,
-  center: pointRef,
-  radius: spawnRadius,
-  innerRadius: spawnRadius,
-  rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
-  cells: list(point2, 1)
-}, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
-var carrier2 = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, expr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")) };
-var spawnSpecs = {
-  unit: withRules(object({
-    ...carrier2,
-    tier: spawnTier,
-    templateId: id,
-    copyOf: target,
-    count: either(integer(1, 10), formula),
-    remainingTurns: spawnTurns,
-    spawnPanel: object({
-      attribute,
-      tier: spawnTier,
-      stats: object(Object.fromEntries(attribute.enum.map((name) => [name, integer(0, 20)])), attribute.enum),
-      maxHp: numericExpr,
-      maxMp: numericExpr,
-      maxSp: numericExpr,
-      armor: numericExpr,
-      size: integer(1, 5),
-      bodyLengthM: { type: "number", exclusiveMinimum: 0 },
-      mc: integer(1),
-      move: numericExpr,
-      skills: list(id),
-      gear: list(id),
-      mainHand: id,
-      offHand: id,
-      shield: id
-    })
-  }), variants(needs("templateId"), needs("copyOf"), needs("spawnPanel"), { not: either(needs("templateId"), needs("copyOf"), needs("spawnPanel")) })),
-  zone: object({ ...carrier2, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ["area"]),
-  terrain: withRules(object({ kind: enumOf("floor", "wall", "slope"), height: number, mode: enumOf("set", "raise", "lower"), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs("kind"), needs("height")), when("mode", {}, needs("height"))),
-  cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
-  item: object({ templateId: id, count: either(integer(1), formula) }, ["templateId"])
-};
-var opcodeSchemas = [
-  opcode("let", { name: id, value: either(expr, enumOf(...scopes), variable), scope: enumOf("frame", "owner") }, ["name", "value"]),
-  opcode("if", { cond: booleanExpr, then: program, else: program }, ["cond", "then"]),
-  opcode("for_each", { select: selector, bind: id, body: program }, ["select", "body"]),
-  opcode("check", {
-    kind: enumOf("save", "contest", "d20", "chance", "attack"),
-    stat: either(attribute, list(attribute, 1)),
-    defenderStat: attribute,
-    dc: numericExpr,
-    mode: enumOf("all", "any"),
-    statusId: dynamicStatusId,
-    rawNatural: bool,
-    tags: list(tag),
-    onPass: program,
-    onFail: program,
-    out: id
-  }, ["kind"], when("kind", literal("chance"), needs("dc"))),
-  opcode(
-    "ask",
-    {
-      chooser: target,
-      kind: enumOf("cell", "entity", "option", "number"),
-      prompt: text,
-      out: id,
-      aiPolicy: enumOf("max", "min", "best_offensive_cell", "safest_cell", "highest_threat", "first"),
-      select: selector,
-      options: chooseOptions,
-      min: numericExpr,
-      max: numericExpr,
-      maxSelect: integer(1, 200)
-    },
-    ["chooser", "kind", "prompt", "out", "aiPolicy"],
-    when("maxSelect", {}, { properties: { kind: literal("entity") } }),
-    when("kind", enumOf("cell", "entity"), withRules(needs("select"), { not: either(needs("options"), needs("min"), needs("max")) })),
-    when("kind", literal("option"), withRules(needs("options"), { not: either(needs("select"), needs("min"), needs("max")) })),
-    when("kind", literal("number"), withRules(needs("min", "max"), { not: either(needs("options"), needs("select")) }))
-  ),
-  opcode("damage", { target, amount: numericExpr, damageType, ignoreArmor: bool, lethal: bool, instantDeath: bool, direct: bool, out: id }, ["target", "amount", "damageType"]),
-  opcode("heal", { target, amount: numericExpr, out: id }, ["target", "amount"]),
-  opcode(
-    "resource",
-    {
-      target,
-      pool: either(entityId, list(entityId, 1)),
-      mode: enumOf("add", "sub", "set", "swap", "add_max", "sub_max", "set_max"),
-      amount: numericExpr,
-      otherPool: entityId,
-      local: bool,
-      minRemain: numericExpr,
-      requireFull: bool,
-      out: id
-    },
-    ["target", "pool", "mode"],
-    when("mode", literal("swap"), withRules({ ...needs("otherPool"), properties: { pool: entityId } }, { not: needs("amount") })),
-    when("mode", enumOf("add", "sub", "set", "add_max", "sub_max", "set_max"), { ...needs("amount"), not: needs("otherPool") })
-  ),
-  opcode("link_pool", { units: selector, pools: list(enumOf("hp", "mp", "sp"), 1), mode: enumOf("link", "unlink") }, ["units", "pools", "mode"]),
-  opcode("apply_status", {
-    target,
-    statusId: dynamicStatusId,
-    ignoreImmunity: bool,
-    turns: numericExpr,
-    stacks: numericExpr,
-    stackMode: enumOf("refresh", "stack", "replace", "extend"),
-    extendTurns: numericExpr,
-    vars: mapOf(id, either(expr, { type: "string", pattern: "^[A-Za-z0-9_\\u4e00-\\u9fa5-]{1,64}$" })),
-    expireOn: ref("expireRule")
-  }, ["target", "statusId"]),
-  opcode("remove_status", { target, where: booleanExpr, force: bool, reason: enumOf("dispelled", "cleansed", "expired"), outCount: id }, ["target", "where"]),
-  opcode("mutate_event", { patch: either(...Object.keys(patchSchemas).map((name) => ref(`patch_${name}`))) }, ["patch"]),
-  opcode("move", {
-    target,
-    mode: enumOf("teleport", "step", "push", "pull", "altitude"),
-    to: pointRef,
-    distance: numericExpr,
-    distanceUnit: enumOf("cell", "position"),
-    deltaZ: numericExpr,
-    land: bool,
-    collisionDamage: numericExpr,
-    onCollide: program
-  }, ["target", "mode"]),
-  opcode(
-    "spawn",
-    { entityKind: enumOf(...Object.keys(spawnSpecs)), spec: { type: "object" }, at: pointRef, out: id },
-    ["entityKind", "spec"],
-    ...Object.keys(spawnSpecs).map((kind) => when("entityKind", literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))
-  ),
-  opcode("despawn", { entityKind: enumOf("zone", "cover", "terrain", "unit"), select: selector }, ["entityKind", "select"]),
-  opcode("revive", { target, hpPercent: numericExpr, mpPercent: numericExpr, spPercent: numericExpr, hpFlat: numericExpr }, ["target"]),
-  opcode(
-    "perform",
-    { actor: target, actionKind: enumOf("skill", "attack", "replay"), skillId: entityId, tapeRecord: variable, target, overrides },
-    ["actor", "actionKind"],
-    when("actionKind", literal("skill"), { ...needs("skillId"), not: needs("tapeRecord") }),
-    when("actionKind", literal("replay"), { ...needs("tapeRecord"), not: needs("skillId") }),
-    when("actionKind", literal("attack"), { not: either(needs("skillId"), needs("tapeRecord")) })
-  )
-];
-var vmOpcodes = Object.freeze(opcodeSchemas.map((schema) => schema.properties.op.const));
-var instructionBranches = ["then", "else", "body", "onPass", "onFail", "onCollide"];
-var guardedHooks = [...Object.keys(patchSchemas), "readOnly"];
-var hookGuard = (name) => ref(`opcodeGuard_${name}`);
-var guardedProgram = (name) => list(hookGuard(name));
-var defs = {
-  expr: either(number, bool, formula),
-  tag,
-  selector: withRules(object({
-    from: either(enumOf(...scopes, "action_targets", "units", "statuses", "zones", "covers", "terrain", "cells", "tape"), variable),
-    options: list(id, 1),
-    of: either(enumOf(...scopes), variable),
-    area,
-    where: booleanExpr,
-    pick: variants(literal("all"), ...["first", "random", "nearest"].map((key4) => object({ [key4]: integer(1) }, [key4])))
-  }), either(needs("from"), needs("options")), when("of", {}, { properties: { from: literal("statuses") } })),
-  targetRef: either(enumOf(...scopes), variable, selector),
-  expireRule,
-  statMod,
-  controlPolicy,
-  ...Object.fromEntries(Object.entries(patchSchemas).map(([name, schema]) => [`patch_${name}`, schema])),
-  ...Object.fromEntries(Object.entries(spawnSpecs).map(([name, schema]) => [`spawn_${name}`, schema])),
-  ...Object.fromEntries(guardedHooks.map((name) => {
-    const properties = Object.fromEntries(instructionBranches.map((branch) => [branch, guardedProgram(name)]));
-    return [`opcodeGuard_${name}`, name === "readOnly" ? { properties, not: needs("patch") } : { properties: { ...properties, patch: ref(`patch_${name}`) } }];
-  })),
-  opcode: variants(...opcodeSchemas),
-  program: list(ref("opcode")),
-  rule: withRules(
-    object({
-      id,
-      hook,
-      program,
-      label: text,
-      enabled: { ...bool, default: true },
-      priority: { type: "integer" },
-      dedupeKey: text,
-      usesPerBattle: integer(1),
-      usesPerTurn: integer(1),
-      cooldownTurns: integer(1, 100),
-      filter: booleanExpr
-    }, ["id", "hook", "program"]),
-    ...Object.keys(patchSchemas).map((name) => when("hook", literal(name), { properties: { program: guardedProgram(name) } })),
-    when("hook", { not: enumOf(...Object.keys(patchSchemas)) }, { properties: { program: guardedProgram("readOnly") } })
-  )
-};
-var root = (title, name) => ({ $schema: "https://json-schema.org/draft/2020-12/schema", title, ...ref(name), $defs: defs });
-var vmSchema = root("Fated Tactical VM Rule", "rule");
-var vmOpcodeSchema = root("Fated Tactical VM Opcode", "opcode");
-var vmProgramSchema = root("Fated Tactical VM Program", "program");
-var vmSelectorSchema = root("Fated Tactical VM Selector", "selector");
-var vmStatModSchema = root("Fated Tactical VM StatMod", "statMod");
-function matches(value, schema, context, depth = 0) {
-  if (depth > 512) return false;
-  const next = (item, rule2) => matches(item, rule2, context, depth + 1);
-  if (schema.$ref && !next(value, defs[schema.$ref.split("/").at(-1)])) return false;
-  if (Object.hasOwn(schema, "const") && value !== schema.const) return false;
-  if (schema.enum && !schema.enum.includes(value)) return false;
-  if (schema.not && next(value, schema.not)) return false;
-  if (schema.anyOf && !schema.anyOf.some((rule2) => next(value, rule2))) return false;
-  if (schema.oneOf && schema.oneOf.filter((rule2) => next(value, rule2)).length !== 1) return false;
-  if (schema.allOf && !schema.allOf.every((rule2) => next(value, rule2))) return false;
-  if (schema.if && next(value, schema.if) && !next(value, schema.then)) return false;
-  if (schema.type === "boolean") return typeof value === "boolean";
-  if (schema.type === "number" || schema.type === "integer") {
-    return Number.isFinite(value) && (schema.type !== "integer" || Number.isInteger(value)) && (schema.minimum === void 0 || value >= schema.minimum) && (schema.maximum === void 0 || value <= schema.maximum) && (schema.exclusiveMinimum === void 0 || value > schema.exclusiveMinimum);
-  }
-  if (schema.type === "string") {
-    if (typeof value !== "string" || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
-    if (schema.format === "tactical-expr") return validExpr(value);
-    if (schema.format === "tactical-status-id") return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
-    return true;
-  }
-  if (schema.type === "array") {
-    return Array.isArray(value) && value.length >= schema.minItems && Array.from(value).every((item) => next(item, schema.items));
-  }
-  const plainObject = value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
-  if (schema.type === "object" && !plainObject) return false;
-  if (plainObject) {
-    if (schema.required?.some((key4) => !Object.hasOwn(value, key4))) return false;
-    const entries3 = Object.entries(value);
-    if (entries3.length < (schema.minProperties ?? 0)) return false;
-    return entries3.every(([key4, item]) => {
-      if (schema.propertyNames && !next(key4, schema.propertyNames)) return false;
-      if (Object.hasOwn(schema.properties ?? {}, key4)) return next(item, schema.properties[key4]);
-      if (schema.additionalProperties === false) return false;
-      return !schema.additionalProperties || next(item, schema.additionalProperties);
-    });
-  }
-  return true;
-}
-var valid = (value, name, options) => Boolean(matches(value, defs[name], options));
-var validHook = (value, options, guard) => options.hook === void 0 || vmHooks.includes(options.hook) && matches(value, guard(Object.hasOwn(patchSchemas, options.hook) ? options.hook : "readOnly"), options);
-var validVmOpcode = (value, options = {}) => valid(value, "opcode", options) && validHook(value, options, hookGuard);
-var validVmProgram = (value, options = {}) => valid(value, "program", options) && validHook(value, options, guardedProgram);
-var validVmRule = (value, options = {}) => valid(value, "rule", options);
-function vmRuleError(rule2, options = {}) {
-  if (validVmRule(rule2, options)) return void 0;
-  const settings = { ...options, hook: rule2?.hook };
-  function invalidInstruction(program2, path2, depth = 0) {
-    if (!Array.isArray(program2) || depth > 64) return path2;
-    for (const [index, instruction] of program2.entries()) {
-      if (validVmOpcode(instruction, settings)) continue;
-      const at2 = `${path2}/${index}`;
-      const schema2 = opcodeSchemas.find((schema3) => schema3.properties.op.const === instruction?.op);
-      if (!schema2) return `${at2}/op`;
-      for (const field of schema2.required) if (!Object.hasOwn(instruction, field)) return `${at2}/${field}`;
-      for (const [field, value] of Object.entries(instruction)) {
-        if (instructionBranches.includes(field) && Object.hasOwn(schema2.properties, field)) {
-          if (!validVmProgram(value, settings)) return invalidInstruction(value, `${at2}/${field}`, depth + 1);
-        } else if (!Object.hasOwn(schema2.properties, field) || !matches(value, schema2.properties[field], options)) {
-          return `${at2}/${field}${field === "statusId" && matches(value, id, options) ? `\uFF08\u72B6\u6001 ${value} \u672A\u6CE8\u518C\uFF09` : ""}`;
-        }
-      }
-      if (instruction.op === "mutate_event") return `${at2}/patch\uFF08\u5F53\u524D hook \u4E0D\u5141\u8BB8\u6B64\u6539\u5199\uFF09`;
-      return `${at2}\uFF08${instruction.op} \u5B57\u6BB5\u7EC4\u5408\u65E0\u6548\uFF09`;
-    }
-    return path2;
-  }
-  const schema = defs.rule;
-  for (const field of schema.required) if (!rule2 || !Object.hasOwn(rule2, field)) return field;
-  for (const [field, value] of Object.entries(rule2)) {
-    if (field === "program") continue;
-    if (!Object.hasOwn(schema.properties, field) || !matches(value, schema.properties[field], options)) return field;
-  }
-  return invalidInstruction(rule2.program, "program");
-}
-var validVmStatMod = (value, options = {}) => valid(value, "statMod", options);
-function vmStatModError(mod2) {
-  if (validVmStatMod(mod2)) return void 0;
-  if (mod2 && ratioStats.enum.includes(mod2.stat) && (Object.hasOwn(mod2, "additivePercent") || typeof mod2.flat === "number" && !matches(mod2.flat, ratioFlat, {}))) {
-    return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 0\uFF0C\u4E0D\u80FD\u7528 additivePercent\uFF1B\u8BF7\u7528 flat \u586B\u5199 -1..1 \u7684\u5C0F\u6570\uFF08\u5982 0.3 \u4EE3\u8868 30%\uFF09\u6216\u6570\u503C\u8868\u8FBE\u5F0F`;
-  }
-  if (mod2 && multiplierStats.enum.includes(mod2.stat) && Object.hasOwn(mod2, "flat")) {
-    return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 1\uFF0C\u4E0D\u80FD\u7528 flat\uFF1B\u8BF7\u7528 mult\uFF08\u5982 1.3\uFF09\u6216 additivePercent\uFF08\u5982 0.3\uFF09`;
-  }
-  return "VM \u4FEE\u9970";
-}
-var validVmTag = (value) => valid(value, "tag", {});
-var validVmSourceSkillId = (value) => matches(value, sourceSkillId, {});
-
 // src/core/vm-rules.js
 var own7 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
 var bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
@@ -3212,10 +2904,13 @@ function continueCheck({ state, frame, host, context }) {
     }
     const key4 = stats[outcomes.length];
     const sides = op.kind === "chance" ? 100 : 20;
-    let roll = dice(state, sides);
-    if (event.advantageDelta > 0) roll = Math.max(roll, dice(state, 20));
-    if (event.advantageDelta < 0) roll = Math.min(roll, dice(state, 20));
-    const defenderRoll = op.kind === "contest" ? dice(state, 20) : null;
+    const rollWith = (delta) => {
+      const first = dice(state, sides);
+      return delta > 0 ? Math.max(first, dice(state, sides)) : delta < 0 ? Math.min(first, dice(state, sides)) : first;
+    };
+    const subject2 = op.kind === "save" ? context.target : context.self;
+    const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject2, event) ?? 0 : 0));
+    const defenderRoll = op.kind === "contest" ? rollWith(host.advantage?.(state, context.target, event) ?? 0) : null;
     event.naturalRoll = roll;
     if (op.rawNatural || sides !== 20) outcomes.push({ key: key4, roll, defenderRoll });
     else {
@@ -3234,7 +2929,7 @@ function continueCheck({ state, frame, host, context }) {
     const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
     const outcomes = frame.naturalOutcomes.map(({ key: key4, roll: roll2, defenderRoll }) => {
       const total3 = roll2 + (key4 ? stat3(subject2, key4) : 0) + checkBonus + (event.bonusDelta ?? 0);
-      const difficulty = kind === "contest" ? defenderRoll + stat3(context.target, op.defenderStat ?? key4) : dc;
+      const difficulty = kind === "contest" ? defenderRoll + stat3(context.target, op.defenderStat ?? key4) + (host.checkBonus?.(state, context.target, event) ?? 0) + (host.resistBonus?.(state, context.target, event) ?? 0) - (host.dcBonus?.(state, context.self, event) ?? 0) : dc;
       const passed2 = kind === "chance" ? roll2 <= difficulty : total3 >= difficulty;
       return { roll: roll2, total: total3, difficulty, passed: passed2 };
     });
@@ -3334,7 +3029,7 @@ function continueApplyStatus({ state, frame, host, context, options }) {
     const vars = Object.fromEntries(Object.entries(values5).map(([key4, expr2]) => [key4, typeof expr2 === "string" && !validExpr(expr2) ? expr2 : evaluateExpr(expr2, context)]).filter(([, value]) => value !== null));
     const cap = evaluate2(template.maxStacks, context, 1);
     const duration2 = evaluate2(op.turns, context, template.remainingTurns ?? 1);
-    const count = evaluate2(op.stacks, context, 1);
+    const count = evaluate2(op.stacks, context, stackMode === "extend" ? previous?.stacks ?? 1 : 1);
     const extension = evaluate2(op.extendTurns, context, 1);
     if (![cap, duration2, count, extension].every(Number.isFinite)) return;
     const maxStacks = bounded(cap, 1, 999999);
@@ -3363,14 +3058,54 @@ function continueApplyStatus({ state, frame, host, context, options }) {
       remainingTurns: bounded(duration2, 1, 100)
     };
     if (op.expireOn) status.expireOn = op.expireOn;
-    if (previous && stackMode === "stack") status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
+    if (previous && stackMode === "stack") {
+      status.stacks = bounded(previous.stacks + status.stacks, 1, maxStacks);
+      if (status.category === "shield") status.vars.shieldAmount = (status.vars.shieldAmount ?? 0) + (previous.vars?.shieldAmount ?? 0);
+    }
+    status.appliedRound = state.round;
+    status.appliedTurn = state.turn;
     if (previous && stackMode === "extend") status.remainingTurns = bounded(previous.remainingTurns + extension, 1, 100);
+    frame.appliedStatus = status;
+    if (previous && stackMode === "replace") removeStatus(state, target2, previous, "replaced", context.self, host, frame);
+    else if (previous?.pools) status.pools = previous.pools;
+    return;
+  }
+  if (frame.pc === 2 && frame.appliedStatus) {
+    frame.pc++;
+    if (!live(target2)) return;
+    const status = frame.appliedStatus;
+    const displaced = own7(target2.statuses, op.statusId);
+    if (displaced?.pools) status.pools = displaced.pools;
     target2.statuses[op.statusId] = status;
     host.log(state, context.self, "status", `${target2.name}\u83B7\u5F97${status.name}\uFF08${status.stacks}\u5C42\uFF09`, host.statusLogDetail(target2, status));
     scheduleHooks(state, frame, "after_status_applied", frame.awaitEvent, host);
     return;
   }
   state.vm.stack.pop();
+}
+function removeStatus(state, target2, status, reason, actor, host, parent, detail = {}) {
+  const statusId3 = status.id;
+  if (own7(target2.statuses, statusId3) !== status) return false;
+  const eventRef = newEvent(state, {
+    actorId: actor?.id ?? null,
+    targetId: target2.id,
+    statusId: statusId3,
+    reason,
+    removeReason: reason,
+    removedStatus: status
+  });
+  delete target2.statuses[statusId3];
+  deleteOwnedPools(state, status);
+  const text5 = reason === "expired" ? `${target2.name}\u7684${status.name}\u7ED3\u675F` : `${target2.name}\u5931\u53BB${status.name}`;
+  host.log(
+    state,
+    actor,
+    reason === "expired" ? "expire" : "cleanse",
+    text5,
+    { targetId: target2.id, statusId: statusId3, reason, ...detail }
+  );
+  scheduleHooks(state, parent, "after_status_removed", eventRef, host);
+  return true;
 }
 function continueRemoveStatus({ state, frame, host, context, options }) {
   const { data: op } = frame;
@@ -3401,30 +3136,345 @@ function continueRemoveStatus({ state, frame, host, context, options }) {
     host.log(state, context.self, "authority", `${status.name}${authorityContestDetail.result > 0 ? "\u88AB\u5F3A\u5236\u79FB\u9664" : "\u62B5\u6297\u4E86\u5F3A\u5236\u79FB\u9664"}${authorityProse(authorityContestDetail)}`, { targetId: target2.id, contest: authorityContestDetail });
     if (authorityContestDetail.result <= 0) return;
   }
-  delete target2.statuses[statusId3];
-  frame.removed = (frame.removed ?? 0) + 1;
-  const reason = op.reason ?? "dispelled";
-  frame.eventRef = newEvent(state, { actorId: context.self?.id ?? null, targetId: target2.id, statusId: statusId3, removeReason: reason, reason });
-  host.log(state, context.self, reason === "expired" ? "expire" : "cleanse", `${target2.name}\u5931\u53BB${status.name}`, {
-    targetId: target2.id,
-    statusId: statusId3,
-    ...authorityContestDetail ? { contest: authorityContestDetail } : {}
+  if (removeStatus(
+    state,
+    target2,
+    status,
+    op.reason ?? "dispelled",
+    context.self,
+    host,
+    frame,
+    authorityContestDetail ? { contest: authorityContestDetail } : {}
+  )) frame.removed = (frame.removed ?? 0) + 1;
+}
+
+// src/core/vm-commit.js
+var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
+var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var pseudoPool = /* @__PURE__ */ new Set(["attack", "action", "move"]);
+function pseudoState(unit, key4) {
+  if (key4 === "move") return { current: Math.max(0, unit.move - (unit.moveSpent ?? 0)), max: unit.move };
+  return { current: Math.max(0, 1 - (unit.used?.[key4] ?? 0)), max: 1 };
+}
+function applyPseudo(unit, key4, mode, amount) {
+  if (!Number.isInteger(amount)) return false;
+  const before = pseudoState(unit, key4).current;
+  let current = mode === "set" ? amount : mode === "add" ? before + amount : mode === "sub" ? before - amount : NaN;
+  if (mode === "add_max" || mode === "sub_max" || mode === "set_max") return false;
+  if (!Number.isFinite(current)) return false;
+  current = Math.max(0, Math.min(pseudoState(unit, key4).max, current));
+  if (key4 === "move") unit.moveSpent = unit.move - current;
+  else {
+    unit.used[key4] = 1 - current;
+    unit.ap = Math.max(0, Math.min(unit.apMax ?? 2, unit.ap + current - before));
+  }
+  return true;
+}
+function scheduleCommit(state, parent, data) {
+  return pushFrame(state, {
+    native: "commit",
+    ownerId: parent.ownerId,
+    sourceId: parent.sourceId,
+    ruleId: parent.ruleId,
+    carrier: parent.carrier ?? null,
+    attribution: parent.attribution ?? null,
+    callerId: parent.localsRef ?? parent.frameId,
+    data
   });
-  scheduleHooks(state, frame, "after_status_removed", frame.eventRef, host);
+}
+function commitOp(env) {
+  const { state, frame, op, context, select } = env;
+  const targets2 = select(op.target).filter((unit) => entry(state.units, unit.id) === unit);
+  const sourceId2 = context.self?.id ?? frame.sourceId;
+  const poolId = (ref2) => ref2?.startsWith("vars.") ? entry(context.vars, ref2.slice(5)) : ref2;
+  const validPoolId2 = (key4) => typeof key4 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(key4);
+  const pools = op.op === "resource" ? [op.pool].flat().map(poolId).reverse() : ["hp"];
+  const otherPool = poolId(op.otherPool);
+  if (op.mode === "swap" && !validPoolId2(otherPool)) return;
+  for (const target2 of targets2.reverse()) {
+    for (const pool of pools) {
+      if (!validPoolId2(pool)) continue;
+      const amount = op.amount === void 0 ? 0 : evaluateExpr(op.amount, { ...context, target: target2, pool });
+      const minRemain = op.minRemain === void 0 ? 0 : evaluateExpr(op.minRemain, { ...context, target: target2, pool });
+      if (!Number.isFinite(amount) || !Number.isFinite(minRemain)) continue;
+      const action = context.event;
+      const item = frame.carrier?.type === "item" ? entry(state.items, frame.carrier.id) : null;
+      const label = op.label ?? context.status?.name ?? context.zone?.name ?? (frame.carrier?.type === "skill" ? entry(state.skills, frame.carrier.id)?.name : void 0) ?? entry(state.equipment, item?.templateId)?.name ?? entry(state.skills, action?.skillId)?.name;
+      scheduleCommit(state, frame, {
+        ...op,
+        sourceId: sourceId2,
+        targetId: target2.id,
+        pool,
+        amount,
+        minRemain,
+        ...op.mode === "swap" && { otherPool },
+        ...label && { label },
+        actionType: action?.actionType ?? null,
+        skillId: action?.skillId ?? null,
+        ...frame.carrier?.type === "item" ? { carrierId: frame.carrier.id } : {}
+      });
+    }
+  }
+}
+var commitOps = {
+  damage: commitOp,
+  heal: commitOp,
+  resource: commitOp,
+  link_pool({ state, context, select, op, host }) {
+    const ids = select(op.units).filter((unit) => entry(state.units, unit.id) === unit).map((unit) => unit.id);
+    if (ids.length < (op.mode === "link" ? 2 : 1)) return;
+    (op.mode === "link" ? linkPools : unlinkPools)(state, ids, op.pools);
+    host.log(state, context.self, "pool_link", `${context.self.name}${op.mode === "link" ? "\u8FDE\u63A5" : "\u62C6\u5206"}\u4E86\u8D44\u6E90\u6C60`);
+  }
+};
+function continueCommit({ state, frame, host, options }) {
+  const { data } = frame;
+  const { op, pool: key4 } = data;
+  const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
+  const localOwner = data.local && frame.data.carrierId;
+  const pseudo = !localOwner && pseudoPool.has(key4);
+  const pool = pseudo ? pseudoState(target2, key4) : getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
+  if (!pool && !pseudo || !target2) {
+    state.vm.stack.pop();
+    return;
+  }
+  let event = entry(state.vm.events, frame.eventRef);
+  if (frame.pc === 0) {
+    const dying = state.vm.stack.some((parent) => parent.native === "lethal" && parent.data.poolId === target2.pools?.hp);
+    if (!alive2(target2) && !((op === "resource" || op === "heal") && dying && !target2.fled)) {
+      state.vm.stack.pop();
+      return;
+    }
+    const amount = op === "damage" ? host.prepareDamage?.(state, source, target2, data) ?? data.amount : op === "heal" ? host.prepareHeal?.(state, source, target2, data) ?? data.amount : data.amount;
+    const authority = authorityFor(state, frame.carrier, data.sourceId);
+    frame.eventRef = newEvent(state, {
+      commitKind: op,
+      actorId: data.sourceId,
+      targetId: target2.id,
+      pool: key4,
+      authorityRank: authority.authorityRank,
+      sourceTier: authority.unitTier,
+      ...data.instantDeath === true && { instantDeath: true },
+      poolId: pool.id,
+      damageType: data.damageType ?? null,
+      rawAmount: data.amount,
+      finalAmount: amount,
+      sourceRuleId: frame.ruleId,
+      direct: data.direct ?? true,
+      preserveLife: data.lethal === false || Boolean(target2.nonLethal || host.flag?.(state, target2, "preserveLife") || host.preserveLife?.(state, source)),
+      actionType: data.actionType ?? null,
+      skillId: data.skillId ?? null,
+      weaponTemplateId: data.weaponTemplateId ?? null,
+      melee: data.melee ?? false,
+      backstab: data.backstab ?? false
+    });
+    frame.pc++;
+    scheduleHooks(state, frame, "before_commit", frame.eventRef, host);
+    return;
+  }
+  if (frame.pc === 1) {
+    frame.pc++;
+    if (event.cancel || !Number.isFinite(event.finalAmount)) {
+      state.vm.stack.pop();
+      return;
+    }
+    const conceptProtection = op === "damage" && event.instantDeath === true ? protectionCarrier(state, target2) : null;
+    if (conceptProtection) {
+      const attacker = authorityFor(state, frame.carrier, data.sourceId);
+      const defender = authorityFor(state, conceptProtection, target2.id);
+      const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target2.id }, {
+        preview: options,
+        checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : data.sourceId }) ?? 0
+      });
+      event.authorityContest = contest;
+      if (contest.conditional) {
+        state.vm.stack.pop();
+        return;
+      }
+      host.log(state, source, "authority", `${target2.name}\u7684\u6982\u5FF5\u4FDD\u62A4${contest.result < 0 ? "\u62E6\u622A\u4E86\u5373\u6B7B" : "\u88AB\u5373\u6B7B\u7A7F\u900F"}${authorityProse(contest)}`, { targetId: target2.id, contest });
+      if (contest.result < 0) {
+        state.vm.stack.pop();
+        return;
+      }
+    }
+    const before = pool.current, beforeMax = pool.max;
+    let absorbed = 0;
+    if (op === "damage") {
+      let pending = Math.max(0, Math.floor(event.finalAmount));
+      for (const statusKey of Object.keys(target2.statuses ?? {}).sort()) {
+        const status = target2.statuses[statusKey];
+        const shield = status.category === "shield" ? status.vars?.shieldAmount : 0;
+        if (!(shield > 0) || !pending) continue;
+        const amount = Math.min(shield, pending);
+        pending -= amount;
+        absorbed += amount;
+        status.vars.shieldAmount -= amount;
+        if (Object.hasOwn(status, "amount")) status.amount = status.vars.shieldAmount;
+        host.log(state, target2, "shield", `${target2.name}\u7684${status.name}\u5438\u6536${amount}\u70B9\u4F24\u5BB3`, { targetId: target2.id, statusId: status.id ?? status.templateId ?? null });
+        if (!status.vars.shieldAmount) removeStatus(state, target2, status, "shield_depleted", source, host, frame);
+      }
+      updatePoolCurrent(state, pool.id, "sub", pending, { minRemain: event.preserveLife ? 1 : 0 });
+      event.dealt = before - getPool(state, target2.id, key4).current;
+      event.absorbed = absorbed;
+      host.log(state, source, "damage", `${target2.name}\u53D7\u5230${event.dealt}\u70B9${data.label ?? ""}\u4F24\u5BB3`, { ...data.details, targetId: target2.id, damageType: event.damageType, amount: event.dealt, absorbed, hpBefore: before, hpAfter: target2.hp });
+    } else if (op === "heal") {
+      updatePoolCurrent(state, pool.id, "add", Math.max(0, Math.floor(event.finalAmount)));
+      event.healing = target2.hp - before;
+      host.log(state, source, "heal", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}\u6062\u590D${event.healing}\u70B9\u751F\u547D`, { ...data.details, targetId: target2.id, amount: event.healing, hpBefore: before, hpAfter: target2.hp });
+    } else {
+      if (pseudo) {
+        if (!applyPseudo(target2, key4, data.mode, Math.floor(event.finalAmount))) {
+          state.vm.stack.pop();
+          return;
+        }
+      } else if (data.mode === "swap") {
+        const other = getPool(state, localOwner || target2.id, data.otherPool, localOwner ? "item" : "unit");
+        if (other) swapPoolCurrents(state, pool.id, other.id);
+      } else {
+        if (["add_max", "sub_max", "set_max"].includes(data.mode) && !["hp", "mp", "sp"].includes(key4)) {
+          state.vm.stack.pop();
+          return;
+        }
+        const amount = data.mode === "sub" ? Math.max(0, event.finalAmount) : event.finalAmount;
+        const reducesMax = data.mode === "sub_max" && amount > 0 || data.mode === "set_max" && amount < pool.max;
+        const protection = reducesMax ? protectionCarrier(state, target2) : null;
+        if (protection) {
+          const attacker = authorityFor(state, frame.carrier, data.sourceId);
+          const defender = authorityFor(state, protection, target2.id);
+          const contest = authorityContest(state, { ...attacker, unitId: data.sourceId }, { ...defender, unitId: target2.id }, {
+            preview: options,
+            checkBonus: (unit, side2) => host.checkBonus?.(state, unit, { checkKind: "authority", targetId: side2 === "attacker" ? target2.id : data.sourceId }) ?? 0
+          });
+          event.authorityContest = contest;
+          if (contest.conditional) {
+            state.vm.stack.pop();
+            return;
+          }
+          host.log(state, source, "authority", `${target2.name}\u7684\u6982\u5FF5\u4FDD\u62A4${contest.result < 0 ? "\u62E6\u622A\u4E86\u4E0A\u9650\u524A\u51CF" : "\u88AB\u4E0A\u9650\u524A\u51CF\u7A7F\u900F"}${authorityProse(contest)}`, { targetId: target2.id, contest });
+          if (contest.result < 0) {
+            state.vm.stack.pop();
+            return;
+          }
+        }
+        const changed = ["add_max", "sub_max", "set_max"].includes(data.mode) ? updatePoolMax(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain) }) : updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
+        if (!changed.applied) {
+          const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
+          if (caller) caller.pc = caller.program.length;
+          state.vm.stack.pop();
+          return;
+        }
+      }
+      const after = pseudo ? pseudoState(target2, key4).current : entry(state.pools, pool.id).current;
+      const maxChange = data.mode.endsWith("_max");
+      const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
+      const label = { attack: "\u653B\u51FB\u69FD", action: "\u52A8\u4F5C\u69FD", move: "\u5269\u4F59\u79FB\u52A8\u683C" }[key4] ?? key4.toUpperCase();
+      const field = label + (maxChange ? "\u4E0A\u9650" : "");
+      event.change = to - from;
+      host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${maxChange ? to >= from ? "\u63D0\u9AD8" : "\u964D\u4F4E" : to >= from ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(event.change)}\u70B9 ${field}`, { targetId: target2.id, resource: key4, resourceLabel: field, before: from, after: to });
+    }
+    const result = entry(state.vm.events, data.resultEventRef);
+    if (result) {
+      for (const key5 of ["dealt", "absorbed", "healing"]) if (event[key5] !== void 0) result[key5] = event[key5];
+    }
+    if (data.out) {
+      const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
+      if (caller) caller.vars[data.out] = event.dealt ?? event.healing ?? event.change;
+    }
+    const depletion = Object.values(state.pools).filter((candidate) => candidate.kind === "hp" && candidate.current === 0 && (candidate.id === pool.id && before > 0 || op === "resource" && data.mode === "swap" && candidate.id === target2.pools?.[data.otherPool]) && !state.vm.stack.some((parent) => parent.native === "lethal" && parent.data.poolId === candidate.id));
+    for (const depleted of depletion.reverse()) pushFrame(state, {
+      native: "lethal",
+      ownerId: target2.id,
+      sourceId: data.sourceId,
+      data: {
+        poolId: depleted.id,
+        damageType: event.damageType,
+        targetId: target2.id,
+        overkill: Math.max(0, event.finalAmount - absorbed - before)
+      }
+    });
+    return;
+  }
+  if (frame.pc === 2) {
+    frame.pc++;
+    const hook2 = op === "damage" ? "after_damage" : op === "heal" ? "after_heal" : null;
+    if (hook2) scheduleHooks(state, frame, hook2, frame.eventRef, host);
+    return;
+  }
+  state.vm.stack.pop();
+}
+function continueLethal({ state, frame, host }) {
+  const { data } = frame;
+  const pool = entry(state.pools, data.poolId);
+  if (!pool) {
+    state.vm.stack.pop();
+    return;
+  }
+  if (frame.pc === 0) {
+    frame.eventRef = newEvent(state, {
+      ...data,
+      actorId: frame.sourceId,
+      killer: frame.sourceId,
+      units: pool.contributors.filter((c) => c.ownerKind === "unit").map((c) => c.ownerId).sort()
+    });
+    frame.pc++;
+    scheduleHooks(state, frame, "on_lethal_p1", frame.eventRef, host);
+    return;
+  }
+  if (frame.pc === 1) {
+    frame.pc++;
+    if (pool.current <= 0) scheduleHooks(state, frame, "on_lethal_p2", frame.eventRef, host);
+    return;
+  }
+  if (frame.pc === 2) {
+    frame.pc++;
+    const event = state.vm.events[frame.eventRef];
+    if (pool.current > 0) return;
+    if (event.preventDeath) {
+      updatePoolCurrent(state, pool.id, "set", 1);
+      return;
+    }
+    for (const unitId of event.units) {
+      const unit = entry(state.units, unitId);
+      if (!unit || unit.pools?.hp !== pool.id) continue;
+      unit.diedAt = { round: state.round, turn: state.turn };
+      unit.corpseOf ??= unit.id;
+      host.log(state, entry(state.units, frame.sourceId), "defeat", `${unit.name}\u5012\u4E0B`, { targetId: unit.id });
+    }
+    data.victims = event.units.filter((id3) => entry(state.units, id3)?.pools?.hp === pool.id);
+    scheduleHooks(state, frame, "on_death", frame.eventRef, host);
+    return;
+  }
+  const index = Math.floor((frame.pc - 3) / 2), deadId = data.victims?.[index];
+  if (!deadId) {
+    state.vm.stack.pop();
+    return;
+  }
+  const allyPhase = frame.pc++ % 2 === 1, killerId = frame.sourceId;
+  if (allyPhase || killerId !== deadId && entry(state.units, killerId)) {
+    const ref2 = newEvent(state, { ...state.vm.events[frame.eventRef], targetId: deadId, deadId, killerId });
+    scheduleHooks(state, frame, allyPhase ? "on_ally_death" : "on_kill", ref2, host);
+  }
 }
 
 // src/core/vm-action.js
 var own8 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record3 = false }) {
+var MAX_ACTION_CHAIN_DEPTH = 3;
+function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record3 = false, chainDepth = 0 }) {
   return pushFrame(state, {
     native: "action",
     ownerId: actorId,
     sourceId: actorId,
+    chainDepth,
     data: { action, overrides: overrides2, record: record3 },
     answers: []
   });
 }
 function perform({ state, context, select, op }) {
+  const chainDepth = (state.vm.stack.findLast((frame) => frame.native === "action")?.chainDepth ?? 0) + 1;
+  if (chainDepth > MAX_ACTION_CHAIN_DEPTH) {
+    context.warn?.(`perform \u5D4C\u5957\u8D85\u8FC7 ${MAX_ACTION_CHAIN_DEPTH} \u5C42\uFF0C\u5DF2\u622A\u65AD`);
+    return;
+  }
   const actors = select(op.actor);
   for (const actor of actors.reverse()) {
     if (actor.hp <= 0 || actor.fled) continue;
@@ -3465,7 +3515,7 @@ function perform({ state, context, select, op }) {
         ...Number.isFinite(origin.z) ? { z: origin.z } : Number.isFinite(origin.altitude) ? { altitude: origin.altitude } : {}
       };
     }
-    queueVMAction(state, { actorId: actor.id, action, overrides: overrides2 });
+    queueVMAction(state, { actorId: actor.id, action, overrides: overrides2, chainDepth });
   }
 }
 function continueAction({ state, frame, host }) {
@@ -3502,7 +3552,9 @@ function continueAction({ state, frame, host }) {
       power: plan2.power ?? 0,
       initiativeBonus: plan2.initiativeBonus ?? 0,
       hostile: plan2.hostile ?? false,
-      weaponTemplateId: plan2.weaponTemplateId ?? null
+      weaponTemplateId: plan2.weaponTemplateId ?? null,
+      chainDepth: frame.chainDepth ?? 0,
+      triggered: (frame.chainDepth ?? 0) > 0
     });
     if (!isStrikeAction(action, plan2)) {
       frame.pc = 5;
@@ -4538,6 +4590,15 @@ function dispatchVMHook(state, hook2, event) {
   scheduleHooks(state, parent, hook2, newEvent(state, event), vmHost);
   if (idle) stepVM(state, vmHost);
 }
+function removeVMStatus(state, target2, status, reason, actor, detail) {
+  initializeVMWorld(state);
+  const parent = state.vm.stack.at(-1) ?? { sourceId: actor?.id };
+  const idle = state.vm.stack.length === 0;
+  if (idle) state.vm.stepsRemaining = 2e3;
+  const removed = removeStatus(state, target2, status, reason, actor, vmHost, parent, detail);
+  if (idle) stepVM(state, vmHost);
+  return removed;
+}
 function commitVMEffect(state, data) {
   initializeVMWorld(state);
   const parent = state.vm.stack.at(-1) ?? { ownerId: data.sourceId ?? data.targetId, sourceId: data.sourceId ?? null };
@@ -4575,30 +4636,21 @@ var vmHost = {
       started: true
     });
   },
-  expireStatuses(state, hook2, event) {
-    const native = (id3, trigger) => {
-      const unit = own11(state.units, id3);
-      if (unit) expireStatuses(state, unit, trigger, { sourceUnitId: event.actorId, direct: event.direct });
-    };
-    if (hook2 === "after_damage" && event.dealt > 0) native(event.targetId, "on_damaged");
-    if (hook2 === "after_heal" && event.healing > 0) native(event.targetId, "on_heal");
-    if (hook2 === "on_death") for (const id3 of event.units ?? [event.targetId]) native(id3, "on_death");
-    if (hook2 === "on_kill") native(event.killerId, "on_kill");
-    if (hook2 === "on_ally_death") for (const id3 of eventOwners(state, hook2, event)) native(id3, "on_ally_death");
+  expireMatchingStatuses(state, hook2, event) {
     const ids = /* @__PURE__ */ new Set([event.actorId, event.targetId, ...eventOwners(state, hook2, event)]);
     for (const id3 of ids) {
       const unit = own11(state.units, id3);
-      for (const [key4, status] of Object.entries(unit?.statuses ?? {})) {
+      for (const status of Object.values(unit?.statuses ?? {})) {
         const expires = [status.expireOn].flat().some((rule2) => rule2?.hook === hook2 && (rule2.filter === void 0 || evaluateExpr(rule2.filter, {
           self: unit,
           status,
           event,
-          source: own11(state.units, status.sourceId),
-          target: own11(state.units, event.targetId)
+          source: own11(state.units, status.sourceId ?? status.sourceUnitId),
+          target: own11(state.units, event.targetId),
+          attacker: own11(state.units, event.actorId)
         })));
         if (!expires) continue;
-        delete unit.statuses[key4];
-        recordVM(state, unit, "expire", `${unit.name}\u7684${status.name}\u63D0\u524D\u89E3\u9664`, { targetId: id3, statusId: key4, hook: hook2 });
+        removeStatus(state, unit, status, "expired", unit, vmHost, { sourceId: id3 }, { hook: hook2 });
       }
     }
   },
@@ -4645,6 +4697,8 @@ var vmHost = {
   flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true || statusModifier(unit, flag) > 0,
   stat: (state, unit, key4) => mod(state, {}, unit.id, key4, unit.stats?.[key4] ?? 0),
   checkBonus: (state, unit, event) => mod(state, event, unit.id, "checkBonus", 0) + (event.checkKind === "save" ? mod(state, event, unit.id, "resistBonus", 0) : 0),
+  advantage: (state, unit, event) => mod(state, event, unit.id, "advantage", 0),
+  resistBonus: (state, unit, event) => mod(state, event, unit.id, "resistBonus", 0),
   dcBonus: (state, unit, event) => mod(state, event, unit.id, "dcBonus", 0),
   isImmune: (state, unit, key4, frame) => {
     const event = frame?.eventRef ? state.vm?.events?.[frame.eventRef] : void 0;
@@ -4670,7 +4724,8 @@ var vmHost = {
       amount += mod(state, event, source.id, "damageFlat", 0);
       amount = mod(state, event, source.id, "damageMult", amount);
     }
-    if (damageType2 !== "true") {
+    if (damageType2 === "true") amount = mod(state, event, target2.id, "incomingDamageMult", amount);
+    else {
       const pierce = data.armorPierce ?? {
         flat: source ? mod(state, event, source.id, "armorPierce", 0) : 0,
         percent: source ? mod(state, event, source.id, "armorPiercePercent", 0) : 0
@@ -4753,7 +4808,6 @@ var vmHost = {
     }
   },
   runAction({ state, frame, actor, plan, event, overrides: overrides2 }) {
-    if (event.actionType === "skill") expireStatuses(state, actor, "on_skill_cast", { sourceUnitId: actor.id });
     event.power *= overrides2.scale ?? 1;
     event.power *= event.damageScale ?? 1;
     const skill2 = own11(state.skills, event.skillId);
@@ -4800,8 +4854,11 @@ function validVmState(state) {
   const { vm, pools } = state;
   const plain2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
   if (!plain2(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain2(vm.events) || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining) || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain2(pools)) return false;
+  if (vm.startingTurn !== void 0 && (!vm.pendingAsk || vm.endingTurn !== void 0 || vm.startingTurn !== state.order?.[state.turn] || !own11(state.units, vm.startingTurn))) return false;
   if (vm.endingTurn !== void 0 && (!vm.pendingAsk || typeof vm.endingTurn !== "string" || vm.endingTurn !== state.order?.[state.turn] || !own11(state.units, vm.endingTurn))) return false;
-  if (vm.endingTicks !== void 0 && (!vm.endingTurn || !Array.isArray(vm.endingTicks) || !vm.endingTicks.every((id3) => typeof id3 === "string"))) return false;
+  for (const remaining of [vm.endingTicks, vm.endingStatuses]) {
+    if (remaining !== void 0 && (!vm.endingTurn || !Array.isArray(remaining) || !remaining.every((id3) => typeof id3 === "string"))) return false;
+  }
   for (const record3 of [...vm.stack, ...Object.values(vm.events)]) {
     if (!plain2(record3) || Object.hasOwn(record3, "sourceSkillId") && !validVmSourceSkillId(record3.sourceSkillId)) return false;
   }
@@ -5000,7 +5057,7 @@ function statusLogDetail(unit, status) {
 }
 function grantShield(state, unit, amount, { stack, ...options } = {}) {
   const statusId3 = actionStatuses.shield;
-  const previous = stack ? statusOf2(unit, statusId3)?.amount ?? 0 : 0;
+  const previous = stack ? statusOf2(unit, statusId3)?.vars?.shieldAmount ?? 0 : 0;
   return grantStatus(state, unit, statusId3, { ...options, amount: amount + previous });
 }
 function concludeObjective(state, outcome, reason) {
@@ -5050,53 +5107,7 @@ function refreshOutcome(state) {
   }
   return result;
 }
-var validExpiry = (value) => Boolean(value && (Array.isArray(value) ? value : [value]).every((rule2) => typeof (rule2.hook ?? rule2.trigger) === "string"));
-var eventLabels = {
-  on_attack: "\u53D1\u52A8\u653B\u51FB",
-  on_hit: "\u653B\u51FB\u547D\u4E2D",
-  on_struck: "\u53D7\u5230\u547D\u4E2D",
-  on_damaged: "\u53D7\u5230\u4F24\u5BB3",
-  on_kill: "\u51FB\u6740",
-  on_death: "\u5012\u4E0B",
-  on_turn_start: "\u56DE\u5408\u5F00\u59CB",
-  on_turn_end: "\u56DE\u5408\u7ED3\u675F",
-  on_skill_cast: "\u65BD\u653E\u6280\u80FD",
-  on_equip: "\u88C5\u5907\u751F\u6548",
-  on_heal: "\u53D7\u5230\u6CBB\u7597",
-  on_ally_death: "\u961F\u53CB\u5012\u4E0B"
-};
-function expireStatuses(state, unit, trigger, { sourceUnitId = null, direct = false } = {}) {
-  for (const status of values3(unit.statuses)) {
-    const expiry = Object.hasOwn(status, "expireOn") ? status.expireOn : getStatusTemplate(state, status.id)?.expireOn;
-    if (!expiry) continue;
-    const rule2 = [].concat(expiry).find((rule3) => rule3.trigger === trigger && (rule3.damageType == null || rule3.damageType === "any" || rule3.damageType === (direct ? "direct" : "indirect")) && (rule3.exceptSource !== "self" || sourceUnitId !== unit.id));
-    if (!rule2) continue;
-    delete unit.statuses[status.id];
-    record(
-      state,
-      unit,
-      "expire",
-      `${unit.name}\u7684${status.name}\u56E0${eventLabels[trigger]}\u63D0\u524D\u89E3\u9664`,
-      { targetId: unit.id, statusId: status.id, trigger, sourceUnitId, ...trigger === "on_damaged" ? { direct } : {} }
-    );
-  }
-}
-function dispatchEffect(state, actor, trigger, context = {}) {
-  if (actor && !["on_damaged", "on_heal", "active"].includes(trigger)) {
-    expireStatuses(state, actor, trigger, { sourceUnitId: context.sourceUnitId ?? actor.id });
-  }
-  const hook2 = { on_hit: "after_hit", on_damaged: "after_damage", on_heal: "after_heal", on_turn_start: "turn_start", on_turn_end: "turn_end" }[trigger] ?? trigger;
-  if (!actor || !["after_hit", "after_damage", "after_heal", "turn_start", "turn_end", "on_death", "on_ally_death", "on_kill"].includes(hook2)) return;
-  const { target: target2, attacker, killed, weaponId, ...detail } = context;
-  dispatchVMHook(state, hook2, {
-    ...detail,
-    actorId: attacker?.id ?? actor.id,
-    ownerIds: [actor.id],
-    targetId: target2?.id ?? actor.id,
-    ...killed && { killedId: killed.id },
-    ...weaponId && { weaponTemplateId: state.items[weaponId]?.templateId ?? null }
-  });
-}
+var validExpiry = (value) => Boolean(value && (Array.isArray(value) ? value : [value]).every((rule2) => typeof rule2?.hook === "string"));
 function moraleCheck(state) {
   for (const unit of living(state)) {
     if (aggregateModifiers(state, unit.id).controlPolicy.moraleLock === "steady") {
@@ -5170,7 +5181,7 @@ function damageAfterFlatReduction(state, unit, amount, context) {
 }
 function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const shatter = hit ? changes(unit, "shatter", type) : 0;
-  const vulnerability = changes(unit, "vulnerability", type);
+  const vulnerability = modStat(state, unit, "incomingDamageMult", 1, { ...ctx, damageType: type }) - 1;
   const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
   const reduction = type === "true" ? 0 : clamp3(modStat(state, unit, "damageReduction", changes(unit, "reduction", type), defensiveContext), -1, 1);
   const dr = type === "true" ? 0 : clamp3(modStat(state, unit, "dr", 0, defensiveContext), -1, 1);
@@ -5189,7 +5200,7 @@ function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   };
 }
 function guardFor(state, target2) {
-  return living(state).find((u) => u !== target2 && u.team === target2.team && changes(u, "intercept") && !changes(u, "skip") && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
+  return living(state).find((u) => u !== target2 && u.team === target2.team && changes(u, "intercept") && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
 }
 function tick2(state, unit, timing, statuses = values3(unit.statuses)) {
   for (const [index, status] of statuses.entries()) {
@@ -5210,7 +5221,6 @@ function endTurn(state, unit, remainingTicks) {
   if (!unit) return;
   if (remainingTicks === void 0) {
     unit.ap = 0;
-    expireStatuses(state, unit, "on_turn_end", { sourceUnitId: unit.id });
   }
   const pendingTicks = tick2(state, unit, "onTurnEnd", remainingTicks?.map((id3) => tableEntry(unit.statuses, id3)).filter(Boolean));
   if (pendingTicks) {
@@ -5218,21 +5228,27 @@ function endTurn(state, unit, remainingTicks) {
     state.vm.endingTicks = pendingTicks;
     return;
   }
-  dispatchEffect(state, unit, "on_turn_end");
+  dispatchVMHook(state, "turn_end", { actorId: unit.id, targetId: unit.id });
   if (state.vm?.pendingAsk) {
     state.vm.endingTurn = unit.id;
     return;
   }
   completeTurnEnd(state, unit);
 }
-function completeTurnEnd(state, unit) {
-  for (const status of values3(unit.statuses)) {
+function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
+  for (const [index, id3] of remaining.entries()) {
+    const status = statusOf2(unit, id3);
+    if (!status) continue;
     if (status.durationType !== "battle_turns") continue;
     if (status.appliedRound === state.round && status.appliedTurn === state.turn && (!status.expireInto || status.sourceUnitId !== unit.id)) continue;
     if (--status.remainingTurns > 0) continue;
-    delete unit.statuses[status.id];
-    record(state, unit, "expire", `${unit.name}\u7684${status.name}\u7ED3\u675F`, { targetId: unit.id, statusId: status.id });
+    removeVMStatus(state, unit, status, "expired", unit);
     if (status.expireInto && alive3(unit) && !refreshOutcome(state)) grantStatus(state, unit, status.expireInto, { sourceUnitId: unit.id });
+    if (state.vm.pendingAsk) {
+      state.vm.endingTurn = unit.id;
+      state.vm.endingStatuses = remaining.slice(index + 1);
+      return;
+    }
   }
   record(state, unit, "end", `${unit.name}\u7ED3\u675F\u56DE\u5408`);
 }
@@ -5245,23 +5261,15 @@ function settleTurn(state) {
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
     if (state.outcome) return;
-    if (alive3(unit) && !unit.fled) {
-      unit.used = { attack: 0, action: 0 };
-      unit.moved = 0;
-      delete unit.moveSpent;
-      unit.reactionAvailable = true;
-      unit.ap = 2;
-      record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
-      const hold = unit.statuses.suppressed;
-      if (hold?.holdTotal != null) {
-        const roll = randomDie(state, 20), total2 = roll + Math.floor(effectiveStat(state, unit, "str") * unit.hp / unit.maxHp);
-        const success = total2 > hold.holdTotal;
-        if (success) delete unit.statuses.suppressed;
-        record(state, unit, "break_hold", `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total2} \u5BF9 ${hold.holdTotal}\uFF09`, { roll, total: total2, threshold: hold.holdTotal, success });
+    if (unit && (state.vm?.startingTurn === unit.id || alive3(unit) && !unit.fled)) {
+      if (state.vm?.startingTurn !== unit.id) {
+        beginUnitTurn(state, unit);
+        if (state.vm.pendingAsk) {
+          state.vm.startingTurn = unit.id;
+          return;
+        }
       }
-      expireStatuses(state, unit, "on_turn_start", { sourceUnitId: unit.id });
-      tick2(state, unit, "onTurnStart");
-      dispatchEffect(state, unit, "on_turn_start");
+      delete state.vm.startingTurn;
       if (refreshOutcome(state)) {
         unit.ap = 0;
         return;
@@ -5274,7 +5282,7 @@ function settleTurn(state) {
         }
         continue;
       }
-      if (alive3(unit) && !changes(unit, "skip")) return;
+      if (alive3(unit) && !unitSkipped(state, unit)) return;
       if (alive3(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
       endTurn(state, unit);
       if (state.vm?.pendingAsk || refreshOutcome(state)) return;
@@ -5287,6 +5295,33 @@ function settleTurn(state) {
   }
   const stalled = currentUnit(state);
   if (stalled) stalled.ap = 0;
+}
+function beginUnitTurn(state, unit) {
+  unit.used = { attack: 0, action: 0 };
+  unit.moved = 0;
+  delete unit.moveSpent;
+  unit.reactionAvailable = true;
+  unit.ap = unit.apMax = turnAP(state, unit);
+  record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
+  const hold = unit.statuses.suppressed;
+  if (hold?.holdTotal != null) {
+    const roll = randomDie(state, 20);
+    const total2 = roll + Math.floor(effectiveStat(state, unit, "str") * unit.hp / unit.maxHp);
+    const success = total2 > hold.holdTotal;
+    if (success) removeVMStatus(state, unit, hold, "escaped", unit);
+    record(
+      state,
+      unit,
+      "break_hold",
+      `${unit.name}\u6323\u8131\u68C0\u5B9A${success ? "\u6210\u529F\uFF0C\u89E3\u9664\u88AB\u538B\u5236" : "\u5931\u8D25\uFF0C\u4ECD\u88AB\u538B\u5236"}\uFF08${total2} \u5BF9 ${hold.holdTotal}\uFF09`,
+      { roll, total: total2, threshold: hold.holdTotal, success }
+    );
+  }
+  tick2(state, unit, "onTurnStart");
+  dispatchVMHook(state, "turn_start", { actorId: unit.id, targetId: unit.id });
+}
+function turnAP(state, unit) {
+  return clamp3(Math.floor(modStat(state, unit, "apMax", 2)), 0, 1e9);
 }
 function resetFacing(state) {
   for (const unit of living(state)) {
@@ -5386,7 +5421,7 @@ function initiativeOrder(state, rollFor) {
       if (skill2?.initiativeBonus === void 0) continue;
       (skill2.slot === "attack" ? attackInit : actionInit).push(skill2.initiativeBonus);
     }
-    const flatInit = modStat(state, unit, "initiative", Number(unit.flatInitiative ?? 0) + modCheck(state, unit, "iniBonus"));
+    const flatInit = modStat(state, unit, "initiative", Number(unit.flatInitiative ?? 0));
     const total2 = initiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
     return { unitId: unit.id, roll, agility, agilityPercent, attackInit: Math.max(0, ...attackInit, 0), actionInit: Math.max(0, ...actionInit, 0), flatInit, total: total2 };
   }).sort((a, b) => b.total - a.total || b.agility - a.agility || (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
@@ -5398,14 +5433,14 @@ function refreshOpeningInitiative(state) {
   const previous = entry2.detail.initiative;
   if (!Array.isArray(previous) || !currentUnit(state)) return;
   const rolls = new Map(previous.filter((row) => row && Number.isInteger(row.roll)).map((row) => [row.unitId, row.roll]));
-  if (living(state).some((unit) => !rolls.has(unit.id) || changes(unit, "skip"))) return;
+  if (living(state).some((unit) => !rolls.has(unit.id) || unitSkipped(state, unit))) return;
   const initiative2 = initiativeOrder(state, (unit) => rolls.get(unit.id));
   if (initiative2.every((row, i) => row.unitId === previous[i]?.unitId && row.total === previous[i]?.total && row.attackInit === previous[i]?.attackInit && row.actionInit === previous[i]?.actionInit)) return;
   currentUnit(state).ap = 0;
   state.order = initiative2.map((row) => row.unitId);
   entry2.detail.initiative = initiative2;
   const first = currentUnit(state);
-  first.ap = 2;
+  first.ap = first.apMax = turnAP(state, first);
   state.logs.pop();
   record(state, first, "turn", `${first.name}\u5F00\u59CB\u56DE\u5408`, { turn: 0 });
 }
@@ -5491,7 +5526,7 @@ function movementScale(state, unit, type) {
   return { moveM, total: total2, limit: Math.floor(total2 / 1e3) };
 }
 function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
-  if (!alive3(unit) || changes(unit, "rooted") || changes(unit, "skip") || aggregateModifiers(state, unit.id).locks.move) return [];
+  if (!alive3(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
   const scale = movementScale(state, unit, type);
   const spent = unit.moveSpent ?? 0;
   const mult = type === "sprint" ? 2 : 1;
@@ -5616,10 +5651,10 @@ function tauntFor(state, actor, template, ammo) {
   return null;
 }
 function opportunitySources(state, mover) {
-  return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !changes(unit, "skip")).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon: weapon2 }) => !weapon2.ammo && isMelee(weapon2.template) && weapon2.template.damage != null);
+  return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !reactionBlocked(state, unit)).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon: weapon2 }) => !weapon2.ammo && isMelee(weapon2.template) && weapon2.template.damage != null);
 }
 function canReact(state, { unit, weapon: weapon2 }, mover) {
-  if (!alive3(unit) || unit.reactionAvailable === false || changes(unit, "skip")) return false;
+  if (!alive3(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit)) return false;
   const taunter = tauntFor(state, unit, weapon2.template);
   return !taunter || taunter.id === mover.id;
 }
@@ -5715,8 +5750,9 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
     souls: weapon2?.souls ?? 0,
     checkKind: "attack"
   };
-  const guaranteeCrit = hasStrikeDamage(template) && Boolean(changes(actor, "guaranteed_crit"));
-  const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || changes(actor, "guaranteed_hit"));
+  const flags2 = aggregateModifiers(state, actor.id, modifierEvent(actor, strike)).flags;
+  const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags2.guaranteed_crit);
+  const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags2.guaranteed_hit);
   const execution = !cover && target2?.team !== actor.team && ["shaken", "routed"].includes(target2?.moraleState) && ["kill", "concept"].includes(context.intent) && hasStrikeDamage(template);
   const dodge = execution || cover ? 0 : modStat(
     state,
@@ -5746,8 +5782,9 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
   const explicitEvasion = execution ? 0 : changes(target2, "incomingAccuracy");
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
   const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 10 + explicitEvasion + equipmentDefense;
-  const advantages = changes(actor, "advantage") + modCheck(state, actor, "advantage", strike) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
-  const disadvantages = changes(actor, "disadvantage") + (template.disadvantage ?? 0);
+  const delta = modCheck(state, actor, "advantage", strike);
+  const advantages = Math.max(0, delta) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
+  const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
   const advantage = Math.sign(advantages - disadvantages);
   const saveStat = !cover && target2 ? template.save : null;
   const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) + modStat(state, actor, "dcBonus", 0, { target: target2, checkKind: "save" }) : null;
@@ -5976,7 +6013,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   const common = { ok: true, ap, cost: ap, slot: slot2, ...resourceCosts, ...availability };
   if (type === "end") return common;
   if (type === "end_encounter") return ["spar", "arena"].includes(state.battleType) ? { ...common, name: state.battleType === "spar" ? "\u53EB\u505C\u5207\u78CB\uFF08\u5E73\u5C40\uFF09" : "\u5168\u961F\u8BA4\u8F93" } : fail2("\u672C\u573A\u4E0D\u80FD\u76F4\u63A5\u53EB\u505C\u6216\u8BA4\u8F93");
-  if (changes(unit, "skip")) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
+  if (unitSkipped(state, unit)) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
   const cannotPay = paymentError(state, unit, ap, slot2, cost, resourceCosts, type === "skill");
   if (cannotPay) return fail2(cannotPay, { ap, ...availability });
   const center = unplaced ? void 0 : pos(x, y);
@@ -6044,7 +6081,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     return { ...common, name: { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" }[type], maneuver: type, targetId: target2.id };
   }
   if (isMovement(type)) {
-    if (changes(unit, "rooted")) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u79FB\u52A8");
+    if (aggregateModifiers(state, unit.id).locks.move) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u79FB\u52A8");
     const cells3 = reachable(state, type, unit);
     if (unplaced) return { ...common, cells: cells3 };
     const choice = cells3.find((at2) => sameCell(at2, center));
@@ -6473,7 +6510,6 @@ function continueStrike({ state, frame, host }) {
   }
   if (!frame.started) {
     frame.started = true;
-    if (plan.hostile || weapon2) expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
     if (!sameCell(actor, plan.center)) actor.facing = facingToward(actor, plan.center);
   }
   const profile = frame.profile ?? plan.targets?.[frame.pc];
@@ -6625,11 +6661,6 @@ function continueStrike({ state, frame, host }) {
   }
   if (frame.phase === "after_hit" && profile.kind !== "cover") {
     frame.phase = "followup";
-    if (plan.hostile || weapon2 || action.type === "shield_bash") {
-      expireStatuses(state, actor, "on_hit", { sourceUnitId: actor.id });
-      const struck = state.units[event.targetId];
-      if (struck) expireStatuses(state, struck, "on_struck", { sourceUnitId: actor.id });
-    }
     if (action.type === "shield_bash") event.rules = shieldBashRules;
     host.hooks(state, frame, "after_hit", frame.awaitEvent);
     return;
@@ -6663,7 +6694,7 @@ function continueMovement(state, actor, type, plan, progress, host) {
   progress.initialCover ??= nearbyCovers(state, actor).map((c) => c.id);
   const path2 = progress.path;
   const to = plan.path[path2.length];
-  if (to && alive3(actor) && !actor.fled && !changes(actor, "skip") && !changes(actor, "rooted")) {
+  if (to && alive3(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move) {
     progress.reactors ??= type === "disengage" ? [] : opportunitySources(state, actor).map(({ unit }) => unit.id);
     while (progress.reactors.length) {
       const unit = tableEntry(state.units, progress.reactors.shift());
@@ -6735,7 +6766,6 @@ function continueInteraction(state, actor, plan, progress) {
     if (!sameCell(actor, item)) actor.facing = facingToward(actor, item);
     record(state, actor, "interact", `${actor.name}${item.kind === "barrel" ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`, { interactiveId: item.id });
     if (effect === "explode") {
-      expireStatuses(state, actor, "on_attack", { sourceUnitId: actor.id });
       const weapon2 = weaponInfo(state, actor);
       if (weapon2.ammo && !weapon2.infiniteAmmo) spendAmmo(state, actor, weapon2, weapon2.ammo);
       progress.targets = plan.targets.map((profile) => profile.id);
@@ -6776,6 +6806,9 @@ function applyAction(state, action) {
       state.vm.events = {};
       delete state.vm.endingTurn;
       delete state.vm.endingTicks;
+      delete state.vm.endingStatuses;
+      delete state.vm.startingTurn;
+      delete state.vm.settlingTurn;
     } else {
       const before2 = state.logs.length;
       const actor2 = currentUnit(state);
@@ -6783,14 +6816,18 @@ function applyAction(state, action) {
       if (!result.pendingAsk && state.vm.endingTurn) {
         const endingUnit = state.units[state.vm.endingTurn];
         const remainingTicks = state.vm.endingTicks;
+        const remainingStatuses = state.vm.endingStatuses;
         delete state.vm.endingTurn;
         delete state.vm.endingTicks;
+        delete state.vm.endingStatuses;
         if (remainingTicks) endTurn(state, endingUnit, remainingTicks);
-        else completeTurnEnd(state, endingUnit);
+        else completeTurnEnd(state, endingUnit, remainingStatuses);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) {
           advanceCursor(state);
           settleTurn(state);
         }
+      } else if (!result.pendingAsk && state.vm.startingTurn) {
+        settleTurn(state);
       } else if (!result.pendingAsk && state.vm.settlingTurn) {
         if (!refreshOutcome(state)) settleTurn(state);
         else delete state.vm.settlingTurn;
@@ -6864,7 +6901,6 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       actor.mainHand = actor.weapon = plan.itemId;
       actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
       if (actor.stance === "attunement" && !actor.attunementCharges) actor.stance = "light_blade";
-      if (!fromOff) dispatchEffect(state, actor, "on_equip", { equippedItemId: plan.itemId, weaponId: plan.itemId });
       break;
     }
     case "use_item": {
@@ -6902,7 +6938,7 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       break;
     case "free_ally": {
       const ally = state.units[plan.targetId];
-      delete ally.statuses.suppressed;
+      removeVMStatus(state, ally, ally.statuses.suppressed, "freed", actor);
       record(state, actor, "free_ally", `${actor.name}\u4E3A${ally.name}\u89E3\u9664\u538B\u5236`, { targetId: ally.id });
       break;
     }
@@ -7270,8 +7306,12 @@ var statusLabels = ["name", "icon", "category", "description"];
 var maxStatusStacks = 999999;
 var maxStatusTemplates = 64;
 var has = (record3, key4) => id2(key4) && own12(record3 ?? {}, key4);
-function fields(v, required, optional = []) {
-  requireThat(plain(v) && required.every((k) => own12(v, k)) && Object.keys(v).every((k) => required.includes(k) || optional.includes(k)), required.join("/") || "\u5BF9\u8C61\u952E");
+function fields(v, required, optional = [], entityLabel = "\u5BF9\u8C61") {
+  requireThat(plain(v), entityLabel);
+  const missing = required.filter((key4) => !own12(v, key4));
+  const unsupported = Object.keys(v).filter((key4) => !required.includes(key4) && !optional.includes(key4));
+  if (missing.length) error(`${entityLabel}\u7F3A\u5C11\u5FC5\u586B\u5B57\u6BB5\uFF1A${missing.join("\u3001")}`);
+  if (unsupported.length) error(`${entityLabel}\u5305\u542B\u4E0D\u652F\u6301\u7684\u5B57\u6BB5\uFF1A${unsupported.join("\u3001")}`);
 }
 function checkOptional(o, key4, check) {
   if (own12(o, key4)) requireThat(check(o[key4]), key4);
@@ -7294,20 +7334,17 @@ function dice3(v) {
   checkOptional(v, "multiplier", (x) => num(x, 0, 8));
   checkOptional(v, "type", (x) => damageTypes.includes(x));
 }
-var damageEvents = ["on_attack", "on_hit", "on_damaged", "on_kill", "on_death", "on_turn_start", "on_turn_end", "on_skill_cast", "on_equip", "on_heal", "on_ally_death", "on_struck"];
-function nativeExpiry(value) {
-  const valid2 = (rule2) => plain(rule2) && damageEvents.includes(rule2.trigger) && Object.keys(rule2).every((key4) => ["trigger", "exceptSource", "damageType"].includes(key4)) && (!own12(rule2, "exceptSource") || rule2.exceptSource === "self") && (!own12(rule2, "damageType") || rule2.trigger === "on_damaged" && ["any", "direct", "indirect"].includes(rule2.damageType));
-  return Array.isArray(value) ? value.length <= 12 && Array.from(value).every(valid2) : valid2(value);
+function vmExpiry2(value) {
+  const rules = Array.isArray(value) ? value : [value];
+  return rules.length > 0 && rules.every((rule2) => plain(rule2) && vmHooks.includes(rule2.hook) && Object.keys(rule2).every((key4) => ["hook", "filter"].includes(key4)) && (!own12(rule2, "filter") || typeof rule2.filter === "boolean" || typeof rule2.filter === "string" && validExpr(rule2.filter)));
 }
-var vmExpiry = (value) => plain(value) && vmHooks.includes(value.hook) && Object.keys(value).every((key4) => ["hook", "filter"].includes(key4)) && (!own12(value, "filter") || typeof value.filter === "boolean" || typeof value.filter === "string" && validExpr(value.filter));
 var stackModes = ["refresh", "stack", "replace", "extend"];
-var carrierFields = ["tags", "tier", "vars", "flags", "mods", "rules"];
 var numericExpr2 = (value) => Number.isFinite(value) || typeof value === "string" && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
   if (own12(value, "tags")) list2(value.tags, 32, resolved ? (tag2) => text2(tag2) : validVmTag, "VM \u6807\u7B7E");
   if (own12(value, "flags")) list2(value.flags, 8, (flag) => ["undispellable", "concept_immune"].includes(flag), "VM \u6807\u8BB0");
   checkOptional(value, "tier", (tier) => int(tier, 1, 7));
-  if (own12(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : typeof entry2 === "boolean" || numericExpr2(entry2), "VM \u53D8\u91CF"));
+  if (own12(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : validCarrierScalar(entry2), "VM \u53D8\u91CF"));
   if (own12(value, "mods")) list2(value.mods, 200, (mod2) => {
     const error2 = vmStatModError(mod2);
     requireThat(!error2, error2);
@@ -7339,7 +7376,7 @@ function statusTemplate(value, key4 = value?.id, state) {
   checkOptional(value, "durationType", (duration2) => statusDurations.includes(duration2));
   checkOptional(value, "stackMode", (mode) => stackModes.includes(mode));
   checkOptional(value, "maxStacks", validStackCap);
-  checkOptional(value, "expireOn", vmExpiry);
+  checkOptional(value, "expireOn", vmExpiry2);
   carrierFieldsValue(value, state);
 }
 function statusLifetime(v) {
@@ -7348,7 +7385,7 @@ function statusLifetime(v) {
 function nativeStatusTemplate(v, key4) {
   fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers"], ["expireInto", "expireOn"]);
   checkOptional(v, "expireInto", id2);
-  checkOptional(v, "expireOn", nativeExpiry);
+  checkOptional(v, "expireOn", vmExpiry2);
   requireThat(id2(key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
   requireThat(text2(v.name) && text2(v.icon, 24) && text2(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
   requireThat(statusLifetime(v) && validStackCap(v.maxStacks), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
@@ -7437,11 +7474,10 @@ function skillTemplate(v, state) {
 }
 function statusValue(v, key4, state, ownerId) {
   if (own12(v ?? {}, "templateId")) {
-    const { templateId, ownerId: owner, sourceId: sourceId2, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, ...rest } = v;
+    const { templateId, ownerId: owner, sourceId: sourceId2, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, ...rest } = v;
     const template = getStatusTemplate(state, key4);
     const { vars, modifiers: modifiers2, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
     if (template?.modifiers) {
-      if (own12(definition, "expireOn") && nativeExpiry(definition.expireOn)) delete definition.expireOn;
       if (own12(rest, "modifiers")) validateStatusModifiers(template, modifiers2);
       if (own12(rest, "stackRule")) requireThat(statusStackRules.includes(stackRule), "\u539F\u751F\u72B6\u6001\u53E0\u5C42");
       if (own12(rest, "tickTiming")) requireThat(statusTickTimings.includes(tickTiming), "\u539F\u751F\u72B6\u6001\u65F6\u673A");
@@ -7453,6 +7489,7 @@ function statusValue(v, key4, state, ownerId) {
       requireThat(["unit", "skill", "status", "item", "zone"].includes(sourceCarrier.type) && validVmSourceSkillId(sourceCarrier.id), "\u72B6\u6001\u6765\u6E90\u8F7D\u4F53");
       checkOptional(sourceCarrier, "ownerId", id2);
     }
+    if (appliedRound !== void 0 || appliedTurn !== void 0) requireThat(int(appliedRound, 1, 1e6) && int(appliedTurn, 0, 199), "\u72B6\u6001\u65BD\u52A0\u56DE\u5408");
     checkOptional(v, "effectiveTier", (x) => int(x, 1, 7));
     if (own12(v, "authorityRank") || own12(v, "sourceTier")) requireThat(int(authorityRank, 1, 8) && int(sourceTier, 1, 7), "\u72B6\u6001\u6765\u6E90\u4F4D\u683C");
     statusTemplate(definition, key4, state);
@@ -7468,7 +7505,7 @@ function statusValue(v, key4, state, ownerId) {
   checkOptional(v, "stackMode", (mode) => stackModes.includes(mode));
   carrierFieldsValue(v, state, true);
   checkOptional(v, "holdTotal", (x) => v.id === "suppressed" && Number.isFinite(x));
-  checkOptional(v, "expireOn", (x) => x === null || nativeExpiry(x));
+  checkOptional(v, "expireOn", (x) => x === null || vmExpiry2(x));
   requireThat(v.expireInto === t.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
   requireThat(v.id === key4 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
   fields(v.modifiers, Object.keys(t.modifiers));
@@ -7484,7 +7521,7 @@ function validateCell(v) {
 var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
 var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
 function unitValue(v, key4, state) {
-  fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
+  fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
   carrierFieldsValue(v, state, true);
   if (own12(v, "pools")) poolBindings(v.pools);
   for (const k of ["templateId", "sourceId"]) checkOptional(v, k, id2);
@@ -7492,7 +7529,7 @@ function unitValue(v, key4, state) {
   checkOptional(v, "summonGroup", (group) => text2(group, 512));
   if (own12(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
   checkOptional(v, "summoned", (x) => x === true);
-  for (const key5 of ["initialMaxHp", "initialMaxMp", "initialMaxSp"]) checkOptional(v, key5, (x) => int(x, 0, 1e9));
+  for (const key5 of ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax"]) checkOptional(v, key5, (x) => int(x, 0, 1e9));
   checkOptional(v, "moved", (x) => int(x, 0, 1e9));
   checkOptional(v, "rawMove", (x) => num(x, 0, 1e3));
   checkOptional(v, "moveM", (x) => num(x, 0, 1e6));
@@ -7512,7 +7549,7 @@ function unitValue(v, key4, state) {
   for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat((v.pools ? num : int)(v[max], r === "hp" ? 1 : 0, 1e9) && (v.pools ? num : int)(v[r], 0, v[max]), r);
   fields(v.used, ["action", "attack"]);
   fields(v.stats, attrs2);
-  requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 0, 1e6), "\u5355\u4F4D\u6570\u503C");
+  requireThat(attrs2.every((k) => int(v.stats[k], -20, 50)) && int(v.ap, 0, v.apMax ?? 2) && int(v.used.action, 0, 2) && int(v.used.attack, 0, 2) && int(v.armor, 0, 1e6) && int(v.size, 1, 5) && int(v.move, 0, 1e6), "\u5355\u4F4D\u6570\u503C");
   requireThat(v.weapon === null || id2(v.weapon), "weapon");
   for (const slot2 of ["mainHand", "offHand", "shield"]) checkOptional(v, slot2, (x) => x === null || id2(x));
   checkOptional(v, "bodyLengthM", (x) => num(x, 0.01, 1e9));
@@ -7628,20 +7665,23 @@ function validatePools(state) {
     fields(pool, ["id", "kind", "contributors", "current", "max", "reloadable"], ["initialMax"]);
     requireThat(validPoolId(key4) && pool.id === key4 && ["hp", "mp", "sp", "custom"].includes(pool.kind) && num(pool.max, 0, Number.MAX_VALUE) && (!own12(pool, "initialMax") || num(pool.initialMax, 0, Number.MAX_VALUE)) && num(pool.current, 0, pool.max) && typeof pool.reloadable === "boolean", "\u8D44\u6E90\u6C60");
     const owners = bindings.get(key4);
-    requireThat(owners?.size > 0 && (pool.kind !== "custom" || owners.size === 1), "\u8D44\u6E90\u6C60\u5F52\u5C5E");
+    if (!owners?.size) error(`\u8D44\u6E90\u6C60 ${key4} \u662F\u65E0\u4EBA\u5F15\u7528\u7684\u5B64\u513F\u6C60`);
+    if (pool.kind === "custom" && owners.size > 1) {
+      error(`\u81EA\u5B9A\u4E49\u8D44\u6E90\u6C60 ${key4} \u88AB\u591A\u4E2A\u5B9E\u4F53\u91CD\u590D\u7ED1\u5B9A\uFF08${[...owners.keys()].join("\u3001")}\uFF09\u3002\u8BF7\u5728\u6A21\u677F /equipment/<id>/pools \u6216 /skills/<id>/pools \u58F0\u660E\u81EA\u5B9A\u4E49\u6C60\uFF0C\u5B9E\u4F8B /units/.../pools \u6216 /items/.../pools \u53EA\u4FDD\u5B58\u7ED1\u5B9A\u3002`);
+    }
     list2(pool.contributors, 200, (contribution) => {
       fields(contribution, ["ownerKind", "ownerId", "maxBase"], ["initialMaxBase"]);
       const ownerKey = `${contribution.ownerKind}/${contribution.ownerId}`;
       return id2(contribution.ownerId) && owners.get(ownerKey) === pool.kind && num(contribution.maxBase, 0, Number.MAX_VALUE) && (!own12(contribution, "initialMaxBase") || num(contribution.initialMaxBase, 0, Number.MAX_VALUE)) && owners.delete(ownerKey);
     }, "\u8D44\u6E90\u6C60\u8D21\u732E\u8005");
-    requireThat(owners.size === 0, "\u8D44\u6E90\u6C60\u7ED1\u5B9A");
+    if (owners.size) error(`\u8D44\u6E90\u6C60 ${key4} \u7684\u8D21\u732E\u8005\u672A\u5B8C\u6574\u5339\u914D\uFF1A${[...owners.keys()].join("\u3001")}`);
     if (own12(pool, "initialMax")) {
       const initialTotal = pool.contributors.reduce((sum, contribution) => sum + (contribution.initialMaxBase ?? contribution.maxBase), 0);
       requireThat(pool.initialMax === initialTotal, "\u8D44\u6E90\u6C60\u521D\u59CB\u4E0A\u9650");
     }
     bindings.delete(key4);
   }
-  requireThat(bindings.size === 0, "\u8D44\u6E90\u6C60\u5F15\u7528");
+  if (bindings.size) error(`\u8D44\u6E90\u6C60\u5F15\u7528\u9519\u8BEF\uFF1A${[...bindings.keys()].join("\u3001")} \u672A\u5728\u8D44\u6E90\u6C60\u8868\u4E2D\u58F0\u660E\uFF08\u6216\u5B58\u5728\u65E0\u6548 poolId\uFF09`);
   for (const unit of Object.values(state.units)) {
     for (const [kind, maxKey] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
       const pool = pools[unit.pools?.[kind]];
@@ -8353,10 +8393,6 @@ var get = (table4, key4, label) => {
 };
 var nonempty = (patch) => requireThat(plain(patch) && Object.keys(patch).length > 0, "patch");
 var builtins = ["hp", "mp", "sp"];
-var deleteOwnedPools = (state, owner) => {
-  for (const poolId of Object.values(owner.pools ?? {})) delete state.pools[poolId];
-};
-var statusPatchFields = ["remainingTurns", "durationType", "stackMode", "stacks", "vars", "mods", "expireOn"];
 var commands = {
   set_unit_stat(s, c) {
     fields(c, ["type", "unitId", "patch"]);
@@ -8457,8 +8493,7 @@ var commands = {
     const unit = get(s.units, c.unitId, "unitId");
     const status = unit.statuses[c.statusId];
     requireThat(!status?.flags?.includes("undispellable"), "\u8BE5\u72B6\u6001\u4E0D\u53EF\u9A71\u6563");
-    if (status) deleteOwnedPools(s, status);
-    delete unit.statuses[c.statusId];
+    if (status) removeVMStatus(s, unit, status, "dispelled", unit);
   },
   adjust_pool(s, c) {
     fields(c, ["type", "poolId", "operation", "value"]);
@@ -8691,7 +8726,13 @@ function statusNotes(detail) {
   for (const [key4, label] of Object.entries(flagModifiers)) if (m[key4]) parts.push(label);
   if (detail.expireOn) {
     const triggers = [].concat(detail.expireOn).map((rule2) => {
-      const qualifier = rule2.damageType === "direct" ? "\u53D7\u5230\u76F4\u63A5\u4F24\u5BB3" : rule2.damageType === "indirect" ? "\u53D7\u5230\u95F4\u63A5\u4F24\u5BB3" : expiryEvents[rule2.trigger] ?? { after_damage: "\u53D7\u5230\u4F24\u5BB3", after_hit: "\u547D\u4E2D", turn_start: "\u56DE\u5408\u5F00\u59CB", turn_end: "\u56DE\u5408\u7ED3\u675F" }[rule2.hook] ?? "\u6EE1\u8DB3\u6761\u4EF6";
+      const qualifier = rule2.damageType === "direct" ? "\u53D7\u5230\u76F4\u63A5\u4F24\u5BB3" : rule2.damageType === "indirect" ? "\u53D7\u5230\u95F4\u63A5\u4F24\u5BB3" : expiryEvents[rule2.trigger] ?? {
+        after_damage: "\u53D7\u5230\u4F24\u5BB3",
+        after_hit: rule2.filter?.includes?.("target.id == self.id") ? "\u53D7\u5230\u547D\u4E2D" : "\u547D\u4E2D",
+        after_action: "\u884C\u52A8\u7ED3\u675F",
+        turn_start: "\u56DE\u5408\u5F00\u59CB",
+        turn_end: "\u56DE\u5408\u7ED3\u675F"
+      }[rule2.hook] ?? "\u6EE1\u8DB3\u6761\u4EF6";
       return qualifier + (rule2.exceptSource === "self" ? "\uFF08\u81EA\u8EAB\u6765\u6E90\u9664\u5916\uFF09" : "");
     });
     parts.push(`${triggers.join("\u6216")}\u65F6\u89E3\u9664`);
@@ -9014,7 +9055,8 @@ function createGameAPI() {
   function restore(snapshot) {
     if (!shape(snapshot, ["kind", "version", "origin", "state", "journal"]) || snapshot.kind !== "battle" || snapshot.version !== battleVersion || !Array.isArray(snapshot.journal) || snapshot.journal.length > maxHistory) fail3("\u4EC5\u652F\u6301\u7248\u672C 11 \u7684\u6218\u5C40\u5FEB\u7167");
     validateState(snapshot.origin);
-    if (snapshot.origin.vm?.pendingAsk) fail3("\u5FEB\u7167\u8D77\u70B9\u4E0D\u5F97\u5305\u542B\u6302\u8D77\u4E2D\u7684\u52A8\u4F5C");
+    if (snapshot.origin.vm?.pendingAsk && !snapshot.origin.vm.startingTurn && !snapshot.origin.vm.settlingTurn && !snapshot.origin.vm.endingTurn)
+      fail3("\u5FEB\u7167\u8D77\u70B9\u4EC5\u5141\u8BB8\u6302\u8D77\u7684\u56DE\u5408\u7ED3\u7B97");
     const start = copy(snapshot.origin), history = [];
     let next = start;
     for (const transaction of snapshot.journal) {
@@ -17010,7 +17052,7 @@ var modLabels = {
 var ratioStats2 = /* @__PURE__ */ new Set(["armorPiercePercent", "damageReduction", "dr"]);
 var percent2 = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 10 });
 var slots2 = { action: "\u52A8\u4F5C", attack: "\u653B\u51FB", move: "\u79FB\u52A8", cast: "\u65BD\u6CD5", reaction: "\u53CD\u5E94" };
-var flags2 = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3" };
+var flags = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3" };
 var checks = { attack: "\u653B\u51FB", save: "\u8C41\u514D", contest: "\u5BF9\u6297", d20: "\u666E\u901A", chance: "\u6982\u7387" };
 var signed2 = (n, asPercent) => typeof n === "number" ? `${n >= 0 ? "+" : ""}${asPercent ? percent2.format(n) : n}` : `\u6309\u516C\u5F0F ${n}`;
 function modSummary(mod2) {
@@ -17024,7 +17066,7 @@ function modSummary(mod2) {
     parts.push([modLabels[mod2.stat], ...values5].join(" "));
   }
   if (mod2.locks?.length) parts.push(`\u7981\u6B62${mod2.locks.map((slot2) => slots2[slot2]).join("\u3001")}`);
-  if (mod2.flags?.length) parts.push(...mod2.flags.map((flag) => flags2[flag]));
+  if (mod2.flags?.length) parts.push(...mod2.flags.map((flag) => flags[flag]));
   const policy = mod2.controlPolicy;
   if (policy?.controller) parts.push(policy.controller === "ai" ? "\u7531 AI \u63A7\u5236" : "\u6062\u590D\u9ED8\u8BA4\u63A7\u5236");
   if (policy?.allegiance) parts.push({ normal: "\u6B63\u5E38\u9635\u8425\u5173\u7CFB", friendly_only: "\u4EC5\u53CB\u65B9", all_hostile: "\u6240\u6709\u5355\u4F4D\u89C6\u4E3A\u654C\u65B9" }[policy.allegiance]);
