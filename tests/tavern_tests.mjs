@@ -6,7 +6,10 @@ import { applyAction, preview, switchableWeapons } from '../src/core/combat.js';
 import { changedEntryKeys, diagnosticText, normalizationCandidates, pendingDiagnostics, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, warningEntryKey, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
 import { normalizationTransactions, replayNormalization } from '../src/tavern/normalization-replay.js';
-import { applyPatch } from '../src/tavern/overlay.js';
+import { applyPatch, TAVERN_VERSION } from '../src/tavern/overlay.js';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const packageVersion = require('../package.json').version;
 import { duplicateMappings, duplicateOperations, instanceGroups } from '../src/tavern/instance-groups.js';
 import { fillInstance, ruleSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
@@ -26,6 +29,17 @@ const mvu = {
 };
 
 const damageOp = (damageType, amount) => ({ op: 'damage', target: 'target', damageType, amount });
+
+test('facade exports remain loadable and Tavern version matches package metadata', async () => {
+  assert.equal(TAVERN_VERSION, packageVersion);
+  const [combat, converter, overlay] = await Promise.all([
+    import('../src/core/combat.js'), import('../src/tavern/converter.js'), import('../src/tavern/overlay.js'),
+  ]);
+  for (const module of [combat, converter, overlay]) assert.ok(Object.keys(module).length > 0);
+  assert.equal(typeof combat.applyAction, 'function');
+  assert.equal(typeof converter.hydrateFromSources, 'function');
+  assert.equal(typeof overlay.mountTavernOverlay, 'function');
+});
 const setResource = (state, unit, key, current) => updatePoolCurrent(state, getPool(state, unit.id, key).id, 'set', current);
 
 function setMaxResource(state, unit, key, max, current = max) {
