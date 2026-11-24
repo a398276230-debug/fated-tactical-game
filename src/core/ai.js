@@ -1,5 +1,6 @@
 import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, visibleEnemy } from './combat.js';
-import { aggregateModifiers } from './vm-carriers.js';
+import { aggregateModifiers, unitSkipped } from './vm-carriers.js';
+import { zoneContains } from './vm-select.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
@@ -26,7 +27,7 @@ export function tactics(state, actor, action, plan) {
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target.hp ? Math.min(profile.hitChance ?? 1, damage / target.hp) : 0;
     const locks = aggregateModifiers(state, target.id).locks;
-    const controlled = Object.values(locks).some(Boolean) || ['skip','rooted','disadvantage'].some(key => locks[key] || aggregateModifiers(state, target.id).stats[key]?.flat > 0);
+    const controlled = unitSkipped(state, target) || Object.values(locks).some(Boolean);
     const statusValue = (controlled ? (enemy ? 8 : -8) : 0)
       + Object.values(target.statuses ?? {}).filter(status => status.durationType === 'battle_turns').length;
     score += sign * (Math.min(target.hp, damage) + kill * 6 + statusValue);
@@ -195,6 +196,45 @@ function approach(state, actor, enemies, suppress = false) {
   return best?.path ?? [];
 }
 
+function zoneOperationScore(state, zone, unit) {
+  const owner = state.units?.[zone.ownerId];
+  const hostile = owner?.team != null && owner.team !== unit.team;
+  const text = rule => typeof rule.filter === 'string' && /target\\.team\\s*!=\\s*source\\.team/.test(rule.filter);
+  const walk = (program, multiplier = 1) => (program ?? []).reduce((score, op) => {
+    let value = 0;
+    if (op.op === 'damage') value = -26;
+    else if (op.op === 'resource' && ['sub', 'sub_max'].includes(op.mode) && op.pool === 'hp') value = -26;
+    else if (op.op === 'heal') value = 14;
+    else if (op.op === 'apply_status') {
+      const category = state.statusTemplates?.[op.statusId]?.category;
+      value = category === 'control' ? -24 : ['dot', 'debuff'].includes(category) ? -16 : ['buff', 'hot', 'shield'].includes(category) ? 12 : 0;
+    }
+    if (op.op === 'if') value += walk(op.then, multiplier) + walk(op.else, multiplier);
+    if (op.op === 'for_each') value += walk(op.body, multiplier);
+    if (op.op === 'check') value += walk(op.onPass, multiplier) + walk(op.onFail, multiplier);
+    return score + value * multiplier;
+  }, 0);
+  return (zone.rules ?? []).reduce((score, rule) => {
+    const value = walk(rule.program);
+    return score + (hostile || !text(rule) ? value : Math.max(0, value));
+  }, 0) + (zone.mods ?? []).reduce((score, mod) => {
+    if (mod.locks?.length) return score + (hostile ? -24 : 12);
+    const flat = typeof mod.flat === 'number' ? mod.flat : 0;
+    const mult = typeof mod.mult === 'number' ? mod.mult : 1;
+    const negative = (mod.stat === 'incomingDamageMult' && mult > 1) || (['movement', 'dodge', 'checkBonus', 'damageReduction', 'dr'].includes(mod.stat) && flat < 0) || (mod.stat === 'incomingAccuracy' && flat > 0);
+    const positive = (mod.stat === 'damageReduction' || mod.stat === 'dr' || mod.stat === 'damageMult' || mod.stat === 'armor') && (flat > 0 || mult > 1)
+      || mod.flags?.some(flag => ['hidden', 'untargetableSingle', 'intercept'].includes(flag));
+    return score + (negative ? (hostile ? -14 : 0) : positive ? (hostile ? 0 : 12) : 0);
+  }, 0);
+}
+
+export function zoneCellScore(state, unit, cell = unit) {
+  return Object.values(state.zones ?? {}).reduce((score, zone) => {
+    if (!zoneContains(state, zone, { ...cell, z: cell.z ?? elevation(state, cell) })) return score;
+    return score + zoneOperationScore(state, zone, { ...unit, x: cell.x, y: cell.y });
+  }, 0);
+}
+
 function coverQuality(state, destination, enemies) {
   return Math.max(0, ...enemies.map(enemy => (coverBetween(state, enemy, destination)?.cover ?? 0) * .35));
 }
@@ -276,7 +316,9 @@ export function chooseAction(state) {
       const progress = baseline - distance;
       const high = elevation(state, cell) - z0;
       const cover = coverQuality(state, cell, objectives) - startingCover;
-      let score = (projectedDepth ? 1.8 + projectedDepth * .55 : progress * .35) + high * .8 + cover;
+      const zoneDelta = zoneCellScore(state, actor, cell) - zoneCellScore(state, actor, actor);
+      let score = (projectedDepth ? 1.8 + projectedDepth * .55 : progress * .35) + high * .8 + cover + zoneDelta;
+      if (zoneCellScore(state, actor, actor) <= -14 && zoneDelta > 0) score += Math.min(50, 14 + zoneDelta);
       if (cell.bankedProgress != null) {
         const gain = cell.bankedProgress - (actor.moveCarryPermille ?? 0);
         if (gain <= 0 || !plannedPath.length) continue;
@@ -297,7 +339,7 @@ export function chooseAction(state) {
         used: { ...actor.used, action: actor.used.action + 1 } };
       const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
       const followup = Math.max(0, ...aimedOptions(shadow, moved, true).map(choice => choice.score));
-      if (followup > 0) score += followup * .84;
+      if (followup > 0) score += followup * .84 + (zoneCellScore(state, moved, moved) - zoneCellScore(state, actor, actor)) * .35;
       // Reload and wait instead of charging blindly with an empty weapon.
       if (followup === 0 && canReload.ok && canReload.ammo === 0) score -= 3;
     }

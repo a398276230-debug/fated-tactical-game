@@ -6,6 +6,7 @@ const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user
 距离与高度：攻击和技能按三维欧氏距离 sqrt(dx²+dy²+dz²) 检查射程。z 是格子高度加单位离地高度。高处攻击低处时，远程攻击通常获得最多+1格射程，低处攻击高处时通常减少1格射程，实际值以技能/装备数据和预览规则为准。移动每跨一格有高度限制，平地通常只能跨1级高度，坡地可跨2级，墙不能通行。移动到高处或低处会消耗路径允许的动作预算，不能把二维相邻当作一定可达。
 视线与隔断：墙体和非可站立格会阻断视线。攻击、远程技能、爆桶引爆和范围效果都要有通畅视线。范围技能以实际形状、半径、宽度、角度和三维距离取格，不能穿墙或隔断。环形以落点为中心并排除中心格，范围伤害可能波及友军。射程为 0 的扇形、锥形和直线沿施术者当前朝向展开。
 掩体：掩体位于攻击者与目标的射线或目标迎击侧时生效，按掩体 cover 数值降低命中或保护目标。攻击者或目标比掩体高至少2级时可以越过该掩体，掩体不再提供遮挡。掩体有自己的 HP，可以被攻击或爆炸破坏，破坏后不再遮挡。不要把掩体当成墙，掩体通常不阻断视线，只改变命中与伤害条件。
+区域：zones 是持续生效的区域规则；避免在敌方伤害、控制或减益区域内停留或结束移动。若当前身处敌方危险区域且未受定身限制，优先移动脱离后再出手；也可利用位移技能把敌人推入己方有利区域。
 互动：祭坛需要相邻且有视线，消耗动作槽，按其声明的效果回复生命、MP、SP、护盾或状态。爆桶需要使用者的当前武器射程和视线，消耗攻击槽与弹药，按互动点声明的半径和伤害对范围内单位与掩体造成能量伤害，也可能波及友方。互动点使用一次后不可重复使用，必须依据输入里的 effect、radius、damage、x、y、z 判断，不能仅凭名称猜测。
 全览：allUnits 列出场上每个单位的 id、名称、阵营、存活/撤离、三维位置、离地高度、HP/MP/SP及上限、行动槽、反应、战意、全部状态、当前装备、装备计数器、背包、技能、技能范围和可移动格。不要只看 units 中的当前敌方行动者。
 战斗类型：切磋双方非致死并在低于30%生命时退场，竞技双方非致死至1生命出局，压制战只有压制方的压制动作留活口，守卫战蓝方坚持5轮。战意会影响命中，所有战斗只有站在地图边界才能逃跑。技能、装备主动效果和背包消耗品都可能有次数、冷却和资源费用，必须优先依据输入中的实际数据。
@@ -71,8 +72,14 @@ export function battleAiPayload(state) {
     if (carry || move || sprint) movementCarry[unit.id] = { currentPercent: carry / 10,
       ...(move && { movePercent: move.bankedProgress / 10 }), ...(sprint && { sprintPercent: sprint.bankedProgress / 10 }) };
   }
+  const zones = Object.keys(state.zones ?? {}).length ? Object.values(state.zones).map(zone => ({
+    id: zone.id, name: zone.name ?? zone.templateId ?? zone.id, ownerId: zone.ownerId ?? null,
+    ownerTeam: state.units?.[zone.ownerId]?.team ?? null, remainingTurns: zone.remainingTurns ?? null,
+    area: zone.area, effectsSummary: { mods: (zone.mods ?? []).map(mod => ({ stat: mod.stat, locks: mod.locks, flags: mod.flags })),
+      rules: (zone.rules ?? []).map(rule => ({ hook: rule.hook, ops: (rule.program ?? []).map(op => op.op) })) },
+  })) : undefined;
   return { rules: RULES, battle: { title: state.title, type: state.battleType, suppressingTeam: state.suppressingTeam ?? null, round: state.round, turnUnitId: current,
-    units: actors, allUnits: Object.values(state.units).map(unit => unitView(state, unit)),
+    units: actors, allUnits: Object.values(state.units).map(unit => unitView(state, unit)), ...(zones ? { zones } : {}), 
     covers: Object.values(state.covers).map(c => ({ id:c.id, name:c.name, x:c.x, y:c.y, z:elevation(state,c), hp:c.hp, maxHp:c.maxHp, cover:c.cover, material:c.material })),
     interactives: Object.values(state.interactives).map(i => ({ id:i.id, name:i.name, kind:i.kind, effect:i.effect, radius:i.radius ?? 0, damage:i.damage ?? 0, x:i.x, y:i.y, z:elevation(state,i), spent:!!i.spent })), movement, movementCarry, grid }, actorIds: actors.map(u => u.id) };
 }
