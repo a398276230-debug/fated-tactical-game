@@ -66,3 +66,11 @@
 - `122a30a`：converter 真物理拆为 parse/effects/unit/patch 四个实心模块，入口保持 barrel，Tavern/scale/terrain 56/56。
 - 本轮 overlay 真物理拆为 AI、patch、sources、diagnostics-view、mount 五个实心模块；入口保持 barrel，DOM id/class/data 选择器和消息事件名未改，Tavern 模块静态依赖环为 0。
 - 最终验证：`npm test` 374/374；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。补充修正后 `overlay-diagnostics-view.js` 143 行、`overlay-sources.js` 226 行，满足职责模块实心行数护栏；最终构建再次更新四份 `dist/`。
+
+## Round 3 Final 收口（当前真实状态）
+
+- `f011281`：删除四个全仓零引用的 combat 假空壳模块：`combat-modifiers.js`、`combat-status.js`、`combat-turn.js`、`combat-geo-preview.js`；`npm test` 374/374。
+- `fc996d8`：纠正文档快照版本、VM/状态计数、命令说明、状态字段、selector/event 白名单说明；新增 `tests/doc_and_arch_contract_tests.mjs` 并接入 `unit_tests.mjs`，契约门禁通过；源码实际命令白名单为 15 项，非任务稿中的 13 项。
+- `8e7d3ab`：构建并提交四份 dist 产物。
+- 最终实测：`npm test` 378/378；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。
+- 契约门禁确认 converter/overlay 依赖环为 0、三个门面行数分别为 combat 3、converter 5、overlay 6；四个 combat 假空壳不存在。全仓静态扫描仍发现 combat↔VM 14 条 DFS 路径（`combat.js → combat-actions.js → vm-runtime.js → combat.js`，以及经 `vm-action.js` 的变体），本轮按策略暂不做高风险断环拆分，后续需专门解耦。
