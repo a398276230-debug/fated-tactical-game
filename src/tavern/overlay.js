@@ -1,4 +1,5 @@
 import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
+import pkg from '../../package.json' with { type: 'json' };
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
@@ -332,7 +333,7 @@ export function formatRejectedItem(item, state = {}) {
 }
 export { normalizationPath };
 
-export const TAVERN_VERSION = '0.4.7';
+export const TAVERN_VERSION = pkg.version;
 
 const LARGE_CONFIG_KEYS = ['charSnapshots', 'normalizationBatches', 'narrativeExemptions', 'unresolvedNotes'];
 const separateConfigKey = (key, field) => `${key}/${field}`;
@@ -586,7 +587,19 @@ export function mountTavernOverlay(options = {}) {
   const listeners = [], controller = typeof AbortController === 'function' ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => { if (!node) return; const options2 = controller ? { ...opts, signal: controller.signal } : opts; node.addEventListener(event, fn, options2); if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts)); };
   const root = el(doc, 'div', { 'data-fated-tavern-overlay': '' });
-  const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打开命定战术控制台 · v${TAVERN_VERSION}`, 'aria-label': `打开命定战术控制台 · v${TAVERN_VERSION}`, type: 'button' }, '🪄');
+  const baselineCache = { key: null, state: null };
+function hydrateBaseline(input, { seed } = {}) {
+  const custom = getGlobal(document?.defaultView ?? globalThis, 'FatedTactical')?.hydrateBattleState;
+  if (custom) return custom(input, { seed, throwOnValidation: true }).state;
+  const key = JSON.stringify([input, seed ?? null]);
+  if (baselineCache.key === key && baselineCache.state) return structuredClone(baselineCache.state);
+  const state = hydrateBattleState(input, { seed, throwOnValidation: true }).state;
+  baselineCache.key = key;
+  baselineCache.state = structuredClone(state);
+  return structuredClone(state);
+}
+
+const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打开命定战术控制台 · v${TAVERN_VERSION}`, 'aria-label': `打开命定战术控制台 · v${TAVERN_VERSION}`, type: 'button' }, '🪄');
   const panel = el(doc, 'section', { class: 'fated-tavern-panel', role: 'dialog', 'aria-label': '命定战术酒馆控制台', hidden: '' });
   const header = el(doc, 'header', { class: 'fated-tavern-header' });
   const title = el(doc, 'strong', {}, `命定战术控制台 v${TAVERN_VERSION}`);
@@ -1296,7 +1309,7 @@ export function mountTavernOverlay(options = {}) {
     const battleInput = sources.input;
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
     const restart = ({ seed }) => {
-      const opening = hydrateBattleState(battleInput, { seed, throwOnValidation: true }).state;
+      const opening = hydrateBaseline(battleInput, { seed });
       const normalized = applyNormalization(opening, operations(battleInstanceId));
       const next = restoreChatOpening(normalized, battleInstanceId);
       updateChatInstances(next, liveState());
@@ -1378,7 +1391,7 @@ export function mountTavernOverlay(options = {}) {
     const source = ref.path;
     if (!source || !/^\/(?:equipment|skills|items|statusTemplates)\/[^/]+$/.test(source)) return;
     const [, table, id] = source.split('/');
-    const baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+    const baseline = hydrateBaseline(sources.input);
     const current = liveState();
     if (!current?.[table] || !Object.hasOwn(current[table], id)) return;
     if (aiController) { notify('标准化进行中', '请等待当前批次完成后再重置大词条。'); return; }
@@ -1654,7 +1667,7 @@ export function mountTavernOverlay(options = {}) {
         catch (error) { conflicts.push({ index, op: operation, path: operation.path, reason: error.message }); return []; }
       });
       const expanded = operation => [operation, ...duplicateOperations(operation, duplicatePaths)];
-      const baselineForPartition = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+      const baselineForPartition = hydrateBaseline(sources.input);
       const partition = partitionNormalizationPatch({
         liveState: current, baselineState: baselineForPartition, existingOps: operations(key), rawPatch: rebasedPatch,
         allowedUnitIds: unitIds, expand: expanded, apply: options.applyPatch ?? applyPatch, validate: options.validateState || defaultValidateState,
@@ -1699,7 +1712,7 @@ export function mountTavernOverlay(options = {}) {
       }
       let baseline, before;
       if (patch.length || data.existing?.length) {
-        baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
+        baseline = hydrateBaseline(sources.input);
         before = applyPatch(baseline, operations(key), true);
       }
       const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
@@ -1842,7 +1855,7 @@ export function mountTavernOverlay(options = {}) {
       const validateOpening = records => {
         const savedSeed = storage?.getItem(battleStorageKey(key, 'fated-tactical/battle-v1/seed'));
         const seed = savedSeed != null && /^\d+$/.test(savedSeed) ? Number(savedSeed) : sources.seed;
-        const source = hydrateBattleState(sources.input, { seed, throwOnValidation: true }).state;
+        const source = hydrateBaseline(sources.input, { seed });
         return replayChatPatches(applyNormalization(source, operations(key)), records);
       };
       if (undo && message.undoReceipt.openingId) {

@@ -146,11 +146,7 @@ function unwrap(value, tag) {
   if (tag === 'battle') {
     const match = value.match(re);
     if (match) return parseBattleBody(match[1]);
-    // Legacy prompt routes used brace-delimited blocks rather than XML.
-    const legacy = value.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*([\s\S]*?)\s*\{\s*\/\s*(?:battle_in|战术沙盘)\s*\}/i);
-    if (legacy) return parseBattleBody(legacy[1]);
-    const brace = value.match(/^\s*\{\s*(?:battle_in|战术沙盘)\s*:\s*([\s\S]+)\}\s*$/i);
-    return parseBattleBody(brace ? brace[1] : value);
+    return parseBattleBody(value);
   }
   return [...value.matchAll(re)].map(m => parseSimpleYaml(m[1]));
 }
@@ -294,7 +290,9 @@ function statusTurns(value, fallback) {
   return bound(turns, 1, 100, fallback);
 }
 
+export const WARNING_SCOPES = Object.freeze(['effect', 'status', 'resource', 'state', 'terrain', 'field']);
 function warningSink(warnings, unitId, source, scope, originPath) {
+  if (!WARNING_SCOPES.includes(scope)) throw new TypeError(`未知诊断 scope：${scope}`);
   return { push: (message, metadata) => warnings.push({ message, unitId, source, scope, ...(originPath && {originPath}), ...metadata }) };
 }
 

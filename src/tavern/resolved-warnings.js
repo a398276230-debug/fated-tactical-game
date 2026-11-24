@@ -59,6 +59,7 @@ export function readUnresolvedDiagnostics(value = [], sent) {
       invalid.push(`${label}缺少有效的词条引用或原因`);
       continue;
     }
+    // A valid-looking text note must still resolve to exactly one warning; otherwise it cannot safely lock a patch receipt.
     const matches = sent.filter(warning => identifiesWarning(item, warning));
     if (matches.length !== 1) {
       invalid.push(`${label}无法唯一匹配本批词条`);
