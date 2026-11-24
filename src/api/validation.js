@@ -1,10 +1,10 @@
 import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
-import { damageTypes } from '../core/vm-schema.js';
+import { carrierFlags, damageTypes, durationTypes, skillShapes, skillTargets, stackModes as vmStackModes, zoneAreaShapes } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 
-import { MORALE, moraleLabels } from '../core/combat_protocol.js';
+import { INTENTS, MORALE, MORALE_STATES, QUALITY_TIER, STANCES, UNIT_STATS, moraleLabels } from '../core/combat_protocol.js';
 import { timeOfDay } from '../core/battle_time.js';
 import { validVmOpcode, vmRuleError, vmStatModError, validVmTag, validVmSourceSkillId, validVmExpiry, validVmPureSelector, carrierFields, validCarrierScalar } from '../core/vm-schema.js';
 import { validVmState } from '../core/vm-runtime.js';
@@ -29,8 +29,8 @@ export const text = (v, max = 100) => typeof v === 'string' && v.trim().length >
 export const team = v => v === 'blue' || v === 'red';
 export const inGrid = (state, x, y) => int(y, 0, (state.grid?.length ?? 0) - 1)
   && int(x, 0, (state.grid[y]?.length ?? 0) - 1);
-export const attrs = ['str', 'agi', 'con', 'int', 'spi'];
-const statusDurations = ['battle_turns', 'until_removed', 'persistent'];
+export const attrs = UNIT_STATS;
+const statusDurations = durationTypes;
 const statusLabels = ['name', 'icon', 'category', 'description'];
 const maxStatusStacks = 999999;
 export const maxStatusTemplates = 64;
@@ -54,11 +54,11 @@ function dice(v) {
   checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
   checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
 }
-const stackModes = ['refresh', 'stack', 'replace', 'extend'];
+const stackModes = vmStackModes;
 const numericExpr = value => Number.isFinite(value) || typeof value === 'string' && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
   if (own(value, 'tags')) list(value.tags, 32, resolved ? tag => text(tag) : validVmTag, 'VM 标签');
-  if (own(value, 'flags')) list(value.flags, 8, flag => ['undispellable', 'concept_immune'].includes(flag), 'VM 标记');
+  if (own(value, 'flags')) list(value.flags, 8, flag => carrierFlags.includes(flag), 'VM 标记');
   checkOptional(value, 'tier', tier => int(tier, 1, 7));
   if (own(value, 'vars')) table(value.vars, entry => requireThat(resolved ? jsonTree(entry)
     : validCarrierScalar(entry), 'VM 变量'));
@@ -140,15 +140,15 @@ export function equipmentTemplate(v, state) {
   }
   checkOptional(v, 'boundTo', id); checkOptional(v, 'weaponType', text);
   requireThat(text(v.name), 'name');
-  checkOptional(v, 'quality', x => ['唯一','普通','优良','稀有','史诗','传说','神话'].includes(x));
+  checkOptional(v, 'quality', x => x === '唯一' || Object.hasOwn(QUALITY_TIER, x));
   checkOptional(v, 'range', x => int(x, 0, 64)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
   checkOptional(v, 'armor', x => int(x, 0, 1000000)); checkOptional(v, 'defense', x => int(x, 0, 1000000));
   checkOptional(v, 'kind', x => ['weapon','shield','armor','accessory','consumable'].includes(x));
   checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
   checkOptional(v, 'hand', x => ['one_handed','two_handed','off_hand'].includes(x)); checkOptional(v, 'rangeType', x => ['melee','ranged'].includes(x));
   for (const field of ['ranged','closeQuarters','heavy','twoHanded','shield']) checkOptional(v, field, x => typeof x === 'boolean');
-  checkOptional(v, 'shape', x => ['single','circle','ring','fan','cone','line'].includes(x));
-  checkOptional(v, 'target', x => ['enemy','ally','self','any','cell'].includes(x));
+  checkOptional(v, 'shape', x => skillShapes.includes(x));
+  checkOptional(v, 'target', x => skillTargets.filter(target => target !== 'corpse').includes(x));
   validateAreaDimensions(v);
   if (own(v, 'damage')) dice(v.damage);
   requireThat(own(v, 'range') === own(v, 'damage'), '武器 range/damage');
@@ -166,7 +166,7 @@ export function skillTemplate(v, state) {
   checkOptional(v, 'initiativeBonus', value => int(value, -100, 100));
   checkOptional(v, 'passive', value => typeof value === 'boolean');
   requireThat(text(v.name) && int(v.ap, 0, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 64)
-    && ['single', 'circle', 'ring', 'fan', 'cone', 'line'].includes(v.shape) && ['enemy', 'ally', 'self', 'any', 'corpse', 'cell'].includes(v.target), '技能');
+    && skillShapes.includes(v.shape) && skillTargets.includes(v.target), '技能');
   checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   validateAreaDimensions(v);
@@ -254,9 +254,9 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'initiativePercent', x => num(x, -1, 10)); checkOptional(v, 'flatInitiative', x => int(x, -1000, 1000));
   for (const field of ['attackInit','actionInit']) checkOptional(v, field, x => Array.isArray(x) && x.length <= 16 && x.every(n => int(n, -1000, 1000)));
   checkOptional(v, 'lockedTargetId', x => x === null || id(x));
-  checkOptional(v, 'intent', x => typeof x === 'string' && ['normal','function','core','kill','concept'].includes(x));
+  checkOptional(v, 'intent', x => typeof x === 'string' && Object.hasOwn(INTENTS, x));
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
-  checkOptional(v, 'stance', x => typeof x === 'string'); checkOptional(v, 'protagonist', x => x === true); checkOptional(v, 'moraleType', x => typeof x === 'string' && Object.hasOwn(MORALE,x)); checkOptional(v, 'moraleState', x => typeof x === 'string' && Object.hasOwn(moraleLabels,x));
+  checkOptional(v, 'stance', x => STANCES.includes(x)); checkOptional(v, 'protagonist', x => x === true); checkOptional(v, 'moraleType', x => typeof x === 'string' && Object.hasOwn(MORALE,x)); checkOptional(v, 'moraleState', x => MORALE_STATES.includes(x));
   checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'parryQuota', x => int(x, 0, 2)); checkOptional(v, 'parryRefunded', x => typeof x === 'boolean'); checkOptional(v, 'attunementCharges', x => int(x, 0, 2)); checkOptional(v, 'blockMode', x => ['normal','heavy'].includes(x));
   if (own(v,'bagWeapons')) list(v.bagWeapons, 200, id, '背包武器');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
@@ -280,6 +280,7 @@ export function zoneValue(value, key, state) {
   carrierFieldsValue(value, state, true);
   if (own(value, 'pools')) poolBindings(value.pools);
   const { area, follow, persistent, remainingTurns } = value;
+  requireThat(zoneAreaShapes.includes(area.shape), 'VM 区域形状');
   requireThat(validVmOpcode({ op: 'spawn', entityKind: 'zone', spec: { area, follow, persistent, remainingTurns } }), 'VM 区域');
   requireThat(int(remainingTurns, 1, 100), 'VM 区域持续回合');
   const validPoint = point => pointValue(state, point);

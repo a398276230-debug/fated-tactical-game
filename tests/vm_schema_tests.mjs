@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateState } from '../src/api/validation.js';
+import { evaluateExpr } from '../src/core/formula.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import {
   opNotes, vmHooks, vmOpcodes, vmSchema, vmOpcodeSchema, vmProgramSchema, vmSelectorSchema, vmStatModSchema,
-  flatOnlyStats, askPolicies, validVmExpiry, validVmRule, validVmOpcode, validVmProgram, validVmSelector, validVmStatMod, validVmTargetRef, validVmTag,
+  flatOnlyStats, askPolicies, EVENT_SCALAR_KEYS, skillShapes, zoneAreaShapes, skillTargets, validVmExpiry, validVmRule, validVmOpcode, validVmProgram, validVmSelector, validVmStatMod, validVmTargetRef, validVmTag,
 } from '../src/core/vm-schema.js';
 
 const mutation = patch => ({ op: 'mutate_event', patch });
@@ -30,6 +31,20 @@ const minimal = {
   revive: { target: 'target', hpPercent: 1 },
   perform: { actor: 'self', actionKind: 'skill', skillId: 'winter_sword', overrides: { free: true } },
 };
+
+test('event fields are closed while runtime missing event values remain nullable', () => {
+  assert.equal(validVmRule(rule('after_damage', { op: 'damage', target: 'target', amount: 'event.dmgType', damageType: 'true' })), false);
+  assert.equal(validVmStatMod({ stat: 'checkBonus', flat: 'event.dmgType' }), false);
+  assert.ok(EVENT_SCALAR_KEYS.includes('damageType'));
+  assert.equal(validVmRule(rule('after_damage', { op: 'damage', target: 'target', amount: 'event.damageScale', damageType: 'true' })), true);
+  assert.equal(evaluateExpr('event.missing == event.other', { event: {} }), null);
+});
+
+test('skill and zone shape enums stay separated and corpse remains a valid target', () => {
+  assert.equal(skillShapes.includes('rect'), false);
+  assert.deepEqual(zoneAreaShapes, ['single', 'circle', 'ring', 'rect', 'cells', 'board']);
+  assert.equal(skillTargets.includes('corpse'), true);
+});
 
 test('carrier sharing permits only pure selectors in validated state', () => {
   const state = buildScenario('ruins');
