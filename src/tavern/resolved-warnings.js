@@ -45,6 +45,7 @@ export function readUnresolvedDiagnostics(value = [], sent) {
       const notes = readTextNote(item.trim(), sent);
       if (notes.length === 1 && notes[0].warning && notes[0].detail) matched.push(notes[0]);
       else {
+        // Keep matched entries as conflict locks while invalid rejects a bare label without a reason.
         matched.push(...notes.filter(note => note.warning));
         invalid.push(`第 ${index + 1} 条未转换说明缺少可唯一匹配的词条或原因`);
       }

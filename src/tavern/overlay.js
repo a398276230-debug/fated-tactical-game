@@ -1,5 +1,4 @@
 import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
-import pkg from '../../package.json' with { type: 'json' };
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
@@ -333,7 +332,7 @@ export function formatRejectedItem(item, state = {}) {
 }
 export { normalizationPath };
 
-export const TAVERN_VERSION = pkg.version;
+export const TAVERN_VERSION = '0.4.7';
 
 const LARGE_CONFIG_KEYS = ['charSnapshots', 'normalizationBatches', 'narrativeExemptions', 'unresolvedNotes'];
 const separateConfigKey = (key, field) => `${key}/${field}`;

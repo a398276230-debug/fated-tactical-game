@@ -253,10 +253,6 @@ function probability(successes, advantage, disadvantage) {
   if (sign3 < 0) return successes ** 2 / 400;
   return successes / 20;
 }
-function hitChance(target2, modifier = 0, advantage = 0, disadvantage = 0) {
-  const needed = Math.ceil(target2 - modifier);
-  return probability(Math.max(1, Math.min(19, 21 - needed)), advantage, disadvantage);
-}
 function critChance(advantage = 0, disadvantage = 0) {
   return probability(1, advantage, disadvantage);
 }
@@ -1158,7 +1154,7 @@ var modifierRanges = {
 Object.assign(modifierRanges, { armor: [-1e5, 1e5] });
 var modifierRatios = /* @__PURE__ */ new Set(["reduction", "vulnerability", "shatter", "damageBonus", "attackPercent", "attributePercent", "finalDamageMultiplier"]);
 var modifierFlags = /* @__PURE__ */ new Set(["taunted", "intercept", "skip", "rooted", "hidden", "infiniteAmmo", "guaranteed_hit", "guaranteed_crit", "blockResourceRestore", "preserveLife"]);
-function validateStatusModifiers(template, modifiers2) {
+function validateStatusModifiers2(template, modifiers2) {
   if (!modifiers2 || Object.getPrototypeOf(modifiers2) !== Object.prototype) throw new Error("modifiers \u5FC5\u987B\u4E3A\u5BF9\u8C61");
   for (const [key4, value] of Object.entries(modifiers2)) {
     if (!Object.hasOwn(template.modifiers, key4)) throw new Error(`${template.id} \u4E0D\u5141\u8BB8\u8986\u76D6\u72B6\u6001\u53C2\u6570 ${key4}`);
@@ -1280,6 +1276,20 @@ var stat = enumOf(
   "apMax"
 );
 var ratioStats = enumOf("damageReduction", "dr", "armorPiercePercent");
+var flatOnlyStats = Object.freeze([
+  "incomingDistanceOffset",
+  "armorPierce",
+  "damageFlat",
+  "damageReductionFlat",
+  "dcBonus",
+  "resistBonus",
+  "advantage",
+  "dodge",
+  "checkBonus",
+  "initiativeFlat",
+  "incomingAccuracy",
+  "intentDifficulty"
+]);
 var multiplierStats = enumOf("incomingDamageMult", "damageMult", "finalDamageMult", "healingMult", "incomingHealMult", "costMult");
 var ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 var statMod = withRules(
@@ -1302,7 +1312,7 @@ var statMod = withRules(
   when("additivePercent", {}, needs("stat")),
   when("stat", ratioStats, { properties: { flat: ratioFlat }, not: needs("additivePercent") }),
   when("stat", multiplierStats, { not: needs("flat") }),
-  when("stat", enumOf("checkBonus", "initiativeFlat"), { not: { anyOf: [needs("mult"), needs("additivePercent")] } })
+  when("stat", enumOf(...flatOnlyStats), { not: { anyOf: [needs("mult"), needs("additivePercent")] } })
 );
 var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
 var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
@@ -1331,7 +1341,7 @@ var zoneArea = withRules(object({
   cells: list(point2, 1)
 }, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
 var scalarOrExpr = either(number, bool, { type: "string", maxLength: 1024 });
-var carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")) };
+var carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")), shareRulesTo: ref("pureSelector") };
 var carrierFields = Object.freeze(Object.keys(carrier).filter((key4) => key4 !== "name"));
 var statusPatchFields = Object.freeze(["remainingTurns", "durationType", "stackMode", "stacks", "expireOn", ...carrierFields]);
 var validCarrierScalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" && value.length <= scalarOrExpr.anyOf[2].maxLength;
@@ -1367,6 +1377,12 @@ var spawnSpecs = {
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
   item: object({ templateId: id, count: either(integer(1), formula) }, ["templateId"])
 };
+var askPolicies = Object.freeze({
+  number: Object.freeze(["min", "max", "first"]),
+  cell: Object.freeze(["best_offensive_cell", "safest_cell", "first"]),
+  entity: Object.freeze(["highest_threat", "first"]),
+  option: Object.freeze(["first"])
+});
 var opcodeSchemas = [
   opcode("let", { name: id, value: either(expr, enumOf(...scopes), variable), scope: enumOf("frame", "owner") }, ["name", "value"]),
   opcode("if", { cond: booleanExpr, then: program, else: program }, ["cond", "then"]),
@@ -1400,6 +1416,7 @@ var opcodeSchemas = [
     },
     ["chooser", "kind", "prompt", "out", "aiPolicy"],
     when("maxSelect", {}, { properties: { kind: literal("entity") } }),
+    ...Object.entries(askPolicies).map(([kind, policies]) => when("kind", literal(kind), { properties: { aiPolicy: enumOf(...policies) } })),
     when("kind", enumOf("cell", "entity"), withRules(needs("select"), { not: either(needs("options"), needs("min"), needs("max")) })),
     when("kind", literal("option"), withRules(needs("options"), { not: either(needs("select"), needs("min"), needs("max")) })),
     when("kind", literal("number"), withRules(needs("min", "max"), { not: either(needs("options"), needs("select")) }))
@@ -1470,17 +1487,19 @@ var instructionBranches = ["then", "else", "body", "onPass", "onFail", "onCollid
 var guardedHooks = [...Object.keys(patchSchemas), "readOnly"];
 var hookGuard = (name) => ref(`opcodeGuard_${name}`);
 var guardedProgram = (name) => list(hookGuard(name));
+var selectorSpec = (picks) => withRules(object({
+  from: either(enumOf(...scopes, "action_targets", "units", "statuses", "zones", "covers", "terrain", "cells", "tape"), variable),
+  options: list(id, 1),
+  of: either(enumOf(...scopes), variable),
+  area,
+  where: booleanExpr,
+  pick: variants(literal("all"), ...picks.map((key4) => object({ [key4]: integer(1) }, [key4])))
+}), either(needs("from"), needs("options")), when("of", {}, { properties: { from: literal("statuses") } }));
 var defs = {
   expr: either(number, bool, formula),
   tag,
-  selector: withRules(object({
-    from: either(enumOf(...scopes, "action_targets", "units", "statuses", "zones", "covers", "terrain", "cells", "tape"), variable),
-    options: list(id, 1),
-    of: either(enumOf(...scopes), variable),
-    area,
-    where: booleanExpr,
-    pick: variants(literal("all"), ...["first", "random", "nearest"].map((key4) => object({ [key4]: integer(1) }, [key4])))
-  }), either(needs("from"), needs("options")), when("of", {}, { properties: { from: literal("statuses") } })),
+  selector: selectorSpec(["first", "random", "nearest"]),
+  pureSelector: selectorSpec(["first", "nearest"]),
   targetRef: either(enumOf(...scopes), variable, selector),
   expireRule,
   expiry: either(ref("expireRule"), list(ref("expireRule"), 1)),
@@ -1593,6 +1612,8 @@ function vmRuleError(rule2, options = {}) {
   }
   return invalidInstruction(rule2.program, "program");
 }
+var validVmExpiry = (value, options = {}) => valid(value, "expiry", options);
+var validVmPureSelector = (value, options = {}) => valid(value, "pureSelector", options);
 var validVmStatMod = (value, options = {}) => valid(value, "statMod", options);
 function vmStatModError(mod2) {
   if (validVmStatMod(mod2)) return void 0;
@@ -1601,6 +1622,9 @@ function vmStatModError(mod2) {
   }
   if (mod2 && multiplierStats.enum.includes(mod2.stat) && Object.hasOwn(mod2, "flat")) {
     return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 1\uFF0C\u4E0D\u80FD\u7528 flat\uFF1B\u8BF7\u7528 mult\uFF08\u5982 1.3\uFF09\u6216 additivePercent\uFF08\u5982 0.3\uFF09`;
+  }
+  if (mod2 && flatOnlyStats.includes(mod2.stat) && (Object.hasOwn(mod2, "mult") || Object.hasOwn(mod2, "additivePercent"))) {
+    return `VM \u4FEE\u9970 ${mod2.stat} \u53EA\u63A5\u53D7 flat \u52A0\u503C`;
   }
   return "VM \u4FEE\u9970";
 }
@@ -1982,7 +2006,8 @@ function eventOwners(state, hook2, event) {
   else refs = [actor, event.sourceId ?? event.source, target2, ...event.targets ?? []];
   return [...new Set(refs.map(idOf).filter((id3) => id3 != null && own3(state.units, id3)))].sort();
 }
-function templateKey({ entity, carrier: carrier4 }) {
+function carrierDedupePrefix({ entity, carrier: carrier4, nativeOwnerId }, ownerId, pooled = false) {
+  if (!pooled && ownerId === nativeOwnerId && carrier4.type === "item") return `item:${carrier4.id}`;
   return entity.templateId ?? JSON.stringify([carrier4.type, carrier4.ownerId, carrier4.id]);
 }
 function collectRules(state, hook2, event = {}, queries2 = {}) {
@@ -1990,6 +2015,7 @@ function collectRules(state, hook2, event = {}, queries2 = {}) {
   const unitIds = eventOwners(state, hook2, event);
   if (!unitIds.length) return [];
   const candidates = [];
+  const pooled = hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2";
   const carrierRows = carriers(state);
   if (hook2 === "after_status_removed" && event.removedStatus?.rules?.length) {
     const removed = event.removedStatus;
@@ -2002,14 +2028,13 @@ function collectRules(state, hook2, event = {}, queries2 = {}) {
     if (!rules?.length) continue;
     for (const ownerId of recipients(state, row, unitIds, event, queries2)) {
       for (const rule2 of rules) {
-        const dedupeKey = rule2.dedupeKey ?? `${templateKey(row)}:${rule2.id}`;
+        const dedupeKey = rule2.dedupeKey ?? `${carrierDedupePrefix(row, ownerId, pooled)}:${rule2.id}`;
         const useKey = JSON.stringify([ownerId, dedupeKey]);
         candidates.push({ dedupeKey, entry: { rule: rule2, carrierOrder, ownerId, sourceId: sourceIdOf(row, ownerId, event), carrier: row.carrier, useKey } });
       }
     }
   }
   candidates.sort(({ entry: a }, { entry: b }) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compare(a.rule.id, b.rule.id) || compare(a.ownerId, b.ownerId));
-  const pooled = hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2";
   const seen = /* @__PURE__ */ new Set();
   return candidates.flatMap(({ dedupeKey, entry: entry2 }) => {
     const key4 = pooled ? dedupeKey : entry2.useKey;
@@ -2033,7 +2058,7 @@ function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
       if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries2).length) continue;
       const context = carrierScope(state, row, unitId, event, queries2);
       for (const [index, mod2] of row.entity.mods.entries()) {
-        const key4 = JSON.stringify([templateKey(row), index]);
+        const key4 = JSON.stringify([carrierDedupePrefix(row, unitId), index]);
         if (seen.has(key4) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
         const values5 = {};
         for (const field of ["flat", "mult", "additivePercent"]) {
@@ -3134,10 +3159,12 @@ function continueRemoveStatus({ state, frame, host, context, options }) {
   }
   const statusId3 = frame.statusKeys[frame.pc++];
   const status = own7(target2.statuses, statusId3);
-  if (!status || status.durationType === "persistent" || evaluateExpr(op.where, { ...context, status }) !== true) return;
+  if (!status || evaluateExpr(op.where, { ...context, status }) !== true) return;
+  const protectedStatus = status.durationType === "persistent" || status.flags?.includes("undispellable");
+  if (protectedStatus && op.force !== true) return;
+  const releaseOwnStatus = context.self?.id === target2.id && (status.sourceId ?? target2.id) === target2.id;
   let authorityContestDetail;
-  if (status.flags?.includes("undispellable")) {
-    if (op.force !== true) return;
+  if (protectedStatus && !releaseOwnStatus) {
     const attacker = authorityFor(state, frame.carrier, context.self?.id);
     const defender = Number.isFinite(status.authorityRank) && Number.isFinite(status.sourceTier) ? { authorityRank: status.authorityRank, unitTier: status.sourceTier } : authorityFor(state, status.sourceCarrier ?? { type: "unit", id: status.sourceId ?? target2.id }, status.sourceId ?? target2.id);
     authorityContestDetail = authorityContest(state, { ...attacker, unitId: context.self?.id }, { ...defender, unitId: target2.id }, {
@@ -4984,7 +5011,7 @@ function patchStatus(state, unitId, statusId3, patch) {
   const { expireOn, ...modifiers2 } = patch;
   const patchExpiry = Object.hasOwn(patch, "expireOn");
   validateStatusModifiers(template, modifiers2);
-  if (patchExpiry && expireOn !== null && !validExpiry(expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
+  if (patchExpiry && expireOn !== null && !validVmExpiry(expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
   status.modifiers = { ...status.modifiers, ...modifiers2 };
   if (patchExpiry) status.expireOn = structuredClone(expireOn);
   if (Object.hasOwn(modifiers2, "amount")) status.amount = clamp3(modifiers2.amount, 1, 1e5);
@@ -5029,7 +5056,7 @@ function grantStatus(state, unit, statusId3, options = {}) {
     appliedTurn: state.turn
   };
   if (Object.hasOwn(options, "expireOn")) {
-    if (!validExpiry(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
+    if (!validVmExpiry(options.expireOn)) throw new Error("\u65E0\u6548\u5B57\u6BB5\uFF1AexpireOn");
     applied.expireOn = structuredClone(options.expireOn);
   } else if (Object.hasOwn(previous ?? {}, "expireOn")) applied.expireOn = previous.expireOn;
   if (Object.hasOwn(applied.modifiers, "amount")) applied.amount = options.amount == null ? applied.modifiers.amount : clamp3(options.amount, 1, 1e4);
@@ -5119,7 +5146,6 @@ function refreshOutcome(state) {
   }
   return result;
 }
-var validExpiry = (value) => Boolean(value && (Array.isArray(value) ? value : [value]).every((rule2) => typeof rule2?.hook === "string"));
 function moraleCheck(state) {
   for (const unit of living(state)) {
     if (aggregateModifiers(state, unit.id).controlPolicy.moraleLock === "steady") {
@@ -5677,8 +5703,9 @@ function area2(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, d
     ignoreLOS: ignoreLOS || deferGeometry
   });
 }
-function selectionAllows(template, actor, unit, allowFriendlyTarget = false) {
+function selectionAllows(state, template, actor, unit, allowFriendlyTarget = false) {
   if (!unit) return false;
+  if ((template.shape ?? "single") === "single" && unit.team !== actor.team && aggregateModifiers(state, unit.id, modifierEvent(unit, { attacker: actor, target: unit })).flags.untargetableSingle) return false;
   switch (template.target ?? "enemy") {
     case "enemy":
       return allowFriendlyTarget || actor.team !== unit.team;
@@ -5779,9 +5806,8 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
   const rangedDistance = weapon2 && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
   const accuracy = modStat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + changes(actor, "accuracy") + (execution || cover || !target2 ? 0 : changes(target2, "incomingAccuracy")) + (flanked ? 2 : 0) - penalty + modCheck(state, actor, "accuracyBonus", strike), strike) - dodge;
-  const explicitEvasion = execution ? 0 : changes(target2, "incomingAccuracy");
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
-  const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 10 + explicitEvasion + equipmentDefense;
+  const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 4;
   const delta = modCheck(state, actor, "advantage", strike);
   const advantages = Math.max(0, delta) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
   const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
@@ -5792,7 +5818,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
   const saveChance2 = saveStat ? saveChance(saveDC, saveBonus) : 0;
   const areaStrike = hasStrikeDamage(template) && (template.shape ?? "single") !== "single";
   const automatic = areaStrike || !weapon2 && (!template.damage || saveStat || template.autoHit);
-  const hitChance2 = automatic || guaranteeHit ? 1 : dodge || modCheck(state, actor, "accuracyBonus", strike) ? saveChance(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveChance(2, 0, advantages, disadvantages) : 0) : hitChance(defense, accuracy, advantages, disadvantages);
+  const hitChance = automatic || guaranteeHit ? 1 : saveChance(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveChance(2, 0, advantages, disadvantages) : 0);
   const critChance2 = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : critChance(advantages, disadvantages);
   const offHandMultiplier = weapon2?.stance === "dual_wield" && weapon2.offHand?.template?.damage ? 1.5 : 1;
   const intentSpec = INTENTS[context.intent ?? "normal"] ?? INTENTS.normal;
@@ -5841,7 +5867,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
   const damage = dice4 ? protocolInitial == null ? bounds(false, minFactor) : [shown(protocolInitial, minFactor), shown(protocolInitial, minFactor)] : [0, 0];
   const criticalDamage = dice4 && critChance2 > 0 ? bounds(true) : null;
   const savedDamage = dice4 && saveStat ? bounds(false, 0.5) : null;
-  const expectedDamage = !dice4 ? 0 : Math.max(0, hitChance2 - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
+  const expectedDamage = !dice4 ? 0 : Math.max(0, hitChance - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
   const expectedD20 = saveStat ? 10.5 : automatic ? null : advantage > 0 ? 13.825 : advantage < 0 ? 7.175 : 10.5;
   return {
     id: target2.id,
@@ -5873,7 +5899,7 @@ function targetProfile(state, actor, target2, at2, template, context = {}) {
     advantage,
     advantages,
     disadvantages,
-    hitChance: hitChance2,
+    hitChance,
     critChance: critChance2,
     expectedD20,
     automatic: Boolean(automatic),
@@ -5951,7 +5977,7 @@ function usableTiles(state, actor, template, weapon2) {
   return allCells(state).filter((at2) => validReach(
     state,
     actor,
-    template.target === "cell" || (template.shape ?? "single") !== "single" ? at2 : locateUnit(state, at2, null, (u) => selectionAllows(template, actor, u, allowFriendlyTarget)) ?? at2,
+    template.target === "cell" || (template.shape ?? "single") !== "single" ? at2 : locateUnit(state, at2, null, (u) => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at2,
     template,
     weapon2?.ammo
   ));
@@ -5962,7 +5988,7 @@ function shapeTargets(state, actor, cells2, template, aim, origin, ammo, ignoreR
   const areaDamage = (template.shape ?? "single") !== "single" && hasStrikeDamage(template);
   const targeting = areaDamage && template.target == null ? { target: "any" } : template;
   return living(state).filter((unit) => {
-    if (!selectionAllows(targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
+    if (!selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
     if ((template.shape ?? "single") === "single") return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === "circle" || template.shape === "ring") {
       const distanceFromCenter = distance3D(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: "attack" });
@@ -6163,7 +6189,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   }
   const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
   const aoe = (template.shape ?? "single") !== "single";
-  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? (u) => selectionAllows(template, unit, u, allowFriendlyTarget) : null);
+  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? (u) => selectionAllows(state, template, unit, u, allowFriendlyTarget) : null);
   if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail2("\u76EE\u6807\u5355\u4F4D\u4E0D\u5728\u6307\u5B9A\u683C");
   const aim = template.target === "cell" || aoe ? center : aimedUnit ?? center;
   const origin = actionOrigin ? {
@@ -6189,7 +6215,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   const cells2 = area2(state, origin, aim, template, ammo, { ignoreRange, ignoreLOS, deferGeometry });
   if (!cells2.length && !deferGeometry) return fail2("\u8BF7\u9009\u62E9\u4E00\u4E2A\u65B9\u5411", { ...geometry, originSensitive: true });
   if (!aoe) {
-    if (!selectionAllows(template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== "cell") {
+    if (!selectionAllows(state, template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== "cell") {
       return fail2("\u8BE5\u683C\u6CA1\u6709\u5408\u9002\u7684\u76EE\u6807", geometry);
     }
     if (!deferGeometry && aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, origin, aimedUnit)) return fail2("\u76EE\u6807\u6B63\u5728\u9690\u8EAB", { ...geometry, originSensitive: true });
@@ -7334,10 +7360,6 @@ function dice3(v) {
   checkOptional(v, "multiplier", (x) => num(x, 0, 8));
   checkOptional(v, "type", (x) => damageTypes.includes(x));
 }
-function vmExpiry2(value) {
-  const rules = Array.isArray(value) ? value : [value];
-  return rules.length > 0 && rules.every((rule2) => plain(rule2) && vmHooks.includes(rule2.hook) && Object.keys(rule2).every((key4) => ["hook", "filter"].includes(key4)) && (!own12(rule2, "filter") || typeof rule2.filter === "boolean" || typeof rule2.filter === "string" && validExpr(rule2.filter)));
-}
 var stackModes = ["refresh", "stack", "replace", "extend"];
 var numericExpr2 = (value) => Number.isFinite(value) || typeof value === "string" && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
@@ -7351,6 +7373,7 @@ function carrierFieldsValue(value, state, resolved = false) {
     return true;
   }, "VM \u4FEE\u9970");
   if (own12(value, "rules")) validateRules(value.rules, state);
+  checkOptional(value, "shareRulesTo", validVmPureSelector);
 }
 function poolDefinitions(value) {
   table2(value, (definition) => {
@@ -7376,7 +7399,7 @@ function statusTemplate(value, key4 = value?.id, state) {
   checkOptional(value, "durationType", (duration2) => statusDurations.includes(duration2));
   checkOptional(value, "stackMode", (mode) => stackModes.includes(mode));
   checkOptional(value, "maxStacks", validStackCap);
-  checkOptional(value, "expireOn", vmExpiry2);
+  checkOptional(value, "expireOn", validVmExpiry);
   carrierFieldsValue(value, state);
 }
 function statusLifetime(v) {
@@ -7385,12 +7408,12 @@ function statusLifetime(v) {
 function nativeStatusTemplate(v, key4) {
   fields(v, ["id", ...statusLabels, "remainingTurns", "durationType", "tickTiming", "stackRule", "maxStacks", "modifiers"], ["expireInto", "expireOn"]);
   checkOptional(v, "expireInto", id2);
-  checkOptional(v, "expireOn", vmExpiry2);
+  checkOptional(v, "expireOn", validVmExpiry);
   requireThat(id2(key4) && v.id === key4, "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
   requireThat(text2(v.name) && text2(v.icon, 24) && text2(v.description, 300) && ["buff", "debuff", "control", "dot", "hot", "shield"].includes(v.category), "\u72B6\u6001\u540D/\u56FE\u6807/\u63CF\u8FF0/\u7C7B\u522B");
   requireThat(statusLifetime(v) && validStackCap(v.maxStacks), "\u72B6\u6001\u65F6\u957F/\u5C42\u6570");
   requireThat(plain(v.modifiers) && Object.keys(v.modifiers).length > 0 && (!own12(v.modifiers, "damageType") || own12(v.modifiers, "damage")), "\u72B6\u6001\u7279\u6548");
-  validateStatusModifiers(v, v.modifiers);
+  validateStatusModifiers2(v, v.modifiers);
   requireThat(key4 !== actionStatuses.shield || own12(v.modifiers, "amount"), "\u9ED8\u8BA4\u62A4\u76FE\u6A21\u677F\u9700\u8981 amount");
 }
 function statusTemplateTable(v) {
@@ -7478,7 +7501,7 @@ function statusValue(v, key4, state, ownerId) {
     const template = getStatusTemplate(state, key4);
     const { vars, modifiers: modifiers2, stackRule, tickTiming, expireInto, amount, ...definition } = rest;
     if (template?.modifiers) {
-      if (own12(rest, "modifiers")) validateStatusModifiers(template, modifiers2);
+      if (own12(rest, "modifiers")) validateStatusModifiers2(template, modifiers2);
       if (own12(rest, "stackRule")) requireThat(statusStackRules.includes(stackRule), "\u539F\u751F\u72B6\u6001\u53E0\u5C42");
       if (own12(rest, "tickTiming")) requireThat(statusTickTimings.includes(tickTiming), "\u539F\u751F\u72B6\u6001\u65F6\u673A");
       if (own12(rest, "expireInto")) requireThat(expireInto === template.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
@@ -7505,11 +7528,11 @@ function statusValue(v, key4, state, ownerId) {
   checkOptional(v, "stackMode", (mode) => stackModes.includes(mode));
   carrierFieldsValue(v, state, true);
   checkOptional(v, "holdTotal", (x) => v.id === "suppressed" && Number.isFinite(x));
-  checkOptional(v, "expireOn", (x) => x === null || vmExpiry2(x));
+  checkOptional(v, "expireOn", (x) => x === null || validVmExpiry(x));
   requireThat(v.expireInto === t.expireInto, "\u72B6\u6001\u5230\u671F\u76EE\u6807");
   requireThat(v.id === key4 && statusLabels.every((k) => v[k] === t[k]) && statusLifetime(v) && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks) && (v.sourceUnitId === null || id2(v.sourceUnitId)), "\u72B6\u6001\u5B9E\u4F8B");
   fields(v.modifiers, Object.keys(t.modifiers));
-  validateStatusModifiers(t, v.modifiers);
+  validateStatusModifiers2(t, v.modifiers);
   checkOptional(v, "appliedRound", (x) => int(x, 1, 1e6));
   checkOptional(v, "appliedTurn", (x) => int(x, 0, 199));
   requireThat(own12(t.modifiers, "amount") ? int(v.amount, 1, 1e9) : !own12(v, "amount"), "\u62A4\u76FE\u6C60");
@@ -8148,7 +8171,7 @@ function tactics(state, actor, action, plan) {
       if (op.op === "remove_status" && Object.values(target2.statuses ?? {}).some((value) => ["debuff", "control", "dot"].includes(value.category))) score += enemy ? -4 : 8;
     }
   }
-  if (programs.some((op) => ["set_terrain", "modify_terrain", "add_cover"].includes(op.op))) {
+  if (programs.some((op) => op.op === "spawn" && ["zone", "terrain", "cover"].includes(op.entityKind))) {
     score += Object.values(state.units).some((unit) => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * 0.35 - plan.sp * 0.25;
@@ -14007,10 +14030,7 @@ function unwrap(value, tag2) {
   if (tag2 === "battle") {
     const match = value.match(re);
     if (match) return parseBattleBody(match[1]);
-    const legacy = value.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*([\s\S]*?)\s*\{\s*\/\s*(?:battle_in|战术沙盘)\s*\}/i);
-    if (legacy) return parseBattleBody(legacy[1]);
-    const brace = value.match(/^\s*\{\s*(?:battle_in|战术沙盘)\s*:\s*([\s\S]+)\}\s*$/i);
-    return parseBattleBody(brace ? brace[1] : value);
+    return parseBattleBody(value);
   }
   return [...value.matchAll(re)].map((m) => parseSimpleYaml(m[1]));
 }
@@ -14171,7 +14191,9 @@ function statusTurns(value, fallback) {
   const turns = typeof value === "string" ? value.match(/^\s*(\d+)\s*(?:回合|轮)\s*$/)?.[1] ?? value : value;
   return bound(turns, 1, 100, fallback);
 }
+var WARNING_SCOPES = Object.freeze(["effect", "status", "resource", "state", "terrain", "field"]);
 function warningSink(warnings, unitId, source, scope, originPath) {
+  if (!WARNING_SCOPES.includes(scope)) throw new TypeError(`\u672A\u77E5\u8BCA\u65AD scope\uFF1A${scope}`);
   return { push: (message, metadata) => warnings.push({ message, unitId, source, scope, ...originPath && { originPath }, ...metadata }) };
 }
 var blockBody = (value) => value.trim().replace(/^[|>](?:[-+2])?[^\S\r\n]*\r?\n/, "").trim();
@@ -15776,10 +15798,12 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
   2. skill\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF0Cskill.id \u4E3A\u672C\u6280\u80FD\u81EA\u8EAB ID\u3002hook:"active" \u4EC5\u5728\u4E3B\u52A8\u65BD\u653E\u672C\u6280\u80FD\u65F6\u6309\u5E8F\u6267\u884C\uFF1B\u5176\u4F59\u6240\u6709\u975E active \u94A9\u5B50\u4E0E mods \u5728\u5355\u4F4D\u6301\u6709\u8BE5\u6280\u80FD\u671F\u95F4\u5168\u5C40\u5E38\u9A7B\u76D1\u542C\u5168\u573A\uFF01\u82E5\u67D0\u6761\u975E active \u89C4\u5219\u4EC5\u5728\u65BD\u653E\u672C\u6280\u80FD\u65F6\u751F\u6548\uFF0Cfilter \u5FC5\u987B\u5305\u542B event.skillId == skill.id\uFF08\u666E\u901A\u884C\u52A8\uFF0F\u547D\u4E2D\uFF0F\u4F24\u5BB3\u4E8B\u4EF6\u4E00\u5F8B\u8BFB event.skillId\uFF0C\u52FF\u7528\u4EC5\u5C5E\u53EC\u5524\u7269\u9876\u66FF\u4E8B\u4EF6\u7684 event.sourceSkillId\uFF09\u3002\u5355\u6B21\u4E3B\u52A8\u65BD\u653E\u5185\u7684\u987A\u5E8F\u56E0\u679C\u94FE\uFF08\u5982\u9020\u6210\u4F24\u5BB3\u540E\u6309\u5B9E\u6263\u91CF\u56DE\u8840\uFF0F\u56DE\u80FD\uFF0F\u4E8C\u6BB5\u5224\u5B9A\uFF09\u5E94\u76F4\u63A5\u5199\u5728 hook:"active" \u5185\u7528 out \u53D8\u91CF\u4E32\u8054\uFF0C\u65E0\u9700\u62C6\u6210\u5E38\u9A7B\u4E8B\u4EF6\u94A9\u5B50\u3002
   3. status\uFF1Aself \u4E3A\u72B6\u6001\u643A\u5E26\u8005\uFF0Csource \u4E3A\u65BD\u52A0\u8005\uFF0Cstatus \u4E3A\u5F53\u524D\u72B6\u6001\u5B9E\u4F8B\u3002
   4. zone\uFF1A\u533A\u57DF\u81EA\u8EAB\u53EF\u6302 tags / vars / mods / rules\uFF1B\u5728\u533A\u57DF\u5185\u7684\u5355\u4F4D\u94A9\u5B50\uFF08\u5982 turn_start\uFF09\u4E2D self \u4E3A\u5904\u4E8E\u533A\u57DF\u5185\u7684\u5355\u4F4D\uFF0Csource \u4E3A\u533A\u57DF\u521B\u5EFA\u8005\uFF1B\u5176\u4ED6\u89C4\u5219\u53EF\u7528 in_zone(unit, tagOrId) \u67E5\u8BE2\u3002
+\u2022 shareRulesTo \u5C06\u4F5C\u7528\u57DF\u5171\u4EAB\u7ED9\u9009\u62E9\u5668\u5F97\u5230\u7684\u5355\u4F4D\u3002\u4F7F\u7528\u7EAF\u9009\u62E9\u5668\uFF0Cpick \u53EA\u63A5\u53D7 all\u3001{first:N} \u6216 {nearest:N}\uFF0C\u4E0D\u63A5\u53D7 random\u3002
 \u2022 \u540C\u4E00\u8F7D\u4F53\u5185\u89C4\u5219 ID \u552F\u4E00\u3002\u89C4\u5219\u6309 priority \u4ECE\u9AD8\u5230\u4F4E\u6267\u884C\uFF0Cprogram \u6309\u6570\u7EC4\u987A\u5E8F\u6267\u884C\uFF1Bfilter \u6C42\u503C\u4E3A true \u624D\u8FDB\u5165\u89C4\u5219\u3002
 
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF08\u95ED\u5408\u679A\u4E3E\uFF0C\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\uFF09\uFF1A
 ${instructions2.join("\n")}
+ask \u7684 kind \u4E0E aiPolicy \u5BF9\u5E94\u5173\u7CFB\uFF1A${Object.entries(askPolicies).map(([kind, policies]) => `${kind} \u2192 ${policies.join(" / ")}`).join("\uFF1B")}\u3002
 check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
 \u539F\u751F\u653B\u51FB\u5728 before_check \u53EF\u5199 ratingDelta\uFF08\u6574\u6570\u6863\u6570\uFF0C\u53EF\u7528\u516C\u5F0F\uFF0C\u6B63\u5347\u8D1F\u964D\uFF09\uFF1A\u5148\u4ECE\u57FA\u7840\u8BC4\u7EA7\u79FB\u52A8\u5E76\u5728\u8868\u4E24\u7AEF\u5C01\u9876\uFF0C\u518D\u6309 minRating \u4FDD\u5E95\u3002\u7CBE\u51C6\u7C7B\u8FDC\u7A0B\u653B\u51FB\u5728\u672C\u89C4\u5219\u7684\u8FDC\u7A0B\u8FC7\u6EE4\u6761\u4EF6\u4E0B\u5199 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"\u6709\u6548","forceOutcome":"hit"}}\uFF1B\u6700\u540E\u4E00\u9879\u7528\u4E8E\u539F\u6587\u660E\u8BF4\u5FC5\u4E2D\u3001\u8FDE\u5929\u71361\u4E5F\u4E0D\u80FD\u5931\u624B\u7684\u60C5\u5F62\uFF0C\u4E0D\u8981\u6C42\u5FC5\u4E2D\u5219\u7701\u7565\u3002
 mutate_event \u7684 patch \u81F3\u5C11\u542B\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u4EC5\u9650\u4E0B\u5217\u53EF\u5199 hook\uFF08before_check.minRating \u53D6\u503C\u679A\u4E3E\uFF1A\u8D85\u66B4\u51FB / \u5F3A\u66B4\u51FB / \u5E73\u66B4\u51FB / \u6709\u6548 / \u52C9\u5F3A / \u64E6\u4F24 / \u5931\u624B\uFF09\uFF1A
@@ -15803,6 +15827,7 @@ targetRef\uFF1A${describe2(defs2.targetRef)}\u3002\u7279\u5B9A\u5FEB\u7167\u5B9E
 
 \u3010\u58F0\u660E\u5F0F\u4FEE\u9970 mods\u3011
 mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u542B stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00\uFF1B\u6570\u503C\u4FEE\u9970\u5FC5\u6307\u5B9A stat\u3002\u8BA1\u7B97\u516C\u5F0F\u4E3A (\u57FA\u503C + flat \u4E4B\u548C) \xD7 (1 + additivePercent \u4E4B\u548C) \xD7 mult \u8FDE\u4E58\uFF1Bwhen \u6C42\u503C\u4E3A true \u65F6\u751F\u6548\uFF1BcheckKind \u53EF\u9650\u5B9A\u68C0\u5B9A\u7C7B\u522B\uFF08attack / save / contest / skill / chance / d20 / dodge / authority \u6216\u72B6\u6001 ID\uFF0F\u6807\u7B7E\uFF09\u3002
+\u2022 \u4EE5\u4E0B\u4FEE\u9970\u53EA\u63A5\u53D7 flat \u52A0\u503C\uFF1A${flatOnlyStats.filter((name) => defs2.statMod.properties.stat.enum.includes(name)).join(" / ")}\u3002
 \u2022 \u8F93\u51FA\u4FA7\uFF08\u6301\u6709\u8005\u8FDB\u653B\uFF09\uFF1AdamageFlat \u56FA\u5B9A\u52A0\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat\uFF09\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF08\u57FA\u503C 1\uFF0C\u7528 mult \u6216 additivePercent\uFF0C\u7981\u7528 flat\uFF09\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF08\u7528 flat\uFF09\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF09\u3002
 \u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
 \u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7684\u57FA\u503C\u4E0E flat \u5747\u4E3A\u540C\u9636\u79FB\u52A8\u5355\u4F4D\uFF0C\u53E0\u52A0\u540E\u5E94\u7528\u500D\u7387\uFF0C\u518D\u6309\u5C42\u7EA7\u7C73\u6570\u6298\u7B97\u4E3A\u683C\uFF1BcheckBonus\u3001initiativeFlat \u4EC5\u63A5\u53D7 flat \u6570\u503C\u52A0\u503C\uFF0C\u4E0D\u4E58\u68C0\u5B9A\u6216\u5148\u653B\u603B\u503C\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
@@ -18250,6 +18275,17 @@ function mountTavernOverlay(options = {}) {
     if (!controller) listeners.push(() => node.removeEventListener(event, fn, opts));
   };
   const root2 = el(doc, "div", { "data-fated-tavern-overlay": "" });
+  const baselineCache = { key: null, state: null };
+  function hydrateBaseline(input, { seed } = {}) {
+    const custom = getGlobal(document?.defaultView ?? globalThis, "FatedTactical")?.hydrateBattleState;
+    if (custom) return custom(input, { seed, throwOnValidation: true }).state;
+    const key4 = JSON.stringify([input, seed ?? null]);
+    if (baselineCache.key === key4 && baselineCache.state) return structuredClone(baselineCache.state);
+    const state = hydrateFromSources(input, { seed, throwOnValidation: true }).state;
+    baselineCache.key = key4;
+    baselineCache.state = structuredClone(state);
+    return structuredClone(state);
+  }
   const launcher = el(doc, "button", { class: "fated-tavern-launcher", title: `\u6253\u5F00\u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0 \xB7 v${TAVERN_VERSION}`, "aria-label": `\u6253\u5F00\u547D\u5B9A\u6218\u672F\u63A7\u5236\u53F0 \xB7 v${TAVERN_VERSION}`, type: "button" }, "\u{1FA84}");
   const panel = el(doc, "section", { class: "fated-tavern-panel", role: "dialog", "aria-label": "\u547D\u5B9A\u6218\u672F\u9152\u9986\u63A7\u5236\u53F0", hidden: "" });
   const header = el(doc, "header", { class: "fated-tavern-header" });
@@ -19166,7 +19202,7 @@ ${tag2.textContent || ""}
     const battleInput = sources.input;
     const target2 = pages.sandbox.querySelector("[data-sandbox-mount]");
     const restart = ({ seed }) => {
-      const opening = hydrateFromSources(battleInput, { seed, throwOnValidation: true }).state;
+      const opening = hydrateBaseline(battleInput, { seed });
       const normalized = applyNormalization(opening, operations2(battleInstanceId));
       const next = restoreChatOpening(normalized, battleInstanceId);
       updateChatInstances(next, liveState());
@@ -19267,7 +19303,7 @@ ${tag2.textContent || ""}
     const source = ref2.path;
     if (!source || !/^\/(?:equipment|skills|items|statusTemplates)\/[^/]+$/.test(source)) return;
     const [, table4, id4] = source.split("/");
-    const baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
+    const baseline = hydrateBaseline(sources.input);
     const current = liveState();
     if (!current?.[table4] || !Object.hasOwn(current[table4], id4)) return;
     if (aiController) {
@@ -19555,7 +19591,7 @@ ${tag2.textContent || ""}
         }
       });
       const expanded = (operation2) => [operation2, ...duplicateOperations(operation2, duplicatePaths)];
-      const baselineForPartition = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
+      const baselineForPartition = hydrateBaseline(sources.input);
       const partition = partitionNormalizationPatch({
         liveState: current,
         baselineState: baselineForPartition,
@@ -19612,7 +19648,7 @@ ${tag2.textContent || ""}
       }
       let baseline, before;
       if (patch.length || data.existing?.length) {
-        baseline = hydrateFromSources(sources.input, { throwOnValidation: true }).state;
+        baseline = hydrateBaseline(sources.input);
         before = applyPatch(baseline, operations2(key4), true);
       }
       const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
@@ -19752,7 +19788,7 @@ ${tag2.textContent || ""}
       const validateOpening = (records2) => {
         const savedSeed = storage?.getItem(battleStorageKey(key4, "fated-tactical/battle-v1/seed"));
         const seed = savedSeed != null && /^\d+$/.test(savedSeed) ? Number(savedSeed) : sources.seed;
-        const source = hydrateFromSources(sources.input, { seed, throwOnValidation: true }).state;
+        const source = hydrateBaseline(sources.input, { seed });
         return replayChatPatches(applyNormalization(source, operations2(key4)), records2);
       };
       if (undo && message.undoReceipt.openingId) {
