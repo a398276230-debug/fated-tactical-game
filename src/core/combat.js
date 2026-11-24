@@ -5,7 +5,7 @@ import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie
   saveChance as saveOdds } from './rng.js';
 import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledTemplate } from './combat_protocol.js';
 
-import { validateStatusModifiers, validVmExpiry as validExpiry } from './vm-schema.js';
+import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, unitSkipped, reactionBlocked } from './vm-carriers.js';
