@@ -21,7 +21,13 @@ const table = (t, id) => (t && id != null && Object.hasOwn(t, id) ? t[id] : unde
 
 export function nameOf(state, id) {
   if (id == null) return '某人';
-  return table(state?.units, id)?.name ?? table(state?.covers, id)?.name ?? table(state?.interactives, id)?.name ?? String(id);
+  const unit = table(state?.units, id);
+  if (unit) {
+    const name = unit.name ?? String(id);
+    const duplicate = Object.values(state.units ?? {}).some(other => other.id !== id && other.name === name);
+    return duplicate ? `${name}〔${id}〕` : name;
+  }
+  return table(state?.covers, id)?.name ?? table(state?.interactives, id)?.name ?? String(id);
 }
 
 export function teamOf(state, id) { return table(state?.units, id)?.team ?? null; }

@@ -8630,12 +8630,17 @@ function formatBattleReportText(report, unitNames = {}) {
     const point4 = event.positions?.[id3] ?? report.units.find((unit) => unit.id === id3);
     return point4 && Number.isInteger(point4.x) && Number.isInteger(point4.y) ? `(${point4.x}, ${point4.y}${Number.isInteger(point4.z) ? `, z=${point4.z}` : ""})` : "";
   };
-  const name = (event, id3) => `${names.get(id3) ?? id3}${position(event, id3)}`;
   const idsByName = /* @__PURE__ */ new Map();
   for (const [id3, label] of names) if (label) {
     if (!idsByName.has(label)) idsByName.set(label, []);
     idsByName.get(label).push(id3);
   }
+  const duplicateNames = new Set([...idsByName].filter(([, ids]) => ids.length > 1).map(([label]) => label));
+  const name = (event, id3) => {
+    const label = names.get(id3) ?? id3;
+    const identity = duplicateNames.has(label) ? `\u3014${id3}\u3015` : "";
+    return `${label}${identity}${position(event, id3)}`;
+  };
   const labels = [...idsByName.keys()].sort((a, b) => b.length - a.length);
   const unitPattern = labels.length ? new RegExp(labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g") : null;
   const targetNarration = /* @__PURE__ */ new Set(["status", "status_patch", "damage", "heal", "resource", "shield", "defeat", "expire", "cleanse", "teleport", "knockback", "revive"]);
@@ -9360,7 +9365,13 @@ var num2 = (n) => Number.isInteger(n) ? `${n}` : Number(n).toFixed(1);
 var table3 = (t, id3) => t && id3 != null && Object.hasOwn(t, id3) ? t[id3] : void 0;
 function nameOf(state, id3) {
   if (id3 == null) return "\u67D0\u4EBA";
-  return table3(state?.units, id3)?.name ?? table3(state?.covers, id3)?.name ?? table3(state?.interactives, id3)?.name ?? String(id3);
+  const unit = table3(state?.units, id3);
+  if (unit) {
+    const name = unit.name ?? String(id3);
+    const duplicate = Object.values(state.units ?? {}).some((other) => other.id !== id3 && other.name === name);
+    return duplicate ? `${name}\u3014${id3}\u3015` : name;
+  }
+  return table3(state?.covers, id3)?.name ?? table3(state?.interactives, id3)?.name ?? String(id3);
 }
 function statusInfo(state, id3) {
   return table3(state?.statusTemplates, id3) ?? table3(STATUSES, id3) ?? { name: id3 };
@@ -17658,7 +17669,7 @@ function formatRejectedItem(item, state = {}) {
   return `[\u672A\u5E94\u7528] ${table4 === "skills" ? "\u6280\u80FD" : table4 === "equipment" ? "\u88C5\u5907" : "\u6761\u76EE"}\u300C${entity}\u300D(${item.path || "\u65E0\u8DEF\u5F84"})\uFF1A${item.reason || "\u8865\u4E01\u6821\u9A8C\u5931\u8D25"}`;
 }
 var normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
-var TAVERN_VERSION = "0.4.6";
+var TAVERN_VERSION = "0.4.7";
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",

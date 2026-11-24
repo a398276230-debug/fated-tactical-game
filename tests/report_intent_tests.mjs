@@ -58,10 +58,22 @@ test('VM 状态与护盾记录施加当时的数值，同名单位各用自己�
     if (id === 'probe_shield') assert.ok(entry.lines.includes('护盾 40 点'));
   }
   const report = api.exportBattleReportText();
-  assert.match(report, /同名\(3, 2, z=0\)获得冰冻[^；]*持续 3 回合[^；]*来源 同名\(1, 2, z=0\)/);
-  assert.match(report, /同名\(1, 2, z=0\)获得试验护盾[^；]*护盾 40 点/);
-  assert.match(report, /同名\(1, 2, z=0\)因试验消耗/);
+  assert.match(report, /同名〔scout〕\(3, 2, z=0\)获得冰冻[^；]*持续 3 回合[^；]*来源 同名〔swordsman〕\(1, 2, z=0\)/);
+  assert.match(report, /同名〔swordsman〕\(1, 2, z=0\)获得试验护盾[^；]*护盾 40 点/);
+  assert.match(report, /同名〔swordsman〕\(1, 2, z=0\)因试验消耗/);
   assert.doesNotMatch(report, /同名\([^)]+\)\(/);
+});
+
+test('同名单位在同格战报中仍用稳定 ID 区分', () => {
+  const report = formatBattleReportText({ title: '同名测试', units: [
+    { id: 'e1', name: '刺壳寄居蟹', x: 2, y: 2, z: 0 },
+    { id: 'e2', name: '刺壳寄居蟹', x: 2, y: 2, z: 0 },
+  ], rounds: [{ round: 1, events: [
+    { type: 'turn', actor: 'e1', text: '刺壳寄居蟹的回合', positions: { e1: { x: 2, y: 2, z: 0 }, e2: { x: 2, y: 2, z: 0 } } },
+    { type: 'damage', actor: 'e1', text: '刺壳寄居蟹受到伤害', detail: { targetId: 'e2', amount: 3, hpBefore: 10, hpAfter: 7 } },
+  ] }] });
+  assert.match(report, /刺壳寄居蟹〔e1〕\(2, 2, z=0\)/);
+  assert.match(report, /刺壳寄居蟹〔e2〕\(2, 2, z=0\)/);
 });
 
 test('VM 瞬移和拉拽的落点只写一次，掩体攻击摘要显示名称', () => {

@@ -77,12 +77,17 @@ export function formatBattleReportText(report, unitNames = {}) {
     const point = event.positions?.[id] ?? report.units.find(unit => unit.id === id);
     return point && Number.isInteger(point.x) && Number.isInteger(point.y) ? `(${point.x}, ${point.y}${Number.isInteger(point.z) ? `, z=${point.z}` : ''})` : '';
   };
-  const name = (event, id) => `${names.get(id) ?? id}${position(event, id)}`;
   const idsByName = new Map();
   for (const [id, label] of names) if (label) {
     if (!idsByName.has(label)) idsByName.set(label, []);
     idsByName.get(label).push(id);
   }
+  const duplicateNames = new Set([...idsByName].filter(([, ids]) => ids.length > 1).map(([label]) => label));
+  const name = (event, id) => {
+    const label = names.get(id) ?? id;
+    const identity = duplicateNames.has(label) ? `〔${id}〕` : '';
+    return `${label}${identity}${position(event, id)}`;
+  };
   const labels = [...idsByName.keys()].sort((a, b) => b.length - a.length);
   const unitPattern = labels.length ? new RegExp(labels.map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g') : null;
   const targetNarration = new Set(['status', 'status_patch', 'damage', 'heal', 'resource', 'shield', 'defeat', 'expire', 'cleanse', 'teleport', 'knockback', 'revive']);
