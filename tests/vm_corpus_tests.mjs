@@ -4,6 +4,7 @@ import { commitVMEffect, dispatchVMHook, resolveVMAction } from '../src/core/vm-
 import { applyAction, beginBattle, grantStatus } from '../src/core/combat.js';
 import { applyPatch } from '../src/tavern/overlay.js';
 import { test } from 'node:test';
+import { tactics } from '../src/core/ai.js';
 import { validVmRule } from '../src/core/vm-schema.js';
 import { createGameAPI } from '../src/api/game_api.js';
 import { validateState } from '../src/api/validation.js';
@@ -46,6 +47,24 @@ test('confirmed ally death reaches living allies without crediting self-kills', 
   const hit = (amount,direct) => commitVMEffect(state,{op:'damage',amount,damageType:'true',direct,sourceId:second.id,targetId:first.id});
   hit(1,true); assert.ok(first.statuses.mark); hit(1,false); assert.equal(first.statuses.mark,undefined);
   hit(500000,true); assert.equal(ally.vars.dead,first.id); assert.equal(second.vars?.dead,undefined);
+});
+
+test('chance requires an explicit threshold, including legal zero', () => {
+  const valid = node => validVmRule({id:'prob',hook:'active',program:[{op:'check',kind:'chance',...node}]});
+  assert.equal(valid({}),false); assert.ok(valid({dc:0})); assert.ok(valid({dc:100}));
+});
+
+test('automatic choices rank only selected candidates without consuming an extra roll', () => {
+  const {state,first,second} = fixture();
+  state.skills.choices = {...skill('选位', ['safest_cell','best_offensive_cell','highest_threat'].map((aiPolicy,i) => ({
+    op:'ask',kind:i===2?'entity':'cell',chooser:'self',prompt:aiPolicy,out:`p${i}`,aiPolicy,
+    select:i===2?{from:'units'}:{from:'cells',where:'candidate.y == 1 && (candidate.x == 3 || candidate.x == 8)'}
+  }))), target:'self'};
+  first.skills = ['choices']; const {state:after} = resolveVMAction(state,{type:'skill',skillId:'choices',x:first.x,y:first.y},{dryRun:true});
+  assert.deepEqual(after.tape.at(-1).targetSpec.answers,[{x:8,y:1},{x:3,y:1},second.id]);
+  const plan = {ok:true,targets:[{id:second.id,expectedDamage:1}]};
+  const score = () => tactics(state,first,{type:'attack'},plan);
+  const base = score(); second.mods = [{locks:['move']}]; assert.equal(score(),base+8);
 });
 
 test('VM save exposes both original and effective DC to the after_check hook', () => {
@@ -439,6 +458,8 @@ function fixture() {
   assert.equal(ask.maxSelect, 2);
   const [first, second, third] = ask.options;
   assert.equal(automaticId, first.id);
+  assert.deepEqual(preview.state.tape.at(-1).targetSpec.answers[0], [first.id, second.id]);
+  assert.equal(preview.state.units[second.id].hp, before.units[second.id].hp - 1);
   for (const value of [first.id, [], [first.id, first.id], [first.id, 'unknown'], [first.id, 3], [first.id, second.id, third.id]]) {
     assert.throws(() => game.playAction({ type: 'answer', askId: ask.askId, value }));
   }

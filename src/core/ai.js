@@ -1,4 +1,5 @@
 import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, statusModifier, visibleEnemy } from './combat.js';
+import { aggregateModifiers } from './vm-carriers.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
 
 const END = Object.freeze({ type: 'end' });
@@ -24,10 +25,10 @@ export function tactics(state, actor, action, plan) {
     const sign = enemy ? 1 : (target === actor ? -1.5 : -1.15);
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target.hp ? Math.min(profile.hitChance ?? 1, damage / target.hp) : 0;
-    const statusValue = target.statuses ? Object.values(target.statuses).reduce((value, status) => {
-      const control = status.modifiers?.skip || status.modifiers?.root || status.modifiers?.disadvantage;
-      return value + (control ? (enemy ? 8 : -8) : 0) + (status.durationType === 'battle_turns' ? 1 : 0);
-    }, 0) : 0;
+    const locks = aggregateModifiers(state, target.id).locks;
+    const controlled = Object.values(locks).some(Boolean) || ['skip','rooted','disadvantage'].some(key => statusModifier(target, key) > 0);
+    const statusValue = (controlled ? (enemy ? 8 : -8) : 0)
+      + Object.values(target.statuses ?? {}).filter(status => status.durationType === 'battle_turns').length;
     score += sign * (Math.min(target.hp, damage) + kill * 6 + statusValue);
     if (profile.heal) {
       const healing = (profile.heal[0] + profile.heal[1]) / 2;

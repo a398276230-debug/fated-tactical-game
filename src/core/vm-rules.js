@@ -99,7 +99,8 @@ export const ruleOps = {
 export function continueCheck({ state, frame, host, context }) {
   const { data: op } = frame;
   if (frame.pc === 0) {
-    const dc = evaluate(op.dc, context, op.kind === 'chance' ? 0 : 10);
+    const dc = evaluate(op.dc, context, op.kind === 'chance' ? undefined : 10);
+    if (op.kind === 'chance' && !Number.isFinite(dc)) host.log(state, context.self, 'warning', '概率判定缺少有效 dc，忽略该检定');
     if (!Number.isFinite(dc)) { state.vm.stack.pop(); return; }
     frame.eventRef = newEvent(state, { checkKind: op.kind, actorId: context.self.id, targetId: context.target.id,
       dc, baseDC: dc, stat: op.stat ?? null, statusId: op.statusId ?? null, tags: op.tags ?? [] });

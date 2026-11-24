@@ -151,9 +151,24 @@ function writeChoice(state, frame, ask, value, host, automatic = false) {
   });
 }
 
-function automaticChoice(state, ask, host) {
+function automaticChoice(state, ask) {
   if (ask.kind === 'number') return ask.aiPolicy === 'max' ? ask.options.max : ask.options.min;
-  return host.choose?.(state, ask) ?? ask.options[0];
+  const chooser = state.units[ask.chooserId];
+  const enemies = Object.values(state.units).filter(unit => unit.team !== chooser.team && unit.hp > 0 && !unit.fled);
+  let ranked = ask.options;
+  if (ask.kind === 'cell' && enemies.length && ['best_offensive_cell','safest_cell'].includes(ask.aiPolicy)) {
+    const sign = ask.aiPolicy === 'safest_cell' ? -1 : 1;
+    ranked = ranked.map(cell => ({cell, distance: Math.min(...enemies.map(enemy => distance3D(state, cell, enemy)))}))
+      .sort((a,b) => sign * (a.distance - b.distance)).map(row => row.cell);
+  } else if (ask.kind === 'entity' && ask.aiPolicy === 'highest_threat') {
+    const threat = option => {
+      const unit = state.units[option.id];
+      return enemies.includes(unit) ? Math.max(0, ...['str','agi','int','spi'].map(stat => unit.stats?.[stat] ?? 0)) : -1;
+    };
+    ranked = [...ranked].sort((a,b) => threat(b) - threat(a));
+  }
+  if (ask.maxSelect !== undefined) return ranked.slice(0, ask.maxSelect).map(option => option.id);
+  return ask.kind === 'cell' ? ranked[0] : ranked[0].id;
 }
 
 function askInstruction(state, frame, op, context, host, options) {
@@ -183,8 +198,7 @@ function askInstruction(state, frame, op, context, host, options) {
     ...(op.maxSelect === undefined ? {} : { maxSelect: op.maxSelect }) };
   if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.controlPolicy?.controller === 'ai' || chooser.team === 'red'))) {
     if (options.dryRun) options.conditional = true;
-    const choice = automaticChoice(state, ask, host);
-    const value = ask.maxSelect !== undefined ? [choice.id] : ask.kind === 'entity' || ask.kind === 'option' ? choice.id : choice;
+    const value = automaticChoice(state, ask);
     writeChoice(state, frame, ask, value, host, true);
   } else state.vm.pendingAsk = ask;
 }
