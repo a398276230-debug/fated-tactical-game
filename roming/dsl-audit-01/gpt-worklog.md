@@ -19,3 +19,20 @@
 - `d8f068d`：确认 `src/core/status_modifiers.js` 全仓无保留调用，将校验迁入 `vm-schema.js` 后删除旧模块；清理 `combat_protocol.js` 中无调用的比例尺别名导出与死导出，保留 `sizeForUnit` 函数体及 `protocolDistance` 公开链路；提交前 `npm test` 360/360。
 - `53298b0`：执行 `npm run build`，单独提交 `dist/index.mjs`、`dist/index.iife.js`、`dist/tavern.mjs`、`dist/tavern.iife.js`；构建后再次 `npm test` 360/360。
 - 最终核验：旧 `status_modifiers.js` 已删除，协议距离仍由 `prebattle_resources.js` 经 `game_api.js` 公开，工作树清理后无未提交文件；未 push。
+
+## Phase 3B 验收
+
+| 批次 | 提交 | 结果 |
+| --- | --- | --- |
+| 3B-1 | `72965b1` | 将技能与武器的运行时几何换算集中到 `combat_protocol.js`。`descriptor.js` 现行职责是解析开场声明，两种导入输入均保留原始距离，并经同一战斗运行时换算。验证普通武器、史诗技能与唯一技能的实际射程和半径。变参 `min/max`、`has_status` 和 `zone.x/y` 已有实现及测试。辅助协议校验 hook、stat、flags、aiPolicy 和指令说明的完整集合。`npm test` 361/361。 |
+| 3B-2 | `00bcd1a` | 标准化按五种互斥状态显示。默认队列仅发送待编译词条。条目说明和核销收据逐条校验，允许只有说明且省略空 `patch` 的响应。忽略和恢复沿用原浏览器存储键与原警告标识。补丁禁止改写运行时实例资源池绑定。`npm test` 363/363。 |
+| 3B-2 补充 | `dde43ba` | Claude、Gemini 原生纯推理返回也会提供输出长度提示，保留字符数和结束原因。 |
+| 3B-3 | `cfde920`、`3f0b0d8` | `npm run build` 重新生成四份 `dist/index.{mjs,iife.js}` 与 `dist/tavern.{mjs,iife.js}`。 |
+| 3B-3 回归 | `94c596a` | Chrome 覆盖坏收据同批保留两处合法补丁、已解释条目退出重试、辅助 AI 预填、忽略跨重载保存、恢复待编译。补充字段错误准确定位的单测。 |
+
+最终构建后按顺序复跑，全部通过，无跳过。Chrome 版本为 `158.0.8127.36`。
+
+- `npm test` 365/365。
+- `npm run test:e2e` 3/3。实测 100 格、4 掩体、4 互动点，1440px 无重叠，390px 竖屏及 844×390 横屏整盘可见。`pageerror` 和 `console.error` 均为 0。
+- `node tests/e2e_scale_grid_chrome.mjs` 1/1。验证矩形棋盘、比例尺徽标、同格叠放和精确目标选择。
+- 本地 `master` 分批提交，最终工作树干净，未推送。
