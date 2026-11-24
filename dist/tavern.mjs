@@ -889,9 +889,9 @@ var precedence = /* @__PURE__ */ new Map([
   ["%", 6]
 ]);
 var VM_LIMITS = { length: 1024, tokens: 256 };
-function parse(text5, dependencies2) {
-  if (!text5.length || text5.length > VM_LIMITS.length) throw new SyntaxError("Invalid expression length");
-  const tokens = text5.match(vmTokens) ?? [];
+function parse(text7, dependencies2) {
+  if (!text7.length || text7.length > VM_LIMITS.length) throw new SyntaxError("Invalid expression length");
+  const tokens = text7.match(vmTokens) ?? [];
   if (tokens.length > VM_LIMITS.tokens) throw new SyntaxError("Too many expression tokens");
   let index = 0;
   const take = (token) => {
@@ -3119,7 +3119,7 @@ function continueCheck({ state, frame, host, context }) {
     Object.assign(event, { roll, total: total2, dc, finalDC: dc, passed, rating: event.forceOutcome === "crit" ? "crit" : event.minRating ?? (passed ? "hit" : "miss") });
     const verdict = passed ? "\u6210\u529F" : "\u5931\u8D25";
     const label = { save: "\u8C41\u514D", chance: "\u6982\u7387\u5224\u5B9A", d20: "\u68C0\u5B9A", contest: "\u5BF9\u6297\u68C0\u5B9A", attack: "\u653B\u51FB\u68C0\u5B9A" }[kind];
-    const text5 = `${subject2.name}${label}${verdict}\uFF08${outcomes.map((outcome) => kind === "chance" ? `d100 \u63B7\u51FA ${outcome.roll}\uFF0C\u9608\u503C ${outcome.difficulty}` : `d20 \u63B7\u51FA ${outcome.roll}\uFF0C\u5408\u8BA1 ${outcome.total} \u5BF9 ${outcome.difficulty}`).join("\uFF1B")}\uFF09`;
+    const text7 = `${subject2.name}${label}${verdict}\uFF08${outcomes.map((outcome) => kind === "chance" ? `d100 \u63B7\u51FA ${outcome.roll}\uFF0C\u9608\u503C ${outcome.difficulty}` : `d20 \u63B7\u51FA ${outcome.roll}\uFF0C\u5408\u8BA1 ${outcome.total} \u5BF9 ${outcome.difficulty}`).join("\uFF1B")}\uFF09`;
     const targetId = context.target.id;
     if (kind === "save") {
       const checks2 = outcomes.map((outcome, index) => ({
@@ -3131,9 +3131,9 @@ function continueCheck({ state, frame, host, context }) {
         saved: outcome.passed
       }));
       const detail = checks2.length > 1 ? { checks: checks2, mode: op.mode ?? "all" } : checks2[0];
-      host.log(state, subject2, "save", text5, { targetId, ...detail, saved: passed });
+      host.log(state, subject2, "save", text7, { targetId, ...detail, saved: passed });
     } else {
-      host.log(state, subject2, "vm_check", text5, { targetId, kind, outcomes, success: passed });
+      host.log(state, subject2, "vm_check", text7, { targetId, kind, outcomes, success: passed });
     }
     scheduleHooks(state, frame, "after_check", frame.eventRef, host);
     return;
@@ -3244,12 +3244,12 @@ function removeStatus(state, target2, status, reason, actor, host, parent, detai
   });
   delete target2.statuses[statusId3];
   deleteOwnedPools(state, status);
-  const text5 = reason === "expired" ? `${target2.name}\u7684${status.name}\u7ED3\u675F` : `${target2.name}\u5931\u53BB${status.name}`;
+  const text7 = reason === "expired" ? `${target2.name}\u7684${status.name}\u7ED3\u675F` : `${target2.name}\u5931\u53BB${status.name}`;
   host.log(
     state,
     actor,
     reason === "expired" ? "expire" : "cleanse",
-    text5,
+    text7,
     { targetId: target2.id, statusId: statusId3, reason, ...detail }
   );
   scheduleHooks(state, parent, "after_status_removed", eventRef, host);
@@ -3931,8 +3931,8 @@ function logMove(state, host, unit, mode, from, path2, collision) {
   const verbs2 = { teleport: "\u77AC\u79FB", step: "\u79FB\u52A8", push: "\u88AB\u63A8\u79BB", pull: "\u88AB\u62C9\u8FD1", altitude: "\u6539\u53D8\u9AD8\u5EA6" };
   const to = at(state, unit);
   const destination = `(${to.x}, ${to.y}, z=${to.z})`;
-  const text5 = `${unit.name}${verbs2[mode]}\u81F3 ${destination}${collision ? "\uFF0C\u9047\u5230\u963B\u6321" : ""}`;
-  host.log(state, unit, types2[mode], text5, { targetId: unit.id, from, to, path: path2, ...collision ? { collision } : {} });
+  const text7 = `${unit.name}${verbs2[mode]}\u81F3 ${destination}${collision ? "\uFF0C\u9047\u5230\u963B\u6321" : ""}`;
+  host.log(state, unit, types2[mode], text7, { targetId: unit.id, from, to, path: path2, ...collision ? { collision } : {} });
 }
 function moveDistance(state, frame, context, op) {
   const distance2 = op.distance === void 0 ? 1 : evaluateExpr(op.distance, context);
@@ -4674,19 +4674,19 @@ function proseNumber(value) {
   if (!Number.isFinite(value) || Number.isInteger(value)) return String(value);
   return Number(value.toFixed(6)).toString();
 }
-function normalizeProse(text5) {
-  return typeof text5 === "string" ? text5.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text5;
+function normalizeProse(text7) {
+  return typeof text7 === "string" ? text7.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text7;
 }
 
 // src/core/vm-runtime.js
 var own12 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
 var lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
 var mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
-function recordVM(state, unit, type, text5, detail = {}) {
+function recordVM(state, unit, type, text7, detail = {}) {
   const positions = Object.fromEntries(Object.values(state.units).map((unit2) => [unit2.id, { x: unit2.x, y: unit2.y, z: elevation(state, unit2) }]));
   const cause = vmAttribution(state);
   const loggedDetail = cause ? { ...detail, attribution: cause } : detail;
-  state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text: normalizeProse(text5), detail: loggedDetail, positions });
+  state.logs.push({ round: state.round, actor: unit?.id ?? null, type, text: normalizeProse(text7), detail: loggedDetail, positions });
 }
 var handlers = {
   action: continueAction,
@@ -5055,10 +5055,10 @@ var clamp3 = (number3, min, max) => Math.max(min, Math.min(max, number3));
 var vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
 var statusOf2 = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
-function record(state, unit, type, text5, detail = {}) {
+function record(state, unit, type, text7, detail = {}) {
   const actor = typeof unit === "string" ? unit : unit?.id ?? null;
   const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, pointAt(state, current)]));
-  const event = { round: state.round, actor, text: text5, type, detail, positions };
+  const event = { round: state.round, actor, text: text7, type, detail, positions };
   state.logs.push(event);
   return event;
 }
@@ -7335,8 +7335,8 @@ var num = (v, min, max) => Number.isFinite(v) && v >= min && v <= max;
 var text2 = (v, max = 100) => typeof v === "string" && v.trim().length > 0 && v.length <= max;
 var team = (v) => v === "blue" || v === "red";
 var inGrid = (state, x, y) => int(y, 0, (state.grid?.length ?? 0) - 1) && int(x, 0, (state.grid[y]?.length ?? 0) - 1);
-var attrs2 = ["str", "agi", "con", "int", "spi"];
-var statusDurations = ["battle_turns", "until_removed", "persistent"];
+var attrs2 = UNIT_STATS;
+var statusDurations = durationTypes;
 var maxStatusStacks = 999999;
 var maxStatusTemplates = 64;
 var has = (record3, key4) => id2(key4) && own13(record3 ?? {}, key4);
@@ -7368,11 +7368,11 @@ function dice3(v) {
   checkOptional(v, "multiplier", (x) => num(x, 0, 8));
   checkOptional(v, "type", (x) => damageTypes.includes(x));
 }
-var stackModes2 = ["refresh", "stack", "replace", "extend"];
+var stackModes2 = stackModes;
 var numericExpr2 = (value) => Number.isFinite(value) || typeof value === "string" && validExpr(value);
 function carrierFieldsValue(value, state, resolved = false) {
   if (own13(value, "tags")) list2(value.tags, 32, resolved ? (tag2) => text2(tag2) : validVmTag, "VM \u6807\u7B7E");
-  if (own13(value, "flags")) list2(value.flags, 8, (flag) => ["undispellable", "concept_immune"].includes(flag), "VM \u6807\u8BB0");
+  if (own13(value, "flags")) list2(value.flags, 8, (flag) => carrierFlags.includes(flag), "VM \u6807\u8BB0");
   checkOptional(value, "tier", (tier) => int(tier, 1, 7));
   if (own13(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : validCarrierScalar(entry2), "VM \u53D8\u91CF"));
   if (own13(value, "mods")) list2(value.mods, 200, (mod2) => {
@@ -7443,7 +7443,7 @@ function equipmentTemplate(v, state) {
   checkOptional(v, "boundTo", id2);
   checkOptional(v, "weaponType", text2);
   requireThat(text2(v.name), "name");
-  checkOptional(v, "quality", (x) => ["\u552F\u4E00", "\u666E\u901A", "\u4F18\u826F", "\u7A00\u6709", "\u53F2\u8BD7", "\u4F20\u8BF4", "\u795E\u8BDD"].includes(x));
+  checkOptional(v, "quality", (x) => x === "\u552F\u4E00" || Object.hasOwn(QUALITY_TIER, x));
   checkOptional(v, "range", (x) => int(x, 0, 64));
   checkOptional(v, "attack", (x) => int(x, 0, 1e9));
   checkOptional(v, "accuracy", (x) => int(x, -20, 30));
@@ -7454,8 +7454,8 @@ function equipmentTemplate(v, state) {
   checkOptional(v, "hand", (x) => ["one_handed", "two_handed", "off_hand"].includes(x));
   checkOptional(v, "rangeType", (x) => ["melee", "ranged"].includes(x));
   for (const field of ["ranged", "closeQuarters", "heavy", "twoHanded", "shield"]) checkOptional(v, field, (x) => typeof x === "boolean");
-  checkOptional(v, "shape", (x) => ["single", "circle", "ring", "fan", "cone", "line"].includes(x));
-  checkOptional(v, "target", (x) => ["enemy", "ally", "self", "any", "cell"].includes(x));
+  checkOptional(v, "shape", (x) => skillShapes.includes(x));
+  checkOptional(v, "target", (x) => skillTargets.filter((target2) => target2 !== "corpse").includes(x));
   validateAreaDimensions(v);
   if (own13(v, "damage")) dice3(v.damage);
   requireThat(own13(v, "range") === own13(v, "damage"), "\u6B66\u5668 range/damage");
@@ -7472,7 +7472,7 @@ function skillTemplate(v, state) {
   checkOptional(v, "resourceCost", resourceCost);
   checkOptional(v, "initiativeBonus", (value) => int(value, -100, 100));
   checkOptional(v, "passive", (value) => typeof value === "boolean");
-  requireThat(text2(v.name) && int(v.ap, 0, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 64) && ["single", "circle", "ring", "fan", "cone", "line"].includes(v.shape) && ["enemy", "ally", "self", "any", "corpse", "cell"].includes(v.target), "\u6280\u80FD");
+  requireThat(text2(v.name) && int(v.ap, 0, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 64) && skillShapes.includes(v.shape) && skillTargets.includes(v.target), "\u6280\u80FD");
   checkOptional(v, "power", (x) => int(x, 0, 1e9));
   for (const k of ["mp", "sp"]) checkOptional(v, k, (x) => int(x, 0, 25e3));
   validateAreaDimensions(v);
@@ -7558,13 +7558,13 @@ function unitValue(v, key4, state) {
   checkOptional(v, "flatInitiative", (x) => int(x, -1e3, 1e3));
   for (const field of ["attackInit", "actionInit"]) checkOptional(v, field, (x) => Array.isArray(x) && x.length <= 16 && x.every((n) => int(n, -1e3, 1e3)));
   checkOptional(v, "lockedTargetId", (x) => x === null || id2(x));
-  checkOptional(v, "intent", (x) => typeof x === "string" && ["normal", "function", "core", "kill", "concept"].includes(x));
+  checkOptional(v, "intent", (x) => typeof x === "string" && Object.hasOwn(INTENTS, x));
   checkOptional(v, "bonusDice", (x) => int(x, 0, 2));
   checkOptional(v, "penaltyDice", (x) => int(x, 0, 1));
-  checkOptional(v, "stance", (x) => typeof x === "string");
+  checkOptional(v, "stance", (x) => STANCES.includes(x));
   checkOptional(v, "protagonist", (x) => x === true);
   checkOptional(v, "moraleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
-  checkOptional(v, "moraleState", (x) => typeof x === "string" && Object.hasOwn(moraleLabels, x));
+  checkOptional(v, "moraleState", (x) => MORALE_STATES.includes(x));
   checkOptional(v, "greatswordMode", (x) => ["offensive", "defensive"].includes(x));
   checkOptional(v, "parryQuota", (x) => int(x, 0, 2));
   checkOptional(v, "parryRefunded", (x) => typeof x === "boolean");
@@ -7593,6 +7593,7 @@ function zoneValue(value, key4, state) {
   carrierFieldsValue(value, state, true);
   if (own13(value, "pools")) poolBindings(value.pools);
   const { area: area3, follow, persistent, remainingTurns } = value;
+  requireThat(zoneAreaShapes.includes(area3.shape), "VM \u533A\u57DF\u5F62\u72B6");
   requireThat(validVmOpcode({ op: "spawn", entityKind: "zone", spec: { area: area3, follow, persistent, remainingTurns } }), "VM \u533A\u57DF");
   requireThat(int(remainingTurns, 1, 100), "VM \u533A\u57DF\u6301\u7EED\u56DE\u5408");
   const validPoint = (point4) => pointValue(state, point4);
@@ -8269,7 +8270,7 @@ function approach(state, actor, enemies, suppress = false) {
 function zoneOperationScore(state, zone, unit) {
   const owner = state.units?.[zone.ownerId];
   const hostile = owner?.team != null && owner.team !== unit.team;
-  const text5 = (rule2) => typeof rule2.filter === "string" && /target\\.team\\s*!=\\s*source\\.team/.test(rule2.filter);
+  const text7 = (rule2) => typeof rule2.filter === "string" && /target\\.team\\s*!=\\s*source\\.team/.test(rule2.filter);
   const walk = (program2, multiplier = 1) => (program2 ?? []).reduce((score, op) => {
     let value = 0;
     if (op.op === "damage") value = -26;
@@ -8286,7 +8287,7 @@ function zoneOperationScore(state, zone, unit) {
   }, 0);
   return (zone.rules ?? []).reduce((score, rule2) => {
     const value = walk(rule2.program);
-    return score + (hostile || !text5(rule2) ? value : Math.max(0, value));
+    return score + (hostile || !text7(rule2) ? value : Math.max(0, value));
   }, 0) + (zone.mods ?? []).reduce((score, mod2) => {
     if (mod2.locks?.length) return score + (hostile ? -24 : 12);
     const flat = typeof mod2.flat === "number" ? mod2.flat : 0;
@@ -8799,11 +8800,11 @@ function formatBattleReportText(report, unitNames = {}) {
   const labels = [...idsByName.keys()].sort((a, b) => b.length - a.length);
   const unitPattern = labels.length ? new RegExp(labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g") : null;
   const targetNarration = /* @__PURE__ */ new Set(["status", "status_patch", "damage", "heal", "resource", "shield", "defeat", "expire", "cleanse", "teleport", "knockback", "revive"]);
-  const replaceUnitNames = (event, text5) => {
-    if (!unitPattern) return text5;
+  const replaceUnitNames = (event, text7) => {
+    if (!unitPattern) return text7;
     const target2 = event.detail?.targetId;
     const contextIds = targetNarration.has(event.type) ? [target2, event.actor] : [event.actor, target2];
-    return cleanProse(text5).replace(unitPattern, (label) => {
+    return cleanProse(text7).replace(unitPattern, (label) => {
       const ids = idsByName.get(label);
       const id3 = contextIds.find((candidate) => ids.includes(candidate)) ?? (ids.length === 1 ? ids[0] : void 0);
       return id3 === void 0 ? label : name(event, id3);
@@ -8811,23 +8812,23 @@ function formatBattleReportText(report, unitNames = {}) {
   };
   const checkTarget = (event, detail) => detail.targetKind === "cover" ? detail.targetName ?? detail.targetId : name(event, detail.targetId);
   const change2 = (resource2, before, after) => Number.isFinite(before) && Number.isFinite(after) ? `\uFF08${resource2} ${proseNumber(before)} \u2192 ${proseNumber(after)}\uFF09` : "";
-  const cleanProse = (text5) => typeof text5 === "string" ? text5.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text5;
+  const cleanProse = (text7) => typeof text7 === "string" ? text7.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text7;
   for (const { round, events } of report.rounds) {
     const rows2 = [];
     let turn = null;
-    const add = (text5) => {
-      if (turn) turn.parts.push(text5);
-      else rows2.push(text5);
+    const add = (text7) => {
+      if (turn) turn.parts.push(text7);
+      else rows2.push(text7);
     };
     for (const [i, event] of events.entries()) {
-      const { type, text: text5, actor } = event;
+      const { type, text: text7, actor } = event;
       const detail = event.detail ?? {};
       switch (type) {
         case "initiative":
           rows2.push(`\u786E\u5B9A\u5148\u653B\u6B21\u5E8F\uFF1A${detail.initiative.map((u) => name(event, u.unitId)).join(" \u2192 ")}`);
           break;
         case "turn":
-          turn = { text: replaceUnitNames(event, text5), actor, parts: [] };
+          turn = { text: replaceUnitNames(event, text7), actor, parts: [] };
           rows2.push(turn);
           break;
         case "end":
@@ -8848,7 +8849,7 @@ function formatBattleReportText(report, unitNames = {}) {
           }
           const prefix = `${actorName}\uFF1A`;
           const rawPrefix = `${names.get(actor) ?? actor}\uFF1A`;
-          const label = text5.startsWith(prefix) ? text5.slice(prefix.length) : text5.startsWith(rawPrefix) ? text5.slice(rawPrefix.length) : text5;
+          const label = text7.startsWith(prefix) ? text7.slice(prefix.length) : text7.startsWith(rawPrefix) ? text7.slice(rawPrefix.length) : text7;
           add(action === "attack" || action === "skill" ? `\u4F7F\u7528${replaceUnitNames(event, label)}` : replaceUnitNames(event, label));
           break;
         }
@@ -8883,7 +8884,7 @@ function formatBattleReportText(report, unitNames = {}) {
         }
         case "choice": {
           if (!detail.choice) {
-            add(replaceUnitNames(event, text5) + attributionText(detail));
+            add(replaceUnitNames(event, text7) + attributionText(detail));
             break;
           }
           const { title, lines: lines2 } = choiceProse(detail.choice, name(event, actor), (id3) => name(event, id3));
@@ -8901,10 +8902,10 @@ function formatBattleReportText(report, unitNames = {}) {
           break;
         }
         case "parry":
-          add(replaceUnitNames(event, text5) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]) + attributionText(detail));
+          add(replaceUnitNames(event, text7) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]) + attributionText(detail));
           break;
         case "morale":
-          add(replaceUnitNames(event, text5) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
+          add(replaceUnitNames(event, text7) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
           break;
         case "status":
         case "status_patch": {
@@ -8913,7 +8914,7 @@ function formatBattleReportText(report, unitNames = {}) {
           const parts = statusNotes(detail);
           if (type === "status_patch" && detail.stacks > 1) parts.unshift(`${detail.stacks} \u5C42`);
           if (type === "status" && actor && detail.targetId && actor !== detail.targetId) parts.push(`\u6765\u6E90 ${name(event, actor)}`);
-          add(replaceUnitNames(event, text5).replace(/ ×1$/, "") + notes(parts) + attributionText(detail));
+          add(replaceUnitNames(event, text7).replace(/ ×1$/, "") + notes(parts) + attributionText(detail));
           break;
         }
         case "stat_modifier": {
@@ -8921,47 +8922,47 @@ function formatBattleReportText(report, unitNames = {}) {
           const parts = [`\u6301\u7EED ${detail.turns} \u56DE\u5408`];
           if (detail.flat) parts.push(`${stat3} ${signed(detail.flat)}`);
           if (detail.percent) parts.push(`${stat3} ${signed(percent(detail.percent))}%`);
-          add(replaceUnitNames(event, text5) + notes(parts));
+          add(replaceUnitNames(event, text7) + notes(parts));
           break;
         }
         case "vm_check":
-          add(replaceUnitNames(event, text5) + (detail.targetId && detail.targetId !== actor ? `\uFF08\u76EE\u6807 ${name(event, detail.targetId)}\uFF09` : "") + attributionText(detail));
+          add(replaceUnitNames(event, text7) + (detail.targetId && detail.targetId !== actor ? `\uFF08\u76EE\u6807 ${name(event, detail.targetId)}\uFF09` : "") + attributionText(detail));
           break;
         case "damage":
         case "heal":
           if (detail.amount !== 0) {
             const origin = detail.statusId && actor && actor !== detail.targetId ? `\uFF08\u65BD\u52A0\u8005 ${name(event, actor)}\uFF09` : "";
-            add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
+            add(replaceUnitNames(event, text7) + change2("HP", detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
           }
           break;
         case "skill_cost":
-          add(replaceUnitNames(event, text5) + change2("HP", detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
+          add(replaceUnitNames(event, text7) + change2("HP", detail.hpBefore ?? detail.remainingHP + detail.hp, detail.hpAfter ?? detail.remainingHP));
           break;
         case "resource":
-          add(replaceUnitNames(event, text5) + change2(detail.resourceLabel ?? detail.resource?.toUpperCase(), detail.before, detail.after) + attributionText(detail));
+          add(replaceUnitNames(event, text7) + change2(detail.resourceLabel ?? detail.resource?.toUpperCase(), detail.before, detail.after) + attributionText(detail));
           break;
         case "counter": {
           const { counterKey, before, after } = detail;
           const suffix = ` \xB7 ${counterKey} ${before} \u2192 ${after}`;
-          const label = counterKey && text5.endsWith(suffix) ? `${text5.slice(0, -suffix.length)} \xB7 ${resourceLabel(counterKey)} ${before} \u2192 ${after}` : text5;
+          const label = counterKey && text7.endsWith(suffix) ? `${text7.slice(0, -suffix.length)} \xB7 ${resourceLabel(counterKey)} ${before} \u2192 ${after}` : text7;
           add(replaceUnitNames(event, label) + attributionText(detail));
           break;
         }
         case "outcome":
           turn = null;
-          rows2.push(replaceUnitNames(event, text5));
+          rows2.push(replaceUnitNames(event, text7));
           break;
         default: {
           if (type === "cover_damage" && detail.amount === 0) break;
           const ownAction = turn?.actor === actor && ["move", "sprint", "disengage", "teleport", "altitude", "interact", "skip", "brace", "cover_approach"].includes(type);
           const banked = Number.isFinite(detail.progressPermille) && ["move", "sprint", "disengage"].includes(type);
           const verb = type === "sprint" ? "\u75BE\u8DD1\u63A8\u8FDB" : "\u84C4\u6B65\u63A8\u8FDB";
-          let label = banked ? `${ownAction ? "" : name(event, actor)}${verb}\uFF0C\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(detail.progressPermille)}` : replaceUnitNames(event, text5);
+          let label = banked ? `${ownAction ? "" : name(event, actor)}${verb}\uFF0C\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(detail.progressPermille)}` : replaceUnitNames(event, text7);
           const actorRaw = names.get(actor) ?? actor;
           if (!banked && ownAction && label.startsWith(`${actorRaw}${position(event, actor)}`)) label = label.slice(`${actorRaw}${position(event, actor)}`.length);
           if (["teleport", "knockback"].includes(type) && Number.isInteger(detail.to?.z)) {
             const destination = `(${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
-            if (!text5.includes(`\u81F3 ${destination}`)) label += `\uFF0C\u81F3 ${destination}`;
+            if (!text7.includes(`\u81F3 ${destination}`)) label += `\uFF0C\u81F3 ${destination}`;
           }
           add(label.replace(/ ×1$/, ""));
         }
@@ -9962,10 +9963,10 @@ var terrainLabel = (t) => t.kind === "wall" ? "\u5899\u4F53\uFF0C\u6321\u4F4F\u7
 function createRenderer(root2, portraitFor = () => []) {
   const doc = root2.ownerDocument;
   const $ = (id3) => root2.querySelector(`[id="${id3}"]`);
-  const el2 = (tag2, cls, text5) => {
+  const el2 = (tag2, cls, text7) => {
     const n = doc.createElement(tag2);
     if (cls) n.className = cls;
-    if (text5 != null) n.textContent = String(text5);
+    if (text7 != null) n.textContent = String(text7);
     return n;
   };
   const cells2 = /* @__PURE__ */ new Map();
@@ -10259,8 +10260,8 @@ function createRenderer(root2, portraitFor = () => []) {
       li.append(el2("b", "", tpl?.name ?? id3));
       const counters = Object.entries(inst?.pools ?? {}).map(([k, id4]) => `${resourceLabel(k)} ${state.pools?.[id4]?.current ?? 0}`);
       if (counters.length) li.append(document_text(` \xB7 ${counters.join(" \xB7 ")}`));
-      const text5 = [tpl?.description, ...(tpl?.rules ?? []).map(effectLabel)].filter(Boolean).join("\uFF1B");
-      if (text5) li.append(el2("p", "", text5));
+      const text7 = [tpl?.description, ...(tpl?.rules ?? []).map(effectLabel)].filter(Boolean).join("\uFF1B");
+      if (text7) li.append(el2("p", "", text7));
       gear.append(li);
     }
     if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
@@ -10273,7 +10274,7 @@ function createRenderer(root2, portraitFor = () => []) {
   function renderFeatures(state) {
     const list4 = [...values3(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values3(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
     const ul = el2("ul", "ft-list");
-    for (const [text5, f] of list4) ul.append(el2("li", "", `${text5} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
+    for (const [text7, f] of list4) ul.append(el2("li", "", `${text7} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
     $("feature-cards").replaceChildren(ul);
   }
   function renderLog(state) {
@@ -10315,10 +10316,10 @@ function createRenderer(root2, portraitFor = () => []) {
   function renderPreview(state, action, hover, range2, p, actor) {
     const node = $("tactical-preview");
     const lines = [];
-    const line = (text5, cls) => {
+    const line = (text7, cls) => {
       const d = el2("div", `preview-line${cls ? ` ${cls}` : ""}`);
-      if (typeof text5 === "string") d.textContent = text5;
-      else d.append(...text5);
+      if (typeof text7 === "string") d.textContent = text7;
+      else d.append(...text7);
       lines.push(d);
       return d;
     };
@@ -10564,12 +10565,12 @@ function createPlayback(root2, { show, onIdle } = {}) {
     token.style.filter = "grayscale(1)";
     return play(token, [{ opacity: 1, filter: "grayscale(0)" }, { opacity: 0.4, filter: "grayscale(1)" }], { duration: 520 });
   }
-  function float(state, id3, text5, tone, sub) {
+  function float(state, id3, text7, tone, sub) {
     const fx = $("board-fx"), at2 = whereIs(state, id3), c = at2 && center(at2.x, at2.y, id3);
     if (!fx || !c || skipping || speed <= 0) return;
     const node = doc.createElement("div");
     node.className = `ft-float ${tone}`;
-    node.textContent = text5;
+    node.textContent = text7;
     if (sub) {
       const s = doc.createElement("small");
       s.textContent = sub;
@@ -10588,11 +10589,11 @@ function createPlayback(root2, { show, onIdle } = {}) {
     if (anim) anim.finished.then(remove, remove);
     else win.setTimeout(remove, 1200);
   }
-  async function banner(text5, sub, faction, ms = BANNER_MS) {
+  async function banner(text7, sub, faction, ms = BANNER_MS) {
     const node = $("turn-banner");
     if (!node || skipping || speed <= 0) return;
     const b = doc.createElement("b"), s = doc.createElement("small");
-    b.textContent = text5;
+    b.textContent = text7;
     s.textContent = sub;
     node.replaceChildren(b, s);
     node.dataset.faction = faction ?? "";
@@ -10602,10 +10603,10 @@ function createPlayback(root2, { show, onIdle } = {}) {
     await play(node, [{ opacity: 1 }, { opacity: 0 }], { duration: 180 });
     node.hidden = true;
   }
-  function ribbon(text5, faction) {
+  function ribbon(text7, faction) {
     const node = $("action-ribbon");
     if (!node || skipping || speed <= 0) return;
-    node.textContent = text5;
+    node.textContent = text7;
     node.dataset.faction = faction ?? "";
     node.hidden = false;
     win.clearTimeout(ribbon.timer);
@@ -10618,10 +10619,10 @@ function createPlayback(root2, { show, onIdle } = {}) {
     if (!list4) return;
     const li = doc.createElement("li");
     li.dataset.tone = entry2.tone;
-    const icon = doc.createElement("span"), text5 = doc.createElement("span");
+    const icon = doc.createElement("span"), text7 = doc.createElement("span");
     icon.textContent = entry2.icon;
-    text5.textContent = entry2.title;
-    li.append(icon, text5);
+    text7.textContent = entry2.title;
+    li.append(icon, text7);
     if (entry2.lines?.length && !entry2.roll) {
       const s = doc.createElement("small");
       s.textContent = entry2.lines.at(-1);
@@ -10631,10 +10632,10 @@ function createPlayback(root2, { show, onIdle } = {}) {
     while (list4.children.length > 4) list4.firstElementChild.remove();
     win.setTimeout(() => li.remove(), CAPTION_LIFE);
   }
-  const el2 = (tag2, cls, text5) => {
+  const el2 = (tag2, cls, text7) => {
     const n = doc.createElement(tag2);
     if (cls) n.className = cls;
-    if (text5 != null) n.textContent = String(text5);
+    if (text7 != null) n.textContent = String(text7);
     return n;
   };
   const signed3 = (n) => n >= 0 ? `+ ${n}` : `\u2212 ${-n}`;
@@ -11116,9 +11117,9 @@ function battleAiPayload(state) {
     grid
   }, actorIds: actors.map((u) => u.id) };
 }
-function parse2(text5) {
-  const match = String(text5).match(/\{[\s\S]*\}/);
-  const data = JSON.parse(match?.[0] ?? text5);
+function parse2(text7) {
+  const match = String(text7).match(/\{[\s\S]*\}/);
+  const data = JSON.parse(match?.[0] ?? text7);
   if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error("\u6218\u6597 AI \u5FC5\u987B\u8FD4\u56DE actions \u6570\u7EC4");
   return data.actions;
 }
@@ -11833,8 +11834,8 @@ ${height2}\uFF0C${sight}`;
   }
   function download(kind, value, format = "json") {
     const link = document2.createElement("a");
-    const text5 = format === "txt";
-    const url = window2.URL.createObjectURL(new window2.Blob([text5 ? value : JSON.stringify(value, null, 2)], { type: text5 ? "text/plain;charset=utf-8" : "application/json" }));
+    const text7 = format === "txt";
+    const url = window2.URL.createObjectURL(new window2.Blob([text7 ? value : JSON.stringify(value, null, 2)], { type: text7 ? "text/plain;charset=utf-8" : "application/json" }));
     link.href = url;
     link.download = `fated-${live3.scenarioId}-${kind}.${format}`;
     link.click();
@@ -13917,7 +13918,7 @@ function parseAreaTags(labels) {
   };
 }
 
-// src/tavern/converter-unit.js
+// src/tavern/converter-parse.js
 var own16 = (o, k) => o !== null && typeof o === "object" && Object.hasOwn(o, k);
 var object3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 var asObject = (v) => object3(v) ? v : {};
@@ -14239,6 +14240,8 @@ function narrativeEntries(value) {
   }
   return [["", value]];
 }
+
+// src/tavern/converter-effects.js
 function activeRule2(id3, program2) {
   return { id: id3, hook: "active", program: program2 };
 }
@@ -14498,6 +14501,8 @@ function normalizeEquipment(raw, slot2, owner, key4, sink) {
   attachAmmoPool(item, ammoCapacity(r));
   return item;
 }
+
+// src/tavern/converter-unit.js
 function sourceEquipment(record3) {
   const value = record3.equipment ?? record3.equipments ?? record3.items ?? record3.\u88C5\u5907 ?? [];
   const slots3 = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
@@ -14985,6 +14990,8 @@ function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {
   const selected2 = new Set(unitIds);
   return warnings.filter((w) => w.unitId === null ? includeGlobal : selected2.has(w.unitId));
 }
+
+// src/tavern/converter-patch.js
 function pointer(path2) {
   return "/" + path2.map((x) => String(x).replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
 }
@@ -15011,28 +15018,28 @@ var subject = (message) => message.match(/待标准化「([^」]+)」/)?.[1]?.tr
 var nonempty2 = (value) => typeof value === "string" && value.trim() !== "";
 function diagnosticText(value, fallback = "\u6A21\u578B\u8FD4\u56DE\u4E86\u7ED3\u6784\u5316\u6570\u636E\uFF0C\u672A\u63D0\u4F9B\u6587\u5B57\u8BF4\u660E") {
   if (!nonempty2(value)) return fallback;
-  const text5 = value.trim();
-  const payload = text5.search(/```|\{\s*(?:["'}]|$)|\[\s*(?:["{\[]|\]|(?:-?\d|true|false|null)[^\]]*\s*,)/);
+  const text7 = value.trim();
+  const payload = text7.search(/```|\{\s*(?:["'}]|$)|\[\s*(?:["{\[]|\]|(?:-?\d|true|false|null)[^\]]*\s*,)/);
   if (payload !== -1) {
-    const prefix = text5.slice(0, payload).trim().replace(/[（(：:]\s*$/, "").trim();
+    const prefix = text7.slice(0, payload).trim().replace(/[（(：:]\s*$/, "").trim();
     return prefix ? `${prefix}\uFF08\u7ED3\u6784\u5316\u8BE6\u60C5\u5DF2\u7701\u7565\uFF09` : fallback;
   }
   try {
-    if (typeof JSON.parse(text5) === "object") return fallback;
+    if (typeof JSON.parse(text7) === "object") return fallback;
   } catch {
   }
-  return text5;
+  return text7;
 }
-function readTextNote(text5, sent) {
-  const exact = sent.filter((warning) => text5 === warning.message);
+function readTextNote(text7, sent) {
+  const exact = sent.filter((warning) => text7 === warning.message);
   if (exact.length) return exact.map((warning) => ({ warning }));
   const match = sent.flatMap((warning) => {
     const title = subject(warning.message);
     if (!title) return [];
     for (const label of [title, `\u300C${title}\u300D`]) {
-      if (text5 === label) return [{ warning }];
-      const tail = text5.slice(label.length);
-      if (text5.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1), "") }];
+      if (text7 === label) return [{ warning }];
+      const tail = text7.slice(label.length);
+      if (text7.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1), "") }];
     }
     return [];
   });
@@ -15686,10 +15693,10 @@ function readStatusAvatars(dbFactory, scope) {
 }
 function imageUrl(value, base) {
   if (typeof value !== "string" || !value.trim() || value.includes("{{")) return "";
-  const text5 = value.trim();
-  if (/^data:image\/(png|jpe?g|webp|gif|avif);base64,/i.test(text5)) return text5;
+  const text7 = value.trim();
+  if (/^data:image\/(png|jpe?g|webp|gif|avif);base64,/i.test(text7)) return text7;
   try {
-    const url = new URL(text5, base);
+    const url = new URL(text7, base);
     if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || /\.svgz?$/i.test(url.pathname)) return "";
     return url.href;
   } catch {
@@ -15704,8 +15711,8 @@ async function predefinedAvatars(host, readVariables) {
     try {
       const response = await host.fetch(`https://cdn.poem-of-destiny.com/assets/${candidate}/frontend/assets/data/predefined-avatars.json`, { signal: AbortSignal.timeout(3e3) });
       if (!response.ok) continue;
-      const text5 = await response.text();
-      const fields3 = text5.replace(
+      const text7 = await response.text();
+      const fields3 = text7.replace(
         /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
         (token) => token.startsWith("/") ? "" : token
       );
@@ -16068,8 +16075,8 @@ function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
       get3("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
       get3("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
     ])) {
-      const handler = (text5, id3) => {
-        if (typeof text5 === "string" && text5 && (!id3 || id3 === genId)) onStreamChunk?.(text5, false);
+      const handler = (text7, id3) => {
+        if (typeof text7 === "string" && text7 && (!id3 || id3 === genId)) onStreamChunk?.(text7, false);
       };
       const sub = on(name, handler);
       cleanups.push(() => {
@@ -16109,10 +16116,10 @@ async function requestViaTavern(host, settings, messages, { onStreamChunk, signa
     signal?.addEventListener("abort", abort, { once: true });
   });
   try {
-    const text5 = await Promise.race([generate({ generation_id: id3, should_stream: stream, ordered_prompts: messages }), cancelled]);
-    if (typeof text5 !== "string" || !text5.trim()) throw new Error("\u9152\u9986\u6A21\u578B\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u5F53\u524D\u4E3B\u63A5\u53E3");
-    onStreamChunk?.(text5, true);
-    return text5;
+    const text7 = await Promise.race([generate({ generation_id: id3, should_stream: stream, ordered_prompts: messages }), cancelled]);
+    if (typeof text7 !== "string" || !text7.trim()) throw new Error("\u9152\u9986\u6A21\u578B\u6CA1\u6709\u8FD4\u56DE\u6587\u672C\uFF0C\u8BF7\u68C0\u67E5\u5F53\u524D\u4E3B\u63A5\u53E3");
+    onStreamChunk?.(text7, true);
+    return text7;
   } finally {
     cleanup?.();
     signal?.removeEventListener("abort", abort);
@@ -16301,7 +16308,7 @@ async function requestViaCustomApi(settings, messages, options = {}) {
     }
   }
   const res = settings.apiTransport === "tavern" ? await sendViaTavernBackend("generate", conn, body, options) : await send(url, { method: "POST", headers, body: JSON.stringify(body) }, options);
-  let text5;
+  let text7;
   const trace = { relay: settings.apiTransport === "tavern", reasoning: 0 };
   const extract = (event) => {
     const choice = event.choices?.[0];
@@ -16318,21 +16325,21 @@ async function requestViaCustomApi(settings, messages, options = {}) {
     return deltas(source, event);
   };
   if (stream && res.body?.getReader && (trace.relay || !/application\/json/i.test(res.headers?.get?.("content-type") || ""))) {
-    text5 = await readSseStream(res.body, extract, options.onStreamChunk, trace);
+    text7 = await readSseStream(res.body, extract, options.onStreamChunk, trace);
   } else {
     const data = await json2(res);
     if (data.error) throw new Error(diagnoseApiError(data.error.message || (settings.apiTransport === "tavern" ? "\u9152\u9986\u540E\u7AEF\u672A\u80FD\u751F\u6210\u56DE\u590D\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC" : "")));
     trace.json = true;
     const d = extract(data);
-    text5 = source === "claude" ? (data.content || []).filter((p) => p.type === "text" || !p.type).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || "";
+    text7 = source === "claude" ? (data.content || []).filter((p) => p.type === "text" || !p.type).map((p) => p.text).join("") : d.contentDelta || d.toolArgsDelta || "";
   }
-  if (typeof text5 !== "string" || !text5.trim()) {
+  if (typeof text7 !== "string" || !text7.trim()) {
     const format = trace.json ? "JSON" : `\u6D41\u4E8B\u4EF6 ${trace.events ?? 0} \u4E2A\uFF0C${trace.done ? "\u6536\u5230 [DONE]" : "\u8FDE\u63A5\u5DF2\u7ED3\u675F\uFF0C\u672A\u6536\u5230 [DONE]"}`;
     const explanation = trace.reasoning > 0 ? "\u6A21\u578B\u53EA\u8FD4\u56DE\u4E86\u601D\u8003\u5185\u5BB9\uFF0C\u53EF\u80FD\u5DF2\u7528\u5B8C\u6700\u5927\u8F93\u51FA\u957F\u5EA6\u3002\u8BF7\u5728\u300CAPI \u8BBE\u7F6E\u300D\u8C03\u5927 max_tokens\uFF0C\u6216\u8C03\u5C0F\u6BCF\u6279\u8B66\u544A\u6761\u6570\u540E\u91CD\u8BD5\u3002" : "\u72EC\u7ACB API \u672A\u8FD4\u56DE\u6709\u6548\u6587\u672C";
     throw new Error(`${explanation}\uFF08${trace.relay ? "\u9152\u9986\u540E\u7AEF" : "\u6D4F\u89C8\u5668\u76F4\u8FDE"}\uFF1B${format}\uFF1B\u63A8\u7406 ${trace.reasoning} \u5B57\u7B26\uFF0C\u6B63\u6587 0\uFF1Bfinish_reason=${trace.finish || "\u672A\u63D0\u4F9B"}\uFF09`);
   }
-  options.onStreamChunk?.(text5, true);
-  return text5;
+  options.onStreamChunk?.(text7, true);
+  return text7;
 }
 
 // src/tavern/settings.js
@@ -16397,15 +16404,15 @@ var css = `
 `;
 function mount2(page) {
   const doc = page.ownerDocument;
-  const make = (tag2, cls, text5) => {
+  const make = (tag2, cls, text7) => {
     const node = doc.createElement(tag2);
     if (cls) node.className = cls;
-    if (text5 != null) node.textContent = text5;
+    if (text7 != null) node.textContent = text7;
     return node;
   };
   const root2 = make("div", "fated-settings");
   page.replaceChildren(make("style", "", css), root2);
-  const button = (text5, cls = "pill-btn") => Object.assign(make("button", cls, text5), { type: "button" });
+  const button = (text7, cls = "pill-btn") => Object.assign(make("button", cls, text7), { type: "button" });
   const panel = (title) => {
     const section = make("section", "action-panel form-card");
     const bar = make("div", "panel-header-bar");
@@ -16628,7 +16635,7 @@ function renderApiTab(page, ctx) {
   }
   const select = (options) => {
     const input2 = make("select");
-    for (const [value, text5] of options) input2.append(Object.assign(make("option", "", text5), { value }));
+    for (const [value, text7] of options) input2.append(Object.assign(make("option", "", text7), { value }));
     return input2;
   };
   const input = (type, props = {}) => Object.assign(make("input"), { type }, props);
@@ -17114,8 +17121,8 @@ function skillDisplay(template = {}, skillInfo = {}) {
   const add = (type, amount, formatted = false) => {
     if (!type || !types[type]) return;
     const suffix = amount == null ? null : formatted ? amount : displayNumber(amount);
-    const text5 = `${types[type]}${suffix ? ` ${suffix}` : ""}`;
-    if (!components.includes(text5)) components.push(text5);
+    const text7 = `${types[type]}${suffix ? ` ${suffix}` : ""}`;
+    if (!components.includes(text7)) components.push(text7);
   };
   if (template.damage) add(template.damage.type ?? template.damageType, diceLabel(template.damage), true);
   else if (template.damageType) add(template.damageType);
@@ -17209,7 +17216,7 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
   if (warnings) nameRow.append(make("span", { class: "fated-char-warn", title: `${warnings} \u6761\u8BCD\u6761\u5F85\u7F16\u8BD1` }, `\u23F3 ${warnings}`));
   if (attention) nameRow.append(make("span", { class: "fated-char-tag", title: `${attention} \u6761\u8BCD\u6761\u9700\u786E\u8BA4` }, `\u24D8 ${attention}`));
   const tags = line("div", "fated-char-tags");
-  for (const text5 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text5) tags.append(line("span", "fated-char-tag", text5));
+  for (const text7 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text7) tags.append(line("span", "fated-char-tag", text7));
   title.append(nameRow, tags);
   const mini = line("div", "fated-char-mini");
   for (const [key4, label, maxKey] of RESOURCES) {
@@ -17385,10 +17392,10 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
       const next = make("button", { type: "button", "aria-label": "\u4E0B\u4E00\u4E2A\u56DE\u590D\u7248\u672C" }, "\u203A");
       const counter = make("span", { "data-ai-versions": "" });
       const editor = make("form", { class: "fated-ai-editor", hidden: "" });
-      const text5 = make("textarea", { rows: "4", "aria-label": "\u7F16\u8F91\u4E0A\u4E00\u6761\u63D0\u95EE", required: "" });
+      const text7 = make("textarea", { rows: "4", "aria-label": "\u7F16\u8F91\u4E0A\u4E00\u6761\u63D0\u95EE", required: "" });
       const saveEdit = make("button", { type: "submit" }, "\u4FDD\u5B58\u5E76\u91CD\u65B0\u751F\u6210");
       const cancelEdit = button("\u53D6\u6D88");
-      editor.append(text5, saveEdit, cancelEdit);
+      editor.append(text7, saveEdit, cancelEdit);
       actions.append(editButton, rerollButton, applyButton, undoButton, copyButton, previous, counter, next);
       feedback.setAttribute("role", "status");
       bubble.append(heading, body, editor, actions, feedback);
@@ -17414,9 +17421,9 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
         editor.hidden = false;
         body.hidden = true;
         refresh();
-        text5.value = message.content;
-        text5.focus();
-        text5.setSelectionRange(text5.value.length, text5.value.length);
+        text7.value = message.content;
+        text7.focus();
+        text7.setSelectionRange(text7.value.length, text7.value.length);
       });
       on(cancelEdit, "click", () => {
         editor.hidden = true;
@@ -17427,9 +17434,9 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
       });
       on(editor, "submit", (event) => {
         event.preventDefault();
-        if (busy || !text5.value.trim()) return;
+        if (busy || !text7.value.trim()) return;
         try {
-          editMessage?.(message, text5.value);
+          editMessage?.(message, text7.value);
         } catch (error2) {
           report(error2.message, "error");
         }
@@ -17554,8 +17561,8 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
   return {
     render,
     show: scrollToEnd,
-    prefill(text5) {
-      input.value = [input.value.trim(), text5].filter(Boolean).join("\n\n");
+    prefill(text7) {
+      input.value = [input.value.trim(), text7].filter(Boolean).join("\n\n");
       drafts.set(shownId, input.value);
       refresh();
       input.focus();
@@ -17611,8 +17618,7 @@ function chatInversePatch(state, changes) {
   });
 }
 
-// src/tavern/overlay-sources.js
-var own18 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+// src/tavern/overlay-ai.js
 var isObject2 = (v) => v && typeof v === "object" && !Array.isArray(v);
 var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
 var clone2 = (value) => {
@@ -17626,49 +17632,8 @@ var clone2 = (value) => {
     }
   }
 };
-function hostWindow() {
-  const w = typeof window !== "undefined" ? window : globalThis;
-  try {
-    return w.parent && w.parent.document ? w.parent : w;
-  } catch (_) {
-    return w;
-  }
-}
-function hostDocument(preferred) {
-  const w = preferred || hostWindow();
-  try {
-    return w.document || document;
-  } catch (_) {
-    return typeof document !== "undefined" ? document : null;
-  }
-}
-function getGlobal(host, name) {
-  try {
-    return host?.[name] ?? globalThis?.[name];
-  } catch (_) {
-    return void 0;
-  }
-}
-function safeStorage(host) {
-  try {
-    return host.localStorage;
-  } catch (_) {
-    return null;
-  }
-}
 function text4(value) {
   return value == null ? "" : String(value);
-}
-function el(doc, tag2, attrs3, content) {
-  const n = doc.createElement(tag2);
-  for (const [key4, value] of Object.entries(attrs3 || {})) {
-    if (key4 === "class") n.className = value;
-    else if (key4 === "style") n.style.cssText = value;
-    else if (key4 === "text") n.textContent = value;
-    else if (value != null) n.setAttribute(key4, value);
-  }
-  if (content != null) n.textContent = content;
-  return n;
 }
 function parseJSON(value, fallback = null) {
   if (value && typeof value === "object") return value;
@@ -17877,7 +17842,7 @@ function jsonPriority(value) {
   if (["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"].some((key4) => key4 in value)) return 3;
   return 1;
 }
-function parseAIResponse(value) {
+function parseAIResponse2(value) {
   const source = typeof value === "object" ? JSON.stringify(value) : text4(value);
   const parsed = preferredJson(source) ?? null;
   const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch || (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
@@ -17886,6 +17851,32 @@ function parseAIResponse(value) {
 function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChunk) {
   const options = { host, fetchImpl, signal, onStreamChunk };
   return config.apiMode === "custom" || config.apiMode === "direct" ? requestViaCustomApi(config, messages, options) : requestViaTavern(host, config, messages, options);
+}
+
+// src/tavern/overlay-patch.js
+var own18 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+var isObject3 = (v) => v && typeof v === "object" && !Array.isArray(v);
+var safeProperty2 = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
+var clone3 = (value) => {
+  try {
+    return structuredClone(value);
+  } catch (_) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_2) {
+      return value;
+    }
+  }
+};
+function deepMerge2(base, extra) {
+  const result = isObject3(base) ? clone3(base) : {};
+  if (!isObject3(extra)) return result;
+  for (const [key4, value] of Object.entries(extra)) {
+    if (!safeProperty2(key4)) continue;
+    if (isObject3(value) && isObject3(result[key4])) result[key4] = deepMerge2(result[key4], value);
+    else result[key4] = clone3(value);
+  }
+  return result;
 }
 function parseJSONPatch(value) {
   const parsed = parseAIResponse(value).data;
@@ -17924,15 +17915,15 @@ function partitionNormalizationPatch({ liveState, baselineState, existingOps = [
   };
   const trial = (live3, base, items) => {
     const operations2 = items.flatMap((item) => expand(strip(item)));
-    const nextLive = apply2(clone2(live3), operations2, true);
-    const nextBase = apply2(clone2(base), operations2, true);
+    const nextLive = apply2(clone3(live3), operations2, true);
+    const nextBase = apply2(clone3(base), operations2, true);
     for (const state of [nextLive, nextBase]) {
       normalize(state);
       validate(state);
     }
     return { nextLive, nextBase };
   };
-  let workLive = clone2(liveState), workBase = apply2(clone2(baselineState), existingOps, true);
+  let workLive = clone3(liveState), workBase = apply2(clone3(baselineState), existingOps, true);
   try {
     const { nextLive, nextBase } = trial(workLive, workBase, candidates);
     return { accepted: candidates, rejected, workLive: nextLive, workBase: nextBase };
@@ -17966,6 +17957,179 @@ function formatRejectedItem(item, state = {}) {
   const [, table4, id3] = String(item.path || "").split("/");
   const entity = item.op?.value?.name || state?.[table4]?.[id3]?.name || id3 || "\u672A\u77E5\u6761\u76EE";
   return `[\u672A\u5E94\u7528] ${table4 === "skills" ? "\u6280\u80FD" : table4 === "equipment" ? "\u88C5\u5907" : "\u6761\u76EE"}\u300C${entity}\u300D(${item.path || "\u65E0\u8DEF\u5F84"})\uFF1A${item.reason || "\u8865\u4E01\u6821\u9A8C\u5931\u8D25"}`;
+}
+function patchValue(value, table4) {
+  if (!Array.isArray(value)) return value;
+  return Object.fromEntries(value.filter((item) => item && (item.id || item.name)).map((item, index) => {
+    const normalized = clone3(item);
+    if (table4 === "covers" || table4 === "interactives" || table4 === "zones") {
+      const xyz = normalized.xyz;
+      if (Array.isArray(xyz)) {
+        normalized.x = Number(xyz[0] ?? 0);
+        normalized.y = Number(xyz[1] ?? 0);
+        delete normalized.xyz;
+      }
+    }
+    if (table4 === "covers") {
+      normalized.name ??= `\u63A9\u4F53${index + 1}`;
+      normalized.material ??= "\u672A\u77E5\u6750\u6599";
+      normalized.maxHp ??= normalized.hp ?? 1;
+      normalized.hp ??= normalized.maxHp;
+      normalized.cover ??= normalized.shielding ?? 2;
+      for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key5)) delete normalized[key5];
+    }
+    if (table4 === "interactives") {
+      normalized.name ??= "\u4E92\u52A8\u70B9";
+      normalized.kind ??= "barrel";
+      normalized.spent ??= false;
+      for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key5)) delete normalized[key5];
+    }
+    const key4 = String(normalized.id || normalized.name || index);
+    return [key4, normalized];
+  }));
+}
+function normalizeSemanticPatch(patch) {
+  if (!isObject3(patch)) return patch;
+  const result = clone3(patch);
+  for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
+  if (isObject3(result.unit_patch)) {
+    const unitPatch = result.unit_patch;
+    const id3 = unitPatch.unitId || unitPatch.id;
+    if (id3 && isObject3(unitPatch.patch)) result.units = { [id3]: unitPatch.patch };
+  }
+  return result;
+}
+function applyPatch(target2, patch, strict = false) {
+  let result = clone3(target2);
+  if (isObject3(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
+    return deepMerge2(result, normalizeSemanticPatch(patch.battle_patch || patch));
+  }
+  const list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
+  if (!Array.isArray(list4)) return result;
+  const pointer3 = (path2) => String(path2 || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
+  for (const operation2 of list4) {
+    if (!operation2 || !operation2.op) continue;
+    const keys = pointer3(operation2.path);
+    if (!keys.length || !keys.every(safeProperty2)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
+    const last = keys.pop();
+    let parent = result;
+    for (const key4 of keys) {
+      if (!own18(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+      parent = parent[key4];
+    }
+    if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
+    if (strict) {
+      if (Array.isArray(parent)) {
+        const append = last === "-" && operation2.op === "add";
+        if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation2.path}`);
+      }
+      if (operation2.op !== "add" && !own18(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+      if (operation2.op === "add" && Array.isArray(parent) && last !== "-") {
+        parent.splice(Number(last), 0, clone3(operation2.value));
+        continue;
+      }
+    }
+    if (operation2.op === "remove") {
+      if (Array.isArray(parent)) parent.splice(Number(last), 1);
+      else delete parent[last];
+    } else if (operation2.op === "add" || operation2.op === "replace") {
+      if (Array.isArray(parent) && last === "-") parent.push(clone3(operation2.value));
+      else parent[last] = clone3(operation2.value);
+    }
+  }
+  return result;
+}
+var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"];
+function chatPatch(state, payload) {
+  const unrecognized = () => new Error('\u65E0\u6CD5\u8BC6\u522B\u8BE5 JSON \u7684\u76EE\u6807\u8DEF\u5F84\uFF0C\u8BF7\u8BA9 AI \u8F93\u51FA {"patch":[{"op":"replace","path":"/...","value":...}]} \u683C\u5F0F');
+  const semantic = payload?.battle_patch ?? payload;
+  const list4 = [payload, payload?.patch, payload?.patches, payload?.jsonPatch, payload?.battle_patch, payload?.unit_patch].find(Array.isArray) ?? (payload?.op ? [payload] : null);
+  if (list4) {
+    for (const operation2 of list4) {
+      if (!["add", "replace", "remove"].includes(operation2?.op) || operation2.op !== "remove" && !own18(operation2, "value")) {
+        throw new Error(`\u4E0D\u652F\u6301\u7684\u8865\u4E01\u64CD\u4F5C\uFF1A${operation2?.path ?? "\u7F3A\u5C11\u8DEF\u5F84"}`);
+      }
+      if (typeof operation2.path !== "string" || !operation2.path.startsWith("/")) throw new Error("\u8865\u4E01\u8DEF\u5F84\u5FC5\u987B\u4EE5 / \u5F00\u5934");
+    }
+    return list4;
+  }
+  if (!isObject3(semantic)) throw unrecognized();
+  const slice = Object.fromEntries(chatTables.filter((key4) => own18(semantic, key4)).map((key4) => [key4, semantic[key4]]));
+  if (isObject3(semantic.unit_patch)) {
+    const { unitId, id: id4 = unitId, patch } = semantic.unit_patch;
+    if (!id4 || !safeProperty2(id4) || !own18(state.units, id4) || !isObject3(patch)) throw unrecognized();
+    slice.units = { ...slice.units, [id4]: patch };
+  }
+  if (Object.keys(slice).length) return normalizeSemanticPatch(slice);
+  if (typeof semantic.name !== "string") throw unrecognized();
+  const matches2 = ["skills", "equipment", "statusTemplates"].flatMap((table5) => Object.entries(state[table5] ?? {}).filter(([id4, value]) => semantic.id ? id4 === semantic.id : value.name === semantic.name).map(([id4]) => ({ table: table5, id: id4 })));
+  const inferred = own18(semantic, "ap") || own18(semantic, "slot") ? "skills" : own18(semantic, "kind") || own18(semantic, "weaponClass") ? "equipment" : own18(semantic, "durationType") || own18(semantic, "maxStacks") || own18(semantic, "category") ? "statusTemplates" : void 0;
+  const scoped = inferred ? matches2.filter((match) => match.table === inferred) : matches2;
+  if (scoped.length > 1) throw unrecognized();
+  const table4 = scoped[0]?.table ?? inferred, id3 = scoped[0]?.id ?? semantic.id;
+  if (!table4 || typeof id3 !== "string" || !id3 || !safeProperty2(id3)) throw unrecognized();
+  const { id: ignored, ...definition } = semantic;
+  const path2 = `/${table4}/${id3.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+  return [{ op: own18(state[table4], id3) ? "replace" : "add", path: path2, value: table4 === "statusTemplates" ? { ...definition, id: id3 } : definition }];
+}
+
+// src/tavern/overlay-sources.js
+var isObject4 = (v) => v && typeof v === "object" && !Array.isArray(v);
+var safeProperty3 = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
+var clone4 = (value) => {
+  try {
+    return structuredClone(value);
+  } catch (_) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_2) {
+      return value;
+    }
+  }
+};
+function hostWindow() {
+  const w = typeof window !== "undefined" ? window : globalThis;
+  try {
+    return w.parent && w.parent.document ? w.parent : w;
+  } catch (_) {
+    return w;
+  }
+}
+function hostDocument(preferred) {
+  const w = preferred || hostWindow();
+  try {
+    return w.document || document;
+  } catch (_) {
+    return typeof document !== "undefined" ? document : null;
+  }
+}
+function getGlobal(host, name) {
+  try {
+    return host?.[name] ?? globalThis?.[name];
+  } catch (_) {
+    return void 0;
+  }
+}
+function text5(value) {
+  return value == null ? "" : String(value);
+}
+function parseJSON2(value, fallback = null) {
+  if (value && typeof value === "object") return value;
+  try {
+    return JSON.parse(String(value));
+  } catch (_) {
+    return fallback;
+  }
+}
+function deepMerge3(base, extra) {
+  const result = isObject4(base) ? clone4(base) : {};
+  if (!isObject4(extra)) return result;
+  for (const [key4, value] of Object.entries(extra)) {
+    if (!safeProperty3(key4)) continue;
+    if (isObject4(value) && isObject4(result[key4])) result[key4] = deepMerge3(result[key4], value);
+    else result[key4] = clone4(value);
+  }
+  return result;
 }
 var TAVERN_VERSION = "0.4.7";
 var LARGE_CONFIG_KEYS = ["charSnapshots", "normalizationBatches", "narrativeExemptions", "unresolvedNotes"];
@@ -18012,14 +18176,14 @@ var DEFAULT_CONFIG = {
 };
 function configFor(storage, key4) {
   try {
-    const saved = parseJSON(storage?.getItem(key4), {});
-    const separateSessions = parseJSON(storage?.getItem(`${key4}/ai-sessions`), null);
+    const saved = parseJSON2(storage?.getItem(key4), {});
+    const separateSessions = parseJSON2(storage?.getItem(`${key4}/ai-sessions`), null);
     const separateLarge = Object.fromEntries(LARGE_CONFIG_KEYS.flatMap((field) => {
-      const value = parseJSON(storage?.getItem(separateConfigKey(key4, field)), null);
+      const value = parseJSON2(storage?.getItem(separateConfigKey(key4, field)), null);
       return value == null ? [] : [[field, value]];
     }));
     const mode = saved?.apiMode ?? (saved?.baseUrl ? "direct" : "tavern");
-    return deepMerge(DEFAULT_CONFIG, {
+    return deepMerge3(DEFAULT_CONFIG, {
       ...saved,
       ...separateLarge,
       ...separateSessions ? { aiSessions: separateSessions } : {},
@@ -18027,7 +18191,7 @@ function configFor(storage, key4) {
       slots: describeSlots(saved?.slots)
     });
   } catch {
-    return clone2(DEFAULT_CONFIG);
+    return clone4(DEFAULT_CONFIG);
   }
 }
 function putConfig(storage, key4, value) {
@@ -18045,7 +18209,7 @@ function chatId(host) {
     if (id3 != null) return String(id3);
   } catch {
   }
-  return text4(host?.location?.pathname || "default").replace(/[^\w.-]+/g, "_") || "default";
+  return text5(host?.location?.pathname || "default").replace(/[^\w.-]+/g, "_") || "default";
 }
 function tavernIdentity(host) {
   const helper = getGlobal(host, "TavernHelper");
@@ -18106,7 +18270,7 @@ function sourceBundle(variables2, messages, chat = "default", preferredMessageId
     }
   }
   let battleInit = battleRaw ? parseBattleInit(battleRaw) : null;
-  if (!isObject2(battleInit) || !Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants)) {
+  if (!isObject4(battleInit) || !Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants)) {
     const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
     if (recovered) {
       battleInit = recovered;
@@ -18116,7 +18280,7 @@ function sourceBundle(variables2, messages, chat = "default", preferredMessageId
   const charBlocks = extractTags(joined, "char_info").reverse();
   const charRaw = charBlocks[0] || "";
   const charInfo = charBlocks.flatMap((raw) => {
-    const value = parseJSON(raw, null);
+    const value = parseJSON2(raw, null);
     return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
   });
   const mvuData = statData(variables2) ?? variables2 ?? {};
@@ -18135,131 +18299,89 @@ function sourceBundle(variables2, messages, chat = "default", preferredMessageId
     source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null
   };
 }
-function patchValue(value, table4) {
-  if (!Array.isArray(value)) return value;
-  return Object.fromEntries(value.filter((item) => item && (item.id || item.name)).map((item, index) => {
-    const normalized = clone2(item);
-    if (table4 === "covers" || table4 === "interactives" || table4 === "zones") {
-      const xyz = normalized.xyz;
-      if (Array.isArray(xyz)) {
-        normalized.x = Number(xyz[0] ?? 0);
-        normalized.y = Number(xyz[1] ?? 0);
-        delete normalized.xyz;
-      }
-    }
-    if (table4 === "covers") {
-      normalized.name ??= `\u63A9\u4F53${index + 1}`;
-      normalized.material ??= "\u672A\u77E5\u6750\u6599";
-      normalized.maxHp ??= normalized.hp ?? 1;
-      normalized.hp ??= normalized.maxHp;
-      normalized.cover ??= normalized.shielding ?? 2;
-      for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key5)) delete normalized[key5];
-    }
-    if (table4 === "interactives") {
-      normalized.name ??= "\u4E92\u52A8\u70B9";
-      normalized.kind ??= "barrel";
-      normalized.spent ??= false;
-      for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key5)) delete normalized[key5];
-    }
-    const key4 = String(normalized.id || normalized.name || index);
-    return [key4, normalized];
-  }));
-}
-function normalizeSemanticPatch(patch) {
-  if (!isObject2(patch)) return patch;
-  const result = clone2(patch);
-  for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
-  if (isObject2(result.unit_patch)) {
-    const unitPatch = result.unit_patch;
-    const id3 = unitPatch.unitId || unitPatch.id;
-    if (id3 && isObject2(unitPatch.patch)) result.units = { [id3]: unitPatch.patch };
-  }
-  return result;
-}
-function applyPatch(target2, patch, strict = false) {
-  let result = clone2(target2);
-  if (isObject2(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
-    return deepMerge(result, normalizeSemanticPatch(patch.battle_patch || patch));
-  }
-  const list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
-  if (!Array.isArray(list4)) return result;
-  const pointer3 = (path2) => String(path2 || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
-  for (const operation2 of list4) {
-    if (!operation2 || !operation2.op) continue;
-    const keys = pointer3(operation2.path);
-    if (!keys.length || !keys.every(safeProperty)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
-    const last = keys.pop();
-    let parent = result;
-    for (const key4 of keys) {
-      if (!own18(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
-      parent = parent[key4];
-    }
-    if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
-    if (strict) {
-      if (Array.isArray(parent)) {
-        const append = last === "-" && operation2.op === "add";
-        if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation2.path}`);
-      }
-      if (operation2.op !== "add" && !own18(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
-      if (operation2.op === "add" && Array.isArray(parent) && last !== "-") {
-        parent.splice(Number(last), 0, clone2(operation2.value));
-        continue;
-      }
-    }
-    if (operation2.op === "remove") {
-      if (Array.isArray(parent)) parent.splice(Number(last), 1);
-      else delete parent[last];
-    } else if (operation2.op === "add" || operation2.op === "replace") {
-      if (Array.isArray(parent) && last === "-") parent.push(clone2(operation2.value));
-      else parent[last] = clone2(operation2.value);
-    }
-  }
-  return result;
-}
-var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"];
-function chatPatch(state, payload) {
-  const unrecognized = () => new Error('\u65E0\u6CD5\u8BC6\u522B\u8BE5 JSON \u7684\u76EE\u6807\u8DEF\u5F84\uFF0C\u8BF7\u8BA9 AI \u8F93\u51FA {"patch":[{"op":"replace","path":"/...","value":...}]} \u683C\u5F0F');
-  const semantic = payload?.battle_patch ?? payload;
-  const list4 = [payload, payload?.patch, payload?.patches, payload?.jsonPatch, payload?.battle_patch, payload?.unit_patch].find(Array.isArray) ?? (payload?.op ? [payload] : null);
-  if (list4) {
-    for (const operation2 of list4) {
-      if (!["add", "replace", "remove"].includes(operation2?.op) || operation2.op !== "remove" && !own18(operation2, "value")) {
-        throw new Error(`\u4E0D\u652F\u6301\u7684\u8865\u4E01\u64CD\u4F5C\uFF1A${operation2?.path ?? "\u7F3A\u5C11\u8DEF\u5F84"}`);
-      }
-      if (typeof operation2.path !== "string" || !operation2.path.startsWith("/")) throw new Error("\u8865\u4E01\u8DEF\u5F84\u5FC5\u987B\u4EE5 / \u5F00\u5934");
-    }
-    return list4;
-  }
-  if (!isObject2(semantic)) throw unrecognized();
-  const slice = Object.fromEntries(chatTables.filter((key4) => own18(semantic, key4)).map((key4) => [key4, semantic[key4]]));
-  if (isObject2(semantic.unit_patch)) {
-    const { unitId, id: id4 = unitId, patch } = semantic.unit_patch;
-    if (!id4 || !safeProperty(id4) || !own18(state.units, id4) || !isObject2(patch)) throw unrecognized();
-    slice.units = { ...slice.units, [id4]: patch };
-  }
-  if (Object.keys(slice).length) return normalizeSemanticPatch(slice);
-  if (typeof semantic.name !== "string") throw unrecognized();
-  const matches2 = ["skills", "equipment", "statusTemplates"].flatMap((table5) => Object.entries(state[table5] ?? {}).filter(([id4, value]) => semantic.id ? id4 === semantic.id : value.name === semantic.name).map(([id4]) => ({ table: table5, id: id4 })));
-  const inferred = own18(semantic, "ap") || own18(semantic, "slot") ? "skills" : own18(semantic, "kind") || own18(semantic, "weaponClass") ? "equipment" : own18(semantic, "durationType") || own18(semantic, "maxStacks") || own18(semantic, "category") ? "statusTemplates" : void 0;
-  const scoped = inferred ? matches2.filter((match) => match.table === inferred) : matches2;
-  if (scoped.length > 1) throw unrecognized();
-  const table4 = scoped[0]?.table ?? inferred, id3 = scoped[0]?.id ?? semantic.id;
-  if (!table4 || typeof id3 !== "string" || !id3 || !safeProperty(id3)) throw unrecognized();
-  const { id: ignored, ...definition } = semantic;
-  const path2 = `/${table4}/${id3.replaceAll("~", "~0").replaceAll("/", "~1")}`;
-  return [{ op: own18(state[table4], id3) ? "replace" : "add", path: path2, value: table4 === "statusTemplates" ? { ...definition, id: id3 } : definition }];
-}
+
+// src/tavern/overlay-diagnostics-view.js
 function style(doc) {
   const installed = doc.querySelector("style[data-fated-tavern-overlay]");
   if (installed) {
     installed.textContent = tavernTheme;
     return;
   }
-  (doc.head || doc.documentElement)?.append(el(doc, "style", { "data-fated-tavern-overlay": "" }, tavernTheme));
+  const node = doc.createElement("style");
+  node.setAttribute("data-fated-tavern-overlay", "");
+  node.textContent = tavernTheme;
+  (doc.head || doc.documentElement)?.append(node);
+}
+
+// src/tavern/overlay-mount.js
+var own19 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
+var isObject5 = (v) => v && typeof v === "object" && !Array.isArray(v);
+var clone5 = (value) => {
+  try {
+    return structuredClone(value);
+  } catch (_) {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch (_2) {
+      return value;
+    }
+  }
+};
+function hostWindow2() {
+  const w = typeof window !== "undefined" ? window : globalThis;
+  try {
+    return w.parent && w.parent.document ? w.parent : w;
+  } catch (_) {
+    return w;
+  }
+}
+function hostDocument2(preferred) {
+  const w = preferred || hostWindow2();
+  try {
+    return w.document || document;
+  } catch (_) {
+    return typeof document !== "undefined" ? document : null;
+  }
+}
+function getGlobal2(host, name) {
+  try {
+    return host?.[name] ?? globalThis?.[name];
+  } catch (_) {
+    return void 0;
+  }
+}
+function safeStorage(host) {
+  try {
+    return host.localStorage;
+  } catch (_) {
+    return null;
+  }
+}
+function text6(value) {
+  return value == null ? "" : String(value);
+}
+function el(doc, tag2, attrs3, content) {
+  const n = doc.createElement(tag2);
+  for (const [key4, value] of Object.entries(attrs3 || {})) {
+    if (key4 === "class") n.className = value;
+    else if (key4 === "style") n.style.cssText = value;
+    else if (key4 === "text") n.textContent = value;
+    else if (value != null) n.setAttribute(key4, value);
+  }
+  if (content != null) n.textContent = content;
+  return n;
+}
+function parseJSON3(value, fallback = null) {
+  if (value && typeof value === "object") return value;
+  try {
+    return JSON.parse(String(value));
+  } catch (_) {
+    return fallback;
+  }
 }
 function mountTavernOverlay(options = {}) {
-  const host = options.host || hostWindow();
-  const doc = options.document || hostDocument(host);
+  const host = options.host || hostWindow2();
+  const doc = options.document || hostDocument2(host);
   if (!doc || !doc.createElement) return { dispose() {
   }, open() {
   }, close() {
@@ -18281,7 +18403,7 @@ function mountTavernOverlay(options = {}) {
   const groupId = (id4) => config.instances[id4]?.archetypeId ?? characters[id4]?.archetypeId ?? id4;
   const openingSources = /* @__PURE__ */ new Map();
   const enteredBattles = /* @__PURE__ */ new Set();
-  const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own18(config.instances, key4)).map(groupId))];
+  const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own19(config.instances, key4)).map(groupId))];
   const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
   const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
   let battleObserver = null, diagnostics = { phase: "created" };
@@ -18295,7 +18417,7 @@ function mountTavernOverlay(options = {}) {
   const root2 = el(doc, "div", { "data-fated-tavern-overlay": "" });
   const baselineCache = { key: null, state: null };
   function hydrateBaseline(input, { seed } = {}) {
-    const custom = getGlobal(document?.defaultView ?? globalThis, "FatedTactical")?.hydrateBattleState;
+    const custom = getGlobal2(document?.defaultView ?? globalThis, "FatedTactical")?.hydrateBattleState;
     if (custom) return custom(input, { seed, throwOnValidation: true }).state;
     const key4 = JSON.stringify([input, seed ?? null]);
     if (baselineCache.key === key4 && baselineCache.state) return structuredClone(baselineCache.state);
@@ -18463,12 +18585,12 @@ function mountTavernOverlay(options = {}) {
   (doc.body || doc.documentElement)?.append(root2);
   const instances = (() => {
     try {
-      return parseJSON(storage?.getItem(stateKey)) ?? config.instances;
+      return parseJSON3(storage?.getItem(stateKey)) ?? config.instances;
     } catch {
       return config.instances;
     }
   })();
-  config.instances = isObject2(instances) ? instances : {};
+  config.instances = isObject5(instances) ? instances : {};
   function save() {
     putConfig(storage, stateKey, config.instances);
   }
@@ -18494,7 +18616,7 @@ function mountTavernOverlay(options = {}) {
     }
     const legacy = (() => {
       try {
-        return parseJSON(storage?.getItem(configKey), {});
+        return parseJSON3(storage?.getItem(configKey), {});
       } catch {
         return {};
       }
@@ -18590,7 +18712,7 @@ function mountTavernOverlay(options = {}) {
       }
     };
     bind("fated_tactical:open_ui", (entry2) => {
-      openBattleEntry(entry2?.messageId, text4(entry2?.battleText)).catch(showError);
+      openBattleEntry(entry2?.messageId, text6(entry2?.battleText)).catch(showError);
     });
   }
   function closePanel() {
@@ -18840,7 +18962,7 @@ ${tag2.textContent || ""}
       on(b, "click", () => choose(all ? Object.keys(config.instances) : []));
       toolbar.append(b);
     }
-    const collapsed = () => isObject2(config.collapsedInstances) ? config.collapsedInstances : {};
+    const collapsed = () => isObject5(config.collapsedInstances) ? config.collapsedInstances : {};
     const setFolded = (ids, value) => {
       const next = { ...collapsed() };
       for (const id4 of ids) {
@@ -18923,8 +19045,8 @@ ${tag2.textContent || ""}
       });
       on(edit, "click", () => {
         const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
-        const parsed = parseJSON(value, null);
-        if (isObject2(parsed)) {
+        const parsed = parseJSON3(value, null);
+        if (isObject5(parsed)) {
           config.instances[key4] = { ...parsed, id: key4, source: "AI \u7F16\u8F91" };
           save();
           renderInstances();
@@ -18985,7 +19107,7 @@ ${tag2.textContent || ""}
     const key4 = activeBattleKey;
     const requestConfig = normalizationApiConfig(config);
     const pending = warningGroups().pending;
-    const ids = [...new Set(unitIds.map(groupId))].filter((id4) => own18(characters, id4));
+    const ids = [...new Set(unitIds.map(groupId))].filter((id4) => own19(characters, id4));
     if (!ids.length) return;
     const queue = planNormalizationBatches(ids, pending, liveState(), {
       maxWarnings: normalizationLimit(requestConfig, "normalizationWarningsPerBatch")
@@ -19004,7 +19126,7 @@ ${tag2.textContent || ""}
     const createdTemplates = /* @__PURE__ */ new Map();
     const progress = (detail) => notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", detail ?? `\u5DF2\u5B8C\u6210 ${completed} / ${queue.length} \u6279`, null, true);
     const request = async (batch, index, correction) => {
-      const snapshot = clone2(liveState());
+      const snapshot = clone5(liveState());
       const warnings = batch.warnings.filter((warning) => sources.warnings.includes(warning));
       let prompts = prepareMessages("validate", "", true, batch.unitIds, warnings);
       const sent = warnings.filter((warning) => prompts.some((message) => message.content.includes(JSON.stringify(warning.message))));
@@ -19020,8 +19142,8 @@ ${tag2.textContent || ""}
       signal.throwIfAborted();
       const timer = setTimeout(() => timeout.abort(new Error("\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u9152\u9986\u4E3B\u63A5\u53E3\u6216\u72EC\u7ACB API")), requestConfig.timeoutMs ?? 24e4);
       try {
-        const reply = await requestTavernAI(host, requestConfig, prompts, options.fetch, signal, (text5, done, info) => {
-          if (!disposed && !signal.aborted) progress(`\u7B2C ${index + 1} \u6279${info?.isHeartbeat ? `\u5DF2\u7B49\u5F85 ${info.elapsedSec} \u79D2` : done ? "\u5DF2\u6536\u5230\u54CD\u5E94\uFF0C\u7B49\u5F85\u6821\u9A8C" : `\u5DF2\u6536\u5230 ${text5.length} \u5B57\u7B26`}`);
+        const reply = await requestTavernAI(host, requestConfig, prompts, options.fetch, signal, (text7, done, info) => {
+          if (!disposed && !signal.aborted) progress(`\u7B2C ${index + 1} \u6279${info?.isHeartbeat ? `\u5DF2\u7B49\u5F85 ${info.elapsedSec} \u79D2` : done ? "\u5DF2\u6536\u5230\u54CD\u5E94\uFF0C\u7B49\u5F85\u6821\u9A8C" : `\u5DF2\u6536\u5230 ${text7.length} \u5B57\u7B26`}`);
         });
         signal.throwIfAborted();
         return { snapshot, sent, reply };
@@ -19119,7 +19241,7 @@ ${tag2.textContent || ""}
   const battleStorageKey = (key4, field) => `fated-tactical/${key4}/${field}`;
   function readBattleStorage(key4, field) {
     try {
-      return parseJSON(storage?.getItem(battleStorageKey(key4, field)));
+      return parseJSON3(storage?.getItem(battleStorageKey(key4, field)));
     } catch {
       return null;
     }
@@ -19127,20 +19249,20 @@ ${tag2.textContent || ""}
   async function hydrate(epoch, candidate, rehydrate) {
     const key4 = candidate.battleKey;
     const opening = !rehydrate && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
-    const nextSources = opening ? clone2(opening) : candidate;
+    const nextSources = opening ? clone5(opening) : candidate;
     if (key4 && !opening) {
-      nextSources.mvuData = clone2(await readBattleVariables(host, Number(candidate.source?.messageId)));
+      nextSources.mvuData = clone5(await readBattleVariables(host, Number(candidate.source?.messageId)));
       nextSources.protagonistName = tavernIdentity(host);
     }
     if (epoch !== scanEpoch || disposed) return null;
-    const openingSource = !opening && key4 ? clone2(nextSources) : null;
+    const openingSource = !opening && key4 ? clone5(nextSources) : null;
     if (!nextSources.battleInit) {
       sources = nextSources;
       diagnostics = { phase: "no-battle" };
       config.instances = {};
       return null;
     }
-    const converter = options.converter || getGlobal(host, "FatedTactical")?.hydrateBattleState || getGlobal(host, "hydrateBattleState") || hydrateFromSources;
+    const converter = options.converter || getGlobal2(host, "FatedTactical")?.hydrateBattleState || getGlobal2(host, "hydrateBattleState") || hydrateFromSources;
     let hydrated = null;
     let conversionError = null;
     if (typeof converter === "function") {
@@ -19174,7 +19296,7 @@ ${tag2.textContent || ""}
     const nextInstances = {};
     for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
       const key5 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
-      nextInstances[key5] = { ...clone2(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
+      nextInstances[key5] = { ...clone5(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
     }
     config.instances = nextInstances;
     diagnostics = {
@@ -19339,12 +19461,12 @@ ${tag2.textContent || ""}
       const receipts = (batch.receipts ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
       if (patch.length || receipts.length || guards.length) retained.push({ ...batch, patch, guards, receipts });
     }
-    const next = clone2(current);
+    const next = clone5(current);
     next[table4] = { ...next[table4] };
     for (const target2 of targets2) {
       const targetId = target2.split("/")[2];
       if (baseline[table4][targetId] === void 0) delete next[table4][targetId];
-      else next[table4][targetId] = clone2(baseline[table4][targetId]);
+      else next[table4][targetId] = clone5(baseline[table4][targetId]);
     }
     try {
       (options.validateState || validateState)(next);
@@ -19355,12 +19477,12 @@ ${tag2.textContent || ""}
     gameMount?.loadState?.(next);
     currentState = next;
     const exemptions = (config.narrativeExemptions[key4] ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
-    const notes2 = clone2(config.unresolvedNotes[key4] ?? {});
+    const notes2 = clone5(config.unresolvedNotes[key4] ?? {});
     for (const [unitId, entries3] of Object.entries(notes2)) {
       for (const warningId of Object.keys(entries3)) if (matchedKeys.has(warningId)) delete entries3[warningId];
       if (!Object.keys(entries3).length) delete notes2[unitId];
     }
-    const snapshots = clone2(config.charSnapshots);
+    const snapshots = clone5(config.charSnapshots);
     for (const snapshot of Object.values(snapshots[key4] ?? {})) {
       if (snapshot.resolvedWarnings) snapshot.resolvedWarnings = snapshot.resolvedWarnings.filter((item) => !matchedKeys.has(item.key ?? item));
     }
@@ -19580,10 +19702,10 @@ ${tag2.textContent || ""}
     return Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`));
   }
   function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
-    const { data } = parseAIResponse(reply);
+    const { data } = parseAIResponse2(reply);
     const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
     const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
-    if (isObject2(data) && !own18(data, "patch") && (explicitUnresolved || explicitNarrative)) data.patch = [];
+    if (isObject5(data) && !own19(data, "patch") && (explicitUnresolved || explicitNarrative)) data.patch = [];
     if (!Array.isArray(data?.patch)) {
       const error2 = new Error("\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01");
       const source = typeof reply === "string" ? reply.trim() : "";
@@ -19774,11 +19896,11 @@ ${tag2.textContent || ""}
     }
   }
   function updateChatInstances(next, previous) {
-    for (const id4 of Object.keys(previous?.units ?? {})) if (!own18(next.units, id4)) delete config.instances[id4];
+    for (const id4 of Object.keys(previous?.units ?? {})) if (!own19(next.units, id4)) delete config.instances[id4];
     for (const unit of Object.values(next.units)) {
       const metadata = { ...config.instances[unit.id] };
       for (const key4 of Object.keys(previous?.units?.[unit.id] ?? {})) delete metadata[key4];
-      config.instances[unit.id] = { ...metadata, ...clone2(unit) };
+      config.instances[unit.id] = { ...metadata, ...clone5(unit) };
     }
     save();
   }
@@ -19843,15 +19965,15 @@ ${tag2.textContent || ""}
     }
     aiPage.feed(sessionId, message);
   }
-  async function copyChatText(text5) {
+  async function copyChatText(text7) {
     try {
-      await doc.defaultView.navigator.clipboard.writeText(text5);
+      await doc.defaultView.navigator.clipboard.writeText(text7);
       return;
     } catch {
     }
     const previousFocus = doc.activeElement;
     const field = el(doc, "textarea", { readonly: "", tabindex: "-1" });
-    field.value = text5;
+    field.value = text7;
     field.style.cssText = "position:fixed;inset:0 auto auto 0;width:1px;height:1px;opacity:0";
     doc.body.append(field);
     try {
@@ -19950,8 +20072,8 @@ ${tag2.textContent || ""}
     applyJson: changeChatPatch,
     undoJson: (message) => changeChatPatch(message, void 0, true),
     copyText: copyChatText,
-    extractJson: (text5) => {
-      const candidate = preferredJson(text5);
+    extractJson: (text7) => {
+      const candidate = preferredJson(text7);
       return candidate ? [candidate] : [];
     },
     stop: () => aiController?.abort(new DOMException("\u5DF2\u53D6\u6D88", "AbortError"))
@@ -19963,9 +20085,9 @@ ${tag2.textContent || ""}
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone2(config), getDiagnostics: () => clone2(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, extractJsonBlocks, getSources: () => clone2(sources), getState: () => {
-    const state = clone2(liveState());
-    if (state) Object.defineProperty(state, "warnings", { value: clone2(sources.warnings ?? []) });
+  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone5(config), getDiagnostics: () => clone5(diagnostics), buildAIRequest, requestAI, parseAIResponse: parseAIResponse2, parseJSONPatch, extractJsonBlocks, getSources: () => clone5(sources), getState: () => {
+    const state = clone5(liveState());
+    if (state) Object.defineProperty(state, "warnings", { value: clone5(sources.warnings ?? []) });
     return state;
   } };
   function dispose() {
