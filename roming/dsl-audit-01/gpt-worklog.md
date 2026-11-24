@@ -65,4 +65,4 @@
 - `3538f10`：validation 接入 VM/combat protocol 权威枚举，补事件字段、技能/区域形状和 corpse 目标回归。
 - `122a30a`：converter 真物理拆为 parse/effects/unit/patch 四个实心模块，入口保持 barrel，Tavern/scale/terrain 56/56。
 - 本轮 overlay 真物理拆为 AI、patch、sources、diagnostics-view、mount 五个实心模块；入口保持 barrel，DOM id/class/data 选择器和消息事件名未改，Tavern 模块静态依赖环为 0。
-- 最终验证：`npm test` 374/374；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。
+- 最终验证：`npm test` 374/374；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。补充修正后 `overlay-diagnostics-view.js` 143 行、`overlay-sources.js` 226 行，满足职责模块实心行数护栏；最终构建再次更新四份 `dist/`。
