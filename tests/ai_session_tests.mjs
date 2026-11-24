@@ -336,6 +336,17 @@ test('酒馆转发按实际报文识别 SSE 与 JSON，并区分仅推理的结�
   await assert.rejects(call(reasoning + 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\ndata: [DONE]\n', 'text/plain'), /收到 \[DONE\].*finish_reason=length/);
 });
 
+test('Claude 和 Gemini 的纯思考回复显示输出长度诊断', async () => {
+  for (const [apiSource, finish, response] of [
+    ['claude', 'max_tokens', { content: [{ type: 'thinking', thinking: '推理' }], stop_reason: 'max_tokens' }],
+    ['gemini', 'MAX_TOKENS', { candidates: [{ content: { parts: [{ thought: true, text: '推理' }] }, finishReason: 'MAX_TOKENS' }] }],
+  ]) {
+    const settings = { apiSource, baseUrl: 'https://example.test', apiKey: 'test', model: 'test', stream: false };
+    await assert.rejects(requestViaCustomApi(settings, [], { fetchImpl: async () => Response.json(response) }),
+      new RegExp(`API 设置.*max_tokens.*推理 2 字符，正文 0.*finish_reason=${finish}`));
+  }
+});
+
 test('独立 API 的推理字段不会进入回复或流式回调', async () => {
   const settings = { baseUrl: 'https://example.test/v1', apiKey: 'test', model: 'test' };
   for (const stream of [true, false]) {
