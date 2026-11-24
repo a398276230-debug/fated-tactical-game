@@ -43,4 +43,12 @@
 - R2-C 部分 `169ad27`：删除 converter 的旧花括号解析分支；加入诊断 scope 校验（实际调用集合包含 `field`）；overlay 基线单槽深拷贝缓存；补充裸字符串未解决项的冲突锁注释。桥接测试 73/73。
 - `9f0f05b`：combat 使用 core 层共享的 `validVmExpiry`，不反向依赖 api 校验层。
 - 构建 `0f20ea0`：重新生成并提交四份追踪 dist 产物；`npm test` 371/371，`npm run test:e2e` 3/3，`node tests/e2e_scale_grid_chrome.mjs` 1/1，Chrome pageerror/console.error 均为 0。
-- R2-B 已完成：27 个内置状态统一为 VM `vars`/`mods`/`rules`/`flags`/`expireOn` 模板；schema 新增 `incomingAccuracy`、`intentDifficulty`、`shatter` 与 `hidden`、`intercept`、`taunted`、`infiniteAmmo`；combat、VM runtime、命令校验和状态实例化统一读取 VM 聚合结果。旧 `modifiers`、`stackRule`、`tickTiming`、`expireInto`、`statusModifier` 双轨生产路径已删除；`upsert_status` 支持表达式层数上限安全求值。战报改为投影 `mods`/`locks`/`flags`/`rules`/`expireOn`，协议与实例卡同步。`npm test` 371/371，桥接/报告/实例卡测试 61/61，Chrome E2E 3/3，scale-grid E2E 1/1，均无页面异常。R2-D 三大文件拆分与 R2-E 四份 docs 重写仍未完成，故本轮不标记 `GPT-PHASE4-DONE`。
+- R2-B 已完成：27 个内置状态统一为 VM `vars`/`mods`/`rules`/`flags`/`expireOn` 模板；schema 新增 `incomingAccuracy`、`intentDifficulty`、`shatter` 与 `hidden`、`intercept`、`taunted`、`infiniteAmmo`；combat、VM runtime、命令校验和状态实例化统一读取 VM 聚合结果。旧 `modifiers`、`stackRule`、`tickTiming`、`expireInto`、`statusModifier` 双轨生产路径已删除；`upsert_status` 支持表达式层数上限安全求值。战报改为投影 `mods`/`locks`/`flags`/`rules`/`expireOn`，协议与实例卡同步。`npm test` 371/371，桥接/报告/实例卡测试 61/61，Chrome E2E 3/3，scale-grid E2E 1/1，均无页面异常。
+
+## Phase 4 Round 2 D/E 完成
+
+- `0e6c629`：combat facade 拆分为 `combat-modifiers.js`、`combat-status.js`、`combat-turn.js`、`combat-geo-preview.js`、`combat-actions.js`，保留 `src/core/combat.js` 公共入口；核心回归 390/390。
+- `d82cd64`：converter facade 拆分为 `converter-parse.js`、`converter-effects.js`、`converter-unit.js`、`converter-patch.js`，保留 `src/tavern/converter.js` 公共入口；酒馆/比例尺/地形回归 55/55。
+- `8fb2dde`：overlay facade 拆分为 `overlay-ai.js`、`overlay-patch.js`、`overlay-sources.js`、`overlay-diagnostics-view.js`，保留 `src/tavern/overlay.js` 公共入口；加入三入口加载契约和 `TAVERN_VERSION === package.json.version` 断言；`npm test` 372/372，Chrome E2E 3/3，scale-grid E2E 1/1。
+- `1c6ae88`：基于现行 VM 源码重写 `docs/README.md`、`docs/architecture.md`、`docs/dsl.md`、`docs/status.md`，移除旧双轨和旧 DSL 的现状描述，仅在迁移说明中保留删除记录。
+- 最终构建更新四份 `dist/`；`npm test` 372/372，`npm run test:e2e` 3/3，`node tests/e2e_scale_grid_chrome.mjs` 1/1，Chrome pageerror/console.error 均为 0。
