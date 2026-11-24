@@ -982,12 +982,17 @@ var resolveRegister = (context, key4) => {
 function resolvePoint(value, context) {
   const point4 = typeof value !== "string" ? value : value.startsWith("vars.") ? resolveRegister(context, value.slice(5)) : context[value];
   if (!point4 || typeof point4 !== "object") return null;
-  if (typeof value === "string") return coordinate(point4) ? point4 : null;
+  const inside = (x2, y2) => {
+    if (x2 >= 0 && x2 < (context.boardW ?? Infinity) && y2 >= 0 && y2 < (context.boardH ?? Infinity)) return true;
+    context.warn?.(`\u5750\u6807 (${x2},${y2}) \u8D8A\u754C\uFF0C\u5FFD\u7565\u8BE5\u843D\u70B9`);
+    return false;
+  };
+  if (typeof value === "string") return coordinate(point4) && inside(point4.x, point4.y) ? point4 : null;
   const x = evaluateExpr(point4.x, context), y = evaluateExpr(point4.y, context);
   const z = point4.z === void 0 ? void 0 : evaluateExpr(point4.z, context);
   if (![x, y].every(Number.isFinite) || z !== void 0 && !Number.isFinite(z)) return null;
-  const axis = (n, size) => Math.max(0, Math.min((size ?? Infinity) - 1, Math.round(n)));
-  return { x: axis(x, context.boardW), y: axis(y, context.boardH), ...z === void 0 ? {} : { z } };
+  const col = Math.round(x), row = Math.round(y);
+  return inside(col, row) ? { x: col, y: row, ...z === void 0 ? {} : { z } } : null;
 }
 function zoneContains(state, zone, at2) {
   if (!coordinate(at2)) return false;
@@ -1571,7 +1576,7 @@ var STATUSES = Object.freeze(Object.fromEntries(Object.entries({
       program: [{ op: "mutate_event", patch: { finalAmount: "event.finalAmount * 1.35" } }]
     }] }
   ),
-  sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", { armor: -4 }, { mods: [{ stat: "armor", flat: -4 }] }),
+  sunder: def("\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", { armor: -4 }),
   mark: def("\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", { incomingAccuracy: 2 }),
   stealth: def(
     "\u9690\u8EAB",
@@ -1707,6 +1712,7 @@ function contextFor(state, frame, host) {
     zones: state.zones,
     effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
     hostileAreaDistance: (origin, unit) => distance3D(state, origin, unit) + incomingDistanceOffset(state, self ?? source, unit, event),
+    warn: (message) => host.log?.(state, self, "warning", message, { ruleId: frame.ruleId }),
     cellM: state.scale?.cellM ?? 2,
     boardW: state.grid?.[0]?.length,
     boardH: state.grid?.length,
@@ -1775,9 +1781,23 @@ function writeChoice(state, frame, ask, value, host, automatic = false) {
     }
   });
 }
-function automaticChoice(state, ask, host) {
+function automaticChoice(state, ask) {
   if (ask.kind === "number") return ask.aiPolicy === "max" ? ask.options.max : ask.options.min;
-  return host.choose?.(state, ask) ?? ask.options[0];
+  const chooser = state.units[ask.chooserId];
+  const enemies = Object.values(state.units).filter((unit) => unit.team !== chooser.team && unit.hp > 0 && !unit.fled);
+  let ranked = ask.options;
+  if (ask.kind === "cell" && enemies.length && ["best_offensive_cell", "safest_cell"].includes(ask.aiPolicy)) {
+    const sign3 = ask.aiPolicy === "safest_cell" ? -1 : 1;
+    ranked = ranked.map((cell) => ({ cell, distance: Math.min(...enemies.map((enemy) => distance3D(state, cell, enemy))) })).sort((a, b) => sign3 * (a.distance - b.distance)).map((row) => row.cell);
+  } else if (ask.kind === "entity" && ask.aiPolicy === "highest_threat") {
+    const threat = (option) => {
+      const unit = state.units[option.id];
+      return enemies.includes(unit) ? Math.max(0, ...["str", "agi", "int", "spi"].map((stat3) => unit.stats?.[stat3] ?? 0)) : -1;
+    };
+    ranked = [...ranked].sort((a, b) => threat(b) - threat(a));
+  }
+  if (ask.maxSelect !== void 0) return ranked.slice(0, ask.maxSelect).map((option) => option.id);
+  return ask.kind === "cell" ? ranked[0] : ranked[0].id;
 }
 function askInstruction(state, frame, op, context, host, options) {
   const chooser = selectVM(state, op.chooser, context)[0];
@@ -1810,8 +1830,7 @@ function askInstruction(state, frame, op, context, host, options) {
   };
   if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.controlPolicy?.controller === "ai" || chooser.team === "red"))) {
     if (options.dryRun) options.conditional = true;
-    const choice = automaticChoice(state, ask, host);
-    const value = ask.maxSelect !== void 0 ? [choice.id] : ask.kind === "entity" || ask.kind === "option" ? choice.id : choice;
+    const value = automaticChoice(state, ask);
     writeChoice(state, frame, ask, value, host, true);
   } else state.vm.pendingAsk = ask;
 }
@@ -2572,16 +2591,20 @@ function continueLethal({ state, frame, host }) {
       unit.corpseOf ??= unit.id;
       host.log(state, entry(state.units, frame.sourceId), "defeat", `${unit.name}\u5012\u4E0B`, { targetId: unit.id });
     }
-    for (const unitId of [...event.units].reverse()) {
-      const victim = entry(state.units, unitId), killer = entry(state.units, frame.sourceId);
-      if (!victim || victim.pools?.hp !== pool.id || !killer || killer.id === victim.id) continue;
-      const killRef = newEvent(state, { ...event, targetId: victim.id, deadId: victim.id, killerId: killer.id });
-      scheduleHooks(state, frame, "on_kill", killRef, host);
-    }
+    data.victims = event.units.filter((id3) => entry(state.units, id3)?.pools?.hp === pool.id);
     scheduleHooks(state, frame, "on_death", frame.eventRef, host);
     return;
   }
-  state.vm.stack.pop();
+  const index = Math.floor((frame.pc - 3) / 2), deadId = data.victims?.[index];
+  if (!deadId) {
+    state.vm.stack.pop();
+    return;
+  }
+  const allyPhase = frame.pc++ % 2 === 1, killerId = frame.sourceId;
+  if (allyPhase || killerId !== deadId && entry(state.units, killerId)) {
+    const ref2 = newEvent(state, { ...state.vm.events[frame.eventRef], targetId: deadId, deadId, killerId });
+    scheduleHooks(state, frame, allyPhase ? "on_ally_death" : "on_kill", ref2, host);
+  }
 }
 
 // src/core/vm-schema.js
@@ -2671,8 +2694,8 @@ var opNotes = Object.freeze({
   let: "name \u5199\u88F8\u540D\u79F0\uFF08\u5982 bonus\uFF09\uFF0C\u8BFB\u53D6\u5199 vars.bonus\u3002\u9ED8\u8BA4\u5199\u5F53\u524D\u5E27\uFF0Cscope:owner \u5199\u89C4\u5219\u5BBF\u4E3B\uFF08\u7528 self.vars.bonus \u6216\u5BF9\u5E94\u8F7D\u4F53\u53D8\u91CF\u8BFB\u53D6\uFF09\u3002",
   if: "\u6309 cond \u9009\u62E9 then \u6216 else \u6307\u4EE4\u5E8F\u5217\u3002\u672A\u63D0\u4F9B else \u65F6\u4E3A\u5047\u5373\u8DF3\u8FC7\u3002",
   for_each: "\u5BF9 Selector \u7684\u7ED3\u679C\u5FEB\u7167\u9010\u9879\u6267\u884C body\u3002bind \u5199\u88F8\u540D\u79F0\uFF0C\u5982 victim\uFF1Bbody \u5185\u901A\u8FC7 vars.victim \u9009\u5B9E\u4F53\u3001vars.victim.hp \u8BFB\u5B57\u6BB5\u3002\u7701\u7565 bind \u65F6\uFF0C\u904D\u5386\u5355\u4F4D\u7684\u5B50\u5E27 target \u662F\u5F53\u524D\u5355\u4F4D\u3002",
-  check: "\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u88F8\u540D\u79F0\uFF1B\u540E\u7EED\u901A\u8FC7 vars.<\u540D\u79F0> \u8BFB\u53D6\u3002rawNatural:true \u4F7F\u7528\u539F\u59CB\u81EA\u7136\u9AB0\uFF0C\u5FFD\u7565 after_natural_roll \u7684\u9AB0\u9762\u66FF\u6362\u3002",
-  ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
+  check: "chance \u5FC5\u586B dc\uFF08d100 \u4E0D\u9AD8\u4E8E\u9608\u503C\u5373\u901A\u8FC7\uFF09\u3002\u8D70\u7EDF\u4E00\u68C0\u5B9A\u548C\u968F\u673A\u6570\u7BA1\u7EBF\uFF0C\u6309\u7ED3\u679C\u8FDB\u5165 onPass \u6216 onFail\uFF1Bout \u5199\u88F8\u540D\u79F0\uFF1B\u540E\u7EED\u901A\u8FC7 vars.<\u540D\u79F0> \u8BFB\u53D6\u3002rawNatural:true \u4F7F\u7528\u539F\u59CB\u81EA\u7136\u9AB0\uFF0C\u5FFD\u7565 after_natural_roll \u7684\u9AB0\u9762\u66FF\u6362\u3002",
+  ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\uFF1Afirst \u4FDD\u7559\u5019\u9009\u987A\u5E8F\uFF0C\u6570\u503C max/min \u53D6\u7AEF\u70B9\uFF1B\u8FDB\u653B\u683C/\u5B89\u5168\u683C\u5206\u522B\u9760\u8FD1/\u8FDC\u79BB\u6700\u8FD1\u5B58\u6D3B\u654C\u4EBA\uFF1Bhighest_threat \u4F18\u5148\u5B58\u6D3B\u654C\u4EBA\uFF0C\u540C\u7C7B\u6309\u6700\u9AD8\u8FDB\u653B\u5C5E\u6027\u6392\u5E8F\uFF1B\u591A\u9009\u53D6\u6392\u5E8F\u524D maxSelect \u4E2A\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
   damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\uFF0C\u5199\u88F8\u540D\u79F0\u3001\u8BFB vars.<\u540D\u79F0>\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
   heal: "\u4EC5\u6CBB\u7597\u5B58\u6D3B\u4E14\u5141\u8BB8\u53D7\u7597\u7684\u5355\u4F4D\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
   resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002pool \u4E0E otherPool \u652F\u6301\u6C60 ID \u6216 vars.<\u540D\u79F0>\uFF0Cpool \u4E5F\u53EF\u7528\u5F15\u7528\u6570\u7EC4\uFF1B\u6570\u503C\u8868\u8FBE\u5F0F\u7528 resource(self, vars.<\u540D\u79F0>) \u8BFB\u53D6\u52A8\u6001\u4F59\u989D\u3002\u5185\u7F6E\u6C60 hp/mp/sp \u6216\u4F2A\u6C60 attack/action/move\uFF1A\u524D\u4E24\u8005\u8868\u793A\u672C\u56DE\u5408\u672A\u7528\u69FD\u4F4D\uFF0Cmove \u8868\u793A\u5269\u4F59\u79FB\u52A8\u683C\uFF1Bmode \u7528 add/sub/set\u3002add_max/sub_max/set_max \u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u955C\u50CF\uFF0CminRemain \u53EF\u9650\u5236\u6700\u4F4E\u4E0A\u9650\uFF1Bswap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\u3002",
@@ -2745,7 +2768,8 @@ var statMod = withRules(
   when("mult", {}, needs("stat")),
   when("additivePercent", {}, needs("stat")),
   when("stat", ratioStats, { properties: { flat: ratioFlat }, not: needs("additivePercent") }),
-  when("stat", multiplierStats, { not: needs("flat") })
+  when("stat", multiplierStats, { not: needs("flat") }),
+  when("stat", enumOf("checkBonus", "initiativeFlat"), { not: { anyOf: [needs("mult"), needs("additivePercent")] } })
 );
 var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
 var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
@@ -2821,7 +2845,7 @@ var opcodeSchemas = [
     onPass: program,
     onFail: program,
     out: id
-  }, ["kind"]),
+  }, ["kind"], when("kind", literal("chance"), needs("dc"))),
   opcode(
     "ask",
     {
@@ -3152,7 +3176,8 @@ var ruleOps = {
 function continueCheck({ state, frame, host, context }) {
   const { data: op } = frame;
   if (frame.pc === 0) {
-    const dc = evaluate2(op.dc, context, op.kind === "chance" ? 0 : 10);
+    const dc = evaluate2(op.dc, context, op.kind === "chance" ? void 0 : 10);
+    if (op.kind === "chance" && !Number.isFinite(dc)) host.log(state, context.self, "warning", "\u6982\u7387\u5224\u5B9A\u7F3A\u5C11\u6709\u6548 dc\uFF0C\u5FFD\u7565\u8BE5\u68C0\u5B9A");
     if (!Number.isFinite(dc)) {
       state.vm.stack.pop();
       return;
@@ -4470,7 +4495,8 @@ var handlers = {
   apply_status: continueApplyStatus,
   remove_status: continueRemoveStatus,
   ...spatialContinuations,
-  strike: continueStrike
+  strike: continueStrike,
+  round: continueRound
 };
 function initializeVMWorld(state) {
   state.vm ??= newVM();
@@ -4488,6 +4514,12 @@ function initializeVMWorld(state) {
       });
     }
   }
+}
+function advanceVMRound(state) {
+  initializeVMWorld(state);
+  state.vm.stepsRemaining = 2e3;
+  pushFrame(state, { native: "round", ownerId: null, sourceId: null });
+  stepVM(state, vmHost);
 }
 function advanceVMSpatial(state) {
   initializeVMWorld(state);
@@ -4544,7 +4576,16 @@ var vmHost = {
     });
   },
   expireStatuses(state, hook2, event) {
-    const ids = /* @__PURE__ */ new Set([event.actorId, event.targetId, ...event.ownerIds ?? []]);
+    const native = (id3, trigger) => {
+      const unit = own11(state.units, id3);
+      if (unit) expireStatuses(state, unit, trigger, { sourceUnitId: event.actorId, direct: event.direct });
+    };
+    if (hook2 === "after_damage" && event.dealt > 0) native(event.targetId, "on_damaged");
+    if (hook2 === "after_heal" && event.healing > 0) native(event.targetId, "on_heal");
+    if (hook2 === "on_death") for (const id3 of event.units ?? [event.targetId]) native(id3, "on_death");
+    if (hook2 === "on_kill") native(event.killerId, "on_kill");
+    if (hook2 === "on_ally_death") for (const id3 of eventOwners(state, hook2, event)) native(id3, "on_ally_death");
+    const ids = /* @__PURE__ */ new Set([event.actorId, event.targetId, ...eventOwners(state, hook2, event)]);
     for (const id3 of ids) {
       const unit = own11(state.units, id3);
       for (const [key4, status] of Object.entries(unit?.statuses ?? {})) {
@@ -4712,6 +4753,7 @@ var vmHost = {
     }
   },
   runAction({ state, frame, actor, plan, event, overrides: overrides2 }) {
+    if (event.actionType === "skill") expireStatuses(state, actor, "on_skill_cast", { sourceUnitId: actor.id });
     event.power *= overrides2.scale ?? 1;
     event.power *= event.damageScale ?? 1;
     const skill2 = own11(state.skills, event.skillId);
@@ -5226,6 +5268,10 @@ function settleTurn(state) {
       }
       if (unit.fled) {
         advanceCursor(state);
+        if (state.vm?.pendingAsk) {
+          state.vm.settlingTurn = true;
+          return;
+        }
         continue;
       }
       if (alive3(unit) && !changes(unit, "skip")) return;
@@ -5234,6 +5280,10 @@ function settleTurn(state) {
       if (state.vm?.pendingAsk || refreshOutcome(state)) return;
     }
     advanceCursor(state);
+    if (state.vm?.pendingAsk) {
+      state.vm.settlingTurn = true;
+      return;
+    }
   }
   const stalled = currentUnit(state);
   if (stalled) stalled.ap = 0;
@@ -5245,11 +5295,28 @@ function resetFacing(state) {
   }
 }
 function advanceCursor(state) {
-  state.turn++;
-  if (state.turn < state.order.length) return;
-  state.turn = 0;
-  state.round++;
-  if (state.spatialTerrain || values3(state.zones).length || values3(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
+  if (state.turn + 1 < state.order.length) {
+    state.turn++;
+    return;
+  }
+  advanceVMRound(state);
+}
+function continueRound({ state, frame, host }) {
+  if (frame.pc++ === 0) {
+    host.hooks(state, frame, "round_end", host.event(state, { round: state.round }));
+    return;
+  }
+  if (frame.pc === 2) {
+    if (refreshOutcome(state)) {
+      state.vm.stack.pop();
+      return;
+    }
+    state.turn = 0;
+    state.round++;
+    if (state.spatialTerrain || values3(state.zones).length || values3(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
+    return;
+  }
+  state.vm.stack.pop();
   const opening = state.logs.find((log) => log.type === "initiative")?.detail?.initiative;
   const openingRows = opening?.filter((row) => state.order.includes(row.unitId)) ?? [];
   const hasModifier = living(state).some((unit) => aggregateModifiers(state, unit.id).stats.initiativeFlat);
@@ -5271,7 +5338,7 @@ function advanceCursor(state) {
   }
   resetFacing(state);
   moraleCheck(state);
-  refreshOutcome(state);
+  if (!refreshOutcome(state)) host.hooks(state, frame, "round_start", host.event(state, { round: state.round }));
 }
 function beginBattle(state) {
   state.logs ??= [];
@@ -5302,7 +5369,10 @@ function beginBattle(state) {
       { ...statusLogDetail(unit, status), initial: true }
     );
   }
-  if (!refreshOutcome(state)) settleTurn(state);
+  if (!refreshOutcome(state)) {
+    dispatchVMHook(state, "round_start", { round: state.round });
+    if (!refreshOutcome(state)) settleTurn(state);
+  }
   return state;
 }
 function initiativeOrder(state, rollFor) {
@@ -5410,24 +5480,22 @@ function actionSkill(state, unit, id3) {
 }
 var syncEquipmentEffects = initializeVMWorld;
 function movementScale(state, unit, type) {
-  const rawMove = Number(unit.rawMove ?? unit.move ?? 3);
   const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit.tier) || 1)));
-  const baseMoveM = unit.moveM ?? rawMove * (TIER_CELL_M[tier] ?? TIER_CELL_M[1]);
-  const bonus = modStat(state, unit, "movement", 0);
-  const movementBonus = bonus * TIER_CELL_M[tier];
-  const moveM = Math.max(0, baseMoveM + movementBonus);
+  const cellM = state.scale?.cellM ?? 2;
+  const tierM = TIER_CELL_M[tier];
+  const base = (unit.moveM ?? unit.move * cellM) / tierM;
+  const moveM = Math.max(0, modStat(state, unit, "movement", base + changes(unit, "movement"))) * tierM;
   const mult = type === "sprint" ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
-  const total2 = carry + Math.round(mult * moveM / Math.max(1e-9, Number(state.scale?.cellM) || 2) * 1e3);
-  return { rawMove, moveM, bonus, total: total2, limit: Math.floor(total2 / 1e3) };
+  const total2 = carry + Math.round(mult * moveM / cellM * 1e3);
+  return { moveM, total: total2, limit: Math.floor(total2 / 1e3) };
 }
 function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
   if (!alive3(unit) || changes(unit, "rooted") || changes(unit, "skip") || aggregateModifiers(state, unit.id).locks.move) return [];
   const scale = movementScale(state, unit, type);
   const spent = unit.moveSpent ?? 0;
-  const remainingMove = Math.max(0, unit.move - spent + scale.bonus);
   const mult = type === "sprint" ? 2 : 1;
-  const limit = distanceLimit ?? (unit.moveM == null ? Math.floor(remainingMove * mult) : Math.max(0, scale.limit - spent * mult));
+  const limit = distanceLimit ?? Math.max(0, scale.limit - spent * mult);
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === "disengage" });
   if (!routes.length && scale.limit === 0 && distanceLimit === void 0) {
     if (state.scale?.anchorTier >= 5) return [];
@@ -6557,6 +6625,11 @@ function continueStrike({ state, frame, host }) {
   }
   if (frame.phase === "after_hit" && profile.kind !== "cover") {
     frame.phase = "followup";
+    if (plan.hostile || weapon2 || action.type === "shield_bash") {
+      expireStatuses(state, actor, "on_hit", { sourceUnitId: actor.id });
+      const struck = state.units[event.targetId];
+      if (struck) expireStatuses(state, struck, "on_struck", { sourceUnitId: actor.id });
+    }
     if (action.type === "shield_bash") event.rules = shieldBashRules;
     host.hooks(state, frame, "after_hit", frame.awaitEvent);
     return;
@@ -8002,10 +8075,9 @@ function tactics(state, actor, action, plan) {
     const sign3 = enemy ? 1 : target2 === actor ? -1.5 : -1.15;
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage / target2.hp) : 0;
-    const statusValue2 = target2.statuses ? Object.values(target2.statuses).reduce((value, status) => {
-      const control = status.modifiers?.skip || status.modifiers?.root || status.modifiers?.disadvantage;
-      return value + (control ? enemy ? 8 : -8 : 0) + (status.durationType === "battle_turns" ? 1 : 0);
-    }, 0) : 0;
+    const locks = aggregateModifiers(state, target2.id).locks;
+    const controlled = Object.values(locks).some(Boolean) || ["skip", "rooted", "disadvantage"].some((key4) => statusModifier(target2, key4) > 0);
+    const statusValue2 = (controlled ? enemy ? 8 : -8 : 0) + Object.values(target2.statuses ?? {}).filter((status) => status.durationType === "battle_turns").length;
     score += sign3 * (Math.min(target2.hp, damage) + kill * 6 + statusValue2);
     if (profile.heal) {
       const healing = (profile.heal[0] + profile.heal[1]) / 2;
@@ -14447,10 +14519,13 @@ function teamOf(value, fallback = "red") {
   const t = text3(value).toLowerCase();
   return ["blue", "player", "ally", "\u53CB\u65B9", "\u6211\u65B9"].includes(t) ? "blue" : ["red", "enemy", "foe", "\u654C\u65B9"].includes(t) ? "red" : fallback;
 }
-function xyzOf(value) {
-  const p = asObject(value);
-  const xyz = Array.isArray(value) ? value : Array.isArray(p.xyz) ? p.xyz : [p.x, p.y, p.z];
-  return { x: Math.max(0, Math.min(9, integer3(xyz[0], 0))), y: Math.max(0, Math.min(9, integer3(xyz[1], 0))), z: integer3(xyz[2], 0) };
+function xyzOf(value, board, warnings) {
+  const xyz = Array.isArray(value) ? value : [value.x, value.y, value.z];
+  const x = integer3(xyz[0]), y = integer3(xyz[1]);
+  const boundedX = Math.max(0, Math.min((board.width ?? 10) - 1, x));
+  const boundedY = Math.max(0, Math.min((board.height ?? 10) - 1, y));
+  if (x !== boundedX || y !== boundedY) warnings.push(`\u5750\u6807 (${x},${y}) \u8D8A\u754C\uFF0C\u8C03\u6574\u4E3A (${boundedX},${boundedY})`);
+  return { x: boundedX, y: boundedY, z: integer3(xyz[2]) };
 }
 function importBackpack(bag, owner, skills, sink) {
   const inventory = {};
@@ -14484,7 +14559,7 @@ function importBackpack(bag, owner, skills, sink) {
   }
   return inventory;
 }
-function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist) {
+function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist, board) {
   const resourcesSink = sink("resource"), warnings = sink("status");
   const p = participant ?? {};
   const name = text3(p.protagonistName || p.name) || sourceName(record3, p.id) || `\u5355\u4F4D ${index + 1}`;
@@ -14615,7 +14690,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
     for (const key5 of ["damage", "heal"]) if (object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5]);
     return sid;
   });
-  const pos2 = xyzOf(p.xyz ?? p);
+  const pos2 = xyzOf(p.xyz ?? p, board, sink("state"));
   const sourceStatuses = record3.statuses ?? record3.\u72B6\u6001\u6548\u679C ?? record3.\u72B6\u6001 ?? record3.effects;
   const statuses = {};
   const statusEntries = Array.isArray(sourceStatuses) ? sourceStatuses.map((s) => [typeof s === "string" ? s : s?.id ?? s?.statusId ?? s?.name ?? s?.\u540D\u79F0, s]) : Object.entries(asObject(sourceStatuses));
@@ -14682,7 +14757,7 @@ function terrainState(battle, state, warnings) {
   state.grid = createBattleGrid(battle, state.rng, Object.values(state.units), warnings);
   for (const [i, raw] of (Array.isArray(battle.covers) ? battle.covers : []).entries()) {
     if (!object3(raw)) continue;
-    const p = xyzOf(raw.xyz ?? raw), id3 = deterministicId(raw.id ?? `cover-${i}`, "cover");
+    const p = xyzOf(raw.xyz ?? raw, battle, warnings), id3 = deterministicId(raw.id ?? `cover-${i}`, "cover");
     if (state.grid[p.y][p.x].kind === "wall") {
       warnings.push(`\u5FFD\u7565\u4F4D\u4E8E\u5899\u4F53\u5185\u7684\u63A9\u4F53\uFF1A${id3}`);
       continue;
@@ -14695,7 +14770,7 @@ function terrainState(battle, state, warnings) {
   const interactives = battle.interacts ?? battle.interactives;
   for (const [i, raw] of (Array.isArray(interactives) ? interactives : []).entries()) {
     if (!object3(raw)) continue;
-    const p = xyzOf(raw.xyz ?? raw), id3 = deterministicId(raw.id ?? `interactive-${i}`, "interactive");
+    const p = xyzOf(raw.xyz ?? raw, battle, warnings), id3 = deterministicId(raw.id ?? `interactive-${i}`, "interactive");
     if (state.grid[p.y][p.x].kind === "wall") {
       warnings.push(`\u5FFD\u7565\u4F4D\u4E8E\u5899\u4F53\u5185\u7684\u4E92\u52A8\u70B9\uFF1A${id3}`);
       continue;
@@ -14706,17 +14781,20 @@ function terrainState(battle, state, warnings) {
   }
   return state;
 }
-function uniquePositions(units, state) {
-  const used = /* @__PURE__ */ new Set();
-  for (const unit of Object.values(units)) {
-    let x = unit.x, y = unit.y;
-    for (let n = 0; n < 100 && (used.has(`${x},${y}`) || state.grid[y][x].kind === "wall" || Object.values(state.covers).some((c) => c.x === x && c.y === y && c.hp > 0)); n++) {
-      x = (x + 1) % 10;
-      if (x === 0) y = (y + 1) % 10;
+function placeUnits(state, warnings) {
+  const placed = { ...state, units: {} };
+  const { width, height: height2 } = state.scale;
+  for (const unit of Object.values(state.units)) {
+    const start = unit.y * width + unit.x;
+    for (let n = 0; ; n++) {
+      if (n === width * height2) throw new Error(`\u68CB\u76D8\u6CA1\u6709\u53EF\u653E\u7F6E ${unit.id} \u7684\u4F4D\u7F6E`);
+      const index = (start + n) % (width * height2), x = index % width, y = Math.floor(index / width);
+      if (!canOccupy(placed, x, y, unit)) continue;
+      if (n) warnings.push(`${unit.id} \u8D77\u70B9\u4E0D\u53EF\u7528\uFF0C\u4ECE (${unit.x},${unit.y}) \u79FB\u81F3 (${x},${y})`);
+      Object.assign(unit, { x, y });
+      placed.units[unit.id] = unit;
+      break;
     }
-    unit.x = x;
-    unit.y = y;
-    used.add(`${x},${y}`);
   }
 }
 function hydrateFromSources(input = {}, options = {}) {
@@ -14749,7 +14827,7 @@ function hydrateFromSources(input = {}, options = {}) {
     const merged = mergeBattleParticipant(record3, participant, battle);
     const placement = { moraleType: battle.moraleType, ...participant, ...persona, id: id3 };
     const startWarnings = warnings.length;
-    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist);
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist, battle);
     if (origin === "char_info") {
       const { \u6570\u91CF: _quantity, count: _count, ...definition } = merged;
       const signature = JSON.stringify([definition, made.unit.tags, made.unit.creatureType, made.unit.nonLethal, made.unit.moraleType]);
@@ -14776,7 +14854,7 @@ function hydrateFromSources(input = {}, options = {}) {
     for (const [i, record3] of records2.entries()) {
       const count = record3.__sourceKind === "char_info" ? bound(record3.\u6570\u91CF ?? record3.count, 1, 100, 1) : 1;
       for (let copy3 = 0; copy3 < count; copy3++, index++) {
-        add({ name: sourceName(record3, record3.__sourceKey), source: sourceId(record3), faction: i ? "red" : "blue", x: index % 10, y: Math.floor(index / 10) % 10 }, record3, index);
+        add({ name: sourceName(record3, record3.__sourceKey), source: sourceId(record3), faction: i ? "red" : "blue", x: index % (battle.width ?? 10), y: Math.floor(index / (battle.width ?? 10)) % (battle.height ?? 10) }, record3, index);
       }
     }
   }
@@ -14794,7 +14872,7 @@ function hydrateFromSources(input = {}, options = {}) {
     unit.moveCarryPermille = 0;
   }
   terrainState(battle, state, sink(null, "terrain", "terrain"));
-  uniquePositions(state.units, state);
+  placeUnits(state, sink(null, "battle_init", "state"));
   let valid2 = true;
   try {
     validateState(state);
@@ -15626,7 +15704,7 @@ targetRef\uFF1A${describe2(defs2.targetRef)}\u3002\u7279\u5B9A\u5FEB\u7167\u5B9E
 mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u542B stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00\uFF1B\u6570\u503C\u4FEE\u9970\u5FC5\u6307\u5B9A stat\u3002\u8BA1\u7B97\u516C\u5F0F\u4E3A (\u57FA\u503C + flat \u4E4B\u548C) \xD7 (1 + additivePercent \u4E4B\u548C) \xD7 mult \u8FDE\u4E58\uFF1Bwhen \u6C42\u503C\u4E3A true \u65F6\u751F\u6548\uFF1BcheckKind \u53EF\u9650\u5B9A\u68C0\u5B9A\u7C7B\u522B\uFF08attack / save / contest / skill / chance / d20 / dodge / authority \u6216\u72B6\u6001 ID\uFF0F\u6807\u7B7E\uFF09\u3002
 \u2022 \u8F93\u51FA\u4FA7\uFF08\u6301\u6709\u8005\u8FDB\u653B\uFF09\uFF1AdamageFlat \u56FA\u5B9A\u52A0\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat\uFF09\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF08\u57FA\u503C 1\uFF0C\u7528 mult \u6216 additivePercent\uFF0C\u7981\u7528 flat\uFF09\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF08\u7528 flat\uFF09\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF09\u3002
 \u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
-\u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7528 flat \u5199\u540C\u9636\u79FB\u52A8\u589E\u51CF\uFF08\u5F15\u64CE\u81EA\u52A8\u6298\u7B97\u6218\u573A\u683C\u6570\uFF09\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
+\u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7684\u57FA\u503C\u4E0E flat \u5747\u4E3A\u540C\u9636\u79FB\u52A8\u5355\u4F4D\uFF0C\u53E0\u52A0\u540E\u5E94\u7528\u500D\u7387\uFF0C\u518D\u6309\u5C42\u7EA7\u7C73\u6570\u6298\u7B97\u4E3A\u683C\uFF1BcheckBonus\u3001initiativeFlat \u4EC5\u63A5\u53D7 flat \u6570\u503C\u52A0\u503C\uFF0C\u4E0D\u4E58\u68C0\u5B9A\u6216\u5148\u653B\u603B\u503C\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
 \u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002
 controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002moraleLock \u4EC5\u679A\u4E3E\u503C "steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u654C\u65B9\u6307\u5411\u52A8\u4F5C\u5408\u6CD5\u9009\u4E2D\u53CB\u519B\u6216\u81EA\u8EAB\u3002`;
 
