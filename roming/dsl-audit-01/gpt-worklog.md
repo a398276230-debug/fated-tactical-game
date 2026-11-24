@@ -52,3 +52,10 @@
 - `8fb2dde`：overlay facade 拆分为 `overlay-ai.js`、`overlay-patch.js`、`overlay-sources.js`、`overlay-diagnostics-view.js`，保留 `src/tavern/overlay.js` 公共入口；加入三入口加载契约和 `TAVERN_VERSION === package.json.version` 断言；`npm test` 372/372，Chrome E2E 3/3，scale-grid E2E 1/1。
 - `1c6ae88`：基于现行 VM 源码重写 `docs/README.md`、`docs/architecture.md`、`docs/dsl.md`、`docs/status.md`，移除旧双轨和旧 DSL 的现状描述，仅在迁移说明中保留删除记录。
 - 最终构建更新四份 `dist/`；`npm test` 372/372，`npm run test:e2e` 3/3，`node tests/e2e_scale_grid_chrome.mjs` 1/1，Chrome pageerror/console.error 均为 0。
+
+## Round 3 Batch R3-B/R3-C 完成
+
+- `479884f`：新增共享 `resolveStatusApplication`，统一原生/VM 状态层数、时长、replace/refresh/stack/extend、变量过滤、护盾叠加、来源位格和模板深拷贝；修复资源 swap 跨池致死判定与零 HP 尸体重复致死问题。
+- `e436198`：新增 `EVENT_SCALAR_KEYS` 闭合事件字段校验，并补齐 VM schema 枚举导出（stat、skill shape、selector/zone shape、target、flags、locks、stack/duration 集合）和 combat protocol 基础枚举。
+- `e4f1931`：本地 tactical AI 新增基于 VM `zones` 的区域利弊评分，移动/疾跑/撤离/走位后攻击纳入脱离危险区收益；LLM battle AI payload 携带 zones 摘要并提示规避敌方危险区域。
+- 最终验证：`npm test` 372/372；`npm run test:e2e` 3/3；`node tests/e2e_scale_grid_chrome.mjs` 1/1；Chrome pageerror/console.error 均为 0。构建已更新四份 `dist/`。
