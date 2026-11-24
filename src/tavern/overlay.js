@@ -973,7 +973,7 @@ export function mountTavernOverlay(options = {}) {
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
     }
     on(refresh, 'click', () => {
-      if (!host.confirm('从当前聊天重新读取本场参战者？来源无变化时保留战斗进度；有变化时重建开场，并保留未变化条目的标准化结果。不会请求 AI，也不影响其他战场。')) return;
+      if (!host.confirm('从当前聊天重新读取本场参战者？来源和转换后的技能均无变化时保留战斗进度；有变化时重建开场，并保留未变化条目的标准化结果。不会请求 AI，也不影响其他战场。')) return;
       void scan({ rehydrate: true });
     });
   }
@@ -1435,7 +1435,8 @@ export function mountTavernOverlay(options = {}) {
         await finished;
         if (epoch !== scanEpoch || disposed) return;
       }
-      const savedBattle = Boolean(key && readBattleStorage(key, 'fated-tactical/battle-v1')?.kind === 'battle');
+      const snapshot = key && readBattleStorage(key, 'fated-tactical/battle-v1');
+      const savedBattle = snapshot?.kind === 'battle';
       const previousOpening = rehydrate && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
       const hydrated = await hydrate(epoch, candidate, rehydrate);
       const latestOpening = key && openingSources.get(key);
@@ -1476,9 +1477,12 @@ export function mountTavernOverlay(options = {}) {
       } });
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
       toast.hidden = true;
-      const restoreSaved = savedBattle && (!rehydrate || (unchangedOpening && !invalid));
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
-      if (currentState && !restoreSaved) currentState = restoreChatOpening(currentState, key);
+      if (currentState && (rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key);
+      // Identical raw text can produce different skill mechanics after a converter fix.
+      // Compare effective opening templates, not the board after turns have been played.
+      const restoreSaved = savedBattle && (!rehydrate || (unchangedOpening && !invalid &&
+        stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills)));
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key]: kept } });
       mountState(currentState, restoreSaved);
       refreshPortraits(currentState, epoch);

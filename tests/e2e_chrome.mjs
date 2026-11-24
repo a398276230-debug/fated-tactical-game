@@ -664,6 +664,15 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
   const raw = await tavernState();
   assert.equal(raw.units.p1.hp, 245);
+  const staleSkillId = Object.keys(raw.units.p1.inventory)[0];
+  await run(`(() => {
+    const key='fated-tactical/'+window.__fatedTacticalTavern.getSources().battleKey+'/fated-tactical/battle-v1';
+    const snapshot=JSON.parse(localStorage.getItem(key));
+    for (const section of [snapshot.origin,snapshot.state]) section.skills[${JSON.stringify(staleSkillId)}].rules=[];
+    localStorage.setItem(key,JSON.stringify(snapshot));
+  })()`);
+  await run('window.__fatedTacticalTavern.scan({rehydrate:true})');
+  assert.ok((await tavernState()).skills[staleSkillId].rules.length, '相同来源：重新水合不能恢复缺机制的旧模板');
   assert.ok(await run(`window.__fatedTacticalTavern.getDiagnostics().warnings.some(w=>w.message.includes('恒定拉距'))`));
   assert.equal(raw.equipment[raw.items[raw.units.p1.mainHand].templateId].attack, 14);
   await run('window.__fatedTacticalTavern.scan()');
@@ -681,6 +690,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const afterHeal = await tavernState();
   assert.equal(afterHeal.units.p1.hp, 255);
   assert.equal(afterHeal.units.p1.inventory[bagId],2);
+  await run('window.__fatedTacticalTavern.scan({rehydrate:true})');
+  assert.deepEqual(await tavernState(), afterHeal, '相同来源和开场模板：重新水合保留已消耗的物品和战斗进度');
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
   assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`), true);
   assert.match(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.textContent`), /剩余 0 次.*次数已用尽/);
