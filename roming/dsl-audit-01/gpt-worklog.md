@@ -36,3 +36,11 @@
 - `npm run test:e2e` 3/3。实测 100 格、4 掩体、4 互动点，1440px 无重叠，390px 竖屏及 844×390 横屏整盘可见。`pageerror` 和 `console.error` 均为 0。
 - `node tests/e2e_scale_grid_chrome.mjs` 1/1。验证矩形棋盘、比例尺徽标、同格叠放和精确目标选择。
 - 本地 `master` 分批提交，最终工作树干净，未推送。
+
+## Phase 4 Round 2 当前落地（截至 2026-03-06）
+
+- R2-A `04dbb44`：修复装备实例去重（同模板双持/双饰品独立生效）、纯选择器 Schema 与 `shareRulesTo` 校验、零基座 stat 约束、`ask.kind × aiPolicy` 约束、persistent/undispellable 强制驱散门控、重甲命中预览与实际 RATING_TABLE 数学对齐、`untargetableSingle` 单体拦截、spawn 地形 AI 识别；新增回归测试。`npm test` 371/371。
+- R2-C 部分 `169ad27`：删除 converter 的旧花括号解析分支；加入诊断 scope 校验（实际调用集合包含 `field`）；overlay 基线单槽深拷贝缓存；补充裸字符串未解决项的冲突锁注释。桥接测试 73/73。
+- `9f0f05b`：combat 使用 core 层共享的 `validVmExpiry`，不反向依赖 api 校验层。
+- 构建 `0f20ea0`：重新生成并提交四份追踪 dist 产物；`npm test` 371/371，`npm run test:e2e` 3/3，`node tests/e2e_scale_grid_chrome.mjs` 1/1，Chrome pageerror/console.error 均为 0。
+- R2-B 的 27 个状态模板纯 VM 单轨迁移、旧 `modifiers`/`stackRule`/`tickTiming` 生产路径删除、战报纯 VM 投影尚未完成；R2-D 三大文件拆分与 R2-E 四份 docs 重写也尚未完成，故本轮不标记 `GPT-PHASE4-DONE`。
