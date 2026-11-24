@@ -201,6 +201,12 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, edit
   return {
     render,
     show: scrollToEnd,
+    prefill(text) {
+      input.value = [input.value.trim(), text].filter(Boolean).join('\n\n');
+      drafts.set(shownId, input.value);
+      refresh();
+      input.focus();
+    },
     setBusy(value) { busy = value; refresh(); },
     feed(id, ...messages) {
       if (id !== shownId) return;

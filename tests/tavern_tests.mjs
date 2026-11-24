@@ -854,7 +854,7 @@ test('诊断收据：只能核销唯一匹配已发送警告的结构化操作�
   const op = { op:'replace', path:'/equipment/bow/rules', value:[{ id:'冰冻箭', hook:'after_hit', program:[] }] };
   const explicit = { ...op, resolves:[referenceFor(ice)] };
   assert.deepEqual(resolvedDiagnostics([ice], records, [op]), []);
-  assert.deepEqual(resolvedDiagnostics(warnings, records, [op], readUnresolvedDiagnostics(['火矢'], warnings)), []);
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [op], readUnresolvedDiagnostics(['火矢'], warnings).matched), []);
   assert.deepEqual(resolvedDiagnostics(warnings, records, [{ ...op, resolves:['冰冻箭'] }]), []);
   assert.deepEqual(resolvedDiagnostics(warnings, records, [{ ...explicit, path:'/equipment/other/rules' }]), []);
   assert.deepEqual(resolvedDiagnostics(warnings, records, [explicit]), [ice]);
@@ -869,24 +869,22 @@ test('未解决诊断：结构化引用精确关联角色、路径与主题，�
   const otherUnit = effectWarning(title, 'e');
   const warnings = [first, next, otherTemplate, otherUnit];
   const unresolved = { unitId: 'p', originPath: '/equipment/bow', effectName: title, reason: '仍缺触发时机' };
-  const notes = readUnresolvedDiagnostics([unresolved, { ...referenceFor(otherUnit), reason: '对手的数值未确定' },
-    '{"bad":"raw model object"}', { ...referenceFor(next), reason: '{"nested":2}' }], warnings);
-  const [a, b, c, d, extra] = pendingDiagnostics(warnings, notes);
-  assert.match(a, /模型说明：仍缺触发时机/);
-  assert.match(b, /未提供文字说明/);
-  assert.equal(c, otherTemplate.message);
-  assert.match(d, /模型说明：对手的数值未确定/);
-  assert.match(extra, /未提供文字说明/);
-  assert.doesNotMatch([a, b, c, d, extra].join(' '), /raw model object|nested|unitId|originPath/);
+  const { matched, invalid } = readUnresolvedDiagnostics([{ ...unresolved, kind: 'missing_info' },
+    { ...referenceFor(otherUnit), reason: '对手的数值未确定' }, '{"bad":"raw model object"}',
+    { ...referenceFor(next), reason: '{"nested":2}' }], warnings);
+  assert.deepEqual(matched, [{ warning: first, detail: '仍缺触发时机', kind: 'missing_info' }, { warning: otherUnit, detail: '对手的数值未确定' }]);
+  assert.equal(invalid.length, 2);
+  assert.doesNotMatch(invalid.join(' '), /raw model object|nested|unitId|originPath/);
   assert.doesNotMatch(diagnosticText('HTTP 502：上游失败（{"error": "secret"}）'), /secret/);
-  assert.deepEqual(pendingDiagnostics([first], readUnresolvedDiagnostics([`${title}：仍缺目标`], [first])),
+  assert.deepEqual(pendingDiagnostics([first], readUnresolvedDiagnostics([`${title}：仍缺目标`], [first]).matched),
     [`${first.message}（模型说明：仍缺目标）`]);
   const records = { p:{hash:'h'}, e:{hash:'e'} };
   const op = { path:'/equipment/bow/rules', resolves:[referenceFor(first), referenceFor(otherUnit)] };
-  assert.deepEqual(resolvedDiagnostics(warnings, records, [op], readUnresolvedDiagnostics([unresolved], warnings)), [otherUnit]);
-  assert.throws(() => readUnresolvedDiagnostics([{ ...unresolved, originPath:'/equipment/wrong' }], warnings), /唯一匹配/);
-  assert.throws(() => readUnresolvedDiagnostics([{ ...unresolved, message:next.message }], warnings), /唯一匹配/);
-  assert.throws(() => readUnresolvedDiagnostics([{ ...unresolved, reason:{ bad:true } }], warnings), /以及原因/);
+  assert.deepEqual(resolvedDiagnostics(warnings, records, [op], readUnresolvedDiagnostics([unresolved], warnings).matched), [otherUnit]);
+  const malformed = readUnresolvedDiagnostics([{ ...unresolved, originPath:'/equipment/wrong' },
+    { ...unresolved, message:next.message }, { ...unresolved, reason:{ bad:true } }], warnings);
+  assert.deepEqual(malformed.matched, []);
+  assert.equal(malformed.invalid.length, 3);
 });
 
 test('char fingerprint merges raw sources without hashing placement or actor AP', async () => {
@@ -908,7 +906,7 @@ test('instance-card rule formatter displays the trigger and status duration', ()
   assert.equal(ruleSummary({hook:'after_hit',program:[{op:'apply_status',statusId:'bleed',turns:2}]}),'命中时 → 施加 流血 2 回合');
 });
 
-function cardSections(state, unit, narrative, options = {}) {
+function cardSections(state, unit, options = {}) {
   const make = (tag, attrs = {}, value = '') => ({
     tag, attrs, value, children: [], dataset: {},
     style: { setProperty() {} }, classList: { add() {} }, listeners: {},
@@ -917,7 +915,7 @@ function cardSections(state, unit, narrative, options = {}) {
     append(...nodes) { this.children.push(...nodes); },
     get textContent() { return [this.value, ...this.children.map(node => node.textContent)].join('\n'); },
   });
-  const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'), { narrative, ...options });
+  const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'), { ...options });
   return body.children.filter(node => node.tag === 'section').map(section => section.children.slice(1));
 }
 
@@ -937,7 +935,7 @@ test('instance card counts and describes equipment mods, rules and granted skill
     },
     skills: { guard: { name: '战帅本能', passive: true }, deflect: { name: '星光偏转' } },
   };
-  const [equipment, skills] = cardSections(state, unit, [{ originPath: '/equipment/accessory', message: '星界储藏', reason: '仅影响剧情' }]);
+  const [equipment, skills] = cardSections(state, unit);
   const [armor, ring] = equipment;
   assert.equal(armor.tag, 'details');
   assert.equal(armor.children[0].children.find(node => node.attrs.class === 'fated-char-fx').value, '6 个效果');
@@ -946,7 +944,6 @@ test('instance card counts and describes equipment mods, rules and granted skill
   assert.match(ring.textContent, /3 个效果/);
   assert.match(ring.textContent, /命中时 → 施加 流血 2 回合/);
   assert.match(ring.textContent, /附带技能 · 星光偏转/);
-  assert.match(ring.textContent, /仅叙事 · 星界储藏/);
   assert.equal(skills.length, 2);
   assert.match(skills[0].textContent, /战帅本能\s+被动/);
   assert.match(skills[1].textContent, /星光偏转\s+装备附带/);
@@ -958,7 +955,7 @@ test('instance card offers one whole-entry reroll control, not one control per e
     accessory: { name: '星弧裂空之戒', rules: [{ id: 'step', hook: 'active', program: [] }], mods: [{ stat: 'dr', flat: 0.3 }] },
   }, skills: {} };
   const calls = [];
-  const [equipment] = cardSections(state, unit, [], { onDiscardEntry: ref => calls.push(ref) });
+  const [equipment] = cardSections(state, unit, { onDiscardEntry: ref => calls.push(ref) });
   assert.match(equipment[0].textContent, /删除并重roll/);
   const buttons = equipment[0].children.filter(node => node.tag === 'summary')[0].children.filter(node => node.tag === 'button');
   assert.equal(buttons.length, 1);

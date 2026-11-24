@@ -27,34 +27,72 @@ function readTextNote(text, sent) {
     for (const label of [title, `「${title}」`]) {
       if (text === label) return [{ warning }];
       const tail = text.slice(label.length);
-      if (text.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1)) }];
+      if (text.startsWith(label) && /^[：:]/.test(tail)) return [{ warning, detail: diagnosticText(tail.slice(1), '') }];
     }
     return [];
   });
   // A short title can be ambiguous. Keep all matching warnings pending, but do
   // not attribute the explanation to the wrong unit or template.
   if (match.length > 1) return match.map(({ warning }) => ({ warning }));
-  return match.length ? match : [{ detail: diagnosticText(text) }];
+  return match;
 }
 
-export function readUnresolvedDiagnostics(value, sent) {
-  if (!Array.isArray(value)) throw new Error('unresolved 必须是 JSON 数组');
-  return value.flatMap((item, index) => {
-    if (nonempty(item)) return readTextNote(item.trim(), sent);
+export function readUnresolvedDiagnostics(value = [], sent) {
+  const matched = [], invalid = [];
+  if (!Array.isArray(value)) return { matched, invalid: ['未能读取模型的未转换说明'] };
+  for (const [index, item] of value.entries()) {
+    if (nonempty(item)) {
+      const notes = readTextNote(item.trim(), sent);
+      if (notes.length === 1 && notes[0].warning && notes[0].detail) matched.push(notes[0]);
+      else {
+        matched.push(...notes.filter(note => note.warning));
+        invalid.push(`第 ${index + 1} 条未转换说明缺少可唯一匹配的词条或原因`);
+      }
+      continue;
+    }
     const label = `unresolved 第 ${index + 1} 项`;
     if (!item || typeof item !== 'object' || Array.isArray(item)
       || !(item.unitId === null || nonempty(item.unitId)) || !(item.originPath === null || nonempty(item.originPath))
       || !(nonempty(item.effectName) || nonempty(item.message)) || !nonempty(item.reason)
       || (Object.hasOwn(item, 'effectName') && !nonempty(item.effectName))
       || (Object.hasOwn(item, 'message') && !nonempty(item.message))) {
-      throw new Error(`${label}须包含单位 ID、来源路径、效果名或诊断原文，以及原因`);
+      invalid.push(`${label}缺少有效的词条引用或原因`);
+      continue;
     }
-    const matches = sent.filter(warning => item.unitId === warning.unitId && item.originPath === (warning.originPath ?? null)
-      && (item.effectName === undefined || item.effectName === subject(warning.message))
-      && (item.message === undefined || item.message === warning.message));
-    if (matches.length !== 1) throw new Error(`${label}必须唯一匹配本批警告`);
-    return [{ warning: matches[0], detail: diagnosticText(item.reason) }];
-  });
+    const matches = sent.filter(warning => identifiesWarning(item, warning));
+    if (matches.length !== 1) {
+      invalid.push(`${label}无法唯一匹配本批词条`);
+      continue;
+    }
+    const detail = diagnosticText(item.reason, '');
+    if (!detail) {
+      invalid.push(`${label}缺少可读原因`);
+      continue;
+    }
+    const kind = ['missing_info', 'engine_limit'].includes(item.kind) ? item.kind : undefined;
+    matched.push({ warning: matches[0], detail, ...(kind && { kind }) });
+  }
+  return { matched, invalid };
+}
+
+export function classifyWarnings(warnings, { notes = {}, exemptions = [], sourceFor, fingerprint = () => undefined }) {
+  const groups = { autoAdjusted: [], pending: [], approximated: [], needsAttention: [], nonCombat: [] };
+  for (const warning of warnings) {
+    if (warning.kind === 'auto_adjusted') {
+      groups.autoAdjusted.push(warning);
+      continue;
+    }
+    const key = warningKey(warning);
+    const source = sourceFor(warning.unitId, warningEntryKey(warning));
+    const exempt = source && exemptions.find(entry => entry.unitId === warning.unitId && entry.key === key && entry.source === source);
+    const note = notes[warning.unitId ?? '']?.[key];
+    if (exempt) groups.nonCombat.push({ ...exempt, warning });
+    else if (source && note?.source === source && note.reason && !note.evidence?.length) groups.needsAttention.push({ ...note, warning });
+    else if (source && note?.source === source && note.reason && note.evidence?.some(([path, value]) => fingerprint(path) === value)) {
+      groups.approximated.push({ ...note, warning });
+    } else groups.pending.push(warning);
+  }
+  return groups;
 }
 
 export function pendingDiagnostics(warnings, notes) {
@@ -143,7 +181,7 @@ export function changedEntryKeys(snapshot, current) {
 }
 
 export function normalizationCandidates(characters, snapshots, warnings) {
-  const pending = new Set(warnings.map(w => w.unitId));
+  const pending = new Set(warnings.filter(w => w.kind !== 'auto_adjusted').map(w => w.unitId));
   return Object.keys(characters).filter(id => pending.has(id) || pending.has(null));
 }
 

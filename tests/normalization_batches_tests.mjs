@@ -5,9 +5,9 @@ import {
   planNormalizationBatches, normalizationOperations, readNarrativeExemptions, runOrderedBatches,
 } from '../src/tavern/normalization-batches.js';
 
-import { applyPatch, parseAIResponse } from '../src/tavern/overlay.js';
+import { applyPatch, normalizationPath, parseAIResponse, partitionNormalizationPatch } from '../src/tavern/overlay.js';
 import { readFileSync } from 'node:fs';
-import { existingEffectReceipts, missingDispositions, resolvedDiagnostics } from '../src/tavern/resolved-warnings.js';
+import { classifyWarnings, existingEffectReceipts, missingDispositions, resolvedDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
 
 const warning = (unitId, originPath, message) => ({ unitId, originPath, message, source: 'mvu', scope: 'effect' });
 
@@ -83,17 +83,53 @@ test('a single oversized equipment entry still respects the configured warning c
 test('narrative exemptions must uniquely match sent warnings and persist only for the same source', () => {
   const w = warning('p1', '/skills/frost/rules', 'unsupported effect');
   const source = { p1: 'input-a' };
-  const entries = readNarrativeExemptions([{ ...w, reason: '保留为纯叙事' }], [w], id => source[id]);
+  const { matched: entries } = readNarrativeExemptions([{ ...w, reason: '保留为纯叙事' }], [w], id => source[id]);
   assert.equal(entries[0].receipt.source, 'input-a');
   assert.equal(activeNarrativeExemptions([w], entries.map(item => item.receipt), id => source[id]).length, 1);
   source.p1 = 'input-b';
   assert.equal(activeNarrativeExemptions([w], entries.map(item => item.receipt), id => source[id]).length, 0);
-  assert.throws(() => readNarrativeExemptions([{ ...w, reason: 'ignored' }], [], id => source[id]), /唯一匹配/);
-  assert.throws(() => readNarrativeExemptions([{ ...w, reason: 'ignored' }], [w], id => source[id], { solved: [w] }), /冲突/);
-  assert.throws(() => readNarrativeExemptions([{ ...w, reason: 'ignored' }], [w], id => source[id], { unresolved: [{ warning: w }] }), /冲突/);
+  const entry = { ...w, reason: 'ignored' };
+  assert.match(readNarrativeExemptions([entry], [], id => source[id]).invalid[0], /唯一匹配/);
+  assert.match(readNarrativeExemptions([entry], [w], id => source[id], { solved: [w] }).invalid[0], /冲突/);
+  assert.match(readNarrativeExemptions([entry], [w], id => source[id], { unresolved: [{ warning: w }] }).invalid[0], /冲突/);
   const other = { ...w, unitId: 'p2' };
-  assert.equal(readNarrativeExemptions([{ ...w, reason: 'ignored' }], [w, other], id => source[id], { unresolved: [{ warning: other }] }).length, 1);
-  assert.throws(() => readNarrativeExemptions([{ ...w, reason: ' ' }], [w], id => source[id]), /非空/);
+  const partial = readNarrativeExemptions([{ ...w, reason: ' ' }, entry], [w, other], id => source[id], { unresolved: [{ warning: other }] });
+  assert.equal(partial.matched.length, 1);
+  assert.equal(partial.invalid.length, 1);
+});
+
+test('warning groups are exclusive and select only pending work for the default queue', () => {
+  const adjusted = { ...warning(null, undefined, '起点已避让'), kind: 'auto_adjusted' };
+  const [pending, approx, attention, ignored] = ['待编译', '近似', '缺数值', '制作'].map((message, i) => warning('p1', `/skills/s${i}`, message));
+  const all = [adjusted, pending, approx, attention, ignored];
+  const store = JSON.parse(JSON.stringify({ notes: { p1: {
+    [warningKey(approx)]: { source: 'original', reason: '可用', evidence: [['/skills/s1/rules', 'live']] },
+    [warningKey(attention)]: { source: 'original', reason: '缺伤害数值', kind: 'missing_info' },
+  } }, exemptions: [{ unitId: 'p1', key: warningKey(ignored), source: 'original', reason: '玩家忽略', dismissed: true }] }));
+  const bindings = { ...store, sourceFor: () => 'original', fingerprint: () => 'live' };
+  const groups = classifyWarnings(all, bindings);
+  assert.deepEqual(groups.autoAdjusted, [adjusted]);
+  assert.deepEqual(groups.pending, [pending]);
+  assert.equal(groups.approximated[0].warning, approx);
+  assert.equal(groups.needsAttention[0].warning, attention);
+  assert.equal(groups.nonCombat[0].warning, ignored);
+  assert.deepEqual(planNormalizationBatches(['p1', 'p2'], [adjusted, ...groups.pending], {}), [{ unitIds: ['p1'], warnings: [pending] }]);
+  assert.deepEqual(planNormalizationBatches(['p1'], [adjusted], {}), []);
+  assert.deepEqual(classifyWarnings(all, { ...bindings, exemptions: [], fingerprint: () => undefined }).pending, [pending, approx, ignored]);
+});
+
+test('normalization accepts pool definitions and rejects direct and whole-instance pool writes', () => {
+  const state = { equipment: { blade: {} }, items: { blade: {}, bound: { pools: { charge: 'runtime-id' } } } };
+  const paths = ['/units/u1/pools', '/items/blade/pools', '/items/blade/pools/charge'];
+  for (const path of paths) assert.equal(normalizationPath.test(path), false, path);
+  assert.equal(normalizationPath.test('/skills/s1/pools/charge'), true);
+  const rawPatch = [...paths.map(path => ({ op: 'add', path, value: {} })),
+    { op: 'replace', path: '/items/blade', value: { pools: { charge: 'invalid' } } },
+    { op: 'replace', path: '/items/bound', value: {} },
+    { op: 'add', path: '/equipment/blade/pools', value: { charge: { cap: 5 } } }];
+  const result = partitionNormalizationPatch({ liveState: state, baselineState: state, rawPatch });
+  assert.equal(result.rejected.length, 5);
+  assert.deepEqual(result.workLive.equipment.blade.pools, { charge: { cap: 5 } });
 });
 
 test('simultaneous batches reuse the first shared definition and retain both skill programs', async () => {

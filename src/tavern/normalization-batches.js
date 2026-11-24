@@ -1,5 +1,7 @@
 import { diagnosticText, warningEntryKey, warningKey } from './resolved-warnings.js';
 
+export const normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
+
 export const warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
 const referenceKey = warning => JSON.stringify(Object.values(warningReference(warning)));
 const targetPath = path => path?.split('/').slice(0, 3).join('/');
@@ -43,10 +45,9 @@ export function normalizationLimit(config, key) {
 export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 3 } = {}) {
   const units = [...new Set(unitIds)];
   const selected = new Set(units);
-  const assigned = new Set();
   const groups = [];
   for (const warning of warnings) {
-    if (!units.length || (warning.unitId !== null && !selected.has(warning.unitId))) continue;
+    if (warning.kind === 'auto_adjusted' || !units.length || (warning.unitId !== null && !selected.has(warning.unitId))) continue;
     const keys = new Set(dependencies(state, warning));
     const group = { keys, unitIds: new Set(warning.unitId === null ? [units[0]] : [warning.unitId]), warnings: [warning] };
     for (let index = groups.length - 1; index >= 0; index--) {
@@ -57,10 +58,8 @@ export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings
       group.warnings.unshift(...previous.warnings);
       groups.splice(index, 1);
     }
-    for (const id of group.unitIds) assigned.add(id);
     groups.push(group);
   }
-  for (const id of units) if (!assigned.has(id)) groups.push({ unitIds: new Set([id]), warnings: [] });
 
   const result = [];
   let current = { unitIds: [], warnings: [] };
@@ -125,7 +124,8 @@ export async function runOrderedBatches(batches, concurrency, request, commit, s
 }
 
 export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = [], unresolved = [] } = {}) {
-  if (!Array.isArray(value)) throw new Error('narrative 必须是 JSON 数组');
+  const matched = [], invalid = [];
+  if (!Array.isArray(value)) return { matched, invalid: ['未能读取模型的非战斗说明'] };
   const index = new Map();
   for (const warning of sent) {
     const key = referenceKey(warning);
@@ -134,23 +134,34 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
     index.set(key, matches);
   }
   const seen = new Set();
-  return value.map(entry => {
-    if (!entry || typeof entry.reason !== 'string' || !entry.reason.trim() || !Object.hasOwn(entry, 'originPath')) {
-      throw new Error('narrative 每项必须包含完整警告引用和非空 reason');
+  for (const [i, entry] of value.entries()) {
+    const label = `第 ${i + 1} 条非战斗说明`;
+    const reason = diagnosticText(entry?.reason, '');
+    if (!reason || !Object.hasOwn(entry, 'originPath')) {
+      invalid.push(`${label}缺少词条引用或原因`);
+      continue;
     }
     const reference = referenceKey(entry);
     const matches = index.get(reference);
-    if (matches?.length !== 1 || seen.has(reference)) throw new Error('narrative 必须唯一匹配本批警告');
+    if (matches?.length !== 1 || seen.has(reference)) {
+      invalid.push(`${label}无法唯一匹配本批词条`);
+      continue;
+    }
     const [warning] = matches;
     if (entry.originPath !== (warning.originPath ?? null) || solved.some(item => referenceKey(item) === reference)
       || unresolved.some(item => item.warning === warning)) {
-      throw new Error('narrative 警告与本批处理结果冲突');
+      invalid.push(`${label}与本批处理结果冲突`);
+      continue;
+    }
+    const source = sourceFor(warning.unitId, warningEntryKey(warning));
+    if (!source) {
+      invalid.push(`${label}缺少词条来源`);
+      continue;
     }
     seen.add(reference);
-    const source = sourceFor(warning.unitId, warningEntryKey(warning));
-    if (!source) throw new Error('narrative 警告缺少来源');
-    return { warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason: diagnosticText(entry.reason) } };
-  });
+    matched.push({ warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason } });
+  }
+  return { matched, invalid };
 }
 
 export function activeNarrativeExemptions(warnings, receipts, sourceFor) {

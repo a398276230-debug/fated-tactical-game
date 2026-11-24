@@ -261,7 +261,10 @@ export async function requestViaCustomApi(settings, messages, options = {}) {
   }
   if (typeof text !== 'string' || !text.trim()) {
     const format = trace.json ? 'JSON' : `流事件 ${trace.events ?? 0} 个，${trace.done ? '收到 [DONE]' : '连接已结束，未收到 [DONE]'}`;
-    throw new Error(`独立 API 未返回有效文本（${trace.relay ? '酒馆后端' : '浏览器直连'}；${format}；推理 ${trace.reasoning} 字符，正文 0；finish_reason=${trace.finish || '未提供'}）`);
+    const explanation = trace.reasoning > 0
+      ? '模型只返回了思考内容，可能已用完最大输出长度。请在「API 设置」调大 max_tokens，或调小每批警告条数后重试。'
+      : '独立 API 未返回有效文本';
+    throw new Error(`${explanation}（${trace.relay ? '酒馆后端' : '浏览器直连'}；${format}；推理 ${trace.reasoning} 字符，正文 0；finish_reason=${trace.finish || '未提供'}）`);
   }
   options.onStreamChunk?.(text, true);
   return text;

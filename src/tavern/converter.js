@@ -224,7 +224,7 @@ function resource(record, key, fallback) {
 }
 function safeResource(pair, key, warnings) {
   let max = Math.max(key === 'hp' ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));
-  if (max > 1000000000 || pair.current > 1000000000) { warnings.push(`${key} 超出引擎上限，已截到 1e9`); max = Math.min(max, 1000000000); current = Math.min(current, max); }
+  if (max > 1000000000 || pair.current > 1000000000) { warnings.push(`${key} 超出引擎上限，已截到 1e9`, { kind: 'auto_adjusted' }); max = Math.min(max, 1000000000); current = Math.min(current, max); }
   return { current, max };
 }
 function sourceName(record, key = '') { return text(findValue(record, ['name', 'displayName', 'characterName', '角色名', '姓名', '名称'], key)); }
@@ -295,7 +295,7 @@ function statusTurns(value, fallback) {
 }
 
 function warningSink(warnings, unitId, source, scope, originPath) {
-  return { push: message => warnings.push({ message, unitId, source, scope, ...(originPath && {originPath}) }) };
+  return { push: (message, metadata) => warnings.push({ message, unitId, source, scope, ...(originPath && {originPath}), ...metadata }) };
 }
 
 const blockBody = value => value.trim().replace(/^[|>](?:[-+2])?[^\S\r\n]*\r?\n/, '').trim();
@@ -387,10 +387,15 @@ function convertNarrative(effects, warnings, prefix, { allowPower = false, equip
       continue;
     }
     const program = !equipment && typeof entry === 'string' ? narrativeDamage(label, entry, allowPower) : [];
+    const rawExcerpt = [entry].flat().map(value => typeof value === 'string' ? blockBody(value)
+      : text(value?.描述 ?? value?.description ?? value?.效果 ?? value?.effect)).filter(Boolean).join('；');
+    const excerpt = [...rawExcerpt];
+    const summary = excerpt.length ? `${excerpt.slice(0, 80).join('')}${excerpt.length > 80 ? '…' : ''}` : '待转换为战斗规则';
+    const metadata = { rawExcerpt, userSummary: `${label ? `「${label}」` : '效果'}：${summary}` };
     if (program.length && areaDamage) {
-      warnings.push(`范围伤害待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请为规则声明精确的目标选择器`);
+      warnings.push(`范围伤害待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请为规则声明精确的目标选择器`, metadata);
     } else if (program.length) appendRules(rules, [activeRule(`${prefix.slice(0, 45)}-narrative-${index}`, program)], warnings);
-    else warnings.push(`${equipment ? '装备' : ''}效果待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请用 VM rules / mods / pools 实现行为与触发时机；缺少状态或召唤物专属技能时，同批新增 /statusTemplates/<id> 或 /skills/<id> 后引用`);
+    else warnings.push(`${equipment ? '装备' : ''}效果待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请用 VM rules / mods / pools 实现行为与触发时机；缺少状态或召唤物专属技能时，同批新增 /statusTemplates/<id> 或 /skills/<id> 后引用`, metadata);
   }
   return rules;
 }
@@ -533,13 +538,13 @@ function normalizeEquipment(raw, slot, owner, key, sink) {
   const effectEntries = narrativeEntries(r.effects ?? r.effectsList ?? r.效果);
   const { rangeValues, radius, shape, target } = parseAreaTags(r.tags ?? r.标签);
   const equipmentWarnings = !isWeapon || rangeValues.length < 2 ? warnings : {
-    push(message) {
+    push(message, metadata) {
       const effectIndex = effectEntries.findIndex(([label, value]) => label ? message.includes(`「${label}」`) : message.includes(describe(value)));
       const rawRange = rangeValues[effectIndex + 1];
       const suffix = effectIndex >= 0 && rawRange != null
         ? `。该装备主动效果的原始距离为 rawRange:${rawRange}${radius != null ? `、rawRadius:${radius}` : ''}${shape ? `、shape:${shape}` : ''}${target ? `、target:${target}` : ''}，请写到装备挂载的技能模板中`
         : '';
-      warnings.push(message + suffix);
+      warnings.push(message + suffix, metadata);
     },
   };
   appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, equipmentWarnings), warnings);
@@ -644,7 +649,7 @@ function readBodyLength(record, warnings) {
       if (length !== null) return length;
     }
   }
-  if (keys.length) warnings.push(`体长「${text(record[keys[0]])}」无法解析，已按默认 1.7 米处理`);
+  if (keys.length) warnings.push(`体长「${text(record[keys[0]])}」无法解析，已按默认 1.7 米处理`, { kind: 'auto_adjusted' });
   return 1.7;
 }
 function mergeBattleParticipant(record, participant, battle) {
@@ -705,7 +710,7 @@ function xyzOf(value, board, warnings) {
   const x = integer(xyz[0]), y = integer(xyz[1]);
   const boundedX = Math.max(0, Math.min((board.width ?? 10) - 1, x));
   const boundedY = Math.max(0, Math.min((board.height ?? 10) - 1, y));
-  if (x !== boundedX || y !== boundedY) warnings.push(`坐标 (${x},${y}) 越界，调整为 (${boundedX},${boundedY})`);
+  if (x !== boundedX || y !== boundedY) warnings.push(`坐标 (${x},${y}) 越界，调整为 (${boundedX},${boundedY})`, { kind: 'auto_adjusted' });
   return { x: boundedX, y: boundedY, z: integer(xyz[2]) };
 }
 
@@ -721,11 +726,12 @@ function importBackpack(bag, owner, skills, sink) {
     const tags = [].concat(item.tags ?? item.标签 ?? []).join(' ');
     const area = areaFields(item, warnings, name);
     const range = bound(area.range, 0, 30, 3);
-    const notes = [];
+    const entries = [];
+    const notes = { push: (message, metadata) => entries.push({ message, metadata }) };
     const rules = readRules(item.rules, notes);
     appendRules(rules, convertNarrative(raw, notes, id, { areaDamage: isAreaDamage(area) }), notes);
-    for (const note of notes) warnings.push(`背包消耗品「${name}」：${note}`);
-    if (!rules.length && !notes.length) warnings.push(`背包消耗品「${name}」缺少效果：请补全用途、目标和数值`);
+    for (const { message, metadata } of entries) warnings.push(`背包消耗品「${name}」：${message}`, metadata);
+    if (!rules.length && !entries.length) warnings.push(`背包消耗品「${name}」缺少效果：请补全用途、目标和数值`);
     skills[id] = {name:name.slice(0,100),backpackItem:true,ap:1,slot:'action',range,
       shape:area.shape ?? 'single',target:area.target ?? 'enemy',rules,...geometryFields(area)};
     inventory[id] = count;
@@ -804,7 +810,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const prefix = `fx-${hash(sid).toString(36)}`;
     const areaDamage = isAreaDamage(area);
     const narrativeNotes = [];
-    appendRules(rules, convertNarrative(rawEffects, { push: msg => narrativeNotes.push(msg) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
+    appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
     const singleTaggedType = damageAliases.get(tag);
     const hasActiveDamage = rules.some(rule => rule.enabled !== false && rule.hook === 'active' && [...instructions(rule.program)].some(op => op.op === 'damage'));
     if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag) {
@@ -828,11 +834,11 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       ? { count: 1, sides: 4, ...(statTag ? { stat: statTag } : {}), ...(generatedDamageType ? { type: generatedDamageType } : {}) }
       : null;
     if (generatedMainDamage && !generatedDamageType && narrativeNotes.length) {
-      notes.push(`主击伤害类型待标准化「主击伤害类型」：根据原始效果补全 /skills/${sid}/damage/type；若原文明确以混合伤害或独立公式替代主击，请移除模板 damage 并以 active 规则结算。`);
+      notes.push(`主击伤害类型待标准化「主击伤害类型」：根据原始效果补全 /skills/${sid}/damage/type；若原文明确以混合伤害或独立公式替代主击，请移除模板 damage 并以 active 规则结算。`, { userSummary: `技能「${skillName}」：待从原文识别主击伤害类型` });
     }
     const mainParsed = hasPower && (generatedMainDamage || damageOps.length);
-    for (const message of narrativeNotes) notes.push(mainParsed
-      ? `${message}。主击与威力 ${numericPower} 已解析，只补本条尚未实现的效果，不要重复添加主击。` : message);
+    for (const { message, metadata } of narrativeNotes) notes.push(mainParsed
+      ? `${message}。主击与威力 ${numericPower} 已解析，只补本条尚未实现的效果，不要重复添加主击。` : message, metadata);
     const damageType = explicitDamageType ?? (types.length === 1 ? types[0] : undefined);
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
@@ -857,7 +863,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
         : typeof r.saveDC === 'string' && !Number.isFinite(dc) && validExpr(r.saveDC) ? r.saveDC : null;
       if (attrNames.includes(save) && saveDC != null && (r.damage || r.heal || !rules.length)) {
         Object.assign(skills[sid], { save, saveDC });
-      } else notes.push(`「${skillName}」豁免待标准化：${describe({ save: r.save, saveDC: r.saveDC })}。规则效果请用 check 声明通过与失败分支`);
+      } else notes.push(`「${skillName}」豁免待标准化：${describe({ save: r.save, saveDC: r.saveDC })}。规则效果请用 check 声明通过与失败分支`, { userSummary: `技能「${skillName}」：待确认抵抗检定的属性和难度` });
     }
     if (object(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
     if (costs.hp != null) skills[sid].resourceCost = { hp:bound(costs.hp, 0, 25000), ...skills[sid].resourceCost };
@@ -881,7 +887,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     }
     const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.剩余回合 ?? rawStatus?.剩余时间, template.remainingTurns);
     const stacks = bound(rawStatus?.stacks ?? rawStatus?.层数, 1, template.maxStacks);
-    if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`状态 ${sid} 的 modifiers 待标准化：${describe(rawStatus.modifiers)}。请在状态模板上声明 mods 或 rules`);
+    if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`状态 ${sid} 的 modifiers 待标准化：${describe(rawStatus.modifiers)}。请在状态模板上声明 mods 或 rules`, { userSummary: `状态「${template.name}」：附带效果待转换` });
     const durationType = ['battle_turns', 'until_removed', 'persistent'].includes(rawStatus?.durationType)
       ? rawStatus.durationType : template.durationType;
     const shieldAmount = template.category === 'shield'
@@ -1051,8 +1057,9 @@ export function hydrateFromSources(input = {}, options = {}) {
     unit.move = scaledCells(unit.rawMove, unit.tier, cellM, { floor: true });
     unit.moveCarryPermille = 0;
   }
-  terrainState(battle, state, sink(null, 'terrain', 'terrain'));
-  placeUnits(state, sink(null, 'battle_init', 'state'));
+  const adjustmentSink = (source, scope) => ({ push: message => sink(null, source, scope).push(message, { kind: 'auto_adjusted' }) });
+  terrainState(battle, state, adjustmentSink('terrain', 'terrain'));
+  placeUnits(state, adjustmentSink('battle_init', 'state'));
   let valid = true;
   try { validateState(state); } catch (error) {
     valid = false;

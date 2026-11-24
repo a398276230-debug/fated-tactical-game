@@ -1,6 +1,6 @@
-import { diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, pendingDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
+import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
-import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
+import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -289,7 +289,10 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
   const candidates = [], rejected = [];
   for (const [index, operation] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
     const unitId = typeof operation?.path === 'string' ? operation.path.match(/^\/units\/([^/]+)/)?.[1] : undefined;
-    if (!['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
+    const itemRoot = typeof operation?.path === 'string' ? operation.path.match(/^\/items\/([^/]+)$/)?.[1] : undefined;
+    const writesPoolBindings = itemRoot && operation?.op !== 'remove' &&
+      (own(operation?.value ?? {}, 'pools') || Boolean(liveState?.items?.[itemRoot]?.pools) || Boolean(baselineState?.items?.[itemRoot]?.pools));
+    if (writesPoolBindings || !['add', 'replace', 'remove'].includes(operation?.op) || typeof operation.path !== 'string' ||
         !normalizationPath.test(operation.path) || (operation.op !== 'remove' && !own(operation, 'value')) ||
         (unitId && allowedUnitIds && !allowedUnitIds.includes(unitId))) {
       rejected.push({ index, op: operation, path: typeof operation?.path === 'string' ? operation.path : '', reason: '路径或操作不在允许白名单内' });
@@ -327,7 +330,7 @@ export function formatRejectedItem(item, state = {}) {
   const entity = item.op?.value?.name || state?.[table]?.[id]?.name || id || '未知条目';
   return `[未应用] ${table === 'skills' ? '技能' : table === 'equipment' ? '装备' : '条目'}「${entity}」(${item.path || '无路径'})：${item.reason || '补丁校验失败'}`;
 }
-export const normalizationPath = /^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
+export { normalizationPath };
 
 export const TAVERN_VERSION = '0.4.7';
 
@@ -613,37 +616,69 @@ export function mountTavernOverlay(options = {}) {
   toast.append(heading, noticeBody, summary, actions);
   on(retry, 'click', () => retryAI?.());
   on(dismiss, 'click', () => { toast.hidden = true; });
-  const warningDisplay = message => diagnosticText(
-    message.replace(/[。\s]*请(?:用|提供)\s*VM\s+rules\s*\/\s*mods\s*\/\s*pools[\s\S]*$/, ''),
-    '原诊断包含结构化数据，未提供文字说明');
-  const pendingTitle = count => `⏳ 待标准化（${count} 项）`;
-  const modelTitle = count => `ℹ️ 模型说明：受限 / 部分实现（${count} 项）`;
-  const modelLine = ({ effectName, reason }) => `「${effectName}」 — ${reason}`;
+  const warningDisplay = warning => warning.userSummary || diagnosticText(warning.message);
   function warningGroups(warnings = sources.warnings ?? []) {
-    const pending = [], reviewed = [];
-    const notes = config.unresolvedNotes[activeBattleKey] ?? {};
-    const sourceFor = narrativeSourceFor(characters);
     const live = liveState();
-    for (const warning of warnings) {
-      const note = notes[warning.unitId ?? '']?.[warningKey(warning)];
-      const explained = note?.reason && note.source === sourceFor(warning.unitId, warningEntryKey(warning));
-      if (explained) reviewed.push({ warning, ...note });
-      const implemented = explained && note.evidence?.some(([path, value]) => fingerprintAt(live, path) === value);
-      if (!implemented) pending.push(warning);
-    }
-    return { pending, reviewed };
+    return classifyWarnings(warnings, {
+      notes: config.unresolvedNotes[activeBattleKey], exemptions: config.narrativeExemptions[activeBattleKey],
+      sourceFor: narrativeSourceFor(characters), fingerprint: path => fingerprintAt(live, path),
+    });
   }
-  function appendWarningGroups(container, { pending, reviewed }, expandable = false) {
-    const add = (kind, label, rows) => {
-      if (!rows.length) return;
+  function updateWarningExemption(warning, ignore) {
+    if (!activeBattleKey || aiController) return;
+    syncSettings();
+    const battle = activeBattleKey;
+    const key = warningKey(warning), { unitId } = warning;
+    const receipts = (config.narrativeExemptions[battle] ?? []).filter(entry => entry.key !== key || entry.unitId !== unitId);
+    const notes = { ...config.unresolvedNotes[battle] };
+    const bucket = unitId ?? '';
+    notes[bucket] = { ...notes[bucket] };
+    delete notes[bucket][key];
+    if (!Object.keys(notes[bucket]).length) delete notes[bucket];
+    if (ignore) {
+      const source = narrativeSourceFor(characters)(unitId, warningEntryKey(warning));
+      if (!source) return;
+      receipts.push({ unitId, key, source, reason: '玩家已设为非战斗忽略', dismissed: true });
+    }
+    persistSettings({ narrativeExemptions: { ...config.narrativeExemptions, [battle]: receipts },
+      unresolvedNotes: { ...config.unresolvedNotes, [battle]: notes } });
+    filterResolved(config.charSnapshots[battle] ?? {}, characters);
+    toast.hidden = true;
+    renderInstances();
+  }
+  function openWarningComposer(warning, reason) {
+    const name = liveState()?.units?.[warning.unitId]?.name ?? characters[warning.unitId]?.raw?.name ?? '本场战斗';
+    tabs.querySelector('[data-tab="ai"]').click();
+    toast.hidden = true;
+    const original = warning.rawExcerpt ? `\n原文：${warning.rawExcerpt}` : '';
+    aiPage?.prefill(`请协助补充 ${name} 的战斗词条。\n词条：${warningDisplay(warning)}${original}\n当前缺口：${reason}\n我的补充：`);
+  }
+  function appendWarningGroups(container, groups, expandable = false) {
+    for (const [kind, label] of [['autoAdjusted', '🧭 战场自动适配'], ['pending', '⏳ 待编译词条'],
+      ['approximated', '✨ 已近似实装'], ['needsAttention', 'ⓘ 未能自动转换'], ['nonCombat', '📖 非战斗词条 · 本场跳过']]) {
+      const rows = groups[kind];
+      if (!rows.length) continue;
       const group = el(doc, expandable ? 'details' : 'div', { class: 'fated-char-diagnostics', 'data-normalization-diagnostics': kind });
       const list = el(doc, 'ul');
-      for (const [text, original] of rows) list.append(el(doc, 'li', original ? { title: original } : {}, text));
-      group.append(el(doc, expandable ? 'summary' : 'h4', {}, label), list);
+      for (const row of rows) {
+        const warning = row.warning ?? row;
+        const category = row.kind === 'missing_info' ? '原文缺参 · ' : row.kind === 'engine_limit' ? '机制暂不支持 · ' : '';
+        const item = el(doc, 'li', { title: warning.rawExcerpt || warningDisplay(warning) },
+          `${warningDisplay(warning)}${row.reason ? ` — ${category}${row.reason}` : ''}`);
+        const action = (name, label, handler) => {
+          const button = el(doc, 'button', { type: 'button', 'data-warning-action': name }, label);
+          button.disabled = Boolean(aiController) && expandable;
+          on(button, 'click', handler);
+          item.append(' ', button);
+        };
+        if (kind === 'needsAttention') action('ignore', '设为非战斗忽略', () => updateWarningExemption(warning, true));
+        if (kind === 'needsAttention' || kind === 'approximated') action('supplement', '去辅助 AI 补充', () => openWarningComposer(warning, row.reason));
+        if (kind === 'nonCombat') action('restore', '恢复为待编译', () => updateWarningExemption(warning, false));
+        list.append(item);
+      }
+      group.append(el(doc, expandable ? 'summary' : 'h4', {}, `${label}（${rows.length} 项）`), list);
       container.append(group);
-    };
-    add('pending', pendingTitle(pending.length), pending.map(warning => [warningDisplay(warning.message)]));
-    add('reviewed', modelTitle(reviewed.length), reviewed.map(note => [modelLine(note), warningDisplay(note.warning.message)]));
+    }
   }
   let rawDetails;
   function notify(title, detail = '', onRetry = null, busy = false, { tone = 'neutral', applied, unresolved = [], warningGroups: groups, raw = '' } = {}) {
@@ -932,10 +967,13 @@ export function mountTavernOverlay(options = {}) {
     const showSource = el(doc, 'details', { class: 'fated-battle-source-box' });
     showSource.append(el(doc, 'summary', {}, '查看原始 battle_init'), el(doc, 'pre', { class: 'fated-battle-source' }, sources.battleRaw || '暂无原始数据'));
     const normalize = el(doc,'button',{type:'button','data-normalize':''},'标准化');
-    normalize.disabled = !selectedIds().length || !activeBattleKey || !!aiController;
-    const hint = !selectedIds().length ? [scanStatus,'请先勾选要标准化的角色'].filter(Boolean).join(' · ') : scanStatus;
+    const selected = selectedIds();
+    const canNormalize = selected.length && warningGroups(warningsForUnit(sources.warnings, selected)).pending.length;
+    normalize.disabled = !canNormalize || !activeBattleKey || !!aiController;
+    const hint = !selected.length ? '请先勾选要标准化的角色' : !canNormalize ? '所选角色没有待编译词条' : scanStatus;
     normalize.title = hint;
-    on(normalize,'click',()=>runNormalize(selectedIds(),{force:true}));
+    on(normalize,'click',()=>runNormalize(selected));
+    appendWarningGroups(battleCard, warningGroups((sources.warnings ?? []).filter(w => w.unitId === null)), true);
     battleActions.append(loadBattle,normalize); battleCard.append(battleActions,el(doc,'p',{class:'fated-mini','data-normalize-status':''},hint),showSource); page.append(battleCard);
     const diag = el(doc, 'details', { class: 'fated-diagnostics' });
     diag.append(el(doc, 'summary', {}, '诊断日志（扫描来源 / 去重）'));
@@ -972,9 +1010,9 @@ export function mountTavernOverlay(options = {}) {
       on(select,'change',()=>choose(select.checked?[...new Set([...selectedIds(),key])]:selectedIds().filter(k=>k!==key)));
       const groups = warningGroups(warningsForUnit(sources.warnings, [key], false));
       const { body } = fillInstance(box,(tag,attrs,value)=>el(doc,tag,attrs,value),instance,liveState(),characters[key]?.raw,select,
-        { collapsed: Boolean(collapsed()[key]), warnings: groups.pending.length, count: members.length,
-          narrative: (diagnostics.narrativeExemptions ?? []).filter(entry => entry.unitId === key), canDiscardEntry: path => operations(activeBattleKey).some(operation => operation.path === path || operation.path.startsWith(`${path}/`)) ||
-            (diagnostics.inputWarnings ?? []).some(warning => warning.originPath === path && warning.unitId === key && !warningGroups([warning]).pending.includes(warning)), onDiscardEntry: ref => discardStandardizedEntry(activeBattleKey, { ...ref, unitId: key }), onToggle: value => setFolded([key], value) });
+        { collapsed: Boolean(collapsed()[key]), warnings: groups.pending.length, attention: groups.needsAttention.length, count: members.length,
+          canDiscardEntry: path => operations(activeBattleKey).some(operation => operation.path === path || operation.path.startsWith(`${path}/`)) ||
+            groups.approximated.some(({ warning }) => warning.originPath === path), onDiscardEntry: ref => discardStandardizedEntry(activeBattleKey, { ...ref, unitId: key }), onToggle: value => setFolded([key], value) });
       appendWarningGroups(body, groups, true);
       const actions = el(doc, 'div', { class: 'fated-actions' }); const edit = el(doc, 'button', { type: 'button' }, '编辑 JSON'); const remove = el(doc, 'button', { type: 'button' }, '删除');
       actions.append(edit, remove); body.append(actions); list.append(box);
@@ -1019,7 +1057,7 @@ export function mountTavernOverlay(options = {}) {
     const slots = config.slots;
     const context = assemblyContext(kind, instruction, unitIds);
     if (kind === 'chat') context.sources = { ...sources, warnings: [] };
-    else if (warnings) context.sources = { ...sources, warnings };
+    else context.sources = { ...sources, warnings: warnings ?? warningGroups().pending };
     const messages = assembleMessages(slots, context);
     if (config.debugPrompts) console.debug('[fated:prompts]', { kind, slots: slots.map(s => ({ id: s.id, enabled: s.enabled })),
       messages: messages.map(({ slotId, role, content }) => ({ slotId, role, chars: content.length })) });
@@ -1031,20 +1069,15 @@ export function mountTavernOverlay(options = {}) {
     return { host, settings: config, slots: config.slots, assemblyContext, prepareMessages, lastSent: () => lastSent,
       onPreview(fn) { previewSink = fn; }, fetchImpl: options.fetch, save: persistSettings };
   }
-  async function runNormalize(unitIds = Object.keys(characters), { force = false } = {}) {
+  async function runNormalize(unitIds = Object.keys(characters)) {
     if (aiController || !activeBattleKey || !liveState()) return;
     syncSettings();
     const key = activeBattleKey;
     const requestConfig = normalizationApiConfig(config);
-    const stored = config.charSnapshots[key] ?? {};
-    const eligible = new Set(force ? Object.keys(characters) : normalizationCandidates(characters, stored, warningGroups().pending));
-    const ids = [...new Set(unitIds.filter(id => eligible.has(id)).map(groupId))];
+    const pending = warningGroups().pending;
+    const ids = [...new Set(unitIds.map(groupId))].filter(id => own(characters, id));
     if (!ids.length) return;
-    const scoped = warningsForUnit(sources.warnings, ids);
-    const { pending } = warningGroups(scoped);
-    const pendingIds = new Set(pending.map(warning => warning.unitId));
-    const queueIds = pending.length && !pendingIds.has(null) ? ids.filter(id => pendingIds.has(id)) : ids;
-    const queue = planNormalizationBatches(queueIds, pending, liveState(), {
+    const queue = planNormalizationBatches(ids, pending, liveState(), {
       maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'),
     });
     if (!queue.length) return;
@@ -1055,7 +1088,7 @@ export function mountTavernOverlay(options = {}) {
     aiPage?.setBusy(true);
     renderInstances();
     let applied = 0, completed = 0, failure;
-    const replies = [], notes = [], rejectedItems = [];
+    const replies = [], unmatchedNotes = [], rejectedItems = [];
     const createdTemplates = new Map();
     const progress = detail => notify('正在标准化中…', detail ?? `已完成 ${completed} / ${queue.length} 批`, null, true);
     const request = async (batch, index, correction) => {
@@ -1117,7 +1150,7 @@ export function mountTavernOverlay(options = {}) {
               const repaired = commitNormalization(key, revisedBatch, revised, createdTemplates, { acceptPartial: true });
               applied += repaired.applied;
               replies.push(repaired.data);
-              notes.push(...repaired.notes);
+              unmatchedNotes.push(...repaired.unmatchedNotes);
               rejectedItems.push(...repaired.rejected);
               const outstanding = new Set(repaired.missing);
               accepted.rejected = accepted.rejected.filter(item => {
@@ -1130,7 +1163,7 @@ export function mountTavernOverlay(options = {}) {
           }
           applied += accepted.applied;
           replies.push(accepted.data);
-          notes.push(...accepted.notes);
+          unmatchedNotes.push(...accepted.unmatchedNotes);
           rejectedItems.push(...accepted.rejected);
           completed++;
           progress();
@@ -1144,19 +1177,19 @@ export function mountTavernOverlay(options = {}) {
     } catch (error) { failure ??= error; }
     finally {
       const groups = warningGroups(warningsForUnit(sources.warnings, ids));
-      const unresolved = [...rejectedItems.map(item => formatRejectedItem(item, liveState())), ...pendingDiagnostics([], notes)];
-      const hasRemaining = groups.pending.length || groups.reviewed.length || unresolved.length;
+      const unresolved = [...rejectedItems.map(item => formatRejectedItem(item, liveState())), ...new Set(unmatchedNotes)];
+      const followUp = groups.needsAttention.length + groups.nonCombat.length;
       const raw = replies.length ? JSON.stringify(replies.length === 1 ? replies[0] : replies, null, 2) : failure?.raw ?? '';
       const aborted = failure?.name === 'AbortError';
       const partial = applied > 0 && (rejectedItems.length || failure || groups.pending.length);
       const title = aborted ? '标准化已中止' : partial && rejectedItems.length
         ? `标准化部分完成（已生效 ${applied} 项，${rejectedItems.length} 项报错未应用）`
-        : partial || (!failure && groups.pending.length) ? '标准化部分完成' : failure ? '标准化失败' : '标准化完成';
+        : partial || (!failure && groups.pending.length) ? '标准化部分完成' : failure ? '标准化失败'
+          : followUp ? `标准化已完成（${followUp} 项需确认或已跳过）` : '标准化完成';
       const detail = failure ? diagnosticText(failure.message ?? failure, '请求或补丁校验失败，未返回可读的错误说明') : '';
       if (!disposed && key === activeBattleKey) {
-        const remainingIds = [...new Set([...groups.pending, ...groups.reviewed].map(warning => warning.unitId).filter(id => ids.includes(id)))];
-        const retry = () => key === activeBattleKey && runNormalize(remainingIds.length && !groups.pending.some(w => !w.unitId) ? remainingIds : ids, { force: true });
-        notify(title, detail, !aborted && (failure || hasRemaining) ? retry : null,
+        const retry = () => key === activeBattleKey && runNormalize(ids);
+        notify(title, detail, !aborted && groups.pending.length ? retry : null,
           false, { tone: aborted ? 'neutral' : partial || groups.pending.length && !failure ? 'warning' : failure ? 'error' : 'success', applied, unresolved, warningGroups: groups, raw });
       }
       aiController = null;
@@ -1303,11 +1336,11 @@ export function mountTavernOverlay(options = {}) {
   }
   function filterResolved(stored, records, retained = batches(activeBattleKey)) {
     const warnings = sources.warnings ??= [];
-    const exempt = activeNarrativeExemptions(diagnostics.inputWarnings ?? warnings,
+    const raw = diagnostics.inputWarnings ?? warnings;
+    const exempt = activeNarrativeExemptions(raw,
       config.narrativeExemptions[activeBattleKey] ?? [], narrativeSourceFor(records));
-    const excluded = new Set(exempt.map(({ warning }) => warning));
-    const remaining = remainingDiagnostics(warnings, stored, records, retained);
-    warnings.splice(0, warnings.length, ...remaining.filter(warning => !excluded.has(warning)));
+    const remaining = remainingDiagnostics(raw, stored, records, retained);
+    warnings.splice(0, warnings.length, ...remaining);
     diagnostics.warnings = warnings;
     diagnostics.narrativeExemptions = exempt.map(({ warning, receipt }) => ({ ...warningReference(warning), reason: receipt.reason }));
   }
@@ -1326,8 +1359,9 @@ export function mountTavernOverlay(options = {}) {
       const evidence = [...(old?.evidence ?? []), ...matching.flatMap(note => note.evidence ?? [])];
       const note = details.length ? {
         source,
-        effectName: warning.message.match(/待标准化「([^」]+)」/)?.[1]?.trim() || warningDisplay(warning.message),
+        effectName: diagnosticTitle(warning),
         reason: details.join('；'),
+        kind: matching.find(note => note.kind)?.kind,
         ...(evidence.length ? { evidence: [...new Map(evidence)] } : {}),
       } : old;
       if (note) (next[unitId] ??= {})[id] = note;
@@ -1494,13 +1528,12 @@ export function mountTavernOverlay(options = {}) {
       const ownExemptions = config.narrativeExemptions[key] ?? [];
       const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions)
         .filter(([other]) => other !== key && other.startsWith(chatPrefix)).reverse()
-        .flatMap(([, receipts]) => receipts.filter(receipt => receipt.unitId != null))] : ownExemptions;
+        .flatMap(([, receipts]) => receipts.filter(receipt => receipt.unitId != null && !receipt.dismissed))] : ownExemptions;
       const activeExemptions = activeNarrativeExemptions(rawWarnings, exemptionCandidates, narrativeSourceFor(fresh));
-      const exempt = new Set(activeExemptions.map(({ warning }) => warning));
       if (imported && activeExemptions.length) persistSettings({ narrativeExemptions: {
         ...config.narrativeExemptions, [key]: activeExemptions.map(({ receipt }) => receipt),
       } });
-      const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept).filter(warning => !exempt.has(warning));
+      const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
       if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key);
@@ -1534,7 +1567,7 @@ export function mountTavernOverlay(options = {}) {
       if (key && currentState) enteredBattles.add(key);
       scanStatus = firstEntry && changed.length ? `待标准化 ${changed.length} 个角色` : '可手动标准化所选角色';
       renderInstances();
-      if (firstEntry && changed.length) void runNormalize(changed, { force: false });
+      if (firstEntry && changed.length) void runNormalize(changed);
       if (node) node.textContent = currentState
         ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')} · ${scanStatus}`
         : '扫描完成（未找到可挂载的战局）。';
@@ -1596,6 +1629,8 @@ export function mountTavernOverlay(options = {}) {
   function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const { data } = parseAIResponse(reply);
     const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
+    const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
+    if (isObject(data) && !own(data, 'patch') && (explicitUnresolved || explicitNarrative)) data.patch = [];
     if (!Array.isArray(data?.patch)) {
       const error = new Error('模型未返回有效的战局补丁');
       const source = typeof reply === 'string' ? reply.trim() : '';
@@ -1605,7 +1640,7 @@ export function mountTavernOverlay(options = {}) {
     }
     const raw = JSON.stringify(data, null, 2);
     try {
-      const notes = readUnresolvedDiagnostics(data.unresolved, sent);
+      const { matched: notes, invalid: unmatchedNotes } = readUnresolvedDiagnostics(data.unresolved, sent);
       const records = Object.fromEntries(unitIds.map(id => [id, characters[id]]));
       const current = liveState();
       const conflicts = [];
@@ -1628,8 +1663,7 @@ export function mountTavernOverlay(options = {}) {
       const rejected = [...conflicts, ...partition.rejected];
       const blockedWarnings = new Set(sent.filter(warning => rejected.some(item => rejectedWarning(item, warning))));
       const eligibleWarnings = sent.filter(warning => !blockedWarnings.has(warning));
-      const repairWarnings = sent.filter(warning => blockedWarnings.has(warning) && !notes.some(note => note.warning === warning)
-        && !data.narrative?.some?.(reference => identifiesWarning(reference, warning)));
+      const repairWarnings = sent.filter(warning => blockedWarnings.has(warning) && !notes.some(note => note.warning === warning && note.detail));
       const repairError = rejected.length ? Object.assign(new Error(rejected.map(item => formatRejectedItem(item, current)).join('；')), {
         raw: JSON.stringify(rejected.map(item => item.op)),
       }) : null;
@@ -1656,13 +1690,10 @@ export function mountTavernOverlay(options = {}) {
         const path = changedAtApply.get(operation);
         return path && fingerprintAt(current, path) !== fingerprintAt(next, path);
       });
-      const narrative = readNarrativeExemptions(data.narrative, eligibleWarnings, narrativeSourceFor(records), { unresolved: notes });
-      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations, notes, { narrative });
-      for (const { warning } of narrative) {
-        if (data.patch.some(operation => Array.isArray(operation.resolves) && operation.resolves.some(reference => identifiesWarning(reference, warning)))) {
-          throw new Error('narrative 警告不能同时声明为补丁已解决');
-        }
-      }
+      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations, notes.filter(note => note.detail));
+      const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(data.narrative, eligibleWarnings,
+        narrativeSourceFor(records), { solved, unresolved: notes.filter(note => note.detail) });
+      unmatchedNotes.push(...invalidNarrative);
       if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes.some(note => note.warning && note.detail)) {
         throw new Error('模型返回的补丁没有改变战局');
       }
@@ -1671,24 +1702,34 @@ export function mountTavernOverlay(options = {}) {
         baseline = hydrateBattleState(sources.input, { throwOnValidation: true }).state;
         before = applyPatch(baseline, operations(key), true);
       }
-      const verified = existingEffectReceipts(data.existing, sent, baseline, before, current, fingerprintAt)
-        .filter(({ warning }) => !blockedWarnings.has(warning));
-      for (const { warning, path, fingerprint } of verified) {
-        if (notes.some(note => note.warning === warning) || narrative.some(note => note.warning === warning)
-          || fingerprintAt(next, path) !== fingerprint) throw new Error('已有实现收据与本批补丁或未解决说明冲突');
-        if (!solved.includes(warning)) solved.push(warning);
-      }
+      const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
+        try {
+          const [entry] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
+          const { warning, path, fingerprint } = entry;
+          if (blockedWarnings.has(warning) || notes.some(note => note.warning === warning && note.detail)
+            || narrative.some(note => note.warning === warning) || fingerprintAt(next, path) !== fingerprint) {
+            throw new Error('已有实现与本批处理结果冲突');
+          }
+          if (!solved.includes(warning)) solved.push(warning);
+          return [entry];
+        } catch {
+          unmatchedNotes.push(`第 ${index + 1} 条已有实现说明未通过核对`);
+          return [];
+        }
+      });
+      if (data.existing !== undefined && !Array.isArray(data.existing)) unmatchedNotes.push('未能读取模型的已有实现说明');
       const missing = missingDispositions(sent, solved, notes, narrative);
       // A repair response with no patch, receipt, explanation, or exemption made
       // no progress. Never commit it as an empty successful batch.
-      if (missing.length && !patch.length && !verified.length && !notes.length && !narrative.length && !rejected.length) {
+      if (missing.length && !patch.length && !verified.length && !notes.some(note => note.detail) && !narrative.length && !rejected.length && !unmatchedNotes.length) {
         const error = new Error(`模型没有提交任何可核销结果，仍缺 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}`);
         error.missingCoverage = true;
         error.missingWarnings = missing;
         error.noRepair = Boolean(acceptPartial);
         throw error;
       }
-      if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length) {
+      if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length && !unmatchedNotes.length && !verified.length
+        && !notes.some(note => note.detail) && !narrative.length) {
         const error = new Error(`本批漏答 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}。本批尚未写入；保留已完成的补丁，重新提交完整结果。已实现的效果请在实际修改的操作上补 resolves；只创建依赖模板还须接回原技能。其余逐项写 unresolved 并说明原因，纯叙事才写 narrative。`);
         error.missingCoverage = true;
         error.missingWarnings = missing;
@@ -1761,7 +1802,7 @@ export function mountTavernOverlay(options = {}) {
       reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
       scanStatus = `已标准化 ${unitIds.length} 个角色`;
       renderInstances();
-      return { applied: effective.length, data, notes, rejected, missing, repairWarnings, repairError };
+      return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings, repairError };
     } catch (error) {
       error.raw ??= raw;
       throw error;

@@ -21,7 +21,7 @@ unit|b|red|char_info|乙|19,11
 unit|c|red|char_info|丙|19,11
 cover|wall|全|石墙|18,11,0` }, { throwOnValidation: true });
   assert.deepEqual([state.units.a,state.units.b,state.units.c,state.covers.wall].map(({x,y}) => [x,y]), [[19,11],[19,11],[0,0],[18,11]]);
-  assert.match(JSON.stringify(warnings), /起点不可用/);
+  assert.equal(warnings.find(w => /起点不可用/.test(w.message))?.kind, 'auto_adjusted');
 });
 
 test('area tags preserve zero/fractional raw distances and slash components', () => {

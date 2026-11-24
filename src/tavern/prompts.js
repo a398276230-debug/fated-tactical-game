@@ -9,6 +9,7 @@ const IDENTITY = `你是命定战斗助手。你需要根据用户输入对战�
 不做叙事、不扮演角色、不推进剧情，只输出引擎可执行的数据变更。按当前任务要求组织补丁和待处理项，沿用快照中的角色、装备、技能和状态 ID，保留与本次操作无关的数据。提交前检查路径、参数和数值范围，确保整批变更可以在当前战局执行。`;
 
 import { warningsForUnit } from './converter.js';
+import { normalizationPath } from './normalization-batches.js';
 
 export const DEFAULT_SLOTS = [
   { id: 'identity', label: '身份与任务声明', role: 'system', enabled: true, desc: '命定战斗助手的职责与边界', content: IDENTITY },
@@ -26,12 +27,12 @@ const TAG_MAPPING = `【世界书标签 → VM 映射】
 • [关联属性: <属性>] 或标签中的五维名称指向施术者主属性（str / agi / con / int / spi），需属性缩放时写入 damage.stat 或在公式中读 self.<stat>；原文要求抵抗范围技能的附带效果时，在 after_hit 规则里用 check(kind:"save")，并在 onPass/onFail 中结算附带效果。用 event.skillId == skill.id 限定来源。
 • [单体] → shape:"single"，target 依描述选取；[范围: <档位>(N)+<形状>(<阵营>)] → rawRadius:N、shape 对应枚举、target 对应枚举，有效距离另映射至 rawRange；角度标签映射至 angle。原生范围主击按 shape 自动命中，无需额外配置命中检定。附带效果的豁免写 DSL，不要用模板 save/saveDC 表达附带效果。原生范围伤害用 target:"enemy" 限定敌方，target:"any" 为无差别波及（覆盖自身格时也会命中自身）。VM 选择器 from:"units" 为未过滤全集，必须在 where 中按原描述显式声明存活与敌我条件。
 • 原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved。位移、治疗、资源恢复、状态授予与场地生成均按原描述拆解为对应指令。`;
-const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。逐条交代警告：实现的用实际补丁的 resolves 或已有实现的 existing；未实现的用带原因的 unresolved；纯叙事用 narrative。若同一条警告只实现了一部分，在实现该部分的操作上写 resolves，并在 unresolved 里用同一引用说明还缺什么。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，必须附顶层 existing 数组。若警告为合并描述，复制完整 message；只有带唯一「效果名」的警告可用 effectName 代替 message。每项给 {unitId,originPath,message,path,value}，也可按上述规则用 effectName 替代 message；path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
+const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。逐条交代警告：实现的用实际补丁的 resolves 或已有实现的 existing；未实现的用带原因的 unresolved；叙事或非战棋外围机制用 narrative。若同一条警告只实现了一部分，在实现该部分的操作上写 resolves，并在 unresolved 里用同一引用说明还缺什么。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，必须附顶层 existing 数组。若警告为合并描述，复制完整 message；只有带唯一「效果名」的警告可用 effectName 代替 message。每项给 {unitId,originPath,message,path,value}，也可按上述规则用 effectName 替代 message；path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
 export const PATCH_RULES = String.raw`【输出目标】
-输出一个 JSON 对象。patch、unresolved、narrative 是数组，已有实现的证据用 existing 数组。补丁路径以当前战局快照为准。快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条。禁止写 /effects/... 或修改来源资料，写入对应模板的 rules / mods / pools 等合法字段。narrative 数组每项为 {unitId,originPath,message,reason}，只收录纯叙事条目。无法实现的战斗机制用同样形状写进 unresolved。
+输出一个 JSON 对象。patch、unresolved、narrative 是数组，已有实现的证据用 existing 数组。补丁路径以当前战局快照为准。快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条。禁止写 /effects/... 或修改来源资料，写入对应模板的 rules / mods / pools 等合法字段。narrative 数组每项为 {unitId,originPath,message,reason}，收录叙事及非战棋外围机制。无法实现的战斗机制用同样形状写进 unresolved，可附 kind:"missing_info"（原文缺参）或 kind:"engine_limit"（机制暂不支持）。reason 用玩家能理解的简短中文，避免 JSON 路径和内部字段名。
 
 【四步编译工作流（提交前逐条自检）】
 1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
@@ -64,13 +65,13 @@ export const PATCH_RULES = String.raw`【输出目标】
 【输出与 RFC 6902 补丁协议】
 • 只输出一个顶层 JSON 对象，结构固定为：
   {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
-  三个顶层数组键必填；如引用先前批次已落地的规则作为证据，必须另附 existing 数组，逐项填写 {unitId,originPath,message,path,value}；带唯一效果名时可用 effectName 替代 message。正文声称“已完成”而 JSON 没有对应 patch.resolves 或 existing 收据，视为未核销，不能用空 patch 代替。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
-• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：/^\/(?:equipment|skills|items|statusTemplates)\/|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/
-  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。
+  请提供三个顶层数组；整批只有 unresolved 或 narrative 说明时，提交空 patch 数组。如引用先前批次已落地的规则作为证据，必须另附 existing 数组，逐项填写 {unitId,originPath,message,path,value}；带唯一效果名时可用 effectName 替代 message。正文声称“已完成”而 JSON 没有对应 patch.resolves 或 existing 收据，视为未核销，不能用空 patch 代替。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
+• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：${normalizationPath}
+  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。模板的自定义池只在 /equipment/<id>/pools 或 /skills/<id>/pools 声明；装备规则用 resource + local:true 读写。禁止补丁直接写 /units/<id>/pools 或 /items/<id>/pools，替换整个道具实例时也不得写入或改动池绑定。
   - /skills/<id>：技能模板或其合法子字段（如 /skills/<id>/damage、/skills/<id>/rules/-）。
   - /statusTemplates/<id>：自定义状态模板（新英文 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$，不覆盖内置状态名）。
   - /units/<unitId>/statuses、/units/<unitId>/armor（整数 0…1000000）、/units/<unitId>/skills（完整技能 ID 数组，保留原有项）。
-• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；仅纯叙事、日常储物空间（如 1km³ 次元戒）、跨位面非战斗传送或元设定可列入 narrative（附完整引用与 reason），含任何战斗机制的条目严禁豁免。
+• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；纯叙事、日常储物、生产制作、商业交易、好感度、战后掉落、非战斗传送等外围内容可列入 narrative（附完整引用与 reason）。影响沙盘行动或回合结算的战斗机制必须单独交代。
 • 禁止直接修改运行时资源池当前值、单位当前 HP/MP/SP、阵营、坐标、先攻队列或日志。先尝试用正交原语拆解组合，再考虑放弃；提交前逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围。`;
 const json = value => JSON.stringify(value, null, 2);
 

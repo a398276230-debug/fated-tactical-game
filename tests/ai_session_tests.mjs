@@ -347,7 +347,7 @@ test('独立 API 的推理字段不会进入回复或流式回调', async () => 
           ? new Response('data: {"choices":[{"delta":{"reasoning_content":"推理草稿"}}]}\n\ndata: [DONE]\n\n')
           : Response.json({ choices: [{ message: { reasoning_content: '推理草稿' } }] });
       },
-    }), /未返回有效文本/);
+    }), /模型只返回了思考内容.*API 设置.*max_tokens.*每批警告条数.*正文 0/);
     assert.deepEqual(chunks, []);
   }
   const chunks = [];

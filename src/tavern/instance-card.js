@@ -98,7 +98,7 @@ const ratio=(v,max)=>max?Math.min(1,Math.max(0,(Number(v)||0)/max)):0;
  * 渲染一张角色实例卡。卡头（头像、名字、标签、迷你资源条、选择框、折叠按钮）始终可见，
  * 其余内容放进返回的 body，折叠时隐藏。调用方可以把诊断和操作按钮追加进 body。
  */
-export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onToggle,warnings=0,count=1,narrative=[],onDiscardEntry,canDiscardEntry}={}) {
+export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onToggle,warnings=0,attention=0,count=1,onDiscardEntry,canDiscardEntry}={}) {
   const line=(tag,cls,value)=>make(tag,{class:cls},value);
   const name=unit.name??unit.id;
   box.classList.add('fated-char-card');
@@ -110,7 +110,8 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
   const nameRow=line('div','fated-char-name-row');
   nameRow.append(line('strong','fated-char-name',name));
   if(count>1) nameRow.append(line('span','fated-char-tag',`×${count}`));
-  if(warnings) nameRow.append(make('span',{class:'fated-char-warn',title:`${warnings} 条诊断`},`⚠ ${warnings}`));
+  if(warnings) nameRow.append(make('span',{class:'fated-char-warn',title:`${warnings} 条词条待编译`},`⏳ ${warnings}`));
+  if(attention) nameRow.append(make('span',{class:'fated-char-tag',title:`${attention} 条词条需确认`},`ⓘ ${attention}`));
   const tags=line('div','fated-char-tags');
   for(const text of [TEAMS[unit.team],unit.tier?`第 ${unit.tier} 层级`:null,`体型 ${bodySizeLabel(unit)}`,unit.source??'AI 编辑']) if(text) tags.append(line('span','fated-char-tag',text));
   title.append(nameRow,tags);
@@ -153,8 +154,7 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
       const mods = [...(template?.mods ?? []),...(item?.mods ?? [])];
       const grantedSkills = template?.skills ?? [];
       const effectCount = fx.length + mods.length + grantedSkills.length;
-      const story = path ? narrative.filter(entry => entry.originPath === path || entry.originPath?.startsWith(`${path}/`)) : [];
-      const expandable = effectCount || story.length;
+      const expandable = effectCount > 0;
       const row=make(expandable?'details':'div',{class:'fated-char-row'});
       const head=make(expandable?'summary':'div',{class:'fated-char-row-head'});
       head.append(line('span','fated-char-row-name',label));
@@ -169,7 +169,6 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
       for(const rule of fx) row.append(line('p','fated-mini',`${rule.label?`${rule.label} · `:''}${ruleSummary(rule,state)}`));
       for(const mod of mods) row.append(line('p','fated-mini',modSummary(mod)));
       for(const id of grantedSkills) row.append(line('p','fated-mini',`附带技能 · ${state?.skills?.[id]?.name??id}`));
-      for(const { message, reason } of story) row.append(make('p',{class:'fated-mini',title:reason},`仅叙事 · ${message}`));
       block.append(row);
     }
     body.append(block);
