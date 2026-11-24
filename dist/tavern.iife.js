@@ -8640,6 +8640,7 @@ var FatedTacticalTavern = (() => {
       }
     }
   };
+  var COMMAND_TYPES = Object.freeze(Object.keys(commands));
   function applyCommand(state, command) {
     requireThat(plain(command) && has(commands, command.type), "\u547D\u4EE4\u7C7B\u578B");
     commands[command.type](state, structuredClone(command));
