@@ -141,6 +141,7 @@ gate('G45', '去样板化协议全貌、四步编译流与闭合枚举披露', (
     'refresh / stack / replace / extend', 'undispellable / concept_immune',
     'intentBonus', 'intentDifficulty', '{stat:"intentBonus", flat:5, when:"event.intent == \'core\'"}',
     'when:"event.intent != \'normal\'"', 'overrides.intent', 'controlPolicy:{intentLock:"kill"}',
+    'sharedPoolLedger', 'siblingCarriersIndex', 'sharedZoneLedger', 'initial ?? 0', '/zones/<id>/', '{locks:["fly"]}',
     'hand:"off_hand"', 'kind:"consumable"', 'reloadable:true', '无内置弹反结算',
     'normal / function / core / kill / concept', '超暴击 / 强暴击 / 平暴击 / 有效 / 勉强 / 擦伤 / 失手',
     'physical / energy / mental / true', '同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击',
