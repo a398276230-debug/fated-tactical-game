@@ -1197,14 +1197,15 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       || (warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`)));
   }
   function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
-    const { data } = parseAIResponse(reply);
+    const { data, parseError } = parseAIResponse(reply);
     const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
     const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
     if (isObject(data) && !own(data, 'patch') && (explicitUnresolved || explicitNarrative)) data.patch = [];
     if (!Array.isArray(data?.patch)) {
-      const error = new Error('模型未返回有效的战局补丁');
+      const error = new Error(`模型未返回有效的战局补丁${parseError ? `：${parseError}` : ''}`);
       const source = typeof reply === 'string' ? stripReasoningBlocks(reply) : '';
-      error.raw = source.startsWith('{') || source.startsWith('[') ? source : source.match(/```json\s*([\s\S]*?)(?:```|$)/i)?.[1];
+      error.raw = /^[\s<]*(?:```(?:json)?\s*)?[{[]/i.test(source)
+        ? source.slice(source.search(/[{[]/)) : undefined;
       if (explicitUnresolved) error.noRepair = true;
       throw error;
     }
@@ -1227,6 +1228,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       const baselineForPartition = hydrateBaseline(sources.input);
       const partition = partitionNormalizationPatch({
         liveState: current, baselineState: baselineForPartition, existingOps: operations(key), rawPatch: rebasedPatch,
+        conflictingDefinitions: conflicts.filter(item => item.op.op === 'add' && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path)).map(item => item.path),
         allowedUnitIds: unitIds, expand: expanded, apply: options.applyPatch ?? applyPatch, validate: options.validateState || defaultValidateState,
         normalize: state => { refreshOpeningInitiative(state); syncEquipmentEffects(state); refreshOutcome(state); },
       });
@@ -1251,18 +1253,24 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
           ? operation.path : parentPath;
         const before = fingerprintAt(next, path);
         next = apply(next, expanded(operation), true);
-        if (fingerprintAt(next, path) !== before) changedAtApply.set(operation, path);
+        const after = fingerprintAt(next, path);
+        if (after !== before) changedAtApply.set(operation, { path, after });
       }
       const changed = new Set(paths.filter(path => fingerprintAt(next, path) !== fingerprintAt(current, path)));
       const effective = operationsToApply.filter(operation => expanded(operation).some(copy => changed.has(rootPath(copy.path))));
       const patch = effective.flatMap(({ resolves, ...operation }) => expanded(operation));
       const changedOperations = effective.filter(operation => {
-        const path = changedAtApply.get(operation);
-        return path && fingerprintAt(current, path) !== fingerprintAt(next, path);
+        const change = changedAtApply.get(operation);
+        if (!change || fingerprintAt(current, change.path) === fingerprintAt(next, change.path)) return false;
+        if (change.path === operation.path) return fingerprintAt(next, change.path) === change.after;
+        // An insertion can survive later appends, but not a later overwrite of that rule.
+        const array = JSON.parse(fingerprintAt(next, change.path) ?? 'null');
+        return operation.op === 'remove' ? fingerprintAt(next, change.path) === change.after
+          : Array.isArray(array) && array.some(value => JSON.stringify(value) === JSON.stringify(operation.value));
       });
-      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations, notes.filter(note => note.detail));
+      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations, notes);
       const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(data.narrative, eligibleWarnings,
-        narrativeSourceFor(records), { solved, unresolved: notes.filter(note => note.detail) });
+        narrativeSourceFor(records), { solved, unresolved: notes });
       unmatchedNotes.push(...invalidNarrative);
       if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes.some(note => note.warning && note.detail)) {
         throw new Error('模型返回的补丁没有改变战局');
@@ -1276,7 +1284,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         try {
           const [entry] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
           const { warning, path, fingerprint } = entry;
-          if (blockedWarnings.has(warning) || notes.some(note => note.warning === warning && note.detail)
+          if (blockedWarnings.has(warning) || notes.some(note => note.warning === warning)
             || narrative.some(note => note.warning === warning) || fingerprintAt(next, path) !== fingerprint) {
             throw new Error('已有实现与本批处理结果冲突');
           }

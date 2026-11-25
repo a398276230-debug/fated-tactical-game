@@ -256,7 +256,15 @@ function jsonPriority(value) {
 }
 export function parseAIResponse(value) {
   const source = typeof value === 'object' ? JSON.stringify(value) : text(value);
-  const parsed = preferredJson(source) ?? null;
+  // Never salvage nested operations from a malformed normalization envelope.
+  const clean = stripReasoningBlocks(source);
+  const envelope = /\{\s*"(?:patch|unresolved|existing|narrative)"\s*:/.exec(clean);
+  let parsed;
+  if (envelope && !/[{[]/.test(clean.slice(0, envelope.index))) {
+    const final = clean.slice(envelope.index).split(/\n\s*```/)[0].trim();
+    try { parsed = JSON.parse(final); }
+    catch (error) { return { data: null, patch: null, text: source, parseError: `最终 JSON 无效：${error.message}` }; }
+  } else parsed = preferredJson(source) ?? null;
   const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch ||
     (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
   return { data: parsed, patch, text: source };

@@ -88,10 +88,31 @@ export function normalizationOperations(operations, snapshot, current, created, 
     const root = path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
     const live = fingerprintAt(current, root);
     const original = fingerprintAt(snapshot, root);
-    if (live === original) return true;
-    if (op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path)
-      && original === undefined && created.has(path) && live === created.get(path)) {
+    const sharedAdd = op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path) && created.has(path) && live === created.get(path);
+    if (sharedAdd) {
+      // Cosmetic naming differences don't change the mechanic. Never silently
+      // bind a consumer to a different rule set with the same generated id.
+      const mechanics = ({ name, description, ...fields }) => JSON.stringify(fields, function (_, value) {
+        return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a],[b]) => a.localeCompare(b))) : value;
+      });
+      if (!operation.value || mechanics(operation.value) !== mechanics(JSON.parse(live))) throw new Error(`共享模板定义冲突：${path}`);
       return false;
+    }
+    if (live === original) return true;
+    // Disjoint member edits commute. Never rebase an index across an array
+    // change; only a trailing append has a stable insertion point.
+    if (path !== root && original !== undefined && live !== undefined) {
+      const parts = path.slice(root.length + 1).split('/');
+      const append = op === 'add' && parts.at(-1) === '-';
+      const field = append ? path.slice(0, path.lastIndexOf('/')) : path;
+      if (!parts.some(part => /^\d+$/.test(part))) {
+        const before = fingerprintAt(snapshot, field), after = fingerprintAt(current, field);
+        if (before === after) return true;
+        if (append && before?.startsWith('[') && after?.startsWith('[')) {
+          const array = JSON.parse(after);
+          if (JSON.parse(before).every((value, i) => JSON.stringify(value) === JSON.stringify(array[i]))) return true;
+        }
+      }
     }
     throw new Error('补丁目标已被更早的批次或战局操作修改');
   });

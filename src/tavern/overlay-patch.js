@@ -15,6 +15,7 @@ import { characterRecords, stableSourceJson } from './char-snapshots.js';
 import { entryRoot, normalizationTransactions, replayNormalization } from './normalization-replay.js';
 import { duplicateMappings, duplicateOperations, instanceGroups } from './instance-groups.js';
 import { fillInstance } from './instance-card.js';
+import { parseAIResponse } from './overlay-ai.js';
 import { mountAiPage } from './ai-page.js';
 import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
 
@@ -137,7 +138,7 @@ export function fingerprintAt(state, path) {
 }
 
 export { deepMerge, applyPatch };
-export function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], validate = () => {}, apply = applyPatch, normalize = state => state, allowedUnitIds, expand = operation => [operation] }) {
+export function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], conflictingDefinitions = [], validate = () => {}, apply = applyPatch, normalize = state => state, allowedUnitIds, expand = operation => [operation] }) {
   const candidates = [], rejected = [];
   for (const [index, operation] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
     const unitId = typeof operation?.path === 'string' ? operation.path.match(/^\/units\/([^/]+)/)?.[1] : undefined;
@@ -150,6 +151,28 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
       rejected.push({ index, op: operation, path: typeof operation?.path === 'string' ? operation.path : '', reason: '路径或操作不在允许白名单内' });
     } else candidates.push({ index, op: operation, lastError: '' });
   }
+  // Only move creations of absent parents ahead of children; never reorder
+  // replacements or array operations relative to each other.
+  const declarations = candidates.filter(({ op }) => op.op === 'add' && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === undefined);
+  const roots = new Set(), conflicted = new Set(conflictingDefinitions);
+  for (const item of declarations) {
+    if (roots.has(item.op.path)) {
+      if (JSON.stringify(declarations.find(other => other.op.path === item.op.path).op.value) !== JSON.stringify(item.op.value)) conflicted.add(item.op.path);
+      rejected.push({ ...item, path: item.op.path, reason: '同批重复创建模板' });
+      candidates.splice(candidates.indexOf(item), 1);
+    } else roots.add(item.op.path);
+  }
+  if (conflicted.size) {
+    const markers = [...conflicted].map(path => ({ path }));
+    const groups = normalizationTransactions({ patch: [...markers, ...candidates.map(i => i.op)], solved: [], verified: [], records: {}, before: liveState, fingerprint: fingerprintAt });
+    const blocked = new Set(groups.filter(group => group.patch.some(op => markers.includes(op))).flatMap(group => group.patch));
+    for (const item of candidates.slice()) if (blocked.has(item.op)) {
+      rejected.push({ index: item.index, op: item.op, path: item.op.path, reason: '补丁依赖存在冲突的模板定义' });
+      candidates.splice(candidates.indexOf(item), 1);
+    }
+  }
+  const first = new Set(declarations);
+  candidates.sort((a, b) => Number(first.has(b)) - Number(first.has(a)));
   const strip = item => { const { resolves, ...operation } = item.op; return operation; };
   const trial = (live, base, items) => {
     const operations = items.flatMap(item => expand(strip(item)));
@@ -172,7 +195,20 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
         workLive = result.nextLive; workBase = result.nextBase; accepted.push(item); progressed = true;
       } catch (error) { item.lastError = error?.message || '补丁校验失败'; next.push(item); }
     }
-    if (!progressed) { rejected.push(...next.map(item => ({ index: item.index, op: item.op, path: item.op.path, reason: item.lastError }))); break; }
+    if (!progressed) {
+      // Mutually referencing templates can only validate together. Retry each
+      // dependency group atomically, isolated from unrelated malformed DSL.
+      const groups = normalizationTransactions({ patch: next.map(item => item.op), solved: [], verified: [], records: {}, before: workBase, fingerprint: fingerprintAt });
+      for (const group of groups) {
+        const items = next.filter(item => group.patch.includes(item.op));
+        if (items.length > 1) try {
+          const result = trial(workLive, workBase, items);
+          workLive = result.nextLive; workBase = result.nextBase; accepted.push(...items); continue;
+        } catch { /* report the individual validation errors */ }
+        rejected.push(...items.map(item => ({ index: item.index, op: item.op, path: item.op.path, reason: item.lastError })));
+      }
+      break;
+    }
     remaining.splice(0, remaining.length, ...next);
   }
   return { accepted, rejected, workLive, workBase };

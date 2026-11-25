@@ -1,6 +1,6 @@
 // Receipts identify an individual conversion diagnostic, not every warning on a unit.
 export const warningKey = w => JSON.stringify([w.source, w.scope, w.originPath ?? '', w.message]);
-const subject = message => message.match(/待标准化「([^」]+)」/)?.[1]?.trim()
+const subject = message => typeof message !== 'string' ? undefined : message.match(/待标准化「([^」]+)」/)?.[1]?.trim()
   ?? message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim()
   ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
 const nonempty = value => typeof value === 'string' && value.trim() !== '';
@@ -54,24 +54,29 @@ export function readUnresolvedDiagnostics(value = [], sent) {
     const label = `unresolved 第 ${index + 1} 项`;
     if (!item || typeof item !== 'object' || Array.isArray(item)
       || !(item.unitId === null || nonempty(item.unitId)) || !(item.originPath === null || nonempty(item.originPath))
-      || !(nonempty(item.effectName) || nonempty(item.message)) || !nonempty(item.reason)
+      || !(nonempty(item.effectName) || nonempty(item.message)) || (item.reason !== undefined && !nonempty(item.reason))
       || (Object.hasOwn(item, 'effectName') && !nonempty(item.effectName))
       || (Object.hasOwn(item, 'message') && !nonempty(item.message))) {
       invalid.push(`${label}缺少有效的词条引用或原因`);
       continue;
     }
     // A valid-looking text note must still resolve to exactly one warning; otherwise it cannot safely lock a patch receipt.
-    const matches = sent.filter(warning => identifiesWarning(item, warning));
+    const matches = sent.filter(warning => identifiesWarning(item, warning) || (!item.effectName && item.reason === undefined
+      && item.unitId === warning.unitId && item.originPath === warning.originPath && shortSubject(warning.message)
+      && item.message?.startsWith(shortSubject(warning.message))));
     if (matches.length !== 1) {
       invalid.push(`${label}无法唯一匹配本批词条`);
       continue;
     }
-    const detail = diagnosticText(item.reason, '');
+    const kind = ['missing_info', 'engine_limit'].includes(item.kind) ? item.kind : undefined;
+    const explanation = item.message !== matches[0].message && item.message?.startsWith(shortSubject(matches[0].message))
+      ? item.message.slice(shortSubject(matches[0].message).length).trim() : '';
+    const detail = diagnosticText(item.reason ?? explanation, '');
     if (!detail) {
-      invalid.push(`${label}缺少可读原因`);
+      if (item.reason === undefined) matched.push({ warning: matches[0] });
+      invalid.push(`${label}「${diagnosticTitle(matches[0])}」缺少可读原因，保留待处理`);
       continue;
     }
-    const kind = ['missing_info', 'engine_limit'].includes(item.kind) ? item.kind : undefined;
     matched.push({ warning: matches[0], detail, ...(kind && { kind }) });
   }
   return { matched, invalid };
@@ -108,10 +113,12 @@ export function pendingDiagnostics(warnings, notes) {
   ];
 }
 
+const shortSubject = message => subject(message)?.match(/^微弱法则\[([^\]]+)\]$/)?.[1] ?? subject(message);
+const sameSubject = (label, message) => nonempty(label) && [subject(message), shortSubject(message)].includes(label);
 export const identifiesWarning = (receipt, warning) => receipt && typeof receipt === 'object'
   && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null)
-  && (receipt.message !== undefined ? receipt.message === warning.message : nonempty(receipt.effectName))
-  && (receipt.effectName === undefined || receipt.effectName === subject(warning.message));
+  && (receipt.message !== undefined ? receipt.message === warning.message || sameSubject(subject(receipt.message), warning.message) : nonempty(receipt.effectName))
+  && (receipt.effectName === undefined || sameSubject(receipt.effectName, warning.message));
 
 // Check coverage of this request, not the number of patch operations. Never manufacture receipts.
 export function missingDispositions(sent, solved, notes, narrative) {
