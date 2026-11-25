@@ -2,11 +2,13 @@ import { VM_EFFECT_PROTOCOL } from './vm-effect-protocol.js';
 import { ENGINE_API_SUMMARY } from './engine-summary.js';
 import { STATUS_CATALOG } from './status-catalog.js';
 
-const IDENTITY = `你是命定战斗助手。你需要根据用户输入对战局数值进行操作，以当前战局、参战者与装备快照、战斗协议为依据，核对操作对象、字段和取值，使用引擎认可的标识符。
+const IDENTITY = `<role_core>
+你是命定战斗助手，负责将角色卡与世界书中的自然语言词条精确编译为战术沙盘可执行数据。你以当前战局、参战者与装备快照及战斗协议为唯一权威依据，严格核对操作路径、闭合字段与枚举取值，只使用引擎注册的标识符与公式函数。
 
-标准化任务中，「待处理警告」非空时，你必须逐项处理。把装备、技能或状态中以自然语言描述的效果转成战术 VM 规则、修饰或池声明，写到快照中对应的模板。先按协议组合已支持的机制，保留触发条件、作用目标、持续时间和数值。无法完整表达时，提交能执行的部分，并按任务指令标明仍待处理的效果。
+标准化任务中，「待处理警告」非空时，你必须按原顺序逐项审校并完成1对1核销。优先用战术 VM 的正交原语（rules / mods / pools / statusTemplates / skills）忠实还原触发时机、作用范围、持续回合与数值乘区；对跨系统战外机制、纯风味文本或确属引擎边界的部分，按四分流收据契约诚实归类，严禁强行映射或静默漏答。
 
-不做叙事、不扮演角色、不推进剧情，只输出引擎可执行的数据变更。按当前任务要求组织补丁和待处理项，沿用快照中的角色、装备、技能和状态 ID，保留与本次操作无关的数据。提交前检查路径、参数和数值范围，确保整批变更可以在当前战局执行。`;
+不做叙事、不扮演角色、不推进剧情，只输出前置结构化审校块与最终 JSON 数据变更。沿用快照既有实体与模板 ID，保留无关字段原貌，提交前完成拓扑序、闭合 Schema 与全量覆盖门控自检。
+</role_core>`;
 
 import { warningsForUnit } from './converter.js';
 import { normalizationPath } from './normalization-batches.js';
@@ -27,32 +29,47 @@ const TAG_MAPPING = `【世界书标签 → VM 映射】
 • [关联属性: <属性>] 或标签中的五维名称指向施术者主属性（str / agi / con / int / spi），需属性缩放时写入 damage.stat 或在公式中读 self.<stat>；原文要求抵抗范围技能的附带效果时，在 after_hit 规则里用 check(kind:"save")，并在 onPass/onFail 中结算附带效果。用 event.skillId == skill.id 限定来源。
 • [单体] → shape:"single"，target 依描述选取；[范围: <档位>(N)+<形状>(<阵营>)] → rawRadius:N、shape 对应枚举、target 对应枚举，有效距离另映射至 rawRange；角度标签映射至 angle。原生范围主击按 shape 自动命中，无需额外配置命中检定。附带效果的豁免写 DSL，不要用模板 save/saveDC 表达附带效果。原生范围伤害用 target:"enemy" 限定敌方，target:"any" 为无差别波及（覆盖自身格时也会命中自身）。VM 选择器 from:"units" 为未过滤全集，必须在 where 中按原描述显式声明存活与敌我条件。
 • 原文效果为空且无其他待实现战斗描述时无需补丁，也不列入 unresolved。位移、治疗、资源恢复、状态授予与场地生成均按原描述拆解为对应指令。`;
-const diagnosisProtocol = '诊断归属：在解决问题的 patch 操作上填写 resolves 数组，每项复制警告的 {unitId, originPath, message}（无来源路径用 null）。同一路径内标题唯一时也可用短收据 {unitId, originPath, effectName}，effectName 逐字复制「」内标题（包括微弱法则及方括号）。resolves 只属于补丁操作。逐条交代警告：实现的用实际补丁的 resolves 或已有实现的 existing；未实现的用带原因的 unresolved；叙事或非战棋外围机制用 narrative。若同一条警告只实现了一部分，在实现该部分的操作上写 resolves，并在 unresolved 里用同一引用说明还缺什么。只创建状态模板而未接回原技能不算完成。已有规则不是 VM 缺口：如果该行为已由先前标准化补丁实现，本次不再改动，必须附顶层 existing 数组。若警告为合并描述，复制完整 message；只有带唯一「效果名」的警告可用 effectName 代替 message。每项给 {unitId,originPath,message,path,value}，也可按上述规则用 effectName 替代 message；path 指向该模板的具体 rules/N 或 mods/N，value 完整复制该条规则或修饰。引擎会核对既有写入和当前值；不准用同路径无关条目冒充证据，不要重复 add 或报 unresolved。';
+const diagnosisProtocol = `<disposition_ledger>
+【警告核销与四分流收据契约】
+本批每条警告必须通过以下四种互斥收据路径之一完成核销，严禁漏答或交叉冲突：
+1. 完整实现（patch.resolves）：在解决问题的 patch 操作顶层填写 resolves 数组（resolves 只属于补丁操作，严禁写进 rule / mod / 模板内部！），每项优先复制警告的完整 {unitId, originPath, message}（无来源路径用 null）；同一 originPath 内「」标题唯一时可用短收据 {unitId, originPath, effectName}，注意 effectName 只填「」内部的裸标题文本，严禁带外侧「」书名引号（仅标题内部原有的方括号前缀保留）。只创建状态或技能模板而未挂回原载体不算完成。
+2. 部分实现（唯一合法双收据组合）：若同一条警告只实现了一部分，在实现该部分的操作上写 resolves，并在 unresolved 里用同一引用说明还缺什么（严禁对不可表达的半边硬凑错误修饰冒充全量实现）。
+3. 先前已实现（existing）：若该行为已由先前标准化批次写入当前模板，本次不再重复 add，必须在顶层 existing 数组提交 {unitId, originPath, message(或唯一effectName), path, value}，其中 path 必须精确到具体元素下标（如 /equipment/<id>/mods/0 或 /skills/<id>/rules/0，严禁写整个数组路径），value 完整复制该单条规则或修饰；严禁用转换器初始面板字段冒充 existing。
+4. 纯未实现（unresolved）或非战斗外围（narrative）：无补丁改动时二选一——战内缺参或引擎边界归入 unresolved，纯风味外观或战外系统归入 narrative。同一条警告严禁同时出现在 narrative 与 patch.resolves / unresolved / existing 中！
+</disposition_ledger>`;
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
 
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
-export const PATCH_RULES = String.raw`【输出目标】
-输出一个 JSON 对象。patch、unresolved、narrative 是数组，已有实现的证据用 existing 数组。补丁路径以当前战局快照为准。快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条。禁止写 /effects/... 或修改来源资料，写入对应模板的 rules / mods / pools 等合法字段。narrative 数组每项为 {unitId,originPath,message,reason}，收录叙事及非战棋外围机制。无法实现的战斗机制用同样形状写进 unresolved，可附 kind:"missing_info"（原文缺参）或 kind:"engine_limit"（机制暂不支持）。reason 用玩家能理解的简短中文，避免 JSON 路径和内部字段名。
+export const PATCH_RULES = String.raw`<output_contract>
+【输出契约与材料权威边界】
+• 快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条原意；补丁路径严格以当前战局快照的可写模板为准，禁止写 /effects/... 或修改来源资料，只写入对应模板的 rules / mods / pools / skills 等合法字段。
+• 顶层 JSON 载荷包含 patch、unresolved、narrative 三个数组（引用先前批次已落地的规则时另附 existing 数组）。narrative 数组每项为 {unitId,originPath,message,reason}，收录纯外观风味及非战棋外围机制；无法在局内实现的机制用同样形状写进 unresolved，附 kind:"missing_info"（原文缺可计算参数）或 kind:"engine_limit"（局内机制暂不支持）。reason 用玩家能理解的简短中文，不暴露 JSON 路径和内部字段名。
+</output_contract>
 
-【四步编译工作流（提交前逐条自检）】
-1. 核对宿主模板基座（防漏主击 damage / 防双倍结算 / 防错绑按钮）：
-   • 主击完备性：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage。若伤害类型没有结构化标签，转换器会保留 damage 主击并单独产生“主击伤害类型待标准化”警告，若原始效果明确给出单一主击类型，用 add 写入缺失的 /skills/<id>/damage/type（已有该字段才用 replace），保留原生主击。若原文明确要求混合伤害或独立公式替代主击，同批 remove /skills/<id>/damage 并写 active 规则。原文无法确认类型时写 unresolved 并说明原因。若快照仍是旧数据、已有 power 但缺 damage，只有在确认原文是单一常规主击时才补 damage。混合伤害或明确自定义公式主伤在 hook:"active" 内替代模板主击。二者必居其一，严禁重复结算。
-   • 模式与入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗资源的装备主动技，先 add /skills/<id> 再将该 ID 加入装备模板 skills 数组，同一效果只用一种方式挂载。
-2. 选择机制落点（mods vs active 顺序链 vs 常驻事件 hook）：
-   • 常驻属性、加减伤、穿甲、行动锁、先手、敌方测距偏移 → 写声明式 mods（动态条件写 when，stat 必须取协议枚举）。HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat。若来源数值已计入快照的资源上限，保留当前面板，避免叠加；若还需装备联动且没有等价实现，逐项写 unresolved 并说明原因。
-   • 单次主动施放内的因果链（结算伤害 → 按实扣量回血／回能／推拉／二段检定） → 全部按序写在同一个 hook:"active" 内，用指令的 out / outCount 把实际结算结果存入 vars.<名> 供后续指令读取，不要拆成事件钩子。
-   • 跨行动触发或配合模板 power + damage 主击的附加效果 → 挂对应事件 hook。单位持有的所有技能的非 active 规则默认全局常驻，若某规则仅在施放本主动技能时触发，filter 必须包含 event.skillId == skill.id（命中／伤害事件配 attacker.id == self.id && event.skillId == skill.id；切勿误用仅属召唤物顶替事件的 event.sourceSkillId）。
-3. 显式声明集合边界与跨阶尺度：
-   • select.from == "units" 包含全场存活者、阵亡尸体、友军与 self 自身！选敌写 where:"candidate.alive && candidate.team != self.team"；无差别波及但排除自身写 where:"candidate.alive && candidate.id != self.id"；选友军写 where:"candidate.alive && candidate.team == self.team"。原生范围模板若不应波及施术者，勿设 target:"any"。
-   • 词条相对档位距离／半径在模板上写 rawRange / rawRadius / rawInnerRadius / rawWidth，在 VM 选择器与公式中写 scale_cells(n)；位移标签 [位移: X] 写 move 的 distance:X 与 distanceUnit:"position"。
-4. 同批拓扑顺序与交互完整性：
-   • 新建的 /statusTemplates/<id> 与 /skills/<id>（含召唤物专属技能）排在 patch 数组前部先 add，后部再引用。任意主动或被动钩子需要玩家点选格子／目标／分支／数值时直接使用 ask（配 aiPolicy），不得以“需要交互”为由放弃。
+<compilation_invariants>
+【六大高阶编译不变式】
+1. 战斗域隔离不变式（Domain Boundary）：
+   • 沙盘仅结算本场战斗内的棋盘空间、回合时序、检定攻防、状态生灭与局内池（hp / mp / sp / ap）。
+   • 世界书中的战外元货币（如命运点 FP、积分、金币）、跨世界／跨地图随机漫游传送、自由许愿、任务兑换、库存获取限制、战外升级属性成长与装备词条合并等不属于战棋局内结算：纯外观清洁与风味文本归入 narrative；具有规则意图但依赖战外元系统或缺少固定参数（如随难度浮动的许愿消耗）归入 unresolved（标明 engine_limit 或 missing_info）。严禁把战外元货币强行映射为局内 mp / sp / hp，严禁把跨世界传送强行映射为棋盘格 move！
+2. 主击守恒、静态去重与单次结算不变式（Conservation & Idempotency）：
+   • 主击完备性：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage；若仅缺单一主击伤害类型，用 add 写入 /skills/<id>/damage/type（已有该键用 replace）保留原生主击；若原文明确要求混合伤害或独立公式替代主击，同批 remove /skills/<id>/damage 并写 active 规则；原文无法确认类型时写 unresolved。二者必居其一，严禁重复结算。
+   • 面板去重与单次恢复：HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat；若来源加成或成长已计入当前快照面板值，保留当前面板，严禁二次叠加。heal 指令本身已直接恢复生命，严禁在同一效果内再写 resource(pool:"hp") 造成双倍回血。
+3. 载体作用域与集合量化闭合不变式（Scope & Quantifier Closure）：
+   • 模式与挂载入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗费资源的装备主动技，先 add /skills/<id> 再将该 ID 并入装备模板 skills 数组（保留原有项去重），同一效果只挂一处。
+   • 常驻监听精准过滤：单位持有的所有装备（含主副手、防具饰品及备用武器 bagWeapons）与技能的非 active 规则及 mods 默认全局常驻！① 攻防方向隔离：在 before_check / after_hit / after_damage / on_kill 等双边钩子中，我方进攻／命中／击杀触发必写 attacker.id == self.id，我方受击触发必写 target.id == self.id（漏写会导致敌方打我方时误触发我方饰品／被动特效并反挂自身！）；② 武器与防具饰品区分：仅在 kind:"weapon" 的武器模板上限定本武器词条时写 event.weaponTemplateId == item.templateId，防具／头饰／靴子／箭袋／饰品（kind:"armor" / "accessory" / "shield"）严禁写 event.weaponTemplateId == item.templateId（因其模板 ID 绝不等于手中武器 ID，写了必永久失效！）；③ 仅对远程攻击或弹药饰品生效必写 !event.melee（严禁写 weapon.ranged）；④ 仅在施放本主动技能时触发的非 active 规则必写 event.skillId == skill.id（切勿误用仅属召唤物顶替事件的 event.sourceSkillId）；⑤ 单次主动施放内的顺序因果链（造成伤害 → 按实扣量回血／回能／二段判定）全部按序写在同一个 hook:"active" 内，用 out / outCount 存入 vars.<名> 串联。
+   • 显式集合与跨阶尺度：select.from == "units" 包含全场存活者、尸体、友军与自身！选敌必写 where:"candidate.alive && candidate.team != self.team"，无差别排除自身写 where:"candidate.alive && candidate.id != self.id"，选友军写 where:"candidate.alive && candidate.team == self.team"；选格瞬移必过滤可通行地面。词条相对档位距离在模板写 rawRange / rawRadius，在公式写 scale_cells(n)；位移标签 [位移: X] 写 distance:X 与 distanceUnit:"position"。
+4. 正交原语保真不变式（Orthogonal Primitive Fidelity）：
+   • 先尝试用正交原语拆解组合，再考虑放弃：跨装备 mods、被动 rules 与派生主动 skills 共享读写或按层数缩放／消耗的自定义计数，统一注册 durationType:"persistent"、stackMode:"stack" 状态模板并用 self.stacks.<状态ID> 读取（严禁用 self.resource.<池> 读取装备 pools，因其在公式中恒为 null！）；百分比增伤直接写 mods 的 damageMult 或 finalDamageMult（配动态 Expr 公式，严禁捏造固定 damageFlat 代替百分比，也勿把攻击力百分比提升降级为评级偏移）；必中／必暴用状态或载体 mods.flags:["guaranteed_hit","guaranteed_crit"]；低血量阈值斩杀用 damage 的 instantDeath:true；定时状态结束触发的后置惩罚挂在该状态模板自身的 after_status_removed（filter:"event.statusId == status.id && event.reason == 'expired'"）；交互点选直接用 ask（配 aiPolicy）。
+   • 检定边界诚实性：若词条涉及引擎不存在的检定维度（如潜行检定，或进攻方针对特定部位意图的专属加值），将可实现部分落地后，仍无法表达的部分列入 unresolved，严禁把局部细分加值硬塞进无条件 checkBonus 污染所有常规攻击！
+5. 拓扑先建后引与闭合 Schema 不变式（Topology & Schema Closure）：
+   • 同批新建的 /statusTemplates/<id> 与 /skills/<id> 必须排在 patch 数组最前部先 add，后部装备或单位补丁再引用；新建的状态 ID 一旦选定，本批所有 self.stacks.<id>、apply_status、remove_status、has_status 必须逐字符使用同一个 ID（严禁前文建 A 后文写近义名 B），且同一模板 rules 数组内各规则 id 必须互不重复。
+   • 所有宿主模板、rule、statMod 与 opcode 对象均为严格闭合 Schema：对对象属性路径（如 /equipment/<id>/skills、/equipment/<id>/mods、/equipment/<id>/rules）写入完整数组或字段时统一优先用 op:"add"（RFC 6902 中对象键 add 兼具新建与覆盖，避免装备初始无 skills 键时写 replace 或 /skills/- 报路径不存在）；严禁在 rule、mod 或模板内私造 resolves、resolvesNote、comment 等未声明字段！resolves 只能写在顶层 patch[i] 操作对象上。
+</compilation_invariants>
 
 【宿主模板闭合字段与枚举全表】
-所有模板对象均为闭合结构，禁止写入未列出的键；缺键用 add，已有键用 replace：
 • 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
 • 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义装备池 {"resource":"<池ID>", "amount":1…1000000}。
-• 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}（已有装备初始化需数值 cap；装备规则内用 resource 的 local:true 读写本实例池）。
+• 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}（已有装备初始化需数值 cap；装备自身规则内用 resource 的 local:true 读写本实例池，跨技能动态计数请改用常驻叠层状态 self.stacks.<状态ID>）。
 • 通用载体字段（装备、技能、状态模板均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（整数 1…7）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）、pools（装备与技能支持）。
 • 技能模板 /skills/<id>：
   - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
@@ -62,17 +79,23 @@ export const PATCH_RULES = String.raw`【输出目标】
   - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
   - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。
 
-【输出与 RFC 6902 补丁协议】
-• 只输出一个顶层 JSON 对象，结构固定为：
+<std_audit_workflow>
+【五步前置审校工作流（<std_audit>）】
+正式生成 JSON 前，必须先在 <std_audit>...</std_audit> 标签内按以下五步完成极简结构化审校（每条警告一行，不写废话）：
+Step 0 [警告盘点]：按输入原序编号列出本批全部警告 W1..Wn（单位ID | originPath | 效果标题），确认总数一致。
+Step 1 [边界与守恒裁定]：逐条核查战斗域边界（是否属战外货币/跨界漫游/许愿/任务/养成）、面板是否已烘焙，将每条定性为 FULL_PATCH / PARTIAL_PATCH / EXISTING / UNRESOLVED / NARRATIVE。
+Step 2 [作用域与原语映射]：对需写补丁项锁定载体路径、触发钩子与过滤条件（双边钩子必检 attacker.id == self.id 或 target.id == self.id；仅 kind:"weapon" 武器自身词条检 event.weaponTemplateId == item.templateId，防具与饰品严禁写此条件；限定本武器／本技能击杀必用 after_damage 检 !target.alive && event.dealt > 0，若配有斩杀规则则同时匹配 event.weaponTemplateId == item.templateId || event.sourceRuleId == '<斩杀规则ID>'，不在 on_kill 写恒为 null 的 weaponTemplateId/skillId；远程与箭袋必检 !event.melee；主动技附加钩子必检 event.skillId == skill.id；选人必检 candidate.alive 与阵营）；确认跨载体计数统一使用 persistent+stack 状态与 self.stacks.<id>（移除 persistent 常驻状态的所有 remove_status 必须显式写 force:true！消耗固定 K 层须带 force:true 清空后再回填余量），所有表达式函数严格限协议注册列表（空值用三元 ?:，无 coalesce），无双倍回血或双倍主击。
+Step 3 [拓扑写集与收据绑定]：明确锁定本批新建的状态 ID 与技能 ID 符号表（后续所有引用逐字对齐同一 ID），严格按被引用依赖从底向上排列 patch 顺序（1. 基础状态模板 → 引用其他新状态的状态模板，如到期施加 B 状态的状态 A 必须排在 B 之后！ → 2. /skills/<id> → 3. /equipment/<id> 或 /units/<id>），对象属性写入优先用 op:"add"，并为每一条 FULL_PATCH / PARTIAL_PATCH 警告明确指定承载 "resolves":[...] 的目标 patch 项（写入主载体的操作必须显式带 resolves 数组，漏写 resolves 会导致警告无法核销！）；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
+Step 4 [终检门控]：逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围（确认 additivePercent 为小数制如 0.5 而非 50；确认模板顶层 flags 仅写 undispellable / concept_immune，而 guaranteed_hit / guaranteed_crit / preserveLife 等行为标志一律写在 mods[i].flags 内！）；确认 rule/mod 内零私造键、每条已实现警告均已在某个 patch[i].resolves 中显式登记、W1..Wn 100% 覆盖且 narrative 与其他收据严格互斥，最后写出 Coverage: PASS | Schema: PASS（若有任一处不合规，当场修正规划后再闭合标签）。
+</std_audit_workflow>
+
+<tail_anchor>
+【最终输出格式与启动锚点】
+严格按「一个闭合 <std_audit>...</std_audit> 块 + 紧接唯一一个顶层纯 JSON 对象」输出。JSON 顶层结构固定为：
   {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
-  请提供三个顶层数组；整批只有 unresolved 或 narrative 说明时，提交空 patch 数组。如引用先前批次已落地的规则作为证据，必须另附 existing 数组，逐项填写 {unitId,originPath,message,path,value}；带唯一效果名时可用 effectName 替代 message。正文声称“已完成”而 JSON 没有对应 patch.resolves 或 existing 收据，视为未核销，不能用空 patch 代替。不要输出解释、注释、Markdown 代码块、JS 调用或额外包装。
-• 允许 op 枚举：add / replace / remove。允许 path 白名单正则：${normalizationPath}
-  - /equipment/<id>：装备模板；若对应道具实例 /items/<id> 已自带 rules 或 mods，同批同步更新并保留实例独有内容。模板的自定义池只在 /equipment/<id>/pools 或 /skills/<id>/pools 声明；装备规则用 resource + local:true 读写。禁止补丁直接写 /units/<id>/pools 或 /items/<id>/pools，替换整个道具实例时也不得写入或改动池绑定。
-  - /skills/<id>：技能模板或其合法子字段（如 /skills/<id>/damage、/skills/<id>/rules/-）。
-  - /statusTemplates/<id>：自定义状态模板（新英文 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$，不覆盖内置状态名）。
-  - /units/<unitId>/statuses、/units/<unitId>/armor（整数 0…1000000）、/units/<unitId>/skills（完整技能 ID 数组，保留原有项）。
-• 诊断核销：只处理本批警告。同一模板多项警告部分解决时，在 resolves 中逐条列出已实现警告的完整 {unitId, originPath, message}；仍无法表达的部分列入 unresolved，复制原警告 {unitId, originPath, message} 并附简短中文 reason；纯叙事、日常储物、生产制作、商业交易、好感度、战后掉落、非战斗传送等外围内容可列入 narrative（附完整引用与 reason）。影响沙盘行动或回合结算的战斗机制必须单独交代。
-• 禁止直接修改运行时资源池当前值、单位当前 HP/MP/SP、阵营、坐标、先攻队列或日志。先尝试用正交原语拆解组合，再考虑放弃；提交前逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围。`;
+整批仅有 unresolved 或 narrative 时提交 "patch":[]；引用既有标准化成果时另附 "existing":[...]。</std_audit> 闭合后直接以 { 开始输出纯 JSON，严禁使用 Markdown 代码围栏、注释、JS 调用或任何尾部解释文字。
+现在立即从 <std_audit> 开始执行审校并输出最终 JSON：
+</tail_anchor>`;
 const json = value => JSON.stringify(value, null, 2);
 
 let lastCustomId = 0;

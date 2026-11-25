@@ -10,7 +10,7 @@ import { applyAction, currentUnit, refreshOpeningInitiative } from '../src/core/
 import { validateState } from '../src/api/validation.js';
 import { dispatchVMHook } from '../src/core/vm-runtime.js';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { applyPatch, extractJsonBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
+import { applyPatch, extractJsonBlocks, parseAIResponse, stripReasoningBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
 
 test('每个 VM 指令的用法说明进入实际组装的默认助手消息', () => {
   const messages = assembleMessages(DEFAULT_SLOTS, {});
@@ -492,3 +492,29 @@ test('会话增删改查、消息追加与持久化保持隔离', () => {
   assert.equal(store.data.sessions.length, 1);
   assert.deepEqual(store.active().messages, []);
 });
+
+test('标准化高阶契约标签、关键不变式与 std_audit 自审块剥离兼容', () => {
+  const messages = assembleMessages(DEFAULT_SLOTS, { warningsText: '1. [unitId="p1", originPath="/equipment/e1"] 测试警告', stateJson: '{}' });
+  const joined = messages.map(m => m.content).join('\n\n');
+  for (const tag of ['<role_core>', '<disposition_ledger>', '<output_contract>', '<compilation_invariants>', '<std_audit_workflow>', '<tail_anchor>']) {
+    assert.ok(joined.includes(tag), `缺少契约标签 ${tag}`);
+  }
+  assert.match(joined, /additivePercent.*小数制/);
+  assert.match(joined, /persistent.*force:true/);
+  assert.match(joined, /self\.stacks\./);
+  assert.match(joined, /guaranteed_hit.*guaranteed_crit/);
+  assert.match(joined, /命运点|FP/);
+  assert.match(joined, /二次叠加/);
+
+  const rawReply = `<std_audit>
+Step 0: W1 | p1 | /equipment/e1 | 测试警告
+Step 2: 伪代码草稿 {"patch":[{"op":"add","path":"/invalid/draft","value":123}]}
+Step 4: Coverage: PASS | Schema: PASS
+</std_audit>
+{"patch":[{"op":"add","path":"/equipment/e1/mods","value":[{"stat":"dodge","flat":2}],"resolves":[{"unitId":"p1","originPath":"/equipment/e1","message":"测试警告"}]}],"unresolved":[],"narrative":[]}`;
+  assert.ok(!stripReasoningBlocks(rawReply).includes('/invalid/draft'));
+  const parsed = parseAIResponse(rawReply);
+  assert.equal(parsed.patch.length, 1);
+  assert.equal(parsed.patch[0].path, '/equipment/e1/mods');
+});
+
