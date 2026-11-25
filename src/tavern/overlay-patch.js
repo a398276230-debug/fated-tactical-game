@@ -146,7 +146,12 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
         !normalizationPath.test(operation.path) || (operation.op !== 'remove' && !own(operation, 'value')) ||
         (unitId && allowedUnitIds && !allowedUnitIds.includes(unitId))) {
       rejected.push({ index, op: operation, path: typeof operation?.path === 'string' ? operation.path : '', reason: '路径或操作不在允许白名单内' });
-    } else candidates.push({ index, op: operation, lastError: '' });
+    } else {
+      const zoneId = operation.path.match(/^\/zones\/([^/]+)\//)?.[1];
+      if (zoneId && !Object.hasOwn(liveState?.zones ?? {}, zoneId)) {
+        rejected.push({ index, op: operation, path: operation.path, reason: '目标战场区域不存在（标准化禁止凭空新建静态 /zones/<id>）' });
+      } else candidates.push({ index, op: operation, lastError: '' });
+    }
   }
   // Only move creations of absent parents ahead of children; never reorder
   // replacements or array operations relative to each other.
@@ -213,7 +218,7 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
 export function formatRejectedItem(item, state = {}) {
   const [, table, id] = String(item.path || '').split('/');
   const entity = item.op?.value?.name || state?.[table]?.[id]?.name || id || '未知条目';
-  return `[未应用] ${table === 'skills' ? '技能' : table === 'equipment' ? '装备' : '条目'}「${entity}」(${item.path || '无路径'})：${item.reason || '补丁校验失败'}`;
+  return `[未应用] ${table === 'skills' ? '技能' : table === 'equipment' ? '装备' : table === 'zones' ? '战场效果' : '条目'}「${entity}」(${item.path || '无路径'})：${item.reason || '补丁校验失败'}`;
 }
 export { normalizationPath };
 function patchValue(value, table) {

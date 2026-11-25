@@ -1304,4 +1304,57 @@ test('真实 Chrome：黑灵灵魂计数跨两场 0→3→5，MVU 写回幂等�
   assert.equal(await run('window.mvuWrites.length'), 3);
   assert.deepEqual({ pageErrors, consoleErrors }, { pageErrors:[], consoleErrors:[] });
   t.diagnostic('黑灵两战完成 0→3→5；重复写回未增加 host write，Swipe 错误未写入，重开回滚次战至 3，战报交付不含 UpdateVariable');
+
+  await t.test('战场区域独立编译、重置、跨楼豁免和撤回', async () => {
+    const scene = (battleId, flavorId, mechanical = false) => `<!-- endingSheet: 并输出<battle_init>块。 -->
+<think>讨论<battle_init>语法</think>
+${battleFixture(battleId).replace('</battle_init>', `${mechanical ? '效果|fog|红|雾障：区域内闪避降低4点|全场(0-1)\n' : ''}效果|${flavorId}|全体|海风：空气微咸|全场\n</battle_init>`)}`;
+    const nextFloor = async (id, battleId, flavorId, mechanical = false) => {
+      await run(`hostMessages.push({message_id:${id},swipe_id:0,role:'assistant',message:${JSON.stringify(scene(battleId, flavorId, mechanical))}});
+        mvuEnvelopes[${id}]={swipe_id:0,stat_data:${JSON.stringify(statData(id - 13))}};
+        void window.__fatedTacticalTavern.open()`);
+      await until(() => run(`window.__fatedTacticalTavern.getState()?.scenarioId === ${JSON.stringify(battleId)}`), '环境战场加载');
+      await click('[data-tab="instances"]');
+    };
+    await run(`window.sceneRequests=[]; window.generateRaw=async config=>{
+      sceneRequests.push(config.ordered_prompts);
+      const warnings=window.__fatedTacticalTavern.getState().warnings.filter(w=>w.scope==='scene' && config.ordered_prompts.some(p=>p.content.includes(JSON.stringify(w.message))));
+      const fog=warnings.find(w=>w.originPath==='/zones/fog');
+      return JSON.stringify({patch:fog?[{op:'replace',path:'/zones/fog/mods',resolves:[{unitId:null,originPath:fog.originPath,effectName:'雾障'}],value:[{stat:'dodge',flat:-4,when:"self.team == 'red'"}]}]:[],
+        narrative:warnings.filter(w=>w!==fog).map(w=>({unitId:null,originPath:w.originPath,message:w.message,reason:'纯背景风味'}))});
+    }`);
+    await nextFloor(14, 'scene-one', 'flavor1', true);
+    const fog = '.fated-battle-zone-item[data-zone-id="fog"]';
+    const flavor = id => `.fated-battle-zone-item[data-zone-id="${id}"]`;
+    const zoneRow = selector => run(`${get(selector)}?.textContent ?? ''`);
+    await until(async () => (await zoneRow(fog)).includes('已编译') && (await zoneRow(flavor('flavor1'))).includes('已豁免'), '仅环境自动编译及 AI 豁免').catch(async error => {
+      throw new Error(`${error.message}: ${await zoneRow(fog)} / ${await zoneRow(flavor('flavor1'))} / ${await run('sceneRequests.length')} 请求 / ${await run(`document.querySelector('.fated-toast')?.textContent`)} / ${JSON.stringify(consoleErrors)}`);
+    });
+    assert.equal(await run(`${get('[data-normalize]')}.disabled`), true, await run(`JSON.stringify(window.__fatedTacticalTavern.getState().warnings)`));
+    assert.equal(await run('sceneRequests.length'), 1);
+    assert.match(await run(`JSON.stringify(sceneRequests[0])`), /rawZones/);
+    await click('[data-tab="sandbox"]');
+    await click('#board [data-unit-id="e1"]');
+    assert.match(await run(`${get('#unit-card')}.textContent`), /所处区域.*雾障（常驻）/);
+    await click('[data-tab="instances"]');
+    await run(`${get('[data-zone-discard="fog"]')}.click(); [...${get('[data-page="instances"]')}.querySelectorAll('button')].find(b=>b.textContent==='取消全选').click()`);
+    assert.equal(await run(`${get('[data-normalize]')}.disabled`), false, '取消全选仍可编译待处理区域');
+    await run(`${get('.fated-battle-card [data-warning-action="ignore"]')}.click()`);
+    assert.match(await zoneRow(fog), /已豁免/);
+    assert.equal(await run(`${get('[data-normalize]')}.disabled`), true);
+    await run(`[...document.querySelectorAll('.fated-battle-card [data-warning-action="restore"]')].find(b=>b.closest('li').textContent.includes('雾障')).click()`);
+    await run(`${get('[data-normalize]')}.click()`);
+    await until(async () => (await zoneRow(fog)).includes('已编译') && await run(`${get('[data-normalize]')}.disabled`), '零角色手动重编译区域');
+    await nextFloor(15, 'scene-two', 'flavor2');
+    assert.match(await zoneRow(flavor('flavor2')), /已豁免/, '不同楼层与 ID、不同 MVU 不影响 AI 豁免');
+    assert.equal(await run('sceneRequests.length'), 2);
+    await run(`${get('.fated-battle-card [data-warning-action="restore"]')}.click()`);
+    assert.match(await zoneRow(flavor('flavor2')), /待标准化/);
+    // Rehydrate on another floor, outside the automatic first-entry job, to
+    // check that the new tombstone suppresses the older receipt across floors.
+    await run(`hostMessages[hostMessages.length-1].message=${JSON.stringify(scene('scene-two', 'flavor3'))};
+      window.__fatedTacticalTavern.scan({rehydrate:true})`);
+    await until(async () => (await zoneRow(flavor('flavor3'))).includes('待标准化'), '撤回墓碑保留');
+    assert.deepEqual({ pageErrors, consoleErrors }, { pageErrors:[], consoleErrors:[] });
+  });
 });

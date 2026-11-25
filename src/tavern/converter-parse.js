@@ -397,7 +397,7 @@ function statusTurns(value, fallback) {
   return bound(turns, 1, 100, fallback);
 }
 
-export const WARNING_SCOPES = Object.freeze(['effect', 'status', 'resource', 'state', 'terrain', 'field']);
+export const WARNING_SCOPES = Object.freeze(['effect', 'status', 'resource', 'state', 'terrain', 'field', 'scene']);
 function warningSink(warnings, unitId, source, scope, originPath) {
   if (!WARNING_SCOPES.includes(scope)) throw new TypeError(`未知诊断 scope：${scope}`);
   return { push: (message, metadata) => warnings.push({ message, unitId, source, scope, ...(originPath && {originPath}), ...metadata }) };

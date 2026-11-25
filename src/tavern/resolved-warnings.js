@@ -1,4 +1,9 @@
-import { activeExemption } from './exemption-ledger.js';
+import { activeExemption, semanticExemptionKey } from './exemption-ledger.js';
+
+export const isSceneZoneWarning = warning =>
+  warning?.unitId === null && /^\/zones\/[^/]+(?:\/|$)/.test(warning.originPath ?? '');
+export const hasPendingSceneWarnings = (warnings = []) =>
+  warnings.some(w => isSceneZoneWarning(w) && w.kind !== 'auto_adjusted');
 
 // Receipts identify an individual conversion diagnostic, not every warning on a unit.
 export const warningKey = w => JSON.stringify([w.source, w.scope, w.originPath ?? '', w.message]);
@@ -84,6 +89,17 @@ export function readUnresolvedDiagnostics(value = [], sent) {
   return { matched, invalid };
 }
 
+export function activeWarningExemption(warning, exemptions, sourceFor) {
+  const source = sourceFor(warning.unitId, warningEntryKey(warning));
+  const semanticKey = semanticExemptionKey(warning);
+  // Attach the current semantic identity only to exact legacy receipts, so
+  // the ledger can arbitrate them together with any newer tombstone.
+  const records = exemptions.flatMap(entry => entry.semanticKey ? [entry]
+    : source && entry.unitId === warning.unitId && entry.key === warningKey(warning) && entry.source === source
+      ? [{ ...entry, semanticKey }] : []);
+  return activeExemption(warning, records, () => source);
+}
+
 export function classifyWarnings(warnings, { notes = {}, exemptions = [], sourceFor, fingerprint = () => undefined }) {
   const groups = { autoAdjusted: [], pending: [], approximated: [], needsAttention: [], nonCombat: [] };
   for (const warning of warnings) {
@@ -93,8 +109,7 @@ export function classifyWarnings(warnings, { notes = {}, exemptions = [], source
     }
     const key = warningKey(warning);
     const source = sourceFor(warning.unitId, warningEntryKey(warning));
-    const exempt = activeExemption(warning, exemptions, sourceFor)
-      ?? (source && exemptions.find(entry => entry.unitId === warning.unitId && entry.key === key && entry.source === source));
+    const exempt = activeWarningExemption(warning, exemptions, () => source);
     const note = notes[warning.unitId ?? '']?.[key];
     if (exempt) groups.nonCombat.push({ ...exempt, warning });
     else if (source && note?.source === source && note.reason && !note.evidence?.length) groups.needsAttention.push({ ...note, warning });
@@ -137,7 +152,7 @@ export function existingEffectReceipts(refs = [], sent, baseline, before, curren
   return refs.map(ref => {
     const matches = sent.filter(w => identifiesWarning(ref, w));
     const origin = matches[0]?.originPath;
-    if (matches.length !== 1 || !/^\/(equipment|skills|items)\/[\w-]+$/.test(origin ?? '')
+    if (matches.length !== 1 || !/^\/(equipment|skills|items|zones)\/[\w-]+$/.test(origin ?? '')
       || typeof ref.path !== 'string' || !ref.path.startsWith(`${origin}/`)
       || !/^(rules|mods)\/(0|[1-9]\d*)$/.test(ref.path.slice(origin.length + 1))) {
       throw new Error('existing 需要唯一的本批诊断及其模板内具体 rules/N 或 mods/N 路径');
@@ -154,13 +169,16 @@ export function existingEffectReceipts(refs = [], sent, baseline, before, curren
 export function resolvedDiagnostics(sent, records, patch, notes = [], { narrative = [] } = {}) {
   const pending = new Set([...notes, ...narrative].map(({ warning }) => warning));
   return sent.filter(warning => {
-    if (warning.unitId == null || !Object.hasOwn(records, warning.unitId) || pending.has(warning)) return false;
+    if (pending.has(warning)) return false;
+    const scene = isSceneZoneWarning(warning);
+    if (warning.unitId === null ? !scene : !Object.hasOwn(records, warning.unitId)) return false;
     return patch.some(op => {
       if (!Array.isArray(op.resolves)) return false;
       const owner = op.path.match(/^\/units\/([^/]+)/)?.[1];
       if (owner && owner !== warning.unitId) return false;
       const path = op.path.split('/').slice(0, 3).join('/');
       const origin = warning.originPath?.split('/').slice(0, 3).join('/');
+      if (scene ? path !== origin : path.startsWith('/zones/')) return false;
       if (origin && path.split('/')[1] === origin.split('/')[1] && path !== origin) return false;
       return op.resolves.some(receipt => identifiesWarning(receipt, warning)
         && sent.filter(candidate => identifiesWarning(receipt, candidate)).length === 1);
@@ -180,7 +198,7 @@ export function activeWarningReceipts(batches) {
 
 export function warningEntryKey(warning) {
   const path = warning?.originPath ?? '';
-  const match = path.match(/^\/(equipment|skills|items|statusTemplates)\/([^/]+)/);
+  const match = path.match(/^\/(equipment|skills|items|statusTemplates|zones)\/([^/]+)/);
   if (match) return `${match[1]}:${match[2]}`;
   return 'unit';
 }
@@ -193,7 +211,7 @@ export function changedEntryKeys(snapshot, current) {
 }
 
 export function normalizationCandidates(characters, snapshots, warnings) {
-  const pending = new Set(warnings.filter(w => w.kind !== 'auto_adjusted').map(w => w.unitId));
+  const pending = new Set(warnings.filter(w => w.kind !== 'auto_adjusted' && !isSceneZoneWarning(w)).map(w => w.unitId));
   return Object.keys(characters).filter(id => pending.has(id) || pending.has(null));
 }
 

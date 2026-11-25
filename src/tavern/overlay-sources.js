@@ -1,5 +1,5 @@
 import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
-import { battleKeyFor, extractTag, extractTags, findBattleJSON, messageContent, messageMeta, parseLooseYaml } from './overlay-ai.js';
+import { battleKeyFor, extractTag, extractTags, findBattleJSON, messageContent, messageMeta, parseLooseYaml, stripMetaAndReasoning } from './overlay-ai.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
@@ -168,12 +168,11 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
   const eligible = list.filter(message => message?.role !== 'user' && !message?.is_user && message?.role !== 'system' && !message?.is_system &&
     (preferredMessageId == null || messageMeta(message).messageId === String(preferredMessageId)));
   const tags = ['battle_init', 'battle_in', '战术沙盘'];
-  const decodeTags = value => value.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"');
-  const battleSource = eligible.findLast(message => extractTag(decodeTags(messageContent(message)), tags));
+  const cleanMessage = message => stripMetaAndReasoning(messageContent(message)
+    .replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"'));
+  const battleSource = eligible.findLast(message => extractTag(cleanMessage(message), tags));
   const sourceIndex = battleSource ? list.indexOf(battleSource) : list.length - 1;
-  // Opening sources end at the entry floor, even when later narration is visible.
-  const joined = list.slice(0, sourceIndex + 1).map(messageContent).join('\n');
-  const allText = decodeTags(messageContent(battleSource ?? eligible.at(-1)));
+  const allText = cleanMessage(battleSource ?? eligible.at(-1));
   let battleRaw = extractTag(allText, tags);
   // Some older prompt routes emit a marker without a closing marker, e.g.
   // `{battle_in}: {"participants": [...]}`. Keep this compatibility path
@@ -194,7 +193,8 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
     const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
     if (recovered) { battleInit = recovered; battleRaw = JSON.stringify(recovered, null, 2); }
   }
-  const charBlocks = extractTags(joined, 'char_info').reverse();
+  // Parse each opening-source message independently so no tag spans chat floors.
+  const charBlocks = list.slice(0, sourceIndex + 1).flatMap(message => extractTags(cleanMessage(message), 'char_info')).reverse();
   const charInfo = charBlocks.flatMap(raw => {
     const value = parseJSON(raw, null);
     return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];

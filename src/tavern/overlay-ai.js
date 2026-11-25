@@ -156,18 +156,30 @@ export function battleKeyFor(chat, message, battle) {
   const explicit = battle?.battleId ?? battle?.id ?? 'unnamed';
   return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit)].join('__');
 }
+function tagBlocks(value, name, legacy = false) {
+  const xml = `<(/?)${name}(?=[\\s>])[^>]*>`;
+  const tokens = new RegExp(legacy ? `${xml}|\\{(/?)${name}\\s*\\}` : xml, 'gi');
+  const closed = [];
+  let open;
+  for (const token of value.matchAll(tokens)) {
+    if (token[1] || token[2]) {
+      if (open) closed.push({ ...open, content: value.slice(open.start, token.index).trim() });
+      open = undefined;
+    } else {
+      // A new opening marker supersedes the previous unclosed marker.
+      open = { index: token.index, start: token.index + token[0].length };
+    }
+  }
+  return { closed, open };
+}
 export function extractTag(source, names) {
   const value = text(source);
-  for (const name of names) {
-    // The legacy world-book routes use {battle_in}/{战术沙盘}, while current
-    // prompts use XML. Accept both forms without interpreting arbitrary HTML.
-    const re = new RegExp(`(?:<${name}[^>]*>|\\{${name}\\s*\\})([\\s\\S]*?)(?:<\\/${name}>|\\{\\/${name}\\s*\\})`, 'i');
-    const match = value.match(re);
-    if (match) return match[1].trim();
-    const open = new RegExp(`(?:<${name}[^>]*>|\\{${name}\\s*\\})([\\s\\S]*)$`, 'i').exec(value);
-    if (open) return open[1].replace(new RegExp(`(?:<\\/${name}>|\\{\\/${name}\\s*\\})[\\s\\S]*$`, 'i'), '').trim();
-  }
-  return '';
+  const matches = names.map(name => tagBlocks(value, name, true));
+  const last = blocks => blocks.reduce((best, block) => block && (!best || block.index > best.index) ? block : best, undefined);
+  const closed = last(matches.map(match => match.closed.at(-1)));
+  if (closed) return closed.content;
+  const open = last(matches.map(match => match.open));
+  return open ? value.slice(open.start).trim() : '';
 }
 function parseTaggedJSON(source, names) {
   const raw = extractTag(source, names);
@@ -175,10 +187,7 @@ function parseTaggedJSON(source, names) {
   return parseJSON(raw, parseJSON(raw.replace(/^```(?:json)?\s*|\s*```$/gi, '').trim(), null));
 }
 export function extractTags(source, name) {
-  const value = text(source), result = [];
-  const re = new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, 'gi');
-  for (const match of value.matchAll(re)) result.push(match[1].trim());
-  return result;
+  return tagBlocks(stripMetaAndReasoning(source), name).closed.map(block => block.content);
 }
 export function parseLooseYaml(value) {
   // Keep a local fallback for standalone builds; the converter's safe YAML
@@ -210,6 +219,10 @@ const REASONING_BLOCK_RE = /<(think|thinking|thought|analysis|std_audit)\b[^>]*>
 const UNCLOSED_REASONING_RE = /<(?:think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*$/i;
 export function stripReasoningBlocks(value) {
   return text(value).replace(REASONING_BLOCK_RE, '').replace(UNCLOSED_REASONING_RE, '').replace(/<\/(?:think|thinking|thought|analysis|std_audit)\s*>/gi, '').trim();
+}
+
+export function stripMetaAndReasoning(value) {
+  return stripReasoningBlocks(value).replace(/<!--[\s\S]*?(?:-->|$)/g, '').trim();
 }
 
 export function extractJsonBlocks(value, { withRanges = false } = {}) {

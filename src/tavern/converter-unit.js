@@ -495,6 +495,65 @@ function terrainState(battle, state, warnings) {
   return state;
 }
 
+function normalizeSceneArea(raw, grid) {
+  if (raw === undefined) return { shape: 'board' };
+  if (!object(raw) || !['board', 'rect'].includes(raw.shape)) return null;
+  const area = { shape: raw.shape };
+  if (area.shape === 'rect') {
+    if (!object(raw.rect)) return null;
+    const { x1, y1, x2, y2 } = raw.rect;
+    if (![x1, y1, x2, y2].every(Number.isInteger) || x1 < 0 || y1 < 0 || x1 > x2 || y1 > y2
+      || y2 >= grid.length || x2 >= (grid[y2]?.length ?? 0)) return null;
+    area.rect = { x1, y1, x2, y2 };
+  }
+  for (const key of ['z1', 'z2']) {
+    if (!own(raw, key)) continue;
+    if (!Number.isInteger(raw[key]) || raw[key] < -4 || raw[key] > 20) return null;
+    area[key] = raw[key];
+  }
+  if (area.z1 > area.z2) return null;
+  return area;
+}
+
+function sceneZonesState(battle, state, warnings) {
+  const zoneEntries = {};
+  if (!Array.isArray(battle.effects)) return zoneEntries;
+  const used = new Set(Object.keys(state.zones).map(id => id.toLowerCase()));
+  const adjusted = warningSink(warnings, null, 'battle_init', 'terrain');
+  if (battle.effects.length > 16) adjusted.push('最多 16 条 效果 记录，已忽略超出部分', { kind: 'auto_adjusted' });
+  for (const [index, raw] of battle.effects.slice(0, 16).entries()) {
+    if (!object(raw)) {
+      adjusted.push(`忽略无效的第 ${index + 1} 条战场效果`, { kind: 'auto_adjusted' });
+      continue;
+    }
+    const nameText = typeof raw.name === 'string' ? raw.name.trim() : '';
+    const area = normalizeSceneArea(own(raw, 'area') ? raw.area : undefined, state.grid);
+    if (!area) {
+      adjusted.push(`忽略范围无效的战场效果「${nameText || index + 1}」`, { kind: 'auto_adjusted' });
+      continue;
+    }
+    const base = validId(raw.id) ? raw.id : deterministicId(nameText || 'zone', 'zone');
+    let id = base;
+    for (let n = 2; used.has(id.toLowerCase()); n++) {
+      const suffix = `_${n}`;
+      id = `${base.slice(0, 64 - suffix.length)}${suffix}`;
+    }
+    used.add(id.toLowerCase());
+    const name = (nameText || id).slice(0, 100);
+    const description = ((typeof raw.description === 'string' && raw.description.trim()) || name).slice(0, 500);
+    const targetTeam = ['blue', 'red'].includes(raw.targetTeam) ? raw.targetTeam : null;
+    state.zones[id] = { id, name, area, follow: false, persistent: true, remainingTurns: 1,
+      sourceId: null, team: null, tags: ['scene_effect'], mods: [], rules: [] };
+    zoneEntries[id] = { id, name, targetTeam, description, area: clone(area) };
+    const teamLabel = targetTeam === null ? '全体' : `仅${targetTeam === 'blue' ? '蓝' : '红'}方(self.team == '${targetTeam}')`;
+    const zText = own(area, 'z1') || own(area, 'z2') ? `(${area.z1 ?? -4}-${area.z2 ?? 20})` : '';
+    const horizontal = area.shape === 'board' ? '全场' : `(${area.rect.x1}-${area.rect.x2})(${area.rect.y1}-${area.rect.y2})`;
+    warningSink(warnings, null, 'battle_init', 'scene', `/zones/${id}`).push(
+      `战场效果待标准化「${name}」[作用阵营:${teamLabel}][范围:${horizontal}${zText}]：${description}`);
+  }
+  return zoneEntries;
+}
+
 function placeUnits(state, warnings) {
   const placed = { ...state, units: {} };
   const { width, height } = state.scale;
@@ -608,6 +667,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   }
   const adjustmentSink = (source, scope) => ({ push: message => sink(null, source, scope).push(message, { kind: 'auto_adjusted' }) });
   terrainState(battle, state, adjustmentSink('terrain', 'terrain'));
+  const zoneEntries = sceneZonesState(battle, state, warnings);
   placeUnits(state, adjustmentSink('battle_init', 'state'));
   let valid = true;
   try { validateState(state); } catch (error) {
@@ -619,7 +679,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   const roster = Object.values(units).map(unit => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
   // Keep conversion diagnostics out of serialized engine state (which has a strict schema).
   Object.defineProperty(state, 'warnings', { value: warnings });
-  return { state, roster, warnings, sourceMap, entrySources, battleInit: battle, seed };
+  return { state, roster, warnings, sourceMap, entrySources, zoneEntries, battleInit: battle, seed };
 }
 
 export function warningsForUnit(warnings = [], unitIds, includeGlobal = true) {

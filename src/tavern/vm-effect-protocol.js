@@ -53,7 +53,7 @@ rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下�
   1. unit / item：self 为持有者（装备规则与修饰内 item.id / item.templateId 指向当前装备实例与模板），持有期间（含主副手、防具饰品及背包备用武器 bagWeapons）mods 与非 active 规则全局常驻监听全场所有单位事件！因此：① 全场广播钩子主语强制隔离：在进攻／命中／击杀钩子（before_check / after_hit / after_damage / on_kill 等）中，“持有者发起”必写 attacker.id == self.id；在**受击、结算拦截、状态拦截及濒死／死亡钩子（before_check / before_commit / before_status / after_damage / on_lethal_p1 / on_lethal_p2 / on_death）**中，“持有者自身受击／濒死／阵亡”**必须显式写 filter:"target.id == self.id"**（绝不可留 filter:null，否则场上任何敌友濒死或受击都会误触发持有者自身被动！）；② 仅在**武器模板（kind:"weapon"）**限定“使用本把武器普攻／命中／造成伤害”时，才写 event.weaponTemplateId == item.templateId（防具、头饰、靴子、箭袋、饰品等非武器装备的 item.templateId 永远不等于当前进攻武器 event.weaponTemplateId，严禁在非武器装备上写 event.weaponTemplateId == item.templateId！）；③ 注意致死帧（on_lethal_p1/p2、on_death、on_kill、on_ally_death）不携带 event.weaponTemplateId 与 event.skillId（二者在致死帧中恒为 null！）：不限武器／技能的角色全局击杀才用 on_kill，而**限定特定武器或特定技能击杀触发**必须在 after_damage 中写 attacker.id == self.id && !target.alive && event.dealt > 0 并配来源过滤（武器含斩杀补刀规则时写 (event.weaponTemplateId == item.templateId || event.sourceRuleId == '<本斩杀规则ID>')，技能写 event.skillId == skill.id）；④ 仅对远程攻击（含防具／箭袋／饰品上的远程加成与命中附效）生效必写 !event.melee（近战为 true、远程为 false，无 weapon.ranged 字段）。
   2. skill：self 为持有者，skill.id 为本技能自身 ID。hook:"active" 仅在主动施放本技能时按序执行；其余所有非 active 钩子与 mods 在单位持有该技能期间全局常驻监听全场！若某条非 active 规则仅在施放本技能时生效，filter 必须包含 event.skillId == skill.id（普通行动／命中／伤害事件一律读 event.skillId，勿用仅属召唤物顶替事件的 event.sourceSkillId）。单次主动施放内的顺序因果链（如造成伤害后按实扣量回血／回能／二段判定）应直接写在 hook:"active" 内用 out 变量串联，无需拆成常驻事件钩子。
   3. status：self 为状态携带者，source 为施加者，status 为当前状态实例。
-  4. zone：区域自身可挂 tags / vars / mods / rules；在区域内的单位钩子（如 turn_start）中 self 为处于区域内的单位，source 为区域创建者；其他规则可用 in_zone(unit, tagOrId) 查询。
+  4. zone：区域自身可挂 tags / vars / mods / rules；对处于 zone.area（含可选 z1..z2 海拔层）内的存活单位生效，单位级钩子（如 turn_start / turn_end / after_move / before_check）与 mods.when 中 self 恒为处于区域内的受影响单位；注意初始战场环境区域（sourceId 为 null）无创建者单位，此时 source 会回退为 self 或事件源，故初始战场区域限定阵营**必须写字面量比较 self.team == 'blue' 或 self.team == 'red'，绝对禁止写 self.team != source.team**（仅由技能动态 spawn 且有施法者的区域才可读 source.team）；在区域内监听受击／结算拦截（before_commit / after_damage / before_status）仍须配 target.id == self.id 以锁定受影响者正是该区域内单位；其他规则可用 in_zone(unit, tagOrId) 查询。
 • shareRulesTo 将作用域共享给选择器得到的单位。使用纯选择器，pick 只接受 all、{first:N} 或 {nearest:N}，不接受 random。
 • 同一载体内规则 ID 唯一。规则按 priority 从高到低执行，program 按数组顺序执行；filter 求值为 true 才进入规则。
 
@@ -67,7 +67,7 @@ before_target.redirectTarget 将整个目标列表覆写为单一实体，范围
 清除敌方区域时 where 可写 "zone.team != null && zone.team != self.team"（zone.team / candidate.team 读创建阵营，zone.sourceId / candidate.sourceId 读创建者 ID）。spawn 的 spec 由 entityKind 决定；unit 的 templateId/copyOf/spawnPanel 至多选一，均省略时按施术者预算自动生成面板；tier、count、remainingTurns、area.radius 支持数值表达式；terrain 至少含 kind 或 height，填 mode 时必填 height：
 ${spawnSpecs.join('\n')}
 召唤物 sourceSkillId 由引擎只读记录生成它的技能 ID（含装备虚拟技能 equip:<实例ID>:<规则ID>），可通过 self/target/candidate/vars.<实体>.sourceSkillId 读取。
-zoneArea：${describe(defs.spawn_zone.properties.area)}。single 仅中心格；rect 必填 rect 对象；cells 必填 cells 数组。
+zoneArea：${describe(defs.spawn_zone.properties.area)}。single 仅中心格；rect 必填 rect 对象；cells 必填 cells 数组；z1/z2 可选限定三维海拔闭区间（地面z + 离地altitude，self.z 亦可读单位海拔）。
 
 【表达式与选择器】
 Expr 为 JSON 数字、布尔值或安全表达式字符串。字符串字面量支持单双引号，空值用 null，支持 + - !、算术、比较、&&、||、?: 三元与括号。严格使用注册变量与函数签名，无数组字面量或任意属性路径。

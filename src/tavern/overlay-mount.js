@@ -1,5 +1,6 @@
-import { classifyWarnings, diagnosticText, diagnosticTitle, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
+import { classifyWarnings, diagnosticText, diagnosticTitle, remainingDiagnostics, normalizationCandidates, isSceneZoneWarning, hasPendingSceneWarnings, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
+import { semanticExemptionKey } from './exemption-ledger.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationPath, planNormalizationBatches, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
@@ -20,7 +21,7 @@ import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
 import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
 import { acceptNormalizationResponse, rejectedWarning, repairWarnings, runNormalizationRepair } from './normalization-commit.js';
-import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey } from './overlay-ai.js';
+import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey, stripMetaAndReasoning } from './overlay-ai.js';
 import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch } from './overlay-patch.js';
 import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
@@ -191,10 +192,18 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
   on(retry, 'click', () => retryAI?.());
   on(dismiss, 'click', () => { toast.hidden = true; });
   const warningDisplay = warning => warning.userSummary || diagnosticText(warning.message);
+  function exemptionRecords(key, warnings = []) {
+    const local = config.narrativeExemptions[key] ?? [];
+    if (!key || !warnings.some(isSceneZoneWarning)) return local;
+    const prefix = `${safeKey(chatId(host))}__`;
+    return [...local, ...Object.entries(config.narrativeExemptions)
+      .filter(([other]) => other !== key && other.startsWith(prefix))
+      .flatMap(([, receipts]) => receipts.filter(isSceneZoneWarning))];
+  }
   function warningGroups(warnings = sources.warnings ?? []) {
     const live = liveState();
     return classifyWarnings(warnings, {
-      notes: config.unresolvedNotes[activeBattleKey], exemptions: config.narrativeExemptions[activeBattleKey],
+      notes: config.unresolvedNotes[activeBattleKey], exemptions: exemptionRecords(activeBattleKey, warnings),
       sourceFor: narrativeSourceFor(characters), fingerprint: path => fingerprintAt(live, path),
     });
   }
@@ -203,16 +212,23 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     syncSettings();
     const battle = activeBattleKey;
     const key = warningKey(warning), { unitId } = warning;
-    const receipts = (config.narrativeExemptions[battle] ?? []).filter(entry => entry.key !== key || entry.unitId !== unitId);
+    const scene = isSceneZoneWarning(warning);
+    if (unitId === null && !scene) return;
+    const semanticKey = scene ? semanticExemptionKey(warning) : undefined;
+    const receipts = (config.narrativeExemptions[battle] ?? []).filter(entry =>
+      (entry.key !== key || entry.unitId !== unitId) && (!scene || entry.semanticKey !== semanticKey));
     const notes = { ...config.unresolvedNotes[battle] };
     const bucket = unitId ?? '';
     notes[bucket] = { ...notes[bucket] };
     delete notes[bucket][key];
     if (!Object.keys(notes[bucket]).length) delete notes[bucket];
-    if (ignore) {
+    if (ignore || scene) {
       const source = narrativeSourceFor(characters)(unitId, warningEntryKey(warning));
       if (!source) return;
-      receipts.push({ unitId, key, source, reason: '玩家已设为非战斗忽略', dismissed: true });
+      const reason = ignore ? '玩家已设为非战斗忽略' : '玩家已恢复为待编译';
+      receipts.push(scene ? { unitId, key, source, reason, semanticKey, originPath: warning.originPath,
+        origin: 'manual', status: ignore ? 'active' : 'revoked', updatedAt: Date.now() }
+        : { unitId, key, source, reason, dismissed: true });
     }
     persistSettings({ narrativeExemptions: { ...config.narrativeExemptions, [battle]: receipts },
       unresolvedNotes: { ...config.unresolvedNotes, [battle]: notes } });
@@ -245,7 +261,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
           on(button, 'click', handler);
           item.append(' ', button);
         };
-        if (kind === 'needsAttention') action('ignore', '设为非战斗忽略', () => updateWarningExemption(warning, true));
+        if (kind === 'needsAttention' || kind === 'pending' && isSceneZoneWarning(warning)) action('ignore', '设为非战斗忽略', () => updateWarningExemption(warning, true));
         if (kind === 'needsAttention' || kind === 'approximated') action('supplement', '去辅助 AI 补充', () => openWarningComposer(warning, row.reason));
         if (kind === 'nonCombat') action('restore', '恢复为待编译', () => updateWarningExemption(warning, false));
         list.append(item);
@@ -536,6 +552,37 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     }
   }
 
+  function appendBattleZones(card, groups, zones) {
+    const entries = Object.values(sources.zoneEntries ?? {});
+    if (!entries.length) return;
+    const list = el(doc, 'ul', { class: 'fated-battle-zones' });
+    for (const entry of entries) {
+      const { id, name, area, description, targetTeam } = entry;
+      const zone = zones[id];
+      const team = targetTeam === 'red' ? '仅红方' : targetTeam === 'blue' ? '仅蓝方' : '全体';
+      const { rect, z1, z2 } = area;
+      const horizontal = area.shape === 'board' ? '全场' : `(${rect.x1}-${rect.x2})(${rect.y1}-${rect.y2})`;
+      const range = `${horizontal}${z1 !== undefined || z2 !== undefined ? `(${z1 ?? -4}-${z2 ?? 20})` : ''}`;
+      const row = el(doc, 'li', { class: 'fated-battle-zone-item', 'data-zone-id': id });
+      row.append(`[${team}] `, el(doc, 'strong', {}, name), ` · ${range} · `);
+      const rules = zone?.rules?.length ?? 0, mods = zone?.mods?.length ?? 0;
+      const path = `/zones/${id}`;
+      const has = kind => groups[kind].some(({ warning }) => pathUnder(warning.originPath, path));
+      const status = has('needsAttention') || has('approximated') ? '部分实现 / 待关注'
+        : rules || mods ? `已编译（${rules}规则/${mods}修饰）`
+          : has('nonCombat') ? '已豁免（非战斗环境）' : !zone ? '已离场' : '待标准化';
+      row.append(status);
+      if (rules || mods) {
+        const reset = el(doc, 'button', { type: 'button', class: 'fated-entry-discard', 'data-zone-discard': id }, '重置并重roll');
+        reset.disabled = Boolean(aiController);
+        on(reset, 'click', () => discardStandardizedEntry(activeBattleKey, { unitId: null, path, name }));
+        row.append(' ', reset);
+      }
+      row.append(el(doc, 'p', { class: 'fated-mini' }, description));
+      list.append(row);
+    }
+    card.append(list);
+  }
   function renderInstances() {
     diagnostics.storage = computeStorageDiagnostics(storage, activeBattleKey);
     const page = pages.instances; page.replaceChildren(el(doc, 'h3', {}, '战场入口'));
@@ -543,20 +590,33 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     const battle = sources.battleInit;
     battleCard.append(el(doc, 'div', { class: 'fated-card-kicker' }, `命定战术控制台 v${TAVERN_VERSION} · ${battle ? 'BATTLE INIT · 已识别' : 'BATTLE INIT · 等待扫描'}`));
     battleCard.append(el(doc, 'h4', {}, battle?.sceneTitle || battle?.title || '尚未发现正文战场'));
-    battleCard.append(el(doc, 'p', { class: 'fated-mini' }, battle ? `${battle.battleType || '标准战斗'} · ${battle.units?.length || battle.participants?.length || 0} 名参与者 · ${battle.covers?.length || 0} 个掩体` : '点击扫描当前聊天，读取最新正文中的 battle_init。'));
+    const zones = liveState()?.zones ?? {};
+    const zoneCount = Object.keys(zones).length;
+    battleCard.append(el(doc, 'p', { class: 'fated-mini' }, battle ? `${battle.battleType || '标准战斗'} · ${battle.units?.length || battle.participants?.length || 0} 名参与者 · ${battle.covers?.length || 0} 个掩体${zoneCount ? ` · ${zoneCount} 项战场效果` : ''}` : '点击扫描当前聊天，读取最新正文中的 battle_init。'));
+    const globalGroups = warningGroups((sources.warnings ?? []).filter(w => w.unitId === null));
+    appendBattleZones(battleCard, globalGroups, zones);
     const battleActions = el(doc, 'div', { class: 'fated-actions' });
     const loadBattle = el(doc, 'button', { type: 'button', class: 'fated-primary' }, battle ? '加载战场' : '扫描并加载');
     const showSource = el(doc, 'details', { class: 'fated-battle-source-box' });
     showSource.append(el(doc, 'summary', {}, '查看原始 battle_init'), el(doc, 'pre', { class: 'fated-battle-source' }, sources.battleRaw || '暂无原始数据'));
     const normalize = el(doc,'button',{type:'button','data-normalize':''},'标准化');
     const selected = selectedIds();
-    const canNormalize = selected.length && warningGroups(warningsForUnit(sources.warnings, selected)).pending.length;
+    const unitPending = selected.length ? warningGroups(warningsForUnit(sources.warnings, selected, false)).pending : [];
+    const scenePending = globalGroups.pending.filter(isSceneZoneWarning);
+    const canNormalize = unitPending.length > 0 || scenePending.length > 0;
     normalize.disabled = !canNormalize || !activeBattleKey || !!aiController;
-    const hint = !selected.length ? '请先勾选要标准化的角色' : !canNormalize ? '所选角色没有待编译词条' : scanStatus;
+    const hint = canNormalize ? scanStatus : !selected.length ? '请先勾选要标准化的角色' : '所选角色和战场均无待编译词条';
     normalize.title = hint;
-    on(normalize,'click',()=>runNormalize(selected));
-    appendWarningGroups(battleCard, warningGroups((sources.warnings ?? []).filter(w => w.unitId === null)), true);
-    battleActions.append(loadBattle,normalize); battleCard.append(battleActions,el(doc,'p',{class:'fated-mini','data-normalize-status':''},hint),showSource); page.append(battleCard);
+    on(normalize, 'click', () => runNormalize(unitPending.length ? selected : [], { includeScene: scenePending.length > 0 }));
+    appendWarningGroups(battleCard, globalGroups, true);
+    battleActions.append(loadBattle, normalize);
+    if (scenePending.length && unitPending.length) {
+      const sceneOnly = el(doc, 'button', { type: 'button', 'data-normalize-scene': '' }, `仅标准化环境 (${scenePending.length})`);
+      sceneOnly.disabled = normalize.disabled;
+      on(sceneOnly, 'click', () => runNormalize([], { includeScene: true }));
+      battleActions.append(sceneOnly);
+    }
+    battleCard.append(battleActions, el(doc,'p',{class:'fated-mini','data-normalize-status':''},hint), showSource); page.append(battleCard);
     const diag = el(doc, 'details', { class: 'fated-diagnostics' });
     diag.append(el(doc, 'summary', {}, '诊断日志（扫描来源 / 去重）'));
     diag.append(el(doc, 'pre', { class: 'fated-status', 'data-diagnostics': '' }, JSON.stringify(diagnostics, null, 2)));
@@ -645,8 +705,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
   function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds, warnings) {
     const slots = config.slots;
     const context = assemblyContext(kind, instruction, unitIds);
-    if (kind === 'chat') context.sources = { ...sources, warnings: [] };
-    else context.sources = { ...sources, warnings: warnings ?? warningGroups().pending };
+    if (kind === 'chat') context.warnings = [];
+    else if (Array.isArray(warnings)) context.warnings = warnings;
+    else context.sources = { ...sources, warnings: warningGroups().pending };
     const messages = assembleMessages(slots, context);
     if (config.debugPrompts) console.debug('[fated:prompts]', { kind, slots: slots.map(s => ({ id: s.id, enabled: s.enabled })),
       messages: messages.map(({ slotId, role, content }) => ({ slotId, role, chars: content.length })) });
@@ -658,16 +719,15 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     return { host, settings: config, slots: config.slots, assemblyContext, prepareMessages, lastSent: () => lastSent,
       onPreview(fn) { previewSink = fn; }, fetchImpl: options.fetch, save: persistSettings };
   }
-  async function runNormalize(unitIds = Object.keys(characters)) {
+  async function runNormalize(unitIds = Object.keys(characters), { includeScene = true } = {}) {
     if (aiController || !activeBattleKey || !liveState()) return;
     syncSettings();
     const key = activeBattleKey;
     const requestConfig = normalizationApiConfig(config);
     const pending = warningGroups().pending;
     const ids = [...new Set(unitIds.map(groupId))].filter(id => own(characters, id));
-    if (!ids.length) return;
     const queue = planNormalizationBatches(ids, pending, liveState(), {
-      maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'), rawSources: characterEntries(),
+      includeScene, maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'), rawSources: characterEntries(),
     });
     if (!queue.length) return;
     const controller = new AbortController();
@@ -749,7 +809,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       }, controller.signal);
     } catch (error) { failure ??= error; }
     finally {
-      const groups = warningGroups(warningsForUnit(sources.warnings, ids));
+      const selected = new Set(ids);
+      const groups = warningGroups(sources.warnings.filter(warning => isSceneZoneWarning(warning)
+        ? includeScene : selected.has(warning.unitId) || ids.length > 0 && warning.unitId === null));
       const unresolved = [...rejectedItems.map(item => formatRejectedItem(item, liveState())), ...new Set(unmatchedNotes)];
       const followUp = groups.needsAttention.length + groups.nonCombat.length;
       const raw = replies.length ? JSON.stringify(replies.length === 1 ? replies[0] : replies, null, 2) : failure?.raw ?? '';
@@ -761,7 +823,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
           : followUp ? `标准化已完成（${followUp} 项需确认或已跳过）` : '标准化完成';
       const detail = failure ? diagnosticText(failure.message ?? failure, '请求或补丁校验失败，未返回可读的错误说明') : '';
       if (!disposed && key === activeBattleKey) {
-        const retry = () => key === activeBattleKey && runNormalize(ids);
+        const retry = () => key === activeBattleKey && runNormalize(ids, { includeScene });
         notify(title, detail, !aborted && groups.pending.length ? retry : null,
           false, { tone: aborted ? 'neutral' : partial || groups.pending.length && !failure ? 'warning' : failure ? 'error' : 'success', applied, unresolved, warningGroups: groups, raw });
       }
@@ -817,6 +879,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     sources = nextSources;
     sources.warnings = hydrated?.warnings ?? [];
     sources.sourceMap = hydrated?.sourceMap ?? {};
+    sources.zoneEntries = hydrated?.zoneEntries ?? {};
     duplicatePaths = hydrated?.roster && hydrated.state ? duplicateMappings(hydrated.roster, hydrated.state) : new Map();
     sources.seed = hydrated?.seed ?? hydrated?.state?.rng;
     sources.input = { mvu: sources.mvuData, charInfo: sources.charInfo, battleInit: sources.battleInit, latestFloor: sources.latestFloor, battleText: sources.battleRaw, protagonistName: sources.protagonistName };
@@ -911,15 +974,17 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
   }
   function showError(error) { const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = `错误：${error?.message || error}`; }
   function narrativeSourceFor(records) {
-    // Global diagnostics have no character source. Bind them to the entire opening input.
-    const globalSource = JSON.stringify([sources.battleRaw, sources.mvuData, sources.charInfo]);
-    return (id, entryKey) => id === null ? globalSource : records[id]?.entryHashes?.[entryKey] ?? records[id]?.hash;
+    return (id, entryKey) => {
+      if (id !== null) return records[id]?.entryHashes?.[entryKey] ?? records[id]?.hash;
+      if (entryKey?.startsWith('zones:')) return JSON.stringify(sources.zoneEntries?.[entryKey.slice(6)] ?? '');
+      return JSON.stringify([sources.battleRaw, sources.mvuData, sources.charInfo]);
+    };
   }
   function filterResolved(stored, records, retained = batches(activeBattleKey)) {
     const warnings = sources.warnings ??= [];
     const raw = diagnostics.inputWarnings ?? warnings;
     const exempt = activeNarrativeExemptions(raw,
-      config.narrativeExemptions[activeBattleKey] ?? [], narrativeSourceFor(records));
+      exemptionRecords(activeBattleKey, raw), narrativeSourceFor(records));
     const remaining = remainingDiagnostics(raw, stored, records, retained);
     warnings.splice(0, warnings.length, ...remaining);
     diagnostics.warnings = warnings;
@@ -954,7 +1019,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
   function pathUnder(path, root) { return path === root || path?.startsWith(`${root}/`); }
   function discardStandardizedEntry(key, ref) {
     const source = ref.path;
-    if (!source || !/^\/(?:equipment|skills|items|statusTemplates)\/[^/]+$/.test(source)) return;
+    if (!source || !/^\/(?:equipment|skills|items|statusTemplates|zones)\/[^/]+$/.test(source)) return;
     const [, table, id] = source.split('/');
     const baseline = hydrateBaseline(sources.input);
     const current = liveState();
@@ -984,7 +1049,11 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     try { (options.validateState || defaultValidateState)(next); } catch (error) { showError(error); return; }
     gameMount?.loadState?.(next);
     currentState = next;
-    const exemptions = (config.narrativeExemptions[key] ?? []).filter(receipt => !matchedKeys.has(receipt.key));
+    const sceneResets = rawWarnings.filter(warning => isSceneZoneWarning(warning) && matchedKeys.has(warningKey(warning)))
+      .map(warning => ({ unitId: null, originPath: warning.originPath, key: warningKey(warning), semanticKey: semanticExemptionKey(warning),
+        origin: 'manual', status: 'revoked', updatedAt: Date.now() }));
+    const exemptions = [...(config.narrativeExemptions[key] ?? []).filter(receipt => !matchedKeys.has(receipt.key) &&
+      !sceneResets.some(reset => reset.semanticKey === receipt.semanticKey)), ...sceneResets];
     const notes = clone(config.unresolvedNotes[key] ?? {});
     for (const [unitId, entries] of Object.entries(notes)) {
       for (const warningId of Object.keys(entries)) if (matchedKeys.has(warningId)) delete entries[warningId];
@@ -1054,7 +1123,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       let entryId = selectedMessageId;
       if (entryId == null && selectedBattleText) {
         const entryIndex = messages.findLastIndex(message => message?.role !== 'user' && !message?.is_user &&
-          extractTag(messageContent(message), ['battle_init'])?.trim() === selectedBattleText.trim());
+          extractTag(stripMetaAndReasoning(messageContent(message)), ['battle_init'])?.trim() === selectedBattleText.trim());
         if (entryIndex >= 0) entryId = messageMeta(messages[entryIndex], entryIndex).messageId;
       }
       const candidate = sourceBundle({}, messages, chat, entryId);
@@ -1100,7 +1169,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       const ownBatches = batches(key);
       const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches)
         .filter(([other]) => other !== key && other.startsWith(chatPrefix))
-        .reverse().flatMap(([, transactions]) => transactions.filter(batch => batch.entries?.length)) : ownBatches;
+        .reverse().flatMap(([, transactions]) => transactions.filter(batch => batch.entries?.length && !batch.receipts?.some(receipt => receipt.unitId === null) &&
+          !batch.patch?.some(operation => pathUnder(operation.path, '/zones')))) : ownBatches;
       const { kept } = nextState ? replayNormalization(nextState, candidates, fresh, rawWarnings, {
         apply: applyPatch, validate: options.validateState || defaultValidateState, fingerprint: fingerprintAt,
       }) : { kept: [] };
@@ -1112,7 +1182,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         .flatMap(([, receipts]) => receipts.filter(receipt => receipt.unitId != null && !receipt.dismissed))] : ownExemptions;
       const activeExemptions = activeNarrativeExemptions(rawWarnings, exemptionCandidates, narrativeSourceFor(fresh));
       if (imported && activeExemptions.length) persistSettings({ narrativeExemptions: {
-        ...config.narrativeExemptions, [key]: activeExemptions.map(({ receipt }) => receipt),
+        ...config.narrativeExemptions, [key]: [...ownExemptions, ...activeExemptions.map(({ receipt }) => receipt)
+          .filter(receipt => !ownExemptions.some(local => local.unitId === receipt.unitId && local.key === receipt.key))],
       } });
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
       toast.hidden = true;
@@ -1147,15 +1218,17 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
           JSON.stringify(value) !== JSON.stringify(config[field] ?? {})));
         if (Object.keys(patch).length) persistSettings(patch);
       }
-      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter(id => groupId(id) === id);
+      const pending = warningGroups(remaining).pending;
+      const changed = normalizationCandidates(fresh, stored, pending).filter(id => groupId(id) === id);
+      const sceneNeedsNorm = hasPendingSceneWarnings(pending);
       if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
       filterResolved(stored, fresh, kept);
       if (key) reconcileUnresolvedNotes(key, fresh, sources.warnings, [], { reset: false });
       const live = liveState();
       if (live) updateChatInstances(live, nextState);
-      scanStatus = firstEntry && changed.length ? `待标准化 ${changed.length} 个角色` : '可手动标准化所选角色';
+      scanStatus = firstEntry && (changed.length || sceneNeedsNorm) ? `待标准化 ${changed.length} 个角色${sceneNeedsNorm ? '及战场效果' : ''}` : '可手动标准化待编译词条';
       renderInstances();
-      if (firstEntry && changed.length) void runNormalize(changed);
+      if (firstEntry && (changed.length || sceneNeedsNorm)) void runNormalize(changed, { includeScene: sceneNeedsNorm });
       if (node) node.textContent = currentState
         ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')} · ${scanStatus}`
         : '扫描完成（未找到可挂载的战局）。';
@@ -1286,7 +1359,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     on(plain, 'click', deliverBattleReport);
     on(report, 'click', () => prepareDelivery().catch(showError));
   }
-  function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
+  function commitNormalization(key, { unitIds, sceneZoneIds = [] }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const current = liveState();
     const records = Object.fromEntries(unitIds.map(id => [id, characters[id]]));
     const accepted = acceptNormalizationResponse({
@@ -1330,7 +1403,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       stored[id] = toStoredCharSnapshot(record, previous);
     }
     syncSettings();
-    const receipts = narrative.map(({ receipt }) => receipt);
+    const receipts = narrative.map(({ warning, receipt }) => isSceneZoneWarning(warning)
+      ? { ...receipt, originPath: warning.originPath, updatedAt: Date.now() } : receipt);
     const previousExemptions = config.narrativeExemptions[key] ?? [];
     persistSettings({
       charSnapshots: { [key]: stored },
@@ -1345,7 +1419,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     }
     filterResolved(stored, characters);
     reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
-    scanStatus = `已标准化 ${unitIds.length} 个角色`;
+    scanStatus = `已标准化 ${unitIds.length} 个角色${sceneZoneIds.length ? `、${sceneZoneIds.length} 项战场效果` : ''}`;
     renderInstances();
     return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings: rejectedWarnings, repairError };
   }

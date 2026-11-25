@@ -237,6 +237,39 @@ test('production repair merges rejected and silently missing warnings into one r
   assert.deepEqual(repairWarnings({ repairWarnings: [first], missing: [second] }), [first, second]);
 });
 
+test('scene lane preserves legacy non-zone null diagnostics on role batches only', () => {
+  const fog = warning(null, '/zones/f1', '雾区');
+  const wind = warning(null, '/zones/f2', '乱流');
+  const legacy = warning(null, '/equipment/legacy', '场景以外全局诊断');
+  const shared = warning('p1', '/skills/shared', '共享命中效果');
+  const unrelated = warning('p1', '/skills/unrelated', '无关角色诊断');
+  const usesShared = { rules: [{ program: [{ op: 'apply_status', statusId: 'frost' }] }] };
+  const state = { zones: { f1: usesShared }, skills: { shared: usesShared } };
+  const all = [fog, wind, legacy, shared, unrelated];
+  assert.deepEqual(planNormalizationBatches([], all, state, { maxWarnings: 1 }), [
+    { unitIds: [], sceneZoneIds: ['f1'], warnings: [fog] }, { unitIds: [], sceneZoneIds: ['f2'], warnings: [wind] },
+  ]);
+  const planned = planNormalizationBatches(['p1'], all, state, { maxWarnings: 1 });
+  assert.deepEqual(planned.find(batch => batch.sceneZoneIds?.includes('f1')), { unitIds: ['p1'], sceneZoneIds: ['f1'], warnings: [fog, shared] });
+  assert.deepEqual(planned.filter(batch => !batch.sceneZoneIds).flatMap(batch => batch.warnings), [legacy, unrelated]);
+  assert.deepEqual(planNormalizationBatches(['p1'], all, state, { includeScene: false }).flatMap(batch => batch.warnings), [legacy, shared, unrelated]);
+});
+
+test('pure and mixed scene batches share the scene lock but allow unrelated roles in parallel', async () => {
+  const batches = [
+    { id: 'scene1', unitIds: [], sceneZoneIds: ['f1'] },
+    { id: 'role', unitIds: ['p2'] },
+    { id: 'mixed', unitIds: ['p1'], sceneZoneIds: ['f2'] },
+    { id: 'scene2', unitIds: [], sceneZoneIds: ['f3'] },
+  ];
+  const events = [];
+  await runOrderedBatches(batches, 2, async batch => { events.push(`request:${batch.id}`); },
+    async (_result, batch) => { events.push(`commit:${batch.id}`); }, new AbortController().signal);
+  assert.ok(events.indexOf('request:role') < events.indexOf('commit:scene1'));
+  assert.ok(events.indexOf('request:mixed') > events.indexOf('commit:scene1'));
+  assert.ok(events.indexOf('request:scene2') > events.indexOf('commit:mixed'));
+});
+
 test('concurrent requests commit deterministically by batch order', async () => {
   const batches = [{ id: 0 }, { id: 1 }, { id: 2 }];
   const order = [];

@@ -16,7 +16,25 @@ import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
-import { configFor } from '../src/tavern/overlay-sources.js';
+import { configFor, sourceBundle } from '../src/tavern/overlay-sources.js';
+
+test('sourceBundle 跳过导演注释、思考与孤立开标签，只取最后闭合战场', () => {
+  const battle = `battle|1|port|幻雾港|flat
+unit|e3|red|char_info|幻雾海鸥|3,8
+cover|c1|半|货箱|4,8,0`;
+  const bundle = sourceBundle({}, [{ content: `<!-- endingSheet: 并输出<battle_init>块。 <char_info>{"name":"注释角色"}</char_info> -->
+<think>讨论<battle_init>语法</think><thinking><char_info>{"name":"思考角色"}</char_info></thinking>
+<battle_init>只是正文提及，未闭合。
+<char_info>{"name":"幻雾海鸥"}</char_info>
+<battle_init>${battle}</battle_init>
+<battle_init>孤立开标签不能覆盖已闭合战场。` }]);
+  assert.equal(bundle.battleRaw, battle);
+  assert.deepEqual(bundle.charInfo, [{ name: '幻雾海鸥' }]);
+  assert.equal(bundle.battleInit.units[0].id, 'e3');
+  assert.equal(bundle.battleInit.covers[0].id, 'c1');
+  assert.equal(sourceBundle({}, [{ content: '{battle_in}: {"units":[]}' }]).battleInit.units.length, 0);
+  assert.equal(sourceBundle({}, [{ content: `&lt;battle_init&gt;${battle}<!-- 未闭合注释` }]).battleRaw, battle);
+});
 import { computeStorageDiagnostics, pruneBattleScopedMap, pruneBattleStorageExcept,
   toPersistedOpeningSource, toStoredCharSnapshot } from '../src/tavern/overlay-storage.js';
 import { GLOBAL_UI_PREF_KEYS, storageAdapter } from '../src/ui/mount.js';

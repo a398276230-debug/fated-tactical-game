@@ -120,7 +120,10 @@ export const tavernTheme = `
 .fated-card-kicker { padding:8px 12px 0; color:var(--gold-dim); font:600 .72em/1.5 ui-monospace,monospace; letter-spacing:.08em }
 .fated-instance { padding:10px 12px 12px; overflow-wrap:anywhere }
 .fated-instance > * { margin-inline:0 }
-.fated-battle-card > :is(p,details,.fated-actions,.fated-status) { margin-inline:12px }
+.fated-battle-card > :is(p,details,.fated-actions,.fated-status,.fated-battle-zones) { margin-inline:12px }
+.fated-battle-zones { display:grid; gap:6px; padding:0; list-style:none }
+.fated-battle-zone-item { padding:6px 0; border-top:1px solid var(--line) }
+.fated-battle-zone-item > p { margin:2px 0 0 }
 .fated-mini,.fated-battle-meta { margin:5px 0; color:var(--text-muted); font-size:.82em }
 .fated-status,.fated-battle-source {
   margin:6px 0; padding:7px 10px; border:1px solid var(--row-border); border-radius:6px;

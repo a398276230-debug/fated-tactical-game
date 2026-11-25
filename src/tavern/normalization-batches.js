@@ -1,7 +1,8 @@
-import { diagnosticText, identifiesWarning, warningEntryKey, warningKey } from './resolved-warnings.js';
+import { activeWarningExemption, diagnosticText, identifiesWarning, isSceneZoneWarning, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { semanticExemptionKey, normalizeClauseForHash } from './exemption-ledger.js';
 
-export const normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
+export const normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|unitPools|persistent|remainingTurns)(?:\/|$)/;
+export const SCENE_LANE = '__scene__';
 
 export const warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
 const referenceKey = warning => JSON.stringify(Object.values(warningReference(warning)));
@@ -61,22 +62,24 @@ export function normalizationLimit(config, key) {
   return Number.isInteger(value) && value >= 1 && value <= max ? value : fallback;
 }
 
-export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 1, rawSources = {} } = {}) {
+export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 1, rawSources = {}, includeScene = true } = {}) {
   const units = [...new Set(unitIds)];
   const selected = new Set(units);
   const carriers = new Map();
   // Separate character buckets except when they actually share a mutable template.
   const pathOwners = new Map();
   for (const warning of warnings) {
-    const path = targetPath(warning.originPath);
+    const path = targetPath(warning?.originPath);
     if (!path || !selected.has(warning.unitId) || warning.kind === 'auto_adjusted') continue;
     if (!pathOwners.has(path)) pathOwners.set(path, new Set());
     pathOwners.get(path).add(warning.unitId);
   }
   const shared = new Map();
   for (const warning of warnings) {
-    if (warning.kind === 'auto_adjusted' || !units.length || (warning.unitId !== null && !selected.has(warning.unitId))) continue;
-    const unitId = warning.unitId ?? units[0];
+    if (!warning || warning.kind === 'auto_adjusted') continue;
+    const scene = isSceneZoneWarning(warning);
+    if (scene ? !includeScene : warning.unitId === null ? !units.length : !selected.has(warning.unitId)) continue;
+    const unitId = scene ? SCENE_LANE : warning.unitId ?? units[0];
     const path = targetPath(warning.originPath) ?? `unit:${unitId}`;
     if (pathOwners.get(path)?.size > 1) {
       if (!shared.has(path)) shared.set(path, []);
@@ -89,6 +92,9 @@ export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings
     carrier.warnings.push(warning);
     carriers.set(key, carrier);
   }
+  // Keep already-shared scene/role dependencies in a single cluster. A
+  // warning with no real dependency stays on its own lane, even if its text is similar.
+  const sceneDependencies = new Set([...carriers.values()].filter(c => c.unitId === SCENE_LANE).flatMap(c => [...c.keys]));
   const grouped = new Map();
   for (const carrier of carriers.values()) {
     const [, table, id] = carrier.path.split('/');
@@ -97,9 +103,10 @@ export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings
     for (const term of [...mechanismKeywords(carrier.warnings.map(item => item.message).join('\n')),
       ...mechanismKeywords(source ?? template)]) carrier.terms.add(term);
     carrier.passive = template?.passive === true;
-    const list = grouped.get(carrier.unitId) ?? [];
+    const lane = [...carrier.keys].some(key => sceneDependencies.has(key)) ? SCENE_LANE : carrier.unitId;
+    const list = grouped.get(lane) ?? [];
     list.push(carrier);
-    grouped.set(carrier.unitId, list);
+    grouped.set(lane, list);
   }
   for (const [unitId, list] of grouped) {
     const clusters = [];
@@ -190,7 +197,11 @@ export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings
       result.push(batch);
     }
   }
-  return result;
+  return result.map(batch => batch.unitIds[0] !== SCENE_LANE ? batch : {
+    unitIds: [...new Set(batch.warnings.map(w => w.unitId).filter(Boolean))],
+    sceneZoneIds: [...new Set(batch.warnings.filter(isSceneZoneWarning).map(w => w.originPath.split('/')[2]))],
+    warnings: batch.warnings,
+  });
 }
 
 // The first validated shared definition wins within a run; external edits still require a rebase.
@@ -264,9 +275,12 @@ export async function runUnitOrderedBatches(batches, concurrency, request, commi
   const completed = new Set();
   const pending = new Map();
   const remainingByUnit = new Map();
-  const dependenciesByIndex = batches.map((batch, index) => {
+  const lanes = batches.map(batch => [...new Set([
+    ...(batch.unitIds ?? []), ...(!batch.unitIds?.length || batch.sceneZoneIds?.length ? [SCENE_LANE] : []),
+  ])]);
+  const dependenciesByIndex = lanes.map((lane, index) => {
     const dependencies = new Set();
-    for (const unitId of new Set(batch.unitIds ?? [])) {
+    for (const unitId of lane) {
       const previous = previousByUnit.get(unitId);
       if (previous !== undefined) dependencies.add(previous);
       previousByUnit.set(unitId, index);
@@ -275,7 +289,7 @@ export async function runUnitOrderedBatches(batches, concurrency, request, commi
     return dependencies;
   });
   const ready = index => [...dependenciesByIndex[index]].every(dependency => completed.has(dependency));
-  const priority = index => Math.max(0, ...(batches[index].unitIds ?? []).map(id => remainingByUnit.get(id) ?? 0));
+  const priority = index => Math.max(0, ...lanes[index].map(id => remainingByUnit.get(id) ?? 0));
   const selectReady = () => batches.map((_, index) => index)
     .filter(index => !completed.has(index) && !pending.has(index) && ready(index))
     .sort((a, b) => priority(b) - priority(a) || a - b)[0];
@@ -290,7 +304,7 @@ export async function runUnitOrderedBatches(batches, concurrency, request, commi
         signal.throwIfAborted();
         await commit(result, batch, index);
         completed.add(index);
-        for (const unitId of new Set(batch.unitIds ?? [])) remainingByUnit.set(unitId, remainingByUnit.get(unitId) - 1);
+        for (const unitId of lanes[index]) remainingByUnit.set(unitId, remainingByUnit.get(unitId) - 1);
       } catch (error) {
         stopped = true;
         failure ??= error;
@@ -362,12 +376,7 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
 
 export function activeNarrativeExemptions(warnings, receipts, sourceFor) {
   return warnings.flatMap(warning => {
-    const source = sourceFor(warning.unitId, warningEntryKey(warning));
-    const semantic = semanticExemptionKey(warning);
-    const receipt = receipts.find(item => item.semanticKey === semantic && item.status !== 'revoked')
-      ?? receipts.find(item => item.unitId === warning.unitId && item.key === warningKey(warning) && item.source === source);
-    if (!receipt || receipt.status === 'revoked') return [];
-    if (receipt.origin === 'ai' && receipt.source && source && receipt.source !== source) return [];
-    return [{ warning, receipt }];
+    const receipt = activeWarningExemption(warning, receipts, sourceFor);
+    return receipt ? [{ warning, receipt }] : [];
   });
 }

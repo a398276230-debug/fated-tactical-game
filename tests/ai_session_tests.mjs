@@ -35,6 +35,33 @@ test('实际 roster 槽只发目标原文；附属技能入表，活状态与兄
   assert.match(index,/主动技能\]derived/); assert.doesNotMatch(index,/定义|他人技能/); assert.ok(index.length < 600);
 });
 
+test('场景批次只读本批警告与目标区域，其他区域只进联动索引', () => {
+  const scene = { unitId: null, originPath: '/zones/mist', message: '雾区编译' };
+  const character = { unitId: 'p1', originPath: '/skills/s1', message: '非本批角色诊断' };
+  const legacy = { unitId: null, originPath: null, message: '非本批全局诊断' };
+  const state = { units: { p1: { name: '角色私有数据' } }, zones: {
+    mist: { name: '雾区', area: { shape: 'board', z1: 1 }, mods: [], rules: [] },
+    wind: { name: '风区', area: { shape: 'rect' }, tags: ['gust'], mods: [{ stat: 'dodge' }], rules: [{ hook: 'turn_end' }] },
+  } };
+  const zoneEntries = { mist: { description: '本批区域原文' }, wind: { description: '非目标区域原文' } };
+  const ctx = { state, onlyUnitIds: [null], warnings: [scene], sources: { warnings: [scene, character, legacy], zoneEntries } };
+  const slots = DEFAULT_SLOTS.filter(s => ['roster', 'warnings'].includes(s.id));
+  const [message] = assembleMessages(slots, ctx);
+  const [payload, index] = message.content.split('\n<role_readonly_index DO_NOT_PATCH="true">');
+  assert.deepEqual(JSON.parse(payload), { raw: {}, units: {}, items: {}, equipment: {}, skills: {},
+    zones: { mist: state.zones.mist }, rawZones: { mist: zoneEntries.mist } });
+  assert.match(index, /sharedZoneLedger[\s\S]*wind\|风区\|rect\|gust\|dodge\|turn_end/);
+  assert.match(index, /"unitId": null/);
+  assert.match(index, /雾区编译/);
+  assert.doesNotMatch(message.content, /非本批角色诊断|非本批全局诊断|非目标区域原文|角色私有数据/);
+  const role = resolveSlotContent({ id: 'roster' }, { ...ctx, onlyUnitIds: ['p1'], warnings: [character] });
+  const [rolePayload, roleIndex] = role.split('\n<role_readonly_index');
+  assert.equal('zones' in JSON.parse(rolePayload), false);
+  assert.equal('rawZones' in JSON.parse(rolePayload), false);
+  assert.match(roleIndex, /mist\|雾区\|board/);
+  assert.equal(resolveSlotContent({ id: 'warnings' }, { ...ctx, warnings: [] }), '');
+});
+
 test('每个 VM 指令的用法说明进入实际组装的默认助手消息', () => {
   const messages = assembleMessages(DEFAULT_SLOTS, {});
   for (const opcode of vmSchema.$defs.opcode.oneOf) {

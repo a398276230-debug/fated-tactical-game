@@ -43,7 +43,7 @@ export function normalizationTransactions({ patch, solved, verified, records, be
   }
   const definitions = new Map();
   for (const root of groups.keys()) {
-    if (/^\/(skills|statusTemplates|equipment|items)\//.test(root)) {
+    if (/^\/(skills|statusTemplates|equipment|items|zones)\//.test(root)) {
       const id = root.split('/')[2];
       definitions.set(id, [...(definitions.get(id) ?? []), root]);
     }
@@ -51,6 +51,10 @@ export function normalizationTransactions({ patch, solved, verified, records, be
   const visit = (value, root) => {
     if (typeof value === 'string') {
       for (const dependency of definitions.get(value) ?? []) join(root, dependency);
+      for (const [, , id] of value.matchAll(/\bin_zone\s*\([^,]+,\s*(['"])([\w-]+)\1\s*\)/g)) {
+        const zone = `/zones/${id}`;
+        if (groups.has(zone)) join(root, zone);
+      }
     } else if (value && typeof value === 'object') {
       for (const [key, child] of Object.entries(value)) { visit(key, root); visit(child, root); }
     }
@@ -67,7 +71,9 @@ export function normalizationTransactions({ patch, solved, verified, records, be
       else for (const id of Object.keys(records)) addRef(id, tableKey(root));
     }
     for (const warning of warnings) addRef(warning.unitId, warningEntryKey(warning));
+    const sceneBound = [...roots].some(root => root.startsWith('/zones/'));
     return {
+      ...(sceneBound && { sceneBound }),
       patch: patch.filter(op => roots.has(entryRoot(op.path))), entries: [...refs.values()],
       receipts: warnings.map(w => ({ unitId: w.unitId, key: warningKey(w) })),
       guards: [...guards].map(path => [path, fingerprint(before, path) ?? null]),

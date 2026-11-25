@@ -29,7 +29,10 @@ function pathFamily(path) {
  * colliding with an unrelated unit-level warning with the same wording.
  */
 export function semanticExemptionKey(warning = {}, clause = warning.message) {
-  return JSON.stringify([pathFamily(warning.originPath), warning.scope ?? '', normalizeClauseForHash(clause)]);
+  const family = pathFamily(warning.originPath);
+  // Scene ranges and numbers describe fixed mechanics, not mutable counters.
+  const identity = family === 'zones' ? text(clause).normalize('NFKC').replace(/\s+/g, ' ').trim() : normalizeClauseForHash(clause);
+  return JSON.stringify([family, warning.scope ?? '', identity]);
 }
 
 function recordKey(record) {
@@ -81,8 +84,15 @@ function activeRecordFor(warning, records, sourceFor) {
   // AI receipts are tied to the clause as it was converted. Manual decisions
   // intentionally survive source hash churn and generated-id changes.
   if (winner.origin === 'ai' && winner.source && sourceFor) {
-    const current = sourceFor(warning.unitId, `${pathFamily(warning.originPath)}:${text(warning.originPath).split('/')[2] ?? ''}`);
-    if (current && winner.source !== current && winner.staticFingerprint && winner.staticFingerprint !== normalizeClauseForHash(current)) return null;
+    const family = pathFamily(warning.originPath);
+    const current = sourceFor(warning.unitId, `${family}:${text(warning.originPath).split('/')[2] ?? ''}`);
+    if (family === 'zones' && winner.source !== current) {
+      // Different floors can use different IDs for the exact same clause.
+      const sceneContent = source => {
+        try { const { id, ...entry } = JSON.parse(source); return JSON.stringify(entry); } catch { return undefined; }
+      };
+      if (!current || !sceneContent(current) || sceneContent(winner.source) !== sceneContent(current)) return null;
+    } else if (current && winner.source !== current && winner.staticFingerprint && winner.staticFingerprint !== normalizeClauseForHash(current)) return null;
   }
   return winner;
 }

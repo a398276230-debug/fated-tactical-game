@@ -3,7 +3,7 @@ import { ENGINE_API_SUMMARY } from './engine-summary.js';
 import { STATUS_CATALOG } from './status-catalog.js';
 
 const IDENTITY = `<role_core>
-你是命定战斗助手，负责将角色卡与世界书中的自然语言词条精确编译为战术沙盘可执行数据。你以当前战局、参战者与装备快照及战斗协议为唯一权威依据，严格核对操作路径、闭合字段与枚举取值，只使用引擎注册的标识符与公式函数。
+你是命定战斗助手，负责将角色卡、世界书与战场环境中的自然语言词条精确编译为战术沙盘可执行数据。你以当前战局、参战者与装备快照及战斗协议为唯一权威依据，严格核对操作路径、闭合字段与枚举取值，只使用引擎注册的标识符与公式函数。
 
 标准化任务中，「待处理警告」非空时，你必须按原顺序逐项审校并完成1对1核销。优先用战术 VM 的正交原语（rules / mods / pools / statusTemplates / skills）忠实还原触发时机、作用范围、持续回合与数值乘区；对跨系统战外机制、纯风味文本或确属引擎边界的部分，按四分流收据契约诚实归类，严禁强行映射或静默漏答。
 
@@ -32,9 +32,9 @@ const TAG_MAPPING = `【世界书标签 → VM 映射】
 const diagnosisProtocol = `<disposition_ledger>
 【警告核销与四分流收据契约】
 本批每条警告必须按单条词条自身的战斗可执行性独立裁定（严禁因同载体含其他战外条目而把战内可实现词条连坐归入 narrative 或 unresolved），通过以下四种互斥收据路径之一完成核销，严禁漏答、串绑或交叉冲突：
-1. 完整实现（patch.resolves）：在解决该警告的**宿主载体补丁** patch[i] 操作对象顶层填写 resolves 数组（**resolves 是 patch[i] 操作对象的第 4 个顶层键 {op, path, value, resolves}，必须在 value 数组的 ] 闭合之后再写 ,"resolves":[...]，绝对禁止把 resolves 写进 rule 对象、mod 对象或模板 value 内部！**），每项优先原样复制警告的 {unitId, originPath, message}（无来源路径用 null，严禁篡改 message 文本）；同一 originPath 内「」标题唯一时可用短收据 {unitId, originPath, effectName}（只填「」内裸标题文本，不带外侧书名引号，保留内部原有方括号）。**宿主落地铁律：只新建 /statusTemplates/<id> 或派生 /skills/<id> 而未修改警告所属 originPath 宿主模板绝不算核销！警告的 resolves 必须挂在修改该警告 originPath（/skills/<id> 或 /equipment/<id>）的宿主操作上，严禁挂在 /statusTemplates/<id> 操作上**；同一模板下多条独立警告必须各自对应实际落地的补丁或未实现收据，唯有仅重申已解析面板主击／先手的单一类型主击词条可与同技能补全 /damage/type 的操作并表共享 resolves。
+1. 完整实现（patch.resolves）：在解决该警告的**宿主载体补丁** patch[i] 操作对象顶层填写 resolves 数组（**resolves 是 patch[i] 操作对象的第 4 个顶层键 {op, path, value, resolves}，必须在 value 数组的 ] 闭合之后再写 ,"resolves":[...]，绝对禁止把 resolves 写进 rule 对象、mod 对象或模板 value 内部！**），每项优先原样复制警告的 {unitId, originPath, message}（无来源路径用 null，严禁篡改 message 文本）；同一 originPath 内「」标题唯一时可用短收据 {unitId, originPath, effectName}（只填「」内裸标题文本，不带外侧书名引号，保留内部原有方括号）。**宿主落地铁律：只新建 /statusTemplates/<id> 或派生 /skills/<id> 而未修改警告所属 originPath 宿主模板绝不算核销！警告的 resolves 必须挂在修改该警告 originPath（/skills/<id>、/equipment/<id> 或 /zones/<id>）的宿主操作上，严禁挂在 /statusTemplates/<id> 操作上**；战场效果警告 unitId 为 null，收据原样填 "unitId": null, "originPath": "/zones/<id>"；同一模板下多条独立警告必须各自对应实际落地的补丁或未实现收据，唯有仅重申已解析面板主击／先手的单一类型主击词条可与同技能补全 /damage/type 的操作并表共享 resolves。
 2. 部分实现（唯一合法双收据组合）：若同一条警告只实现了一部分（确有半边属引擎未开放维度），在实现该部分的操作上写 resolves，并在 unresolved 里用同一引用说明还缺什么（必填独立非空中文 reason 字段；注意：凡整条机制可用协议原语如 intentBonus/intentDifficulty+event.intent、perform.overrides.intent、controlPolicy.intentLock、from:"tape"+replay、before_action.origin、spawn+link_pool、dcBonus/resistBonus 完整表达时，一律直接走「1. 完整实现」只写 patch.resolves，切勿多余塞入 unresolved！）。
-3. 先前已实现（existing）：仅当该行为已由**更早标准化批次或首轮已落盘补丁**新增在当前快照的 rules/N 或 mods/N 时，在顶层 existing 提交 {unitId, originPath, message(或唯一effectName), path, value}（**path 必须带具体数字下标如 /skills/<id>/rules/0 或 /skills/<id>/mods/0，value 为该单条对象 {...}，严禁写不带下标的 /rules 或 /mods 整数组**；若返修轮正在提交同技能 rules 补丁，直接将同技能已落盘警告并入该 rules 补丁的 resolves 即可，不要重发无变化的 no-op 补丁）；绝对禁止用转换器初始生成的未修改面板字段冒充 existing！
+3. 先前已实现（existing）：仅当该行为已由**更早标准化批次或首轮已落盘补丁**新增在当前快照的 rules/N 或 mods/N 时，在顶层 existing 提交 {unitId, originPath, message(或唯一effectName), path, value}（**path 必须带具体数字下标如 /skills/<id>/rules/0、/skills/<id>/mods/0 或 /zones/<id>/rules/0，value 为该单条对象 {...}，严禁写不带下标的 /rules 或 /mods 整数组**；若返修轮正在提交同技能 rules 补丁，直接将同技能已落盘警告并入该 rules 补丁的 resolves 即可，不要重发无变化的 no-op 补丁）；绝对禁止用转换器初始生成的未修改面板字段冒充 existing！
 4. 纯未实现（unresolved）或非战斗外围（narrative）：无补丁改动时二选一——战内缺参或引擎边界归入 unresolved（必填 {unitId, originPath, message, kind, reason}），纯风味外观或战外系统（含所有消耗 fp / FP 外部叙事专用资源的词条！）归入 narrative（必填 {unitId, originPath, message, reason}）。reason 必须为独立非空中文短句！同一条警告严禁同时出现在 narrative 与 patch.resolves / unresolved / existing 中，严禁把本技能主击伤害词条误归入 narrative！
 </disposition_ledger>`;
 const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join('\n\n');
@@ -70,8 +70,8 @@ export const PATCH_RULES = String.raw`<output_contract>
      ② 看见 sharedPoolLedger 已列出的 unitPools 池 ID 时，直接复用既有 poolId、name 与语义；装备、技能和单位之间共享计数必须读写同一个 self.resource.<poolId>，严禁为同一资源另起英文 ID，也严禁把单位共享池写成 equipment pools。
      ③ <role_readonly_index> 中的 siblingCarriersIndex 仅供了解同角色其他装备／技能的联动状态命名与触发语义，**绝对禁止对未出现在本批 warnings 中的兄弟载体输出任何 patch 操作或核销收据**！
    • **RFC 6902 数组字段 [...] vs 元素追加 /- 铁律（严禁类型错配与重复整表覆盖！）**：
-     ① 当 path 指向数组属性本身（末尾**不带** /-，如 /skills/<id>/rules、/equipment/<id>/mods、/equipment/<id>/skills）时，**value 必须是 JSON 数组 [...]**（即使只有 1 条规则或 1 个技能 ID，也必须写成 [{"id":...}] 或 ["skill_x"]，**绝对禁止对不带 /- 的 /rules、/mods、/skills 传入单个对象 {...} 或裸字符串，否则必触发 Schema 拒收与运行时崩溃！**）；且同一批次内对同一模板的同一数组属性**最多只允许写一次**（同一载体的多条规则必须合并进同一个 [rule1, rule2, ...] 数组，严禁在同批写两次 add .../rules 导致后一条把前一条规则整表覆盖抹除！）。
-     ② 当向快照已存在的 rules 或 mods 数组逐条追加单个元素时，path **必须以 /- 结尾**（如 /skills/<id>/rules/-、/equipment/<id>/mods/-），此时 value 才是单个规则或修饰对象 {...}（注意装备初始无 skills 数组键，故装备挂载主动技能一律写 /equipment/<id>/skills 并传去重后的字符串数组 ["<技能ID>"]）。
+     ① 当 path 指向数组属性本身（末尾**不带** /-，如 /skills/<id>/rules、/equipment/<id>/mods、/zones/<id>/rules、/equipment/<id>/skills）时，**value 必须是 JSON 数组 [...]**（即使只有 1 条规则或 1 个技能 ID，也必须写成 [{"id":...}] 或 ["skill_x"]，**绝对禁止对不带 /- 的 /rules、/mods、/skills 传入单个对象 {...} 或裸字符串，否则必触发 Schema 拒收与运行时崩溃！**）；且同一批次内对同一模板的同一数组属性**最多只允许写一次**（同一载体的多条规则必须合并进同一个 [rule1, rule2, ...] 数组，严禁在同批写两次 add .../rules 导致后一条把前一条规则整表覆盖抹除！）。
+     ② 当向快照已存在的 rules 或 mods 数组逐条追加单个元素时，path **必须以 /- 结尾**（如 /skills/<id>/rules/-、/equipment/<id>/mods/-、/zones/<id>/mods/-），此时 value 才是单个规则或修饰对象 {...}（注意装备初始无 skills 数组键，故装备挂载主动技能一律写 /equipment/<id>/skills 并传去重后的字符串数组 ["<技能ID>"]）。
    • 闭合 Schema、顶层 resolves 边界与括号配平：所有宿主模板、rule、statMod 与 opcode 均为严格闭合 Schema（**特别注意：/statusTemplates/<id> 状态模板只有 stackMode 与 maxStacks，严禁写运行时字段 stacks；costMult / damageMult / finalDamageMult / healingMult 基值为 1，只用 mult 或 additivePercent，严禁写 flat（哪怕 flat:null 也会被拒收）！**）；**严禁在 rule 对象（{"id":...,"hook":...,"program":[...]}）或 mod 对象内部写入 resolves、comment 等键！当向 /skills/<id>/rules 写入规则数组时，program 的 ] 闭合后，必须先写 }] 依次闭合当前 rule 对象与 value 数组，然后才能在 patch[i] 操作对象层级写 ,"resolves":[...]（形如 ..."program":[...]}],"resolves":[...]}）**！多召唤物、召唤物阵亡反噬或多段 if/else 分支规则一律拆为宿主 rules 数组下扁平并列的独立 rule（如监听召唤物死亡直接并列写 hook:"on_death", filter:"target.summoned && target.team == self.team" 规则，切勿在 spawn 指令内部再深层嵌套 rules/for_each 导致 ]} 多括号失配！）。
 </compilation_invariants>
 
@@ -79,8 +79,8 @@ export const PATCH_RULES = String.raw`<output_contract>
 • 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
 • 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义装备池 {"resource":"<池ID>", "amount":1…1000000}。
 • 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}，仅表示装备实例池（如本武器 ammo）；装备规则作用域用 item.resource.<池ID> 读取，缺省为 0，local:true 才写入本实例池。
-• 单位共享池表 unitPools：{"<池ID>": {"name"?: 文本, "cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）}}，仅 equipment / skill / unit 模板可声明，statusTemplate 不能声明。它挂在持有者单位上；同一单位的同名声明合并为一个单位池，current 默认 initial ?? 0。跨载体读写使用 self.resource.<池ID> 或 resource(self, '<池ID>')，技能 resourceCost:{resource:"<池ID>",amount:N} 也可扣除单位池。跨批必须复用 <role_readonly_index> 的 sharedPoolLedger 中既有 poolId。
-• 通用载体字段（装备、技能、状态模板均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（整数 1…7）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）。pools 与 unitPools 都不是通用字段：pools 仅 equipment 模板声明装备实例池；unitPools 仅 equipment / skill / unit 模板声明单位共享池，statusTemplate 两者均不支持。装备规则内读取本装备实例池用 item.resource.<池ID>（缺省为 0），其他载体不得把 item.resource 当作自身作用域。
+• 单位共享池表 unitPools：{"<池ID>": {"name"?: 文本, "cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）}}，仅 equipment / skill / unit / zone 可声明，statusTemplate 不支持。它挂在持有者单位上；同一单位的同名声明合并为一个单位池，current 默认 initial ?? 0。跨载体读写使用 self.resource.<池ID> 或 resource(self, '<池ID>')，技能 resourceCost:{resource:"<池ID>",amount:N} 也可扣除单位池。跨批必须复用 <role_readonly_index> 的 sharedPoolLedger 中既有 poolId。
+• 通用载体字段（装备、技能、状态模板、战场区域 zones 均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（整数 1…7）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）。pools 与 unitPools 都不是通用字段：pools 仅 equipment 模板声明装备实例池；unitPools 仅 equipment / skill / unit / zone 可声明，statusTemplate 不支持。装备规则内读取本装备实例池用 item.resource.<池ID>（缺省为 0），其他载体不得把 item.resource 当作自身作用域。
 • 技能模板 /skills/<id>：
   - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
   - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（枚举：physical / energy / mental / true）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
@@ -89,13 +89,18 @@ export const PATCH_RULES = String.raw`<output_contract>
   - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
   - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。装备可用 unitPools 声明挂在持有者身上的共享池，pools 仅声明本装备实例池。流派联动：双手占槽设 twoHanded:true，重型设 heavy:true（任一激活重剑攻守倍率，无内置弹反结算，招架反击须写受击规则）；双持普攻触发副手追击要求副手武器 hand:"off_hand" 且带 damage；有主手无盾且副手为 kind:"consumable" 时激活同调（0 AP 不占槽对 self 执行副手 hook:"active"，每战共 2 次）；持盾激活剑盾格挡与盾击。
 
+• 战场环境区域 /zones/<id>（对应 unitId:null、originPath:"/zones/<id>" 的战场效果警告）：
+  - 空间几何与身份字段（id / name / area / follow / sourceId / team）已由转换器落盘只读锁定，严禁整块 replace /zones/<id> 或改写 area/id/name/pools，也严禁写不存在的 description 字段！只允许写子路径 /zones/<id>/(rules|mods|tags|vars|flags|tier|shareRulesTo|unitPools|persistent|remainingTurns)。
+  - 持续时间：默认已设 persistent:true, remainingTurns:1（整场常驻）；仅当原文明写持续 N 轮时，同时 replace /zones/<id>/persistent 为 false 并 replace /zones/<id>/remainingTurns 为 N（1…100 整数）。
+  - 阵营过滤铁律：初始战场区域的 sourceId 为 null（无创建者），**严禁写 source.team**！警告标明 [作用阵营:全体] 时不加阵营限制；标明仅蓝方时在 mods 写 when:"self.team == 'blue'"、在 rules 写 filter:"self.team == 'blue'"（红方同理写 'red'）；受击／状态拦截钩子须并入 target.id == self.id；纯背景风味无战棋数值机制的环境词条直接归入 narrative（unitId 填 null）。
+
 <std_audit_workflow>
 【五步前置审校工作流（<std_audit>）】
 正式生成 JSON 前，必须先在 <std_audit>...</std_audit> 标签内按以下五步完成极简结构化审校（每条警告仅占紧凑一行，严禁长篇推导挤占输出空间）：
 Step 0 [警告盘点]：按输入原序编号列出本批全部警告 W1..Wn（单位ID | originPath | 效果标题），确认总数一致。
 Step 1 [边界与快照增量裁定]：逐条核查战斗域边界（**凡包含消耗 fp / FP 外部叙事资源的词条一律整条定性为 NARRATIVE，绝不入 UNRESOLVED**）、当前快照已解析字段（先手/范围/威力/纯被动 vs 双态载体）及原语可表达性，定性为 FULL_PATCH / PARTIAL_PATCH / EXISTING / UNRESOLVED / NARRATIVE（严禁把主击归入 narrative 或初始面板归入 existing）。
-Step 2 [作用域、量词与符号核对]：锁定宿主载体路径（被动首次触发必挂已持有宿主自身 rules 而非未施加状态模板！）、钩子与过滤条件（进攻检 attacker.id == self.id；**受击、防御预判、before_commit、before_status 及濒死 on_lethal_p1/p2、on_death 必显式写 filter:"target.id == self.id"，严禁在濒死钩子留 filter:null！** on_summon_evict 检 source.id == self.id，切勿写不存在的 target.sourceId 或 candidate.tags；仅武器检 weaponTemplateId；限定武器／技能击杀用 after_damage 检 !target.alive && event.dealt > 0；远程检 !event.melee；主动技附效检 event.skillId == skill.id；选人必检存活、阵营与空间范围；受击迫使进攻方豁免用无 bind 的 for_each(from:"attacker")）；核对正负号（自身增益、受击减伤与攻方利好 intentBonus flat 为正数，负面状态扣闪避／检定／移动或令攻方意图变难的 intentBonus flat 必为负数，守方提高意图难度的 intentDifficulty flat 为正数！）、护盾等状态 vars 传参闭环、多状态／多层累加量词（逐项相加而非 >0 布尔）及 persistent 状态 remove_status 必带 force:true。
-Step 3 [批内自足拓扑、只读账本复用、数组类型与收据绑定]：先查 <role_readonly_index> 的 sharedStatusLedger、内置 STATUSES 与当前快照，**凡已列出的状态／技能 ID 直接复用且严禁再次 add，同时严禁触碰未在本批 warnings 出现的 siblingCarriersIndex 载体**；确需新建的状态／派生技能按「新建基础状态 → 新建复合状态 → 新建派生技能 → 本批警告宿主载体」排列 patch；**逐条硬核对 RFC 6902 数组类型：不带 /- 的 .../rules、.../mods、.../skills 其 value 必须是 [...] 数组（绝不可为单对象 {...}！）且同路径同批最多写一次**；确认操作 /damage 前快照确有该键且 remove /damage 后不再写 /damage/type；为每条 FULL_PATCH / PARTIAL_PATCH 绑定宿主载体顶层 patch[i].resolves（勿挂在 /statusTemplates/... 上；返修轮对前轮已落盘项直接并入本轮同宿主有效补丁 resolves 或用带数字下标的 existing 如 /skills/<id>/rules/0 核销，切勿重发 no-op 补丁！），并为每条 UNRESOLVED 与 NARRATIVE 准备独立非空中文 reason；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
+Step 2 [作用域、量词与符号核对]：锁定宿主载体路径（被动首次触发必挂已持有宿主自身 rules 而非未施加状态模板！）、钩子与过滤条件（进攻检 attacker.id == self.id；**受击、防御预判、before_commit、before_status 及濒死 on_lethal_p1/p2、on_death 必显式写 filter:"target.id == self.id"，严禁在濒死钩子留 filter:null！** on_summon_evict 检 source.id == self.id，切勿写不存在的 target.sourceId 或 candidate.tags；仅武器检 weaponTemplateId；限定武器／技能击杀用 after_damage 检 !target.alive && event.dealt > 0；远程检 !event.melee；主动技附效检 event.skillId == skill.id；选人必检存活、阵营与空间范围；初始战场区域 /zones/<id> 阵营限定必写 self.team == 'blue' 或 'red' 而严禁写 source.team；受击迫使进攻方豁免用无 bind 的 for_each(from:"attacker")）；核对正负号（自身增益、受击减伤与攻方利好 intentBonus flat 为正数，负面状态扣闪避／检定／移动或令攻方意图变难的 intentBonus flat 必为负数，守方提高意图难度的 intentDifficulty flat 为正数！）、护盾等状态 vars 传参闭环、多状态／多层累加量词（逐项相加而非 >0 布尔）及 persistent 状态 remove_status 必带 force:true。
+Step 3 [批内自足拓扑、只读账本复用、数组类型与收据绑定]：先查 <role_readonly_index> 的 sharedStatusLedger、内置 STATUSES 与当前快照，**凡已列出的状态／技能 ID 直接复用且严禁再次 add，同时严禁触碰未在本批 warnings 出现的 siblingCarriersIndex 载体**；确需新建的状态／派生技能按「新建基础状态 → 新建复合状态 → 新建派生技能 → 本批警告宿主载体」排列 patch；**逐条硬核对 RFC 6902 数组类型：不带 /- 的 .../rules、.../mods、.../skills 其 value 必须是 [...] 数组（绝不可为单对象 {...}！）且同路径同批最多写一次**；确认操作 /damage 前快照确有该键且 remove /damage 后不再写 /damage/type；为每条 FULL_PATCH / PARTIAL_PATCH 绑定宿主载体顶层 patch[i].resolves（勿挂在 /statusTemplates/... 上；返修轮对前轮已落盘项直接并入本轮同宿主有效补丁 resolves 或用带数字下标的 existing 如 /skills/<id>/rules/0 核销，切勿重发 no-op 补丁！），并为每条 UNRESOLVED 与 NARRATIVE 准备独立非空中文 reason；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；禁止整块覆写 /zones/<id> 或改写其 area/pools；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
 Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围（再次确认不带 /- 的 /rules、/mods、/skills 全部为 [...] 数组而非 {...} 对象！critDamageBonus 只用 flat 小数如 0.3；additivePercent 为小数制如 0.5 而非 50；顶层 flags 仅写 undispellable / concept_immune，行为标志写 mods[i].flags；ask 按 kind 配齐必填键与合法 aiPolicy；mutate_event 仅写当前 hook 允许字段）；**重点核查每一个 rules 补丁的闭合序列：program 结束 ] 后必须紧跟 }] 闭合 rule 对象与 value 数组，随后才是 ,"resolves":[...]（rule 对象内部严禁出现 resolves 键！）**；确认 W1..Wn 100% 覆盖且收据严格互斥，最后写出 Coverage: PASS | Schema: PASS。
 </std_audit_workflow>
 
@@ -134,11 +139,17 @@ export function describeSlots(saved) {
 const distinct = values => [...new Set(values.filter(Boolean))];
 function scopedRoster(ctx, state, warnings) {
   const pick = (table, ids) => Object.fromEntries(distinct(ids).filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
-  const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
+  const unitIds = distinct(ctx.onlyUnitIds ?? []);
+  const targetZoneIds = distinct(warnings.map(w => w.originPath?.match(/^\/zones\/([^/]+)/)?.[1]));
+  const units = pick(state.units, unitIds), rows = Object.values(units);
   const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear ?? []),...(u.bagWeapons ?? [])]));
   const equipment = pick(state.equipment, Object.values(items).map(i => i.templateId));
   const skills = pick(state.skills, [...rows.flatMap(u => [...(u.skills ?? []), ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap(e => e.skills ?? [])]);
-  const roster = { raw:pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment, skills, statusTemplates:state.statusTemplates };
+  const roster = { raw:pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, statusTemplates:state.statusTemplates };
+  if (targetZoneIds.length) {
+    roster.zones = pick(state.zones, targetZoneIds);
+    roster.rawZones = pick(ctx.zoneEntries ?? ctx.sources?.zoneEntries, targetZoneIds);
+  }
   if (!warnings.length) return json(roster);
 
   // Match canonical converter identities (not display names, which can collide).
@@ -147,11 +158,11 @@ function scopedRoster(ctx, state, warnings) {
     return table === 'items' && items[id] ? `equipment:${items[id].templateId}` : `${table}:${id}`;
   }));
   const entryTables = ctx.characterEntries ?? {};
-  roster.raw = Object.fromEntries(ctx.onlyUnitIds.map(id => {
+  roster.raw = Object.fromEntries(unitIds.map(id => {
     const entries = entryTables[id] ?? {};
     return [id, { unit:entries.unit ?? units[id], ...pick(entries, [...targets]) }];
   }));
-  const rawCarriers = Object.assign({}, ...ctx.onlyUnitIds.map(id => entryTables[id]));
+  const rawCarriers = Object.assign({}, ...unitIds.map(id => entryTables[id]));
   const siblings = [];
   for (const [table, carriers] of Object.entries({skills,equipment})) for (const [id, c] of Object.entries(carriers)) {
     const key = `${table}:${id}`;
@@ -176,12 +187,20 @@ function scopedRoster(ctx, state, warnings) {
     poolLedger.set(id, entry);
   }
   const poolLines = [...poolLedger].map(([id, pool]) => [id, pool.name, pool.cap ?? '?', pool.sources.join('/')].join('|'));
-  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\nsharedStatusLedger：ID|名|层/叠法|标签|mods|hooks；复用 statusId，勿重复 add。\n${ledger.join('\n')}\nsharedPoolLedger：poolId|名|cap|声明来源；复用 poolId，读写 self.resource.<poolId>，勿重复声明。\n${poolLines.join('\n')}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}\n</role_readonly_index>`;
+  const otherZones = Object.entries(state.zones ?? {}).filter(([id]) => !targetZoneIds.includes(id));
+  const zoneLines = otherZones.map(([id, z]) => [
+    id, z.name, z.area?.shape ?? '?', (z.tags ?? []).join('/'),
+    distinct((z.mods ?? []).map(m => m.stat)).join('/'), distinct((z.rules ?? []).map(r => r.hook)).join('/'),
+  ].join('|'));
+  const zoneLedger = zoneLines.length ? `\nsharedZoneLedger：zoneId|名|形状|标签|mods|hooks；仅供联动查询如 in_zone(self, '<zoneId>')，勿改勿核销。\n${zoneLines.join('\n')}` : '';
+  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\nsharedStatusLedger：ID|名|层/叠法|标签|mods|hooks；复用 statusId，勿重复 add。\n${ledger.join('\n')}\nsharedPoolLedger：poolId|名|cap|声明来源；复用 poolId，读写 self.resource.<poolId>，勿重复声明。\n${poolLines.join('\n')}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}${zoneLedger}\n</role_readonly_index>`;
 }
 
 export function resolveSlotContent(slot, ctx = {}) {
   const { sources = {}, state, instruction = '' } = ctx;
-  const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
+  const warnings = Array.isArray(ctx.warnings)
+    ? ctx.warnings
+    : warningsForUnit(sources.warnings, ctx.onlyUnitIds);
   const variables = {
     battle_init: () => sources.battleRaw || json(sources.battleInit ?? {}),
     battle_state: () => json(state ?? {}), warnings: () => json(warnings.map(({unitId, originPath = null, message}) => ({unitId, originPath, message}))),
