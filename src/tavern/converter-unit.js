@@ -117,8 +117,25 @@ function mergeBattleParticipant(record, participant, battle) {
 }
 function sourceSkills(record) {
   const value = record.skills ?? record.abilities ?? record.技能 ?? [];
-  if (Array.isArray(value)) return value.map((v, i) => [v, i]);
-  return Object.entries(asObject(value)).map(([name, v], i) => [({ ...asObject(v), name: v?.name ?? v?.名称 ?? name }), i]);
+  const list = Array.isArray(value) ? [...value] : Object.entries(asObject(value)).map(([name, v]) => ({ ...asObject(v), name: v?.name ?? v?.名称 ?? name }));
+  // Carried relics are persistent carriers, not expendable inventory actions.
+  for (const [name, item] of Object.entries(asObject(record.背包))) {
+    if (item?.类型 !== '道具' || bound(item.数量 ?? item.count, 0, 1e9, 1) === 0) continue;
+    const declared = item.rules ?? item.规则;
+    const rules = Array.isArray(declared) ? declared.filter(rule => validVmRule(rule)) : [];
+    const narrative = Array.isArray(declared) ? declared.filter(rule => !validVmRule(rule)) : declared;
+    const effects = [item.effects ?? item.效果, item.被动, narrative].filter(v => narrativeEntries(v).length);
+    if (effects.length || rules.length) list.push({ ...item, id: `bag:${name}`, name, passive: !rules.some(rule => rule.hook === 'active'), effects, rules });
+  }
+  const ladder = record.登神长阶;
+  if (ladder && ladder.是否开启 !== false) for (const group of ['要素', '权能', '法则']) {
+    for (const [name, entry] of Object.entries(asObject(ladder[group]))) {
+      const effects = object(entry) ? Object.fromEntries(Object.entries(entry).filter(([key]) => !['描述','名称','品质'].includes(key))) : entry;
+      if (!narrativeEntries(effects).length) continue;
+      list.push({ id: `ascension:${group}:${name}`, name, 描述: entry?.描述, effects, passive: !Object.keys(asObject(effects)).some(label => label.startsWith('主动')) });
+    }
+  }
+  return list.map((v, i) => [v, i]);
 }
 export function mergeRecords(records) {
   const result = new Map();
@@ -224,24 +241,29 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
   const skillInfo = {};
   const skillKeys = new Map();
-  const normalizedSkills = sourceSkills(record).slice(0, 32).map(([raw, i]) => {
-    const r = asObject(raw);
+  const skillSources = sourceSkills(record);
+  for (const [extra] of skillSources.slice(32)) sink('effect', `/units/${id}`).push(`技能数量超过上限 32，未导入「${extra?.name ?? extra?.名称 ?? '未知技能'}」`);
+  const normalizedSkills = skillSources.slice(0, 32).map(([raw, i]) => {
+    const input = asObject(raw);
+    const r = input.damage == null && object(input.伤害) ? { ...input, damage: input.伤害 } : input;
     const skillName = text(r.name ?? r.名称).slice(0, 100) || `技能${i + 1}`;
     const key = hash(String(r.id ?? r.ID ?? skillName)).toString(36);
     const occurrence = skillKeys.get(key) ?? 0;
     skillKeys.set(key, occurrence + 1);
     const sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${key}${occurrence ? `-${occurrence}` : ''}`;
-    entrySources[`skills:${sid}`] = r;
+    entrySources[`skills:${sid}`] = input;
     const labels = [].concat(r.tags ?? r.标签 ?? [], r.description ?? r.描述 ?? '').join(' ');
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const notes = sink('effect', `/skills/${sid}`);
     const area = areaFields(r, notes, skillName);
     const costs = skillCosts(r.cost ?? r.消耗);
-    const mode = text(r.模式 ?? r.mode);
-    const passive = r.passive === true || mode.includes('被动') && !mode.includes('主动');
-    const tag = tagEntries(r.tags ?? r.标签).map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
+    const mode = text(r.模式 ?? r.mode ?? r.类型 ?? r.type).toLowerCase();
+    const passive = r.passive === true || mode === 'passive' || mode.includes('被动') && !mode.includes('主动');
+    const tag = (typeof r.伤害 === 'string' ? r.伤害 : null) ?? tagEntries(r.tags ?? r.标签).map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
     const rawEffects = r.effects ?? r.效果;
-    const power = r.power ?? taggedPower;
+    const power = r.power ?? r.威力 ?? taggedPower;
+    const initiative = r.先手 ?? tagEntries(r.tags ?? r.标签).map(v => v.match(/^先手\s*[:：]?\s*([+-]?\d+)$/)?.[1]).find(Boolean)
+      ?? narrativeEntries(rawEffects).map(([, v]) => typeof v === 'string' && v.match(/^(?:\[[^\]]+\]\s*)*本技能先手\s*([+-]\d+)(?=[，。；、\s]|$)/)?.[1]).find(Boolean);
     const numericPower = number(power, NaN);
     const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
     const statTag = tagEntries(r.tags ?? r.标签)
@@ -250,7 +272,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const prefix = `fx-${hash(sid).toString(36)}`;
     const areaDamage = isAreaDamage(area);
     const narrativeNotes = [];
-    appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes);
+    appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive }), notes);
     const singleTaggedType = damageAliases.get(tag);
     const hasActiveDamage = rules.some(rule => rule.enabled !== false && rule.hook === 'active' && [...instructions(rule.program)].some(op => op.op === 'damage'));
     if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag) {
@@ -283,7 +305,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
-      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), rawRange: area.range ?? 1, ...(passive && { passive: true }), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
+      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), rawRange: area.range ?? 1, ...(passive ? { passive: true } : r.passive === false ? { passive: false } : {}), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: passive || (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(area.range, 0, 64, 1), shape: area.shape ?? 'single',
       target: area.target ?? (areaDamage && object(r.damage) ? 'any' : 'enemy'), ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
@@ -293,7 +315,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     if (damageTypes.includes(damageType)) skills[sid].damageType = damageType;
     else if (damageType != null) notes.push(`「${skillName}」未知伤害类型：${damageType}`);
     for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['accuracy', -20, 30], ['initiativeBonus', -100, 100], ['power', 0, 1e9]]) {
-      const value = r[key] ?? (key === 'power' ? taggedPower : costs[key]);
+      const value = r[key] ?? (key === 'power' ? power : key === 'initiativeBonus' ? (passive ? undefined : initiative) : costs[key]);
       if (value != null) skills[sid][key] = bound(value, min, max);
     }
     if (r.save != null || r.saveDC != null) {
@@ -307,7 +329,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     }
     if (object(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
     if (costs.hp != null) skills[sid].resourceCost = { hp:bound(costs.hp, 0, 25000), ...skills[sid].resourceCost };
-    for (const key of ['damage', 'heal']) if (object(r[key])) skills[sid][key] = normalizeDice(r[key]);
+    for (const key of ['damage', 'heal']) if (!passive && object(r[key])) skills[sid][key] = normalizeDice(r[key]);
     return sid;
   });
   const pos = xyzOf(p.xyz ?? p, board, sink('state'));

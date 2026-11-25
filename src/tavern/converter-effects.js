@@ -77,14 +77,14 @@ function readEquipmentNarrative(effects, warnings) {
   return convertNarrative(effects, warnings, '', { equipment: true });
 }
 
-export function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false } = {}) {
+export function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false, passive = false } = {}) {
   const rules = [];
   for (const [index, [label, entry]] of narrativeEntries(effects).entries()) {
     if (validVmRule(entry)) {
       appendRules(rules, [clone(entry)], warnings);
       continue;
     }
-    const program = !equipment && typeof entry === 'string' ? narrativeDamage(label, entry, allowPower) : [];
+    const program = !equipment && !passive && typeof entry === 'string' ? narrativeDamage(label, entry, allowPower) : [];
     const rawExcerpt = [entry].flat().map(value => typeof value === 'string' ? blockBody(value)
       : text(value?.描述 ?? value?.description ?? value?.效果 ?? value?.effect)).filter(Boolean).join('；');
     const excerpt = [...rawExcerpt];
@@ -146,7 +146,7 @@ export function normalizeDice(raw) {
 }
 
 export function areaFields(raw, warnings, name) {
-  const tags = parseAreaTags(raw.tags ?? raw.标签);
+  const tags = parseAreaTags([...(raw.距离 != null ? [`有效距离: ${raw.距离}`] : []), ...(raw.范围 != null ? [raw.范围 === '单体' ? '单体' : `范围: ${raw.范围}`] : []), ...[].concat(raw.tags ?? raw.标签 ?? [])]);
   if (tags.missingRange && raw.range == null && raw.有效距离 == null) warnings.push(`「${name}」有效距离标签缺少格数`);
   if (tags.missingRadius && tags.radius == null && raw.radius == null) warnings.push(`「${name}」范围标签缺少半径格数`);
   const tier = DISTANCE_TABLE.find(row => row.name === tags.rangeTier);
