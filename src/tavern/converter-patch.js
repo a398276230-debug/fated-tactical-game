@@ -44,7 +44,9 @@ function poolCurrent(state, unit, binding) {
   if (target.kind === 'item_pool' || binding.ownerKind === 'item') {
     const itemId = binding.itemId ?? target.itemId;
     const poolKey = target.poolKey ?? binding.poolKey ?? binding.key;
-    return getPool(state, itemId, poolKey, 'item')?.current;
+    const current = getPool(state, itemId, poolKey, 'item')?.current;
+    if (current == null || binding.sliceCap == null) return current;
+    return Math.max(0, Math.min(binding.sliceCap, current - binding.sliceBase));
   }
   if (target.kind === 'unit_pool' || binding.ownerKind === 'unit') {
     const poolKey = target.poolKey ?? binding.poolKey ?? binding.key;
@@ -64,12 +66,13 @@ function formatCounter(binding, current) {
   const sep = format.sep ?? ': ';
   const cap = numberValue(binding.max ?? format.capInTag);
   const slash = format.slash ?? '/';
-  if (format.kind === 'tag_slash') return `${label}${sep}${value}${slash}${cap ?? ''}`;
+  const counter = `${format.prefix ?? ''}${label}${sep}${value}`;
   // A single-value ammo tag gains an explicit denominator only after it is used.
-  if (/弹药|箭矢|残弹|装填/u.test(label) && cap != null && value < cap) return `${label}${sep}${value}${slash}${cap}`;
-  return `${label}${sep}${value}`;
+  const includeCap = format.kind === 'tag_slash' || /弹药|箭矢|残弹|装填/u.test(label) && cap != null && value < cap;
+  return `${counter}${includeCap ? `${slash}${cap ?? ''}` : ''}${format.suffix ?? ''}`;
 }
 function counterInitial(binding) {
+  if (binding.current != null) return binding.current;
   if (binding.initialRawValue == null) return null;
   if (typeof binding.initialRawValue === 'number') return binding.initialRawValue;
   const match = String(binding.initialRawValue).match(/(-?\d+)(?:\s*[\/]\s*(\d+))?\s*$/);

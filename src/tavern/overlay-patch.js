@@ -1,117 +1,8 @@
-import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
-import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
-import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
-import { mount as defaultMount } from '../ui/mount.js';
-import { validateState as defaultValidateState } from '../api/validation.js';
-import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
-import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
-import { tavernTheme } from './theme.js';
-import { readBattlePortraits } from './portraits.js';
-import { assembleMessages, describeSlots } from './prompts.js';
-import { normalizationApiConfig, requestViaTavern, requestViaCustomApi } from './api.js';
-import { renderSettings } from './settings.js';
-import { createAiSessions } from './ai-sessions.js';
-import { characterRecords, stableSourceJson } from './char-snapshots.js';
-import { entryRoot, normalizationTransactions, replayNormalization } from './normalization-replay.js';
-import { duplicateMappings, duplicateOperations, instanceGroups } from './instance-groups.js';
-import { fillInstance } from './instance-card.js';
+import { normalizationPath } from './normalization-batches.js';
+import { normalizationTransactions } from './normalization-replay.js';
 import { parseAIResponse } from './overlay-ai.js';
-import { mountAiPage } from './ai-page.js';
-import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
+import { applyJsonPatch, deepClone as clone, deepMerge, isObject, normalizePath, own, safeProperty } from './mvu-utils.js';
 
-/*
- * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
- * can be loaded from an iframe, from a normal web page, or from a test DOM.  The
- * game and converter are supplied by the library entry point (or by options).
- */
-
-const own = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
-const isObject = v => v && typeof v === 'object' && !Array.isArray(v);
-const safeProperty = key => !['__proto__', 'prototype', 'constructor'].includes(key);
-const clone = value => {
-  try { return structuredClone(value); } catch (_) {
-    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
-  }
-};
-
-function hostWindow() {
-  const w = typeof window !== 'undefined' ? window : globalThis;
-  try { return w.parent && w.parent.document ? w.parent : w; } catch (_) { return w; }
-}
-function hostDocument(preferred) {
-  const w = preferred || hostWindow();
-  try { return w.document || document; } catch (_) { return typeof document !== 'undefined' ? document : null; }
-}
-function getGlobal(host, name) {
-  try { return host?.[name] ?? globalThis?.[name]; } catch (_) { return undefined; }
-}
-function text(value) { return value == null ? '' : String(value); }
-function el(doc, tag, attrs, content) {
-  const n = doc.createElement(tag);
-  for (const [key, value] of Object.entries(attrs || {})) {
-    if (key === 'class') n.className = value;
-    else if (key === 'style') n.style.cssText = value;
-    else if (key === 'text') n.textContent = value;
-    else if (value != null) n.setAttribute(key, value);
-  }
-  if (content != null) n.textContent = content;
-  return n;
-}
-function parseJSON(value, fallback = null) {
-  if (value && typeof value === 'object') return value;
-  try { return JSON.parse(String(value)); } catch (_) { return fallback; }
-}
-function balancedJSONObjects(source) {
-  const value = text(source).replaceAll('&quot;', '"').replaceAll('&#34;', '"');
-  const results = [];
-  for (let start = 0; start < value.length; start++) {
-    if (value[start] !== '{') continue;
-    let depth = 0, quoted = false, escaped = false;
-    for (let i = start; i < value.length; i++) {
-      const ch = value[i];
-      if (quoted) { if (escaped) escaped = false; else if (ch === '\\') escaped = true; else if (ch === '"') quoted = false; continue; }
-      if (ch === '"') { quoted = true; continue; }
-      if (ch === '{') depth++;
-      else if (ch === '}' && --depth === 0) {
-        const parsed = parseJSON(value.slice(start, i + 1), null);
-        if (parsed) results.push(parsed);
-        break;
-      }
-    }
-  }
-  return results;
-}
-function findBattleJSON(source) {
-  return balancedJSONObjects(source).reverse().find(value => isObject(value) && (Array.isArray(value.units) || Array.isArray(value.participants) || value.battleId || value.title || value.sceneTitle)) || null;
-}
-function deepMerge(base, extra) {
-  const result = isObject(base) ? clone(base) : {};
-  if (!isObject(extra)) return result;
-  for (const [key, value] of Object.entries(extra)) {
-    if (!safeProperty(key)) continue;
-    if (isObject(value) && isObject(result[key])) result[key] = deepMerge(result[key], value);
-    else result[key] = clone(value);
-  }
-  return result;
-}
-function deletePath(object, path) {
-  if (!path) return;
-  const parts = String(path).trim().replace(/^\$\.?/, '').split('.').filter(Boolean);
-  if (!parts.length || !parts.every(safeProperty)) return;
-  let cursor = object;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (!cursor || typeof cursor !== 'object') return;
-    cursor = cursor[parts[i]];
-  }
-  if (cursor && typeof cursor === 'object') delete cursor[parts.at(-1)];
-}
-function excludedList(value) {
-  if (Array.isArray(value)) return value.flatMap(excludedList);
-  if (typeof value !== 'string') return [];
-  return value.split(/[,\n]/).map(x => x.trim()).filter(Boolean);
-}
-
-/** Build an OpenAI-compatible request without mutating user configuration. */
 export function parseJSONPatch(value) {
   const parsed = parseAIResponse(value).data;
   if (Array.isArray(parsed)) return parsed;
@@ -126,8 +17,10 @@ export function parseJSONPatch(value) {
 }
 
 export function fingerprintAt(state, path) {
+  const keys = normalizePath(path);
+  if (!keys.length) return undefined;
   let value = state;
-  for (const key of path.slice(1).split('/').map(key => key.replaceAll('~1', '/').replaceAll('~0', '~'))) {
+  for (const key of keys) {
     if (value == null || !own(value, key)) return undefined;
     value = value[key];
   }
@@ -250,38 +143,12 @@ function normalizeSemanticPatch(patch) {
   return result;
 }
 function applyPatch(target, patch, strict = false) {
-  let result = clone(target);
-  // AI assistants commonly return a semantic battle_patch/unit_patch object
-  // rather than RFC 6902 operations. Normalize array tables to engine maps first.
-  if (isObject(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
-    return deepMerge(result, normalizeSemanticPatch(patch.battle_patch || patch));
+  // AI assistants can also return a semantic battle_patch/unit_patch object.
+  if (isObject(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
+    return deepMerge(target, normalizeSemanticPatch(patch.battle_patch || patch));
   }
   const list = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
-  if (!Array.isArray(list)) return result;
-  const pointer = path => String(path || '').split('/').slice(1).map(x => x.replaceAll('~1', '/').replaceAll('~0', '~'));
-  for (const operation of list) {
-    if (!operation || !operation.op) continue;
-    const keys = pointer(operation.path);
-    if (!keys.length || !keys.every(safeProperty)) throw new Error('AI 返回了不支持的补丁路径');
-    const last = keys.pop();
-    let parent = result;
-    for (const key of keys) {
-      if (!own(parent, key)) throw new Error(`补丁路径不存在：${operation.path}`);
-      parent = parent[key];
-    }
-    if (parent == null || typeof parent !== 'object') throw new Error(`补丁路径不可写：${operation.path}`);
-    if (strict) {
-      if (Array.isArray(parent)) {
-        const append = last === '-' && operation.op === 'add';
-        if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`数组索引无效：${operation.path}`);
-      }
-      if (operation.op !== 'add' && !own(parent, last)) throw new Error(`补丁路径不存在：${operation.path}`);
-      if (operation.op === 'add' && Array.isArray(parent) && last !== '-') { parent.splice(Number(last), 0, clone(operation.value)); continue; }
-    }
-    if (operation.op === 'remove') { if (Array.isArray(parent)) parent.splice(Number(last), 1); else delete parent[last]; }
-    else if (operation.op === 'add' || operation.op === 'replace') { if (Array.isArray(parent) && last === '-') parent.push(clone(operation.value)); else parent[last] = clone(operation.value); }
-  }
-  return result;
+  return applyJsonPatch(target, Array.isArray(list) ? list : [], { strict });
 }
 
 const chatTables = ['units', 'skills', 'equipment', 'items', 'statusTemplates', 'covers', 'interactives', 'zones'];

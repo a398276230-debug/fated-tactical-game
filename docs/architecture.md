@@ -46,7 +46,9 @@ MVU 是数值、装备和技能权威；battle_init 只负责站位、朝向、�
 `src/tavern/overlay.js` 是宿主挂载门面，浏览器实现按职责拆在以下模块：
 
 - `overlay-ai.js`：请求、流式响应、JSON/JSON Patch 解析。
-- `overlay-patch.js`：patch 应用、标准化分区和聊天 patch。
+- `overlay-patch.js`：战局 patch 应用、标准化分区和聊天 patch。
+- `overlay-sources.js`：宿主消息读取、开场来源组装与配置。
+- `mvu-utils.js`：零依赖的数据工具，集中处理克隆、深合并、JSON Pointer 解码与 patch 回放；战局校验使用严格模式，拒绝不存在的中间路径。
 - `overlay-diagnostics-view.js`：来源包和诊断导出。
 - `overlay-mount.js`：宿主挂载与 DOM 编排。
 

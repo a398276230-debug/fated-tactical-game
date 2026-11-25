@@ -352,7 +352,7 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
 </char_info>`,
     battleInit:'<battle_init>\nbattle|1|ammo-test|弹药测试|flat|123\nunit|p|blue|mvu:主角|主角|1,1\nunit|e|red|char_info|发条木偶|4,1\n</battle_init>'
   };
-  const {state}=hydrateFromSources(input,{throwOnValidation:true});
+  const {state, sourceMap}=hydrateFromSources(input,{throwOnValidation:true});
   for (const [id, range, hp, stats] of [['p',4,628,[6,6,6,5,5]],['e',5,610,[1,1,6,1,1]]]) {
     const unit = state.units[id], item = state.items[unit.mainHand], template = state.equipment[item.templateId];
     assert.equal(template.weaponClass, 'ranged');
@@ -370,6 +370,7 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
   assert.notEqual(state.units.p.mainHand,state.units.e.mainHand);
   state.turn = state.order.indexOf('p');
   const actor = state.units.p, item = state.items[actor.mainHand];
+  state.equipment[item.templateId].attack = 1;
   actor.ap = 2;
   actor.used = {attack:0, action:0};
   const attack = {type:'attack', x:4, y:1};
@@ -379,6 +380,15 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
   applyAction(state, attack);
   const ammo = getPool(state, item.id, 'ammo', 'item');
   assert.equal(getPool(state, item.id, 'ammo', 'item').current, 19);
+  for (let i = 0; i < 2; i++) {
+    actor.ap = 2;
+    actor.used = {attack:0, action:0};
+    applyAction(state, attack);
+  }
+  assert.equal(getPool(state, item.id, 'ammo', 'item').current, 17);
+  assert.deepEqual(battleReportToMvuPatch(state, sourceMap).filter(op => op.path.includes('/背包/')), [
+    { op: 'replace', path: '/stat_data/主角/背包/箭筒/标签/0', value: '弹药:17/20' },
+  ]);
   updatePoolCurrent(state, ammo.id, 'set', 1);
   actor.ap = 2;
   actor.used = {attack:0, action:0};
@@ -389,6 +399,75 @@ test('远程标签与弹药容器贯通 MVU 主角与 char_info', () => {
   assert.equal(preview(state, attack).error, '弹药已耗尽');
   assert.equal(preview(state, {type:'reload'}).ok, false);
   assert.deepEqual(input.mvu.主角.背包.箭筒.标签,['弹药:20']);
+});
+
+test('主武器弹药池按互斥切片写回武器、装备饰品与背包', () => {
+  const input = { mvu: { 主角: { ...mvu.主角,
+    装备: {
+      冰霜之弓: { 类型:'武器', 标签:['弓','双手','弹药: 5'] },
+      '饰品/甲~': { 名称:'展示用箭筒名', 类型:'饰品', 位置:'饰品', 标签:['[弹药：4／4]'] },
+    },
+    背包: {
+      箭筒乙: { 类型:'弹药容器', 数量:1, 当前弹药:3, 标签:['弹药: 3'] },
+      空槽: { 类型:'弹药容器', 数量:0, 标签:['弹药: 15'] },
+      备用弩: { 类型:'武器', 数量:1, 标签:['弩','弹药: 7'] },
+    },
+  } } };
+  const original = structuredClone(input);
+  const { state, sourceMap } = hydrateFromSources(input, { throwOnValidation:true });
+  const unit = Object.values(state.units)[0];
+  const pool = getPool(state, unit.mainHand, 'ammo', 'item');
+  assert.deepEqual([pool.current, pool.max, pool.reloadable], [12, 12, false]);
+  assert.equal(getPool(state, unit.bagWeapons[0], 'ammo', 'item').current, 7);
+  const ammoOps = () => battleReportToMvuPatch(state, sourceMap).filter(op => /\/(装备|背包)\//u.test(op.path));
+  assert.deepEqual(ammoOps(), []);
+  updatePoolCurrent(state, pool.id, 'set', 10);
+  assert.deepEqual(ammoOps(), [{ op:'replace', path:'/stat_data/主角/背包/箭筒乙/当前弹药', value:1 }]);
+  updatePoolCurrent(state, pool.id, 'set', 7);
+  assert.deepEqual(ammoOps(), [
+    { op:'replace', path:'/stat_data/主角/装备/饰品~1甲~0/标签/0', value:'[弹药：2／4]' },
+    { op:'replace', path:'/stat_data/主角/背包/箭筒乙/当前弹药', value:0 },
+  ]);
+  updatePoolCurrent(state, pool.id, 'set', 2);
+  assert.deepEqual(ammoOps(), [
+    { op:'replace', path:'/stat_data/主角/装备/冰霜之弓/标签/2', value:'弹药: 2/5' },
+    { op:'replace', path:'/stat_data/主角/装备/饰品~1甲~0/标签/0', value:'[弹药：0／4]' },
+    { op:'replace', path:'/stat_data/主角/背包/箭筒乙/当前弹药', value:0 },
+  ]);
+  assert.deepEqual(input, original);
+});
+
+test('无自带弹药的弓从装备饰品弹药切片水合并可再次水合写回结果', () => {
+  const input = { mvu: { 主角: { ...mvu.主角,
+    装备: { ...mvu.主角.装备, 箭筒:{ 类型:'饰品', 标签:['弹药: 20'] } },
+  } } };
+  const { state, sourceMap } = hydrateFromSources(input, { throwOnValidation:true });
+  const unit = Object.values(state.units)[0];
+  const pool = getPool(state, unit.mainHand, 'ammo', 'item');
+  updatePoolCurrent(state, pool.id, 'sub', 3);
+  const patch = battleReportToMvuPatch(state, sourceMap).filter(op => op.path.includes('/装备/'));
+  assert.deepEqual(patch, [{ op:'replace', path:'/stat_data/主角/装备/箭筒/标签/0', value:'弹药: 17/20' }]);
+  input.mvu.主角.装备.箭筒.标签[0] = patch[0].value;
+  const next = hydrateFromSources(input, { throwOnValidation:true }).state;
+  const nextPool = getPool(next, next.units[unit.id].mainHand, 'ammo', 'item');
+  assert.deepEqual([nextPool.current, nextPool.max], [17, 20]);
+});
+
+test('远程贴身射击字段与标签透传，转换单位不再携带弹反空壳', () => {
+  for (const [tags, fields, expected] of [
+    [['火枪'], { closeQuarters:true }, true],
+    [['火枪','[近战射击]'], {}, true],
+    [['火枪','贴身射击'], {}, true],
+    [['火枪'], {}, undefined],
+  ]) {
+    const { state } = hydrateFromSources({ mvu:{ 主角:{ ...mvu.主角,
+      装备:{ 火枪:{ 类型:'武器', 标签:tags, ...fields } },
+    } } }, { throwOnValidation:true });
+    const unit = Object.values(state.units)[0];
+    assert.equal(state.equipment[state.items[unit.mainHand].templateId].closeQuarters, expected);
+    assert.equal(Object.hasOwn(unit, 'parryQuota'), false);
+    assert.equal(Object.hasOwn(unit, 'parryRefunded'), false);
+  }
 });
 
 test('箭袋命中附伤只强化指定子类，不等同远程或有弹药', () => {

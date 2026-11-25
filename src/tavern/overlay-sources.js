@@ -1,38 +1,9 @@
-import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { battleKeyFor, extractTag, extractTags, findBattleJSON, messageContent, messageMeta, parseLooseYaml, stripMetaAndReasoning } from './overlay-ai.js';
-import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
-import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
-import { mount as defaultMount } from '../ui/mount.js';
-import { validateState as defaultValidateState } from '../api/validation.js';
-import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
-import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
-import { tavernTheme } from './theme.js';
-import { readBattlePortraits } from './portraits.js';
-import { assembleMessages, describeSlots } from './prompts.js';
-import { normalizationApiConfig, requestViaTavern, requestViaCustomApi } from './api.js';
-import { renderSettings } from './settings.js';
-import { createAiSessions } from './ai-sessions.js';
-import { characterRecords, stableSourceJson } from './char-snapshots.js';
-import { entryRoot, normalizationTransactions, replayNormalization } from './normalization-replay.js';
-import { duplicateMappings, duplicateOperations, instanceGroups } from './instance-groups.js';
-import { fillInstance } from './instance-card.js';
-import { mountAiPage } from './ai-page.js';
-import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
-
-/*
- * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
- * can be loaded from an iframe, from a normal web page, or from a test DOM.  The
- * game and converter are supplied by the library entry point (or by options).
- */
-
-const own = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
-const isObject = v => v && typeof v === 'object' && !Array.isArray(v);
-const safeProperty = key => !['__proto__', 'prototype', 'constructor'].includes(key);
-const clone = value => {
-  try { return structuredClone(value); } catch (_) {
-    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
-  }
-};
+import { parseBattleInit } from './converter.js';
+import { normalizationLimits } from './normalization-batches.js';
+import { hostMethod, readChatMessages, statData } from './host.js';
+import { describeSlots } from './prompts.js';
+import { deepClone, deepMerge, isObject } from './mvu-utils.js';
 
 function hostWindow() {
   const w = typeof window !== 'undefined' ? window : globalThis;
@@ -46,49 +17,10 @@ function getGlobal(host, name) {
   try { return host?.[name] ?? globalThis?.[name]; } catch (_) { return undefined; }
 }
 function text(value) { return value == null ? '' : String(value); }
-function el(doc, tag, attrs, content) {
-  const n = doc.createElement(tag);
-  for (const [key, value] of Object.entries(attrs || {})) {
-    if (key === 'class') n.className = value;
-    else if (key === 'style') n.style.cssText = value;
-    else if (key === 'text') n.textContent = value;
-    else if (value != null) n.setAttribute(key, value);
-  }
-  if (content != null) n.textContent = content;
-  return n;
-}
 function parseJSON(value, fallback = null) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value)); } catch (_) { return fallback; }
 }
-function deepMerge(base, extra) {
-  const result = isObject(base) ? clone(base) : {};
-  if (!isObject(extra)) return result;
-  for (const [key, value] of Object.entries(extra)) {
-    if (!safeProperty(key)) continue;
-    if (isObject(value) && isObject(result[key])) result[key] = deepMerge(result[key], value);
-    else result[key] = clone(value);
-  }
-  return result;
-}
-function deletePath(object, path) {
-  if (!path) return;
-  const parts = String(path).trim().replace(/^\$\.?/, '').split('.').filter(Boolean);
-  if (!parts.length || !parts.every(safeProperty)) return;
-  let cursor = object;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (!cursor || typeof cursor !== 'object') return;
-    cursor = cursor[parts[i]];
-  }
-  if (cursor && typeof cursor === 'object') delete cursor[parts.at(-1)];
-}
-function excludedList(value) {
-  if (Array.isArray(value)) return value.flatMap(excludedList);
-  if (typeof value !== 'string') return [];
-  return value.split(/[,\n]/).map(x => x.trim()).filter(Boolean);
-}
-
-/** Build an OpenAI-compatible request without mutating user configuration. */
 export const TAVERN_VERSION = '0.4.7';
 
 export const LARGE_CONFIG_KEYS = ['charSnapshots', 'normalizationBatches', 'narrativeExemptions', 'unresolvedNotes'];
@@ -121,7 +53,7 @@ export function configFor(storage, key) {
       apiMode: mode === 'direct' ? 'custom' : mode,
       slots: describeSlots(saved?.slots),
     });
-  } catch { return clone(DEFAULT_CONFIG); }
+  } catch { return deepClone(DEFAULT_CONFIG); }
 }
 export function putConfig(storage, key, value) {
   try { if (!storage) return false; storage.setItem(key, JSON.stringify(value)); return true; }

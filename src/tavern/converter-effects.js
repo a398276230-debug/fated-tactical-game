@@ -183,15 +183,29 @@ export function geometryFields(area) {
   return result;
 }
 
-export function ammoCapacity(raw) {
-  const match = tagEntries(raw?.tags ?? raw?.标签).map(tag => tag.match(/^弹药\s*[:：]\s*(\d+)$/u)).find(Boolean);
-  return match ? bound(match[1], 0, 1000000, 0) : null;
+export function ammoCounter(raw) {
+  const field = ['currentAmmo', '当前弹药'].find(key => Number.isInteger(raw[key]) && raw[key] >= 0);
+  if (field) return { current: bound(raw[field], 0, 1e9), initialRawValue: raw[field], path: [field], format: { kind: 'field_number' } };
+  const key = raw.tags != null ? 'tags' : '标签';
+  const tags = raw[key];
+  for (const [index, value] of [].concat(tags ?? []).entries()) {
+    const rawTag = text(value);
+    const match = /(?<prefix>(?:^|[\[【])\s*)弹药(?<sep>\s*[:：]\s*)(?<current>\d+)(?:(?<slash>\s*[/／]\s*)(?<max>\d+))?(?=\s*(?:[\]】]|$))/u.exec(rawTag);
+    if (!match) continue;
+    const { prefix, sep, current, slash, max } = match.groups;
+    return { current: bound(current, 0, 1e9), max: max == null ? null : bound(max, 0, 1e9), rawLabel: '弹药', initialRawValue: rawTag,
+      path: Array.isArray(tags) ? [key, index] : [key],
+      format: { kind: max == null ? 'tag_single' : 'tag_slash', sep, slash,
+        prefix: rawTag.slice(0, match.index) + prefix,
+        suffix: rawTag.slice(match.index + match[0].length) } };
+  }
+  return null;
 }
-export function attachAmmoPool(item, capacity) {
+export function attachAmmoPool(item, initial, cap = initial) {
   const { template } = item;
-  if (capacity == null || template.kind !== 'weapon' || !template.ranged) return;
+  if (initial == null || template.kind !== 'weapon' || !template.ranged) return;
   const declared = template.pools.ammo;
-  template.pools.ammo = { ...declared, initial: capacity, cap: Math.max(declared?.cap ?? 0, capacity) };
+  template.pools.ammo = { ...declared, initial, cap: Math.max(declared?.cap ?? 0, cap, initial) };
 }
 
 export function* instructions(program) {
@@ -257,7 +271,8 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
     const classes = ['ranged', 'light_blade', 'greatsword', 'staff', 'auxiliary'];
     const weaponClassAlias = new Map([['bow', 'ranged'], ['crossbow', 'ranged'], ['arcane', 'staff']]);
     const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-    const subtype = tagEntries(r.tags ?? r.标签).find(tag => ['弓','弩','火枪','投掷武器'].includes(tag));
+    const tags = tagEntries(r.tags ?? r.标签);
+    const subtype = tags.find(tag => ['弓','弩','火枪','投掷武器'].includes(tag));
     const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : Boolean(subtype));
     const twoHanded = slot === 'twoHands' || r.twoHanded === true || r.hand === 'two_handed' || explicitClass === 'greatsword'
       || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
@@ -267,6 +282,7 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
       ...(r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {}),
       weaponClass, hand: twoHanded ? 'two_handed' : slot === 'offHand' ? 'off_hand' : 'one_handed',
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
+      ...(r.closeQuarters === true || tags.some(tag => /近战射击|贴身射击/u.test(tag)) ? { closeQuarters: true } : {}),
       range: bound(area.range, 0, 64, ranged ? 4 : 1), rawRange: area.range ?? (ranged ? 4 : 1),
       attack: bound(r.attack ?? r.攻击 ?? attackTag?.[1], 0, 1e9), accuracy: bound(r.accuracy ?? r.命中, -20, 30, 0),
       damage: normalizeDice(r.damage ?? { stat: 'str' }),
@@ -275,6 +291,9 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
   } else Object.assign(template, { defense, ...(own(r, 'armor') ? { armor: bound(r.armor, 0, 1000000, 0) } : {}) });
   const item = { id: idBase, templateId, template, slot, name };
-  attachAmmoPool(item, ammoCapacity(r));
+  if (isWeapon && template.ranged) {
+    const ammo = ammoCounter(r);
+    if (ammo) attachAmmoPool(item, ammo.current, ammo.max ?? ammo.current);
+  }
   return item;
 }

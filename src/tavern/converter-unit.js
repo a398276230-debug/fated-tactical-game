@@ -12,7 +12,7 @@ import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
 import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, warningSink, WARNING_SCOPES } from './converter-parse.js';
-import { activeRule, ammoCapacity, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
+import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -34,18 +34,17 @@ function dynamicPoolKey(item, label) {
   return pools.length === 1 ? pools[0] : null;
 }
 
-function sourceEquipment(record) {
-  const value = record.equipment ?? record.equipments ?? record.items ?? record.装备 ?? [];
+function sourceEquipment(value, path) {
   const slots = new Map(Object.entries({ mainHand: 'mainHand', main: 'mainHand', weapon: 'mainHand', 主手: 'mainHand', 双手: 'twoHands', 双手武器: 'twoHands', offHand: 'offHand', off: 'offHand', 副手: 'offHand', shield: 'shield', 盾牌: 'shield' }));
-  const entries = Array.isArray(value) ? value.map(v => ['', v]) : Object.entries(asObject(value));
-  return entries.filter(([, item]) => object(item)).map(([key, item], i) => {
+  const entries = Array.isArray(value) ? value.map((v, i) => ['', v, i]) : Object.entries(asObject(value)).map(([key, item]) => [key, item, key]);
+  return entries.filter(([, item]) => object(item)).map(([key, item, sourceKey], i) => {
     // A later narrative placement overrides the starting hand declared in equipment tags.
     const position = [item.slot, item.position, item.位置].map(text).find(Boolean);
     const tags = [].concat(item.tags ?? item.标签 ?? []).map(text).join(',');
     const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
     const rawSlot = position || (slots.has(key) ? key : hand || key);
     const name = item.name ?? item.名称 ?? (slots.has(key) ? '' : key);
-    return [slots.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`)];
+    return [slots.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`), path ? [...path, sourceKey] : null];
   });
 }
 function normalizeBattleDefinition(raw, id = '') {
@@ -248,7 +247,7 @@ function importBackpack(bag, owner, skills, sink, entrySources, inventoryPaths, 
   return inventory;
 }
 
-function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist, board) {
+function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist, board, sourceRecord) {
   const resourcesSink = sink('resource'), warnings = sink('status');
   const p = participant ?? {};
   const name = text(p.protagonistName || p.name) || sourceName(record, p.id) || `单位 ${index + 1}`;
@@ -261,30 +260,46 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const size = sizeClassFor(bodyLengthM);
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100), resourcesSink), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10), resourcesSink), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10), resourcesSink), 'sp', resourcesSink) };
-  const sourceEntries = sourceEquipment(record);
+  const sourcePath = Array.isArray(record.__sourcePath) ? record.__sourcePath : null;
+  const equipmentKey = ['equipment', 'equipments', 'items', '装备'].find(key => record[key] != null);
+  const equipmentPath = sourcePath && sourceRecord[equipmentKey] != null ? [...sourcePath, equipmentKey] : null;
+  const sourceEntries = sourceEquipment(record[equipmentKey], equipmentPath);
+  const bagEntries = sourceEquipment(record.背包, sourcePath ? [...sourcePath, '背包'] : null);
   const entrySources = {}, equipmentKeys = new Map();
   const dynamicOverlay = { units: {}, itemCounters: {}, inventory: {} };
   const counterBindings = [];
   const inventoryPaths = {};
-  const sourcePath = Array.isArray(record.__sourcePath) ? record.__sourcePath : null;
-  const equipmentEntry = ([slot, raw, identity]) => {
+  const addBinding = (item, path, { path: suffix, ...counter }, poolKey) => {
+    const binding = { ...counter, ownerKind: 'item', poolKey, itemId: item.id, templateId: item.templateId, itemName: item.template.name,
+      mvuPath: path ? [...path, ...suffix] : null, unitId: id };
+    counterBindings.push(binding);
+    dynamicOverlay.itemCounters[item.id] ??= [];
+    dynamicOverlay.itemCounters[item.id].push(binding);
+    return binding;
+  };
+  const weaponAmmoBindings = new Map();
+  const equipmentEntry = ([slot, raw, identity, path]) => {
     const key = hash(String(identity)).toString(36);
     const occurrence = equipmentKeys.get(key) ?? 0;
     equipmentKeys.set(key, occurrence + 1);
     const item = normalizeEquipment(raw, slot, id, occurrence ? `${key}-${occurrence}` : key, sink);
     const { slot: _slot, position: _position, 位置: _placement, count: _count, 数量: _quantity, ...definition } = raw;
     entrySources[`equipment:${item.templateId}`] = staticProjection(definition);
-    const rawTags = [].concat(raw.tags ?? raw.标签 ?? []);
-    rawTags.forEach((tag, index) => {
+    const ammo = ammoCounter(raw);
+    const rangedWeapon = item.template.kind === 'weapon' && item.template.ranged;
+    if (rangedWeapon && ammo) {
+      weaponAmmoBindings.set(item.id, addBinding(item, path, { ...ammo, max: ammo.max ?? item.template.pools.ammo.cap }, 'ammo'));
+    }
+    const tagKey = raw.tags != null ? 'tags' : '标签';
+    [].concat(raw[tagKey] ?? []).forEach((tag, index) => {
       const dynamic = dynamicTag(tag);
-      if (!dynamic) return;
+      if (!dynamic || ammo && dynamic.label === '弹药') return;
       const poolKey = dynamicPoolKey(item, dynamic.label);
-      const binding = { ownerKind: 'item', poolKey, itemId: item.id, templateId: item.templateId, itemName: item.template.name,
-        rawLabel: dynamic.label, current: dynamic.current, max: dynamic.max, mvuPath: sourcePath ? [...sourcePath, '装备', item.template.name, raw.tags !== undefined ? 'tags' : '标签', index] : null,
-        format: { kind: dynamic.max == null ? 'tag_single' : 'tag_slash', sep: dynamic.sep, ...(dynamic.slash ? { slash: dynamic.slash, capInTag: dynamic.max } : {}) }, initialRawValue: text(tag), unitId: id };
-      counterBindings.push(binding);
-      dynamicOverlay.itemCounters[item.id] ??= [];
-      dynamicOverlay.itemCounters[item.id].push(binding);
+      if (poolKey === 'ammo' && weaponAmmoBindings.has(item.id)) return;
+      const binding = addBinding(item, path, { rawLabel: dynamic.label, current: dynamic.current, max: dynamic.max,
+        path: Array.isArray(raw[tagKey]) ? [tagKey, index] : [tagKey],
+        format: { kind: dynamic.max == null ? 'tag_single' : 'tag_slash', sep: dynamic.sep, slash: dynamic.slash }, initialRawValue: text(tag) }, poolKey);
+      if (rangedWeapon && poolKey === 'ammo') weaponAmmoBindings.set(item.id, binding);
     });
     return item;
   };
@@ -295,13 +310,31 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const off = !main?.template.twoHanded && slotItems.find(i => i.slot === 'offHand' && ['weapon', 'consumable'].includes(i.template.kind));
   const shield = !main?.template.twoHanded && slotItems.find(i => i.template.kind === 'shield');
   const gear = slotItems.filter(i => ![main, off, shield].includes(i));
-  const bagEntries = record.__sourceKind === 'MVU' ? sourceEquipment({装备:record.背包}) : [];
-  const containerCounts = [...sourceEntries, ...bagEntries].map(([, raw]) =>
-    raw.类型 === '武器' || raw.kind === 'weapon' ? null : ammoCapacity(raw)).filter(value => value != null);
-  const ammoWeapon = [main, off, ...gear].find(item => item?.template?.ranged);
-  if (ammoWeapon && containerCounts.length) {
-    const ownAmmo = ammoWeapon.template.pools.ammo?.initial ?? 0;
-    attachAmmoPool(ammoWeapon, Math.min(1e9, ownAmmo + containerCounts.reduce((sum, count) => sum + count, 0)));
+  if (main?.template.ranged) {
+    const containers = [
+      ...sourceEntries.filter((_, i) => slotItems[i].template.kind !== 'weapon'),
+      ...(record.__sourceKind === 'MVU' ? bagEntries.filter(([, raw]) =>
+        raw.类型 !== '武器' && raw.kind !== 'weapon' && bound(raw.数量 ?? raw.count, 0, 1e9, 1) > 0) : []),
+    ].flatMap(([, raw, , path]) => {
+      const counter = ammoCounter(raw);
+      return counter ? [{ counter, name: raw.name, path }] : [];
+    });
+    if (containers.length) {
+      const weaponPool = main.template.pools.ammo;
+      const ownBinding = weaponAmmoBindings.get(main.id);
+      const ownAmmo = bound(ownBinding?.current ?? weaponPool?.initial, 0, 1e9, 0);
+      if (ownBinding) Object.assign(ownBinding, { sliceBase: 0, sliceCap: ownAmmo });
+      // Remaining rounds occupy consecutive slices: weapon first, then equipped and bag containers in source order.
+      let total = ownAmmo, cap = weaponPool?.cap ?? 0;
+      for (const { counter, name, path } of containers) {
+        const sliceCap = Math.min(counter.current, 1e9 - total);
+        const binding = addBinding(main, path, { ...counter, max: counter.max ?? counter.current, sliceBase: total, sliceCap }, 'ammo');
+        binding.itemName = name;
+        total += sliceCap;
+        cap += Math.max(counter.max ?? 0, counter.current);
+      }
+      attachAmmoPool(main, total, Math.min(1e9, cap));
+    }
   }
   for (const item of slotItems) {
     finalizeEquipment(item, sink('effect', `/equipment/${item.templateId}`));
@@ -435,13 +468,14 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
   const rawMove = number(findValue(record, ['move','movement','移动'], null), NaN);
   const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stanceRules('attunement').itemCharges, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
+  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', attunementCharges: stanceRules('attunement').itemCharges, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
   if (p.moraleType && !moraleTypeFor(p.moraleType)) sink('state').push(`未知战斗类型「${p.moraleType}」，按标准处理`);
   if (isProtagonist) {
     const bagWeapons = [];
-    for (const [slot, raw, identity] of sourceEquipment({装备:record.背包})) {
+    for (const entry of bagEntries) {
+      const [, raw] = entry;
       if ((raw.类型 !== '武器' && raw.kind !== 'weapon') || bound(raw.数量 ?? raw.count, 0, 1e9, 1) === 0) continue;
-      const item = equipmentEntry([slot, raw, identity]);
+      const item = equipmentEntry(entry);
       if (item.template.kind === 'weapon') {
         finalizeEquipment(item, sink('effect', `/equipment/${item.templateId}`));
         equipment[item.templateId] = item.template;
@@ -605,7 +639,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const merged = mergeBattleParticipant(record, participant, battle);
     const placement = { moraleType:battle.moraleType, ...participant, ...persona, id };
     const startWarnings = warnings.length;
-    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist, battle);
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist, battle, record);
     if (origin === 'char_info') {
       // Preserve source order: it can decide which weapon is selected as main hand.
       const { 数量: _quantity, count: _count, ...definition } = merged;
@@ -654,7 +688,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: battle.explicitScale === true }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
-    if (binding.poolKey == null || binding.current == null) continue;
+    if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
     const pool = getPool(state, binding.itemId, binding.poolKey, 'item');
     if (pool) updatePoolCurrent(state, pool.id, 'set', binding.current);
   }
