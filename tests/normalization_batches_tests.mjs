@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activeNarrativeExemptions, MAX_NORMALIZATION_REPAIRS, normalizationLimit, normalizationRepairAllowed,
-  planNormalizationBatches, normalizationOperations, readNarrativeExemptions, runOrderedBatches,
+  activeNarrativeExemptions, MAX_NORMALIZATION_REPAIRS, mechanismTerms, normalizationLimit, normalizationRepairAllowed,
+  planNormalizationBatches, normalizationOperations, readNarrativeExemptions, runOrderedBatches, runUnitOrderedBatches,
 } from '../src/tavern/normalization-batches.js';
 
 import { applyPatch, normalizationPath, parseAIResponse, partitionNormalizationPatch } from '../src/tavern/overlay.js';
 import { readFileSync } from 'node:fs';
 import { classifyWarnings, existingEffectReceipts, missingDispositions, resolvedDiagnostics, warningKey } from '../src/tavern/resolved-warnings.js';
+import { acceptNormalizationResponse, repairWarnings, runNormalizationRepair } from '../src/tavern/normalization-commit.js';
 
 const warning = (unitId, originPath, message) => ({ unitId, originPath, message, source: 'mvu', scope: 'effect' });
 
@@ -57,33 +58,56 @@ test('existing armor receipt requires a previous write on the exact live mechani
 
 test('normalization settings enforce defaults and bounded positive integers', () => {
   assert.equal(normalizationLimit({}, 'normalizationConcurrency'), 1);
-  assert.equal(normalizationLimit({}, 'normalizationWarningsPerBatch'), 6);
+  assert.equal(normalizationLimit({}, 'normalizationWarningsPerBatch'), 5);
   assert.equal(normalizationLimit({ normalizationConcurrency: 3 }, 'normalizationConcurrency'), 3);
   assert.equal(normalizationLimit({ normalizationConcurrency: 0 }, 'normalizationConcurrency'), 1);
-  assert.equal(normalizationLimit({ normalizationWarningsPerBatch: 99 }, 'normalizationWarningsPerBatch'), 6);
+  assert.equal(normalizationLimit({ normalizationWarningsPerBatch: 99 }, 'normalizationWarningsPerBatch'), 5);
 });
 
-test('batch planning keeps shared equipment dependents together and caps independent warnings', () => {
-  const warnings = [warning('a', '/equipment/sword', 'one'), warning('b', '/equipment/sword', 'two'),
-    ...Array.from({ length: 5 }, (_, i) => warning(`u${i}`, `/skills/s${i}`, `independent ${i}`))];
-  const batches = planNormalizationBatches(['a', 'b', 'u0', 'u1', 'u2', 'u3', 'u4'], warnings, {
+test('batch planning keeps each carrier atomic, separates roles, and caps independent warnings', () => {
+  const warnings = [warning('a', '/equipment/sword', 'one'), warning('b', '/equipment/bow', 'two'),
+    ...Array.from({ length: 5 }, (_, i) => warning('a', `/skills/s${i}`, `independent ${i}`))];
+  const batches = planNormalizationBatches(['a', 'b'], warnings, {
     equipment: { sword: {} }, skills: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`s${i}`, {}])),
   }, { maxWarnings: 2 });
-  assert.deepEqual(batches[0].warnings.map(item => item.message), ['one', 'two']);
-  assert.deepEqual(batches.slice(1).map(batch => batch.warnings.length), [2, 2, 1]);
+  assert.deepEqual(batches[0].warnings.map(item => item.message), ['one', 'independent 0']);
+  assert.equal(batches.every(batch => batch.unitIds.length === 1), true);
+  assert.deepEqual(batches.filter(batch => batch.unitIds[0] === 'a').map(batch => batch.warnings.length), [2, 2, 2]);
+  assert.deepEqual(batches.find(batch => batch.unitIds[0] === 'b').warnings.map(item => item.message), ['two']);
 });
 
-test('a single oversized equipment entry still respects the configured warning ceiling', () => {
-  const warnings = Array.from({ length: 48 }, (_, index) => warning('boss', '/equipment/artifact', `effect ${index}`));
-  const batches = planNormalizationBatches(['boss'], warnings, {}, { maxWarnings: 6 });
-  assert.deepEqual(batches.map(batch => batch.warnings.length), Array(8).fill(6));
-  assert.equal(new Set(batches.flatMap(batch => batch.warnings)).size, 48);
+test('两个角色确实共用同一载体时不把写同一模板的警告分散到两条泳道', () => {
+  const warnings=['a','b'].map(id=>warning(id,'/equipment/shared/rules',id));
+  assert.deepEqual(planNormalizationBatches(['a','b'],warnings,{}, {maxWarnings:1}), [{unitIds:['a','b'],warnings}]);
 });
 
-test('narrative exemptions must uniquely match sent warnings and persist only for the same source', () => {
-  const w = warning('p1', '/skills/frost/rules', 'unsupported effect');
+test('carrier clusters up to elastic limit stay atomic while larger ones split only at that limit', () => {
+  const atomic = Array.from({ length: 8 }, (_, index) => warning('boss', '/equipment/artifact', `effect ${index}`));
+  const oversized = Array.from({ length: 19 }, (_, index) => warning('boss', '/equipment/armor', `effect ${index}`));
+  const batches = planNormalizationBatches(['boss'], [...atomic, ...oversized], {}, { maxWarnings: 5 });
+  assert.deepEqual(batches.map(batch => batch.warnings.length).sort((a, b) => b - a), [8, 5, 5, 5, 4]);
+  assert.equal(new Set(batches.flatMap(batch => batch.warnings)).size, 27);
+});
+
+test('首批优先定义共享状态的被动；跨批边界保持原文术语亲和，不把零 AP 主动误当核心被动', () => {
+  const ids=['a','b','c','z'], state={skills:{a:{ap:0},b:{},c:{},z:{passive:true}}};
+  const terms=['【攻击】【位移：4】','无','[冻伤]','「冻伤」'];
+  const rawSources={boss:Object.fromEntries(ids.map((id,i)=>[`skills:${id}`,{效果:terms[i]}]))};
+  const warnings=ids.map(id=>warning('boss',`/skills/${id}`, '待标准化'));
+  for(const maxWarnings of [1,2]) {
+    const batches=planNormalizationBatches(['boss'],warnings,state,{maxWarnings,rawSources});
+    assert.deepEqual(batches.flatMap(b=>b.warnings).slice(0,2).map(w=>w.originPath),['/skills/z','/skills/c']);
+  }
+});
+
+test('mechanismTerms extracts only closed bracketed terms and filters generic and structured tags', () => {
+  assert.deepEqual([...mechanismTerms(JSON.stringify('「冻伤」[冰封][被动][位移: 4][未闭合「破损]'))], ['冻伤', '冰封']);
+});
+
+test('narrative exemptions use unresolved-compatible unique matching and persist only for the same source', () => {
+  const w = warning('p1', '/skills/frost/rules', '待标准化「霜冻」：unsupported effect');
   const source = { p1: 'input-a' };
-  const { matched: entries } = readNarrativeExemptions([{ ...w, reason: '保留为纯叙事' }], [w], id => source[id]);
+  const { matched: entries } = readNarrativeExemptions([{ unitId: 'p1', originPath: w.originPath, effectName: '霜冻', reason: '保留为纯叙事' }], [w], id => source[id]);
   assert.equal(entries[0].receipt.source, 'input-a');
   assert.equal(activeNarrativeExemptions([w], entries.map(item => item.receipt), id => source[id]).length, 1);
   source.p1 = 'input-b';
@@ -166,6 +190,53 @@ test('a mechanic write cannot implicitly resolve sibling warnings on the same te
   assert.deepEqual(solve([{ ...operation, resolves: sent }]), [sent[0], sent[1]]);
 });
 
+test('production acceptance keeps every appended mechanic value for P3 resolution', () => {
+  const w1 = warning('u1', '/skills/frost/mods', '基础机制');
+  const w2 = warning('u1', '/skills/frost/mods', '追加机制');
+  const state = { skills: { frost: { mods: [] } }, statusTemplates: {} };
+  const result = acceptNormalizationResponse({
+    reply: JSON.stringify({ patch: [
+      { op: 'add', path: '/skills/frost/mods', value: [{ stat: 'dr', flat: 1 }], resolves: [w1] },
+      { op: 'add', path: '/skills/frost/mods/-', value: { stat: 'speed', flat: 2 }, resolves: [w2] },
+    ] }),
+    snapshot: structuredClone(state), sent: [w1, w2], unitIds: ['u1'], current: structuredClone(state), baseline: structuredClone(state),
+    records: { u1: {} }, validate: () => {}, sourceFor: () => 'source',
+  });
+  assert.equal(result.changedOperations.length, 2);
+  assert.deepEqual(result.solved, [w1, w2]);
+  assert.deepEqual(result.next.skills.frost.mods, [{ stat: 'dr', flat: 1 }, { stat: 'speed', flat: 2 }]);
+});
+
+test('production acceptance reports shared-template conflict guidance for repair', () => {
+  const warningEntry = warning('u1', '/statusTemplates/freeze', '共享状态定义');
+  const state = { skills: {}, statusTemplates: { freeze: { name: '冻伤', category: 'debuff', stackMode: 'stack', maxStacks: 3, mods: [{ stat: 'speed' }], rules: [{ hook: 'turn_end' }] } } };
+  const result = acceptNormalizationResponse({
+    reply: JSON.stringify({ patch: [{ op: 'add', path: '/statusTemplates/freeze', value: { name: '另一个冻伤', mods: [{ stat: 'damage' }] }, resolves: [warningEntry] }] }),
+    snapshot: structuredClone(state), sent: [warningEntry], unitIds: ['u1'], current: structuredClone(state), baseline: structuredClone(state),
+    createdTemplates: new Map([['/statusTemplates/freeze', JSON.stringify(state.statusTemplates.freeze)]]), records: { u1: {} }, validate: () => {}, sourceFor: () => 'source',
+  });
+  assert.equal(result.repairWarnings.length, 1);
+  assert.match(result.repairError.message, /liveState已有模板摘要/);
+  assert.match(result.repairError.message, /若机制一致请删去 add 直接引用/);
+});
+
+test('production repair merges rejected and silently missing warnings into one request', async () => {
+  const first = warning('u1', '/skills/frost/mods', '被拒');
+  const second = warning('u1', '/skills/frost/rules', '遗漏');
+  const calls = [];
+  let count = 0;
+  const result = await runNormalizationRepair({
+    batch: { unitIds: ['u1'], warnings: [first, second] }, index: 2, result: { reply: 'initial' },
+    commit: (_batch, _reply) => count++ ? { repairWarnings: [], missing: [] } : { repairWarnings: [first], missing: [second] },
+    request: async (batch, index, correction) => { calls.push({ batch, index, correction }); return { reply: 'repair' }; },
+  });
+  assert.equal(result.repairAttempts, 1);
+  assert.deepEqual(calls[0].batch.warnings, [first, second]);
+  assert.match(calls[0].correction.message, /校验被拒/);
+  assert.equal(result.repaired.repairWarnings.length, 0);
+  assert.deepEqual(repairWarnings({ repairWarnings: [first], missing: [second] }), [first, second]);
+});
+
 test('concurrent requests commit deterministically by batch order', async () => {
   const batches = [{ id: 0 }, { id: 1 }, { id: 2 }];
   const order = [];
@@ -177,4 +248,53 @@ test('concurrent requests commit deterministically by batch order', async () => 
   }, async ({ value }, batch) => order.push(`commit${batch.id}:${value}`), controller.signal);
   assert.deepEqual(order.filter(entry => entry.startsWith('commit')), ['commit0:0', 'commit1:1', 'commit2:2']);
   assert.ok(order.indexOf('request1') < order.indexOf('commit0:0'));
+});
+
+test('unit dependency DAG allows fork branches in parallel and joins after both commits', async () => {
+  const batches = [
+    { id: 'a1', unitIds: ['a'] }, { id: 'b1', unitIds: ['b'] },
+    { id: 'ab2', unitIds: ['a', 'b'] }, { id: 'a3', unitIds: ['a'] },
+  ];
+  const order = [], live = { a: 0, b: 0 };
+  let active = 0, maxActive = 0;
+  const controller = new AbortController();
+  await runUnitOrderedBatches(batches, 2, async batch => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    order.push(`request:${batch.id}`);
+    await new Promise(resolve => setTimeout(resolve, 3));
+    const version = Object.fromEntries(batch.unitIds.map(id => [id, live[id]]));
+    active--;
+    return version;
+  }, async ({ value }, batch) => {
+    for (const unitId of batch.unitIds) {
+      assert.equal(value[unitId], live[unitId]);
+      live[unitId]++;
+    }
+    order.push(`commit:${batch.id}`);
+  }, controller.signal);
+  assert.equal(maxActive, 2);
+  assert.ok(order.indexOf('request:ab2') > order.indexOf('commit:a1'));
+  assert.ok(order.indexOf('request:ab2') > order.indexOf('commit:b1'));
+  assert.ok(order.indexOf('request:a3') > order.indexOf('commit:ab2'));
+});
+
+test('a lane failure stops new launches and waits for in-flight batches', async () => {
+  const batches = [
+    { id: 'fail', unitIds: ['a'] }, { id: 'inflight', unitIds: ['b'] },
+    { id: 'not-launched', unitIds: ['c'] },
+  ];
+  const events = [];
+  const controller = new AbortController();
+  await assert.rejects(runUnitOrderedBatches(batches, 2, async batch => {
+    events.push(`request:${batch.id}`);
+    if (batch.id === 'fail') throw new Error('request failed');
+    await new Promise(resolve => setTimeout(resolve, 5));
+    return batch.id;
+  }, async (result, batch) => {
+    if (result.error) throw result.error;
+    events.push(`commit:${batch.id}:${result.value}`);
+  }, controller.signal), /request failed/);
+  assert.ok(events.includes('commit:inflight:inflight'));
+  assert.equal(events.includes('request:not-launched'), false);
 });

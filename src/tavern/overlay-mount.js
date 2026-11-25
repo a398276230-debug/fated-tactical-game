@@ -1,6 +1,6 @@
-import { classifyWarnings, diagnosticText, diagnosticTitle, existingEffectReceipts, missingDispositions, identifiesWarning, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
+import { classifyWarnings, diagnosticText, diagnosticTitle, remainingDiagnostics, normalizationCandidates, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { hydrateFromSources as hydrateBattleState, parseBattleInit, parseSimpleYaml, warningsForUnit } from './converter.js';
-import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationOperations, normalizationPath, normalizationRepairAllowed, planNormalizationBatches, readNarrativeExemptions, runOrderedBatches, warningReference } from './normalization-batches.js';
+import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationPath, planNormalizationBatches, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
@@ -17,8 +17,9 @@ import { duplicateMappings, duplicateOperations, instanceGroups } from './instan
 import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
 import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
-import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey, stripReasoningBlocks } from './overlay-ai.js';
-import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch, partitionNormalizationPatch } from './overlay-patch.js';
+import { acceptNormalizationResponse, rejectedWarning, repairWarnings, runNormalizationRepair } from './normalization-commit.js';
+import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey } from './overlay-ai.js';
+import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch } from './overlay-patch.js';
 import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
 
@@ -616,8 +617,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
 
   let promptKind = 'validate', promptInstruction = '';
   let previewSink, lastSent = null;
+  const characterEntries = () => Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.entryValues]));
   function assemblyContext(kind = promptKind, instruction = promptInstruction, onlyUnitIds = kind === 'validate' ? selectedIds() : undefined) {
-    return { kind, instruction, onlyUnitIds, rawCharacters:Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
+    return { kind, instruction, onlyUnitIds, characterEntries:characterEntries(), rawCharacters:Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
   }
   function publishMessages(messages, kind = promptKind) {
     previewSink?.(messages, kind);
@@ -648,7 +650,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     const ids = [...new Set(unitIds.map(groupId))].filter(id => own(characters, id));
     if (!ids.length) return;
     const queue = planNormalizationBatches(ids, pending, liveState(), {
-      maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'),
+      maxWarnings: normalizationLimit(requestConfig, 'normalizationWarningsPerBatch'), rawSources: characterEntries(),
     });
     if (!queue.length) return;
     const controller = new AbortController();
@@ -690,46 +692,30 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         controller.signal.throwIfAborted();
         try {
           if (result.error) throw result.error;
-          let accepted;
-          let repairAttempts = 0;
-          try { accepted = commitNormalization(key, batch, result.value, createdTemplates); }
-          catch (error) {
-            // A batch gets one repair request at most. Explicit unresolved/narrative
-            // dispositions are an intentional model decision, not syntax to repair.
-            if (!normalizationRepairAllowed({ attempts: repairAttempts, explicitUnresolved: error.noRepair || result.value?.explicitUnresolved })) throw error;
-            repairAttempts++;
-            progress(`第 ${index + 1} 批正在修正输出`);
-            try {
-              const revised = await request(error.missingWarnings ? { ...batch, warnings: error.missingWarnings } : batch, index, error);
+          const repairResult = await runNormalizationRepair({
+            batch, index, result: result.value,
+            commit: (repairBatch, payload, options = {}) => {
               controller.signal.throwIfAborted();
-              accepted = commitNormalization(key, batch, revised, createdTemplates, { acceptPartial: true });
-            } catch (retryError) {
-              controller.signal.throwIfAborted();
-              if (!error.missingCoverage || key !== activeBattleKey) throw retryError;
-              // Revalidate the initial response before preserving usable partial work.
-              accepted = commitNormalization(key, batch, result.value, createdTemplates, { acceptPartial: true });
-            }
-          }
-          if (!repairAttempts && accepted.repairWarnings?.length) {
-            repairAttempts++;
-            progress(`第 ${index + 1} 批正在修复拒收项`);
-            try {
-              const revisedBatch = { ...batch, warnings: accepted.repairWarnings };
-              const revised = await request(revisedBatch, index, accepted.repairError);
-              controller.signal.throwIfAborted();
-              const repaired = commitNormalization(key, revisedBatch, revised, createdTemplates, { acceptPartial: true });
-              applied += repaired.applied;
-              replies.push(repaired.data);
-              unmatchedNotes.push(...repaired.unmatchedNotes);
-              rejectedItems.push(...repaired.rejected);
-              const outstanding = new Set(repaired.missing);
-              accepted.rejected = accepted.rejected.filter(item => {
-                const related = accepted.repairWarnings.filter(warning => rejectedWarning(item, warning));
-                return !related.length || related.some(warning => outstanding.has(warning));
-              });
-            } catch (error) {
-              controller.signal.throwIfAborted();
-            }
+              if (key !== activeBattleKey) throw new Error('战场已切换，不应用旧战场补丁');
+              return commitNormalization(key, repairBatch, payload, createdTemplates, options);
+            },
+            request,
+            onRepair: ({ kind }) => progress(`第 ${index + 1} 批正在${kind === 'initial' ? '修正输出' : '修复拒收项'}`),
+          });
+          controller.signal.throwIfAborted();
+          const accepted = repairResult.accepted;
+          const repaired = repairResult.repaired;
+          if (repaired) {
+            applied += repaired.applied;
+            replies.push(repaired.data);
+            unmatchedNotes.push(...repaired.unmatchedNotes);
+            rejectedItems.push(...repaired.rejected);
+            const outstanding = new Set(repaired.missing);
+            const repairedWarnings = repairWarnings(accepted);
+            accepted.rejected = accepted.rejected.filter(item => {
+              const related = repairedWarnings.filter(warning => rejectedWarning(item, warning));
+              return !related.length || related.some(warning => outstanding.has(warning));
+            });
           }
           applied += accepted.applied;
           replies.push(accepted.data);
@@ -1124,7 +1110,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       if(key && (rehydrate||changed.length||removed.length)) {
         for (const id of ids) {
           const previous = stored[id];
-          stored[id] = { ...fresh[id], resolvedWarnings: rawWarnings.filter(w => w.unitId === id &&
+          const { entryValues: _promptSources, ...record } = fresh[id];
+          stored[id] = { ...record, resolvedWarnings: rawWarnings.filter(w => w.unitId === id &&
             previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id]: previous }, fresh).length).map(warningKey) };
         }
         persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
@@ -1192,199 +1179,74 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     on(refresh, 'click', () => scan().catch(showError));
     on(report, 'click', deliverBattleReport);
   }
-  function rejectedWarning(item, warning) {
-    return (Array.isArray(item.op?.resolves) && item.op.resolves.some(reference => identifiesWarning(reference, warning)))
-      || (warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`)));
-  }
   function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
-    const { data, parseError } = parseAIResponse(reply);
-    const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
-    const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
-    if (isObject(data) && !own(data, 'patch') && (explicitUnresolved || explicitNarrative)) data.patch = [];
-    if (!Array.isArray(data?.patch)) {
-      const error = new Error(`模型未返回有效的战局补丁${parseError ? `：${parseError}` : ''}`);
-      const source = typeof reply === 'string' ? stripReasoningBlocks(reply) : '';
-      error.raw = /^[\s<]*(?:```(?:json)?\s*)?[{[]/i.test(source)
-        ? source.slice(source.search(/[{[]/)) : undefined;
-      if (explicitUnresolved) error.noRepair = true;
-      throw error;
-    }
-    const raw = JSON.stringify(data, null, 2);
-    try {
-      const { matched: notes, invalid: unmatchedNotes } = readUnresolvedDiagnostics(data.unresolved, sent);
-      const records = Object.fromEntries(unitIds.map(id => [id, characters[id]]));
-      const current = liveState();
-      const conflicts = [];
-      const rebasedPatch = data.patch.flatMap((operation, index) => {
-        if (typeof operation?.path !== 'string') return [operation];
-        try {
-          const accepted = normalizationOperations([operation], snapshot, current, createdTemplates, fingerprintAt);
-          if (accepted.length) normalizationOperations(duplicateOperations(operation, duplicatePaths), snapshot, current, createdTemplates, fingerprintAt);
-          return accepted;
-        }
-        catch (error) { conflicts.push({ index, op: operation, path: operation.path, reason: error.message }); return []; }
-      });
-      const expanded = operation => [operation, ...duplicateOperations(operation, duplicatePaths)];
-      const baselineForPartition = hydrateBaseline(sources.input);
-      const partition = partitionNormalizationPatch({
-        liveState: current, baselineState: baselineForPartition, existingOps: operations(key), rawPatch: rebasedPatch,
-        conflictingDefinitions: conflicts.filter(item => item.op.op === 'add' && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path)).map(item => item.path),
-        allowedUnitIds: unitIds, expand: expanded, apply: options.applyPatch ?? applyPatch, validate: options.validateState || defaultValidateState,
-        normalize: state => { refreshOpeningInitiative(state); syncEquipmentEffects(state); refreshOutcome(state); },
-      });
-      const rejected = [...conflicts, ...partition.rejected];
-      const blockedWarnings = new Set(sent.filter(warning => rejected.some(item => rejectedWarning(item, warning))));
-      const eligibleWarnings = sent.filter(warning => !blockedWarnings.has(warning));
-      const repairWarnings = sent.filter(warning => blockedWarnings.has(warning) && !notes.some(note => note.warning === warning && note.detail));
-      const repairError = rejected.length ? Object.assign(new Error(rejected.map(item => formatRejectedItem(item, current)).join('；')), {
-        raw: JSON.stringify(rejected.map(item => item.op)),
-      }) : null;
-      data.patch = partition.accepted.map(item => item.op);
-      const rootPath = entryRoot;
-      const operationsToApply = data.patch;
-      const paths = [...new Set(operationsToApply.flatMap(expanded).map(operation => rootPath(operation.path)))];
-      const apply = options.applyPatch ?? applyPatch;
-      let next = current;
-      const changedAtApply = new Map();
-      for (const operation of operationsToApply) {
-        const parentPath = operation.path.slice(0, operation.path.lastIndexOf('/'));
-        // Inserting/removing array entries also shifts the values at other indexes.
-        const path = operation.op === 'replace' || !fingerprintAt(next, parentPath)?.startsWith('[')
-          ? operation.path : parentPath;
-        const before = fingerprintAt(next, path);
-        next = apply(next, expanded(operation), true);
-        const after = fingerprintAt(next, path);
-        if (after !== before) changedAtApply.set(operation, { path, after });
-      }
-      const changed = new Set(paths.filter(path => fingerprintAt(next, path) !== fingerprintAt(current, path)));
-      const effective = operationsToApply.filter(operation => expanded(operation).some(copy => changed.has(rootPath(copy.path))));
-      const patch = effective.flatMap(({ resolves, ...operation }) => expanded(operation));
-      const changedOperations = effective.filter(operation => {
-        const change = changedAtApply.get(operation);
-        if (!change || fingerprintAt(current, change.path) === fingerprintAt(next, change.path)) return false;
-        if (change.path === operation.path) return fingerprintAt(next, change.path) === change.after;
-        // An insertion can survive later appends, but not a later overwrite of that rule.
-        const array = JSON.parse(fingerprintAt(next, change.path) ?? 'null');
-        return operation.op === 'remove' ? fingerprintAt(next, change.path) === change.after
-          : Array.isArray(array) && array.some(value => JSON.stringify(value) === JSON.stringify(operation.value));
-      });
-      const solved = resolvedDiagnostics(eligibleWarnings, records, changedOperations, notes);
-      const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(data.narrative, eligibleWarnings,
-        narrativeSourceFor(records), { solved, unresolved: notes });
-      unmatchedNotes.push(...invalidNarrative);
-      if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes.some(note => note.warning && note.detail)) {
-        throw new Error('模型返回的补丁没有改变战局');
-      }
-      let baseline, before;
-      if (patch.length || data.existing?.length) {
-        baseline = hydrateBaseline(sources.input);
-        before = applyPatch(baseline, operations(key), true);
-      }
-      const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
-        try {
-          const [entry] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
-          const { warning, path, fingerprint } = entry;
-          if (blockedWarnings.has(warning) || notes.some(note => note.warning === warning)
-            || narrative.some(note => note.warning === warning) || fingerprintAt(next, path) !== fingerprint) {
-            throw new Error('已有实现与本批处理结果冲突');
-          }
-          if (!solved.includes(warning)) solved.push(warning);
-          return [entry];
-        } catch {
-          unmatchedNotes.push(`第 ${index + 1} 条已有实现说明未通过核对`);
-          return [];
-        }
-      });
-      if (data.existing !== undefined && !Array.isArray(data.existing)) unmatchedNotes.push('未能读取模型的已有实现说明');
-      const missing = missingDispositions(sent, solved, notes, narrative);
-      // A repair response with no patch, receipt, explanation, or exemption made
-      // no progress. Never commit it as an empty successful batch.
-      if (missing.length && !patch.length && !verified.length && !notes.some(note => note.detail) && !narrative.length && !rejected.length && !unmatchedNotes.length) {
-        const error = new Error(`模型没有提交任何可核销结果，仍缺 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}`);
-        error.missingCoverage = true;
-        error.missingWarnings = missing;
-        error.noRepair = Boolean(acceptPartial);
-        throw error;
-      }
-      if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length && !unmatchedNotes.length && !verified.length
-        && !notes.some(note => note.detail) && !narrative.length) {
-        const error = new Error(`本批漏答 ${missing.length} 项：${missing.map(w => `${w.originPath ?? w.unitId}「${diagnosticTitle(w)}」`).join('、')}。本批尚未写入；保留已完成的补丁，重新提交完整结果。已实现的效果请在实际修改的操作上补 resolves；只创建依赖模板还须接回原技能。其余逐项写 unresolved 并说明原因，纯叙事才写 narrative。`);
-        error.missingCoverage = true;
-        error.missingWarnings = missing;
-        throw error;
-      }
-      const additions = [];
-      if (patch.length || verified.length) {
-        const validate = options.validateState || defaultValidateState;
+    const current = liveState();
+    const records = Object.fromEntries(unitIds.map(id => [id, characters[id]]));
+    const accepted = acceptNormalizationResponse({
+      reply, snapshot, sent, unitIds, current,
+      baseline: hydrateBaseline(sources.input),
+      existingOps: operations(key),
+      createdTemplates,
+      records,
+      sourceFor: narrativeSourceFor(records),
+      duplicateOperations: operation => duplicateOperations(operation, duplicatePaths),
+      apply: options.applyPatch ?? applyPatch,
+      validate: options.validateState || defaultValidateState,
+      normalize: state => { refreshOpeningInitiative(state); syncEquipmentEffects(state); refreshOutcome(state); },
+      acceptPartial,
+    });
+    const { data, notes, unmatchedNotes, rejected, missing, repairWarnings: rejectedWarnings,
+      repairError, baseline, before, next, effective, patch, solved, verified, narrative } = accepted;
+    const additions = [];
+    if (patch.length || verified.length) {
+      const validate = options.validateState || defaultValidateState;
+      validate(next);
+      validate(applyNormalization(baseline, [...operations(key), ...patch]));
+      additions.push(...normalizationTransactions({ patch, solved, verified, records: characters, before, fingerprint: fingerprintAt,
+        linkedRoots: effective.map(operation => [operation.path, ...duplicateOperations(operation, duplicatePaths).map(copy => copy.path)]) }).map(batch =>
+        batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
+      if (patch.length) {
+        refreshOpeningInitiative(next);
+        syncEquipmentEffects(next);
+        refreshOutcome(next);
         validate(next);
-        const previous = operations(key);
-        validate(applyNormalization(baseline, [...previous, ...patch]));
-        additions.push(...normalizationTransactions({ patch, solved, verified, records: characters, before, fingerprint: fingerprintAt,
-          linkedRoots: effective.map(operation => expanded(operation).map(copy => copy.path)) }).map(batch =>
-          batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
-        if (patch.length) {
-          refreshOpeningInitiative(next);
-          syncEquipmentEffects(next);
-          refreshOutcome(next);
-          validate(next);
-          if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
-          gameMount.loadState(next);
-          currentState = next;
-          for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
-          save();
-        }
+        if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
+        gameMount.loadState(next);
+        currentState = next;
+        for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
+        save();
       }
-      const stored = { ...config.charSnapshots[key] };
-      const rejectedUnits = new Set(rejected.flatMap(item => {
-        const direct = item.path.match(/^\/units\/([^/]+)/)?.[1];
-        if (direct) return [direct];
-        return [...blockedWarnings].map(warning => warning.unitId).filter(Boolean);
-      }));
-      for (const [id, record] of Object.entries(records)) {
-        const previous = stored[id]?.hash === record.hash ? stored[id].resolvedWarnings ?? [] : [];
-        stored[id] = { ...record, at: Date.now(), normalized: !rejectedUnits.has(id), resolvedWarnings: previous };
-      }
-      syncSettings();
-      const receipts = narrative.map(({ receipt }) => receipt);
-      const previousExemptions = config.narrativeExemptions[key] ?? [];
-      persistSettings({
-        charSnapshots: { ...config.charSnapshots, [key]: stored },
-        normalizationBatches: { ...config.normalizationBatches, [key]: [...batches(key), ...additions] },
-        narrativeExemptions: { ...config.narrativeExemptions, [key]: [...previousExemptions.filter(previous => !receipts.some(receipt => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] },
-      });
-      for (const { op, path } of effective) {
-        if (op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path) && fingerprintAt(current, path) === undefined) {
-          const fingerprint = fingerprintAt(next, path);
-          if (fingerprint !== undefined) createdTemplates.set(path, fingerprint);
-        }
-      }
-      filterResolved(stored, characters);
-      for (const note of notes) {
-        const path = note.warning?.originPath;
-        if (!note.detail || !path) continue;
-        // Partial work requires a receipt for this warning and a change to its own mechanics.
-        note.evidence = changedOperations.flatMap(operation => {
-          if (operation.op === 'remove' || !Array.isArray(operation.resolves)
-            || !operation.resolves.some(ref => identifiesWarning(ref, note.warning)
-              && sent.filter(warning => identifiesWarning(ref, warning)).length === 1)) return [];
-          const fields = ['rules', 'mods', 'pools', 'damage', 'heal'];
-          return fields.flatMap(field => {
-            const fieldPath = `${path}/${field}`;
-            if (!pathUnder(operation.path, fieldPath) && operation.path !== path) return [];
-            const value = fingerprintAt(next, fieldPath);
-            return value !== undefined && value !== '[]' && value !== '{}' && value !== fingerprintAt(current, fieldPath)
-              ? [[fieldPath, value]] : [];
-          });
-        });
-      }
-      reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
-      scanStatus = `已标准化 ${unitIds.length} 个角色`;
-      renderInstances();
-      return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings, repairError };
-    } catch (error) {
-      error.raw ??= raw;
-      throw error;
     }
+    const stored = { ...config.charSnapshots[key] };
+    const rejectedUnits = new Set(rejected.flatMap(item => {
+      const direct = item.path.match(/^\/units\/([^/]+)/)?.[1];
+      if (direct) return [direct];
+      return [...accepted.blockedWarnings].map(warning => warning.unitId).filter(Boolean);
+    }));
+    for (const [id, record] of Object.entries(records)) {
+      const { entryValues: _promptSources, ...snapshotRecord } = record;
+      const previous = stored[id]?.hash === snapshotRecord.hash ? stored[id].resolvedWarnings ?? [] : [];
+      stored[id] = { ...snapshotRecord, at: Date.now(), normalized: !rejectedUnits.has(id), resolvedWarnings: previous };
+    }
+    syncSettings();
+    const receipts = narrative.map(({ receipt }) => receipt);
+    const previousExemptions = config.narrativeExemptions[key] ?? [];
+    persistSettings({
+      charSnapshots: { ...config.charSnapshots, [key]: stored },
+      normalizationBatches: { ...config.normalizationBatches, [key]: [...batches(key), ...additions] },
+      narrativeExemptions: { ...config.narrativeExemptions, [key]: [...previousExemptions.filter(previous => !receipts.some(receipt => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] },
+    });
+    for (const operation of effective) {
+      if (operation.op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(operation.path) && fingerprintAt(current, operation.path) === undefined) {
+        const fingerprint = fingerprintAt(next, operation.path);
+        if (fingerprint !== undefined) createdTemplates.set(operation.path, fingerprint);
+      }
+    }
+    filterResolved(stored, characters);
+    reconcileUnresolvedNotes(key, characters, sources.warnings, notes);
+    scanStatus = `已标准化 ${unitIds.length} 个角色`;
+    renderInstances();
+    return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings: rejectedWarnings, repairError };
   }
   function updateChatInstances(next, previous) {
     for (const id of Object.keys(previous?.units ?? {})) if (!own(next.units, id)) delete config.instances[id];

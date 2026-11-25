@@ -43,7 +43,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
           else if (body.messages.at(-1).content === '只回复 OK') data = { choices: [{ message: { content: 'OK' } }] };
           else {
             normalizationRequests.push(body.messages);
-            const content = JSON.stringify({ patch: [
+            const content = normalizationRequests.length === 2 ? '{"patch":[]}' : JSON.stringify({ patch: [
               { op: 'replace', path: '/units/p1/armor', value: 7 },
               { op: 'replace', path: '/skills/missing/rules', value: [{ op: 'bad_op' }] },
             ], unresolved: ['模拟待处理项'] });
@@ -177,6 +177,17 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     }};
     window.generateRaw = async config => new Promise((resolve,reject) => {
       window.hostRequests ||= [];
+      // Independent enemy lane. Keep the manually stepped transcript below specific to the player.
+      const live=window.__fatedTacticalTavern.getState();
+      const enemy=live.warnings.find(w=>w.unitId==='e1' && w.message.includes('恒定发射'));
+      const warningSlot=config.ordered_prompts.find(m=>m.content.includes('待处理警告：'))?.content.split('待处理警告：').at(-1);
+      if (enemy && warningSlot?.includes(JSON.stringify(enemy.message))) {
+        const calls=window.enemyRequests??=[]; calls.push(config);
+        if (calls.length<=2) return resolve('无有效补丁');
+        const {unitId,originPath,message}=enemy, id=originPath.split('/').at(-1);
+        return resolve(JSON.stringify({patch:[{op:'replace',path:originPath+'/rules',resolves:[{unitId,originPath,message}],value:[...live.equipment[id].rules,
+          {id:'fixed-shot',hook:'before_commit',filter:"event.actorId == self.id && event.actionType == 'attack' && event.weaponTemplateId == '"+id+"' && event.damageType == 'physical'",program:[{op:'mutate_event',patch:{finalAmount:10}}]}]}]}));
+      }
       hostRequests.push(config);
       window.completeHostAI = () => {
         if (hostRequests.length === 1 || hostRequests.length === 2) return resolve('推理草稿：先分析冰冻箭和恒定发射，然后输出 {"patch":');
@@ -195,11 +206,6 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
           return {op:'replace',path:path+'/rules',value:[...state.equipment[templateId].rules,fixedShot(templateId)],resolves};
         };
         const patch = [rulePatch('/equipment/'+id,resolves)];
-        const crossbow = state.warnings.find(w => w.unitId === 'e1' && w.message.includes('恒定发射'));
-        if (crossbow) {
-          const { unitId, originPath, message } = crossbow;
-          patch.push(rulePatch(originPath,[{unitId,originPath,message}]));
-        }
         const unresolved = state.warnings.filter(w => w.message.includes('冰冻箭')).map(({unitId,originPath,message}) =>
           ({unitId,originPath,message,effectName:'冰冻箭',reason:'仍缺冰冻持续时间'}));
         if (hostRequests.length === 4 && unresolved.length) {
@@ -283,6 +289,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.equal(await run('hostRequests.length'),3);
   }
   const tavernState = () => run('window.__fatedTacticalTavern.getState()');
+  assert.equal(await run('enemyRequests.length'),3,'敌方独立泳道经历首次失败、一次返修和手动重试');
   const opening = await tavernState();
   const openingBow = state => state.equipment[state.items[state.units.p1.mainHand].templateId];
   await run(`hostMessages.push({message_id:8,role:'assistant',message:battleFixture.replace('chrome-host','chrome-reuse')});
@@ -440,7 +447,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('[data-tab="api"]');
   assert.equal(await run(`document.querySelector('[name="apiSource"]').disabled`), true);
   const batchFields = `['normalizationConcurrency','normalizationWarningsPerBatch'].map(name => Number(document.querySelector('[name="'+name+'"]').value))`;
-  assert.deepEqual(await run(batchFields), [1, 6]);
+  assert.deepEqual(await run(batchFields), [1, 5]);
   await select('[name="normalizationConcurrency"]', '3');
   await select('[name="normalizationWarningsPerBatch"]', '4');
   assert.deepEqual(await run(`(() => { const c = window.__fatedTacticalTavern.getConfig(); return [c.normalizationConcurrency, c.normalizationWarningsPerBatch]; })()`), [3, 4]);
@@ -617,10 +624,12 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`${get('[data-normalize]')}.disabled`), true, '没有待编译词条时不发送空批次');
   await run(`${get(rerollEntry)}.click(); document.querySelector('[data-normalize]').click(); document.querySelector('[data-tab="ai"]').click();`);
   await until(async () => (await tavernState()).units.p1.armor === 7, '手动标准化通过独立 API 写入');
-  assert.equal(normalizationRequests.length, 1);
+  await until(() => normalizationRequests.length === 2, '已生效护甲后仅补答静默漏项一次');
+  assert.match(normalizationRequests[1].at(-1).content, /上一轮静默遗漏/);
   assert.doesNotMatch(JSON.stringify(normalizationRequests[0]), /编辑后的护甲问题|调整错误路径/);
   assert.equal(await run('aiProbe.args.ordered_prompts.at(-1).content'), '编辑后的护甲问题');
   assert.deepEqual(await aiData(), beforeNormalize);
+  await until(() => run(`document.querySelector('.fated-toast[data-tone="warning"]')?.textContent.includes('/skills/missing/rules')`), '局部返修未进展仍报告原始拒收');
   assert.match(await run(`document.querySelector('.fated-toast[data-tone="warning"]').textContent`), /1 项报错未应用.*\/skills\/missing\/rules/s);
   await run(`aiSend('Markdown 测试'); aiProbe.resolve(${JSON.stringify('一段 `行内代码`。\n\n```js\nconst n = 1;\n```\n\n下一段。')})`);
   await until(async () => (await bubble())?.status === 'ok', 'Markdown 回复完成');

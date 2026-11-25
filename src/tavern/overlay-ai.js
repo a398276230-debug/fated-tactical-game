@@ -212,20 +212,20 @@ export function parseLooseYaml(value) {
 const REASONING_BLOCK_RE = /<(think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*?<\/\1>/gi;
 const UNCLOSED_REASONING_RE = /<(?:think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*$/i;
 export function stripReasoningBlocks(value) {
-  return text(value).replace(REASONING_BLOCK_RE, '').replace(UNCLOSED_REASONING_RE, '').trim();
+  return text(value).replace(REASONING_BLOCK_RE, '').replace(UNCLOSED_REASONING_RE, '').replace(/<\/(?:think|thinking|thought|analysis|std_audit)\s*>/gi, '').trim();
 }
 
-export function extractJsonBlocks(value) {
+export function extractJsonBlocks(value, { withRanges = false } = {}) {
   const source = typeof value === 'object' ? JSON.stringify(value) : stripReasoningBlocks(value);
   const output = [];
-  const accept = (candidate, index) => {
+  const accept = (candidate, index, end) => {
     const parsed = parseJSON(candidate, null);
     if (!((isObject(parsed) && Object.keys(parsed).length) || (Array.isArray(parsed) && parsed.length))) return;
-    output.push({ parsed, index });
+    output.push({ parsed, index, end });
   };
   const fencedRanges = [];
   for (const match of source.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
-    accept(match[1].trim(), match.index);
+    accept(match[1].trim(), match.index, match.index + match[0].length);
     fencedRanges.push([match.index, match.index + match[0].length]);
   }
   const hidden = index => fencedRanges.some(([start, end]) => index >= start && index < end);
@@ -240,11 +240,12 @@ export function extractJsonBlocks(value) {
     else if (ch === '}' || ch === ']') {
       const expected = ch === '}' ? '{' : '[';
       const top = stack.at(-1);
-      if (top?.ch === expected) { stack.pop(); if (!stack.length) accept(source.slice(top.start, i + 1), top.start); }
+      if (top?.ch === expected) { stack.pop(); if (!stack.length) accept(source.slice(top.start, i + 1), top.start, i + 1); }
       else if (top) stack.length = 0;
     }
   }
-  return output.sort((a, b) => a.index - b.index).map(entry => entry.parsed);
+  output.sort((a, b) => a.index - b.index);
+  return withRanges ? output : output.map(entry => entry.parsed);
 }
 export const preferredJson = source => extractJsonBlocks(source).sort((a, b) => jsonPriority(a) - jsonPriority(b)).at(-1);
 function jsonPriority(value) {
@@ -261,9 +262,23 @@ export function parseAIResponse(value) {
   const envelope = /\{\s*"(?:patch|unresolved|existing|narrative)"\s*:/.exec(clean);
   let parsed;
   if (envelope && !/[{[]/.test(clean.slice(0, envelope.index))) {
-    const final = clean.slice(envelope.index).split(/\n\s*```/)[0].trim();
-    try { parsed = JSON.parse(final); }
-    catch (error) { return { data: null, patch: null, text: source, parseError: `最终 JSON 无效：${error.message}` }; }
+    try { parsed = JSON.parse(clean.slice(envelope.index)); }
+    catch (error) {
+      // One Markdown fence can surround several envelopes. Remove only paired
+      // delimiters; a stray fence or a partial object must still fail below.
+      const batchText = clean.replace(/```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n[\t ]*```/gi, '$1').trim();
+      const blocks = extractJsonBlocks(batchText, { withRanges: true });
+      const keys = ['patch','unresolved','existing','narrative'];
+      let cursor = 0;
+      const intact = blocks.length && blocks.every(({ parsed: block, index, end }) => {
+        const gap = batchText.slice(cursor, index);
+        cursor = end;
+        return !/[{}\[\]`]/.test(gap) && isObject(block) && Object.entries(block).every(([key, val]) => keys.includes(key) && Array.isArray(val));
+      }) && !/[{}\[\]`]/.test(batchText.slice(cursor));
+      if (!intact) return { data: null, patch: null, text: source, parseError: `最终 JSON 无效：${error.message}` };
+      parsed = Object.fromEntries(keys.filter(key => blocks.some(b => Object.hasOwn(b.parsed, key)))
+        .map(key => [key, blocks.flatMap(b => b.parsed[key] ?? [])]));
+    }
   } else parsed = preferredJson(source) ?? null;
   const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch ||
     (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);

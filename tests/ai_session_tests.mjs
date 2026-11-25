@@ -12,6 +12,29 @@ import { dispatchVMHook } from '../src/core/vm-runtime.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { applyPatch, extractJsonBlocks, parseAIResponse, stripReasoningBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
 
+test('多信封只合并完整的处置数组，不抢救残缺或嵌套信封', () => {
+  const p = {op:'add',path:'/skills/a/mods',value:[]};
+  const first = JSON.stringify({patch:[p]}), second = JSON.stringify({patch:[p],narrative:[]});
+  for (const raw of [first + second, '```json\n'+first+'\n'+second+'\n```', '```json\n' + first + '\n```\n```json\n' + second + '\n```', first+'\n'+second+'\n完成。']) {
+    assert.deepEqual(parseAIResponse(raw+'</std_audit></thinking></thought></analysis></think>').data,{patch:[p,p],narrative:[]});
+  }
+  for (const tail of ['}', '{"patch":[', '{"patch":[], broken}', '{"patch":{}}', '{"other":[]}', '```json\n{"patch":\n```']) {
+    const r=parseAIResponse(first+'\n'+tail); assert.equal(r.data,null,tail); assert.match(r.parseError,/JSON/);
+  }
+});
+
+test('实际 roster 槽只发目标原文；附属技能入表，活状态与兄弟机制只读', () => {
+  const state={units:{a:{skills:['core','sib'],mainHand:'i'},b:{skills:['alien']}},items:{i:{templateId:'gear'}},equipment:{gear:{name:'剑',skills:['derived']}},
+    skills:{core:{name:'定义'},sib:{name:'余波',passive:true,rules:[{}]},derived:{name:'剑技'},alien:{name:'他人技能'}},statusTemplates:{ice:{name:'冻伤',maxStacks:5,stackMode:'stack',tags:['冰'],mods:[{stat:'speed'}],rules:[{hook:'turn_end'}]}}};
+  const long='未命中载体全文'.repeat(500), entries={a:{unit:[{等级:7}], 'skills:core':{效果:'本批定义原文'}, 'skills:sib':{效果:`「冻伤」${long}`}}};
+  const ctx={state,onlyUnitIds:['a'],characterEntries:entries,rawCharacters:{a:{技能:{定义:'本批定义原文',余波:long}}},sources:{warnings:[{unitId:'a',originPath:'/skills/core/mods',message:'待处理'}]}};
+  const [payload,index]=assembleMessages(DEFAULT_SLOTS.filter(s=>s.id==='roster'),ctx)[0].content.split('\n<role_readonly_index DO_NOT_PATCH="true">');
+  const roster=JSON.parse(payload); assert.deepEqual(Object.keys(roster.skills),['core','sib','derived']);
+  assert.deepEqual(roster.raw.a,{unit:[{等级:7}],'skills:core':{效果:'本批定义原文'}}); assert.ok(!payload.includes(long));
+  assert.match(index,/ice\|冻伤\|5\/stack\|冰\|speed\|turn_end/); assert.match(index,/被动技能\]sib.*冻伤.*1规则/);
+  assert.match(index,/主动技能\]derived/); assert.doesNotMatch(index,/定义|他人技能/); assert.ok(index.length < 600);
+});
+
 test('每个 VM 指令的用法说明进入实际组装的默认助手消息', () => {
   const messages = assembleMessages(DEFAULT_SLOTS, {});
   for (const opcode of vmSchema.$defs.opcode.oneOf) {
