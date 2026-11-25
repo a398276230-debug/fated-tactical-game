@@ -225,71 +225,6 @@ var FatedTacticalTavern = (() => {
     return table(state.units).some((ally) => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
   }
 
-  // src/core/rng.js
-  var UINT32_SIZE = 4294967296;
-  function advance(rng) {
-    return Math.imul(rng, 1664525) + 1013904223 >>> 0;
-  }
-  function nextRng(rng) {
-    rng = advance(rng);
-    return { rng, value: rng / UINT32_SIZE };
-  }
-  function rollDie(rng, sides) {
-    if (!Number.isInteger(sides) || sides < 1 || sides > UINT32_SIZE) throw new RangeError("Invalid die size");
-    const bucket = Math.floor(UINT32_SIZE / sides);
-    const boundary = bucket * sides;
-    do {
-      rng = advance(rng);
-    } while (rng >= boundary);
-    return { rng, value: Math.floor(rng / bucket) + 1 };
-  }
-  function rollDice(rng, count, sides) {
-    if (!Number.isSafeInteger(count) || count < 0) throw new RangeError("Invalid dice count");
-    let total2 = 0;
-    const rolls = [];
-    for (let i = 0; i < count; i++) {
-      const roll = rollDie(rng, sides);
-      rng = roll.rng;
-      rolls.push(roll.value);
-      total2 += roll.value;
-    }
-    return { rng, total: total2, rolls };
-  }
-  var edge = (advantage, disadvantage) => Math.sign(Number(advantage) - Number(disadvantage));
-  function rollD20(rng, advantage = 0, disadvantage = 0) {
-    const sign3 = edge(advantage, disadvantage);
-    const result = rollDice(rng, sign3 ? 2 : 1, 20);
-    const { rolls } = result;
-    return {
-      rng: result.rng,
-      rolls,
-      value: sign3 > 0 ? Math.max(...rolls) : sign3 < 0 ? Math.min(...rolls) : rolls[0],
-      mode: sign3 > 0 ? "advantage" : sign3 < 0 ? "disadvantage" : "normal"
-    };
-  }
-  function rollProtocolD20(rng, { bonus = 0, penalty = 0, tierAdvantage = 0 } = {}) {
-    const b = Math.max(0, Math.min(2, bonus)), p = Math.max(0, Math.min(1, penalty));
-    const sign3 = b > p ? 1 : p > b ? -1 : 0;
-    const count = sign3 === 0 ? 1 : b === 2 && sign3 > 0 || tierAdvantage && sign3 < 0 ? 3 : 2;
-    const result = rollDice(rng, count, 20);
-    const sorted = [...result.rolls].sort((a, z) => a - z);
-    const value = count === 3 ? sorted[1] : sign3 > 0 ? Math.max(...result.rolls) : sign3 < 0 ? Math.min(...result.rolls) : result.rolls[0];
-    return { rng: result.rng, rolls: result.rolls, value, mode: count === 3 ? "middle" : sign3 > 0 ? "bonus" : sign3 < 0 ? "penalty" : "normal" };
-  }
-  function probability(successes, advantage, disadvantage) {
-    const sign3 = edge(advantage, disadvantage);
-    if (sign3 > 0) return (400 - (20 - successes) ** 2) / 400;
-    if (sign3 < 0) return successes ** 2 / 400;
-    return successes / 20;
-  }
-  function critChance(advantage = 0, disadvantage = 0) {
-    return probability(1, advantage, disadvantage);
-  }
-  function saveChance(target2, modifier = 0, advantage = 0, disadvantage = 0) {
-    const needed = Math.ceil(target2 - modifier);
-    return probability(Math.max(0, Math.min(20, 21 - needed)), advantage, disadvantage);
-  }
-
   // src/core/combat_protocol.js
   var BL_SIZE_TABLE = Object.freeze([
     { id: "tiny", name: "\u5FAE\u578B", max: 0.6, value: 2, martial: -8, melee: 0.7 },
@@ -373,7 +308,8 @@ var FatedTacticalTavern = (() => {
   var stanceFor = (slots3 = {}) => {
     const main = slots3.mainHand ?? slots3.weapon ?? null, off = slots3.offHand ?? null, shield = slots3.shield ?? null;
     if (shield) return "sword_shield";
-    if (off?.kind === "consumable" || off?.kind === "auxiliary") return "attunement";
+    if (!main) return "unarmed";
+    if (off?.kind === "consumable") return "attunement";
     if (main?.heavy || main?.twoHanded) return "greatsword";
     if (off) return "dual_wield";
     if (main?.ranged || main?.kind === "ranged") return "light_blade";
@@ -446,6 +382,71 @@ var FatedTacticalTavern = (() => {
     return { threshold, check, triggered, roll, outcome: !triggered ? "steady" : !check ? "shaken" : roll !== null && roll < 12 ? "routed" : "steady" };
   }
 
+  // src/core/rng.js
+  var UINT32_SIZE = 4294967296;
+  function advance(rng) {
+    return Math.imul(rng, 1664525) + 1013904223 >>> 0;
+  }
+  function nextRng(rng) {
+    rng = advance(rng);
+    return { rng, value: rng / UINT32_SIZE };
+  }
+  function rollDie(rng, sides) {
+    if (!Number.isInteger(sides) || sides < 1 || sides > UINT32_SIZE) throw new RangeError("Invalid die size");
+    const bucket = Math.floor(UINT32_SIZE / sides);
+    const boundary = bucket * sides;
+    do {
+      rng = advance(rng);
+    } while (rng >= boundary);
+    return { rng, value: Math.floor(rng / bucket) + 1 };
+  }
+  function rollDice(rng, count, sides) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new RangeError("Invalid dice count");
+    let total2 = 0;
+    const rolls = [];
+    for (let i = 0; i < count; i++) {
+      const roll = rollDie(rng, sides);
+      rng = roll.rng;
+      rolls.push(roll.value);
+      total2 += roll.value;
+    }
+    return { rng, total: total2, rolls };
+  }
+  var edge = (advantage, disadvantage) => Math.sign(Number(advantage) - Number(disadvantage));
+  function rollD20(rng, advantage = 0, disadvantage = 0) {
+    const sign3 = edge(advantage, disadvantage);
+    const result = rollDice(rng, sign3 ? 2 : 1, 20);
+    const { rolls } = result;
+    return {
+      rng: result.rng,
+      rolls,
+      value: sign3 > 0 ? Math.max(...rolls) : sign3 < 0 ? Math.min(...rolls) : rolls[0],
+      mode: sign3 > 0 ? "advantage" : sign3 < 0 ? "disadvantage" : "normal"
+    };
+  }
+  function rollProtocolD20(rng, { bonus = 0, penalty = 0, tierAdvantage = 0 } = {}) {
+    const b = Math.max(0, Math.min(2, bonus)), p = Math.max(0, Math.min(1, penalty));
+    const sign3 = b > p ? 1 : p > b ? -1 : 0;
+    const count = sign3 === 0 ? 1 : b === 2 && sign3 > 0 || tierAdvantage && sign3 < 0 ? 3 : 2;
+    const result = rollDice(rng, count, 20);
+    const sorted = [...result.rolls].sort((a, z) => a - z);
+    const value = count === 3 ? sorted[1] : sign3 > 0 ? Math.max(...result.rolls) : sign3 < 0 ? Math.min(...result.rolls) : result.rolls[0];
+    return { rng: result.rng, rolls: result.rolls, value, mode: count === 3 ? "middle" : sign3 > 0 ? "bonus" : sign3 < 0 ? "penalty" : "normal" };
+  }
+  function probability(successes, advantage, disadvantage) {
+    const sign3 = edge(advantage, disadvantage);
+    if (sign3 > 0) return (400 - (20 - successes) ** 2) / 400;
+    if (sign3 < 0) return successes ** 2 / 400;
+    return successes / 20;
+  }
+  function critChance(advantage = 0, disadvantage = 0) {
+    return probability(1, advantage, disadvantage);
+  }
+  function saveChance(target2, modifier = 0, advantage = 0, disadvantage = 0) {
+    const needed = Math.ceil(target2 - modifier);
+    return probability(Math.max(0, Math.min(20, 21 - needed)), advantage, disadvantage);
+  }
+
   // src/presets/status-defaults.js
   var actionStatuses = Object.freeze({
     brace: "guarded",
@@ -455,7 +456,6 @@ var FatedTacticalTavern = (() => {
     scan: "weakness",
     grapple: "grappled",
     trip: "prone",
-    use_item: "haste",
     altar: "haste",
     shield: "shield",
     collision: "stun",
@@ -571,7 +571,7 @@ var FatedTacticalTavern = (() => {
       mods: [{ stat: "damageMult", additivePercent: "0.15 * status.stacks", when: 'event.actionType == "attack"' }]
     }),
     lock_on: def("lock_on", "\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", {
-      mods: [{ stat: "checkBonus", checkKind: "attack", flat: "1 * status.stacks" }]
+      mods: [{ stat: "checkBonus", checkKind: "attack", flat: "1 * status.stacks", when: "event.targetId == status.vars.targetId" }]
     }),
     weakness: def("weakness", "\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", {
       stackMode: "stack",
@@ -771,6 +771,8 @@ var FatedTacticalTavern = (() => {
   for (const [name, description] of Object.entries({
     skillId: "\u672C\u6B21\u884C\u52A8\u65BD\u653E\u7684\u6280\u80FD ID\uFF08\u666E\u653B\u6216\u975E\u6280\u80FD\u4E8B\u4EF6\u4E3A null\uFF1B\u9650\u5B9A\u672C\u6280\u80FD\u89E6\u53D1\u5199 event.skillId == skill.id\uFF09",
     actionType: "\u672C\u6B21\u884C\u52A8\u7C7B\u578B\uFF08attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item\uFF09",
+    infiniteAmmo: "\u672C\u6B21\u653B\u51FB\u58F0\u660E\u65F6\u662F\u5426\u514D\u8017\u5F39\u836F",
+    weaponId: "\u672C\u6B21\u4F7F\u7528\u7684\u6B66\u5668\u5B9E\u4F8B ID",
     actorId: "\u672C\u6B21\u4E8B\u4EF6\u7684\u53D1\u8D77\u5355\u4F4D ID",
     targetId: "\u672C\u6B21\u4E8B\u4EF6\u7684\u4E3B\u76EE\u6807\u5355\u4F4D ID",
     damageType: "\u4F24\u5BB3\u7C7B\u578B\uFF08physical/energy/mental/true\uFF09",
@@ -1220,7 +1222,10 @@ var FatedTacticalTavern = (() => {
     "turns",
     "type",
     "unitId",
+    "weaponId",
+    "infiniteAmmo",
     "weaponTemplateId",
+    "instanceId",
     "dealt",
     "finalAmount",
     "eventRef"
@@ -1670,8 +1675,8 @@ var FatedTacticalTavern = (() => {
   var validVmRule = (value, options = {}) => valid(value, "rule", options);
   function vmRuleError(rule2, options = {}) {
     if (validVmRule(rule2, options)) return void 0;
-    const unknownEvent = typeof rule2 === "object" && rule2 ? JSON.stringify(rule2).match(/event\.([A-Za-z_][A-Za-z0-9_]*)/) : null;
-    if (unknownEvent && !EVENT_SCALAR_KEYS.includes(unknownEvent[1]) && !(options.extraEventKeys ?? []).includes(unknownEvent[1])) return `\u672A\u77E5\u4E8B\u4EF6\u5B57\u6BB5 event.${unknownEvent[1]}`;
+    const unknownEvent = typeof rule2 === "object" && rule2 ? [...JSON.stringify(rule2).matchAll(/\bevent\.([A-Za-z_][A-Za-z0-9_]*)/g)].find(([, key4]) => !EVENT_SCALAR_KEYS.includes(key4) && !(options.extraEventKeys ?? []).includes(key4)) : null;
+    if (unknownEvent) return `\u672A\u77E5\u4E8B\u4EF6\u5B57\u6BB5 event.${unknownEvent[1]}`;
     const settings = { ...options, hook: rule2?.hook };
     function invalidInstruction(program2, path2, depth = 0) {
       if (!Array.isArray(program2) || depth > 64) return path2;
@@ -1715,7 +1720,18 @@ var FatedTacticalTavern = (() => {
     if (mod2 && flatOnlyStats.includes(mod2.stat) && (Object.hasOwn(mod2, "mult") || Object.hasOwn(mod2, "additivePercent"))) {
       return `VM \u4FEE\u9970 ${mod2.stat} \u53EA\u63A5\u53D7 flat \u52A0\u503C`;
     }
-    return "VM \u4FEE\u9970";
+    if (!mod2 || typeof mod2 !== "object" || Array.isArray(mod2)) return "VM \u4FEE\u9970\u5FC5\u987B\u662F\u5BF9\u8C61";
+    for (const [key4, value] of Object.entries(mod2)) {
+      if (!Object.hasOwn(statMod.properties, key4)) return `VM \u4FEE\u9970 ${key4}\uFF1A\u672A\u77E5\u5B57\u6BB5`;
+      const field = statMod.properties[key4];
+      if (!matches(value, field, {}) || !exprCheck(value)) {
+        const choices = field.enum ?? field.items?.enum;
+        return `VM \u4FEE\u9970 ${key4}=${JSON.stringify(value)} \u65E0\u6548\uFF1B${choices ? `\u53EF\u9009\u503C\uFF1A${choices.join("\u3001")}` : "\u8BF7\u68C0\u67E5\u5B57\u6BB5\u7C7B\u578B\u3001\u7ED3\u6784\u6216\u8868\u8FBE\u5F0F"}`;
+      }
+    }
+    const numeric2 = ["flat", "mult", "additivePercent"].find((key4) => Object.hasOwn(mod2, key4));
+    if (numeric2 && !Object.hasOwn(mod2, "stat")) return `VM \u4FEE\u9970 ${numeric2} \u7F3A\u5C11 stat`;
+    return "VM \u4FEE\u9970\u81F3\u5C11\u9700\u8981 stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00";
   }
   var validVmTag = (value) => valid(value, "tag", {});
   var validVmSourceSkillId = (value) => matches(value, sourceSkillId, {});
@@ -1959,7 +1975,7 @@ var FatedTacticalTavern = (() => {
     const result = [];
     for (const [id3, unit] of units) {
       result.push({ entity: unit, carrier: { type: "unit", id: id3 }, nativeOwnerId: id3 });
-      for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...unit.gear ?? []]) {
+      for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...unit.gear ?? [], ...unit.bagWeapons ?? []]) {
         if (itemId != null && !equippedBy.has(itemId)) equippedBy.set(itemId, id3);
       }
     }
@@ -3721,7 +3737,7 @@ var FatedTacticalTavern = (() => {
         actorId: actor.id,
         actionType: action.type,
         skillId: action.skillId ?? null,
-        targetId: plan2.targetIds[0] ?? null,
+        targetId: plan2.targetIds[0] ?? plan2.targetId ?? null,
         center: plan2.center,
         origin: frame.originalOrigin,
         ignoreLOS: overrides2.ignoreLOS === true,
@@ -3731,7 +3747,9 @@ var FatedTacticalTavern = (() => {
         power: plan2.power ?? 0,
         initiativeBonus: plan2.initiativeBonus ?? 0,
         hostile: plan2.hostile ?? false,
+        ...plan2.instanceId && { weaponId: plan2.instanceId, infiniteAmmo: plan2.infiniteAmmo === true },
         weaponTemplateId: plan2.weaponTemplateId ?? null,
+        instanceId: plan2.instanceId ?? null,
         chainDepth: frame.chainDepth ?? 0,
         triggered: (frame.chainDepth ?? 0) > 0
       });
@@ -4200,7 +4218,8 @@ var FatedTacticalTavern = (() => {
       tier: panel.tier ?? actor.tier ?? 1
     } };
   }
-  function removeSummon(state, unit) {
+  function removeSummon(state, unit, host) {
+    for (const zone of values(state.zones)) if (zone.area?.anchorUnitId === unit.id) removeZone(state, host, zone.id, "\u951A\u70B9\u79BB\u573A");
     const shared = ["hp", "mp", "sp"].filter((key4) => own10(state.pools, own10(unit.pools, key4))?.contributors.length > 1);
     if (shared.length) unlinkPools(state, [unit.id], shared);
     const ownedItems = values(state.items).filter((item) => item.ownerId === unit.id);
@@ -4260,8 +4279,7 @@ var FatedTacticalTavern = (() => {
       const old = own10(state.units, data.pendingId);
       if (old) {
         host.log(state, old, "spawn", `${old.name}\u7ED3\u675F\u53EC\u5524\u5E76\u79BB\u573A`, { unitId: old.id, evicted: true });
-        removeSummon(state, old);
-        refreshFollowingZones(state, host);
+        removeSummon(state, old, host);
       }
       data.pendingId = null;
       delete frame.awaitEvent;
@@ -4270,8 +4288,7 @@ var FatedTacticalTavern = (() => {
       const old = own10(state.units, data.evictIds[frame.pc++]);
       if (!old || old.summonGroup !== data.group) continue;
       if (!live2(old)) {
-        removeSummon(state, old);
-        refreshFollowingZones(state, host);
+        removeSummon(state, old, host);
         continue;
       }
       data.pendingId = old.id;
@@ -4306,6 +4323,7 @@ var FatedTacticalTavern = (() => {
         id: id3,
         ...placement,
         altitude: 0,
+        moraleType: actor.moraleType ?? state.battleType ?? "standard",
         summonGroup: data.group,
         summoned: true,
         used: { attack: 0, action: 0 },
@@ -4323,6 +4341,8 @@ var FatedTacticalTavern = (() => {
       unit.weapon = unit.mainHand = mint(gear.mainHand);
       unit.offHand = mint(gear.offHand);
       unit.shield = mint(gear.shield);
+      unit.attunementCharges = stanceRules("attunement").itemCharges;
+      unit.stance = stanceFor({ mainHand: state.equipment[gear.mainHand], offHand: state.equipment[gear.offHand], shield: state.equipment[gear.shield] });
       unit.gear = gear.gear.map(mint);
       state.order.push(id3);
       first ??= id3;
@@ -4583,7 +4603,7 @@ var FatedTacticalTavern = (() => {
       removeTerrainLayers(state, host, frame, new Set(layers.map((layer) => layer.id)), "\u89E3\u9664\u540E");
     } else if (op.entityKind === "unit") {
       for (const unit of [...targets2].filter((unit2) => own10(state.units, unit2.id) === unit2 && unit2.summoned === true)) {
-        removeSummon(state, unit);
+        removeSummon(state, unit, host);
         host.log(state, context.self, "despawn", `${unit.name}\u88AB\u79FB\u9664`, { unitId: unit.id, summoned: true });
       }
     }
@@ -4629,7 +4649,7 @@ var FatedTacticalTavern = (() => {
     }
     if (unit) {
       host.log(state, unit, "despawn", `${unit.name}\u53EC\u5524\u671F\u9650\u7ED3\u675F`, { unitId: unit.id, summoned: true, expired: true });
-      removeSummon(state, unit);
+      removeSummon(state, unit, host);
       if (state.turn >= state.order.length) state.turn = 0;
     }
     state.vm.stack.pop();
@@ -4838,7 +4858,8 @@ var FatedTacticalTavern = (() => {
       const skill2 = actionSkill(state, actor, event.skillId);
       const isHeld = actor?.skills?.includes(event.skillId);
       const actionRules = hook2 === "active" || !isHeld ? skill2?.rules : void 0;
-      const carrier4 = skill2?.itemId ? { type: "item", id: skill2.itemId } : skill2 ? { type: "skill", id: event.skillId, ownerId: actor?.id } : null;
+      const usedItem = event.actionType === "use_item" ? event.itemId : null;
+      const carrier4 = usedItem || skill2?.itemId ? { type: "item", id: usedItem ?? skill2.itemId } : skill2 ? { type: "skill", id: event.skillId, ownerId: actor?.id } : null;
       return [...entries3, ...(event.rules ?? actionRules ?? []).filter((rule2) => rule2.hook === hook2).map((rule2) => ({
         rule: rule2,
         ownerId: event.actorId,
@@ -4846,7 +4867,7 @@ var FatedTacticalTavern = (() => {
         carrierOrder: -1,
         carrier: carrier4,
         ...skill2 && !event.rules && { sourceSkillId: event.skillId },
-        useKey: JSON.stringify([event.actorId, event.skillId, rule2.id])
+        useKey: JSON.stringify([event.actorId, usedItem ?? event.skillId, rule2.id])
       }))];
     },
     enterRule(state, frame, key4) {
@@ -5105,6 +5126,14 @@ var FatedTacticalTavern = (() => {
   }
   var isWeapon = (template) => template?.kind === "weapon" || Boolean(template?.damage && !template.kind);
   var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3)).filter(({ template }) => !isWeapon(template) && template?.kind !== "shield");
+  function loadoutStance(state, unit) {
+    const stance = stanceFor({
+      mainHand: equipmentFor(state, unit.mainHand ?? unit.weapon).template,
+      offHand: equipmentFor(state, unit.offHand).template,
+      shield: equipmentFor(state, unit.shield).template
+    });
+    return stance === "attunement" && unit.attunementCharges === 0 ? "light_blade" : stance;
+  }
   function switchableWeapons(state, unit) {
     const main = unit.mainHand ?? unit.weapon;
     const bag = unit.bagWeapons ?? [];
@@ -5382,6 +5411,7 @@ var FatedTacticalTavern = (() => {
     if (stalled) stalled.ap = 0;
   }
   function beginUnitTurn(state, unit) {
+    delete unit.followupUsed;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
     delete unit.moveSpent;
@@ -5409,7 +5439,7 @@ var FatedTacticalTavern = (() => {
   }
   function resetFacing(state) {
     for (const unit of living(state)) {
-      const target2 = unit.lockedTargetId ? state.units[unit.lockedTargetId] : null;
+      const target2 = unit.statuses[actionStatuses.lock_on] ? state.units[unit.lockedTargetId] : null;
       if (target2 && alive3(target2)) unit.facing = facingToward(unit, target2);
     }
   }
@@ -5469,6 +5499,7 @@ var FatedTacticalTavern = (() => {
     state.order = initiative2.map((entry2) => entry2.unitId);
     for (const unit of values2(state.units)) {
       unit.ap = 0;
+      delete unit.followupUsed;
       unit.used = { attack: 0, action: 0 };
       unit.moved = 0;
       delete unit.moveSpent;
@@ -5541,7 +5572,7 @@ var FatedTacticalTavern = (() => {
   }
   function modCheck(state, unit, key4, context = {}) {
     const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
-    if (key4 === "highGroundRange" || key4 === "highGroundAccuracy") return template?.[key4] ?? 0;
+    if (key4 === "highGroundRange" || key4 === "highGroundAccuracy") return template?.vars?.[key4] ?? 0;
     if (key4 === "advantage") return modStat(state, unit, "advantage", 0, { checkKind: "attack", ...context });
     return 0;
   }
@@ -5564,6 +5595,7 @@ var FatedTacticalTavern = (() => {
           result.set(skillId, { ...skill2, quality: template.quality ?? skill2.quality });
         }
       }
+      if (template.kind === "consumable") continue;
       for (const rule2 of itemRules(template, instance).filter(activeRule)) {
         result.set(`equip:${id3}:${rule2.id}`, {
           name: rule2.label || `${template.name}\xB7${rule2.id}`,
@@ -5684,9 +5716,10 @@ var FatedTacticalTavern = (() => {
     weapon2.template = scaledTemplate(state, unit, weapon2.template, "weapon");
     const ammo = weaponAmmo(weapon2.template);
     const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon2.instance)?.amount : null;
-    const infiniteAmmo = Boolean(ammo && vmFlag(state, unit, "infiniteAmmo"));
+    const infiniteAmmo = vmFlag(state, unit, "infiniteAmmo");
     const souls = resourcePool(state, unit, "souls", weapon2.instance)?.amount ?? 0;
     const offHand = equipmentFor(state, unit.offHand);
+    offHand.template = scaledTemplate(state, unit, offHand.template, "weapon");
     const stance = unit.stance ?? stanceFor({ mainHand: weapon2.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
     return {
       ...weapon2,
@@ -5866,13 +5899,19 @@ var FatedTacticalTavern = (() => {
     const automatic = areaStrike || !weapon2 && (!template.damage || saveStat || template.autoHit);
     const hitChance = automatic || guaranteeHit ? 1 : saveChance(4, accuracy, advantages, disadvantages) - (accuracy + 1 >= 4 ? 1 - saveChance(2, 0, advantages, disadvantages) : 0);
     const critChance2 = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : critChance(advantages, disadvantages);
-    const offHandMultiplier = weapon2?.stance === "dual_wield" && weapon2.offHand?.template?.damage ? 1.5 : 1;
+    const loadout = weapon2 ?? (context.skillId && template.damage && actor.stance === "dual_wield" ? weaponInfo(state, actor) : null);
+    const off = loadout?.offHand;
+    const combo = template.tags?.some((tag2) => /多段|连击/.test(tag2));
+    const offAttack = loadout?.stance === "dual_wield" && off?.template?.damage && validReach(state, actor, at2, off.template, weaponAmmo(off.template), off.instance.id) ? (off.template.attack ?? 0) * (combo ? rules.comboOffHandDamage : rules.offHandDamage) : 0;
+    const mainAttack = Number(loadout?.template?.attack ?? 0);
+    const weaponAttack = mainAttack * (stance === "greatsword" ? actor.greatswordMode === "defensive" ? rules.defensiveDamage : rules.offensiveDamage : 1) + offAttack;
     const intentSpec = INTENTS[context.intent ?? "normal"] ?? INTENTS.normal;
     const damageType2 = template.damage?.type ?? template.damageType ?? "physical";
-    const multiplier = offHandMultiplier * (teleport2 ? 1 + (teleport2.bonusMultiplier ?? 0.5) : 1);
+    const sandboxDual = state.ruleset === "sandbox" && weapon2?.stance === "dual_wield" && off?.template?.damage;
+    const multiplier = (sandboxDual ? 0.75 : 1) * (teleport2 ? 1 + (teleport2.bonusMultiplier ?? 0.5) : 1);
     const tierPower = { 1: 2, 2: 2.8, 3: 4, 4: 8, 5: 15, 6: 35, 7: 80 }[actor.tier ?? 1] ?? 2;
     const attributeBase = () => state.ruleset === "protocol" ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? "str" : "int")) * 10 * tierPower : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
-    const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + Number(weapon2?.template?.attack ?? 0) : null;
+    const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + weaponAttack : null;
     const armorPierce = {
       flat: modStat(state, actor, "armorPierce", template.armorPierce ?? 0, { ...strike, damageType: damageType2 }),
       percent: clamp3(modStat(state, actor, "armorPiercePercent", rules.armorPenetration ?? 0, { ...strike, damageType: damageType2 }), -1, 1)
@@ -5986,6 +6025,7 @@ var FatedTacticalTavern = (() => {
     switch_weapon: { ap: 0, slot: null },
     attack: { ap: 1, slot: "attack" },
     reload: { ap: 1, slot: "action" },
+    stance_mode: { ap: 0, slot: null },
     brace: { ap: 1, slot: "action" },
     block: { ap: 1, slot: "action" },
     shield_bash: { ap: 1, slot: "attack", sp: 2 },
@@ -6099,6 +6139,11 @@ var FatedTacticalTavern = (() => {
       if (weapon2.ammoCount >= weapon2.ammo.cap) return fail2("\u5F39\u4ED3\u5DF2\u6EE1");
       return { ...common, ammo: weapon2.ammoCount, capacity: weapon2.ammo.cap };
     }
+    if (type === "stance_mode") {
+      if (weapon2.stance !== "greatsword" || !["offensive", "defensive"].includes(action.maneuver) || action.maneuver === (unit.greatswordMode ?? "offensive")) return fail2("\u5F53\u524D\u4E0D\u80FD\u5207\u6362\u8BE5\u91CD\u5251\u6001\u52BF");
+      if (unit.used.attack || unit.used.action || unit.moved) return fail2("\u53EA\u80FD\u5728\u56DE\u5408\u5F00\u59CB\u884C\u52A8\u524D\u5207\u6362\u91CD\u5251\u6001\u52BF");
+      return { ...common, name: action.maneuver === "defensive" ? "\u8F6C\u4E3A\u6C89\u52BF" : "\u8F6C\u4E3A\u653B\u52BF" };
+    }
     if (type === "block") {
       if (stanceFor({ mainHand: weapon2.template, offHand: weapon2.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
       return { ...common, name: "\u683C\u6321", reduction: action.maneuver === "heavy" ? 0.45 : 0.25, turns: 1 };
@@ -6117,12 +6162,17 @@ var FatedTacticalTavern = (() => {
       const item2 = equipmentFor(state, unit.offHand);
       if (unit.stance !== "attunement" || item2.template?.kind !== "consumable") return fail2("\u53EA\u6709\u540C\u8C03\u59FF\u6001\u53EF\u4EE5\u514D\u8D39\u4F7F\u7528\u526F\u624B\u9053\u5177");
       if ((unit.attunementCharges ?? 0) <= 0) return fail2("\u540C\u8C03\u9053\u5177\u6B21\u6570\u5DF2\u7528\u5C3D");
-      return { ...common, name: `\u4F7F\u7528${item2.template.name}`, maneuver: "use_item", itemId: unit.offHand };
+      const rules = itemRules(item2.template, item2.instance).filter(activeRule);
+      if (!rules.some((rule2) => {
+        const { usesLeft, cooldownRemaining } = ruleAvailability(state, rule2, JSON.stringify([unit.id, unit.offHand, rule2.id]));
+        return rule2.program.length && usesLeft > 0 && !cooldownRemaining;
+      })) return fail2("\u526F\u624B\u9053\u5177\u6CA1\u6709\u53EF\u6267\u884C\u7684\u4E3B\u52A8\u6548\u679C");
+      return { ...common, name: `\u4F7F\u7528${item2.template.name}`, maneuver: "use_item", itemId: unit.offHand, rules };
     }
     if (type === "charge") return { ...common, name: "\u84C4\u529B", maneuver: "charge" };
     if (type === "scan") return { ...common, name: "\u63A2\u5BDF", maneuver: "scan" };
     if (type === "flee") return { ...common, name: "\u9003\u8DD1", maneuver: "flee" };
-    if (type === "detour") return { ...common, name: "\u7ED5\u884C", maneuver: "detour" };
+    if (type === "detour") return fail2("\u7ED5\u884C\u5C1A\u672A\u5B9E\u73B0\uFF0C\u8BF7\u4F7F\u7528\u79FB\u52A8\u6216\u8131\u79BB");
     if (type === "lock_on") {
       const target2 = locateUnit(state, center, action.targetId, (u) => u.team !== unit.team);
       if (!target2 || target2.team === unit.team || !sameCell(target2, center)) return fail2("\u5B9A\u4F4D\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
@@ -6147,6 +6197,7 @@ var FatedTacticalTavern = (() => {
     if (["grapple", "disarm", "trip", "push"].includes(type)) {
       const target2 = locateUnit(state, center, action.targetId, (u) => u.team !== unit.team);
       if (!target2 || target2.team === unit.team || !sameCell(target2, center)) return fail2("\u6218\u672F\u5BF9\u6297\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
+      if (type === "disarm" && !(target2.mainHand ?? target2.weapon)) return fail2("\u76EE\u6807\u6CA1\u6709\u53EF\u7F34\u68B0\u7684\u4E3B\u624B\u6B66\u5668");
       if (gridDistance(unit, target2) > 1 || !hasLOS(state, unit, target2)) return fail2("\u6218\u672F\u5BF9\u6297\u9700\u8981\u8D34\u8EAB\u4E14\u89C6\u7EBF\u7545\u901A");
       return { ...common, name: { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" }[type], maneuver: type, targetId: target2.id };
     }
@@ -6210,7 +6261,7 @@ var FatedTacticalTavern = (() => {
     const template = shieldBash ? { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules } : attack ? weapon2.template : skill2;
     if (attack && !shieldBash && weapon2.ammo && !weapon2.infiniteAmmo && weapon2.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon2.ammo));
     const triggers = template.rules ?? [];
-    const stance = unit.stance ?? (unit.offHand ? unit.offHand.kind === "consumable" ? "attunement" : "dual_wield" : unit.shield ? "sword_shield" : "light_blade");
+    const stance = weapon2.stance;
     const tuning = {
       name: template.name,
       shape: template.shape ?? "single",
@@ -6603,8 +6654,9 @@ var FatedTacticalTavern = (() => {
       melee: profile.melee,
       backstab: profile.backstab,
       arrow: profile.arrow,
-      opportunityAttack: Boolean(frame.weapon),
+      opportunityAttack: Boolean(frame.weapon && !frame.followup),
       weaponTemplateId: weapon2?.instance?.templateId ?? null,
+      instanceId: weapon2?.instance?.id ?? null,
       damageType: profile.damageType,
       souls: weapon2?.souls ?? 0
     };
@@ -6676,9 +6728,8 @@ var FatedTacticalTavern = (() => {
       if (!profile.dice) return;
       const dice4 = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, critical);
       const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
-      const stanceScale = profile.stance === "greatsword" ? actor.greatswordMode === "defensive" ? 1.5 : 1.3 : 1;
-      const offHandScale = profile.stance === "dual_wield" && profile.offHand ? 0.5 : 1;
-      const amount = dice4.value * profile.multiplier * meleeMultiplier(actor) * ratingScale * (intent?.success ? intent.multiplier ?? 1 : 1) * stanceScale * offHandScale * (saved ? 0.5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
+      const stanceScale = state.ruleset === "sandbox" && profile.stance === "greatsword" ? actor.greatswordMode === "defensive" ? profile.stanceRules.defensiveDamage : profile.stanceRules.offensiveDamage : 1;
+      const amount = dice4.value * profile.multiplier * meleeMultiplier(actor) * ratingScale * (intent?.success ? intent.multiplier ?? 1 : 1) * stanceScale * (saved ? 0.5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
       const details = {
         dice: dice4,
         critical,
@@ -6687,8 +6738,7 @@ var FatedTacticalTavern = (() => {
         ratingMultiplier: ratingScale,
         intent: intent ?? { success: true, multiplier: 1 },
         attackMultiplier: profile.multiplier,
-        stanceScale,
-        offHandScale
+        stanceScale
       };
       if (profile.kind === "cover") {
         coverDamage(state, actor, target2, Math.floor(amount), details);
@@ -6735,14 +6785,16 @@ var FatedTacticalTavern = (() => {
       host.hooks(state, frame, "after_hit", frame.awaitEvent);
       return;
     }
-    if (frame.phase === "followup" && action.type === "attack" && !frame.followup && weapon2?.stance === "dual_wield") {
+    if (frame.phase === "followup" && action.type === "attack" && !frame.weapon && !actor.followupUsed && weapon2?.stance === "dual_wield") {
       const recipient = tableEntry(state.units, event.targetId);
       const off = weapon2.offHand;
       const ammo = weaponAmmo(off?.template);
-      const cost = (actor.tier ?? 1) * 10;
-      if (alive3(recipient) && recipient.team !== actor.team && off?.template?.hand === "off_hand" && off.template.damage && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
-        const followWeapon = { ...off, ammo, stance: "dual_wield" };
-        const follow = targetProfile(state, actor, recipient, recipient, off.template, { weapon: followWeapon });
+      const level = actor.level ?? actor.tier ?? 1;
+      const cost = level * 10;
+      if (alive3(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === "off_hand" && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
+        actor.followupUsed = true;
+        const followWeapon = { ...off, template: { ...off.template, power: level * 15 }, ammo, stance: "dual_wield" };
+        const follow = targetProfile(state, actor, recipient, recipient, followWeapon.template, { weapon: followWeapon });
         follow.disadvantages = event.rating.multiplier >= 1.3 ? 0 : Math.max(1, follow.disadvantages);
         record(state, actor, "followup", `${actor.name}\u4F7F\u7528${off.template.name}\u8FFD\u51FB${recipient.name}`, { targetId: recipient.id, cost, weaponId: off.instance.id });
         setResourceTotal(state, actor, "sp", actor.sp - cost, actor.id, "\u526F\u624B\u8FFD\u51FB");
@@ -6958,6 +7010,9 @@ var FatedTacticalTavern = (() => {
     }
     if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress);
     switch (type) {
+      case "stance_mode":
+        actor.greatswordMode = action.maneuver;
+        break;
       case "switch_weapon": {
         const old = actor.mainHand ?? actor.weapon;
         const fromOff = plan.itemId === actor.offHand;
@@ -6965,23 +7020,25 @@ var FatedTacticalTavern = (() => {
         else if (actor.bagWeapons?.includes(plan.itemId)) actor.bagWeapons.splice(actor.bagWeapons.indexOf(plan.itemId), 1, ...old ? [old] : []);
         else actor.gear[actor.gear.indexOf(plan.itemId)] = old;
         actor.mainHand = actor.weapon = plan.itemId;
-        actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
-        if (actor.stance === "attunement" && !actor.attunementCharges) actor.stance = "light_blade";
+        actor.stance = loadoutStance(state, actor);
         break;
       }
       case "use_item": {
-        actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
+        if (frame.nativeProgress.itemUsed) return true;
+        frame.nativeProgress.itemUsed = true;
+        actor.attunementCharges--;
         record(state, actor, "item", `${actor.name}\u4F7F\u7528\u540C\u8C03\u526F\u624B\u9053\u5177`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-        grantStatus(state, actor, actionStatuses.use_item, { sourceId: actor.id });
         if (!actor.attunementCharges) actor.stance = "light_blade";
-        break;
+        Object.assign(event, { targetId: actor.id, targets: [actor.id], itemId: plan.itemId, rules: plan.rules });
+        host.hooks(state, frame, "active", frame.eventRef);
+        return false;
       }
       case "charge":
         grantStatus(state, actor, actionStatuses.charge, { sourceId: actor.id });
         break;
       case "lock_on":
         actor.lockedTargetId = plan.targetId;
-        grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id });
+        grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id, vars: { targetId: plan.targetId } });
         record(state, actor, "maneuver", `${actor.name}\u9501\u5B9A${state.units[plan.targetId].name}`, { targetId: plan.targetId });
         break;
       case "scan":
@@ -6999,9 +7056,6 @@ var FatedTacticalTavern = (() => {
         }
         break;
       }
-      case "detour":
-        record(state, actor, "maneuver", `${actor.name}\u9009\u62E9\u7ED5\u884C`, { maneuver: "detour" });
-        break;
       case "free_ally": {
         const ally = state.units[plan.targetId];
         removeVMStatus(state, ally, ally.statuses.suppressed, "freed", actor);
@@ -7028,8 +7082,10 @@ var FatedTacticalTavern = (() => {
         if (target2 && maneuverContest(state, actor, target2, type)) {
           if (type === "grapple") grantStatus(state, target2, actionStatuses.grapple, { sourceId: actor.id });
           if (type === "disarm") {
-            target2.mainHand = null;
-            target2.weapon = null;
+            const lost = state.items[target2.mainHand ?? target2.weapon];
+            if (lost?.ownerId === target2.id) lost.ownerId = null;
+            target2.mainHand = target2.weapon = null;
+            target2.stance = loadoutStance(state, target2);
           }
           if (type === "trip") grantStatus(state, target2, actionStatuses.trip, { sourceId: actor.id });
           if (type === "push") knockback(state, actor, target2, { distance: 1, collisionDamage: 3 });
@@ -7109,7 +7165,7 @@ var FatedTacticalTavern = (() => {
     mods: [{ stat: "armorPierce", flat: armorPierce, when: weapon(templateId) }],
     rules: [rule(`${templateId}-spend`, "before_action", [
       { op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }
-    ], weapon(templateId, "event.actionType == 'attack' && !has_status(self, 'infinite_ammo')"))]
+    ], weapon(templateId, "event.actionType == 'attack' && event.weaponId == item.id && !event.infiniteAmmo"))]
   });
   var EQUIPMENT = {
     soulblade: {
@@ -7204,7 +7260,7 @@ var FatedTacticalTavern = (() => {
       ], "event.actorId == self.id && event.actionType == 'skill' && event.healing >= 2")]
     },
     shortblade: { name: "\u526F\u624B\u77ED\u5203", kind: "weapon", weaponClass: "light_blade", hand: "off_hand", rangeType: "melee", attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice2(1, 4, "agi", "physical") },
-    potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand" },
+    potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand", rules: [rule("potion-haste", "active", [apply("haste", "self")])] },
     greatsword: { name: "\u7384\u94C1\u91CD\u5251", kind: "weapon", weaponClass: "greatsword", hand: "two_handed", heavy: true, twoHanded: true, attack: 260, defense: 0, rangeType: "melee", range: 1, accuracy: 1, damage: dice2(2, 8, "str", "physical") },
     towerShield: { name: "\u5854\u76FE", kind: "shield", weaponClass: "shield", hand: "off_hand", shield: true, defense: 8 },
     pike: {
@@ -7404,9 +7460,9 @@ var FatedTacticalTavern = (() => {
     if (own13(value, "flags")) list2(value.flags, 8, (flag) => carrierFlags.includes(flag), "VM \u6807\u8BB0");
     checkOptional(value, "tier", (tier) => int(tier, 1, 7));
     if (own13(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : validCarrierScalar(entry2), "VM \u53D8\u91CF"));
-    if (own13(value, "mods")) list2(value.mods, 200, (mod2) => {
+    if (own13(value, "mods")) list2(value.mods, 200, (mod2, index) => {
       const error2 = vmStatModError(mod2);
-      requireThat(!error2, error2);
+      requireThat(!error2, `mods[${index}]\uFF1A${error2}`);
       return true;
     }, "VM \u4FEE\u9970");
     if (own13(value, "rules")) validateRules(value.rules, state);
@@ -7544,7 +7600,7 @@ var FatedTacticalTavern = (() => {
     requireThat(["floor", "slope", "wall"].includes(v.kind) && int(v.z, -4, 8), "\u5730\u5F62");
   }
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
-  var protocolUnitKeys = ["mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
+  var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
   function unitValue(v, key4, state) {
     fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
     carrierFieldsValue(v, state, true);
@@ -7586,6 +7642,8 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "initiativePercent", (x) => num(x, -1, 10));
     checkOptional(v, "flatInitiative", (x) => int(x, -1e3, 1e3));
     for (const field of ["attackInit", "actionInit"]) checkOptional(v, field, (x) => Array.isArray(x) && x.length <= 16 && x.every((n) => int(n, -1e3, 1e3)));
+    checkOptional(v, "followupUsed", (x) => typeof x === "boolean");
+    checkOptional(v, "level", (x) => Number.isSafeInteger(x) && x >= 1);
     checkOptional(v, "lockedTargetId", (x) => x === null || id2(x));
     checkOptional(v, "intent", (x) => typeof x === "string" && Object.hasOwn(INTENTS, x));
     checkOptional(v, "bonusDice", (x) => int(x, 0, 2));
@@ -7962,7 +8020,7 @@ var FatedTacticalTavern = (() => {
       const equip = (itemId, templateId) => equipItem(state, itemId, templateId, id3);
       const offHand = offHandTemplate ? equip(`${id3}-offhand`, offHandTemplate) : null;
       const shield = shieldTemplate ? equip(`${id3}-shield`, shieldTemplate) : null;
-      const stance = shield ? "sword_shield" : offHandTemplate === "potion" ? "attunement" : offHand ? "dual_wield" : state.equipment[weapon2]?.weaponClass === "greatsword" ? "greatsword" : "light_blade";
+      const stance = stanceFor({ mainHand: state.equipment[weapon2], offHand: state.equipment[offHandTemplate], shield: state.equipment[shieldTemplate] });
       const resources = ruleset === "protocol" ? calculatePrebattleResources({ stats: { str, agi, con, int: int2, spi }, tier: 1, bodyLengthM }).resources : null;
       const hpValue = resources?.hp.current ?? hp, mpValue = resources?.mp.current ?? 14, spValue = resources?.sp.current ?? 10;
       state.units[id3] = {
@@ -7993,7 +8051,7 @@ var FatedTacticalTavern = (() => {
         greatswordMode: "offensive",
         parryQuota: stance === "greatsword" ? 2 : 0,
         parryRefunded: false,
-        attunementCharges: stance === "attunement" ? 2 : 0,
+        attunementCharges: stanceRules("attunement").itemCharges,
         moraleType: "standard",
         mp: mpValue,
         maxMp: resources?.mp.max ?? mpValue,
@@ -8588,20 +8646,33 @@ var FatedTacticalTavern = (() => {
       delete s.units[c.unitId];
     },
     equip_item(s, c) {
-      fields(c, ["type", "instanceId", "unitId"]);
+      fields(c, ["type", "instanceId", "unitId"], ["slot"]);
       const instance = get(s.items, c.instanceId, "instanceId");
       const u = c.unitId === null ? null : get(s.units, c.unitId, "unitId");
+      const template = s.equipment[instance.templateId];
+      const slot2 = c.slot ?? (template.kind === "shield" ? "shield" : template.hand === "off_hand" ? "offHand" : template.damage ? "mainHand" : "gear");
+      requireThat(slot2 === "shield" ? template.kind === "shield" : slot2 === "offHand" ? !template.twoHanded && template.hand !== "two_handed" && !!(template.damage || template.kind === "consumable") : slot2 === "mainHand" ? !!template.damage : slot2 === "gear", "\u88C5\u5907\u4E0D\u9002\u7528\u6B64\u69FD\u4F4D");
+      const changed = /* @__PURE__ */ new Set();
       for (const v of Object.values(s.units)) {
-        for (const slot2 of ["weapon", "mainHand", "offHand", "shield"]) if (v[slot2] === instance.id) v[slot2] = null;
+        if ([v.weapon, v.mainHand, v.offHand, v.shield].includes(instance.id)) changed.add(v);
+        if (v.bagWeapons) v.bagWeapons = v.bagWeapons.filter((i) => i !== instance.id);
+        for (const slot3 of ["weapon", "mainHand", "offHand", "shield"]) if (v[slot3] === instance.id) v[slot3] = null;
         v.gear = v.gear.filter((i) => i !== instance.id);
       }
       if (own13(instance, "ownerId")) instance.ownerId = u?.id ?? null;
       if (u) {
-        if (own13(s.equipment[instance.templateId], "damage")) {
-          u.weapon = instance.id;
-          u.mainHand = instance.id;
-        } else u.gear.push(instance.id);
+        const main = s.equipment[s.items[u.mainHand ?? u.weapon]?.templateId];
+        requireThat(!(slot2 === "mainHand" && (template.twoHanded || template.hand === "two_handed") && (u.offHand || u.shield)) && !(["shield", "offHand"].includes(slot2) && (main?.twoHanded || main?.hand === "two_handed" || (slot2 === "shield" ? u.offHand : u.shield))), "\u53CC\u624B\u6216\u526F\u624B\u69FD\u4F4D\u51B2\u7A81");
+        const previous = slot2 === "gear" ? null : s.items[u[slot2]];
+        if (previous?.ownerId === u.id) previous.ownerId = null;
+        if (slot2 === "gear") u.gear.push(instance.id);
+        else {
+          u[slot2] = instance.id;
+          if (slot2 === "mainHand") u.weapon = instance.id;
+        }
+        changed.add(u);
       }
+      for (const unit of changed) unit.stance = loadoutStance(s, unit);
     },
     set_zone(s, c) {
       fields(c, ["type", "zone"]);
@@ -9277,7 +9348,8 @@ var FatedTacticalTavern = (() => {
       setWeaponStance(unitId, stance, options = {}) {
         const s = current();
         if (!own15(s.units, unitId)) return { ok: false, error: "\u672A\u77E5\u5355\u4F4D" };
-        if (!["light_blade", "dual_wield", "attunement", "greatsword", "sword_shield"].includes(stance)) return { ok: false, error: "\u672A\u77E5\u6301\u68B0\u59FF\u6001" };
+        if (!STANCES.includes(stance)) return { ok: false, error: "\u672A\u77E5\u6301\u68B0\u59FF\u6001" };
+        if (stance !== loadoutStance(s, s.units[unitId])) return { ok: false, error: "\u59FF\u6001\u4E0E\u5F53\u524D\u6301\u68B0\u69FD\u4F4D\u4E0D\u7B26" };
         const patch = { stance };
         if (options.greatswordMode !== void 0) patch.greatswordMode = options.greatswordMode;
         if (options.blockMode !== void 0) patch.blockMode = options.blockMode;
@@ -9288,7 +9360,7 @@ var FatedTacticalTavern = (() => {
         const s = current();
         const u = s.units[unitId];
         if (!u) return null;
-        return copy(u.maneuvers ?? ["charge", "lock_on", "scan", "cover", "guard", "interrupt", "push", "knockback", "grapple", "disarm", "trip", "flee", "detour"]);
+        return copy(u.maneuvers ?? ["charge", "lock_on", "scan", "brace", "block", "shield_bash", "push", "grapple", "disarm", "trip", "flee"]);
       },
       inspectUnit(unitId) {
         const s = current();
@@ -9929,7 +10001,6 @@ var FatedTacticalTavern = (() => {
   // src/ui/render.js
   var effectLabel = (rule2) => rule2.label ?? rule2.id;
   var STATUS_ICON = { buff: "\u2191", debuff: "\u2193", control: "\u2298", dot: "\u2739", hot: "\u271A", shield: "\u2B21" };
-  var STANCES2 = { light_blade: "\u8F7B\u5251", dual_wield: "\u53CC\u6301", attunement: "\u540C\u8C03", greatsword: "\u91CD\u5251", sword_shield: "\u5251\u76FE" };
   var SHAPES = { circle: "\u5706\u5F62\u8303\u56F4", ring: "\u73AF\u5F62\u8303\u56F4", cone: "\u9525\u5F62\u8303\u56F4", fan: "\u6247\u5F62\u8303\u56F4", line: "\u76F4\u7EBF\u8303\u56F4" };
   var ARROWS = { "-1,-1": "\u2199", "0,-1": "\u2193", "1,-1": "\u2198", "-1,0": "\u2190", "1,0": "\u2192", "-1,1": "\u2196", "0,1": "\u2191", "1,1": "\u2197" };
   var ACTION_LABELS = {
@@ -10269,7 +10340,7 @@ var FatedTacticalTavern = (() => {
         `\u79FB\u52A8 ${u.move} \u683C`,
         `\u4F53\u578B ${bodySizeLabel(u)}`,
         `\u9AD8\u5EA6 z=${elevation(state, u)}${u.altitude ? `\uFF08\u79BB\u5730 ${u.altitude}\uFF09` : ""}`,
-        `\u6301\u68B0\uFF1A${STANCES2[u.stance] ?? "\u8F7B\u5251"}`,
+        `\u6301\u68B0\uFF1A${stanceLabel[u.stance] ?? "\u672A\u6307\u5B9A"}${u.stance === "attunement" ? `\uFF08\u9053\u5177\u5269 ${u.attunementCharges} \u6B21\uFF09` : ""}`,
         `\u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2`,
         u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
       ].filter(Boolean).join(" \xB7 "));
@@ -11191,7 +11262,7 @@ var FatedTacticalTavern = (() => {
 
   // src/ui/main.js
   var THEMES = ["amethyst", "night-gold", "frost-silver"];
-  var TARGETLESS = ["end_encounter", "switch_weapon", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
+  var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
   var PATH_NAMES = { units: "\u5355\u4F4D", items: "\u7269\u54C1", grid: "\u5730\u5F62", statuses: "\u72B6\u6001", counters: "\u8BA1\u6570", statusTemplates: "\u72B6\u6001\u6A21\u677F", covers: "\u63A9\u4F53", interactives: "\u4E92\u52A8\u70B9" };
   function describeProposal(result) {
     if (!result?.ok) return `\u2716 \u65E0\u6CD5\u6267\u884C\uFF1A${result?.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
@@ -11240,7 +11311,7 @@ var FatedTacticalTavern = (() => {
     let toggleEntityChoice;
     const pendingAsk = () => live3?.vm?.pendingAsk;
     const active2 = (s = state) => s?.units[s.order[s.turn]];
-    const TARGETED = /* @__PURE__ */ new Set(["attack", "skill", "free_ally", "suppress", "grapple", "disarm", "trip", "push", "shield_bash"]);
+    const TARGETED = /* @__PURE__ */ new Set(["attack", "skill", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push", "shield_bash"]);
     const error2 = (value) => {
       const node = $("action-error");
       node.hidden = !value;
@@ -11739,9 +11810,10 @@ ${height2}\uFF0C${sight}`;
       const bonus = $("bonus-dice-select");
       bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
       const options = [];
-      const add = (type, skill2, itemId, skillName) => {
+      const add = (type, skill2, itemId, skillName, maneuver) => {
         const command = {
           type,
+          ...maneuver && { maneuver },
           ...TARGETLESS.includes(type) ? {} : { x: at2.x, y: at2.y },
           ...skill2 ? { skillId: skill2 } : {},
           ...itemId ? { itemId } : {},
@@ -11762,7 +11834,12 @@ ${height2}\uFF0C${sight}`;
           add("sprint");
         }
         if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
-        else for (const t of [...onActorCell ? [] : [sprint ? "sprint" : "move"], "disengage", "attack", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
+        else for (const t of [...onActorCell ? [] : [sprint ? "sprint" : "move"], "disengage", "attack", "shield_bash", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
+        if (self && actor.stance === "greatsword") {
+          const defensive = actor.greatswordMode !== "defensive";
+          add("stance_mode", null, null, defensive ? "\u91CD\u5251\uFF1A\u8F6C\u4E3A\u6C89\u52BF" : "\u91CD\u5251\uFF1A\u8F6C\u4E3A\u653B\u52BF", defensive ? "defensive" : "offensive");
+        }
+        if (self) add("block", null, null, "\u91CD\u683C\u6321", "heavy");
         if (self) for (const itemId of switchableWeapons(state, actor)) add("switch_weapon", null, itemId);
         add("interact");
         const skills = new Map([...actor.skills.map((id3) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, actor)]);
@@ -14308,8 +14385,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return [];
     }
     return value.flatMap((mod2, index) => {
-      if (index < 200 && validVmStatMod(mod2)) return [clone(mod2)];
-      warnings.push(`mods[${index}] \u65E0\u6548\u6216\u8D85\u51FA\u6570\u91CF\u4E0A\u9650\uFF1A${describe(mod2)}`);
+      const error2 = index < 200 ? vmStatModError(mod2) : "\u8D85\u51FA\u6570\u91CF\u4E0A\u9650 200";
+      if (!error2) return [clone(mod2)];
+      warnings.push(`mods[${index}] ${error2}\uFF1A${describe(mod2)}`);
       return [];
     });
   }
@@ -14395,15 +14473,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     };
   }
   function areaFields(raw, warnings, name) {
-    const tags = parseAreaTags([...raw.\u8DDD\u79BB != null ? [`\u6709\u6548\u8DDD\u79BB: ${raw.\u8DDD\u79BB}`] : [], ...raw.\u8303\u56F4 != null ? [raw.\u8303\u56F4 === "\u5355\u4F53" ? "\u5355\u4F53" : `\u8303\u56F4: ${raw.\u8303\u56F4}`] : [], ...[].concat(raw.tags ?? raw.\u6807\u7B7E ?? [])]);
-    if (tags.missingRange && raw.range == null && raw.\u6709\u6548\u8DDD\u79BB == null) warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB\u6807\u7B7E\u7F3A\u5C11\u683C\u6570`);
+    const declaredRange = raw.range ?? raw.\u6709\u6548\u8DDD\u79BB ?? raw.\u8DDD\u79BB;
+    const tags = parseAreaTags([...declaredRange != null ? [`\u6709\u6548\u8DDD\u79BB: ${declaredRange}`] : [], ...raw.\u8303\u56F4 != null ? [raw.\u8303\u56F4 === "\u5355\u4F53" ? "\u5355\u4F53" : `\u8303\u56F4: ${raw.\u8303\u56F4}`] : [], ...[].concat(raw.tags ?? raw.\u6807\u7B7E ?? [])]);
+    if (tags.missingRange) warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB\u6807\u7B7E\u7F3A\u5C11\u683C\u6570`);
     if (tags.missingRadius && tags.radius == null && raw.radius == null) warnings.push(`\u300C${name}\u300D\u8303\u56F4\u6807\u7B7E\u7F3A\u5C11\u534A\u5F84\u683C\u6570`);
     const tier = DISTANCE_TABLE.find((row) => row.name === tags.rangeTier);
     if (tier && (tags.range < tier.min || tier.max != null && tags.range > tier.max)) {
       warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB ${tags.range} \u683C\u4E0E\u300C${tier.name}\u300D\u7684\u8DDD\u79BB\u533A\u95F4\u4E0D\u7B26`);
     }
     const shape2 = raw.shape ?? tags.shape;
-    const range2 = raw.range ?? raw.\u6709\u6548\u8DDD\u79BB ?? tags.range;
+    const range2 = tags.range;
     const radius = raw.radius ?? tags.radius;
     const innerRadius = raw.innerRadius ?? tags.innerRadius;
     const width = raw.width ?? (tags.width != null ? tags.width / 2 : shape2 === "line" ? 0.5 : null);
@@ -14466,7 +14545,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     appendRules(template.rules, [{
       id: `ammo-${hash(templateId).toString(36)}`,
       hook: "before_action",
-      filter: `event.actorId == self.id && event.weaponTemplateId == '${templateId}' && event.actionType == 'attack' && !has_status(self, 'infinite_ammo')`,
+      filter: `event.actorId == self.id && event.weaponTemplateId == '${templateId}' && event.actionType == 'attack' && event.weaponId == item.id && !event.infiniteAmmo`,
       program: [{ op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }]
     }], warnings);
   }
@@ -14709,7 +14788,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const name = text3(p.protagonistName || p.name) || sourceName(record3, p.id) || `\u5355\u4F4D ${index + 1}`;
     const id3 = p.id;
     const stats = statsOf(record3), level = Math.max(1, integer3(findValue(record3, ["level", "\u7B49\u7EA7"], 1), 1));
-    const tier = Math.max(1, Math.min(7, tierNumber(findValue(record3, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], level), level)));
+    const levelTier = Math.min(7, Math.ceil(level / 4));
+    const declaredTier = findValue(record3, ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"], null);
+    const tier = Math.max(1, Math.min(7, tierNumber(declaredTier ?? levelTier, levelTier)));
     const bodyLengthM = readBodyLength(record3, sink("state"));
     const size = sizeClassFor(bodyLengthM);
     const mc = Math.max(1, Math.min(64, integer3(findValue(record3, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
@@ -14874,7 +14955,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
     const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stance === "attunement" ? 2 : 0, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
