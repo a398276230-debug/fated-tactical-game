@@ -11403,7 +11403,12 @@ var FatedTacticalTavern = (() => {
   }
   function initializeUI(root2, { game = createGameAPI(), storageKey = "fated-tactical/battle-v1", crossedKey = "fated-tactical/carry-v1", signal, initialState, customBattle, onVictory, storage: storageArea, battleAiRequest } = {}) {
     const document2 = root2.ownerDocument, window2 = document2.defaultView;
-    const localStorage2 = storageArea ?? window2?.localStorage;
+    let rawStorage = storageArea;
+    try {
+      rawStorage ??= window2?.localStorage;
+    } catch {
+    }
+    const saveError = "\u6D4F\u89C8\u5668\u5B58\u50A8\u7A7A\u95F4\u4E0D\u8DB3\u6216\u5DF2\u5173\u95ED\uFF1B\u8BF7\u4E0B\u8F7D\u5FEB\u7167\u4FDD\u5B58\u6218\u5C40\u3002";
     const $ = (id3) => root2.querySelector(`[id="${id3}"]`);
     let portraits = {};
     const view = createRenderer(root2, (id3) => Object.hasOwn(portraits, id3) ? portraits[id3] : []);
@@ -11411,20 +11416,22 @@ var FatedTacticalTavern = (() => {
     const storage = {
       getItem: (key4) => {
         try {
-          return localStorage2?.getItem(key4) ?? null;
+          return rawStorage?.getItem(key4) ?? null;
         } catch {
           return null;
         }
       },
       setItem: (key4, value) => {
         try {
-          localStorage2?.setItem(key4, value);
-        } catch {
+          if (!rawStorage) throw new Error("\u6D4F\u89C8\u5668\u5B58\u50A8\u4E0D\u53EF\u7528");
+          rawStorage.setItem(key4, value);
+        } catch (error3) {
+          if (key4 === storageKey || key4 === crossedKey) throw error3;
         }
       },
       removeItem: (key4) => {
         try {
-          localStorage2?.removeItem(key4);
+          rawStorage?.removeItem(key4);
         } catch {
         }
       }
@@ -11437,10 +11444,11 @@ var FatedTacticalTavern = (() => {
     const pendingAsk = () => live3?.vm?.pendingAsk;
     const active3 = (s = state) => s?.units[s.order[s.turn]];
     const TARGETED = /* @__PURE__ */ new Set(["attack", "skill", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push", "shield_bash"]);
+    let snapshotSaveFailed = false;
     const error2 = (value) => {
       const node = $("action-error");
-      node.hidden = !value;
-      node.textContent = value ?? "";
+      node.textContent = value || (snapshotSaveFailed ? saveError : "");
+      node.hidden = !node.textContent;
     };
     const safely = (fn) => {
       try {
@@ -11837,8 +11845,13 @@ ${height2}\uFF0C${sight}`;
       else if (before && !before.outcome) victoryPending = true;
       try {
         storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
+        if (snapshotSaveFailed) {
+          snapshotSaveFailed = false;
+          error2("");
+        }
       } catch {
-        error2("\u6D4F\u89C8\u5668\u5B58\u50A8\u7A7A\u95F4\u4E0D\u8DB3\u6216\u5DF2\u5173\u95ED\uFF1B\u8BF7\u4E0B\u8F7D\u5FEB\u7167\u4FDD\u5B58\u6218\u5C40\u3002");
+        snapshotSaveFailed = true;
+        error2(saveError);
       }
       view.renderControls(live3);
       if (pendingAsk()) {
@@ -12187,8 +12200,13 @@ ${height2}\uFF0C${sight}`;
               carry = previous;
               throw e;
             }
-            storage.setItem(crossedKey, JSON.stringify(carry));
             scenarioDescription();
+            try {
+              storage.setItem(crossedKey, JSON.stringify(carry));
+            } catch {
+              error2(saveError);
+              return;
+            }
           } else {
             const restored = game.restoreBattleSnapshot(data);
             configure(restored.scenarioId);
@@ -13839,28 +13857,25 @@ body { margin: 0; background: var(--ink-2); }
     if (typeof container === "string") return document.querySelector(container);
     return container;
   }
-  function storageAdapter(storage, prefix) {
-    const fallback = typeof localStorage !== "undefined" ? localStorage : null;
-    const source = storage || fallback;
+  var GLOBAL_UI_PREF_KEYS = new Set(["zoom", "theme", "anim", "auto", "llm-enemy-ai", "ai-speed"].map((key4) => `fated-tactical/${key4}`));
+  function storageAdapter(source, prefix, onQuotaExceeded) {
+    const resolveKey = (key4) => GLOBAL_UI_PREF_KEYS.has(key4) ? key4 : `${prefix}/${key4}`;
     return {
       getItem(key4) {
-        try {
-          return source?.getItem(`${prefix}/${key4}`) ?? null;
-        } catch {
-          return null;
-        }
+        return source?.getItem(resolveKey(key4)) ?? null;
       },
       setItem(key4, value) {
+        if (!source) throw new Error("\u6D4F\u89C8\u5668\u5B58\u50A8\u4E0D\u53EF\u7528");
+        const resolvedKey = resolveKey(key4);
         try {
-          source?.setItem(`${prefix}/${key4}`, value);
-        } catch {
+          source.setItem(resolvedKey, value);
+        } catch (error2) {
+          if (error2.name !== "QuotaExceededError" || !onQuotaExceeded?.(resolvedKey)) throw error2;
+          source.setItem(resolvedKey, value);
         }
       },
       removeItem(key4) {
-        try {
-          source?.removeItem(`${prefix}/${key4}`);
-        } catch {
-        }
+        source?.removeItem(resolveKey(key4));
       }
     };
   }
@@ -13888,7 +13903,12 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     target2.append(root2);
     const controller = new AbortController();
     const prefix = `fated-tactical/${options.instanceId || "default"}`;
-    const storage = storageAdapter(options.storage, prefix);
+    let source = options.storage;
+    try {
+      source ??= doc.defaultView?.localStorage;
+    } catch {
+    }
+    const storage = storageAdapter(source, prefix, options.onQuotaExceeded);
     const api = options.api || createGameAPI();
     const ui = initializeUI(root2, { ...options, initialState: options.state ?? options.initialState, game: api, storage, signal: controller.signal });
     let active3 = true;
@@ -17898,11 +17918,6 @@ ${variables2.warnings()}` : "");
     const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
     field2(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.8);
     field2(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 32e3);
-    field2(sampling, "nonCombatPersistenceScope", "\u975E\u6218\u6597\u5FFD\u7565\u4FDD\u5B58\u8303\u56F4", select([
-      ["chat_and_global", "\u5F53\u524D\u804A\u5929 + \u5168\u5C40"],
-      ["chat", "\u4EC5\u5F53\u524D\u804A\u5929"],
-      ["global", "\u4EC5\u5168\u5C40"]
-    ]), "chat_and_global", false, true);
     for (const [key4, label] of [["normalizationConcurrency", "\u6807\u51C6\u5316\u6700\u5927\u5E76\u53D1\u8BF7\u6C42\u6570"], ["normalizationWarningsPerBatch", "\u6807\u51C6\u5316\u6BCF\u6279\u8B66\u544A\u6570"]]) {
       const { fallback, max } = normalizationLimits[key4];
       field2(sampling, key4, label, input("number", { min: "1", max: String(max), step: "1", required: true }), fallback);
@@ -19389,8 +19404,7 @@ ${variables2.warnings()}` : "");
     charSnapshots: {},
     rosterSelection: null,
     normalizationBatches: {},
-    narrativeExemptions: [],
-    nonCombatPersistenceScope: "chat_and_global",
+    narrativeExemptions: {},
     unresolvedNotes: {},
     ...Object.fromEntries(Object.entries(normalizationLimits).map(([key4, { fallback }]) => [key4, fallback])),
     slots: describeSlots(),
@@ -19404,6 +19418,7 @@ ${variables2.warnings()}` : "");
   function configFor(storage, key4) {
     try {
       const saved = parseJSON2(storage?.getItem(key4), {});
+      const settings = Object.fromEntries(Object.entries(saved ?? {}).filter(([field2]) => field2 !== "instances" && field2 !== "aiSessions" && field2 !== "nonCombatPersistenceScope" && !LARGE_CONFIG_KEYS.includes(field2)));
       const separateSessions = parseJSON2(storage?.getItem(`${key4}/ai-sessions`), null);
       const separateLarge = Object.fromEntries(LARGE_CONFIG_KEYS.flatMap((field2) => {
         const value = parseJSON2(storage?.getItem(separateConfigKey(key4, field2)), null);
@@ -19411,7 +19426,7 @@ ${variables2.warnings()}` : "");
       }));
       const mode = saved?.apiMode ?? (saved?.baseUrl ? "direct" : "tavern");
       return deepMerge3(DEFAULT_CONFIG, {
-        ...saved,
+        ...settings,
         ...separateLarge,
         ...separateSessions ? { aiSessions: separateSessions } : {},
         apiMode: mode === "direct" ? "custom" : mode,
@@ -19505,7 +19520,6 @@ ${variables2.warnings()}` : "");
       }
     }
     const charBlocks = extractTags(joined, "char_info").reverse();
-    const charRaw = charBlocks[0] || "";
     const charInfo = charBlocks.flatMap((raw) => {
       const value = parseJSON2(raw, null);
       return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
@@ -19519,8 +19533,6 @@ ${variables2.warnings()}` : "");
       battleInit,
       charInfo,
       battleRaw,
-      charRaw,
-      roster: "",
       protagonistName: "",
       battleKey,
       source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null
@@ -19936,6 +19948,94 @@ ${variables2.warnings()}` : "");
     return { accepted, repaired, repairAttempts };
   }
 
+  // src/tavern/overlay-storage.js
+  var PREFIX = "fated-tactical/";
+  var GLOBAL_STATE_KEYS = new Set(["battle-v1", "battle-v1/seed", "carry-v1", "reset-probe"].map((key4) => PREFIX + key4));
+  var BATTLE_SNAPSHOT = `${PREFIX}battle-v1`;
+  var TAVERN_PREFIX = `${PREFIX}tavern/`;
+  var INSTANCES_PREFIX = `${PREFIX}instances/`;
+  var MAX_RETAINED_BATCH_BATTLES = 2;
+  function parseStoredBattleKey(key4) {
+    if (!key4?.startsWith(PREFIX) || key4.startsWith(TAVERN_PREFIX) || key4.startsWith(INSTANCES_PREFIX) || GLOBAL_STATE_KEYS.has(key4)) return null;
+    const slash = key4.indexOf("/", PREFIX.length);
+    return slash > PREFIX.length ? key4.slice(PREFIX.length, slash) : null;
+  }
+  function pruneBattleStorageExcept(storage, keepKey) {
+    let removedKeys = 0, freedBytes = 0;
+    try {
+      const keys = Array.from({ length: storage?.length ?? 0 }, (_, i) => storage.key(i));
+      for (const key4 of keys) {
+        const battle = parseStoredBattleKey(key4);
+        if (!battle || battle === keepKey && !GLOBAL_UI_PREF_KEYS.has(key4.slice(PREFIX.length + battle.length + 1))) continue;
+        try {
+          const bytes = (key4.length + (storage.getItem(key4)?.length ?? 0)) * 2;
+          storage.removeItem(key4);
+          removedKeys += 1;
+          freedBytes += bytes;
+        } catch {
+        }
+      }
+    } catch {
+    }
+    return { removedKeys, freedBytes };
+  }
+  function pruneBattleScopedMap(record3, activeKey, maxBattles = MAX_RETAINED_BATCH_BATTLES) {
+    if (!record3 || typeof record3 !== "object" || Array.isArray(record3) || maxBattles < 1) return {};
+    const hasActive = activeKey && Object.hasOwn(record3, activeKey);
+    const others = Object.entries(record3).filter(([key4, value]) => key4 !== activeKey && value && typeof value === "object" && Object.keys(value).length > 0);
+    const limit = maxBattles - Number(Boolean(activeKey));
+    const result = Object.fromEntries(limit > 0 ? others.slice(-limit) : []);
+    if (hasActive) result[activeKey] = record3[activeKey];
+    return result;
+  }
+  function toStoredCharSnapshot({ hash: hash2, entryHashes }, resolvedWarnings = []) {
+    return { hash: hash2, entryHashes, resolvedWarnings };
+  }
+  function toPersistedOpeningSource({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source }) {
+    return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source });
+  }
+  function storageCategory(key4) {
+    if (key4.startsWith(INSTANCES_PREFIX)) return "instancesBytes";
+    if (key4.startsWith(TAVERN_PREFIX)) {
+      const match = key4.slice(TAVERN_PREFIX.length).match(/\/(ai-sessions|charSnapshots|normalizationBatches|narrativeExemptions|unresolvedNotes)$/);
+      if (match?.[1] === "ai-sessions") return "aiSessionsBytes";
+      if (match?.[1] === "charSnapshots") return "charSnapshotsBytes";
+      return match ? "normalizationBatchesBytes" : "chatConfigBytes";
+    }
+    const battle = parseStoredBattleKey(key4);
+    const field2 = battle ? key4.slice(PREFIX.length + battle.length + 1) : key4;
+    if (field2 === BATTLE_SNAPSHOT || field2 === `${BATTLE_SNAPSHOT}/seed`) return "battleSnapshotBytes";
+    if (field2 === "opening-source" || field2 === "chat-opening-patches") return "openingSourceBytes";
+    if (field2.startsWith("mvu-")) return "mvuWritebackBytes";
+    return "otherFatedBytes";
+  }
+  function computeStorageDiagnostics(storage, activeBattleKey) {
+    const categories = {
+      battleSnapshotBytes: 0,
+      openingSourceBytes: 0,
+      mvuWritebackBytes: 0,
+      chatConfigBytes: 0,
+      aiSessionsBytes: 0,
+      charSnapshotsBytes: 0,
+      normalizationBatchesBytes: 0,
+      instancesBytes: 0,
+      otherFatedBytes: 0
+    };
+    const summary = { totalBytes: 0, keyCount: 0, activeBattleKey: activeBattleKey ?? null, categories };
+    try {
+      for (let i = 0; i < (storage?.length ?? 0); i += 1) {
+        const key4 = storage.key(i);
+        if (!key4?.startsWith(PREFIX)) continue;
+        const bytes = (key4.length + (storage.getItem(key4)?.length ?? 0)) * 2;
+        summary.totalBytes += bytes;
+        summary.keyCount += 1;
+        categories[storageCategory(key4)] += bytes;
+      }
+    } catch {
+    }
+    return summary;
+  }
+
   // src/tavern/overlay-mount.js
   var own21 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
   var isObject6 = (v) => v && typeof v === "object" && !Array.isArray(v);
@@ -20025,7 +20125,6 @@ ${variables2.warnings()}` : "");
     let characters = {}, scanStatus = "", duplicatePaths = /* @__PURE__ */ new Map();
     const groupId = (id4) => config.instances[id4]?.archetypeId ?? characters[id4]?.archetypeId ?? id4;
     const openingSources = /* @__PURE__ */ new Map();
-    const enteredBattles = /* @__PURE__ */ new Set();
     const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own21(config.instances, key4)).map(groupId))];
     const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
     const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
@@ -20208,20 +20307,32 @@ ${variables2.warnings()}` : "");
     (doc.body || doc.documentElement)?.append(root2);
     const instances = (() => {
       try {
-        return parseJSON3(storage?.getItem(stateKey)) ?? config.instances;
+        return parseJSON3(storage?.getItem(stateKey));
       } catch {
-        return config.instances;
+        return null;
       }
     })();
     config.instances = isObject6(instances) ? instances : {};
-    function save() {
-      putConfig(storage, stateKey, config.instances);
+    function pruneBattleStorageExcept2(key4) {
+      for (const cachedKey of openingSources.keys()) if (cachedKey !== key4) openingSources.delete(cachedKey);
+      return pruneBattleStorageExcept(storage, key4);
     }
-    let localOnly = false;
+    function writeWithEvictionRetry(key4, value) {
+      if (putConfig(storage, key4, value)) return true;
+      return !!activeBattleKey && pruneBattleStorageExcept2(activeBattleKey).removedKeys > 0 && putConfig(storage, key4, value);
+    }
+    const notifyStorageFailure = () => notify("\u6570\u636E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\u3002\u8BF7\u5148\u4E0B\u8F7D\u6218\u5C40\u5907\u4EFD\uFF1B\u5982\u9700\u5F7B\u5E95\u521D\u59CB\u5316\uFF0C\u53EF\u5728\u5B9E\u4F8B\u7EF4\u62A4\u70B9\u300C\u6E05\u7406\u811A\u672C\u7F13\u5B58\u300D\u3002");
+    function save() {
+      if (!writeWithEvictionRetry(stateKey, config.instances)) notifyStorageFailure();
+    }
+    const unsavedSettings = /* @__PURE__ */ new Set();
+    const separateSettings = /* @__PURE__ */ new Set(["aiSessions", ...LARGE_CONFIG_KEYS]);
     function syncSettings() {
-      if (localOnly || !storage) return;
-      const { instances: _legacyInstances, aiSessions: _savedSessions, ...latest } = configFor(storage, configKey);
-      Object.assign(config, latest);
+      if (!storage) return;
+      const { aiSessions: _savedSessions, ...latest } = configFor(storage, configKey);
+      for (const [field2, value] of Object.entries(latest)) {
+        if (!unsavedSettings.has(separateSettings.has(field2) ? field2 : configKey)) config[field2] = value;
+      }
     }
     function persistSettings(patch, previousSlots = config.slots) {
       syncSettings();
@@ -20231,40 +20342,34 @@ ${variables2.warnings()}` : "");
         return;
       }
       Object.assign(config, patch);
-      const { instances: instances2, aiSessions: aiSessions2, ...settingsWithLarge } = config;
+      const { instances: _instances, aiSessions: aiSessions2, ...settingsWithLarge } = config;
       const settings = Object.fromEntries(Object.entries(settingsWithLarge).filter(([key4]) => !LARGE_CONFIG_KEYS.includes(key4)));
-      try {
-        if (storage && storage.getItem(stateKey) == null) putConfig(storage, stateKey, instances2);
-      } catch {
-      }
-      const legacy = (() => {
-        try {
-          return parseJSON3(storage?.getItem(configKey), {});
-        } catch {
-          return {};
-        }
-      })();
       const fields3 = [
         ["aiSessions", `${configKey}/ai-sessions`, aiSessions2],
         ...LARGE_CONFIG_KEYS.map((field2) => [field2, separateConfigKey(configKey, field2), config[field2]])
       ];
-      let allSaved = true;
-      for (const [field2, key4, value] of fields3) {
-        if (!localOnly && !Object.hasOwn(patch, field2) && !Object.hasOwn(legacy ?? {}, field2)) continue;
-        if (putConfig(storage, key4, value)) continue;
-        allSaved = false;
-        if (Object.hasOwn(legacy ?? {}, field2)) settings[field2] = legacy[field2];
-      }
-      if (Object.hasOwn(legacy ?? {}, "instances")) {
-        try {
-          if (storage?.getItem(stateKey) == null) settings.instances = legacy.instances;
-        } catch {
-          settings.instances = legacy.instances;
+      let failed = false;
+      const write = (field2, key4, value) => {
+        if (writeWithEvictionRetry(key4, value)) unsavedSettings.delete(field2);
+        else {
+          unsavedSettings.add(field2);
+          failed = true;
         }
+      };
+      for (const [field2, key4, value] of fields3) {
+        if (Object.hasOwn(patch, field2)) write(field2, key4, value);
       }
-      const settingsSaved = putConfig(storage, configKey, settings);
-      localOnly = !allSaved || !settingsSaved;
-      if (localOnly) notify("\u8BBE\u7F6E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\u3002\u8BF7\u5148\u4E0B\u8F7D\u6218\u5C40\u5907\u4EFD\uFF1B\u5982\u9700\u5F7B\u5E95\u521D\u59CB\u5316\uFF0C\u53EF\u5728\u5B9E\u4F8B\u7EF4\u62A4\u70B9\u300C\u6E05\u7406\u811A\u672C\u7F13\u5B58\u300D\u3002");
+      const hasMainSettings = (() => {
+        try {
+          return storage?.getItem(configKey) != null;
+        } catch {
+          return false;
+        }
+      })();
+      if (!hasMainSettings || Object.keys(patch).some((field2) => field2 !== "instances" && !separateSettings.has(field2))) {
+        write(configKey, configKey, settings);
+      }
+      if (failed) notifyStorageFailure();
     }
     if (!config.aiSessions?.sessions?.length || config.aiSessions.activeId !== aiSessions.data.activeId) {
       persistSettings({ aiSessions: aiSessions.data });
@@ -20528,6 +20633,7 @@ ${tag2.textContent || ""}
       }
     }
     function renderInstances() {
+      diagnostics.storage = computeStorageDiagnostics(storage, activeBattleKey);
       const page = pages.instances;
       page.replaceChildren(el(doc, "h3", {}, "\u6218\u573A\u5165\u53E3"));
       const battleCard = el(doc, "article", { class: "fated-battle-card" });
@@ -20655,14 +20761,23 @@ ${tag2.textContent || ""}
             ...Object.keys(batch.hashes ?? {})
           ].some((id4) => deleting.has(id4)));
           for (const id4 of members) delete config.instances[id4];
+          if (!Object.keys(config.instances).length) {
+            for (const field2 of ["chat-opening-patches", "fated-tactical/battle-v1"]) {
+              try {
+                storage?.removeItem(battleStorageKey(battle2, field2));
+              } catch {
+                notifyStorageFailure();
+              }
+            }
+          }
           save();
           persistSettings({
             rosterSelection: selectedIds(),
-            normalizationBatches: { ...config.normalizationBatches, [battle2]: retained },
-            charSnapshots: { ...config.charSnapshots, [battle2]: omit(config.charSnapshots[battle2]) },
+            normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [battle2]: retained }, battle2),
+            charSnapshots: { [battle2]: omit(config.charSnapshots[battle2]) },
             narrativeExemptions: { ...config.narrativeExemptions, [battle2]: (config.narrativeExemptions[battle2] ?? []).filter((r) => !deleting.has(r.unitId)) },
-            unresolvedNotes: { ...config.unresolvedNotes, [battle2]: omit(config.unresolvedNotes[battle2]) },
-            pendingInstanceResets: { ...config.pendingInstanceResets, [battle2]: true }
+            unresolvedNotes: { [battle2]: omit(config.unresolvedNotes[battle2]) },
+            pendingInstanceResets: { [battle2]: true }
           });
           renderInstances();
         });
@@ -20873,7 +20988,7 @@ ${tag2.textContent || ""}
         nextSources.protagonistName = tavernIdentity(host);
       }
       if (epoch !== scanEpoch || disposed) return null;
-      const openingSource = !opening && key4 ? clone6(nextSources) : null;
+      const openingSource = !opening && key4 ? toPersistedOpeningSource(nextSources) : null;
       if (!nextSources.battleInit) {
         sources = nextSources;
         diagnostics = { phase: "no-battle" };
@@ -20899,8 +21014,8 @@ ${tag2.textContent || ""}
           console.error("[fated-tactical] hydrate failed", diagnostics);
         } catch (_) {
         }
-        const diagnosticNode2 = pages.instances.querySelector("[data-diagnostics]");
-        if (diagnosticNode2) diagnosticNode2.textContent = JSON.stringify(diagnostics, null, 2);
+        const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
+        if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
         throw conversionError;
       }
       sources = nextSources;
@@ -20931,14 +21046,7 @@ ${tag2.textContent || ""}
         unitIds: Object.values(hydrated?.state?.units || {}).map((unit) => `${unit.id}:${unit.name}:${unit.team}`),
         warnings: hydrated?.warnings || []
       };
-      save();
-      const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
-      if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
-      if (openingSource && hydrated?.state) {
-        openingSources.set(key4, openingSource);
-        putConfig(storage, battleStorageKey(key4, "opening-source"), openingSource);
-      }
-      return hydrated;
+      return { hydrated, openingSource };
     }
     let stopTerrainNotices;
     function refreshPortraits(state, epoch) {
@@ -20985,6 +21093,7 @@ ${tag2.textContent || ""}
         storage,
         state,
         customBattle: { seed: sources.seed, restart, restoreSaved },
+        onQuotaExceeded: () => pruneBattleStorageExcept2(battleInstanceId).removedKeys > 0,
         battleAiRequest: async (messages, signal) => {
           syncSettings();
           const battleConfig = config.battleAiMode === "custom" ? {
@@ -21062,10 +21171,7 @@ ${tag2.textContent || ""}
         if (note) (next[unitId] ??= {})[id4] = note;
       }
       if (JSON.stringify(previous) === JSON.stringify(next)) return;
-      const unresolvedNotes = { ...config.unresolvedNotes };
-      if (Object.keys(next).length) unresolvedNotes[key4] = next;
-      else delete unresolvedNotes[key4];
-      persistSettings({ unresolvedNotes });
+      persistSettings({ unresolvedNotes: Object.keys(next).length ? { [key4]: next } : {} });
     }
     function liveState() {
       return gameMount?.getState?.() ?? currentState;
@@ -21124,9 +21230,9 @@ ${tag2.textContent || ""}
       sources.warnings = nextWarnings;
       diagnostics.warnings = nextWarnings;
       persistSettings({
-        normalizationBatches: { ...config.normalizationBatches, [key4]: retained },
+        normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: retained }, key4),
         narrativeExemptions: { ...config.narrativeExemptions, [key4]: exemptions },
-        unresolvedNotes: { ...config.unresolvedNotes, [key4]: notes2 },
+        unresolvedNotes: { [key4]: notes2 },
         charSnapshots: snapshots
       });
       filterResolved(snapshots[key4] ?? {}, characters, retained);
@@ -21188,6 +21294,9 @@ ${tag2.textContent || ""}
         foldBattleEntries();
         if (!rehydrate && !refreshSource && key4 && activeBattleKey === key4 && gameMount) {
           refreshPortraits(currentState, epoch);
+          diagnostics.storage = computeStorageDiagnostics(storage, activeBattleKey);
+          const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
+          if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
           if (node) node.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
           return;
         }
@@ -21200,8 +21309,8 @@ ${tag2.textContent || ""}
         const snapshot = key4 && readBattleStorage(key4, "fated-tactical/battle-v1");
         const savedBattle = snapshot?.kind === "battle";
         const previousOpening = rehydrate && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
-        const hydrated = await hydrate(epoch, candidate, rehydrate, refreshSource, snapshot);
-        const latestOpening = key4 && openingSources.get(key4);
+        const { hydrated, openingSource } = await hydrate(epoch, candidate, rehydrate, refreshSource, snapshot) ?? {};
+        const latestOpening = openingSource ?? (key4 && openingSources.get(key4));
         const openingInput = (opening) => [opening.battleInit, opening.mvuData, opening.charInfo, opening.protagonistName];
         const unchangedOpening = previousOpening && latestOpening && stableSourceJson(openingInput(previousOpening)) === stableSourceJson(openingInput(latestOpening));
         if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
@@ -21216,7 +21325,7 @@ ${tag2.textContent || ""}
         const rawWarnings = sources.warnings ?? [];
         diagnostics.inputWarnings = [...rawWarnings];
         const resetDeleted = Boolean(config.pendingInstanceResets?.[key4]);
-        const firstEntry = !resetDeleted && !rehydrate && nextState && key4 && !savedBattle && !enteredBattles.has(key4);
+        const firstEntry = !resetDeleted && !rehydrate && nextState && key4 && !savedBattle && !own21(config.normalizationBatches, key4);
         const chatPrefix = `${safeKey3(chat)}__`;
         const ownBatches = batches(key4);
         const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, transactions]) => transactions.filter((batch) => batch.entries?.length)) : ownBatches;
@@ -21239,37 +21348,46 @@ ${tag2.textContent || ""}
         currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
         if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
         const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || unchangedOpening && !invalid && stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills));
-        if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key4]: kept } });
         mountState(currentState, restoreSaved);
-        if (currentState && resetDeleted) {
-          const pendingInstanceResets = { ...config.pendingInstanceResets };
-          delete pendingInstanceResets[key4];
-          persistSettings({ pendingInstanceResets });
-        }
+        activeBattleKey = currentState ? key4 : null;
         refreshPortraits(currentState, epoch);
-        activeBattleKey = key4;
         characters = fresh;
-        const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter((id4) => groupId(id4) === id4);
-        if (key4 && (rehydrate || changed.length || removed.length)) {
+        if (activeBattleKey) {
+          pruneBattleStorageExcept2(key4);
+          if (openingSource) {
+            openingSources.set(key4, openingSource);
+            if (!writeWithEvictionRetry(battleStorageKey(key4, "opening-source"), openingSource)) notifyStorageFailure();
+          }
+          const nextSettings = {
+            normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: kept }, key4),
+            unresolvedNotes: own21(config.unresolvedNotes, key4) ? { [key4]: config.unresolvedNotes[key4] } : {},
+            pendingInstanceResets: {}
+          };
           for (const id4 of ids) {
             const previous = stored[id4];
-            const { entryValues: _promptSources, ...record3 } = fresh[id4];
-            stored[id4] = { ...record3, resolvedWarnings: rawWarnings.filter((w) => w.unitId === id4 && previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id4]: previous }, fresh).length).map(warningKey) };
+            stored[id4] = toStoredCharSnapshot(fresh[id4], rawWarnings.filter((w) => w.unitId === id4 && previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id4]: previous }, fresh).length).map(warningKey));
           }
-          persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
+          nextSettings.charSnapshots = { [key4]: stored };
+          const patch = Object.fromEntries(Object.entries(nextSettings).filter(([field2, value]) => JSON.stringify(value) !== JSON.stringify(config[field2] ?? {})));
+          if (Object.keys(patch).length) persistSettings(patch);
         }
+        const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter((id4) => groupId(id4) === id4);
         if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
         filterResolved(stored, fresh, kept);
         if (key4) reconcileUnresolvedNotes(key4, fresh, sources.warnings, [], { reset: false });
         const live3 = liveState();
         if (live3) updateChatInstances(live3, nextState);
-        if (key4 && currentState) enteredBattles.add(key4);
         scanStatus = firstEntry && changed.length ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u6240\u9009\u89D2\u8272";
         renderInstances();
         if (firstEntry && changed.length) void runNormalize(changed);
         if (node) node.textContent = currentState ? `\u626B\u63CF\u5B8C\u6210\uFF1A${Object.values(currentState.units || {}).map((unit) => `${unit.name}(${unit.id})`).join("\u3001")} \xB7 ${scanStatus}` : "\u626B\u63CF\u5B8C\u6210\uFF08\u672A\u627E\u5230\u53EF\u6302\u8F7D\u7684\u6218\u5C40\uFF09\u3002";
       } catch (e) {
-        diagnostics = { ...diagnostics, phase: "scan-error", error: e?.stack || e?.message || String(e) };
+        diagnostics = {
+          ...diagnostics,
+          phase: "scan-error",
+          error: e?.stack || e?.message || String(e),
+          storage: computeStorageDiagnostics(storage, activeBattleKey)
+        };
         try {
           console.error("[fated-tactical] scan failed", diagnostics);
         } catch (_) {
@@ -21504,22 +21622,16 @@ ${tag2.textContent || ""}
         }
       }
       const stored = { ...config.charSnapshots[key4] };
-      const rejectedUnits = new Set(rejected.flatMap((item) => {
-        const direct = item.path.match(/^\/units\/([^/]+)/)?.[1];
-        if (direct) return [direct];
-        return [...accepted.blockedWarnings].map((warning) => warning.unitId).filter(Boolean);
-      }));
       for (const [id4, record3] of Object.entries(records2)) {
-        const { entryValues: _promptSources, ...snapshotRecord } = record3;
-        const previous = stored[id4]?.hash === snapshotRecord.hash ? stored[id4].resolvedWarnings ?? [] : [];
-        stored[id4] = { ...snapshotRecord, at: Date.now(), normalized: !rejectedUnits.has(id4), resolvedWarnings: previous };
+        const previous = stored[id4]?.hash === record3.hash ? stored[id4].resolvedWarnings : void 0;
+        stored[id4] = toStoredCharSnapshot(record3, previous);
       }
       syncSettings();
       const receipts = narrative.map(({ receipt }) => receipt);
       const previousExemptions = config.narrativeExemptions[key4] ?? [];
       persistSettings({
-        charSnapshots: { ...config.charSnapshots, [key4]: stored },
-        normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] },
+        charSnapshots: { [key4]: stored },
+        normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] }, key4),
         narrativeExemptions: { ...config.narrativeExemptions, [key4]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
       });
       for (const operation2 of effective) {
@@ -21585,11 +21697,12 @@ ${tag2.textContent || ""}
           }
         }
         const storageKey = battleStorageKey(key4, "chat-opening-patches");
-        const persisted = nextEntries === entries3 || putConfig(storage, storageKey, nextEntries);
+        const persisted = nextEntries === entries3 || writeWithEvictionRetry(storageKey, nextEntries);
+        if (undo && !persisted) throw new Error("\u65E0\u6CD5\u66F4\u65B0\u6D4F\u89C8\u5668\u4E2D\u7684\u5F00\u573A\u8865\u4E01\uFF0C\u672A\u64A4\u9500");
         try {
           gameMount.loadState(next);
         } catch (error2) {
-          if (nextEntries !== entries3 && persisted) putConfig(storage, storageKey, entries3);
+          if (nextEntries !== entries3 && persisted && !writeWithEvictionRetry(storageKey, entries3)) notifyStorageFailure();
           throw error2;
         }
         currentState = liveState();
