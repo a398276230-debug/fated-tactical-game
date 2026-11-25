@@ -67,7 +67,7 @@ before_target.redirectTarget 将整个目标列表覆写为单一实体，范围
 清除敌方区域时 where 可写 "zone.team != null && zone.team != self.team"（zone.team / candidate.team 读创建阵营，zone.sourceId / candidate.sourceId 读创建者 ID）。spawn 的 spec 由 entityKind 决定；unit 的 templateId/copyOf/spawnPanel 至多选一，均省略时按施术者预算自动生成面板；tier、count、remainingTurns、area.radius 支持数值表达式；terrain 至少含 kind 或 height，填 mode 时必填 height：
 ${spawnSpecs.join('\n')}
 召唤物 sourceSkillId 由引擎只读记录生成它的技能 ID（含装备虚拟技能 equip:<实例ID>:<规则ID>），可通过 self/target/candidate/vars.<实体>.sourceSkillId 读取。
-zoneArea：${describe(defs.spawn_zone.properties.area)}。single 仅中心格；rect 必填 rect 对象；cells 必填 cells 数组；z1/z2 可选限定三维海拔闭区间（地面z + 离地altitude，self.z 亦可读单位海拔）。
+zoneArea：${describe(defs.spawn_zone.properties.area)}。single 仅中心格；circle/ring 必填 radius；rect 必填 rect 对象；cells 必填 cells 数组；z1/z2 可选限定三维海拔闭区间（地面z + 离地altitude，self.z 亦可读单位海拔）。
 
 【表达式与选择器】
 Expr 为 JSON 数字、布尔值或安全表达式字符串。字符串字面量支持单双引号，空值用 null，支持 + - !、算术、比较、&&、||、?: 三元与括号。严格使用注册变量与函数签名，无数组字面量或任意属性路径。

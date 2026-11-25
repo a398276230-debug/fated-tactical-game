@@ -55,9 +55,14 @@ export function configFor(storage, key) {
     });
   } catch { return deepClone(DEFAULT_CONFIG); }
 }
-export function putConfig(storage, key, value) {
+export function isQuotaExceededError(error) {
+  return error?.name === 'QuotaExceededError' || error?.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    error?.code === 22 || error?.code === 1014;
+}
+
+export function putConfig(storage, key, value, onError) {
   try { if (!storage) return false; storage.setItem(key, JSON.stringify(value)); return true; }
-  catch { return false; }
+  catch (error) { onError?.(error); return false; }
 }
 export function chatId(host) {
   try {
@@ -113,7 +118,7 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
     const legacy = allText.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*[:：]?\s*([\s\S]+)/i);
     if (legacy) battleRaw = legacy[1].trim();
     else {
-      const wrapped = allText.match(/\{\s*"?(?:battle_in|战术沙盘)"?\s*:\s*([\\s\\S]+)\}/i);
+      const wrapped = allText.match(/\{\s*"?(?:battle_in|战术沙盘)"?\s*:\s*([\s\S]+)\}/i);
       if (wrapped) battleRaw = wrapped[1].trim();
     }
   }

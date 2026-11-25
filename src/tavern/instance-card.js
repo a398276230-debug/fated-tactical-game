@@ -48,7 +48,7 @@ export function skillDisplay(template = {}, skillInfo = {}) {
   if (template.angle != null) area.push(`角度 ${template.angle}`);
   return { damage: components.join('、'), costs, range: template.range ?? '—', area: area.join('，') || '单体' };
 }
-const verbs = { let: '记录数值', if: '条件分支', for_each: '逐个结算', check: '检定', ask: '等待选择', mutate_event: '调整结算', damage: '伤害', heal: '治疗', resource: '调整资源', apply_status: '施加状态', remove_status: '移除状态', move: '位移', spawn: '生成', remove: '移除', perform: '执行行动', link_pool: '调整共享资源' };
+const verbs = { let: '记录数值', if: '条件分支', for_each: '逐个结算', check: '检定', ask: '等待选择', mutate_event: '调整结算', damage: '伤害', heal: '治疗', resource: '调整资源', apply_status: '施加状态', remove_status: '移除状态', move: '位移', spawn: '生成', despawn: '移除', revive: '复活', perform: '执行行动', link_pool: '调整共享资源' };
 export function ruleSummary(rule, state) {
   const statusName = id => state?.statusTemplates?.[id]?.name ?? STATUSES[id]?.name ?? id;
   const describe = op => {
@@ -67,8 +67,8 @@ const modLabels = {
 };
 const ratioStats = new Set(['armorPiercePercent','damageReduction','dr']);
 const percent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:10});
-const slots = {action:'动作',attack:'攻击',move:'移动',cast:'施法',reaction:'反应'};
-const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害',hidden:'隐身',intercept:'可拦截攻击',taunted:'被嘲讽',infiniteAmmo:'弹药不限'};
+const slots = {action:'动作',attack:'攻击',move:'移动',cast:'施法',reaction:'反应',fly:'升空',teleport:'瞬移'};
+const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害',guaranteed_hit:'必定命中',guaranteed_crit:'必定暴击',hidden:'隐身',intercept:'可拦截攻击',taunted:'被嘲讽',infiniteAmmo:'弹药不限'};
 const checks = {attack:'攻击',save:'豁免',contest:'对抗',d20:'普通',chance:'概率'};
 const signed = (n, asPercent) => typeof n === 'number' ? `${n>=0?'+':''}${asPercent?percent.format(n):n}` : `按公式 ${n}`;
 function modSummary(mod) {
@@ -82,9 +82,6 @@ function modSummary(mod) {
   if(mod.locks?.length) parts.push(`禁止${mod.locks.map(slot=>slots[slot]).join('、')}`);
   if(mod.flags?.length) parts.push(...mod.flags.map(flag=>flags[flag]));
   const policy = mod.controlPolicy;
-  if(policy?.controller) parts.push(policy.controller==='ai'?'由 AI 控制':'恢复默认控制');
-  if(policy?.allegiance) parts.push(({normal:'正常阵营关系',friendly_only:'仅友方',all_hostile:'所有单位视为敌方'})[policy.allegiance]);
-  if(policy?.forcedActionKinds?.length) parts.push(`强制行动类型：${policy.forcedActionKinds.map(kind=>kind==='attack'?'攻击':'技能').join('、')}`);
   if(policy?.allowFriendlyTarget != null) parts.push(policy.allowFriendlyTarget?'可选友方为目标':'不可选友方为目标');
   if(policy?.intentLock) parts.push(`锁定意图：${INTENTS[policy.intentLock]?.name ?? policy.intentLock}`);
   if(policy?.moraleLock==='steady') parts.push('士气恒定坚守');

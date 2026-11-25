@@ -106,7 +106,8 @@ export function readCombatTags(raw, kind, name, warnings) {
     } else {
       const stat = { 防御:'armor', 命中:'checkBonus', 闪避:'dodge', 先手:'initiativeFlat' }[key];
       const checkKind = key === '命中' ? 'attack' : undefined;
-      if (!total || (weapon && stat === 'armor' && total < 0) || mods.some(mod => mod.stat === stat && mod.checkKind === checkKind)) continue;
+      if (!total || (weapon && stat === 'armor' && total < 0) || mods.some(mod => mod.stat === stat && mod.checkKind === checkKind &&
+        mod.when === undefined && mod.damageType === undefined && mod.statusId === undefined)) continue;
       if (mods.length >= 200 || !Number.isSafeInteger(total)) { for (const { tag } of group) warn(tag, '合计数值或 mods 数量超限'); continue; }
       mods.push({ stat, flat:total, ...(checkKind && {checkKind}) });
       summary.push([key, total]);

@@ -23,7 +23,7 @@ import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
 import { acceptNormalizationResponse, rejectedWarning, repairWarnings, runNormalizationRepair } from './normalization-commit.js';
 import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey, stripMetaAndReasoning } from './overlay-ai.js';
 import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch } from './overlay-patch.js';
-import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
+import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, isQuotaExceededError, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
 import { computeStorageDiagnostics, pruneBattleScopedMap, pruneBattleStorageExcept as pruneStoredBattles,
   toPersistedOpeningSource, toStoredCharSnapshot } from './overlay-storage.js';
@@ -309,8 +309,15 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     return pruneStoredBattles(storage, key);
   }
   function writeWithEvictionRetry(key, value) {
-    if (putConfig(storage, key, value)) return true;
-    return !!activeBattleKey && pruneBattleStorageExcept(activeBattleKey).removedKeys > 0 && putConfig(storage, key, value);
+    let quotaExceeded = false;
+    if (putConfig(storage, key, value, error => { quotaExceeded = isQuotaExceededError(error); })) return true;
+    return quotaExceeded && !!activeBattleKey && pruneBattleStorageExcept(activeBattleKey).removedKeys > 0 && putConfig(storage, key, value);
+  }
+  function retainedUnresolvedNotes(key, notes) {
+    const nextMap = { ...config.unresolvedNotes };
+    if (notes && Object.keys(notes).length) nextMap[key] = notes;
+    else delete nextMap[key];
+    return pruneBattleScopedMap(nextMap, key);
   }
   const notifyStorageFailure = () => notify('数据仅在本窗口生效', '无法写入浏览器存储。请先下载战局备份；如需彻底初始化，可在实例维护点「清理脚本缓存」。');
   function save() { if (!writeWithEvictionRetry(stateKey, config.instances)) notifyStorageFailure(); }
@@ -676,7 +683,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
           normalizationBatches:pruneBattleScopedMap({...config.normalizationBatches,[battle]:retained}, battle),
           charSnapshots:{[battle]:omit(config.charSnapshots[battle])},
           narrativeExemptions:{...config.narrativeExemptions,[battle]:(config.narrativeExemptions[battle]??[]).filter(r=>!deleting.has(r.unitId))},
-          unresolvedNotes:{[battle]:omit(config.unresolvedNotes[battle])},
+          unresolvedNotes:retainedUnresolvedNotes(battle, omit(config.unresolvedNotes[battle])),
           pendingInstanceResets:{[battle]:true} });
         renderInstances();
       });
@@ -928,10 +935,18 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     if (!state) return;
     const battleInstanceId = sources.battleKey || id;
     const battleInput = sources.input;
+    const battleCharacters = characters;
+    const battleRawWarnings = [...(diagnostics.inputWarnings ?? sources.warnings ?? [])];
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
     const rebuild = ({ seed }) => {
       const opening = hydrateBaseline(battleInput, { seed });
-      const normalized = applyNormalization(opening, operations(battleInstanceId));
+      const ownBatches = batches(battleInstanceId);
+      const { state: normalized, kept } = replayNormalization(opening, ownBatches, battleCharacters, battleRawWarnings, {
+        apply: applyNormalization, validate: () => {}, fingerprint: fingerprintAt,
+      });
+      if (kept.length !== ownBatches.length) {
+        persistSettings({ normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [battleInstanceId]: kept }, battleInstanceId) });
+      }
       const next = restoreChatOpening(normalized, battleInstanceId);
       updateChatInstances(next, liveState());
       return next;
@@ -1013,7 +1028,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       if (note) (next[unitId] ??= {})[id] = note;
     }
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
-    persistSettings({ unresolvedNotes: Object.keys(next).length ? { [key]: next } : {} });
+    persistSettings({ unresolvedNotes: retainedUnresolvedNotes(key, next) });
   }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
   function pathUnder(path, root) { return path === root || path?.startsWith(`${root}/`); }
@@ -1069,7 +1084,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     persistSettings({
       normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key]: retained }, key),
       narrativeExemptions: { ...config.narrativeExemptions, [key]: exemptions },
-      unresolvedNotes: { [key]: notes },
+      unresolvedNotes: retainedUnresolvedNotes(key, notes),
       charSnapshots: snapshots,
     });
     filterResolved(snapshots[key] ?? {}, characters, retained);
@@ -1193,10 +1208,10 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       // Compare effective opening templates, not the board after turns have been played.
       const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || (unchangedOpening && !invalid &&
         stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills)));
+      characters = fresh;
       mountState(currentState, restoreSaved);
       activeBattleKey = currentState ? key : null;
       refreshPortraits(currentState, epoch);
-      characters = fresh;
       if (activeBattleKey) {
         pruneBattleStorageExcept(key);
         if (openingSource) {
@@ -1205,7 +1220,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         }
         const nextSettings = {
           normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key]: kept }, key),
-          unresolvedNotes: own(config.unresolvedNotes, key) ? { [key]: config.unresolvedNotes[key] } : {},
+          unresolvedNotes: retainedUnresolvedNotes(key, config.unresolvedNotes[key]),
           pendingInstanceResets: {},
         };
         for (const id of ids) {

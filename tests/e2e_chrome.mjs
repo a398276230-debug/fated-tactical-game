@@ -306,13 +306,24 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run('enemyRequests.length'),3,'敌方独立泳道经历首次失败、一次返修和手动重试');
   const opening = await tavernState();
   const openingBow = state => state.equipment[state.items[state.units.p1.mainHand].templateId];
+  const notesKey = await run(`Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/') && k.split('/').length === 3) + '/unresolvedNotes'`);
+  const originalKey = await activeStorageKey();
+  const notesA = { p1: { example: { reason: '原战局需确认' } } };
+  const notesB = { p1: { example: { reason: '新战局需确认' } } };
+  const seedNotes = record => run(`localStorage.setItem(${JSON.stringify(notesKey)}, ${JSON.stringify(JSON.stringify(record))})`);
+  await seedNotes({ [originalKey]: notesA });
   await run(`hostMessages.push({message_id:8,role:'assistant',message:battleFixture.replace('chrome-host','chrome-reuse')});
     window.__fatedTacticalTavern.open()`);
   await until(async () => (await tavernState())?.scenarioId === 'chrome-reuse', '新战场复用同一聊天的条目补丁');
   assert.deepEqual(openingBow(await tavernState()), openingBow(opening));
   assert.equal(await run('hostRequests.length'), 3);
+  const reuseKey = await activeStorageKey();
+  const notes = () => run('window.__fatedTacticalTavern.getConfig().unresolvedNotes');
+  assert.deepEqual(await notes(), { [originalKey]: notesA }, '空战局不写入空说明');
+  await seedNotes({ [originalKey]: notesA, [reuseKey]: notesB });
   await run(`hostMessages.pop(); window.__fatedTacticalTavern.open()`);
   await until(async () => (await tavernState())?.scenarioId === opening.scenarioId, '返回原战场');
+  assert.deepEqual(await notes(), { [reuseKey]: notesB }, '返回原战局清除已核销的说明，但保留另一场说明');
   await run(`document.querySelector('[data-tab="sandbox"]').click();
     const auto = document.querySelector('#auto-ai'); if (auto.checked) auto.click();
     document.querySelector('#end-turn').click();`);
@@ -614,7 +625,21 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await until(async () => (await boardUnitName()) === '补丁即时刷新验证', '当前棋盘原位刷新');
   assert.equal(await run(`${currentBoard} === window.boardBeforeChatPatch`), true);
   assert.match(await run(`${lastAssistant}.querySelector('.fated-ai-msg-feedback').textContent`), /已应用/);
-  await run(`document.querySelector('[data-tab="sandbox"]').click(); document.querySelector('.fated-tavern-panel #reset-button').click();`);
+  const restartKey = await activeStorageKey();
+  const retainedBeforeRestart = (await run('window.__fatedTacticalTavern.getConfig().normalizationBatches'))[restartKey];
+  assert.ok(retainedBeforeRestart.some(batch => batch.receipts?.length), '需覆盖已核销警告的批次');
+  await run(`(() => {
+    const base = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/') && k.split('/').length === 3);
+    const storageKey = base + '/normalizationBatches', battle = ${JSON.stringify(restartKey)};
+    const map = JSON.parse(localStorage.getItem(storageKey));
+    map[battle].push({ entries: [], receipts: [], patch: [{ op: 'replace', path: '/zones/no-longer-present/name', value: '过期区域' }] });
+    localStorage.setItem(storageKey, JSON.stringify(map));
+    document.querySelector('[data-tab="prompt"]').click();
+    document.querySelector('[data-tab="sandbox"]').click();
+    document.querySelector('.fated-tavern-panel #reset-button').click();
+  })()`);
+  assert.deepEqual((await run('window.__fatedTacticalTavern.getConfig().normalizationBatches'))[restartKey], retainedBeforeRestart,
+    '重开只剔除无效区域批次，保留有核销收据的有效补丁');
   assert.equal((await tavernState()).units.p1.armor, 6, '重开保留已应用的辅助 AI 补丁');
   assert.equal(await boardUnitName(), '补丁即时刷新验证');
   await run(`document.querySelector('[data-tab="ai"]').click()`);
@@ -777,6 +802,31 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   })()`);
   assert.deepEqual(quotaProbe, { blocked: 2, healed: true, visible: true,
     message: '浏览器存储空间不足或已关闭；请下载快照保存战局。' });
+  await click('[data-tab="prompt"]');
+  const configWriteProbe = await run(`(() => {
+    const key = Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/') && k.split('/').length === 3);
+    const stale = 'fated-tactical/old-config-probe/fated-tactical/battle-v1';
+    const setItem = Storage.prototype.setItem;
+    const toggleProtocol = () => document.querySelector('[data-page="prompt"] .wf-card:nth-child(2) .toggle-switch').click();
+    localStorage.setItem(stale, '{}');
+    const before = localStorage.getItem(key);
+    let quota = false, failures = 0;
+    Storage.prototype.setItem = function(k, value) {
+      if (k === key && this.getItem(stale)) {
+        failures++;
+        throw quota ? new DOMException('quota', 'QuotaExceededError') : new Error('not a quota error');
+      }
+      return setItem.call(this, k, value);
+    };
+    try {
+      toggleProtocol();
+      const ordinaryFailurePreservedOldBattle = localStorage.getItem(stale) !== null && localStorage.getItem(key) === before;
+      quota = true;
+      toggleProtocol();
+      return { ordinaryFailurePreservedOldBattle, quotaEvictedOldBattle: localStorage.getItem(stale) === null, failures };
+    } finally { Storage.prototype.setItem = setItem; localStorage.removeItem(stale); }
+  })()`);
+  assert.deepEqual(configWriteProbe, { ordinaryFailurePreservedOldBattle: true, quotaEvictedOldBattle: true, failures: 2 });
   assert.equal(await run('hostRequests.length'), requestsBeforeHydrate);
   await click('[data-tab="sandbox"]');
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);

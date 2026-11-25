@@ -16,7 +16,19 @@ import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
-import { configFor, sourceBundle } from '../src/tavern/overlay-sources.js';
+import { configFor, isQuotaExceededError, putConfig, sourceBundle } from '../src/tavern/overlay-sources.js';
+
+test('sourceBundle 识别 battle_in 的 JSON 对象键与非引号对象键', () => {
+  const battle = { battleId: 'legacy', participants: [{ name: '主角', faction: 'blue', source: 'mvu_protagonist', xyz: [1, 1, 0] }] };
+  for (const content of [
+    `{"battle_in": ${JSON.stringify(battle)}}`,
+    `{battle_in: ${JSON.stringify(battle)}}`,
+  ]) {
+    const result = sourceBundle({}, [{ content }]);
+    assert.deepEqual(result.battleInit, battle);
+    assert.equal(result.battleRaw, JSON.stringify(battle));
+  }
+});
 
 test('sourceBundle 跳过导演注释、思考与孤立开标签，只取最后闭合战场', () => {
   const battle = `battle|1|port|幻雾港|flat
@@ -99,6 +111,19 @@ test('配置只从独立键读取大对象，不裁剪豁免表', () => {
   assert.equal(config.aiSessions.activeId, null);
   assert.deepEqual(config.charSnapshots, {});
   assert.deepEqual(config.narrativeExemptions, ledger);
+});
+
+test('存储错误分类：只有配额错误允许进入驱逐重试路径', () => {
+  const errors = [new Error('循环引用'), Object.assign(new Error('满'), { name: 'QuotaExceededError' })];
+  for (const error of errors) {
+    const storage = { setItem() { throw error; } };
+    let observed;
+    assert.equal(putConfig(storage, 'key', { value: 1 }, received => { observed = received; }), false);
+    assert.equal(observed, error);
+    assert.equal(isQuotaExceededError(error), error.name === 'QuotaExceededError');
+  }
+  assert.equal(isQuotaExceededError(Object.assign(new Error('quota'), { code: 22 })), true);
+  assert.equal(isQuotaExceededError(new Error('普通写入失败')), false);
 });
 
 test('挂载偏好全局共享，战局写满时驱逐重试一次，重试失败向上抛出', () => {
@@ -227,6 +252,17 @@ test('静态标签：MVU 面板与常驻修饰落盘，开场先攻、双向普�
     const roll = fight.logs.findLast(l => l.type === 'roll').detail;
     assert.deepEqual([roll.targetId,roll.dodgeBonus,roll.accuracy], [target.id,expectedDodge,profile.accuracy]);
   }
+});
+
+test('静态闪避标签与带 when 的动态闪避修饰共存且不互相去重', () => {
+  const input = staticTagSource();
+  input.mvu.主角.装备.鹰眼戒.标签 = ['闪避: 10'];
+  input.mvu.主角.装备.鹰眼戒.mods = [{ stat: 'dodge', flat: 5, when: 'self.hp < 10' }];
+  const { state } = hydrateFromSources(input, { throwOnValidation: true });
+  const ring = templateByName(state.equipment, '鹰眼戒')[1];
+  assert.equal(ring.mods.length, 2);
+  assert.ok(ring.mods.some(mod => mod.stat === 'dodge' && mod.flat === 10 && mod.when === undefined));
+  assert.ok(ring.mods.some(mod => mod.stat === 'dodge' && mod.flat === 5 && mod.when === 'self.hp < 10'));
 });
 
 test('静态标签：同维修饰求和、抵消，显式修饰按检定类型判重，回灌模板不翻倍', () => {
@@ -1285,6 +1321,26 @@ test('未解决诊断：结构化引用精确关联角色、路径与主题，�
     { ...unresolved, message:next.message }, { ...unresolved, reason:{ bad:true } }], warnings);
   assert.deepEqual(malformed.matched, []);
   assert.equal(malformed.invalid.length, 3);
+});
+
+test('重开回放跳过失效批次并保留有效批次', () => {
+  const state = { value: 0 };
+  const batches = [
+    { patch: [{ op: 'replace', path: '/value', value: 1 }], entries: [['p', 'unit', 'old']], receipts: [] },
+    { patch: [{ op: 'replace', path: '/value', value: 2 }], entries: [['p', 'unit', 'new']], receipts: [] },
+  ];
+  const result = replayNormalization(state, batches, { p: { entryHashes: { unit: 'new' } } }, [], {
+    apply: (current, patch) => {
+      const next = structuredClone(current);
+      next.value = patch[0].value;
+      return next;
+    },
+    validate: current => { if (current.value > 2) throw new Error('invalid'); },
+    fingerprint: () => null,
+  });
+  assert.equal(result.state.value, 2);
+  assert.equal(result.kept.length, 1);
+  assert.deepEqual(result.kept[0].patch, batches[1].patch);
 });
 
 test('char fingerprint merges raw sources without hashing placement or actor AP', async () => {

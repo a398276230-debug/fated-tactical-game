@@ -301,6 +301,15 @@ test('G97 protocol maps mixed damage, empty effects and worldbook tags without c
   for (const tag of ['[威力: X 物理]', '[关联属性: <属性>]', '[单体]', '[范围: <档位>(N)+<形状>(<阵营>)]']) assert.ok(protocol.includes(tag), tag);
 });
 
+test('标准化协议不暴露失效字段或区域单位池', () => {
+  const protocol = resolveSlotContent({ id: 'protocol' });
+  assert.doesNotMatch(protocol, /\b(?:controller|allegiance|forcedActionKinds|charged)\b/);
+  const zoneSpec = protocol.split('\n').find(line => line.startsWith('• zone：'));
+  assert.ok(zoneSpec);
+  assert.doesNotMatch(zoneSpec, /\bunitPools\b/);
+  assert.match(protocol, /circle\/ring 必填 radius/);
+});
+
 test('标准化发送的任务区分只读来源、输出数组和部分实现收据', () => {
   const text = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(message => message.content).join('\n');
   assert.match(text, /raw、MVU 和 char_info 是只读来源/);

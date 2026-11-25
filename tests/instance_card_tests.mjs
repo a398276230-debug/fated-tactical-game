@@ -1,6 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { skillDisplay } from '../src/tavern/instance-card.js';
+import { fillInstance, ruleSummary, skillDisplay } from '../src/tavern/instance-card.js';
+
+function cardText(unit, state) {
+  const make = (tag, attrs = {}, value = '') => ({
+    tag, attrs, value, children: [], dataset: {}, style: { setProperty() {} }, classList: { add() {} },
+    append(...nodes) { this.children.push(...nodes); },
+    addEventListener() {},
+    get textContent() { return [this.value, ...this.children.map(node => node.textContent)].join('\\n'); },
+  });
+  const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'));
+  return body.textContent;
+}
+
+test('instance card summarizes fly and teleport locks, guaranteed flags, despawn and revive', () => {
+  const text = cardText({ id: 'u1', gear: ['item'], skills: [] }, {
+    items: { item: { templateId: 'equipment' } },
+    equipment: { equipment: { name: '护符', mods: [{ locks: ['fly', 'teleport'], flags: ['guaranteed_hit', 'guaranteed_crit'] }] } },
+    skills: {},
+  });
+  assert.match(text, /禁止升空、瞬移/);
+  assert.match(text, /必定命中/);
+  assert.match(text, /必定暴击/);
+  assert.match(ruleSummary({ hook: 'active', program: [{ op: 'despawn' }] }), /主动 → 移除/);
+  assert.match(ruleSummary({ hook: 'active', program: [{ op: 'revive' }] }), /主动 → 复活/);
+  assert.doesNotMatch(text, /undefined/);
+});
 
 test('skill card shows every active mixed-damage component and its determinate amount', () => {
   const display = skillDisplay({
