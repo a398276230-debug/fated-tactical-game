@@ -17,7 +17,7 @@ import { duplicateMappings, duplicateOperations, instanceGroups } from './instan
 import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
 import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
-import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey } from './overlay-ai.js';
+import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey, stripReasoningBlocks } from './overlay-ai.js';
 import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch, partitionNormalizationPatch } from './overlay-patch.js';
 import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
@@ -1203,7 +1203,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     if (isObject(data) && !own(data, 'patch') && (explicitUnresolved || explicitNarrative)) data.patch = [];
     if (!Array.isArray(data?.patch)) {
       const error = new Error('模型未返回有效的战局补丁');
-      const source = typeof reply === 'string' ? reply.trim() : '';
+      const source = typeof reply === 'string' ? stripReasoningBlocks(reply) : '';
       error.raw = source.startsWith('{') || source.startsWith('[') ? source : source.match(/```json\s*([\s\S]*?)(?:```|$)/i)?.[1];
       if (explicitUnresolved) error.noRepair = true;
       throw error;

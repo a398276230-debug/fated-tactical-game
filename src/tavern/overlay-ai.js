@@ -209,8 +209,14 @@ export function parseLooseYaml(value) {
   return output;
 }
 
+const REASONING_BLOCK_RE = /<(think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*?<\/\1>/gi;
+const UNCLOSED_REASONING_RE = /<(?:think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*$/i;
+export function stripReasoningBlocks(value) {
+  return text(value).replace(REASONING_BLOCK_RE, '').replace(UNCLOSED_REASONING_RE, '').trim();
+}
+
 export function extractJsonBlocks(value) {
-  const source = typeof value === 'object' ? JSON.stringify(value) : text(value);
+  const source = typeof value === 'object' ? JSON.stringify(value) : stripReasoningBlocks(value);
   const output = [];
   const accept = (candidate, index) => {
     const parsed = parseJSON(candidate, null);
