@@ -11,7 +11,7 @@ const IDENTITY = `<role_core>
 </role_core>`;
 
 import { warningsForUnit } from './converter.js';
-import { normalizationPath } from './normalization-batches.js';
+import { mechanismTerms, normalizationPath } from './normalization-batches.js';
 
 export const DEFAULT_SLOTS = [
   { id: 'identity', label: '身份与任务声明', role: 'system', enabled: true, desc: '命定战斗助手的职责与边界', content: IDENTITY },
@@ -127,6 +127,41 @@ export function describeSlots(saved) {
   return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots] : slots;
 }
 
+const distinct = values => [...new Set(values.filter(Boolean))];
+function scopedRoster(ctx, state, warnings) {
+  const pick = (table, ids) => Object.fromEntries(distinct(ids).filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
+  const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
+  const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear ?? []),...(u.bagWeapons ?? [])]));
+  const equipment = pick(state.equipment, Object.values(items).map(i => i.templateId));
+  const skills = pick(state.skills, [...rows.flatMap(u => [...(u.skills ?? []), ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap(e => e.skills ?? [])]);
+  const roster = { raw:pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment, skills, statusTemplates:state.statusTemplates };
+  if (!warnings.length) return json(roster);
+
+  // Match canonical converter identities (not display names, which can collide).
+  const targets = new Set(warnings.map(w => {
+    const [, table, id] = (w.originPath ?? '').split('/');
+    return table === 'items' && items[id] ? `equipment:${items[id].templateId}` : `${table}:${id}`;
+  }));
+  const entryTables = ctx.characterEntries ?? {};
+  roster.raw = Object.fromEntries(ctx.onlyUnitIds.map(id => {
+    const entries = entryTables[id] ?? {};
+    return [id, { unit:entries.unit ?? units[id], ...pick(entries, [...targets]) }];
+  }));
+  const rawCarriers = Object.assign({}, ...ctx.onlyUnitIds.map(id => entryTables[id]));
+  const siblings = [];
+  for (const [table, carriers] of Object.entries({skills,equipment})) for (const [id, c] of Object.entries(carriers)) {
+    const key = `${table}:${id}`;
+    if (targets.has(key)) continue;
+    const type = table === 'equipment' ? '装备' : c.passive ? '被动技能' : '主动技能';
+    const terms = [...mechanismTerms(JSON.stringify(rawCarriers[key] ?? c))].slice(0, 4);
+    const count = c.rules?.length ?? 0, mods = c.mods?.length ?? 0;
+    siblings.push(`[${type}]${id} ${c.name ?? ''}|${terms.join('/')}|${count || mods ? `${count}规则${mods ? `/${mods}修饰` : ''}` : '待后批'}`);
+  }
+  const ledger = Object.entries(state.statusTemplates ?? {}).map(([id,s]) => [id, s.name, `${s.maxStacks ?? 1}/${s.stackMode ?? 'refresh'}`,
+    s.tags?.join('/') ?? '', distinct((s.mods ?? []).map(m => m.stat)).join('/'), distinct((s.rules ?? []).map(r => r.hook)).join('/')].join('|'));
+  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\nsharedStatusLedger：ID|名|层/叠法|标签|mods|hooks；复用 statusId，勿重复 add。\n${ledger.join('\n')}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}\n</role_readonly_index>`;
+}
+
 export function resolveSlotContent(slot, ctx = {}) {
   const { sources = {}, state, instruction = '' } = ctx;
   const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
@@ -139,18 +174,15 @@ export function resolveSlotContent(slot, ctx = {}) {
   };
   const expand = template => String(template).replace(/\{\{(\w+)\}\}/g, (_, key) => Object.hasOwn(variables, key) ? variables[key]() : '');
   function rosterText() {
-    if (ctx.onlyUnitIds && state) {
-      const pick = (table, ids) => Object.fromEntries([...new Set(ids)].filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
-      const units = pick(state.units, ctx.onlyUnitIds), rows = Object.values(units);
-      const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear??[]),...(u.bagWeapons??[])]));
-      return json({raw:pick(ctx.rawCharacters,ctx.onlyUnitIds), units, items, equipment:pick(state.equipment,Object.values(items).map(i=>i.templateId)), skills:pick(state.skills,rows.flatMap(u=>[...(u.skills??[]), ...Object.keys(u.inventory??{})])), statusTemplates:state.statusTemplates});
-    }
+    if (ctx.onlyUnitIds && state) return scopedRoster(ctx, state, warnings);
     if (ctx.rosterText != null) return ctx.rosterText;
     if (!state) return sources.roster || '';
     const templates = new Set(Object.values(state.items ?? {}).map(item => item.templateId));
     const skillIds = new Set(Object.values(state.units ?? {}).flatMap(unit => [...(unit.skills ?? []), ...Object.keys(unit.inventory ?? {})]));
     const used = (table, ids) => Object.fromEntries(Object.entries(table ?? {}).filter(([id]) => ids.has(id)));
-    return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment: used(state.equipment, templates), skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
+    const equipment = used(state.equipment, templates);
+    for (const e of Object.values(equipment)) for (const id of e.skills ?? []) skillIds.add(id);
+    return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
   }
   function battleText() {
     if (ctx.battleText != null) return ctx.battleText;

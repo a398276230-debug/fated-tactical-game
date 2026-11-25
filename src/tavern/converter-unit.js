@@ -171,13 +171,14 @@ function xyzOf(value, board, warnings) {
   return { x: boundedX, y: boundedY, z: integer(xyz[2]) };
 }
 
-function importBackpack(bag, owner, skills, sink) {
+function importBackpack(bag, owner, skills, sink, entrySources) {
   const inventory = {};
   for (const [name, item] of Object.entries(asObject(bag))) {
     if (item?.类型 !== '消耗品' && item?.kind !== 'consumable') continue;
     const count = bound(item.数量 ?? item.count, 0, 1e9, 1);
     if (!count) continue;
     const id = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
+    entrySources[`skills:${id}`] = item;
     const warnings = sink('effect', `/skills/${id}`);
     const raw = item.effects ?? item.效果;
     const tags = [].concat(item.tags ?? item.标签 ?? []).join(' ');
@@ -382,7 +383,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       }
     }
     if (bagWeapons.length) unit.bagWeapons = bagWeapons;
-    const inventory = importBackpack(record.背包, id, skills, sink);
+    const inventory = importBackpack(record.背包, id, skills, sink, entrySources);
     if (Object.keys(inventory).length) unit.inventory = inventory;
   }
   const creatureType = p.creatureType ?? record.creatureType;

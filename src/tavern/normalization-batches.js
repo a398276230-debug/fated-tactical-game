@@ -1,4 +1,4 @@
-import { diagnosticText, warningEntryKey, warningKey } from './resolved-warnings.js';
+import { diagnosticText, identifiesWarning, warningEntryKey, warningKey } from './resolved-warnings.js';
 
 export const normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
@@ -34,50 +34,161 @@ export function normalizationRepairAllowed({ attempts = 0, explicitUnresolved = 
 
 export const normalizationLimits = {
   normalizationConcurrency: { fallback: 1, max: 8 },
-  normalizationWarningsPerBatch: { fallback: 6, max: 30 },
+  normalizationWarningsPerBatch: { fallback: 5, max: 30 },
 };
+
+const genericMechanismKeywords = new Set([
+  '主动', '被动', '位移', '动作', '攻击', '消耗', '技能', '装备', '武器', '效果', '状态',
+  '触发', '范围', '单体', '自身', '目标', '友军', '敌人', '命中', '伤害', '防御', '检定',
+]);
+
+/** Extract bracketed mechanism terms shared by prompt assembly and batch planning. */
+export function mechanismTerms(text) {
+  const terms = new Set();
+  const patterns = [/[「]([^「\[【」\]】{}:"'`,]{1,24})[」]/g, /\[([^「\[【」\]】{}:"'`,]{1,24})\]/g, /【([^「\[【」\]】{}:"'`,]{1,24})】/g];
+  for (const pattern of patterns) for (const match of String(text ?? '').matchAll(pattern)) {
+    const term = match[1].trim();
+    if (term && !genericMechanismKeywords.has(term.split(/[：:]/)[0].trim()) && !/^\d+(?:[+〜~-]\d+)?$/.test(term)) terms.add(term);
+  }
+  return terms;
+}
+
+const mechanismKeywords = value => mechanismTerms(typeof value === 'string' ? value : JSON.stringify(value ?? ''));
 export function normalizationLimit(config, key) {
   const { fallback, max } = normalizationLimits[key];
   const value = config[key];
   return Number.isInteger(value) && value >= 1 && value <= max ? value : fallback;
 }
 
-export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 3 } = {}) {
+export function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 1, rawSources = {} } = {}) {
   const units = [...new Set(unitIds)];
   const selected = new Set(units);
-  const groups = [];
+  const carriers = new Map();
+  // Separate character buckets except when they actually share a mutable template.
+  const pathOwners = new Map();
+  for (const warning of warnings) {
+    const path = targetPath(warning.originPath);
+    if (!path || !selected.has(warning.unitId) || warning.kind === 'auto_adjusted') continue;
+    if (!pathOwners.has(path)) pathOwners.set(path, new Set());
+    pathOwners.get(path).add(warning.unitId);
+  }
+  const shared = new Map();
   for (const warning of warnings) {
     if (warning.kind === 'auto_adjusted' || !units.length || (warning.unitId !== null && !selected.has(warning.unitId))) continue;
-    const keys = new Set(dependencies(state, warning));
-    const group = { keys, unitIds: new Set(warning.unitId === null ? [units[0]] : [warning.unitId]), warnings: [warning] };
-    for (let index = groups.length - 1; index >= 0; index--) {
-      const previous = groups[index];
-      if (![...previous.keys].some(key => keys.has(key))) continue;
-      for (const key of previous.keys) keys.add(key);
-      for (const id of previous.unitIds) group.unitIds.add(id);
-      group.warnings.unshift(...previous.warnings);
-      groups.splice(index, 1);
+    const unitId = warning.unitId ?? units[0];
+    const path = targetPath(warning.originPath) ?? `unit:${unitId}`;
+    if (pathOwners.get(path)?.size > 1) {
+      if (!shared.has(path)) shared.set(path, []);
+      shared.get(path).push(warning);
+      continue;
     }
-    groups.push(group);
+    const key = `${unitId}|${path}`;
+    const carrier = carriers.get(key) ?? { unitId, path, keys: new Set(), warnings: [], terms: new Set(), passive: false };
+    for (const dependency of dependencies(state, warning)) carrier.keys.add(dependency);
+    carrier.warnings.push(warning);
+    carriers.set(key, carrier);
+  }
+  const grouped = new Map();
+  for (const carrier of carriers.values()) {
+    const [, table, id] = carrier.path.split('/');
+    const template = state?.[table]?.[id];
+    const source = rawSources?.[carrier.unitId]?.[`${table}:${id}`];
+    for (const term of [...mechanismKeywords(carrier.warnings.map(item => item.message).join('\n')),
+      ...mechanismKeywords(source ?? template)]) carrier.terms.add(term);
+    carrier.passive = template?.passive === true;
+    const list = grouped.get(carrier.unitId) ?? [];
+    list.push(carrier);
+    grouped.set(carrier.unitId, list);
+  }
+  for (const [unitId, list] of grouped) {
+    const clusters = [];
+    for (const carrier of list) {
+      const joined = clusters.filter(cluster => [...carrier.keys].some(key => cluster.keys.has(key)));
+      const cluster = joined.shift() ?? { path: carrier.path, keys: new Set(), warnings: [], terms: new Set(), members: [], passive: false, coreScore: 0 };
+      cluster.path = [cluster.path, carrier.path].filter(Boolean).sort()[0];
+      for (const other of joined) {
+        for (const key of other.keys) cluster.keys.add(key);
+        cluster.warnings.push(...other.warnings);
+        cluster.members.push(...other.members);
+        for (const term of other.terms) cluster.terms.add(term);
+        cluster.passive ||= other.passive;
+        cluster.path = [cluster.path, other.path].filter(Boolean).sort()[0];
+        clusters.splice(clusters.indexOf(other), 1);
+      }
+      for (const key of carrier.keys) cluster.keys.add(key);
+      cluster.warnings.push(...carrier.warnings);
+      cluster.members.push(carrier);
+      for (const term of carrier.terms) cluster.terms.add(term);
+      cluster.passive ||= carrier.passive;
+      if (!clusters.includes(cluster)) clusters.push(cluster);
+    }
+    const elasticMax = Math.max(maxWarnings, 8);
+    const bounded = clusters.flatMap(cluster => {
+      if (cluster.warnings.length <= elasticMax) return [cluster];
+      const parts = [];
+      let part = { path: '', keys: new Set(), warnings: [], terms: new Set(), members: [], passive: false, coreScore: 0 };
+      for (const member of cluster.members) {
+        if (part.warnings.length && part.warnings.length + member.warnings.length > elasticMax) {
+          parts.push(part);
+          part = { path: '', keys: new Set(), warnings: [], terms: new Set(), members: [], passive: false, coreScore: 0 };
+        }
+        for (const key of member.keys) part.keys.add(key);
+        part.warnings.push(...member.warnings);
+        part.members.push(member);
+        for (const term of member.terms) part.terms.add(term);
+        part.passive ||= member.passive;
+      }
+      if (part.warnings.length) parts.push(part);
+      return parts;
+    });
+    grouped.set(unitId, bounded);
   }
 
   const result = [];
-  let current = { unitIds: [], warnings: [] };
-  const append = (ids, diagnostics) => {
-    const combinedIds = [...new Set([...current.unitIds, ...ids])];
-    if (current.unitIds.length && (combinedIds.length > maxUnits || current.warnings.length + diagnostics.length > maxWarnings)) {
-      result.push(current);
-      current = { unitIds: [...ids], warnings: [...diagnostics] };
-    } else {
-      current.unitIds = combinedIds;
-      current.warnings.push(...diagnostics);
-    }
-  };
-  for (const group of groups) {
-    if (group.warnings.length <= maxWarnings && group.unitIds.size <= maxUnits) append(group.unitIds, group.warnings);
-    else for (const warning of group.warnings) append([warning.unitId ?? units[0]], [warning]);
+  for (const [path, group] of shared) {
+    const owners = [...pathOwners.get(path)], size = group.length <= Math.max(8, maxWarnings) ? group.length : maxWarnings;
+    for (let i = 0; i < group.length; i += size) result.push({unitIds: owners, warnings: group.slice(i, i + size)});
   }
-  if (current.unitIds.length) result.push(current);
+  for (const [unitId, list] of grouped) {
+    const frequency = new Map();
+    for (const carrier of list) for (const term of carrier.terms) frequency.set(term, (frequency.get(term) ?? 0) + 1);
+    for (const carrier of list) carrier.coreScore = [...carrier.terms].reduce((sum, term) => sum + (frequency.get(term) ?? 0) - 1, 0);
+    const remaining = [...list].sort((a, b) => Number(b.passive) - Number(a.passive) || b.coreScore - a.coreScore || a.path.localeCompare(b.path));
+    while (remaining.length) {
+      const first = remaining.shift();
+      const elasticMax = Math.max(maxWarnings, 8);
+      if (first.warnings.length > elasticMax) {
+        const chunkSize = Math.max(1, maxWarnings);
+        for (let offset = 0; offset < first.warnings.length; offset += chunkSize) {
+          result.push({ unitIds: [unitId], warnings: first.warnings.slice(offset, offset + chunkSize) });
+        }
+        continue;
+      }
+      const batch = { unitIds: [unitId], warnings: [...first.warnings] };
+      const terms = new Set(first.terms);
+      while (true) {
+        let bestIndex = -1, bestAffinity = -1;
+        for (let index = 0; index < remaining.length; index++) {
+          const candidate = remaining[index];
+          const intersection = [...candidate.terms].filter(term => terms.has(term)).length;
+          const union = new Set([...candidate.terms, ...terms]).size;
+          const affinity = union ? intersection / union : 0;
+          if (affinity > bestAffinity) { bestAffinity = affinity; bestIndex = index; }
+        }
+        if (bestIndex < 0) break;
+        const candidate = remaining[bestIndex];
+        if (batch.warnings.length + candidate.warnings.length > maxWarnings || maxUnits < 1) {
+          // Carry affinity across the batch boundary rather than reverting to path order.
+          if (bestAffinity > 0) remaining.unshift(...remaining.splice(bestIndex, 1));
+          break;
+        }
+        const [next] = remaining.splice(bestIndex, 1);
+        batch.warnings.push(...next.warnings);
+        for (const term of next.terms) terms.add(term);
+      }
+      result.push(batch);
+    }
+  }
   return result;
 }
 
@@ -121,6 +232,9 @@ export function normalizationOperations(operations, snapshot, current, created, 
 // Keep a bounded window of requests in flight and commit in plan order. A new
 // request sees all changes committed before it starts, including serial mode.
 export async function runOrderedBatches(batches, concurrency, request, commit, signal) {
+  if (batches.some(batch => Array.isArray(batch?.unitIds))) {
+    return runUnitOrderedBatches(batches, concurrency, request, commit, signal);
+  }
   const pending = new Map();
   let next = 0;
   const fill = () => {
@@ -144,33 +258,92 @@ export async function runOrderedBatches(batches, concurrency, request, commit, s
   }
 }
 
+export async function runUnitOrderedBatches(batches, concurrency, request, commit, signal) {
+  const previousByUnit = new Map();
+  const completed = new Set();
+  const pending = new Map();
+  const remainingByUnit = new Map();
+  const dependenciesByIndex = batches.map((batch, index) => {
+    const dependencies = new Set();
+    for (const unitId of new Set(batch.unitIds ?? [])) {
+      const previous = previousByUnit.get(unitId);
+      if (previous !== undefined) dependencies.add(previous);
+      previousByUnit.set(unitId, index);
+      remainingByUnit.set(unitId, (remainingByUnit.get(unitId) ?? 0) + 1);
+    }
+    return dependencies;
+  });
+  const ready = index => [...dependenciesByIndex[index]].every(dependency => completed.has(dependency));
+  const priority = index => Math.max(0, ...(batches[index].unitIds ?? []).map(id => remainingByUnit.get(id) ?? 0));
+  const selectReady = () => batches.map((_, index) => index)
+    .filter(index => !completed.has(index) && !pending.has(index) && ready(index))
+    .sort((a, b) => priority(b) - priority(a) || a - b)[0];
+  let stopped = false, failure;
+  const launch = index => {
+    const batch = batches[index];
+    const task = (async () => {
+      try {
+        let result;
+        try { result = { value: await request(batch, index) }; }
+        catch (error) { result = { error }; }
+        signal.throwIfAborted();
+        await commit(result, batch, index);
+        completed.add(index);
+        for (const unitId of new Set(batch.unitIds ?? [])) remainingByUnit.set(unitId, remainingByUnit.get(unitId) - 1);
+      } catch (error) {
+        stopped = true;
+        failure ??= error;
+      } finally {
+        pending.delete(index);
+      }
+    })();
+    pending.set(index, task);
+  };
+  try {
+    while (!stopped && completed.size < batches.length) {
+      signal.throwIfAborted();
+      while (!stopped && pending.size < concurrency) {
+        const index = selectReady();
+        if (index === undefined) break;
+        launch(index);
+      }
+      if (pending.size) {
+        await Promise.race(pending.values());
+      } else if (!stopped && completed.size < batches.length) {
+        throw new Error('标准化批次依赖无法满足');
+      }
+    }
+  } catch (error) {
+    stopped = true;
+    failure ??= error;
+  }
+  if (pending.size) await Promise.allSettled(pending.values());
+  if (failure) throw failure;
+}
+
 export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = [], unresolved = [] } = {}) {
   const matched = [], invalid = [];
   if (!Array.isArray(value)) return { matched, invalid: ['未能读取模型的非战斗说明'] };
-  const index = new Map();
-  for (const warning of sent) {
-    const key = referenceKey(warning);
-    const matches = index.get(key) ?? [];
-    if (!matches.some(match => warningKey(match) === warningKey(warning))) matches.push(warning);
-    index.set(key, matches);
-  }
   const seen = new Set();
   for (const [i, entry] of value.entries()) {
     const label = `第 ${i + 1} 条非战斗说明`;
     const reason = diagnosticText(entry?.reason, '');
-    if (!reason || !Object.hasOwn(entry, 'originPath')) {
+    if (!reason) {
       invalid.push(`${label}缺少词条引用或原因`);
       continue;
     }
-    const reference = referenceKey(entry);
-    const matches = index.get(reference);
-    if (matches?.length !== 1 || seen.has(reference)) {
+    const matches = sent.filter(warning => identifiesWarning(entry, warning));
+    if (matches.length !== 1) {
       invalid.push(`${label}无法唯一匹配本批词条`);
       continue;
     }
     const [warning] = matches;
-    if (entry.originPath !== (warning.originPath ?? null) || solved.some(item => referenceKey(item) === reference)
-      || unresolved.some(item => item.warning === warning)) {
+    const reference = warningKey(warning);
+    if (seen.has(reference)) {
+      invalid.push(`${label}无法唯一匹配本批词条`);
+      continue;
+    }
+    if (solved.some(item => identifiesWarning(item, warning)) || unresolved.some(item => item.warning === warning)) {
       invalid.push(`${label}与本批处理结果冲突`);
       continue;
     }
@@ -180,7 +353,7 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
       continue;
     }
     seen.add(reference);
-    matched.push({ warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason } });
+    matched.push({ warning, receipt: { unitId: warning.unitId, key: reference, source, reason } });
   }
   return { matched, invalid };
 }

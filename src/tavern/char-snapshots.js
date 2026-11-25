@@ -32,7 +32,7 @@ export async function characterRecords(sources, hydrated) {
       entryHashes[entryKey] = Array.from(new Uint8Array(bytes), b=>b.toString(16).padStart(2,'0')).join('');
     }
     const bytes = await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(ordered(raw))));
-    return [unit.id,{raw,sourceKind,entryHashes,hash:Array.from(new Uint8Array(bytes), b=>b.toString(16).padStart(2,'0')).join('')}];
+    return [unit.id,{raw,sourceKind,entryHashes,entryValues,hash:Array.from(new Uint8Array(bytes), b=>b.toString(16).padStart(2,'0')).join('')}];
   }));
   return Object.fromEntries(rows);
 }
