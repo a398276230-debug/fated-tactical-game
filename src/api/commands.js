@@ -1,6 +1,6 @@
 import { getStatusTemplate, grantStatus, statusLogDetail, loadoutStance } from '../core/combat.js';
 import { statusPatchFields } from '../core/vm-schema.js';
-import { deleteOwnedPools, getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
+import { deleteOwnedPools, getPool, syncUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
 import { recordVM, removeVMStatus } from '../core/vm-runtime.js';
 import { attrs, checkOptional, inGrid, defineStatus, equipmentTemplate, fields, has, id, int, own,
   plain, requireThat as check, skillTemplate, statusValue, unitValue, validateCell, zoneValue } from './validation.js';
@@ -114,7 +114,7 @@ const commands = {
     if (v.offHand === undefined) v.offHand = null;
     if (v.shield === undefined) v.shield = null;
     s.units[v.id] = v;
-    if (s.vm || s.pools) initializeUnitPools(s, v.id);
+    if (s.vm || s.pools) syncUnitPools(s, v);
     s.order.push(v.id);
   },
   remove_unit(s, c) {

@@ -198,7 +198,7 @@ function askInstruction(state, frame, op, context, host, options) {
   const ask = { askId: nextId(state.vm, 'ask'), chooserId: chooser.id, prompt: op.prompt, kind: op.kind,
     options: choices, outVar: op.out, aiPolicy: op.aiPolicy,
     ...(op.maxSelect === undefined ? {} : { maxSelect: op.maxSelect }) };
-  if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.controlPolicy?.controller === 'ai' || chooser.team === 'red'))) {
+  if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.team === 'red'))) {
     if (options.dryRun) options.conditional = true;
     const value = automaticChoice(state, ask);
     writeChoice(state, frame, ask, value, host, true);

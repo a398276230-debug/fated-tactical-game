@@ -104,7 +104,8 @@ test('battle report explains automatic cell selections and the amount pending in
     { op: 'ask', chooser: 'self', kind: 'cell', prompt: '选择混沌球体引爆位置', select: { from: 'cells', where: 'candidate.x == 8 && candidate.y == 7' }, out: 'center', aiPolicy: 'first' },
     { op: 'ask', chooser: 'self', kind: 'number', prompt: '选择实际生效数值', min: 0, max: 'event.finalAmount', out: 'amount', aiPolicy: 'max' },
   ] }];
-  actor.controlPolicy = { controller: 'ai' };
+  actor.team = 'red';
+  target.team = 'blue';
   const remainingHp = target.hp;
   commitVMEffect(state, { op: 'damage', damageType: 'true', amount: 10316, sourceId: actor.id, targetId: target.id });
   assert.equal(state.logs.find(entry => entry.type === 'damage').detail.amount, remainingHp);

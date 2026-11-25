@@ -4,7 +4,7 @@ import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, d
 import { spawnPanel } from './spawn-unit.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { scheduleCommit } from './vm-commit.js';
-import { createPool, initializeUnitPools, unlinkPools } from './vm-pools.js';
+import { createPool, initializeUnitPools, syncUnitPools, unlinkPools } from './vm-pools.js';
 import { resolvePoint, selectVM } from './vm-select.js';
 import { aggregateModifiers } from './vm-carriers.js';
 
@@ -201,13 +201,16 @@ function continueMove({ state, frame, host, context }) {
   });
 }
 
-function carrier(spec, sourceId, id, templateId, context) {
+function carrier(spec, sourceId, id, templateId, context, { allowUnitPools = false } = {}) {
   const vars = Object.fromEntries(Object.entries(spec.vars ?? {}).flatMap(([key, expression]) => {
     const value = evaluateExpr(expression, context);
     return value === null ? [] : [[key, value]];
   }));
   return { id, templateId, name: spec.name ?? templateId, sourceId, tier: spec.tier ?? context.self?.tier ?? 1,
-    tags: [...(spec.tags ?? [])], vars, mods: structuredClone(spec.mods ?? []), rules: structuredClone(spec.rules ?? []) };
+    tags: [...(spec.tags ?? [])], vars, mods: structuredClone(spec.mods ?? []), rules: structuredClone(spec.rules ?? []),
+    ...(spec.flags?.length ? { flags: [...spec.flags] } : {}),
+    ...(spec.shareRulesTo ? { shareRulesTo: structuredClone(spec.shareRulesTo) } : {}),
+    ...(allowUnitPools && spec.unitPools ? { unitPools: structuredClone(spec.unitPools) } : {}) };
 }
 
 function publishOut(state, frame, out, id) {
@@ -312,7 +315,9 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
   const group = JSON.stringify([actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
   const data = { plan, center: xy(center), out: op.out ?? null, remainingTurns: spec.remainingTurns,
     fields: carrier({ ...original, ...spec, tier: spec.spawnPanel ? plan.panel.tier : spec.tier ?? plan.panel.tier,
-      vars: { ...(spec.copyOf ? {} : original?.vars), ...spec.vars } }, actor.id, '', templateId, context),
+      vars: { ...(spec.copyOf ? {} : original?.vars), ...spec.vars },
+      unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : undefined,
+    }, actor.id, '', templateId, context, { allowUnitPools: true }),
     group, evictIds: [], pendingId: null };
   if (original && spec.copyOf) data.fields.vars = { ...(original.vars ?? {}), ...data.fields.vars };
   // An eviction hook may summon another group, but cannot reenter its own replacement.
@@ -387,6 +392,7 @@ function continueSpawn({ state, frame, host, context }) {
     unit.attunementCharges = stanceRules('attunement').itemCharges;
     unit.stance = stanceFor({ mainHand: state.equipment[gear.mainHand], offHand: state.equipment[gear.offHand], shield: state.equipment[gear.shield] });
     unit.gear = gear.gear.map(mint);
+    syncUnitPools(state, unit);
     state.order.push(id);
     first ??= id;
     host.log(state, actor, 'spawn', `${unit.name}登场`, { unitId: id, ...at(state, unit) });

@@ -101,10 +101,7 @@ function opcode(op, properties, required, ...conditions) {
 }
 
 const intentEnum = enumOf('normal', 'function', 'core', 'kill', 'concept');
-const controlPolicy = object({
-  controller: enumOf('default', 'ai'), allegiance: enumOf('normal', 'friendly_only', 'all_hostile'),
-  forcedActionKinds: list(enumOf('attack', 'skill')), intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady'),
-});
+const controlPolicy = { ...object({ intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady') }), minProperties: 1 };
 export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
   'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'shatter']);
@@ -132,7 +129,7 @@ when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additive
 when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additivePercent') }),
 when('stat', multiplierStats, { not: needs('flat') }),
 when('stat', enumOf(...flatOnlyStats), { not: { anyOf: [needs('mult'), needs('additivePercent')] } }));
-const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
+const overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, scale: numericExpr, origin: pointRef });
 const expireRule = object({ hook, filter: booleanExpr }, ['hook']);
 export const vmExpiry = either(expireRule, list(expireRule, 1));
 const spawnRadius = either({ type: 'number', minimum: 0 }, formula);
@@ -150,11 +147,13 @@ const zoneArea = withRules(object({
   shape: enumOf('single', 'circle', 'ring', 'rect', 'cells', 'board'), anchorUnitId: entityId, origin: pointRef, center: pointRef,
   radius: spawnRadius, innerRadius: spawnRadius, z1: zoneZ, z2: zoneZ,
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
-}, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
+}, ['shape']), when('shape', enumOf('circle', 'ring'), needs('radius')),
+when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
 const scalarOrExpr = either(number, bool, { type: 'string', maxLength: 1024 });
 const poolDefinition = object({ name: text, cap: numericExpr, initial: numericExpr }, ['cap']);
 const unitPools = mapOf(id, poolDefinition);
-const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')), shareRulesTo: ref('pureSelector'), unitPools };
+const baseCarrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')), shareRulesTo: ref('pureSelector') };
+const carrier = { ...baseCarrier, unitPools };
 export const carrierFields = Object.freeze(Object.keys(carrier).filter(key => key !== 'name'));
 export const statusPatchFields = Object.freeze(['remainingTurns', 'durationType', 'stackMode', 'stacks', 'expireOn', ...carrierFields]);
 export const validCarrierScalar = value => Number.isFinite(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= scalarOrExpr.anyOf[2].maxLength);
@@ -168,7 +167,7 @@ const spawnSpecs = {
       skills: list(id), gear: list(id), mainHand: id, offHand: id, shield: id,
     }),
   }), variants(needs('templateId'), needs('copyOf'), needs('spawnPanel'), { not: either(needs('templateId'), needs('copyOf'), needs('spawnPanel')) })),
-  zone: object({ ...carrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
+  zone: object({ ...baseCarrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
   terrain: withRules(object({ kind: enumOf('floor', 'wall', 'slope'), height: number, mode: enumOf('set', 'raise', 'lower'), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs('kind'), needs('height')), when('mode', {}, needs('height'))),
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
   item: object({ templateId: id, count: either(integer(1), formula) }, ['templateId']),

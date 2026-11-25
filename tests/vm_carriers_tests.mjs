@@ -110,17 +110,17 @@ test('modifier operands aggregate independently with damage and check qualifiers
 
 test('following zones update modifiers, locks, flags and control policy from current position', () => {
   const state = stateOf(unit('a', { x: 0 }), unit('b', { x: 1, statuses: { confusion: { mods: [
-    { locks: ['attack'], controlPolicy: { controller: 'ai', allegiance: 'friendly_only', forcedActionKinds: ['attack'] } },
+    { locks: ['attack'], controlPolicy: { intentLock: 'kill', moraleLock: 'steady' } },
   ] } } }));
   state.zones.fog = { templateId: 'mist', tags: ['fog'], vars: { factor: 0.5 }, follow: true, remainingTurns: 2,
     area: { shape: 'circle', anchorUnitId: 'a', radius: 1 }, mods: [
       { stat: 'incomingHealMult', mult: 'zone.vars.factor', when: "in_zone(self, 'fog')", flags: ['blockRevive'] },
-      { locks: ['move'], controlPolicy: { allegiance: 'all_hostile', allowFriendlyTarget: true } },
+      { locks: ['move'], controlPolicy: { intentLock: 'core', allowFriendlyTarget: true } },
     ] };
   const mods = aggregateModifiers(state, 'b');
   assert.deepEqual(mods.locks, { attack: true, action: false, move: true, cast: false, reaction: false, fly: false, teleport: false });
   assert.deepEqual(mods.flags, { blockRevive: true });
-  assert.deepEqual(mods.controlPolicy, { controller: 'ai', allegiance: 'friendly_only', forcedActionKinds: ['attack'], allowFriendlyTarget: true });
+  assert.deepEqual(mods.controlPolicy, { intentLock: 'kill', moraleLock: 'steady', allowFriendlyTarget: true });
   assert.equal(mods.stats.incomingHealMult.mult, 0.5);
   state.units.b.x = 2;
   assert.equal(aggregateModifiers(state, 'b').locks.move, false);
@@ -129,7 +129,7 @@ test('following zones update modifiers, locks, flags and control policy from cur
   state.units.a.hp = 0;
   assert.deepEqual(aggregateModifiers(state, 'b').flags, {});
   delete state.units.b.statuses.confusion;
-  assert.deepEqual(aggregateModifiers(state, 'b').controlPolicy, { controller: 'default', allegiance: 'normal' });
+  assert.deepEqual(aggregateModifiers(state, 'b').controlPolicy, {});
 });
 
 test('VM uses shared recipient as self and resolves owner writes to the original carrier', () => {

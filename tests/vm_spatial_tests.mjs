@@ -4,7 +4,8 @@ import { answerVM, newEvent, startVM, stepVM } from '../src/core/tactical-vm.js'
 import { continueAction, perform, queueVMAction } from '../src/core/vm-action.js';
 import { ruleOps } from '../src/core/vm-rules.js';
 import { commitOps, continueCommit } from '../src/core/vm-commit.js';
-import { initializeUnitPools } from '../src/core/vm-pools.js';
+import { getPool, initializeUnitPools } from '../src/core/vm-pools.js';
+import { validVmRule } from '../src/core/vm-schema.js';
 import { expireSpatialEffects, spatialContinuations, spatialOps } from '../src/core/vm-spatial-ops.js';
 import { vmHost } from '../src/core/vm-runtime.js';
 import { zoneContains } from '../src/core/vm-select.js';
@@ -53,6 +54,38 @@ test('zones retain creator team after allegiance changes and enemy despawn filte
   state.units.other.team = 'blue';
   run(state, [{ op: 'despawn', entityKind: 'zone', select: { from: 'zones', where: "zone.team != self.team && candidate.team == 'red' && zone.sourceId == candidate.sourceId && zone.sourceId == 'other'" } }]);
   assert.deepEqual(Object.keys(state.zones), ['zone-1']);
+});
+
+test('spawn publishes unit pools, concept protection and shared unit/zone modifiers in the same VM rule', () => {
+  const state = board();
+  state.units.other.skills = ['focus'];
+  state.skills = { focus: { unitPools: { focus: { cap: 4, initial: 3 } } } };
+  state.units.other.unitPools = { legacy: { cap: 3, initial: 2 }, souls: { cap: 9, initial: 8 } };
+  state.units.other.mainHand = 'sword_1';
+  state.items.sword_1 = { id: 'sword_1', templateId: 'sword', ownerId: 'other' };
+  state.equipment.sword.unitPools = { edge: { cap: 6, initial: 5 } };
+  const shareRulesTo = { from: 'units', where: "candidate.id == 'actor'" };
+  const rule = { id: 'spawn_carriers', hook: 'active', program: [
+    { op: 'spawn', entityKind: 'unit', out: 'clone', spec: { copyOf: { from: 'units', where: "candidate.id == 'other'" }, tier: 4,
+      flags: ['concept_immune'], shareRulesTo, mods: [{ stat: 'armor', flat: 3 }], unitPools: { souls: { cap: 4, initial: 3 } } } },
+    { op: 'let', name: 'before', value: 'vars.clone.resource.souls + vars.clone.resource.legacy + vars.clone.resource.focus + vars.clone.resource.edge' },
+    { op: 'resource', target: 'vars.clone', pool: ['souls', 'focus', 'edge'], mode: 'sub', amount: 1 },
+    { op: 'damage', target: 'vars.clone', amount: 1, damageType: 'true', instantDeath: true },
+    { op: 'spawn', entityKind: 'zone', out: 'ward', at: { x: 5, y: 4 }, spec: { area: { shape: 'single' },
+      flags: ['undispellable'], shareRulesTo, mods: [{ stat: 'armor', flat: 5 }] } },
+  ] };
+  assert.equal(validVmRule(rule), true);
+  const frame = startVM(state, { ownerId: 'actor', sourceId: 'actor', ruleId: rule.id, program: rule.program });
+  stepVM(state, vmHost);
+  const clone = state.units[frame.vars.clone];
+  assert.equal(frame.vars.before, 13);
+  assert.deepEqual(['souls', 'legacy', 'focus', 'edge'].map(key => getPool(state, clone.id, key).current), [2, 2, 2, 4]);
+  assert.equal(getPool(state, clone.id, 'souls').max, 4);
+  assert.equal(clone.hp, clone.maxHp);
+  const ward = state.zones[frame.vars.ward];
+  assert.deepEqual(ward.flags, ['undispellable']);
+  assert.equal(zoneContains(state, ward, state.units.actor), false);
+  assert.equal(aggregateModifiers(state, 'actor').stats.armor.flat, 8);
 });
 
 test('height-bounded rect distinguishes ground from flight in the same cell', () => {

@@ -266,7 +266,7 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
   }
   return {
     stats: Object.fromEntries(stats), locks, flags: Object.fromEntries([...flags].map(flag => [flag, true])),
-    controlPolicy: { controller: 'default', allegiance: 'normal', ...Object.fromEntries(policy) },
+    controlPolicy: Object.fromEntries(policy),
   };
 }
 

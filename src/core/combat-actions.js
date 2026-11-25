@@ -231,7 +231,7 @@ export function unitStandingStats(state, unit) {
 function armorOf(state, unit, damageType, pierce = 0, context = {}) {
   const base = baseArmor(state, unit);
   const ctx = { ...context, target: context.attacker, damageType };
-  const armor = Math.max(0, modStat(state, unit, 'defense', modStat(state, unit, 'armor', base, ctx), ctx));
+  const armor = Math.max(0, modStat(state, unit, 'armor', base, ctx));
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
   const percent = typeof pierce === 'object' ? clamp(pierce.percent ?? 0, -1, 1) : 0;
   const effective = Math.max(0, armor * (1 - percent) - flat);

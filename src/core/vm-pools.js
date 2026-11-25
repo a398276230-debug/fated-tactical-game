@@ -1,4 +1,5 @@
 import { clamp, own } from './util.js';
+import { evaluateExpr } from './formula.js';
 
 const mirrors = { hp: 'maxHp', mp: 'maxMp', sp: 'maxSp' };
 const initialMirrors = { hp: 'initialMaxHp', mp: 'initialMaxMp', sp: 'initialMaxSp' };
@@ -104,6 +105,42 @@ export function initializeUnitPools(state, unitId, resources) {
   }));
   publish(state, plans.map(p => p.pool), plans.map(p => p.binding));
   return Object.fromEntries(plans.map(({ pool }) => [pool.kind, pool.id]));
+}
+
+export function poolNumber(expr, context) {
+  const number = evaluateExpr(expr, context);
+  return Number.isFinite(number) ? Math.max(0, number) : 0;
+}
+
+export function syncUnitPools(state, unit) {
+  if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
+  const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...(unit.gear ?? []), ...(unit.bagWeapons ?? [])]
+    .map(id => own(state.items, id)).filter(Boolean).map(item => own(state.equipment, item.templateId));
+  const skills = [...new Set([...(unit.skills ?? []), ...Object.keys(unit.inventory ?? {})])].map(id => own(state.skills, id));
+  const definitions = new Map();
+  const context = { state, self: unit };
+  for (const declaration of [unit, ...skills, ...equipment]) {
+    for (const [key, definition] of Object.entries(declaration?.unitPools ?? {})) {
+      if (Object.hasOwn(mirrors, key)) continue;
+      const previous = definitions.get(key);
+      definitions.set(key, {
+        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
+        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context)),
+      });
+    }
+  }
+  for (const [key, { max, current }] of definitions) {
+    const pool = getPool(state, unit.id, key);
+    if (!pool) {
+      createPool(state, { ownerId: unit.id, key, max, current: Math.min(max, current) });
+    } else if (max > pool.initialMax) {
+      // Only declaration growth may raise the cap; a re-sync never refills a pool.
+      if (max > pool.max) updatePoolMax(state, pool.id, 'set_max', max);
+      const updated = getPool(state, unit.id, key);
+      updated.initialMax = max;
+      updated.contributors[0].initialMaxBase = max;
+    }
+  }
 }
 
 function maxFor(state, contributor, effectiveMax) {

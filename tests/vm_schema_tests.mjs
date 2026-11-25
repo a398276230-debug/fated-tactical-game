@@ -188,19 +188,29 @@ test('conditional operand shapes match ask, resource, perform and spawn modes', 
   assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'replay', tapeRecord: 'vars.action' }), true);
   assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'replay', tapeRecord: 'vars.constructor' }), false);
   assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'skill' }), false);
+  assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'attack' }), true);
+  assert.equal(validVmOpcode({ op: 'perform', actor: 'self', actionKind: 'attack', overrides: { charged: true } }), false);
   for (const [entityKind, spec] of Object.entries({ unit: { name: '镜像', spawnPanel: {} }, zone: { area: { shape: 'board' } },
     terrain: { kind: 'wall' }, cover: { hp: 10 }, item: { templateId: 'vial', count: 2 } })) {
     assert.equal(validVmOpcode({ op: 'spawn', entityKind, spec, at: { x: 1, y: 2, z: 0 } }), true, entityKind);
     assert.equal(validVmOpcode({ op: 'spawn', entityKind, spec: { ...spec, unknown: true } }), false, entityKind);
   }
   assert.equal(validVmOpcode({ op: 'spawn', entityKind: 'item', spec: { copyOf: 'self' } }), false);
+  const zone = { op: 'spawn', entityKind: 'zone' };
+  for (const shape of ['circle', 'ring']) {
+    assert.equal(validVmOpcode({ ...zone, spec: { area: { shape, radius: 2 } } }), true);
+    assert.equal(validVmOpcode({ ...zone, spec: { area: { shape } } }), false);
+  }
+  assert.equal(validVmOpcode({ ...zone, spec: { area: { shape: 'board' }, unitPools: { souls: { cap: 1 } } } }), false);
 });
 
 test('rule qualifiers, declaration modifiers and context validation share the closed definitions', () => {
   assert.equal(validVmStatMod({ stat: 'healingMult', mult: '1/3', when: "in_zone(self, 'darkness')" }), true);
-  assert.equal(validVmStatMod({ locks: ['move'], flags: ['blockRevive'], controlPolicy: { controller: 'ai', allegiance: 'friendly_only' } }), true);
+  assert.equal(validVmStatMod({ locks: ['move'], flags: ['blockRevive'], controlPolicy: { intentLock: 'kill', allowFriendlyTarget: true, moraleLock: 'steady' } }), true);
   assert.equal(validVmStatMod({ locks: ['revive'] }), false);
-  assert.equal(validVmStatMod({ controlPolicy: { controller: 'enemy' } }), false);
+  for (const controlPolicy of [{}, { controller: 'ai' }, { allegiance: 'friendly_only' }, { forcedActionKinds: ['attack'] }]) {
+    assert.equal(validVmStatMod({ controlPolicy }), false);
+  }
   assert.equal(validVmStatMod({ flags: ['harmless'], flat: 2 }), false);
   assert.equal(validVmStatMod({ stat: 'armor', wrongKey: 1 }), false);
   const apply = { op: 'apply_status', target: 'self', statusId: 'fading_glimmer', turns: 1 };

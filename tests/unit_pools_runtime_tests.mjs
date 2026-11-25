@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { equipmentTemplate, statusTemplate, validateState, zoneValue } from '../src/api/validation.js';
 import { createGameAPI } from '../src/api/game_api.js';
+import { applyCommand } from '../src/api/commands.js';
 import { applyAction, preview } from '../src/core/combat.js';
 import { evaluateExpr } from '../src/core/formula.js';
 import { getPool, updatePoolMax } from '../src/core/vm-pools.js';
@@ -61,13 +62,25 @@ test('持有装备实例池支持公式，扣费优先于同名单位池', () =>
   assert.equal(preview(state, action).error, '装备资源不足');
 });
 
-test('资源池声明封闭校验：拒绝非法数值、状态模板、无主区域及其标准化补丁', () => {
+test('沙盒增援命令在返回前建立单位和技能声明的池', () => {
+  const { state, unit } = fixture();
+  const { pools, ...reserve } = structuredClone(unit);
+  Object.assign(reserve, { id: 'reserve', ap: 0, used: { action: 0, attack: 0 }, weapon: null, mainHand: null });
+  applyCommand(state, { type: 'spawn_unit', unit: reserve });
+  assert.equal(getPool(state, 'reserve', 'hp').current, reserve.hp);
+  assert.equal(getPool(state, 'reserve', 'innate').current, 1);
+  assert.equal(getPool(state, 'reserve', 'souls').max, 12);
+});
+
+test('资源池声明封闭校验：拒绝非法数值、状态模板、战场区域及其标准化补丁', () => {
   for (const definition of [{ cap: -1 }, { cap: 1, initial: 2 }, { cap: 1, reloadable: true }, { cap: 1, name: 'x'.repeat(101) }]) {
     assert.throws(() => equipmentTemplate({ name: '装备', unitPools: { souls: definition } }));
   }
   const unitPools = { souls: { name: '灵魂', cap: 1 } };
   assert.throws(() => statusTemplate({ id: 'soul', name: '灵魂', unitPools }), /不能声明单位池/);
-  assert.throws(() => zoneValue({ id: 'zone', name: '环境', area: { shape: 'board' }, sourceId: null,
-    follow: false, persistent: true, remainingTurns: 1, unitPools }, 'zone'), /不能声明单位池/);
+  for (const sourceId of [null, 'swordsman']) {
+    assert.throws(() => zoneValue({ id: 'zone', name: '环境', area: { shape: 'board' }, sourceId,
+      follow: false, persistent: true, remainingTurns: 1, unitPools }, 'zone'), /不能声明单位池/);
+  }
   assert.ok(!normalizationPath.test('/zones/zone/unitPools/souls'));
 });

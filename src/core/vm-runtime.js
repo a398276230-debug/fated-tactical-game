@@ -5,7 +5,7 @@ import { isStatusImmune } from './vm-immunity.js';
 import { commitOps, continueCommit, continueLethal, scheduleCommit } from './vm-commit.js';
 import { continueApplyStatus, continueCheck, continueRemoveStatus, removeStatus, ruleOps } from './vm-rules.js';
 import { continueAction, perform, queueVMAction } from './vm-action.js';
-import { createPool, getPool, initializeUnitPools, updatePoolCurrent, updatePoolMax } from './vm-pools.js';
+import { createPool, getPool, initializeUnitPools, poolNumber, syncUnitPools, updatePoolCurrent } from './vm-pools.js';
 import { spatialOps, spatialContinuations, refreshFollowingZones, expireSpatialEffects } from './vm-spatial-ops.js';
 import { elevation } from './spatial.js';
 import { evaluateExpr } from './formula.js';
@@ -34,38 +34,6 @@ const handlers = {
   round: continueRound,
 };
 
-const poolNumber = (expr, context) => {
-  const number = evaluateExpr(expr, context);
-  return Number.isFinite(number) ? Math.max(0, number) : 0;
-};
-
-function syncDeclaredUnitPools(state, unit, carriers) {
-  const definitions = new Map();
-  const context = { state, self: unit };
-  for (const carrier of carriers) {
-    for (const [key, definition] of Object.entries(carrier?.unitPools ?? {})) {
-      if (['hp', 'mp', 'sp'].includes(key)) continue;
-      const previous = definitions.get(key);
-      definitions.set(key, {
-        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
-        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context)),
-      });
-    }
-  }
-  for (const [key, { max, current }] of definitions) {
-    const pool = getPool(state, unit.id, key);
-    if (!pool) {
-      createPool(state, { ownerId: unit.id, key, max, current: Math.min(max, current) });
-    } else if (max > pool.initialMax) {
-      // Only new declaration growth can raise the cap here. Re-sync must not undo VM changes or refill the pool.
-      if (max > pool.max) updatePoolMax(state, pool.id, 'set_max', max);
-      const updated = getPool(state, unit.id, key);
-      updated.initialMax = max;
-      updated.contributors[0].initialMaxBase = max;
-    }
-  }
-}
-
 export function initializeVMWorld(state) {
   state.vm ??= newVM();
   state.pools ??= {};
@@ -73,13 +41,11 @@ export function initializeVMWorld(state) {
   const holders = new Map();
   for (const unit of units) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
   for (const unit of units) {
-    const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...(unit.gear ?? []), ...(unit.bagWeapons ?? [])]
-      .map(id => own(state.items, id)).filter(Boolean).map(item => {
-        holders.set(item.id, unit);
-        return own(state.equipment, item.templateId);
-      });
-    const skills = [...new Set([...(unit.skills ?? []), ...Object.keys(unit.inventory ?? {})])].map(id => own(state.skills, id));
-    syncDeclaredUnitPools(state, unit, [unit, ...skills, ...equipment]);
+    for (const id of [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...(unit.gear ?? []), ...(unit.bagWeapons ?? [])]) {
+      const item = own(state.items, id);
+      if (item) holders.set(item.id, unit);
+    }
+    syncUnitPools(state, unit);
   }
   for (const item of values(state.items)) {
     const context = { state, self: holders.get(item.id) ?? own(state.units, item.ownerId), item };

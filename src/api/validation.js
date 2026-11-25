@@ -282,7 +282,7 @@ export function zoneValue(value, key, state) {
   requireThat(id(key) && value.id === key && text(value.name), 'VM 区域 ID/名称');
   checkOptional(value, 'templateId', id);
   checkOptional(value, 'sourceId', source => source === null || id(source));
-  requireThat(value.sourceId != null || !own(value, 'unitPools'), '无主区域不能声明单位池');
+  requireThat(!own(value, 'unitPools'), '区域不能声明单位池');
   carrierFieldsValue(value, state, true);
   if (own(value, 'pools')) poolBindings(value.pools);
   const { area, follow, persistent, remainingTurns } = value;
