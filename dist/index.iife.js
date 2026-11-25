@@ -804,8 +804,10 @@ var FatedTactical = (() => {
     direct: "\u662F\u5426\u4E3A\u76F4\u63A5\u4F24\u5BB3\uFF08true/false\uFF09",
     commitKind: "before_commit \u63D0\u4EA4\u7C7B\u522B\uFF08damage/heal/resource\uFF09",
     pool: "before_commit \u76EE\u6807\u8D44\u6E90\u6C60\u952E\uFF08hp/mp/sp \u7B49\uFF09",
-    rawAmount: "before_commit \u51CF\u514D\u524D\u539F\u59CB\u6570\u503C",
-    finalAmount: "before_commit \u5F53\u524D\u5F85\u63D0\u4EA4\u6570\u503C",
+    stat: "\u672C\u6B21\u68C0\u5B9A\u7684\u5355\u9879\u5C5E\u6027\uFF08str/agi/con/int/spi \u6216 null\uFF09",
+    overkill: "\u81F4\u547D\u4F24\u5BB3\u6263\u9664\u62A4\u76FE\u4E0E\u5269\u4F59\u751F\u547D\u540E\u7684\u6EA2\u51FA\u91CF",
+    rawAmount: "\u672C\u6B21\u63D0\u4EA4\u51CF\u514D\u524D\u7684\u539F\u59CB\u6570\u503C",
+    finalAmount: "\u672C\u6B21\u63D0\u4EA4\u7684\u6700\u7EC8\u6570\u503C",
     sourceRuleId: "\u4EA7\u751F\u672C\u7B14\u63D0\u4EA4\u7684 VM \u89C4\u5219 ID\uFF08\u4E0D\u662F\u6280\u80FD ID\uFF09",
     power: "\u6280\u80FD\u5A01\u529B",
     dealt: "\u672C\u6B21\u5B9E\u9645\u6263\u9664\u7684 HP",
@@ -825,7 +827,7 @@ var FatedTactical = (() => {
     const rating = path(context, "event", "rating");
     return typeof rating === "string" ? rating : own2(rating, "name");
   });
-  register("event.ratingMultiplier", "\u653B\u51FB\u547D\u4E2D\u8BC4\u7EA7\u500D\u7387\uFF082/1.6/1.3/1/0.8/0.3/0\uFF09", (context) => own2(path(context, "event", "rating"), "multiplier"));
+  register("event.ratingMultiplier", "\u653B\u51FB\u547D\u4E2D\u8BC4\u7EA7\u500D\u7387\uFF08\u4F24\u5BB3\u63D0\u4EA4\u65F6\u542B\u66B4\u51FB\u4FEE\u6B63\uFF09", (context) => path(context, "event", "ratingMultiplier") ?? own2(path(context, "event", "rating"), "multiplier"));
   register("event.kind", "\u4E8B\u4EF6\u7C7B\u578B\uFF0C\u68C0\u5B9A\u4E2D\u7B49\u540C\u4E8E event.checkKind", (context) => path(context, "event", "kind") ?? path(context, "event", "checkKind"));
   register("event.authorityRank", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u8F7D\u4F53\u4F4D\u683C\uFF0C\u552F\u4E00\u4E3A 8", (context) => path(context, "event", "authorityRank"));
   register("event.naturalRoll", "\u672A\u7ECF\u66FF\u6362\u7684\u81EA\u7136\u9AB0\u9762\uFF0C\u9002\u7528\u4E8E after_natural_roll", (context) => path(context, "event", "naturalRoll"));
@@ -852,6 +854,7 @@ var FatedTactical = (() => {
   });
   query("clamp", ["value", "value", "value"], "clamp(value, lo, hi)", "\u5C06\u6570\u503C\u94B3\u5236\u5728\u4E0A\u4E0B\u9650\u4E4B\u95F4", ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
   query("distance", ["unit", "unit"], "distance() / distance(unitA, unitB)", "\u8BFB\u53D6\u4E24\u5355\u4F4D\u7684\u4E09\u7EF4\u8DDD\u79BB\uFF0C\u65E0\u53C2\u65F6\u9ED8\u8BA4 self \u5230 target", ([a, b], context) => readDistance(context, a, b));
+  query("facing_arc", ["entity", "entity"], "facing_arc(observer, point)", "\u8BFB\u53D6 point \u76F8\u5BF9 observer \u671D\u5411\u7684\u6247\u533A\uFF1Afront\u3001side \u6216 back", ([observer, point4]) => observer && point4 && Number.isFinite(observer.x) && Number.isFinite(observer.y) && Number.isFinite(point4.x) && Number.isFinite(point4.y) ? facingArc(observer, point4) : null);
   var booleanQuery = (value) => typeof value === "boolean" ? value : null;
   var statusPresent = (context, entity, id3) => booleanQuery(callback(context, "hasStatus", entity, id3) ?? statusOf(entity, id3) != null);
   function tagged(entity, tag2) {
@@ -1171,6 +1174,7 @@ var FatedTactical = (() => {
     "authorityRank",
     "backstab",
     "baseDC",
+    "stat",
     "bonusDelta",
     "backX",
     "backY",
@@ -1191,6 +1195,7 @@ var FatedTactical = (() => {
     "dealt",
     "defenderId",
     "delta",
+    "overkill",
     "direct",
     "distance",
     "finalAmount",
@@ -1226,6 +1231,7 @@ var FatedTactical = (() => {
     "rating",
     "ratingDelta",
     "ratingMultiplier",
+    "rawAmount",
     "rawNatural",
     "reason",
     "redirectTarget",
@@ -1251,8 +1257,6 @@ var FatedTactical = (() => {
     "infiniteAmmo",
     "weaponTemplateId",
     "instanceId",
-    "dealt",
-    "finalAmount",
     "eventRef"
   ]);
   var damageTypes = Object.freeze(["physical", "energy", "mental", "true"]);
@@ -1367,6 +1371,7 @@ var FatedTactical = (() => {
     "dodge",
     "advantage",
     "initiativeFlat",
+    "critDamageBonus",
     "apMax",
     "incomingAccuracy",
     "intentDifficulty",
@@ -1394,6 +1399,7 @@ var FatedTactical = (() => {
     "dodge",
     "checkBonus",
     "initiativeFlat",
+    "critDamageBonus",
     "incomingAccuracy",
     "intentDifficulty"
   ]);
@@ -3131,7 +3137,7 @@ var FatedTactical = (() => {
         targetId: context.target.id,
         dc,
         baseDC: dc,
-        stat: op.stat ?? null,
+        stat: Array.isArray(op.stat) ? op.stat[0] ?? null : op.stat ?? null,
         statusId: op.statusId ?? null,
         tags: op.tags ?? []
       });
@@ -3142,6 +3148,7 @@ var FatedTactical = (() => {
     const event = state.vm.events[frame.eventRef];
     if (frame.pc === 1) {
       const stats = [op.stat ?? null].flat();
+      event.stat = stats[0] ?? null;
       const outcomes = frame.naturalOutcomes ??= [];
       if (frame.pendingNatural) {
         const replacement = event.replaceNaturalRoll;
@@ -3160,8 +3167,11 @@ var FatedTactical = (() => {
         return delta > 0 ? Math.max(first, dice(state, sides)) : delta < 0 ? Math.min(first, dice(state, sides)) : first;
       };
       const subject2 = op.kind === "save" ? context.target : context.self;
-      const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject2, event) ?? 0 : 0));
-      const defenderRoll = op.kind === "contest" ? rollWith(host.advantage?.(state, context.target, event) ?? 0) : null;
+      const checkEvent = { ...event, stat: key4 ?? null };
+      const defenderEvent = { ...event, stat: op.defenderStat ?? key4 ?? null };
+      event.stat = key4 ?? null;
+      const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject2, checkEvent) ?? 0 : 0));
+      const defenderRoll = op.kind === "contest" ? rollWith(host.advantage?.(state, context.target, defenderEvent) ?? 0) : null;
       event.naturalRoll = roll;
       if (op.rawNatural || sides !== 20) outcomes.push({ key: key4, roll, defenderRoll });
       else {
@@ -3176,17 +3186,20 @@ var FatedTactical = (() => {
       const subject2 = kind === "save" ? context.target : context.self;
       const stat3 = (unit, key4) => host.stat?.(state, unit, key4) ?? unit.stats?.[key4] ?? 0;
       const stats = [op.stat ?? null].flat();
-      const checkBonus = host.checkBonus?.(state, subject2, event) ?? 0;
-      const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
       const outcomes = frame.naturalOutcomes.map(({ key: key4, roll: roll2, defenderRoll }) => {
+        const checkEvent = { ...event, stat: key4 ?? null };
+        const defenderStat = op.defenderStat ?? key4;
+        const defenderEvent = { ...event, stat: defenderStat ?? null };
+        const checkBonus = host.checkBonus?.(state, subject2, checkEvent) ?? 0;
         const total3 = roll2 + (key4 ? stat3(subject2, key4) : 0) + checkBonus + (event.bonusDelta ?? 0);
-        const difficulty = kind === "contest" ? defenderRoll + stat3(context.target, op.defenderStat ?? key4) + (host.checkBonus?.(state, context.target, event) ?? 0) + (host.resistBonus?.(state, context.target, event) ?? 0) - (host.dcBonus?.(state, context.self, event) ?? 0) : dc;
+        const difficulty = kind === "contest" ? defenderRoll + stat3(context.target, defenderStat) + (host.checkBonus?.(state, context.target, defenderEvent) ?? 0) + (host.resistBonus?.(state, context.target, defenderEvent) ?? 0) - (host.dcBonus?.(state, context.self, checkEvent) ?? 0) : event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, checkEvent) ?? 0);
         const passed2 = kind === "chance" ? roll2 <= difficulty : total3 >= difficulty;
         return { roll: roll2, total: total3, difficulty, passed: passed2 };
       });
       const { roll, total: total2 } = outcomes[0];
       const passed = ["pass", "hit", "crit"].includes(event.forceOutcome) ? true : ["fail", "miss"].includes(event.forceOutcome) ? false : op.mode === "any" ? outcomes.some((outcome) => outcome.passed) : outcomes.every((outcome) => outcome.passed);
-      Object.assign(event, { roll, total: total2, dc, finalDC: dc, passed, rating: event.forceOutcome === "crit" ? "crit" : event.minRating ?? (passed ? "hit" : "miss") });
+      const dc = outcomes[0].difficulty;
+      Object.assign(event, { stat: stats[0] ?? null, roll, total: total2, dc, finalDC: dc, passed, rating: event.forceOutcome === "crit" ? "crit" : event.minRating ?? (passed ? "hit" : "miss") });
       const verdict = passed ? "\u6210\u529F" : "\u5931\u8D25";
       const label = { save: "\u8C41\u514D", chance: "\u6982\u7387\u5224\u5B9A", d20: "\u68C0\u5B9A", contest: "\u5BF9\u6297\u68C0\u5B9A", attack: "\u653B\u51FB\u68C0\u5B9A" }[kind];
       const text7 = `${subject2.name}${label}${verdict}\uFF08${outcomes.map((outcome) => kind === "chance" ? `d100 \u63B7\u51FA ${outcome.roll}\uFF0C\u9608\u503C ${outcome.difficulty}` : `d20 \u63B7\u51FA ${outcome.roll}\uFF0C\u5408\u8BA1 ${outcome.total} \u5BF9 ${outcome.difficulty}`).join("\uFF1B")}\uFF09`;
@@ -3488,7 +3501,9 @@ var FatedTactical = (() => {
         skillId: data.skillId ?? null,
         weaponTemplateId: data.weaponTemplateId ?? null,
         melee: data.melee ?? false,
-        backstab: data.backstab ?? false
+        backstab: data.backstab ?? false,
+        critical: data.critical ?? false,
+        ratingMultiplier: data.ratingMultiplier ?? 1
       });
       frame.pc++;
       scheduleHooks(state, frame, "before_commit", frame.eventRef, host);
@@ -3609,7 +3624,11 @@ var FatedTactical = (() => {
           poolId: depleted.id,
           damageType: event.damageType,
           targetId: target2.id,
-          overkill: Math.max(0, event.finalAmount - absorbed - before)
+          rawAmount: event.rawAmount ?? 0,
+          finalAmount: event.finalAmount ?? 0,
+          dealt: event.dealt ?? 0,
+          absorbed: absorbed ?? 0,
+          overkill: Math.max(0, (event.finalAmount ?? 0) - (absorbed ?? 0) - before)
         }
       });
       return;
@@ -3679,6 +3698,7 @@ var FatedTactical = (() => {
   // src/core/vm-action.js
   var own9 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var MAX_ACTION_CHAIN_DEPTH = 3;
+  var clamp2 = (value, min, max) => Math.max(min, Math.min(max, value));
   function queueVMAction(state, { actorId, action, overrides: overrides2 = {}, record: record3 = false, chainDepth = 0 }) {
     return pushFrame(state, {
       native: "action",
@@ -3806,6 +3826,9 @@ var FatedTactical = (() => {
         frame.plan = plan = replanned;
       }
       host.payAction(state, actor, plan, event, overrides2);
+      frame.beforeTargetPosition = { x: actor.x, y: actor.y };
+      const primary = own9(state.units, plan.targetIds[0]);
+      const [facingX, facingY] = primary?.facing ?? [1, 0];
       Object.assign(event, {
         targetId: plan.targetIds[0] ?? null,
         center: plan.center,
@@ -3813,7 +3836,9 @@ var FatedTactical = (() => {
         isSingle: plan.isSingle,
         isArea: !plan.isSingle,
         isRanged: plan.isRanged,
-        damageType: plan.damageType ?? null
+        damageType: plan.damageType ?? null,
+        backX: primary ? clamp2(primary.x - facingX, 0, state.grid[0].length - 1) : null,
+        backY: primary ? clamp2(primary.y - facingY, 0, state.grid.length - 1) : null
       });
       scheduleHooks(state, frame, "before_target", frame.eventRef, host);
       return;
@@ -3939,7 +3964,7 @@ var FatedTactical = (() => {
   var cells = (state) => state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })));
   var blocked = (state, p, ignored = /* @__PURE__ */ new Set(), occupants = []) => !isGround(state, p) || (state.scale?.cellM ?? 2) < 10 && coverAt(state, p.x, p.y) || occupants.some((unit) => !canOccupy(state, p.x, p.y, unit, ignored.has(unit.id) ? unit.id : void 0)) || !occupants.length && unitsAt(state, p.x, p.y).some((unit) => live2(unit) && !ignored.has(unit.id));
   var fixture = (state, p) => values(state.interactives).some((item) => same2(item, p));
-  var clamp2 = (value, min, max) => Math.max(min, Math.min(value, max));
+  var clamp3 = (value, min, max) => Math.max(min, Math.min(value, max));
   var capitalize = (key4) => key4[0].toUpperCase() + key4.slice(1);
   function nextId3(state, table4, prefix) {
     state.spatialSerial ??= {};
@@ -3955,7 +3980,7 @@ var FatedTactical = (() => {
   function spawnNumber(expression, context, min, max = Infinity, integer4 = true) {
     const value = evaluateExpr(expression, context);
     if (!Number.isFinite(value)) return void 0;
-    return clamp2(integer4 ? Math.floor(value) : value, min, max);
+    return clamp3(integer4 ? Math.floor(value) : value, min, max);
   }
   function resolveSpawnSpec(spec, context, kind) {
     const resolved = { ...spec };
@@ -4083,7 +4108,7 @@ var FatedTactical = (() => {
     if (op.mode === "altitude") {
       const delta = op.deltaZ === void 0 ? 3 : evaluateExpr(op.deltaZ, scope);
       if (!op.land && !Number.isFinite(delta)) return;
-      const altitude = op.land ? 0 : clamp2((unit.altitude ?? 0) + Math.trunc(delta), 0, 12);
+      const altitude = op.land ? 0 : clamp3((unit.altitude ?? 0) + Math.trunc(delta), 0, 12);
       if (altitude === (unit.altitude ?? 0) || altitude > (unit.altitude ?? 0) && aggregateModifiers(state, unit.id).locks.fly) return;
       unit.altitude = altitude;
     } else if (op.mode === "step") {
@@ -4443,7 +4468,7 @@ var FatedTactical = (() => {
     let z = tile.z;
     if (spec.height !== void 0) {
       const height2 = Math.trunc(spec.height);
-      z = clamp2(mode === "set" ? height2 : z + (mode === "raise" ? height2 : -height2), -4, 8);
+      z = clamp3(mode === "set" ? height2 : z + (mode === "raise" ? height2 : -height2), -4, 8);
     }
     return { ...tile, z, kind: spec.kind ?? tile.kind };
   }
@@ -4940,7 +4965,9 @@ var FatedTactical = (() => {
         skillId: data.skillId ?? null,
         backstab: data.backstab ?? false,
         melee: data.melee ?? false,
-        souls: data.souls ?? 0
+        souls: data.souls ?? 0,
+        critical: data.critical ?? false,
+        ratingMultiplier: data.ratingMultiplier ?? 1
       };
       if (source && vmHost.flag(state, source, "harmless")) return 0;
       let amount = data.amount;
@@ -5068,6 +5095,7 @@ var FatedTactical = (() => {
         eventRef: frame.eventRef,
         data: frame.data.action,
         plan: { ...plan, targets: targets2 },
+        beforeTargetPosition: frame.beforeTargetPosition,
         scale: overrides2.scale ?? 1
       });
       scheduleHooks(state, frame, "active", frame.eventRef, vmHost);
@@ -5126,7 +5154,7 @@ var FatedTactical = (() => {
   var pointAt = (state, at2) => ({ x: at2.x, y: at2.y, z: elevation(state, at2) });
   var key2 = (x, y) => `${x},${y}`;
   var stat2 = (unit, id3) => Number(unit.stats?.[id3] ?? 0);
-  var clamp3 = (number3, min, max) => Math.max(min, Math.min(max, number3));
+  var clamp4 = (number3, min, max) => Math.max(min, Math.min(max, number3));
   var vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
   var statusOf2 = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
   var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
@@ -5318,7 +5346,7 @@ var FatedTactical = (() => {
     const ctx = { ...context, target: context.attacker, damageType: damageType2 };
     const armor = Math.max(0, modStat(state, unit, "defense", modStat(state, unit, "armor", base, ctx), ctx));
     const flat = typeof pierce === "object" ? pierce.flat ?? 0 : pierce;
-    const percent3 = typeof pierce === "object" ? clamp3(pierce.percent ?? 0, -1, 1) : 0;
+    const percent3 = typeof pierce === "object" ? clamp4(pierce.percent ?? 0, -1, 1) : 0;
     const effective = Math.max(0, armor * (1 - percent3) - flat);
     return typedArmor(damageType2, effective);
   }
@@ -5346,8 +5374,8 @@ var FatedTactical = (() => {
     const shatter = hit ? modStat(state, unit, "shatter", 0, { damageType: type }) : 0;
     const vulnerability = modStat(state, unit, "incomingDamageMult", 1, { ...ctx, damageType: type }) - 1;
     const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
-    const reduction = type === "true" ? 0 : clamp3(modStat(state, unit, "damageReduction", 0, defensiveContext), -1, 1);
-    const dr = type === "true" ? 0 : clamp3(modStat(state, unit, "dr", 0, defensiveContext), -1, 1);
+    const reduction = type === "true" ? 0 : clamp4(modStat(state, unit, "damageReduction", 0, defensiveContext), -1, 1);
+    const dr = type === "true" ? 0 : clamp4(modStat(state, unit, "dr", 0, defensiveContext), -1, 1);
     const defense = ctx.ignoreArmor || type === "true" || type === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
     const armorMultiplier = 2e3 / (defense + 2e3);
     const attributeReduction = state.ruleset === "protocol" && type !== "true" ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map((key4) => [key4, effectiveStat(state, unit, key4)]))) : 0;
@@ -5460,7 +5488,7 @@ var FatedTactical = (() => {
     dispatchVMHook(state, "turn_start", { actorId: unit.id, targetId: unit.id });
   }
   function turnAP(state, unit) {
-    return clamp3(Math.floor(modStat(state, unit, "apMax", 2)), 0, 1e9);
+    return clamp4(Math.floor(modStat(state, unit, "apMax", 2)), 0, 1e9);
   }
   function resetFacing(state) {
     for (const unit of living(state)) {
@@ -5728,6 +5756,7 @@ var FatedTactical = (() => {
     { op: "move", target: "target", mode: "push", distance: 1 },
     { op: "apply_status", target: "target", statusId: actionStatuses.shield_bash, turns: 1 }
   ] }];
+  var shieldBashTemplate = { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules };
   var isMelee = (template) => template.rangeType !== "ranged" && !template.ranged && template.weaponClass !== "ranged" && (template.rawRange ?? template.range ?? 1.5) <= 2;
   var weaponAmmo = (template) => {
     const pools = Object.entries(template?.pools ?? {}).map(([resource2, pool]) => ({ resource: resource2, ...pool }));
@@ -5879,7 +5908,8 @@ var FatedTactical = (() => {
       damageType: template.damage?.type ?? template.damageType,
       weaponTemplateId: weapon2?.instance?.templateId,
       souls: weapon2?.souls ?? 0,
-      checkKind: "attack"
+      checkKind: "attack",
+      stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? "str" : "agi")
     };
     const flags2 = aggregateModifiers(state, actor.id, modifierEvent(actor, strike)).flags;
     const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags2.guaranteed_crit);
@@ -5917,8 +5947,9 @@ var FatedTactical = (() => {
     const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
     const advantage = Math.sign(advantages - disadvantages);
     const saveStat = !cover && target2 ? template.save : null;
-    const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) + modStat(state, actor, "dcBonus", 0, { target: target2, checkKind: "save" }) : null;
-    const saveBonus = saveStat ? effectiveStat(state, target2, saveStat) + modStat(state, target2, "resistBonus", 0, { target: actor, checkKind: "save" }) : 0;
+    const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) + modStat(state, actor, "dcBonus", 0, { target: target2, checkKind: "save", stat: saveStat }) : null;
+    const saveContext = { attacker: actor, target: target2, checkKind: "save", stat: saveStat };
+    const saveBonus = saveStat ? effectiveStat(state, target2, saveStat) + modStat(state, target2, "resistBonus", 0, saveContext) + modStat(state, target2, "checkBonus", 0, saveContext) : 0;
     const saveChance2 = saveStat ? saveChance(saveDC, saveBonus) : 0;
     const areaStrike = hasStrikeDamage(template) && (template.shape ?? "single") !== "single";
     const automatic = areaStrike || !weapon2 && (!template.damage || saveStat || template.autoHit);
@@ -5939,7 +5970,7 @@ var FatedTactical = (() => {
     const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + weaponAttack : null;
     const armorPierce = {
       flat: modStat(state, actor, "armorPierce", template.armorPierce ?? 0, { ...strike, damageType: damageType2 }),
-      percent: clamp3(modStat(state, actor, "armorPiercePercent", rules.armorPenetration ?? 0, { ...strike, damageType: damageType2 }), -1, 1)
+      percent: clamp4(modStat(state, actor, "armorPiercePercent", rules.armorPenetration ?? 0, { ...strike, damageType: damageType2 }), -1, 1)
     };
     const recipient = cover || !hasStrikeDamage(template) ? target2 : guardFor(state, target2) ?? target2;
     const reduction = cover ? { multiplier: 1, armor: target2.armor ?? 0 } : mitigation(
@@ -6000,6 +6031,7 @@ var FatedTactical = (() => {
       accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: modStat(state, actor, "accuracy", 0, strike) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) },
       ...context.skillId && { skillId: context.skillId },
       ...weapon2?.instance?.id && { weaponId: weapon2.instance.id },
+      stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? "str" : "agi"),
       intent: context.intent ?? "normal",
       intentDifficulty: intentSpec.difficulty,
       intentMultiplier: intentSpec.multiplier,
@@ -6283,7 +6315,7 @@ var FatedTactical = (() => {
     }
     const attack = type === "attack" || type === "shield_bash";
     const shieldBash = type === "shield_bash";
-    const template = shieldBash ? { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules } : attack ? weapon2.template : skill2;
+    const template = shieldBash ? shieldBashTemplate : attack ? weapon2.template : skill2;
     if (attack && !shieldBash && weapon2.ammo && !weapon2.infiniteAmmo && weapon2.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon2.ammo));
     const triggers = template.rules ?? [];
     const stance = weapon2.stance;
@@ -6484,7 +6516,7 @@ var FatedTactical = (() => {
   }
   function adjustedRating(base, event) {
     const delta = Number.isFinite(event.ratingDelta) ? Math.trunc(event.ratingDelta) : 0;
-    const rating = RATING_TABLE[clamp3(RATING_TABLE.indexOf(base) - delta, 0, RATING_TABLE.length - 1)];
+    const rating = RATING_TABLE[clamp4(RATING_TABLE.indexOf(base) - delta, 0, RATING_TABLE.length - 1)];
     const floor = event.minRating && RATING_TABLE.find((row) => row.name === event.minRating);
     return floor && floor.multiplier > rating.multiplier ? floor : rating;
   }
@@ -6639,17 +6671,22 @@ var FatedTactical = (() => {
     }
     record(state, actor, "knockback", `${target2.name}\u906D\u5230\u51FB\u9000`, { targetId: target2.id, from, to: pointAt(state, target2) });
   }
-  function retargetStrike(state, actor, action, target2, plan) {
+  function retargetStrike(state, actor, action, target2, plan, previous = {}) {
     const weapon2 = action.type === "attack" ? weaponInfo(state, actor) : null;
-    const template = weapon2?.template ?? actionSkill(state, actor, action.skillId) ?? normalAttack;
-    return { ...targetProfile(state, actor, target2, target2, template, { weapon: weapon2, intent: plan.intent }), nonLethal: plan.nonLethal ?? false };
+    const template = action.type === "shield_bash" ? shieldBashTemplate : weapon2?.template ?? actionSkill(state, actor, action.skillId) ?? normalAttack;
+    return {
+      ...previous,
+      ...targetProfile(state, actor, target2, target2, template, { weapon: weapon2, skillId: action.skillId, cover: previous.kind === "cover", intent: previous.intent ?? plan.intent }),
+      bonusDice: previous.bonusDice ?? action.bonusDice ?? 0,
+      nonLethal: previous.nonLethal ?? action.nonLethal ?? actor.nonLethal ?? false
+    };
   }
   function continueStrike({ state, frame, host }) {
     const { data: action, plan } = frame;
     const actor = tableEntry(state.units, frame.ownerId);
     const actionEvent = state.vm.events[frame.eventRef];
     const weapon2 = frame.weapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
-    const template = action.type === "shield_bash" ? { name: "\u76FE\u51FB", range: 1, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules } : weapon2 ? weapon2.template : actionSkill(state, actor, action.skillId);
+    const template = action.type === "shield_bash" ? shieldBashTemplate : weapon2 ? weapon2.template : actionSkill(state, actor, action.skillId);
     if (!alive3(actor) || !template) {
       state.vm.stack.pop();
       return;
@@ -6658,12 +6695,17 @@ var FatedTactical = (() => {
       frame.started = true;
       if (!sameCell(actor, plan.center)) actor.facing = facingToward(actor, plan.center);
     }
-    const profile = frame.profile ?? plan.targets?.[frame.pc];
+    let profile = frame.profile ?? plan.targets?.[frame.pc];
     if (!profile) {
       state.vm.stack.pop();
       return;
     }
     const target2 = tableEntry(profile.kind === "cover" ? state.covers : state.units, profile.id);
+    const beforeTargetPosition = frame.beforeTargetPosition;
+    if (!frame.phase && target2 && beforeTargetPosition && (actor.x !== beforeTargetPosition.x || actor.y !== beforeTargetPosition.y)) {
+      profile = retargetStrike(state, actor, action, target2, plan, profile);
+      frame.profile = profile;
+    }
     const next = () => {
       frame.pc++;
       delete frame.phase;
@@ -6697,7 +6739,12 @@ var FatedTactical = (() => {
         return;
       }
       frame.phase = "check";
-      frame.awaitEvent = host.event(state, { ...detail, checkKind: profile.saveStat ? "save" : "attack", dc: profile.saveDC ?? profile.defense });
+      frame.awaitEvent = host.event(state, {
+        ...detail,
+        checkKind: profile.saveStat ? "save" : "attack",
+        stat: profile.saveStat ?? profile.stat ?? null,
+        dc: profile.saveDC ?? profile.defense
+      });
       host.hooks(state, frame, "before_check", frame.awaitEvent);
       return;
     }
@@ -6728,7 +6775,7 @@ var FatedTactical = (() => {
         guaranteeHit: profile.guaranteeHit || ["hit", "crit"].includes(event.forceOutcome),
         guaranteeCrit: profile.guaranteeCrit || event.forceOutcome === "crit"
       };
-      const replacement = Number.isFinite(event.replaceNaturalRoll) ? clamp3(Math.trunc(event.replaceNaturalRoll), 1, 20) : void 0;
+      const replacement = Number.isFinite(event.replaceNaturalRoll) ? clamp4(Math.trunc(event.replaceNaturalRoll), 1, 20) : void 0;
       const result = resolveCheck(state, actor, adjusted, {
         ...event,
         replaceNaturalRoll: replacement,
@@ -6752,7 +6799,15 @@ var FatedTactical = (() => {
       const { critical, rating, intent, saved } = event;
       if (!profile.dice) return;
       const dice4 = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, critical);
-      const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
+      const baseScale = rating?.multiplier ?? (critical ? 2 : 1);
+      const isCritical = Boolean(critical) || baseScale > 1;
+      const ratingScale = isCritical ? Math.max(0, baseScale + modStat(
+        state,
+        actor,
+        "critDamageBonus",
+        0,
+        { ...detail, target: target2, critical: true, ratingMultiplier: baseScale }
+      )) : baseScale;
       const stanceScale = state.ruleset === "sandbox" && profile.stance === "greatsword" ? actor.greatswordMode === "defensive" ? profile.stanceRules.defensiveDamage : profile.stanceRules.offensiveDamage : 1;
       const amount = dice4.value * profile.multiplier * meleeMultiplier(actor) * ratingScale * (intent?.success ? intent.multiplier ?? 1 : 1) * stanceScale * (saved ? 0.5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
       const details = {
@@ -6782,6 +6837,8 @@ var FatedTactical = (() => {
         direct: true,
         intercepted: recipient !== target2,
         armorPierce: profile.armorPierce,
+        critical: isCritical,
+        ratingMultiplier: ratingScale,
         details,
         resultEventRef: frame.awaitEvent,
         lethal: !(profile.nonLethal || recipient.nonLethal || vmFlag(state, recipient, "preserveLife") || encounterNonlethal(state, actor))
@@ -7072,9 +7129,21 @@ var FatedTactical = (() => {
       case "flee": {
         const enemies = living(state).filter((u) => u.team !== actor.team).sort((a, b) => effectiveStat(state, b, "agi") - effectiveStat(state, a, "agi") || byId2(a, b));
         const target2 = enemies[0];
-        const attackerRoll = randomDie(state, 20), defenderRoll = randomDie(state, 20);
-        const success = target2 ? effectiveStat(state, actor, "agi") + attackerRoll >= effectiveStat(state, target2, "agi") + defenderRoll : true;
-        record(state, actor, "flee", `${actor.name}${success ? "\u9003\u8DD1\u6210\u529F" : "\u9003\u8DD1\u5931\u8D25"}`, { targetId: target2?.id ?? null, attackerRoll, defenderRoll, success });
+        const actorCheck = { checkKind: "flee", stat: "agi" };
+        const chaseCheck = { checkKind: "flee_chase", stat: "agi" };
+        const attackerRoll = rollD20(state.rng, modStat(state, actor, "advantage", 0, actorCheck));
+        state.rng = attackerRoll.rng;
+        const defenderRoll = target2 ? rollD20(state.rng, modStat(state, target2, "advantage", 0, chaseCheck)) : { value: 0, rng: state.rng };
+        state.rng = defenderRoll.rng;
+        const success = target2 ? effectiveStat(state, actor, "agi") + attackerRoll.value + modStat(state, actor, "checkBonus", 0, actorCheck) >= effectiveStat(state, target2, "agi") + defenderRoll.value + modStat(state, target2, "checkBonus", 0, chaseCheck) : true;
+        record(state, actor, "flee", `${actor.name}${success ? "\u9003\u8DD1\u6210\u529F" : "\u9003\u8DD1\u5931\u8D25"}`, {
+          targetId: target2?.id ?? null,
+          attackerRoll: attackerRoll.value,
+          defenderRoll: defenderRoll.value,
+          attackerRolls: attackerRoll.rolls,
+          defenderRolls: defenderRoll.rolls ?? [],
+          success
+        });
         if (success) {
           actor.fled = true;
           actor.ap = 0;
@@ -11081,7 +11150,7 @@ var FatedTactical = (() => {
       below: bottom - a.bottom - gap,
       above: a.top - top - gap
     };
-    const clamp4 = (v, min, max) => Math.max(min, Math.min(v, max));
+    const clamp5 = (v, min, max) => Math.max(min, Math.min(v, max));
     let x, y;
     if (room.right >= width || room.left >= width) {
       x = room.right >= width ? a.right + gap : a.left - gap - width;
@@ -11097,8 +11166,8 @@ var FatedTactical = (() => {
       }
     }
     card.style.maxHeight = `${maxHeight}px`;
-    card.style.left = `${clamp4(x, left, right - width)}px`;
-    card.style.top = `${clamp4(y, top, bottom - card.getBoundingClientRect().height)}px`;
+    card.style.left = `${clamp5(x, left, right - width)}px`;
+    card.style.top = `${clamp5(y, top, bottom - card.getBoundingClientRect().height)}px`;
   }
 
   // src/core/battle-ai.js
@@ -14782,13 +14851,14 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (x !== boundedX || y !== boundedY) warnings.push(`\u5750\u6807 (${x},${y}) \u8D8A\u754C\uFF0C\u8C03\u6574\u4E3A (${boundedX},${boundedY})`, { kind: "auto_adjusted" });
     return { x: boundedX, y: boundedY, z: integer3(xyz[2]) };
   }
-  function importBackpack(bag, owner, skills, sink) {
+  function importBackpack(bag, owner, skills, sink, entrySources) {
     const inventory = {};
     for (const [name, item] of Object.entries(asObject(bag))) {
       if (item?.\u7C7B\u578B !== "\u6D88\u8017\u54C1" && item?.kind !== "consumable") continue;
       const count = bound(item.\u6570\u91CF ?? item.count, 0, 1e9, 1);
       if (!count) continue;
       const id3 = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
+      entrySources[`skills:${id3}`] = item;
       const warnings = sink("effect", `/skills/${id3}`);
       const raw = item.effects ?? item.\u6548\u679C;
       const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).join(" ");
@@ -15003,7 +15073,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         }
       }
       if (bagWeapons.length) unit.bagWeapons = bagWeapons;
-      const inventory = importBackpack(record3.\u80CC\u5305, id3, skills, sink);
+      const inventory = importBackpack(record3.\u80CC\u5305, id3, skills, sink, entrySources);
       if (Object.keys(inventory).length) unit.inventory = inventory;
     }
     const creatureType = p.creatureType ?? record3.creatureType;
@@ -15342,7 +15412,6 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   // src/tavern/normalization-batches.js
   var normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
   var warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
-  var referenceKey = (warning) => JSON.stringify(Object.values(warningReference(warning)));
   var targetPath = (path2) => path2?.split("/").slice(0, 3).join("/");
   function dependencies(state, warning) {
     const path2 = targetPath(warning.originPath);
@@ -15369,48 +15438,178 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var normalizationLimits = {
     normalizationConcurrency: { fallback: 1, max: 8 },
-    normalizationWarningsPerBatch: { fallback: 6, max: 30 }
+    normalizationWarningsPerBatch: { fallback: 5, max: 30 }
   };
+  var genericMechanismKeywords = /* @__PURE__ */ new Set([
+    "\u4E3B\u52A8",
+    "\u88AB\u52A8",
+    "\u4F4D\u79FB",
+    "\u52A8\u4F5C",
+    "\u653B\u51FB",
+    "\u6D88\u8017",
+    "\u6280\u80FD",
+    "\u88C5\u5907",
+    "\u6B66\u5668",
+    "\u6548\u679C",
+    "\u72B6\u6001",
+    "\u89E6\u53D1",
+    "\u8303\u56F4",
+    "\u5355\u4F53",
+    "\u81EA\u8EAB",
+    "\u76EE\u6807",
+    "\u53CB\u519B",
+    "\u654C\u4EBA",
+    "\u547D\u4E2D",
+    "\u4F24\u5BB3",
+    "\u9632\u5FA1",
+    "\u68C0\u5B9A"
+  ]);
+  function mechanismTerms(text7) {
+    const terms = /* @__PURE__ */ new Set();
+    const patterns = [/[「]([^「\[【」\]】{}:"'`,]{1,24})[」]/g, /\[([^「\[【」\]】{}:"'`,]{1,24})\]/g, /【([^「\[【」\]】{}:"'`,]{1,24})】/g];
+    for (const pattern of patterns) for (const match of String(text7 ?? "").matchAll(pattern)) {
+      const term = match[1].trim();
+      if (term && !genericMechanismKeywords.has(term.split(/[：:]/)[0].trim()) && !/^\d+(?:[+〜~-]\d+)?$/.test(term)) terms.add(term);
+    }
+    return terms;
+  }
+  var mechanismKeywords = (value) => mechanismTerms(typeof value === "string" ? value : JSON.stringify(value ?? ""));
   function normalizationLimit(config, key4) {
     const { fallback, max } = normalizationLimits[key4];
     const value = config[key4];
     return Number.isInteger(value) && value >= 1 && value <= max ? value : fallback;
   }
-  function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 3 } = {}) {
+  function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 1, rawSources = {} } = {}) {
     const units = [...new Set(unitIds)];
     const selected2 = new Set(units);
-    const groups = [];
+    const carriers2 = /* @__PURE__ */ new Map();
+    const pathOwners = /* @__PURE__ */ new Map();
+    for (const warning of warnings) {
+      const path2 = targetPath(warning.originPath);
+      if (!path2 || !selected2.has(warning.unitId) || warning.kind === "auto_adjusted") continue;
+      if (!pathOwners.has(path2)) pathOwners.set(path2, /* @__PURE__ */ new Set());
+      pathOwners.get(path2).add(warning.unitId);
+    }
+    const shared = /* @__PURE__ */ new Map();
     for (const warning of warnings) {
       if (warning.kind === "auto_adjusted" || !units.length || warning.unitId !== null && !selected2.has(warning.unitId)) continue;
-      const keys = new Set(dependencies(state, warning));
-      const group = { keys, unitIds: new Set(warning.unitId === null ? [units[0]] : [warning.unitId]), warnings: [warning] };
-      for (let index = groups.length - 1; index >= 0; index--) {
-        const previous = groups[index];
-        if (![...previous.keys].some((key4) => keys.has(key4))) continue;
-        for (const key4 of previous.keys) keys.add(key4);
-        for (const id3 of previous.unitIds) group.unitIds.add(id3);
-        group.warnings.unshift(...previous.warnings);
-        groups.splice(index, 1);
+      const unitId = warning.unitId ?? units[0];
+      const path2 = targetPath(warning.originPath) ?? `unit:${unitId}`;
+      if (pathOwners.get(path2)?.size > 1) {
+        if (!shared.has(path2)) shared.set(path2, []);
+        shared.get(path2).push(warning);
+        continue;
       }
-      groups.push(group);
+      const key4 = `${unitId}|${path2}`;
+      const carrier4 = carriers2.get(key4) ?? { unitId, path: path2, keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), passive: false };
+      for (const dependency of dependencies(state, warning)) carrier4.keys.add(dependency);
+      carrier4.warnings.push(warning);
+      carriers2.set(key4, carrier4);
+    }
+    const grouped = /* @__PURE__ */ new Map();
+    for (const carrier4 of carriers2.values()) {
+      const [, table4, id3] = carrier4.path.split("/");
+      const template = state?.[table4]?.[id3];
+      const source = rawSources?.[carrier4.unitId]?.[`${table4}:${id3}`];
+      for (const term of [
+        ...mechanismKeywords(carrier4.warnings.map((item) => item.message).join("\n")),
+        ...mechanismKeywords(source ?? template)
+      ]) carrier4.terms.add(term);
+      carrier4.passive = template?.passive === true;
+      const list4 = grouped.get(carrier4.unitId) ?? [];
+      list4.push(carrier4);
+      grouped.set(carrier4.unitId, list4);
+    }
+    for (const [unitId, list4] of grouped) {
+      const clusters = [];
+      for (const carrier4 of list4) {
+        const joined = clusters.filter((cluster2) => [...carrier4.keys].some((key4) => cluster2.keys.has(key4)));
+        const cluster = joined.shift() ?? { path: carrier4.path, keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), members: [], passive: false, coreScore: 0 };
+        cluster.path = [cluster.path, carrier4.path].filter(Boolean).sort()[0];
+        for (const other of joined) {
+          for (const key4 of other.keys) cluster.keys.add(key4);
+          cluster.warnings.push(...other.warnings);
+          cluster.members.push(...other.members);
+          for (const term of other.terms) cluster.terms.add(term);
+          cluster.passive ||= other.passive;
+          cluster.path = [cluster.path, other.path].filter(Boolean).sort()[0];
+          clusters.splice(clusters.indexOf(other), 1);
+        }
+        for (const key4 of carrier4.keys) cluster.keys.add(key4);
+        cluster.warnings.push(...carrier4.warnings);
+        cluster.members.push(carrier4);
+        for (const term of carrier4.terms) cluster.terms.add(term);
+        cluster.passive ||= carrier4.passive;
+        if (!clusters.includes(cluster)) clusters.push(cluster);
+      }
+      const elasticMax = Math.max(maxWarnings, 8);
+      const bounded3 = clusters.flatMap((cluster) => {
+        if (cluster.warnings.length <= elasticMax) return [cluster];
+        const parts = [];
+        let part = { path: "", keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), members: [], passive: false, coreScore: 0 };
+        for (const member of cluster.members) {
+          if (part.warnings.length && part.warnings.length + member.warnings.length > elasticMax) {
+            parts.push(part);
+            part = { path: "", keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), members: [], passive: false, coreScore: 0 };
+          }
+          for (const key4 of member.keys) part.keys.add(key4);
+          part.warnings.push(...member.warnings);
+          part.members.push(member);
+          for (const term of member.terms) part.terms.add(term);
+          part.passive ||= member.passive;
+        }
+        if (part.warnings.length) parts.push(part);
+        return parts;
+      });
+      grouped.set(unitId, bounded3);
     }
     const result = [];
-    let current = { unitIds: [], warnings: [] };
-    const append = (ids, diagnostics) => {
-      const combinedIds = [.../* @__PURE__ */ new Set([...current.unitIds, ...ids])];
-      if (current.unitIds.length && (combinedIds.length > maxUnits || current.warnings.length + diagnostics.length > maxWarnings)) {
-        result.push(current);
-        current = { unitIds: [...ids], warnings: [...diagnostics] };
-      } else {
-        current.unitIds = combinedIds;
-        current.warnings.push(...diagnostics);
-      }
-    };
-    for (const group of groups) {
-      if (group.warnings.length <= maxWarnings && group.unitIds.size <= maxUnits) append(group.unitIds, group.warnings);
-      else for (const warning of group.warnings) append([warning.unitId ?? units[0]], [warning]);
+    for (const [path2, group] of shared) {
+      const owners = [...pathOwners.get(path2)], size = group.length <= Math.max(8, maxWarnings) ? group.length : maxWarnings;
+      for (let i = 0; i < group.length; i += size) result.push({ unitIds: owners, warnings: group.slice(i, i + size) });
     }
-    if (current.unitIds.length) result.push(current);
+    for (const [unitId, list4] of grouped) {
+      const frequency = /* @__PURE__ */ new Map();
+      for (const carrier4 of list4) for (const term of carrier4.terms) frequency.set(term, (frequency.get(term) ?? 0) + 1);
+      for (const carrier4 of list4) carrier4.coreScore = [...carrier4.terms].reduce((sum, term) => sum + (frequency.get(term) ?? 0) - 1, 0);
+      const remaining = [...list4].sort((a, b) => Number(b.passive) - Number(a.passive) || b.coreScore - a.coreScore || a.path.localeCompare(b.path));
+      while (remaining.length) {
+        const first = remaining.shift();
+        const elasticMax = Math.max(maxWarnings, 8);
+        if (first.warnings.length > elasticMax) {
+          const chunkSize = Math.max(1, maxWarnings);
+          for (let offset = 0; offset < first.warnings.length; offset += chunkSize) {
+            result.push({ unitIds: [unitId], warnings: first.warnings.slice(offset, offset + chunkSize) });
+          }
+          continue;
+        }
+        const batch = { unitIds: [unitId], warnings: [...first.warnings] };
+        const terms = new Set(first.terms);
+        while (true) {
+          let bestIndex = -1, bestAffinity = -1;
+          for (let index = 0; index < remaining.length; index++) {
+            const candidate2 = remaining[index];
+            const intersection = [...candidate2.terms].filter((term) => terms.has(term)).length;
+            const union = (/* @__PURE__ */ new Set([...candidate2.terms, ...terms])).size;
+            const affinity = union ? intersection / union : 0;
+            if (affinity > bestAffinity) {
+              bestAffinity = affinity;
+              bestIndex = index;
+            }
+          }
+          if (bestIndex < 0) break;
+          const candidate = remaining[bestIndex];
+          if (batch.warnings.length + candidate.warnings.length > maxWarnings || maxUnits < 1) {
+            if (bestAffinity > 0) remaining.unshift(...remaining.splice(bestIndex, 1));
+            break;
+          }
+          const [next] = remaining.splice(bestIndex, 1);
+          batch.warnings.push(...next.warnings);
+          for (const term of next.terms) terms.add(term);
+        }
+        result.push(batch);
+      }
+    }
     return result;
   }
   function normalizationOperations(operations2, snapshot, current, created, fingerprintAt2) {
@@ -15445,6 +15644,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     });
   }
   async function runOrderedBatches(batches, concurrency, request, commit, signal) {
+    if (batches.some((batch) => Array.isArray(batch?.unitIds))) {
+      return runUnitOrderedBatches(batches, concurrency, request, commit, signal);
+    }
     const pending = /* @__PURE__ */ new Map();
     let next = 0;
     const fill = () => {
@@ -15467,32 +15669,92 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       await Promise.all(pending.values());
     }
   }
+  async function runUnitOrderedBatches(batches, concurrency, request, commit, signal) {
+    const previousByUnit = /* @__PURE__ */ new Map();
+    const completed = /* @__PURE__ */ new Set();
+    const pending = /* @__PURE__ */ new Map();
+    const remainingByUnit = /* @__PURE__ */ new Map();
+    const dependenciesByIndex = batches.map((batch, index) => {
+      const dependencies2 = /* @__PURE__ */ new Set();
+      for (const unitId of new Set(batch.unitIds ?? [])) {
+        const previous = previousByUnit.get(unitId);
+        if (previous !== void 0) dependencies2.add(previous);
+        previousByUnit.set(unitId, index);
+        remainingByUnit.set(unitId, (remainingByUnit.get(unitId) ?? 0) + 1);
+      }
+      return dependencies2;
+    });
+    const ready = (index) => [...dependenciesByIndex[index]].every((dependency) => completed.has(dependency));
+    const priority = (index) => Math.max(0, ...(batches[index].unitIds ?? []).map((id3) => remainingByUnit.get(id3) ?? 0));
+    const selectReady = () => batches.map((_, index) => index).filter((index) => !completed.has(index) && !pending.has(index) && ready(index)).sort((a, b) => priority(b) - priority(a) || a - b)[0];
+    let stopped = false, failure;
+    const launch = (index) => {
+      const batch = batches[index];
+      const task = (async () => {
+        try {
+          let result;
+          try {
+            result = { value: await request(batch, index) };
+          } catch (error2) {
+            result = { error: error2 };
+          }
+          signal.throwIfAborted();
+          await commit(result, batch, index);
+          completed.add(index);
+          for (const unitId of new Set(batch.unitIds ?? [])) remainingByUnit.set(unitId, remainingByUnit.get(unitId) - 1);
+        } catch (error2) {
+          stopped = true;
+          failure ??= error2;
+        } finally {
+          pending.delete(index);
+        }
+      })();
+      pending.set(index, task);
+    };
+    try {
+      while (!stopped && completed.size < batches.length) {
+        signal.throwIfAborted();
+        while (!stopped && pending.size < concurrency) {
+          const index = selectReady();
+          if (index === void 0) break;
+          launch(index);
+        }
+        if (pending.size) {
+          await Promise.race(pending.values());
+        } else if (!stopped && completed.size < batches.length) {
+          throw new Error("\u6807\u51C6\u5316\u6279\u6B21\u4F9D\u8D56\u65E0\u6CD5\u6EE1\u8DB3");
+        }
+      }
+    } catch (error2) {
+      stopped = true;
+      failure ??= error2;
+    }
+    if (pending.size) await Promise.allSettled(pending.values());
+    if (failure) throw failure;
+  }
   function readNarrativeExemptions(value = [], sent, sourceFor, { solved = [], unresolved = [] } = {}) {
     const matched = [], invalid = [];
     if (!Array.isArray(value)) return { matched, invalid: ["\u672A\u80FD\u8BFB\u53D6\u6A21\u578B\u7684\u975E\u6218\u6597\u8BF4\u660E"] };
-    const index = /* @__PURE__ */ new Map();
-    for (const warning of sent) {
-      const key4 = referenceKey(warning);
-      const matches2 = index.get(key4) ?? [];
-      if (!matches2.some((match) => warningKey(match) === warningKey(warning))) matches2.push(warning);
-      index.set(key4, matches2);
-    }
     const seen = /* @__PURE__ */ new Set();
     for (const [i, entry2] of value.entries()) {
       const label = `\u7B2C ${i + 1} \u6761\u975E\u6218\u6597\u8BF4\u660E`;
       const reason = diagnosticText(entry2?.reason, "");
-      if (!reason || !Object.hasOwn(entry2, "originPath")) {
+      if (!reason) {
         invalid.push(`${label}\u7F3A\u5C11\u8BCD\u6761\u5F15\u7528\u6216\u539F\u56E0`);
         continue;
       }
-      const reference = referenceKey(entry2);
-      const matches2 = index.get(reference);
-      if (matches2?.length !== 1 || seen.has(reference)) {
+      const matches2 = sent.filter((warning2) => identifiesWarning(entry2, warning2));
+      if (matches2.length !== 1) {
         invalid.push(`${label}\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u672C\u6279\u8BCD\u6761`);
         continue;
       }
       const [warning] = matches2;
-      if (entry2.originPath !== (warning.originPath ?? null) || solved.some((item) => referenceKey(item) === reference) || unresolved.some((item) => item.warning === warning)) {
+      const reference = warningKey(warning);
+      if (seen.has(reference)) {
+        invalid.push(`${label}\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u672C\u6279\u8BCD\u6761`);
+        continue;
+      }
+      if (solved.some((item) => identifiesWarning(item, warning)) || unresolved.some((item) => item.warning === warning)) {
         invalid.push(`${label}\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81`);
         continue;
       }
@@ -15502,7 +15764,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         continue;
       }
       seen.add(reference);
-      matched.push({ warning, receipt: { unitId: warning.unitId, key: warningKey(warning), source, reason } });
+      matched.push({ warning, receipt: { unitId: warning.unitId, key: reference, source, reason } });
     }
     return { matched, invalid };
   }
@@ -16185,6 +16447,50 @@ Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭
     }));
     return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots3] : slots3;
   }
+  var distinct = (values4) => [...new Set(values4.filter(Boolean))];
+  function scopedRoster(ctx, state, warnings) {
+    const pick = (table4, ids) => Object.fromEntries(distinct(ids).filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
+    const units = pick(state.units, ctx.onlyUnitIds), rows2 = Object.values(units);
+    const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? [], ...u.bagWeapons ?? []]));
+    const equipment = pick(state.equipment, Object.values(items).map((i) => i.templateId));
+    const skills = pick(state.skills, [...rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap((e) => e.skills ?? [])]);
+    const roster = { raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment, skills, statusTemplates: state.statusTemplates };
+    if (!warnings.length) return json(roster);
+    const targets2 = new Set(warnings.map((w) => {
+      const [, table4, id3] = (w.originPath ?? "").split("/");
+      return table4 === "items" && items[id3] ? `equipment:${items[id3].templateId}` : `${table4}:${id3}`;
+    }));
+    const entryTables = ctx.characterEntries ?? {};
+    roster.raw = Object.fromEntries(ctx.onlyUnitIds.map((id3) => {
+      const entries3 = entryTables[id3] ?? {};
+      return [id3, { unit: entries3.unit ?? units[id3], ...pick(entries3, [...targets2]) }];
+    }));
+    const rawCarriers = Object.assign({}, ...ctx.onlyUnitIds.map((id3) => entryTables[id3]));
+    const siblings = [];
+    for (const [table4, carriers2] of Object.entries({ skills, equipment })) for (const [id3, c] of Object.entries(carriers2)) {
+      const key4 = `${table4}:${id3}`;
+      if (targets2.has(key4)) continue;
+      const type = table4 === "equipment" ? "\u88C5\u5907" : c.passive ? "\u88AB\u52A8\u6280\u80FD" : "\u4E3B\u52A8\u6280\u80FD";
+      const terms = [...mechanismTerms(JSON.stringify(rawCarriers[key4] ?? c))].slice(0, 4);
+      const count = c.rules?.length ?? 0, mods = c.mods?.length ?? 0;
+      siblings.push(`[${type}]${id3} ${c.name ?? ""}|${terms.join("/")}|${count || mods ? `${count}\u89C4\u5219${mods ? `/${mods}\u4FEE\u9970` : ""}` : "\u5F85\u540E\u6279"}`);
+    }
+    const ledger = Object.entries(state.statusTemplates ?? {}).map(([id3, s]) => [
+      id3,
+      s.name,
+      `${s.maxStacks ?? 1}/${s.stackMode ?? "refresh"}`,
+      s.tags?.join("/") ?? "",
+      distinct((s.mods ?? []).map((m) => m.stat)).join("/"),
+      distinct((s.rules ?? []).map((r) => r.hook)).join("/")
+    ].join("|"));
+    return `${json(roster)}
+<role_readonly_index DO_NOT_PATCH="true">
+sharedStatusLedger\uFF1AID|\u540D|\u5C42/\u53E0\u6CD5|\u6807\u7B7E|mods|hooks\uFF1B\u590D\u7528 statusId\uFF0C\u52FF\u91CD\u590D add\u3002
+${ledger.join("\n")}
+siblingCarriersIndex\uFF1A\u4EC5\u4F9B\u8054\u52A8\uFF0C\u52FF\u6539\u52FF\u6838\u9500\u3002
+${siblings.join("\n")}
+</role_readonly_index>`;
+  }
   function resolveSlotContent(slot2, ctx = {}) {
     const { sources = {}, state, instruction = "" } = ctx;
     const warnings = warningsForUnit(sources.warnings, ctx.onlyUnitIds);
@@ -16201,18 +16507,15 @@ Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭
     };
     const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key4) => Object.hasOwn(variables2, key4) ? variables2[key4]() : "");
     function rosterText() {
-      if (ctx.onlyUnitIds && state) {
-        const pick = (table4, ids) => Object.fromEntries([...new Set(ids)].filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
-        const units = pick(state.units, ctx.onlyUnitIds), rows2 = Object.values(units);
-        const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? [], ...u.bagWeapons ?? []]));
-        return json({ raw: pick(ctx.rawCharacters, ctx.onlyUnitIds), units, items, equipment: pick(state.equipment, Object.values(items).map((i) => i.templateId)), skills: pick(state.skills, rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})])), statusTemplates: state.statusTemplates });
-      }
+      if (ctx.onlyUnitIds && state) return scopedRoster(ctx, state, warnings);
       if (ctx.rosterText != null) return ctx.rosterText;
       if (!state) return sources.roster || "";
       const templates = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
       const skillIds = new Set(Object.values(state.units ?? {}).flatMap((unit) => [...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})]));
       const used = (table4, ids) => Object.fromEntries(Object.entries(table4 ?? {}).filter(([id3]) => ids.has(id3)));
-      return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment: used(state.equipment, templates), skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
+      const equipment = used(state.equipment, templates);
+      for (const e of Object.values(equipment)) for (const id3 of e.skills ?? []) skillIds.add(id3);
+      return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
     }
     function battleText() {
       if (ctx.battleText != null) return ctx.battleText;
@@ -17154,7 +17457,7 @@ ${variables2.warnings()}` : "");
         entryHashes[entryKey] = Array.from(new Uint8Array(bytes2), (b) => b.toString(16).padStart(2, "0")).join("");
       }
       const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(ordered(raw))));
-      return [unit.id, { raw, sourceKind, entryHashes, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
+      return [unit.id, { raw, sourceKind, entryHashes, entryValues, hash: Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, "0")).join("") }];
     }));
     return Object.fromEntries(rows2);
   }
@@ -18011,19 +18314,19 @@ ${variables2.warnings()}` : "");
   var REASONING_BLOCK_RE = /<(think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*?<\/\1>/gi;
   var UNCLOSED_REASONING_RE = /<(?:think|thinking|thought|analysis|std_audit)\b[^>]*>[\s\S]*$/i;
   function stripReasoningBlocks(value) {
-    return text4(value).replace(REASONING_BLOCK_RE, "").replace(UNCLOSED_REASONING_RE, "").trim();
+    return text4(value).replace(REASONING_BLOCK_RE, "").replace(UNCLOSED_REASONING_RE, "").replace(/<\/(?:think|thinking|thought|analysis|std_audit)\s*>/gi, "").trim();
   }
-  function extractJsonBlocks(value) {
+  function extractJsonBlocks(value, { withRanges = false } = {}) {
     const source = typeof value === "object" ? JSON.stringify(value) : stripReasoningBlocks(value);
     const output2 = [];
-    const accept = (candidate, index) => {
+    const accept = (candidate, index, end) => {
       const parsed = parseJSON(candidate, null);
       if (!(isObject2(parsed) && Object.keys(parsed).length || Array.isArray(parsed) && parsed.length)) return;
-      output2.push({ parsed, index });
+      output2.push({ parsed, index, end });
     };
     const fencedRanges = [];
     for (const match of source.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
-      accept(match[1].trim(), match.index);
+      accept(match[1].trim(), match.index, match.index + match[0].length);
       fencedRanges.push([match.index, match.index + match[0].length]);
     }
     const hidden = (index) => fencedRanges.some(([start, end]) => index >= start && index < end);
@@ -18052,11 +18355,12 @@ ${variables2.warnings()}` : "");
         const top = stack.at(-1);
         if (top?.ch === expected) {
           stack.pop();
-          if (!stack.length) accept(source.slice(top.start, i + 1), top.start);
+          if (!stack.length) accept(source.slice(top.start, i + 1), top.start, i + 1);
         } else if (top) stack.length = 0;
       }
     }
-    return output2.sort((a, b) => a.index - b.index).map((entry2) => entry2.parsed);
+    output2.sort((a, b) => a.index - b.index);
+    return withRanges ? output2 : output2.map((entry2) => entry2.parsed);
   }
   var preferredJson = (source) => extractJsonBlocks(source).sort((a, b) => jsonPriority(a) - jsonPriority(b)).at(-1);
   function jsonPriority(value) {
@@ -18072,11 +18376,20 @@ ${variables2.warnings()}` : "");
     const envelope = /\{\s*"(?:patch|unresolved|existing|narrative)"\s*:/.exec(clean2);
     let parsed;
     if (envelope && !/[{[]/.test(clean2.slice(0, envelope.index))) {
-      const final = clean2.slice(envelope.index).split(/\n\s*```/)[0].trim();
       try {
-        parsed = JSON.parse(final);
+        parsed = JSON.parse(clean2.slice(envelope.index));
       } catch (error2) {
-        return { data: null, patch: null, text: source, parseError: `\u6700\u7EC8 JSON \u65E0\u6548\uFF1A${error2.message}` };
+        const batchText = clean2.replace(/```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n[\t ]*```/gi, "$1").trim();
+        const blocks = extractJsonBlocks(batchText, { withRanges: true });
+        const keys = ["patch", "unresolved", "existing", "narrative"];
+        let cursor = 0;
+        const intact = blocks.length && blocks.every(({ parsed: block, index, end }) => {
+          const gap = batchText.slice(cursor, index);
+          cursor = end;
+          return !/[{}\[\]`]/.test(gap) && isObject2(block) && Object.entries(block).every(([key4, val]) => keys.includes(key4) && Array.isArray(val));
+        }) && !/[{}\[\]`]/.test(batchText.slice(cursor));
+        if (!intact) return { data: null, patch: null, text: source, parseError: `\u6700\u7EC8 JSON \u65E0\u6548\uFF1A${error2.message}` };
+        parsed = Object.fromEntries(keys.filter((key4) => blocks.some((b) => Object.hasOwn(b.parsed, key4))).map((key4) => [key4, blocks.flatMap((b) => b.parsed[key4] ?? [])]));
       }
     } else parsed = preferredJson(source) ?? null;
     const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch || (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
@@ -18586,9 +18899,272 @@ ${variables2.warnings()}` : "");
     ["nonCombat", "\u975E\u6218\u6597"]
   ]);
 
+  // src/tavern/normalization-commit.js
+  var isObject5 = (value) => value && typeof value === "object" && !Array.isArray(value);
+  function rejectedWarning(item, warning) {
+    return Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`));
+  }
+  function repairWarnings(accepted = {}) {
+    const output2 = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const warning of [...accepted.repairWarnings ?? [], ...accepted.missingWarnings ?? accepted.missing ?? []]) {
+      const key4 = JSON.stringify([warning?.unitId ?? null, warning?.originPath ?? null, warning?.message ?? ""]);
+      if (!seen.has(key4)) {
+        seen.add(key4);
+        output2.push(warning);
+      }
+    }
+    return output2;
+  }
+  function templateSummary(state, path2) {
+    const value = JSON.parse(fingerprintAt(state, path2) ?? "null");
+    if (!value || typeof value !== "object") return "";
+    const mods = Array.isArray(value.mods) ? value.mods.map((mod2) => mod2?.stat ?? mod2?.kind ?? "?").join(",") : "";
+    const hooks = Array.isArray(value.rules) ? value.rules.map((rule2) => rule2?.hook ?? rule2?.kind ?? "?").join(",") : "";
+    return `\uFF1BliveState\u5DF2\u6709\u6A21\u677F\u6458\u8981\uFF1Aname=${value.name ?? ""}, category=${value.category ?? ""}, stackMode=${value.stackMode ?? ""}, maxStacks=${value.maxStacks ?? ""}, mods=[${mods}], hooks=[${hooks}]\u3002\u82E5\u673A\u5236\u4E00\u81F4\u8BF7\u5220\u53BB add \u76F4\u63A5\u5F15\u7528\uFF0C\u82E5\u5C5E\u672C\u89D2\u8272\u4E13\u5C5E\u673A\u5236\u8BF7\u6539\u7528\u5E26\u524D\u7F00\u7684\u65B0 ID \u5E76\u540C\u6B65\u66F4\u65B0\u672C\u6279\u5F15\u7528`;
+  }
+  function conflictRepairError(rejected, current) {
+    if (!rejected.length) return null;
+    const message = rejected.map((item) => {
+      const detail = formatRejectedItem(item, current);
+      return /^共享模板定义冲突：\/(?:statusTemplates|skills)\//.test(item.reason ?? "") ? `${detail}${templateSummary(current, item.path)}` : detail;
+    }).join("\uFF1B");
+    return Object.assign(new Error(message), { raw: JSON.stringify(rejected.map((item) => item.op)) });
+  }
+  function acceptNormalizationResponse({
+    reply,
+    snapshot,
+    sent,
+    unitIds,
+    current,
+    baseline,
+    existingOps = [],
+    createdTemplates = /* @__PURE__ */ new Map(),
+    records: records2 = {},
+    sourceFor = () => void 0,
+    duplicateOperations: duplicateOperations2 = (operation2) => [],
+    apply: apply2 = applyPatch,
+    validate = () => {
+    },
+    normalize = (state) => state,
+    acceptPartial = false
+  }) {
+    const { data, parseError } = parseAIResponse(reply);
+    const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
+    const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
+    if (isObject5(data) && !Object.hasOwn(data, "patch") && (explicitUnresolved || explicitNarrative || Array.isArray(data.existing) && data.existing.length)) data.patch = [];
+    if (!Array.isArray(data?.patch)) {
+      const error2 = new Error(`\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01${parseError ? `\uFF1A${parseError}` : ""}`);
+      const source = typeof reply === "string" ? stripReasoningBlocks(reply) : "";
+      error2.raw = /^[\s<]*(?:```(?:json)?\s*)?[{[]/i.test(source) ? source.slice(source.search(/[{[]/)) : void 0;
+      if (explicitUnresolved) error2.noRepair = true;
+      throw error2;
+    }
+    const raw = JSON.stringify(data, null, 2);
+    try {
+      const { matched: notes2, invalid: unmatchedNotes } = readUnresolvedDiagnostics(data.unresolved, sent);
+      const conflicts = [];
+      const expand = (operation2) => [operation2, ...duplicateOperations2(operation2)];
+      const rebasedPatch = data.patch.flatMap((operation2, index) => {
+        if (typeof operation2?.path !== "string") return [operation2];
+        try {
+          const accepted = normalizationOperations([operation2], snapshot, current, createdTemplates, fingerprintAt);
+          if (accepted.length) normalizationOperations(duplicateOperations2(operation2), snapshot, current, createdTemplates, fingerprintAt);
+          return accepted;
+        } catch (error2) {
+          conflicts.push({ index, op: operation2, path: operation2.path, reason: error2.message });
+          return [];
+        }
+      });
+      const partition = partitionNormalizationPatch({
+        liveState: current,
+        baselineState: baseline,
+        existingOps,
+        rawPatch: rebasedPatch,
+        conflictingDefinitions: conflicts.filter((item) => item.op.op === "add" && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path)).map((item) => item.path),
+        allowedUnitIds: unitIds,
+        expand,
+        apply: apply2,
+        validate,
+        normalize
+      });
+      const rejected = [...conflicts, ...partition.rejected];
+      const blockedWarnings = new Set(sent.filter((warning) => rejected.some((item) => rejectedWarning(item, warning))));
+      const eligibleWarnings = sent.filter((warning) => !blockedWarnings.has(warning));
+      const repair = sent.filter((warning) => blockedWarnings.has(warning) && !notes2.some((note) => note.warning === warning && note.detail));
+      const repairError = conflictRepairError(rejected, current);
+      data.patch = partition.accepted.map((item) => item.op);
+      const operationsToApply = data.patch;
+      const paths = [...new Set(operationsToApply.flatMap(expand).map((operation2) => entryRoot(operation2.path)))];
+      let next = current;
+      const changedAtApply = /* @__PURE__ */ new Map();
+      for (const operation2 of operationsToApply) {
+        const parentPath = operation2.path.slice(0, operation2.path.lastIndexOf("/"));
+        const path2 = operation2.op === "replace" || !fingerprintAt(next, parentPath)?.startsWith("[") ? operation2.path : parentPath;
+        const before2 = fingerprintAt(next, path2);
+        next = apply2(next, expand(operation2), true);
+        const after = fingerprintAt(next, path2);
+        if (after !== before2) changedAtApply.set(operation2, { path: path2, after });
+      }
+      const changed = new Set(paths.filter((path2) => fingerprintAt(next, path2) !== fingerprintAt(current, path2)));
+      const effective = operationsToApply.filter((operation2) => expand(operation2).some((copy3) => changed.has(entryRoot(copy3.path))));
+      const patch = effective.flatMap(({ resolves, ...operation2 }) => expand(operation2));
+      const changedOperations = effective.filter((operation2) => {
+        const change2 = changedAtApply.get(operation2);
+        if (!change2 || fingerprintAt(current, change2.path) === fingerprintAt(next, change2.path)) return false;
+        if (change2.path === operation2.path) {
+          const final = fingerprintAt(next, change2.path);
+          if (final === change2.after) return true;
+          if (operation2.op !== "add" || !Array.isArray(operation2.value) || !operation2.value.length) return false;
+          const array2 = JSON.parse(final ?? "null");
+          if (!Array.isArray(array2)) return false;
+          const remaining = array2.map((value) => JSON.stringify(value));
+          return operation2.value.every((value) => {
+            const index = remaining.indexOf(JSON.stringify(value));
+            if (index < 0) return false;
+            remaining.splice(index, 1);
+            return true;
+          });
+        }
+        const array = JSON.parse(fingerprintAt(next, change2.path) ?? "null");
+        const values4 = Array.isArray(operation2.value) ? operation2.value : [operation2.value];
+        return operation2.op === "remove" ? fingerprintAt(next, change2.path) === change2.after : Array.isArray(array) && values4.every((expected) => array.some((value) => JSON.stringify(value) === JSON.stringify(expected)));
+      });
+      const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2);
+      const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(
+        data.narrative,
+        eligibleWarnings,
+        sourceFor,
+        { solved, unresolved: notes2 }
+      );
+      unmatchedNotes.push(...invalidNarrative);
+      if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes2.some((note) => note.warning && note.detail)) {
+        throw new Error("\u6A21\u578B\u8FD4\u56DE\u7684\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
+      }
+      let before;
+      if (patch.length || data.existing?.length) before = apply2(baseline, existingOps, true);
+      const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
+        try {
+          const [entry2] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
+          const { warning, path: path2, fingerprint } = entry2;
+          if (blockedWarnings.has(warning) || notes2.some((note) => note.warning === warning) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) throw new Error("\u5DF2\u6709\u5B9E\u73B0\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81");
+          if (!solved.includes(warning)) solved.push(warning);
+          return [entry2];
+        } catch {
+          unmatchedNotes.push(`\u7B2C ${index + 1} \u6761\u5DF2\u6709\u5B9E\u73B0\u8BF4\u660E\u672A\u901A\u8FC7\u6838\u5BF9`);
+          return [];
+        }
+      });
+      if (data.existing !== void 0 && !Array.isArray(data.existing)) unmatchedNotes.push("\u672A\u80FD\u8BFB\u53D6\u6A21\u578B\u7684\u5DF2\u6709\u5B9E\u73B0\u8BF4\u660E");
+      const missing = missingDispositions(sent, solved, notes2, narrative);
+      if (missing.length && !patch.length && !verified.length && !notes2.some((note) => note.detail) && !narrative.length && !rejected.length && !unmatchedNotes.length) {
+        const error2 = new Error(`\u6A21\u578B\u6CA1\u6709\u63D0\u4EA4\u4EFB\u4F55\u53EF\u6838\u9500\u7ED3\u679C\uFF0C\u4ECD\u7F3A ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}`);
+        error2.missingCoverage = true;
+        error2.missingWarnings = missing;
+        error2.noRepair = Boolean(acceptPartial);
+        throw error2;
+      }
+      if (missing.length && !acceptPartial && !patch.length && !repair.length && !unmatchedNotes.length && !verified.length && !notes2.some((note) => note.detail) && !narrative.length) {
+        const error2 = new Error(`\u672C\u6279\u6F0F\u7B54 ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}\u3002\u672C\u6279\u5C1A\u672A\u5199\u5165\uFF1B\u4FDD\u7559\u5DF2\u5B8C\u6210\u7684\u8865\u4E01\uFF0C\u91CD\u65B0\u63D0\u4EA4\u5B8C\u6574\u7ED3\u679C\u3002\u5DF2\u5B9E\u73B0\u7684\u6548\u679C\u8BF7\u5728\u5B9E\u9645\u4FEE\u6539\u7684\u64CD\u4F5C\u4E0A\u8865 resolves\uFF1B\u53EA\u521B\u5EFA\u4F9D\u8D56\u6A21\u677F\u8FD8\u987B\u63A5\u56DE\u539F\u6280\u80FD\u3002\u5176\u4F59\u9010\u9879\u5199 unresolved \u5E76\u8BF4\u660E\u539F\u56E0\uFF0C\u7EAF\u53D9\u4E8B\u624D\u5199 narrative\u3002`);
+        error2.missingCoverage = true;
+        error2.missingWarnings = missing;
+        throw error2;
+      }
+      for (const note of notes2) {
+        const path2 = note.warning?.originPath;
+        if (!note.detail || !path2) continue;
+        note.evidence = changedOperations.flatMap((op) => {
+          if (op.op === "remove" || !Array.isArray(op.resolves) || !op.resolves.some((ref2) => identifiesWarning(ref2, note.warning) && sent.filter((w) => identifiesWarning(ref2, w)).length === 1)) return [];
+          return ["rules", "mods", "pools", "damage", "heal"].flatMap((field) => {
+            const pointer3 = `${path2}/${field}`;
+            if (op.path !== path2 && op.path !== pointer3 && !op.path.startsWith(`${pointer3}/`)) return [];
+            const value = fingerprintAt(next, pointer3);
+            return value !== void 0 && value !== "[]" && value !== "{}" && value !== fingerprintAt(current, pointer3) ? [[pointer3, value]] : [];
+          });
+        });
+      }
+      return {
+        data,
+        notes: notes2,
+        unmatchedNotes,
+        current,
+        next,
+        baseline,
+        before,
+        rebasedPatch,
+        conflicts,
+        partition,
+        rejected,
+        blockedWarnings,
+        eligibleWarnings,
+        repairWarnings: repair,
+        repairError,
+        operationsToApply,
+        effective,
+        patch,
+        changedOperations,
+        solved,
+        narrative,
+        verified,
+        missing,
+        missingWarnings: missing,
+        explicitUnresolved,
+        explicitNarrative,
+        accepted: effective.length
+      };
+    } catch (error2) {
+      error2.raw ??= raw;
+      throw error2;
+    }
+  }
+  async function runNormalizationRepair({ batch, index, result, commit, request, onRepair = () => {
+  }, repairAllowed = normalizationRepairAllowed }) {
+    let repairAttempts = 0;
+    let accepted;
+    let repaired;
+    try {
+      accepted = commit(batch, result);
+    } catch (error2) {
+      if (!repairAllowed({ attempts: repairAttempts, explicitUnresolved: error2.noRepair || result?.explicitUnresolved })) throw error2;
+      repairAttempts++;
+      const revisedBatch = error2.missingWarnings?.length ? { ...batch, warnings: error2.missingWarnings } : batch;
+      const correction = error2.missingCoverage ? Object.assign(new Error(`\u4E0A\u4E00\u8F6E\u9759\u9ED8\u9057\u6F0F\uFF1A${error2.message}`), { raw: error2.raw }) : error2;
+      onRepair({ kind: "initial", batch: revisedBatch, correction, attempts: repairAttempts });
+      const revised = await request(revisedBatch, index, correction);
+      try {
+        accepted = commit(revisedBatch, revised, { acceptPartial: true });
+      } catch (retryError) {
+        if (!error2.missingCoverage) throw retryError;
+        accepted = commit(batch, result, { acceptPartial: true });
+      }
+    }
+    if (!repairAttempts && repairWarnings(accepted).length) {
+      repairAttempts++;
+      const toRepair = repairWarnings(accepted);
+      const revisedBatch = { ...batch, warnings: toRepair };
+      const rejected = new Set(accepted.repairWarnings ?? []);
+      const titles = (list4) => list4.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001");
+      const omitted = toRepair.filter((w) => !rejected.has(w));
+      const message = [
+        rejected.size && `\u6821\u9A8C\u88AB\u62D2\uFF1A${titles([...rejected])}\u3002${accepted.repairError?.message ?? ""}`,
+        omitted.length && `\u4E0A\u4E00\u8F6E\u9759\u9ED8\u9057\u6F0F\uFF1A${titles(omitted)}\u3002\u8BF7\u9010\u9879\u8865\u7B54\u3002`
+      ].filter(Boolean).join("\n");
+      const correction = Object.assign(new Error(message), { raw: accepted.repairError?.raw });
+      onRepair({ kind: "rejected-or-missing", batch: revisedBatch, correction, attempts: repairAttempts });
+      try {
+        const revised = await request(revisedBatch, index, correction);
+        repaired = commit(revisedBatch, revised, { acceptPartial: true });
+      } catch (error2) {
+        repaired = null;
+        onRepair({ kind: "failed", error: error2, batch: revisedBatch, correction, attempts: repairAttempts });
+      }
+    }
+    return { accepted, repaired, repairAttempts };
+  }
+
   // src/tavern/overlay-mount.js
   var own19 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
-  var isObject5 = (v) => v && typeof v === "object" && !Array.isArray(v);
+  var isObject6 = (v) => v && typeof v === "object" && !Array.isArray(v);
   var clone5 = (value) => {
     try {
       return structuredClone(value);
@@ -18863,7 +19439,7 @@ ${variables2.warnings()}` : "");
         return config.instances;
       }
     })();
-    config.instances = isObject5(instances) ? instances : {};
+    config.instances = isObject6(instances) ? instances : {};
     function save() {
       putConfig(storage, stateKey, config.instances);
     }
@@ -19235,7 +19811,7 @@ ${tag2.textContent || ""}
         on(b, "click", () => choose(all ? Object.keys(config.instances) : []));
         toolbar.append(b);
       }
-      const collapsed = () => isObject5(config.collapsedInstances) ? config.collapsedInstances : {};
+      const collapsed = () => isObject6(config.collapsedInstances) ? config.collapsedInstances : {};
       const setFolded = (ids, value) => {
         const next = { ...collapsed() };
         for (const id4 of ids) {
@@ -19319,7 +19895,7 @@ ${tag2.textContent || ""}
         on(edit, "click", () => {
           const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
           const parsed = parseJSON3(value, null);
-          if (isObject5(parsed)) {
+          if (isObject6(parsed)) {
             config.instances[key4] = { ...parsed, id: key4, source: "AI \u7F16\u8F91" };
             save();
             renderInstances();
@@ -19337,8 +19913,9 @@ ${tag2.textContent || ""}
     }
     let promptKind = "validate", promptInstruction = "";
     let previewSink, lastSent = null;
+    const characterEntries = () => Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.entryValues]));
     function assemblyContext(kind = promptKind, instruction = promptInstruction, onlyUnitIds = kind === "validate" ? selectedIds() : void 0) {
-      return { kind, instruction, onlyUnitIds, rawCharacters: Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
+      return { kind, instruction, onlyUnitIds, characterEntries: characterEntries(), rawCharacters: Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
     }
     function publishMessages(messages, kind = promptKind) {
       previewSink?.(messages, kind);
@@ -19383,7 +19960,8 @@ ${tag2.textContent || ""}
       const ids = [...new Set(unitIds.map(groupId))].filter((id4) => own19(characters, id4));
       if (!ids.length) return;
       const queue = planNormalizationBatches(ids, pending, liveState(), {
-        maxWarnings: normalizationLimit(requestConfig, "normalizationWarningsPerBatch")
+        maxWarnings: normalizationLimit(requestConfig, "normalizationWarningsPerBatch"),
+        rawSources: characterEntries()
       });
       if (!queue.length) return;
       const controller2 = new AbortController();
@@ -19430,44 +20008,32 @@ ${tag2.textContent || ""}
           controller2.signal.throwIfAborted();
           try {
             if (result.error) throw result.error;
-            let accepted;
-            let repairAttempts = 0;
-            try {
-              accepted = commitNormalization(key4, batch, result.value, createdTemplates);
-            } catch (error2) {
-              if (!normalizationRepairAllowed({ attempts: repairAttempts, explicitUnresolved: error2.noRepair || result.value?.explicitUnresolved })) throw error2;
-              repairAttempts++;
-              progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728\u4FEE\u6B63\u8F93\u51FA`);
-              try {
-                const revised = await request(error2.missingWarnings ? { ...batch, warnings: error2.missingWarnings } : batch, index, error2);
+            const repairResult = await runNormalizationRepair({
+              batch,
+              index,
+              result: result.value,
+              commit: (repairBatch, payload, options2 = {}) => {
                 controller2.signal.throwIfAborted();
-                accepted = commitNormalization(key4, batch, revised, createdTemplates, { acceptPartial: true });
-              } catch (retryError) {
-                controller2.signal.throwIfAborted();
-                if (!error2.missingCoverage || key4 !== activeBattleKey) throw retryError;
-                accepted = commitNormalization(key4, batch, result.value, createdTemplates, { acceptPartial: true });
-              }
-            }
-            if (!repairAttempts && accepted.repairWarnings?.length) {
-              repairAttempts++;
-              progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728\u4FEE\u590D\u62D2\u6536\u9879`);
-              try {
-                const revisedBatch = { ...batch, warnings: accepted.repairWarnings };
-                const revised = await request(revisedBatch, index, accepted.repairError);
-                controller2.signal.throwIfAborted();
-                const repaired = commitNormalization(key4, revisedBatch, revised, createdTemplates, { acceptPartial: true });
-                applied += repaired.applied;
-                replies.push(repaired.data);
-                unmatchedNotes.push(...repaired.unmatchedNotes);
-                rejectedItems.push(...repaired.rejected);
-                const outstanding = new Set(repaired.missing);
-                accepted.rejected = accepted.rejected.filter((item) => {
-                  const related = accepted.repairWarnings.filter((warning) => rejectedWarning(item, warning));
-                  return !related.length || related.some((warning) => outstanding.has(warning));
-                });
-              } catch (error2) {
-                controller2.signal.throwIfAborted();
-              }
+                if (key4 !== activeBattleKey) throw new Error("\u6218\u573A\u5DF2\u5207\u6362\uFF0C\u4E0D\u5E94\u7528\u65E7\u6218\u573A\u8865\u4E01");
+                return commitNormalization(key4, repairBatch, payload, createdTemplates, options2);
+              },
+              request,
+              onRepair: ({ kind }) => progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728${kind === "initial" ? "\u4FEE\u6B63\u8F93\u51FA" : "\u4FEE\u590D\u62D2\u6536\u9879"}`)
+            });
+            controller2.signal.throwIfAborted();
+            const accepted = repairResult.accepted;
+            const repaired = repairResult.repaired;
+            if (repaired) {
+              applied += repaired.applied;
+              replies.push(repaired.data);
+              unmatchedNotes.push(...repaired.unmatchedNotes);
+              rejectedItems.push(...repaired.rejected);
+              const outstanding = new Set(repaired.missing);
+              const repairedWarnings = repairWarnings(accepted);
+              accepted.rejected = accepted.rejected.filter((item) => {
+                const related = repairedWarnings.filter((warning) => rejectedWarning(item, warning));
+                return !related.length || related.some((warning) => outstanding.has(warning));
+              });
             }
             applied += accepted.applied;
             replies.push(accepted.data);
@@ -19892,7 +20458,8 @@ ${tag2.textContent || ""}
         if (key4 && (rehydrate || changed.length || removed.length)) {
           for (const id4 of ids) {
             const previous = stored[id4];
-            stored[id4] = { ...fresh[id4], resolvedWarnings: rawWarnings.filter((w) => w.unitId === id4 && previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id4]: previous }, fresh).length).map(warningKey) };
+            const { entryValues: _promptSources, ...record3 } = fresh[id4];
+            stored[id4] = { ...record3, resolvedWarnings: rawWarnings.filter((w) => w.unitId === id4 && previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id4]: previous }, fresh).length).map(warningKey) };
           }
           persistSettings({ charSnapshots: { ...config.charSnapshots, [key4]: stored } });
         }
@@ -19971,207 +20538,103 @@ ${tag2.textContent || ""}
       on(refresh, "click", () => scan().catch(showError));
       on(report, "click", deliverBattleReport);
     }
-    function rejectedWarning(item, warning) {
-      return Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`));
-    }
     function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
-      const { data, parseError } = parseAIResponse(reply);
-      const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
-      const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
-      if (isObject5(data) && !own19(data, "patch") && (explicitUnresolved || explicitNarrative)) data.patch = [];
-      if (!Array.isArray(data?.patch)) {
-        const error2 = new Error(`\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01${parseError ? `\uFF1A${parseError}` : ""}`);
-        const source = typeof reply === "string" ? stripReasoningBlocks(reply) : "";
-        error2.raw = /^[\s<]*(?:```(?:json)?\s*)?[{[]/i.test(source) ? source.slice(source.search(/[{[]/)) : void 0;
-        if (explicitUnresolved) error2.noRepair = true;
-        throw error2;
-      }
-      const raw = JSON.stringify(data, null, 2);
-      try {
-        const { matched: notes2, invalid: unmatchedNotes } = readUnresolvedDiagnostics(data.unresolved, sent);
-        const records2 = Object.fromEntries(unitIds.map((id4) => [id4, characters[id4]]));
-        const current = liveState();
-        const conflicts = [];
-        const rebasedPatch = data.patch.flatMap((operation2, index) => {
-          if (typeof operation2?.path !== "string") return [operation2];
-          try {
-            const accepted = normalizationOperations([operation2], snapshot, current, createdTemplates, fingerprintAt);
-            if (accepted.length) normalizationOperations(duplicateOperations(operation2, duplicatePaths), snapshot, current, createdTemplates, fingerprintAt);
-            return accepted;
-          } catch (error2) {
-            conflicts.push({ index, op: operation2, path: operation2.path, reason: error2.message });
-            return [];
-          }
-        });
-        const expanded = (operation2) => [operation2, ...duplicateOperations(operation2, duplicatePaths)];
-        const baselineForPartition = hydrateBaseline(sources.input);
-        const partition = partitionNormalizationPatch({
-          liveState: current,
-          baselineState: baselineForPartition,
-          existingOps: operations2(key4),
-          rawPatch: rebasedPatch,
-          conflictingDefinitions: conflicts.filter((item) => item.op.op === "add" && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path)).map((item) => item.path),
-          allowedUnitIds: unitIds,
-          expand: expanded,
-          apply: options.applyPatch ?? applyPatch,
-          validate: options.validateState || validateState,
-          normalize: (state) => {
-            refreshOpeningInitiative(state);
-            syncEquipmentEffects(state);
-            refreshOutcome(state);
-          }
-        });
-        const rejected = [...conflicts, ...partition.rejected];
-        const blockedWarnings = new Set(sent.filter((warning) => rejected.some((item) => rejectedWarning(item, warning))));
-        const eligibleWarnings = sent.filter((warning) => !blockedWarnings.has(warning));
-        const repairWarnings = sent.filter((warning) => blockedWarnings.has(warning) && !notes2.some((note) => note.warning === warning && note.detail));
-        const repairError = rejected.length ? Object.assign(new Error(rejected.map((item) => formatRejectedItem(item, current)).join("\uFF1B")), {
-          raw: JSON.stringify(rejected.map((item) => item.op))
-        }) : null;
-        data.patch = partition.accepted.map((item) => item.op);
-        const rootPath = entryRoot;
-        const operationsToApply = data.patch;
-        const paths = [...new Set(operationsToApply.flatMap(expanded).map((operation2) => rootPath(operation2.path)))];
-        const apply2 = options.applyPatch ?? applyPatch;
-        let next = current;
-        const changedAtApply = /* @__PURE__ */ new Map();
-        for (const operation2 of operationsToApply) {
-          const parentPath = operation2.path.slice(0, operation2.path.lastIndexOf("/"));
-          const path2 = operation2.op === "replace" || !fingerprintAt(next, parentPath)?.startsWith("[") ? operation2.path : parentPath;
-          const before2 = fingerprintAt(next, path2);
-          next = apply2(next, expanded(operation2), true);
-          const after = fingerprintAt(next, path2);
-          if (after !== before2) changedAtApply.set(operation2, { path: path2, after });
-        }
-        const changed = new Set(paths.filter((path2) => fingerprintAt(next, path2) !== fingerprintAt(current, path2)));
-        const effective = operationsToApply.filter((operation2) => expanded(operation2).some((copy3) => changed.has(rootPath(copy3.path))));
-        const patch = effective.flatMap(({ resolves, ...operation2 }) => expanded(operation2));
-        const changedOperations = effective.filter((operation2) => {
-          const change2 = changedAtApply.get(operation2);
-          if (!change2 || fingerprintAt(current, change2.path) === fingerprintAt(next, change2.path)) return false;
-          if (change2.path === operation2.path) return fingerprintAt(next, change2.path) === change2.after;
-          const array = JSON.parse(fingerprintAt(next, change2.path) ?? "null");
-          return operation2.op === "remove" ? fingerprintAt(next, change2.path) === change2.after : Array.isArray(array) && array.some((value) => JSON.stringify(value) === JSON.stringify(operation2.value));
-        });
-        const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2);
-        const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(
-          data.narrative,
-          eligibleWarnings,
-          narrativeSourceFor(records2),
-          { solved, unresolved: notes2 }
-        );
-        unmatchedNotes.push(...invalidNarrative);
-        if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes2.some((note) => note.warning && note.detail)) {
-          throw new Error("\u6A21\u578B\u8FD4\u56DE\u7684\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
-        }
-        let baseline, before;
-        if (patch.length || data.existing?.length) {
-          baseline = hydrateBaseline(sources.input);
-          before = applyPatch(baseline, operations2(key4), true);
-        }
-        const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
-          try {
-            const [entry2] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
-            const { warning, path: path2, fingerprint } = entry2;
-            if (blockedWarnings.has(warning) || notes2.some((note) => note.warning === warning) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) {
-              throw new Error("\u5DF2\u6709\u5B9E\u73B0\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81");
-            }
-            if (!solved.includes(warning)) solved.push(warning);
-            return [entry2];
-          } catch {
-            unmatchedNotes.push(`\u7B2C ${index + 1} \u6761\u5DF2\u6709\u5B9E\u73B0\u8BF4\u660E\u672A\u901A\u8FC7\u6838\u5BF9`);
-            return [];
-          }
-        });
-        if (data.existing !== void 0 && !Array.isArray(data.existing)) unmatchedNotes.push("\u672A\u80FD\u8BFB\u53D6\u6A21\u578B\u7684\u5DF2\u6709\u5B9E\u73B0\u8BF4\u660E");
-        const missing = missingDispositions(sent, solved, notes2, narrative);
-        if (missing.length && !patch.length && !verified.length && !notes2.some((note) => note.detail) && !narrative.length && !rejected.length && !unmatchedNotes.length) {
-          const error2 = new Error(`\u6A21\u578B\u6CA1\u6709\u63D0\u4EA4\u4EFB\u4F55\u53EF\u6838\u9500\u7ED3\u679C\uFF0C\u4ECD\u7F3A ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}`);
-          error2.missingCoverage = true;
-          error2.missingWarnings = missing;
-          error2.noRepair = Boolean(acceptPartial);
-          throw error2;
-        }
-        if (missing.length && !acceptPartial && !patch.length && !repairWarnings.length && !unmatchedNotes.length && !verified.length && !notes2.some((note) => note.detail) && !narrative.length) {
-          const error2 = new Error(`\u672C\u6279\u6F0F\u7B54 ${missing.length} \u9879\uFF1A${missing.map((w) => `${w.originPath ?? w.unitId}\u300C${diagnosticTitle(w)}\u300D`).join("\u3001")}\u3002\u672C\u6279\u5C1A\u672A\u5199\u5165\uFF1B\u4FDD\u7559\u5DF2\u5B8C\u6210\u7684\u8865\u4E01\uFF0C\u91CD\u65B0\u63D0\u4EA4\u5B8C\u6574\u7ED3\u679C\u3002\u5DF2\u5B9E\u73B0\u7684\u6548\u679C\u8BF7\u5728\u5B9E\u9645\u4FEE\u6539\u7684\u64CD\u4F5C\u4E0A\u8865 resolves\uFF1B\u53EA\u521B\u5EFA\u4F9D\u8D56\u6A21\u677F\u8FD8\u987B\u63A5\u56DE\u539F\u6280\u80FD\u3002\u5176\u4F59\u9010\u9879\u5199 unresolved \u5E76\u8BF4\u660E\u539F\u56E0\uFF0C\u7EAF\u53D9\u4E8B\u624D\u5199 narrative\u3002`);
-          error2.missingCoverage = true;
-          error2.missingWarnings = missing;
-          throw error2;
-        }
-        const additions = [];
-        if (patch.length || verified.length) {
-          const validate = options.validateState || validateState;
+      const current = liveState();
+      const records2 = Object.fromEntries(unitIds.map((id4) => [id4, characters[id4]]));
+      const accepted = acceptNormalizationResponse({
+        reply,
+        snapshot,
+        sent,
+        unitIds,
+        current,
+        baseline: hydrateBaseline(sources.input),
+        existingOps: operations2(key4),
+        createdTemplates,
+        records: records2,
+        sourceFor: narrativeSourceFor(records2),
+        duplicateOperations: (operation2) => duplicateOperations(operation2, duplicatePaths),
+        apply: options.applyPatch ?? applyPatch,
+        validate: options.validateState || validateState,
+        normalize: (state) => {
+          refreshOpeningInitiative(state);
+          syncEquipmentEffects(state);
+          refreshOutcome(state);
+        },
+        acceptPartial
+      });
+      const {
+        data,
+        notes: notes2,
+        unmatchedNotes,
+        rejected,
+        missing,
+        repairWarnings: rejectedWarnings,
+        repairError,
+        baseline,
+        before,
+        next,
+        effective,
+        patch,
+        solved,
+        verified,
+        narrative
+      } = accepted;
+      const additions = [];
+      if (patch.length || verified.length) {
+        const validate = options.validateState || validateState;
+        validate(next);
+        validate(applyNormalization(baseline, [...operations2(key4), ...patch]));
+        additions.push(...normalizationTransactions({
+          patch,
+          solved,
+          verified,
+          records: characters,
+          before,
+          fingerprint: fingerprintAt,
+          linkedRoots: effective.map((operation2) => [operation2.path, ...duplicateOperations(operation2, duplicatePaths).map((copy3) => copy3.path)])
+        }).map((batch) => batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
+        if (patch.length) {
+          refreshOpeningInitiative(next);
+          syncEquipmentEffects(next);
+          refreshOutcome(next);
           validate(next);
-          const previous = operations2(key4);
-          validate(applyNormalization(baseline, [...previous, ...patch]));
-          additions.push(...normalizationTransactions({
-            patch,
-            solved,
-            verified,
-            records: characters,
-            before,
-            fingerprint: fingerprintAt,
-            linkedRoots: effective.map((operation2) => expanded(operation2).map((copy3) => copy3.path))
-          }).map((batch) => batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
-          if (patch.length) {
-            refreshOpeningInitiative(next);
-            syncEquipmentEffects(next);
-            refreshOutcome(next);
-            validate(next);
-            if (typeof gameMount?.loadState !== "function") throw new Error("\u6C99\u76D8\u672A\u5C31\u7EEA\uFF0C\u65E0\u6CD5\u6CE8\u5165\u8865\u4E01");
-            gameMount.loadState(next);
-            currentState = next;
-            for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
-            save();
-          }
+          if (typeof gameMount?.loadState !== "function") throw new Error("\u6C99\u76D8\u672A\u5C31\u7EEA\uFF0C\u65E0\u6CD5\u6CE8\u5165\u8865\u4E01");
+          gameMount.loadState(next);
+          currentState = next;
+          for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
+          save();
         }
-        const stored = { ...config.charSnapshots[key4] };
-        const rejectedUnits = new Set(rejected.flatMap((item) => {
-          const direct = item.path.match(/^\/units\/([^/]+)/)?.[1];
-          if (direct) return [direct];
-          return [...blockedWarnings].map((warning) => warning.unitId).filter(Boolean);
-        }));
-        for (const [id4, record3] of Object.entries(records2)) {
-          const previous = stored[id4]?.hash === record3.hash ? stored[id4].resolvedWarnings ?? [] : [];
-          stored[id4] = { ...record3, at: Date.now(), normalized: !rejectedUnits.has(id4), resolvedWarnings: previous };
-        }
-        syncSettings();
-        const receipts = narrative.map(({ receipt }) => receipt);
-        const previousExemptions = config.narrativeExemptions[key4] ?? [];
-        persistSettings({
-          charSnapshots: { ...config.charSnapshots, [key4]: stored },
-          normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] },
-          narrativeExemptions: { ...config.narrativeExemptions, [key4]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
-        });
-        for (const { op, path: path2 } of effective) {
-          if (op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path2) && fingerprintAt(current, path2) === void 0) {
-            const fingerprint = fingerprintAt(next, path2);
-            if (fingerprint !== void 0) createdTemplates.set(path2, fingerprint);
-          }
-        }
-        filterResolved(stored, characters);
-        for (const note of notes2) {
-          const path2 = note.warning?.originPath;
-          if (!note.detail || !path2) continue;
-          note.evidence = changedOperations.flatMap((operation2) => {
-            if (operation2.op === "remove" || !Array.isArray(operation2.resolves) || !operation2.resolves.some((ref2) => identifiesWarning(ref2, note.warning) && sent.filter((warning) => identifiesWarning(ref2, warning)).length === 1)) return [];
-            const fields3 = ["rules", "mods", "pools", "damage", "heal"];
-            return fields3.flatMap((field) => {
-              const fieldPath = `${path2}/${field}`;
-              if (!pathUnder(operation2.path, fieldPath) && operation2.path !== path2) return [];
-              const value = fingerprintAt(next, fieldPath);
-              return value !== void 0 && value !== "[]" && value !== "{}" && value !== fingerprintAt(current, fieldPath) ? [[fieldPath, value]] : [];
-            });
-          });
-        }
-        reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
-        scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272`;
-        renderInstances();
-        return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings, repairError };
-      } catch (error2) {
-        error2.raw ??= raw;
-        throw error2;
       }
+      const stored = { ...config.charSnapshots[key4] };
+      const rejectedUnits = new Set(rejected.flatMap((item) => {
+        const direct = item.path.match(/^\/units\/([^/]+)/)?.[1];
+        if (direct) return [direct];
+        return [...accepted.blockedWarnings].map((warning) => warning.unitId).filter(Boolean);
+      }));
+      for (const [id4, record3] of Object.entries(records2)) {
+        const { entryValues: _promptSources, ...snapshotRecord } = record3;
+        const previous = stored[id4]?.hash === snapshotRecord.hash ? stored[id4].resolvedWarnings ?? [] : [];
+        stored[id4] = { ...snapshotRecord, at: Date.now(), normalized: !rejectedUnits.has(id4), resolvedWarnings: previous };
+      }
+      syncSettings();
+      const receipts = narrative.map(({ receipt }) => receipt);
+      const previousExemptions = config.narrativeExemptions[key4] ?? [];
+      persistSettings({
+        charSnapshots: { ...config.charSnapshots, [key4]: stored },
+        normalizationBatches: { ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] },
+        narrativeExemptions: { ...config.narrativeExemptions, [key4]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
+      });
+      for (const operation2 of effective) {
+        if (operation2.op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(operation2.path) && fingerprintAt(current, operation2.path) === void 0) {
+          const fingerprint = fingerprintAt(next, operation2.path);
+          if (fingerprint !== void 0) createdTemplates.set(operation2.path, fingerprint);
+        }
+      }
+      filterResolved(stored, characters);
+      reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
+      scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272`;
+      renderInstances();
+      return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings: rejectedWarnings, repairError };
     }
     function updateChatInstances(next, previous) {
       for (const id4 of Object.keys(previous?.units ?? {})) if (!own19(next.units, id4)) delete config.instances[id4];
