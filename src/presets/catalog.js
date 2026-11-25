@@ -29,7 +29,7 @@ export const EQUIPMENT = {
     name: '噬魂太刀', kind: 'weapon', weaponClass: 'light_blade', hand: 'one_handed', rangeType: 'melee', attack: 120,
     defense: 0, range: 1, accuracy: 5, damage: dice(2, 6, 'str', 'physical'),
     pools: { souls: { cap: 10, initial: 0, reloadable: false } },
-    mods: [{ stat: 'damageMult', mult: '1 + 0.5 * event.souls', when: weapon('soulblade') }],
+    mods: [{ stat: 'damageMult', mult: '1 + 0.5 * item.resource.souls', when: weapon('soulblade') }],
     rules: [rule('soulblade-kill', 'after_damage', [
       { op: 'resource', target: 'self', pool: 'souls', mode: 'add', amount: 1, local: true },
     ], weapon('soulblade', 'event.direct == true && event.dealt > 0 && !target.alive && target.team != self.team'))],

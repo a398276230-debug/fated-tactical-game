@@ -341,11 +341,13 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     }
     scenarioDescription();
   }
-  function restart() {
+  async function restart() {
     if (!seed.value || !seed.checkValidity()) throw new Error('种子须为 0–4294967295 的整数');
     if (customBattle) {
       const value = Number(seed.value);
-      game.createBattle({ kind: 'custom_state', state: customBattle.restart({ seed: value }) });
+      const opening = await customBattle.restart({ seed: value });
+      if (signal?.aborted) return;
+      game.createBattle({ kind: 'custom_state', state: opening });
       customBattle.seed = value;
       storage.setItem(`${storageKey}/seed`, String(value));
     } else game.createBattle({ scenarioId: scenario.value, ruleset: 'protocol', seed: Number(seed.value), ...(carry ? { persistentSnapshot: carry } : {}) });
@@ -619,7 +621,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       storage.removeItem(crossedKey);
       scenarioDescription();
     });
-    on('reset-button', 'click', () => { if (!pendingAsk()) safely(restart); });
+    on('reset-button', 'click', () => { if (!pendingAsk()) void restart().catch(e => error(e.message)); });
     on('end-turn', 'click', () => {
       if (pendingAsk()) return;
       playback.skip();
@@ -674,7 +676,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
         if (data.kind === 'persistent') {
           const previous = carry;
           carry = data;
-          try { restart(); } catch (e) { carry = previous; throw e; }
+          try { await restart(); } catch (e) { carry = previous; throw e; }
           storage.setItem(crossedKey, JSON.stringify(carry));
           scenarioDescription();
         } else {

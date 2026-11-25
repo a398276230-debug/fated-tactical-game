@@ -8,7 +8,10 @@ test('六档体型、伤害档位与距离命中表边界', () => {
   assert.equal(sizeFor(.6).id, 'small'); assert.equal(sizeFor(1.3).id, 'medium'); assert.equal(sizeFor(10).id, 'gargantuan');
   assert.equal(ratingFor(30).multiplier, 2); assert.equal(ratingFor(25).multiplier, 1.6); assert.equal(ratingFor(20).multiplier, 1.3);
   assert.equal(ratingFor(11).multiplier, 1); assert.equal(ratingFor(8).multiplier, .8); assert.equal(ratingFor(4).multiplier, .3); assert.equal(ratingFor(3).multiplier, 0);
-  assert.deepEqual([0,1,3,6,11].map(d => distanceTier(d).hit), [4,0,-2,-4,-6]); assert.equal(DISTANCE_TABLE[0].range, 6);
+  const distances = [0, .5, 1, 2.83, 3, 5.5, 6, 10.5, 11];
+  assert.deepEqual(distances.map(d => distanceTier(d).hit), [4,0,0,0,-2,-2,-4,-4,-6]);
+  assert.deepEqual(DISTANCE_TABLE.map(({min,max}) => [min,max]), [[0,0],[1,2],[3,5],[6,10],[11,null]]);
+  assert.equal(DISTANCE_TABLE[0].range, 6);
 });
 test('BL/MC 互斥、近战倍率、战技与先手公式', () => {
   assert.equal(sizeHitModifier({bodyLengthM:.5},{bodyLengthM:20,mc:2}),4);

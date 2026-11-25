@@ -175,8 +175,9 @@ export const vmHost = {
     const { damageType } = data;
     const event = { damageType, actorId: source?.id ?? null, targetId: target.id, weaponTemplateId: data.weaponTemplateId ?? null,
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, backstab: data.backstab ?? false,
-      melee: data.melee ?? false, souls: data.souls ?? 0, critical: data.critical ?? false,
-      ratingMultiplier: data.ratingMultiplier ?? 1 };
+      melee: data.melee ?? false, critical: data.critical ?? false,
+      ratingMultiplier: data.ratingMultiplier ?? 1,
+      ...(typeof data.intent === 'string' && { intent: data.intent }) };
     if (source && vmHost.flag(state, source, 'harmless')) return 0;
     let amount = data.amount;
     if (source) {
@@ -209,7 +210,8 @@ export const vmHost = {
   },
   prepareHeal(state, source, target, data) {
     if (source && vmHost.flag(state, source, 'harmless')) return 0;
-    const event = { actorId: source?.id ?? null, targetId: target.id, actionType: data.actionType ?? null };
+    const event = { actorId: source?.id ?? null, targetId: target.id, actionType: data.actionType ?? null,
+      ...(typeof data.intent === 'string' && { intent: data.intent }) };
     const scaled = source ? mod(state, event, source.id, 'healingMult', data.amount) : data.amount;
     return Math.max(0, mod(state, event, target.id, 'incomingHealMult', scaled));
   },

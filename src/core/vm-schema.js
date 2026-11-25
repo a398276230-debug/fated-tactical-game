@@ -33,10 +33,10 @@ export const EVENT_SCALAR_KEYS = Object.freeze([
   'bonusDelta', 'backX', 'backY', 'cancel', 'canceled', 'chainDepth', 'change', 'checkKind', 'commitKind', 'consumeCostOnCancel',
   'costScale', 'critical', 'damageScale', 'damageType', 'dc', 'dcDelta', 'deadId', 'dealt', 'defenderId', 'delta', 'overkill',
   'direct', 'distance', 'finalAmount', 'finalDC', 'flank', 'forceOutcome', 'fromX', 'fromY', 'healing', 'hit',
-  'hostile', 'ignoreDodge', 'ignoreLOS', 'immunityOwnerId', 'initiativeBonus', 'instantDeath', 'killed', 'killedId',
+  'hostile', 'ignoreDodge', 'ignoreLOS', 'immunityOwnerId', 'initiativeBonus', 'instantDeath', 'intent', 'killed', 'killedId',
   'killerId', 'kind', 'melee', 'minRating', 'naturalRoll', 'opportunityAttack', 'other', 'passed', 'pool', 'poolId',
   'power', 'preRolled', 'preserveLife', 'preventDeath', 'rating', 'ratingDelta', 'ratingMultiplier', 'rawAmount', 'rawNatural',
-  'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'souls', 'sourceId',
+  'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'sourceId',
   'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
   'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'eventRef',
 ]);
@@ -107,7 +107,7 @@ const controlPolicy = object({
 });
 export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentDifficulty', 'shatter']);
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'shatter']);
 const stat = enumOf(...statNames);
 export const skillShapes = Object.freeze(['single', 'circle', 'ring', 'fan', 'cone', 'line']);
 export const selectorAreaShapes = Object.freeze([...skillShapes, 'rect']);
@@ -120,7 +120,7 @@ export const stackModes = Object.freeze(['refresh', 'stack', 'replace', 'extend'
 export const durationTypes = Object.freeze(['battle_turns', 'until_removed', 'persistent']);
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
 export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
-  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'critDamageBonus', 'incomingAccuracy', 'intentDifficulty']);
+  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'critDamageBonus', 'incomingAccuracy', 'intentBonus', 'intentDifficulty']);
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
@@ -151,7 +151,9 @@ const zoneArea = withRules(object({
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
 const scalarOrExpr = either(number, bool, { type: 'string', maxLength: 1024 });
-const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')), shareRulesTo: ref('pureSelector') };
+const poolDefinition = object({ name: text, cap: numericExpr, initial: numericExpr }, ['cap']);
+const unitPools = mapOf(id, poolDefinition);
+const carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf('undispellable', 'concept_immune'), 1), mods: list(ref('statMod')), rules: list(ref('rule')), shareRulesTo: ref('pureSelector'), unitPools };
 export const carrierFields = Object.freeze(Object.keys(carrier).filter(key => key !== 'name'));
 export const statusPatchFields = Object.freeze(['remainingTurns', 'durationType', 'stackMode', 'stacks', 'expireOn', ...carrierFields]);
 export const validCarrierScalar = value => Number.isFinite(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= scalarOrExpr.anyOf[2].maxLength);

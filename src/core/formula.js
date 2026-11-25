@@ -103,6 +103,9 @@ for (const [scope, label] of Object.entries(unitScopes)) {
   }
 }
 
+dynamicFamily('item.resource', '当前装备实例的资源池余额，缺省为 0', (context, id) =>
+  callback(context, 'itemResource', own(context, 'item'), id) ?? 0);
+
 dynamicFamily('vars', '当前栈帧的局部变量，带 ID 的实体引用返回其 ID', (context, id) => {
   const value = frameValue(context, id);
   const type = own(value, 'type');
@@ -161,6 +164,7 @@ register('weapon.range', '事件武器模板的基础射程', context => own(cal
 for (const [name, description] of Object.entries({
   skillId: '本次行动施放的技能 ID（普攻或非技能事件为 null；限定本技能触发写 event.skillId == skill.id）',
   actionType: '本次行动类型（attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item）',
+  intent: '敌对打击意图（normal/function/core/kill/concept）：检定前为声明值，受击分支检定失败后为 normal，非打击事件无此字段',
   infiniteAmmo: '本次攻击声明时是否免耗弹药', weaponId: '本次使用的武器实例 ID',
   actorId: '本次事件的发起单位 ID', targetId: '本次事件的主目标单位 ID',
   damageType: '伤害类型（physical/energy/mental/true）', direct: '是否为直接伤害（true/false）',

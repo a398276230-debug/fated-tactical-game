@@ -109,6 +109,14 @@ test('lethal or rooting reaction interrupts before entering the next square', ()
   }
 });
 
+test('opportunity after_hit uses normal even when the reactor selected a special intent', () => {
+  const s = hall();
+  s.units.sentry.intent = 'kill';
+  s.equipment.spear.rules = [{ ...rootReaction, filter: `${rootReaction.filter} && event.intent == 'normal'` }];
+  applyAction(s, { type: 'move', x: 4, y: 0 });
+  assert.equal(s.units.mover.statuses.root?.remainingTurns, 1);
+});
+
 test('an interrupt cancels the attempted step without spending later reactors', () => {
   const s = state(['##.##', '.....', '##.##'], [mover(0, 1), enemy('a', 2, 0), enemy('z', 2, 2)]);
   s.equipment.spear.rules = [rootReaction];

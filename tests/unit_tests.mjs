@@ -28,6 +28,8 @@ import './z_interaction_tests.mjs';
 import './terrain_descriptor_regression_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
+import './intent_commit_tests.mjs';
+import './intent_commit_tests.mjs';
 import './instance_card_tests.mjs';
 import './tactical_action_tests.mjs';
 import './morale_tests.mjs';
@@ -234,7 +236,7 @@ test('优势/劣势抵消；自然 1/20 门槛与命中概率可审计', () => {
 test('装备转手/热改/跨战：同名两刀不串值，常驻状态跟随 ID', () => {
   const a = boot();
   commit(a,adjust(a,'soulblade-lan',3),adjust(a,'soulblade-spare',2), status('swordsman','haste',{durationType:'persistent'}), status('swordsman','blind'));
-  const mods = a.getBattleState().equipment.soulblade.mods.map(mod => mod.stat === 'damageMult' ? {...mod, mult:'1 + 0.75 * event.souls'} : mod);
+  const mods = a.getBattleState().equipment.soulblade.mods.map(mod => mod.stat === 'damageMult' ? {...mod, mult:'1 + 0.75 * item.resource.souls'} : mod);
   commit(a,{type:'patch_equipment_template',templateId:'soulblade',patch:{mods}},
     {type:'equip_item',instanceId:'soulblade-lan',unitId:'ranger'},{type:'equip_item',instanceId:'soulblade-spare',unitId:'swordsman'});
   assert.equal(u(a,'ranger').equipment[0].id,'soulblade-lan');
@@ -242,7 +244,8 @@ test('装备转手/热改/跨战：同名两刀不串值，常驻状态跟随 ID
   assert.equal(pool(a,'soulblade-lan').current,3);
   assert.equal(pool(a,'soulblade-spare').current,2);
   assert.deepEqual(u(a,'swordsman').equipment[0].mods,mods);
-  assert.equal(a.previewAction({type:'attack'}).multiplier,2.5);
+  commit(a,stats('swordsman',{x:2,y:2}));
+  assert.equal(a.previewAction({type:'attack',x:3,y:2,targetId:'scout'}).damageMultiplier,2.5);
   const b=boot({scenarioId:'altar',persistentSnapshot:JSON.parse(JSON.stringify(a.exportPersistentCarryOver()))});
   assert.equal(u(b,'ranger').weapon,'soulblade-lan');
   assert.ok(u(b,'swordsman').statuses.haste);

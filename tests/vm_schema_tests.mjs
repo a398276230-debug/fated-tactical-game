@@ -40,6 +40,17 @@ test('event fields are closed while runtime missing event values remain nullable
   assert.equal(evaluateExpr('event.missing == event.other', { event: {} }), null);
 });
 
+test('intent is a read-only strike scalar; intentBonus accepts only flat modifiers', () => {
+  const when = "event.intent == 'core'";
+  assert.ok(validVmStatMod({ stat: 'intentBonus', flat: 5, when }));
+  assert.ok(flatOnlyStats.includes('intentBonus'));
+  assert.ok(validVmRule({ ...rule('after_hit', { op: 'heal', ...minimal.heal }), filter: when }));
+  assert.equal(validVmOpcode(mutation({ intent: 'kill' })), false);
+  assert.equal(evaluateExpr(when, { event: { intent: 'core' } }), true);
+  for (const op of ['==', '!=']) assert.equal(evaluateExpr(`event.intent ${op} 'normal'`, { event: {} }), null);
+  assert.equal(evaluateExpr('event.intent == null', { event: {} }), true);
+});
+
 test('skill and zone shape enums stay separated and corpse remains a valid target', () => {
   assert.equal(skillShapes.includes('rect'), false);
   assert.deepEqual(zoneAreaShapes, ['single', 'circle', 'ring', 'rect', 'cells', 'board']);

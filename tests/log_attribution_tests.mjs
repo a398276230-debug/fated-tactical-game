@@ -21,6 +21,17 @@ function setup(program) {
   return { state, actor, target, action: { type: 'attack', x: target.x, y: target.y } };
 }
 
+test('intent bonuses are named in status reports and signed in opposed-roll arithmetic', () => {
+  const report = formatBattleReportText({ title: '状态', units: [], rounds: [{ round: 1, events: [
+    { type: 'status', text: '获得犹豫', detail: { mods: [{ stat: 'intentBonus', flat: -8 }] } },
+  ] }] });
+  assert.match(report, /意图加值 -8/);
+  for (const [bonus, term] of [[5, ' + 意图加值 5'], [-8, ' − 意图加值 8'], [0, '']]) {
+    const detail = { intent: 'core', attackerBase: 5, attackerD20: 14, ratingBonus: 10, intentBonus: bonus, attackerTotal: 29 + bonus };
+    assert.equal(narrate({ type: 'intent', detail }, { units: {} }).lines[0], `攻方：阶位 5 + 骰 14 + 评级 10${term} = ${29 + bonus}`);
+  }
+});
+
 test('passive VM logs identify skill, rule and original attack in UI and export', () => {
   const { state, actor, target, action } = setup([
     { op: 'damage', target: 'self', amount: 1, damageType: 'true', label: '回响' },
@@ -62,6 +73,29 @@ test('attribution survives an ask suspension and is attached after resume', () =
   assert.equal(log.detail.attribution.ruleId, 'echo_after_action');
   assert.equal(log.detail.attribution.action.type, 'attack');
   assert.equal(resumed.units[actor.id].hp, actor.hp - 2);
+});
+
+test('an after_check ask preserves the effective intent and multiplier across JSON resume', () => {
+  const { state, actor, target, action } = setup([]);
+  actor.mods = [{ stat: 'intentBonus', flat: 100 }];
+  actor.rules = [
+    { id: 'hit', hook: 'before_check', program: [{ op: 'mutate_event', patch: { forceOutcome: 'crit' } }] },
+    { id: 'hold', hook: 'after_check', filter: "event.intent == 'core'", program: [
+      { op: 'ask', chooser: 'self', kind: 'number', min: 1, max: 2, out: 'n', prompt: '继续结算？' },
+    ] },
+  ];
+  applyAction(state, { ...action, targetId: target.id, intent: 'core' });
+  const frame = state.vm.stack.find(frame => frame.native === 'strike');
+  assert.ok(state.vm.pendingAsk);
+  assert.equal(state.vm.events[frame.awaitEvent].intent, 'core');
+  assert.equal(frame.intentOutcome.multiplier, 1.4);
+  const resumed = JSON.parse(JSON.stringify(state));
+  const answer = { type: 'answer', askId: state.vm.pendingAsk.askId, value: 1 };
+  const continued = applyAction(state, answer);
+  assert.deepEqual(applyAction(resumed, answer), continued);
+  assert.ok(continued.some(log => log.type === 'damage'));
+  assert.equal(resumed.rng, state.rng);
+  assert.equal(resumed.units[target.id].hp, state.units[target.id].hp);
 });
 
 test('battle report explains automatic cell selections and the amount pending in a damage choice', () => {

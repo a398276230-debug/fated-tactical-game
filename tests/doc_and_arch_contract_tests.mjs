@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { vmHooks, vmOpcodes } from '../src/core/vm-schema.js';
+import { flatOnlyStats, statNames, vmHooks, vmOpcodes } from '../src/core/vm-schema.js';
 import { STATUSES } from '../src/presets/status-defaults.js';
 import { COMMAND_TYPES } from '../src/api/commands.js';
 
@@ -58,6 +58,13 @@ test('documentation counts match authoritative sources', () => {
   assert.match(read('README.md'), /version: 11/);
   assert.match(docs, /15 项|15 个|Commands（15）/);
   assert.doesNotMatch(docs, /adjust_item_counter/);
+});
+
+test('DSL modifier lists in the handbook match the schema', () => {
+  const lines = read('docs/dsl.md').split('\n');
+  const names = line => [...line.matchAll(/`(\w+)`/g)].map(match => match[1]);
+  assert.deepEqual(names(lines.find(line => line.startsWith('`statMod.stat`'))), statNames.filter(stat => !['str', 'agi', 'con', 'int', 'spi'].includes(stat)));
+  assert.deepEqual(names(lines.find(line => line.startsWith('- flat-only stats：'))), flatOnlyStats);
 });
 
 test('Tavern module graph has no cycles', () => {

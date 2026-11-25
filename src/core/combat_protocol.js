@@ -76,18 +76,26 @@ export const stanceFor = (slots = {}) => {
 };
 export const stanceLabel = Object.freeze({ light_blade: '轻剑', dual_wield: '双持', attunement: '同调', greatsword: '重剑', sword_shield: '剑盾', unarmed: '无械' });
 export const STANCE_RULES = Object.freeze({
-  light_blade: Object.freeze({ armorPenetration: .08, closeRange: true, rangedDistancePenalty: 0 }),
-  dual_wield: Object.freeze({ offHandDamage: .5, comboOffHandDamage: .75, followUp: true }),
-  attunement: Object.freeze({ itemCharges: 2 }),
-  greatsword: Object.freeze({ offensiveDamage: 1.3, defensiveDamage: 1.5, armorPenetration: .05, parryQuota: 2, parryReduction: .6, perfectParryReduction: 1 }),
-  sword_shield: Object.freeze({ blockReduction: .25, heavyBlockReduction: .45, shieldDamageFactor: .3 }),
-  unarmed: Object.freeze({}),
+  light_blade: { armorPenetration: .08, closeRange: true, rangedDistancePenalty: 0 },
+  dual_wield: { offHandDamage: .5, comboOffHandDamage: .75, followUp: true },
+  attunement: { itemCharges: 2 },
+  greatsword: { offensiveDamage: 1.3, defensiveDamage: 1.5, armorPenetration: .05, parryQuota: 2, parryReduction: .6, perfectParryReduction: 1 },
+  sword_shield: { blockReduction: .25, heavyBlockReduction: .45, shieldDamageFactor: .3 },
+  unarmed: {},
 });
 export function stanceRules(stance) { return STANCE_RULES[stance] ?? STANCE_RULES.unarmed; }
 export function sizeFor(bodyLengthM) { return BL_SIZE_TABLE.find(x => Number.isFinite(bodyLengthM) && bodyLengthM < x.max) ?? BL_SIZE_TABLE[2]; }
 export function sizeClassFor(bodyLengthM) { return Math.min(5, 3 - sizeFor(bodyLengthM).value); }
 function sizeForUnit(unit = {}) { return unit.bodyLengthM == null ? (BL_SIZE_TABLE.find(x => x.id === unit.sizeId) ?? BL_SIZE_TABLE[2]) : sizeFor(unit.bodyLengthM); }
-export function distanceTier(distance) { return DISTANCE_TABLE.find(x => distance >= x.min && distance <= x.max) ?? DISTANCE_TABLE.at(-1); }
+// Keep the descriptor-facing table's closed integer endpoints unchanged. For continuous distances,
+// d=0 is the exact 贴身 point; d in (0,1) maps to 近程, and d >= 1 is floored into
+// the table's effective half-open ranges [1,3), [3,6), [6,11), and [11,+∞).
+export function distanceTier(distance) {
+  const value = Number(distance);
+  if (value === 0) return DISTANCE_TABLE[0];
+  const normalized = value > 0 && value < 1 ? 1 : Math.floor(value);
+  return DISTANCE_TABLE.find(entry => normalized >= entry.min && (entry.max == null || normalized <= entry.max)) ?? DISTANCE_TABLE.at(-1);
+}
 export function ratingFor(total) { return RATING_TABLE.find(x => x.min === null || total >= x.min); }
 export function initiative({ agility = 0, percent = 0, d20 = 0, attack = [], action = [], flat = 0 } = {}) { return agility * (1 + percent) + d20 + Math.max(0, ...attack, 0) + Math.max(0, ...action, 0) + flat; }
 export function bodySizeLabel(unit) {
@@ -98,7 +106,10 @@ export function sizeHitModifier(attacker, defender) { const a = sizeForUnit(atta
 export function meleeMultiplier(unit = {}) { const s = sizeForUnit(unit); return (unit.mc ?? 1) >= 2 ? 1 : s.melee; }
 export function intentCheck(intent = 'normal', attackerTier = 1, defenderTier = 1, attackerD20 = 10, defenderD20 = 10, ratingBonus = 0) {
   const spec = typeof intent === 'string' ? INTENTS[intent] ?? INTENTS.normal : intent;
-  if (!spec.difficulty) return { required: false, success: true, ...spec };
+  const special = spec.name !== INTENTS.normal.name;
+  if (!special) return { required: false, success: true, ...spec };
+  // The tier wall is a rule of special intent itself; do not let a negative
+  // difficulty modifier turn a two-tier gap into an ordinary contest.
   if (attackerTier < defenderTier - 1) return { required: true, success: false, forced: true, ...spec };
   return { required: true, success: attackerTier * 5 + attackerD20 + ratingBonus >= defenderTier * 5 + defenderD20 + spec.difficulty, ...spec };
 }

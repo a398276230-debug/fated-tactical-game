@@ -216,7 +216,7 @@ export function narrate(log, state) {
       const ok = d.success;
       return out({ tone: ok ? 'hit' : 'miss', icon: ok ? '🎯' : '🛡️',
         title: `意图「${d.name ?? INTENT_NAMES[d.intent] ?? d.intent}」${ok ? '成立' : '受阻'}`,
-        lines: [`攻方：阶位 ${d.attackerBase} + 骰 ${d.attackerD20}${d.ratingBonus ? ` + 评级 ${d.ratingBonus}` : ''} = ${d.attackerTotal}`,
+        lines: [`攻方：阶位 ${d.attackerBase} + 骰 ${d.attackerD20}${d.ratingBonus ? ` + 评级 ${d.ratingBonus}` : ''}${d.intentBonus ? ` ${d.intentBonus > 0 ? '+' : '−'} 意图加值 ${Math.abs(d.intentBonus)}` : ''} = ${d.attackerTotal}`,
           `守方：阶位 ${d.defenderBase} + d20 ${d.defenderD20} + 难度 ${d.intentDifficulty} = ${d.defenderTotal}`,
           ok ? `伤害 ×${d.multiplier}` : '意图落空，按普通命中结算'],
         roll: { kind: 'versus', label: `意图对抗 · ${d.name ?? ''}`, verdict: ok ? '意图成立' : '意图受阻', tone: ok ? 'hit' : 'miss',

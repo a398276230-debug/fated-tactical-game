@@ -5,7 +5,7 @@ import { evaluateExpr } from '../core/formula.js';
 const damageNames = { physical: '物理', energy: '能量', mental: '精神', true: '真实' };
 const statNames = {
   str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神', accuracy: '命中', dodge: '闪避',
-  defense: '防御', initiative: '先攻', armor: '护甲', armorPierce: '穿甲', incomingAccuracy: '被命中修正', intentDifficulty: '意图难度', shatter: '碎裂增伤', damageReduction: '减伤比例',
+  defense: '防御', initiative: '先攻', armor: '护甲', armorPierce: '穿甲', incomingAccuracy: '被命中修正', intentBonus: '意图加值', intentDifficulty: '意图难度', shatter: '碎裂增伤', damageReduction: '减伤比例',
   damageReductionFlat: '固定减伤', damage: '伤害', healing: '治疗', skillPower: '技能威力',
 };
 const modifierNames = {

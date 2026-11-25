@@ -57,6 +57,7 @@ function commitOp(env) {
       scheduleCommit(state, frame, { ...op, sourceId, targetId: target.id, pool, amount, minRemain,
         ...(op.mode === 'swap' && { otherPool }),
         ...(label && { label }), actionType: action?.actionType ?? null, skillId: action?.skillId ?? null,
+        ...(sourceId === action?.actorId && typeof action?.intent === 'string' ? { intent: action.intent } : {}),
         ...(frame.carrier?.type === 'item' ? { carrierId: frame.carrier.id } : {}) });
     }
   }
@@ -96,7 +97,8 @@ export function continueCommit({ state, frame, host, options }) {
       sourceRuleId: frame.ruleId, direct: data.direct ?? true, preserveLife: data.lethal === false || Boolean(target.nonLethal || host.flag?.(state, target, 'preserveLife') || host.preserveLife?.(state, source)),
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, weaponTemplateId: data.weaponTemplateId ?? null,
       melee: data.melee ?? false, backstab: data.backstab ?? false,
-      critical: data.critical ?? false, ratingMultiplier: data.ratingMultiplier ?? 1 });
+      critical: data.critical ?? false, ratingMultiplier: data.ratingMultiplier ?? 1,
+      ...(typeof data.intent === 'string' && { intent: data.intent }) });
     frame.pc++;
     scheduleHooks(state, frame, 'before_commit', frame.eventRef, host);
     return;
@@ -194,7 +196,8 @@ export function continueCommit({ state, frame, host, options }) {
     for (const depleted of depletion.reverse()) pushFrame(state, { native: 'lethal', ownerId: target.id, sourceId: data.sourceId,
       data: { poolId: depleted.id, damageType: event.damageType, targetId: target.id,
         rawAmount: event.rawAmount ?? 0, finalAmount: event.finalAmount ?? 0, dealt: event.dealt ?? 0, absorbed: absorbed ?? 0,
-        overkill: Math.max(0, (event.finalAmount ?? 0) - (absorbed ?? 0) - before) } });
+        overkill: Math.max(0, (event.finalAmount ?? 0) - (absorbed ?? 0) - before),
+        ...(typeof event.intent === 'string' && { intent: event.intent }) } });
     return;
   }
   if (frame.pc === 2) {

@@ -50,15 +50,32 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 
 ## 4. stat mods、锁和 flags
 
-`statMod.stat` 当前包括五维属性和：`movement`、`incomingDistanceOffset`、`armor`、`armorPierce`、`armorPiercePercent`、`damageMult`、`finalDamageMult`、`incomingDamageMult`、`damageFlat`、`damageReduction`、`damageReductionFlat`、`dr`、`healingMult`、`incomingHealMult`、`costMult`、`checkBonus`、`dcBonus`、`resistBonus`、`dodge`、`advantage`、`initiativeFlat`、`apMax`、`incomingAccuracy`、`intentDifficulty`、`shatter`。
+`statMod.stat` 当前包括五维属性和：`movement`、`incomingDistanceOffset`、`armor`、`armorPierce`、`armorPiercePercent`、`damageMult`、`finalDamageMult`、`incomingDamageMult`、`damageFlat`、`damageReduction`、`damageReductionFlat`、`dr`、`healingMult`、`incomingHealMult`、`costMult`、`checkBonus`、`dcBonus`、`resistBonus`、`dodge`、`advantage`、`initiativeFlat`、`critDamageBonus`、`apMax`、`incomingAccuracy`、`intentBonus`、`intentDifficulty`、`shatter`。
 
-- flat-only stats：`incomingDistanceOffset`、`armorPierce`、`damageFlat`、`damageReductionFlat`、`dcBonus`、`resistBonus`、`advantage`、`dodge`、`checkBonus`、`initiativeFlat`、`incomingAccuracy`、`intentDifficulty`。
+- flat-only stats：`incomingDistanceOffset`、`armorPierce`、`damageFlat`、`damageReductionFlat`、`dcBonus`、`resistBonus`、`advantage`、`dodge`、`checkBonus`、`initiativeFlat`、`critDamageBonus`、`incomingAccuracy`、`intentBonus`、`intentDifficulty`。
+- 意图对抗：攻方 `intentBonus` 加到攻方总值，守方 `intentDifficulty` 加到对抗难度，均不改变普通命中。例如猎人帽的「命中核心判定 +5」写 `{ "stat": "intentBonus", "flat": 5, "when": "event.intent == 'core'" }`。敌对打击检定前读取声明意图，检定失败后该目标分支读取 `normal`；外层 `after_action` 保留声明值，非打击事件不含此键。
 - ratio stats：`damageReduction`、`dr`、`armorPiercePercent`、`shatter`。
 - multiplier stats：`incomingDamageMult`、`damageMult`、`finalDamageMult`、`healingMult`、`incomingHealMult`、`costMult`。
 - 控制槽：`attack`、`action`、`move`、`cast`、`reaction`、`fly`、`teleport`。
 - flags：`preserveLife`、`blockRevive`、`blockResourceRestore`、`untargetableSingle`、`harmless`、`guaranteed_hit`、`guaranteed_crit`、`hidden`、`intercept`、`taunted`、`infiniteAmmo`。
 
 `aggregateModifiers()` 汇总每个单位在事件上下文中的 stats、locks、flags、controlPolicy。表达式型 `flat`/`mult`/`additivePercent` 在 carrier scope 中求值；同一载体声明按模板和索引去重。
+
+## 4.1 资源池作用域
+
+`pools` 是装备实例池的模板声明，例如武器弹药。装备规则作用域用 `item.resource.<poolId>` 读取当前实例余额，缺省为数字 `0`；`resource` 指令的 `local:true` 才读写该实例池。`event.souls` 等业务专用事件字段不属于 DSL。
+
+`unitPools` 是挂在单位身上的命名共享池，equipment、skill、unit 模板均可声明：
+
+```json
+{
+  "unitPools": {
+    "souls": { "name": "灵魂", "cap": 10, "initial": 0 }
+  }
+}
+```
+
+初始化时同一单位的同名声明合并为一个池，当前值默认 `initial ?? 0`。跨载体规则用 `self.resource.<poolId>` 或 `resource(self, "<poolId>")` 读取和修改；技能的 `resourceCost: {"resource":"<poolId>","amount":N}` 也按单位池扣费。标准化 AI 必须读取 roster 末尾的 `<role_readonly_index>`，复用其中 `sharedPoolLedger` 已登记的 `poolId`、名称和语义；不要把共享池写成 equipment `pools`，也不要为同一资源重新命名。
 
 ## 5. Selector、spawn 和状态引用
 

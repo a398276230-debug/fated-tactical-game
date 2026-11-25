@@ -2,10 +2,12 @@ import { evaluateExpr } from './formula.js';
 import { isTapeAction, isStrikeAction, continueNativeAction } from './combat.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { resolvePoint } from './vm-select.js';
+import { aggregateModifiers } from './vm-carriers.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const MAX_ACTION_CHAIN_DEPTH = 3;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const aggregateIntentLock = (state, unitId) => aggregateModifiers(state, unitId).controlPolicy.intentLock;
 
 export function queueVMAction(state, { actorId, action, overrides = {}, record = false, chainDepth = 0 }) {
   return pushFrame(state, { native: 'action', ownerId: actorId, sourceId: actorId, chainDepth,
@@ -42,6 +44,9 @@ export function perform({ state, context, select, op }) {
     }
     const overrides = tape ? { free: true, ignoreSlots: true, ...op.overrides,
       ...(tape.interactiveId && { interactiveId: tape.interactiveId }) } : { ...op.overrides };
+    if (['attack', 'skill', 'shield_bash'].includes(action.type) && overrides.intent !== undefined) {
+      action.intent = overrides.intent;
+    }
     if (overrides.scale !== undefined) {
       overrides.scale = evaluateExpr(overrides.scale, context);
       if (!Number.isFinite(overrides.scale)) continue;
@@ -73,13 +78,17 @@ export function continueAction({ state, frame, host }) {
     }
     frame.plan = plan;
     frame.originalOrigin = overrides.origin ?? { x: actor.x, y: actor.y, ...(actor.altitude ? { altitude: actor.altitude } : {}) };
+    const strike = isStrikeAction(action, plan);
+    const hostileStrike = strike && plan.hostile === true;
+    frame.initialIntentLock = aggregateIntentLock(state, actor.id);
     frame.eventRef = newEvent(state, { actorId: actor.id, actionType: action.type, skillId: action.skillId ?? null,
       targetId: plan.targetIds[0] ?? plan.targetId ?? null, center: plan.center, origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
+      ...(hostileStrike ? { intent: plan.intent ?? 'normal' } : {}),
       mpCost: plan.mp ?? 0, spCost: plan.sp ?? 0, hpCost: plan.hp ?? 0, power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,
       ...(plan.instanceId && { weaponId: plan.instanceId, infiniteAmmo: plan.infiniteAmmo === true }),
       weaponTemplateId: plan.weaponTemplateId ?? null, instanceId: plan.instanceId ?? null, chainDepth: frame.chainDepth ?? 0,
       triggered: (frame.chainDepth ?? 0) > 0 });
-    if (!isStrikeAction(action, plan)) {
+    if (!strike) {
       frame.pc = 5;
       return;
     }
@@ -97,9 +106,11 @@ export function continueAction({ state, frame, host }) {
       return;
     }
     const originalOrigin = frame.originalOrigin ?? overrides.origin ?? actor;
+    const intentLock = aggregateIntentLock(state, actor.id);
     if (plan.provisional || event.origin.x !== originalOrigin.x || event.origin.y !== originalOrigin.y
         || event.origin.z !== originalOrigin.z || event.origin.altitude !== originalOrigin.altitude
-        || (event.ignoreLOS === true) !== (overrides.ignoreLOS === true)) {
+        || (event.ignoreLOS === true) !== (overrides.ignoreLOS === true)
+        || intentLock !== frame.initialIntentLock) {
       const replanned = host.planAction(state, actor, action, { ...overrides, origin: event.origin, ignoreLOS: event.ignoreLOS });
       if (!replanned?.ok) {
         if (record && !host.rejectAction?.(state, actor, action, replanned?.error)) throw new Error(replanned?.error ?? '无法执行动作');
@@ -107,7 +118,9 @@ export function continueAction({ state, frame, host }) {
         return;
       }
       frame.plan = plan = replanned;
+      frame.initialIntentLock = intentLock;
     }
+    if (isStrikeAction(action, plan) && plan.hostile === true) event.intent = plan.intent ?? 'normal';
     host.payAction(state, actor, plan, event, overrides);
     frame.beforeTargetPosition = { x: actor.x, y: actor.y };
     const primary = own(state.units, plan.targetIds[0]);
