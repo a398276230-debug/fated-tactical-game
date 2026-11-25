@@ -1293,14 +1293,7 @@ function opcode(op, properties, required, ...conditions) {
   return conditions.length ? withRules(schema, ...conditions) : schema;
 }
 var intentEnum = enumOf("normal", "function", "core", "kill", "concept");
-var controlPolicy = object({
-  controller: enumOf("default", "ai"),
-  allegiance: enumOf("normal", "friendly_only", "all_hostile"),
-  forcedActionKinds: list(enumOf("attack", "skill")),
-  intentLock: intentEnum,
-  allowFriendlyTarget: bool,
-  moraleLock: literal("steady")
-});
+var controlPolicy = { ...object({ intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal("steady") }), minProperties: 1 };
 var statNames = Object.freeze([
   ...attribute.enum,
   "movement",
@@ -1382,7 +1375,7 @@ var statMod = withRules(
   when("stat", multiplierStats, { not: needs("flat") }),
   when("stat", enumOf(...flatOnlyStats), { not: { anyOf: [needs("mult"), needs("additivePercent")] } })
 );
-var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, charged: bool, scale: numericExpr, origin: pointRef });
+var overrides = object({ free: bool, ignoreSlots: bool, ignoreRange: bool, ignoreLOS: bool, intent: intentEnum, scale: numericExpr, origin: pointRef });
 var expireRule = object({ hook, filter: booleanExpr }, ["hook"]);
 var vmExpiry = either(expireRule, list(expireRule, 1));
 var spawnRadius = either({ type: "number", minimum: 0 }, formula);
@@ -1399,22 +1392,28 @@ var spawnTier = either(integer(1, 7), formula);
 var spawnTurns = either(integer(1, 100), formula);
 var spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
 var zoneZ = integer(-4, 20);
-var zoneArea = withRules(object({
-  shape: enumOf("single", "circle", "ring", "rect", "cells", "board"),
-  anchorUnitId: entityId,
-  origin: pointRef,
-  center: pointRef,
-  radius: spawnRadius,
-  innerRadius: spawnRadius,
-  z1: zoneZ,
-  z2: zoneZ,
-  rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
-  cells: list(point2, 1)
-}, ["shape"]), when("shape", literal("rect"), needs("rect")), when("shape", literal("cells"), needs("cells")));
+var zoneArea = withRules(
+  object({
+    shape: enumOf("single", "circle", "ring", "rect", "cells", "board"),
+    anchorUnitId: entityId,
+    origin: pointRef,
+    center: pointRef,
+    radius: spawnRadius,
+    innerRadius: spawnRadius,
+    z1: zoneZ,
+    z2: zoneZ,
+    rect: object({ x1: number, y1: number, x2: number, y2: number }, ["x1", "y1", "x2", "y2"]),
+    cells: list(point2, 1)
+  }, ["shape"]),
+  when("shape", enumOf("circle", "ring"), needs("radius")),
+  when("shape", literal("rect"), needs("rect")),
+  when("shape", literal("cells"), needs("cells"))
+);
 var scalarOrExpr = either(number, bool, { type: "string", maxLength: 1024 });
 var poolDefinition = object({ name: text, cap: numericExpr, initial: numericExpr }, ["cap"]);
 var unitPools = mapOf(id, poolDefinition);
-var carrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")), shareRulesTo: ref("pureSelector"), unitPools };
+var baseCarrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")), shareRulesTo: ref("pureSelector") };
+var carrier = { ...baseCarrier, unitPools };
 var carrierFields = Object.freeze(Object.keys(carrier).filter((key4) => key4 !== "name"));
 var statusPatchFields = Object.freeze(["remainingTurns", "durationType", "stackMode", "stacks", "expireOn", ...carrierFields]);
 var validCarrierScalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" && value.length <= scalarOrExpr.anyOf[2].maxLength;
@@ -1445,7 +1444,7 @@ var spawnSpecs = {
       shield: id
     })
   }), variants(needs("templateId"), needs("copyOf"), needs("spawnPanel"), { not: either(needs("templateId"), needs("copyOf"), needs("spawnPanel")) })),
-  zone: object({ ...carrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ["area"]),
+  zone: object({ ...baseCarrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ["area"]),
   terrain: withRules(object({ kind: enumOf("floor", "wall", "slope"), height: number, mode: enumOf("set", "raise", "lower"), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs("kind"), needs("height")), when("mode", {}, needs("height"))),
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
   item: object({ templateId: id, count: either(integer(1), formula) }, ["templateId"])
@@ -2051,6 +2050,38 @@ function initializeUnitPools(state, unitId, resources) {
   publish(state, plans.map((p) => p.pool), plans.map((p) => p.binding));
   return Object.fromEntries(plans.map(({ pool }) => [pool.kind, pool.id]));
 }
+function poolNumber(expr2, context) {
+  const number3 = evaluateExpr(expr2, context);
+  return Number.isFinite(number3) ? Math.max(0, number3) : 0;
+}
+function syncUnitPools(state, unit) {
+  if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
+  const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []].map((id3) => own(state.items, id3)).filter(Boolean).map((item) => own(state.equipment, item.templateId));
+  const skills = [.../* @__PURE__ */ new Set([...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})])].map((id3) => own(state.skills, id3));
+  const definitions = /* @__PURE__ */ new Map();
+  const context = { state, self: unit };
+  for (const declaration of [unit, ...skills, ...equipment]) {
+    for (const [key4, definition] of Object.entries(declaration?.unitPools ?? {})) {
+      if (Object.hasOwn(mirrors, key4)) continue;
+      const previous = definitions.get(key4);
+      definitions.set(key4, {
+        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
+        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context))
+      });
+    }
+  }
+  for (const [key4, { max, current }] of definitions) {
+    const pool = getPool(state, unit.id, key4);
+    if (!pool) {
+      createPool(state, { ownerId: unit.id, key: key4, max, current: Math.min(max, current) });
+    } else if (max > pool.initialMax) {
+      if (max > pool.max) updatePoolMax(state, pool.id, "set_max", max);
+      const updated = getPool(state, unit.id, key4);
+      updated.initialMax = max;
+      updated.contributors[0].initialMaxBase = max;
+    }
+  }
+}
 function maxFor(state, contributor, effectiveMax) {
   return nonnegative(effectiveMax ? effectiveMax(contributor, state) : contributor.maxBase, "Contributor max");
 }
@@ -2439,7 +2470,7 @@ function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
     stats: Object.fromEntries(stats),
     locks,
     flags: Object.fromEntries([...flags2].map((flag) => [flag, true])),
-    controlPolicy: { controller: "default", allegiance: "normal", ...Object.fromEntries(policy) }
+    controlPolicy: Object.fromEntries(policy)
   };
 }
 function unitSkipped(state, unit) {
@@ -2674,7 +2705,7 @@ function askInstruction(state, frame, op, context, host, options) {
     aiPolicy: op.aiPolicy,
     ...op.maxSelect === void 0 ? {} : { maxSelect: op.maxSelect }
   };
-  if (options.dryRun || (host.isAI?.(state, chooser) ?? (chooser.controlPolicy?.controller === "ai" || chooser.team === "red"))) {
+  if (options.dryRun || (host.isAI?.(state, chooser) ?? chooser.team === "red")) {
     if (options.dryRun) options.conditional = true;
     const value = automaticChoice(state, ask);
     writeChoice(state, frame, ask, value, host, true);
@@ -4161,7 +4192,7 @@ function continueMove({ state, frame, host, context }) {
     label: op.label ?? "\u649E\u51FB"
   });
 }
-function carrier3(spec, sourceId2, id3, templateId, context) {
+function carrier3(spec, sourceId2, id3, templateId, context, { allowUnitPools = false } = {}) {
   const vars = Object.fromEntries(Object.entries(spec.vars ?? {}).flatMap(([key4, expression]) => {
     const value = evaluateExpr(expression, context);
     return value === null ? [] : [[key4, value]];
@@ -4175,7 +4206,10 @@ function carrier3(spec, sourceId2, id3, templateId, context) {
     tags: [...spec.tags ?? []],
     vars,
     mods: structuredClone(spec.mods ?? []),
-    rules: structuredClone(spec.rules ?? [])
+    rules: structuredClone(spec.rules ?? []),
+    ...spec.flags?.length ? { flags: [...spec.flags] } : {},
+    ...spec.shareRulesTo ? { shareRulesTo: structuredClone(spec.shareRulesTo) } : {},
+    ...allowUnitPools && spec.unitPools ? { unitPools: structuredClone(spec.unitPools) } : {}
   };
 }
 function publishOut(state, frame, out, id3) {
@@ -4288,8 +4322,9 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
       ...original,
       ...spec,
       tier: spec.spawnPanel ? plan.panel.tier : spec.tier ?? plan.panel.tier,
-      vars: { ...spec.copyOf ? {} : original?.vars, ...spec.vars }
-    }, actor.id, "", templateId, context),
+      vars: { ...spec.copyOf ? {} : original?.vars, ...spec.vars },
+      unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : void 0
+    }, actor.id, "", templateId, context, { allowUnitPools: true }),
     group,
     evictIds: [],
     pendingId: null
@@ -4379,6 +4414,7 @@ function continueSpawn({ state, frame, host, context }) {
     unit.attunementCharges = stanceRules("attunement").itemCharges;
     unit.stance = stanceFor({ mainHand: state.equipment[gear.mainHand], offHand: state.equipment[gear.offHand], shield: state.equipment[gear.shield] });
     unit.gear = gear.gear.map(mint);
+    syncUnitPools(state, unit);
     state.order.push(id3);
     first ??= id3;
     host.log(state, actor, "spawn", `${unit.name}\u767B\u573A`, { unitId: id3, ...at(state, unit) });
@@ -4784,35 +4820,6 @@ var handlers = {
   strike: continueStrike,
   round: continueRound
 };
-var poolNumber = (expr2, context) => {
-  const number3 = evaluateExpr(expr2, context);
-  return Number.isFinite(number3) ? Math.max(0, number3) : 0;
-};
-function syncDeclaredUnitPools(state, unit, carriers2) {
-  const definitions = /* @__PURE__ */ new Map();
-  const context = { state, self: unit };
-  for (const carrier4 of carriers2) {
-    for (const [key4, definition] of Object.entries(carrier4?.unitPools ?? {})) {
-      if (["hp", "mp", "sp"].includes(key4)) continue;
-      const previous = definitions.get(key4);
-      definitions.set(key4, {
-        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
-        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context))
-      });
-    }
-  }
-  for (const [key4, { max, current }] of definitions) {
-    const pool = getPool(state, unit.id, key4);
-    if (!pool) {
-      createPool(state, { ownerId: unit.id, key: key4, max, current: Math.min(max, current) });
-    } else if (max > pool.initialMax) {
-      if (max > pool.max) updatePoolMax(state, pool.id, "set_max", max);
-      const updated = getPool(state, unit.id, key4);
-      updated.initialMax = max;
-      updated.contributors[0].initialMaxBase = max;
-    }
-  }
-}
 function initializeVMWorld(state) {
   state.vm ??= newVM();
   state.pools ??= {};
@@ -4820,12 +4827,11 @@ function initializeVMWorld(state) {
   const holders = /* @__PURE__ */ new Map();
   for (const unit of units) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
   for (const unit of units) {
-    const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []].map((id3) => own12(state.items, id3)).filter(Boolean).map((item) => {
-      holders.set(item.id, unit);
-      return own12(state.equipment, item.templateId);
-    });
-    const skills = [.../* @__PURE__ */ new Set([...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})])].map((id3) => own12(state.skills, id3));
-    syncDeclaredUnitPools(state, unit, [unit, ...skills, ...equipment]);
+    for (const id3 of [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []]) {
+      const item = own12(state.items, id3);
+      if (item) holders.set(item.id, unit);
+    }
+    syncUnitPools(state, unit);
   }
   for (const item of values2(state.items)) {
     const context = { state, self: holders.get(item.id) ?? own12(state.units, item.ownerId), item };
@@ -5387,7 +5393,7 @@ function unitStandingStats(state, unit) {
 function armorOf(state, unit, damageType2, pierce = 0, context = {}) {
   const base = baseArmor(state, unit);
   const ctx = { ...context, target: context.attacker, damageType: damageType2 };
-  const armor = Math.max(0, modStat(state, unit, "defense", modStat(state, unit, "armor", base, ctx), ctx));
+  const armor = Math.max(0, modStat(state, unit, "armor", base, ctx));
   const flat = typeof pierce === "object" ? pierce.flat ?? 0 : pierce;
   const percent3 = typeof pierce === "object" ? clamp4(pierce.percent ?? 0, -1, 1) : 0;
   const effective = Math.max(0, armor * (1 - percent3) - flat);
@@ -7891,7 +7897,7 @@ function zoneValue(value, key4, state) {
   requireThat(id2(key4) && value.id === key4 && text2(value.name), "VM \u533A\u57DF ID/\u540D\u79F0");
   checkOptional(value, "templateId", id2);
   checkOptional(value, "sourceId", (source) => source === null || id2(source));
-  requireThat(value.sourceId != null || !own13(value, "unitPools"), "\u65E0\u4E3B\u533A\u57DF\u4E0D\u80FD\u58F0\u660E\u5355\u4F4D\u6C60");
+  requireThat(!own13(value, "unitPools"), "\u533A\u57DF\u4E0D\u80FD\u58F0\u660E\u5355\u4F4D\u6C60");
   carrierFieldsValue(value, state, true);
   if (own13(value, "pools")) poolBindings(value.pools);
   const { area: area3, follow, persistent, remainingTurns } = value;
@@ -8836,7 +8842,7 @@ var commands = {
     if (v.offHand === void 0) v.offHand = null;
     if (v.shield === void 0) v.shield = null;
     s.units[v.id] = v;
-    if (s.vm || s.pools) initializeUnitPools(s, v.id);
+    if (s.vm || s.pools) syncUnitPools(s, v);
     s.order.push(v.id);
   },
   remove_unit(s, c) {
@@ -14913,7 +14919,7 @@ function readCombatTags(raw, kind, name, warnings) {
     } else {
       const stat3 = { \u9632\u5FA1: "armor", \u547D\u4E2D: "checkBonus", \u95EA\u907F: "dodge", \u5148\u624B: "initiativeFlat" }[key4];
       const checkKind = key4 === "\u547D\u4E2D" ? "attack" : void 0;
-      if (!total2 || weapon2 && stat3 === "armor" && total2 < 0 || mods.some((mod2) => mod2.stat === stat3 && mod2.checkKind === checkKind)) continue;
+      if (!total2 || weapon2 && stat3 === "armor" && total2 < 0 || mods.some((mod2) => mod2.stat === stat3 && mod2.checkKind === checkKind && mod2.when === void 0 && mod2.damageType === void 0 && mod2.statusId === void 0)) continue;
       if (mods.length >= 200 || !Number.isSafeInteger(total2)) {
         for (const { tag: tag2 } of group) warn(tag2, "\u5408\u8BA1\u6570\u503C\u6216 mods \u6570\u91CF\u8D85\u9650");
         continue;
@@ -17404,7 +17410,7 @@ before_target.redirectTarget \u5C06\u6574\u4E2A\u76EE\u6807\u5217\u8868\u8986\u5
 \u6E05\u9664\u654C\u65B9\u533A\u57DF\u65F6 where \u53EF\u5199 "zone.team != null && zone.team != self.team"\uFF08zone.team / candidate.team \u8BFB\u521B\u5EFA\u9635\u8425\uFF0Czone.sourceId / candidate.sourceId \u8BFB\u521B\u5EFA\u8005 ID\uFF09\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF1Bunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\uFF0C\u5747\u7701\u7565\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\uFF1Btier\u3001count\u3001remainingTurns\u3001area.radius \u652F\u6301\u6570\u503C\u8868\u8FBE\u5F0F\uFF1Bterrain \u81F3\u5C11\u542B kind \u6216 height\uFF0C\u586B mode \u65F6\u5FC5\u586B height\uFF1A
 ${spawnSpecs2.join("\n")}
 \u53EC\u5524\u7269 sourceSkillId \u7531\u5F15\u64CE\u53EA\u8BFB\u8BB0\u5F55\u751F\u6210\u5B83\u7684\u6280\u80FD ID\uFF08\u542B\u88C5\u5907\u865A\u62DF\u6280\u80FD equip:<\u5B9E\u4F8BID>:<\u89C4\u5219ID>\uFF09\uFF0C\u53EF\u901A\u8FC7 self/target/candidate/vars.<\u5B9E\u4F53>.sourceSkillId \u8BFB\u53D6\u3002
-zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002single \u4EC5\u4E2D\u5FC3\u683C\uFF1Brect \u5FC5\u586B rect \u5BF9\u8C61\uFF1Bcells \u5FC5\u586B cells \u6570\u7EC4\uFF1Bz1/z2 \u53EF\u9009\u9650\u5B9A\u4E09\u7EF4\u6D77\u62D4\u95ED\u533A\u95F4\uFF08\u5730\u9762z + \u79BB\u5730altitude\uFF0Cself.z \u4EA6\u53EF\u8BFB\u5355\u4F4D\u6D77\u62D4\uFF09\u3002
+zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002single \u4EC5\u4E2D\u5FC3\u683C\uFF1Bcircle/ring \u5FC5\u586B radius\uFF1Brect \u5FC5\u586B rect \u5BF9\u8C61\uFF1Bcells \u5FC5\u586B cells \u6570\u7EC4\uFF1Bz1/z2 \u53EF\u9009\u9650\u5B9A\u4E09\u7EF4\u6D77\u62D4\u95ED\u533A\u95F4\uFF08\u5730\u9762z + \u79BB\u5730altitude\uFF0Cself.z \u4EA6\u53EF\u8BFB\u5355\u4F4D\u6D77\u62D4\uFF09\u3002
 
 \u3010\u8868\u8FBE\u5F0F\u4E0E\u9009\u62E9\u5668\u3011
 Expr \u4E3A JSON \u6570\u5B57\u3001\u5E03\u5C14\u503C\u6216\u5B89\u5168\u8868\u8FBE\u5F0F\u5B57\u7B26\u4E32\u3002\u5B57\u7B26\u4E32\u5B57\u9762\u91CF\u652F\u6301\u5355\u53CC\u5F15\u53F7\uFF0C\u7A7A\u503C\u7528 null\uFF0C\u652F\u6301 + - !\u3001\u7B97\u672F\u3001\u6BD4\u8F83\u3001&&\u3001||\u3001?: \u4E09\u5143\u4E0E\u62EC\u53F7\u3002\u4E25\u683C\u4F7F\u7528\u6CE8\u518C\u53D8\u91CF\u4E0E\u51FD\u6570\u7B7E\u540D\uFF0C\u65E0\u6570\u7EC4\u5B57\u9762\u91CF\u6216\u4EFB\u610F\u5C5E\u6027\u8DEF\u5F84\u3002
@@ -17527,7 +17533,7 @@ var PATCH_RULES = String.raw`<output_contract>
 • 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
 • 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义池 {"resource":"<池ID>", "amount":1…1000000}（装备实例池或单位共享池）。
 • 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}，仅表示装备实例池（如本武器 ammo）；装备规则作用域用 item.resource.<池ID> 读取，缺省为 0，local:true 才写入本实例池。
-• 单位共享池表 unitPools：{"<池ID>": {"name"?: 文本, "cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）}}，仅 equipment / skill / unit 可声明，statusTemplate 与无主战场区域 /zones/<id> 不支持。它挂在持有者单位上；同一单位的同名声明合并为一个单位池，current 默认 initial ?? 0。跨载体读写使用 self.resource.<池ID> 或 resource(self, '<池ID>')，技能 resourceCost:{resource:"<池ID>",amount:N} 也可扣除单位池。跨批必须复用 <role_readonly_index> 的 sharedPoolLedger 中既有 poolId。
+• 单位共享池表 unitPools：{"<池ID>": {"name"?: 文本, "cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）}}，仅 equipment / skill / unit 可声明，statusTemplate 与战场区域 /zones/<id> 不支持。它挂在持有者单位上；同一单位的同名声明合并为一个单位池，current 默认 initial ?? 0。跨载体读写使用 self.resource.<池ID> 或 resource(self, '<池ID>')，技能 resourceCost:{resource:"<池ID>",amount:N} 也可扣除单位池。跨批必须复用 <role_readonly_index> 的 sharedPoolLedger 中既有 poolId。
 • 通用载体字段（装备、技能、状态模板、战场区域 zones 均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（品级文本 唯一/普通…神话 或整数 1…8）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）。pools 与 unitPools 都不是通用字段：pools 仅 equipment 模板声明装备实例池；unitPools 仅 equipment / skill / unit 可声明，statusTemplate 与 /zones/<id> 不支持。装备规则内读取本装备实例池用 item.resource.<池ID>（缺省为 0），其他载体不得把 item.resource 当作自身作用域。
 • 技能模板 /skills/<id>：
   - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
@@ -18837,7 +18843,7 @@ function skillDisplay(template = {}, skillInfo = {}) {
   if (template.angle != null) area3.push(`\u89D2\u5EA6 ${template.angle}`);
   return { damage: components.join("\u3001"), costs, range: template.range ?? "\u2014", area: area3.join("\uFF0C") || "\u5355\u4F53" };
 }
-var verbs = { let: "\u8BB0\u5F55\u6570\u503C", if: "\u6761\u4EF6\u5206\u652F", for_each: "\u9010\u4E2A\u7ED3\u7B97", check: "\u68C0\u5B9A", ask: "\u7B49\u5F85\u9009\u62E9", mutate_event: "\u8C03\u6574\u7ED3\u7B97", damage: "\u4F24\u5BB3", heal: "\u6CBB\u7597", resource: "\u8C03\u6574\u8D44\u6E90", apply_status: "\u65BD\u52A0\u72B6\u6001", remove_status: "\u79FB\u9664\u72B6\u6001", move: "\u4F4D\u79FB", spawn: "\u751F\u6210", remove: "\u79FB\u9664", perform: "\u6267\u884C\u884C\u52A8", link_pool: "\u8C03\u6574\u5171\u4EAB\u8D44\u6E90" };
+var verbs = { let: "\u8BB0\u5F55\u6570\u503C", if: "\u6761\u4EF6\u5206\u652F", for_each: "\u9010\u4E2A\u7ED3\u7B97", check: "\u68C0\u5B9A", ask: "\u7B49\u5F85\u9009\u62E9", mutate_event: "\u8C03\u6574\u7ED3\u7B97", damage: "\u4F24\u5BB3", heal: "\u6CBB\u7597", resource: "\u8C03\u6574\u8D44\u6E90", apply_status: "\u65BD\u52A0\u72B6\u6001", remove_status: "\u79FB\u9664\u72B6\u6001", move: "\u4F4D\u79FB", spawn: "\u751F\u6210", despawn: "\u79FB\u9664", revive: "\u590D\u6D3B", perform: "\u6267\u884C\u884C\u52A8", link_pool: "\u8C03\u6574\u5171\u4EAB\u8D44\u6E90" };
 function ruleSummary(rule2, state) {
   const statusName = (id3) => state?.statusTemplates?.[id3]?.name ?? STATUSES[id3]?.name ?? id3;
   const describe3 = (op) => {
@@ -18879,8 +18885,8 @@ var modLabels = {
 };
 var ratioStats2 = /* @__PURE__ */ new Set(["armorPiercePercent", "damageReduction", "dr"]);
 var percent2 = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 10 });
-var slots2 = { action: "\u52A8\u4F5C", attack: "\u653B\u51FB", move: "\u79FB\u52A8", cast: "\u65BD\u6CD5", reaction: "\u53CD\u5E94" };
-var flags = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3", hidden: "\u9690\u8EAB", intercept: "\u53EF\u62E6\u622A\u653B\u51FB", taunted: "\u88AB\u5632\u8BBD", infiniteAmmo: "\u5F39\u836F\u4E0D\u9650" };
+var slots2 = { action: "\u52A8\u4F5C", attack: "\u653B\u51FB", move: "\u79FB\u52A8", cast: "\u65BD\u6CD5", reaction: "\u53CD\u5E94", fly: "\u5347\u7A7A", teleport: "\u77AC\u79FB" };
+var flags = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3", guaranteed_hit: "\u5FC5\u5B9A\u547D\u4E2D", guaranteed_crit: "\u5FC5\u5B9A\u66B4\u51FB", hidden: "\u9690\u8EAB", intercept: "\u53EF\u62E6\u622A\u653B\u51FB", taunted: "\u88AB\u5632\u8BBD", infiniteAmmo: "\u5F39\u836F\u4E0D\u9650" };
 var checks = { attack: "\u653B\u51FB", save: "\u8C41\u514D", contest: "\u5BF9\u6297", d20: "\u666E\u901A", chance: "\u6982\u7387" };
 var signed2 = (n, asPercent) => typeof n === "number" ? `${n >= 0 ? "+" : ""}${asPercent ? percent2.format(n) : n}` : `\u6309\u516C\u5F0F ${n}`;
 function modSummary(mod2) {
@@ -18896,9 +18902,6 @@ function modSummary(mod2) {
   if (mod2.locks?.length) parts.push(`\u7981\u6B62${mod2.locks.map((slot2) => slots2[slot2]).join("\u3001")}`);
   if (mod2.flags?.length) parts.push(...mod2.flags.map((flag) => flags[flag]));
   const policy = mod2.controlPolicy;
-  if (policy?.controller) parts.push(policy.controller === "ai" ? "\u7531 AI \u63A7\u5236" : "\u6062\u590D\u9ED8\u8BA4\u63A7\u5236");
-  if (policy?.allegiance) parts.push({ normal: "\u6B63\u5E38\u9635\u8425\u5173\u7CFB", friendly_only: "\u4EC5\u53CB\u65B9", all_hostile: "\u6240\u6709\u5355\u4F4D\u89C6\u4E3A\u654C\u65B9" }[policy.allegiance]);
-  if (policy?.forcedActionKinds?.length) parts.push(`\u5F3A\u5236\u884C\u52A8\u7C7B\u578B\uFF1A${policy.forcedActionKinds.map((kind) => kind === "attack" ? "\u653B\u51FB" : "\u6280\u80FD").join("\u3001")}`);
   if (policy?.allowFriendlyTarget != null) parts.push(policy.allowFriendlyTarget ? "\u53EF\u9009\u53CB\u65B9\u4E3A\u76EE\u6807" : "\u4E0D\u53EF\u9009\u53CB\u65B9\u4E3A\u76EE\u6807");
   if (policy?.intentLock) parts.push(`\u9501\u5B9A\u610F\u56FE\uFF1A${INTENTS[policy.intentLock]?.name ?? policy.intentLock}`);
   if (policy?.moraleLock === "steady") parts.push("\u58EB\u6C14\u6052\u5B9A\u575A\u5B88");
@@ -19971,12 +19974,16 @@ function configFor(storage, key4) {
     return deepClone(DEFAULT_CONFIG);
   }
 }
-function putConfig(storage, key4, value) {
+function isQuotaExceededError(error2) {
+  return error2?.name === "QuotaExceededError" || error2?.name === "NS_ERROR_DOM_QUOTA_REACHED" || error2?.code === 22 || error2?.code === 1014;
+}
+function putConfig(storage, key4, value, onError) {
   try {
     if (!storage) return false;
     storage.setItem(key4, JSON.stringify(value));
     return true;
-  } catch {
+  } catch (error2) {
+    onError?.(error2);
     return false;
   }
 }
@@ -20041,7 +20048,7 @@ function sourceBundle(variables2, messages, chat = "default", preferredMessageId
     const legacy = allText.match(/\{\s*(?:battle_in|战术沙盘)\s*\}\s*[:：]?\s*([\s\S]+)/i);
     if (legacy) battleRaw = legacy[1].trim();
     else {
-      const wrapped = allText.match(/\{\s*"?(?:battle_in|战术沙盘)"?\s*:\s*([\\s\\S]+)\}/i);
+      const wrapped = allText.match(/\{\s*"?(?:battle_in|战术沙盘)"?\s*:\s*([\s\S]+)\}/i);
       if (wrapped) battleRaw = wrapped[1].trim();
     }
   }
@@ -20872,8 +20879,17 @@ function mountTavernOverlay(options = {}) {
     return pruneBattleStorageExcept(storage, key4);
   }
   function writeWithEvictionRetry(key4, value) {
-    if (putConfig(storage, key4, value)) return true;
-    return !!activeBattleKey && pruneBattleStorageExcept2(activeBattleKey).removedKeys > 0 && putConfig(storage, key4, value);
+    let quotaExceeded = false;
+    if (putConfig(storage, key4, value, (error2) => {
+      quotaExceeded = isQuotaExceededError(error2);
+    })) return true;
+    return quotaExceeded && !!activeBattleKey && pruneBattleStorageExcept2(activeBattleKey).removedKeys > 0 && putConfig(storage, key4, value);
+  }
+  function retainedUnresolvedNotes(key4, notes2) {
+    const nextMap = { ...config.unresolvedNotes };
+    if (notes2 && Object.keys(notes2).length) nextMap[key4] = notes2;
+    else delete nextMap[key4];
+    return pruneBattleScopedMap(nextMap, key4);
   }
   const notifyStorageFailure = () => notify("\u6570\u636E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\u3002\u8BF7\u5148\u4E0B\u8F7D\u6218\u5C40\u5907\u4EFD\uFF1B\u5982\u9700\u5F7B\u5E95\u521D\u59CB\u5316\uFF0C\u53EF\u5728\u5B9E\u4F8B\u7EF4\u62A4\u70B9\u300C\u6E05\u7406\u811A\u672C\u7F13\u5B58\u300D\u3002");
   function save() {
@@ -21371,7 +21387,7 @@ ${tag2.textContent || ""}
           normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [battle2]: retained }, battle2),
           charSnapshots: { [battle2]: omit(config.charSnapshots[battle2]) },
           narrativeExemptions: { ...config.narrativeExemptions, [battle2]: (config.narrativeExemptions[battle2] ?? []).filter((r) => !deleting.has(r.unitId)) },
-          unresolvedNotes: { [battle2]: omit(config.unresolvedNotes[battle2]) },
+          unresolvedNotes: retainedUnresolvedNotes(battle2, omit(config.unresolvedNotes[battle2])),
           pendingInstanceResets: { [battle2]: true }
         });
         renderInstances();
@@ -21664,10 +21680,21 @@ ${tag2.textContent || ""}
     if (!state) return;
     const battleInstanceId = sources.battleKey || id3;
     const battleInput = sources.input;
+    const battleCharacters = characters;
+    const battleRawWarnings = [...diagnostics.inputWarnings ?? sources.warnings ?? []];
     const target2 = pages.sandbox.querySelector("[data-sandbox-mount]");
     const rebuild = ({ seed }) => {
       const opening = hydrateBaseline(battleInput, { seed });
-      const normalized = applyNormalization(opening, operations2(battleInstanceId));
+      const ownBatches = batches(battleInstanceId);
+      const { state: normalized, kept } = replayNormalization(opening, ownBatches, battleCharacters, battleRawWarnings, {
+        apply: applyNormalization,
+        validate: () => {
+        },
+        fingerprint: fingerprintAt
+      });
+      if (kept.length !== ownBatches.length) {
+        persistSettings({ normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [battleInstanceId]: kept }, battleInstanceId) });
+      }
       const next = restoreChatOpening(normalized, battleInstanceId);
       updateChatInstances(next, liveState());
       return next;
@@ -21772,7 +21799,7 @@ ${tag2.textContent || ""}
       if (note) (next[unitId] ??= {})[id4] = note;
     }
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
-    persistSettings({ unresolvedNotes: Object.keys(next).length ? { [key4]: next } : {} });
+    persistSettings({ unresolvedNotes: retainedUnresolvedNotes(key4, next) });
   }
   function liveState() {
     return gameMount?.getState?.() ?? currentState;
@@ -21842,7 +21869,7 @@ ${tag2.textContent || ""}
     persistSettings({
       normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: retained }, key4),
       narrativeExemptions: { ...config.narrativeExemptions, [key4]: exemptions },
-      unresolvedNotes: { [key4]: notes2 },
+      unresolvedNotes: retainedUnresolvedNotes(key4, notes2),
       charSnapshots: snapshots
     });
     filterResolved(snapshots[key4] ?? {}, characters, retained);
@@ -21958,10 +21985,10 @@ ${tag2.textContent || ""}
       currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
       if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
       const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || unchangedOpening && !invalid && stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills));
+      characters = fresh;
       mountState(currentState, restoreSaved);
       activeBattleKey = currentState ? key4 : null;
       refreshPortraits(currentState, epoch);
-      characters = fresh;
       if (activeBattleKey) {
         pruneBattleStorageExcept2(key4);
         if (openingSource) {
@@ -21970,7 +21997,7 @@ ${tag2.textContent || ""}
         }
         const nextSettings = {
           normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: kept }, key4),
-          unresolvedNotes: own21(config.unresolvedNotes, key4) ? { [key4]: config.unresolvedNotes[key4] } : {},
+          unresolvedNotes: retainedUnresolvedNotes(key4, config.unresolvedNotes[key4]),
           pendingInstanceResets: {}
         };
         for (const id4 of ids) {
