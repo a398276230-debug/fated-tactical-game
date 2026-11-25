@@ -38,7 +38,7 @@ export const EVENT_SCALAR_KEYS = Object.freeze([
   'power', 'preRolled', 'preserveLife', 'preventDeath', 'rating', 'ratingDelta', 'ratingMultiplier', 'rawNatural',
   'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'souls', 'sourceId',
   'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
-  'unitId', 'weaponTemplateId', 'dealt', 'finalAmount', 'eventRef',
+  'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'dealt', 'finalAmount', 'eventRef',
 ]);
 export const damageTypes = Object.freeze(['physical', 'energy', 'mental', 'true']);
 const damageType = enumOf(...damageTypes);
@@ -323,8 +323,9 @@ export const validVmRule = (value, options = {}) => valid(value, 'rule', options
 
 export function vmRuleError(rule, options = {}) {
   if (validVmRule(rule, options)) return undefined;
-  const unknownEvent = typeof rule === 'object' && rule ? JSON.stringify(rule).match(/event\.([A-Za-z_][A-Za-z0-9_]*)/) : null;
-  if (unknownEvent && !EVENT_SCALAR_KEYS.includes(unknownEvent[1]) && !(options.extraEventKeys ?? []).includes(unknownEvent[1])) return `未知事件字段 event.${unknownEvent[1]}`;
+  const unknownEvent = typeof rule === 'object' && rule ? [...JSON.stringify(rule).matchAll(/\bevent\.([A-Za-z_][A-Za-z0-9_]*)/g)]
+    .find(([, key]) => !EVENT_SCALAR_KEYS.includes(key) && !(options.extraEventKeys ?? []).includes(key)) : null;
+  if (unknownEvent) return `未知事件字段 event.${unknownEvent[1]}`;
   const settings = { ...options, hook: rule?.hook };
   function invalidInstruction(program, path, depth = 0) {
     if (!Array.isArray(program) || depth > 64) return path;
@@ -370,7 +371,18 @@ export function vmStatModError(mod) {
   if (mod && flatOnlyStats.includes(mod.stat) && (Object.hasOwn(mod, 'mult') || Object.hasOwn(mod, 'additivePercent'))) {
     return `VM 修饰 ${mod.stat} 只接受 flat 加值`;
   }
-  return 'VM 修饰';
+  if (!mod || typeof mod !== 'object' || Array.isArray(mod)) return 'VM 修饰必须是对象';
+  for (const [key, value] of Object.entries(mod)) {
+    if (!Object.hasOwn(statMod.properties, key)) return `VM 修饰 ${key}：未知字段`;
+    const field = statMod.properties[key];
+    if (!matches(value, field, {}) || !exprCheck(value)) {
+      const choices = field.enum ?? field.items?.enum;
+      return `VM 修饰 ${key}=${JSON.stringify(value)} 无效；${choices ? `可选值：${choices.join('、')}` : '请检查字段类型、结构或表达式'}`;
+    }
+  }
+  const numeric = ['flat', 'mult', 'additivePercent'].find(key => Object.hasOwn(mod, key));
+  if (numeric && !Object.hasOwn(mod, 'stat')) return `VM 修饰 ${numeric} 缺少 stat`;
+  return 'VM 修饰至少需要 stat、locks、flags 或 controlPolicy 之一';
 }
 export const validVmTargetRef = (value, options = {}) => valid(value, 'targetRef', options);
 export const validVmTag = value => valid(value, 'tag', {});

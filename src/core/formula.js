@@ -160,6 +160,7 @@ register('weapon.range', '事件武器模板的基础射程', context => own(cal
 for (const [name, description] of Object.entries({
   skillId: '本次行动施放的技能 ID（普攻或非技能事件为 null；限定本技能触发写 event.skillId == skill.id）',
   actionType: '本次行动类型（attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item）',
+  infiniteAmmo: '本次攻击声明时是否免耗弹药', weaponId: '本次使用的武器实例 ID',
   actorId: '本次事件的发起单位 ID', targetId: '本次事件的主目标单位 ID',
   damageType: '伤害类型（physical/energy/mental/true）', direct: '是否为直接伤害（true/false）',
   commitKind: 'before_commit 提交类别（damage/heal/resource）', pool: 'before_commit 目标资源池键（hp/mp/sp 等）',

@@ -73,9 +73,10 @@ export function continueAction({ state, frame, host }) {
     frame.plan = plan;
     frame.originalOrigin = overrides.origin ?? { x: actor.x, y: actor.y, ...(actor.altitude ? { altitude: actor.altitude } : {}) };
     frame.eventRef = newEvent(state, { actorId: actor.id, actionType: action.type, skillId: action.skillId ?? null,
-      targetId: plan.targetIds[0] ?? null, center: plan.center, origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
+      targetId: plan.targetIds[0] ?? plan.targetId ?? null, center: plan.center, origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
       mpCost: plan.mp ?? 0, spCost: plan.sp ?? 0, hpCost: plan.hp ?? 0, power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,
-      weaponTemplateId: plan.weaponTemplateId ?? null, chainDepth: frame.chainDepth ?? 0,
+      ...(plan.instanceId && { weaponId: plan.instanceId, infiniteAmmo: plan.infiniteAmmo === true }),
+      weaponTemplateId: plan.weaponTemplateId ?? null, instanceId: plan.instanceId ?? null, chainDepth: frame.chainDepth ?? 0,
       triggered: (frame.chainDepth ?? 0) > 0 });
     if (!isStrikeAction(action, plan)) {
       frame.pc = 5;

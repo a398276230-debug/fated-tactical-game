@@ -1,4 +1,4 @@
-import { resolveEffectiveTier, scaledMoveCells, sizeClassFor } from './combat_protocol.js';
+import { resolveEffectiveTier, scaledMoveCells, sizeClassFor, stanceFor, stanceRules } from './combat_protocol.js';
 import { evaluateExpr } from './formula.js';
 import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
 import { spawnPanel } from './spawn-unit.js';
@@ -281,7 +281,8 @@ function unitPlan(state, context, spec, original) {
     tier: panel.tier ?? actor.tier ?? 1 } };
 }
 
-function removeSummon(state, unit) {
+function removeSummon(state, unit, host) {
+  for (const zone of values(state.zones)) if (zone.area?.anchorUnitId === unit.id) removeZone(state, host, zone.id, '锚点离场');
   const shared = ['hp', 'mp', 'sp'].filter(key => own(state.pools, own(unit.pools, key))?.contributors.length > 1);
   if (shared.length) unlinkPools(state, [unit.id], shared);
   const ownedItems = values(state.items).filter(item => item.ownerId === unit.id);
@@ -336,8 +337,7 @@ function continueSpawn({ state, frame, host, context }) {
     const old = own(state.units, data.pendingId);
     if (old) {
       host.log(state, old, 'spawn', `${old.name}结束召唤并离场`, { unitId: old.id, evicted: true });
-      removeSummon(state, old);
-      refreshFollowingZones(state, host);
+      removeSummon(state, old, host);
     }
     data.pendingId = null;
     delete frame.awaitEvent;
@@ -346,8 +346,7 @@ function continueSpawn({ state, frame, host, context }) {
     const old = own(state.units, data.evictIds[frame.pc++]);
     if (!old || old.summonGroup !== data.group) continue;
     if (!live(old)) {
-      removeSummon(state, old);
-      refreshFollowingZones(state, host);
+      removeSummon(state, old, host);
       continue;
     }
     data.pendingId = old.id;
@@ -373,7 +372,7 @@ function continueSpawn({ state, frame, host, context }) {
   for (const placement of landings.slice(0, plan.count)) {
     const id = nextId(state, state.units, 'summon');
     const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement, altitude: 0,
-      summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
+      moraleType: actor.moraleType ?? state.battleType ?? 'standard', summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
       ...(data.remainingTurns !== undefined && { remainingTurns: data.remainingTurns }),
       ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
     unit.hp = unit.maxHp;
@@ -385,6 +384,8 @@ function continueSpawn({ state, frame, host, context }) {
     unit.weapon = unit.mainHand = mint(gear.mainHand);
     unit.offHand = mint(gear.offHand);
     unit.shield = mint(gear.shield);
+    unit.attunementCharges = stanceRules('attunement').itemCharges;
+    unit.stance = stanceFor({ mainHand: state.equipment[gear.mainHand], offHand: state.equipment[gear.offHand], shield: state.equipment[gear.shield] });
     unit.gear = gear.gear.map(mint);
     state.order.push(id);
     first ??= id;
@@ -618,7 +619,7 @@ function despawn({ state, frame, host, context, op, select }) {
     removeTerrainLayers(state, host, frame, new Set(layers.map(layer => layer.id)), '解除后');
   } else if (op.entityKind === 'unit') {
     for (const unit of [...targets].filter(unit => own(state.units, unit.id) === unit && unit.summoned === true)) {
-      removeSummon(state, unit);
+      removeSummon(state, unit, host);
       host.log(state, context.self, 'despawn', `${unit.name}被移除`, { unitId: unit.id, summoned: true });
     }
   }
@@ -654,7 +655,7 @@ function continueExpireSummon({ state, frame, host }) {
   }
   if (unit) {
     host.log(state, unit, 'despawn', `${unit.name}召唤期限结束`, { unitId: unit.id, summoned: true, expired: true });
-    removeSummon(state, unit);
+    removeSummon(state, unit, host);
     if (state.turn >= state.order.length) state.turn = 0;
   }
   state.vm.stack.pop();

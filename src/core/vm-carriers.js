@@ -29,7 +29,7 @@ function carriers(state) {
   const result = [];
   for (const [id, unit] of units) {
     result.push({ entity: unit, carrier: { type: 'unit', id }, nativeOwnerId: id });
-    for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...(unit.gear ?? [])]) {
+    for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...(unit.gear ?? []), ...(unit.bagWeapons ?? [])]) {
       if (itemId != null && !equippedBy.has(itemId)) equippedBy.set(itemId, id);
     }
   }

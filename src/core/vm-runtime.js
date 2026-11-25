@@ -127,12 +127,13 @@ export const vmHost = {
     const skill = actionSkill(state, actor, event.skillId);
     const isHeld = actor?.skills?.includes(event.skillId);
     const actionRules = hook === 'active' || !isHeld ? skill?.rules : undefined;
-    const carrier = skill?.itemId ? { type: 'item', id: skill.itemId }
+    const usedItem = event.actionType === 'use_item' ? event.itemId : null;
+    const carrier = usedItem || skill?.itemId ? { type: 'item', id: usedItem ?? skill.itemId }
       : skill ? { type: 'skill', id: event.skillId, ownerId: actor?.id } : null;
     return [...entries, ...(event.rules ?? actionRules ?? []).filter(rule => rule.hook === hook).map(rule => ({
       rule, ownerId: event.actorId, sourceId: event.actorId, carrierOrder: -1, carrier,
       ...(skill && !event.rules && { sourceSkillId: event.skillId }),
-      useKey: JSON.stringify([event.actorId, event.skillId, rule.id]),
+      useKey: JSON.stringify([event.actorId, usedItem ?? event.skillId, rule.id]),
     }))];
   },
   enterRule(state, frame, key) {
