@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateState } from '../src/api/validation.js';
 import { getPool, refreshPoolMax, updatePoolCurrent } from '../src/core/vm-pools.js';
-import { applyAction, preview, switchableWeapons } from '../src/core/combat.js';
+import { applyAction, preview, switchableWeapons, unitStandingStats } from '../src/core/combat.js';
 import { changedEntryKeys, diagnosticText, normalizationCandidates, pendingDiagnostics, readUnresolvedDiagnostics, resolvedDiagnostics, remainingDiagnostics, warningEntryKey, warningKey } from '../src/tavern/resolved-warnings.js';
 import { characterRecords } from '../src/tavern/char-snapshots.js';
 import { normalizationTransactions, replayNormalization } from '../src/tavern/normalization-replay.js';
@@ -176,6 +176,141 @@ test('历史楼层按净战损写入、重复确认幂等、重打替换旧结�
   assert.deepEqual(envelopes[1].stat_data.主角.装备.黑灵.标签, ['灵魂计数：2']);
   assert.equal(envelopes[1].stat_data.主角.新剧情, '保留');
   assert.equal(map.size, 0);
+});
+
+function staticTagSource() {
+  return {
+    mvu: { 主角: { ...mvu.主角, 装备: {
+      风律弓: { 类型:'武器', 位置:'主手', 标签:['弓','攻击(弓身): 10','命中: 8','弹药: 20'] },
+      猎人帽: { 类型:'防具', 标签:['头饰','防具：135'] },
+      疾风之靴: { 类型:'防具', 标签:['靴子','防御(脚部): 160','闪避: 15','先手: 2'], 效果:{轻身:'穿戴时闪避+15，移动距离增加2格'} },
+      鹰眼戒: { 类型:'饰品', 标签:['命中: 6'] },
+    }, 技能: {
+      风律: { 类型:'被动', 标签:['先手: 8','闪避: 10'] },
+      瞄准: { 标签:['命中: 35','先手: 4','威力: 5'], damageType:'physical' },
+    } } },
+    charInfo: { name:'陪练', hp:9999, 装备:{木剑:{类型:'武器',位置:'主手',标签:['剑','攻击: 10']}} },
+    battleInit: 'battle|1|tags|静态标签|flat|123\nunit|p|blue|mvu:主角|主角|1,1\nunit|e|red|char_info|陪练|2,1',
+  };
+}
+const templateByName = (table, name) => {
+  const entry = Object.entries(table).find(([, t]) => t.name === name);
+  assert.ok(entry, `缺模板：${name}`);
+  return entry;
+};
+const flatMod = (stat, flat, extra = {}) => ({stat, flat, ...extra});
+const sortedMods = mods => [...mods].sort((a,b) => a.stat.localeCompare(b.stat) || (a.checkKind ?? '').localeCompare(b.checkKind ?? ''));
+
+test('静态标签：MVU 面板与常驻修饰落盘，开场先攻、双向普攻无需标准化即生效', () => {
+  const {state} = hydrateFromSources(staticTagSource(), {throwOnValidation:true});
+  const {p,e} = state.units, template = name => templateByName(state.equipment, name)[1];
+  assert.deepEqual([template('风律弓').attack, template('风律弓').accuracy, template('猎人帽').defense, template('疾风之靴').defense], [10,8,135,160]);
+  assert.deepEqual(sortedMods(template('疾风之靴').mods), [flatMod('dodge',15), flatMod('initiativeFlat',2)]);
+  assert.deepEqual(template('鹰眼戒').mods, [flatMod('checkBonus',6,{checkKind:'attack'})]);
+  const passive = templateByName(state.skills,'风律')[1], aimed = templateByName(state.skills,'瞄准')[1];
+  assert.deepEqual(sortedMods(passive.mods), [flatMod('dodge',10), flatMod('initiativeFlat',8)]);
+  assert.equal(passive.initiativeBonus, undefined);
+  assert.deepEqual([aimed.accuracy, aimed.initiativeBonus, aimed.power], [35,4,5]);
+  assert.deepEqual(unitStandingStats(state,p), {armor:295,dodge:25});
+  assert.equal(state.logs.find(l => l.type === 'initiative').detail.initiative.find(i => i.unitId === p.id).flatInit, 10);
+  for (const [actor,target] of [[p,e],[e,p]]) {
+    const fight = structuredClone(state);
+    fight.turn = fight.order.indexOf(actor.id);
+    Object.assign(fight.units[actor.id], {ap:2,used:{attack:0,action:0}});
+    const action = {type:'attack',x:target.x,y:target.y}, plan = preview(fight,action);
+    assert.ok(plan.ok,plan.error);
+    const profile = plan.targets.find(t => t.id === target.id);
+    if (actor === p) assert.deepEqual([profile.accuracySources.explicit,profile.accuracySources.checkBonus], [8,6]);
+    const expectedDodge = target === p ? 25 : 0;
+    assert.equal(profile.dodgeBonus,expectedDodge);
+    applyAction(fight,action);
+    const roll = fight.logs.findLast(l => l.type === 'roll').detail;
+    assert.deepEqual([roll.targetId,roll.dodgeBonus,roll.accuracy], [target.id,expectedDodge,profile.accuracy]);
+  }
+});
+
+test('静态标签：同维修饰求和、抵消，显式修饰按检定类型判重，回灌模板不翻倍', () => {
+  const input = staticTagSource(), boot = input.mvu.主角.装备.疾风之靴, passive = input.mvu.主角.技能.风律;
+  boot.标签 = ['闪避(基础): 5','闪避(附魔): 10','先手: 4','先手: -4','命中: 6'];
+  boot.mods = [flatMod('checkBonus',3,{checkKind:'save'})];
+  passive.mods = [flatMod('initiativeFlat',1)];
+  for (let pass = 0; pass < 2; pass++) {
+    const {state} = hydrateFromSources(input,{throwOnValidation:true});
+    const gearMods = templateByName(state.equipment,'疾风之靴')[1].mods;
+    const skillMods = templateByName(state.skills,'风律')[1].mods;
+    assert.deepEqual(sortedMods(gearMods), [flatMod('checkBonus',6,{checkKind:'attack'}),flatMod('checkBonus',3,{checkKind:'save'}),flatMod('dodge',15)]);
+    assert.deepEqual(sortedMods(skillMods), [flatMod('dodge',10),flatMod('initiativeFlat',1)]);
+    boot.mods = structuredClone(gearMods); passive.mods = structuredClone(skillMods);
+  }
+});
+
+test('静态标签：武器与被动防御写 armor，穿戴防御留在面板，显式值优先', () => {
+  const input = staticTagSource(), {装备,技能} = input.mvu.主角;
+  装备.风律弓.标签.push('护甲: 9'); 装备.风律弓.attack = 12;
+  装备.猎人帽.标签 = ['防御力: 77']; 装备.疾风之靴.defense = 3;
+  技能.风律.标签.push('防御: 4','命中: -3','威力: 8');
+  const {state,warnings} = hydrateFromSources(input,{throwOnValidation:true});
+  const bow = templateByName(state.equipment,'风律弓')[1], [sid,passive] = templateByName(state.skills,'风律');
+  assert.equal(bow.attack,12); assert.deepEqual(bow.mods,[flatMod('armor',9)]);
+  assert.equal(templateByName(state.equipment,'猎人帽')[1].defense,77);
+  assert.equal(templateByName(state.equipment,'疾风之靴')[1].defense,3);
+  assert.deepEqual(sortedMods(passive.mods), [flatMod('armor',4),flatMod('checkBonus',-3,{checkKind:'attack'}),flatMod('dodge',10),flatMod('initiativeFlat',8)]);
+  assert.equal(unitStandingStats(state,state.units.p).armor,93);
+  assert.ok(warnings.some(w => w.scope === 'effect' && w.originPath === `/skills/${sid}` && w.message.includes('威力: 8')));
+});
+
+test('静态标签：未确定语义逐条送宿主 effect warning，不截取百分号、无视防御或生成计数器', () => {
+  const input = staticTagSource();
+  const gearTags = ['暴击: 15','闪避: 15%','命中: 7%','先手: 2%','攻击: 5','威力: 20'];
+  const skillTags = ['闪避: 5','暴击: 15','防御: 30'];
+  input.mvu.主角.装备.鹰眼戒.标签 = [...gearTags,'无视防御: 50'];
+  input.mvu.主角.技能.瞄准.标签 = skillTags;
+  const {state,warnings,sourceMap} = hydrateFromSources(input,{throwOnValidation:true});
+  const forbidden = new Set(gearTags.map(tag => tag.split(':')[0]));
+  assert.ok(sourceMap.p.counterBindings.every(b => b.itemName !== '鹰眼戒' || !forbidden.has(b.rawLabel)));
+  for (const [table,name,tags] of [['equipment','鹰眼戒',gearTags],['skills','瞄准',skillTags]]) {
+    const [id,t] = templateByName(state[table],name);
+    const notes = warnings.filter(w => w.scope === 'effect' && w.unitId === 'p' && w.originPath === `/${table}/${id}`);
+    for (const tag of tags) assert.ok(notes.some(w => w.message.includes(tag)), `缺 ${name} ${tag} 的定向诊断`);
+    assert.deepEqual(t.mods,[]); assert.equal(t.defense ?? 0,0);
+    assert.equal(t.accuracy ?? 0,0); assert.equal(t.initiativeBonus ?? 0,0);
+  }
+});
+
+test('静态标签：叙事警告报告已解析的数值，并在辅助模型收到的角色快照保留修饰', () => {
+  const result = hydrateFromSources(staticTagSource(),{throwOnValidation:true}), {state,warnings} = result;
+  const [id] = templateByName(state.equipment,'疾风之靴');
+  const note = warnings.find(w => w.originPath === `/equipment/${id}` && w.message.includes('轻身'));
+  assert.ok(note); assert.match(note.message,/闪避\s*\+?15/); assert.match(note.message,/先手\s*\+?2/);
+  for (const concept of [/保留/,/重复|双算/,/narrative/]) assert.match(note.message,concept);
+  const ctx = {state,sources:result,onlyUnitIds:['p'],warnings:[note]};
+  const roster = JSON.parse(resolveSlotContent({id:'roster'},ctx).split('<role_readonly_index')[0]);
+  assert.deepEqual(sortedMods(roster.equipment[id].mods), [flatMod('dodge',15),flatMod('initiativeFlat',2)]);
+});
+
+test('静态标签：辅助模型协议保留预填项、防双算、允许纯复述退出，不宣传独立闪避检定', () => {
+  for (const slot of ['protocol','task']) {
+    const text = resolveSlotContent({id:slot});
+    const guidance = text.split('\n').find(line => line.includes('initiativeBonus') && line.includes('/mods/-'));
+    assert.ok(guidance, `${slot} 未说明如何追加预填项`);
+    for (const concept of ['attack','defense','accuracy','保留','重复','narrative','existing']) assert.ok(guidance.includes(concept), `${slot} 缺 ${concept}`);
+  }
+  const protocol = resolveSlotContent({id:'protocol'});
+  const kinds = protocol.match(/checkKind 可限定检定类别[（(]([^）)]+)/u)?.[1];
+  assert.ok(kinds?.includes('attack')); assert.doesNotMatch(kinds,/\bdodge\b/);
+  assert.match(protocol,/dodge 受击闪避[^\n]*省略 checkKind/);
+});
+
+test('静态标签：武器和技能命中整数面板 -100..100，显式值优先，越界或小数无法通过验证', () => {
+  const input = staticTagSource(), bow = input.mvu.主角.装备.风律弓, aimed = input.mvu.主角.技能.瞄准;
+  bow.命中 = -100; aimed.accuracy = 100;
+  const {state} = hydrateFromSources(input,{throwOnValidation:true});
+  for (const [t,expected] of [[templateByName(state.equipment,'风律弓')[1],-100],[templateByName(state.skills,'瞄准')[1],100]]) {
+    assert.equal(t.accuracy,expected);
+    for (const n of [-100,35,100]) { t.accuracy = n; validateState(state); }
+    for (const n of [-101,101,1.5]) { t.accuracy = n; assert.throws(() => validateState(state),/accuracy/); }
+    t.accuracy = expected;
+  }
 });
 
 const damageOp = (damageType, amount) => ({ op: 'damage', target: 'target', damageType, amount });

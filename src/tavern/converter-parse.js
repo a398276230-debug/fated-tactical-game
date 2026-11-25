@@ -42,7 +42,15 @@ function qualityOf(raw) {
   const direct = text(raw?.quality ?? raw?.品质);
   if (QUALITY_NAMES.has(direct)) return direct;
   const meta = [].concat(raw?.meta ?? raw?.元数据 ?? []).map(text);
-  return meta.find(value => QUALITY_NAMES.has(value));
+  const declared = meta.find(value => QUALITY_NAMES.has(value));
+  if (declared) return declared;
+  for (const tag of tagEntries(raw?.tags ?? raw?.标签)) {
+    const value = /^品质\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.+)$/u.exec(tag)?.[1];
+    if (!value) continue;
+    if (QUALITY_NAMES.has(value)) return value;
+    const quality = Object.keys(QUALITY_TIER).find(key => String(QUALITY_TIER[key]) === value);
+    if (quality) return quality;
+  }
 }
 function rawTagValues(raw) {
   return [].concat(raw?.tags ?? raw?.标签 ?? []).map(text)

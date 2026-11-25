@@ -24,6 +24,7 @@ export const DEFAULT_SLOTS = [
 ].map(slot => ({ builtin: true, ...slot, content: slot.content ?? '' }));
 
 const TAG_MAPPING = `【世界书标签 → VM 映射】
+• 静态标签可能已写入 attack、defense、accuracy、initiativeBonus 与 mods。命中修正用 {stat:"checkBonus",checkKind:"attack",flat:N}，受击闪避用 {stat:"dodge",flat:N}，不带 checkKind。保留已填项（用 /mods/- 追加），只实现未落盘的机制；不要重复叠加同源数值。纯复述归 narrative，不用初始字段报 existing。
 • 常规评级主击用模板 power 配合 damage 骰子对象。[威力: X 物理] 等价于 [威力: X][伤害: 物理]。转换器遇到 [威力: X] 且没有自定义 active 主伤规则时，会自动生成 damage:{count:1,sides:4,stat}，单一伤害标签存在时再写入 type。只有混合伤害或明确的独立公式才由 active 规则替代模板主击，不要重复添加主击。混合伤害、固定伤害包或独立公式才由 active 规则写 damage 指令，同一笔伤害只结算一次。
 • 混合伤害（如物理与能量按数值或百分比并列）在 hook:"active" 内拆为多条按序执行的 damage 指令，各分量按同一基准求值，不再额外叠加模板总威力主击。标准伤害标签如 [威力:75][伤害:能量45/真实30] 即使另有叙事效果，也已自动解析威力与主击；范围规则用 for_each 的 from:"action_targets" 逐个处理本次行动已圈定的单位。保留已生成的规则，只补尚未实现的附加效果，不要再按总威力或各分量重复添加伤害。
 • [关联属性: <属性>] 或标签中的五维名称指向施术者主属性（str / agi / con / int / spi），需属性缩放时写入 damage.stat 或在公式中读 self.<stat>；原文要求抵抗范围技能的附带效果时，在 after_hit 规则里用 check(kind:"save")，并在 onPass/onFail 中结算附带效果。用 event.skillId == skill.id 限定来源。
@@ -53,6 +54,7 @@ export const PATCH_RULES = String.raw`<output_contract>
    • **消耗 fp（FP / 命运点）硬分流铁律**：只要效果描述中包含消耗 fp（FP）这种外部叙事专用资源（包括消耗 fp 许愿、改写因果或兑换效果），**一律整条直接归入 narrative**（在 reason 中用通俗人话补全说明即可，**既不要映射为战棋战斗规则或局内 mp / sp / hp，也绝对不要塞进 unresolved**）！
    • 其他战外系统分流：纯外观清洁、宝库收纳、跨世界／跨位面随机漫游传送、战外数小时延时复活与库存获取限制同样归入 narrative；不涉及消耗 fp、确属战棋局内规则意图但依赖引擎未开放机制（如永久篡改剥夺敌方技能模板）或缺少战内固定参数的部分，才归入 unresolved（标明 engine_limit 或 missing_info）。严禁把跨世界传送强行映射为棋盘格 move！
 2. 快照增量、幂等引用与主击守恒不变式（Snapshot Delta, Idempotency & Conservation）：
+   • 保留 roster 中已由标签落盘的 attack、defense、accuracy、initiativeBonus 与 mods（dodge、initiativeFlat、checkBonus 等）。用 /mods/- 追加或整数组原样保留已有项，不得覆写冲掉或重复叠加。例如已有闪避 +15，效果又写“闪避 +15、移动 +2”，只补移动。若整条仅重申静态数值且剩余为风味，归 narrative，注明“对应数值已由静态标签落盘，其余为风味描述”；禁止把 baseline 初始项填入 existing 或提交无变化补丁。
    • 快照增量与已存模板禁重定义：动笔前（尤含返修轮次！）先查当前 roster 快照的 skills、statusTemplates 与宿主模板现有键——① 凡当前快照中**已存在**的状态模板或派生技能 ID（含前序批次或首轮已成功落盘的模板），**直接按既有 ID 引用，绝对禁止再次输出 add /skills/<id> 或 add /statusTemplates/<id>**（重复 add 已存在模板会触发共享模板定义冲突并级联拒收宿主规则！）；② 已解析的 initiativeBonus、rawRange / rawRadius / shape、power 直接保留；移除或替换 /skills/<id>/damage 前先核实当前快照该技能确实存在 damage 键（已移除或本来无 damage 键时严禁再 remove/replace /damage，remove /damage 后更严禁再写 /damage/type！）。
    • 主击完备性与并表核销：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage：① 若原文为单一伤害类型主击，仅用 add 写入 /skills/<id>/damage/type（已有该键用 replace）保留原生主击，并将「主击伤害类型」警告与同技能仅重申该单一主击比例及已解析先手／范围的原词条一并挂在该补丁操作的 resolves 上共同核销（严禁再追加第二段 100% 伤害规则，严禁塞入 existing 或 narrative）；② 若原文明确要求多属性混合主击或独立公式替代主击，同批先核实存在 damage 后 remove /skills/<id>/damage，并在 hook:"active" 内拆为多条 damage 原语，将该混合主击词条与「主击伤害类型」一并挂在主击补丁 resolves 上核销；③ 原文无法确认类型时写 unresolved。
    • 面板去重与单次恢复：HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat；若来源加成或成长已计入当前快照面板值，保留当前面板，严禁二次叠加。heal 指令本身已直接恢复生命，严禁在同一效果内再写 resource(pool:"hp") 造成双倍回血。

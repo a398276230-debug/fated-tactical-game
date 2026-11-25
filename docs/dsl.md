@@ -53,6 +53,7 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 `statMod.stat` 当前包括五维属性和：`movement`、`incomingDistanceOffset`、`armor`、`armorPierce`、`armorPiercePercent`、`damageMult`、`finalDamageMult`、`incomingDamageMult`、`damageFlat`、`damageReduction`、`damageReductionFlat`、`dr`、`healingMult`、`incomingHealMult`、`costMult`、`checkBonus`、`dcBonus`、`resistBonus`、`dodge`、`advantage`、`initiativeFlat`、`critDamageBonus`、`apMax`、`incomingAccuracy`、`intentBonus`、`intentDifficulty`、`shatter`。
 
 - flat-only stats：`incomingDistanceOffset`、`armorPierce`、`damageFlat`、`damageReductionFlat`、`dcBonus`、`resistBonus`、`advantage`、`dodge`、`checkBonus`、`initiativeFlat`、`critDamageBonus`、`incomingAccuracy`、`intentBonus`、`intentDifficulty`。
+- 受击闪避：`dodge` 是独立的 `statMod.stat`。攻方命中减去守方闪避得到净命中修正；引擎没有独立闪避检定，`statMod.checkKind` 禁止填写 `"dodge"`。例如 `{ "stat": "dodge", "flat": 15 }` 会扣减攻方 15 点命中。
 - 意图对抗：攻方 `intentBonus` 加到攻方总值，守方 `intentDifficulty` 加到对抗难度，均不改变普通命中。例如猎人帽的「命中核心判定 +5」写 `{ "stat": "intentBonus", "flat": 5, "when": "event.intent == 'core'" }`。敌对打击检定前读取声明意图，检定失败后该目标分支读取 `normal`；外层 `after_action` 保留声明值，非打击事件不含此键。
 - ratio stats：`damageReduction`、`dr`、`armorPiercePercent`、`shatter`。
 - multiplier stats：`incomingDamageMult`、`damageMult`、`finalDamageMult`、`healingMult`、`incomingHealMult`、`costMult`。

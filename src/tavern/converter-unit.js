@@ -12,7 +12,7 @@ import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
 import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, warningSink, WARNING_SCOPES } from './converter-parse.js';
-import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
+import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readCombatTags, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -355,27 +355,31 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     skillKeys.set(key, occurrence + 1);
     const sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${key}${occurrence ? `-${occurrence}` : ''}`;
     entrySources[`skills:${sid}`] = staticProjection(input);
-    const labels = [].concat(r.tags ?? r.标签 ?? [], r.description ?? r.描述 ?? '').join(' ');
-    const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const notes = sink('effect', `/skills/${sid}`);
     const area = areaFields(r, notes, skillName);
     const costs = skillCosts(r.cost ?? r.消耗);
     const mode = text(r.模式 ?? r.mode ?? r.类型 ?? r.type).toLowerCase();
     const passive = r.passive === true || mode === 'passive' || mode.includes('被动') && !mode.includes('主动');
-    const tag = (typeof r.伤害 === 'string' ? r.伤害 : null) ?? tagEntries(r.tags ?? r.标签).map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
+    const parsed = readCombatTags(r, passive ? 'passive' : 'active', skillName, notes);
+    const tag = (typeof r.伤害 === 'string' ? r.伤害 : null) ?? parsed.entries.map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean) ?? parsed.powerType;
     const rawEffects = r.effects ?? r.效果;
-    const power = r.power ?? r.威力 ?? taggedPower;
-    const initiative = r.先手 ?? tagEntries(r.tags ?? r.标签).map(v => v.match(/^先手\s*[:：]?\s*([+-]?\d+)$/)?.[1]).find(Boolean)
-      ?? narrativeEntries(rawEffects).map(([, v]) => typeof v === 'string' && v.match(/^(?:\[[^\]]+\]\s*)*本技能先手\s*([+-]\d+)(?=[，。；、\s]|$)/)?.[1]).find(Boolean);
+    // Old cards sometimes put the power declaration in the description rather than tags.
+    const descriptionPower = text(r.description ?? r.描述).match(/(?:^|[\s，。；【\[])威力\s*[:：]\s*(\d+)(?=$|[\s，。；：、】\]]|物理|能量|精神|真实)/u)?.[1];
+    // A passive tag cannot synthesize strike fields. Explicit template fields still round-trip.
+    const power = r.power ?? r.威力 ?? (passive ? undefined : parsed.fields.power ?? descriptionPower);
+    const initiative = r.initiativeBonus ?? (passive ? undefined : r.先手 ?? parsed.fields.initiativeBonus
+      ?? narrativeEntries(rawEffects).map(([, v]) => typeof v === 'string' && v.match(/^(?:\[[^\]]+\]\s*)*本技能先手\s*([+-]\d+)(?=[，。；、\s]|$)/)?.[1]).find(Boolean));
     const numericPower = number(power, NaN);
-    const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
-    const statTag = tagEntries(r.tags ?? r.标签)
+    const hasPower = !passive && Number.isFinite(numericPower) && numericPower >= 0;
+    if (!hasPower) for (const attack of parsed.activeAttack) notes.push(`「${skillName}」标签「${attack}」待标准化：未声明主击威力，请结合词条语义裁定，不直接把攻击填作 power`);
+    const statTag = parsed.entries
       .map(label => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
     const rules = readRules(r.rules, notes);
     const prefix = `fx-${hash(sid).toString(36)}`;
     const areaDamage = isAreaDamage(area);
     const narrativeNotes = [];
-    appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive }), notes);
+    appendRules(rules, convertNarrative(rawEffects, notes, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive,
+      onNarrativeWarning: (message, metadata) => narrativeNotes.push({ message, metadata }) }), notes);
     const singleTaggedType = damageAliases.get(tag);
     const hasActiveDamage = rules.some(rule => rule.enabled !== false && rule.hook === 'active' && [...instructions(rule.program)].some(op => op.op === 'damage'));
     if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag) {
@@ -402,8 +406,10 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       notes.push(`主击伤害类型待标准化「主击伤害类型」：根据原始效果补全 /skills/${sid}/damage/type；若原文明确以混合伤害或独立公式替代主击，请移除模板 damage 并以 active 规则结算。`, { userSummary: `技能「${skillName}」：待从原文识别主击伤害类型` });
     }
     const mainParsed = hasPower && (generatedMainDamage || damageOps.length);
-    for (const { message, metadata } of narrativeNotes) notes.push(mainParsed
-      ? `${message}。主击与威力 ${numericPower} 已解析，只补本条尚未实现的效果，不要重复添加主击。` : message, metadata);
+    for (const { message, metadata } of narrativeNotes) {
+      const mainNote = mainParsed ? `。主击与威力 ${numericPower} 已解析，只补本条尚未实现的效果，不要重复添加主击。` : '';
+      notes.push(message + mainNote + parsed.suffix, metadata);
+    }
     const damageType = explicitDamageType ?? (types.length === 1 ? types[0] : undefined);
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
@@ -413,14 +419,15 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       target: area.target ?? (areaDamage && object(r.damage) ? 'any' : 'enemy'), ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       ...(generatedMainDamage ? { damage: generatedMainDamage } : {}),
-      rules, mods: readMods(r.mods, notes), pools: readPools(r.pools, notes),
+      rules, mods: parsed.mods, pools: readPools(r.pools, notes),
     };
     if (damageTypes.includes(damageType)) skills[sid].damageType = damageType;
     else if (damageType != null) notes.push(`「${skillName}」未知伤害类型：${damageType}`);
-    for (const [key, min, max] of [['mp', 0, 25000], ['sp', 0, 25000], ['accuracy', -20, 30], ['initiativeBonus', -100, 100], ['power', 0, 1e9]]) {
-      const value = r[key] ?? (key === 'power' ? power : key === 'initiativeBonus' ? (passive ? undefined : initiative) : costs[key]);
-      if (value != null) skills[sid][key] = bound(value, min, max);
-    }
+    for (const key of ['mp', 'sp']) if ((r[key] ?? costs[key]) != null) skills[sid][key] = bound(r[key] ?? costs[key], 0, 25000);
+    const accuracy = r.accuracy ?? (passive ? undefined : r.命中 ?? parsed.fields.accuracy);
+    if (accuracy != null) skills[sid].accuracy = bound(accuracy, -100, 100);
+    if (initiative != null) skills[sid].initiativeBonus = bound(initiative, -100, 100);
+    if (power != null) skills[sid].power = bound(power, 0, 1e9);
     if (r.save != null || r.saveDC != null) {
       const save = statAliases[r.save] ?? r.save;
       const dc = number(r.saveDC, NaN);

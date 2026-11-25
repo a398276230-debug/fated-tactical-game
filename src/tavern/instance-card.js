@@ -59,7 +59,7 @@ export function ruleSummary(rule, state) {
   return `${rule.enabled === false ? '已关闭：' : ''}${when[rule.hook] ?? '触发'} → ${rule.program.map(describe).join('；')}`;
 }
 const modLabels = {
-  ...attributes, armor:'护甲', armorPierce:'固定穿甲', armorPiercePercent:'百分比穿甲',
+  ...attributes, dodge:'闪避', movement:'移动距离', incomingDistanceOffset:'表观距离', critDamageBonus:'暴击伤害加成', incomingDamageMult:'受击易伤倍率', apMax:'行动点上限', armor:'护甲', armorPierce:'固定穿甲', armorPiercePercent:'百分比穿甲',
   damageFlat:'输出固定伤害', damageMult:'全伤害倍率', finalDamageMult:'最终伤害倍率',
   damageReductionFlat:'受击固定减伤', damageReduction:'受击伤害减免', dr:'受击伤害减免',
   healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率',
@@ -182,7 +182,7 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
     shownItems.add(id);
     const item=state?.items?.[id],t=state?.equipment?.[item?.templateId]??unit.equipment?.find(e=>e.id===id)?.template;const d=t?.damage;
     const dice=d?`${d.count}d${d.sides}${d.bonus?` ${d.bonus>0?'+':''}${d.bonus}`:''}${d.stat?` + ${attributes[d.stat]??d.stat}`:''} ${types[d.type]??''}`.trim():null;
-    gear.push({label:`[${slot}] ${t?.name??id}`,path:item?.templateId ? `/equipment/${item.templateId}` : null,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t,item});
+    gear.push({label:`[${slot}] ${t?.name??id}`,path:item?.templateId ? `/equipment/${item.templateId}` : null,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.accuracy?`命中 ${signed(t.accuracy)}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t,item});
   }
   section('装备',gear);
   const innate = new Set(unit.skills??[]);

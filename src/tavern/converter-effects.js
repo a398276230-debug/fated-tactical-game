@@ -53,6 +53,69 @@ export function readMods(value, warnings) {
   });
 }
 
+// Geometry is handled by parseAreaTags. Only complete combat declarations enter
+// this table: a qualifier such as 无视防御 is not a defense-panel declaration.
+const combatTag = /^(攻击力?|防御力?|防具|护甲|命中|闪避|先手|暴击|威力)\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.*)$/u;
+const numberTag = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu;
+const powerTag = /^(\d+)(?:\s*(物理|能量|精神|真实))?$/u;
+const canonicalKey = { 攻击力:'攻击', 防御力:'防御', 护甲:'防御', 防具:'防御' };
+
+export function readCombatTags(raw, kind, name, warnings) {
+  const mods = readMods(raw.mods, warnings), fields = {}, summary = [], groups = new Map();
+  const weapon = kind === 'weapon', active = kind === 'active', passive = kind === 'passive';
+  const entries = tagEntries(raw.tags ?? raw.标签);
+  const warn = (tag, advice = '') => warnings.push(`「${name}」标签「${tag}」待标准化：请结合词条语义映射为合法 VM mods / rules 或标明 engine_limit${advice && `；${advice}`}`);
+  for (const tag of entries) {
+    const match = combatTag.exec(tag) ?? /^(先手)\s*([+-]?\d.*)$/u.exec(tag);
+    if (!match) continue;
+    const key = canonicalKey[match[1]] ?? match[1];
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ tag, value:match[2] });
+  }
+  let powerType;
+  const equipmentPower = [], activeAttack = [];
+  for (const [key, group] of groups) {
+    const values = [];
+    for (const { tag, value } of group) {
+      if (key === '暴击') { warn(tag, '区分暴击档位与暴击伤害'); continue; }
+      if (key === '威力' && !active) {
+        if (passive) warn(tag, '纯被动技能不结算主击威力');
+        else equipmentPower.push(tag);
+        continue;
+      }
+      if (key === '攻击' && active) { activeAttack.push(tag); continue; }
+      if (key === '攻击' && !weapon) { warn(tag, '请结合描述裁定伤害加值或触发效果'); continue; }
+      if (active && (key === '防御' || key === '闪避')) { warn(tag, '主动技能不能直接提供常驻加成，请裁定是否施加状态'); continue; }
+      const power = key === '威力' ? powerTag.exec(value) : null;
+      const n = power ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
+      if (!Number.isSafeInteger(n) || (key === '威力' && n < 0)) { warn(tag); continue; }
+      if (power && !values.length) powerType = power[2];
+      values.push(n);
+    }
+    if (!values.length) continue;
+    const total = values.reduce((sum, n) => sum + n, 0);
+    const field = key === '攻击' ? 'attack' : key === '防御' && !weapon && !passive ? 'defense'
+      : key === '命中' && (weapon || active) ? 'accuracy' : key === '先手' && active ? 'initiativeBonus' : key === '威力' ? 'power' : null;
+    if (field) {
+      // Explicit template fields win. Power describes one main strike, not a stackable bonus.
+      if ((raw[field] ?? raw[key]) != null) continue;
+      const n = field === 'power' ? values[0] : total;
+      const panel = field === 'attack' || field === 'power' ? bound(n, 0, 1e9) : field === 'defense' ? bound(n, 0, 1e6) : bound(n, -100, 100);
+      fields[field] = panel;
+      summary.push([key, panel]);
+    } else {
+      const stat = { 防御:'armor', 命中:'checkBonus', 闪避:'dodge', 先手:'initiativeFlat' }[key];
+      const checkKind = key === '命中' ? 'attack' : undefined;
+      if (!total || (weapon && stat === 'armor' && total < 0) || mods.some(mod => mod.stat === stat && mod.checkKind === checkKind)) continue;
+      if (mods.length >= 200 || !Number.isSafeInteger(total)) { for (const { tag } of group) warn(tag, '合计数值或 mods 数量超限'); continue; }
+      mods.push({ stat, flat:total, ...(checkKind && {checkKind}) });
+      summary.push([key, total]);
+    }
+  }
+  const suffix = summary.length ? `。已由静态标签解析落盘：${summary.map(([label, n]) => `${label} ${n >= 0 ? '+' : ''}${n}`).join('、')}；补丁改写 mods 时须保留既有项（或用 /mods/- 追加）且切勿重复叠加同一数值；若本条仅重申该静态加成而无额外局内机制，直接归入 narrative 说明即可。` : '';
+  return { entries, fields, mods, suffix, powerType, equipmentPower, activeAttack };
+}
+
 export function readPools(value, warnings) {
   if (value == null) return {};
   if (!object(value)) { warnings.push('pools 必须是资源池声明对象'); return {}; }
@@ -74,11 +137,12 @@ export function mapEffects(effects, context = 'skill', warnings = [], prefix = '
 }
 export const mapEffect = (raw, context, warnings) => mapEffects([raw], context, warnings)[0] ?? null;
 
-function readEquipmentNarrative(effects, warnings) {
-  return convertNarrative(effects, warnings, '', { equipment: true });
+function readEquipmentNarrative(effects, warnings, onNarrativeWarning) {
+  return convertNarrative(effects, warnings, '', { equipment: true, onNarrativeWarning });
 }
 
-export function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false, passive = false } = {}) {
+export function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false, passive = false,
+  onNarrativeWarning = (message, metadata) => warnings.push(message, metadata) } = {}) {
   const rules = [];
   for (const [index, [label, entry]] of narrativeEntries(effects).entries()) {
     if (validVmRule(entry)) {
@@ -92,9 +156,9 @@ export function convertNarrative(effects, warnings, prefix, { allowPower = false
     const summary = excerpt.length ? `${excerpt.slice(0, 80).join('')}${excerpt.length > 80 ? '…' : ''}` : '待转换为战斗规则';
     const metadata = { rawExcerpt, userSummary: `${label ? `「${label}」` : '效果'}：${summary}` };
     if (program.length && areaDamage) {
-      warnings.push(`范围伤害待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请为规则声明精确的目标选择器`, metadata);
+      onNarrativeWarning(`范围伤害待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请为规则声明精确的目标选择器`, metadata, index, label);
     } else if (program.length) appendRules(rules, [activeRule(`${prefix.slice(0, 45)}-narrative-${index}`, program)], warnings);
-    else warnings.push(`${equipment ? '装备' : ''}效果待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请用 VM rules / mods / pools 实现行为与触发时机；缺少状态或召唤物专属技能时，同批新增 /statusTemplates/<id> 或 /skills/<id> 后引用`, metadata);
+    else onNarrativeWarning(`${equipment ? '装备' : ''}效果待标准化${label ? `「${label}」` : ''}：${describe(entry)}。请用 VM rules / mods / pools 实现行为与触发时机；缺少状态或召唤物专属技能时，同批新增 /statusTemplates/<id> 或 /skills/<id> 后引用`, metadata, index, label);
   }
   return rules;
 }
@@ -248,22 +312,22 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
   const templateId = `template-${idBase}`;
   const warnings = sink('effect', `/equipment/${templateId}`);
   const rules = readRules(r.rules, warnings);
-  const template = { name: name.slice(0, 100), kind, rules, mods: readMods(r.mods, warnings), pools: readPools(r.pools, warnings), ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}) };
-  const effectEntries = narrativeEntries(r.effects ?? r.effectsList ?? r.效果);
+  const parsed = readCombatTags(r, kind, name, warnings);
+  const template = { name: name.slice(0, 100), kind, rules, mods: parsed.mods, pools: readPools(r.pools, warnings), ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}) };
   const { rangeValues, radius, shape, target } = parseAreaTags(r.tags ?? r.标签);
-  const equipmentWarnings = !isWeapon || rangeValues.length < 2 ? warnings : {
-    push(message, metadata) {
-      const effectIndex = effectEntries.findIndex(([label, value]) => label ? message.includes(`「${label}」`) : message.includes(describe(value)));
-      const rawRange = rangeValues[effectIndex + 1];
-      const suffix = effectIndex >= 0 && rawRange != null
-        ? `。该装备主动效果的原始距离为 rawRange:${rawRange}${radius != null ? `、rawRadius:${radius}` : ''}${shape ? `、shape:${shape}` : ''}${target ? `、target:${target}` : ''}，请写到装备挂载的技能模板中`
-        : '';
-      warnings.push(message + suffix, metadata);
-    },
+  let powerCovered = false;
+  const onNarrativeWarning = (message, metadata, index, label) => {
+    const rawRange = isWeapon && rangeValues.length > 1 ? rangeValues[index + 1] : null;
+    const rangeNote = rawRange != null
+      ? `。该装备主动效果的原始距离为 rawRange:${rawRange}${radius != null ? `、rawRadius:${radius}` : ''}${shape ? `、shape:${shape}` : ''}${target ? `、target:${target}` : ''}，请写到装备挂载的技能模板中` : '';
+    const powerEffect = parsed.equipmentPower.length && (rawRange != null || /威力|主动|造成.{0,24}伤害/u.test(`${label} ${metadata.rawExcerpt}`));
+    const powerNote = powerEffect ? `。装备标签「${parsed.equipmentPower.join('、')}」尚未落盘，请结合原词条裁定挂载技能的威力` : '';
+    if (powerEffect) powerCovered = true;
+    warnings.push(message + rangeNote + powerNote + parsed.suffix, metadata);
   };
-  appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, equipmentWarnings), warnings);
-  const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
-  const defense = bound(r.defense ?? r.防御 ?? defenseTag?.[1], 0, 1000000, kind === 'shield' ? 1 : 0);
+  appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, warnings, onNarrativeWarning), warnings);
+  if (!powerCovered) for (const tag of parsed.equipmentPower) warnings.push(`「${name}」标签「${tag}」待标准化：装备没有主击威力面板，请结合描述裁定挂载主动技能`);
+  const defense = bound(r.defense ?? r.防御 ?? parsed.fields.defense, 0, 1000000, kind === 'shield' ? 1 : 0);
   if (kind === 'shield') Object.assign(template, { weaponClass: 'shield', hand: 'off_hand', shield: true, defense });
   else if (isWeapon) {
     const area = areaFields(r, sink('field', `/equipment/${templateId}`), name);
@@ -271,12 +335,11 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
     const classes = ['ranged', 'light_blade', 'greatsword', 'staff', 'auxiliary'];
     const weaponClassAlias = new Map([['bow', 'ranged'], ['crossbow', 'ranged'], ['arcane', 'staff']]);
     const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-    const tags = tagEntries(r.tags ?? r.标签);
+    const tags = parsed.entries;
     const subtype = tags.find(tag => ['弓','弩','火枪','投掷武器'].includes(tag));
     const ranged = r.ranged ?? (r.rangeType ? r.rangeType === 'ranged' : Boolean(subtype));
     const twoHanded = slot === 'twoHands' || r.twoHanded === true || r.hand === 'two_handed' || explicitClass === 'greatsword'
       || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
-    const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
     const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? 'ranged' : twoHanded ? 'greatsword' : 'light_blade';
     Object.assign(template, {
       ...(r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {}),
@@ -284,7 +347,7 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
       ranged: Boolean(ranged), rangeType: ranged ? 'ranged' : 'melee',
       ...(r.closeQuarters === true || tags.some(tag => /近战射击|贴身射击/u.test(tag)) ? { closeQuarters: true } : {}),
       range: bound(area.range, 0, 64, ranged ? 4 : 1), rawRange: area.range ?? (ranged ? 4 : 1),
-      attack: bound(r.attack ?? r.攻击 ?? attackTag?.[1], 0, 1e9), accuracy: bound(r.accuracy ?? r.命中, -20, 30, 0),
+      attack: bound(r.attack ?? r.攻击 ?? parsed.fields.attack, 0, 1e9), accuracy: bound(r.accuracy ?? r.命中 ?? parsed.fields.accuracy, -100, 100, 0),
       damage: normalizeDice(r.damage ?? { stat: 'str' }),
       ...geometryFields(area),
     });
