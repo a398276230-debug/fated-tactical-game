@@ -822,7 +822,7 @@ var FatedTactical = (() => {
     previous: "\u5F53\u524D\u6548\u679C\u94FE\u4E0A\u4E00\u6B65\u5B9E\u9645\u6570\u503C",
     healing: "\u672C\u6B21\u6CBB\u7597\u91CF",
     statusId: "\u89E6\u53D1\u672C\u6B21\u68C0\u5B9A\u6216\u4E8B\u4EF6\u7684\u72B6\u6001 ID",
-    checkKind: "\u68C0\u5B9A\u7C7B\u578B\uFF08attack/save/contest/skill/chance/d20/dodge/authority\uFF09",
+    checkKind: "\u68C0\u5B9A\u7C7B\u578B\uFF08attack/save/contest/skill/chance/d20/authority/flee/flee_chase\uFF09",
     passed: "\u68C0\u5B9A\u662F\u5426\u901A\u8FC7\uFF08true/false\uFF09",
     hit: "\u653B\u51FB\u68C0\u5B9A\u662F\u5426\u547D\u4E2D\uFF08true/false\uFF09",
     critical: "\u662F\u5426\u66B4\u51FB\uFF08true/false\uFF09",
@@ -1421,7 +1421,7 @@ var FatedTactical = (() => {
       mult: numericExpr,
       additivePercent: numericExpr,
       damageType,
-      checkKind: text,
+      checkKind: { ...text, not: literal("dodge") },
       statusId: id,
       locks: list(slot, 1),
       flags: list(enumOf("preserveLife", "blockRevive", "blockResourceRestore", "untargetableSingle", "harmless", "guaranteed_hit", "guaranteed_crit", "hidden", "intercept", "taunted", "infiniteAmmo"), 1),
@@ -1756,6 +1756,7 @@ var FatedTactical = (() => {
   var validVmStatMod = (value, options = {}) => valid(value, "statMod", options);
   function vmStatModError(mod2) {
     if (validVmStatMod(mod2)) return void 0;
+    if (mod2?.checkKind === "dodge") return 'VM \u4FEE\u9970\u4E0D\u652F\u6301 checkKind:"dodge"\uFF08\u5F15\u64CE\u4E0D\u5B58\u5728\u72EC\u7ACB\u95EA\u907F\u68C0\u5B9A\uFF09\uFF1B\u53D7\u51FB\u95EA\u907F\u52A0\u51CF\u503C\u8BF7\u76F4\u63A5\u5199 {stat:"dodge", flat:...} \u5E76\u7701\u7565 checkKind';
     if (mod2 && ratioStats.enum.includes(mod2.stat) && (Object.hasOwn(mod2, "additivePercent") || typeof mod2.flat === "number" && !matches(mod2.flat, ratioFlat, {}))) {
       return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 0\uFF0C\u4E0D\u80FD\u7528 additivePercent\uFF1B\u8BF7\u7528 flat \u586B\u5199 -1..1 \u7684\u5C0F\u6570\uFF08\u5982 0.3 \u4EE3\u8868 30%\uFF09\u6216\u6570\u503C\u8868\u8FBE\u5F0F`;
     }
@@ -5295,7 +5296,7 @@ var FatedTactical = (() => {
     return null;
   };
   function stealthCheck(state, unit, d20, dc) {
-    const bonus = modCheck(state, unit, "stealthBonus");
+    const bonus = 0;
     return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
   }
   var shieldTotal = (unit) => values3(unit.statuses).reduce((total2, status) => total2 + (status.category === "shield" ? status.vars?.shieldAmount ?? 0 : 0), 0);
@@ -5427,9 +5428,18 @@ var FatedTactical = (() => {
       { targetId: target2.id, resource: resource2, amount, before, after }
     );
   }
+  function baseArmor(state, unit) {
+    return (unit.armor ?? 0) + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0) + (g.template?.armor ?? 0), 0) + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
+  }
+  function unitStandingStats(state, unit) {
+    if (!unit) return { armor: 0, dodge: 0 };
+    return {
+      armor: Math.max(0, Math.round(modStat(state, unit, "armor", baseArmor(state, unit)))),
+      dodge: Math.round(modStat(state, unit, "dodge", 0))
+    };
+  }
   function armorOf(state, unit, damageType2, pierce = 0, context = {}) {
-    const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0) + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
-    const base = unit.armor + equipmentDefense + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
+    const base = baseArmor(state, unit);
     const ctx = { ...context, target: context.attacker, damageType: damageType2 };
     const armor = Math.max(0, modStat(state, unit, "defense", modStat(state, unit, "armor", base, ctx), ctx));
     const flat = typeof pierce === "object" ? pierce.flat ?? 0 : pierce;
@@ -5670,7 +5680,7 @@ var FatedTactical = (() => {
   }
   function initiativeOrder(state, rollFor) {
     return living(state).map((unit) => {
-      const roll = rollFor(unit), agility = effectiveStat(state, unit, "agi") + modCheck(state, unit, "initiativeAgility");
+      const roll = rollFor(unit), agility = effectiveStat(state, unit, "agi");
       const agilityPercent = Number(unit.initiativePercent ?? 0);
       const attackInit = [...unit.attackInit ?? []];
       const actionInit = [...unit.actionInit ?? []];
@@ -5712,12 +5722,6 @@ var FatedTactical = (() => {
   function modStat(state, unit, name, base, context = {}) {
     const statName = { damage: "damageMult", healing: "healingMult", accuracy: "checkBonus", initiative: "initiativeFlat" }[name] ?? name;
     return applyStatMod(base, aggregateModifiers(state, unit?.id, modifierEvent(unit, context)).stats[statName]);
-  }
-  function modCheck(state, unit, key4, context = {}) {
-    const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
-    if (key4 === "highGroundAccuracy") return template?.vars?.[key4] ?? 0;
-    if (key4 === "advantage") return modStat(state, unit, "advantage", 0, { checkKind: "attack", ...context });
-    return 0;
   }
   var activeRule = (rule2) => rule2.hook === "active" && rule2.enabled !== false;
   function isPassiveSkill(skill2) {
@@ -5998,6 +6002,7 @@ var FatedTactical = (() => {
     const intent = context.intent ?? "normal";
     const strike = {
       target: target2,
+      distance: geometry.distance,
       melee: geometry.melee,
       arrow,
       backstab,
@@ -6016,14 +6021,9 @@ var FatedTactical = (() => {
     const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags2.guaranteed_crit);
     const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags2.guaranteed_hit);
     const execution = !cover && target2?.team !== actor.team && ["shaken", "routed"].includes(target2?.moraleState) && ["kill", "concept"].includes(context.intent) && hasStrikeDamage(template);
-    const dodge = execution || cover ? 0 : modStat(
-      state,
-      target2,
-      "dodge",
-      modCheck(state, target2, "dodgeBonus", { target: actor }) + modCheck(state, target2, "dodgeAgility", { target: actor }),
-      { ...strike, attacker: actor, checkKind: "dodge" }
-    );
-    const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, "highGroundAccuracy", strike) : 0);
+    const dodge = execution || cover || !target2 ? 0 : modStat(state, target2, "dodge", 0, { ...strike, attacker: actor });
+    const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
+    const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
     const flanked = target2 && !cover ? isFlanked(state, origin, target2) : false;
     const protectedBy = target2 && !cover && !geometry.melee ? coverBetween(state, origin, target2) : null;
     const penalty = protectedBy?.cover ?? 0;
@@ -6040,10 +6040,17 @@ var FatedTactical = (() => {
     const rules = stanceRules(stance);
     const rangedDistance = weapon2 && !geometry.melee && geometry.distance > 0 && distanceModifier < 0 ? Math.min(0, distanceModifier + (rules.rangedPenaltyOffset ?? 0)) : distanceModifier;
     const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
-    const accuracy = modStat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) + (execution || cover || !target2 ? 0 : modStat(state, target2, "incomingAccuracy", 0, { attacker: actor })) + (flanked ? 2 : 0) - penalty + modCheck(state, actor, "accuracyBonus", strike), strike) - dodge;
+    const sandboxStat = state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0;
+    const morale = moraleModifiers[actor.moraleState]?.accuracy ?? 0;
+    const incomingAccuracy = execution || cover || !target2 ? 0 : modStat(state, target2, "incomingAccuracy", 0, { attacker: actor });
+    const flankedBonus = flanked ? 2 : 0;
+    const baseAccuracy = (template.accuracy ?? 0) + sandboxStat + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + morale + incomingAccuracy + flankedBonus - penalty;
+    const attackAccuracy = modStat(state, actor, "accuracy", baseAccuracy, strike);
+    const checkBonus = attackAccuracy - baseAccuracy;
+    const accuracy = attackAccuracy - dodge;
     const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
     const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 4;
-    const delta = modCheck(state, actor, "advantage", strike);
+    const delta = modStat(state, actor, "advantage", 0, strike);
     const advantages = Math.max(0, delta) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
     const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
     const advantage = Math.sign(advantages - disadvantages);
@@ -6114,6 +6121,9 @@ var FatedTactical = (() => {
       x: at3.x,
       y: at3.y,
       ...geometry,
+      ruleset: state.ruleset ?? "protocol",
+      kind: cover ? "cover" : "unit",
+      attackAccuracy,
       recipientId: recipient.id,
       arc,
       backstab: Boolean(backstab),
@@ -6126,7 +6136,20 @@ var FatedTactical = (() => {
       weaponRangeModifier,
       stance,
       stanceRules: rules,
-      accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: modStat(state, actor, "accuracy", 0, strike) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) },
+      accuracySources: {
+        explicit: template.accuracy ?? 0,
+        highGround: high,
+        size: sizeAccuracy,
+        distance: closeRange,
+        weaponRange: weaponRangeModifier,
+        status: checkBonus + morale,
+        checkBonus,
+        morale,
+        incomingAccuracy,
+        flanked: flankedBonus,
+        cover: 0 - penalty,
+        ...sandboxStat && { statBonus: sandboxStat }
+      },
       ...context.skillId && { skillId: context.skillId },
       ...weapon2?.instance?.id && { weaponId: weapon2.instance.id },
       stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? "str" : "agi"),
@@ -6740,7 +6763,16 @@ var FatedTactical = (() => {
       };
     }
     const effectiveHit = hit;
-    record(state, actor, "roll", `${profile.name}\uFF1A${critical ? "\u66B4\u51FB" : hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D"} (${total2}/${profile.defense})`, {
+    const summary = state.ruleset === "sandbox" || profile.kind === "cover" ? ` (${total2}/${profile.defense})` : `\uFF08\u5408\u8BA1 ${total2}\uFF0C${rating.name}${profile.dodgeBonus ? `\uFF0C\u5B88\u65B9\u95EA\u907F ${profile.dodgeBonus > 0 ? "+" : ""}${profile.dodgeBonus}` : ""}\uFF09`;
+    record(state, actor, "roll", `${profile.name}\uFF1A${critical ? "\u66B4\u51FB" : hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D"}${summary}`, {
+      ruleset: state.ruleset ?? "protocol",
+      targetKind: profile.kind === "cover" ? "cover" : "unit",
+      attackAccuracy: profile.attackAccuracy ?? profile.accuracy,
+      dodgeBonus: profile.dodgeBonus ?? 0,
+      ...profile.rawDodgeBonus && { rawDodgeBonus: profile.rawDodgeBonus },
+      ...profile.ignoreDodge && { ignoreDodge: true },
+      ...profile.bonusDelta && { bonusDelta: profile.bonusDelta },
+      ...profile.accuracySources && { accuracySources: profile.accuracySources },
       targetId: profile.id,
       ...cover,
       dice: dice4,
@@ -6894,9 +6926,17 @@ var FatedTactical = (() => {
       return;
     }
     if (frame.phase === "natural") {
+      const bonusDelta = event.bonusDelta ?? 0, ignoreDodge = Boolean(event.ignoreDodge);
+      const rawDodgeBonus = profile.dodgeBonus ?? 0, dodgeBonus = ignoreDodge ? 0 : rawDodgeBonus;
+      const attackAccuracy = (profile.attackAccuracy ?? profile.accuracy + rawDodgeBonus) + bonusDelta;
       const adjusted = {
         ...profile,
-        accuracy: profile.accuracy + (event.bonusDelta ?? 0) + (event.ignoreDodge ? profile.dodgeBonus : 0),
+        attackAccuracy,
+        dodgeBonus,
+        rawDodgeBonus,
+        ignoreDodge,
+        bonusDelta,
+        accuracy: attackAccuracy - dodgeBonus,
         advantage: profile.advantage + (event.advantageDelta ?? 0),
         saveDC: (profile.saveDC ?? 0) + (event.dcDelta ?? 0),
         guaranteeHit: profile.guaranteeHit || ["hit", "crit"].includes(event.forceOutcome),
@@ -7763,7 +7803,7 @@ var FatedTactical = (() => {
     checkOptional(v, "quality", (x) => x === "\u552F\u4E00" || Object.hasOwn(QUALITY_TIER, x));
     checkOptional(v, "range", (x) => int(x, 0, 64));
     checkOptional(v, "attack", (x) => int(x, 0, 1e9));
-    checkOptional(v, "accuracy", (x) => int(x, -20, 30));
+    checkOptional(v, "accuracy", (x) => int(x, -100, 100));
     checkOptional(v, "armor", (x) => int(x, 0, 1e6));
     checkOptional(v, "defense", (x) => int(x, 0, 1e6));
     checkOptional(v, "kind", (x) => ["weapon", "shield", "armor", "accessory", "consumable"].includes(x));
@@ -7793,7 +7833,7 @@ var FatedTactical = (() => {
     checkOptional(v, "power", (x) => int(x, 0, 1e9));
     for (const k of ["mp", "sp"]) checkOptional(v, k, (x) => int(x, 0, 25e3));
     validateAreaDimensions(v);
-    checkOptional(v, "accuracy", (x) => int(x, -20, 30));
+    checkOptional(v, "accuracy", (x) => int(x, -100, 100));
     checkOptional(v, "save", (x) => attrs2.includes(x));
     checkOptional(v, "saveDC", (dc) => validSaveDC(dc) || typeof dc === "string" && validExpr(dc));
     requireThat(own13(v, "save") === own13(v, "saveDC"), "save/saveDC");
@@ -9190,11 +9230,12 @@ var FatedTactical = (() => {
           case "hit_result": {
             const target2 = checkTarget(event, detail);
             if (detail.cover > 0) add(`${target2}\u53D7\u5230${detail.coverId ? ` ${detail.coverId} ` : ""}\u63A9\u4F53\u906E\u853D`);
-            if (!detail.hit) add(`${target2}\u672A\u88AB\u51FB\u4E2D\uFF08${checkGrade(false, detail.selected)}\uFF0C\u5931\u624B\uFF09`);
+            const dodgeNote = detail.ignoreDodge && detail.rawDodgeBonus ? `\u65E0\u89C6\u95EA\u907F ${signed(detail.rawDodgeBonus)}` : detail.dodgeBonus ? `\u5B88\u65B9\u95EA\u907F ${signed(detail.dodgeBonus)}` : null;
+            if (!detail.hit) add(`${target2}\u672A\u88AB\u51FB\u4E2D` + notes([checkGrade(false, detail.selected), "\u5931\u624B", dodgeNote].filter(Boolean)));
             else {
               const verdict = detail.critical ? `\u5BF9${target2}\u6253\u51FA\u66B4\u51FB` : `\u51FB\u4E2D${target2}`;
               const grade = detail.automatic ? "\u81EA\u52A8\u547D\u4E2D" : checkGrade(true, detail.selected);
-              add(verdict + notes([grade, detail.rating?.name, detail.execution && "\u5904\u51B3\u52A0\u6210"].filter(Boolean)));
+              add(verdict + notes([grade, detail.rating?.name, detail.execution && "\u5904\u51B3\u52A0\u6210", dodgeNote].filter(Boolean)));
             }
             break;
           }
@@ -9880,13 +9921,25 @@ var FatedTactical = (() => {
     const verdict = d.critical ? "\u66B4\u51FB" : d.hit ? "\u547D\u4E2D" : "\u672A\u547D\u4E2D";
     const tone = d.critical ? "crit" : d.hit ? "hit" : "miss";
     const lines = [describeDice(d.dice, kept, mode)];
-    if (Number.isFinite(d.accuracy)) lines.push(`\u547D\u4E2D\u4FEE\u6B63 ${sign(d.accuracy)}\uFF0C\u5408\u8BA1 ${d.total}`);
+    const atk = d.attackAccuracy ?? d.accuracy + (d.dodgeBonus ?? 0);
+    const ignored = d.ignoreDodge && d.rawDodgeBonus;
+    if (Number.isFinite(d.accuracy)) {
+      const summary = d.dodgeBonus ? `\u653B\u65B9\u547D\u4E2D ${sign(atk)} \u2212 \u5B88\u65B9\u95EA\u907F ${sign(d.dodgeBonus)} = \u51C0\u4FEE\u6B63 ${sign(d.accuracy)}` : `\u547D\u4E2D\u4FEE\u6B63 ${sign(d.accuracy)}${ignored ? `\uFF08\u65E0\u89C6\u5B88\u65B9\u95EA\u907F ${sign(d.rawDodgeBonus)}\uFF09` : ""}`;
+      lines.push(`${summary}\uFF0C\u5408\u8BA1 ${d.total}`);
+    }
     const factors = [];
     if (d.distanceTier?.name && Number.isFinite(d.distance)) factors.push(`\u8DDD\u79BB ${num2(d.distance)} \u683C\uFF08${d.distanceTier.name}\uFF09`);
     if (d.highGround) factors.push(d.highGround > 0 ? `\u5C45\u9AD8\u4E34\u4E0B ${sign(d.highGround)}` : `\u4EF0\u653B ${sign(d.highGround)}`);
     if (d.cover) factors.push(`\u88AB${d.coverId ? nameOf(state, d.coverId) : "\u63A9\u4F53"}\u906E\u6321 \u2212${d.cover}`);
     if (d.flanked) factors.push("\u5939\u51FB +2");
     if (d.arc === "back") factors.push("\u4ECE\u80CC\u540E\u51FA\u624B");
+    const src = d.accuracySources ?? {};
+    for (const [label, value] of [["\u9762\u677F\u547D\u4E2D", src.explicit], ["\u4F53\u578B", src.size], ["\u53D7\u51FB\u66B4\u9732", src.incomingAccuracy], ["\u68C0\u5B9A\u52A0\u503C", src.checkBonus], ["\u6218\u610F", src.morale], ["\u68C0\u5B9A\u524D\u4FEE\u6B63", d.bonusDelta]]) {
+      if (value) factors.push(`${label} ${sign(value)}`);
+    }
+    if (d.dodgeBonus) factors.push(`\u5B88\u65B9\u95EA\u907F ${d.dodgeBonus > 0 ? `\u2212${d.dodgeBonus}` : sign(-d.dodgeBonus)}`);
+    if (ignored) factors.push(`\u65E0\u89C6\u95EA\u907F\uFF08\u539F ${sign(d.rawDodgeBonus)}\uFF09`);
+    if (d.execution) factors.push("\u5904\u51B3\u514D\u95EA\u907F");
     if (factors.length) lines.push(`\u4FEE\u6B63\u6765\u6E90\uFF1A${factors.join("\uFF0C")}`);
     if (kept === 1) lines.push(d.hit ? "\u5929\u7136 1\uFF1A\u672C\u6B21\u4ECD\u547D\u4E2D" : "\u5929\u7136 1\uFF1A\u5931\u624B");
     else if (kept === 20) lines.push("\u5929\u7136 20\uFF1A\u5FC5\u5B9A\u66B4\u51FB");
@@ -9906,7 +9959,7 @@ var FatedTactical = (() => {
         kept,
         mode,
         modifier: d.accuracy ?? 0,
-        modifierLabel: "\u547D\u4E2D\u4FEE\u6B63",
+        modifierLabel: d.dodgeBonus ? `\u51C0\u4FEE\u6B63\uFF08\u653B${sign(atk)} / \u95EA${sign(d.dodgeBonus)}\uFF09` : "\u547D\u4E2D\u4FEE\u6B63",
         total: d.total,
         verdict: d.critical ? `\u66B4\u51FB\uFF01${d.rating?.name ? `\u300C${d.rating.name}\u300D` : ""}` : d.hit ? `\u547D\u4E2D\u300C${d.rating?.name ?? "\u6709\u6548"}\u300D` : kept === 1 ? "\u5929\u7136 1 \xB7 \u5931\u624B" : "\u672A\u547D\u4E2D",
         tone,
@@ -10553,8 +10606,10 @@ var FatedTactical = (() => {
       }
       const template = get2(state.equipment, get2(state.items, u.weapon)?.templateId);
       const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some((pool) => pool.reloadable);
+      const standing = unitStandingStats(state, u);
       const facts = el2("p", "muted", [
-        `\u62A4\u7532 ${u.armor}`,
+        `\u62A4\u7532 ${standing.armor}`,
+        `\u95EA\u907F ${sign2(standing.dodge)}`,
         `\u79FB\u52A8 ${u.move} \u683C`,
         `\u4F53\u578B ${bodySizeLabel(u)}`,
         `\u9AD8\u5EA6 z=${elevation(state, u)}${u.altitude ? `\uFF08\u79BB\u5730 ${u.altitude}\uFF09` : ""}`,
@@ -10684,7 +10739,12 @@ var FatedTactical = (() => {
           else if (Number.isFinite(t.hitChance)) {
             chance = t.hitChance;
             const dice4 = t.advantage > 0 ? "\u4F18\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u9AD8\uFF09" : t.advantage < 0 ? "\u52A3\u52BF\uFF08\u63B7\u4E24\u9897\u53D6\u4F4E\uFF09" : "d20";
-            bits.push(`\u547D\u4E2D\u7387 ${pct2(t.hitChance)}\uFF1A${dice4} + \u547D\u4E2D ${t.accuracy}\uFF0C\u5BF9\u6297\u9632\u5FA1 ${t.defense}`);
+            const prefix = `\u547D\u4E2D\u7387 ${pct2(t.hitChance)}\uFF1A${dice4} + `;
+            if ((t.ruleset ?? state.ruleset) === "sandbox" || t.kind === "cover") bits.push(`${prefix}\u547D\u4E2D ${sign2(t.accuracy)}\uFF0C\u76EE\u6807\u9608\u503C ${t.defense}`);
+            else {
+              const net = t.dodgeBonus ? `\u653B\u65B9\u547D\u4E2D ${sign2(t.attackAccuracy ?? t.accuracy + t.dodgeBonus)} \u2212 \u5B88\u65B9\u95EA\u907F ${sign2(t.dodgeBonus)} = \u51C0\u4FEE\u6B63 ${sign2(t.accuracy)}` : `\u51C0\u547D\u4E2D ${sign2(t.accuracy)}`;
+              bits.push(`${prefix}${net}\uFF08\u22654 \u64E6\u4F24 / \u226511 \u6709\u6548 / \u226520 \u66B4\u51FB\uFF09`);
+            }
             if (t.accuracySources) bits.push(`\u547D\u4E2D\u4E2D\u7684\u4F53\u578B\u4FEE\u6B63 ${sign2(t.accuracySources.size)}`);
           }
           const mods = [
@@ -14397,7 +14457,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const direct = text3(raw?.quality ?? raw?.\u54C1\u8D28);
     if (QUALITY_NAMES.has(direct)) return direct;
     const meta = [].concat(raw?.meta ?? raw?.\u5143\u6570\u636E ?? []).map(text3);
-    return meta.find((value) => QUALITY_NAMES.has(value));
+    const declared = meta.find((value) => QUALITY_NAMES.has(value));
+    if (declared) return declared;
+    for (const tag2 of tagEntries(raw?.tags ?? raw?.\u6807\u7B7E)) {
+      const value = /^品质\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.+)$/u.exec(tag2)?.[1];
+      if (!value) continue;
+      if (QUALITY_NAMES.has(value)) return value;
+      const quality = Object.keys(QUALITY_TIER).find((key4) => String(QUALITY_TIER[key4]) === value);
+      if (quality) return quality;
+    }
   }
   function rawTagValues(raw) {
     return [].concat(raw?.tags ?? raw?.\u6807\u7B7E ?? []).map(text3).filter((tag2) => /^[a-z0-9][a-z0-9_-]{0,31}$/u.test(tag2));
@@ -14836,6 +14904,81 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return [];
     });
   }
+  var combatTag = /^(攻击力?|防御力?|防具|护甲|命中|闪避|先手|暴击|威力)\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.*)$/u;
+  var numberTag = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu;
+  var powerTag = /^(\d+)(?:\s*(物理|能量|精神|真实))?$/u;
+  var canonicalKey = { \u653B\u51FB\u529B: "\u653B\u51FB", \u9632\u5FA1\u529B: "\u9632\u5FA1", \u62A4\u7532: "\u9632\u5FA1", \u9632\u5177: "\u9632\u5FA1" };
+  function readCombatTags(raw, kind, name, warnings) {
+    const mods = readMods(raw.mods, warnings), fields3 = {}, summary = [], groups = /* @__PURE__ */ new Map();
+    const weapon2 = kind === "weapon", active3 = kind === "active", passive = kind === "passive";
+    const entries3 = tagEntries(raw.tags ?? raw.\u6807\u7B7E);
+    const warn = (tag2, advice = "") => warnings.push(`\u300C${name}\u300D\u6807\u7B7E\u300C${tag2}\u300D\u5F85\u6807\u51C6\u5316\uFF1A\u8BF7\u7ED3\u5408\u8BCD\u6761\u8BED\u4E49\u6620\u5C04\u4E3A\u5408\u6CD5 VM mods / rules \u6216\u6807\u660E engine_limit${advice && `\uFF1B${advice}`}`);
+    for (const tag2 of entries3) {
+      const match = combatTag.exec(tag2) ?? /^(先手)\s*([+-]?\d.*)$/u.exec(tag2);
+      if (!match) continue;
+      const key4 = canonicalKey[match[1]] ?? match[1];
+      if (!groups.has(key4)) groups.set(key4, []);
+      groups.get(key4).push({ tag: tag2, value: match[2] });
+    }
+    let powerType;
+    const equipmentPower = [], activeAttack = [];
+    for (const [key4, group] of groups) {
+      const values5 = [];
+      for (const { tag: tag2, value } of group) {
+        if (key4 === "\u66B4\u51FB") {
+          warn(tag2, "\u533A\u5206\u66B4\u51FB\u6863\u4F4D\u4E0E\u66B4\u51FB\u4F24\u5BB3");
+          continue;
+        }
+        if (key4 === "\u5A01\u529B" && !active3) {
+          if (passive) warn(tag2, "\u7EAF\u88AB\u52A8\u6280\u80FD\u4E0D\u7ED3\u7B97\u4E3B\u51FB\u5A01\u529B");
+          else equipmentPower.push(tag2);
+          continue;
+        }
+        if (key4 === "\u653B\u51FB" && active3) {
+          activeAttack.push(tag2);
+          continue;
+        }
+        if (key4 === "\u653B\u51FB" && !weapon2) {
+          warn(tag2, "\u8BF7\u7ED3\u5408\u63CF\u8FF0\u88C1\u5B9A\u4F24\u5BB3\u52A0\u503C\u6216\u89E6\u53D1\u6548\u679C");
+          continue;
+        }
+        if (active3 && (key4 === "\u9632\u5FA1" || key4 === "\u95EA\u907F")) {
+          warn(tag2, "\u4E3B\u52A8\u6280\u80FD\u4E0D\u80FD\u76F4\u63A5\u63D0\u4F9B\u5E38\u9A7B\u52A0\u6210\uFF0C\u8BF7\u88C1\u5B9A\u662F\u5426\u65BD\u52A0\u72B6\u6001");
+          continue;
+        }
+        const power = key4 === "\u5A01\u529B" ? powerTag.exec(value) : null;
+        const n = power ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
+        if (!Number.isSafeInteger(n) || key4 === "\u5A01\u529B" && n < 0) {
+          warn(tag2);
+          continue;
+        }
+        if (power && !values5.length) powerType = power[2];
+        values5.push(n);
+      }
+      if (!values5.length) continue;
+      const total2 = values5.reduce((sum, n) => sum + n, 0);
+      const field2 = key4 === "\u653B\u51FB" ? "attack" : key4 === "\u9632\u5FA1" && !weapon2 && !passive ? "defense" : key4 === "\u547D\u4E2D" && (weapon2 || active3) ? "accuracy" : key4 === "\u5148\u624B" && active3 ? "initiativeBonus" : key4 === "\u5A01\u529B" ? "power" : null;
+      if (field2) {
+        if ((raw[field2] ?? raw[key4]) != null) continue;
+        const n = field2 === "power" ? values5[0] : total2;
+        const panel = field2 === "attack" || field2 === "power" ? bound(n, 0, 1e9) : field2 === "defense" ? bound(n, 0, 1e6) : bound(n, -100, 100);
+        fields3[field2] = panel;
+        summary.push([key4, panel]);
+      } else {
+        const stat3 = { \u9632\u5FA1: "armor", \u547D\u4E2D: "checkBonus", \u95EA\u907F: "dodge", \u5148\u624B: "initiativeFlat" }[key4];
+        const checkKind = key4 === "\u547D\u4E2D" ? "attack" : void 0;
+        if (!total2 || weapon2 && stat3 === "armor" && total2 < 0 || mods.some((mod2) => mod2.stat === stat3 && mod2.checkKind === checkKind)) continue;
+        if (mods.length >= 200 || !Number.isSafeInteger(total2)) {
+          for (const { tag: tag2 } of group) warn(tag2, "\u5408\u8BA1\u6570\u503C\u6216 mods \u6570\u91CF\u8D85\u9650");
+          continue;
+        }
+        mods.push({ stat: stat3, flat: total2, ...checkKind && { checkKind } });
+        summary.push([key4, total2]);
+      }
+    }
+    const suffix = summary.length ? `\u3002\u5DF2\u7531\u9759\u6001\u6807\u7B7E\u89E3\u6790\u843D\u76D8\uFF1A${summary.map(([label, n]) => `${label} ${n >= 0 ? "+" : ""}${n}`).join("\u3001")}\uFF1B\u8865\u4E01\u6539\u5199 mods \u65F6\u987B\u4FDD\u7559\u65E2\u6709\u9879\uFF08\u6216\u7528 /mods/- \u8FFD\u52A0\uFF09\u4E14\u5207\u52FF\u91CD\u590D\u53E0\u52A0\u540C\u4E00\u6570\u503C\uFF1B\u82E5\u672C\u6761\u4EC5\u91CD\u7533\u8BE5\u9759\u6001\u52A0\u6210\u800C\u65E0\u989D\u5916\u5C40\u5185\u673A\u5236\uFF0C\u76F4\u63A5\u5F52\u5165 narrative \u8BF4\u660E\u5373\u53EF\u3002` : "";
+    return { entries: entries3, fields: fields3, mods, suffix, powerType, equipmentPower, activeAttack };
+  }
   function readPools(value, warnings) {
     if (value == null) return {};
     if (!object3(value)) {
@@ -14853,10 +14996,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (context === "equipment") return readEquipmentNarrative(effects, sink);
     return convertNarrative(effects, sink, deterministicId(prefix, "rule"), { allowPower: true });
   }
-  function readEquipmentNarrative(effects, warnings) {
-    return convertNarrative(effects, warnings, "", { equipment: true });
+  function readEquipmentNarrative(effects, warnings, onNarrativeWarning) {
+    return convertNarrative(effects, warnings, "", { equipment: true, onNarrativeWarning });
   }
-  function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false, passive = false } = {}) {
+  function convertNarrative(effects, warnings, prefix, {
+    allowPower = false,
+    equipment = false,
+    areaDamage = false,
+    passive = false,
+    onNarrativeWarning = (message, metadata) => warnings.push(message, metadata)
+  } = {}) {
     const rules = [];
     for (const [index, [label, entry2]] of narrativeEntries(effects).entries()) {
       if (validVmRule(entry2)) {
@@ -14869,9 +15018,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const summary = excerpt.length ? `${excerpt.slice(0, 80).join("")}${excerpt.length > 80 ? "\u2026" : ""}` : "\u5F85\u8F6C\u6362\u4E3A\u6218\u6597\u89C4\u5219";
       const metadata = { rawExcerpt, userSummary: `${label ? `\u300C${label}\u300D` : "\u6548\u679C"}\uFF1A${summary}` };
       if (program2.length && areaDamage) {
-        warnings.push(`\u8303\u56F4\u4F24\u5BB3\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`, metadata);
+        onNarrativeWarning(`\u8303\u56F4\u4F24\u5BB3\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u4E3A\u89C4\u5219\u58F0\u660E\u7CBE\u786E\u7684\u76EE\u6807\u9009\u62E9\u5668`, metadata, index, label);
       } else if (program2.length) appendRules(rules, [activeRule2(`${prefix.slice(0, 45)}-narrative-${index}`, program2)], warnings);
-      else warnings.push(`${equipment ? "\u88C5\u5907" : ""}\u6548\u679C\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u7528 VM rules / mods / pools \u5B9E\u73B0\u884C\u4E3A\u4E0E\u89E6\u53D1\u65F6\u673A\uFF1B\u7F3A\u5C11\u72B6\u6001\u6216\u53EC\u5524\u7269\u4E13\u5C5E\u6280\u80FD\u65F6\uFF0C\u540C\u6279\u65B0\u589E /statusTemplates/<id> \u6216 /skills/<id> \u540E\u5F15\u7528`, metadata);
+      else onNarrativeWarning(`${equipment ? "\u88C5\u5907" : ""}\u6548\u679C\u5F85\u6807\u51C6\u5316${label ? `\u300C${label}\u300D` : ""}\uFF1A${describe(entry2)}\u3002\u8BF7\u7528 VM rules / mods / pools \u5B9E\u73B0\u884C\u4E3A\u4E0E\u89E6\u53D1\u65F6\u673A\uFF1B\u7F3A\u5C11\u72B6\u6001\u6216\u53EC\u5524\u7269\u4E13\u5C5E\u6280\u80FD\u65F6\uFF0C\u540C\u6279\u65B0\u589E /statusTemplates/<id> \u6216 /skills/<id> \u540E\u5F15\u7528`, metadata, index, label);
     }
     return rules;
   }
@@ -15034,20 +15183,21 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const templateId = `template-${idBase}`;
     const warnings = sink("effect", `/equipment/${templateId}`);
     const rules = readRules(r.rules, warnings);
-    const template = { name: name.slice(0, 100), kind, rules, mods: readMods(r.mods, warnings), pools: readPools(r.pools, warnings), ...qualityOf(r) ? { quality: qualityOf(r) } : {}, ...rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {} };
-    const effectEntries = narrativeEntries(r.effects ?? r.effectsList ?? r.\u6548\u679C);
+    const parsed = readCombatTags(r, kind, name, warnings);
+    const template = { name: name.slice(0, 100), kind, rules, mods: parsed.mods, pools: readPools(r.pools, warnings), ...qualityOf(r) ? { quality: qualityOf(r) } : {}, ...rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {} };
     const { rangeValues, radius, shape: shape2, target: target2 } = parseAreaTags(r.tags ?? r.\u6807\u7B7E);
-    const equipmentWarnings = !isWeapon2 || rangeValues.length < 2 ? warnings : {
-      push(message, metadata) {
-        const effectIndex = effectEntries.findIndex(([label, value]) => label ? message.includes(`\u300C${label}\u300D`) : message.includes(describe(value)));
-        const rawRange = rangeValues[effectIndex + 1];
-        const suffix = effectIndex >= 0 && rawRange != null ? `\u3002\u8BE5\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u7684\u539F\u59CB\u8DDD\u79BB\u4E3A rawRange:${rawRange}${radius != null ? `\u3001rawRadius:${radius}` : ""}${shape2 ? `\u3001shape:${shape2}` : ""}${target2 ? `\u3001target:${target2}` : ""}\uFF0C\u8BF7\u5199\u5230\u88C5\u5907\u6302\u8F7D\u7684\u6280\u80FD\u6A21\u677F\u4E2D` : "";
-        warnings.push(message + suffix, metadata);
-      }
+    let powerCovered = false;
+    const onNarrativeWarning = (message, metadata, index, label) => {
+      const rawRange = isWeapon2 && rangeValues.length > 1 ? rangeValues[index + 1] : null;
+      const rangeNote = rawRange != null ? `\u3002\u8BE5\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u7684\u539F\u59CB\u8DDD\u79BB\u4E3A rawRange:${rawRange}${radius != null ? `\u3001rawRadius:${radius}` : ""}${shape2 ? `\u3001shape:${shape2}` : ""}${target2 ? `\u3001target:${target2}` : ""}\uFF0C\u8BF7\u5199\u5230\u88C5\u5907\u6302\u8F7D\u7684\u6280\u80FD\u6A21\u677F\u4E2D` : "";
+      const powerEffect = parsed.equipmentPower.length && (rawRange != null || /威力|主动|造成.{0,24}伤害/u.test(`${label} ${metadata.rawExcerpt}`));
+      const powerNote = powerEffect ? `\u3002\u88C5\u5907\u6807\u7B7E\u300C${parsed.equipmentPower.join("\u3001")}\u300D\u5C1A\u672A\u843D\u76D8\uFF0C\u8BF7\u7ED3\u5408\u539F\u8BCD\u6761\u88C1\u5B9A\u6302\u8F7D\u6280\u80FD\u7684\u5A01\u529B` : "";
+      if (powerEffect) powerCovered = true;
+      warnings.push(message + rangeNote + powerNote + parsed.suffix, metadata);
     };
-    appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.\u6548\u679C, equipmentWarnings), warnings);
-    const defenseTag = labels.match(/防御\s*[:：]\s*([\d.e+-]+)/i);
-    const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? defenseTag?.[1], 0, 1e6, kind === "shield" ? 1 : 0);
+    appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.\u6548\u679C, warnings, onNarrativeWarning), warnings);
+    if (!powerCovered) for (const tag2 of parsed.equipmentPower) warnings.push(`\u300C${name}\u300D\u6807\u7B7E\u300C${tag2}\u300D\u5F85\u6807\u51C6\u5316\uFF1A\u88C5\u5907\u6CA1\u6709\u4E3B\u51FB\u5A01\u529B\u9762\u677F\uFF0C\u8BF7\u7ED3\u5408\u63CF\u8FF0\u88C1\u5B9A\u6302\u8F7D\u4E3B\u52A8\u6280\u80FD`);
+    const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? parsed.fields.defense, 0, 1e6, kind === "shield" ? 1 : 0);
     if (kind === "shield") Object.assign(template, { weaponClass: "shield", hand: "off_hand", shield: true, defense });
     else if (isWeapon2) {
       const area3 = areaFields(r, sink("field", `/equipment/${templateId}`), name);
@@ -15059,11 +15209,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const classes = ["ranged", "light_blade", "greatsword", "staff", "auxiliary"];
       const weaponClassAlias = /* @__PURE__ */ new Map([["bow", "ranged"], ["crossbow", "ranged"], ["arcane", "staff"]]);
       const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-      const tags = tagEntries(r.tags ?? r.\u6807\u7B7E);
+      const tags = parsed.entries;
       const subtype = tags.find((tag2) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag2));
       const ranged = r.ranged ?? (r.rangeType ? r.rangeType === "ranged" : Boolean(subtype));
       const twoHanded = slot2 === "twoHands" || r.twoHanded === true || r.hand === "two_handed" || explicitClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
-      const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
       const weaponClass = classes.includes(explicitClass) ? explicitClass : ranged ? "ranged" : twoHanded ? "greatsword" : "light_blade";
       Object.assign(template, {
         ...r.weaponType || subtype ? { weaponType: r.weaponType || subtype } : {},
@@ -15074,8 +15223,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         ...r.closeQuarters === true || tags.some((tag2) => /近战射击|贴身射击/u.test(tag2)) ? { closeQuarters: true } : {},
         range: bound(area3.range, 0, 64, ranged ? 4 : 1),
         rawRange: area3.range ?? (ranged ? 4 : 1),
-        attack: bound(r.attack ?? r.\u653B\u51FB ?? attackTag?.[1], 0, 1e9),
-        accuracy: bound(r.accuracy ?? r.\u547D\u4E2D, -20, 30, 0),
+        attack: bound(r.attack ?? r.\u653B\u51FB ?? parsed.fields.attack, 0, 1e9),
+        accuracy: bound(r.accuracy ?? r.\u547D\u4E2D ?? parsed.fields.accuracy, -100, 100, 0),
         damage: normalizeDice(r.damage ?? { stat: "str" }),
         ...geometryFields(area3)
       });
@@ -15424,25 +15573,31 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       skillKeys.set(key4, occurrence + 1);
       const sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${key4}${occurrence ? `-${occurrence}` : ""}`;
       entrySources[`skills:${sid}`] = staticProjection(input);
-      const labels = [].concat(r.tags ?? r.\u6807\u7B7E ?? [], r.description ?? r.\u63CF\u8FF0 ?? "").join(" ");
-      const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
       const notes2 = sink("effect", `/skills/${sid}`);
       const area3 = areaFields(r, notes2, skillName);
       const costs = skillCosts(r.cost ?? r.\u6D88\u8017);
       const mode = text3(r.\u6A21\u5F0F ?? r.mode ?? r.\u7C7B\u578B ?? r.type).toLowerCase();
       const passive = r.passive === true || mode === "passive" || mode.includes("\u88AB\u52A8") && !mode.includes("\u4E3B\u52A8");
-      const tag2 = (typeof r.\u4F24\u5BB3 === "string" ? r.\u4F24\u5BB3 : null) ?? tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
+      const parsed = readCombatTags(r, passive ? "passive" : "active", skillName, notes2);
+      const tag2 = (typeof r.\u4F24\u5BB3 === "string" ? r.\u4F24\u5BB3 : null) ?? parsed.entries.map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean) ?? parsed.powerType;
       const rawEffects = r.effects ?? r.\u6548\u679C;
-      const power = r.power ?? r.\u5A01\u529B ?? taggedPower;
-      const initiative2 = r.\u5148\u624B ?? tagEntries(r.tags ?? r.\u6807\u7B7E).map((v) => v.match(/^先手\s*[:：]?\s*([+-]?\d+)$/)?.[1]).find(Boolean) ?? narrativeEntries(rawEffects).map(([, v]) => typeof v === "string" && v.match(/^(?:\[[^\]]+\]\s*)*本技能先手\s*([+-]\d+)(?=[，。；、\s]|$)/)?.[1]).find(Boolean);
+      const descriptionPower = text3(r.description ?? r.\u63CF\u8FF0).match(/(?:^|[\s，。；【\[])威力\s*[:：]\s*(\d+)(?=$|[\s，。；：、】\]]|物理|能量|精神|真实)/u)?.[1];
+      const power = r.power ?? r.\u5A01\u529B ?? (passive ? void 0 : parsed.fields.power ?? descriptionPower);
+      const initiative2 = r.initiativeBonus ?? (passive ? void 0 : r.\u5148\u624B ?? parsed.fields.initiativeBonus ?? narrativeEntries(rawEffects).map(([, v]) => typeof v === "string" && v.match(/^(?:\[[^\]]+\]\s*)*本技能先手\s*([+-]\d+)(?=[，。；、\s]|$)/)?.[1]).find(Boolean));
       const numericPower = number2(power, NaN);
-      const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
-      const statTag = tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
+      const hasPower = !passive && Number.isFinite(numericPower) && numericPower >= 0;
+      if (!hasPower) for (const attack of parsed.activeAttack) notes2.push(`\u300C${skillName}\u300D\u6807\u7B7E\u300C${attack}\u300D\u5F85\u6807\u51C6\u5316\uFF1A\u672A\u58F0\u660E\u4E3B\u51FB\u5A01\u529B\uFF0C\u8BF7\u7ED3\u5408\u8BCD\u6761\u8BED\u4E49\u88C1\u5B9A\uFF0C\u4E0D\u76F4\u63A5\u628A\u653B\u51FB\u586B\u4F5C power`);
+      const statTag = parsed.entries.map((label) => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
       const rules = readRules(r.rules, notes2);
       const prefix = `fx-${hash(sid).toString(36)}`;
       const areaDamage = isAreaDamage(area3);
       const narrativeNotes = [];
-      appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive }), notes2);
+      appendRules(rules, convertNarrative(rawEffects, notes2, prefix, {
+        allowPower: !r.damage && hasPower,
+        areaDamage,
+        passive,
+        onNarrativeWarning: (message, metadata) => narrativeNotes.push({ message, metadata })
+      }), notes2);
       const singleTaggedType = damageAliases.get(tag2);
       const hasActiveDamage = rules.some((rule2) => rule2.enabled !== false && rule2.hook === "active" && [...instructions(rule2.program)].some((op) => op.op === "damage"));
       if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag2) {
@@ -15466,7 +15621,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         notes2.push(`\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u5F85\u6807\u51C6\u5316\u300C\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u300D\uFF1A\u6839\u636E\u539F\u59CB\u6548\u679C\u8865\u5168 /skills/${sid}/damage/type\uFF1B\u82E5\u539F\u6587\u660E\u786E\u4EE5\u6DF7\u5408\u4F24\u5BB3\u6216\u72EC\u7ACB\u516C\u5F0F\u66FF\u4EE3\u4E3B\u51FB\uFF0C\u8BF7\u79FB\u9664\u6A21\u677F damage \u5E76\u4EE5 active \u89C4\u5219\u7ED3\u7B97\u3002`, { userSummary: `\u6280\u80FD\u300C${skillName}\u300D\uFF1A\u5F85\u4ECE\u539F\u6587\u8BC6\u522B\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B` });
       }
       const mainParsed = hasPower && (generatedMainDamage || damageOps.length);
-      for (const { message, metadata } of narrativeNotes) notes2.push(mainParsed ? `${message}\u3002\u4E3B\u51FB\u4E0E\u5A01\u529B ${numericPower} \u5DF2\u89E3\u6790\uFF0C\u53EA\u8865\u672C\u6761\u5C1A\u672A\u5B9E\u73B0\u7684\u6548\u679C\uFF0C\u4E0D\u8981\u91CD\u590D\u6DFB\u52A0\u4E3B\u51FB\u3002` : message, metadata);
+      for (const { message, metadata } of narrativeNotes) {
+        const mainNote = mainParsed ? `\u3002\u4E3B\u51FB\u4E0E\u5A01\u529B ${numericPower} \u5DF2\u89E3\u6790\uFF0C\u53EA\u8865\u672C\u6761\u5C1A\u672A\u5B9E\u73B0\u7684\u6548\u679C\uFF0C\u4E0D\u8981\u91CD\u590D\u6DFB\u52A0\u4E3B\u51FB\u3002` : "";
+        notes2.push(message + mainNote + parsed.suffix, metadata);
+      }
       const damageType2 = explicitDamageType ?? (types2.length === 1 ? types2[0] : void 0);
       skillInfo[sid] = { description: text3(r.description ?? r.\u63CF\u8FF0), damageType: damageType2, hp: costs.hp };
       skills[sid] = {
@@ -15484,15 +15642,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         ...text3(r.school) ? { school: text3(r.school).slice(0, 100) } : {},
         ...generatedMainDamage ? { damage: generatedMainDamage } : {},
         rules,
-        mods: readMods(r.mods, notes2),
+        mods: parsed.mods,
         pools: readPools(r.pools, notes2)
       };
       if (damageTypes2.includes(damageType2)) skills[sid].damageType = damageType2;
       else if (damageType2 != null) notes2.push(`\u300C${skillName}\u300D\u672A\u77E5\u4F24\u5BB3\u7C7B\u578B\uFF1A${damageType2}`);
-      for (const [key5, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["accuracy", -20, 30], ["initiativeBonus", -100, 100], ["power", 0, 1e9]]) {
-        const value = r[key5] ?? (key5 === "power" ? power : key5 === "initiativeBonus" ? passive ? void 0 : initiative2 : costs[key5]);
-        if (value != null) skills[sid][key5] = bound(value, min, max);
-      }
+      for (const key5 of ["mp", "sp"]) if ((r[key5] ?? costs[key5]) != null) skills[sid][key5] = bound(r[key5] ?? costs[key5], 0, 25e3);
+      const accuracy = r.accuracy ?? (passive ? void 0 : r.\u547D\u4E2D ?? parsed.fields.accuracy);
+      if (accuracy != null) skills[sid].accuracy = bound(accuracy, -100, 100);
+      if (initiative2 != null) skills[sid].initiativeBonus = bound(initiative2, -100, 100);
+      if (power != null) skills[sid].power = bound(power, 0, 1e9);
       if (r.save != null || r.saveDC != null) {
         const save = statAliases[r.save] ?? r.save;
         const dc = number2(r.saveDC, NaN);
@@ -17315,13 +17474,13 @@ pointRef\uFF1A\u53EF\u5199 {x,y,z?}\u3001\u4F5C\u7528\u57DF\u679A\u4E3E self / s
 targetRef\uFF1A${describe2(defs2.targetRef)}\u3002\u7279\u5B9A\u5FEB\u7167\u5B9E\u4F53\u53EF\u7528\u9009\u62E9\u5668 {"from":"units","where":"candidate.id == '<\u5FEB\u7167ID>'"}\u3002
 
 \u3010\u58F0\u660E\u5F0F\u4FEE\u9970 mods\u3011
-mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u542B stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00\uFF1B\u6570\u503C\u4FEE\u9970\u5FC5\u6307\u5B9A stat\u3002\u8BA1\u7B97\u516C\u5F0F\u4E3A (\u57FA\u503C + flat \u4E4B\u548C) \xD7 (1 + additivePercent \u4E4B\u548C) \xD7 mult \u8FDE\u4E58\uFF08\u6CE8\u610F\uFF1AadditivePercent \u4EE5 1 \u4E3A 100% \u5C0F\u6570\u5236\uFF0C\u5982 +50% \u5FC5\u987B\u5199 0.5 \u6216 0.5 * \u5C42\u6570\u800C\u4E25\u7981\u5199 50\uFF0C\u6BD4\u4F8B\u516C\u5F0F\u5982 (self.str - 5) / self.str \u76F4\u63A5\u4F5C\u5C0F\u6570\u5199\u5165\u800C\u4E25\u7981\u518D * 100\uFF01mult \u4E3A\u76F4\u63A5\u4E58\u6570\uFF0C\u5982 \xD7200% \u5199 2\uFF09\uFF1Bwhen \u6C42\u503C\u4E3A true \u65F6\u751F\u6548\uFF1BcheckKind \u53EF\u9650\u5B9A\u68C0\u5B9A\u7C7B\u522B\uFF08attack / save / contest / skill / chance / d20 / dodge / authority / flee \u6216\u72B6\u6001 ID\uFF0F\u6807\u7B7E\uFF0C\u5176\u4E2D checkKind:"flee" \u53EF\u4FEE\u9970\u539F\u751F\u9003\u8DD1\u68C0\u5B9A\u52A0\u503C\u6216 advantage \u4F18\u52A3\u52BF\u9AB0\uFF09\u3002
+mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u542B stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00\uFF1B\u6570\u503C\u4FEE\u9970\u5FC5\u6307\u5B9A stat\u3002\u8BA1\u7B97\u516C\u5F0F\u4E3A (\u57FA\u503C + flat \u4E4B\u548C) \xD7 (1 + additivePercent \u4E4B\u548C) \xD7 mult \u8FDE\u4E58\uFF08\u6CE8\u610F\uFF1AadditivePercent \u4EE5 1 \u4E3A 100% \u5C0F\u6570\u5236\uFF0C\u5982 +50% \u5FC5\u987B\u5199 0.5 \u6216 0.5 * \u5C42\u6570\u800C\u4E25\u7981\u5199 50\uFF0C\u6BD4\u4F8B\u516C\u5F0F\u5982 (self.str - 5) / self.str \u76F4\u63A5\u4F5C\u5C0F\u6570\u5199\u5165\u800C\u4E25\u7981\u518D * 100\uFF01mult \u4E3A\u76F4\u63A5\u4E58\u6570\uFF0C\u5982 \xD7200% \u5199 2\uFF09\uFF1Bwhen \u6C42\u503C\u4E3A true \u65F6\u751F\u6548\uFF1BcheckKind \u53EF\u9650\u5B9A\u68C0\u5B9A\u7C7B\u522B\uFF08attack / save / contest / skill / chance / d20 / authority / flee \u6216\u72B6\u6001 ID\uFF0F\u6807\u7B7E\uFF0C\u5176\u4E2D checkKind:"flee" \u53EF\u4FEE\u9970\u539F\u751F\u9003\u8DD1\u68C0\u5B9A\u52A0\u503C\u6216 advantage \u4F18\u52A3\u52BF\u9AB0\uFF09\u3002
 \u2022 \u4EE5\u4E0B\u4FEE\u9970\u53EA\u63A5\u53D7 flat \u52A0\u503C\uFF1A${flatOnlyStats.filter((name) => defs2.statMod.properties.stat.enum.includes(name)).join(" / ")}\u3002
 \u2022 \u8F93\u51FA\u4FA7\uFF08\u6301\u6709\u8005\u8FDB\u653B\uFF09\uFF1Aflat / additivePercent / mult \u5747\u652F\u6301\u52A8\u6001 Expr \u516C\u5F0F\u3002\u6CE8\u610F\u6B66\u5668\u666E\u653B\u4E2D event.power \u4E3A null\uFF08\u4E8B\u4EF6\u6B66\u5668\u9762\u677F\u653B\u51FB\u529B\u4E3A weapon.attack\uFF09\uFF1B\u51E1\u201C\u6BCF\u5C42\u63D0\u5347\u653B\u51FB\u529B X%\u201D\u6216\u201C\u547D\u4E2D\u9644\u52A0\u57FA\u7840\u4F24\u5BB3 \xD7 \u6BD4\u4F8B\u201D\u5747\u5C5E\u57FA\u7840\u4E58\u533A\u6BD4\u4F8B\u589E\u5E45\uFF0C\u4F18\u5148\u76F4\u63A5\u5199\u8F7D\u4F53 mods \u7684 stat:"damageMult", additivePercent:"\u6BD4\u4F8B\u516C\u5F0F"\uFF08\u6B66\u5668\u672C\u8EAB\u8BCD\u6761\u914D when:"event.weaponTemplateId == item.templateId"\uFF09\uFF0C\u907F\u514D\u5728 after_hit \u8BEF\u8BFB\u4E3A null \u7684 event.power \u6216\u91CD\u590D\u7ED3\u7B97\u62A4\u7532\uFF01damageFlat \u56FA\u5B9A\u52A0\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat\uFF09\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF08\u57FA\u503C 1\uFF0C\u7528 mult \u6216 additivePercent\uFF0C\u7981\u7528 flat\uFF09\uFF1BcritDamageBonus \u66B4\u51FB\u4F24\u5BB3\u500D\u7387\u52A0\u6210\uFF08\u57FA\u503C 0\uFF0C\u53EA\u63A5\u53D7 flat \u5C0F\u6570\u52A0\u503C\uFF0C\u5982\u66B4\u51FB\u4F24\u5BB3 +30% \u6216\u66B4\u51FB\u500D\u7387 +0.5 \u76F4\u63A5\u5199 {stat:"critDamageBonus", flat:0.3} \u6216 flat:0.5\uFF0C\u4E25\u7981\u5199 mult/additivePercent\uFF01\u4F24\u5BB3\u76F8\u5173\u9636\u6BB5\u4EA6\u53EF\u8BFB event.critical \u4E0E event.ratingMultiplier\uFF09\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF08\u7528 flat\uFF09\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF09\u3002
 \u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u6B63\u6570\u51CF\u4F24\u3001\u8D1F\u6570\u589E\u4F24\uFF08+0.3 \u51CF\u4F24 30%\uFF09\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
 \u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7684\u57FA\u503C\u4E0E flat \u5747\u4E3A\u540C\u9636\u79FB\u52A8\u5355\u4F4D\uFF0C\u53E0\u52A0\u540E\u5E94\u7528\u500D\u7387\uFF0C\u518D\u6309\u5C42\u7EA7\u7C73\u6570\u6298\u7B97\u4E3A\u683C\uFF1BcheckBonus\u3001initiativeFlat \u4EC5\u63A5\u53D7 flat \u6570\u503C\u52A0\u503C\uFF0C\u4E0D\u4E58\u68C0\u5B9A\u6216\u5148\u653B\u603B\u503C\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
 \u2022 \u72B6\u6001\u6269\u5C55\u4E0E\u884C\u4E3A\u6807\u5FD7\uFF1AincomingAccuracy\uFF08\u88AB\u547D\u4E2D\u4FEE\u6B63\uFF09\u3001intentBonus\uFF08\u653B\u65B9\u610F\u56FE\u68C0\u5B9A\u52A0\u503C\uFF0Cflat-only\uFF1A\u6B63\u6570\u5229\u653B\u7B49\u4EF7\u4E8E\u81EA\u8EAB\u53D1\u8D77\u610F\u56FE DC -N\uFF0C\u8D1F\u6570\u635F\u653B\u5982\u6302\u5728\u8FDB\u653B\u65B9\u8EAB\u4E0A\u7684\u51CF\u76CA\u201C\u653B\u51FB\u65F6\u610F\u56FE DC +8\u201D\u5199 flat:-8 \u6216 "-1 * status.stacks"\uFF1B\u5168\u610F\u56FE\u7701\u7565\u610F\u56FE\u8FC7\u6EE4\uFF0C\u5355\u610F\u56FE\u5982\u730E\u4EBA\u5E3D\u201C\u547D\u4E2D\u6838\u5FC3\u5224\u5B9A +5\u201D\u5199 {stat:"intentBonus", flat:5, when:"event.intent == 'core'"}\uFF0C\u4EC5\u9650\u672C\u628A\u6B66\u5668\u65F6\u518D\u5E76\u5165 event.weaponTemplateId == item.templateId\uFF1B\u4E25\u7981\u6DF7\u5165\u5E38\u89C4 checkBonus\uFF0C\u4E14\u4E0D\u53EF\u7A81\u7834\u4F4E\u4E24\u9636\u5F3A\u5236\u5931\u8D25\u58C1\u5792\uFF09\u3001intentDifficulty\uFF08\u5B88\u65B9\u53D7\u51FB\u610F\u56FE\u96BE\u5EA6\u4FEE\u6B63\uFF0Cflat-only\uFF1A\u6B63\u6570\u63D0\u9AD8\u654C\u65B9\u610F\u56FE\u96BE\u5EA6\u5229\u5B88\uFF0C\u8D1F\u6570\u66B4\u9732\u5F31\u70B9\u964D\u96BE\u5EA6\uFF0Cwhen \u540C\u6837\u53EF\u8BFB event.intent / !event.melee \u7B49\u4E0A\u4E0B\u6587\uFF09\u3001shatter\uFF08\u788E\u88C2\u589E\u4F24\uFF09\u5747\u4F7F\u7528 stat flat\uFF1Bmods.flags \u5B9E\u88C5\u751F\u6548\u9879\u4E3A guaranteed_hit\uFF08\u653B\u51FB\u5FC5\u4E2D\u4E14\u514D\u5929\u7136 1 \u5931\u624B\uFF09\u3001guaranteed_crit\uFF08\u653B\u51FB\u5FC5\u66B4\u51FB\uFF09\u3001preserveLife\uFF08\u53D7\u51FB\u81F4\u6B7B\u4FDD\u7559 1 HP\uFF09\u3001blockRevive\uFF08\u7981\u7EDD\u590D\u6D3B\uFF09\u3001untargetableSingle\uFF08\u4E0D\u53EF\u88AB\u654C\u65B9\u5355\u4F53\u6307\u5411\u9009\u4E2D\uFF09\u3001harmless\uFF08\u9020\u6210\u7684\u4F24\u7597\u5F52\u96F6\uFF09\u3001hidden\uFF08\u9690\u8EAB\uFF09\u3001intercept\uFF08\u53EF\u63F4\u62A4\u62E6\u622A\uFF09\u3001taunted\uFF08\u88AB\u5632\u8BBD\uFF09\u3001infiniteAmmo\uFF08\u5F39\u836F\u4E0D\u9650\uFF09\uFF08\u6CE8\uFF1A\u5C01\u9501\u7279\u5B9A\u6062\u590D\u6280\u80FD\u6216\u8D44\u6E90\u56DE\u590D\u8BF7\u7528 before_action / before_commit \u7684 cancel:true \u5B9E\u73B0\uFF09\u3002
-\u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF0C\u53EF\u914D when:"facing_arc(self, attacker) == 'back'" \u7B49\u671D\u5411\u6761\u4EF6\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\uFF08\u652F\u6301\u6309\u5355\u4E00\u4E94\u7EF4\u5C5E\u6027\u9650\u5B9A\uFF01\u68C0\u5B9A\u4E0E\u8C41\u514D\u4E8B\u4EF6\u66B4\u9732 event.stat \u4E3A 'str' / 'agi' / 'con' / 'int' / 'spi'\uFF0C\u5982\u201C\u7CBE\u795E\u68C0\u5B9A -5\u201D\u6216\u201C\u529B\u91CF\u4E0E\u4F53\u8D28\u68C0\u5B9A +3\u201D\u76F4\u63A5\u5199 {stat:"checkBonus", flat:-5, when:"event.stat == 'spi'"} \u6216\u7EC4\u5408 ||\uFF0C\u65E0\u9700\u5224 engine_limit\uFF01\uFF09\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF0C\u53EF\u914D statusId:"<\u72B6\u6001ID>" \u9650\u5B9A\u7279\u5B9A\u72B6\u6001\u3001checkKind:"save" \u6216 when:"event.stat == '...'"\uFF0C\u65BD\u52A0\u4FA7 check(kind:"save") \u987B\u540C\u6B65\u586B statusId\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF0C\u540C\u6837\u652F\u6301 statusId\u3001checkKind:"save" \u6216 when:"event.stat == '...'" \u9650\u5B9A\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\uFF08\u652F\u6301 checkKind:"flee" \u6216 when:"event.stat == '...'"\uFF09\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u6B63\u5411\u6536\u76CA\u586B\u6B63\u6570 flat\u3001\u8D1F\u9762\u51CF\u76CA\u586B\u8D1F\u6570 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002\u5BF9\u514D\u75AB\u7279\u5B9A\u72B6\u6001\u7684\u76EE\u6807\u589E\u4F24\u53EF\u76F4\u63A5\u7528 mods \u7684 finalDamageMult \u914D when:"is_immune(target, '<\u72B6\u6001ID>')"\u3002
+\u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\u3001\u8D1F\u6570\u964D\u4F4E\u81EA\u8EAB\u95EA\u907F\u3002\u7701\u7565 checkKind\uFF1A\u6CA1\u6709\u72EC\u7ACB\u95EA\u907F\u68C0\u5B9A\uFF0C\u4E25\u7981\u5199 checkKind:"dodge" \u6216 {stat:"checkBonus",checkKind:"dodge"}\u3002\u53EF\u914D when:"facing_arc(self, attacker) == 'back'" \u7B49\u671D\u5411\u6761\u4EF6\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\uFF08\u652F\u6301\u6309\u5355\u4E00\u4E94\u7EF4\u5C5E\u6027\u9650\u5B9A\uFF01\u68C0\u5B9A\u4E0E\u8C41\u514D\u4E8B\u4EF6\u66B4\u9732 event.stat \u4E3A 'str' / 'agi' / 'con' / 'int' / 'spi'\uFF0C\u5982\u201C\u7CBE\u795E\u68C0\u5B9A -5\u201D\u6216\u201C\u529B\u91CF\u4E0E\u4F53\u8D28\u68C0\u5B9A +3\u201D\u76F4\u63A5\u5199 {stat:"checkBonus", flat:-5, when:"event.stat == 'spi'"} \u6216\u7EC4\u5408 ||\uFF0C\u65E0\u9700\u5224 engine_limit\uFF01\uFF09\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF0C\u53EF\u914D statusId:"<\u72B6\u6001ID>" \u9650\u5B9A\u7279\u5B9A\u72B6\u6001\u3001checkKind:"save" \u6216 when:"event.stat == '...'"\uFF0C\u65BD\u52A0\u4FA7 check(kind:"save") \u987B\u540C\u6B65\u586B statusId\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF0C\u540C\u6837\u652F\u6301 statusId\u3001checkKind:"save" \u6216 when:"event.stat == '...'" \u9650\u5B9A\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\uFF08\u652F\u6301 checkKind:"flee" \u6216 when:"event.stat == '...'"\uFF09\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u6B63\u5411\u6536\u76CA\u586B\u6B63\u6570 flat\u3001\u8D1F\u9762\u51CF\u76CA\u586B\u8D1F\u6570 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002\u5BF9\u514D\u75AB\u7279\u5B9A\u72B6\u6001\u7684\u76EE\u6807\u589E\u4F24\u53EF\u76F4\u63A5\u7528 mods \u7684 finalDamageMult \u914D when:"is_immune(target, '<\u72B6\u6001ID>')"\u3002
 controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\uFF08\u5199\u6210 mods:[{controlPolicy:{moraleLock:"steady"}}]\u3001{controlPolicy:{allowFriendlyTarget:true}} \u6216 {controlPolicy:{intentLock:"kill"}}\uFF1B\u539F\u751F\u6253\u51FB\u9700\u6309\u6761\u4EF6\u5982\u201C\u76EE\u6807 HP\u226420% \u65F6\u610F\u56FE\u89C6\u4E3A\u62B9\u6740\u201D\u4E34\u65F6\u5347\u7EA7\u610F\u56FE\u65F6\uFF0C\u5728 before_action \u5BF9 self \u65BD\u52A0 expireOn:{hook:"after_action"} \u4E14\u5E26 controlPolicy:{intentLock:"kill"} \u7684\u77AC\u65F6\u72B6\u6001\u89E6\u53D1\u91CD\u89C4\u5212\uFF1B\u6CE8\u610F moraleLock / allowFriendlyTarget / intentLock \u5C5E\u4E8E controlPolicy \u5BF9\u8C61\uFF0C\u4E25\u7981\u5199\u6210 stat:"moraleLock"\uFF01\uFF09\u3002
 
 \u3010\u5E38\u89C1\u8BEF\u5199\u3011
@@ -17366,6 +17525,7 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
     { id: "extra", label: "\u81EA\u5B9A\u4E49\u8865\u5145\uFF08\u53EF\u7A7A\uFF09", role: "system", enabled: false, desc: "\u7528\u6237\u81EA\u5DF1\u586B\u7684\u989D\u5916\u63D0\u793A\u8BCD" }
   ].map((slot2) => ({ builtin: true, ...slot2, content: slot2.content ?? "" }));
   var TAG_MAPPING = `\u3010\u4E16\u754C\u4E66\u6807\u7B7E \u2192 VM \u6620\u5C04\u3011
+\u2022 \u9759\u6001\u6807\u7B7E\u53EF\u80FD\u5DF2\u5199\u5165 attack\u3001defense\u3001accuracy\u3001initiativeBonus \u4E0E mods\u3002\u547D\u4E2D\u4FEE\u6B63\u7528 {stat:"checkBonus",checkKind:"attack",flat:N}\uFF0C\u53D7\u51FB\u95EA\u907F\u7528 {stat:"dodge",flat:N}\uFF0C\u4E0D\u5E26 checkKind\u3002\u4FDD\u7559\u5DF2\u586B\u9879\uFF08\u7528 /mods/- \u8FFD\u52A0\uFF09\uFF0C\u53EA\u5B9E\u73B0\u672A\u843D\u76D8\u7684\u673A\u5236\uFF1B\u4E0D\u8981\u91CD\u590D\u53E0\u52A0\u540C\u6E90\u6570\u503C\u3002\u7EAF\u590D\u8FF0\u5F52 narrative\uFF0C\u4E0D\u7528\u521D\u59CB\u5B57\u6BB5\u62A5 existing\u3002
 \u2022 \u5E38\u89C4\u8BC4\u7EA7\u4E3B\u51FB\u7528\u6A21\u677F power \u914D\u5408 damage \u9AB0\u5B50\u5BF9\u8C61\u3002[\u5A01\u529B: X \u7269\u7406] \u7B49\u4EF7\u4E8E [\u5A01\u529B: X][\u4F24\u5BB3: \u7269\u7406]\u3002\u8F6C\u6362\u5668\u9047\u5230 [\u5A01\u529B: X] \u4E14\u6CA1\u6709\u81EA\u5B9A\u4E49 active \u4E3B\u4F24\u89C4\u5219\u65F6\uFF0C\u4F1A\u81EA\u52A8\u751F\u6210 damage:{count:1,sides:4,stat}\uFF0C\u5355\u4E00\u4F24\u5BB3\u6807\u7B7E\u5B58\u5728\u65F6\u518D\u5199\u5165 type\u3002\u53EA\u6709\u6DF7\u5408\u4F24\u5BB3\u6216\u660E\u786E\u7684\u72EC\u7ACB\u516C\u5F0F\u624D\u7531 active \u89C4\u5219\u66FF\u4EE3\u6A21\u677F\u4E3B\u51FB\uFF0C\u4E0D\u8981\u91CD\u590D\u6DFB\u52A0\u4E3B\u51FB\u3002\u6DF7\u5408\u4F24\u5BB3\u3001\u56FA\u5B9A\u4F24\u5BB3\u5305\u6216\u72EC\u7ACB\u516C\u5F0F\u624D\u7531 active \u89C4\u5219\u5199 damage \u6307\u4EE4\uFF0C\u540C\u4E00\u7B14\u4F24\u5BB3\u53EA\u7ED3\u7B97\u4E00\u6B21\u3002
 \u2022 \u6DF7\u5408\u4F24\u5BB3\uFF08\u5982\u7269\u7406\u4E0E\u80FD\u91CF\u6309\u6570\u503C\u6216\u767E\u5206\u6BD4\u5E76\u5217\uFF09\u5728 hook:"active" \u5185\u62C6\u4E3A\u591A\u6761\u6309\u5E8F\u6267\u884C\u7684 damage \u6307\u4EE4\uFF0C\u5404\u5206\u91CF\u6309\u540C\u4E00\u57FA\u51C6\u6C42\u503C\uFF0C\u4E0D\u518D\u989D\u5916\u53E0\u52A0\u6A21\u677F\u603B\u5A01\u529B\u4E3B\u51FB\u3002\u6807\u51C6\u4F24\u5BB3\u6807\u7B7E\u5982 [\u5A01\u529B:75][\u4F24\u5BB3:\u80FD\u91CF45/\u771F\u5B9E30] \u5373\u4F7F\u53E6\u6709\u53D9\u4E8B\u6548\u679C\uFF0C\u4E5F\u5DF2\u81EA\u52A8\u89E3\u6790\u5A01\u529B\u4E0E\u4E3B\u51FB\uFF1B\u8303\u56F4\u89C4\u5219\u7528 for_each \u7684 from:"action_targets" \u9010\u4E2A\u5904\u7406\u672C\u6B21\u884C\u52A8\u5DF2\u5708\u5B9A\u7684\u5355\u4F4D\u3002\u4FDD\u7559\u5DF2\u751F\u6210\u7684\u89C4\u5219\uFF0C\u53EA\u8865\u5C1A\u672A\u5B9E\u73B0\u7684\u9644\u52A0\u6548\u679C\uFF0C\u4E0D\u8981\u518D\u6309\u603B\u5A01\u529B\u6216\u5404\u5206\u91CF\u91CD\u590D\u6DFB\u52A0\u4F24\u5BB3\u3002
 \u2022 [\u5173\u8054\u5C5E\u6027: <\u5C5E\u6027>] \u6216\u6807\u7B7E\u4E2D\u7684\u4E94\u7EF4\u540D\u79F0\u6307\u5411\u65BD\u672F\u8005\u4E3B\u5C5E\u6027\uFF08str / agi / con / int / spi\uFF09\uFF0C\u9700\u5C5E\u6027\u7F29\u653E\u65F6\u5199\u5165 damage.stat \u6216\u5728\u516C\u5F0F\u4E2D\u8BFB self.<stat>\uFF1B\u539F\u6587\u8981\u6C42\u62B5\u6297\u8303\u56F4\u6280\u80FD\u7684\u9644\u5E26\u6548\u679C\u65F6\uFF0C\u5728 after_hit \u89C4\u5219\u91CC\u7528 check(kind:"save")\uFF0C\u5E76\u5728 onPass/onFail \u4E2D\u7ED3\u7B97\u9644\u5E26\u6548\u679C\u3002\u7528 event.skillId == skill.id \u9650\u5B9A\u6765\u6E90\u3002
@@ -17393,6 +17553,7 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
    • **消耗 fp（FP / 命运点）硬分流铁律**：只要效果描述中包含消耗 fp（FP）这种外部叙事专用资源（包括消耗 fp 许愿、改写因果或兑换效果），**一律整条直接归入 narrative**（在 reason 中用通俗人话补全说明即可，**既不要映射为战棋战斗规则或局内 mp / sp / hp，也绝对不要塞进 unresolved**）！
    • 其他战外系统分流：纯外观清洁、宝库收纳、跨世界／跨位面随机漫游传送、战外数小时延时复活与库存获取限制同样归入 narrative；不涉及消耗 fp、确属战棋局内规则意图但依赖引擎未开放机制（如永久篡改剥夺敌方技能模板）或缺少战内固定参数的部分，才归入 unresolved（标明 engine_limit 或 missing_info）。严禁把跨世界传送强行映射为棋盘格 move！
 2. 快照增量、幂等引用与主击守恒不变式（Snapshot Delta, Idempotency & Conservation）：
+   • 保留 roster 中已由标签落盘的 attack、defense、accuracy、initiativeBonus 与 mods（dodge、initiativeFlat、checkBonus 等）。用 /mods/- 追加或整数组原样保留已有项，不得覆写冲掉或重复叠加。例如已有闪避 +15，效果又写“闪避 +15、移动 +2”，只补移动。若整条仅重申静态数值且剩余为风味，归 narrative，注明“对应数值已由静态标签落盘，其余为风味描述”；禁止把 baseline 初始项填入 existing 或提交无变化补丁。
    • 快照增量与已存模板禁重定义：动笔前（尤含返修轮次！）先查当前 roster 快照的 skills、statusTemplates 与宿主模板现有键——① 凡当前快照中**已存在**的状态模板或派生技能 ID（含前序批次或首轮已成功落盘的模板），**直接按既有 ID 引用，绝对禁止再次输出 add /skills/<id> 或 add /statusTemplates/<id>**（重复 add 已存在模板会触发共享模板定义冲突并级联拒收宿主规则！）；② 已解析的 initiativeBonus、rawRange / rawRadius / shape、power 直接保留；移除或替换 /skills/<id>/damage 前先核实当前快照该技能确实存在 damage 键（已移除或本来无 damage 键时严禁再 remove/replace /damage，remove /damage 后更严禁再写 /damage/type！）。
    • 主击完备性与并表核销：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage：① 若原文为单一伤害类型主击，仅用 add 写入 /skills/<id>/damage/type（已有该键用 replace）保留原生主击，并将「主击伤害类型」警告与同技能仅重申该单一主击比例及已解析先手／范围的原词条一并挂在该补丁操作的 resolves 上共同核销（严禁再追加第二段 100% 伤害规则，严禁塞入 existing 或 narrative）；② 若原文明确要求多属性混合主击或独立公式替代主击，同批先核实存在 damage 后 remove /skills/<id>/damage，并在 hook:"active" 内拆为多条 damage 原语，将该混合主击词条与「主击伤害类型」一并挂在主击补丁 resolves 上核销；③ 原文无法确认类型时写 unresolved。
    • 面板去重与单次恢复：HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat；若来源加成或成长已计入当前快照面板值，保留当前面板，严禁二次叠加。heal 指令本身已直接恢复生命，严禁在同一效果内再写 resource(pool:"hp") 造成双倍回血。
@@ -18742,6 +18903,12 @@ ${variables2.warnings()}` : "");
   }
   var modLabels = {
     ...attributes2,
+    dodge: "\u95EA\u907F",
+    movement: "\u79FB\u52A8\u8DDD\u79BB",
+    incomingDistanceOffset: "\u8868\u89C2\u8DDD\u79BB",
+    critDamageBonus: "\u66B4\u51FB\u4F24\u5BB3\u52A0\u6210",
+    incomingDamageMult: "\u53D7\u51FB\u6613\u4F24\u500D\u7387",
+    apMax: "\u884C\u52A8\u70B9\u4E0A\u9650",
     armor: "\u62A4\u7532",
     armorPierce: "\u56FA\u5B9A\u7A7F\u7532",
     armorPiercePercent: "\u767E\u5206\u6BD4\u7A7F\u7532",
@@ -18893,7 +19060,7 @@ ${variables2.warnings()}` : "");
       const item = state?.items?.[id3], t = state?.equipment?.[item?.templateId] ?? unit.equipment?.find((e) => e.id === id3)?.template;
       const d = t?.damage;
       const dice4 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}`.trim() : null;
-      gear.push({ label: `[${slot2}] ${t?.name ?? id3}`, path: item?.templateId ? `/equipment/${item.templateId}` : null, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice4].filter(Boolean), template: t, item });
+      gear.push({ label: `[${slot2}] ${t?.name ?? id3}`, path: item?.templateId ? `/equipment/${item.templateId}` : null, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.accuracy ? `\u547D\u4E2D ${signed2(t.accuracy)}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice4].filter(Boolean), template: t, item });
     }
     section("\u88C5\u5907", gear);
     const innate = new Set(unit.skills ?? []);
