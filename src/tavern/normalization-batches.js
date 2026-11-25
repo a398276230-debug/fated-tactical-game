@@ -1,4 +1,5 @@
 import { diagnosticText, identifiesWarning, warningEntryKey, warningKey } from './resolved-warnings.js';
+import { semanticExemptionKey, normalizeClauseForHash } from './exemption-ledger.js';
 
 export const normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)/;
 
@@ -353,7 +354,8 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
       continue;
     }
     seen.add(reference);
-    matched.push({ warning, receipt: { unitId: warning.unitId, key: reference, source, reason } });
+    matched.push({ warning, receipt: { unitId: warning.unitId, key: reference, source, reason, origin: 'ai',
+      semanticKey: semanticExemptionKey(warning), staticFingerprint: normalizeClauseForHash(warning.message), status: 'active' } });
   }
   return { matched, invalid };
 }
@@ -361,7 +363,11 @@ export function readNarrativeExemptions(value = [], sent, sourceFor, { solved = 
 export function activeNarrativeExemptions(warnings, receipts, sourceFor) {
   return warnings.flatMap(warning => {
     const source = sourceFor(warning.unitId, warningEntryKey(warning));
-    const receipt = source && receipts.find(item => item.unitId === warning.unitId && item.key === warningKey(warning) && item.source === source);
-    return receipt ? [{ warning, receipt }] : [];
+    const semantic = semanticExemptionKey(warning);
+    const receipt = receipts.find(item => item.semanticKey === semantic && item.status !== 'revoked')
+      ?? receipts.find(item => item.unitId === warning.unitId && item.key === warningKey(warning) && item.source === source);
+    if (!receipt || receipt.status === 'revoked') return [];
+    if (receipt.origin === 'ai' && receipt.source && source && receipt.source !== source) return [];
+    return [{ warning, receipt }];
   });
 }

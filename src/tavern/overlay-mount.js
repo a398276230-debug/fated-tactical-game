@@ -4,7 +4,9 @@ import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, nor
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
-import { hostMethod, readBattleVariables, readChatMessages, statData } from './host.js';
+import { battleReportToMvuPatch } from './converter-patch.js';
+import { outcomeDigest, rollbackBattleOutcome, writeBattleOutcome, writebackReceipt } from './mvu-writeback.js';
+import { hostMethod, probeMvuWriteCapability, readBattleVariables, readChatMessages, statData } from './host.js';
 import { tavernTheme } from './theme.js';
 import { readBattlePortraits } from './portraits.js';
 import { assembleMessages, describeSlots } from './prompts.js';
@@ -341,7 +343,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     panel.hidden = false;
     launcher.hidden = true;
     switchTab('sandbox');
-    await scan();
+    await scan({ refreshSource: true });
   }
   let panelFullscreen = false;
   let panelRestore = null;
@@ -759,9 +761,14 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     try { return parseJSON(storage?.getItem(battleStorageKey(key, field))); }
     catch { return null; }
   }
-  async function hydrate(epoch, candidate, rehydrate) {
+  function battleHasProgress(snapshot) {
+    return snapshot?.kind === 'battle' && (snapshot.journal?.length > 0 || snapshot.state?.logs?.length > 0);
+  }
+  async function hydrate(epoch, candidate, rehydrate, refreshSource = false, snapshot = null) {
     const key = candidate.battleKey;
-    const opening = !rehydrate && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
+    const preserveOpening = battleHasProgress(snapshot) || battleHasProgress(readBattleStorage(key, 'fated-tactical/battle-v1'));
+    const protectedOpening = key && readBattleStorage(key, 'mvu-pre-writeback');
+    const opening = (protectedOpening || (!rehydrate && (!refreshSource || preserveOpening))) && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
     const nextSources = opening ? clone(opening) : candidate;
     if (key && !opening) {
       nextSources.mvuData = clone(await readBattleVariables(host, Number(candidate.source?.messageId)));
@@ -851,13 +858,22 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     const battleInstanceId = sources.battleKey || id;
     const battleInput = sources.input;
     const target = pages.sandbox.querySelector('[data-sandbox-mount]');
-    const restart = ({ seed }) => {
+    const rebuild = ({ seed }) => {
       const opening = hydrateBaseline(battleInput, { seed });
       const normalized = applyNormalization(opening, operations(battleInstanceId));
       const next = restoreChatOpening(normalized, battleInstanceId);
       updateChatInstances(next, liveState());
       return next;
     };
+    const restart = opts => {
+      const bar = pages.sandbox.querySelector('[data-mvu-settlement]');
+      if (bar) bar.hidden = true;
+      if (!readBattleStorage(battleInstanceId, 'mvu-pre-writeback')) return rebuild(opts);
+      return currentFloor().then(last => rollbackBattleOutcome({ host, storage, key: battleInstanceId, lastMessageId: last.messageId,
+        assertContext: () => checkWriteContext(battleInstanceId) })).then(() => rebuild(opts));
+    };
+    const bar = pages.sandbox.querySelector('[data-mvu-settlement]');
+    if (bar) bar.hidden = true;
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
       battleAiRequest: async (messages, signal) => {
@@ -869,8 +885,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         return requestTavernAI(host, battleConfig, messages, options.fetch, signal);
       },
       onVictory() {
-        syncSettings;
-        if (config.autoDeliverBattleReport !== false) void deliverBattleReport();
+        syncSettings();
+        queueMicrotask(() => { if (!disposed && activeBattleKey === battleInstanceId) void prepareDelivery(true).catch(showError); });
       },
     });
     const game = gameMount?.api;
@@ -1022,7 +1038,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     if (conflicts.length) notify('部分辅助 AI 补丁未能重放', '', null, false, { tone: 'warning', unresolved: conflicts });
     return next;
   }
-  async function scan({ rehydrate = false } = {}) {
+  async function scan({ rehydrate = false, refreshSource = false } = {}) {
     const epoch = ++scanEpoch;
     const node = pages.sandbox.querySelector('[data-status]'); if (node) node.textContent = '正在读取 MVU、最新楼层并转换…';
     try {
@@ -1038,7 +1054,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       const candidate = sourceBundle({}, messages, chat, entryId);
       const key = candidate.battleKey;
       foldBattleEntries();
-      if (!rehydrate && key && activeBattleKey === key && gameMount) {
+      if (!rehydrate && !refreshSource && key && activeBattleKey === key && gameMount) {
         refreshPortraits(currentState, epoch);
         if (node) node.textContent = `已续接当前战局 · ${scanStatus}`;
         return;
@@ -1052,7 +1068,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       const snapshot = key && readBattleStorage(key, 'fated-tactical/battle-v1');
       const savedBattle = snapshot?.kind === 'battle';
       const previousOpening = rehydrate && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
-      const hydrated = await hydrate(epoch, candidate, rehydrate);
+      const hydrated = await hydrate(epoch, candidate, rehydrate, refreshSource, snapshot);
       const latestOpening = key && openingSources.get(key);
       const openingInput = opening => [opening.battleInit, opening.mvuData, opening.charInfo, opening.protagonistName];
       const unchangedOpening = previousOpening && latestOpening && stableSourceJson(openingInput(previousOpening)) === stableSourceJson(openingInput(latestOpening));
@@ -1095,7 +1111,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key);
       // Identical raw text can produce different skill mechanics after a converter fix.
       // Compare effective opening templates, not the board after turns have been played.
-      const restoreSaved = !resetDeleted && savedBattle && (!rehydrate || (unchangedOpening && !invalid &&
+      const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || (unchangedOpening && !invalid &&
         stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills)));
       if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key]: kept } });
       mountState(currentState, restoreSaved);
@@ -1137,11 +1153,79 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       notify('战局加载失败', e.message, () => scan({ rehydrate }));
     }
   }
+  function checkWriteContext(key) {
+    if (disposed || key !== activeBattleKey || chatId(host) !== sources.source?.chatId) throw new Error('战场或聊天已切换，未写入');
+  }
+  async function currentFloor() {
+    const rows = await tavernMessages(host);
+    if (!rows.length) throw new Error('无法定位最新楼层');
+    const meta = messageMeta(rows.at(-1), rows.length - 1);
+    if (!Number.isSafeInteger(Number(meta.messageId))) throw new Error('无法定位最新楼层');
+    return { messageId: Number(meta.messageId), swipeId: meta.swipeId };
+  }
+  async function prepareDelivery(automatic = false) {
+    syncSettings();
+    const page = pages.sandbox, bar = page.querySelector('[data-mvu-settlement]');
+    bar.hidden = true;
+    const state = liveState();
+    const capability = probeMvuWriteCapability(host);
+    if (!state?.outcome || config.mvuWritebackMode === 'off' || capability.driver === 'none') {
+      if (!automatic || config.autoDeliverBattleReport !== false) await deliverBattleReport();
+      return;
+    }
+    const key = activeBattleKey, source = sources.source;
+    const patch = battleReportToMvuPatch(state, sources.sourceMap);
+    if (!patch.length && !readBattleStorage(key, 'mvu-pre-writeback')) { if (!automatic || config.autoDeliverBattleReport !== false) await deliverBattleReport(); return; }
+    const last = await currentFloor(), digest = await outcomeDigest(patch);
+    checkWriteContext(key);
+    const historical = last.messageId > Number(source.messageId);
+    const selector = bar.querySelector('[data-mvu-target]'); selector.replaceChildren();
+    if (historical) selector.append(el(doc, 'option', { value: 'latestFloor' }, `按战损差量写至最新楼层 #${last.messageId}`));
+    selector.append(el(doc, 'option', { value: 'battleFloor' }, `仅写战斗楼层 #${source.messageId}`));
+    selector.hidden = !historical;
+    const button = bar.querySelector('[data-mvu-writeback]');
+    const target = () => selector.value === 'latestFloor' ? last : { messageId: Number(source.messageId), swipeId: source.swipeId };
+    const force = bar.querySelector('[data-mvu-refresh]');
+    const update = () => {
+      const receipt = writebackReceipt(storage, key), t = target();
+      button.disabled = receipt?.outcomeDigest === digest && receipt.targetMessageId === t.messageId && String(receipt.targetSwipeId) === String(t.swipeId);
+      force.hidden = !button.disabled;
+      button.textContent = button.disabled ? '已写回 MVU ✓' : '同步至 MVU 并交付战报';
+    };
+    selector.onchange = update; update();
+    bar.querySelector('[data-mvu-summary]').textContent = patch.map(op => {
+      const labels = op.path.slice('/stat_data/'.length).split('/').map(s => s.replace(/~1/g, '/').replace(/~0/g, '~'));
+      const before = labels.reduce((obj, k) => obj?.[k], sources.mvuData);
+      return `${labels.join('/')}：${JSON.stringify(before) ?? '无'} → ${JSON.stringify(op.value) ?? '移除'}`;
+    }).join(' ｜ ') || '本次无战损；将按写回前基线撤销上次战果。';
+    const confirm = async (forceRefresh = false) => {
+      if ((button.disabled && !forceRefresh) || force.disabled) return;
+      button.disabled = force.disabled = true;
+      try {
+        checkWriteContext(key);
+        if (!liveState()?.outcome || await outcomeDigest(battleReportToMvuPatch(liveState(), sources.sourceMap)) !== digest) throw new Error('战果已变更，请重新确认');
+        const t = target(), latest = await currentFloor();
+        if (latest.messageId !== last.messageId) throw new Error('最新楼层已变更，请重新确认写回目标');
+        await writeBattleOutcome({ storage, host, key, battleId: state.battleId ?? key, source, opening: sources.mvuData, patch,
+          targetMessageId: t.messageId, targetSwipeId: t.swipeId, force: forceRefresh, assertContext: () => checkWriteContext(key) });
+        checkWriteContext(key); update(); await deliverBattleReport();
+      } catch (error) { update(); showError(error); }
+      finally { force.disabled = false; }
+    };
+    force.onclick = () => confirm(true);
+    button.onclick = () => confirm(); bar.hidden = false;
+    if (automatic && config.autoDeliverBattleReport !== false && config.mvuWritebackMode === 'auto' && !historical) await confirm();
+  }
   async function deliverBattleReport() {
     const mount = gameMount;
     try {
-      const result = mount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.();
+      let result = mount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.();
       if (!result?.trim()) throw new Error('当前没有可交付的战报。');
+      const receipt = activeBattleKey && writebackReceipt(storage, activeBattleKey);
+      if (receipt && receipt.outcomeDigest === await outcomeDigest(battleReportToMvuPatch(liveState(), sources.sourceMap))) {
+        result += `\n（注：本场战斗结算后的生命/法力/体力、装备计数与消耗品变动已同步写入楼层 #${receipt.targetMessageId} 状态变量，请基于最新变量面板续写剧情，无需在 <UpdateVariable> 中重复扣减本场已结算战损。）`;
+      }
+      if (disposed || gameMount !== mount) return;
       const textarea = doc.querySelector('#send_textarea');
       const clipboard = doc.defaultView?.navigator?.clipboard;
       if (textarea) {
@@ -1177,7 +1261,14 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     actions.append(hideLabel);
     on(hideLauncher, 'change', () => { persistSettings({ hideLauncher: hideLauncher.checked }); updateMagic(); });
     on(refresh, 'click', () => scan().catch(showError));
-    on(report, 'click', deliverBattleReport);
+    const settlement = el(doc, 'section', { 'data-mvu-settlement': '', hidden: '' });
+    const plain = el(doc, 'button', { type: 'button', 'data-mvu-deliver-only': '' }, '仅交付战报');
+    settlement.append(el(doc, 'p', { 'data-mvu-summary': '' }), el(doc, 'select', { 'aria-label': '写回目标楼层', 'data-mvu-target': '' }),
+      el(doc, 'button', { type: 'button', 'data-mvu-writeback': '' }, '同步至 MVU 并交付战报'), plain,
+      el(doc, 'button', { type: 'button', 'data-mvu-refresh': '', hidden: '' }, '按基线重刷本次战果'));
+    page.append(settlement);
+    on(plain, 'click', deliverBattleReport);
+    on(report, 'click', () => prepareDelivery().catch(showError));
   }
   function commitNormalization(key, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const current = liveState();

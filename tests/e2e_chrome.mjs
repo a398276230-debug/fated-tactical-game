@@ -1075,3 +1075,176 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.deepEqual({ pageErrors, consoleErrors }, { pageErrors:[], consoleErrors:[] });
   t.diagnostic('实测 100 格、4 掩体、4 互动点；1440px 无重叠，390 竖屏与 844×390 横屏整盘可见；0 pageerror / 0 console.error');
 });
+
+test('真实 Chrome：黑灵灵魂计数跨两场 0→3→5，MVU 写回幂等、Swipe 拦截、重开回滚与战报交付', { timeout: 45000 }, async t => {
+  const server = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url, 'http://localhost');
+      const path = resolve(root, `.${url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname)}`);
+      if (!path.startsWith(resolve(root) + sep)) { res.writeHead(403).end(); return; }
+      const type = { '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css' }[extname(path)];
+      res.writeHead(200, { 'Content-Type': `${type ?? 'application/octet-stream'}; charset=utf-8` }).end(await readFile(path));
+    } catch { if (!res.headersSent) res.writeHead(404); res.end(); }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const profile = await mkdtemp(join(tmpdir(), 'fated-black-spirit-'));
+  const child = spawn(chrome, ['--headless=new', '--disable-gpu', '--disable-extensions', '--no-first-run', '--remote-debugging-port=0',
+    `--user-data-dir=${profile}`, '--window-size=1440,1000', 'about:blank'], { stdio: 'ignore' });
+  let spawnError;
+  child.on('error', error => { spawnError = error; });
+  let socket;
+  t.after(async () => {
+    socket?.close(); child.kill(); server.close(); await pause(400);
+    await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
+  });
+  const port = await until(async () => {
+    if (spawnError) throw spawnError;
+    try { return (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; } catch { return null; }
+  }, '黑灵 Chrome CDP 端口');
+  const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+  socket = new WebSocket(tabs.find(tab => tab.type === 'page').webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true });
+  });
+  let serial = 0;
+  const responses = new Map(), pageErrors = [], consoleErrors = [];
+  socket.addEventListener('message', ({ data }) => {
+    const message = JSON.parse(data);
+    if (message.id) {
+      const reply = responses.get(message.id); responses.delete(message.id);
+      if (message.error) reply.reject(new Error(`${reply.method}: ${message.error.message}`)); else reply.resolve(message.result);
+    } else if (message.method === 'Runtime.exceptionThrown') pageErrors.push(message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text);
+    else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') consoleErrors.push(message.params.args.map(arg => arg.description ?? arg.value));
+  });
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    responses.set(++serial, { method, resolve, reject }); socket.send(JSON.stringify({ id: serial, method, params }));
+  });
+  await send('Runtime.enable'); await send('Page.enable'); await send('Log.enable');
+  const run = async expression => {
+    const { result, exceptionDetails } = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+    return result.value;
+  };
+  const get = selector => `document.querySelector(${JSON.stringify(selector)})`;
+  const click = async selector => {
+    const box = await run(`(() => { const element=${get(selector)}; if (!element) return null; element.scrollIntoView({block:'center',inline:'center'}); const r=element.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2,disabled:element.disabled}; })()`);
+    assert.ok(box && !box.disabled, `黑灵场景可点击 ${selector}; ${await run(`JSON.stringify({output:${get('#sandbox-output')}.textContent,editor:${get('#sandbox-editor')}.value,state:window.__fatedTacticalTavern.getState()})`)}`);
+    await send('Input.dispatchMouseEvent', { type:'mousePressed', x:box.x, y:box.y, button:'left', clickCount:1 });
+    await send('Input.dispatchMouseEvent', { type:'mouseReleased', x:box.x, y:box.y, button:'left', clickCount:1 });
+  };
+  const select = (selector, value) => run(`(() => { const input=${get(selector)}; input.value=${JSON.stringify(value)}; input.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  const state = () => run('window.__fatedTacticalTavern.getState()');
+  const battleFixture = id => `<battle_init>\nbattle|1|${id}|黑灵测试|flat|7\nunit|p1|blue|mvu:主角|玩家|1,1\nunit|e1|red|char_info|木桩|2,1\n</battle_init>`;
+  const statData = souls => ({ 主角: {
+    属性: { 力量:6, 敏捷:6, 体质:6, 智力:5, 精神:5 },
+    生命值: { 当前:100, 上限:{ _基础:100, 额外:0 } },
+    法力值: { 当前:20, 上限:{ _基础:20, 额外:0 } },
+    体力值: { 当前:20, 上限:{ _基础:20, 额外:0 } },
+    装备: { 黑灵: { 类型:'武器', 位置:'主手', pools:{ souls:{ cap:10, initial:souls } }, 标签:['匕首','攻击: 100',`灵魂计数：${souls}`] } },
+  } });
+  await send('Page.navigate', { url:`http://127.0.0.1:${server.address().port}/tavern.html` });
+  await until(() => run('document.readyState === "complete"'), '黑灵酒馆页面加载');
+  await run(`(async () => {
+    window.hostEvents = new Map();
+    window.eventOn = (name, fn) => { hostEvents.set(name, fn); return () => hostEvents.delete(name); };
+    window.eventEmit = (name, payload) => hostEvents.get(name)?.(payload);
+    window.SillyTavern = { substituteParams: value => value };
+    window.deliveredReports = [];
+    const textarea = document.createElement('textarea'); textarea.id = 'send_textarea';
+    textarea.addEventListener('input', () => deliveredReports.push(textarea.value)); document.body.append(textarea);
+    const bundle = await (await fetch('/dist/tavern.iife.js')).text();
+    const iframe = document.createElement('iframe'); iframe.hidden = true; document.body.append(iframe);
+    window.overlayFrame = iframe; window.overlayBundle = bundle;
+    window.hostMessages = [
+      { message_id:10, swipe_id:0, role:'assistant', message:'<char_info>{"name":"木桩","stats":{"agi":-20}}</char_info>'+${JSON.stringify(battleFixture('black-spirit-b1'))} },
+      { message_id:11, swipe_id:0, role:'assistant', message:'首战后续' },
+    ];
+    window.mvuEnvelopes = Object.fromEntries([[10,0],[11,0]].map(([message_id,souls]) => [message_id,{ swipe_id:0, stat_data:${JSON.stringify(statData(0))}, initialized_lorebooks:['原卡'] }]));
+    window.mvuWrites = [];
+    window.Mvu = {
+      getMvuData({message_id}) { return structuredClone(mvuEnvelopes[message_id]); },
+      replaceMvuData(next, {message_id}) { mvuWrites.push({messageId:message_id,next:structuredClone(next)}); mvuEnvelopes[message_id]=structuredClone(next); },
+    };
+    window.getLastMessageId = () => hostMessages.at(-1).message_id;
+    window.getChatMessages = () => hostMessages;
+    iframe.contentWindow.eval(bundle);
+  })()`);
+  await until(() => run('!!window.__fatedTacticalTavern'), '黑灵 overlay 挂载');
+  await run(`window.__fatedTacticalTavern.open()`);
+  await until(() => run(`window.__fatedTacticalTavern.getState()?.scenarioId === 'black-spirit-b1'`), '首战状态加载');
+  await click('[data-tab="sandbox"]');
+  await run(`(() => {
+    const state=window.__fatedTacticalTavern.getState();
+    const poolId=state.pools[state.items[state.units.p1.mainHand].pools.souls].id;
+    const editor=document.querySelector('#sandbox-editor');
+    const enemyHp=state.pools[state.units.e1.pools.hp].id;
+    editor.value=JSON.stringify([{type:'adjust_pool',poolId,operation:'set',value:3},{type:'adjust_pool',poolId:enemyHp,operation:'set',value:0}]);
+    editor.dispatchEvent(new Event('input',{bubbles:true}));
+  })()`);
+  await run(`document.querySelector('#sandbox-preview').click()`);
+  await until(() => run(`${get('#sandbox-output')}.textContent.length > 0`), '首战沙盒试算');
+  await run(`document.querySelector('#sandbox-commit').click()`);
+  await until(() => run(`window.__fatedTacticalTavern.getState().outcome === 'blue'`), '首战胜负结算').catch(async error => { throw new Error(`${error.message}: ${await run(`JSON.stringify({output:${get('#sandbox-output')}.textContent,state:window.__fatedTacticalTavern.getState()})`)}`); });
+  await until(() => run(`!${get('[data-mvu-settlement]')}.hidden`), '首战显示 MVU 结算');
+  assert.match(await run(`${get('[data-mvu-summary]')}.textContent`), /灵魂计数/);
+  await run('window.mvuEnvelopes[10].swipe_id=9');
+  await click('[data-mvu-writeback]');
+  await until(() => run(`${get('[data-page="sandbox"] [data-status]')}.textContent.includes('SWIPE_MISMATCH')`), '首战 Swipe 错误提示');
+  assert.equal(await run('window.mvuWrites.length'), 0);
+  await run('window.mvuEnvelopes[10].swipe_id=0');
+  await click('[data-mvu-writeback]');
+  await until(() => run('window.mvuWrites.length === 1'), '首战 MVU 写回');
+  assert.equal(await run(`window.mvuEnvelopes[11].stat_data.主角.装备.黑灵.标签[2]`), '灵魂计数：3');
+  assert.equal(await run(`window.mvuEnvelopes[11].initialized_lorebooks[0]`), '原卡');
+  assert.equal(await run('window.deliveredReports.length'), 1);
+  assert.doesNotMatch(await run('window.deliveredReports[0]'), /<UpdateVariable>[\s\S]*<\/UpdateVariable>/);
+  await run('window.__fatedTacticalTavern.open()'); await click('[data-tab="sandbox"]');
+  await click('[data-page="sandbox"] > .fated-actions button:first-child');
+  await until(() => run(`!${get('[data-mvu-settlement]')}.hidden`), '首战重复确认界面');
+  assert.equal(await run(`${get('[data-mvu-writeback]')}.disabled`), true);
+  assert.equal(await run('window.mvuWrites.length'), 1);
+  await click('[data-mvu-deliver-only]');
+  await until(() => run(`${get('.fated-tavern-panel')}.hidden`), '仅交付首战战报');
+  assert.equal(await run('window.mvuWrites.length'), 1);
+  assert.equal(await run('window.deliveredReports.length'), 2);
+  await run(`(() => {
+    window.hostMessages.push({message_id:12,swipe_id:0,role:'assistant',message:'<char_info>{"name":"木桩","stats":{"agi":-20}}</char_info>'+${JSON.stringify(battleFixture('black-spirit-b2'))}});
+    window.hostMessages.push({message_id:13,swipe_id:0,role:'assistant',message:'次战后续'});
+    window.mvuEnvelopes[12]={swipe_id:0,stat_data:${JSON.stringify(statData(3))},initialized_lorebooks:['原卡']};
+    window.mvuEnvelopes[13]={swipe_id:0,stat_data:${JSON.stringify(statData(3))},initialized_lorebooks:['原卡']};
+  })()`);
+  await run('window.__fatedTacticalTavern.open()');
+  await until(() => run(`window.__fatedTacticalTavern.getState()?.scenarioId === 'black-spirit-b2'`), '次战状态加载');
+  await click('[data-tab="sandbox"]');
+  await run(`(() => {
+    const state=window.__fatedTacticalTavern.getState();
+    const poolId=state.pools[state.items[state.units.p1.mainHand].pools.souls].id;
+    const editor=document.querySelector('#sandbox-editor');
+    const enemyHp=state.pools[state.units.e1.pools.hp].id;
+    editor.value=JSON.stringify([{type:'adjust_pool',poolId,operation:'set',value:5},{type:'adjust_pool',poolId:enemyHp,operation:'set',value:0}]);
+    editor.dispatchEvent(new Event('input',{bubbles:true}));
+  })()`);
+  await run(`document.querySelector('#sandbox-preview').click()`);
+  await until(() => run(`${get('#sandbox-output')}.textContent.length > 0`), '次战沙盒试算');
+  await run(`document.querySelector('#sandbox-commit').click()`);
+  await until(() => run(`window.__fatedTacticalTavern.getState().outcome === 'blue'`), '次战胜负结算');
+  await until(() => run(`!${get('[data-mvu-settlement]')}.hidden`), '次战显示 MVU 结算');
+  assert.deepEqual(await run(`Array.from(${get('[data-mvu-target]')}.options).map(option=>option.value)`), ['latestFloor','battleFloor']);
+  await select('[data-mvu-target]', 'latestFloor');
+  await click('[data-mvu-writeback]');
+  await until(() => run('window.mvuWrites.length === 2'), '次战 MVU 写回');
+  assert.equal(await run(`window.mvuEnvelopes[13].stat_data.主角.装备.黑灵.标签[2]`), '灵魂计数：5');
+  assert.equal(await run('window.deliveredReports.at(-1).includes("无需在 <UpdateVariable> 中重复扣减")'), true);
+  await run('window.__fatedTacticalTavern.open()'); await click('[data-tab="sandbox"]');
+  await click('[data-page="sandbox"] > .fated-actions button:first-child');
+  await until(() => run(`!${get('[data-mvu-settlement]')}.hidden`), '次战重复确认界面');
+  assert.equal(await run(`${get('[data-mvu-writeback]')}.disabled`), true);
+  assert.equal(await run('window.mvuWrites.length'), 2);
+  await run(`document.querySelector('#reset-button').click()`);
+  await until(() => run(`window.__fatedTacticalTavern.getState().outcome === null`), '次战重开');
+  assert.equal(await run(`window.__fatedTacticalTavern.getState().pools[window.__fatedTacticalTavern.getState().items[window.__fatedTacticalTavern.getState().units.p1.mainHand].pools.souls].current`), 3);
+  assert.equal(await run(`window.mvuEnvelopes[13].stat_data.主角.装备.黑灵.标签[2]`), '灵魂计数：3');
+  assert.equal(await run('window.mvuWrites.length'), 3);
+  assert.deepEqual({ pageErrors, consoleErrors }, { pageErrors:[], consoleErrors:[] });
+  t.diagnostic('黑灵两战完成 0→3→5；重复写回未增加 host write，Swipe 错误未写入，重开回滚次战至 3，战报交付不含 UpdateVariable');
+});

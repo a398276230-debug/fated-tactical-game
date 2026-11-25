@@ -101,8 +101,8 @@ const DEFAULT_CONFIG = {
   normalizationAiMode: 'same', normalizationAiBaseUrl: '', normalizationAiApiKey: '', normalizationAiModel: '',
   normalizationAiApiTransport: 'direct', normalizationAiApiSource: 'openai',
   battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
-  extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true,
-  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {}, unresolvedNotes: {},
+  extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true, mvuWritebackMode: 'confirm',
+  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: [], nonCombatPersistenceScope: 'chat_and_global', unresolvedNotes: {},
   ...Object.fromEntries(Object.entries(normalizationLimits).map(([key, { fallback }]) => [key, fallback])),
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 240000,
 };

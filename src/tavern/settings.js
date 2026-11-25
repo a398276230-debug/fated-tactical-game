@@ -380,6 +380,8 @@ export function renderApiTab(page, ctx) {
   const normalizationModelField = field(normalization, 'normalizationAiModel', '标准化 AI 模型', normalizationModel, '', !separate, true);
   if (separate) modelCommands(normalizationModelField, normalizationModel, () => normalizationApiConfig(ctx.settings), { pickerLabel: '标准化可用模型' });
   normalization.append(make('p', 'hint wide', '自动标准化、手动标准化和失败补丁的修复请求共用此通道。'));
+  const settlement = card('战后结算');
+  field(settlement, 'mvuWritebackMode', '战果同步至 MVU', select([['confirm', '写回前确认'], ['auto', '自动同步并交付'], ['off', '仅交付战报']]), 'confirm');
   const battle = card('⚔️ 战斗 AI（敌方陪玩）');
   field(battle, 'battleAiEnabled', '启用战斗 AI', Object.assign(input('checkbox'), { type:'checkbox' }), false);
   field(battle, 'battleAiMode', '调用通道', select([['same','复用辅助 AI 配置'],['custom','独立战斗 AI API']]), 'same');
@@ -391,6 +393,9 @@ export function renderApiTab(page, ctx) {
   const sampling = card('⚙ 采样参数');
   field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.8);
   field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 32000);
+  field(sampling, 'nonCombatPersistenceScope', '非战斗忽略保存范围', select([
+    ['chat_and_global', '当前聊天 + 全局'], ['chat', '仅当前聊天'], ['global', '仅全局'],
+  ]), 'chat_and_global', false, true);
   for (const [key, label] of [['normalizationConcurrency', '标准化最大并发请求数'], ['normalizationWarningsPerBatch', '标准化每批警告数']]) {
     const { fallback, max } = normalizationLimits[key];
     field(sampling, key, label, input('number', { min: '1', max: String(max), step: '1', required: true }), fallback);

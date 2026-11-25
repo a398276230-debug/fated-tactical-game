@@ -49,6 +49,67 @@ function rawTagValues(raw) {
     .filter(tag => /^[a-z0-9][a-z0-9_-]{0,31}$/u.test(tag));
 }
 
+// Runtime counters are deliberately identified at the source boundary. Their
+// current values must never participate in normalization fingerprints.
+export const DYNAMIC_TAG_RE = /^(?<label>[^:：0-9]+?(?:计数|层数|充能|弹药|箭矢|灵魂|能量|魔力|耐久|次数|印记|残弹|装填))(?<sep>\s*[:：]\s*)(?<cur>\d+)(?:\s*(?<slash>[\/／])\s*(?<max>\d+))?$/u;
+const DYNAMIC_FIELD_KEYS = new Set(['当前弹药', '当前充能', '当前层数', 'currentCharges', 'currentAmmo', 'currentStacks']);
+const RUNTIME_STATUS_KEYS = new Set(['层数', 'stacks', '剩余回合', 'remainingTurns', '剩余时间', 'remainingTime', '护盾值', 'amount']);
+const STATIC_TAG_KEY_RE = /^(?:攻击|攻击力|防御|防御力|防具|护甲|威力|射程|有效距离|范围|先手|命中|闪避|暴击|重量|等级|层级|品质|体型)(?:\([^)]*\))?$/u;
+
+export function dynamicTag(value) {
+  const match = text(value).match(DYNAMIC_TAG_RE);
+  if (!match || STATIC_TAG_KEY_RE.test(match.groups.label.trim())) return null;
+  const label = match.groups.label.trim(), current = Number(match.groups.cur);
+  const max = match.groups.max == null ? null : Number(match.groups.max);
+  // A bare ammo value and an ammo value with a denominator represent the same
+  // static declaration; only the current amount is dynamic.
+  const normalized = label === '弹药' || max == null
+    ? `${label}:<DYNAMIC>`
+    : `${label}:<DYNAMIC>/${max}`;
+  return { label, current, max, sep: match.groups.sep, slash: match.groups.slash, normalized };
+}
+
+export function staticProjection(value, context = {}) {
+  if (Array.isArray(value)) {
+    return value.map(item => staticProjection(item, context));
+  }
+  if (!object(value)) return value;
+  const result = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (DYNAMIC_FIELD_KEYS.has(key) || key === 'initial' && context.pool) continue;
+    if (context.resource && ['current', '当前', 'now', 'value'].includes(key)) continue;
+    if (context.status && RUNTIME_STATUS_KEYS.has(key)) continue;
+    if (key === '标签' || key === 'tags') {
+      result[key] = [].concat(child).map(item => dynamicTag(item)?.normalized ?? item);
+      continue;
+    }
+    if (key === 'pools' || key === '资源池') {
+      result[key] = Object.fromEntries(Object.entries(asObject(child)).map(([poolKey, pool]) => [poolKey,
+        staticProjection(pool, { pool: true })]));
+      continue;
+    }
+    if (['生命值', '法力值', '体力值', 'hp', 'mp', 'sp'].includes(key)) {
+      result[key] = object(child) ? staticProjection(child, { resource: true }) : '<DYNAMIC>';
+      continue;
+    }
+    if (key === '状态效果' || key === 'statuses' || key === '状态') {
+      // Keep names and static descriptions for diagnostics, but discard live
+      // stacks/durations. This allows a custom status edit to invalidate a
+      // fingerprint without making combat damage invalidate it.
+      result[key] = staticProjection(child, { status: true });
+      continue;
+    }
+    result[key] = staticProjection(child, context);
+  }
+  return result;
+}
+
+export function normalizeClauseForHash(value) {
+  return text(value).replaceAll('：', ':').replaceAll('（', '(').replaceAll('）', ')')
+    .replace(/(数量|当前|剩余|层数|计数|充能|弹药)\s*:\s*\d+(?:\s*[/／]\s*\d+)?/gu, '$1:<DYNAMIC>')
+    .replace(/\s+/gu, ' ').trim();
+}
+
 function hash(value) {
   let h = 2166136261;
   for (const ch of String(value)) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619); }
@@ -178,7 +239,7 @@ function parseBattleBody(value) {
   return battle.battle_init ?? battle.battle_in ?? battle.战术沙盘 ?? battle;
 }
 export function parseBattleInit(value) { return asObject(typeof value === 'string' ? unwrap(value, 'battle') : parseBattleBody(value)); }
-export { qualityOf, rawTagValues, object, asObject, finite, number, integer, text, clone, own, findValue, sourceName, tierNumber, sourceId, samePath, bound, statusTurns, warningSink, describe, blockBody, narrativeEntries, protagonistAliases, charSources, statusId, resolveParticipant, attrNames, statAliases, safeResource, resource, emptyEntry, hash };
+export { qualityOf, rawTagValues, object, asObject, finite, number, integer, text, clone, own, findValue, sourceName, tierNumber, sourceId, samePath, bound, statusTurns, warningSink, describe, blockBody, narrativeEntries, protagonistAliases, charSources, statusId, resolveParticipant, attrNames, statAliases, safeResource, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, emptyEntry, hash };
 
 export function parseCharInfo(value) {
   if (Array.isArray(value)) return value.flatMap(parseCharInfo);
@@ -205,20 +266,64 @@ export function statsOf(record) {
   }
   return result;
 }
-function resource(record, key, fallback) {
+const RESOURCE_ALIASES = Object.freeze({
+  hp: ['hp', 'HP', '生命值'], mp: ['mp', 'MP', '法力值'], sp: ['sp', 'SP', '体力值'],
+});
+const RESOURCE_MAX_ALIASES = Object.freeze({
+  hp: ['maxHp', 'hpMax', '生命值上限'], mp: ['maxMp', 'mpMax', '法力值上限'], sp: ['maxSp', 'spMax', '体力值上限'],
+});
+function resourceValue(record, key) {
   const r = asObject(record), nested = asObject(r.resources ?? r.resource ?? r.资源);
-  const aliases = { hp: ['HP', '生命值'], mp: ['MP', '法力值'], sp: ['SP', '体力值'] }[key] ?? [];
-  const value = own(r, key) ? r[key] : own(r, key.toUpperCase()) ? r[key.toUpperCase()] : own(r, aliases[1]) ? r[aliases[1]] : own(nested, key) ? nested[key] : own(nested, aliases[0]) ? nested[aliases[0]] : own(nested, aliases[1]) ? nested[aliases[1]] : undefined;
+  const aliases = RESOURCE_ALIASES[key] ?? [];
+  for (const name of aliases) if (own(r, name)) return { value: r[name], key: name };
+  for (const name of aliases) if (own(nested, name)) return { value: nested[name], key: name };
+  return { value: undefined, key: null };
+}
+function resource(record, key, fallback, warnings) {
+  const r = asObject(record), aliases = RESOURCE_ALIASES[key] ?? [], { value } = resourceValue(r, key);
+  const numeric = raw => { const parsed = number(raw, NaN); return Number.isFinite(parsed) ? Math.round(parsed) : null; };
+  const warn = (kind, raw) => warnings?.push(`${aliases[2]}${kind}${raw === undefined ? '缺失' : `「${text(raw)}」无法解析`}，已按五维公式兜底`, { kind: 'unmapped_field', field: `${key}.${kind}` });
   if (object(value)) {
-    const current = integer(value.current ?? value.当前 ?? value.now ?? value.value, fallback);
-    const upper = value.max ?? value.maximum ?? value.上限;
-    const max = object(upper) ? integer((upper._基础 ?? 0) + (upper.额外 ?? 0), fallback) : integer(upper, fallback);
-    return { current, max };
+    const currentKey = ['current', '当前', 'now', 'value'].find(name => own(value, name));
+    const currentRaw = currentKey === undefined ? undefined : value[currentKey];
+    const currentValue = currentKey === undefined ? null : numeric(currentRaw);
+    if (currentValue === null) warn('当前', currentRaw ?? value);
+    const current = currentValue ?? fallback;
+    const upperKey = ['max', 'maximum', '上限'].find(name => own(value, name));
+    if (upperKey === undefined) {
+      const outerMaxKey = (RESOURCE_MAX_ALIASES[key] ?? []).find(name => own(r, name));
+      if (outerMaxKey !== undefined) {
+        const outerMax = numeric(r[outerMaxKey]);
+        if (outerMax !== null) return { current, max: outerMax };
+        warn('上限', r[outerMaxKey]);
+      } else warn('上限', undefined);
+      return { current, max: fallback };
+    }
+    const upper = value[upperKey];
+    let max = null;
+    if (object(upper)) {
+      const hasBase = own(upper, '_基础'), hasExtra = own(upper, '额外');
+      if (!hasBase && !hasExtra) warn('上限', upper);
+      else {
+        const base = hasBase ? numeric(upper._基础) : 0;
+        const extra = hasExtra ? numeric(upper.额外) : 0;
+        if (base === null || extra === null) warn('上限', upper);
+        else max = base + extra;
+      }
+    } else {
+      max = numeric(upper);
+      if (max === null) warn('上限', upper);
+    }
+    return { current, max: max ?? fallback };
   }
-  const current = integer(value, fallback);
-  const maxValue = findValue(r, [`max${key[0].toUpperCase()}${key.slice(1)}`, `${key}Max`, `${aliases[1]}上限`], current);
-  const max = integer(maxValue, current);
-  return { current, max };
+  const currentValue = value === undefined ? null : numeric(value);
+  if (value !== undefined && currentValue === null) warn('当前', value);
+  const current = currentValue ?? fallback;
+  const maxName = (RESOURCE_MAX_ALIASES[key] ?? []).find(name => own(r, name));
+  const maxRaw = maxName === undefined ? undefined : r[maxName];
+  const maxValue = maxName === undefined ? current : numeric(maxRaw);
+  if (maxName !== undefined && maxValue === null) warn('上限', maxRaw);
+  return { current, max: maxValue ?? current };
 }
 function safeResource(pair, key, warnings) {
   let max = Math.max(key === 'hp' ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));

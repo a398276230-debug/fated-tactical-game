@@ -1,4 +1,4 @@
-import { bodySizeLabel } from '../core/combat_protocol.js';
+import { bodySizeLabel, INTENTS } from '../core/combat_protocol.js';
 import { equippedActiveSkills, STATUSES } from '../core/combat.js';
 const attributes = {str:'力量',agi:'敏捷',con:'体质',int:'智力',spi:'精神'};
 const types = {physical:'物理',energy:'能量',mental:'精神',true:'真实'};
@@ -63,7 +63,7 @@ const modLabels = {
   damageFlat:'输出固定伤害', damageMult:'全伤害倍率', finalDamageMult:'最终伤害倍率',
   damageReductionFlat:'受击固定减伤', damageReduction:'受击伤害减免', dr:'受击伤害减免',
   healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率',
-  checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻', incomingAccuracy:'被命中修正', intentDifficulty:'意图难度', shatter:'碎裂增伤',
+  checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻', incomingAccuracy:'被命中修正', intentBonus:'意图加值', intentDifficulty:'意图难度', shatter:'碎裂增伤',
 };
 const ratioStats = new Set(['armorPiercePercent','damageReduction','dr']);
 const percent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:10});
@@ -86,6 +86,7 @@ function modSummary(mod) {
   if(policy?.allegiance) parts.push(({normal:'正常阵营关系',friendly_only:'仅友方',all_hostile:'所有单位视为敌方'})[policy.allegiance]);
   if(policy?.forcedActionKinds?.length) parts.push(`强制行动类型：${policy.forcedActionKinds.map(kind=>kind==='attack'?'攻击':'技能').join('、')}`);
   if(policy?.allowFriendlyTarget != null) parts.push(policy.allowFriendlyTarget?'可选友方为目标':'不可选友方为目标');
+  if(policy?.intentLock) parts.push(`锁定意图：${INTENTS[policy.intentLock]?.name ?? policy.intentLock}`);
   if(policy?.moraleLock==='steady') parts.push('士气恒定坚守');
   const scope = [mod.damageType?`${types[mod.damageType]}伤害`:null,mod.checkKind?`${checks[mod.checkKind]??mod.checkKind}检定`:null].filter(Boolean);
   return `${parts.filter(Boolean).join('；')||'修饰'}${scope.length?`（${scope.join('、')}）`:''}${mod.when!=null?` · 条件：${mod.when===true?'始终':mod.when===false?'从不':mod.when}`:''}`;

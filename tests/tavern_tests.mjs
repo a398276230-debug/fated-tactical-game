@@ -14,6 +14,7 @@ import { duplicateMappings, duplicateOperations, instanceGroups } from '../src/t
 import { fillInstance, ruleSummary } from '../src/tavern/instance-card.js';
 import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
+import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
 
 const mvu = {
@@ -28,7 +29,58 @@ const mvu = {
   },
 };
 
+import { rollbackBattleOutcome, writeBattleOutcome } from '../src/tavern/mvu-writeback.js';
+
+test('历史楼层按净战损写入、重复确认幂等、重打替换旧结果且重开只回滚本场路径', async () => {
+  const opening = { 主角: { 生命值: { 当前: 100, 上限: 150 }, 装备: { 黑灵: { 标签: ['灵魂计数：0'] } } } };
+  const envelopes = [opening, structuredClone(opening)].map(stat_data => ({ stat_data, initialized_lorebooks: ['原卡'] }));
+  envelopes[1].stat_data.主角.生命值.当前 = 125;
+  envelopes[1].stat_data.主角.装备.黑灵.标签[0] = '灵魂计数：2';
+  const chat = [{swipe_id: 0}, {swipe_id: 1}];
+  let writes = 0;
+  const host = { SillyTavern: { getContext: () => ({chat}) }, Mvu: {
+    getMvuData: ({message_id}) => structuredClone(envelopes[message_id]),
+    replaceMvuData: (next, {message_id}) => { writes++; envelopes[message_id] = next; },
+  } };
+  const map = new Map(), storage = { getItem: k => map.get(k) ?? null, setItem: (k,v) => map.set(k,v), removeItem: k => map.delete(k) };
+  const path = '/stat_data/主角/装备/黑灵/标签/0', form = (hp, souls) => [
+    { op: 'replace', path: '/stat_data/主角/生命值/当前', value: hp }, { op: 'replace', path, value: `灵魂计数：${souls}` },
+  ];
+  const params = { host, storage, key: 'test-one', source: { messageId: 0, swipeId: 0 }, opening, targetMessageId: 1, targetSwipeId: 1, patch: form(85,5) };
+  await writeBattleOutcome(params); await writeBattleOutcome(params);
+  assert.equal(writes, 1);
+  assert.equal(envelopes[1].stat_data.主角.生命值.当前, 110);
+  assert.deepEqual(envelopes[1].stat_data.主角.装备.黑灵.标签, ['灵魂计数：7']);
+  assert.deepEqual(envelopes[1].initialized_lorebooks, ['原卡']);
+  await writeBattleOutcome({ ...params, patch: form(95,3) });
+  assert.equal(envelopes[1].stat_data.主角.生命值.当前, 120);
+  assert.deepEqual(envelopes[1].stat_data.主角.装备.黑灵.标签, ['灵魂计数：5']);
+  chat[0].swipe_id = 1;
+  await assert.rejects(writeBattleOutcome(params), /SWIPE_MISMATCH/);
+  assert.equal(writes, 2);
+  envelopes[1].stat_data.主角.新剧情 = '保留';
+  assert.equal(await rollbackBattleOutcome({ ...params, lastMessageId: 2 }), false);
+  assert.equal(await rollbackBattleOutcome({ ...params, lastMessageId: 1 }), true);
+  assert.equal(envelopes[1].stat_data.主角.生命值.当前, 125);
+  assert.deepEqual(envelopes[1].stat_data.主角.装备.黑灵.标签, ['灵魂计数：2']);
+  assert.equal(envelopes[1].stat_data.主角.新剧情, '保留');
+  assert.equal(map.size, 0);
+});
+
 const damageOp = (damageType, amount) => ({ op: 'damage', target: 'target', damageType, amount });
+
+test('MVU 资源别名保持同源并生成可写回的当前值路径', () => {
+  const hydrated = hydrateFromSources({
+    mvu: { 主角: { 属性: { 敏捷: 10 }, 生命值: { 当前: 90, 上限: 200 }, 法力值: { 当前: 12, 上限: 30 }, 体力值: { 当前: 8, 上限: 20 } } },
+    battleInit: { units: [{ id: 'p', name: '主角', source: 'mvu:主角', team: 'blue', x: 1, y: 1, hp: 999, maxHp: 999 }] },
+  });
+  const unit = hydrated.state.units.p;
+  assert.deepEqual({ hp: unit.hp, maxHp: unit.maxHp, mp: unit.mp, maxMp: unit.maxMp, sp: unit.sp, maxSp: unit.maxSp }, { hp: 90, maxHp: 200, mp: 12, maxMp: 30, sp: 8, maxSp: 20 });
+  const patch = battleReportToMvuPatch({ units: { p: { hp: 70, mp: 5, sp: 3 } } }, hydrated.sourceMap);
+  assert.deepEqual(patch.map(operation => [operation.path, operation.value]), [
+    ['/stat_data/主角/生命值/当前', 70], ['/stat_data/主角/法力值/当前', 5], ['/stat_data/主角/体力值/当前', 3],
+  ]);
+});
 
 test('facade exports remain loadable and Tavern version matches package metadata', async () => {
   assert.equal(TAVERN_VERSION, packageVersion);
@@ -292,8 +344,11 @@ test('只有副手标记的小刀能追击；切刀主攻后主手弓不追击�
       assert.deepEqual([p.mainHand, p.offHand, p.stance], [offHand, mainHand, 'dual_wield']);
       assert.equal(preview(state, { type:'attack', x:e.x, y:e.y }).targets[0].weaponId, offHand);
     }
-    const attack={type:'attack',x:e.x,y:e.y};
+    const attack={type:'attack',x:e.x,y:e.y,intent:'core'};
     const offTemplate=state.equipment[state.items[p.offHand].templateId];
+    if (!swap) offTemplate.rules.push({ id: 'probe_followup', hook: 'after_hit',
+      filter: "event.weaponTemplateId == item.templateId && event.intent == 'normal'",
+      program: [{ op: 'apply_status', target: 'target', statusId: 'root', turns: 1 }] });
     const base=preview(state,attack).targets[0].protocolInitial;
     offTemplate.attack=(offTemplate.attack ?? 0)+100;
     assert.equal(preview(state,attack).targets[0].protocolInitial-base,dist===4 ? 0 : 50);
@@ -301,6 +356,7 @@ test('只有副手标记的小刀能追击；切刀主攻后主手弓不追击�
     assert.ok(e.hp<hp);
     followups.push([dist,logs.find(l=>l.type==='followup')?.detail.weaponId,sp-p.sp]);
     assert.equal(followups.at(-1)[1], dist === 4 || swap ? undefined : offHand);
+    assert.equal(Boolean(e.statuses.root), dist === 1 && !swap, '副手命中携带自身的 normal，而不是主击声明的 core');
   }
   assert.deepEqual(followups.map(([dist, id, sp]) => [dist, Boolean(id), sp]), [[1,true,10],[4,false,0],[1,false,0]]);
 });
@@ -937,6 +993,16 @@ function cardSections(state, unit, options = {}) {
   const { body } = fillInstance(make('article'), make, unit, state, {}, make('input'), { ...options });
   return body.children.filter(node => node.tag === 'section').map(section => section.children.slice(1));
 }
+
+test('hunter hat card distinguishes a conditional intent bonus from a forced intent', () => {
+  const unit = { id: 'a1', gear: ['hat'] };
+  const state = { items: { hat: { templateId: 'hunter' } }, equipment: { hunter: { name: '猎人帽', mods: [
+    { stat: 'intentBonus', flat: 5, when: "event.intent == 'core'" }, { controlPolicy: { intentLock: 'kill' } },
+  ] } } };
+  const [[hat]] = cardSections(state, unit);
+  assert.match(hat.textContent, /意图加值 \+5 · 条件：event\.intent == 'core'/);
+  assert.match(hat.textContent, /锁定意图：抹杀/);
+});
 
 test('instance card counts and describes equipment mods, rules and granted skills', () => {
   const unit = { id: 'a1', gear: ['mail', 'ring'], skills: ['guard'] };

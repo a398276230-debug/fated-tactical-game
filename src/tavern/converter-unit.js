@@ -4,13 +4,14 @@ import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TI
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
+import { getPool, updatePoolCurrent } from '../core/vm-pools.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
-import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, emptyEntry, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, safeResource, samePath, sourceId, sourceName, statAliases, statsOf, statusId, statusTurns, text, tierNumber, warningSink, WARNING_SCOPES } from './converter-parse.js';
+import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, warningSink, WARNING_SCOPES } from './converter-parse.js';
 import { activeRule, ammoCapacity, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
 
 /*
@@ -19,6 +20,20 @@ import { activeRule, ammoCapacity, appendRules, areaFields, attachAmmoPool, conv
  * understands.  Keeping this file free of TavernHelper imports also makes it
  * useful to import from a worker, a test, or a normal browser page.
  */
+function dynamicPoolKey(item, label) {
+  const pools = Object.keys(item.template?.pools ?? {});
+  if (!pools.length) return null;
+  const normalized = text(label);
+  const semantic = normalized.match(/弹药|箭矢|残弹|装填/u) ? 'ammo'
+    : normalized.match(/灵魂|魂数/u) ? 'souls'
+      : normalized.match(/充能|能量/u) ? 'charge'
+        : normalized.match(/层数|堆叠/u) ? 'stacks'
+          : normalized.match(/次数|计数/u) ? 'count' : null;
+  if (semantic && pools.includes(semantic)) return semantic;
+  if (pools.includes(normalized)) return normalized;
+  return pools.length === 1 ? pools[0] : null;
+}
+
 function sourceEquipment(record) {
   const value = record.equipment ?? record.equipments ?? record.items ?? record.装备 ?? [];
   const slots = new Map(Object.entries({ mainHand: 'mainHand', main: 'mainHand', weapon: 'mainHand', 主手: 'mainHand', 双手: 'twoHands', 双手武器: 'twoHands', offHand: 'offHand', off: 'offHand', 副手: 'offHand', shield: 'shield', 盾牌: 'shield' }));
@@ -105,15 +120,47 @@ function mergeBattleParticipant(record, participant, battle) {
     tier: ['tier', 'levelTier', '层级', '生命层级'], armor: ['armor', 'defense', '护甲'],
     stats: ['stats', 'attributes', '属性', ...attrNames, ...Object.keys(statAliases)],
     statuses: ['statuses', '状态效果', '状态', 'effects'],
-    hp: ['hp', 'HP', '生命值', 'resources', 'resource', '资源'],
-    mp: ['mp', 'MP', '法力值', 'resources', 'resource', '资源'],
-    sp: ['sp', 'SP', '体力值', 'resources', 'resource', '资源'],
   };
   for (const [field, aliases] of Object.entries(fields)) {
     if (inline[field] != null && !aliases.some(alias => own(merged, alias))) merged[field] = clone(inline[field]);
   }
-  for (const field of ['maxHp', 'maxMp', 'maxSp']) if (!own(merged, field) && inline[field] != null) merged[field] = inline[field];
+  const resourceSource = (recordValue, key) => {
+    const aliases = RESOURCE_ALIASES[key] ?? [];
+    const direct = aliases.find(name => own(recordValue, name));
+    if (direct) return { container: null, key: direct, value: recordValue[direct] };
+    const container = ['resources', 'resource', '资源'].find(name => object(recordValue?.[name]) && aliases.some(alias => own(recordValue[name], alias)));
+    if (!container) return null;
+    const nestedKey = aliases.find(name => own(recordValue[container], name));
+    return { container, key: nestedKey, value: recordValue[container][nestedKey] };
+  };
+  for (const key of ['hp', 'mp', 'sp']) {
+    const source = resourceSource(inline, key);
+    if (!source || resourceValue(merged, key).value !== undefined) continue;
+    if (source.container) merged[source.container] = { ...asObject(merged[source.container]), [source.key]: clone(source.value) };
+    else merged[source.key] = clone(source.value);
+  }
+  const resourceMaxAliases = {
+    hp: ['maxHp', 'hpMax', '生命值上限'], mp: ['maxMp', 'mpMax', '法力值上限'], sp: ['maxSp', 'spMax', '体力值上限'],
+  };
+  const hasResourceMax = (recordValue, key) => {
+    const source = asObject(recordValue), nested = asObject(source.resources ?? source.resource ?? source.资源);
+    return resourceMaxAliases[key].some(alias => own(source, alias) || own(nested, alias));
+  };
+  for (const [field, key] of [['maxHp', 'hp'], ['maxMp', 'mp'], ['maxSp', 'sp']]) {
+    if (inline[field] != null && !hasResourceMax(merged, key)) merged[field] = clone(inline[field]);
+  }
   return merged;
+}
+function sourceResourcePath(record, key) {
+  const aliases = RESOURCE_ALIASES[key] ?? [];
+  const direct = aliases.find(name => own(record, name));
+  const containerKey = ['resources', 'resource', '资源'].find(name => object(record?.[name]) && aliases.some(alias => own(record[name], alias)));
+  const owner = direct ? record[direct] : containerKey ? record[containerKey] : undefined;
+  const ownerPath = direct ? [direct] : containerKey ? [containerKey, aliases.find(name => own(record[containerKey], name))] : null;
+  if (!ownerPath) return null;
+  if (!object(owner)) return ownerPath;
+  const current = ['current', '当前', 'now', 'value'].find(name => own(owner, name));
+  return current ? [...ownerPath, current] : ownerPath;
 }
 function sourceSkills(record) {
   const value = record.skills ?? record.abilities ?? record.技能 ?? [];
@@ -171,14 +218,18 @@ function xyzOf(value, board, warnings) {
   return { x: boundedX, y: boundedY, z: integer(xyz[2]) };
 }
 
-function importBackpack(bag, owner, skills, sink, entrySources) {
+function importBackpack(bag, owner, skills, sink, entrySources, inventoryPaths, sourcePath) {
   const inventory = {};
   for (const [name, item] of Object.entries(asObject(bag))) {
     if (item?.类型 !== '消耗品' && item?.kind !== 'consumable') continue;
     const count = bound(item.数量 ?? item.count, 0, 1e9, 1);
     if (!count) continue;
     const id = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
-    entrySources[`skills:${id}`] = item;
+    entrySources[`skills:${id}`] = staticProjection(item);
+    if (Array.isArray(sourcePath)) inventoryPaths[id] = {
+      countPath: [...sourcePath, '背包', name, Object.hasOwn(item, '数量') ? '数量' : 'count'],
+      initialCount: count,
+    };
     const warnings = sink('effect', `/skills/${id}`);
     const raw = item.effects ?? item.效果;
     const tags = [].concat(item.tags ?? item.标签 ?? []).join(' ');
@@ -209,16 +260,32 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const bodyLengthM = readBodyLength(record, sink('state'));
   const size = sizeClassFor(bodyLengthM);
   const mc = Math.max(1, Math.min(64, integer(findValue(record, ['mc','MC','massClass'], bodyLengthM >= 10 ? 2 : 1), 1)));
-  const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100)), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10)), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10)), 'sp', resourcesSink) };
+  const resources = { hp: safeResource(resource(record, 'hp', Math.max(1, stats.con * 100), resourcesSink), 'hp', resourcesSink), mp: safeResource(resource(record, 'mp', Math.max(0, (stats.int + stats.spi) * 10), resourcesSink), 'mp', resourcesSink), sp: safeResource(resource(record, 'sp', Math.max(0, (stats.str + stats.agi) * 10), resourcesSink), 'sp', resourcesSink) };
   const sourceEntries = sourceEquipment(record);
   const entrySources = {}, equipmentKeys = new Map();
+  const dynamicOverlay = { units: {}, itemCounters: {}, inventory: {} };
+  const counterBindings = [];
+  const inventoryPaths = {};
+  const sourcePath = Array.isArray(record.__sourcePath) ? record.__sourcePath : null;
   const equipmentEntry = ([slot, raw, identity]) => {
     const key = hash(String(identity)).toString(36);
     const occurrence = equipmentKeys.get(key) ?? 0;
     equipmentKeys.set(key, occurrence + 1);
     const item = normalizeEquipment(raw, slot, id, occurrence ? `${key}-${occurrence}` : key, sink);
     const { slot: _slot, position: _position, 位置: _placement, count: _count, 数量: _quantity, ...definition } = raw;
-    entrySources[`equipment:${item.templateId}`] = definition;
+    entrySources[`equipment:${item.templateId}`] = staticProjection(definition);
+    const rawTags = [].concat(raw.tags ?? raw.标签 ?? []);
+    rawTags.forEach((tag, index) => {
+      const dynamic = dynamicTag(tag);
+      if (!dynamic) return;
+      const poolKey = dynamicPoolKey(item, dynamic.label);
+      const binding = { ownerKind: 'item', poolKey, itemId: item.id, templateId: item.templateId, itemName: item.template.name,
+        rawLabel: dynamic.label, current: dynamic.current, max: dynamic.max, mvuPath: sourcePath ? [...sourcePath, '装备', item.template.name, raw.tags !== undefined ? 'tags' : '标签', index] : null,
+        format: { kind: dynamic.max == null ? 'tag_single' : 'tag_slash', sep: dynamic.sep, ...(dynamic.slash ? { slash: dynamic.slash, capInTag: dynamic.max } : {}) }, initialRawValue: text(tag), unitId: id };
+      counterBindings.push(binding);
+      dynamicOverlay.itemCounters[item.id] ??= [];
+      dynamicOverlay.itemCounters[item.id].push(binding);
+    });
     return item;
   };
   const slotItems = sourceEntries.map(equipmentEntry);
@@ -254,7 +321,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const occurrence = skillKeys.get(key) ?? 0;
     skillKeys.set(key, occurrence + 1);
     const sid = `skill-${id.slice(0, 31)}-${hash(id).toString(36)}-${key}${occurrence ? `-${occurrence}` : ''}`;
-    entrySources[`skills:${sid}`] = input;
+    entrySources[`skills:${sid}`] = staticProjection(input);
     const labels = [].concat(r.tags ?? r.标签 ?? [], r.description ?? r.描述 ?? '').join(' ');
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const notes = sink('effect', `/skills/${sid}`);
@@ -383,7 +450,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       }
     }
     if (bagWeapons.length) unit.bagWeapons = bagWeapons;
-    const inventory = importBackpack(record.背包, id, skills, sink, entrySources);
+    const inventory = importBackpack(record.背包, id, skills, sink, entrySources, inventoryPaths, sourcePath);
+    dynamicOverlay.inventory = inventoryPaths;
     if (Object.keys(inventory).length) unit.inventory = inventory;
   }
   const creatureType = p.creatureType ?? record.creatureType;
@@ -393,7 +461,9 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   if (Array.isArray(tags)) unit.tags = tags.map(text).filter(tag => /^[a-z0-9][a-z0-9_-]{0,31}$/.test(tag)).slice(0, 32);
   unit.rules = readRules(record.rules, sink('effect', `/units/${id}`));
   unit.mods = readMods(record.mods, sink('effect', `/units/${id}`));
-  return { unit, entrySources, profile: { id, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
+  dynamicOverlay.units[id] = { hp: resources.hp.current, mp: resources.mp.current, sp: resources.sp.current,
+    statuses: clone(statuses), inventory: clone(inventoryPaths) };
+  return { unit, entrySources, dynamicOverlay, counterBindings, inventoryPaths, profile: { id, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
 }
 
 function terrainState(battle, state, warnings) {
@@ -488,7 +558,16 @@ export function hydrateFromSources(input = {}, options = {}) {
     units[id] = made.unit;
     profiles[id] = made.profile;
     entrySources[id] = made.entrySources;
-    sourceMap[id] = { path: record?.__sourcePath, sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist };
+    sourceMap[id] = {
+      path: record?.__sourcePath,
+      resourcePaths: Object.fromEntries(['hp', 'mp', 'sp'].map(key => [key, sourceResourcePath(record, key)]).filter(([, path]) => path)),
+      statusesPath: ['statuses', '状态效果', '状态', 'effects'].find(key => own(record, key)) ? [
+        ['statuses', '状态效果', '状态', 'effects'].find(key => own(record, key)),
+      ] : undefined,
+      counterBindings: made.counterBindings,
+      inventoryPaths: made.inventoryPaths,
+      sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist,
+    };
   };
   for (const [i, participant] of participants.entries()) {
     const record = resolved[i];
@@ -515,6 +594,11 @@ export function hydrateFromSources(input = {}, options = {}) {
   const cellM = battle.cellM ?? TIER_CELL_M[anchorTier];
   const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: battle.explicitScale === true }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
+  for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
+    if (binding.poolKey == null || binding.current == null) continue;
+    const pool = getPool(state, binding.itemId, binding.poolKey, 'item');
+    if (pool) updatePoolCurrent(state, pool.id, 'set', binding.current);
+  }
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
   for (const unit of Object.values(units)) {

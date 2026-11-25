@@ -1,3 +1,5 @@
+import { activeExemption } from './exemption-ledger.js';
+
 // Receipts identify an individual conversion diagnostic, not every warning on a unit.
 export const warningKey = w => JSON.stringify([w.source, w.scope, w.originPath ?? '', w.message]);
 const subject = message => typeof message !== 'string' ? undefined : message.match(/待标准化「([^」]+)」/)?.[1]?.trim()
@@ -91,7 +93,8 @@ export function classifyWarnings(warnings, { notes = {}, exemptions = [], source
     }
     const key = warningKey(warning);
     const source = sourceFor(warning.unitId, warningEntryKey(warning));
-    const exempt = source && exemptions.find(entry => entry.unitId === warning.unitId && entry.key === key && entry.source === source);
+    const exempt = activeExemption(warning, exemptions, sourceFor)
+      ?? (source && exemptions.find(entry => entry.unitId === warning.unitId && entry.key === key && entry.source === source));
     const note = notes[warning.unitId ?? '']?.[key];
     if (exempt) groups.nonCombat.push({ ...exempt, warning });
     else if (source && note?.source === source && note.reason && !note.evidence?.length) groups.needsAttention.push({ ...note, warning });
