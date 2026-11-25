@@ -16,6 +16,99 @@ import { resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
+import { configFor } from '../src/tavern/overlay-sources.js';
+import { computeStorageDiagnostics, pruneBattleScopedMap, pruneBattleStorageExcept,
+  toPersistedOpeningSource, toStoredCharSnapshot } from '../src/tavern/overlay-storage.js';
+import { GLOBAL_UI_PREF_KEYS, storageAdapter } from '../src/ui/mount.js';
+
+function memoryStorage(map = new Map()) {
+  return {
+    get length() { return map.size; }, key: index => [...map.keys()][index] ?? null,
+    getItem: key => map.get(key) ?? null, setItem: (key, value) => map.set(key, value),
+    removeItem: key => map.delete(key),
+  };
+}
+
+test('只清理旧战局及双前缀偏好，保留当前回滚和其他聊天数据', () => {
+  const prefix = 'fated-tactical/';
+  const stale = ['old/fated-tactical/battle-v1', 'old/fated-tactical/battle-v1/seed', 'old/opening-source',
+    'old/chat-opening-patches', 'old/mvu-pre-writeback', 'old/mvu-writeback-receipt', 'new/fated-tactical/zoom'];
+  const keep = ['new/fated-tactical/battle-v1', 'new/opening-source', 'new/mvu-pre-writeback', 'new/mvu-writeback-receipt',
+    'tavern/chat/charSnapshots', 'tavern/chat/ai-sessions', 'tavern/chat/normalizationBatches', 'tavern/chat/narrativeExemptions',
+    'tavern/another-chat', 'instances/chat', 'zoom', 'battle-v1/seed', 'reset-probe'];
+  const map = new Map([...stale, ...keep].map(key => [prefix + key, '测试']));
+  map.set('other-script/old/opening-source', 'keep');
+  const storage = memoryStorage(map);
+  assert.deepEqual(pruneBattleStorageExcept(storage, 'new'), {
+    removedKeys: stale.length, freedBytes: stale.reduce((n, key) => n + 2 * (prefix.length + key.length + 2), 0),
+  });
+  assert.deepEqual([...map.keys()], [...keep.map(key => prefix + key), 'other-script/old/opening-source']);
+  const summary = computeStorageDiagnostics(storage, 'new');
+  assert.equal(summary.activeBattleKey, 'new');
+  assert.equal(summary.keyCount, keep.length);
+  assert.equal(summary.totalBytes, keep.reduce((n, key) => n + 2 * (prefix.length + key.length + 2), 0));
+  assert.deepEqual(Object.keys(summary.categories).filter(key => !summary.categories[key]), []);
+  assert.equal(Object.values(summary.categories).reduce((n, bytes) => n + bytes, 0), summary.totalBytes);
+});
+
+test('批次窗口保留当前重置标记，单场只存恢复所需开场及角色字段', () => {
+  const record = { early: [1], latest: [2], empty: [], active: [] };
+  assert.deepEqual(pruneBattleScopedMap(record, 'active'), { latest: [2], active: [] });
+  assert.deepEqual(pruneBattleScopedMap(record, 'early', 1), { early: [1] });
+  assert.deepEqual(pruneBattleScopedMap(record, 'unknown'), { latest: [2] });
+  assert.deepEqual(pruneBattleScopedMap(record, null), { early: [1], latest: [2] });
+  assert.deepEqual(toStoredCharSnapshot({ hash: 'h', entryHashes: { unit: 'h' }, raw: 'text',
+    sourceKind: 'mvu', entryValues: {}, at: 100, normalized: true }, ['warn']),
+  { hash: 'h', entryHashes: { unit: 'h' }, resolvedWarnings: ['warn'] });
+  const opening = { mvuData: { hp: 42 }, latestFloor: '', battleInit: {}, battleRaw: '', charInfo: [], protagonistName: '', battleKey: 'b', source: {} };
+  const persisted = toPersistedOpeningSource({ ...opening, charRaw: 'raw', roster: '', input: {} });
+  assert.deepEqual(persisted, opening);
+  assert.notEqual(persisted.mvuData, opening.mvuData);
+});
+
+test('配置只从独立键读取大对象，不裁剪豁免表', () => {
+  const key = 'fated-tactical/tavern/chat';
+  const ledger = Object.fromEntries(['early', 'prior', 'active'].map(key => [key, [{ semanticKey: key }]]));
+  const storage = memoryStorage(new Map([
+    [key, JSON.stringify({ hideLauncher: true, instances: { inline: true }, charSnapshots: { inline: true },
+      aiSessions: { activeId: 'inline' }, narrativeExemptions: { inline: [] }, nonCombatPersistenceScope: 'chat' })],
+    [`${key}/narrativeExemptions`, JSON.stringify(ledger)],
+  ]));
+  const config = configFor(storage, key);
+  assert.equal(config.hideLauncher, true);
+  assert.equal(config.instances, undefined);
+  assert.equal(config.nonCombatPersistenceScope, undefined);
+  assert.equal(config.aiSessions.activeId, null);
+  assert.deepEqual(config.charSnapshots, {});
+  assert.deepEqual(config.narrativeExemptions, ledger);
+});
+
+test('挂载偏好全局共享，战局写满时驱逐重试一次，重试失败向上抛出', () => {
+  const map = new Map();
+  const storage = memoryStorage(map);
+  const quota = Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+  let blocked = false, attempts = 0, retries = 0;
+  const underlying = { ...storage, setItem(key, value) { attempts += 1; if (blocked) throw quota; storage.setItem(key, value); } };
+  const adapter = storageAdapter(underlying, 'fated-tactical/new', key => {
+    retries += 1;
+    if (key.endsWith('/battle-v1')) blocked = false;
+    return true;
+  });
+  const other = storageAdapter(underlying, 'fated-tactical/other');
+  for (const key of GLOBAL_UI_PREF_KEYS) {
+    adapter.setItem(key, 'pref');
+    assert.equal(other.getItem(key), 'pref');
+    assert.ok(map.has(key));
+  }
+  blocked = true;
+  adapter.setItem('fated-tactical/battle-v1', 'snapshot');
+  assert.equal(adapter.getItem('fated-tactical/battle-v1'), 'snapshot');
+  assert.equal(other.getItem('fated-tactical/battle-v1'), null);
+  blocked = true;
+  assert.throws(() => adapter.setItem('fated-tactical/carry-v1', 'carry'), error => error === quota);
+  assert.equal(retries, 2);
+  assert.equal(attempts, GLOBAL_UI_PREF_KEYS.size + 4);
+});
 
 const mvu = {
   主角: {

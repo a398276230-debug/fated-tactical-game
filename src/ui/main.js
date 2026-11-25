@@ -27,15 +27,24 @@ function describeProposal(result) {
 
 export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated-tactical/battle-v1', crossedKey = 'fated-tactical/carry-v1', signal, initialState, customBattle, onVictory, storage: storageArea, battleAiRequest } = {}) {
   const document = root.ownerDocument, window = document.defaultView;
-  const localStorage = storageArea ?? window?.localStorage;
+  let rawStorage = storageArea;
+  try { rawStorage ??= window?.localStorage; } catch { /* storage is disabled */ }
+  const saveError = '浏览器存储空间不足或已关闭；请下载快照保存战局。';
   const $ = id => root.querySelector(`[id="${id}"]`);
   let portraits = {};
   const view = createRenderer(root, id => Object.hasOwn(portraits, id) ? portraits[id] : []);
   const scenario = $('scenario-select'), seed = $('seed-input');
   const storage = {
-    getItem: key => { try { return localStorage?.getItem(key) ?? null; } catch { return null; } },
-    setItem: (key, value) => { try { localStorage?.setItem(key, value); } catch { /* optional */ } },
-    removeItem: key => { try { localStorage?.removeItem(key); } catch { /* optional */ } },
+    getItem: key => { try { return rawStorage?.getItem(key) ?? null; } catch { return null; } },
+    setItem: (key, value) => {
+      try {
+        if (!rawStorage) throw new Error('浏览器存储不可用');
+        rawStorage.setItem(key, value);
+      } catch (error) {
+        if (key === storageKey || key === crossedKey) throw error;
+      }
+    },
+    removeItem: key => { try { rawStorage?.removeItem(key); } catch { /* optional */ } },
   };
   // state：屏幕上正在展示的战局（演出时会落后于真实战局）；live：规则层的真实战局。
   let bagAim = null;
@@ -47,7 +56,12 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   const pendingAsk = () => live?.vm?.pendingAsk;
   const active = (s = state) => s?.units[s.order[s.turn]];
   const TARGETED = new Set(['attack', 'skill', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
-  const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
+  let snapshotSaveFailed = false;
+  const error = value => {
+    const node = $('action-error');
+    node.textContent = value || (snapshotSaveFailed ? saveError : '');
+    node.hidden = !node.textContent;
+  };
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
   const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy,
     askLocked: !!pendingAsk(), askCells, entityChoices });
@@ -401,8 +415,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     live = game.getBattleState();
     if (!live.outcome) victoryPending = false;
     else if (before && !before.outcome) victoryPending = true;
-    try { storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot())); }
-    catch { error('浏览器存储空间不足或已关闭；请下载快照保存战局。'); }
+    try {
+      storage.setItem(storageKey, JSON.stringify(game.exportBattleSnapshot()));
+      if (snapshotSaveFailed) { snapshotSaveFailed = false; error(''); }
+    } catch { snapshotSaveFailed = true; error(saveError); }
     view.renderControls(live);
     if (pendingAsk()) {
       closeDrawer();
@@ -677,8 +693,9 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
           const previous = carry;
           carry = data;
           try { await restart(); } catch (e) { carry = previous; throw e; }
-          storage.setItem(crossedKey, JSON.stringify(carry));
           scenarioDescription();
+          try { storage.setItem(crossedKey, JSON.stringify(carry)); }
+          catch { error(saveError); return; }
         } else {
           const restored = game.restoreBattleSnapshot(data);
           configure(restored.scenarioId);

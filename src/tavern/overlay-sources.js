@@ -45,9 +45,6 @@ function hostDocument(preferred) {
 function getGlobal(host, name) {
   try { return host?.[name] ?? globalThis?.[name]; } catch (_) { return undefined; }
 }
-function safeStorage(host) {
-  try { return host.localStorage; } catch (_) { return null; }
-}
 function text(value) { return value == null ? '' : String(value); }
 function el(doc, tag, attrs, content) {
   const n = doc.createElement(tag);
@@ -102,13 +99,15 @@ const DEFAULT_CONFIG = {
   normalizationAiApiTransport: 'direct', normalizationAiApiSource: 'openai',
   battleAiEnabled: false, battleAiMode: 'same', battleAiBaseUrl: '', battleAiApiKey: '', battleAiModel: '', battleAiApiTransport: 'direct', battleAiApiSource: 'openai',
   extraBody: '{}', excludeParams: '', headers: '{}', hideLauncher: false, autoScan: true, autoDeliverBattleReport: true, mvuWritebackMode: 'confirm',
-  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: [], nonCombatPersistenceScope: 'chat_and_global', unresolvedNotes: {},
+  charSnapshots: {}, rosterSelection: null, normalizationBatches: {}, narrativeExemptions: {}, unresolvedNotes: {},
   ...Object.fromEntries(Object.entries(normalizationLimits).map(([key, { fallback }]) => [key, fallback])),
   slots: describeSlots(), extraText: '', aiSessions: { sessions: [], activeId: null }, debugPrompts: false, apiSource: 'openai', stream: true, timeoutMs: 240000,
 };
 export function configFor(storage, key) {
   try {
     const saved = parseJSON(storage?.getItem(key), {});
+    const settings = Object.fromEntries(Object.entries(saved ?? {}).filter(([field]) =>
+      field !== 'instances' && field !== 'aiSessions' && field !== 'nonCombatPersistenceScope' && !LARGE_CONFIG_KEYS.includes(field)));
     const separateSessions = parseJSON(storage?.getItem(`${key}/ai-sessions`), null);
     const separateLarge = Object.fromEntries(LARGE_CONFIG_KEYS.flatMap(field => {
       const value = parseJSON(storage?.getItem(separateConfigKey(key, field)), null);
@@ -116,7 +115,7 @@ export function configFor(storage, key) {
     }));
     const mode = saved?.apiMode ?? (saved?.baseUrl ? 'direct' : 'tavern');
     return deepMerge(DEFAULT_CONFIG, {
-      ...saved,
+      ...settings,
       ...separateLarge,
       ...(separateSessions ? { aiSessions: separateSessions } : {}),
       apiMode: mode === 'direct' ? 'custom' : mode,
@@ -196,7 +195,6 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
     if (recovered) { battleInit = recovered; battleRaw = JSON.stringify(recovered, null, 2); }
   }
   const charBlocks = extractTags(joined, 'char_info').reverse();
-  const charRaw = charBlocks[0] || '';
   const charInfo = charBlocks.flatMap(raw => {
     const value = parseJSON(raw, null);
     return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
@@ -204,7 +202,7 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
   const mvuData = statData(variables) ?? variables ?? {};
   const sourceMessage = battleSource ?? eligible.at(-1);
   const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit) : null;
-  return { mvuData, latestFloor: battleSource ? messageContent(battleSource) : latestFloor, battleInit, charInfo, battleRaw, charRaw, roster: '', protagonistName: '', battleKey,
+  return { mvuData, latestFloor: battleSource ? messageContent(battleSource) : latestFloor, battleInit, charInfo, battleRaw, protagonistName: '', battleKey,
     source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null };
 }
 

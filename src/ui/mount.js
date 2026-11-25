@@ -10,13 +10,23 @@ function resolveContainer(container) {
   if (typeof container === 'string') return document.querySelector(container);
   return container;
 }
-function storageAdapter(storage, prefix) {
-  const fallback = typeof localStorage !== 'undefined' ? localStorage : null;
-  const source = storage || fallback;
+export const GLOBAL_UI_PREF_KEYS = new Set(['zoom', 'theme', 'anim', 'auto', 'llm-enemy-ai', 'ai-speed']
+  .map(key => `fated-tactical/${key}`));
+
+export function storageAdapter(source, prefix, onQuotaExceeded) {
+  const resolveKey = key => GLOBAL_UI_PREF_KEYS.has(key) ? key : `${prefix}/${key}`;
   return {
-    getItem(key) { try { return source?.getItem(`${prefix}/${key}`) ?? null; } catch { return null; } },
-    setItem(key, value) { try { source?.setItem(`${prefix}/${key}`, value); } catch {} },
-    removeItem(key) { try { source?.removeItem(`${prefix}/${key}`); } catch {} },
+    getItem(key) { return source?.getItem(resolveKey(key)) ?? null; },
+    setItem(key, value) {
+      if (!source) throw new Error('浏览器存储不可用');
+      const resolvedKey = resolveKey(key);
+      try { source.setItem(resolvedKey, value); }
+      catch (error) {
+        if (error.name !== 'QuotaExceededError' || !onQuotaExceeded?.(resolvedKey)) throw error;
+        source.setItem(resolvedKey, value);
+      }
+    },
+    removeItem(key) { source?.removeItem(resolveKey(key)); },
   };
 }
 function injectStyle(doc) {
@@ -48,7 +58,9 @@ export function mount(container, options = {}) {
   target.append(root);
   const controller = new AbortController();
   const prefix = `fated-tactical/${options.instanceId || 'default'}`;
-  const storage = storageAdapter(options.storage, prefix);
+  let source = options.storage;
+  try { source ??= doc.defaultView?.localStorage; } catch { /* storage is disabled */ }
+  const storage = storageAdapter(source, prefix, options.onQuotaExceeded);
   const api = options.api || createGameAPI();
   const ui = initializeUI(root, { ...options, initialState: options.state ?? options.initialState, game: api, storage, signal: controller.signal });
   let active = true;

@@ -45,9 +45,6 @@ function hostDocument(preferred) {
 function getGlobal(host, name) {
   try { return host?.[name] ?? globalThis?.[name]; } catch (_) { return undefined; }
 }
-function safeStorage(host) {
-  try { return host.localStorage; } catch (_) { return null; }
-}
 function text(value) { return value == null ? '' : String(value); }
 function el(doc, tag, attrs, content) {
   const n = doc.createElement(tag);

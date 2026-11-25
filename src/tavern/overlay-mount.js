@@ -24,6 +24,8 @@ import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageM
 import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch } from './overlay-patch.js';
 import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
+import { computeStorageDiagnostics, pruneBattleScopedMap, pruneBattleStorageExcept as pruneStoredBattles,
+  toPersistedOpeningSource, toStoredCharSnapshot } from './overlay-storage.js';
 
 /*
  * Tavern integration.  This file deliberately has no dependency on SillyTavern: it
@@ -139,7 +141,6 @@ export function mountTavernOverlay(options = {}) {
   let characters = {}, scanStatus = '', duplicatePaths = new Map();
   const groupId = id => config.instances[id]?.archetypeId ?? characters[id]?.archetypeId ?? id;
   const openingSources = new Map();
-  const enteredBattles = new Set();
   const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter(key => own(config.instances,key)).map(groupId))];
   const batches = key => config.normalizationBatches?.[key] ?? [];
   const operations = key => batches(key).flatMap(batch=>batch.patch);
@@ -284,16 +285,29 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     toast.hidden = false;
   }
   panel.append(header, tabs, content, resizeHandle); root.append(launcher, panel, toast); (doc.body || doc.documentElement)?.append(root);
-  const instances = (() => { try { return parseJSON(storage?.getItem(stateKey)) ?? config.instances; } catch { return config.instances; } })();
+  const instances = (() => { try { return parseJSON(storage?.getItem(stateKey)); } catch { return null; } })();
   config.instances = isObject(instances) ? instances : {};
 
-  // Battle scans/normalization must never write an old copy of the settings.
-  function save() { putConfig(storage, stateKey, config.instances); }
-  let localOnly = false;
+  function pruneBattleStorageExcept(key) {
+    for (const cachedKey of openingSources.keys()) if (cachedKey !== key) openingSources.delete(cachedKey);
+    return pruneStoredBattles(storage, key);
+  }
+  function writeWithEvictionRetry(key, value) {
+    if (putConfig(storage, key, value)) return true;
+    return !!activeBattleKey && pruneBattleStorageExcept(activeBattleKey).removedKeys > 0 && putConfig(storage, key, value);
+  }
+  const notifyStorageFailure = () => notify('数据仅在本窗口生效', '无法写入浏览器存储。请先下载战局备份；如需彻底初始化，可在实例维护点「清理脚本缓存」。');
+  function save() { if (!writeWithEvictionRetry(stateKey, config.instances)) notifyStorageFailure(); }
+
+  // Don't overwrite a failed local write on the next sync, or rewrite it during unrelated edits.
+  const unsavedSettings = new Set();
+  const separateSettings = new Set(['aiSessions', ...LARGE_CONFIG_KEYS]);
   function syncSettings() {
-    if (localOnly || !storage) return;
-    const { instances: _legacyInstances, aiSessions: _savedSessions, ...latest } = configFor(storage, configKey);
-    Object.assign(config, latest);
+    if (!storage) return;
+    const { aiSessions: _savedSessions, ...latest } = configFor(storage, configKey);
+    for (const [field, value] of Object.entries(latest)) {
+      if (!unsavedSettings.has(separateSettings.has(field) ? field : configKey)) config[field] = value;
+    }
   }
   function persistSettings(patch, previousSlots = config.slots) {
     syncSettings();
@@ -303,29 +317,23 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       return;
     }
     Object.assign(config, patch);
-    const { instances, aiSessions, ...settingsWithLarge } = config;
+    const { instances: _instances, aiSessions, ...settingsWithLarge } = config;
     const settings = Object.fromEntries(Object.entries(settingsWithLarge).filter(([key]) => !LARGE_CONFIG_KEYS.includes(key)));
-    // Older configs embedded the instance table and growing payloads. Preserve
-    // the old record for migration, then write each large payload separately so
-    // one full record cannot invalidate unrelated standardization data.
-    try { if (storage && storage.getItem(stateKey) == null) putConfig(storage, stateKey, instances); } catch { /* unavailable */ }
-    const legacy = (() => { try { return parseJSON(storage?.getItem(configKey), {}); } catch { return {}; } })();
     const fields = [['aiSessions', `${configKey}/ai-sessions`, aiSessions],
       ...LARGE_CONFIG_KEYS.map(field => [field, separateConfigKey(configKey, field), config[field]])];
-    let allSaved = true;
+    let failed = false;
+    const write = (field, key, value) => {
+      if (writeWithEvictionRetry(key, value)) unsavedSettings.delete(field);
+      else { unsavedSettings.add(field); failed = true; }
+    };
     for (const [field, key, value] of fields) {
-      if (!localOnly && !Object.hasOwn(patch, field) && !Object.hasOwn(legacy ?? {}, field)) continue;
-      if (putConfig(storage, key, value)) continue;
-      allSaved = false;
-      if (Object.hasOwn(legacy ?? {}, field)) settings[field] = legacy[field];
+      if (Object.hasOwn(patch, field)) write(field, key, value);
     }
-    if (Object.hasOwn(legacy ?? {}, 'instances')) {
-      try { if (storage?.getItem(stateKey) == null) settings.instances = legacy.instances; }
-      catch { settings.instances = legacy.instances; }
+    const hasMainSettings = (() => { try { return storage?.getItem(configKey) != null; } catch { return false; } })();
+    if (!hasMainSettings || Object.keys(patch).some(field => field !== 'instances' && !separateSettings.has(field))) {
+      write(configKey, configKey, settings);
     }
-    const settingsSaved = putConfig(storage, configKey, settings);
-    localOnly = !allSaved || !settingsSaved;
-    if (localOnly) notify('设置仅在本窗口生效', '无法写入浏览器存储。请先下载战局备份；如需彻底初始化，可在实例维护点「清理脚本缓存」。');
+    if (failed) notifyStorageFailure();
   }
   if (!config.aiSessions?.sessions?.length || config.aiSessions.activeId !== aiSessions.data.activeId) {
     persistSettings({ aiSessions: aiSessions.data });
@@ -529,6 +537,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
   }
 
   function renderInstances() {
+    diagnostics.storage = computeStorageDiagnostics(storage, activeBattleKey);
     const page = pages.instances; page.replaceChildren(el(doc, 'h3', {}, '战场入口'));
     const battleCard = el(doc, 'article', { class: 'fated-battle-card' });
     const battle = sources.battleInit;
@@ -598,11 +607,17 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         const retained = batches(battle).filter(batch => ![...(batch.entries ?? []).map(([id])=>id),
           ...(batch.receipts ?? []).map(r=>r.unitId), ...(batch.ownerIds ?? []), ...Object.keys(batch.hashes ?? {})].some(id=>deleting.has(id)));
         for (const id of members) delete config.instances[id];
-        save(); persistSettings({ rosterSelection:selectedIds(), normalizationBatches:{...config.normalizationBatches,[battle]:retained},
-          charSnapshots:{...config.charSnapshots,[battle]:omit(config.charSnapshots[battle])},
+        if (!Object.keys(config.instances).length) {
+          for (const field of ['chat-opening-patches', 'fated-tactical/battle-v1']) {
+            try { storage?.removeItem(battleStorageKey(battle, field)); } catch { notifyStorageFailure(); }
+          }
+        }
+        save(); persistSettings({ rosterSelection:selectedIds(),
+          normalizationBatches:pruneBattleScopedMap({...config.normalizationBatches,[battle]:retained}, battle),
+          charSnapshots:{[battle]:omit(config.charSnapshots[battle])},
           narrativeExemptions:{...config.narrativeExemptions,[battle]:(config.narrativeExemptions[battle]??[]).filter(r=>!deleting.has(r.unitId))},
-          unresolvedNotes:{...config.unresolvedNotes,[battle]:omit(config.unresolvedNotes[battle])},
-          pendingInstanceResets:{...config.pendingInstanceResets,[battle]:true} });
+          unresolvedNotes:{[battle]:omit(config.unresolvedNotes[battle])},
+          pendingInstanceResets:{[battle]:true} });
         renderInstances();
       });
       on(edit, 'click', () => { const value = prompt('编辑实例 JSON', JSON.stringify(instance, null, 2)); const parsed = parseJSON(value, null); if (isObject(parsed)) { config.instances[key] = { ...parsed, id:key, source:'AI 编辑' }; save(); renderInstances(); } });
@@ -775,7 +790,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       nextSources.protagonistName = tavernIdentity(host);
     }
     if (epoch !== scanEpoch || disposed) return null;
-    const openingSource = !opening && key ? clone(nextSources) : null;
+    const openingSource = !opening && key ? toPersistedOpeningSource(nextSources) : null;
     if (!nextSources.battleInit) {
       sources = nextSources;
       diagnostics = { phase: 'no-battle' };
@@ -830,14 +845,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       unitIds: Object.values(hydrated?.state?.units || {}).map(unit => `${unit.id}:${unit.name}:${unit.team}`),
       warnings: hydrated?.warnings || [],
     };
-    save();
-    const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
-    if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
-    if (openingSource && hydrated?.state) {
-      openingSources.set(key, openingSource);
-      putConfig(storage, battleStorageKey(key, 'opening-source'), openingSource);
-    }
-    return hydrated;
+    return { hydrated, openingSource };
   }
   let stopTerrainNotices;
   function refreshPortraits(state, epoch) {
@@ -876,6 +884,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     if (bar) bar.hidden = true;
     gameMount = (options.mount || defaultMount)(target, {
       instanceId: battleInstanceId, storage, state, customBattle: { seed: sources.seed, restart, restoreSaved },
+      onQuotaExceeded: () => pruneBattleStorageExcept(battleInstanceId).removedKeys > 0,
       battleAiRequest: async (messages, signal) => {
         syncSettings();
         const battleConfig = config.battleAiMode === 'custom'
@@ -939,10 +948,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       if (note) (next[unitId] ??= {})[id] = note;
     }
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
-    const unresolvedNotes = { ...config.unresolvedNotes };
-    if (Object.keys(next).length) unresolvedNotes[key] = next;
-    else delete unresolvedNotes[key];
-    persistSettings({ unresolvedNotes });
+    persistSettings({ unresolvedNotes: Object.keys(next).length ? { [key]: next } : {} });
   }
   function liveState() { return gameMount?.getState?.() ?? currentState; }
   function pathUnder(path, root) { return path === root || path?.startsWith(`${root}/`); }
@@ -992,9 +998,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     sources.warnings = nextWarnings;
     diagnostics.warnings = nextWarnings;
     persistSettings({
-      normalizationBatches: { ...config.normalizationBatches, [key]: retained },
+      normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key]: retained }, key),
       narrativeExemptions: { ...config.narrativeExemptions, [key]: exemptions },
-      unresolvedNotes: { ...config.unresolvedNotes, [key]: notes },
+      unresolvedNotes: { [key]: notes },
       charSnapshots: snapshots,
     });
     filterResolved(snapshots[key] ?? {}, characters, retained);
@@ -1056,6 +1062,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       foldBattleEntries();
       if (!rehydrate && !refreshSource && key && activeBattleKey === key && gameMount) {
         refreshPortraits(currentState, epoch);
+        diagnostics.storage = computeStorageDiagnostics(storage, activeBattleKey);
+        const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
+        if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
         if (node) node.textContent = `已续接当前战局 · ${scanStatus}`;
         return;
       }
@@ -1068,8 +1077,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       const snapshot = key && readBattleStorage(key, 'fated-tactical/battle-v1');
       const savedBattle = snapshot?.kind === 'battle';
       const previousOpening = rehydrate && key && (openingSources.get(key) ?? readBattleStorage(key, 'opening-source'));
-      const hydrated = await hydrate(epoch, candidate, rehydrate, refreshSource, snapshot);
-      const latestOpening = key && openingSources.get(key);
+      const { hydrated, openingSource } = (await hydrate(epoch, candidate, rehydrate, refreshSource, snapshot)) ?? {};
+      const latestOpening = openingSource ?? (key && openingSources.get(key));
       const openingInput = opening => [opening.battleInit, opening.mvuData, opening.charInfo, opening.protagonistName];
       const unchangedOpening = previousOpening && latestOpening && stableSourceJson(openingInput(previousOpening)) === stableSourceJson(openingInput(latestOpening));
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
@@ -1086,7 +1095,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       // Reuse only source-bound transactions from this chat. Existing battles
       // keep their own history, including deliberate entry resets.
       const resetDeleted = Boolean(config.pendingInstanceResets?.[key]);
-      const firstEntry = !resetDeleted && !rehydrate && nextState && key && !savedBattle && !enteredBattles.has(key);
+      const firstEntry = !resetDeleted && !rehydrate && nextState && key && !savedBattle && !own(config.normalizationBatches, key);
       const chatPrefix = `${safeKey(chat)}__`;
       const ownBatches = batches(key);
       const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches)
@@ -1113,31 +1122,37 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       // Compare effective opening templates, not the board after turns have been played.
       const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || (unchangedOpening && !invalid &&
         stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills)));
-      if (invalid) persistSettings({ normalizationBatches: { ...config.normalizationBatches, [key]: kept } });
       mountState(currentState, restoreSaved);
-      if (currentState && resetDeleted) {
-        const pendingInstanceResets = {...config.pendingInstanceResets}; delete pendingInstanceResets[key];
-        persistSettings({pendingInstanceResets});
-      }
+      activeBattleKey = currentState ? key : null;
       refreshPortraits(currentState, epoch);
-      activeBattleKey = key;
       characters = fresh;
-      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter(id => groupId(id) === id);
-      if(key && (rehydrate||changed.length||removed.length)) {
+      if (activeBattleKey) {
+        pruneBattleStorageExcept(key);
+        if (openingSource) {
+          openingSources.set(key, openingSource);
+          if (!writeWithEvictionRetry(battleStorageKey(key, 'opening-source'), openingSource)) notifyStorageFailure();
+        }
+        const nextSettings = {
+          normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key]: kept }, key),
+          unresolvedNotes: own(config.unresolvedNotes, key) ? { [key]: config.unresolvedNotes[key] } : {},
+          pendingInstanceResets: {},
+        };
         for (const id of ids) {
           const previous = stored[id];
-          const { entryValues: _promptSources, ...record } = fresh[id];
-          stored[id] = { ...record, resolvedWarnings: rawWarnings.filter(w => w.unitId === id &&
-            previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id]: previous }, fresh).length).map(warningKey) };
+          stored[id] = toStoredCharSnapshot(fresh[id], rawWarnings.filter(w => w.unitId === id &&
+            previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id]: previous }, fresh).length).map(warningKey));
         }
-        persistSettings({charSnapshots:{...config.charSnapshots,[key]:stored}});
+        nextSettings.charSnapshots = { [key]: stored };
+        const patch = Object.fromEntries(Object.entries(nextSettings).filter(([field, value]) =>
+          JSON.stringify(value) !== JSON.stringify(config[field] ?? {})));
+        if (Object.keys(patch).length) persistSettings(patch);
       }
+      const changed = normalizationCandidates(fresh, stored, warningGroups(remaining).pending).filter(id => groupId(id) === id);
       if((rehydrate || config.rosterSelection===null) && ids.length) persistSettings({rosterSelection:ids});
       filterResolved(stored, fresh, kept);
       if (key) reconcileUnresolvedNotes(key, fresh, sources.warnings, [], { reset: false });
       const live = liveState();
       if (live) updateChatInstances(live, nextState);
-      if (key && currentState) enteredBattles.add(key);
       scanStatus = firstEntry && changed.length ? `待标准化 ${changed.length} 个角色` : '可手动标准化所选角色';
       renderInstances();
       if (firstEntry && changed.length) void runNormalize(changed);
@@ -1145,7 +1160,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         ? `扫描完成：${Object.values(currentState.units || {}).map(unit => `${unit.name}(${unit.id})`).join('、')} · ${scanStatus}`
         : '扫描完成（未找到可挂载的战局）。';
     } catch (e) {
-      diagnostics = { ...diagnostics, phase: 'scan-error', error: e?.stack || e?.message || String(e) };
+      diagnostics = { ...diagnostics, phase: 'scan-error', error: e?.stack || e?.message || String(e),
+        storage: computeStorageDiagnostics(storage, activeBattleKey) };
       try { console.error('[fated-tactical] scan failed', diagnostics); } catch (_) {}
       const diagnosticNode = pages.instances.querySelector('[data-diagnostics]');
       if (diagnosticNode) diagnosticNode.textContent = JSON.stringify(diagnostics, null, 2);
@@ -1309,22 +1325,16 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       }
     }
     const stored = { ...config.charSnapshots[key] };
-    const rejectedUnits = new Set(rejected.flatMap(item => {
-      const direct = item.path.match(/^\/units\/([^/]+)/)?.[1];
-      if (direct) return [direct];
-      return [...accepted.blockedWarnings].map(warning => warning.unitId).filter(Boolean);
-    }));
     for (const [id, record] of Object.entries(records)) {
-      const { entryValues: _promptSources, ...snapshotRecord } = record;
-      const previous = stored[id]?.hash === snapshotRecord.hash ? stored[id].resolvedWarnings ?? [] : [];
-      stored[id] = { ...snapshotRecord, at: Date.now(), normalized: !rejectedUnits.has(id), resolvedWarnings: previous };
+      const previous = stored[id]?.hash === record.hash ? stored[id].resolvedWarnings : undefined;
+      stored[id] = toStoredCharSnapshot(record, previous);
     }
     syncSettings();
     const receipts = narrative.map(({ receipt }) => receipt);
     const previousExemptions = config.narrativeExemptions[key] ?? [];
     persistSettings({
-      charSnapshots: { ...config.charSnapshots, [key]: stored },
-      normalizationBatches: { ...config.normalizationBatches, [key]: [...batches(key), ...additions] },
+      charSnapshots: { [key]: stored },
+      normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key]: [...batches(key), ...additions] }, key),
       narrativeExemptions: { ...config.narrativeExemptions, [key]: [...previousExemptions.filter(previous => !receipts.some(receipt => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] },
     });
     for (const operation of effective) {
@@ -1392,10 +1402,11 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         }
       }
       const storageKey = battleStorageKey(key, 'chat-opening-patches');
-      const persisted = nextEntries === entries || putConfig(storage, storageKey, nextEntries);
+      const persisted = nextEntries === entries || writeWithEvictionRetry(storageKey, nextEntries);
+      if (undo && !persisted) throw new Error('无法更新浏览器中的开场补丁，未撤销');
       try { gameMount.loadState(next); }
       catch (error) {
-        if (nextEntries !== entries && persisted) putConfig(storage, storageKey, entries);
+        if (nextEntries !== entries && persisted && !writeWithEvictionRetry(storageKey, entries)) notifyStorageFailure();
         throw error;
       }
       currentState = liveState();

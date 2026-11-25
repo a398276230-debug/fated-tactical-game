@@ -393,9 +393,6 @@ export function renderApiTab(page, ctx) {
   const sampling = card('⚙ 采样参数');
   field(sampling, 'temperature', '温度 (temperature)', input('number', { step: 'any', required: true }), 0.8);
   field(sampling, 'max_tokens', '最大输出长度 (max_tokens)', input('number', { min: '1', step: '1', required: true }), 32000);
-  field(sampling, 'nonCombatPersistenceScope', '非战斗忽略保存范围', select([
-    ['chat_and_global', '当前聊天 + 全局'], ['chat', '仅当前聊天'], ['global', '仅全局'],
-  ]), 'chat_and_global', false, true);
   for (const [key, label] of [['normalizationConcurrency', '标准化最大并发请求数'], ['normalizationWarningsPerBatch', '标准化每批警告数']]) {
     const { fallback, max } = normalizationLimits[key];
     field(sampling, key, label, input('number', { min: '1', max: String(max), step: '1', required: true }), fallback);

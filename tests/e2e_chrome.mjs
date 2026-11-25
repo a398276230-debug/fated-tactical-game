@@ -173,7 +173,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.getChatMessages = (range) => { window.hostRange = range; return messages; };
     window.Mvu = {getMvuData({message_id}) {
       hostCalls.push(message_id);
-      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},背包:window.battleBag,装备:{...window.reserveWeapons,旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...window.extraBowEffects}}}}}};
+      // The new clauses belong to floor 4; reopening floor 0 reads its own equipment text.
+      const effects = message_id >= 4 ? window.extraBowEffects : undefined;
+      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},背包:window.battleBag,装备:{...window.reserveWeapons,旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...effects}}}}}};
     }};
     window.generateRaw = async config => new Promise((resolve,reject) => {
       window.hostRequests ||= [];
@@ -289,6 +291,18 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.equal(await run('hostRequests.length'),3);
   }
   const tavernState = () => run('window.__fatedTacticalTavern.getState()');
+  const activeStorageKey = () => run('window.__fatedTacticalTavern.getSources().battleKey');
+  const savedBattleKeys = () => run(`Object.keys(localStorage).filter(k => k.endsWith('/fated-tactical/battle-v1'))`);
+  const assertCurrentBattleStorage = async key => {
+    assert.deepEqual(await savedBattleKeys(), [`fated-tactical/${key}/fated-tactical/battle-v1`]);
+    const storage = await run('window.__fatedTacticalTavern.getDiagnostics().storage');
+    const count = await run(`Object.keys(localStorage).filter(k => k.startsWith('fated-tactical/')).length`);
+    assert.equal(storage.activeBattleKey, key);
+    assert.equal(storage.keyCount, count);
+    assert.equal(Object.values(storage.categories).reduce((sum, bytes) => sum + bytes, 0), storage.totalBytes);
+    assert.ok(storage.categories.battleSnapshotBytes > 0 && storage.categories.openingSourceBytes > 0);
+    assert.deepEqual(await run(`JSON.parse(document.querySelector('[data-diagnostics]').textContent).storage`), storage);
+  };
   assert.equal(await run('enemyRequests.length'),3,'敌方独立泳道经历首次失败、一次返修和手动重试');
   const opening = await tavernState();
   const openingBow = state => state.equipment[state.items[state.units.p1.mainHand].templateId];
@@ -321,9 +335,18 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     await window.__fatedTacticalTavern.open(); })()`);
   assert.deepEqual(await tavernState(), halfBattle);
   assert.equal(await run('hostRequests.length'), 3);
+  const hostBattleKey = await activeStorageKey();
+  await assertCurrentBattleStorage(hostBattleKey);
   await run(`hostMessages.push({message_id:4,role:'assistant',message:battleFixture.replace('chrome-host','chrome-next')});
     window.__fatedTacticalTavern.open()`);
   await until(() => run('hostRequests.length === 4'), '新战场发起首次自动标准化');
+  const nextBattleKey = await activeStorageKey();
+  assert.notEqual(nextBattleKey, hostBattleKey);
+  await assertCurrentBattleStorage(nextBattleKey);
+  assert.equal(await run(`localStorage.getItem(${JSON.stringify(`fated-tactical/${hostBattleKey}/opening-source`)})`), null);
+  assert.deepEqual(await run('Object.keys(window.__fatedTacticalTavern.getConfig().charSnapshots)'), [nextBattleKey]);
+  assert.equal(await run(`localStorage.getItem('fated-tactical/auto')`), 'false');
+  assert.equal(await run(`Object.keys(localStorage).some(k => k.endsWith('/fated-tactical/auto'))`), false);
   assert.equal((await tavernState()).units.p1.hp, 123);
   await run('window.completeHostAI()');
   await until(() => run('hostRequests.length === 5'), '拒收项自动修复');
@@ -389,9 +412,13 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     entry.querySelector('button').click();
     frame.remove();
   })()`);
-  await until(async () => (await tavernState())?.scenarioId === halfBattle.scenarioId, '旧楼入口恢复原战场');
-  assert.deepEqual(await tavernState(), halfBattle);
-  assert.equal(await run('hostRequests.length'), 5);
+  await until(async () => (await tavernState())?.scenarioId === halfBattle.scenarioId, '旧楼入口重建原战场');
+  const reopened = await tavernState();
+  assert.equal(reopened.logs.length, opening.logs.length, '被淘汰的快照不会恢复战斗进度');
+  assert.equal(reopened.units.p1.hp, 123, '从 MVU 重建开场而非恢复旧快照');
+  assert.deepEqual(openingBow(reopened), openingBow(opening), '保留旧场标准化装备规则');
+  assert.equal(await run('hostRequests.length'), 5, '回到旧楼不额外请求 AI');
+  await assertCurrentBattleStorage(hostBattleKey);
   assert.equal(await run(`!!${get(`${playerCard} ${reviewedSelector}`)}`), false);
   // Whole-entry reset and reroll: restore the raw warning and only this
   // equipment root; sibling entries and combat progress remain intact.
@@ -485,7 +512,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(imported.title, '酒馆联调');
   assert.equal(imported.order[0], 'p1');
   assert.equal(imported.units.p1.ap, 2);
-  assert.equal(imported.units.p1.hp, 321);
+  assert.equal(imported.units.p1.hp, reopened.units.p1.hp);
   const fixedShotRule = state => state.equipment[state.items[state.units.p1.mainHand].templateId].rules.find(rule => rule.id === 'fixed-shot');
   assert.notEqual(imported.units.e1.mainHand, imported.units.e2.mainHand);
   for (const id of ['e1', 'e2']) {
@@ -700,8 +727,13 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   const requestsBeforeHydrate = await run('hostRequests.length');
   const resetKey=await run('window.__fatedTacticalTavern.getSources().battleKey');
   assert.ok(await run(`window.__fatedTacticalTavern.getConfig().normalizationBatches[${JSON.stringify(resetKey)}].length`));
+  const openingPatchKey = JSON.stringify(`fated-tactical/${resetKey}/chat-opening-patches`);
+  await run(`localStorage.setItem(${openingPatchKey}, '[]')`);
+  assert.deepEqual(await savedBattleKeys(), [`fated-tactical/${resetKey}/fated-tactical/battle-v1`]);
   await run(`for (const id of ['p1','e1']) [...document.querySelectorAll('.fated-instance[data-unit-id="'+id+'"] button')].find(b=>b.textContent==='删除').click()`);
   assert.equal(await run(`document.querySelectorAll('article.fated-instance').length`), 0);
+  assert.deepEqual(await savedBattleKeys(), []);
+  assert.equal(await run(`localStorage.getItem(${openingPatchKey})`), null);
   await run(`window.confirm = () => true; window.battleBag={急救包:{类型:'消耗品',数量:3,target:'self',rules:[{id:'heal_self',hook:'active',usesPerBattle:1,program:[{op:'heal',target:'self',amount:10}]}]}}; window.reserveWeapons={黑灵:{类型:'武器',标签:['匕首','攻击：150'],位置:''}}; window.narrativeHp = 245; [...document.querySelectorAll('[data-page="instances"] button')].find(b=>b.textContent==='从当前聊天重新水合').click()`);
   await until(() => run(`document.querySelectorAll('article.fated-instance').length===2`), '手动重新水合恢复已删除的角色');
   const raw = await tavernState();
@@ -720,6 +752,31 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(raw.equipment[raw.items[raw.units.p1.mainHand].templateId].attack, 14);
   await run('window.__fatedTacticalTavern.scan()');
   assert.deepEqual(await tavernState(), raw);
+  const quotaProbe = await run(`(async () => {
+    const { scan } = window.__fatedTacticalTavern;
+    const stale = 'fated-tactical/old-quota-probe/fated-tactical/battle-v1';
+    const snapshot = ${JSON.stringify(`fated-tactical/${resetKey}/fated-tactical/battle-v1`)};
+    const nativeSetItem = Storage.prototype.setItem;
+    localStorage.setItem(stale, '{}');
+    let blocked = 0, alwaysFail = false;
+    Storage.prototype.setItem = function(key, value) {
+      if (key === snapshot && (alwaysFail || this.getItem(stale))) {
+        blocked += 1;
+        throw new DOMException('quota probe', 'QuotaExceededError');
+      }
+      return nativeSetItem.call(this, key, value);
+    };
+    try {
+      await scan({ rehydrate: true });
+      const healed = !localStorage.getItem(stale) && document.querySelector('#action-error').hidden;
+      alwaysFail = true;
+      await scan({ rehydrate: true });
+      const status = document.querySelector('#action-error');
+      return { blocked, healed, visible: !status.hidden, message: status.textContent };
+    } finally { Storage.prototype.setItem = nativeSetItem; }
+  })()`);
+  assert.deepEqual(quotaProbe, { blocked: 2, healed: true, visible: true,
+    message: '浏览器存储空间不足或已关闭；请下载快照保存战局。' });
   assert.equal(await run('hostRequests.length'), requestsBeforeHydrate);
   await click('[data-tab="sandbox"]');
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);

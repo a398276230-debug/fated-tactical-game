@@ -1,10 +1,3 @@
-const GLOBAL_CHAT_ID = '__global__';
-const SCOPES = new Set(['chat', 'global', 'chat_and_global']);
-
-const own = (value, key) => value != null && Object.prototype.hasOwnProperty.call(value, key);
-const clone = value => {
-  try { return structuredClone(value); } catch (_) { return JSON.parse(JSON.stringify(value)); }
-};
 const text = value => value == null ? '' : String(value);
 
 /**
@@ -39,20 +32,6 @@ export function semanticExemptionKey(warning = {}, clause = warning.message) {
   return JSON.stringify([pathFamily(warning.originPath), warning.scope ?? '', normalizeClauseForHash(clause)]);
 }
 
-export function exemptionStorageKey(chatId, global = false) {
-  return `fated-tactical/tavern/${global ? GLOBAL_CHAT_ID : String(chatId || 'default')}/narrativeExemptions`;
-}
-
-function readJSON(storage, key) {
-  try {
-    const value = JSON.parse(storage?.getItem(key) ?? 'null');
-    return value;
-  } catch (_) { return null; }
-}
-function writeJSON(storage, key, value) {
-  try { return Boolean(storage?.setItem(key, JSON.stringify(value))); } catch (_) { return false; }
-}
-
 function recordKey(record) {
   return record?.semanticKey ?? (record ? semanticExemptionKey(record, record.message) : '');
 }
@@ -67,13 +46,6 @@ function normalizedRecord(record, fallbackOrigin = 'manual') {
     status: record.status === 'revoked' || record.revoked === true ? 'revoked' : 'active',
     updatedAt: Number.isFinite(record.updatedAt) ? record.updatedAt : 0,
   };
-}
-
-function flattenStored(value, fallbackOrigin = 'manual') {
-  if (Array.isArray(value)) return value.map(record => normalizedRecord(record, fallbackOrigin)).filter(Boolean);
-  // One-time read compatibility for the previously shipped battle-key map.
-  if (value && typeof value === 'object') return Object.values(value).flatMap(bucket => flattenStored(bucket, fallbackOrigin));
-  return [];
 }
 
 function preference(record) {
@@ -115,76 +87,6 @@ function activeRecordFor(warning, records, sourceFor) {
   return winner;
 }
 
-export class ExemptionLedger {
-  constructor({ storage = null, chatId = 'default', scope = 'chat_and_global' } = {}) {
-    this.storage = storage;
-    this.chatId = String(chatId || 'default');
-    this.scope = SCOPES.has(scope) ? scope : 'chat_and_global';
-    this.chatRecords = [];
-    this.globalRecords = [];
-    this.reload();
-  }
-  keys() {
-    return {
-      chat: exemptionStorageKey(this.chatId),
-      global: exemptionStorageKey(this.chatId, true),
-    };
-  }
-  reload() {
-    const keys = this.keys();
-    this.chatRecords = flattenStored(readJSON(this.storage, keys.chat));
-    this.globalRecords = flattenStored(readJSON(this.storage, keys.global));
-    return this;
-  }
-  records() {
-    const values = this.scope === 'global' ? this.globalRecords
-      : this.scope === 'chat' ? this.chatRecords : [...this.globalRecords, ...this.chatRecords];
-    return mergeExemptionRecords(values);
-  }
-  active(warnings = [], sourceFor) {
-    const records = this.records();
-    return warnings.flatMap(warning => {
-      const receipt = activeRecordFor(warning, records, sourceFor);
-      return receipt ? [{ warning, receipt }] : [];
-    });
-  }
-  save(records, target = 'chat') {
-    const key = target === 'global' ? this.keys().global : this.keys().chat;
-    const ok = writeJSON(this.storage, key, records);
-    if (target === 'global') this.globalRecords = records;
-    else this.chatRecords = records;
-    return ok;
-  }
-  upsert(warning, { reason = '', origin = 'manual', source = null } = {}, target = 'chat') {
-    this.reload();
-    const semanticKey = semanticExemptionKey(warning);
-    const current = target === 'global' ? this.globalRecords : this.chatRecords;
-    const record = normalizedRecord({
-      unitId: warning.unitId ?? null, key: warning.key, originPath: warning.originPath ?? null,
-      message: warning.message, semanticKey, source, reason, origin,
-      staticFingerprint: normalizeClauseForHash(warning.message), status: 'active', updatedAt: Date.now(),
-    }, origin);
-    return this.save([...current.filter(item => recordKey(item) !== semanticKey), record], target);
-  }
-  revoke(warning, { reason = '玩家已恢复为待编译', origin = 'manual' } = {}, target = 'chat') {
-    this.reload();
-    const semanticKey = semanticExemptionKey(warning);
-    const current = target === 'global' ? this.globalRecords : this.chatRecords;
-    const tombstone = normalizedRecord({ semanticKey, unitId: warning.unitId ?? null,
-      key: warning.key, originPath: warning.originPath ?? null, message: warning.message,
-      reason, origin, status: 'revoked', updatedAt: Date.now() }, origin);
-    return this.save([...current.filter(item => recordKey(item) !== semanticKey), tombstone], target);
-  }
-  removeWarnings(warnings = [], target = 'chat') {
-    this.reload();
-    const keys = new Set(warnings.map(semanticExemptionKey));
-    const current = target === 'global' ? this.globalRecords : this.chatRecords;
-    return this.save(current.filter(item => !keys.has(recordKey(item))), target);
-  }
-}
-
 export function activeExemption(warning, records, sourceFor) {
   return activeRecordFor(warning, records.map(normalizedRecord).filter(Boolean), sourceFor);
 }
-
-export { GLOBAL_CHAT_ID };
