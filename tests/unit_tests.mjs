@@ -37,6 +37,7 @@ import './ai_session_tests.mjs';
 import './vm_expr_tests.mjs';
 import './vm_schema_tests.mjs';
 import './normalization_batches_tests.mjs';
+import './enmosolen_stage1_tests.mjs';
 import './arena_handoff_tests.mjs';
 import './vm_pools_tests.mjs';
 import './vm_carriers_tests.mjs';
