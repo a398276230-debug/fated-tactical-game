@@ -57,30 +57,31 @@ export const DISTANCE_TABLE = Object.freeze([
 ]);
 export const UNIT_STATS = Object.freeze(['str', 'agi', 'con', 'int', 'spi']);
 export const DAMAGE_TYPES = Object.freeze(['physical', 'energy', 'mental', 'true']);
-export const STANCES = Object.freeze(['light_blade', 'dual_wield', 'attunement', 'greatsword', 'sword_shield', 'unarmed']);
+export const STANCES = Object.freeze(['light_blade', 'dual_wield', 'attunement', 'greatsword', 'sword_shield', 'ranged', 'unarmed']);
 export const MORALE_STATES = Object.freeze(['steady', 'shaken', 'routed']);
 export const INTENTS = Object.freeze({ normal: { name: '常规', difficulty: 0, multiplier: 1 },
   function: { name: '机能限制', difficulty: 5, multiplier: 1.1 }, core: { name: '核心要害', difficulty: 10, multiplier: 1.4 },
   kill: { name: '抹杀', difficulty: 15, multiplier: 1.7 }, concept: { name: '概念破碎', difficulty: 20, multiplier: 2 } });
 export const MORALE = Object.freeze({ spar: { threshold: .4, check: false }, arena: { threshold: .3, check: false },
   suppress: { threshold: .5, check: false }, deathmatch: { threshold: .1, check: true }, standard: { threshold: .3, check: true }, guard: { threshold: .35, check: true } });
+export const isRangedMain = item => Boolean(item && (item.ranged === true || item.weaponClass === 'ranged' || item.kind === 'ranged'));
 export const stanceFor = (slots = {}) => {
   const main = slots.mainHand ?? slots.weapon ?? null, off = slots.offHand ?? null, shield = slots.shield ?? null;
   if (shield) return 'sword_shield';
   if (!main) return 'unarmed';
   if (off?.kind === 'consumable') return 'attunement';
-  if (main?.heavy || main?.twoHanded) return 'greatsword';
+  if (!isRangedMain(main) && (main.heavy || main.twoHanded)) return 'greatsword';
   if (off) return 'dual_wield';
-  if (main?.ranged || main?.kind === 'ranged') return 'light_blade';
-  return main ? 'light_blade' : 'unarmed';
+  return isRangedMain(main) ? 'ranged' : 'light_blade';
 };
-export const stanceLabel = Object.freeze({ light_blade: '轻剑', dual_wield: '双持', attunement: '同调', greatsword: '重剑', sword_shield: '剑盾', unarmed: '无械' });
+export const stanceLabel = Object.freeze({ light_blade: '轻剑', dual_wield: '双持', attunement: '同调', greatsword: '重剑', sword_shield: '剑盾', ranged: '射击', unarmed: '无械' });
 export const STANCE_RULES = Object.freeze({
-  light_blade: { armorPenetration: .08, closeRange: true, rangedDistancePenalty: 0 },
+  light_blade: { armorPenetration: .08, closeRange: true },
   dual_wield: { offHandDamage: .5, comboOffHandDamage: .75, followUp: true },
   attunement: { itemCharges: 2 },
-  greatsword: { offensiveDamage: 1.3, defensiveDamage: 1.5, armorPenetration: .05, parryQuota: 2, parryReduction: .6, perfectParryReduction: 1 },
-  sword_shield: { blockReduction: .25, heavyBlockReduction: .45, shieldDamageFactor: .3 },
+  greatsword: { offensiveDamage: 1.5, defensiveDamage: 1.2, defensiveReduction: .15, armorPenetration: .05 },
+  sword_shield: { blockReduction: .25, heavyBlockReduction: .45 },
+  ranged: { rangedPenaltyOffset: 2 },
   unarmed: {},
 });
 export function stanceRules(stance) { return STANCE_RULES[stance] ?? STANCE_RULES.unarmed; }

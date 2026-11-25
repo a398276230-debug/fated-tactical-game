@@ -14,8 +14,9 @@ const commands = {
     fields(c, ['type','unitId','patch']);
     const u = get(s.units, c.unitId, 'unitId');
     nonempty(c.patch);
-    fields(c.patch, [], ['hp','mp','sp','ap','x','y','team','stats','weapon','mainHand','offHand','shield','bodyLengthM','tier','mc','bonusDice','penaltyDice','intent','nonLethal','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','deathrattle','maneuvers']);
-    for (const k of ['hp','mp','sp','ap','x','y','team','weapon','mainHand','offHand','shield','bodyLengthM','tier','mc','bonusDice','penaltyDice','intent','nonLethal','stance','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','deathrattle','maneuvers']) if (own(c.patch, k)) u[k] = c.patch[k];
+    const keys = ['hp','mp','sp','ap','x','y','team','weapon','mainHand','offHand','shield','bodyLengthM','tier','mc','bonusDice','penaltyDice','intent','nonLethal','stance','moraleType','moraleState','greatswordMode','attunementCharges','deathrattle'];
+    fields(c.patch, [], [...keys, 'stats']);
+    for (const k of keys) if (own(c.patch, k)) u[k] = c.patch[k];
     if (own(c.patch, 'stats')) {
       nonempty(c.patch.stats);
       fields(c.patch.stats, [], attrs);

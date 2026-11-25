@@ -238,7 +238,7 @@ export function createGameAPI() {
       const u = s.units[unitId];
       const item = id => id ? ({ id, ...s.items[id], template: s.equipment[s.items[id]?.templateId] }) : null;
       return copy({ unitId, stance: u.stance, mainHand: item(u.mainHand ?? u.weapon), offHand: item(u.offHand), shield: item(u.shield),
-        greatswordMode: u.greatswordMode ?? 'offensive', blockMode: u.blockMode ?? 'normal' });
+        greatswordMode: u.greatswordMode ?? 'offensive' });
     },
     setWeaponStance(unitId, stance, options = {}) {
       const s = current();
@@ -247,15 +247,8 @@ export function createGameAPI() {
       if (stance !== loadoutStance(s, s.units[unitId])) return { ok: false, error: '姿态与当前持械槽位不符' };
       const patch = { stance };
       if (options.greatswordMode !== undefined) patch.greatswordMode = options.greatswordMode;
-      if (options.blockMode !== undefined) patch.blockMode = options.blockMode;
       const transaction = { kind: 'commands', entries: [{ type: 'set_unit_stat', unitId, patch }], reason: '切换持械姿态' };
       return commit(simulate(s, transaction), transaction);
-    },
-    listManeuvers(unitId) {
-      const s = current();
-      const u = s.units[unitId];
-      if (!u) return null;
-      return copy(u.maneuvers ?? ['charge','lock_on','scan','brace','block','shield_bash','push','grapple','disarm','trip','flee']);
     },
     inspectUnit(unitId) {
       const s = current();

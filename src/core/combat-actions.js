@@ -3,7 +3,7 @@ import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetwee
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledTemplate } from './combat_protocol.js';
+import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledTemplate } from './combat_protocol.js';
 
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
@@ -63,10 +63,13 @@ function equipmentFor(state, instanceId) {
 const isWeapon = template => template?.kind === 'weapon' || Boolean(template?.damage && !template.kind);
 const gearFor = (state, unit) => (unit.gear ?? []).map(id => equipmentFor(state, id)).filter(({template}) => !isWeapon(template) && template?.kind !== 'shield');
 export function loadoutStance(state, unit) {
-  const stance = stanceFor({ mainHand: equipmentFor(state, unit.mainHand ?? unit.weapon).template,
-    offHand: equipmentFor(state, unit.offHand).template, shield: equipmentFor(state, unit.shield).template });
-  return stance === 'attunement' && unit.attunementCharges === 0 ? 'light_blade' : stance;
+  const main = equipmentFor(state, unit.mainHand ?? unit.weapon).template;
+  const off = equipmentFor(state, unit.offHand).template;
+  return stanceFor({ mainHand: main?.boundTo && main.boundTo !== unit.id ? null : main,
+    offHand: off?.kind === 'consumable' && unit.attunementCharges === 0 ? null : off,
+    shield: equipmentFor(state, unit.shield).template });
 }
+const effectiveStance = (state, unit) => unit.stance ?? loadoutStance(state, unit);
 export function switchableWeapons(state, unit) {
   const main = unit.mainHand ?? unit.weapon;
   const bag = unit.bagWeapons ?? [];
@@ -85,7 +88,8 @@ const resourcePool = (state, unit, resource, instance) => {
   for (const item of equipped(state, unit)) {
     if (instance && item.instance !== instance) continue;
     const effect = tableEntry(item.template?.pools, resource);
-    if (effect) return { item, effect, amount: getPool(state, item.instance.id, resource, 'item')?.current ?? effect.initial ?? 0 };
+    const pool = effect && getPool(state, item.instance.id, resource, 'item');
+    if (pool) return { item, effect, amount: pool.current };
   }
   return null;
 };
@@ -243,7 +247,9 @@ export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const shatter = hit ? modStat(state, unit, 'shatter', 0, { damageType: type }) : 0;
   const vulnerability = modStat(state, unit, 'incomingDamageMult', 1, { ...ctx, damageType: type }) - 1;
   const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
-  const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', 0, defensiveContext), -1, 1);
+  const stanceDR = unit?.greatswordMode === 'defensive' && effectiveStance(state, unit) === 'greatsword'
+    ? stanceRules('greatsword').defensiveReduction : 0;
+  const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', stanceDR, defensiveContext), -1, 1);
   const dr = type === 'true' ? 0 : clamp(modStat(state, unit, 'dr', 0, defensiveContext), -1, 1);
   const defense = ctx.ignoreArmor || type === 'true' || type === 'mental' ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2000 / (defense + 2000);
@@ -401,6 +407,8 @@ export function beginBattle(state) {
   const initiative = initiativeOrder(state, () => randomDie(state, 20));
   state.order = initiative.map(entry => entry.unitId);
   for (const unit of values(state.units)) {
+    unit.stance ??= loadoutStance(state, unit);
+    if (unit.stance === 'attunement') unit.attunementCharges ??= stanceRules('attunement').itemCharges;
     unit.ap = 0;
     delete unit.followupUsed;
     unit.used = { attack: 0, action: 0 };
@@ -482,7 +490,7 @@ function modStat(state, unit, name, base, context = {}) {
 }
 function modCheck(state, unit, key, context = {}) {
   const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
-  if (key === 'highGroundRange' || key === 'highGroundAccuracy') return template?.vars?.[key] ?? 0;
+  if (key === 'highGroundAccuracy') return template?.vars?.[key] ?? 0;
   if (key === 'advantage') return modStat(state, unit, 'advantage', 0, { checkKind: 'attack', ...context });
   return 0;
 }
@@ -506,7 +514,7 @@ export function equippedActiveSkills(state, unit) {
     for (const skillId of template.skills ?? []) {
       const skill = tableEntry(state.skills, skillId);
       if (skill && !isPassiveSkill(skill) && !result.has(skillId)) {
-        result.set(skillId, { ...skill, quality: template.quality ?? skill.quality });
+        result.set(skillId, { ...skill, quality: template.quality ?? skill.quality, itemInstance: instance });
       }
     }
     // Held consumables activate through use_item, which pays the battle-wide charge.
@@ -610,7 +618,12 @@ function paymentError(state, unit, ap, slot, template, { hp, mp, sp }, skill = f
   if (hp > 0 && hp >= unit.hp) return insufficientHP;
   if (unit.mp < mp) return '魔力不足';
   if (unit.sp < sp) return '体力不足';
-  if (template.resourceCost?.resource && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return '装备资源不足';
+  const { resource, amount } = template.resourceCost ?? {};
+  if (resource) {
+    const item = resourcePool(state, unit, resource, template.itemInstance);
+    const pool = !item && !template.itemInstance && getPool(state, unit.id, resource);
+    if ((item?.amount ?? pool?.current ?? 0) < amount) return item || template.itemInstance ? '装备资源不足' : '自定义资源不足';
+  }
   return null;
 }
 
@@ -620,7 +633,7 @@ const shieldBashRules = [{ id: 'shield-bash-hit', hook: 'after_hit', program: [
   { op: 'apply_status', target: 'target', statusId: actionStatuses.shield_bash, turns: 1 },
 ] }];
 const shieldBashTemplate = { name: '盾击', range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: shieldBashRules };
-const isMelee = template => template.rangeType !== 'ranged' && !template.ranged && template.weaponClass !== 'ranged' && (template.rawRange ?? template.range ?? 1.5) <= 2;
+const isMelee = template => template.rangeType !== 'ranged' && !isRangedMain(template) && (template.rawRange ?? template.range ?? 1.5) <= 2;
 
 const weaponAmmo = template => {
   const pools = Object.entries(template?.pools ?? {}).map(([resource, pool]) => ({ resource, ...pool }));
@@ -638,22 +651,22 @@ export function weaponInfo(state, unit) {
   const infiniteAmmo = vmFlag(state, unit, 'infiniteAmmo');
   const offHand = equipmentFor(state, unit.offHand);
   offHand.template = scaledTemplate(state, unit, offHand.template, 'weapon');
-  const stance = unit.stance ?? stanceFor({ mainHand: weapon.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
+  const stance = effectiveStance(state, unit);
   return { ...weapon, ammo, ammoCount, infiniteAmmo, offHand, stance,
     template: weapon.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, 'weapon')) };
 }
 
-function reaches(state, actor, at, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
+function reaches(state, actor, at, template, ammo) {
   const dz = elevation(state, actor) - elevation(state, at);
   const melee = isMelee(template) && !ammo;
   const baseRange = template.range ?? 1.5;
-  const range = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? (ammo?.reloadable ? modCheck(state, actor, 'highGroundRange', { weaponId, highGround: true }) : 1) : -1);
+  const range = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? (template.vars?.highGroundRange ?? 1) : -1);
   const offset = incomingDistanceOffset(state, actor, at, { checkKind: 'attack' });
   return { distance: distance(state, actor, at) + offset, dz, range: Math.max(0, range), melee };
 }
 
-function validReach(state, actor, at, template, ammo, weaponId) {
-  const geometry = reaches(state, actor, at, template, ammo, weaponId);
+function validReach(state, actor, at, template, ammo) {
+  const geometry = reaches(state, actor, at, template, ammo);
   return ground(state, at) && geometry.distance <= geometry.range + 1e-9 && clearSight(state, actor, at);
 }
 
@@ -765,7 +778,7 @@ function resolveArmorPierce(state, actor, template, weapon, strike) {
 
 function targetProfile(state, actor, target, at, template, context = {}) {
   const { weapon, origin = actor, teleport, cover = false } = context;
-  const geometry = reaches(state, origin, at, template, weapon?.ammo, weapon?.instance?.id);
+  const geometry = reaches(state, origin, at, template, weapon?.ammo);
   const arrow = Boolean(weapon?.ammo);
   const arc = target && !cover ? facingArc(target, origin) : 'front';
   const backstab = !cover && arc !== 'front' && geometry.melee;
@@ -792,16 +805,17 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   // close-quarters weapons keep the normal melee bonus. Spells use their
   // effective range tiers for distance lookup, but point-blank spells remain
   // ordinary close combat rather than inheriting a bow's penalty.
-  const rangedWeapon = Boolean(weapon && template.ranged === true && !template.closeQuarters);
+  const rangedWeapon = Boolean(weapon && (isRangedMain(template) || weapon.ammo));
   const rangedCarrier = Boolean(!weapon && !geometry.melee && (template.range ?? 0) > 0);
-  const ranged = rangedWeapon || rangedCarrier;
-  const lookupDistance = ranged && template.rawRange != null && geometry.distance > 0
-    ? Math.round((geometry.distance / Math.max(6, geometry.range)) * 6) : geometry.distance;
-  const distanceModifier = geometry.distance === 0 && rangedWeapon ? -4 : distanceTier(lookupDistance).hit;
+  const pointBlank = geometry.distance === 0 && rangedWeapon;
+  const lookupDistance = (weapon || rangedCarrier) && template.rawRange != null
+    ? (geometry.distance / Math.max(6, geometry.range)) * 6 : geometry.distance;
+  const distanceModifier = pointBlank ? (template.closeQuarters ? 0 : -4) : distanceTier(lookupDistance).hit;
   const weaponRangeModifier = distanceTier(Math.max(geometry.distance, geometry.range)).range;
-  const stance = weapon?.stance ?? actor.stance ?? 'unarmed';
+  const stance = weapon?.stance ?? effectiveStance(state, actor);
   const rules = stanceRules(stance);
-  const rangedDistance = weapon && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
+  const rangedDistance = weapon && !geometry.melee && geometry.distance > 0 && distanceModifier < 0
+    ? Math.min(0, distanceModifier + (rules.rangedPenaltyOffset ?? 0)) : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
   // The protocol does not grant an implicit STR/AGI-to-hit bonus. Associated attributes
   // belong in the damage formula; hit comes from explicit weapon/skill and combat modifiers.
@@ -835,7 +849,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const loadout = weapon ?? (context.skillId && template.damage && actor.stance === 'dual_wield' ? weaponInfo(state, actor) : null);
   const off = loadout?.offHand;
   const combo = template.tags?.some(tag => /多段|连击/.test(tag));
-  const offAttack = loadout?.stance === 'dual_wield' && off?.template?.damage && validReach(state, actor, at, off.template, weaponAmmo(off.template), off.instance.id)
+  const offAttack = loadout?.stance === 'dual_wield' && off?.template?.damage && validReach(state, actor, at, off.template, weaponAmmo(off.template))
     ? (off.template.attack ?? 0) * (combo ? rules.comboOffHandDamage : rules.offHandDamage) : 0;
   const mainAttack = Number(loadout?.template?.attack ?? 0);
   const weaponAttack = mainAttack * (stance === 'greatsword' ? (actor.greatswordMode === 'defensive' ? rules.defensiveDamage : rules.offensiveDamage) : 1) + offAttack;
@@ -901,7 +915,7 @@ const ACTIONS = Object.freeze({
   stance_mode: { ap: 0, slot: null }, brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   free_ally: { ap: 1, slot: 'attack' }, suppress: { ap: 1, slot: 'attack' }, grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
-  flee: { ap: 1, slot: 'action' }, detour: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
+  flee: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
 });
 const movementNames = Object.freeze({ move: '移动', sprint: '疾跑', disengage: '撤离' });
 const isMovement = type => Object.hasOwn(movementNames, type);
@@ -1007,7 +1021,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     return { ...common, name: action.maneuver === 'defensive' ? '转为沉势' : '转为攻势' };
   }
   if (type === 'block') {
-    const stance = stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template });
+    const stance = effectiveStance(state, unit);
     if (stance !== 'sword_shield') return fail('只有剑盾姿态可格挡');
     const rules = stanceRules(stance);
     return { ...common, name: '格挡', reduction: action.maneuver === 'heavy' ? rules.heavyBlockReduction : rules.blockReduction, turns: 1 };
@@ -1032,7 +1046,6 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
 
   if (type === 'flee') return { ...common, name: '逃跑', maneuver: 'flee' };
-  if (type === 'detour') return fail('绕行尚未实现，请使用移动或脱离');
   if (type === 'lock_on') {
     const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
     if (!target || target.team === unit.team || !sameCell(target, center)) return fail('定位必须指定敌方单位');
@@ -1239,8 +1252,16 @@ function changeCounter(state, actor, weapon, effect, resource, after) {
 export function paySkillEquipmentCost(state, actor, skill) {
   const { resource, amount: cost } = skill?.resourceCost ?? {};
   if (!resource || !cost) return;
-  const pool = resourcePool(state, actor, resource);
-  if (pool) changeCounter(state, actor, pool.item, pool.effect, resource, pool.amount - cost);
+  const item = resourcePool(state, actor, resource, skill.itemInstance);
+  if (item) {
+    changeCounter(state, actor, item.item, item.effect, resource, item.amount - cost);
+  } else if (!skill.itemInstance) {
+    const pool = getPool(state, actor.id, resource);
+    if (!pool) return;
+    const { before, after } = updatePoolCurrent(state, pool.id, 'sub', cost);
+    record(state, actor, 'resource', `${actor.name} · ${resource} ${before} → ${after}`,
+      { targetId: actor.id, resource, amount: before - after, before, after });
+  }
 }
 
 function spendAmmo(state, actor, weapon, ammo) {
@@ -1490,14 +1511,14 @@ export function continueStrike({ state, frame, host }) {
     host.hooks(state, frame, 'after_hit', frame.awaitEvent);
     return;
   }
-  if (frame.phase === 'followup' && action.type === 'attack' && !frame.weapon && !actor.followupUsed && weapon?.stance === 'dual_wield') {
+  if (frame.phase === 'followup' && action.type === 'attack' && !frame.weapon && !actor.followupUsed && stanceRules(weapon?.stance).followUp) {
     const recipient = tableEntry(state.units, event.targetId);
     const off = weapon.offHand;
     const ammo = weaponAmmo(off?.template);
     const level = actor.level ?? actor.tier ?? 1;
     const cost = level * 10;
     if (alive(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === 'off_hand' && actor.sp >= cost
-      && (event.rating?.multiplier ?? 0) >= .8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id)
+      && (event.rating?.multiplier ?? 0) >= .8 && validReach(state, actor, recipient, off.template, ammo)
       && (!ammo || weapon.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
       actor.followupUsed = true;
       const followWeapon = { ...off, template: { ...off.template, power: level * 15 }, ammo, stance: 'dual_wield' };
@@ -1706,7 +1727,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       frame.nativeProgress.itemUsed = true;
       actor.attunementCharges--;
       record(state, actor, 'item', `${actor.name}使用同调副手道具`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-      if (!actor.attunementCharges) actor.stance = 'light_blade';
+      if (!actor.attunementCharges) actor.stance = loadoutStance(state, actor);
       Object.assign(event, { targetId: actor.id, targets: [actor.id], itemId: plan.itemId, rules: plan.rules });
       host.hooks(state, frame, 'active', frame.eventRef);
       return false;
@@ -1764,12 +1785,13 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       }
       break;
     }
-    case 'block':
-      actor.blockMode = action.maneuver === 'heavy' ? 'heavy' : 'normal';
+    case 'block': {
+      const heavy = action.maneuver === 'heavy';
       grantStatus(state, actor, actionStatuses.block, { sourceId: actor.id, remainingTurns: 1,
         vars: { reduction: plan.reduction } });
-      record(state, actor, 'block', `${actor.name}${actor.blockMode === 'heavy' ? '重' : ''}格挡`, { reduction: plan.reduction });
+      record(state, actor, 'block', `${actor.name}${heavy ? '重' : ''}格挡`, { reduction: plan.reduction });
       break;
+    }
     case 'reload': {
       const weapon = weaponInfo(state, actor);
       changeCounter(state, actor, weapon, weapon.ammo, weapon.ammo.resource, weapon.ammo.cap);

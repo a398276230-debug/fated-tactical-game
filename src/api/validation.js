@@ -69,14 +69,17 @@ function carrierFieldsValue(value, state, resolved = false) {
   }, 'VM 修饰');
   if (own(value, 'rules')) validateRules(value.rules, state);
   checkOptional(value, 'shareRulesTo', validVmPureSelector);
+  if (own(value, 'unitPools')) unitPoolDefinitions(value.unitPools);
 }
-function poolDefinitions(value) {
+function unitPoolDefinitions(value) { poolDefinitions(value, true); }
+function poolDefinitions(value, unit = false) {
   table(value, definition => {
-    fields(definition, ['cap'], ['initial', 'reloadable']);
+    fields(definition, ['cap'], ['initial', unit ? 'name' : 'reloadable']);
     requireThat(numericExpr(definition.cap) && (typeof definition.cap !== 'number' || definition.cap >= 0), '资源池上限');
     checkOptional(definition, 'initial', initial => numericExpr(initial) && (typeof initial !== 'number' || initial >= 0
       && (typeof definition.cap !== 'number' || initial <= definition.cap)));
     checkOptional(definition, 'reloadable', flag => typeof flag === 'boolean');
+    checkOptional(definition, 'name', name => text(name, 100));
   });
 }
 const validPoolId = value => typeof value === 'string' && /^pool_[A-Za-z0-9_-]{1,250}$/.test(value);
@@ -88,6 +91,7 @@ const stackCapLimit = template => typeof template.maxStacks === 'string' ? maxSt
 
 export function statusTemplate(value, key = value?.id, state) {
   fields(value, ['id', 'name'], ['icon', 'category', 'description', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'expireOn', ...carrierFields]);
+  requireThat(!own(value, 'unitPools'), '状态模板不能声明单位池');
   requireThat(id(key) && key === value.id && text(value.name), 'VM 状态 ID/名称');
   checkOptional(value, 'icon', icon => text(icon, 24));
   checkOptional(value, 'description', description => text(description, 300));
@@ -214,7 +218,7 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
-const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
+const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','attunementCharges','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound'];
 export function unitValue(v, key, state) {
   fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
   carrierFieldsValue(v, state, true);
@@ -250,7 +254,6 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'bodyLengthM', x => num(x, .01, 1e9)); checkOptional(v, 'tier', x => int(x, 1, 7));
   checkOptional(v, 'mc', x => int(x, 1, 64)); checkOptional(v, 'nonLethal', x => typeof x === 'boolean');
   checkOptional(v, 'moraleCheckedRound', x => int(x, 1, 1000000));
-  checkOptional(v, 'maneuvers', x => Array.isArray(x) && x.length <= 32 && x.every(id));
   checkOptional(v, 'initiativePercent', x => num(x, -1, 10)); checkOptional(v, 'flatInitiative', x => int(x, -1000, 1000));
   for (const field of ['attackInit','actionInit']) checkOptional(v, field, x => Array.isArray(x) && x.length <= 16 && x.every(n => int(n, -1000, 1000)));
   checkOptional(v, 'followupUsed', x => typeof x === 'boolean');
@@ -259,7 +262,7 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'intent', x => typeof x === 'string' && Object.hasOwn(INTENTS, x));
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));
   checkOptional(v, 'stance', x => STANCES.includes(x)); checkOptional(v, 'protagonist', x => x === true); checkOptional(v, 'moraleType', x => typeof x === 'string' && Object.hasOwn(MORALE,x)); checkOptional(v, 'moraleState', x => MORALE_STATES.includes(x));
-  checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'parryQuota', x => int(x, 0, 2)); checkOptional(v, 'parryRefunded', x => typeof x === 'boolean'); checkOptional(v, 'attunementCharges', x => int(x, 0, 2)); checkOptional(v, 'blockMode', x => ['normal','heavy'].includes(x));
+  checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'attunementCharges', x => int(x, 0, 2));
   if (own(v,'bagWeapons')) list(v.bagWeapons, 200, id, '背包武器');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
   table(v.statuses, (status, statusId) => statusValue(status, statusId, state, key), maxStatusTemplates + Object.keys(STATUSES).length);
@@ -279,6 +282,7 @@ export function zoneValue(value, key, state) {
   requireThat(id(key) && value.id === key && text(value.name), 'VM 区域 ID/名称');
   checkOptional(value, 'templateId', id);
   checkOptional(value, 'sourceId', source => source === null || id(source));
+  requireThat(value.sourceId != null || !own(value, 'unitPools'), '无主区域不能声明单位池');
   carrierFieldsValue(value, state, true);
   if (own(value, 'pools')) poolBindings(value.pools);
   const { area, follow, persistent, remainingTurns } = value;

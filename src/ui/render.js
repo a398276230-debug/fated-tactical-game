@@ -12,7 +12,7 @@ const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范�
 const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' };
 export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', attack: '普攻', interact: '互动', brace: '架势防御',
   free_ally: '解除压制', suppress: '压制', block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',
-  flee: '逃跑', detour: '绕行', reload: '装填', end: '结束回合' };
+  flee: '逃跑', reload: '装填', end: '结束回合' };
 export const ACTION_HINTS = { move: '走到这一格', sprint: '跑得更远，耗 2 AP', disengage: '离开时不被借机', attack: '用武器攻击', interact: '使用场景设施',
   free_ally: '用攻击槽直接解救相邻队友', suppress: '一格内命中后进行力量对抗，不造成伤害', brace: '本回合减伤', block: '举盾格挡', charge: '为下一击蓄力', scan: '侦察周围', lock_on: '下次攻击更准', grapple: '对抗检定，擒住对方',
   disarm: '对抗检定，打落武器', trip: '对抗检定，绊倒对方', push: '对抗检定，推开对方', flee: '尝试脱离战斗', use_item: '使用副手道具',
@@ -273,7 +273,7 @@ export function createRenderer(root, portraitFor = () => []) {
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some(pool => pool.reloadable);
-    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
+    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'greatsword' ? `·${u.greatswordMode === 'defensive' ? '沉势' : '攻势'}` : ''}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
     for (const s of values(u.statuses)) {

@@ -8,7 +8,7 @@ import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js'
 import { requestBattleAi } from '../core/battle-ai.js';
 
 const THEMES = ['amethyst', 'night-gold', 'frost-silver'];
-const TARGETLESS = ['end_encounter','switch_weapon','stance_mode', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
+const TARGETLESS = ['end_encounter','switch_weapon','stance_mode', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload', 'end'];
 const PATH_NAMES = { units: '单位', items: '物品', grid: '地形', statuses: '状态', counters: '计数', statusTemplates: '状态模板', covers: '掩体', interactives: '互动点' };
 
 /** 把沙盒试算结果写成人能读的句子（保留原始键名，便于对照命令）。 */

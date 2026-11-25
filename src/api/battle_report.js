@@ -33,7 +33,7 @@ const hookNames = {
   round_start: '轮次开始', round_end: '轮次结束',
 };
 const checkGrade = (success, roll) => success ? (roll === 20 ? '大成功' : '成功') : (roll === 1 ? '大失败' : '失败');
-const maneuvers = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
+const contestLabels = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
 import { proseNumber, attributionLine, choiceProse, movementProgressText } from '../core/log-attribution.js';
 const signed = value => `${value > 0 ? '+' : ''}${proseNumber(value)}`;
 const percent = value => Number((value * 100).toFixed(4));
@@ -214,13 +214,10 @@ export function formatBattleReportText(report, unitNames = {}) {
           break;
         case 'contest': case 'flee': {
           const target = detail.targetId ? `（对手 ${name(event, detail.targetId)}）` : '';
-          const label = type === 'flee' ? '逃跑' : maneuvers[detail.maneuver] ?? '对抗';
+          const label = type === 'flee' ? '逃跑' : contestLabels[detail.maneuver] ?? '对抗';
           add(`${name(event, actor)}${label}检定${checkGrade(detail.success, detail.attackerRoll)}${target}`);
           break;
         }
-        case 'parry':
-          add(replaceUnitNames(event, text) + notes([detail.perfect ? '大成功' : checkGrade(detail.success, detail.defenderRoll)]) + attributionText(detail));
-          break;
         case 'morale':
           add(replaceUnitNames(event, text) + (Number.isFinite(detail.roll) ? notes([`战意检定${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ''));
           break;

@@ -116,7 +116,7 @@ export function buildScenario(request = 'ruins') {
     const hpValue = resources?.hp.current ?? hp, mpValue = resources?.mp.current ?? 14, spValue = resources?.sp.current ?? 10;
     state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp:hpValue, maxHp:resources?.hp.max ?? hpValue,
       mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM, mc, templateId: id, tags: [], vars: {}, mods: [], rules,
-      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stanceRules('attunement').itemCharges, moraleType: 'standard',
+      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', attunementCharges: stanceRules('attunement').itemCharges, moraleType: 'standard',
       mp: mpValue, maxMp:resources?.mp.max ?? mpValue, sp: spValue, maxSp:resources?.sp.max ?? spValue, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
       weapon: equip(weaponId, weapon), gear: gear.map(templateId => equip(`${id}-${templateId}`, templateId)), skills };

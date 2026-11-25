@@ -105,7 +105,6 @@ function damageEntry(state, log) {
   if (d.attackMultiplier && d.attackMultiplier !== 1) mults.push(`攻击加成 ×${num(d.attackMultiplier)}`);
   if (d.multiplier && d.multiplier !== 1) mults.push(`增伤 ×${num(d.multiplier)}`);
   if (d.stanceScale && d.stanceScale !== 1) mults.push(`架势 ×${d.stanceScale}`);
-  if (d.offHandScale && d.offHandScale !== 1) mults.push(`副手 ×${d.offHandScale}`);
   if (d.shatter) mults.push(`碎冰 +${pct(d.shatter)}`);
   if (d.vulnerability) mults.push(`易伤 +${pct(d.vulnerability)}`);
   if (d.reduction) mults.push(`减伤 −${pct(d.reduction)}`);
@@ -250,7 +249,7 @@ export function narrate(log, state) {
     case 'cover_break': return out({ tone: 'damage', icon: '🧱' });
     case 'cover_approach': return out({ icon: '🧱', quiet: true });
     case 'interact': return out({ tone: 'status', icon: '✴️' });
-    case 'brace': case 'block': case 'guard': case 'parry': return out({ tone: 'status', icon: '🛡️' });
+    case 'brace': case 'block': case 'guard': return out({ tone: 'status', icon: '🛡️' });
     case 'followup': return out({ tone: 'hit', icon: '⚔️' });
     case 'reveal': return out({ icon: '👁' });
     case 'cleanse': return out({ tone: 'heal', icon: '✨' });

@@ -88,7 +88,8 @@ function hpRatio(unit) {
 }
 
 const entityFamilies = {
-  resource: ['资源余额，使用资源 ID', (context, entity, id) => callback(context, 'resource', entity, id) ?? path(entity, 'resources', id)],
+  resource: ['资源余额，使用资源 ID，缺省为 0', (context, entity, id) => callback(context, 'resource', entity, id)
+    ?? path(own(context, 'state'), 'pools', path(entity, 'pools', id), 'current') ?? path(entity, 'resources', id) ?? own(entity, id) ?? 0],
   stacks: ['状态层数，使用状态 ID', (context, entity, id) => callback(context, 'stacks', entity, id) ?? own(statusOf(entity, id), 'stacks') ?? 0],
   vars: ['变量', (context, entity, id) => path(entity, 'vars', id)]
 };
