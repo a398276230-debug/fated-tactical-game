@@ -259,7 +259,7 @@ var DISTANCE_TABLE = Object.freeze([
 ]);
 var UNIT_STATS = Object.freeze(["str", "agi", "con", "int", "spi"]);
 var DAMAGE_TYPES = Object.freeze(["physical", "energy", "mental", "true"]);
-var STANCES = Object.freeze(["light_blade", "dual_wield", "attunement", "greatsword", "sword_shield", "unarmed"]);
+var STANCES = Object.freeze(["light_blade", "dual_wield", "attunement", "greatsword", "sword_shield", "ranged", "unarmed"]);
 var MORALE_STATES = Object.freeze(["steady", "shaken", "routed"]);
 var INTENTS = Object.freeze({
   normal: { name: "\u5E38\u89C4", difficulty: 0, multiplier: 1 },
@@ -276,23 +276,24 @@ var MORALE = Object.freeze({
   standard: { threshold: 0.3, check: true },
   guard: { threshold: 0.35, check: true }
 });
+var isRangedMain = (item) => Boolean(item && (item.ranged === true || item.weaponClass === "ranged" || item.kind === "ranged"));
 var stanceFor = (slots3 = {}) => {
   const main = slots3.mainHand ?? slots3.weapon ?? null, off = slots3.offHand ?? null, shield = slots3.shield ?? null;
   if (shield) return "sword_shield";
   if (!main) return "unarmed";
   if (off?.kind === "consumable") return "attunement";
-  if (main?.heavy || main?.twoHanded) return "greatsword";
+  if (!isRangedMain(main) && (main.heavy || main.twoHanded)) return "greatsword";
   if (off) return "dual_wield";
-  if (main?.ranged || main?.kind === "ranged") return "light_blade";
-  return main ? "light_blade" : "unarmed";
+  return isRangedMain(main) ? "ranged" : "light_blade";
 };
-var stanceLabel = Object.freeze({ light_blade: "\u8F7B\u5251", dual_wield: "\u53CC\u6301", attunement: "\u540C\u8C03", greatsword: "\u91CD\u5251", sword_shield: "\u5251\u76FE", unarmed: "\u65E0\u68B0" });
+var stanceLabel = Object.freeze({ light_blade: "\u8F7B\u5251", dual_wield: "\u53CC\u6301", attunement: "\u540C\u8C03", greatsword: "\u91CD\u5251", sword_shield: "\u5251\u76FE", ranged: "\u5C04\u51FB", unarmed: "\u65E0\u68B0" });
 var STANCE_RULES = Object.freeze({
-  light_blade: { armorPenetration: 0.08, closeRange: true, rangedDistancePenalty: 0 },
+  light_blade: { armorPenetration: 0.08, closeRange: true },
   dual_wield: { offHandDamage: 0.5, comboOffHandDamage: 0.75, followUp: true },
   attunement: { itemCharges: 2 },
-  greatsword: { offensiveDamage: 1.3, defensiveDamage: 1.5, armorPenetration: 0.05, parryQuota: 2, parryReduction: 0.6, perfectParryReduction: 1 },
-  sword_shield: { blockReduction: 0.25, heavyBlockReduction: 0.45, shieldDamageFactor: 0.3 },
+  greatsword: { offensiveDamage: 1.5, defensiveDamage: 1.2, defensiveReduction: 0.15, armorPenetration: 0.05 },
+  sword_shield: { blockReduction: 0.25, heavyBlockReduction: 0.45 },
+  ranged: { rangedPenaltyOffset: 2 },
   unarmed: {}
 });
 function stanceRules(stance) {
@@ -673,7 +674,7 @@ function hpRatio(unit) {
   return maxHp == null || maxHp === 0 ? 0 : numeric((a, b) => a / b, own2(unit, "hp"), maxHp);
 }
 var entityFamilies = {
-  resource: ["\u8D44\u6E90\u4F59\u989D\uFF0C\u4F7F\u7528\u8D44\u6E90 ID", (context, entity, id3) => callback(context, "resource", entity, id3) ?? path(entity, "resources", id3)],
+  resource: ["\u8D44\u6E90\u4F59\u989D\uFF0C\u4F7F\u7528\u8D44\u6E90 ID\uFF0C\u7F3A\u7701\u4E3A 0", (context, entity, id3) => callback(context, "resource", entity, id3) ?? path(own2(context, "state"), "pools", path(entity, "pools", id3), "current") ?? path(entity, "resources", id3) ?? own2(entity, id3) ?? 0],
   stacks: ["\u72B6\u6001\u5C42\u6570\uFF0C\u4F7F\u7528\u72B6\u6001 ID", (context, entity, id3) => callback(context, "stacks", entity, id3) ?? own2(statusOf(entity, id3), "stacks") ?? 0],
   vars: ["\u53D8\u91CF", (context, entity, id3) => path(entity, "vars", id3)]
 };
@@ -1090,7 +1091,7 @@ function evaluateExpr(value, context) {
 }
 
 // src/core/vm-schema.js
-var enumOf = (...values4) => ({ enum: values4 });
+var enumOf = (...values5) => ({ enum: values5 });
 var ref = (name) => ({ $ref: `#/$defs/${name}` });
 var either = (...anyOf) => ({ anyOf });
 var variants = (...oneOf) => ({ oneOf });
@@ -2052,8 +2053,8 @@ function initializeUnitPools(state, unitId, resources) {
 function maxFor(state, contributor, effectiveMax) {
   return nonnegative(effectiveMax ? effectiveMax(contributor, state) : contributor.maxBase, "Contributor max");
 }
-function total(values4, name) {
-  return nonnegative(values4.reduce((sum, value) => sum + value, 0), name);
+function total(values5, name) {
+  return nonnegative(values5.reduce((sum, value) => sum + value, 0), name);
 }
 function unitBindings(state, pool) {
   return pool.contributors.map((contributor) => {
@@ -2410,19 +2411,19 @@ function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
       for (const [index, mod2] of row.entity.mods.entries()) {
         const key4 = JSON.stringify([carrierDedupePrefix(row, unitId), index]);
         if (seen.has(key4) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
-        const values4 = {};
+        const values5 = {};
         for (const field2 of ["flat", "mult", "additivePercent"]) {
           if (mod2[field2] === void 0) continue;
           const value = evaluateExpr(mod2[field2], context);
-          if (Number.isFinite(value)) values4[field2] = value;
+          if (Number.isFinite(value)) values5[field2] = value;
         }
-        if (!Object.keys(values4).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length) continue;
+        if (!Object.keys(values5).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length) continue;
         seen.add(key4);
-        if (mod2.stat && Object.keys(values4).length) {
+        if (mod2.stat && Object.keys(values5).length) {
           const total2 = stats.get(mod2.stat) ?? { flat: 0, mult: 1, additivePercent: 0 };
-          total2.flat += values4.flat ?? 0;
-          total2.mult *= values4.mult ?? 1;
-          total2.additivePercent += values4.additivePercent ?? 0;
+          total2.flat += values5.flat ?? 0;
+          total2.mult *= values5.mult ?? 1;
+          total2.additivePercent += values5.additivePercent ?? 0;
           stats.set(mod2.stat, total2);
         }
         for (const lock of mod2.locks ?? []) if (Object.hasOwn(locks, lock)) locks[lock] = true;
@@ -3036,14 +3037,14 @@ var ruleOps = {
       const hp = getPool(state, target2.id, "hp");
       if (!hp || live(target2) || target2.fled || target2.corpseConsumed || host.flag?.(state, target2, "blockRevive")) continue;
       if (hp.contributors.length !== 1) continue;
-      const values4 = ["hp", "mp", "sp"].map((key4) => {
+      const values5 = ["hp", "mp", "sp"].map((key4) => {
         const pool = getPool(state, target2.id, key4);
         const fraction = evaluate2(op[`${key4}Percent`], { ...context, target: target2 }, key4 === "hp" ? 1 : 0);
         const flat = key4 === "hp" && op.hpFlat !== void 0 ? evaluateExpr(op.hpFlat, { ...context, target: target2 }) : fraction * pool.max;
         return { pool, flat };
       });
-      if (values4.some(({ flat }) => !Number.isFinite(flat))) continue;
-      for (const { pool, flat } of values4) updatePoolCurrent(state, pool.id, "set", bounded2(flat, pool.kind === "hp" ? 1 : 0, pool.max));
+      if (values5.some(({ flat }) => !Number.isFinite(flat))) continue;
+      for (const { pool, flat } of values5) updatePoolCurrent(state, pool.id, "set", bounded2(flat, pool.kind === "hp" ? 1 : 0, pool.max));
       delete target2.diedAt;
       if (!state.order.includes(target2.id)) state.order.push(target2.id);
       host.log(state, context.self, "revive", `${target2.name}\u590D\u6D3B\uFF0C\u6062\u590D\u81F3${target2.hp}\u70B9\u751F\u547D`, { targetId: target2.id });
@@ -4762,6 +4763,7 @@ function normalizeProse(text8) {
 
 // src/core/vm-runtime.js
 var own12 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var values2 = (table4) => Object.values(table4 ?? {});
 var lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
 var mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
 function recordVM(state, unit, type, text8, detail = {}) {
@@ -4781,18 +4783,58 @@ var handlers = {
   strike: continueStrike,
   round: continueRound
 };
+var poolNumber = (expr2, context) => {
+  const number3 = evaluateExpr(expr2, context);
+  return Number.isFinite(number3) ? Math.max(0, number3) : 0;
+};
+function syncDeclaredUnitPools(state, unit, carriers2) {
+  const definitions = /* @__PURE__ */ new Map();
+  const context = { state, self: unit };
+  for (const carrier4 of carriers2) {
+    for (const [key4, definition] of Object.entries(carrier4?.unitPools ?? {})) {
+      if (["hp", "mp", "sp"].includes(key4)) continue;
+      const previous = definitions.get(key4);
+      definitions.set(key4, {
+        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
+        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context))
+      });
+    }
+  }
+  for (const [key4, { max, current }] of definitions) {
+    const pool = getPool(state, unit.id, key4);
+    if (!pool) {
+      createPool(state, { ownerId: unit.id, key: key4, max, current: Math.min(max, current) });
+    } else if (max > pool.initialMax) {
+      if (max > pool.max) updatePoolMax(state, pool.id, "set_max", max);
+      const updated = getPool(state, unit.id, key4);
+      updated.initialMax = max;
+      updated.contributors[0].initialMaxBase = max;
+    }
+  }
+}
 function initializeVMWorld(state) {
   state.vm ??= newVM();
   state.pools ??= {};
-  for (const unit of Object.values(state.units)) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
-  for (const item of Object.values(state.items ?? {})) {
+  const units = values2(state.units);
+  const holders = /* @__PURE__ */ new Map();
+  for (const unit of units) if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
+  for (const unit of units) {
+    const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []].map((id3) => own12(state.items, id3)).filter(Boolean).map((item) => {
+      holders.set(item.id, unit);
+      return own12(state.equipment, item.templateId);
+    });
+    const skills = [.../* @__PURE__ */ new Set([...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})])].map((id3) => own12(state.skills, id3));
+    syncDeclaredUnitPools(state, unit, [unit, ...skills, ...equipment]);
+  }
+  for (const item of values2(state.items)) {
+    const context = { state, self: holders.get(item.id) ?? own12(state.units, item.ownerId), item };
     for (const [key4, definition] of Object.entries(own12(state.equipment, item.templateId)?.pools ?? {})) {
-      if (!getPool(state, item.id, key4, "item") && Number.isFinite(definition.cap)) createPool(state, {
+      if (!getPool(state, item.id, key4, "item")) createPool(state, {
         ownerKind: "item",
         ownerId: item.id,
         key: key4,
-        max: definition.cap,
-        current: definition.initial ?? 0,
+        max: poolNumber(definition.cap, context),
+        current: poolNumber(definition.initial, context),
         reloadable: definition.reloadable ?? false
       });
     }
@@ -5133,10 +5175,10 @@ function randomDie(state, sides) {
   state.rng = rng;
   return value;
 }
-var values2 = (object4) => Object.values(object4 ?? {});
+var values3 = (object4) => Object.values(object4 ?? {});
 var alive3 = (unit) => unit && unit.hp > 0;
 var byId2 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-var living = (state) => values2(state.units).filter((unit) => alive3(unit) && !unit.fled).sort(byId2);
+var living = (state) => values3(state.units).filter((unit) => alive3(unit) && !unit.fled).sort(byId2);
 var sameCell = (a, b) => a.x === b.x && a.y === b.y;
 var pos = (x, y) => ({ x, y });
 var pointAt = (state, at3) => ({ x: at3.x, y: at3.y, z: elevation(state, at3) });
@@ -5148,7 +5190,7 @@ var statusOf2 = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.st
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
 function record(state, unit, type, text8, detail = {}) {
   const actor = typeof unit === "string" ? unit : unit?.id ?? null;
-  const positions = Object.fromEntries(values2(state.units).map((current) => [current.id, pointAt(state, current)]));
+  const positions = Object.fromEntries(values3(state.units).map((current) => [current.id, pointAt(state, current)]));
   const event = { round: state.round, actor, text: text8, type, detail, positions };
   state.logs.push(event);
   return event;
@@ -5168,13 +5210,15 @@ function equipmentFor(state, instanceId) {
 var isWeapon = (template) => template?.kind === "weapon" || Boolean(template?.damage && !template.kind);
 var gearFor = (state, unit) => (unit.gear ?? []).map((id3) => equipmentFor(state, id3)).filter(({ template }) => !isWeapon(template) && template?.kind !== "shield");
 function loadoutStance(state, unit) {
-  const stance = stanceFor({
-    mainHand: equipmentFor(state, unit.mainHand ?? unit.weapon).template,
-    offHand: equipmentFor(state, unit.offHand).template,
+  const main = equipmentFor(state, unit.mainHand ?? unit.weapon).template;
+  const off = equipmentFor(state, unit.offHand).template;
+  return stanceFor({
+    mainHand: main?.boundTo && main.boundTo !== unit.id ? null : main,
+    offHand: off?.kind === "consumable" && unit.attunementCharges === 0 ? null : off,
     shield: equipmentFor(state, unit.shield).template
   });
-  return stance === "attunement" && unit.attunementCharges === 0 ? "light_blade" : stance;
 }
+var effectiveStance = (state, unit) => unit.stance ?? loadoutStance(state, unit);
 function switchableWeapons(state, unit) {
   const main = unit.mainHand ?? unit.weapon;
   const bag = unit.bagWeapons ?? [];
@@ -5191,7 +5235,8 @@ var resourcePool = (state, unit, resource2, instance) => {
   for (const item of equipped(state, unit)) {
     if (instance && item.instance !== instance) continue;
     const effect = tableEntry(item.template?.pools, resource2);
-    if (effect) return { item, effect, amount: getPool(state, item.instance.id, resource2, "item")?.current ?? effect.initial ?? 0 };
+    const pool = effect && getPool(state, item.instance.id, resource2, "item");
+    if (pool) return { item, effect, amount: pool.current };
   }
   return null;
 };
@@ -5199,7 +5244,7 @@ function stealthCheck(state, unit, d20, dc) {
   const bonus = modCheck(state, unit, "stealthBonus");
   return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
 }
-var shieldTotal = (unit) => values2(unit.statuses).reduce((total2, status) => total2 + (status.category === "shield" ? status.vars?.shieldAmount ?? 0 : 0), 0);
+var shieldTotal = (unit) => values3(unit.statuses).reduce((total2, status) => total2 + (status.category === "shield" ? status.vars?.shieldAmount ?? 0 : 0), 0);
 function grantStatus(state, unit, statusId3, options = {}) {
   const template = getStatusTemplate(state, statusId3);
   if (!unit || !template) throw new Error(`\u672A\u77E5\u72B6\u6001\uFF1A${statusId3}`);
@@ -5262,13 +5307,13 @@ function refreshOutcome(state) {
   if (state.battleConclusion) return state.outcome;
   if (["spar", "arena"].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
   let blue = false, red = false;
-  for (const unit of values2(state.units)) if (alive3(unit) && !unit.fled) {
+  for (const unit of values3(state.units)) if (alive3(unit) && !unit.fled) {
     blue ||= unit.team === "blue";
     red ||= unit.team === "red";
   }
   if (state.battleType === "suppress") {
     const side2 = state.suppressingTeam, label = side2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
-    const defenders = values2(state.units).filter((u) => u.team !== side2);
+    const defenders = values3(state.units).filter((u) => u.team !== side2);
     const present = defenders.filter((u) => alive3(u) && !u.fled);
     const dead = defenders.filter((u) => !alive3(u));
     if (!present.length && defenders.length) return concludeObjective(
@@ -5362,7 +5407,8 @@ function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const shatter = hit ? modStat(state, unit, "shatter", 0, { damageType: type }) : 0;
   const vulnerability = modStat(state, unit, "incomingDamageMult", 1, { ...ctx, damageType: type }) - 1;
   const defensiveContext = { ...ctx, target: ctx.attacker, damageType: type };
-  const reduction = type === "true" ? 0 : clamp4(modStat(state, unit, "damageReduction", 0, defensiveContext), -1, 1);
+  const stanceDR = unit?.greatswordMode === "defensive" && effectiveStance(state, unit) === "greatsword" ? stanceRules("greatsword").defensiveReduction : 0;
+  const reduction = type === "true" ? 0 : clamp4(modStat(state, unit, "damageReduction", stanceDR, defensiveContext), -1, 1);
   const dr = type === "true" ? 0 : clamp4(modStat(state, unit, "dr", 0, defensiveContext), -1, 1);
   const defense = ctx.ignoreArmor || type === "true" || type === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2e3 / (defense + 2e3);
@@ -5503,7 +5549,7 @@ function continueRound({ state, frame, host }) {
     }
     state.turn = 0;
     state.round++;
-    if (state.spatialTerrain || values2(state.zones).length || values2(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
+    if (state.spatialTerrain || values3(state.zones).length || values3(state.units).some((unit) => unit.summoned && unit.remainingTurns != null)) advanceVMSpatial(state);
     return;
   }
   state.vm.stack.pop();
@@ -5538,20 +5584,22 @@ function beginBattle(state) {
   syncEquipmentEffects(state);
   const initiative2 = initiativeOrder(state, () => randomDie(state, 20));
   state.order = initiative2.map((entry2) => entry2.unitId);
-  for (const unit of values2(state.units)) {
+  for (const unit of values3(state.units)) {
+    unit.stance ??= loadoutStance(state, unit);
+    if (unit.stance === "attunement") unit.attunementCharges ??= stanceRules("attunement").itemCharges;
     unit.ap = 0;
     delete unit.followupUsed;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
     delete unit.moveSpent;
     unit.reactionAvailable = true;
-    for (const status of values2(unit.statuses)) {
+    for (const status of values3(unit.statuses)) {
       delete status.appliedRound;
       delete status.appliedTurn;
     }
   }
   record(state, null, "initiative", "\u654F\u6377 + d20\uFF1A\u786E\u5B9A\u5148\u653B\u6B21\u5E8F", { initiative: initiative2 });
-  for (const unit of living(state)) for (const status of values2(unit.statuses)) {
+  for (const unit of living(state)) for (const status of values3(unit.statuses)) {
     record(
       state,
       status.sourceId ?? unit.id,
@@ -5613,7 +5661,7 @@ function modStat(state, unit, name, base, context = {}) {
 }
 function modCheck(state, unit, key4, context = {}) {
   const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
-  if (key4 === "highGroundRange" || key4 === "highGroundAccuracy") return template?.vars?.[key4] ?? 0;
+  if (key4 === "highGroundAccuracy") return template?.vars?.[key4] ?? 0;
   if (key4 === "advantage") return modStat(state, unit, "advantage", 0, { checkKind: "attack", ...context });
   return 0;
 }
@@ -5633,7 +5681,7 @@ function equippedActiveSkills(state, unit) {
     for (const skillId of template.skills ?? []) {
       const skill2 = tableEntry(state.skills, skillId);
       if (skill2 && !isPassiveSkill(skill2) && !result.has(skillId)) {
-        result.set(skillId, { ...skill2, quality: template.quality ?? skill2.quality });
+        result.set(skillId, { ...skill2, quality: template.quality ?? skill2.quality, itemInstance: instance });
       }
     }
     if (template.kind === "consumable") continue;
@@ -5736,7 +5784,12 @@ function paymentError(state, unit, ap, slot2, template, { hp, mp, sp }, skill2 =
   if (hp > 0 && hp >= unit.hp) return insufficientHP;
   if (unit.mp < mp) return "\u9B54\u529B\u4E0D\u8DB3";
   if (unit.sp < sp) return "\u4F53\u529B\u4E0D\u8DB3";
-  if (template.resourceCost?.resource && (resourcePool(state, unit, template.resourceCost.resource)?.amount ?? 0) < template.resourceCost.amount) return "\u88C5\u5907\u8D44\u6E90\u4E0D\u8DB3";
+  const { resource: resource2, amount } = template.resourceCost ?? {};
+  if (resource2) {
+    const item = resourcePool(state, unit, resource2, template.itemInstance);
+    const pool = !item && !template.itemInstance && getPool(state, unit.id, resource2);
+    if ((item?.amount ?? pool?.current ?? 0) < amount) return item || template.itemInstance ? "\u88C5\u5907\u8D44\u6E90\u4E0D\u8DB3" : "\u81EA\u5B9A\u4E49\u8D44\u6E90\u4E0D\u8DB3";
+  }
   return null;
 }
 var normalAttack = Object.freeze({ name: "\u5F92\u624B", range: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" } });
@@ -5745,7 +5798,7 @@ var shieldBashRules = [{ id: "shield-bash-hit", hook: "after_hit", program: [
   { op: "apply_status", target: "target", statusId: actionStatuses.shield_bash, turns: 1 }
 ] }];
 var shieldBashTemplate = { name: "\u76FE\u51FB", range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" }, rules: shieldBashRules };
-var isMelee = (template) => template.rangeType !== "ranged" && !template.ranged && template.weaponClass !== "ranged" && (template.rawRange ?? template.range ?? 1.5) <= 2;
+var isMelee = (template) => template.rangeType !== "ranged" && !isRangedMain(template) && (template.rawRange ?? template.range ?? 1.5) <= 2;
 var weaponAmmo = (template) => {
   const pools = Object.entries(template?.pools ?? {}).map(([resource2, pool]) => ({ resource: resource2, ...pool }));
   return pools.find((pool) => pool.resource === "ammo") ?? pools.find((pool) => pool.reloadable);
@@ -5761,7 +5814,7 @@ function weaponInfo(state, unit) {
   const infiniteAmmo = vmFlag(state, unit, "infiniteAmmo");
   const offHand = equipmentFor(state, unit.offHand);
   offHand.template = scaledTemplate(state, unit, offHand.template, "weapon");
-  const stance = unit.stance ?? stanceFor({ mainHand: weapon2.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
+  const stance = effectiveStance(state, unit);
   return {
     ...weapon2,
     ammo,
@@ -5772,23 +5825,23 @@ function weaponInfo(state, unit) {
     template: weapon2.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, "weapon"))
   };
 }
-function reaches(state, actor, at3, template, ammo, weaponId = actor.mainHand ?? actor.weapon) {
+function reaches(state, actor, at3, template, ammo) {
   const dz = elevation(state, actor) - elevation(state, at3);
   const melee = isMelee(template) && !ammo;
   const baseRange = template.range ?? 1.5;
-  const range2 = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? ammo?.reloadable ? modCheck(state, actor, "highGroundRange", { weaponId, highGround: true }) : 1 : -1);
+  const range2 = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? template.vars?.highGroundRange ?? 1 : -1);
   const offset = incomingDistanceOffset(state, actor, at3, { checkKind: "attack" });
   return { distance: distance3D(state, actor, at3) + offset, dz, range: Math.max(0, range2), melee };
 }
-function validReach(state, actor, at3, template, ammo, weaponId) {
-  const geometry = reaches(state, actor, at3, template, ammo, weaponId);
+function validReach(state, actor, at3, template, ammo) {
+  const geometry = reaches(state, actor, at3, template, ammo);
   return isGround(state, at3) && geometry.distance <= geometry.range + 1e-9 && hasLOS(state, actor, at3);
 }
 function visibleEnemy(state, actor, target2) {
   return target2.team !== actor.team && (!vmFlag(state, target2, "hidden", { attacker: actor }) || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1);
 }
 function tauntFor(state, actor, template, ammo) {
-  for (const status of values2(actor.statuses).filter((status2) => status2.mods?.some((mod2) => mod2.flags?.includes("taunted"))).sort(byId2)) {
+  for (const status of values3(actor.statuses).filter((status2) => status2.mods?.some((mod2) => mod2.flags?.includes("taunted"))).sort(byId2)) {
     const source = tableEntry(state.units, status.sourceId);
     if (alive3(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo)) return source;
   }
@@ -5884,7 +5937,7 @@ function resolveArmorPierce(state, actor, template, weapon2, strike) {
 }
 function targetProfile(state, actor, target2, at3, template, context = {}) {
   const { weapon: weapon2, origin = actor, teleport: teleport2, cover = false } = context;
-  const geometry = reaches(state, origin, at3, template, weapon2?.ammo, weapon2?.instance?.id);
+  const geometry = reaches(state, origin, at3, template, weapon2?.ammo);
   const arrow = Boolean(weapon2?.ammo);
   const arc = target2 && !cover ? facingArc(target2, origin) : "front";
   const backstab = !cover && arc !== "front" && geometry.melee;
@@ -5923,15 +5976,15 @@ function targetProfile(state, actor, target2, at3, template, context = {}) {
   const size = cover ? 0 : typeof target2?.size === "number" ? Math.max(0, target2.size - 1) : target2?.size === "large" ? 2 : target2?.size === "small" ? -1 : 0;
   const sizeModifier = cover || !target2 ? 0 : sizeHitModifier(actor, target2);
   const sizeAccuracy = size + sizeModifier;
-  const rangedWeapon2 = Boolean(weapon2 && template.ranged === true && !template.closeQuarters);
+  const rangedWeapon2 = Boolean(weapon2 && (isRangedMain(template) || weapon2.ammo));
   const rangedCarrier = Boolean(!weapon2 && !geometry.melee && (template.range ?? 0) > 0);
-  const ranged = rangedWeapon2 || rangedCarrier;
-  const lookupDistance = ranged && template.rawRange != null && geometry.distance > 0 ? Math.round(geometry.distance / Math.max(6, geometry.range) * 6) : geometry.distance;
-  const distanceModifier = geometry.distance === 0 && rangedWeapon2 ? -4 : distanceTier(lookupDistance).hit;
+  const pointBlank = geometry.distance === 0 && rangedWeapon2;
+  const lookupDistance = (weapon2 || rangedCarrier) && template.rawRange != null ? geometry.distance / Math.max(6, geometry.range) * 6 : geometry.distance;
+  const distanceModifier = pointBlank ? template.closeQuarters ? 0 : -4 : distanceTier(lookupDistance).hit;
   const weaponRangeModifier = distanceTier(Math.max(geometry.distance, geometry.range)).range;
-  const stance = weapon2?.stance ?? actor.stance ?? "unarmed";
+  const stance = weapon2?.stance ?? effectiveStance(state, actor);
   const rules = stanceRules(stance);
-  const rangedDistance = weapon2 && !geometry.melee && distanceModifier < 0 ? rules.rangedDistancePenalty ?? distanceModifier : distanceModifier;
+  const rangedDistance = weapon2 && !geometry.melee && geometry.distance > 0 && distanceModifier < 0 ? Math.min(0, distanceModifier + (rules.rangedPenaltyOffset ?? 0)) : distanceModifier;
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
   const accuracy = modStat(state, actor, "accuracy", (template.accuracy ?? 0) + (state.ruleset === "sandbox" ? effectiveStat(state, actor, geometry.melee ? "str" : "agi") : 0) + high + sizeAccuracy + closeRange + (state.ruleset === "sandbox" ? 0 : weaponRangeModifier) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) + (execution || cover || !target2 ? 0 : modStat(state, target2, "incomingAccuracy", 0, { attacker: actor })) + (flanked ? 2 : 0) - penalty + modCheck(state, actor, "accuracyBonus", strike), strike) - dodge;
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
@@ -5952,7 +6005,7 @@ function targetProfile(state, actor, target2, at3, template, context = {}) {
   const loadout = weapon2 ?? (context.skillId && template.damage && actor.stance === "dual_wield" ? weaponInfo(state, actor) : null);
   const off = loadout?.offHand;
   const combo = template.tags?.some((tag2) => /多段|连击/.test(tag2));
-  const offAttack = loadout?.stance === "dual_wield" && off?.template?.damage && validReach(state, actor, at3, off.template, weaponAmmo(off.template), off.instance.id) ? (off.template.attack ?? 0) * (combo ? rules.comboOffHandDamage : rules.offHandDamage) : 0;
+  const offAttack = loadout?.stance === "dual_wield" && off?.template?.damage && validReach(state, actor, at3, off.template, weaponAmmo(off.template)) ? (off.template.attack ?? 0) * (combo ? rules.comboOffHandDamage : rules.offHandDamage) : 0;
   const mainAttack = Number(loadout?.template?.attack ?? 0);
   const weaponAttack = mainAttack * (stance === "greatsword" ? actor.greatswordMode === "defensive" ? rules.defensiveDamage : rules.offensiveDamage : 1) + offAttack;
   const intentSpec = INTENTS[intent] ?? INTENTS.normal;
@@ -6087,7 +6140,6 @@ var ACTIONS = Object.freeze({
   trip: { ap: 1, slot: "attack" },
   push: { ap: 1, slot: "attack" },
   flee: { ap: 1, slot: "action" },
-  detour: { ap: 1, slot: "action" },
   interact: { ap: 1, slot: "action" },
   end: { ap: 0, slot: null }
 });
@@ -6102,7 +6154,7 @@ function inInteractionRange(state, actor, at3) {
   return gridDistance(actor, at3) <= 1 && Math.abs(elevation(state, actor) - elevation(state, at3)) <= 1 && hasLOS(state, actor, at3);
 }
 function nearbyCovers(state, at3) {
-  return values2(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at3, c)).sort(byId2);
+  return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at3, c)).sort(byId2);
 }
 function usableTiles(state, actor, template, weapon2) {
   const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
@@ -6160,10 +6212,10 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
   if (type === "interact" && unplaced) {
-    const cells3 = values2(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
+    const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
     return cells3.length ? { ok: true, ap: 1, cost: 1, cells: cells3 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells3 });
   }
-  const item = !unplaced && (type === "interact" || type === "attack") ? values2(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
+  const item = !unplaced && (type === "interact" || type === "attack") ? values3(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
   const detonate = item?.kind === "barrel";
   const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
   const ap = drawFromBag ? 1 : cost.ap, slot2 = ap === 0 ? null : drawFromBag ? "action" : detonate ? "attack" : cost.slot;
@@ -6192,7 +6244,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     return { ...common, name: action.maneuver === "defensive" ? "\u8F6C\u4E3A\u6C89\u52BF" : "\u8F6C\u4E3A\u653B\u52BF" };
   }
   if (type === "block") {
-    const stance2 = stanceFor({ mainHand: weapon2.template, offHand: weapon2.offHand?.template, shield: equipmentFor(state, unit.shield).template });
+    const stance2 = effectiveStance(state, unit);
     if (stance2 !== "sword_shield") return fail2("\u53EA\u6709\u5251\u76FE\u59FF\u6001\u53EF\u683C\u6321");
     const rules = stanceRules(stance2);
     return { ...common, name: "\u683C\u6321", reduction: action.maneuver === "heavy" ? rules.heavyBlockReduction : rules.blockReduction, turns: 1 };
@@ -6221,7 +6273,6 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
   if (type === "charge") return { ...common, name: "\u84C4\u529B", maneuver: "charge" };
   if (type === "scan") return { ...common, name: "\u63A2\u5BDF", maneuver: "scan" };
   if (type === "flee") return { ...common, name: "\u9003\u8DD1", maneuver: "flee" };
-  if (type === "detour") return fail2("\u7ED5\u884C\u5C1A\u672A\u5B9E\u73B0\uFF0C\u8BF7\u4F7F\u7528\u79FB\u52A8\u6216\u8131\u79BB");
   if (type === "lock_on") {
     const target2 = locateUnit(state, center, action.targetId, (u) => u.team !== unit.team);
     if (!target2 || target2.team === unit.team || !sameCell(target2, center)) return fail2("\u5B9A\u4F4D\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
@@ -6390,7 +6441,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     nonLethal: action.nonLethal ?? unit.nonLethal ?? false
   }));
   if (template.target !== "cell" && hasStrikeDamage(template)) {
-    for (const c of values2(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at3) => sameCell(at3, c2))).sort(byId2)) {
+    for (const c of values3(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at3) => sameCell(at3, c2))).sort(byId2)) {
       targets2.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon2 : null, origin, cover: true, intent: resolvedIntent }), kind: "cover" });
     }
   }
@@ -6497,8 +6548,21 @@ function changeCounter(state, actor, weapon2, effect, resource2, after) {
 function paySkillEquipmentCost(state, actor, skill2) {
   const { resource: resource2, amount: cost } = skill2?.resourceCost ?? {};
   if (!resource2 || !cost) return;
-  const pool = resourcePool(state, actor, resource2);
-  if (pool) changeCounter(state, actor, pool.item, pool.effect, resource2, pool.amount - cost);
+  const item = resourcePool(state, actor, resource2, skill2.itemInstance);
+  if (item) {
+    changeCounter(state, actor, item.item, item.effect, resource2, item.amount - cost);
+  } else if (!skill2.itemInstance) {
+    const pool = getPool(state, actor.id, resource2);
+    if (!pool) return;
+    const { before, after } = updatePoolCurrent(state, pool.id, "sub", cost);
+    record(
+      state,
+      actor,
+      "resource",
+      `${actor.name} \xB7 ${resource2} ${before} \u2192 ${after}`,
+      { targetId: actor.id, resource: resource2, amount: before - after, before, after }
+    );
+  }
 }
 function spendAmmo(state, actor, weapon2, ammo) {
   const pool = getPool(state, weapon2.instance.id, ammo.resource, "item");
@@ -6880,13 +6944,13 @@ function continueStrike({ state, frame, host }) {
     host.hooks(state, frame, "after_hit", frame.awaitEvent);
     return;
   }
-  if (frame.phase === "followup" && action.type === "attack" && !frame.weapon && !actor.followupUsed && weapon2?.stance === "dual_wield") {
+  if (frame.phase === "followup" && action.type === "attack" && !frame.weapon && !actor.followupUsed && stanceRules(weapon2?.stance).followUp) {
     const recipient = tableEntry(state.units, event.targetId);
     const off = weapon2.offHand;
     const ammo = weaponAmmo(off?.template);
     const level = actor.level ?? actor.tier ?? 1;
     const cost = level * 10;
-    if (alive3(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === "off_hand" && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
+    if (alive3(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === "off_hand" && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
       actor.followupUsed = true;
       const followWeapon = { ...off, template: { ...off.template, power: level * 15 }, ammo, stance: "dual_wield" };
       const follow = targetProfile(state, actor, recipient, recipient, followWeapon.template, { weapon: followWeapon });
@@ -6998,7 +7062,7 @@ function continueInteraction(state, actor, plan, progress) {
       damageTarget(state, target2, actor.id, item.damage ?? 12, "energy", item.name, { direct: false });
       return false;
     }
-    for (const cover of values2(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at3) => sameCell(at3, c))).sort(byId2)) {
+    for (const cover of values3(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at3) => sameCell(at3, c))).sort(byId2)) {
       coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
   } else if (effect === "restore") {
@@ -7123,7 +7187,7 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       frame.nativeProgress.itemUsed = true;
       actor.attunementCharges--;
       record(state, actor, "item", `${actor.name}\u4F7F\u7528\u540C\u8C03\u526F\u624B\u9053\u5177`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-      if (!actor.attunementCharges) actor.stance = "light_blade";
+      if (!actor.attunementCharges) actor.stance = loadoutStance(state, actor);
       Object.assign(event, { targetId: actor.id, targets: [actor.id], itemId: plan.itemId, rules: plan.rules });
       host.hooks(state, frame, "active", frame.eventRef);
       return false;
@@ -7199,15 +7263,16 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       }
       break;
     }
-    case "block":
-      actor.blockMode = action.maneuver === "heavy" ? "heavy" : "normal";
+    case "block": {
+      const heavy = action.maneuver === "heavy";
       grantStatus(state, actor, actionStatuses.block, {
         sourceId: actor.id,
         remainingTurns: 1,
         vars: { reduction: plan.reduction }
       });
-      record(state, actor, "block", `${actor.name}${actor.blockMode === "heavy" ? "\u91CD" : ""}\u683C\u6321`, { reduction: plan.reduction });
+      record(state, actor, "block", `${actor.name}${heavy ? "\u91CD" : ""}\u683C\u6321`, { reduction: plan.reduction });
       break;
+    }
     case "reload": {
       const weapon2 = weaponInfo(state, actor);
       changeCounter(state, actor, weapon2, weapon2.ammo, weapon2.ammo.resource, weapon2.ammo.cap);
@@ -7574,13 +7639,18 @@ function carrierFieldsValue(value, state, resolved = false) {
   }, "VM \u4FEE\u9970");
   if (own13(value, "rules")) validateRules(value.rules, state);
   checkOptional(value, "shareRulesTo", validVmPureSelector);
+  if (own13(value, "unitPools")) unitPoolDefinitions(value.unitPools);
 }
-function poolDefinitions(value) {
+function unitPoolDefinitions(value) {
+  poolDefinitions(value, true);
+}
+function poolDefinitions(value, unit = false) {
   table2(value, (definition) => {
-    fields(definition, ["cap"], ["initial", "reloadable"]);
+    fields(definition, ["cap"], ["initial", unit ? "name" : "reloadable"]);
     requireThat(numericExpr2(definition.cap) && (typeof definition.cap !== "number" || definition.cap >= 0), "\u8D44\u6E90\u6C60\u4E0A\u9650");
     checkOptional(definition, "initial", (initial) => numericExpr2(initial) && (typeof initial !== "number" || initial >= 0 && (typeof definition.cap !== "number" || initial <= definition.cap)));
     checkOptional(definition, "reloadable", (flag) => typeof flag === "boolean");
+    checkOptional(definition, "name", (name) => text2(name, 100));
   });
 }
 var validPoolId = (value) => typeof value === "string" && /^pool_[A-Za-z0-9_-]{1,250}$/.test(value);
@@ -7591,6 +7661,7 @@ var validStackCap = (value) => int(value, 1, maxStatusStacks) || typeof value ==
 var stackCapLimit = (template) => typeof template.maxStacks === "string" ? maxStatusStacks : template.maxStacks ?? 1;
 function statusTemplate(value, key4 = value?.id, state) {
   fields(value, ["id", "name"], ["icon", "category", "description", "remainingTurns", "durationType", "stackMode", "maxStacks", "expireOn", ...carrierFields]);
+  requireThat(!own13(value, "unitPools"), "\u72B6\u6001\u6A21\u677F\u4E0D\u80FD\u58F0\u660E\u5355\u4F4D\u6C60");
   requireThat(id2(key4) && key4 === value.id && text2(value.name), "VM \u72B6\u6001 ID/\u540D\u79F0");
   checkOptional(value, "icon", (icon) => text2(icon, 24));
   checkOptional(value, "description", (description) => text2(description, 300));
@@ -7707,7 +7778,7 @@ function validateCell(v) {
   requireThat(["floor", "slope", "wall"].includes(v.kind) && int(v.z, -4, 8), "\u5730\u5F62");
 }
 var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
-var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound", "maneuvers"];
+var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound"];
 function unitValue(v, key4, state) {
   fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
   carrierFieldsValue(v, state, true);
@@ -7745,7 +7816,6 @@ function unitValue(v, key4, state) {
   checkOptional(v, "mc", (x) => int(x, 1, 64));
   checkOptional(v, "nonLethal", (x) => typeof x === "boolean");
   checkOptional(v, "moraleCheckedRound", (x) => int(x, 1, 1e6));
-  checkOptional(v, "maneuvers", (x) => Array.isArray(x) && x.length <= 32 && x.every(id2));
   checkOptional(v, "initiativePercent", (x) => num(x, -1, 10));
   checkOptional(v, "flatInitiative", (x) => int(x, -1e3, 1e3));
   for (const field2 of ["attackInit", "actionInit"]) checkOptional(v, field2, (x) => Array.isArray(x) && x.length <= 16 && x.every((n) => int(n, -1e3, 1e3)));
@@ -7760,10 +7830,7 @@ function unitValue(v, key4, state) {
   checkOptional(v, "moraleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
   checkOptional(v, "moraleState", (x) => MORALE_STATES.includes(x));
   checkOptional(v, "greatswordMode", (x) => ["offensive", "defensive"].includes(x));
-  checkOptional(v, "parryQuota", (x) => int(x, 0, 2));
-  checkOptional(v, "parryRefunded", (x) => typeof x === "boolean");
   checkOptional(v, "attunementCharges", (x) => int(x, 0, 2));
-  checkOptional(v, "blockMode", (x) => ["normal", "heavy"].includes(x));
   if (own13(v, "bagWeapons")) list2(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
   list2(v.gear, 12, id2, "gear");
   list2(v.skills, 32, id2, "skills");
@@ -7784,6 +7851,7 @@ function zoneValue(value, key4, state) {
   requireThat(id2(key4) && value.id === key4 && text2(value.name), "VM \u533A\u57DF ID/\u540D\u79F0");
   checkOptional(value, "templateId", id2);
   checkOptional(value, "sourceId", (source) => source === null || id2(source));
+  requireThat(value.sourceId != null || !own13(value, "unitPools"), "\u65E0\u4E3B\u533A\u57DF\u4E0D\u80FD\u58F0\u660E\u5355\u4F4D\u6C60");
   carrierFieldsValue(value, state, true);
   if (own13(value, "pools")) poolBindings(value.pools);
   const { area: area3, follow, persistent, remainingTurns } = value;
@@ -8159,8 +8227,6 @@ function buildScenario(request = "ruins") {
       nonLethal: false,
       stance,
       greatswordMode: "offensive",
-      parryQuota: stance === "greatsword" ? 2 : 0,
-      parryRefunded: false,
       attunementCharges: stanceRules("attunement").itemCharges,
       moraleType: "standard",
       mp: mpValue,
@@ -8630,8 +8696,9 @@ var commands = {
     fields(c, ["type", "unitId", "patch"]);
     const u = get(s.units, c.unitId, "unitId");
     nonempty(c.patch);
-    fields(c.patch, [], ["hp", "mp", "sp", "ap", "x", "y", "team", "stats", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]);
-    for (const k of ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "parryQuota", "parryRefunded", "attunementCharges", "blockMode", "deathrattle", "maneuvers"]) if (own13(c.patch, k)) u[k] = c.patch[k];
+    const keys = ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "deathrattle"];
+    fields(c.patch, [], [...keys, "stats"]);
+    for (const k of keys) if (own13(c.patch, k)) u[k] = c.patch[k];
     if (own13(c.patch, "stats")) {
       nonempty(c.patch.stats);
       fields(c.patch.stats, [], attrs2);
@@ -8931,7 +8998,7 @@ var hookNames = {
   round_end: "\u8F6E\u6B21\u7ED3\u675F"
 };
 var checkGrade = (success, roll) => success ? roll === 20 ? "\u5927\u6210\u529F" : "\u6210\u529F" : roll === 1 ? "\u5927\u5931\u8D25" : "\u5931\u8D25";
-var maneuvers = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
+var contestLabels = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
 var signed = (value) => `${value > 0 ? "+" : ""}${proseNumber(value)}`;
 var percent = (value) => Number((value * 100).toFixed(4));
 var notes = (parts) => parts.length ? `\uFF08${parts.join("\uFF0C")}\uFF09` : "";
@@ -9109,13 +9176,10 @@ function formatBattleReportText(report, unitNames = {}) {
         case "contest":
         case "flee": {
           const target2 = detail.targetId ? `\uFF08\u5BF9\u624B ${name(event, detail.targetId)}\uFF09` : "";
-          const label = type === "flee" ? "\u9003\u8DD1" : maneuvers[detail.maneuver] ?? "\u5BF9\u6297";
+          const label = type === "flee" ? "\u9003\u8DD1" : contestLabels[detail.maneuver] ?? "\u5BF9\u6297";
           add(`${name(event, actor)}${label}\u68C0\u5B9A${checkGrade(detail.success, detail.attackerRoll)}${target2}`);
           break;
         }
-        case "parry":
-          add(replaceUnitNames(event, text8) + notes([detail.perfect ? "\u5927\u6210\u529F" : checkGrade(detail.success, detail.defenderRoll)]) + attributionText(detail));
-          break;
         case "morale":
           add(replaceUnitNames(event, text8) + (Number.isFinite(detail.roll) ? notes([`\u6218\u610F\u68C0\u5B9A${checkGrade(detail.outcome ? detail.roll >= 12 : detail.shaken, detail.roll)}`]) : ""));
           break;
@@ -9452,8 +9516,7 @@ function createGameAPI() {
         mainHand: item(u.mainHand ?? u.weapon),
         offHand: item(u.offHand),
         shield: item(u.shield),
-        greatswordMode: u.greatswordMode ?? "offensive",
-        blockMode: u.blockMode ?? "normal"
+        greatswordMode: u.greatswordMode ?? "offensive"
       });
     },
     setWeaponStance(unitId, stance, options = {}) {
@@ -9463,15 +9526,8 @@ function createGameAPI() {
       if (stance !== loadoutStance(s, s.units[unitId])) return { ok: false, error: "\u59FF\u6001\u4E0E\u5F53\u524D\u6301\u68B0\u69FD\u4F4D\u4E0D\u7B26" };
       const patch = { stance };
       if (options.greatswordMode !== void 0) patch.greatswordMode = options.greatswordMode;
-      if (options.blockMode !== void 0) patch.blockMode = options.blockMode;
       const transaction = { kind: "commands", entries: [{ type: "set_unit_stat", unitId, patch }], reason: "\u5207\u6362\u6301\u68B0\u59FF\u6001" };
       return commit(simulate(s, transaction), transaction);
-    },
-    listManeuvers(unitId) {
-      const s = current();
-      const u = s.units[unitId];
-      if (!u) return null;
-      return copy(u.maneuvers ?? ["charge", "lock_on", "scan", "brace", "block", "shield_bash", "push", "grapple", "disarm", "trip", "flee"]);
     },
     inspectUnit(unitId) {
       const s = current();
@@ -9819,7 +9875,6 @@ function damageEntry(state, log) {
   if (d.attackMultiplier && d.attackMultiplier !== 1) mults.push(`\u653B\u51FB\u52A0\u6210 \xD7${num2(d.attackMultiplier)}`);
   if (d.multiplier && d.multiplier !== 1) mults.push(`\u589E\u4F24 \xD7${num2(d.multiplier)}`);
   if (d.stanceScale && d.stanceScale !== 1) mults.push(`\u67B6\u52BF \xD7${d.stanceScale}`);
-  if (d.offHandScale && d.offHandScale !== 1) mults.push(`\u526F\u624B \xD7${d.offHandScale}`);
   if (d.shatter) mults.push(`\u788E\u51B0 +${pct(d.shatter)}`);
   if (d.vulnerability) mults.push(`\u6613\u4F24 +${pct(d.vulnerability)}`);
   if (d.reduction) mults.push(`\u51CF\u4F24 \u2212${pct(d.reduction)}`);
@@ -10077,7 +10132,6 @@ function narrate(log, state) {
     case "brace":
     case "block":
     case "guard":
-    case "parry":
       return out({ tone: "status", icon: "\u{1F6E1}\uFE0F" });
     case "followup":
       return out({ tone: "hit", icon: "\u2694\uFE0F" });
@@ -10134,7 +10188,6 @@ var ACTION_LABELS = {
   trip: "\u7ECA\u6454",
   push: "\u63A8\u649E",
   flee: "\u9003\u8DD1",
-  detour: "\u7ED5\u884C",
   reload: "\u88C5\u586B",
   end: "\u7ED3\u675F\u56DE\u5408"
 };
@@ -10167,7 +10220,7 @@ var side = (team2) => team2 === "blue" ? "\u6211\u65B9" : "\u654C\u65B9";
 var ratio = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
 var has2 = (table4, id3) => table4 && id3 != null && Object.hasOwn(table4, id3);
 var get2 = (table4, id3) => has2(table4, id3) ? table4[id3] : void 0;
-var values3 = (table4) => Object.values(table4 ?? {});
+var values4 = (table4) => Object.values(table4 ?? {});
 var key3 = (x, y) => `${x},${y}`;
 var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
 var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
@@ -10244,7 +10297,7 @@ function createRenderer(root2, portraitFor = () => []) {
       bars.append(meter);
     }
     node.append(bars);
-    const marks = values3(unit.statuses);
+    const marks = values4(unit.statuses);
     if (marks.length) node.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : STATUS_ICON[marks[0].category] ?? "\u25C6"));
     return node;
   }
@@ -10281,8 +10334,8 @@ function createRenderer(root2, portraitFor = () => []) {
   function renderBoard(state, { selected: selected2, action, hover, preview: preview2, current, askLocked, askCells, entityChoices }) {
     initBoard(state);
     const moving = ["move", "sprint", "disengage"].includes(action?.type);
-    const unitsAt2 = group(values3(state.units).filter((u) => u.hp > 0 && !u.fled));
-    const bodiesAt = group(corpses(state)), coversAt = group(values3(state.covers)), itemsAt = group(values3(state.interactives));
+    const unitsAt2 = group(values4(state.units).filter((u) => u.hp > 0 && !u.fled));
+    const bodiesAt = group(corpses(state)), coversAt = group(values4(state.covers)), itemsAt = group(values4(state.interactives));
     const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
     const path2 = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
     const risks = new Set((moving && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
@@ -10411,7 +10464,7 @@ function createRenderer(root2, portraitFor = () => []) {
     meta.append(crystals);
     if (u.moraleState && u.moraleState !== "steady") meta.append(el2("span", "ft-chip", `\u6218\u610F${moraleLabels[u.moraleState]}`));
     meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
-    for (const s of values3(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
+    for (const s of values4(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
     node.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
   }
   function renderUnitCard(state, u, inspected) {
@@ -10451,12 +10504,12 @@ function createRenderer(root2, portraitFor = () => []) {
       `\u79FB\u52A8 ${u.move} \u683C`,
       `\u4F53\u578B ${bodySizeLabel(u)}`,
       `\u9AD8\u5EA6 z=${elevation(state, u)}${u.altitude ? `\uFF08\u79BB\u5730 ${u.altitude}\uFF09` : ""}`,
-      `\u6301\u68B0\uFF1A${stanceLabel[u.stance] ?? "\u672A\u6307\u5B9A"}${u.stance === "attunement" ? `\uFF08\u9053\u5177\u5269 ${u.attunementCharges} \u6B21\uFF09` : ""}`,
+      `\u6301\u68B0\uFF1A${stanceLabel[u.stance] ?? "\u672A\u6307\u5B9A"}${u.stance === "greatsword" ? `\xB7${u.greatswordMode === "defensive" ? "\u6C89\u52BF" : "\u653B\u52BF"}` : ""}${u.stance === "attunement" ? `\uFF08\u9053\u5177\u5269 ${u.attunementCharges} \u6B21\uFF09` : ""}`,
       `\u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2`,
       u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
     ].filter(Boolean).join(" \xB7 "));
     const statusList = el2("ul", "ft-list");
-    for (const s of values3(u.statuses)) {
+    for (const s of values4(u.statuses)) {
       const li = el2("li");
       li.append(el2("b", "", statusText(s)), document_text(` ${duration(s)}`));
       if (s.description) li.append(el2("p", "", s.description));
@@ -10478,7 +10531,7 @@ function createRenderer(root2, portraitFor = () => []) {
     }
     if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
     const permanentZone = (z) => z.persistent || z.durationType === "persistent" || z.durationType === "until_removed";
-    const zones = values3(state.zones).filter((z) => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
+    const zones = values4(state.zones).filter((z) => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
     const parts = [wrap, bars, stats, facts, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
     if (zones.length) parts.push(el2("h3", "ft-section", "\u6240\u5904\u533A\u57DF"), el2(
       "p",
@@ -10489,7 +10542,7 @@ function createRenderer(root2, portraitFor = () => []) {
   }
   const document_text = (t) => doc.createTextNode(t);
   function renderFeatures(state) {
-    const list4 = [...values3(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values3(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
+    const list4 = [...values4(state.covers).map((c) => [`\u{1F9F1} ${coverText(c)}`, c]), ...values4(state.interactives).map((i) => [`\u2734\uFE0F ${interactiveText(i)}`, i])];
     const ul = el2("ul", "ft-list");
     for (const [text8, f] of list4) ul.append(el2("li", "", `${text8} \xB7 \u4F4D\u4E8E (${f.x}, ${f.y})`));
     $("feature-cards").replaceChildren(ul);
@@ -11378,7 +11431,7 @@ async function requestBattleAi(state, request, { signal } = {}) {
 
 // src/ui/main.js
 var THEMES = ["amethyst", "night-gold", "frost-silver"];
-var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "detour", "reload", "end"];
+var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "reload", "end"];
 var PATH_NAMES = { units: "\u5355\u4F4D", items: "\u7269\u54C1", grid: "\u5730\u5F62", statuses: "\u72B6\u6001", counters: "\u8BA1\u6570", statusTemplates: "\u72B6\u6001\u6A21\u677F", covers: "\u63A9\u4F53", interactives: "\u4E92\u52A8\u70B9" };
 function describeProposal(result) {
   if (!result?.ok) return `\u2716 \u65E0\u6CD5\u6267\u884C\uFF1A${result?.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
@@ -14849,15 +14902,38 @@ function geometryFields(area3) {
   if (area3.moveDistance != null) result.rawMoveDistance = area3.moveDistance;
   return result;
 }
-function ammoCapacity(raw) {
-  const match = tagEntries(raw?.tags ?? raw?.\u6807\u7B7E).map((tag2) => tag2.match(/^弹药\s*[:：]\s*(\d+)$/u)).find(Boolean);
-  return match ? bound(match[1], 0, 1e6, 0) : null;
+function ammoCounter(raw) {
+  const field2 = ["currentAmmo", "\u5F53\u524D\u5F39\u836F"].find((key5) => Number.isInteger(raw[key5]) && raw[key5] >= 0);
+  if (field2) return { current: bound(raw[field2], 0, 1e9), initialRawValue: raw[field2], path: [field2], format: { kind: "field_number" } };
+  const key4 = raw.tags != null ? "tags" : "\u6807\u7B7E";
+  const tags = raw[key4];
+  for (const [index, value] of [].concat(tags ?? []).entries()) {
+    const rawTag = text3(value);
+    const match = /(?<prefix>(?:^|[\[【])\s*)弹药(?<sep>\s*[:：]\s*)(?<current>\d+)(?:(?<slash>\s*[/／]\s*)(?<max>\d+))?(?=\s*(?:[\]】]|$))/u.exec(rawTag);
+    if (!match) continue;
+    const { prefix, sep, current, slash, max } = match.groups;
+    return {
+      current: bound(current, 0, 1e9),
+      max: max == null ? null : bound(max, 0, 1e9),
+      rawLabel: "\u5F39\u836F",
+      initialRawValue: rawTag,
+      path: Array.isArray(tags) ? [key4, index] : [key4],
+      format: {
+        kind: max == null ? "tag_single" : "tag_slash",
+        sep,
+        slash,
+        prefix: rawTag.slice(0, match.index) + prefix,
+        suffix: rawTag.slice(match.index + match[0].length)
+      }
+    };
+  }
+  return null;
 }
-function attachAmmoPool(item, capacity) {
+function attachAmmoPool(item, initial, cap = initial) {
   const { template } = item;
-  if (capacity == null || template.kind !== "weapon" || !template.ranged) return;
+  if (initial == null || template.kind !== "weapon" || !template.ranged) return;
   const declared = template.pools.ammo;
-  template.pools.ammo = { ...declared, initial: capacity, cap: Math.max(declared?.cap ?? 0, capacity) };
+  template.pools.ammo = { ...declared, initial, cap: Math.max(declared?.cap ?? 0, cap, initial) };
 }
 function* instructions(program2) {
   for (const instruction of program2) {
@@ -14921,7 +14997,8 @@ function normalizeEquipment(raw, slot2, owner, key4, sink) {
     const classes = ["ranged", "light_blade", "greatsword", "staff", "auxiliary"];
     const weaponClassAlias = /* @__PURE__ */ new Map([["bow", "ranged"], ["crossbow", "ranged"], ["arcane", "staff"]]);
     const explicitClass = weaponClassAlias.get(r.weaponClass) ?? r.weaponClass;
-    const subtype = tagEntries(r.tags ?? r.\u6807\u7B7E).find((tag2) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag2));
+    const tags = tagEntries(r.tags ?? r.\u6807\u7B7E);
+    const subtype = tags.find((tag2) => ["\u5F13", "\u5F29", "\u706B\u67AA", "\u6295\u63B7\u6B66\u5668"].includes(tag2));
     const ranged = r.ranged ?? (r.rangeType ? r.rangeType === "ranged" : Boolean(subtype));
     const twoHanded = slot2 === "twoHands" || r.twoHanded === true || r.hand === "two_handed" || explicitClass === "greatsword" || /双手|巨剑|重剑|长戟|重斧|重锤|长枪/.test(`${name} ${labels}`);
     const attackTag = labels.match(/攻击(?:力)?\s*[:：]\s*([\d.e+-]+)/i);
@@ -14932,6 +15009,7 @@ function normalizeEquipment(raw, slot2, owner, key4, sink) {
       hand: twoHanded ? "two_handed" : slot2 === "offHand" ? "off_hand" : "one_handed",
       ranged: Boolean(ranged),
       rangeType: ranged ? "ranged" : "melee",
+      ...r.closeQuarters === true || tags.some((tag2) => /近战射击|贴身射击/u.test(tag2)) ? { closeQuarters: true } : {},
       range: bound(area3.range, 0, 64, ranged ? 4 : 1),
       rawRange: area3.range ?? (ranged ? 4 : 1),
       attack: bound(r.attack ?? r.\u653B\u51FB ?? attackTag?.[1], 0, 1e9),
@@ -14942,7 +15020,10 @@ function normalizeEquipment(raw, slot2, owner, key4, sink) {
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
   } else Object.assign(template, { defense, ...own16(r, "armor") ? { armor: bound(r.armor, 0, 1e6, 0) } : {} });
   const item = { id: idBase, templateId, template, slot: slot2, name };
-  attachAmmoPool(item, ammoCapacity(r));
+  if (isWeapon2 && template.ranged) {
+    const ammo = ammoCounter(r);
+    if (ammo) attachAmmoPool(item, ammo.current, ammo.max ?? ammo.current);
+  }
   return item;
 }
 
@@ -14956,17 +15037,16 @@ function dynamicPoolKey(item, label) {
   if (pools.includes(normalized)) return normalized;
   return pools.length === 1 ? pools[0] : null;
 }
-function sourceEquipment(record3) {
-  const value = record3.equipment ?? record3.equipments ?? record3.items ?? record3.\u88C5\u5907 ?? [];
+function sourceEquipment(value, path2) {
   const slots3 = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
-  const entries3 = Array.isArray(value) ? value.map((v) => ["", v]) : Object.entries(asObject(value));
-  return entries3.filter(([, item]) => object3(item)).map(([key4, item], i) => {
+  const entries3 = Array.isArray(value) ? value.map((v, i) => ["", v, i]) : Object.entries(asObject(value)).map(([key4, item]) => [key4, item, key4]);
+  return entries3.filter(([, item]) => object3(item)).map(([key4, item, sourceKey], i) => {
     const position = [item.slot, item.position, item.\u4F4D\u7F6E].map(text3).find(Boolean);
     const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).map(text3).join(",");
     const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
     const rawSlot = position || (slots3.has(key4) ? key4 : hand || key4);
     const name = item.name ?? item.\u540D\u79F0 ?? (slots3.has(key4) ? "" : key4);
-    return [slots3.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`)];
+    return [slots3.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`), path2 ? [...path2, sourceKey] : null];
   });
 }
 function normalizeBattleDefinition(raw, id3 = "") {
@@ -15165,7 +15245,7 @@ function importBackpack(bag, owner, skills, sink, entrySources, inventoryPaths, 
   }
   return inventory;
 }
-function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist, board) {
+function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist, board, sourceRecord) {
   const resourcesSink = sink("resource"), warnings = sink("status");
   const p = participant ?? {};
   const name = text3(p.protagonistName || p.name) || sourceName(record3, p.id) || `\u5355\u4F4D ${index + 1}`;
@@ -15178,41 +15258,59 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   const size = sizeClassFor(bodyLengthM);
   const mc = Math.max(1, Math.min(64, integer3(findValue(record3, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record3, "hp", Math.max(1, stats.con * 100), resourcesSink), "hp", resourcesSink), mp: safeResource(resource(record3, "mp", Math.max(0, (stats.int + stats.spi) * 10), resourcesSink), "mp", resourcesSink), sp: safeResource(resource(record3, "sp", Math.max(0, (stats.str + stats.agi) * 10), resourcesSink), "sp", resourcesSink) };
-  const sourceEntries = sourceEquipment(record3);
+  const sourcePath = Array.isArray(record3.__sourcePath) ? record3.__sourcePath : null;
+  const equipmentKey = ["equipment", "equipments", "items", "\u88C5\u5907"].find((key4) => record3[key4] != null);
+  const equipmentPath = sourcePath && sourceRecord[equipmentKey] != null ? [...sourcePath, equipmentKey] : null;
+  const sourceEntries = sourceEquipment(record3[equipmentKey], equipmentPath);
+  const bagEntries = sourceEquipment(record3.\u80CC\u5305, sourcePath ? [...sourcePath, "\u80CC\u5305"] : null);
   const entrySources = {}, equipmentKeys = /* @__PURE__ */ new Map();
   const dynamicOverlay = { units: {}, itemCounters: {}, inventory: {} };
   const counterBindings = [];
   const inventoryPaths = {};
-  const sourcePath = Array.isArray(record3.__sourcePath) ? record3.__sourcePath : null;
-  const equipmentEntry = ([slot2, raw, identity]) => {
+  const addBinding = (item, path2, { path: suffix, ...counter2 }, poolKey) => {
+    const binding = {
+      ...counter2,
+      ownerKind: "item",
+      poolKey,
+      itemId: item.id,
+      templateId: item.templateId,
+      itemName: item.template.name,
+      mvuPath: path2 ? [...path2, ...suffix] : null,
+      unitId: id3
+    };
+    counterBindings.push(binding);
+    dynamicOverlay.itemCounters[item.id] ??= [];
+    dynamicOverlay.itemCounters[item.id].push(binding);
+    return binding;
+  };
+  const weaponAmmoBindings = /* @__PURE__ */ new Map();
+  const equipmentEntry = ([slot2, raw, identity, path2]) => {
     const key4 = hash(String(identity)).toString(36);
     const occurrence = equipmentKeys.get(key4) ?? 0;
     equipmentKeys.set(key4, occurrence + 1);
     const item = normalizeEquipment(raw, slot2, id3, occurrence ? `${key4}-${occurrence}` : key4, sink);
     const { slot: _slot, position: _position, \u4F4D\u7F6E: _placement, count: _count, \u6570\u91CF: _quantity, ...definition } = raw;
     entrySources[`equipment:${item.templateId}`] = staticProjection(definition);
-    const rawTags = [].concat(raw.tags ?? raw.\u6807\u7B7E ?? []);
-    rawTags.forEach((tag2, index2) => {
+    const ammo = ammoCounter(raw);
+    const rangedWeapon2 = item.template.kind === "weapon" && item.template.ranged;
+    if (rangedWeapon2 && ammo) {
+      weaponAmmoBindings.set(item.id, addBinding(item, path2, { ...ammo, max: ammo.max ?? item.template.pools.ammo.cap }, "ammo"));
+    }
+    const tagKey = raw.tags != null ? "tags" : "\u6807\u7B7E";
+    [].concat(raw[tagKey] ?? []).forEach((tag2, index2) => {
       const dynamic = dynamicTag(tag2);
-      if (!dynamic) return;
+      if (!dynamic || ammo && dynamic.label === "\u5F39\u836F") return;
       const poolKey = dynamicPoolKey(item, dynamic.label);
-      const binding = {
-        ownerKind: "item",
-        poolKey,
-        itemId: item.id,
-        templateId: item.templateId,
-        itemName: item.template.name,
+      if (poolKey === "ammo" && weaponAmmoBindings.has(item.id)) return;
+      const binding = addBinding(item, path2, {
         rawLabel: dynamic.label,
         current: dynamic.current,
         max: dynamic.max,
-        mvuPath: sourcePath ? [...sourcePath, "\u88C5\u5907", item.template.name, raw.tags !== void 0 ? "tags" : "\u6807\u7B7E", index2] : null,
-        format: { kind: dynamic.max == null ? "tag_single" : "tag_slash", sep: dynamic.sep, ...dynamic.slash ? { slash: dynamic.slash, capInTag: dynamic.max } : {} },
-        initialRawValue: text3(tag2),
-        unitId: id3
-      };
-      counterBindings.push(binding);
-      dynamicOverlay.itemCounters[item.id] ??= [];
-      dynamicOverlay.itemCounters[item.id].push(binding);
+        path: Array.isArray(raw[tagKey]) ? [tagKey, index2] : [tagKey],
+        format: { kind: dynamic.max == null ? "tag_single" : "tag_slash", sep: dynamic.sep, slash: dynamic.slash },
+        initialRawValue: text3(tag2)
+      }, poolKey);
+      if (rangedWeapon2 && poolKey === "ammo") weaponAmmoBindings.set(item.id, binding);
     });
     return item;
   };
@@ -15221,12 +15319,29 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   const off = !main?.template.twoHanded && slotItems.find((i) => i.slot === "offHand" && ["weapon", "consumable"].includes(i.template.kind));
   const shield = !main?.template.twoHanded && slotItems.find((i) => i.template.kind === "shield");
   const gear = slotItems.filter((i) => ![main, off, shield].includes(i));
-  const bagEntries = record3.__sourceKind === "MVU" ? sourceEquipment({ \u88C5\u5907: record3.\u80CC\u5305 }) : [];
-  const containerCounts = [...sourceEntries, ...bagEntries].map(([, raw]) => raw.\u7C7B\u578B === "\u6B66\u5668" || raw.kind === "weapon" ? null : ammoCapacity(raw)).filter((value) => value != null);
-  const ammoWeapon = [main, off, ...gear].find((item) => item?.template?.ranged);
-  if (ammoWeapon && containerCounts.length) {
-    const ownAmmo = ammoWeapon.template.pools.ammo?.initial ?? 0;
-    attachAmmoPool(ammoWeapon, Math.min(1e9, ownAmmo + containerCounts.reduce((sum, count) => sum + count, 0)));
+  if (main?.template.ranged) {
+    const containers = [
+      ...sourceEntries.filter((_, i) => slotItems[i].template.kind !== "weapon"),
+      ...record3.__sourceKind === "MVU" ? bagEntries.filter(([, raw]) => raw.\u7C7B\u578B !== "\u6B66\u5668" && raw.kind !== "weapon" && bound(raw.\u6570\u91CF ?? raw.count, 0, 1e9, 1) > 0) : []
+    ].flatMap(([, raw, , path2]) => {
+      const counter2 = ammoCounter(raw);
+      return counter2 ? [{ counter: counter2, name: raw.name, path: path2 }] : [];
+    });
+    if (containers.length) {
+      const weaponPool = main.template.pools.ammo;
+      const ownBinding = weaponAmmoBindings.get(main.id);
+      const ownAmmo = bound(ownBinding?.current ?? weaponPool?.initial, 0, 1e9, 0);
+      if (ownBinding) Object.assign(ownBinding, { sliceBase: 0, sliceCap: ownAmmo });
+      let total2 = ownAmmo, cap = weaponPool?.cap ?? 0;
+      for (const { counter: counter2, name: name2, path: path2 } of containers) {
+        const sliceCap = Math.min(counter2.current, 1e9 - total2);
+        const binding = addBinding(main, path2, { ...counter2, max: counter2.max ?? counter2.current, sliceBase: total2, sliceCap }, "ammo");
+        binding.itemName = name2;
+        total2 += sliceCap;
+        cap += Math.max(counter2.max ?? 0, counter2.current);
+      }
+      attachAmmoPool(main, total2, Math.min(1e9, cap));
+    }
   }
   for (const item of slotItems) {
     finalizeEquipment(item, sink("effect", `/equipment/${item.templateId}`));
@@ -15365,13 +15480,14 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
   const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
   const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", parryQuota: stance === "greatsword" ? 2 : 0, parryRefunded: false, attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
   if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
   if (isProtagonist) {
     const bagWeapons = [];
-    for (const [slot2, raw, identity] of sourceEquipment({ \u88C5\u5907: record3.\u80CC\u5305 })) {
+    for (const entry2 of bagEntries) {
+      const [, raw] = entry2;
       if (raw.\u7C7B\u578B !== "\u6B66\u5668" && raw.kind !== "weapon" || bound(raw.\u6570\u91CF ?? raw.count, 0, 1e9, 1) === 0) continue;
-      const item = equipmentEntry([slot2, raw, identity]);
+      const item = equipmentEntry(entry2);
       if (item.template.kind === "weapon") {
         finalizeEquipment(item, sink("effect", `/equipment/${item.templateId}`));
         equipment[item.templateId] = item.template;
@@ -15542,7 +15658,7 @@ function hydrateFromSources(input = {}, options = {}) {
     const merged = mergeBattleParticipant(record3, participant, battle);
     const placement = { moraleType: battle.moraleType, ...participant, ...persona, id: id3 };
     const startWarnings = warnings.length;
-    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist, battle);
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist, battle, record3);
     if (origin === "char_info") {
       const { \u6570\u91CF: _quantity, count: _count, ...definition } = merged;
       const signature = JSON.stringify([definition, made.unit.tags, made.unit.creatureType, made.unit.nonLethal, made.unit.moraleType]);
@@ -15591,7 +15707,7 @@ function hydrateFromSources(input = {}, options = {}) {
   const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: battle.explicitScale === true }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
-    if (binding.poolKey == null || binding.current == null) continue;
+    if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
     const pool = getPool(state, binding.itemId, binding.poolKey, "item");
     if (pool) updatePoolCurrent(state, pool.id, "set", binding.current);
   }
@@ -15632,8 +15748,8 @@ function pointer(path2) {
 var own17 = (value, key4) => value != null && Object.prototype.hasOwnProperty.call(value, key4);
 var numberValue = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
 function initialResource(mapping, key4, unit) {
-  const values4 = mapping.initialResources ?? mapping.resourceInitials ?? mapping.initial ?? {};
-  const value = values4[key4] ?? mapping[`initial${key4[0].toUpperCase()}${key4.slice(1)}`];
+  const values5 = mapping.initialResources ?? mapping.resourceInitials ?? mapping.initial ?? {};
+  const value = values5[key4] ?? mapping[`initial${key4[0].toUpperCase()}${key4.slice(1)}`];
   return value == null ? null : numberValue(value);
 }
 function finalResource(unit, key4) {
@@ -15649,7 +15765,9 @@ function poolCurrent(state, unit, binding) {
   if (target2.kind === "item_pool" || binding.ownerKind === "item") {
     const itemId = binding.itemId ?? target2.itemId;
     const poolKey = target2.poolKey ?? binding.poolKey ?? binding.key;
-    return getPool(state, itemId, poolKey, "item")?.current;
+    const current = getPool(state, itemId, poolKey, "item")?.current;
+    if (current == null || binding.sliceCap == null) return current;
+    return Math.max(0, Math.min(binding.sliceCap, current - binding.sliceBase));
   }
   if (target2.kind === "unit_pool" || binding.ownerKind === "unit") {
     const poolKey = target2.poolKey ?? binding.poolKey ?? binding.key;
@@ -15669,11 +15787,12 @@ function formatCounter(binding, current) {
   const sep = format.sep ?? ": ";
   const cap = numberValue(binding.max ?? format.capInTag);
   const slash = format.slash ?? "/";
-  if (format.kind === "tag_slash") return `${label}${sep}${value}${slash}${cap ?? ""}`;
-  if (/弹药|箭矢|残弹|装填/u.test(label) && cap != null && value < cap) return `${label}${sep}${value}${slash}${cap}`;
-  return `${label}${sep}${value}`;
+  const counter2 = `${format.prefix ?? ""}${label}${sep}${value}`;
+  const includeCap = format.kind === "tag_slash" || /弹药|箭矢|残弹|装填/u.test(label) && cap != null && value < cap;
+  return `${counter2}${includeCap ? `${slash}${cap ?? ""}` : ""}${format.suffix ?? ""}`;
 }
 function counterInitial(binding) {
+  if (binding.current != null) return binding.current;
   if (binding.initialRawValue == null) return null;
   if (typeof binding.initialRawValue === "number") return binding.initialRawValue;
   const match = String(binding.initialRawValue).match(/(-?\d+)(?:\s*[\/]\s*(\d+))?\s*$/);
@@ -16010,7 +16129,7 @@ function remainingDiagnostics(warnings, snapshots, characters, batches = []) {
 }
 
 // src/tavern/normalization-batches.js
-var normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|unitPools|persistent|remainingTurns)(?:\/|$)/;
+var normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
 var SCENE_LANE = "__scene__";
 var warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
 var targetPath = (path2) => path2?.split("/").slice(0, 3).join("/");
@@ -17154,7 +17273,7 @@ var PROTOCOL_RULES = `\u3010\u6218\u6597\u534F\u8BAE\uFF5C\u6A21\u677F\u4E0E\u89
 \u2022 \u5E38\u89C4\u4E3B\u51FB\u5199\u6280\u80FD\u6A21\u677F\u7684 power \u548C damage\uFF1B\u6CBB\u7597\u5199 heal\u3002\u5F15\u64CE\u7ED3\u7B97\u547D\u4E2D\u8BC4\u7EA7\u3001\u4F53\u578B\u3001\u9AD8\u5DEE\u3001\u62A4\u7532\u3001\u66B4\u51FB\u3001\u610F\u56FE\uFF08normal / function / core[\u6838\u5FC3\u8981\u5BB3\uFF0C\u5373\u201C\u547D\u4E2D\u6838\u5FC3\u201D] / kill / concept\uFF1B\u8303\u56F4\u4E0E\u975E\u654C\u5BF9\u884C\u52A8\u5F3A\u5236 normal\uFF0C\u4F4E\u76EE\u6807\u4E24\u9636\u53CA\u4EE5\u4E0A\u610F\u56FE\u68C0\u5B9A\u5F3A\u5236\u5931\u8D25\uFF1B\u653B\u65B9\u610F\u56FE\u52A0\u503C\u7528 intentBonus\uFF0C\u5B88\u65B9\u96BE\u5EA6\u4FEE\u6B63\u7528 intentDifficulty\uFF1B\u4EC5\u5BF9\u6838\u5FC3\u751F\u6548\u52A0 when:"event.intent == 'core'"\uFF0C\u4E0D\u5199\u8FDB\u5E38\u89C4\u653B\u51FB checkBonus\uFF1B\u4E14\u65E0\u4E13\u95E8\u6F5C\u884C\u68C0\u5B9A\u7EF4\u5EA6\uFF09\u548C\u58EB\u6C14\u3002\u8303\u56F4\u4E3B\u51FB\u81EA\u52A8\u547D\u4E2D\u3002\u9644\u5E26\u6548\u679C\u82E5\u9700\u62B5\u6297\uFF0C\u5728 DSL \u4E2D\u5199\u72EC\u7ACB\u68C0\u5B9A\u3002power \u5355\u72EC\u586B\u5199\u4E0D\u4F1A\u5F00\u542F\u4E3B\u51FB\uFF0C\u987B\u914D\u5408 damage \u9AB0\u5B50\u5BF9\u8C61\u3002\u4F24\u5BB3\u62C6\u5206\u6216\u989D\u5916\u6548\u679C\u624D\u5199 rules\uFF0C\u907F\u514D\u91CD\u590D\u6253\u51FA\u4E3B\u51FB\u3002
 \u2022 range \u662F\u65BD\u653E\u5C04\u7A0B\uFF08\u4E0A\u9650 64 \u683C\uFF09\uFF0Cradius \u662F\u8986\u76D6\u534A\u5F84\uFF08radius\u3001innerRadius\u3001width \u4E0A\u9650\u4E3A 30 \u683C\uFF09\u3002
 \u2022 \u88C5\u5907\u6A21\u677F equipment \u548C\u5B9E\u4F8B items \u901A\u8FC7 templateId \u5173\u8054\u3002\u6280\u80FD\u6A21\u677F\u5728 skills\uFF0C\u5DF2\u6709\u5355\u4F4D\u7684\u6280\u80FD\u7531 units.<id>.skills \u5F15\u7528\uFF08\u7A7F\u6234\u88C5\u5907 skills \u6570\u7EC4\u4E2D\u7684\u6280\u80FD\u4E5F\u4F1A\u81EA\u52A8\u5BF9\u6301\u6709\u8005\u751F\u6548\uFF09\u3002\u72B6\u6001\u6A21\u677F\u5728 statusTemplates\uFF1B\u6218\u573A\u521D\u59CB\u73AF\u5883\u533A\u57DF\u5B9E\u4F8B\u5728 zones\uFF08\u6309 area \u7A7A\u95F4\u5305\u542B\u5173\u7CFB\u5BF9\u533A\u57DF\u5185\u5355\u4F4D\u6302\u8F7D mods \u4E0E rules\uFF09\u3002\u4E3B\u52A8\u6280\u80FD\u7684\u989D\u5916\u7A0B\u5E8F\u5199 hook:active\u3002
-\u2022 \u6B66\u5668\u6D41\u6D3E\u4E0E\u539F\u751F\u52A8\u4F5C\u8FB9\u754C\uFF1A\u6301\u76FE\u4E3A\u5251\u76FE\uFF08\u539F\u751F\u683C\u6321 block / \u76FE\u51FB shield_bash\uFF09\uFF1B\u6709\u4E3B\u624B\u65E0\u76FE\u4E14\u526F\u624B\u4E3A kind:"consumable" \u65F6\u6FC0\u6D3B\u540C\u8C03\uFF08\u539F\u751F use_item 0 AP \u4E0D\u5360\u69FD\u5BF9\u81EA\u8EAB\u6267\u884C\u526F\u624B hook:"active"\uFF0C\u6BCF\u6218\u5171 2 \u6B21\uFF09\uFF1B\u4E3B\u624B heavy \u6216 twoHanded \u6FC0\u6D3B\u91CD\u5251\uFF08twoHanded \u5360\u53CC\u624B\u69FD\uFF0Cheavy \u6807\u91CD\u578B\uFF0C\u4EC5\u539F\u751F\u5207\u6362\u653B\u5B88\u500D\u7387\uFF0C\u65E0\u5185\u7F6E\u5F39\u53CD\u7ED3\u7B97\uFF0C\u5F39\u53CD\uFF0F\u62DB\u67B6\u53CD\u51FB\u987B\u5199\u53D7\u51FB\u89C4\u5219\uFF09\uFF1B\u4E3B\u526F\u624B\u53CC\u6B66\u5668\u6FC0\u6D3B\u53CC\u6301\uFF08\u526F\u624B\u6B66\u5668\u987B\u8BBE hand:"off_hand" \u4E14\u5E26 damage \u624D\u89E6\u53D1\u666E\u653B\u526F\u624B\u8FFD\u51FB\uFF09\uFF1B\u9152\u9986\u8F6C\u6362\u8FDC\u7A0B\u6B66\u5668\u7531 pools.ammo \u8BA1\u5F39\u836F\u4F46\u9ED8\u8BA4\u4E0D\u5E26 reloadable:true\uFF08\u4E0D\u53EF\u539F\u751F\u88C5\u586B\uFF0C\u4EC5\u539F\u6587\u652F\u6301\u5C40\u5185\u88C5\u586B\u65F6\u624D\u663E\u5F0F\u8BBE reloadable:true\uFF09\u3002\u88C5\u5907\u5B9E\u4F8B\u6C60\u5728\u88C5\u5907\u89C4\u5219\u4E2D\u901A\u8FC7 item.resource.<\u6C60ID> \u8BFB\u53D6\uFF0C\u7F3A\u7701\u4E3A 0\uFF1Bequipment / skill / unit \u53EF\u58F0\u660E unitPools\uFF0C\u521D\u59CB\u5316\u540E\u4EE5 self.resource.<\u6C60ID> \u5171\u4EAB\u8BFB\u5199\uFF0CresourceCost:{resource:"<\u6C60ID>",amount:N} \u53EF\u6263\u9664\u5355\u4F4D\u6C60\uFF0C\u8DE8\u6279\u590D\u7528 sharedPoolLedger \u4E2D\u7684 poolId\uFF0C\u4E0D\u4F7F\u7528 event.souls \u7279\u5224\u3002`;
+\u2022 \u6B66\u5668\u6D41\u6D3E\u4E0E\u539F\u751F\u52A8\u4F5C\u8FB9\u754C\uFF1A\u6301\u76FE\u4E3A\u5251\u76FE\uFF08\u539F\u751F\u683C\u6321 block / \u76FE\u51FB shield_bash\uFF09\uFF1B\u6709\u4E3B\u624B\u65E0\u76FE\u4E14\u526F\u624B\u4E3A kind:"consumable" \u65F6\u6FC0\u6D3B\u540C\u8C03\uFF08\u539F\u751F use_item 0 AP \u4E0D\u5360\u69FD\u5BF9\u81EA\u8EAB\u6267\u884C\u526F\u624B hook:"active"\uFF0C\u6BCF\u6218\u5171 2 \u6B21\uFF09\uFF1B\u8FD1\u6218\u4E3B\u624B heavy \u6216 twoHanded \u6FC0\u6D3B\u91CD\u5251\uFF08twoHanded \u5360\u53CC\u624B\u69FD\uFF0Cheavy \u6807\u91CD\u578B\uFF1B\u653B\u52BF 1.5\xD7\u3001\u6C89\u52BF 1.2\xD7 \u4E14\u51CF\u514D 15% \u975E\u771F\u4F24\uFF0C\u65E0\u5185\u7F6E\u5F39\u53CD\u7ED3\u7B97\uFF0C\u5F39\u53CD\uFF0F\u62DB\u67B6\u53CD\u51FB\u987B\u5199\u53D7\u51FB\u89C4\u5219\uFF09\uFF1B\u7EAF\u8FDC\u7A0B\u4E3B\u624B\u5355\u6301\u6FC0\u6D3B\u5C04\u51FB\u59FF\u6001\uFF08\u4E2D\u8FDC\u8DDD\u8870\u51CF\u7F13\u548C 2\uFF0C\u5C01\u9876 0\uFF1B\u540C\u683C\u9ED8\u8BA4 -4 \u547D\u4E2D\uFF0C\u8D34\u8EAB\u514D\u7F5A\u8BBE closeQuarters:true\uFF09\uFF1B\u4E3B\u526F\u624B\u53CC\u6B66\u5668\u6FC0\u6D3B\u53CC\u6301\uFF08\u526F\u624B\u6B66\u5668\u987B\u8BBE hand:"off_hand" \u4E14\u5E26 damage \u624D\u89E6\u53D1\u666E\u653B\u526F\u624B\u8FFD\u51FB\uFF09\uFF1B\u9152\u9986\u8F6C\u6362\u8FDC\u7A0B\u6B66\u5668\u7531 pools.ammo \u8BA1\u5F39\u836F\u4F46\u9ED8\u8BA4\u4E0D\u5E26 reloadable:true\uFF08\u4E0D\u53EF\u539F\u751F\u88C5\u586B\uFF0C\u4EC5\u539F\u6587\u652F\u6301\u5C40\u5185\u88C5\u586B\u65F6\u624D\u663E\u5F0F\u8BBE reloadable:true\uFF09\u3002\u88C5\u5907\u5B9E\u4F8B\u6C60\u5728\u88C5\u5907\u89C4\u5219\u4E2D\u901A\u8FC7 item.resource.<\u6C60ID> \u8BFB\u53D6\uFF0C\u7F3A\u7701\u4E3A 0\uFF1Bequipment / skill / unit \u53EF\u58F0\u660E unitPools\uFF0C\u521D\u59CB\u5316\u540E\u4EE5 self.resource.<\u6C60ID> \u5171\u4EAB\u8BFB\u5199\uFF0CresourceCost:{resource:"<\u6C60ID>",amount:N} \u53EF\u6263\u9664\u5355\u4F4D\u6C60\uFF0C\u8DE8\u6279\u590D\u7528 sharedPoolLedger \u4E2D\u7684 poolId\uFF0C\u4E0D\u4F7F\u7528 event.souls \u7279\u5224\u3002`;
 var ENGINE_API_SUMMARY = PROTOCOL_RULES;
 
 // src/tavern/status-catalog.js
@@ -17245,7 +17364,7 @@ var PATCH_RULES = String.raw`<output_contract>
 • 装备模板 /equipment/<id>：
   - 必填：name。武器若声明 range（整数 0…64）则必须同时声明 damage（dice 对象），二者成对出现；武器斜杠分段距离第一项归模板普攻，后续项依次归挂载的装备主动技能。
   - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
-  - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。装备可用 unitPools 声明挂在持有者身上的共享池，pools 仅声明本装备实例池。流派联动：双手占槽设 twoHanded:true，重型设 heavy:true（任一激活重剑攻守倍率，无内置弹反结算，招架反击须写受击规则）；双持普攻触发副手追击要求副手武器 hand:"off_hand" 且带 damage；有主手无盾且副手为 kind:"consumable" 时激活同调（0 AP 不占槽对 self 执行副手 hook:"active"，每战共 2 次）；持盾激活剑盾格挡与盾击。
+  - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。装备可用 unitPools 声明挂在持有者身上的共享池，pools 仅声明本装备实例池。流派联动：双手占槽设 twoHanded:true，重型设 heavy:true（近战主手任一激活重剑：攻势 1.5×、沉势 1.2× 且减免 15% 非真伤，无内置弹反结算，招架反击须写受击规则）；纯远程主手单持激活射击姿态（中远距衰减缓和 2，封顶 0；同格默认 -4 命中，贴身免罚设 closeQuarters:true）；双持普攻触发副手追击要求副手武器 hand:"off_hand" 且带 damage；有主手无盾且副手为 kind:"consumable" 时激活同调（0 AP 不占槽对 self 执行副手 hook:"active"，每战共 2 次）；持盾激活剑盾格挡与盾击。
 
 • 战场环境区域 /zones/<id>（对应 unitId:null、originPath:"/zones/<id>" 的战场效果警告）：
   - 空间几何与身份字段（id / name / area / follow / sourceId / team）已由转换器落盘只读锁定，严禁整块 replace /zones/<id> 或改写 area/id/name/pools，也严禁写不存在的 description 字段！只允许写子路径 /zones/<id>/(rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)。
@@ -17292,7 +17411,7 @@ function describeSlots(saved) {
   }));
   return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots3] : slots3;
 }
-var distinct = (values4) => [...new Set(values4.filter(Boolean))];
+var distinct = (values5) => [...new Set(values5.filter(Boolean))];
 function scopedRoster(ctx, state, warnings) {
   const pick = (table4, ids) => Object.fromEntries(distinct(ids).filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
   const unitIds = distinct(ctx.onlyUnitIds ?? []);
@@ -18590,12 +18709,12 @@ var signed2 = (n, asPercent) => typeof n === "number" ? `${n >= 0 ? "+" : ""}${a
 function modSummary(mod2) {
   const parts = [];
   if (mod2.stat) {
-    const values4 = [
+    const values5 = [
       mod2.flat != null ? signed2(mod2.flat, ratioStats2.has(mod2.stat)) : null,
       mod2.mult != null ? `\xD7${typeof mod2.mult === "number" ? mod2.mult : `\uFF08${mod2.mult}\uFF09`}` : null,
       mod2.additivePercent != null ? signed2(mod2.additivePercent, true) : null
     ].filter(Boolean);
-    parts.push([modLabels[mod2.stat], ...values4].join(" "));
+    parts.push([modLabels[mod2.stat], ...values5].join(" "));
   }
   if (mod2.locks?.length) parts.push(`\u7981\u6B62${mod2.locks.map((slot2) => slots2[slot2]).join("\u3001")}`);
   if (mod2.flags?.length) parts.push(...mod2.flags.map((flag) => flags[flag]));
@@ -19301,31 +19420,79 @@ function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChun
   return config.apiMode === "custom" || config.apiMode === "direct" ? requestViaCustomApi(config, messages, options) : requestViaTavern(host, config, messages, options);
 }
 
-// src/tavern/overlay-patch.js
-var own20 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
-var isObject3 = (v) => v && typeof v === "object" && !Array.isArray(v);
+// src/tavern/mvu-utils.js
+var own20 = (value, key4) => value != null && Object.hasOwn(value, key4);
+var isObject3 = (value) => value && typeof value === "object" && !Array.isArray(value);
 var safeProperty2 = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
-var clone4 = (value) => {
+function deepClone(value) {
   try {
     return structuredClone(value);
-  } catch (_) {
+  } catch {
     try {
       return JSON.parse(JSON.stringify(value));
-    } catch (_2) {
+    } catch {
       return value;
     }
   }
-};
+}
 function deepMerge2(base, extra) {
-  const result = isObject3(base) ? clone4(base) : {};
+  const result = isObject3(base) ? deepClone(base) : {};
   if (!isObject3(extra)) return result;
   for (const [key4, value] of Object.entries(extra)) {
     if (!safeProperty2(key4)) continue;
-    if (isObject3(value) && isObject3(result[key4])) result[key4] = deepMerge2(result[key4], value);
-    else result[key4] = clone4(value);
+    result[key4] = isObject3(value) && isObject3(result[key4]) ? deepMerge2(result[key4], value) : deepClone(value);
   }
   return result;
 }
+function normalizePath(path2) {
+  return typeof path2 === "string" && path2.startsWith("/") ? path2.slice(1).split("/").map((key4) => key4.replaceAll("~1", "/").replaceAll("~0", "~")) : [];
+}
+var arrayIndex = (key4) => /^(0|[1-9]\d*)$/.test(key4);
+function applyJsonPatch(document2, patch, { strict = false } = {}) {
+  const result = deepClone(document2);
+  for (const operation2 of patch) {
+    const { op, path: path2, value } = operation2 ?? {};
+    if (!["add", "replace", "remove"].includes(op)) continue;
+    const keys = normalizePath(path2);
+    if (!keys.length || !keys.every(safeProperty2)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
+    const last = keys.pop();
+    let parent = result;
+    for (const key4 of keys) {
+      if (!parent || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${path2}`);
+      if (Array.isArray(parent) && (!arrayIndex(key4) || Number(key4) >= parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${path2}`);
+      if (!own20(parent, key4) || !strict && (!parent[key4] || typeof parent[key4] !== "object")) {
+        if (strict) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${path2}`);
+        if (op === "remove") {
+          parent = null;
+          break;
+        }
+        parent[key4] = {};
+      }
+      parent = parent[key4];
+    }
+    if (!strict && parent === null && op === "remove") continue;
+    if (!parent || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${path2}`);
+    if (Array.isArray(parent)) {
+      if (last === "-" && op === "add") {
+        parent.push(deepClone(value));
+        continue;
+      }
+      if (!arrayIndex(last) || Number(last) > parent.length) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${path2}`);
+      if (op === "add") {
+        parent.splice(Number(last), 0, deepClone(value));
+        continue;
+      }
+    }
+    if (strict && op !== "add" && !own20(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${path2}`);
+    if (op === "remove") {
+      if (Array.isArray(parent)) parent.splice(Number(last), 1);
+      else delete parent[last];
+    } else parent[last] = deepClone(value);
+  }
+  return result;
+}
+
+// src/tavern/overlay-patch.js
 function parseJSONPatch(value) {
   const parsed = parseAIResponse(value).data;
   if (Array.isArray(parsed)) return parsed;
@@ -19339,8 +19506,10 @@ function parseJSONPatch(value) {
   return null;
 }
 function fingerprintAt(state, path2) {
+  const keys = normalizePath(path2);
+  if (!keys.length) return void 0;
   let value = state;
-  for (const key4 of path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"))) {
+  for (const key4 of keys) {
     if (value == null || !own20(value, key4)) return void 0;
     value = value[key4];
   }
@@ -19388,15 +19557,15 @@ function partitionNormalizationPatch({ liveState, baselineState, existingOps = [
   };
   const trial = (live3, base, items) => {
     const operations2 = items.flatMap((item) => expand(strip(item)));
-    const nextLive = apply2(clone4(live3), operations2, true);
-    const nextBase = apply2(clone4(base), operations2, true);
+    const nextLive = apply2(deepClone(live3), operations2, true);
+    const nextBase = apply2(deepClone(base), operations2, true);
     for (const state of [nextLive, nextBase]) {
       normalize(state);
       validate(state);
     }
     return { nextLive, nextBase };
   };
-  let workLive = clone4(liveState), workBase = apply2(clone4(baselineState), existingOps, true);
+  let workLive = deepClone(liveState), workBase = apply2(deepClone(baselineState), existingOps, true);
   try {
     const { nextLive, nextBase } = trial(workLive, workBase, candidates);
     return { accepted: candidates, rejected, workLive: nextLive, workBase: nextBase };
@@ -19446,7 +19615,7 @@ function formatRejectedItem(item, state = {}) {
 function patchValue(value, table4) {
   if (!Array.isArray(value)) return value;
   return Object.fromEntries(value.filter((item) => item && (item.id || item.name)).map((item, index) => {
-    const normalized = clone4(item);
+    const normalized = deepClone(item);
     if (table4 === "covers" || table4 === "interactives" || table4 === "zones") {
       const xyz = normalized.xyz;
       if (Array.isArray(xyz)) {
@@ -19475,7 +19644,7 @@ function patchValue(value, table4) {
 }
 function normalizeSemanticPatch(patch) {
   if (!isObject3(patch)) return patch;
-  const result = clone4(patch);
+  const result = deepClone(patch);
   for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
   if (isObject3(result.unit_patch)) {
     const unitPatch = result.unit_patch;
@@ -19485,44 +19654,11 @@ function normalizeSemanticPatch(patch) {
   return result;
 }
 function applyPatch(target2, patch, strict = false) {
-  let result = clone4(target2);
-  if (isObject3(patch) && !Array.isArray(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
-    return deepMerge2(result, normalizeSemanticPatch(patch.battle_patch || patch));
+  if (isObject3(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
+    return deepMerge2(target2, normalizeSemanticPatch(patch.battle_patch || patch));
   }
   const list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
-  if (!Array.isArray(list4)) return result;
-  const pointer3 = (path2) => String(path2 || "").split("/").slice(1).map((x) => x.replaceAll("~1", "/").replaceAll("~0", "~"));
-  for (const operation2 of list4) {
-    if (!operation2 || !operation2.op) continue;
-    const keys = pointer3(operation2.path);
-    if (!keys.length || !keys.every(safeProperty2)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
-    const last = keys.pop();
-    let parent = result;
-    for (const key4 of keys) {
-      if (!own20(parent, key4)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
-      parent = parent[key4];
-    }
-    if (parent == null || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
-    if (strict) {
-      if (Array.isArray(parent)) {
-        const append = last === "-" && operation2.op === "add";
-        if (!append && (!/^(0|[1-9]\d*)$/.test(last) || Number(last) > parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${operation2.path}`);
-      }
-      if (operation2.op !== "add" && !own20(parent, last)) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
-      if (operation2.op === "add" && Array.isArray(parent) && last !== "-") {
-        parent.splice(Number(last), 0, clone4(operation2.value));
-        continue;
-      }
-    }
-    if (operation2.op === "remove") {
-      if (Array.isArray(parent)) parent.splice(Number(last), 1);
-      else delete parent[last];
-    } else if (operation2.op === "add" || operation2.op === "replace") {
-      if (Array.isArray(parent) && last === "-") parent.push(clone4(operation2.value));
-      else parent[last] = clone4(operation2.value);
-    }
-  }
-  return result;
+  return applyJsonPatch(target2, Array.isArray(list4) ? list4 : [], { strict });
 }
 var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"];
 function chatPatch(state, payload) {
@@ -19559,19 +19695,6 @@ function chatPatch(state, payload) {
 }
 
 // src/tavern/overlay-sources.js
-var isObject4 = (v) => v && typeof v === "object" && !Array.isArray(v);
-var safeProperty3 = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
-var clone5 = (value) => {
-  try {
-    return structuredClone(value);
-  } catch (_) {
-    try {
-      return JSON.parse(JSON.stringify(value));
-    } catch (_2) {
-      return value;
-    }
-  }
-};
 function hostWindow() {
   const w = typeof window !== "undefined" ? window : globalThis;
   try {
@@ -19605,16 +19728,6 @@ function parseJSON2(value, fallback = null) {
   } catch (_) {
     return fallback;
   }
-}
-function deepMerge3(base, extra) {
-  const result = isObject4(base) ? clone5(base) : {};
-  if (!isObject4(extra)) return result;
-  for (const [key4, value] of Object.entries(extra)) {
-    if (!safeProperty3(key4)) continue;
-    if (isObject4(value) && isObject4(result[key4])) result[key4] = deepMerge3(result[key4], value);
-    else result[key4] = clone5(value);
-  }
-  return result;
 }
 var TAVERN_VERSION = "0.4.7";
 var LARGE_CONFIG_KEYS = ["charSnapshots", "normalizationBatches", "narrativeExemptions", "unresolvedNotes"];
@@ -19670,7 +19783,7 @@ function configFor(storage, key4) {
       return value == null ? [] : [[field2, value]];
     }));
     const mode = saved?.apiMode ?? (saved?.baseUrl ? "direct" : "tavern");
-    return deepMerge3(DEFAULT_CONFIG, {
+    return deepMerge2(DEFAULT_CONFIG, {
       ...settings,
       ...separateLarge,
       ...separateSessions ? { aiSessions: separateSessions } : {},
@@ -19678,7 +19791,7 @@ function configFor(storage, key4) {
       slots: describeSlots(saved?.slots)
     });
   } catch {
-    return clone5(DEFAULT_CONFIG);
+    return deepClone(DEFAULT_CONFIG);
   }
 }
 function putConfig(storage, key4, value) {
@@ -19756,7 +19869,7 @@ function sourceBundle(variables2, messages, chat = "default", preferredMessageId
     }
   }
   let battleInit = battleRaw ? parseBattleInit(battleRaw) : null;
-  if (!isObject4(battleInit) || !Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants)) {
+  if (!isObject3(battleInit) || !Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants)) {
     const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
     if (recovered) {
       battleInit = recovered;
@@ -19930,7 +20043,7 @@ function writeBattleOutcome({ storage, host, key: key4, battleId, opening, patch
 }
 
 // src/tavern/normalization-commit.js
-var isObject5 = (value) => value && typeof value === "object" && !Array.isArray(value);
+var isObject4 = (value) => value && typeof value === "object" && !Array.isArray(value);
 function rejectedWarning(item, warning) {
   return Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`));
 }
@@ -19982,7 +20095,7 @@ function acceptNormalizationResponse({
   const { data, parseError } = parseAIResponse(reply);
   const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
   const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
-  if (isObject5(data) && !Object.hasOwn(data, "patch") && (explicitUnresolved || explicitNarrative || Array.isArray(data.existing) && data.existing.length)) data.patch = [];
+  if (isObject4(data) && !Object.hasOwn(data, "patch") && (explicitUnresolved || explicitNarrative || Array.isArray(data.existing) && data.existing.length)) data.patch = [];
   if (!Array.isArray(data?.patch)) {
     const error2 = new Error(`\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01${parseError ? `\uFF1A${parseError}` : ""}`);
     const source = typeof reply === "string" ? stripReasoningBlocks(reply) : "";
@@ -20057,8 +20170,8 @@ function acceptNormalizationResponse({
         });
       }
       const array = JSON.parse(fingerprintAt(next, change2.path) ?? "null");
-      const values4 = Array.isArray(operation2.value) ? operation2.value : [operation2.value];
-      return operation2.op === "remove" ? fingerprintAt(next, change2.path) === change2.after : Array.isArray(array) && values4.every((expected) => array.some((value) => JSON.stringify(value) === JSON.stringify(expected)));
+      const values5 = Array.isArray(operation2.value) ? operation2.value : [operation2.value];
+      return operation2.op === "remove" ? fingerprintAt(next, change2.path) === change2.after : Array.isArray(array) && values5.every((expected) => array.some((value) => JSON.stringify(value) === JSON.stringify(expected)));
     });
     const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2);
     const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(
@@ -20282,8 +20395,8 @@ function computeStorageDiagnostics(storage, activeBattleKey) {
 
 // src/tavern/overlay-mount.js
 var own21 = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k);
-var isObject6 = (v) => v && typeof v === "object" && !Array.isArray(v);
-var clone6 = (value) => {
+var isObject5 = (v) => v && typeof v === "object" && !Array.isArray(v);
+var clone4 = (value) => {
   try {
     return structuredClone(value);
   } catch (_) {
@@ -20576,7 +20689,7 @@ function mountTavernOverlay(options = {}) {
       return null;
     }
   })();
-  config.instances = isObject6(instances) ? instances : {};
+  config.instances = isObject5(instances) ? instances : {};
   function pruneBattleStorageExcept2(key4) {
     for (const cachedKey of openingSources.keys()) if (cachedKey !== key4) openingSources.delete(cachedKey);
     return pruneBattleStorageExcept(storage, key4);
@@ -20996,7 +21109,7 @@ ${tag2.textContent || ""}
       on(b, "click", () => choose(all ? Object.keys(config.instances) : []));
       toolbar.append(b);
     }
-    const collapsed = () => isObject6(config.collapsedInstances) ? config.collapsedInstances : {};
+    const collapsed = () => isObject5(config.collapsedInstances) ? config.collapsedInstances : {};
     const setFolded = (ids, value) => {
       const next = { ...collapsed() };
       for (const id4 of ids) {
@@ -21089,7 +21202,7 @@ ${tag2.textContent || ""}
       on(edit, "click", () => {
         const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
         const parsed = parseJSON3(value, null);
-        if (isObject6(parsed)) {
+        if (isObject5(parsed)) {
           config.instances[key4] = { ...parsed, id: key4, source: "AI \u7F16\u8F91" };
           save();
           renderInstances();
@@ -21172,7 +21285,7 @@ ${tag2.textContent || ""}
     const createdTemplates = /* @__PURE__ */ new Map();
     const progress = (detail) => notify("\u6B63\u5728\u6807\u51C6\u5316\u4E2D\u2026", detail ?? `\u5DF2\u5B8C\u6210 ${completed} / ${queue.length} \u6279`, null, true);
     const request = async (batch, index, correction) => {
-      const snapshot = clone6(liveState());
+      const snapshot = clone4(liveState());
       const warnings = batch.warnings.filter((warning) => sources.warnings.includes(warning));
       let prompts = prepareMessages("validate", "", true, batch.unitIds, warnings);
       const sent = warnings.filter((warning) => prompts.some((message) => message.content.includes(JSON.stringify(warning.message))));
@@ -21289,9 +21402,9 @@ ${tag2.textContent || ""}
     const preserveOpening = battleHasProgress(snapshot) || battleHasProgress(readBattleStorage(key4, "fated-tactical/battle-v1"));
     const protectedOpening = key4 && readBattleStorage(key4, "mvu-pre-writeback");
     const opening = (protectedOpening || !rehydrate && (!refreshSource || preserveOpening)) && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
-    const nextSources = opening ? clone6(opening) : candidate;
+    const nextSources = opening ? clone4(opening) : candidate;
     if (key4 && !opening) {
-      nextSources.mvuData = clone6(await readBattleVariables(host, Number(candidate.source?.messageId)));
+      nextSources.mvuData = clone4(await readBattleVariables(host, Number(candidate.source?.messageId)));
       nextSources.protagonistName = tavernIdentity(host);
     }
     if (epoch !== scanEpoch || disposed) return null;
@@ -21337,7 +21450,7 @@ ${tag2.textContent || ""}
     const nextInstances = {};
     for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
       const key5 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
-      nextInstances[key5] = { ...clone6(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
+      nextInstances[key5] = { ...clone4(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
     }
     config.instances = nextInstances;
     diagnostics = {
@@ -21512,12 +21625,12 @@ ${tag2.textContent || ""}
       const receipts = (batch.receipts ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
       if (patch.length || receipts.length || guards.length) retained.push({ ...batch, patch, guards, receipts });
     }
-    const next = clone6(current);
+    const next = clone4(current);
     next[table4] = { ...next[table4] };
     for (const target2 of targets2) {
       const targetId = target2.split("/")[2];
       if (baseline[table4][targetId] === void 0) delete next[table4][targetId];
-      else next[table4][targetId] = clone6(baseline[table4][targetId]);
+      else next[table4][targetId] = clone4(baseline[table4][targetId]);
     }
     try {
       (options.validateState || validateState)(next);
@@ -21537,12 +21650,12 @@ ${tag2.textContent || ""}
       updatedAt: Date.now()
     }));
     const exemptions = [...(config.narrativeExemptions[key4] ?? []).filter((receipt) => !matchedKeys.has(receipt.key) && !sceneResets.some((reset) => reset.semanticKey === receipt.semanticKey)), ...sceneResets];
-    const notes2 = clone6(config.unresolvedNotes[key4] ?? {});
+    const notes2 = clone4(config.unresolvedNotes[key4] ?? {});
     for (const [unitId, entries3] of Object.entries(notes2)) {
       for (const warningId of Object.keys(entries3)) if (matchedKeys.has(warningId)) delete entries3[warningId];
       if (!Object.keys(entries3).length) delete notes2[unitId];
     }
-    const snapshots = clone6(config.charSnapshots);
+    const snapshots = clone4(config.charSnapshots);
     for (const snapshot of Object.values(snapshots[key4] ?? {})) {
       if (snapshot.resolvedWarnings) snapshot.resolvedWarnings = snapshot.resolvedWarnings.filter((item) => !matchedKeys.has(item.key ?? item));
     }
@@ -21973,7 +22086,7 @@ ${tag2.textContent || ""}
     for (const unit of Object.values(next.units)) {
       const metadata = { ...config.instances[unit.id] };
       for (const key4 of Object.keys(previous?.units?.[unit.id] ?? {})) delete metadata[key4];
-      config.instances[unit.id] = { ...metadata, ...clone6(unit) };
+      config.instances[unit.id] = { ...metadata, ...clone4(unit) };
     }
     save();
   }
@@ -22159,9 +22272,9 @@ ${tag2.textContent || ""}
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone6(config), getDiagnostics: () => clone6(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, extractJsonBlocks, getSources: () => clone6(sources), getState: () => {
-    const state = clone6(liveState());
-    if (state) Object.defineProperty(state, "warnings", { value: clone6(sources.warnings ?? []) });
+  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone4(config), getDiagnostics: () => clone4(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, extractJsonBlocks, getSources: () => clone4(sources), getState: () => {
+    const state = clone4(liveState());
+    if (state) Object.defineProperty(state, "warnings", { value: clone4(sources.warnings ?? []) });
     return state;
   } };
   function dispose() {
