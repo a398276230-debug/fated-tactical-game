@@ -1,7 +1,7 @@
 import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { id as validId, validateState } from '../api/validation.js';
 import { DISTANCE_TABLE, sizeClassFor, stanceFor, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells } from '../core/combat_protocol.js';
-import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
+import { validVmRule, vmStatModError } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
@@ -46,8 +46,9 @@ export function readMods(value, warnings) {
   if (value == null) return [];
   if (!Array.isArray(value)) { warnings.push('mods 必须是 StatMod 数组'); return []; }
   return value.flatMap((mod, index) => {
-    if (index < 200 && validVmStatMod(mod)) return [clone(mod)];
-    warnings.push(`mods[${index}] 无效或超出数量上限：${describe(mod)}`);
+    const error = index < 200 ? vmStatModError(mod) : '超出数量上限 200';
+    if (!error) return [clone(mod)];
+    warnings.push(`mods[${index}] ${error}：${describe(mod)}`);
     return [];
   });
 }
@@ -146,15 +147,16 @@ export function normalizeDice(raw) {
 }
 
 export function areaFields(raw, warnings, name) {
-  const tags = parseAreaTags([...(raw.距离 != null ? [`有效距离: ${raw.距离}`] : []), ...(raw.范围 != null ? [raw.范围 === '单体' ? '单体' : `范围: ${raw.范围}`] : []), ...[].concat(raw.tags ?? raw.标签 ?? [])]);
-  if (tags.missingRange && raw.range == null && raw.有效距离 == null) warnings.push(`「${name}」有效距离标签缺少格数`);
+  const declaredRange = raw.range ?? raw.有效距离 ?? raw.距离;
+  const tags = parseAreaTags([...(declaredRange != null ? [`有效距离: ${declaredRange}`] : []), ...(raw.范围 != null ? [raw.范围 === '单体' ? '单体' : `范围: ${raw.范围}`] : []), ...[].concat(raw.tags ?? raw.标签 ?? [])]);
+  if (tags.missingRange) warnings.push(`「${name}」有效距离标签缺少格数`);
   if (tags.missingRadius && tags.radius == null && raw.radius == null) warnings.push(`「${name}」范围标签缺少半径格数`);
   const tier = DISTANCE_TABLE.find(row => row.name === tags.rangeTier);
   if (tier && (tags.range < tier.min || (tier.max != null && tags.range > tier.max))) {
     warnings.push(`「${name}」有效距离 ${tags.range} 格与「${tier.name}」的距离区间不符`);
   }
   const shape = raw.shape ?? tags.shape;
-  const range = raw.range ?? raw.有效距离 ?? tags.range;
+  const range = tags.range;
   const radius = raw.radius ?? tags.radius;
   const innerRadius = raw.innerRadius ?? tags.innerRadius;
   const width = raw.width ?? (tags.width != null ? tags.width / 2 : shape === 'line' ? 0.5 : null);
@@ -215,7 +217,7 @@ export function finalizeEquipment(item, warnings) {
   appendRules(template.rules, [{
     id: `ammo-${hash(templateId).toString(36)}`,
     hook: 'before_action',
-    filter: `event.actorId == self.id && event.weaponTemplateId == '${templateId}' && event.actionType == 'attack' && !has_status(self, 'infinite_ammo')`,
+    filter: `event.actorId == self.id && event.weaponTemplateId == '${templateId}' && event.actionType == 'attack' && event.weaponId == item.id && !event.infiniteAmmo`,
     program: [{ op: 'resource', target: 'self', pool: 'ammo', mode: 'sub', amount: 1, local: true, requireFull: true }],
   }], warnings);
 }

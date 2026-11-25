@@ -226,6 +226,10 @@ test('qualified damage reduction affects only its type and shields still absorb 
 
 test('VM modifiers reject percentage-point and multiplier field mistakes', () => {
   for (const [mod, error] of [
+    [{ stat: 'accuracy', flat: 3 }, /mods\[0\].*accuracy.*checkBonus/],
+    [{ flat: 2 }, /flat.*缺少 stat/],
+    [{ locks: ['walk'] }, /locks.*walk.*move/],
+    [{ stat: 'str', flatt: 2 }, /flatt.*未知字段/],
     [{ stat: 'damageReduction', additivePercent: 0.3 }, /基值为 0.*flat.*0.3/],
     [{ stat: 'armorPiercePercent', flat: 20 }, /基值为 0.*flat.*-1\.\.1/],
     [{ stat: 'damageMult', flat: 0.3 }, /基值为 1.*mult/],
@@ -277,8 +281,8 @@ test('native weapon and VM damage share flat and separate percentage mitigation'
     assert.equal(preview(state, spell).targets[0].damage[0], expected(100));
     const before = enemy.hp;
     applyAction(state, attack);
-    const { dice, ratingMultiplier, attackMultiplier, intent, stanceScale, offHandScale } = state.logs.findLast(entry => entry.type === 'damage').detail;
-    assert.equal(before - enemy.hp, expected(dice.value * ratingMultiplier * attackMultiplier * intent.multiplier * stanceScale * offHandScale));
+    const { dice, ratingMultiplier, attackMultiplier, intent, stanceScale } = state.logs.findLast(entry => entry.type === 'damage').detail;
+    assert.equal(before - enemy.hp, expected(dice.value * ratingMultiplier * attackMultiplier * intent.multiplier * stanceScale));
     const then = enemy.hp;
     applyAction(state, spell);
     assert.equal(then - enemy.hp, expected(100));

@@ -440,8 +440,8 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
 });
 
 // Shared-cell routes and point-blank actions change fixed-seed tactics.
-// AI uses the same hit probabilities as actual strikes, including in the altar scenario.
-for (const [scenarioId, winner] of [['ruins', 'blue'], ['altar', 'blue'], ['boss', 'red']]) {
+// Altar's elevated shooters use their declared high-ground range and accuracy.
+for (const [scenarioId, winner] of [['ruins', 'blue'], ['altar', 'red'], ['boss', 'red']]) {
   test(`${scenarioId} 打到胜负并完整重放战报和 JSON 日志`, () => {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {

@@ -71,9 +71,12 @@ test('gravity locks block teleport and ascent but allow forced landing; dispel c
 test('unit despawn removes only summons, not native units, without death or kill credit', () => {
   const state = board();
   run(state, [{ op:'spawn', entityKind:'unit', spec:{ name:'召唤物' } }]);
-  assert.ok(Object.values(state.units).some(unit => unit.summoned));
+  const summon = Object.values(state.units).find(unit => unit.summoned);
+  run(state, [{ op:'spawn', entityKind:'zone', spec:{follow:true, area:{shape:'single',anchorUnitId:summon.id}} }]);
+  assert.equal(state.zones['zone-1'].area.anchorUnitId, summon.id);
   run(state, [{ op:'despawn', entityKind:'unit', select:{from:'units', where:'candidate.summoned == true'} }]);
   assert.deepEqual(Object.keys(state.units).sort(), ['actor','other']);
+  assert.deepEqual(Object.keys(state.zones), []);
   run(state, [{ op:'despawn', entityKind:'unit', select:{from:'units'} }]);
   assert.deepEqual(state.order, ['actor','other']);
   assert.equal(state.logs.some(log => log.type === 'defeat'), false);

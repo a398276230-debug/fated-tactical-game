@@ -292,7 +292,12 @@ test('只有副手标记的小刀能追击；切刀主攻后主手弓不追击�
       assert.deepEqual([p.mainHand, p.offHand, p.stance], [offHand, mainHand, 'dual_wield']);
       assert.equal(preview(state, { type:'attack', x:e.x, y:e.y }).targets[0].weaponId, offHand);
     }
-    const logs=applyAction(state,{type:'attack',x:e.x,y:e.y});
+    const attack={type:'attack',x:e.x,y:e.y};
+    const offTemplate=state.equipment[state.items[p.offHand].templateId];
+    const base=preview(state,attack).targets[0].protocolInitial;
+    offTemplate.attack=(offTemplate.attack ?? 0)+100;
+    assert.equal(preview(state,attack).targets[0].protocolInitial-base,dist===4 ? 0 : 50);
+    const logs=applyAction(state,attack);
     assert.ok(e.hp<hp);
     followups.push([dist,logs.find(l=>l.type==='followup')?.detail.weaponId,sp-p.sp]);
     assert.equal(followups.at(-1)[1], dist === 4 || swap ? undefined : offHand);

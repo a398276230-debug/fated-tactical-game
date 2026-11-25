@@ -8,7 +8,7 @@ import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js'
 import { requestBattleAi } from '../core/battle-ai.js';
 
 const THEMES = ['amethyst', 'night-gold', 'frost-silver'];
-const TARGETLESS = ['end_encounter','switch_weapon', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
+const TARGETLESS = ['end_encounter','switch_weapon','stance_mode', 'brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'detour', 'reload', 'end'];
 const PATH_NAMES = { units: '单位', items: '物品', grid: '地形', statuses: '状态', counters: '计数', statusTemplates: '状态模板', covers: '掩体', interactives: '互动点' };
 
 /** 把沙盒试算结果写成人能读的句子（保留原始键名，便于对照命令）。 */
@@ -46,7 +46,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
 
   const pendingAsk = () => live?.vm?.pendingAsk;
   const active = (s = state) => s?.units[s.order[s.turn]];
-  const TARGETED = new Set(['attack', 'skill', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
+  const TARGETED = new Set(['attack', 'skill', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
   const error = value => { const node = $('action-error'); node.hidden = !value; node.textContent = value ?? ''; };
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
   const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy,
@@ -486,8 +486,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [];
-    const add = (type, skill, itemId, skillName) => {
-      const command = { type, ...(TARGETLESS.includes(type) ? {} : { x: at.x, y: at.y }), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
+    const add = (type, skill, itemId, skillName, maneuver) => {
+      const command = { type, ...(maneuver && { maneuver }), ...(TARGETLESS.includes(type) ? {} : { x: at.x, y: at.y }), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = game.previewAction(command);
@@ -502,7 +502,12 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (canAct) {
       if (onActorCell) { add('move'); add('sprint'); }
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
-      else for (const t of [...(onActorCell ? [] : [sprint ? 'sprint' : 'move']), 'disengage', 'attack', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      else for (const t of [...(onActorCell ? [] : [sprint ? 'sprint' : 'move']), 'disengage', 'attack', 'shield_bash', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      if (self && actor.stance === 'greatsword') {
+        const defensive = actor.greatswordMode !== 'defensive';
+        add('stance_mode', null, null, defensive ? '重剑：转为沉势' : '重剑：转为攻势', defensive ? 'defensive' : 'offensive');
+      }
+      if (self) add('block', null, null, '重格挡', 'heavy');
       if (self) for (const itemId of switchableWeapons(state, actor)) add('switch_weapon', null, itemId);
       add('interact');
       const skills = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);

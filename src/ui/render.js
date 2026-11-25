@@ -3,11 +3,10 @@ import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
 import { preview as rulesPreview, corpses } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
-import { bodySizeLabel, moraleLabels, moraleTypes } from '../core/combat_protocol.js';
+import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES, DAMAGE_TYPES } from './narrate.js';
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
-const STANCES = { light_blade: '轻剑', dual_wield: '双持', attunement: '同调', greatsword: '重剑', sword_shield: '剑盾' };
 const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
 const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' };
 export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', attack: '普攻', interact: '互动', brace: '架势防御',
@@ -273,7 +272,7 @@ export function createRenderer(root, portraitFor = () => []) {
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some(pool => pool.reloadable);
-    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${STANCES[u.stance] ?? '轻剑'}`,
+    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
     for (const s of values(u.statuses)) {

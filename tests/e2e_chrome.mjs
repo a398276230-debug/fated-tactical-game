@@ -831,6 +831,15 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.deepEqual(layout, { cells:100, covers:4, items:4, fit:true, spill:false });
   assert.equal(await run('document.querySelector("#mode-select")'), null);
   assert.equal((await state()).mode, 'split');
+  await run(`(() => { const g = window.FatedTacticalGame, s = g.getBattleState();
+    const a = s.units[s.order[s.turn]], enemy = Object.values(s.units).find(u => u.team !== a.team);
+    s.items['audit-shield'] = {id:'audit-shield',templateId:'towerShield'};
+    Object.assign(a,{x:0,y:0,shield:'audit-shield',stance:'sword_shield'}); Object.assign(enemy,{x:1,y:0});
+    g.createBattle({kind:'custom_state',state:s}); })()`);
+  await click(cell(1,0));
+  await click('#target-actions [data-action="shield_bash"]');
+  assert.ok((await state()).tape.some(record => record.actionType === 'shield_bash') && (await actor()).used.attack === 1, '点击盾击实际消耗攻击槽');
+  await click('#reset-button');
   const actions = type => `#action-toolbar [data-action="${type}"]`;
   await run(`(() => {
     const game = window.FatedTacticalGame;

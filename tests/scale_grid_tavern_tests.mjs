@@ -33,6 +33,14 @@ test('area tags preserve zero/fractional raw distances and slash components', ()
   assert.equal(area.target, 'enemy');
 });
 
+test('虚海大幻觉 retains numeric rawRange from the char_info distance field', () => {
+  const { state } = hydrateFromSources({ battleInit: 'battle|1|range|测试|flat\nunit|e1|red|char_info|塞尔塞特|1,1',
+    charInfo: [{ name: '塞尔塞特', level: 21, skills: [{ name: '虚海大幻觉', 有效距离: '远程(8)', 标签: ['有效距离: 远程(8)'] }] }],
+  }, { throwOnValidation: true });
+  assert.equal(state.skills[state.units.e1.skills[0]].rawRange, 8);
+  assert.deepEqual([state.units.e1.level, state.units.e1.tier], [21, 6]);
+});
+
 test('untagged equipment and skill default ranges use the battle scale', () => {
   const { state } = hydrateFromSources({
     battleInit: '<battle_init>\nbattle|1|default-range|神战|flat|比例尺=1km\nunit|p1|blue|char_info|甲|1,1,0\n</battle_init>',
