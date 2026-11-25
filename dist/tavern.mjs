@@ -1212,7 +1212,7 @@ var chooseOptions = list(object({ id, label: text }, ["id", "label"]), 1);
 var mapOf = (key4, value) => ({ type: "object", propertyNames: key4, additionalProperties: value });
 var eventPatchFields = {
   before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
-  before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), skipColossusArea: booleanExpr, damageScale: numericExpr },
+  before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), damageScale: numericExpr },
   before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
   after_natural_roll: { replaceNaturalRoll: numericExpr },
   before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
@@ -14299,14 +14299,14 @@ function readPools(value, warnings) {
 function readEquipmentNarrative(effects, warnings) {
   return convertNarrative(effects, warnings, "", { equipment: true });
 }
-function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false } = {}) {
+function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false, passive = false } = {}) {
   const rules = [];
   for (const [index, [label, entry2]] of narrativeEntries(effects).entries()) {
     if (validVmRule(entry2)) {
       appendRules(rules, [clone(entry2)], warnings);
       continue;
     }
-    const program2 = !equipment && typeof entry2 === "string" ? narrativeDamage(label, entry2, allowPower) : [];
+    const program2 = !equipment && !passive && typeof entry2 === "string" ? narrativeDamage(label, entry2, allowPower) : [];
     const rawExcerpt = [entry2].flat().map((value) => typeof value === "string" ? blockBody(value) : text3(value?.\u63CF\u8FF0 ?? value?.description ?? value?.\u6548\u679C ?? value?.effect)).filter(Boolean).join("\uFF1B");
     const excerpt = [...rawExcerpt];
     const summary = excerpt.length ? `${excerpt.slice(0, 80).join("")}${excerpt.length > 80 ? "\u2026" : ""}` : "\u5F85\u8F6C\u6362\u4E3A\u6218\u6597\u89C4\u5219";
@@ -14366,7 +14366,7 @@ function normalizeDice(raw) {
   };
 }
 function areaFields(raw, warnings, name) {
-  const tags = parseAreaTags(raw.tags ?? raw.\u6807\u7B7E);
+  const tags = parseAreaTags([...raw.\u8DDD\u79BB != null ? [`\u6709\u6548\u8DDD\u79BB: ${raw.\u8DDD\u79BB}`] : [], ...raw.\u8303\u56F4 != null ? [raw.\u8303\u56F4 === "\u5355\u4F53" ? "\u5355\u4F53" : `\u8303\u56F4: ${raw.\u8303\u56F4}`] : [], ...[].concat(raw.tags ?? raw.\u6807\u7B7E ?? [])]);
   if (tags.missingRange && raw.range == null && raw.\u6709\u6548\u8DDD\u79BB == null) warnings.push(`\u300C${name}\u300D\u6709\u6548\u8DDD\u79BB\u6807\u7B7E\u7F3A\u5C11\u683C\u6570`);
   if (tags.missingRadius && tags.radius == null && raw.radius == null) warnings.push(`\u300C${name}\u300D\u8303\u56F4\u6807\u7B7E\u7F3A\u5C11\u534A\u5F84\u683C\u6570`);
   const tier = DISTANCE_TABLE.find((row) => row.name === tags.rangeTier);
@@ -14597,8 +14597,24 @@ function mergeBattleParticipant(record3, participant, battle) {
 }
 function sourceSkills(record3) {
   const value = record3.skills ?? record3.abilities ?? record3.\u6280\u80FD ?? [];
-  if (Array.isArray(value)) return value.map((v, i) => [v, i]);
-  return Object.entries(asObject(value)).map(([name, v], i) => [{ ...asObject(v), name: v?.name ?? v?.\u540D\u79F0 ?? name }, i]);
+  const list4 = Array.isArray(value) ? [...value] : Object.entries(asObject(value)).map(([name, v]) => ({ ...asObject(v), name: v?.name ?? v?.\u540D\u79F0 ?? name }));
+  for (const [name, item] of Object.entries(asObject(record3.\u80CC\u5305))) {
+    if (item?.\u7C7B\u578B !== "\u9053\u5177" || bound(item.\u6570\u91CF ?? item.count, 0, 1e9, 1) === 0) continue;
+    const declared = item.rules ?? item.\u89C4\u5219;
+    const rules = Array.isArray(declared) ? declared.filter((rule2) => validVmRule(rule2)) : [];
+    const narrative = Array.isArray(declared) ? declared.filter((rule2) => !validVmRule(rule2)) : declared;
+    const effects = [item.effects ?? item.\u6548\u679C, item.\u88AB\u52A8, narrative].filter((v) => narrativeEntries(v).length);
+    if (effects.length || rules.length) list4.push({ ...item, id: `bag:${name}`, name, passive: !rules.some((rule2) => rule2.hook === "active"), effects, rules });
+  }
+  const ladder = record3.\u767B\u795E\u957F\u9636;
+  if (ladder && ladder.\u662F\u5426\u5F00\u542F !== false) for (const group of ["\u8981\u7D20", "\u6743\u80FD", "\u6CD5\u5219"]) {
+    for (const [name, entry2] of Object.entries(asObject(ladder[group]))) {
+      const effects = object3(entry2) ? Object.fromEntries(Object.entries(entry2).filter(([key4]) => !["\u63CF\u8FF0", "\u540D\u79F0", "\u54C1\u8D28"].includes(key4))) : entry2;
+      if (!narrativeEntries(effects).length) continue;
+      list4.push({ id: `ascension:${group}:${name}`, name, \u63CF\u8FF0: entry2?.\u63CF\u8FF0, effects, passive: !Object.keys(asObject(effects)).some((label) => label.startsWith("\u4E3B\u52A8")) });
+    }
+  }
+  return list4.map((v, i) => [v, i]);
 }
 function participantList(battle) {
   const value = Array.isArray(battle.units) ? battle.units : battle.participants ?? battle.roster ?? [];
@@ -14700,24 +14716,28 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   const mainId = main?.id ?? null, offId = off?.id ?? null, shieldId = shield?.id ?? null;
   const skillInfo = {};
   const skillKeys = /* @__PURE__ */ new Map();
-  const normalizedSkills = sourceSkills(record3).slice(0, 32).map(([raw, i]) => {
-    const r = asObject(raw);
+  const skillSources = sourceSkills(record3);
+  for (const [extra] of skillSources.slice(32)) sink("effect", `/units/${id3}`).push(`\u6280\u80FD\u6570\u91CF\u8D85\u8FC7\u4E0A\u9650 32\uFF0C\u672A\u5BFC\u5165\u300C${extra?.name ?? extra?.\u540D\u79F0 ?? "\u672A\u77E5\u6280\u80FD"}\u300D`);
+  const normalizedSkills = skillSources.slice(0, 32).map(([raw, i]) => {
+    const input = asObject(raw);
+    const r = input.damage == null && object3(input.\u4F24\u5BB3) ? { ...input, damage: input.\u4F24\u5BB3 } : input;
     const skillName = text3(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`;
     const key4 = hash(String(r.id ?? r.ID ?? skillName)).toString(36);
     const occurrence = skillKeys.get(key4) ?? 0;
     skillKeys.set(key4, occurrence + 1);
     const sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${key4}${occurrence ? `-${occurrence}` : ""}`;
-    entrySources[`skills:${sid}`] = r;
+    entrySources[`skills:${sid}`] = input;
     const labels = [].concat(r.tags ?? r.\u6807\u7B7E ?? [], r.description ?? r.\u63CF\u8FF0 ?? "").join(" ");
     const taggedPower = labels.match(/威力\s*[:：]\s*(\d+)/)?.[1];
     const notes2 = sink("effect", `/skills/${sid}`);
     const area3 = areaFields(r, notes2, skillName);
     const costs = skillCosts(r.cost ?? r.\u6D88\u8017);
-    const mode = text3(r.\u6A21\u5F0F ?? r.mode);
-    const passive = r.passive === true || mode.includes("\u88AB\u52A8") && !mode.includes("\u4E3B\u52A8");
-    const tag2 = tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
+    const mode = text3(r.\u6A21\u5F0F ?? r.mode ?? r.\u7C7B\u578B ?? r.type).toLowerCase();
+    const passive = r.passive === true || mode === "passive" || mode.includes("\u88AB\u52A8") && !mode.includes("\u4E3B\u52A8");
+    const tag2 = (typeof r.\u4F24\u5BB3 === "string" ? r.\u4F24\u5BB3 : null) ?? tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean);
     const rawEffects = r.effects ?? r.\u6548\u679C;
-    const power = r.power ?? taggedPower;
+    const power = r.power ?? r.\u5A01\u529B ?? taggedPower;
+    const initiative2 = r.\u5148\u624B ?? tagEntries(r.tags ?? r.\u6807\u7B7E).map((v) => v.match(/^先手\s*[:：]?\s*([+-]?\d+)$/)?.[1]).find(Boolean) ?? narrativeEntries(rawEffects).map(([, v]) => typeof v === "string" && v.match(/^(?:\[[^\]]+\]\s*)*本技能先手\s*([+-]\d+)(?=[，。；、\s]|$)/)?.[1]).find(Boolean);
     const numericPower = number2(power, NaN);
     const hasPower = Number.isFinite(numericPower) && numericPower >= 0;
     const statTag = tagEntries(r.tags ?? r.\u6807\u7B7E).map((label) => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
@@ -14725,7 +14745,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
     const prefix = `fx-${hash(sid).toString(36)}`;
     const areaDamage = isAreaDamage(area3);
     const narrativeNotes = [];
-    appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage }), notes2);
+    appendRules(rules, convertNarrative(rawEffects, { push: (message, metadata) => narrativeNotes.push({ message, metadata }) }, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive }), notes2);
     const singleTaggedType = damageAliases.get(tag2);
     const hasActiveDamage = rules.some((rule2) => rule2.enabled !== false && rule2.hook === "active" && [...instructions(rule2.program)].some((op) => op.op === "damage"));
     if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag2) {
@@ -14757,9 +14777,9 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
       ...qualityOf(r) ? { quality: qualityOf(r) } : {},
       ...rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {},
       rawRange: area3.range ?? 1,
-      ...passive && { passive: true },
+      ...passive ? { passive: true } : r.passive === false ? { passive: false } : {},
       ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2),
-      slot: (r.slot ?? costs.slot) === "action" ? "action" : "attack",
+      slot: passive || (r.slot ?? costs.slot) === "action" ? "action" : "attack",
       range: bound(area3.range, 0, 64, 1),
       shape: area3.shape ?? "single",
       target: area3.target ?? (areaDamage && object3(r.damage) ? "any" : "enemy"),
@@ -14773,7 +14793,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
     if (damageTypes2.includes(damageType2)) skills[sid].damageType = damageType2;
     else if (damageType2 != null) notes2.push(`\u300C${skillName}\u300D\u672A\u77E5\u4F24\u5BB3\u7C7B\u578B\uFF1A${damageType2}`);
     for (const [key5, min, max] of [["mp", 0, 25e3], ["sp", 0, 25e3], ["accuracy", -20, 30], ["initiativeBonus", -100, 100], ["power", 0, 1e9]]) {
-      const value = r[key5] ?? (key5 === "power" ? taggedPower : costs[key5]);
+      const value = r[key5] ?? (key5 === "power" ? power : key5 === "initiativeBonus" ? passive ? void 0 : initiative2 : costs[key5]);
       if (value != null) skills[sid][key5] = bound(value, min, max);
     }
     if (r.save != null || r.saveDC != null) {
@@ -14786,7 +14806,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
     }
     if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
     if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
-    for (const key5 of ["damage", "heal"]) if (object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5]);
+    for (const key5 of ["damage", "heal"]) if (!passive && object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5]);
     return sid;
   });
   const pos2 = xyzOf(p.xyz ?? p, board, sink("state"));
@@ -15015,7 +15035,7 @@ function buildMvuJsonPatch(report, sourceMap = {}, options = {}) {
 
 // src/tavern/resolved-warnings.js
 var warningKey = (w) => JSON.stringify([w.source, w.scope, w.originPath ?? "", w.message]);
-var subject = (message) => message.match(/待标准化「([^」]+)」/)?.[1]?.trim() ?? message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim() ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
+var subject = (message) => typeof message !== "string" ? void 0 : message.match(/待标准化「([^」]+)」/)?.[1]?.trim() ?? message.match(/已忽略[：:]\s*([^：:，。]+)/)?.[1]?.trim() ?? message.match(/^(?:效果|状态)\s+(.+?)\s*已拒绝/)?.[1]?.trim();
 var nonempty2 = (value) => typeof value === "string" && value.trim() !== "";
 function diagnosticText(value, fallback = "\u6A21\u578B\u8FD4\u56DE\u4E86\u7ED3\u6784\u5316\u6570\u636E\uFF0C\u672A\u63D0\u4F9B\u6587\u5B57\u8BF4\u660E") {
   if (!nonempty2(value)) return fallback;
@@ -15061,21 +15081,23 @@ function readUnresolvedDiagnostics(value = [], sent) {
       continue;
     }
     const label = `unresolved \u7B2C ${index + 1} \u9879`;
-    if (!item || typeof item !== "object" || Array.isArray(item) || !(item.unitId === null || nonempty2(item.unitId)) || !(item.originPath === null || nonempty2(item.originPath)) || !(nonempty2(item.effectName) || nonempty2(item.message)) || !nonempty2(item.reason) || Object.hasOwn(item, "effectName") && !nonempty2(item.effectName) || Object.hasOwn(item, "message") && !nonempty2(item.message)) {
+    if (!item || typeof item !== "object" || Array.isArray(item) || !(item.unitId === null || nonempty2(item.unitId)) || !(item.originPath === null || nonempty2(item.originPath)) || !(nonempty2(item.effectName) || nonempty2(item.message)) || item.reason !== void 0 && !nonempty2(item.reason) || Object.hasOwn(item, "effectName") && !nonempty2(item.effectName) || Object.hasOwn(item, "message") && !nonempty2(item.message)) {
       invalid.push(`${label}\u7F3A\u5C11\u6709\u6548\u7684\u8BCD\u6761\u5F15\u7528\u6216\u539F\u56E0`);
       continue;
     }
-    const matches2 = sent.filter((warning) => identifiesWarning(item, warning));
+    const matches2 = sent.filter((warning) => identifiesWarning(item, warning) || !item.effectName && item.reason === void 0 && item.unitId === warning.unitId && item.originPath === warning.originPath && shortSubject(warning.message) && item.message?.startsWith(shortSubject(warning.message)));
     if (matches2.length !== 1) {
       invalid.push(`${label}\u65E0\u6CD5\u552F\u4E00\u5339\u914D\u672C\u6279\u8BCD\u6761`);
       continue;
     }
-    const detail = diagnosticText(item.reason, "");
+    const kind = ["missing_info", "engine_limit"].includes(item.kind) ? item.kind : void 0;
+    const explanation = item.message !== matches2[0].message && item.message?.startsWith(shortSubject(matches2[0].message)) ? item.message.slice(shortSubject(matches2[0].message).length).trim() : "";
+    const detail = diagnosticText(item.reason ?? explanation, "");
     if (!detail) {
-      invalid.push(`${label}\u7F3A\u5C11\u53EF\u8BFB\u539F\u56E0`);
+      if (item.reason === void 0) matched.push({ warning: matches2[0] });
+      invalid.push(`${label}\u300C${diagnosticTitle(matches2[0])}\u300D\u7F3A\u5C11\u53EF\u8BFB\u539F\u56E0\uFF0C\u4FDD\u7559\u5F85\u5904\u7406`);
       continue;
     }
-    const kind = ["missing_info", "engine_limit"].includes(item.kind) ? item.kind : void 0;
     matched.push({ warning: matches2[0], detail, ...kind && { kind } });
   }
   return { matched, invalid };
@@ -15099,7 +15121,9 @@ function classifyWarnings(warnings, { notes: notes2 = {}, exemptions = [], sourc
   }
   return groups;
 }
-var identifiesWarning = (receipt, warning) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && (receipt.message !== void 0 ? receipt.message === warning.message : nonempty2(receipt.effectName)) && (receipt.effectName === void 0 || receipt.effectName === subject(warning.message));
+var shortSubject = (message) => subject(message)?.match(/^微弱法则\[([^\]]+)\]$/)?.[1] ?? subject(message);
+var sameSubject = (label, message) => nonempty2(label) && [subject(message), shortSubject(message)].includes(label);
+var identifiesWarning = (receipt, warning) => receipt && typeof receipt === "object" && receipt.unitId === warning.unitId && receipt.originPath === (warning.originPath ?? null) && (receipt.message !== void 0 ? receipt.message === warning.message || sameSubject(subject(receipt.message), warning.message) : nonempty2(receipt.effectName)) && (receipt.effectName === void 0 || sameSubject(receipt.effectName, warning.message));
 function missingDispositions(sent, solved, notes2, narrative) {
   const accounted = /* @__PURE__ */ new Set([...solved, ...notes2.filter((note) => note.detail).map((note) => note.warning), ...narrative.map((entry2) => entry2.warning)]);
   return sent.filter((warning) => !accounted.has(warning));
@@ -15250,9 +15274,27 @@ function normalizationOperations(operations2, snapshot, current, created, finger
     const root2 = path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
     const live3 = fingerprintAt2(current, root2);
     const original = fingerprintAt2(snapshot, root2);
-    if (live3 === original) return true;
-    if (op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path2) && original === void 0 && created.has(path2) && live3 === created.get(path2)) {
+    const sharedAdd = op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path2) && created.has(path2) && live3 === created.get(path2);
+    if (sharedAdd) {
+      const mechanics = ({ name, description, ...fields3 }) => JSON.stringify(fields3, function(_, value) {
+        return value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value;
+      });
+      if (!operation2.value || mechanics(operation2.value) !== mechanics(JSON.parse(live3))) throw new Error(`\u5171\u4EAB\u6A21\u677F\u5B9A\u4E49\u51B2\u7A81\uFF1A${path2}`);
       return false;
+    }
+    if (live3 === original) return true;
+    if (path2 !== root2 && original !== void 0 && live3 !== void 0) {
+      const parts = path2.slice(root2.length + 1).split("/");
+      const append = op === "add" && parts.at(-1) === "-";
+      const field = append ? path2.slice(0, path2.lastIndexOf("/")) : path2;
+      if (!parts.some((part) => /^\d+$/.test(part))) {
+        const before = fingerprintAt2(snapshot, field), after = fingerprintAt2(current, field);
+        if (before === after) return true;
+        if (append && before?.startsWith("[") && after?.startsWith("[")) {
+          const array = JSON.parse(after);
+          if (JSON.parse(before).every((value, i) => JSON.stringify(value) === JSON.stringify(array[i]))) return true;
+        }
+      }
     }
     throw new Error("\u8865\u4E01\u76EE\u6807\u5DF2\u88AB\u66F4\u65E9\u7684\u6279\u6B21\u6216\u6218\u5C40\u64CD\u4F5C\u4FEE\u6539");
   });
@@ -15813,8 +15855,8 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
 \u6807\u8BC6\u7B26\u683C\u5F0F\uFF1A\u89C4\u5219\uFF0F\u6A21\u677F\uFF0F\u53D8\u91CF ID \u5339\u914D ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$\uFF1Btag \u5339\u914D ^[a-z0-9][a-z0-9_-]{0,31}$\uFF1B\u72B6\u6001\u4E0E\u8F7D\u4F53\u9876\u5C42 flags \u679A\u4E3E\u4E3A ${statusFlags.join(" / ")}\u3002
 
 \u3010\u5168\u5C40\u4E8B\u4EF6\u7BA1\u7EBF\u4E0E\u8F7D\u4F53\u4F5C\u7528\u57DF\u3011
-\u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u8D77\u70B9\u4E0E\u65E0\u89C6\u89C6\u7EBF\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001\u91CD\u5B9A\u5411\u6216\u66FF\u6362\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/rawAmount/finalAmount/sourceRuleId\uFF0C\u652F\u6301 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u3001\u6CBB\u7597\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 heal \u6CBB\u7597\u6216 preventDeath \u514D\u6B7B\u9501\u8840 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
-\u2022 \u72EC\u7ACB\u751F\u547D\u5468\u671F\u94A9\u5B50\uFF1Aafter_move\uFF08\u5B9E\u9645\u4F4D\u79FB\u6216\u9AD8\u5EA6\u53D8\u5316\u540E\u89E6\u53D1\uFF0Cattacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0C\u53EF\u8BFB event.fromX/fromY/toX/toY/steps/moveKind\uFF09\uFF1Bbefore_status / after_status_applied / after_status_removed / on_status_immunized\uFF08\u72B6\u6001\u62E6\u622A\u3001\u65BD\u52A0\u3001\u79FB\u9664\u3001\u88AB\u514D\u75AB\uFF09\uFF1Bon_summon_evict\uFF08\u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u9876\u66FF\u6D88\u6563\u524D\uFF0Ctarget \u4E3A\u65E7\u53EC\u5524\u7269\uFF0Cevent.sourceSkillId \u4E3A\u5176\u6765\u6E90\u6280\u80FD\uFF09\uFF1Bturn_start / turn_end\uFF08\u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF09\uFF1Bround_start / round_end\uFF08\u5927\u8F6E\u9996\u5C3E\uFF09\u3002\u4EFB\u610F\u94A9\u5B50\u5747\u53EF\u4F7F\u7528 ask \u6302\u8D77\u7B49\u5F85\u9009\u62E9\u3002
+\u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u751F\u6548\u8D77\u70B9 origin \u4E0E\u65E0\u89C6\u89C6\u7EBF ignoreLOS\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001redirectTarget \u8986\u5199\u4E3A\u5355\u4E00\u76EE\u6807\u6216 replaceTarget:{from,to} \u5355\u70B9\u66FF\u8EAB\u627F\u4F24\u5E76\u4FDD\u7559\u5176\u4F59\u8303\u56F4\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/finalAmount/sourceRuleId\uFF0C\u652F\u6301 ask \u4EA4\u4E92\u622A\u53D6\u5E76\u6539\u5199 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u3001\u6CBB\u7597\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 heal \u6CBB\u7597\u6216 preventDeath \u514D\u6B7B\u9501\u8840 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
+\u2022 \u72EC\u7ACB\u751F\u547D\u5468\u671F\u94A9\u5B50\uFF1Aafter_move\uFF08\u5B9E\u9645\u4F4D\u79FB\u6216\u9AD8\u5EA6\u53D8\u5316\u540E\u89E6\u53D1\uFF0Cattacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0C\u53EF\u8BFB event.fromX/fromY/toX/toY\uFF09\uFF1Bbefore_status / after_status_applied / after_status_removed / on_status_immunized\uFF08\u72B6\u6001\u62E6\u622A\u3001\u65BD\u52A0\u3001\u79FB\u9664\u3001\u88AB\u514D\u75AB\uFF0C\u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F\u72B6\u6001\u89C4\u5219\u5185 status.* \u6307\u5411\u5F53\u524D\u5BBF\u4E3B\u72B6\u6001\u81EA\u8EAB\u800C\u975E\u5F85\u65BD\u52A0\u72B6\u6001\uFF09\uFF1Bon_summon_evict\uFF08\u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u9876\u66FF\u6D88\u6563\u524D\u89E6\u53D1\uFF0Ctarget \u4E3A\u65E7\u53EC\u5524\u7269\uFF0Cevent.sourceSkillId \u4E3A\u751F\u6210\u8BE5\u65E7\u53EC\u5524\u7269\u7684\u53EC\u5524\u6280\u80FD ID\u2014\u2014\u5168\u5C40\u88AB\u52A8\u76D1\u542C\u9876\u66FF\u65F6\u68C0 target.sourceId == self.id\uFF0C\u5207\u52FF\u4E0E\u88AB\u52A8\u6280\u80FD\u81EA\u8EAB skill.id \u6BD4\u8F83\uFF01\uFF09\uFF1Bturn_start / turn_end\uFF08\u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF09\uFF1Bround_start / round_end\uFF08\u5927\u8F6E\u9996\u5C3E\uFF09\u3002\u4EFB\u610F\u94A9\u5B50\u5747\u53EF\u4F7F\u7528 ask \u6302\u8D77\u7B49\u5F85\u9009\u62E9\u3002
 \u2022 \u4E94\u7C7B\u8F7D\u4F53\u4F5C\u7528\u57DF\u77E9\u9635\uFF1A
   1. unit / item\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF08\u88C5\u5907\u89C4\u5219\u4E0E\u4FEE\u9970\u5185 item.id / item.templateId \u6307\u5411\u5F53\u524D\u88C5\u5907\u5B9E\u4F8B\u4E0E\u6A21\u677F\uFF09\uFF0C\u6301\u6709\u671F\u95F4\uFF08\u542B\u4E3B\u526F\u624B\u3001\u9632\u5177\u9970\u54C1\u53CA\u80CC\u5305\u5907\u7528\u6B66\u5668 bagWeapons\uFF09mods \u4E0E\u975E active \u89C4\u5219\u5168\u5C40\u5E38\u9A7B\uFF01\u56E0\u6B64\uFF1A\u2460 \u653B\u9632\u53CC\u8FB9\u5171\u4EAB\u94A9\u5B50\uFF08before_check / after_hit / after_damage \u7B49\uFF09\u4E2D\uFF0C\u201C\u6301\u6709\u8005\u53D1\u8D77\u8FDB\u653B\uFF0F\u547D\u4E2D\uFF0F\u9020\u6210\u4F24\u5BB3\u201D\u5FC5\u5199 attacker.id == self.id\uFF0C\u201C\u6301\u6709\u8005\u53D7\u51FB\u201D\u5FC5\u5199 target.id == self.id\uFF1B\u2461 \u4EC5\u5728**\u6B66\u5668\u6A21\u677F\uFF08kind:"weapon"\uFF09**\u9650\u5B9A\u201C\u4F7F\u7528\u672C\u628A\u6B66\u5668\u666E\u653B\uFF0F\u547D\u4E2D\uFF0F\u9020\u6210\u4F24\u5BB3\u201D\u65F6\uFF0C\u624D\u5199 event.weaponTemplateId == item.templateId\uFF08\u9632\u5177\u3001\u5934\u9970\u3001\u9774\u5B50\u3001\u7BAD\u888B\u3001\u9970\u54C1\u7B49\u975E\u6B66\u5668\u88C5\u5907\u7684 item.templateId \u6C38\u8FDC\u4E0D\u7B49\u4E8E\u5F53\u524D\u8FDB\u653B\u6B66\u5668 event.weaponTemplateId\uFF0C\u4E25\u7981\u5728\u975E\u6B66\u5668\u88C5\u5907\u4E0A\u5199 event.weaponTemplateId == item.templateId\uFF01\uFF09\uFF1B\u2462 \u6CE8\u610F\u81F4\u6B7B\u5E27\uFF08on_lethal_p1/p2\u3001on_death\u3001on_kill\u3001on_ally_death\uFF09\u4E0D\u643A\u5E26 event.weaponTemplateId \u4E0E event.skillId\uFF08\u4E8C\u8005\u5728\u81F4\u6B7B\u5E27\u4E2D\u6052\u4E3A null\uFF01\uFF09\uFF1A\u4E0D\u9650\u6B66\u5668\uFF0F\u6280\u80FD\u7684\u89D2\u8272\u5168\u5C40\u51FB\u6740\u624D\u7528 on_kill\uFF0C\u800C**\u9650\u5B9A\u7279\u5B9A\u6B66\u5668\u6216\u7279\u5B9A\u6280\u80FD\u51FB\u6740\u89E6\u53D1**\u5FC5\u987B\u5728 after_damage \u4E2D\u5199 attacker.id == self.id && !target.alive && event.dealt > 0 \u5E76\u914D\u6765\u6E90\u8FC7\u6EE4\uFF08\u6B66\u5668\u542B\u65A9\u6740\u8865\u5200\u89C4\u5219\u65F6\u5199 (event.weaponTemplateId == item.templateId || event.sourceRuleId == '<\u672C\u65A9\u6740\u89C4\u5219ID>')\uFF0C\u6280\u80FD\u5199 event.skillId == skill.id\uFF09\uFF1B\u2463 \u4EC5\u5BF9\u8FDC\u7A0B\u653B\u51FB\uFF08\u542B\u9632\u5177\uFF0F\u7BAD\u888B\uFF0F\u9970\u54C1\u4E0A\u7684\u8FDC\u7A0B\u52A0\u6210\u4E0E\u547D\u4E2D\u9644\u6548\uFF09\u751F\u6548\u5FC5\u5199 !event.melee\uFF08\u8FD1\u6218\u4E3A true\u3001\u8FDC\u7A0B\u4E3A false\uFF0C\u65E0 weapon.ranged \u5B57\u6BB5\uFF09\u3002
   2. skill\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF0Cskill.id \u4E3A\u672C\u6280\u80FD\u81EA\u8EAB ID\u3002hook:"active" \u4EC5\u5728\u4E3B\u52A8\u65BD\u653E\u672C\u6280\u80FD\u65F6\u6309\u5E8F\u6267\u884C\uFF1B\u5176\u4F59\u6240\u6709\u975E active \u94A9\u5B50\u4E0E mods \u5728\u5355\u4F4D\u6301\u6709\u8BE5\u6280\u80FD\u671F\u95F4\u5168\u5C40\u5E38\u9A7B\u76D1\u542C\u5168\u573A\uFF01\u82E5\u67D0\u6761\u975E active \u89C4\u5219\u4EC5\u5728\u65BD\u653E\u672C\u6280\u80FD\u65F6\u751F\u6548\uFF0Cfilter \u5FC5\u987B\u5305\u542B event.skillId == skill.id\uFF08\u666E\u901A\u884C\u52A8\uFF0F\u547D\u4E2D\uFF0F\u4F24\u5BB3\u4E8B\u4EF6\u4E00\u5F8B\u8BFB event.skillId\uFF0C\u52FF\u7528\u4EC5\u5C5E\u53EC\u5524\u7269\u9876\u66FF\u4E8B\u4EF6\u7684 event.sourceSkillId\uFF09\u3002\u5355\u6B21\u4E3B\u52A8\u65BD\u653E\u5185\u7684\u987A\u5E8F\u56E0\u679C\u94FE\uFF08\u5982\u9020\u6210\u4F24\u5BB3\u540E\u6309\u5B9E\u6263\u91CF\u56DE\u8840\uFF0F\u56DE\u80FD\uFF0F\u4E8C\u6BB5\u5224\u5B9A\uFF09\u5E94\u76F4\u63A5\u5199\u5728 hook:"active" \u5185\u7528 out \u53D8\u91CF\u4E32\u8054\uFF0C\u65E0\u9700\u62C6\u6210\u5E38\u9A7B\u4E8B\u4EF6\u94A9\u5B50\u3002
@@ -15826,10 +15868,11 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF08\u95ED\u5408\u679A\u4E3E\uFF0C\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\uFF09\uFF1A
 ${instructions2.join("\n")}
 ask \u7684 kind \u4E0E aiPolicy \u5BF9\u5E94\u5173\u7CFB\uFF1A${Object.entries(askPolicies).map(([kind, policies]) => `${kind} \u2192 ${policies.join(" / ")}`).join("\uFF1B")}\u3002
-check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
+check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F check(kind:"save") \u9ED8\u8BA4\u7531\u5F53\u524D\u5E27 target \u63B7\u9AB0\uFF0C\u82E5\u5728\u53D7\u51FB\u65B9\u94A9\u5B50\u5185\u8981\u6C42\u8FDB\u653B\u65B9\u8C41\u514D\uFF0C\u5148\u7528\u7701\u7565 bind \u7684 for_each(select:{from:"attacker"}) \u5C06\u5B50\u5E27 target \u5207\u81F3\u8FDB\u653B\u65B9\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\uFF08\u6CE8\u610F spawn \u5728 count > 1 \u65F6 out \u4EC5\u5B58\u9996\u4E2A\u751F\u6210\u5B9E\u4F53 ID\uFF1B\u9700\u5BF9\u540C\u6279\u5168\u4F53\u65B0\u53EC\u5524\u7269\u8FFD\u52A0\u52A8\u4F5C\u65F6\uFF0C\u540E\u7EED\u7528 from:"units" \u914D candidate.summoned && candidate.sourceId == self.id \u7B5B\u9009\u904D\u5386\uFF09\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u914D\u5408 from:"tape" \u7B5B\u9009\u672C\u56DE\u5408\u6216\u6307\u5B9A\u5355\u4F4D\u5DF2\u6267\u884C\u8BB0\u5F55\uFF0C\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\uFF1Boverrides \u652F\u6301 free / ignoreSlots / ignoreRange / ignoreLOS / intent / scale / origin\uFF08\u65E0\u84C4\u529B\u76F4\u53D1\u8986\u76D6\u5B57\u6BB5\uFF0C\u7ACB\u5373\u91CA\u653E\u9AD8\u500D\u7387\u6280\u80FD\u7528 scale \u6216\u524D\u7F6E\u72B6\u6001\u8868\u8FBE\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
 \u539F\u751F\u653B\u51FB\u5728 before_check \u53EF\u5199 ratingDelta\uFF08\u6574\u6570\u6863\u6570\uFF0C\u53EF\u7528\u516C\u5F0F\uFF0C\u6B63\u5347\u8D1F\u964D\uFF09\uFF1A\u5148\u4ECE\u57FA\u7840\u8BC4\u7EA7\u79FB\u52A8\u5E76\u5728\u8868\u4E24\u7AEF\u5C01\u9876\uFF0C\u518D\u6309 minRating \u4FDD\u5E95\u3002\u7CBE\u51C6\u7C7B\u8FDC\u7A0B\u653B\u51FB\u5728\u672C\u89C4\u5219\u7684\u8FDC\u7A0B\u8FC7\u6EE4\u6761\u4EF6\u4E0B\u5199 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"\u6709\u6548","forceOutcome":"hit"}}\uFF1B\u6700\u540E\u4E00\u9879\u7528\u4E8E\u539F\u6587\u660E\u8BF4\u5FC5\u4E2D\u3001\u8FDE\u5929\u71361\u4E5F\u4E0D\u80FD\u5931\u624B\u7684\u60C5\u5F62\uFF0C\u4E0D\u8981\u6C42\u5FC5\u4E2D\u5219\u7701\u7565\u3002after_hit \u5728\u4E3B\u51FB\u6263\u8840\u540E\u89E6\u53D1\uFF1A\u751F\u547D\u9608\u503C\u65A9\u6740\u5728 after_hit\uFF08\u9650\u5B9A attacker.id == self.id \u53CA\u6765\u6E90\u4E14 target.alive && target.hpRatio < \u9608\u503C\uFF09\u8C03\u7528 damage \u5E76\u8BBE instantDeath:true\uFF08\u7ED5\u8FC7\u62A4\u7532\u76F4\u63A5\u81F4\u6B7B\uFF1B\u82E5\u65A9\u6740\u4F34\u968F\u8BE5\u6B66\u5668\u7684\u51FB\u6740\u6536\u5272\u53E0\u5C42\uFF0C\u5C06\u53E0\u5C42\u5199\u5728 after_damage \u4E2D\u5339\u914D !target.alive && event.dealt > 0 \u4E14\u9650\u5B9A event.weaponTemplateId == item.templateId \u6216 event.sourceRuleId == '<\u65A9\u6740\u89C4\u5219ID>'\uFF0C\u5207\u52FF\u5728\u65E0\u6B66\u5668\u5B57\u6BB5\u7684 on_kill \u4E2D\u5199 event.weaponTemplateId\uFF09\uFF1B\u4E3B\u52A8\u6280\u80FD\u6709\u524D\u7F6E\u5C42\u6570\u95E8\u69DB\u6216\u53D7\u7279\u5B9A\u8D1F\u9762\u72B6\u6001\u7981\u7528\u65F6\uFF0C\u4F18\u5148\u5728 before_action\uFF08\u5339\u914D attacker.id == self.id \u4E0E event.skillId\uFF09\u6267\u884C mutate_event:{cancel:true} \u76F4\u63A5\u62E6\u622A\u65BD\u653E\u800C\u4E0D\u767D\u6263\u884C\u52A8\u69FD\uFF0C\u5C01\u9501\u8D44\u6E90\u6062\u590D\u5219\u5728 before_commit \u6267\u884C mutate_event:{cancel:true}\u3002
 mutate_event \u7684 patch \u81F3\u5C11\u542B\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u4EC5\u9650\u4E0B\u5217\u53EF\u5199 hook\uFF08before_check.minRating \u53D6\u503C\u679A\u4E3E\uFF1A\u8D85\u66B4\u51FB / \u5F3A\u66B4\u51FB / \u5E73\u66B4\u51FB / \u6709\u6548 / \u52C9\u5F3A / \u64E6\u4F24 / \u5931\u624B\uFF09\uFF1A
 ${eventPatches.join("\n")}
+before_target.redirectTarget \u5C06\u6574\u4E2A\u76EE\u6807\u5217\u8868\u8986\u5199\u4E3A\u5355\u4E00\u5B9E\u4F53\uFF0C\u8303\u56F4\u884C\u52A8\u4E2D\u4EC5\u66FF\u5355\u540D\u53D7\u51FB\u8005\u8F6C\u79FB\u627F\u4F24\u7528 replaceTarget:{from,to}\uFF1B\u62A4\u76FE\u7528 category:"shield" \u7684\u72B6\u6001\uFF0C\u5B9E\u9645\u5269\u4F59\u76FE\u503C\u5B58\u4E8E vars.shieldAmount\uFF08apply_status \u65BD\u52A0\u65F6\u987B\u5728 vars \u4E2D\u663E\u5F0F\u4F20\u5165\u521D\u59CB\u6216\u53E0\u52A0\u540E\u7684 shieldAmount\uFF09\u3002
 \u6E05\u9664\u654C\u65B9\u533A\u57DF\u65F6 where \u53EF\u5199 "zone.team != null && zone.team != self.team"\uFF08zone.team / candidate.team \u8BFB\u521B\u5EFA\u9635\u8425\uFF0Czone.sourceId / candidate.sourceId \u8BFB\u521B\u5EFA\u8005 ID\uFF09\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF1Bunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\uFF0C\u5747\u7701\u7565\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\uFF1Btier\u3001count\u3001remainingTurns\u3001area.radius \u652F\u6301\u6570\u503C\u8868\u8FBE\u5F0F\uFF1Bterrain \u81F3\u5C11\u542B kind \u6216 height\uFF0C\u586B mode \u65F6\u5FC5\u586B height\uFF1A
 ${spawnSpecs2.join("\n")}
 \u53EC\u5524\u7269 sourceSkillId \u7531\u5F15\u64CE\u53EA\u8BFB\u8BB0\u5F55\u751F\u6210\u5B83\u7684\u6280\u80FD ID\uFF08\u542B\u88C5\u5907\u865A\u62DF\u6280\u80FD equip:<\u5B9E\u4F8BID>:<\u89C4\u5219ID>\uFF09\uFF0C\u53EF\u901A\u8FC7 self/target/candidate/vars.<\u5B9E\u4F53>.sourceSkillId \u8BFB\u53D6\u3002
@@ -15852,10 +15895,10 @@ targetRef\uFF1A${describe2(defs2.targetRef)}\u3002\u7279\u5B9A\u5FEB\u7167\u5B9E
 mods \u6570\u7EC4\u6BCF\u9879\uFF1A${describe2(defs2.statMod)}\u3002\u81F3\u5C11\u542B stat\u3001locks\u3001flags \u6216 controlPolicy \u4E4B\u4E00\uFF1B\u6570\u503C\u4FEE\u9970\u5FC5\u6307\u5B9A stat\u3002\u8BA1\u7B97\u516C\u5F0F\u4E3A (\u57FA\u503C + flat \u4E4B\u548C) \xD7 (1 + additivePercent \u4E4B\u548C) \xD7 mult \u8FDE\u4E58\uFF08\u6CE8\u610F\uFF1AadditivePercent \u4EE5 1 \u4E3A 100% \u5C0F\u6570\u5236\uFF0C\u5982 +50% \u5FC5\u987B\u5199 0.5 \u6216 0.5 * \u5C42\u6570\u800C\u4E25\u7981\u5199 50\uFF0C\u6BD4\u4F8B\u516C\u5F0F\u5982 (self.str - 5) / self.str \u76F4\u63A5\u4F5C\u5C0F\u6570\u5199\u5165\u800C\u4E25\u7981\u518D * 100\uFF01mult \u4E3A\u76F4\u63A5\u4E58\u6570\uFF0C\u5982 \xD7200% \u5199 2\uFF09\uFF1Bwhen \u6C42\u503C\u4E3A true \u65F6\u751F\u6548\uFF1BcheckKind \u53EF\u9650\u5B9A\u68C0\u5B9A\u7C7B\u522B\uFF08attack / save / contest / skill / chance / d20 / dodge / authority \u6216\u72B6\u6001 ID\uFF0F\u6807\u7B7E\uFF09\u3002
 \u2022 \u4EE5\u4E0B\u4FEE\u9970\u53EA\u63A5\u53D7 flat \u52A0\u503C\uFF1A${flatOnlyStats.filter((name) => defs2.statMod.properties.stat.enum.includes(name)).join(" / ")}\u3002
 \u2022 \u8F93\u51FA\u4FA7\uFF08\u6301\u6709\u8005\u8FDB\u653B\uFF09\uFF1Aflat / additivePercent / mult \u5747\u652F\u6301\u52A8\u6001 Expr \u516C\u5F0F\u3002\u6CE8\u610F\u6B66\u5668\u666E\u653B\u4E2D event.power \u4E3A null\uFF08\u4E8B\u4EF6\u6B66\u5668\u9762\u677F\u653B\u51FB\u529B\u4E3A weapon.attack\uFF09\uFF1B\u51E1\u201C\u6BCF\u5C42\u63D0\u5347\u653B\u51FB\u529B X%\u201D\u6216\u201C\u547D\u4E2D\u9644\u52A0\u57FA\u7840\u4F24\u5BB3 \xD7 \u6BD4\u4F8B\u201D\u5747\u5C5E\u57FA\u7840\u4E58\u533A\u6BD4\u4F8B\u589E\u5E45\uFF0C\u4F18\u5148\u76F4\u63A5\u5199\u8F7D\u4F53 mods \u7684 stat:"damageMult", additivePercent:"\u6BD4\u4F8B\u516C\u5F0F"\uFF08\u6B66\u5668\u672C\u8EAB\u8BCD\u6761\u914D when:"event.weaponTemplateId == item.templateId"\uFF09\uFF0C\u907F\u514D\u5728 after_hit \u8BEF\u8BFB\u4E3A null \u7684 event.power \u6216\u91CD\u590D\u7ED3\u7B97\u62A4\u7532\uFF01damageFlat \u56FA\u5B9A\u52A0\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat\uFF09\uFF1BdamageMult \u8F93\u51FA\u500D\u7387\u3001finalDamageMult \u6700\u7EC8\u4F24\u5BB3\u500D\u7387\uFF08\u57FA\u503C 1\uFF0C\u7528 mult \u6216 additivePercent\uFF0C\u7981\u7528 flat\uFF09\uFF1BarmorPierce \u56FA\u5B9A\u7A7F\u7532\uFF08\u7528 flat\uFF09\uFF1BarmorPiercePercent \u767E\u5206\u6BD4\u7A7F\u7532\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF09\u3002
-\u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
+\u2022 \u627F\u4F24\u4FA7\uFF08\u6301\u6709\u8005\u53D7\u51FB\uFF09\uFF1AdamageReductionFlat \u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat\uFF0C\u52FF\u5199\u6210\u8D1F damageFlat\uFF09\uFF1BdamageReduction \u4E0E dr \u53D7\u51FB\u6BD4\u4F8B\u51CF\u4F24\uFF08\u57FA\u503C 0\uFF0C\u7528 flat:-1..1\uFF0C\u6B63\u6570\u51CF\u4F24\u3001\u8D1F\u6570\u589E\u4F24\uFF08+0.3 \u51CF\u4F24 30%\uFF09\uFF0C\u7981\u7528 additivePercent\uFF1BdamageReduction \u5728\u56FA\u51CF\u524D\u4E58\u7B97\uFF0Cdr \u5728\u56FA\u51CF\u540E\u4E58\u7B97\uFF1B\u771F\u5B9E\u4F24\u5BB3\u65E0\u89C6\u51CF\u4F24\uFF09\u3002
 \u2022 \u673A\u52A8\u4E0E\u8DDD\u79BB\uFF1Amovement \u7684\u57FA\u503C\u4E0E flat \u5747\u4E3A\u540C\u9636\u79FB\u52A8\u5355\u4F4D\uFF0C\u53E0\u52A0\u540E\u5E94\u7528\u500D\u7387\uFF0C\u518D\u6309\u5C42\u7EA7\u7C73\u6570\u6298\u7B97\u4E3A\u683C\uFF1BcheckBonus\u3001initiativeFlat \u4EC5\u63A5\u53D7 flat \u6570\u503C\u52A0\u503C\uFF0C\u4E0D\u4E58\u68C0\u5B9A\u6216\u5148\u653B\u603B\u503C\uFF1BincomingDistanceOffset \u7528 flat \u5199\u654C\u65B9\u6D4B\u7B97\u5C04\u7A0B\u3001\u8303\u56F4\u4E0E\u8DDD\u79BB\u6863\u4F4D\u65F6\u7684\u8868\u89C2\u8DDD\u79BB\u589E\u91CF\uFF08\u53EF\u7528 scale_cells(n)\uFF09\u3002
 \u2022 \u72B6\u6001\u6269\u5C55\u4E0E\u884C\u4E3A\u6807\u5FD7\uFF1AincomingAccuracy\uFF08\u88AB\u547D\u4E2D\u4FEE\u6B63\uFF09\u3001intentDifficulty\uFF08\u53D7\u51FB\u65B9\u627F\u53D7\u610F\u56FE\u96BE\u5EA6\u4FEE\u6B63\uFF09\u3001shatter\uFF08\u788E\u88C2\u589E\u4F24\uFF09\u5747\u4F7F\u7528 stat flat\uFF1Bmods.flags \u5B9E\u88C5\u751F\u6548\u9879\u4E3A guaranteed_hit\uFF08\u653B\u51FB\u5FC5\u4E2D\u4E14\u514D\u5929\u7136 1 \u5931\u624B\uFF09\u3001guaranteed_crit\uFF08\u653B\u51FB\u5FC5\u66B4\u51FB\uFF09\u3001preserveLife\uFF08\u53D7\u51FB\u81F4\u6B7B\u4FDD\u7559 1 HP\uFF09\u3001blockRevive\uFF08\u7981\u7EDD\u590D\u6D3B\uFF09\u3001untargetableSingle\uFF08\u4E0D\u53EF\u88AB\u654C\u65B9\u5355\u4F53\u6307\u5411\u9009\u4E2D\uFF09\u3001harmless\uFF08\u9020\u6210\u7684\u4F24\u7597\u5F52\u96F6\uFF09\u3001hidden\uFF08\u9690\u8EAB\uFF09\u3001intercept\uFF08\u53EF\u63F4\u62A4\u62E6\u622A\uFF09\u3001taunted\uFF08\u88AB\u5632\u8BBD\uFF09\u3001infiniteAmmo\uFF08\u5F39\u836F\u4E0D\u9650\uFF09\uFF08\u6CE8\uFF1A\u5C01\u9501\u7279\u5B9A\u6062\u590D\u6280\u80FD\u6216\u8D44\u6E90\u56DE\u590D\u8BF7\u7528 before_action / before_commit \u7684 cancel:true \u5B9E\u73B0\uFF09\u3002
-\u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF09\u3001checkBonus \u68C0\u5B9A\u52A0\u503C\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u7528 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002
+\u2022 \u68C0\u5B9A\u4E0E\u5C5E\u6027\uFF1Adodge \u53D7\u51FB\u95EA\u907F\uFF08\u57FA\u503C 0\uFF0C\u7528\u6B63\u6570 flat \u6263\u654C\u65B9\u547D\u4E2D\uFF09\u3001checkBonus \u901A\u7528\u68C0\u5B9A\u52A0\u503C\uFF08\u6CE8\uFF1A\u5F15\u64CE\u65E0\u6309\u5355\u4E00\u4E94\u7EF4\u5C5E\u6027\u62C6\u5206\u7684 checkBonus \u9650\u5B9A\u7B26\uFF0Cevent.stat \u4EA6\u4E0D\u53EF\u5728\u516C\u5F0F\u4E2D\u8BFB\u53D6\uFF09\u3001dcBonus \u8C41\u514D\u96BE\u5EA6\u52A0\u503C\uFF08\u6302\u65BD\u52A0\u8005\uFF0C\u53EF\u914D statusId:"<\u72B6\u6001ID>" \u9650\u5B9A\u7279\u5B9A\u72B6\u6001\u6216 checkKind:"save" \u9650\u5B9A\u5168\u4F53\u72B6\u6001\u8C41\u514D\uFF0C\u65BD\u52A0\u4FA7 check(kind:"save") \u987B\u540C\u6B65\u586B statusId\uFF09\u3001resistBonus \u8C41\u514D\u62B5\u6297\u52A0\u503C\uFF08\u6302\u8C41\u514D\u8005\uFF0C\u540C\u6837\u652F\u6301 statusId \u6216 checkKind:"save" \u9650\u5B9A\uFF09\u3001advantage \u4F18\u52A3\u52BF\u9AB0\u6570\u3001initiativeFlat \u5148\u624B\u52A0\u503C\uFF0C\u57FA\u503C\u5747\u4E3A 0\uFF0C\u6B63\u5411\u6536\u76CA\u4E00\u5F8B\u586B\u6B63\u6570 flat\uFF1BhealingMult / incomingHealMult / costMult \u57FA\u503C\u5747\u4E3A 1\uFF0C\u7528 mult \u6216 additivePercent\uFF08\u7981\u7528 flat\uFF09\uFF1Bstr/agi/con/int/spi/armor \u53E0\u52A0\u6301\u6709\u8005\u5BF9\u5E94\u9762\u677F\u503C\u3002\u5BF9\u514D\u75AB\u7279\u5B9A\u72B6\u6001\u7684\u76EE\u6807\u589E\u4F24\u53EF\u76F4\u63A5\u7528 mods \u7684 finalDamageMult \u914D when:"is_immune(target, '<\u72B6\u6001ID>')"\u3002
 controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\u3002moraleLock \u4EC5\u679A\u4E3E\u503C "steady"\uFF1BallowFriendlyTarget:true \u5141\u8BB8\u654C\u65B9\u6307\u5411\u52A8\u4F5C\u5408\u6CD5\u9009\u4E2D\u53CB\u519B\u6216\u81EA\u8EAB\u3002
 
 \u3010\u5E38\u89C1\u8BEF\u5199\u3011
@@ -15875,9 +15918,9 @@ var ENGINE_API_SUMMARY = PROTOCOL_RULES;
 // src/tavern/status-catalog.js
 var reservedIds = Object.keys(STATUSES).join("\u3001");
 var STATUS_CATALOG = `\u3010VM \u72B6\u6001\u3011
-apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u53EF\u6267\u884C\u7684\u72B6\u6001\u3002\u65B0\u72B6\u6001\u5148\u6DFB\u52A0\u6A21\u677F\uFF0C\u518D\u5F15\u7528\uFF0CID \u4E0E\u8868\u952E\u4E00\u81F4\u3002\u539F\u751F\u72B6\u6001 ID \u53EF\u76F4\u63A5\u5F15\u7528\u4F46\u4E0D\u80FD\u8986\u76D6\uFF1A${reservedIds}\u3002\u82E5\u540C\u540D\u6548\u679C\u673A\u5236\u4E0D\u540C\uFF08\u4F8B\u5982\u4E0D\u4F1A\u788E\u51B0\u7684\u51BB\u7ED3\uFF09\uFF0C\u53E6\u8D77\u82F1\u6587 ID \u5982 permafrost_freeze\uFF1B\u540C\u6279\u5148 add /statusTemplates/permafrost_freeze\uFF0C\u518D\u7528 apply_status \u5F15\u7528\u5B83\u3002
+apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u53EF\u6267\u884C\u7684\u72B6\u6001\u3002\u4F18\u5148\u76F4\u63A5\u590D\u7528\u8BED\u4E49\u4E00\u81F4\u7684\u539F\u751F\u72B6\u6001 ID\uFF08\u4E0D\u53EF\u8986\u76D6\u5176\u5B9A\u4E49\uFF09\uFF1A${reservedIds}\uFF1B\u4EC5\u5F53\u539F\u8BCD\u6761\u660E\u786E\u8981\u6C42\u4E0D\u540C\u4E8E\u539F\u751F\u72B6\u6001\u7684\u9501\u9879\u3001\u6301\u7EED\u673A\u5236\u6216\u94A9\u5B50\uFF08\u4F8B\u5982\u4E0D\u4F1A\u788E\u51B0\u7684\u51BB\u7ED3\u3001\u4E13\u5C5E\u5468\u671F\u6263\u8840\u6216\u7279\u6B8A\u53E0\u5C42\u4E0A\u9650\uFF09\u65F6\uFF0C\u624D\u53E6\u8D77\u82F1\u6587 ID \u5E76\u5728\u540C\u6279\u5148 add /statusTemplates/<id> \u518D\u5F15\u7528\uFF0C\u4E25\u7981\u8DE8\u6279\u60AC\u7A7A\u5F15\u7528\u5F53\u524D\u5FEB\u7167\u4E0E\u672C\u6279\u5747\u672A\u6CE8\u518C\u7684\u72B6\u6001 ID\uFF01
 \u6A21\u677F\u5FC5\u586B id\u3001name\u3002\u53EF\u9009 icon\uFF08\u226424 \u5B57\u7B26\uFF09\u3001category\uFF08\u63A8\u8350\u679A\u4E3E\uFF1Abuff / debuff / control / dot / hot / shield\uFF1B\u62A4\u76FE\u5438\u6536\u673A\u5236\u5FC5\u987B\u5199 category:"shield" \u5E76\u5C06\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\uFF09\u3001description\uFF08\u2264300 \u5B57\u7B26\uFF09\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF09\u3001durationType\uFF08\u679A\u4E3E\uFF1Abattle_turns / until_removed / persistent\uFF09\u3001stackMode\uFF08\u679A\u4E3E\uFF1Arefresh / stack / replace / extend\uFF09\u3001maxStacks\uFF08\u6574\u6570 1\u2026999999 \u6216\u6570\u503C\u8868\u8FBE\u5F0F\uFF1B\u65BD\u52A0\u65F6\u5728\u65BD\u672F\u8005\u4E0A\u4E0B\u6587\u6C42\u503C\uFF09\u3001expireOn\uFF08{hook, filter?}\uFF0Chook \u53D6\u5141\u8BB8\u94A9\u5B50\u679A\u4E3E\uFF0Cfilter \u4E3A\u5E03\u5C14\u8868\u8FBE\u5F0F\uFF09\u3001flags\uFF08\u679A\u4E3E\u6570\u7EC4\uFF1Aundispellable / concept_immune\uFF09\u3001tags\uFF08\u5C0F\u5199\u6807\u7B7E\u6570\u7EC4\uFF09\u3001tier\uFF08\u6574\u6570 1\u20267\uFF09\u3001vars\u3001mods\u3001rules\u3002\u7701\u7565\u671F\u9650\u548C\u53E0\u5C42\u5B57\u6BB5\u65F6\u9ED8\u8BA4\u4E3A battle_turns\u30011 \u56DE\u5408\u3001refresh\u30011 \u5C42\u3002
-\u5468\u671F\u4F24\u5BB3\u548C\u6CBB\u7597\u7528 turn_start \u6216 turn_end \u89C4\u5219\uFF0C\u72B6\u6001\u81EA\u7136\u5230\u671F\u89E6\u53D1\u7684\u540E\u7F6E\u6548\u679C\uFF0F\u53CD\u566C\u76F4\u63A5\u5199\u5728\u8BE5\u72B6\u6001\u6A21\u677F\u81EA\u8EAB\u7684 after_status_removed \u89C4\u5219\uFF08filter:"event.statusId == status.id && event.reason == 'expired'"\uFF09\uFF0C\u6301\u7EED\u9650\u5236\u7528 mods.locks\uFF0C\u6570\u503C\u4FEE\u9970\u7528 mods\uFF0C\u62A4\u76FE\u7528 category:"shield"\uFF0C\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\u3002apply_status \u53EF\u6309\u65BD\u52A0\u4E0A\u4E0B\u6587\u6C42\u503C vars\uFF0C\u5E76\u6307\u5B9A turns\u3001stacks\u3001stackMode\u3001extendTurns \u6216 expireOn\u3002remove_status \u7684 where \u53EF\u8BFB\u53D6 status.id\u3001status.category \u7B49\u6CE8\u518C\u5B57\u6BB5\u3002
+\u5468\u671F\u4F24\u5BB3\u548C\u6CBB\u7597\u7528 turn_start \u6216 turn_end \u89C4\u5219\uFF0C\u72B6\u6001\u81EA\u7136\u5230\u671F\u89E6\u53D1\u7684\u540E\u7F6E\u6548\u679C\uFF0F\u53CD\u566C\u76F4\u63A5\u5199\u5728\u8BE5\u72B6\u6001\u6A21\u677F\u81EA\u8EAB\u7684 after_status_removed \u89C4\u5219\uFF08filter:"event.statusId == status.id && event.reason == 'expired'"\uFF09\uFF0C\u6301\u7EED\u9650\u5236\u7528 mods.locks\uFF0C\u6570\u503C\u4FEE\u9970\u7528 mods\uFF0C\u62A4\u76FE\u7528 category:"shield"\uFF0C\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\u3002\u51E1\u6A21\u677F\u5185\u90E8\u8BFB\u53D6 status.vars.<\u540D>\uFF08\u542B\u62A4\u76FE vars.shieldAmount\uFF09\uFF0C\u6BCF\u6B21 apply_status \u65BD\u52A0\u65F6\u5747\u987B\u5728 vars \u4E2D\u663E\u5F0F\u4F20\u5165\u672C\u6B21\u6C42\u503C\u53C2\u6570\uFF1B\u82E5\u539F\u8BCD\u6761\u533A\u5206\u9996\u6B21\u65BD\u52A0\u4E0E\u5DF2\u6301\u6709\u7EED\u671F\uFF08\u5982\u201C\u6301\u7EED M \u56DE\u5408\uFF0C\u5DF2\u5904\u4E8E\u8BE5\u72B6\u6001\u5219\u56DE\u5408 +N\u201D\uFF09\uFF0C\u7528 if(has_status(target,'<id>')) \u5206\u652F\u5206\u522B\u8C03\u7528 stackMode:"extend", extendTurns:N \u4E0E\u5E38\u89C4 turns:M\u3002\u72B6\u6001\u6A21\u677F\u81EA\u8EAB\u89C4\u5219\u5185 status.* \u59CB\u7EC8\u6307\u5411\u672C\u72B6\u6001\u8F7D\u4F53\u81EA\u8EAB\uFF08\u5207\u52FF\u5728\u589E\u76CA\u72B6\u6001\u7684 before_status \u94A9\u5B50\u5185\u5199 status.category == 'control' \u4F01\u56FE\u62E6\u622A\u5916\u90E8\u63A7\u5236\uFF0C\u5916\u90E8\u5F85\u65BD\u52A0\u72B6\u6001\u4EC5\u66B4\u9732 event.statusId\uFF1B\u4EC5 remove_status \u7684 where \u5185 status.* \u6307\u5411\u88AB\u7B5B\u67E5\u7684\u76EE\u6807\u72B6\u6001\uFF0C\u53EF\u8BFB\u53D6 status.id\u3001status.category \u7B49\u6CE8\u518C\u5B57\u6BB5\uFF09\u3002
 \u9700\u8981\u76F4\u63A5\u6DFB\u52A0\u521D\u59CB\u72B6\u6001\u65F6\uFF0C\u5728 /units/<unitId>/statuses/<statusId> \u5199\u5165\u95ED\u5408\u5B9E\u4F8B\uFF0C\u5FC5\u586B id\u3001templateId\uFF08\u5747\u7B49\u4E8E\u72B6\u6001 ID\uFF09\u3001ownerId\uFF08\u7B49\u4E8E\u5355\u4F4D ID\uFF09\u3001name\uFF08\u987B\u4E0E\u72B6\u6001\u6A21\u677F name \u5B8C\u5168\u4E00\u81F4\uFF09\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF0Cpersistent \u4E5F\u5FC5\u586B\u6B63\u6574\u6570\u5982 1\uFF09\u3001durationType\u3001stackMode\u3001maxStacks\uFF08\u6B63\u6574\u6570\uFF09\u3001stacks\uFF08\u6574\u6570 1\u2026maxStacks\uFF09\uFF0C\u53EF\u9009 sourceId\uFF08\u5355\u4F4D ID \u6216 null\uFF09\u7B49\u6A21\u677F\u5B57\u6BB5\uFF1B\u5B9E\u4F8B vars \u5199\u5DF2\u6C42\u503C\u7684 JSON \u503C\u3002`;
 
 // src/tavern/prompts.js
@@ -15905,11 +15948,11 @@ var TAG_MAPPING = `\u3010\u4E16\u754C\u4E66\u6807\u7B7E \u2192 VM \u6620\u5C04\u
 \u2022 \u539F\u6587\u6548\u679C\u4E3A\u7A7A\u4E14\u65E0\u5176\u4ED6\u5F85\u5B9E\u73B0\u6218\u6597\u63CF\u8FF0\u65F6\u65E0\u9700\u8865\u4E01\uFF0C\u4E5F\u4E0D\u5217\u5165 unresolved\u3002\u4F4D\u79FB\u3001\u6CBB\u7597\u3001\u8D44\u6E90\u6062\u590D\u3001\u72B6\u6001\u6388\u4E88\u4E0E\u573A\u5730\u751F\u6210\u5747\u6309\u539F\u63CF\u8FF0\u62C6\u89E3\u4E3A\u5BF9\u5E94\u6307\u4EE4\u3002`;
 var diagnosisProtocol = `<disposition_ledger>
 \u3010\u8B66\u544A\u6838\u9500\u4E0E\u56DB\u5206\u6D41\u6536\u636E\u5951\u7EA6\u3011
-\u672C\u6279\u6BCF\u6761\u8B66\u544A\u5FC5\u987B\u901A\u8FC7\u4EE5\u4E0B\u56DB\u79CD\u4E92\u65A5\u6536\u636E\u8DEF\u5F84\u4E4B\u4E00\u5B8C\u6210\u6838\u9500\uFF0C\u4E25\u7981\u6F0F\u7B54\u6216\u4EA4\u53C9\u51B2\u7A81\uFF1A
-1. \u5B8C\u6574\u5B9E\u73B0\uFF08patch.resolves\uFF09\uFF1A\u5728\u89E3\u51B3\u95EE\u9898\u7684 patch \u64CD\u4F5C\u9876\u5C42\u586B\u5199 resolves \u6570\u7EC4\uFF08resolves \u53EA\u5C5E\u4E8E\u8865\u4E01\u64CD\u4F5C\uFF0C\u4E25\u7981\u5199\u8FDB rule / mod / \u6A21\u677F\u5185\u90E8\uFF01\uFF09\uFF0C\u6BCF\u9879\u4F18\u5148\u590D\u5236\u8B66\u544A\u7684\u5B8C\u6574 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF09\uFF1B\u540C\u4E00 originPath \u5185\u300C\u300D\u6807\u9898\u552F\u4E00\u65F6\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF0C\u6CE8\u610F effectName \u53EA\u586B\u300C\u300D\u5185\u90E8\u7684\u88F8\u6807\u9898\u6587\u672C\uFF0C\u4E25\u7981\u5E26\u5916\u4FA7\u300C\u300D\u4E66\u540D\u5F15\u53F7\uFF08\u4EC5\u6807\u9898\u5185\u90E8\u539F\u6709\u7684\u65B9\u62EC\u53F7\u524D\u7F00\u4FDD\u7559\uFF09\u3002\u53EA\u521B\u5EFA\u72B6\u6001\u6216\u6280\u80FD\u6A21\u677F\u800C\u672A\u6302\u56DE\u539F\u8F7D\u4F53\u4E0D\u7B97\u5B8C\u6210\u3002
-2. \u90E8\u5206\u5B9E\u73B0\uFF08\u552F\u4E00\u5408\u6CD5\u53CC\u6536\u636E\u7EC4\u5408\uFF09\uFF1A\u82E5\u540C\u4E00\u6761\u8B66\u544A\u53EA\u5B9E\u73B0\u4E86\u4E00\u90E8\u5206\uFF0C\u5728\u5B9E\u73B0\u8BE5\u90E8\u5206\u7684\u64CD\u4F5C\u4E0A\u5199 resolves\uFF0C\u5E76\u5728 unresolved \u91CC\u7528\u540C\u4E00\u5F15\u7528\u8BF4\u660E\u8FD8\u7F3A\u4EC0\u4E48\uFF08\u4E25\u7981\u5BF9\u4E0D\u53EF\u8868\u8FBE\u7684\u534A\u8FB9\u786C\u51D1\u9519\u8BEF\u4FEE\u9970\u5192\u5145\u5168\u91CF\u5B9E\u73B0\uFF09\u3002
-3. \u5148\u524D\u5DF2\u5B9E\u73B0\uFF08existing\uFF09\uFF1A\u82E5\u8BE5\u884C\u4E3A\u5DF2\u7531\u5148\u524D\u6807\u51C6\u5316\u6279\u6B21\u5199\u5165\u5F53\u524D\u6A21\u677F\uFF0C\u672C\u6B21\u4E0D\u518D\u91CD\u590D add\uFF0C\u5FC5\u987B\u5728\u9876\u5C42 existing \u6570\u7EC4\u63D0\u4EA4 {unitId, originPath, message(\u6216\u552F\u4E00effectName), path, value}\uFF0C\u5176\u4E2D path \u5FC5\u987B\u7CBE\u786E\u5230\u5177\u4F53\u5143\u7D20\u4E0B\u6807\uFF08\u5982 /equipment/<id>/mods/0 \u6216 /skills/<id>/rules/0\uFF0C\u4E25\u7981\u5199\u6574\u4E2A\u6570\u7EC4\u8DEF\u5F84\uFF09\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u5355\u6761\u89C4\u5219\u6216\u4FEE\u9970\uFF1B\u4E25\u7981\u7528\u8F6C\u6362\u5668\u521D\u59CB\u9762\u677F\u5B57\u6BB5\u5192\u5145 existing\u3002
-4. \u7EAF\u672A\u5B9E\u73B0\uFF08unresolved\uFF09\u6216\u975E\u6218\u6597\u5916\u56F4\uFF08narrative\uFF09\uFF1A\u65E0\u8865\u4E01\u6539\u52A8\u65F6\u4E8C\u9009\u4E00\u2014\u2014\u6218\u5185\u7F3A\u53C2\u6216\u5F15\u64CE\u8FB9\u754C\u5F52\u5165 unresolved\uFF0C\u7EAF\u98CE\u5473\u5916\u89C2\u6216\u6218\u5916\u7CFB\u7EDF\u5F52\u5165 narrative\u3002\u540C\u4E00\u6761\u8B66\u544A\u4E25\u7981\u540C\u65F6\u51FA\u73B0\u5728 narrative \u4E0E patch.resolves / unresolved / existing \u4E2D\uFF01
+\u672C\u6279\u6BCF\u6761\u8B66\u544A\u5FC5\u987B\u901A\u8FC7\u4EE5\u4E0B\u56DB\u79CD\u4E92\u65A5\u6536\u636E\u8DEF\u5F84\u4E4B\u4E00\u5B8C\u6210\u6838\u9500\uFF0C\u4E25\u7981\u6F0F\u7B54\u3001\u4E32\u7ED1\u6216\u4EA4\u53C9\u51B2\u7A81\uFF1A
+1. \u5B8C\u6574\u5B9E\u73B0\uFF08patch.resolves\uFF09\uFF1A\u5728\u89E3\u51B3\u8BE5\u8B66\u544A\u7684 patch[i] \u64CD\u4F5C\u5BF9\u8C61\u9876\u5C42\u586B\u5199 resolves \u6570\u7EC4\uFF08resolves \u4EC5\u5C5E\u8865\u4E01\u64CD\u4F5C\u9876\u5C42\u952E\uFF0C\u4E25\u7981\u5199\u8FDB rule / mod / \u6A21\u677F value \u5185\u90E8\uFF01\uFF09\uFF0C\u6BCF\u9879\u4F18\u5148\u539F\u6837\u590D\u5236\u8B66\u544A\u7684 {unitId, originPath, message}\uFF08\u65E0\u6765\u6E90\u8DEF\u5F84\u7528 null\uFF0C\u4E25\u7981\u7BE1\u6539 message \u6587\u672C\u6216\u628A\u8BF4\u660E\u585E\u8FDB message\uFF01\uFF09\uFF1B\u540C\u4E00 originPath \u5185\u300C\u300D\u6807\u9898\u552F\u4E00\u65F6\u53EF\u7528\u77ED\u6536\u636E {unitId, originPath, effectName}\uFF08\u53EA\u586B\u300C\u300D\u5185\u88F8\u6807\u9898\u6587\u672C\uFF0C\u4E0D\u5E26\u5916\u4FA7\u4E66\u540D\u5F15\u53F7\uFF0C\u4FDD\u7559\u5185\u90E8\u539F\u6709\u65B9\u62EC\u53F7\uFF09\u3002\u53EA\u65B0\u5EFA\u72B6\u6001\u6216\u6D3E\u751F\u6280\u80FD\u6A21\u677F\u800C\u672A\u6302\u56DE\u539F\u8F7D\u4F53\u4E0D\u7B97\u6838\u9500\uFF1B\u540C\u4E00\u6A21\u677F\u4E0B\u591A\u6761\u72EC\u7ACB\u8B66\u544A\u5FC5\u987B\u5404\u81EA\u5BF9\u5E94\u5B9E\u9645\u843D\u5730\u7684\u8865\u4E01\u6216\u672A\u5B9E\u73B0\u6536\u636E\uFF0C\u552F\u6709\u4EC5\u91CD\u7533\u5DF2\u89E3\u6790\u9762\u677F\u4E3B\u51FB\uFF0F\u5148\u624B\u7684\u5355\u4E00\u7C7B\u578B\u4E3B\u51FB\u8BCD\u6761\u53EF\u4E0E\u540C\u6280\u80FD\u8865\u5168 /damage/type \u7684\u64CD\u4F5C\u5E76\u8868\u5171\u4EAB resolves\u3002
+2. \u90E8\u5206\u5B9E\u73B0\uFF08\u552F\u4E00\u5408\u6CD5\u53CC\u6536\u636E\u7EC4\u5408\uFF09\uFF1A\u82E5\u540C\u4E00\u6761\u8B66\u544A\u53EA\u5B9E\u73B0\u4E86\u4E00\u90E8\u5206\uFF0C\u5728\u5B9E\u73B0\u8BE5\u90E8\u5206\u7684\u64CD\u4F5C\u4E0A\u5199 resolves\uFF0C\u5E76\u5728 unresolved \u91CC\u7528\u540C\u4E00\u5F15\u7528\u8BF4\u660E\u8FD8\u7F3A\u4EC0\u4E48\uFF08\u5FC5\u586B\u72EC\u7ACB\u975E\u7A7A\u4E2D\u6587 reason \u5B57\u6BB5\u5199\u660E\u5DF2\u5B9E\u73B0\u4E0E\u672A\u5B9E\u73B0\u90E8\u5206\uFF0C\u4E25\u7981\u7F3A\u7701 reason \u6216\u5BF9\u4E0D\u53EF\u8868\u8FBE\u7684\u534A\u8FB9\u786C\u51D1\u5931\u771F\u4FEE\u9970\u5192\u5145\u5168\u91CF\u5B9E\u73B0\uFF09\u3002
+3. \u5148\u524D\u5DF2\u5B9E\u73B0\uFF08existing\uFF09\uFF1A\u4EC5\u5F53\u8BE5\u884C\u4E3A\u5DF2\u7531**\u66F4\u65E9\u6807\u51C6\u5316\u6279\u6B21\u65B0\u589E**\u7684\u5177\u4F53 rules/N \u6216 mods/N \u5143\u7D20\u843D\u5730\u65F6\uFF0C\u5728\u9876\u5C42 existing \u63D0\u4EA4 {unitId, originPath, message(\u6216\u552F\u4E00effectName), path, value}\uFF08path \u7CBE\u786E\u5230\u5143\u7D20\u4E0B\u6807\u5982 /skills/<id>/rules/0\uFF0Cvalue \u5B8C\u6574\u590D\u5236\u8BE5\u5355\u6761\u5143\u7D20\uFF09\uFF1B\u7EDD\u5BF9\u7981\u6B62\u7528\u8F6C\u6362\u5668\u521D\u59CB\u751F\u6210\u7684 damage\u3001initiativeBonus\u3001power \u6216\u9762\u677F\u5B57\u6BB5\u5192\u5145 existing\uFF01
+4. \u7EAF\u672A\u5B9E\u73B0\uFF08unresolved\uFF09\u6216\u975E\u6218\u6597\u5916\u56F4\uFF08narrative\uFF09\uFF1A\u65E0\u8865\u4E01\u6539\u52A8\u65F6\u4E8C\u9009\u4E00\u2014\u2014\u6218\u5185\u7F3A\u53C2\u6216\u5F15\u64CE\u8FB9\u754C\u5F52\u5165 unresolved\uFF08\u5FC5\u586B {unitId, originPath, message, kind, reason}\uFF09\uFF0C\u7EAF\u98CE\u5473\u5916\u89C2\u6216\u6218\u5916\u7CFB\u7EDF\u5F52\u5165 narrative\uFF08\u5FC5\u586B {unitId, originPath, message, reason}\uFF09\u3002reason \u5FC5\u987B\u4E3A\u72EC\u7ACB\u975E\u7A7A\u4E2D\u6587\u77ED\u53E5\uFF01\u540C\u4E00\u6761\u8B66\u544A\u4E25\u7981\u540C\u65F6\u51FA\u73B0\u5728 narrative \u4E0E patch.resolves / unresolved / existing \u4E2D\uFF0C\u4E25\u7981\u628A\u672C\u6280\u80FD\u4E3B\u51FB\u4F24\u5BB3\u8BCD\u6761\u8BEF\u5F52\u5165 narrative\uFF01
 </disposition_ledger>`;
 var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
 var PATCH_RULES = String.raw`<output_contract>
@@ -15919,23 +15962,28 @@ var PATCH_RULES = String.raw`<output_contract>
 </output_contract>
 
 <compilation_invariants>
-【六大高阶编译不变式】
+【五大高阶编译不变式】
 1. 战斗域隔离不变式（Domain Boundary）：
    • 沙盘仅结算本场战斗内的棋盘空间、回合时序、检定攻防、状态生灭与局内池（hp / mp / sp / ap）。
-   • 世界书中的战外元货币（如命运点 FP、积分、金币）、跨世界／跨地图随机漫游传送、自由许愿、任务兑换、库存获取限制、战外升级属性成长与装备词条合并等不属于战棋局内结算：纯外观清洁与风味文本归入 narrative；具有规则意图但依赖战外元系统或缺少固定参数（如随难度浮动的许愿消耗）归入 unresolved（标明 engine_limit 或 missing_info）。严禁把战外元货币强行映射为局内 mp / sp / hp，严禁把跨世界传送强行映射为棋盘格 move！
-2. 主击守恒、静态去重与单次结算不变式（Conservation & Idempotency）：
-   • 主击完备性：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage；若仅缺单一主击伤害类型，用 add 写入 /skills/<id>/damage/type（已有该键用 replace）保留原生主击；若原文明确要求混合伤害或独立公式替代主击，同批 remove /skills/<id>/damage 并写 active 规则；原文无法确认类型时写 unresolved。二者必居其一，严禁重复结算。
+   • 世界书中的战外元货币（如命运点 FP、积分、金币）、跨世界／跨位面传送、战外数小时延时复活、自由许愿、任务兑换、库存获取限制、战外升级成长等不属于战棋局内结算：纯外观清洁、宝库收纳与跨界漫游归入 narrative；具有规则意图但依赖跨战长时序、篡改剥夺敌方技能模板或缺少固定参数的部分归入 unresolved（标明 engine_limit 或 missing_info）。严禁把战外元货币强行映射为局内 mp / sp / hp，严禁把跨世界传送强行映射为棋盘格 move！
+2. 快照增量、幂等引用与主击守恒不变式（Snapshot Delta, Idempotency & Conservation）：
+   • 快照增量与已存模板禁重定义：动笔前（尤含返修轮次！）先查当前 roster 快照的 skills、statusTemplates 与宿主模板现有键——① 凡当前快照中**已存在**的状态模板或派生技能 ID（含前序批次或首轮已成功落盘的模板），**直接按既有 ID 引用，绝对禁止再次输出 add /skills/<id> 或 add /statusTemplates/<id>**（重复 add 已存在模板会触发共享模板定义冲突并级联拒收宿主规则！）；② 已解析的 initiativeBonus、rawRange / rawRadius / shape、power 直接保留；移除或替换 /skills/<id>/damage 前先核实当前快照该技能确实存在 damage 键（已移除或本来无 damage 键时严禁再 remove/replace /damage，remove /damage 后更严禁再写 /damage/type！）。
+   • 主击完备性与并表核销：同时缺少 damage 骰子对象和 active 主击伤害规则时，才缺少主击。转换器会为 [威力: X] 自动写入 damage：① 若原文为单一伤害类型主击，仅用 add 写入 /skills/<id>/damage/type（已有该键用 replace）保留原生主击，并将「主击伤害类型」警告与同技能仅重申该单一主击比例及已解析先手／范围的原词条一并挂在该补丁操作的 resolves 上共同核销（严禁再追加第二段 100% 伤害规则，严禁塞入 existing 或 narrative）；② 若原文明确要求多属性混合主击或独立公式替代主击，同批先核实存在 damage 后 remove /skills/<id>/damage，并在 hook:"active" 内拆为多条 damage 原语，将该混合主击词条与「主击伤害类型」一并挂在主击补丁 resolves 上核销；③ 原文无法确认类型时写 unresolved。
    • 面板去重与单次恢复：HP/MP/SP 是资源池，sp、maxSp 等不是 mods.stat；若来源加成或成长已计入当前快照面板值，保留当前面板，严禁二次叠加。heal 指令本身已直接恢复生命，严禁在同一效果内再写 resource(pool:"hp") 造成双倍回血。
-3. 载体作用域与集合量化闭合不变式（Scope & Quantifier Closure）：
-   • 模式与挂载入口：被动技能必设 passive:true、ap:0 且不写 active 规则。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label 与限次字段）；需选目标、有射程或耗费资源的装备主动技，先 add /skills/<id> 再将该 ID 并入装备模板 skills 数组（保留原有项去重），同一效果只挂一处。
-   • 常驻监听精准过滤：单位持有的所有装备（含主副手、防具饰品及备用武器 bagWeapons）与技能的非 active 规则及 mods 默认全局常驻！① 攻防方向隔离：在 before_check / after_hit / after_damage / on_kill 等双边钩子中，我方进攻／命中／击杀触发必写 attacker.id == self.id，我方受击触发必写 target.id == self.id（漏写会导致敌方打我方时误触发我方饰品／被动特效并反挂自身！）；② 武器与防具饰品区分：仅在 kind:"weapon" 的武器模板上限定本武器词条时写 event.weaponTemplateId == item.templateId，防具／头饰／靴子／箭袋／饰品（kind:"armor" / "accessory" / "shield"）严禁写 event.weaponTemplateId == item.templateId（因其模板 ID 绝不等于手中武器 ID，写了必永久失效！）；③ 仅对远程攻击或弹药饰品生效必写 !event.melee（严禁写 weapon.ranged）；④ 仅在施放本主动技能时触发的非 active 规则必写 event.skillId == skill.id（切勿误用仅属召唤物顶替事件的 event.sourceSkillId）；⑤ 单次主动施放内的顺序因果链（造成伤害 → 按实扣量回血／回能／二段判定）全部按序写在同一个 hook:"active" 内，用 out / outCount 存入 vars.<名> 串联。
-   • 显式集合与跨阶尺度：select.from == "units" 包含全场存活者、尸体、友军与自身！选敌必写 where:"candidate.alive && candidate.team != self.team"，无差别排除自身写 where:"candidate.alive && candidate.id != self.id"，选友军写 where:"candidate.alive && candidate.team == self.team"；选格瞬移必过滤可通行地面。词条相对档位距离在模板写 rawRange / rawRadius，在公式写 scale_cells(n)；位移标签 [位移: X] 写 distance:X 与 distanceUnit:"position"。
-4. 正交原语保真不变式（Orthogonal Primitive Fidelity）：
-   • 先尝试用正交原语拆解组合，再考虑放弃：跨装备 mods、被动 rules 与派生主动 skills 共享读写或按层数缩放／消耗的自定义计数，统一注册 durationType:"persistent"、stackMode:"stack" 状态模板并用 self.stacks.<状态ID> 读取（严禁用 self.resource.<池> 读取装备 pools，因其在公式中恒为 null！）；百分比增伤直接写 mods 的 damageMult 或 finalDamageMult（配动态 Expr 公式，严禁捏造固定 damageFlat 代替百分比，也勿把攻击力百分比提升降级为评级偏移）；必中／必暴用状态或载体 mods.flags:["guaranteed_hit","guaranteed_crit"]；低血量阈值斩杀用 damage 的 instantDeath:true；定时状态结束触发的后置惩罚挂在该状态模板自身的 after_status_removed（filter:"event.statusId == status.id && event.reason == 'expired'"）；交互点选直接用 ask（配 aiPolicy）。
-   • 检定边界诚实性：若词条涉及引擎不存在的检定维度（如潜行检定，或进攻方针对特定部位意图的专属加值），将可实现部分落地后，仍无法表达的部分列入 unresolved，严禁把局部细分加值硬塞进无条件 checkBonus 污染所有常规攻击！
-5. 拓扑先建后引与闭合 Schema 不变式（Topology & Schema Closure）：
-   • 同批新建的 /statusTemplates/<id> 与 /skills/<id> 必须排在 patch 数组最前部先 add，后部装备或单位补丁再引用；新建的状态 ID 一旦选定，本批所有 self.stacks.<id>、apply_status、remove_status、has_status 必须逐字符使用同一个 ID（严禁前文建 A 后文写近义名 B），且同一模板 rules 数组内各规则 id 必须互不重复。
-   • 所有宿主模板、rule、statMod 与 opcode 对象均为严格闭合 Schema：对对象属性路径（如 /equipment/<id>/skills、/equipment/<id>/mods、/equipment/<id>/rules）写入完整数组或字段时统一优先用 op:"add"（RFC 6902 中对象键 add 兼具新建与覆盖，避免装备初始无 skills 键时写 replace 或 /skills/- 报路径不存在）；严禁在 rule、mod 或模板内私造 resolves、resolvesNote、comment 等未声明字段！resolves 只能写在顶层 patch[i] 操作对象上。
+3. 载体定性、宿主直挂与量词保真不变式（Carrier Polarity, Host Reachability & Quantifier Fidelity）：
+   • 载体定性与宿主直挂闭环：纯被动载体（passive:true、ap:0，含纯被动技能、常驻背包道具规则载体、长阶被动分支）严禁存在 damage 骰子对象或 hook:"active" 规则；兼具环境／条件常驻生效与主动施放的双态载体，必须同时实现常驻触发／脱离解除钩子与 hook:"active" 分支，严禁丢失常驻半边退化为纯主动！被动首次触发逻辑（如濒死 on_lethal_p1/p2、回合初、受击响应）**必须直接挂在角色当前已持有的宿主技能或装备／道具模板自身的 rules 上**，严禁把首次触发钩子只写进一个尚未挂在角色身上的衍生状态模板里（未持有该状态则钩子永不可达！）。装备自身的无目标 0 AP 开关写装备模板 hook:"active"（配 label）；需选落点、选目标或有射程耗能的装备主动能力，先 add /skills/<id> 再将该 ID 并入装备 skills 数组（或在无目标 active 内先 ask 选格再传 to，严禁写缺 to 的裸 teleport）。
+   • 常驻监听精准过滤：单位持有的所有装备（含主副手、防具饰品及备用武器 bagWeapons）与技能的非 active 规则及 mods 默认全局常驻！① 攻防主客体对称辨析：在 before_check / after_hit / after_damage / on_kill 等双边钩子中，“我方发起进攻／命中／击杀”必写 attacker.id == self.id；凡描述“预判敌方攻击、迫使针对我方的检定失手或不利、我方受击减免或反制”的防御直觉，事件中敌方是 attacker、我方是 target，必写 target.id == self.id && attacker.team != self.team（严禁写反为 attacker.id == self.id 变成妨碍自身攻击！）；受击方钩子内若需令进攻方掷 check(kind:"save")，必须先用省略 bind 的 for_each(select:{from:"attacker"}) 切换子帧 target，防止己方替敌方掷豁免！② 武器与非武器隔离：仅在 kind:"weapon" 武器模板限定本武器时写 event.weaponTemplateId == item.templateId，防具／头饰／靴子／箭袋／饰品（kind:"armor" / "accessory" / "shield"）严禁写此条件；③ 远程与技能来源：远程限定必写 !event.melee；仅施放本主动技能时触发的非 active 规则必写 event.skillId == skill.id（而被动监听旧召唤物被顶替消散用 on_summon_evict 配 target.sourceId == self.id，切勿在被动技能上写 event.sourceSkillId == skill.id！）；④ 单次主动施放内的顺序因果链全部按序写在同一个 hook:"active" 内用 out / outCount 串联。
+   • 空间边界与计次量词保真：select.from == "units" 包含全场存活者、尸体、友军与自身！选敌必写 where:"candidate.alive && candidate.team != self.team"，无差别排除自身写 where:"candidate.alive && candidate.id != self.id"，选友军写 where:"candidate.alive && candidate.team == self.team"，复活阵亡友军写 !candidate.alive && candidate.team == self.team；原文限定在技能范围或指定半径内生效时必须配 from:"action_targets" 或 area 几何半径，严禁无范围全场遍历，更严禁写 || true 等恒真过滤！严格区分存在布尔（任一满足触发一次 → ||）与独立基数累加（“每存在一种指定状态／每有一层／每命中一目标各叠加一次”必须按 (condA ? 1 : 0) + (condB ? 1 : 0) + ... 或乘以层数逐项累加，严禁坍缩为 > 0 单次加成！）。词条相对档位距离在模板写 rawRange / rawRadius，在公式写 scale_cells(n)；位移标签 [位移: X] 写 distance:X 与 distanceUnit:"position"。
+4. 符号对称、参数闭环与正交原语穷尽不变式（Sign Symmetry, Closure & Primitive Exhaustion）：
+   • 增益为正、减益为负与参数闭环：所有声明式修饰严格遵守符号方向——正面收益与受击减免（增伤、穿甲、自身闪避加成、检定加值及受击减伤 damageReduction / dr / damageReductionFlat）一律填**正数**（如受击减伤 30% 必写 flat:0.3）；反之，挂在负面减益／控制状态上**削弱受控目标闪避、检定、移动或五维**的修饰，flat **必须填负数**（如令目标闪避降低 10 必写 stat:"dodge", flat:-10，填正数会反给敌人加闪避！）。凡状态或载体模板读取 vars.*（特别是 category:"shield" 读取 vars.shieldAmount），每次 apply_status 必须在 vars 中显式传入求值表达式，严禁漏传参数或留空壳状态模板！控制状态若限制瞬移／飞行，须在 locks 中完整并入 "teleport" / "fly"。
+   • 先尝试用正交原语拆解组合，再考虑放弃：动用 engine_limit 前必须穷尽协议已披露原语——① 状态施加／抵抗加值用 mods 的 dcBonus / resistBonus（配 statusId:"<状态ID>" 或 checkKind:"save"，施加侧 check(kind:"save") 同步填 statusId）；② 对免疫某状态目标增伤用 is_immune(target, '<状态ID>')；③ 复刻重演本回合已执行行动用 from:"tape" 筛选配合 perform(actionKind:"replay", tapeRecord:"vars.x") 与 usesPerBattle:1；④ 改变技能生效原点用 before_action 的 mutate_event:{patch:{origin:...}}；⑤ 范围攻击中替特定友军单点承伤用 before_target 的 replaceTarget:{from, to}（全目标改指才用 redirectTarget）；⑥ 双生同命共享池与被动共享用 link_pool 与 shareRulesTo，濒死换池用 resource(mode:"swap")，按任意数额截取伤害或转化资源用 ask(kind:"number") 配合 before_commit.finalAmount 或 resource；⑦ 战意锁定与友军可选用 controlPolicy（moraleLock:"steady", allowFriendlyTarget:true）；⑧ 跨载体计数统一注册 durationType:"persistent", stackMode:"stack" 状态并用 self.stacks.<状态ID> 读取；定时状态到期后置效果挂该状态自身 after_status_removed（filter:"event.statusId == status.id && event.reason == 'expired'"）。
+   • 真实边界诚实披露：唯有确属引擎未开放维度（如按单一五维拆分的通用 checkBonus、拦截外部任意未知 ID 控制类别的泛化条件、无蓄力直发覆盖、跨战长延时或篡改敌方技能表等），在将可实现部分落地后，仍无法表达的部分列入 unresolved 并附清晰中文 reason，严禁把局部细分加值硬塞进无条件全局 checkBonus！
+5. 批内自足、RFC 6902 数组类型铁律与闭合 Schema 不变式（Self-Containment, Array Type Contract & Schema Closure）：
+   • 原生复用优先与批内 100% 自足：引用任何状态 ID 前，先核查内置 STATUSES 表与当前快照 statusTemplates 是否已有匹配项——快照已有则直接引用（严禁重复 add！）；确需新建专属状态或派生技能时，**必须在当前批次 patch 数组最前部先 add 完整模板定义**（严禁建空对象 {}！），后部规则、mods 或 is_immune / has_status 再引用，本批内所有引用逐字符一致，同一模板 rules 内规则 id 互不重复——**绝对禁止跨批悬空引用未注册 ID**！
+   • **RFC 6902 数组字段 [...] vs 元素追加 /- 铁律（严禁类型错配与重复整表覆盖！）**：
+     ① 当 path 指向数组属性本身（末尾**不带** /-，如 /skills/<id>/rules、/equipment/<id>/mods、/equipment/<id>/skills）时，**value 必须是 JSON 数组 [...]**（即使只有 1 条规则或 1 个技能 ID，也必须写成 [{"id":...}] 或 ["skill_x"]，**绝对禁止对不带 /- 的 /rules、/mods、/skills 传入单个对象 {...} 或裸字符串，否则必触发 Schema 拒收与运行时崩溃！**）；且同一批次内对同一模板的同一数组属性**最多只允许写一次**（同一载体的多条规则必须合并进同一个 [rule1, rule2, ...] 数组，严禁在同批写两次 add .../rules 导致后一条把前一条规则整表覆盖抹除！）。
+     ② 当向快照已存在的 rules 或 mods 数组逐条追加单个元素时，path **必须以 /- 结尾**（如 /skills/<id>/rules/-、/equipment/<id>/mods/-），此时 value 才是单个规则或修饰对象 {...}（注意装备初始无 skills 数组键，故装备挂载主动技能一律写 /equipment/<id>/skills 并传去重后的字符串数组 ["<技能ID>"]）。
+   • 闭合 Schema 与扁平编码：所有宿主模板、rule、statMod 与 opcode 均为严格闭合 Schema；严禁在 rule、mod 或模板内私造 resolves、comment 等未声明字段（resolves 只能写在顶层 patch[i] 上）！多召唤物或多段顺序结算优先拆为扁平并列的 program 指令或独立子规则，避免超深层括号嵌套导致 JSON 失配。
 </compilation_invariants>
 
 【宿主模板闭合字段与枚举全表】
@@ -15953,19 +16001,19 @@ var PATCH_RULES = String.raw`<output_contract>
 
 <std_audit_workflow>
 【五步前置审校工作流（<std_audit>）】
-正式生成 JSON 前，必须先在 <std_audit>...</std_audit> 标签内按以下五步完成极简结构化审校（每条警告一行，不写废话）：
+正式生成 JSON 前，必须先在 <std_audit>...</std_audit> 标签内按以下五步完成极简结构化审校（每条警告仅占紧凑一行，严禁长篇推导挤占输出空间）：
 Step 0 [警告盘点]：按输入原序编号列出本批全部警告 W1..Wn（单位ID | originPath | 效果标题），确认总数一致。
-Step 1 [边界与守恒裁定]：逐条核查战斗域边界（是否属战外货币/跨界漫游/许愿/任务/养成）、面板是否已烘焙，将每条定性为 FULL_PATCH / PARTIAL_PATCH / EXISTING / UNRESOLVED / NARRATIVE。
-Step 2 [作用域与原语映射]：对需写补丁项锁定载体路径、触发钩子与过滤条件（双边钩子必检 attacker.id == self.id 或 target.id == self.id；仅 kind:"weapon" 武器自身词条检 event.weaponTemplateId == item.templateId，防具与饰品严禁写此条件；限定本武器／本技能击杀必用 after_damage 检 !target.alive && event.dealt > 0，若配有斩杀规则则同时匹配 event.weaponTemplateId == item.templateId || event.sourceRuleId == '<斩杀规则ID>'，不在 on_kill 写恒为 null 的 weaponTemplateId/skillId；远程与箭袋必检 !event.melee；主动技附加钩子必检 event.skillId == skill.id；选人必检 candidate.alive 与阵营）；确认跨载体计数统一使用 persistent+stack 状态与 self.stacks.<id>（移除 persistent 常驻状态的所有 remove_status 必须显式写 force:true！消耗固定 K 层须带 force:true 清空后再回填余量），所有表达式函数严格限协议注册列表（空值用三元 ?:，无 coalesce），无双倍回血或双倍主击。
-Step 3 [拓扑写集与收据绑定]：明确锁定本批新建的状态 ID 与技能 ID 符号表（后续所有引用逐字对齐同一 ID），严格按被引用依赖从底向上排列 patch 顺序（1. 基础状态模板 → 引用其他新状态的状态模板，如到期施加 B 状态的状态 A 必须排在 B 之后！ → 2. /skills/<id> → 3. /equipment/<id> 或 /units/<id>），对象属性写入优先用 op:"add"，并为每一条 FULL_PATCH / PARTIAL_PATCH 警告明确指定承载 "resolves":[...] 的目标 patch 项（写入主载体的操作必须显式带 resolves 数组，漏写 resolves 会导致警告无法核销！）；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
-Step 4 [终检门控]：逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围（确认 additivePercent 为小数制如 0.5 而非 50；确认模板顶层 flags 仅写 undispellable / concept_immune，而 guaranteed_hit / guaranteed_crit / preserveLife 等行为标志一律写在 mods[i].flags 内！）；确认 rule/mod 内零私造键、每条已实现警告均已在某个 patch[i].resolves 中显式登记、W1..Wn 100% 覆盖且 narrative 与其他收据严格互斥，最后写出 Coverage: PASS | Schema: PASS（若有任一处不合规，当场修正规划后再闭合标签）。
+Step 1 [边界与快照增量裁定]：逐条核查战斗域边界、当前快照已解析字段（先手/范围/威力/纯被动 vs 双态载体）及原语可表达性，定性为 FULL_PATCH / PARTIAL_PATCH / EXISTING / UNRESOLVED / NARRATIVE（严禁把主击归入 narrative 或初始面板归入 existing）。
+Step 2 [作用域、量词与符号核对]：锁定宿主载体路径（被动首次触发必挂已持有宿主自身 rules 而非未施加状态模板！）、钩子与过滤条件（进攻检 attacker.id == self.id，防御预判／受击反制必检 target.id == self.id && attacker.team != self.team；仅武器检 weaponTemplateId；限定武器／技能击杀用 after_damage 检 !target.alive && event.dealt > 0；远程检 !event.melee；主动技附效检 event.skillId == skill.id；选人必检存活、阵营与空间范围；受击迫使进攻方豁免用无 bind 的 for_each(from:"attacker")）；核对正负号（自身增益与受击减伤 flat 为正数，负面状态扣闪避／检定／移动 flat 必为负数！）、护盾等状态 vars 传参闭环、多状态／多层累加量词（逐项相加而非 >0 布尔）及 persistent 状态 remove_status 必带 force:true。
+Step 3 [批内自足拓扑、数组类型与收据绑定]：核对所有引用的状态／技能 ID 在内置 STATUSES、当前快照或本批前置 add 中 100% 存在（**已在当前 roster 快照存在的 skills / statusTemplates 严禁再次 add！**），按「新建基础状态 → 新建复合状态 → 新建派生技能 → 主载体」排列 patch；**逐条硬核对 RFC 6902 数组类型：不带 /- 的 .../rules、.../mods、.../skills 其 value 必须是 [...] 数组（绝不可为单对象 {...}！）且同路径同批最多写一次（多规则合并入同一数组或改用 .../rules/- 追加单对象）**；确认操作 /damage 前快照确有该键且 remove /damage 后不再写 /damage/type；为每条 FULL_PATCH / PARTIAL_PATCH 绑定顶层 patch[i].resolves（同技能单一类型主击词条与补全 /damage/type 共同挂入 resolves），并为每条 UNRESOLVED 与 NARRATIVE 准备独立非空中文 reason；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
+Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围（再次确认不带 /- 的 /rules、/mods、/skills 全部为 [...] 数组而非 {...} 对象！additivePercent 为小数制如 0.5 而非 50；顶层 flags 仅写 undispellable / concept_immune，行为标志写 mods[i].flags；ask 按 kind 配齐必填键与合法 aiPolicy；mutate_event 仅写当前 hook 允许字段）；确认 rule/mod 内零私造 resolves 键、W1..Wn 100% 覆盖且收据严格互斥、深层数组与对象括号逐层闭合，最后写出 Coverage: PASS | Schema: PASS。
 </std_audit_workflow>
 
 <tail_anchor>
 【最终输出格式与启动锚点】
 严格按「一个闭合 <std_audit>...</std_audit> 块 + 紧接唯一一个顶层纯 JSON 对象」输出。JSON 顶层结构固定为：
   {"patch":[{"op":"add","path":"<允许路径>","value":"<合法模板或字段值>","resolves":[{"unitId":"<单位ID>","originPath":"<来源路径或null>","message":"<原警告全文>"}]}],"unresolved":[],"narrative":[]}
-整批仅有 unresolved 或 narrative 时提交 "patch":[]；引用既有标准化成果时另附 "existing":[...]。</std_audit> 闭合后直接以 { 开始输出纯 JSON，严禁使用 Markdown 代码围栏、注释、JS 调用或任何尾部解释文字。
+整批仅有 unresolved 或 narrative 时提交 "patch":[]；引用既有标准化成果时另附 "existing":[...]。输出大型规则或多召唤指令时保持扁平层级并逐层核对 } 与 ] 闭合配对，</std_audit> 闭合后立即以 { 开始输出完整合法的纯 JSON，严禁在开头输出孤立尖括号、Markdown 代码围栏、注释或任何尾部文字。
 现在立即从 <std_audit> 开始执行审校并输出最终 JSON：
 </tail_anchor>`;
 var json = (value) => JSON.stringify(value, null, 2);
@@ -17872,9 +17920,19 @@ function jsonPriority(value) {
   if (["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"].some((key4) => key4 in value)) return 3;
   return 1;
 }
-function parseAIResponse2(value) {
+function parseAIResponse(value) {
   const source = typeof value === "object" ? JSON.stringify(value) : text4(value);
-  const parsed = preferredJson(source) ?? null;
+  const clean2 = stripReasoningBlocks(source);
+  const envelope = /\{\s*"(?:patch|unresolved|existing|narrative)"\s*:/.exec(clean2);
+  let parsed;
+  if (envelope && !/[{[]/.test(clean2.slice(0, envelope.index))) {
+    const final = clean2.slice(envelope.index).split(/\n\s*```/)[0].trim();
+    try {
+      parsed = JSON.parse(final);
+    } catch (error2) {
+      return { data: null, patch: null, text: source, parseError: `\u6700\u7EC8 JSON \u65E0\u6548\uFF1A${error2.message}` };
+    }
+  } else parsed = preferredJson(source) ?? null;
   const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch || (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
   return { data: parsed, patch, text: source };
 }
@@ -17928,7 +17986,7 @@ function fingerprintAt(state, path2) {
   }
   return JSON.stringify(value);
 }
-function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], validate = () => {
+function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], conflictingDefinitions = [], validate = () => {
 }, apply: apply2 = applyPatch, normalize = (state) => state, allowedUnitIds, expand = (operation2) => [operation2] }) {
   const candidates = [], rejected = [];
   for (const [index, operation2] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
@@ -17939,6 +17997,26 @@ function partitionNormalizationPatch({ liveState, baselineState, existingOps = [
       rejected.push({ index, op: operation2, path: typeof operation2?.path === "string" ? operation2.path : "", reason: "\u8DEF\u5F84\u6216\u64CD\u4F5C\u4E0D\u5728\u5141\u8BB8\u767D\u540D\u5355\u5185" });
     } else candidates.push({ index, op: operation2, lastError: "" });
   }
+  const declarations = candidates.filter(({ op }) => op.op === "add" && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === void 0);
+  const roots = /* @__PURE__ */ new Set(), conflicted = new Set(conflictingDefinitions);
+  for (const item of declarations) {
+    if (roots.has(item.op.path)) {
+      if (JSON.stringify(declarations.find((other) => other.op.path === item.op.path).op.value) !== JSON.stringify(item.op.value)) conflicted.add(item.op.path);
+      rejected.push({ ...item, path: item.op.path, reason: "\u540C\u6279\u91CD\u590D\u521B\u5EFA\u6A21\u677F" });
+      candidates.splice(candidates.indexOf(item), 1);
+    } else roots.add(item.op.path);
+  }
+  if (conflicted.size) {
+    const markers = [...conflicted].map((path2) => ({ path: path2 }));
+    const groups = normalizationTransactions({ patch: [...markers, ...candidates.map((i) => i.op)], solved: [], verified: [], records: {}, before: liveState, fingerprint: fingerprintAt });
+    const blocked2 = new Set(groups.filter((group) => group.patch.some((op) => markers.includes(op))).flatMap((group) => group.patch));
+    for (const item of candidates.slice()) if (blocked2.has(item.op)) {
+      rejected.push({ index: item.index, op: item.op, path: item.op.path, reason: "\u8865\u4E01\u4F9D\u8D56\u5B58\u5728\u51B2\u7A81\u7684\u6A21\u677F\u5B9A\u4E49" });
+      candidates.splice(candidates.indexOf(item), 1);
+    }
+  }
+  const first = new Set(declarations);
+  candidates.sort((a, b) => Number(first.has(b)) - Number(first.has(a)));
   const strip = (item) => {
     const { resolves, ...operation2 } = item.op;
     return operation2;
@@ -17976,7 +18054,19 @@ function partitionNormalizationPatch({ liveState, baselineState, existingOps = [
       }
     }
     if (!progressed) {
-      rejected.push(...next.map((item) => ({ index: item.index, op: item.op, path: item.op.path, reason: item.lastError })));
+      const groups = normalizationTransactions({ patch: next.map((item) => item.op), solved: [], verified: [], records: {}, before: workBase, fingerprint: fingerprintAt });
+      for (const group of groups) {
+        const items = next.filter((item) => group.patch.includes(item.op));
+        if (items.length > 1) try {
+          const result = trial(workLive, workBase, items);
+          workLive = result.nextLive;
+          workBase = result.nextBase;
+          accepted.push(...items);
+          continue;
+        } catch {
+        }
+        rejected.push(...items.map((item) => ({ index: item.index, op: item.op, path: item.op.path, reason: item.lastError })));
+      }
       break;
     }
     remaining.splice(0, remaining.length, ...next);
@@ -19739,14 +19829,14 @@ ${tag2.textContent || ""}
     return Array.isArray(item.op?.resolves) && item.op.resolves.some((reference) => identifiesWarning(reference, warning)) || warning.originPath && (item.path === warning.originPath || item.path?.startsWith(`${warning.originPath}/`));
   }
   function commitNormalization(key4, { unitIds }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
-    const { data } = parseAIResponse2(reply);
+    const { data, parseError } = parseAIResponse(reply);
     const explicitUnresolved = Array.isArray(data?.unresolved) && data.unresolved.length > 0;
     const explicitNarrative = Array.isArray(data?.narrative) && data.narrative.length > 0;
     if (isObject5(data) && !own19(data, "patch") && (explicitUnresolved || explicitNarrative)) data.patch = [];
     if (!Array.isArray(data?.patch)) {
-      const error2 = new Error("\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01");
+      const error2 = new Error(`\u6A21\u578B\u672A\u8FD4\u56DE\u6709\u6548\u7684\u6218\u5C40\u8865\u4E01${parseError ? `\uFF1A${parseError}` : ""}`);
       const source = typeof reply === "string" ? stripReasoningBlocks(reply) : "";
-      error2.raw = source.startsWith("{") || source.startsWith("[") ? source : source.match(/```json\s*([\s\S]*?)(?:```|$)/i)?.[1];
+      error2.raw = /^[\s<]*(?:```(?:json)?\s*)?[{[]/i.test(source) ? source.slice(source.search(/[{[]/)) : void 0;
       if (explicitUnresolved) error2.noRepair = true;
       throw error2;
     }
@@ -19774,6 +19864,7 @@ ${tag2.textContent || ""}
         baselineState: baselineForPartition,
         existingOps: operations2(key4),
         rawPatch: rebasedPatch,
+        conflictingDefinitions: conflicts.filter((item) => item.op.op === "add" && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path)).map((item) => item.path),
         allowedUnitIds: unitIds,
         expand: expanded,
         apply: options.applyPatch ?? applyPatch,
@@ -19803,21 +19894,25 @@ ${tag2.textContent || ""}
         const path2 = operation2.op === "replace" || !fingerprintAt(next, parentPath)?.startsWith("[") ? operation2.path : parentPath;
         const before2 = fingerprintAt(next, path2);
         next = apply2(next, expanded(operation2), true);
-        if (fingerprintAt(next, path2) !== before2) changedAtApply.set(operation2, path2);
+        const after = fingerprintAt(next, path2);
+        if (after !== before2) changedAtApply.set(operation2, { path: path2, after });
       }
       const changed = new Set(paths.filter((path2) => fingerprintAt(next, path2) !== fingerprintAt(current, path2)));
       const effective = operationsToApply.filter((operation2) => expanded(operation2).some((copy3) => changed.has(rootPath(copy3.path))));
       const patch = effective.flatMap(({ resolves, ...operation2 }) => expanded(operation2));
       const changedOperations = effective.filter((operation2) => {
-        const path2 = changedAtApply.get(operation2);
-        return path2 && fingerprintAt(current, path2) !== fingerprintAt(next, path2);
+        const change2 = changedAtApply.get(operation2);
+        if (!change2 || fingerprintAt(current, change2.path) === fingerprintAt(next, change2.path)) return false;
+        if (change2.path === operation2.path) return fingerprintAt(next, change2.path) === change2.after;
+        const array = JSON.parse(fingerprintAt(next, change2.path) ?? "null");
+        return operation2.op === "remove" ? fingerprintAt(next, change2.path) === change2.after : Array.isArray(array) && array.some((value) => JSON.stringify(value) === JSON.stringify(operation2.value));
       });
-      const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2.filter((note) => note.detail));
+      const solved = resolvedDiagnostics(eligibleWarnings, records2, changedOperations, notes2);
       const { matched: narrative, invalid: invalidNarrative } = readNarrativeExemptions(
         data.narrative,
         eligibleWarnings,
         narrativeSourceFor(records2),
-        { solved, unresolved: notes2.filter((note) => note.detail) }
+        { solved, unresolved: notes2 }
       );
       unmatchedNotes.push(...invalidNarrative);
       if (operationsToApply.length && !patch.length && !narrative.length && !data.existing?.length && !notes2.some((note) => note.warning && note.detail)) {
@@ -19832,7 +19927,7 @@ ${tag2.textContent || ""}
         try {
           const [entry2] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
           const { warning, path: path2, fingerprint } = entry2;
-          if (blockedWarnings.has(warning) || notes2.some((note) => note.warning === warning && note.detail) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) {
+          if (blockedWarnings.has(warning) || notes2.some((note) => note.warning === warning) || narrative.some((note) => note.warning === warning) || fingerprintAt(next, path2) !== fingerprint) {
             throw new Error("\u5DF2\u6709\u5B9E\u73B0\u4E0E\u672C\u6279\u5904\u7406\u7ED3\u679C\u51B2\u7A81");
           }
           if (!solved.includes(warning)) solved.push(warning);
@@ -20122,7 +20217,7 @@ ${tag2.textContent || ""}
     battleObserver = new MutationObserver(() => foldBattleEntries());
     battleObserver.observe(doc.body, { childList: true, subtree: true });
   }
-  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone5(config), getDiagnostics: () => clone5(diagnostics), buildAIRequest, requestAI, parseAIResponse: parseAIResponse2, parseJSONPatch, extractJsonBlocks, getSources: () => clone5(sources), getState: () => {
+  const api = { version: TAVERN_VERSION, open, close: closePanel, dispose, scan, getConfig: () => clone5(config), getDiagnostics: () => clone5(diagnostics), buildAIRequest, requestAI, parseAIResponse, parseJSONPatch, extractJsonBlocks, getSources: () => clone5(sources), getState: () => {
     const state = clone5(liveState());
     if (state) Object.defineProperty(state, "warnings", { value: clone5(sources.warnings ?? []) });
     return state;
