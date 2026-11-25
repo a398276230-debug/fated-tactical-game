@@ -67,7 +67,8 @@ export const MORALE = Object.freeze({ spar: { threshold: .4, check: false }, are
 export const stanceFor = (slots = {}) => {
   const main = slots.mainHand ?? slots.weapon ?? null, off = slots.offHand ?? null, shield = slots.shield ?? null;
   if (shield) return 'sword_shield';
-  if (off?.kind === 'consumable' || off?.kind === 'auxiliary') return 'attunement';
+  if (!main) return 'unarmed';
+  if (off?.kind === 'consumable') return 'attunement';
   if (main?.heavy || main?.twoHanded) return 'greatsword';
   if (off) return 'dual_wield';
   if (main?.ranged || main?.kind === 'ranged') return 'light_blade';

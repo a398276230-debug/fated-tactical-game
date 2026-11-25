@@ -1,8 +1,9 @@
 import { elevation } from '../core/spatial.js';
 import { buildScenario } from '../presets/scenarios.js';
+import { STANCES } from '../core/combat_protocol.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
-import { applyAction, currentUnit, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
+import { applyAction, currentUnit, loadoutStance, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
 import { chooseAction } from '../core/ai.js';
 import { applyCommand } from './commands.js';
 import { validateState } from './validation.js';
@@ -242,7 +243,8 @@ export function createGameAPI() {
     setWeaponStance(unitId, stance, options = {}) {
       const s = current();
       if (!own(s.units, unitId)) return { ok: false, error: '未知单位' };
-      if (!['light_blade','dual_wield','attunement','greatsword','sword_shield'].includes(stance)) return { ok: false, error: '未知持械姿态' };
+      if (!STANCES.includes(stance)) return { ok: false, error: '未知持械姿态' };
+      if (stance !== loadoutStance(s, s.units[unitId])) return { ok: false, error: '姿态与当前持械槽位不符' };
       const patch = { stance };
       if (options.greatswordMode !== undefined) patch.greatswordMode = options.greatswordMode;
       if (options.blockMode !== undefined) patch.blockMode = options.blockMode;
@@ -253,7 +255,7 @@ export function createGameAPI() {
       const s = current();
       const u = s.units[unitId];
       if (!u) return null;
-      return copy(u.maneuvers ?? ['charge','lock_on','scan','cover','guard','interrupt','push','knockback','grapple','disarm','trip','flee','detour']);
+      return copy(u.maneuvers ?? ['charge','lock_on','scan','brace','block','shield_bash','push','grapple','disarm','trip','flee']);
     },
     inspectUnit(unitId) {
       const s = current();

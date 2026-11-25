@@ -1,4 +1,4 @@
-import { getStatusTemplate, grantStatus, statusLogDetail } from '../core/combat.js';
+import { getStatusTemplate, grantStatus, statusLogDetail, loadoutStance } from '../core/combat.js';
 import { statusPatchFields } from '../core/vm-schema.js';
 import { deleteOwnedPools, getPool, initializeUnitPools, unlinkPools, updatePoolCurrent } from '../core/vm-pools.js';
 import { recordVM, removeVMStatus } from '../core/vm-runtime.js';
@@ -137,18 +137,32 @@ const commands = {
     delete s.units[c.unitId];
   },
   equip_item(s, c) {
-    fields(c, ['type','instanceId','unitId']);
+    fields(c, ['type','instanceId','unitId'], ['slot']);
     const instance = get(s.items, c.instanceId, 'instanceId');
     const u = c.unitId === null ? null : get(s.units, c.unitId, 'unitId');
+    const template = s.equipment[instance.templateId];
+    const slot = c.slot ?? (template.kind === 'shield' ? 'shield' : template.hand === 'off_hand' ? 'offHand' : template.damage ? 'mainHand' : 'gear');
+    check(slot === 'shield' ? template.kind === 'shield' : slot === 'offHand' ? !template.twoHanded && template.hand !== 'two_handed' && !!(template.damage || template.kind === 'consumable')
+      : slot === 'mainHand' ? !!template.damage : slot === 'gear', '装备不适用此槽位');
+    const changed = new Set();
     for (const v of Object.values(s.units)) {
+      if ([v.weapon,v.mainHand,v.offHand,v.shield].includes(instance.id)) changed.add(v);
+      if (v.bagWeapons) v.bagWeapons = v.bagWeapons.filter(i => i !== instance.id);
       for (const slot of ['weapon', 'mainHand', 'offHand', 'shield']) if (v[slot] === instance.id) v[slot] = null;
       v.gear = v.gear.filter(i => i !== instance.id);
     }
     if (own(instance, 'ownerId')) instance.ownerId = u?.id ?? null;
     if (u) {
-      if (own(s.equipment[instance.templateId], 'damage')) { u.weapon = instance.id; u.mainHand = instance.id; }
-      else u.gear.push(instance.id);
+      const main = s.equipment[s.items[u.mainHand ?? u.weapon]?.templateId];
+      check(!(slot === 'mainHand' && (template.twoHanded || template.hand === 'two_handed') && (u.offHand || u.shield))
+        && !(['shield','offHand'].includes(slot) && (main?.twoHanded || main?.hand === 'two_handed' || (slot === 'shield' ? u.offHand : u.shield))), '双手或副手槽位冲突');
+      const previous = slot === 'gear' ? null : s.items[u[slot]];
+      if (previous?.ownerId === u.id) previous.ownerId = null;
+      if (slot === 'gear') u.gear.push(instance.id);
+      else { u[slot] = instance.id; if (slot === 'mainHand') u.weapon = instance.id; }
+      changed.add(u);
     }
+    for (const unit of changed) unit.stance = loadoutStance(s, unit);
   },
   set_zone(s, c) {
     fields(c, ['type','zone']);

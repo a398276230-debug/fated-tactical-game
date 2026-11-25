@@ -1,3 +1,4 @@
+import { stanceRules, stanceFor } from '../core/combat_protocol.js';
 import { beginBattle } from '../core/combat.js';
 import { calculatePrebattleResources } from '../core/prebattle_resources.js';
 import { createPool } from '../core/vm-pools.js';
@@ -110,12 +111,12 @@ export function buildScenario(request = 'ruins') {
     const equip = (itemId, templateId) => equipItem(state, itemId, templateId, id);
     const offHand = offHandTemplate ? equip(`${id}-offhand`, offHandTemplate) : null;
     const shield = shieldTemplate ? equip(`${id}-shield`, shieldTemplate) : null;
-    const stance = shield ? 'sword_shield' : offHandTemplate === 'potion' ? 'attunement' : offHand ? 'dual_wield' : state.equipment[weapon]?.weaponClass === 'greatsword' ? 'greatsword' : 'light_blade';
+    const stance = stanceFor({ mainHand: state.equipment[weapon], offHand: state.equipment[offHandTemplate], shield: state.equipment[shieldTemplate] });
     const resources = ruleset === 'protocol' ? calculatePrebattleResources({ stats:{str, agi, con, int, spi}, tier:1, bodyLengthM }).resources : null;
     const hpValue = resources?.hp.current ?? hp, mpValue = resources?.mp.current ?? 14, spValue = resources?.sp.current ?? 10;
     state.units[id] = { id, name, team, x, y, facing: [team === 'blue' ? 1 : -1, 0], hp:hpValue, maxHp:resources?.hp.max ?? hpValue,
       mainHand: weaponId, offHand, shield, tier: 1, bodyLengthM, mc, templateId: id, tags: [], vars: {}, mods: [], rules,
-      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stance === 'attunement' ? 2 : 0, moraleType: 'standard',
+      bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: false, stance, greatswordMode: 'offensive', parryQuota: stance === 'greatsword' ? 2 : 0, parryRefunded: false, attunementCharges: stanceRules('attunement').itemCharges, moraleType: 'standard',
       mp: mpValue, maxMp:resources?.mp.max ?? mpValue, sp: spValue, maxSp:resources?.sp.max ?? spValue, ap: 0, used: { attack: 0, action: 0 },
       stats: { str, agi, con, int, spi }, armor, size, move: 3, statuses: {},
       weapon: equip(weaponId, weapon), gear: gear.map(templateId => equip(`${id}-${templateId}`, templateId)), skills };

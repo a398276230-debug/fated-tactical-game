@@ -1,7 +1,7 @@
 // Default status bindings for engine actions and the shield DSL shorthand.
 export const actionStatuses = Object.freeze({
   brace: 'guarded', block: 'guarded', charge: 'charge', lock_on: 'lock_on', scan: 'weakness',
-  grapple: 'grappled', trip: 'prone', use_item: 'haste', altar: 'haste',
+  grapple: 'grappled', trip: 'prone', altar: 'haste',
   shield: 'shield', collision: 'stun', shield_bash: 'stun',
 });
 
@@ -84,7 +84,7 @@ export const STATUSES = Object.freeze({
     mods: [{ stat: 'damageMult', additivePercent: '0.15 * status.stacks', when: 'event.actionType == "attack"' }],
   }),
   lock_on: def('lock_on', '定位', '⌖', 'buff', 1, '本回合对锁定目标命中提高。', {
-    mods: [{ stat: 'checkBonus', checkKind: 'attack', flat: '1 * status.stacks' }],
+    mods: [{ stat: 'checkBonus', checkKind: 'attack', flat: '1 * status.stacks', when: 'event.targetId == status.vars.targetId' }],
   }),
   weakness: def('weakness', '弱点识别', '◉', 'buff', 3, '每层使意图难度降低 2。', {
     stackMode: 'stack', maxStacks: 3, mods: [{ stat: 'intentDifficulty', flat: '-2 * status.stacks' }],

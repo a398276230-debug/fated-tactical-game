@@ -62,9 +62,9 @@ function carrierFieldsValue(value, state, resolved = false) {
   checkOptional(value, 'tier', tier => int(tier, 1, 7));
   if (own(value, 'vars')) table(value.vars, entry => requireThat(resolved ? jsonTree(entry)
     : validCarrierScalar(entry), 'VM 变量'));
-  if (own(value, 'mods')) list(value.mods, 200, mod => {
+  if (own(value, 'mods')) list(value.mods, 200, (mod, index) => {
     const error = vmStatModError(mod);
-    requireThat(!error, error);
+    requireThat(!error, `mods[${index}]：${error}`);
     return true;
   }, 'VM 修饰');
   if (own(value, 'rules')) validateRules(value.rules, state);
@@ -214,7 +214,7 @@ export function validateCell(v) {
   requireThat(['floor', 'slope', 'wall'].includes(v.kind) && int(v.z, -4, 8), '地形');
 }
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
-const protocolUnitKeys = ['mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
+const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','parryQuota','parryRefunded','attunementCharges','blockMode','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound','maneuvers'];
 export function unitValue(v, key, state) {
   fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
   carrierFieldsValue(v, state, true);
@@ -253,6 +253,8 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'maneuvers', x => Array.isArray(x) && x.length <= 32 && x.every(id));
   checkOptional(v, 'initiativePercent', x => num(x, -1, 10)); checkOptional(v, 'flatInitiative', x => int(x, -1000, 1000));
   for (const field of ['attackInit','actionInit']) checkOptional(v, field, x => Array.isArray(x) && x.length <= 16 && x.every(n => int(n, -1000, 1000)));
+  checkOptional(v, 'followupUsed', x => typeof x === 'boolean');
+  checkOptional(v, 'level', x => Number.isSafeInteger(x) && x >= 1);
   checkOptional(v, 'lockedTargetId', x => x === null || id(x));
   checkOptional(v, 'intent', x => typeof x === 'string' && Object.hasOwn(INTENTS, x));
   checkOptional(v, 'bonusDice', x => int(x, 0, 2)); checkOptional(v, 'penaltyDice', x => int(x, 0, 1));

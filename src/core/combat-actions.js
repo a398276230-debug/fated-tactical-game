@@ -62,6 +62,11 @@ function equipmentFor(state, instanceId) {
 }
 const isWeapon = template => template?.kind === 'weapon' || Boolean(template?.damage && !template.kind);
 const gearFor = (state, unit) => (unit.gear ?? []).map(id => equipmentFor(state, id)).filter(({template}) => !isWeapon(template) && template?.kind !== 'shield');
+export function loadoutStance(state, unit) {
+  const stance = stanceFor({ mainHand: equipmentFor(state, unit.mainHand ?? unit.weapon).template,
+    offHand: equipmentFor(state, unit.offHand).template, shield: equipmentFor(state, unit.shield).template });
+  return stance === 'attunement' && unit.attunementCharges === 0 ? 'light_blade' : stance;
+}
 export function switchableWeapons(state, unit) {
   const main = unit.mainHand ?? unit.weapon;
   const bag = unit.bagWeapons ?? [];
@@ -315,6 +320,7 @@ export function settleTurn(state) {
 }
 
 function beginUnitTurn(state, unit) {
+  delete unit.followupUsed;
   unit.used = { attack: 0, action: 0 };
   unit.moved = 0;
   delete unit.moveSpent;
@@ -339,7 +345,7 @@ function turnAP(state, unit) {
 
 function resetFacing(state) {
   for (const unit of living(state)) {
-    const target = unit.lockedTargetId ? state.units[unit.lockedTargetId] : null;
+    const target = unit.statuses[actionStatuses.lock_on] ? state.units[unit.lockedTargetId] : null;
     if (target && alive(target)) unit.facing = signFacing(unit, target);
   }
 }
@@ -396,6 +402,7 @@ export function beginBattle(state) {
   state.order = initiative.map(entry => entry.unitId);
   for (const unit of values(state.units)) {
     unit.ap = 0;
+    delete unit.followupUsed;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
     delete unit.moveSpent;
@@ -475,7 +482,7 @@ function modStat(state, unit, name, base, context = {}) {
 }
 function modCheck(state, unit, key, context = {}) {
   const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
-  if (key === 'highGroundRange' || key === 'highGroundAccuracy') return template?.[key] ?? 0;
+  if (key === 'highGroundRange' || key === 'highGroundAccuracy') return template?.vars?.[key] ?? 0;
   if (key === 'advantage') return modStat(state, unit, 'advantage', 0, { checkKind: 'attack', ...context });
   return 0;
 }
@@ -502,6 +509,8 @@ export function equippedActiveSkills(state, unit) {
         result.set(skillId, { ...skill, quality: template.quality ?? skill.quality });
       }
     }
+    // Held consumables activate through use_item, which pays the battle-wide charge.
+    if (template.kind === 'consumable') continue;
     for (const rule of itemRules(template, instance).filter(activeRule)) {
       result.set(`equip:${id}:${rule.id}`, { name: rule.label || `${template.name}·${rule.id}`, ap: 0,
         slot: 'action', range: 0, shape: 'single', target: 'self', rules: [rule], itemId: id,
@@ -625,9 +634,10 @@ export function weaponInfo(state, unit) {
   weapon.template = scaledTemplate(state, unit, weapon.template, 'weapon');
   const ammo = weaponAmmo(weapon.template);
   const ammoCount = ammo ? resourcePool(state, unit, ammo.resource, weapon.instance)?.amount : null;
-  const infiniteAmmo = Boolean(ammo && vmFlag(state, unit, 'infiniteAmmo'));
+  const infiniteAmmo = vmFlag(state, unit, 'infiniteAmmo');
   const souls = resourcePool(state, unit, 'souls', weapon.instance)?.amount ?? 0;
   const offHand = equipmentFor(state, unit.offHand);
+  offHand.template = scaledTemplate(state, unit, offHand.template, 'weapon');
   const stance = unit.stance ?? stanceFor({ mainHand: weapon.template, offHand: offHand.template, shield: equipmentFor(state, unit.shield).template });
   return { ...weapon, ammo, ammoCount, infiniteAmmo, souls, offHand, stance,
     template: weapon.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, 'weapon')), soulMultiplier: modStat(state, unit, 'damageMult', 1, { souls, weaponTemplateId: weapon.instance?.templateId }) };
@@ -813,18 +823,24 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const hitChance = automatic || guaranteeHit ? 1 : saveOdds(4, accuracy, advantages, disadvantages)
     - (accuracy + 1 >= 4 ? 1 - saveOdds(2, 0, advantages, disadvantages) : 0);
   const critChance = saveStat ? 0 : guaranteeCrit ? 1 : automatic ? 0 : criticalOdds(advantages, disadvantages);
-  const offHandMultiplier = weapon?.stance === 'dual_wield' && weapon.offHand?.template?.damage ? 1.5 : 1;
+  const loadout = weapon ?? (context.skillId && template.damage && actor.stance === 'dual_wield' ? weaponInfo(state, actor) : null);
+  const off = loadout?.offHand;
+  const combo = template.tags?.some(tag => /多段|连击/.test(tag));
+  const offAttack = loadout?.stance === 'dual_wield' && off?.template?.damage && validReach(state, actor, at, off.template, weaponAmmo(off.template), off.instance.id)
+    ? (off.template.attack ?? 0) * (combo ? rules.comboOffHandDamage : rules.offHandDamage) : 0;
+  const mainAttack = Number(loadout?.template?.attack ?? 0);
+  const weaponAttack = mainAttack * (stance === 'greatsword' ? (actor.greatswordMode === 'defensive' ? rules.defensiveDamage : rules.offensiveDamage) : 1) + offAttack;
   const intentSpec = INTENTS[context.intent ?? 'normal'] ?? INTENTS.normal;
   // Intent is applied once in applyStrike after the intent contest; do not fold it into this preview multiplier.
   const damageType = template.damage?.type ?? template.damageType ?? 'physical';
-  const multiplier = offHandMultiplier
-    * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
+  const sandboxDual = state.ruleset === 'sandbox' && weapon?.stance === 'dual_wield' && off?.template?.damage;
+  const multiplier = (sandboxDual ? 0.75 : 1) * (teleport ? 1 + (teleport.bonusMultiplier ?? .5) : 1);
   const tierPower = ({1:2, 2:2.8, 3:4, 4:8, 5:15, 6:35, 7:80})[actor.tier ?? 1] ?? 2;
   const attributeBase = () => state.ruleset === 'protocol'
     ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? 'str' : 'int')) * 10 * tierPower
     : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
   const protocolInitial = state.ruleset === 'protocol' && template.damage
-    ? attributeBase() + Number(template.power ?? 20) + Number(weapon?.template?.attack ?? 0) : null;
+    ? attributeBase() + Number(template.power ?? 20) + weaponAttack : null;
   const armorPierce = { flat: modStat(state, actor, 'armorPierce', template.armorPierce ?? 0, { ...strike, damageType }),
     percent: clamp(modStat(state, actor, 'armorPiercePercent', rules.armorPenetration ?? 0, { ...strike, damageType }), -1, 1) };
   const recipient = cover || !hasStrikeDamage(template) ? target : guardFor(state, target) ?? target;
@@ -874,7 +890,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
 const ACTIONS = Object.freeze({
   move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
   end_encounter: {ap:0,slot:null}, switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
-  brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
+  stance_mode: { ap: 0, slot: null }, brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   free_ally: { ap: 1, slot: 'attack' }, suppress: { ap: 1, slot: 'attack' }, grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
   flee: { ap: 1, slot: 'action' }, detour: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
@@ -977,6 +993,11 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     if (weapon.ammoCount >= weapon.ammo.cap) return fail('弹仓已满');
     return { ...common, ammo: weapon.ammoCount, capacity: weapon.ammo.cap };
   }
+  if (type === 'stance_mode') {
+    if (weapon.stance !== 'greatsword' || !['offensive','defensive'].includes(action.maneuver) || action.maneuver === (unit.greatswordMode ?? 'offensive')) return fail('当前不能切换该重剑态势');
+    if (unit.used.attack || unit.used.action || unit.moved) return fail('只能在回合开始行动前切换重剑态势');
+    return { ...common, name: action.maneuver === 'defensive' ? '转为沉势' : '转为攻势' };
+  }
   if (type === 'block') {
     if (stanceFor({ mainHand: weapon.template, offHand: weapon.offHand?.template, shield: equipmentFor(state, unit.shield).template }) !== 'sword_shield') return fail('只有剑盾姿态可格挡');
       return { ...common, name: '格挡', reduction: action.maneuver === 'heavy' ? .45 : .25, turns: 1 };
@@ -990,13 +1011,18 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     const item = equipmentFor(state, unit.offHand);
     if (unit.stance !== 'attunement' || item.template?.kind !== 'consumable') return fail('只有同调姿态可以免费使用副手道具');
     if ((unit.attunementCharges ?? 0) <= 0) return fail('同调道具次数已用尽');
-    return { ...common, name: `使用${item.template.name}`, maneuver: 'use_item', itemId: unit.offHand };
+    const rules = itemRules(item.template, item.instance).filter(activeRule);
+    if (!rules.some(rule => {
+      const { usesLeft, cooldownRemaining } = ruleAvailability(state, rule, JSON.stringify([unit.id, unit.offHand, rule.id]));
+      return rule.program.length && usesLeft > 0 && !cooldownRemaining;
+    })) return fail('副手道具没有可执行的主动效果');
+    return { ...common, name: `使用${item.template.name}`, maneuver: 'use_item', itemId: unit.offHand, rules };
   }
   if (type === 'charge') return { ...common, name: '蓄力', maneuver: 'charge' };
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
 
   if (type === 'flee') return { ...common, name: '逃跑', maneuver: 'flee' };
-  if (type === 'detour') return { ...common, name: '绕行', maneuver: 'detour' };
+  if (type === 'detour') return fail('绕行尚未实现，请使用移动或脱离');
   if (type === 'lock_on') {
     const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
     if (!target || target.team === unit.team || !sameCell(target, center)) return fail('定位必须指定敌方单位');
@@ -1021,6 +1047,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (['grapple','disarm','trip','push'].includes(type)) {
     const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
     if (!target || target.team === unit.team || !sameCell(target, center)) return fail('战术对抗必须指定敌方单位');
+    if (type === 'disarm' && !(target.mainHand ?? target.weapon)) return fail('目标没有可缴械的主手武器');
     if (near(unit, target) > 1 || !clearSight(state, unit, target)) return fail('战术对抗需要贴身且视线畅通');
     return { ...common, name: ({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[type], maneuver: type, targetId: target.id };
   }
@@ -1061,7 +1088,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   const template = shieldBash ? { name: '盾击', range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: shieldBashRules } : attack ? weapon.template : skill;
   if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail(emptyAmmoMessage(weapon.ammo));
   const triggers = template.rules ?? [];
-  const stance = unit.stance ?? (unit.offHand ? (unit.offHand.kind === 'consumable' ? 'attunement' : 'dual_wield') : unit.shield ? 'sword_shield' : 'light_blade');
+  const stance = weapon.stance;
   const tuning = { name: template.name, shape: template.shape ?? 'single', stance, rules: triggers,
     ...(attack && !shieldBash ? { souls: weapon.souls, multiplier: weapon.soulMultiplier, ammo: weapon.ammoCount, infiniteAmmo: weapon.infiniteAmmo,
       instanceId: weapon.instance?.id ?? null } : {}) };
@@ -1348,8 +1375,8 @@ export function continueStrike({ state, frame, host }) {
   const target = tableEntry(profile.kind === 'cover' ? state.covers : state.units, profile.id);
   const next = () => { frame.pc++; delete frame.phase; delete frame.profile; delete frame.awaitEvent; delete frame.preRolled; };
   const detail = { actorId: actor.id, targetId: target?.id ?? null, skillId: action.skillId ?? null, actionType: action.type,
-    melee: profile.melee, backstab: profile.backstab, arrow: profile.arrow, opportunityAttack: Boolean(frame.weapon),
-    weaponTemplateId: weapon?.instance?.templateId ?? null, damageType: profile.damageType, souls: weapon?.souls ?? 0 };
+    melee: profile.melee, backstab: profile.backstab, arrow: profile.arrow, opportunityAttack: Boolean(frame.weapon && !frame.followup),
+    weaponTemplateId: weapon?.instance?.templateId ?? null, instanceId: weapon?.instance?.id ?? null, damageType: profile.damageType, souls: weapon?.souls ?? 0 };
   if (!frame.phase) {
     if (!alive(target) || target.fled) { next(); return; }
     if (profile.skipHitCheck) {
@@ -1404,12 +1431,13 @@ export function continueStrike({ state, frame, host }) {
     if (!profile.dice) return;
     const dice = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, critical);
     const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
-    const stanceScale = profile.stance === 'greatsword' ? (actor.greatswordMode === 'defensive' ? 1.5 : 1.3) : 1;
-    const offHandScale = profile.stance === 'dual_wield' && profile.offHand ? .5 : 1;
+    // Sandbox dice do not have a separate weapon attack term. Keep its heavy-weapon balance.
+    const stanceScale = state.ruleset === 'sandbox' && profile.stance === 'greatsword'
+      ? (actor.greatswordMode === 'defensive' ? profile.stanceRules.defensiveDamage : profile.stanceRules.offensiveDamage) : 1;
     const amount = dice.value * profile.multiplier * meleeMultiplier(actor) * ratingScale * (intent?.success ? intent.multiplier ?? 1 : 1)
-      * stanceScale * offHandScale * (saved ? .5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
+      * stanceScale * (saved ? .5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
     const details = { dice, critical, saved, rating: rating?.name ?? '有效', ratingMultiplier: ratingScale,
-      intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale, offHandScale };
+      intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale };
     if (profile.kind === 'cover') { coverDamage(state, actor, target, Math.floor(amount), details); return; }
     const recipient = guardFor(state, target) ?? target;
     event.targetId = recipient.id;
@@ -1432,16 +1460,18 @@ export function continueStrike({ state, frame, host }) {
     host.hooks(state, frame, 'after_hit', frame.awaitEvent);
     return;
   }
-  if (frame.phase === 'followup' && action.type === 'attack' && !frame.followup && weapon?.stance === 'dual_wield') {
+  if (frame.phase === 'followup' && action.type === 'attack' && !frame.weapon && !actor.followupUsed && weapon?.stance === 'dual_wield') {
     const recipient = tableEntry(state.units, event.targetId);
     const off = weapon.offHand;
     const ammo = weaponAmmo(off?.template);
-    const cost = (actor.tier ?? 1) * 10;
-    if (alive(recipient) && recipient.team !== actor.team && off?.template?.hand === 'off_hand' && off.template.damage && actor.sp >= cost
+    const level = actor.level ?? actor.tier ?? 1;
+    const cost = level * 10;
+    if (alive(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === 'off_hand' && actor.sp >= cost
       && (event.rating?.multiplier ?? 0) >= .8 && validReach(state, actor, recipient, off.template, ammo, off.instance?.id)
       && (!ammo || weapon.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
-      const followWeapon = { ...off, ammo, stance: 'dual_wield' };
-      const follow = targetProfile(state, actor, recipient, recipient, off.template, { weapon: followWeapon });
+      actor.followupUsed = true;
+      const followWeapon = { ...off, template: { ...off.template, power: level * 15 }, ammo, stance: 'dual_wield' };
+      const follow = targetProfile(state, actor, recipient, recipient, followWeapon.template, { weapon: followWeapon });
       follow.disadvantages = event.rating.multiplier >= 1.3 ? 0 : Math.max(1, follow.disadvantages);
       record(state, actor, 'followup', `${actor.name}使用${off.template.name}追击${recipient.name}`, { targetId: recipient.id, cost, weaponId: off.instance.id });
       setResourceTotal(state, actor, 'sp', actor.sp - cost, actor.id, '副手追击');
@@ -1630,6 +1660,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
   }
   if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress);
   switch (type) {
+    case 'stance_mode': actor.greatswordMode = action.maneuver; break;
     case 'switch_weapon': {
       const old = actor.mainHand ?? actor.weapon;
       const fromOff = plan.itemId === actor.offHand;
@@ -1637,19 +1668,21 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       else if (actor.bagWeapons?.includes(plan.itemId)) actor.bagWeapons.splice(actor.bagWeapons.indexOf(plan.itemId), 1, ...(old ? [old] : []));
       else actor.gear[actor.gear.indexOf(plan.itemId)] = old;
       actor.mainHand = actor.weapon = plan.itemId;
-      actor.stance = stanceFor({ mainHand: equipmentFor(state, plan.itemId).template, offHand: equipmentFor(state, actor.offHand).template, shield: equipmentFor(state, actor.shield).template });
-      if (actor.stance === 'attunement' && !actor.attunementCharges) actor.stance = 'light_blade';
+      actor.stance = loadoutStance(state, actor);
       break;
     }
     case 'use_item': {
-      actor.attunementCharges = Math.max(0, (actor.attunementCharges ?? 2) - 1);
+      if (frame.nativeProgress.itemUsed) return true;
+      frame.nativeProgress.itemUsed = true;
+      actor.attunementCharges--;
       record(state, actor, 'item', `${actor.name}使用同调副手道具`, { itemId: plan.itemId, remaining: actor.attunementCharges });
-      grantStatus(state, actor, actionStatuses.use_item, { sourceId: actor.id });
       if (!actor.attunementCharges) actor.stance = 'light_blade';
-      break;
+      Object.assign(event, { targetId: actor.id, targets: [actor.id], itemId: plan.itemId, rules: plan.rules });
+      host.hooks(state, frame, 'active', frame.eventRef);
+      return false;
     }
     case 'charge': grantStatus(state, actor, actionStatuses.charge, { sourceId: actor.id }); break;
-    case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
+    case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id, vars: { targetId: plan.targetId } }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
     case 'scan': grantStatus(state, actor, actionStatuses.scan, { sourceId: actor.id, stacks: 3 }); break;
     case 'flee': {
       const enemies = living(state).filter(u => u.team !== actor.team).sort((a,b) => effectiveStat(state, b, 'agi') - effectiveStat(state, a, 'agi') || byId(a,b));
@@ -1659,7 +1692,6 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       if (success) { actor.fled = true; actor.ap = 0; }
       break;
     }
-    case 'detour': record(state, actor, 'maneuver', `${actor.name}选择绕行`, { maneuver: 'detour' }); break;
     case 'free_ally': {
       const ally = state.units[plan.targetId];
       removeVMStatus(state, ally, ally.statuses.suppressed, 'freed', actor);
@@ -1682,7 +1714,12 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       const target = state.units[plan.targetId];
       if (target && maneuverContest(state, actor, target, type)) {
         if (type === 'grapple') grantStatus(state, target, actionStatuses.grapple, { sourceId: actor.id });
-        if (type === 'disarm') { target.mainHand = null; target.weapon = null; }
+        if (type === 'disarm') {
+          const lost = state.items[target.mainHand ?? target.weapon];
+          if (lost?.ownerId === target.id) lost.ownerId = null;
+          target.mainHand = target.weapon = null;
+          target.stance = loadoutStance(state, target);
+        }
         if (type === 'trip') grantStatus(state, target, actionStatuses.trip, { sourceId: actor.id });
         if (type === 'push') knockback(state, actor, target, { distance: 1, collisionDamage: 3 });
       }
