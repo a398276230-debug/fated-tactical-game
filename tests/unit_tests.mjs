@@ -28,6 +28,7 @@ import './z_interaction_tests.mjs';
 import './terrain_descriptor_regression_tests.mjs';
 import './equipment_stance_tests.mjs';
 import './report_intent_tests.mjs';
+import './dodge_pipeline_tests.mjs';
 import './intent_commit_tests.mjs';
 import './intent_commit_tests.mjs';
 import './instance_card_tests.mjs';

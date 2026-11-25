@@ -4,6 +4,8 @@ import { createGameAPI } from '../src/api/game_api.js';
 import { beginBattle, currentUnit } from '../src/core/combat.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { narrate } from '../src/ui/narrate.js';
+import { createRenderer } from '../src/ui/render.js';
+import { fillInstance } from '../src/tavern/instance-card.js';
 import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
 import { formatBattleReportText } from '../src/api/battle_report.js';
 import { RATING_TABLE } from '../src/core/combat_protocol.js';
@@ -17,6 +19,109 @@ test('寄居蟹攻击瑞吉：合计 19 判有效，不把防御 150 当作命�
   assert.deepEqual([entry.roll.kept, entry.roll.modifier, entry.roll.total, entry.roll.verdict], [14,5,19,'命中「有效」']);
   assert.equal(entry.roll.target, undefined, '卡片不能渲染 vs 防御');
   assert.match(entry.roll.label, /命中评级/);
+});
+
+// 只提供 DOM 写入与文本读取；预览计算、单位面板和酒馆词条均走生产渲染器。
+function textNode(tag, attrs = {}, value = '') {
+  return {
+    tag, className: attrs.class, dataset: {}, children: value === '' ? [] : [String(value)], style: { setProperty() {} }, classList: { add() {} },
+    setAttribute() {}, removeAttribute() {}, addEventListener() {}, querySelector() { return null; },
+    append(...nodes) { this.children.push(...nodes); }, prepend(...nodes) { this.children.unshift(...nodes); },
+    replaceChildren(...nodes) { this.children = nodes; },
+    set textContent(text) { this.replaceChildren(String(text)); },
+    get textContent() { return this.children.map(node => typeof node === 'string' ? node : node.textContent).join(''); },
+  };
+}
+
+function dodgeScene(ruleset, dodge, kind = 'unit') {
+  const state = buildScenario('ruins');
+  state.ruleset = ruleset;
+  const unit = state.units.scout;
+  unit.armor = 3;
+  unit.gear = ['boots'];
+  const mods = [{ stat: 'dodge', flat: dodge }];
+  state.equipment.boots = { name: '试验靴', kind: 'armor', defense: 160, mods };
+  state.items.boots = { id: 'boots', templateId: 'boots', mods: structuredClone(mods) };
+  const target = kind === 'cover' ? state.covers.C1 : unit;
+  target.x = 2; target.y = 2;
+  const nodes = new Map();
+  const root = { ownerDocument: { createElement: textNode, createTextNode: String }, querySelector(selector) {
+    if (!nodes.has(selector)) nodes.set(selector, textNode('div'));
+    return nodes.get(selector);
+  } };
+  createRenderer(root).render(state, { selectedId: unit.id, action: { type: 'attack' }, target, hover: target });
+  return { preview: nodes.get('[id="tactical-preview"]').textContent, card: nodes.get('[id="unit-card"]').textContent };
+}
+
+for (const [ruleset, dodge, kind, formula] of [
+  ['protocol', 15, 'unit', '攻方命中 +11 − 守方闪避 +15 = 净修正 -4（≥4 擦伤 / ≥11 有效 / ≥20 暴击）'],
+  ['protocol', 0, 'unit', '净命中 +11（≥4 擦伤 / ≥11 有效 / ≥20 暴击）'],
+  ['protocol', 0, 'cover', '命中 +11，目标阈值 8'],
+  ['sandbox', 0, 'unit', '命中 +16，目标阈值 172'],
+]) test(`实际战术预览：${ruleset} ${kind} 闪避 ${dodge}`, () => {
+  const { preview } = dodgeScene(ruleset, dodge, kind);
+  assert.ok(preview.includes(formula), preview);
+  assert.match(preview, /命中中的体型修正 0/);
+  if (ruleset === 'protocol' && kind === 'unit') assert.doesNotMatch(preview, /对抗防御|目标阈值/);
+  else assert.doesNotMatch(preview, /≥4 擦伤/);
+});
+
+test('实际单位卡：有效护甲包含穿戴防御，闪避来自装备', () => {
+  const { card } = dodgeScene('protocol', 15);
+  assert.match(card, /护甲 163\b/);
+  assert.match(card, /闪避 \+15\b/);
+});
+
+test('酒馆装备卡：六种修饰有中文名，命中芯片只显示非零值', () => {
+  const mods = [{ stat: 'dodge', flat: 15 }, { stat: 'movement', flat: 2 }, { stat: 'incomingDistanceOffset', flat: -1 },
+    { stat: 'critDamageBonus', flat: 4 }, { stat: 'incomingDamageMult', mult: 1.5 }, { stat: 'apMax', flat: 1 }];
+  for (const accuracy of [5, -3, 0]) {
+    const unit = { id: 'test', gear: ['boots'] };
+    const state = { items: { boots: { templateId: 'boots' } }, equipment: { boots: { name: '试验靴', accuracy, mods } } };
+    const { body } = fillInstance(textNode('article'), textNode, unit, state, {}, textNode('input'));
+    const section = body.children.find(node => node.tag === 'section' && node.textContent.startsWith('装备'));
+    const row = section.children.find(node => node.className === 'fated-char-row');
+    const chips = row.children.find(node => node.className === 'fated-char-row-head').children.filter(node => node.className === 'fated-char-chip');
+    assert.deepEqual(chips.map(node => node.textContent).filter(text => text.startsWith('命中')), accuracy ? [`命中 ${accuracy > 0 ? '+' : ''}${accuracy}`] : []);
+    assert.deepEqual(row.children.filter(node => node.tag === 'p').map(node => node.textContent),
+      ['闪避 +15', '移动距离 +2', '表观距离 -1', '暴击伤害加成 +4', '受击易伤倍率 ×1.5', '行动点上限 +1']);
+  }
+});
+
+for (const [label, detail, modifierLabel, summary, factor] of [
+  ['常规', { attackAccuracy: 5, dodgeBonus: 0 }, '命中修正', '命中修正 +5，合计 19', null],
+  ['有闪避', { attackAccuracy: 20, dodgeBonus: 15 }, '净修正（攻+20 / 闪+15）', '攻方命中 +20 − 守方闪避 +15 = 净修正 +5，合计 19', '守方闪避 −15'],
+  ['负闪避', { attackAccuracy: 2, dodgeBonus: -3 }, '净修正（攻+2 / 闪-3）', '攻方命中 +2 − 守方闪避 -3 = 净修正 +5，合计 19', '守方闪避 +3'],
+  ['无视', { attackAccuracy: 5, dodgeBonus: 0, ignoreDodge: true, rawDodgeBonus: 15 }, '命中修正', '命中修正 +5（无视守方闪避 +15），合计 19', '无视闪避（原 +15）'],
+]) test(`命中回放：${label}，骰面加净修正仍等于合计`, () => {
+  const entry = narrate({ type: 'roll', actor: 'a', detail: { targetId: 'b', dice: [14], selected: 14, accuracy: 5,
+    total: 19, hit: true, rating: { name: '有效' }, ...detail } }, { units: { a: { id: 'a', name: '甲' }, b: { id: 'b', name: '乙' } } });
+  assert.deepEqual([entry.roll.kept, entry.roll.modifier, entry.roll.total, entry.roll.verdict], [14, 5, 19, '命中「有效」']);
+  assert.equal(entry.roll.target, undefined);
+  assert.equal(entry.roll.label, '甲 → 乙 · 命中评级');
+  assert.equal(entry.roll.modifierLabel, modifierLabel);
+  assert.ok(entry.lines.includes(summary), entry.lines.join('\n'));
+  if (factor) assert.equal(entry.lines.find(line => line.startsWith('修正来源：')), `修正来源：${factor}`);
+  else assert.doesNotMatch(entry.lines.join('\n'), /闪避/);
+});
+
+test('回放来源分别列出面板、体型、受击暴露、检定、战意与检定前修正', () => {
+  const entry = narrate({ type: 'roll', detail: { dice: [10], selected: 10, accuracy: 9, total: 19, hit: true, bonusDelta: 1,
+    accuracySources: { explicit: 5, size: -2, incomingAccuracy: 1, checkBonus: 3, morale: 1 } } }, { units: {} });
+  assert.equal(entry.lines.find(line => line.startsWith('修正来源：')), '修正来源：面板命中 +5，体型 -2，受击暴露 +1，检定加值 +3，战意 +1，检定前修正 +1');
+});
+
+test('战报：零闪避与旧日志逐字一致；擦伤、失手和无视闪避各自附注', () => {
+  const format = detail => formatBattleReportText({ title: '闪避', units: [{ id: 'b', name: '瑞吉', x: 2, y: 2, z: 0 }],
+    rounds: [{ round: 1, events: [{ type: 'roll', detail: { targetId: 'b', selected: 12, hit: true, rating: { name: '有效' }, ...detail } }] }] });
+  assert.equal(format({ dodgeBonus: 0 }), format({}));
+  for (const [detail, expected] of [
+    [{ dodgeBonus: 0 }, '击中瑞吉(2, 2, z=0)（成功，有效）'],
+    [{ dodgeBonus: 15, hit: false }, '瑞吉(2, 2, z=0)未被击中（失败，失手，守方闪避 +15）'],
+    [{ dodgeBonus: 15, rating: { name: '擦伤' } }, '击中瑞吉(2, 2, z=0)（成功，擦伤，守方闪避 +15）'],
+    [{ dodgeBonus: -3 }, '击中瑞吉(2, 2, z=0)（成功，有效，守方闪避 -3）'],
+    [{ dodgeBonus: 0, ignoreDodge: true, rawDodgeBonus: 15 }, '击中瑞吉(2, 2, z=0)（成功，有效，无视闪避 +15）'],
+  ]) assert.ok(format(detail).includes(expected), format(detail));
 });
 
 function castProbe(program, configure = () => {}) {

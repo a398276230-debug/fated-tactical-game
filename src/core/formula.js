@@ -175,7 +175,7 @@ for (const [name, description] of Object.entries({
   sourceRuleId: '产生本笔提交的 VM 规则 ID（不是技能 ID）',
   power: '技能威力', dealt: '本次实际扣除的 HP', absorbed: '本次被护盾吸收的伤害',
   previous: '当前效果链上一步实际数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID',
-  checkKind: '检定类型（attack/save/contest/skill/chance/d20/dodge/authority）',
+  checkKind: '检定类型（attack/save/contest/skill/chance/d20/authority/flee/flee_chase）',
   passed: '检定是否通过（true/false）', hit: '攻击检定是否命中（true/false）', critical: '是否暴击（true/false）', saved: '豁免是否通过（true/false）',
   baseDC: 'VM 检定初始 DC', finalDC: 'VM 检定完成时计入修饰后的 DC'
 })) register(`event.${name}`, description, context => path(context, 'event', name));

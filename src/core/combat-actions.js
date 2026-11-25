@@ -95,7 +95,7 @@ const resourcePool = (state, unit, resource, instance) => {
 };
 
 export function stealthCheck(state, unit, d20, dc) {
-  const bonus = modCheck(state, unit, 'stealthBonus');
+  const bonus = 0;
   return { total: d20 + bonus, bonus, success: d20 + bonus >= dc };
 }
 
@@ -217,10 +217,19 @@ function setResourceTotal(state, target, resource, after, sourceUnitId, label) {
     { targetId: target.id, resource, amount, before, after });
 }
 
-function armorOf(state, unit, damageType, pierce = 0, context = {}) {
-  const equipmentDefense = gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0), 0)
+function baseArmor(state, unit) {
+  return (unit.armor ?? 0) + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.defense ?? 0) + (g.template?.armor ?? 0), 0)
     + (unit.shield ? equipmentFor(state, unit.shield).template?.defense ?? 0 : 0);
-  const base = unit.armor + equipmentDefense + gearFor(state, unit).reduce((sum, g) => sum + (g.template?.armor ?? 0), 0);
+}
+
+export function unitStandingStats(state, unit) {
+  if (!unit) return { armor: 0, dodge: 0 };
+  return { armor: Math.max(0, Math.round(modStat(state, unit, 'armor', baseArmor(state, unit)))),
+    dodge: Math.round(modStat(state, unit, 'dodge', 0)) };
+}
+
+function armorOf(state, unit, damageType, pierce = 0, context = {}) {
+  const base = baseArmor(state, unit);
   const ctx = { ...context, target: context.attacker, damageType };
   const armor = Math.max(0, modStat(state, unit, 'defense', modStat(state, unit, 'armor', base, ctx), ctx));
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
@@ -434,7 +443,7 @@ export function beginBattle(state) {
 
 function initiativeOrder(state, rollFor) {
   return living(state).map(unit => {
-    const roll = rollFor(unit), agility = effectiveStat(state, unit, 'agi') + modCheck(state, unit, 'initiativeAgility');
+    const roll = rollFor(unit), agility = effectiveStat(state, unit, 'agi');
     const agilityPercent = Number(unit.initiativePercent ?? 0);
     const attackInit = [...(unit.attackInit ?? [])];
     const actionInit = [...(unit.actionInit ?? [])];
@@ -487,12 +496,6 @@ const modifierEvent = (unit, context) => {
 function modStat(state, unit, name, base, context = {}) {
   const statName = { damage: 'damageMult', healing: 'healingMult', accuracy: 'checkBonus', initiative: 'initiativeFlat' }[name] ?? name;
   return applyStatMod(base, aggregateModifiers(state, unit?.id, modifierEvent(unit, context)).stats[statName]);
-}
-function modCheck(state, unit, key, context = {}) {
-  const template = equipmentFor(state, context.weaponId ?? unit?.mainHand ?? unit?.weapon).template;
-  if (key === 'highGroundAccuracy') return template?.vars?.[key] ?? 0;
-  if (key === 'advantage') return modStat(state, unit, 'advantage', 0, { checkKind: 'attack', ...context });
-  return 0;
 }
 
 const activeRule = rule => rule.hook === 'active' && rule.enabled !== false;
@@ -783,7 +786,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const arc = target && !cover ? facingArc(target, origin) : 'front';
   const backstab = !cover && arc !== 'front' && geometry.melee;
   const intent = context.intent ?? 'normal';
-  const strike = { target, melee: geometry.melee, arrow, backstab, highGround: geometry.dz > 0,
+  const strike = { target, distance: geometry.distance, melee: geometry.melee, arrow, backstab, highGround: geometry.dz > 0,
     weaponId: weapon?.instance?.id, actionType: weapon ? 'attack' : 'skill', skillId: context.skillId, school: template.school,
     damageType: template.damage?.type ?? template.damageType, weaponTemplateId: weapon?.instance?.templateId,
     checkKind: 'attack', intent, stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? 'str' : 'agi') };
@@ -791,10 +794,9 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags.guaranteed_crit);
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags.guaranteed_hit);
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
-  const dodge = execution || cover ? 0 : modStat(state, target, 'dodge', modCheck(state, target, 'dodgeBonus', { target: actor })
-    + modCheck(state, target, 'dodgeAgility', { target: actor }),
-    { ...strike, attacker: actor, checkKind: 'dodge' });
-  const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? modCheck(state, actor, 'highGroundAccuracy', strike) : 0);
+  const dodge = execution || cover || !target ? 0 : modStat(state, target, 'dodge', 0, { ...strike, attacker: actor });
+  const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
+  const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;
   const protectedBy = target && !cover && !geometry.melee ? coverBetween(state, origin, target) : null;
   const penalty = protectedBy?.cover ?? 0;
@@ -819,17 +821,22 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const closeRange = rules.closeRange && geometry.melee && geometry.distance <= 2 ? 4 : rangedDistance;
   // The protocol does not grant an implicit STR/AGI-to-hit bonus. Associated attributes
   // belong in the damage formula; hit comes from explicit weapon/skill and combat modifiers.
-  const accuracy = modStat(state, actor, 'accuracy', (template.accuracy ?? 0) + (state.ruleset === 'sandbox' ? effectiveStat(state, actor, geometry.melee ? 'str' : 'agi') : 0)
-    + high + sizeAccuracy + closeRange + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0)
-    + (execution || cover || !target ? 0 : modStat(state, target, 'incomingAccuracy', 0, { attacker: actor })) + (flanked ? 2 : 0) - penalty
-    + modCheck(state, actor, 'accuracyBonus', strike), strike) - dodge;
+  const sandboxStat = state.ruleset === 'sandbox' ? effectiveStat(state, actor, geometry.melee ? 'str' : 'agi') : 0;
+  const morale = moraleModifiers[actor.moraleState]?.accuracy ?? 0;
+  const incomingAccuracy = execution || cover || !target ? 0 : modStat(state, target, 'incomingAccuracy', 0, { attacker: actor });
+  const flankedBonus = flanked ? 2 : 0;
+  const baseAccuracy = (template.accuracy ?? 0) + sandboxStat + high + sizeAccuracy + closeRange
+    + (state.ruleset === 'sandbox' ? 0 : weaponRangeModifier) + morale + incomingAccuracy + flankedBonus - penalty;
+  const attackAccuracy = modStat(state, actor, 'accuracy', baseAccuracy, strike);
+  const checkBonus = attackAccuracy - baseAccuracy;
+  const accuracy = attackAccuracy - dodge;
   const equipmentDefense = gearFor(state, target).reduce((d, g) => d + (g.template?.defense ?? 0), 0)
     + (target.shield ? equipmentFor(state, target.shield).template?.defense ?? 0 : 0);
   // Protocol mode has no implicit AGI-to-defense; sandbox keeps its legacy balance only for regression fixtures.
   const defense = cover ? 8 : state.ruleset === 'sandbox'
     ? 10 + Math.floor(effectiveStat(state, target, 'agi') / 2) + equipmentDefense
     : 4;
-  const delta = modCheck(state, actor, 'advantage', strike);
+  const delta = modStat(state, actor, 'advantage', 0, strike);
   const advantages = Math.max(0, delta) + Number(Boolean(teleport)) + (template.advantage ?? 0);
   const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
   const advantage = Math.sign(advantages - disadvantages);
@@ -895,9 +902,11 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     + (savedDamage ? saveChance * average(false, .5) : 0);
   const expectedD20 = saveStat ? 10.5 : automatic ? null : advantage > 0 ? 13.825 : advantage < 0 ? 7.175 : 10.5;
   return { id: target.id, targetId: target.id, name: target.name, x: at.x, y: at.y, ...geometry,
+    ruleset: state.ruleset ?? 'protocol', kind: cover ? 'cover' : 'unit', attackAccuracy,
     recipientId: recipient.id, arc, backstab: Boolean(backstab), flanked, accuracy, defense, highGround: high,
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
-    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: modStat(state, actor, 'accuracy', 0, strike) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) },
+    accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: checkBonus + morale,
+      checkBonus, morale, incomingAccuracy, flanked: flankedBonus, cover: 0 - penalty, ...(sandboxStat && { statBonus: sandboxStat }) },
     ...(context.skillId && { skillId: context.skillId }), ...(weapon?.instance?.id && { weaponId: weapon.instance.id }),
     stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? 'str' : 'agi'), intent, intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
@@ -1351,7 +1360,13 @@ function resolveCheck(state, actor, profile, event = {}) {
   }
   // Failed intent falls back to an ordinary landed hit; it does not erase the attack.
   const effectiveHit = hit;
-  record(state, actor, 'roll', `${profile.name}：${critical ? '暴击' : hit ? '命中' : '未命中'} (${total}/${profile.defense})`, {
+  const summary = state.ruleset === 'sandbox' || profile.kind === 'cover' ? ` (${total}/${profile.defense})`
+    : `（合计 ${total}，${rating.name}${profile.dodgeBonus ? `，守方闪避 ${profile.dodgeBonus > 0 ? '+' : ''}${profile.dodgeBonus}` : ''}）`;
+  record(state, actor, 'roll', `${profile.name}：${critical ? '暴击' : hit ? '命中' : '未命中'}${summary}`, {
+    ruleset: state.ruleset ?? 'protocol', targetKind: profile.kind === 'cover' ? 'cover' : 'unit',
+    attackAccuracy: profile.attackAccuracy ?? profile.accuracy, dodgeBonus: profile.dodgeBonus ?? 0,
+    ...(profile.rawDodgeBonus && { rawDodgeBonus: profile.rawDodgeBonus }), ...(profile.ignoreDodge && { ignoreDodge: true }),
+    ...(profile.bonusDelta && { bonusDelta: profile.bonusDelta }), ...(profile.accuracySources && { accuracySources: profile.accuracySources }),
     targetId: profile.id, ...cover, dice, selected, total, accuracy: profile.accuracy, defense: profile.defense, advantage: profile.advantage,
     advantages: profile.advantages, disadvantages: profile.disadvantages, highGround: profile.highGround, cover: profile.cover,
     ...(profile.coverId ? { coverId: profile.coverId } : {}),
@@ -1455,7 +1470,10 @@ export function continueStrike({ state, frame, host }) {
     return;
   }
   if (frame.phase === 'natural') {
-    const adjusted = { ...profile, accuracy: profile.accuracy + (event.bonusDelta ?? 0) + (event.ignoreDodge ? profile.dodgeBonus : 0),
+    const bonusDelta = event.bonusDelta ?? 0, ignoreDodge = Boolean(event.ignoreDodge);
+    const rawDodgeBonus = profile.dodgeBonus ?? 0, dodgeBonus = ignoreDodge ? 0 : rawDodgeBonus;
+    const attackAccuracy = (profile.attackAccuracy ?? (profile.accuracy + rawDodgeBonus)) + bonusDelta;
+    const adjusted = { ...profile, attackAccuracy, dodgeBonus, rawDodgeBonus, ignoreDodge, bonusDelta, accuracy: attackAccuracy - dodgeBonus,
       advantage: profile.advantage + (event.advantageDelta ?? 0), saveDC: (profile.saveDC ?? 0) + (event.dcDelta ?? 0),
       guaranteeHit: profile.guaranteeHit || ['hit', 'crit'].includes(event.forceOutcome), guaranteeCrit: profile.guaranteeCrit || event.forceOutcome === 'crit' };
     const replacement = Number.isFinite(event.replaceNaturalRoll) ? clamp(Math.trunc(event.replaceNaturalRoll), 1, 20) : undefined;

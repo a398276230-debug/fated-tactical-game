@@ -145,7 +145,7 @@ export function equipmentTemplate(v, state) {
   checkOptional(v, 'boundTo', id); checkOptional(v, 'weaponType', text);
   requireThat(text(v.name), 'name');
   checkOptional(v, 'quality', x => x === '唯一' || Object.hasOwn(QUALITY_TIER, x));
-  checkOptional(v, 'range', x => int(x, 0, 64)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -20, 30));
+  checkOptional(v, 'range', x => int(x, 0, 64)); checkOptional(v, 'attack', x => int(x, 0, 1000000000)); checkOptional(v, 'accuracy', x => int(x, -100, 100));
   checkOptional(v, 'armor', x => int(x, 0, 1000000)); checkOptional(v, 'defense', x => int(x, 0, 1000000));
   checkOptional(v, 'kind', x => ['weapon','shield','armor','accessory','consumable'].includes(x));
   checkOptional(v, 'weaponClass', x => ['light_blade','ranged','greatsword','staff','shield','auxiliary'].includes(x));
@@ -174,7 +174,7 @@ export function skillTemplate(v, state) {
   checkOptional(v, 'power', x => int(x, 0, 1000000000));
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   validateAreaDimensions(v);
-  checkOptional(v, 'accuracy', x => int(x, -20, 30)); checkOptional(v, 'save', x => attrs.includes(x));
+  checkOptional(v, 'accuracy', x => int(x, -100, 100)); checkOptional(v, 'save', x => attrs.includes(x));
   checkOptional(v, 'saveDC', dc => validSaveDC(dc) || typeof dc === 'string' && validExpr(dc));
   requireThat(own(v, 'save') === own(v, 'saveDC'), 'save/saveDC');
   for (const k of ['damage', 'heal']) if (own(v, k)) dice(v[k]);

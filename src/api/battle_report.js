@@ -178,11 +178,13 @@ export function formatBattleReportText(report, unitNames = {}) {
         case 'roll': case 'hit_result': {
           const target = checkTarget(event, detail);
           if (detail.cover > 0) add(`${target}受到${detail.coverId ? ` ${detail.coverId} ` : ''}掩体遮蔽`);
-          if (!detail.hit) add(`${target}未被击中（${checkGrade(false, detail.selected)}，失手）`);
+          const dodgeNote = detail.ignoreDodge && detail.rawDodgeBonus ? `无视闪避 ${signed(detail.rawDodgeBonus)}`
+            : detail.dodgeBonus ? `守方闪避 ${signed(detail.dodgeBonus)}` : null;
+          if (!detail.hit) add(`${target}未被击中` + notes([checkGrade(false, detail.selected), '失手', dodgeNote].filter(Boolean)));
           else {
             const verdict = detail.critical ? `对${target}打出暴击` : `击中${target}`;
             const grade = detail.automatic ? '自动命中' : checkGrade(true, detail.selected);
-            add(verdict + notes([grade, detail.rating?.name, detail.execution && '处决加成'].filter(Boolean)));
+            add(verdict + notes([grade, detail.rating?.name, detail.execution && '处决加成', dodgeNote].filter(Boolean)));
           }
           break;
         }

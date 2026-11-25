@@ -67,13 +67,26 @@ function rollEntry(state, log) {
   const verdict = d.critical ? '暴击' : d.hit ? '命中' : '未命中';
   const tone = d.critical ? 'crit' : d.hit ? 'hit' : 'miss';
   const lines = [describeDice(d.dice, kept, mode)];
-  if (Number.isFinite(d.accuracy)) lines.push(`命中修正 ${sign(d.accuracy)}，合计 ${d.total}`);
+  const atk = d.attackAccuracy ?? (d.accuracy + (d.dodgeBonus ?? 0));
+  const ignored = d.ignoreDodge && d.rawDodgeBonus;
+  if (Number.isFinite(d.accuracy)) {
+    const summary = d.dodgeBonus ? `攻方命中 ${sign(atk)} − 守方闪避 ${sign(d.dodgeBonus)} = 净修正 ${sign(d.accuracy)}`
+      : `命中修正 ${sign(d.accuracy)}${ignored ? `（无视守方闪避 ${sign(d.rawDodgeBonus)}）` : ''}`;
+    lines.push(`${summary}，合计 ${d.total}`);
+  }
   const factors = [];
   if (d.distanceTier?.name && Number.isFinite(d.distance)) factors.push(`距离 ${num(d.distance)} 格（${d.distanceTier.name}）`);
   if (d.highGround) factors.push(d.highGround > 0 ? `居高临下 ${sign(d.highGround)}` : `仰攻 ${sign(d.highGround)}`);
   if (d.cover) factors.push(`被${d.coverId ? nameOf(state, d.coverId) : '掩体'}遮挡 −${d.cover}`);
   if (d.flanked) factors.push('夹击 +2');
   if (d.arc === 'back') factors.push('从背后出手');
+  const src = d.accuracySources ?? {};
+  for (const [label, value] of [['面板命中', src.explicit], ['体型', src.size], ['受击暴露', src.incomingAccuracy], ['检定加值', src.checkBonus], ['战意', src.morale], ['检定前修正', d.bonusDelta]]) {
+    if (value) factors.push(`${label} ${sign(value)}`);
+  }
+  if (d.dodgeBonus) factors.push(`守方闪避 ${d.dodgeBonus > 0 ? `−${d.dodgeBonus}` : sign(-d.dodgeBonus)}`);
+  if (ignored) factors.push(`无视闪避（原 ${sign(d.rawDodgeBonus)}）`);
+  if (d.execution) factors.push('处决免闪避');
   if (factors.length) lines.push(`修正来源：${factors.join('，')}`);
   if (kept === 1) lines.push(d.hit ? '天然 1：本次仍命中' : '天然 1：失手');
   else if (kept === 20) lines.push('天然 20：必定暴击');
@@ -85,7 +98,7 @@ function rollEntry(state, log) {
     title: `${attacker} 攻击 ${target}：${verdict}${d.hit && d.rating?.name && !d.critical ? `（${d.rating.name}）` : ''}`,
     lines, targetId: d.targetId,
     roll: { kind: 'd20', label: `${attacker} → ${target} · 命中评级`, dice: d.dice ?? [kept], kept, mode, modifier: d.accuracy ?? 0,
-      modifierLabel: '命中修正', total: d.total, verdict: d.critical ? `暴击！${d.rating?.name ? `「${d.rating.name}」` : ''}` : d.hit ? `命中「${d.rating?.name ?? '有效'}」` : kept === 1 ? '天然 1 · 失手' : '未命中', tone,
+      modifierLabel: d.dodgeBonus ? `净修正（攻${sign(atk)} / 闪${sign(d.dodgeBonus)}）` : '命中修正', total: d.total, verdict: d.critical ? `暴击！${d.rating?.name ? `「${d.rating.name}」` : ''}` : d.hit ? `命中「${d.rating?.name ?? '有效'}」` : kept === 1 ? '天然 1 · 失手' : '未命中', tone,
       note: d.rating?.multiplier && d.hit ? `伤害 ×${d.rating.multiplier}` : null },
   };
 }

@@ -124,7 +124,7 @@ export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPier
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
-  stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: text, statusId: id,
+  stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: { ...text, not: literal('dodge') }, statusId: id,
   locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo'), 1),
   controlPolicy, when: booleanExpr,
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
@@ -364,6 +364,7 @@ export const validVmSelector = (value, options = {}) => valid(value, 'selector',
 export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options);
 export function vmStatModError(mod) {
   if (validVmStatMod(mod)) return undefined;
+  if (mod?.checkKind === 'dodge') return 'VM 修饰不支持 checkKind:"dodge"（引擎不存在独立闪避检定）；受击闪避加减值请直接写 {stat:"dodge", flat:...} 并省略 checkKind';
   if (mod && ratioStats.enum.includes(mod.stat) && (Object.hasOwn(mod, 'additivePercent')
     || typeof mod.flat === 'number' && !matches(mod.flat, ratioFlat, {}))) {
     return `VM 修饰 ${mod.stat} 基值为 0，不能用 additivePercent；请用 flat 填写 -1..1 的小数（如 0.3 代表 30%）或数值表达式`;

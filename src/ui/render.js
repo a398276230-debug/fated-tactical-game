@@ -1,7 +1,7 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
 import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
-import { preview as rulesPreview, corpses } from '../core/combat.js';
+import { preview as rulesPreview, corpses, unitStandingStats } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
 import { zoneContains } from '../core/vm-select.js';
 import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
@@ -273,7 +273,8 @@ export function createRenderer(root, portraitFor = () => []) {
     for (const [id, label] of Object.entries(STAT_NAMES)) { const s = el('span', '', label); s.prepend(el('b', '', u.stats[id])); stats.append(s); }
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some(pool => pool.reloadable);
-    const facts = el('p', 'muted', [`护甲 ${u.armor}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'greatsword' ? `·${u.greatswordMode === 'defensive' ? '沉势' : '攻势'}` : ''}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
+    const standing = unitStandingStats(state, u);
+    const facts = el('p', 'muted', [`护甲 ${standing.armor}`, `闪避 ${sign(standing.dodge)}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'greatsword' ? `·${u.greatswordMode === 'defensive' ? '沉势' : '攻势'}` : ''}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
     for (const s of values(u.statuses)) {
@@ -378,7 +379,12 @@ export function createRenderer(root, portraitFor = () => []) {
         else if (Number.isFinite(t.hitChance)) {
           chance = t.hitChance;
           const dice = t.advantage > 0 ? '优势（掷两颗取高）' : t.advantage < 0 ? '劣势（掷两颗取低）' : 'd20';
-          bits.push(`命中率 ${pct(t.hitChance)}：${dice} + 命中 ${t.accuracy}，对抗防御 ${t.defense}`);
+          const prefix = `命中率 ${pct(t.hitChance)}：${dice} + `;
+          if ((t.ruleset ?? state.ruleset) === 'sandbox' || t.kind === 'cover') bits.push(`${prefix}命中 ${sign(t.accuracy)}，目标阈值 ${t.defense}`);
+          else {
+            const net = t.dodgeBonus ? `攻方命中 ${sign(t.attackAccuracy ?? t.accuracy + t.dodgeBonus)} − 守方闪避 ${sign(t.dodgeBonus)} = 净修正 ${sign(t.accuracy)}` : `净命中 ${sign(t.accuracy)}`;
+            bits.push(`${prefix}${net}（≥4 擦伤 / ≥11 有效 / ≥20 暴击）`);
+          }
           if (t.accuracySources) bits.push(`命中中的体型修正 ${sign(t.accuracySources.size)}`);
         }
         const mods = [t.coverId ? `被${get(state.covers, t.coverId)?.name ?? '掩体'}遮挡 −${t.cover}` : '', t.highGround ? (t.highGround > 0 ? `居高临下 ${sign(t.highGround)}` : `仰攻 ${t.highGround}`) : '',
