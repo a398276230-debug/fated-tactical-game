@@ -619,6 +619,7 @@ const shieldBashRules = [{ id: 'shield-bash-hit', hook: 'after_hit', program: [
   { op: 'move', target: 'target', mode: 'push', distance: 1 },
   { op: 'apply_status', target: 'target', statusId: actionStatuses.shield_bash, turns: 1 },
 ] }];
+const shieldBashTemplate = { name: '盾击', range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: shieldBashRules };
 const isMelee = template => template.rangeType !== 'ranged' && !template.ranged && template.weaponClass !== 'ranged' && (template.rawRange ?? template.range ?? 1.5) <= 2;
 
 const weaponAmmo = template => {
@@ -766,7 +767,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const strike = { target, melee: geometry.melee, arrow, backstab, highGround: geometry.dz > 0,
     weaponId: weapon?.instance?.id, actionType: weapon ? 'attack' : 'skill', school: template.school,
     damageType: template.damage?.type ?? template.damageType, weaponTemplateId: weapon?.instance?.templateId,
-    souls: weapon?.souls ?? 0, checkKind: 'attack' };
+    souls: weapon?.souls ?? 0, checkKind: 'attack', stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? 'str' : 'agi') };
   const flags = aggregateModifiers(state, actor.id, modifierEvent(actor, strike)).flags;
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags.guaranteed_crit);
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags.guaranteed_hit);
@@ -814,9 +815,11 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const advantage = Math.sign(advantages - disadvantages);
   const saveStat = !cover && target ? template.save : null;
   const saveDC = saveStat ? (resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, 'int') / 2))
-    + modStat(state, actor, 'dcBonus', 0, { target, checkKind: 'save' })) : null;
+    + modStat(state, actor, 'dcBonus', 0, { target, checkKind: 'save', stat: saveStat })) : null;
+  const saveContext = { attacker: actor, target, checkKind: 'save', stat: saveStat };
   const saveBonus = saveStat ? effectiveStat(state, target, saveStat)
-    + modStat(state, target, 'resistBonus', 0, { target: actor, checkKind: 'save' }) : 0;
+    + modStat(state, target, 'resistBonus', 0, saveContext)
+    + modStat(state, target, 'checkBonus', 0, saveContext) : 0;
   const saveChance = saveStat ? saveOdds(saveDC, saveBonus) : 0;
   const areaStrike = hasStrikeDamage(template) && (template.shape ?? 'single') !== 'single';
   const automatic = areaStrike || !weapon && (!template.damage || saveStat || template.autoHit);
@@ -877,7 +880,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     sizeModifier, distanceModifier: closeRange, weaponRangeModifier, stance, stanceRules: rules,
     accuracySources: { explicit: template.accuracy ?? 0, highGround: high, size: sizeAccuracy, distance: closeRange, weaponRange: weaponRangeModifier, status: modStat(state, actor, 'accuracy', 0, strike) + (moraleModifiers[actor.moraleState]?.accuracy ?? 0) },
     ...(context.skillId && { skillId: context.skillId }), ...(weapon?.instance?.id && { weaponId: weapon.instance.id }),
-    intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
+    stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? 'str' : 'agi'), intent: context.intent ?? 'normal', intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
     automatic: Boolean(automatic), ...(areaStrike && !saveStat && { skipHitCheck: true }), execution, guaranteeHit, guaranteeCrit, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
     coreBonus: modCheck(state, actor, 'coreBonus', strike), dodgeBonus: dodge,
@@ -1085,7 +1088,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   }
   const attack = type === 'attack' || type === 'shield_bash';
   const shieldBash = type === 'shield_bash';
-  const template = shieldBash ? { name: '盾击', range: 1, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: shieldBashRules } : attack ? weapon.template : skill;
+  const template = shieldBash ? shieldBashTemplate : attack ? weapon.template : skill;
   if (attack && !shieldBash && weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail(emptyAmmoMessage(weapon.ammo));
   const triggers = template.rules ?? [];
   const stance = weapon.stance;
@@ -1351,10 +1354,11 @@ function knockback(state, actor, target, effect) {
   record(state, actor, 'knockback', `${target.name}遭到击退`, { targetId: target.id, from, to: pointAt(state, target) });
 }
 
-export function retargetStrike(state, actor, action, target, plan) {
+export function retargetStrike(state, actor, action, target, plan, previous = {}) {
   const weapon = action.type === 'attack' ? weaponInfo(state, actor) : null;
-  const template = weapon?.template ?? actionSkill(state, actor, action.skillId) ?? normalAttack;
-  return { ...targetProfile(state, actor, target, target, template, { weapon, intent: plan.intent }), nonLethal: plan.nonLethal ?? false };
+  const template = action.type === 'shield_bash' ? shieldBashTemplate : weapon?.template ?? actionSkill(state, actor, action.skillId) ?? normalAttack;
+  return { ...previous, ...targetProfile(state, actor, target, target, template, { weapon, skillId: action.skillId, cover: previous.kind === 'cover', intent: previous.intent ?? plan.intent }),
+    bonusDice: previous.bonusDice ?? action.bonusDice ?? 0, nonLethal: previous.nonLethal ?? action.nonLethal ?? actor.nonLethal ?? false };
 }
 
 export function continueStrike({ state, frame, host }) {
@@ -1363,16 +1367,21 @@ export function continueStrike({ state, frame, host }) {
   const actionEvent = state.vm.events[frame.eventRef];
   const weapon = frame.weapon ?? (action.type === 'attack' ? weaponInfo(state, actor) : null);
   const template = action.type === 'shield_bash'
-    ? { name: '盾击', range: 1, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' }, rules: shieldBashRules }
+    ? shieldBashTemplate
     : weapon ? weapon.template : actionSkill(state, actor, action.skillId);
   if (!alive(actor) || !template) { state.vm.stack.pop(); return; }
   if (!frame.started) {
     frame.started = true;
     if (!sameCell(actor, plan.center)) actor.facing = signFacing(actor, plan.center);
   }
-  const profile = frame.profile ?? plan.targets?.[frame.pc];
+  let profile = frame.profile ?? plan.targets?.[frame.pc];
   if (!profile) { state.vm.stack.pop(); return; }
   const target = tableEntry(profile.kind === 'cover' ? state.covers : state.units, profile.id);
+  const beforeTargetPosition = frame.beforeTargetPosition;
+  if (!frame.phase && target && beforeTargetPosition && (actor.x !== beforeTargetPosition.x || actor.y !== beforeTargetPosition.y)) {
+    profile = retargetStrike(state, actor, action, target, plan, profile);
+    frame.profile = profile;
+  }
   const next = () => { frame.pc++; delete frame.phase; delete frame.profile; delete frame.awaitEvent; delete frame.preRolled; };
   const detail = { actorId: actor.id, targetId: target?.id ?? null, skillId: action.skillId ?? null, actionType: action.type,
     melee: profile.melee, backstab: profile.backstab, arrow: profile.arrow, opportunityAttack: Boolean(frame.weapon && !frame.followup),
@@ -1386,7 +1395,8 @@ export function continueStrike({ state, frame, host }) {
       return;
     }
     frame.phase = 'check';
-    frame.awaitEvent = host.event(state, { ...detail, checkKind: profile.saveStat ? 'save' : 'attack', dc: profile.saveDC ?? profile.defense });
+    frame.awaitEvent = host.event(state, { ...detail, checkKind: profile.saveStat ? 'save' : 'attack',
+      stat: profile.saveStat ?? profile.stat ?? null, dc: profile.saveDC ?? profile.defense });
     host.hooks(state, frame, 'before_check', frame.awaitEvent);
     return;
   }
@@ -1430,7 +1440,10 @@ export function continueStrike({ state, frame, host }) {
     const { critical, rating, intent, saved } = event;
     if (!profile.dice) return;
     const dice = profile.protocolInitial != null ? flatDice(profile.protocolInitial) : diceRoll(state, profile.dice, critical);
-    const ratingScale = rating?.multiplier ?? (critical ? 2 : 1);
+    const baseScale = rating?.multiplier ?? (critical ? 2 : 1);
+    const isCritical = Boolean(critical) || baseScale > 1;
+    const ratingScale = isCritical ? Math.max(0, baseScale + modStat(state, actor, 'critDamageBonus', 0,
+      { ...detail, target, critical: true, ratingMultiplier: baseScale })) : baseScale;
     // Sandbox dice do not have a separate weapon attack term. Keep its heavy-weapon balance.
     const stanceScale = state.ruleset === 'sandbox' && profile.stance === 'greatsword'
       ? (actor.greatswordMode === 'defensive' ? profile.stanceRules.defensiveDamage : profile.stanceRules.offensiveDamage) : 1;
@@ -1442,7 +1455,8 @@ export function continueStrike({ state, frame, host }) {
     const recipient = guardFor(state, target) ?? target;
     event.targetId = recipient.id;
     host.commit(state, frame, { ...detail, op: 'damage', pool: 'hp', targetId: recipient.id, sourceId: actor.id,
-      amount, label: template.name, direct: true, intercepted: recipient !== target, armorPierce: profile.armorPierce, details, resultEventRef: frame.awaitEvent,
+      amount, label: template.name, direct: true, intercepted: recipient !== target, armorPierce: profile.armorPierce,
+      critical: isCritical, ratingMultiplier: ratingScale, details, resultEventRef: frame.awaitEvent,
       lethal: !(profile.nonLethal || recipient.nonLethal || vmFlag(state, recipient, 'preserveLife') || encounterNonlethal(state, actor)) });
     return;
   }
@@ -1686,9 +1700,18 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     case 'scan': grantStatus(state, actor, actionStatuses.scan, { sourceId: actor.id, stacks: 3 }); break;
     case 'flee': {
       const enemies = living(state).filter(u => u.team !== actor.team).sort((a,b) => effectiveStat(state, b, 'agi') - effectiveStat(state, a, 'agi') || byId(a,b));
-      const target = enemies[0]; const attackerRoll = randomDie(state,20), defenderRoll = randomDie(state,20);
-      const success = target ? effectiveStat(state, actor, 'agi') + attackerRoll >= effectiveStat(state, target, 'agi') + defenderRoll : true;
-      record(state, actor, 'flee', `${actor.name}${success ? '逃跑成功' : '逃跑失败'}`, { targetId: target?.id ?? null, attackerRoll, defenderRoll, success });
+      const target = enemies[0];
+      const actorCheck = { checkKind: 'flee', stat: 'agi' };
+      const chaseCheck = { checkKind: 'flee_chase', stat: 'agi' };
+      const attackerRoll = rollD20(state.rng, modStat(state, actor, 'advantage', 0, actorCheck));
+      state.rng = attackerRoll.rng;
+      const defenderRoll = target ? rollD20(state.rng, modStat(state, target, 'advantage', 0, chaseCheck)) : { value: 0, rng: state.rng };
+      state.rng = defenderRoll.rng;
+      const success = target ? effectiveStat(state, actor, 'agi') + attackerRoll.value + modStat(state, actor, 'checkBonus', 0, actorCheck)
+        >= effectiveStat(state, target, 'agi') + defenderRoll.value + modStat(state, target, 'checkBonus', 0, chaseCheck) : true;
+      record(state, actor, 'flee', `${actor.name}${success ? '逃跑成功' : '逃跑失败'}`, {
+        targetId: target?.id ?? null, attackerRoll: attackerRoll.value, defenderRoll: defenderRoll.value,
+        attackerRolls: attackerRoll.rolls, defenderRolls: defenderRoll.rolls ?? [], success });
       if (success) { actor.fled = true; actor.ap = 0; }
       break;
     }

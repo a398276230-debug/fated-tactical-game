@@ -5,6 +5,7 @@ import { resolvePoint } from './vm-select.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const MAX_ACTION_CHAIN_DEPTH = 3;
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export function queueVMAction(state, { actorId, action, overrides = {}, record = false, chainDepth = 0 }) {
   return pushFrame(state, { native: 'action', ownerId: actorId, sourceId: actorId, chainDepth,
@@ -108,9 +109,14 @@ export function continueAction({ state, frame, host }) {
       frame.plan = plan = replanned;
     }
     host.payAction(state, actor, plan, event, overrides);
+    frame.beforeTargetPosition = { x: actor.x, y: actor.y };
+    const primary = own(state.units, plan.targetIds[0]);
+    const [facingX, facingY] = primary?.facing ?? [1, 0];
     Object.assign(event, { targetId: plan.targetIds[0] ?? null, center: plan.center,
       targets: plan.targetIds, isSingle: plan.isSingle, isArea: !plan.isSingle,
-      isRanged: plan.isRanged, damageType: plan.damageType ?? null });
+      isRanged: plan.isRanged, damageType: plan.damageType ?? null,
+      backX: primary ? clamp(primary.x - facingX, 0, state.grid[0].length - 1) : null,
+      backY: primary ? clamp(primary.y - facingY, 0, state.grid.length - 1) : null });
     scheduleHooks(state, frame, 'before_target', frame.eventRef, host);
     return;
   }

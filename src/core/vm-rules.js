@@ -104,7 +104,7 @@ export function continueCheck({ state, frame, host, context }) {
     if (op.kind === 'chance' && !Number.isFinite(dc)) host.log(state, context.self, 'warning', '概率判定缺少有效 dc，忽略该检定');
     if (!Number.isFinite(dc)) { state.vm.stack.pop(); return; }
     frame.eventRef = newEvent(state, { checkKind: op.kind, actorId: context.self.id, targetId: context.target.id,
-      dc, baseDC: dc, stat: op.stat ?? null, statusId: op.statusId ?? null, tags: op.tags ?? [] });
+      dc, baseDC: dc, stat: Array.isArray(op.stat) ? (op.stat[0] ?? null) : (op.stat ?? null), statusId: op.statusId ?? null, tags: op.tags ?? [] });
     frame.pc++;
     scheduleHooks(state, frame, 'before_check', frame.eventRef, host);
     return;
@@ -112,6 +112,7 @@ export function continueCheck({ state, frame, host, context }) {
   const event = state.vm.events[frame.eventRef];
   if (frame.pc === 1) {
     const stats = [op.stat ?? null].flat();
+    event.stat = stats[0] ?? null;
     const outcomes = frame.naturalOutcomes ??= [];
     if (frame.pendingNatural) {
       const replacement = event.replaceNaturalRoll;
@@ -127,8 +128,11 @@ export function continueCheck({ state, frame, host, context }) {
       return delta > 0 ? Math.max(first, dice(state, sides)) : delta < 0 ? Math.min(first, dice(state, sides)) : first;
     };
     const subject = op.kind === 'save' ? context.target : context.self;
-    const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject, event) ?? 0 : 0));
-    const defenderRoll = op.kind === 'contest' ? rollWith(host.advantage?.(state, context.target, event) ?? 0) : null;
+    const checkEvent = { ...event, stat: key ?? null };
+    const defenderEvent = { ...event, stat: op.defenderStat ?? key ?? null };
+    event.stat = key ?? null;
+    const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject, checkEvent) ?? 0 : 0));
+    const defenderRoll = op.kind === 'contest' ? rollWith(host.advantage?.(state, context.target, defenderEvent) ?? 0) : null;
     event.naturalRoll = roll;
     if (op.rawNatural || sides !== 20) outcomes.push({ key, roll, defenderRoll });
     else {
@@ -143,20 +147,24 @@ export function continueCheck({ state, frame, host, context }) {
     const subject = kind === 'save' ? context.target : context.self;
     const stat = (unit, key) => host.stat?.(state, unit, key) ?? unit.stats?.[key] ?? 0;
     const stats = [op.stat ?? null].flat();
-    const checkBonus = host.checkBonus?.(state, subject, event) ?? 0;
-    const dc = event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, event) ?? 0);
     const outcomes = frame.naturalOutcomes.map(({ key, roll, defenderRoll }) => {
+      const checkEvent = { ...event, stat: key ?? null };
+      const defenderStat = op.defenderStat ?? key;
+      const defenderEvent = { ...event, stat: defenderStat ?? null };
+      const checkBonus = host.checkBonus?.(state, subject, checkEvent) ?? 0;
       const total = roll + (key ? stat(subject, key) : 0) + checkBonus + (event.bonusDelta ?? 0);
-      const difficulty = kind === 'contest' ? defenderRoll + stat(context.target, op.defenderStat ?? key)
-        + (host.checkBonus?.(state, context.target, event) ?? 0) + (host.resistBonus?.(state, context.target, event) ?? 0)
-        - (host.dcBonus?.(state, context.self, event) ?? 0) : dc;
+      const difficulty = kind === 'contest' ? defenderRoll + stat(context.target, defenderStat)
+        + (host.checkBonus?.(state, context.target, defenderEvent) ?? 0) + (host.resistBonus?.(state, context.target, defenderEvent) ?? 0)
+        - (host.dcBonus?.(state, context.self, checkEvent) ?? 0)
+        : event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, checkEvent) ?? 0);
       const passed = kind === 'chance' ? roll <= difficulty : total >= difficulty;
       return { roll, total, difficulty, passed };
     });
     const { roll, total } = outcomes[0];
     const passed = ['pass', 'hit', 'crit'].includes(event.forceOutcome) ? true : ['fail', 'miss'].includes(event.forceOutcome) ? false
       : op.mode === 'any' ? outcomes.some(outcome => outcome.passed) : outcomes.every(outcome => outcome.passed);
-    Object.assign(event, { roll, total, dc, finalDC: dc, passed, rating: event.forceOutcome === 'crit' ? 'crit' : event.minRating ?? (passed ? 'hit' : 'miss') });
+    const dc = outcomes[0].difficulty;
+    Object.assign(event, { stat: stats[0] ?? null, roll, total, dc, finalDC: dc, passed, rating: event.forceOutcome === 'crit' ? 'crit' : event.minRating ?? (passed ? 'hit' : 'miss') });
     const verdict = passed ? '成功' : '失败';
     const label = { save: '豁免', chance: '概率判定', d20: '检定', contest: '对抗检定', attack: '攻击检定' }[kind];
     const text = `${subject.name}${label}${verdict}（${outcomes.map(outcome => kind === 'chance'

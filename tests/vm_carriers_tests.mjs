@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { evaluateExpr as evaluateScalar } from '../src/core/formula.js';
 import { aggregateModifiers, applyStatMod, collectRules } from '../src/core/vm-carriers.js';
 import { newEvent, scheduleHooks, startVM, stepVM } from '../src/core/tactical-vm.js';
+
+test('伤害钩子优先读取提交后的暴击倍率，普通检定仍可从评级派生', () => {
+  const rating={name:'平暴击',multiplier:1.3};
+  assert.equal(evaluateScalar('event.ratingMultiplier',{event:{rating,ratingMultiplier:1.6}}),1.6);
+  assert.equal(evaluateScalar('event.ratingMultiplier',{event:{rating}}),1.3);
+  assert.equal(evaluateScalar('event.ratingMultiplier',{event:{ratingMultiplier:0}}),0);
+});
 
 const unit = (id, props = {}) => ({ id, hp: 20, x: 0, y: 0, team: 'blue', statuses: {}, ...props });
 const rule = (id, props = {}) => ({ id, hook: 'before_check', program: [], ...props });

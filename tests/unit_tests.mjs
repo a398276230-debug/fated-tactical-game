@@ -53,6 +53,7 @@ import './bellica_movement_tests.mjs';
 import './bellica_spatial_tests.mjs';
 import './doc_and_arch_contract_tests.mjs';
 import './vm_natural_roll_tests.mjs';
+import './vm_stage4_batch_a_tests.mjs';
 import './animation_tests.mjs';
 
 
@@ -440,8 +441,8 @@ test('敌方战术 AI 给出确定且合法的一步，试算不改 RNG', () => 
 });
 
 // Shared-cell routes and point-blank actions change fixed-seed tactics.
-// Altar's elevated shooters use their declared high-ground range and accuracy.
-for (const [scenarioId, winner] of [['ruins', 'blue'], ['altar', 'red'], ['boss', 'red']]) {
+// With blink-move active the ranger reaches the back line in altar and boss.
+for (const [scenarioId, winner] of [['ruins', 'blue'], ['altar', 'blue'], ['boss', 'blue']]) {
   test(`${scenarioId} 打到胜负并完整重放战报和 JSON 日志`, () => {
     const a=boot(scenarioId);
     for(let i=0; i<200&&!a.getStateSummary().outcome; i++) {

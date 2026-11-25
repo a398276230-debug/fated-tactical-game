@@ -29,16 +29,16 @@ const numericExpr = either(number, formula);
 const booleanExpr = either(bool, formula);
 const entityId = either(id, variable);
 export const EVENT_SCALAR_KEYS = Object.freeze([
-  'actionType', 'actorId', 'absorbed', 'advantageDelta', 'attackerId', 'authorityRank', 'backstab', 'baseDC',
+  'actionType', 'actorId', 'absorbed', 'advantageDelta', 'attackerId', 'authorityRank', 'backstab', 'baseDC', 'stat',
   'bonusDelta', 'backX', 'backY', 'cancel', 'canceled', 'chainDepth', 'change', 'checkKind', 'commitKind', 'consumeCostOnCancel',
-  'costScale', 'critical', 'damageScale', 'damageType', 'dc', 'dcDelta', 'deadId', 'dealt', 'defenderId', 'delta',
+  'costScale', 'critical', 'damageScale', 'damageType', 'dc', 'dcDelta', 'deadId', 'dealt', 'defenderId', 'delta', 'overkill',
   'direct', 'distance', 'finalAmount', 'finalDC', 'flank', 'forceOutcome', 'fromX', 'fromY', 'healing', 'hit',
   'hostile', 'ignoreDodge', 'ignoreLOS', 'immunityOwnerId', 'initiativeBonus', 'instantDeath', 'killed', 'killedId',
   'killerId', 'kind', 'melee', 'minRating', 'naturalRoll', 'opportunityAttack', 'other', 'passed', 'pool', 'poolId',
-  'power', 'preRolled', 'preserveLife', 'preventDeath', 'rating', 'ratingDelta', 'ratingMultiplier', 'rawNatural',
+  'power', 'preRolled', 'preserveLife', 'preventDeath', 'rating', 'ratingDelta', 'ratingMultiplier', 'rawAmount', 'rawNatural',
   'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'souls', 'sourceId',
   'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
-  'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'dealt', 'finalAmount', 'eventRef',
+  'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'eventRef',
 ]);
 export const damageTypes = Object.freeze(['physical', 'energy', 'mental', 'true']);
 const damageType = enumOf(...damageTypes);
@@ -107,7 +107,7 @@ const controlPolicy = object({
 });
 export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'apMax', 'incomingAccuracy', 'intentDifficulty', 'shatter']);
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentDifficulty', 'shatter']);
 const stat = enumOf(...statNames);
 export const skillShapes = Object.freeze(['single', 'circle', 'ring', 'fan', 'cone', 'line']);
 export const selectorAreaShapes = Object.freeze([...skillShapes, 'rect']);
@@ -120,7 +120,7 @@ export const stackModes = Object.freeze(['refresh', 'stack', 'replace', 'extend'
 export const durationTypes = Object.freeze(['battle_turns', 'until_removed', 'persistent']);
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
 export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
-  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'incomingAccuracy', 'intentDifficulty']);
+  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'critDamageBonus', 'incomingAccuracy', 'intentDifficulty']);
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({

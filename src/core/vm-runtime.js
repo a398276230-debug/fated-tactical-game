@@ -175,7 +175,8 @@ export const vmHost = {
     const { damageType } = data;
     const event = { damageType, actorId: source?.id ?? null, targetId: target.id, weaponTemplateId: data.weaponTemplateId ?? null,
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, backstab: data.backstab ?? false,
-      melee: data.melee ?? false, souls: data.souls ?? 0 };
+      melee: data.melee ?? false, souls: data.souls ?? 0, critical: data.critical ?? false,
+      ratingMultiplier: data.ratingMultiplier ?? 1 };
     if (source && vmHost.flag(state, source, 'harmless')) return 0;
     let amount = data.amount;
     if (source) {
@@ -268,7 +269,7 @@ export const vmHost = {
       ?? retargetStrike(state, actor, frame.data.action, state.units[id], plan));
     targets.push(...covers);
     pushFrame(state, { native: 'strike', ownerId: actor.id, sourceId: actor.id, eventRef: frame.eventRef,
-      data: frame.data.action, plan: { ...plan, targets }, scale: overrides.scale ?? 1 });
+      data: frame.data.action, plan: { ...plan, targets }, beforeTargetPosition: frame.beforeTargetPosition, scale: overrides.scale ?? 1 });
     scheduleHooks(state, frame, 'active', frame.eventRef, vmHost);
   },
 };

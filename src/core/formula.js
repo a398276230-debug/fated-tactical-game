@@ -1,6 +1,7 @@
 // Expression identifiers and queries expose a bounded, read-only combat context.
 import { TIER_CELL_M, resolveEffectiveTier } from './combat_protocol.js';
 import { ownDataValue } from './util.js';
+import { facingArc } from './spatial.js';
 
 const variables = new Map();
 const families = [];
@@ -164,7 +165,8 @@ for (const [name, description] of Object.entries({
   actorId: '本次事件的发起单位 ID', targetId: '本次事件的主目标单位 ID',
   damageType: '伤害类型（physical/energy/mental/true）', direct: '是否为直接伤害（true/false）',
   commitKind: 'before_commit 提交类别（damage/heal/resource）', pool: 'before_commit 目标资源池键（hp/mp/sp 等）',
-  rawAmount: 'before_commit 减免前原始数值', finalAmount: 'before_commit 当前待提交数值',
+  stat: '本次检定的单项属性（str/agi/con/int/spi 或 null）', overkill: '致命伤害扣除护盾与剩余生命后的溢出量',
+  rawAmount: '本次提交减免前的原始数值', finalAmount: '本次提交的最终数值',
   sourceRuleId: '产生本笔提交的 VM 规则 ID（不是技能 ID）',
   power: '技能威力', dealt: '本次实际扣除的 HP', absorbed: '本次被护盾吸收的伤害',
   previous: '当前效果链上一步实际数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID',
@@ -176,7 +178,7 @@ register('event.rating', '命中或检定评级（攻击检定为 超暴击/强�
   const rating = path(context, 'event', 'rating');
   return typeof rating === 'string' ? rating : own(rating, 'name');
 });
-register('event.ratingMultiplier', '攻击命中评级倍率（2/1.6/1.3/1/0.8/0.3/0）', context => own(path(context, 'event', 'rating'), 'multiplier'));
+register('event.ratingMultiplier', '攻击命中评级倍率（伤害提交时含暴击修正）', context => path(context, 'event', 'ratingMultiplier') ?? own(path(context, 'event', 'rating'), 'multiplier'));
 // Existing authored check filters used event.kind before checkKind was documented.
 register('event.kind', '事件类型，检定中等同于 event.checkKind', context => path(context, 'event', 'kind') ?? path(context, 'event', 'checkKind'));
 register('event.authorityRank', '提交效果的来源载体位格，唯一为 8', context => path(context, 'event', 'authorityRank'));
@@ -209,6 +211,9 @@ query('scale_cells', ['value'], 'scale_cells(n)', '把词条小数值按规则�
 });
 query('clamp', ['value', 'value', 'value'], 'clamp(value, lo, hi)', '将数值钳制在上下限之间', ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
 query('distance', ['unit', 'unit'], 'distance() / distance(unitA, unitB)', '读取两单位的三维距离，无参时默认 self 到 target', ([a, b], context) => readDistance(context, a, b));
+query('facing_arc', ['entity', 'entity'], 'facing_arc(observer, point)', '读取 point 相对 observer 朝向的扇区：front、side 或 back', ([observer, point]) =>
+  observer && point && Number.isFinite(observer.x) && Number.isFinite(observer.y)
+    && Number.isFinite(point.x) && Number.isFinite(point.y) ? facingArc(observer, point) : null);
 
 const booleanQuery = value => typeof value === 'boolean' ? value : null;
 const statusPresent = (context, entity, id) => booleanQuery(callback(context, 'hasStatus', entity, id) ?? (statusOf(entity, id) != null));
