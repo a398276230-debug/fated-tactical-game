@@ -283,6 +283,9 @@ export function zoneValue(value, key, state) {
   if (own(value, 'pools')) poolBindings(value.pools);
   const { area, follow, persistent, remainingTurns } = value;
   requireThat(zoneAreaShapes.includes(area.shape), 'VM 区域形状');
+  checkOptional(area, 'z1', z => int(z, -4, 20));
+  checkOptional(area, 'z2', z => int(z, -4, 20));
+  if (own(area, 'z1') && own(area, 'z2')) requireThat(area.z1 <= area.z2, 'VM 区域高度区间');
   requireThat(validVmOpcode({ op: 'spawn', entityKind: 'zone', spec: { area, follow, persistent, remainingTurns } }), 'VM 区域');
   requireThat(int(remainingTurns, 1, 100), 'VM 区域持续回合');
   const validPoint = point => pointValue(state, point);

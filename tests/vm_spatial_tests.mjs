@@ -9,6 +9,10 @@ import { expireSpatialEffects, spatialContinuations, spatialOps } from '../src/c
 import { vmHost } from '../src/core/vm-runtime.js';
 import { zoneContains } from '../src/core/vm-select.js';
 import { preview } from '../src/core/combat.js';
+import { aggregateModifiers } from '../src/core/vm-carriers.js';
+import { dispatchVMHook } from '../src/core/vm-runtime.js';
+import { reachableCells } from '../src/core/spatial.js';
+import { zoneCellScore } from '../src/core/ai.js';
 
 const unit = (id, x, y) => ({ id, name: id, x, y, hp: 30, maxHp: 30, mp: 10, maxMp: 10, sp: 10, maxSp: 10,
   team: 'blue', facing: [1, 0], tier: 3, stats: { str: 10, agi: 10, con: 10, int: 10, spi: 10 }, statuses: {} });
@@ -49,6 +53,71 @@ test('zones retain creator team after allegiance changes and enemy despawn filte
   state.units.other.team = 'blue';
   run(state, [{ op: 'despawn', entityKind: 'zone', select: { from: 'zones', where: "zone.team != self.team && candidate.team == 'red' && zone.sourceId == candidate.sourceId && zone.sourceId == 'other'" } }]);
   assert.deepEqual(Object.keys(state.zones), ['zone-1']);
+});
+
+test('height-bounded rect distinguishes ground from flight in the same cell', () => {
+  const state = board();
+  state.grid[1][0].z = 1;
+  state.units.other.x = 0;
+  state.units.other.altitude = 1;
+  const area = { shape: 'rect', rect: { x1: 0, y1: 1, x2: 1, y2: 2 }, z1: 0, z2: 1 };
+  run(state, [{ op: 'spawn', entityKind: 'zone', spec: { area } }]);
+  const zone = state.zones['zone-1'];
+  assert.equal(zone.area.z1, 0);
+  assert.equal(zone.area.z2, 1);
+  assert.equal(zoneContains(state, zone, state.units.actor), true);
+  assert.equal(zoneContains(state, zone, state.units.other), false);
+  assert.equal(zoneContains(state, zone, { x: 3, y: 1, z: 1 }), false);
+});
+
+test('high-altitude board zone applies modifiers and turn-start rules using VM elevation formulas', () => {
+  const state = board();
+  state.grid[1][1].z = 1;
+  state.units.other.altitude = 1;
+  state.grid[1][2].z = 2;
+  state.units.plateau = unit('plateau', 2, 1);
+  initializeUnitPools(state, 'plateau');
+  run(state, [{ op: 'spawn', entityKind: 'zone', spec: {
+    area: { shape: 'board', z1: 2, z2: 12 },
+    mods: [{ locks: ['fly'], when: 'self.z == 2 && target.z == 0' }],
+    rules: [{ id: 'turbulence', hook: 'turn_start', filter: 'self.z == 2 && target.z == 0 && attacker.z == 2', program: [
+      { op: 'damage', target: { from: 'self', where: 'candidate.z == 2' }, amount: 3, damageType: 'true', direct: false },
+    ] }],
+  } }]);
+  for (const id of ['actor', 'other', 'plateau']) {
+    const event = { actorId: id, targetId: 'actor' };
+    assert.equal(aggregateModifiers(state, id, event).locks.fly, id !== 'actor');
+    dispatchVMHook(state, 'turn_start', event);
+    assert.equal(state.units[id].hp, id === 'actor' ? 30 : 27);
+  }
+});
+
+test('2D zone despawn selects suspended zones by footprint', () => {
+  const state = board();
+  const area = { shape: 'rect', rect: { x1: 0, y1: 1, x2: 1, y2: 2 }, z1: 3, z2: 6 };
+  run(state, [
+    { op: 'spawn', entityKind: 'zone', spec: { area } },
+    { op: 'spawn', entityKind: 'zone', spec: { area: { ...area, rect: { x1: 4, y1: 1, x2: 5, y2: 2 } } } },
+  ]);
+  assert.equal(zoneContains(state, state.zones['zone-1'], state.units.actor), false);
+  run(state, [{ op: 'despawn', entityKind: 'zone', select: { from: 'zones', area: { shape: 'single', origin: 'self' } } }]);
+  assert.deepEqual(Object.keys(state.zones), ['zone-2']);
+});
+
+test('AI zone scoring uses absolute z on reachable flight destinations', () => {
+  const state = board(), actor = state.units.actor;
+  actor.altitude = 2;
+  state.grid[0][0].z = 1;
+  run(state, [{ op: 'spawn', entityKind: 'zone', spec: {
+    area: { shape: 'board', z1: 3 }, mods: [{ locks: ['fly'] }],
+  } }]);
+  const cells = reachableCells(state, actor, 1);
+  const elevated = cells.find(({ x, y }) => x === 0 && y === 0);
+  const lower = cells.find(({ x, y }) => x === 0 && y === 2);
+  assert.equal(elevated.z, 3);
+  assert.equal(lower.z, 2);
+  assert.equal(zoneCellScore(state, actor, elevated), 12);
+  assert.equal(zoneCellScore(state, actor, lower), 0);
 });
 
 test('gravity locks block teleport and ascent but allow forced landing; dispel cannot forge expiry', () => {

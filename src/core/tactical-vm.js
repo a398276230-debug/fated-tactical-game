@@ -1,6 +1,6 @@
 import { evaluateExpr } from './formula.js';
 import { distance3D, unitAt } from './spatial.js';
-import { selectVM, selectorOwner, zoneContains } from './vm-select.js';
+import { pointElevation, selectVM, selectorOwner, zoneContains } from './vm-select.js';
 import { carrierEffectiveTier, skillCarrierVars, incomingDistanceOffset } from './vm-carriers.js';
 
 const maxSteps = 2000;
@@ -97,8 +97,9 @@ function contextFor(state, frame, host) {
     warn: message => host.log?.(state, self, 'warning', message, { ruleId: frame.ruleId }),
     cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
+    elevation: entity => pointElevation(state, entity),
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),
-    inZone: (entity, key) => Object.values(state.zones ?? {}).some(zone => (zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, entity)),
+    inZone: (entity, key) => Object.values(state.zones ?? {}).some(zone => (zone.id === key || zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, entity)),
     isImmune: (unit, key) => host.isImmune?.(state, unit, key, frame) ?? false,
     select: selector => selectVM(state, selector, contextFor(state, frame, host), { pure: true }),
   };

@@ -145,9 +145,10 @@ const area = object({
 const spawnTier = either(integer(1, 7), formula);
 const spawnTurns = either(integer(1, 100), formula);
 const spawnArea = { ...area, properties: { ...area.properties, radius: spawnRadius } };
+const zoneZ = integer(-4, 20);
 const zoneArea = withRules(object({
   shape: enumOf('single', 'circle', 'ring', 'rect', 'cells', 'board'), anchorUnitId: entityId, origin: pointRef, center: pointRef,
-  radius: spawnRadius, innerRadius: spawnRadius,
+  radius: spawnRadius, innerRadius: spawnRadius, z1: zoneZ, z2: zoneZ,
   rect: object({ x1: number, y1: number, x2: number, y2: number }, ['x1', 'y1', 'x2', 'y2']), cells: list(point2, 1),
 }, ['shape']), when('shape', literal('rect'), needs('rect')), when('shape', literal('cells'), needs('cells')));
 const scalarOrExpr = either(number, bool, { type: 'string', maxLength: 1024 });

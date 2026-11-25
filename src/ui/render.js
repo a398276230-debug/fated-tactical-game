@@ -3,8 +3,9 @@ import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
 import { preview as rulesPreview, corpses } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
+import { zoneContains } from '../core/vm-select.js';
 import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
-import { narrateAll, STAT_NAMES, DAMAGE_TYPES } from './narrate.js';
+import { narrateAll, STAT_NAMES } from './narrate.js';
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
 const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
@@ -294,9 +295,11 @@ export function createRenderer(root, portraitFor = () => []) {
       gear.append(li);
     }
     if (!gear.children.length) gear.append(el('li', 'muted', '徒手'));
-    const zones = values(state.zones).filter(z => Math.max(Math.abs(z.x - u.x), Math.abs(z.y - u.y)) <= z.radius);
+    const permanentZone = z => z.persistent || z.durationType === 'persistent' || z.durationType === 'until_removed';
+    const zones = values(state.zones).filter(z => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
     const parts = [wrap, bars, stats, facts, el('h3', 'ft-section', '状态'), statusList, el('h3', 'ft-section', '装备'), gear];
-    if (zones.length) parts.push(el('h3', 'ft-section', '所处区域'), el('p', '', zones.map(z => `${z.name}：每回合 ${z.damage} 点${DAMAGE_TYPES[z.damageType] ?? ''}伤害`).join('；')));
+    if (zones.length) parts.push(el('h3', 'ft-section', '所处区域'), el('p', '',
+      zones.map(z => `${z.name}${permanentZone(z) ? '（常驻）' : `（剩余 ${z.remainingTurns} 轮）`}`).join('；')));
     node.replaceChildren(...parts);
   }
   const document_text = t => doc.createTextNode(t);
