@@ -78,6 +78,15 @@ test('effect: IDs are shared across row types but the areas never claim cells', 
   }
 });
 
+test('summon declarations share ID guards and require an admitted owner and safe source', () => {
+  const summon = 'summon|s1|e3|char_info|幻雾幼鸟';
+  assert.equal(parseBattleDescriptor([header, summon, unit].join('\n')).summons[0].ownerId, 'e3');
+  for (const row of [summon.replace('|e3|', '|missing|'), summon.replace('|s1|', '|e3|'),
+    summon.replace('|char_info|', '|mvu:主角/constructor|'), summon + '|上限=21']) {
+    assert.throws(() => parseBattleDescriptor(body(row)), { message: /^battle_init 描述符：/u });
+  }
+});
+
 test('descriptor reports individual header and row fields', () => {
   for (const [badHeader, pattern] of [
     ['unit|1|mist|幻雾海|flat', /首行前缀/u], ['battle|2|mist|幻雾海|flat', /首行版本号/u],

@@ -5,12 +5,14 @@ import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
 import { getPool, updatePoolCurrent, updatePoolMax } from '../core/vm-pools.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
-import { canOccupy } from '../core/spatial.js';
+import { fitSpawnStats, spawnBudgetIssue } from '../core/spawn-unit.js';
+import { sizeMultiplier } from '../core/prebattle_resources.js';
+import { canOccupy, elevation } from '../core/spatial.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
-import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, extractUnitPoolEntries, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, unitPoolKeyFromLabel, warningSink, WARNING_SCOPES } from './converter-parse.js';
+import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, extractUnitPoolEntries, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resolveSummonSource, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, unitPoolKeyFromLabel, warningSink, WARNING_SCOPES } from './converter-parse.js';
 import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageTags, elementTags, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readCombatTags, readMods, readPools, readRules, resolveDamageType, skillCosts } from './converter-effects.js';
 
 /*
@@ -652,7 +654,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   // Do not preload the demo catalog: its rules intentionally reference demo-only
   // status templates. Hydrated Tavern battles contain only source-backed entries.
   const equipment = {}, skills = {}, items = [];
-  const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = new Map();
+  const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, summonTemplates = {}, archetypes = new Map();
   const add = (participant, record, index) => {
     const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, 'unit');
     let id = base;
@@ -686,8 +688,29 @@ export function hydrateFromSources(input = {}, options = {}) {
       sourceId: sourceId(record), sourceName: sourceName(record), isProtagonist: record === protagonist,
     };
   };
+  const summonRows = [...(battle.summons ?? [])];
+  const markedSummon = record => record?.角色定位 === '召唤物' || record?.类型 === '召唤物';
+  for (const record of chars.filter(markedSummon)) {
+    const name = sourceName(record);
+    const ownerName = text(record.归属);
+    if (!ownerName) continue;
+    const owner = participants.find((p, i) => p.name === ownerName || sourceName(resolved[i]) === ownerName);
+    if (!owner?.id || !name || summonRows.some(row => row.ownerId === owner.id && row.name === name)) continue;
+    summonRows.push({ id: deterministicId(`${owner.id}-${name}`, 'summon'), ownerId: owner.id, source: 'char_info', name });
+    sink(owner.id, 'char_info', 'state').push(`已按归属补录召唤物「${name}」`, { kind: 'auto_adjusted' });
+  }
   for (const [i, participant] of participants.entries()) {
     const record = resolved[i];
+    const summon = summonRows.find(row => row.ownerId !== participant.id && row.name === participant.name);
+    const name = text(participant.name);
+    const mentioned = !record && name.length >= 2 && participants.some((other, j) => j !== i && resolved[j]
+      && (other.team ?? other.faction) === (participant.team ?? participant.faction)
+      && JSON.stringify([resolved[j].技能, resolved[j].装备, resolved[j].skills, resolved[j].equipment]).includes(name));
+    const isSummonRecord = record?.__sourceKind === 'char_info' && (markedSummon(record) || summon);
+    if (isSummonRecord || (!record && summon) || mentioned) {
+      sink(null, 'battle_init', 'state').push(`已忽略误写为 unit 的召唤物「${participant.name}」，请使用 summon| 行`, { kind: 'auto_adjusted' });
+      continue;
+    }
     const count = record?.__sourceKind === 'char_info' ? bound(record.数量 ?? record.count, 1, 100, 1) : 1;
     for (let copy = 0; copy < count; copy++) {
       const placement = copy ? { ...participant, id: `${participant.id ?? participant.uid ?? participant.name}-${copy + 1}` } : participant;
@@ -696,7 +719,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   }
   // Older battles without an explicit roster retain the discovered characters.
   if (!participants.length) {
-    const records = [...mvuRecords, ...chars.filter(char => !mvuRecords.some(record => sourceName(record, record.__sourceKey) === sourceName(char)))];
+    const records = [...mvuRecords, ...chars.filter(char => !markedSummon(char) && !summonRows.some(row => row.source === 'char_info' && row.name === sourceName(char)) && !mvuRecords.some(record => sourceName(record, record.__sourceKey) === sourceName(char)))];
     let index = 0;
     for (const [i, record] of records.entries()) {
       const count = record.__sourceKind === 'char_info' ? bound(record.数量 ?? record.count, 1, 100, 1) : 1;
@@ -704,6 +727,63 @@ export function hydrateFromSources(input = {}, options = {}) {
         add({ name: sourceName(record, record.__sourceKey), source: sourceId(record), faction: i ? 'red' : 'blue', x: index % (battle.width ?? 10), y: Math.floor(index / (battle.width ?? 10)) % (battle.height ?? 10) }, record, index);
       }
     }
+  }
+  const openingSummons = [];
+  for (const [ownerIndex, ownerRecord] of resolved.entries()) {
+    const ownerId = participants[ownerIndex]?.id;
+    for (const name of Object.keys(ownerRecord?.tacticalSummons ?? {})) {
+      if (ownerId && !summonRows.some(row => row.ownerId === ownerId && row.name === name)) {
+        summonRows.push({ id: deterministicId(`${ownerId}-${name}`, 'summon'), ownerId, source: `mvu:${ownerRecord.__sourcePath?.join('/') ?? '主角'}/${name}`, name });
+      }
+    }
+  }
+  for (const [index, row] of summonRows.entries()) {
+    const ownerIndex = participants.findIndex(participant => participant.id === row.ownerId);
+    const owner = units[row.ownerId];
+    const ownerRecord = ownerIndex >= 0 ? resolved[ownerIndex] : null;
+    if (!owner) { sink(null, 'battle_init', 'state').push(`召唤物「${row.name}」找不到归属单位「${row.ownerId}」`); continue; }
+    const sourceRecord = resolveSummonSource(row, ownerRecord, mvuRecords, chars);
+    if (!sourceRecord) { sink(row.ownerId, row.source, 'state').push(`未找到召唤物来源：${row.source}（${row.name}）`); continue; }
+    const templateId = deterministicId(row.id, 'summon');
+    const firstItem = items.length;
+    const made = unitFrom({ ...asObject(sourceRecord), __sourceKind: sourceRecord.__sourceKind ?? row.source },
+      { id: `summon-template-${templateId}`, name: row.name, team: owner.team, x: owner.x, y: owner.y }, index,
+      equipment, skills, items, (scope, path) => sink(row.ownerId, row.source, scope, path), false, battle, sourceRecord, customElements);
+    const summonUnit = made.unit;
+    const itemTemplate = id => id && items.find(item => item.id === id)?.templateId;
+    const features = asObject(sourceRecord.特征);
+    const mode = features.行动模式 ?? sourceRecord.行动模式 ?? sourceRecord.turnMode;
+    const modes = { 随主共享:'linked_group', 随主独立:'linked_each', 独立回合:'independent', 纯被动:'none', 随动:'linked_group', 各自随动:'linked_each', 独立:'independent', 瞬发:'none' };
+    const turnMode = row.turnMode ?? (own(modes, mode) ? modes[mode] : undefined) ?? (['linked_group','linked_each','independent','none'].includes(mode) ? mode : undefined);
+    const rawGroup = features.分组 ?? sourceRecord.分组 ?? sourceRecord.group;
+    const group = rawGroup && (!row.group || row.group === row.id) ? deterministicId(rawGroup, 'summon-group') : row.group ?? templateId;
+    const limit = features.上限 ?? sourceRecord.上限 ?? sourceRecord.maxActive;
+    const maxActive = row.maxActive ?? (limit == null ? undefined : bound(limit, 1, 20));
+    const duration = text(features.存续 ?? sourceRecord.存续);
+    const amount = duration.match(/^(\d+)\s*(?:个)?(大轮|轮|回合)$/);
+    const turns = amount ? bound(amount[1], 1, 100, 1) : /本回合结束/.test(duration) && !/依召唤|或/.test(duration) ? 1 : null;
+    const panel = { stats: summonUnit.stats, tier: Math.min(summonUnit.tier, owner.tier) };
+    if (spawnBudgetIssue(owner, panel)) {
+      panel.stats = fitSpawnStats(owner, panel);
+      sink(row.ownerId, row.source, 'state').push(`召唤物「${row.name}」的五维已按归属者预算收敛`, { kind: 'auto_adjusted' });
+    }
+    summonTemplates[templateId] = {
+      name: row.name, ownerId: row.ownerId, ...panel,
+      ...(findValue(sourceRecord, ['level', '等级'], null) != null && { level: summonUnit.level }),
+      bodyLengthM: summonUnit.bodyLengthM, size: summonUnit.size,
+      mc: bound(findValue(sourceRecord, ['mc','MC','massClass'], sizeMultiplier(summonUnit.bodyLengthM)), 1, 64, 1),
+      skills: [...(summonUnit.skills ?? [])], ...(itemTemplate(summonUnit.mainHand) && { mainHand: itemTemplate(summonUnit.mainHand) }),
+      ...(itemTemplate(summonUnit.offHand) && { offHand: itemTemplate(summonUnit.offHand) }),
+      ...(itemTemplate(summonUnit.shield) && { shield: itemTemplate(summonUnit.shield) }),
+      gear: summonUnit.gear.map(itemTemplate).filter(Boolean),
+      group, ...(turnMode && { turnMode }), ...(maxActive && { maxActive }),
+      ...(row.stackPolicy && { stackPolicy: row.stackPolicy }),
+      ...(turns && { remainingTurns: turns, durationUnit: amount?.[2].endsWith('轮') ? 'rounds' : 'anchor_turns' }),
+    };
+    if (row.opening) openingSummons.push({ owner, templateId, opening: row.opening });
+    items.splice(firstItem);
+    entrySources[row.ownerId] ??= {};
+    Object.assign(entrySources[row.ownerId], made.entrySources, { [`summonTemplates:${templateId}`]: { record: staticProjection(sourceRecord), declaration: row } });
   }
   const title = text(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || '酒馆战术战局';
   const seed = integer(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
@@ -718,7 +798,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
   const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
   const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
-  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), ...(Object.keys(customElements).length ? { customElements } : {}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), ...(Object.keys(customElements).length ? { customElements } : {}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
     if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
@@ -747,8 +827,22 @@ export function hydrateFromSources(input = {}, options = {}) {
     sink(null, null, 'state').push(`转换结果未通过校验：${error.message}`);
     if (options.throwOnValidation) throw error;
   }
-  if (valid) beginBattle(state);
-  const roster = Object.values(units).map(unit => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
+  if (valid) {
+    const ownerRules = new Map();
+    for (const { owner, templateId, opening } of openingSummons) {
+      if (!ownerRules.has(owner)) ownerRules.set(owner, owner.rules);
+      const at = opening === 'owner' ? { x: owner.x, y: owner.y, z: elevation(state, owner) }
+        : { x: opening.x, y: opening.y, z: (opening.z ?? state.grid[opening.y][opening.x].z) + (opening.altitude ?? 0) };
+      owner.rules = [...(owner.rules ?? []), { id: `open-${hash(templateId)}`, hook: 'round_start', filter: 'round == 1',
+        program: [{ op: 'spawn', entityKind: 'unit', at, spec: { templateId } }] }];
+    }
+    beginBattle(state);
+    for (const [owner, rules] of ownerRules) {
+      if (rules === undefined) delete owner.rules;
+      else owner.rules = rules;
+    }
+  }
+  const roster = Object.values(units).filter(unit => profiles[unit.id]).map(unit => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
   // Keep conversion diagnostics out of serialized engine state (which has a strict schema).
   Object.defineProperty(state, 'warnings', { value: warnings });
   return { state, roster, warnings, sourceMap, entrySources, zoneEntries, battleInit: battle, seed };

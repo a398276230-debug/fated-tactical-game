@@ -26,6 +26,7 @@ import './terrain_effects_tests.mjs';
 import './spawn_unit_tests.mjs';
 import './summon_mount_and_swarm_tests.mjs';
 import './summon_turn_economy_tests.mjs';
+import './camilla_dlc_fixture_tests.mjs';
 import './z_interaction_tests.mjs';
 import './terrain_descriptor_regression_tests.mjs';
 import './equipment_stance_tests.mjs';

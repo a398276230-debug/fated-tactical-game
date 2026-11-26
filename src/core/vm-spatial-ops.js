@@ -300,7 +300,7 @@ function unitPlan(state, context, spec, original) {
   return { count, gear, panel: { stats, ...maxima, bodyLengthM, size: panel.size ?? sizeClassFor(bodyLengthM),
     mc: panel.mc ?? sizeMultiplier(bodyLengthM), armor: panel.armor ?? 0, move: panel.move ?? 3,
     skills: [...(loads.skills ?? [])], team: actor.team, facing: [...(actor.facing ?? [1, 0])],
-    level: actor.level ?? actor.tier ?? 1, tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier } };
+    level: (spec.templateId && original?.level) || actor.level || actor.tier || 1, tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier } };
 }
 
 function removeSummon(state, unit, host) {
@@ -358,7 +358,11 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
   if (requested.templateId && !original) return fail('missing_template', { templateId: requested.templateId });
   if (!actor || !point(center) || requested.copyOf && !original) return fail('invalid_panel');
   const form = requested.copyOf ? 'copy' : requested.spawnPanel ? 'panel' : requested.templateId ? 'template' : 'panel';
-  const spec = resolveSpawnSpec({ ...requested, ...(requested.copyOf ? {} : { spawnPanel: { ...original, ...requested.spawnPanel } }) }, context, 'unit');
+  const defaults = {};
+  if (requested.templateId) for (const key of ['group', 'maxActive', 'stackPolicy', 'remainingTurns']) {
+    if (original[key] !== undefined) defaults[key] = original[key];
+  }
+  const spec = resolveSpawnSpec({ ...defaults, ...requested, ...(requested.copyOf ? {} : { spawnPanel: { ...original, ...requested.spawnPanel } }) }, context, 'unit');
   if (!spec) return fail('invalid_panel');
   const templateId = spec.templateId ?? original?.templateId ?? original?.id ?? frame.ruleId ?? 'summon';
   const group = JSON.stringify(spec.group ? [actor.id, spec.group]

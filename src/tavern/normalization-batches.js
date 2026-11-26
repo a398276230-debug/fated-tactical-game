@@ -1,7 +1,7 @@
 import { activeWarningExemption, diagnosticText, identifiesWarning, isSceneZoneWarning, warningEntryKey, warningKey } from './resolved-warnings.js';
 import { semanticExemptionKey, normalizeClauseForHash } from './exemption-ledger.js';
 
-export const normalizationPath = /^\/(?:equipment|skills|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
+export const normalizationPath = /^\/(?:equipment|skills|summonTemplates|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
 export const SCENE_LANE = '__scene__';
 
 export const warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });

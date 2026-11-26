@@ -428,8 +428,14 @@ function validateSummonReferences(node, state) {
 }
 
 function summonTemplateValue(v, state) {
-  fields(v, ['name'], [...new Set([...carrierFields, ...summonTemplatePanelFields]), 'turnMode', 'durationUnit']);
+  fields(v, ['name'], [...new Set([...carrierFields, ...summonTemplatePanelFields]), 'ownerId', 'level', 'group', 'maxActive', 'stackPolicy', 'turnMode', 'durationUnit', 'remainingTurns']);
   requireThat(text(v.name), '召唤模板名称');
+  checkOptional(v, 'ownerId', owner => id(owner) && has(state.units, owner));
+  checkOptional(v, 'level', x => int(x, 1, 100));
+  checkOptional(v, 'group', id);
+  checkOptional(v, 'maxActive', x => int(x, 1, 50));
+  checkOptional(v, 'stackPolicy', x => ['replace', 'fifo', 'cap'].includes(x));
+  checkOptional(v, 'remainingTurns', x => int(x, 1, 100));
   const spawnPanel = Object.fromEntries(summonTemplatePanelFields.filter(key => own(v, key)).map(key => [key, v[key]]));
   requireThat(validVmOpcode({ op: 'spawn', entityKind: 'unit', spec: { spawnPanel } }), '召唤模板面板');
   carrierFieldsValue(v, state);

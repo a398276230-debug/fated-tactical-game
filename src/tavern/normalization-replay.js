@@ -43,7 +43,7 @@ export function normalizationTransactions({ patch, solved, verified, records, be
   }
   const definitions = new Map();
   for (const root of groups.keys()) {
-    if (/^\/(skills|statusTemplates|equipment|items|zones|customElements)\//.test(root)) {
+    if (/^\/(skills|statusTemplates|equipment|items|summonTemplates|zones|customElements)\//.test(root)) {
       const id = root.split('/')[2];
       definitions.set(id, [...(definitions.get(id) ?? []), root]);
     }

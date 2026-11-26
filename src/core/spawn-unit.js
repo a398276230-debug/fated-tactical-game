@@ -8,6 +8,18 @@ function budget(actor, spec) {
   const a = spec.attribute ? actor.stats[spec.attribute] : Math.max(actor.stats.int, actor.stats.spi);
   return {tier, sum:Math.max(tier * 5, a * 5 - 30), cap:Math.min(a, tierCaps[tier-1])};
 }
+export function fitSpawnStats(actor, spec) {
+  const { cap, sum } = budget(actor, spec);
+  const values = attrs.map(key => Math.max(0, Math.min(cap, spec.stats[key])));
+  const total = values.reduce((a, b) => a + b, 0);
+  const scaled = values.map(value => total > sum ? value * sum / total : value);
+  const rounded = scaled.map(Math.floor);
+  let spare = Math.min(total, sum) - rounded.reduce((a, b) => a + b, 0);
+  for (const i of attrs.map((_, i) => i).sort((a, b) => (scaled[b] - rounded[b]) - (scaled[a] - rounded[a]))) {
+    if (spare > 0 && rounded[i] < scaled[i]) { rounded[i]++; spare--; }
+  }
+  return Object.fromEntries(attrs.map((key, i) => [key, rounded[i]]));
+}
 export function spawnBudgetIssue(actor, spec) {
   if (!spec.stats) return null;
   const { cap, sum } = budget(actor, spec);

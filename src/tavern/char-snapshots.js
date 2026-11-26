@@ -20,7 +20,9 @@ export async function characterRecords(sources, hydrated) {
     const char = sources.charInfo?.find(matches);
     const sourceKind = unit.source === 'MVU' || mv && !char ? 'mvu' : char ? 'char_info' : 'battle_init';
     const defs = (table, ids) => Object.fromEntries(ids.filter(id => typeof id === 'string' && Object.hasOwn(table ?? {}, id)).map(id => [id,table[id]]));
-    const raw = { ...(mv && {mvu:clean(mv)}), ...(char && {char_info:clean(char)}), battle_init: clean(p),
+    const summonRows = (battle.summons ?? []).filter(row => row.ownerId === unit.id || row.ownerId === p?.id);
+    const raw = { ...(mv && {mvu:clean(mv)}), ...(char && {char_info:clean(char)}), battle_init: clean(p), ...(summonRows.length && {summons: summonRows.map(row => ({ declaration: row,
+      ...(row.source === 'char_info' && { record: clean(sources.charInfo?.find(record => aliases(record).includes(row.name) && (!record.归属 || names.has(record.归属)))) }) }))}),
       equipment: defs(battle.equipment,[p?.mainHand,p?.offHand,p?.shield,...(Array.isArray(p?.gear)?p.gear:[])]), skills: defs(battle.skills,Array.isArray(p?.skills)?p.skills:[]) };
     const stripEntries = source => Object.fromEntries(Object.entries(source ?? {})
       .filter(([key]) => !['equipment', 'equipments', 'items', '装备', 'skills', 'abilities', '技能', '背包', 'mainHand', 'offHand', 'shield', 'gear'].includes(key)));

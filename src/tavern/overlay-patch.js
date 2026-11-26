@@ -48,7 +48,7 @@ export function partitionNormalizationPatch({ liveState, baselineState, existing
   }
   // Only move creations of absent parents ahead of children; never reorder
   // replacements or array operations relative to each other.
-  const declarations = candidates.filter(({ op }) => op.op === 'add' && /^\/(?:customElements|skills|statusTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === undefined);
+  const declarations = candidates.filter(({ op }) => op.op === 'add' && /^\/(?:customElements|skills|statusTemplates|summonTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === undefined);
   const roots = new Set(), conflicted = new Set(conflictingDefinitions);
   for (const item of declarations) {
     if (roots.has(item.op.path)) {
@@ -135,7 +135,7 @@ function patchValue(value, table) {
 function normalizeSemanticPatch(patch) {
   if (!isObject(patch)) return patch;
   const result = clone(patch);
-  for (const key of ['units', 'covers', 'interactives', 'zones', 'items', 'equipment', 'skills', 'customElements']) if (Array.isArray(result[key])) result[key] = patchValue(result[key], key);
+  for (const key of ['units', 'covers', 'interactives', 'zones', 'items', 'equipment', 'skills', 'summonTemplates', 'customElements']) if (Array.isArray(result[key])) result[key] = patchValue(result[key], key);
   if (isObject(result.unit_patch)) {
     const unitPatch = result.unit_patch;
     const id = unitPatch.unitId || unitPatch.id;
@@ -162,7 +162,7 @@ function applyPatch(target, patch, strict = false) {
   return result;
 }
 
-const chatTables = ['units', 'skills', 'equipment', 'items', 'statusTemplates', 'customElements', 'covers', 'interactives', 'zones'];
+const chatTables = ['units', 'skills', 'equipment', 'items', 'statusTemplates', 'summonTemplates', 'customElements', 'covers', 'interactives', 'zones'];
 export function chatPatch(state, payload) {
   const unrecognized = () => new Error('无法识别该 JSON 的目标路径，请让 AI 输出 {"patch":[{"op":"replace","path":"/...","value":...}]} 格式');
   const semantic = payload?.battle_patch ?? payload;

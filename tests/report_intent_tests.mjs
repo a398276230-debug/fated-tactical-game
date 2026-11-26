@@ -7,10 +7,37 @@ import { narrate } from '../src/ui/narrate.js';
 import { createRenderer } from '../src/ui/render.js';
 import { fillInstance } from '../src/tavern/instance-card.js';
 import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
-import { formatBattleReportText } from '../src/api/battle_report.js';
+import { formatBattleReportText, summarizeSummons } from '../src/api/battle_report.js';
 import { RATING_TABLE } from '../src/core/combat_protocol.js';
 
 const boot = () => { const a = createGameAPI(); a.createBattle({scenarioId:'ruins', ruleset:'sandbox'}); return a; };
+
+test('战报投影在场召唤物实际血量、护盾、乘客与持续时间', () => {
+  const units = {
+    caster: {id:'caster',name:'卡梅拉',hp:10,statuses:{boarding:{vars:{hostId:'ship'}}}},
+    ship: {id:'ship',name:'黄金骷髅号',hp:120,maxHp:150,summoned:true,sourceId:'caster',
+      remainingTurns:2,durationUnit:'anchor_turns',durationAnchorId:'caster',
+      statuses:{shield:{category:'shield',vars:{shieldAmount:40}},other:{vars:{shieldAmount:99}}}},
+    spent: {id:'spent',name:'离场召唤物',summoned:true,hp:0},
+  };
+  const summons = summarizeSummons(units);
+  assert.deepEqual(summons, [{id:'ship',name:'黄金骷髅号',sourceId:'caster',hp:120,maxHp:150,shield:40,
+    passengerIds:['caster'],remainingTurns:2,durationUnit:'anchor_turns',durationAnchorId:'caster'}]);
+  const report = formatBattleReportText({title:'战报',units:Object.values(units),rounds:[],summons});
+  assert.match(report, /以沙盘实测结算为准/);
+  assert.match(report, /黄金骷髅号，归属 卡梅拉，HP 120\/150，护盾 40，搭乘 卡梅拉，剩余 2 个卡梅拉回合/);
+  assert.doesNotMatch(report, /离场召唤物/);
+
+  const api = boot(), state = api.getBattleState(), actor = currentUnit(state);
+  actor.skills.push('report_summon');
+  state.skills.report_summon = { name:'战报召唤', shape:'single', target:'self', range:0, ap:1, slot:'action',
+    rules:[{id:'report_spawn',hook:'active',program:[{op:'spawn',entityKind:'unit',spec:{name:'侦察魔像'}}]}] };
+  api.createBattle({ kind:'custom_state', state });
+  api.playAction({type:'skill',skillId:'report_summon',x:actor.x,y:actor.y});
+  const [actual] = api.exportBattleReport().summons;
+  assert.equal(actual.sourceId, actor.id);
+  assert.match(api.exportBattleReportText(), /侦察魔像.*HP 105\/105/);
+});
 
 test('寄居蟹攻击瑞吉：合计 19 判有效，不把防御 150 当作命中 DC', () => {
   const detail = { targetId:'p1', dice:[14], selected:14, accuracy:5, total:19, defense:150,

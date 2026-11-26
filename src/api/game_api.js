@@ -8,7 +8,7 @@ import { chooseUnitStep } from '../core/battle-ai.js';
 import { linkedUnitsOf } from '../core/turn-routing.js';
 import { applyCommand } from './commands.js';
 import { validateState } from './validation.js';
-import { formatBattleReportText } from './battle_report.js';
+import { formatBattleReportText, summarizeSummons } from './battle_report.js';
 import { normalizeProse } from '../core/log-attribution.js';
 
 const copy = value => structuredClone(value);
@@ -191,8 +191,10 @@ export function createGameAPI() {
         rounds.get(log.round).push(log);
       }
       const outcome = { blue: '蓝方胜利', red: '红方胜利', draw: '平局' }[s.outcome] ?? '战斗尚未结束';
+      const summons = summarizeSummons(s.units);
       return copy({ version, scenarioId: s.scenarioId, title: s.title, outcome: s.outcome,
         rounds: [...rounds].map(([round, events]) => ({ round, events })), units: api.listUnits(),
+        ...(summons.length && { summons }),
         journal: frames.map(frame => frame.transaction),
         summary: `${s.title} · 第 ${s.round} 轮 · ${outcome} · ${s.logs.length} 条事件` });
     },

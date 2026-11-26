@@ -14,6 +14,7 @@ const modifierNames = {
   damageFlat: '固定增伤', damageMult: '增伤', finalDamageMult: '最终伤害', incomingDamageMult: '易伤',
   healingMult: '治疗', incomingHealMult: '受治疗', costMult: '消耗',
   damageReduction: '减伤', dr: '最终减伤', armorPiercePercent: '穿甲比例',
+  power: '威力', hits: '打击段数', attackDistanceOffset: '攻击距离修正',
 };
 const ratios = new Set(['damageReduction', 'dr', 'armorPiercePercent', 'shatter']);
 const flagModifiers = {
@@ -100,6 +101,34 @@ function statusNotes(detail, customElements = {}) {
     parts.push(`${triggers.join('或')}时解除`);
   }
   return parts;
+}
+
+export function summarizeSummons(units) {
+  const living = Object.values(units).filter(unit => unit.hp > 0 && !unit.fled);
+  const summons = living.filter(unit => unit.summoned);
+  if (!summons.length) return [];
+  const summonIds = new Set(summons.map(unit => unit.id));
+  const passengers = new Map();
+  for (const unit of living) {
+    for (const status of Object.values(unit.statuses ?? {})) {
+      const hostId = status.vars?.hostId;
+      if (!summonIds.has(hostId) || hostId === unit.id) continue;
+      if (!passengers.has(hostId)) passengers.set(hostId, new Set());
+      passengers.get(hostId).add(unit.id);
+    }
+  }
+  return summons.map(unit => ({
+    id: unit.id, name: unit.name, sourceId: unit.sourceId ?? null,
+    hp: unit.hp, maxHp: unit.maxHp,
+    shield: Object.values(unit.statuses ?? {}).reduce((total, status) => (
+      status.category === 'shield' && Number.isFinite(status.vars?.shieldAmount)
+        ? total + Math.max(0, status.vars.shieldAmount) : total
+    ), 0),
+    passengerIds: [...(passengers.get(unit.id) ?? [])],
+    remainingTurns: unit.remainingTurns ?? null,
+    durationUnit: unit.remainingTurns == null ? null : unit.durationUnit ?? 'rounds',
+    durationAnchorId: unit.durationAnchorId ?? null,
+  }));
 }
 
 // Narrative projection only: the structured report remains the audit record.
@@ -296,6 +325,17 @@ export function formatBattleReportText(report, unitNames = {}) {
     if (!rows.length) continue;
     lines.push('', `- 回合${roundLabel(round)}`);
     for (const row of rows) lines.push(`  - ${typeof row === 'string' ? row : row.text + (row.parts.length ? `：${row.parts.join('；')}` : '')}`);
+  }
+  if (report.summons?.length) {
+    lines.push('', '在场召唤物（以沙盘实测结算为准）：');
+    for (const unit of report.summons) {
+      const owner = unit.sourceId ? `，归属 ${name({}, unit.sourceId)}` : '';
+      const passengers = unit.passengerIds.length ? `，搭乘 ${unit.passengerIds.map(id => name({}, id)).join('、')}` : '';
+      const duration = unit.remainingTurns == null ? '常驻' : unit.durationUnit === 'anchor_turns'
+        ? `剩余 ${unit.remainingTurns} 个${unit.durationAnchorId ? name({}, unit.durationAnchorId) : '锚点单位'}回合`
+        : `剩余 ${unit.remainingTurns} 轮`;
+      lines.push(`- ${name({}, unit.id)}${owner}，HP ${proseNumber(unit.hp)}/${proseNumber(unit.maxHp)}，护盾 ${proseNumber(unit.shield)}${passengers}，${duration}`);
+    }
   }
   if (!report.outcome) lines.push('', '战斗尚未结束。');
   return `${lines.join('\n')}\n`;

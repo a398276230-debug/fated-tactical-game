@@ -118,15 +118,47 @@ function parseEffect(parts, row, battle) {
   return { id, targetTeam, name, description, rawText, area: parseEffectArea(parts.at(-1), row, battle) };
 }
 
+function checkSource(source, row, allowMvu = false) {
+  const path = source.startsWith('mvu:') ? source.slice(4).split('/') : [];
+  if (source === 'char_info' || (allowMvu && source === 'mvu')) return;
+  if (!path.length || path.some(key => !key || key !== key.trim() || unsafeKey(key) || key === '.' || key === '..')) {
+    fail(`${row}的来源「${source}」无效，应为 char_info 或 mvu:精确/路径`);
+  }
+}
+
+const summonModes = { 随动: 'linked_group', 集群: 'linked_group', 独立: 'independent', 各自随动: 'linked_each', 瞬发: 'none' };
+const summonPolicies = { 顶替: 'replace', 队列: 'fifo', 封顶: 'cap' };
+function parseSummon(parts, row, battle) {
+  const [, id, ownerId, source, name, ...options] = parts;
+  if (!identifier.test(ownerId) || unsafeKey(ownerId)) fail(`${row}的归属单位 ID 无效`);
+  checkSource(source, row, true);
+  if (!name || name.length > 100) fail(`${row}的显示名不能为空且不超过 100 字`);
+  const summon = { id, ownerId, source, name, group: id };
+  const seen = new Set();
+  for (const option of options) {
+    const [, key, value] = option.match(/^([^=]+?)\s*=\s*(.+)$/u) ?? [];
+    if (!key || seen.has(key)) fail(`${row}含无效或重复选项「${option}」`);
+    seen.add(key);
+    if (key === '分组' && identifier.test(value) && !unsafeKey(value)) summon.group = value;
+    else if (key === '模式' && Object.values(summonModes).includes(summonModes[value] ?? value)) summon.turnMode = summonModes[value] ?? value;
+    else if (key === '策略' && Object.values(summonPolicies).includes(summonPolicies[value] ?? value)) summon.stackPolicy = summonPolicies[value] ?? value;
+    else if (key === '上限' && /^(?:[1-9]|1\d|20)$/.test(value)) summon.maxActive = Number(value);
+    else if (key === '类型' && value.length <= 100) summon.archetypeHint = value;
+    else if (key === '开场') summon.opening = value === '随主' ? 'owner' : parsePoint(value, row, battle, true);
+    else fail(`${row}含无效选项「${option}」`);
+  }
+  return summon;
+}
+
 /** Parse a versioned, pipe-delimited battle body. Return null for legacy input. */
 export function parseBattleDescriptor(value) {
   if (typeof value !== 'string') return null;
   const lines = value.trim().replace(/^```[^\r\n]*\r?\n/, '').replace(/\r?\n```$/, '')
     .split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-  if (!/^(?:battle|unit|cover|interact|效果|effect)\s*\|/iu.test(lines[0] ?? '')) return null;
+  if (!/^(?:battle|unit|summon|cover|interact|效果|effect)\s*\|/iu.test(lines[0] ?? '')) return null;
   const battle = parseHeader(lines[0]);
   const ids = new Set(), occupied = new Set(), unitCounts = new Map();
-  const units = [], covers = [], interactives = [], effects = [];
+  const units = [], covers = [], interactives = [], effects = [], summons = [];
   const claimId = (id, row) => {
     if (!identifier.test(id ?? '') || unsafeKey(id)) fail(`${row}的 ID「${id ?? ''}」格式无效（须以字母或数字开头，仅含 ASCII 字母、数字、_、-，长度 ≤64）`);
     const key = id.toLowerCase();
@@ -158,14 +190,16 @@ export function parseBattleDescriptor(value) {
       claimId(id, row);
       const [, , team, source, name, point] = parts;
       if (!['blue', 'red'].includes(team)) fail(`${row}的阵营「${team}」无效，必须为 blue 或 red`);
-      const path = source.startsWith('mvu:') ? source.slice(4).split('/') : [];
-      if (source !== 'char_info' && (!path.length || path.some(key => !key || key !== key.trim() || unsafeKey(key)))) {
-        fail(`${row}的来源「${source}」无效，应为 char_info 或 mvu:精确/路径`);
-      }
+      checkSource(source, row);
       if (!name || name.length > 100) fail(`${row}的显示名不能为空且不超过 100 字`);
       const position = parsePoint(point, row, battle, true);
       claimPosition(position, row, true);
       units.push({ id, team, source, name, ...position });
+    } else if (kind === 'summon') {
+      if (parts.length < 5) fail(`${row}需要 summon|ID|归属单位ID|来源|显示名`);
+      if (summons.length >= 24) fail('最多 24 条 summon 记录');
+      claimId(id, row);
+      summons.push(parseSummon(parts, row, battle));
     } else if (kind === 'cover') {
       if (parts.length !== 5) fail(`${row}需要 5 段字段（cover|ID|半或全|名称|坐标，当前为 ${parts.length} 段）`);
       claimId(id, row);
@@ -189,8 +223,11 @@ export function parseBattleDescriptor(value) {
       claimPosition(position, row);
       if (interactives.length === 2) fail('最多两条 interact 记录');
       interactives.push({ id, name, ...position, kind: type, effect, radius, damage });
-    } else fail(`第 ${rowNo} 条记录未知行类型「${kind}」，允许前缀：unit、cover、interact、效果`);
+    } else fail(`第 ${rowNo} 条记录未知行类型「${kind}」，允许前缀：unit、summon、cover、interact、效果`);
   }
   if (!units.length) fail('至少需要一条 unit 记录');
-  return { ...battle, units, ...(covers.length && { covers }), ...(interactives.length && { interactives }), ...(effects.length && { effects }) };
+  for (const summon of summons) {
+    if (!units.some(unit => unit.id === summon.ownerId)) fail(`召唤物「${summon.id}」的归属单位「${summon.ownerId}」不存在`);
+  }
+  return { ...battle, units, ...(summons.length && { summons }), ...(covers.length && { covers }), ...(interactives.length && { interactives }), ...(effects.length && { effects }) };
 }

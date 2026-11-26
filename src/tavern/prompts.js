@@ -197,9 +197,14 @@ function scopedRoster(ctx, state, warnings) {
   const targetZoneIds = distinct(warnings.map(w => w.originPath?.match(/^\/zones\/([^/]+)/)?.[1]));
   const units = pick(state.units, unitIds), rows = Object.values(units);
   const items = pick(state.items, rows.flatMap(u => [u.mainHand,u.weapon,u.offHand,u.shield,...(u.gear ?? []),...(u.bagWeapons ?? [])]));
-  const equipment = pick(state.equipment, Object.values(items).map(i => i.templateId));
-  const skills = pick(state.skills, [...rows.flatMap(u => [...(u.skills ?? []), ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap(e => e.skills ?? [])]);
-  const roster = { raw:pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, statusTemplates:state.statusTemplates };
+  const summonIds = Object.entries(state.summonTemplates ?? {}).filter(([, template]) => unitIds.includes(template.ownerId)).map(([id]) => id);
+  const summonTemplates = pick(state.summonTemplates, summonIds);
+  const summons = Object.values(summonTemplates);
+  const equipment = pick(state.equipment, [...Object.values(items).map(i => i.templateId),
+    ...summons.flatMap(s => [s.mainHand, s.offHand, s.shield, ...(s.gear ?? [])])]);
+  const skills = pick(state.skills, [...rows.flatMap(u => [...(u.skills ?? []), ...Object.keys(u.inventory ?? {})]),
+    ...summons.flatMap(s => s.skills ?? []), ...Object.values(equipment).flatMap(e => e.skills ?? [])]);
+  const roster = { raw:pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, ...(Object.keys(summonTemplates).length ? { summonTemplates } : {}), statusTemplates:state.statusTemplates };
   if (Object.keys(state.customElements ?? {}).length) roster.customElements = state.customElements;
   if (targetZoneIds.length) {
     roster.zones = pick(state.zones, targetZoneIds);
@@ -236,7 +241,7 @@ function scopedRoster(ctx, state, warnings) {
     distinct((z.mods ?? []).map(m => m.stat)).join('/'), distinct((z.rules ?? []).map(r => r.hook)).join('/'),
   ].join('|'));
   const zoneLedger = zoneLines.length ? `\nsharedZoneLedger：zoneId|名|形状|标签|mods|hooks；仅供联动查询如 in_zone(self, '<zoneId>')，勿改勿核销。\n${zoneLines.join('\n')}` : '';
-  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\n${ledger}\n${poolLines}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}${zoneLedger}${customLedger}\n</role_readonly_index>`;
+  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\n${ledger}\n${poolLines}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}${zoneLedger}\n${sharedSummonLedger(state)}${customLedger}\n</role_readonly_index>`;
 }
 
 function statusLedger(state) {
@@ -264,6 +269,14 @@ function sharedPoolLines(ctx, rows, equipment, skills) {
     return [id, pool.name, caps, pool.sources.join('/'), ...bound.map(item => `MVU写回:/stat_data/${item.mvuPath.join('/')}`)].join('|');
   });
   return `sharedPoolLedger：poolId|名|cap|声明来源；复用 poolId，读写 self.resource.<poolId>，勿重复声明。\n${poolLines.join('\n')}`;
+}
+function sharedSummonLedger(state) {
+  const lines = Object.entries(state.summonTemplates ?? {}).map(([id, template]) => [
+    id, template.name ?? id, template.ownerId ?? '?', `T${template.tier ?? '?'}/MC${template.mc ?? '?'}`,
+    Object.values(template.stats ?? {}).join('/'), template.mainHand ?? '', template.offHand ?? '',
+    template.shield ?? '', (template.skills ?? []).join(','), template.turnMode ?? 'independent',
+  ].join('|'));
+  return `sharedSummonLedger：templateId|名|归属|tier/mc|五维(str/agi/con/int/spi)|主手|副手|盾牌|技能|默认行动模式；优先复用既有 templateId，不重复捏造面板。\n${lines.join('\n')}`;
 }
 function customElementLedger(state) {
   const lines = Object.entries(state.customElements ?? {}).map(([id, entry]) => [id, entry.name, entry.category ?? 'energy'].join('|'));

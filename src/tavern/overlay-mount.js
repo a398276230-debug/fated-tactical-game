@@ -4,7 +4,7 @@ import { semanticExemptionKey } from './exemption-ledger.js';
 import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, normalizationPath, planNormalizationBatches, runOrderedBatches, warningReference } from './normalization-batches.js';
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
-import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
+import { refreshOpeningInitiative, refreshOutcome, replayOpeningBattle, syncEquipmentEffects } from '../core/combat.js';
 import { getPool } from '../core/vm-pools.js';
 import { battleReportToMvuPatch } from './converter-patch.js';
 import { outcomeDigest, rollbackBattleOutcome, writeBattleOutcome, writebackReceipt } from './mvu-writeback.js';
@@ -1144,7 +1144,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     const conflicts = [];
     const next = replayChatPatches(state, chatOpeningPatches(key), error => conflicts.push(error.message));
     if (conflicts.length) notify('部分辅助 AI 补丁未能重放', '', null, false, { tone: 'warning', unresolved: conflicts });
-    return next;
+    return replayOpeningBattle(next);
   }
   async function scan({ rehydrate = false, refreshSource = false } = {}) {
     const epoch = ++scanEpoch;
@@ -1345,6 +1345,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     try {
       let result = mount?.exportBattleReportText?.() || options.game?.exportBattleReportText?.();
       if (!result?.trim()) throw new Error('当前没有可交付的战报。');
+      if (mount?.exportBattleReport?.()?.summons?.length || /在场召唤物（以沙盘实测结算为准）/.test(result)) {
+        result += '\n续写请以沙盘结算记录中的召唤物存续、在场位置和资源为准。';
+      }
       const receipt = activeBattleKey && writebackReceipt(storage, activeBattleKey);
       if (receipt && receipt.outcomeDigest === await outcomeDigest(battleReportToMvuPatch(liveState(), sources.sourceMap))) {
         result += `\n（注：本场战斗结算后的生命/法力/体力、装备计数与消耗品变动已同步写入楼层 #${receipt.targetMessageId} 状态变量，请基于最新变量面板续写剧情，无需在 <UpdateVariable> 中重复扣减本场已结算战损。）`;
@@ -1421,7 +1424,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         linkedRoots: effective.map(operation => [operation.path, ...duplicateOperations(operation, duplicatePaths).map(copy => copy.path)]) }).map(batch =>
         batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
       if (patch.length) {
-        refreshOpeningInitiative(next);
+        replayOpeningBattle(next);
         syncEquipmentEffects(next);
         refreshOutcome(next);
         validate(next);

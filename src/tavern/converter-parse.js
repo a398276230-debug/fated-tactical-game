@@ -464,10 +464,31 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist) {
   return char;
 }
 
+export function resolveSummonSource(row, ownerRecord, mvuRecords, chars) {
+  if (row.source === 'char_info') {
+    return chars.find(record => sourceName(record) === row.name && (!record.归属 || record.归属 === sourceName(ownerRecord)))
+      ?? chars.find(record => sourceName(record) === row.name && !record.归属);
+  }
+  const notes = asObject(ownerRecord?.tacticalSummons);
+  const ownerPath = ownerRecord?.__sourcePath ?? [];
+  if (row.source.startsWith('mvu:')) {
+    const leaf = row.source.slice(4).split('/').at(-1);
+    const path = row.source.slice(4).split('/');
+    if (samePath(path.slice(0, -1), ownerPath) && own(notes, leaf)) return notes[leaf];
+    const root = ['事件', '战术扩展', '召唤物'];
+    const notePath = ownerPath[0] === '关系列表' ? [...root, '伙伴', ownerPath[1]] : [...root, '主角'];
+    if (samePath(path.slice(0, -1), notePath)) return own(notes, leaf) ? notes[leaf] : undefined;
+    if (!mvuRecords.some(record => record === ownerRecord && samePath(record.__sourcePath, path))) return undefined;
+  }
+  return own(notes, row.name) ? notes[row.name] : Object.values(notes).find(note => object(note) && sourceName(note) === row.name);
+}
+
 export function collectMvu(value) {
   const root = asObject(value?.stat_data ?? value?.statData ?? value);
   const lengths = asObject(root.事件?.战术扩展?.体长);
   const companionLengths = asObject(lengths.伙伴);
+  const summons = asObject(root.事件?.战术扩展?.召唤物);
+  const companionSummons = asObject(summons.伙伴);
   const found = [];
   const visit = (node, key = '', path = []) => {
     if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path, i]));
@@ -480,12 +501,22 @@ export function collectMvu(value) {
       const length = path.length === 1 && protagonistAliases.includes(path[0]) ? lengths.主角
         : path.length === 2 && path[0] === '关系列表' && own(companionLengths, key) ? companionLengths[key] : undefined;
       const record = clone(node);
+      const notes = path.length === 1 && protagonistAliases.includes(path[0]) ? own(summons, '主角')
+        : path.length === 2 && path[0] === '关系列表' ? own(companionSummons, key) : undefined;
+      if (object(notes)) record.tacticalSummons = clone(notes);
       if (Number.isFinite(length) && length > 0) record.bodyLengthM = length;
       found.push({ ...record, __sourceKey: key, __sourcePath: path, __sourceKind: 'MVU' });
     }
-    for (const [k, v] of Object.entries(node)) if (!['stats', 'attributes', '属性', 'resources', '资源', 'equipment', '装备', 'skills', '技能', 'statuses', '状态效果'].includes(k)) visit(v, k, [...path, k]);
+    for (const [k, v] of Object.entries(node)) if (!['stats', 'attributes', '属性', 'resources', '资源', 'equipment', '装备', 'skills', '技能', 'statuses', '状态效果', '战术扩展', 'tacticalSummons'].includes(k)) visit(v, k, [...path, k]);
   };
   visit(root);
+  const protagonist = found.find(record => record.__sourcePath.length === 1 && protagonistAliases.includes(record.__sourcePath[0]));
+  if (protagonist && object(summons.主角)) protagonist.tacticalSummons = clone(summons.主角);
+  for (const record of found) {
+    if (record.__sourcePath.length === 2 && record.__sourcePath[0] === '关系列表' && object(companionSummons[record.__sourcePath[1]])) {
+      record.tacticalSummons = clone(companionSummons[record.__sourcePath[1]]);
+    }
+  }
   return found;
 }
 
