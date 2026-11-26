@@ -16,7 +16,7 @@ import { assembleMessages, DEFAULT_SLOTS, resolveSlotContent } from '../src/tave
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
-import { configFor, isQuotaExceededError, putConfig, sourceBundle } from '../src/tavern/overlay-sources.js';
+import { battleEntryIndex, configFor, isQuotaExceededError, putConfig, sourceBundle, tavernMessages } from '../src/tavern/overlay-sources.js';
 
 test('Batch 3 自定义元素注册、静态修饰与空状态提示保持闭合', () => {
   const source = { charInfo: [{ name: '元素师', 装备: { 长剑: { 类型: '武器', 位置: '主手', 标签: ['[元素: 虚空]', '[虚空抗性: 20%]'] } }, 技能: [{ 名称: '虚空斩', 类型: '主动', 标签: ['威力: 20', '[伤害类型: 虚空]'] }] }], battleInit: { units: [{ id: 'u', name: '元素师', source: '元素师', faction: 'blue', x: 1, y: 1 }] } };
@@ -85,6 +85,89 @@ cover|c1|半|货箱|4,8,0`;
 import { CUSTOM_ELEMENTS_KEY, computeStorageDiagnostics, loadCustomElements, mergeCustomElements, pruneBattleScopedMap, pruneBattleStorageExcept,
   removeCustomElement, toPersistedOpeningSource, toStoredCharSnapshot } from '../src/tavern/overlay-storage.js';
 import { GLOBAL_UI_PREF_KEYS, storageAdapter } from '../src/ui/mount.js';
+
+const openingDescriptor = 'battle|1|floor-test|海岸 &amp; 港口|flat\nunit|e1|red|char_info|沃特·达加|6,2';
+const charTag = record => `<char_info>${JSON.stringify(record)}</char_info>`;
+const battleTag = raw => `<battle_init>${raw}</battle_init>`;
+const floor = (message_id, content) => ({ message_id, content });
+
+test('char_info 追溯使用 DOM 楼层 ID 对齐 API 索引，缺失或晚于入口时从头追溯', async () => {
+  const messages = [floor(2, charTag({name:'旧楼'})), floor(14, charTag({name:'窗口首楼'})),
+    floor(30, battleTag(openingDescriptor)), floor(43, charTag({name:'战后'}))];
+  const dom = (...ids) => ({ querySelectorAll: () => ids.map(id => ({getAttribute: key => key === 'data-mesid' ? id : null})) });
+  const doc = dom('43', '999', '14');
+  const rows = await tavernMessages({ getChatMessages: () => messages, document: doc });
+  const names = options => sourceBundle({}, rows, 'chat', 30, options).charInfo.map(r => r.name);
+  assert.deepEqual(names({ document:doc }), ['窗口首楼']);
+  for (const document of [null, dom(), dom(null), dom('999'), dom('43')]) {
+    assert.deepEqual(names({ document }), ['窗口首楼', '旧楼']);
+  }
+  assert.deepEqual(names(), ['窗口首楼', '旧楼']);
+  assert.deepEqual(names({ document:doc, minFloorIndex:0 }), ['窗口首楼', '旧楼']);
+  assert.deepEqual(names({ document:doc, minFloorIndex:2 }), []);
+});
+
+test('历史入口匹配对齐 pre 的空白和实体，显示正则只替换真正闭合的内层块', async () => {
+  const prefix = '自然语言 <battle_init> 中间正文';
+  const rendered = renderBattleInitEntry(`${prefix}\n${battleTag(openingDescriptor)}`);
+  assert.ok(rendered.startsWith(`${prefix}\n<details`));
+  assert.ok(rendered.includes(`<pre class="fated-battle-source">${openingDescriptor}</pre>`));
+  const pre = '  battle | 1 | floor-test | 海岸 & 港口 | flat\r\nunit|e1|red|char_info|沃特·达加|6, 2  ';
+  const messages = [floor(8, battleTag(openingDescriptor)), floor(15, battleTag(openingDescriptor.replace('floor-test', 'later')))];
+  assert.equal(battleEntryIndex(messages, pre), 0);
+  assert.equal(sourceBundle({}, messages, 'chat', messages[battleEntryIndex(messages, pre)].message_id).battleKey, 'chat__8__0__floor-test');
+  const node = {getAttribute: key => key === 'mesid' ? '8' : null, textContent: `${prefix}\n${pre}`,
+    querySelector: selector => selector === '.fated-battle-source' ? {textContent: pre} : null};
+  const document = { querySelectorAll: () => [node] };
+  const rows = await tavernMessages({document});
+  assert.equal(sourceBundle({}, rows, 'dom', 8, {document}).battleKey, 'dom__8__0__floor-test');
+});
+
+test('畸形描述符可降级或恢复 JSON，截断块保留有效正文并丢弃 HTML 尾部', () => {
+  const scan = content => sourceBundle({}, [floor(1, content)]);
+  assert.equal(scan(battleTag(`${openingDescriptor}\n<summary>报告`)).battleKey, null);
+  const json = {battleId:'recover', units:[]};
+  assert.deepEqual(scan(battleTag(`${openingDescriptor}\n${JSON.stringify(json)}`)).battleInit, json);
+  for (const raw of [openingDescriptor, JSON.stringify(json)]) {
+    const result = scan(`<battle_init>${raw}\n</pre><script>trailing payload</script>`);
+    assert.equal(result.battleRaw, raw);
+    assert.ok(result.battleKey);
+  }
+  assert.deepEqual(scan(`<battle_init>{"broken":${JSON.stringify(json)}`).battleInit, json);
+});
+
+test('参战简表继承同名旧楼完整面板，存档保留合并来源及召唤物并可重建', async () => {
+  const old = {姓名:'沃特·达加', 生命层级:'第二层级', 等级:8, 体长:1.76, 身份:'打捞队长',
+    属性:{力量:8, 敏捷:6, 体质:7, 智力:2, 精神:4}, 资源:{HP:1427, MP:750, SP:1750},
+    装备:{精铁破浪重弩:{类型:'武器', 位置:'主手', 标签:['弩','攻击: 10']}},
+    技能:[{名称:'裂甲钩锁箭'}], 道具:[{名称:'狂躁嗅盐'}]};
+  const brief = {name:'沃特·达加', 身份:'新身份', level:'', stats:{str:9}, resources:{mp:700}, equipment:{}, skills:[], 道具:[]};
+  const summon = {姓名:'幼鸟', 归属:'沃特·达加', HP:20};
+  const implicit = {姓名:'鸥影', 角色定位:'召唤物', 归属:'沃特·达加', HP:12};
+  const stray = {姓名:'无关路人', 描述:'闲聊'.repeat(50000)};
+  const descriptor = `${openingDescriptor}\nsummon|s1|e1|char_info|幼鸟`;
+  const bundle = sourceBundle({}, [floor(1, [old, stray, summon, implicit].map(charTag).join('\n')), floor(2, charTag(brief)), floor(3, battleTag(descriptor))]);
+  assert.equal(bundle.charInfo.length, 5);
+  const persisted = toPersistedOpeningSource(bundle);
+  assert.deepEqual(persisted.charInfo, [brief, implicit, summon, old]);
+  assert.ok(JSON.stringify(persisted).length < 5000);
+  const hydrate = ({battleInit, charInfo}) => hydrateFromSources({battleInit, charInfo}, {seed:123, throwOnValidation:true});
+  const before = hydrate(bundle), after = hydrate(JSON.parse(JSON.stringify(persisted)));
+  const unit = after.state.units.e1;
+  assert.deepEqual(unit.stats, {str:9, agi:6, con:7, int:2, spi:4});
+  assert.deepEqual([unit.hp, unit.maxHp, unit.mp, unit.sp, unit.tier, unit.level, unit.bodyLengthM], [1427, 1427, 700, 1750, 2, 8, 1.76]);
+  assert.ok(unit.mainHand);
+  assert.equal(unit.skills.length, 1);
+  assert.deepEqual(Object.values(after.state.summonTemplates).map(r => r.name), ['幼鸟', '鸥影']);
+  assert.deepEqual(after.state, before.state);
+  const fingerprint = async (source, result) => (await characterRecords(source, result)).e1;
+  const first = await fingerprint(bundle, before);
+  assert.equal(first.hash, (await fingerprint(persisted, after)).hash);
+  assert.equal(first.raw.char_info.身份, '新身份');
+  assert.deepEqual(first.raw.char_info.道具, old.道具);
+  const changed = {...persisted, charInfo:persisted.charInfo.map(r => r.生命层级 ? {...r, 体长:1.8} : r)};
+  assert.notEqual((await fingerprint(changed, hydrate(changed))).entryHashes.unit, first.entryHashes.unit);
+});
 
 function memoryStorage(map = new Map()) {
   return {

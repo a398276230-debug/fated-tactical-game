@@ -1,4 +1,5 @@
 import { collectMvu } from './converter.js';
+import { resolveCharPanel, resolveSummonSource, sourceId } from './converter-parse.js';
 
 // Strip combat cursor/placement at the character boundary only: a skill's AP cost is source data.
 const transient = new Set(['x','y','z','xyz','position','pos','coordinates','facing','ap','used','round','turn','initiativeRoll','reactionAvailable','位置','坐标','行动点','回合','朝向']);
@@ -17,12 +18,14 @@ export async function characterRecords(sources, hydrated) {
     const samePath = mvu.find(r => mapping.path && JSON.stringify(r.__sourcePath) === JSON.stringify(mapping.path));
     const mv = samePath ?? mvu.find(matches);
     if (mv) aliases(mv).forEach(name => names.add(name));
-    const char = sources.charInfo?.find(matches);
+    const chars = sources.charInfo ?? [];
+    const char = p ? (mapping.sourceId && resolveCharPanel(chars, record => sourceId(record) === mapping.sourceId))
+      || resolveCharPanel(chars, matches) : chars.find(matches);
     const sourceKind = unit.source === 'MVU' || mv && !char ? 'mvu' : char ? 'char_info' : 'battle_init';
     const defs = (table, ids) => Object.fromEntries(ids.filter(id => typeof id === 'string' && Object.hasOwn(table ?? {}, id)).map(id => [id,table[id]]));
     const summonRows = (battle.summons ?? []).filter(row => row.ownerId === unit.id || row.ownerId === p?.id);
     const raw = { ...(mv && {mvu:clean(mv)}), ...(char && {char_info:clean(char)}), battle_init: clean(p), ...(summonRows.length && {summons: summonRows.map(row => ({ declaration: row,
-      ...(row.source === 'char_info' && { record: clean(sources.charInfo?.find(record => aliases(record).includes(row.name) && (!record.归属 || names.has(record.归属)))) }) }))}),
+      ...(row.source === 'char_info' && { record: clean(resolveSummonSource(row, unit.source === 'MVU' ? mv : char, mvu, chars)) }) }))}),
       equipment: defs(battle.equipment,[p?.mainHand,p?.offHand,p?.shield,...(Array.isArray(p?.gear)?p.gear:[])]), skills: defs(battle.skills,Array.isArray(p?.skills)?p.skills:[]) };
     const stripEntries = source => Object.fromEntries(Object.entries(source ?? {})
       .filter(([key]) => !['equipment', 'equipments', 'items', '装备', 'skills', 'abilities', '技能', '背包', 'mainHand', 'offHand', 'shield', 'gear'].includes(key)));

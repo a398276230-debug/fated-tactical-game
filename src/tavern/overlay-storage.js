@@ -1,5 +1,6 @@
 import { validateCustomElements } from '../core/elements.js';
 import { GLOBAL_UI_PREF_KEYS } from '../ui/mount.js';
+import { openingCharInfo } from './converter-unit.js';
 
 const PREFIX = 'fated-tactical/';
 export const CUSTOM_ELEMENTS_KEY = `${PREFIX}custom-elements`;
@@ -74,7 +75,8 @@ export function toStoredCharSnapshot({ hash, entryHashes }, resolvedWarnings = [
 }
 
 export function toPersistedOpeningSource({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source }) {
-  return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source });
+  const relatedCharInfo = openingCharInfo(battleInit, mvuData, charInfo, protagonistName);
+  return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo: relatedCharInfo, protagonistName, battleKey, source });
 }
 
 function storageCategory(key) {

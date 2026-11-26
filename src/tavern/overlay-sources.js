@@ -86,27 +86,55 @@ export function tavernIdentity(host) {
   return '';
 }
 
+const floorNodes = doc => [...(doc?.querySelectorAll?.('.mes, .chat-msg, [data-message-id], [data-mesid]') ?? [])];
+const floorId = node => ['mesid', 'data-message-id', 'data-mesid'].map(key => node.getAttribute(key))
+  .map(id => text(id).trim()).find(Boolean);
+
 export async function tavernMessages(host) {
   const messages = await readChatMessages(host);
   if (messages.length) return messages;
-  const doc = hostDocument(host);
-  const nodes = doc ? [...doc.querySelectorAll('.mes, .chat-msg, [data-message-id], [data-mesid]')] : [];
-  return nodes.map((node, index) => ({
-    message_id: node.getAttribute('mesid') ?? node.dataset.messageId ?? node.dataset.mesid ?? node.dataset.id ?? `floor-${index}`,
-    swipe_id: node.dataset.swipeId ?? node.dataset.swipe ?? '0',
-    content: node.querySelector('.mes_text, .message, [data-content]')?.textContent || node.textContent,
-  })).filter(item => item.content);
+  return floorNodes(hostDocument(host)).map((node, index) => {
+    const content = node.querySelector('.mes_text, .message, [data-content]')?.textContent || node.textContent;
+    const pre = node.querySelector('.fated-battle-source')?.textContent ?? '';
+    const battle = extractTag(pre, ['battle_init']) || pre;
+    return {
+      message_id: floorId(node) ?? node.dataset?.id ?? `floor-${index}`,
+      swipe_id: node.dataset?.swipeId ?? node.dataset?.swipe ?? '0',
+      content: battle?.trim() ? `${content}\n<battle_init>${battle}</battle_init>` : content,
+    };
+  }).filter(item => item.content);
 }
 
-export function sourceBundle(variables, messages, chat = 'default', preferredMessageId) {
+export function renderedMinFloorIndex(messages, doc = hostDocument()) {
+  const ids = new Set(floorNodes(doc).map(floorId).filter(Boolean));
+  return messages.findIndex((message, index) => ids.has(messageMeta(message, index).messageId));
+}
+
+const entities = { lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', amp: '&' };
+function decodeEntities(value, pattern) {
+  return value.replace(pattern, (entity, name) => {
+    if (Object.hasOwn(entities, name)) return entities[name];
+    const code = /^#x/i.test(name) ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+    return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+  });
+}
+const cleanMessage = message => stripMetaAndReasoning(decodeEntities(messageContent(message), /&(lt|gt|quot);/g));
+const comparableBattleText = value => decodeEntities(value, /&(#\d+|#[xX][0-9a-fA-F]+|lt|gt|quot|apos|nbsp|amp);/g)
+  .replace(/\s+/gu, ' ').replace(/\s*([|,])\s*/gu, '$1').trim();
+export function battleEntryIndex(messages, battleText) {
+  const expected = comparableBattleText(extractTag(battleText, ['battle_init']) || battleText);
+  return expected ? messages.findLastIndex(message => isBattleMessage(message) &&
+    comparableBattleText(extractTag(cleanMessage(message), ['battle_init'])) === expected) : -1;
+}
+const isBattleMessage = message => message?.role !== 'user' && !message?.is_user && message?.role !== 'system' && !message?.is_system;
+
+export function sourceBundle(variables, messages, chat = 'default', preferredMessageId, options) {
   const list = Array.isArray(messages) ? messages : [];
   const latestMessage = list.at(-1);
   const latestFloor = messageContent(latestMessage ?? variables?.latest_floor ?? variables?.latestFloor ?? '');
-  const eligible = list.filter(message => message?.role !== 'user' && !message?.is_user && message?.role !== 'system' && !message?.is_system &&
-    (preferredMessageId == null || messageMeta(message).messageId === String(preferredMessageId)));
+  const eligible = list.filter((message, index) => isBattleMessage(message) &&
+    (preferredMessageId == null || messageMeta(message, index).messageId === String(preferredMessageId)));
   const tags = ['battle_init', 'battle_in', '战术沙盘'];
-  const cleanMessage = message => stripMetaAndReasoning(messageContent(message)
-    .replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"'));
   const battleSource = eligible.findLast(message => extractTag(cleanMessage(message), tags));
   const sourceIndex = battleSource ? list.indexOf(battleSource) : list.length - 1;
   const allText = cleanMessage(battleSource ?? eligible.at(-1));
@@ -122,23 +150,30 @@ export function sourceBundle(variables, messages, chat = 'default', preferredMes
       if (wrapped) battleRaw = wrapped[1].trim();
     }
   }
-  let battleInit = battleRaw ? parseBattleInit(battleRaw) : null;
+  let battleInit = null;
+  if (battleRaw) {
+    try { battleInit = parseBattleInit(battleRaw); }
+    catch { battleInit = null; }
+  }
   // Tavern may strip XML tags, escape them, or wrap the JSON in markdown.
   // Recover the canonical battle object by shape instead of treating it as a
   // char_info block.
   if (!isObject(battleInit) || (!Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants))) {
     const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
     if (recovered) { battleInit = recovered; battleRaw = JSON.stringify(recovered, null, 2); }
+    else if (!isObject(battleInit?.participants) && !battleInit?.roster && !battleInit?.battleId && !battleInit?.id && !battleInit?.title && !battleInit?.sceneTitle) battleInit = null;
   }
   // Parse each opening-source message independently so no tag spans chat floors.
-  const charBlocks = list.slice(0, sourceIndex + 1).flatMap(message => extractTags(cleanMessage(message), 'char_info')).reverse();
+  const renderedMinIndex = options?.minFloorIndex ?? renderedMinFloorIndex(list, options?.document);
+  const startIndex = renderedMinIndex >= 0 && renderedMinIndex <= sourceIndex ? renderedMinIndex : 0;
+  const charBlocks = list.slice(startIndex, sourceIndex + 1).flatMap(message => extractTags(cleanMessage(message), 'char_info')).reverse();
   const charInfo = charBlocks.flatMap(raw => {
     const value = parseJSON(raw, null);
     return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
   });
   const mvuData = statData(variables) ?? variables ?? {};
   const sourceMessage = battleSource ?? eligible.at(-1);
-  const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit) : null;
+  const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit, sourceIndex) : null;
   return { mvuData, latestFloor: battleSource ? messageContent(battleSource) : latestFloor, battleInit, charInfo, battleRaw, protagonistName: '', battleKey,
     source: sourceMessage ? { ...messageMeta(sourceMessage, sourceIndex), chatId: chat } : null };
 }

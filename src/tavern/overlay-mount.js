@@ -22,9 +22,9 @@ import { fillInstance } from './instance-card.js';
 import { mountAiPage } from './ai-page.js';
 import { chatUndoChanges, chatInversePatch } from './ai-patch-undo.js';
 import { acceptNormalizationResponse, rejectedWarning, repairWarnings, runNormalizationRepair } from './normalization-commit.js';
-import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey, stripMetaAndReasoning } from './overlay-ai.js';
+import { buildAIRequest, extractJsonBlocks, messageMeta, parseAIResponse, preferredJson, requestAI, requestTavernAI, safeKey } from './overlay-ai.js';
 import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch } from './overlay-patch.js';
-import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, isQuotaExceededError, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
+import { LARGE_CONFIG_KEYS, TAVERN_VERSION, battleEntryIndex, chatId, configFor, isQuotaExceededError, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
 import { computeStorageDiagnostics, loadCustomElements, mergeCustomElements, pruneBattleScopedMap, pruneBattleStorageExcept as pruneStoredBattles,
   toPersistedOpeningSource, toStoredCharSnapshot } from './overlay-storage.js';
@@ -434,7 +434,9 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     if (trigger) {
       event.preventDefault(); event.stopPropagation();
       const floor = trigger.closest('[mesid], [data-message-id], [data-mesid]');
-      void openBattleEntry(floor?.getAttribute('mesid') ?? floor?.dataset.messageId ?? floor?.dataset.mesid);
+      const battleText = trigger.previousElementSibling?.matches('.fated-battle-source')
+        ? trigger.previousElementSibling.textContent : '';
+      void openBattleEntry(floor?.getAttribute('mesid') ?? floor?.dataset.messageId ?? floor?.dataset.mesid, battleText);
     }
   }, { capture: true });
 
@@ -869,6 +871,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     }
     if (epoch !== scanEpoch || disposed) return null;
     const openingSource = !opening && key ? toPersistedOpeningSource(nextSources) : null;
+    if (openingSource) nextSources.charInfo = openingSource.charInfo;
     if (!nextSources.battleInit) {
       sources = nextSources;
       diagnostics = { phase: 'no-battle' };
@@ -1155,11 +1158,10 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       let entryId = selectedMessageId;
       if (entryId == null && selectedBattleText) {
-        const entryIndex = messages.findLastIndex(message => message?.role !== 'user' && !message?.is_user &&
-          extractTag(stripMetaAndReasoning(messageContent(message)), ['battle_init'])?.trim() === selectedBattleText.trim());
+        const entryIndex = battleEntryIndex(messages, selectedBattleText);
         if (entryIndex >= 0) entryId = messageMeta(messages[entryIndex], entryIndex).messageId;
       }
-      const candidate = sourceBundle({}, messages, chat, entryId);
+      const candidate = sourceBundle({}, messages, chat, entryId, { document: doc });
       const key = candidate.battleKey;
       foldBattleEntries();
       if (!rehydrate && !refreshSource && key && activeBattleKey === key && gameMount) {

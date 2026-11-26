@@ -151,8 +151,8 @@ export function messageMeta(message, index = 0) {
 }
 export function safeKey(value) { return text(value).replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 96) || 'unknown';
 }
-export function battleKeyFor(chat, message, battle) {
-  const meta = messageMeta(message);
+export function battleKeyFor(chat, message, battle, index) {
+  const meta = messageMeta(message, index);
   const explicit = battle?.battleId ?? battle?.id ?? 'unnamed';
   return [safeKey(chat), safeKey(meta.messageId), safeKey(meta.swipeId), safeKey(explicit)].join('__');
 }
@@ -179,7 +179,19 @@ export function extractTag(source, names) {
   const closed = last(matches.map(match => match.closed.at(-1)));
   if (closed) return closed.content;
   const open = last(matches.map(match => match.open));
-  return open ? value.slice(open.start).trim() : '';
+  if (!open) return '';
+  const body = value.slice(open.start).trim();
+  if (!names.some(name => ['battle_init', 'battle_in', '战术沙盘'].includes(name))) return body;
+  // Cut a rendered wrapper or trailing metadata at the first markup line.
+  // Keep markup inside JSON string values and inline descriptor text intact.
+  const markup = /^[^\S\r\n]*(?:<\/?[a-z][\w-]*(?:\s|\/?>)|<!--)/im.exec(body);
+  const prefix = markup ? body.slice(0, markup.index) : body;
+  // HTML wrappers can also start immediately after the last descriptor or JSON record.
+  // Consume quoted strings first so a literal tag in a JSON field is not a boundary.
+  for (const token of prefix.matchAll(/"(?:\\[\s\S]|[^"\\])*"|<\/(?:pre|details)\s*>|<(?:script|summary)\b[^>]*>/gi)) {
+    if (token[0].startsWith('<')) return prefix.slice(0, token.index).trim();
+  }
+  return prefix.trim();
 }
 function parseTaggedJSON(source, names) {
   const raw = extractTag(source, names);

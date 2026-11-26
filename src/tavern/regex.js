@@ -5,7 +5,7 @@
  * markdown rendering. The replacement is intentionally only a marker card;
  * overlay.js owns the click handler and opens the console safely.
  */
-export const BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>([\s\S]*?)<\/battle_init>/gi;
+export const BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>((?:(?!<battle_init\b[^>]*>)[\s\S])*?)<\/battle_init>/gi;
 export const BATTLE_INIT_DISPLAY_REPLACEMENT =
   '<details class="fated-battle-entry" data-fated-battle-entry="true">' +
   '<summary>⚔ 进入战场 · 点击展开入口</summary>' +

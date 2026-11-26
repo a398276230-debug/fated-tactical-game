@@ -444,30 +444,90 @@ const protagonistAliases = ['主角', '玩家', '主控', 'protagonist', 'player
 const charSources = ['char_info', 'narrative_char_info'];
 const samePath = (a, b) => a.length === b.length && a.every((part, i) => String(part) === b[i]);
 
-function resolveParticipant(participant, mvuRecords, chars, protagonist) {
+const charNameKeys = ['name', 'displayName', 'characterName', '角色名', '姓名', '名称'];
+const charIdKeys = ['id', 'uid', 'characterId', 'instanceId', 'ID'];
+const statContainers = ['stats', 'attributes', '属性'];
+const resourceContainers = ['resources', 'resource', '资源'];
+const panelAliases = [charNameKeys, charIdKeys, ['tier', 'levelTier', '层级', '生命层级'], ['level', '等级'],
+  ['bodyLengthM', 'bodyLength', 'BL', 'bl', '体长', '身高'], ['equipment', 'equipments', 'items', '装备'],
+  ['skills', 'abilities', '技能'], ['道具', 'consumables'], ['数量', 'count']];
+const present = value => !emptyEntry(value) && (!Array.isArray(value) || value.length > 0);
+
+function mergePanelFields(base, newer, groups = []) {
+  for (const [key, value] of Object.entries(newer)) {
+    if (!present(value) || ['__proto__', 'constructor', 'prototype'].includes(key)) continue;
+    for (const alias of groups.find(group => group.includes(key)) ?? []) {
+      if (alias !== key) delete base[alias];
+    }
+    base[key] = value;
+  }
+  return base;
+}
+
+export function resolveCharPanel(chars, matches, useRecord) {
+  const anchor = chars.find(matches);
+  if (!anchor) return undefined;
+  const id = sourceId(anchor), name = sourceName(anchor);
+  const namedIds = !id && new Set(chars.filter(record => name && sourceName(record) === name).map(record => sourceId(record)).filter(Boolean));
+  const records = chars.filter(record => {
+    const otherId = sourceId(record);
+    if (record === anchor || (id && id === otherId)) return true;
+    return (!otherId || (!id && namedIds.size === 1)) && name && sourceName(record) === name &&
+      (!anchor.归属 || !record.归属 || anchor.归属 === record.归属);
+  });
+  records.forEach(record => useRecord?.(record));
+  if (records.length === 1) return anchor;
+
+  const merged = {}, stats = {}, resources = {};
+  const statKeys = attrNames.map(key => [key, ...Object.keys(statAliases).filter(alias => statAliases[alias] === key)]);
+  const resourceKeys = Object.values(RESOURCE_ALIASES);
+  const scalarAliases = [...panelAliases, ...Object.values(RESOURCE_MAX_ALIASES)];
+  for (const record of records.toReversed()) {
+    const flat = { ...record };
+    const mergeGroup = (target, containers, keys, flatWins) => {
+      const nested = asObject(containers.map(key => flat[key]).find(present));
+      const direct = Object.fromEntries(keys.flat().filter(key => own(flat, key)).map(key => [key, flat[key]]));
+      for (const fields of flatWins ? [nested, direct] : [direct, nested]) mergePanelFields(target, fields, keys);
+      for (const key of [...containers, ...keys.flat()]) delete flat[key];
+    };
+    mergeGroup(stats, statContainers, statKeys, false);
+    // Resource maxima are also read from the top level by the unit converter.
+    mergeGroup(resources, resourceContainers, resourceKeys, true);
+    mergePanelFields(merged, flat, scalarAliases);
+  }
+  if (Object.keys(stats).length) merged.stats = stats;
+  if (Object.keys(resources).length) merged.resources = resources;
+  return merged;
+}
+
+function resolveParticipant(participant, mvuRecords, chars, protagonist, useRecord) {
   const source = text(participant.source), name = text(participant.name);
   if (source.startsWith('mvu:')) {
     const path = source.slice(4).split('/');
     return mvuRecords.find(record => samePath(record.__sourcePath, path));
   }
   if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
-  const char = chars.find(record => sourceId(record) && sourceId(record) === text(participant.id ?? participant.uid))
-    ?? chars.find(record => sourceName(record) === name);
-  if (charSources.includes(source.toLowerCase())) return char;
+  const char = () => {
+    const id = text(participant.id ?? participant.uid);
+    return (id && resolveCharPanel(chars, record => sourceId(record) === id, useRecord))
+      || resolveCharPanel(chars, record => name && sourceName(record) === name, useRecord);
+  };
+  if (charSources.includes(source.toLowerCase())) return char();
   const matches = (record, key) => [sourceId(record), sourceName(record), record.__sourceKey].includes(key);
-  if (source) return [...mvuRecords, ...chars].find(record => matches(record, source));
+  if (source) return mvuRecords.find(record => matches(record, source))
+    ?? resolveCharPanel(chars, record => matches(record, source), useRecord);
   const exact = [text(participant.id ?? participant.uid), name].filter(Boolean);
   for (const key of exact) {
     const record = mvuRecords.find(record => matches(record, key));
     if (record) return record;
   }
-  return char;
+  return char();
 }
 
-export function resolveSummonSource(row, ownerRecord, mvuRecords, chars) {
+export function resolveSummonSource(row, ownerRecord, mvuRecords, chars, useRecord) {
   if (row.source === 'char_info') {
-    return chars.find(record => sourceName(record) === row.name && (!record.归属 || record.归属 === sourceName(ownerRecord)))
-      ?? chars.find(record => sourceName(record) === row.name && !record.归属);
+    const eligible = chars.filter(record => !record.归属 || record.归属 === sourceName(ownerRecord));
+    return resolveCharPanel(eligible, record => sourceName(record) === row.name, useRecord);
   }
   const notes = asObject(ownerRecord?.tacticalSummons);
   const ownerPath = ownerRecord?.__sourcePath ?? [];

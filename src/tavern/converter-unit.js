@@ -630,18 +630,27 @@ function placeUnits(state, warnings) {
 /** Convert MVU stat_data, one or more char_info blocks, and battle_init into a
  * validated tactical state. The returned roster retains level/source metadata
  * which the engine unit schema intentionally does not store. */
-export function hydrateFromSources(input = {}, options = {}) {
-  const source = asObject(input), warnings = [];
-  const sink = (unitId, source, scope, path) => warningSink(warnings, unitId, source, scope, path);
-  const protagonistName = text(source.protagonistName ?? options.protagonistName);
-  const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
-  const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
-  const chars = parseCharInfo(source.charInfo ?? source.char_info ?? '').map(record => ({ ...record, __sourceKind: 'char_info' }));
+const markedSummon = record => record?.角色定位 === '召唤物' || record?.类型 === '召唤物';
+
+function addOwnedSummonRows(summonRows, chars, participants, resolved, onAdd) {
+  for (const record of chars.filter(markedSummon)) {
+    const name = sourceName(record);
+    const ownerName = text(record.归属);
+    if (!ownerName) continue;
+    const owner = participants.find((p, i) => p.name === ownerName || sourceName(resolved[i]) === ownerName);
+    if (!owner?.id || !name || summonRows.some(row => row.ownerId === owner.id && row.name === name)) continue;
+    summonRows.push({ id: deterministicId(`${owner.id}-${name}`, 'summon'), ownerId: owner.id, source: 'char_info', name });
+    onAdd?.(owner.id, name);
+    // The declaration may come from an older panel even if a newer panel supplies its stats.
+  }
+}
+
+function resolveRoster(battle, mvu, chars, protagonistName, useRecord) {
   const mvuRecords = collectMvu(mvu);
   const protagonist = protagonistAliases.flatMap(alias => mvuRecords.filter(record => samePath(record.__sourcePath, [alias])))[0];
   const descriptor = battle.version === 1 && ['flat', 'terrain'].includes(battle.terrainMode);
   const participants = participantList(battle);
-  const resolved = participants.map(participant => resolveParticipant(participant, mvuRecords, chars, protagonist));
+  const resolved = participants.map(participant => resolveParticipant(participant, mvuRecords, chars, protagonist, useRecord));
   // Older chapter JSON uses generated unit IDs and rarely names the MVU path.
   if (!descriptor && protagonist && !resolved.includes(protagonist)) {
     const eligible = p => !text(p.source) && teamOf(p.faction ?? p.team) === 'blue';
@@ -650,6 +659,41 @@ export function hydrateFromSources(input = {}, options = {}) {
     const fallbackIndex = byPersona >= 0 ? byPersona : participants.findIndex((p, i) => eligible(p) && !resolved[i]);
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
+  return { mvuRecords, protagonist, descriptor, participants, resolved };
+}
+
+export function openingCharInfo(battle, mvu, chars, protagonistName) {
+  if (!Array.isArray(chars) || !chars.length || !battle) return chars;
+  const used = new Set();
+  const keep = record => used.add(record);
+  const { mvuRecords, participants, resolved } = resolveRoster(battle, mvu, chars, protagonistName, keep);
+  // A legacy battle with no roster discovers its units from the source records.
+  if (!participants.length) return chars;
+  const summons = [...(battle.summons ?? [])];
+  addOwnedSummonRows(summons, chars, participants, resolved);
+  for (const row of summons) {
+    if (row.source !== 'char_info') continue;
+    const ownerIndex = participants.findIndex(p => p.id === row.ownerId);
+    if (ownerIndex < 0) continue;
+    const owner = resolved[ownerIndex];
+    resolveSummonSource(row, owner, mvuRecords, chars, keep);
+    // Preserve the record that supplies implicit summon discovery on replay.
+    for (const record of chars) {
+      if (markedSummon(record) && sourceName(record) === row.name && record.归属 &&
+          [participants[ownerIndex].name, sourceName(owner)].includes(record.归属)) keep(record);
+    }
+  }
+  return chars.filter(record => used.has(record));
+}
+
+export function hydrateFromSources(input = {}, options = {}) {
+  const source = asObject(input), warnings = [];
+  const sink = (unitId, source, scope, path) => warningSink(warnings, unitId, source, scope, path);
+  const protagonistName = text(source.protagonistName ?? options.protagonistName);
+  const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
+  const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
+  const chars = parseCharInfo(source.charInfo ?? source.char_info ?? '').map(record => ({ ...record, __sourceKind: 'char_info' }));
+  const { mvuRecords, protagonist, descriptor, participants, resolved } = resolveRoster(battle, mvu, chars, protagonistName);
   const customElements = clone(source.customElements ?? options.customElements ?? {});
   // Do not preload the demo catalog: its rules intentionally reference demo-only
   // status templates. Hydrated Tavern battles contain only source-backed entries.
@@ -689,16 +733,9 @@ export function hydrateFromSources(input = {}, options = {}) {
     };
   };
   const summonRows = [...(battle.summons ?? [])];
-  const markedSummon = record => record?.角色定位 === '召唤物' || record?.类型 === '召唤物';
-  for (const record of chars.filter(markedSummon)) {
-    const name = sourceName(record);
-    const ownerName = text(record.归属);
-    if (!ownerName) continue;
-    const owner = participants.find((p, i) => p.name === ownerName || sourceName(resolved[i]) === ownerName);
-    if (!owner?.id || !name || summonRows.some(row => row.ownerId === owner.id && row.name === name)) continue;
-    summonRows.push({ id: deterministicId(`${owner.id}-${name}`, 'summon'), ownerId: owner.id, source: 'char_info', name });
-    sink(owner.id, 'char_info', 'state').push(`已按归属补录召唤物「${name}」`, { kind: 'auto_adjusted' });
-  }
+  addOwnedSummonRows(summonRows, chars, participants, resolved, (ownerId, name) => {
+    sink(ownerId, 'char_info', 'state').push(`已按归属补录召唤物「${name}」`, { kind: 'auto_adjusted' });
+  });
   for (const [i, participant] of participants.entries()) {
     const record = resolved[i];
     const summon = summonRows.find(row => row.ownerId !== participant.id && row.name === participant.name);

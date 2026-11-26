@@ -447,8 +447,14 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(afterReset.equipment[itemTemplateId].rules.length, 0);
   await run(`(async () => { const frame = document.createElement('iframe'); frame.hidden = true;
     document.body.append(frame); frame.contentWindow.eval(overlayBundle); overlayFrame.remove(); window.overlayFrame = frame;
-    hostEvents.get('fated_tactical:open_ui')({messageId: 0}); })()`);
-  await until(async () => (await tavernState())?.scenarioId === afterReset.scenarioId, '重载所选旧楼战场');
+    const entry = document.createElement('details');
+    entry.innerHTML = '<pre class="fated-battle-source"></pre><button class="fated-battle-enter">打开战场控制台</button>';
+    entry.querySelector('pre').textContent = battleFixture.replaceAll('|', ' | ').replaceAll('\\n', '\\r\\n');
+    document.body.append(entry);
+    entry.querySelector('button').click();
+    entry.remove(); })()`);
+  await until(async () => (await tavernState())?.scenarioId === afterReset.scenarioId, '按入口正文重载所选旧楼战场');
+  assert.equal(await run('window.__fatedTacticalTavern.getSources().source.messageId'), '0');
   assert.deepEqual(await tavernState(), afterReset);
   assert.match(await run(`${get(cardWarnings)}.textContent`), /恒定拉距/);
   assert.equal(await run(`document.querySelectorAll('${rerollEntry}').length`), 0);
