@@ -4,7 +4,7 @@ import { DISTANCE_TABLE, sizeClassFor, stanceFor, moraleTypeFor, TIER_CELL_M, QU
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
-import { beginBattle, STATUSES } from '../core/combat.js';
+import { STATUSES } from '../presets/status-defaults.js';
 import { canOccupy } from '../core/spatial.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
@@ -491,8 +491,7 @@ export function collectMvu(value) {
 
 function statusId(value) {
   const key = text(value);
-  if (own(STATUSES, key)) return key;
-  return Object.keys(STATUSES).find(id => STATUSES[id].name === key) ?? null;
+  return key === 'suppressed' || key === STATUSES.suppressed.name ? 'suppressed' : null;
 }
 const bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer(value, fallback)));
 function statusTurns(value, fallback) {

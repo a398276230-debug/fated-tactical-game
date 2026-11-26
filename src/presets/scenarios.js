@@ -3,6 +3,7 @@ import { beginBattle } from '../core/combat.js';
 import { calculatePrebattleResources } from '../core/prebattle_resources.js';
 import { createPool } from '../core/vm-pools.js';
 import { EQUIPMENT, SKILLS } from './catalog.js';
+import { DEMO_STATUSES } from './demo-statuses.js';
 import { fields, validateState, statusTemplateTable, statusValue } from '../api/validation.js';
 
 export const SCENARIOS = Object.freeze({
@@ -45,8 +46,9 @@ function importCarry(state, value) {
   if (value.version !== 1 || value.kind !== 'persistent') throw new Error('无效的跨战档案');
   const carry = structuredClone(value);
   if (own(carry, 'statusTemplates')) {
-    statusTemplateTable(carry.statusTemplates);
-    state.statusTemplates = carry.statusTemplates;
+    if (!object(carry.statusTemplates)) throw new Error('跨战状态模板表无效');
+    state.statusTemplates = { ...state.statusTemplates, ...carry.statusTemplates };
+    statusTemplateTable(state.statusTemplates);
   }
   if (own(carry, 'customElements')) {
     const existing = state.customElements ?? {};
@@ -105,7 +107,7 @@ export function buildScenario(request = 'ruins') {
   const seed = request.seed ?? defaultSeed;
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff || !['protocol','sandbox'].includes(ruleset)) throw new Error('无效的种子或行动规则');
   const state = { scenarioId, title, mode:'split', ruleset, round: 1, turn: 0, order: [], units: {}, items: {},
-    equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS),
+    equipment: structuredClone(EQUIPMENT), skills: structuredClone(SKILLS), statusTemplates: structuredClone(DEMO_STATUSES),
     scale: { cellM: 2, width: 10, height: 10, anchorTier: 1, explicit: false },
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: 'floor', z: 0 }))),
     covers: {}, interactives: {}, zones: {}, pools: {}, rng: seed, logs: [], outcome: null };
@@ -130,7 +132,8 @@ export function buildScenario(request = 'ruins') {
     state.covers[id] = { id, name: `${material}掩体`, material, x, y, hp, maxHp: hp, cover: shielding };
   }
   function interact(id, x, y, kind) {
-    state.interactives[id] = { id, name: kind === 'barrel' ? '余烬爆桶' : '星辉祭坛', x, y, kind, spent: false };
+    state.interactives[id] = { id, name: kind === 'barrel' ? '余烬爆桶' : '星辉祭坛', x, y, kind, spent: false,
+      ...(kind === 'altar' ? { effect: 'shield', damage: 10, healAmount: 8, statusId: 'haste' } : {}) };
   }
   function heroes(x, y) {
     unit('swordsman', '岚 · 噬魂剑客', 'blue', x, y, 'soulblade', ['brand', 'surge', 'challenge', 'armor'],

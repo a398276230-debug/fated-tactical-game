@@ -1,7 +1,7 @@
 import { evaluateExpr, validExpr } from './formula.js';
 import { validVmExpiry } from './vm-schema.js';
 import { authorityFor } from './vm-authority.js';
-import { STATUSES } from '../presets/status-defaults.js';
+import { getStatusTemplate } from '../presets/status-defaults.js';
 
 const own = (record, key) => record != null && Object.hasOwn(record, key) ? record[key] : undefined;
 const bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
@@ -16,7 +16,7 @@ const finite = (value, fallback, strict, label) => {
 };
 
 export function resolveStatusApplication(state, target, statusId, input = {}, { strict = false } = {}) {
-  const template = own(state.statusTemplates, statusId) ?? own(STATUSES, statusId);
+  const template = getStatusTemplate(state, statusId);
   if (!template || !target) return null;
   const previous = own(target.statuses, statusId);
   const requestedMode = input.stackMode ?? previous?.stackMode ?? template.stackMode ?? 'refresh';

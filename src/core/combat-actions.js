@@ -10,14 +10,14 @@ import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, unitSkipped, reactionBlocked } from './vm-carriers.js';
-import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
+import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 import { resolveStatusApplication } from './status-application.js';
-export { STATUSES };
+export { getStatusTemplate, STATUSES };
 export const corpses = state => Object.values(state.units).filter(unit => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
 
 
@@ -50,11 +50,6 @@ function record(state, unit, type, text, detail = {}) {
 }
 
 function tableEntry(table, id) { return Object.hasOwn(table ?? {}, id) ? table[id] : undefined; }
-
-export function getStatusTemplate(state, statusId) {
-  if (typeof statusId !== 'string') return undefined;
-  return tableEntry(state?.statusTemplates, statusId) ?? tableEntry(STATUSES, statusId);
-}
 
 function equipmentFor(state, instanceId) {
   const instance = tableEntry(state.items, instanceId);
@@ -1111,7 +1106,8 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     } else if (distance(state,unit,item) > 1.5 || !clearSight(state,unit,item)) return fail('需要靠近互动点');
     const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: item.radius ?? 1.5 }) : [center];
     const keyset = new Set(cells.map(at => key(at.x, at.y)));
-    const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }]
+    const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y,
+      heal: item.effect === 'shield' && item.healAmount ? [item.healAmount, item.healAmount] : [0, 0] }]
       : living(state).filter(u => keyset.has(key(u.x, u.y)) && distance(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: 'attack' }) <= (item.radius ?? 1.5) + 1e-9).map(u => {
         const guard = guardFor(state, u) ?? u;
         const context = { attacker: unit, targetId: guard.id, damageType: 'energy', intercepting: guard !== u };
@@ -1234,7 +1230,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     for (const profile of targets) {
       if (profile.heal && profile.kind !== 'cover') {
         const shieldOps = template.rules.flatMap(rule => rule.program ?? [])
-          .filter(op => op.op === 'apply_status' && op.statusId === 'shield');
+          .filter(op => op.op === 'apply_status' && getStatusTemplate(state, op.statusId)?.category === 'shield');
         if (shieldOps.length) profile.healingShield = [Math.floor(profile.heal[1] / 2), Math.floor(profile.heal[1] / 2)];
       }
       if (profile.dice) continue;
@@ -1640,7 +1636,8 @@ function continueInteraction(state, actor, plan, progress) {
       if (weapon.ammo && !weapon.infiniteAmmo) spendAmmo(state, actor, weapon, weapon.ammo);
       progress.targets = plan.targets.map(profile => profile.id);
     } else if (effect !== 'shield') {
-      restoreHP(state, actor, item.damage ?? 8, actor.id, item.name);
+      if (effect) restoreHP(state, actor, item.damage ?? 8, actor.id, item.name);
+      if (item.statusId) grantStatus(state, actor, item.statusId, { sourceId: actor.id });
       return false;
     }
   }
@@ -1659,10 +1656,9 @@ function continueInteraction(state, actor, plan, progress) {
     setResourceTotal(state, actor, 'mp', Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
     setResourceTotal(state, actor, 'sp', Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
   } else if (effect === 'shield') {
+    if (item.healAmount) restoreHP(state, actor, item.healAmount, actor.id, item.name);
     grantShield(state, actor, item.damage ?? 10, { sourceId: actor.id });
-  } else if (effect !== 'heal') {
-    grantShield(state, actor, 10, { sourceId: actor.id });
-    grantStatus(state, actor, actionStatuses.altar, { sourceId: actor.id });
+    if (item.statusId) grantStatus(state, actor, item.statusId, { sourceId: actor.id });
   }
   return true;
 }

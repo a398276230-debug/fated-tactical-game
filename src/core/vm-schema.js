@@ -284,7 +284,8 @@ function matches(value, schema, context, depth = 0) {
   if (schema.type === 'string') {
     if (typeof value !== 'string' || (schema.pattern && !new RegExp(schema.pattern, 'u').test(value))) return false;
     if (schema.format === 'tactical-expr') return validExpr(value);
-    if (schema.format === 'tactical-status-id') return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
+    if (schema.format === 'tactical-status-id') return Object.hasOwn(context.statusTemplates ?? {}, value)
+      || (context.declaredStatusTemplatesOnly ? value === 'suppressed' : Object.hasOwn(STATUSES, value));
     if (schema.format === 'tactical-damage-type') return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
     return true;
   }

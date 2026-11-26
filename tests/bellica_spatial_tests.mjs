@@ -47,6 +47,9 @@ test('a vehicle observes boarding, moves its passenger, and reads actual moved d
 test('sunder counts once; movement combines native flat and VM multipliers before cell conversion', () => {
   const {state, actor} = field();
   actor.armor = 20;
+  state.statusTemplates.sunder = { id: 'sunder', name: '破甲', category: 'debuff', remainingTurns: 2, durationType: 'battle_turns', mods: [{ stat: 'armor', flat: -4 }] };
+  state.statusTemplates.chill = { id: 'chill', name: '寒冷', category: 'debuff', remainingTurns: 2, durationType: 'battle_turns', mods: [{ stat: 'movement', flat: -1 }] };
+  state.statusTemplates.haste = { id: 'haste', name: '疾走', category: 'buff', remainingTurns: 2, durationType: 'battle_turns', mods: [{ stat: 'movement', flat: 1 }] };
   const armor = () => mitigation(state, actor, 'physical', true).armor;
   const initial = armor(); grantStatus(state, actor, 'sunder'); assert.equal(armor(), initial - 4);
   Object.assign(actor, { tier:3, moveM:20 }); state.scale.cellM = 5;

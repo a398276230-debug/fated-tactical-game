@@ -212,6 +212,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
           ({unitId,originPath,message,effectName:'冰冻箭',reason:'仍缺冰冻持续时间'}));
         if (hostRequests.length === 4 && unresolved.length) {
           const {unitId,originPath,message} = unresolved[0];
+          patch.unshift({op:'add',path:'/statusTemplates/freeze',value:{id:'freeze',name:'冰冻',category:'control',mods:[{locks:['attack','action','move','cast']}]}});
           patch.push({op:'add',path:originPath+'/rules/-',resolves:[{unitId,originPath,message}],value:{
             id:'ice-partial',hook:'after_hit',filter:'attacker.id == self.id',
             program:[{op:'apply_status',target:'target',statusId:'freeze'}],
@@ -221,7 +222,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
           const missing = state.warnings.find(w => w.message.includes('震荡尾音'));
           if (missing) unresolved.push({unitId:missing.unitId,originPath:missing.originPath,message:missing.message,
             reason:'原文没有写持续时间',kind:'missing_info'});
-          patch[0].value.at(-1).program = [{op:'mutate_event'}];
+          patch.find(operation => operation.op === 'replace').value.at(-1).program = [{op:'mutate_event'}];
           patch.push({op:'add',path:'/statusTemplates/repair_probe',value:{id:'repair_probe',name:'校验探针',category:'special'}});
           unresolved.push({unitId:'p1',originPath:'/equipment/typo',effectName:'写错引用',reason:'缺少细节'});
         }

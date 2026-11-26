@@ -97,7 +97,7 @@ test('VM status expiry filters direct damage from indirect damage', () => {
       { op: 'apply_status', statusId: id, target: 'target', expireOn: { hook: 'after_damage', filter: 'event.direct == true' } },
       { op: 'damage', target: 'target', damageType: 'true', amount: 1, direct },
     ]);
-    state.statusTemplates = { [id]: { id, name: '易碎' } };
+    state.statusTemplates[id] = { id, name: '易碎' };
     validateState(state);
     applyAction(state, action);
     assert.equal(Boolean(target.statuses[id]), !direct);

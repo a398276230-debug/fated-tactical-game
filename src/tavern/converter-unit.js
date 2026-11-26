@@ -1,4 +1,3 @@
-import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { id as validId, validateState } from '../api/validation.js';
 import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells, tierFromCellM } from '../core/combat_protocol.js';
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
@@ -469,10 +468,11 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   for (const [rawId, rawStatus] of statusEntries) {
     if ((Array.isArray(sourceStatuses) && emptyEntry(rawStatus)) || (typeof rawId === 'string' && emptyEntry(rawId))) continue;
     const sid = statusId(rawStatus?.statusId ?? rawStatus?.id ?? rawId);
-    const template = STATUSES[sid];
+    const template = sid === 'suppressed' ? STATUSES.suppressed : null;
     const description = text(rawStatus?.效果 ?? rawStatus?.description ?? rawStatus?.描述 ?? (rawStatus !== rawId && typeof rawStatus === 'string' ? rawStatus : ''));
     if (!template || description && description !== template.description) {
-      warnings.push(`状态待标准化：${rawId ?? 'unknown'}${description ? `：${description}` : ''}`);
+      const details = object(rawStatus) && !emptyEntry(rawStatus) ? describe(rawStatus) : description;
+      warnings.push(`状态待标准化：${rawId ?? 'unknown'}${description ? `：${description}` : ''}${details && details !== description ? `（原文 ${details}）` : ''}`);
       continue;
     }
     const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.剩余回合 ?? rawStatus?.剩余时间, template.remainingTurns);
@@ -480,11 +480,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`状态 ${sid} 的 modifiers 待标准化：${describe(rawStatus.modifiers)}。请在状态模板上声明 mods 或 rules`, { userSummary: `状态「${template.name}」：附带效果待转换` });
     const durationType = ['battle_turns', 'until_removed', 'persistent'].includes(rawStatus?.durationType)
       ? rawStatus.durationType : template.durationType;
-    const shieldAmount = template.category === 'shield'
-      ? bound(rawStatus?.amount ?? rawStatus?.护盾值, 1, 1e9, template.vars.shieldAmount) : null;
-    statuses[sid] = { ...clone(template), templateId: sid, ownerId: id, sourceId: null, durationType, remainingTurns, stacks,
-      ...(shieldAmount != null && { vars: { ...template.vars, shieldAmount } }),
-    };
+    statuses[sid] = { ...clone(template), templateId: sid, ownerId: id, sourceId: null, durationType, remainingTurns, stacks };
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
   const team = teamOf(p.faction ?? p.team, 'red');
@@ -653,7 +649,9 @@ export function hydrateFromSources(input = {}, options = {}) {
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
   const customElements = clone(source.customElements ?? options.customElements ?? {});
-  const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
+  // Do not preload the demo catalog: its rules intentionally reference demo-only
+  // status templates. Hydrated Tavern battles contain only source-backed entries.
+  const equipment = {}, skills = {}, items = [];
   const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = new Map();
   const add = (participant, record, index) => {
     const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, 'unit');

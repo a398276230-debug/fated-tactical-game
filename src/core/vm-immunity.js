@@ -1,4 +1,5 @@
 import { evaluateExpr } from './formula.js';
+import { getStatusTemplate } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 
@@ -55,7 +56,7 @@ export function isStatusImmune(state, target, statusId, source = null, dependenc
     sourceId: source?.id ?? null,
     targetId: target.id,
     statusId,
-    tags: own(state.statusTemplates, statusId)?.tags ?? [],
+    tags: getStatusTemplate(state, statusId)?.tags ?? [],
   };
   const { collectRules, carrierScope } = dependencies;
   if (typeof collectRules !== 'function' || typeof carrierScope !== 'function') return null;

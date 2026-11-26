@@ -716,7 +716,13 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const unitId = selectedId ?? active(live)?.id;
       const examples = {
         counter: () => ({ type: 'adjust_pool', poolId: game.getBattleState().items['soulblade-lan']?.pools?.souls ?? '', operation: 'add', value: 1 }),
-        status: () => ({ type: 'upsert_status', unitId, statusId: 'haste', options: { durationType: 'persistent' } }),
+        status: () => {
+          const [registeredId] = Object.keys(game.getBattleState().statusTemplates ?? {});
+          const statusId = registeredId ?? 'sandbox_buff';
+          const apply = { type: 'upsert_status', unitId, statusId, options: { durationType: 'persistent' } };
+          if (registeredId) return apply;
+          return [{ type: 'define_status_template', template: { id: statusId, name: '沙盒增益', category: 'buff' } }, apply];
+        },
         'custom-status': () => {
           const id = 'bone_frost', apply = { type: 'upsert_status', unitId, statusId: id };
           if (Object.hasOwn(game.listStatusTemplates(), id)) return [apply];

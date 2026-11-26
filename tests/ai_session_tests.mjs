@@ -256,7 +256,9 @@ test('主动吸血 out 链、周身选敌与 skill.id 作用域隔离在生产 V
 
 test('同批新增状态与召唤物专属技能补丁在生产战局中按拓扑序直接执行', () => {
   const message = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(row => row.content).join('\n');
-  assert.doesNotMatch(message, /平暴击×1\.3|切磋40%/);
+  assert.doesNotMatch(message, /平暴击×1\.3|切磋40%|原生状态 ID（不可覆盖其定义）|内置 STATUSES/);
+  assert.match(message, /suppressed 是压制战系统保留状态/);
+  assert.match(message, /sharedStatusLedger 未登记.*add \/statusTemplates\/<id>/);
   const patch = [
     { op: 'add', path: '/statusTemplates/guard_chill', value: { id: 'guard_chill', name: '星霜', category: 'control', remainingTurns: 2, mods: [{ locks: ['move'] }] } },
     { op: 'add', path: '/skills/guard_slash', value: { name: '亡卫斩', ap: 1, slot: 'attack', range: 2, shape: 'single', target: 'enemy', power: 20,

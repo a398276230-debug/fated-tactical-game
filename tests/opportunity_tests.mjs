@@ -12,6 +12,10 @@ const state = (rows, units) => ({ grid: rows.map(row => [...row].map(ch => ({ ki
   units: Object.fromEntries(units.map(u => [u.id, u])), covers: {}, interactives: {}, logs: [],
   items: { spear: { id: 'spear', templateId: 'spear' }, bow: { id: 'bow', templateId: 'bow' } },
   equipment: { spear: { name: 'spear', range: 1.5, damage }, bow: { name: 'bow', range: 4, damage } },
+  statusTemplates: {
+    root: { id: 'root', name: '定身', mods: [{ locks: ['move', 'teleport'] }] },
+    freeze: { id: 'freeze', name: '冻结', mods: [{ locks: ['move', 'attack', 'reaction'] }] },
+  },
   skills: {}, rng: 0, turn: 0, round: 1, outcome: null, order: units.map(u => u.id) });
 const xy = at => ({ x: at.x, y: at.y });
 const reactions = logs => logs.filter(entry => entry.type === 'opportunity');

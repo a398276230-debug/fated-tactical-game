@@ -742,6 +742,7 @@ test('只有副手标记的小刀能追击；切刀主攻后主手弓不追击�
     }
     const attack={type:'attack',x:e.x,y:e.y,intent:'core'};
     const offTemplate=state.equipment[state.items[p.offHand].templateId];
+    state.statusTemplates.root = { id: 'root', name: '定身', mods: [{ locks: ['move', 'teleport'] }] };
     if (!swap) offTemplate.rules.push({ id: 'probe_followup', hook: 'after_hit',
       filter: "event.weaponTemplateId == item.templateId && event.intent == 'normal'",
       program: [{ op: 'apply_status', target: 'target', statusId: 'root', turns: 1 }] });
@@ -955,7 +956,11 @@ test('Chinese slots, status durations and unsupported effect warnings', () => {
   assert.ok(skillWarnings.some(w => /statusId.*freeze/.test(w.message)));
   assert.equal(p.statuses.poison, undefined);
   for (const label of ['场地弹药补给', '轻便', '不存在', '冰冻', '中毒：每回合受到能量伤害']) assert.ok(warnings.some(w => w.message.includes(label)));
-  assert.equal(p.statuses.root.remainingTurns, 3, 'opening status must retain its authored duration');
+  assert.equal(p.statuses.root, undefined);
+  assert.ok(warnings.some(w => w.message.includes('状态待标准化：root') && w.message.includes('3回合')));
+  assert.deepEqual(state.statusTemplates, {});
+  assert.deepEqual(Object.values(state.equipment).map(item => item.name).sort(), ['匕首', '木盾', '皮甲']);
+  assert.deepEqual(Object.keys(state.skills), p.skills);
 });
 
 const shooterYaml = `技能:
@@ -1045,13 +1050,12 @@ test('G100 populated YAML blocks keep VM rules and diagnose unstandardized text'
     assert.ok(actual.some(w => w.originPath === `/skills/${id}` && w.message.includes(narrative)));
   }
 });
-test('G101 status placeholders are silent without hiding invalid modifier overrides', () => {
-  const {state,warnings} = hydrateDummy({ 状态: ['|', '>-', {}, null, {id:'stun',modifiers:'|'}] });
-  assert.deepEqual(warnings, []);
-  assert.ok(state.units.e1.statuses.stun.mods.some(mod => mod.locks?.includes('action')));
-  const bad = hydrateDummy({ 状态: [{id:'stun',modifiers:{badKey:2}}] });
-  assert.ok(bad.state.units.e1.statuses.stun.mods.some(mod => mod.locks?.includes('action')));
-  assert.ok(bad.warnings.some(w => w.message.includes('状态 stun 的 modifiers 待标准化') && w.message.includes('badKey')));
+test('G101 ignores status placeholders and sends authored statuses to standardization', () => {
+  const {state,warnings} = hydrateDummy({ 状态: ['|', '>-', {}, null, {id:'stun',modifiers:'|'}, {id:'bleed',modifiers:{badKey:2}}] });
+  assert.deepEqual(state.units.e1.statuses, {});
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0].message, /状态待标准化：stun/);
+  assert.match(warnings[1].message, /状态待标准化：bleed.*badKey/);
 });
 test('G102/G103 original YAML and rejected effects retain the referenced skill template', () => {
   const {state,warnings} = hydrateDummy(shooterYaml.replace('[伤害: 物理]',''));
@@ -1435,7 +1439,9 @@ test('原始资料槽限制单角色与整槽字符数，超限有可见提示',
 });
 
 test('instance-card rule formatter displays the trigger and status duration', () => {
-  assert.equal(ruleSummary({hook:'after_hit',program:[{op:'apply_status',statusId:'bleed',turns:2}]}),'命中时 → 施加 流血 2 回合');
+  const rule = { hook: 'after_hit', program: [{ op: 'apply_status', statusId: 'bleed', turns: 2 }] };
+  assert.equal(ruleSummary(rule), '命中时 → 施加 bleed 2 回合');
+  assert.equal(ruleSummary(rule, { statusTemplates: { bleed: { name: '裂伤' } } }), '命中时 → 施加 裂伤 2 回合');
 });
 
 function cardSections(state, unit, options = {}) {
@@ -1476,6 +1482,7 @@ test('instance card counts and describes equipment mods, rules and granted skill
       ] },
     },
     skills: { guard: { name: '战帅本能', passive: true }, deflect: { name: '星光偏转' } },
+    statusTemplates: { bleed: { id: 'bleed', name: '流血' } },
   };
   const [equipment, skills] = cardSections(state, unit);
   const [armor, ring] = equipment;

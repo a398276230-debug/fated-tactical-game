@@ -134,7 +134,7 @@ test('custom VM shields absorb damage by capacity and disappear when exhausted',
 test('snapshot replay validates and restores VM status definitions, instances and undo', () => {
   const api = boot(), before = api.exportBattleSnapshot();
   const snapshot = () => JSON.parse(JSON.stringify(api.exportBattleSnapshot()));
-  assert.equal(Object.hasOwn(before.state, 'statusTemplates'), false);
+  assert.equal(Object.keys(before.state.statusTemplates ?? {}).length, 17, 'demo statuses are scoped to demo scenarios');
   commit(api, define(), upsert('swordsman', { sourceId: 'scout', vars: { damage: 2 } }));
   const saved = snapshot(), restored = boot(saved);
   assert.deepEqual(restored.exportBattleSnapshot(), saved);
@@ -168,8 +168,10 @@ test('carryover retains persistent VM status instances and referenced templates'
 
 test('status templates and rules reject malformed data and unknown references atomically', () => {
   const api = boot(), start = api.exportBattleSnapshot();
+  const namespaceApi = boot();
+  assert.equal(propose(namespaceApi, define({ id: 'shield' })).ok, true, 'ordinary status IDs are intentionally open');
   for (const command of [
-    define({ id: 'shield' }), define({ id: '__proto__' }), define({ id: 'constructor' }),
+    define({ id: 'suppressed' }), define({ id: '__proto__' }), define({ id: 'constructor' }),
     define({ script: 'arbitrary code' }), define({ maxStacks: 1000000 }), define({ maxStacks: 1.5 }),
     define({ maxStacks: 'self.unknown' }), define({ remainingTurns: 0 }),
     define({ mods: [{ stat: 'move', flat: -1 }] }), define({ mods: [{ stat: 'str', flat: Infinity }] }),
@@ -180,17 +182,19 @@ test('status templates and rules reject malformed data and unknown references at
     assert.equal(propose(api, define(), skill({ id: 'invalid', hook: 'active', program: [op] })).ok, false);
   }
   assert.equal(propose(api, define(), define()).ok, false);
+  assert.equal(propose(api, define({ id: 'suppressed' })).ok, false, 'suppressed remains the reserved engine ID');
   assert.deepEqual(api.exportBattleSnapshot(), start);
 });
 
 test('custom definitions are battle-local and the registry is capped at 64 entries', () => {
   const api = boot();
-  const batch = offset => Array.from({ length: 32 }, (_, i) => define({ id: `custom-${offset + i}`, rules: [] }));
-  commit(api, ...batch(0));
-  commit(api, ...batch(32));
+  const baseline = Object.keys(api.getBattleState().statusTemplates ?? {}).length;
+  const batch = (offset, count) => Array.from({ length: count }, (_, i) => define({ id: `custom-${offset + i}`, rules: [] }));
+  commit(api, ...batch(0, 32));
+  commit(api, ...batch(32, 64 - baseline - 32));
   assert.equal(Object.keys(api.getBattleState().statusTemplates).length, 64);
   assert.equal(propose(api, define()).ok, false);
-  assert.equal(Object.hasOwn(boot().getBattleState(), 'statusTemplates'), false);
+  assert.equal(Object.keys(boot().getBattleState().statusTemplates ?? {}).length, 17, 'fresh demo battle receives only demo templates');
   assert.equal(api.undoLastCommit().ok, true);
   commit(api, define());
 });

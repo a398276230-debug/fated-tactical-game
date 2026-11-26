@@ -1,6 +1,6 @@
 # VM 状态系统
 
-权威模板位于 `src/presets/status-defaults.js` 的 `STATUSES`，校验位于 `src/api/validation.js`，运行时载体和 modifier 聚合位于 `src/core/vm-carriers.js`。当前共有 26 个内置状态。
+战局的 `state.statusTemplates` 定义角色状态。`src/api/validation.js` 校验模板，`src/core/vm-carriers.js` 聚合运行时效果。引擎另有 9 个内核状态，供压制规则和基础动作使用；只有 `suppressed` 是保留 ID。
 
 ## 1. 统一模板和实例
 
@@ -16,38 +16,23 @@
 
 现行状态系统不使用 `modifiers`、`stackRule`、`tickTiming` 或 `expireInto`。这些字段是已删除的旧双轨格式；外部脏输入只能被 converter 标记为待标准化。
 
-## 2. 内置状态目录
+## 2. 状态命名与基础动作
+
+标准化时，复用当前战局 `sharedStatusLedger` 中匹配的模板；未登记的灼烧、流血、护盾、控制等状态按词条的面板、公式、时长和叠层新建，不按中英文名称套用固定效果。除 `suppressed` 外，战局定义优先于下表的同名动作模板。
 
 | 状态 | 类别 | VM 语义 |
 | --- | --- | --- |
 | `suppressed` | control | 全部行动槽锁定；`vars.holdTotal` 保存挣脱阈值 |
-| `burn` | dot | `turn_start` 能量伤害 |
-| `bleed` | dot | `turn_end` 每层真实伤害 |
-| `poison` | dot | `turn_start` 每层真实伤害 |
-| `regen` | hot | `turn_start` 治疗 |
-| `shield` | shield | `vars.shieldAmount` 吸收伤害 |
+| `shield` | shield | 按调用方显式传入的 `vars.shieldAmount` 吸收伤害，无默认盾值 |
 | `guarded` | buff | `vars.reduction` 驱动 `damageReduction` |
-| `taunt` | control | `mods.flags: taunted` 强制敌方目标 |
-| `guard` | buff | `mods.flags: intercept` 拦截伤害 |
-| `thorns` | buff | `after_damage` 反伤规则 |
 | `stun` | control | 全部行动槽锁定 |
-| `freeze` | control | 全部行动槽锁定并提供 `shatter`，命中后解除 |
-| `root` | control | 锁 `move` 和 `teleport` |
-| `blind` | debuff | 攻击检定劣势 |
-| `vulnerable` | debuff | `incomingDamageMult` 增加承伤 |
-| `sunder` | debuff | armor flat 降低 |
-| `mark` | debuff | `incomingAccuracy` 增加 |
-| `stealth` | buff | `hidden`、攻击优势，敌对攻击/行动后解除 |
-| `haste` | buff | `movement` 增加 |
-| `chill` | debuff | `movement` 和攻击 `checkBonus` 降低 |
 | `charge` | buff | `damageMult` additivePercent |
 | `lock_on` | buff | 对攻击目标 `checkBonus` 增加 |
-| `weakness` | buff | `intentDifficulty` 每层降低 |
+| `weakness` | buff | 探察者自己的 `intentBonus` 每层 +2 |
 | `grappled` | control | 锁 `move` |
 | `prone` | debuff | 锁 `move` 并增加 `incomingAccuracy` |
-| `infinite_ammo` | buff | `infiniteAmmo` flag |
 
-动作映射由 `actionStatuses` 管理；状态本身仍是普通 VM 模板，不是引擎特例。
+动作映射见 `src/presets/status-defaults.js`。三张演示地图在开局时从 `src/presets/demo-statuses.js` 装入 17 个演示模板；酒馆水合不装入这些示例。
 
 ## 3. 聚合与结算
 

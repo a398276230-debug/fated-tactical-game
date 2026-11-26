@@ -26,6 +26,7 @@ test('heavy armor leaves native rating odds intact and exposure improves those o
   assert.ok(base.hitChance > .05 && base.hitChance < .95);
   const expected = Array.from({ length: 20 }, (_, i) => i + 1).filter(roll => roll !== 1 && roll + base.accuracy >= 4).length / 20;
   assert.ok(Math.abs(base.hitChance - expected) < 1e-10);
+  state.statusTemplates.mark = { id: 'mark', name: '标记', category: 'debuff', durationType: 'battle_turns', remainingTurns: 2, mods: [{ stat: 'incomingAccuracy', flat: 2 }] };
   grantStatus(state, target, 'mark');
   assert.ok(profile().hitChance > base.hitChance);
 });

@@ -55,7 +55,7 @@ export function tactics(state, actor, action, plan) {
     for (const target of targets) {
       const enemy = target.team !== actor.team;
       const status = getStatusTemplate(state, op.statusId);
-      const control = op.op === 'apply_status' && (status?.category === 'control' || ['stun', 'root', 'freeze', 'suppressed'].includes(op.statusId));
+      const control = op.op === 'apply_status' && status?.category === 'control';
       const profile = (plan.targets ?? []).find(row => (row.recipientId ?? row.id) === target.id);
       if (control && profile?.expectedDamage > 0 && !target.statuses[op.statusId]) {
         score += enemy ? 7 + (target.used.attack ? 2 : 0) : -7;
@@ -124,7 +124,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     if (op.enabled === false) return false;
     if (op.op === 'damage' || op.op === 'resource' && ['sub', 'sub_max'].includes(op.mode) && op.pool === 'hp') return true;
     if (op.op === 'apply_status') {
-      const category = state.statusTemplates?.[op.statusId]?.category;
+      const category = getStatusTemplate(state, op.statusId)?.category;
       return ['control', 'debuff', 'dot'].includes(category);
     }
     return op.op === 'if' && (offensiveProgram(op.then) || offensiveProgram(op.else))
@@ -235,7 +235,7 @@ function zoneOperationScore(state, zone, unit) {
     else if (op.op === 'resource' && ['sub', 'sub_max'].includes(op.mode) && op.pool === 'hp') value = -26;
     else if (op.op === 'heal') value = 14;
     else if (op.op === 'apply_status') {
-      const category = state.statusTemplates?.[op.statusId]?.category;
+      const category = getStatusTemplate(state, op.statusId)?.category;
       value = category === 'control' ? -24 : ['dot', 'debuff'].includes(category) ? -16 : ['buff', 'hot', 'shield'].includes(category) ? 12 : 0;
     }
     if (op.op === 'if') value += walk(op.then, multiplier) + walk(op.else, multiplier);

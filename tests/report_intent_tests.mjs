@@ -296,7 +296,7 @@ test('战报用施加时的状态实例呈现层数、护盾、解除条件和�
   assert.match(report, /获得护盾（持续至解除，护盾 12 点）/);
   assert.match(report, /获得疾走（跨战斗持续，移动距离 \+1）/);
   assert.match(report, /获得冰冻（持续 1 回合，碎裂增伤 \+50%，跳过行动，受到命中时解除，来源 [^；]+/);
-  assert.match(report, /获得弱点识别 ×3（持续 3 回合，每层意图难度 -2）/);
+  assert.match(report, /获得弱点识别 ×3（持续 3 回合，每层意图加值 \+2）/);
   assert.match(report, /的冰冻结束/);
   assert.match(report, /的护盾吸收6点伤害/);
 

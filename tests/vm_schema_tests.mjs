@@ -92,8 +92,9 @@ test('all 17 opcodes have closed shapes and generated Chinese descriptions', () 
     assert.equal(schema.description, opNotes[op]);
     assert.match(schema.description, /\p{Script=Han}/u);
     const instruction = { op, ...minimal[op], enabled: false, label: '说明' };
-    assert.equal(validVmOpcode(instruction), true, op);
-    assert.equal(validVmOpcode({ ...instruction, extra: 1 }), false, op);
+    const context = op === 'apply_status' ? { statusTemplates: { freeze: {} } } : undefined;
+    assert.equal(validVmOpcode(instruction, context), true, op);
+    assert.equal(validVmOpcode({ ...instruction, extra: 1 }, context), false, op);
     for (const key of schema.required) {
       const incomplete = { ...instruction };
       delete incomplete[key];

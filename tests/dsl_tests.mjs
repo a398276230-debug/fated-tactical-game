@@ -209,7 +209,7 @@ test('qualified damage reduction affects only its type and shields still absorb 
     enemy.armor = 0;
     Object.assign(enemy.stats, { str: 0, agi: 0, con: 0, int: 0, spi: 0 });
     enemy.mods = [{ stat: 'damageReduction', damageType: 'physical', flat: 0.5 }];
-    state.statusTemplates = { ward: { id: 'ward', name: '护盾', category: 'shield', vars: { shieldAmount: 2 } } };
+    state.statusTemplates.ward = { id: 'ward', name: '护盾', category: 'shield', vars: { shieldAmount: 2 } };
     const ward = learn(fixture, 'ward-test', [{ op: 'apply_status', target: 'target', statusId: 'ward' }]);
     const strike = learn(fixture, 'typed-test', [{ op: 'damage', target: 'target', amount: 8, damageType }]);
     validateState(state);

@@ -78,7 +78,7 @@ test('natural expiry removes the pool and runs the status rule with its final sn
   const api = createGameAPI();
   const rule = { id: 'last_words', hook: 'after_status_removed',
     program: [resource('mp', 'status.vars.value * status.stacks')] };
-  state.statusTemplates = { farewell: { id: 'farewell', name: '告别', maxStacks: 2, rules: [rule] } };
+  state.statusTemplates.farewell = { id: 'farewell', name: '告别', maxStacks: 2, rules: [rule] };
   first.statuses.farewell = { ...state.statusTemplates.farewell, templateId: 'farewell', ownerId: first.id, sourceId: first.id,
     remainingTurns: 1, durationType: 'battle_turns', stackMode: 'refresh', stacks: 2, vars: { value: 4 }, pools: { marker: 'pool_marker' } };
   state.pools = { pool_marker: { id: 'pool_marker', kind: 'custom', current: 2, max: 2, reloadable: false,

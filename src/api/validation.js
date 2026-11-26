@@ -13,7 +13,10 @@ import { validVmState } from '../core/vm-runtime.js';
 function validateRules(rules, state) {
   list(rules, 200, () => true, 'VM 规则');
   for (const [index, rule] of rules.entries()) {
-    const issue = vmRuleError(rule, { statusTemplates: state?.statusTemplates, customElements: state?.customElements });
+    const issue = vmRuleError(rule, {
+      statusTemplates: state?.statusTemplates, customElements: state?.customElements,
+      declaredStatusTemplatesOnly: state?.declaredStatusTemplatesOnly,
+    });
     requireThat(!issue, `VM 规则 rules/${index}${typeof rule?.id === 'string' ? `（${rule.id}）` : ''}/${issue}`);
   }
   requireThat(new Set(rules.map(rule => rule.id)).size === rules.length, 'VM 规则 ID 重复');
@@ -104,16 +107,19 @@ export function statusTemplate(value, key = value?.id, state) {
   checkOptional(value, 'expireOn', validVmExpiry);
   carrierFieldsValue(value, state);
 }
-export function statusTemplateTable(v) {
-  const state = { statusTemplates: v };
-  table(v, (template, key) => statusTemplate(template, key, state), maxStatusTemplates);
+export function statusTemplateTable(v, options = {}) {
+  const state = { ...options, statusTemplates: v };
+  table(v, (template, key) => {
+    requireThat(key !== 'suppressed', '保留状态 ID：suppressed');
+    statusTemplate(template, key, state);
+  }, maxStatusTemplates);
 }
 
 export function defineStatus(state, key, template) {
   requireThat(plain(template) && (!own(template, 'id') || template.id === key), '自定义状态 ID');
   const definition = { ...template, id: key };
   statusTemplate(definition, key, { statusTemplates: { ...state.statusTemplates, [key]: definition } });
-  requireThat(!own(state.statusTemplates ?? {}, key) && !own(STATUSES, key), '自定义状态 ID 已存在');
+  requireThat(key !== 'suppressed' && !own(state.statusTemplates ?? {}, key), '自定义状态 ID 已存在');
   requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, '自定义状态模板数量');
   (state.statusTemplates ??= {})[key] = structuredClone(definition);
   return structuredClone(definition);
@@ -455,10 +461,13 @@ export function validateState(s) {
     requireThat(!(v.cells.length && v.coverIds.length) && validVmOpcode({ op: 'spawn', entityKind: v.coverIds.length ? 'cover' : 'terrain', spec: v.spec }), '地形声明');
   }, 64);
   table(s.interactives, (v, k) => {
-    fields(v, ['id','name','x','y','kind','spent'], ['z','effect','radius','damage']);
+    fields(v, ['id','name','x','y','kind','spent'], ['z','effect','radius','damage','statusId','healAmount']);
     requireThat(v.id === k && text(v.name) && inGrid(s, v.x, v.y) && (!own(v,'z') || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== 'wall'
       && ['barrel','altar'].includes(v.kind) && (!own(v,'effect') || ['explode','heal','shield','restore'].includes(v.effect))
-      && (!own(v,'radius') || int(v.radius, 0, 10)) && (!own(v,'damage') || int(v.damage, 0, 100000)) && typeof v.spent === 'boolean', '互动点');
+      && (!own(v,'radius') || int(v.radius, 0, 10)) && (!own(v,'damage') || int(v.damage, 0, 100000))
+      && (!own(v,'healAmount') || v.effect === 'shield' && int(v.healAmount, 0, 100000))
+      && (!own(v,'statusId') || v.effect !== 'explode' && typeof v.statusId === 'string' && !!getStatusTemplate(s, v.statusId))
+      && typeof v.spent === 'boolean', '互动点');
   });
   const equipped = new Set();
   table(s.units, (v, k) => {

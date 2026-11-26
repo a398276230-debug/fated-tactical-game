@@ -11,11 +11,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadCorpus } from './load.mjs';
 import { VM_EFFECT_PROTOCOL } from '../../src/tavern/vm-effect-protocol.js';
-import { validVmRule, validVmOpcode, vmHooks, vmOpcodeSchema, vmSchema } from '../../src/core/vm-schema.js';
+import { validVmRule, validVmOpcode, vmRuleError, vmHooks, vmOpcodeSchema, vmSchema } from '../../src/core/vm-schema.js';
 import { validExpr, formulaReference, formulaQueryNames } from '../../src/core/formula.js';
-import { equipmentTemplate, skillTemplate } from '../../src/api/validation.js';
-import { buildScenario } from '../../src/presets/scenarios.js';
-import { STATUSES } from '../../src/presets/status-defaults.js';
+import { equipmentTemplate, skillTemplate, statusTemplateTable } from '../../src/api/validation.js';
+import { STATUS_CATALOG } from '../../src/tavern/status-catalog.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API = (process.env.VM_API ?? 'http://127.0.0.1:8317/v1').replace(/\/$/, '');
@@ -34,11 +33,6 @@ const OUTDIR = join(HERE, 'results');
 
 if (!KEY) { console.error('缺少 VM_API_KEY'); process.exit(2); }
 
-// 校验用的真实战局状态：状态模板表必须是引擎认可的那一份
-const scenario = buildScenario({ scenarioId: 'ruins', ruleset: 'protocol' });
-const state = { statusTemplates: scenario.statusTemplates, skills: scenario.skills, equipment: scenario.equipment };
-const STATUS_LIST = Object.keys(STATUSES).join(', ');
-
 // ---------- 分组：一个条目一次请求 ----------
 const rows = loadCorpus().filter(row => !ONLY || row.file.includes(ONLY));
 const items = new Map();
@@ -54,12 +48,12 @@ console.log(`条目 ${work.length} 个（效果 ${work.reduce((n, w) => n + w.ef
 
 // ---------- 提示词 ----------
 const SYSTEM = `你是「命定战术沙盘」的 VM 规则编译器。把中文技能/装备效果编译成战术 VM 的 rules 数组。
-只输出一个 JSON 对象，形如 {"rules":[...]}，不要解释、不要 Markdown 代码块。
+只输出一个 JSON 对象，形如 {"statusTemplates":{},"rules":[...]}，不要解释、不要 Markdown 代码块。
 规则：{id, hook, program, label?, priority?, usesPerBattle?, filter?}，program 是 opcode 数组。
 要求：
 1. 效果里每一条（每个「效果名」或每个自然段）至少产出一个 rule，按出现顺序排列；多条效果可以拆成多条 rule。
 2. hook 只能取协议里列出的枚举值；「受到伤害时」用 after_damage，「致命伤害」用 on_lethal_p2（preventDeath）或 on_death，「命中后」用 after_hit，「行动前拦截」用 before_action，「检定前」用 before_check，「施加状态前」用 before_status，「主动技能」用 active，「回合开始/结束」用 turn_start/turn_end。
-3. 状态 ID 只能从这份已注册表里选：${STATUS_LIST}。描述里出现表外状态名时，用最接近的已注册状态近似，并在 rule.label 里写原名。
+3. 每个条目独立编译。suppressed 仅用于压制战系统语义，禁止重定义。其他状态在本次输出的 statusTemplates 中按原文定义，以 ID 为键，再在 rules 中引用；没有新状态可省略 statusTemplates。
 4. 无法精确表达的机制，用现有 opcode 近似，并把近似点写进 label，不要发明新 opcode 或新字段。
 5. 数值用协议允许的形式：数字或表达式字符串（如 "3 + self.tier"）。表达式里的字符串字面量用单引号。
 6. 描述里没有数量的（如「高额」「少量」），按下列基准取整：一次攻击的一击 ≈ 目标 10% 最大 HP；"固定伤害+N" 写成 damage.amount 的常量 N；"减伤 X%" 写成 statMod(dr, flat: X/100)；"伤害提高 X%" 写成 statMod(damageMult, mult: 1+X)。`;
@@ -79,7 +73,7 @@ const userPrompt = ({ row, effects }) => {
     '效果：',
     ...effects.map((e, i) => `${i + 1}. ${e.name ? `${e.name}：` : ''}${e.text}`),
     '',
-    '输出 {"rules":[...]}，至少一条规则；每条效果的规则 id 用英文小写下划线，唯一。',
+    '输出 {"statusTemplates":{},"rules":[...]}，至少一条规则；每条效果的规则 id 用英文小写下划线，唯一。',
   ];
   return lines.filter(l => l !== null).join('\n');
 };
@@ -240,9 +234,11 @@ function isolate(op, hook) {
   return null;
 }
 
-function explainRule(rule) {
+function explainRule(rule, context) {
   if (!rule || typeof rule !== 'object') return 'rule 不是对象';
-  if (validVmRule(rule, { statusTemplates: state.statusTemplates })) return null;
+  if (validVmRule(rule, context)) return null;
+  const registrationError = vmRuleError(rule, context);
+  if (registrationError?.includes('未注册')) return registrationError;
   if (!vmHooks.includes(rule.hook)) return `hook=${show(rule.hook)} 不在允许枚举`;
   if (!Array.isArray(rule.program)) return 'program 不是数组';
   for (const [index, op] of rule.program.entries()) {
@@ -259,12 +255,15 @@ function explainRule(rule) {
 }
 
 // ---------- 校验 ----------
-function validate(item, rules) {
+function validate(item, rules, statusTemplates) {
   const problems = [];
+  try { statusTemplateTable(statusTemplates, { declaredStatusTemplatesOnly: true }); }
+  catch (error) { return { ok: false, problems: [`状态模板校验失败：${error.message}`] }; }
+  const state = { statusTemplates, declaredStatusTemplatesOnly: true };
   if (!Array.isArray(rules)) return { ok: false, problems: ['rules 不是数组'] };
   if (!rules.length) problems.push('rules 为空');
   rules.forEach((rule, index) => {
-    const reason = explainRule(rule);
+    const reason = explainRule(rule, state);
     if (reason) problems.push(`rule[${index}] ${rule?.id ?? '?'}: ${reason}`);
   });
   // 整条目校验：把 rules 挂到模板上，走引擎真正的入口
@@ -285,16 +284,17 @@ async function handle(entry) {
   const record = { key: entry.key, file: entry.row.file, uid: entry.row.source.uid, name: entry.row.item.name,
     category: entry.row.category, effects: entry.effects.length, attempts: 0, ok: false, problems: [], rules: [] };
   try {
-    let content = await chat([{ role: 'system', content: SYSTEM + '\n\n' + VM_EFFECT_PROTOCOL }, { role: 'user', content: user }]);
+    const system = [SYSTEM, VM_EFFECT_PROTOCOL, STATUS_CATALOG].join('\n\n');
+    let content = await chat([{ role: 'system', content: system }, { role: 'user', content: user }]);
     record.attempts++;
-    let rules, verdict;
     const accept = text => {
       let parsed;
       try { parsed = JSON.parse(stripFence(text)); } catch (error) { return { error: `JSON 解析失败：${error.message}` }; }
       const explicitUnresolved = Array.isArray(parsed?.unresolved) && parsed.unresolved.length > 0;
       if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.rules)) return { error: '缺少 rules 数组', explicitUnresolved };
-      const verdict = validate(entry.row.item, parsed.rules);
-      return { rules: parsed.rules, ...verdict, explicitUnresolved };
+      const statusTemplates = parsed.statusTemplates === undefined ? {} : parsed.statusTemplates;
+      const verdict = validate(entry.row.item, parsed.rules, statusTemplates);
+      return { rules: parsed.rules, statusTemplates, ...verdict, explicitUnresolved };
     };
     let outcome = accept(content);
     record.firstPass = !outcome.error && outcome.ok === true;
@@ -303,16 +303,17 @@ async function handle(entry) {
     for (let round = 0; round < REPAIR && !outcome.explicitUnresolved && (outcome.error || !outcome.ok); round++) {
       const diagnostic = outcome.error || outcome.problems.join('；') || 'VM 校验失败';
       content = await chat([
-        { role: 'system', content: SYSTEM + '\n\n' + VM_EFFECT_PROTOCOL },
+        { role: 'system', content: system },
         { role: 'user', content: user },
         { role: 'assistant', content: content.slice(0, 4000) },
-        { role: 'user', content: `输出不合格，精确诊断：${diagnostic}。只输出修正后的 {"rules":[...]}，不要输出 unresolved。` },
+        { role: 'user', content: `输出不合格，精确诊断：${diagnostic}。只输出修正后的 {"statusTemplates":{},"rules":[...]}，不要输出 unresolved。` },
       ]);
       record.attempts++;
       outcome = accept(content);
     }
     if (outcome.error) record.problems.push(outcome.error);
     else {
+      record.statusTemplates = outcome.statusTemplates;
       record.rules = outcome.rules;
       record.problems = outcome.problems;
       record.ok = outcome.ok;

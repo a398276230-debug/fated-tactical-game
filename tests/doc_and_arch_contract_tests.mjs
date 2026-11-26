@@ -5,6 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { flatOnlyStats, statNames, vmHooks, vmOpcodes } from '../src/core/vm-schema.js';
 import { STATUSES } from '../src/presets/status-defaults.js';
+import { DEMO_STATUSES } from '../src/presets/demo-statuses.js';
+import { buildScenario } from '../src/presets/scenarios.js';
 import { COMMAND_TYPES } from '../src/api/commands.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -50,11 +52,14 @@ test('documentation counts match authoritative sources', () => {
   const docs = files.map(read).join('\n');
   assert.equal(vmHooks.length, 26);
   assert.equal(vmOpcodes.length, 17);
-  assert.equal(Object.keys(STATUSES).length, 26);
+  assert.equal(Object.keys(STATUSES).length, 9);
+  assert.equal(Object.keys(DEMO_STATUSES).length, 17);
+  assert.deepEqual(Object.keys(buildScenario('ruins').statusTemplates).sort(), Object.keys(DEMO_STATUSES).sort());
   assert.equal(COMMAND_TYPES.length, 15);
   assert.match(docs, /Hooks（26）/);
   assert.match(docs, /Opcodes（17）/);
-  assert.match(docs, /26 个内置状态/);
+  assert.match(docs, /9 个内核状态/);
+  assert.doesNotMatch(docs, /26 个内置状态/);
   assert.match(read('README.md'), /version: 11/);
   assert.match(docs, /15 项|15 个|Commands（15）/);
   assert.doesNotMatch(docs, /adjust_item_counter/);
