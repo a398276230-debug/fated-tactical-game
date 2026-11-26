@@ -884,8 +884,8 @@ var FatedTactical = (() => {
     if (typeof id3 !== "string" || !safeKey(id3) || own2(context, "units") == null) return null;
     for (const unit of records(own2(context, "units"))) {
       if (!runtime.step()) return null;
-      const present = statusPresent(context, unit, id3);
-      if (present !== false) return present;
+      const present2 = statusPresent(context, unit, id3);
+      if (present2 !== false) return present2;
     }
     return false;
   });
@@ -2770,12 +2770,12 @@ var FatedTactical = (() => {
     } else if (op.kind === "option") choices = op.options;
     else if (op.kind === "entity") {
       const { from } = op.select;
-      const entities = /* @__PURE__ */ new Map();
+      const entities2 = /* @__PURE__ */ new Map();
       for (const entity of selectVM(state, op.select, context)) {
-        if (typeof entity.id === "string" && !entities.has(entity.id)) entities.set(entity.id, entity);
+        if (typeof entity.id === "string" && !entities2.has(entity.id)) entities2.set(entity.id, entity);
       }
-      choices = [...entities.values()].map(({ id: id3, name }) => ({ id: id3, label: name ?? id3 }));
-      if (choices.length) frame.choiceRefs = Object.fromEntries([...entities].map(([id3, entity]) => [id3, entityRef(state, entity, from, selectorOwner(op.select, context), context)]));
+      choices = [...entities2.values()].map(({ id: id3, name }) => ({ id: id3, label: name ?? id3 }));
+      if (choices.length) frame.choiceRefs = Object.fromEntries([...entities2].map(([id3, entity]) => [id3, entityRef(state, entity, from, selectorOwner(op.select, context), context)]));
     } else choices = selectVM(state, op.select, context).filter((cell) => coordinate2(cell) && !unitAt(state, cell.x, cell.y, chooser.id)).map(({ x, y }) => ({ x, y }));
     if (!choices || choices.length === 0) return;
     const ask = {
@@ -2857,10 +2857,10 @@ var FatedTactical = (() => {
         return;
       }
       case "for_each": {
-        const entities = selectVM(state, op.select, context);
-        if (!entities.length) return;
+        const entities2 = selectVM(state, op.select, context);
+        if (!entities2.length) return;
         const { from = "options" } = op.select;
-        const items = entities.map((entity) => typeof entity === "object" ? entityRef(state, entity, from, selectorOwner(op.select, context), context) : { type: "literal", value: entity });
+        const items = entities2.map((entity) => typeof entity === "object" ? entityRef(state, entity, from, selectorOwner(op.select, context), context) : { type: "literal", value: entity });
         childFrame(state, frame, { kind: "loop", from, bind: op.bind ?? null, items, program: op.body });
         return;
       }
@@ -5590,14 +5590,14 @@ var FatedTactical = (() => {
     if (state.battleType === "suppress") {
       const side2 = state.suppressingTeam, label = side2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
       const defenders = values3(state.units).filter((u) => u.team !== side2);
-      const present = defenders.filter((u) => alive3(u) && !u.fled);
+      const present2 = defenders.filter((u) => alive3(u) && !u.fled);
       const dead = defenders.filter((u) => !alive3(u));
-      if (!present.length && defenders.length) return concludeObjective(
+      if (!present2.length && defenders.length) return concludeObjective(
         state,
         side2 === "blue" ? "red" : "blue",
         dead.length === defenders.length ? `${label}\u8FC7\u5931\u81F4\u6B7B\uFF0C\u538B\u5236\u5931\u8D25` : `${label}\u672A\u80FD\u7559\u4F4F\u76EE\u6807\uFF0C\u538B\u5236\u5931\u8D25`
       );
-      if ((side2 === "blue" ? blue : red) && present.length && present.every((u) => u.statuses.suppressed?.vars?.holdTotal != null))
+      if ((side2 === "blue" ? blue : red) && present2.length && present2.every((u) => u.statuses.suppressed?.vars?.holdTotal != null))
         return concludeObjective(state, side2, `${label}\u538B\u5236\u6210\u529F${dead.length ? "\uFF0C\u8FC7\u5931\u81F4\u6B7B\uFF1A" + dead.map((u) => u.name).join("\u3001") : ""}`);
     }
     if (blue && red && state.battleType === "guard" && state.round > 5) return concludeObjective(state, "blue", "\u5B88\u65B9\u575A\u5B88\u4E94\u8F6E");
@@ -15695,27 +15695,89 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var protagonistAliases = ["\u4E3B\u89D2", "\u73A9\u5BB6", "\u4E3B\u63A7", "protagonist", "player", "mvu_protagonist"];
   var charSources = ["char_info", "narrative_char_info"];
   var samePath = (a, b) => a.length === b.length && a.every((part, i) => String(part) === b[i]);
-  function resolveParticipant(participant, mvuRecords, chars, protagonist) {
+  var charNameKeys = ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"];
+  var charIdKeys = ["id", "uid", "characterId", "instanceId", "ID"];
+  var statContainers = ["stats", "attributes", "\u5C5E\u6027"];
+  var resourceContainers = ["resources", "resource", "\u8D44\u6E90"];
+  var panelAliases = [
+    charNameKeys,
+    charIdKeys,
+    ["tier", "levelTier", "\u5C42\u7EA7", "\u751F\u547D\u5C42\u7EA7"],
+    ["level", "\u7B49\u7EA7"],
+    ["bodyLengthM", "bodyLength", "BL", "bl", "\u4F53\u957F", "\u8EAB\u9AD8"],
+    ["equipment", "equipments", "items", "\u88C5\u5907"],
+    ["skills", "abilities", "\u6280\u80FD"],
+    ["\u9053\u5177", "consumables"],
+    ["\u6570\u91CF", "count"]
+  ];
+  var present = (value) => !emptyEntry(value) && (!Array.isArray(value) || value.length > 0);
+  function mergePanelFields(base, newer, groups = []) {
+    for (const [key4, value] of Object.entries(newer)) {
+      if (!present(value) || ["__proto__", "constructor", "prototype"].includes(key4)) continue;
+      for (const alias of groups.find((group) => group.includes(key4)) ?? []) {
+        if (alias !== key4) delete base[alias];
+      }
+      base[key4] = value;
+    }
+    return base;
+  }
+  function resolveCharPanel(chars, matches2, useRecord) {
+    const anchor = chars.find(matches2);
+    if (!anchor) return void 0;
+    const id3 = sourceId(anchor), name = sourceName(anchor);
+    const namedIds = !id3 && new Set(chars.filter((record3) => name && sourceName(record3) === name).map((record3) => sourceId(record3)).filter(Boolean));
+    const records2 = chars.filter((record3) => {
+      const otherId = sourceId(record3);
+      if (record3 === anchor || id3 && id3 === otherId) return true;
+      return (!otherId || !id3 && namedIds.size === 1) && name && sourceName(record3) === name && (!anchor.\u5F52\u5C5E || !record3.\u5F52\u5C5E || anchor.\u5F52\u5C5E === record3.\u5F52\u5C5E);
+    });
+    records2.forEach((record3) => useRecord?.(record3));
+    if (records2.length === 1) return anchor;
+    const merged = {}, stats = {}, resources = {};
+    const statKeys = attrNames.map((key4) => [key4, ...Object.keys(statAliases).filter((alias) => statAliases[alias] === key4)]);
+    const resourceKeys = Object.values(RESOURCE_ALIASES);
+    const scalarAliases = [...panelAliases, ...Object.values(RESOURCE_MAX_ALIASES)];
+    for (const record3 of records2.toReversed()) {
+      const flat = { ...record3 };
+      const mergeGroup = (target2, containers, keys, flatWins) => {
+        const nested = asObject(containers.map((key4) => flat[key4]).find(present));
+        const direct = Object.fromEntries(keys.flat().filter((key4) => own16(flat, key4)).map((key4) => [key4, flat[key4]]));
+        for (const fields3 of flatWins ? [nested, direct] : [direct, nested]) mergePanelFields(target2, fields3, keys);
+        for (const key4 of [...containers, ...keys.flat()]) delete flat[key4];
+      };
+      mergeGroup(stats, statContainers, statKeys, false);
+      mergeGroup(resources, resourceContainers, resourceKeys, true);
+      mergePanelFields(merged, flat, scalarAliases);
+    }
+    if (Object.keys(stats).length) merged.stats = stats;
+    if (Object.keys(resources).length) merged.resources = resources;
+    return merged;
+  }
+  function resolveParticipant(participant, mvuRecords, chars, protagonist, useRecord) {
     const source = text3(participant.source), name = text3(participant.name);
     if (source.startsWith("mvu:")) {
       const path2 = source.slice(4).split("/");
       return mvuRecords.find((record3) => samePath(record3.__sourcePath, path2));
     }
     if (protagonistAliases.includes(source.toLowerCase())) return protagonist;
-    const char = chars.find((record3) => sourceId(record3) && sourceId(record3) === text3(participant.id ?? participant.uid)) ?? chars.find((record3) => sourceName(record3) === name);
-    if (charSources.includes(source.toLowerCase())) return char;
+    const char = () => {
+      const id3 = text3(participant.id ?? participant.uid);
+      return id3 && resolveCharPanel(chars, (record3) => sourceId(record3) === id3, useRecord) || resolveCharPanel(chars, (record3) => name && sourceName(record3) === name, useRecord);
+    };
+    if (charSources.includes(source.toLowerCase())) return char();
     const matches2 = (record3, key4) => [sourceId(record3), sourceName(record3), record3.__sourceKey].includes(key4);
-    if (source) return [...mvuRecords, ...chars].find((record3) => matches2(record3, source));
+    if (source) return mvuRecords.find((record3) => matches2(record3, source)) ?? resolveCharPanel(chars, (record3) => matches2(record3, source), useRecord);
     const exact = [text3(participant.id ?? participant.uid), name].filter(Boolean);
     for (const key4 of exact) {
       const record3 = mvuRecords.find((record4) => matches2(record4, key4));
       if (record3) return record3;
     }
-    return char;
+    return char();
   }
-  function resolveSummonSource(row, ownerRecord, mvuRecords, chars) {
+  function resolveSummonSource(row, ownerRecord, mvuRecords, chars, useRecord) {
     if (row.source === "char_info") {
-      return chars.find((record3) => sourceName(record3) === row.name && (!record3.\u5F52\u5C5E || record3.\u5F52\u5C5E === sourceName(ownerRecord))) ?? chars.find((record3) => sourceName(record3) === row.name && !record3.\u5F52\u5C5E);
+      const eligible = chars.filter((record3) => !record3.\u5F52\u5C5E || record3.\u5F52\u5C5E === sourceName(ownerRecord));
+      return resolveCharPanel(eligible, (record3) => sourceName(record3) === row.name, useRecord);
     }
     const notes2 = asObject(ownerRecord?.tacticalSummons);
     const ownerPath = ownerRecord?.__sourcePath ?? [];
@@ -16880,6 +16942,52 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
     }
   }
+  var markedSummon = (record3) => record3?.\u89D2\u8272\u5B9A\u4F4D === "\u53EC\u5524\u7269" || record3?.\u7C7B\u578B === "\u53EC\u5524\u7269";
+  function addOwnedSummonRows(summonRows, chars, participants, resolved, onAdd) {
+    for (const record3 of chars.filter(markedSummon)) {
+      const name = sourceName(record3);
+      const ownerName = text3(record3.\u5F52\u5C5E);
+      if (!ownerName) continue;
+      const owner = participants.find((p, i) => p.name === ownerName || sourceName(resolved[i]) === ownerName);
+      if (!owner?.id || !name || summonRows.some((row) => row.ownerId === owner.id && row.name === name)) continue;
+      summonRows.push({ id: deterministicId(`${owner.id}-${name}`, "summon"), ownerId: owner.id, source: "char_info", name });
+      onAdd?.(owner.id, name);
+    }
+  }
+  function resolveRoster(battle, mvu, chars, protagonistName, useRecord) {
+    const mvuRecords = collectMvu(mvu);
+    const protagonist = protagonistAliases.flatMap((alias) => mvuRecords.filter((record3) => samePath(record3.__sourcePath, [alias])))[0];
+    const descriptor = battle.version === 1 && ["flat", "terrain"].includes(battle.terrainMode);
+    const participants = participantList(battle);
+    const resolved = participants.map((participant) => resolveParticipant(participant, mvuRecords, chars, protagonist, useRecord));
+    if (!descriptor && protagonist && !resolved.includes(protagonist)) {
+      const eligible = (p) => !text3(p.source) && teamOf(p.faction ?? p.team) === "blue";
+      const byPersona = protagonistName ? participants.findIndex((p, i) => eligible(p) && text3(p.name) === protagonistName && resolved[i]?.__sourceKind !== "MVU") : -1;
+      const fallbackIndex = byPersona >= 0 ? byPersona : participants.findIndex((p, i) => eligible(p) && !resolved[i]);
+      if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
+    }
+    return { mvuRecords, protagonist, descriptor, participants, resolved };
+  }
+  function openingCharInfo(battle, mvu, chars, protagonistName) {
+    if (!Array.isArray(chars) || !chars.length || !battle) return chars;
+    const used = /* @__PURE__ */ new Set();
+    const keep = (record3) => used.add(record3);
+    const { mvuRecords, participants, resolved } = resolveRoster(battle, mvu, chars, protagonistName, keep);
+    if (!participants.length) return chars;
+    const summons = [...battle.summons ?? []];
+    addOwnedSummonRows(summons, chars, participants, resolved);
+    for (const row of summons) {
+      if (row.source !== "char_info") continue;
+      const ownerIndex = participants.findIndex((p) => p.id === row.ownerId);
+      if (ownerIndex < 0) continue;
+      const owner = resolved[ownerIndex];
+      resolveSummonSource(row, owner, mvuRecords, chars, keep);
+      for (const record3 of chars) {
+        if (markedSummon(record3) && sourceName(record3) === row.name && record3.\u5F52\u5C5E && [participants[ownerIndex].name, sourceName(owner)].includes(record3.\u5F52\u5C5E)) keep(record3);
+      }
+    }
+    return chars.filter((record3) => used.has(record3));
+  }
   function hydrateFromSources(input = {}, options = {}) {
     const source = asObject(input), warnings = [];
     const sink = (unitId, source2, scope, path2) => warningSink(warnings, unitId, source2, scope, path2);
@@ -16887,17 +16995,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const mvu = source.mvu ?? source.statData ?? source.stat_data ?? {};
     const battle = parseBattleInit(source.battleInit ?? source.battle_init ?? source.battle ?? {});
     const chars = parseCharInfo(source.charInfo ?? source.char_info ?? "").map((record3) => ({ ...record3, __sourceKind: "char_info" }));
-    const mvuRecords = collectMvu(mvu);
-    const protagonist = protagonistAliases.flatMap((alias) => mvuRecords.filter((record3) => samePath(record3.__sourcePath, [alias])))[0];
-    const descriptor = battle.version === 1 && ["flat", "terrain"].includes(battle.terrainMode);
-    const participants = participantList(battle);
-    const resolved = participants.map((participant) => resolveParticipant(participant, mvuRecords, chars, protagonist));
-    if (!descriptor && protagonist && !resolved.includes(protagonist)) {
-      const eligible = (p) => !text3(p.source) && teamOf(p.faction ?? p.team) === "blue";
-      const byPersona = protagonistName ? participants.findIndex((p, i) => eligible(p) && text3(p.name) === protagonistName && resolved[i]?.__sourceKind !== "MVU") : -1;
-      const fallbackIndex = byPersona >= 0 ? byPersona : participants.findIndex((p, i) => eligible(p) && !resolved[i]);
-      if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
-    }
+    const { mvuRecords, protagonist, descriptor, participants, resolved } = resolveRoster(battle, mvu, chars, protagonistName);
     const customElements = clone(source.customElements ?? options.customElements ?? {});
     const equipment = {}, skills = {}, items = [];
     const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, summonTemplates = {}, archetypes = /* @__PURE__ */ new Map();
@@ -16936,16 +17034,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       };
     };
     const summonRows = [...battle.summons ?? []];
-    const markedSummon = (record3) => record3?.\u89D2\u8272\u5B9A\u4F4D === "\u53EC\u5524\u7269" || record3?.\u7C7B\u578B === "\u53EC\u5524\u7269";
-    for (const record3 of chars.filter(markedSummon)) {
-      const name = sourceName(record3);
-      const ownerName = text3(record3.\u5F52\u5C5E);
-      if (!ownerName) continue;
-      const owner = participants.find((p, i) => p.name === ownerName || sourceName(resolved[i]) === ownerName);
-      if (!owner?.id || !name || summonRows.some((row) => row.ownerId === owner.id && row.name === name)) continue;
-      summonRows.push({ id: deterministicId(`${owner.id}-${name}`, "summon"), ownerId: owner.id, source: "char_info", name });
-      sink(owner.id, "char_info", "state").push(`\u5DF2\u6309\u5F52\u5C5E\u8865\u5F55\u53EC\u5524\u7269\u300C${name}\u300D`, { kind: "auto_adjusted" });
-    }
+    addOwnedSummonRows(summonRows, chars, participants, resolved, (ownerId, name) => {
+      sink(ownerId, "char_info", "state").push(`\u5DF2\u6309\u5F52\u5C5E\u8865\u5F55\u53EC\u5524\u7269\u300C${name}\u300D`, { kind: "auto_adjusted" });
+    });
     for (const [i, participant] of participants.entries()) {
       const record3 = resolved[i];
       const summon = summonRows.find((row) => row.ownerId !== participant.id && row.name === participant.name);
@@ -19933,7 +20024,8 @@ ${variables2.warnings()}` : "");
       const samePath2 = mvu.find((r) => mapping.path && JSON.stringify(r.__sourcePath) === JSON.stringify(mapping.path));
       const mv = samePath2 ?? mvu.find(matches2);
       if (mv) aliases2(mv).forEach((name) => names.add(name));
-      const char = sources.charInfo?.find(matches2);
+      const chars = sources.charInfo ?? [];
+      const char = p ? mapping.sourceId && resolveCharPanel(chars, (record3) => sourceId(record3) === mapping.sourceId) || resolveCharPanel(chars, matches2) : chars.find(matches2);
       const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
       const defs3 = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
       const summonRows = (battle.summons ?? []).filter((row) => row.ownerId === unit.id || row.ownerId === p?.id);
@@ -19943,7 +20035,7 @@ ${variables2.warnings()}` : "");
         battle_init: clean(p),
         ...summonRows.length && { summons: summonRows.map((row) => ({
           declaration: row,
-          ...row.source === "char_info" && { record: clean(sources.charInfo?.find((record3) => aliases2(record3).includes(row.name) && (!record3.\u5F52\u5C5E || names.has(record3.\u5F52\u5C5E)))) }
+          ...row.source === "char_info" && { record: clean(resolveSummonSource(row, unit.source === "MVU" ? mv : char, mvu, chars)) }
         })) },
         equipment: defs3(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
         skills: defs3(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
@@ -20783,8 +20875,8 @@ ${variables2.warnings()}` : "");
   function safeKey3(value) {
     return text5(value).replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 96) || "unknown";
   }
-  function battleKeyFor(chat, message, battle) {
-    const meta = messageMeta(message);
+  function battleKeyFor(chat, message, battle, index) {
+    const meta = messageMeta(message, index);
     const explicit = battle?.battleId ?? battle?.id ?? "unnamed";
     return [safeKey3(chat), safeKey3(meta.messageId), safeKey3(meta.swipeId), safeKey3(explicit)].join("__");
   }
@@ -20810,7 +20902,15 @@ ${variables2.warnings()}` : "");
     const closed = last(matches2.map((match) => match.closed.at(-1)));
     if (closed) return closed.content;
     const open = last(matches2.map((match) => match.open));
-    return open ? value.slice(open.start).trim() : "";
+    if (!open) return "";
+    const body = value.slice(open.start).trim();
+    if (!names.some((name) => ["battle_init", "battle_in", "\u6218\u672F\u6C99\u76D8"].includes(name))) return body;
+    const markup = /^[^\S\r\n]*(?:<\/?[a-z][\w-]*(?:\s|\/?>)|<!--)/im.exec(body);
+    const prefix = markup ? body.slice(0, markup.index) : body;
+    for (const token of prefix.matchAll(/"(?:\\[\s\S]|[^"\\])*"|<\/(?:pre|details)\s*>|<(?:script|summary)\b[^>]*>/gi)) {
+      if (token[0].startsWith("<")) return prefix.slice(0, token.index).trim();
+    }
+    return prefix.trim();
   }
   function extractTags(source, name) {
     return tagBlocks(stripMetaAndReasoning(source), name).closed.map((block) => block.content);
@@ -21366,24 +21466,48 @@ ${variables2.warnings()}` : "");
     }
     return "";
   }
+  var floorNodes = (doc) => [...doc?.querySelectorAll?.(".mes, .chat-msg, [data-message-id], [data-mesid]") ?? []];
+  var floorId = (node) => ["mesid", "data-message-id", "data-mesid"].map((key4) => node.getAttribute(key4)).map((id3) => text6(id3).trim()).find(Boolean);
   async function tavernMessages(host) {
     const messages = await readChatMessages(host);
     if (messages.length) return messages;
-    const doc = hostDocument(host);
-    const nodes = doc ? [...doc.querySelectorAll(".mes, .chat-msg, [data-message-id], [data-mesid]")] : [];
-    return nodes.map((node, index) => ({
-      message_id: node.getAttribute("mesid") ?? node.dataset.messageId ?? node.dataset.mesid ?? node.dataset.id ?? `floor-${index}`,
-      swipe_id: node.dataset.swipeId ?? node.dataset.swipe ?? "0",
-      content: node.querySelector(".mes_text, .message, [data-content]")?.textContent || node.textContent
-    })).filter((item) => item.content);
+    return floorNodes(hostDocument(host)).map((node, index) => {
+      const content = node.querySelector(".mes_text, .message, [data-content]")?.textContent || node.textContent;
+      const pre = node.querySelector(".fated-battle-source")?.textContent ?? "";
+      const battle = extractTag(pre, ["battle_init"]) || pre;
+      return {
+        message_id: floorId(node) ?? node.dataset?.id ?? `floor-${index}`,
+        swipe_id: node.dataset?.swipeId ?? node.dataset?.swipe ?? "0",
+        content: battle?.trim() ? `${content}
+<battle_init>${battle}</battle_init>` : content
+      };
+    }).filter((item) => item.content);
   }
-  function sourceBundle(variables2, messages, chat = "default", preferredMessageId) {
+  function renderedMinFloorIndex(messages, doc = hostDocument()) {
+    const ids = new Set(floorNodes(doc).map(floorId).filter(Boolean));
+    return messages.findIndex((message, index) => ids.has(messageMeta(message, index).messageId));
+  }
+  var entities = { lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", amp: "&" };
+  function decodeEntities(value, pattern) {
+    return value.replace(pattern, (entity, name) => {
+      if (Object.hasOwn(entities, name)) return entities[name];
+      const code = /^#x/i.test(name) ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+      return code > 0 && code <= 1114111 ? String.fromCodePoint(code) : entity;
+    });
+  }
+  var cleanMessage = (message) => stripMetaAndReasoning(decodeEntities(messageContent(message), /&(lt|gt|quot);/g));
+  var comparableBattleText = (value) => decodeEntities(value, /&(#\d+|#[xX][0-9a-fA-F]+|lt|gt|quot|apos|nbsp|amp);/g).replace(/\s+/gu, " ").replace(/\s*([|,])\s*/gu, "$1").trim();
+  function battleEntryIndex(messages, battleText) {
+    const expected = comparableBattleText(extractTag(battleText, ["battle_init"]) || battleText);
+    return expected ? messages.findLastIndex((message) => isBattleMessage(message) && comparableBattleText(extractTag(cleanMessage(message), ["battle_init"])) === expected) : -1;
+  }
+  var isBattleMessage = (message) => message?.role !== "user" && !message?.is_user && message?.role !== "system" && !message?.is_system;
+  function sourceBundle(variables2, messages, chat = "default", preferredMessageId, options) {
     const list4 = Array.isArray(messages) ? messages : [];
     const latestMessage = list4.at(-1);
     const latestFloor = messageContent(latestMessage ?? variables2?.latest_floor ?? variables2?.latestFloor ?? "");
-    const eligible = list4.filter((message) => message?.role !== "user" && !message?.is_user && message?.role !== "system" && !message?.is_system && (preferredMessageId == null || messageMeta(message).messageId === String(preferredMessageId)));
+    const eligible = list4.filter((message, index) => isBattleMessage(message) && (preferredMessageId == null || messageMeta(message, index).messageId === String(preferredMessageId)));
     const tags = ["battle_init", "battle_in", "\u6218\u672F\u6C99\u76D8"];
-    const cleanMessage = (message) => stripMetaAndReasoning(messageContent(message).replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"'));
     const battleSource = eligible.findLast((message) => extractTag(cleanMessage(message), tags));
     const sourceIndex = battleSource ? list4.indexOf(battleSource) : list4.length - 1;
     const allText = cleanMessage(battleSource ?? eligible.at(-1));
@@ -21396,22 +21520,31 @@ ${variables2.warnings()}` : "");
         if (wrapped) battleRaw = wrapped[1].trim();
       }
     }
-    let battleInit = battleRaw ? parseBattleInit(battleRaw) : null;
+    let battleInit = null;
+    if (battleRaw) {
+      try {
+        battleInit = parseBattleInit(battleRaw);
+      } catch {
+        battleInit = null;
+      }
+    }
     if (!isObject3(battleInit) || !Array.isArray(battleInit.units) && !Array.isArray(battleInit.participants)) {
       const recovered = battleRaw ? findBattleJSON(battleRaw) : null;
       if (recovered) {
         battleInit = recovered;
         battleRaw = JSON.stringify(recovered, null, 2);
-      }
+      } else if (!isObject3(battleInit?.participants) && !battleInit?.roster && !battleInit?.battleId && !battleInit?.id && !battleInit?.title && !battleInit?.sceneTitle) battleInit = null;
     }
-    const charBlocks = list4.slice(0, sourceIndex + 1).flatMap((message) => extractTags(cleanMessage(message), "char_info")).reverse();
+    const renderedMinIndex = options?.minFloorIndex ?? renderedMinFloorIndex(list4, options?.document);
+    const startIndex = renderedMinIndex >= 0 && renderedMinIndex <= sourceIndex ? renderedMinIndex : 0;
+    const charBlocks = list4.slice(startIndex, sourceIndex + 1).flatMap((message) => extractTags(cleanMessage(message), "char_info")).reverse();
     const charInfo = charBlocks.flatMap((raw) => {
       const value = parseJSON2(raw, null);
       return Array.isArray(value) ? value : value ? [value] : [parseLooseYaml(raw)];
     });
     const mvuData = statData(variables2) ?? variables2 ?? {};
     const sourceMessage = battleSource ?? eligible.at(-1);
-    const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit) : null;
+    const battleKey = battleInit ? battleKeyFor(chat, sourceMessage, battleInit, sourceIndex) : null;
     return {
       mvuData,
       latestFloor: battleSource ? messageContent(battleSource) : latestFloor,
@@ -21894,7 +22027,8 @@ ${variables2.warnings()}` : "");
     return { hash: hash2, entryHashes, resolvedWarnings };
   }
   function toPersistedOpeningSource({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source }) {
-    return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source });
+    const relatedCharInfo = openingCharInfo(battleInit, mvuData, charInfo, protagonistName);
+    return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo: relatedCharInfo, protagonistName, battleKey, source });
   }
   function storageCategory(key4) {
     if (key4 === CUSTOM_ELEMENTS_KEY) return "otherFatedBytes";
@@ -22404,7 +22538,8 @@ ${variables2.warnings()}` : "");
         event.preventDefault();
         event.stopPropagation();
         const floor = trigger.closest("[mesid], [data-message-id], [data-mesid]");
-        void openBattleEntry(floor?.getAttribute("mesid") ?? floor?.dataset.messageId ?? floor?.dataset.mesid);
+        const battleText = trigger.previousElementSibling?.matches(".fated-battle-source") ? trigger.previousElementSibling.textContent : "";
+        void openBattleEntry(floor?.getAttribute("mesid") ?? floor?.dataset.messageId ?? floor?.dataset.mesid, battleText);
       }
     }, { capture: true });
     function draggable(node, handle) {
@@ -22972,6 +23107,7 @@ ${tag2.textContent || ""}
       }
       if (epoch !== scanEpoch || disposed) return null;
       const openingSource = !opening && key4 ? toPersistedOpeningSource(nextSources) : null;
+      if (openingSource) nextSources.charInfo = openingSource.charInfo;
       if (!nextSources.battleInit) {
         sources = nextSources;
         diagnostics = { phase: "no-battle" };
@@ -23302,10 +23438,10 @@ ${tag2.textContent || ""}
         if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
         let entryId = selectedMessageId;
         if (entryId == null && selectedBattleText) {
-          const entryIndex = messages.findLastIndex((message) => message?.role !== "user" && !message?.is_user && extractTag(stripMetaAndReasoning(messageContent(message)), ["battle_init"])?.trim() === selectedBattleText.trim());
+          const entryIndex = battleEntryIndex(messages, selectedBattleText);
           if (entryIndex >= 0) entryId = messageMeta(messages[entryIndex], entryIndex).messageId;
         }
-        const candidate = sourceBundle({}, messages, chat, entryId);
+        const candidate = sourceBundle({}, messages, chat, entryId, { document: doc });
         const key4 = candidate.battleKey;
         foldBattleEntries();
         if (!rehydrate && !refreshSource && key4 && activeBattleKey === key4 && gameMount) {
@@ -23903,7 +24039,7 @@ ${tag2.textContent || ""}
   }
 
   // src/tavern/regex.js
-  var BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>([\s\S]*?)<\/battle_init>/gi;
+  var BATTLE_INIT_DISPLAY_REGEX = /<battle_init\b[^>]*>((?:(?!<battle_init\b[^>]*>)[\s\S])*?)<\/battle_init>/gi;
   var BATTLE_INIT_DISPLAY_REPLACEMENT = '<details class="fated-battle-entry" data-fated-battle-entry="true"><summary>\u2694 \u8FDB\u5165\u6218\u573A \xB7 \u70B9\u51FB\u5C55\u5F00\u5165\u53E3</summary><div class="fated-battle-meta">\u5DF2\u8BC6\u522B battle_init \xB7 \u53EF\u5728\u63A7\u5236\u53F0\u52A0\u8F7D\u6218\u5C40</div><pre class="fated-battle-source">$1</pre><button type="button" class="fated-battle-enter" data-fated-battle-open="true">\u6253\u5F00\u6218\u573A\u63A7\u5236\u53F0</button><script>(function(){var b=document.currentScript.previousElementSibling;if(!b)return;b.addEventListener("click",function(){if(typeof eventEmit!=="function")return;var selector="[mesid], [data-message-id], [data-mesid]",floor=b.closest(selector);try{floor=floor||window.frameElement?.closest(selector);}catch(_){}eventEmit("fated_tactical:open_ui",{source:"battle_init",messageId:floor?.getAttribute("mesid")??floor?.dataset.messageId??floor?.dataset.mesid,battleText:b.previousElementSibling.textContent});});})();<\/script></details>';
   var BATTLE_INIT_DISPLAY_RULE = Object.freeze({
     id: "fated-tactical-battle-init-display",
