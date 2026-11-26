@@ -10,7 +10,40 @@ import { applyAction, currentUnit, refreshOpeningInitiative } from '../src/core/
 import { validateState } from '../src/api/validation.js';
 import { dispatchVMHook } from '../src/core/vm-runtime.js';
 import { buildScenario } from '../src/presets/scenarios.js';
+import { normalizationTransactions, replayNormalization } from '../src/tavern/normalization-replay.js';
+import { chatPatch, fingerprintAt } from '../src/tavern/overlay-patch.js';
 import { applyPatch, extractJsonBlocks, parseAIResponse, stripReasoningBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
+
+test('首次登记的元素先于引用校验，重放复用已全局登记的同一定义', () => {
+  const state = buildScenario('ruins');
+  const definition = { op: 'add', path: '/customElements/void', value: { id: 'void', name: '虚空' } };
+  const reference = { op: 'replace', path: '/equipment/soulblade/damage/type', value: 'void' };
+  const { accepted, rejected, workLive } = partitionNormalizationPatch({
+    liveState: state, baselineState: state, rawPatch: [reference, definition], validate: validateState,
+  });
+  assert.deepEqual(rejected, []);
+  assert.deepEqual(accepted.map(entry => entry.op), [definition, reference]);
+  assert.equal(workLive.equipment.soulblade.damage.type, 'void');
+  const batches = normalizationTransactions({ patch: [definition, reference], solved: [], verified: [], records: {}, before: state, fingerprint: fingerprintAt });
+  assert.equal(batches.length, 1);
+  const preloaded = applyPatch(state, chatPatch(state, { customElements: [definition.value] }), true);
+  const replay = replayNormalization(preloaded, batches, {}, [], { apply: applyPatch, validate: validateState, fingerprint: fingerprintAt });
+  assert.equal(replay.kept.length, 1);
+  assert.equal(replay.state.equipment.soulblade.damage.type, 'void');
+});
+
+test('标准化与聊天都披露共享池写回路径与已登记元素', () => {
+  const state = { units: { p1: { id: 'p1', unitPools: { souls: { name: '灵魂', cap: 999 } } } },
+    customElements: { void: { id: 'void', name: '虚空' } }, statusTemplates: {} };
+  const sources = { sourceMap: { p1: { counterBindings: [{ unitId: 'p1', ownerKind: 'unit', poolKey: 'souls', mvuPath: ['主角', '魂量'] }] } } };
+  for (const context of [{ onlyUnitIds: ['p1'], warnings: [{ unitId: 'p1', originPath: '/units/p1/unitPools' }] }, { kind: 'chat' }]) {
+    const roster = resolveSlotContent({ id: 'roster' }, { state, sources, ...context });
+    const [payload, index] = roster.split('\n<role_readonly_index DO_NOT_PATCH="true">');
+    assert.deepEqual(JSON.parse(payload).customElements, state.customElements);
+    assert.match(index, /souls\|灵魂\|999\(开放上限\)\|unit:p1\|MVU写回:\/stat_data\/主角\/魂量/);
+    assert.match(index, /customElementsLedger[\s\S]*void\|虚空\|energy/);
+  }
+});
 
 test('多信封只合并完整的处置数组，不抢救残缺或嵌套信封', () => {
   const p = {op:'add',path:'/skills/a/mods',value:[]};

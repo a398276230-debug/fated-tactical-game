@@ -26,7 +26,7 @@ import { buildAIRequest, extractJsonBlocks, extractTag, messageContent, messageM
 import { applyPatch, chatPatch, fingerprintAt, formatRejectedItem, parseJSONPatch } from './overlay-patch.js';
 import { LARGE_CONFIG_KEYS, TAVERN_VERSION, chatId, configFor, isQuotaExceededError, putConfig, separateConfigKey, sourceBundle, tavernIdentity, tavernMessages } from './overlay-sources.js';
 import { style } from './overlay-diagnostics-view.js';
-import { computeStorageDiagnostics, pruneBattleScopedMap, pruneBattleStorageExcept as pruneStoredBattles,
+import { computeStorageDiagnostics, loadCustomElements, mergeCustomElements, pruneBattleScopedMap, pruneBattleStorageExcept as pruneStoredBattles,
   toPersistedOpeningSource, toStoredCharSnapshot } from './overlay-storage.js';
 
 /*
@@ -153,10 +153,12 @@ export function mountTavernOverlay(options = {}) {
   const baselineCache = { key: null, state: null };
 function hydrateBaseline(input, { seed } = {}) {
   const custom = getGlobal(document?.defaultView ?? globalThis, 'FatedTactical')?.hydrateBattleState;
-  if (custom) return custom(input, { seed, throwOnValidation: true }).state;
-  const key = JSON.stringify([input, seed ?? null]);
+  const customElements = loadCustomElements(storage);
+  const hydratedInput = { ...input, customElements };
+  if (custom) return custom(hydratedInput, { seed, throwOnValidation: true }).state;
+  const key = JSON.stringify([hydratedInput, seed ?? null]);
   if (baselineCache.key === key && baselineCache.state) return structuredClone(baselineCache.state);
-  const state = hydrateBattleState(input, { seed, throwOnValidation: true }).state;
+  const state = hydrateBattleState(hydratedInput, { seed, throwOnValidation: true }).state;
   baselineCache.key = key;
   baselineCache.state = structuredClone(state);
   return structuredClone(state);
@@ -322,6 +324,12 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
   }
   const notifyStorageFailure = () => notify('数据仅在本窗口生效', '无法写入浏览器存储。请先下载战局备份；如需彻底初始化，可在实例维护点「清理脚本缓存」。');
   function save() { if (!writeWithEvictionRetry(stateKey, config.instances)) notifyStorageFailure(); }
+  function persistCustomElements(state) {
+    if (!state?.customElements) return;
+    mergeCustomElements(storage, state.customElements, (key, value) => {
+      if (!writeWithEvictionRetry(key, value)) notifyStorageFailure();
+    });
+  }
 
   // Don't overwrite a failed local write on the next sync, or rewrite it during unrelated edits.
   const unsavedSettings = new Set();
@@ -872,8 +880,8 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     let conversionError = null;
     if (typeof converter === 'function') {
       const { mvuData, charInfo, battleInit, protagonistName } = nextSources;
-      const input = { mvu: mvuData, stat_data: mvuData, charInfo, battleInit, protagonistName };
-      try { hydrated = await converter(input); }
+      const input = { mvu: mvuData, stat_data: mvuData, charInfo, battleInit, protagonistName, customElements: loadCustomElements(storage) };
+      try { hydrated = await converter(input, { throwOnValidation: true }); }
       catch (error) { conversionError = error; }
     }
     if (epoch !== scanEpoch || disposed) return null;
@@ -1222,6 +1230,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       characters = fresh;
       mountState(currentState, restoreSaved);
       activeBattleKey = currentState ? key : null;
+      persistCustomElements(liveState());
       refreshPortraits(currentState, epoch);
       if (activeBattleKey) {
         pruneBattleStorageExcept(key);
@@ -1419,6 +1428,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         if (typeof gameMount?.loadState !== 'function') throw new Error('沙盘未就绪，无法注入补丁');
         gameMount.loadState(next);
         currentState = next;
+        persistCustomElements(next);
         for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
         save();
       }
@@ -1438,7 +1448,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       narrativeExemptions: { ...config.narrativeExemptions, [key]: [...previousExemptions.filter(previous => !receipts.some(receipt => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] },
     });
     for (const operation of effective) {
-      if (operation.op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(operation.path) && fingerprintAt(current, operation.path) === undefined) {
+      if (operation.op === 'add' && /^\/(?:customElements|statusTemplates|skills)\/[^/]+$/.test(operation.path) && fingerprintAt(current, operation.path) === undefined) {
         const fingerprint = fingerprintAt(next, operation.path);
         if (fingerprint !== undefined) createdTemplates.set(operation.path, fingerprint);
       }
@@ -1510,6 +1520,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
         throw error;
       }
       currentState = liveState();
+      if (!undo) persistCustomElements(currentState);
       updateChatInstances(currentState, current);
       renderInstances(); prepareMessages();
       const undoReceipt = undo ? null : { battleKey: key, changes: chatUndoChanges(current, currentState), openingId };

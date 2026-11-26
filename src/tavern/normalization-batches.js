@@ -211,7 +211,7 @@ export function normalizationOperations(operations, snapshot, current, created, 
     const root = path.split('/').slice(0, path.startsWith('/units/') ? 4 : 3).join('/');
     const live = fingerprintAt(current, root);
     const original = fingerprintAt(snapshot, root);
-    const sharedAdd = op === 'add' && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path) && created.has(path) && live === created.get(path);
+    const sharedAdd = op === 'add' && /^\/(?:customElements|statusTemplates|skills)\/[^/]+$/.test(path) && created.has(path) && live === created.get(path);
     if (sharedAdd) {
       // Cosmetic naming differences don't change the mechanic. Never silently
       // bind a consumer to a different rule set with the same generated id.

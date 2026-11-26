@@ -10,7 +10,8 @@ import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
-import { attrNames, blockBody, bound, clone, describe, deterministicId, finite, hash, narrativeEntries, object, own, qualityOf, rawTagValues, statAliases, text, warningSink, asObject } from './converter-parse.js'
+import { attrNames, blockBody, bound, clone, describe, deterministicId, finite, hash, narrativeEntries, object, own, qualityOf, rawTagValues, statAliases, text, warningSink, asObject } from './converter-parse.js';
+import { ELEMENT_DEFINITIONS, resolveElementAlias } from '../core/elements.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -20,13 +21,13 @@ import { attrNames, blockBody, bound, clone, describe, deterministicId, finite, 
  */
 export function activeRule(id, program) { return { id, hook: 'active', program }; }
 
-export function readRules(value, warnings) {
+export function readRules(value, warnings, customElements) {
   if (value == null) return [];
   if (!Array.isArray(value)) { warnings.push('rules 必须是 Rule 数组'); return []; }
   const rules = [], ids = new Set();
   for (const [index, rule] of value.entries()) {
     const location = `rules[${index}]${rule?.id ? ` (${rule.id})` : ''}`;
-    if (!validVmRule(rule)) warnings.push(`${location} 不符合 VM 规则 Schema：${describe(rule)}`);
+    if (!validVmRule(rule, { customElements })) warnings.push(`${location} 不符合 VM 规则 Schema：${describe(rule)}`);
     else if (ids.has(rule.id)) warnings.push(`${location} 的规则 ID 重复`);
     else if (rules.length === 200) warnings.push(`${location} 超过规则数量上限 200`);
     else { rules.push(clone(rule)); ids.add(rule.id); }
@@ -42,11 +43,11 @@ export function appendRules(rules, additions, warnings) {
   }
 }
 
-export function readMods(value, warnings) {
+export function readMods(value, warnings, customElements) {
   if (value == null) return [];
   if (!Array.isArray(value)) { warnings.push('mods 必须是 StatMod 数组'); return []; }
   return value.flatMap((mod, index) => {
-    const error = index < 200 ? vmStatModError(mod) : '超出数量上限 200';
+    const error = index < 200 ? vmStatModError(mod, { customElements }) : '超出数量上限 200';
     if (!error) return [clone(mod)];
     warnings.push(`mods[${index}] ${error}：${describe(mod)}`);
     return [];
@@ -57,11 +58,69 @@ export function readMods(value, warnings) {
 // this table: a qualifier such as 无视防御 is not a defense-panel declaration.
 const combatTag = /^(攻击力?|防御力?|防具|护甲|命中|闪避|先手|暴击|威力)\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.*)$/u;
 const numberTag = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu;
-const powerTag = /^(\d+)(?:\s*(物理|能量|精神|真实))?$/u;
+const powerTag = /^(\d+)\s*(\D.*)?$/u;
 const canonicalKey = { 攻击力:'攻击', 防御力:'防御', 护甲:'防御', 防具:'防御' };
+const CUSTOM_ELEMENT_IDS = { 虚空:'void', 星界:'astral', 星辰:'astral', 星辉:'astral', 混沌:'chaos', 鲜血:'blood', 血煞:'blood', 血:'blood', 风暴:'wind', 疾风:'wind', 风:'wind', 大地:'earth', 岩石:'earth', 土:'earth', 岩:'earth', 草木:'nature', 自然:'nature', 木:'nature', 流水:'water', 潮汐:'water', 水:'water', 蒸汽:'steam', 蚀月:'lunar', 太阴:'lunar', 月:'lunar', 日耀:'solar', 太阳:'solar', 时空:'chrono', 时间:'chrono', 重力:'gravity', 引力:'gravity', 梦魇:'nightmare', 辐射:'radiation', 磁力:'magnetic', 电磁:'magnetic', 晶石:'crystal', 结晶:'crystal', 煞气:'miasma', 魔气:'miasma' };
+const WRAPPED_ELEMENT_RE = /^\s*[\[【](?<body>[^\]】]+?)\s*[\]】]\s*$/u;
+const ELEMENT_TAG_RE = /^(?<name>[\p{Script=Han}]{1,6})属性$/u;
+const blockedElementNames = new Set(['全','无','多','主','副','双','单','同','异','本','基','高','低','攻','防','体','智','力','敏','精','物','魔','五维','基础','全能','特殊','控制','眩晕','沉默','定身','减速','位移','击退','魅惑','恐惧','睡眠','流血','中毒','灼烧','冰冻','致死','即死','异常','负面','减益','全部','所有','远程','近战','暴击','溅射','范围']);
+export function resolveDamageType(value, customElements = {}, register = false) {
+  const label = text(value).trim();
+  const raw = label.replace(/伤害$/u, '').trim();
+  const builtin = resolveElementAlias(label) ?? resolveElementAlias(raw);
+  if (builtin) return builtin;
+  const existing = Object.hasOwn(customElements, raw) ? raw : Object.entries(customElements).find(([, entry]) => entry?.name === raw || entry?.aliases?.includes(raw))?.[0];
+  if (existing) return existing;
+  if (!register || !/^[\p{L}][\p{L}\p{M}_-]{0,23}$/u.test(raw) || raw.length > 24 || blockedElementNames.has(raw)) return null;
+  const known = Object.hasOwn(CUSTOM_ELEMENT_IDS, raw);
+  const id = known ? CUSTOM_ELEMENT_IDS[raw] : `elem_${hash(raw).toString(36)}`;
+  if (Object.hasOwn(customElements, id)) return known ? id : null;
+  if (Object.keys(customElements).length >= 64) return null;
+  customElements[id] = { id, name: raw, category: 'energy' };
+  return id;
+}
+function explicitElementName(tag) {
+  const value = text(tag).trim();
+  const wrapped = value.match(WRAPPED_ELEMENT_RE);
+  const body = wrapped?.groups.body.trim() ?? value;
+  const explicit = body.match(/^(?:元素|属性|伤害|伤害类型)\s*[:：]\s*(.+)$/u);
+  if (explicit) return explicit[1].trim();
+  const standalone = body.match(ELEMENT_TAG_RE);
+  return standalone && !blockedElementNames.has(standalone.groups.name) ? standalone.groups.name : null;
+}
+function elementFromText(value, customElements, register = false) {
+  const raw = explicitElementName(value);
+  if (raw) return resolveDamageType(raw, customElements, register);
+  const power = value.match(/^威力\s*[:：]\s*(.+)$/u)?.[1];
+  if (power) return resolveDamageType(powerTag.exec(power)?.[2], customElements);
+  const type = resolveDamageType(value, customElements);
+  if (!type || Object.hasOwn(statAliases, value) || blockedElementNames.has(value)) return null;
+  return ELEMENT_DEFINITIONS[type]?.name === value || type === value || Object.hasOwn(customElements, type) ? type : null;
+}
+function parseElementModifier(tag, customElements) {
+  const match = /^(?<name>[\p{L}_-]+?)(?<marker>属性|元素)?(?<kind>固定减伤|抗性|减伤|免疫|易伤|伤害加成|增伤|强化)\s*[:：]?\s*(?<amount>\+?\d+(?:\.\d+)?)?\s*(?<percent>[%％])?$/u.exec(tag);
+  if (!match) return null;
+  const { name, marker, kind, amount, percent } = match.groups;
+  if (blockedElementNames.has(name)) return null;
+  const n = Number(amount);
+  if (kind === '免疫' ? amount || percent : !finite(n) || (kind === '固定减伤' ? percent || !Number.isSafeInteger(n) : !percent)) return null;
+  const damageType = resolveDamageType(name, customElements, Boolean(marker));
+  if (!damageType) return null;
+  if (kind === '免疫') return { stat: 'dr', flat: 1, damageType };
+  if (kind === '固定减伤') return { stat: 'damageReductionFlat', flat: n, damageType };
+  if (kind === '易伤') return { stat: 'incomingDamageMult', mult: 1 + n / 100, damageType };
+  if (/伤害加成|增伤|强化/u.test(kind)) return { stat: 'damageMult', additivePercent: n / 100, damageType };
+  return { stat: 'damageReduction', flat: n / 100, damageType };
+}
 
-export function readCombatTags(raw, kind, name, warnings) {
-  const mods = readMods(raw.mods, warnings), fields = {}, summary = [], groups = new Map();
+export function elementTags(raw, type) {
+  const tags = rawTagValues(raw);
+  if (!type || tags.slice(0, 32).includes(type)) return tags.slice(0, 32);
+  return [...tags.slice(0, 31), type];
+}
+
+export function readCombatTags(raw, kind, name, warnings, { customElements = {} } = {}) {
+  const fields = {}, summary = [], groups = new Map();
   const weapon = kind === 'weapon', active = kind === 'active', passive = kind === 'passive';
   const entries = tagEntries(raw.tags ?? raw.标签);
   const warn = (tag, advice = '') => warnings.push(`「${name}」标签「${tag}」待标准化：请结合词条语义映射为合法 VM mods / rules 或标明 engine_limit${advice && `；${advice}`}`);
@@ -74,6 +133,14 @@ export function readCombatTags(raw, kind, name, warnings) {
   }
   let powerType;
   const equipmentPower = [], activeAttack = [];
+  const explicitTypes = entries.map(tag => elementFromText(tag, customElements, true));
+  const typedMods = entries.map(tag => parseElementModifier(tag, customElements)).filter(Boolean);
+  const mods = readMods(raw.mods, warnings, customElements);
+  for (const modifier of typedMods) {
+    if (mods.length === 200) break;
+    if (!mods.some(mod => mod.stat === modifier.stat && mod.damageType === modifier.damageType &&
+      mod.when === undefined && mod.checkKind === undefined && mod.statusId === undefined)) mods.push(modifier);
+  }
   for (const [key, group] of groups) {
     const values = [];
     for (const { tag, value } of group) {
@@ -87,9 +154,10 @@ export function readCombatTags(raw, kind, name, warnings) {
       if (key === '攻击' && !weapon) { warn(tag, '请结合描述裁定伤害加值或触发效果'); continue; }
       if (active && (key === '防御' || key === '闪避')) { warn(tag, '主动技能不能直接提供常驻加成，请裁定是否施加状态'); continue; }
       const power = key === '威力' ? powerTag.exec(value) : null;
-      const n = power ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
+      const type = resolveDamageType(power?.[2], customElements);
+      const n = power && (!power[2] || type) ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
       if (!Number.isSafeInteger(n) || (key === '威力' && n < 0)) { warn(tag); continue; }
-      if (power && !values.length) powerType = power[2];
+      if (power && !values.length) powerType = type;
       values.push(n);
     }
     if (!values.length) continue;
@@ -114,7 +182,7 @@ export function readCombatTags(raw, kind, name, warnings) {
     }
   }
   const suffix = summary.length ? `。已由静态标签解析落盘：${summary.map(([label, n]) => `${label} ${n >= 0 ? '+' : ''}${n}`).join('、')}；补丁改写 mods 时须保留既有项（或用 /mods/- 追加）且切勿重复叠加同一数值；若本条仅重申该静态加成而无额外局内机制，直接归入 narrative 说明即可。` : '';
-  return { entries, fields, mods, suffix, powerType, equipmentPower, activeAttack };
+  return { entries, fields, mods, suffix, powerType, equipmentPower, activeAttack, damageType: explicitTypes.find(Boolean) };
 }
 
 export function readPools(value, warnings) {
@@ -138,19 +206,19 @@ export function mapEffects(effects, context = 'skill', warnings = [], prefix = '
 }
 export const mapEffect = (raw, context, warnings) => mapEffects([raw], context, warnings)[0] ?? null;
 
-function readEquipmentNarrative(effects, warnings, onNarrativeWarning) {
-  return convertNarrative(effects, warnings, '', { equipment: true, onNarrativeWarning });
+function readEquipmentNarrative(effects, warnings, onNarrativeWarning, customElements) {
+  return convertNarrative(effects, warnings, '', { equipment: true, onNarrativeWarning, customElements });
 }
 
 export function convertNarrative(effects, warnings, prefix, { allowPower = false, equipment = false, areaDamage = false, passive = false,
-  onNarrativeWarning = (message, metadata) => warnings.push(message, metadata) } = {}) {
+  customElements = {}, onNarrativeWarning = (message, metadata) => warnings.push(message, metadata) } = {}) {
   const rules = [];
   for (const [index, [label, entry]] of narrativeEntries(effects).entries()) {
-    if (validVmRule(entry)) {
+    if (validVmRule(entry, { customElements })) {
       appendRules(rules, [clone(entry)], warnings);
       continue;
     }
-    const program = !equipment && !passive && typeof entry === 'string' ? narrativeDamage(label, entry, allowPower) : [];
+    const program = !equipment && !passive && typeof entry === 'string' ? narrativeDamage(label, entry, allowPower, customElements) : [];
     const rawExcerpt = [entry].flat().map(value => typeof value === 'string' ? blockBody(value)
       : text(value?.描述 ?? value?.description ?? value?.效果 ?? value?.effect)).filter(Boolean).join('；');
     const excerpt = [...rawExcerpt];
@@ -164,8 +232,6 @@ export function convertNarrative(effects, warnings, prefix, { allowPower = false
   return rules;
 }
 
-export const damageAliases = new Map(Object.entries({ 物理: 'physical', 能量: 'energy', 精神: 'mental', 真实: 'true' }));
-export const damageTypes = ['physical', 'energy', 'mental', 'true'];
 export function skillCosts(value) {
   const cost = object(value) ? Object.entries(value).map(([k,v]) => `${k}: ${v}`).join(' ') : text(value);
   const slots = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
@@ -175,39 +241,40 @@ export function skillCosts(value) {
 }
 const damageOp = (damageType, amount) => ({ op: 'damage', target: 'target', damageType, amount });
 const powerAmount = percent => percent === 100 ? 'event.power' : `event.power * (${percent} / 100)`;
-export function damageTags(value, power) {
+export function damageTags(value, power, customElements) {
   if (!value) return [];
-  const single = damageAliases.get(value);
+  const single = resolveDamageType(value, customElements);
   if (single) return [damageOp(single, 'event.power')];
-  const parts = value.split(/[/／]/).map(s => s.trim().match(/^(物理|能量|精神|真实)\s*(\d+(?:\.\d+)?)\s*([%％]?)$/));
-  if (parts.length < 2 || parts.some(p => !p || !finite(Number(p[2])))) return [];
+  const parts = value.split(/[/／]/).map(s => { const match = s.trim().match(/^(?:(\d+(?:\.\d+)?)\s*([%％]?)\s*(.+?)|(.+?)\s*(\d+(?:\.\d+)?)\s*([%％]?))$/u); return match ? [match[0], resolveDamageType(match[3] ?? match[4], customElements), match[1] ?? match[5], match[2] ?? match[6]] : null; });
+  if (parts.length < 2 || parts.some(p => !p?.[1] || !finite(Number(p[2])))) return [];
   const percent = parts.every(p => p[3]);
   if (!percent && !(parts.every(p => !p[3]) && parts.reduce((n,p) => n + Number(p[2]),0) === Number(power))) return [];
-  return parts.map(([, type, n]) => damageOp(damageAliases.get(type), percent ? powerAmount(Number(n)) : Number(n)));
+  return parts.map(([, type, n]) => damageOp(type, percent ? powerAmount(Number(n)) : Number(n)));
 }
-function narrativeDamage(label, entry, allowPower) {
+function narrativeDamage(label, entry, allowPower, customElements) {
   const body = blockBody(entry);
-  const flat = /^(?:造成\s*)?(\d+)\s*(?:点)?\s*(物理|能量|精神|真实)伤害[。.]?$/.exec(body);
-  if (flat && finite(Number(flat[1]))) return [damageOp(damageAliases.get(flat[2]), Number(flat[1]))];
-  const typedLabel = /^(物理|能量|精神|真实)伤害$/.exec(label);
+  const flat = /^(?:造成\s*)?(\d+)\s*(?:点)?\s*(.+?)伤害[。.]?$/u.exec(body);
+  const flatType = flat && resolveDamageType(flat[2], customElements);
+  if (flat && flatType && finite(Number(flat[1]))) return [damageOp(flatType, Number(flat[1]))];
+  const typedLabel = label && text(label).match(/^(.+?)伤害$/u);
+  const typedType = typedLabel && resolveDamageType(typedLabel[1], customElements);
   const labelledFlat = typedLabel && /^造成\s*(\d+)\s*(?:点)?伤害[。.]?$/.exec(body);
-  if (labelledFlat && finite(Number(labelledFlat[1]))) return [damageOp(damageAliases.get(typedLabel[1]), Number(labelledFlat[1]))];
+  if (labelledFlat && typedType && finite(Number(labelledFlat[1]))) return [damageOp(typedType, Number(labelledFlat[1]))];
   if (!allowPower) return [];
-  const parts = body.split(/[/／、+＋]/).map(part => part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(物理|能量|精神|真实)(?:伤害)?[。.]?$/));
-  if (parts.some(part => !part || Number(part[1]) <= 0 || Number(part[1]) > 1000)) return [];
-  return parts.map(([, percent, type]) => damageOp(damageAliases.get(type), powerAmount(Number(percent))));
+  const parts = body.split(/[/／、+＋]/).map(part => { const match = part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(.+?)(?:伤害)?[。.]?$/u); return match ? [match[0], match[1], resolveDamageType(match[2], customElements)] : null; });
+  if (parts.some(part => !part?.[2] || Number(part[1]) <= 0 || Number(part[1]) > 1000)) return [];
+  return parts.map(([, percent, type]) => damageOp(type, powerAmount(Number(percent))));
 }
-export function normalizeDice(raw) {
+export function normalizeDice(raw, customElements, fallback = 'physical') {
   const dice = asObject(raw);
   const stat = own(statAliases, dice.stat) ? statAliases[dice.stat] : dice.stat;
-  const type = damageAliases.get(dice.type) ?? dice.type;
   const count = bound(dice.count, 0, 1000000, 1);
   return {
     count, sides: bound(dice.sides, count ? 1 : 0, 1000000, 4),
     bonus: bound(dice.bonus, -1e9, 1e9, 0),
     ...(attrNames.includes(stat) ? { stat } : {}),
     ...(finite(dice.multiplier) ? { multiplier: Math.max(0, Math.min(8, dice.multiplier)) } : {}),
-    type: damageTypes.includes(type) ? type : 'physical',
+    type: resolveDamageType(dice.type, customElements) ?? fallback,
   };
 }
 
@@ -300,7 +367,7 @@ export function finalizeEquipment(item, warnings) {
     program: [{ op: 'resource', target: 'self', pool: 'ammo', mode: 'sub', amount: 1, local: true, requireFull: true }],
   }], warnings);
 }
-export function normalizeEquipment(raw, slot, owner, key, sink) {
+export function normalizeEquipment(raw, slot, owner, key, sink, customElements = {}) {
   const r = asObject(raw), name = text(r.name ?? r.名称 ?? r.itemName) || `${slot || '装备'}${key}`;
   const isShield = slot === 'shield' || r.kind === 'shield' || r.shield === true || r.weaponClass === 'shield' || /盾/.test(name);
   const labels = Array.isArray(r.tags ?? r.标签) ? (r.tags ?? r.标签).join(' ') : text(r.tags ?? r.标签);
@@ -312,9 +379,11 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
   const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${key}`;
   const templateId = `template-${idBase}`;
   const warnings = sink('effect', `/equipment/${templateId}`);
-  const rules = readRules(r.rules, warnings);
-  const parsed = readCombatTags(r, kind, name, warnings);
-  const template = { name: name.slice(0, 100), kind, rules, mods: parsed.mods, pools: readPools(r.pools, warnings), ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}) };
+  const parsed = readCombatTags(r, kind, name, warnings, { customElements });
+  const rules = readRules(r.rules, warnings, customElements);
+  const type = resolveDamageType(r.damage?.type, customElements) ?? parsed.damageType;
+  const carrierTags = elementTags(r, type);
+  const template = { name: name.slice(0, 100), kind, rules, mods: parsed.mods, pools: readPools(r.pools, warnings), ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(carrierTags.length ? { tags: carrierTags } : {}) };
   const { rangeValues, radius, shape, target } = parseAreaTags(r.tags ?? r.标签);
   let powerCovered = false;
   const onNarrativeWarning = (message, metadata, index, label) => {
@@ -326,7 +395,7 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
     if (powerEffect) powerCovered = true;
     warnings.push(message + rangeNote + powerNote + parsed.suffix, metadata);
   };
-  appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, warnings, onNarrativeWarning), warnings);
+  appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.效果, warnings, onNarrativeWarning, customElements), warnings);
   if (!powerCovered) for (const tag of parsed.equipmentPower) warnings.push(`「${name}」标签「${tag}」待标准化：装备没有主击威力面板，请结合描述裁定挂载主动技能`);
   const defense = bound(r.defense ?? r.防御 ?? parsed.fields.defense, 0, 1000000, kind === 'shield' ? 1 : 0);
   if (kind === 'shield') Object.assign(template, { weaponClass: 'shield', hand: 'off_hand', shield: true, defense });
@@ -349,7 +418,7 @@ export function normalizeEquipment(raw, slot, owner, key, sink) {
       ...(r.closeQuarters === true || tags.some(tag => /近战射击|贴身射击/u.test(tag)) ? { closeQuarters: true } : {}),
       range: bound(area.range, 0, 64, ranged ? 4 : 1), rawRange: area.range ?? (ranged ? 4 : 1),
       attack: bound(r.attack ?? r.攻击 ?? parsed.fields.attack, 0, 1e9), accuracy: bound(r.accuracy ?? r.命中 ?? parsed.fields.accuracy, -100, 100, 0),
-      damage: normalizeDice(r.damage ?? { stat: 'str' }),
+      damage: normalizeDice(r.damage ?? { stat: 'str' }, customElements, type),
       ...geometryFields(area),
     });
     if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });

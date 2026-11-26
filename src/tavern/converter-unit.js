@@ -12,7 +12,7 @@ import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
 import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, extractUnitPoolEntries, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, unitPoolKeyFromLabel, warningSink, WARNING_SCOPES } from './converter-parse.js';
-import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readCombatTags, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
+import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageTags, elementTags, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readCombatTags, readMods, readPools, readRules, resolveDamageType, skillCosts } from './converter-effects.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -56,8 +56,8 @@ function normalizeBattleDefinition(raw, id = '') {
   if (value.hand === 'off') value.hand = 'off_hand';
   if (value.rangeType === 'ranged') value.ranged = true;
   if (value.rangeType === 'melee') value.ranged = false;
-  const damageType = { '物理': 'physical', '能量': 'energy', '精神': 'mental', '真实': 'true' };
-  if (object(value.damage) && damageType[value.damage.type]) value.damage.type = damageType[value.damage.type];
+  const type = resolveDamageType(value.damage?.type);
+  if (type) value.damage.type = type;
   return value;
 }
 function battleEquipmentRecord(participant, battle) {
@@ -248,7 +248,7 @@ function importBackpack(bag, owner, skills, sink, entrySources, inventoryPaths, 
   return inventory;
 }
 
-function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist, board, sourceRecord) {
+function unitFrom(record, participant, index, equipment, skills, items, sink, isProtagonist, board, sourceRecord, customElements = {}) {
   const resourcesSink = sink('resource'), warnings = sink('status');
   const p = participant ?? {};
   const name = text(p.protagonistName || p.name) || sourceName(record, p.id) || `单位 ${index + 1}`;
@@ -300,7 +300,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const key = hash(String(identity)).toString(36);
     const occurrence = equipmentKeys.get(key) ?? 0;
     equipmentKeys.set(key, occurrence + 1);
-    const item = normalizeEquipment(raw, slot, id, occurrence ? `${key}-${occurrence}` : key, sink);
+    const item = normalizeEquipment(raw, slot, id, occurrence ? `${key}-${occurrence}` : key, sink, customElements);
     const { slot: _slot, position: _position, 位置: _placement, count: _count, 数量: _quantity, ...definition } = raw;
     entrySources[`equipment:${item.templateId}`] = staticProjection(definition);
     const ammo = ammoCounter(raw);
@@ -378,8 +378,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const costs = skillCosts(r.cost ?? r.消耗);
     const mode = text(r.模式 ?? r.mode ?? r.类型 ?? r.type).toLowerCase();
     const passive = r.passive === true || mode === 'passive' || mode.includes('被动') && !mode.includes('主动');
-    const parsed = readCombatTags(r, passive ? 'passive' : 'active', skillName, notes);
-    const tag = (typeof r.伤害 === 'string' ? r.伤害 : null) ?? parsed.entries.map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean) ?? parsed.powerType;
+    const parsed = readCombatTags(r, passive ? 'passive' : 'active', skillName, notes, { customElements });
+    const tag = (typeof r.伤害 === 'string' ? r.伤害 : null) ?? parsed.entries.map(label => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean) ?? parsed.damageType ?? parsed.powerType;
     const rawEffects = r.effects ?? r.效果;
     // Old cards sometimes put the power declaration in the description rather than tags.
     const descriptionPower = text(r.description ?? r.描述).match(/(?:^|[\s，。；【\[])威力\s*[:：]\s*(\d+)(?=$|[\s，。；：、】\]]|物理|能量|精神|真实)/u)?.[1];
@@ -392,16 +392,16 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     if (!hasPower) for (const attack of parsed.activeAttack) notes.push(`「${skillName}」标签「${attack}」待标准化：未声明主击威力，请结合词条语义裁定，不直接把攻击填作 power`);
     const statTag = parsed.entries
       .map(label => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
-    const rules = readRules(r.rules, notes);
+    const rules = readRules(r.rules, notes, customElements);
     const prefix = `fx-${hash(sid).toString(36)}`;
     const areaDamage = isAreaDamage(area);
     const narrativeNotes = [];
-    appendRules(rules, convertNarrative(rawEffects, notes, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive,
+    appendRules(rules, convertNarrative(rawEffects, notes, prefix, { allowPower: !r.damage && hasPower, areaDamage, passive, customElements,
       onNarrativeWarning: (message, metadata) => narrativeNotes.push({ message, metadata }) }), notes);
-    const singleTaggedType = damageAliases.get(tag);
+    const singleTaggedType = resolveDamageType(tag, customElements);
     const hasActiveDamage = rules.some(rule => rule.enabled !== false && rule.hook === 'active' && [...instructions(rule.program)].some(op => op.op === 'damage'));
     if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag) {
-      const packets = hasPower ? damageTags(tag, power) : [];
+      const packets = hasPower ? damageTags(tag, power, customElements) : [];
       if (!singleTaggedType && packets.length && area.target !== 'cell') {
         const program = areaDamage ? [{ op: 'for_each', select: { from: 'action_targets' }, body: packets }] : packets;
         appendRules(rules, [activeRule(`${prefix}-damage`, program)], notes);
@@ -414,9 +414,9 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     const damageOps = rules.filter(rule => rule.enabled !== false && rule.hook === 'active')
       .flatMap(rule => [...instructions(rule.program)].filter(op => op.op === 'damage'));
     const types = [...new Set(damageOps.map(op => op.damageType))];
-    const rawDamageType = r.damageType ?? damageAliases.get(tag);
-    const explicitDamageType = damageAliases.get(rawDamageType) ?? rawDamageType;
-    const generatedDamageType = singleTaggedType ?? (damageTypes.includes(explicitDamageType) ? explicitDamageType : undefined);
+    const explicitDamageType = resolveDamageType(r.damageType, customElements);
+    if (r.damageType != null && !explicitDamageType) notes.push(`「${skillName}」未知伤害类型：${r.damageType}`);
+    const generatedDamageType = explicitDamageType ?? singleTaggedType;
     const generatedMainDamage = hasPower && !passive && !r.damage && !r.heal && !damageOps.length && (!tag || singleTaggedType)
       ? { count: 1, sides: 4, ...(statTag ? { stat: statTag } : {}), ...(generatedDamageType ? { type: generatedDamageType } : {}) }
       : null;
@@ -428,19 +428,19 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
       const mainNote = mainParsed ? `。主击与威力 ${numericPower} 已解析，只补本条尚未实现的效果，不要重复添加主击。` : '';
       notes.push(message + mainNote + parsed.suffix, metadata);
     }
-    const damageType = explicitDamageType ?? (types.length === 1 ? types[0] : undefined);
+    const damageType = explicitDamageType ?? resolveDamageType(r.damage?.type, customElements) ?? singleTaggedType ?? (types.length === 1 ? types[0] : undefined);
+    const tags = elementTags(r, singleTaggedType);
     skillInfo[sid] = { description:text(r.description ?? r.描述), damageType, hp:costs.hp };
     skills[sid] = {
       name: skillName,
-      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {}), rawRange: area.range ?? 1, ...(passive ? { passive: true } : r.passive === false ? { passive: false } : {}), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: passive || (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
+      ...(qualityOf(r) ? { quality: qualityOf(r) } : {}), ...(tags.length ? { tags } : {}), rawRange: area.range ?? 1, ...(passive ? { passive: true } : r.passive === false ? { passive: false } : {}), ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2), slot: passive || (r.slot ?? costs.slot) === 'action' ? 'action' : 'attack',
       range: bound(area.range, 0, 64, 1), shape: area.shape ?? 'single',
       target: area.target ?? (areaDamage && object(r.damage) ? 'any' : 'enemy'), ...geometryFields(area),
       ...(text(r.school) ? { school: text(r.school).slice(0, 100) } : {}),
       ...(generatedMainDamage ? { damage: generatedMainDamage } : {}),
       rules, mods: parsed.mods, pools: readPools(r.pools, notes),
     };
-    if (damageTypes.includes(damageType)) skills[sid].damageType = damageType;
-    else if (damageType != null) notes.push(`「${skillName}」未知伤害类型：${damageType}`);
+    if (damageType) skills[sid].damageType = damageType;
     for (const key of ['mp', 'sp']) if ((r[key] ?? costs[key]) != null) skills[sid][key] = bound(r[key] ?? costs[key], 0, 25000);
     const accuracy = r.accuracy ?? (passive ? undefined : r.命中 ?? parsed.fields.accuracy);
     if (accuracy != null) skills[sid].accuracy = bound(accuracy, -100, 100);
@@ -457,7 +457,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
     }
     if (object(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
     if (costs.hp != null) skills[sid].resourceCost = { hp:bound(costs.hp, 0, 25000), ...skills[sid].resourceCost };
-    for (const key of ['damage', 'heal']) if (!passive && object(r[key])) skills[sid][key] = normalizeDice(r[key]);
+    for (const key of ['damage', 'heal']) if (!passive && object(r[key])) skills[sid][key] = normalizeDice(r[key], customElements, key === 'damage' ? damageType : undefined);
     return sid;
   });
   const pos = xyzOf(p.xyz ?? p, board, sink('state'));
@@ -652,6 +652,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const fallbackIndex = byPersona >= 0 ? byPersona : participants.findIndex((p, i) => eligible(p) && !resolved[i]);
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
+  const customElements = clone(source.customElements ?? options.customElements ?? {});
   const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
   const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = new Map();
   const add = (participant, record, index) => {
@@ -664,7 +665,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     const merged = mergeBattleParticipant(record, participant, battle);
     const placement = { moraleType:battle.moraleType, ...participant, ...persona, id };
     const startWarnings = warnings.length;
-    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist, battle, record);
+    const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path) => sink(id, origin, scope, path), record === protagonist, battle, record, customElements);
     if (origin === 'char_info') {
       // Preserve source order: it can decide which weapon is selected as main hand.
       const { 数量: _quantity, count: _count, ...definition } = merged;
@@ -719,7 +720,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
   const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
   const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
-  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), ...(Object.keys(customElements).length ? { customElements } : {}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
     if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;

@@ -107,7 +107,7 @@ export function acceptNormalizationResponse({
       existingOps,
       rawPatch: rebasedPatch,
       conflictingDefinitions: conflicts
-        .filter(item => item.op.op === 'add' && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path))
+        .filter(item => item.op.op === 'add' && /^\/(?:customElements|skills|statusTemplates)\/[^/]+$/.test(item.path))
         .map(item => item.path),
       allowedUnitIds: unitIds,
       expand,

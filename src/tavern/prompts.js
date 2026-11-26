@@ -1,6 +1,9 @@
 import { VM_EFFECT_PROTOCOL } from './vm-effect-protocol.js';
 import { ENGINE_API_SUMMARY } from './engine-summary.js';
 import { STATUS_CATALOG } from './status-catalog.js';
+import { ELEMENT_DEFINITIONS } from '../core/elements.js';
+
+const damageTypeList = Object.values(ELEMENT_DEFINITIONS).map(({ id, name }) => `${id}(${name})`).join(' / ');
 
 const IDENTITY = `<role_core>
 你是命定战斗助手，负责将角色卡、世界书与战场环境中的自然语言词条精确编译为战术沙盘可执行数据。你以当前战局、参战者与装备快照及战斗协议为唯一权威依据，严格核对操作路径、闭合字段与枚举取值，只使用引擎注册的标识符与公式函数。
@@ -44,7 +47,7 @@ const protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CA
 // Wire contract: normalization in overlay.js; value schemas in api/validation.js.
 export const PATCH_RULES = String.raw`<output_contract>
 【输出契约与材料权威边界】
-• 快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条原意；补丁路径严格以当前战局快照的可写模板为准，禁止写 /effects/... 或修改来源资料，只写入对应模板的 rules / mods / pools / skills 等合法字段。
+• 快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条原意；补丁路径严格以当前战局快照的可写模板为准，禁止写 /effects/... 或修改来源资料，只写入对应模板的 rules / mods / pools / skills 等合法字段。MVU 写回绑定由宿主读取真实字段路径生成，禁止写 sourceMap 或构造 MVU 路径。sharedPoolLedger 标记 MVU写回 的池由宿主写回战斗净变化，其余自定义池只在战局内生效。
 • 顶层 JSON 载荷包含 patch、unresolved、narrative 三个数组（引用先前批次已落地的规则时另附 existing 数组）。narrative 数组每项为 {unitId,originPath,message,reason}，收录纯外观风味及非战棋外围机制；无法在局内实现的机制用同样形状写进 unresolved，附 kind:"missing_info"（原文缺可计算参数）或 kind:"engine_limit"（局内机制暂不支持）。reason 用玩家能理解的简短中文，不暴露 JSON 路径和内部字段名。
 </output_contract>
 
@@ -80,14 +83,15 @@ export const PATCH_RULES = String.raw`<output_contract>
 </compilation_invariants>
 
 【宿主模板闭合字段与枚举全表】
-• 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
+• 伤害类型：${damageTypeList} 或已登记 customElements ID。physical 计全额护甲，energy 与能量类元素计半额护甲及灵智减伤，mental / psychic 无视护甲并计精神减伤，true 无视护甲及减伤。已有自定义元素直接复用 customElementsLedger 的 ID。确需新增时，先 add /customElements/<id>，再在本批引用。定义含 id（与键相同，匹配 ^[a-z][a-z0-9_-]{0,31}$）、name（1…24 字符），可选 aliases（至多 8 项，每项 1…24 字符）与 category（energy / physical / mental，缺省 energy）。
+• 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（伤害类型，见上表）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
 • 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义池 {"resource":"<池ID>", "amount":1…1000000}（装备实例池或单位共享池）。
 • 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}，仅表示装备实例池（如本武器 ammo）；装备规则作用域用 item.resource.<池ID> 读取，缺省为 0，local:true 才写入本实例池。
 • 单位共享池表 unitPools：{"<池ID>": {"name"?: 文本, "cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）}}，仅 equipment / skill / unit 可声明，statusTemplate 与战场区域 /zones/<id> 不支持。它挂在持有者单位上；同一单位的同名声明合并为一个单位池，current 默认 initial ?? 0。跨载体读写使用 self.resource.<池ID> 或 resource(self, '<池ID>')，技能 resourceCost:{resource:"<池ID>",amount:N} 也可扣除单位池。跨批必须复用 <role_readonly_index> 的 sharedPoolLedger 中既有 poolId。
 • 通用载体字段（装备、技能、状态模板、战场区域 zones 均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（品级文本 唯一/普通…神话 或整数 1…8）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）。pools 与 unitPools 都不是通用字段：pools 仅 equipment 模板声明装备实例池；unitPools 仅 equipment / skill / unit 可声明，statusTemplate 与 /zones/<id> 不支持。装备规则内读取本装备实例池用 item.resource.<池ID>（缺省为 0），其他载体不得把 item.resource 当作自身作用域。
 • 技能模板 /skills/<id>：
   - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
-  - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（枚举：physical / energy / mental / true）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
+  - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（见伤害类型表）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
 • 装备模板 /equipment/<id>：
   - 必填：name。武器若声明 range（整数 0…64）则必须同时声明 damage（dice 对象），二者成对出现；武器斜杠分段距离第一项归模板普攻，后续项依次归挂载的装备主动技能。
   - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
@@ -115,6 +119,8 @@ Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭
 整批仅有 unresolved 或 narrative 时提交 "patch":[]；引用既有标准化成果时另附 "existing":[...]。输出大型规则或多召唤指令时保持扁平层级并逐层核对 } 与 ] 闭合配对，</std_audit> 闭合后立即以 { 开始输出完整合法的纯 JSON，**顶层 JSON 对象的根 } 一旦闭合必须立即结束输出——严禁在开头输出尖括号或代码围栏，严禁在最终 JSON 的根 } 之后重复输出 </std_audit> 闭合标签、多余括号、注释或拆成两段顶层 JSON 对象**！
 现在立即从 <std_audit> 开始执行审校并输出最终 JSON：
 </tail_anchor>`;
+export const CHAT_TASK_RULES = `【辅助 AI 对话】玩家咨询时直接用文字回答。原始资料（MVU / char_info 原文）仅供只读参考，当前战局生效数据以 state 为准。玩家明确要求修改已加载战局时，只输出 JSON 补丁信封。复用 sharedPoolLedger 中已有的 poolId，unitPools 只能声明在 units、equipment、skills，运行时 pools 只由引擎维护。带 MVU写回 的池沿用原池，宿主自动写回净变化，未标记的池仅在本场生效。禁止修改 sourceMap 或构造 MVU 写回路径。damageType 直接使用 14 个内置元素 ID 或 customElementsLedger 中已登记 ID。遇到明确的新元素时，先在同一补丁数组中 add /customElements/<id>，再由装备、技能或 mods 引用。`;
+
 const json = value => JSON.stringify(value, null, 2);
 
 let lastCustomId = 0;
@@ -194,6 +200,7 @@ function scopedRoster(ctx, state, warnings) {
   const equipment = pick(state.equipment, Object.values(items).map(i => i.templateId));
   const skills = pick(state.skills, [...rows.flatMap(u => [...(u.skills ?? []), ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap(e => e.skills ?? [])]);
   const roster = { raw:pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, statusTemplates:state.statusTemplates };
+  if (Object.keys(state.customElements ?? {}).length) roster.customElements = state.customElements;
   if (targetZoneIds.length) {
     roster.zones = pick(state.zones, targetZoneIds);
     roster.rawZones = pick(ctx.zoneEntries ?? ctx.sources?.zoneEntries, targetZoneIds);
@@ -220,8 +227,24 @@ function scopedRoster(ctx, state, warnings) {
     const count = c.rules?.length ?? 0, mods = c.mods?.length ?? 0;
     siblings.push(`[${type}]${id} ${c.name ?? ''}|${terms.join('/')}|${count || mods ? `${count}规则${mods ? `/${mods}修饰` : ''}` : '待后批'}`);
   }
-  const ledger = Object.entries(state.statusTemplates ?? {}).map(([id,s]) => [id, s.name, `${s.maxStacks ?? 1}/${s.stackMode ?? 'refresh'}`,
+  const ledger = statusLedger(state);
+  const poolLines = sharedPoolLines(ctx, rows, equipment, skills);
+  const customLedger = customElementLedger(state);
+  const otherZones = Object.entries(state.zones ?? {}).filter(([id]) => !targetZoneIds.includes(id));
+  const zoneLines = otherZones.map(([id, z]) => [
+    id, z.name, z.area?.shape ?? '?', (z.tags ?? []).join('/'),
+    distinct((z.mods ?? []).map(m => m.stat)).join('/'), distinct((z.rules ?? []).map(r => r.hook)).join('/'),
+  ].join('|'));
+  const zoneLedger = zoneLines.length ? `\nsharedZoneLedger：zoneId|名|形状|标签|mods|hooks；仅供联动查询如 in_zone(self, '<zoneId>')，勿改勿核销。\n${zoneLines.join('\n')}` : '';
+  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\n${ledger}\n${poolLines}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}${zoneLedger}${customLedger}\n</role_readonly_index>`;
+}
+
+function statusLedger(state) {
+  const lines = Object.entries(state.statusTemplates ?? {}).map(([id,s]) => [id, s.name, `${s.maxStacks ?? 1}/${s.stackMode ?? 'refresh'}`,
     s.tags?.join('/') ?? '', distinct((s.mods ?? []).map(m => m.stat)).join('/'), distinct((s.rules ?? []).map(r => r.hook)).join('/')].join('|'));
+  return `sharedStatusLedger：ID|名|层/叠法|标签|mods|hooks；复用 statusId，勿重复 add。\n${lines.join('\n')}`;
+}
+function sharedPoolLines(ctx, rows, equipment, skills) {
   const poolSources = [
     ...rows.map(unit => [`unit:${unit.id}`, unit.unitPools]),
     ...Object.entries(equipment).map(([id, carrier]) => [`equipment:${id}`, carrier.unitPools]),
@@ -234,14 +257,17 @@ function scopedRoster(ctx, state, warnings) {
     entry.sources.push(source);
     poolLedger.set(id, entry);
   }
-  const poolLines = [...poolLedger].map(([id, pool]) => [id, pool.name, pool.cap ?? '?', pool.sources.join('/')].join('|'));
-  const otherZones = Object.entries(state.zones ?? {}).filter(([id]) => !targetZoneIds.includes(id));
-  const zoneLines = otherZones.map(([id, z]) => [
-    id, z.name, z.area?.shape ?? '?', (z.tags ?? []).join('/'),
-    distinct((z.mods ?? []).map(m => m.stat)).join('/'), distinct((z.rules ?? []).map(r => r.hook)).join('/'),
-  ].join('|'));
-  const zoneLedger = zoneLines.length ? `\nsharedZoneLedger：zoneId|名|形状|标签|mods|hooks；仅供联动查询如 in_zone(self, '<zoneId>')，勿改勿核销。\n${zoneLines.join('\n')}` : '';
-  return `${json(roster)}\n<role_readonly_index DO_NOT_PATCH="true">\nsharedStatusLedger：ID|名|层/叠法|标签|mods|hooks；复用 statusId，勿重复 add。\n${ledger.join('\n')}\nsharedPoolLedger：poolId|名|cap|声明来源；复用 poolId，读写 self.resource.<poolId>，勿重复声明。\n${poolLines.join('\n')}\nsiblingCarriersIndex：仅供联动，勿改勿核销。\n${siblings.join('\n')}${zoneLedger}\n</role_readonly_index>`;
+  const bindings = Object.values(ctx.sources?.sourceMap ?? {}).flatMap(mapping => mapping.counterBindings ?? []);
+  const poolLines = [...poolLedger].map(([id, pool]) => {
+    const bound = bindings.filter(item => item.ownerKind === 'unit' && item.poolKey === id && item.mvuPath && pool.sources.includes(`unit:${item.unitId}`));
+    const caps = bound.length && bound.every(item => !item.hasExplicitCap) ? `${pool.cap}(开放上限)` : pool.cap ?? '?';
+    return [id, pool.name, caps, pool.sources.join('/'), ...bound.map(item => `MVU写回:/stat_data/${item.mvuPath.join('/')}`)].join('|');
+  });
+  return `sharedPoolLedger：poolId|名|cap|声明来源；复用 poolId，读写 self.resource.<poolId>，勿重复声明。\n${poolLines.join('\n')}`;
+}
+function customElementLedger(state) {
+  const lines = Object.entries(state.customElements ?? {}).map(([id, entry]) => [id, entry.name, entry.category ?? 'energy'].join('|'));
+  return lines.length ? `\ncustomElementsLedger：elementId|名|减伤归类；已全局持久化，直接引用，勿重复 add。\n${lines.join('\n')}` : '';
 }
 
 export function resolveSlotContent(slot, ctx = {}) {
@@ -266,7 +292,11 @@ export function resolveSlotContent(slot, ctx = {}) {
     const used = (table, ids) => Object.fromEntries(Object.entries(table ?? {}).filter(([id]) => ids.has(id)));
     const equipment = used(state.equipment, templates);
     for (const e of Object.values(equipment)) for (const id of e.skills ?? []) skillIds.add(id);
-    return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
+    const skills = used(state.skills, skillIds);
+    const payload = { roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills, items: state.items, statusTemplates: state.statusTemplates };
+    if (Object.keys(state.customElements ?? {}).length) payload.customElements = state.customElements;
+    const pools = sharedPoolLines(ctx, Object.values(state.units ?? {}), equipment, skills);
+    return `${json(payload)}\n<role_readonly_index DO_NOT_PATCH="true">\n${statusLedger(state)}\n${pools}${customElementLedger(state)}\n</role_readonly_index>`;
   }
   function battleText() {
     if (ctx.battleText != null) return ctx.battleText;
@@ -282,7 +312,7 @@ export function resolveSlotContent(slot, ctx = {}) {
     case 'battle': return battleText();
     case 'raw': return rawText(ctx);
     case 'warnings': return ctx.warningsText ?? (warnings.length ? `待处理警告：\n${variables.warnings()}` : '');
-    case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? '【辅助 AI 对话】玩家咨询时，直接用文字回答。玩家明确要求调整已加载的战局时，输出 {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} 形状的 JSON，按请求使用快照中的真实路径和值。装备、技能和状态的变更值遵循上面的 VM 协议。原始资料（MVU / char_info 原文）仅供只读参考，当前战局生效数据以 state 为准。标准化任务单独处理警告。' : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
+    case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? CHAT_TASK_RULES : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
     case 'extra': return expand(ctx.extraText || '');
     case 'assistant': return ctx.assistantText || '';
     default: return '';

@@ -12,6 +12,7 @@ const range = schema => [
 function describe(schema) {
   if (schema.format === 'tactical-expr') return 'Expr 字符串';
   if (schema.format === 'tactical-status-id') return '已定义状态 ID';
+  if (schema.format === 'tactical-damage-type') return 'physical / energy / mental / true / fire / cold / lightning / thunder / acid / poison / necrotic / radiant / force / psychic 或已登记 customElements ID';
   if (schema.$ref) {
     const name = schema.$ref.split('/').at(-1);
     return name === 'expireRule' ? `{${fields(defs.expireRule)}}` : name;
@@ -43,7 +44,7 @@ const spawnSpecs = Object.entries(defs).filter(([key]) => key.startsWith('spawn_
 export const VM_EFFECT_PROTOCOL = `【战术 VM 效果协议】
 rules 是规则数组。规则：{${fields(defs.rule, ['hook'])}，hook: 以下枚举}。
 允许 hook 枚举：${vmHooks.join(' / ')}。
-标识符格式：规则／模板／变量 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$；tag 匹配 ^[a-z0-9][a-z0-9_-]{0,31}$；状态与载体顶层 flags 枚举为 ${statusFlags.join(' / ')}。
+标识符格式：规则／模板／变量 ID 匹配 ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$；tag 匹配 ^[a-z0-9][a-z0-9_-]{0,31}$；状态与载体顶层 flags 枚举为 ${statusFlags.join(' / ')}。伤害类型共 14 项：physical(物理)、energy(能量)、mental(精神)、true(真实)、fire(火焰)、cold(冰霜)、lightning(雷电)、thunder(雷鸣)、acid(酸蚀)、poison(毒素)、necrotic(暗蚀)、radiant(光耀)、force(力场)、psychic(心灵)，或使用已登记 customElements ID。
 
 【全局事件管线与载体作用域】
 • 单次行动结算序：before_action（扣费缩放、取消行动、改写生效起点 origin 与无视视线 ignoreLOS；期间若改变持有者 controlPolicy.intentLock 会自动触发重规划并刷新 event.intent）→ before_target（取消指向、redirectTarget 覆写为单一目标或 replaceTarget:{from,to} 单点替身承伤并保留其余范围目标、伤害倍率缩放；可读 event.backX/event.backY 获取主目标相对自身朝向的背后一格坐标）→ before_check（改 DC/加值/优劣势、无视闪避、保底评级、强制判定结果，可读 event.stat 区分 str/agi/con/int/spi 检定属性）→ after_natural_roll（自然 d20 出骰后读 event.naturalRoll 并可用 replaceNaturalRoll 改骰）→ after_check → [模板主击/治疗 或 hook:"active" 规则执行] → before_commit（在 damage/heal/resource 实际落盘前统一拦截，通过 event.commitKind 区分类型，可读 event.targetId/pool/finalAmount/sourceRuleId/critical/ratingMultiplier，支持 ask 交互截取并改写 cancel/finalAmount/preserveLife）→ [HP 归零时：先跑 on_lethal_p1 处理遗言、治疗或换池 → 仍 ≤0 再跑 on_lethal_p2 处理 heal 治疗或 preventDeath 免死锁血（on_lethal_p1 与 on_lethal_p2 均可直接读取 event.rawAmount/finalAmount/dealt/absorbed/overkill 获取本次致死伤害量，如按致死伤害恢复法力或反伤！） → 仍 ≤0 才结算 on_death / on_ally_death / on_kill] → after_damage / after_heal → after_hit → after_action。

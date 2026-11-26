@@ -1,8 +1,10 @@
+import { validateCustomElements } from '../core/elements.js';
 import { GLOBAL_UI_PREF_KEYS } from '../ui/mount.js';
 
 const PREFIX = 'fated-tactical/';
+export const CUSTOM_ELEMENTS_KEY = `${PREFIX}custom-elements`;
 const GLOBAL_STATE_KEYS = new Set(['battle-v1', 'battle-v1/seed', 'carry-v1', 'reset-probe']
-  .map(key => PREFIX + key));
+  .map(key => PREFIX + key).concat(CUSTOM_ELEMENTS_KEY));
 const BATTLE_SNAPSHOT = `${PREFIX}battle-v1`;
 const TAVERN_PREFIX = `${PREFIX}tavern/`;
 const INSTANCES_PREFIX = `${PREFIX}instances/`;
@@ -12,6 +14,30 @@ function parseStoredBattleKey(key) {
   if (!key?.startsWith(PREFIX) || key.startsWith(TAVERN_PREFIX) || key.startsWith(INSTANCES_PREFIX) || GLOBAL_STATE_KEYS.has(key)) return null;
   const slash = key.indexOf('/', PREFIX.length);
   return slash > PREFIX.length ? key.slice(PREFIX.length, slash) : null;
+}
+
+export function loadCustomElements(storage) {
+  try {
+    const value = JSON.parse(storage?.getItem(CUSTOM_ELEMENTS_KEY) ?? '{}');
+    validateCustomElements(value);
+    return value;
+  } catch { return {}; }
+}
+
+export function mergeCustomElements(storage, elements = {}, write = (key, value) => storage?.setItem(key, JSON.stringify(value))) {
+  const current = loadCustomElements(storage);
+  const merged = { ...current, ...elements };
+  validateCustomElements(merged);
+  if (JSON.stringify(merged) !== JSON.stringify(current)) write(CUSTOM_ELEMENTS_KEY, merged);
+  return merged;
+}
+
+export function removeCustomElement(storage, id) {
+  const current = loadCustomElements(storage);
+  delete current[id];
+  if (Object.keys(current).length) storage?.setItem(CUSTOM_ELEMENTS_KEY, JSON.stringify(current));
+  else storage?.removeItem(CUSTOM_ELEMENTS_KEY);
+  return current;
 }
 
 export function pruneBattleStorageExcept(storage, keepKey) {
@@ -52,6 +78,7 @@ export function toPersistedOpeningSource({ mvuData, latestFloor, battleInit, bat
 }
 
 function storageCategory(key) {
+  if (key === CUSTOM_ELEMENTS_KEY) return 'otherFatedBytes';
   if (key.startsWith(INSTANCES_PREFIX)) return 'instancesBytes';
   if (key.startsWith(TAVERN_PREFIX)) {
     const match = key.slice(TAVERN_PREFIX.length).match(/\/(ai-sessions|charSnapshots|normalizationBatches|narrativeExemptions|unresolvedNotes)$/);

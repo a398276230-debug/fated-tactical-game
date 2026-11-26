@@ -43,7 +43,7 @@ export function normalizationTransactions({ patch, solved, verified, records, be
   }
   const definitions = new Map();
   for (const root of groups.keys()) {
-    if (/^\/(skills|statusTemplates|equipment|items|zones)\//.test(root)) {
+    if (/^\/(skills|statusTemplates|equipment|items|zones|customElements)\//.test(root)) {
       const id = root.split('/')[2];
       definitions.set(id, [...(definitions.get(id) ?? []), root]);
     }
@@ -93,7 +93,9 @@ export function replayNormalization(state, batches, records, warnings, { apply, 
       const owners = Object.entries(batch.hashes ?? {});
       if (!sameDiagnostics && (!owners.length || !owners.every(([id, hash]) => records[id]?.hash === hash))) continue;
     }
-    if (batch.guards?.some(([path, value]) => (fingerprint(state, path) ?? null) !== value)) continue;
+    const alreadyRegistered = new Set((batch.patch ?? []).filter(op => op.op === 'add' &&
+      /^\/customElements\/[^/]+$/.test(op.path) && fingerprint(state, op.path) === JSON.stringify(op.value)).map(op => op.path));
+    if (batch.guards?.some(([path, value]) => (fingerprint(state, path) ?? null) !== value && !alreadyRegistered.has(path))) continue;
     try {
       const next = apply(state, batch.patch, true);
       validate(next);

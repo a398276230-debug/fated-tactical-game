@@ -18,6 +18,41 @@ import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
 import { configFor, isQuotaExceededError, putConfig, sourceBundle } from '../src/tavern/overlay-sources.js';
 
+test('Batch 3 自定义元素注册、静态修饰与空状态提示保持闭合', () => {
+  const source = { charInfo: [{ name: '元素师', 装备: { 长剑: { 类型: '武器', 位置: '主手', 标签: ['[元素: 虚空]', '[虚空抗性: 20%]'] } }, 技能: [{ 名称: '虚空斩', 类型: '主动', 标签: ['威力: 20', '[伤害类型: 虚空]'] }] }], battleInit: { units: [{ id: 'u', name: '元素师', source: '元素师', faction: 'blue', x: 1, y: 1 }] } };
+  const result = hydrateFromSources(source, { throwOnValidation: true });
+  assert.deepEqual(result.state.customElements, { void: { id: 'void', name: '虚空', category: 'energy' } });
+  const item = Object.values(result.state.equipment).find(entry => entry.name === '长剑');
+  assert.equal(item.damage.type, 'void');
+  assert.deepEqual(item.mods.find(mod => mod.damageType === 'void'), { stat: 'damageReduction', flat: 0.2, damageType: 'void' });
+  assert.ok(item.tags.includes('void'));
+  const [skillId] = result.state.units.u.skills;
+  assert.equal(result.state.skills[skillId].damageType, 'void');
+  assert.ok(result.state.skills[skillId].tags.includes('void'));
+  const next = structuredClone(source);
+  next.customElements = result.state.customElements;
+  delete next.charInfo[0].装备;
+  next.charInfo[0].技能[0].标签 = ['[突进]', '[控制属性免疫]', '[元素: 20%]'];
+  next.charInfo[0].技能[0].效果 = { 余波: '造成 30 点虚空伤害' };
+  const rehydrated = hydrateFromSources(next, { throwOnValidation: true }).state;
+  assert.deepEqual(rehydrated.customElements, result.state.customElements);
+  assert.deepEqual(rehydrated.skills[rehydrated.units.u.skills[0]].rules[0].program, [damageOp('void', 30)]);
+  const message = resolveSlotContent({ id: 'roster' }, { state: { units: {}, items: {}, equipment: {}, skills: {}, statusTemplates: {} }, kind: 'chat' });
+  assert.doesNotMatch(message, /customElements/);
+});
+
+test('Batch 3 自定义元素存储避开战局驱逐并支持合并移除', () => {
+  const map = new Map([[CUSTOM_ELEMENTS_KEY, JSON.stringify({ void: { id: 'void', name: '虚空' } })], ['fated-tactical/old/battle-v1', 'x'], ['fated-tactical/new/battle-v1', 'y']]);
+  const storage = { get length() { return map.size; }, key: index => [...map.keys()][index] ?? null, getItem: key => map.get(key) ?? null, setItem: (key, value) => map.set(key, value), removeItem: key => map.delete(key) };
+  assert.deepEqual(loadCustomElements(storage), { void: { id: 'void', name: '虚空' } });
+  mergeCustomElements(storage, { astral: { id: 'astral', name: '星界', category: 'energy' } });
+  assert.ok(loadCustomElements(storage).astral);
+  pruneBattleStorageExcept(storage, 'new');
+  assert.ok(storage.getItem(CUSTOM_ELEMENTS_KEY));
+  removeCustomElement(storage, 'void');
+  assert.deepEqual(loadCustomElements(storage), { astral: { id: 'astral', name: '星界', category: 'energy' } });
+});
+
 test('sourceBundle 识别 battle_in 的 JSON 对象键与非引号对象键', () => {
   const battle = { battleId: 'legacy', participants: [{ name: '主角', faction: 'blue', source: 'mvu_protagonist', xyz: [1, 1, 0] }] };
   for (const content of [
@@ -47,8 +82,8 @@ cover|c1|半|货箱|4,8,0`;
   assert.equal(sourceBundle({}, [{ content: '{battle_in}: {"units":[]}' }]).battleInit.units.length, 0);
   assert.equal(sourceBundle({}, [{ content: `&lt;battle_init&gt;${battle}<!-- 未闭合注释` }]).battleRaw, battle);
 });
-import { computeStorageDiagnostics, pruneBattleScopedMap, pruneBattleStorageExcept,
-  toPersistedOpeningSource, toStoredCharSnapshot } from '../src/tavern/overlay-storage.js';
+import { CUSTOM_ELEMENTS_KEY, computeStorageDiagnostics, loadCustomElements, mergeCustomElements, pruneBattleScopedMap, pruneBattleStorageExcept,
+  removeCustomElement, toPersistedOpeningSource, toStoredCharSnapshot } from '../src/tavern/overlay-storage.js';
 import { GLOBAL_UI_PREF_KEYS, storageAdapter } from '../src/ui/mount.js';
 
 function memoryStorage(map = new Map()) {
@@ -1026,7 +1061,7 @@ test('G102/G103 original YAML and rejected effects retain the referenced skill t
   const skill = state.skills[id];
   assert.deepEqual([skill.name,skill.rules,skill.power,skill.range,skill.target], ['制式轻矢点射',[],50,5,'enemy']);
   const rejected = hydrateDummy(shooterYaml.replace('效果: |','效果: 不认识的动作'));
-  assert.deepEqual(rejected.state.skills[id], { ...skill, damage: { count: 1, sides: 4, stat: 'agi', type: 'physical' }, damageType:'physical' });
+  assert.deepEqual(rejected.state.skills[id], { ...skill, damage: { count: 1, sides: 4, stat: 'agi', type: 'physical' }, damageType:'physical', tags: ['physical'] });
   assert.ok(rejected.warnings.some(w => w.originPath === `/skills/${id}` && w.message.includes('不认识的动作')));
 });
 
