@@ -3,7 +3,7 @@ import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetwee
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledTemplate } from './combat_protocol.js';
+import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate } from './combat_protocol.js';
 
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
@@ -549,7 +549,8 @@ function movementScale(state, unit, type) {
   const mult = type === 'sprint' ? 2 : 1;
   const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
   const total = carry + Math.round(mult * moveM / cellM * 1000);
-  return { moveM, total, limit: Math.floor(total / 1000) };
+  const maxBoardSteps = (state.scale?.width ?? 10) + (state.scale?.height ?? 10);
+  return { moveM, total, limit: Math.min(maxBoardSteps, Math.floor(total / 1000)) };
 }
 export function reachable(state, type = 'move', unit = currentUnit(state), distanceLimit = undefined) {
   if (!alive(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
@@ -630,7 +631,7 @@ function paymentError(state, unit, ap, slot, template, { hp, mp, sp }, skill = f
   return null;
 }
 
-const normalAttack = Object.freeze({ name: '徒手', range: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' } });
+const normalAttack = Object.freeze({ name: '徒手', range: 1.5, rawRange: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: 'str', type: 'physical' } });
 const shieldBashRules = [{ id: 'shield-bash-hit', hook: 'after_hit', program: [
   { op: 'move', target: 'target', mode: 'push', distance: 1 },
   { op: 'apply_status', target: 'target', statusId: actionStatuses.shield_bash, turns: 1 },
@@ -655,8 +656,12 @@ export function weaponInfo(state, unit) {
   const offHand = equipmentFor(state, unit.offHand);
   offHand.template = scaledTemplate(state, unit, offHand.template, 'weapon');
   const stance = effectiveStance(state, unit);
-  return { ...weapon, ammo, ammoCount, infiniteAmmo, offHand, stance,
-    template: weapon.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, 'weapon')) };
+  const template = weapon.template ?? (() => {
+    const unarmed = scaledTemplate(state, unit, normalAttack, 'weapon');
+    unarmed.range = Math.min(1, unarmed.range);
+    return unarmed;
+  })();
+  return { ...weapon, ammo, ammoCount, infiniteAmmo, offHand, stance, template };
 }
 
 function reaches(state, actor, at, template, ammo) {
@@ -685,7 +690,7 @@ function tauntFor(state, actor, template, ammo) {
   return null;
 }
 
-// Threat is the set of tiles the reactor can legally target with its melee weapon.
+// Threat is the limited melee reach around the reactor used for opportunity attacks.
 // Root does not prevent attacking; stun and freeze do. A missing charge means ready
 // for snapshots written before opportunity attacks existed.
 function opportunitySources(state, mover) {
@@ -701,8 +706,11 @@ function canReact(state, { unit, weapon }, mover) {
 }
 
 function threatens(state, source, mover, at) {
+  const template = source.weapon.template;
+  const rawReach = template.rawRange ?? 1;
+  const zocRange = Math.min(template.range ?? 0, Math.max(1, Math.floor(rawReach + 1e-9)));
   return visibleEnemy(state, source.unit, { ...mover, x: at.x, y: at.y }) &&
-    validReach(state, source.unit, { ...at, altitude:mover.altitude }, source.weapon.template);
+    validReach(state, source.unit, { ...at, altitude:mover.altitude }, { ...template, range: zocRange });
 }
 
 const opportunityDetail = (source, from, to) => ({ unitId: source.id, name: source.name,

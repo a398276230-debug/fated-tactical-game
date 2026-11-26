@@ -14,6 +14,52 @@ test('battle_init parses rectangular board, scale units, and stacked units', () 
   assert.throws(() => parseBattleDescriptor(overCapacity), /同格单位超过容量/);
 });
 
+test('battle_init accepts independent tier and physical scale declarations', () => {
+  const tier = parseBattleDescriptor('battle|1|tier|近身|flat|战场层级=第 2 层级\nunit|p|blue|char_info|甲|1,1');
+  assert.deepEqual({ scaleTier: tier.scaleTier, explicitScale: tier.explicitScale, cellM: tier.cellM ?? null }, { scaleTier: 2, explicitScale: true, cellM: null });
+  const alias = parseBattleDescriptor('battle|1|alias|庭院|flat|尺度层级=5级|比例尺=12m\nunit|p|blue|char_info|甲|1,1');
+  assert.deepEqual({ scaleTier: alias.scaleTier, cellM: alias.cellM, explicitScale: alias.explicitScale }, { scaleTier: 5, cellM: 12, explicitScale: true });
+  for (const header of [
+    'battle|1|bad-tier|错误|flat|战场层级=0',
+    'battle|1|bad-tier|错误|flat|战场层级=8',
+    'battle|1|bad-tier|错误|flat|尺度层级=2.5',
+    'battle|1|duplicate-tier|错误|flat|战场层级=2|尺度层级=2',
+  ]) assert.throws(() => parseBattleDescriptor(`${header}\nunit|p|blue|char_info|甲|1,1`), /战场层级/);
+});
+
+test('hydrate arbitrates explicit scale axes and defaults to the lowest unit tier', () => {
+  const battle = 'battle|1|scale-default|混合队|flat\nunit|low|blue|char_info|低阶|1,1\nunit|high|red|char_info|高阶|2,1';
+  const charInfo = [{ name: '低阶', tier: 1 }, { name: '高阶', tier: 5 }];
+  const defaultScale = hydrateFromSources({ battleInit: battle, charInfo }, { throwOnValidation: true }).state.scale;
+  assert.deepEqual(defaultScale, { cellM: 2, width: 10, height: 10, anchorTier: 1, explicit: false });
+  const highOnly = hydrateFromSources({ battleInit: 'battle|1|scale-high|高阶|flat\nunit|high|blue|char_info|高阶|1,1', charInfo: [{ name: '高阶', tier: 5 }] }, { throwOnValidation: true }).state.scale;
+  assert.deepEqual(highOnly, { cellM: 50, width: 10, height: 10, anchorTier: 5, explicit: false });
+  const declaredTier = hydrateFromSources({ battleInit: battle.replace('|flat\n', '|flat|战场层级=5\n'), charInfo }, { throwOnValidation: true }).state.scale;
+  assert.deepEqual(declaredTier, { cellM: 50, width: 10, height: 10, anchorTier: 5, explicit: true });
+  const declaredCell = hydrateFromSources({ battleInit: battle.replace('|flat\n', '|flat|比例尺=2m\n'), charInfo }, { throwOnValidation: true }).state.scale;
+  assert.deepEqual(declaredCell, { cellM: 2, width: 10, height: 10, anchorTier: 1, explicit: true });
+  const orthogonal = hydrateFromSources({ battleInit: battle.replace('|flat\n', '|flat|战场层级=5|比例尺=2m\n'), charInfo }, { throwOnValidation: true }).state.scale;
+  assert.deepEqual(orthogonal, { cellM: 2, width: 10, height: 10, anchorTier: 5, explicit: true });
+});
+
+test('hydrate accepts structured anchorTier and scaleTier declarations', () => {
+  const source = { charInfo: [{ name: '甲', tier: 1 }], battleInit: {
+    battleId: 'structured-tier', terrainMode: 'flat', sceneTitle: '结构化',
+    units: [{ id: 'p', team: 'blue', source: 'char_info', name: '甲', x: 1, y: 1 }],
+    scaleTier: 4, cellM: 7,
+  } };
+  assert.deepEqual(hydrateFromSources(source, { throwOnValidation: true }).state.scale, { cellM: 7, width: 10, height: 10, anchorTier: 4, explicit: true });
+  const anchor = { ...source, battleInit: { ...source.battleInit, scaleTier: undefined, anchorTier: 6, cellM: undefined } };
+  assert.deepEqual(hydrateFromSources(anchor, { throwOnValidation: true }).state.scale, { cellM: 250, width: 10, height: 10, anchorTier: 6, explicit: true });
+  for (const scaleTier of [true, [5], 2.5, 8]) {
+    assert.throws(() => hydrateFromSources({ ...source, battleInit: { ...source.battleInit, scaleTier } }), /战场层级/);
+  }
+  const markerOnly = { ...source, battleInit: { ...source.battleInit, scaleTier: undefined, anchorTier: undefined, cellM: undefined, explicitScale: true } };
+  assert.equal(hydrateFromSources(markerOnly, { throwOnValidation: true }).state.scale.explicit, false);
+  const empty = hydrateFromSources({ battleInit: { battleId: 'empty', terrainMode: 'flat', sceneTitle: '空场', explicitScale: true } }, { throwOnValidation: true }).state.scale;
+  assert.deepEqual(empty, { cellM: 2, width: 10, height: 10, anchorTier: 1, explicit: false });
+});
+
 test('hydrate preserves the far corner, legal stacks and rectangular wraparound', () => {
   const { state, warnings } = hydrateFromSources({ battleInit: `battle|1|edge|边界|flat|棋盘=20x12
 unit|a|blue|char_info|甲|19,11

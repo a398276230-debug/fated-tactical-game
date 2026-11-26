@@ -18,6 +18,19 @@ export const TIER_CELL_M = Object.freeze([null, 2, 2, 5, 15, 50, 250, 1000]);
 export const QUALITY_TIER = Object.freeze({ 普通: 1, 优良: 2, 稀有: 3, 史诗: 4, 传说: 5, 神话: 6 });
 export const QUALITY_AUTHORITY = Object.freeze({ ...QUALITY_TIER, 唯一: 8 });
 const clampTier = tier => Math.max(1, Math.min(7, Math.trunc(Number(tier) || 1)));
+export function tierFromCellM(cellM) {
+  const value = Number(cellM);
+  if (!Number.isFinite(value) || value <= 2) return 1;
+  if (value < 15) return 3;
+  if (value < 50) return 4;
+  if (value < 250) return 5;
+  if (value < 1000) return 6;
+  return 7;
+}
+export function scaleRatio(effectiveTier, cellM) {
+  const rawRatio = (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]) / Math.max(1e-9, Number(cellM) || 1);
+  return rawRatio <= 5 ? rawRatio : 5 + Math.sqrt(rawRatio - 5);
+}
 export function resolveEffectiveTier(carrierKind, quality, unitTier) {
   const actorTier = clampTier(unitTier);
   if (!quality || quality === '唯一') return actorTier;
@@ -31,12 +44,12 @@ export function resolveAuthorityRank(carrier = {}, ownerUnit = {}) {
     : QUALITY_AUTHORITY[carrier.quality] ?? Math.max(1, Math.min(7, Math.trunc(Number(carrier.authorityRank ?? carrier.tier ?? unitTier) || unitTier)));
   return { authorityRank, unitTier };
 }
-function scaledMeters(raw, effectiveTier) { return Number(raw || 0) * (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]); }
 export function scaledCells(raw, effectiveTier, cellM, { max = Infinity, floor = false } = {}) {
-  const cells = scaledMeters(raw, effectiveTier) / Math.max(1e-9, Number(cellM) || 1);
+  const cells = Number(raw || 0) * scaleRatio(effectiveTier, cellM);
   return Math.max(0, Math.min(max, floor ? Math.floor(cells + 1e-9) : cells));
 }
-export const scaledMoveCells = (raw, effectiveTier, cellM) => scaledCells(raw, effectiveTier, cellM, { floor: true });
+export const scaledMoveCells = (raw, effectiveTier, cellM, options = {}) =>
+  scaledCells(raw, effectiveTier, cellM, { ...options, floor: true });
 
 export function scaledTemplate(state, unit, template, kind) {
   if (!template) return template;
@@ -45,8 +58,12 @@ export function scaledTemplate(state, unit, template, kind) {
   const result = { ...template };
   if (template.target === 'self') result.range = 0;
   else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
+  const ratio = scaleRatio(tier, cellM);
+  const radiusMax = ratio > 1
+    ? Math.max(template.rawRadius ?? 0, Math.ceil(Math.min(state.scale?.width ?? 10, state.scale?.height ?? 10) * 0.6))
+    : 30;
   for (const [rawKey, key] of [['rawRadius', 'radius'], ['rawInnerRadius', 'innerRadius'], ['rawWidth', 'width']]) {
-    if (template[rawKey] != null) result[key] = scaledCells(template[rawKey], tier, cellM, { max: 30 });
+    if (template[rawKey] != null) result[key] = scaledCells(template[rawKey], tier, cellM, { max: key === 'radius' ? radiusMax : 30 });
   }
   return result;
 }

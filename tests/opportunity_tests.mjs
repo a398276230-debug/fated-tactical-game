@@ -46,16 +46,18 @@ for (const type of ['move', 'sprint']) test(`${type}: pass-through provokes at t
 });
 
 test('safe path can be longer; risk is offered only if all legal paths in the budget provoke', () => {
-  const s = state(['.....', '.....', '.....', '.....'], [mover(0, 1), enemy('sentry', 2, 1)]);
-  const action = { type: 'move', x: 4, y: 1 };
+  // One-cell threat on the short upper corridor; the lower corridor bypasses it.
+  const s = state(['###.###', '.......', '.#####.', '.......'],
+    [mover(0, 1, { move: 10 }), enemy('sentry', 3, 0)]);
+  const action = { type: 'move', x: 6, y: 1 };
   const safe = preview(s, action);
   assert.equal(safe.ok, true);
-  assert.ok(safe.steps > 4 && safe.steps <= 6);
+  assert.ok(safe.steps > 6 && safe.steps <= 10);
   assert.deepEqual(safe.opportunities, []);
   assert.equal(reactions(applyAction(structuredClone(s), action)).length, 0);
-  s.units.mover.move = 4;
+  s.units.mover.move = 6;
   const risky = preview(s, action);
-  assert.equal(risky.steps, 4);
+  assert.equal(risky.steps, 6);
   assert.ok(risky.opportunities.length > 0);
 });
 
@@ -161,6 +163,7 @@ test('threat requires hostile ready melee, line of sight, and 3D weapon reach, b
   }
   const corner = state(['.....', '.#.##'], [mover(0, 0), enemy('sentry', 2, 1)]);
   const exit = { type: 'move', x: 0, y: 0 };
+  Object.assign(corner.equipment.spear, { rawRange: 2, range: 2 });
   corner.units.mover.x = 1;
   assert.deepEqual(preview(corner, exit).opportunities, [], 'wall at the diagonal corner blocks threat');
   corner.grid[1][1].kind = 'floor';

@@ -94,7 +94,8 @@ function moveDistance(state, frame, context, op) {
   const item = ref?.type === 'item' ? own(state.items, ref.id) : null;
   const template = item ? own(state.equipment, item.templateId) : ref?.type === 'skill' ? own(state.skills, ref.id) : context.status;
   const kind = ref?.type === 'skill' && !template?.backpackItem ? 'skill' : 'item';
-  return scaledMoveCells(distance, resolveEffectiveTier(kind, template?.quality, context.self?.tier), state.scale?.cellM ?? 2);
+  const maxBoardSteps = (state.scale?.width ?? 10) + (state.scale?.height ?? 10);
+  return scaledMoveCells(distance, resolveEffectiveTier(kind, template?.quality, context.self?.tier), state.scale?.cellM ?? 2, { max: maxBoardSteps });
 }
 
 function teleport({ state, frame, host, context, op }, targets) {

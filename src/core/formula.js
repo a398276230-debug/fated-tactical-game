@@ -1,5 +1,5 @@
 // Expression identifiers and queries expose a bounded, read-only combat context.
-import { TIER_CELL_M, resolveEffectiveTier } from './combat_protocol.js';
+import { resolveEffectiveTier, scaleRatio } from './combat_protocol.js';
 import { ownDataValue } from './util.js';
 import { facingArc } from './spatial.js';
 
@@ -212,7 +212,7 @@ query('cells_m', ['value'], 'cells_m(meters)', '按战场比例尺把米数换�
   numeric((a, b) => a / b, meters, own(context, 'cellM') ?? 2));
 query('scale_cells', ['value'], 'scale_cells(n)', '把词条小数值按规则载体的有效层级换算为格数，保留小数', ([n], context) => {
   const tier = own(context, 'effectiveTier') ?? resolveEffectiveTier('unit', null, path(context, 'self', 'tier'));
-  return numeric((value, tierMeters, cellMeters) => value * tierMeters / cellMeters, n, TIER_CELL_M[tier], own(context, 'cellM') ?? 2);
+  return numeric((value, ratio) => value * ratio, n, scaleRatio(tier, own(context, 'cellM') ?? 2));
 });
 query('clamp', ['value', 'value', 'value'], 'clamp(value, lo, hi)', '将数值钳制在上下限之间', ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
 query('distance', ['unit', 'unit'], 'distance() / distance(unitA, unitB)', '读取两单位的三维距离，无参时默认 self 到 target', ([a, b], context) => readDistance(context, a, b));

@@ -903,6 +903,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     config.instances = nextInstances;
     diagnostics = {
       phase: 'hydrated',
+      scale: hydrated?.state?.scale ?? null,
       version: TAVERN_VERSION,
       mvuKeys: Object.keys(sources.mvuData || {}),
       protagonistName: sources.protagonistName || '',

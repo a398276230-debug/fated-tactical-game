@@ -173,8 +173,12 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
     return true;
   })()`);
   await openMovementMenu(5);
+  const suppressedCard = await run('document.querySelector("#actor-card").textContent');
+  assert.match(suppressedCard, /尺度压制（限同格）/);
+  assert.doesNotMatch(suppressedCard, /蓄步 0%/);
   assert.equal(await run('document.querySelectorAll("#action-toolbar [data-action=move], #action-toolbar [data-action=sprint]").length'), 0);
   await openMovementMenu(4);
+  assert.match(await run('document.querySelector("#actor-card").textContent'), /蓄步 0%/);
   assert.match(await run('document.querySelector("#action-toolbar [data-action=move]")?.textContent ?? ""'), /蓄步推进/);
   assert.match(await run('document.querySelector("#action-toolbar [data-action=sprint]")?.textContent ?? ""'), /疾跑推进/);
   await run('document.querySelector("#action-toolbar [data-action=move]").click(); true');

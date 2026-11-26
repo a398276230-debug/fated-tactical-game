@@ -1,6 +1,6 @@
 import { EQUIPMENT, SKILLS } from '../presets/catalog.js';
 import { id as validId, validateState } from '../api/validation.js';
-import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells } from '../core/combat_protocol.js';
+import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells, tierFromCellM } from '../core/combat_protocol.js';
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
@@ -690,9 +690,18 @@ export function hydrateFromSources(input = {}, options = {}) {
   }
   const title = text(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || '酒馆战术战局';
   const seed = integer(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-  const anchorTier = Math.max(1, ...Object.values(units).map(unit => unit.tier ?? 1));
-  const cellM = battle.cellM ?? TIER_CELL_M[anchorTier];
-  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: battle.explicitScale === true }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+  const tierValue = battle.scaleTier ?? battle.anchorTier;
+  const hasDeclaredTier = tierValue != null;
+  const hasDeclaredCellM = battle.cellM != null;
+  const explicitScale = hasDeclaredTier || hasDeclaredCellM;
+  if (hasDeclaredTier && (!Number.isInteger(tierValue) || tierValue < 1 || tierValue > 7)) {
+    throw new Error('战场层级必须是 1 至 7 的整数');
+  }
+  const unitTiers = Object.values(units).map(unit => unit.tier ?? 1);
+  const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
+  const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
+  const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
+  const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
     if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;

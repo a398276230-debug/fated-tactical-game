@@ -205,7 +205,10 @@ export function createRenderer(root, portraitFor = () => []) {
 
   function appendMovementCarry(bars, unit, state) {
     const carry = unit.moveCarryPermille ?? 0;
-    if (carry || (unit.moveM != null && unit.moveM < state.scale?.cellM)) {
+    const subCell = unit.moveM != null && unit.moveM < state.scale?.cellM;
+    if (subCell && state.scale.anchorTier >= 5 && !(carry > 0)) {
+      bars.append(el('span', '', '尺度压制（限同格）'));
+    } else if (carry || subCell) {
       bars.append(bar('sp', carry, 1000, `蓄步 ${carry / 10}%`));
     }
   }

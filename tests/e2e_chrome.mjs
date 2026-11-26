@@ -305,6 +305,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   };
   assert.equal(await run('enemyRequests.length'),3,'敌方独立泳道经历首次失败、一次返修和手动重试');
   const opening = await tavernState();
+  assert.deepEqual(await run(`JSON.parse(document.querySelector('[data-diagnostics]').textContent).scale`), opening.scale);
   const openingBow = state => state.equipment[state.items[state.units.p1.mainHand].templateId];
   const notesKey = await run(`Object.keys(localStorage).find(k => k.startsWith('fated-tactical/tavern/') && k.split('/').length === 3) + '/unresolvedNotes'`);
   const originalKey = await activeStorageKey();

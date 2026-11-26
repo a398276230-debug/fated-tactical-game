@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildScenario } from '../src/presets/scenarios.js';
-import { actionSkill, applyAction, currentUnit, grantStatus, preview } from '../src/core/combat.js';
-import { canStep, coverBetween, unitsAt } from '../src/core/spatial.js';
+import { actionSkill, applyAction, currentUnit, grantStatus, preview, weaponInfo } from '../src/core/combat.js';
+import { scaledCells, scaledMoveCells, scaledTemplate, scaleRatio, tierFromCellM } from '../src/core/combat_protocol.js';
+import { evaluateExpr } from '../src/core/formula.js';
+import { canStep, coverBetween, findPath, unitsAt } from '../src/core/spatial.js';
 import { chooseAction } from '../src/core/ai.js';
 import { battleAiPayload } from '../src/core/battle-ai.js';
 import { narrate } from '../src/ui/narrate.js';
@@ -162,6 +164,144 @@ test('skill geometry is resolved for the individual caster and preserves fractio
   assert.equal(actionSkill(state, actor, 'scaled').radius, 0.5);
   actor.tier = 7;
   assert.equal(actionSkill(state, actor, 'scaled').range, 4);
+});
+
+test('tier scale uses R1 damping consistently in protocol and formula geometry', () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map(tier => tierFromCellM([2, 2, 5, 15, 50, 250, 1000][tier - 1])), [1, 1, 3, 4, 5, 6, 7]);
+  assert.equal(scaleRatio(4, 5), 3);
+  assert.equal(scaleRatio(6, 50), 5);
+  assert.equal(evaluateExpr('scale_cells(8)', { self: { tier: 6 }, cellM: 50 }), 40);
+  assert.equal(scaledCells(4, 4, 5), 12);
+  assert.equal(evaluateExpr('scale_cells(4)', { self: { tier: 4 }, cellM: 5 }), 12);
+
+  const damped = 5 + Math.sqrt(25 - 5);
+  assert.ok(Math.abs(scaleRatio(5, 2) - damped) < 1e-12);
+  assert.ok(Math.abs(scaledCells(1, 5, 2) - damped) < 1e-12);
+  assert.ok(Math.abs(evaluateExpr('scale_cells(1)', { self: { tier: 5 }, cellM: 2 }) - damped) < 1e-12);
+  assert.equal(scaledMoveCells(1000, 7, 2, { max: 16 }), 16);
+
+  const template = scaledTemplate({ scale: { cellM: 2, width: 10, height: 10 } }, { tier: 5 },
+    { rawRange: 1, rawRadius: 1, shape: 'circle' }, 'skill');
+  assert.equal(template.range, 9);
+  assert.equal(template.radius, 6);
+});
+
+test('movement limit is capped by board span while fractional carry remains uncapped at zero steps', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  actor.tier = 7;
+  actor.moveM = 100000;
+  actor.move = 0;
+  state.scale = { cellM: 2, width: 8, height: 8, anchorTier: 2, explicit: true };
+  const corridor = Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => ({ kind: 'wall', z: 0 })));
+  for (const y of [0, 2, 4, 6]) for (let x = 0; x < 8; x++) corridor[y][x] = { kind: 'floor', z: 0 };
+  for (const [y, x] of [[1, 7], [3, 0], [5, 7]]) corridor[y][x] = { kind: 'floor', z: 0 };
+  state.grid = corridor;
+  state.covers = {};
+  state.interactives = {};
+  Object.assign(actor, { x: 0, y: 0, ap: 2, used: { attack: 0, action: 0 } });
+  for (const unit of Object.values(state.units)) if (unit !== actor) Object.assign(unit, { x: 7, y: 6 });
+  const atLimit = { x: 0, y: 2 }, beyondLimit = { x: 0, y: 3 };
+  assert.equal(findPath(state, actor, beyondLimit).length, 17);
+  const cells = preview(state, { type: 'move' }).cells;
+  assert.ok(cells.some(cell => cell.x === atLimit.x && cell.y === atLimit.y && cell.steps === 16));
+  assert.equal(preview(state, { type: 'move', ...beyondLimit }).ok, false);
+
+  actor.skills = ['scaled-step'];
+  const move = { op: 'move', target: 'self', mode: 'step', to: beyondLimit, distance: 100, distanceUnit: 'position' };
+  state.skills['scaled-step'] = { name: '长距步法', ap: 1, slot: 'action', range: 0, shape: 'single', target: 'self',
+    rules: [{ id: 'scaled-step', hook: 'active', program: [move] }] };
+  const cast = { type: 'skill', skillId: 'scaled-step', x: actor.x, y: actor.y, targetId: actor.id };
+  const vmBlocked = structuredClone(state);
+  applyAction(vmBlocked, cast);
+  assert.deepEqual([vmBlocked.units[actor.id].x, vmBlocked.units[actor.id].y], [0, 0]);
+  const vmAllowed = structuredClone(state);
+  vmAllowed.skills['scaled-step'].rules[0].program[0].to = atLimit;
+  applyAction(vmAllowed, cast);
+  assert.deepEqual([vmAllowed.units[actor.id].x, vmAllowed.units[actor.id].y], [0, 2]);
+
+  actor.moveM = 1;
+  actor.moveCarryPermille = 0;
+  actor.used.action = 0;
+  const origin = { x: actor.x, y: actor.y };
+  assert.equal(preview(state, { type: 'move', x: origin.x, y: origin.y }).ok, true);
+  applyAction(state, { type: 'move', x: origin.x, y: origin.y });
+  assert.equal(actor.moveCarryPermille, 500);
+});
+
+test('high-tier unarmed attacks use one-cell punch range and real adjacent-only opportunities', () => {
+  const makeState = () => {
+    const state = buildScenario('ruins');
+    const mover = currentUnit(state);
+    const reactor = Object.values(state.units).find(unit => unit !== mover);
+    state.grid = Array.from({ length: 8 }, () => Array.from({ length: 8 }, () => ({ kind: 'floor', z: 0 })));
+    state.covers = {};
+    state.interactives = {};
+    for (const unit of Object.values(state.units)) if (unit !== mover && unit !== reactor) unit.hp = 0;
+    Object.assign(mover, { team: 'blue', x: 2, y: 1, ap: 2, used: { attack: 0, action: 0 }, hp: 100, maxHp: 100 });
+    Object.assign(reactor, { team: 'red', x: 3, y: 1, tier: 5, mainHand: null, weapon: null, offHand: null, shield: null, gear: [], reactionAvailable: true });
+    state.order = [mover.id, reactor.id];
+    state.turn = 0;
+    state.scale = { cellM: 2, width: 8, height: 8, anchorTier: 2, explicit: true };
+    return { state, mover, reactor };
+  };
+
+  const distant = makeState();
+  const { state, reactor, mover } = distant;
+  assert.equal(weaponInfo(state, reactor).template.range, 1);
+  state.turn = 1;
+  Object.assign(reactor, { ap: 2, used: { attack: 0, action: 0 } });
+  const punch = () => preview(state, { type: 'attack', targetId: mover.id, x: mover.x, y: mover.y });
+  assert.equal(punch().ok, true);
+  mover.x = 1;
+  assert.equal(punch().ok, false);
+  state.scale.cellM = 1000;
+  assert.equal(weaponInfo(state, reactor).template.range, 0);
+  mover.x = 2;
+  assert.equal(punch().ok, false);
+  mover.x = 3;
+  assert.equal(punch().ok, true);
+  state.scale.cellM = 2;
+  state.turn = 0;
+  mover.x = 0;
+  assert.deepEqual(preview(state, { type: 'move', x: 1, y: 1 }).opportunities, []);
+
+  const adjacent = makeState();
+  const plan = preview(adjacent.state, { type: 'move', x: 1, y: 1 });
+  assert.equal(plan.opportunities.length, 1);
+  assert.equal(plan.opportunities[0].unitId, adjacent.reactor.id);
+  const logs = applyAction(adjacent.state, { type: 'move', x: 1, y: 1 });
+  assert.equal(logs.filter(log => log.type === 'opportunity').length, 1);
+  assert.ok(adjacent.mover.hp < adjacent.mover.maxHp);
+});
+
+test('high-tier scaled melee attack range does not expand opportunity-attack threat', () => {
+  const state = buildScenario('ruins');
+  const mover = currentUnit(state);
+  const reactor = Object.values(state.units).find(unit => unit !== mover);
+  state.grid = Array.from({ length: 8 }, () => Array.from({ length: 20 }, () => ({ kind: 'floor', z: 0 })));
+  state.covers = {};
+  state.interactives = {};
+  for (const unit of Object.values(state.units)) if (unit !== mover && unit !== reactor) unit.hp = 0;
+  state.items.spear5 = { id: 'spear5', templateId: 'spear5' };
+  state.equipment.spear5 = { name: '长枪', kind: 'weapon', range: 2, rawRange: 2,
+    damage: { count: 1, sides: 4, stat: 'str', type: 'physical' } };
+  Object.assign(reactor, { team: 'red', x: 0, y: 1, tier: 5, mainHand: 'spear5', weapon: 'spear5',
+    offHand: null, shield: null, gear: [], reactionAvailable: true, ap: 2, used: { attack: 0, action: 0 } });
+  Object.assign(mover, { team: 'blue', x: 18, y: 1, ap: 2, used: { attack: 0, action: 0 } });
+  state.order = [mover.id, reactor.id];
+  state.scale = { cellM: 2, width: 20, height: 8, anchorTier: 2, explicit: true };
+
+  assert.equal(weaponInfo(state, reactor).template.range, 18);
+  state.turn = 1;
+  const normalAttack = preview(state, { type: 'attack', targetId: mover.id, x: mover.x, y: mover.y });
+  assert.equal(normalAttack.ok, true, normalAttack.error);
+  state.turn = 0;
+  const departing = { type: 'move', x: 19, y: 1 };
+  assert.deepEqual(preview(state, departing).opportunities, [], 'leaving distance 18 does not provoke outside raw-range ZoC');
+  assert.equal(applyAction(state, departing).some(log => log.type === 'opportunity'), false);
+  Object.assign(mover, { x: 2, ap: 2, used: { attack: 0, action: 0 } });
+  assert.deepEqual(preview(state, { type: 'move', x: 3, y: 1 }).opportunities.map(row => row.unitId), [reactor.id]);
 });
 
 test('zero-range fan resolves its own cell, radius-two neighbors, and real hover distance', () => {

@@ -22,6 +22,11 @@ function parseHeader(line) {
 
   const sizeToken = options.find(value => /^棋盘\s*=/.test(value));
   const scaleToken = options.find(value => /^比例尺\s*=/.test(value));
+  const tierTokens = options.filter(value => /^(?:战场层级|尺度层级)\s*=/.test(value));
+  if (tierTokens.length > 1) fail('战场层级只能声明一次（不可同时重复战场层级或尺度层级）');
+  const tierToken = tierTokens[0];
+  const tierMatch = tierToken?.match(/^(?:战场层级|尺度层级)\s*=\s*(?:第\s*)?([1-7])(?:\s*(?:层级?|阶级?|级))?$/u);
+  if (tierToken && !tierMatch) fail('战场层级必须是 1 至 7 的整数（可写作第 N 层级或 N 阶）');
   const sizeMatch = sizeToken?.match(/^棋盘\s*=\s*(\d+)\s*[xX×*]\s*(\d+)$/u);
   if (sizeToken && (!sizeMatch || Number(sizeMatch[1]) < 8 || Number(sizeMatch[1]) > 20 || Number(sizeMatch[2]) < 8 || Number(sizeMatch[2]) > 20)) fail('棋盘尺寸必须在 8x8 至 20x20 之间');
   const width = sizeMatch ? Number(sizeMatch[1]) : 10, height = sizeMatch ? Number(sizeMatch[2]) : 10;
@@ -35,13 +40,16 @@ function parseHeader(line) {
   if (typeValue && !moraleType) fail('未知战斗类型，可选：标准、切磋、竞技、压制、死斗、守卫');
   if ((sideValue && !sideToken) || (moraleType === 'suppress') !== !!sideToken) fail('压制战必须在战斗类型后声明 |压制方=blue 或 |压制方=red；其他类型不填压制方');
   const remainingOptions = options.slice();
-  for (const token of [sizeToken, scaleToken, sideValue, typeValue]) {
+  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue]) {
     if (token !== undefined) remainingOptions.splice(remainingOptions.indexOf(token), 1);
   }
   const [seedText, ...extra] = remainingOptions;
   if (extra.length) fail(`首行包含无法识别的选项「${extra.join('|')}」`);
   if (seedText !== undefined && (!/^\d+$/.test(seedText) || Number(seedText) > 0xffffffff)) fail('seed 必须是 0–4294967295 的整数');
-  return { version: 1, battleId, sceneTitle, terrainMode, width, height, ...(cellM != null && { cellM, explicitScale: true }),
+  const scaleExplicit = cellM != null || tierMatch != null;
+  return { version: 1, battleId, sceneTitle, terrainMode, width, height,
+    ...(cellM != null && { cellM }), ...(tierMatch && { scaleTier: Number(tierMatch[1]) }),
+    ...(scaleExplicit && { explicitScale: true }),
     ...(moraleType && { moraleType }), ...(sideToken && { suppressingTeam: sideToken[1] }),
     ...(seedText === undefined ? {} : { seed: Number(seedText) }) };
 }
