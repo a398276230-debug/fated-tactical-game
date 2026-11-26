@@ -225,6 +225,64 @@ var FatedTacticalTavern = (() => {
     return table(state.units).some((ally) => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
   }
 
+  // src/core/elements.js
+  var reserved = /* @__PURE__ */ new Set([...Object.getOwnPropertyNames(Object.prototype), "prototype"]);
+  var definitions = [
+    ["physical", "\u7269\u7406", "physical", ["\u7269\u7406", "\u5288\u780D", "\u7A7F\u523A", "\u949D\u51FB", "\u65A9\u51FB", "\u6253\u51FB", "\u7269\u4F24", "physical", "slashing", "piercing", "bludgeoning"]],
+    ["energy", "\u80FD\u91CF", "energy", ["\u80FD\u91CF", "\u9B54\u6CD5", "\u6CD5\u672F", "\u9B54\u529B\u4F24\u5BB3", "energy", "magic", "spell"]],
+    ["mental", "\u7CBE\u795E", "mental", ["\u7CBE\u795E", "\u7075\u9B42\u4F24\u5BB3", "\u795E\u8BC6", "mental"]],
+    ["true", "\u771F\u5B9E", "true", ["\u771F\u5B9E", "\u7EAF\u7CB9", "\u771F\u4F24", "\u7EDD\u5BF9", "true", "pure"]],
+    ["fire", "\u706B\u7130", "energy", ["\u706B", "\u706B\u7130", "\u706B\u5C5E\u6027", "\u70C8\u7130", "\u707C\u70ED", "\u708E", "\u4E1A\u706B", "fire", "flame", "pyro"]],
+    ["cold", "\u51B0\u971C", "energy", ["\u51B0", "\u5BD2", "\u51B0\u971C", "\u5BD2\u51B7", "\u5BD2\u51B0", "\u51B0\u5C5E\u6027", "\u51B0\u51BB", "\u51DB\u51AC", "cold", "ice", "frost", "cryo"]],
+    ["lightning", "\u96F7\u7535", "energy", ["\u96F7", "\u7535", "\u96F7\u7535", "\u95EA\u7535", "\u96F7\u5C5E\u6027", "\u7535\u5C5E\u6027", "\u96F7\u9706", "\u7535\u51FB", "lightning", "electric", "thunderbolt", "shock"]],
+    ["thunder", "\u96F7\u9E23", "energy", ["\u96F7\u9E23", "\u97F3\u6CE2", "\u58F0\u6CE2", "\u9707\u8361", "\u8F70\u9E23", "\u97F3\u5C5E\u6027", "thunder", "sonic"]],
+    ["acid", "\u9178\u8680", "energy", ["\u9178", "\u9178\u8680", "\u5F3A\u9178", "\u8150\u8680", "\u9178\u5C5E\u6027", "\u9178\u6DB2", "acid", "corrosive"]],
+    ["poison", "\u6BD2\u7D20", "energy", ["\u6BD2", "\u6BD2\u7D20", "\u5267\u6BD2", "\u6BD2\u5C5E\u6027", "\u6BD2\u6DB2", "\u7634\u6C14", "poison", "toxic", "venom"]],
+    ["necrotic", "\u6697\u8680", "energy", ["\u6697", "\u6697\u8680", "\u6B7B\u7075", "\u6697\u5F71", "\u51CB\u96F6", "\u8D1F\u80FD\u91CF", "\u6697\u5C5E\u6027", "\u8150\u8680\u6B7B\u6C14", "necrotic", "dark", "shadow", "unholy"]],
+    ["radiant", "\u5149\u8000", "energy", ["\u5149", "\u5149\u8000", "\u795E\u5723", "\u5723\u5149", "\u9633\u708E", "\u5149\u5C5E\u6027", "\u5723\u5C5E\u6027", "\u8F89\u5149", "radiant", "holy", "light", "sacred"]],
+    ["force", "\u529B\u573A", "energy", ["\u529B\u573A", "\u5965\u672F", "\u7EAF\u9B54\u529B", "\u5965\u80FD", "\u529B\u573A\u5C5E\u6027", "force", "arcane"]],
+    ["psychic", "\u5FC3\u7075", "mental", ["\u5FC3\u7075", "\u5FC3\u667A", "\u5FF5\u529B", "\u5FF5\u80FD", "\u5E7B\u8C61", "\u5FC3\u7075\u5C5E\u6027", "psychic"]]
+  ];
+  var BUILTIN_DAMAGE_TYPES = Object.freeze(definitions.map(([id3]) => id3));
+  var ELEMENT_DEFINITIONS = Object.freeze(Object.fromEntries(definitions.map(([id3, name, category, aliases3]) => [
+    id3,
+    Object.freeze({ id: id3, name, category, aliases: Object.freeze(aliases3) })
+  ])));
+  var aliases = new Map(definitions.flatMap(([id3, , , names]) => names.map((name) => [name.toLocaleLowerCase(), id3])));
+  function resolveElementAlias(value) {
+    return typeof value === "string" ? aliases.get(value.trim().toLocaleLowerCase()) ?? null : null;
+  }
+  function elementMitigationCategory(type, customElements = {}) {
+    if (ELEMENT_DEFINITIONS[type]) return ELEMENT_DEFINITIONS[type].category;
+    const category = customElements?.[type]?.category;
+    return ["physical", "energy", "mental", "true"].includes(category) ? category : "energy";
+  }
+  function typedArmorForElement(type, armor, customElements) {
+    const category = elementMitigationCategory(type, customElements);
+    return category === "physical" ? armor : category === "energy" ? armor / 2 : 0;
+  }
+  function attributeReductionForElement(type, stats = {}, customElements) {
+    const category = elementMitigationCategory(type, customElements);
+    if (category === "physical") return (stats.con + stats.str + stats.agi) * 25e-4;
+    if (category === "energy") return (stats.spi + stats.int) * 4e-3;
+    return category === "mental" ? stats.spi * 8e-3 : 0;
+  }
+  function elementLabel(type, customElements = {}) {
+    return ELEMENT_DEFINITIONS[type]?.name ?? customElements?.[type]?.name ?? type;
+  }
+  function validateCustomElements(value) {
+    if (value === void 0) return;
+    if (value === null || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).length > 64) {
+      throw new Error("\u81EA\u5B9A\u4E49\u5143\u7D20\u8868\u65E0\u6548");
+    }
+    for (const [key4, entry2] of Object.entries(value)) {
+      if (reserved.has(key4) || !/^[a-z][a-z0-9_-]{0,31}$/.test(key4) || BUILTIN_DAMAGE_TYPES.includes(key4)) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20 ID \u65E0\u6548\uFF1A${key4}`);
+      if (!entry2 || Object.getPrototypeOf(entry2) !== Object.prototype || entry2.id !== key4 || typeof entry2.name !== "string" || entry2.name.length < 1 || entry2.name.length > 24) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u5B9A\u4E49\u65E0\u6548\uFF1A${key4}`);
+      if (entry2.aliases !== void 0 && (!Array.isArray(entry2.aliases) || entry2.aliases.length > 8 || entry2.aliases.some((alias) => typeof alias !== "string" || alias.length < 1 || alias.length > 24))) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u522B\u540D\u65E0\u6548\uFF1A${key4}`);
+      if (entry2.category !== void 0 && !["energy", "physical", "mental"].includes(entry2.category)) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u5F52\u7C7B\u65E0\u6548\uFF1A${key4}`);
+    }
+  }
+
   // src/core/combat_protocol.js
   var BL_SIZE_TABLE = Object.freeze([
     { id: "tiny", name: "\u5FAE\u578B", max: 0.6, value: 2, martial: -8, melee: 0.7 },
@@ -299,7 +357,6 @@ var FatedTacticalTavern = (() => {
     { name: "\u8D85\u8DDD", min: 11, max: null, hit: -6, range: 0 }
   ]);
   var UNIT_STATS = Object.freeze(["str", "agi", "con", "int", "spi"]);
-  var DAMAGE_TYPES = Object.freeze(["physical", "energy", "mental", "true"]);
   var STANCES = Object.freeze(["light_blade", "dual_wield", "attunement", "greatsword", "sword_shield", "ranged", "unarmed"]);
   var MORALE_STATES = Object.freeze(["steady", "shaken", "routed"]);
   var INTENTS = Object.freeze({
@@ -380,13 +437,11 @@ var FatedTacticalTavern = (() => {
     if (attackerTier < defenderTier - 1) return { required: true, success: false, forced: true, ...spec };
     return { required: true, success: attackerTier * 5 + attackerD20 + ratingBonus >= defenderTier * 5 + defenderD20 + spec.difficulty, ...spec };
   }
-  function typedArmor(type, defense) {
-    return type === "physical" ? defense : type === "energy" ? defense / 2 : 0;
+  function typedArmor(type, defense, customElements) {
+    return typedArmorForElement(type, defense, customElements);
   }
-  function damageAttributeReduction(type, { con = 0, str = 0, agi = 0, spi = 0, int: int2 = 0 } = {}) {
-    if (type === "physical") return (con + str + agi) * 25e-4;
-    if (type === "energy") return (spi + int2) * 4e-3;
-    return type === "mental" ? spi * 8e-3 : 0;
+  function damageAttributeReduction(type, { con = 0, str = 0, agi = 0, spi = 0, int: int2 = 0 } = {}, customElements) {
+    return attributeReductionForElement(type, { con, str, agi, spi, int: int2 }, customElements);
   }
   var moraleTypes = Object.freeze({ \u6807\u51C6: "standard", \u5207\u78CB: "spar", \u7ADE\u6280: "arena", \u538B\u5236: "suppress", \u6B7B\u6597: "deathmatch", \u5B88\u536B: "guard" });
   var moraleTypeFor = (value) => Object.hasOwn(MORALE, value) ? value : Object.hasOwn(moraleTypes, value) ? moraleTypes[value] : null;
@@ -1146,11 +1201,11 @@ var FatedTacticalTavern = (() => {
   var number = { type: "number" };
   var bool = { type: "boolean" };
   var text = { type: "string", pattern: "\\S" };
-  var reserved = [...Object.getOwnPropertyNames(Object.prototype), "prototype"];
+  var reserved2 = [...Object.getOwnPropertyNames(Object.prototype), "prototype"];
   var idPattern2 = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
-  var id = { type: "string", pattern: `^${idPattern2}$`, not: enumOf(...reserved) };
+  var id = { type: "string", pattern: `^${idPattern2}$`, not: enumOf(...reserved2) };
   var sourceSkillId = either(id, { type: "string", pattern: `^equip:${idPattern2}:${idPattern2}$` });
-  var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved.map((key4) => `vars.${key4}`)) };
+  var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved2.map((key4) => `vars.${key4}`)) };
   var tag = { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" };
   var statusId = { ...id, format: "tactical-status-id" };
   var dynamicStatusId = either(statusId, variable);
@@ -1253,8 +1308,8 @@ var FatedTacticalTavern = (() => {
     "instanceId",
     "eventRef"
   ]);
-  var damageTypes = Object.freeze(["physical", "energy", "mental", "true"]);
-  var damageType = enumOf(...damageTypes);
+  var damageTypes = BUILTIN_DAMAGE_TYPES;
+  var damageType = { type: "string", pattern: `^${idPattern2}$`, format: "tactical-damage-type" };
   var attribute = enumOf("str", "agi", "con", "int", "spi");
   var slot = enumOf("attack", "action", "move", "cast", "reaction", "fly", "teleport");
   var point2 = object({ x: number, y: number }, ["x", "y"]);
@@ -1272,7 +1327,7 @@ var FatedTacticalTavern = (() => {
     before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), damageScale: numericExpr },
     before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
     after_natural_roll: { replaceNaturalRoll: numericExpr },
-    before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
+    before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr, damageType },
     before_status: { cancel: booleanExpr },
     on_lethal_p2: { preventDeath: booleanExpr }
   };
@@ -1669,6 +1724,7 @@ var FatedTacticalTavern = (() => {
       if (typeof value !== "string" || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
       if (schema.format === "tactical-expr") return validExpr(value);
       if (schema.format === "tactical-status-id") return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
+      if (schema.format === "tactical-damage-type") return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
       return true;
     }
     if (schema.type === "array") {
@@ -1740,8 +1796,8 @@ var FatedTacticalTavern = (() => {
   var validVmExpiry = (value, options = {}) => valid(value, "expiry", options);
   var validVmPureSelector = (value, options = {}) => valid(value, "pureSelector", options);
   var validVmStatMod = (value, options = {}) => valid(value, "statMod", options);
-  function vmStatModError(mod2) {
-    if (validVmStatMod(mod2)) return void 0;
+  function vmStatModError(mod2, options = {}) {
+    if (validVmStatMod(mod2, options)) return void 0;
     if (mod2?.checkKind === "dodge") return 'VM \u4FEE\u9970\u4E0D\u652F\u6301 checkKind:"dodge"\uFF08\u5F15\u64CE\u4E0D\u5B58\u5728\u72EC\u7ACB\u95EA\u907F\u68C0\u5B9A\uFF09\uFF1B\u53D7\u51FB\u95EA\u907F\u52A0\u51CF\u503C\u8BF7\u76F4\u63A5\u5199 {stat:"dodge", flat:...} \u5E76\u7701\u7565 checkKind';
     if (mod2 && ratioStats.enum.includes(mod2.stat) && (Object.hasOwn(mod2, "additivePercent") || typeof mod2.flat === "number" && !matches(mod2.flat, ratioFlat, {}))) {
       return `VM \u4FEE\u9970 ${mod2.stat} \u57FA\u503C\u4E3A 0\uFF0C\u4E0D\u80FD\u7528 additivePercent\uFF1B\u8BF7\u7528 flat \u586B\u5199 -1..1 \u7684\u5C0F\u6570\uFF08\u5982 0.3 \u4EE3\u8868 30%\uFF09\u6216\u6570\u503C\u8868\u8FBE\u5F0F`;
@@ -1756,7 +1812,7 @@ var FatedTacticalTavern = (() => {
     for (const [key4, value] of Object.entries(mod2)) {
       if (!Object.hasOwn(statMod.properties, key4)) return `VM \u4FEE\u9970 ${key4}\uFF1A\u672A\u77E5\u5B57\u6BB5`;
       const field2 = statMod.properties[key4];
-      if (!matches(value, field2, {}) || !exprCheck(value)) {
+      if (!matches(value, field2, options) || !exprCheck(value, options)) {
         const choices = field2.enum ?? field2.items?.enum;
         return `VM \u4FEE\u9970 ${key4}=${JSON.stringify(value)} \u65E0\u6548\uFF1B${choices ? `\u53EF\u9009\u503C\uFF1A${choices.join("\u3001")}` : "\u8BF7\u68C0\u67E5\u5B57\u6BB5\u7C7B\u578B\u3001\u7ED3\u6784\u6216\u8868\u8FBE\u5F0F"}`;
       }
@@ -2013,10 +2069,10 @@ var FatedTacticalTavern = (() => {
     if (!Number.isFinite(value) || value < 0) throw new RangeError(`${name} must be finite and nonnegative`);
     return value;
   }
-  function nextId(state, reserved2, base) {
+  function nextId(state, reserved3, base) {
     let id3 = base;
-    for (let suffix = 2; own(state.pools, id3) || reserved2.has(id3); suffix++) id3 = `${base}_${suffix}`;
-    reserved2.add(id3);
+    for (let suffix = 2; own(state.pools, id3) || reserved3.has(id3); suffix++) id3 = `${base}_${suffix}`;
+    reserved3.add(id3);
     return id3;
   }
   function syncMirrors(state, pool) {
@@ -2052,7 +2108,7 @@ var FatedTacticalTavern = (() => {
     for (const poolId of Object.values(owner?.pools ?? {})) delete state.pools[poolId];
     if (owner?.pools) owner.pools = {};
   }
-  function planPool(state, reserved2, { ownerKind = "unit", ownerId, key: key4, max, current = max, initialMax = max, reloadable = false }) {
+  function planPool(state, reserved3, { ownerKind = "unit", ownerId, key: key4, max, current = max, initialMax = max, reloadable = false }) {
     const owner = carrier2(state, ownerKind, ownerId);
     if (typeof key4 !== "string" || key4.length === 0) throw new TypeError("Pool key must be a nonempty string");
     if (own(owner.pools, key4) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key4}`);
@@ -2060,7 +2116,7 @@ var FatedTacticalTavern = (() => {
     nonnegative(initialMax, "Pool initial max");
     if (!Number.isFinite(current)) throw new RangeError("Pool current must be finite");
     if (typeof reloadable !== "boolean") throw new TypeError("Pool reloadable must be boolean");
-    const id3 = nextId(state, reserved2, `pool_${ownerKind === "unit" ? "" : `${ownerKind}_`}${ownerId}_${key4}`);
+    const id3 = nextId(state, reserved3, `pool_${ownerKind === "unit" ? "" : `${ownerKind}_`}${ownerId}_${key4}`);
     const kind = ownerKind === "unit" && Object.hasOwn(mirrors, key4) ? key4 : "custom";
     const pool = {
       id: id3,
@@ -2080,8 +2136,8 @@ var FatedTacticalTavern = (() => {
   }
   function initializeUnitPools(state, unitId, resources) {
     const unit = carrier2(state, "unit", unitId);
-    const reserved2 = /* @__PURE__ */ new Set();
-    const plans = Object.entries(mirrors).map(([key4, maxField]) => planPool(state, reserved2, {
+    const reserved3 = /* @__PURE__ */ new Set();
+    const plans = Object.entries(mirrors).map(([key4, maxField]) => planPool(state, reserved3, {
       max: resources ? own(resources, key4)?.max : unit[maxField],
       initialMax: resources ? own(resources, key4)?.initialMax ?? own(resources, key4)?.max : unit[initialMirrors[key4]] ?? unit[maxField],
       current: resources ? own(resources, key4)?.current : unit[key4],
@@ -2099,19 +2155,19 @@ var FatedTacticalTavern = (() => {
     if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
     const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []].map((id3) => own(state.items, id3)).filter(Boolean).map((item) => own(state.equipment, item.templateId));
     const skills = [.../* @__PURE__ */ new Set([...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})])].map((id3) => own(state.skills, id3));
-    const definitions = /* @__PURE__ */ new Map();
+    const definitions2 = /* @__PURE__ */ new Map();
     const context = { state, self: unit };
     for (const declaration of [unit, ...skills, ...equipment]) {
       for (const [key4, definition] of Object.entries(declaration?.unitPools ?? {})) {
         if (Object.hasOwn(mirrors, key4)) continue;
-        const previous = definitions.get(key4);
-        definitions.set(key4, {
+        const previous = definitions2.get(key4);
+        definitions2.set(key4, {
           max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
           current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context))
         });
       }
     }
-    for (const [key4, { max, current }] of definitions) {
+    for (const [key4, { max, current }] of definitions2) {
       const pool = getPool(state, unit.id, key4);
       if (!pool) {
         createPool(state, { ownerId: unit.id, key: key4, max, current: Math.min(max, current) });
@@ -2149,12 +2205,12 @@ var FatedTacticalTavern = (() => {
   }
   function topology(state, unitIds, kinds, plan, effectiveMax) {
     const units = [...new Set(unitIds)].sort();
-    const reserved2 = /* @__PURE__ */ new Set();
+    const reserved3 = /* @__PURE__ */ new Set();
     const pools = [], bindings = [], removed = [];
     for (const kind of [...new Set(kinds)].sort()) {
       if (!Object.hasOwn(mirrors, kind)) throw new RangeError(`Pool cannot be linked or unlinked: ${kind}`);
       plan(state, selectedPools(state, units, kind), new Set(units), effectiveMax, {
-        reserved: reserved2,
+        reserved: reserved3,
         pools,
         bindings,
         removed
@@ -2659,6 +2715,7 @@ var FatedTacticalTavern = (() => {
       sourceId: entry2.sourceId ?? parent.sourceId,
       ruleId: entry2.rule.id,
       carrier: entry2.carrier ?? null,
+      ...parent.data && { data: parent.data },
       ...entry2.sourceSkillId && { sourceSkillId: entry2.sourceSkillId },
       rule: entry2.rule,
       useKey: entry2.useKey ?? `${entry2.ownerId}:${entry2.rule.dedupeKey ?? entry2.rule.id}`,
@@ -3141,10 +3198,15 @@ var FatedTacticalTavern = (() => {
         else if (key4 === "origin") {
           const point4 = resolvePoint(expression, context);
           if (point4) value = { x: point4.x, y: point4.y, ...Number.isFinite(point4.z) && { z: point4.z } };
-        } else if (typeof expression === "object" || ["minRating", "forceOutcome"].includes(key4)) value = expression;
+        } else if (typeof expression === "object" || ["minRating", "forceOutcome", "damageType"].includes(key4)) value = expression;
         else value = evaluateExpr(expression, context);
         if (value == null || key4 === "replaceTarget" && (!value.from || !value.to)) continue;
         event[key4] = value;
+        if (frame.hook === "before_commit" && key4 === "damageType" && event.commitKind === "damage" && !Object.hasOwn(op.patch, "finalAmount") && typeof host.prepareDamage === "function") {
+          const target2 = state.units?.[event.targetId];
+          const source = state.units?.[event.actorId];
+          if (source && target2) event.finalAmount = host.prepareDamage(state, source, target2, { ...frame.data, damageType: value });
+        }
         if (frame.hook === "before_status" && key4 === "cancel") {
           if (!value) {
             delete event.immunityCarrier;
@@ -4081,12 +4143,12 @@ var FatedTacticalTavern = (() => {
     };
   }
   function logMove(state, host, unit, mode, from, path2, collision) {
-    const types2 = { teleport: "teleport", step: "move", push: "knockback", pull: "knockback", altitude: "altitude" };
+    const types = { teleport: "teleport", step: "move", push: "knockback", pull: "knockback", altitude: "altitude" };
     const verbs2 = { teleport: "\u77AC\u79FB", step: "\u79FB\u52A8", push: "\u88AB\u63A8\u79BB", pull: "\u88AB\u62C9\u8FD1", altitude: "\u6539\u53D8\u9AD8\u5EA6" };
     const to = at(state, unit);
     const destination = `(${to.x}, ${to.y}, z=${to.z})`;
     const text8 = `${unit.name}${verbs2[mode]}\u81F3 ${destination}${collision ? "\uFF0C\u9047\u5230\u963B\u6321" : ""}`;
-    host.log(state, unit, types2[mode], text8, { targetId: unit.id, from, to, path: path2, ...collision ? { collision } : {} });
+    host.log(state, unit, types[mode], text8, { targetId: unit.id, from, to, path: path2, ...collision ? { collision } : {} });
   }
   function moveDistance(state, frame, context, op) {
     const distance2 = op.distance === void 0 ? 1 : evaluateExpr(op.distance, context);
@@ -5468,15 +5530,17 @@ var FatedTacticalTavern = (() => {
     const stanceDR = unit?.greatswordMode === "defensive" && effectiveStance(state, unit) === "greatsword" ? stanceRules("greatsword").defensiveReduction : 0;
     const reduction = type === "true" ? 0 : clamp4(modStat(state, unit, "damageReduction", stanceDR, defensiveContext), -1, 1);
     const dr = type === "true" ? 0 : clamp4(modStat(state, unit, "dr", 0, defensiveContext), -1, 1);
-    const defense = ctx.ignoreArmor || type === "true" || type === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
+    const category = elementMitigationCategory(type, state.customElements);
+    const defense = ctx.ignoreArmor || category === "true" || category === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
     const armorMultiplier = 2e3 / (defense + 2e3);
-    const attributeReduction = state.ruleset === "protocol" && type !== "true" ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map((key4) => [key4, effectiveStat(state, unit, key4)]))) : 0;
+    const attributeReduction = state.ruleset === "protocol" && type !== "true" ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map((key4) => [key4, effectiveStat(state, unit, key4)])), state.customElements) : 0;
     return {
       shatter,
       vulnerability,
       reduction,
       dr,
       attributeReduction,
+      category,
       multiplier: (1 + shatter) * (1 + vulnerability) * (1 - reduction),
       armor: defense,
       armorMultiplier
@@ -7665,7 +7729,7 @@ var FatedTacticalTavern = (() => {
   function validateRules(rules, state) {
     list2(rules, 200, () => true, "VM \u89C4\u5219");
     for (const [index, rule2] of rules.entries()) {
-      const issue = vmRuleError(rule2, { statusTemplates: state?.statusTemplates });
+      const issue = vmRuleError(rule2, { statusTemplates: state?.statusTemplates, customElements: state?.customElements });
       requireThat(!issue, `VM \u89C4\u5219 rules/${index}${typeof rule2?.id === "string" ? `\uFF08${rule2.id}\uFF09` : ""}/${issue}`);
     }
     requireThat(new Set(rules.map((rule2) => rule2.id)).size === rules.length, "VM \u89C4\u5219 ID \u91CD\u590D");
@@ -7709,13 +7773,13 @@ var FatedTacticalTavern = (() => {
   function list2(v, max, check, key4) {
     requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key4);
   }
-  function dice3(v) {
+  function dice3(v, state) {
     fields(v, ["count", "sides"], ["bonus", "stat", "multiplier", "type"]);
     requireThat(int(v.count, 0, 1e6) && int(v.sides, 0, 1e6) && (v.count === 0 || v.sides >= 1), "\u4F24\u5BB3\u9AB0");
     checkOptional(v, "bonus", (x) => int(x, -1e9, 1e9));
     checkOptional(v, "stat", (x) => attrs2.includes(x));
     checkOptional(v, "multiplier", (x) => num(x, 0, 8));
-    checkOptional(v, "type", (x) => damageTypes.includes(x));
+    checkOptional(v, "type", (x) => damageTypes.includes(x) || own13(state?.customElements ?? {}, x));
   }
   var stackModes2 = stackModes;
   var numericExpr2 = (value) => Number.isFinite(value) || typeof value === "string" && validExpr(value);
@@ -7725,7 +7789,7 @@ var FatedTacticalTavern = (() => {
     checkOptional(value, "tier", (tier) => int(tier, 1, 7));
     if (own13(value, "vars")) table2(value.vars, (entry2) => requireThat(resolved ? jsonTree(entry2) : validCarrierScalar(entry2), "VM \u53D8\u91CF"));
     if (own13(value, "mods")) list2(value.mods, 200, (mod2, index) => {
-      const error2 = vmStatModError(mod2);
+      const error2 = vmStatModError(mod2, { customElements: state?.customElements });
       requireThat(!error2, `mods[${index}]\uFF1A${error2}`);
       return true;
     }, "VM \u4FEE\u9970");
@@ -7812,7 +7876,7 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "shape", (x) => skillShapes.includes(x));
     checkOptional(v, "target", (x) => skillTargets.filter((target2) => target2 !== "corpse").includes(x));
     validateAreaDimensions(v);
-    if (own13(v, "damage")) dice3(v.damage);
+    if (own13(v, "damage")) dice3(v.damage, state);
     requireThat(own13(v, "range") === own13(v, "damage"), "\u6B66\u5668 range/damage");
     carrierFieldsValue(v, state);
     if (own13(v, "pools")) poolDefinitions(v.pools);
@@ -7822,7 +7886,7 @@ var FatedTacticalTavern = (() => {
     carrierFieldsValue(v, state);
     if (own13(v, "pools")) poolDefinitions(v.pools);
     checkOptional(v, "backpackItem", (flag) => flag === true && v.ap === 1 && v.slot === "action");
-    checkOptional(v, "damageType", (type) => damageTypes.includes(type));
+    checkOptional(v, "damageType", (type) => damageTypes.includes(type) || own13(state?.customElements ?? {}, type));
     checkOptional(v, "school", text2);
     checkOptional(v, "resourceCost", resourceCost);
     checkOptional(v, "initiativeBonus", (value) => int(value, -100, 100));
@@ -7835,7 +7899,7 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "save", (x) => attrs2.includes(x));
     checkOptional(v, "saveDC", (dc) => validSaveDC(dc) || typeof dc === "string" && validExpr(dc));
     requireThat(own13(v, "save") === own13(v, "saveDC"), "save/saveDC");
-    for (const k of ["damage", "heal"]) if (own13(v, k)) dice3(v[k]);
+    for (const k of ["damage", "heal"]) if (own13(v, k)) dice3(v[k], state);
   }
   function statusValue(v, key4, state, ownerId) {
     if (own13(v ?? {}, "templateId")) {
@@ -8048,7 +8112,8 @@ var FatedTacticalTavern = (() => {
     }
   }
   function validateState(s) {
-    fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape", "scale"]);
+    fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape", "scale", "customElements"]);
+    if (own13(s, "customElements")) validateCustomElements(s.customElements);
     requireThat(s.battleType === "suppress" ? ["blue", "red"].includes(s.suppressingTeam) : s.suppressingTeam === void 0, "\u538B\u5236\u65B9");
     checkOptional(s, "battleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
     checkOptional(s, "battleConclusion", (x) => typeof x === "string" && x.trim().length > 0 && s.outcome != null);
@@ -8189,12 +8254,16 @@ var FatedTacticalTavern = (() => {
     return id3;
   }
   function importCarry(state, value) {
-    fields(value, ["kind", "version", "items", "units"], ["statusTemplates", "pools"]);
+    fields(value, ["kind", "version", "items", "units"], ["statusTemplates", "pools", "customElements"]);
     if (value.version !== 1 || value.kind !== "persistent") throw new Error("\u65E0\u6548\u7684\u8DE8\u6218\u6863\u6848");
     const carry = structuredClone(value);
     if (own14(carry, "statusTemplates")) {
       statusTemplateTable(carry.statusTemplates);
       state.statusTemplates = carry.statusTemplates;
+    }
+    if (own14(carry, "customElements")) {
+      const existing = state.customElements ?? {};
+      state.customElements = { ...existing, ...carry.customElements };
     }
     for (const [id3, item] of entries2(carry.items)) {
       if (!object2(item) || item.id !== id3 || !own14(state.equipment, item.templateId)) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u88C5\u5907\uFF1A${id3}`);
@@ -9025,7 +9094,6 @@ var FatedTacticalTavern = (() => {
   var resourceLabel = (name) => Object.hasOwn(RESOURCE_NAMES, name) ? RESOURCE_NAMES[name] : name;
 
   // src/api/battle_report.js
-  var damageNames = { physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" };
   var statNames2 = {
     str: "\u529B\u91CF",
     agi: "\u654F\u6377",
@@ -9122,7 +9190,13 @@ var FatedTacticalTavern = (() => {
     const cause = attributionLine(detail);
     return cause ? `\uFF08${cause}\uFF09` : "";
   };
-  function statusNotes(detail) {
+  var legacyDamageTypes = /* @__PURE__ */ new Set(["physical", "energy", "mental", "true", "poison"]);
+  var damageTypeSuffix = (type, text8, customElements) => {
+    if (!type || legacyDamageTypes.has(type)) return "";
+    const label = elementLabel(type, customElements);
+    return text8.includes(label) ? "" : `\uFF08${label}\uFF09`;
+  };
+  function statusNotes(detail, customElements = {}) {
     const parts = [];
     if (detail.durationType === "persistent") parts.push("\u8DE8\u6218\u6597\u6301\u7EED");
     else if (detail.durationType === "until_removed") parts.push("\u6301\u7EED\u81F3\u89E3\u9664");
@@ -9138,7 +9212,7 @@ var FatedTacticalTavern = (() => {
         if (op.op !== "damage" && op.op !== "heal") return [];
         const perLayer = scaled(op.amount);
         const amount = resolve(op.amount, perLayer ? 1 : void 0);
-        const label = op.op === "heal" ? "\u6CBB\u7597" : `${damageNames[op.damageType ?? "true"]}\u4F24\u5BB3`;
+        const label = op.op === "heal" ? "\u6CBB\u7597" : `${op.damageType === "poison" ? "\u4E2D\u6BD2" : elementLabel(op.damageType ?? "true", customElements)}\u4F24\u5BB3`;
         if (!Number.isFinite(amount)) return [`${label}\uFF08${op.amount}\uFF09`];
         const total2 = perLayer && detail.stacks > 1 ? `\uFF08\u5F53\u524D\u5408\u8BA1 ${proseNumber(resolve(op.amount))} \u70B9\uFF09` : "";
         return [`${perLayer || detail.stacks === 1 ? "\u6BCF\u5C42 " : ""}${proseNumber(amount)} \u70B9${label}${total2}`];
@@ -9304,14 +9378,14 @@ var FatedTacticalTavern = (() => {
           case "status_patch": {
             const brace = events[i - 1];
             if (type === "status" && brace?.type === "brace" && brace.actor === detail.targetId && (detail.stacks ?? 1) === 1 && (!detail.durationType || detail.durationType === "battle_turns") && !detail.expireOn && !detail.amount && brace.detail?.turns === detail.remainingTurns && detail.mods?.length === 1 && detail.mods[0].stat === "damageReduction" && detail.vars?.reduction === brace.detail.reduction) break;
-            const parts = statusNotes(detail);
+            const parts = statusNotes(detail, report.customElements);
             if (type === "status_patch" && detail.stacks > 1) parts.unshift(`${detail.stacks} \u5C42`);
             if (type === "status" && actor && detail.targetId && actor !== detail.targetId) parts.push(`\u6765\u6E90 ${name(event, actor)}`);
             add(replaceUnitNames(event, text8).replace(/ ×1$/, "") + notes(parts) + attributionText(detail));
             break;
           }
           case "stat_modifier": {
-            const stat3 = (damageNames[detail.damageType] ?? "") + statNames2[detail.stat];
+            const stat3 = (detail.damageType ? elementLabel(detail.damageType, report.customElements) : "") + statNames2[detail.stat];
             const parts = [`\u6301\u7EED ${detail.turns} \u56DE\u5408`];
             if (detail.flat) parts.push(`${stat3} ${signed(detail.flat)}`);
             if (detail.percent) parts.push(`${stat3} ${signed(percent(detail.percent))}%`);
@@ -9325,7 +9399,8 @@ var FatedTacticalTavern = (() => {
           case "heal":
             if (detail.amount !== 0) {
               const origin = detail.statusId && actor && actor !== detail.targetId ? `\uFF08\u65BD\u52A0\u8005 ${name(event, actor)}\uFF09` : "";
-              add(replaceUnitNames(event, text8) + change2("HP", detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
+              const damageTypeLabel = type === "damage" ? damageTypeSuffix(detail.damageType, text8, report.customElements) : "";
+              add(replaceUnitNames(event, text8) + damageTypeLabel + change2("HP", detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
             }
             break;
           case "skill_cost":
@@ -9539,7 +9614,8 @@ var FatedTacticalTavern = (() => {
           }])),
           items: s.items,
           pools: s.pools,
-          ...s.statusTemplates && Object.keys(s.statusTemplates).length ? { statusTemplates: s.statusTemplates } : {}
+          ...s.statusTemplates && Object.keys(s.statusTemplates).length ? { statusTemplates: s.statusTemplates } : {},
+          ...s.customElements && Object.keys(s.customElements).length ? { customElements: s.customElements } : {}
         });
       },
       exportBattleReport() {
@@ -9895,7 +9971,7 @@ var FatedTacticalTavern = (() => {
 </div>`;
 
   // src/ui/narrate.js
-  var DAMAGE_TYPES2 = Object.freeze({ physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" });
+  var DAMAGE_TYPES = Object.freeze(Object.fromEntries(BUILTIN_DAMAGE_TYPES.map((type) => [type, elementLabel(type)])));
   var STAT_NAMES = Object.freeze({ str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" });
   var MANEUVERS = { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" };
   var INTENT_NAMES = { normal: "\u5E38\u89C4", function: "\u673A\u80FD\u9650\u5236", core: "\u6838\u5FC3\u8981\u5BB3", kill: "\u62B9\u6740", concept: "\u6982\u5FF5\u7834\u788E" };
@@ -9992,6 +10068,8 @@ var FatedTacticalTavern = (() => {
   function damageEntry(state, log) {
     const d = log.detail ?? {};
     const target2 = nameOf(state, d.targetId);
+    const damageType2 = d.damageType ?? d.type;
+    const typeLabel = damageType2 ? elementLabel(damageType2, state?.customElements) : null;
     const lines = [];
     const dice4 = d.dice;
     if (dice4 && typeof dice4 === "object") {
@@ -10010,9 +10088,14 @@ var FatedTacticalTavern = (() => {
     if (d.attributeReduction) mults.push(`\u4F53\u9B44\u51CF\u4F24 \u2212${pct(d.attributeReduction)}`);
     if (d.armorMultiplier && d.armorMultiplier < 0.995) mults.push(`\u62A4\u7532 \u2212${pct(1 - d.armorMultiplier)}`);
     if (mults.length) lines.push(`\u500D\u7387\uFF1A${mults.join("\uFF0C")}`);
+    if (typeLabel) lines.unshift(`\u4F24\u5BB3\u7C7B\u578B\uFF1A${typeLabel}`);
+    if (d.resistance || d.vulnerability || d.immunity) {
+      const defenses = [d.immunity ? "\u514D\u75AB" : "", d.resistance ? `\u6297\u6027 \u2212${pct(d.resistance)}` : "", d.vulnerability ? `\u6613\u4F24 +${pct(d.vulnerability)}` : ""].filter(Boolean);
+      if (defenses.length) lines.push(`\u76EE\u6807\u9632\u62A4\uFF1A${defenses.join("\uFF0C")}`);
+    }
     if (d.absorbed) lines.push(`\u62A4\u76FE\u5438\u6536 ${d.absorbed} \u70B9`);
     if (Number.isFinite(d.hpBefore)) lines.push(`\u751F\u547D ${proseNumber(d.hpBefore)} \u2192 ${proseNumber(d.hpAfter)}`);
-    return { tone: "damage", icon: "\u{1FA78}", title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0 };
+    return { tone: "damage", icon: "\u{1FA78}", title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0, damageType: damageType2, damageTypeLabel: typeLabel };
   }
   function saveCheck(state, who, c) {
     const stat3 = STAT_NAMES[c.saveStat] ?? c.saveStat;
@@ -10354,6 +10437,21 @@ var FatedTacticalTavern = (() => {
   var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
   var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
   var terrainLabel = (t) => t.kind === "wall" ? "\u5899\u4F53\uFF0C\u6321\u4F4F\u79FB\u52A8\u548C\u89C6\u7EBF" : t.kind === "slope" ? "\u5761\u9053" : t.z > 0 ? `\u9AD8\u53F0\uFF08\u9AD8 ${t.z}\uFF09` : t.z < 0 ? `\u4F4E\u5730\uFF08${t.z}\uFF09` : "\u5E73\u5730";
+  var typedDefenseText = (unit, customElements) => {
+    const rows2 = [...unit.mods ?? [], ...Object.values(unit.statuses ?? {}).flatMap((status) => status.mods ?? [])];
+    const byType = /* @__PURE__ */ new Map();
+    for (const mod2 of rows2) {
+      if (!mod2.damageType || !["damageReduction", "dr", "incomingDamageMult"].includes(mod2.stat)) continue;
+      const value = mod2.stat === "incomingDamageMult" ? (mod2.mult ?? 1) - 1 : mod2.flat ?? 0;
+      if (!value) continue;
+      const current = byType.get(mod2.damageType) ?? { resistance: 0, vulnerability: 0, immunity: false };
+      if (mod2.stat === "dr" && value >= 1) current.immunity = true;
+      else if (mod2.stat === "incomingDamageMult" && value > 0 || mod2.stat !== "incomingDamageMult" && value < 0) current.vulnerability += Math.abs(value);
+      else current.resistance += Math.abs(value);
+      byType.set(mod2.damageType, current);
+    }
+    return [...byType].map(([type, row]) => `${elementLabel(type, customElements)} ${row.immunity ? "\u514D\u75AB" : row.vulnerability ? `\u6613\u4F24 +${pct2(row.vulnerability)}` : `\u6297\u6027 ${pct2(row.resistance)}`}`);
+  };
   function createRenderer(root2, portraitFor = () => []) {
     const doc = root2.ownerDocument;
     const $ = (id3) => root2.querySelector(`[id="${id3}"]`);
@@ -10632,12 +10730,17 @@ var FatedTacticalTavern = (() => {
       const template = get2(state.equipment, get2(state.items, u.weapon)?.templateId);
       const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some((pool) => pool.reloadable);
       const standing = unitStandingStats(state, u);
+      const weaponTemplate = get2(state.equipment, get2(state.items, u.mainHand ?? u.weapon)?.templateId);
+      const weaponType = weaponTemplate?.damage?.type ?? weaponTemplate?.damageType;
+      const defenseTypes = typedDefenseText(u, state.customElements);
       const facts = el2("p", "muted", [
         `\u62A4\u7532 ${standing.armor}`,
         `\u95EA\u907F ${sign2(standing.dodge)}`,
         `\u79FB\u52A8 ${u.move} \u683C`,
         `\u4F53\u578B ${bodySizeLabel(u)}`,
         `\u9AD8\u5EA6 z=${elevation(state, u)}${u.altitude ? `\uFF08\u79BB\u5730 ${u.altitude}\uFF09` : ""}`,
+        weaponType ? `\u6B66\u5668\u5143\u7D20\uFF1A${elementLabel(weaponType, state.customElements)}` : "",
+        ...defenseTypes.map((text8) => `\u5143\u7D20\u9632\u62A4\uFF1A${text8}`),
         `\u6301\u68B0\uFF1A${stanceLabel[u.stance] ?? "\u672A\u6307\u5B9A"}${u.stance === "greatsword" ? `\xB7${u.greatswordMode === "defensive" ? "\u6C89\u52BF" : "\u653B\u52BF"}` : ""}${u.stance === "attunement" ? `\uFF08\u9053\u5177\u5269 ${u.attunementCharges} \u6B21\uFF09` : ""}`,
         `\u5956\u52B1\u9AB0 ${u.bonusDice ?? 0}/2`,
         u.hp && melee ? u.reactionAvailable === false ? "\u672C\u8F6E\u501F\u673A\u653B\u51FB\u5DF2\u7528" : "\u53EF\u4EE5\u501F\u673A\u653B\u51FB" : ""
@@ -10755,6 +10858,7 @@ var FatedTacticalTavern = (() => {
         if (p.ok && action.type === "disengage") line("\u64A4\u79BB\uFF1A\u8FD9\u6B21\u79FB\u52A8\u4E0D\u4F1A\u5F15\u53D1\u501F\u673A\u653B\u51FB\u3002");
         for (const t of p.targets ?? []) {
           const row = line([el2("b", "", t.name)]);
+          if (t.damageType) row.dataset.damageType = t.damageType;
           const bits = [];
           let chance = null;
           if (t.saveStat) {
@@ -10782,7 +10886,10 @@ var FatedTacticalTavern = (() => {
           ].filter(Boolean);
           if (mods.length) bits.push(mods.join("\uFF0C"));
           if (t.heal) bits.push(`\u6CBB\u7597 ${interval(t.heal)}`);
-          else if (t.damage) bits.push(`${t.execution ? "\u5904\u51B3\uFF1A\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u81F3\u5C11\u5E73\u66B4\u51FB\u3002" : ""}\u547D\u4E2D\u540E\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
+          else if (t.damage) bits.push(`${t.execution ? "\u5904\u51B3\uFF1A\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u81F3\u5C11\u5E73\u66B4\u51FB\u3002" : ""}\u547D\u4E2D\u540E${t.damageType ? `${elementLabel(t.damageType, state.customElements)} ` : ""}\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
+          if (t.immunity) bits.push(`${elementLabel(t.damageType, state.customElements)}\u514D\u75AB`);
+          else if (t.resistance) bits.push(`${elementLabel(t.damageType, state.customElements)}\u6297\u6027 ${pct2(t.resistance)}`);
+          else if (t.vulnerability) bits.push(`${elementLabel(t.damageType, state.customElements)}\u6613\u4F24 +${pct2(t.vulnerability)}`);
           row.append(el2("div", "", bits.join("\u3002")));
           if (chance != null) {
             const odds = el2("div", "ft-odds"), track = el2("span", "ft-odds-bar"), fill = el2("i");
@@ -10974,11 +11081,12 @@ var FatedTacticalTavern = (() => {
       token.style.filter = "grayscale(1)";
       return play(token, [{ opacity: 1, filter: "grayscale(0)" }, { opacity: 0.4, filter: "grayscale(1)" }], { duration: 520 });
     }
-    function float(state, id3, text8, tone, sub) {
+    function float(state, id3, text8, tone, sub, damageType2) {
       const fx = $("board-fx"), at3 = whereIs(state, id3), c = at3 && center(at3.x, at3.y, id3);
       if (!fx || !c || skipping || speed <= 0) return;
       const node = doc.createElement("div");
       node.className = `ft-float ${tone}`;
+      if (damageType2) node.dataset.damageType = damageType2;
       node.textContent = text8;
       if (sub) {
         const s = doc.createElement("small");
@@ -11192,13 +11300,13 @@ var FatedTacticalTavern = (() => {
           return;
         case "damage":
           caption(entry2);
-          float(state, d.targetId, `\u2212${entry2.amount}`, ctx.crit ? "crit" : "", ctx.crit ? "\u66B4\u51FB" : d.absorbed ? `\u62A4\u76FE\u5438\u6536 ${d.absorbed}` : void 0);
+          float(state, d.targetId, `\u2212${entry2.amount}`, ctx.crit ? "crit" : "", [d.damageType ? elementLabel(d.damageType, state.customElements) : "", ctx.crit ? "\u66B4\u51FB" : d.absorbed ? `\u62A4\u76FE\u5438\u6536 ${d.absorbed}` : ""].filter(Boolean).join(" \xB7 ") || void 0, d.damageType);
           await shake(d.targetId, ctx.crit);
           await wait(HIT_MS);
           return;
         case "heal":
           caption(entry2);
-          float(state, d.targetId ?? log.actor, `+${entry2.amount}`, "heal");
+          float(state, d.targetId ?? log.actor, `+${entry2.amount}`, "heal", d.damageType ? elementLabel(d.damageType, state.customElements) : void 0, d.damageType);
           await wait(HIT_MS);
           return;
         case "defeat":
@@ -13673,7 +13781,16 @@ body { margin: 0; background: var(--ink-2); }
 .ft-float.status { color: var(--tone-status); font-size: 14px; font-weight: 700; }
 .ft-float.miss { color: var(--tone-miss); font-size: 16px; }
 .ft-float.crit { color: var(--tone-crit); font-size: 32px; }
-.ft-float small { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; text-align: center; letter-spacing: .1em; }
+.ft-float small { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; text-align: center; letter-spacing: .1em; color: var(--text-soft); }
+.ft-float[data-damage-type="fire"] { --tone-damage: #ff9f6e; }
+.ft-float[data-damage-type="cold"] { --tone-damage: #8fd8ff; }
+.ft-float[data-damage-type="lightning"] { --tone-damage: #f5e28a; }
+.ft-float[data-damage-type="poison"] { --tone-damage: #9bdf82; }
+.ft-float[data-damage-type="necrotic"] { --tone-damage: #c39ae8; }
+.ft-float[data-damage-type="radiant"] { --tone-damage: #fff0a6; }
+.ft-float[data-damage-type="psychic"] { --tone-damage: #e7a9e8; }
+.ft-float[data-damage-type="acid"] { --tone-damage: #c1e889; }
+.ft-float[data-damage-type="force"] { --tone-damage: #b3b8ff; }
 .ft-bolt { position: absolute; height: 3px; transform-origin: 0 50%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--gold-bright) 70%, #fff); box-shadow: 0 0 10px var(--gold-bright); }
 .ft-ring { position: absolute; width: var(--cell); height: var(--cell); transform: translate(-50%, -50%); border: 2px solid currentColor; border-radius: 50%; color: var(--tone-crit); }
 .ft-mark { position: absolute; width: var(--cell); height: var(--cell); transform: translate(-50%, -50%); border-radius: 6px; border: 2px solid var(--tone-damage); box-shadow: inset 0 0 14px rgb(255 110 100 / .5); }
@@ -13875,6 +13992,8 @@ body { margin: 0; background: var(--ink-2); }
 .ft-preview:empty { display: none; }
 .preview-line + .preview-line { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
 .preview-line b { color: var(--accent-text); }
+.preview-line[data-damage-type] { color: var(--damage-type-color, var(--text-soft)); }
+.fated-char-chip[data-damage-type] { border-color: rgb(var(--gold-rgb) / .4); color: var(--accent-text); }
 .preview-line.is-warning { color: #f3c58c; }
 .ft-odds { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .ft-odds-bar { flex: 1; height: 6px; border-radius: 3px; background: rgb(0 0 0 / .5); overflow: hidden; }
@@ -14338,7 +14457,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const inGrid2 = (x, y) => inBounds(x, width) && inBounds(y, boardHeight);
     const anchors = battle.version === 1 ? [...list3(battle.units), ...list3(battle.covers), ...list3(battle.interactives)].filter((unit) => Number.isInteger(unit.z)) : [];
     if (anchors.some((anchor) => anchor.z !== 0)) {
-      const reserved2 = new Set([...battle.units ?? [], ...list3(battle.covers), ...list3(battle.interactives)].map((at3) => `${at3.x},${at3.y}`));
+      const reserved3 = new Set([...battle.units ?? [], ...list3(battle.covers), ...list3(battle.interactives)].map((at3) => `${at3.x},${at3.y}`));
       const painted = /* @__PURE__ */ new Set();
       for (const { x, y, z } of anchors) {
         grid[y][x] = { kind: "floor", z };
@@ -14348,7 +14467,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         for (let i = 0; i < offsets.length; i++) {
           const [dx, dy] = offsets[(start + i) % offsets.length];
           const points = [[x + dx, y + dy, z], [x + 2 * dx, y + 2 * dy, Math.abs(z) > 1 ? z - Math.sign(z) : 0]];
-          if (!points.every(([a, b]) => inGrid2(a, b) && !reserved2.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
+          if (!points.every(([a, b]) => inGrid2(a, b) && !reserved3.has(`${a},${b}`) && !painted.has(`${a},${b}`))) continue;
           for (const [a, b, h] of points) {
             grid[b][a] = { kind: h === z ? "floor" : "slope", z: h };
             painted.add(`${a},${b}`);
@@ -14359,7 +14478,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       for (let pass = 0; pass < 4; pass++) {
         const previous = grid.map((row) => row.map((cell) => cell.z));
         grid.forEach((row, y) => row.forEach((cell, x) => {
-          if (reserved2.has(`${x},${y}`) || painted.has(`${x},${y}`)) return;
+          if (reserved3.has(`${x},${y}`) || painted.has(`${x},${y}`)) return;
           for (const [a, b] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
             const h = previous[b]?.[a];
             if (h !== void 0 && Math.abs(h) > Math.abs(cell.z) + 2) Object.assign(cell, { kind: "slope", z: h - 2 * Math.sign(h) });
@@ -14502,6 +14621,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var DYNAMIC_TAG_RE = /^(?<label>[^:：0-9]+?(?:计数|层数|充能|弹药|箭矢|灵魂|能量|魔力|耐久|次数|印记|残弹|装填))(?<sep>\s*[:：]\s*)(?<cur>\d+)(?:\s*(?<slash>[\/／])\s*(?<max>\d+))?$/u;
   var DYNAMIC_FIELD_KEYS = /* @__PURE__ */ new Set(["\u5F53\u524D\u5F39\u836F", "\u5F53\u524D\u5145\u80FD", "\u5F53\u524D\u5C42\u6570", "currentCharges", "currentAmmo", "currentStacks"]);
+  var UNIT_COUNTER_KEY_RE = /^(?:当前)?[^:：0-9]{1,16}?(?:计数|充能|层数|魂量|魂数|剑意|怒气|狂怒|战意|理智|印记|残弹|信仰值|能量值|连击点)$/u;
+  var STATIC_UNIT_COUNTER_KEYS = /* @__PURE__ */ new Set(["\u7B49\u7EA7", "\u751F\u547D\u5C42\u7EA7", "\u5C42\u7EA7", "\u4F53\u957F", "\u8EAB\u9AD8", "\u4F53\u91CD", "\u5E74\u9F84", "\u62A4\u7532", "\u9632\u5FA1", "\u9632\u5FA1\u529B", "\u653B\u51FB", "\u653B\u51FB\u529B", "\u547D\u4E2D", "\u95EA\u907F", "\u5148\u624B", "\u66B4\u51FB", "\u79FB\u52A8\u529B", "\u901F\u5EA6", "\u91D1\u5E01", "\u91D1\u94B1", "\u8D27\u5E01", "\u597D\u611F", "\u597D\u611F\u5EA6", "\u7ECF\u9A8C", "\u7ECF\u9A8C\u503C"]);
   var RUNTIME_STATUS_KEYS = /* @__PURE__ */ new Set(["\u5C42\u6570", "stacks", "\u5269\u4F59\u56DE\u5408", "remainingTurns", "\u5269\u4F59\u65F6\u95F4", "remainingTime", "\u62A4\u76FE\u503C", "amount"]);
   var STATIC_TAG_KEY_RE = /^(?:攻击|攻击力|防御|防御力|防具|护甲|威力|射程|有效距离|范围|先手|命中|闪避|暴击|重量|等级|层级|品质|体型)(?:\([^)]*\))?$/u;
   function dynamicTag(value) {
@@ -14519,18 +14640,40 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (!object3(value)) return value;
     const result = {};
     for (const [key4, child] of Object.entries(value)) {
-      if (DYNAMIC_FIELD_KEYS.has(key4) || key4 === "initial" && context.pool) continue;
-      if (context.resource && ["current", "\u5F53\u524D", "now", "value"].includes(key4)) continue;
+      if (context.resource && (typeof child === "number" || typeof child === "string") && !["\u4E0A\u9650", "max", "maximum"].includes(key4)) {
+        result[key4] = "<DYNAMIC>";
+        continue;
+      }
+      if (DYNAMIC_FIELD_KEYS.has(key4)) {
+        result[key4] = "<DYNAMIC>";
+        continue;
+      }
+      if (context.pool && ["initial", "current", "\u5F53\u524D", "now", "value"].includes(key4)) {
+        result[key4] = "<DYNAMIC>";
+        continue;
+      }
+      if (context.resource && ["current", "\u5F53\u524D", "now", "value"].includes(key4)) {
+        result[key4] = "<DYNAMIC>";
+        continue;
+      }
       if (context.status && RUNTIME_STATUS_KEYS.has(key4)) continue;
       if (key4 === "\u6807\u7B7E" || key4 === "tags") {
         result[key4] = [].concat(child).map((item) => dynamicTag(item)?.normalized ?? item);
         continue;
       }
-      if (key4 === "pools" || key4 === "\u8D44\u6E90\u6C60") {
+      if (key4 === "pools" || key4 === "unitPools" || key4 === "\u8D44\u6E90\u6C60") {
         result[key4] = Object.fromEntries(Object.entries(asObject(child)).map(([poolKey, pool]) => [
           poolKey,
           staticProjection(pool, { pool: true })
         ]));
+        continue;
+      }
+      if (key4 === "resources" || key4 === "resource" || key4 === "\u8D44\u6E90" || key4 === "\u8BA1\u6570\u5668" || key4 === "counters") {
+        result[key4] = staticProjection(child, { resource: true });
+        continue;
+      }
+      if (UNIT_COUNTER_KEY_RE.test(key4) && !STATIC_UNIT_COUNTER_KEYS.has(key4) || key4 === "\u5F53\u524D") {
+        result[key4] = typeof child === "number" || typeof child === "string" ? "<DYNAMIC>" : staticProjection(child, context);
         continue;
       }
       if (["\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "hp", "mp", "sp"].includes(key4)) {
@@ -14544,6 +14687,115 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       result[key4] = staticProjection(child, context);
     }
     return result;
+  }
+  var SEMANTIC_UNIT_POOL_KEYS = [
+    [/^(?:灵魂|魂量|魂数|魂魄)(?:计数|值|池)?$/u, "souls"],
+    [/^剑意(?:层数|值|池)?$/u, "sword_intent"],
+    [/^(?:怒气|狂怒|战意)(?:值|池)?$/u, "rage"],
+    [/^(?:充能|蓄能)(?:层数|计数|值)?$/u, "charge"],
+    [/^(?:理智|精神值|san|SAN)(?:值)?$/u, "sanity"],
+    [/^(?:信仰|虔诚)(?:值|力)?$/u, "faith"],
+    [/^(?:印记|刻印)(?:层数|计数)?$/u, "marks"],
+    [/^(?:连击|连段)(?:点|数|层数)?$/u, "combo"],
+    [/^(?:能量|源能|灵能)(?:值|池)?$/u, "energy_pool"],
+    [/^(?:魔力|法术位)(?:计数|充能|值)?$/u, "arcane_charge"]
+  ];
+  function unitPoolKeyFromLabel(rawName) {
+    const name = text3(rawName);
+    if (/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(name) && !["hp", "mp", "sp"].includes(name)) return name;
+    return SEMANTIC_UNIT_POOL_KEYS.find(([pattern]) => pattern.test(name))?.[1] ?? deterministicId(name, "pool").replaceAll("-", "_");
+  }
+  var RESERVED_UNIT_KEYS = /* @__PURE__ */ new Set(["\u59D3\u540D", "name", "id", "ID", "\u7B49\u7EA7", "level", "\u751F\u547D\u5C42\u7EA7", "tier", "\u4F53\u957F", "bodyLengthM", "\u5C5E\u6027", "stats", "attributes", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "hp", "HP", "mp", "MP", "sp", "SP", "\u62A4\u7532", "armor", "\u9632\u5FA1", "\u79FB\u52A8\u529B", "move", "mc", "\u88C5\u5907", "equipment", "gear", "\u6B66\u5668", "\u6280\u80FD", "skills", "\u80CC\u5305", "inventory", "bag", "\u9053\u5177", "items", "\u72B6\u6001", "\u72B6\u6001\u6548\u679C", "statuses", "effects", "\u767B\u795E\u957F\u9636", "\u4F4D\u7F6E", "\u5750\u6807", "position", "\u671D\u5411", "facing", "\u9635\u8425", "team", "\u7ACB\u7ED8", "avatar", "portrait", "\u6807\u7B7E", "tags", "\u5143\u6570\u636E", "meta", "\u89C4\u5219", "rules", "mods", "pools", "unitPools", "\u8D44\u6E90\u6C60", "\u8D44\u6E90", "resource", "resources", "\u8BA1\u6570\u5668", "counters"]);
+  var CURRENT_KEYS = ["\u5F53\u524D", "current", "now", "value"];
+  var MAX_KEYS = ["\u4E0A\u9650", "max", "maximum"];
+  function finiteCounter(value) {
+    const parsed = number2(value, NaN);
+    return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null;
+  }
+  function poolEntry(rawKey, label, current, explicitMax, subPath, format = { kind: "field_number" }, initialRawValue) {
+    const value = finiteCounter(current) ?? 0;
+    const max = finiteCounter(explicitMax);
+    return {
+      rawKey,
+      label: text3(label) || text3(rawKey),
+      current: value,
+      explicitMax: max,
+      cap: max ?? Math.max(value, 999),
+      subPath,
+      format,
+      ...initialRawValue !== void 0 ? { initialRawValue } : {}
+    };
+  }
+  function resourceEntry(rawKey, label, value, subPath) {
+    const currentKey = CURRENT_KEYS.find((key4) => own16(value, key4));
+    const current = object3(value) ? value[currentKey] : value;
+    const maxRaw = object3(value) ? MAX_KEYS.find((key4) => own16(value, key4)) && value[MAX_KEYS.find((key4) => own16(value, key4))] : void 0;
+    const explicitMax = object3(maxRaw) ? finiteCounter(number2(maxRaw._\u57FA\u7840, 0) + number2(maxRaw.\u989D\u5916, 0)) : finiteCounter(maxRaw);
+    return poolEntry(rawKey, label, current, explicitMax, [...subPath, ...currentKey ? [currentKey] : []]);
+  }
+  function extractUnitPoolEntries(record3) {
+    const source = asObject(record3), entries3 = [], seen = /* @__PURE__ */ new Set();
+    const add = (entry2) => {
+      const key4 = JSON.stringify(entry2.subPath);
+      if (!seen.has(key4)) {
+        seen.add(key4);
+        entries3.push(entry2);
+      }
+    };
+    for (const [rawKey, value] of Object.entries(asObject(source.unitPools ?? source.\u8D44\u6E90\u6C60))) {
+      if (!object3(value)) continue;
+      const currentKey = CURRENT_KEYS.find((key4) => own16(value, key4));
+      add(poolEntry(
+        rawKey,
+        value.name ?? value.\u540D\u79F0 ?? rawKey,
+        value[currentKey] ?? value.initial,
+        value.cap ?? value.max ?? value.\u4E0A\u9650,
+        ["unitPools", rawKey, ...currentKey ? [currentKey] : ["initial"]],
+        { kind: "field_number" },
+        value[currentKey] ?? value.initial
+      ));
+    }
+    for (const containerKey of ["\u8D44\u6E90", "resources", "resource"]) {
+      for (const [rawKey, value] of Object.entries(asObject(source[containerKey]))) {
+        if (RESOURCE_ALIASES.hp.includes(rawKey) || RESOURCE_ALIASES.mp.includes(rawKey) || RESOURCE_ALIASES.sp.includes(rawKey) || RESOURCE_MAX_ALIASES.hp.includes(rawKey) || RESOURCE_MAX_ALIASES.mp.includes(rawKey) || RESOURCE_MAX_ALIASES.sp.includes(rawKey)) continue;
+        const sibling = asObject(source[containerKey]);
+        const maxKey = [`${rawKey}\u4E0A\u9650`, `${rawKey}Max`].find((key4) => own16(sibling, key4));
+        add(resourceEntry(rawKey, rawKey, object3(value) ? value : { current: value, ...maxKey ? { max: sibling[maxKey] } : {} }, [containerKey, rawKey]));
+      }
+    }
+    for (const [rawKey, value] of Object.entries(source)) {
+      if (RESERVED_UNIT_KEYS.has(rawKey)) continue;
+      if (object3(value) && CURRENT_KEYS.some((key4) => own16(value, key4)) && !["\u6548\u679C", "\u7C7B\u578B", "\u54C1\u8D28", "\u5C42\u6570", "stacks", "\u5269\u4F59\u56DE\u5408", "remainingTurns", "\u5269\u4F59\u65F6\u95F4"].some((key4) => own16(value, key4))) {
+        add(resourceEntry(rawKey, rawKey, value, [rawKey]));
+        continue;
+      }
+      if (finiteCounter(value) != null && (DYNAMIC_FIELD_KEYS.has(rawKey) || UNIT_COUNTER_KEY_RE.test(rawKey)) && !STATIC_UNIT_COUNTER_KEYS.has(rawKey)) {
+        const maxKey = [`${rawKey}\u4E0A\u9650`, `${rawKey}Max`].find((key4) => own16(source, key4));
+        add(poolEntry(rawKey, rawKey, value, maxKey ? source[maxKey] : null, [rawKey]));
+      }
+    }
+    for (const containerKey of ["\u8BA1\u6570\u5668", "counters"]) {
+      for (const [rawKey, value] of Object.entries(asObject(source[containerKey]))) {
+        add(resourceEntry(rawKey, rawKey, value, [containerKey, rawKey]));
+      }
+    }
+    for (const [tagsKey, tags] of [["\u6807\u7B7E", source.\u6807\u7B7E], ["tags", source.tags]]) {
+      if (!Array.isArray(tags)) continue;
+      tags.forEach((rawTag, index) => {
+        const dynamic = dynamicTag(rawTag);
+        if (!dynamic) return;
+        add(poolEntry(
+          dynamic.label,
+          dynamic.label,
+          dynamic.current,
+          dynamic.max,
+          [tagsKey, index],
+          { kind: dynamic.max == null ? "tag_single" : "tag_slash", sep: dynamic.sep, slash: dynamic.slash },
+          text3(rawTag)
+        ));
+      });
+    }
+    return entries3;
   }
   function hash(value) {
     let h = 2166136261;
@@ -14717,9 +14969,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const r = asObject(record3), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
     const result = {};
     for (const key4 of attrNames) {
-      const aliases2 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
+      const aliases3 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
       result[key4] = Math.max(-20, Math.min(50, integer3(
-        aliases2.find((alias) => own16(nested, alias)) !== void 0 ? nested[aliases2.find((alias) => own16(nested, alias))] : findValue(r, aliases2, 0),
+        aliases3.find((alias) => own16(nested, alias)) !== void 0 ? nested[aliases3.find((alias) => own16(nested, alias))] : findValue(r, aliases3, 0),
         0
       )));
     }
@@ -14737,18 +14989,18 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   });
   function resourceValue(record3, key4) {
     const r = asObject(record3), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
-    const aliases2 = RESOURCE_ALIASES[key4] ?? [];
-    for (const name of aliases2) if (own16(r, name)) return { value: r[name], key: name };
-    for (const name of aliases2) if (own16(nested, name)) return { value: nested[name], key: name };
+    const aliases3 = RESOURCE_ALIASES[key4] ?? [];
+    for (const name of aliases3) if (own16(r, name)) return { value: r[name], key: name };
+    for (const name of aliases3) if (own16(nested, name)) return { value: nested[name], key: name };
     return { value: void 0, key: null };
   }
   function resource(record3, key4, fallback, warnings) {
-    const r = asObject(record3), aliases2 = RESOURCE_ALIASES[key4] ?? [], { value } = resourceValue(r, key4);
+    const r = asObject(record3), aliases3 = RESOURCE_ALIASES[key4] ?? [], { value } = resourceValue(r, key4);
     const numeric2 = (raw) => {
       const parsed = number2(raw, NaN);
       return Number.isFinite(parsed) ? Math.round(parsed) : null;
     };
-    const warn = (kind, raw) => warnings?.push(`${aliases2[2]}${kind}${raw === void 0 ? "\u7F3A\u5931" : `\u300C${text3(raw)}\u300D\u65E0\u6CD5\u89E3\u6790`}\uFF0C\u5DF2\u6309\u4E94\u7EF4\u516C\u5F0F\u515C\u5E95`, { kind: "unmapped_field", field: `${key4}.${kind}` });
+    const warn = (kind, raw) => warnings?.push(`${aliases3[2]}${kind}${raw === void 0 ? "\u7F3A\u5931" : `\u300C${text3(raw)}\u300D\u65E0\u6CD5\u89E3\u6790`}\uFF0C\u5DF2\u6309\u4E94\u7EF4\u516C\u5F0F\u515C\u5E95`, { kind: "unmapped_field", field: `${key4}.${kind}` });
     if (object3(value)) {
       const currentKey = ["current", "\u5F53\u524D", "now", "value"].find((name) => own16(value, name));
       const currentRaw = currentKey === void 0 ? void 0 : value[currentKey];
@@ -14895,7 +15147,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function activeRule2(id3, program2) {
     return { id: id3, hook: "active", program: program2 };
   }
-  function readRules(value, warnings) {
+  function readRules(value, warnings, customElements) {
     if (value == null) return [];
     if (!Array.isArray(value)) {
       warnings.push("rules \u5FC5\u987B\u662F Rule \u6570\u7EC4");
@@ -14904,7 +15156,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const rules = [], ids = /* @__PURE__ */ new Set();
     for (const [index, rule2] of value.entries()) {
       const location = `rules[${index}]${rule2?.id ? ` (${rule2.id})` : ""}`;
-      if (!validVmRule(rule2)) warnings.push(`${location} \u4E0D\u7B26\u5408 VM \u89C4\u5219 Schema\uFF1A${describe(rule2)}`);
+      if (!validVmRule(rule2, { customElements })) warnings.push(`${location} \u4E0D\u7B26\u5408 VM \u89C4\u5219 Schema\uFF1A${describe(rule2)}`);
       else if (ids.has(rule2.id)) warnings.push(`${location} \u7684\u89C4\u5219 ID \u91CD\u590D`);
       else if (rules.length === 200) warnings.push(`${location} \u8D85\u8FC7\u89C4\u5219\u6570\u91CF\u4E0A\u9650 200`);
       else {
@@ -14921,14 +15173,14 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       else rules.push(rule2);
     }
   }
-  function readMods(value, warnings) {
+  function readMods(value, warnings, customElements) {
     if (value == null) return [];
     if (!Array.isArray(value)) {
       warnings.push("mods \u5FC5\u987B\u662F StatMod \u6570\u7EC4");
       return [];
     }
     return value.flatMap((mod2, index) => {
-      const error2 = index < 200 ? vmStatModError(mod2) : "\u8D85\u51FA\u6570\u91CF\u4E0A\u9650 200";
+      const error2 = index < 200 ? vmStatModError(mod2, { customElements }) : "\u8D85\u51FA\u6570\u91CF\u4E0A\u9650 200";
       if (!error2) return [clone(mod2)];
       warnings.push(`mods[${index}] ${error2}\uFF1A${describe(mod2)}`);
       return [];
@@ -14936,10 +15188,67 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var combatTag = /^(攻击力?|防御力?|防具|护甲|命中|闪避|先手|暴击|威力)\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.*)$/u;
   var numberTag = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/iu;
-  var powerTag = /^(\d+)(?:\s*(物理|能量|精神|真实))?$/u;
+  var powerTag = /^(\d+)\s*(\D.*)?$/u;
   var canonicalKey = { \u653B\u51FB\u529B: "\u653B\u51FB", \u9632\u5FA1\u529B: "\u9632\u5FA1", \u62A4\u7532: "\u9632\u5FA1", \u9632\u5177: "\u9632\u5FA1" };
-  function readCombatTags(raw, kind, name, warnings) {
-    const mods = readMods(raw.mods, warnings), fields3 = {}, summary = [], groups = /* @__PURE__ */ new Map();
+  var CUSTOM_ELEMENT_IDS = { \u865A\u7A7A: "void", \u661F\u754C: "astral", \u661F\u8FB0: "astral", \u661F\u8F89: "astral", \u6DF7\u6C8C: "chaos", \u9C9C\u8840: "blood", \u8840\u715E: "blood", \u8840: "blood", \u98CE\u66B4: "wind", \u75BE\u98CE: "wind", \u98CE: "wind", \u5927\u5730: "earth", \u5CA9\u77F3: "earth", \u571F: "earth", \u5CA9: "earth", \u8349\u6728: "nature", \u81EA\u7136: "nature", \u6728: "nature", \u6D41\u6C34: "water", \u6F6E\u6C50: "water", \u6C34: "water", \u84B8\u6C7D: "steam", \u8680\u6708: "lunar", \u592A\u9634: "lunar", \u6708: "lunar", \u65E5\u8000: "solar", \u592A\u9633: "solar", \u65F6\u7A7A: "chrono", \u65F6\u95F4: "chrono", \u91CD\u529B: "gravity", \u5F15\u529B: "gravity", \u68A6\u9B47: "nightmare", \u8F90\u5C04: "radiation", \u78C1\u529B: "magnetic", \u7535\u78C1: "magnetic", \u6676\u77F3: "crystal", \u7ED3\u6676: "crystal", \u715E\u6C14: "miasma", \u9B54\u6C14: "miasma" };
+  var WRAPPED_ELEMENT_RE = /^\s*[\[【](?<body>[^\]】]+?)\s*[\]】]\s*$/u;
+  var ELEMENT_TAG_RE = /^(?<name>[\p{Script=Han}]{1,6})属性$/u;
+  var blockedElementNames = /* @__PURE__ */ new Set(["\u5168", "\u65E0", "\u591A", "\u4E3B", "\u526F", "\u53CC", "\u5355", "\u540C", "\u5F02", "\u672C", "\u57FA", "\u9AD8", "\u4F4E", "\u653B", "\u9632", "\u4F53", "\u667A", "\u529B", "\u654F", "\u7CBE", "\u7269", "\u9B54", "\u4E94\u7EF4", "\u57FA\u7840", "\u5168\u80FD", "\u7279\u6B8A", "\u63A7\u5236", "\u7729\u6655", "\u6C89\u9ED8", "\u5B9A\u8EAB", "\u51CF\u901F", "\u4F4D\u79FB", "\u51FB\u9000", "\u9B45\u60D1", "\u6050\u60E7", "\u7761\u7720", "\u6D41\u8840", "\u4E2D\u6BD2", "\u707C\u70E7", "\u51B0\u51BB", "\u81F4\u6B7B", "\u5373\u6B7B", "\u5F02\u5E38", "\u8D1F\u9762", "\u51CF\u76CA", "\u5168\u90E8", "\u6240\u6709", "\u8FDC\u7A0B", "\u8FD1\u6218", "\u66B4\u51FB", "\u6E85\u5C04", "\u8303\u56F4"]);
+  function resolveDamageType(value, customElements = {}, register2 = false) {
+    const label = text3(value).trim();
+    const raw = label.replace(/伤害$/u, "").trim();
+    const builtin = resolveElementAlias(label) ?? resolveElementAlias(raw);
+    if (builtin) return builtin;
+    const existing = Object.hasOwn(customElements, raw) ? raw : Object.entries(customElements).find(([, entry2]) => entry2?.name === raw || entry2?.aliases?.includes(raw))?.[0];
+    if (existing) return existing;
+    if (!register2 || !/^[\p{L}][\p{L}\p{M}_-]{0,23}$/u.test(raw) || raw.length > 24 || blockedElementNames.has(raw)) return null;
+    const known = Object.hasOwn(CUSTOM_ELEMENT_IDS, raw);
+    const id3 = known ? CUSTOM_ELEMENT_IDS[raw] : `elem_${hash(raw).toString(36)}`;
+    if (Object.hasOwn(customElements, id3)) return known ? id3 : null;
+    if (Object.keys(customElements).length >= 64) return null;
+    customElements[id3] = { id: id3, name: raw, category: "energy" };
+    return id3;
+  }
+  function explicitElementName(tag2) {
+    const value = text3(tag2).trim();
+    const wrapped = value.match(WRAPPED_ELEMENT_RE);
+    const body = wrapped?.groups.body.trim() ?? value;
+    const explicit = body.match(/^(?:元素|属性|伤害|伤害类型)\s*[:：]\s*(.+)$/u);
+    if (explicit) return explicit[1].trim();
+    const standalone = body.match(ELEMENT_TAG_RE);
+    return standalone && !blockedElementNames.has(standalone.groups.name) ? standalone.groups.name : null;
+  }
+  function elementFromText(value, customElements, register2 = false) {
+    const raw = explicitElementName(value);
+    if (raw) return resolveDamageType(raw, customElements, register2);
+    const power = value.match(/^威力\s*[:：]\s*(.+)$/u)?.[1];
+    if (power) return resolveDamageType(powerTag.exec(power)?.[2], customElements);
+    const type = resolveDamageType(value, customElements);
+    if (!type || Object.hasOwn(statAliases, value) || blockedElementNames.has(value)) return null;
+    return ELEMENT_DEFINITIONS[type]?.name === value || type === value || Object.hasOwn(customElements, type) ? type : null;
+  }
+  function parseElementModifier(tag2, customElements) {
+    const match = /^(?<name>[\p{L}_-]+?)(?<marker>属性|元素)?(?<kind>固定减伤|抗性|减伤|免疫|易伤|伤害加成|增伤|强化)\s*[:：]?\s*(?<amount>\+?\d+(?:\.\d+)?)?\s*(?<percent>[%％])?$/u.exec(tag2);
+    if (!match) return null;
+    const { name, marker, kind, amount, percent: percent3 } = match.groups;
+    if (blockedElementNames.has(name)) return null;
+    const n = Number(amount);
+    if (kind === "\u514D\u75AB" ? amount || percent3 : !finite3(n) || (kind === "\u56FA\u5B9A\u51CF\u4F24" ? percent3 || !Number.isSafeInteger(n) : !percent3)) return null;
+    const damageType2 = resolveDamageType(name, customElements, Boolean(marker));
+    if (!damageType2) return null;
+    if (kind === "\u514D\u75AB") return { stat: "dr", flat: 1, damageType: damageType2 };
+    if (kind === "\u56FA\u5B9A\u51CF\u4F24") return { stat: "damageReductionFlat", flat: n, damageType: damageType2 };
+    if (kind === "\u6613\u4F24") return { stat: "incomingDamageMult", mult: 1 + n / 100, damageType: damageType2 };
+    if (/伤害加成|增伤|强化/u.test(kind)) return { stat: "damageMult", additivePercent: n / 100, damageType: damageType2 };
+    return { stat: "damageReduction", flat: n / 100, damageType: damageType2 };
+  }
+  function elementTags(raw, type) {
+    const tags = rawTagValues(raw);
+    if (!type || tags.slice(0, 32).includes(type)) return tags.slice(0, 32);
+    return [...tags.slice(0, 31), type];
+  }
+  function readCombatTags(raw, kind, name, warnings, { customElements = {} } = {}) {
+    const fields3 = {}, summary = [], groups = /* @__PURE__ */ new Map();
     const weapon2 = kind === "weapon", active3 = kind === "active", passive = kind === "passive";
     const entries3 = tagEntries(raw.tags ?? raw.\u6807\u7B7E);
     const warn = (tag2, advice = "") => warnings.push(`\u300C${name}\u300D\u6807\u7B7E\u300C${tag2}\u300D\u5F85\u6807\u51C6\u5316\uFF1A\u8BF7\u7ED3\u5408\u8BCD\u6761\u8BED\u4E49\u6620\u5C04\u4E3A\u5408\u6CD5 VM mods / rules \u6216\u6807\u660E engine_limit${advice && `\uFF1B${advice}`}`);
@@ -14952,6 +15261,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     let powerType;
     const equipmentPower = [], activeAttack = [];
+    const explicitTypes = entries3.map((tag2) => elementFromText(tag2, customElements, true));
+    const typedMods = entries3.map((tag2) => parseElementModifier(tag2, customElements)).filter(Boolean);
+    const mods = readMods(raw.mods, warnings, customElements);
+    for (const modifier of typedMods) {
+      if (mods.length === 200) break;
+      if (!mods.some((mod2) => mod2.stat === modifier.stat && mod2.damageType === modifier.damageType && mod2.when === void 0 && mod2.checkKind === void 0 && mod2.statusId === void 0)) mods.push(modifier);
+    }
     for (const [key4, group] of groups) {
       const values5 = [];
       for (const { tag: tag2, value } of group) {
@@ -14977,12 +15293,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           continue;
         }
         const power = key4 === "\u5A01\u529B" ? powerTag.exec(value) : null;
-        const n = power ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
+        const type = resolveDamageType(power?.[2], customElements);
+        const n = power && (!power[2] || type) ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
         if (!Number.isSafeInteger(n) || key4 === "\u5A01\u529B" && n < 0) {
           warn(tag2);
           continue;
         }
-        if (power && !values5.length) powerType = power[2];
+        if (power && !values5.length) powerType = type;
         values5.push(n);
       }
       if (!values5.length) continue;
@@ -15007,7 +15324,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
     }
     const suffix = summary.length ? `\u3002\u5DF2\u7531\u9759\u6001\u6807\u7B7E\u89E3\u6790\u843D\u76D8\uFF1A${summary.map(([label, n]) => `${label} ${n >= 0 ? "+" : ""}${n}`).join("\u3001")}\uFF1B\u8865\u4E01\u6539\u5199 mods \u65F6\u987B\u4FDD\u7559\u65E2\u6709\u9879\uFF08\u6216\u7528 /mods/- \u8FFD\u52A0\uFF09\u4E14\u5207\u52FF\u91CD\u590D\u53E0\u52A0\u540C\u4E00\u6570\u503C\uFF1B\u82E5\u672C\u6761\u4EC5\u91CD\u7533\u8BE5\u9759\u6001\u52A0\u6210\u800C\u65E0\u989D\u5916\u5C40\u5185\u673A\u5236\uFF0C\u76F4\u63A5\u5F52\u5165 narrative \u8BF4\u660E\u5373\u53EF\u3002` : "";
-    return { entries: entries3, fields: fields3, mods, suffix, powerType, equipmentPower, activeAttack };
+    return { entries: entries3, fields: fields3, mods, suffix, powerType, equipmentPower, activeAttack, damageType: explicitTypes.find(Boolean) };
   }
   function readPools(value, warnings) {
     if (value == null) return {};
@@ -15021,23 +15338,24 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       return allowed;
     }).map(([key4, pool]) => [key4, { initial: pool.cap, ...pool }]));
   }
-  function readEquipmentNarrative(effects, warnings, onNarrativeWarning) {
-    return convertNarrative(effects, warnings, "", { equipment: true, onNarrativeWarning });
+  function readEquipmentNarrative(effects, warnings, onNarrativeWarning, customElements) {
+    return convertNarrative(effects, warnings, "", { equipment: true, onNarrativeWarning, customElements });
   }
   function convertNarrative(effects, warnings, prefix, {
     allowPower = false,
     equipment = false,
     areaDamage = false,
     passive = false,
+    customElements = {},
     onNarrativeWarning = (message, metadata) => warnings.push(message, metadata)
   } = {}) {
     const rules = [];
     for (const [index, [label, entry2]] of narrativeEntries(effects).entries()) {
-      if (validVmRule(entry2)) {
+      if (validVmRule(entry2, { customElements })) {
         appendRules(rules, [clone(entry2)], warnings);
         continue;
       }
-      const program2 = !equipment && !passive && typeof entry2 === "string" ? narrativeDamage(label, entry2, allowPower) : [];
+      const program2 = !equipment && !passive && typeof entry2 === "string" ? narrativeDamage(label, entry2, allowPower, customElements) : [];
       const rawExcerpt = [entry2].flat().map((value) => typeof value === "string" ? blockBody(value) : text3(value?.\u63CF\u8FF0 ?? value?.description ?? value?.\u6548\u679C ?? value?.effect)).filter(Boolean).join("\uFF1B");
       const excerpt = [...rawExcerpt];
       const summary = excerpt.length ? `${excerpt.slice(0, 80).join("")}${excerpt.length > 80 ? "\u2026" : ""}` : "\u5F85\u8F6C\u6362\u4E3A\u6218\u6597\u89C4\u5219";
@@ -15049,8 +15367,6 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return rules;
   }
-  var damageAliases = new Map(Object.entries({ \u7269\u7406: "physical", \u80FD\u91CF: "energy", \u7CBE\u795E: "mental", \u771F\u5B9E: "true" }));
-  var damageTypes2 = ["physical", "energy", "mental", "true"];
   function skillCosts(value) {
     const cost = object3(value) ? Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(" ") : text3(value);
     const slots3 = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
@@ -15060,32 +15376,39 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
   var damageOp = (damageType2, amount) => ({ op: "damage", target: "target", damageType: damageType2, amount });
   var powerAmount = (percent3) => percent3 === 100 ? "event.power" : `event.power * (${percent3} / 100)`;
-  function damageTags(value, power) {
+  function damageTags(value, power, customElements) {
     if (!value) return [];
-    const single = damageAliases.get(value);
+    const single = resolveDamageType(value, customElements);
     if (single) return [damageOp(single, "event.power")];
-    const parts = value.split(/[/／]/).map((s) => s.trim().match(/^(物理|能量|精神|真实)\s*(\d+(?:\.\d+)?)\s*([%％]?)$/));
-    if (parts.length < 2 || parts.some((p) => !p || !finite3(Number(p[2])))) return [];
+    const parts = value.split(/[/／]/).map((s) => {
+      const match = s.trim().match(/^(?:(\d+(?:\.\d+)?)\s*([%％]?)\s*(.+?)|(.+?)\s*(\d+(?:\.\d+)?)\s*([%％]?))$/u);
+      return match ? [match[0], resolveDamageType(match[3] ?? match[4], customElements), match[1] ?? match[5], match[2] ?? match[6]] : null;
+    });
+    if (parts.length < 2 || parts.some((p) => !p?.[1] || !finite3(Number(p[2])))) return [];
     const percent3 = parts.every((p) => p[3]);
     if (!percent3 && !(parts.every((p) => !p[3]) && parts.reduce((n, p) => n + Number(p[2]), 0) === Number(power))) return [];
-    return parts.map(([, type, n]) => damageOp(damageAliases.get(type), percent3 ? powerAmount(Number(n)) : Number(n)));
+    return parts.map(([, type, n]) => damageOp(type, percent3 ? powerAmount(Number(n)) : Number(n)));
   }
-  function narrativeDamage(label, entry2, allowPower) {
+  function narrativeDamage(label, entry2, allowPower, customElements) {
     const body = blockBody(entry2);
-    const flat = /^(?:造成\s*)?(\d+)\s*(?:点)?\s*(物理|能量|精神|真实)伤害[。.]?$/.exec(body);
-    if (flat && finite3(Number(flat[1]))) return [damageOp(damageAliases.get(flat[2]), Number(flat[1]))];
-    const typedLabel = /^(物理|能量|精神|真实)伤害$/.exec(label);
+    const flat = /^(?:造成\s*)?(\d+)\s*(?:点)?\s*(.+?)伤害[。.]?$/u.exec(body);
+    const flatType = flat && resolveDamageType(flat[2], customElements);
+    if (flat && flatType && finite3(Number(flat[1]))) return [damageOp(flatType, Number(flat[1]))];
+    const typedLabel = label && text3(label).match(/^(.+?)伤害$/u);
+    const typedType = typedLabel && resolveDamageType(typedLabel[1], customElements);
     const labelledFlat = typedLabel && /^造成\s*(\d+)\s*(?:点)?伤害[。.]?$/.exec(body);
-    if (labelledFlat && finite3(Number(labelledFlat[1]))) return [damageOp(damageAliases.get(typedLabel[1]), Number(labelledFlat[1]))];
+    if (labelledFlat && typedType && finite3(Number(labelledFlat[1]))) return [damageOp(typedType, Number(labelledFlat[1]))];
     if (!allowPower) return [];
-    const parts = body.split(/[/／、+＋]/).map((part) => part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(物理|能量|精神|真实)(?:伤害)?[。.]?$/));
-    if (parts.some((part) => !part || Number(part[1]) <= 0 || Number(part[1]) > 1e3)) return [];
-    return parts.map(([, percent3, type]) => damageOp(damageAliases.get(type), powerAmount(Number(percent3))));
+    const parts = body.split(/[/／、+＋]/).map((part) => {
+      const match = part.trim().match(/^(\d+(?:\.\d+)?)\s*[%％]\s*(.+?)(?:伤害)?[。.]?$/u);
+      return match ? [match[0], match[1], resolveDamageType(match[2], customElements)] : null;
+    });
+    if (parts.some((part) => !part?.[2] || Number(part[1]) <= 0 || Number(part[1]) > 1e3)) return [];
+    return parts.map(([, percent3, type]) => damageOp(type, powerAmount(Number(percent3))));
   }
-  function normalizeDice(raw) {
+  function normalizeDice(raw, customElements, fallback = "physical") {
     const dice4 = asObject(raw);
     const stat3 = own16(statAliases, dice4.stat) ? statAliases[dice4.stat] : dice4.stat;
-    const type = damageAliases.get(dice4.type) ?? dice4.type;
     const count = bound(dice4.count, 0, 1e6, 1);
     return {
       count,
@@ -15093,7 +15416,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       bonus: bound(dice4.bonus, -1e9, 1e9, 0),
       ...attrNames.includes(stat3) ? { stat: stat3 } : {},
       ...finite3(dice4.multiplier) ? { multiplier: Math.max(0, Math.min(8, dice4.multiplier)) } : {},
-      type: damageTypes2.includes(type) ? type : "physical"
+      type: resolveDamageType(dice4.type, customElements) ?? fallback
     };
   }
   function areaFields(raw, warnings, name) {
@@ -15196,7 +15519,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       program: [{ op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }]
     }], warnings);
   }
-  function normalizeEquipment(raw, slot2, owner, key4, sink) {
+  function normalizeEquipment(raw, slot2, owner, key4, sink, customElements = {}) {
     const r = asObject(raw), name = text3(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot2 || "\u88C5\u5907"}${key4}`;
     const isShield = slot2 === "shield" || r.kind === "shield" || r.shield === true || r.weaponClass === "shield" || /盾/.test(name);
     const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text3(r.tags ?? r.\u6807\u7B7E);
@@ -15207,9 +15530,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${key4}`;
     const templateId = `template-${idBase}`;
     const warnings = sink("effect", `/equipment/${templateId}`);
-    const rules = readRules(r.rules, warnings);
-    const parsed = readCombatTags(r, kind, name, warnings);
-    const template = { name: name.slice(0, 100), kind, rules, mods: parsed.mods, pools: readPools(r.pools, warnings), ...qualityOf(r) ? { quality: qualityOf(r) } : {}, ...rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {} };
+    const parsed = readCombatTags(r, kind, name, warnings, { customElements });
+    const rules = readRules(r.rules, warnings, customElements);
+    const type = resolveDamageType(r.damage?.type, customElements) ?? parsed.damageType;
+    const carrierTags = elementTags(r, type);
+    const template = { name: name.slice(0, 100), kind, rules, mods: parsed.mods, pools: readPools(r.pools, warnings), ...qualityOf(r) ? { quality: qualityOf(r) } : {}, ...carrierTags.length ? { tags: carrierTags } : {} };
     const { rangeValues, radius, shape: shape2, target: target2 } = parseAreaTags(r.tags ?? r.\u6807\u7B7E);
     let powerCovered = false;
     const onNarrativeWarning = (message, metadata, index, label) => {
@@ -15220,7 +15545,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       if (powerEffect) powerCovered = true;
       warnings.push(message + rangeNote + powerNote + parsed.suffix, metadata);
     };
-    appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.\u6548\u679C, warnings, onNarrativeWarning), warnings);
+    appendRules(rules, readEquipmentNarrative(r.effects ?? r.effectsList ?? r.\u6548\u679C, warnings, onNarrativeWarning, customElements), warnings);
     if (!powerCovered) for (const tag2 of parsed.equipmentPower) warnings.push(`\u300C${name}\u300D\u6807\u7B7E\u300C${tag2}\u300D\u5F85\u6807\u51C6\u5316\uFF1A\u88C5\u5907\u6CA1\u6709\u4E3B\u51FB\u5A01\u529B\u9762\u677F\uFF0C\u8BF7\u7ED3\u5408\u63CF\u8FF0\u88C1\u5B9A\u6302\u8F7D\u4E3B\u52A8\u6280\u80FD`);
     const defense = bound(r.defense ?? r.\u9632\u5FA1 ?? parsed.fields.defense, 0, 1e6, kind === "shield" ? 1 : 0);
     if (kind === "shield") Object.assign(template, { weaponClass: "shield", hand: "off_hand", shield: true, defense });
@@ -15250,7 +15575,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         rawRange: area3.range ?? (ranged ? 4 : 1),
         attack: bound(r.attack ?? r.\u653B\u51FB ?? parsed.fields.attack, 0, 1e9),
         accuracy: bound(r.accuracy ?? r.\u547D\u4E2D ?? parsed.fields.accuracy, -100, 100, 0),
-        damage: normalizeDice(r.damage ?? { stat: "str" }),
+        damage: normalizeDice(r.damage ?? { stat: "str" }, customElements, type),
         ...geometryFields(area3)
       });
       if (twoHanded) Object.assign(template, { twoHanded: true, heavy: r.heavy ?? !ranged });
@@ -15294,21 +15619,21 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (value.hand === "off") value.hand = "off_hand";
     if (value.rangeType === "ranged") value.ranged = true;
     if (value.rangeType === "melee") value.ranged = false;
-    const damageType2 = { "\u7269\u7406": "physical", "\u80FD\u91CF": "energy", "\u7CBE\u795E": "mental", "\u771F\u5B9E": "true" };
-    if (object3(value.damage) && damageType2[value.damage.type]) value.damage.type = damageType2[value.damage.type];
+    const type = resolveDamageType(value.damage?.type);
+    if (type) value.damage.type = type;
     return value;
   }
   function battleEquipmentRecord(participant, battle) {
-    const definitions = asObject(battle?.equipment), result = {};
+    const definitions2 = asObject(battle?.equipment), result = {};
     for (const [field2, slot2] of [["mainHand", "mainHand"], ["offHand", "offHand"], ["shield", "shield"]]) {
-      const id3 = text3(participant?.[field2]), definition = definitions[id3];
+      const id3 = text3(participant?.[field2]), definition = definitions2[id3];
       if (id3 && object3(definition)) result[slot2] = normalizeBattleDefinition(definition, id3);
     }
     return Object.keys(result).length ? result : null;
   }
   function battleSkillsRecord(participant, battle) {
-    const definitions = asObject(battle?.skills), result = {};
-    for (const id3 of Array.isArray(participant?.skills) ? participant.skills : []) if (object3(definitions[id3])) result[id3] = clone(definitions[id3]);
+    const definitions2 = asObject(battle?.skills), result = {};
+    for (const id3 of Array.isArray(participant?.skills) ? participant.skills : []) if (object3(definitions2[id3])) result[id3] = clone(definitions2[id3]);
     return Object.keys(result).length ? result : null;
   }
   var lengthKeys = ["bodyLengthM", "bodyLength", "BL", "bl", "\u4F53\u957F", "\u8EAB\u9AD8"];
@@ -15354,16 +15679,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       stats: ["stats", "attributes", "\u5C5E\u6027", ...attrNames, ...Object.keys(statAliases)],
       statuses: ["statuses", "\u72B6\u6001\u6548\u679C", "\u72B6\u6001", "effects"]
     };
-    for (const [field2, aliases2] of Object.entries(fields3)) {
-      if (inline[field2] != null && !aliases2.some((alias) => own16(merged, alias))) merged[field2] = clone(inline[field2]);
+    for (const [field2, aliases3] of Object.entries(fields3)) {
+      if (inline[field2] != null && !aliases3.some((alias) => own16(merged, alias))) merged[field2] = clone(inline[field2]);
     }
     const resourceSource = (recordValue, key4) => {
-      const aliases2 = RESOURCE_ALIASES[key4] ?? [];
-      const direct = aliases2.find((name) => own16(recordValue, name));
+      const aliases3 = RESOURCE_ALIASES[key4] ?? [];
+      const direct = aliases3.find((name) => own16(recordValue, name));
       if (direct) return { container: null, key: direct, value: recordValue[direct] };
-      const container = ["resources", "resource", "\u8D44\u6E90"].find((name) => object3(recordValue?.[name]) && aliases2.some((alias) => own16(recordValue[name], alias)));
+      const container = ["resources", "resource", "\u8D44\u6E90"].find((name) => object3(recordValue?.[name]) && aliases3.some((alias) => own16(recordValue[name], alias)));
       if (!container) return null;
-      const nestedKey = aliases2.find((name) => own16(recordValue[container], name));
+      const nestedKey = aliases3.find((name) => own16(recordValue[container], name));
       return { container, key: nestedKey, value: recordValue[container][nestedKey] };
     };
     for (const key4 of ["hp", "mp", "sp"]) {
@@ -15387,11 +15712,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     return merged;
   }
   function sourceResourcePath(record3, key4) {
-    const aliases2 = RESOURCE_ALIASES[key4] ?? [];
-    const direct = aliases2.find((name) => own16(record3, name));
-    const containerKey = ["resources", "resource", "\u8D44\u6E90"].find((name) => object3(record3?.[name]) && aliases2.some((alias) => own16(record3[name], alias)));
+    const aliases3 = RESOURCE_ALIASES[key4] ?? [];
+    const direct = aliases3.find((name) => own16(record3, name));
+    const containerKey = ["resources", "resource", "\u8D44\u6E90"].find((name) => object3(record3?.[name]) && aliases3.some((alias) => own16(record3[name], alias)));
     const owner = direct ? record3[direct] : containerKey ? record3[containerKey] : void 0;
-    const ownerPath = direct ? [direct] : containerKey ? [containerKey, aliases2.find((name) => own16(record3[containerKey], name))] : null;
+    const ownerPath = direct ? [direct] : containerKey ? [containerKey, aliases3.find((name) => own16(record3[containerKey], name))] : null;
     if (!ownerPath) return null;
     if (!object3(owner)) return ownerPath;
     const current = ["current", "\u5F53\u524D", "now", "value"].find((name) => own16(owner, name));
@@ -15452,6 +15777,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const id3 = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
       entrySources[`skills:${id3}`] = staticProjection(item);
       if (Array.isArray(sourcePath)) inventoryPaths[id3] = {
+        skillId: id3,
         countPath: [...sourcePath, "\u80CC\u5305", name, Object.hasOwn(item, "\u6570\u91CF") ? "\u6570\u91CF" : "count"],
         initialCount: count
       };
@@ -15481,7 +15807,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return inventory;
   }
-  function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist, board, sourceRecord) {
+  function unitFrom(record3, participant, index, equipment, skills, items, sink, isProtagonist, board, sourceRecord, customElements = {}) {
     const resourcesSink = sink("resource"), warnings = sink("status");
     const p = participant ?? {};
     const name = text3(p.protagonistName || p.name) || sourceName(record3, p.id) || `\u5355\u4F4D ${index + 1}`;
@@ -15500,8 +15826,34 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const sourceEntries = sourceEquipment(record3[equipmentKey], equipmentPath);
     const bagEntries = sourceEquipment(record3.\u80CC\u5305, sourcePath ? [...sourcePath, "\u80CC\u5305"] : null);
     const entrySources = {}, equipmentKeys = /* @__PURE__ */ new Map();
-    const dynamicOverlay = { units: {}, itemCounters: {}, inventory: {} };
+    const dynamicOverlay = { units: {}, itemCounters: {}, unitCounters: {}, inventory: {} };
     const counterBindings = [];
+    const unitPools2 = {};
+    const usedUnitPoolKeys = /* @__PURE__ */ new Set();
+    for (const entry2 of extractUnitPoolEntries(record3)) {
+      const baseKey = unitPoolKeyFromLabel(entry2.rawKey || entry2.label);
+      let poolKey = baseKey;
+      for (let suffix = 2; Object.hasOwn(unitPools2, poolKey); suffix++) poolKey = `${baseKey}_${suffix}`;
+      usedUnitPoolKeys.add(poolKey);
+      unitPools2[poolKey] = { name: entry2.label, cap: entry2.cap, initial: Math.min(entry2.cap, entry2.current) };
+      if (Array.isArray(sourcePath) && sourcePath.length && entry2.subPath) {
+        const binding = {
+          ownerKind: "unit",
+          target: { kind: "unit_pool", poolKey },
+          poolKey,
+          label: entry2.label,
+          unitId: id3,
+          current: entry2.current,
+          max: entry2.explicitMax ?? null,
+          hasExplicitCap: entry2.explicitMax != null,
+          ...entry2.initialRawValue !== void 0 ? { initialRawValue: entry2.initialRawValue } : {},
+          format: entry2.format,
+          mvuPath: [...sourcePath, ...entry2.subPath]
+        };
+        counterBindings.push(binding);
+        dynamicOverlay.unitCounters[poolKey] = binding;
+      }
+    }
     const inventoryPaths = {};
     const addBinding = (item, path2, { path: suffix, ...counter2 }, poolKey) => {
       const binding = {
@@ -15524,7 +15876,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const key4 = hash(String(identity)).toString(36);
       const occurrence = equipmentKeys.get(key4) ?? 0;
       equipmentKeys.set(key4, occurrence + 1);
-      const item = normalizeEquipment(raw, slot2, id3, occurrence ? `${key4}-${occurrence}` : key4, sink);
+      const item = normalizeEquipment(raw, slot2, id3, occurrence ? `${key4}-${occurrence}` : key4, sink, customElements);
       const { slot: _slot, position: _position, \u4F4D\u7F6E: _placement, count: _count, \u6570\u91CF: _quantity, ...definition } = raw;
       entrySources[`equipment:${item.templateId}`] = staticProjection(definition);
       const ammo = ammoCounter(raw);
@@ -15603,8 +15955,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const costs = skillCosts(r.cost ?? r.\u6D88\u8017);
       const mode = text3(r.\u6A21\u5F0F ?? r.mode ?? r.\u7C7B\u578B ?? r.type).toLowerCase();
       const passive = r.passive === true || mode === "passive" || mode.includes("\u88AB\u52A8") && !mode.includes("\u4E3B\u52A8");
-      const parsed = readCombatTags(r, passive ? "passive" : "active", skillName, notes2);
-      const tag2 = (typeof r.\u4F24\u5BB3 === "string" ? r.\u4F24\u5BB3 : null) ?? parsed.entries.map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean) ?? parsed.powerType;
+      const parsed = readCombatTags(r, passive ? "passive" : "active", skillName, notes2, { customElements });
+      const tag2 = (typeof r.\u4F24\u5BB3 === "string" ? r.\u4F24\u5BB3 : null) ?? parsed.entries.map((label) => label.match(/^伤害\s*[:：]\s*(.+)$/)?.[1]?.trim()).find(Boolean) ?? parsed.damageType ?? parsed.powerType;
       const rawEffects = r.effects ?? r.\u6548\u679C;
       const descriptionPower = text3(r.description ?? r.\u63CF\u8FF0).match(/(?:^|[\s，。；【\[])威力\s*[:：]\s*(\d+)(?=$|[\s，。；：、】\]]|物理|能量|精神|真实)/u)?.[1];
       const power = r.power ?? r.\u5A01\u529B ?? (passive ? void 0 : parsed.fields.power ?? descriptionPower);
@@ -15613,7 +15965,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const hasPower = !passive && Number.isFinite(numericPower) && numericPower >= 0;
       if (!hasPower) for (const attack of parsed.activeAttack) notes2.push(`\u300C${skillName}\u300D\u6807\u7B7E\u300C${attack}\u300D\u5F85\u6807\u51C6\u5316\uFF1A\u672A\u58F0\u660E\u4E3B\u51FB\u5A01\u529B\uFF0C\u8BF7\u7ED3\u5408\u8BCD\u6761\u8BED\u4E49\u88C1\u5B9A\uFF0C\u4E0D\u76F4\u63A5\u628A\u653B\u51FB\u586B\u4F5C power`);
       const statTag = parsed.entries.map((label) => statAliases[label.match(/^(?:关联属性\s*[:：]\s*)?(力量|敏捷|体质|智力|精神)$/)?.[1]]).find(Boolean);
-      const rules = readRules(r.rules, notes2);
+      const rules = readRules(r.rules, notes2, customElements);
       const prefix = `fx-${hash(sid).toString(36)}`;
       const areaDamage = isAreaDamage(area3);
       const narrativeNotes = [];
@@ -15621,12 +15973,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         allowPower: !r.damage && hasPower,
         areaDamage,
         passive,
+        customElements,
         onNarrativeWarning: (message, metadata) => narrativeNotes.push({ message, metadata })
       }), notes2);
-      const singleTaggedType = damageAliases.get(tag2);
+      const singleTaggedType = resolveDamageType(tag2, customElements);
       const hasActiveDamage = rules.some((rule2) => rule2.enabled !== false && rule2.hook === "active" && [...instructions(rule2.program)].some((op) => op.op === "damage"));
       if (!passive && !r.damage && !r.heal && !hasActiveDamage && tag2) {
-        const packets = hasPower ? damageTags(tag2, power) : [];
+        const packets = hasPower ? damageTags(tag2, power, customElements) : [];
         if (!singleTaggedType && packets.length && area3.target !== "cell") {
           const program2 = areaDamage ? [{ op: "for_each", select: { from: "action_targets" }, body: packets }] : packets;
           appendRules(rules, [activeRule2(`${prefix}-damage`, program2)], notes2);
@@ -15637,10 +15990,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         }
       }
       const damageOps = rules.filter((rule2) => rule2.enabled !== false && rule2.hook === "active").flatMap((rule2) => [...instructions(rule2.program)].filter((op) => op.op === "damage"));
-      const types2 = [...new Set(damageOps.map((op) => op.damageType))];
-      const rawDamageType = r.damageType ?? damageAliases.get(tag2);
-      const explicitDamageType = damageAliases.get(rawDamageType) ?? rawDamageType;
-      const generatedDamageType = singleTaggedType ?? (damageTypes2.includes(explicitDamageType) ? explicitDamageType : void 0);
+      const types = [...new Set(damageOps.map((op) => op.damageType))];
+      const explicitDamageType = resolveDamageType(r.damageType, customElements);
+      if (r.damageType != null && !explicitDamageType) notes2.push(`\u300C${skillName}\u300D\u672A\u77E5\u4F24\u5BB3\u7C7B\u578B\uFF1A${r.damageType}`);
+      const generatedDamageType = explicitDamageType ?? singleTaggedType;
       const generatedMainDamage = hasPower && !passive && !r.damage && !r.heal && !damageOps.length && (!tag2 || singleTaggedType) ? { count: 1, sides: 4, ...statTag ? { stat: statTag } : {}, ...generatedDamageType ? { type: generatedDamageType } : {} } : null;
       if (generatedMainDamage && !generatedDamageType && narrativeNotes.length) {
         notes2.push(`\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u5F85\u6807\u51C6\u5316\u300C\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B\u300D\uFF1A\u6839\u636E\u539F\u59CB\u6548\u679C\u8865\u5168 /skills/${sid}/damage/type\uFF1B\u82E5\u539F\u6587\u660E\u786E\u4EE5\u6DF7\u5408\u4F24\u5BB3\u6216\u72EC\u7ACB\u516C\u5F0F\u66FF\u4EE3\u4E3B\u51FB\uFF0C\u8BF7\u79FB\u9664\u6A21\u677F damage \u5E76\u4EE5 active \u89C4\u5219\u7ED3\u7B97\u3002`, { userSummary: `\u6280\u80FD\u300C${skillName}\u300D\uFF1A\u5F85\u4ECE\u539F\u6587\u8BC6\u522B\u4E3B\u51FB\u4F24\u5BB3\u7C7B\u578B` });
@@ -15650,12 +16003,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         const mainNote = mainParsed ? `\u3002\u4E3B\u51FB\u4E0E\u5A01\u529B ${numericPower} \u5DF2\u89E3\u6790\uFF0C\u53EA\u8865\u672C\u6761\u5C1A\u672A\u5B9E\u73B0\u7684\u6548\u679C\uFF0C\u4E0D\u8981\u91CD\u590D\u6DFB\u52A0\u4E3B\u51FB\u3002` : "";
         notes2.push(message + mainNote + parsed.suffix, metadata);
       }
-      const damageType2 = explicitDamageType ?? (types2.length === 1 ? types2[0] : void 0);
+      const damageType2 = explicitDamageType ?? resolveDamageType(r.damage?.type, customElements) ?? singleTaggedType ?? (types.length === 1 ? types[0] : void 0);
+      const tags2 = elementTags(r, singleTaggedType);
       skillInfo[sid] = { description: text3(r.description ?? r.\u63CF\u8FF0), damageType: damageType2, hp: costs.hp };
       skills[sid] = {
         name: skillName,
         ...qualityOf(r) ? { quality: qualityOf(r) } : {},
-        ...rawTagValues(r).length ? { tags: rawTagValues(r).slice(0, 32) } : {},
+        ...tags2.length ? { tags: tags2 } : {},
         rawRange: area3.range ?? 1,
         ...passive ? { passive: true } : r.passive === false ? { passive: false } : {},
         ap: passive ? 0 : bound(r.ap ?? costs.ap, 0, 2),
@@ -15670,8 +16024,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         mods: parsed.mods,
         pools: readPools(r.pools, notes2)
       };
-      if (damageTypes2.includes(damageType2)) skills[sid].damageType = damageType2;
-      else if (damageType2 != null) notes2.push(`\u300C${skillName}\u300D\u672A\u77E5\u4F24\u5BB3\u7C7B\u578B\uFF1A${damageType2}`);
+      if (damageType2) skills[sid].damageType = damageType2;
       for (const key5 of ["mp", "sp"]) if ((r[key5] ?? costs[key5]) != null) skills[sid][key5] = bound(r[key5] ?? costs[key5], 0, 25e3);
       const accuracy = r.accuracy ?? (passive ? void 0 : r.\u547D\u4E2D ?? parsed.fields.accuracy);
       if (accuracy != null) skills[sid].accuracy = bound(accuracy, -100, 100);
@@ -15687,7 +16040,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
       if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
       if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
-      for (const key5 of ["damage", "heal"]) if (!passive && object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5]);
+      for (const key5 of ["damage", "heal"]) if (!passive && object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5], customElements, key5 === "damage" ? damageType2 : void 0);
       return sid;
     });
     const pos2 = xyzOf(p.xyz ?? p, board, sink("state"));
@@ -15726,7 +16079,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
     const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...Object.keys(unitPools2).length ? { unitPools: unitPools2 } : {}, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
@@ -15758,7 +16111,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       mp: resources.mp.current,
       sp: resources.sp.current,
       statuses: clone(statuses),
-      inventory: clone(inventoryPaths)
+      inventory: clone(inventoryPaths),
+      unitPools: clone(unitPools2)
     };
     return { unit, entrySources, dynamicOverlay, counterBindings, inventoryPaths, profile: { id: id3, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record3.__sourcePath ?? null, sourceKind: record3.__sourceKind || "unknown", fieldSources: { numeric: record3.__sourceKind || "unknown", equipment: record3.__sourceKind || "unknown", placement: "battle_init", faction: "battle_init", name: p.protagonistName ? "persona" : p.name ? "battle_init" : record3.__sourceKind || "unknown" } }, participant: p };
   }
@@ -15892,6 +16246,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const fallbackIndex = byPersona >= 0 ? byPersona : participants.findIndex((p, i) => eligible(p) && !resolved[i]);
       if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
     }
+    const customElements = clone(source.customElements ?? options.customElements ?? {});
     const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
     const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = /* @__PURE__ */ new Map();
     const add = (participant, record3, index) => {
@@ -15904,7 +16259,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const merged = mergeBattleParticipant(record3, participant, battle);
       const placement = { moraleType: battle.moraleType, ...participant, ...persona, id: id3 };
       const startWarnings = warnings.length;
-      const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist, battle, record3);
+      const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist, battle, record3, customElements);
       if (origin === "char_info") {
         const { \u6570\u91CF: _quantity, count: _count, ...definition } = merged;
         const signature = JSON.stringify([definition, made.unit.tags, made.unit.creatureType, made.unit.nonLethal, made.unit.moraleType]);
@@ -15959,12 +16314,15 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
     const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
     const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
-    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
     initializeVMWorld(state);
     for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
       if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
-      const pool = getPool(state, binding.itemId, binding.poolKey, "item");
-      if (pool) updatePoolCurrent(state, pool.id, "set", binding.current);
+      const isUnit = binding.ownerKind === "unit" || binding.target?.kind === "unit_pool";
+      const pool = isUnit ? getPool(state, binding.unitId, binding.poolKey, "unit") : getPool(state, binding.itemId, binding.poolKey, "item");
+      if (!pool) continue;
+      if (binding.current > pool.max) updatePoolMax(state, pool.id, "set_max", binding.current);
+      updatePoolCurrent(state, pool.id, "set", binding.current);
     }
     const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
     if (time) state.time = time;
@@ -16070,7 +16428,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const units = state?.units ?? (Array.isArray(report?.units) ? Object.fromEntries(report.units.map((u) => [u.id, u])) : {});
     const root2 = options.root ?? "stat_data";
     const ops = [];
-    const aliases2 = { hp: ["\u751F\u547D\u503C", "\u5F53\u524D"], mp: ["\u6CD5\u529B\u503C", "\u5F53\u524D"], sp: ["\u4F53\u529B\u503C", "\u5F53\u524D"] };
+    const aliases3 = { hp: ["\u751F\u547D\u503C", "\u5F53\u524D"], mp: ["\u6CD5\u529B\u503C", "\u5F53\u524D"], sp: ["\u4F53\u529B\u503C", "\u5F53\u524D"] };
     for (const [id3, unit] of Object.entries(units ?? {})) {
       const mapping = sourceMap[id3] ?? {};
       if (!Array.isArray(mapping.path) || mapping.path.length === 0) continue;
@@ -16079,7 +16437,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       for (const key4 of ["hp", "mp", "sp"]) {
         const value = finalResource(unit, key4), initial = initialResource(mapping, key4, unit);
         if (value == null || initial != null && value === initial) continue;
-        const mapped = Array.isArray(resourcePaths[key4]) ? resourcePaths[key4] : aliases2[key4];
+        const mapped = Array.isArray(resourcePaths[key4]) ? resourcePaths[key4] : aliases3[key4];
         ops.push({ op: "replace", path: pointer([root2, ...path2, ...mapped]), value });
       }
       for (const [, binding] of asBindings(mapping.counterBindings)) {
@@ -16384,7 +16742,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
 
   // src/tavern/normalization-batches.js
-  var normalizationPath = /^\/(?:equipment|skills|statusTemplates)\/|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
+  var normalizationPath = /^\/(?:equipment|skills|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
   var SCENE_LANE = "__scene__";
   var warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
   var targetPath = (path2) => path2?.split("/").slice(0, 3).join("/");
@@ -16601,7 +16959,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const root2 = path2.split("/").slice(0, path2.startsWith("/units/") ? 4 : 3).join("/");
       const live3 = fingerprintAt2(current, root2);
       const original = fingerprintAt2(snapshot, root2);
-      const sharedAdd = op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(path2) && created.has(path2) && live3 === created.get(path2);
+      const sharedAdd = op === "add" && /^\/(?:customElements|statusTemplates|skills)\/[^/]+$/.test(path2) && created.has(path2) && live3 === created.get(path2);
       if (sharedAdd) {
         const mechanics = ({ name, description, ...fields3 }) => JSON.stringify(fields3, function(_, value) {
           return value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value;
@@ -17440,6 +17798,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   function describe2(schema) {
     if (schema.format === "tactical-expr") return "Expr \u5B57\u7B26\u4E32";
     if (schema.format === "tactical-status-id") return "\u5DF2\u5B9A\u4E49\u72B6\u6001 ID";
+    if (schema.format === "tactical-damage-type") return "physical / energy / mental / true / fire / cold / lightning / thunder / acid / poison / necrotic / radiant / force / psychic \u6216\u5DF2\u767B\u8BB0 customElements ID";
     if (schema.$ref) {
       const name = schema.$ref.split("/").at(-1);
       return name === "expireRule" ? `{${fields2(defs2.expireRule)}}` : name;
@@ -17465,7 +17824,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   var VM_EFFECT_PROTOCOL = `\u3010\u6218\u672F VM \u6548\u679C\u534F\u8BAE\u3011
 rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rule, ["hook"])}\uFF0Chook: \u4EE5\u4E0B\u679A\u4E3E}\u3002
 \u5141\u8BB8 hook \u679A\u4E3E\uFF1A${vmHooks.join(" / ")}\u3002
-\u6807\u8BC6\u7B26\u683C\u5F0F\uFF1A\u89C4\u5219\uFF0F\u6A21\u677F\uFF0F\u53D8\u91CF ID \u5339\u914D ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$\uFF1Btag \u5339\u914D ^[a-z0-9][a-z0-9_-]{0,31}$\uFF1B\u72B6\u6001\u4E0E\u8F7D\u4F53\u9876\u5C42 flags \u679A\u4E3E\u4E3A ${statusFlags.join(" / ")}\u3002
+\u6807\u8BC6\u7B26\u683C\u5F0F\uFF1A\u89C4\u5219\uFF0F\u6A21\u677F\uFF0F\u53D8\u91CF ID \u5339\u914D ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$\uFF1Btag \u5339\u914D ^[a-z0-9][a-z0-9_-]{0,31}$\uFF1B\u72B6\u6001\u4E0E\u8F7D\u4F53\u9876\u5C42 flags \u679A\u4E3E\u4E3A ${statusFlags.join(" / ")}\u3002\u4F24\u5BB3\u7C7B\u578B\u5171 14 \u9879\uFF1Aphysical(\u7269\u7406)\u3001energy(\u80FD\u91CF)\u3001mental(\u7CBE\u795E)\u3001true(\u771F\u5B9E)\u3001fire(\u706B\u7130)\u3001cold(\u51B0\u971C)\u3001lightning(\u96F7\u7535)\u3001thunder(\u96F7\u9E23)\u3001acid(\u9178\u8680)\u3001poison(\u6BD2\u7D20)\u3001necrotic(\u6697\u8680)\u3001radiant(\u5149\u8000)\u3001force(\u529B\u573A)\u3001psychic(\u5FC3\u7075)\uFF0C\u6216\u4F7F\u7528\u5DF2\u767B\u8BB0 customElements ID\u3002
 
 \u3010\u5168\u5C40\u4E8B\u4EF6\u7BA1\u7EBF\u4E0E\u8F7D\u4F53\u4F5C\u7528\u57DF\u3011
 \u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u751F\u6548\u8D77\u70B9 origin \u4E0E\u65E0\u89C6\u89C6\u7EBF ignoreLOS\uFF1B\u671F\u95F4\u82E5\u6539\u53D8\u6301\u6709\u8005 controlPolicy.intentLock \u4F1A\u81EA\u52A8\u89E6\u53D1\u91CD\u89C4\u5212\u5E76\u5237\u65B0 event.intent\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001redirectTarget \u8986\u5199\u4E3A\u5355\u4E00\u76EE\u6807\u6216 replaceTarget:{from,to} \u5355\u70B9\u66FF\u8EAB\u627F\u4F24\u5E76\u4FDD\u7559\u5176\u4F59\u8303\u56F4\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF1B\u53EF\u8BFB event.backX/event.backY \u83B7\u53D6\u4E3B\u76EE\u6807\u76F8\u5BF9\u81EA\u8EAB\u671D\u5411\u7684\u80CC\u540E\u4E00\u683C\u5750\u6807\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF0C\u53EF\u8BFB event.stat \u533A\u5206 str/agi/con/int/spi \u68C0\u5B9A\u5C5E\u6027\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/finalAmount/sourceRuleId/critical/ratingMultiplier\uFF0C\u652F\u6301 ask \u4EA4\u4E92\u622A\u53D6\u5E76\u6539\u5199 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u3001\u6CBB\u7597\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 heal \u6CBB\u7597\u6216 preventDeath \u514D\u6B7B\u9501\u8840\uFF08on_lethal_p1 \u4E0E on_lethal_p2 \u5747\u53EF\u76F4\u63A5\u8BFB\u53D6 event.rawAmount/finalAmount/dealt/absorbed/overkill \u83B7\u53D6\u672C\u6B21\u81F4\u6B7B\u4F24\u5BB3\u91CF\uFF0C\u5982\u6309\u81F4\u6B7B\u4F24\u5BB3\u6062\u590D\u6CD5\u529B\u6216\u53CD\u4F24\uFF01\uFF09 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
@@ -17525,7 +17884,7 @@ controlPolicy\uFF1A${describe2(defs2.controlPolicy)}\uFF08\u5199\u6210 mods:[{co
   // src/tavern/engine-summary.js
   var PROTOCOL_RULES = `\u3010\u6218\u6597\u534F\u8BAE\uFF5C\u6A21\u677F\u4E0E\u89C4\u5219\u7684\u5206\u5DE5\u3011
 \u2022 \u6BCF\u56DE\u5408\u6709 1 \u52A8\u4F5C\u69FD\u548C 1 \u653B\u51FB\u69FD\u3002ap:1 \u5360\u5BF9\u5E94 slot\uFF0Cap:2 \u5360\u53CC\u69FD\uFF0Cap:0 \u4E0D\u5360\u69FD\u3002initiativeBonus \u6309 slot \u8BA1\u5165\u5F00\u573A attackInit \u6216 actionInit\uFF0C\u6BCF\u69FD\u53D6\u6700\u9AD8\u975E\u8D1F\u503C\u3002\u5F00\u573A\u5148\u653B\u9ED8\u8BA4\u5DF2\u5168\u989D\u8BA1\u5165\u5355\u4F4D\u9762\u677F agi\uFF1B\u534F\u8BAE\u6A21\u5F0F\u4E0B\u547D\u4E2D\u4E0E\u53D7\u51FB\u95EA\u907F\u57FA\u503C\u5747\u4E3A 0\uFF08\u4E0D\u81EA\u52A8\u8BA1\u5165\u4E94\u7EF4\uFF09\uFF0C\u4EC5\u7EDF\u8BA1\u663E\u5F0F\u7684 accuracy\u3001checkBonus \u4E0E dodge \u4FEE\u9970\u3002
-\u2022 \u5E38\u89C4\u4E3B\u51FB\u5199\u6280\u80FD\u6A21\u677F\u7684 power \u548C damage\uFF1B\u6CBB\u7597\u5199 heal\u3002\u5F15\u64CE\u7ED3\u7B97\u547D\u4E2D\u8BC4\u7EA7\u3001\u4F53\u578B\u3001\u9AD8\u5DEE\u3001\u62A4\u7532\u3001\u66B4\u51FB\u3001\u610F\u56FE\uFF08normal / function / core[\u6838\u5FC3\u8981\u5BB3\uFF0C\u5373\u201C\u547D\u4E2D\u6838\u5FC3\u201D] / kill / concept\uFF1B\u8303\u56F4\u4E0E\u975E\u654C\u5BF9\u884C\u52A8\u5F3A\u5236 normal\uFF0C\u4F4E\u76EE\u6807\u4E24\u9636\u53CA\u4EE5\u4E0A\u610F\u56FE\u68C0\u5B9A\u5F3A\u5236\u5931\u8D25\uFF1B\u653B\u65B9\u610F\u56FE\u52A0\u503C\u7528 intentBonus\uFF0C\u5B88\u65B9\u96BE\u5EA6\u4FEE\u6B63\u7528 intentDifficulty\uFF1B\u4EC5\u5BF9\u6838\u5FC3\u751F\u6548\u52A0 when:"event.intent == 'core'"\uFF0C\u4E0D\u5199\u8FDB\u5E38\u89C4\u653B\u51FB checkBonus\uFF1B\u4E14\u65E0\u4E13\u95E8\u6F5C\u884C\u68C0\u5B9A\u7EF4\u5EA6\uFF09\u548C\u58EB\u6C14\u3002\u8303\u56F4\u4E3B\u51FB\u81EA\u52A8\u547D\u4E2D\u3002\u9644\u5E26\u6548\u679C\u82E5\u9700\u62B5\u6297\uFF0C\u5728 DSL \u4E2D\u5199\u72EC\u7ACB\u68C0\u5B9A\u3002power \u5355\u72EC\u586B\u5199\u4E0D\u4F1A\u5F00\u542F\u4E3B\u51FB\uFF0C\u987B\u914D\u5408 damage \u9AB0\u5B50\u5BF9\u8C61\u3002\u4F24\u5BB3\u62C6\u5206\u6216\u989D\u5916\u6548\u679C\u624D\u5199 rules\uFF0C\u907F\u514D\u91CD\u590D\u6253\u51FA\u4E3B\u51FB\u3002
+\u2022 \u5E38\u89C4\u4E3B\u51FB\u5199\u6280\u80FD\u6A21\u677F\u7684 power \u548C damage\u3002damageType \u4F7F\u7528 physical / energy / mental / true / fire / cold / lightning / thunder / acid / poison / necrotic / radiant / force / psychic\uFF0C\u6216\u5DF2\u767B\u8BB0 customElements ID\u3002\u6CBB\u7597\u5199 heal\u3002\u5F15\u64CE\u7ED3\u7B97\u547D\u4E2D\u8BC4\u7EA7\u3001\u4F53\u578B\u3001\u9AD8\u5DEE\u3001\u62A4\u7532\u3001\u66B4\u51FB\u3001\u610F\u56FE\uFF08normal / function / core[\u6838\u5FC3\u8981\u5BB3\uFF0C\u5373\u201C\u547D\u4E2D\u6838\u5FC3\u201D] / kill / concept\uFF1B\u8303\u56F4\u4E0E\u975E\u654C\u5BF9\u884C\u52A8\u5F3A\u5236 normal\uFF0C\u4F4E\u76EE\u6807\u4E24\u9636\u53CA\u4EE5\u4E0A\u610F\u56FE\u68C0\u5B9A\u5F3A\u5236\u5931\u8D25\uFF1B\u653B\u65B9\u610F\u56FE\u52A0\u503C\u7528 intentBonus\uFF0C\u5B88\u65B9\u96BE\u5EA6\u4FEE\u6B63\u7528 intentDifficulty\uFF1B\u4EC5\u5BF9\u6838\u5FC3\u751F\u6548\u52A0 when:"event.intent == 'core'"\uFF0C\u4E0D\u5199\u8FDB\u5E38\u89C4\u653B\u51FB checkBonus\uFF1B\u4E14\u65E0\u4E13\u95E8\u6F5C\u884C\u68C0\u5B9A\u7EF4\u5EA6\uFF09\u548C\u58EB\u6C14\u3002\u8303\u56F4\u4E3B\u51FB\u81EA\u52A8\u547D\u4E2D\u3002\u9644\u5E26\u6548\u679C\u82E5\u9700\u62B5\u6297\uFF0C\u5728 DSL \u4E2D\u5199\u72EC\u7ACB\u68C0\u5B9A\u3002power \u5355\u72EC\u586B\u5199\u4E0D\u4F1A\u5F00\u542F\u4E3B\u51FB\uFF0C\u987B\u914D\u5408 damage \u9AB0\u5B50\u5BF9\u8C61\u3002\u4F24\u5BB3\u62C6\u5206\u6216\u989D\u5916\u6548\u679C\u624D\u5199 rules\uFF0C\u907F\u514D\u91CD\u590D\u6253\u51FA\u4E3B\u51FB\u3002
 \u2022 range \u662F\u65BD\u653E\u5C04\u7A0B\uFF08\u4E0A\u9650 64 \u683C\uFF09\uFF0Cradius \u662F\u8986\u76D6\u534A\u5F84\uFF08radius\u3001innerRadius\u3001width \u4E0A\u9650\u4E3A 30 \u683C\uFF09\u3002
 \u2022 \u88C5\u5907\u6A21\u677F equipment \u548C\u5B9E\u4F8B items \u901A\u8FC7 templateId \u5173\u8054\u3002\u6280\u80FD\u6A21\u677F\u5728 skills\uFF0C\u5DF2\u6709\u5355\u4F4D\u7684\u6280\u80FD\u7531 units.<id>.skills \u5F15\u7528\uFF08\u7A7F\u6234\u88C5\u5907 skills \u6570\u7EC4\u4E2D\u7684\u6280\u80FD\u4E5F\u4F1A\u81EA\u52A8\u5BF9\u6301\u6709\u8005\u751F\u6548\uFF09\u3002\u72B6\u6001\u6A21\u677F\u5728 statusTemplates\uFF1B\u6218\u573A\u521D\u59CB\u73AF\u5883\u533A\u57DF\u5B9E\u4F8B\u5728 zones\uFF08\u6309 area \u7A7A\u95F4\u5305\u542B\u5173\u7CFB\u5BF9\u533A\u57DF\u5185\u5355\u4F4D\u6302\u8F7D mods \u4E0E rules\uFF09\u3002\u4E3B\u52A8\u6280\u80FD\u7684\u989D\u5916\u7A0B\u5E8F\u5199 hook:active\u3002
 \u2022 \u6B66\u5668\u6D41\u6D3E\u4E0E\u539F\u751F\u52A8\u4F5C\u8FB9\u754C\uFF1A\u6301\u76FE\u4E3A\u5251\u76FE\uFF08\u539F\u751F\u683C\u6321 block / \u76FE\u51FB shield_bash\uFF09\uFF1B\u6709\u4E3B\u624B\u65E0\u76FE\u4E14\u526F\u624B\u4E3A kind:"consumable" \u65F6\u6FC0\u6D3B\u540C\u8C03\uFF08\u539F\u751F use_item 0 AP \u4E0D\u5360\u69FD\u5BF9\u81EA\u8EAB\u6267\u884C\u526F\u624B hook:"active"\uFF0C\u6BCF\u6218\u5171 2 \u6B21\uFF09\uFF1B\u8FD1\u6218\u4E3B\u624B heavy \u6216 twoHanded \u6FC0\u6D3B\u91CD\u5251\uFF08twoHanded \u5360\u53CC\u624B\u69FD\uFF0Cheavy \u6807\u91CD\u578B\uFF1B\u653B\u52BF 1.5\xD7\u3001\u6C89\u52BF 1.2\xD7 \u4E14\u51CF\u514D 15% \u975E\u771F\u4F24\uFF0C\u65E0\u5185\u7F6E\u5F39\u53CD\u7ED3\u7B97\uFF0C\u5F39\u53CD\uFF0F\u62DB\u67B6\u53CD\u51FB\u987B\u5199\u53D7\u51FB\u89C4\u5219\uFF09\uFF1B\u7EAF\u8FDC\u7A0B\u4E3B\u624B\u5355\u6301\u6FC0\u6D3B\u5C04\u51FB\u59FF\u6001\uFF08\u4E2D\u8FDC\u8DDD\u8870\u51CF\u7F13\u548C 2\uFF0C\u5C01\u9876 0\uFF1B\u540C\u683C\u9ED8\u8BA4 -4 \u547D\u4E2D\uFF0C\u8D34\u8EAB\u514D\u7F5A\u8BBE closeQuarters:true\uFF09\uFF1B\u4E3B\u526F\u624B\u53CC\u6B66\u5668\u6FC0\u6D3B\u53CC\u6301\uFF08\u526F\u624B\u6B66\u5668\u987B\u8BBE hand:"off_hand" \u4E14\u5E26 damage \u624D\u89E6\u53D1\u666E\u653B\u526F\u624B\u8FFD\u51FB\uFF09\uFF1B\u9152\u9986\u8F6C\u6362\u8FDC\u7A0B\u6B66\u5668\u7531 pools.ammo \u8BA1\u5F39\u836F\u4F46\u9ED8\u8BA4\u4E0D\u5E26 reloadable:true\uFF08\u4E0D\u53EF\u539F\u751F\u88C5\u586B\uFF0C\u4EC5\u539F\u6587\u652F\u6301\u5C40\u5185\u88C5\u586B\u65F6\u624D\u663E\u5F0F\u8BBE reloadable:true\uFF09\u3002\u88C5\u5907\u5B9E\u4F8B\u6C60\u5728\u88C5\u5907\u89C4\u5219\u4E2D\u901A\u8FC7 item.resource.<\u6C60ID> \u8BFB\u53D6\uFF0C\u7F3A\u7701\u4E3A 0\uFF1Bequipment / skill / unit \u53EF\u58F0\u660E unitPools\uFF0C\u521D\u59CB\u5316\u540E\u4EE5 self.resource.<\u6C60ID> \u5171\u4EAB\u8BFB\u5199\uFF0CresourceCost:{resource:"<\u6C60ID>",amount:N} \u53EF\u6263\u9664\u5355\u4F4D\u6C60\uFF0C\u8DE8\u6279\u590D\u7528 sharedPoolLedger \u4E2D\u7684 poolId\uFF0C\u4E0D\u4F7F\u7528 event.souls \u7279\u5224\u3002`;
@@ -17540,6 +17899,7 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
 \u9700\u8981\u76F4\u63A5\u6DFB\u52A0\u521D\u59CB\u72B6\u6001\u65F6\uFF0C\u5728 /units/<unitId>/statuses/<statusId> \u5199\u5165\u95ED\u5408\u5B9E\u4F8B\uFF0C\u5FC5\u586B id\u3001templateId\uFF08\u5747\u7B49\u4E8E\u72B6\u6001 ID\uFF09\u3001ownerId\uFF08\u7B49\u4E8E\u5355\u4F4D ID\uFF09\u3001name\uFF08\u987B\u4E0E\u72B6\u6001\u6A21\u677F name \u5B8C\u5168\u4E00\u81F4\uFF09\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF0Cpersistent \u4E5F\u5FC5\u586B\u6B63\u6574\u6570\u5982 1\uFF09\u3001durationType\u3001stackMode\u3001maxStacks\uFF08\u6B63\u6574\u6570\uFF09\u3001stacks\uFF08\u6574\u6570 1\u2026maxStacks\uFF09\uFF0C\u53EF\u9009 sourceId\uFF08\u5355\u4F4D ID \u6216 null\uFF09\u7B49\u6A21\u677F\u5B57\u6BB5\uFF1B\u5B9E\u4F8B vars \u5199\u5DF2\u6C42\u503C\u7684 JSON \u503C\u3002`;
 
   // src/tavern/prompts.js
+  var damageTypeList = Object.values(ELEMENT_DEFINITIONS).map(({ id: id3, name }) => `${id3}(${name})`).join(" / ");
   var IDENTITY = `<role_core>
 \u4F60\u662F\u547D\u5B9A\u6218\u6597\u52A9\u624B\uFF0C\u8D1F\u8D23\u5C06\u89D2\u8272\u5361\u3001\u4E16\u754C\u4E66\u4E0E\u6218\u573A\u73AF\u5883\u4E2D\u7684\u81EA\u7136\u8BED\u8A00\u8BCD\u6761\u7CBE\u786E\u7F16\u8BD1\u4E3A\u6218\u672F\u6C99\u76D8\u53EF\u6267\u884C\u6570\u636E\u3002\u4F60\u4EE5\u5F53\u524D\u6218\u5C40\u3001\u53C2\u6218\u8005\u4E0E\u88C5\u5907\u5FEB\u7167\u53CA\u6218\u6597\u534F\u8BAE\u4E3A\u552F\u4E00\u6743\u5A01\u4F9D\u636E\uFF0C\u4E25\u683C\u6838\u5BF9\u64CD\u4F5C\u8DEF\u5F84\u3001\u95ED\u5408\u5B57\u6BB5\u4E0E\u679A\u4E3E\u53D6\u503C\uFF0C\u53EA\u4F7F\u7528\u5F15\u64CE\u6CE8\u518C\u7684\u6807\u8BC6\u7B26\u4E0E\u516C\u5F0F\u51FD\u6570\u3002
 
@@ -17575,7 +17935,7 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
   var protocol = [ENGINE_API_SUMMARY, TAG_MAPPING, VM_EFFECT_PROTOCOL, STATUS_CATALOG, diagnosisProtocol].join("\n\n");
   var PATCH_RULES = String.raw`<output_contract>
 【输出契约与材料权威边界】
-• 快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条原意；补丁路径严格以当前战局快照的可写模板为准，禁止写 /effects/... 或修改来源资料，只写入对应模板的 rules / mods / pools / skills 等合法字段。
+• 快照的 raw、MVU 和 char_info 是只读来源，里面的「效果」/ effects 只用于理解词条原意；补丁路径严格以当前战局快照的可写模板为准，禁止写 /effects/... 或修改来源资料，只写入对应模板的 rules / mods / pools / skills 等合法字段。MVU 写回绑定由宿主读取真实字段路径生成，禁止写 sourceMap 或构造 MVU 路径。sharedPoolLedger 标记 MVU写回 的池由宿主写回战斗净变化，其余自定义池只在战局内生效。
 • 顶层 JSON 载荷包含 patch、unresolved、narrative 三个数组（引用先前批次已落地的规则时另附 existing 数组）。narrative 数组每项为 {unitId,originPath,message,reason}，收录纯外观风味及非战棋外围机制；无法在局内实现的机制用同样形状写进 unresolved，附 kind:"missing_info"（原文缺可计算参数）或 kind:"engine_limit"（局内机制暂不支持）。reason 用玩家能理解的简短中文，不暴露 JSON 路径和内部字段名。
 </output_contract>
 
@@ -17611,14 +17971,15 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
 </compilation_invariants>
 
 【宿主模板闭合字段与枚举全表】
-• 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（damage 伤害类型枚举：physical / energy / mental / true）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
+• 伤害类型：${damageTypeList} 或已登记 customElements ID。physical 计全额护甲，energy 与能量类元素计半额护甲及灵智减伤，mental / psychic 无视护甲并计精神减伤，true 无视护甲及减伤。已有自定义元素直接复用 customElementsLedger 的 ID。确需新增时，先 add /customElements/<id>，再在本批引用。定义含 id（与键相同，匹配 ^[a-z][a-z0-9_-]{0,31}$）、name（1…24 字符），可选 aliases（至多 8 项，每项 1…24 字符）与 category（energy / physical / mental，缺省 energy）。
+• 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（伤害类型，见上表）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
 • 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义池 {"resource":"<池ID>", "amount":1…1000000}（装备实例池或单位共享池）。
 • 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}，仅表示装备实例池（如本武器 ammo）；装备规则作用域用 item.resource.<池ID> 读取，缺省为 0，local:true 才写入本实例池。
 • 单位共享池表 unitPools：{"<池ID>": {"name"?: 文本, "cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）}}，仅 equipment / skill / unit 可声明，statusTemplate 与战场区域 /zones/<id> 不支持。它挂在持有者单位上；同一单位的同名声明合并为一个单位池，current 默认 initial ?? 0。跨载体读写使用 self.resource.<池ID> 或 resource(self, '<池ID>')，技能 resourceCost:{resource:"<池ID>",amount:N} 也可扣除单位池。跨批必须复用 <role_readonly_index> 的 sharedPoolLedger 中既有 poolId。
 • 通用载体字段（装备、技能、状态模板、战场区域 zones 均支持）：tags（小写标签数组 ^[a-z0-9][a-z0-9_-]{0,31}$）、tier（品级文本 唯一/普通…神话 或整数 1…8）、vars（ID → Expr）、flags（枚举数组：undispellable / concept_immune）、mods（statMod 数组）、rules（rule 数组）。pools 与 unitPools 都不是通用字段：pools 仅 equipment 模板声明装备实例池；unitPools 仅 equipment / skill / unit 可声明，statusTemplate 与 /zones/<id> 不支持。装备规则内读取本装备实例池用 item.resource.<池ID>（缺省为 0），其他载体不得把 item.resource 当作自身作用域。
 • 技能模板 /skills/<id>：
   - 必填：name（非空文本）、ap（整数 0 / 1 / 2，0 不占槽）、slot（枚举：attack / action）、range（整数 0…64）、shape（枚举：single / circle / ring / fan / cone / line）、target（枚举：enemy / ally / self / any / corpse / cell）。
-  - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（枚举：physical / energy / mental / true）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
+  - 可选：quality（枚举：唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、power（整数 0…1000000000）、mp（整数 0…25000）、sp（整数 0…25000）、resourceCost、damage（dice 对象）、heal（dice 对象）、damageType（见伤害类型表）、accuracy（整数 -20…30）、initiativeBonus（整数 -100…100，按 slot 计入开场先手）、passive（boolean）、backpackItem（仅背包消耗品为 true，须配 ap:1、slot:"action"，保留库存且不加入单位 skills）、school（文本）、save（枚举：str / agi / con / int / spi，须与 saveDC 成对出现）、saveDC（整数 1…50、缩放对象或 Expr 字符串）、radius / innerRadius / width（数值 0…30）、angle（整数 1…360）、rawRange / rawRadius / rawInnerRadius / rawWidth / rawMoveDistance（非负数）。
 • 装备模板 /equipment/<id>：
   - 必填：name。武器若声明 range（整数 0…64）则必须同时声明 damage（dice 对象），二者成对出现；武器斜杠分段距离第一项归模板普攻，后续项依次归挂载的装备主动技能。
   - 可选枚举：quality（唯一 / 普通 / 优良 / 稀有 / 史诗 / 传说 / 神话）、kind（weapon / shield / armor / accessory / consumable）、weaponClass（light_blade / ranged / greatsword / staff / shield / auxiliary）、hand（one_handed / two_handed / off_hand）、rangeType（melee / ranged）、shape（single / circle / ring / fan / cone / line）、target（enemy / ally / self / any / cell）。
@@ -17646,6 +18007,7 @@ Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭
 整批仅有 unresolved 或 narrative 时提交 "patch":[]；引用既有标准化成果时另附 "existing":[...]。输出大型规则或多召唤指令时保持扁平层级并逐层核对 } 与 ] 闭合配对，</std_audit> 闭合后立即以 { 开始输出完整合法的纯 JSON，**顶层 JSON 对象的根 } 一旦闭合必须立即结束输出——严禁在开头输出尖括号或代码围栏，严禁在最终 JSON 的根 } 之后重复输出 </std_audit> 闭合标签、多余括号、注释或拆成两段顶层 JSON 对象**！
 现在立即从 <std_audit> 开始执行审校并输出最终 JSON：
 </tail_anchor>`;
+  var CHAT_TASK_RULES = `\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u73A9\u5BB6\u54A8\u8BE2\u65F6\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u3002\u539F\u59CB\u8D44\u6599\uFF08MVU / char_info \u539F\u6587\uFF09\u4EC5\u4F9B\u53EA\u8BFB\u53C2\u8003\uFF0C\u5F53\u524D\u6218\u5C40\u751F\u6548\u6570\u636E\u4EE5 state \u4E3A\u51C6\u3002\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u4FEE\u6539\u5DF2\u52A0\u8F7D\u6218\u5C40\u65F6\uFF0C\u53EA\u8F93\u51FA JSON \u8865\u4E01\u4FE1\u5C01\u3002\u590D\u7528 sharedPoolLedger \u4E2D\u5DF2\u6709\u7684 poolId\uFF0CunitPools \u53EA\u80FD\u58F0\u660E\u5728 units\u3001equipment\u3001skills\uFF0C\u8FD0\u884C\u65F6 pools \u53EA\u7531\u5F15\u64CE\u7EF4\u62A4\u3002\u5E26 MVU\u5199\u56DE \u7684\u6C60\u6CBF\u7528\u539F\u6C60\uFF0C\u5BBF\u4E3B\u81EA\u52A8\u5199\u56DE\u51C0\u53D8\u5316\uFF0C\u672A\u6807\u8BB0\u7684\u6C60\u4EC5\u5728\u672C\u573A\u751F\u6548\u3002\u7981\u6B62\u4FEE\u6539 sourceMap \u6216\u6784\u9020 MVU \u5199\u56DE\u8DEF\u5F84\u3002damageType \u76F4\u63A5\u4F7F\u7528 14 \u4E2A\u5185\u7F6E\u5143\u7D20 ID \u6216 customElementsLedger \u4E2D\u5DF2\u767B\u8BB0 ID\u3002\u9047\u5230\u660E\u786E\u7684\u65B0\u5143\u7D20\u65F6\uFF0C\u5148\u5728\u540C\u4E00\u8865\u4E01\u6570\u7EC4\u4E2D add /customElements/<id>\uFF0C\u518D\u7531\u88C5\u5907\u3001\u6280\u80FD\u6216 mods \u5F15\u7528\u3002`;
   var json = (value) => JSON.stringify(value, null, 2);
   var lastCustomId = 0;
   function makeCustomSlot() {
@@ -17723,6 +18085,7 @@ ${body}`;
     const equipment = pick(state.equipment, Object.values(items).map((i) => i.templateId));
     const skills = pick(state.skills, [...rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap((e) => e.skills ?? [])]);
     const roster = { raw: pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, statusTemplates: state.statusTemplates };
+    if (Object.keys(state.customElements ?? {}).length) roster.customElements = state.customElements;
     if (targetZoneIds.length) {
       roster.zones = pick(state.zones, targetZoneIds);
       roster.rawZones = pick(ctx.zoneEntries ?? ctx.sources?.zoneEntries, targetZoneIds);
@@ -17747,27 +18110,9 @@ ${body}`;
       const count = c.rules?.length ?? 0, mods = c.mods?.length ?? 0;
       siblings.push(`[${type}]${id3} ${c.name ?? ""}|${terms.join("/")}|${count || mods ? `${count}\u89C4\u5219${mods ? `/${mods}\u4FEE\u9970` : ""}` : "\u5F85\u540E\u6279"}`);
     }
-    const ledger = Object.entries(state.statusTemplates ?? {}).map(([id3, s]) => [
-      id3,
-      s.name,
-      `${s.maxStacks ?? 1}/${s.stackMode ?? "refresh"}`,
-      s.tags?.join("/") ?? "",
-      distinct((s.mods ?? []).map((m) => m.stat)).join("/"),
-      distinct((s.rules ?? []).map((r) => r.hook)).join("/")
-    ].join("|"));
-    const poolSources = [
-      ...rows2.map((unit) => [`unit:${unit.id}`, unit.unitPools]),
-      ...Object.entries(equipment).map(([id3, carrier4]) => [`equipment:${id3}`, carrier4.unitPools]),
-      ...Object.entries(skills).map(([id3, carrier4]) => [`skill:${id3}`, carrier4.unitPools])
-    ];
-    const poolLedger = /* @__PURE__ */ new Map();
-    for (const [source, pools] of poolSources) for (const [id3, pool] of Object.entries(pools ?? {})) {
-      const entry2 = poolLedger.get(id3) ?? { name: pool.name ?? id3, cap: pool.cap, sources: [] };
-      entry2.cap = entry2.cap ?? pool.cap;
-      entry2.sources.push(source);
-      poolLedger.set(id3, entry2);
-    }
-    const poolLines = [...poolLedger].map(([id3, pool]) => [id3, pool.name, pool.cap ?? "?", pool.sources.join("/")].join("|"));
+    const ledger = statusLedger(state);
+    const poolLines = sharedPoolLines(ctx, rows2, equipment, skills);
+    const customLedger = customElementLedger(state);
     const otherZones = Object.entries(state.zones ?? {}).filter(([id3]) => !targetZoneIds.includes(id3));
     const zoneLines = otherZones.map(([id3, z]) => [
       id3,
@@ -17782,13 +18127,51 @@ sharedZoneLedger\uFF1AzoneId|\u540D|\u5F62\u72B6|\u6807\u7B7E|mods|hooks\uFF1B\u
 ${zoneLines.join("\n")}` : "";
     return `${json(roster)}
 <role_readonly_index DO_NOT_PATCH="true">
-sharedStatusLedger\uFF1AID|\u540D|\u5C42/\u53E0\u6CD5|\u6807\u7B7E|mods|hooks\uFF1B\u590D\u7528 statusId\uFF0C\u52FF\u91CD\u590D add\u3002
-${ledger.join("\n")}
-sharedPoolLedger\uFF1ApoolId|\u540D|cap|\u58F0\u660E\u6765\u6E90\uFF1B\u590D\u7528 poolId\uFF0C\u8BFB\u5199 self.resource.<poolId>\uFF0C\u52FF\u91CD\u590D\u58F0\u660E\u3002
-${poolLines.join("\n")}
+${ledger}
+${poolLines}
 siblingCarriersIndex\uFF1A\u4EC5\u4F9B\u8054\u52A8\uFF0C\u52FF\u6539\u52FF\u6838\u9500\u3002
-${siblings.join("\n")}${zoneLedger}
+${siblings.join("\n")}${zoneLedger}${customLedger}
 </role_readonly_index>`;
+  }
+  function statusLedger(state) {
+    const lines = Object.entries(state.statusTemplates ?? {}).map(([id3, s]) => [
+      id3,
+      s.name,
+      `${s.maxStacks ?? 1}/${s.stackMode ?? "refresh"}`,
+      s.tags?.join("/") ?? "",
+      distinct((s.mods ?? []).map((m) => m.stat)).join("/"),
+      distinct((s.rules ?? []).map((r) => r.hook)).join("/")
+    ].join("|"));
+    return `sharedStatusLedger\uFF1AID|\u540D|\u5C42/\u53E0\u6CD5|\u6807\u7B7E|mods|hooks\uFF1B\u590D\u7528 statusId\uFF0C\u52FF\u91CD\u590D add\u3002
+${lines.join("\n")}`;
+  }
+  function sharedPoolLines(ctx, rows2, equipment, skills) {
+    const poolSources = [
+      ...rows2.map((unit) => [`unit:${unit.id}`, unit.unitPools]),
+      ...Object.entries(equipment).map(([id3, carrier4]) => [`equipment:${id3}`, carrier4.unitPools]),
+      ...Object.entries(skills).map(([id3, carrier4]) => [`skill:${id3}`, carrier4.unitPools])
+    ];
+    const poolLedger = /* @__PURE__ */ new Map();
+    for (const [source, pools] of poolSources) for (const [id3, pool] of Object.entries(pools ?? {})) {
+      const entry2 = poolLedger.get(id3) ?? { name: pool.name ?? id3, cap: pool.cap, sources: [] };
+      entry2.cap = entry2.cap ?? pool.cap;
+      entry2.sources.push(source);
+      poolLedger.set(id3, entry2);
+    }
+    const bindings = Object.values(ctx.sources?.sourceMap ?? {}).flatMap((mapping) => mapping.counterBindings ?? []);
+    const poolLines = [...poolLedger].map(([id3, pool]) => {
+      const bound2 = bindings.filter((item) => item.ownerKind === "unit" && item.poolKey === id3 && item.mvuPath && pool.sources.includes(`unit:${item.unitId}`));
+      const caps = bound2.length && bound2.every((item) => !item.hasExplicitCap) ? `${pool.cap}(\u5F00\u653E\u4E0A\u9650)` : pool.cap ?? "?";
+      return [id3, pool.name, caps, pool.sources.join("/"), ...bound2.map((item) => `MVU\u5199\u56DE:/stat_data/${item.mvuPath.join("/")}`)].join("|");
+    });
+    return `sharedPoolLedger\uFF1ApoolId|\u540D|cap|\u58F0\u660E\u6765\u6E90\uFF1B\u590D\u7528 poolId\uFF0C\u8BFB\u5199 self.resource.<poolId>\uFF0C\u52FF\u91CD\u590D\u58F0\u660E\u3002
+${poolLines.join("\n")}`;
+  }
+  function customElementLedger(state) {
+    const lines = Object.entries(state.customElements ?? {}).map(([id3, entry2]) => [id3, entry2.name, entry2.category ?? "energy"].join("|"));
+    return lines.length ? `
+customElementsLedger\uFF1AelementId|\u540D|\u51CF\u4F24\u5F52\u7C7B\uFF1B\u5DF2\u5168\u5C40\u6301\u4E45\u5316\uFF0C\u76F4\u63A5\u5F15\u7528\uFF0C\u52FF\u91CD\u590D add\u3002
+${lines.join("\n")}` : "";
   }
   function resolveSlotContent(slot2, ctx = {}) {
     const { sources = {}, state, instruction = "" } = ctx;
@@ -17814,7 +18197,15 @@ ${siblings.join("\n")}${zoneLedger}
       const used = (table4, ids) => Object.fromEntries(Object.entries(table4 ?? {}).filter(([id3]) => ids.has(id3)));
       const equipment = used(state.equipment, templates);
       for (const e of Object.values(equipment)) for (const id3 of e.skills ?? []) skillIds.add(id3);
-      return json({ roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills: used(state.skills, skillIds), items: state.items, statusTemplates: state.statusTemplates });
+      const skills = used(state.skills, skillIds);
+      const payload = { roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills, items: state.items, statusTemplates: state.statusTemplates };
+      if (Object.keys(state.customElements ?? {}).length) payload.customElements = state.customElements;
+      const pools = sharedPoolLines(ctx, Object.values(state.units ?? {}), equipment, skills);
+      return `${json(payload)}
+<role_readonly_index DO_NOT_PATCH="true">
+${statusLedger(state)}
+${pools}${customElementLedger(state)}
+</role_readonly_index>`;
     }
     function battleText() {
       if (ctx.battleText != null) return ctx.battleText;
@@ -17839,7 +18230,7 @@ ${json(board)}`;
         return ctx.warningsText ?? (warnings.length ? `\u5F85\u5904\u7406\u8B66\u544A\uFF1A
 ${variables2.warnings()}` : "");
       case "task":
-        return expand(ctx.taskText ?? (ctx.kind === "chat" ? '\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u73A9\u5BB6\u54A8\u8BE2\u65F6\uFF0C\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u3002\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u8C03\u6574\u5DF2\u52A0\u8F7D\u7684\u6218\u5C40\u65F6\uFF0C\u8F93\u51FA {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} \u5F62\u72B6\u7684 JSON\uFF0C\u6309\u8BF7\u6C42\u4F7F\u7528\u5FEB\u7167\u4E2D\u7684\u771F\u5B9E\u8DEF\u5F84\u548C\u503C\u3002\u88C5\u5907\u3001\u6280\u80FD\u548C\u72B6\u6001\u7684\u53D8\u66F4\u503C\u9075\u5FAA\u4E0A\u9762\u7684 VM \u534F\u8BAE\u3002\u539F\u59CB\u8D44\u6599\uFF08MVU / char_info \u539F\u6587\uFF09\u4EC5\u4F9B\u53EA\u8BFB\u53C2\u8003\uFF0C\u5F53\u524D\u6218\u5C40\u751F\u6548\u6570\u636E\u4EE5 state \u4E3A\u51C6\u3002\u6807\u51C6\u5316\u4EFB\u52A1\u5355\u72EC\u5904\u7406\u8B66\u544A\u3002' : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
+        return expand(ctx.taskText ?? (ctx.kind === "chat" ? CHAT_TASK_RULES : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
       case "extra":
         return expand(ctx.extraText || "");
       case "assistant":
@@ -18734,7 +19125,7 @@ ${variables2.warnings()}` : "");
   var clean = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
   var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
   var stableSourceJson = (value) => JSON.stringify(ordered(value));
-  var aliases = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
+  var aliases2 = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
   async function characterRecords(sources, hydrated) {
     const mvu = collectMvu(sources.mvuData), battle = sources.battleInit;
     const participants = battle.units ?? battle.participants ?? [];
@@ -18742,10 +19133,10 @@ ${variables2.warnings()}` : "");
       const mapping = hydrated.sourceMap?.[unit.id] ?? {};
       const p = participants.find?.((p2) => p2.id === unit.id) ?? participants[unit.id] ?? participants[i];
       const names = new Set([unit.id, unit.name, p?.name, mapping.sourceId, mapping.sourceName].filter(Boolean));
-      const matches2 = (r) => aliases(r).some((x) => names.has(x));
+      const matches2 = (r) => aliases2(r).some((x) => names.has(x));
       const samePath2 = mvu.find((r) => mapping.path && JSON.stringify(r.__sourcePath) === JSON.stringify(mapping.path));
       const mv = samePath2 ?? mvu.find(matches2);
-      if (mv) aliases(mv).forEach((name) => names.add(name));
+      if (mv) aliases2(mv).forEach((name) => names.add(name));
       const char = sources.charInfo?.find(matches2);
       const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
       const defs3 = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
@@ -18813,16 +19204,16 @@ ${variables2.warnings()}` : "");
       const roots = [...new Set(paths.map(entryRoot))].filter((root2) => groups.has(root2));
       for (const root2 of roots.slice(1)) join(roots[0], root2);
     }
-    const definitions = /* @__PURE__ */ new Map();
+    const definitions2 = /* @__PURE__ */ new Map();
     for (const root2 of groups.keys()) {
-      if (/^\/(skills|statusTemplates|equipment|items|zones)\//.test(root2)) {
+      if (/^\/(skills|statusTemplates|equipment|items|zones|customElements)\//.test(root2)) {
         const id3 = root2.split("/")[2];
-        definitions.set(id3, [...definitions.get(id3) ?? [], root2]);
+        definitions2.set(id3, [...definitions2.get(id3) ?? [], root2]);
       }
     }
     const visit = (value, root2) => {
       if (typeof value === "string") {
-        for (const dependency of definitions.get(value) ?? []) join(root2, dependency);
+        for (const dependency of definitions2.get(value) ?? []) join(root2, dependency);
         for (const [, , id3] of value.matchAll(/\bin_zone\s*\([^,]+,\s*(['"])([\w-]+)\1\s*\)/g)) {
           const zone = `/zones/${id3}`;
           if (groups.has(zone)) join(root2, zone);
@@ -18868,7 +19259,8 @@ ${variables2.warnings()}` : "");
         const owners = Object.entries(batch.hashes ?? {});
         if (!sameDiagnostics && (!owners.length || !owners.every(([id3, hash2]) => records2[id3]?.hash === hash2))) continue;
       }
-      if (batch.guards?.some(([path2, value]) => (fingerprint(state, path2) ?? null) !== value)) continue;
+      const alreadyRegistered = new Set((batch.patch ?? []).filter((op) => op.op === "add" && /^\/customElements\/[^/]+$/.test(op.path) && fingerprint(state, op.path) === JSON.stringify(op.value)).map((op) => op.path));
+      if (batch.guards?.some(([path2, value]) => (fingerprint(state, path2) ?? null) !== value && !alreadyRegistered.has(path2))) continue;
       try {
         const next = apply2(state, batch.patch, true);
         validate(next);
@@ -18933,7 +19325,6 @@ ${variables2.warnings()}` : "");
 
   // src/tavern/instance-card.js
   var attributes2 = { str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" };
-  var types = { physical: "\u7269\u7406", energy: "\u80FD\u91CF", mental: "\u7CBE\u795E", true: "\u771F\u5B9E" };
   var shapes2 = { single: "\u5355\u4F53", circle: "\u5706\u5F62", ring: "\u73AF\u5F62", cone: "\u9525\u5F62", fan: "\u6247\u5F62", line: "\u76F4\u7EBF" };
   var when2 = { active: "\u4E3B\u52A8", after_hit: "\u547D\u4E2D\u65F6", before_action: "\u884C\u52A8\u524D", after_damage: "\u4F24\u5BB3\u7ED3\u7B97\u540E", after_heal: "\u6CBB\u7597\u540E", turn_start: "\u56DE\u5408\u5F00\u59CB", turn_end: "\u56DE\u5408\u7ED3\u675F", on_kill: "\u51FB\u5012\u65F6", on_death: "\u5012\u4E0B\u65F6" };
   var displayNumber = (value) => typeof value === "number" ? String(value) : typeof value === "string" ? `\u6309\u516C\u5F0F ${value}` : null;
@@ -18954,12 +19345,12 @@ ${variables2.warnings()}` : "");
     for (const [key4, child] of Object.entries(value)) if (key4 !== "damage") collectDamageOps(child, result);
     return result;
   }
-  function skillDisplay(template = {}, skillInfo = {}) {
+  function skillDisplay(template = {}, skillInfo = {}, customElements = {}) {
     const components = [];
     const add = (type, amount, formatted = false) => {
-      if (!type || !types[type]) return;
+      if (!type) return;
       const suffix = amount == null ? null : formatted ? amount : displayNumber(amount);
-      const text8 = `${types[type]}${suffix ? ` ${suffix}` : ""}`;
+      const text8 = `${elementLabel(type, customElements)}${suffix ? ` ${suffix}` : ""}`;
       if (!components.includes(text8)) components.push(text8);
     };
     if (template.damage) add(template.damage.type ?? template.damageType, diceLabel(template.damage), true);
@@ -18967,7 +19358,7 @@ ${variables2.warnings()}` : "");
     for (const rule2 of template.rules ?? []) {
       if (rule2.enabled !== false && rule2.hook === "active") for (const op of collectDamageOps(rule2.program)) add(op.damageType, op.amount);
     }
-    if (!components.length && skillInfo.damageType && types[skillInfo.damageType]) add(skillInfo.damageType);
+    if (!components.length && skillInfo.damageType) add(skillInfo.damageType);
     const costs = [["sp", "SP"], ["mp", "MP"], ["hp", "HP"]].map(([key4, label]) => [label, template.resourceCost?.[key4] ?? template[key4]]).filter(([, value]) => value !== void 0 && value !== null && value !== 0 && value !== "0").map(([label, value]) => `${displayNumber(value) ?? value} ${label}`);
     const area3 = [];
     if (template.shape && template.shape !== "single") area3.push(shapes2[template.shape] ?? template.shape);
@@ -18983,7 +19374,7 @@ ${variables2.warnings()}` : "");
     const describe3 = (op) => {
       const prefix = op.enabled === false ? "\u5DF2\u5173\u95ED\uFF1A" : "";
       if (op.op === "apply_status") return `${prefix}\u65BD\u52A0 ${statusName(op.statusId)}${typeof op.turns === "number" ? ` ${op.turns} \u56DE\u5408` : ""}`;
-      return [prefix + (verbs[op.op] ?? "\u6548\u679C"), types[op.damageType], typeof op.amount === "number" ? op.amount : null].filter((value) => value != null).join(" ");
+      return [prefix + (verbs[op.op] ?? "\u6548\u679C"), op.damageType ? elementLabel(op.damageType, state?.customElements) : null, typeof op.amount === "number" ? op.amount : null].filter((value) => value != null).join(" ");
     };
     return `${rule2.enabled === false ? "\u5DF2\u5173\u95ED\uFF1A" : ""}${when2[rule2.hook] ?? "\u89E6\u53D1"} \u2192 ${rule2.program.map(describe3).join("\uFF1B")}`;
   }
@@ -19023,7 +19414,7 @@ ${variables2.warnings()}` : "");
   var flags = { preserveLife: "\u4FDD\u7559\u751F\u547D", blockRevive: "\u7981\u6B62\u590D\u6D3B", blockResourceRestore: "\u7981\u6B62\u8D44\u6E90\u6062\u590D", untargetableSingle: "\u4E0D\u53EF\u88AB\u5355\u4F53\u9009\u4E2D", harmless: "\u65E0\u5BB3", guaranteed_hit: "\u5FC5\u5B9A\u547D\u4E2D", guaranteed_crit: "\u5FC5\u5B9A\u66B4\u51FB", hidden: "\u9690\u8EAB", intercept: "\u53EF\u62E6\u622A\u653B\u51FB", taunted: "\u88AB\u5632\u8BBD", infiniteAmmo: "\u5F39\u836F\u4E0D\u9650" };
   var checks = { attack: "\u653B\u51FB", save: "\u8C41\u514D", contest: "\u5BF9\u6297", d20: "\u666E\u901A", chance: "\u6982\u7387" };
   var signed2 = (n, asPercent) => typeof n === "number" ? `${n >= 0 ? "+" : ""}${asPercent ? percent2.format(n) : n}` : `\u6309\u516C\u5F0F ${n}`;
-  function modSummary(mod2) {
+  function modSummary(mod2, customElements = {}) {
     const parts = [];
     if (mod2.stat) {
       const values5 = [
@@ -19039,7 +19430,7 @@ ${variables2.warnings()}` : "");
     if (policy?.allowFriendlyTarget != null) parts.push(policy.allowFriendlyTarget ? "\u53EF\u9009\u53CB\u65B9\u4E3A\u76EE\u6807" : "\u4E0D\u53EF\u9009\u53CB\u65B9\u4E3A\u76EE\u6807");
     if (policy?.intentLock) parts.push(`\u9501\u5B9A\u610F\u56FE\uFF1A${INTENTS[policy.intentLock]?.name ?? policy.intentLock}`);
     if (policy?.moraleLock === "steady") parts.push("\u58EB\u6C14\u6052\u5B9A\u575A\u5B88");
-    const scope = [mod2.damageType ? `${types[mod2.damageType]}\u4F24\u5BB3` : null, mod2.checkKind ? `${checks[mod2.checkKind] ?? mod2.checkKind}\u68C0\u5B9A` : null].filter(Boolean);
+    const scope = [mod2.damageType ? `${elementLabel(mod2.damageType, customElements)}\u4F24\u5BB3` : null, mod2.checkKind ? `${checks[mod2.checkKind] ?? mod2.checkKind}\u68C0\u5B9A` : null].filter(Boolean);
     return `${parts.filter(Boolean).join("\uFF1B") || "\u4FEE\u9970"}${scope.length ? `\uFF08${scope.join("\u3001")}\uFF09` : ""}${mod2.when != null ? ` \xB7 \u6761\u4EF6\uFF1A${mod2.when === true ? "\u59CB\u7EC8" : mod2.when === false ? "\u4ECE\u4E0D" : mod2.when}` : ""}`;
   }
   var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
@@ -19128,7 +19519,7 @@ ${variables2.warnings()}` : "");
         }
         row.append(head);
         for (const rule2 of fx) row.append(line("p", "fated-mini", `${rule2.label ? `${rule2.label} \xB7 ` : ""}${ruleSummary(rule2, state)}`));
-        for (const mod2 of mods) row.append(line("p", "fated-mini", modSummary(mod2)));
+        for (const mod2 of mods) row.append(line("p", "fated-mini", modSummary(mod2, state?.customElements)));
         for (const id3 of grantedSkills) row.append(line("p", "fated-mini", `\u9644\u5E26\u6280\u80FD \xB7 ${state?.skills?.[id3]?.name ?? id3}`));
         block.append(row);
       }
@@ -19142,7 +19533,7 @@ ${variables2.warnings()}` : "");
       shownItems.add(id3);
       const item = state?.items?.[id3], t = state?.equipment?.[item?.templateId] ?? unit.equipment?.find((e) => e.id === id3)?.template;
       const d = t?.damage;
-      const dice4 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${types[d.type] ?? ""}`.trim() : null;
+      const dice4 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${d.type ? elementLabel(d.type, state?.customElements) : ""}`.trim() : null;
       gear.push({ label: `[${slot2}] ${t?.name ?? id3}`, path: item?.templateId ? `/equipment/${item.templateId}` : null, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.accuracy ? `\u547D\u4E2D ${signed2(t.accuracy)}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice4].filter(Boolean), template: t, item });
     }
     section("\u88C5\u5907", gear);
@@ -19152,7 +19543,7 @@ ${variables2.warnings()}` : "");
       for (const [id3, template] of equippedActiveSkills(state, unit)) if (!skillTemplates.has(id3)) skillTemplates.set(id3, template);
     }
     const skills = [...skillTemplates].map(([id3, t]) => {
-      const display = skillDisplay(t, unit.skillInfo?.[id3]);
+      const display = skillDisplay(t, unit.skillInfo?.[id3], state?.customElements);
       const cost = display.costs.join(" / ");
       return { label: t?.name ?? id3, path: innate.has(id3) || state?.skills?.[id3] ? `/skills/${id3}` : null, meta: [!innate.has(id3) ? "\u88C5\u5907\u9644\u5E26" : null, t?.passive && !t.rules?.some((rule2) => rule2.hook === "active") ? "\u88AB\u52A8" : null, cost ? `\u6D88\u8017 ${cost}` : "\u65E0\u8D44\u6E90\u6D88\u8017", t?.power != null ? `\u5A01\u529B ${t.power}` : null, display.damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B", `\u5C04\u7A0B ${display.range}`, `\u8303\u56F4 ${display.area}`].filter(Boolean), template: t };
     });
@@ -19849,7 +20240,7 @@ ${variables2.warnings()}` : "");
         } else candidates.push({ index, op: operation2, lastError: "" });
       }
     }
-    const declarations = candidates.filter(({ op }) => op.op === "add" && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === void 0);
+    const declarations = candidates.filter(({ op }) => op.op === "add" && /^\/(?:customElements|skills|statusTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === void 0);
     const roots = /* @__PURE__ */ new Set(), conflicted = new Set(conflictingDefinitions);
     for (const item of declarations) {
       if (roots.has(item.op.path)) {
@@ -19868,7 +20259,8 @@ ${variables2.warnings()}` : "");
       }
     }
     const first = new Set(declarations);
-    candidates.sort((a, b) => Number(first.has(b)) - Number(first.has(a)));
+    const declarationRank = (item) => first.has(item) ? Number(!item.op.path.startsWith("/customElements/")) : 2;
+    candidates.sort((a, b) => declarationRank(a) - declarationRank(b));
     const strip = (item) => {
       const { resolves, ...operation2 } = item.op;
       return operation2;
@@ -19963,7 +20355,7 @@ ${variables2.warnings()}` : "");
   function normalizeSemanticPatch(patch) {
     if (!isObject3(patch)) return patch;
     const result = deepClone(patch);
-    for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
+    for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills", "customElements"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
     if (isObject3(result.unit_patch)) {
       const unitPatch = result.unit_patch;
       const id3 = unitPatch.unitId || unitPatch.id;
@@ -19975,10 +20367,20 @@ ${variables2.warnings()}` : "");
     if (isObject3(patch) && !Array.isArray(patch.patch) && !Array.isArray(patch.jsonPatch)) {
       return deepMerge2(target2, normalizeSemanticPatch(patch.battle_patch || patch));
     }
-    const list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
-    return applyJsonPatch(target2, Array.isArray(list4) ? list4 : [], { strict });
+    let list4 = Array.isArray(patch) ? patch : patch?.patch || patch?.jsonPatch;
+    if (!Array.isArray(list4)) list4 = [];
+    if (!own20(target2, "customElements")) {
+      const index = list4.findIndex((op) => typeof op?.path === "string" && /^\/customElements(?:\/|$)/.test(op.path));
+      const first = list4[index];
+      if (first?.op === "add" && /^\/customElements\/[^/]+$/.test(first.path)) {
+        list4 = [...list4.slice(0, index), { op: "add", path: "/customElements", value: {} }, ...list4.slice(index)];
+      }
+    }
+    const result = applyJsonPatch(target2, list4, { strict });
+    if (isObject3(result.customElements) && !Object.keys(result.customElements).length) delete result.customElements;
+    return result;
   }
-  var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"];
+  var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "customElements", "covers", "interactives", "zones"];
   function chatPatch(state, payload) {
     const unrecognized = () => new Error('\u65E0\u6CD5\u8BC6\u522B\u8BE5 JSON \u7684\u76EE\u6807\u8DEF\u5F84\uFF0C\u8BF7\u8BA9 AI \u8F93\u51FA {"patch":[{"op":"replace","path":"/...","value":...}]} \u683C\u5F0F');
     const semantic = payload?.battle_patch ?? payload;
@@ -20446,7 +20848,7 @@ ${variables2.warnings()}` : "");
         baselineState: baseline,
         existingOps,
         rawPatch: rebasedPatch,
-        conflictingDefinitions: conflicts.filter((item) => item.op.op === "add" && /^\/(?:skills|statusTemplates)\/[^/]+$/.test(item.path)).map((item) => item.path),
+        conflictingDefinitions: conflicts.filter((item) => item.op.op === "add" && /^\/(?:customElements|skills|statusTemplates)\/[^/]+$/.test(item.path)).map((item) => item.path),
         allowedUnitIds: unitIds,
         expand,
         apply: apply2,
@@ -20629,7 +21031,8 @@ ${variables2.warnings()}` : "");
 
   // src/tavern/overlay-storage.js
   var PREFIX = "fated-tactical/";
-  var GLOBAL_STATE_KEYS = new Set(["battle-v1", "battle-v1/seed", "carry-v1", "reset-probe"].map((key4) => PREFIX + key4));
+  var CUSTOM_ELEMENTS_KEY = `${PREFIX}custom-elements`;
+  var GLOBAL_STATE_KEYS = new Set(["battle-v1", "battle-v1/seed", "carry-v1", "reset-probe"].map((key4) => PREFIX + key4).concat(CUSTOM_ELEMENTS_KEY));
   var BATTLE_SNAPSHOT = `${PREFIX}battle-v1`;
   var TAVERN_PREFIX = `${PREFIX}tavern/`;
   var INSTANCES_PREFIX = `${PREFIX}instances/`;
@@ -20638,6 +21041,22 @@ ${variables2.warnings()}` : "");
     if (!key4?.startsWith(PREFIX) || key4.startsWith(TAVERN_PREFIX) || key4.startsWith(INSTANCES_PREFIX) || GLOBAL_STATE_KEYS.has(key4)) return null;
     const slash = key4.indexOf("/", PREFIX.length);
     return slash > PREFIX.length ? key4.slice(PREFIX.length, slash) : null;
+  }
+  function loadCustomElements(storage) {
+    try {
+      const value = JSON.parse(storage?.getItem(CUSTOM_ELEMENTS_KEY) ?? "{}");
+      validateCustomElements(value);
+      return value;
+    } catch {
+      return {};
+    }
+  }
+  function mergeCustomElements(storage, elements = {}, write = (key4, value) => storage?.setItem(key4, JSON.stringify(value))) {
+    const current = loadCustomElements(storage);
+    const merged = { ...current, ...elements };
+    validateCustomElements(merged);
+    if (JSON.stringify(merged) !== JSON.stringify(current)) write(CUSTOM_ELEMENTS_KEY, merged);
+    return merged;
   }
   function pruneBattleStorageExcept(storage, keepKey) {
     let removedKeys = 0, freedBytes = 0;
@@ -20674,6 +21093,7 @@ ${variables2.warnings()}` : "");
     return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo, protagonistName, battleKey, source });
   }
   function storageCategory(key4) {
+    if (key4 === CUSTOM_ELEMENTS_KEY) return "otherFatedBytes";
     if (key4.startsWith(INSTANCES_PREFIX)) return "instancesBytes";
     if (key4.startsWith(TAVERN_PREFIX)) {
       const match = key4.slice(TAVERN_PREFIX.length).match(/\/(ai-sessions|charSnapshots|normalizationBatches|narrativeExemptions|unresolvedNotes)$/);
@@ -20819,10 +21239,12 @@ ${variables2.warnings()}` : "");
     const baselineCache = { key: null, state: null };
     function hydrateBaseline(input, { seed } = {}) {
       const custom = getGlobal2(document?.defaultView ?? globalThis, "FatedTactical")?.hydrateBattleState;
-      if (custom) return custom(input, { seed, throwOnValidation: true }).state;
-      const key4 = JSON.stringify([input, seed ?? null]);
+      const customElements = loadCustomElements(storage);
+      const hydratedInput = { ...input, customElements };
+      if (custom) return custom(hydratedInput, { seed, throwOnValidation: true }).state;
+      const key4 = JSON.stringify([hydratedInput, seed ?? null]);
       if (baselineCache.key === key4 && baselineCache.state) return structuredClone(baselineCache.state);
-      const state = hydrateFromSources(input, { seed, throwOnValidation: true }).state;
+      const state = hydrateFromSources(hydratedInput, { seed, throwOnValidation: true }).state;
       baselineCache.key = key4;
       baselineCache.state = structuredClone(state);
       return structuredClone(state);
@@ -21032,6 +21454,12 @@ ${variables2.warnings()}` : "");
     const notifyStorageFailure = () => notify("\u6570\u636E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\u3002\u8BF7\u5148\u4E0B\u8F7D\u6218\u5C40\u5907\u4EFD\uFF1B\u5982\u9700\u5F7B\u5E95\u521D\u59CB\u5316\uFF0C\u53EF\u5728\u5B9E\u4F8B\u7EF4\u62A4\u70B9\u300C\u6E05\u7406\u811A\u672C\u7F13\u5B58\u300D\u3002");
     function save() {
       if (!writeWithEvictionRetry(stateKey, config.instances)) notifyStorageFailure();
+    }
+    function persistCustomElements(state) {
+      if (!state?.customElements) return;
+      mergeCustomElements(storage, state.customElements, (key4, value) => {
+        if (!writeWithEvictionRetry(key4, value)) notifyStorageFailure();
+      });
     }
     const unsavedSettings = /* @__PURE__ */ new Set();
     const separateSettings = /* @__PURE__ */ new Set(["aiSessions", ...LARGE_CONFIG_KEYS]);
@@ -21751,9 +22179,9 @@ ${tag2.textContent || ""}
       let conversionError = null;
       if (typeof converter === "function") {
         const { mvuData, charInfo, battleInit, protagonistName } = nextSources;
-        const input = { mvu: mvuData, stat_data: mvuData, charInfo, battleInit, protagonistName };
+        const input = { mvu: mvuData, stat_data: mvuData, charInfo, battleInit, protagonistName, customElements: loadCustomElements(storage) };
         try {
-          hydrated = await converter(input);
+          hydrated = await converter(input, { throwOnValidation: true });
         } catch (error2) {
           conversionError = error2;
         }
@@ -22024,6 +22452,14 @@ ${tag2.textContent || ""}
       refreshOutcome(next);
       return next;
     }
+    function calibrateOpeningPools(state, sourceMap) {
+      for (const binding of Object.values(sourceMap ?? {}).flatMap((mapping) => mapping.counterBindings ?? [])) {
+        if (binding.ownerKind !== "unit" || binding.poolKey == null || binding.current == null) continue;
+        const pool = getPool(state, binding.unitId, binding.poolKey, "unit");
+        if (pool) pool.current = Math.max(0, Math.min(pool.max, Number(binding.current)));
+      }
+      return state;
+    }
     function chatOpeningPatches(key4) {
       const stored = readBattleStorage(key4, "chat-opening-patches");
       return Array.isArray(stored) ? stored : [];
@@ -22123,10 +22559,12 @@ ${tag2.textContent || ""}
         toast.hidden = true;
         currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
         if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
+        if (currentState && hydrated?.sourceMap) currentState = calibrateOpeningPools(currentState, hydrated.sourceMap);
         const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || unchangedOpening && !invalid && stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills));
         characters = fresh;
         mountState(currentState, restoreSaved);
         activeBattleKey = currentState ? key4 : null;
+        persistCustomElements(liveState());
         refreshPortraits(currentState, epoch);
         if (activeBattleKey) {
           pruneBattleStorageExcept2(key4);
@@ -22395,6 +22833,7 @@ ${tag2.textContent || ""}
           if (typeof gameMount?.loadState !== "function") throw new Error("\u6C99\u76D8\u672A\u5C31\u7EEA\uFF0C\u65E0\u6CD5\u6CE8\u5165\u8865\u4E01");
           gameMount.loadState(next);
           currentState = next;
+          persistCustomElements(next);
           for (const unit of Object.values(next.units)) config.instances[unit.id] = { ...config.instances[unit.id], ...unit };
           save();
         }
@@ -22413,7 +22852,7 @@ ${tag2.textContent || ""}
         narrativeExemptions: { ...config.narrativeExemptions, [key4]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
       });
       for (const operation2 of effective) {
-        if (operation2.op === "add" && /^\/(?:statusTemplates|skills)\/[^/]+$/.test(operation2.path) && fingerprintAt(current, operation2.path) === void 0) {
+        if (operation2.op === "add" && /^\/(?:customElements|statusTemplates|skills)\/[^/]+$/.test(operation2.path) && fingerprintAt(current, operation2.path) === void 0) {
           const fingerprint = fingerprintAt(next, operation2.path);
           if (fingerprint !== void 0) createdTemplates.set(operation2.path, fingerprint);
         }
@@ -22484,6 +22923,7 @@ ${tag2.textContent || ""}
           throw error2;
         }
         currentState = liveState();
+        if (!undo) persistCustomElements(currentState);
         updateChatInstances(currentState, current);
         renderInstances();
         prepareMessages();
