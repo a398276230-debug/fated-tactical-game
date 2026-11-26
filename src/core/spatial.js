@@ -150,7 +150,7 @@ export function hasLOS(state, from, to) {
  * is the lateral half-width in cells. Range can also be a per-cell function.
  */
 export function aoeCells(state, origin, target, options = {}) {
-  const { shape = 'single', radius = 1.5, width = .6, angle = shape === 'fan' ? 100 : 60,
+  const { shape = 'single', radius = 1.5, width = .6, angle,
     innerRadius = 0, facing = origin.facing, range = distance3D(state, origin, target), ignoreLOS = false, ignoreAimRange = false } = options;
   const limitAt = typeof range === 'function' ? range : () => range;
   const inRange = at => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
@@ -160,7 +160,7 @@ export function aoeCells(state, origin, target, options = {}) {
   const [dx, dy] = same(origin, target) ? (facing ?? [1, 0]) : [target.x - origin.x, target.y - origin.y];
   const aimLength = Math.hypot(dx, dy);
   if (shape !== 'circle' && shape !== 'ring' && (!aimLength || !['line', 'fan', 'cone'].includes(shape))) return [];
-  const minCosine = Math.cos(Math.max(0, Math.min(360, angle)) * Math.PI / 360);
+  const minCosine = Math.cos(Math.max(0, Math.min(360, angle ?? (shape === 'fan' ? 100 : 60))) * Math.PI / 360);
   const result = [];
   state.grid.forEach((row, y) => row.forEach((cell, x) => {
     const at = { x, y, z: cell.z };

@@ -320,7 +320,8 @@ test('AI rejects empty directed AOE aims while keeping enemy and cover gains', (
   actor.skills = ['fan'];
 
   const ownAim = preview(state, { type: 'skill', skillId: 'fan', x: actor.x, y: actor.y });
-  assert.equal(ownAim.ok, false, 'range-positive directed skills cannot aim at the origin');
+  assert.equal(ownAim.error, '有向技能需要选择方向');
+  assert.equal(preview(state, { type: 'skill', skillId: 'fan' }).cells.some(at => at.x === actor.x && at.y === actor.y), false);
   const choices = aimedOptions(state, actor).filter(choice => choice.action.skillId === 'fan');
   assert.ok(choices.length > 0);
   assert.ok(choices.every(choice => choice.action.x !== actor.x || choice.action.y !== actor.y));
@@ -334,6 +335,29 @@ test('AI rejects empty directed AOE aims while keeping enemy and cover gains', (
     'an offensive AOE with no hostile hit cannot enter the attack choices');
   const emptyChoice = chooseAction(state);
   assert.notEqual(emptyChoice.skillId, 'fan');
+});
+
+test('directed fan can aim at an overlapping enemy and null angle keeps the full aperture', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  const [overlapping, diagonal] = Object.values(state.units).filter(unit => unit.team !== actor.team);
+  state.grid = state.grid.map(row => row.map(() => ({ kind: 'floor', z: 0 })));
+  state.covers = {};
+  Object.assign(actor, { x: 4, y: 4, altitude: 0, facing: [1, 0], skills: ['fan'] });
+  Object.assign(overlapping, { x: 4, y: 4, altitude: 0 });
+  Object.assign(diagonal, { x: 5, y: 5, altitude: 0 });
+  state.skills.fan = { name: '碧海潮生', ap: 1, slot: 'attack', range: 3, radius: 2, shape: 'fan', angle: null,
+    target: 'enemy', damage: { count: 1, sides: 1, stat: 'str', type: 'physical' } };
+  const command = { type: 'skill', skillId: 'fan' };
+  assert.ok(preview(state, command).cells.some(at => at.x === 4 && at.y === 4));
+  const aimed = { ...command, x: 4, y: 4, targetId: overlapping.id };
+  const plan = preview(state, aimed);
+  assert.equal(plan.ok, true, plan.error);
+  assert.ok(plan.targets.some(target => target.id === overlapping.id));
+  assert.ok(plan.targets.some(target => target.id === diagonal.id));
+  assert.ok(aimedOptions(state, actor).every(choice => choice.action.skillId !== 'fan' || choice.action.x !== 4 || choice.action.y !== 4));
+  const logs = applyAction(state, aimed);
+  assert.ok(logs.some(log => log.type === 'hit_result' && log.detail.targetId === overlapping.id));
 });
 
 test('zero-range fan resolves its own cell, radius-two neighbors, and real hover distance', () => {

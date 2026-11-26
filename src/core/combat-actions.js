@@ -945,20 +945,33 @@ function nearbyCovers(state, at) {
   return values(state.covers).filter(c => c.hp > 0 && inInteractionRange(state, at, c)).sort(byId);
 }
 
+function shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget) {
+  const areaDamage = (template.shape ?? 'single') !== 'single' && hasStrikeDamage(template);
+  const targeting = areaDamage && template.target == null ? { ...template, target: 'any' } : template;
+  return selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget);
+}
+
+function needsAimDirection(state, actor, origin, center, template, range, allowFriendlyTarget) {
+  return range > 0 && ['fan', 'cone', 'line'].includes(template.shape) && sameCell(origin, center)
+    && !living(state).some(unit => unit.id !== actor.id && sameCell(unit, center)
+      && shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget));
+}
+
 function usableTiles(state, actor, template, weapon) {
   const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
-  return allCells(state).filter(at => validReach(state, actor,
-    template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at
-      : locateUnit(state, at, null, u => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at,
-    template, weapon?.ammo));
+  return allCells(state).filter(at => {
+    const aim = template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at
+      : locateUnit(state, at, null, u => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at;
+    if (sameCell(actor, at) && needsAimDirection(state, actor, actor, at, template,
+      reaches(state, actor, aim, template, weapon?.ammo).range, allowFriendlyTarget)) return false;
+    return validReach(state, actor, aim, template, weapon?.ammo);
+  });
 }
 function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
   const keys = new Set(cells.map(at => key(at.x, at.y)));
   if (template.target === 'cell') return [];
-  const areaDamage = (template.shape ?? 'single') !== 'single' && hasStrikeDamage(template);
-  const targeting = areaDamage && template.target == null ? { target: 'any' } : template;
   return living(state).filter(unit => {
-    if (!selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
+    if (!shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget)) return false;
     if ((template.shape ?? 'single') === 'single') return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
       const distanceFromCenter = distance(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: 'attack' });
@@ -1146,7 +1159,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     altitude: actionOrigin.altitude ?? (actionOrigin.z === undefined ? 0 : actionOrigin.z - elevation(state, actionOrigin)) } : unit;
   const ammo = attack && !shieldBash ? weapon.ammo : null;
   const geometry = reaches(state, origin, aim, template, ammo);
-  if (['fan', 'cone', 'line'].includes(template.shape) && template.range > 0 && sameCell(origin, center)) {
+  if (needsAimDirection(state, unit, origin, center, template, geometry.range, allowFriendlyTarget)) {
     return fail('有向技能需要选择方向', { ...geometry, originSensitive: true });
   }
   if (!ground(state, center)) return fail('墙体无法指定', geometry);

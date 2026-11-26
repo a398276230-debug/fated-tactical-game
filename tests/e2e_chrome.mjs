@@ -974,6 +974,25 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('#target-actions [data-action="shield_bash"]');
   assert.ok((await state()).tape.some(record => record.actionType === 'shield_bash') && (await actor()).used.attack === 1, '点击盾击实际消耗攻击槽');
   await click('#reset-button');
+  await t.test('同格扇形技能可沿当前朝向命中敌方', async () => {
+    await run(`(() => {
+      const game = window.FatedTacticalGame, s = game.getBattleState();
+      const a = s.units[s.order[s.turn]], enemy = s.units.scout;
+      Object.assign(a, {x:1,y:2,facing:[1,0],skills:['overlap_fan']});
+      Object.assign(enemy, {x:1,y:2,hp:1});
+      s.pools[enemy.pools.hp].current = 1;
+      s.skills.overlap_fan = {name:'碧海潮生',ap:1,slot:'attack',shape:'fan',target:'enemy',range:3,radius:2,
+        damage:{count:1,sides:1,bonus:5,type:'physical'}};
+      game.createBattle({kind:'custom_state',state:s});
+    })()`);
+    await click(`${cell(1,2)} [data-unit-id="scout"]`);
+    const skill = '#target-actions [data-skill-id="overlap_fan"]';
+    assert.equal(await run(`${get(skill)}.disabled`), false, await run(`${get(skill)}.title`));
+    await click(skill);
+    await click('#confirm-action');
+    assert.ok((await state()).logs.some(log => log.type === 'hit_result' && log.detail.targetId === 'scout'));
+  });
+  await click('#reset-button');
   const actions = type => `#action-toolbar [data-action="${type}"]`;
   await run(`(() => {
     const game = window.FatedTacticalGame;

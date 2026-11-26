@@ -576,7 +576,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       if (small.textContent) button.append(small);
       button.disabled = !plan.ok;
       button.title = plan.error || ACTION_HINTS[command.type] || label;
-      if (!plan.ok) small.textContent = plan.error;
+      if (!plan.ok) small.textContent = plan.error === '有向技能需要选择方向'
+        ? '有向技能需要选择方向（点相邻格确定朝向）' : plan.error;
       if (!plan.ok && !small.parentNode) button.append(small);
       button.setAttribute('aria-pressed', 'false');
       menuButtons.set(button, choice);
