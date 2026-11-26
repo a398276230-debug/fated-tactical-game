@@ -153,7 +153,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
   const templates = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...items.map(([id]) => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
   for (const skillId of [...templates.keys()].sort()) {
     const skill = templates.get(skillId);
-    if (!skill || isPassiveSkill(skill) || attacksOnly && (skill.slot !== 'attack' || skill.ap > 1)) continue;
+    if (!skill || isPassiveSkill(skill) || attacksOnly && skill.slot !== 'attack') continue;
     // The greedy planner cannot guarantee progress on a free skill unless it
     // exhausts a budget. Filters could skip consumption, so do not rely on them.
     if (skill.ap === 0 && !skill.backpackItem && !skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false
@@ -207,7 +207,7 @@ function approach(state, actor, enemies, suppress = false) {
     const d = distance3D(state, probe, target);
     if (suppress) return d <= 1 && hasLOS(state,probe,target);
     if (d > range + 1) return false;
-    const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
+    const u = { ...actor, x: probe.x, y: probe.y, ap: Math.max(1, actor.ap), used: { ...actor.used, attack: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
     const attack = preview(s, { type: 'attack', targetId: target.id, x: target.x, y: target.y }, { actingUnit: s.units[actor.id] });
     if (attack.ok || attack.error === '弹仓已空，请装填' && d <= range && hasLOS(state, probe, target)) return true;
@@ -347,26 +347,27 @@ export function chooseAction(state, actor = currentUnit(state)) {
       const high = elevation(state, cell) - z0;
       const cover = coverQuality(state, cell, objectives) - startingCover;
       const zoneDelta = zoneCellScore(state, actor, cell) - zoneCellScore(state, actor, actor);
-      let score = (projectedDepth ? 1.8 + projectedDepth * .55 : progress * .35) + high * .8 + cover + zoneDelta;
+      const canAttack = actor.ap > 0 && !actor.used.attack;
+      let score = (canAttack ? (projectedDepth ? 1.8 + projectedDepth * .55 : progress * .35) : 0) + high * .8 + cover + zoneDelta;
       if (zoneCellScore(state, actor, actor) <= -14 && zoneDelta > 0) score += Math.min(50, 14 + zoneDelta);
       if (cell.bankedProgress != null) {
         const gain = cell.bankedProgress - (actor.moveCarryPermille ?? 0);
         if (gain <= 0 || !plannedPath.length) continue;
         score = 1.6 + cell.bankedProgress / 1000 + gain / 1000 - (type === 'sprint' ? .6 : 0);
-      } else if (type === 'sprint') score = score * .82 - 1.2;
+      } else if (type === 'sprint') score = score * .75 - 2.0;
       score -= (cell.opportunities?.length ?? 0) * 3.5;
       if (type === 'disengage') score -= .2;
-      movements.push({ type, cell, score, available: actor.ap - options.ap });
+      movements.push({ type, cell, score, slot: options.slot, available: actor.ap - options.ap });
     }
   }
   const evaluatedMoves = state.ruleset === 'protocol'
     ? movements.sort((a, b) => b.score - a.score).slice(0, 3) : movements;
-  for (const { type, cell, available, score: movementScore } of evaluatedMoves) {
+  for (const { type, cell, slot, available, score: movementScore } of evaluatedMoves) {
     let score = movementScore;
     if (available > 0 && !actor.used.attack) {
       const moved = { ...actor, x: cell.x, y: cell.y, ap: available,
         facing: cell.steps === 0 ? actor.facing : facingToward(cell.path.at(-2) ?? actor, cell),
-        used: { ...actor.used, action: actor.used.action + 1 } };
+        used: slot ? { ...actor.used, [slot]: (actor.used[slot] ?? 0) + 1 } : { ...actor.used } };
       const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
       const followup = Math.max(0, ...aimedOptions(shadow, moved, true).map(choice => choice.score));
       if (followup > 0) score += followup * .84 + (zoneCellScore(state, moved, moved) - zoneCellScore(state, actor, actor)) * .35;

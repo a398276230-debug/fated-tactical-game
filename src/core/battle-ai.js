@@ -1,10 +1,10 @@
-import { applyAction, equippedActiveSkills, isPassiveSkill, preview, skillAvailability, switchableWeapons } from './combat.js';
+import { applyAction, equippedActiveSkills, isPassiveSkill, movementBudget, preview, skillAvailability, switchableWeapons } from './combat.js';
 import { elevation, atBattleEdge } from './spatial.js';
 import { canRouteActor, linkedUnitsOf } from './turn-routing.js';
 import { chooseAction } from './ai.js';
 const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user 一方的对手，只控制当前连续行动的敌方角色，不替玩家做决定。
-行动：每回合每个角色有1个攻击槽和1个动作槽。移动、装填、互动、换装、架势和逃跑使用动作槽，普通攻击、技能攻击、压制和解除压制使用攻击槽，重型技能可同时使用两槽。一个动作只能使用当前行动者自己的槽位。动作、技能和背包物品的实际 ap、slot、资源、次数与冷却以输入数据为准。
-蓄步：movementCarry 按单位列出已积累的百分比，以及原地 move 或 sprint 后可达到的百分比。若有正收益且需要接近目标，可在自己当前坐标执行该移动来积累进度，攒够后再选择实际落点。
+行动：每回合每个角色有 2 点 AP（1个攻击槽和1个动作槽）以及独立的移动力预算。常规移动（move）消耗移动力预算、0 AP、不占槽位，在移动力耗尽前可分多次在行动前后自由走位；疾跑（sprint，追加一倍基础移动力并移动）、撤离（disengage，本次移动免借机且无视阻挡）、装填、互动、背包换装、架势和逃跑消耗 1 AP 并使用动作槽；普通攻击、技能攻击、压制和解除压制使用攻击槽；重型技能同时使用两槽（2 AP）。动作、技能和背包物品的实际 ap、slot、资源、次数与冷却以输入数据为准。
+移动与蓄步：每个单位包含 moveRemaining（本回合剩余可走格数）、moveMax（本回合移动格上限）与 moveCarryPercent（跨区蓄步百分比）；movementCarry 按单位列出亚格状态下的当前百分比及原地 move（本回合限1次，0 AP）或 sprint（1 AP，动作槽）后可达到的百分比。
 距离与高度：攻击和技能按三维欧氏距离 sqrt(dx²+dy²+dz²) 检查射程。z 是格子高度加单位离地高度。高处攻击低处时，远程攻击通常获得最多+1格射程，低处攻击高处时通常减少1格射程，实际值以技能/装备数据和预览规则为准。移动每跨一格有高度限制，平地通常只能跨1级高度，坡地可跨2级，墙不能通行。移动到高处或低处会消耗路径允许的动作预算，不能把二维相邻当作一定可达。
 视线与隔断：墙体和非可站立格会阻断视线。攻击、远程技能、爆桶引爆和范围效果都要有通畅视线。范围技能以实际形状、半径、宽度、角度和三维距离取格，不能穿墙或隔断。环形以落点为中心并排除中心格，范围伤害可能波及友军。射程为 0 的扇形、锥形和直线沿施术者当前朝向展开。
 掩体：掩体位于攻击者与目标的射线或目标迎击侧时生效，按掩体 cover 数值降低命中或保护目标。攻击者或目标比掩体高至少2级时可以越过该掩体，掩体不再提供遮挡。掩体有自己的 HP，可以被攻击或爆炸破坏，破坏后不再遮挡。不要把掩体当成墙，掩体通常不阻断视线，只改变命中与伤害条件。
@@ -38,9 +38,11 @@ function unitView(state, unit) {
   shadow.turn = shadow.order.indexOf(unit.id);
   for (const type of ['attack','move','sprint','disengage','brace','reload','flee','suppress','free_ally','end']) {
     const plan = preview(shadow, { type });
-    if (plan.ok || type === 'move') actions.push(type);
+    if (plan.ok) actions.push(type);
   }
+  const mb = movementBudget(state, unit);
   return { id: unit.id, name: unit.name, team: unit.team, faction: unit.team === 'red' ? '敌方' : '玩家方',
+    moveRemaining: mb.remainingCells, moveMax: mb.maxCells, moveCarryPercent: mb.currentCarryPermille / 10,
     alive: unit.hp > 0, fled: !!unit.fled, hp: unit.hp, maxHp: unit.maxHp, mp: unit.mp, maxMp: unit.maxMp, sp: unit.sp, maxSp: unit.maxSp,
     x: unit.x, y: unit.y, z: elevation(state, unit), altitude: unit.altitude ?? 0, ap: unit.ap, used: unit.used, reactionAvailable: unit.reactionAvailable, statuses: unit.statuses,
     moraleState: unit.moraleState ?? 'steady', routed: unit.moraleState === 'routed',
