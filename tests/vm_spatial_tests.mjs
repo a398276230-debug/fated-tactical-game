@@ -262,10 +262,62 @@ test('summon replacement waits for its eviction hook and creates independent det
   assert.deepEqual(saved, state);
 });
 
+test('summon groups support cap truncation and FIFO eviction', () => {
+  const state = board();
+  const spawn = spec => ({ op: 'spawn', entityKind: 'unit', at: { x: 5, y: 4 }, spec: { name: '群怪',
+    spawnPanel: { maxHp: 10, maxMp: 0, maxSp: 0 }, ...spec } });
+  run(state, [spawn({ count: 2, group: 'pack', stackPolicy: 'cap', maxActive: 3 })]);
+  run(state, [spawn({ count: 2, group: 'pack', stackPolicy: 'cap', maxActive: '1 + 2', spawnPanel: {} })]);
+  assert.equal(state.units['summon-3'].maxHp, 1620);
+  run(state, [spawn({ count: 2, group: 'pack', stackPolicy: 'cap', maxActive: 3 })]);
+  assert.equal(state.logs.at(-1).detail.reason, 'max_active');
+  assert.equal(Object.values(state.units).filter(unit => unit.summoned).length, 3);
+  run(state, [spawn({ count: 2, group: 'pack', stackPolicy: 'fifo', maxActive: 3 })]);
+  assert.equal(Object.values(state.units).filter(unit => unit.summoned).length, 3);
+  assert.deepEqual(Object.values(state.units).filter(unit => unit.summoned).map(unit => unit.id), ['summon-3', 'summon-4', 'summon-5']);
+});
+
+test('explicit landing shares the occupied center up to capacity and honors absolute z', () => {
+  const state = board();
+  state.units.other.team = 'red';
+  state.grid[1][1].z = 2;
+  run(state, [{ op: 'spawn', entityKind: 'unit', at: { x: 1, y: 1, z: 5 }, spec: { count: 3 } }]);
+  assert.deepEqual(position(state.units['summon-1']), [1, 1]);
+  assert.equal(state.units['summon-1'].altitude, 3);
+  assert.notDeepEqual(position(state.units['summon-2']), [1, 1]);
+  assert.notDeepEqual(position(state.units['summon-3']), position(state.units['summon-2']));
+});
+
+test('runtime logs unresolved summon template, missing equipment and invalid expressions', () => {
+  const state = board();
+  for (const [spec, reason] of [
+    [{ templateId: 'missing' }, 'missing_template'],
+    [{ spawnPanel: { mainHand: 'missing' } }, 'missing_equipment'],
+    [{ spawnPanel: { maxHp: '1 / 0' } }, 'invalid_panel'],
+  ]) {
+    run(state, [{ op: 'spawn', entityKind: 'unit', spec }]);
+    assert.equal(state.logs.at(-1).detail.reason, reason);
+    assert.equal(state.logs.at(-1).detail.failed, true);
+  }
+  assert.equal(state.units['summon-1'], undefined);
+});
+
+test('anchor_turns expiry runs through the normal summon eviction continuation', () => {
+  const state = board();
+  run(state, [{ op: 'spawn', entityKind: 'unit', spec: { name: '限时', remainingTurns: 1,
+    durationUnit: 'anchor_turns', spawnPanel: { maxHp: 10, maxMp: 0, maxSp: 0 } } }]);
+  assert.ok(state.units['summon-1']);
+  expireSpatialEffects(state, host, { advance: true, anchorUnitId: 'actor' });
+  stepVM(state, host);
+  assert.equal(state.units['summon-1'], undefined);
+  assert.ok(state.logs.some(log => log.type === 'despawn' && log.detail?.expired));
+});
+
 test('template summons and mirror copies use private pools and independent gear', () => {
   const state = board();
-  state.summonTemplates = { echo: { ...unit('echo', 0, 0), mainHand: 'sword', tags: ['illusion'] } };
-  const templateId = run(state, [{ op: 'spawn', entityKind: 'unit', out: 'result', spec: { templateId: 'echo' } }]).result;
+  state.summonTemplates = { echo: { name: 'echo', tier: 3, stats: { str: 4, agi: 4, con: 4, int: 4, spi: 4 },
+    maxHp: 30, maxMp: 10, maxSp: 10, mainHand: 'sword', gear: [], skills: [], tags: ['illusion'] } };
+  const templateId = run(state, [{ op: 'spawn', entityKind: 'unit', out: 'result', spec: { templateId: 'echo', spawnPanel: { maxHp: 30, maxMp: 10, maxSp: 10 } } }]).result;
   const cloneId = run(state, [{ op: 'spawn', entityKind: 'unit', out: 'result', spec: {
     copyOf: { from: 'units', where: "candidate.id == 'summon-1'" }, name: '镜像',
   } }]).result;

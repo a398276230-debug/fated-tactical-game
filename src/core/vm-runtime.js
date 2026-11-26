@@ -65,13 +65,13 @@ export function advanceVMRound(state) {
   stepVM(state, vmHost);
 }
 
-export function advanceVMSpatial(state) {
+export function advanceVMSpatial(state, options = {}) {
   initializeVMWorld(state);
   if (state.vm.pendingAsk) return;
   const idle = !state.vm.stack.length;
   if (idle) state.vm.stepsRemaining = 2000;
   const parent = state.vm.stack.at(-1) ?? { ownerId: null, sourceId: null };
-  expireSpatialEffects(state, vmHost, { advance: true, parent });
+  expireSpatialEffects(state, vmHost, { advance: true, ...options, parent });
   if (idle) stepVM(state, vmHost);
 }
 

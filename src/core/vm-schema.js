@@ -91,7 +91,7 @@ export const opNotes = Object.freeze({
   remove_status: '在目标持有的状态中用 where 筛选可移除项。durationType:"persistent" 常驻状态与 undispellable 状态均受保护，移除或消耗它们（含自身消耗常驻计数层数）必须显式填 force:true（自身移除自身常驻状态填 force:true 直接成功，对他人生效按来源位格裁定）；outCount 写裸名称。',
   mutate_event: '仅在有可写字段的拦截钩子改写当前事件。patch 的键必须属于当前 Rule.hook。',
   move: '统一移动、瞬移、推拉与高度变化。push/pull 逐格判碰撞，altitude 可用 deltaZ 或 land。distance 默认用格；原词条 [位移: X] 用 distance:X、distanceUnit:"position"，按施放载体换算。teleport 声明 distance 时也校验位移上限。',
-  spawn: '按 entityKind 提供对应的 spec 生成单位、结界、地形、掩体或库存物品；at 指定落点。',
+  spawn: '按 entityKind 提供对应的 spec；at 指定落点。单位 templateId 可配 spawnPanel 覆写，copyOf 与二者互斥。group 在 summoner（默认 self）名下跨技能共享；stackPolicy 可为 replace（默认）、fifo 或 cap，maxActive 限制存活数量。remainingTurns 默认按大轮递减，durationUnit:"anchor_turns" 改按 durationAnchor（默认召唤者）回合末递减。',
   despawn: '用 select 清除指定的 zone、cover、terrain 或 unit；unit 通常配 where: "candidate.summoned == true" 只移除召唤物，不触发死亡/亡语。筛选敌方区域时用 candidate.team != null && candidate.team != self.team；terrain 只清除 VM 生成的地形层。',
   revive: '只对未被 blockRevive 禁止的阵亡单位生效；hpPercent/mpPercent/spPercent 以 1 为满额。',
   perform: '压入独立子动作；skill 用技能 ID 或 vars.<名称>，replay 用 tapeRecord 引用磁带记录。overrides.origin 可改生效原点；跨距离或阻隔需显式设置 ignoreRange 或 ignoreLOS。',
@@ -159,16 +159,22 @@ const carrier = { ...baseCarrier, unitPools };
 export const carrierFields = Object.freeze(Object.keys(carrier).filter(key => key !== 'name'));
 export const statusPatchFields = Object.freeze(['remainingTurns', 'durationType', 'stackMode', 'stacks', 'expireOn', ...carrierFields]);
 export const validCarrierScalar = value => Number.isFinite(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= scalarOrExpr.anyOf[2].maxLength);
+const summonDuration = enumOf('rounds', 'anchor_turns');
+const spawnPanelFields = {
+  attribute, tier: spawnTier,
+  stats: object(Object.fromEntries(attribute.enum.map(name => [name, either(integer(0, 20), formula)])), attribute.enum),
+  maxHp: numericExpr, maxMp: numericExpr, maxSp: numericExpr, armor: numericExpr, size: integer(1, 5),
+  bodyLengthM: { type: 'number', minimum: 0.01, maximum: 1e9 }, mc: integer(1, 64), move: numericExpr,
+  skills: { ...list(id), maxItems: 32, uniqueItems: true }, gear: { ...list(id), maxItems: 12 },
+  mainHand: id, offHand: id, shield: id,
+};
+export const summonTemplatePanelFields = Object.freeze(Object.keys(spawnPanelFields));
 const spawnSpecs = {
   unit: withRules(object({
     ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula), remainingTurns: spawnTurns,
-    spawnPanel: object({
-      attribute, tier: spawnTier, stats: object(Object.fromEntries(attribute.enum.map(name => [name, integer(0, 20)])), attribute.enum),
-      maxHp: numericExpr, maxMp: numericExpr, maxSp: numericExpr, armor: numericExpr, size: integer(1, 5),
-      bodyLengthM: { type: 'number', exclusiveMinimum: 0 }, mc: integer(1), move: numericExpr,
-      skills: list(id), gear: list(id), mainHand: id, offHand: id, shield: id,
-    }),
-  }), variants(needs('templateId'), needs('copyOf'), needs('spawnPanel'), { not: either(needs('templateId'), needs('copyOf'), needs('spawnPanel')) })),
+    group: id, stackPolicy: enumOf('replace', 'fifo', 'cap'), maxActive: either(integer(1, 50), formula), summoner: target,
+    durationUnit: summonDuration, durationAnchor: target, spawnPanel: object(spawnPanelFields),
+  }), when('copyOf', {}, { not: either(needs('templateId'), needs('spawnPanel')) })),
   zone: object({ ...baseCarrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
   terrain: withRules(object({ kind: enumOf('floor', 'wall', 'slope'), height: number, mode: enumOf('set', 'raise', 'lower'), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs('kind'), needs('height')), when('mode', {}, needs('height'))),
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),

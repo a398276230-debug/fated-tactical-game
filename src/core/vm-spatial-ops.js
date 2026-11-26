@@ -1,7 +1,8 @@
 import { resolveEffectiveTier, scaledMoveCells, sizeClassFor, stanceFor, stanceRules } from './combat_protocol.js';
 import { evaluateExpr } from './formula.js';
 import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
-import { spawnPanel } from './spawn-unit.js';
+import { spawnPanel, spawnBudgetIssue } from './spawn-unit.js';
+import { sizeMultiplier } from './prebattle_resources.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { scheduleCommit } from './vm-commit.js';
 import { createPool, initializeUnitPools, syncUnitPools, unlinkPools } from './vm-pools.js';
@@ -44,7 +45,7 @@ function spawnNumber(expression, context, min, max = Infinity, integer = true) {
 
 function resolveSpawnSpec(spec, context, kind) {
   const resolved = { ...spec };
-  const bounds = { tier: [1, 7], count: [1, kind === 'unit' ? 10 : Infinity], remainingTurns: [1, 100] };
+  const bounds = { tier: [1, 7], count: [1, kind === 'unit' ? 10 : Infinity], maxActive: [1, kind === 'unit' ? 50 : Infinity], remainingTurns: [1, 100] };
   for (const [key, [min, max]] of Object.entries(bounds)) {
     if (spec[key] === undefined) continue;
     resolved[key] = spawnNumber(spec[key], context, min, max);
@@ -52,11 +53,20 @@ function resolveSpawnSpec(spec, context, kind) {
   }
   if (spec.spawnPanel) {
     resolved.spawnPanel = { ...spec.spawnPanel };
+    if (spec.spawnPanel.stats) {
+      resolved.spawnPanel.stats = {};
+      for (const [key, expr] of Object.entries(spec.spawnPanel.stats)) {
+        const value = evaluateExpr(expr, context);
+        if (!Number.isFinite(value) || !Number.isSafeInteger(Math.floor(value))) return;
+        resolved.spawnPanel.stats[key] = Math.floor(value);
+      }
+    }
     for (const key of ['tier', 'maxHp', 'maxMp', 'maxSp', 'armor', 'move']) {
       if (spec.spawnPanel[key] === undefined) continue;
-      const value = spawnNumber(spec.spawnPanel[key], context, key === 'tier' ? 1 : 0, key === 'tier' ? 7 : 1000000000);
-      if (value === undefined) return;
-      resolved.spawnPanel[key] = value;
+      const value = evaluateExpr(spec.spawnPanel[key], context);
+      const max = ['armor', 'move'].includes(key) ? 1e6 : 1e9;
+      if (!Number.isFinite(value) || key !== 'tier' && (value < 0 || value > max)) return;
+      resolved.spawnPanel[key] = key === 'tier' ? clamp(Math.floor(value), 1, 7) : Math.floor(value);
     }
   }
   if (spec.area) {
@@ -260,15 +270,22 @@ function spawnItems({ state, frame, host, context, op }) {
 function unitPlan(state, context, spec, original) {
   const actor = context.self;
   const count = spec.count ?? 1;
-  const panel = spec.spawnPanel ? spawnPanel(actor, { ...spec.spawnPanel, tier: spec.tier ?? spec.spawnPanel.tier, count }) : original;
+  const panelSpec = spec.spawnPanel ? { ...spec.spawnPanel, tier: spec.tier ?? spec.spawnPanel.tier, count } : null;
+  const issue = panelSpec && spawnBudgetIssue(actor, panelSpec);
+  if (issue) return { error: 'budget_exceeded', detail: issue };
+  const panel = panelSpec ? spawnPanel(actor, panelSpec) : original;
   if (!panel || !panel.stats || ![panel.maxHp, panel.maxMp, panel.maxSp].every(Number.isFinite)
       || panel.maxHp <= 0 || panel.maxMp < 0 || panel.maxSp < 0) return undefined;
   const loads = spec.spawnPanel ?? original;
-  const equipment = id => own(state.items, id)?.templateId ?? id;
+  const equipment = id => spec.copyOf ? own(state.items, id)?.templateId ?? id : id;
   const gear = Object.fromEntries(['mainHand', 'offHand', 'shield'].map(slot => [slot,
     equipment(loads[slot] ?? (slot === 'mainHand' ? loads.weapon : null)) ?? null]));
   gear.gear = (loads.gear ?? []).map(equipment);
   const items = [...new Set([gear.mainHand, gear.offHand, gear.shield, ...gear.gear].filter(Boolean))];
+  const equipmentId = items.find(id => !own(state.equipment, id));
+  if (equipmentId) return { error: 'missing_equipment', detail: { equipmentId } };
+  const skillId = loads.skills?.find(id => !own(state.skills, id));
+  if (skillId) return { error: 'missing_skill', detail: { skillId } };
   if (items.some(id => !itemPlan(state, id, context))) return undefined;
   const bodyLengthM = panel.bodyLengthM ?? 1.7;
   const stats = { ...panel.stats };
@@ -280,9 +297,9 @@ function unitPlan(state, context, spec, original) {
     return [field, contributor?.maxBase ?? panel[field]];
   }));
   return { count, gear, panel: { stats, ...maxima, bodyLengthM, size: panel.size ?? sizeClassFor(bodyLengthM),
-    mc: panel.mc ?? (bodyLengthM >= 10 ? 2 : 1), armor: panel.armor ?? 0, move: panel.move ?? 3,
+    mc: panel.mc ?? sizeMultiplier(bodyLengthM), armor: panel.armor ?? 0, move: panel.move ?? 3,
     skills: [...(loads.skills ?? [])], team: actor.team, facing: [...(actor.facing ?? [1, 0])],
-    tier: panel.tier ?? actor.tier ?? 1 } };
+    level: actor.level ?? actor.tier ?? 1, tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier } };
 }
 
 function removeSummon(state, unit, host) {
@@ -302,35 +319,87 @@ function removeSummon(state, unit, host) {
   }
 }
 
+function logSpawnFailure(state, host, actor, name, reason, detail = {}) {
+  const messages = {
+    budget_exceeded: () => `五维面板超出施术者预算（单项上限 ${detail.cap}，总和上限 ${detail.sum}，实际 [${Object.values(detail.stats)}] 合计 ${detail.actualSum}）`,
+    missing_template: () => `找不到召唤模板 ${detail.templateId}`,
+    missing_equipment: () => `找不到装备模板 ${detail.equipmentId}`,
+    missing_skill: () => `找不到技能 ${detail.skillId}`,
+    invalid_panel: () => '召唤面板、引用或数值无效',
+    max_active: () => `同组在场数量已达上限（${detail.maxActive}）`,
+    capacity: () => '可用格子或实体槽不足',
+    reentrant_group: () => '同组召唤正在结算',
+  };
+  host.log(state, actor, 'spawn', `${name}未能登场：${messages[reason]()}`, { failed: true, reason, ...detail });
+}
+
+function summonLandings(state, { center, explicitAt, plan }, leaving = new Set()) {
+  const candidates = cells(state).filter(cell => !same(cell, center) || !explicitAt)
+    .filter(cell => !blocked(state, cell, leaving))
+    .sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
+  if (explicitAt && isGround(state, center) && ((state.scale?.cellM ?? 2) >= 10 || !coverAt(state, center.x, center.y))) {
+    const occupied = unitsAt(state, center.x, center.y).filter(unit => !leaving.has(unit.id))
+      .reduce((total, unit) => total + unitCellCost(state, unit), 0);
+    const available = Math.floor((MAX_CELL_CAPACITY - occupied) / unitCellCost(state, plan.panel));
+    candidates.unshift(...Array.from({ length: Math.max(0, available) }, () => xy(center)));
+  }
+  return candidates.slice(0, plan.count).map(cell => ({ ...cell, altitude: Number.isFinite(center.z)
+    ? clamp(Math.round(center.z - elevation(state, cell)), 0, 12) : 0 }));
+}
+
 function spawnUnits({ state, frame, host, context, op, select, push }, center) {
-  const actor = context.self;
-  if (!actor || !center) return;
-  const spec = op.spec.templateId === undefined && op.spec.copyOf === undefined
-    ? { ...op.spec, spawnPanel: op.spec.spawnPanel ?? {} } : op.spec;
-  const original = spec.copyOf ? select(spec.copyOf).find(unit => own(state.units, unit.id) === unit)
-    : own(state.summonTemplates, spec.templateId);
-  const plan = unitPlan(state, context, spec, original);
-  if (!plan) return;
+  const requested = op.spec;
+  const firstUnit = selector => select(selector).find(unit => own(state.units, unit.id) === unit);
+  const actor = requested.summoner ? firstUnit(requested.summoner) : context.self;
+  const original = requested.copyOf ? firstUnit(requested.copyOf) : own(state.summonTemplates, requested.templateId);
+  const name = requested.name ?? original?.name ?? requested.templateId ?? '召唤物';
+  const fail = (reason, detail) => logSpawnFailure(state, host, actor ?? context.self, name, reason, detail);
+  if (requested.templateId && !original) return fail('missing_template', { templateId: requested.templateId });
+  if (!actor || !point(center) || requested.copyOf && !original) return fail('invalid_panel');
+  const form = requested.copyOf ? 'copy' : requested.spawnPanel ? 'panel' : requested.templateId ? 'template' : 'panel';
+  const spec = resolveSpawnSpec({ ...requested, ...(requested.copyOf ? {} : { spawnPanel: { ...original, ...requested.spawnPanel } }) }, context, 'unit');
+  if (!spec) return fail('invalid_panel');
   const templateId = spec.templateId ?? original?.templateId ?? original?.id ?? frame.ruleId ?? 'summon';
-  const form = spec.copyOf ? 'copy' : spec.spawnPanel ? 'panel' : 'template';
-  const group = JSON.stringify([actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
-  const data = { plan, center: xy(center), out: op.out ?? null, remainingTurns: spec.remainingTurns,
-    fields: carrier({ ...original, ...spec, tier: spec.spawnPanel ? plan.panel.tier : spec.tier ?? plan.panel.tier,
-      vars: { ...(spec.copyOf ? {} : original?.vars), ...spec.vars },
-      unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : undefined,
-    }, actor.id, '', templateId, context, { allowUnitPools: true }),
-    group, evictIds: [], pendingId: null };
-  if (original && spec.copyOf) data.fields.vars = { ...(original.vars ?? {}), ...data.fields.vars };
+  const group = JSON.stringify(spec.group ? [actor.id, spec.group]
+    : [actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
+  const durationUnit = spec.durationUnit ?? (spec.templateId ? original.durationUnit : undefined) ?? 'rounds';
+  const timed = spec.remainingTurns !== undefined;
+  const anchor = timed && durationUnit === 'anchor_turns' ? (spec.durationAnchor ? firstUnit(spec.durationAnchor) : actor) : null;
+  if (timed && durationUnit === 'anchor_turns' && !anchor) return fail('invalid_panel');
   // An eviction hook may summon another group, but cannot reenter its own replacement.
-  if (state.vm.stack.some(entry => entry.native === 'spatialSpawn' && entry.data.group === data.group)) return;
-  data.evictIds = Object.keys(state.units).sort().filter(id => own(state.units, id).summonGroup === data.group && id !== actor.id);
+  if (state.vm.stack.some(entry => entry.native === 'spatialSpawn' && entry.data.group === group)) return fail('reentrant_group');
+  const groupUnits = values(state.units).filter(unit => unit.summoned && unit.summonGroup === group && unit.id !== actor.id);
+  for (const old of groupUnits) {
+    if (!live(old) && !aggregateModifiers(state, old.id).flags.blockRevive) removeSummon(state, old, host);
+  }
+  const serial = unit => Number(unit.id.match(/^summon-(\d+)$/)?.[1] ?? Number.MAX_SAFE_INTEGER);
+  const livingGroup = groupUnits.filter(live).sort((a, b) => serial(a) - serial(b));
+  const stackPolicy = spec.stackPolicy ?? 'replace';
+  const maxActive = spec.maxActive ?? (stackPolicy === 'replace' ? Infinity : 12);
+  const allowed = stackPolicy === 'cap' ? Math.max(0, maxActive - livingGroup.length) : maxActive;
+  const count = Math.min(spec.count ?? 1, allowed);
+  if (!count) return fail('max_active', { maxActive });
+  const plan = unitPlan(state, { ...context, self: actor }, { ...spec, count }, original);
+  if (!plan || plan.error) return fail(plan?.error ?? 'invalid_panel', plan?.detail);
+  const evictCount = stackPolicy === 'replace' ? livingGroup.length : stackPolicy === 'fifo' ? Math.max(0, livingGroup.length + count - maxActive) : 0;
+  const evictIds = livingGroup.slice(0, evictCount).map(unit => unit.id);
+  const fields = carrier({ ...original, ...spec, tier: plan.panel.tier,
+    vars: { ...(spec.copyOf ? {} : original?.vars), ...spec.vars },
+    unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : undefined,
+  }, actor.id, '', templateId, context, { allowUnitPools: true });
+  if (spec.copyOf) fields.vars = { ...(original.vars ?? {}), ...fields.vars };
+  const explicitAt = op.at !== undefined;
+  const z = explicitAt ? center.z : undefined;
+  const data = { plan, center: { ...xy(center), ...(Number.isFinite(z) && { z }) }, explicitAt,
+    out: op.out ?? null, fields, group, evictIds, pendingId: null,
+    moraleType: actor.moraleType ?? state.battleType ?? 'standard',
+    ...(timed && { duration: { remainingTurns: spec.remainingTurns, durationUnit, ...(anchor && { durationAnchorId: anchor.id }) } }) };
   const leaving = new Set(data.evictIds);
   const slots = [plan.gear.mainHand, plan.gear.offHand, plan.gear.shield, ...plan.gear.gear].filter(Boolean);
   const keptItems = values(state.items).filter(item => !leaving.has(item.ownerId)).length;
   if (values(state.units).length - leaving.size + plan.count > 200 || keptItems + slots.length * plan.count > 200
-    || cells(state).filter(cell => !blocked(state, cell, leaving)).length < plan.count) {
-    host.log(state, actor, 'spawn', `${data.fields.name}未能登场：可用战场空间不足`);
-    return;
+    || summonLandings(state, data, leaving).length < plan.count) {
+    return fail('capacity');
   }
   const sourceSkillId = frame.sourceSkillId ?? (frame.carrier?.type === 'skill' ? frame.carrier.id : undefined);
   push({ ...inherit(frame), native: 'spatialSpawn', data, ...(sourceSkillId && { sourceSkillId }) });
@@ -338,7 +407,7 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
 
 function continueSpawn({ state, frame, host, context }) {
   const { data } = frame;
-  const actor = own(state.units, frame.ownerId);
+  const actor = own(state.units, data.fields.sourceId);
   if (data.pendingId) {
     const old = own(state.units, data.pendingId);
     if (old) {
@@ -356,30 +425,31 @@ function continueSpawn({ state, frame, host, context }) {
       continue;
     }
     data.pendingId = old.id;
-    frame.awaitEvent = newEvent(state, { actorId: actor?.id ?? frame.ownerId, targetId: old.id,
-      sourceId: actor?.id ?? frame.ownerId, summonId: old.id, templateId: old.templateId, center: at(state, old),
+    frame.awaitEvent = newEvent(state, { actorId: data.fields.sourceId, targetId: old.id,
+      sourceId: data.fields.sourceId, summonId: old.id, templateId: old.templateId, center: at(state, old), reason: 'replaced',
       ...(old.sourceSkillId && { sourceSkillId: old.sourceSkillId }) });
     scheduleHooks(state, frame, 'on_summon_evict', frame.awaitEvent, host);
     return;
   }
-  const { plan, center } = data;
-  const landings = cells(state).filter(cell => !blocked(state, cell))
-    .sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
+  const { plan } = data;
+  const landings = summonLandings(state, data);
   const { gear } = plan;
   const templateIds = [gear.mainHand, gear.offHand, gear.shield, ...gear.gear].filter(Boolean);
   const items = new Map(templateIds.map(id => [id, itemPlan(state, id, context)]));
   if (landings.length < plan.count || values(state.units).length + plan.count > 200 || [...items.values()].some(item => !item)
       || values(state.items).length + templateIds.length * plan.count > 200) {
-    host.log(state, actor, 'spawn', `${data.fields.name}未能登场：可用格子或装备实例不足`);
+    const equipmentId = templateIds.find(id => !own(state.equipment, id));
+    const reason = equipmentId ? 'missing_equipment' : [...items.values()].some(item => !item) ? 'invalid_panel' : 'capacity';
+    logSpawnFailure(state, host, actor, data.fields.name, reason, equipmentId ? { equipmentId } : {});
     state.vm.stack.pop();
     return;
   }
   let first;
-  for (const placement of landings.slice(0, plan.count)) {
+  for (const placement of landings) {
     const id = nextId(state, state.units, 'summon');
-    const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement, altitude: 0,
-      moraleType: actor.moraleType ?? state.battleType ?? 'standard', summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
-      ...(data.remainingTurns !== undefined && { remainingTurns: data.remainingTurns }),
+    const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement,
+      moraleType: data.moraleType, summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
+      ...data.duration,
       ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
     unit.hp = unit.maxHp;
     unit.mp = unit.maxMp;
@@ -593,14 +663,18 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
 }
 
 /** Call on lifecycle boundaries. Set advance once per round after round-end hooks. */
-export function expireSpatialEffects(state, host, { advance = false, parent = state.vm?.stack.at(-1) } = {}) {
+export function expireSpatialEffects(state, host, { advance = false, anchorUnitId = null, parent = state.vm?.stack.at(-1) } = {}) {
   refreshFollowingZones(state, host);
   if (!advance) return;
-  const expiring = values(state.units).filter(unit => unit.summoned && unit.remainingTurns != null && --unit.remainingTurns === 0);
+  const expiring = values(state.units).filter(unit => unit.summoned && unit.remainingTurns != null
+    && (anchorUnitId === null ? (unit.durationUnit ?? 'rounds') === 'rounds'
+      || !live(own(state.units, unit.durationAnchorId)) : unit.durationUnit === 'anchor_turns' && unit.durationAnchorId === anchorUnitId)
+    && --unit.remainingTurns === 0);
   for (const unit of expiring.reverse()) {
     unit.remainingTurns = 1;
     pushFrame(state, { kind: 'action', native: 'expireSummon', ownerId: unit.id, sourceId: unit.sourceId ?? unit.id });
   }
+  if (anchorUnitId !== null) return;
   for (const zone of values(state.zones)) {
     if (!zone.persistent && --zone.remainingTurns <= 0) removeZone(state, host, zone.id, '到期');
   }
@@ -634,15 +708,16 @@ function despawn({ state, frame, host, context, op, select }) {
 
 function spawn(env) {
   const { op, context } = env;
+  const center = () => op.at === undefined ? context.center ?? context.target ?? context.self : resolvePoint(op.at, context);
+  if (op.entityKind === 'unit') return spawnUnits(env, center());
   const spec = resolveSpawnSpec(op.spec, context, op.entityKind);
   if (!spec) return;
   const resolved = { ...env, op: { ...op, spec } };
   if (op.entityKind === 'item') { spawnItems(resolved); return; }
-  const center = op.at === undefined ? context.center ?? context.target ?? context.self : resolvePoint(op.at, context);
-  if ((op.at !== undefined && !center) || (center && !point(center))) return;
-  if (op.entityKind === 'unit') spawnUnits(resolved, center);
-  else if (op.entityKind === 'zone') spawnZone(resolved, center);
-  else spawnTerrain(resolved, center);
+  const location = center();
+  if ((op.at !== undefined && !location) || (location && !point(location))) return;
+  if (op.entityKind === 'zone') spawnZone(resolved, location);
+  else spawnTerrain(resolved, location);
 }
 
 export const spatialOps = Object.freeze({ move, spawn, despawn });

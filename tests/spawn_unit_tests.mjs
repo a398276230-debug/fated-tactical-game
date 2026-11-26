@@ -6,6 +6,7 @@ import { buildScenario } from '../src/presets/scenarios.js';
 import { applyAction, currentUnit } from '../src/core/combat.js';
 import { getPool } from '../src/core/vm-pools.js';
 import { initializeVMWorld } from '../src/core/vm-runtime.js';
+import { calculatePrebattleResources } from '../src/core/prebattle_resources.js';
 
 function fixture(spawnPanel = {}, tier = 1, attribute = 3, count = 1) {
   const state = buildScenario('ruins');
@@ -42,7 +43,12 @@ test('召唤术拒绝超过单项上限或五维总预算的面板', () => {
   for (const stats of [{ str: 4, agi: 0, con: 1, int: 0, spi: 0 }, { str: 2, agi: 1, con: 1, int: 1, spi: 1 }]) {
     const { state, cast } = fixture({ stats });
     const before = Object.keys(state.units);
-    cast();
+    const failure = cast().find(log => log.type === 'spawn' && log.detail.failed);
+    assert.equal(failure.detail.reason, 'budget_exceeded');
+    assert.equal(failure.detail.cap, 3);
+    assert.equal(failure.detail.sum, 5);
+    assert.equal(failure.detail.actualSum, Object.values(stats).reduce((a, b) => a + b, 0));
+    assert.deepEqual(failure.detail.stats, stats);
     assert.deepEqual(Object.keys(state.units), before);
     assert.equal(state.units['summon-1'], undefined);
   }
@@ -73,9 +79,22 @@ test('十个召唤物各自铸造装备、资源池及唯一落点和编号', ()
     assert.deepEqual(unit.skills, ['brand']);
     assert.equal(unit.size, 5);
     assert.equal(unit.mc, 2);
-    assert.equal(unit.maxHp, 25);
+    assert.equal(unit.maxHp, 21);
     assert.equal(getPool(state, unit.mainHand, 'charges', 'item').current, 3);
   }
+});
+
+test('召唤总量按 summonCount 分摊后逐实例取整', () => {
+  const result = calculatePrebattleResources({ stats: { str: 0, agi: 0, con: 0, int: 0, spi: 0 }, tier: 1,
+    bodyLengthM: 12, count: 1, summonCount: 4 });
+  assert.equal(result.resources.hp.rawMax, 0);
+  assert.equal(result.resources.hp.max, 1);
+  assert.equal(result.resources.mp.rawMax, 0);
+  assert.equal(result.resources.sp.rawMax, 0);
+  const exact = calculatePrebattleResources({ stats: { str: 0, agi: 0, con: 1, int: 0, spi: 0 }, tier: 1,
+    bodyLengthM: 12, count: 1, summonCount: 4 });
+  assert.equal(exact.resources.hp.rawMax, 50.25);
+  assert.equal(exact.resources.hp.max, 50);
 });
 
 function assertAborted(state, cast) {
@@ -106,12 +125,77 @@ test('满实例表时整批拒绝，不遗留单位或资源池', () => {
 
 test('原型召唤与面板召唤共享确定性编号', () => {
   const { state, actor, cast, program } = fixture();
-  state.summonTemplates = { echo: { ...structuredClone(actor), id: 'echo', mainHand: null, weapon: null, gear: [] } };
+  state.summonTemplates = { echo: { name: actor.name, tier: actor.tier, maxHp: actor.maxHp,
+    maxMp: actor.maxMp, maxSp: actor.maxSp, skills: [], gear: [] } };
   program.unshift({ op: 'spawn', entityKind: 'unit', spec: { templateId: 'echo' } });
   cast();
   assert.equal(state.units['summon-1'].name, actor.name);
   assert.equal(state.units['summon-1'].maxHp, actor.maxHp);
   assert.equal(state.units['summon-2'].name, '沙偶');
+});
+
+for (const [name, values, count, expected, mc] of [
+  ['盾卫', [8, 6, 10, 6, 10], 1, [30040, 12000, 10500], 3],
+  ['刺客', [8, 14, 6, 6, 6], 4, [1510, 2250, 4125], 1],
+  ['鼓舞者', [6, 8, 6, 10, 10], 6, [1007, 2500, 1750], 1],
+]) {
+  test(`卡梅拉 T4 ${name} ×${count} 的蓝图面板`, () => {
+    const { state, actor, cast, program } = fixture({}, 4, 14, count);
+    actor.level = 20;
+    const stats = Object.fromEntries(['str', 'agi', 'con', 'int', 'spi'].map((key, i) => [key, values[i]]));
+    state.summonTemplates = { generic: { name, tier: 4, stats: { ...stats, con: `self.int - ${14 - stats.con}` },
+      mainHand: 'vial', skills: ['brand'] } };
+    program[0].spec = { templateId: 'generic', count, ...(mc === 3 && { spawnPanel: { mc } }) };
+    cast();
+    const summons = Object.values(state.units).filter(unit => unit.summoned);
+    assert.equal(summons.length, count);
+    for (const unit of summons) {
+      assert.deepEqual(unit.stats, stats);
+      assert.deepEqual([unit.maxHp, unit.maxMp, unit.maxSp], expected);
+      assert.deepEqual([unit.tier, unit.level, unit.mc], [4, 20, mc]);
+      assert.deepEqual(unit.skills, ['brand']);
+      assert.equal(state.items[unit.mainHand].templateId, 'vial');
+      if (mc === 3) assert.deepEqual([unit.bodyLengthM, unit.size], [20, 5]);
+    }
+    const raw = calculatePrebattleResources({ stats, tier: 4, mc, summonCount: count }).resources;
+    assert.equal(raw.hp.rawMax, (stats.con * 1000 * mc + 40) / count);
+    if (count === 4) assert.equal(raw.hp.rawMax * count, 6040);
+    if (count === 6) assert.equal(summons.reduce((total, unit) => total + unit.maxHp, 0), 6042);
+  });
+}
+
+test('嵌套召唤规则拒绝缺失的模板、技能和装备引用', () => {
+  for (const [spec, error] of [
+    [{ templateId: 'missing' }, /召唤模板引用 missing/],
+    [{ spawnPanel: { skills: ['missing'] } }, /召唤技能引用 missing/],
+    [{ spawnPanel: { gear: ['missing'] } }, /召唤装备引用 missing/],
+  ]) {
+    const { state, program } = fixture();
+    program[0] = { op: 'if', cond: true, then: [{ op: 'spawn', entityKind: 'unit', spec }] };
+    assert.throws(() => validateState(state), error);
+  }
+});
+
+test('锚点本回合与下一回合各自到期，失锚改按大轮', () => {
+  const { state, actor, cast, program } = fixture();
+  program.length = 0;
+  for (const [name, remainingTurns, durationAnchor] of [['本回合', 1, 'self'], ['下一回合', 2, 'self'],
+    ['失锚', 1, { from: 'units', where: 'candidate.team != self.team' }]]) {
+    program.push({ op: 'spawn', entityKind: 'unit', spec: { name, remainingTurns, durationUnit: 'anchor_turns', durationAnchor } });
+  }
+  cast();
+  const orphan = state.units['summon-3'];
+  state.units[orphan.durationAnchorId].fled = true;
+  applyAction(state, { type: 'end' });
+  assert.equal(state.units['summon-1'], undefined);
+  assert.equal(state.units['summon-2'].remainingTurns, 1);
+  while (state.round === 1) applyAction(state, { type: 'end' });
+  assert.equal(state.units['summon-3'], undefined);
+  assert.equal(state.units['summon-2'].remainingTurns, 1);
+  while (currentUnit(state).id !== actor.id) applyAction(state, { type: 'end' });
+  applyAction(state, { type: 'end' });
+  assert.equal(state.units['summon-2'], undefined);
+  validateState(state);
 });
 
 test('召唤事务的快照重放与撤销包含单位、装备实例和资源池', () => {

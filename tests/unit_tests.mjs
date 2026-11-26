@@ -136,7 +136,8 @@ test('原协议资源：层级、巨兽、集群与固定召唤总数独立计�
   const mix=calculatePrebattleResources({ stats,tier:2,bodyLengthM:50,count:3,summonCount:5 });
   assert.equal(mix.mc,4);
   assert.deepEqual(mix.multipliers,{hp:1.6,mp:.5,sp:.5});
-  assert.equal(mix.resources.hp.max,3006); assert.equal(mix.resources.sp.max,2100);
+  assert.equal(mix.resources.hp.rawMax, 2905.2);
+  assert.equal(mix.resources.hp.max,2905); assert.equal(mix.resources.sp.max,2100);
   assert.equal(protocolDistance({x:0,y:0,z:0},{x:3,y:4,z:2}),5);
   assert.throws(()=>calculatePrebattleResources({stats,tier:8}), /层级/);
   assert.throws(()=>calculatePrebattleResources({stats,tier:1,summonCount:0}), /召唤/);

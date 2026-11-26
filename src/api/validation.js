@@ -1,7 +1,7 @@
 import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
-import { carrierFlags, damageTypes, durationTypes, skillShapes, skillTargets, stackModes as vmStackModes, zoneAreaShapes } from '../core/vm-schema.js';
+import { carrierFlags, damageTypes, durationTypes, skillShapes, skillTargets, stackModes as vmStackModes, zoneAreaShapes, summonTemplatePanelFields } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { validateCustomElements } from '../core/elements.js';
 
@@ -20,6 +20,7 @@ function validateRules(rules, state) {
     requireThat(!issue, `VM 规则 rules/${index}${typeof rule?.id === 'string' ? `（${rule.id}）` : ''}/${issue}`);
   }
   requireThat(new Set(rules.map(rule => rule.id)).size === rules.length, 'VM 规则 ID 重复');
+  if (state?.units && state.equipment && state.skills) validateSummonReferences(rules, state);
 }
 
 export const own = Object.hasOwn;
@@ -227,7 +228,7 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','attunementCharges','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'durationUnit', 'durationAnchorId']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
@@ -242,6 +243,9 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'moveCarryPermille', x => int(x, 0, 999));
   checkOptional(v, 'lastMoveDir', x => x === null || ['N', 'S', 'E', 'W'].includes(x));
   checkOptional(v, 'remainingTurns', x => int(x, 1, 100));
+  checkOptional(v, 'durationUnit', x => v.summoned === true && v.remainingTurns !== undefined
+    && (x === 'rounds' && v.durationAnchorId === undefined || x === 'anchor_turns' && id(v.durationAnchorId)));
+  checkOptional(v, 'durationAnchorId', x => v.durationUnit === 'anchor_turns' && id(x));
   checkOptional(v, 'moveSpent', x => int(x, 0, 1000000000));
   for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
   checkOptional(v, 'corpseOf', id);
@@ -399,6 +403,33 @@ export function validatePools(state) {
     }
   }
 }
+function validateSummonLoadout(panel, state) {
+  for (const skill of panel.skills ?? []) requireThat(has(state.skills, skill), `召唤技能引用 ${skill}`);
+  for (const item of [panel.mainHand, panel.offHand, panel.shield, ...(panel.gear ?? [])].filter(Boolean)) {
+    requireThat(has(state.equipment, item), `召唤装备引用 ${item}`);
+  }
+}
+
+function validateSummonReferences(node, state) {
+  if (!node || typeof node !== 'object') return;
+  if (node.op === 'spawn' && node.entityKind === 'unit') {
+    const { templateId, spawnPanel } = node.spec;
+    if (templateId !== undefined) requireThat(has(state.summonTemplates, templateId), `召唤模板引用 ${templateId}`);
+    if (spawnPanel) validateSummonLoadout(spawnPanel, state);
+  }
+  for (const child of Object.values(node)) validateSummonReferences(child, state);
+}
+
+function summonTemplateValue(v, state) {
+  fields(v, ['name'], [...new Set([...carrierFields, ...summonTemplatePanelFields]), 'turnMode', 'durationUnit']);
+  requireThat(text(v.name), '召唤模板名称');
+  const spawnPanel = Object.fromEntries(summonTemplatePanelFields.filter(key => own(v, key)).map(key => [key, v[key]]));
+  requireThat(validVmOpcode({ op: 'spawn', entityKind: 'unit', spec: { spawnPanel } }), '召唤模板面板');
+  carrierFieldsValue(v, state);
+  checkOptional(v, 'turnMode', x => ['independent', 'linked_group', 'linked_each', 'none'].includes(x));
+  checkOptional(v, 'durationUnit', x => ['rounds', 'anchor_turns'].includes(x));
+  validateSummonLoadout(spawnPanel, state);
+}
 export function validateState(s) {
   fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','suppressingTeam','vm','pools','tape','scale','customElements']);
   if (own(s, 'customElements')) validateCustomElements(s.customElements);
@@ -410,8 +441,11 @@ export function validateState(s) {
     requireThat(text(s.time.raw, 500) && typeof s.time.calendar === 'string' && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23)
       && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), 'time');
   }
-  if (own(s, 'summonTemplates')) table(s.summonTemplates, (u, key) => { unitValue(u, key, s); requireThat(u.skills.every(skill => has(s.skills, skill)), 'summon skills'); });
-  if (own(s, 'statusTemplates')) statusTemplateTable(s.statusTemplates);
+  if (own(s, 'summonTemplates')) table(s.summonTemplates, u => summonTemplateValue(u, s));
+  if (own(s, 'statusTemplates')) {
+    statusTemplateTable(s.statusTemplates);
+    for (const template of Object.values(s.statusTemplates)) validateSummonReferences(template.rules, s);
+  }
   requireThat(id(s.scenarioId) && text(s.title) && s.mode === 'split' && ['protocol','sandbox'].includes(s.ruleset) && int(s.round, 1, 1000000) && int(s.rng, 0, 0xffffffff)
     && [null,'blue','red','draw'].includes(s.outcome), '战局');
   requireThat(Array.isArray(s.grid) && int(s.grid.length, 8, 20), '棋盘');

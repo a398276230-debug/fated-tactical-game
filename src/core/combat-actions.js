@@ -299,6 +299,11 @@ function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
     }
   }
   record(state, unit, 'end', `${unit.name}结束回合`);
+  advanceVMSpatial(state, { anchorUnitId: unit.id });
+  if (state.vm.pendingAsk) {
+    state.vm.endingTurn = unit.id;
+    state.vm.endingSpatial = true;
+  }
 }
 
 // Automatic skips are bounded even if sandbox commands make every living unit permanently stunned.
@@ -1686,6 +1691,7 @@ export function applyAction(state, action) {
       state.vm.events = {};
       delete state.vm.endingTurn;
       delete state.vm.endingStatuses;
+      delete state.vm.endingSpatial;
       delete state.vm.startingTurn;
       delete state.vm.settlingTurn;
     } else {
@@ -1697,7 +1703,8 @@ export function applyAction(state, action) {
         const remainingStatuses = state.vm.endingStatuses;
         delete state.vm.endingTurn;
         delete state.vm.endingStatuses;
-        completeTurnEnd(state, endingUnit, remainingStatuses);
+        if (state.vm.endingSpatial) delete state.vm.endingSpatial;
+        else completeTurnEnd(state, endingUnit, remainingStatuses);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
       } else if (!result.pendingAsk && state.vm.startingTurn) {
         settleTurn(state);
