@@ -5,6 +5,7 @@ import { activeNarrativeExemptions, normalizationLimit, normalizationLimits, nor
 import { mount as defaultMount } from '../ui/mount.js';
 import { validateState as defaultValidateState } from '../api/validation.js';
 import { refreshOpeningInitiative, refreshOutcome, syncEquipmentEffects } from '../core/combat.js';
+import { getPool } from '../core/vm-pools.js';
 import { battleReportToMvuPatch } from './converter-patch.js';
 import { outcomeDigest, rollbackBattleOutcome, writeBattleOutcome, writebackReceipt } from './mvu-writeback.js';
 import { hostMethod, probeMvuWriteCapability, readBattleVariables, readChatMessages, statData } from './host.js';
@@ -1101,6 +1102,14 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     refreshOutcome(next);
     return next;
   }
+  function calibrateOpeningPools(state, sourceMap) {
+    for (const binding of Object.values(sourceMap ?? {}).flatMap(mapping => mapping.counterBindings ?? [])) {
+      if (binding.ownerKind !== 'unit' || binding.poolKey == null || binding.current == null) continue;
+      const pool = getPool(state, binding.unitId, binding.poolKey, 'unit');
+      if (pool) pool.current = Math.max(0, Math.min(pool.max, Number(binding.current)));
+    }
+    return state;
+  }
   function chatOpeningPatches(key) {
     const stored = readBattleStorage(key, 'chat-opening-patches');
     return Array.isArray(stored) ? stored : [];
@@ -1205,6 +1214,7 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap(batch => batch.patch)) : null;
       if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key);
+      if (currentState && hydrated?.sourceMap) currentState = calibrateOpeningPools(currentState, hydrated.sourceMap);
       // Identical raw text can produce different skill mechanics after a converter fix.
       // Compare effective opening templates, not the board after turns have been played.
       const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || (unchangedOpening && !invalid &&

@@ -142,10 +142,14 @@ test('warning groups are exclusive and select only pending work for the default 
   assert.deepEqual(classifyWarnings(all, { ...bindings, exemptions: [], fingerprint: () => undefined }).pending, [pending, approx, ignored]);
 });
 
-test('normalization accepts pool definitions and rejects direct and whole-instance pool writes', () => {
+test('normalization accepts unit pool definitions and rejects runtime pool writes', () => {
   const state = { equipment: { blade: {} }, items: { blade: {}, bound: { pools: { charge: 'runtime-id' } } } };
   const paths = ['/units/u1/pools', '/items/blade/pools', '/items/blade/pools/charge'];
   for (const path of paths) assert.equal(normalizationPath.test(path), false, path);
+  assert.equal(normalizationPath.test('/units/u1/unitPools/souls'), true);
+  assert.equal(normalizationPath.test('/units/u1/unitPools/souls/cap'), true);
+  assert.equal(normalizationPath.test('/statusTemplates/s1/unitPools'), false);
+  assert.equal(normalizationPath.test('/statusTemplates/s1/unitPools/souls/cap'), false);
   assert.equal(normalizationPath.test('/skills/s1/pools/charge'), true);
   const rawPatch = [...paths.map(path => ({ op: 'add', path, value: {} })),
     { op: 'replace', path: '/items/blade', value: { pools: { charge: 'invalid' } } },

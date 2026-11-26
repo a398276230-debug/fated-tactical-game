@@ -8,7 +8,9 @@ import { evaluateExpr } from '../src/core/formula.js';
 import { getPool, updatePoolMax } from '../src/core/vm-pools.js';
 import { initializeVMWorld } from '../src/core/vm-runtime.js';
 import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
+import { hydrateFromSources } from '../src/tavern/converter.js';
 import { normalizationPath } from '../src/tavern/normalization-batches.js';
+import { staticProjection } from '../src/tavern/converter-parse.js';
 
 function fixture() {
   const game = createGameAPI(); game.createBattle('ruins');
@@ -48,6 +50,30 @@ test('单位池跨载体合并，施放扣费，空池拒绝预览，战后写�
   skill.unitPools.souls = { cap: 14, initial: 10 };
   initializeVMWorld(state); validateState(state);
   assert.deepEqual([pool().max, pool().current], [14, 0]);
+});
+
+test('真实 MVU 资源池自动识别、开场同步、写回与静态指纹脱敏', () => {
+  const mvu = { 主角: { 属性: { 力量: 5, 敏捷: 5, 体质: 5, 智力: 5, 精神: 5 },
+    资源: { 剑意: { 当前: 7, 上限: 10 }, 魂量: 3 }, 灵魂计数: 4, 灵魂计数上限: 8,
+    标签: ['灵魂计数：2', '品质：稀有'] } };
+  const input = { mvu, battleInit: 'battle|1|pool-fixture|池测试|flat\nunit|p1|blue|mvu:主角|主角|1,1' };
+  const hydrated = hydrateFromSources(input, { throwOnValidation: true });
+  const unit = hydrated.state.units.p1;
+  assert.deepEqual(Object.keys(unit.unitPools).sort(), ['souls', 'souls_2', 'souls_3', 'sword_intent']);
+  assert.equal(hydrated.sourceMap.p1.counterBindings.filter(binding => binding.ownerKind === 'unit').length, 4);
+  const bindings = Object.fromEntries(hydrated.sourceMap.p1.counterBindings.map(binding => [binding.poolKey, binding]));
+  assert.deepEqual([bindings.sword_intent.current, bindings.sword_intent.max, bindings.sword_intent.mvuPath], [7, 10, ['主角', '资源', '剑意', '当前']]);
+  assert.deepEqual([bindings.souls.current, bindings.souls.max, bindings.souls.mvuPath], [3, null, ['主角', '资源', '魂量', 'current']]);
+  assert.deepEqual(bindings.souls_2.mvuPath, ['主角', '灵魂计数']);
+  assert.deepEqual(bindings.souls_3.mvuPath, ['主角', '标签', 0]);
+  assert.equal(getPool(hydrated.state, 'p1', 'sword_intent').current, 7);
+  assert.equal(getPool(hydrated.state, 'p1', 'souls').current, 3);
+  assert.equal(getPool(hydrated.state, 'p1', 'souls_2').current, 4);
+  assert.deepEqual(battleReportToMvuPatch(hydrated.state, hydrated.sourceMap).filter(operation => operation.path.includes('/资源/剑意')), []);
+  updatePoolMax(hydrated.state, getPool(hydrated.state, 'p1', 'sword_intent').id, 'set_max', 12);
+  assert.deepEqual(staticProjection(mvu.主角).资源, { 剑意: { 当前: '<DYNAMIC>', 上限: 10 }, 魂量: '<DYNAMIC>' });
+  assert.deepEqual(staticProjection({ unitPools: { souls: { cap: 10, initial: 4, current: 3 } } }), { unitPools: { souls: { cap: 10, initial: '<DYNAMIC>', current: '<DYNAMIC>' } } });
+  assert.equal(staticProjection({ 灵魂计数: 4, 灵魂计数上限: 8 }).灵魂计数, '<DYNAMIC>');
 });
 
 test('持有装备实例池支持公式，扣费优先于同名单位池', () => {

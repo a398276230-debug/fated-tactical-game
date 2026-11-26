@@ -61,6 +61,8 @@ function rawTagValues(raw) {
 // current values must never participate in normalization fingerprints.
 export const DYNAMIC_TAG_RE = /^(?<label>[^:：0-9]+?(?:计数|层数|充能|弹药|箭矢|灵魂|能量|魔力|耐久|次数|印记|残弹|装填))(?<sep>\s*[:：]\s*)(?<cur>\d+)(?:\s*(?<slash>[\/／])\s*(?<max>\d+))?$/u;
 const DYNAMIC_FIELD_KEYS = new Set(['当前弹药', '当前充能', '当前层数', 'currentCharges', 'currentAmmo', 'currentStacks']);
+export const UNIT_COUNTER_KEY_RE = /^(?:当前)?[^:：0-9]{1,16}?(?:计数|充能|层数|魂量|魂数|剑意|怒气|狂怒|战意|理智|印记|残弹|信仰值|能量值|连击点)$/u;
+const STATIC_UNIT_COUNTER_KEYS = new Set(['等级', '生命层级', '层级', '体长', '身高', '体重', '年龄', '护甲', '防御', '防御力', '攻击', '攻击力', '命中', '闪避', '先手', '暴击', '移动力', '速度', '金币', '金钱', '货币', '好感', '好感度', '经验', '经验值']);
 const RUNTIME_STATUS_KEYS = new Set(['层数', 'stacks', '剩余回合', 'remainingTurns', '剩余时间', 'remainingTime', '护盾值', 'amount']);
 const STATIC_TAG_KEY_RE = /^(?:攻击|攻击力|防御|防御力|防具|护甲|威力|射程|有效距离|范围|先手|命中|闪避|暴击|重量|等级|层级|品质|体型)(?:\([^)]*\))?$/u;
 
@@ -84,16 +86,26 @@ export function staticProjection(value, context = {}) {
   if (!object(value)) return value;
   const result = {};
   for (const [key, child] of Object.entries(value)) {
-    if (DYNAMIC_FIELD_KEYS.has(key) || key === 'initial' && context.pool) continue;
-    if (context.resource && ['current', '当前', 'now', 'value'].includes(key)) continue;
+    if (context.resource && (typeof child === 'number' || typeof child === 'string') && !['上限', 'max', 'maximum'].includes(key)) { result[key] = '<DYNAMIC>'; continue; }
+    if (DYNAMIC_FIELD_KEYS.has(key)) { result[key] = '<DYNAMIC>'; continue; }
+    if (context.pool && ['initial', 'current', '当前', 'now', 'value'].includes(key)) { result[key] = '<DYNAMIC>'; continue; }
+    if (context.resource && ['current', '当前', 'now', 'value'].includes(key)) { result[key] = '<DYNAMIC>'; continue; }
     if (context.status && RUNTIME_STATUS_KEYS.has(key)) continue;
     if (key === '标签' || key === 'tags') {
       result[key] = [].concat(child).map(item => dynamicTag(item)?.normalized ?? item);
       continue;
     }
-    if (key === 'pools' || key === '资源池') {
+    if (key === 'pools' || key === 'unitPools' || key === '资源池') {
       result[key] = Object.fromEntries(Object.entries(asObject(child)).map(([poolKey, pool]) => [poolKey,
         staticProjection(pool, { pool: true })]));
+      continue;
+    }
+    if (key === 'resources' || key === 'resource' || key === '资源' || key === '计数器' || key === 'counters') {
+      result[key] = staticProjection(child, { resource: true });
+      continue;
+    }
+    if ((UNIT_COUNTER_KEY_RE.test(key) && !STATIC_UNIT_COUNTER_KEYS.has(key)) || key === '当前') {
+      result[key] = typeof child === 'number' || typeof child === 'string' ? '<DYNAMIC>' : staticProjection(child, context);
       continue;
     }
     if (['生命值', '法力值', '体力值', 'hp', 'mp', 'sp'].includes(key)) {
@@ -110,6 +122,89 @@ export function staticProjection(value, context = {}) {
     result[key] = staticProjection(child, context);
   }
   return result;
+}
+
+const SEMANTIC_UNIT_POOL_KEYS = [
+  [/^(?:灵魂|魂量|魂数|魂魄)(?:计数|值|池)?$/u, 'souls'],
+  [/^剑意(?:层数|值|池)?$/u, 'sword_intent'],
+  [/^(?:怒气|狂怒|战意)(?:值|池)?$/u, 'rage'],
+  [/^(?:充能|蓄能)(?:层数|计数|值)?$/u, 'charge'],
+  [/^(?:理智|精神值|san|SAN)(?:值)?$/u, 'sanity'],
+  [/^(?:信仰|虔诚)(?:值|力)?$/u, 'faith'],
+  [/^(?:印记|刻印)(?:层数|计数)?$/u, 'marks'],
+  [/^(?:连击|连段)(?:点|数|层数)?$/u, 'combo'],
+  [/^(?:能量|源能|灵能)(?:值|池)?$/u, 'energy_pool'],
+  [/^(?:魔力|法术位)(?:计数|充能|值)?$/u, 'arcane_charge'],
+];
+
+export function unitPoolKeyFromLabel(rawName) {
+  const name = text(rawName);
+  if (/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(name) && !['hp', 'mp', 'sp'].includes(name)) return name;
+  return SEMANTIC_UNIT_POOL_KEYS.find(([pattern]) => pattern.test(name))?.[1]
+    ?? deterministicId(name, 'pool').replaceAll('-', '_');
+}
+
+const RESERVED_UNIT_KEYS = new Set(['姓名', 'name', 'id', 'ID', '等级', 'level', '生命层级', 'tier', '体长', 'bodyLengthM', '属性', 'stats', 'attributes', '生命值', '法力值', '体力值', 'hp', 'HP', 'mp', 'MP', 'sp', 'SP', '护甲', 'armor', '防御', '移动力', 'move', 'mc', '装备', 'equipment', 'gear', '武器', '技能', 'skills', '背包', 'inventory', 'bag', '道具', 'items', '状态', '状态效果', 'statuses', 'effects', '登神长阶', '位置', '坐标', 'position', '朝向', 'facing', '阵营', 'team', '立绘', 'avatar', 'portrait', '标签', 'tags', '元数据', 'meta', '规则', 'rules', 'mods', 'pools', 'unitPools', '资源池', '资源', 'resource', 'resources', '计数器', 'counters']);
+const CURRENT_KEYS = ['当前', 'current', 'now', 'value'];
+const MAX_KEYS = ['上限', 'max', 'maximum'];
+function finiteCounter(value) {
+  const parsed = number(value, NaN);
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : null;
+}
+function poolEntry(rawKey, label, current, explicitMax, subPath, format = { kind: 'field_number' }, initialRawValue) {
+  const value = finiteCounter(current) ?? 0;
+  const max = finiteCounter(explicitMax);
+  return { rawKey, label: text(label) || text(rawKey), current: value, explicitMax: max, cap: max ?? Math.max(value, 999), subPath,
+    format, ...(initialRawValue !== undefined ? { initialRawValue } : {}) };
+}
+function resourceEntry(rawKey, label, value, subPath) {
+  const currentKey = CURRENT_KEYS.find(key => own(value, key));
+  const current = object(value) ? value[currentKey] : value;
+  const maxRaw = object(value) ? MAX_KEYS.find(key => own(value, key)) && value[MAX_KEYS.find(key => own(value, key))] : undefined;
+  const explicitMax = object(maxRaw) ? finiteCounter(number(maxRaw._基础, 0) + number(maxRaw.额外, 0)) : finiteCounter(maxRaw);
+  return poolEntry(rawKey, label, current, explicitMax, [...subPath, ...(currentKey ? [currentKey] : [])]);
+}
+export function extractUnitPoolEntries(record) {
+  const source = asObject(record), entries = [], seen = new Set();
+  const add = entry => { const key = JSON.stringify(entry.subPath); if (!seen.has(key)) { seen.add(key); entries.push(entry); } };
+  for (const [rawKey, value] of Object.entries(asObject(source.unitPools ?? source.资源池))) {
+    if (!object(value)) continue;
+    const currentKey = CURRENT_KEYS.find(key => own(value, key));
+    add(poolEntry(rawKey, value.name ?? value.名称 ?? rawKey, value[currentKey] ?? value.initial, value.cap ?? value.max ?? value.上限,
+      ['unitPools', rawKey, ...(currentKey ? [currentKey] : ['initial'])], { kind: 'field_number' }, value[currentKey] ?? value.initial));
+  }
+  for (const containerKey of ['资源', 'resources', 'resource']) {
+    for (const [rawKey, value] of Object.entries(asObject(source[containerKey]))) {
+      if (RESOURCE_ALIASES.hp.includes(rawKey) || RESOURCE_ALIASES.mp.includes(rawKey) || RESOURCE_ALIASES.sp.includes(rawKey)
+        || RESOURCE_MAX_ALIASES.hp.includes(rawKey) || RESOURCE_MAX_ALIASES.mp.includes(rawKey) || RESOURCE_MAX_ALIASES.sp.includes(rawKey)) continue;
+      const sibling = asObject(source[containerKey]);
+      const maxKey = [`${rawKey}上限`, `${rawKey}Max`].find(key => own(sibling, key));
+      add(resourceEntry(rawKey, rawKey, object(value) ? value : { current: value, ...(maxKey ? { max: sibling[maxKey] } : {}) }, [containerKey, rawKey]));
+    }
+  }
+  for (const [rawKey, value] of Object.entries(source)) {
+    if (RESERVED_UNIT_KEYS.has(rawKey)) continue;
+    if (object(value) && CURRENT_KEYS.some(key => own(value, key)) && !['效果', '类型', '品质', '层数', 'stacks', '剩余回合', 'remainingTurns', '剩余时间'].some(key => own(value, key))) {
+      add(resourceEntry(rawKey, rawKey, value, [rawKey]));
+      continue;
+    }
+    if (finiteCounter(value) != null && (DYNAMIC_FIELD_KEYS.has(rawKey) || UNIT_COUNTER_KEY_RE.test(rawKey)) && !STATIC_UNIT_COUNTER_KEYS.has(rawKey)) {
+      const maxKey = [`${rawKey}上限`, `${rawKey}Max`].find(key => own(source, key));
+      add(poolEntry(rawKey, rawKey, value, maxKey ? source[maxKey] : null, [rawKey]));
+    }
+  }
+  for (const containerKey of ['计数器', 'counters']) {
+    for (const [rawKey, value] of Object.entries(asObject(source[containerKey]))) {
+      add(resourceEntry(rawKey, rawKey, value, [containerKey, rawKey]));
+    }
+  }
+  for (const [tagsKey, tags] of [['标签', source.标签], ['tags', source.tags]]) {
+    if (!Array.isArray(tags)) continue;
+    tags.forEach((rawTag, index) => { const dynamic = dynamicTag(rawTag); if (!dynamic) return;
+      add(poolEntry(dynamic.label, dynamic.label, dynamic.current, dynamic.max, [tagsKey, index],
+        { kind: dynamic.max == null ? 'tag_single' : 'tag_slash', sep: dynamic.sep, slash: dynamic.slash }, text(rawTag))); });
+  }
+  return entries;
 }
 
 export function normalizeClauseForHash(value) {

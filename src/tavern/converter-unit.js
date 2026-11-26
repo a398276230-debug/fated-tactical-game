@@ -4,14 +4,14 @@ import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TI
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
-import { getPool, updatePoolCurrent } from '../core/vm-pools.js';
+import { getPool, updatePoolCurrent, updatePoolMax } from '../core/vm-pools.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
-import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, warningSink, WARNING_SCOPES } from './converter-parse.js';
+import { asObject, attrNames, bound, charSources, clone, collectMvu, defaultCoverHp, describe, deterministicId, dynamicTag, emptyEntry, extractUnitPoolEntries, findValue, hash, integer, narrativeEntries, number, object, own, parseBattleInit, parseCharInfo, protagonistAliases, qualityOf, rawTagValues, resolveParticipant, resource, resourceValue, RESOURCE_ALIASES, RESOURCE_MAX_ALIASES, safeResource, samePath, sourceId, sourceName, staticProjection, statAliases, statsOf, statusId, statusTurns, text, tierNumber, unitPoolKeyFromLabel, warningSink, WARNING_SCOPES } from './converter-parse.js';
 import { activeRule, ammoCounter, appendRules, areaFields, attachAmmoPool, convertNarrative, damageAliases, damageTags, damageTypes, finalizeEquipment, geometryFields, instructions, isAreaDamage, mapEffects, normalizeDice, normalizeEquipment, readCombatTags, readMods, readPools, readRules, skillCosts } from './converter-effects.js';
 
 /*
@@ -226,6 +226,7 @@ function importBackpack(bag, owner, skills, sink, entrySources, inventoryPaths, 
     const id = `bag-${hash(owner).toString(36)}-${hash(name).toString(36)}`;
     entrySources[`skills:${id}`] = staticProjection(item);
     if (Array.isArray(sourcePath)) inventoryPaths[id] = {
+      skillId: id,
       countPath: [...sourcePath, '背包', name, Object.hasOwn(item, '数量') ? '数量' : 'count'],
       initialCount: count,
     };
@@ -266,8 +267,25 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const sourceEntries = sourceEquipment(record[equipmentKey], equipmentPath);
   const bagEntries = sourceEquipment(record.背包, sourcePath ? [...sourcePath, '背包'] : null);
   const entrySources = {}, equipmentKeys = new Map();
-  const dynamicOverlay = { units: {}, itemCounters: {}, inventory: {} };
+  const dynamicOverlay = { units: {}, itemCounters: {}, unitCounters: {}, inventory: {} };
   const counterBindings = [];
+  const unitPools = {};
+  const usedUnitPoolKeys = new Set();
+  for (const entry of extractUnitPoolEntries(record)) {
+    const baseKey = unitPoolKeyFromLabel(entry.rawKey || entry.label);
+    let poolKey = baseKey;
+    for (let suffix = 2; Object.hasOwn(unitPools, poolKey); suffix++) poolKey = `${baseKey}_${suffix}`;
+    usedUnitPoolKeys.add(poolKey);
+    unitPools[poolKey] = { name: entry.label, cap: entry.cap, initial: Math.min(entry.cap, entry.current) };
+    if (Array.isArray(sourcePath) && sourcePath.length && entry.subPath) {
+      const binding = { ownerKind: 'unit', target: { kind: 'unit_pool', poolKey }, poolKey, label: entry.label,
+        unitId: id, current: entry.current, max: entry.explicitMax ?? null, hasExplicitCap: entry.explicitMax != null,
+        ...(entry.initialRawValue !== undefined ? { initialRawValue: entry.initialRawValue } : {}), format: entry.format,
+        mvuPath: [...sourcePath, ...entry.subPath] };
+      counterBindings.push(binding);
+      dynamicOverlay.unitCounters[poolKey] = binding;
+    }
+  }
   const inventoryPaths = {};
   const addBinding = (item, path, { path: suffix, ...counter }, poolKey) => {
     const binding = { ...counter, ownerKind: 'item', poolKey, itemId: item.id, templateId: item.templateId, itemName: item.template.name,
@@ -475,7 +493,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
   const rawMove = number(findValue(record, ['move','movement','移动'], null), NaN);
   const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), facing, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', attunementCharges: stanceRules('attunement').itemCharges, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
+  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, facing, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...(Object.keys(unitPools).length ? { unitPools } : {}), ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', attunementCharges: stanceRules('attunement').itemCharges, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
   if (p.moraleType && !moraleTypeFor(p.moraleType)) sink('state').push(`未知战斗类型「${p.moraleType}」，按标准处理`);
   if (isProtagonist) {
     const bagWeapons = [];
@@ -503,7 +521,7 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   unit.rules = readRules(record.rules, sink('effect', `/units/${id}`));
   unit.mods = readMods(record.mods, sink('effect', `/units/${id}`));
   dynamicOverlay.units[id] = { hp: resources.hp.current, mp: resources.mp.current, sp: resources.sp.current,
-    statuses: clone(statuses), inventory: clone(inventoryPaths) };
+    statuses: clone(statuses), inventory: clone(inventoryPaths), unitPools: clone(unitPools) };
   return { unit, entrySources, dynamicOverlay, counterBindings, inventoryPaths, profile: { id, skillInfo, level, tier, stats, bodyLengthM, size, mc, hp: resources.hp, mp: resources.mp, sp: resources.sp, equipment: clone(slotItems), sourcePath: record.__sourcePath ?? null, sourceKind: record.__sourceKind || 'unknown', fieldSources: { numeric: record.__sourceKind || 'unknown', equipment: record.__sourceKind || 'unknown', placement: 'battle_init', faction: 'battle_init', name: p.protagonistName ? 'persona' : (p.name ? 'battle_init' : (record.__sourceKind || 'unknown')) } }, participant: p };
 }
 
@@ -705,8 +723,13 @@ export function hydrateFromSources(input = {}, options = {}) {
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
     if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
-    const pool = getPool(state, binding.itemId, binding.poolKey, 'item');
-    if (pool) updatePoolCurrent(state, pool.id, 'set', binding.current);
+    const isUnit = binding.ownerKind === 'unit' || binding.target?.kind === 'unit_pool';
+    const pool = isUnit
+      ? getPool(state, binding.unitId, binding.poolKey, 'unit')
+      : getPool(state, binding.itemId, binding.poolKey, 'item');
+    if (!pool) continue;
+    if (binding.current > pool.max) updatePoolMax(state, pool.id, 'set_max', binding.current);
+    updatePoolCurrent(state, pool.id, 'set', binding.current);
   }
   const time = parseBattleTime(source.task, source.battle, source.battleText, source.latestFloor, source.battleInit, source.battle_init);
   if (time) state.time = time;
