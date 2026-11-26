@@ -21,7 +21,7 @@ function parseJSON(value, fallback = null) {
   if (value && typeof value === 'object') return value;
   try { return JSON.parse(String(value)); } catch (_) { return fallback; }
 }
-export const TAVERN_VERSION = '0.5.1';
+export const TAVERN_VERSION = '0.5.2';
 
 export const LARGE_CONFIG_KEYS = ['charSnapshots', 'normalizationBatches', 'narrativeExemptions', 'unresolvedNotes'];
 export const separateConfigKey = (key, field) => `${key}/${field}`;
