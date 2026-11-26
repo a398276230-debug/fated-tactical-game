@@ -172,7 +172,7 @@ test('step and teleport can carry a locked unit without consuming movement or pr
     assert.equal(api.playAction({ type: 'skill', skillId: 'tow', x: actor.x, y: actor.y }).ok, true);
     const after = api.getBattleState();
     assert.equal(after.units[actor.id].y, actor.y + Number(ignoreLocks));
-    assert.equal(after.units[actor.id].moveSpent ?? 0, 0);
+    assert.equal(after.units[actor.id].moveSpentPermille ?? 0, 0);
     assert.equal(after.logs.some(log => log.type === 'opportunity'), false);
   }
 });

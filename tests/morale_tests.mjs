@@ -95,7 +95,6 @@ test('溃逃 AI 进行逃跑对抗，队友在场不直接判负；处决评级�
   for (const type of ['standard','arena','spar','suppress','deathmatch','guard']) {
     s.battleType=type;assert.match(preview(s,{type:'flee'}).error,/边界/);
   }
-  const move=chooseAction(s);assert.equal(move.type,'move');applyAction(s,move);assert.ok(!e.fled);assert.equal(preview(s,{type:'flee'}).ok,false);
-  e.used={action:0,attack:0};e.ap=2;
+  const move=chooseAction(s);assert.equal(move.type,'move');applyAction(s,move);assert.ok(!e.fled);assert.equal(preview(s,{type:'flee'}).ok,true);
   const escape=chooseAction(s);assert.equal(escape.type,'flee');applyAction(s,escape);assert.equal(e.fled,true);assert.equal(s.outcome,null);
 });

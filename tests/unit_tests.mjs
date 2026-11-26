@@ -56,6 +56,7 @@ import './skill_carrier_tests.mjs';
 import './log_attribution_tests.mjs';
 import './scale_grid_tavern_tests.mjs';
 import './scale_runtime_tests.mjs';
+import './move_budget_speed_tests.mjs';
 import './vm_authority_tests.mjs';
 import './vm_risc_symmetry_tests.mjs';
 import './bellica_movement_tests.mjs';
@@ -160,7 +161,7 @@ test('固定双槽：移动→普攻，RNG/动作日志与击杀计数可撤销�
   assert.equal(u(a,'swordsman').ap,2);
   act(a,'move',2,2);
   const before = a.exportBattleSnapshot();
-  assert.equal(u(a,'swordsman').ap,1);
+  assert.equal(u(a,'swordsman').ap,2);
   assert.equal(probe(a,'attack',3,2).hitChance,.95);
   assert.deepEqual(a.exportBattleSnapshot(),before);
   act(a,'attack',3,2);
@@ -177,7 +178,7 @@ test('架势防御区分空地与借掩体，战报不把站位当成遮蔽', ()
   assert.equal(a.previewAction({type:'brace'}).turns,1);
   commit(a, stats('scout',{x:3,y:0}));
   act(a,'move',3,2);
-  assert.equal(a.previewAction({type:'brace'}).ok,false); end(a); turn(a,'swordsman');
+  assert.equal(a.previewAction({type:'brace'}).ok,true); end(a); turn(a,'swordsman');
   const p=a.previewAction({type:'brace'});
   assert.equal(p.coverId,'C1'); assert.equal(p.turns,2); assert.equal(p.reduction,.35);
   act(a,'brace');
@@ -216,10 +217,13 @@ test('精简战报按轮和行动单位分组，不带骰值、JSON 或重复移
   assert.doesNotMatch(text, /<UpdateVariable>/);
 });
 
-test('双槽禁止两次移动；重技占 2 AP；轻技消耗 MP、施加状态', () => {
+test('分步移动后耗尽移动力，动作槽限制重技和轻技', () => {
   const a = boot({mode:'split'});
   act(a,'move',2,2);
-  assert.match(probe(a,'move',3,3).error,/槽/);
+  act(a,'move',3,3);
+  act(a,'move',4,3);
+  assert.match(probe(a,'move',5,3).error,/移动力已耗尽/);
+  act(a,'brace');
   assert.match(probe(a,'skill',3,2,'surge').error,/2 AP/);
   assert.throws(() => act(a,'skill',2,2,'armor'), /槽/);
   const b = boot();

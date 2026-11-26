@@ -76,12 +76,10 @@ test('reactor charge is spent even on a miss; starts ready and refills on its ow
   assert.equal(s.units.mover.hp, 50);
   assert.equal(s.units.sentry.reactionAvailable, false);
   assert.equal(preview(s, {type:'move',x:0,y:0}).ok,false);
-  s.units.mover.used.action=0; // isolate reaction availability from the mover's slot
-  assert.deepEqual(preview(s, { type: 'move', x: 0, y: 0 }).opportunities, []);
-  assert.equal(reactions(applyAction(s, { type: 'move', x: 0, y: 0 })).length, 0);
-  assert.equal(s.units.sentry.reactionAvailable, true);
+  assert.deepEqual(preview(s, { type: 'move', x: 2, y: 0 }).opportunities, []);
+  assert.equal(reactions(applyAction(s, { type: 'move', x: 2, y: 0 })).length, 0);
   applyAction(s, { type: 'end' });
-  assert.equal(preview(s, { type: 'move', x: 4, y: 0 }).opportunities.length, 1);
+  assert.equal(s.units.sentry.reactionAvailable, true);
 });
 
 test('simultaneous exits react by stable unit ID without spending AP or action slots', () => {
@@ -109,7 +107,8 @@ test('lethal or rooting reaction interrupts before entering the next square', ()
     if (lethal) assert.equal(s.units.mover.hp, 0);
     else {
       assert.equal(s.units.mover.statuses.root.remainingTurns, 1);
-      assert.equal(s.units.mover.ap, 1);
+      assert.equal(s.units.mover.ap, 2);
+      assert.equal(s.units.mover.moveSpentPermille, 2000);
       assert.equal(preview(s, { type: 'disengage', x: 4, y: 0 }).ok, false);
     }
   }
@@ -134,7 +133,7 @@ test('an interrupt cancels the attempted step without spending later reactors', 
 });
 
 test('disengage is a 1 AP move that neither provokes nor consumes a reaction', () => {
-  const s = hall();
+  const s = hall({ move: 7 });
   s.mode = 'split';
   const action = { type: 'disengage', x: 4, y: 0 };
   assert.equal(preview(s, action).ap, 1);
@@ -147,7 +146,7 @@ test('disengage is a 1 AP move that neither provokes nor consumes a reaction', (
   assert.equal(s.rng, 0);
   assert.equal(preview(s, action).ok, false);
   s.units.mover.used.action=0;
-  assert.equal(preview(s, { type: 'move', x: 0, y: 0 }).opportunities.length, 1, 'immunity does not carry to another move');
+  assert.equal(preview(s, { type: 'move', x: 1, y: 0 }).opportunities.length, 1, 'immunity does not carry to another move');
 });
 
 test('threat requires hostile ready melee, line of sight, and 3D weapon reach, but allows rooted reactors', () => {

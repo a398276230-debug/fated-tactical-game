@@ -187,9 +187,11 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   const banked = await run(`(() => {
     const state = window.FatedTacticalGame.getBattleState();
     const actor = state.units[state.order[state.turn]];
-    return [actor.x, actor.y, actor.moveCarryPermille, actor.used.action];
+    return [actor.x, actor.y, actor.moveCarryPermille, actor.used.action, actor.moveBanked];
   })()`);
-  assert.deepEqual(banked, [2, 2, 300, 1]);
+  assert.deepEqual(banked, [2, 2, 300, 0, true]);
+  await run('document.querySelector(\'#board .tactical-cell[data-x="2"][data-y="2"]\').click(); true');
+  assert.equal(await run('!!document.querySelector("#action-toolbar [data-action=move]")'), false);
   const report = await run('window.FatedTacticalGame.exportBattleReportText()');
   assert.match(report, /约 30%/);
   assert.doesNotMatch(report, /\d+(?:\.\d+)?\s*m\b|移动 0 格/);

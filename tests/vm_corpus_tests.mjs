@@ -271,6 +271,7 @@ test('turn tape preserves native movement, interaction and combat order across r
   game.playAction({ type: 'skill', skillId: 'tape_strike', x: 4, y: 1 });
   game.playAction(askAnswer(game, 1));
   game.playAction({ type: 'interact', x: 3, y: 1 });
+  game.playAction({ type: 'end' });
   const pending = game.getBattleState();
   assert.deepEqual(pending.tape.map(row => [row.seq, row.actionType]), [[1, 'move'], [2, 'skill'], [3, 'interact']]);
   assert.deepEqual(pending.logs.filter(log => log.type === 'action').map(log => log.detail.action.type), ['move', 'skill', 'interact', 'move', 'skill']);
@@ -292,6 +293,7 @@ test('turn tape preserves native movement, interaction and combat order across r
   assert.equal(result.units[second.id].hp, second.hp - 4);
   game.playAction({ type: 'end' });
   game.playAction({ type: 'sprint', x: 2, y: 1 });
+  game.playAction({ type: 'end' });
   const next = game.getBattleState();
   assert.equal(next.vm.pendingAsk, null);
   assert.equal(next.order[next.turn], second.id);
@@ -301,7 +303,7 @@ test('turn tape preserves native movement, interaction and combat order across r
 
 test('a native interaction resumes its remaining effects before recording and ending the turn', () => {
   const { state, first } = fixture();
-  Object.assign(first, { hp: 30, mp: 0, sp: 0, used: { attack: 1, action: 0 }, ap: 1 });
+  Object.assign(first, { hp: 30, mp: 0, sp: 0, move: 0, used: { attack: 1, action: 0 }, ap: 1 });
   state.interactives = { altar: { id: 'altar', name: '恢复点', kind: 'altar', effect: 'restore', damage: 5, x: 1, y: 1, spent: false } };
   first.rules = [{ id: 'choose_heal', hook: 'before_commit', filter: "target.id == self.id && event.commitKind == 'heal'", program: [
     { op: 'ask', chooser: 'self', kind: 'number', prompt: '选择治疗量', min: 1, max: 5, out: 'amount', aiPolicy: 'max' },

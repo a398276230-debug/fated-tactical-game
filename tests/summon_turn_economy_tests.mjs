@@ -20,6 +20,21 @@ for (const turnMode of ['independent', 'linked_group', 'linked_each', 'none']) {
       assert.equal(spawned.order.includes(unit.id), turnMode === 'independent');
       assert.equal(api.previewAction({ type: 'move', actorId: unit.id }).ok, turnMode.startsWith('linked_'));
     }
+    if (turnMode.startsWith('linked_')) {
+      const [first, second] = units;
+      const before = api.previewAction({ type: 'move', actorId: second.id }).cells;
+      for (let i = 0; i < 2; i++) {
+        const cell = api.previewAction({ type: 'move', actorId: first.id }).cells.find(cell => cell.steps === 1 && !cell.opportunities.length);
+        assert.ok(cell);
+        const result = api.playAction({ type: 'move', actorId: first.id, x: cell.x, y: cell.y });
+        assert.equal(result.ok, true, result.error);
+      }
+      const after = api.getBattleState();
+      assert.equal(after.units[first.id].moveSpentPermille, 2000);
+      assert.equal(after.units[first.id].ap, first.ap);
+      assert.equal(after.units[second.id].moveSpentPermille, undefined);
+      assert.ok(before.length > 0);
+    }
     const snapshot = JSON.parse(JSON.stringify(api.exportBattleSnapshot()));
     const restored = createGameAPI();
     restored.createBattle(snapshot);

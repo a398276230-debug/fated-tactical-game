@@ -19,7 +19,7 @@ const until = async (probe, description) => {
   throw new Error(`超时：${description}`);
 };
 
-test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒、下载/导入、窄屏与刷新', { timeout: 45000 }, async t => {
+test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒、下载/导入、窄屏与刷新', { timeout: 90000 }, async t => {
   const normalizationRequests = [];
   const server = createServer(async (req, res) => {
     try {
@@ -1200,6 +1200,12 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.deepEqual(corpse, { filter: 'grayscale(1)', pointer: 'none', unit: null, selected: 'false' });
   t.diagnostic(`G57 ${JSON.stringify(corpse)}`);
   assert.equal(await souls(), 1);
+  assert.match(await run(`${get('#actor-card')}.textContent`), /移动 2\/3 格/);
+  await click(cell(1, 2)); await click(actions('move'));
+  assert.equal((await state()).units.swordsman.x, 1);
+  assert.equal((await actor()).id, 'swordsman');
+  assert.equal((await actor()).ap, 1);
+  await click(cell(2, 2)); await click(actions('move'));
   const returnToSwordsman = async () => {
     for (let step = 0; (await actor()).id !== 'swordsman'; step++) {
     assert.ok(step < 20, '先攻队列应回到剑客');
@@ -1217,7 +1223,10 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run('document.querySelector(\'#action-toolbar [data-skill-id="armor"]\')'), null);
   await click('#end-turn');
   await returnToSwordsman();
-  await click(cell(2, 2)); await click('#action-toolbar [data-skill-id="armor"]'); await click('#confirm-action');
+  const swordPosition = (await state()).units.swordsman;
+  await click(cell(swordPosition.x, swordPosition.y));
+  if (await run('!!document.querySelector("#target-unit-options [data-target-id=swordsman]")')) await click('#target-unit-options [data-target-id="swordsman"]');
+  await click('#action-toolbar [data-skill-id="armor"]'); await click('#confirm-action');
   assert.ok((await state()).units.swordsman.statuses.thorns);
   await click('#api-sandbox summary'); await click('[data-example="counter"]'); await click('#sandbox-preview');
   assert.match(await run(`${get('#sandbox-output')}.textContent`), /souls/);

@@ -84,8 +84,9 @@ test('subcell movement banks 600 permille then spends a step and retains 200', (
   assert.match(bankLog.text, /蓄步推进（跨区进度约 60%）$/);
   assert.match(narrate(bankLog, state).title, /蓄步推进.*约 60%/);
   assert.doesNotMatch(narrate(bankLog, state).title, /\d+m|移动 0 格/);
-  actor.ap = 2;
-  actor.used.action = 0;
+  assert.equal(preview(state, { type: 'move', x, y }).error, '本回合移动力已耗尽');
+  applyAction(state, { type: 'end' });
+  while (currentUnit(state).id !== actor.id) applyAction(state, { type: 'end' });
   const destination = preview(state, { type: 'move' }).cells.find(cell => cell.steps === 1);
   assert.ok(destination);
   applyAction(state, { type: 'move', x: destination.x, y: destination.y });
@@ -145,9 +146,8 @@ test('enemy AI banks movement on a reachable route and spends it on a later turn
   assert.deepEqual(action, { type: 'move', x: 1, y: 1 });
   applyAction(state, action);
   assert.equal(actor.moveCarryPermille, 600);
-  state.turn = state.order.indexOf(actor.id);
-  actor.used = { attack: 1, action: 0 };
-  actor.ap = 1;
+  applyAction(state, { type: 'end' });
+  while (currentUnit(state).id !== actor.id) applyAction(state, { type: 'end' });
   const next = chooseAction(state);
   assert.equal(next.type, 'move');
   assert.equal(preview(state, next).steps, 1);

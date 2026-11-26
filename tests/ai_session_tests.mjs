@@ -316,7 +316,9 @@ test('结界生成、磁带重放与资源落盘拦截在生产 VM 中结算', (
   const hp = enemy.hp;
   dispatchVMHook(state, 'turn_start', { actorId: enemy.id, targetId: enemy.id, ownerIds: [enemy.id] });
   assert.equal(enemy.hp, hp - 10);
-  const replay = applyAction(state, { type: 'brace' }).filter(row => row.type === 'action').map(row => row.detail.action.skillId ?? row.detail.action.type);
+  const brace = applyAction(state, { type: 'brace' });
+  assert.equal(currentUnit(state).id, actor.id);
+  const replay = [...brace, ...applyAction(state, { type: 'end' })].filter(row => row.type === 'action').map(row => row.detail.action.skillId ?? row.detail.action.type);
   assert.deepEqual(replay, ['brace', 'probe', 'weather', 'brace']);
   assert.equal(state.tape.length, 3);
 });

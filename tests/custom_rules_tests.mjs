@@ -4,6 +4,7 @@ import { buildScenario } from '../src/presets/scenarios.js';
 import { applyAction, currentUnit, preview, reachable, refreshOpeningInitiative } from '../src/core/combat.js';
 import { validateState } from '../src/api/validation.js';
 import { getPool, updatePoolCurrent } from '../src/core/vm-pools.js';
+import { vmHost } from '../src/core/vm-runtime.js';
 
 const strike = { type: 'attack', x: 3, y: 2 };
 function battle() {
@@ -95,13 +96,26 @@ test('on_kill can refund the consumed attack slot through the pseudo resource po
 
 test('move pseudo pool reaches zero and native preview honors the exhausted budget', () => {
   const { state, actor } = battle();
-  actor.moveSpent = actor.move;
-  assert.equal(reachable(state, 'move', actor).length, 0);
+  const remaining = () => vmHost.resource(state, actor, 'move');
+  assert.equal(remaining(), 3);
+  for (const steps of [2, 1]) {
+    const cell = reachable(state).find(cell => cell.steps === steps && !cell.opportunities.length);
+    assert.ok(cell);
+    applyAction(state, { type: 'move', x: cell.x, y: cell.y });
+    assert.equal(remaining(), steps - 1);
+  }
   assert.equal(preview(state, { type: 'move' }).cells?.length ?? 0, 0);
   assert.equal(preview(state, { type: 'move', x: actor.x + 1, y: actor.y }).ok, false);
-  actor.moveSpent = 0;
-  actor.moved = actor.move;
-  assert.ok(reachable(state, 'move', actor).length > 0);
+
+  const fresh = battle();
+  fresh.actor.moved = fresh.actor.move;
+  assert.ok(reachable(fresh.state).length > 0);
+  const drain = addSkill(fresh.state, fresh.actor, 'drain', [
+    { op: 'resource', target: 'self', pool: 'move', mode: 'sub', amount: 3 },
+  ]);
+  applyAction(fresh.state, drain);
+  assert.equal(vmHost.resource(fresh.state, fresh.actor, 'move'), 0);
+  assert.deepEqual(reachable(fresh.state), []);
 });
 
 test('equipment initiative and attribute modifiers reuse the opening roll', () => {
