@@ -120,8 +120,32 @@ export function aimedOptions(state, actor, attacksOnly = false) {
   const protocol = state.ruleset === 'protocol';
   const vmAimBudget = attacksOnly ? 2 : 6;
   const score = (action, plan) => protocol && plan.kind !== 'altar' ? protocolTactics(state, actor, plan) : tactics(state, actor, action, plan);
+  const offensiveProgram = program => (program ?? []).some(op => {
+    if (op.enabled === false) return false;
+    if (op.op === 'damage' || op.op === 'resource' && ['sub', 'sub_max'].includes(op.mode) && op.pool === 'hp') return true;
+    if (op.op === 'apply_status') {
+      const category = state.statusTemplates?.[op.statusId]?.category;
+      return ['control', 'debuff', 'dot'].includes(category);
+    }
+    return op.op === 'if' && (offensiveProgram(op.then) || offensiveProgram(op.else))
+      || op.op === 'for_each' && offensiveProgram(op.body)
+      || op.op === 'check' && (offensiveProgram(op.onPass) || offensiveProgram(op.onFail));
+  });
+  const isOffensiveAreaSkill = skill => {
+    if (!skill || (skill.shape ?? 'single') === 'single' || skill.target === 'ally' || skill.target === 'self') return false;
+    if (skill.damage != null || skill.target === 'enemy') return true;
+    return (skill.rules ?? []).filter(rule => rule.enabled !== false && rule.hook === 'active')
+      .some(rule => offensiveProgram(rule.program));
+  };
+  const hitsEnemy = plan => (plan.targets ?? []).some(target => target.kind !== 'cover'
+    && state.units[target.recipientId ?? target.id]?.team !== actor.team)
+    || (plan.ruleImpact?.units ?? []).some(effect => {
+      const target = state.units[effect.id];
+      return target?.team !== actor.team && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
+    });
   function consider(action, plan = preview(state, action)) {
-    if (plan.ok) choices.push({ action, score: score(action, plan) });
+    const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
+    if (plan.ok && !(isOffensiveAreaSkill(skill) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
   }
   const enemies = units.filter(u => visibleEnemy(state, actor, u));
   for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y, ...(target.id ? { targetId: target.id } : {}) });
@@ -136,6 +160,9 @@ export function aimedOptions(state, actor, attacksOnly = false) {
       && (rule.filter === undefined || rule.filter === true) && (rule.usesPerTurn || rule.usesPerBattle || rule.cooldownTurns))) continue;
     const query = preview(state, { type: 'skill', skillId });
     if (!query.ok) continue;
+    const effectiveSkill = actionSkill(state, actor, skillId) ?? skill;
+    const directed = ['fan', 'cone', 'line'].includes(effectiveSkill?.shape ?? skill.shape);
+    const range = effectiveSkill?.range ?? skill.range ?? 0;
     let candidates;
     if (skill.target === 'cell' || skill.target === 'corpse') {
       candidates = query.cells;
@@ -146,12 +173,14 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     } else {
       candidates = query.cells;
     }
+    if (directed && range > 0) candidates = candidates.filter(candidate => !samePosition(candidate, actor));
     const actionAt = ({ x, y, id }) => ({ type: 'skill', skillId, x, y, ...(id ? { targetId: id } : {}) });
     const runsVm = skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false);
     if (protocol && runsVm && candidates.length > vmAimBudget) {
       // Preview geometry and native strikes for every legal aim. Spend the VM
       // budget on the strongest aims and cells closest to relevant units.
-      const objectives = skill.target === 'ally' || skill.slot === 'action' ? units : enemies;
+      const objectives = isOffensiveAreaSkill(effectiveSkill) ? enemies
+        : skill.target === 'ally' || skill.slot === 'action' ? units : enemies;
       candidates = candidates.map(candidate => {
         const action = actionAt(candidate);
         const plan = preview(state, action, { simulateRules: false });
@@ -350,8 +379,9 @@ export function chooseAction(state) {
   // Ending while a legal attack slot is still available throws away a whole
   // resource. Keep higher-value movement, brace, reload, or skill choices,
   // but use the best legal attack whenever END would otherwise win.
-  if (best.action.type === 'end' && !actor.used.attack && attackChoices.length) {
-    best = attackChoices.reduce((choice, current) => choice.score > current.score ? choice : current);
+  if (best.action.type === 'end' && !actor.used.attack) {
+    const positiveAttacks = attackChoices.filter(choice => choice.score > 0);
+    if (positiveAttacks.length) best = positiveAttacks.reduce((choice, current) => choice.score > current.score ? choice : current);
   }
   return { ...best.action };
 }

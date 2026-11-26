@@ -1148,6 +1148,9 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
     altitude: actionOrigin.altitude ?? (actionOrigin.z === undefined ? 0 : actionOrigin.z - elevation(state, actionOrigin)) } : unit;
   const ammo = attack && !shieldBash ? weapon.ammo : null;
   const geometry = reaches(state, origin, aim, template, ammo);
+  if (['fan', 'cone', 'line'].includes(template.shape) && template.range > 0 && sameCell(origin, center)) {
+    return fail('有向技能需要选择方向', { ...geometry, originSensitive: true });
+  }
   if (!ground(state, center)) return fail('墙体无法指定', geometry);
   if (!deferGeometry) {
     if (!ground(state, origin)) return fail('动作起点无效', { ...geometry, originSensitive: true });

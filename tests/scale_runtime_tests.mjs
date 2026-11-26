@@ -5,7 +5,7 @@ import { actionSkill, applyAction, currentUnit, grantStatus, preview, weaponInfo
 import { scaledCells, scaledMoveCells, scaledTemplate, scaleRatio, tierFromCellM } from '../src/core/combat_protocol.js';
 import { evaluateExpr } from '../src/core/formula.js';
 import { canStep, coverBetween, findPath, unitsAt } from '../src/core/spatial.js';
-import { chooseAction } from '../src/core/ai.js';
+import { aimedOptions, chooseAction } from '../src/core/ai.js';
 import { battleAiPayload } from '../src/core/battle-ai.js';
 import { narrate } from '../src/ui/narrate.js';
 
@@ -302,6 +302,37 @@ test('high-tier scaled melee attack range does not expand opportunity-attack thr
   assert.equal(applyAction(state, departing).some(log => log.type === 'opportunity'), false);
   Object.assign(mover, { x: 2, ap: 2, used: { attack: 0, action: 0 } });
   assert.deepEqual(preview(state, { type: 'move', x: 3, y: 1 }).opportunities.map(row => row.unitId), [reactor.id]);
+});
+
+test('AI rejects empty directed AOE aims while keeping enemy and cover gains', () => {
+  const state = buildScenario('ruins');
+  const actor = currentUnit(state);
+  const enemy = Object.values(state.units).find(unit => unit !== actor && unit.team !== actor.team);
+  state.grid = state.grid.map(row => row.map(() => ({ kind: 'floor', z: 0 })));
+  state.covers = { wall: { id: 'wall', name: '墙', x: 7, y: 5, cover: 5, hp: 20, maxHp: 20 } };
+  for (const unit of Object.values(state.units)) if (unit !== actor && unit !== enemy) unit.hp = 0;
+  Object.assign(actor, { team: 'red', x: 7, y: 6, facing: [0, 1], ap: 2, used: { attack: 0, action: 0 } });
+  Object.assign(enemy, { team: 'blue', x: 6, y: 6, ap: 2, used: { attack: 0, action: 0 } });
+  state.turn = state.order.indexOf(actor.id);
+  state.skills.fan = { name: '扇击', ap: 1, slot: 'attack', range: 3, radius: 2, shape: 'fan', target: 'enemy',
+    damage: { count: 1, sides: 1, stat: 'str', type: 'physical' } };
+  actor.skills = ['fan'];
+
+  const ownAim = preview(state, { type: 'skill', skillId: 'fan', x: actor.x, y: actor.y });
+  assert.equal(ownAim.ok, false, 'range-positive directed skills cannot aim at the origin');
+  const choices = aimedOptions(state, actor).filter(choice => choice.action.skillId === 'fan');
+  assert.ok(choices.length > 0);
+  assert.ok(choices.every(choice => choice.action.x !== actor.x || choice.action.y !== actor.y));
+  assert.ok(choices.some(choice => preview(state, choice.action).targets.some(target => target.id === enemy.id)));
+  const chosen = chooseAction(state);
+  assert.ok(chosen.type === 'attack' || chosen.skillId === 'fan');
+  if (chosen.skillId === 'fan') assert.ok(preview(state, chosen).targets.some(target => target.id === enemy.id));
+
+  enemy.x = 0; enemy.y = 0;
+  assert.equal(aimedOptions(state, actor).some(choice => choice.action.skillId === 'fan'), false,
+    'an offensive AOE with no hostile hit cannot enter the attack choices');
+  const emptyChoice = chooseAction(state);
+  assert.notEqual(emptyChoice.skillId, 'fan');
 });
 
 test('zero-range fan resolves its own cell, radius-two neighbors, and real hover distance', () => {
