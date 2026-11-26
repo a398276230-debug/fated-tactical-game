@@ -35,6 +35,13 @@ test('skill card shows every active mixed-damage component and its determinate a
   assert.equal(display.damage, '物理 1d4 + 智力、能量 按公式 event.power * 0.5');
 });
 
+test('instance card and skill display use custom element labels', () => {
+  const state = { customElements: { void: { id: 'void', name: '虚空', category: 'energy' } }, items: {}, equipment: {}, skills: {} };
+  const text = cardText({ id: 'u1', skills: ['void_skill'] }, { ...state, skills: { void_skill: { name: '虚空裂隙', damageType: 'void' } } });
+  assert.match(text, /虚空/);
+  assert.equal(skillDisplay({ damageType: 'void' }, {}, state.customElements).damage, '虚空');
+});
+
 test('skill card does not imply zero costs and separates cast range from area', () => {
   const display = skillDisplay({ ap: 1, sp: 0, mp: 0, range: 8, shape: 'circle', radius: 2 });
   assert.deepEqual(display.costs, []);

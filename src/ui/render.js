@@ -6,6 +6,7 @@ import { elevation } from '../core/spatial.js';
 import { zoneContains } from '../core/vm-select.js';
 import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES } from './narrate.js';
+import { elementLabel } from '../core/elements.js';
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
 const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
@@ -30,6 +31,21 @@ const key = (x, y) => `${x},${y}`;
 const statusText = s => `${STATUS_ICON[s.category] ?? '◆'} ${s.name ?? s.id}${s.stacks > 1 ? ` ×${s.stacks}` : ''}`;
 const duration = s => (Number.isInteger(s.remainingTurns) ? `剩 ${s.remainingTurns} 回合` : s.durationType === 'persistent' ? '常驻' : '');
 const terrainLabel = t => (t.kind === 'wall' ? '墙体，挡住移动和视线' : t.kind === 'slope' ? '坡道' : t.z > 0 ? `高台（高 ${t.z}）` : t.z < 0 ? `低地（${t.z}）` : '平地');
+const typedDefenseText = (unit, customElements) => {
+  const rows = [...(unit.mods ?? []), ...Object.values(unit.statuses ?? {}).flatMap(status => status.mods ?? [])];
+  const byType = new Map();
+  for (const mod of rows) {
+    if (!mod.damageType || !['damageReduction', 'dr', 'incomingDamageMult'].includes(mod.stat)) continue;
+    const value = mod.stat === 'incomingDamageMult' ? (mod.mult ?? 1) - 1 : mod.flat ?? 0;
+    if (!value) continue;
+    const current = byType.get(mod.damageType) ?? { resistance: 0, vulnerability: 0, immunity: false };
+    if (mod.stat === 'dr' && value >= 1) current.immunity = true;
+    else if (mod.stat === 'incomingDamageMult' && value > 0 || mod.stat !== 'incomingDamageMult' && value < 0) current.vulnerability += Math.abs(value);
+    else current.resistance += Math.abs(value);
+    byType.set(mod.damageType, current);
+  }
+  return [...byType].map(([type, row]) => `${elementLabel(type, customElements)} ${row.immunity ? '免疫' : row.vulnerability ? `易伤 +${pct(row.vulnerability)}` : `抗性 ${pct(row.resistance)}`}`);
+};
 
 export function createRenderer(root, portraitFor = () => []) {
   const doc = root.ownerDocument;
@@ -277,7 +293,10 @@ export function createRenderer(root, portraitFor = () => []) {
     const template = get(state.equipment, get(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some(pool => pool.reloadable);
     const standing = unitStandingStats(state, u);
-    const facts = el('p', 'muted', [`护甲 ${standing.armor}`, `闪避 ${sign(standing.dodge)}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'greatsword' ? `·${u.greatswordMode === 'defensive' ? '沉势' : '攻势'}` : ''}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
+    const weaponTemplate = get(state.equipment, get(state.items, u.mainHand ?? u.weapon)?.templateId);
+    const weaponType = weaponTemplate?.damage?.type ?? weaponTemplate?.damageType;
+    const defenseTypes = typedDefenseText(u, state.customElements);
+    const facts = el('p', 'muted', [`护甲 ${standing.armor}`, `闪避 ${sign(standing.dodge)}`, `移动 ${u.move} 格`, `体型 ${bodySizeLabel(u)}`, `高度 z=${elevation(state, u)}${u.altitude ? `（离地 ${u.altitude}）` : ''}`, weaponType ? `武器元素：${elementLabel(weaponType, state.customElements)}` : '', ...defenseTypes.map(text => `元素防护：${text}`), `持械：${stanceLabel[u.stance] ?? '未指定'}${u.stance === 'greatsword' ? `·${u.greatswordMode === 'defensive' ? '沉势' : '攻势'}` : ''}${u.stance === 'attunement' ? `（道具剩 ${u.attunementCharges} 次）` : ''}`,
       `奖励骰 ${u.bonusDice ?? 0}/2`, u.hp && melee ? (u.reactionAvailable === false ? '本轮借机攻击已用' : '可以借机攻击') : ''].filter(Boolean).join(' · '));
     const statusList = el('ul', 'ft-list');
     for (const s of values(u.statuses)) {
@@ -373,6 +392,7 @@ export function createRenderer(root, portraitFor = () => []) {
       if (p.ok && action.type === 'disengage') line('撤离：这次移动不会引发借机攻击。');
       for (const t of p.targets ?? []) {
         const row = line([el('b', '', t.name)]);
+        if (t.damageType) row.dataset.damageType = t.damageType;
         const bits = [];
         let chance = null;
         if (t.saveStat) {
@@ -395,7 +415,10 @@ export function createRenderer(root, portraitFor = () => []) {
           t.shield ? `对方有 ${t.shield} 点护盾` : ''].filter(Boolean);
         if (mods.length) bits.push(mods.join('，'));
         if (t.heal) bits.push(`治疗 ${interval(t.heal)}`);
-        else if (t.damage) bits.push(`${t.execution ? '处决：忽略闪避，命中至少平暴击。' : ''}命中后伤害约 ${interval(t.damage)}${t.savedDamage ? `（豁免成功则 ${interval(t.savedDamage)}）` : ''}`);
+        else if (t.damage) bits.push(`${t.execution ? '处决：忽略闪避，命中至少平暴击。' : ''}命中后${t.damageType ? `${elementLabel(t.damageType, state.customElements)} ` : ''}伤害约 ${interval(t.damage)}${t.savedDamage ? `（豁免成功则 ${interval(t.savedDamage)}）` : ''}`);
+        if (t.immunity) bits.push(`${elementLabel(t.damageType, state.customElements)}免疫`);
+        else if (t.resistance) bits.push(`${elementLabel(t.damageType, state.customElements)}抗性 ${pct(t.resistance)}`);
+        else if (t.vulnerability) bits.push(`${elementLabel(t.damageType, state.customElements)}易伤 +${pct(t.vulnerability)}`);
         row.append(el('div', '', bits.join('。')));
         if (chance != null) {
           const odds = el('div', 'ft-odds'), track = el('span', 'ft-odds-bar'), fill = el('i');

@@ -1,8 +1,8 @@
 import { resourceLabel } from '../core/resource_names.js';
+import { elementLabel } from '../core/elements.js';
 
 import { evaluateExpr } from '../core/formula.js';
 
-const damageNames = { physical: '物理', energy: '能量', mental: '精神', true: '真实' };
 const statNames = {
   str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神', accuracy: '命中', dodge: '闪避',
   defense: '防御', initiative: '先攻', armor: '护甲', armorPierce: '穿甲', incomingAccuracy: '被命中修正', intentBonus: '意图加值', intentDifficulty: '意图难度', shatter: '碎裂增伤', damageReduction: '减伤比例',
@@ -42,8 +42,14 @@ const attributionText = detail => {
   const cause = attributionLine(detail);
   return cause ? `（${cause}）` : '';
 };
+const legacyDamageTypes = new Set(['physical', 'energy', 'mental', 'true', 'poison']);
+const damageTypeSuffix = (type, text, customElements) => {
+  if (!type || legacyDamageTypes.has(type)) return '';
+  const label = elementLabel(type, customElements);
+  return text.includes(label) ? '' : `（${label}）`;
+};
 
-function statusNotes(detail) {
+function statusNotes(detail, customElements = {}) {
   const parts = [];
   if (detail.durationType === 'persistent') parts.push('跨战斗持续');
   else if (detail.durationType === 'until_removed') parts.push('持续至解除');
@@ -59,7 +65,7 @@ function statusNotes(detail) {
       if (op.op !== 'damage' && op.op !== 'heal') return [];
       const perLayer = scaled(op.amount);
       const amount = resolve(op.amount, perLayer ? 1 : undefined);
-      const label = op.op === 'heal' ? '治疗' : `${damageNames[op.damageType ?? 'true']}伤害`;
+      const label = op.op === 'heal' ? '治疗' : `${op.damageType === 'poison' ? '中毒' : elementLabel(op.damageType ?? 'true', customElements)}伤害`;
       if (!Number.isFinite(amount)) return [`${label}（${op.amount}）`];
       const total = perLayer && detail.stacks > 1 ? `（当前合计 ${proseNumber(resolve(op.amount))} 点）` : '';
       return [`${perLayer || detail.stacks === 1 ? '每层 ' : ''}${proseNumber(amount)} 点${label}${total}`];
@@ -229,14 +235,14 @@ export function formatBattleReportText(report, unitNames = {}) {
             && (detail.stacks ?? 1) === 1 && (!detail.durationType || detail.durationType === 'battle_turns')
             && !detail.expireOn && !detail.amount && brace.detail?.turns === detail.remainingTurns
             && detail.mods?.length === 1 && detail.mods[0].stat === 'damageReduction' && detail.vars?.reduction === brace.detail.reduction) break;
-          const parts = statusNotes(detail);
+          const parts = statusNotes(detail, report.customElements);
           if (type === 'status_patch' && detail.stacks > 1) parts.unshift(`${detail.stacks} 层`);
           if (type === 'status' && actor && detail.targetId && actor !== detail.targetId) parts.push(`来源 ${name(event, actor)}`);
           add(replaceUnitNames(event, text).replace(/ ×1$/, '') + notes(parts) + attributionText(detail));
           break;
         }
         case 'stat_modifier': {
-          const stat = (damageNames[detail.damageType] ?? '') + statNames[detail.stat];
+          const stat = (detail.damageType ? elementLabel(detail.damageType, report.customElements) : '') + statNames[detail.stat];
           const parts = [`持续 ${detail.turns} 回合`];
           if (detail.flat) parts.push(`${stat} ${signed(detail.flat)}`);
           if (detail.percent) parts.push(`${stat} ${signed(percent(detail.percent))}%`);
@@ -249,7 +255,8 @@ export function formatBattleReportText(report, unitNames = {}) {
         case 'damage': case 'heal':
           if (detail.amount !== 0) {
             const origin = detail.statusId && actor && actor !== detail.targetId ? `（施加者 ${name(event, actor)}）` : '';
-            add(replaceUnitNames(event, text) + change('HP', detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
+            const damageTypeLabel = type === 'damage' ? damageTypeSuffix(detail.damageType, text, report.customElements) : '';
+            add(replaceUnitNames(event, text) + damageTypeLabel + change('HP', detail.hpBefore, detail.hpAfter) + origin + attributionText(detail));
           }
           break;
         case 'skill_cost':

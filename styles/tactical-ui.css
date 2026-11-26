@@ -153,7 +153,16 @@ body { margin: 0; background: var(--ink-2); }
 .ft-float.status { color: var(--tone-status); font-size: 14px; font-weight: 700; }
 .ft-float.miss { color: var(--tone-miss); font-size: 16px; }
 .ft-float.crit { color: var(--tone-crit); font-size: 32px; }
-.ft-float small { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; text-align: center; letter-spacing: .1em; }
+.ft-float small { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; text-align: center; letter-spacing: .1em; color: var(--text-soft); }
+.ft-float[data-damage-type="fire"] { --tone-damage: #ff9f6e; }
+.ft-float[data-damage-type="cold"] { --tone-damage: #8fd8ff; }
+.ft-float[data-damage-type="lightning"] { --tone-damage: #f5e28a; }
+.ft-float[data-damage-type="poison"] { --tone-damage: #9bdf82; }
+.ft-float[data-damage-type="necrotic"] { --tone-damage: #c39ae8; }
+.ft-float[data-damage-type="radiant"] { --tone-damage: #fff0a6; }
+.ft-float[data-damage-type="psychic"] { --tone-damage: #e7a9e8; }
+.ft-float[data-damage-type="acid"] { --tone-damage: #c1e889; }
+.ft-float[data-damage-type="force"] { --tone-damage: #b3b8ff; }
 .ft-bolt { position: absolute; height: 3px; transform-origin: 0 50%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--gold-bright) 70%, #fff); box-shadow: 0 0 10px var(--gold-bright); }
 .ft-ring { position: absolute; width: var(--cell); height: var(--cell); transform: translate(-50%, -50%); border: 2px solid currentColor; border-radius: 50%; color: var(--tone-crit); }
 .ft-mark { position: absolute; width: var(--cell); height: var(--cell); transform: translate(-50%, -50%); border-radius: 6px; border: 2px solid var(--tone-damage); box-shadow: inset 0 0 14px rgb(255 110 100 / .5); }
@@ -355,6 +364,8 @@ body { margin: 0; background: var(--ink-2); }
 .ft-preview:empty { display: none; }
 .preview-line + .preview-line { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
 .preview-line b { color: var(--accent-text); }
+.preview-line[data-damage-type] { color: var(--damage-type-color, var(--text-soft)); }
+.fated-char-chip[data-damage-type] { border-color: rgb(var(--gold-rgb) / .4); color: var(--accent-text); }
 .preview-line.is-warning { color: #f3c58c; }
 .ft-odds { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .ft-odds-bar { flex: 1; height: 6px; border-radius: 3px; background: rgb(0 0 0 / .5); overflow: hidden; }

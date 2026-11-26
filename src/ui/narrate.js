@@ -6,8 +6,9 @@
 //   { kind:'chance', label, chance, rolled, verdict, tone }
 import { STATUSES } from '../core/combat.js';
 import { ratingFor } from '../core/combat_protocol.js';
+import { BUILTIN_DAMAGE_TYPES, elementLabel } from '../core/elements.js';
 
-export const DAMAGE_TYPES = Object.freeze({ physical: '物理', energy: '能量', mental: '精神', true: '真实' });
+export const DAMAGE_TYPES = Object.freeze(Object.fromEntries(BUILTIN_DAMAGE_TYPES.map(type => [type, elementLabel(type)])));
 export const STAT_NAMES = Object.freeze({ str: '力量', agi: '敏捷', con: '体质', int: '智力', spi: '精神' });
 const MANEUVERS = { grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞' };
 const INTENT_NAMES = { normal: '常规', function: '机能限制', core: '核心要害', kill: '抹杀', concept: '概念破碎' };
@@ -106,6 +107,8 @@ function rollEntry(state, log) {
 function damageEntry(state, log) {
   const d = log.detail ?? {};
   const target = nameOf(state, d.targetId);
+  const damageType = d.damageType ?? d.type;
+  const typeLabel = damageType ? elementLabel(damageType, state?.customElements) : null;
   const lines = [];
   const dice = d.dice;
   if (dice && typeof dice === 'object') {
@@ -124,9 +127,14 @@ function damageEntry(state, log) {
   if (d.attributeReduction) mults.push(`体魄减伤 −${pct(d.attributeReduction)}`);
   if (d.armorMultiplier && d.armorMultiplier < .995) mults.push(`护甲 −${pct(1 - d.armorMultiplier)}`);
   if (mults.length) lines.push(`倍率：${mults.join('，')}`);
+  if (typeLabel) lines.unshift(`伤害类型：${typeLabel}`);
+  if (d.resistance || d.vulnerability || d.immunity) {
+    const defenses = [d.immunity ? '免疫' : '', d.resistance ? `抗性 −${pct(d.resistance)}` : '', d.vulnerability ? `易伤 +${pct(d.vulnerability)}` : ''].filter(Boolean);
+    if (defenses.length) lines.push(`目标防护：${defenses.join('，')}`);
+  }
   if (d.absorbed) lines.push(`护盾吸收 ${d.absorbed} 点`);
   if (Number.isFinite(d.hpBefore)) lines.push(`生命 ${proseNumber(d.hpBefore)} → ${proseNumber(d.hpAfter)}`);
-  return { tone: 'damage', icon: '🩸', title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0 };
+  return { tone: 'damage', icon: '🩸', title: log.text, lines, targetId: d.targetId, amount: d.amount ?? 0, damageType, damageTypeLabel: typeLabel };
 }
 
 function saveCheck(state, who, c) {

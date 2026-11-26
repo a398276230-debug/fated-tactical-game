@@ -78,6 +78,23 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 
 初始化时同一单位的同名声明合并为一个池，当前值默认 `initial ?? 0`。跨载体规则用 `self.resource.<poolId>` 或 `resource(self, "<poolId>")` 读取和修改；技能的 `resourceCost: {"resource":"<poolId>","amount":N}` 也按单位池扣费。标准化 AI 必须读取 roster 末尾的 `<role_readonly_index>`，复用其中 `sharedPoolLedger` 已登记的 `poolId`、名称和语义；不要把共享池写成 equipment `pools`，也不要为同一资源重新命名。
 
+MVU 角色原本存在并被转换器绑定的单位池带有 `mvuBound` 语义，战斗结束的净变化按 `sourceMap` 写回原 MVU 路径。没有对应 MVU 字段的单位池只在本场战斗中生效，战后不会生成 MVU 写回补丁。标准化 AI 修改池的 `cap` 时应复用已有 `poolId`，不能覆盖整张 `unitPools` 表。
+
+## 4.2 伤害类型与元素
+
+`damageType` 统一表示内置和自定义伤害类型。14 种内置类型为 `physical`（物理）、`energy`（能量）、`mental`（精神）、`true`（真实）、`fire`（火焰）、`cold`（冰霜）、`lightning`（雷电）、`thunder`（雷鸣）、`acid`（酸蚀）、`poison`（毒素）、`necrotic`（暗蚀）、`radiant`（光耀）、`force`（力场）和 `psychic`（心灵）。`fire`、`cold`、`lightning`、`thunder`、`acid`、`poison`、`necrotic`、`radiant`、`force` 默认按能量类减伤，`psychic` 按精神类减伤。
+
+持久自定义元素登记在 `customElements`，键必须是合法 ASCII ID，值至少包含同名 `id` 与展示用 `name`，可选 `aliases` 和 `category`（`physical`、`energy` 或 `mental`）。自定义元素仍使用 `damageType`，例如 `{ "damageType": "void" }`，不增加平行的 `element` 字段。`before_commit` 支持写入 `damageType`，引擎会按新的类型重新计算尚未显式覆盖的最终伤害。
+
+```json
+{
+  "customElements": {
+    "void": { "id": "void", "name": "虚空", "category": "energy" }
+  },
+  "damageType": "void"
+}
+```
+
 ## 5. Selector、spawn 和状态引用
 
 selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`、`origin`、`sort` 等 schema 字段；纯 selector 才能用于载体共享规则。`event.<field>` 只允许 `vm-schema.js` 导出的 `EVENT_SCALAR_KEYS` 闭合白名单，未知字段在 schema 阶段拒绝；表达式运行时仍对缺失字段返回 `null`。`spawn` 的 `entityKind` 决定 spec：unit 支持 `templateId/copyOf/spawnPanel/count`，zone/terrain/cover 使用区域和剩余回合，item 支持模板与数量。生成 ID 由已用数字后缀确定性递增。

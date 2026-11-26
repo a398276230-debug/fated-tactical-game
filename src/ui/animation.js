@@ -2,6 +2,7 @@
 // 规则状态是瞬时结算的；演出期间棋盘停留在行动前的画面，逐条播放
 // 移动 → 掷骰 → 命中/伤害 → 字幕，播完再切到结算后的画面。
 import { narrate } from './narrate.js';
+import { elementLabel } from '../core/elements.js';
 
 const STEP_MS = 150, BANNER_MS = 750, RIBBON_MS = 1300, ROLL_MS = 560, HOLD_MS = 1050, HIT_MS = 420, CAPTION_LIFE = 6500;
 
@@ -116,11 +117,12 @@ export function createPlayback(root, { show, onIdle } = {}) {
     token.style.opacity = '.4'; token.style.filter = 'grayscale(1)';
     return play(token, [{ opacity: 1, filter: 'grayscale(0)' }, { opacity: .4, filter: 'grayscale(1)' }], { duration: 520 });
   }
-  function float(state, id, text, tone, sub) {
+  function float(state, id, text, tone, sub, damageType) {
     const fx = $('board-fx'), at = whereIs(state, id), c = at && center(at.x, at.y, id);
     if (!fx || !c || skipping || speed <= 0) return;
     const node = doc.createElement('div');
     node.className = `ft-float ${tone}`;
+    if (damageType) node.dataset.damageType = damageType;
     node.textContent = text;
     if (sub) { const s = doc.createElement('small'); s.textContent = sub; node.append(s); }
     const jitter = (fx.childElementCount % 3 - 1) * 14;
@@ -296,12 +298,12 @@ export function createPlayback(root, { show, onIdle } = {}) {
         return;
       case 'damage':
         caption(entry);
-        float(state, d.targetId, `−${entry.amount}`, ctx.crit ? 'crit' : '', ctx.crit ? '暴击' : d.absorbed ? `护盾吸收 ${d.absorbed}` : undefined);
+        float(state, d.targetId, `−${entry.amount}`, ctx.crit ? 'crit' : '', [d.damageType ? elementLabel(d.damageType, state.customElements) : '', ctx.crit ? '暴击' : d.absorbed ? `护盾吸收 ${d.absorbed}` : ''].filter(Boolean).join(' · ') || undefined, d.damageType);
         await shake(d.targetId, ctx.crit);
         await wait(HIT_MS);
         return;
       case 'heal':
-        caption(entry); float(state, d.targetId ?? log.actor, `+${entry.amount}`, 'heal'); await wait(HIT_MS); return;
+        caption(entry); float(state, d.targetId ?? log.actor, `+${entry.amount}`, 'heal', d.damageType ? elementLabel(d.damageType, state.customElements) : undefined, d.damageType); await wait(HIT_MS); return;
       case 'defeat':
         caption(entry); float(state, d.targetId, '倒下', 'miss'); await fall(d.targetId); return;
       case 'status':
