@@ -103,7 +103,12 @@ export function renderPromptTab(page, ctx) {
   const toolbar = make('div', 'wf-toolbar');
   const add = button('+ 新建槽位');
   const reset = button('恢复默认');
-  toolbar.append(add, reset);
+  const previewKind = make('select');
+  previewKind.setAttribute('aria-label', '提示词预览类型');
+  for (const [value, label] of [['validate', '标准化预览'], ['chat', '辅助聊天预览']]) {
+    previewKind.append(Object.assign(make('option', '', label), { value }));
+  }
+  toolbar.append(add, reset, previewKind);
   dashboard.append(dashBar, toolbar);
 
   const pipeline = make('div', 'slot-pipeline');
@@ -115,7 +120,6 @@ export function renderPromptTab(page, ctx) {
   root.append(dashboard, pipeline, preview);
 
   const extraText = () => ctx.settings.extraText ?? '';
-  const assembly = ctx.assemblyContext;
   const last = make('details', 'action-panel form-card preview-panel');
   const lastSummary = make('summary', 'panel-header-bar');
   lastSummary.append(make('span', 'panel-title', '上次实际发送的 messages（组装快照）'));
@@ -125,13 +129,14 @@ export function renderPromptTab(page, ctx) {
     if (messages) lastJson.textContent = JSON.stringify(messages, null, 2);
   };
   ctx.onPreview((messages, kind) => {
-    summary.firstChild.textContent = `最终 messages 预览（${kind === 'chat' ? 'AI 调整' : '标准化'}）`;
-    json.textContent = JSON.stringify(messages, null, 2);
     showLast();
+    if (kind !== previewKind.value) return;
+    summary.firstChild.textContent = `最终 messages 预览（${kind === 'chat' ? '辅助聊天' : '标准化'}）`;
+    json.textContent = JSON.stringify(messages, null, 2);
   });
   const refresh = () => {
     hero.textContent = `已启用 ${slots.filter(s => s.enabled !== false).length} / ${slots.length}`;
-    ctx.prepareMessages();
+    ctx.prepareMessages(previewKind.value);
   };
   function saveSlots(next, fields = {}) {
     const previous = slots;
@@ -147,6 +152,7 @@ export function renderPromptTab(page, ctx) {
     pipeline.replaceChildren();
     editors.clear();
     if (!slots.length) { refresh(); return blank(); }
+    const previewContext = ctx.assemblyContext(previewKind.value);
     slots.forEach((slot, i) => {
       const card = make('article', 'action-panel wf-card');
       const head = make('div', 'slot-head');
@@ -165,8 +171,8 @@ export function renderPromptTab(page, ctx) {
       const down = button('▼');
       down.title = '下移';
       const remove = button('✕', 'pill-btn danger');
-      remove.disabled = slot.id === 'identity';
-      remove.title = remove.disabled ? '可使用开关停用身份声明' : slot.custom ? '删除此槽位' : '隐藏此内置槽位（可从「恢复默认」找回）';
+      remove.disabled = slot.id === 'identity' || slot.id === 'raw';
+      remove.title = remove.disabled ? '可使用开关停用此内置槽位' : slot.custom ? '删除此槽位' : '隐藏此内置槽位（可从「恢复默认」找回）';
       actions.append(edit, up, down, remove);
       head.append(title, badge, actions, switchWrap);
 
@@ -195,12 +201,12 @@ export function renderPromptTab(page, ctx) {
       content.setAttribute('aria-label', '槽位内容');
       if (editable) content.value = staticContent;
       else {
-        content.textContent = resolveSlotContent(slot, assembly());
+        content.textContent = resolveSlotContent(slot, previewContext);
         content.setAttribute('aria-readonly', 'true');
         content.tabIndex = 0;
       }
       form.append(field('标题', labelInput), field('角色', role), field(editable ? '内容' : '内容（动态生成，只读）', content, true));
-      if (editable) form.append(make('p', 'hint wide', '可用占位符：{{battle_init}}、{{battle_state}}、{{warnings}}、{{user_instruction}}、{{roster}}、{{battle}}。留空则不发送。'));
+      if (editable) form.append(make('p', 'hint wide', '可用占位符：{{battle_init}}、{{battle_state}}、{{warnings}}、{{user_instruction}}、{{roster}}、{{battle}}、{{mvu_data}}、{{latest_floor}}、{{standardized_roster}}。留空则不发送。'));
 
       const expand = open => {
         form.hidden = !open;
@@ -250,6 +256,7 @@ export function renderPromptTab(page, ctx) {
     });
     refresh();
   }
+  previewKind.onchange = drawCards;
   add.onclick = () => {
     const slot = makeCustomSlot();
     editing = slot.id;

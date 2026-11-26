@@ -82,12 +82,14 @@ gate('G41', '身份槽位在首位且包含完整职责', () => {
 });
 
 gate('G42', '内置与新建自定义槽位默认均为 system', () => {
+  assert.deepEqual(DEFAULT_SLOTS.map(slot => slot.id), ['identity', 'protocol', 'roster', 'battle', 'raw', 'warnings', 'task', 'extra']);
+  assert.equal(DEFAULT_SLOTS.find(slot => slot.id === 'raw').enabled, true);
   assert.ok([...DEFAULT_SLOTS, makeCustomSlot()].every(slot => slot.role === 'system'));
 });
 
 gate('G43', '合并保持内容和顺序，跳过空槽位，assistant 独立', () => {
   const slots = DEFAULT_SLOTS.map(slot => ({ ...slot, enabled: true }));
-  const ctx = { rosterText: '参战快照', battleText: '地形快照', warningsText: '警告清单', extraText: '额外约定' };
+  const ctx = { kind: 'chat', rawCharacters: { p1: { mvu: { 原文: '角色资料' } } }, rosterText: '参战快照', battleText: '地形快照', warningsText: '警告清单', extraText: '额外约定' };
   assert.deepEqual(assembleMessages(slots, ctx), [{
     role: 'system', slotId: slots.map(slot => slot.id).join('+'), slotLabel: slots.map(slot => slot.label).join(' / '),
     content: slots.map(slot => resolveSlotContent(slot, ctx)).join('\n\n'),
@@ -107,6 +109,18 @@ gate('G44', '旧内置 user 一次迁移，自定义 role 保留', () => {
   assert.deepEqual(migrated.at(-1), custom);
   migrated[2].role = 'user';
   assert.deepEqual(describeSlots(migrated), migrated);
+});
+
+test('旧提示词配置自动补原始资料槽，保留各槽顺序和停用状态', () => {
+  const get = id => ({ ...DEFAULT_SLOTS.find(slot => slot.id === id) });
+  const saved = [get('identity'), { ...get('task'), enabled: false }, makeCustomSlot(), get('battle'), get('roster')];
+  const next = describeSlots(saved);
+  assert.deepEqual(next.filter(slot => slot.id !== 'raw'), saved);
+  assert.equal(next[next.findIndex(slot => slot.id === 'battle') + 1].id, 'raw');
+  assert.deepEqual(describeSlots(describeSlots([{ id: 'battle', enabled: false }])),
+    DEFAULT_SLOTS.map(slot => slot.id === 'battle' ? { ...slot, enabled: false } : slot));
+  next.find(slot => slot.id === 'raw').enabled = false;
+  assert.deepEqual(describeSlots(next), next);
 });
 
 gate('G45', '去样板化协议全貌、四步编译流与闭合枚举披露', () => {

@@ -10,7 +10,7 @@ import { outcomeDigest, rollbackBattleOutcome, writeBattleOutcome, writebackRece
 import { hostMethod, probeMvuWriteCapability, readBattleVariables, readChatMessages, statData } from './host.js';
 import { tavernTheme } from './theme.js';
 import { readBattlePortraits } from './portraits.js';
-import { assembleMessages, describeSlots } from './prompts.js';
+import { assembleMessages, describeSlots, resolveSlotContent } from './prompts.js';
 import { normalizationApiConfig, requestViaTavern, requestViaCustomApi } from './api.js';
 import { renderSettings } from './settings.js';
 import { createAiSessions } from './ai-sessions.js';
@@ -699,22 +699,22 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     button?.click();
   }
 
-  let promptKind = 'validate', promptInstruction = '';
   let previewSink, lastSent = null;
   const characterEntries = () => Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.entryValues]));
-  function assemblyContext(kind = promptKind, instruction = promptInstruction, onlyUnitIds = kind === 'validate' ? selectedIds() : undefined) {
-    return { kind, instruction, onlyUnitIds, characterEntries:characterEntries(), rawCharacters:Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
+  function assemblyContext(kind = 'validate', instruction = '', unitIds, batchWarnings) {
+    const selectedUnitIds = selectedIds();
+    const onlyUnitIds = kind === 'validate' ? unitIds ?? selectedUnitIds : undefined;
+    const warnings = kind === 'chat' ? [] : batchWarnings;
+    const promptSources = kind === 'validate' && !batchWarnings ? { ...sources, warnings: warningGroups().pending } : sources;
+    return { kind, instruction, onlyUnitIds, selectedUnitIds, warnings, characterEntries:characterEntries(), rawCharacters:Object.fromEntries(Object.entries(characters).map(([id,c])=>[id,c.raw])), state: liveState(), sources: promptSources, roster: Object.values(config.instances), extraText: config.extraText };
   }
-  function publishMessages(messages, kind = promptKind) {
+  function publishMessages(messages, kind) {
     previewSink?.(messages, kind);
     return messages;
   }
-  function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds, warnings) {
+  function prepareMessages(kind = 'validate', instruction = '', sending = false, unitIds, warnings) {
     const slots = config.slots;
-    const context = assemblyContext(kind, instruction, unitIds);
-    if (kind === 'chat') context.warnings = [];
-    else if (Array.isArray(warnings)) context.warnings = warnings;
-    else context.sources = { ...sources, warnings: warningGroups().pending };
+    const context = assemblyContext(kind, instruction, unitIds, warnings);
     const messages = assembleMessages(slots, context);
     if (config.debugPrompts) console.debug('[fated:prompts]', { kind, slots: slots.map(s => ({ id: s.id, enabled: s.enabled })),
       messages: messages.map(({ slotId, role, content }) => ({ slotId, role, chars: content.length })) });
@@ -1548,8 +1548,6 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     const session = aiSessions.get(sessionId);
     if (aiController || !requestText || !session) return;
     syncSettings();
-    promptKind = 'chat';
-    promptInstruction = requestText;
     const history = (rerollTurn?.historyBeforeUser ?? session.messages).filter(message =>
       ['user', 'assistant'].includes(message.role) && message.content?.trim() && !['error', 'aborted'].includes(message.status)
     ).map(({ role, content }) => ({ role, content }));
@@ -1610,6 +1608,14 @@ const launcher = el(doc, 'button', { class: 'fated-tavern-launcher', title: `打
     applyJson: changeChatPatch,
     undoJson: message => changeChatPatch(message, undefined, true),
     copyText: copyChatText,
+    rawSummary() {
+      const slot = config.slots.find(s => s.id === 'raw' && !s.custom);
+      if (!slot || slot.enabled === false) return '原始资料槽已停用';
+      const selectedUnitIds = selectedIds();
+      const rawCharacters = Object.fromEntries(selectedUnitIds.map(id => [id, characters[id]?.raw]));
+      const chars = resolveSlotContent(slot, { kind: 'chat', selectedUnitIds, rawCharacters }).length;
+      return `原始资料：已勾选 ${selectedUnitIds.length} 名角色 · 待发送 ${chars} 字符`;
+    },
     extractJson: text => { const candidate = preferredJson(text); return candidate ? [candidate] : []; }, stop: () => aiController?.abort(new DOMException('已取消', 'AbortError')) });
   updateMagic();
   bindEventBus();

@@ -164,7 +164,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     window.overlayFrame = iframe;
     window.overlayBundle = bundle;
     const messages = window.hostMessages = [
-      {message_id:0, role:'assistant', message:'<char_info>{"name":"对手","stats":{"agi":-20},"装备":{"木弩":{"类型":"武器","位置":"主手","标签":["弩","攻击: 10"],"效果":{"恒定发射":"以稳定机括发射钝头木矢，攻击力恒定为10。"}}}}</char_info>' + battle},
+      {message_id:0, role:'assistant', message:'<char_info>{"name":"对手","原始资料校验":"对手私有原文","stats":{"agi":-20},"装备":{"木弩":{"类型":"武器","位置":"主手","标签":["弩","攻击: 10"],"效果":{"恒定发射":"以稳定机括发射钝头木矢，攻击力恒定为10。"}}}}</char_info>' + battle},
       {message_id:1, role:'assistant', message:'后续叙事'},
     ];
     window.hostCalls = [];
@@ -175,7 +175,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
       hostCalls.push(message_id);
       // The new clauses belong to floor 4; reopening floor 0 reads its own equipment text.
       const effects = message_id >= 4 ? window.extraBowEffects : undefined;
-      return {stat_data:{主角:{属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},背包:window.battleBag,装备:{...window.reserveWeapons,旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...effects}}}}}};
+      return {stat_data:{主角:{原始资料校验:'玩家私有原文',属性:{敏捷:50},生命值:{当前:window.narrativeHp ?? 321,上限:321},背包:window.battleBag,装备:{...window.reserveWeapons,旧弩:{类型:'武器',位置:'主手',标签:['弩','攻击: 14'],效果:{恒定拉距:'弩箭攻击恒定为10',...effects}}}}}};
     }};
     window.generateRaw = async config => new Promise((resolve,reject) => {
       window.hostRequests ||= [];
@@ -563,7 +563,15 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     };
     window.aiProbe = null;
   `);
+  await click('[data-tab="instances"]');
+  const sourceCheck = '.fated-instance[data-unit-id="e1"] input[type="checkbox"]';
+  await run(`if (document.querySelector('${sourceCheck}').checked) document.querySelector('${sourceCheck}').click()`);
+  await click('[data-tab="prompt"]');
+  await select('[aria-label="提示词预览类型"]', 'chat');
+  assert.match(JSON.stringify(await preview()), /玩家私有原文/);
+  assert.doesNotMatch(JSON.stringify(await preview()), /对手私有原文/);
   await click('[data-tab="ai"]');
+  assert.match(await run(`document.querySelector('[data-page="ai"] small.fated-ai-info').textContent`), /已勾选 1 名角色 · 待发送 [1-9]\d* 字符/);
   await run(`aiButton('清空当前会话').click()`);
   const selectSession = id => select('[aria-label="切换会话"]', id);
   const aiData = () => run(`window.__fatedTacticalTavern.getConfig().aiSessions`);
@@ -577,6 +585,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.deepEqual(await run(`aiProbe.args.ordered_prompts.filter(m => m.role !== 'system').map(m => m.content)`), [`问题 ${i}`]);
     assert.equal(await run(`aiButton('发送').disabled && !aiButton('停止').hidden`), true);
     if (i === 1) {
+      const payload = await run('JSON.stringify(aiProbe.args.ordered_prompts)');
+      assert.match(payload, /玩家私有原文/);
+      assert.doesNotMatch(payload, /对手私有原文/);
       const snapshots = [];
       for (const word of ['答', '回答', '回答 1']) {
         await run(`aiProbe.chunk(${JSON.stringify(word)})`);
@@ -589,6 +600,9 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     await until(async () => (await bubble())?.status === 'ok', '会话回复完成');
     assert.equal((await aiData()).sessions.find(s => s.id === sessions[i - 1]).messages.length, 2);
   }
+  await click('[data-tab="instances"]');
+  await click(sourceCheck);
+  await click('[data-tab="ai"]');
   for (const [index, id] of sessions.entries()) {
     await selectSession(id);
     assert.equal((await bubble()).body, `回答 ${index + 1}`);
@@ -646,6 +660,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run(`document.querySelector('[data-tab="ai"]').click()`);
   const beforeReroll = await aiData();
   await run(`${lastAssistant}.querySelector('[data-ai-reroll]').click(); aiProbe.resolve(JSON.stringify([{op:'replace',path:'/units/missing/armor',value:9}]))`);
+  assert.equal(await run(`aiProbe.args.ordered_prompts.some(m => m.role === 'system' && m.content.includes('玩家私有原文'))`), true);
   await until(() => run(`Boolean(${lastAssistant}.querySelector('[data-ai-apply]:not(:disabled)'))`), '重生成原位显示应用按钮');
   assert.equal((await aiData()).sessions.at(-1).messages.length, beforeReroll.sessions.at(-1).messages.length);
   await run(`${lastAssistant}.querySelector('[data-ai-apply]').click()`);
@@ -669,6 +684,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal(await run(`${editor}.querySelector('textarea').value`), '调整护甲');
   await run(`${editor}.querySelector('textarea').value='编辑后的护甲问题'; ${editor}.requestSubmit()`);
   assert.equal(await run('aiProbe.args.ordered_prompts.at(-1).content'), '编辑后的护甲问题');
+  assert.equal(await run(`aiProbe.args.ordered_prompts.some(m => m.role === 'system' && m.content.includes('玩家私有原文'))`), true);
   await run(`aiProbe.resolve('编辑后回复')`);
   await until(async () => (await bubble())?.body === '编辑后回复', '编辑后重新生成完成');
   assert.equal((await aiData()).sessions.at(-1).messages.at(-2).content, '编辑后的护甲问题');

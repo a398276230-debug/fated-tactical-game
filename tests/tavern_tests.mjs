@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const packageVersion = require('../package.json').version;
 import { duplicateMappings, duplicateOperations, instanceGroups } from '../src/tavern/instance-groups.js';
 import { fillInstance, ruleSummary } from '../src/tavern/instance-card.js';
-import { resolveSlotContent } from '../src/tavern/prompts.js';
+import { assembleMessages, DEFAULT_SLOTS, resolveSlotContent } from '../src/tavern/prompts.js';
 import { hydrateFromSources, parseBattleInit, mapEffects, warningsForUnit } from '../src/tavern/converter.js';
 import { battleReportToMvuPatch } from '../src/tavern/converter-patch.js';
 import { renderBattleInitEntry } from '../src/tavern/regex.js';
@@ -1356,6 +1356,47 @@ test('char fingerprint merges raw sources without hashing placement or actor AP'
 test('scoped roster omits other units and their item/skill templates', () => {
   const ctx={state:{units:{p:{weapon:'i',skills:['a']},q:{weapon:'j',skills:['b']}},items:{i:{templateId:'t'},j:{templateId:'u'}},equipment:{t:{},u:{}},skills:{a:{},b:{}}},rawCharacters:{p:{tag:'原始'},q:{}},onlyUnitIds:['p']};
   const row=JSON.parse(resolveSlotContent({id:'roster'},ctx)); for(const [key,id] of Object.entries({units:'p',items:'i',equipment:'t',skills:'a',raw:'p'}))assert.deepEqual(Object.keys(row[key]),[id]);
+});
+
+test('辅助聊天单独附上勾选角色原文，标准化沿用按批裁剪的 roster', () => {
+  const rawCharacters = {
+    p: { mvu: { note: '角色卡原句' }, char_info: { note: '角色描述原句' },
+      battle_init: { note: '战场声明只发一次' }, equipment: { name: '武器原句' }, skills: { name: '技能原句' } },
+    e: { char_info: { note: '未勾选敌方原文' } },
+  };
+  const state = { units: { p: { id: 'p' }, e: { id: 'e' } } };
+  const slots = DEFAULT_SLOTS.filter(slot => ['roster', 'battle', 'raw', 'task'].includes(slot.id));
+  const common = { state, rawCharacters, selectedUnitIds: ['p'], sources: { battleRaw: '战场声明只发一次' } };
+  const [chat] = assembleMessages(slots, { ...common, kind: 'chat' });
+  assert.equal(chat.slotId, 'roster+battle+raw+task');
+  for (const phrase of ['角色卡原句', '角色描述原句', '武器原句', '技能原句']) assert.ok(chat.content.includes(phrase), phrase);
+  assert.equal(chat.content.match(/战场声明只发一次/g).length, 1);
+  assert.doesNotMatch(chat.content, /未勾选敌方原文/);
+  assert.match(chat.content, /仅供只读参考，当前战局生效数据以 state 为准/);
+  const raw = ctx => resolveSlotContent({ id: 'raw' }, { ...common, kind: 'chat', ...ctx });
+  assert.equal(raw({ selectedUnitIds: [] }), '');
+  assert.equal(raw({ rawCharacters: { p: { battle_init: '重复声明', equipment: {}, skills: {} } } }), '');
+  assert.match(raw({ onlyUnitIds: ['e'] }), /未勾选敌方原文/);
+  assert.match(raw({ selectedUnitIds: undefined }), /未勾选敌方原文/);
+
+  const [validate] = assembleMessages(slots, { ...common, kind: 'validate', onlyUnitIds: ['p'],
+    characterEntries: { p: { 'skills:a': { note: '本批技能原句' } } },
+    warnings: [{ unitId: 'p', originPath: '/skills/a', message: '待编译' }] });
+  assert.equal(validate.slotId, 'roster+battle+task');
+  assert.equal(validate.content.match(/本批技能原句/g).length, 1);
+  assert.doesNotMatch(validate.content, /角色卡原句|未勾选敌方原文/);
+});
+
+test('原始资料槽限制单角色与整槽字符数，超限有可见提示', () => {
+  const entries = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`u${i}`, { mvu: { note: '甲'.repeat(10000) } }]));
+  const raw = rawCharacters => resolveSlotContent({ id: 'raw' }, { kind: 'chat', rawCharacters });
+  const first = raw({ u0: entries.u0 });
+  assert.match(first, /该角色原始资料已截断/);
+  assert.ok(first.split('角色 u0\n')[1].length <= 6000);
+  const all = raw(entries);
+  assert.ok(all.length <= 24000);
+  assert.match(all, /原始资料总长度已达上限/);
+  assert.doesNotMatch(all, /角色 u7/);
 });
 
 test('instance-card rule formatter displays the trigger and status duration', () => {

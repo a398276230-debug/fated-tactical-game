@@ -22,7 +22,7 @@ function renderMarkdown(target, content, make) {
   }
 }
 
-export function mountAiPage(page, { make, on, sessions, send, stop, reroll, editMessage, applyJson, undoJson, copyText, extractJson = () => [] }) {
+export function mountAiPage(page, { make, on, sessions, send, stop, reroll, editMessage, applyJson, undoJson, copyText, rawSummary, extractJson = () => [] }) {
   const button = label => make('button', { type: 'button' }, label);
   const toolbar = make('div', { class: 'fated-actions' });
   const select = make('select', { 'aria-label': '切换会话' });
@@ -35,12 +35,13 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, edit
   const info = make('p', { class: 'fated-ai-info' });
   const log = make('div', { class: 'fated-ai-log', role: 'log', 'aria-label': '消息流', tabindex: '0' });
   const composer = make('form', { class: 'fated-chat' });
+  const sourceHint = make('small', { class: 'fated-ai-info' });
   const input = make('textarea', { rows: '3', 'aria-label': '输入消息', placeholder: '输入消息 · Shift+Enter 换行' });
   const submit = make('button', { type: 'submit' }, '发送');
   const abort = button('停止');
   const status = make('span', { role: 'status' });
   composer.append(input, submit, abort, status);
-  page.append(make('h3', {}, '辅助 AI'), toolbar, edit, info, log, composer);
+  page.append(make('h3', {}, '辅助 AI'), toolbar, edit, info, sourceHint, log, composer);
 
   let shownId, busy = false, pinned = true;
   const rows = new Map(), drafts = new Map();
@@ -200,7 +201,7 @@ export function mountAiPage(page, { make, on, sessions, send, stop, reroll, edit
 
   return {
     render,
-    show: scrollToEnd,
+    show() { sourceHint.textContent = rawSummary?.() ?? ''; scrollToEnd(); },
     prefill(text) {
       input.value = [input.value.trim(), text].filter(Boolean).join('\n\n');
       drafts.set(shownId, input.value);

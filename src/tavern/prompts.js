@@ -16,8 +16,9 @@ import { mechanismTerms, normalizationPath } from './normalization-batches.js';
 export const DEFAULT_SLOTS = [
   { id: 'identity', label: '身份与任务声明', role: 'system', enabled: true, desc: '命定战斗助手的职责与边界', content: IDENTITY },
   { id: 'protocol', label: '战斗协议与规则说明', role: 'system', enabled: true, desc: '真实战斗协议的数值口径、判定方式、输出约束' },
-  { id: 'roster', label: '参战者与装备快照', role: 'system', enabled: true, desc: '当前战局的单位、装备、技能、状态（含 MVU 来源）' },
-  { id: 'battle', label: '战局与地形', role: 'system', enabled: true, desc: 'battle_init 描述符解析后的棋盘、地形、掩体、互动点' },
+  { id: 'roster', label: '参战者与装备快照', role: 'system', enabled: true, desc: '当前单位、装备、技能与状态模板。标准化时附本批原文与只读索引' },
+  { id: 'battle', label: '战局与地形', role: 'system', enabled: true, desc: 'battle_init 声明与当前棋盘、地形、掩体、互动点' },
+  { id: 'raw', label: '原始资料（MVU / char_info 原文）', role: 'system', enabled: true, desc: '辅助聊天中发送勾选角色的原文，供只读参考' },
   { id: 'warnings', label: '待处理警告清单', role: 'system', enabled: true, desc: '沙盘转换时无法等价映射的装备/技能/效果及原因' },
   { id: 'task', label: '标准化任务指令', role: 'system', enabled: true, desc: 'RFC 6902 补丁格式约束、允许路径白名单、禁止项' },
   { id: 'extra', label: '自定义补充（可空）', role: 'system', enabled: false, desc: '用户自己填的额外提示词' },
@@ -133,13 +134,57 @@ export function describeSlots(saved) {
   }
   // The identity slot marks snapshots already migrated to the new role defaults.
   const needsIdentity = !entries.some(slot => slot.id === 'identity');
-  const slots = entries.map(slot => ({ ...defaults.get(slot.id), ...slot,
-    ...(needsIdentity && defaults.has(slot.id) && slot.role === 'user' ? { role: 'system' } : {}),
-  }));
-  return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots] : slots;
+  const slots = entries.map(slot => {
+    const builtin = defaults.get(slot.id);
+    return { ...builtin, ...slot,
+      ...(builtin && { desc: builtin.desc }),
+      ...(needsIdentity && builtin && slot.role === 'user' ? { role: 'system' } : {}),
+    };
+  });
+  if (needsIdentity) slots.unshift({ ...defaults.get('identity') });
+  if (!slots.some(slot => slot.id === 'raw')) {
+    const battleIndex = slots.findIndex(slot => slot.id === 'battle');
+    const taskIndex = slots.findIndex(slot => slot.id === 'warnings' || slot.id === 'task');
+    const index = battleIndex >= 0 ? battleIndex + 1 : taskIndex >= 0 ? taskIndex : slots.length;
+    slots.splice(index, 0, { ...defaults.get('raw') });
+  }
+  return slots;
 }
 
 const distinct = values => [...new Set(values.filter(Boolean))];
+const RAW_PER_UNIT_LIMIT = 6000;
+const RAW_TOTAL_LIMIT = 24000;
+const RAW_FIELDS = ['mvu', 'char_info', 'equipment', 'skills'];
+
+function rawText(ctx) {
+  // Standardization already receives the relevant source excerpts in its scoped roster.
+  if (ctx.kind !== 'chat') return '';
+  const raw = ctx.rawCharacters ?? {};
+  const ids = distinct(ctx.onlyUnitIds ?? ctx.selectedUnitIds ?? Object.keys(raw));
+  const totalNotice = '\n\n[原始资料总长度已达上限，部分角色原文已省略]';
+  const unitNotice = '\n[该角色原始资料已截断]';
+  let text = '【原始资料（只读）】';
+  let included = false;
+  for (const id of ids) {
+    const row = Object.hasOwn(raw, id) ? raw[id] : null;
+    if (!row) continue;
+    const fields = RAW_FIELDS.filter(key => {
+      const value = row[key];
+      if (value == null) return false;
+      if (typeof value === 'string') return Boolean(value.trim());
+      return typeof value !== 'object' || Object.keys(value).length > 0;
+    });
+    if (!fields.length) continue;
+    const payload = json(Object.fromEntries(fields.map(key => [key, row[key]])));
+    const body = payload.length <= RAW_PER_UNIT_LIMIT ? payload
+      : payload.slice(0, RAW_PER_UNIT_LIMIT - unitNotice.length) + unitNotice;
+    const block = `\n\n角色 ${id}\n${body}`;
+    if (text.length + block.length > RAW_TOTAL_LIMIT - totalNotice.length) return text + totalNotice;
+    text += block;
+    included = true;
+  }
+  return included ? text : '';
+}
 function scopedRoster(ctx, state, warnings) {
   const pick = (table, ids) => Object.fromEntries(distinct(ids).filter(id => Object.hasOwn(table ?? {}, id)).map(id => [id, table[id]]));
   const unitIds = distinct(ctx.onlyUnitIds ?? []);
@@ -235,8 +280,9 @@ export function resolveSlotContent(slot, ctx = {}) {
     case 'protocol': return protocol;
     case 'roster': return rosterText();
     case 'battle': return battleText();
+    case 'raw': return rawText(ctx);
     case 'warnings': return ctx.warningsText ?? (warnings.length ? `待处理警告：\n${variables.warnings()}` : '');
-    case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? '【辅助 AI 对话】玩家咨询时，直接用文字回答。玩家明确要求调整已加载的战局时，输出 {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} 形状的 JSON，按请求使用快照中的真实路径和值。装备、技能和状态的变更值遵循上面的 VM 协议。标准化任务单独处理警告。' : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
+    case 'task': return expand(ctx.taskText ?? (ctx.kind === 'chat' ? '【辅助 AI 对话】玩家咨询时，直接用文字回答。玩家明确要求调整已加载的战局时，输出 {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} 形状的 JSON，按请求使用快照中的真实路径和值。装备、技能和状态的变更值遵循上面的 VM 协议。原始资料（MVU / char_info 原文）仅供只读参考，当前战局生效数据以 state 为准。标准化任务单独处理警告。' : PATCH_RULES + (instruction ? '\n玩家补充：{{user_instruction}}' : '')));
     case 'extra': return expand(ctx.extraText || '');
     case 'assistant': return ctx.assistantText || '';
     default: return '';
