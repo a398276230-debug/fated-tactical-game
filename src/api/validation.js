@@ -231,7 +231,7 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','attunementCharges','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','moveCarryInPermille','moveSpentPermille','moveBonusPermille','moveBanked','lastMoveDir','remainingTurns','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
@@ -253,7 +253,10 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'durationUnit', x => v.summoned === true && v.remainingTurns !== undefined
     && (x === 'rounds' && v.durationAnchorId === undefined || x === 'anchor_turns' && id(v.durationAnchorId)));
   checkOptional(v, 'durationAnchorId', x => v.durationUnit === 'anchor_turns' && id(x));
-  checkOptional(v, 'moveSpent', x => int(x, 0, 1000000000));
+  checkOptional(v, 'moveCarryInPermille', x => int(x, 0, 999));
+  checkOptional(v, 'moveSpentPermille', x => int(x, 0, 1000000000));
+  checkOptional(v, 'moveBonusPermille', x => int(x, 0, 1000000000));
+  checkOptional(v, 'moveBanked', x => typeof x === 'boolean');
   for (const k of ['fled','corpseConsumed']) checkOptional(v, k, x => typeof x === 'boolean');
   checkOptional(v, 'corpseOf', id);
   checkOptional(v, 'diedAt', x => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));

@@ -15,6 +15,18 @@ export const RATING_TABLE = Object.freeze([
   { min: null, name: '失手', multiplier: 0 },
 ]);
 export const TIER_CELL_M = Object.freeze([null, 2, 2, 5, 15, 50, 250, 1000]);
+export function defaultMoveFromAgi(agi) {
+  if (agi == null) return 3;
+  const value = Number(agi);
+  if (!Number.isFinite(value)) return 3;
+  return Math.max(2, Math.min(6, 1 + Math.ceil(value / 4)));
+}
+export function boardMoveCellsFromMoveM(moveM, scale) {
+  const cellM = Math.max(1e-9, Number(scale?.cellM) || 2);
+  const maxBoardSteps = (scale?.width ?? 10) + (scale?.height ?? 10);
+  const permille = Math.round((Math.max(0, Number(moveM) || 0) / cellM) * 1000);
+  return Math.min(maxBoardSteps, Math.floor(permille / 1000));
+}
 export const QUALITY_TIER = Object.freeze({ 普通: 1, 优良: 2, 稀有: 3, 史诗: 4, 传说: 5, 神话: 6 });
 export const QUALITY_AUTHORITY = Object.freeze({ ...QUALITY_TIER, 唯一: 8 });
 const clampTier = tier => Math.max(1, Math.min(7, Math.trunc(Number(tier) || 1)));

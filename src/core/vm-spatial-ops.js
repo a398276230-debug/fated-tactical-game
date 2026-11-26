@@ -1,4 +1,4 @@
-import { resolveEffectiveTier, scaledMoveCells, sizeClassFor, stanceFor, stanceRules } from './combat_protocol.js';
+import { resolveEffectiveTier, scaledMoveCells, sizeClassFor, stanceFor, stanceRules, TIER_CELL_M, defaultMoveFromAgi, boardMoveCellsFromMoveM } from './combat_protocol.js';
 import { evaluateExpr } from './formula.js';
 import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
 import { spawnPanel, spawnBudgetIssue } from './spawn-unit.js';
@@ -297,8 +297,13 @@ function unitPlan(state, context, spec, original) {
     const contributor = pool?.contributors.find(entry => entry.ownerKind === 'unit' && entry.ownerId === panel.id);
     return [field, contributor?.maxBase ?? panel[field]];
   }));
+  const tier = spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier;
+  const rawMove = spec.move != null ? Math.max(0, Number(spec.move))
+    : panel.rawMove ?? (spec.copyOf && panel.moveM != null
+      ? panel.moveM / TIER_CELL_M[Math.max(1, Math.min(7, tier ?? 1))]
+      : panelSpec ? defaultMoveFromAgi(stats.agi) : panel.move ?? defaultMoveFromAgi(stats.agi));
   return { count, gear, panel: { stats, ...maxima, bodyLengthM, size: panel.size ?? sizeClassFor(bodyLengthM),
-    mc: panel.mc ?? sizeMultiplier(bodyLengthM), armor: panel.armor ?? 0, move: panel.move ?? 3,
+    mc: panel.mc ?? sizeMultiplier(bodyLengthM), armor: panel.armor ?? 0, rawMove, move: Math.round(rawMove),
     skills: [...(loads.skills ?? [])], team: actor.team, facing: [...(actor.facing ?? [1, 0])],
     level: (spec.templateId && original?.level) || actor.level || actor.tier || 1, tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier } };
 }
@@ -461,6 +466,9 @@ function continueSpawn({ state, frame, host, context }) {
       ...(['linked_group', 'linked_each'].includes(data.turnMode) && { turnAnchorId: data.turnAnchorId }),
       ...data.duration,
       ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
+    unit.moveM = unit.rawMove * TIER_CELL_M[Math.max(1, Math.min(7, unit.tier ?? 1))];
+    unit.move = boardMoveCellsFromMoveM(unit.moveM, state.scale);
+    unit.moveCarryPermille = 0;
     unit.hp = unit.maxHp;
     unit.mp = unit.maxMp;
     unit.sp = unit.maxSp;

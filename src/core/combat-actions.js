@@ -280,7 +280,10 @@ function resetUnitTurn(state, unit) {
   delete unit.followupUsed;
   unit.used = { attack: 0, action: 0 };
   unit.moved = 0;
-  delete unit.moveSpent;
+  unit.moveCarryInPermille = unit.moveCarryPermille ?? 0;
+  delete unit.moveSpentPermille;
+  delete unit.moveBonusPermille;
+  delete unit.moveBanked;
   unit.reactionAvailable = true;
   unit.ap = unit.apMax = turnAP(state, unit);
 }
@@ -499,7 +502,10 @@ export function beginBattle(state, openingRolls) {
     delete unit.followupUsed;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
-    delete unit.moveSpent;
+    delete unit.moveCarryInPermille;
+    delete unit.moveSpentPermille;
+    delete unit.moveBonusPermille;
+    delete unit.moveBanked;
     unit.reactionAvailable = true;
     for (const status of values(unit.statuses)) {
       delete status.appliedRound;
@@ -633,29 +639,38 @@ export function actionSkill(state, unit, id) {
 }
 export const syncEquipmentEffects = initializeVMWorld;
 
-function movementScale(state, unit, type) {
-  const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit.tier) || 1)));
-  const cellM = state.scale?.cellM ?? 2;
+export function movementBudget(state, unit, { prospectiveSprint = false } = {}) {
+  const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit?.tier) || 1)));
+  const cellM = Math.max(1e-9, Number(state.scale?.cellM) || 2);
   const tierM = TIER_CELL_M[tier];
-  // Presets store cells; scaled units store metres. Apply all modifiers once in tier units.
-  const base = (unit.moveM ?? unit.move * cellM) / tierM;
-  const moveM = Math.max(0, modStat(state, unit, 'movement', base)) * tierM;
-  const mult = type === 'sprint' ? 2 : 1;
-  const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
-  const total = carry + Math.round(mult * moveM / cellM * 1000);
   const maxBoardSteps = (state.scale?.width ?? 10) + (state.scale?.height ?? 10);
-  return { moveM, total, limit: Math.min(maxBoardSteps, Math.floor(total / 1000)) };
+  const base = unit.moveM != null ? unit.moveM / tierM : (unit.rawMove ?? ((unit.move ?? 3) * cellM / tierM));
+  const effectiveMoveM = Math.max(0, modStat(state, unit, 'movement', base)) * tierM;
+  const stepPermille = Math.round(effectiveMoveM / cellM * 1000);
+  const carryInPermille = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryInPermille ?? unit.moveCarryPermille) || 0)));
+  const bonusPermille = (unit.moveBonusPermille ?? 0) + (prospectiveSprint ? stepPermille : 0);
+  const spentPermille = unit.moveSpentPermille ?? 0;
+  const grossPermille = Math.max(0, carryInPermille + stepPermille + bonusPermille);
+  const remainingPermille = Math.max(0, grossPermille - spentPermille);
+  const maxCells = Math.min(maxBoardSteps, Math.floor(grossPermille / 1000));
+  const remainingCells = Math.min(maxBoardSteps, Math.floor(remainingPermille / 1000));
+  const currentCarryPermille = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
+  const subCell = (unit.moveM != null && effectiveMoveM < cellM) || (stepPermille > 0 && stepPermille < 1000);
+  const scaleSuppressed = (state.scale?.anchorTier ?? 1) >= 5;
+  const canBankSubcell = remainingCells === 0 && !scaleSuppressed && !unit.moveBanked && (unit.moved ?? 0) === 0
+    && (prospectiveSprint ? remainingPermille > currentCarryPermille : spentPermille === 0 && remainingPermille > carryInPermille);
+  return { effectiveMoveM, stepPermille, carryInPermille, bonusPermille, spentPermille, grossPermille,
+    remainingPermille, maxBoardSteps, maxCells, remainingCells, currentCarryPermille, subCell, scaleSuppressed,
+    canBankSubcell, bankedProgress: canBankSubcell ? remainingPermille : null,
+    exhausted: remainingCells === 0 && !canBankSubcell && (spentPermille > 0 || Boolean(unit.moveBanked)) };
 }
 export function reachable(state, type = 'move', unit = currentUnit(state), distanceLimit = undefined) {
   if (!alive(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
-  const scale = movementScale(state, unit, type);
-  const spent = unit.moveSpent ?? 0;
-  const mult = type === 'sprint' ? 2 : 1;
-  const limit = distanceLimit ?? Math.max(0, scale.limit - spent * mult);
+  const budget = movementBudget(state, unit, { prospectiveSprint: type === 'sprint' });
+  const limit = distanceLimit ?? budget.remainingCells;
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === 'disengage' });
-  if (!routes.length && scale.limit === 0 && distanceLimit === undefined) {
-    if (state.scale?.anchorTier >= 5) return [];
-    return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
+  if (!routes.length && type !== 'disengage' && distanceLimit === undefined && budget.canBankSubcell) {
+    return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: budget.bankedProgress }];
   }
   const sources = type === 'disengage' ? [] : opportunitySources(state, unit).filter(source => canReact(state, source, unit));
   const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
@@ -1039,7 +1054,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
 }
 
 const ACTIONS = Object.freeze({
-  move: { ap: 1, slot: 'action' }, sprint: { ap: 2, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
+  move: { ap: 0, slot: null }, sprint: { ap: 1, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
   end_encounter: {ap:0,slot:null}, switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   stance_mode: { ap: 0, slot: null }, brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
@@ -1136,16 +1151,14 @@ export function preview(state, action, { simulateRules = true, actionOrigin, act
   const item = !unplaced && (type === 'interact' || type === 'attack') ? values(state.interactives).find(v => !v.spent && v.x === x && v.y === y) : null;
   const detonate = item?.kind === 'barrel';
   const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
-  const independentMove = isLinkedMode(unit) && isMovement(type);
-  const ap = independentMove ? 0 : drawFromBag ? 1 : cost.ap;
-  const slot = independentMove ? 'move' : ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
+  const ap = drawFromBag ? 1 : cost.ap;
+  const slot = ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
   const resourceCosts = actorCost(state, unit, cost, type === 'skill' ? skillId : undefined);
   const common = { ok: true, ap, cost: ap, slot, ...resourceCosts, ...availability };
   if (type === 'end') return common;
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
     ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
   if (unitSkipped(state, unit)) return fail('当前单位受控制，只能结束回合');
-  if (independentMove && unit.moved > 0) return fail('本回合已经移动');
   const cannotPay = paymentError(state, unit, ap, slot, cost, resourceCosts, type === 'skill');
   if (cannotPay) return fail(cannotPay, { ap, ...availability });
   const center = unplaced ? undefined : pos(x, y);
@@ -1162,7 +1175,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, act
   }
   if (type === 'stance_mode') {
     if (weapon.stance !== 'greatsword' || !['offensive','defensive'].includes(action.maneuver) || action.maneuver === (unit.greatswordMode ?? 'offensive')) return fail('当前不能切换该重剑态势');
-    if (unit.used.attack || unit.used.action || unit.moved) return fail('只能在回合开始行动前切换重剑态势');
+    if (unit.used.attack || unit.used.action || unit.moved || unit.moveBanked) return fail('只能在回合开始行动前切换重剑态势');
     return { ...common, name: action.maneuver === 'defensive' ? '转为沉势' : '转为攻势' };
   }
   if (type === 'block') {
@@ -1222,10 +1235,14 @@ export function preview(state, action, { simulateRules = true, actionOrigin, act
   if (isMovement(type)) {
     if (aggregateModifiers(state, unit.id).locks.move) return fail('定身时不能移动');
     const cells = reachable(state, type, unit);
-    if (unplaced) return { ...common, cells };
+    const budget = movementBudget(state, unit, { prospectiveSprint: type === 'sprint' });
+    if (unplaced) return cells.length ? { ...common, cells, moveRemaining: budget.remainingCells, moveMax: budget.maxCells }
+      : fail(budget.exhausted ? '本回合移动力已耗尽' : '当前无法移动', { cells, moveRemaining: budget.remainingCells, moveMax: budget.maxCells });
     const choice = cells.find(at => sameCell(at, center));
-    if (!choice) return fail('无法到达：距离、占位、墙体或陡崖阻挡', { cells });
+    if (!choice) return fail(budget.exhausted ? '本回合移动力已耗尽' : '无法到达：距离、占位、墙体或陡崖阻挡', { cells });
     return { ...common, cells, path: choice.path, steps: choice.steps, opportunities: choice.opportunities,
+      moveRemaining: budget.remainingCells, moveMax: budget.maxCells,
+      remainingCellsAfter: choice.bankedProgress != null ? 0 : Math.max(0, Math.min(budget.maxBoardSteps, Math.floor((budget.remainingPermille - choice.steps * 1000) / 1000))),
       ...(choice.bankedProgress != null && { bankedProgress: choice.bankedProgress }),
       dz: elevation(state, center) - elevation(state, unit) };
   }
@@ -1716,6 +1733,11 @@ function movementDirection(from, to, previous) {
 }
 
 function continueMovement(state, actor, type, plan, progress, host) {
+  if (type === 'sprint' && !progress.sprintCharged) {
+    actor.moveBonusPermille = (actor.moveBonusPermille ?? 0) + movementBudget(state, actor).stepPermille;
+    progress.sprintCharged = true;
+  }
+  actor.moveCarryInPermille ??= actor.moveCarryPermille ?? 0;
   progress.from ??= pointAt(state, actor);
   progress.path ??= [];
   progress.initialCover ??= nearbyCovers(state, actor).map(c => c.id);
@@ -1747,14 +1769,16 @@ function continueMovement(state, actor, type, plan, progress, host) {
     }
   }
   const landing = pointAt(state, actor), interrupted = path.length !== plan.path.length;
-  const scale = movementScale(state, actor, type);
-  const consumed = Math.min(scale.total, path.length * 1000);
-  if (actor.moveM != null || scale.limit === 0) actor.moveCarryPermille = (scale.total - consumed) % 1000;
-  // Actual displacement is tracked independently of explicit movement-pool changes.
-  const carryText = path.length === 0 && scale.limit === 0
-    ? `在广袤战区中奋力蓄步推进（跨区进度${movementProgressText(scale.total)}）` : null;
+  const budget = movementBudget(state, actor);
+  const banking = plan.bankedProgress != null && path.length === 0;
+  const consumed = banking ? budget.remainingPermille : Math.min(budget.remainingPermille, path.length * 1000);
+  actor.moveSpentPermille = (actor.moveSpentPermille ?? 0) + consumed;
+  if (banking || path.length) actor.moveCarryPermille = banking ? budget.remainingPermille % 1000 : (budget.remainingPermille - consumed) % 1000;
+  if (banking) actor.moveBanked = true;
+  const carryText = banking ? `在广袤战区中奋力蓄步推进（跨区进度${movementProgressText(budget.remainingPermille)}）` : null;
   const movedCells = path.length;
-  actor.moved = (actor.moved ?? 0) + movedCells;
+  const movedBefore = actor.moved ?? 0;
+  actor.moved = movedBefore + movedCells;
   if (movedCells || progress.from.z !== landing.z) {
     actor.lastMoveDir = movementDirection(progress.from, landing, actor.lastMoveDir);
     progress.moveEvent = { actorId: actor.id, targetId: actor.id,
@@ -1762,9 +1786,9 @@ function continueMovement(state, actor, type, plan, progress, host) {
       steps: movedCells, moveKind: type };
   }
   record(state, actor, type, carryText ?? `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${landing.x}, ${landing.y}, z=${landing.z})`,
-    { from: progress.from, to: landing, path, steps: path.length, interrupted, ...(actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }), ...(carryText ? { moveM: scale.moveM, progressPermille: scale.total } : {}) });
+    { from: progress.from, to: landing, path, steps: path.length, interrupted, ...(actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }), ...(carryText ? { moveM: budget.effectiveMoveM, progressPermille: budget.remainingPermille } : {}) });
   if (alive(actor)) {
-    if (type === 'move' && actor.stance === 'light_blade') actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
+    if (type === 'move' && movedBefore === 0 && movedCells > 0 && actor.stance === 'light_blade') actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
     const coverIds = nearbyCovers(state, actor).filter(c => !progress.initialCover.includes(c.id)).map(c => c.id);
     if (coverIds.length) record(state, actor, 'cover_approach', `${actor.name}移至掩体 ${coverIds.join('、')} 旁`, { coverIds });
   }
@@ -1986,7 +2010,15 @@ function finishAction(state, actor, type) {
   const turnOwner = currentUnit(state) ?? actor;
   if (!turnOwner) return;
   const linked = routedLinkedUnitsOf(state, turnOwner.id).filter(member => member.team === turnOwner.team);
-  if (type === 'end' || !alive(turnOwner) || turnOwner.fled || (!turnOwner.ap && !linked.length)) {
+  const canStillAct = member => {
+    if (!alive(member) || member.fled || unitSkipped(state, member)) return false;
+    if (member.ap > 0) return true;
+    if (preview(state, { type: 'move' }, { actingUnit: member }).ok) return true;
+    if (preview(state, { type: 'use_item' }, { actingUnit: member }).ok) return true;
+    const skills = [...(member.skills ?? []), ...equippedActiveSkills(state, member).map(([id]) => id)];
+    return skills.some(skillId => actionSkill(state, member, skillId)?.ap === 0 && preview(state, { type: 'skill', skillId }, { actingUnit: member }).ok);
+  };
+  if (type === 'end' || !alive(turnOwner) || turnOwner.fled || ![turnOwner, ...linked].some(canStillAct)) {
     if (!turnOwner.fled || linked.length) endTurn(state, turnOwner);
     if (!state.vm?.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
   }

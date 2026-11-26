@@ -1,4 +1,4 @@
-import { actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
+import { movementBudget, actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
@@ -175,7 +175,7 @@ export const vmHost = {
   },
   resource: (state, unit, key) => {
     if (!unit) return undefined;
-    if (key === 'move') return Math.max(0, unit.move - (unit.moveSpent ?? 0));
+    if (key === 'move') return movementBudget(state, unit).remainingCells;
     if (key === 'attack' || key === 'action') return Math.max(0, 1 - (unit.used?.[key] ?? 0));
     return getPool(state, unit.id, key)?.current;
   },

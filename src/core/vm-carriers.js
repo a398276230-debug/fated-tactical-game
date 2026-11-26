@@ -1,4 +1,5 @@
 import { evaluateExpr } from './formula.js';
+import { movementBudget } from './combat-actions.js';
 import { isStatusImmune } from './vm-immunity.js';
 import { distance3D } from './spatial.js';
 import { resolveEffectiveTier } from './combat_protocol.js';
@@ -120,7 +121,7 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
     ...(state.grid && { distance: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
       && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null }),
     elevation: entity => pointElevation(state, entity),
-    resource: (unit, key) => key === 'move' ? Math.max(0, (unit?.move ?? 0) - (unit?.moveSpent ?? 0))
+    resource: (unit, key) => key === 'move' ? (unit ? movementBudget(state, unit).remainingCells : 0)
       : key === 'attack' || key === 'action' ? Math.max(0, 1 - (unit?.used?.[key] ?? 0))
       : getPool(state, unit?.id, key, 'unit')?.current ?? own(unit, key),
     itemResource: (item, key) => getPool(state, item?.id, key, 'item')?.current ?? 0,

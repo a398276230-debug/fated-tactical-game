@@ -1,5 +1,5 @@
 import { calculatePrebattleResources } from './prebattle_resources.js';
-import { sizeClassFor } from './combat_protocol.js';
+import { sizeClassFor, defaultMoveFromAgi } from './combat_protocol.js';
 
 const attrs = ['str','agi','con','int','spi'];
 const tierCaps = [8,10,12,14,16,18,20];
@@ -38,6 +38,8 @@ export function spawnPanel(actor, spec) {
   const bodyLengthM = spec.bodyLengthM ?? (spec.mc >= 2 ? 10 * 2 ** (spec.mc - 2) : 1.7);
   if (bodyLengthM < 0.01 || bodyLengthM > 1e9) return null;
   const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, mc: spec.mc, summonCount: spec.count ?? 1 });
-  return {stats,tier,bodyLengthM,mc,size:spec.size ?? sizeClassFor(bodyLengthM),armor:spec.armor ?? 0,move:spec.move ?? 3,
+  const rawMove = spec.move != null && Number.isFinite(Number(spec.move))
+    ? Math.max(0, Number(spec.move)) : defaultMoveFromAgi(stats.agi);
+  return {stats,tier,bodyLengthM,mc,size:spec.size ?? sizeClassFor(bodyLengthM),armor:spec.armor ?? 0,rawMove,move:Math.round(rawMove),
     maxHp:spec.maxHp ?? resources.hp.max,maxMp:spec.maxMp ?? resources.mp.max,maxSp:spec.maxSp ?? resources.sp.max};
 }

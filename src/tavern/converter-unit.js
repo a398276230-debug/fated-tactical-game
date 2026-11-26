@@ -1,5 +1,5 @@
 import { id as validId, validateState } from '../api/validation.js';
-import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells, tierFromCellM } from '../core/combat_protocol.js';
+import { DISTANCE_TABLE, sizeClassFor, stanceFor, stanceRules, moraleTypeFor, TIER_CELL_M, QUALITY_TIER, resolveEffectiveTier, scaledCells, tierFromCellM, defaultMoveFromAgi, boardMoveCellsFromMoveM } from '../core/combat_protocol.js';
 import { validVmRule, validVmStatMod } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { initializeVMWorld } from '../core/vm-runtime.js';
@@ -490,8 +490,8 @@ function unitFrom(record, participant, index, equipment, skills, items, sink, is
   const facing = rawFacing.slice(0, 2).map(n => Math.sign(integer(n)));
   if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team === 'blue' ? 1 : -1, 0);
   const rawMove = number(findValue(record, ['move','movement','移动'], null), NaN);
-  const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, facing, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...(Object.keys(unitPools).length ? { unitPools } : {}), ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.max(1, Math.min(10, integer(findValue(record, ['move','movement','移动'], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', attunementCharges: stanceRules('attunement').itemCharges, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
+  const defaultMove = defaultMoveFromAgi(stats.agi);
+  const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id, name, team, x: pos.x, y: pos.y, facing, ...(Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}), hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...(Object.keys(unitPools).length ? { unitPools } : {}), ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1000000, integer(findValue(record, ['armor','defense','护甲'], 0), 0))), size, move: Math.round(Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map(item => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: 'offensive', attunementCharges: stanceRules('attunement').itemCharges, bonusDice: 0, penaltyDice: 0, intent: 'normal', nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? 'standard', ...(isProtagonist && {protagonist:true}) };
   if (p.moraleType && !moraleTypeFor(p.moraleType)) sink('state').push(`未知战斗类型「${p.moraleType}」，按标准处理`);
   if (isProtagonist) {
     const bagWeapons = [];
@@ -806,6 +806,7 @@ export function hydrateFromSources(input = {}, options = {}) {
     }
     summonTemplates[templateId] = {
       name: row.name, ownerId: row.ownerId, ...panel,
+      ...(Number.isFinite(number(findValue(sourceRecord, ['move', 'movement', '移动'], null), NaN)) && { move: summonUnit.rawMove }),
       ...(findValue(sourceRecord, ['level', '等级'], null) != null && { level: summonUnit.level }),
       bodyLengthM: summonUnit.bodyLengthM, size: summonUnit.size,
       mc: bound(findValue(sourceRecord, ['mc','MC','massClass'], sizeMultiplier(summonUnit.bodyLengthM)), 1, 64, 1),
@@ -851,7 +852,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   if (time) state.time = time;
   for (const unit of Object.values(units)) {
     unit.moveM = unit.rawMove * TIER_CELL_M[unit.tier];
-    unit.move = scaledCells(unit.rawMove, unit.tier, cellM, { floor: true });
+    unit.move = boardMoveCellsFromMoveM(unit.moveM, state.scale);
     unit.moveCarryPermille = 0;
   }
   const adjustmentSink = (source, scope) => ({ push: message => sink(null, source, scope).push(message, { kind: 'auto_adjusted' }) });

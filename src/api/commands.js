@@ -109,7 +109,7 @@ const commands = {
     check(plain(v) && id(v.id) && !own(s.units, v.id), 'unit.id');
     unitValue(v, v.id, s);
     check(!own(v, 'pools'), '增援资源池由战局初始化');
-    check(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0, '增援须存活且行动未开始');
+    check(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0 && (v.moved ?? 0) === 0 && (v.moveSpentPermille ?? 0) === 0 && !v.moveBanked, '增援须存活且行动未开始');
     v.mainHand = v.weapon;
     if (v.offHand === undefined) v.offHand = null;
     if (v.shield === undefined) v.shield = null;

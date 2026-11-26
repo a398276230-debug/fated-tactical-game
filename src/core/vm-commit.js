@@ -3,23 +3,33 @@ import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { evaluateExpr } from './formula.js';
 import { removeStatus } from './vm-rules.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
+import { movementBudget } from './combat-actions.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
 const entry = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const pseudoPool = new Set(['attack', 'action', 'move']);
-function pseudoState(unit, key) {
-  if (key === 'move') return { current: Math.max(0, unit.move - (unit.moveSpent ?? 0)), max: unit.move };
+function pseudoState(state, unit, key) {
+  if (key === 'move') { const b = movementBudget(state, unit); return { current: b.remainingCells, max: b.maxBoardSteps }; }
   return { current: Math.max(0, 1 - (unit.used?.[key] ?? 0)), max: 1 };
 }
-function applyPseudo(unit, key, mode, amount) {
+function applyPseudo(state, unit, key, mode, amount) {
   if (!Number.isInteger(amount)) return false;
-  const before = pseudoState(unit, key).current;
+  const before = pseudoState(state, unit, key).current;
   let current = mode === 'set' ? amount : mode === 'add' ? before + amount : mode === 'sub' ? before - amount : NaN;
   if (mode === 'add_max' || mode === 'sub_max' || mode === 'set_max') return false;
   if (!Number.isFinite(current)) return false;
-  current = Math.max(0, Math.min(pseudoState(unit, key).max, current));
-  if (key === 'move') unit.moveSpent = unit.move - current;
-  else {
+  current = Math.max(0, Math.min(pseudoState(state, unit, key).max, current));
+  if (key === 'move') {
+    const delta = (current - before) * 1000;
+    if (delta < 0) unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - delta;
+    else if (delta > 0) {
+      const refund = Math.min(unit.moveSpentPermille ?? 0, delta);
+      unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - refund;
+      unit.moveBonusPermille = (unit.moveBonusPermille ?? 0) + delta - refund;
+      if (!unit.moveSpentPermille) delete unit.moveSpentPermille;
+      if (!unit.moveBonusPermille) delete unit.moveBonusPermille;
+    }
+  } else {
     unit.used[key] = 1 - current;
     // `ap` is the aggregate remaining split-slot budget. Keep it in sync
     // with slot refunds/confiscations; movement is deliberately not AP.
@@ -79,7 +89,7 @@ export function continueCommit({ state, frame, host, options }) {
   const target = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
   const localOwner = data.local && frame.data.carrierId;
   const pseudo = !localOwner && pseudoPool.has(key);
-  const pool = pseudo ? pseudoState(target, key) : getPool(state, localOwner || data.targetId, key, localOwner ? 'item' : 'unit');
+  const pool = pseudo ? pseudoState(state, target, key) : getPool(state, localOwner || data.targetId, key, localOwner ? 'item' : 'unit');
   const other = op === 'resource' && data.mode === 'swap'
     ? getPool(state, localOwner || data.targetId, data.otherPool, localOwner ? 'item' : 'unit') : null;
   const otherBefore = other?.current ?? 0;
@@ -154,7 +164,7 @@ export function continueCommit({ state, frame, host, options }) {
       host.log(state, source, 'heal', `${target.name}${data.label ? `因${data.label}` : ''}恢复${event.healing}点生命`, { ...data.details, targetId: target.id, amount: event.healing, hpBefore: before, hpAfter: target.hp });
     } else {
       if (pseudo) {
-        if (!applyPseudo(target, key, data.mode, Math.floor(event.finalAmount))) { state.vm.stack.pop(); return; }
+        if (!applyPseudo(state, target, key, data.mode, Math.floor(event.finalAmount))) { state.vm.stack.pop(); return; }
       } else if (data.mode === 'swap') {
         if (other) swapPoolCurrents(state, pool.id, other.id);
       } else {
@@ -186,7 +196,7 @@ export function continueCommit({ state, frame, host, options }) {
           return;
         }
       }
-      const after = pseudo ? pseudoState(target, key).current : entry(state.pools, pool.id).current;
+      const after = pseudo ? pseudoState(state, target, key).current : entry(state.pools, pool.id).current;
       const maxChange = data.mode.endsWith('_max');
       const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
       const label = ({attack:'攻击槽',action:'动作槽',move:'剩余移动格'})[key] ?? key.toUpperCase();

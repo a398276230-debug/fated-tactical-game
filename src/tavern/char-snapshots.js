@@ -2,7 +2,7 @@ import { collectMvu } from './converter.js';
 import { resolveCharPanel, resolveSummonSource, sourceId } from './converter-parse.js';
 
 // Strip combat cursor/placement at the character boundary only: a skill's AP cost is source data.
-const transient = new Set(['x','y','z','xyz','position','pos','coordinates','facing','ap','used','round','turn','initiativeRoll','reactionAvailable','位置','坐标','行动点','回合','朝向']);
+const transient = new Set(['x','y','z','xyz','position','pos','coordinates','facing','ap','used','round','turn','initiativeRoll','reactionAvailable','moved','moveCarryPermille','moveCarryInPermille','moveSpentPermille','moveBonusPermille','moveBanked','位置','坐标','行动点','回合','朝向']);
 const clean = record => Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => !transient.has(key) && !key.startsWith('__source')));
 const ordered = v => Array.isArray(v) ? v.map(ordered) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, ordered(v[k])])) : v;
 export const stableSourceJson = value => JSON.stringify(ordered(value));
