@@ -10542,6 +10542,9 @@ var FatedTacticalTavern = (() => {
       <strong id="target-title"></strong>
       <button type="button" id="close-target" class="ft-close" aria-label="\u5173\u95ED">\xD7</button>
     </div>
+    <div id="target-submenu-nav" class="ft-submenu-nav" hidden>
+      <button type="button" id="bag-submenu-back" class="game-button ft-submenu-back">\u2190 \u8FD4\u56DE\u884C\u52A8\u83DC\u5355</button>
+    </div>
     <div id="target-unit-options" class="ft-target-unit-options" aria-label="\u540C\u683C\u76EE\u6807" hidden></div>
     <div id="target-options" class="ft-target-options" hidden>
       <label>\u610F\u56FE <select id="intent-select"><option value="normal">\u5E38\u89C4</option><option value="function">\u673A\u80FD\u9650\u5236</option><option value="core">\u6838\u5FC3\u8981\u5BB3</option><option value="kill">\u62B9\u6740</option><option value="concept">\u6982\u5FF5\u7834\u788E</option></select></label>
@@ -12169,7 +12172,9 @@ var FatedTacticalTavern = (() => {
     const viewportHeight = Math.max(0, bottom - top);
     const a = anchor.getBoundingClientRect();
     const { width, height: renderedHeight } = card.getBoundingClientRect();
-    const height2 = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight);
+    const list4 = card.dataset.submenu ? card.querySelector("#action-toolbar") : null;
+    const listOverflow = list4 ? Math.max(0, list4.scrollHeight - list4.clientHeight) : 0;
+    const height2 = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight + listOverflow);
     let maxHeight = viewportHeight;
     const room = {
       right: right - a.right - gap,
@@ -12248,7 +12253,7 @@ var FatedTacticalTavern = (() => {
         }
       }
     };
-    let bagAim = null;
+    let bagAim = null, bagMenuOpen = false;
     let state, live3, selectedId, action, hover, target2, sprint = false, timer, pending, carry, inspectedId, busy = false;
     let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
     let visibleAsk = null, askCells = null, entityChoices = null;
@@ -12443,12 +12448,16 @@ var FatedTacticalTavern = (() => {
     }
     function resetSelection() {
       bagAim = null;
+      bagMenuOpen = false;
       selectedId = active3(live3 ?? state)?.id;
       action = null;
       hover = target2 = null;
       sprint = false;
       inspectedId = null;
-      $("target-actions").hidden = true;
+      const card = $("target-actions");
+      delete card.dataset.submenu;
+      $("target-submenu-nav").hidden = true;
+      card.hidden = true;
     }
     function answer(ask, fields3) {
       if (visibleAsk === ask && pendingAsk() === ask && !busy) {
@@ -12720,10 +12729,14 @@ ${height2}\uFF0C${sight}`;
     }
     function closeTarget(restoreFocus = false) {
       const at3 = target2;
-      if (!at3 && !bagAim && $("target-actions").hidden) return;
+      if (!at3 && !bagAim && !bagMenuOpen && $("target-actions").hidden) return;
       bagAim = null;
+      bagMenuOpen = false;
       target2 = action = null;
-      $("target-actions").hidden = true;
+      const card = $("target-actions");
+      delete card.dataset.submenu;
+      $("target-submenu-nav").hidden = true;
+      card.hidden = true;
       draw();
       if (restoreFocus && at3) cellFor(at3)?.focus({ preventScroll: true });
     }
@@ -12756,20 +12769,27 @@ ${height2}\uFF0C${sight}`;
           error2(plan.error);
           return;
         }
+        bagMenuOpen = false;
         target2 = { x: at3.x, y: at3.y, ...unit?.id ? { targetId: unit.id } : {} };
         hover = target2;
         action = command;
         bagAim = null;
+        const card2 = $("target-actions");
+        delete card2.dataset.submenu;
+        $("target-submenu-nav").hidden = true;
+        $("target-unit-options").hidden = true;
         $("target-title").textContent = `${plan.name} \xB7 (${at3.x}, ${at3.y})`;
         $("action-toolbar").replaceChildren();
         $("target-options").hidden = true;
-        $("target-actions").hidden = false;
+        card2.hidden = false;
+        card2.style.maxHeight = "";
         $("confirm-action").hidden = false;
         $("confirm-action").textContent = `\u786E\u8BA4\u4F7F\u7528${plan.name}`;
         draw();
         layoutTargetCard();
         return;
       }
+      if (!input.preserveBagMenu) bagMenuOpen = false;
       if (self && !input.preserveSprint) {
         const check = previewSelected({ type: "sprint" });
         sprint = !sprint && check.ok;
@@ -12782,7 +12802,7 @@ ${height2}\uFF0C${sight}`;
       action = null;
       const bonus = $("bonus-dice-select");
       bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
-      const options = [];
+      const options = [], bagChoices = [];
       const add = (type, skill2, itemId, skillName, maneuver) => {
         const command = {
           type,
@@ -12826,74 +12846,110 @@ ${height2}\uFF0C${sight}`;
             if (!item?.backpackItem || count < 1) continue;
             const command = { type: "skill", skillId };
             const plan = previewSelected(command);
-            options.push({ command, plan, bag: true, label: `\u4F7F\u7528\u80CC\u5305\u7269\u54C1\uFF1A${item.name} \xD7${count}` });
+            const ruleHint = (item.rules ?? []).map((r) => r.label).filter(Boolean).join("\uFF1B");
+            bagChoices.push({ command, plan, item, count, ruleHint, bag: true, label: `${item.name} \xD7${count}` });
+          }
+          if (bagChoices.length) {
+            const totalCount = bagChoices.reduce((sum, entry2) => sum + entry2.count, 0);
+            const usableCount = bagChoices.filter((entry2) => entry2.plan.ok).length;
+            const summary = usableCount > 0 ? `\u5171 ${totalCount} \u4EF6 \xB7 ${usableCount === bagChoices.length ? "\u6253\u5F00\u9053\u5177\u5B50\u83DC\u5355" : `${usableCount} \u79CD\u53EF\u7528`}` : `\u5171 ${totalCount} \u4EF6 \xB7 ${bagChoices[0].plan.error || "\u5F53\u524D\u4E0D\u53EF\u7528"}`;
+            options.push({ command: { type: "bag_menu" }, plan: { ok: true }, bagMenuEntry: true, summary, label: `\u80CC\u5305\u9053\u5177\uFF08${bagChoices.length} \u79CD\uFF09` });
           }
           add("end_encounter");
           add("end");
         }
       }
+      if (!self || !bagChoices.length) bagMenuOpen = false;
+      const inBagSubmenu = self && bagMenuOpen;
       const who = unit ? `${unit.team === "blue" ? "\u6211\u65B9" : "\u654C\u65B9"} ${unit.name}` : feature?.name ?? "\u7A7A\u5730";
-      $("target-title").textContent = `${who} \xB7 (${at3.x}, ${at3.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4" : "" : ""}`;
+      const totalBagCount = bagChoices.reduce((sum, entry2) => sum + entry2.count, 0);
+      $("target-title").textContent = inBagSubmenu ? `${actor.name} \xB7 \u80CC\u5305\u9053\u5177 \xB7 \u5171 ${bagChoices.length} \u79CD\uFF08${totalBagCount} \u4EF6\uFF09` : `${who} \xB7 (${at3.x}, ${at3.y})${self ? sprint ? " \xB7 \u75BE\u8DD1\u8303\u56F4" : "" : ""}`;
+      $("target-submenu-nav").hidden = !inBagSubmenu;
       const targetOptions = $("target-unit-options");
       targetOptions.replaceChildren();
-      targetOptions.hidden = units.length < 2;
-      for (const candidate of units) {
-        const button = document2.createElement("button");
-        button.type = "button";
-        button.className = "ft-target-unit";
-        button.dataset.targetId = candidate.id;
-        button.dataset.faction = candidate.team;
-        button.setAttribute("aria-pressed", String(candidate.id === unit?.id));
-        button.textContent = `${candidate.name} \xB7 ${Math.round(candidate.hp / Math.max(1, candidate.maxHp) * 100)}%`;
-        button.addEventListener("click", () => selectTarget(candidate.id), { signal });
-        targetOptions.append(button);
+      targetOptions.hidden = inBagSubmenu || units.length < 2;
+      if (!inBagSubmenu) {
+        for (const candidate of units) {
+          const button = document2.createElement("button");
+          button.type = "button";
+          button.className = "ft-target-unit";
+          button.dataset.targetId = candidate.id;
+          button.dataset.faction = candidate.team;
+          button.setAttribute("aria-pressed", String(candidate.id === unit?.id));
+          button.textContent = `${candidate.name} \xB7 ${Math.round(candidate.hp / Math.max(1, candidate.maxHp) * 100)}%`;
+          button.addEventListener("click", () => selectTarget(candidate.id), { signal });
+          targetOptions.append(button);
+        }
       }
-      $("target-options").hidden = !options.some((o) => ["attack", "skill"].includes(o.command.type));
+      const visibleChoices = inBagSubmenu ? bagChoices : options;
+      $("target-options").hidden = inBagSubmenu || !options.some((o) => ["attack", "skill"].includes(o.command.type));
       const toolbar = $("action-toolbar");
+      toolbar.setAttribute("aria-label", inBagSubmenu ? "\u80CC\u5305\u9053\u5177\u5217\u8868" : "\u53EF\u7528\u52A8\u4F5C");
       toolbar.replaceChildren();
       menuButtons = /* @__PURE__ */ new Map();
-      for (const choice of options) {
+      for (const choice of visibleChoices) {
         const { command, plan, label } = choice;
         const button = document2.createElement("button");
         button.type = "button";
         button.className = "game-button";
         button.dataset.action = command.type;
         if (command.skillId) button.dataset.skillId = command.skillId;
-        const cost = [plan.ap ? `${plan.ap} AP` : "", plan.mp ? `${plan.mp} MP` : "", plan.sp ? `${plan.sp} SP` : ""].filter(Boolean).join(" \xB7 ");
+        const ap = plan.ap ?? choice.item?.ap, mp = plan.mp ?? choice.item?.mp, sp = plan.sp ?? choice.item?.sp;
+        const cost = [ap ? `${ap} AP` : "", mp ? `${mp} MP` : "", sp ? `${sp} SP` : ""].filter(Boolean).join(" \xB7 ");
         const odds = plan.targets?.[0]?.hitChance;
-        const note = [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `\u547D\u4E2D ${Math.round(odds * 100)}%` : "", plan.opportunities?.length ? "\u26A0 \u4F1A\u88AB\u501F\u673A" : ""].filter(Boolean).join(" \xB7 ");
+        const bagNote = choice.bag ? [cost, choice.item.target === "self" || choice.item.range === 0 ? "\u81EA\u8EAB" : `\u5C04\u7A0B ${plan.range ?? choice.item.range}`, choice.ruleHint || "\u9009\u62E9\u76EE\u6807\u683C\u65BD\u653E"].filter(Boolean).join(" \xB7 ") : "";
+        const note = choice.bagMenuEntry ? choice.summary : choice.bag ? bagNote : [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `\u547D\u4E2D ${Math.round(odds * 100)}%` : "", plan.opportunities?.length ? "\u26A0 \u4F1A\u88AB\u501F\u673A" : ""].filter(Boolean).join(" \xB7 ");
         button.append(Number.isFinite(plan.usesLeft) ? `${label}\uFF08\u5269\u4F59 ${plan.usesLeft} \u6B21\uFF09` : label);
         const small = document2.createElement("small");
         small.textContent = note || ACTION_HINTS[command.type] || "";
         if (small.textContent) button.append(small);
         button.disabled = !plan.ok;
-        button.title = plan.error || ACTION_HINTS[command.type] || label;
-        if (!plan.ok) small.textContent = plan.error === "\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411" ? "\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411\uFF08\u70B9\u76F8\u90BB\u683C\u786E\u5B9A\u671D\u5411\uFF09" : plan.error;
+        button.title = plan.error || choice.ruleHint || ACTION_HINTS[command.type] || label;
+        if (!plan.ok) {
+          const errText = plan.error === "\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411" ? "\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411\uFF08\u70B9\u76F8\u90BB\u683C\u786E\u5B9A\u671D\u5411\uFF09" : plan.error;
+          small.textContent = choice.bag ? [cost, errText, choice.ruleHint].filter(Boolean).join(" \xB7 ") : errText;
+        }
         if (!plan.ok && !small.parentNode) button.append(small);
         button.setAttribute("aria-pressed", "false");
         menuButtons.set(button, choice);
         toolbar.append(button);
       }
-      if (!options.length) toolbar.textContent = canAct ? "\u8FD9\u4E00\u683C\u6CA1\u6709\u80FD\u505A\u7684\u4E8B\u3002" : "\u73B0\u5728\u4E0D\u662F\u4F60\u7684\u56DE\u5408\uFF0C\u53EA\u80FD\u67E5\u770B\u3002";
+      if (!visibleChoices.length) toolbar.textContent = canAct ? "\u8FD9\u4E00\u683C\u6CA1\u6709\u80FD\u505A\u7684\u4E8B\u3002" : "\u73B0\u5728\u4E0D\u662F\u4F60\u7684\u56DE\u5408\uFF0C\u53EA\u80FD\u67E5\u770B\u3002";
       const card = $("target-actions");
+      if (inBagSubmenu) card.dataset.submenu = "bag";
+      else delete card.dataset.submenu;
       card.hidden = false;
+      card.style.maxHeight = "";
       card.scrollTop = 0;
+      toolbar.scrollTop = 0;
       $("confirm-action").hidden = true;
-      if (options.length) action = options[0].command;
+      action = inBagSubmenu ? null : options.find((o) => !o.bagMenuEntry)?.command ?? null;
       draw();
       layoutTargetCard();
-      if (input.detail === 0) (toolbar.querySelector("button") || $("close-target")).focus({ preventScroll: true });
+      if (input.focusSubmenu) (toolbar.querySelector("button:not(:disabled)") || $("bag-submenu-back") || $("close-target"))?.focus({ preventScroll: true });
+      else if (input.focusBagEntry) (toolbar.querySelector('[data-action="bag_menu"]') || $("close-target"))?.focus({ preventScroll: true });
+      else if (input.detail === 0) (toolbar.querySelector("button") || $("close-target")).focus({ preventScroll: true });
     }
     function handleAction(button) {
       if (pendingAsk()) return;
       const choice = menuButtons.get(button);
       if (!choice) return;
+      if (choice.bagMenuEntry) {
+        if (!target2) return;
+        bagMenuOpen = true;
+        handlePoint(target2, { preserveSprint: true, preserveBagMenu: true, focusSubmenu: true });
+        return;
+      }
       if (choice.bag) {
+        bagMenuOpen = false;
         bagAim = choice.command.skillId;
         action = choice.command;
         target2 = null;
         sprint = false;
-        $("target-actions").hidden = true;
+        const card = $("target-actions");
+        delete card.dataset.submenu;
+        $("target-submenu-nav").hidden = true;
+        card.hidden = true;
         error2(`\u8BF7\u9009\u62E9${choice.plan.name}\u7684\u76EE\u6807\uFF08Esc \u53D6\u6D88\uFF09`);
         draw();
         return;
@@ -13161,6 +13217,11 @@ ${height2}\uFF0C${sight}`;
         }
       });
       on("close-target", "click", () => closeTarget(true));
+      on("bag-submenu-back", "click", () => {
+        if (pendingAsk() || !target2) return;
+        bagMenuOpen = false;
+        handlePoint(target2, { preserveSprint: true, focusBagEntry: true });
+      });
       on("confirm-action", "click", () => {
         if (target2 && action) execute2(action);
       });
@@ -13182,7 +13243,14 @@ ${height2}\uFF0C${sight}`;
         if (target2 && !$("target-actions").contains(e.target) && !pointFrom(e.target)) closeTarget();
       }, { signal });
       document2.addEventListener("keydown", (e) => {
-        if (e.key !== "Escape" || root2.querySelector("dialog[open]")) return;
+        if (root2.querySelector("dialog[open]")) return;
+        if (e.key === "Backspace" && bagMenuOpen && target2 && !e.target.closest?.("input, textarea, select, [contenteditable]")) {
+          e.preventDefault();
+          bagMenuOpen = false;
+          handlePoint(target2, { preserveSprint: true, focusBagEntry: true });
+          return;
+        }
+        if (e.key !== "Escape") return;
         if (target2 || bagAim) closeTarget(true);
         else if (openDrawer) closeDrawer();
         else playback.skip();
@@ -14546,14 +14614,24 @@ body { margin: 0; background: var(--ink-2); }
   border: 1px solid rgb(var(--gold-rgb) / .45); border-radius: 12px; background: var(--ink-1); color: var(--text); font-size: 13px;
   box-shadow: 0 14px 34px rgb(0 0 0 / .6);
 }
+#target-actions.ft-target-card[data-submenu="bag"] { display: flex; flex-direction: column; overflow: hidden; }
 .ft-target-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+#target-actions[data-submenu="bag"] .ft-target-head { flex: none; }
 #target-title { min-width: 0; color: var(--accent-text); overflow-wrap: anywhere; }
 .ft-close { flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-mid); border-radius: 7px; background: var(--raised-b); color: var(--text); font-size: 17px; cursor: pointer; }
+.ft-submenu-nav { flex: none; display: flex; align-items: center; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line-mid); }
+.ft-submenu-back { width: 100%; min-height: 30px; padding: 3px 9px; text-align: left; color: var(--accent-text); font-size: 12px; }
 .ft-target-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; color: var(--text-soft); font-size: 12px; }
 .ft-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .ft-actions .game-button { flex: 1 1 calc(50% - 5px); padding-inline: 8px; text-align: left; }
+.ft-actions .game-button[data-action="bag_menu"] { border-color: rgb(var(--gold-rgb) / .45); }
 .ft-actions .game-button small { display: block; color: var(--text-muted); font-size: 10px; }
 .ft-actions .game-button[aria-pressed="true"] small { color: inherit; opacity: .8; }
+#target-actions[data-submenu="bag"] .ft-actions {
+  flex: 1 1 auto; min-height: 0; max-height: min(56vh, 340px); flex-direction: column; flex-wrap: nowrap; gap: 4px;
+  overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
+}
+#target-actions[data-submenu="bag"] .ft-actions .game-button { flex: none; width: 100%; padding: 5px 9px; }
 .ft-preview { margin-top: 8px; max-height: 13em; overflow: auto; color: var(--text-soft); font-size: 12px; }
 .ft-preview:empty { display: none; }
 .preview-line + .preview-line { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
@@ -14697,6 +14775,7 @@ body { margin: 0; background: var(--ink-2); }
   .ft-caption { left: max(8px, var(--safe-l)); bottom: max(8px, var(--safe-b)); width: calc(100% - var(--hud-right) - 24px); }
   .ft-skip { right: calc(var(--hud-right) + 8px); bottom: max(8px, var(--safe-b)); }
   .ft-banner b { font-size: 22px; }
+  #target-actions.ft-target-card { width: min(280px, 44vw); padding: 8px; }
 }
 
 /* ---------- \u89E6\u5C4F\uFF1A\u89E6\u63A7\u76EE\u6807\u4E0D\u5C0F\u4E8E 44px ---------- */
