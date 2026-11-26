@@ -247,6 +247,19 @@ var FatedTacticalTavern = (() => {
   var QUALITY_TIER = Object.freeze({ \u666E\u901A: 1, \u4F18\u826F: 2, \u7A00\u6709: 3, \u53F2\u8BD7: 4, \u4F20\u8BF4: 5, \u795E\u8BDD: 6 });
   var QUALITY_AUTHORITY = Object.freeze({ ...QUALITY_TIER, \u552F\u4E00: 8 });
   var clampTier = (tier) => Math.max(1, Math.min(7, Math.trunc(Number(tier) || 1)));
+  function tierFromCellM(cellM) {
+    const value = Number(cellM);
+    if (!Number.isFinite(value) || value <= 2) return 1;
+    if (value < 15) return 3;
+    if (value < 50) return 4;
+    if (value < 250) return 5;
+    if (value < 1e3) return 6;
+    return 7;
+  }
+  function scaleRatio(effectiveTier, cellM) {
+    const rawRatio = (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]) / Math.max(1e-9, Number(cellM) || 1);
+    return rawRatio <= 5 ? rawRatio : 5 + Math.sqrt(rawRatio - 5);
+  }
   function resolveEffectiveTier(carrierKind, quality, unitTier) {
     const actorTier = clampTier(unitTier);
     if (!quality || quality === "\u552F\u4E00") return actorTier;
@@ -259,14 +272,11 @@ var FatedTacticalTavern = (() => {
     const authorityRank = carrier4.quality === "\u552F\u4E00" ? 8 : QUALITY_AUTHORITY[carrier4.quality] ?? Math.max(1, Math.min(7, Math.trunc(Number(carrier4.authorityRank ?? carrier4.tier ?? unitTier) || unitTier)));
     return { authorityRank, unitTier };
   }
-  function scaledMeters(raw, effectiveTier) {
-    return Number(raw || 0) * (TIER_CELL_M[clampTier(effectiveTier)] ?? TIER_CELL_M[1]);
-  }
   function scaledCells(raw, effectiveTier, cellM, { max = Infinity, floor = false } = {}) {
-    const cells2 = scaledMeters(raw, effectiveTier) / Math.max(1e-9, Number(cellM) || 1);
+    const cells2 = Number(raw || 0) * scaleRatio(effectiveTier, cellM);
     return Math.max(0, Math.min(max, floor ? Math.floor(cells2 + 1e-9) : cells2));
   }
-  var scaledMoveCells = (raw, effectiveTier, cellM) => scaledCells(raw, effectiveTier, cellM, { floor: true });
+  var scaledMoveCells = (raw, effectiveTier, cellM, options = {}) => scaledCells(raw, effectiveTier, cellM, { ...options, floor: true });
   function scaledTemplate(state, unit, template, kind) {
     if (!template) return template;
     const tier = resolveEffectiveTier(kind, template.quality, unit.tier);
@@ -274,8 +284,10 @@ var FatedTacticalTavern = (() => {
     const result = { ...template };
     if (template.target === "self") result.range = 0;
     else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
+    const ratio3 = scaleRatio(tier, cellM);
+    const radiusMax = ratio3 > 1 ? Math.max(template.rawRadius ?? 0, Math.ceil(Math.min(state.scale?.width ?? 10, state.scale?.height ?? 10) * 0.6)) : 30;
     for (const [rawKey, key4] of [["rawRadius", "radius"], ["rawInnerRadius", "innerRadius"], ["rawWidth", "width"]]) {
-      if (template[rawKey] != null) result[key4] = scaledCells(template[rawKey], tier, cellM, { max: 30 });
+      if (template[rawKey] != null) result[key4] = scaledCells(template[rawKey], tier, cellM, { max: key4 === "radius" ? radiusMax : 30 });
     }
     return result;
   }
@@ -832,7 +844,7 @@ var FatedTacticalTavern = (() => {
   query("cells_m", ["value"], "cells_m(meters)", "\u6309\u6218\u573A\u6BD4\u4F8B\u5C3A\u628A\u7C73\u6570\u6362\u7B97\u4E3A\u683C\u6570\uFF0C\u4FDD\u7559\u5C0F\u6570", ([meters2], context) => numeric((a, b) => a / b, meters2, own2(context, "cellM") ?? 2));
   query("scale_cells", ["value"], "scale_cells(n)", "\u628A\u8BCD\u6761\u5C0F\u6570\u503C\u6309\u89C4\u5219\u8F7D\u4F53\u7684\u6709\u6548\u5C42\u7EA7\u6362\u7B97\u4E3A\u683C\u6570\uFF0C\u4FDD\u7559\u5C0F\u6570", ([n], context) => {
     const tier = own2(context, "effectiveTier") ?? resolveEffectiveTier("unit", null, path(context, "self", "tier"));
-    return numeric((value, tierMeters, cellMeters) => value * tierMeters / cellMeters, n, TIER_CELL_M[tier], own2(context, "cellM") ?? 2);
+    return numeric((value, ratio3) => value * ratio3, n, scaleRatio(tier, own2(context, "cellM") ?? 2));
   });
   query("clamp", ["value", "value", "value"], "clamp(value, lo, hi)", "\u5C06\u6570\u503C\u94B3\u5236\u5728\u4E0A\u4E0B\u9650\u4E4B\u95F4", ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
   query("distance", ["unit", "unit"], "distance() / distance(unitA, unitB)", "\u8BFB\u53D6\u4E24\u5355\u4F4D\u7684\u4E09\u7EF4\u8DDD\u79BB\uFF0C\u65E0\u53C2\u65F6\u9ED8\u8BA4 self \u5230 target", ([a, b], context) => readDistance(context, a, b));
@@ -4083,7 +4095,8 @@ var FatedTacticalTavern = (() => {
     const item = ref2?.type === "item" ? own10(state.items, ref2.id) : null;
     const template = item ? own10(state.equipment, item.templateId) : ref2?.type === "skill" ? own10(state.skills, ref2.id) : context.status;
     const kind = ref2?.type === "skill" && !template?.backpackItem ? "skill" : "item";
-    return scaledMoveCells(distance2, resolveEffectiveTier(kind, template?.quality, context.self?.tier), state.scale?.cellM ?? 2);
+    const maxBoardSteps = (state.scale?.width ?? 10) + (state.scale?.height ?? 10);
+    return scaledMoveCells(distance2, resolveEffectiveTier(kind, template?.quality, context.self?.tier), state.scale?.cellM ?? 2, { max: maxBoardSteps });
   }
   function teleport({ state, frame, host, context, op }, targets2) {
     const anchor = targets2[0];
@@ -5755,7 +5768,8 @@ var FatedTacticalTavern = (() => {
     const mult = type === "sprint" ? 2 : 1;
     const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
     const total2 = carry + Math.round(mult * moveM / cellM * 1e3);
-    return { moveM, total: total2, limit: Math.floor(total2 / 1e3) };
+    const maxBoardSteps = (state.scale?.width ?? 10) + (state.scale?.height ?? 10);
+    return { moveM, total: total2, limit: Math.min(maxBoardSteps, Math.floor(total2 / 1e3)) };
   }
   function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
     if (!alive3(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
@@ -5831,7 +5845,7 @@ var FatedTacticalTavern = (() => {
     }
     return null;
   }
-  var normalAttack = Object.freeze({ name: "\u5F92\u624B", range: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" } });
+  var normalAttack = Object.freeze({ name: "\u5F92\u624B", range: 1.5, rawRange: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" } });
   var shieldBashRules = [{ id: "shield-bash-hit", hook: "after_hit", program: [
     { op: "move", target: "target", mode: "push", distance: 1 },
     { op: "apply_status", target: "target", statusId: actionStatuses.shield_bash, turns: 1 }
@@ -5854,15 +5868,12 @@ var FatedTacticalTavern = (() => {
     const offHand = equipmentFor(state, unit.offHand);
     offHand.template = scaledTemplate(state, unit, offHand.template, "weapon");
     const stance = effectiveStance(state, unit);
-    return {
-      ...weapon2,
-      ammo,
-      ammoCount,
-      infiniteAmmo,
-      offHand,
-      stance,
-      template: weapon2.template ?? (unit.moveM == null ? normalAttack : scaledTemplate(state, unit, { ...normalAttack, rawRange: normalAttack.range }, "weapon"))
-    };
+    const template = weapon2.template ?? (() => {
+      const unarmed = scaledTemplate(state, unit, normalAttack, "weapon");
+      unarmed.range = Math.min(1, unarmed.range);
+      return unarmed;
+    })();
+    return { ...weapon2, ammo, ammoCount, infiniteAmmo, offHand, stance, template };
   }
   function reaches(state, actor, at3, template, ammo) {
     const dz = elevation(state, actor) - elevation(state, at3);
@@ -5895,7 +5906,10 @@ var FatedTacticalTavern = (() => {
     return !taunter || taunter.id === mover.id;
   }
   function threatens(state, source, mover, at3) {
-    return visibleEnemy(state, source.unit, { ...mover, x: at3.x, y: at3.y }) && validReach(state, source.unit, { ...at3, altitude: mover.altitude }, source.weapon.template);
+    const template = source.weapon.template;
+    const rawReach = template.rawRange ?? 1;
+    const zocRange = Math.min(template.range ?? 0, Math.max(1, Math.floor(rawReach + 1e-9)));
+    return visibleEnemy(state, source.unit, { ...mover, x: at3.x, y: at3.y }) && validReach(state, source.unit, { ...at3, altitude: mover.altitude }, { ...template, range: zocRange });
   }
   var opportunityDetail = (source, from, to) => ({
     unitId: source.id,
@@ -10508,7 +10522,10 @@ var FatedTacticalTavern = (() => {
     }
     function appendMovementCarry(bars, unit, state) {
       const carry = unit.moveCarryPermille ?? 0;
-      if (carry || unit.moveM != null && unit.moveM < state.scale?.cellM) {
+      const subCell = unit.moveM != null && unit.moveM < state.scale?.cellM;
+      if (subCell && state.scale.anchorTier >= 5 && !(carry > 0)) {
+        bars.append(el2("span", "", "\u5C3A\u5EA6\u538B\u5236\uFF08\u9650\u540C\u683C\uFF09"));
+      } else if (carry || subCell) {
         bars.append(bar("sp", carry, 1e3, `\u84C4\u6B65 ${carry / 10}%`));
       }
     }
@@ -14109,6 +14126,11 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (!["flat", "terrain"].includes(terrainMode)) fail4(`\u9996\u884C\u5730\u5F62\u6A21\u5F0F\u300C${terrainMode ?? ""}\u300D\u65E0\u6548\uFF0C\u5FC5\u987B\u4E3A flat \u6216 terrain`);
     const sizeToken = options.find((value) => /^棋盘\s*=/.test(value));
     const scaleToken = options.find((value) => /^比例尺\s*=/.test(value));
+    const tierTokens = options.filter((value) => /^(?:战场层级|尺度层级)\s*=/.test(value));
+    if (tierTokens.length > 1) fail4("\u6218\u573A\u5C42\u7EA7\u53EA\u80FD\u58F0\u660E\u4E00\u6B21\uFF08\u4E0D\u53EF\u540C\u65F6\u91CD\u590D\u6218\u573A\u5C42\u7EA7\u6216\u5C3A\u5EA6\u5C42\u7EA7\uFF09");
+    const tierToken = tierTokens[0];
+    const tierMatch = tierToken?.match(/^(?:战场层级|尺度层级)\s*=\s*(?:第\s*)?([1-7])(?:\s*(?:层级?|阶级?|级))?$/u);
+    if (tierToken && !tierMatch) fail4("\u6218\u573A\u5C42\u7EA7\u5FC5\u987B\u662F 1 \u81F3 7 \u7684\u6574\u6570\uFF08\u53EF\u5199\u4F5C\u7B2C N \u5C42\u7EA7\u6216 N \u9636\uFF09");
     const sizeMatch = sizeToken?.match(/^棋盘\s*=\s*(\d+)\s*[xX×*]\s*(\d+)$/u);
     if (sizeToken && (!sizeMatch || Number(sizeMatch[1]) < 8 || Number(sizeMatch[1]) > 20 || Number(sizeMatch[2]) < 8 || Number(sizeMatch[2]) > 20)) fail4("\u68CB\u76D8\u5C3A\u5BF8\u5FC5\u987B\u5728 8x8 \u81F3 20x20 \u4E4B\u95F4");
     const width = sizeMatch ? Number(sizeMatch[1]) : 10, height2 = sizeMatch ? Number(sizeMatch[2]) : 10;
@@ -14122,12 +14144,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (typeValue && !moraleType) fail4("\u672A\u77E5\u6218\u6597\u7C7B\u578B\uFF0C\u53EF\u9009\uFF1A\u6807\u51C6\u3001\u5207\u78CB\u3001\u7ADE\u6280\u3001\u538B\u5236\u3001\u6B7B\u6597\u3001\u5B88\u536B");
     if (sideValue && !sideToken || moraleType === "suppress" !== !!sideToken) fail4("\u538B\u5236\u6218\u5FC5\u987B\u5728\u6218\u6597\u7C7B\u578B\u540E\u58F0\u660E |\u538B\u5236\u65B9=blue \u6216 |\u538B\u5236\u65B9=red\uFF1B\u5176\u4ED6\u7C7B\u578B\u4E0D\u586B\u538B\u5236\u65B9");
     const remainingOptions = options.slice();
-    for (const token of [sizeToken, scaleToken, sideValue, typeValue]) {
+    for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue]) {
       if (token !== void 0) remainingOptions.splice(remainingOptions.indexOf(token), 1);
     }
     const [seedText, ...extra] = remainingOptions;
     if (extra.length) fail4(`\u9996\u884C\u5305\u542B\u65E0\u6CD5\u8BC6\u522B\u7684\u9009\u9879\u300C${extra.join("|")}\u300D`);
     if (seedText !== void 0 && (!/^\d+$/.test(seedText) || Number(seedText) > 4294967295)) fail4("seed \u5FC5\u987B\u662F 0\u20134294967295 \u7684\u6574\u6570");
+    const scaleExplicit = cellM != null || tierMatch != null;
     return {
       version: 1,
       battleId,
@@ -14135,7 +14158,9 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       terrainMode,
       width,
       height: height2,
-      ...cellM != null && { cellM, explicitScale: true },
+      ...cellM != null && { cellM },
+      ...tierMatch && { scaleTier: Number(tierMatch[1]) },
+      ...scaleExplicit && { explicitScale: true },
       ...moraleType && { moraleType },
       ...sideToken && { suppressingTeam: sideToken[1] },
       ...seedText === void 0 ? {} : { seed: Number(seedText) }
@@ -14189,17 +14214,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const targetTeam = fieldTeams.get(teamToken.toLowerCase());
     if (targetTeam === void 0) fail4(`${row}\u7684\u76EE\u6807\u9635\u8425\u300C${teamToken}\u300D\u65E0\u6548\uFF0C\u5FC5\u987B\u4E3A \u5168\u4F53\u3001\u84DD \u6216 \u7EA2`);
     const separate = parts.length === 6 && !effectPrefix.test(first);
-    const rawText = separate ? `${first}\uFF1A${second}` : parts.length === 6 ? second : first;
-    let name = rawText, description = rawText;
+    const rawText2 = separate ? `${first}\uFF1A${second}` : parts.length === 6 ? second : first;
+    let name = rawText2, description = rawText2;
     if (separate) [name, description] = [first, second];
     else {
-      const colon = rawText.search(/[:：]/u);
-      const prefix = colon > 0 ? rawText.slice(0, colon).trim() : "";
-      if (prefix) [name, description] = [prefix, rawText.slice(colon + 1).trim() || prefix];
+      const colon = rawText2.search(/[:：]/u);
+      const prefix = colon > 0 ? rawText2.slice(0, colon).trim() : "";
+      if (prefix) [name, description] = [prefix, rawText2.slice(colon + 1).trim() || prefix];
     }
     if (!name || name.length > 100) fail4(`${row}\u7684\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 100 \u5B57\uFF08\u53EF\u7528\u300C\u540D\u5B57\uFF1A\u8BE6\u7EC6\u6548\u679C\u300D\u5206\u9694\u957F\u63CF\u8FF0\uFF09`);
-    if (!description || description.length > 500 || !separate && rawText.length > 500) fail4(`${row}\u7684\u6548\u679C\u63CF\u8FF0\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 500 \u5B57\uFF08\u5408\u5E76\u5199\u6CD5\u603B\u957F \u2264500 \u5B57\uFF09`);
-    return { id: id3, targetTeam, name, description, rawText, area: parseEffectArea(parts.at(-1), row, battle) };
+    if (!description || description.length > 500 || !separate && rawText2.length > 500) fail4(`${row}\u7684\u6548\u679C\u63CF\u8FF0\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 500 \u5B57\uFF08\u5408\u5E76\u5199\u6CD5\u603B\u957F \u2264500 \u5B57\uFF09`);
+    return { id: id3, targetTeam, name, description, rawText: rawText2, area: parseEffectArea(parts.at(-1), row, battle) };
   }
   function parseBattleDescriptor(value) {
     if (typeof value !== "string") return null;
@@ -15896,9 +15921,18 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     const title = text3(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
     const seed = integer3(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
-    const anchorTier = Math.max(1, ...Object.values(units).map((unit) => unit.tier ?? 1));
-    const cellM = battle.cellM ?? TIER_CELL_M[anchorTier];
-    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: battle.explicitScale === true }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+    const tierValue = battle.scaleTier ?? battle.anchorTier;
+    const hasDeclaredTier = tierValue != null;
+    const hasDeclaredCellM = battle.cellM != null;
+    const explicitScale = hasDeclaredTier || hasDeclaredCellM;
+    if (hasDeclaredTier && (!Number.isInteger(tierValue) || tierValue < 1 || tierValue > 7)) {
+      throw new Error("\u6218\u573A\u5C42\u7EA7\u5FC5\u987B\u662F 1 \u81F3 7 \u7684\u6574\u6570");
+    }
+    const unitTiers = Object.values(units).map((unit) => unit.tier ?? 1);
+    const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
+    const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
+    const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
+    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
     initializeVMWorld(state);
     for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
       if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
@@ -17489,8 +17523,9 @@ apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u
   var DEFAULT_SLOTS = [
     { id: "identity", label: "\u8EAB\u4EFD\u4E0E\u4EFB\u52A1\u58F0\u660E", role: "system", enabled: true, desc: "\u547D\u5B9A\u6218\u6597\u52A9\u624B\u7684\u804C\u8D23\u4E0E\u8FB9\u754C", content: IDENTITY },
     { id: "protocol", label: "\u6218\u6597\u534F\u8BAE\u4E0E\u89C4\u5219\u8BF4\u660E", role: "system", enabled: true, desc: "\u771F\u5B9E\u6218\u6597\u534F\u8BAE\u7684\u6570\u503C\u53E3\u5F84\u3001\u5224\u5B9A\u65B9\u5F0F\u3001\u8F93\u51FA\u7EA6\u675F" },
-    { id: "roster", label: "\u53C2\u6218\u8005\u4E0E\u88C5\u5907\u5FEB\u7167", role: "system", enabled: true, desc: "\u5F53\u524D\u6218\u5C40\u7684\u5355\u4F4D\u3001\u88C5\u5907\u3001\u6280\u80FD\u3001\u72B6\u6001\uFF08\u542B MVU \u6765\u6E90\uFF09" },
-    { id: "battle", label: "\u6218\u5C40\u4E0E\u5730\u5F62", role: "system", enabled: true, desc: "battle_init \u63CF\u8FF0\u7B26\u89E3\u6790\u540E\u7684\u68CB\u76D8\u3001\u5730\u5F62\u3001\u63A9\u4F53\u3001\u4E92\u52A8\u70B9" },
+    { id: "roster", label: "\u53C2\u6218\u8005\u4E0E\u88C5\u5907\u5FEB\u7167", role: "system", enabled: true, desc: "\u5F53\u524D\u5355\u4F4D\u3001\u88C5\u5907\u3001\u6280\u80FD\u4E0E\u72B6\u6001\u6A21\u677F\u3002\u6807\u51C6\u5316\u65F6\u9644\u672C\u6279\u539F\u6587\u4E0E\u53EA\u8BFB\u7D22\u5F15" },
+    { id: "battle", label: "\u6218\u5C40\u4E0E\u5730\u5F62", role: "system", enabled: true, desc: "battle_init \u58F0\u660E\u4E0E\u5F53\u524D\u68CB\u76D8\u3001\u5730\u5F62\u3001\u63A9\u4F53\u3001\u4E92\u52A8\u70B9" },
+    { id: "raw", label: "\u539F\u59CB\u8D44\u6599\uFF08MVU / char_info \u539F\u6587\uFF09", role: "system", enabled: true, desc: "\u8F85\u52A9\u804A\u5929\u4E2D\u53D1\u9001\u52FE\u9009\u89D2\u8272\u7684\u539F\u6587\uFF0C\u4F9B\u53EA\u8BFB\u53C2\u8003" },
     { id: "warnings", label: "\u5F85\u5904\u7406\u8B66\u544A\u6E05\u5355", role: "system", enabled: true, desc: "\u6C99\u76D8\u8F6C\u6362\u65F6\u65E0\u6CD5\u7B49\u4EF7\u6620\u5C04\u7684\u88C5\u5907/\u6280\u80FD/\u6548\u679C\u53CA\u539F\u56E0" },
     { id: "task", label: "\u6807\u51C6\u5316\u4EFB\u52A1\u6307\u4EE4", role: "system", enabled: true, desc: "RFC 6902 \u8865\u4E01\u683C\u5F0F\u7EA6\u675F\u3001\u5141\u8BB8\u8DEF\u5F84\u767D\u540D\u5355\u3001\u7981\u6B62\u9879" },
     { id: "extra", label: "\u81EA\u5B9A\u4E49\u8865\u5145\uFF08\u53EF\u7A7A\uFF09", role: "system", enabled: false, desc: "\u7528\u6237\u81EA\u5DF1\u586B\u7684\u989D\u5916\u63D0\u793A\u8BCD" }
@@ -17600,14 +17635,58 @@ Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭
       return DEFAULT_SLOTS.map((slot2) => ({ ...slot2, ...overrides2.get(slot2.id) }));
     }
     const needsIdentity = !entries3.some((slot2) => slot2.id === "identity");
-    const slots3 = entries3.map((slot2) => ({
-      ...defaults.get(slot2.id),
-      ...slot2,
-      ...needsIdentity && defaults.has(slot2.id) && slot2.role === "user" ? { role: "system" } : {}
-    }));
-    return needsIdentity ? [{ ...DEFAULT_SLOTS[0] }, ...slots3] : slots3;
+    const slots3 = entries3.map((slot2) => {
+      const builtin = defaults.get(slot2.id);
+      return {
+        ...builtin,
+        ...slot2,
+        ...builtin && { desc: builtin.desc },
+        ...needsIdentity && builtin && slot2.role === "user" ? { role: "system" } : {}
+      };
+    });
+    if (needsIdentity) slots3.unshift({ ...defaults.get("identity") });
+    if (!slots3.some((slot2) => slot2.id === "raw")) {
+      const battleIndex = slots3.findIndex((slot2) => slot2.id === "battle");
+      const taskIndex = slots3.findIndex((slot2) => slot2.id === "warnings" || slot2.id === "task");
+      const index = battleIndex >= 0 ? battleIndex + 1 : taskIndex >= 0 ? taskIndex : slots3.length;
+      slots3.splice(index, 0, { ...defaults.get("raw") });
+    }
+    return slots3;
   }
   var distinct = (values5) => [...new Set(values5.filter(Boolean))];
+  var RAW_PER_UNIT_LIMIT = 6e3;
+  var RAW_TOTAL_LIMIT = 24e3;
+  var RAW_FIELDS = ["mvu", "char_info", "equipment", "skills"];
+  function rawText(ctx) {
+    if (ctx.kind !== "chat") return "";
+    const raw = ctx.rawCharacters ?? {};
+    const ids = distinct(ctx.onlyUnitIds ?? ctx.selectedUnitIds ?? Object.keys(raw));
+    const totalNotice = "\n\n[\u539F\u59CB\u8D44\u6599\u603B\u957F\u5EA6\u5DF2\u8FBE\u4E0A\u9650\uFF0C\u90E8\u5206\u89D2\u8272\u539F\u6587\u5DF2\u7701\u7565]";
+    const unitNotice = "\n[\u8BE5\u89D2\u8272\u539F\u59CB\u8D44\u6599\u5DF2\u622A\u65AD]";
+    let text8 = "\u3010\u539F\u59CB\u8D44\u6599\uFF08\u53EA\u8BFB\uFF09\u3011";
+    let included = false;
+    for (const id3 of ids) {
+      const row = Object.hasOwn(raw, id3) ? raw[id3] : null;
+      if (!row) continue;
+      const fields3 = RAW_FIELDS.filter((key4) => {
+        const value = row[key4];
+        if (value == null) return false;
+        if (typeof value === "string") return Boolean(value.trim());
+        return typeof value !== "object" || Object.keys(value).length > 0;
+      });
+      if (!fields3.length) continue;
+      const payload = json(Object.fromEntries(fields3.map((key4) => [key4, row[key4]])));
+      const body = payload.length <= RAW_PER_UNIT_LIMIT ? payload : payload.slice(0, RAW_PER_UNIT_LIMIT - unitNotice.length) + unitNotice;
+      const block = `
+
+\u89D2\u8272 ${id3}
+${body}`;
+      if (text8.length + block.length > RAW_TOTAL_LIMIT - totalNotice.length) return text8 + totalNotice;
+      text8 += block;
+      included = true;
+    }
+    return included ? text8 : "";
+  }
   function scopedRoster(ctx, state, warnings) {
     const pick = (table4, ids) => Object.fromEntries(distinct(ids).filter((id3) => Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
     const unitIds = distinct(ctx.onlyUnitIds ?? []);
@@ -17727,11 +17806,13 @@ ${json(board)}`;
         return rosterText();
       case "battle":
         return battleText();
+      case "raw":
+        return rawText(ctx);
       case "warnings":
         return ctx.warningsText ?? (warnings.length ? `\u5F85\u5904\u7406\u8B66\u544A\uFF1A
 ${variables2.warnings()}` : "");
       case "task":
-        return expand(ctx.taskText ?? (ctx.kind === "chat" ? '\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u73A9\u5BB6\u54A8\u8BE2\u65F6\uFF0C\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u3002\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u8C03\u6574\u5DF2\u52A0\u8F7D\u7684\u6218\u5C40\u65F6\uFF0C\u8F93\u51FA {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} \u5F62\u72B6\u7684 JSON\uFF0C\u6309\u8BF7\u6C42\u4F7F\u7528\u5FEB\u7167\u4E2D\u7684\u771F\u5B9E\u8DEF\u5F84\u548C\u503C\u3002\u88C5\u5907\u3001\u6280\u80FD\u548C\u72B6\u6001\u7684\u53D8\u66F4\u503C\u9075\u5FAA\u4E0A\u9762\u7684 VM \u534F\u8BAE\u3002\u6807\u51C6\u5316\u4EFB\u52A1\u5355\u72EC\u5904\u7406\u8B66\u544A\u3002' : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
+        return expand(ctx.taskText ?? (ctx.kind === "chat" ? '\u3010\u8F85\u52A9 AI \u5BF9\u8BDD\u3011\u73A9\u5BB6\u54A8\u8BE2\u65F6\uFF0C\u76F4\u63A5\u7528\u6587\u5B57\u56DE\u7B54\u3002\u73A9\u5BB6\u660E\u786E\u8981\u6C42\u8C03\u6574\u5DF2\u52A0\u8F7D\u7684\u6218\u5C40\u65F6\uFF0C\u8F93\u51FA {"patch":[{"op":"replace","path":"/units/p1/armor","value":6}],"unresolved":[]} \u5F62\u72B6\u7684 JSON\uFF0C\u6309\u8BF7\u6C42\u4F7F\u7528\u5FEB\u7167\u4E2D\u7684\u771F\u5B9E\u8DEF\u5F84\u548C\u503C\u3002\u88C5\u5907\u3001\u6280\u80FD\u548C\u72B6\u6001\u7684\u53D8\u66F4\u503C\u9075\u5FAA\u4E0A\u9762\u7684 VM \u534F\u8BAE\u3002\u539F\u59CB\u8D44\u6599\uFF08MVU / char_info \u539F\u6587\uFF09\u4EC5\u4F9B\u53EA\u8BFB\u53C2\u8003\uFF0C\u5F53\u524D\u6218\u5C40\u751F\u6548\u6570\u636E\u4EE5 state \u4E3A\u51C6\u3002\u6807\u51C6\u5316\u4EFB\u52A1\u5355\u72EC\u5904\u7406\u8B66\u544A\u3002' : PATCH_RULES + (instruction ? "\n\u73A9\u5BB6\u8865\u5145\uFF1A{{user_instruction}}" : "")));
       case "extra":
         return expand(ctx.extraText || "");
       case "assistant":
@@ -17840,8 +17921,8 @@ ${variables2.warnings()}` : "");
       signal?.removeEventListener("abort", abort);
     }
   }
-  function diagnoseApiError(rawText, status) {
-    let detail = String(rawText || "").trim();
+  function diagnoseApiError(rawText2, status) {
+    let detail = String(rawText2 || "").trim();
     try {
       detail = JSON.parse(detail)?.error?.message || detail;
     } catch {
@@ -18154,7 +18235,12 @@ ${variables2.warnings()}` : "");
     const toolbar = make("div", "wf-toolbar");
     const add = button("+ \u65B0\u5EFA\u69FD\u4F4D");
     const reset = button("\u6062\u590D\u9ED8\u8BA4");
-    toolbar.append(add, reset);
+    const previewKind = make("select");
+    previewKind.setAttribute("aria-label", "\u63D0\u793A\u8BCD\u9884\u89C8\u7C7B\u578B");
+    for (const [value, label] of [["validate", "\u6807\u51C6\u5316\u9884\u89C8"], ["chat", "\u8F85\u52A9\u804A\u5929\u9884\u89C8"]]) {
+      previewKind.append(Object.assign(make("option", "", label), { value }));
+    }
+    toolbar.append(add, reset, previewKind);
     dashboard.append(dashBar, toolbar);
     const pipeline = make("div", "slot-pipeline");
     const preview2 = make("details", "action-panel form-card preview-panel");
@@ -18164,7 +18250,6 @@ ${variables2.warnings()}` : "");
     preview2.append(summary, json3);
     root2.append(dashboard, pipeline, preview2);
     const extraText = () => ctx.settings.extraText ?? "";
-    const assembly = ctx.assemblyContext;
     const last = make("details", "action-panel form-card preview-panel");
     const lastSummary = make("summary", "panel-header-bar");
     lastSummary.append(make("span", "panel-title", "\u4E0A\u6B21\u5B9E\u9645\u53D1\u9001\u7684 messages\uFF08\u7EC4\u88C5\u5FEB\u7167\uFF09"));
@@ -18177,13 +18262,14 @@ ${variables2.warnings()}` : "");
       if (messages) lastJson.textContent = JSON.stringify(messages, null, 2);
     };
     ctx.onPreview((messages, kind) => {
-      summary.firstChild.textContent = `\u6700\u7EC8 messages \u9884\u89C8\uFF08${kind === "chat" ? "AI \u8C03\u6574" : "\u6807\u51C6\u5316"}\uFF09`;
-      json3.textContent = JSON.stringify(messages, null, 2);
       showLast();
+      if (kind !== previewKind.value) return;
+      summary.firstChild.textContent = `\u6700\u7EC8 messages \u9884\u89C8\uFF08${kind === "chat" ? "\u8F85\u52A9\u804A\u5929" : "\u6807\u51C6\u5316"}\uFF09`;
+      json3.textContent = JSON.stringify(messages, null, 2);
     });
     const refresh = () => {
       hero.textContent = `\u5DF2\u542F\u7528 ${slots3.filter((s) => s.enabled !== false).length} / ${slots3.length}`;
-      ctx.prepareMessages();
+      ctx.prepareMessages(previewKind.value);
     };
     function saveSlots(next, fields3 = {}) {
       const previous = slots3;
@@ -18201,6 +18287,7 @@ ${variables2.warnings()}` : "");
         refresh();
         return blank();
       }
+      const previewContext = ctx.assemblyContext(previewKind.value);
       slots3.forEach((slot2, i) => {
         const card = make("article", "action-panel wf-card");
         const head = make("div", "slot-head");
@@ -18219,8 +18306,8 @@ ${variables2.warnings()}` : "");
         const down = button("\u25BC");
         down.title = "\u4E0B\u79FB";
         const remove = button("\u2715", "pill-btn danger");
-        remove.disabled = slot2.id === "identity";
-        remove.title = remove.disabled ? "\u53EF\u4F7F\u7528\u5F00\u5173\u505C\u7528\u8EAB\u4EFD\u58F0\u660E" : slot2.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
+        remove.disabled = slot2.id === "identity" || slot2.id === "raw";
+        remove.title = remove.disabled ? "\u53EF\u4F7F\u7528\u5F00\u5173\u505C\u7528\u6B64\u5185\u7F6E\u69FD\u4F4D" : slot2.custom ? "\u5220\u9664\u6B64\u69FD\u4F4D" : "\u9690\u85CF\u6B64\u5185\u7F6E\u69FD\u4F4D\uFF08\u53EF\u4ECE\u300C\u6062\u590D\u9ED8\u8BA4\u300D\u627E\u56DE\uFF09";
         actions.append(edit, up, down, remove);
         head.append(title, badge, actions, switchWrap);
         const setTitle = (value) => {
@@ -18247,12 +18334,12 @@ ${variables2.warnings()}` : "");
         content.setAttribute("aria-label", "\u69FD\u4F4D\u5185\u5BB9");
         if (editable) content.value = staticContent;
         else {
-          content.textContent = resolveSlotContent(slot2, assembly());
+          content.textContent = resolveSlotContent(slot2, previewContext);
           content.setAttribute("aria-readonly", "true");
           content.tabIndex = 0;
         }
         form.append(field2("\u6807\u9898", labelInput), field2("\u89D2\u8272", role), field2(editable ? "\u5185\u5BB9" : "\u5185\u5BB9\uFF08\u52A8\u6001\u751F\u6210\uFF0C\u53EA\u8BFB\uFF09", content, true));
-        if (editable) form.append(make("p", "hint wide", "\u53EF\u7528\u5360\u4F4D\u7B26\uFF1A{{battle_init}}\u3001{{battle_state}}\u3001{{warnings}}\u3001{{user_instruction}}\u3001{{roster}}\u3001{{battle}}\u3002\u7559\u7A7A\u5219\u4E0D\u53D1\u9001\u3002"));
+        if (editable) form.append(make("p", "hint wide", "\u53EF\u7528\u5360\u4F4D\u7B26\uFF1A{{battle_init}}\u3001{{battle_state}}\u3001{{warnings}}\u3001{{user_instruction}}\u3001{{roster}}\u3001{{battle}}\u3001{{mvu_data}}\u3001{{latest_floor}}\u3001{{standardized_roster}}\u3002\u7559\u7A7A\u5219\u4E0D\u53D1\u9001\u3002"));
         const expand = (open) => {
           form.hidden = !open;
           edit.setAttribute("aria-expanded", String(open));
@@ -18304,6 +18391,7 @@ ${variables2.warnings()}` : "");
       });
       refresh();
     }
+    previewKind.onchange = drawCards;
     add.onclick = () => {
       const slot2 = makeCustomSlot();
       editing = slot2.id;
@@ -19071,7 +19159,7 @@ ${variables2.warnings()}` : "");
       }
     }
   }
-  function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, editMessage, applyJson, undoJson, copyText, extractJson = () => [] }) {
+  function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, editMessage, applyJson, undoJson, copyText, rawSummary, extractJson = () => [] }) {
     const button = (label) => make("button", { type: "button" }, label);
     const toolbar = make("div", { class: "fated-actions" });
     const select = make("select", { "aria-label": "\u5207\u6362\u4F1A\u8BDD" });
@@ -19084,12 +19172,13 @@ ${variables2.warnings()}` : "");
     const info = make("p", { class: "fated-ai-info" });
     const log = make("div", { class: "fated-ai-log", role: "log", "aria-label": "\u6D88\u606F\u6D41", tabindex: "0" });
     const composer = make("form", { class: "fated-chat" });
+    const sourceHint = make("small", { class: "fated-ai-info" });
     const input = make("textarea", { rows: "3", "aria-label": "\u8F93\u5165\u6D88\u606F", placeholder: "\u8F93\u5165\u6D88\u606F \xB7 Shift+Enter \u6362\u884C" });
     const submit = make("button", { type: "submit" }, "\u53D1\u9001");
     const abort = button("\u505C\u6B62");
     const status = make("span", { role: "status" });
     composer.append(input, submit, abort, status);
-    page.append(make("h3", {}, "\u8F85\u52A9 AI"), toolbar, edit, info, log, composer);
+    page.append(make("h3", {}, "\u8F85\u52A9 AI"), toolbar, edit, info, sourceHint, log, composer);
     let shownId, busy = false, pinned = true;
     const rows2 = /* @__PURE__ */ new Map(), drafts = /* @__PURE__ */ new Map();
     function scrollToEnd() {
@@ -19288,7 +19377,10 @@ ${variables2.warnings()}` : "");
     render();
     return {
       render,
-      show: scrollToEnd,
+      show() {
+        sourceHint.textContent = rawSummary?.() ?? "";
+        scrollToEnd();
+      },
       prefill(text8) {
         input.value = [input.value.trim(), text8].filter(Boolean).join("\n\n");
         drafts.set(shownId, input.value);
@@ -21430,22 +21522,22 @@ ${tag2.textContent || ""}
       const button = tabs.querySelector(`[data-tab="${key4}"]`);
       button?.click();
     }
-    let promptKind = "validate", promptInstruction = "";
     let previewSink, lastSent = null;
     const characterEntries = () => Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.entryValues]));
-    function assemblyContext(kind = promptKind, instruction = promptInstruction, onlyUnitIds = kind === "validate" ? selectedIds() : void 0) {
-      return { kind, instruction, onlyUnitIds, characterEntries: characterEntries(), rawCharacters: Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.raw])), state: liveState(), sources, roster: Object.values(config.instances), extraText: config.extraText };
+    function assemblyContext(kind = "validate", instruction = "", unitIds, batchWarnings) {
+      const selectedUnitIds = selectedIds();
+      const onlyUnitIds = kind === "validate" ? unitIds ?? selectedUnitIds : void 0;
+      const warnings = kind === "chat" ? [] : batchWarnings;
+      const promptSources = kind === "validate" && !batchWarnings ? { ...sources, warnings: warningGroups().pending } : sources;
+      return { kind, instruction, onlyUnitIds, selectedUnitIds, warnings, characterEntries: characterEntries(), rawCharacters: Object.fromEntries(Object.entries(characters).map(([id4, c]) => [id4, c.raw])), state: liveState(), sources: promptSources, roster: Object.values(config.instances), extraText: config.extraText };
     }
-    function publishMessages(messages, kind = promptKind) {
+    function publishMessages(messages, kind) {
       previewSink?.(messages, kind);
       return messages;
     }
-    function prepareMessages(kind = promptKind, instruction = promptInstruction, sending = false, unitIds, warnings) {
+    function prepareMessages(kind = "validate", instruction = "", sending = false, unitIds, warnings) {
       const slots3 = config.slots;
-      const context = assemblyContext(kind, instruction, unitIds);
-      if (kind === "chat") context.warnings = [];
-      else if (Array.isArray(warnings)) context.warnings = warnings;
-      else context.sources = { ...sources, warnings: warningGroups().pending };
+      const context = assemblyContext(kind, instruction, unitIds, warnings);
       const messages = assembleMessages(slots3, context);
       if (config.debugPrompts) console.debug("[fated:prompts]", {
         kind,
@@ -21667,6 +21759,7 @@ ${tag2.textContent || ""}
       config.instances = nextInstances;
       diagnostics = {
         phase: "hydrated",
+        scale: hydrated?.state?.scale ?? null,
         version: TAVERN_VERSION,
         mvuKeys: Object.keys(sources.mvuData || {}),
         protagonistName: sources.protagonistName || "",
@@ -22406,8 +22499,6 @@ ${tag2.textContent || ""}
       const session = aiSessions.get(sessionId);
       if (aiController || !requestText || !session) return;
       syncSettings();
-      promptKind = "chat";
-      promptInstruction = requestText;
       const history = (rerollTurn?.historyBeforeUser ?? session.messages).filter(
         (message) => ["user", "assistant"].includes(message.role) && message.content?.trim() && !["error", "aborted"].includes(message.status)
       ).map(({ role, content: content2 }) => ({ role, content: content2 }));
@@ -22482,6 +22573,14 @@ ${tag2.textContent || ""}
       applyJson: changeChatPatch,
       undoJson: (message) => changeChatPatch(message, void 0, true),
       copyText: copyChatText,
+      rawSummary() {
+        const slot2 = config.slots.find((s) => s.id === "raw" && !s.custom);
+        if (!slot2 || slot2.enabled === false) return "\u539F\u59CB\u8D44\u6599\u69FD\u5DF2\u505C\u7528";
+        const selectedUnitIds = selectedIds();
+        const rawCharacters = Object.fromEntries(selectedUnitIds.map((id4) => [id4, characters[id4]?.raw]));
+        const chars = resolveSlotContent(slot2, { kind: "chat", selectedUnitIds, rawCharacters }).length;
+        return `\u539F\u59CB\u8D44\u6599\uFF1A\u5DF2\u52FE\u9009 ${selectedUnitIds.length} \u540D\u89D2\u8272 \xB7 \u5F85\u53D1\u9001 ${chars} \u5B57\u7B26`;
+      },
       extractJson: (text8) => {
         const candidate = preferredJson(text8);
         return candidate ? [candidate] : [];
