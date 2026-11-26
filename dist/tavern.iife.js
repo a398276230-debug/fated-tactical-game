@@ -6465,6 +6465,9 @@ var FatedTacticalTavern = (() => {
     } : unit;
     const ammo = attack && !shieldBash ? weapon2.ammo : null;
     const geometry = reaches(state, origin, aim, template, ammo);
+    if (["fan", "cone", "line"].includes(template.shape) && template.range > 0 && sameCell(origin, center)) {
+      return fail2("\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411", { ...geometry, originSensitive: true });
+    }
     if (!isGround(state, center)) return fail2("\u5899\u4F53\u65E0\u6CD5\u6307\u5B9A", geometry);
     if (!deferGeometry) {
       if (!isGround(state, origin)) return fail2("\u52A8\u4F5C\u8D77\u70B9\u65E0\u6548", { ...geometry, originSensitive: true });
@@ -8550,8 +8553,27 @@ var FatedTacticalTavern = (() => {
     const protocol2 = state.ruleset === "protocol";
     const vmAimBudget = attacksOnly ? 2 : 6;
     const score = (action, plan) => protocol2 && plan.kind !== "altar" ? protocolTactics(state, actor, plan) : tactics(state, actor, action, plan);
+    const offensiveProgram = (program2) => (program2 ?? []).some((op) => {
+      if (op.enabled === false) return false;
+      if (op.op === "damage" || op.op === "resource" && ["sub", "sub_max"].includes(op.mode) && op.pool === "hp") return true;
+      if (op.op === "apply_status") {
+        const category = state.statusTemplates?.[op.statusId]?.category;
+        return ["control", "debuff", "dot"].includes(category);
+      }
+      return op.op === "if" && (offensiveProgram(op.then) || offensiveProgram(op.else)) || op.op === "for_each" && offensiveProgram(op.body) || op.op === "check" && (offensiveProgram(op.onPass) || offensiveProgram(op.onFail));
+    });
+    const isOffensiveAreaSkill = (skill2) => {
+      if (!skill2 || (skill2.shape ?? "single") === "single" || skill2.target === "ally" || skill2.target === "self") return false;
+      if (skill2.damage != null || skill2.target === "enemy") return true;
+      return (skill2.rules ?? []).filter((rule2) => rule2.enabled !== false && rule2.hook === "active").some((rule2) => offensiveProgram(rule2.program));
+    };
+    const hitsEnemy = (plan) => (plan.targets ?? []).some((target2) => target2.kind !== "cover" && state.units[target2.recipientId ?? target2.id]?.team !== actor.team) || (plan.ruleImpact?.units ?? []).some((effect) => {
+      const target2 = state.units[effect.id];
+      return target2?.team !== actor.team && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
+    });
     function consider(action, plan = preview(state, action)) {
-      if (plan.ok) choices.push({ action, score: score(action, plan) });
+      const skill2 = action.type === "skill" ? actionSkill(state, actor, action.skillId) : null;
+      if (plan.ok && !(isOffensiveAreaSkill(skill2) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
     }
     const enemies = units.filter((u) => visibleEnemy(state, actor, u));
     for (const target2 of [...enemies, ...attacksOnly ? [] : covers]) consider({ type: "attack", x: target2.x, y: target2.y, ...target2.id ? { targetId: target2.id } : {} });
@@ -8563,6 +8585,9 @@ var FatedTacticalTavern = (() => {
       if (skill2.ap === 0 && !skill2.backpackItem && !skill2.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false && (rule2.filter === void 0 || rule2.filter === true) && (rule2.usesPerTurn || rule2.usesPerBattle || rule2.cooldownTurns))) continue;
       const query2 = preview(state, { type: "skill", skillId });
       if (!query2.ok) continue;
+      const effectiveSkill = actionSkill(state, actor, skillId) ?? skill2;
+      const directed = ["fan", "cone", "line"].includes(effectiveSkill?.shape ?? skill2.shape);
+      const range2 = effectiveSkill?.range ?? skill2.range ?? 0;
       let candidates;
       if (skill2.target === "cell" || skill2.target === "corpse") {
         candidates = query2.cells;
@@ -8573,10 +8598,11 @@ var FatedTacticalTavern = (() => {
       } else {
         candidates = query2.cells;
       }
+      if (directed && range2 > 0) candidates = candidates.filter((candidate) => !samePosition(candidate, actor));
       const actionAt = ({ x, y, id: id3 }) => ({ type: "skill", skillId, x, y, ...id3 ? { targetId: id3 } : {} });
       const runsVm = skill2.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false);
       if (protocol2 && runsVm && candidates.length > vmAimBudget) {
-        const objectives = skill2.target === "ally" || skill2.slot === "action" ? units : enemies;
+        const objectives = isOffensiveAreaSkill(effectiveSkill) ? enemies : skill2.target === "ally" || skill2.slot === "action" ? units : enemies;
         candidates = candidates.map((candidate) => {
           const action = actionAt(candidate);
           const plan = preview(state, action, { simulateRules: false });
@@ -8767,8 +8793,9 @@ var FatedTacticalTavern = (() => {
     }
     const bracing = preview(state, { type: "brace" });
     if (bracing.ok && !aggregateModifiers(state, actor.id).stats.damageReduction?.flat && baseline <= 5) consider({ action: { type: "brace" }, score: bracing.coverId ? 2.5 : 1.4 });
-    if (best.action.type === "end" && !actor.used.attack && attackChoices.length) {
-      best = attackChoices.reduce((choice, current) => choice.score > current.score ? choice : current);
+    if (best.action.type === "end" && !actor.used.attack) {
+      const positiveAttacks = attackChoices.filter((choice) => choice.score > 0);
+      if (positiveAttacks.length) best = positiveAttacks.reduce((choice, current) => choice.score > current.score ? choice : current);
     }
     return { ...best.action };
   }
