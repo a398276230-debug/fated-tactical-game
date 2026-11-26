@@ -57,7 +57,8 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 - 意图对抗：攻方 `intentBonus` 加到攻方总值，守方 `intentDifficulty` 加到对抗难度，均不改变普通命中。例如猎人帽的「命中核心判定 +5」写 `{ "stat": "intentBonus", "flat": 5, "when": "event.intent == 'core'" }`。敌对打击检定前读取声明意图，检定失败后该目标分支读取 `normal`；外层 `after_action` 保留声明值，非打击事件不含此键。
 - ratio stats：`damageReduction`、`dr`、`armorPiercePercent`、`shatter`。
 - multiplier stats：`incomingDamageMult`、`damageMult`、`finalDamageMult`、`healingMult`、`incomingHealMult`、`costMult`。
-- 控制槽：`attack`、`action`、`move`、`cast`、`reaction`、`fly`、`teleport`。
+- 控制锁：`attack`、`action`、`move`、`cast`、`reaction`、`fly`、`teleport`。
+- `movement` 在单位自身层级的基础移动值上结算，再换算为战场格数。`resource(self, 'move')` 读取本回合剩余整格，与寻路预览共用预算。`resource` 节点对 `pool: 'move'` 使用整数 `add`、`sub` 或 `set`。例如在 `turn_start` 中使用 `add` 追加当回合移动格。
 - flags：`preserveLife`、`blockRevive`、`blockResourceRestore`、`untargetableSingle`、`harmless`、`guaranteed_hit`、`guaranteed_crit`、`hidden`、`intercept`、`taunted`、`infiniteAmmo`。
 
 `aggregateModifiers()` 汇总每个单位在事件上下文中的 stats、locks、flags、controlPolicy。表达式型 `flat`/`mult`/`additivePercent` 在 carrier scope 中求值；同一载体声明按模板和索引去重。
@@ -105,7 +106,7 @@ selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`�
 
 - `summoner` 默认取 `self`，指定另一单位时用该单位的阵营、层级和预算。`at` 独立控制落点。状态挂在敌人身上时可用 `summoner: "source"` 与 `at: "self"` 在敌人位置生成己方单位。
 - 省略 `group` 时按施术者、技能、规则和召唤形态分组。显式 `group` 可由同一施术者的多个规则共享。`stackPolicy` 默认 `replace`（顶替旧批），`fifo` 优先驱逐最早入场的成员，`cap` 保留旧成员并截断新批。`fifo` 和 `cap` 默认上限 12，可用 `maxActive` 修改。每次执行同组召唤时，回收已阵亡的旧实体及其装备。
-- `turnMode` 默认 `independent`（独立回合）。`linked_group` 随锚点行动，组员各自移动，共享攻槽与动槽。`linked_each` 随锚点行动，各用自己的槽。`none` 没有自主行动槽。`turnAnchor` 缺省取召唤者。附随单位在锚点阶段开始与结束时运行自己的回合钩子和状态计时。玩家同一阶段可用 `action.actorId` 指定同阵营附随单位，`end` 结束整个阶段。
+- `turnMode` 默认 `independent`（独立回合）。`linked_group` 随锚点行动，组员各有独立移动预算，共享攻槽与动槽。`linked_each` 随锚点行动，各用自己的槽。`none` 没有自主行动槽。`turnAnchor` 缺省取召唤者。附随单位在锚点阶段开始与结束时运行自己的回合钩子和状态计时。玩家同一阶段可用 `action.actorId` 指定同阵营附随单位，`end` 结束整个阶段。
 - 省略 `remainingTurns` 时持续到退场。默认 `durationUnit: "rounds"` 在轮末递减。`"anchor_turns"` 在 `durationAnchor` 的回合末递减，缺省锚点取 `turnAnchor` 或召唤者。`remainingTurns: 1` 可在当前锚点回合结束时到期。失去计时锚点后按大轮递减。到期触发 `on_summon_evict` 与死亡事件。
 - `spawnPanel.stats` 各维可用公式。有效层级 `T = min(召唤者 tier, spec.tier ?? 7)`，关联属性 `A` 由 `attribute` 指定，省略时取智力与精神的较大值。单项上限为 `min(A, [8,10,12,14,16,18,20][T-1])`，总和上限为 `max(T*5, A*5-30)`。
 - 批次 HP 为 `con*100*[1,2,4,10,20,40,100][T-1]*mc + 五维和`，MP 为 `(int+spi)*50*[1,2.5,6,15,35,80,160][T-1]`，SP 用同一倍率乘 `(str+agi)*50`。每只取批次总量除以 `count` 后四舍五入，HP 至少为 1。例如 `6040 / 6` 得每只 1007 HP，六只的整数上限相加为 6042 HP。显式填写 `maxHp`、`maxMp` 或 `maxSp` 时，该值直接作为每只的对应上限。

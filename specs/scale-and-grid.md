@@ -163,16 +163,14 @@ export function resolveEffectiveTier(carrierKind, quality, unitTier) {
 ### 2.3 单位移动力与「跨回合亚格累积槽 `moveCarryPermille`」
 
 1. **单位物理移速 `unit.moveM`（米/回合）统一按小数值 × 自身层级尺度推演**：
-   - 先取单位的小数值基础移动格数 `rawMove`：若角色数据显式填了 `move / 移动`（如预设的 `3` 或敏捷型 `4`）则取该小数值；未填则按敏捷给默认小数值 `clamp(3 + Math.floor(Math.log10(Math.max(1, unit.stats.agi / 10))), 3, 5)`。
-   - 乘以单位自身层级的平均物理距离：**`unit.moveM = rawMove * TIER_CELL_M[unit.tier]`**！
-   - 换算当前战局每回合步数：`unit.move = scaledCells(rawMove, unit.tier, cellM, { floor: true })`（同阶战局下恒等于 `rawMove`；跨入高维大比例尺战局时允许为 `0`）。
-2. **亚格累积移动（防止低阶角色在大比例尺地图报错或瞬移 1 公里）**：
-   - 在 `unit` 上维护整数状态字段 `moveCarryPermille: 0..999`（千分比进度，纯整数以符合快照/事务规范）。
-   - 执行 `move`（倍率 `1`）或 `sprint`（倍率 `2`）时：
-     - 本次总格数预算 `totalPermille = (unit.moveCarryPermille ?? 0) + Math.round((mult * unit.moveM / state.scale.cellM) * 1000)`；
-     - 可迈出格数 `availableSteps = Math.min(width + height, Math.floor(totalPermille / 1000))`。
-     - 若 `availableSteps >= 1`：正常寻路移动 `1..availableSteps` 格，扣除实际消耗步数对应的千分比后余数写回 `moveCarryPermille`。
-     - 若 `availableSteps === 0`：一至四阶战场可原地消耗动作蓄步，`moveCarryPermille` 更新为 `totalPermille`；五至七阶战场不提供蓄步选项，零进度时面板显示「尺度压制（限同格）」。
+   - 显式 `move / 移动` 优先。省略时按敏捷取基础移动值 `rawMove`，敏捷缺失取 3，0–4 取 2，5–8 取 3，9–12 取 4，13–16 取 5，17 以上取 6。
+   - `unit.moveM = rawMove * TIER_CELL_M[unit.tier]`。`unit.move` 是基础盘面格数，先将 `moveM / cellM` 四舍五入到千分之一格，再向下取整并限制在 `width + height`，允许为 0。召唤物使用同一换算。
+2. **当回合移动预算**
+   - `movement` 修正在单位自身尺度上应用，然后换算为整数千分格。总预算为本回合初的继承进度、修正后的基础移动力和额外移动力之和，再逐步扣除实际走过的格数。寻路与 VM 的 `resource(self, 'move')` 共用剩余整格预算，上限为 `width + height`。
+   - 普通移动花费 0 AP。疾跑花费 1 AP 和动作槽，额外加入一份修正后的基础移动力。撤离花费 1 AP 和动作槽，使用同一预算，且本段免借机和敌军阻滞。
+3. **亚格蓄步**
+   - `moveCarryPermille` 记录 0–999 的跨回合进度。一至四阶战场且预算不足一整格时，可以原地蓄步，每回合最多一次。普通蓄步花费 0 AP，疾跑蓄步仍按疾跑扣费。
+   - 五至七阶战场不提供原地蓄步，进度为 0 时显示「尺度压制（限同格）」。
 
 ### 2.4 免疫穿透、无视无视免疫与概念对抗的品级优先级裁定
 
