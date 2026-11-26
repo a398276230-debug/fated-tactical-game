@@ -993,6 +993,30 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.ok((await state()).logs.some(log => log.type === 'hit_result' && log.detail.targetId === 'scout'));
   });
   await click('#reset-button');
+  await t.test('玩家可在同一回合切换附随召唤物并操控其走位', async () => {
+    await run(`(() => {
+      const game = window.FatedTacticalGame, s = game.getBattleState();
+      const a = s.units[s.order[s.turn]];
+      s.skills.squad_proof = {name:'协战测试召唤',ap:1,slot:'action',shape:'single',target:'self',range:0,
+        rules:[{id:'squad_proof_spawn',hook:'active',program:[{op:'spawn',entityKind:'unit',at:{x:1,y:1},
+          spec:{name:'协战测试单位',turnMode:'linked_each'}}]}]};
+      a.skills.push('squad_proof');
+      game.createBattle({kind:'custom_state',state:s});
+      const result = game.playAction({type:'skill',skillId:'squad_proof',x:a.x,y:a.y});
+      if (!result.ok) throw new Error(result.error);
+    })()`);
+    const summon = Object.values((await state()).units).find(unit => unit.summoned);
+    assert.ok(summon);
+    await click(`${cell(summon.x,summon.y)} [data-unit-id="${summon.id}"]`);
+    await click(cell(1,0));
+    await click('#action-toolbar [data-action="move"]');
+    const s = await state();
+    assert.deepEqual([s.units[summon.id].x, s.units[summon.id].y], [1, 0]);
+    assert.equal(s.order.includes(summon.id), false);
+    assert.equal(s.order[s.turn], 'swordsman');
+    assert.equal(s.units.swordsman.y, 2);
+  });
+  await click('#reset-button');
   const actions = type => `#action-toolbar [data-action="${type}"]`;
   await run(`(() => {
     const game = window.FatedTacticalGame;

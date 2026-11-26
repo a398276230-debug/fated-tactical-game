@@ -12,11 +12,12 @@ import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, carrierScope, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
-import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
+import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMAnchorTurn, advanceVMRound } from './vm-runtime.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 import { resolveStatusApplication } from './status-application.js';
+import { actionActor, canRouteActor, isLinkedMode, linkedGroupKey, linkedUnitsOf as routedLinkedUnitsOf } from './turn-routing.js';
 export { getStatusTemplate, STATUSES };
 export const corpses = state => Object.values(state.units).filter(unit => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
 
@@ -273,15 +274,68 @@ function guardFor(state, target) {
     clearSight(state, u, target));
 }
 
+export const linkedUnitsOf = routedLinkedUnitsOf;
+
+function resetUnitTurn(state, unit) {
+  delete unit.followupUsed;
+  unit.used = { attack: 0, action: 0 };
+  unit.moved = 0;
+  delete unit.moveSpent;
+  unit.reactionAvailable = true;
+  unit.ap = unit.apMax = turnAP(state, unit);
+}
+
+export function initializeSummonTurn(state, unit) {
+  if (unit.turnMode === 'independent') return;
+  unit.ap = 0;
+  unit.apMax = unit.turnMode === 'none' ? 0 : turnAP(state, unit);
+  if (isLinkedMode(unit) && state.vm?.activePhaseId === unit.turnAnchorId) {
+    resetUnitTurn(state, unit);
+    Object.assign(unit.used, state.vm.linkedGroupUsed?.[linkedGroupKey(unit)]);
+    unit.ap = Math.max(0, unit.apMax - unit.used.attack - unit.used.action);
+    if (state.vm.startingMembers) state.vm.startingMembers.push(unit.id);
+  }
+}
+
 function endTurn(state, unit) {
   if (!unit) return;
-  unit.ap = 0;
-  dispatchVMHook(state, 'turn_end', { actorId: unit.id, targetId: unit.id });
-  if (state.vm?.pendingAsk) {
-    state.vm.endingTurn = unit.id;
-    return;
+  initializeVMWorld(state);
+  delete state.vm.activePhaseId;
+  const members = [...routedLinkedUnitsOf(state, unit.id), unit];
+  for (const member of members) member.ap = 0;
+  for (const key of Object.keys(state.vm.linkedGroupUsed ?? {})) {
+    if (key.startsWith(`${unit.id}:`)) delete state.vm.linkedGroupUsed[key];
   }
-  completeTurnEnd(state, unit);
+  state.vm.endingTurn = unit.id;
+  state.vm.endingPhase = { members: members.map(member => member.id), stage: 0 };
+  continueTurnEnd(state);
+}
+
+function continueTurnEnd(state) {
+  const phase = state.vm.endingPhase;
+  while (phase.members.length) {
+    const id = phase.members[0];
+    const member = tableEntry(state.units, id);
+    if (member && phase.stage === 0) {
+      phase.stage++;
+      dispatchVMHook(state, 'turn_end', { actorId: id, targetId: id });
+      if (state.vm.pendingAsk) return;
+    }
+    if (member && phase.stage === 1) {
+      completeTurnEnd(state, member, phase.statuses);
+      if (state.vm.pendingAsk) return;
+    }
+    if (phase.stage < 2) {
+      phase.stage = 2;
+      advanceVMAnchorTurn(state, id);
+      if (state.vm.pendingAsk) return;
+    }
+    phase.members.shift();
+    phase.stage = 0;
+    delete phase.statuses;
+  }
+  delete state.vm.endingPhase;
+  delete state.vm.endingTurn;
 }
 
 function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
@@ -293,17 +347,11 @@ function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
     if (--status.remainingTurns > 0) continue;
     removeVMStatus(state, unit, status, 'expired', unit);
     if (state.vm.pendingAsk) {
-      state.vm.endingTurn = unit.id;
-      state.vm.endingStatuses = remaining.slice(index + 1);
+      state.vm.endingPhase.statuses = remaining.slice(index + 1);
       return;
     }
   }
   record(state, unit, 'end', `${unit.name}结束回合`);
-  advanceVMSpatial(state, { anchorUnitId: unit.id });
-  if (state.vm.pendingAsk) {
-    state.vm.endingTurn = unit.id;
-    state.vm.endingSpatial = true;
-  }
 }
 
 // Automatic skips are bounded even if sandbox commands make every living unit permanently stunned.
@@ -321,7 +369,8 @@ export function settleTurn(state) {
           return;
         }
       }
-      delete state.vm.startingTurn;
+      if (state.vm.startingTurn === unit.id) continueUnitTurnStart(state);
+      if (state.vm.pendingAsk) return;
       if (refreshOutcome(state)) { unit.ap = 0; return; }
       if (unit.fled) { advanceCursor(state); if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; } continue; }
       if (alive(unit) && !unitSkipped(state, unit)) return;
@@ -337,13 +386,37 @@ export function settleTurn(state) {
 }
 
 function beginUnitTurn(state, unit) {
-  delete unit.followupUsed;
-  unit.used = { attack: 0, action: 0 };
-  unit.moved = 0;
-  delete unit.moveSpent;
-  unit.reactionAvailable = true;
-  unit.ap = unit.apMax = turnAP(state, unit);
+  resetUnitTurn(state, unit);
+  const linked = routedLinkedUnitsOf(state, unit.id);
+  initializeVMWorld(state);
+  state.vm.activePhaseId = unit.id;
+  for (const member of linked) resetUnitTurn(state, member);
+  state.vm.startingTurn = unit.id;
+  state.vm.startingMembers = [unit.id, ...linked.map(member => member.id)];
   record(state, unit, 'turn', `${unit.name}开始回合`, { turn: state.turn });
+  continueUnitTurnStart(state);
+}
+
+function continueUnitTurnStart(state) {
+  while (state.vm.startingMembers.length && !state.vm.pendingAsk) {
+    const id = state.vm.startingMembers[0];
+    const unit = tableEntry(state.units, id);
+    if (!alive(unit) || unit.fled) { state.vm.startingMembers.shift(); continue; }
+    if (!state.vm.startingHoldChecked) {
+      state.vm.startingHoldChecked = true;
+      tryBreakHold(state, unit);
+      if (state.vm.pendingAsk) return;
+    }
+    state.vm.startingMembers.shift();
+    delete state.vm.startingHoldChecked;
+    dispatchVMHook(state, 'turn_start', { actorId: id, targetId: id });
+  }
+  if (state.vm.pendingAsk) return;
+  delete state.vm.startingMembers;
+  delete state.vm.startingTurn;
+}
+
+function tryBreakHold(state, unit) {
   const hold = unit.statuses.suppressed;
   if (hold?.vars?.holdTotal != null) {
     const roll = randomDie(state, 20);
@@ -353,7 +426,6 @@ function beginUnitTurn(state, unit) {
     record(state, unit, 'break_hold', `${unit.name}挣脱检定${success ? '成功，解除被压制' : '失败，仍被压制'}（${total} 对 ${hold.vars.holdTotal}）`,
       { roll, total, threshold: hold.vars.holdTotal, success });
   }
-  dispatchVMHook(state, 'turn_start', { actorId: unit.id, targetId: unit.id });
 }
 
 function turnAP(state, unit) {
@@ -409,13 +481,16 @@ export function continueRound({ state, frame, host }) {
   if (!refreshOutcome(state)) host.hooks(state, frame, 'round_start', host.event(state, { round: state.round }));
 }
 
-export function beginBattle(state) {
+export function beginBattle(state, openingRolls) {
   state.logs ??= [];
   state.round = 1;
   state.turn = 0;
   state.outcome = null;
+  initializeVMWorld(state);
   syncEquipmentEffects(state);
-  const initiative = initiativeOrder(state, () => randomDie(state, 20));
+  const initiative = initiativeOrder(state, unit => openingRolls?.get(unit.id) ?? randomDie(state, 20));
+  delete state.vm.activePhaseId;
+  delete state.vm.linkedGroupUsed;
   state.order = initiative.map(entry => entry.unitId);
   for (const unit of values(state.units)) {
     unit.stance ??= loadoutStance(state, unit);
@@ -431,7 +506,7 @@ export function beginBattle(state) {
       delete status.appliedTurn;
     }
   }
-  record(state, null, 'initiative', '敏捷 + d20：确定先攻次序', { initiative });
+  record(state, null, 'initiative', '敏捷 + d20：确定先攻次序', { initiative, openingRng: state.rng });
   for (const unit of living(state)) for (const status of values(unit.statuses)) {
     record(state, status.sourceId ?? unit.id, 'status', `${unit.name}开场已有${status.name} ×${status.stacks}`,
       { ...statusLogDetail(unit, status), initial: true });
@@ -444,7 +519,7 @@ export function beginBattle(state) {
 }
 
 function initiativeOrder(state, rollFor) {
-  return living(state).map(unit => {
+  return living(state).filter(unit => !unit.summoned || (unit.turnMode ?? 'independent') === 'independent').map(unit => {
     const roll = rollFor(unit), agility = effectiveStat(state, unit, 'agi');
     const agilityPercent = Number(unit.initiativePercent ?? 0);
     const attackInit = [...(unit.attackInit ?? [])];
@@ -459,6 +534,23 @@ function initiativeOrder(state, rollFor) {
     return { unitId: unit.id, roll, agility, agilityPercent, attackInit:Math.max(0,...attackInit,0), actionInit:Math.max(0,...actionInit,0), flatInit, total };
   }).sort((a, b) => b.total - a.total || b.agility - a.agility ||
     (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
+}
+
+export function isUntouchedOpening(state) {
+  return state.round === 1 && state.turn === 0 && !state.tape?.length && !state.vm?.pendingAsk
+    && state.logs[0]?.type === 'initiative'
+    && state.logs.every(log => log.type === 'initiative' || (log.type === 'status' && log.detail?.initial)
+      || (log.type === 'turn' && log.detail?.turn === 0));
+}
+
+export function replayOpeningBattle(state) {
+  if (!isUntouchedOpening(state)) return state;
+  const { initiative, openingRng } = state.logs[0].detail;
+  if (!Array.isArray(initiative)) return state;
+  const rolls = new Map(initiative.map(row => [row.unitId, row.roll]));
+  state.rng = openingRng ?? state.rng;
+  state.logs = [];
+  return beginBattle(state, rolls);
 }
 
 // Reuse the opening dice when normalization changes check bonuses before play.
@@ -1009,14 +1101,14 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
 }
 
 /** With no x/y, queries highlighting. With both coordinates, validates one executable action. */
-export function preview(state, action, { simulateRules = true, actionOrigin, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
+export function preview(state, action, { simulateRules = true, actionOrigin, actingUnit, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
   if (state.outcome) return fail('战斗已经结束');
-  const unit = currentUnit(state);
+  const unit = actingUnit ?? actionActor(state, action);
   if (!alive(unit) && action?.type !== 'end') return fail('当前单位不能行动');
   if (!action || typeof action !== 'object' || Array.isArray(action)) return fail('动作格式错误');
   const { type, skillId } = action;
   let { x, y } = action;
-  if (!Object.keys(action).every(field => (type === 'switch_weapon' && field === 'itemId') || ['type', 'x', 'y', 'targetId', 'skillId', 'bonusDice', 'intent', 'nonLethal', 'maneuver'].includes(field))) return fail('动作含未知字段');
+  if (!Object.keys(action).every(field => (type === 'switch_weapon' && field === 'itemId') || ['type', 'x', 'y', 'targetId', 'skillId', 'actorId', 'bonusDice', 'intent', 'nonLethal', 'maneuver'].includes(field))) return fail('动作含未知字段');
   if (action.bonusDice !== undefined && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail('奖励骰储备不足');
   if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
   const equipmentSkill = type === 'skill' ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
@@ -1038,19 +1130,22 @@ export function preview(state, action, { simulateRules = true, actionOrigin, ign
   if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed)) return fail('动作带有不适用的参数');
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !tileAt(state, x, y))) return fail('目标坐标超出棋盘');
   if (type === 'interact' && unplaced) {
-    const cells = values(state.interactives).filter(v => !v.spent && preview(state, {type, x:v.x, y:v.y}).ok).sort(byId).map(v => pos(v.x,v.y));
+    const cells = values(state.interactives).filter(v => !v.spent && preview(state, {type, x:v.x, y:v.y}, { actingUnit: unit }).ok).sort(byId).map(v => pos(v.x,v.y));
     return cells.length ? {ok:true, ap:1, cost:1, cells} : fail('没有可用的互动点', {cells});
   }
   const item = !unplaced && (type === 'interact' || type === 'attack') ? values(state.interactives).find(v => !v.spent && v.x === x && v.y === y) : null;
   const detonate = item?.kind === 'barrel';
   const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
-  const ap = drawFromBag ? 1 : cost.ap, slot = ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
+  const independentMove = isLinkedMode(unit) && isMovement(type);
+  const ap = independentMove ? 0 : drawFromBag ? 1 : cost.ap;
+  const slot = independentMove ? 'move' : ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
   const resourceCosts = actorCost(state, unit, cost, type === 'skill' ? skillId : undefined);
   const common = { ok: true, ap, cost: ap, slot, ...resourceCosts, ...availability };
   if (type === 'end') return common;
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
     ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
   if (unitSkipped(state, unit)) return fail('当前单位受控制，只能结束回合');
+  if (independentMove && unit.moved > 0) return fail('本回合已经移动');
   const cannotPay = paymentError(state, unit, ap, slot, cost, resourceCosts, type === 'skill');
   if (cannotPay) return fail(cannotPay, { ap, ...availability });
   const center = unplaced ? undefined : pos(x, y);
@@ -1717,6 +1812,7 @@ function continueInteraction(state, actor, plan, progress) {
 }
 
 export function applyAction(state, action) {
+  if (action?.type !== 'answer' && action?.actorId !== undefined && !canRouteActor(state, action.actorId)) throw new Error('该单位不能在当前阶段行动');
   if (action?.type === 'answer' || state.vm?.pendingAsk || action?.type && !['end', 'end_encounter'].includes(action.type)) {
     if (state.vm?.pendingAsk && action.type === 'end_encounter') {
       const concession = preview(state, action);
@@ -1725,21 +1821,17 @@ export function applyAction(state, action) {
       state.vm.stack.length = 0;
       state.vm.events = {};
       delete state.vm.endingTurn;
-      delete state.vm.endingStatuses;
-      delete state.vm.endingSpatial;
+      delete state.vm.endingPhase;
+      delete state.vm.startingMembers;
+      delete state.vm.startingHoldChecked;
       delete state.vm.startingTurn;
       delete state.vm.settlingTurn;
     } else {
       const before = state.logs.length;
-      const actor = currentUnit(state);
+      const actor = actionActor(state, action) ?? currentUnit(state);
       const result = resolveVMAction(state, action);
       if (!result.pendingAsk && state.vm.endingTurn) {
-        const endingUnit = state.units[state.vm.endingTurn];
-        const remainingStatuses = state.vm.endingStatuses;
-        delete state.vm.endingTurn;
-        delete state.vm.endingStatuses;
-        if (state.vm.endingSpatial) delete state.vm.endingSpatial;
-        else completeTurnEnd(state, endingUnit, remainingStatuses);
+        continueTurnEnd(state);
         if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
       } else if (!result.pendingAsk && state.vm.startingTurn) {
         settleTurn(state);
@@ -1759,7 +1851,7 @@ export function applyAction(state, action) {
     }
     throw new Error(plan.error);
   }
-  const actor = currentUnit(state);
+  const actor = actionActor(state, action) ?? currentUnit(state);
   const before = state.logs.length;
   if (action.type === 'end_encounter') {
     record(state, actor, 'action', `${actor.name}：${plan.name}`,
@@ -1891,8 +1983,11 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
 function finishAction(state, actor, type) {
   if (state.vm?.pendingAsk) return;
   if (refreshOutcome(state)) { if (actor) actor.ap = 0; return; }
-  if (type === 'end' || !alive(actor) || !actor.ap) {
-    if (!actor.fled) endTurn(state, actor);
+  const turnOwner = currentUnit(state) ?? actor;
+  if (!turnOwner) return;
+  const linked = routedLinkedUnitsOf(state, turnOwner.id).filter(member => member.team === turnOwner.team);
+  if (type === 'end' || !alive(turnOwner) || turnOwner.fled || (!turnOwner.ap && !linked.length)) {
+    if (!turnOwner.fled || linked.length) endTurn(state, turnOwner);
     if (!state.vm?.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
   }
 }

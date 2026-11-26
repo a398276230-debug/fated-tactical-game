@@ -231,12 +231,16 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','attunementCharges','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'durationUnit', 'durationAnchorId']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','lastMoveDir','remainingTurns','moveSpent','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId']);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
   checkOptional(v, 'sourceSkillId', skillId => v.summoned === true && validVmSourceSkillId(skillId));
   checkOptional(v, 'summonGroup', group => text(group, 512));
+  checkOptional(v, 'turnMode', mode => ['independent', 'linked_group', 'linked_each', 'none'].includes(mode));
+  checkOptional(v, 'turnAnchorId', id);
+  checkOptional(v, 'durationUnit', unit => ['rounds', 'anchor_turns'].includes(unit));
+  checkOptional(v, 'durationAnchorId', id);
   if (own(v, 'altitude')) requireThat(int(v.altitude, 0, 12), '离地高度');
   checkOptional(v, 'summoned', x => x === true);
   for (const key of ['initialMaxHp', 'initialMaxMp', 'initialMaxSp', 'apMax']) checkOptional(v, key, x => int(x, 0, 1000000000));
@@ -531,7 +535,8 @@ export function validateState(s) {
   validatePools(s);
   list(s.order, 200, x => has(s.units, x), '先攻队列');
   requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1))
-    && Object.values(s.units).every(u => u.hp <= 0 || s.order.includes(u.id)), '先攻索引');
+    && Object.values(s.units).every(u => u.summoned && ['linked_group', 'linked_each', 'none'].includes(u.turnMode)
+      ? !s.order.includes(u.id) : u.hp <= 0 || s.order.includes(u.id)), '先攻索引');
   requireThat(Array.isArray(s.logs) && s.logs.length <= 100000, '日志');
   for (const log of s.logs) {
     fields(log, ['round','actor','type','text','detail'], ['positions']);

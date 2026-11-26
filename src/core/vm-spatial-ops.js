@@ -365,7 +365,10 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
     : [actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
   const durationUnit = spec.durationUnit ?? (spec.templateId ? original.durationUnit : undefined) ?? 'rounds';
   const timed = spec.remainingTurns !== undefined;
-  const anchor = timed && durationUnit === 'anchor_turns' ? (spec.durationAnchor ? firstUnit(spec.durationAnchor) : actor) : null;
+  const turnMode = spec.turnMode ?? (spec.templateId ? original.turnMode : undefined) ?? 'independent';
+  const turnAnchor = spec.turnAnchor ? firstUnit(spec.turnAnchor) : actor;
+  if (['linked_group', 'linked_each'].includes(turnMode) && !live(turnAnchor)) return fail('invalid_panel');
+  const anchor = timed && durationUnit === 'anchor_turns' ? (spec.durationAnchor ? firstUnit(spec.durationAnchor) : turnAnchor) : null;
   if (timed && durationUnit === 'anchor_turns' && !anchor) return fail('invalid_panel');
   // An eviction hook may summon another group, but cannot reenter its own replacement.
   if (state.vm.stack.some(entry => entry.native === 'spatialSpawn' && entry.data.group === group)) return fail('reentrant_group');
@@ -392,7 +395,7 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
   const explicitAt = op.at !== undefined;
   const z = explicitAt ? center.z : undefined;
   const data = { plan, center: { ...xy(center), ...(Number.isFinite(z) && { z }) }, explicitAt,
-    out: op.out ?? null, fields, group, evictIds, pendingId: null,
+    out: op.out ?? null, fields, group, evictIds, pendingId: null, turnMode, turnAnchorId: turnAnchor?.id,
     moraleType: actor.moraleType ?? state.battleType ?? 'standard',
     ...(timed && { duration: { remainingTurns: spec.remainingTurns, durationUnit, ...(anchor && { durationAnchorId: anchor.id }) } }) };
   const leaving = new Set(data.evictIds);
@@ -450,6 +453,8 @@ function continueSpawn({ state, frame, host, context }) {
     const id = nextId(state, state.units, 'summon');
     const unit = { ...structuredClone(plan.panel), ...structuredClone(data.fields), id, ...placement,
       moraleType: data.moraleType, summonGroup: data.group, summoned: true, used: { attack: 0, action: 0 }, ap: 0, statuses: {},
+      ...(data.turnMode !== 'independent' && { turnMode: data.turnMode }),
+      ...(['linked_group', 'linked_each'].includes(data.turnMode) && { turnAnchorId: data.turnAnchorId }),
       ...data.duration,
       ...(frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }) };
     unit.hp = unit.maxHp;
@@ -465,7 +470,8 @@ function continueSpawn({ state, frame, host, context }) {
     unit.stance = stanceFor({ mainHand: state.equipment[gear.mainHand], offHand: state.equipment[gear.offHand], shield: state.equipment[gear.shield] });
     unit.gear = gear.gear.map(mint);
     syncUnitPools(state, unit);
-    state.order.push(id);
+    if (data.turnMode === 'independent') state.order.push(id);
+    else host.initializeSummonTurn?.(state, unit);
     first ??= id;
     host.log(state, actor, 'spawn', `${unit.name}登场`, { unitId: id, ...at(state, unit) });
   }

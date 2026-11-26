@@ -143,7 +143,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
       const target = state.units[effect.id];
       return target?.team !== actor.team && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
     });
-  function consider(action, plan = preview(state, action)) {
+  function consider(action, plan = preview(state, action, { actingUnit: actor })) {
     const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
     if (plan.ok && !(isOffensiveAreaSkill(skill) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
   }
@@ -158,7 +158,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     // exhausts a budget. Filters could skip consumption, so do not rely on them.
     if (skill.ap === 0 && !skill.backpackItem && !skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false
       && (rule.filter === undefined || rule.filter === true) && (rule.usesPerTurn || rule.usesPerBattle || rule.cooldownTurns))) continue;
-    const query = preview(state, { type: 'skill', skillId });
+    const query = preview(state, { type: 'skill', skillId }, { actingUnit: actor });
     if (!query.ok) continue;
     const effectiveSkill = actionSkill(state, actor, skillId) ?? skill;
     const directed = ['fan', 'cone', 'line'].includes(effectiveSkill?.shape ?? skill.shape);
@@ -183,7 +183,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
         : skill.target === 'ally' || skill.slot === 'action' ? units : enemies;
       candidates = candidates.map(candidate => {
         const action = actionAt(candidate);
-        const plan = preview(state, action, { simulateRules: false });
+        const plan = preview(state, action, { simulateRules: false, actingUnit: actor });
         const proximity = Math.min(Infinity, ...objectives.map(target => dist(candidate, target)));
         return { candidate, rank: plan.ok ? score(action, plan) + (1 / (1 + proximity)) : -Infinity };
       }).filter(entry => Number.isFinite(entry.rank)).sort((a, b) => b.rank - a.rank).slice(0, vmAimBudget).map(entry => entry.candidate);
@@ -209,7 +209,7 @@ function approach(state, actor, enemies, suppress = false) {
     if (d > range + 1) return false;
     const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
-    const attack = preview(s, { type: 'attack', targetId: target.id, x: target.x, y: target.y });
+    const attack = preview(s, { type: 'attack', targetId: target.id, x: target.x, y: target.y }, { actingUnit: s.units[actor.id] });
     if (attack.ok || attack.error === '弹仓已空，请装填' && d <= range && hasLOS(state, probe, target)) return true;
     return false;
   });
@@ -269,16 +269,17 @@ function coverQuality(state, destination, enemies) {
 }
 
 /** Choose a legal command without consuming the live battle's RNG or mutating its state. */
-export function chooseAction(state) {
+export function chooseAction(state, actor = currentUnit(state)) {
   if (state.outcome) return null;
-  const actor = currentUnit(state);
-  if (!actor || !actor.hp || !actor.ap) return { ...END };
+  if (!actor || !actor.hp) return { ...END };
+  const plan = action => preview(state, action, { actingUnit: actor });
+  if (!actor.ap && !plan({ type: 'move' }).ok) return { ...END };
   const enemies = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId);
   if (!enemies.length) return { ...END };
   const bankStep = move => move.cells?.find(cell => cell.bankedProgress > (actor.moveCarryPermille ?? 0));
   if (actor.moraleState === 'routed') {
-    if (atBattleEdge(state,actor)) return preview(state,{type:'flee'}).ok ? {type:'flee'} : {...END};
-    const move = preview(state,{type:'move'});
+    if (atBattleEdge(state,actor)) return plan({type:'flee'}).ok ? {type:'flee'} : {...END};
+    const move = plan({type:'move'});
     if (!move.ok) return {...END};
     const exit = reachable(state,'move',actor,Infinity).filter(cell=>atBattleEdge(state,cell)).sort((a,b)=>a.steps-b.steps)[0];
     const dest = exit && (exit.path.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p))) ?? bankStep(move));
@@ -288,10 +289,10 @@ export function chooseAction(state) {
     const held = Object.values(state.units).filter(t=>t.team===actor.team && t.hp>0 && !t.fled && t.statuses.suppressed).sort(byId);
     for (const ally of held) {
       const rescue={type:'free_ally',targetId:ally.id,x:ally.x,y:ally.y};
-      if (preview(state,rescue).ok) return rescue;
+      if (plan(rescue).ok) return rescue;
     }
     if (held.length) {
-      const move=preview(state,{type:'move'});
+      const move=plan({type:'move'});
       if (move.ok) {
         const route=approach(state,actor,held,true);
         const dest=route.slice().reverse().find(p=>move.cells.some(c=>samePosition(c,p))) ?? (route.length ? bankStep(move) : undefined);
@@ -302,12 +303,12 @@ export function chooseAction(state) {
   if (state.battleType === 'suppress' && state.suppressingTeam === actor.team) {
     for (const enemy of enemies) {
       const action={type:'suppress',targetId:enemy.id,x:enemy.x,y:enemy.y};
-      if (preview(state,action).ok) return action;
+      if (plan(action).ok) return action;
     }
     const targets=enemies.filter(t=>!t.statuses.suppressed && visibleEnemy(state,actor,t));
     const path=targets.length && approach(state,actor,targets,true);
     if (path?.length) {
-      const move=preview(state,{type:'move'});
+      const move=plan({type:'move'});
       const dest=path.slice().reverse().find(p=>move.cells?.some(c=>samePosition(c,p))) ?? bankStep(move);
       if (dest) return {type:'move',x:dest.x,y:dest.y};
     }
@@ -324,19 +325,19 @@ export function chooseAction(state) {
     if (choice.score > best.score + 1e-8) best = choice;
   }
   for (const choice of aimedOptions(state, actor)) consider(choice);
-  const canReload = preview(state, { type: 'reload' });
+  const canReload = plan({ type: 'reload' });
   if (canReload.ok) consider({ action: { type: 'reload' }, score: canReload.ammo === 0 ? 7.5 : (canReload.capacity - canReload.ammo) * .5 });
 
   const plannedPath = approach(state, actor, objectives);
   const z0 = elevation(state, actor);
   const startingCover = coverQuality(state, actor, objectives);
   const baseline = Math.min(...objectives.map(u => dist(actor, u)));
-  const ordinary = preview(state, { type: 'move' });
+  const ordinary = plan({ type: 'move' });
   const riskyDestinations = new Set((ordinary.cells ?? []).filter(c => c.opportunities?.length).map(c => `${c.x},${c.y}`));
   const movements = [];
   for (const type of ['move', 'sprint', 'disengage']) {
     if (type === 'disengage' && !riskyDestinations.size) continue;
-    const options = type === 'move' ? ordinary : preview(state, { type });
+    const options = type === 'move' ? ordinary : plan({ type });
     if (!options.ok) continue;
     for (const cell of options.cells) {
       if (type === 'disengage' && !riskyDestinations.has(`${cell.x},${cell.y}`)) continue;
@@ -374,7 +375,7 @@ export function chooseAction(state) {
     }
     consider({ action: { type, x: cell.x, y: cell.y }, score });
   }
-  const bracing = preview(state, { type: 'brace' });
+  const bracing = plan({ type: 'brace' });
   if (bracing.ok && !aggregateModifiers(state, actor.id).stats.damageReduction?.flat && baseline <= 5) consider({ action: { type: 'brace' }, score: bracing.coverId ? 2.5 : 1.4 });
   // Ending while a legal attack slot is still available throws away a whole
   // resource. Keep higher-value movement, brace, reload, or skill choices,

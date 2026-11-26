@@ -238,6 +238,7 @@ body { margin: 0; background: var(--ink-2); }
 .ap-crystal { font-size: 1.15em; color: var(--gold-bright); text-shadow: var(--icon-glow); }
 .ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
 
+.ft-linked-squad:not([hidden]) { display: flex; flex-wrap: wrap; gap: 4px; }
 .ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
 .ft-ask { width: min(100%, 28rem); padding: 8px 10px; border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); }
 .ft-ask p { margin: 0 0 6px; color: var(--accent-text); overflow-wrap: anywhere; }

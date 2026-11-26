@@ -1,4 +1,4 @@
-import { actionSkill, continueStrike, continueRound, currentUnit, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
+import { actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
@@ -12,6 +12,7 @@ import { evaluateExpr } from './formula.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { validVmSourceSkillId } from './vm-schema.js';
 import { vmAttribution, normalizeProse } from './log-attribution.js';
+import { actionActor, syncLinkedGroupSlots } from './turn-routing.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
@@ -75,6 +76,16 @@ export function advanceVMSpatial(state, options = {}) {
   if (idle) stepVM(state, vmHost);
 }
 
+export function advanceVMAnchorTurn(state, anchorUnitId) {
+  initializeVMWorld(state);
+  if (state.vm.pendingAsk) return;
+  const idle = !state.vm.stack.length;
+  if (idle) state.vm.stepsRemaining = 2000;
+  const parent = state.vm.stack.at(-1) ?? { ownerId: anchorUnitId, sourceId: anchorUnitId };
+  expireSpatialEffects(state, vmHost, { advance: true, anchorUnitId, parent });
+  if (idle) stepVM(state, vmHost);
+}
+
 export function dispatchVMHook(state, hook, event) {
   initializeVMWorld(state);
   const parent = state.vm.stack.at(-1) ?? { sourceId: event.actorId };
@@ -106,6 +117,7 @@ export function commitVMEffect(state, data) {
 export const vmHost = {
   ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
   log: recordVM,
+  initializeSummonTurn,
   event: newEvent,
   hooks: (state, frame, hook, ref) => scheduleHooks(state, frame, hook, ref, vmHost),
   commit: scheduleCommit,
@@ -231,8 +243,8 @@ export const vmHost = {
     if (overrides.free) Object.assign(unit, { hp: unit.maxHp, mp: unit.maxMp, sp: unit.maxSp });
     if (overrides.ignoreSlots) Object.assign(unit, { ap: 2, used: { attack: 0, action: 0 } });
     const skill = actionSkill(state, actor, action.skillId);
-    const view = { ...state, turn: state.order.indexOf(actor.id), units: { ...state.units, [actor.id]: unit } };
-    const planned = preview(view, action, { simulateRules: false, actionOrigin: overrides.origin,
+    const view = { ...state, units: { ...state.units, [actor.id]: unit } };
+    const planned = preview(view, action, { actingUnit: unit, simulateRules: false, actionOrigin: overrides.origin,
       ignoreRange: overrides.ignoreRange === true, ignoreLOS: overrides.ignoreLOS === true,
       deferGeometry: overrides.deferGeometry === true, limitClock: state });
     if (!planned.ok) return planned;
@@ -249,7 +261,10 @@ export const vmHost = {
   payAction(state, actor, plan, event, overrides) {
     if (!overrides.ignoreSlots && plan.ap > 0) {
       actor.ap -= plan.ap;
-      for (const slot of plan.ap === 2 ? ['attack', 'action'] : plan.slot ? [plan.slot] : []) actor.used[slot]++;
+      for (const slot of plan.ap === 2 ? ['attack', 'action'] : plan.slot ? [plan.slot] : []) {
+        actor.used[slot]++;
+        syncLinkedGroupSlots(state, actor, slot, actor.used[slot]);
+      }
     }
     if (overrides.free) return;
     paySkillEquipmentCost(state, actor, actionSkill(state, actor, event.skillId));
@@ -315,7 +330,7 @@ export function validVmState(state) {
   return state.tape === undefined || Array.isArray(state.tape);
 }
 
-export function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false } = {}) {
+export function resolveVMAction(state, action, { actor = actionActor(state, action), dryRun = false } = {}) {
   if (dryRun) {
     state = structuredClone(state);
     actor = own(state.units, actor?.id);

@@ -53,8 +53,11 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   let visibleAsk = null, askCells = null, entityChoices = null;
   let toggleEntityChoice;
 
+  let actorId, autoCollaborate = false;
   const pendingAsk = () => live?.vm?.pendingAsk;
   const active = (s = state) => s?.units[s.order[s.turn]];
+  const routed = command => actorId && !['answer', 'end'].includes(command.type) ? { ...command, actorId } : command;
+  const previewSelected = command => game.previewAction(routed(command));
   const TARGETED = new Set(['attack', 'skill', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
   let snapshotSaveFailed = false;
   const error = value => {
@@ -63,7 +66,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     node.hidden = !node.textContent;
   };
   const safely = fn => { try { error(''); return fn(); } catch (e) { error(e.message); return undefined; } };
-  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy,
+  const draw = () => view.render(state, { selectedId, action, hover: target ?? hover, sprint, target, inspectedId, busy, actorId, autoCollaborate,
     askLocked: !!pendingAsk(), askCells, entityChoices });
 
   // ---------- 屏幕适配 ----------
@@ -378,8 +381,8 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       let executed = false, expected = initial;
       for (const entry of entries) {
         if (signal?.aborted || live !== expected || pendingAsk()) break;
-        const actor = active(live);
-        if (!actor || actor.team !== 'red' || actor.id !== entry.unitId || live.outcome) break;
+        const actor = live.units[entry.unitId];
+        if (!actor || actor.team !== 'red' || active(live)?.team !== 'red' || live.outcome) break;
         const plan = game.previewAction(entry.action);
         if (!plan.ok) throw new Error(plan.error || '外部战斗 AI 返回了非法动作');
         game.playAction(entry.action);
@@ -394,8 +397,16 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
   function schedule() {
     window.clearTimeout(timer);
-    if (busy || playback.busy || pendingAsk() || live?.outcome || active(live)?.team !== 'red' || !$('auto-ai').checked || battleAiBusy) return;
-    timer = window.setTimeout(stepEnemy, Number($('ai-speed').value) || 350);
+    if (busy || playback.busy || pendingAsk() || live?.outcome || battleAiBusy) return;
+    if (active(live)?.team === 'blue' && autoCollaborate) timer = window.setTimeout(stepCollaborate, 120);
+    else if (active(live)?.team === 'red' && $('auto-ai').checked) timer = window.setTimeout(stepEnemy, Number($('ai-speed').value) || 350);
+  }
+  function stepCollaborate() {
+    if (!autoCollaborate || busy || pendingAsk()) return;
+    if (!safely(() => game.stepLinked())?.ok) {
+      autoCollaborate = false;
+      draw();
+    }
   }
   async function stepEnemy() {
     if (pendingAsk() || battleAiBusy) return;
@@ -424,6 +435,10 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       closeDrawer();
       for (const dialog of root.querySelectorAll('dialog[open]')) dialog.close();
     }
+    if (active(before)?.id !== active(live)?.id || live.outcome) {
+      actorId = undefined;
+      autoCollaborate = false;
+    } else if (!live.units[actorId]?.hp) actorId = undefined;
     resetSelection();
     if (continues(before, live) && playback.enqueue(before, live)) { window.clearTimeout(timer); return; }
     playback.reset();
@@ -431,7 +446,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
   const execute = command => safely(() => {
     if (pendingAsk() && command.type !== 'answer') return;
-    const result = game.playAction(command);
+    const result = game.playAction(routed(command));
     if (result && result.ok === false) error(result.error);
     return result;
   });
@@ -464,11 +479,16 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   function handlePoint(at, input = {}) {
     if (pendingAsk()) return;
     error('');
-    const actor = active();
+    const actor = state.units[actorId] ?? active();
     const canAct = actor?.team === 'blue' && !state.outcome;
     const units = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.x === at.x && u.y === at.y);
     const clickedToken = input?.target?.closest?.('.tactical-cell-units > [data-unit-id]');
     const clickedUnitId = clickedToken?.dataset.unitId;
+    if (clickedUnitId && clickedUnitId !== actor?.id && !bagAim
+      && [...$('linked-squad').children].some(button => button.dataset.actorId === clickedUnitId)) {
+      selectActor(clickedUnitId);
+      return;
+    }
     const preferredUnit = units.find(u => u.id === (at.targetId ?? clickedUnitId))
       ?? units.find(u => u.id === action?.targetId)
       ?? (canAct ? units.find(u => u.team !== actor.team) : null)
@@ -484,7 +504,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const onActorCell = canAct && actor.x === at.x && actor.y === at.y;
     if (bagAim) {
       const command = { type:'skill', skillId:bagAim, x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) };
-      const plan = game.previewAction(command);
+      const plan = previewSelected(command);
       if (!plan.ok) { error(plan.error); return; }
       target = { x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = command; bagAim = null;
       $('target-title').textContent = `${plan.name} · (${at.x}, ${at.y})`;
@@ -494,7 +514,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       draw(); layoutTargetCard(); return;
     }
     if (self && !input.preserveSprint) {
-      const check = game.previewAction({ type: 'sprint' });
+      const check = previewSelected({ type: 'sprint' });
       sprint = !sprint && check.ok;
       if (!check.ok) error(`不能疾跑：${check.error}`);
     }
@@ -508,7 +528,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const command = { type, ...(maneuver && { maneuver }), ...(TARGETLESS.includes(type) ? {} : { x: at.x, y: at.y }), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
-      const plan = game.previewAction(command);
+      const plan = previewSelected(command);
       if (onActorCell && ['move', 'sprint'].includes(type) && !(plan.bankedProgress > (actor.moveCarryPermille ?? 0))) return;
       const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
       if ((plan.ok || limited || (type === 'flee' && plan.error?.includes('边界'))) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) {
@@ -538,7 +558,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
           const item = state.skills[skillId];
           if (!item?.backpackItem || count < 1) continue;
           const command = { type:'skill', skillId };
-          const plan = game.previewAction(command);
+          const plan = previewSelected(command);
           options.push({ command, plan, bag:true, label:`使用背包物品：${item.name} ×${count}` });
         }
         add('end_encounter');
@@ -626,7 +646,25 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
 
   const on = (id, event, fn) => $(id)?.addEventListener(event, fn, { signal });
 
+  function selectActor(id) {
+    if (pendingAsk() || busy) return;
+    actorId = id === active()?.id ? undefined : id;
+    closeTarget();
+    selectedId = id;
+    draw();
+  }
+
   function bindControls() {
+    on('linked-squad', 'click', event => {
+      const button = event.target.closest('[data-actor-id]');
+      if (button) selectActor(button.dataset.actorId);
+    });
+    on('linked-collaborate', 'click', () => {
+      if (pendingAsk() || busy) return;
+      autoCollaborate = !autoCollaborate;
+      draw();
+      schedule();
+    });
     for (const input of measurement) input.addEventListener('change', () => { input.dataset.faction = state.units[input.value]?.team ?? ''; measure(); }, { signal });
     on('scenario-select', 'change', () => configure(scenario.value));
     for (const id of ['intent-select', 'nonlethal-toggle', 'bonus-dice-select']) on(id, 'change', () => { if (target) handlePoint(target, { preserveSprint: true }); });

@@ -3,6 +3,7 @@ import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
 import { preview as rulesPreview, corpses, unitStandingStats } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
+import { linkedUnitsOf } from '../core/turn-routing.js';
 import { zoneContains } from '../core/vm-select.js';
 import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES } from './narrate.js';
@@ -239,6 +240,8 @@ export function createRenderer(root, portraitFor = () => []) {
       chip.className = `turn-chip${u.hp <= 0 ? ' is-defeated' : ''}`;
       chip.dataset.unitId = id; chip.dataset.faction = u.team;
       chip.replaceChildren(el('span', 'chip-face', Array.from(u.name)[0]), el('span', '', u.name.split(' · ')[0]));
+      const count = linkedUnitsOf(state, id).length;
+      if (count) chip.append(el('span', 'ft-linked-count', `+${count}`));
       chip.title = `${side(u.team)} ${u.name} · 生命 ${u.hp}/${u.maxHp}`;
       chip.setAttribute('aria-current', String(id === current?.id));
       chip.setAttribute('aria-pressed', String(id === selected));
@@ -246,6 +249,29 @@ export function createRenderer(root, portraitFor = () => []) {
     }).filter(Boolean);
     node.replaceChildren(...chips);
     node.querySelector('[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest', inline: 'center' });
+  }
+
+  function renderSquad(state, owner, actor, ui) {
+    const node = $('linked-squad');
+    const linked = owner?.team === 'blue' && !state.outcome ? linkedUnitsOf(state, owner.id).filter(unit => unit.team === owner.team) : [];
+    node.hidden = $('linked-collaborate').hidden = !linked.length;
+    node.inert = !!ui.busy || !!ui.askLocked;
+    const collaborate = $('linked-collaborate');
+    collaborate.disabled = node.inert;
+    collaborate.setAttribute('aria-pressed', String(!!ui.autoCollaborate));
+    const previous = new Map([...node.children].map(button => [button.dataset.actorId, button]));
+    const members = linked.length ? [owner, ...linked] : [];
+    const buttons = members.map(unit => {
+      const button = previous.get(unit.id) ?? Object.assign(el('button', 'game-button'), { type: 'button' });
+      button.dataset.actorId = unit.id;
+      button.setAttribute('aria-pressed', String(unit.id === actor?.id));
+      const move = rulesPreview(state, { type: 'move', actorId: unit.id }).ok;
+      const attack = unit.ap > 0 && !unit.used.attack;
+      const action = unit.ap > 0 && !unit.used.action;
+      button.textContent = `${unit.name} · 移${move ? '●' : '○'} 攻${attack ? '●' : '○'} 动${action ? '●' : '○'}`;
+      return button;
+    });
+    if (buttons.length !== node.children.length || buttons.some((button, i) => button !== node.children[i])) node.replaceChildren(...buttons);
   }
 
   function renderActor(state, u) {
@@ -435,9 +461,11 @@ export function createRenderer(root, portraitFor = () => []) {
     const selected = ui.selectedId ?? current?.id;
     const action = ui.action ?? null, hover = ui.hover ?? null;
     const canAct = !ui.busy && !ui.askLocked && current?.team === 'blue' && !state.outcome;
-    const run = cmd => (canAct ? rulesPreview(state, cmd) : null);
+    const actor = get(state.units, ui.actorId) ?? current;
+    const run = cmd => canAct ? rulesPreview(state, { ...cmd, actorId: actor.id }) : null;
     const fresh = last?.state !== state;
-    if (fresh || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
+    const actorChanged = last?.actorId !== actor?.id;
+    if (fresh || actorChanged || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
       const cells = p => new Set((p?.ok ? p.cells : []).map(c => key(c.x, c.y)));
       baseline = { move: cells(run({ type: ui.sprint ? 'sprint' : 'move' })), attack: cells(run({ type: 'attack' })), interact: cells(run({ type: 'interact' })) };
     }
@@ -454,10 +482,11 @@ export function createRenderer(root, portraitFor = () => []) {
       renderFeatures(state);
     }
     if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);
-    if (fresh) renderActor(state, current);
+    if (fresh || actorChanged) renderActor(state, actor);
+    if (fresh || actorChanged || last?.canAct !== canAct || last?.autoCollaborate !== ui.autoCollaborate) renderSquad(state, current, actor, ui);
     $('sprint-indicator').textContent = ui.sprint ? '疾跑范围已显示 · 走更远需要 2 AP' : '';
     renderBoard(state, { selected, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells, entityChoices: ui.entityChoices });
-    if (ui.target) renderPreview(state, action, hover, range, result, current);
+    if (ui.target) renderPreview(state, action, hover, range, result, actor);
     if (fresh || last?.selected !== selected || last?.inspectedId !== ui.inspectedId) {
       const feature = get(state.covers, ui.inspectedId) ?? get(state.interactives, ui.inspectedId);
       renderUnitCard(state, feature ? null : get(state.units, selected), feature);
@@ -465,7 +494,7 @@ export function createRenderer(root, portraitFor = () => []) {
     $('battle-status').textContent = state.outcome
       ? (state.outcome === 'draw' ? '战斗结束：平局' : `战斗结束：${state.outcome === 'blue' ? '我方胜利' : '敌方胜利'}`)
       : ui.askLocked ? '' : canAct ? '点击格子选择目标，再选要做的事' : current ? `${current.name} 正在行动……` : '';
-    last = { state, canAct, selected, inspectedId: ui.inspectedId, sprint: ui.sprint };
+    last = { state, canAct, selected, actorId: actor?.id, autoCollaborate: ui.autoCollaborate, inspectedId: ui.inspectedId, sprint: ui.sprint };
   }
 
   /** 按钮可用性不等动画，总是立刻跟随真实战局。 */

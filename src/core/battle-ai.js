@@ -1,5 +1,7 @@
 import { applyAction, equippedActiveSkills, isPassiveSkill, preview, skillAvailability, switchableWeapons } from './combat.js';
 import { elevation, atBattleEdge } from './spatial.js';
+import { canRouteActor, linkedUnitsOf } from './turn-routing.js';
+import { chooseAction } from './ai.js';
 const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user 一方的对手，只控制当前连续行动的敌方角色，不替玩家做决定。
 行动：每回合每个角色有1个攻击槽和1个动作槽。移动、装填、互动、换装、架势和逃跑使用动作槽，普通攻击、技能攻击、压制和解除压制使用攻击槽，重型技能可同时使用两槽。一个动作只能使用当前行动者自己的槽位。动作、技能和背包物品的实际 ap、slot、资源、次数与冷却以输入数据为准。
 蓄步：movementCarry 按单位列出已积累的百分比，以及原地 move 或 sprint 后可达到的百分比。若有正收益且需要接近目标，可在自己当前坐标执行该移动来积累进度，攒够后再选择实际落点。
@@ -48,6 +50,12 @@ function unitView(state, unit) {
     rangeHint: { attack: state.equipment[state.items[unit.mainHand ?? unit.weapon] ? state.items[unit.mainHand ?? unit.weapon].templateId : '']?.range ?? 1.5 },
   };
 }
+export function chooseUnitStep(state, actorId) {
+  if (!canRouteActor(state, actorId) || state.vm?.pendingAsk) return null;
+  const action = chooseAction(state, state.units[actorId]);
+  return action && action.type !== 'end' ? { ...action, actorId } : null;
+}
+
 export function battleAiPayload(state) {
   const current = state.order[state.turn];
   const start = state.order.indexOf(current);
@@ -56,7 +64,7 @@ export function battleAiPayload(state) {
     const unit = state.units[state.order[(start + i) % state.order.length]];
     if (!unit || unit.hp <= 0 || unit.fled) continue;
     if (actors.length && unit.team === 'blue') break;
-    if (unit.team === 'red') actors.push(unitView(state, unit));
+    if (unit.team === 'red') actors.push(...[unit, ...linkedUnitsOf(state, unit.id).filter(member => member.team === unit.team)].map(member => unitView(state, member)));
   }
   const grid = state.grid.map(row => row.map(cell => cell.kind === 'wall' ? '#' : cell.kind === 'slope' ? `^${cell.z ?? 0}` : cell.kind === 'floor' ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(' '));
   const movement = {}, movementCarry = {};
@@ -103,9 +111,11 @@ export async function requestBattleAi(state, request, { signal } = {}) {
         if (!entry || typeof entry.unitId !== 'string' || !entry.action || typeof entry.action.type !== 'string') throw new Error('动作缺少 unitId 或 action.type');
         const actor = shadow.units[entry.unitId];
         if (!actor || actor.team !== 'red') throw new Error(`不能控制单位 ${entry.unitId}`);
-        if (shadow.units[shadow.order[shadow.turn]]?.id !== entry.unitId) throw new Error(`行动顺序错误，应轮到 ${shadow.order[shadow.turn]}`);
+        if (!canRouteActor(shadow, entry.unitId)) throw new Error(`行动顺序错误，应轮到 ${shadow.order[shadow.turn]}`);
         if (actor.moraleState === 'routed' && !['move','flee','end'].includes(entry.action.type)) throw new Error('溃逃单位只能撤向边界或逃跑');
         const action = Object.fromEntries(Object.entries(entry.action).filter(([, value]) => value !== null));
+        if (entry.unitId !== shadow.order[shadow.turn]) action.actorId = entry.unitId;
+        else delete action.actorId;
         if (action.type === 'skill' && typeof action.skillId !== 'string') throw new Error('技能动作必须提供 skillId');
         if (action.type !== 'skill') delete action.skillId;
         const plan = preview(shadow, action);
