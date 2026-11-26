@@ -327,6 +327,18 @@ var FatedTactical = (() => {
     { min: null, name: "\u5931\u624B", multiplier: 0 }
   ]);
   var TIER_CELL_M = Object.freeze([null, 2, 2, 5, 15, 50, 250, 1e3]);
+  function defaultMoveFromAgi(agi) {
+    if (agi == null) return 3;
+    const value = Number(agi);
+    if (!Number.isFinite(value)) return 3;
+    return Math.max(2, Math.min(6, 1 + Math.ceil(value / 4)));
+  }
+  function boardMoveCellsFromMoveM(moveM, scale) {
+    const cellM = Math.max(1e-9, Number(scale?.cellM) || 2);
+    const maxBoardSteps = (scale?.width ?? 10) + (scale?.height ?? 10);
+    const permille = Math.round(Math.max(0, Number(moveM) || 0) / cellM * 1e3);
+    return Math.min(maxBoardSteps, Math.floor(permille / 1e3));
+  }
   var QUALITY_TIER = Object.freeze({ \u666E\u901A: 1, \u4F18\u826F: 2, \u7A00\u6709: 3, \u53F2\u8BD7: 4, \u4F20\u8BF4: 5, \u795E\u8BDD: 6 });
   var QUALITY_AUTHORITY = Object.freeze({ ...QUALITY_TIER, \u552F\u4E00: 8 });
   var clampTier = (tier) => Math.max(1, Math.min(7, Math.trunc(Number(tier) || 1)));
@@ -1340,7 +1352,7 @@ var FatedTactical = (() => {
     ask: '\u5411 chooser \u8BF7\u6C42\u9009\u62E9\uFF0C\u73A9\u5BB6\u53EF\u6302\u8D77\u7ED3\u7B97\uFF0CAI \u6216\u9884\u89C8\u6309 aiPolicy \u81EA\u52A8\u9009\u62E9\uFF1Afirst \u4FDD\u7559\u5019\u9009\u987A\u5E8F\uFF0C\u6570\u503C max/min \u53D6\u7AEF\u70B9\uFF1B\u8FDB\u653B\u683C/\u5B89\u5168\u683C\u5206\u522B\u9760\u8FD1/\u8FDC\u79BB\u6700\u8FD1\u5B58\u6D3B\u654C\u4EBA\uFF1Bhighest_threat \u4F18\u5148\u5B58\u6D3B\u654C\u4EBA\uFF0C\u540C\u7C7B\u6309\u6700\u9AD8\u8FDB\u653B\u5C5E\u6027\u6392\u5E8F\uFF1B\u591A\u9009\u53D6\u6392\u5E8F\u524D maxSelect \u4E2A\u3002\u9009\u683C\u548C\u9009\u5B9E\u4F53\u7528 select\uFF0C\u9009\u9879\u7528 options\uFF0C\u6570\u503C\u7528 min/max\u3002entity \u7684 maxSelect \u5F00\u542F\u591A\u9009\uFF0C\u5C06 ID \u6570\u7EC4\u5199\u5165 out\uFF0Cfor_each \u4EE5 {from:"vars.<\u540D\u79F0>"} \u904D\u5386\u3002out \u5199\u88F8\u540D\u79F0\uFF0C\u5355\u9009\u5B9E\u4F53\u53EF\u7528 vars.<\u540D\u79F0> \u4F5C\u76EE\u6807\u3002',
     damage: "\u8D70\u5B8C\u6574\u4F24\u5BB3\u548C\u81F4\u6B7B\u7BA1\u7EBF\uFF08instantDeath:true \u7ED5\u8FC7\u62A4\u7532\u4E0E\u51CF\u4F24\u76F4\u63A5\u6263\u5149\u76EE\u6807\u751F\u547D\u5E76\u6B63\u5E38\u7ED3\u7B97\u51FB\u6740\uFF09\uFF0Cout \u8BB0\u5F55\u5B9E\u9645\u6263\u8840\u91CF\uFF0C\u5199\u88F8\u540D\u79F0\u3001\u8BFB vars.<\u540D\u79F0>\u3002\u88F8\u6263\u8D44\u6E90\u4F7F\u7528 resource\u3002",
     heal: "\u76F4\u63A5\u6CBB\u7597\u5B58\u6D3B\u6216\u4ECD\u5728 on_lethal_p1/p2 \u7ED3\u7B97\u4E2D\u7684\u5355\u4F4D\uFF08\u5DF2\u843D\u76D8\u6062\u590D\u751F\u547D\uFF0C\u52FF\u518D\u53E0\u52A0 resource \u6539 hp\uFF09\uFF0C\u7ECF\u8FC7\u6CBB\u7597\u500D\u7387\u4E0E\u843D\u76D8\u62E6\u622A\u3002\u6062\u590D\u5176\u4ED6\u6C60\u4F7F\u7528 resource\u3002",
-    resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002pool \u4E0E otherPool \u652F\u6301\u6C60 ID \u6216 vars.<\u540D\u79F0>\uFF0Cpool \u4E5F\u53EF\u7528\u5F15\u7528\u6570\u7EC4\uFF1B\u6570\u503C\u8868\u8FBE\u5F0F\u7528 resource(self, vars.<\u540D\u79F0>) \u8BFB\u53D6\u52A8\u6001\u4F59\u989D\u3002\u5185\u7F6E\u6C60 hp/mp/sp \u6216\u4F2A\u6C60 attack/action/move\uFF1A\u524D\u4E24\u8005\u8868\u793A\u672C\u56DE\u5408\u672A\u7528\u69FD\u4F4D\uFF0Cmove \u8868\u793A\u5269\u4F59\u79FB\u52A8\u683C\uFF1Bmode \u7528 add/sub/set\u3002add_max/sub_max/set_max \u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u955C\u50CF\uFF0CminRemain \u53EF\u9650\u5236\u6700\u4F4E\u4E0A\u9650\uFF1Bswap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\u3002",
+    resource: "\u76F4\u63A5\u6539\u8D44\u6E90\u6C60\u5E76\u7ECF\u8FC7\u843D\u76D8\u62E6\u622A\u3002pool \u4E0E otherPool \u652F\u6301\u6C60 ID \u6216 vars.<\u540D\u79F0>\uFF0Cpool \u4E5F\u53EF\u7528\u5F15\u7528\u6570\u7EC4\uFF1B\u6570\u503C\u8868\u8FBE\u5F0F\u7528 resource(self, vars.<\u540D\u79F0>) \u8BFB\u53D6\u52A8\u6001\u4F59\u989D\u3002\u5185\u7F6E\u6C60 hp/mp/sp \u6216\u4F2A\u6C60 attack/action/move\uFF1A\u524D\u4E24\u8005\u8868\u793A\u672C\u56DE\u5408\u672A\u7528\u69FD\u4F4D\uFF0Cmove \u8868\u793A\u672C\u56DE\u5408\u5269\u4F59\u53EF\u79FB\u52A8\u683C\u6570\uFF08\u4E0E\u771F\u5B9E\u79FB\u52A8\u5171\u4EAB\u540C\u4E00\u9884\u7B97\uFF0Cturn_start \u7528 add \u53EF\u8FFD\u52A0\u5F53\u56DE\u5408\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u7528 add/sub/set\u3002add_max/sub_max/set_max \u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u955C\u50CF\uFF0CminRemain \u53EF\u9650\u5236\u6700\u4F4E\u4E0A\u9650\uFF1Bswap \u4F7F\u7528\u5355\u4E2A pool \u548C otherPool\u3002",
     link_pool: "\u7528 units \u9009\u62E9\u5355\u4F4D\uFF0C\u5C06\u6307\u5B9A\u7684 HP/MP/SP \u6C60\u5408\u5E76\u5171\u4EAB\u6216\u62C6\u56DE\u72EC\u7ACB\u6C60\u3002",
     apply_status: "\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002ignoreImmunity:true \u660E\u786E\u6FC0\u6D3B\u514D\u75AB\u7A7F\u900F\uFF0C\u5E76\u6309\u8F7D\u4F53\u4F4D\u683C\u3001\u89D2\u8272\u5C42\u7EA7\u3001\u540C\u5C42 contest \u88C1\u5B9A\uFF1B\u5426\u5219 before_status \u514D\u75AB\u59CB\u7EC8\u751F\u6548\u3002",
     remove_status: '\u5728\u76EE\u6807\u6301\u6709\u7684\u72B6\u6001\u4E2D\u7528 where \u7B5B\u9009\u53EF\u79FB\u9664\u9879\u3002durationType:"persistent" \u5E38\u9A7B\u72B6\u6001\u4E0E undispellable \u72B6\u6001\u5747\u53D7\u4FDD\u62A4\uFF0C\u79FB\u9664\u6216\u6D88\u8017\u5B83\u4EEC\uFF08\u542B\u81EA\u8EAB\u6D88\u8017\u5E38\u9A7B\u8BA1\u6570\u5C42\u6570\uFF09\u5FC5\u987B\u663E\u5F0F\u586B force:true\uFF08\u81EA\u8EAB\u79FB\u9664\u81EA\u8EAB\u5E38\u9A7B\u72B6\u6001\u586B force:true \u76F4\u63A5\u6210\u529F\uFF0C\u5BF9\u4ED6\u4EBA\u751F\u6548\u6309\u6765\u6E90\u4F4D\u683C\u88C1\u5B9A\uFF09\uFF1BoutCount \u5199\u88F8\u540D\u79F0\u3002',
@@ -2432,7 +2444,7 @@ var FatedTactical = (() => {
       boardH: state.grid?.length,
       ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
       elevation: (entity) => pointElevation(state, entity),
-      resource: (unit, key4) => key4 === "move" ? Math.max(0, (unit?.move ?? 0) - (unit?.moveSpent ?? 0)) : key4 === "attack" || key4 === "action" ? Math.max(0, 1 - (unit?.used?.[key4] ?? 0)) : getPool(state, unit?.id, key4, "unit")?.current ?? own4(unit, key4),
+      resource: (unit, key4) => key4 === "move" ? unit ? movementBudget(state, unit).remainingCells : 0 : key4 === "attack" || key4 === "action" ? Math.max(0, 1 - (unit?.used?.[key4] ?? 0)) : getPool(state, unit?.id, key4, "unit")?.current ?? own4(unit, key4),
       itemResource: (item, key4) => getPool(state, item?.id, key4, "item")?.current ?? 0,
       inZone: (unit, key4) => entries(state.zones).some(([, zone]) => active(zone) && (zone.id === key4 || zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, unit)),
       isImmune: (unit, key4, context) => immunity(state, unit, key4, context ?? { source }),
@@ -3475,19 +3487,31 @@ var FatedTactical = (() => {
   var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
   var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var pseudoPool = /* @__PURE__ */ new Set(["attack", "action", "move"]);
-  function pseudoState(unit, key4) {
-    if (key4 === "move") return { current: Math.max(0, unit.move - (unit.moveSpent ?? 0)), max: unit.move };
+  function pseudoState(state, unit, key4) {
+    if (key4 === "move") {
+      const b = movementBudget(state, unit);
+      return { current: b.remainingCells, max: b.maxBoardSteps };
+    }
     return { current: Math.max(0, 1 - (unit.used?.[key4] ?? 0)), max: 1 };
   }
-  function applyPseudo(unit, key4, mode, amount) {
+  function applyPseudo(state, unit, key4, mode, amount) {
     if (!Number.isInteger(amount)) return false;
-    const before = pseudoState(unit, key4).current;
+    const before = pseudoState(state, unit, key4).current;
     let current = mode === "set" ? amount : mode === "add" ? before + amount : mode === "sub" ? before - amount : NaN;
     if (mode === "add_max" || mode === "sub_max" || mode === "set_max") return false;
     if (!Number.isFinite(current)) return false;
-    current = Math.max(0, Math.min(pseudoState(unit, key4).max, current));
-    if (key4 === "move") unit.moveSpent = unit.move - current;
-    else {
+    current = Math.max(0, Math.min(pseudoState(state, unit, key4).max, current));
+    if (key4 === "move") {
+      const delta = (current - before) * 1e3;
+      if (delta < 0) unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - delta;
+      else if (delta > 0) {
+        const refund = Math.min(unit.moveSpentPermille ?? 0, delta);
+        unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - refund;
+        unit.moveBonusPermille = (unit.moveBonusPermille ?? 0) + delta - refund;
+        if (!unit.moveSpentPermille) delete unit.moveSpentPermille;
+        if (!unit.moveBonusPermille) delete unit.moveBonusPermille;
+      }
+    } else {
       unit.used[key4] = 1 - current;
       unit.ap = Math.max(0, Math.min(unit.apMax ?? 2, unit.ap + current - before));
     }
@@ -3557,7 +3581,7 @@ var FatedTactical = (() => {
     const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
     const localOwner = data.local && frame.data.carrierId;
     const pseudo = !localOwner && pseudoPool.has(key4);
-    const pool = pseudo ? pseudoState(target2, key4) : getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
+    const pool = pseudo ? pseudoState(state, target2, key4) : getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
     const other = op === "resource" && data.mode === "swap" ? getPool(state, localOwner || data.targetId, data.otherPool, localOwner ? "item" : "unit") : null;
     const otherBefore = other?.current ?? 0;
     if (!pool && !pseudo || !target2) {
@@ -3669,7 +3693,7 @@ var FatedTactical = (() => {
         host.log(state, source, "heal", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}\u6062\u590D${event.healing}\u70B9\u751F\u547D`, { ...data.details, targetId: target2.id, amount: event.healing, hpBefore: before, hpAfter: target2.hp });
       } else {
         if (pseudo) {
-          if (!applyPseudo(target2, key4, data.mode, Math.floor(event.finalAmount))) {
+          if (!applyPseudo(state, target2, key4, data.mode, Math.floor(event.finalAmount))) {
             state.vm.stack.pop();
             return;
           }
@@ -3709,7 +3733,7 @@ var FatedTactical = (() => {
             return;
           }
         }
-        const after = pseudo ? pseudoState(target2, key4).current : entry(state.pools, pool.id).current;
+        const after = pseudo ? pseudoState(state, target2, key4).current : entry(state.pools, pool.id).current;
         const maxChange = data.mode.endsWith("_max");
         const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
         const label = { attack: "\u653B\u51FB\u69FD", action: "\u52A8\u4F5C\u69FD", move: "\u5269\u4F59\u79FB\u52A8\u683C" }[key4] ?? key4.toUpperCase();
@@ -4093,6 +4117,7 @@ var FatedTactical = (() => {
     const bodyLengthM = spec.bodyLengthM ?? (spec.mc >= 2 ? 10 * 2 ** (spec.mc - 2) : 1.7);
     if (bodyLengthM < 0.01 || bodyLengthM > 1e9) return null;
     const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, mc: spec.mc, summonCount: spec.count ?? 1 });
+    const rawMove = spec.move != null && Number.isFinite(Number(spec.move)) ? Math.max(0, Number(spec.move)) : defaultMoveFromAgi(stats.agi);
     return {
       stats,
       tier,
@@ -4100,7 +4125,8 @@ var FatedTactical = (() => {
       mc,
       size: spec.size ?? sizeClassFor(bodyLengthM),
       armor: spec.armor ?? 0,
-      move: spec.move ?? 3,
+      rawMove,
+      move: Math.round(rawMove),
       maxHp: spec.maxHp ?? resources.hp.max,
       maxMp: spec.maxMp ?? resources.mp.max,
       maxSp: spec.maxSp ?? resources.sp.max
@@ -4430,6 +4456,8 @@ var FatedTactical = (() => {
       const contributor = pool?.contributors.find((entry2) => entry2.ownerKind === "unit" && entry2.ownerId === panel.id);
       return [field2, contributor?.maxBase ?? panel[field2]];
     }));
+    const tier = spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier;
+    const rawMove = spec.move != null ? Math.max(0, Number(spec.move)) : panel.rawMove ?? (spec.copyOf && panel.moveM != null ? panel.moveM / TIER_CELL_M[Math.max(1, Math.min(7, tier ?? 1))] : panelSpec ? defaultMoveFromAgi(stats.agi) : panel.move ?? defaultMoveFromAgi(stats.agi));
     return { count, gear, panel: {
       stats,
       ...maxima,
@@ -4437,7 +4465,8 @@ var FatedTactical = (() => {
       size: panel.size ?? sizeClassFor(bodyLengthM),
       mc: panel.mc ?? sizeMultiplier(bodyLengthM),
       armor: panel.armor ?? 0,
-      move: panel.move ?? 3,
+      rawMove,
+      move: Math.round(rawMove),
       skills: [...loads.skills ?? []],
       team: actor.team,
       facing: [...actor.facing ?? [1, 0]],
@@ -4621,6 +4650,9 @@ var FatedTactical = (() => {
         ...data.duration,
         ...frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }
       };
+      unit.moveM = unit.rawMove * TIER_CELL_M[Math.max(1, Math.min(7, unit.tier ?? 1))];
+      unit.move = boardMoveCellsFromMoveM(unit.moveM, state.scale);
+      unit.moveCarryPermille = 0;
       unit.hp = unit.maxHp;
       unit.mp = unit.maxMp;
       unit.sp = unit.maxSp;
@@ -5235,7 +5267,7 @@ var FatedTactical = (() => {
     },
     resource: (state, unit, key4) => {
       if (!unit) return void 0;
-      if (key4 === "move") return Math.max(0, unit.move - (unit.moveSpent ?? 0));
+      if (key4 === "move") return movementBudget(state, unit).remainingCells;
       if (key4 === "attack" || key4 === "action") return Math.max(0, 1 - (unit.used?.[key4] ?? 0));
       return getPool(state, unit.id, key4)?.current;
     },
@@ -5718,7 +5750,10 @@ var FatedTactical = (() => {
     delete unit.followupUsed;
     unit.used = { attack: 0, action: 0 };
     unit.moved = 0;
-    delete unit.moveSpent;
+    unit.moveCarryInPermille = unit.moveCarryPermille ?? 0;
+    delete unit.moveSpentPermille;
+    delete unit.moveBonusPermille;
+    delete unit.moveBanked;
     unit.reactionAvailable = true;
     unit.ap = unit.apMax = turnAP(state, unit);
   }
@@ -5953,7 +5988,10 @@ var FatedTactical = (() => {
       delete unit.followupUsed;
       unit.used = { attack: 0, action: 0 };
       unit.moved = 0;
-      delete unit.moveSpent;
+      delete unit.moveCarryInPermille;
+      delete unit.moveSpentPermille;
+      delete unit.moveBonusPermille;
+      delete unit.moveBanked;
       unit.reactionAvailable = true;
       for (const status of values3(unit.statuses)) {
         delete status.appliedRound;
@@ -6075,28 +6113,51 @@ var FatedTactical = (() => {
     return scaledTemplate(state, unit, template, equipped2 || template?.backpackItem ? "item" : "skill");
   }
   var syncEquipmentEffects = initializeVMWorld;
-  function movementScale(state, unit, type) {
-    const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit.tier) || 1)));
-    const cellM = state.scale?.cellM ?? 2;
+  function movementBudget(state, unit, { prospectiveSprint = false } = {}) {
+    const tier = Math.max(1, Math.min(7, Math.trunc(Number(unit?.tier) || 1)));
+    const cellM = Math.max(1e-9, Number(state.scale?.cellM) || 2);
     const tierM = TIER_CELL_M[tier];
-    const base = (unit.moveM ?? unit.move * cellM) / tierM;
-    const moveM = Math.max(0, modStat(state, unit, "movement", base)) * tierM;
-    const mult = type === "sprint" ? 2 : 1;
-    const carry = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
-    const total2 = carry + Math.round(mult * moveM / cellM * 1e3);
     const maxBoardSteps = (state.scale?.width ?? 10) + (state.scale?.height ?? 10);
-    return { moveM, total: total2, limit: Math.min(maxBoardSteps, Math.floor(total2 / 1e3)) };
+    const base = unit.moveM != null ? unit.moveM / tierM : unit.rawMove ?? (unit.move ?? 3) * cellM / tierM;
+    const effectiveMoveM = Math.max(0, modStat(state, unit, "movement", base)) * tierM;
+    const stepPermille = Math.round(effectiveMoveM / cellM * 1e3);
+    const carryInPermille = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryInPermille ?? unit.moveCarryPermille) || 0)));
+    const bonusPermille = (unit.moveBonusPermille ?? 0) + (prospectiveSprint ? stepPermille : 0);
+    const spentPermille = unit.moveSpentPermille ?? 0;
+    const grossPermille = Math.max(0, carryInPermille + stepPermille + bonusPermille);
+    const remainingPermille = Math.max(0, grossPermille - spentPermille);
+    const maxCells = Math.min(maxBoardSteps, Math.floor(grossPermille / 1e3));
+    const remainingCells = Math.min(maxBoardSteps, Math.floor(remainingPermille / 1e3));
+    const currentCarryPermille = Math.max(0, Math.min(999, Math.trunc(Number(unit.moveCarryPermille) || 0)));
+    const subCell = unit.moveM != null && effectiveMoveM < cellM || stepPermille > 0 && stepPermille < 1e3;
+    const scaleSuppressed = (state.scale?.anchorTier ?? 1) >= 5;
+    const canBankSubcell = remainingCells === 0 && !scaleSuppressed && !unit.moveBanked && (unit.moved ?? 0) === 0 && (prospectiveSprint ? remainingPermille > currentCarryPermille : spentPermille === 0 && remainingPermille > carryInPermille);
+    return {
+      effectiveMoveM,
+      stepPermille,
+      carryInPermille,
+      bonusPermille,
+      spentPermille,
+      grossPermille,
+      remainingPermille,
+      maxBoardSteps,
+      maxCells,
+      remainingCells,
+      currentCarryPermille,
+      subCell,
+      scaleSuppressed,
+      canBankSubcell,
+      bankedProgress: canBankSubcell ? remainingPermille : null,
+      exhausted: remainingCells === 0 && !canBankSubcell && (spentPermille > 0 || Boolean(unit.moveBanked))
+    };
   }
   function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
     if (!alive3(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
-    const scale = movementScale(state, unit, type);
-    const spent = unit.moveSpent ?? 0;
-    const mult = type === "sprint" ? 2 : 1;
-    const limit = distanceLimit ?? Math.max(0, scale.limit - spent * mult);
+    const budget2 = movementBudget(state, unit, { prospectiveSprint: type === "sprint" });
+    const limit = distanceLimit ?? budget2.remainingCells;
     const routes = movementOptions(state, unit, limit, { ignoreZoc: type === "disengage" });
-    if (!routes.length && scale.limit === 0 && distanceLimit === void 0) {
-      if (state.scale?.anchorTier >= 5) return [];
-      return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: scale.total }];
+    if (!routes.length && type !== "disengage" && distanceLimit === void 0 && budget2.canBankSubcell) {
+      return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: budget2.bankedProgress }];
     }
     const sources = type === "disengage" ? [] : opportunitySources(state, unit).filter((source) => canReact(state, source, unit));
     const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
@@ -6114,12 +6175,12 @@ var FatedTactical = (() => {
     return routes.map((route) => {
       const alternate = safe.get(key2(route.x, route.y));
       if (alternate) return routeCell(alternate);
-      const spent2 = /* @__PURE__ */ new Set(), opportunities = [];
+      const spent = /* @__PURE__ */ new Set(), opportunities = [];
       let from = unit;
       for (const to of route.path) {
         for (const { unit: source } of exits(from, to)) {
-          if (spent2.has(source.id)) continue;
-          spent2.add(source.id);
+          if (spent.has(source.id)) continue;
+          spent.add(source.id);
           opportunities.push(opportunityDetail(source, from, to));
         }
         from = to;
@@ -6529,8 +6590,8 @@ var FatedTactical = (() => {
     };
   }
   var ACTIONS = Object.freeze({
-    move: { ap: 1, slot: "action" },
-    sprint: { ap: 2, slot: "action" },
+    move: { ap: 0, slot: null },
+    sprint: { ap: 1, slot: "action" },
     disengage: { ap: 1, slot: "action" },
     end_encounter: { ap: 0, slot: null },
     switch_weapon: { ap: 0, slot: null },
@@ -6641,15 +6702,13 @@ var FatedTactical = (() => {
     const item = !unplaced && (type === "interact" || type === "attack") ? values3(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
     const detonate = item?.kind === "barrel";
     const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
-    const independentMove = isLinkedMode(unit) && isMovement(type);
-    const ap = independentMove ? 0 : drawFromBag ? 1 : cost.ap;
-    const slot2 = independentMove ? "move" : ap === 0 ? null : drawFromBag ? "action" : detonate ? "attack" : cost.slot;
+    const ap = drawFromBag ? 1 : cost.ap;
+    const slot2 = ap === 0 ? null : drawFromBag ? "action" : detonate ? "attack" : cost.slot;
     const resourceCosts = actorCost(state, unit, cost, type === "skill" ? skillId : void 0);
     const common = { ok: true, ap, cost: ap, slot: slot2, ...resourceCosts, ...availability };
     if (type === "end") return common;
     if (type === "end_encounter") return ["spar", "arena"].includes(state.battleType) ? { ...common, name: state.battleType === "spar" ? "\u53EB\u505C\u5207\u78CB\uFF08\u5E73\u5C40\uFF09" : "\u5168\u961F\u8BA4\u8F93" } : fail2("\u672C\u573A\u4E0D\u80FD\u76F4\u63A5\u53EB\u505C\u6216\u8BA4\u8F93");
     if (unitSkipped(state, unit)) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
-    if (independentMove && unit.moved > 0) return fail2("\u672C\u56DE\u5408\u5DF2\u7ECF\u79FB\u52A8");
     const cannotPay = paymentError(state, unit, ap, slot2, cost, resourceCosts, type === "skill");
     if (cannotPay) return fail2(cannotPay, { ap, ...availability });
     const center = unplaced ? void 0 : pos(x, y);
@@ -6666,7 +6725,7 @@ var FatedTactical = (() => {
     }
     if (type === "stance_mode") {
       if (weapon2.stance !== "greatsword" || !["offensive", "defensive"].includes(action.maneuver) || action.maneuver === (unit.greatswordMode ?? "offensive")) return fail2("\u5F53\u524D\u4E0D\u80FD\u5207\u6362\u8BE5\u91CD\u5251\u6001\u52BF");
-      if (unit.used.attack || unit.used.action || unit.moved) return fail2("\u53EA\u80FD\u5728\u56DE\u5408\u5F00\u59CB\u884C\u52A8\u524D\u5207\u6362\u91CD\u5251\u6001\u52BF");
+      if (unit.used.attack || unit.used.action || unit.moved || unit.moveBanked) return fail2("\u53EA\u80FD\u5728\u56DE\u5408\u5F00\u59CB\u884C\u52A8\u524D\u5207\u6362\u91CD\u5251\u6001\u52BF");
       return { ...common, name: action.maneuver === "defensive" ? "\u8F6C\u4E3A\u6C89\u52BF" : "\u8F6C\u4E3A\u653B\u52BF" };
     }
     if (type === "block") {
@@ -6730,15 +6789,19 @@ var FatedTactical = (() => {
     if (isMovement(type)) {
       if (aggregateModifiers(state, unit.id).locks.move) return fail2("\u5B9A\u8EAB\u65F6\u4E0D\u80FD\u79FB\u52A8");
       const cells3 = reachable(state, type, unit);
-      if (unplaced) return { ...common, cells: cells3 };
+      const budget2 = movementBudget(state, unit, { prospectiveSprint: type === "sprint" });
+      if (unplaced) return cells3.length ? { ...common, cells: cells3, moveRemaining: budget2.remainingCells, moveMax: budget2.maxCells } : fail2(budget2.exhausted ? "\u672C\u56DE\u5408\u79FB\u52A8\u529B\u5DF2\u8017\u5C3D" : "\u5F53\u524D\u65E0\u6CD5\u79FB\u52A8", { cells: cells3, moveRemaining: budget2.remainingCells, moveMax: budget2.maxCells });
       const choice = cells3.find((at3) => sameCell(at3, center));
-      if (!choice) return fail2("\u65E0\u6CD5\u5230\u8FBE\uFF1A\u8DDD\u79BB\u3001\u5360\u4F4D\u3001\u5899\u4F53\u6216\u9661\u5D16\u963B\u6321", { cells: cells3 });
+      if (!choice) return fail2(budget2.exhausted ? "\u672C\u56DE\u5408\u79FB\u52A8\u529B\u5DF2\u8017\u5C3D" : "\u65E0\u6CD5\u5230\u8FBE\uFF1A\u8DDD\u79BB\u3001\u5360\u4F4D\u3001\u5899\u4F53\u6216\u9661\u5D16\u963B\u6321", { cells: cells3 });
       return {
         ...common,
         cells: cells3,
         path: choice.path,
         steps: choice.steps,
         opportunities: choice.opportunities,
+        moveRemaining: budget2.remainingCells,
+        moveMax: budget2.maxCells,
+        remainingCellsAfter: choice.bankedProgress != null ? 0 : Math.max(0, Math.min(budget2.maxBoardSteps, Math.floor((budget2.remainingPermille - choice.steps * 1e3) / 1e3))),
         ...choice.bankedProgress != null && { bankedProgress: choice.bankedProgress },
         dz: elevation(state, center) - elevation(state, unit)
       };
@@ -7444,6 +7507,11 @@ var FatedTactical = (() => {
     return dy < 0 ? "N" : "S";
   }
   function continueMovement(state, actor, type, plan, progress, host) {
+    if (type === "sprint" && !progress.sprintCharged) {
+      actor.moveBonusPermille = (actor.moveBonusPermille ?? 0) + movementBudget(state, actor).stepPermille;
+      progress.sprintCharged = true;
+    }
+    actor.moveCarryInPermille ??= actor.moveCarryPermille ?? 0;
     progress.from ??= pointAt(state, actor);
     progress.path ??= [];
     progress.initialCover ??= nearbyCovers(state, actor).map((c) => c.id);
@@ -7479,12 +7547,16 @@ var FatedTactical = (() => {
       }
     }
     const landing = pointAt(state, actor), interrupted = path2.length !== plan.path.length;
-    const scale = movementScale(state, actor, type);
-    const consumed = Math.min(scale.total, path2.length * 1e3);
-    if (actor.moveM != null || scale.limit === 0) actor.moveCarryPermille = (scale.total - consumed) % 1e3;
-    const carryText = path2.length === 0 && scale.limit === 0 ? `\u5728\u5E7F\u88A4\u6218\u533A\u4E2D\u594B\u529B\u84C4\u6B65\u63A8\u8FDB\uFF08\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(scale.total)}\uFF09` : null;
+    const budget2 = movementBudget(state, actor);
+    const banking = plan.bankedProgress != null && path2.length === 0;
+    const consumed = banking ? budget2.remainingPermille : Math.min(budget2.remainingPermille, path2.length * 1e3);
+    actor.moveSpentPermille = (actor.moveSpentPermille ?? 0) + consumed;
+    if (banking || path2.length) actor.moveCarryPermille = banking ? budget2.remainingPermille % 1e3 : (budget2.remainingPermille - consumed) % 1e3;
+    if (banking) actor.moveBanked = true;
+    const carryText = banking ? `\u5728\u5E7F\u88A4\u6218\u533A\u4E2D\u594B\u529B\u84C4\u6B65\u63A8\u8FDB\uFF08\u8DE8\u533A\u8FDB\u5EA6${movementProgressText(budget2.remainingPermille)}\uFF09` : null;
     const movedCells = path2.length;
-    actor.moved = (actor.moved ?? 0) + movedCells;
+    const movedBefore = actor.moved ?? 0;
+    actor.moved = movedBefore + movedCells;
     if (movedCells || progress.from.z !== landing.z) {
       actor.lastMoveDir = movementDirection(progress.from, landing, actor.lastMoveDir);
       progress.moveEvent = {
@@ -7503,10 +7575,10 @@ var FatedTactical = (() => {
       actor,
       type,
       carryText ?? `${actor.name}${movementNames[type]}${interrupted ? "\u53D7\u963B\uFF0C\u505C\u5728" : "\u81F3"} (${landing.x}, ${landing.y}, z=${landing.z})`,
-      { from: progress.from, to: landing, path: path2, steps: path2.length, interrupted, ...actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }, ...carryText ? { moveM: scale.moveM, progressPermille: scale.total } : {} }
+      { from: progress.from, to: landing, path: path2, steps: path2.length, interrupted, ...actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }, ...carryText ? { moveM: budget2.effectiveMoveM, progressPermille: budget2.remainingPermille } : {} }
     );
     if (alive3(actor)) {
-      if (type === "move" && actor.stance === "light_blade") actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
+      if (type === "move" && movedBefore === 0 && movedCells > 0 && actor.stance === "light_blade") actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
       const coverIds = nearbyCovers(state, actor).filter((c) => !progress.initialCover.includes(c.id)).map((c) => c.id);
       if (coverIds.length) record(state, actor, "cover_approach", `${actor.name}\u79FB\u81F3\u63A9\u4F53 ${coverIds.join("\u3001")} \u65C1`, { coverIds });
     }
@@ -7773,7 +7845,15 @@ var FatedTactical = (() => {
     const turnOwner = currentUnit(state) ?? actor;
     if (!turnOwner) return;
     const linked = linkedUnitsOf(state, turnOwner.id).filter((member) => member.team === turnOwner.team);
-    if (type === "end" || !alive3(turnOwner) || turnOwner.fled || !turnOwner.ap && !linked.length) {
+    const canStillAct = (member) => {
+      if (!alive3(member) || member.fled || unitSkipped(state, member)) return false;
+      if (member.ap > 0) return true;
+      if (preview(state, { type: "move" }, { actingUnit: member }).ok) return true;
+      if (preview(state, { type: "use_item" }, { actingUnit: member }).ok) return true;
+      const skills = [...member.skills ?? [], ...equippedActiveSkills(state, member).map(([id3]) => id3)];
+      return skills.some((skillId) => actionSkill(state, member, skillId)?.ap === 0 && preview(state, { type: "skill", skillId }, { actingUnit: member }).ok);
+    };
+    if (type === "end" || !alive3(turnOwner) || turnOwner.fled || ![turnOwner, ...linked].some(canStillAct)) {
       if (!turnOwner.fled || linked.length) endTurn(state, turnOwner);
       if (!state.vm?.pendingAsk && !refreshOutcome(state)) {
         advanceCursor(state);
@@ -8343,7 +8423,7 @@ var FatedTactical = (() => {
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
   var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound"];
   function unitValue(v, key4, state) {
-    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned", "turnMode", "turnAnchorId", "durationUnit", "durationAnchorId"]);
+    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "moveCarryInPermille", "moveSpentPermille", "moveBonusPermille", "moveBanked", "lastMoveDir", "remainingTurns", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned", "turnMode", "turnAnchorId", "durationUnit", "durationAnchorId"]);
     carrierFieldsValue(v, state, true);
     if (own13(v, "pools")) poolBindings(v.pools);
     for (const k of ["templateId", "sourceId"]) checkOptional(v, k, id2);
@@ -8364,7 +8444,10 @@ var FatedTactical = (() => {
     checkOptional(v, "remainingTurns", (x) => int(x, 1, 100));
     checkOptional(v, "durationUnit", (x) => v.summoned === true && v.remainingTurns !== void 0 && (x === "rounds" && v.durationAnchorId === void 0 || x === "anchor_turns" && id2(v.durationAnchorId)));
     checkOptional(v, "durationAnchorId", (x) => v.durationUnit === "anchor_turns" && id2(x));
-    checkOptional(v, "moveSpent", (x) => int(x, 0, 1e9));
+    checkOptional(v, "moveCarryInPermille", (x) => int(x, 0, 999));
+    checkOptional(v, "moveSpentPermille", (x) => int(x, 0, 1e9));
+    checkOptional(v, "moveBonusPermille", (x) => int(x, 0, 1e9));
+    checkOptional(v, "moveBanked", (x) => typeof x === "boolean");
     for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
     checkOptional(v, "corpseOf", id2);
     checkOptional(v, "diedAt", (x) => plain(x) && Object.keys(x).length === 2 && int(x.round, 1, state.round) && int(x.turn, 0, 199));
@@ -9104,7 +9187,7 @@ var FatedTactical = (() => {
     const templates = new Map([...actor.skills.map((id3) => [id3, state.skills[id3]]), ...items.map(([id3]) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, actor)]);
     for (const skillId of [...templates.keys()].sort()) {
       const skill2 = templates.get(skillId);
-      if (!skill2 || isPassiveSkill(skill2) || attacksOnly && (skill2.slot !== "attack" || skill2.ap > 1)) continue;
+      if (!skill2 || isPassiveSkill(skill2) || attacksOnly && skill2.slot !== "attack") continue;
       if (skill2.ap === 0 && !skill2.backpackItem && !skill2.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false && (rule2.filter === void 0 || rule2.filter === true) && (rule2.usesPerTurn || rule2.usesPerBattle || rule2.cooldownTurns))) continue;
       const query2 = preview(state, { type: "skill", skillId }, { actingUnit: actor });
       if (!query2.ok) continue;
@@ -9149,7 +9232,7 @@ var FatedTactical = (() => {
       const d = distance3D(state, probe, target2);
       if (suppress) return d <= 1 && hasLOS(state, probe, target2);
       if (d > range2 + 1) return false;
-      const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
+      const u = { ...actor, x: probe.x, y: probe.y, ap: Math.max(1, actor.ap), used: { ...actor.used, attack: 0 } };
       const s = { ...state, units: { ...state.units, [actor.id]: u } };
       const attack = preview(s, { type: "attack", targetId: target2.id, x: target2.x, y: target2.y }, { actingUnit: s.units[actor.id] });
       if (attack.ok || attack.error === "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" && d <= range2 && hasLOS(state, probe, target2)) return true;
@@ -9284,20 +9367,21 @@ var FatedTactical = (() => {
         const high = elevation(state, cell) - z0;
         const cover = coverQuality(state, cell, objectives) - startingCover;
         const zoneDelta = zoneCellScore(state, actor, cell) - zoneCellScore(state, actor, actor);
-        let score = (projectedDepth ? 1.8 + projectedDepth * 0.55 : progress * 0.35) + high * 0.8 + cover + zoneDelta;
+        const canAttack = actor.ap > 0 && !actor.used.attack;
+        let score = (canAttack ? projectedDepth ? 1.8 + projectedDepth * 0.55 : progress * 0.35 : 0) + high * 0.8 + cover + zoneDelta;
         if (zoneCellScore(state, actor, actor) <= -14 && zoneDelta > 0) score += Math.min(50, 14 + zoneDelta);
         if (cell.bankedProgress != null) {
           const gain = cell.bankedProgress - (actor.moveCarryPermille ?? 0);
           if (gain <= 0 || !plannedPath.length) continue;
           score = 1.6 + cell.bankedProgress / 1e3 + gain / 1e3 - (type === "sprint" ? 0.6 : 0);
-        } else if (type === "sprint") score = score * 0.82 - 1.2;
+        } else if (type === "sprint") score = score * 0.75 - 2;
         score -= (cell.opportunities?.length ?? 0) * 3.5;
         if (type === "disengage") score -= 0.2;
-        movements.push({ type, cell, score, available: actor.ap - options.ap });
+        movements.push({ type, cell, score, slot: options.slot, available: actor.ap - options.ap });
       }
     }
     const evaluatedMoves = state.ruleset === "protocol" ? movements.sort((a, b) => b.score - a.score).slice(0, 3) : movements;
-    for (const { type, cell, available, score: movementScore } of evaluatedMoves) {
+    for (const { type, cell, slot: slot2, available, score: movementScore } of evaluatedMoves) {
       let score = movementScore;
       if (available > 0 && !actor.used.attack) {
         const moved = {
@@ -9306,7 +9390,7 @@ var FatedTactical = (() => {
           y: cell.y,
           ap: available,
           facing: cell.steps === 0 ? actor.facing : facingToward(cell.path.at(-2) ?? actor, cell),
-          used: { ...actor.used, action: actor.used.action + 1 }
+          used: slot2 ? { ...actor.used, [slot2]: (actor.used[slot2] ?? 0) + 1 } : { ...actor.used }
         };
         const shadow = { ...state, units: { ...state.units, [actor.id]: moved } };
         const followup = Math.max(0, ...aimedOptions(shadow, moved, true).map((choice) => choice.score));
@@ -9326,8 +9410,8 @@ var FatedTactical = (() => {
 
   // src/core/battle-ai.js
   var RULES = `\u4F60\u662F\u547D\u5B9A\u6218\u672F\u6C99\u76D8\u7684\u654C\u65B9\u966A\u73A9 AI\u3002\u4F60\u7684\u8EAB\u4EFD\u662F user \u4E00\u65B9\u7684\u5BF9\u624B\uFF0C\u53EA\u63A7\u5236\u5F53\u524D\u8FDE\u7EED\u884C\u52A8\u7684\u654C\u65B9\u89D2\u8272\uFF0C\u4E0D\u66FF\u73A9\u5BB6\u505A\u51B3\u5B9A\u3002
-\u884C\u52A8\uFF1A\u6BCF\u56DE\u5408\u6BCF\u4E2A\u89D2\u8272\u67091\u4E2A\u653B\u51FB\u69FD\u548C1\u4E2A\u52A8\u4F5C\u69FD\u3002\u79FB\u52A8\u3001\u88C5\u586B\u3001\u4E92\u52A8\u3001\u6362\u88C5\u3001\u67B6\u52BF\u548C\u9003\u8DD1\u4F7F\u7528\u52A8\u4F5C\u69FD\uFF0C\u666E\u901A\u653B\u51FB\u3001\u6280\u80FD\u653B\u51FB\u3001\u538B\u5236\u548C\u89E3\u9664\u538B\u5236\u4F7F\u7528\u653B\u51FB\u69FD\uFF0C\u91CD\u578B\u6280\u80FD\u53EF\u540C\u65F6\u4F7F\u7528\u4E24\u69FD\u3002\u4E00\u4E2A\u52A8\u4F5C\u53EA\u80FD\u4F7F\u7528\u5F53\u524D\u884C\u52A8\u8005\u81EA\u5DF1\u7684\u69FD\u4F4D\u3002\u52A8\u4F5C\u3001\u6280\u80FD\u548C\u80CC\u5305\u7269\u54C1\u7684\u5B9E\u9645 ap\u3001slot\u3001\u8D44\u6E90\u3001\u6B21\u6570\u4E0E\u51B7\u5374\u4EE5\u8F93\u5165\u6570\u636E\u4E3A\u51C6\u3002
-\u84C4\u6B65\uFF1AmovementCarry \u6309\u5355\u4F4D\u5217\u51FA\u5DF2\u79EF\u7D2F\u7684\u767E\u5206\u6BD4\uFF0C\u4EE5\u53CA\u539F\u5730 move \u6216 sprint \u540E\u53EF\u8FBE\u5230\u7684\u767E\u5206\u6BD4\u3002\u82E5\u6709\u6B63\u6536\u76CA\u4E14\u9700\u8981\u63A5\u8FD1\u76EE\u6807\uFF0C\u53EF\u5728\u81EA\u5DF1\u5F53\u524D\u5750\u6807\u6267\u884C\u8BE5\u79FB\u52A8\u6765\u79EF\u7D2F\u8FDB\u5EA6\uFF0C\u6512\u591F\u540E\u518D\u9009\u62E9\u5B9E\u9645\u843D\u70B9\u3002
+\u884C\u52A8\uFF1A\u6BCF\u56DE\u5408\u6BCF\u4E2A\u89D2\u8272\u6709 2 \u70B9 AP\uFF081\u4E2A\u653B\u51FB\u69FD\u548C1\u4E2A\u52A8\u4F5C\u69FD\uFF09\u4EE5\u53CA\u72EC\u7ACB\u7684\u79FB\u52A8\u529B\u9884\u7B97\u3002\u5E38\u89C4\u79FB\u52A8\uFF08move\uFF09\u6D88\u8017\u79FB\u52A8\u529B\u9884\u7B97\u30010 AP\u3001\u4E0D\u5360\u69FD\u4F4D\uFF0C\u5728\u79FB\u52A8\u529B\u8017\u5C3D\u524D\u53EF\u5206\u591A\u6B21\u5728\u884C\u52A8\u524D\u540E\u81EA\u7531\u8D70\u4F4D\uFF1B\u75BE\u8DD1\uFF08sprint\uFF0C\u8FFD\u52A0\u4E00\u500D\u57FA\u7840\u79FB\u52A8\u529B\u5E76\u79FB\u52A8\uFF09\u3001\u64A4\u79BB\uFF08disengage\uFF0C\u672C\u6B21\u79FB\u52A8\u514D\u501F\u673A\u4E14\u65E0\u89C6\u963B\u6321\uFF09\u3001\u88C5\u586B\u3001\u4E92\u52A8\u3001\u80CC\u5305\u6362\u88C5\u3001\u67B6\u52BF\u548C\u9003\u8DD1\u6D88\u8017 1 AP \u5E76\u4F7F\u7528\u52A8\u4F5C\u69FD\uFF1B\u666E\u901A\u653B\u51FB\u3001\u6280\u80FD\u653B\u51FB\u3001\u538B\u5236\u548C\u89E3\u9664\u538B\u5236\u4F7F\u7528\u653B\u51FB\u69FD\uFF1B\u91CD\u578B\u6280\u80FD\u540C\u65F6\u4F7F\u7528\u4E24\u69FD\uFF082 AP\uFF09\u3002\u52A8\u4F5C\u3001\u6280\u80FD\u548C\u80CC\u5305\u7269\u54C1\u7684\u5B9E\u9645 ap\u3001slot\u3001\u8D44\u6E90\u3001\u6B21\u6570\u4E0E\u51B7\u5374\u4EE5\u8F93\u5165\u6570\u636E\u4E3A\u51C6\u3002
+\u79FB\u52A8\u4E0E\u84C4\u6B65\uFF1A\u6BCF\u4E2A\u5355\u4F4D\u5305\u542B moveRemaining\uFF08\u672C\u56DE\u5408\u5269\u4F59\u53EF\u8D70\u683C\u6570\uFF09\u3001moveMax\uFF08\u672C\u56DE\u5408\u79FB\u52A8\u683C\u4E0A\u9650\uFF09\u4E0E moveCarryPercent\uFF08\u8DE8\u533A\u84C4\u6B65\u767E\u5206\u6BD4\uFF09\uFF1BmovementCarry \u6309\u5355\u4F4D\u5217\u51FA\u4E9A\u683C\u72B6\u6001\u4E0B\u7684\u5F53\u524D\u767E\u5206\u6BD4\u53CA\u539F\u5730 move\uFF08\u672C\u56DE\u5408\u96501\u6B21\uFF0C0 AP\uFF09\u6216 sprint\uFF081 AP\uFF0C\u52A8\u4F5C\u69FD\uFF09\u540E\u53EF\u8FBE\u5230\u7684\u767E\u5206\u6BD4\u3002
 \u8DDD\u79BB\u4E0E\u9AD8\u5EA6\uFF1A\u653B\u51FB\u548C\u6280\u80FD\u6309\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB sqrt(dx\xB2+dy\xB2+dz\xB2) \u68C0\u67E5\u5C04\u7A0B\u3002z \u662F\u683C\u5B50\u9AD8\u5EA6\u52A0\u5355\u4F4D\u79BB\u5730\u9AD8\u5EA6\u3002\u9AD8\u5904\u653B\u51FB\u4F4E\u5904\u65F6\uFF0C\u8FDC\u7A0B\u653B\u51FB\u901A\u5E38\u83B7\u5F97\u6700\u591A+1\u683C\u5C04\u7A0B\uFF0C\u4F4E\u5904\u653B\u51FB\u9AD8\u5904\u65F6\u901A\u5E38\u51CF\u5C111\u683C\u5C04\u7A0B\uFF0C\u5B9E\u9645\u503C\u4EE5\u6280\u80FD/\u88C5\u5907\u6570\u636E\u548C\u9884\u89C8\u89C4\u5219\u4E3A\u51C6\u3002\u79FB\u52A8\u6BCF\u8DE8\u4E00\u683C\u6709\u9AD8\u5EA6\u9650\u5236\uFF0C\u5E73\u5730\u901A\u5E38\u53EA\u80FD\u8DE81\u7EA7\u9AD8\u5EA6\uFF0C\u5761\u5730\u53EF\u8DE82\u7EA7\uFF0C\u5899\u4E0D\u80FD\u901A\u884C\u3002\u79FB\u52A8\u5230\u9AD8\u5904\u6216\u4F4E\u5904\u4F1A\u6D88\u8017\u8DEF\u5F84\u5141\u8BB8\u7684\u52A8\u4F5C\u9884\u7B97\uFF0C\u4E0D\u80FD\u628A\u4E8C\u7EF4\u76F8\u90BB\u5F53\u4F5C\u4E00\u5B9A\u53EF\u8FBE\u3002
 \u89C6\u7EBF\u4E0E\u9694\u65AD\uFF1A\u5899\u4F53\u548C\u975E\u53EF\u7AD9\u7ACB\u683C\u4F1A\u963B\u65AD\u89C6\u7EBF\u3002\u653B\u51FB\u3001\u8FDC\u7A0B\u6280\u80FD\u3001\u7206\u6876\u5F15\u7206\u548C\u8303\u56F4\u6548\u679C\u90FD\u8981\u6709\u901A\u7545\u89C6\u7EBF\u3002\u8303\u56F4\u6280\u80FD\u4EE5\u5B9E\u9645\u5F62\u72B6\u3001\u534A\u5F84\u3001\u5BBD\u5EA6\u3001\u89D2\u5EA6\u548C\u4E09\u7EF4\u8DDD\u79BB\u53D6\u683C\uFF0C\u4E0D\u80FD\u7A7F\u5899\u6216\u9694\u65AD\u3002\u73AF\u5F62\u4EE5\u843D\u70B9\u4E3A\u4E2D\u5FC3\u5E76\u6392\u9664\u4E2D\u5FC3\u683C\uFF0C\u8303\u56F4\u4F24\u5BB3\u53EF\u80FD\u6CE2\u53CA\u53CB\u519B\u3002\u5C04\u7A0B\u4E3A 0 \u7684\u6247\u5F62\u3001\u9525\u5F62\u548C\u76F4\u7EBF\u6CBF\u65BD\u672F\u8005\u5F53\u524D\u671D\u5411\u5C55\u5F00\u3002
 \u63A9\u4F53\uFF1A\u63A9\u4F53\u4F4D\u4E8E\u653B\u51FB\u8005\u4E0E\u76EE\u6807\u7684\u5C04\u7EBF\u6216\u76EE\u6807\u8FCE\u51FB\u4FA7\u65F6\u751F\u6548\uFF0C\u6309\u63A9\u4F53 cover \u6570\u503C\u964D\u4F4E\u547D\u4E2D\u6216\u4FDD\u62A4\u76EE\u6807\u3002\u653B\u51FB\u8005\u6216\u76EE\u6807\u6BD4\u63A9\u4F53\u9AD8\u81F3\u5C112\u7EA7\u65F6\u53EF\u4EE5\u8D8A\u8FC7\u8BE5\u63A9\u4F53\uFF0C\u63A9\u4F53\u4E0D\u518D\u63D0\u4F9B\u906E\u6321\u3002\u63A9\u4F53\u6709\u81EA\u5DF1\u7684 HP\uFF0C\u53EF\u4EE5\u88AB\u653B\u51FB\u6216\u7206\u70B8\u7834\u574F\uFF0C\u7834\u574F\u540E\u4E0D\u518D\u906E\u6321\u3002\u4E0D\u8981\u628A\u63A9\u4F53\u5F53\u6210\u5899\uFF0C\u63A9\u4F53\u901A\u5E38\u4E0D\u963B\u65AD\u89C6\u7EBF\uFF0C\u53EA\u6539\u53D8\u547D\u4E2D\u4E0E\u4F24\u5BB3\u6761\u4EF6\u3002
@@ -9374,13 +9458,17 @@ var FatedTactical = (() => {
     shadow.turn = shadow.order.indexOf(unit.id);
     for (const type of ["attack", "move", "sprint", "disengage", "brace", "reload", "flee", "suppress", "free_ally", "end"]) {
       const plan = preview(shadow, { type });
-      if (plan.ok || type === "move") actions.push(type);
+      if (plan.ok) actions.push(type);
     }
+    const mb = movementBudget(state, unit);
     return {
       id: unit.id,
       name: unit.name,
       team: unit.team,
       faction: unit.team === "red" ? "\u654C\u65B9" : "\u73A9\u5BB6\u65B9",
+      moveRemaining: mb.remainingCells,
+      moveMax: mb.maxCells,
+      moveCarryPercent: mb.currentCarryPermille / 10,
       alive: unit.hp > 0,
       fled: !!unit.fled,
       hp: unit.hp,
@@ -9622,7 +9710,7 @@ var FatedTactical = (() => {
       requireThat(plain(v) && id2(v.id) && !own13(s.units, v.id), "unit.id");
       unitValue(v, v.id, s);
       requireThat(!own13(v, "pools"), "\u589E\u63F4\u8D44\u6E90\u6C60\u7531\u6218\u5C40\u521D\u59CB\u5316");
-      requireThat(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0, "\u589E\u63F4\u987B\u5B58\u6D3B\u4E14\u884C\u52A8\u672A\u5F00\u59CB");
+      requireThat(v.hp > 0 && v.ap === 0 && v.used.action === 0 && v.used.attack === 0 && (v.moved ?? 0) === 0 && (v.moveSpentPermille ?? 0) === 0 && !v.moveBanked, "\u589E\u63F4\u987B\u5B58\u6D3B\u4E14\u884C\u52A8\u672A\u5F00\u59CB");
       v.mainHand = v.weapon;
       if (v.offHand === void 0) v.offHand = null;
       if (v.shield === void 0) v.shield = null;
@@ -11110,9 +11198,9 @@ var FatedTactical = (() => {
     end: "\u7ED3\u675F\u56DE\u5408"
   };
   var ACTION_HINTS = {
-    move: "\u8D70\u5230\u8FD9\u4E00\u683C",
-    sprint: "\u8DD1\u5F97\u66F4\u8FDC\uFF0C\u8017 2 AP",
-    disengage: "\u79BB\u5F00\u65F6\u4E0D\u88AB\u501F\u673A",
+    move: "\u81EA\u7531\u8D70\u4F4D\uFF080 AP\uFF0C\u6D88\u8017\u79FB\u52A8\u529B\uFF09",
+    sprint: "\u5145\u80FD\u75BE\u8DD1\uFF0C\u8017 1 AP\uFF08\u52A8\u4F5C\u69FD\uFF09",
+    disengage: "\u5B89\u5168\u64A4\u79BB\uFF0C\u8017 1 AP\uFF08\u514D\u501F\u673A\uFF09",
     attack: "\u7528\u6B66\u5668\u653B\u51FB",
     interact: "\u4F7F\u7528\u573A\u666F\u8BBE\u65BD",
     free_ally: "\u7528\u653B\u51FB\u69FD\u76F4\u63A5\u89E3\u6551\u76F8\u90BB\u961F\u53CB",
@@ -11352,12 +11440,12 @@ var FatedTactical = (() => {
       return node;
     }
     function appendMovementCarry(bars, unit, state) {
-      const carry = unit.moveCarryPermille ?? 0;
-      const subCell = unit.moveM != null && unit.moveM < state.scale?.cellM;
-      if (subCell && state.scale.anchorTier >= 5 && !(carry > 0)) {
+      const mb = movementBudget(state, unit);
+      if (!(mb.subCell && mb.maxCells === 0)) bars.append(bar("move", state.outcome ? 0 : mb.remainingCells, Math.max(1, mb.maxCells), `\u79FB\u52A8 ${state.outcome ? 0 : mb.remainingCells}/${mb.maxCells} \u683C`));
+      if (mb.subCell && mb.scaleSuppressed && !mb.currentCarryPermille) {
         bars.append(el2("span", "", "\u5C3A\u5EA6\u538B\u5236\uFF08\u9650\u540C\u683C\uFF09"));
-      } else if (carry || subCell) {
-        bars.append(bar("sp", carry, 1e3, `\u84C4\u6B65 ${carry / 10}%`));
+      } else if (mb.currentCarryPermille || mb.subCell) {
+        bars.append(bar("sp", mb.currentCarryPermille, 1e3, `\u84C4\u6B65 ${mb.currentCarryPermille / 10}%`));
       }
     }
     function renderTurnOrder(state, current, selected2) {
@@ -11579,7 +11667,7 @@ var FatedTactical = (() => {
       if (hover && p) {
         const geo = [];
         if (p.bankedProgress != null) geo.push(`\u84C4\u6B65\u8FDB\u5EA6\u5C06\u8FBE\u5230 ${p.bankedProgress / 10}%`);
-        else if (p.steps) geo.push(`\u8D70 ${p.steps} \u683C`);
+        else if (p.steps) geo.push(`\u8D70 ${p.steps} \u683C${p.remainingCellsAfter != null ? `\uFF08\u8D70\u540E\u5269 ${p.remainingCellsAfter} \u683C\uFF09` : ""}`);
         if (Number.isFinite(p.distance)) geo.push(`\u8DDD\u79BB ${p.distance.toFixed(1)} \u683C${p.range != null ? `\uFF08\u5C04\u7A0B ${p.range}\uFF09` : ""}`);
         if (p.dz) geo.push(p.dz > 0 ? `\u76EE\u6807\u9AD8\u51FA ${p.dz}` : `\u76EE\u6807\u4F4E ${-p.dz}`);
         if (p.teleport) geo.push(`\u77AC\u79FB\u5230 (${p.teleport.x}, ${p.teleport.y})`);
@@ -11660,7 +11748,7 @@ var FatedTactical = (() => {
       if (fresh || last?.selected !== selected2) renderTurnOrder(state, current, selected2);
       if (fresh || actorChanged) renderActor(state, actor);
       if (fresh || actorChanged || last?.canAct !== canAct || last?.autoCollaborate !== ui.autoCollaborate) renderSquad(state, current, actor, ui);
-      $("sprint-indicator").textContent = ui.sprint ? "\u75BE\u8DD1\u8303\u56F4\u5DF2\u663E\u793A \xB7 \u8D70\u66F4\u8FDC\u9700\u8981 2 AP" : "";
+      $("sprint-indicator").textContent = ui.sprint ? "\u75BE\u8DD1\u8303\u56F4\u5DF2\u663E\u793A \xB7 \u5145\u80FD\u75BE\u8DD1\u8017 1 AP\uFF08\u52A8\u4F5C\u69FD\uFF09" : "";
       renderBoard(state, { selected: selected2, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells, entityChoices: ui.entityChoices });
       if (ui.target) renderPreview(state, action, hover, range2, result, actor);
       if (fresh || last?.selected !== selected2 || last?.inspectedId !== ui.inspectedId) {
@@ -12732,6 +12820,7 @@ ${height2}\uFF0C${sight}`;
     const execute2 = (command) => safely(() => {
       if (pendingAsk() && command.type !== "answer") return;
       const result = game.playAction(routed(command));
+      if (result.ok && command.type === "sprint") sprint = false;
       if (result && result.ok === false) error2(result.error);
       return result;
     });
@@ -12852,7 +12941,14 @@ ${height2}\uFF0C${sight}`;
           add("sprint");
         }
         if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
-        else for (const t of [...onActorCell ? [] : [sprint ? "sprint" : "move"], "disengage", "attack", "shield_bash", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
+        else {
+          if (!onActorCell) {
+            const move2 = previewSelected({ type: "move", x: at3.x, y: at3.y });
+            add("move");
+            if (sprint || !move2.ok) add("sprint");
+          }
+          for (const t of ["disengage", "attack", "shield_bash", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
+        }
         if (self && actor.stance === "greatsword") {
           const defensive = actor.greatswordMode !== "defensive";
           add("stance_mode", null, null, defensive ? "\u91CD\u5251\uFF1A\u8F6C\u4E3A\u6C89\u52BF" : "\u91CD\u5251\uFF1A\u8F6C\u4E3A\u653B\u52BF", defensive ? "defensive" : "offensive");
@@ -14519,6 +14615,7 @@ body { margin: 0; background: var(--ink-2); }
 .ft-bar.hp { --bar: linear-gradient(90deg, #a8474a, #e78886); }
 .ft-bar.mp { --bar: linear-gradient(90deg, #3f6c9b, #86b8e6); }
 .ft-bar.sp { --bar: linear-gradient(90deg, #3e7f57, #80cc9a); }
+.ft-bar.move { --bar: linear-gradient(90deg, #168b90, #65e1d1); }
 .ft-actor-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; color: var(--text-soft); }
 .ft-chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid rgba(170, 140, 230, .38); border-radius: 9px; background: rgba(150, 118, 214, .14); color: #e6dbfb; font-size: 11px; }
 .ap-crystal { font-size: 1.15em; color: var(--gold-bright); text-shadow: var(--icon-glow); }
@@ -16871,8 +16968,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
-    const defaultMove = Math.min(5, 3 + Math.floor(Math.log10(Math.max(1, stats.agi / 10))));
-    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...Object.keys(unitPools2).length ? { unitPools: unitPools2 } : {}, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.max(1, Math.min(10, integer3(findValue(record3, ["move", "movement", "\u79FB\u52A8"], 3), 3))), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+    const defaultMove = defaultMoveFromAgi(stats.agi);
+    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...Object.keys(unitPools2).length ? { unitPools: unitPools2 } : {}, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.round(Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
@@ -17201,6 +17298,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         name: row.name,
         ownerId: row.ownerId,
         ...panel,
+        ...Number.isFinite(number2(findValue(sourceRecord, ["move", "movement", "\u79FB\u52A8"], null), NaN)) && { move: summonUnit.rawMove },
         ...findValue(sourceRecord, ["level", "\u7B49\u7EA7"], null) != null && { level: summonUnit.level },
         bodyLengthM: summonUnit.bodyLengthM,
         size: summonUnit.size,
@@ -17248,7 +17346,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (time) state.time = time;
     for (const unit of Object.values(units)) {
       unit.moveM = unit.rawMove * TIER_CELL_M[unit.tier];
-      unit.move = scaledCells(unit.rawMove, unit.tier, cellM, { floor: true });
+      unit.move = boardMoveCellsFromMoveM(unit.moveM, state.scale);
       unit.moveCarryPermille = 0;
     }
     const adjustmentSink = (source2, scope) => ({ push: (message) => sink(null, source2, scope).push(message, { kind: "auto_adjusted" }) });
@@ -18780,7 +18878,7 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF08\u95ED\u5408\u679A\u4E3E\uFF0C\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\uFF09\uFF1A
 ${instructions2.join("\n")}
 ask \u7684 kind \u4E0E aiPolicy \u5BF9\u5E94\u5173\u7CFB\uFF1A${Object.entries(askPolicies).map(([kind, policies]) => `${kind} \u2192 ${policies.join(" / ")}`).join("\uFF1B")}\u3002
-check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F check(kind:"save") \u9ED8\u8BA4\u7531\u5F53\u524D\u5E27 target \u63B7\u9AB0\uFF0C\u82E5\u5728\u53D7\u51FB\u65B9\u94A9\u5B50\u5185\u8981\u6C42\u8FDB\u653B\u65B9\u8C41\u514D\uFF0C\u5148\u7528\u7701\u7565 bind \u7684 for_each(select:{from:"attacker"}) \u5C06\u5B50\u5E27 target \u5207\u81F3\u8FDB\u653B\u65B9\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\uFF08\u6CE8\u610F spawn \u5728 count > 1 \u65F6 out \u4EC5\u5B58\u9996\u4E2A\u751F\u6210\u5B9E\u4F53 ID\uFF1B\u9700\u5BF9\u540C\u6279\u5168\u4F53\u65B0\u53EC\u5524\u7269\u8FFD\u52A0\u52A8\u4F5C\u65F6\uFF0C\u540E\u7EED\u7528 from:"units" \u914D candidate.summoned && candidate.sourceId == self.id \u7B5B\u9009\u904D\u5386\u2014\u2014\u5355\u4F4D\u4F5C\u7528\u57DF\u53EF\u8BFB .sourceId\uFF0C\u67E5\u6807\u7B7E\u5FC5\u987B\u8C03\u51FD\u6570 has_tag(candidate, '<tag>') \u800C\u4E0D\u53EF\u8BFB candidate.tags\uFF01\uFF09\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u914D\u5408 from:"tape" \u7B5B\u9009\u672C\u56DE\u5408\u6216\u6307\u5B9A\u5355\u4F4D\u5DF2\u6267\u884C\u8BB0\u5F55\uFF0C\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\uFF1Boverrides \u652F\u6301 free / ignoreSlots / ignoreRange / ignoreLOS / intent / scale / origin\uFF08overrides.intent \u53EF\u5F3A\u5236\u6307\u5B9A attack / skill / shield_bash \u5B50\u6253\u51FB\u6216\u78C1\u5E26\u91CD\u653E\u7684\u610F\u56FE\uFF0C\u4F18\u5148\u7EA7\u4F4E\u4E8E\u8303\u56F4\uFF0F\u975E\u654C\u5BF9\u5F52\u96F6\u4E0E controlPolicy.intentLock\uFF0C\u9AD8\u4E8E\u78C1\u5E26\u539F\u610F\u56FE\u4E0E\u5355\u4F4D\u9ED8\u8BA4\u610F\u56FE\uFF1B\u65E0\u84C4\u529B\u76F4\u53D1\u8986\u76D6\u5B57\u6BB5\uFF0C\u7ACB\u5373\u91CA\u653E\u9AD8\u500D\u7387\u6280\u80FD\u7528 scale \u6216\u524D\u7F6E\u72B6\u6001\u8868\u8FBE\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
+check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F check(kind:"save") \u9ED8\u8BA4\u7531\u5F53\u524D\u5E27 target \u63B7\u9AB0\uFF0C\u82E5\u5728\u53D7\u51FB\u65B9\u94A9\u5B50\u5185\u8981\u6C42\u8FDB\u653B\u65B9\u8C41\u514D\uFF0C\u5148\u7528\u7701\u7565 bind \u7684 for_each(select:{from:"attacker"}) \u5C06\u5B50\u5E27 target \u5207\u81F3\u8FDB\u653B\u65B9\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\uFF08\u6CE8\u610F spawn \u5728 count > 1 \u65F6 out \u4EC5\u5B58\u9996\u4E2A\u751F\u6210\u5B9E\u4F53 ID\uFF1B\u9700\u5BF9\u540C\u6279\u5168\u4F53\u65B0\u53EC\u5524\u7269\u8FFD\u52A0\u52A8\u4F5C\u65F6\uFF0C\u540E\u7EED\u7528 from:"units" \u914D candidate.summoned && candidate.sourceId == self.id \u7B5B\u9009\u904D\u5386\u2014\u2014\u5355\u4F4D\u4F5C\u7528\u57DF\u53EF\u8BFB .sourceId\uFF0C\u67E5\u6807\u7B7E\u5FC5\u987B\u8C03\u51FD\u6570 has_tag(candidate, '<tag>') \u800C\u4E0D\u53EF\u8BFB candidate.tags\uFF01\uFF09\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u914D\u5408 from:"tape" \u7B5B\u9009\u672C\u56DE\u5408\u6216\u6307\u5B9A\u5355\u4F4D\u5DF2\u6267\u884C\u8BB0\u5F55\uFF0C\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\uFF1Boverrides \u652F\u6301 free / ignoreSlots / ignoreRange / ignoreLOS / intent / scale / origin\uFF08overrides.intent \u53EF\u5F3A\u5236\u6307\u5B9A attack / skill / shield_bash \u5B50\u6253\u51FB\u6216\u78C1\u5E26\u91CD\u653E\u7684\u610F\u56FE\uFF0C\u4F18\u5148\u7EA7\u4F4E\u4E8E\u8303\u56F4\uFF0F\u975E\u654C\u5BF9\u5F52\u96F6\u4E0E controlPolicy.intentLock\uFF0C\u9AD8\u4E8E\u78C1\u5E26\u539F\u610F\u56FE\u4E0E\u5355\u4F4D\u9ED8\u8BA4\u610F\u56FE\uFF1B\u65E0\u84C4\u529B\u76F4\u53D1\u8986\u76D6\u5B57\u6BB5\uFF0C\u7ACB\u5373\u91CA\u653E\u9AD8\u500D\u7387\u6280\u80FD\u7528 scale \u6216\u524D\u7F6E\u72B6\u6001\u8868\u8FBE\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF1Bmove \u4E0E\u771F\u5B9E\u79FB\u52A8\u5171\u4EAB\u9884\u7B97\uFF0Cturn_start \u7684 add \u53EF\u8FFD\u52A0\u5F53\u56DE\u5408\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
 \u539F\u751F\u653B\u51FB\u5728 before_check \u53EF\u5199 ratingDelta\uFF08\u6574\u6570\u6863\u6570\uFF0C\u53EF\u7528\u516C\u5F0F\uFF0C\u6B63\u5347\u8D1F\u964D\uFF09\uFF1A\u5148\u4ECE\u57FA\u7840\u8BC4\u7EA7\u79FB\u52A8\u5E76\u5728\u8868\u4E24\u7AEF\u5C01\u9876\uFF0C\u518D\u6309 minRating \u4FDD\u5E95\u3002\u7CBE\u51C6\u7C7B\u8FDC\u7A0B\u653B\u51FB\u5728\u672C\u89C4\u5219\u7684\u8FDC\u7A0B\u8FC7\u6EE4\u6761\u4EF6\u4E0B\u5199 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"\u6709\u6548","forceOutcome":"hit"}}\uFF1B\u6700\u540E\u4E00\u9879\u7528\u4E8E\u539F\u6587\u660E\u8BF4\u5FC5\u4E2D\u3001\u8FDE\u5929\u71361\u4E5F\u4E0D\u80FD\u5931\u624B\u7684\u60C5\u5F62\uFF0C\u4E0D\u8981\u6C42\u5FC5\u4E2D\u5219\u7701\u7565\u3002after_hit \u5728\u4E3B\u51FB\u6263\u8840\u540E\u89E6\u53D1\uFF1A\u751F\u547D\u9608\u503C\u65A9\u6740\u5728 after_hit\uFF08\u9650\u5B9A attacker.id == self.id \u53CA\u6765\u6E90\u4E14 target.alive && target.hpRatio < \u9608\u503C\uFF09\u8C03\u7528 damage \u5E76\u8BBE instantDeath:true\uFF08\u7ED5\u8FC7\u62A4\u7532\u76F4\u63A5\u81F4\u6B7B\uFF1B\u82E5\u65A9\u6740\u4F34\u968F\u8BE5\u6B66\u5668\u7684\u51FB\u6740\u6536\u5272\u53E0\u5C42\uFF0C\u5C06\u53E0\u5C42\u5199\u5728 after_damage \u4E2D\u5339\u914D !target.alive && event.dealt > 0 \u4E14\u9650\u5B9A event.weaponTemplateId == item.templateId \u6216 event.sourceRuleId == '<\u65A9\u6740\u89C4\u5219ID>'\uFF0C\u5207\u52FF\u5728\u65E0\u6B66\u5668\u5B57\u6BB5\u7684 on_kill \u4E2D\u5199 event.weaponTemplateId\uFF09\uFF1B\u4E3B\u52A8\u6280\u80FD\u6709\u524D\u7F6E\u5C42\u6570\u95E8\u69DB\u6216\u53D7\u7279\u5B9A\u8D1F\u9762\u72B6\u6001\u7981\u7528\u65F6\uFF0C\u4F18\u5148\u5728 before_action\uFF08\u5339\u914D attacker.id == self.id \u4E0E event.skillId\uFF09\u6267\u884C mutate_event:{cancel:true} \u76F4\u63A5\u62E6\u622A\u65BD\u653E\u800C\u4E0D\u767D\u6263\u884C\u52A8\u69FD\uFF0C\u5C01\u9501\u8D44\u6E90\u6062\u590D\u5219\u5728 before_commit \u6267\u884C mutate_event:{cancel:true}\u3002
 mutate_event \u7684 patch \u81F3\u5C11\u542B\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u4EC5\u9650\u4E0B\u5217\u53EF\u5199 hook\uFF08before_check.minRating \u53D6\u503C\u679A\u4E3E\uFF1A\u8D85\u66B4\u51FB / \u5F3A\u66B4\u51FB / \u5E73\u66B4\u51FB / \u6709\u6548 / \u52C9\u5F3A / \u64E6\u4F24 / \u5931\u624B\uFF09\uFF1A
 ${eventPatches.join("\n")}
@@ -20087,7 +20185,7 @@ ${variables2.warnings()}` : "");
   }
 
   // src/tavern/char-snapshots.js
-  var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
+  var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "moved", "moveCarryPermille", "moveCarryInPermille", "moveSpentPermille", "moveBonusPermille", "moveBanked", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
   var clean = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
   var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
   var stableSourceJson = (value) => JSON.stringify(ordered(value));
