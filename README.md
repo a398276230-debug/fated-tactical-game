@@ -51,7 +51,7 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 
 ## 真实协议数值
 
-浏览器和正常 `createBattle()` 开局默认使用 `ruleset: 'protocol'`，不再使用小游戏 HP/MP/SP 或骰子伤害作为实际战斗口径。单位资源按五维、生命层级、BL/MC 和战前资源公式推导；装备模板使用 `attack` / `defense` / `quality`；技能模板使用 `power` / `quality`。
+浏览器和正常 `createBattle()` 开局默认使用 `ruleset: 'protocol'`，不再使用小游戏 HP/MP/SP 或骰子伤害作为实际战斗口径。单位资源按五维、生命层级、BL/MC 和战前资源公式推导；装备模板使用 `attack` / `defense` / `quality`；技能模板使用 `power` / `quality`，可用 `hits` 声明多段打击。每个目标只结算一次命中检定，命中后逐段扣除资源并触发命中效果。
 
 协议模式的核心伤害路径为：
 
@@ -72,7 +72,7 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 
 ## 原协议数值对账
 
-内置关卡仍按小游戏独立平衡。例如岚的五维 `7/21/6/4/4`，实际开局资源 `44/14/10`，按原协议一层计算上限为 `642/400/1400`。直接替换上限而不迁移伤害、消耗和恢复会改变对局节奏。点「原协议资源推演」可按所选单位填入五维和当前资源比例核算，不改棋盘。也可导入 `calculatePrebattleResources({stats,tier,bodyLengthM?,count?,summonCount?,previous?})`：`count` 是本编组数量，`summonCount` 是该次召唤的初始总数，两个不同；`previous` 按 `hp/mp/sp: {current,max}` 传入，不传的资源按满值处理。返回 `rawMax` 保留原始精度，整数输出以四舍五入为明确约定。测距并列显示战棋欧氏距离和原协议 `max(|ΔX|,|ΔY|)+ceil(|ΔZ|/2)`；实际射程、掩体与借机规则没有切换为旧协议。
+内置关卡仍按小游戏独立平衡。例如岚的五维 `7/21/6/4/4`，实际开局资源 `44/14/10`，按原协议一层计算上限为 `642/400/1400`。直接替换上限而不迁移伤害、消耗和恢复会改变对局节奏。点「原协议资源推演」可按所选单位填入五维和当前资源比例核算，不改棋盘。也可导入 `calculatePrebattleResources({stats,tier,bodyLengthM?,mc?,count?,summonCount?,previous?})`：`count` 是本编组数量，`summonCount` 是该次召唤的初始总数，两个不同；`previous` 按 `hp/mp/sp: {current,max}` 传入，不传的资源按满值处理。返回 `rawMax` 保留原始精度，整数输出以四舍五入为明确约定。测距并列显示战棋欧氏距离和原协议 `max(|ΔX|,|ΔY|)+ceil(|ΔZ|/2)`；实际射程、掩体与借机规则没有切换为旧协议。
 
 ## 规则口径
 
@@ -83,6 +83,12 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 - **检定**：d20 + 修正对防御，优势取高、劣势取低，两者抵消后只掷一骰。自然 1 必失、自然 20 暴击并翻倍伤害骰数。指定豁免技能由受击方掷 d20 + 属性对 DC，成功半伤并免追加效果。预览不掷实际骰；详细日志记录实际骰、修正与伤害分步。
 - **伤害与状态**：先算伤害骰和属性，再乘武器／背刺／豁免倍率、伤害增减与碎冰，扣护甲，再由护盾吸收，最后扣 HP。物理吃全护甲、能量吃半护甲、精神和真实忽略护甲。邻近未被控制的援护者可以拦截一次，不递归。演示地图中的灼烧／中毒／再生在回合初触发，流血在回合末触发；这些不是酒馆规则。酒馆角色的状态按词条定义面板公式、触发时机与叠层。短期状态按持有者回合计时，施加当回合不扣时长。`until_removed` 与 `persistent` 不自然到期，只有后者跨战；净化不移除常驻状态。
 - **装备与技能**：噬魂太刀直接用刀击杀敌人，每次给该 `instanceId` 加 1 魂，最多 10；按出手前计数每魂 `+50%`，燃烧、流血、反伤和场景击杀不算。左轮／重弩的弹药也绑定实例，有穿甲和高台加成；装填补满。另有霜纹重甲反伤与寒冷、双生血牙侧背击和暴击触发流血及连击、圣咏徽记强化治疗附盾。技能有轻技、重斩击退撞障、瞬移背刺、四种 AOE、队伍治疗、净化和荆壁药剂。装备转手不改实例计数；热改规则不回写运行中已有计数。若降低计数上限，保留原始数值供审核，超出上限的部分不会继续增加噬魂倍率。
+
+## 召唤物
+
+召唤蓝图可从 `<char_info>` 与 `battle_init` 的 `summon` 行配对载入，也可放在 MVU 的 `事件.战术扩展.召唤物`。蓝图可跨技能复用，阵营继承召唤者，资源按本批数量切分。声明 `开场` 可生成随角色入场的召唤物。参见 [战斗声明](docs/battle-types.md) 和 [召唤 DSL](docs/dsl.md#召唤单位)。
+
+附随召唤物在锚点的回合行动。玩家可从协同小队切换操控单位，或使用协战。`linked_group` 的成员各自移动，共享一次攻击和一次动作。`linked_each` 的成员各用自己的行动槽。
 
 ## 视觉来源
 
@@ -99,7 +105,7 @@ await import('http://127.0.0.1:8787/dist/tavern.iife.js')
 | `exportPersistentCarryOver()` | `{kind:'persistent',version,units,items,statusTemplates?}`。常驻状态以单位 ID 匹配；装备实例和计数保留，无对应单位的装备进入库存。它不是整局存档或酒馆正式结算包。 |
 | `exportBattleReport()` / `exportBattleReportText()` | 前者保留分轮事件、公式、命令和修正理由；后者返回供 AI 扩写的纯文本，只保留战况事实。 |
 | `getStateSummary()` / `listUnits()` / `inspectUnit(id)` / `listStatusTemplates()` / `listActionLogs(limit)` | 轻量查询；克隆输出。日志 `limit` 为 0–200，缺省 10。UI 可用 `getBattleState()` 获取完整数据。 |
-| `previewAction(action)` / `playAction(action)` | 共用同一判定；攻击和技能动作以 `{type,x,y,skillId?}` 描述，去掉坐标时只查范围；普通即时动作如 `{type:'end'}` 不带坐标。 |
+| `previewAction(action)` / `playAction(action)` | 共用同一判定；攻击和技能动作以 `{type,x,y,skillId?}` 描述，去掉坐标时只查范围；可用 `actorId` 操控本阶段同阵营的附随召唤物。普通即时动作如 `{type:'end'}` 不带坐标。 |
 | `proposeCommands(commands,{baseRevision,reason})` | 1–32 条原子试算。成功返回 `{ok:true,dryRun:true,proposalId,baseRevision,reason,diff}`；失败返回错误，不改状态、RNG 或日志。`diff` 的 `path` 为键／数组下标列表，增删省略一侧。 |
 | `commitProposal(proposalId)` / `undoLastCommit()` | 只提交基准 revision 仍有效的提案，提交后即失效。撤销还原完整事务（含 RNG、日志、装备和规则），但 API revision 继续递增，旧提案不能复活。 |
 

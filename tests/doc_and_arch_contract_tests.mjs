@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { flatOnlyStats, statNames, vmHooks, vmOpcodes } from '../src/core/vm-schema.js';
+import { flatOnlyStats, statNames, validVmRule, vmHooks, vmOpcodes } from '../src/core/vm-schema.js';
 import { STATUSES } from '../src/presets/status-defaults.js';
 import { DEMO_STATUSES } from '../src/presets/demo-statuses.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { COMMAND_TYPES } from '../src/api/commands.js';
+import { battleTheme, tacticalUI } from '../src/ui/styles.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = file => fs.readFileSync(path.join(root, file), 'utf8');
@@ -48,6 +49,12 @@ test('documentation JSON fences are parseable', () => {
   for (const block of files.flatMap(jsonBlocks)) assert.doesNotThrow(() => block.value, block.file);
 });
 
+test('documented opening summon is a valid VM rule', () => {
+  const opening = jsonBlocks('docs/dsl.md').find(({ value }) => value.id === 'opening_ship');
+  assert.ok(opening);
+  assert.equal(validVmRule(opening.value), true);
+});
+
 test('documentation counts match authoritative sources', () => {
   const docs = files.map(read).join('\n');
   assert.equal(vmHooks.length, 26);
@@ -65,11 +72,22 @@ test('documentation counts match authoritative sources', () => {
   assert.doesNotMatch(docs, /adjust_item_counter/);
 });
 
+test('package and Tavern bundle use the same release version', () => {
+  const { version } = JSON.parse(read('package.json'));
+  const stamp = read('src/tavern/overlay-sources.js').match(/TAVERN_VERSION\s*=\s*['"]([^'"]+)['"]/);
+  assert.equal(stamp?.[1], version);
+});
+
 test('DSL modifier lists in the handbook match the schema', () => {
   const lines = read('docs/dsl.md').split('\n');
   const names = line => [...line.matchAll(/`(\w+)`/g)].map(match => match[1]);
   assert.deepEqual(names(lines.find(line => line.startsWith('`statMod.stat`'))), statNames.filter(stat => !['str', 'agi', 'con', 'int', 'spi'].includes(stat)));
   assert.deepEqual(names(lines.find(line => line.startsWith('- flat-only stats：'))), flatOnlyStats);
+});
+
+test('embedded UI styles match their CSS sources', () => {
+  assert.equal(battleTheme, read('styles/battle-theme.css').replaceAll('\r\n', '\n'));
+  assert.equal(tacticalUI, read('styles/tactical-ui.css').replaceAll('\r\n', '\n'));
 });
 
 test('Tavern module graph has no cycles', () => {
