@@ -9,7 +9,7 @@ import { elementMitigationCategory } from './elements.js';
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
-import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, unitSkipped, reactionBlocked } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, carrierScope, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMRound } from './vm-runtime.js';
@@ -672,7 +672,8 @@ function reaches(state, actor, at, template, ammo) {
   const baseRange = template.range ?? 1.5;
   const range = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? (template.vars?.highGroundRange ?? 1) : -1);
   const offset = incomingDistanceOffset(state, actor, at, { checkKind: 'attack' });
-  return { distance: distance(state, actor, at) + offset, dz, range: Math.max(0, range), melee };
+  const attackOffset = modStat(state, actor, 'attackDistanceOffset', 0, { checkKind: 'attack', target: at });
+  return { distance: Math.max(0, distance(state, actor, at) + offset + attackOffset), dz, range: Math.max(0, range), melee };
 }
 
 function validReach(state, actor, at, template, ammo) {
@@ -723,8 +724,14 @@ function area(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, de
   return aoeCells(state, actor, center, {
     ...template,
     radius: selfCentered ? template.radius ?? 1.5 : template.radius,
-    range: at => ignoreRange || deferGeometry ? Infinity : reaches(state, actor, at, template, ammo).range,
-    ignoreAimRange: ignoreRange || deferGeometry,
+    range: at => {
+      if (ignoreRange || deferGeometry) return Infinity;
+      const effective = reaches(state, actor, at, template, ammo);
+      return effective.range + distance(state, actor, at) - effective.distance;
+    },
+    // preview has already checked the aim using effective distance. The
+    // range callback supplies the equivalent geometric limit for ray cells.
+    ignoreAimRange: true,
     ignoreLOS: ignoreLOS || deferGeometry,
   });
 }
@@ -879,8 +886,19 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const attributeBase = () => state.ruleset === 'protocol'
     ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? 'str' : 'int')) * 10 * tierPower
     : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
+  const carrier = weapon?.instance ? { type: 'item', id: weapon.instance.id }
+    : context.skillId ? { type: 'skill', id: context.skillId } : { type: 'unit', id: actor.id };
+  const scope = { ...carrierScope(state, { entity: template, carrier, nativeOwnerId: actor.id }, actor.id,
+    modifierEvent(actor, strike)), self: actor, target };
+  const resolve = (stat, fallback) => {
+    const base = evaluateExpr(template[stat] ?? fallback, scope);
+    const value = modStat(state, actor, stat, Number.isFinite(base) ? base : fallback, strike);
+    return Number.isFinite(value) ? value : fallback;
+  };
+  const power = template.power != null || template.damage ? Math.max(0, resolve('power', template.damage ? 20 : 0)) : null;
+  const hits = template.damage ? clamp(Math.floor(resolve('hits', 1)), 1, 20) : 1;
   const protocolInitial = state.ruleset === 'protocol' && template.damage
-    ? attributeBase() + Number(template.power ?? 20) + weaponAttack : null;
+    ? attributeBase() + power + weaponAttack : null;
   const armorPierce = resolveArmorPierce(state, actor, template, weapon, strike);
   const recipient = cover || !hasStrikeDamage(template) ? target : guardFor(state, target) ?? target;
   const reduction = cover ? { multiplier: 1, armor: target.armor ?? 0 }
@@ -895,10 +913,10 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     { ...strikeEvent, attacker: actor, target: recipient, intercepting: recipient !== target });
   const shown = (raw, factor = 1) => {
     const scaled = Math.floor(applyStatMod(raw * multiplier * factor + flatDamage, outgoing.damageMult));
-    if (cover) return Math.max(0, scaled - (target.armor ?? 0));
+    if (cover) return Math.max(0, scaled - (target.armor ?? 0)) * hits;
     const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction)));
     const mitigated = Math.max(0, Math.floor(modified - flatReduction)) * (1 - reduction.dr);
-    return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) - absorb);
+    return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) * hits - absorb);
   };
   const flat = protocolInitial !== null;
   const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice, critical)).map(n => shown(n, factor));
@@ -920,7 +938,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
     ...(context.skillId && { skillId: context.skillId }), ...(weapon?.instance?.id && { weaponId: weapon.instance.id }),
     stat: template.damage?.stat ?? template.stat ?? (geometry.melee ? 'str' : 'agi'), intent, intentDifficulty: intentSpec.difficulty, intentMultiplier: intentSpec.multiplier,
     cover: penalty, coverId: protectedBy?.id ?? null, advantage, advantages, disadvantages, hitChance, critChance, expectedD20,
-    automatic: Boolean(automatic), ...(areaStrike && !saveStat && { skipHitCheck: true }), execution, guaranteeHit, guaranteeCrit, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial,
+    automatic: Boolean(automatic), ...(areaStrike && !saveStat && { skipHitCheck: true }), execution, guaranteeHit, guaranteeCrit, arrow, saveStat, saveDC, saveBonus, saveChance, multiplier, damageType, armorPierce, protocolInitial, power, hits,
     dodgeBonus: dodge,
     damageMultiplier: modStat(state, actor, 'damage', multiplier, { ...strike, damageType }),
     offHand: Boolean(weapon?.offHand?.template), armor: reduction.armor, damagePipeline: reduction.armorMultiplier,
@@ -1457,13 +1475,14 @@ export function continueStrike({ state, frame, host }) {
     profile = retargetStrike(state, actor, action, target, plan, profile);
     frame.profile = profile;
   }
-  const next = () => { frame.pc++; delete frame.phase; delete frame.profile; delete frame.awaitEvent; delete frame.preRolled; delete frame.intentOutcome; };
+  const next = () => { frame.pc++; delete frame.phase; delete frame.profile; delete frame.awaitEvent; delete frame.preRolled; delete frame.intentOutcome; delete frame.hitIndex; };
   const detail = { actorId: actor.id, targetId: target?.id ?? null, skillId: action.skillId ?? null, actionType: action.type,
     melee: profile.melee, backstab: profile.backstab, arrow: profile.arrow, opportunityAttack: Boolean(frame.weapon && !frame.followup),
     weaponTemplateId: weapon?.instance?.templateId ?? null, instanceId: weapon?.instance?.id ?? null, damageType: profile.damageType,
-    intent: profile.intent ?? 'normal' };
+    intent: profile.intent ?? 'normal', isSingle: plan.isSingle ?? true, isArea: !(plan.isSingle ?? true), isRanged: profile.arrow || !profile.melee };
   if (!frame.phase) {
     if (!alive(target) || target.fled) { next(); return; }
+    frame.hitIndex ??= 0;
     if (profile.skipHitCheck) {
       const result = resolveCheck(state, actor, profile);
       frame.intentOutcome = result.intent;
@@ -1516,7 +1535,10 @@ export function continueStrike({ state, frame, host }) {
     return;
   }
   if (frame.phase === 'damage') {
-    if (!event.hit) { next(); return; }
+    if (!event.hit || !alive(target) || target.fled) { next(); return; }
+    delete event.dealt;
+    delete event.absorbed;
+    event.targetId = target.id;
     frame.phase = 'heal';
     const { critical, rating, saved } = event;
     const intent = frame.intentOutcome;
@@ -1533,7 +1555,11 @@ export function continueStrike({ state, frame, host }) {
       * stanceScale * (saved ? .5 : 1) * (actionEvent?.damageScale ?? 1) * (frame.scale ?? 1);
     const details = { dice, critical, saved, rating: rating?.name ?? '有效', ratingMultiplier: ratingScale,
       intent: intent ?? { success: true, multiplier: 1 }, attackMultiplier: profile.multiplier, stanceScale };
-    if (profile.kind === 'cover') { coverDamage(state, actor, target, Math.floor(amount), details); return; }
+    if (profile.kind === 'cover') {
+      coverDamage(state, actor, target, Math.floor(amount), details);
+      frame.phase = 'next_hit';
+      return;
+    }
     const recipient = guardFor(state, target) ?? target;
     event.targetId = recipient.id;
     host.commit(state, frame, { ...detail, intent: event.intent, op: 'damage', pool: 'hp', targetId: recipient.id, sourceId: actor.id,
@@ -1545,16 +1571,25 @@ export function continueStrike({ state, frame, host }) {
   if (frame.phase === 'heal') {
     frame.phase = 'after_hit';
     const recipient = tableEntry(state.units, event.targetId);
-    if (template.heal != null && alive(recipient)) host.commit(state, frame, { ...detail, intent: event.intent, op: 'heal', pool: 'hp',
+    if (frame.hitIndex === 0 && template.heal != null && alive(recipient)) host.commit(state, frame, { ...detail, intent: event.intent, op: 'heal', pool: 'hp',
       sourceId: actor.id, targetId: recipient.id, amount: diceRoll(state, diceFormula(state, template.heal, actor)).value,
       actionType: action.type, skillId: action.skillId ?? null, label: template.name });
     return;
   }
-  if (frame.phase === 'after_hit' && profile.kind !== 'cover') {
-    frame.phase = 'followup';
+  if (frame.phase === 'after_hit') {
+    frame.phase = 'next_hit';
     if (action.type === 'shield_bash') event.rules = shieldBashRules;
     host.hooks(state, frame, 'after_hit', frame.awaitEvent);
     return;
+  }
+  if (frame.phase === 'next_hit') {
+    if (frame.hitIndex + 1 < (profile.hits ?? 1) && alive(target) && !target.fled) {
+      frame.hitIndex++;
+      frame.phase = 'damage';
+      return;
+    }
+    if (profile.kind === 'cover') { next(); return; }
+    frame.phase = 'followup';
   }
   if (frame.phase === 'followup' && action.type === 'attack' && !frame.weapon && !actor.followupUsed && stanceRules(weapon?.stance).followUp) {
     const recipient = tableEntry(state.units, event.targetId);
@@ -1566,7 +1601,7 @@ export function continueStrike({ state, frame, host }) {
       && (event.rating?.multiplier ?? 0) >= .8 && validReach(state, actor, recipient, off.template, ammo)
       && (!ammo || weapon.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
       actor.followupUsed = true;
-      const followWeapon = { ...off, template: { ...off.template, power: level * 15 }, ammo, stance: 'dual_wield' };
+      const followWeapon = { ...off, template: { ...off.template, power: off.template.power ?? level * 15 }, ammo, stance: 'dual_wield' };
       const follow = targetProfile(state, actor, recipient, recipient, followWeapon.template, { weapon: followWeapon });
       follow.disadvantages = event.rating.multiplier >= 1.3 ? 0 : Math.max(1, follow.disadvantages);
       record(state, actor, 'followup', `${actor.name}使用${off.template.name}追击${recipient.name}`, { targetId: recipient.id, cost, weaponId: off.instance.id });

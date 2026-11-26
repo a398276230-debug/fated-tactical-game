@@ -145,7 +145,7 @@ function validateAreaDimensions(v) {
   checkOptional(v, 'angle', x => int(x, 1, 360));
 }
 export function equipmentTemplate(v, state) {
-  fields(v, ['name'], ['quality','kind','weaponClass','hand','rangeType','ranged','closeQuarters','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'damage', 'armor', 'defense', 'boundTo', 'weaponType', 'shape', 'target', 'radius', 'innerRadius', 'width', 'angle', ...rawDistanceFields, ...carrierFields, 'pools', 'skills']);
+  fields(v, ['name'], ['quality','kind','weaponClass','hand','rangeType','ranged','closeQuarters','heavy','twoHanded','shield','range', 'accuracy', 'attack', 'power', 'hits', 'damage', 'armor', 'defense', 'boundTo', 'weaponType', 'shape', 'target', 'radius', 'innerRadius', 'width', 'angle', ...rawDistanceFields, ...carrierFields, 'pools', 'skills']);
   if (own(v, 'skills')) {
     list(v.skills, 32, skillId => state ? has(state.skills, skillId) : id(skillId), '装备技能');
     requireThat(new Set(v.skills).size === v.skills.length, '重复装备技能');
@@ -162,13 +162,15 @@ export function equipmentTemplate(v, state) {
   checkOptional(v, 'shape', x => skillShapes.includes(x));
   checkOptional(v, 'target', x => skillTargets.filter(target => target !== 'corpse').includes(x));
   validateAreaDimensions(v);
+  checkOptional(v, 'power', numericExpr);
+  checkOptional(v, 'hits', numericExpr);
   if (own(v, 'damage')) dice(v.damage, state);
   requireThat(own(v, 'range') === own(v, 'damage'), '武器 range/damage');
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', 'passive', ...rawDistanceFields, ...carrierFields, 'pools']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','hits','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', 'passive', ...rawDistanceFields, ...carrierFields, 'pools']);
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
   checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
@@ -179,7 +181,8 @@ export function skillTemplate(v, state) {
   checkOptional(v, 'passive', value => typeof value === 'boolean');
   requireThat(text(v.name) && int(v.ap, 0, 2) && ['attack', 'action'].includes(v.slot) && int(v.range, 0, 64)
     && skillShapes.includes(v.shape) && skillTargets.includes(v.target), '技能');
-  checkOptional(v, 'power', x => int(x, 0, 1000000000));
+  checkOptional(v, 'power', numericExpr);
+  checkOptional(v, 'hits', numericExpr);
   for (const k of ['mp', 'sp']) checkOptional(v, k, x => int(x, 0, 25000));
   validateAreaDimensions(v);
   checkOptional(v, 'accuracy', x => int(x, -100, 100)); checkOptional(v, 'save', x => attrs.includes(x));

@@ -26,6 +26,7 @@ const unitFields = {
 const vmUnitFields = {
   id: '实体 ID', armor: '护甲', x: '横坐标', y: '纵坐标', z: '实际高度',
   altitude: '离地高度', mc: '巨型系数', alive: '是否存活且在场', team: '阵营（blue/red）', summoned: '是否为召唤物',
+  sourceId: '召唤者或候选实体创建者 ID', summonGroup: '召唤分组键', level: '等级（缺省取层级或 1）',
   sourceSkillId: '生成该召唤物的技能 ID（无记录时为 null）',
   name: '单位名称', templateId: '模板 ID', moved: '本回合累计位移格数',
   moraleState: '士气状态（steady/shaken/routed）',
@@ -55,6 +56,7 @@ function unitField(context, unit, field) {
     const hp = own(unit, 'hp');
     return value ?? (Number.isFinite(hp) ? hp > 0 && !own(unit, 'fled') : undefined);
   }
+  if (field === 'level' && unit != null) return value ?? own(unit, 'tier') ?? 1;
   if (field === 'moved' && unit != null) return value ?? 0;
   if (field === 'facing' && Array.isArray(value)) {
     const [x, y] = value;
@@ -139,7 +141,6 @@ register('event.triggered', '动作是否由 perform 触发', context => path(co
 register('event.chainDepth', 'perform 动作嵌套层数', context => path(context, 'event', 'chainDepth'));
 register('zone.team', '区域创建时的阵营；无阵营时为 null', context => path(context, 'zone', 'team'));
 register('zone.sourceId', '区域创建者 ID', context => path(context, 'zone', 'sourceId'));
-register('candidate.sourceId', '当前候选实体的创建者 ID', context => path(context, 'candidate', 'sourceId'));
 for (const [scope, fields] of Object.entries({ status: statusFields, tape: tapeFields })) {
   for (const [field, description] of Object.entries(fields)) {
     register(`${scope}.${field}`, description, context => path(context, scope, field));

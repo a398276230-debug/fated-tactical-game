@@ -415,7 +415,7 @@ export function createRenderer(root, portraitFor = () => []) {
           t.shield ? `对方有 ${t.shield} 点护盾` : ''].filter(Boolean);
         if (mods.length) bits.push(mods.join('，'));
         if (t.heal) bits.push(`治疗 ${interval(t.heal)}`);
-        else if (t.damage) bits.push(`${t.execution ? '处决：忽略闪避，命中至少平暴击。' : ''}命中后${t.damageType ? `${elementLabel(t.damageType, state.customElements)} ` : ''}伤害约 ${interval(t.damage)}${t.savedDamage ? `（豁免成功则 ${interval(t.savedDamage)}）` : ''}`);
+        else if (t.damage) bits.push(`${t.execution ? '处决：忽略闪避，命中至少平暴击。' : ''}命中后${t.damageType ? `${elementLabel(t.damageType, state.customElements)} ` : ''}伤害约 ${interval(t.damage)}${t.hits > 1 ? `（${t.hits} 段合计）` : ''}${t.savedDamage ? `（豁免成功则 ${interval(t.savedDamage)}）` : ''}`);
         if (t.immunity) bits.push(`${elementLabel(t.damageType, state.customElements)}免疫`);
         else if (t.resistance) bits.push(`${elementLabel(t.damageType, state.customElements)}抗性 ${pct(t.resistance)}`);
         else if (t.vulnerability) bits.push(`${elementLabel(t.damageType, state.customElements)}易伤 +${pct(t.vulnerability)}`);

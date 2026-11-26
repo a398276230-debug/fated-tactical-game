@@ -94,6 +94,8 @@ export function continueCommit({ state, frame, host, options }) {
     frame.eventRef = newEvent(state, { commitKind: op, actorId: data.sourceId, targetId: target.id, pool: key,
       authorityRank: authority.authorityRank, sourceTier: authority.unitTier,
       ...(data.instantDeath === true && { instantDeath: true }), poolId: pool.id, damageType: data.damageType ?? null, rawAmount: data.amount, finalAmount: amount,
+      ...(op === 'damage' && { shared: data.shared === true, sharedFromId: data.sharedFromId ?? null }),
+      isSingle: data.isSingle ?? null, isArea: data.isArea ?? null, isRanged: data.isRanged ?? null,
       sourceRuleId: frame.ruleId, direct: data.direct ?? true, preserveLife: data.lethal === false || Boolean(target.nonLethal || host.flag?.(state, target, 'preserveLife') || host.preserveLife?.(state, source)),
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, weaponTemplateId: data.weaponTemplateId ?? null,
       melee: data.melee ?? false, backstab: data.backstab ?? false,
@@ -118,6 +120,14 @@ export function continueCommit({ state, frame, host, options }) {
       if (contest.conditional) { state.vm.stack.pop(); return; }
       host.log(state, source, 'authority', `${target.name}的概念保护${contest.result < 0 ? '拦截了即死' : '被即死穿透'}${authorityProse(contest)}`, { targetId: target.id, contest });
       if (contest.result < 0) { state.vm.stack.pop(); return; }
+    }
+    const protector = op === 'damage' && !data.shared && entry(state.units, event.shareTo);
+    const ratio = Number.isFinite(event.shareRatio) ? Math.max(0, Math.min(1, event.shareRatio)) : 0;
+    if (ratio > 0 && alive(protector) && protector !== target) {
+      const { resultEventRef, out, ...sharedData } = data;
+      frame.sharedDamage = { ...sharedData, targetId: protector.id, amount: data.amount * ratio,
+        damageType: event.damageType, shared: true, sharedFromId: target.id };
+      event.finalAmount = Math.floor(event.finalAmount * (1 - ratio));
     }
     const before = pool.current, beforeMax = pool.max;
     let absorbed = 0;
@@ -204,6 +214,12 @@ export function continueCommit({ state, frame, host, options }) {
     frame.pc++;
     const hook = op === 'damage' ? 'after_damage' : op === 'heal' ? 'after_heal' : null;
     if (hook) scheduleHooks(state, frame, hook, frame.eventRef, host);
+    return;
+  }
+  if (frame.sharedDamage) {
+    const sharedDamage = frame.sharedDamage;
+    delete frame.sharedDamage;
+    scheduleCommit(state, frame, sharedDamage);
     return;
   }
   state.vm.stack.pop();

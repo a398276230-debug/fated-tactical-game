@@ -62,6 +62,7 @@ export function ruleSummary(rule, state) {
 const modLabels = {
   ...attributes, dodge:'闪避', movement:'移动距离', incomingDistanceOffset:'表观距离', critDamageBonus:'暴击伤害加成', incomingDamageMult:'受击易伤倍率', apMax:'行动点上限', armor:'护甲', armorPierce:'固定穿甲', armorPiercePercent:'百分比穿甲',
   damageFlat:'输出固定伤害', damageMult:'全伤害倍率', finalDamageMult:'最终伤害倍率',
+  power:'威力', hits:'打击段数', attackDistanceOffset:'攻击距离修正',
   damageReductionFlat:'受击固定减伤', damageReduction:'受击伤害减免', dr:'受击伤害减免',
   healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率',
   checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻', incomingAccuracy:'被命中修正', intentBonus:'意图加值', intentDifficulty:'意图难度', shatter:'碎裂增伤',
@@ -189,7 +190,7 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
   const skills=[...skillTemplates].map(([id,t])=>{
     const display=skillDisplay(t,unit.skillInfo?.[id],state?.customElements);
     const cost=display.costs.join(' / ');
-    return {label:t?.name??id,path:innate.has(id)||state?.skills?.[id]?`/skills/${id}`:null,meta:[!innate.has(id)?'装备附带':null,t?.passive&&!t.rules?.some(rule=>rule.hook==='active')?'被动':null,cost?`消耗 ${cost}`:'无资源消耗',t?.power!=null?`威力 ${t.power}`:null,display.damage||'无伤害类型',`射程 ${display.range}`,`范围 ${display.area}`].filter(Boolean),template:t};
+    return {label:t?.name??id,path:innate.has(id)||state?.skills?.[id]?`/skills/${id}`:null,meta:[!innate.has(id)?'装备附带':null,t?.passive&&!t.rules?.some(rule=>rule.hook==='active')?'被动':null,cost?`消耗 ${cost}`:'无资源消耗',t?.power!=null?`威力 ${t.power}`:null,t?.hits!=null?`打击段数 ${t.hits}`:null,display.damage||'无伤害类型',`射程 ${display.range}`,`范围 ${display.area}`].filter(Boolean),template:t};
   });
   section('技能',skills);
   const details=make('details',{class:'fated-char-raw'});

@@ -32,12 +32,12 @@ export const EVENT_SCALAR_KEYS = Object.freeze([
   'actionType', 'actorId', 'absorbed', 'advantageDelta', 'attackerId', 'authorityRank', 'backstab', 'baseDC', 'stat',
   'bonusDelta', 'backX', 'backY', 'cancel', 'canceled', 'chainDepth', 'change', 'checkKind', 'commitKind', 'consumeCostOnCancel',
   'costScale', 'critical', 'damageScale', 'damageType', 'dc', 'dcDelta', 'deadId', 'dealt', 'defenderId', 'delta', 'overkill',
-  'direct', 'distance', 'finalAmount', 'finalDC', 'flank', 'forceOutcome', 'fromX', 'fromY', 'healing', 'hit',
+  'direct', 'distance', 'finalAmount', 'finalDC', 'flank', 'forceOutcome', 'fromX', 'fromY', 'healing', 'hit', 'isSingle', 'isArea', 'isRanged', 'moveKind', 'steps', 'shared', 'sharedFromId',
   'hostile', 'ignoreDodge', 'ignoreLOS', 'immunityOwnerId', 'initiativeBonus', 'instantDeath', 'intent', 'killed', 'killedId',
   'killerId', 'kind', 'melee', 'minRating', 'naturalRoll', 'opportunityAttack', 'other', 'passed', 'pool', 'poolId',
   'power', 'preRolled', 'preserveLife', 'preventDeath', 'rating', 'ratingDelta', 'ratingMultiplier', 'rawAmount', 'rawNatural',
   'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'sourceId',
-  'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
+  'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'shareTo', 'shareRatio', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
   'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'eventRef',
 ]);
 import { BUILTIN_DAMAGE_TYPES } from './elements.js';
@@ -62,7 +62,7 @@ const eventPatchFields = {
   before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ['from', 'to']), damageScale: numericExpr },
   before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf('pass', 'fail', 'hit', 'miss', 'crit') },
   after_natural_roll: { replaceNaturalRoll: numericExpr },
-  before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr, damageType },
+  before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr, damageType, shareTo: redirectRef, shareRatio: numericExpr },
   before_status: { cancel: booleanExpr },
   on_lethal_p2: { preventDeath: booleanExpr },
 };
@@ -89,8 +89,8 @@ export const opNotes = Object.freeze({
   link_pool: '用 units 选择单位，将指定的 HP/MP/SP 池合并共享或拆回独立池。',
   apply_status: '施加已注册的状态模板，vars 求值后存入状态。ignoreImmunity:true 明确激活免疫穿透，并按载体位格、角色层级、同层 contest 裁定；否则 before_status 免疫始终生效。',
   remove_status: '在目标持有的状态中用 where 筛选可移除项。durationType:"persistent" 常驻状态与 undispellable 状态均受保护，移除或消耗它们（含自身消耗常驻计数层数）必须显式填 force:true（自身移除自身常驻状态填 force:true 直接成功，对他人生效按来源位格裁定）；outCount 写裸名称。',
-  mutate_event: '仅在有可写字段的拦截钩子改写当前事件。patch 的键必须属于当前 Rule.hook。',
-  move: '统一移动、瞬移、推拉与高度变化。push/pull 逐格判碰撞，altitude 可用 deltaZ 或 land。distance 默认用格；原词条 [位移: X] 用 distance:X、distanceUnit:"position"，按施放载体换算。teleport 声明 distance 时也校验位移上限。',
+  mutate_event: '仅在有可写字段的拦截钩子改写当前事件。patch 的键必须属于当前 Rule.hook。before_commit 可用 shareTo（单位 ID 或公式）与 shareRatio（0 到 1）分担原始伤害；派生伤害保留攻击者并标记 event.shared，不再次分担。',
+  move: '统一移动、瞬移、推拉与高度变化。push/pull 逐格判碰撞，altitude 可用 deltaZ 或 land。distance 默认用格；原词条 [位移: X] 用 distance:X、distanceUnit:"position"，按施放载体换算。teleport 声明 distance 时也校验位移上限。ignoreLocks:true 允许 step/teleport 牵引受移动或瞬移锁限制的单位，仍校验落点。',
   spawn: '按 entityKind 提供对应的 spec；at 指定落点。单位 templateId 可配 spawnPanel 覆写，copyOf 与二者互斥。group 在 summoner（默认 self）名下跨技能共享；stackPolicy 可为 replace（默认）、fifo 或 cap，maxActive 限制存活数量。remainingTurns 默认按大轮递减，durationUnit:"anchor_turns" 改按 durationAnchor（默认召唤者）回合末递减。',
   despawn: '用 select 清除指定的 zone、cover、terrain 或 unit；unit 通常配 where: "candidate.summoned == true" 只移除召唤物，不触发死亡/亡语。筛选敌方区域时用 candidate.team != null && candidate.team != self.team；terrain 只清除 VM 生成的地形层。',
   revive: '只对未被 blockRevive 禁止的阵亡单位生效；hpPercent/mpPercent/spPercent 以 1 为满额。',
@@ -106,7 +106,7 @@ const intentEnum = enumOf('normal', 'function', 'core', 'kill', 'concept');
 const controlPolicy = { ...object({ intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady') }), minProperties: 1 };
 export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
-  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'shatter']);
+  'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'shatter', 'power', 'hits', 'attackDistanceOffset']);
 const stat = enumOf(...statNames);
 export const skillShapes = Object.freeze(['single', 'circle', 'ring', 'fan', 'cone', 'line']);
 export const selectorAreaShapes = Object.freeze([...skillShapes, 'rect']);
@@ -119,7 +119,7 @@ export const stackModes = Object.freeze(['refresh', 'stack', 'replace', 'extend'
 export const durationTypes = Object.freeze(['battle_turns', 'until_removed', 'persistent']);
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
 export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
-  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'critDamageBonus', 'incomingAccuracy', 'intentBonus', 'intentDifficulty']);
+  'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'critDamageBonus', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'hits', 'attackDistanceOffset']);
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
@@ -213,7 +213,7 @@ const opcodeSchemas = [
   opcode('remove_status', { target, where: booleanExpr, force: bool, reason: enumOf('dispelled', 'cleansed', 'expired'), outCount: id }, ['target', 'where']),
   opcode('mutate_event', { patch: either(...Object.keys(patchSchemas).map(name => ref(`patch_${name}`))) }, ['patch']),
   opcode('move', { target, mode: enumOf('teleport', 'step', 'push', 'pull', 'altitude'),
-    to: pointRef, distance: numericExpr, distanceUnit: enumOf('cell', 'position'), deltaZ: numericExpr, land: bool, collisionDamage: numericExpr, onCollide: program }, ['target', 'mode']),
+    to: pointRef, distance: numericExpr, distanceUnit: enumOf('cell', 'position'), deltaZ: numericExpr, land: bool, ignoreLocks: bool, collisionDamage: numericExpr, onCollide: program }, ['target', 'mode']),
   opcode('spawn', { entityKind: enumOf(...Object.keys(spawnSpecs)), spec: { type: 'object' }, at: pointRef, out: id }, ['entityKind', 'spec'],
   ...Object.keys(spawnSpecs).map(kind => when('entityKind', literal(kind), { properties: { spec: ref(`spawn_${kind}`) } }))),
   opcode('despawn', { entityKind: enumOf('zone', 'cover', 'terrain', 'unit'), select: selector }, ['entityKind', 'select']),

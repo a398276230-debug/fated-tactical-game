@@ -71,7 +71,7 @@ export const ruleOps = {
         return own(state.units, id)?.id ?? evaluateExpr(id, context);
       };
       let value;
-      if (key === 'redirectTarget') value = resolveId(expression);
+      if (key === 'redirectTarget' || key === 'shareTo') value = resolveId(expression);
       else if (key === 'replaceTarget') value = { from: resolveId(expression.from), to: resolveId(expression.to) };
       else if (key === 'origin') {
         const point = resolvePoint(expression, context);

@@ -110,7 +110,7 @@ function moveDistance(state, frame, context, op) {
 
 function teleport({ state, frame, host, context, op }, targets) {
   const anchor = targets[0];
-  if (targets.some(unit => aggregateModifiers(state, unit.id).locks.teleport)) return;
+  if (!op.ignoreLocks && targets.some(unit => aggregateModifiers(state, unit.id).locks.teleport)) return;
   const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
   if (!point(destination)) return;
   const ignored = new Set(targets.map(unit => unit.id));
@@ -155,7 +155,8 @@ function continueMove({ state, frame, host, context }) {
   const { op, unitIds } = frame.data;
   if (frame.pc >= unitIds.length) { state.vm.stack.pop(); return; }
   const unit = own(state.units, unitIds[frame.pc++]);
-  if (!live(unit) || (op.mode !== 'push' && op.mode !== 'pull' && aggregateModifiers(state, unit.id).locks.move)) return;
+  const forced = op.mode === 'push' || op.mode === 'pull' || op.mode === 'step' && op.ignoreLocks;
+  if (!live(unit) || (!forced && aggregateModifiers(state, unit.id).locks.move)) return;
   const scope = { ...context, target: unit };
   const from = at(state, unit);
   const path = [];

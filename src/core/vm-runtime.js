@@ -238,8 +238,11 @@ export const vmHost = {
     if (!planned.ok) return planned;
     if (needsTarget(action.type) && action.x === undefined && !planned.center) return { ok: false, error: '缺少目标坐标' };
     if (overrides.interactiveId && planned.interactiveId !== overrides.interactiveId) return { ok: false, error: '原互动点已不可用' };
+    const primary = planned.targets?.find(row => row.id === planned.targetId) ?? planned.targets?.[0];
+    const basePower = evaluateExpr(skill?.power, { self: actor, source: actor, attacker: actor, units: state.units });
+    const power = skill?.power == null ? 0 : primary?.power ?? (Number.isFinite(basePower) ? basePower : 0);
     return { ...planned, center: planned.center ?? { x: action.x ?? actor.x, y: action.y ?? actor.y }, targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter(row => row.kind !== 'cover').map(row => row.id),
-      power: skill?.power ?? 0, initiativeBonus: skill?.initiativeBonus ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
+      power, initiativeBonus: skill?.initiativeBonus ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
       damageType: skill?.damageType ?? skill?.damage?.type ?? planned.damageType ?? null,
       weaponTemplateId: action.type === 'attack' ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null };
   },
