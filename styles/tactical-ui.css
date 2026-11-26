@@ -233,6 +233,7 @@ body { margin: 0; background: var(--ink-2); }
 .ft-bar.hp { --bar: linear-gradient(90deg, #a8474a, #e78886); }
 .ft-bar.mp { --bar: linear-gradient(90deg, #3f6c9b, #86b8e6); }
 .ft-bar.sp { --bar: linear-gradient(90deg, #3e7f57, #80cc9a); }
+.ft-bar.move { --bar: linear-gradient(90deg, #168b90, #65e1d1); }
 .ft-actor-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; color: var(--text-soft); }
 .ft-chip { display: inline-flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid rgba(170, 140, 230, .38); border-radius: 9px; background: rgba(150, 118, 214, .14); color: #e6dbfb; font-size: 11px; }
 .ap-crystal { font-size: 1.15em; color: var(--gold-bright); text-shadow: var(--icon-glow); }

@@ -1,7 +1,7 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
 import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
-import { preview as rulesPreview, corpses, unitStandingStats } from '../core/combat.js';
+import { preview as rulesPreview, corpses, unitStandingStats, movementBudget } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
 import { linkedUnitsOf } from '../core/turn-routing.js';
 import { zoneContains } from '../core/vm-select.js';
@@ -15,7 +15,7 @@ const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1
 export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', attack: '普攻', interact: '互动', brace: '架势防御',
   free_ally: '解除压制', suppress: '压制', block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',
   flee: '逃跑', reload: '装填', end: '结束回合' };
-export const ACTION_HINTS = { move: '走到这一格', sprint: '跑得更远，耗 2 AP', disengage: '离开时不被借机', attack: '用武器攻击', interact: '使用场景设施',
+export const ACTION_HINTS = { move: '自由走位（0 AP，消耗移动力）', sprint: '充能疾跑，耗 1 AP（动作槽）', disengage: '安全撤离，耗 1 AP（免借机）', attack: '用武器攻击', interact: '使用场景设施',
   free_ally: '用攻击槽直接解救相邻队友', suppress: '一格内命中后进行力量对抗，不造成伤害', brace: '本回合减伤', block: '举盾格挡', charge: '为下一击蓄力', scan: '侦察周围', lock_on: '下次攻击更准', grapple: '对抗检定，擒住对方',
   disarm: '对抗检定，打落武器', trip: '对抗检定，绊倒对方', push: '对抗检定，推开对方', flee: '尝试脱离战斗', use_item: '使用副手道具',
   reload: '补充弹药', end: '保留剩余 AP' };
@@ -221,12 +221,12 @@ export function createRenderer(root, portraitFor = () => []) {
   }
 
   function appendMovementCarry(bars, unit, state) {
-    const carry = unit.moveCarryPermille ?? 0;
-    const subCell = unit.moveM != null && unit.moveM < state.scale?.cellM;
-    if (subCell && state.scale.anchorTier >= 5 && !(carry > 0)) {
+    const mb = movementBudget(state, unit);
+    if (!(mb.subCell && mb.maxCells === 0)) bars.append(bar('move', state.outcome ? 0 : mb.remainingCells, Math.max(1, mb.maxCells), `移动 ${state.outcome ? 0 : mb.remainingCells}/${mb.maxCells} 格`));
+    if (mb.subCell && mb.scaleSuppressed && !mb.currentCarryPermille) {
       bars.append(el('span', '', '尺度压制（限同格）'));
-    } else if (carry || subCell) {
-      bars.append(bar('sp', carry, 1000, `蓄步 ${carry / 10}%`));
+    } else if (mb.currentCarryPermille || mb.subCell) {
+      bars.append(bar('sp', mb.currentCarryPermille, 1000, `蓄步 ${mb.currentCarryPermille / 10}%`));
     }
   }
 
@@ -409,7 +409,7 @@ export function createRenderer(root, portraitFor = () => []) {
     if (hover && p) {
       const geo = [];
       if (p.bankedProgress != null) geo.push(`蓄步进度将达到 ${p.bankedProgress / 10}%`);
-      else if (p.steps) geo.push(`走 ${p.steps} 格`);
+      else if (p.steps) geo.push(`走 ${p.steps} 格${p.remainingCellsAfter != null ? `（走后剩 ${p.remainingCellsAfter} 格）` : ''}`);
       if (Number.isFinite(p.distance)) geo.push(`距离 ${p.distance.toFixed(1)} 格${p.range != null ? `（射程 ${p.range}）` : ''}`);
       if (p.dz) geo.push(p.dz > 0 ? `目标高出 ${p.dz}` : `目标低 ${-p.dz}`);
       if (p.teleport) geo.push(`瞬移到 (${p.teleport.x}, ${p.teleport.y})`);
@@ -484,7 +484,7 @@ export function createRenderer(root, portraitFor = () => []) {
     if (fresh || last?.selected !== selected) renderTurnOrder(state, current, selected);
     if (fresh || actorChanged) renderActor(state, actor);
     if (fresh || actorChanged || last?.canAct !== canAct || last?.autoCollaborate !== ui.autoCollaborate) renderSquad(state, current, actor, ui);
-    $('sprint-indicator').textContent = ui.sprint ? '疾跑范围已显示 · 走更远需要 2 AP' : '';
+    $('sprint-indicator').textContent = ui.sprint ? '疾跑范围已显示 · 充能疾跑耗 1 AP（动作槽）' : '';
     renderBoard(state, { selected, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells, entityChoices: ui.entityChoices });
     if (ui.target) renderPreview(state, action, hover, range, result, actor);
     if (fresh || last?.selected !== selected || last?.inspectedId !== ui.inspectedId) {

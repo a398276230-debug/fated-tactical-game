@@ -450,6 +450,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   const execute = command => safely(() => {
     if (pendingAsk() && command.type !== 'answer') return;
     const result = game.playAction(routed(command));
+    if (result.ok && command.type === 'sprint') sprint = false;
     if (result && result.ok === false) error(result.error);
     return result;
   });
@@ -552,7 +553,14 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     if (canAct) {
       if (onActorCell) { add('move'); add('sprint'); }
       if (self) for (const t of ['brace', 'block', 'charge', 'scan', 'flee', 'use_item', 'reload']) add(t);
-      else for (const t of [...(onActorCell ? [] : [sprint ? 'sprint' : 'move']), 'disengage', 'attack', 'shield_bash', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      else {
+        if (!onActorCell) {
+          const move = previewSelected({ type: 'move', x: at.x, y: at.y });
+          add('move');
+          if (sprint || !move.ok) add('sprint');
+        }
+        for (const t of ['disengage', 'attack', 'shield_bash', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
+      }
       if (self && actor.stance === 'greatsword') {
         const defensive = actor.greatswordMode !== 'defensive';
         add('stance_mode', null, null, defensive ? '重剑：转为沉势' : '重剑：转为攻势', defensive ? 'defensive' : 'offensive');
