@@ -41,12 +41,16 @@ function equipItem(state, id, templateId, sourceId, carriedAmounts = {}) {
 }
 function importCarry(state, value) {
   // v1 carry records only had weapon; normalize them into mainHand without changing replay data.
-  fields(value, ['kind', 'version', 'items', 'units'], ['statusTemplates', 'pools']);
+  fields(value, ['kind', 'version', 'items', 'units'], ['statusTemplates', 'pools', 'customElements']);
   if (value.version !== 1 || value.kind !== 'persistent') throw new Error('无效的跨战档案');
   const carry = structuredClone(value);
   if (own(carry, 'statusTemplates')) {
     statusTemplateTable(carry.statusTemplates);
     state.statusTemplates = carry.statusTemplates;
+  }
+  if (own(carry, 'customElements')) {
+    const existing = state.customElements ?? {};
+    state.customElements = { ...existing, ...carry.customElements };
   }
   for (const [id, item] of entries(carry.items)) {
     if (!object(item) || item.id !== id || !own(state.equipment, item.templateId)) throw new Error(`无效的跨战装备：${id}`);

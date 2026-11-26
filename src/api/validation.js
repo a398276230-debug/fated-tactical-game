@@ -3,6 +3,7 @@ import { canOccupy } from '../core/spatial.js';
 import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
 import { carrierFlags, damageTypes, durationTypes, skillShapes, skillTargets, stackModes as vmStackModes, zoneAreaShapes } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
+import { validateCustomElements } from '../core/elements.js';
 
 import { INTENTS, MORALE, MORALE_STATES, QUALITY_TIER, STANCES, UNIT_STATS, moraleLabels } from '../core/combat_protocol.js';
 import { timeOfDay } from '../core/battle_time.js';
@@ -12,7 +13,7 @@ import { validVmState } from '../core/vm-runtime.js';
 function validateRules(rules, state) {
   list(rules, 200, () => true, 'VM 规则');
   for (const [index, rule] of rules.entries()) {
-    const issue = vmRuleError(rule, { statusTemplates: state?.statusTemplates });
+    const issue = vmRuleError(rule, { statusTemplates: state?.statusTemplates, customElements: state?.customElements });
     requireThat(!issue, `VM 规则 rules/${index}${typeof rule?.id === 'string' ? `（${rule.id}）` : ''}/${issue}`);
   }
   requireThat(new Set(rules.map(rule => rule.id)).size === rules.length, 'VM 规则 ID 重复');
@@ -48,11 +49,11 @@ export function table(v, test, max = 200) {
   for (const [k, value] of Object.entries(v)) { requireThat(id(k), '实体 ID'); test(value, k); }
 }
 export function list(v, max, check, key) { requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key); }
-function dice(v) {
+function dice(v, state) {
   fields(v, ['count', 'sides'], ['bonus', 'stat', 'multiplier', 'type']);
   requireThat(int(v.count, 0, 1000000) && int(v.sides, 0, 1000000) && (v.count === 0 || v.sides >= 1), '伤害骰');
   checkOptional(v, 'bonus', x => int(x, -1000000000, 1000000000)); checkOptional(v, 'stat', x => attrs.includes(x));
-  checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x));
+  checkOptional(v, 'multiplier', x => num(x, 0, 8)); checkOptional(v, 'type', x => damageTypes.includes(x) || own(state?.customElements ?? {}, x));
 }
 const stackModes = vmStackModes;
 const numericExpr = value => Number.isFinite(value) || typeof value === 'string' && validExpr(value);
@@ -63,7 +64,7 @@ function carrierFieldsValue(value, state, resolved = false) {
   if (own(value, 'vars')) table(value.vars, entry => requireThat(resolved ? jsonTree(entry)
     : validCarrierScalar(entry), 'VM 变量'));
   if (own(value, 'mods')) list(value.mods, 200, (mod, index) => {
-    const error = vmStatModError(mod);
+    const error = vmStatModError(mod, { customElements: state?.customElements });
     requireThat(!error, `mods[${index}]：${error}`);
     return true;
   }, 'VM 修饰');
@@ -154,7 +155,7 @@ export function equipmentTemplate(v, state) {
   checkOptional(v, 'shape', x => skillShapes.includes(x));
   checkOptional(v, 'target', x => skillTargets.filter(target => target !== 'corpse').includes(x));
   validateAreaDimensions(v);
-  if (own(v, 'damage')) dice(v.damage);
+  if (own(v, 'damage')) dice(v.damage, state);
   requireThat(own(v, 'range') === own(v, 'damage'), '武器 range/damage');
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
@@ -164,7 +165,7 @@ export function skillTemplate(v, state) {
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
   checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
-  checkOptional(v, 'damageType', type => damageTypes.includes(type));
+  checkOptional(v, 'damageType', type => damageTypes.includes(type) || own(state?.customElements ?? {}, type));
   checkOptional(v, 'school', text);
   checkOptional(v, 'resourceCost', resourceCost);
   checkOptional(v, 'initiativeBonus', value => int(value, -100, 100));
@@ -177,7 +178,7 @@ export function skillTemplate(v, state) {
   checkOptional(v, 'accuracy', x => int(x, -100, 100)); checkOptional(v, 'save', x => attrs.includes(x));
   checkOptional(v, 'saveDC', dc => validSaveDC(dc) || typeof dc === 'string' && validExpr(dc));
   requireThat(own(v, 'save') === own(v, 'saveDC'), 'save/saveDC');
-  for (const k of ['damage', 'heal']) if (own(v, k)) dice(v[k]);
+  for (const k of ['damage', 'heal']) if (own(v, k)) dice(v[k], state);
 }
 export function statusValue(v, key, state, ownerId) {
   if (own(v ?? {}, 'templateId')) {
@@ -393,7 +394,8 @@ export function validatePools(state) {
   }
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','suppressingTeam','vm','pools','tape','scale']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','suppressingTeam','vm','pools','tape','scale','customElements']);
+  if (own(s, 'customElements')) validateCustomElements(s.customElements);
   requireThat(s.battleType === 'suppress' ? ['blue','red'].includes(s.suppressingTeam) : s.suppressingTeam === undefined, '压制方');
   checkOptional(s,'battleType',x=>typeof x==='string' && Object.hasOwn(MORALE,x));
   checkOptional(s,'battleConclusion',x=>typeof x==='string' && x.trim().length>0 && s.outcome != null);

@@ -180,7 +180,8 @@ export function createGameAPI() {
           statuses: Object.fromEntries(Object.entries(u.statuses).filter(([, v]) => v.durationType === 'persistent')),
           weapon: u.weapon, gear: u.gear,
         }])), items: s.items, pools: s.pools,
-        ...(s.statusTemplates && Object.keys(s.statusTemplates).length ? { statusTemplates: s.statusTemplates } : {}) });
+        ...(s.statusTemplates && Object.keys(s.statusTemplates).length ? { statusTemplates: s.statusTemplates } : {}),
+        ...(s.customElements && Object.keys(s.customElements).length ? { customElements: s.customElements } : {}) });
     },
     exportBattleReport() {
       const s = current(), rounds = new Map();

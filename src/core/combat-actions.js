@@ -5,6 +5,7 @@ import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie
   saveChance as saveOdds } from './rng.js';
 import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate } from './combat_protocol.js';
 
+import { elementMitigationCategory } from './elements.js';
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
@@ -260,12 +261,13 @@ export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
     ? stanceRules('greatsword').defensiveReduction : 0;
   const reduction = type === 'true' ? 0 : clamp(modStat(state, unit, 'damageReduction', stanceDR, defensiveContext), -1, 1);
   const dr = type === 'true' ? 0 : clamp(modStat(state, unit, 'dr', 0, defensiveContext), -1, 1);
-  const defense = ctx.ignoreArmor || type === 'true' || type === 'mental' ? 0 : armorOf(state, unit, type, pierce, ctx);
+  const category = elementMitigationCategory(type, state.customElements);
+  const defense = ctx.ignoreArmor || category === 'true' || category === 'mental' ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2000 / (defense + 2000);
   const attributeReduction = state.ruleset === 'protocol' && type !== 'true'
-    ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map(key => [key, effectiveStat(state, unit, key)])))
+    ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map(key => [key, effectiveStat(state, unit, key)])), state.customElements)
     : 0;
-  return { shatter, vulnerability, reduction, dr, attributeReduction,
+  return { shatter, vulnerability, reduction, dr, attributeReduction, category,
     multiplier: (1 + shatter) * (1 + vulnerability) * (1 - reduction),
     armor: defense, armorMultiplier };
 }

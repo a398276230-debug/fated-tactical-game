@@ -120,6 +120,7 @@ export function scheduleHooks(state, parent, hook, eventRef, host) {
   // Evaluate filters when the rule is reached so they can observe earlier event mutations.
   for (const entry of ordered.reverse()) pushFrame(state, { kind: 'hook', hook, eventRef, ownerId: entry.ownerId,
     sourceId: entry.sourceId ?? parent.sourceId, ruleId: entry.rule.id, carrier: entry.carrier ?? null,
+    ...(parent.data && { data: parent.data }),
     ...(entry.sourceSkillId && { sourceSkillId: entry.sourceSkillId }),
     rule: entry.rule, useKey: entry.useKey ?? `${entry.ownerId}:${entry.rule.dedupeKey ?? entry.rule.id}`, program: entry.rule.program });
 }

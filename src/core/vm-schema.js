@@ -40,8 +40,10 @@ export const EVENT_SCALAR_KEYS = Object.freeze([
   'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
   'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'eventRef',
 ]);
-export const damageTypes = Object.freeze(['physical', 'energy', 'mental', 'true']);
-const damageType = enumOf(...damageTypes);
+import { BUILTIN_DAMAGE_TYPES } from './elements.js';
+
+export const damageTypes = BUILTIN_DAMAGE_TYPES;
+const damageType = { type: 'string', pattern: `^${idPattern}$`, format: 'tactical-damage-type' };
 const attribute = enumOf('str', 'agi', 'con', 'int', 'spi');
 const slot = enumOf('attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport');
 const point2 = object({ x: number, y: number }, ['x', 'y']);
@@ -60,7 +62,7 @@ const eventPatchFields = {
   before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ['from', 'to']), damageScale: numericExpr },
   before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf('pass', 'fail', 'hit', 'miss', 'crit') },
   after_natural_roll: { replaceNaturalRoll: numericExpr },
-  before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr },
+  before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr, damageType },
   before_status: { cancel: booleanExpr },
   on_lethal_p2: { preventDeath: booleanExpr },
 };
@@ -283,6 +285,7 @@ function matches(value, schema, context, depth = 0) {
     if (typeof value !== 'string' || (schema.pattern && !new RegExp(schema.pattern, 'u').test(value))) return false;
     if (schema.format === 'tactical-expr') return validExpr(value);
     if (schema.format === 'tactical-status-id') return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
+    if (schema.format === 'tactical-damage-type') return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
     return true;
   }
   if (schema.type === 'array') {
@@ -361,8 +364,8 @@ export const validVmExpiry = (value, options = {}) => valid(value, 'expiry', opt
 export const validVmPureSelector = (value, options = {}) => valid(value, 'pureSelector', options);
 export const validVmSelector = (value, options = {}) => valid(value, 'selector', options);
 export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options);
-export function vmStatModError(mod) {
-  if (validVmStatMod(mod)) return undefined;
+export function vmStatModError(mod, options = {}) {
+  if (validVmStatMod(mod, options)) return undefined;
   if (mod?.checkKind === 'dodge') return 'VM 修饰不支持 checkKind:"dodge"（引擎不存在独立闪避检定）；受击闪避加减值请直接写 {stat:"dodge", flat:...} 并省略 checkKind';
   if (mod && ratioStats.enum.includes(mod.stat) && (Object.hasOwn(mod, 'additivePercent')
     || typeof mod.flat === 'number' && !matches(mod.flat, ratioFlat, {}))) {
@@ -378,7 +381,7 @@ export function vmStatModError(mod) {
   for (const [key, value] of Object.entries(mod)) {
     if (!Object.hasOwn(statMod.properties, key)) return `VM 修饰 ${key}：未知字段`;
     const field = statMod.properties[key];
-    if (!matches(value, field, {}) || !exprCheck(value)) {
+    if (!matches(value, field, options) || !exprCheck(value, options)) {
       const choices = field.enum ?? field.items?.enum;
       return `VM 修饰 ${key}=${JSON.stringify(value)} 无效；${choices ? `可选值：${choices.join('、')}` : '请检查字段类型、结构或表达式'}`;
     }

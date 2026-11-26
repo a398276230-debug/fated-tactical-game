@@ -76,10 +76,16 @@ export const ruleOps = {
       else if (key === 'origin') {
         const point = resolvePoint(expression, context);
         if (point) value = { x: point.x, y: point.y, ...(Number.isFinite(point.z) && { z: point.z }) };
-      } else if (typeof expression === 'object' || ['minRating', 'forceOutcome'].includes(key)) value = expression;
+      } else if (typeof expression === 'object' || ['minRating', 'forceOutcome', 'damageType'].includes(key)) value = expression;
       else value = evaluateExpr(expression, context);
       if (value == null || (key === 'replaceTarget' && (!value.from || !value.to))) continue;
       event[key] = value;
+      if (frame.hook === 'before_commit' && key === 'damageType' && event.commitKind === 'damage'
+        && !Object.hasOwn(op.patch, 'finalAmount') && typeof host.prepareDamage === 'function') {
+        const target = state.units?.[event.targetId];
+        const source = state.units?.[event.actorId];
+        if (source && target) event.finalAmount = host.prepareDamage(state, source, target, { ...frame.data, damageType: value });
+      }
       if (frame.hook === 'before_status' && key === 'cancel') {
         if (!value) { delete event.immunityCarrier; delete event.immunityOwnerId; }
         else {

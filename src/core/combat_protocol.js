@@ -73,7 +73,9 @@ export const DISTANCE_TABLE = Object.freeze([
   { name: '超距', min: 11, max: null, hit: -6, range: 0 },
 ]);
 export const UNIT_STATS = Object.freeze(['str', 'agi', 'con', 'int', 'spi']);
-export const DAMAGE_TYPES = Object.freeze(['physical', 'energy', 'mental', 'true']);
+import { BUILTIN_DAMAGE_TYPES, attributeReductionForElement, elementMitigationCategory, typedArmorForElement } from './elements.js';
+
+export const DAMAGE_TYPES = BUILTIN_DAMAGE_TYPES;
 export const STANCES = Object.freeze(['light_blade', 'dual_wield', 'attunement', 'greatsword', 'sword_shield', 'ranged', 'unarmed']);
 export const MORALE_STATES = Object.freeze(['steady', 'shaken', 'routed']);
 export const INTENTS = Object.freeze({ normal: { name: '常规', difficulty: 0, multiplier: 1 },
@@ -131,23 +133,23 @@ export function intentCheck(intent = 'normal', attackerTier = 1, defenderTier = 
   if (attackerTier < defenderTier - 1) return { required: true, success: false, forced: true, ...spec };
   return { required: true, success: attackerTier * 5 + attackerD20 + ratingBonus >= defenderTier * 5 + defenderD20 + spec.difficulty, ...spec };
 }
-export function typedArmor(type, defense) {
-  return type === 'physical' ? defense : type === 'energy' ? defense / 2 : 0;
+export function typedArmor(type, defense, customElements) {
+  return typedArmorForElement(type, defense, customElements);
 }
-export function damageAttributeReduction(type, { con = 0, str = 0, agi = 0, spi = 0, int = 0 } = {}) {
-  if (type === 'physical') return (con + str + agi) * .0025;
-  if (type === 'energy') return (spi + int) * .004;
-  return type === 'mental' ? spi * .008 : 0;
+export function damageAttributeReduction(type, { con = 0, str = 0, agi = 0, spi = 0, int = 0 } = {}, customElements) {
+  return attributeReductionForElement(type, { con, str, agi, spi, int }, customElements);
 }
-export function damagePipeline({ initial = 0, bonus = 0, reductions = [], type = 'physical', defense = 0, penetration = 0, attributes = {}, flatReduction = 0, dr = 0, damageMultiplier = 1 } = {}) {
-  const reduction = type === 'true' ? 0 : Math.min(1, reductions.slice().sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0));
-  const effectiveDefense = typedArmor(type, Math.max(0, defense * (1 - penetration)));
+export function damagePipeline({ initial = 0, bonus = 0, reductions = [], type = 'physical', defense = 0, penetration = 0, attributes = {}, flatReduction = 0, dr = 0, damageMultiplier = 1, customElements } = {}) {
+  const category = elementMitigationCategory(type, customElements);
+  const ignoresMitigation = category === 'true';
+  const reduction = ignoresMitigation ? 0 : Math.min(1, reductions.slice().sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0));
+  const effectiveDefense = typedArmor(type, Math.max(0, defense * (1 - penetration)), customElements);
   const armor = 2000 / (effectiveDefense + 2000);
-  const attributeReduction = damageAttributeReduction(type, attributes);
+  const attributeReduction = damageAttributeReduction(type, attributes, customElements);
   const composed = (initial + bonus) * damageMultiplier * (1 - reduction);
-  const afterArmor = type === 'true' ? composed : composed * armor;
-  const result = Math.max(0, afterArmor * (1 - attributeReduction) - (type === 'true' ? 0 : flatReduction));
-  return { initial, bonus, reduction, effectiveDefense, armorMultiplier: armor, attributeReduction, beforeDR: result, damage: result * (1 - (type === 'true' ? 0 : Math.max(0, Math.min(1, dr)))) };
+  const afterArmor = ignoresMitigation ? composed : composed * armor;
+  const result = Math.max(0, afterArmor * (1 - attributeReduction) - (ignoresMitigation ? 0 : flatReduction));
+  return { initial, bonus, reduction, effectiveDefense, armorMultiplier: armor, attributeReduction, beforeDR: result, damage: result * (1 - (ignoresMitigation ? 0 : Math.max(0, Math.min(1, dr)))) };
 }
 export function areaResolution({ baseDamage, mc = 1, coverage = 1, rangeTier = 1, members = 1, colossus = false } = {}) {
   const nHit = Math.max(1, Math.min(members, Math.ceil(members * Math.min(rangeTier, 10) / 10 * coverage)));
