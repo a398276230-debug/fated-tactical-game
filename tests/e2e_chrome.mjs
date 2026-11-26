@@ -855,6 +855,8 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await click('[data-tab="sandbox"]');
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
   const bagId = Object.keys(raw.units.p1.inventory)[0];
+  assert.equal(await run(`document.querySelector('#target-actions [data-skill-id="${bagId}"]')`), null);
+  await click('#target-actions [data-action="bag_menu"]');
   assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`),false,await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.title`));
   assert.match(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.textContent`), /剩余 1 次/);
   await click(`#target-actions [data-skill-id="${bagId}"]`);
@@ -867,8 +869,11 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await run('window.__fatedTacticalTavern.scan({rehydrate:true})');
   assert.deepEqual(await tavernState(), afterHeal, '相同来源和开场模板：重新水合保留已消耗的物品和战斗进度');
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
+  await click('#target-actions [data-action="bag_menu"]');
   assert.equal(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.disabled`), true);
   assert.match(await run(`${get(`#target-actions [data-skill-id="${bagId}"]`)}.textContent`), /剩余 0 次.*次数已用尽/);
+  await click('#bag-submenu-back');
+  assert.ok(await run(`Boolean(${get('#target-actions [data-action="bag_menu"]')})`));
   await run(`${get('#sandbox-undo')}.click()`);
   assert.equal((await tavernState()).units.p1.inventory[bagId],3);
   await click(`#board [data-x="${raw.units.p1.x}"][data-y="${raw.units.p1.y}"]`);
@@ -1046,6 +1051,7 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   assert.equal((await actor()).id, 'swordsman');
   assert.ok(await run(`${get(cell(2, 2))}.classList.contains('is-reachable')`));
   await click(cell(1, 2));
+  assert.equal(await run('document.querySelector(\'#action-toolbar [data-action="bag_menu"]\')'), null, '空背包不展示背包道具入口');
   assert.match(await run(`${get('#unit-card')}.textContent`), /体型 中型 \(1\.7m\)/);
   assert.match(await run(`${get('#sprint-indicator')}.textContent`), /疾跑范围/);
   await click(cell(1, 2));
@@ -1053,6 +1059,132 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
   await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape'});
   assert.equal(await run(`${get('#target-actions')}.hidden`), true);
   assert.equal(await run('scrollY'),scrollBefore);
+  // 背包二级菜单：8 种背包道具下，一级菜单克制不平铺、二级菜单可滚动/返回/Esc取消/瞄准扣库存/切格自动复位
+  const level1WithoutBagCount = await run(`(() => {
+    document.querySelector(${JSON.stringify(cell(1, 2))}).click();
+    return document.querySelectorAll('#action-toolbar > button').length;
+  })()`);
+  await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape'});
+  await run(`(() => {
+    const game = window.FatedTacticalGame, fixture = game.getBattleState(), u = fixture.units.swordsman;
+    u.hp = Math.max(1, u.maxHp - 20);
+    fixture.pools[u.pools.hp].current = u.hp;
+    u.inventory = {};
+    for (let i = 0; i < 8; i++) {
+      const id = 'bag_item_' + i;
+      const costly = i === 7;
+      fixture.skills[id] = {
+        name: (costly ? '禁咒卷轴' : '战地药剂') + (i + 1),
+        backpackItem: true, ap: 1, ...(costly ? { mp: 999 } : i === 1 ? { sp: 2 } : {}),
+        slot: 'action', range: i === 0 ? 0 : 3, shape: 'single', target: i === 0 ? 'self' : 'ally',
+        rules: [{ id: 'rule_' + id, label: costly ? '高阶奥术消耗品' : '回复 6 点生命', hook: 'active', program: [{ op: 'heal', target: 'target', amount: 6 }] }],
+      };
+      u.inventory[id] = i + 2;
+    }
+    fixture.skills.bag_zero = {
+      name: '耗尽药剂', backpackItem: true, ap: 1, slot: 'action', range: 0, shape: 'single', target: 'self',
+      rules: [{ id: 'rule_zero', hook: 'active', program: [{ op: 'heal', target: 'self', amount: 1 }] }],
+    };
+    u.inventory.bag_zero = 0;
+    game.createBattle({ kind: 'custom_state', state: fixture });
+  })()`);
+  await click(cell(1, 2));
+  const level1Summary = await run(`(() => {
+    const buttons = [...document.querySelectorAll('#action-toolbar > button')];
+    const actions = buttons.map(b => b.dataset.action);
+    const bagBtn = document.querySelector('#action-toolbar [data-action="bag_menu"]');
+    return {
+      totalButtons: buttons.length,
+      bagMenuCount: buttons.filter(b => b.dataset.action === 'bag_menu').length,
+      flatBagItems: buttons.filter(b => b.dataset.skillId?.startsWith('bag_')).length,
+      beforeEnd: actions.indexOf('bag_menu') > 0 && actions.indexOf('bag_menu') < actions.indexOf('end'),
+      label: bagBtn?.textContent ?? '',
+    };
+  })()`);
+  assert.equal(level1Summary.totalButtons, level1WithoutBagCount + 1, '8 种道具仅在一级菜单新增 1 个聚合入口');
+  assert.equal(level1Summary.bagMenuCount, 1);
+  assert.equal(level1Summary.flatBagItems, 0);
+  assert.equal(level1Summary.beforeEnd, true, '背包入口位于动作后、结束回合前');
+  assert.match(level1Summary.label, /背包道具（8 种）.*共 44 件.*7 种可用/);
+  await click('#action-toolbar [data-action="bag_menu"]');
+  const submenuState = await run(`(() => {
+    const card = document.querySelector('#target-actions'), back = document.querySelector('#bag-submenu-back'), toolbar = document.querySelector('#action-toolbar');
+    const items = [...toolbar.querySelectorAll('button')];
+    toolbar.scrollTop = toolbar.scrollHeight;
+    const cr = card.getBoundingClientRect(), br = back.getBoundingClientRect(), tr = toolbar.getBoundingClientRect();
+    return {
+      hidden: card.hidden, submenu: card.dataset.submenu, title: document.querySelector('#target-title').textContent,
+      backVisible: !document.querySelector('#target-submenu-nav').hidden && br.top >= cr.top && br.bottom <= tr.top + 2,
+      inViewport: cr.left >= 0 && cr.right <= innerWidth && cr.top >= 0 && cr.bottom <= innerHeight,
+      count: items.length,
+      firstText: items[0]?.textContent ?? '',
+      secondText: items[1]?.textContent ?? '',
+      disabledLast: items[7]?.disabled,
+      lastText: items[7]?.textContent ?? '',
+    };
+  })()`);
+  assert.equal(submenuState.hidden, false);
+  assert.equal(submenuState.submenu, 'bag');
+  assert.match(submenuState.title, /背包道具 · 共 8 种（44 件）/);
+  assert.equal(submenuState.backVisible, true, '二级菜单滚动到底部后返回按钮仍固定在顶部');
+  assert.equal(submenuState.inViewport, true);
+  assert.equal(submenuState.count, 8, 'count=0 的道具不渲染，全部 8 种有效道具完整渲染');
+  assert.match(submenuState.firstText, /战地药剂1 ×2.*1 AP.*自身.*回复 6 点生命/);
+  assert.match(submenuState.secondText, /战地药剂2 ×3.*1 AP · 2 SP/);
+  assert.equal(submenuState.disabledLast, true);
+  assert.match(submenuState.lastText, /禁咒卷轴8 ×9.*1 AP · 999 MP · 魔力不足 · 高阶奥术消耗品/);
+  // 返回按钮与 Backspace 均可无缝切回一级菜单；切格/重开自动复位一级视图
+  await click('#bag-submenu-back');
+  assert.equal(await run('document.querySelector("#target-actions").dataset.submenu ?? null'), null);
+  assert.equal(await run('document.querySelector("#target-submenu-nav").hidden'), true);
+  assert.ok(await run('Boolean(document.querySelector(\'#action-toolbar [data-action="bag_menu"]\'))'));
+  await click('#action-toolbar [data-action="bag_menu"]');
+  assert.equal(await run('document.querySelector("#target-actions").dataset.submenu'), 'bag');
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Backspace' });
+  assert.equal(await run('document.querySelector("#target-actions").dataset.submenu ?? null'), null);
+  await click('#action-toolbar [data-action="bag_menu"]');
+  await click(cell(0, 2));
+  assert.equal(await run('document.querySelector("#target-actions").dataset.submenu ?? null'), null, '切换选中格自动复位回一级视图');
+  // 横屏 844×390 与竖屏 390×850 下二级菜单滚动不溢出、不丢失返回按钮
+  for (const vp of [{ width: 844, height: 390, mobile: true }, { width: 390, height: 850, mobile: true }]) {
+    await send('Emulation.setDeviceMetricsOverride', { ...vp, deviceScaleFactor: 1 });
+    await pause(60);
+    await click(cell(1, 2));
+    await click('#action-toolbar [data-action="bag_menu"]');
+    const check = await run(`(() => {
+      const card = document.querySelector('#target-actions'), back = document.querySelector('#bag-submenu-back'), toolbar = document.querySelector('#action-toolbar');
+      toolbar.scrollTop = toolbar.scrollHeight;
+      const cr = card.getBoundingClientRect(), br = back.getBoundingClientRect(), tr = toolbar.getBoundingClientRect();
+      return {
+        fits: cr.left >= 0 && cr.right <= innerWidth + 1 && cr.top >= 0 && cr.bottom <= innerHeight + 1,
+        scrolled: toolbar.scrollHeight > toolbar.clientHeight && toolbar.scrollTop > 0,
+        backPinned: br.height >= 30 && br.top >= cr.top && br.bottom <= tr.top + 2 && br.right <= cr.right,
+      };
+    })()`);
+    assert.deepEqual(check, { fits: true, scrolled: true, backPinned: true }, `${vp.width}×${vp.height} 二级菜单不溢出且保留返回按钮`);
+    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape' });
+  }
+  await send('Emulation.clearDeviceMetricsOverride');
+  await pause(60);
+  // 选中二级菜单道具进入 bagAim：Esc 取消不扣库存，再次选中施放成功扣减库存并复位回一级菜单
+  const hpBeforePotion = (await state()).units.swordsman.hp;
+  await click(cell(1, 2));
+  assert.equal(await run('document.querySelector("#target-actions").dataset.submenu ?? null'), null, 'Esc 关闭重开后回到一级菜单');
+  await click('#action-toolbar [data-action="bag_menu"]');
+  await click('#action-toolbar [data-skill-id="bag_item_0"]');
+  assert.equal(await run('document.querySelector("#target-actions").hidden'), true);
+  assert.match(await run('document.querySelector("#action-error").textContent'), /请选择战地药剂1的目标/);
+  await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape' });
+  assert.equal((await state()).units.swordsman.inventory.bag_item_0, 2);
+  await click(cell(1, 2));
+  await click('#action-toolbar [data-action="bag_menu"]');
+  await click('#action-toolbar [data-skill-id="bag_item_0"]');
+  await click(cell(1, 2));
+  await click('#confirm-action');
+  const afterPotion = (await state()).units.swordsman;
+  assert.equal(afterPotion.inventory.bag_item_0, 1, '施放消耗道具扣减库存');
+  assert.equal(afterPotion.hp, hpBeforePotion + 6);
+  await click('#reset-button');
   await click(cell(2, 2)); assert.equal((await state()).units.swordsman.x, 1);
   await click(actions('move')); assert.equal((await state()).units.swordsman.x, 2);
   await click(cell(3, 2)); await click(actions('attack'));

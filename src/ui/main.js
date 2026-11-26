@@ -47,7 +47,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     removeItem: key => { try { rawStorage?.removeItem(key); } catch { /* optional */ } },
   };
   // state：屏幕上正在展示的战局（演出时会落后于真实战局）；live：规则层的真实战局。
-  let bagAim = null;
+  let bagAim = null, bagMenuOpen = false;
   let state, live, selectedId, action, hover, target, sprint = false, timer, pending, carry, inspectedId, busy = false;
   let menuButtons = new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
   let visibleAsk = null, askCells = null, entityChoices = null;
@@ -200,10 +200,13 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     refreshMeasurement();
   }
   function resetSelection() {
-    bagAim = null;
+    bagAim = null; bagMenuOpen = false;
     selectedId = active(live ?? state)?.id;
     action = null; hover = target = null; sprint = false; inspectedId = null;
-    $('target-actions').hidden = true;
+    const card = $('target-actions');
+    delete card.dataset.submenu;
+    $('target-submenu-nav').hidden = true;
+    card.hidden = true;
   }
 
   // ---------- 挂起选择 ----------
@@ -468,10 +471,13 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
   function closeTarget(restoreFocus = false) {
     const at = target;
-    if (!at && !bagAim && $('target-actions').hidden) return;
-    bagAim = null;
+    if (!at && !bagAim && !bagMenuOpen && $('target-actions').hidden) return;
+    bagAim = null; bagMenuOpen = false;
     target = action = null;
-    $('target-actions').hidden = true;
+    const card = $('target-actions');
+    delete card.dataset.submenu;
+    $('target-submenu-nav').hidden = true;
+    card.hidden = true;
     draw();
     if (restoreFocus && at) cellFor(at)?.focus({ preventScroll: true });
   }
@@ -506,13 +512,19 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const command = { type:'skill', skillId:bagAim, x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) };
       const plan = previewSelected(command);
       if (!plan.ok) { error(plan.error); return; }
+      bagMenuOpen = false;
       target = { x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = command; bagAim = null;
+      const card = $('target-actions');
+      delete card.dataset.submenu;
+      $('target-submenu-nav').hidden = true;
+      $('target-unit-options').hidden = true;
       $('target-title').textContent = `${plan.name} · (${at.x}, ${at.y})`;
       $('action-toolbar').replaceChildren(); $('target-options').hidden = true;
-      $('target-actions').hidden = false; $('confirm-action').hidden = false;
+      card.hidden = false; card.style.maxHeight = ''; $('confirm-action').hidden = false;
       $('confirm-action').textContent = `确认使用${plan.name}`;
       draw(); layoutTargetCard(); return;
     }
+    if (!input.preserveBagMenu) bagMenuOpen = false;
     if (self && !input.preserveSprint) {
       const check = previewSelected({ type: 'sprint' });
       sprint = !sprint && check.ok;
@@ -523,7 +535,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     target = { x: at.x, y: at.y, ...(unit?.id ? { targetId: unit.id } : {}) }; hover = target; action = null;
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
-    const options = [];
+    const options = [], bagChoices = [];
     const add = (type, skill, itemId, skillName, maneuver) => {
       const command = { type, ...(maneuver && { maneuver }), ...(TARGETLESS.includes(type) ? {} : { x: at.x, y: at.y }), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
@@ -559,67 +571,106 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
           if (!item?.backpackItem || count < 1) continue;
           const command = { type:'skill', skillId };
           const plan = previewSelected(command);
-          options.push({ command, plan, bag:true, label:`使用背包物品：${item.name} ×${count}` });
+          const ruleHint = (item.rules ?? []).map(r => r.label).filter(Boolean).join('；');
+          bagChoices.push({ command, plan, item, count, ruleHint, bag:true, label:`${item.name} ×${count}` });
+        }
+        if (bagChoices.length) {
+          const totalCount = bagChoices.reduce((sum, entry) => sum + entry.count, 0);
+          const usableCount = bagChoices.filter(entry => entry.plan.ok).length;
+          const summary = usableCount > 0
+            ? `共 ${totalCount} 件 · ${usableCount === bagChoices.length ? '打开道具子菜单' : `${usableCount} 种可用`}`
+            : `共 ${totalCount} 件 · ${bagChoices[0].plan.error || '当前不可用'}`;
+          options.push({ command:{ type:'bag_menu' }, plan:{ ok:true }, bagMenuEntry:true, summary, label:`背包道具（${bagChoices.length} 种）` });
         }
         add('end_encounter');
         add('end');
       }
     }
+    if (!self || !bagChoices.length) bagMenuOpen = false;
+    const inBagSubmenu = self && bagMenuOpen;
     const who = unit ? `${unit.team === 'blue' ? '我方' : '敌方'} ${unit.name}` : feature?.name ?? '空地';
-    $('target-title').textContent = `${who} · (${at.x}, ${at.y})${self ? (sprint ? ' · 疾跑范围' : '') : ''}`;
+    const totalBagCount = bagChoices.reduce((sum, entry) => sum + entry.count, 0);
+    $('target-title').textContent = inBagSubmenu
+      ? `${actor.name} · 背包道具 · 共 ${bagChoices.length} 种（${totalBagCount} 件）`
+      : `${who} · (${at.x}, ${at.y})${self ? (sprint ? ' · 疾跑范围' : '') : ''}`;
+    $('target-submenu-nav').hidden = !inBagSubmenu;
     const targetOptions = $('target-unit-options');
     targetOptions.replaceChildren();
-    targetOptions.hidden = units.length < 2;
-    for (const candidate of units) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'ft-target-unit'; button.dataset.targetId = candidate.id;
-      button.dataset.faction = candidate.team; button.setAttribute('aria-pressed', String(candidate.id === unit?.id));
-      button.textContent = `${candidate.name} · ${Math.round((candidate.hp / Math.max(1, candidate.maxHp)) * 100)}%`;
-      button.addEventListener('click', () => selectTarget(candidate.id), { signal });
-      targetOptions.append(button);
+    targetOptions.hidden = inBagSubmenu || units.length < 2;
+    if (!inBagSubmenu) {
+      for (const candidate of units) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'ft-target-unit'; button.dataset.targetId = candidate.id;
+        button.dataset.faction = candidate.team; button.setAttribute('aria-pressed', String(candidate.id === unit?.id));
+        button.textContent = `${candidate.name} · ${Math.round((candidate.hp / Math.max(1, candidate.maxHp)) * 100)}%`;
+        button.addEventListener('click', () => selectTarget(candidate.id), { signal });
+        targetOptions.append(button);
+      }
     }
-    $('target-options').hidden = !options.some(o => ['attack', 'skill'].includes(o.command.type));
+    const visibleChoices = inBagSubmenu ? bagChoices : options;
+    $('target-options').hidden = inBagSubmenu || !options.some(o => ['attack', 'skill'].includes(o.command.type));
     const toolbar = $('action-toolbar');
+    toolbar.setAttribute('aria-label', inBagSubmenu ? '背包道具列表' : '可用动作');
     toolbar.replaceChildren();
     menuButtons = new Map();
-    for (const choice of options) {
+    for (const choice of visibleChoices) {
       const { command, plan, label } = choice;
       const button = document.createElement('button');
       button.type = 'button'; button.className = 'game-button'; button.dataset.action = command.type;
       if (command.skillId) button.dataset.skillId = command.skillId;
-      const cost = [plan.ap ? `${plan.ap} AP` : '', plan.mp ? `${plan.mp} MP` : '', plan.sp ? `${plan.sp} SP` : ''].filter(Boolean).join(' · ');
+      const ap = plan.ap ?? choice.item?.ap, mp = plan.mp ?? choice.item?.mp, sp = plan.sp ?? choice.item?.sp;
+      const cost = [ap ? `${ap} AP` : '', mp ? `${mp} MP` : '', sp ? `${sp} SP` : ''].filter(Boolean).join(' · ');
       const odds = plan.targets?.[0]?.hitChance;
-      const note = [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `命中 ${Math.round(odds * 100)}%` : '', plan.opportunities?.length ? '⚠ 会被借机' : ''].filter(Boolean).join(' · ');
+      const bagNote = choice.bag ? [cost, choice.item.target === 'self' || choice.item.range === 0 ? '自身' : `射程 ${plan.range ?? choice.item.range}`, choice.ruleHint || '选择目标格施放'].filter(Boolean).join(' · ') : '';
+      const note = choice.bagMenuEntry ? choice.summary : choice.bag ? bagNote
+        : [cost, Number.isFinite(odds) && !plan.targets[0].automatic ? `命中 ${Math.round(odds * 100)}%` : '', plan.opportunities?.length ? '⚠ 会被借机' : ''].filter(Boolean).join(' · ');
       button.append(Number.isFinite(plan.usesLeft) ? `${label}（剩余 ${plan.usesLeft} 次）` : label);
       const small = document.createElement('small');
       small.textContent = note || ACTION_HINTS[command.type] || '';
       if (small.textContent) button.append(small);
       button.disabled = !plan.ok;
-      button.title = plan.error || ACTION_HINTS[command.type] || label;
-      if (!plan.ok) small.textContent = plan.error === '有向技能需要选择方向'
-        ? '有向技能需要选择方向（点相邻格确定朝向）' : plan.error;
+      button.title = plan.error || choice.ruleHint || ACTION_HINTS[command.type] || label;
+      if (!plan.ok) {
+        const errText = plan.error === '有向技能需要选择方向' ? '有向技能需要选择方向（点相邻格确定朝向）' : plan.error;
+        small.textContent = choice.bag ? [cost, errText, choice.ruleHint].filter(Boolean).join(' · ') : errText;
+      }
       if (!plan.ok && !small.parentNode) button.append(small);
       button.setAttribute('aria-pressed', 'false');
       menuButtons.set(button, choice);
       toolbar.append(button);
     }
-    if (!options.length) toolbar.textContent = canAct ? '这一格没有能做的事。' : '现在不是你的回合，只能查看。';
+    if (!visibleChoices.length) toolbar.textContent = canAct ? '这一格没有能做的事。' : '现在不是你的回合，只能查看。';
     const card = $('target-actions');
+    if (inBagSubmenu) card.dataset.submenu = 'bag'; else delete card.dataset.submenu;
     card.hidden = false;
+    card.style.maxHeight = '';
     card.scrollTop = 0;
+    toolbar.scrollTop = 0;
     $('confirm-action').hidden = true;
-    if (options.length) action = options[0].command;
+    action = inBagSubmenu ? null : options.find(o => !o.bagMenuEntry)?.command ?? null;
     draw();
     layoutTargetCard();
-    if (input.detail === 0) (toolbar.querySelector('button') || $('close-target')).focus({ preventScroll: true });
+    if (input.focusSubmenu) (toolbar.querySelector('button:not(:disabled)') || $('bag-submenu-back') || $('close-target'))?.focus({ preventScroll: true });
+    else if (input.focusBagEntry) (toolbar.querySelector('[data-action="bag_menu"]') || $('close-target'))?.focus({ preventScroll: true });
+    else if (input.detail === 0) (toolbar.querySelector('button') || $('close-target')).focus({ preventScroll: true });
   }
   function handleAction(button) {
     if (pendingAsk()) return;
     const choice = menuButtons.get(button);
     if (!choice) return;
+    if (choice.bagMenuEntry) {
+      if (!target) return;
+      bagMenuOpen = true;
+      handlePoint(target, { preserveSprint: true, preserveBagMenu: true, focusSubmenu: true });
+      return;
+    }
     if (choice.bag) {
+      bagMenuOpen = false;
       bagAim = choice.command.skillId; action = choice.command; target = null; sprint = false;
-      $('target-actions').hidden = true; error(`请选择${choice.plan.name}的目标（Esc 取消）`); draw(); return;
+      const card = $('target-actions');
+      delete card.dataset.submenu;
+      $('target-submenu-nav').hidden = true;
+      card.hidden = true; error(`请选择${choice.plan.name}的目标（Esc 取消）`); draw(); return;
     }
     const { command, plan, label } = choice;
     error('');
@@ -814,6 +865,11 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     });
 
     on('close-target', 'click', () => closeTarget(true));
+    on('bag-submenu-back', 'click', () => {
+      if (pendingAsk() || !target) return;
+      bagMenuOpen = false;
+      handlePoint(target, { preserveSprint: true, focusBagEntry: true });
+    });
     on('confirm-action', 'click', () => { if (target && action) execute(action); });
     on('action-toolbar', 'click', e => { const button = e.target.closest('[data-action]'); if (button) handleAction(button); });
     on('turn-order', 'click', e => {
@@ -830,7 +886,14 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       if (target && !$('target-actions').contains(e.target) && !pointFrom(e.target)) closeTarget();
     }, { signal });
     document.addEventListener('keydown', e => {
-      if (e.key !== 'Escape' || root.querySelector('dialog[open]')) return;
+      if (root.querySelector('dialog[open]')) return;
+      if (e.key === 'Backspace' && bagMenuOpen && target && !e.target.closest?.('input, textarea, select, [contenteditable]')) {
+        e.preventDefault();
+        bagMenuOpen = false;
+        handlePoint(target, { preserveSprint: true, focusBagEntry: true });
+        return;
+      }
+      if (e.key !== 'Escape') return;
       if (target || bagAim) closeTarget(true);
       else if (openDrawer) closeDrawer();
       else playback.skip();

@@ -353,14 +353,24 @@ body { margin: 0; background: var(--ink-2); }
   border: 1px solid rgb(var(--gold-rgb) / .45); border-radius: 12px; background: var(--ink-1); color: var(--text); font-size: 13px;
   box-shadow: 0 14px 34px rgb(0 0 0 / .6);
 }
+#target-actions.ft-target-card[data-submenu="bag"] { display: flex; flex-direction: column; overflow: hidden; }
 .ft-target-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+#target-actions[data-submenu="bag"] .ft-target-head { flex: none; }
 #target-title { min-width: 0; color: var(--accent-text); overflow-wrap: anywhere; }
 .ft-close { flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line-mid); border-radius: 7px; background: var(--raised-b); color: var(--text); font-size: 17px; cursor: pointer; }
+.ft-submenu-nav { flex: none; display: flex; align-items: center; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line-mid); }
+.ft-submenu-back { width: 100%; min-height: 30px; padding: 3px 9px; text-align: left; color: var(--accent-text); font-size: 12px; }
 .ft-target-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; color: var(--text-soft); font-size: 12px; }
 .ft-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 .ft-actions .game-button { flex: 1 1 calc(50% - 5px); padding-inline: 8px; text-align: left; }
+.ft-actions .game-button[data-action="bag_menu"] { border-color: rgb(var(--gold-rgb) / .45); }
 .ft-actions .game-button small { display: block; color: var(--text-muted); font-size: 10px; }
 .ft-actions .game-button[aria-pressed="true"] small { color: inherit; opacity: .8; }
+#target-actions[data-submenu="bag"] .ft-actions {
+  flex: 1 1 auto; min-height: 0; max-height: min(56vh, 340px); flex-direction: column; flex-wrap: nowrap; gap: 4px;
+  overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent;
+}
+#target-actions[data-submenu="bag"] .ft-actions .game-button { flex: none; width: 100%; padding: 5px 9px; }
 .ft-preview { margin-top: 8px; max-height: 13em; overflow: auto; color: var(--text-soft); font-size: 12px; }
 .ft-preview:empty { display: none; }
 .preview-line + .preview-line { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
@@ -504,6 +514,7 @@ body { margin: 0; background: var(--ink-2); }
   .ft-caption { left: max(8px, var(--safe-l)); bottom: max(8px, var(--safe-b)); width: calc(100% - var(--hud-right) - 24px); }
   .ft-skip { right: calc(var(--hud-right) + 8px); bottom: max(8px, var(--safe-b)); }
   .ft-banner b { font-size: 22px; }
+  #target-actions.ft-target-card { width: min(280px, 44vw); padding: 8px; }
 }
 
 /* ---------- 触屏：触控目标不小于 44px ---------- */

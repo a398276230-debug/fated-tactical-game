@@ -11,7 +11,9 @@ export function placeTargetCard(card, anchor, viewport = window.visualViewport) 
   const { width, height: renderedHeight } = card.getBoundingClientRect();
   // Measure the content without temporarily expanding the scroll container:
   // expanding then shrinking clamps scrollTop on every captured scroll event.
-  const height = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight);
+  const list = card.dataset.submenu ? card.querySelector('#action-toolbar') : null;
+  const listOverflow = list ? Math.max(0, list.scrollHeight - list.clientHeight) : 0;
+  const height = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight + listOverflow);
   let maxHeight = viewportHeight;
   const room = { right: right - a.right - gap, left: a.left - left - gap,
     below: bottom - a.bottom - gap, above: a.top - top - gap };
