@@ -491,6 +491,11 @@ function saveChance(target2, modifier = 0, advantage = 0, disadvantage = 0) {
 }
 
 // src/presets/status-defaults.js
+function getStatusTemplate(state, statusId3) {
+  if (typeof statusId3 !== "string") return void 0;
+  const templates = state?.statusTemplates;
+  return (Object.hasOwn(templates ?? {}, statusId3) ? templates[statusId3] : void 0) ?? (Object.hasOwn(STATUSES, statusId3) ? STATUSES[statusId3] : void 0);
+}
 var actionStatuses = Object.freeze({
   brace: "guarded",
   block: "guarded",
@@ -499,7 +504,6 @@ var actionStatuses = Object.freeze({
   scan: "weakness",
   grapple: "grappled",
   trip: "prone",
-  altar: "haste",
   shield: "shield",
   collision: "stun",
   shield_bash: "stun"
@@ -522,8 +526,6 @@ var def = (id3, name, icon, category, remainingTurns, description, options = {})
   rules: Object.freeze([]),
   ...options
 });
-var tick = (id3, hook2, op) => ({ id: id3, hook: hook2, program: [{ target: "self", ...op }] });
-var dot = (id3, hook2, amount, damageType2) => tick(id3, hook2, { op: "damage", amount, damageType: damageType2, direct: false });
 var STATUSES = Object.freeze({
   suppressed: def("suppressed", "\u88AB\u538B\u5236", "\u26D3\uFE0F", "control", 1, "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002", {
     durationType: "until_removed",
@@ -531,84 +533,16 @@ var STATUSES = Object.freeze({
     vars: { holdTotal: 0 },
     mods: [{ locks: allSlots }]
   }),
-  burn: def("burn", "\u707C\u70E7", "\u{1F525}", "dot", 2, "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002", {
-    tags: ["fire"],
-    rules: [dot("burn-tick", "turn_start", 5, "energy")]
-  }),
-  bleed: def("bleed", "\u6D41\u8840", "\u{1FA78}", "dot", 3, "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002", {
-    stackMode: "stack",
-    maxStacks: 5,
-    rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")]
-  }),
-  poison: def("poison", "\u4E2D\u6BD2", "\u2620\uFE0F", "dot", 3, "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002", {
-    stackMode: "stack",
-    maxStacks: 4,
-    tags: ["poison"],
-    rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")]
-  }),
-  regen: def("regen", "\u518D\u751F", "\u{1F49A}", "hot", 3, "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002", {
-    rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })]
-  }),
   shield: def("shield", "\u62A4\u76FE", "\u{1F6E1}\uFE0F", "shield", 2, "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002", {
-    stackMode: "replace",
-    vars: { shieldAmount: 8 }
+    stackMode: "replace"
   }),
   guarded: def("guarded", "\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", {
     vars: { reduction: 0.35 },
     mods: [{ stat: "damageReduction", flat: "status.vars.reduction" }]
   }),
-  taunt: def("taunt", "\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", {
-    mods: [{ flags: ["taunted"] }]
-  }),
-  guard: def("guard", "\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", {
-    mods: [{ flags: ["intercept"] }]
-  }),
-  thorns: def("thorns", "\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {
-    rules: [{
-      id: "thorns-retaliate",
-      hook: "after_damage",
-      filter: "event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team",
-      program: [{ op: "damage", target: "attacker", amount: 5, damageType: "true", direct: false }]
-    }]
-  }),
   stun: def("stun", "\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", {
     tags: ["control"],
     mods: [{ locks: allSlots }]
-  }),
-  freeze: def("freeze", "\u51B0\u51BB", "\u{1F9CA}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002", {
-    tags: ["control", "ice"],
-    mods: [{ locks: allSlots }, { stat: "shatter", flat: 0.5 }],
-    expireOn: { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
-  }),
-  root: def("root", "\u5B9A\u8EAB", "\u26D3\uFE0F", "control", 2, "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002", {
-    tags: ["control"],
-    mods: [{ locks: ["move", "teleport"] }]
-  }),
-  blind: def("blind", "\u81F4\u76F2", "\u{1F311}", "debuff", 2, "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002", {
-    mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }]
-  }),
-  vulnerable: def("vulnerable", "\u6613\u4F24", "\u{1F4A2}", "debuff", 2, "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002", {
-    mods: [{ stat: "incomingDamageMult", mult: 1.35 }]
-  }),
-  sunder: def("sunder", "\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", {
-    mods: [{ stat: "armor", flat: -4 }]
-  }),
-  mark: def("mark", "\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", {
-    mods: [{ stat: "incomingAccuracy", flat: "2 * status.stacks" }]
-  }),
-  stealth: def("stealth", "\u9690\u8EAB", "\u{1F464}", "buff", 2, "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002", {
-    tags: ["stealth"],
-    mods: [{ flags: ["hidden"] }, { stat: "advantage", flat: 2, checkKind: "attack" }],
-    expireOn: [
-      { hook: "after_action", filter: "attacker.id == self.id && event.hostile == true" },
-      { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
-    ]
-  }),
-  haste: def("haste", "\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1.", {
-    mods: [{ stat: "movement", flat: "1 * status.stacks" }]
-  }),
-  chill: def("chill", "\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", {
-    mods: [{ stat: "movement", flat: "-1 * status.stacks" }, { stat: "checkBonus", checkKind: "attack", flat: "-2 * status.stacks" }]
   }),
   charge: def("charge", "\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", {
     mods: [{ stat: "damageMult", additivePercent: "0.15 * status.stacks", when: 'event.actionType == "attack"' }]
@@ -616,10 +550,10 @@ var STATUSES = Object.freeze({
   lock_on: def("lock_on", "\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", {
     mods: [{ stat: "checkBonus", checkKind: "attack", flat: "1 * status.stacks", when: "event.targetId == status.vars.targetId" }]
   }),
-  weakness: def("weakness", "\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4F7F\u610F\u56FE\u96BE\u5EA6\u964D\u4F4E 2\u3002", {
+  weakness: def("weakness", "\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4E3A\u63A2\u5BDF\u8005\u7684\u610F\u56FE\u68C0\u5B9A\u52A0 2\u3002", {
     stackMode: "stack",
     maxStacks: 3,
-    mods: [{ stat: "intentDifficulty", flat: "-2 * status.stacks" }]
+    mods: [{ stat: "intentBonus", flat: "2 * status.stacks" }]
   }),
   grappled: def("grappled", "\u64D2\u62B1", "\u26D3", "control", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002", {
     tags: ["control"],
@@ -627,9 +561,6 @@ var STATUSES = Object.freeze({
   }),
   prone: def("prone", "\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", {
     mods: [{ locks: ["move"] }, { stat: "incomingAccuracy", flat: "2 * status.stacks" }]
-  }),
-  infinite_ammo: def("infinite_ammo", "\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", {
-    mods: [{ flags: ["infiniteAmmo"] }]
   })
 });
 
@@ -1694,7 +1625,7 @@ function matches(value, schema, context, depth = 0) {
   if (schema.type === "string") {
     if (typeof value !== "string" || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
     if (schema.format === "tactical-expr") return validExpr(value);
-    if (schema.format === "tactical-status-id") return Object.hasOwn(STATUSES, value) || Object.hasOwn(context.statusTemplates ?? {}, value);
+    if (schema.format === "tactical-status-id") return Object.hasOwn(context.statusTemplates ?? {}, value) || (context.declaredStatusTemplatesOnly ? value === "suppressed" : Object.hasOwn(STATUSES, value));
     if (schema.format === "tactical-damage-type") return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
     return true;
   }
@@ -2000,7 +1931,7 @@ function isStatusImmune(state, target2, statusId3, source = null, dependencies2 
     sourceId: source?.id ?? null,
     targetId: target2.id,
     statusId: statusId3,
-    tags: own3(state.statusTemplates, statusId3)?.tags ?? []
+    tags: getStatusTemplate(state, statusId3)?.tags ?? []
   };
   const { collectRules: collectRules2, carrierScope: carrierScope2 } = dependencies2;
   if (typeof collectRules2 !== "function" || typeof carrierScope2 !== "function") return null;
@@ -3011,7 +2942,7 @@ var finite = (value, fallback, strict, label) => {
   return fallback;
 };
 function resolveStatusApplication(state, target2, statusId3, input = {}, { strict = false } = {}) {
-  const template = own7(state.statusTemplates, statusId3) ?? own7(STATUSES, statusId3);
+  const template = getStatusTemplate(state, statusId3);
   if (!template || !target2) return null;
   const previous = own7(target2.statuses, statusId3);
   const requestedMode = input.stackMode ?? previous?.stackMode ?? template.stackMode ?? "refresh";
@@ -5280,10 +5211,6 @@ function record(state, unit, type, text8, detail = {}) {
 function tableEntry(table4, id3) {
   return Object.hasOwn(table4 ?? {}, id3) ? table4[id3] : void 0;
 }
-function getStatusTemplate(state, statusId3) {
-  if (typeof statusId3 !== "string") return void 0;
-  return tableEntry(state?.statusTemplates, statusId3) ?? tableEntry(STATUSES, statusId3);
-}
 function equipmentFor(state, instanceId) {
   const instance = tableEntry(state.items, instanceId);
   const template = tableEntry(state.equipment, instance?.templateId);
@@ -6432,7 +6359,14 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     } else if (distance3D(state, unit, item) > 1.5 || !hasLOS(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
     const cells3 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: item.radius ?? 1.5 }) : [center];
     const keyset = new Set(cells3.map((at3) => key2(at3.x, at3.y)));
-    const targets3 = item.kind === "altar" ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y, heal: [8, 8] }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: "attack" }) <= (item.radius ?? 1.5) + 1e-9).map((u) => {
+    const targets3 = item.kind === "altar" ? [{
+      id: unit.id,
+      targetId: unit.id,
+      name: unit.name,
+      x: unit.x,
+      y: unit.y,
+      heal: item.effect === "shield" && item.healAmount ? [item.healAmount, item.healAmount] : [0, 0]
+    }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: "attack" }) <= (item.radius ?? 1.5) + 1e-9).map((u) => {
       const guard = guardFor(state, u) ?? u;
       const context = { attacker: unit, targetId: guard.id, damageType: "energy", intercepting: guard !== u };
       const formula2 = mitigation(state, guard, "energy", true, 0, context);
@@ -6595,7 +6529,7 @@ function preview(state, action, { simulateRules = true, actionOrigin, ignoreRang
     support = [...heals].map(([id3, heal]) => ({ id: id3, heal, shieldGain: 0 }));
     for (const profile of targets2) {
       if (profile.heal && profile.kind !== "cover") {
-        const shieldOps = template.rules.flatMap((rule2) => rule2.program ?? []).filter((op) => op.op === "apply_status" && op.statusId === "shield");
+        const shieldOps = template.rules.flatMap((rule2) => rule2.program ?? []).filter((op) => op.op === "apply_status" && getStatusTemplate(state, op.statusId)?.category === "shield");
         if (shieldOps.length) profile.healingShield = [Math.floor(profile.heal[1] / 2), Math.floor(profile.heal[1] / 2)];
       }
       if (profile.dice) continue;
@@ -7178,7 +7112,8 @@ function continueInteraction(state, actor, plan, progress) {
       if (weapon2.ammo && !weapon2.infiniteAmmo) spendAmmo(state, actor, weapon2, weapon2.ammo);
       progress.targets = plan.targets.map((profile) => profile.id);
     } else if (effect !== "shield") {
-      restoreHP(state, actor, item.damage ?? 8, actor.id, item.name);
+      if (effect) restoreHP(state, actor, item.damage ?? 8, actor.id, item.name);
+      if (item.statusId) grantStatus(state, actor, item.statusId, { sourceId: actor.id });
       return false;
     }
   }
@@ -7197,10 +7132,9 @@ function continueInteraction(state, actor, plan, progress) {
     setResourceTotal(state, actor, "mp", Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
     setResourceTotal(state, actor, "sp", Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);
   } else if (effect === "shield") {
+    if (item.healAmount) restoreHP(state, actor, item.healAmount, actor.id, item.name);
     grantShield(state, actor, item.damage ?? 10, { sourceId: actor.id });
-  } else if (effect !== "heal") {
-    grantShield(state, actor, 10, { sourceId: actor.id });
-    grantStatus(state, actor, actionStatuses.altar, { sourceId: actor.id });
+    if (item.statusId) grantStatus(state, actor, item.statusId, { sourceId: actor.id });
   }
   return true;
 }
@@ -7672,6 +7606,82 @@ var skillPresets = {
 };
 var SKILLS = Object.fromEntries(Object.entries(skillPresets).map(([id3, template]) => [id3, onCast(id3, template)]));
 
+// src/presets/demo-statuses.js
+var tick = (id3, hook2, op) => ({ id: id3, hook: hook2, program: [{ target: "self", ...op }] });
+var dot = (id3, hook2, amount, damageType2) => tick(id3, hook2, { op: "damage", amount, damageType: damageType2, direct: false });
+var DEMO_STATUSES = Object.freeze({
+  burn: def("burn", "\u707C\u70E7", "\u{1F525}", "dot", 2, "\u56DE\u5408\u521D\u53D7\u5230\u706B\u7130\u80FD\u91CF\u4F24\u5BB3\u3002", {
+    tags: ["fire"],
+    rules: [dot("burn-tick", "turn_start", 5, "energy")]
+  }),
+  bleed: def("bleed", "\u6D41\u8840", "\u{1FA78}", "dot", 3, "\u56DE\u5408\u672B\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002", {
+    stackMode: "stack",
+    maxStacks: 5,
+    rules: [dot("bleed-tick", "turn_end", "3 * status.stacks", "true")]
+  }),
+  poison: def("poison", "\u4E2D\u6BD2", "\u2620\uFE0F", "dot", 3, "\u56DE\u5408\u521D\u6BCF\u5C42\u53D7\u5230 3 \u70B9\u771F\u5B9E\u4F24\u5BB3\u3002", {
+    stackMode: "stack",
+    maxStacks: 4,
+    tags: ["poison"],
+    rules: [dot("poison-tick", "turn_start", "3 * status.stacks", "true")]
+  }),
+  regen: def("regen", "\u518D\u751F", "\u{1F49A}", "hot", 3, "\u56DE\u5408\u521D\u6062\u590D\u751F\u547D\u3002", {
+    rules: [tick("regen-tick", "turn_start", { op: "heal", amount: 5 })]
+  }),
+  taunt: def("taunt", "\u5632\u8BBD", "\u{1F4E3}", "control", 1, "\u53EF\u653B\u51FB\u5632\u8BBD\u6765\u6E90\u65F6\uFF0C\u8FDB\u653B\u5FC5\u987B\u6307\u5B9A\u8BE5\u6765\u6E90\u3002", {
+    mods: [{ flags: ["taunted"] }]
+  }),
+  guard: def("guard", "\u63F4\u62A4", "\u{1F91D}", "buff", 2, "\u66FF\u76F8\u90BB\u53CB\u519B\u627F\u53D7\u4F24\u5BB3\uFF1B\u4E0D\u4F1A\u8FDE\u7EED\u8F6C\u4EA4\u3002", {
+    mods: [{ flags: ["intercept"] }]
+  }),
+  thorns: def("thorns", "\u53CD\u4F24\u68D8\u7532", "\u{1F335}", "buff", 2, "\u88AB\u8FD1\u6218\u547D\u4E2D\u65F6\uFF0C\u5BF9\u8FDB\u653B\u8005\u9020\u6210\u771F\u5B9E\u4F24\u5BB3\u3002", {
+    rules: [{
+      id: "thorns-retaliate",
+      hook: "after_damage",
+      filter: "event.targetId == self.id && event.melee == true && event.direct == true && attacker.alive && attacker.team != self.team",
+      program: [{ op: "damage", target: "attacker", amount: 5, damageType: "true", direct: false }]
+    }]
+  }),
+  freeze: def("freeze", "\u51B0\u51BB", "\u{1F9CA}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\uFF1B\u88AB\u6253\u51FB\u65F6\u788E\u51B0\uFF0C\u53D7\u5230\u989D\u5916\u4F24\u5BB3\u3002", {
+    tags: ["control", "ice"],
+    mods: [{ locks: allSlots }, { stat: "shatter", flat: 0.5 }],
+    expireOn: { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
+  }),
+  root: def("root", "\u5B9A\u8EAB", "\u26D3\uFE0F", "control", 2, "\u65E0\u6CD5\u79FB\u52A8\u6216\u77AC\u79FB\uFF0C\u4ECD\u53EF\u653B\u51FB\u6216\u65BD\u6CD5\u3002", {
+    tags: ["control"],
+    mods: [{ locks: ["move", "teleport"] }]
+  }),
+  blind: def("blind", "\u81F4\u76F2", "\u{1F311}", "debuff", 2, "\u547D\u4E2D\u68C0\u5B9A\u5E26\u52A3\u52BF\u3002", {
+    mods: [{ stat: "advantage", flat: -1, checkKind: "attack" }]
+  }),
+  vulnerable: def("vulnerable", "\u6613\u4F24", "\u{1F4A2}", "debuff", 2, "\u53D7\u5230\u7684\u4F24\u5BB3\u589E\u52A0 35%\u3002", {
+    mods: [{ stat: "incomingDamageMult", mult: 1.35 }]
+  }),
+  sunder: def("sunder", "\u7834\u7532", "\u{1F528}", "debuff", 2, "\u62A4\u7532\u964D\u4F4E 4 \u70B9\u3002", {
+    mods: [{ stat: "armor", flat: -4 }]
+  }),
+  mark: def("mark", "\u6807\u8BB0", "\u{1F3AF}", "debuff", 2, "\u653B\u51FB\u6B64\u5355\u4F4D\u7684\u547D\u4E2D\u52A0 2\u3002", {
+    mods: [{ stat: "incomingAccuracy", flat: "2 * status.stacks" }]
+  }),
+  stealth: def("stealth", "\u9690\u8EAB", "\u{1F464}", "buff", 2, "\u65E0\u6CD5\u88AB\u654C\u65B9\u8FDC\u8DDD\u76F4\u63A5\u9501\u5B9A\uFF1B\u53D1\u52A8\u8FDB\u653B\u6216\u906D\u653B\u51FB\u4F24\u5BB3\u65F6\u73B0\u5F62\u3002", {
+    tags: ["stealth"],
+    mods: [{ flags: ["hidden"] }, { stat: "advantage", flat: 2, checkKind: "attack" }],
+    expireOn: [
+      { hook: "after_action", filter: "attacker.id == self.id && event.hostile == true" },
+      { hook: "after_hit", filter: "target.id == self.id && attacker.id != self.id" }
+    ]
+  }),
+  haste: def("haste", "\u75BE\u8D70", "\u{1F4A8}", "buff", 2, "\u79FB\u52A8\u8DDD\u79BB\u589E\u52A0 1.", {
+    mods: [{ stat: "movement", flat: "1 * status.stacks" }]
+  }),
+  chill: def("chill", "\u5BD2\u51B7", "\u2744\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u548C\u547D\u4E2D\u964D\u4F4E\u3002", {
+    mods: [{ stat: "movement", flat: "-1 * status.stacks" }, { stat: "checkBonus", checkKind: "attack", flat: "-2 * status.stacks" }]
+  }),
+  infinite_ammo: def("infinite_ammo", "\u65E0\u9650\u5F39\u836F", "\u{1F3F9}", "buff", 1, "\u8FDC\u7A0B\u5C04\u51FB\u65E0\u9700\u88C5\u586B\uFF0C\u4E5F\u4E0D\u6D88\u8017\u5F39\u836F\u3002", {
+    mods: [{ flags: ["infiniteAmmo"] }]
+  })
+});
+
 // src/core/battle_time.js
 var timeOfDay = (hour, minute) => {
   const clock = hour * 60 + minute;
@@ -7700,7 +7710,11 @@ function parseBattleTime(...sources) {
 function validateRules(rules, state) {
   list2(rules, 200, () => true, "VM \u89C4\u5219");
   for (const [index, rule2] of rules.entries()) {
-    const issue = vmRuleError(rule2, { statusTemplates: state?.statusTemplates, customElements: state?.customElements });
+    const issue = vmRuleError(rule2, {
+      statusTemplates: state?.statusTemplates,
+      customElements: state?.customElements,
+      declaredStatusTemplatesOnly: state?.declaredStatusTemplatesOnly
+    });
     requireThat(!issue, `VM \u89C4\u5219 rules/${index}${typeof rule2?.id === "string" ? `\uFF08${rule2.id}\uFF09` : ""}/${issue}`);
   }
   requireThat(new Set(rules.map((rule2) => rule2.id)).size === rules.length, "VM \u89C4\u5219 ID \u91CD\u590D");
@@ -7800,15 +7814,18 @@ function statusTemplate(value, key4 = value?.id, state) {
   checkOptional(value, "expireOn", validVmExpiry);
   carrierFieldsValue(value, state);
 }
-function statusTemplateTable(v) {
-  const state = { statusTemplates: v };
-  table2(v, (template, key4) => statusTemplate(template, key4, state), maxStatusTemplates);
+function statusTemplateTable(v, options = {}) {
+  const state = { ...options, statusTemplates: v };
+  table2(v, (template, key4) => {
+    requireThat(key4 !== "suppressed", "\u4FDD\u7559\u72B6\u6001 ID\uFF1Asuppressed");
+    statusTemplate(template, key4, state);
+  }, maxStatusTemplates);
 }
 function defineStatus(state, key4, template) {
   requireThat(plain(template) && (!own13(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
   const definition = { ...template, id: key4 };
   statusTemplate(definition, key4, { statusTemplates: { ...state.statusTemplates, [key4]: definition } });
-  requireThat(!own13(state.statusTemplates ?? {}, key4) && !own13(STATUSES, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
+  requireThat(key4 !== "suppressed" && !own13(state.statusTemplates ?? {}, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
   requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, "\u81EA\u5B9A\u4E49\u72B6\u6001\u6A21\u677F\u6570\u91CF");
   (state.statusTemplates ??= {})[key4] = structuredClone(definition);
   return structuredClone(definition);
@@ -8144,8 +8161,8 @@ function validateState(s) {
     requireThat(!(v.cells.length && v.coverIds.length) && validVmOpcode({ op: "spawn", entityKind: v.coverIds.length ? "cover" : "terrain", spec: v.spec }), "\u5730\u5F62\u58F0\u660E");
   }, 64);
   table2(s.interactives, (v, k) => {
-    fields(v, ["id", "name", "x", "y", "kind", "spent"], ["z", "effect", "radius", "damage"]);
-    requireThat(v.id === k && text2(v.name) && inGrid(s, v.x, v.y) && (!own13(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own13(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own13(v, "radius") || int(v.radius, 0, 10)) && (!own13(v, "damage") || int(v.damage, 0, 1e5)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
+    fields(v, ["id", "name", "x", "y", "kind", "spent"], ["z", "effect", "radius", "damage", "statusId", "healAmount"]);
+    requireThat(v.id === k && text2(v.name) && inGrid(s, v.x, v.y) && (!own13(v, "z") || int(v.z, -4, 8)) && s.grid[v.y][v.x].kind !== "wall" && ["barrel", "altar"].includes(v.kind) && (!own13(v, "effect") || ["explode", "heal", "shield", "restore"].includes(v.effect)) && (!own13(v, "radius") || int(v.radius, 0, 10)) && (!own13(v, "damage") || int(v.damage, 0, 1e5)) && (!own13(v, "healAmount") || v.effect === "shield" && int(v.healAmount, 0, 1e5)) && (!own13(v, "statusId") || v.effect !== "explode" && typeof v.statusId === "string" && !!getStatusTemplate(s, v.statusId)) && typeof v.spent === "boolean", "\u4E92\u52A8\u70B9");
   });
   const equipped2 = /* @__PURE__ */ new Set();
   table2(s.units, (v, k) => {
@@ -8229,8 +8246,9 @@ function importCarry(state, value) {
   if (value.version !== 1 || value.kind !== "persistent") throw new Error("\u65E0\u6548\u7684\u8DE8\u6218\u6863\u6848");
   const carry = structuredClone(value);
   if (own14(carry, "statusTemplates")) {
-    statusTemplateTable(carry.statusTemplates);
-    state.statusTemplates = carry.statusTemplates;
+    if (!object2(carry.statusTemplates)) throw new Error("\u8DE8\u6218\u72B6\u6001\u6A21\u677F\u8868\u65E0\u6548");
+    state.statusTemplates = { ...state.statusTemplates, ...carry.statusTemplates };
+    statusTemplateTable(state.statusTemplates);
   }
   if (own14(carry, "customElements")) {
     const existing = state.customElements ?? {};
@@ -8299,6 +8317,7 @@ function buildScenario(request = "ruins") {
     items: {},
     equipment: structuredClone(EQUIPMENT),
     skills: structuredClone(SKILLS),
+    statusTemplates: structuredClone(DEMO_STATUSES),
     scale: { cellM: 2, width: 10, height: 10, anchorTier: 1, explicit: false },
     grid: Array.from({ length: 10 }, () => Array.from({ length: 10 }, () => ({ kind: "floor", z: 0 }))),
     covers: {},
@@ -8384,7 +8403,15 @@ function buildScenario(request = "ruins") {
     state.covers[id3] = { id: id3, name: `${material}\u63A9\u4F53`, material, x, y, hp, maxHp: hp, cover: shielding };
   }
   function interact(id3, x, y, kind) {
-    state.interactives[id3] = { id: id3, name: kind === "barrel" ? "\u4F59\u70EC\u7206\u6876" : "\u661F\u8F89\u796D\u575B", x, y, kind, spent: false };
+    state.interactives[id3] = {
+      id: id3,
+      name: kind === "barrel" ? "\u4F59\u70EC\u7206\u6876" : "\u661F\u8F89\u796D\u575B",
+      x,
+      y,
+      kind,
+      spent: false,
+      ...kind === "altar" ? { effect: "shield", damage: 10, healAmount: 8, statusId: "haste" } : {}
+    };
   }
   function heroes(x, y) {
     unit(
@@ -8532,7 +8559,7 @@ function tactics(state, actor, action, plan) {
     for (const target2 of targets2) {
       const enemy = target2.team !== actor.team;
       const status = getStatusTemplate(state, op.statusId);
-      const control = op.op === "apply_status" && (status?.category === "control" || ["stun", "root", "freeze", "suppressed"].includes(op.statusId));
+      const control = op.op === "apply_status" && status?.category === "control";
       const profile = (plan.targets ?? []).find((row) => (row.recipientId ?? row.id) === target2.id);
       if (control && profile?.expectedDamage > 0 && !target2.statuses[op.statusId]) {
         score += enemy ? 7 + (target2.used.attack ? 2 : 0) : -7;
@@ -8597,7 +8624,7 @@ function aimedOptions(state, actor, attacksOnly = false) {
     if (op.enabled === false) return false;
     if (op.op === "damage" || op.op === "resource" && ["sub", "sub_max"].includes(op.mode) && op.pool === "hp") return true;
     if (op.op === "apply_status") {
-      const category = state.statusTemplates?.[op.statusId]?.category;
+      const category = getStatusTemplate(state, op.statusId)?.category;
       return ["control", "debuff", "dot"].includes(category);
     }
     return op.op === "if" && (offensiveProgram(op.then) || offensiveProgram(op.else)) || op.op === "for_each" && offensiveProgram(op.body) || op.op === "check" && (offensiveProgram(op.onPass) || offensiveProgram(op.onFail));
@@ -8695,7 +8722,7 @@ function zoneOperationScore(state, zone, unit) {
     else if (op.op === "resource" && ["sub", "sub_max"].includes(op.mode) && op.pool === "hp") value = -26;
     else if (op.op === "heal") value = 14;
     else if (op.op === "apply_status") {
-      const category = state.statusTemplates?.[op.statusId]?.category;
+      const category = getStatusTemplate(state, op.statusId)?.category;
       value = category === "control" ? -24 : ["dot", "debuff"].includes(category) ? -16 : ["buff", "hot", "shield"].includes(category) ? 12 : 0;
     }
     if (op.op === "if") value += walk(op.then, multiplier) + walk(op.else, multiplier);
@@ -12495,7 +12522,13 @@ ${height2}\uFF0C${sight}`;
       const unitId = selectedId ?? active3(live3)?.id;
       const examples = {
         counter: () => ({ type: "adjust_pool", poolId: game.getBattleState().items["soulblade-lan"]?.pools?.souls ?? "", operation: "add", value: 1 }),
-        status: () => ({ type: "upsert_status", unitId, statusId: "haste", options: { durationType: "persistent" } }),
+        status: () => {
+          const [registeredId] = Object.keys(game.getBattleState().statusTemplates ?? {});
+          const statusId3 = registeredId ?? "sandbox_buff";
+          const apply2 = { type: "upsert_status", unitId, statusId: statusId3, options: { durationType: "persistent" } };
+          if (registeredId) return apply2;
+          return [{ type: "define_status_template", template: { id: statusId3, name: "\u6C99\u76D2\u589E\u76CA", category: "buff" } }, apply2];
+        },
         "custom-status": () => {
           const id3 = "bone_frost", apply2 = { type: "upsert_status", unitId, statusId: id3 };
           if (Object.hasOwn(game.listStatusTemplates(), id3)) return [apply2];
@@ -15081,8 +15114,7 @@ function collectMvu(value) {
 }
 function statusId2(value) {
   const key4 = text3(value);
-  if (own16(STATUSES, key4)) return key4;
-  return Object.keys(STATUSES).find((id3) => STATUSES[id3].name === key4) ?? null;
+  return key4 === "suppressed" || key4 === STATUSES.suppressed.name ? "suppressed" : null;
 }
 var bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer3(value, fallback)));
 function statusTurns(value, fallback) {
@@ -16029,27 +16061,18 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   for (const [rawId, rawStatus] of statusEntries) {
     if (Array.isArray(sourceStatuses) && emptyEntry(rawStatus) || typeof rawId === "string" && emptyEntry(rawId)) continue;
     const sid = statusId2(rawStatus?.statusId ?? rawStatus?.id ?? rawId);
-    const template = STATUSES[sid];
+    const template = sid === "suppressed" ? STATUSES.suppressed : null;
     const description = text3(rawStatus?.\u6548\u679C ?? rawStatus?.description ?? rawStatus?.\u63CF\u8FF0 ?? (rawStatus !== rawId && typeof rawStatus === "string" ? rawStatus : ""));
     if (!template || description && description !== template.description) {
-      warnings.push(`\u72B6\u6001\u5F85\u6807\u51C6\u5316\uFF1A${rawId ?? "unknown"}${description ? `\uFF1A${description}` : ""}`);
+      const details = object3(rawStatus) && !emptyEntry(rawStatus) ? describe(rawStatus) : description;
+      warnings.push(`\u72B6\u6001\u5F85\u6807\u51C6\u5316\uFF1A${rawId ?? "unknown"}${description ? `\uFF1A${description}` : ""}${details && details !== description ? `\uFF08\u539F\u6587 ${details}\uFF09` : ""}`);
       continue;
     }
     const remainingTurns = statusTurns(rawStatus?.remainingTurns ?? rawStatus?.\u5269\u4F59\u56DE\u5408 ?? rawStatus?.\u5269\u4F59\u65F6\u95F4, template.remainingTurns);
     const stacks = bound(rawStatus?.stacks ?? rawStatus?.\u5C42\u6570, 1, template.maxStacks);
     if (!emptyEntry(rawStatus?.modifiers)) warnings.push(`\u72B6\u6001 ${sid} \u7684 modifiers \u5F85\u6807\u51C6\u5316\uFF1A${describe(rawStatus.modifiers)}\u3002\u8BF7\u5728\u72B6\u6001\u6A21\u677F\u4E0A\u58F0\u660E mods \u6216 rules`, { userSummary: `\u72B6\u6001\u300C${template.name}\u300D\uFF1A\u9644\u5E26\u6548\u679C\u5F85\u8F6C\u6362` });
     const durationType = ["battle_turns", "until_removed", "persistent"].includes(rawStatus?.durationType) ? rawStatus.durationType : template.durationType;
-    const shieldAmount = template.category === "shield" ? bound(rawStatus?.amount ?? rawStatus?.\u62A4\u76FE\u503C, 1, 1e9, template.vars.shieldAmount) : null;
-    statuses[sid] = {
-      ...clone(template),
-      templateId: sid,
-      ownerId: id3,
-      sourceId: null,
-      durationType,
-      remainingTurns,
-      stacks,
-      ...shieldAmount != null && { vars: { ...template.vars, shieldAmount } }
-    };
+    statuses[sid] = { ...clone(template), templateId: sid, ownerId: id3, sourceId: null, durationType, remainingTurns, stacks };
   }
   const stance = stanceFor({ mainHand: main ? main.template : null, offHand: off?.template ?? null, shield: shield?.template ?? null });
   const team2 = teamOf(p.faction ?? p.team, "red");
@@ -16226,7 +16249,7 @@ function hydrateFromSources(input = {}, options = {}) {
     if (fallbackIndex >= 0) resolved[fallbackIndex] = protagonist;
   }
   const customElements = clone(source.customElements ?? options.customElements ?? {});
-  const equipment = clone(EQUIPMENT), skills = clone(SKILLS), items = [];
+  const equipment = {}, skills = {}, items = [];
   const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = /* @__PURE__ */ new Map();
   const add = (participant, record3, index) => {
     const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
@@ -17872,9 +17895,8 @@ var PROTOCOL_RULES = `\u3010\u6218\u6597\u534F\u8BAE\uFF5C\u6A21\u677F\u4E0E\u89
 var ENGINE_API_SUMMARY = PROTOCOL_RULES;
 
 // src/tavern/status-catalog.js
-var reservedIds = Object.keys(STATUSES).join("\u3001");
 var STATUS_CATALOG = `\u3010VM \u72B6\u6001\u3011
-apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u53EF\u6267\u884C\u7684\u72B6\u6001\u3002\u4F18\u5148\u76F4\u63A5\u590D\u7528\u8BED\u4E49\u4E00\u81F4\u7684\u539F\u751F\u72B6\u6001 ID\uFF08\u4E0D\u53EF\u8986\u76D6\u5176\u5B9A\u4E49\uFF09\uFF1A${reservedIds}\uFF1B\u4EC5\u5F53\u539F\u8BCD\u6761\u660E\u786E\u8981\u6C42\u4E0D\u540C\u4E8E\u539F\u751F\u72B6\u6001\u7684\u9501\u9879\u3001\u6301\u7EED\u673A\u5236\u6216\u94A9\u5B50\uFF08\u4F8B\u5982\u4E0D\u4F1A\u788E\u51B0\u7684\u51BB\u7ED3\u3001\u4E13\u5C5E\u5468\u671F\u6263\u8840\u6216\u7279\u6B8A\u53E0\u5C42\u4E0A\u9650\uFF09\u65F6\uFF0C\u624D\u53E6\u8D77\u82F1\u6587 ID \u5E76\u5728\u540C\u6279\u5148 add /statusTemplates/<id> \u518D\u5F15\u7528\uFF0C\u4E25\u7981\u8DE8\u6279\u60AC\u7A7A\u5F15\u7528\u5F53\u524D\u5FEB\u7167\u4E0E\u672C\u6279\u5747\u672A\u6CE8\u518C\u7684\u72B6\u6001 ID\uFF01
+apply_status \u53EA\u5F15\u7528\u5F53\u524D\u6218\u5C40 statusTemplates \u4E2D\u53EF\u6267\u884C\u7684\u72B6\u6001\u3002suppressed \u662F\u538B\u5236\u6218\u7CFB\u7EDF\u4FDD\u7559\u72B6\u6001\uFF1B\u9664\u6B64\u4E4B\u5916\uFF0C\u707C\u70E7\u3001\u6D41\u8840\u3001\u4E2D\u6BD2\u3001\u62A4\u76FE\u3001\u63A7\u5236\u3001\u5632\u8BBD\u3001\u9690\u8EAB\u4EE5\u53CA\u4EFB\u4F55\u589E\u76CA/\u51CF\u76CA\u72B6\u6001\uFF0C\u53EA\u8981\u5F53\u524D\u5FEB\u7167\u7684 sharedStatusLedger \u672A\u767B\u8BB0\uFF0C\u5C31\u5FC5\u987B\u6309\u539F\u6587\u9762\u677F\u6570\u503C\u3001\u516C\u5F0F\u3001\u6301\u7EED\u56DE\u5408\u4E0E\u53E0\u5C42\u89C4\u5219\u5148 add /statusTemplates/<id> \u58F0\u660E\uFF0C\u518D\u5F15\u7528\uFF0C\u7981\u6B62\u9759\u9ED8\u590D\u7528\u6216\u5047\u5B9A\u5B58\u5728\u4EFB\u4F55\u5185\u7F6E\u72B6\u6001\u3002\u7729\u6655/\u5B9A\u8EAB\u7B49\u9650\u5236\u7528 mods.locks\uFF0C\u5632\u8BBD/\u63F4\u62A4/\u9690\u8EAB/\u65E0\u9650\u5F39\u836F\u7528 mods.flags\uFF08taunted/intercept/hidden/infiniteAmmo\uFF09\uFF0C\u62A4\u76FE\u7528 category:"shield" \u5E76\u5728\u6BCF\u6B21\u65BD\u52A0\u65F6\u663E\u5F0F\u4F20\u5165 vars.shieldAmount\uFF1B\u4E25\u7981\u8DE8\u6279\u60AC\u7A7A\u5F15\u7528\u5F53\u524D\u5FEB\u7167\u4E0E\u672C\u6279\u5747\u672A\u6CE8\u518C\u7684\u72B6\u6001 ID\uFF01
 \u6A21\u677F\u5FC5\u586B id\u3001name\u3002\u53EF\u9009 icon\uFF08\u226424 \u5B57\u7B26\uFF09\u3001category\uFF08\u63A8\u8350\u679A\u4E3E\uFF1Abuff / debuff / control / dot / hot / shield\uFF1B\u62A4\u76FE\u5438\u6536\u673A\u5236\u5FC5\u987B\u5199 category:"shield" \u5E76\u5C06\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\uFF09\u3001description\uFF08\u2264300 \u5B57\u7B26\uFF09\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF09\u3001durationType\uFF08\u679A\u4E3E\uFF1Abattle_turns / until_removed / persistent\uFF09\u3001stackMode\uFF08\u679A\u4E3E\uFF1Arefresh / stack / replace / extend\uFF09\u3001maxStacks\uFF08\u6574\u6570 1\u2026999999 \u6216\u6570\u503C\u8868\u8FBE\u5F0F\uFF1B\u65BD\u52A0\u65F6\u5728\u65BD\u672F\u8005\u4E0A\u4E0B\u6587\u6C42\u503C\uFF09\u3001expireOn\uFF08{hook, filter?}\uFF0Chook \u53D6\u5141\u8BB8\u94A9\u5B50\u679A\u4E3E\uFF0Cfilter \u4E3A\u5E03\u5C14\u8868\u8FBE\u5F0F\uFF09\u3001flags\uFF08\u679A\u4E3E\u6570\u7EC4\uFF1Aundispellable / concept_immune\uFF09\u3001tags\uFF08\u5C0F\u5199\u6807\u7B7E\u6570\u7EC4\uFF09\u3001tier\uFF08\u6574\u6570 1\u20267\uFF09\u3001vars\u3001mods\u3001rules\u3002\u6CE8\u610F\uFF1A/statusTemplates/<id> \u72B6\u6001\u6A21\u677F\u5B9A\u4E49\u4E25\u7981\u5199\u8FD0\u884C\u65F6\u5F53\u524D\u5C42\u6570 stacks\uFF08\u6A21\u677F\u53EA\u6709 stackMode \u4E0E maxStacks\uFF0C\u521D\u59CB\u6216\u65BD\u52A0\u5C42\u6570 stacks \u4EC5\u5728 apply_status \u6307\u4EE4\u6216 /units/<id>/statuses/<id> \u5B9E\u4F8B\u4E2D\u586B\u5199\uFF09\uFF01\u7701\u7565\u671F\u9650\u548C\u53E0\u5C42\u5B57\u6BB5\u65F6\u9ED8\u8BA4\u4E3A battle_turns\u30011 \u56DE\u5408\u3001refresh\u30011 \u5C42\u3002
 \u5468\u671F\u4F24\u5BB3\u548C\u6CBB\u7597\u7528 turn_start \u6216 turn_end \u89C4\u5219\uFF0C\u72B6\u6001\u81EA\u7136\u5230\u671F\u89E6\u53D1\u7684\u540E\u7F6E\u6548\u679C\uFF0F\u53CD\u566C\u76F4\u63A5\u5199\u5728\u8BE5\u72B6\u6001\u6A21\u677F\u81EA\u8EAB\u7684 after_status_removed \u89C4\u5219\uFF08filter:"event.statusId == status.id && event.reason == 'expired'"\uFF09\uFF0C\u6301\u7EED\u9650\u5236\u7528 mods.locks\uFF0C\u6570\u503C\u4FEE\u9970\u7528 mods\uFF0C\u62A4\u76FE\u7528 category:"shield"\uFF0C\u62A4\u76FE\u91CF\u5B58\u4E8E vars.shieldAmount\u3002\u51E1\u6A21\u677F\u5185\u90E8\u8BFB\u53D6 status.vars.<\u540D>\uFF08\u542B\u62A4\u76FE vars.shieldAmount\uFF09\uFF0C\u6BCF\u6B21 apply_status \u65BD\u52A0\u65F6\u5747\u987B\u5728 vars \u4E2D\u663E\u5F0F\u4F20\u5165\u672C\u6B21\u6C42\u503C\u53C2\u6570\uFF1B\u82E5\u539F\u8BCD\u6761\u533A\u5206\u9996\u6B21\u65BD\u52A0\u4E0E\u5DF2\u6301\u6709\u7EED\u671F\uFF08\u5982\u201C\u6301\u7EED M \u56DE\u5408\uFF0C\u5DF2\u5904\u4E8E\u8BE5\u72B6\u6001\u5219\u56DE\u5408 +N\u201D\uFF09\uFF0C\u7528 if(has_status(target,'<id>')) \u5206\u652F\u5206\u522B\u8C03\u7528 stackMode:"extend", extendTurns:N \u4E0E\u5E38\u89C4 turns:M\u3002\u72B6\u6001\u6A21\u677F\u81EA\u8EAB\u89C4\u5219\u5185 status.* \u59CB\u7EC8\u6307\u5411\u672C\u72B6\u6001\u8F7D\u4F53\u81EA\u8EAB\uFF08\u5207\u52FF\u5728\u589E\u76CA\u72B6\u6001\u7684 before_status \u94A9\u5B50\u5185\u5199 status.category == 'control' \u4F01\u56FE\u62E6\u622A\u5916\u90E8\u63A7\u5236\uFF0C\u5916\u90E8\u5F85\u65BD\u52A0\u72B6\u6001\u4EC5\u66B4\u9732 event.statusId\uFF1B\u4EC5 remove_status \u7684 where \u5185 status.* \u6307\u5411\u88AB\u7B5B\u67E5\u7684\u76EE\u6807\u72B6\u6001\uFF0C\u53EF\u8BFB\u53D6 status.id\u3001status.category \u7B49\u6CE8\u518C\u5B57\u6BB5\uFF09\u3002
 \u9700\u8981\u76F4\u63A5\u6DFB\u52A0\u521D\u59CB\u72B6\u6001\u65F6\uFF0C\u5728 /units/<unitId>/statuses/<statusId> \u5199\u5165\u95ED\u5408\u5B9E\u4F8B\uFF0C\u5FC5\u586B id\u3001templateId\uFF08\u5747\u7B49\u4E8E\u72B6\u6001 ID\uFF09\u3001ownerId\uFF08\u7B49\u4E8E\u5355\u4F4D ID\uFF09\u3001name\uFF08\u987B\u4E0E\u72B6\u6001\u6A21\u677F name \u5B8C\u5168\u4E00\u81F4\uFF09\u3001remainingTurns\uFF08\u6574\u6570 1\u2026100\uFF0Cpersistent \u4E5F\u5FC5\u586B\u6B63\u6574\u6570\u5982 1\uFF09\u3001durationType\u3001stackMode\u3001maxStacks\uFF08\u6B63\u6574\u6570\uFF09\u3001stacks\uFF08\u6574\u6570 1\u2026maxStacks\uFF09\uFF0C\u53EF\u9009 sourceId\uFF08\u5355\u4F4D ID \u6216 null\uFF09\u7B49\u6A21\u677F\u5B57\u6BB5\uFF1B\u5B9E\u4F8B vars \u5199\u5DF2\u6C42\u503C\u7684 JSON \u503C\u3002`;
@@ -17941,7 +17963,7 @@ var PATCH_RULES = String.raw`<output_contract>
    • 真实边界诚实披露：唯有确属引擎未开放维度（如暴击阈值档位平移、拦截外部任意未知 ID 控制类别的泛化条件、无蓄力直发覆盖、跨战长延时或永久篡改剥夺敌方技能／装备表等），在将可实现部分落地后，仍无法表达的部分列入 unresolved 并附清晰中文 reason，严禁把局部细分加值硬塞进无条件全局 checkBonus！
 5. 批内自足、只读索引复用、RFC 6902 数组类型铁律与闭合 Schema 不变式（Self-Containment, Readonly Index Reuse, Array Type Contract & Schema Closure）：
    • **<role_readonly_index> 共享状态／资源池复用与跨载体只读边界**：
-     ① 看见快照末尾 <role_readonly_index DO_NOT_PATCH="true"> 内 sharedStatusLedger 已列出的状态模板（及内置 STATUSES、当前快照 statusTemplates）时，**凡同名或同机制状态必须直接复用其既定英文 statusId，绝对禁止重复输出 add /statusTemplates/<该ID> 或另起近义 ID 重复建表**！确属尚未注册的新状态或派生技能，才在当前批次 patch 数组最前部先 add 完整模板定义（严禁建空对象 {}！），本批内所有引用逐字符一致，同一模板 rules 内规则 id 互不重复。
+     ① 看见快照末尾 <role_readonly_index DO_NOT_PATCH="true"> 内 sharedStatusLedger 或当前快照 statusTemplates 已列出的状态模板时，凡同名或同机制状态必须直接复用其既定英文 statusId，绝对禁止重复 add 或另起近义 ID；suppressed 是压制战唯一系统保留状态。除此之外未登记的状态必须依据原文效果在当前批次 patch 数组最前部 add 完整 /statusTemplates/<id> 定义（严禁建空对象 {}！），本批内所有引用逐字符一致，同一模板 rules 内规则 id 互不重复。
      ② 看见 sharedPoolLedger 已列出的 unitPools 池 ID 时，直接复用既有 poolId、name 与语义；装备、技能和单位之间共享计数必须读写同一个 self.resource.<poolId>，严禁为同一资源另起英文 ID，也严禁把单位共享池写成 equipment pools。
      ③ <role_readonly_index> 中的 siblingCarriersIndex 仅供了解同角色其他装备／技能的联动状态命名与触发语义，**绝对禁止对未出现在本批 warnings 中的兄弟载体输出任何 patch 操作或核销收据**！
      ④ <role_readonly_index> 中的 sharedZoneLedger 仅供 in_zone(self, '<zoneId>') 等跨区域空间联动查询，**绝对禁止对非本批 warnings 的战场区域输出任何 patch 操作或核销收据**！
@@ -17977,7 +17999,7 @@ var PATCH_RULES = String.raw`<output_contract>
 Step 0 [警告盘点]：按输入原序编号列出本批全部警告 W1..Wn（单位ID | originPath | 效果标题），确认总数一致。
 Step 1 [边界与快照增量裁定]：逐条核查战斗域边界（**凡包含消耗 fp / FP 外部叙事资源的词条一律整条定性为 NARRATIVE，绝不入 UNRESOLVED**）、当前快照已解析字段（先手/范围/威力/纯被动 vs 双态载体）及原语可表达性，定性为 FULL_PATCH / PARTIAL_PATCH / EXISTING / UNRESOLVED / NARRATIVE（严禁把主击归入 narrative 或初始面板归入 existing）。
 Step 2 [作用域、量词与符号核对]：锁定宿主载体路径（被动首次触发必挂已持有宿主自身 rules 而非未施加状态模板！）、钩子与过滤条件（进攻检 attacker.id == self.id；**受击、防御预判、before_commit、before_status 及濒死 on_lethal_p1/p2、on_death 必显式写 filter:"target.id == self.id"，严禁在濒死钩子留 filter:null！** on_summon_evict 检 source.id == self.id，切勿写不存在的 target.sourceId 或 candidate.tags；仅武器检 weaponTemplateId；限定武器／技能击杀用 after_damage 检 !target.alive && event.dealt > 0；远程检 !event.melee；主动技附效检 event.skillId == skill.id；选人必检存活、阵营与空间范围；初始战场区域 /zones/<id> 阵营限定必写 self.team == 'blue' 或 'red' 而严禁写 source.team；受击迫使进攻方豁免用无 bind 的 for_each(from:"attacker")）；核对正负号（自身增益、受击减伤与攻方利好 intentBonus flat 为正数，负面状态扣闪避／检定／移动或令攻方意图变难的 intentBonus flat 必为负数，守方提高意图难度的 intentDifficulty flat 为正数！）、护盾等状态 vars 传参闭环、多状态／多层累加量词（逐项相加而非 >0 布尔）及 persistent 状态 remove_status 必带 force:true。
-Step 3 [批内自足拓扑、只读账本复用、数组类型与收据绑定]：先查 <role_readonly_index> 的 sharedStatusLedger、内置 STATUSES 与当前快照，**凡已列出的状态／技能 ID 直接复用且严禁再次 add，同时严禁触碰未在本批 warnings 出现的 siblingCarriersIndex 载体**；确需新建的状态／派生技能按「新建基础状态 → 新建复合状态 → 新建派生技能 → 本批警告宿主载体」排列 patch；**逐条硬核对 RFC 6902 数组类型：不带 /- 的 .../rules、.../mods、.../skills 其 value 必须是 [...] 数组（绝不可为单对象 {...}！）且同路径同批最多写一次**；确认操作 /damage 前快照确有该键且 remove /damage 后不再写 /damage/type；为每条 FULL_PATCH / PARTIAL_PATCH 绑定宿主载体顶层 patch[i].resolves（勿挂在 /statusTemplates/... 上；返修轮对前轮已落盘项直接并入本轮同宿主有效补丁 resolves 或用带数字下标的 existing 如 /skills/<id>/rules/0 核销，切勿重发 no-op 补丁！），并为每条 UNRESOLVED 与 NARRATIVE 准备独立非空中文 reason；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；禁止整块覆写 /zones/<id> 或改写其 area/pools；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
+Step 3 [批内自足拓扑、只读账本复用、数组类型与收据绑定]：先查 <role_readonly_index> 的 sharedStatusLedger 与当前快照，凡已列出的状态／技能 ID 直接复用且严禁再次 add；suppressed 是压制战唯一系统保留状态，其他未登记状态按原文效果新建模板，同时严禁触碰未在本批 warnings 出现的 siblingCarriersIndex 载体；确需新建的状态／派生技能按「新建基础状态 → 新建复合状态 → 新建派生技能 → 本批警告宿主载体」排列 patch；**逐条硬核对 RFC 6902 数组类型：不带 /- 的 .../rules、.../mods、.../skills 其 value 必须是 [...] 数组（绝不可为单对象 {...}！）且同路径同批最多写一次**；确认操作 /damage 前快照确有该键且 remove /damage 后不再写 /damage/type；为每条 FULL_PATCH / PARTIAL_PATCH 绑定宿主载体顶层 patch[i].resolves（勿挂在 /statusTemplates/... 上；返修轮对前轮已落盘项直接并入本轮同宿主有效补丁 resolves 或用带数字下标的 existing 如 /skills/<id>/rules/0 核销，切勿重发 no-op 补丁！），并为每条 UNRESOLVED 与 NARRATIVE 准备独立非空中文 reason；核对路径白名单：${normalizationPath}（禁止写 /units/<id>/pools、/items/<id>/pools、运行时当前 HP/MP/SP、坐标或先攻队列；禁止整块覆写 /zones/<id> 或改写其 area/pools；若 /items/<id> 已自带 rules 或 mods 需同步更新）。
 Step 4 [闭合 Schema 与括号配平门控]：逐项检查 hook 枚举、op 闭合字段、目标引用、池名称、状态 ID 与数值范围（再次确认不带 /- 的 /rules、/mods、/skills 全部为 [...] 数组而非 {...} 对象！critDamageBonus 只用 flat 小数如 0.3；additivePercent 为小数制如 0.5 而非 50；顶层 flags 仅写 undispellable / concept_immune，行为标志写 mods[i].flags；ask 按 kind 配齐必填键与合法 aiPolicy；mutate_event 仅写当前 hook 允许字段）；**重点核查每一个 rules 补丁的闭合序列：program 结束 ] 后必须紧跟 }] 闭合 rule 对象与 value 数组，随后才是 ,"resolves":[...]（rule 对象内部严禁出现 resolves 键！）**；确认 W1..Wn 100% 覆盖且收据严格互斥，最后写出 Coverage: PASS | Schema: PASS。
 </std_audit_workflow>
 
