@@ -147,7 +147,7 @@ var FatedTacticalTavern = (() => {
       shape: shape2 = "single",
       radius = 1.5,
       width = 0.6,
-      angle = shape2 === "fan" ? 100 : 60,
+      angle,
       innerRadius = 0,
       facing = origin.facing,
       range: range2 = distance3D(state, origin, target2),
@@ -162,7 +162,7 @@ var FatedTacticalTavern = (() => {
     const [dx, dy] = same(origin, target2) ? facing ?? [1, 0] : [target2.x - origin.x, target2.y - origin.y];
     const aimLength = Math.hypot(dx, dy);
     if (shape2 !== "circle" && shape2 !== "ring" && (!aimLength || !["line", "fan", "cone"].includes(shape2))) return [];
-    const minCosine = Math.cos(Math.max(0, Math.min(360, angle)) * Math.PI / 360);
+    const minCosine = Math.cos(Math.max(0, Math.min(360, angle ?? (shape2 === "fan" ? 100 : 60))) * Math.PI / 360);
     const result = [];
     state.grid.forEach((row, y) => row.forEach((cell, x) => {
       const at3 = { x, y, z: cell.z };
@@ -643,6 +643,9 @@ var FatedTacticalTavern = (() => {
     alive: "\u662F\u5426\u5B58\u6D3B\u4E14\u5728\u573A",
     team: "\u9635\u8425\uFF08blue/red\uFF09",
     summoned: "\u662F\u5426\u4E3A\u53EC\u5524\u7269",
+    sourceId: "\u53EC\u5524\u8005\u6216\u5019\u9009\u5B9E\u4F53\u521B\u5EFA\u8005 ID",
+    summonGroup: "\u53EC\u5524\u5206\u7EC4\u952E",
+    level: "\u7B49\u7EA7\uFF08\u7F3A\u7701\u53D6\u5C42\u7EA7\u6216 1\uFF09",
     sourceSkillId: "\u751F\u6210\u8BE5\u53EC\u5524\u7269\u7684\u6280\u80FD ID\uFF08\u65E0\u8BB0\u5F55\u65F6\u4E3A null\uFF09",
     name: "\u5355\u4F4D\u540D\u79F0",
     templateId: "\u6A21\u677F ID",
@@ -673,6 +676,7 @@ var FatedTacticalTavern = (() => {
       const hp = own2(unit, "hp");
       return value ?? (Number.isFinite(hp) ? hp > 0 && !own2(unit, "fled") : void 0);
     }
+    if (field2 === "level" && unit != null) return value ?? own2(unit, "tier") ?? 1;
     if (field2 === "moved" && unit != null) return value ?? 0;
     if (field2 === "facing" && Array.isArray(value)) {
       const [x, y] = value;
@@ -748,7 +752,6 @@ var FatedTacticalTavern = (() => {
   register("event.chainDepth", "perform \u52A8\u4F5C\u5D4C\u5957\u5C42\u6570", (context) => path(context, "event", "chainDepth"));
   register("zone.team", "\u533A\u57DF\u521B\u5EFA\u65F6\u7684\u9635\u8425\uFF1B\u65E0\u9635\u8425\u65F6\u4E3A null", (context) => path(context, "zone", "team"));
   register("zone.sourceId", "\u533A\u57DF\u521B\u5EFA\u8005 ID", (context) => path(context, "zone", "sourceId"));
-  register("candidate.sourceId", "\u5F53\u524D\u5019\u9009\u5B9E\u4F53\u7684\u521B\u5EFA\u8005 ID", (context) => path(context, "candidate", "sourceId"));
   for (const [scope, fields3] of Object.entries({ status: statusFields, tape: tapeFields })) {
     for (const [field2, description] of Object.entries(fields3)) {
       register(`${scope}.${field2}`, description, (context) => path(context, scope, field2));
@@ -1186,6 +1189,13 @@ var FatedTacticalTavern = (() => {
     "fromY",
     "healing",
     "hit",
+    "isSingle",
+    "isArea",
+    "isRanged",
+    "moveKind",
+    "steps",
+    "shared",
+    "sharedFromId",
     "hostile",
     "ignoreDodge",
     "ignoreLOS",
@@ -1226,6 +1236,8 @@ var FatedTacticalTavern = (() => {
     "sourceSkillId",
     "sourceTier",
     "statusId",
+    "shareTo",
+    "shareRatio",
     "targetId",
     "toX",
     "toY",
@@ -1258,7 +1270,7 @@ var FatedTacticalTavern = (() => {
     before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), damageScale: numericExpr },
     before_check: { dcDelta: numericExpr, bonusDelta: numericExpr, advantageDelta: numericExpr, ignoreDodge: booleanExpr, ratingDelta: numericExpr, minRating: text, forceOutcome: enumOf("pass", "fail", "hit", "miss", "crit") },
     after_natural_roll: { replaceNaturalRoll: numericExpr },
-    before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr, damageType },
+    before_commit: { cancel: booleanExpr, finalAmount: numericExpr, preserveLife: booleanExpr, damageType, shareTo: redirectRef, shareRatio: numericExpr },
     before_status: { cancel: booleanExpr },
     on_lethal_p2: { preventDeath: booleanExpr }
   };
@@ -1307,9 +1319,9 @@ var FatedTacticalTavern = (() => {
     link_pool: "\u7528 units \u9009\u62E9\u5355\u4F4D\uFF0C\u5C06\u6307\u5B9A\u7684 HP/MP/SP \u6C60\u5408\u5E76\u5171\u4EAB\u6216\u62C6\u56DE\u72EC\u7ACB\u6C60\u3002",
     apply_status: "\u65BD\u52A0\u5DF2\u6CE8\u518C\u7684\u72B6\u6001\u6A21\u677F\uFF0Cvars \u6C42\u503C\u540E\u5B58\u5165\u72B6\u6001\u3002ignoreImmunity:true \u660E\u786E\u6FC0\u6D3B\u514D\u75AB\u7A7F\u900F\uFF0C\u5E76\u6309\u8F7D\u4F53\u4F4D\u683C\u3001\u89D2\u8272\u5C42\u7EA7\u3001\u540C\u5C42 contest \u88C1\u5B9A\uFF1B\u5426\u5219 before_status \u514D\u75AB\u59CB\u7EC8\u751F\u6548\u3002",
     remove_status: '\u5728\u76EE\u6807\u6301\u6709\u7684\u72B6\u6001\u4E2D\u7528 where \u7B5B\u9009\u53EF\u79FB\u9664\u9879\u3002durationType:"persistent" \u5E38\u9A7B\u72B6\u6001\u4E0E undispellable \u72B6\u6001\u5747\u53D7\u4FDD\u62A4\uFF0C\u79FB\u9664\u6216\u6D88\u8017\u5B83\u4EEC\uFF08\u542B\u81EA\u8EAB\u6D88\u8017\u5E38\u9A7B\u8BA1\u6570\u5C42\u6570\uFF09\u5FC5\u987B\u663E\u5F0F\u586B force:true\uFF08\u81EA\u8EAB\u79FB\u9664\u81EA\u8EAB\u5E38\u9A7B\u72B6\u6001\u586B force:true \u76F4\u63A5\u6210\u529F\uFF0C\u5BF9\u4ED6\u4EBA\u751F\u6548\u6309\u6765\u6E90\u4F4D\u683C\u88C1\u5B9A\uFF09\uFF1BoutCount \u5199\u88F8\u540D\u79F0\u3002',
-    mutate_event: "\u4EC5\u5728\u6709\u53EF\u5199\u5B57\u6BB5\u7684\u62E6\u622A\u94A9\u5B50\u6539\u5199\u5F53\u524D\u4E8B\u4EF6\u3002patch \u7684\u952E\u5FC5\u987B\u5C5E\u4E8E\u5F53\u524D Rule.hook\u3002",
-    move: '\u7EDF\u4E00\u79FB\u52A8\u3001\u77AC\u79FB\u3001\u63A8\u62C9\u4E0E\u9AD8\u5EA6\u53D8\u5316\u3002push/pull \u9010\u683C\u5224\u78B0\u649E\uFF0Caltitude \u53EF\u7528 deltaZ \u6216 land\u3002distance \u9ED8\u8BA4\u7528\u683C\uFF1B\u539F\u8BCD\u6761 [\u4F4D\u79FB: X] \u7528 distance:X\u3001distanceUnit:"position"\uFF0C\u6309\u65BD\u653E\u8F7D\u4F53\u6362\u7B97\u3002teleport \u58F0\u660E distance \u65F6\u4E5F\u6821\u9A8C\u4F4D\u79FB\u4E0A\u9650\u3002',
-    spawn: "\u6309 entityKind \u63D0\u4F9B\u5BF9\u5E94\u7684 spec \u751F\u6210\u5355\u4F4D\u3001\u7ED3\u754C\u3001\u5730\u5F62\u3001\u63A9\u4F53\u6216\u5E93\u5B58\u7269\u54C1\uFF1Bat \u6307\u5B9A\u843D\u70B9\u3002",
+    mutate_event: "\u4EC5\u5728\u6709\u53EF\u5199\u5B57\u6BB5\u7684\u62E6\u622A\u94A9\u5B50\u6539\u5199\u5F53\u524D\u4E8B\u4EF6\u3002patch \u7684\u952E\u5FC5\u987B\u5C5E\u4E8E\u5F53\u524D Rule.hook\u3002before_commit \u53EF\u7528 shareTo\uFF08\u5355\u4F4D ID \u6216\u516C\u5F0F\uFF09\u4E0E shareRatio\uFF080 \u5230 1\uFF09\u5206\u62C5\u539F\u59CB\u4F24\u5BB3\uFF1B\u6D3E\u751F\u4F24\u5BB3\u4FDD\u7559\u653B\u51FB\u8005\u5E76\u6807\u8BB0 event.shared\uFF0C\u4E0D\u518D\u6B21\u5206\u62C5\u3002",
+    move: '\u7EDF\u4E00\u79FB\u52A8\u3001\u77AC\u79FB\u3001\u63A8\u62C9\u4E0E\u9AD8\u5EA6\u53D8\u5316\u3002push/pull \u9010\u683C\u5224\u78B0\u649E\uFF0Caltitude \u53EF\u7528 deltaZ \u6216 land\u3002distance \u9ED8\u8BA4\u7528\u683C\uFF1B\u539F\u8BCD\u6761 [\u4F4D\u79FB: X] \u7528 distance:X\u3001distanceUnit:"position"\uFF0C\u6309\u65BD\u653E\u8F7D\u4F53\u6362\u7B97\u3002teleport \u58F0\u660E distance \u65F6\u4E5F\u6821\u9A8C\u4F4D\u79FB\u4E0A\u9650\u3002ignoreLocks:true \u5141\u8BB8 step/teleport \u7275\u5F15\u53D7\u79FB\u52A8\u6216\u77AC\u79FB\u9501\u9650\u5236\u7684\u5355\u4F4D\uFF0C\u4ECD\u6821\u9A8C\u843D\u70B9\u3002',
+    spawn: '\u6309 entityKind \u63D0\u4F9B\u5BF9\u5E94\u7684 spec\uFF1Bat \u6307\u5B9A\u843D\u70B9\u3002\u5355\u4F4D templateId \u53EF\u914D spawnPanel \u8986\u5199\uFF0CcopyOf \u4E0E\u4E8C\u8005\u4E92\u65A5\u3002group \u5728 summoner\uFF08\u9ED8\u8BA4 self\uFF09\u540D\u4E0B\u8DE8\u6280\u80FD\u5171\u4EAB\uFF1BstackPolicy \u53EF\u4E3A replace\uFF08\u9ED8\u8BA4\uFF09\u3001fifo \u6216 cap\uFF0CmaxActive \u9650\u5236\u5B58\u6D3B\u6570\u91CF\u3002remainingTurns \u9ED8\u8BA4\u6309\u5927\u8F6E\u9012\u51CF\uFF0CdurationUnit:"anchor_turns" \u6539\u6309 durationAnchor\uFF08\u9ED8\u8BA4 turnAnchor \u6216\u53EC\u5524\u8005\uFF09\u56DE\u5408\u672B\u9012\u51CF\u3002turnMode \u53EF\u7528 independent\u3001linked_group\u3001linked_each \u6216 none\uFF1BturnAnchor \u9ED8\u8BA4\u53EC\u5524\u8005\u3002',
     despawn: '\u7528 select \u6E05\u9664\u6307\u5B9A\u7684 zone\u3001cover\u3001terrain \u6216 unit\uFF1Bunit \u901A\u5E38\u914D where: "candidate.summoned == true" \u53EA\u79FB\u9664\u53EC\u5524\u7269\uFF0C\u4E0D\u89E6\u53D1\u6B7B\u4EA1/\u4EA1\u8BED\u3002\u7B5B\u9009\u654C\u65B9\u533A\u57DF\u65F6\u7528 candidate.team != null && candidate.team != self.team\uFF1Bterrain \u53EA\u6E05\u9664 VM \u751F\u6210\u7684\u5730\u5F62\u5C42\u3002',
     revive: "\u53EA\u5BF9\u672A\u88AB blockRevive \u7981\u6B62\u7684\u9635\u4EA1\u5355\u4F4D\u751F\u6548\uFF1BhpPercent/mpPercent/spPercent \u4EE5 1 \u4E3A\u6EE1\u989D\u3002",
     perform: "\u538B\u5165\u72EC\u7ACB\u5B50\u52A8\u4F5C\uFF1Bskill \u7528\u6280\u80FD ID \u6216 vars.<\u540D\u79F0>\uFF0Creplay \u7528 tapeRecord \u5F15\u7528\u78C1\u5E26\u8BB0\u5F55\u3002overrides.origin \u53EF\u6539\u751F\u6548\u539F\u70B9\uFF1B\u8DE8\u8DDD\u79BB\u6216\u963B\u9694\u9700\u663E\u5F0F\u8BBE\u7F6E ignoreRange \u6216 ignoreLOS\u3002"
@@ -1349,7 +1361,10 @@ var FatedTacticalTavern = (() => {
     "incomingAccuracy",
     "intentBonus",
     "intentDifficulty",
-    "shatter"
+    "shatter",
+    "power",
+    "hits",
+    "attackDistanceOffset"
   ]);
   var stat = enumOf(...statNames);
   var skillShapes = Object.freeze(["single", "circle", "ring", "fan", "cone", "line"]);
@@ -1376,7 +1391,9 @@ var FatedTacticalTavern = (() => {
     "critDamageBonus",
     "incomingAccuracy",
     "intentBonus",
-    "intentDifficulty"
+    "intentDifficulty",
+    "hits",
+    "attackDistanceOffset"
   ]);
   var multiplierStats = enumOf("incomingDamageMult", "damageMult", "finalDamageMult", "healingMult", "incomingHealMult", "costMult");
   var ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
@@ -1444,6 +1461,26 @@ var FatedTacticalTavern = (() => {
   var carrierFields = Object.freeze(Object.keys(carrier).filter((key4) => key4 !== "name"));
   var statusPatchFields = Object.freeze(["remainingTurns", "durationType", "stackMode", "stacks", "expireOn", ...carrierFields]);
   var validCarrierScalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" && value.length <= scalarOrExpr.anyOf[2].maxLength;
+  var summonDuration = enumOf("rounds", "anchor_turns");
+  var spawnPanelFields = {
+    attribute,
+    tier: spawnTier,
+    stats: object(Object.fromEntries(attribute.enum.map((name) => [name, either(integer(0, 20), formula)])), attribute.enum),
+    maxHp: numericExpr,
+    maxMp: numericExpr,
+    maxSp: numericExpr,
+    armor: numericExpr,
+    size: integer(1, 5),
+    bodyLengthM: { type: "number", minimum: 0.01, maximum: 1e9 },
+    mc: integer(1, 64),
+    move: numericExpr,
+    skills: { ...list(id), maxItems: 32, uniqueItems: true },
+    gear: { ...list(id), maxItems: 12 },
+    mainHand: id,
+    offHand: id,
+    shield: id
+  };
+  var summonTemplatePanelFields = Object.freeze(Object.keys(spawnPanelFields));
   var spawnSpecs = {
     unit: withRules(object({
       ...carrier,
@@ -1452,25 +1489,16 @@ var FatedTacticalTavern = (() => {
       copyOf: target,
       count: either(integer(1, 10), formula),
       remainingTurns: spawnTurns,
-      spawnPanel: object({
-        attribute,
-        tier: spawnTier,
-        stats: object(Object.fromEntries(attribute.enum.map((name) => [name, integer(0, 20)])), attribute.enum),
-        maxHp: numericExpr,
-        maxMp: numericExpr,
-        maxSp: numericExpr,
-        armor: numericExpr,
-        size: integer(1, 5),
-        bodyLengthM: { type: "number", exclusiveMinimum: 0 },
-        mc: integer(1),
-        move: numericExpr,
-        skills: list(id),
-        gear: list(id),
-        mainHand: id,
-        offHand: id,
-        shield: id
-      })
-    }), variants(needs("templateId"), needs("copyOf"), needs("spawnPanel"), { not: either(needs("templateId"), needs("copyOf"), needs("spawnPanel")) })),
+      group: id,
+      stackPolicy: enumOf("replace", "fifo", "cap"),
+      maxActive: either(integer(1, 50), formula),
+      summoner: target,
+      durationUnit: summonDuration,
+      durationAnchor: target,
+      spawnPanel: object(spawnPanelFields),
+      turnMode: enumOf("independent", "linked_group", "linked_each", "none"),
+      turnAnchor: target
+    }), when("copyOf", {}, { not: either(needs("templateId"), needs("spawnPanel")) })),
     zone: object({ ...baseCarrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ["area"]),
     terrain: withRules(object({ kind: enumOf("floor", "wall", "slope"), height: number, mode: enumOf("set", "raise", "lower"), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs("kind"), needs("height")), when("mode", {}, needs("height"))),
     cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
@@ -1561,6 +1589,7 @@ var FatedTacticalTavern = (() => {
       distanceUnit: enumOf("cell", "position"),
       deltaZ: numericExpr,
       land: bool,
+      ignoreLocks: bool,
       collisionDamage: numericExpr,
       onCollide: program
     }, ["target", "mode"]),
@@ -3124,7 +3153,7 @@ var FatedTacticalTavern = (() => {
           return own8(state.units, id3)?.id ?? evaluateExpr(id3, context);
         };
         let value;
-        if (key4 === "redirectTarget") value = resolveId(expression);
+        if (key4 === "redirectTarget" || key4 === "shareTo") value = resolveId(expression);
         else if (key4 === "replaceTarget") value = { from: resolveId(expression.from), to: resolveId(expression.to) };
         else if (key4 === "origin") {
           const point4 = resolvePoint(expression, context);
@@ -3531,6 +3560,10 @@ var FatedTacticalTavern = (() => {
         damageType: data.damageType ?? null,
         rawAmount: data.amount,
         finalAmount: amount,
+        ...op === "damage" && { shared: data.shared === true, sharedFromId: data.sharedFromId ?? null },
+        isSingle: data.isSingle ?? null,
+        isArea: data.isArea ?? null,
+        isRanged: data.isRanged ?? null,
         sourceRuleId: frame.ruleId,
         direct: data.direct ?? true,
         preserveLife: data.lethal === false || Boolean(target2.nonLethal || host.flag?.(state, target2, "preserveLife") || host.preserveLife?.(state, source)),
@@ -3571,6 +3604,20 @@ var FatedTacticalTavern = (() => {
           state.vm.stack.pop();
           return;
         }
+      }
+      const protector = op === "damage" && !data.shared && entry(state.units, event.shareTo);
+      const ratio3 = Number.isFinite(event.shareRatio) ? Math.max(0, Math.min(1, event.shareRatio)) : 0;
+      if (ratio3 > 0 && alive2(protector) && protector !== target2) {
+        const { resultEventRef, out, ...sharedData } = data;
+        frame.sharedDamage = {
+          ...sharedData,
+          targetId: protector.id,
+          amount: data.amount * ratio3,
+          damageType: event.damageType,
+          shared: true,
+          sharedFromId: target2.id
+        };
+        event.finalAmount = Math.floor(event.finalAmount * (1 - ratio3));
       }
       const before = pool.current, beforeMax = pool.max;
       let absorbed = 0;
@@ -3676,6 +3723,12 @@ var FatedTacticalTavern = (() => {
       frame.pc++;
       const hook2 = op === "damage" ? "after_damage" : op === "heal" ? "after_heal" : null;
       if (hook2) scheduleHooks(state, frame, hook2, frame.eventRef, host);
+      return;
+    }
+    if (frame.sharedDamage) {
+      const sharedDamage = frame.sharedDamage;
+      delete frame.sharedDamage;
+      scheduleCommit(state, frame, sharedDamage);
       return;
     }
     state.vm.stack.pop();
@@ -3942,9 +3995,10 @@ var FatedTacticalTavern = (() => {
   var fail = (field2) => {
     throw new Error(`\u6218\u524D\u8D44\u6E90\u63A8\u6F14\uFF1A${field2}\u65E0\u6548`);
   };
+  var sizeMultiplier = (bodyLengthM) => bodyLengthM >= 10 ? 2 + Math.floor(Math.log2(bodyLengthM / 10)) : 1;
   function calculatePrebattleResources(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) fail("\u8F93\u5165");
-    const { stats, tier, bodyLengthM = null, count = 1, summonCount = 1, previous = {} } = input;
+    const { stats, tier, bodyLengthM = null, mc = sizeMultiplier(bodyLengthM), count = 1, summonCount = 1, previous = {} } = input;
     if (!stats || !attributes.every((k) => integer2(stats[k], 0, 1e6))) fail("\u4E94\u7EF4");
     if (!integer2(tier, 1, 7)) fail("\u5C42\u7EA7");
     if (bodyLengthM !== null && !finite2(bodyLengthM, Number.MIN_VALUE, 1e9)) fail("\u4F53\u957F");
@@ -3952,16 +4006,22 @@ var FatedTacticalTavern = (() => {
     if (!previous || typeof previous !== "object" || Array.isArray(previous)) fail("\u65E7\u8D44\u6E90");
     const { str, agi, con, int: int2, spi } = stats;
     const statSum = str + agi + con + int2 + spi;
-    const mc = bodyLengthM >= 10 ? 2 + Math.floor(Math.log2(bodyLengthM / 10)) : 1;
+    if (!integer2(mc, 1, 64)) fail("\u4F53\u578B\u500D\u7387");
     const baseMultipliers = { hp: hpTier[tier - 1], mp: manaTier[tier - 1], sp: manaTier[tier - 1] };
     const hp = baseMultipliers.hp * mc / summonCount, mp = baseMultipliers.mp / summonCount;
-    const raw = { hp: (con * 100 * hp + statSum) * count, mp: (int2 + spi) * 50 * mp * count, sp: (str + agi) * 50 * mp * count };
+    const batch = {
+      hp: con * 100 * baseMultipliers.hp * mc + statSum,
+      mp: (int2 + spi) * 50 * baseMultipliers.mp,
+      sp: (str + agi) * 50 * baseMultipliers.sp
+    };
     const resources = {};
-    for (const [key4, value] of Object.entries(raw)) {
+    for (const [key4, total2] of Object.entries(batch)) {
+      const value = total2 / summonCount * count;
       const old = previous[key4];
       if (Object.hasOwn(previous, key4) && (!old || !finite2(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite2(old.current, 0, old.max))) fail(`\u65E7 ${key4.toUpperCase()} `);
       const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
-      resources[key4] = { rawMax: value, max: Math.round(value), current: Math.round(value * ratio3), ratio: ratio3 };
+      const max = key4 === "hp" ? Math.max(1, Math.round(value)) : Math.round(value);
+      resources[key4] = { rawMax: value, max, current: ratio3 === 1 ? max : Math.round(value * ratio3), ratio: ratio3 };
     }
     return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
   }
@@ -3977,22 +4037,42 @@ var FatedTacticalTavern = (() => {
     const a = spec.attribute ? actor.stats[spec.attribute] : Math.max(actor.stats.int, actor.stats.spi);
     return { tier, sum: Math.max(tier * 5, a * 5 - 30), cap: Math.min(a, tierCaps[tier - 1]) };
   }
-  function spawnStatsAllowed(actor, spec) {
+  function fitSpawnStats(actor, spec) {
     const { cap, sum } = budget(actor, spec);
-    return !spec.stats || attrs.every((k) => spec.stats[k] >= 0 && spec.stats[k] <= cap) && attrs.reduce((n, k) => n + spec.stats[k], 0) <= sum;
+    const values5 = attrs.map((key4) => Math.max(0, Math.min(cap, spec.stats[key4])));
+    const total2 = values5.reduce((a, b) => a + b, 0);
+    const scaled = values5.map((value) => total2 > sum ? value * sum / total2 : value);
+    const rounded = scaled.map(Math.floor);
+    let spare = Math.min(total2, sum) - rounded.reduce((a, b) => a + b, 0);
+    for (const i of attrs.map((_, i2) => i2).sort((a, b) => scaled[b] - rounded[b] - (scaled[a] - rounded[a]))) {
+      if (spare > 0 && rounded[i] < scaled[i]) {
+        rounded[i]++;
+        spare--;
+      }
+    }
+    return Object.fromEntries(attrs.map((key4, i) => [key4, rounded[i]]));
   }
+  function spawnBudgetIssue(actor, spec) {
+    if (!spec.stats) return null;
+    const { cap, sum } = budget(actor, spec);
+    const { stats } = spec;
+    const actualSum = attrs.reduce((total2, key4) => total2 + stats[key4], 0);
+    return attrs.every((key4) => Number.isSafeInteger(stats[key4]) && stats[key4] >= 0 && stats[key4] <= cap) && actualSum <= sum ? null : { cap, sum, actualSum, stats };
+  }
+  var spawnStatsAllowed = (actor, spec) => !spawnBudgetIssue(actor, spec);
   function spawnPanel(actor, spec) {
     const { tier, cap, sum } = budget(actor, spec);
-    const total2 = Math.min(sum, 5 * cap);
-    if (total2 < 0 || !spawnStatsAllowed(actor, spec)) return null;
+    const total2 = Math.max(0, Math.min(sum, 5 * cap));
+    if (!spawnStatsAllowed(actor, spec)) return null;
     const stats = spec.stats ? { ...spec.stats } : Object.fromEntries(attrs.map((k, i) => [k, Math.floor(total2 / 5) + Number(i < total2 % 5)]));
-    const bodyLengthM = spec.bodyLengthM ?? 1.7;
-    const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, summonCount: spec.count ?? 1 });
+    const bodyLengthM = spec.bodyLengthM ?? (spec.mc >= 2 ? 10 * 2 ** (spec.mc - 2) : 1.7);
+    if (bodyLengthM < 0.01 || bodyLengthM > 1e9) return null;
+    const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, mc: spec.mc, summonCount: spec.count ?? 1 });
     return {
       stats,
       tier,
       bodyLengthM,
-      mc: spec.mc ?? mc,
+      mc,
       size: spec.size ?? sizeClassFor(bodyLengthM),
       armor: spec.armor ?? 0,
       move: spec.move ?? 3,
@@ -4034,7 +4114,7 @@ var FatedTacticalTavern = (() => {
   }
   function resolveSpawnSpec(spec, context, kind) {
     const resolved = { ...spec };
-    const bounds = { tier: [1, 7], count: [1, kind === "unit" ? 10 : Infinity], remainingTurns: [1, 100] };
+    const bounds = { tier: [1, 7], count: [1, kind === "unit" ? 10 : Infinity], maxActive: [1, kind === "unit" ? 50 : Infinity], remainingTurns: [1, 100] };
     for (const [key4, [min, max]] of Object.entries(bounds)) {
       if (spec[key4] === void 0) continue;
       resolved[key4] = spawnNumber(spec[key4], context, min, max);
@@ -4042,11 +4122,20 @@ var FatedTacticalTavern = (() => {
     }
     if (spec.spawnPanel) {
       resolved.spawnPanel = { ...spec.spawnPanel };
+      if (spec.spawnPanel.stats) {
+        resolved.spawnPanel.stats = {};
+        for (const [key4, expr2] of Object.entries(spec.spawnPanel.stats)) {
+          const value = evaluateExpr(expr2, context);
+          if (!Number.isFinite(value) || !Number.isSafeInteger(Math.floor(value))) return;
+          resolved.spawnPanel.stats[key4] = Math.floor(value);
+        }
+      }
       for (const key4 of ["tier", "maxHp", "maxMp", "maxSp", "armor", "move"]) {
         if (spec.spawnPanel[key4] === void 0) continue;
-        const value = spawnNumber(spec.spawnPanel[key4], context, key4 === "tier" ? 1 : 0, key4 === "tier" ? 7 : 1e9);
-        if (value === void 0) return;
-        resolved.spawnPanel[key4] = value;
+        const value = evaluateExpr(spec.spawnPanel[key4], context);
+        const max = ["armor", "move"].includes(key4) ? 1e6 : 1e9;
+        if (!Number.isFinite(value) || key4 !== "tier" && (value < 0 || value > max)) return;
+        resolved.spawnPanel[key4] = key4 === "tier" ? clamp3(Math.floor(value), 1, 7) : Math.floor(value);
       }
     }
     if (spec.area) {
@@ -4093,7 +4182,7 @@ var FatedTacticalTavern = (() => {
   }
   function teleport({ state, frame, host, context, op }, targets2) {
     const anchor = targets2[0];
-    if (targets2.some((unit) => aggregateModifiers(state, unit.id).locks.teleport)) return;
+    if (!op.ignoreLocks && targets2.some((unit) => aggregateModifiers(state, unit.id).locks.teleport)) return;
     const destination = resolvePoint(op.to, { ...context, target: context.target ?? anchor });
     if (!point3(destination)) return;
     const ignored = new Set(targets2.map((unit) => unit.id));
@@ -4151,7 +4240,8 @@ var FatedTacticalTavern = (() => {
       return;
     }
     const unit = own10(state.units, unitIds[frame.pc++]);
-    if (!live2(unit) || op.mode !== "push" && op.mode !== "pull" && aggregateModifiers(state, unit.id).locks.move) return;
+    const forced = op.mode === "push" || op.mode === "pull" || op.mode === "step" && op.ignoreLocks;
+    if (!live2(unit) || !forced && aggregateModifiers(state, unit.id).locks.move) return;
     const scope = { ...context, target: unit };
     const from = at(state, unit);
     const path2 = [];
@@ -4289,16 +4379,23 @@ var FatedTacticalTavern = (() => {
   function unitPlan(state, context, spec, original) {
     const actor = context.self;
     const count = spec.count ?? 1;
-    const panel = spec.spawnPanel ? spawnPanel(actor, { ...spec.spawnPanel, tier: spec.tier ?? spec.spawnPanel.tier, count }) : original;
+    const panelSpec = spec.spawnPanel ? { ...spec.spawnPanel, tier: spec.tier ?? spec.spawnPanel.tier, count } : null;
+    const issue = panelSpec && spawnBudgetIssue(actor, panelSpec);
+    if (issue) return { error: "budget_exceeded", detail: issue };
+    const panel = panelSpec ? spawnPanel(actor, panelSpec) : original;
     if (!panel || !panel.stats || ![panel.maxHp, panel.maxMp, panel.maxSp].every(Number.isFinite) || panel.maxHp <= 0 || panel.maxMp < 0 || panel.maxSp < 0) return void 0;
     const loads = spec.spawnPanel ?? original;
-    const equipment = (id3) => own10(state.items, id3)?.templateId ?? id3;
+    const equipment = (id3) => spec.copyOf ? own10(state.items, id3)?.templateId ?? id3 : id3;
     const gear = Object.fromEntries(["mainHand", "offHand", "shield"].map((slot2) => [
       slot2,
       equipment(loads[slot2] ?? (slot2 === "mainHand" ? loads.weapon : null)) ?? null
     ]));
     gear.gear = (loads.gear ?? []).map(equipment);
     const items = [...new Set([gear.mainHand, gear.offHand, gear.shield, ...gear.gear].filter(Boolean))];
+    const equipmentId = items.find((id3) => !own10(state.equipment, id3));
+    if (equipmentId) return { error: "missing_equipment", detail: { equipmentId } };
+    const skillId = loads.skills?.find((id3) => !own10(state.skills, id3));
+    if (skillId) return { error: "missing_skill", detail: { skillId } };
     if (items.some((id3) => !itemPlan(state, id3, context))) return void 0;
     const bodyLengthM = panel.bodyLengthM ?? 1.7;
     const stats = { ...panel.stats };
@@ -4313,13 +4410,14 @@ var FatedTacticalTavern = (() => {
       ...maxima,
       bodyLengthM,
       size: panel.size ?? sizeClassFor(bodyLengthM),
-      mc: panel.mc ?? (bodyLengthM >= 10 ? 2 : 1),
+      mc: panel.mc ?? sizeMultiplier(bodyLengthM),
       armor: panel.armor ?? 0,
       move: panel.move ?? 3,
       skills: [...loads.skills ?? []],
       team: actor.team,
       facing: [...actor.facing ?? [1, 0]],
-      tier: panel.tier ?? actor.tier ?? 1
+      level: spec.templateId && original?.level || actor.level || actor.tier || 1,
+      tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier
     } };
   }
   function removeSummon(state, unit, host) {
@@ -4338,48 +4436,105 @@ var FatedTacticalTavern = (() => {
       if (index < state.turn) state.turn--;
     }
   }
+  function logSpawnFailure(state, host, actor, name, reason, detail = {}) {
+    const messages = {
+      budget_exceeded: () => `\u4E94\u7EF4\u9762\u677F\u8D85\u51FA\u65BD\u672F\u8005\u9884\u7B97\uFF08\u5355\u9879\u4E0A\u9650 ${detail.cap}\uFF0C\u603B\u548C\u4E0A\u9650 ${detail.sum}\uFF0C\u5B9E\u9645 [${Object.values(detail.stats)}] \u5408\u8BA1 ${detail.actualSum}\uFF09`,
+      missing_template: () => `\u627E\u4E0D\u5230\u53EC\u5524\u6A21\u677F ${detail.templateId}`,
+      missing_equipment: () => `\u627E\u4E0D\u5230\u88C5\u5907\u6A21\u677F ${detail.equipmentId}`,
+      missing_skill: () => `\u627E\u4E0D\u5230\u6280\u80FD ${detail.skillId}`,
+      invalid_panel: () => "\u53EC\u5524\u9762\u677F\u3001\u5F15\u7528\u6216\u6570\u503C\u65E0\u6548",
+      max_active: () => `\u540C\u7EC4\u5728\u573A\u6570\u91CF\u5DF2\u8FBE\u4E0A\u9650\uFF08${detail.maxActive}\uFF09`,
+      capacity: () => "\u53EF\u7528\u683C\u5B50\u6216\u5B9E\u4F53\u69FD\u4E0D\u8DB3",
+      reentrant_group: () => "\u540C\u7EC4\u53EC\u5524\u6B63\u5728\u7ED3\u7B97"
+    };
+    host.log(state, actor, "spawn", `${name}\u672A\u80FD\u767B\u573A\uFF1A${messages[reason]()}`, { failed: true, reason, ...detail });
+  }
+  function summonLandings(state, { center, explicitAt, plan }, leaving = /* @__PURE__ */ new Set()) {
+    const candidates = cells(state).filter((cell) => !same2(cell, center) || !explicitAt).filter((cell) => !blocked(state, cell, leaving)).sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
+    if (explicitAt && isGround(state, center) && ((state.scale?.cellM ?? 2) >= 10 || !coverAt(state, center.x, center.y))) {
+      const occupied = unitsAt(state, center.x, center.y).filter((unit) => !leaving.has(unit.id)).reduce((total2, unit) => total2 + unitCellCost(state, unit), 0);
+      const available = Math.floor((MAX_CELL_CAPACITY - occupied) / unitCellCost(state, plan.panel));
+      candidates.unshift(...Array.from({ length: Math.max(0, available) }, () => xy(center)));
+    }
+    return candidates.slice(0, plan.count).map((cell) => ({ ...cell, altitude: Number.isFinite(center.z) ? clamp3(Math.round(center.z - elevation(state, cell)), 0, 12) : 0 }));
+  }
   function spawnUnits({ state, frame, host, context, op, select, push }, center) {
-    const actor = context.self;
-    if (!actor || !center) return;
-    const spec = op.spec.templateId === void 0 && op.spec.copyOf === void 0 ? { ...op.spec, spawnPanel: op.spec.spawnPanel ?? {} } : op.spec;
-    const original = spec.copyOf ? select(spec.copyOf).find((unit) => own10(state.units, unit.id) === unit) : own10(state.summonTemplates, spec.templateId);
-    const plan = unitPlan(state, context, spec, original);
-    if (!plan) return;
+    const requested = op.spec;
+    const firstUnit = (selector2) => select(selector2).find((unit) => own10(state.units, unit.id) === unit);
+    const actor = requested.summoner ? firstUnit(requested.summoner) : context.self;
+    const original = requested.copyOf ? firstUnit(requested.copyOf) : own10(state.summonTemplates, requested.templateId);
+    const name = requested.name ?? original?.name ?? requested.templateId ?? "\u53EC\u5524\u7269";
+    const fail5 = (reason, detail) => logSpawnFailure(state, host, actor ?? context.self, name, reason, detail);
+    if (requested.templateId && !original) return fail5("missing_template", { templateId: requested.templateId });
+    if (!actor || !point3(center) || requested.copyOf && !original) return fail5("invalid_panel");
+    const form = requested.copyOf ? "copy" : requested.spawnPanel ? "panel" : requested.templateId ? "template" : "panel";
+    const defaults = {};
+    if (requested.templateId) for (const key4 of ["group", "maxActive", "stackPolicy", "remainingTurns"]) {
+      if (original[key4] !== void 0) defaults[key4] = original[key4];
+    }
+    const spec = resolveSpawnSpec({ ...defaults, ...requested, ...requested.copyOf ? {} : { spawnPanel: { ...original, ...requested.spawnPanel } } }, context, "unit");
+    if (!spec) return fail5("invalid_panel");
     const templateId = spec.templateId ?? original?.templateId ?? original?.id ?? frame.ruleId ?? "summon";
-    const form = spec.copyOf ? "copy" : spec.spawnPanel ? "panel" : "template";
-    const group = JSON.stringify([actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
+    const group = JSON.stringify(spec.group ? [actor.id, spec.group] : [actor.id, context.event.skillId ?? null, frame.ruleId, form, templateId, spec.name ?? null]);
+    const durationUnit = spec.durationUnit ?? (spec.templateId ? original.durationUnit : void 0) ?? "rounds";
+    const timed = spec.remainingTurns !== void 0;
+    const turnMode = spec.turnMode ?? (spec.templateId ? original.turnMode : void 0) ?? "independent";
+    const turnAnchor = spec.turnAnchor ? firstUnit(spec.turnAnchor) : actor;
+    if (["linked_group", "linked_each"].includes(turnMode) && !live2(turnAnchor)) return fail5("invalid_panel");
+    const anchor = timed && durationUnit === "anchor_turns" ? spec.durationAnchor ? firstUnit(spec.durationAnchor) : turnAnchor : null;
+    if (timed && durationUnit === "anchor_turns" && !anchor) return fail5("invalid_panel");
+    if (state.vm.stack.some((entry2) => entry2.native === "spatialSpawn" && entry2.data.group === group)) return fail5("reentrant_group");
+    const groupUnits = values(state.units).filter((unit) => unit.summoned && unit.summonGroup === group && unit.id !== actor.id);
+    for (const old of groupUnits) {
+      if (!live2(old) && !aggregateModifiers(state, old.id).flags.blockRevive) removeSummon(state, old, host);
+    }
+    const serial = (unit) => Number(unit.id.match(/^summon-(\d+)$/)?.[1] ?? Number.MAX_SAFE_INTEGER);
+    const livingGroup = groupUnits.filter(live2).sort((a, b) => serial(a) - serial(b));
+    const stackPolicy = spec.stackPolicy ?? "replace";
+    const maxActive = spec.maxActive ?? (stackPolicy === "replace" ? Infinity : 12);
+    const allowed = stackPolicy === "cap" ? Math.max(0, maxActive - livingGroup.length) : maxActive;
+    const count = Math.min(spec.count ?? 1, allowed);
+    if (!count) return fail5("max_active", { maxActive });
+    const plan = unitPlan(state, { ...context, self: actor }, { ...spec, count }, original);
+    if (!plan || plan.error) return fail5(plan?.error ?? "invalid_panel", plan?.detail);
+    const evictCount = stackPolicy === "replace" ? livingGroup.length : stackPolicy === "fifo" ? Math.max(0, livingGroup.length + count - maxActive) : 0;
+    const evictIds = livingGroup.slice(0, evictCount).map((unit) => unit.id);
+    const fields3 = carrier3({
+      ...original,
+      ...spec,
+      tier: plan.panel.tier,
+      vars: { ...spec.copyOf ? {} : original?.vars, ...spec.vars },
+      unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : void 0
+    }, actor.id, "", templateId, context, { allowUnitPools: true });
+    if (spec.copyOf) fields3.vars = { ...original.vars ?? {}, ...fields3.vars };
+    const explicitAt = op.at !== void 0;
+    const z = explicitAt ? center.z : void 0;
     const data = {
       plan,
-      center: xy(center),
+      center: { ...xy(center), ...Number.isFinite(z) && { z } },
+      explicitAt,
       out: op.out ?? null,
-      remainingTurns: spec.remainingTurns,
-      fields: carrier3({
-        ...original,
-        ...spec,
-        tier: spec.spawnPanel ? plan.panel.tier : spec.tier ?? plan.panel.tier,
-        vars: { ...spec.copyOf ? {} : original?.vars, ...spec.vars },
-        unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : void 0
-      }, actor.id, "", templateId, context, { allowUnitPools: true }),
+      fields: fields3,
       group,
-      evictIds: [],
-      pendingId: null
+      evictIds,
+      pendingId: null,
+      turnMode,
+      turnAnchorId: turnAnchor?.id,
+      moraleType: actor.moraleType ?? state.battleType ?? "standard",
+      ...timed && { duration: { remainingTurns: spec.remainingTurns, durationUnit, ...anchor && { durationAnchorId: anchor.id } } }
     };
-    if (original && spec.copyOf) data.fields.vars = { ...original.vars ?? {}, ...data.fields.vars };
-    if (state.vm.stack.some((entry2) => entry2.native === "spatialSpawn" && entry2.data.group === data.group)) return;
-    data.evictIds = Object.keys(state.units).sort().filter((id3) => own10(state.units, id3).summonGroup === data.group && id3 !== actor.id);
     const leaving = new Set(data.evictIds);
     const slots3 = [plan.gear.mainHand, plan.gear.offHand, plan.gear.shield, ...plan.gear.gear].filter(Boolean);
     const keptItems = values(state.items).filter((item) => !leaving.has(item.ownerId)).length;
-    if (values(state.units).length - leaving.size + plan.count > 200 || keptItems + slots3.length * plan.count > 200 || cells(state).filter((cell) => !blocked(state, cell, leaving)).length < plan.count) {
-      host.log(state, actor, "spawn", `${data.fields.name}\u672A\u80FD\u767B\u573A\uFF1A\u53EF\u7528\u6218\u573A\u7A7A\u95F4\u4E0D\u8DB3`);
-      return;
+    if (values(state.units).length - leaving.size + plan.count > 200 || keptItems + slots3.length * plan.count > 200 || summonLandings(state, data, leaving).length < plan.count) {
+      return fail5("capacity");
     }
     const sourceSkillId2 = frame.sourceSkillId ?? (frame.carrier?.type === "skill" ? frame.carrier.id : void 0);
     push({ ...inherit(frame), native: "spatialSpawn", data, ...sourceSkillId2 && { sourceSkillId: sourceSkillId2 } });
   }
   function continueSpawn({ state, frame, host, context }) {
     const { data } = frame;
-    const actor = own10(state.units, frame.ownerId);
+    const actor = own10(state.units, data.fields.sourceId);
     if (data.pendingId) {
       const old = own10(state.units, data.pendingId);
       if (old) {
@@ -4398,43 +4553,47 @@ var FatedTacticalTavern = (() => {
       }
       data.pendingId = old.id;
       frame.awaitEvent = newEvent(state, {
-        actorId: actor?.id ?? frame.ownerId,
+        actorId: data.fields.sourceId,
         targetId: old.id,
-        sourceId: actor?.id ?? frame.ownerId,
+        sourceId: data.fields.sourceId,
         summonId: old.id,
         templateId: old.templateId,
         center: at(state, old),
+        reason: "replaced",
         ...old.sourceSkillId && { sourceSkillId: old.sourceSkillId }
       });
       scheduleHooks(state, frame, "on_summon_evict", frame.awaitEvent, host);
       return;
     }
-    const { plan, center } = data;
-    const landings = cells(state).filter((cell) => !blocked(state, cell)).sort((a, b) => distance3D(state, center, a) - distance3D(state, center, b));
+    const { plan } = data;
+    const landings = summonLandings(state, data);
     const { gear } = plan;
     const templateIds = [gear.mainHand, gear.offHand, gear.shield, ...gear.gear].filter(Boolean);
     const items = new Map(templateIds.map((id3) => [id3, itemPlan(state, id3, context)]));
     if (landings.length < plan.count || values(state.units).length + plan.count > 200 || [...items.values()].some((item) => !item) || values(state.items).length + templateIds.length * plan.count > 200) {
-      host.log(state, actor, "spawn", `${data.fields.name}\u672A\u80FD\u767B\u573A\uFF1A\u53EF\u7528\u683C\u5B50\u6216\u88C5\u5907\u5B9E\u4F8B\u4E0D\u8DB3`);
+      const equipmentId = templateIds.find((id3) => !own10(state.equipment, id3));
+      const reason = equipmentId ? "missing_equipment" : [...items.values()].some((item) => !item) ? "invalid_panel" : "capacity";
+      logSpawnFailure(state, host, actor, data.fields.name, reason, equipmentId ? { equipmentId } : {});
       state.vm.stack.pop();
       return;
     }
     let first;
-    for (const placement of landings.slice(0, plan.count)) {
+    for (const placement of landings) {
       const id3 = nextId3(state, state.units, "summon");
       const unit = {
         ...structuredClone(plan.panel),
         ...structuredClone(data.fields),
         id: id3,
         ...placement,
-        altitude: 0,
-        moraleType: actor.moraleType ?? state.battleType ?? "standard",
+        moraleType: data.moraleType,
         summonGroup: data.group,
         summoned: true,
         used: { attack: 0, action: 0 },
         ap: 0,
         statuses: {},
-        ...data.remainingTurns !== void 0 && { remainingTurns: data.remainingTurns },
+        ...data.turnMode !== "independent" && { turnMode: data.turnMode },
+        ...["linked_group", "linked_each"].includes(data.turnMode) && { turnAnchorId: data.turnAnchorId },
+        ...data.duration,
         ...frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId }
       };
       unit.hp = unit.maxHp;
@@ -4450,7 +4609,8 @@ var FatedTacticalTavern = (() => {
       unit.stance = stanceFor({ mainHand: state.equipment[gear.mainHand], offHand: state.equipment[gear.offHand], shield: state.equipment[gear.shield] });
       unit.gear = gear.gear.map(mint);
       syncUnitPools(state, unit);
-      state.order.push(id3);
+      if (data.turnMode === "independent") state.order.push(id3);
+      else host.initializeSummonTurn?.(state, unit);
       first ??= id3;
       host.log(state, actor, "spawn", `${unit.name}\u767B\u573A`, { unitId: id3, ...at(state, unit) });
     }
@@ -4677,14 +4837,15 @@ var FatedTacticalTavern = (() => {
       host.log(state, null, "terrain", `\u5730\u5F62\u6548\u679C${reason}\u8FD8\u539F`, { terrainId: layer.id });
     }
   }
-  function expireSpatialEffects(state, host, { advance: advance2 = false, parent = state.vm?.stack.at(-1) } = {}) {
+  function expireSpatialEffects(state, host, { advance: advance2 = false, anchorUnitId = null, parent = state.vm?.stack.at(-1) } = {}) {
     refreshFollowingZones(state, host);
     if (!advance2) return;
-    const expiring = values(state.units).filter((unit) => unit.summoned && unit.remainingTurns != null && --unit.remainingTurns === 0);
+    const expiring = values(state.units).filter((unit) => unit.summoned && unit.remainingTurns != null && (anchorUnitId === null ? (unit.durationUnit ?? "rounds") === "rounds" || !live2(own10(state.units, unit.durationAnchorId)) : unit.durationUnit === "anchor_turns" && unit.durationAnchorId === anchorUnitId) && --unit.remainingTurns === 0);
     for (const unit of expiring.reverse()) {
       unit.remainingTurns = 1;
       pushFrame(state, { kind: "action", native: "expireSummon", ownerId: unit.id, sourceId: unit.sourceId ?? unit.id });
     }
+    if (anchorUnitId !== null) return;
     for (const zone of values(state.zones)) {
       if (!zone.persistent && --zone.remainingTurns <= 0) removeZone(state, host, zone.id, "\u5230\u671F");
     }
@@ -4716,6 +4877,8 @@ var FatedTacticalTavern = (() => {
   }
   function spawn(env) {
     const { op, context } = env;
+    const center = () => op.at === void 0 ? context.center ?? context.target ?? context.self : resolvePoint(op.at, context);
+    if (op.entityKind === "unit") return spawnUnits(env, center());
     const spec = resolveSpawnSpec(op.spec, context, op.entityKind);
     if (!spec) return;
     const resolved = { ...env, op: { ...op, spec } };
@@ -4723,11 +4886,10 @@ var FatedTacticalTavern = (() => {
       spawnItems(resolved);
       return;
     }
-    const center = op.at === void 0 ? context.center ?? context.target ?? context.self : resolvePoint(op.at, context);
-    if (op.at !== void 0 && !center || center && !point3(center)) return;
-    if (op.entityKind === "unit") spawnUnits(resolved, center);
-    else if (op.entityKind === "zone") spawnZone(resolved, center);
-    else spawnTerrain(resolved, center);
+    const location = center();
+    if (op.at !== void 0 && !location || location && !point3(location)) return;
+    if (op.entityKind === "zone") spawnZone(resolved, location);
+    else spawnTerrain(resolved, location);
   }
   var spatialOps = Object.freeze({ move, spawn, despawn });
   function continueExpireSummon({ state, frame, host }) {
@@ -4833,6 +4995,40 @@ var FatedTacticalTavern = (() => {
     return typeof text8 === "string" ? text8.replace(/-?\d+\.\d{3,}/g, (value) => proseNumber(Number(value))) : text8;
   }
 
+  // src/core/turn-routing.js
+  var linkedModes = /* @__PURE__ */ new Set(["linked_group", "linked_each"]);
+  var isLinkedMode = (unit) => linkedModes.has(unit?.turnMode);
+  function linkedUnitsOf(state, anchorId) {
+    return Object.values(state.units ?? {}).filter((unit) => unit.summoned && unit.turnAnchorId === anchorId && isLinkedMode(unit) && unit.hp > 0 && !unit.fled).sort((a, b) => a.id.localeCompare(b.id));
+  }
+  function linkedGroupKey(unit) {
+    return unit?.turnMode === "linked_group" && unit.summonGroup && unit.turnAnchorId ? `${unit.turnAnchorId}:${unit.summonGroup}` : null;
+  }
+  function canRouteActor(state, actorId) {
+    const anchor = state.units?.[state.order?.[state.turn]];
+    const actor = state.units?.[actorId];
+    if (!anchor || !actor || actor.hp <= 0 || actor.fled) return false;
+    return actor.id === anchor.id || isLinkedMode(actor) && actor.turnAnchorId === anchor.id && actor.team === anchor.team;
+  }
+  function actionActor(state, action) {
+    const actorId = action?.actorId ?? state.order?.[state.turn];
+    return canRouteActor(state, actorId) ? state.units[actorId] : void 0;
+  }
+  function syncLinkedGroupSlots(state, actor, slot2, used) {
+    const key4 = linkedGroupKey(actor);
+    if (!key4 || !["attack", "action"].includes(slot2)) return;
+    state.vm ??= {};
+    state.vm.linkedGroupUsed ??= {};
+    state.vm.linkedGroupUsed[key4] ??= { attack: 0, action: 0 };
+    state.vm.linkedGroupUsed[key4][slot2] = used;
+    for (const unit of linkedUnitsOf(state, actor.turnAnchorId)) {
+      if (linkedGroupKey(unit) !== key4) continue;
+      unit.used ??= { attack: 0, action: 0 };
+      unit.used[slot2] = used;
+      unit.ap = Math.max(0, (unit.apMax ?? 2) - (unit.used.attack ?? 0) - (unit.used.action ?? 0));
+    }
+  }
+
   // src/core/vm-runtime.js
   var own12 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
   var values2 = (table4) => Object.values(table4 ?? {});
@@ -4888,13 +5084,22 @@ var FatedTacticalTavern = (() => {
     pushFrame(state, { native: "round", ownerId: null, sourceId: null });
     stepVM(state, vmHost);
   }
-  function advanceVMSpatial(state) {
+  function advanceVMSpatial(state, options = {}) {
     initializeVMWorld(state);
     if (state.vm.pendingAsk) return;
     const idle = !state.vm.stack.length;
     if (idle) state.vm.stepsRemaining = 2e3;
     const parent = state.vm.stack.at(-1) ?? { ownerId: null, sourceId: null };
-    expireSpatialEffects(state, vmHost, { advance: true, parent });
+    expireSpatialEffects(state, vmHost, { advance: true, ...options, parent });
+    if (idle) stepVM(state, vmHost);
+  }
+  function advanceVMAnchorTurn(state, anchorUnitId) {
+    initializeVMWorld(state);
+    if (state.vm.pendingAsk) return;
+    const idle = !state.vm.stack.length;
+    if (idle) state.vm.stepsRemaining = 2e3;
+    const parent = state.vm.stack.at(-1) ?? { ownerId: anchorUnitId, sourceId: anchorUnitId };
+    expireSpatialEffects(state, vmHost, { advance: true, anchorUnitId, parent });
     if (idle) stepVM(state, vmHost);
   }
   function dispatchVMHook(state, hook2, event) {
@@ -4925,6 +5130,7 @@ var FatedTacticalTavern = (() => {
   var vmHost = {
     ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
     log: recordVM,
+    initializeSummonTurn,
     event: newEvent,
     hooks: (state, frame, hook2, ref2) => scheduleHooks(state, frame, hook2, ref2, vmHost),
     commit: scheduleCommit,
@@ -5084,8 +5290,9 @@ var FatedTacticalTavern = (() => {
       if (overrides2.free) Object.assign(unit, { hp: unit.maxHp, mp: unit.maxMp, sp: unit.maxSp });
       if (overrides2.ignoreSlots) Object.assign(unit, { ap: 2, used: { attack: 0, action: 0 } });
       const skill2 = actionSkill(state, actor, action.skillId);
-      const view = { ...state, turn: state.order.indexOf(actor.id), units: { ...state.units, [actor.id]: unit } };
+      const view = { ...state, units: { ...state.units, [actor.id]: unit } };
       const planned = preview(view, action, {
+        actingUnit: unit,
         simulateRules: false,
         actionOrigin: overrides2.origin,
         ignoreRange: overrides2.ignoreRange === true,
@@ -5096,11 +5303,14 @@ var FatedTacticalTavern = (() => {
       if (!planned.ok) return planned;
       if (needsTarget(action.type) && action.x === void 0 && !planned.center) return { ok: false, error: "\u7F3A\u5C11\u76EE\u6807\u5750\u6807" };
       if (overrides2.interactiveId && planned.interactiveId !== overrides2.interactiveId) return { ok: false, error: "\u539F\u4E92\u52A8\u70B9\u5DF2\u4E0D\u53EF\u7528" };
+      const primary = planned.targets?.find((row) => row.id === planned.targetId) ?? planned.targets?.[0];
+      const basePower = evaluateExpr(skill2?.power, { self: actor, source: actor, attacker: actor, units: state.units });
+      const power = skill2?.power == null ? 0 : primary?.power ?? (Number.isFinite(basePower) ? basePower : 0);
       return {
         ...planned,
         center: planned.center ?? { x: action.x ?? actor.x, y: action.y ?? actor.y },
         targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter((row) => row.kind !== "cover").map((row) => row.id),
-        power: skill2?.power ?? 0,
+        power,
         initiativeBonus: skill2?.initiativeBonus ?? 0,
         isSingle: planned.shape == null || planned.shape === "single",
         isRanged: (skill2?.range ?? planned.range ?? 1) > 2,
@@ -5111,7 +5321,10 @@ var FatedTacticalTavern = (() => {
     payAction(state, actor, plan, event, overrides2) {
       if (!overrides2.ignoreSlots && plan.ap > 0) {
         actor.ap -= plan.ap;
-        for (const slot2 of plan.ap === 2 ? ["attack", "action"] : plan.slot ? [plan.slot] : []) actor.used[slot2]++;
+        for (const slot2 of plan.ap === 2 ? ["attack", "action"] : plan.slot ? [plan.slot] : []) {
+          actor.used[slot2]++;
+          syncLinkedGroupSlots(state, actor, slot2, actor.used[slot2]);
+        }
       }
       if (overrides2.free) return;
       paySkillEquipmentCost(state, actor, actionSkill(state, actor, event.skillId));
@@ -5192,7 +5405,7 @@ var FatedTacticalTavern = (() => {
     }
     return state.tape === void 0 || Array.isArray(state.tape);
   }
-  function resolveVMAction(state, action, { actor = currentUnit(state), dryRun = false } = {}) {
+  function resolveVMAction(state, action, { actor = actionActor(state, action), dryRun = false } = {}) {
     if (dryRun) {
       state = structuredClone(state);
       actor = own12(state.units, actor?.id);
@@ -5476,15 +5689,63 @@ var FatedTacticalTavern = (() => {
   function guardFor(state, target2) {
     return living(state).find((u) => u !== target2 && u.team === target2.team && vmFlag(state, u, "intercept", { target: target2 }) && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
   }
+  function resetUnitTurn(state, unit) {
+    delete unit.followupUsed;
+    unit.used = { attack: 0, action: 0 };
+    unit.moved = 0;
+    delete unit.moveSpent;
+    unit.reactionAvailable = true;
+    unit.ap = unit.apMax = turnAP(state, unit);
+  }
+  function initializeSummonTurn(state, unit) {
+    if (unit.turnMode === "independent") return;
+    unit.ap = 0;
+    unit.apMax = unit.turnMode === "none" ? 0 : turnAP(state, unit);
+    if (isLinkedMode(unit) && state.vm?.activePhaseId === unit.turnAnchorId) {
+      resetUnitTurn(state, unit);
+      Object.assign(unit.used, state.vm.linkedGroupUsed?.[linkedGroupKey(unit)]);
+      unit.ap = Math.max(0, unit.apMax - unit.used.attack - unit.used.action);
+      if (state.vm.startingMembers) state.vm.startingMembers.push(unit.id);
+    }
+  }
   function endTurn(state, unit) {
     if (!unit) return;
-    unit.ap = 0;
-    dispatchVMHook(state, "turn_end", { actorId: unit.id, targetId: unit.id });
-    if (state.vm?.pendingAsk) {
-      state.vm.endingTurn = unit.id;
-      return;
+    initializeVMWorld(state);
+    delete state.vm.activePhaseId;
+    const members = [...linkedUnitsOf(state, unit.id), unit];
+    for (const member of members) member.ap = 0;
+    for (const key4 of Object.keys(state.vm.linkedGroupUsed ?? {})) {
+      if (key4.startsWith(`${unit.id}:`)) delete state.vm.linkedGroupUsed[key4];
     }
-    completeTurnEnd(state, unit);
+    state.vm.endingTurn = unit.id;
+    state.vm.endingPhase = { members: members.map((member) => member.id), stage: 0 };
+    continueTurnEnd(state);
+  }
+  function continueTurnEnd(state) {
+    const phase = state.vm.endingPhase;
+    while (phase.members.length) {
+      const id3 = phase.members[0];
+      const member = tableEntry(state.units, id3);
+      if (member && phase.stage === 0) {
+        phase.stage++;
+        dispatchVMHook(state, "turn_end", { actorId: id3, targetId: id3 });
+        if (state.vm.pendingAsk) return;
+      }
+      if (member && phase.stage === 1) {
+        completeTurnEnd(state, member, phase.statuses);
+        if (state.vm.pendingAsk) return;
+      }
+      if (phase.stage < 2) {
+        phase.stage = 2;
+        advanceVMAnchorTurn(state, id3);
+        if (state.vm.pendingAsk) return;
+      }
+      phase.members.shift();
+      phase.stage = 0;
+      delete phase.statuses;
+    }
+    delete state.vm.endingPhase;
+    delete state.vm.endingTurn;
   }
   function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
     for (const [index, id3] of remaining.entries()) {
@@ -5495,8 +5756,7 @@ var FatedTacticalTavern = (() => {
       if (--status.remainingTurns > 0) continue;
       removeVMStatus(state, unit, status, "expired", unit);
       if (state.vm.pendingAsk) {
-        state.vm.endingTurn = unit.id;
-        state.vm.endingStatuses = remaining.slice(index + 1);
+        state.vm.endingPhase.statuses = remaining.slice(index + 1);
         return;
       }
     }
@@ -5519,7 +5779,8 @@ var FatedTacticalTavern = (() => {
             return;
           }
         }
-        delete state.vm.startingTurn;
+        if (state.vm.startingTurn === unit.id) continueUnitTurnStart(state);
+        if (state.vm.pendingAsk) return;
         if (refreshOutcome(state)) {
           unit.ap = 0;
           return;
@@ -5547,13 +5808,38 @@ var FatedTacticalTavern = (() => {
     if (stalled) stalled.ap = 0;
   }
   function beginUnitTurn(state, unit) {
-    delete unit.followupUsed;
-    unit.used = { attack: 0, action: 0 };
-    unit.moved = 0;
-    delete unit.moveSpent;
-    unit.reactionAvailable = true;
-    unit.ap = unit.apMax = turnAP(state, unit);
+    resetUnitTurn(state, unit);
+    const linked = linkedUnitsOf(state, unit.id);
+    initializeVMWorld(state);
+    state.vm.activePhaseId = unit.id;
+    for (const member of linked) resetUnitTurn(state, member);
+    state.vm.startingTurn = unit.id;
+    state.vm.startingMembers = [unit.id, ...linked.map((member) => member.id)];
     record(state, unit, "turn", `${unit.name}\u5F00\u59CB\u56DE\u5408`, { turn: state.turn });
+    continueUnitTurnStart(state);
+  }
+  function continueUnitTurnStart(state) {
+    while (state.vm.startingMembers.length && !state.vm.pendingAsk) {
+      const id3 = state.vm.startingMembers[0];
+      const unit = tableEntry(state.units, id3);
+      if (!alive3(unit) || unit.fled) {
+        state.vm.startingMembers.shift();
+        continue;
+      }
+      if (!state.vm.startingHoldChecked) {
+        state.vm.startingHoldChecked = true;
+        tryBreakHold(state, unit);
+        if (state.vm.pendingAsk) return;
+      }
+      state.vm.startingMembers.shift();
+      delete state.vm.startingHoldChecked;
+      dispatchVMHook(state, "turn_start", { actorId: id3, targetId: id3 });
+    }
+    if (state.vm.pendingAsk) return;
+    delete state.vm.startingMembers;
+    delete state.vm.startingTurn;
+  }
+  function tryBreakHold(state, unit) {
     const hold = unit.statuses.suppressed;
     if (hold?.vars?.holdTotal != null) {
       const roll = randomDie(state, 20);
@@ -5568,7 +5854,6 @@ var FatedTacticalTavern = (() => {
         { roll, total: total2, threshold: hold.vars.holdTotal, success }
       );
     }
-    dispatchVMHook(state, "turn_start", { actorId: unit.id, targetId: unit.id });
   }
   function turnAP(state, unit) {
     return clamp4(Math.floor(modStat(state, unit, "apMax", 2)), 0, 1e9);
@@ -5625,13 +5910,16 @@ var FatedTacticalTavern = (() => {
     moraleCheck(state);
     if (!refreshOutcome(state)) host.hooks(state, frame, "round_start", host.event(state, { round: state.round }));
   }
-  function beginBattle(state) {
+  function beginBattle(state, openingRolls) {
     state.logs ??= [];
     state.round = 1;
     state.turn = 0;
     state.outcome = null;
+    initializeVMWorld(state);
     syncEquipmentEffects(state);
-    const initiative2 = initiativeOrder(state, () => randomDie(state, 20));
+    const initiative2 = initiativeOrder(state, (unit) => openingRolls?.get(unit.id) ?? randomDie(state, 20));
+    delete state.vm.activePhaseId;
+    delete state.vm.linkedGroupUsed;
     state.order = initiative2.map((entry2) => entry2.unitId);
     for (const unit of values3(state.units)) {
       unit.stance ??= loadoutStance(state, unit);
@@ -5647,7 +5935,7 @@ var FatedTacticalTavern = (() => {
         delete status.appliedTurn;
       }
     }
-    record(state, null, "initiative", "\u654F\u6377 + d20\uFF1A\u786E\u5B9A\u5148\u653B\u6B21\u5E8F", { initiative: initiative2 });
+    record(state, null, "initiative", "\u654F\u6377 + d20\uFF1A\u786E\u5B9A\u5148\u653B\u6B21\u5E8F", { initiative: initiative2, openingRng: state.rng });
     for (const unit of living(state)) for (const status of values3(unit.statuses)) {
       record(
         state,
@@ -5664,7 +5952,7 @@ var FatedTacticalTavern = (() => {
     return state;
   }
   function initiativeOrder(state, rollFor) {
-    return living(state).map((unit) => {
+    return living(state).filter((unit) => !unit.summoned || (unit.turnMode ?? "independent") === "independent").map((unit) => {
       const roll = rollFor(unit), agility = effectiveStat(state, unit, "agi");
       const agilityPercent = Number(unit.initiativePercent ?? 0);
       const attackInit = [...unit.attackInit ?? []];
@@ -5678,6 +5966,18 @@ var FatedTacticalTavern = (() => {
       const total2 = initiative({ agility, percent: agilityPercent, d20: roll, attack: attackInit, action: actionInit, flat: flatInit });
       return { unitId: unit.id, roll, agility, agilityPercent, attackInit: Math.max(0, ...attackInit, 0), actionInit: Math.max(0, ...actionInit, 0), flatInit, total: total2 };
     }).sort((a, b) => b.total - a.total || b.agility - a.agility || (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
+  }
+  function isUntouchedOpening(state) {
+    return state.round === 1 && state.turn === 0 && !state.tape?.length && !state.vm?.pendingAsk && state.logs[0]?.type === "initiative" && state.logs.every((log) => log.type === "initiative" || log.type === "status" && log.detail?.initial || log.type === "turn" && log.detail?.turn === 0);
+  }
+  function replayOpeningBattle(state) {
+    if (!isUntouchedOpening(state)) return state;
+    const { initiative: initiative2, openingRng } = state.logs[0].detail;
+    if (!Array.isArray(initiative2)) return state;
+    const rolls = new Map(initiative2.map((row) => [row.unitId, row.roll]));
+    state.rng = openingRng ?? state.rng;
+    state.logs = [];
+    return beginBattle(state, rolls);
   }
   function refreshOpeningInitiative(state) {
     const [entry2, ...following] = state.logs;
@@ -5872,7 +6172,8 @@ var FatedTacticalTavern = (() => {
     const baseRange = template.range ?? 1.5;
     const range2 = baseRange + (baseRange === 0 || melee || !dz ? 0 : dz > 0 ? template.vars?.highGroundRange ?? 1 : -1);
     const offset = incomingDistanceOffset(state, actor, at3, { checkKind: "attack" });
-    return { distance: distance3D(state, actor, at3) + offset, dz, range: Math.max(0, range2), melee };
+    const attackOffset = modStat(state, actor, "attackDistanceOffset", 0, { checkKind: "attack", target: at3 });
+    return { distance: Math.max(0, distance3D(state, actor, at3) + offset + attackOffset), dz, range: Math.max(0, range2), melee };
   }
   function validReach(state, actor, at3, template, ammo) {
     const geometry = reaches(state, actor, at3, template, ammo);
@@ -5913,8 +6214,14 @@ var FatedTacticalTavern = (() => {
     return aoeCells(state, actor, center, {
       ...template,
       radius: selfCentered ? template.radius ?? 1.5 : template.radius,
-      range: (at3) => ignoreRange || deferGeometry ? Infinity : reaches(state, actor, at3, template, ammo).range,
-      ignoreAimRange: ignoreRange || deferGeometry,
+      range: (at3) => {
+        if (ignoreRange || deferGeometry) return Infinity;
+        const effective = reaches(state, actor, at3, template, ammo);
+        return effective.range + distance3D(state, actor, at3) - effective.distance;
+      },
+      // preview has already checked the aim using effective distance. The
+      // range callback supplies the equivalent geometric limit for ray cells.
+      ignoreAimRange: true,
       ignoreLOS: ignoreLOS || deferGeometry
     });
   }
@@ -6061,7 +6368,21 @@ var FatedTacticalTavern = (() => {
     const multiplier = (sandboxDual ? 0.75 : 1) * (teleport2 ? 1 + (teleport2.bonusMultiplier ?? 0.5) : 1);
     const tierPower = { 1: 2, 2: 2.8, 3: 4, 4: 8, 5: 15, 6: 35, 7: 80 }[actor.tier ?? 1] ?? 2;
     const attributeBase = () => state.ruleset === "protocol" ? effectiveStat(state, actor, template.damage.stat ?? (geometry.melee ? "str" : "int")) * 10 * tierPower : Math.floor(effectiveStat(state, actor, template.damage.stat) * (template.damage.multiplier ?? 1));
-    const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + Number(template.power ?? 20) + weaponAttack : null;
+    const carrier4 = weapon2?.instance ? { type: "item", id: weapon2.instance.id } : context.skillId ? { type: "skill", id: context.skillId } : { type: "unit", id: actor.id };
+    const scope = { ...carrierScope(
+      state,
+      { entity: template, carrier: carrier4, nativeOwnerId: actor.id },
+      actor.id,
+      modifierEvent(actor, strike)
+    ), self: actor, target: target2 };
+    const resolve = (stat3, fallback) => {
+      const base = evaluateExpr(template[stat3] ?? fallback, scope);
+      const value = modStat(state, actor, stat3, Number.isFinite(base) ? base : fallback, strike);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    const power = template.power != null || template.damage ? Math.max(0, resolve("power", template.damage ? 20 : 0)) : null;
+    const hits = template.damage ? clamp4(Math.floor(resolve("hits", 1)), 1, 20) : 1;
+    const protocolInitial = state.ruleset === "protocol" && template.damage ? attributeBase() + power + weaponAttack : null;
     const armorPierce = resolveArmorPierce(state, actor, template, weapon2, strike);
     const recipient = cover || !hasStrikeDamage(template) ? target2 : guardFor(state, target2) ?? target2;
     const reduction = cover ? { multiplier: 1, armor: target2.armor ?? 0 } : mitigation(
@@ -6086,10 +6407,10 @@ var FatedTacticalTavern = (() => {
     );
     const shown = (raw, factor = 1) => {
       const scaled = Math.floor(applyStatMod(raw * multiplier * factor + flatDamage, outgoing.damageMult));
-      if (cover) return Math.max(0, scaled - (target2.armor ?? 0));
+      if (cover) return Math.max(0, scaled - (target2.armor ?? 0)) * hits;
       const modified = Math.max(0, Math.floor(scaled * reduction.multiplier * reduction.armorMultiplier * (1 - reduction.attributeReduction)));
       const mitigated = Math.max(0, Math.floor(modified - flatReduction)) * (1 - reduction.dr);
-      return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) - absorb);
+      return Math.max(0, Math.floor(applyStatMod(mitigated, outgoing.finalDamageMult)) * hits - absorb);
     };
     const flat = protocolInitial !== null;
     const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice4, critical)).map((n) => shown(n, factor));
@@ -6164,6 +6485,8 @@ var FatedTacticalTavern = (() => {
       damageType: damageType2,
       armorPierce,
       protocolInitial,
+      power,
+      hits,
       dodgeBonus: dodge,
       damageMultiplier: modStat(state, actor, "damage", multiplier, { ...strike, damageType: damageType2 }),
       offHand: Boolean(weapon2?.offHand?.template),
@@ -6219,23 +6542,35 @@ var FatedTacticalTavern = (() => {
   function nearbyCovers(state, at3) {
     return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at3, c)).sort(byId2);
   }
+  function shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget) {
+    const areaDamage = (template.shape ?? "single") !== "single" && hasStrikeDamage(template);
+    const targeting = areaDamage && template.target == null ? { ...template, target: "any" } : template;
+    return selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget);
+  }
+  function needsAimDirection(state, actor, origin, center, template, range2, allowFriendlyTarget) {
+    return range2 > 0 && ["fan", "cone", "line"].includes(template.shape) && sameCell(origin, center) && !living(state).some((unit) => unit.id !== actor.id && sameCell(unit, center) && shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget));
+  }
   function usableTiles(state, actor, template, weapon2) {
     const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
-    return allCells(state).filter((at3) => validReach(
-      state,
-      actor,
-      template.target === "cell" || (template.shape ?? "single") !== "single" ? at3 : locateUnit(state, at3, null, (u) => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at3,
-      template,
-      weapon2?.ammo
-    ));
+    return allCells(state).filter((at3) => {
+      const aim = template.target === "cell" || (template.shape ?? "single") !== "single" ? at3 : locateUnit(state, at3, null, (u) => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at3;
+      if (sameCell(actor, at3) && needsAimDirection(
+        state,
+        actor,
+        actor,
+        at3,
+        template,
+        reaches(state, actor, aim, template, weapon2?.ammo).range,
+        allowFriendlyTarget
+      )) return false;
+      return validReach(state, actor, aim, template, weapon2?.ammo);
+    });
   }
   function shapeTargets(state, actor, cells2, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
     const keys = new Set(cells2.map((at3) => key2(at3.x, at3.y)));
     if (template.target === "cell") return [];
-    const areaDamage = (template.shape ?? "single") !== "single" && hasStrikeDamage(template);
-    const targeting = areaDamage && template.target == null ? { target: "any" } : template;
     return living(state).filter((unit) => {
-      if (!selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget)) return false;
+      if (!shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget)) return false;
       if ((template.shape ?? "single") === "single") return targetId ? unit.id === targetId : sameCell(unit, aim);
       if (template.shape === "circle" || template.shape === "ring") {
         const distanceFromCenter = distance3D(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: "attack" });
@@ -6246,14 +6581,14 @@ var FatedTacticalTavern = (() => {
       return keys.has(key2(unit.x, unit.y)) && (ignoreLOS || hasLOS(state, origin, unit)) && (radius == null ? ignoreRange || geometry.distance <= geometry.range + 1e-9 : geometry.distance <= radius + 1e-9);
     });
   }
-  function preview(state, action, { simulateRules = true, actionOrigin, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
+  function preview(state, action, { simulateRules = true, actionOrigin, actingUnit, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
     if (state.outcome) return fail2("\u6218\u6597\u5DF2\u7ECF\u7ED3\u675F");
-    const unit = currentUnit(state);
+    const unit = actingUnit ?? actionActor(state, action);
     if (!alive3(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
     if (!action || typeof action !== "object" || Array.isArray(action)) return fail2("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
     const { type, skillId } = action;
     let { x, y } = action;
-    if (!Object.keys(action).every((field2) => type === "switch_weapon" && field2 === "itemId" || ["type", "x", "y", "targetId", "skillId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field2))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
+    if (!Object.keys(action).every((field2) => type === "switch_weapon" && field2 === "itemId" || ["type", "x", "y", "targetId", "skillId", "actorId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field2))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
     if (action.bonusDice !== void 0 && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail2("\u5956\u52B1\u9AB0\u50A8\u5907\u4E0D\u8DB3");
     if (action.intent !== void 0 && !["normal", "function", "core", "kill", "concept"].includes(action.intent)) return fail2("\u610F\u56FE\u7C7B\u578B\u65E0\u6548");
     const equipmentSkill = type === "skill" ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
@@ -6275,18 +6610,21 @@ var FatedTacticalTavern = (() => {
     if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
     if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
     if (type === "interact" && unplaced) {
-      const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }).ok).sort(byId2).map((v) => pos(v.x, v.y));
+      const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }, { actingUnit: unit }).ok).sort(byId2).map((v) => pos(v.x, v.y));
       return cells3.length ? { ok: true, ap: 1, cost: 1, cells: cells3 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells3 });
     }
     const item = !unplaced && (type === "interact" || type === "attack") ? values3(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
     const detonate = item?.kind === "barrel";
     const drawFromBag = type === "switch_weapon" && unit.bagWeapons?.includes(action.itemId);
-    const ap = drawFromBag ? 1 : cost.ap, slot2 = ap === 0 ? null : drawFromBag ? "action" : detonate ? "attack" : cost.slot;
+    const independentMove = isLinkedMode(unit) && isMovement(type);
+    const ap = independentMove ? 0 : drawFromBag ? 1 : cost.ap;
+    const slot2 = independentMove ? "move" : ap === 0 ? null : drawFromBag ? "action" : detonate ? "attack" : cost.slot;
     const resourceCosts = actorCost(state, unit, cost, type === "skill" ? skillId : void 0);
     const common = { ok: true, ap, cost: ap, slot: slot2, ...resourceCosts, ...availability };
     if (type === "end") return common;
     if (type === "end_encounter") return ["spar", "arena"].includes(state.battleType) ? { ...common, name: state.battleType === "spar" ? "\u53EB\u505C\u5207\u78CB\uFF08\u5E73\u5C40\uFF09" : "\u5168\u961F\u8BA4\u8F93" } : fail2("\u672C\u573A\u4E0D\u80FD\u76F4\u63A5\u53EB\u505C\u6216\u8BA4\u8F93");
     if (unitSkipped(state, unit)) return fail2("\u5F53\u524D\u5355\u4F4D\u53D7\u63A7\u5236\uFF0C\u53EA\u80FD\u7ED3\u675F\u56DE\u5408");
+    if (independentMove && unit.moved > 0) return fail2("\u672C\u56DE\u5408\u5DF2\u7ECF\u79FB\u52A8");
     const cannotPay = paymentError(state, unit, ap, slot2, cost, resourceCosts, type === "skill");
     if (cannotPay) return fail2(cannotPay, { ap, ...availability });
     const center = unplaced ? void 0 : pos(x, y);
@@ -6463,7 +6801,7 @@ var FatedTacticalTavern = (() => {
     } : unit;
     const ammo = attack && !shieldBash ? weapon2.ammo : null;
     const geometry = reaches(state, origin, aim, template, ammo);
-    if (["fan", "cone", "line"].includes(template.shape) && template.range > 0 && sameCell(origin, center)) {
+    if (needsAimDirection(state, unit, origin, center, template, geometry.range, allowFriendlyTarget)) {
       return fail2("\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411", { ...geometry, originSensitive: true });
     }
     if (!isGround(state, center)) return fail2("\u5899\u4F53\u65E0\u6CD5\u6307\u5B9A", geometry);
@@ -6866,6 +7204,7 @@ var FatedTacticalTavern = (() => {
       delete frame.awaitEvent;
       delete frame.preRolled;
       delete frame.intentOutcome;
+      delete frame.hitIndex;
     };
     const detail = {
       actorId: actor.id,
@@ -6879,13 +7218,17 @@ var FatedTacticalTavern = (() => {
       weaponTemplateId: weapon2?.instance?.templateId ?? null,
       instanceId: weapon2?.instance?.id ?? null,
       damageType: profile.damageType,
-      intent: profile.intent ?? "normal"
+      intent: profile.intent ?? "normal",
+      isSingle: plan.isSingle ?? true,
+      isArea: !(plan.isSingle ?? true),
+      isRanged: profile.arrow || !profile.melee
     };
     if (!frame.phase) {
       if (!alive3(target2) || target2.fled) {
         next();
         return;
       }
+      frame.hitIndex ??= 0;
       if (profile.skipHitCheck) {
         const result = resolveCheck(state, actor, profile);
         frame.intentOutcome = result.intent;
@@ -6955,10 +7298,13 @@ var FatedTacticalTavern = (() => {
       return;
     }
     if (frame.phase === "damage") {
-      if (!event.hit) {
+      if (!event.hit || !alive3(target2) || target2.fled) {
         next();
         return;
       }
+      delete event.dealt;
+      delete event.absorbed;
+      event.targetId = target2.id;
       frame.phase = "heal";
       const { critical, rating, saved } = event;
       const intent = frame.intentOutcome;
@@ -6987,6 +7333,7 @@ var FatedTacticalTavern = (() => {
       };
       if (profile.kind === "cover") {
         coverDamage(state, actor, target2, Math.floor(amount), details);
+        frame.phase = "next_hit";
         return;
       }
       const recipient = guardFor(state, target2) ?? target2;
@@ -7014,7 +7361,7 @@ var FatedTacticalTavern = (() => {
     if (frame.phase === "heal") {
       frame.phase = "after_hit";
       const recipient = tableEntry(state.units, event.targetId);
-      if (template.heal != null && alive3(recipient)) host.commit(state, frame, {
+      if (frame.hitIndex === 0 && template.heal != null && alive3(recipient)) host.commit(state, frame, {
         ...detail,
         intent: event.intent,
         op: "heal",
@@ -7028,11 +7375,23 @@ var FatedTacticalTavern = (() => {
       });
       return;
     }
-    if (frame.phase === "after_hit" && profile.kind !== "cover") {
-      frame.phase = "followup";
+    if (frame.phase === "after_hit") {
+      frame.phase = "next_hit";
       if (action.type === "shield_bash") event.rules = shieldBashRules;
       host.hooks(state, frame, "after_hit", frame.awaitEvent);
       return;
+    }
+    if (frame.phase === "next_hit") {
+      if (frame.hitIndex + 1 < (profile.hits ?? 1) && alive3(target2) && !target2.fled) {
+        frame.hitIndex++;
+        frame.phase = "damage";
+        return;
+      }
+      if (profile.kind === "cover") {
+        next();
+        return;
+      }
+      frame.phase = "followup";
     }
     if (frame.phase === "followup" && action.type === "attack" && !frame.weapon && !actor.followupUsed && stanceRules(weapon2?.stance).followUp) {
       const recipient = tableEntry(state.units, event.targetId);
@@ -7042,7 +7401,7 @@ var FatedTacticalTavern = (() => {
       const cost = level * 10;
       if (alive3(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === "off_hand" && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
         actor.followupUsed = true;
-        const followWeapon = { ...off, template: { ...off.template, power: level * 15 }, ammo, stance: "dual_wield" };
+        const followWeapon = { ...off, template: { ...off.template, power: off.template.power ?? level * 15 }, ammo, stance: "dual_wield" };
         const follow = targetProfile(state, actor, recipient, recipient, followWeapon.template, { weapon: followWeapon });
         follow.disadvantages = event.rating.multiplier >= 1.3 ? 0 : Math.max(1, follow.disadvantages);
         record(state, actor, "followup", `${actor.name}\u4F7F\u7528${off.template.name}\u8FFD\u51FB${recipient.name}`, { targetId: recipient.id, cost, weaponId: off.instance.id });
@@ -7168,6 +7527,7 @@ var FatedTacticalTavern = (() => {
     return true;
   }
   function applyAction(state, action) {
+    if (action?.type !== "answer" && action?.actorId !== void 0 && !canRouteActor(state, action.actorId)) throw new Error("\u8BE5\u5355\u4F4D\u4E0D\u80FD\u5728\u5F53\u524D\u9636\u6BB5\u884C\u52A8");
     if (action?.type === "answer" || state.vm?.pendingAsk || action?.type && !["end", "end_encounter"].includes(action.type)) {
       if (state.vm?.pendingAsk && action.type === "end_encounter") {
         const concession = preview(state, action);
@@ -7176,19 +7536,17 @@ var FatedTacticalTavern = (() => {
         state.vm.stack.length = 0;
         state.vm.events = {};
         delete state.vm.endingTurn;
-        delete state.vm.endingStatuses;
+        delete state.vm.endingPhase;
+        delete state.vm.startingMembers;
+        delete state.vm.startingHoldChecked;
         delete state.vm.startingTurn;
         delete state.vm.settlingTurn;
       } else {
         const before2 = state.logs.length;
-        const actor2 = currentUnit(state);
+        const actor2 = actionActor(state, action) ?? currentUnit(state);
         const result = resolveVMAction(state, action);
         if (!result.pendingAsk && state.vm.endingTurn) {
-          const endingUnit = state.units[state.vm.endingTurn];
-          const remainingStatuses = state.vm.endingStatuses;
-          delete state.vm.endingTurn;
-          delete state.vm.endingStatuses;
-          completeTurnEnd(state, endingUnit, remainingStatuses);
+          continueTurnEnd(state);
           if (!state.vm.pendingAsk && !refreshOutcome(state)) {
             advanceCursor(state);
             settleTurn(state);
@@ -7210,7 +7568,7 @@ var FatedTacticalTavern = (() => {
       }
       throw new Error(plan.error);
     }
-    const actor = currentUnit(state);
+    const actor = actionActor(state, action) ?? currentUnit(state);
     const before = state.logs.length;
     if (action.type === "end_encounter") {
       record(
@@ -7387,8 +7745,11 @@ var FatedTacticalTavern = (() => {
       if (actor) actor.ap = 0;
       return;
     }
-    if (type === "end" || !alive3(actor) || !actor.ap) {
-      if (!actor.fled) endTurn(state, actor);
+    const turnOwner = currentUnit(state) ?? actor;
+    if (!turnOwner) return;
+    const linked = linkedUnitsOf(state, turnOwner.id).filter((member) => member.team === turnOwner.team);
+    if (type === "end" || !alive3(turnOwner) || turnOwner.fled || !turnOwner.ap && !linked.length) {
+      if (!turnOwner.fled || linked.length) endTurn(state, turnOwner);
       if (!state.vm?.pendingAsk && !refreshOutcome(state)) {
         advanceCursor(state);
         settleTurn(state);
@@ -7747,6 +8108,7 @@ var FatedTacticalTavern = (() => {
       requireThat(!issue, `VM \u89C4\u5219 rules/${index}${typeof rule2?.id === "string" ? `\uFF08${rule2.id}\uFF09` : ""}/${issue}`);
     }
     requireThat(new Set(rules.map((rule2) => rule2.id)).size === rules.length, "VM \u89C4\u5219 ID \u91CD\u590D");
+    if (state?.units && state.equipment && state.skills) validateSummonReferences(rules, state);
   }
   var own13 = Object.hasOwn;
   var error = (message) => {
@@ -7871,7 +8233,7 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "angle", (x) => int(x, 1, 360));
   }
   function equipmentTemplate(v, state) {
-    fields(v, ["name"], ["quality", "kind", "weaponClass", "hand", "rangeType", "ranged", "closeQuarters", "heavy", "twoHanded", "shield", "range", "accuracy", "attack", "damage", "armor", "defense", "boundTo", "weaponType", "shape", "target", "radius", "innerRadius", "width", "angle", ...rawDistanceFields, ...carrierFields, "pools", "skills"]);
+    fields(v, ["name"], ["quality", "kind", "weaponClass", "hand", "rangeType", "ranged", "closeQuarters", "heavy", "twoHanded", "shield", "range", "accuracy", "attack", "power", "hits", "damage", "armor", "defense", "boundTo", "weaponType", "shape", "target", "radius", "innerRadius", "width", "angle", ...rawDistanceFields, ...carrierFields, "pools", "skills"]);
     if (own13(v, "skills")) {
       list2(v.skills, 32, (skillId) => state ? has(state.skills, skillId) : id2(skillId), "\u88C5\u5907\u6280\u80FD");
       requireThat(new Set(v.skills).size === v.skills.length, "\u91CD\u590D\u88C5\u5907\u6280\u80FD");
@@ -7893,13 +8255,15 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "shape", (x) => skillShapes.includes(x));
     checkOptional(v, "target", (x) => skillTargets.filter((target2) => target2 !== "corpse").includes(x));
     validateAreaDimensions(v);
+    checkOptional(v, "power", numericExpr2);
+    checkOptional(v, "hits", numericExpr2);
     if (own13(v, "damage")) dice3(v.damage, state);
     requireThat(own13(v, "range") === own13(v, "damage"), "\u6B66\u5668 range/damage");
     carrierFieldsValue(v, state);
     if (own13(v, "pools")) poolDefinitions(v.pools);
   }
   function skillTemplate(v, state) {
-    fields(v, ["name", "ap", "slot", "range", "shape", "target"], ["quality", "power", "mp", "sp", "radius", "innerRadius", "width", "angle", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType", "backpackItem", "initiativeBonus", "passive", ...rawDistanceFields, ...carrierFields, "pools"]);
+    fields(v, ["name", "ap", "slot", "range", "shape", "target"], ["quality", "power", "hits", "mp", "sp", "radius", "innerRadius", "width", "angle", "accuracy", "save", "saveDC", "damage", "heal", "resourceCost", "school", "damageType", "backpackItem", "initiativeBonus", "passive", ...rawDistanceFields, ...carrierFields, "pools"]);
     carrierFieldsValue(v, state);
     if (own13(v, "pools")) poolDefinitions(v.pools);
     checkOptional(v, "backpackItem", (flag) => flag === true && v.ap === 1 && v.slot === "action");
@@ -7909,7 +8273,8 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "initiativeBonus", (value) => int(value, -100, 100));
     checkOptional(v, "passive", (value) => typeof value === "boolean");
     requireThat(text2(v.name) && int(v.ap, 0, 2) && ["attack", "action"].includes(v.slot) && int(v.range, 0, 64) && skillShapes.includes(v.shape) && skillTargets.includes(v.target), "\u6280\u80FD");
-    checkOptional(v, "power", (x) => int(x, 0, 1e9));
+    checkOptional(v, "power", numericExpr2);
+    checkOptional(v, "hits", numericExpr2);
     for (const k of ["mp", "sp"]) checkOptional(v, k, (x) => int(x, 0, 25e3));
     validateAreaDimensions(v);
     checkOptional(v, "accuracy", (x) => int(x, -100, 100));
@@ -7953,12 +8318,16 @@ var FatedTacticalTavern = (() => {
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
   var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound"];
   function unitValue(v, key4, state) {
-    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned"]);
+    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "lastMoveDir", "remainingTurns", "moveSpent", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned", "turnMode", "turnAnchorId", "durationUnit", "durationAnchorId"]);
     carrierFieldsValue(v, state, true);
     if (own13(v, "pools")) poolBindings(v.pools);
     for (const k of ["templateId", "sourceId"]) checkOptional(v, k, id2);
     checkOptional(v, "sourceSkillId", (skillId) => v.summoned === true && validVmSourceSkillId(skillId));
     checkOptional(v, "summonGroup", (group) => text2(group, 512));
+    checkOptional(v, "turnMode", (mode) => ["independent", "linked_group", "linked_each", "none"].includes(mode));
+    checkOptional(v, "turnAnchorId", id2);
+    checkOptional(v, "durationUnit", (unit) => ["rounds", "anchor_turns"].includes(unit));
+    checkOptional(v, "durationAnchorId", id2);
     if (own13(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
     checkOptional(v, "summoned", (x) => x === true);
     for (const key5 of ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax"]) checkOptional(v, key5, (x) => int(x, 0, 1e9));
@@ -7968,6 +8337,8 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "moveCarryPermille", (x) => int(x, 0, 999));
     checkOptional(v, "lastMoveDir", (x) => x === null || ["N", "S", "E", "W"].includes(x));
     checkOptional(v, "remainingTurns", (x) => int(x, 1, 100));
+    checkOptional(v, "durationUnit", (x) => v.summoned === true && v.remainingTurns !== void 0 && (x === "rounds" && v.durationAnchorId === void 0 || x === "anchor_turns" && id2(v.durationAnchorId)));
+    checkOptional(v, "durationAnchorId", (x) => v.durationUnit === "anchor_turns" && id2(x));
     checkOptional(v, "moveSpent", (x) => int(x, 0, 1e9));
     for (const k of ["fled", "corpseConsumed"]) checkOptional(v, k, (x) => typeof x === "boolean");
     checkOptional(v, "corpseOf", id2);
@@ -8128,6 +8499,37 @@ var FatedTacticalTavern = (() => {
       }
     }
   }
+  function validateSummonLoadout(panel, state) {
+    for (const skill2 of panel.skills ?? []) requireThat(has(state.skills, skill2), `\u53EC\u5524\u6280\u80FD\u5F15\u7528 ${skill2}`);
+    for (const item of [panel.mainHand, panel.offHand, panel.shield, ...panel.gear ?? []].filter(Boolean)) {
+      requireThat(has(state.equipment, item), `\u53EC\u5524\u88C5\u5907\u5F15\u7528 ${item}`);
+    }
+  }
+  function validateSummonReferences(node, state) {
+    if (!node || typeof node !== "object") return;
+    if (node.op === "spawn" && node.entityKind === "unit") {
+      const { templateId, spawnPanel: spawnPanel2 } = node.spec;
+      if (templateId !== void 0) requireThat(has(state.summonTemplates, templateId), `\u53EC\u5524\u6A21\u677F\u5F15\u7528 ${templateId}`);
+      if (spawnPanel2) validateSummonLoadout(spawnPanel2, state);
+    }
+    for (const child of Object.values(node)) validateSummonReferences(child, state);
+  }
+  function summonTemplateValue(v, state) {
+    fields(v, ["name"], [.../* @__PURE__ */ new Set([...carrierFields, ...summonTemplatePanelFields]), "ownerId", "level", "group", "maxActive", "stackPolicy", "turnMode", "durationUnit", "remainingTurns"]);
+    requireThat(text2(v.name), "\u53EC\u5524\u6A21\u677F\u540D\u79F0");
+    checkOptional(v, "ownerId", (owner) => id2(owner) && has(state.units, owner));
+    checkOptional(v, "level", (x) => int(x, 1, 100));
+    checkOptional(v, "group", id2);
+    checkOptional(v, "maxActive", (x) => int(x, 1, 50));
+    checkOptional(v, "stackPolicy", (x) => ["replace", "fifo", "cap"].includes(x));
+    checkOptional(v, "remainingTurns", (x) => int(x, 1, 100));
+    const spawnPanel2 = Object.fromEntries(summonTemplatePanelFields.filter((key4) => own13(v, key4)).map((key4) => [key4, v[key4]]));
+    requireThat(validVmOpcode({ op: "spawn", entityKind: "unit", spec: { spawnPanel: spawnPanel2 } }), "\u53EC\u5524\u6A21\u677F\u9762\u677F");
+    carrierFieldsValue(v, state);
+    checkOptional(v, "turnMode", (x) => ["independent", "linked_group", "linked_each", "none"].includes(x));
+    checkOptional(v, "durationUnit", (x) => ["rounds", "anchor_turns"].includes(x));
+    validateSummonLoadout(spawnPanel2, state);
+  }
   function validateState(s) {
     fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape", "scale", "customElements"]);
     if (own13(s, "customElements")) validateCustomElements(s.customElements);
@@ -8138,11 +8540,11 @@ var FatedTacticalTavern = (() => {
       fields(s.time, ["raw", "hour", "minute", "timeOfDay", "calendar"]);
       requireThat(text2(s.time.raw, 500) && typeof s.time.calendar === "string" && s.time.calendar.length <= 500 && int(s.time.hour, 0, 23) && int(s.time.minute, 0, 59) && s.time.timeOfDay === timeOfDay(s.time.hour, s.time.minute), "time");
     }
-    if (own13(s, "summonTemplates")) table2(s.summonTemplates, (u, key4) => {
-      unitValue(u, key4, s);
-      requireThat(u.skills.every((skill2) => has(s.skills, skill2)), "summon skills");
-    });
-    if (own13(s, "statusTemplates")) statusTemplateTable(s.statusTemplates);
+    if (own13(s, "summonTemplates")) table2(s.summonTemplates, (u) => summonTemplateValue(u, s));
+    if (own13(s, "statusTemplates")) {
+      statusTemplateTable(s.statusTemplates);
+      for (const template of Object.values(s.statusTemplates)) validateSummonReferences(template.rules, s);
+    }
     requireThat(id2(s.scenarioId) && text2(s.title) && s.mode === "split" && ["protocol", "sandbox"].includes(s.ruleset) && int(s.round, 1, 1e6) && int(s.rng, 0, 4294967295) && [null, "blue", "red", "draw"].includes(s.outcome), "\u6218\u5C40");
     requireThat(Array.isArray(s.grid) && int(s.grid.length, 8, 20), "\u68CB\u76D8");
     const width = s.grid[0]?.length;
@@ -8217,7 +8619,7 @@ var FatedTacticalTavern = (() => {
     if (own13(s, "tape")) tapeValue(s.tape, s);
     validatePools(s);
     list2(s.order, 200, (x) => has(s.units, x), "\u5148\u653B\u961F\u5217");
-    requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1)) && Object.values(s.units).every((u) => u.hp <= 0 || s.order.includes(u.id)), "\u5148\u653B\u7D22\u5F15");
+    requireThat(new Set(s.order).size === s.order.length && int(s.turn, 0, Math.max(0, s.order.length - 1)) && Object.values(s.units).every((u) => u.summoned && ["linked_group", "linked_each", "none"].includes(u.turnMode) ? !s.order.includes(u.id) : u.hp <= 0 || s.order.includes(u.id)), "\u5148\u653B\u7D22\u5F15");
     requireThat(Array.isArray(s.logs) && s.logs.length <= 1e5, "\u65E5\u5FD7");
     for (const log of s.logs) {
       fields(log, ["round", "actor", "type", "text", "detail"], ["positions"]);
@@ -8667,7 +9069,7 @@ var FatedTacticalTavern = (() => {
       const target2 = state.units[effect.id];
       return target2?.team !== actor.team && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
     });
-    function consider(action, plan = preview(state, action)) {
+    function consider(action, plan = preview(state, action, { actingUnit: actor })) {
       const skill2 = action.type === "skill" ? actionSkill(state, actor, action.skillId) : null;
       if (plan.ok && !(isOffensiveAreaSkill(skill2) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
     }
@@ -8679,7 +9081,7 @@ var FatedTacticalTavern = (() => {
       const skill2 = templates.get(skillId);
       if (!skill2 || isPassiveSkill(skill2) || attacksOnly && (skill2.slot !== "attack" || skill2.ap > 1)) continue;
       if (skill2.ap === 0 && !skill2.backpackItem && !skill2.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false && (rule2.filter === void 0 || rule2.filter === true) && (rule2.usesPerTurn || rule2.usesPerBattle || rule2.cooldownTurns))) continue;
-      const query2 = preview(state, { type: "skill", skillId });
+      const query2 = preview(state, { type: "skill", skillId }, { actingUnit: actor });
       if (!query2.ok) continue;
       const effectiveSkill = actionSkill(state, actor, skillId) ?? skill2;
       const directed = ["fan", "cone", "line"].includes(effectiveSkill?.shape ?? skill2.shape);
@@ -8701,7 +9103,7 @@ var FatedTacticalTavern = (() => {
         const objectives = isOffensiveAreaSkill(effectiveSkill) ? enemies : skill2.target === "ally" || skill2.slot === "action" ? units : enemies;
         candidates = candidates.map((candidate) => {
           const action = actionAt(candidate);
-          const plan = preview(state, action, { simulateRules: false });
+          const plan = preview(state, action, { simulateRules: false, actingUnit: actor });
           const proximity = Math.min(Infinity, ...objectives.map((target2) => dist(candidate, target2)));
           return { candidate, rank: plan.ok ? score(action, plan) + 1 / (1 + proximity) : -Infinity };
         }).filter((entry2) => Number.isFinite(entry2.rank)).sort((a, b) => b.rank - a.rank).slice(0, vmAimBudget).map((entry2) => entry2.candidate);
@@ -8724,7 +9126,7 @@ var FatedTacticalTavern = (() => {
       if (d > range2 + 1) return false;
       const u = { ...actor, x: probe.x, y: probe.y, ap: 2, used: { attack: 0, action: 0 } };
       const s = { ...state, units: { ...state.units, [actor.id]: u } };
-      const attack = preview(s, { type: "attack", targetId: target2.id, x: target2.x, y: target2.y });
+      const attack = preview(s, { type: "attack", targetId: target2.id, x: target2.x, y: target2.y }, { actingUnit: s.units[actor.id] });
       if (attack.ok || attack.error === "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" && d <= range2 && hasLOS(state, probe, target2)) return true;
       return false;
     });
@@ -8780,16 +9182,17 @@ var FatedTacticalTavern = (() => {
   function coverQuality(state, destination, enemies) {
     return Math.max(0, ...enemies.map((enemy) => (coverBetween(state, enemy, destination)?.cover ?? 0) * 0.35));
   }
-  function chooseAction(state) {
+  function chooseAction(state, actor = currentUnit(state)) {
     if (state.outcome) return null;
-    const actor = currentUnit(state);
-    if (!actor || !actor.hp || !actor.ap) return { ...END };
+    if (!actor || !actor.hp) return { ...END };
+    const plan = (action) => preview(state, action, { actingUnit: actor });
+    if (!actor.ap && !plan({ type: "move" }).ok) return { ...END };
     const enemies = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId3);
     if (!enemies.length) return { ...END };
     const bankStep = (move2) => move2.cells?.find((cell) => cell.bankedProgress > (actor.moveCarryPermille ?? 0));
     if (actor.moraleState === "routed") {
-      if (atBattleEdge(state, actor)) return preview(state, { type: "flee" }).ok ? { type: "flee" } : { ...END };
-      const move2 = preview(state, { type: "move" });
+      if (atBattleEdge(state, actor)) return plan({ type: "flee" }).ok ? { type: "flee" } : { ...END };
+      const move2 = plan({ type: "move" });
       if (!move2.ok) return { ...END };
       const exit = reachable(state, "move", actor, Infinity).filter((cell) => atBattleEdge(state, cell)).sort((a, b) => a.steps - b.steps)[0];
       const dest = exit && (exit.path.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p))) ?? bankStep(move2));
@@ -8799,10 +9202,10 @@ var FatedTacticalTavern = (() => {
       const held = Object.values(state.units).filter((t) => t.team === actor.team && t.hp > 0 && !t.fled && t.statuses.suppressed).sort(byId3);
       for (const ally of held) {
         const rescue = { type: "free_ally", targetId: ally.id, x: ally.x, y: ally.y };
-        if (preview(state, rescue).ok) return rescue;
+        if (plan(rescue).ok) return rescue;
       }
       if (held.length) {
-        const move2 = preview(state, { type: "move" });
+        const move2 = plan({ type: "move" });
         if (move2.ok) {
           const route = approach(state, actor, held, true);
           const dest = route.slice().reverse().find((p) => move2.cells.some((c) => samePosition(c, p))) ?? (route.length ? bankStep(move2) : void 0);
@@ -8813,12 +9216,12 @@ var FatedTacticalTavern = (() => {
     if (state.battleType === "suppress" && state.suppressingTeam === actor.team) {
       for (const enemy of enemies) {
         const action = { type: "suppress", targetId: enemy.id, x: enemy.x, y: enemy.y };
-        if (preview(state, action).ok) return action;
+        if (plan(action).ok) return action;
       }
       const targets2 = enemies.filter((t) => !t.statuses.suppressed && visibleEnemy(state, actor, t));
       const path2 = targets2.length && approach(state, actor, targets2, true);
       if (path2?.length) {
-        const move2 = preview(state, { type: "move" });
+        const move2 = plan({ type: "move" });
         const dest = path2.slice().reverse().find((p) => move2.cells?.some((c) => samePosition(c, p))) ?? bankStep(move2);
         if (dest) return { type: "move", x: dest.x, y: dest.y };
       }
@@ -8835,18 +9238,18 @@ var FatedTacticalTavern = (() => {
       if (choice.score > best.score + 1e-8) best = choice;
     }
     for (const choice of aimedOptions(state, actor)) consider(choice);
-    const canReload = preview(state, { type: "reload" });
+    const canReload = plan({ type: "reload" });
     if (canReload.ok) consider({ action: { type: "reload" }, score: canReload.ammo === 0 ? 7.5 : (canReload.capacity - canReload.ammo) * 0.5 });
     const plannedPath = approach(state, actor, objectives);
     const z0 = elevation(state, actor);
     const startingCover = coverQuality(state, actor, objectives);
     const baseline = Math.min(...objectives.map((u) => dist(actor, u)));
-    const ordinary = preview(state, { type: "move" });
+    const ordinary = plan({ type: "move" });
     const riskyDestinations = new Set((ordinary.cells ?? []).filter((c) => c.opportunities?.length).map((c) => `${c.x},${c.y}`));
     const movements = [];
     for (const type of ["move", "sprint", "disengage"]) {
       if (type === "disengage" && !riskyDestinations.size) continue;
-      const options = type === "move" ? ordinary : preview(state, { type });
+      const options = type === "move" ? ordinary : plan({ type });
       if (!options.ok) continue;
       for (const cell of options.cells) {
         if (type === "disengage" && !riskyDestinations.has(`${cell.x},${cell.y}`)) continue;
@@ -8887,13 +9290,204 @@ var FatedTacticalTavern = (() => {
       }
       consider({ action: { type, x: cell.x, y: cell.y }, score });
     }
-    const bracing = preview(state, { type: "brace" });
+    const bracing = plan({ type: "brace" });
     if (bracing.ok && !aggregateModifiers(state, actor.id).stats.damageReduction?.flat && baseline <= 5) consider({ action: { type: "brace" }, score: bracing.coverId ? 2.5 : 1.4 });
     if (best.action.type === "end" && !actor.used.attack) {
       const positiveAttacks = attackChoices.filter((choice) => choice.score > 0);
       if (positiveAttacks.length) best = positiveAttacks.reduce((choice, current) => choice.score > current.score ? choice : current);
     }
     return { ...best.action };
+  }
+
+  // src/core/battle-ai.js
+  var RULES = `\u4F60\u662F\u547D\u5B9A\u6218\u672F\u6C99\u76D8\u7684\u654C\u65B9\u966A\u73A9 AI\u3002\u4F60\u7684\u8EAB\u4EFD\u662F user \u4E00\u65B9\u7684\u5BF9\u624B\uFF0C\u53EA\u63A7\u5236\u5F53\u524D\u8FDE\u7EED\u884C\u52A8\u7684\u654C\u65B9\u89D2\u8272\uFF0C\u4E0D\u66FF\u73A9\u5BB6\u505A\u51B3\u5B9A\u3002
+\u884C\u52A8\uFF1A\u6BCF\u56DE\u5408\u6BCF\u4E2A\u89D2\u8272\u67091\u4E2A\u653B\u51FB\u69FD\u548C1\u4E2A\u52A8\u4F5C\u69FD\u3002\u79FB\u52A8\u3001\u88C5\u586B\u3001\u4E92\u52A8\u3001\u6362\u88C5\u3001\u67B6\u52BF\u548C\u9003\u8DD1\u4F7F\u7528\u52A8\u4F5C\u69FD\uFF0C\u666E\u901A\u653B\u51FB\u3001\u6280\u80FD\u653B\u51FB\u3001\u538B\u5236\u548C\u89E3\u9664\u538B\u5236\u4F7F\u7528\u653B\u51FB\u69FD\uFF0C\u91CD\u578B\u6280\u80FD\u53EF\u540C\u65F6\u4F7F\u7528\u4E24\u69FD\u3002\u4E00\u4E2A\u52A8\u4F5C\u53EA\u80FD\u4F7F\u7528\u5F53\u524D\u884C\u52A8\u8005\u81EA\u5DF1\u7684\u69FD\u4F4D\u3002\u52A8\u4F5C\u3001\u6280\u80FD\u548C\u80CC\u5305\u7269\u54C1\u7684\u5B9E\u9645 ap\u3001slot\u3001\u8D44\u6E90\u3001\u6B21\u6570\u4E0E\u51B7\u5374\u4EE5\u8F93\u5165\u6570\u636E\u4E3A\u51C6\u3002
+\u84C4\u6B65\uFF1AmovementCarry \u6309\u5355\u4F4D\u5217\u51FA\u5DF2\u79EF\u7D2F\u7684\u767E\u5206\u6BD4\uFF0C\u4EE5\u53CA\u539F\u5730 move \u6216 sprint \u540E\u53EF\u8FBE\u5230\u7684\u767E\u5206\u6BD4\u3002\u82E5\u6709\u6B63\u6536\u76CA\u4E14\u9700\u8981\u63A5\u8FD1\u76EE\u6807\uFF0C\u53EF\u5728\u81EA\u5DF1\u5F53\u524D\u5750\u6807\u6267\u884C\u8BE5\u79FB\u52A8\u6765\u79EF\u7D2F\u8FDB\u5EA6\uFF0C\u6512\u591F\u540E\u518D\u9009\u62E9\u5B9E\u9645\u843D\u70B9\u3002
+\u8DDD\u79BB\u4E0E\u9AD8\u5EA6\uFF1A\u653B\u51FB\u548C\u6280\u80FD\u6309\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB sqrt(dx\xB2+dy\xB2+dz\xB2) \u68C0\u67E5\u5C04\u7A0B\u3002z \u662F\u683C\u5B50\u9AD8\u5EA6\u52A0\u5355\u4F4D\u79BB\u5730\u9AD8\u5EA6\u3002\u9AD8\u5904\u653B\u51FB\u4F4E\u5904\u65F6\uFF0C\u8FDC\u7A0B\u653B\u51FB\u901A\u5E38\u83B7\u5F97\u6700\u591A+1\u683C\u5C04\u7A0B\uFF0C\u4F4E\u5904\u653B\u51FB\u9AD8\u5904\u65F6\u901A\u5E38\u51CF\u5C111\u683C\u5C04\u7A0B\uFF0C\u5B9E\u9645\u503C\u4EE5\u6280\u80FD/\u88C5\u5907\u6570\u636E\u548C\u9884\u89C8\u89C4\u5219\u4E3A\u51C6\u3002\u79FB\u52A8\u6BCF\u8DE8\u4E00\u683C\u6709\u9AD8\u5EA6\u9650\u5236\uFF0C\u5E73\u5730\u901A\u5E38\u53EA\u80FD\u8DE81\u7EA7\u9AD8\u5EA6\uFF0C\u5761\u5730\u53EF\u8DE82\u7EA7\uFF0C\u5899\u4E0D\u80FD\u901A\u884C\u3002\u79FB\u52A8\u5230\u9AD8\u5904\u6216\u4F4E\u5904\u4F1A\u6D88\u8017\u8DEF\u5F84\u5141\u8BB8\u7684\u52A8\u4F5C\u9884\u7B97\uFF0C\u4E0D\u80FD\u628A\u4E8C\u7EF4\u76F8\u90BB\u5F53\u4F5C\u4E00\u5B9A\u53EF\u8FBE\u3002
+\u89C6\u7EBF\u4E0E\u9694\u65AD\uFF1A\u5899\u4F53\u548C\u975E\u53EF\u7AD9\u7ACB\u683C\u4F1A\u963B\u65AD\u89C6\u7EBF\u3002\u653B\u51FB\u3001\u8FDC\u7A0B\u6280\u80FD\u3001\u7206\u6876\u5F15\u7206\u548C\u8303\u56F4\u6548\u679C\u90FD\u8981\u6709\u901A\u7545\u89C6\u7EBF\u3002\u8303\u56F4\u6280\u80FD\u4EE5\u5B9E\u9645\u5F62\u72B6\u3001\u534A\u5F84\u3001\u5BBD\u5EA6\u3001\u89D2\u5EA6\u548C\u4E09\u7EF4\u8DDD\u79BB\u53D6\u683C\uFF0C\u4E0D\u80FD\u7A7F\u5899\u6216\u9694\u65AD\u3002\u73AF\u5F62\u4EE5\u843D\u70B9\u4E3A\u4E2D\u5FC3\u5E76\u6392\u9664\u4E2D\u5FC3\u683C\uFF0C\u8303\u56F4\u4F24\u5BB3\u53EF\u80FD\u6CE2\u53CA\u53CB\u519B\u3002\u5C04\u7A0B\u4E3A 0 \u7684\u6247\u5F62\u3001\u9525\u5F62\u548C\u76F4\u7EBF\u6CBF\u65BD\u672F\u8005\u5F53\u524D\u671D\u5411\u5C55\u5F00\u3002
+\u63A9\u4F53\uFF1A\u63A9\u4F53\u4F4D\u4E8E\u653B\u51FB\u8005\u4E0E\u76EE\u6807\u7684\u5C04\u7EBF\u6216\u76EE\u6807\u8FCE\u51FB\u4FA7\u65F6\u751F\u6548\uFF0C\u6309\u63A9\u4F53 cover \u6570\u503C\u964D\u4F4E\u547D\u4E2D\u6216\u4FDD\u62A4\u76EE\u6807\u3002\u653B\u51FB\u8005\u6216\u76EE\u6807\u6BD4\u63A9\u4F53\u9AD8\u81F3\u5C112\u7EA7\u65F6\u53EF\u4EE5\u8D8A\u8FC7\u8BE5\u63A9\u4F53\uFF0C\u63A9\u4F53\u4E0D\u518D\u63D0\u4F9B\u906E\u6321\u3002\u63A9\u4F53\u6709\u81EA\u5DF1\u7684 HP\uFF0C\u53EF\u4EE5\u88AB\u653B\u51FB\u6216\u7206\u70B8\u7834\u574F\uFF0C\u7834\u574F\u540E\u4E0D\u518D\u906E\u6321\u3002\u4E0D\u8981\u628A\u63A9\u4F53\u5F53\u6210\u5899\uFF0C\u63A9\u4F53\u901A\u5E38\u4E0D\u963B\u65AD\u89C6\u7EBF\uFF0C\u53EA\u6539\u53D8\u547D\u4E2D\u4E0E\u4F24\u5BB3\u6761\u4EF6\u3002
+\u533A\u57DF\uFF1Azones \u662F\u6301\u7EED\u751F\u6548\u7684\u533A\u57DF\u89C4\u5219\uFF1B\u907F\u514D\u5728\u654C\u65B9\u4F24\u5BB3\u3001\u63A7\u5236\u6216\u51CF\u76CA\u533A\u57DF\u5185\u505C\u7559\u6216\u7ED3\u675F\u79FB\u52A8\u3002\u82E5\u5F53\u524D\u8EAB\u5904\u654C\u65B9\u5371\u9669\u533A\u57DF\u4E14\u672A\u53D7\u5B9A\u8EAB\u9650\u5236\uFF0C\u4F18\u5148\u79FB\u52A8\u8131\u79BB\u540E\u518D\u51FA\u624B\uFF1B\u4E5F\u53EF\u5229\u7528\u4F4D\u79FB\u6280\u80FD\u628A\u654C\u4EBA\u63A8\u5165\u5DF1\u65B9\u6709\u5229\u533A\u57DF\u3002
+\u4E92\u52A8\uFF1A\u796D\u575B\u9700\u8981\u76F8\u90BB\u4E14\u6709\u89C6\u7EBF\uFF0C\u6D88\u8017\u52A8\u4F5C\u69FD\uFF0C\u6309\u5176\u58F0\u660E\u7684\u6548\u679C\u56DE\u590D\u751F\u547D\u3001MP\u3001SP\u3001\u62A4\u76FE\u6216\u72B6\u6001\u3002\u7206\u6876\u9700\u8981\u4F7F\u7528\u8005\u7684\u5F53\u524D\u6B66\u5668\u5C04\u7A0B\u548C\u89C6\u7EBF\uFF0C\u6D88\u8017\u653B\u51FB\u69FD\u4E0E\u5F39\u836F\uFF0C\u6309\u4E92\u52A8\u70B9\u58F0\u660E\u7684\u534A\u5F84\u548C\u4F24\u5BB3\u5BF9\u8303\u56F4\u5185\u5355\u4F4D\u4E0E\u63A9\u4F53\u9020\u6210\u80FD\u91CF\u4F24\u5BB3\uFF0C\u4E5F\u53EF\u80FD\u6CE2\u53CA\u53CB\u65B9\u3002\u4E92\u52A8\u70B9\u4F7F\u7528\u4E00\u6B21\u540E\u4E0D\u53EF\u91CD\u590D\u4F7F\u7528\uFF0C\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u91CC\u7684 effect\u3001radius\u3001damage\u3001x\u3001y\u3001z \u5224\u65AD\uFF0C\u4E0D\u80FD\u4EC5\u51ED\u540D\u79F0\u731C\u6D4B\u3002
+\u5168\u89C8\uFF1AallUnits \u5217\u51FA\u573A\u4E0A\u6BCF\u4E2A\u5355\u4F4D\u7684 id\u3001\u540D\u79F0\u3001\u9635\u8425\u3001\u5B58\u6D3B/\u64A4\u79BB\u3001\u4E09\u7EF4\u4F4D\u7F6E\u3001\u79BB\u5730\u9AD8\u5EA6\u3001HP/MP/SP\u53CA\u4E0A\u9650\u3001\u884C\u52A8\u69FD\u3001\u53CD\u5E94\u3001\u6218\u610F\u3001\u5168\u90E8\u72B6\u6001\u3001\u5F53\u524D\u88C5\u5907\u3001\u88C5\u5907\u8BA1\u6570\u5668\u3001\u80CC\u5305\u3001\u6280\u80FD\u3001\u6280\u80FD\u8303\u56F4\u548C\u53EF\u79FB\u52A8\u683C\u3002\u4E0D\u8981\u53EA\u770B units \u4E2D\u7684\u5F53\u524D\u654C\u65B9\u884C\u52A8\u8005\u3002
+\u6218\u6597\u7C7B\u578B\uFF1A\u5207\u78CB\u53CC\u65B9\u975E\u81F4\u6B7B\u5E76\u5728\u4F4E\u4E8E30%\u751F\u547D\u65F6\u9000\u573A\uFF0C\u7ADE\u6280\u53CC\u65B9\u975E\u81F4\u6B7B\u81F31\u751F\u547D\u51FA\u5C40\uFF0C\u538B\u5236\u6218\u53EA\u6709\u538B\u5236\u65B9\u7684\u538B\u5236\u52A8\u4F5C\u7559\u6D3B\u53E3\uFF0C\u5B88\u536B\u6218\u84DD\u65B9\u575A\u63015\u8F6E\u3002\u6218\u610F\u4F1A\u5F71\u54CD\u547D\u4E2D\uFF0C\u6240\u6709\u6218\u6597\u53EA\u6709\u7AD9\u5728\u5730\u56FE\u8FB9\u754C\u624D\u80FD\u9003\u8DD1\u3002\u6280\u80FD\u3001\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u548C\u80CC\u5305\u6D88\u8017\u54C1\u90FD\u53EF\u80FD\u6709\u6B21\u6570\u3001\u51B7\u5374\u548C\u8D44\u6E90\u8D39\u7528\uFF0C\u5FC5\u987B\u4F18\u5148\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u6570\u636E\u3002
+\u4F60\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u5355\u4F4D\u3001\u6280\u80FD\u3001\u88C5\u5907\u3001\u884C\u52A8\u8303\u56F4\u3001\u4E92\u52A8\u70B9\u548C\u5730\u56FE\u505A\u51B3\u7B56\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981 Markdown\u3001\u89E3\u91CA\u3001\u601D\u8003\u8FC7\u7A0B\u3002\u683C\u5F0F\u4E3A {"actions":[{"unitId":"\u654C\u65B9\u5355\u4F4DID","action":{"type":"attack|skill|move|sprint|disengage|brace|reload|interact|suppress|free_ally|flee|switch_weapon|end","x":\u6574\u6570,"y":\u6574\u6570,"skillId":"\u6280\u80FDID"}}]}\u3002\u975E\u6280\u80FD\u52A8\u4F5C\u4E0D\u8981\u8F93\u51FA skillId\uFF0C\u672A\u4F7F\u7528\u7684\u5750\u6807\u4E0D\u8981\u8F93\u51FA\u3002\u52A8\u4F5C\u6309\u6267\u884C\u987A\u5E8F\u6392\u5217\uFF0C\u6700\u591A\u8986\u76D6\u5F53\u524D\u5230\u4E0B\u4E00\u4E2A\u73A9\u5BB6\u5355\u4F4D\u4E4B\u524D\u7684\u654C\u65B9\u56DE\u5408\u3002\u6BCF\u4E2A\u52A8\u4F5C\u90FD\u5FC5\u987B\u6709 unitId\u3002`;
+  var copy = (value) => structuredClone(value);
+  function compactSkill(state, unit, id3, s) {
+    if (!s || isPassiveSkill(s)) return null;
+    return {
+      id: id3,
+      name: s.name,
+      slot: s.slot,
+      ap: s.ap,
+      range: s.range,
+      shape: s.shape,
+      target: s.target,
+      radius: s.radius,
+      innerRadius: s.innerRadius,
+      width: s.width,
+      angle: s.angle,
+      power: s.power,
+      damageType: s.damageType,
+      damage: s.damage,
+      rules: s.rules,
+      mods: s.mods,
+      usage: skillAvailability(state, unit, s, id3)
+    };
+  }
+  function unitView(state, unit) {
+    const ids = [...unit.skills ?? [], ...Object.keys(unit.inventory ?? {}), ...Object.keys(state.skills).filter((id3) => state.skills[id3]?.backpackItem)];
+    const templates = new Map([...ids.map((id3) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, unit)]);
+    const skills = [...templates].map(([id3, template]) => compactSkill(state, unit, id3, template)).filter(Boolean);
+    const equipment = {};
+    for (const instanceId of [...new Set([unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? []].filter(Boolean))]) {
+      const instance = state.items[instanceId];
+      const template = instance && state.equipment[instance.templateId];
+      if (template) equipment[instanceId] = { instanceId, templateId: instance.templateId, ...template, counters: instance.counters ?? {} };
+    }
+    const actions = [];
+    const shadow = copy(state);
+    shadow.turn = shadow.order.indexOf(unit.id);
+    for (const type of ["attack", "move", "sprint", "disengage", "brace", "reload", "flee", "suppress", "free_ally", "end"]) {
+      const plan = preview(shadow, { type });
+      if (plan.ok || type === "move") actions.push(type);
+    }
+    return {
+      id: unit.id,
+      name: unit.name,
+      team: unit.team,
+      faction: unit.team === "red" ? "\u654C\u65B9" : "\u73A9\u5BB6\u65B9",
+      alive: unit.hp > 0,
+      fled: !!unit.fled,
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      mp: unit.mp,
+      maxMp: unit.maxMp,
+      sp: unit.sp,
+      maxSp: unit.maxSp,
+      x: unit.x,
+      y: unit.y,
+      z: elevation(state, unit),
+      altitude: unit.altitude ?? 0,
+      ap: unit.ap,
+      used: unit.used,
+      reactionAvailable: unit.reactionAvailable,
+      statuses: unit.statuses,
+      moraleState: unit.moraleState ?? "steady",
+      routed: unit.moraleState === "routed",
+      retreatTarget: unit.moraleState === "routed" ? state.grid.flatMap((row, y) => row.map((cell, x) => ({ x, y }))).filter((at3) => atBattleEdge(state, at3)).sort((a, b) => Math.hypot(a.x - unit.x, a.y - unit.y) - Math.hypot(b.x - unit.x, b.y - unit.y))[0] ?? null : null,
+      mainHand: unit.mainHand ?? unit.weapon,
+      offHand: unit.offHand,
+      skills,
+      actions,
+      atEdge: atBattleEdge(state, unit),
+      equipment,
+      inventory: unit.inventory ?? {},
+      switchableWeapons: switchableWeapons(state, unit).map((id3) => ({ id: id3, name: state.equipment[state.items[id3]?.templateId]?.name ?? id3 })),
+      rangeHint: { attack: state.equipment[state.items[unit.mainHand ?? unit.weapon] ? state.items[unit.mainHand ?? unit.weapon].templateId : ""]?.range ?? 1.5 }
+    };
+  }
+  function chooseUnitStep(state, actorId) {
+    if (!canRouteActor(state, actorId) || state.vm?.pendingAsk) return null;
+    const action = chooseAction(state, state.units[actorId]);
+    return action && action.type !== "end" ? { ...action, actorId } : null;
+  }
+  function battleAiPayload(state) {
+    const current = state.order[state.turn];
+    const start = state.order.indexOf(current);
+    const actors = [];
+    for (let i = 0; i < state.order.length; i++) {
+      const unit = state.units[state.order[(start + i) % state.order.length]];
+      if (!unit || unit.hp <= 0 || unit.fled) continue;
+      if (actors.length && unit.team === "blue") break;
+      if (unit.team === "red") actors.push(...[unit, ...linkedUnitsOf(state, unit.id).filter((member) => member.team === unit.team)].map((member) => unitView(state, member)));
+    }
+    const grid = state.grid.map((row) => row.map((cell) => cell.kind === "wall" ? "#" : cell.kind === "slope" ? `^${cell.z ?? 0}` : cell.kind === "floor" ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(" "));
+    const movement = {}, movementCarry = {};
+    for (const unit of Object.values(state.units)) {
+      if (unit.hp <= 0 || unit.fled) continue;
+      const shadow = copy(state);
+      shadow.turn = shadow.order.indexOf(unit.id);
+      const plan = preview(shadow, { type: "move" });
+      movement[unit.id] = (plan.cells ?? []).map(({ x, y, z }) => [x, y, z ?? elevation(state, { x, y })]);
+      const carry = unit.moveCarryPermille ?? 0;
+      const move2 = plan.cells?.find((cell) => cell.bankedProgress > carry);
+      const sprint = move2 && preview(shadow, { type: "sprint" }).cells?.find((cell) => cell.bankedProgress > carry);
+      if (carry || move2 || sprint) movementCarry[unit.id] = {
+        currentPercent: carry / 10,
+        ...move2 && { movePercent: move2.bankedProgress / 10 },
+        ...sprint && { sprintPercent: sprint.bankedProgress / 10 }
+      };
+    }
+    const zones = Object.keys(state.zones ?? {}).length ? Object.values(state.zones).map((zone) => ({
+      id: zone.id,
+      name: zone.name ?? zone.templateId ?? zone.id,
+      ownerId: zone.ownerId ?? null,
+      ownerTeam: state.units?.[zone.ownerId]?.team ?? null,
+      remainingTurns: zone.remainingTurns ?? null,
+      area: zone.area,
+      effectsSummary: {
+        mods: (zone.mods ?? []).map((mod2) => ({ stat: mod2.stat, locks: mod2.locks, flags: mod2.flags })),
+        rules: (zone.rules ?? []).map((rule2) => ({ hook: rule2.hook, ops: (rule2.program ?? []).map((op) => op.op) }))
+      }
+    })) : void 0;
+    return { rules: RULES, battle: {
+      title: state.title,
+      type: state.battleType,
+      suppressingTeam: state.suppressingTeam ?? null,
+      round: state.round,
+      turnUnitId: current,
+      units: actors,
+      allUnits: Object.values(state.units).map((unit) => unitView(state, unit)),
+      ...zones ? { zones } : {},
+      covers: Object.values(state.covers).map((c) => ({ id: c.id, name: c.name, x: c.x, y: c.y, z: elevation(state, c), hp: c.hp, maxHp: c.maxHp, cover: c.cover, material: c.material })),
+      interactives: Object.values(state.interactives).map((i) => ({ id: i.id, name: i.name, kind: i.kind, effect: i.effect, radius: i.radius ?? 0, damage: i.damage ?? 0, x: i.x, y: i.y, z: elevation(state, i), spent: !!i.spent })),
+      movement,
+      movementCarry,
+      grid
+    }, actorIds: actors.map((u) => u.id) };
+  }
+  function parse2(text8) {
+    const match = String(text8).match(/\{[\s\S]*\}/);
+    const data = JSON.parse(match?.[0] ?? text8);
+    if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error("\u6218\u6597 AI \u5FC5\u987B\u8FD4\u56DE actions \u6570\u7EC4");
+    return data.actions;
+  }
+  async function requestBattleAi(state, request, { signal } = {}) {
+    const payload = battleAiPayload(state);
+    if (!payload.actorIds.length) return [];
+    let messages = [{ role: "system", content: RULES }, { role: "user", content: JSON.stringify(payload) }];
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const reply = await request(messages, signal);
+      try {
+        const actions = parse2(reply);
+        const valid2 = [];
+        const shadow = copy(state);
+        for (const entry2 of actions) {
+          if (!entry2 || typeof entry2.unitId !== "string" || !entry2.action || typeof entry2.action.type !== "string") throw new Error("\u52A8\u4F5C\u7F3A\u5C11 unitId \u6216 action.type");
+          const actor = shadow.units[entry2.unitId];
+          if (!actor || actor.team !== "red") throw new Error(`\u4E0D\u80FD\u63A7\u5236\u5355\u4F4D ${entry2.unitId}`);
+          if (!canRouteActor(shadow, entry2.unitId)) throw new Error(`\u884C\u52A8\u987A\u5E8F\u9519\u8BEF\uFF0C\u5E94\u8F6E\u5230 ${shadow.order[shadow.turn]}`);
+          if (actor.moraleState === "routed" && !["move", "flee", "end"].includes(entry2.action.type)) throw new Error("\u6E83\u9003\u5355\u4F4D\u53EA\u80FD\u64A4\u5411\u8FB9\u754C\u6216\u9003\u8DD1");
+          const action = Object.fromEntries(Object.entries(entry2.action).filter(([, value]) => value !== null));
+          if (entry2.unitId !== shadow.order[shadow.turn]) action.actorId = entry2.unitId;
+          else delete action.actorId;
+          if (action.type === "skill" && typeof action.skillId !== "string") throw new Error("\u6280\u80FD\u52A8\u4F5C\u5FC5\u987B\u63D0\u4F9B skillId");
+          if (action.type !== "skill") delete action.skillId;
+          const plan = preview(shadow, action);
+          if (!plan.ok) throw new Error(`${entry2.unitId} \u7684 ${entry2.action.type} \u4E0D\u5408\u6CD5\uFF1A${plan.error}`);
+          applyAction(shadow, action);
+          valid2.push({ ...entry2, action });
+          const next = shadow.units[shadow.order[shadow.turn]];
+          if (!next || next.team !== "red") break;
+        }
+        if (!valid2.length) throw new Error("actions \u4E3A\u7A7A");
+        return valid2;
+      } catch (error2) {
+        if (attempt) throw error2;
+        messages = [...messages, { role: "assistant", content: reply }, { role: "user", content: `\u4E0A\u4E00\u4EFD JSON \u6216\u52A8\u4F5C\u65E0\u6548\uFF1A${error2.message}\u3002\u53EA\u8F93\u51FA\u4FEE\u6B63\u540E\u7684\u5B8C\u6574 JSON\u3002` }];
+      }
+    }
+    throw new Error("\u6218\u6597 AI \u672A\u8FD4\u56DE\u6709\u6548\u52A8\u4F5C");
   }
 
   // src/api/commands.js
@@ -9161,7 +9755,10 @@ var FatedTacticalTavern = (() => {
     costMult: "\u6D88\u8017",
     damageReduction: "\u51CF\u4F24",
     dr: "\u6700\u7EC8\u51CF\u4F24",
-    armorPiercePercent: "\u7A7F\u7532\u6BD4\u4F8B"
+    armorPiercePercent: "\u7A7F\u7532\u6BD4\u4F8B",
+    power: "\u5A01\u529B",
+    hits: "\u6253\u51FB\u6BB5\u6570",
+    attackDistanceOffset: "\u653B\u51FB\u8DDD\u79BB\u4FEE\u6B63"
   };
   var ratios = /* @__PURE__ */ new Set(["damageReduction", "dr", "armorPiercePercent", "shatter"]);
   var flagModifiers = {
@@ -9271,6 +9868,33 @@ var FatedTacticalTavern = (() => {
       parts.push(`${triggers.join("\u6216")}\u65F6\u89E3\u9664`);
     }
     return parts;
+  }
+  function summarizeSummons(units) {
+    const living2 = Object.values(units).filter((unit) => unit.hp > 0 && !unit.fled);
+    const summons = living2.filter((unit) => unit.summoned);
+    if (!summons.length) return [];
+    const summonIds = new Set(summons.map((unit) => unit.id));
+    const passengers = /* @__PURE__ */ new Map();
+    for (const unit of living2) {
+      for (const status of Object.values(unit.statuses ?? {})) {
+        const hostId = status.vars?.hostId;
+        if (!summonIds.has(hostId) || hostId === unit.id) continue;
+        if (!passengers.has(hostId)) passengers.set(hostId, /* @__PURE__ */ new Set());
+        passengers.get(hostId).add(unit.id);
+      }
+    }
+    return summons.map((unit) => ({
+      id: unit.id,
+      name: unit.name,
+      sourceId: unit.sourceId ?? null,
+      hp: unit.hp,
+      maxHp: unit.maxHp,
+      shield: Object.values(unit.statuses ?? {}).reduce((total2, status) => status.category === "shield" && Number.isFinite(status.vars?.shieldAmount) ? total2 + Math.max(0, status.vars.shieldAmount) : total2, 0),
+      passengerIds: [...passengers.get(unit.id) ?? []],
+      remainingTurns: unit.remainingTurns ?? null,
+      durationUnit: unit.remainingTurns == null ? null : unit.durationUnit ?? "rounds",
+      durationAnchorId: unit.durationAnchorId ?? null
+    }));
   }
   function formatBattleReportText(report, unitNames = {}) {
     const lines = [report.title];
@@ -9467,13 +10091,22 @@ var FatedTacticalTavern = (() => {
       lines.push("", `- \u56DE\u5408${roundLabel(round)}`);
       for (const row of rows2) lines.push(`  - ${typeof row === "string" ? row : row.text + (row.parts.length ? `\uFF1A${row.parts.join("\uFF1B")}` : "")}`);
     }
+    if (report.summons?.length) {
+      lines.push("", "\u5728\u573A\u53EC\u5524\u7269\uFF08\u4EE5\u6C99\u76D8\u5B9E\u6D4B\u7ED3\u7B97\u4E3A\u51C6\uFF09\uFF1A");
+      for (const unit of report.summons) {
+        const owner = unit.sourceId ? `\uFF0C\u5F52\u5C5E ${name({}, unit.sourceId)}` : "";
+        const passengers = unit.passengerIds.length ? `\uFF0C\u642D\u4E58 ${unit.passengerIds.map((id3) => name({}, id3)).join("\u3001")}` : "";
+        const duration2 = unit.remainingTurns == null ? "\u5E38\u9A7B" : unit.durationUnit === "anchor_turns" ? `\u5269\u4F59 ${unit.remainingTurns} \u4E2A${unit.durationAnchorId ? name({}, unit.durationAnchorId) : "\u951A\u70B9\u5355\u4F4D"}\u56DE\u5408` : `\u5269\u4F59 ${unit.remainingTurns} \u8F6E`;
+        lines.push(`- ${name({}, unit.id)}${owner}\uFF0CHP ${proseNumber(unit.hp)}/${proseNumber(unit.maxHp)}\uFF0C\u62A4\u76FE ${proseNumber(unit.shield)}${passengers}\uFF0C${duration2}`);
+      }
+    }
     if (!report.outcome) lines.push("", "\u6218\u6597\u5C1A\u672A\u7ED3\u675F\u3002");
     return `${lines.join("\n")}
 `;
   }
 
   // src/api/game_api.js
-  var copy = (value) => structuredClone(value);
+  var copy2 = (value) => structuredClone(value);
   var fail3 = (message) => {
     throw new Error(message);
   };
@@ -9533,7 +10166,7 @@ var FatedTacticalTavern = (() => {
     const isCommand = transaction?.kind === "commands";
     if (!shape(transaction, isCommand ? ["kind", "entries", "reason"] : ["kind", "entries"]) || !Array.isArray(transaction.entries) || transaction.entries.length < 1 || transaction.entries.length > maxBatch) fail3("\u4E8B\u52A1\u683C\u5F0F\u9519\u8BEF");
     if (isCommand && (typeof transaction.reason !== "string" || !transaction.reason.trim() || transaction.reason.length > 300)) fail3("\u65E0\u6548\u7684\u4E8B\u52A1\u7406\u7531");
-    const next = copy(base);
+    const next = copy2(base);
     if (transaction.kind === "actions") {
       for (const action of transaction.entries) {
         if (!action || Object.getPrototypeOf(action) !== Object.prototype || Object.entries(action).some(([key4, value]) => typeof value !== "string" && typeof value !== "boolean" && !(action.type === "answer" && key4 === "value" ? Number.isFinite(value) || Array.isArray(value) && value.length <= 200 && [...value].every((id3) => typeof id3 === "string") : Number.isInteger(value)))) fail3("\u52A8\u4F5C\u5FC5\u987B\u7531 JSON \u5B57\u6BB5\u7EC4\u6210");
@@ -9589,10 +10222,10 @@ var FatedTacticalTavern = (() => {
       validateState(snapshot.origin);
       if (snapshot.origin.vm?.pendingAsk && !snapshot.origin.vm.startingTurn && !snapshot.origin.vm.settlingTurn && !snapshot.origin.vm.endingTurn)
         fail3("\u5FEB\u7167\u8D77\u70B9\u4EC5\u5141\u8BB8\u6302\u8D77\u7684\u56DE\u5408\u7ED3\u7B97");
-      const start = copy(snapshot.origin), history = [];
+      const start = copy2(snapshot.origin), history = [];
       let next = start;
       for (const transaction of snapshot.journal) {
-        const entry2 = copy(transaction);
+        const entry2 = copy2(transaction);
         const result = simulate(next, entry2);
         history.push({ before: next, transaction: entry2 });
         next = result;
@@ -9627,11 +10260,11 @@ var FatedTacticalTavern = (() => {
       },
       restoreBattleSnapshot: restore,
       exportBattleSnapshot() {
-        return copy({ kind: "battle", version: battleVersion, origin, state: current(), journal: frames.map((frame) => frame.transaction) });
+        return copy2({ kind: "battle", version: battleVersion, origin, state: current(), journal: frames.map((frame) => frame.transaction) });
       },
       exportPersistentCarryOver() {
         const s = current();
-        return copy({
+        return copy2({
           kind: "persistent",
           version,
           units: Object.fromEntries(Object.values(s.units).map((u) => [u.id, {
@@ -9652,13 +10285,15 @@ var FatedTacticalTavern = (() => {
           rounds.get(log.round).push(log);
         }
         const outcome = { blue: "\u84DD\u65B9\u80DC\u5229", red: "\u7EA2\u65B9\u80DC\u5229", draw: "\u5E73\u5C40" }[s.outcome] ?? "\u6218\u6597\u5C1A\u672A\u7ED3\u675F";
-        return copy({
+        const summons = summarizeSummons(s.units);
+        return copy2({
           version,
           scenarioId: s.scenarioId,
           title: s.title,
           outcome: s.outcome,
           rounds: [...rounds].map(([round, events]) => ({ round, events })),
           units: api.listUnits(),
+          ...summons.length && { summons },
           journal: frames.map((frame) => frame.transaction),
           summary: `${s.title} \xB7 \u7B2C ${s.round} \u8F6E \xB7 ${outcome} \xB7 ${s.logs.length} \u6761\u4E8B\u4EF6`
         });
@@ -9688,7 +10323,7 @@ var FatedTacticalTavern = (() => {
       },
       listStatusTemplates() {
         const s = current();
-        return copy({ ...STATUSES, ...s.statusTemplates });
+        return copy2({ ...STATUSES, ...s.statusTemplates });
       },
       checkStealth(unitId, d20, dc) {
         const s = current();
@@ -9730,7 +10365,7 @@ var FatedTacticalTavern = (() => {
         if (!own15(s.units, unitId)) return null;
         const u = s.units[unitId];
         const item = (id3) => id3 ? { id: id3, ...s.items[id3], template: s.equipment[s.items[id3]?.templateId] } : null;
-        return copy({
+        return copy2({
           unitId,
           stance: u.stance,
           mainHand: item(u.mainHand ?? u.weapon),
@@ -9757,17 +10392,17 @@ var FatedTacticalTavern = (() => {
         const equippedSkills = equippedActiveSkills(s, unit).map(([id3, template]) => ({ id: id3, ...template }));
         const templates = [...skills.map((id3) => [id3, s.skills[id3]]), ...equippedSkills.map((template) => [template.id, template])];
         const skillUsage = Object.fromEntries(templates.filter(([, template]) => template).map(([id3, template]) => [id3, skillAvailability(s, unit, template, id3)]));
-        return copy({ ...unit, equippedSkills, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id3, i, all) => all.indexOf(id3) === i).map((id3) => ({
+        return copy2({ ...unit, equippedSkills, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id3, i, all) => all.indexOf(id3) === i).map((id3) => ({
           ...s.items[id3],
           template: s.equipment[s.items[id3].templateId]
         })) });
       },
       listActionLogs(limit = 10) {
         if (!Number.isInteger(limit) || limit < 0 || limit > 200) fail3("\u65E5\u5FD7\u6761\u6570\u987B\u4E3A 0\u2013200 \u7684\u6574\u6570");
-        return limit ? copy(current().logs.slice(-limit)) : [];
+        return limit ? copy2(current().logs.slice(-limit)) : [];
       },
       getBattleState() {
-        return copy(current());
+        return copy2(current());
       },
       subscribe(listener) {
         if (typeof listener !== "function") fail3("\u76D1\u542C\u5668\u5FC5\u987B\u662F\u51FD\u6570");
@@ -9775,17 +10410,31 @@ var FatedTacticalTavern = (() => {
         return () => listeners.delete(listener);
       },
       previewAction(action) {
-        return copy(preview(current(), copy(action)));
+        return copy2(preview(current(), copy2(action)));
       },
       playAction(action) {
         if (!action || Object.getPrototypeOf(action) !== Object.prototype) fail3("\u52A8\u4F5C\u987B\u4E3A\u666E\u901A\u5BF9\u8C61");
-        const transaction = { kind: "actions", entries: [copy(action)] };
+        const transaction = { kind: "actions", entries: [copy2(action)] };
         return commit(simulate(current(), transaction), transaction);
       },
       stepEnemy() {
         const s = current();
         if (s.outcome || s.units[s.order[s.turn]]?.team !== "red") return { ok: false };
-        return api.playAction(chooseAction(copy(s)) ?? { type: "end" });
+        const owner = s.units[s.order[s.turn]];
+        const actors = [owner, ...linkedUnitsOf(s, owner.id).filter((unit) => unit.team === owner.team)];
+        const step = actors.map((unit) => unit.id).map((id3) => chooseUnitStep(s, id3)).find(Boolean);
+        return api.playAction(step ?? { type: "end" });
+      },
+      stepLinked() {
+        const s = current();
+        const owner = s.units[s.order[s.turn]];
+        if (s.outcome || s.vm?.pendingAsk || owner?.team !== "blue") return { ok: false };
+        for (const unit of linkedUnitsOf(s, owner.id)) {
+          if (unit.team !== owner.team) continue;
+          const action = chooseUnitStep(s, unit.id);
+          if (action) return api.playAction(action);
+        }
+        return { ok: false };
       },
       proposeCommands(commands2, options = {}) {
         try {
@@ -9794,14 +10443,14 @@ var FatedTacticalTavern = (() => {
           if (!Array.isArray(commands2) || commands2.length < 1 || commands2.length > maxBatch) fail3("\u547D\u4EE4\u5FC5\u987B\u662F 1\u201332 \u6761\u7684\u6570\u7EC4");
           const s = current();
           const isUndo = commands2.length === 1 && shape(commands2[0], ["type", "operation"]) && commands2[0].type === "replay_or_undo" && commands2[0].operation === "undo";
-          const transaction = { kind: "commands", entries: copy(commands2), reason: options.reason };
+          const transaction = { kind: "commands", entries: copy2(commands2), reason: options.reason };
           const next = isUndo ? frames.at(-1)?.before ?? fail3("\u6CA1\u6709\u53EF\u64A4\u9500\u7684\u4E8B\u52A1") : simulate(s, transaction);
           const changes = diff(s, next);
           if (!changes.length) fail3("\u547D\u4EE4\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
           const proposalId = `p${++serial}`;
           if (pending.size >= 16) pending.delete(pending.keys().next().value);
           pending.set(proposalId, { transaction, next, isUndo, revision });
-          return copy({ ok: true, dryRun: true, proposalId, baseRevision: revision, reason: options.reason, diff: changes });
+          return copy2({ ok: true, dryRun: true, proposalId, baseRevision: revision, reason: options.reason, diff: changes });
         } catch (error2) {
           return { ok: false, dryRun: true, error: error2.message };
         }
@@ -9867,6 +10516,7 @@ var FatedTacticalTavern = (() => {
     <footer class="ft-dock">
       <div id="actor-card" class="ft-actor"></div>
       <div class="ft-dock-actions">
+        <div id="linked-squad" class="ft-linked-squad" aria-label="\u672C\u9636\u6BB5\u534F\u540C\u5C0F\u961F" hidden></div>
         <p id="battle-status" class="ft-status" role="status"></p>
         <p id="sprint-indicator" class="ft-hint"></p>
         <p id="action-error" class="ft-error" role="alert" hidden></p>
@@ -9878,6 +10528,7 @@ var FatedTacticalTavern = (() => {
           <button id="end-turn" type="button" class="game-button primary">\u7ED3\u675F\u56DE\u5408</button>
           <button id="undo-button" type="button" class="game-button">\u64A4\u9500</button>
           <button id="ai-step" type="button" class="game-button">\u654C\u65B9\u5355\u6B65</button>
+          <button id="linked-collaborate" type="button" class="game-button" aria-pressed="false" hidden>\u534F\u6218</button>
           <label class="ft-switch"><input id="auto-ai" type="checkbox" checked> \u81EA\u52A8\u654C\u65B9</label>
           <label class="ft-switch"><input id="llm-enemy-ai" type="checkbox"> LLM\u63A5\u624B\u654C\u65B9\u56DE\u5408</label>
           <label class="ft-mini-select">\u95F4\u9694 <select id="ai-speed"><option value="800">\u6162</option><option value="350" selected>\u6807\u51C6</option><option value="80">\u5FEB</option></select></label>
@@ -10692,6 +11343,8 @@ var FatedTacticalTavern = (() => {
         chip.dataset.unitId = id3;
         chip.dataset.faction = u.team;
         chip.replaceChildren(el2("span", "chip-face", Array.from(u.name)[0]), el2("span", "", u.name.split(" \xB7 ")[0]));
+        const count = linkedUnitsOf(state, id3).length;
+        if (count) chip.append(el2("span", "ft-linked-count", `+${count}`));
         chip.title = `${side(u.team)} ${u.name} \xB7 \u751F\u547D ${u.hp}/${u.maxHp}`;
         chip.setAttribute("aria-current", String(id3 === current?.id));
         chip.setAttribute("aria-pressed", String(id3 === selected2));
@@ -10699,6 +11352,28 @@ var FatedTacticalTavern = (() => {
       }).filter(Boolean);
       node.replaceChildren(...chips);
       node.querySelector('[aria-current="true"]')?.scrollIntoView?.({ block: "nearest", inline: "center" });
+    }
+    function renderSquad(state, owner, actor, ui) {
+      const node = $("linked-squad");
+      const linked = owner?.team === "blue" && !state.outcome ? linkedUnitsOf(state, owner.id).filter((unit) => unit.team === owner.team) : [];
+      node.hidden = $("linked-collaborate").hidden = !linked.length;
+      node.inert = !!ui.busy || !!ui.askLocked;
+      const collaborate = $("linked-collaborate");
+      collaborate.disabled = node.inert;
+      collaborate.setAttribute("aria-pressed", String(!!ui.autoCollaborate));
+      const previous = new Map([...node.children].map((button) => [button.dataset.actorId, button]));
+      const members = linked.length ? [owner, ...linked] : [];
+      const buttons = members.map((unit) => {
+        const button = previous.get(unit.id) ?? Object.assign(el2("button", "game-button"), { type: "button" });
+        button.dataset.actorId = unit.id;
+        button.setAttribute("aria-pressed", String(unit.id === actor?.id));
+        const move2 = preview(state, { type: "move", actorId: unit.id }).ok;
+        const attack = unit.ap > 0 && !unit.used.attack;
+        const action = unit.ap > 0 && !unit.used.action;
+        button.textContent = `${unit.name} \xB7 \u79FB${move2 ? "\u25CF" : "\u25CB"} \u653B${attack ? "\u25CF" : "\u25CB"} \u52A8${action ? "\u25CF" : "\u25CB"}`;
+        return button;
+      });
+      if (buttons.length !== node.children.length || buttons.some((button, i) => button !== node.children[i])) node.replaceChildren(...buttons);
     }
     function renderActor(state, u) {
       const node = $("actor-card");
@@ -10913,7 +11588,7 @@ var FatedTacticalTavern = (() => {
           ].filter(Boolean);
           if (mods.length) bits.push(mods.join("\uFF0C"));
           if (t.heal) bits.push(`\u6CBB\u7597 ${interval(t.heal)}`);
-          else if (t.damage) bits.push(`${t.execution ? "\u5904\u51B3\uFF1A\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u81F3\u5C11\u5E73\u66B4\u51FB\u3002" : ""}\u547D\u4E2D\u540E${t.damageType ? `${elementLabel(t.damageType, state.customElements)} ` : ""}\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
+          else if (t.damage) bits.push(`${t.execution ? "\u5904\u51B3\uFF1A\u5FFD\u7565\u95EA\u907F\uFF0C\u547D\u4E2D\u81F3\u5C11\u5E73\u66B4\u51FB\u3002" : ""}\u547D\u4E2D\u540E${t.damageType ? `${elementLabel(t.damageType, state.customElements)} ` : ""}\u4F24\u5BB3\u7EA6 ${interval(t.damage)}${t.hits > 1 ? `\uFF08${t.hits} \u6BB5\u5408\u8BA1\uFF09` : ""}${t.savedDamage ? `\uFF08\u8C41\u514D\u6210\u529F\u5219 ${interval(t.savedDamage)}\uFF09` : ""}`);
           if (t.immunity) bits.push(`${elementLabel(t.damageType, state.customElements)}\u514D\u75AB`);
           else if (t.resistance) bits.push(`${elementLabel(t.damageType, state.customElements)}\u6297\u6027 ${pct2(t.resistance)}`);
           else if (t.vulnerability) bits.push(`${elementLabel(t.damageType, state.customElements)}\u6613\u4F24 +${pct2(t.vulnerability)}`);
@@ -10934,9 +11609,11 @@ var FatedTacticalTavern = (() => {
       const selected2 = ui.selectedId ?? current?.id;
       const action = ui.action ?? null, hover = ui.hover ?? null;
       const canAct = !ui.busy && !ui.askLocked && current?.team === "blue" && !state.outcome;
-      const run = (cmd) => canAct ? preview(state, cmd) : null;
+      const actor = get2(state.units, ui.actorId) ?? current;
+      const run = (cmd) => canAct ? preview(state, { ...cmd, actorId: actor.id }) : null;
       const fresh = last?.state !== state;
-      if (fresh || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
+      const actorChanged = last?.actorId !== actor?.id;
+      if (fresh || actorChanged || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
         const cells3 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
         baseline = { move: cells3(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells3(run({ type: "attack" })), interact: cells3(run({ type: "interact" })) };
       }
@@ -10953,16 +11630,17 @@ var FatedTacticalTavern = (() => {
         renderFeatures(state);
       }
       if (fresh || last?.selected !== selected2) renderTurnOrder(state, current, selected2);
-      if (fresh) renderActor(state, current);
+      if (fresh || actorChanged) renderActor(state, actor);
+      if (fresh || actorChanged || last?.canAct !== canAct || last?.autoCollaborate !== ui.autoCollaborate) renderSquad(state, current, actor, ui);
       $("sprint-indicator").textContent = ui.sprint ? "\u75BE\u8DD1\u8303\u56F4\u5DF2\u663E\u793A \xB7 \u8D70\u66F4\u8FDC\u9700\u8981 2 AP" : "";
       renderBoard(state, { selected: selected2, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells, entityChoices: ui.entityChoices });
-      if (ui.target) renderPreview(state, action, hover, range2, result, current);
+      if (ui.target) renderPreview(state, action, hover, range2, result, actor);
       if (fresh || last?.selected !== selected2 || last?.inspectedId !== ui.inspectedId) {
         const feature = get2(state.covers, ui.inspectedId) ?? get2(state.interactives, ui.inspectedId);
         renderUnitCard(state, feature ? null : get2(state.units, selected2), feature);
       }
       $("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F\uFF1A\u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F\uFF1A${state.outcome === "blue" ? "\u6211\u65B9\u80DC\u5229" : "\u654C\u65B9\u80DC\u5229"}` : ui.askLocked ? "" : canAct ? "\u70B9\u51FB\u683C\u5B50\u9009\u62E9\u76EE\u6807\uFF0C\u518D\u9009\u8981\u505A\u7684\u4E8B" : current ? `${current.name} \u6B63\u5728\u884C\u52A8\u2026\u2026` : "";
-      last = { state, canAct, selected: selected2, inspectedId: ui.inspectedId, sprint: ui.sprint };
+      last = { state, canAct, selected: selected2, actorId: actor?.id, autoCollaborate: ui.autoCollaborate, inspectedId: ui.inspectedId, sprint: ui.sprint };
     }
     function renderControls(state) {
       const current = get2(state.units, state.order[state.turn]);
@@ -11519,190 +12197,6 @@ var FatedTacticalTavern = (() => {
     card.style.top = `${clamp5(y, top, bottom - card.getBoundingClientRect().height)}px`;
   }
 
-  // src/core/battle-ai.js
-  var RULES = `\u4F60\u662F\u547D\u5B9A\u6218\u672F\u6C99\u76D8\u7684\u654C\u65B9\u966A\u73A9 AI\u3002\u4F60\u7684\u8EAB\u4EFD\u662F user \u4E00\u65B9\u7684\u5BF9\u624B\uFF0C\u53EA\u63A7\u5236\u5F53\u524D\u8FDE\u7EED\u884C\u52A8\u7684\u654C\u65B9\u89D2\u8272\uFF0C\u4E0D\u66FF\u73A9\u5BB6\u505A\u51B3\u5B9A\u3002
-\u884C\u52A8\uFF1A\u6BCF\u56DE\u5408\u6BCF\u4E2A\u89D2\u8272\u67091\u4E2A\u653B\u51FB\u69FD\u548C1\u4E2A\u52A8\u4F5C\u69FD\u3002\u79FB\u52A8\u3001\u88C5\u586B\u3001\u4E92\u52A8\u3001\u6362\u88C5\u3001\u67B6\u52BF\u548C\u9003\u8DD1\u4F7F\u7528\u52A8\u4F5C\u69FD\uFF0C\u666E\u901A\u653B\u51FB\u3001\u6280\u80FD\u653B\u51FB\u3001\u538B\u5236\u548C\u89E3\u9664\u538B\u5236\u4F7F\u7528\u653B\u51FB\u69FD\uFF0C\u91CD\u578B\u6280\u80FD\u53EF\u540C\u65F6\u4F7F\u7528\u4E24\u69FD\u3002\u4E00\u4E2A\u52A8\u4F5C\u53EA\u80FD\u4F7F\u7528\u5F53\u524D\u884C\u52A8\u8005\u81EA\u5DF1\u7684\u69FD\u4F4D\u3002\u52A8\u4F5C\u3001\u6280\u80FD\u548C\u80CC\u5305\u7269\u54C1\u7684\u5B9E\u9645 ap\u3001slot\u3001\u8D44\u6E90\u3001\u6B21\u6570\u4E0E\u51B7\u5374\u4EE5\u8F93\u5165\u6570\u636E\u4E3A\u51C6\u3002
-\u84C4\u6B65\uFF1AmovementCarry \u6309\u5355\u4F4D\u5217\u51FA\u5DF2\u79EF\u7D2F\u7684\u767E\u5206\u6BD4\uFF0C\u4EE5\u53CA\u539F\u5730 move \u6216 sprint \u540E\u53EF\u8FBE\u5230\u7684\u767E\u5206\u6BD4\u3002\u82E5\u6709\u6B63\u6536\u76CA\u4E14\u9700\u8981\u63A5\u8FD1\u76EE\u6807\uFF0C\u53EF\u5728\u81EA\u5DF1\u5F53\u524D\u5750\u6807\u6267\u884C\u8BE5\u79FB\u52A8\u6765\u79EF\u7D2F\u8FDB\u5EA6\uFF0C\u6512\u591F\u540E\u518D\u9009\u62E9\u5B9E\u9645\u843D\u70B9\u3002
-\u8DDD\u79BB\u4E0E\u9AD8\u5EA6\uFF1A\u653B\u51FB\u548C\u6280\u80FD\u6309\u4E09\u7EF4\u6B27\u6C0F\u8DDD\u79BB sqrt(dx\xB2+dy\xB2+dz\xB2) \u68C0\u67E5\u5C04\u7A0B\u3002z \u662F\u683C\u5B50\u9AD8\u5EA6\u52A0\u5355\u4F4D\u79BB\u5730\u9AD8\u5EA6\u3002\u9AD8\u5904\u653B\u51FB\u4F4E\u5904\u65F6\uFF0C\u8FDC\u7A0B\u653B\u51FB\u901A\u5E38\u83B7\u5F97\u6700\u591A+1\u683C\u5C04\u7A0B\uFF0C\u4F4E\u5904\u653B\u51FB\u9AD8\u5904\u65F6\u901A\u5E38\u51CF\u5C111\u683C\u5C04\u7A0B\uFF0C\u5B9E\u9645\u503C\u4EE5\u6280\u80FD/\u88C5\u5907\u6570\u636E\u548C\u9884\u89C8\u89C4\u5219\u4E3A\u51C6\u3002\u79FB\u52A8\u6BCF\u8DE8\u4E00\u683C\u6709\u9AD8\u5EA6\u9650\u5236\uFF0C\u5E73\u5730\u901A\u5E38\u53EA\u80FD\u8DE81\u7EA7\u9AD8\u5EA6\uFF0C\u5761\u5730\u53EF\u8DE82\u7EA7\uFF0C\u5899\u4E0D\u80FD\u901A\u884C\u3002\u79FB\u52A8\u5230\u9AD8\u5904\u6216\u4F4E\u5904\u4F1A\u6D88\u8017\u8DEF\u5F84\u5141\u8BB8\u7684\u52A8\u4F5C\u9884\u7B97\uFF0C\u4E0D\u80FD\u628A\u4E8C\u7EF4\u76F8\u90BB\u5F53\u4F5C\u4E00\u5B9A\u53EF\u8FBE\u3002
-\u89C6\u7EBF\u4E0E\u9694\u65AD\uFF1A\u5899\u4F53\u548C\u975E\u53EF\u7AD9\u7ACB\u683C\u4F1A\u963B\u65AD\u89C6\u7EBF\u3002\u653B\u51FB\u3001\u8FDC\u7A0B\u6280\u80FD\u3001\u7206\u6876\u5F15\u7206\u548C\u8303\u56F4\u6548\u679C\u90FD\u8981\u6709\u901A\u7545\u89C6\u7EBF\u3002\u8303\u56F4\u6280\u80FD\u4EE5\u5B9E\u9645\u5F62\u72B6\u3001\u534A\u5F84\u3001\u5BBD\u5EA6\u3001\u89D2\u5EA6\u548C\u4E09\u7EF4\u8DDD\u79BB\u53D6\u683C\uFF0C\u4E0D\u80FD\u7A7F\u5899\u6216\u9694\u65AD\u3002\u73AF\u5F62\u4EE5\u843D\u70B9\u4E3A\u4E2D\u5FC3\u5E76\u6392\u9664\u4E2D\u5FC3\u683C\uFF0C\u8303\u56F4\u4F24\u5BB3\u53EF\u80FD\u6CE2\u53CA\u53CB\u519B\u3002\u5C04\u7A0B\u4E3A 0 \u7684\u6247\u5F62\u3001\u9525\u5F62\u548C\u76F4\u7EBF\u6CBF\u65BD\u672F\u8005\u5F53\u524D\u671D\u5411\u5C55\u5F00\u3002
-\u63A9\u4F53\uFF1A\u63A9\u4F53\u4F4D\u4E8E\u653B\u51FB\u8005\u4E0E\u76EE\u6807\u7684\u5C04\u7EBF\u6216\u76EE\u6807\u8FCE\u51FB\u4FA7\u65F6\u751F\u6548\uFF0C\u6309\u63A9\u4F53 cover \u6570\u503C\u964D\u4F4E\u547D\u4E2D\u6216\u4FDD\u62A4\u76EE\u6807\u3002\u653B\u51FB\u8005\u6216\u76EE\u6807\u6BD4\u63A9\u4F53\u9AD8\u81F3\u5C112\u7EA7\u65F6\u53EF\u4EE5\u8D8A\u8FC7\u8BE5\u63A9\u4F53\uFF0C\u63A9\u4F53\u4E0D\u518D\u63D0\u4F9B\u906E\u6321\u3002\u63A9\u4F53\u6709\u81EA\u5DF1\u7684 HP\uFF0C\u53EF\u4EE5\u88AB\u653B\u51FB\u6216\u7206\u70B8\u7834\u574F\uFF0C\u7834\u574F\u540E\u4E0D\u518D\u906E\u6321\u3002\u4E0D\u8981\u628A\u63A9\u4F53\u5F53\u6210\u5899\uFF0C\u63A9\u4F53\u901A\u5E38\u4E0D\u963B\u65AD\u89C6\u7EBF\uFF0C\u53EA\u6539\u53D8\u547D\u4E2D\u4E0E\u4F24\u5BB3\u6761\u4EF6\u3002
-\u533A\u57DF\uFF1Azones \u662F\u6301\u7EED\u751F\u6548\u7684\u533A\u57DF\u89C4\u5219\uFF1B\u907F\u514D\u5728\u654C\u65B9\u4F24\u5BB3\u3001\u63A7\u5236\u6216\u51CF\u76CA\u533A\u57DF\u5185\u505C\u7559\u6216\u7ED3\u675F\u79FB\u52A8\u3002\u82E5\u5F53\u524D\u8EAB\u5904\u654C\u65B9\u5371\u9669\u533A\u57DF\u4E14\u672A\u53D7\u5B9A\u8EAB\u9650\u5236\uFF0C\u4F18\u5148\u79FB\u52A8\u8131\u79BB\u540E\u518D\u51FA\u624B\uFF1B\u4E5F\u53EF\u5229\u7528\u4F4D\u79FB\u6280\u80FD\u628A\u654C\u4EBA\u63A8\u5165\u5DF1\u65B9\u6709\u5229\u533A\u57DF\u3002
-\u4E92\u52A8\uFF1A\u796D\u575B\u9700\u8981\u76F8\u90BB\u4E14\u6709\u89C6\u7EBF\uFF0C\u6D88\u8017\u52A8\u4F5C\u69FD\uFF0C\u6309\u5176\u58F0\u660E\u7684\u6548\u679C\u56DE\u590D\u751F\u547D\u3001MP\u3001SP\u3001\u62A4\u76FE\u6216\u72B6\u6001\u3002\u7206\u6876\u9700\u8981\u4F7F\u7528\u8005\u7684\u5F53\u524D\u6B66\u5668\u5C04\u7A0B\u548C\u89C6\u7EBF\uFF0C\u6D88\u8017\u653B\u51FB\u69FD\u4E0E\u5F39\u836F\uFF0C\u6309\u4E92\u52A8\u70B9\u58F0\u660E\u7684\u534A\u5F84\u548C\u4F24\u5BB3\u5BF9\u8303\u56F4\u5185\u5355\u4F4D\u4E0E\u63A9\u4F53\u9020\u6210\u80FD\u91CF\u4F24\u5BB3\uFF0C\u4E5F\u53EF\u80FD\u6CE2\u53CA\u53CB\u65B9\u3002\u4E92\u52A8\u70B9\u4F7F\u7528\u4E00\u6B21\u540E\u4E0D\u53EF\u91CD\u590D\u4F7F\u7528\uFF0C\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u91CC\u7684 effect\u3001radius\u3001damage\u3001x\u3001y\u3001z \u5224\u65AD\uFF0C\u4E0D\u80FD\u4EC5\u51ED\u540D\u79F0\u731C\u6D4B\u3002
-\u5168\u89C8\uFF1AallUnits \u5217\u51FA\u573A\u4E0A\u6BCF\u4E2A\u5355\u4F4D\u7684 id\u3001\u540D\u79F0\u3001\u9635\u8425\u3001\u5B58\u6D3B/\u64A4\u79BB\u3001\u4E09\u7EF4\u4F4D\u7F6E\u3001\u79BB\u5730\u9AD8\u5EA6\u3001HP/MP/SP\u53CA\u4E0A\u9650\u3001\u884C\u52A8\u69FD\u3001\u53CD\u5E94\u3001\u6218\u610F\u3001\u5168\u90E8\u72B6\u6001\u3001\u5F53\u524D\u88C5\u5907\u3001\u88C5\u5907\u8BA1\u6570\u5668\u3001\u80CC\u5305\u3001\u6280\u80FD\u3001\u6280\u80FD\u8303\u56F4\u548C\u53EF\u79FB\u52A8\u683C\u3002\u4E0D\u8981\u53EA\u770B units \u4E2D\u7684\u5F53\u524D\u654C\u65B9\u884C\u52A8\u8005\u3002
-\u6218\u6597\u7C7B\u578B\uFF1A\u5207\u78CB\u53CC\u65B9\u975E\u81F4\u6B7B\u5E76\u5728\u4F4E\u4E8E30%\u751F\u547D\u65F6\u9000\u573A\uFF0C\u7ADE\u6280\u53CC\u65B9\u975E\u81F4\u6B7B\u81F31\u751F\u547D\u51FA\u5C40\uFF0C\u538B\u5236\u6218\u53EA\u6709\u538B\u5236\u65B9\u7684\u538B\u5236\u52A8\u4F5C\u7559\u6D3B\u53E3\uFF0C\u5B88\u536B\u6218\u84DD\u65B9\u575A\u63015\u8F6E\u3002\u6218\u610F\u4F1A\u5F71\u54CD\u547D\u4E2D\uFF0C\u6240\u6709\u6218\u6597\u53EA\u6709\u7AD9\u5728\u5730\u56FE\u8FB9\u754C\u624D\u80FD\u9003\u8DD1\u3002\u6280\u80FD\u3001\u88C5\u5907\u4E3B\u52A8\u6548\u679C\u548C\u80CC\u5305\u6D88\u8017\u54C1\u90FD\u53EF\u80FD\u6709\u6B21\u6570\u3001\u51B7\u5374\u548C\u8D44\u6E90\u8D39\u7528\uFF0C\u5FC5\u987B\u4F18\u5148\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u6570\u636E\u3002
-\u4F60\u5FC5\u987B\u4F9D\u636E\u8F93\u5165\u4E2D\u7684\u5B9E\u9645\u5355\u4F4D\u3001\u6280\u80FD\u3001\u88C5\u5907\u3001\u884C\u52A8\u8303\u56F4\u3001\u4E92\u52A8\u70B9\u548C\u5730\u56FE\u505A\u51B3\u7B56\u3002\u53EA\u8F93\u51FA JSON\uFF0C\u4E0D\u8981 Markdown\u3001\u89E3\u91CA\u3001\u601D\u8003\u8FC7\u7A0B\u3002\u683C\u5F0F\u4E3A {"actions":[{"unitId":"\u654C\u65B9\u5355\u4F4DID","action":{"type":"attack|skill|move|sprint|disengage|brace|reload|interact|suppress|free_ally|flee|switch_weapon|end","x":\u6574\u6570,"y":\u6574\u6570,"skillId":"\u6280\u80FDID"}}]}\u3002\u975E\u6280\u80FD\u52A8\u4F5C\u4E0D\u8981\u8F93\u51FA skillId\uFF0C\u672A\u4F7F\u7528\u7684\u5750\u6807\u4E0D\u8981\u8F93\u51FA\u3002\u52A8\u4F5C\u6309\u6267\u884C\u987A\u5E8F\u6392\u5217\uFF0C\u6700\u591A\u8986\u76D6\u5F53\u524D\u5230\u4E0B\u4E00\u4E2A\u73A9\u5BB6\u5355\u4F4D\u4E4B\u524D\u7684\u654C\u65B9\u56DE\u5408\u3002\u6BCF\u4E2A\u52A8\u4F5C\u90FD\u5FC5\u987B\u6709 unitId\u3002`;
-  var copy2 = (value) => structuredClone(value);
-  function compactSkill(state, unit, id3, s) {
-    if (!s || isPassiveSkill(s)) return null;
-    return {
-      id: id3,
-      name: s.name,
-      slot: s.slot,
-      ap: s.ap,
-      range: s.range,
-      shape: s.shape,
-      target: s.target,
-      radius: s.radius,
-      innerRadius: s.innerRadius,
-      width: s.width,
-      angle: s.angle,
-      power: s.power,
-      damageType: s.damageType,
-      damage: s.damage,
-      rules: s.rules,
-      mods: s.mods,
-      usage: skillAvailability(state, unit, s, id3)
-    };
-  }
-  function unitView(state, unit) {
-    const ids = [...unit.skills ?? [], ...Object.keys(unit.inventory ?? {}), ...Object.keys(state.skills).filter((id3) => state.skills[id3]?.backpackItem)];
-    const templates = new Map([...ids.map((id3) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, unit)]);
-    const skills = [...templates].map(([id3, template]) => compactSkill(state, unit, id3, template)).filter(Boolean);
-    const equipment = {};
-    for (const instanceId of [...new Set([unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? []].filter(Boolean))]) {
-      const instance = state.items[instanceId];
-      const template = instance && state.equipment[instance.templateId];
-      if (template) equipment[instanceId] = { instanceId, templateId: instance.templateId, ...template, counters: instance.counters ?? {} };
-    }
-    const actions = [];
-    const shadow = copy2(state);
-    shadow.turn = shadow.order.indexOf(unit.id);
-    for (const type of ["attack", "move", "sprint", "disengage", "brace", "reload", "flee", "suppress", "free_ally", "end"]) {
-      const plan = preview(shadow, { type });
-      if (plan.ok || type === "move") actions.push(type);
-    }
-    return {
-      id: unit.id,
-      name: unit.name,
-      team: unit.team,
-      faction: unit.team === "red" ? "\u654C\u65B9" : "\u73A9\u5BB6\u65B9",
-      alive: unit.hp > 0,
-      fled: !!unit.fled,
-      hp: unit.hp,
-      maxHp: unit.maxHp,
-      mp: unit.mp,
-      maxMp: unit.maxMp,
-      sp: unit.sp,
-      maxSp: unit.maxSp,
-      x: unit.x,
-      y: unit.y,
-      z: elevation(state, unit),
-      altitude: unit.altitude ?? 0,
-      ap: unit.ap,
-      used: unit.used,
-      reactionAvailable: unit.reactionAvailable,
-      statuses: unit.statuses,
-      moraleState: unit.moraleState ?? "steady",
-      routed: unit.moraleState === "routed",
-      retreatTarget: unit.moraleState === "routed" ? state.grid.flatMap((row, y) => row.map((cell, x) => ({ x, y }))).filter((at3) => atBattleEdge(state, at3)).sort((a, b) => Math.hypot(a.x - unit.x, a.y - unit.y) - Math.hypot(b.x - unit.x, b.y - unit.y))[0] ?? null : null,
-      mainHand: unit.mainHand ?? unit.weapon,
-      offHand: unit.offHand,
-      skills,
-      actions,
-      atEdge: atBattleEdge(state, unit),
-      equipment,
-      inventory: unit.inventory ?? {},
-      switchableWeapons: switchableWeapons(state, unit).map((id3) => ({ id: id3, name: state.equipment[state.items[id3]?.templateId]?.name ?? id3 })),
-      rangeHint: { attack: state.equipment[state.items[unit.mainHand ?? unit.weapon] ? state.items[unit.mainHand ?? unit.weapon].templateId : ""]?.range ?? 1.5 }
-    };
-  }
-  function battleAiPayload(state) {
-    const current = state.order[state.turn];
-    const start = state.order.indexOf(current);
-    const actors = [];
-    for (let i = 0; i < state.order.length; i++) {
-      const unit = state.units[state.order[(start + i) % state.order.length]];
-      if (!unit || unit.hp <= 0 || unit.fled) continue;
-      if (actors.length && unit.team === "blue") break;
-      if (unit.team === "red") actors.push(unitView(state, unit));
-    }
-    const grid = state.grid.map((row) => row.map((cell) => cell.kind === "wall" ? "#" : cell.kind === "slope" ? `^${cell.z ?? 0}` : cell.kind === "floor" ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(" "));
-    const movement = {}, movementCarry = {};
-    for (const unit of Object.values(state.units)) {
-      if (unit.hp <= 0 || unit.fled) continue;
-      const shadow = copy2(state);
-      shadow.turn = shadow.order.indexOf(unit.id);
-      const plan = preview(shadow, { type: "move" });
-      movement[unit.id] = (plan.cells ?? []).map(({ x, y, z }) => [x, y, z ?? elevation(state, { x, y })]);
-      const carry = unit.moveCarryPermille ?? 0;
-      const move2 = plan.cells?.find((cell) => cell.bankedProgress > carry);
-      const sprint = move2 && preview(shadow, { type: "sprint" }).cells?.find((cell) => cell.bankedProgress > carry);
-      if (carry || move2 || sprint) movementCarry[unit.id] = {
-        currentPercent: carry / 10,
-        ...move2 && { movePercent: move2.bankedProgress / 10 },
-        ...sprint && { sprintPercent: sprint.bankedProgress / 10 }
-      };
-    }
-    const zones = Object.keys(state.zones ?? {}).length ? Object.values(state.zones).map((zone) => ({
-      id: zone.id,
-      name: zone.name ?? zone.templateId ?? zone.id,
-      ownerId: zone.ownerId ?? null,
-      ownerTeam: state.units?.[zone.ownerId]?.team ?? null,
-      remainingTurns: zone.remainingTurns ?? null,
-      area: zone.area,
-      effectsSummary: {
-        mods: (zone.mods ?? []).map((mod2) => ({ stat: mod2.stat, locks: mod2.locks, flags: mod2.flags })),
-        rules: (zone.rules ?? []).map((rule2) => ({ hook: rule2.hook, ops: (rule2.program ?? []).map((op) => op.op) }))
-      }
-    })) : void 0;
-    return { rules: RULES, battle: {
-      title: state.title,
-      type: state.battleType,
-      suppressingTeam: state.suppressingTeam ?? null,
-      round: state.round,
-      turnUnitId: current,
-      units: actors,
-      allUnits: Object.values(state.units).map((unit) => unitView(state, unit)),
-      ...zones ? { zones } : {},
-      covers: Object.values(state.covers).map((c) => ({ id: c.id, name: c.name, x: c.x, y: c.y, z: elevation(state, c), hp: c.hp, maxHp: c.maxHp, cover: c.cover, material: c.material })),
-      interactives: Object.values(state.interactives).map((i) => ({ id: i.id, name: i.name, kind: i.kind, effect: i.effect, radius: i.radius ?? 0, damage: i.damage ?? 0, x: i.x, y: i.y, z: elevation(state, i), spent: !!i.spent })),
-      movement,
-      movementCarry,
-      grid
-    }, actorIds: actors.map((u) => u.id) };
-  }
-  function parse2(text8) {
-    const match = String(text8).match(/\{[\s\S]*\}/);
-    const data = JSON.parse(match?.[0] ?? text8);
-    if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error("\u6218\u6597 AI \u5FC5\u987B\u8FD4\u56DE actions \u6570\u7EC4");
-    return data.actions;
-  }
-  async function requestBattleAi(state, request, { signal } = {}) {
-    const payload = battleAiPayload(state);
-    if (!payload.actorIds.length) return [];
-    let messages = [{ role: "system", content: RULES }, { role: "user", content: JSON.stringify(payload) }];
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const reply = await request(messages, signal);
-      try {
-        const actions = parse2(reply);
-        const valid2 = [];
-        const shadow = copy2(state);
-        for (const entry2 of actions) {
-          if (!entry2 || typeof entry2.unitId !== "string" || !entry2.action || typeof entry2.action.type !== "string") throw new Error("\u52A8\u4F5C\u7F3A\u5C11 unitId \u6216 action.type");
-          const actor = shadow.units[entry2.unitId];
-          if (!actor || actor.team !== "red") throw new Error(`\u4E0D\u80FD\u63A7\u5236\u5355\u4F4D ${entry2.unitId}`);
-          if (shadow.units[shadow.order[shadow.turn]]?.id !== entry2.unitId) throw new Error(`\u884C\u52A8\u987A\u5E8F\u9519\u8BEF\uFF0C\u5E94\u8F6E\u5230 ${shadow.order[shadow.turn]}`);
-          if (actor.moraleState === "routed" && !["move", "flee", "end"].includes(entry2.action.type)) throw new Error("\u6E83\u9003\u5355\u4F4D\u53EA\u80FD\u64A4\u5411\u8FB9\u754C\u6216\u9003\u8DD1");
-          const action = Object.fromEntries(Object.entries(entry2.action).filter(([, value]) => value !== null));
-          if (action.type === "skill" && typeof action.skillId !== "string") throw new Error("\u6280\u80FD\u52A8\u4F5C\u5FC5\u987B\u63D0\u4F9B skillId");
-          if (action.type !== "skill") delete action.skillId;
-          const plan = preview(shadow, action);
-          if (!plan.ok) throw new Error(`${entry2.unitId} \u7684 ${entry2.action.type} \u4E0D\u5408\u6CD5\uFF1A${plan.error}`);
-          applyAction(shadow, action);
-          valid2.push({ ...entry2, action });
-          const next = shadow.units[shadow.order[shadow.turn]];
-          if (!next || next.team !== "red") break;
-        }
-        if (!valid2.length) throw new Error("actions \u4E3A\u7A7A");
-        return valid2;
-      } catch (error2) {
-        if (attempt) throw error2;
-        messages = [...messages, { role: "assistant", content: reply }, { role: "user", content: `\u4E0A\u4E00\u4EFD JSON \u6216\u52A8\u4F5C\u65E0\u6548\uFF1A${error2.message}\u3002\u53EA\u8F93\u51FA\u4FEE\u6B63\u540E\u7684\u5B8C\u6574 JSON\u3002` }];
-      }
-    }
-    throw new Error("\u6218\u6597 AI \u672A\u8FD4\u56DE\u6709\u6548\u52A8\u4F5C");
-  }
-
   // src/ui/main.js
   var THEMES = ["amethyst", "night-gold", "frost-silver"];
   var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "reload", "end"];
@@ -11759,8 +12253,11 @@ var FatedTacticalTavern = (() => {
     let menuButtons = /* @__PURE__ */ new Map(), openDrawer = null, seenLogs = 0, battleAiBusy = false;
     let visibleAsk = null, askCells = null, entityChoices = null;
     let toggleEntityChoice;
+    let actorId, autoCollaborate = false;
     const pendingAsk = () => live3?.vm?.pendingAsk;
     const active3 = (s = state) => s?.units[s.order[s.turn]];
+    const routed = (command) => actorId && !["answer", "end"].includes(command.type) ? { ...command, actorId } : command;
+    const previewSelected = (command) => game.previewAction(routed(command));
     const TARGETED = /* @__PURE__ */ new Set(["attack", "skill", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push", "shield_bash"]);
     let snapshotSaveFailed = false;
     const error2 = (value) => {
@@ -11785,6 +12282,8 @@ var FatedTacticalTavern = (() => {
       target: target2,
       inspectedId,
       busy,
+      actorId,
+      autoCollaborate,
       askLocked: !!pendingAsk(),
       askCells,
       entityChoices
@@ -12121,8 +12620,8 @@ ${height2}\uFF0C${sight}`;
         let executed = false, expected = initial2;
         for (const entry2 of entries3) {
           if (signal?.aborted || live3 !== expected || pendingAsk()) break;
-          const actor = active3(live3);
-          if (!actor || actor.team !== "red" || actor.id !== entry2.unitId || live3.outcome) break;
+          const actor = live3.units[entry2.unitId];
+          if (!actor || actor.team !== "red" || active3(live3)?.team !== "red" || live3.outcome) break;
           const plan = game.previewAction(entry2.action);
           if (!plan.ok) throw new Error(plan.error || "\u5916\u90E8\u6218\u6597 AI \u8FD4\u56DE\u4E86\u975E\u6CD5\u52A8\u4F5C");
           game.playAction(entry2.action);
@@ -12139,8 +12638,16 @@ ${height2}\uFF0C${sight}`;
     }
     function schedule() {
       window2.clearTimeout(timer);
-      if (busy || playback.busy || pendingAsk() || live3?.outcome || active3(live3)?.team !== "red" || !$("auto-ai").checked || battleAiBusy) return;
-      timer = window2.setTimeout(stepEnemy, Number($("ai-speed").value) || 350);
+      if (busy || playback.busy || pendingAsk() || live3?.outcome || battleAiBusy) return;
+      if (active3(live3)?.team === "blue" && autoCollaborate) timer = window2.setTimeout(stepCollaborate, 120);
+      else if (active3(live3)?.team === "red" && $("auto-ai").checked) timer = window2.setTimeout(stepEnemy, Number($("ai-speed").value) || 350);
+    }
+    function stepCollaborate() {
+      if (!autoCollaborate || busy || pendingAsk()) return;
+      if (!safely(() => game.stepLinked())?.ok) {
+        autoCollaborate = false;
+        draw();
+      }
     }
     async function stepEnemy() {
       if (pendingAsk() || battleAiBusy) return;
@@ -12176,6 +12683,10 @@ ${height2}\uFF0C${sight}`;
         closeDrawer();
         for (const dialog of root2.querySelectorAll("dialog[open]")) dialog.close();
       }
+      if (active3(before)?.id !== active3(live3)?.id || live3.outcome) {
+        actorId = void 0;
+        autoCollaborate = false;
+      } else if (!live3.units[actorId]?.hp) actorId = void 0;
       resetSelection();
       if (continues(before, live3) && playback.enqueue(before, live3)) {
         window2.clearTimeout(timer);
@@ -12186,7 +12697,7 @@ ${height2}\uFF0C${sight}`;
     }
     const execute2 = (command) => safely(() => {
       if (pendingAsk() && command.type !== "answer") return;
-      const result = game.playAction(command);
+      const result = game.playAction(routed(command));
       if (result && result.ok === false) error2(result.error);
       return result;
     });
@@ -12219,11 +12730,15 @@ ${height2}\uFF0C${sight}`;
     function handlePoint(at3, input = {}) {
       if (pendingAsk()) return;
       error2("");
-      const actor = active3();
+      const actor = state.units[actorId] ?? active3();
       const canAct = actor?.team === "blue" && !state.outcome;
       const units = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled && u.x === at3.x && u.y === at3.y);
       const clickedToken = input?.target?.closest?.(".tactical-cell-units > [data-unit-id]");
       const clickedUnitId = clickedToken?.dataset.unitId;
+      if (clickedUnitId && clickedUnitId !== actor?.id && !bagAim && [...$("linked-squad").children].some((button) => button.dataset.actorId === clickedUnitId)) {
+        selectActor(clickedUnitId);
+        return;
+      }
       const preferredUnit = units.find((u) => u.id === (at3.targetId ?? clickedUnitId)) ?? units.find((u) => u.id === action?.targetId) ?? (canAct ? units.find((u) => u.team !== actor.team) : null) ?? units[0];
       const unit = preferredUnit;
       const chosenTargetId = unit?.id;
@@ -12236,7 +12751,7 @@ ${height2}\uFF0C${sight}`;
       const onActorCell = canAct && actor.x === at3.x && actor.y === at3.y;
       if (bagAim) {
         const command = { type: "skill", skillId: bagAim, x: at3.x, y: at3.y, ...unit?.id ? { targetId: unit.id } : {} };
-        const plan = game.previewAction(command);
+        const plan = previewSelected(command);
         if (!plan.ok) {
           error2(plan.error);
           return;
@@ -12256,7 +12771,7 @@ ${height2}\uFF0C${sight}`;
         return;
       }
       if (self && !input.preserveSprint) {
-        const check = game.previewAction({ type: "sprint" });
+        const check = previewSelected({ type: "sprint" });
         sprint = !sprint && check.ok;
         if (!check.ok) error2(`\u4E0D\u80FD\u75BE\u8DD1\uFF1A${check.error}`);
       }
@@ -12278,7 +12793,7 @@ ${height2}\uFF0C${sight}`;
           ...chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {},
           ...type === "attack" || type === "skill" ? { intent: $("intent-select").value || "normal", nonLethal: $("nonlethal-toggle").checked, bonusDice: Number(bonus.value) } : {}
         };
-        const plan = game.previewAction(command);
+        const plan = previewSelected(command);
         if (onActorCell && ["move", "sprint"].includes(type) && !(plan.bankedProgress > (actor.moveCarryPermille ?? 0))) return;
         const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
         if ((plan.ok || limited || type === "flee" && plan.error?.includes("\u8FB9\u754C")) && !(plan.interactiveId && options.some((o) => o.plan.interactiveId === plan.interactiveId))) {
@@ -12310,7 +12825,7 @@ ${height2}\uFF0C${sight}`;
             const item = state.skills[skillId];
             if (!item?.backpackItem || count < 1) continue;
             const command = { type: "skill", skillId };
-            const plan = game.previewAction(command);
+            const plan = previewSelected(command);
             options.push({ command, plan, bag: true, label: `\u4F7F\u7528\u80CC\u5305\u7269\u54C1\uFF1A${item.name} \xD7${count}` });
           }
           add("end_encounter");
@@ -12353,7 +12868,7 @@ ${height2}\uFF0C${sight}`;
         if (small.textContent) button.append(small);
         button.disabled = !plan.ok;
         button.title = plan.error || ACTION_HINTS[command.type] || label;
-        if (!plan.ok) small.textContent = plan.error;
+        if (!plan.ok) small.textContent = plan.error === "\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411" ? "\u6709\u5411\u6280\u80FD\u9700\u8981\u9009\u62E9\u65B9\u5411\uFF08\u70B9\u76F8\u90BB\u683C\u786E\u5B9A\u671D\u5411\uFF09" : plan.error;
         if (!plan.ok && !small.parentNode) button.append(small);
         button.setAttribute("aria-pressed", "false");
         menuButtons.set(button, choice);
@@ -12407,7 +12922,24 @@ ${height2}\uFF0C${sight}`;
       window2.setTimeout(() => window2.URL.revokeObjectURL(url), 1e3);
     }
     const on = (id3, event, fn) => $(id3)?.addEventListener(event, fn, { signal });
+    function selectActor(id3) {
+      if (pendingAsk() || busy) return;
+      actorId = id3 === active3()?.id ? void 0 : id3;
+      closeTarget();
+      selectedId = id3;
+      draw();
+    }
     function bindControls() {
+      on("linked-squad", "click", (event) => {
+        const button = event.target.closest("[data-actor-id]");
+        if (button) selectActor(button.dataset.actorId);
+      });
+      on("linked-collaborate", "click", () => {
+        if (pendingAsk() || busy) return;
+        autoCollaborate = !autoCollaborate;
+        draw();
+        schedule();
+      });
       for (const input of measurement) input.addEventListener("change", () => {
         input.dataset.faction = state.units[input.value]?.team ?? "";
         measure();
@@ -13899,6 +14431,7 @@ body { margin: 0; background: var(--ink-2); }
 .ap-crystal { font-size: 1.15em; color: var(--gold-bright); text-shadow: var(--icon-glow); }
 .ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
 
+.ft-linked-squad:not([hidden]) { display: flex; flex-wrap: wrap; gap: 4px; }
 .ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
 .ft-ask { width: min(100%, 28rem); padding: 8px 10px; border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); }
 .ft-ask p { margin: 0 0 6px; color: var(--accent-text); overflow-wrap: anywhere; }
@@ -14405,13 +14938,43 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (!description || description.length > 500 || !separate && rawText2.length > 500) fail4(`${row}\u7684\u6548\u679C\u63CF\u8FF0\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 500 \u5B57\uFF08\u5408\u5E76\u5199\u6CD5\u603B\u957F \u2264500 \u5B57\uFF09`);
     return { id: id3, targetTeam, name, description, rawText: rawText2, area: parseEffectArea(parts.at(-1), row, battle) };
   }
+  function checkSource(source, row, allowMvu = false) {
+    const path2 = source.startsWith("mvu:") ? source.slice(4).split("/") : [];
+    if (source === "char_info" || allowMvu && source === "mvu") return;
+    if (!path2.length || path2.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4) || key4 === "." || key4 === "..")) {
+      fail4(`${row}\u7684\u6765\u6E90\u300C${source}\u300D\u65E0\u6548\uFF0C\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
+    }
+  }
+  var summonModes = { \u968F\u52A8: "linked_group", \u96C6\u7FA4: "linked_group", \u72EC\u7ACB: "independent", \u5404\u81EA\u968F\u52A8: "linked_each", \u77AC\u53D1: "none" };
+  var summonPolicies = { \u9876\u66FF: "replace", \u961F\u5217: "fifo", \u5C01\u9876: "cap" };
+  function parseSummon(parts, row, battle) {
+    const [, id3, ownerId, source, name, ...options] = parts;
+    if (!identifier2.test(ownerId) || unsafeKey(ownerId)) fail4(`${row}\u7684\u5F52\u5C5E\u5355\u4F4D ID \u65E0\u6548`);
+    checkSource(source, row, true);
+    if (!name || name.length > 100) fail4(`${row}\u7684\u663E\u793A\u540D\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 100 \u5B57`);
+    const summon = { id: id3, ownerId, source, name, group: id3 };
+    const seen = /* @__PURE__ */ new Set();
+    for (const option of options) {
+      const [, key4, value] = option.match(/^([^=]+?)\s*=\s*(.+)$/u) ?? [];
+      if (!key4 || seen.has(key4)) fail4(`${row}\u542B\u65E0\u6548\u6216\u91CD\u590D\u9009\u9879\u300C${option}\u300D`);
+      seen.add(key4);
+      if (key4 === "\u5206\u7EC4" && identifier2.test(value) && !unsafeKey(value)) summon.group = value;
+      else if (key4 === "\u6A21\u5F0F" && Object.values(summonModes).includes(summonModes[value] ?? value)) summon.turnMode = summonModes[value] ?? value;
+      else if (key4 === "\u7B56\u7565" && Object.values(summonPolicies).includes(summonPolicies[value] ?? value)) summon.stackPolicy = summonPolicies[value] ?? value;
+      else if (key4 === "\u4E0A\u9650" && /^(?:[1-9]|1\d|20)$/.test(value)) summon.maxActive = Number(value);
+      else if (key4 === "\u7C7B\u578B" && value.length <= 100) summon.archetypeHint = value;
+      else if (key4 === "\u5F00\u573A") summon.opening = value === "\u968F\u4E3B" ? "owner" : parsePoint(value, row, battle, true);
+      else fail4(`${row}\u542B\u65E0\u6548\u9009\u9879\u300C${option}\u300D`);
+    }
+    return summon;
+  }
   function parseBattleDescriptor(value) {
     if (typeof value !== "string") return null;
     const lines = value.trim().replace(/^```[^\r\n]*\r?\n/, "").replace(/\r?\n```$/, "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    if (!/^(?:battle|unit|cover|interact|效果|effect)\s*\|/iu.test(lines[0] ?? "")) return null;
+    if (!/^(?:battle|unit|summon|cover|interact|效果|effect)\s*\|/iu.test(lines[0] ?? "")) return null;
     const battle = parseHeader(lines[0]);
     const ids = /* @__PURE__ */ new Set(), occupied = /* @__PURE__ */ new Set(), unitCounts = /* @__PURE__ */ new Map();
-    const units = [], covers = [], interactives = [], effects = [];
+    const units = [], covers = [], interactives = [], effects = [], summons = [];
     const claimId = (id3, row) => {
       if (!identifier2.test(id3 ?? "") || unsafeKey(id3)) fail4(`${row}\u7684 ID\u300C${id3 ?? ""}\u300D\u683C\u5F0F\u65E0\u6548\uFF08\u987B\u4EE5\u5B57\u6BCD\u6216\u6570\u5B57\u5F00\u5934\uFF0C\u4EC5\u542B ASCII \u5B57\u6BCD\u3001\u6570\u5B57\u3001_\u3001-\uFF0C\u957F\u5EA6 \u226464\uFF09`);
       const key4 = id3.toLowerCase();
@@ -14443,14 +15006,16 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         claimId(id3, row);
         const [, , team2, source, name, point4] = parts;
         if (!["blue", "red"].includes(team2)) fail4(`${row}\u7684\u9635\u8425\u300C${team2}\u300D\u65E0\u6548\uFF0C\u5FC5\u987B\u4E3A blue \u6216 red`);
-        const path2 = source.startsWith("mvu:") ? source.slice(4).split("/") : [];
-        if (source !== "char_info" && (!path2.length || path2.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4)))) {
-          fail4(`${row}\u7684\u6765\u6E90\u300C${source}\u300D\u65E0\u6548\uFF0C\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
-        }
+        checkSource(source, row);
         if (!name || name.length > 100) fail4(`${row}\u7684\u663E\u793A\u540D\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 100 \u5B57`);
         const position = parsePoint(point4, row, battle, true);
         claimPosition(position, row, true);
         units.push({ id: id3, team: team2, source, name, ...position });
+      } else if (kind === "summon") {
+        if (parts.length < 5) fail4(`${row}\u9700\u8981 summon|ID|\u5F52\u5C5E\u5355\u4F4DID|\u6765\u6E90|\u663E\u793A\u540D`);
+        if (summons.length >= 24) fail4("\u6700\u591A 24 \u6761 summon \u8BB0\u5F55");
+        claimId(id3, row);
+        summons.push(parseSummon(parts, row, battle));
       } else if (kind === "cover") {
         if (parts.length !== 5) fail4(`${row}\u9700\u8981 5 \u6BB5\u5B57\u6BB5\uFF08cover|ID|\u534A\u6216\u5168|\u540D\u79F0|\u5750\u6807\uFF0C\u5F53\u524D\u4E3A ${parts.length} \u6BB5\uFF09`);
         claimId(id3, row);
@@ -14474,10 +15039,13 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         claimPosition(position, row);
         if (interactives.length === 2) fail4("\u6700\u591A\u4E24\u6761 interact \u8BB0\u5F55");
         interactives.push({ id: id3, name, ...position, kind: type, effect, radius, damage });
-      } else fail4(`\u7B2C ${rowNo} \u6761\u8BB0\u5F55\u672A\u77E5\u884C\u7C7B\u578B\u300C${kind}\u300D\uFF0C\u5141\u8BB8\u524D\u7F00\uFF1Aunit\u3001cover\u3001interact\u3001\u6548\u679C`);
+      } else fail4(`\u7B2C ${rowNo} \u6761\u8BB0\u5F55\u672A\u77E5\u884C\u7C7B\u578B\u300C${kind}\u300D\uFF0C\u5141\u8BB8\u524D\u7F00\uFF1Aunit\u3001summon\u3001cover\u3001interact\u3001\u6548\u679C`);
     }
     if (!units.length) fail4("\u81F3\u5C11\u9700\u8981\u4E00\u6761 unit \u8BB0\u5F55");
-    return { ...battle, units, ...covers.length && { covers }, ...interactives.length && { interactives }, ...effects.length && { effects } };
+    for (const summon of summons) {
+      if (!units.some((unit) => unit.id === summon.ownerId)) fail4(`\u53EC\u5524\u7269\u300C${summon.id}\u300D\u7684\u5F52\u5C5E\u5355\u4F4D\u300C${summon.ownerId}\u300D\u4E0D\u5B58\u5728`);
+    }
+    return { ...battle, units, ...summons.length && { summons }, ...covers.length && { covers }, ...interactives.length && { interactives }, ...effects.length && { effects } };
   }
 
   // src/tavern/terrain.js
@@ -15117,10 +15685,29 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     return char;
   }
+  function resolveSummonSource(row, ownerRecord, mvuRecords, chars) {
+    if (row.source === "char_info") {
+      return chars.find((record3) => sourceName(record3) === row.name && (!record3.\u5F52\u5C5E || record3.\u5F52\u5C5E === sourceName(ownerRecord))) ?? chars.find((record3) => sourceName(record3) === row.name && !record3.\u5F52\u5C5E);
+    }
+    const notes2 = asObject(ownerRecord?.tacticalSummons);
+    const ownerPath = ownerRecord?.__sourcePath ?? [];
+    if (row.source.startsWith("mvu:")) {
+      const leaf = row.source.slice(4).split("/").at(-1);
+      const path2 = row.source.slice(4).split("/");
+      if (samePath(path2.slice(0, -1), ownerPath) && own16(notes2, leaf)) return notes2[leaf];
+      const root2 = ["\u4E8B\u4EF6", "\u6218\u672F\u6269\u5C55", "\u53EC\u5524\u7269"];
+      const notePath = ownerPath[0] === "\u5173\u7CFB\u5217\u8868" ? [...root2, "\u4F19\u4F34", ownerPath[1]] : [...root2, "\u4E3B\u89D2"];
+      if (samePath(path2.slice(0, -1), notePath)) return own16(notes2, leaf) ? notes2[leaf] : void 0;
+      if (!mvuRecords.some((record3) => record3 === ownerRecord && samePath(record3.__sourcePath, path2))) return void 0;
+    }
+    return own16(notes2, row.name) ? notes2[row.name] : Object.values(notes2).find((note) => object3(note) && sourceName(note) === row.name);
+  }
   function collectMvu(value) {
     const root2 = asObject(value?.stat_data ?? value?.statData ?? value);
     const lengths = asObject(root2.\u4E8B\u4EF6?.\u6218\u672F\u6269\u5C55?.\u4F53\u957F);
     const companionLengths = asObject(lengths.\u4F19\u4F34);
+    const summons = asObject(root2.\u4E8B\u4EF6?.\u6218\u672F\u6269\u5C55?.\u53EC\u5524\u7269);
+    const companionSummons = asObject(summons.\u4F19\u4F34);
     const found = [];
     const visit = (node, key4 = "", path2 = []) => {
       if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path2, i]));
@@ -15130,12 +15717,21 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       if (name && (hasStats || hasResource)) {
         const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own16(companionLengths, key4) ? companionLengths[key4] : void 0;
         const record3 = clone(node);
+        const notes2 = path2.length === 1 && protagonistAliases.includes(path2[0]) ? own16(summons, "\u4E3B\u89D2") : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" ? own16(companionSummons, key4) : void 0;
+        if (object3(notes2)) record3.tacticalSummons = clone(notes2);
         if (Number.isFinite(length) && length > 0) record3.bodyLengthM = length;
         found.push({ ...record3, __sourceKey: key4, __sourcePath: path2, __sourceKind: "MVU" });
       }
-      for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C"].includes(k)) visit(v, k, [...path2, k]);
+      for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C", "\u6218\u672F\u6269\u5C55", "tacticalSummons"].includes(k)) visit(v, k, [...path2, k]);
     };
     visit(root2);
+    const protagonist = found.find((record3) => record3.__sourcePath.length === 1 && protagonistAliases.includes(record3.__sourcePath[0]));
+    if (protagonist && object3(summons.\u4E3B\u89D2)) protagonist.tacticalSummons = clone(summons.\u4E3B\u89D2);
+    for (const record3 of found) {
+      if (record3.__sourcePath.length === 2 && record3.__sourcePath[0] === "\u5173\u7CFB\u5217\u8868" && object3(companionSummons[record3.__sourcePath[1]])) {
+        record3.tacticalSummons = clone(companionSummons[record3.__sourcePath[1]]);
+      }
+    }
     return found;
   }
   function statusId2(value) {
@@ -16271,7 +16867,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     }
     const customElements = clone(source.customElements ?? options.customElements ?? {});
     const equipment = {}, skills = {}, items = [];
-    const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, archetypes = /* @__PURE__ */ new Map();
+    const units = {}, profiles = {}, sourceMap = {}, entrySources = {}, summonTemplates = {}, archetypes = /* @__PURE__ */ new Map();
     const add = (participant, record3, index) => {
       const base = descriptor ? participant.id : deterministicId(participant.id || participant.uid || participant.source || `${participant.name}-${index}`, "unit");
       let id3 = base;
@@ -16306,8 +16902,27 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         isProtagonist: record3 === protagonist
       };
     };
+    const summonRows = [...battle.summons ?? []];
+    const markedSummon = (record3) => record3?.\u89D2\u8272\u5B9A\u4F4D === "\u53EC\u5524\u7269" || record3?.\u7C7B\u578B === "\u53EC\u5524\u7269";
+    for (const record3 of chars.filter(markedSummon)) {
+      const name = sourceName(record3);
+      const ownerName = text3(record3.\u5F52\u5C5E);
+      if (!ownerName) continue;
+      const owner = participants.find((p, i) => p.name === ownerName || sourceName(resolved[i]) === ownerName);
+      if (!owner?.id || !name || summonRows.some((row) => row.ownerId === owner.id && row.name === name)) continue;
+      summonRows.push({ id: deterministicId(`${owner.id}-${name}`, "summon"), ownerId: owner.id, source: "char_info", name });
+      sink(owner.id, "char_info", "state").push(`\u5DF2\u6309\u5F52\u5C5E\u8865\u5F55\u53EC\u5524\u7269\u300C${name}\u300D`, { kind: "auto_adjusted" });
+    }
     for (const [i, participant] of participants.entries()) {
       const record3 = resolved[i];
+      const summon = summonRows.find((row) => row.ownerId !== participant.id && row.name === participant.name);
+      const name = text3(participant.name);
+      const mentioned = !record3 && name.length >= 2 && participants.some((other, j) => j !== i && resolved[j] && (other.team ?? other.faction) === (participant.team ?? participant.faction) && JSON.stringify([resolved[j].\u6280\u80FD, resolved[j].\u88C5\u5907, resolved[j].skills, resolved[j].equipment]).includes(name));
+      const isSummonRecord = record3?.__sourceKind === "char_info" && (markedSummon(record3) || summon);
+      if (isSummonRecord || !record3 && summon || mentioned) {
+        sink(null, "battle_init", "state").push(`\u5DF2\u5FFD\u7565\u8BEF\u5199\u4E3A unit \u7684\u53EC\u5524\u7269\u300C${participant.name}\u300D\uFF0C\u8BF7\u4F7F\u7528 summon| \u884C`, { kind: "auto_adjusted" });
+        continue;
+      }
       const count = record3?.__sourceKind === "char_info" ? bound(record3.\u6570\u91CF ?? record3.count, 1, 100, 1) : 1;
       for (let copy3 = 0; copy3 < count; copy3++) {
         const placement = copy3 ? { ...participant, id: `${participant.id ?? participant.uid ?? participant.name}-${copy3 + 1}` } : participant;
@@ -16315,7 +16930,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       }
     }
     if (!participants.length) {
-      const records2 = [...mvuRecords, ...chars.filter((char) => !mvuRecords.some((record3) => sourceName(record3, record3.__sourceKey) === sourceName(char)))];
+      const records2 = [...mvuRecords, ...chars.filter((char) => !markedSummon(char) && !summonRows.some((row) => row.source === "char_info" && row.name === sourceName(char)) && !mvuRecords.some((record3) => sourceName(record3, record3.__sourceKey) === sourceName(char)))];
       let index = 0;
       for (const [i, record3] of records2.entries()) {
         const count = record3.__sourceKind === "char_info" ? bound(record3.\u6570\u91CF ?? record3.count, 1, 100, 1) : 1;
@@ -16323,6 +16938,85 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
           add({ name: sourceName(record3, record3.__sourceKey), source: sourceId(record3), faction: i ? "red" : "blue", x: index % (battle.width ?? 10), y: Math.floor(index / (battle.width ?? 10)) % (battle.height ?? 10) }, record3, index);
         }
       }
+    }
+    const openingSummons = [];
+    for (const [ownerIndex, ownerRecord] of resolved.entries()) {
+      const ownerId = participants[ownerIndex]?.id;
+      for (const name of Object.keys(ownerRecord?.tacticalSummons ?? {})) {
+        if (ownerId && !summonRows.some((row) => row.ownerId === ownerId && row.name === name)) {
+          summonRows.push({ id: deterministicId(`${ownerId}-${name}`, "summon"), ownerId, source: `mvu:${ownerRecord.__sourcePath?.join("/") ?? "\u4E3B\u89D2"}/${name}`, name });
+        }
+      }
+    }
+    for (const [index, row] of summonRows.entries()) {
+      const ownerIndex = participants.findIndex((participant) => participant.id === row.ownerId);
+      const owner = units[row.ownerId];
+      const ownerRecord = ownerIndex >= 0 ? resolved[ownerIndex] : null;
+      if (!owner) {
+        sink(null, "battle_init", "state").push(`\u53EC\u5524\u7269\u300C${row.name}\u300D\u627E\u4E0D\u5230\u5F52\u5C5E\u5355\u4F4D\u300C${row.ownerId}\u300D`);
+        continue;
+      }
+      const sourceRecord = resolveSummonSource(row, ownerRecord, mvuRecords, chars);
+      if (!sourceRecord) {
+        sink(row.ownerId, row.source, "state").push(`\u672A\u627E\u5230\u53EC\u5524\u7269\u6765\u6E90\uFF1A${row.source}\uFF08${row.name}\uFF09`);
+        continue;
+      }
+      const templateId = deterministicId(row.id, "summon");
+      const firstItem = items.length;
+      const made = unitFrom(
+        { ...asObject(sourceRecord), __sourceKind: sourceRecord.__sourceKind ?? row.source },
+        { id: `summon-template-${templateId}`, name: row.name, team: owner.team, x: owner.x, y: owner.y },
+        index,
+        equipment,
+        skills,
+        items,
+        (scope, path2) => sink(row.ownerId, row.source, scope, path2),
+        false,
+        battle,
+        sourceRecord,
+        customElements
+      );
+      const summonUnit = made.unit;
+      const itemTemplate = (id3) => id3 && items.find((item) => item.id === id3)?.templateId;
+      const features = asObject(sourceRecord.\u7279\u5F81);
+      const mode = features.\u884C\u52A8\u6A21\u5F0F ?? sourceRecord.\u884C\u52A8\u6A21\u5F0F ?? sourceRecord.turnMode;
+      const modes = { \u968F\u4E3B\u5171\u4EAB: "linked_group", \u968F\u4E3B\u72EC\u7ACB: "linked_each", \u72EC\u7ACB\u56DE\u5408: "independent", \u7EAF\u88AB\u52A8: "none", \u968F\u52A8: "linked_group", \u5404\u81EA\u968F\u52A8: "linked_each", \u72EC\u7ACB: "independent", \u77AC\u53D1: "none" };
+      const turnMode = row.turnMode ?? (own16(modes, mode) ? modes[mode] : void 0) ?? (["linked_group", "linked_each", "independent", "none"].includes(mode) ? mode : void 0);
+      const rawGroup = features.\u5206\u7EC4 ?? sourceRecord.\u5206\u7EC4 ?? sourceRecord.group;
+      const group = rawGroup && (!row.group || row.group === row.id) ? deterministicId(rawGroup, "summon-group") : row.group ?? templateId;
+      const limit = features.\u4E0A\u9650 ?? sourceRecord.\u4E0A\u9650 ?? sourceRecord.maxActive;
+      const maxActive = row.maxActive ?? (limit == null ? void 0 : bound(limit, 1, 20));
+      const duration2 = text3(features.\u5B58\u7EED ?? sourceRecord.\u5B58\u7EED);
+      const amount = duration2.match(/^(\d+)\s*(?:个)?(大轮|轮|回合)$/);
+      const turns = amount ? bound(amount[1], 1, 100, 1) : /本回合结束/.test(duration2) && !/依召唤|或/.test(duration2) ? 1 : null;
+      const panel = { stats: summonUnit.stats, tier: Math.min(summonUnit.tier, owner.tier) };
+      if (spawnBudgetIssue(owner, panel)) {
+        panel.stats = fitSpawnStats(owner, panel);
+        sink(row.ownerId, row.source, "state").push(`\u53EC\u5524\u7269\u300C${row.name}\u300D\u7684\u4E94\u7EF4\u5DF2\u6309\u5F52\u5C5E\u8005\u9884\u7B97\u6536\u655B`, { kind: "auto_adjusted" });
+      }
+      summonTemplates[templateId] = {
+        name: row.name,
+        ownerId: row.ownerId,
+        ...panel,
+        ...findValue(sourceRecord, ["level", "\u7B49\u7EA7"], null) != null && { level: summonUnit.level },
+        bodyLengthM: summonUnit.bodyLengthM,
+        size: summonUnit.size,
+        mc: bound(findValue(sourceRecord, ["mc", "MC", "massClass"], sizeMultiplier(summonUnit.bodyLengthM)), 1, 64, 1),
+        skills: [...summonUnit.skills ?? []],
+        ...itemTemplate(summonUnit.mainHand) && { mainHand: itemTemplate(summonUnit.mainHand) },
+        ...itemTemplate(summonUnit.offHand) && { offHand: itemTemplate(summonUnit.offHand) },
+        ...itemTemplate(summonUnit.shield) && { shield: itemTemplate(summonUnit.shield) },
+        gear: summonUnit.gear.map(itemTemplate).filter(Boolean),
+        group,
+        ...turnMode && { turnMode },
+        ...maxActive && { maxActive },
+        ...row.stackPolicy && { stackPolicy: row.stackPolicy },
+        ...turns && { remainingTurns: turns, durationUnit: amount?.[2].endsWith("\u8F6E") ? "rounds" : "anchor_turns" }
+      };
+      if (row.opening) openingSummons.push({ owner, templateId, opening: row.opening });
+      items.splice(firstItem);
+      entrySources[row.ownerId] ??= {};
+      Object.assign(entrySources[row.ownerId], made.entrySources, { [`summonTemplates:${templateId}`]: { record: staticProjection(sourceRecord), declaration: row } });
     }
     const title = text3(battle.sceneTitle ?? battle.title ?? options.title).slice(0, 100) || "\u9152\u9986\u6218\u672F\u6218\u5C40";
     const seed = integer3(options.seed ?? battle.seed, hash(battle.battleId ?? title)) >>> 0;
@@ -16337,7 +17031,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
     const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
     const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
-    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
     initializeVMWorld(state);
     for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
       if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
@@ -16366,8 +17060,25 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       sink(null, null, "state").push(`\u8F6C\u6362\u7ED3\u679C\u672A\u901A\u8FC7\u6821\u9A8C\uFF1A${error2.message}`);
       if (options.throwOnValidation) throw error2;
     }
-    if (valid2) beginBattle(state);
-    const roster = Object.values(units).map((unit) => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
+    if (valid2) {
+      const ownerRules = /* @__PURE__ */ new Map();
+      for (const { owner, templateId, opening } of openingSummons) {
+        if (!ownerRules.has(owner)) ownerRules.set(owner, owner.rules);
+        const at3 = opening === "owner" ? { x: owner.x, y: owner.y, z: elevation(state, owner) } : { x: opening.x, y: opening.y, z: (opening.z ?? state.grid[opening.y][opening.x].z) + (opening.altitude ?? 0) };
+        owner.rules = [...owner.rules ?? [], {
+          id: `open-${hash(templateId)}`,
+          hook: "round_start",
+          filter: "round == 1",
+          program: [{ op: "spawn", entityKind: "unit", at: at3, spec: { templateId } }]
+        }];
+      }
+      beginBattle(state);
+      for (const [owner, rules] of ownerRules) {
+        if (rules === void 0) delete owner.rules;
+        else owner.rules = rules;
+      }
+    }
+    const roster = Object.values(units).filter((unit) => profiles[unit.id]).map((unit) => ({ ...profiles[unit.id], ...clone(unit), source: profiles[unit.id].sourceKind }));
     Object.defineProperty(state, "warnings", { value: warnings });
     return { state, roster, warnings, sourceMap, entrySources, zoneEntries, battleInit: battle, seed };
   }
@@ -16765,7 +17476,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
   }
 
   // src/tavern/normalization-batches.js
-  var normalizationPath = /^\/(?:equipment|skills|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
+  var normalizationPath = /^\/(?:equipment|skills|summonTemplates|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
   var SCENE_LANE = "__scene__";
   var warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
   var targetPath = (path2) => path2?.split("/").slice(0, 3).join("/");
@@ -17852,7 +18563,7 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
 \u3010\u5168\u5C40\u4E8B\u4EF6\u7BA1\u7EBF\u4E0E\u8F7D\u4F53\u4F5C\u7528\u57DF\u3011
 \u2022 \u5355\u6B21\u884C\u52A8\u7ED3\u7B97\u5E8F\uFF1Abefore_action\uFF08\u6263\u8D39\u7F29\u653E\u3001\u53D6\u6D88\u884C\u52A8\u3001\u6539\u5199\u751F\u6548\u8D77\u70B9 origin \u4E0E\u65E0\u89C6\u89C6\u7EBF ignoreLOS\uFF1B\u671F\u95F4\u82E5\u6539\u53D8\u6301\u6709\u8005 controlPolicy.intentLock \u4F1A\u81EA\u52A8\u89E6\u53D1\u91CD\u89C4\u5212\u5E76\u5237\u65B0 event.intent\uFF09\u2192 before_target\uFF08\u53D6\u6D88\u6307\u5411\u3001redirectTarget \u8986\u5199\u4E3A\u5355\u4E00\u76EE\u6807\u6216 replaceTarget:{from,to} \u5355\u70B9\u66FF\u8EAB\u627F\u4F24\u5E76\u4FDD\u7559\u5176\u4F59\u8303\u56F4\u76EE\u6807\u3001\u4F24\u5BB3\u500D\u7387\u7F29\u653E\uFF1B\u53EF\u8BFB event.backX/event.backY \u83B7\u53D6\u4E3B\u76EE\u6807\u76F8\u5BF9\u81EA\u8EAB\u671D\u5411\u7684\u80CC\u540E\u4E00\u683C\u5750\u6807\uFF09\u2192 before_check\uFF08\u6539 DC/\u52A0\u503C/\u4F18\u52A3\u52BF\u3001\u65E0\u89C6\u95EA\u907F\u3001\u4FDD\u5E95\u8BC4\u7EA7\u3001\u5F3A\u5236\u5224\u5B9A\u7ED3\u679C\uFF0C\u53EF\u8BFB event.stat \u533A\u5206 str/agi/con/int/spi \u68C0\u5B9A\u5C5E\u6027\uFF09\u2192 after_natural_roll\uFF08\u81EA\u7136 d20 \u51FA\u9AB0\u540E\u8BFB event.naturalRoll \u5E76\u53EF\u7528 replaceNaturalRoll \u6539\u9AB0\uFF09\u2192 after_check \u2192 [\u6A21\u677F\u4E3B\u51FB/\u6CBB\u7597 \u6216 hook:"active" \u89C4\u5219\u6267\u884C] \u2192 before_commit\uFF08\u5728 damage/heal/resource \u5B9E\u9645\u843D\u76D8\u524D\u7EDF\u4E00\u62E6\u622A\uFF0C\u901A\u8FC7 event.commitKind \u533A\u5206\u7C7B\u578B\uFF0C\u53EF\u8BFB event.targetId/pool/finalAmount/sourceRuleId/critical/ratingMultiplier\uFF0C\u652F\u6301 ask \u4EA4\u4E92\u622A\u53D6\u5E76\u6539\u5199 cancel/finalAmount/preserveLife\uFF09\u2192 [HP \u5F52\u96F6\u65F6\uFF1A\u5148\u8DD1 on_lethal_p1 \u5904\u7406\u9057\u8A00\u3001\u6CBB\u7597\u6216\u6362\u6C60 \u2192 \u4ECD \u22640 \u518D\u8DD1 on_lethal_p2 \u5904\u7406 heal \u6CBB\u7597\u6216 preventDeath \u514D\u6B7B\u9501\u8840\uFF08on_lethal_p1 \u4E0E on_lethal_p2 \u5747\u53EF\u76F4\u63A5\u8BFB\u53D6 event.rawAmount/finalAmount/dealt/absorbed/overkill \u83B7\u53D6\u672C\u6B21\u81F4\u6B7B\u4F24\u5BB3\u91CF\uFF0C\u5982\u6309\u81F4\u6B7B\u4F24\u5BB3\u6062\u590D\u6CD5\u529B\u6216\u53CD\u4F24\uFF01\uFF09 \u2192 \u4ECD \u22640 \u624D\u7ED3\u7B97 on_death / on_ally_death / on_kill] \u2192 after_damage / after_heal \u2192 after_hit \u2192 after_action\u3002
 \u2022 event.intent \u5355\u5B57\u6BB5\u6536\u655B\u4E0E\u5B89\u5168\u8FB9\u754C\uFF1A\u4EC5\u654C\u5BF9\u6253\u51FB\u94FE\u6302\u8F7D\u5B57\u7B26\u4E32\u679A\u4E3E event.intent\uFF08normal / function / core / kill / concept\uFF1B\u8303\u56F4\u4E0E\u975E\u654C\u5BF9\u884C\u52A8\u5F52\u5E76\u4E3A 'normal'\uFF09\u3002\u68C0\u5B9A\u524D\u53CA\u68C0\u5B9A\u4E2D\uFF08before_action / before_target / before_check / after_natural_roll / intentBonus \u4E0E intentDifficulty \u6C42\u503C\uFF09\u4E3A\u58F0\u660E\u610F\u56FE\uFF1B\u4E00\u65E6\u610F\u56FE\u68C0\u5B9A\u5931\u8D25\uFF08\u542B\u4F4E\u76EE\u6807\u4E24\u9636\u5F3A\u5236\u5931\u8D25\u3001concept_immune \u4F4D\u683C\u62E6\u622A\u6216\u5BF9\u6297\u672A\u8FC7\uFF09\uFF0C\u8BE5\u53D7\u51FB\u5206\u652F\u5728 after_check / prepareDamage / before_commit / after_damage / on_lethal_* / on_death / on_kill / after_hit \u4E2D\u81EA\u52A8\u56DE\u9000\u4E3A 'normal'\uFF08\u6545\u5199 when:"event.intent != 'normal'" \u6216 event.intent == 'core' \u5728\u68C0\u5B9A\u540E\u5929\u7136\u4EC5\u5728\u610F\u56FE\u5B9E\u9645\u6210\u7ACB\u65F6\u751F\u6548\uFF0C\u65E0\u9700\u989D\u5916\u6210\u529F\u5B57\u6BB5\uFF09\u3002\u4F4D\u79FB\u3001\u56DE\u5408\u9996\u5C3E\u3001\u7EAF\u72B6\u6001\u53CA\u72EC\u7ACB\u5468\u671F\u7ED3\u7B97\u7B49\u975E\u6253\u51FB\u4E8B\u4EF6\u4E0D\u6302\u8F7D intent\uFF08undefined\uFF0C\u4E09\u503C\u903B\u8F91\u4E0B event.intent != 'normal' \u4E0E == 'normal' \u5747\u8FD4\u56DE null \u5B89\u5168\u4E0D\u8BEF\u5224\uFF0C\u5224\u65E0\u610F\u56FE\u7528 event.intent == null\uFF09\uFF1B\u540C\u4E3B\u8BED\u900F\u4F20\u4FDD\u8BC1\u4EC5\u884C\u52A8\u53D1\u8D77\u8005\u81EA\u8EAB\u7684\u8FFD\u4F24\u7EE7\u627F\u751F\u6548 intent\uFF0C\u53D7\u51FB\u65B9\u5728 after_damage \u4E2D\u7684\u53CD\u4F24\u7EDD\u4E0D\u7EE7\u627F\u653B\u65B9\u610F\u56FE\u3002
-\u2022 \u72EC\u7ACB\u751F\u547D\u5468\u671F\u94A9\u5B50\uFF1Aafter_move\uFF08\u5B9E\u9645\u4F4D\u79FB\u6216\u9AD8\u5EA6\u53D8\u5316\u540E\u89E6\u53D1\uFF0Cattacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0C\u53EF\u8BFB event.fromX/fromY/toX/toY\uFF09\uFF1Bbefore_status / after_status_applied / after_status_removed / on_status_immunized\uFF08\u72B6\u6001\u62E6\u622A\u3001\u65BD\u52A0\u3001\u79FB\u9664\u3001\u88AB\u514D\u75AB\uFF0C\u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F\u72B6\u6001\u89C4\u5219\u5185 status.* \u6307\u5411\u5F53\u524D\u5BBF\u4E3B\u72B6\u6001\u81EA\u8EAB\u800C\u975E\u5F85\u65BD\u52A0\u72B6\u6001\uFF09\uFF1Bon_summon_evict\uFF08\u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u9876\u66FF\u6216\u5230\u671F\u6D88\u6563\u524D\u89E6\u53D1\uFF0Ctarget \u4E3A\u65E7\u53EC\u5524\u7269\uFF0Csource \u4E0E attacker \u4E3A\u53EC\u5524\u8005\uFF0Cevent.sourceSkillId \u4E3A\u751F\u6210\u8BE5\u65E7\u53EC\u5524\u7269\u7684\u53EC\u5524\u6280\u80FD ID\u2014\u2014\u5168\u5C40\u88AB\u52A8\u76D1\u542C\u5DF1\u65B9\u53EC\u5524\u7269\u6D88\u6563\u65F6\u68C0 source.id == self.id \u6216 target.summoned && target.team == self.team\uFF0C\u6CE8\u610F target/self \u65E0 .sourceId \u5B57\u6BB5\uFF0C\u4E14\u5207\u52FF\u4E0E\u88AB\u52A8\u6280\u80FD\u81EA\u8EAB skill.id \u6BD4\u8F83\uFF01\uFF09\uFF1Bturn_start / turn_end\uFF08\u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF09\uFF1Bround_start / round_end\uFF08\u5927\u8F6E\u9996\u5C3E\uFF09\u3002\u4EFB\u610F\u94A9\u5B50\u5747\u53EF\u4F7F\u7528 ask \u6302\u8D77\u7B49\u5F85\u9009\u62E9\u3002
+\u2022 \u72EC\u7ACB\u751F\u547D\u5468\u671F\u94A9\u5B50\uFF1Aafter_move\uFF08\u5B9E\u9645\u4F4D\u79FB\u6216\u9AD8\u5EA6\u53D8\u5316\u540E\u89E6\u53D1\uFF0Cattacker/target \u6307\u79FB\u52A8\u5355\u4F4D\uFF0C\u53EF\u8BFB event.fromX/fromY/toX/toY\uFF09\uFF1Bbefore_status / after_status_applied / after_status_removed / on_status_immunized\uFF08\u72B6\u6001\u62E6\u622A\u3001\u65BD\u52A0\u3001\u79FB\u9664\u3001\u88AB\u514D\u75AB\uFF0C\u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F\u72B6\u6001\u89C4\u5219\u5185 status.* \u6307\u5411\u5F53\u524D\u5BBF\u4E3B\u72B6\u6001\u81EA\u8EAB\u800C\u975E\u5F85\u65BD\u52A0\u72B6\u6001\uFF09\uFF1Bon_summon_evict\uFF08\u540C\u6E90\u65E7\u53EC\u5524\u7269\u88AB\u9876\u66FF\u6216\u5230\u671F\u6D88\u6563\u524D\u89E6\u53D1\uFF0Ctarget \u4E3A\u65E7\u53EC\u5524\u7269\uFF0Csource \u4E0E attacker \u4E3A\u53EC\u5524\u8005\uFF0Cevent.sourceSkillId \u4E3A\u751F\u6210\u8BE5\u65E7\u53EC\u5524\u7269\u7684\u53EC\u5524\u6280\u80FD ID\u2014\u2014\u5168\u5C40\u88AB\u52A8\u76D1\u542C\u5DF1\u65B9\u53EC\u5524\u7269\u6D88\u6563\u65F6\u68C0 source.id == self.id \u6216 target.summoned && target.team == self.team\uFF0C\u5355\u4F4D\u4F5C\u7528\u57DF\u53EF\u8BFB .sourceId\u3001.summonGroup\u3001.level\uFF0C\u5207\u52FF\u4E0E\u88AB\u52A8\u6280\u80FD\u81EA\u8EAB skill.id \u6BD4\u8F83\uFF01\uFF09\uFF1Bturn_start / turn_end\uFF08\u5355\u4F4D\u56DE\u5408\u9996\u5C3E\uFF09\uFF1Bround_start / round_end\uFF08\u5927\u8F6E\u9996\u5C3E\uFF09\u3002\u4EFB\u610F\u94A9\u5B50\u5747\u53EF\u4F7F\u7528 ask \u6302\u8D77\u7B49\u5F85\u9009\u62E9\u3002
 \u2022 \u4E94\u7C7B\u8F7D\u4F53\u4F5C\u7528\u57DF\u77E9\u9635\uFF1A
   1. unit / item\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF08\u88C5\u5907\u89C4\u5219\u4E0E\u4FEE\u9970\u5185 item.id / item.templateId \u6307\u5411\u5F53\u524D\u88C5\u5907\u5B9E\u4F8B\u4E0E\u6A21\u677F\uFF09\uFF0C\u6301\u6709\u671F\u95F4\uFF08\u542B\u4E3B\u526F\u624B\u3001\u9632\u5177\u9970\u54C1\u53CA\u80CC\u5305\u5907\u7528\u6B66\u5668 bagWeapons\uFF09mods \u4E0E\u975E active \u89C4\u5219\u5168\u5C40\u5E38\u9A7B\u76D1\u542C\u5168\u573A\u6240\u6709\u5355\u4F4D\u4E8B\u4EF6\uFF01\u56E0\u6B64\uFF1A\u2460 \u5168\u573A\u5E7F\u64AD\u94A9\u5B50\u4E3B\u8BED\u5F3A\u5236\u9694\u79BB\uFF1A\u5728\u8FDB\u653B\uFF0F\u547D\u4E2D\uFF0F\u51FB\u6740\u94A9\u5B50\uFF08before_check / after_hit / after_damage / on_kill \u7B49\uFF09\u4E2D\uFF0C\u201C\u6301\u6709\u8005\u53D1\u8D77\u201D\u5FC5\u5199 attacker.id == self.id\uFF1B\u5728**\u53D7\u51FB\u3001\u7ED3\u7B97\u62E6\u622A\u3001\u72B6\u6001\u62E6\u622A\u53CA\u6FD2\u6B7B\uFF0F\u6B7B\u4EA1\u94A9\u5B50\uFF08before_check / before_commit / before_status / after_damage / on_lethal_p1 / on_lethal_p2 / on_death\uFF09**\u4E2D\uFF0C\u201C\u6301\u6709\u8005\u81EA\u8EAB\u53D7\u51FB\uFF0F\u6FD2\u6B7B\uFF0F\u9635\u4EA1\u201D**\u5FC5\u987B\u663E\u5F0F\u5199 filter:"target.id == self.id"**\uFF08\u7EDD\u4E0D\u53EF\u7559 filter:null\uFF0C\u5426\u5219\u573A\u4E0A\u4EFB\u4F55\u654C\u53CB\u6FD2\u6B7B\u6216\u53D7\u51FB\u90FD\u4F1A\u8BEF\u89E6\u53D1\u6301\u6709\u8005\u81EA\u8EAB\u88AB\u52A8\uFF01\uFF09\uFF1B\u2461 \u4EC5\u5728**\u6B66\u5668\u6A21\u677F\uFF08kind:"weapon"\uFF09**\u9650\u5B9A\u201C\u4F7F\u7528\u672C\u628A\u6B66\u5668\u666E\u653B\uFF0F\u547D\u4E2D\uFF0F\u9020\u6210\u4F24\u5BB3\u201D\u65F6\uFF0C\u624D\u5199 event.weaponTemplateId == item.templateId\uFF08\u9632\u5177\u3001\u5934\u9970\u3001\u9774\u5B50\u3001\u7BAD\u888B\u3001\u9970\u54C1\u7B49\u975E\u6B66\u5668\u88C5\u5907\u7684 item.templateId \u6C38\u8FDC\u4E0D\u7B49\u4E8E\u5F53\u524D\u8FDB\u653B\u6B66\u5668 event.weaponTemplateId\uFF0C\u4E25\u7981\u5728\u975E\u6B66\u5668\u88C5\u5907\u4E0A\u5199 event.weaponTemplateId == item.templateId\uFF01\uFF09\uFF1B\u2462 \u6CE8\u610F\u81F4\u6B7B\u5E27\uFF08on_lethal_p1/p2\u3001on_death\u3001on_kill\u3001on_ally_death\uFF09\u4E0D\u643A\u5E26 event.weaponTemplateId \u4E0E event.skillId\uFF08\u4E8C\u8005\u5728\u81F4\u6B7B\u5E27\u4E2D\u6052\u4E3A null\uFF01\uFF09\uFF1A\u4E0D\u9650\u6B66\u5668\uFF0F\u6280\u80FD\u7684\u89D2\u8272\u5168\u5C40\u51FB\u6740\u624D\u7528 on_kill\uFF0C\u800C**\u9650\u5B9A\u7279\u5B9A\u6B66\u5668\u6216\u7279\u5B9A\u6280\u80FD\u51FB\u6740\u89E6\u53D1**\u5FC5\u987B\u5728 after_damage \u4E2D\u5199 attacker.id == self.id && !target.alive && event.dealt > 0 \u5E76\u914D\u6765\u6E90\u8FC7\u6EE4\uFF08\u6B66\u5668\u542B\u65A9\u6740\u8865\u5200\u89C4\u5219\u65F6\u5199 (event.weaponTemplateId == item.templateId || event.sourceRuleId == '<\u672C\u65A9\u6740\u89C4\u5219ID>')\uFF0C\u6280\u80FD\u5199 event.skillId == skill.id\uFF09\uFF1B\u2463 \u4EC5\u5BF9\u8FDC\u7A0B\u653B\u51FB\uFF08\u542B\u9632\u5177\uFF0F\u7BAD\u888B\uFF0F\u9970\u54C1\u4E0A\u7684\u8FDC\u7A0B\u52A0\u6210\u4E0E\u547D\u4E2D\u9644\u6548\uFF09\u751F\u6548\u5FC5\u5199 !event.melee\uFF08\u8FD1\u6218\u4E3A true\u3001\u8FDC\u7A0B\u4E3A false\uFF0C\u65E0 weapon.ranged \u5B57\u6BB5\uFF09\u3002
   2. skill\uFF1Aself \u4E3A\u6301\u6709\u8005\uFF0Cskill.id \u4E3A\u672C\u6280\u80FD\u81EA\u8EAB ID\u3002hook:"active" \u4EC5\u5728\u4E3B\u52A8\u65BD\u653E\u672C\u6280\u80FD\u65F6\u6309\u5E8F\u6267\u884C\uFF1B\u5176\u4F59\u6240\u6709\u975E active \u94A9\u5B50\u4E0E mods \u5728\u5355\u4F4D\u6301\u6709\u8BE5\u6280\u80FD\u671F\u95F4\u5168\u5C40\u5E38\u9A7B\u76D1\u542C\u5168\u573A\uFF01\u82E5\u67D0\u6761\u975E active \u89C4\u5219\u4EC5\u5728\u65BD\u653E\u672C\u6280\u80FD\u65F6\u751F\u6548\uFF0Cfilter \u5FC5\u987B\u5305\u542B event.skillId == skill.id\uFF08\u666E\u901A\u884C\u52A8\uFF0F\u547D\u4E2D\uFF0F\u4F24\u5BB3\u4E8B\u4EF6\u4E00\u5F8B\u8BFB event.skillId\uFF0C\u52FF\u7528\u4EC5\u5C5E\u53EC\u5524\u7269\u9876\u66FF\u4E8B\u4EF6\u7684 event.sourceSkillId\uFF09\u3002\u5355\u6B21\u4E3B\u52A8\u65BD\u653E\u5185\u7684\u987A\u5E8F\u56E0\u679C\u94FE\uFF08\u5982\u9020\u6210\u4F24\u5BB3\u540E\u6309\u5B9E\u6263\u91CF\u56DE\u8840\uFF0F\u56DE\u80FD\uFF0F\u4E8C\u6BB5\u5224\u5B9A\uFF09\u5E94\u76F4\u63A5\u5199\u5728 hook:"active" \u5185\u7528 out \u53D8\u91CF\u4E32\u8054\uFF0C\u65E0\u9700\u62C6\u6210\u5E38\u9A7B\u4E8B\u4EF6\u94A9\u5B50\u3002
@@ -17864,13 +18575,14 @@ rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rul
 \u3010Opcode\u3011\u6BCF\u4E2A\u6307\u4EE4\u5BF9\u8C61\u5FC5\u586B op\uFF08\u95ED\u5408\u679A\u4E3E\uFF0C\u53EA\u63A5\u53D7\u5217\u51FA\u7684\u5B57\u6BB5\uFF0C? \u8868\u793A\u53EF\u7701\uFF09\uFF1A
 ${instructions2.join("\n")}
 ask \u7684 kind \u4E0E aiPolicy \u5BF9\u5E94\u5173\u7CFB\uFF1A${Object.entries(askPolicies).map(([kind, policies]) => `${kind} \u2192 ${policies.join(" / ")}`).join("\uFF1B")}\u3002
-check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F check(kind:"save") \u9ED8\u8BA4\u7531\u5F53\u524D\u5E27 target \u63B7\u9AB0\uFF0C\u82E5\u5728\u53D7\u51FB\u65B9\u94A9\u5B50\u5185\u8981\u6C42\u8FDB\u653B\u65B9\u8C41\u514D\uFF0C\u5148\u7528\u7701\u7565 bind \u7684 for_each(select:{from:"attacker"}) \u5C06\u5B50\u5E27 target \u5207\u81F3\u8FDB\u653B\u65B9\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\uFF08\u6CE8\u610F spawn \u5728 count > 1 \u65F6 out \u4EC5\u5B58\u9996\u4E2A\u751F\u6210\u5B9E\u4F53 ID\uFF1B\u9700\u5BF9\u540C\u6279\u5168\u4F53\u65B0\u53EC\u5524\u7269\u8FFD\u52A0\u52A8\u4F5C\u65F6\uFF0C\u540E\u7EED\u7528 from:"units" \u914D candidate.summoned && candidate.sourceId == self.id \u7B5B\u9009\u904D\u5386\u2014\u2014\u6CE8\u610F .sourceId \u4EC5\u5728 candidate \u4E0E zone \u4E0A\u6CE8\u518C\uFF0Ctarget/self \u65E0 .sourceId\uFF0C\u4E14\u67E5\u6807\u7B7E\u5FC5\u987B\u8C03\u51FD\u6570 has_tag(candidate, '<tag>') \u800C\u4E0D\u53EF\u8BFB candidate.tags\uFF01\uFF09\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u914D\u5408 from:"tape" \u7B5B\u9009\u672C\u56DE\u5408\u6216\u6307\u5B9A\u5355\u4F4D\u5DF2\u6267\u884C\u8BB0\u5F55\uFF0C\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\uFF1Boverrides \u652F\u6301 free / ignoreSlots / ignoreRange / ignoreLOS / intent / scale / origin\uFF08overrides.intent \u53EF\u5F3A\u5236\u6307\u5B9A attack / skill / shield_bash \u5B50\u6253\u51FB\u6216\u78C1\u5E26\u91CD\u653E\u7684\u610F\u56FE\uFF0C\u4F18\u5148\u7EA7\u4F4E\u4E8E\u8303\u56F4\uFF0F\u975E\u654C\u5BF9\u5F52\u96F6\u4E0E controlPolicy.intentLock\uFF0C\u9AD8\u4E8E\u78C1\u5E26\u539F\u610F\u56FE\u4E0E\u5355\u4F4D\u9ED8\u8BA4\u610F\u56FE\uFF1B\u65E0\u84C4\u529B\u76F4\u53D1\u8986\u76D6\u5B57\u6BB5\uFF0C\u7ACB\u5373\u91CA\u653E\u9AD8\u500D\u7387\u6280\u80FD\u7528 scale \u6216\u524D\u7F6E\u72B6\u6001\u8868\u8FBE\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
+check\uFF1Akind \u4E3A chance \u65F6\u7528 dc \u4E0E d100 \u6BD4\u8F83\uFF08\u5982 dc:25 \u4E3A 25%\uFF09\uFF1B\u8C41\u514D\u672A\u901A\u8FC7\u8FDB\u5165 onFail\uFF1B\u72B6\u6001\u8C41\u514D\u5199 kind:"save" \u4E0E statusId:"\u5DF2\u58F0\u660E\u72B6\u6001ID"\uFF08\u68C0\u5B9A\u94A9\u5B50\u4E0E mods \u53EF\u8BFB event.statusId\uFF1B\u6CE8\u610F check(kind:"save") \u9ED8\u8BA4\u7531\u5F53\u524D\u5E27 target \u63B7\u9AB0\uFF0C\u82E5\u5728\u53D7\u51FB\u65B9\u94A9\u5B50\u5185\u8981\u6C42\u8FDB\u653B\u65B9\u8C41\u514D\uFF0C\u5148\u7528\u7701\u7565 bind \u7684 for_each(select:{from:"attacker"}) \u5C06\u5B50\u5E27 target \u5207\u81F3\u8FDB\u653B\u65B9\uFF09\u3002ask\uFF1Akind \u4E3A cell/entity \u65F6\u5FC5\u586B select\uFF0Coption \u5FC5\u586B options\uFF0Cnumber \u5FC5\u586B min/max\uFF1B\u5FC5\u586B aiPolicy \u4F9B AI \u4E0E\u9884\u89C8\u81EA\u52A8\u51B3\u7B56\u3002damage / heal / resource / check / ask / spawn \u5747\u652F\u6301 out:"\u88F8\u53D8\u91CF\u540D"\uFF08remove_status \u7528 outCount:"\u88F8\u53D8\u91CF\u540D"\uFF09\u5C06\u672C\u6B21\u5B9E\u9645\u7ED3\u7B97\u503C\u6216\u5B9E\u4F53\u5F15\u7528\u5199\u5165\u5F53\u524D\u5E27\uFF0C\u540E\u7EED\u6307\u4EE4\u901A\u8FC7 vars.<\u53D8\u91CF\u540D> \u8BFB\u53D6\uFF08\u6CE8\u610F spawn \u5728 count > 1 \u65F6 out \u4EC5\u5B58\u9996\u4E2A\u751F\u6210\u5B9E\u4F53 ID\uFF1B\u9700\u5BF9\u540C\u6279\u5168\u4F53\u65B0\u53EC\u5524\u7269\u8FFD\u52A0\u52A8\u4F5C\u65F6\uFF0C\u540E\u7EED\u7528 from:"units" \u914D candidate.summoned && candidate.sourceId == self.id \u7B5B\u9009\u904D\u5386\u2014\u2014\u5355\u4F4D\u4F5C\u7528\u57DF\u53EF\u8BFB .sourceId\uFF0C\u67E5\u6807\u7B7E\u5FC5\u987B\u8C03\u51FD\u6570 has_tag(candidate, '<tag>') \u800C\u4E0D\u53EF\u8BFB candidate.tags\uFF01\uFF09\u3002perform\uFF1AactionKind \u4E3A skill \u65F6\u53EA\u914D skillId\uFF0Creplay \u65F6\u53EA\u914D tapeRecord\uFF08\u914D\u5408 from:"tape" \u7B5B\u9009\u672C\u56DE\u5408\u6216\u6307\u5B9A\u5355\u4F4D\u5DF2\u6267\u884C\u8BB0\u5F55\uFF0C\u78C1\u5E26\u91CD\u653E\u9ED8\u8BA4\u514D\u69FD\u514D\u8017\u5E76\u8DF3\u8FC7\u5DF2\u5931\u6548\u76EE\u6807\uFF0C\u5B50\u884C\u52A8\u4E0D\u518D\u5165\u5E26\uFF09\uFF1Boverrides \u652F\u6301 free / ignoreSlots / ignoreRange / ignoreLOS / intent / scale / origin\uFF08overrides.intent \u53EF\u5F3A\u5236\u6307\u5B9A attack / skill / shield_bash \u5B50\u6253\u51FB\u6216\u78C1\u5E26\u91CD\u653E\u7684\u610F\u56FE\uFF0C\u4F18\u5148\u7EA7\u4F4E\u4E8E\u8303\u56F4\uFF0F\u975E\u654C\u5BF9\u5F52\u96F6\u4E0E controlPolicy.intentLock\uFF0C\u9AD8\u4E8E\u78C1\u5E26\u539F\u610F\u56FE\u4E0E\u5355\u4F4D\u9ED8\u8BA4\u610F\u56FE\uFF1B\u65E0\u84C4\u529B\u76F4\u53D1\u8986\u76D6\u5B57\u6BB5\uFF0C\u7ACB\u5373\u91CA\u653E\u9AD8\u500D\u7387\u6280\u80FD\u7528 scale \u6216\u524D\u7F6E\u72B6\u6001\u8868\u8FBE\uFF09\u3002resource\uFF1Amode \u4E3A add/sub/set \u65F6\u9700 amount\uFF0Cswap \u65F6\u9700\u5355\u4E2A pool \u4E0E otherPool\uFF1Bpool \u652F\u6301\u5185\u7F6E\u6C60 hp/mp/sp\u3001\u81EA\u5B9A\u4E49\u6C60 ID \u6216\u884C\u52A8\u4F2A\u6C60 attack/action/move\uFF08\u672C\u56DE\u5408\u5269\u4F59\u653B\u51FB\u69FD\u3001\u52A8\u4F5C\u69FD\u3001\u79FB\u52A8\u683C\uFF09\uFF1Bmode \u4E3A add_max/sub_max/set_max \u65F6\u4FEE\u6539 HP/MP/SP \u4E0A\u9650\u5E76\u540C\u6B65\u5F53\u524D\u503C\u4E0E initialMax \u955C\u50CF\uFF0CminRemain \u9650\u5236\u6700\u4F4E\u4E0A\u9650\u3002move\uFF1Amode \u4E3A step/teleport \u65F6\u7528 to\uFF0Cpush/pull \u7528 distance\uFF0Caltitude \u7528 deltaZ \u6216 land:true\u3002mods:[{locks:["fly","teleport"]}] \u7981\u6B62\u5347\u7A7A\u4E0E\u77AC\u79FB\uFF08\u5DF2\u5728\u7A7A\u4E2D\u9700\u53E6\u7528 land:true \u5F3A\u5236\u964D\u843D\uFF09\u3002\u4E0D\u53EF\u9A71\u6563\u5199\u5728\u72B6\u6001\u6A21\u677F\u9876\u5C42 flags:["undispellable"]\u3002expireOn \u63A5\u53D7\u5355\u4E2A\u6761\u4EF6\u6216\u975E\u7A7A\u6761\u4EF6\u6570\u7EC4\uFF0C\u4EFB\u4E00\u6761\u4EF6\u6EE1\u8DB3\u5373\u53EF\u8FC7\u671F\u3002despawn\uFF1AentityKind:"unit" \u7528\u4E8E\u79FB\u9664\u53EC\u5524\u7269\u4E14\u4E0D\u8BA1\u51FB\u6740\u3002
 \u539F\u751F\u653B\u51FB\u5728 before_check \u53EF\u5199 ratingDelta\uFF08\u6574\u6570\u6863\u6570\uFF0C\u53EF\u7528\u516C\u5F0F\uFF0C\u6B63\u5347\u8D1F\u964D\uFF09\uFF1A\u5148\u4ECE\u57FA\u7840\u8BC4\u7EA7\u79FB\u52A8\u5E76\u5728\u8868\u4E24\u7AEF\u5C01\u9876\uFF0C\u518D\u6309 minRating \u4FDD\u5E95\u3002\u7CBE\u51C6\u7C7B\u8FDC\u7A0B\u653B\u51FB\u5728\u672C\u89C4\u5219\u7684\u8FDC\u7A0B\u8FC7\u6EE4\u6761\u4EF6\u4E0B\u5199 {"op":"mutate_event","patch":{"ratingDelta":1,"minRating":"\u6709\u6548","forceOutcome":"hit"}}\uFF1B\u6700\u540E\u4E00\u9879\u7528\u4E8E\u539F\u6587\u660E\u8BF4\u5FC5\u4E2D\u3001\u8FDE\u5929\u71361\u4E5F\u4E0D\u80FD\u5931\u624B\u7684\u60C5\u5F62\uFF0C\u4E0D\u8981\u6C42\u5FC5\u4E2D\u5219\u7701\u7565\u3002after_hit \u5728\u4E3B\u51FB\u6263\u8840\u540E\u89E6\u53D1\uFF1A\u751F\u547D\u9608\u503C\u65A9\u6740\u5728 after_hit\uFF08\u9650\u5B9A attacker.id == self.id \u53CA\u6765\u6E90\u4E14 target.alive && target.hpRatio < \u9608\u503C\uFF09\u8C03\u7528 damage \u5E76\u8BBE instantDeath:true\uFF08\u7ED5\u8FC7\u62A4\u7532\u76F4\u63A5\u81F4\u6B7B\uFF1B\u82E5\u65A9\u6740\u4F34\u968F\u8BE5\u6B66\u5668\u7684\u51FB\u6740\u6536\u5272\u53E0\u5C42\uFF0C\u5C06\u53E0\u5C42\u5199\u5728 after_damage \u4E2D\u5339\u914D !target.alive && event.dealt > 0 \u4E14\u9650\u5B9A event.weaponTemplateId == item.templateId \u6216 event.sourceRuleId == '<\u65A9\u6740\u89C4\u5219ID>'\uFF0C\u5207\u52FF\u5728\u65E0\u6B66\u5668\u5B57\u6BB5\u7684 on_kill \u4E2D\u5199 event.weaponTemplateId\uFF09\uFF1B\u4E3B\u52A8\u6280\u80FD\u6709\u524D\u7F6E\u5C42\u6570\u95E8\u69DB\u6216\u53D7\u7279\u5B9A\u8D1F\u9762\u72B6\u6001\u7981\u7528\u65F6\uFF0C\u4F18\u5148\u5728 before_action\uFF08\u5339\u914D attacker.id == self.id \u4E0E event.skillId\uFF09\u6267\u884C mutate_event:{cancel:true} \u76F4\u63A5\u62E6\u622A\u65BD\u653E\u800C\u4E0D\u767D\u6263\u884C\u52A8\u69FD\uFF0C\u5C01\u9501\u8D44\u6E90\u6062\u590D\u5219\u5728 before_commit \u6267\u884C mutate_event:{cancel:true}\u3002
 mutate_event \u7684 patch \u81F3\u5C11\u542B\u4E00\u4E2A\u5B57\u6BB5\uFF0C\u4EC5\u9650\u4E0B\u5217\u53EF\u5199 hook\uFF08before_check.minRating \u53D6\u503C\u679A\u4E3E\uFF1A\u8D85\u66B4\u51FB / \u5F3A\u66B4\u51FB / \u5E73\u66B4\u51FB / \u6709\u6548 / \u52C9\u5F3A / \u64E6\u4F24 / \u5931\u624B\uFF09\uFF1A
 ${eventPatches.join("\n")}
 before_target.redirectTarget \u5C06\u6574\u4E2A\u76EE\u6807\u5217\u8868\u8986\u5199\u4E3A\u5355\u4E00\u5B9E\u4F53\uFF0C\u8303\u56F4\u884C\u52A8\u4E2D\u4EC5\u66FF\u5355\u540D\u53D7\u51FB\u8005\u8F6C\u79FB\u627F\u4F24\u7528 replaceTarget:{from,to}\uFF1B\u62A4\u76FE\u7528 category:"shield" \u7684\u72B6\u6001\uFF0C\u5B9E\u9645\u5269\u4F59\u76FE\u503C\u5B58\u4E8E vars.shieldAmount\uFF08apply_status \u65BD\u52A0\u65F6\u987B\u5728 vars \u4E2D\u663E\u5F0F\u4F20\u5165\u521D\u59CB\u6216\u53E0\u52A0\u540E\u7684 shieldAmount\uFF09\u3002
-\u6E05\u9664\u654C\u65B9\u533A\u57DF\u65F6 where \u53EF\u5199 "zone.team != null && zone.team != self.team"\uFF08zone.team / candidate.team \u8BFB\u521B\u5EFA\u9635\u8425\uFF0Czone.sourceId / candidate.sourceId \u8BFB\u521B\u5EFA\u8005 ID\uFF09\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF1Bunit \u7684 templateId/copyOf/spawnPanel \u81F3\u591A\u9009\u4E00\uFF0C\u5747\u7701\u7565\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\uFF1Btier\u3001count\u3001remainingTurns\u3001area.radius \u652F\u6301\u6570\u503C\u8868\u8FBE\u5F0F\uFF1Bterrain \u81F3\u5C11\u542B kind \u6216 height\uFF0C\u586B mode \u65F6\u5FC5\u586B height\uFF1A
+\u6E05\u9664\u654C\u65B9\u533A\u57DF\u65F6 where \u53EF\u5199 "zone.team != null && zone.team != self.team"\uFF08zone.team / candidate.team \u8BFB\u521B\u5EFA\u9635\u8425\uFF0Czone.sourceId / candidate.sourceId \u8BFB\u521B\u5EFA\u8005 ID\uFF09\u3002spawn \u7684 spec \u7531 entityKind \u51B3\u5B9A\uFF1Bunit \u7684 templateId \u53EF\u642D\u914D spawnPanel \u8986\u5199\u84DD\u56FE\uFF0CcopyOf \u4E0E\u4E24\u8005\u4E92\u65A5\uFF0C\u5747\u7701\u7565\u65F6\u6309\u65BD\u672F\u8005\u9884\u7B97\u81EA\u52A8\u751F\u6210\u9762\u677F\uFF1Btier\u3001count\u3001remainingTurns\u3001area.radius \u652F\u6301\u6570\u503C\u8868\u8FBE\u5F0F\uFF1Bterrain \u81F3\u5C11\u542B kind \u6216 height\uFF0C\u586B mode \u65F6\u5FC5\u586B height\uFF1A
 ${spawnSpecs2.join("\n")}
+\u53EC\u5524\u84DD\u56FE\u4F18\u5148\u590D\u7528 state.summonTemplates \u4E2D\u5DF2\u6709 templateId\u3002spawn(entityKind:"unit") \u7684 group\u3001stackPolicy\u3001maxActive\u3001turnMode\u3001turnAnchor\u3001durationUnit\u3001durationAnchor \u5171\u540C\u8868\u8FBE\u540C\u7EC4\u7D2F\u79EF\u3001\u9644\u968F\u884C\u52A8\u4E0E\u951A\u70B9\u5230\u671F\u3002\u968F\u53EC\u5524\u8005\u884C\u52A8\u3001\u65E0\u72EC\u7ACB\u9636\u6BB5\u6216\u591A\u4F53\u96C6\u7FA4\u7528 linked_group\uFF08\u6BCF\u53EA\u72EC\u7ACB\u8D70\u4F4D\uFF0C\u5171\u4EAB\u653B\u69FD\u3001\u52A8\u69FD\uFF09\uFF0C\u7CBE\u9510\u72EC\u7ACB\u53CC\u5BA0\u7528 linked_each\uFF0C\u7EAF\u89E6\u53D1\u5355\u4F4D\u7528 none\uFF0C\u72EC\u7ACB\u56DE\u5408\u7528 independent\u3002\u5F00\u573A\u6548\u679C\u7528 round_start \u4E14 filter:"round == 1"\u3002\u89C4\u5219\u7275\u5F15\u53EF\u5199 move.ignoreLocks:true\uFF0C\u5206\u4F24\u5728 before_commit \u4E2D\u540C\u65F6\u5199 shareTo\u3001shareRatio\uFF0C\u5E76\u7528 !event.shared \u6392\u9664\u6D3E\u751F\u4F24\u5BB3\u3002\u7701\u7565 maxHp/maxMp/maxSp \u65F6\u7531\u5F15\u64CE\u6309 count \u5207\u5206\u6279\u6B21\u603B\u91CF\uFF0C\u5E76\u5BF9\u6BCF\u4E2A\u5B9E\u4F8B\u72EC\u7ACB\u56DB\u820D\u4E94\u5165\u3002\u6709\u6548\u5C42\u7EA7 T=min(\u65BD\u672F\u8005 tier, spec.tier ?? 7)\uFF0C\u5173\u8054\u5C5E\u6027 A \u7531 attribute \u6307\u5B9A\uFF0C\u7F3A\u7701 max(int,spi)\u3002\u5355\u9879 cap=min(A,[8,10,12,14,16,18,20][T-1])\uFF0C\u603B\u548C sum=max(T*5,A*5-30)\u3002\u6279\u6B21 HP=con*100*[1,2,4,10,20,40,100][T-1]*(mc ?? 1)+\u4E94\u7EF4\u548C\uFF0CMP=(int+spi)*50*[1,2.5,6,15,35,80,160][T-1]\uFF0CSP=(str+agi)*50*\u540C\u500D\u7387\u3002\u53EA\u5728\u539F\u6587\u660E\u786E\u56FA\u5B9A\u6216\u6309\u6BD4\u4F8B\u89C4\u5B9A\u8D44\u6E90\u65F6\u586B\u6BCF\u5B9E\u4F8B maxHp/maxMp/maxSp\u3002
 \u53EC\u5524\u7269 sourceSkillId \u7531\u5F15\u64CE\u53EA\u8BFB\u8BB0\u5F55\u751F\u6210\u5B83\u7684\u6280\u80FD ID\uFF08\u542B\u88C5\u5907\u865A\u62DF\u6280\u80FD equip:<\u5B9E\u4F8BID>:<\u89C4\u5219ID>\uFF09\uFF0C\u53EF\u901A\u8FC7 self/target/candidate/vars.<\u5B9E\u4F53>.sourceSkillId \u8BFB\u53D6\u3002
 zoneArea\uFF1A${describe2(defs2.spawn_zone.properties.area)}\u3002single \u4EC5\u4E2D\u5FC3\u683C\uFF1Bcircle/ring \u5FC5\u586B radius\uFF1Brect \u5FC5\u586B rect \u5BF9\u8C61\uFF1Bcells \u5FC5\u586B cells \u6570\u7EC4\uFF1Bz1/z2 \u53EF\u9009\u9650\u5B9A\u4E09\u7EF4\u6D77\u62D4\u95ED\u533A\u95F4\uFF08\u5730\u9762z + \u79BB\u5730altitude\uFF0Cself.z \u4EA6\u53EF\u8BFB\u5355\u4F4D\u6D77\u62D4\uFF09\u3002
 
@@ -18104,9 +18816,19 @@ ${body}`;
     const targetZoneIds = distinct(warnings.map((w) => w.originPath?.match(/^\/zones\/([^/]+)/)?.[1]));
     const units = pick(state.units, unitIds), rows2 = Object.values(units);
     const items = pick(state.items, rows2.flatMap((u) => [u.mainHand, u.weapon, u.offHand, u.shield, ...u.gear ?? [], ...u.bagWeapons ?? []]));
-    const equipment = pick(state.equipment, Object.values(items).map((i) => i.templateId));
-    const skills = pick(state.skills, [...rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})]), ...Object.values(equipment).flatMap((e) => e.skills ?? [])]);
-    const roster = { raw: pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, statusTemplates: state.statusTemplates };
+    const summonIds = Object.entries(state.summonTemplates ?? {}).filter(([, template]) => unitIds.includes(template.ownerId)).map(([id3]) => id3);
+    const summonTemplates = pick(state.summonTemplates, summonIds);
+    const summons = Object.values(summonTemplates);
+    const equipment = pick(state.equipment, [
+      ...Object.values(items).map((i) => i.templateId),
+      ...summons.flatMap((s) => [s.mainHand, s.offHand, s.shield, ...s.gear ?? []])
+    ]);
+    const skills = pick(state.skills, [
+      ...rows2.flatMap((u) => [...u.skills ?? [], ...Object.keys(u.inventory ?? {})]),
+      ...summons.flatMap((s) => s.skills ?? []),
+      ...Object.values(equipment).flatMap((e) => e.skills ?? [])
+    ]);
+    const roster = { raw: pick(ctx.rawCharacters, unitIds), units, items, equipment, skills, ...Object.keys(summonTemplates).length ? { summonTemplates } : {}, statusTemplates: state.statusTemplates };
     if (Object.keys(state.customElements ?? {}).length) roster.customElements = state.customElements;
     if (targetZoneIds.length) {
       roster.zones = pick(state.zones, targetZoneIds);
@@ -18152,7 +18874,8 @@ ${zoneLines.join("\n")}` : "";
 ${ledger}
 ${poolLines}
 siblingCarriersIndex\uFF1A\u4EC5\u4F9B\u8054\u52A8\uFF0C\u52FF\u6539\u52FF\u6838\u9500\u3002
-${siblings.join("\n")}${zoneLedger}${customLedger}
+${siblings.join("\n")}${zoneLedger}
+${sharedSummonLedger(state)}${customLedger}
 </role_readonly_index>`;
   }
   function statusLedger(state) {
@@ -18188,6 +18911,22 @@ ${lines.join("\n")}`;
     });
     return `sharedPoolLedger\uFF1ApoolId|\u540D|cap|\u58F0\u660E\u6765\u6E90\uFF1B\u590D\u7528 poolId\uFF0C\u8BFB\u5199 self.resource.<poolId>\uFF0C\u52FF\u91CD\u590D\u58F0\u660E\u3002
 ${poolLines.join("\n")}`;
+  }
+  function sharedSummonLedger(state) {
+    const lines = Object.entries(state.summonTemplates ?? {}).map(([id3, template]) => [
+      id3,
+      template.name ?? id3,
+      template.ownerId ?? "?",
+      `T${template.tier ?? "?"}/MC${template.mc ?? "?"}`,
+      Object.values(template.stats ?? {}).join("/"),
+      template.mainHand ?? "",
+      template.offHand ?? "",
+      template.shield ?? "",
+      (template.skills ?? []).join(","),
+      template.turnMode ?? "independent"
+    ].join("|"));
+    return `sharedSummonLedger\uFF1AtemplateId|\u540D|\u5F52\u5C5E|tier/mc|\u4E94\u7EF4(str/agi/con/int/spi)|\u4E3B\u624B|\u526F\u624B|\u76FE\u724C|\u6280\u80FD|\u9ED8\u8BA4\u884C\u52A8\u6A21\u5F0F\uFF1B\u4F18\u5148\u590D\u7528\u65E2\u6709 templateId\uFF0C\u4E0D\u91CD\u590D\u634F\u9020\u9762\u677F\u3002
+${lines.join("\n")}`;
   }
   function customElementLedger(state) {
     const lines = Object.entries(state.customElements ?? {}).map(([id3, entry2]) => [id3, entry2.name, entry2.category ?? "energy"].join("|"));
@@ -19162,10 +19901,15 @@ ${variables2.warnings()}` : "");
       const char = sources.charInfo?.find(matches2);
       const sourceKind = unit.source === "MVU" || mv && !char ? "mvu" : char ? "char_info" : "battle_init";
       const defs3 = (table4, ids) => Object.fromEntries(ids.filter((id3) => typeof id3 === "string" && Object.hasOwn(table4 ?? {}, id3)).map((id3) => [id3, table4[id3]]));
+      const summonRows = (battle.summons ?? []).filter((row) => row.ownerId === unit.id || row.ownerId === p?.id);
       const raw = {
         ...mv && { mvu: clean(mv) },
         ...char && { char_info: clean(char) },
         battle_init: clean(p),
+        ...summonRows.length && { summons: summonRows.map((row) => ({
+          declaration: row,
+          ...row.source === "char_info" && { record: clean(sources.charInfo?.find((record3) => aliases2(record3).includes(row.name) && (!record3.\u5F52\u5C5E || names.has(record3.\u5F52\u5C5E)))) }
+        })) },
         equipment: defs3(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
         skills: defs3(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
       };
@@ -19228,7 +19972,7 @@ ${variables2.warnings()}` : "");
     }
     const definitions2 = /* @__PURE__ */ new Map();
     for (const root2 of groups.keys()) {
-      if (/^\/(skills|statusTemplates|equipment|items|zones|customElements)\//.test(root2)) {
+      if (/^\/(skills|statusTemplates|equipment|items|summonTemplates|zones|customElements)\//.test(root2)) {
         const id3 = root2.split("/")[2];
         definitions2.set(id3, [...definitions2.get(id3) ?? [], root2]);
       }
@@ -19414,6 +20158,9 @@ ${variables2.warnings()}` : "");
     damageFlat: "\u8F93\u51FA\u56FA\u5B9A\u4F24\u5BB3",
     damageMult: "\u5168\u4F24\u5BB3\u500D\u7387",
     finalDamageMult: "\u6700\u7EC8\u4F24\u5BB3\u500D\u7387",
+    power: "\u5A01\u529B",
+    hits: "\u6253\u51FB\u6BB5\u6570",
+    attackDistanceOffset: "\u653B\u51FB\u8DDD\u79BB\u4FEE\u6B63",
     damageReductionFlat: "\u53D7\u51FB\u56FA\u5B9A\u51CF\u4F24",
     damageReduction: "\u53D7\u51FB\u4F24\u5BB3\u51CF\u514D",
     dr: "\u53D7\u51FB\u4F24\u5BB3\u51CF\u514D",
@@ -19567,7 +20314,7 @@ ${variables2.warnings()}` : "");
     const skills = [...skillTemplates].map(([id3, t]) => {
       const display = skillDisplay(t, unit.skillInfo?.[id3], state?.customElements);
       const cost = display.costs.join(" / ");
-      return { label: t?.name ?? id3, path: innate.has(id3) || state?.skills?.[id3] ? `/skills/${id3}` : null, meta: [!innate.has(id3) ? "\u88C5\u5907\u9644\u5E26" : null, t?.passive && !t.rules?.some((rule2) => rule2.hook === "active") ? "\u88AB\u52A8" : null, cost ? `\u6D88\u8017 ${cost}` : "\u65E0\u8D44\u6E90\u6D88\u8017", t?.power != null ? `\u5A01\u529B ${t.power}` : null, display.damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B", `\u5C04\u7A0B ${display.range}`, `\u8303\u56F4 ${display.area}`].filter(Boolean), template: t };
+      return { label: t?.name ?? id3, path: innate.has(id3) || state?.skills?.[id3] ? `/skills/${id3}` : null, meta: [!innate.has(id3) ? "\u88C5\u5907\u9644\u5E26" : null, t?.passive && !t.rules?.some((rule2) => rule2.hook === "active") ? "\u88AB\u52A8" : null, cost ? `\u6D88\u8017 ${cost}` : "\u65E0\u8D44\u6E90\u6D88\u8017", t?.power != null ? `\u5A01\u529B ${t.power}` : null, t?.hits != null ? `\u6253\u51FB\u6BB5\u6570 ${t.hits}` : null, display.damage || "\u65E0\u4F24\u5BB3\u7C7B\u578B", `\u5C04\u7A0B ${display.range}`, `\u8303\u56F4 ${display.area}`].filter(Boolean), template: t };
     });
     section("\u6280\u80FD", skills);
     const details = make("details", { class: "fated-char-raw" });
@@ -20262,7 +21009,7 @@ ${variables2.warnings()}` : "");
         } else candidates.push({ index, op: operation2, lastError: "" });
       }
     }
-    const declarations = candidates.filter(({ op }) => op.op === "add" && /^\/(?:customElements|skills|statusTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === void 0);
+    const declarations = candidates.filter(({ op }) => op.op === "add" && /^\/(?:customElements|skills|statusTemplates|summonTemplates)\/[^/]+$/.test(op.path) && fingerprintAt(liveState, op.path) === void 0);
     const roots = /* @__PURE__ */ new Set(), conflicted = new Set(conflictingDefinitions);
     for (const item of declarations) {
       if (roots.has(item.op.path)) {
@@ -20377,7 +21124,7 @@ ${variables2.warnings()}` : "");
   function normalizeSemanticPatch(patch) {
     if (!isObject3(patch)) return patch;
     const result = deepClone(patch);
-    for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills", "customElements"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
+    for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills", "summonTemplates", "customElements"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
     if (isObject3(result.unit_patch)) {
       const unitPatch = result.unit_patch;
       const id3 = unitPatch.unitId || unitPatch.id;
@@ -20402,7 +21149,7 @@ ${variables2.warnings()}` : "");
     if (isObject3(result.customElements) && !Object.keys(result.customElements).length) delete result.customElements;
     return result;
   }
-  var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "customElements", "covers", "interactives", "zones"];
+  var chatTables = ["units", "skills", "equipment", "items", "statusTemplates", "summonTemplates", "customElements", "covers", "interactives", "zones"];
   function chatPatch(state, payload) {
     const unrecognized = () => new Error('\u65E0\u6CD5\u8BC6\u522B\u8BE5 JSON \u7684\u76EE\u6807\u8DEF\u5F84\uFF0C\u8BF7\u8BA9 AI \u8F93\u51FA {"patch":[{"op":"replace","path":"/...","value":...}]} \u683C\u5F0F');
     const semantic = payload?.battle_patch ?? payload;
@@ -22508,7 +23255,7 @@ ${tag2.textContent || ""}
       const conflicts = [];
       const next = replayChatPatches(state, chatOpeningPatches(key4), (error2) => conflicts.push(error2.message));
       if (conflicts.length) notify("\u90E8\u5206\u8F85\u52A9 AI \u8865\u4E01\u672A\u80FD\u91CD\u653E", "", null, false, { tone: "warning", unresolved: conflicts });
-      return next;
+      return replayOpeningBattle(next);
     }
     async function scan({ rehydrate = false, refreshSource = false } = {}) {
       const epoch = ++scanEpoch;
@@ -22727,6 +23474,9 @@ ${tag2.textContent || ""}
       try {
         let result = mount3?.exportBattleReportText?.() || options.game?.exportBattleReportText?.();
         if (!result?.trim()) throw new Error("\u5F53\u524D\u6CA1\u6709\u53EF\u4EA4\u4ED8\u7684\u6218\u62A5\u3002");
+        if (mount3?.exportBattleReport?.()?.summons?.length || /在场召唤物（以沙盘实测结算为准）/.test(result)) {
+          result += "\n\u7EED\u5199\u8BF7\u4EE5\u6C99\u76D8\u7ED3\u7B97\u8BB0\u5F55\u4E2D\u7684\u53EC\u5524\u7269\u5B58\u7EED\u3001\u5728\u573A\u4F4D\u7F6E\u548C\u8D44\u6E90\u4E3A\u51C6\u3002";
+        }
         const receipt = activeBattleKey && writebackReceipt(storage, activeBattleKey);
         if (receipt && receipt.outcomeDigest === await outcomeDigest(battleReportToMvuPatch(liveState(), sources.sourceMap))) {
           result += `
@@ -22848,7 +23598,7 @@ ${tag2.textContent || ""}
           linkedRoots: effective.map((operation2) => [operation2.path, ...duplicateOperations(operation2, duplicatePaths).map((copy3) => copy3.path)])
         }).map((batch) => batch.entries.length || batch.receipts.length ? batch : { ...batch, ownerIds: [...unitIds] }));
         if (patch.length) {
-          refreshOpeningInitiative(next);
+          replayOpeningBattle(next);
           syncEquipmentEffects(next);
           refreshOutcome(next);
           validate(next);
