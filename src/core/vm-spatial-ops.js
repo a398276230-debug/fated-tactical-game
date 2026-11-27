@@ -4,7 +4,7 @@ import { applyMediumEntry, mediaCells, mediumRank, mediumZone, physicsEnabled, p
 import { elementTraits } from './elements.js';
 import { resolveSpatialImpulse } from './element-impulse.js';
 export { removeZone } from './element-media.js';
-import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canDisplaceStep, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
+import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canDisplaceStep, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt, displacementDrop, displacementBlocker } from './spatial.js';
 import { spawnPanel, spawnBudgetIssue } from './spawn-unit.js';
 import { sizeMultiplier } from './prebattle_resources.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
@@ -165,7 +165,7 @@ function continueMove({ state, frame, host, context }) {
   const scope = { ...context, target: unit };
   const from = at(state, unit);
   const path = [];
-  let collision;
+  let collision, cliffDrop = 0;
   if (op.mode === 'altitude') {
     const delta = op.deltaZ === undefined ? 3 : evaluateExpr(op.deltaZ, scope);
     if (!op.land && !Number.isFinite(delta)) return;
@@ -196,6 +196,7 @@ function continueMove({ state, frame, host, context }) {
       const next = { x: unit.x + dx, y: unit.y + dy, altitude: unit.altitude ?? 0 };
       const allowed = forced ? canDisplaceStep(state, unit, next) : canStep(state, unit, next);
       if (!allowed) { collision = xy(next); break; }
+      cliffDrop += displacementDrop(state, unit, next);
       Object.assign(unit, xy(next));
       path.push(at(state, unit));
       if (forced && applyMediumEntry(state, host, frame, unit, next)) break;
@@ -212,16 +213,26 @@ function continueMove({ state, frame, host, context }) {
       moveKind: op.mode, ...(path.length && { traversedCells: path.map(pt => at(state, { ...pt, altitude: unit.altitude })) }) }));
   }
   logMove(state, host, unit, op.mode, from, path, collision);
+  const sourceId = context.self?.id ?? frame.sourceId;
+  if (cliffDrop >= 2) {
+    host.grantStatus(state, unit, 'prone', { sourceId, remainingTurns: 1 });
+    scheduleCommit(state, frame, { op: 'damage', pool: 'hp', damageType: 'true', direct: false,
+      amount: Math.max(4, cliffDrop * 5), targetId: unit.id, sourceId, label: '坠落' });
+  }
   if (!collision) return;
   const target = { type: 'unit', id: unit.id };
   const inherited = inherit(frame);
   if (op.onCollide?.length) pushFrame(state, { ...inherited, kind: frame.hook ? 'hook' : 'action',
     scope: { ...inherited.scope, target }, program: op.onCollide });
-  const amount = evaluateExpr(op.collisionDamage, scope);
-  if (Number.isFinite(amount) && amount > 0) scheduleCommit(state, frame, {
-    op: 'damage', pool: 'hp', damageType: 'true', direct: false, amount, targetId: unit.id,
-    sourceId: context.self?.id ?? frame.sourceId, label: op.label ?? '撞击',
-  });
+  const amount = op.collisionDamage === undefined ? 3 : evaluateExpr(op.collisionDamage, scope);
+  if (Number.isFinite(amount) && amount > 0) {
+    const blocker = displacementBlocker(state, unit, collision);
+    if (blocker.cover) host.coverDamage?.(state, state.units?.[sourceId], blocker.cover, amount, { label: '撞击' });
+    if (blocker.unit) scheduleCommit(state, frame, { op: 'damage', pool: 'hp', damageType: 'true', direct: false,
+      amount, targetId: blocker.unit.id, sourceId, label: '连环撞击' });
+    scheduleCommit(state, frame, { op: 'damage', pool: 'hp', damageType: 'true', direct: false,
+      amount, targetId: unit.id, sourceId, label: op.label ?? '撞击' });
+  }
 }
 
 function carrier(spec, sourceId, id, templateId, context, { allowUnitPools = false } = {}) {

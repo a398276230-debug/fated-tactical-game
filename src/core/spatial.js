@@ -72,6 +72,21 @@ export function canDisplaceStep(state, from, to, { ignoreUnitId = from.id } = {}
     && (elevation(state, to) <= elevation(state, from) || passableEdge(state, from, to));
 }
 
+export function displacementDrop(state, from, to) {
+  if ((from.altitude ?? 0) !== 0) return 0;
+  const slope = [from, to].some(at => cellAt(state, at.x, at.y)?.kind === 'slope');
+  const drop = elevation(state, from) - elevation(state, to);
+  return drop > (slope ? 2 : 1) ? drop : 0;
+}
+
+export function displacementBlocker(state, unit, at) {
+  if (!isGround(state, at)) return {};
+  const cover = (state.scale?.cellM ?? 2) < 10 ? coverAt(state, at.x, at.y) : null;
+  if (cover) return { cover };
+  return cellCapacity(state, at.x, at.y, unit.id) + unitCellCost(state, unit) > MAX_CELL_CAPACITY
+    ? { unit: unitsAt(state, at.x, at.y, unit.id)[0] } : {};
+}
+
 export function zoneContains(state, zone, at, { ignoreZ = false } = {}) {
   const coordinate = pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y);
   if (!zone?.area || !coordinate(at)) return false;

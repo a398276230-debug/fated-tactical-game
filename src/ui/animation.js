@@ -278,7 +278,7 @@ export function createPlayback(root, { show, onIdle } = {}) {
         if (unit) await banner(`${unit.name}`, `${unit.team === 'blue' ? '我方行动' : '敌方行动'} · 第 ${log.round} 回合`, unit.team, unit.team === 'blue' ? BANNER_MS * .8 : BANNER_MS);
         return;
       case 'action': ribbon(log.text, unit?.team); await wait(250); return;
-      case 'move': case 'sprint': case 'disengage':
+      case 'move': case 'sprint': case 'disengage': case 'jump':
         caption(entry);
         await walk(state, log.actor, d.path ?? (d.to ? [d.to] : []));
         return;

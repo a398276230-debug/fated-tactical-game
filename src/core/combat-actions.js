@@ -1,12 +1,12 @@
 import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, cellStepCost, coverAt, coverBetween, distance3D as distance,
   elevation, canDisplaceStep, facingArc, facingToward as signFacing, gridDistance as near, hasLOS,
-  isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
+  isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt, canOccupy, supercoverLine, displacementDrop, displacementBlocker } from './spatial.js';
 import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
 import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate, sizeFor, BL_SIZE_TABLE } from './combat_protocol.js';
 
 import { elementMitigationCategory, elementTraits } from './elements.js';
-import { applyMediumEntry } from './element-media.js';
+import { applyMediumEntry, isMedium, mediumRank } from './element-media.js';
 import { previewSpatialImpulse, resolveSpatialImpulse } from './element-impulse.js';
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
@@ -1129,6 +1129,7 @@ const ACTIONS = Object.freeze({
   move: { ap: 0, slot: null }, sprint: { ap: 1, slot: 'action' }, disengage: { ap: 1, slot: 'action' },
   end_encounter: {ap:0,slot:null}, switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   stance_mode: { ap: 0, slot: null }, brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
+  jump: { ap: 1, slot: 'action' }, dip: { ap: 1, slot: 'action' },
   charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   free_ally: { ap: 1, slot: 'attack' }, suppress: { ap: 1, slot: 'attack' }, grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
   flee: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
@@ -1137,6 +1138,29 @@ const movementNames = Object.freeze({ move: '移动', sprint: '疾跑', disengag
 const isMovement = type => Object.hasOwn(movementNames, type);
 export const isTapeAction = type => type === 'skill' || (Object.hasOwn(ACTIONS, type) && type !== 'end' && type !== 'end_encounter');
 export const isStrikeAction = (action, plan) => ['attack', 'skill', 'shield_bash'].includes(action.type) && !plan.interactiveId;
+
+const DIP_SOURCES = {
+  fire: ['fire', '烈焰', 4], acid: ['acid', '强酸', 4], poison_cloud: ['poison', '毒瘴', 4, 'flammable'],
+  electrified_water: ['lightning', '雷电', 4], electrified_steam: ['lightning', '雷电', 4],
+  oil: ['physical', '火油', 2, 'flammable'], ice: ['cold', '寒霜', 3], barrel: ['fire', '余烬火油', 4],
+};
+
+function dipSource(state, unit, center) {
+  const zones = values(state.zones).filter(isMedium).sort((a, b) => mediumRank(b) - mediumRank(a) || byId(a, b));
+  const cells = center ? [center] : state.grid.flatMap((row, y) => row.map((_, x) => pos(x, y)))
+    .sort((a, b) => near(unit, a) - near(unit, b));
+  for (const at of cells) {
+    if (near(unit, at) > 1 || Math.abs(elevation(state, unit) - elevation(state, at)) > 1) continue;
+    const zone = zones.find(zone => DIP_SOURCES[zone.medium] && zoneContains(state, zone, at));
+    const barrel = values(state.interactives).some(item => item.kind === 'barrel' && !item.spent && sameCell(item, at));
+    const source = zone ? DIP_SOURCES[zone.medium] : barrel ? DIP_SOURCES.barrel : null;
+    if (source) {
+      const [dipType, label, dipBonus, dipTrait] = source;
+      return { label, dipType, dipBonus, ...(dipTrait && { dipTrait }) };
+    }
+  }
+  return null;
+}
 
 export function makeActionImpulse(state, actor, action, plan, origin, targetIds = []) {
   if (state.elementalPhysics === 'off' || !plan.cells?.length) return null;
@@ -1149,8 +1173,30 @@ export function makeActionImpulse(state, actor, action, plan, origin, targetIds 
     : skill ? { type: 'skill', id: action.skillId, ownerId: actor.id } : null;
   const traits = barrel ? ['heat', 'ignite', 'gust'] : elementTraits(
     plan.damageType ?? plan.actionContext?.damageType, state.customElements, plan.actionContext?.tags ?? []);
-  if (!traits.length) return null;
-  return { traits, cells: plan.cells, origin: barrel ? plan.center : origin, center: plan.center,
+  const extra = new Set(traits);
+  const dip = weapon?.instance && actor.statuses?.dipped?.vars;
+  if (dip) for (const trait of elementTraits(dip.dipType, state.customElements, dip.dipTrait ? [dip.dipTrait] : [])) extra.add(trait);
+  if (weapon && (isRangedMain(weapon.template) || weapon.ammo) && origin && plan.center) {
+    const fromZ = elevation(state, origin), toZ = elevation(state, plan.center);
+    const zones = values(state.zones).filter(isMedium);
+    for (const at of supercoverLine(origin, plan.center).slice(1)) {
+      const progress = near(origin, at) / Math.max(1, near(origin, plan.center));
+      const lineZ = fromZ + (toZ - fromZ) * progress;
+      for (const zone of zones) {
+        if (!zoneContains(state, zone, { ...at, altitude: lineZ - elevation(state, at) }, { ignoreZ: zone.medium === 'fire' })) continue;
+        if (zone.layer === 'cloud') {
+          if (zone.medium === 'electrified_steam') extra.add('shock');
+          if (zone.medium === 'poison_cloud') extra.add('flammable');
+          if (zone.medium === 'steam') extra.add('wet');
+        } else if (zone.medium === 'fire' && Math.abs(lineZ - elevation(state, at)) <= 1) {
+          extra.add('heat');
+          extra.add('ignite');
+        }
+      }
+    }
+  }
+  if (!extra.size) return null;
+  return { traits: [...extra], cells: plan.cells, origin: barrel ? plan.center : origin, center: plan.center,
     sourceId: actor.id, tier: carrierEffectiveTier(state, carrier, actor), rank: authorityFor(state, carrier, actor.id).authorityRank,
     directTargetIds: targetIds, ...(barrel && { ambient: true }) };
 }
@@ -1168,7 +1214,7 @@ function withSurfaceImpact(state, actor, action, plan, origin) {
 export function emitSpatialImpulse(state, host, frame, impulse) {
   if (impulse) resolveSpatialImpulse(state, host, frame, impulse);
 }
-export const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
+export const needsTarget = type => isMovement(type) || ['jump', 'attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 const healMultiplier = (state, actor) => modStat(state, actor, 'healing', 1, { actionType: 'skill' });
 function inInteractionRange(state, actor, at) {
@@ -1264,7 +1310,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   if (!cost) return fail('未知动作');
   const aimed = needsTarget(type);
   const unplaced = x === undefined && y === undefined;
-  if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed)) return fail('动作带有不适用的参数');
+  if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed && type !== 'dip')) return fail('动作带有不适用的参数');
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !tileAt(state, x, y))) return fail('目标坐标超出棋盘');
   if (type === 'interact' && unplaced) {
     const cells = values(state.interactives).filter(v => !v.spent && preview(state, {type, x:v.x, y:v.y}, { actingUnit: unit }).ok).sort(byId).map(v => pos(v.x,v.y));
@@ -1331,6 +1377,27 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
       return rule.program.length && usesLeft > 0 && !cooldownRemaining;
     })) return fail('副手道具没有可执行的主动效果');
     return { ...common, name: `使用${item.template.name}`, maneuver: 'use_item', itemId: unit.offHand, rules };
+  }
+  if (type === 'dip') {
+    if (!weapon.instance || state.elementalPhysics === 'off') return fail('当前武器无法蘸取');
+    const source = dipSource(state, unit, action.x === undefined ? null : pos(action.x, action.y));
+    return source ? { ...common, name: `蘸取${source.label}`, dip: source } : fail('附近没有可蘸取的元素媒介');
+  }
+  if (type === 'jump') {
+    if (aggregateModifiers(state, unit.id).locks.move) return fail('当前不能纵跃');
+    const range = clamp(2 + Math.floor(Math.max(effectiveStat(state, unit, 'str'), effectiveStat(state, unit, 'agi')) / 6), 2, 6);
+    const eligible = to => {
+      const dz = elevation(state, to) - elevation(state, unit);
+      return !sameCell(unit, to) && near(unit, to) <= range && dz >= -3 && dz <= 2
+        && canOccupy(state, to.x, to.y, unit)
+        && supercoverLine(unit, to).slice(1, -1).every(at => tileAt(state, at.x, at.y)?.kind !== 'wall');
+    };
+    const cells = state.grid.flatMap((row, y) => row.map((_, x) => pos(x, y))).filter(eligible);
+    if (center && !eligible(center)) return fail('无法纵跃至该落点', { cells });
+    if (!cells.length) return fail('没有可用纵跃落点');
+    const opportunities = opportunitySources(state, unit).filter(source => threatens(state, source, unit, unit))
+      .map(({ unit: reactor }) => opportunityDetail(reactor, unit, center ?? unit));
+    return { ...common, name: '纵跃', cells, opportunities, ...(center && { center, steps: near(unit, center), path: [center] }) };
   }
   if (type === 'charge') return { ...common, name: '蓄力', maneuver: 'charge' };
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
@@ -1713,22 +1780,13 @@ function knockback(state, actor, target, effect) {
     if (!canDisplaceStep(state, target, at)) {
       damageTarget(state, target, actor.id, effect.collisionDamage ?? 5, 'true', '撞击');
       if (alive(target)) grantStatus(state, target, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
-      const cellM = state.scale?.cellM ?? 2;
-      if (cellM < 10) {
-        const cover = coverAt(state, at.x, at.y);
-        if (cover) coverDamage(state, actor, cover, effect.collisionDamage ?? 5, { label: '撞击' });
-      } else {
-        const blocker = unitsAt(state, at.x, at.y).find(unit => alive(unit) && unit.id !== target.id);
-        if (blocker) damageTarget(state, blocker, actor.id, effect.collisionDamage ?? 3, 'true', '连环撞击');
-      }
+      const blocker = displacementBlocker(state, target, at);
+      if (blocker.cover) coverDamage(state, actor, blocker.cover, effect.collisionDamage ?? 5, { label: '撞击' });
+      if (blocker.unit) damageTarget(state, blocker.unit, actor.id, effect.collisionDamage ?? 5, 'true', '连环撞击');
       break;
     }
-    const beforeZ = elevation(state, target);
+    cliffDrop += displacementDrop(state, target, at);
     Object.assign(target, at);
-    const afterZ = elevation(state, target);
-    const stepDrop = beforeZ - afterZ;
-    const slope = tileAt(state, target.x, target.y)?.kind === 'slope' || tileAt(state, at.x, at.y)?.kind === 'slope';
-    if ((target.altitude ?? 0) === 0 && stepDrop > (slope ? 2 : 1)) cliffDrop += stepDrop;
     traversedCells.push(pointAt(state, target));
     if (applyMediumEntry(state, vmHost, null, target, at)) break;
   }
@@ -1839,7 +1897,7 @@ export function continueStrike({ state, frame, host }) {
     delete event.dealt;
     delete event.absorbed;
     event.targetId = target.id;
-    frame.phase = 'heal';
+    frame.phase = 'dip_damage';
     const { critical, rating, saved } = event;
     const intent = frame.intentOutcome;
     if (!profile.dice) return;
@@ -1868,6 +1926,18 @@ export function continueStrike({ state, frame, host }) {
       critical: isCritical, ratingMultiplier: ratingScale, details, resultEventRef: frame.awaitEvent,
       lethal: !(profile.nonLethal || recipient.nonLethal || vmFlag(state, recipient, 'preserveLife') || encounterNonlethal(state, actor)) });
     return;
+  }
+  if (frame.phase === 'dip_damage') {
+    frame.phase = 'heal';
+    const dipped = action.type === 'attack' && weapon?.instance && actor.statuses?.dipped;
+    const recipient = tableEntry(state.units, event.targetId);
+    if (dipped && alive(recipient) && state.elementalPhysics !== 'off') {
+      const { dipType, dipBonus } = dipped.vars ?? {};
+      removeVMStatus(state, actor, dipped, 'consumed', actor);
+      if (dipType && dipBonus > 0) host.commit(state, frame, { op: 'damage', pool: 'hp', targetId: recipient.id,
+        sourceId: actor.id, amount: dipBonus, damageType: dipType, direct: false, reactionChain: true, label: '蘸取附伤' });
+      return;
+    }
   }
   if (frame.phase === 'heal') {
     frame.phase = 'after_hit';
@@ -1941,12 +2011,7 @@ function continueMovement(state, actor, type, plan, progress, host, frame) {
       const source = { unit, weapon };
       if (!canReact(state, source, actor) || !threatens(state, source, actor, actor)
         || (!sameCell(actor, unit) && threatens(state, source, actor, to))) continue;
-      unit.reactionAvailable = false;
-      const center = pos(actor.x, actor.y);
-      record(state, unit, 'opportunity', `${unit.name}对${actor.name}发动借机攻击（${weapon.template.name}）`,
-        { ...opportunityDetail(unit, center, to), targetId: actor.id });
-      const profile = targetProfile(state, unit, actor, actor, weapon.template, { weapon });
-      host.opportunity(state, unit, center, profile, weapon);
+      launchOpportunity(state, source, actor, to, host);
       return false;
     }
     const stepCost = cellStepCost(state, actor, to) * 1000;
@@ -1988,6 +2053,43 @@ function continueMovement(state, actor, type, plan, progress, host, frame) {
     if (coverIds.length) record(state, actor, 'cover_approach', `${actor.name}移至掩体 ${coverIds.join('、')} 旁`, { coverIds });
   }
   return true;
+}
+
+function continueJump(state, actor, plan, progress, host, frame) {
+  if (progress.movementSettled) return true;
+  const to = plan.center;
+  progress.reactors ??= plan.opportunities.map(source => source.unitId);
+  while (alive(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move && progress.reactors.length) {
+    const unit = tableEntry(state.units, progress.reactors.shift());
+    if (!alive(unit)) continue;
+    const weapon = weaponInfo(state, unit);
+    const source = { unit, weapon };
+    if (!canReact(state, source, actor) || !threatens(state, source, actor, actor)) continue;
+    launchOpportunity(state, source, actor, to, host);
+    return false;
+  }
+  progress.movementSettled = true;
+  if (!alive(actor) || actor.fled || aggregateModifiers(state, actor.id).locks.move || !canOccupy(state, to.x, to.y, actor)) return true;
+  const from = pointAt(state, actor);
+  actor.facing = signFacing(actor, to);
+  actor.lastMoveDir = movementDirection(from, to, actor.lastMoveDir);
+  Object.assign(actor, pos(to.x, to.y));
+  refreshFollowingZones(state, vmHost);
+  const landing = pointAt(state, actor);
+  applyMediumEntry(state, host, frame, actor, landing);
+  record(state, actor, 'jump', `${actor.name}纵跃至 (${landing.x}, ${landing.y}, z=${landing.z})`,
+    { from, to: landing, path: [landing], steps: plan.steps });
+  dispatchVMHook(state, 'after_move', { actorId: actor.id, targetId: actor.id, fromX: from.x, fromY: from.y,
+    toX: landing.x, toY: landing.y, moveKind: 'jump', steps: plan.steps, traversedCells: [landing] });
+  return false;
+}
+
+function launchOpportunity(state, { unit, weapon }, mover, to, host) {
+  unit.reactionAvailable = false;
+  const center = pos(mover.x, mover.y);
+  record(state, unit, 'opportunity', `${unit.name}对${mover.name}发动借机攻击（${weapon.template.name}）`,
+    { ...opportunityDetail(unit, center, to), targetId: mover.id });
+  host.opportunity(state, unit, center, targetProfile(state, unit, mover, mover, weapon.template, { weapon }), weapon);
 }
 
 function continueInteraction(state, actor, plan, progress, ammoBefore) {
@@ -2108,6 +2210,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
         targetId: action.targetId ?? plan.targets?.find(target => target.kind !== 'cover')?.id ?? null,
         ap: plan.ap, mp: plan.mp, sp: plan.sp, ...(plan.hp > 0 && { hp: plan.hp }), remainingAP: actor.ap });
   }
+  if (type === 'jump') return continueJump(state, actor, plan, frame.nativeProgress, host, frame);
   if (isMovement(type)) {
     const progress = frame.nativeProgress;
     if (progress.movementSettled) return true;
@@ -2139,6 +2242,11 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       Object.assign(event, { targetId: actor.id, targets: [actor.id], itemId: plan.itemId, rules: plan.rules });
       host.hooks(state, frame, 'active', frame.eventRef);
       return false;
+    }
+    case 'dip': {
+      const { label, ...vars } = plan.dip;
+      grantStatus(state, actor, 'dipped', { sourceId: actor.id, remainingTurns: 2, vars });
+      break;
     }
     case 'charge': grantStatus(state, actor, actionStatuses.charge, { sourceId: actor.id }); break;
     case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id, vars: { targetId: plan.targetId } }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;

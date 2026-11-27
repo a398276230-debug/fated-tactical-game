@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
+import { buildScenario } from '../src/presets/scenarios.js';
 const boot=()=>{const a=createGameAPI();a.createBattle({scenarioId:'ruins', ruleset:'sandbox'});return a;};
 const endTo=(a,id)=>{for(let i=0;i<20&&a.getStateSummary().currentUnitId!==id;i++)a.playAction({type:'end'});assert.equal(a.getStateSummary().currentUnitId,id);};
 const commit=(a,command)=>{const p=a.proposeCommands([command],{baseRevision:a.getStateSummary().revision,reason:'tactical'});assert.equal(p.ok,true,p.error);a.commitProposal(p.proposalId);};
@@ -21,6 +22,42 @@ test('定位、擒抱、缴械、绊摔、推撞都写入可重放日志',()=>{
  const types=a.listActionLogs(100).map(x=>x.type);
  assert.ok(types.includes('contest') || types.includes('maneuver'));
 });
+test('纵跃跨过高差并只记录落点，消耗动作槽而不消耗移动预算', () => {
+ const state = buildScenario('ruins');
+ state.grid[2][2].z = state.grid[2][1].z + 2;
+ const api = createGameAPI();
+ api.createBattle({ kind: 'custom_state', state });
+ endTo(api, 'swordsman');
+ const before = api.getBattleState().units.swordsman;
+ assert.equal(api.previewAction({ type: 'move', x: 2, y: 2 }).ok, false);
+ assert.equal(api.playAction({ type: 'jump', x: 2, y: 2 }).ok, true);
+ const after = api.getBattleState().units.swordsman;
+ assert.equal(after.x, 2);
+ assert.equal(after.ap, before.ap - 1);
+ assert.equal(after.moveSpentPermille, before.moveSpentPermille);
+ assert.equal(api.listActionLogs(20).find(log => log.type === 'jump').detail.path.length, 1);
+ const snapshot = api.exportBattleSnapshot();
+ const restored = createGameAPI();
+ restored.createBattle(snapshot);
+ assert.deepEqual(restored.getBattleState(), snapshot.state);
+});
+
+test('武器蘸取相邻爆桶时保留爆桶并写入两回合附魔', () => {
+ const state = buildScenario('ruins');
+ const { x, y } = state.units.swordsman;
+ Object.assign(state.interactives.I2, { x: x - 1, y });
+ const api = createGameAPI();
+ api.createBattle({ kind: 'custom_state', state });
+ endTo(api, 'swordsman');
+ const action = { type: 'dip', x: x - 1, y };
+ assert.deepEqual(api.previewAction(action).dip, { dipType: 'fire', dipBonus: 4, label: '余烬火油' });
+ assert.equal(api.playAction(action).ok, true);
+ const after = api.getBattleState();
+ assert.equal(after.interactives.I2.spent, false);
+ assert.equal(after.units.swordsman.statuses.dipped.remainingTurns, 2);
+ assert.deepEqual(after.units.swordsman.statuses.dipped.vars, { dipType: 'fire', dipBonus: 4 });
+});
+
 test('逃跑动作产生结构化成功或失败日志并可写入快照',()=>{
  const a=boot(); endTo(a,'swordsman');
  assert.match(a.previewAction({type:'flee'}).error,/边界/);

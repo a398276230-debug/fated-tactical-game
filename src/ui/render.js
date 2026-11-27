@@ -19,7 +19,7 @@ const MEDIUM_MARKS = Object.freeze({
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
 const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
 const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' };
-export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', attack: '普攻', interact: '互动', brace: '架势防御',
+export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', jump: '纵跃', dip: '武器蘸取', attack: '普攻', interact: '互动', brace: '架势防御',
   free_ally: '解除压制', suppress: '压制', block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',
   flee: '逃跑', reload: '装填', end: '结束回合' };
 export const ACTION_HINTS = { move: '自由走位（0 AP，消耗移动力）', sprint: '充能疾跑，耗 1 AP（动作槽）', disengage: '安全撤离，耗 1 AP（免借机）', attack: '用武器攻击', interact: '使用场景设施',
@@ -160,7 +160,7 @@ export function createRenderer(root, portraitFor = () => []) {
 
   function renderBoard(state, { selected, action, hover, preview, current, askLocked, askCells, entityChoices }) {
     initBoard(state);
-    const moving = ['move', 'sprint', 'disengage'].includes(action?.type);
+    const moving = ['move', 'sprint', 'disengage', 'jump'].includes(action?.type);
     const unitsAt = group(values(state.units).filter(u => u.hp > 0 && !u.fled));
     const bodiesAt = group(corpses(state)), coversAt = group(values(state.covers)), itemsAt = group(values(state.interactives));
     const affected = new Set((!moving && preview?.ok && preview.cells || []).map(p => key(p.x, p.y)));
@@ -498,7 +498,7 @@ export function createRenderer(root, portraitFor = () => []) {
       baseline = { move: cells(run({ type: ui.sprint ? 'sprint' : 'move' })), attack: cells(run({ type: 'attack' })), interact: cells(run({ type: 'interact' })) };
     }
     const range = action ? run({ type: action.type, ...(action.skillId ? { skillId: action.skillId } : {}) }) : null;
-    const aimed = ['move', 'sprint', 'disengage', 'attack', 'skill', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push', 'shield_bash'].includes(action?.type);
+    const aimed = ['move', 'sprint', 'disengage', 'jump', 'attack', 'skill', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push', 'shield_bash'].includes(action?.type);
     const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
     if (fresh) {
       const battleKind = Object.keys(moraleTypes).find(k => moraleTypes[k] === state.battleType);
