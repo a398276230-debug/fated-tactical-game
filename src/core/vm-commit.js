@@ -148,7 +148,7 @@ export function continueCommit({ state, frame, host, options }) {
       ...(data.instantDeath === true && { instantDeath: true }), poolId: pool.id, damageType: data.damageType ?? null, rawAmount: data.amount, finalAmount: amount,
       ...(op === 'damage' && { shared: data.shared === true, sharedFromId: data.sharedFromId ?? null }),
       direct: data.direct ?? true, isSingle: data.isSingle ?? null, isArea: data.isArea ?? null, isRanged: data.isRanged ?? null,
-      sourceRuleId: frame.ruleId, direct: data.direct ?? true, preserveLife: data.lethal === false || Boolean(target.nonLethal || host.flag?.(state, target, 'preserveLife') || host.preserveLife?.(state, source)),
+      sourceRuleId: frame.ruleId, preserveLife: data.lethal === false || Boolean(target.nonLethal || host.flag?.(state, target, 'preserveLife') || host.preserveLife?.(state, source)),
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, weaponTemplateId: data.weaponTemplateId ?? null,
       melee: data.melee ?? false, backstab: data.backstab ?? false,
       critical: data.critical ?? false, ratingMultiplier: data.ratingMultiplier ?? 1,
