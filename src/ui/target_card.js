@@ -1,3 +1,7 @@
+export function surfaceReactionLines(surfaceImpact) {
+  return (surfaceImpact?.reactions ?? []).map(({ label, cells }) => `${label}（${cells.length} 格）`);
+}
+
 // Fixed overlay next to a cell. Never change grid dimensions or scroll the page.
 export function placeTargetCard(card, anchor, viewport = window.visualViewport) {
   const gutter = 8, gap = 6;

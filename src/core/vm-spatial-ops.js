@@ -1,6 +1,8 @@
 import { resolveEffectiveTier, scaledMoveCells, sizeClassFor, stanceFor, stanceRules, TIER_CELL_M, defaultMoveFromAgi, boardMoveCellsFromMoveM } from './combat_protocol.js';
 import { evaluateExpr } from './formula.js';
-import { applyMediumEntry, mediumZone, putMedium, removeZone, zoneMediumFields } from './element-media.js';
+import { applyMediumEntry, mediaCells, mediumRank, mediumZone, physicsEnabled, putMedium, removeZone, zoneMediumFields } from './element-media.js';
+import { elementTraits } from './elements.js';
+import { resolveSpatialImpulse } from './element-impulse.js';
 export { removeZone } from './element-media.js';
 import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
 import { spawnPanel, spawnBudgetIssue } from './spawn-unit.js';
@@ -548,6 +550,12 @@ function spawnZone({ state, frame, host, context, op }, center) {
   if (!placed) return;
   publishOut(state, frame, op.out, id);
   host.log(state, context.self, 'zone', `展开${zone.name}`, { zoneId: id });
+  const traits = defaults && physicsEnabled(state) ? elementTraits(undefined, state.customElements, spec.tags) : [];
+  if (traits.length) {
+    const impact = origin ?? center;
+    resolveSpatialImpulse(state, host, frame, { traits, cells: mediaCells(state, placed), origin: context.self ?? impact,
+      center: impact, sourceId, tier: placed.tier, rank: mediumRank(placed) });
+  }
 }
 
 export function refreshFollowingZones(state, host) {

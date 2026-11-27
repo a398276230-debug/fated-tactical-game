@@ -1,4 +1,4 @@
-import { grantStatus, movementBudget, actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget, isAiControlled } from './combat.js';
+import { coverDamage, grantStatus, movementBudget, actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget, isAiControlled } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
@@ -13,6 +13,7 @@ import { ruleAvailability } from './vm-rule-limits.js';
 import { validVmSourceSkillId } from './vm-schema.js';
 import { vmAttribution, normalizeProse } from './log-attribution.js';
 import { actionActor, syncLinkedGroupSlots } from './turn-routing.js';
+import { continueSpatialImpulse } from './element-impulse.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
@@ -31,6 +32,7 @@ const handlers = {
   action: continueAction, commit: continueCommit, lethal: continueLethal, check: continueCheck,
   apply_status: continueApplyStatus, remove_status: continueRemoveStatus,
   ...spatialContinuations,
+  spatial_impulse: continueSpatialImpulse,
   strike: continueStrike,
   round: continueRound,
 };
@@ -115,7 +117,7 @@ export function commitVMEffect(state, data) {
 }
 
 export const vmHost = {
-  grantStatus,
+  grantStatus, coverDamage,
   ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
   log: recordVM,
   isAI: isAiControlled,

@@ -1,5 +1,6 @@
 import { evaluateExpr } from './formula.js';
 import { actionSkill, isTapeAction, isStrikeAction, continueNativeAction } from './combat.js';
+import { emitSpatialImpulse, makeActionImpulse } from './combat-actions.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { resolvePoint } from './vm-select.js';
 import { aggregateModifiers } from './vm-carriers.js';
@@ -151,6 +152,14 @@ export function continueAction({ state, frame, host, options }) {
     return;
   }
   if (frame.pc === 3) {
+    if (!frame.impulseEmitted) {
+      const impulse = makeActionImpulse(state, actor, action, plan, event.origin, frame.impulseDirectTargets ?? []);
+      if (impulse) {
+        frame.impulseEmitted = true;
+        emitSpatialImpulse(state, host, frame, impulse);
+        return;
+      }
+    }
     frame.pc++;
     if (actor.hp > 0) scheduleHooks(state, frame, 'after_action', frame.eventRef, host);
     return;

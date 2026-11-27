@@ -8,6 +8,13 @@ import { zoneContains } from '../core/vm-select.js';
 import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES } from './narrate.js';
 import { elementLabel } from '../core/elements.js';
+import { isMedium, mediaCells } from '../core/element-media.js';
+import { surfaceReactionLines } from './target_card.js';
+
+const MEDIUM_MARKS = Object.freeze({
+  water: '水', ice: '冰', oil: '油', fire: '火', acid: '酸', electrified_water: '电水',
+  steam: '汽', smoke: '烟', poison_cloud: '毒雾', electrified_steam: '雷雾',
+});
 
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
 const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
@@ -157,6 +164,10 @@ export function createRenderer(root, portraitFor = () => []) {
     const unitsAt = group(values(state.units).filter(u => u.hp > 0 && !u.fled));
     const bodiesAt = group(corpses(state)), coversAt = group(values(state.covers)), itemsAt = group(values(state.interactives));
     const affected = new Set((!moving && preview?.ok && preview.cells || []).map(p => key(p.x, p.y)));
+    const reactions = preview?.ok ? preview.surfaceImpact?.reactions ?? [] : [];
+    const reactionsAt = group(reactions.flatMap(({ label, cells }) => cells.map(cell => ({ ...cell, label }))));
+    const mediaAt = group(values(state.zones).filter(isMedium).flatMap(zone =>
+      mediaCells(state, zone).map(at => ({ ...at, medium: zone.medium, name: zone.name }))));
     const path = new Set((moving && preview?.ok && preview.path || []).map(p => key(p.x, p.y)));
     const risks = new Set((moving && preview?.opportunities || []).map(o => key(o.from.x, o.from.y)));
     const hoverKey = hover ? key(hover.x, hover.y) : null;
@@ -167,6 +178,8 @@ export function createRenderer(root, portraitFor = () => []) {
       const { cell } = slot;
       const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
       const stack = unitsAt.get(xy) ?? [], unit = stack[0], cover = coversAt.get(xy)?.[0], item = itemsAt.get(xy)?.[0];
+      const media = mediaAt.get(xy) ?? [];
+      const reactionNames = [...new Set((reactionsAt.get(xy) ?? []).map(reaction => reaction.label))];
       const chosen = stack.some(u => selected === u.id || action?.targetId === u.id), isHover = hoverKey === xy, edges = cliffs(state, x, y, tile);
       const reach = baseline.move.has(xy);
       const entityOption = stack.some(u => entityChoices?.eligible.has(u.id));
@@ -177,7 +190,8 @@ export function createRenderer(root, portraitFor = () => []) {
         chosen ? 'is-selected' : '', isHover ? 'is-hovered' : '', isHover && preview?.ok === false ? 'is-invalid' : '',
         reach ? 'is-reachable' : '', (action?.type === 'interact' ? baseline.interact : baseline.attack).has(xy) || (item && baseline.interact.has(xy)) ? 'is-in-range' : '',
         reach && (tile.kind === 'slope' || tile.z !== originZ) ? 'is-elevated-reach' : '',
-        affected.has(xy) ? 'axis-covered' : '', path.has(xy) ? 'is-path' : '', risks.has(xy) ? 'is-opportunity' : '',
+        affected.has(xy) ? 'axis-covered' : '', reactionNames.length ? 'is-surface-impact' : '',
+        path.has(xy) ? 'is-path' : '', risks.has(xy) ? 'is-opportunity' : '',
         answerable ? 'is-ask-option' : '', entitySelected ? 'is-ask-selected' : ''].filter(Boolean).join(' ');
       cell.dataset.terrainType = tile.kind;
       cell.dataset.terrainZ = tile.z;
@@ -188,13 +202,14 @@ export function createRenderer(root, portraitFor = () => []) {
       cell.setAttribute('aria-pressed', String(entityChoices ? !!entitySelected : chosen));
       const label = [`(${xy}) ${terrainLabel(tile)}`, edges.length ? '陡崖边' : '',
         stack.length ? stack.map(u => `${side(u.team)}${u.name}，生命 ${u.hp}/${u.maxHp}`).join('；') : '',
-        cover ? coverText(cover) : '', item ? interactiveText(item) : '', reach ? '可以走到这里' : '', answerable ? '可选择此格' : ''].filter(Boolean).join(' · ');
+        cover ? coverText(cover) : '', item ? interactiveText(item) : '', ...media.map(zone => zone.name), ...reactionNames,
+        reach ? '可以走到这里' : '', answerable ? '可选择此格' : ''].filter(Boolean).join(' · ');
       cell.setAttribute('aria-label', label);
       if (answerable) cell.setAttribute('aria-describedby', 'pending-ask-prompt');
       else cell.removeAttribute('aria-describedby');
       if (isHover) inspection = label;
       const bodies = bodiesAt.get(xy) ?? [];
-      const signature = JSON.stringify([tile, stack, cover, item, chosen, action?.targetId, stack.some(u => u.id === current?.id), bodies.map(b => b.id), stack.map(u => [u.id, portraitFor(u.id)])]);
+      const signature = JSON.stringify([tile, stack, cover, item, chosen, action?.targetId, stack.some(u => u.id === current?.id), bodies.map(b => b.id), stack.map(u => [u.id, portraitFor(u.id)]), media.map(zone => [zone.medium, zone.name])]);
       if (slot.signature === signature) continue;
       slot.signature = signature;
       slot.z.textContent = tile.kind !== 'wall' && tile.z ? `z${sign(tile.z)}` : '';
@@ -208,7 +223,14 @@ export function createRenderer(root, portraitFor = () => []) {
       slot.units.dataset.stack = String(stack.length);
       slot.units.replaceChildren(...dead, ...stack.map(u => unitToken(state, u, tile.z, action ? action.targetId === u.id : selected === u.id, u.id === current?.id)),
         ...[cover && featureToken(cover, tile.z, true), item && featureToken(item, tile.z, false)].filter(Boolean));
-      slot.features.replaceChildren(...(tile.kind !== 'floor' ? [el('span', 'tactical-cell-tag', tile.kind === 'wall' ? '#' : '坡')] : []));
+      const marks = media.map(zone => {
+        const mark = el('span', 'ft-medium-mark', MEDIUM_MARKS[zone.medium]);
+        mark.dataset.medium = zone.medium;
+        mark.title = zone.name;
+        mark.setAttribute('aria-hidden', 'true');
+        return mark;
+      });
+      slot.features.replaceChildren(...marks, ...(tile.kind !== 'floor' ? [el('span', 'tactical-cell-tag', tile.kind === 'wall' ? '#' : '坡')] : []));
     }
     $('terrain-inspector').textContent = inspection;
   }
@@ -415,6 +437,10 @@ export function createRenderer(root, portraitFor = () => []) {
       if (p.dz) geo.push(p.dz > 0 ? `目标高出 ${p.dz}` : `目标低 ${-p.dz}`);
       if (p.teleport) geo.push(`瞬移到 (${p.teleport.x}, ${p.teleport.y})`);
       if (geo.length) line(geo.join('，'));
+      if (p.ok) {
+        const reactions = surfaceReactionLines(p.surfaceImpact);
+        if (reactions.length) line(`环境连锁：${reactions.join('、')}`, 'is-surface-impact');
+      }
       if (p.opportunities?.length) line(`⚠ 借机风险：${p.opportunities.map(o => `${o.name}（你离开 ${o.from.x},${o.from.y} 时出手）`).join('、')}。改用「撤离」可以避免。`, 'is-warning');
       if (p.ok && action.type === 'disengage') line('撤离：这次移动不会引发借机攻击。');
       for (const t of p.targets ?? []) {

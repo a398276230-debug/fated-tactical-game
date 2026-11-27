@@ -1,15 +1,17 @@
-import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, coverAt, coverBetween, distance3D as distance,
-  elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS as clearSight,
+import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, cellStepCost, coverAt, coverBetween, distance3D as distance,
+  elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS,
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
 import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate } from './combat_protocol.js';
 
-import { elementMitigationCategory } from './elements.js';
+import { elementMitigationCategory, elementTraits } from './elements.js';
+import { applyMediumEntry } from './element-media.js';
+import { previewSpatialImpulse, resolveSpatialImpulse } from './element-impulse.js';
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
-import { aggregateModifiers, applyStatMod, collectRules, itemRules, incomingDistanceOffset, carrierScope, unitSkipped, reactionBlocked } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, collectRules, itemRules, incomingDistanceOffset, carrierScope, carrierEffectiveTier, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMAnchorTurn, advanceVMRound, vmHost } from './vm-runtime.js';
@@ -41,6 +43,12 @@ const key = (x, y) => `${x},${y}`;
 const stat = (unit, id) => Number(unit.stats?.[id] ?? 0);
 const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
 const vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
+const sightOptions = (state, observer, target) => ({
+  ignoreObscure: Boolean(observer?.id && state.elementalPhysics !== 'off'
+    && values(state.zones).some(zone => zone.blocksLOS === true)
+    && vmFlag(state, observer, 'trueSight', { target })),
+});
+const clearSight = (state, from, to, observer = from) => hasLOS(state, from, to, sightOptions(state, observer, to));
 const statusOf = (unit, id) => Object.hasOwn(unit.statuses ?? {}, id) ? unit.statuses[id] : undefined;
 export const currentUnit = state => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : undefined;
 export function isAiControlled(state, unit) {
@@ -678,7 +686,8 @@ export function reachable(state, type = 'move', unit = currentUnit(state), dista
     return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: budget.bankedProgress }];
   }
   const sources = type === 'disengage' ? [] : opportunitySources(state, unit).filter(source => canReact(state, source, unit));
-  const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
+  const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cell.path.length,
+    ...(cost !== cell.path.length && { costPermille: cost * 1000 }), opportunities });
   if (!sources.length || !routes.length) return routes.map(route => routeCell(route));
 
   const threatCache = new Map();
@@ -897,6 +906,7 @@ function area(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, de
     // range callback supplies the equivalent geometric limit for ray cells.
     ignoreAimRange: true,
     ignoreLOS: ignoreLOS || deferGeometry,
+    ...sightOptions(state, actor, center),
   });
 }
 
@@ -979,7 +989,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;
-  const protectedBy = target && !cover && !geometry.melee ? coverBetween(state, origin, target) : null;
+  const protectedBy = target && !cover && !geometry.melee ? coverBetween(state, origin, target, sightOptions(state, actor, target)) : null;
   const penalty = protectedBy?.cover ?? 0;
   const size = cover ? 0 : typeof target?.size === 'number' ? Math.max(0, target.size - 1) : target?.size === 'large' ? 2 : target?.size === 'small' ? -1 : 0;
   const sizeModifier = cover || !target ? 0 : sizeHitModifier(actor, target);
@@ -1122,6 +1132,37 @@ const movementNames = Object.freeze({ move: '移动', sprint: '疾跑', disengag
 const isMovement = type => Object.hasOwn(movementNames, type);
 export const isTapeAction = type => type === 'skill' || (Object.hasOwn(ACTIONS, type) && type !== 'end' && type !== 'end_encounter');
 export const isStrikeAction = (action, plan) => ['attack', 'skill', 'shield_bash'].includes(action.type) && !plan.interactiveId;
+
+export function makeActionImpulse(state, actor, action, plan, origin, targetIds = []) {
+  if (state.elementalPhysics === 'off' || !plan.cells?.length) return null;
+  const barrel = plan.kind === 'barrel';
+  if (!barrel && !isStrikeAction(action, plan)) return null;
+  const weapon = !barrel && action.type === 'attack' ? weaponInfo(state, actor) : null;
+  const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
+  const itemId = weapon?.instance?.id ?? skill?.itemId ?? skill?.itemInstance?.id;
+  const carrier = itemId ? { type: 'item', id: itemId, ownerId: actor.id }
+    : skill ? { type: 'skill', id: action.skillId, ownerId: actor.id } : null;
+  const traits = barrel ? ['heat', 'ignite', 'gust'] : elementTraits(
+    plan.damageType ?? plan.actionContext?.damageType, state.customElements, plan.actionContext?.tags ?? []);
+  if (!traits.length) return null;
+  return { traits, cells: plan.cells, origin: barrel ? plan.center : origin, center: plan.center,
+    sourceId: actor.id, tier: carrierEffectiveTier(state, carrier, actor), rank: authorityFor(state, carrier, actor.id).authorityRank,
+    directTargetIds: targetIds, ...(barrel && { ambient: true }) };
+}
+
+function withSurfaceImpact(state, actor, action, plan, origin) {
+  const impulse = makeActionImpulse(state, actor, action, plan, origin,
+    (plan.targets ?? []).filter(target => target.kind !== 'cover').map(target => target.id));
+  if (!impulse) return plan;
+  const barrel = impulse.ambient && tableEntry(state.interactives, plan.interactiveId);
+  const view = barrel ? { ...state, interactives: { ...state.interactives, [barrel.id]: { ...barrel, spent: true } } } : state;
+  const surfaceImpact = previewSpatialImpulse(view, impulse);
+  return surfaceImpact.reactions.length ? { ...plan, surfaceImpact } : plan;
+}
+
+export function emitSpatialImpulse(state, host, frame, impulse) {
+  if (impulse) resolveSpatialImpulse(state, host, frame, impulse);
+}
 export const needsTarget = type => isMovement(type) || ['attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 const healMultiplier = (state, actor) => modStat(state, actor, 'healing', 1, { actionType: 'skill' });
@@ -1161,7 +1202,7 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
     if ((template.shape ?? 'single') === 'single') return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
       const distanceFromCenter = distance(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: 'attack' });
-      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || clearSight(state, aim, unit))
+      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || clearSight(state, aim, unit, actor))
         && (template.shape !== 'ring' || (!sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9));
     }
     const radius = template.radius ?? (template.range === 0 ? 1.5 : null);
@@ -1326,8 +1367,10 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     const choice = cells.find(at => sameCell(at, center));
     if (!choice) return fail(budget.exhausted ? '本回合移动力已耗尽' : '无法到达：距离、占位、墙体或陡崖阻挡', { cells });
     return { ...common, cells, path: choice.path, steps: choice.steps, opportunities: choice.opportunities,
+      ...(choice.costPermille !== undefined && { costPermille: choice.costPermille }),
       moveRemaining: budget.remainingCells, moveMax: budget.maxCells,
-      remainingCellsAfter: choice.bankedProgress != null ? 0 : Math.max(0, Math.min(budget.maxBoardSteps, Math.floor((budget.remainingPermille - choice.steps * 1000) / 1000))),
+      remainingCellsAfter: choice.bankedProgress != null ? 0 : Math.max(0, Math.min(budget.maxBoardSteps,
+        Math.floor((budget.remainingPermille - (choice.costPermille ?? choice.steps * 1000)) / 1000))),
       ...(choice.bankedProgress != null && { bankedProgress: choice.bankedProgress }),
       dz: elevation(state, center) - elevation(state, unit) };
   }
@@ -1337,7 +1380,8 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
       if (weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail(emptyAmmoMessage(weapon.ammo));
       if (!validReach(state, unit, item, weapon.template, weapon.ammo)) return fail('爆桶超出武器射程或被墙体阻挡');
     } else if (distance(state,unit,item) > 1.5 || !clearSight(state,unit,item)) return fail('需要靠近互动点');
-    const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: item.radius ?? 1.5 }) : [center];
+    const cells = detonate ? aoeCells(state, center, center, { shape: 'circle', radius: item.radius ?? 1.5,
+      ...sightOptions(state, unit, item) }) : [center];
     const keyset = new Set(cells.map(at => key(at.x, at.y)));
     const targets = item.kind === 'altar' ? [{ id: unit.id, targetId: unit.id, name: unit.name, x: unit.x, y: unit.y,
       heal: item.effect === 'shield' && item.healAmount ? [item.healAmount, item.healAmount] : [0, 0] }]
@@ -1352,8 +1396,9 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
           damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
       });
     if (detonate && targets.some(profile => forbidden(state.units[profile.id]) || forbidden(state.units[profile.recipientId]))) return fail(forbiddenTargetError);
-    return { ...common, ...(detonate ? { ...reaches(state, unit, item, weapon.template, weapon.ammo), ammo: weapon.ammoCount } : {}),
+    const plan = { ...common, ...(detonate ? { ...reaches(state, unit, item, weapon.template, weapon.ammo), ammo: weapon.ammoCount } : {}),
       name: `${detonate ? '引爆' : '激活'}${item.name}`, interactiveId: item.id, kind: item.kind, cells, targets, center };
+    return simulateRules ? withSurfaceImpact(state, unit, action, plan, unit) : plan;
   }
   const attack = type === 'attack' || type === 'shield_bash';
   const shieldBash = type === 'shield_bash';
@@ -1480,9 +1525,10 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     }
   }
   const first = targets.find(t => sameCell(t, center)) ?? targets[0];
-  return { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.damageMultiplier } : {}),
+  const plan = { ...first, ...common, ...geometry, ...tuning, ...(first ? { damageMultiplier: first.damageMultiplier } : {}),
     bonusDice: action.bonusDice ?? 0, intent: resolvedIntent, nonLethal: action.nonLethal ?? unit.nonLethal ?? false,
     dXYZ: geometry.distance, cells, targets, center, ...(support?.length ? { support } : {}), ...(ruleImpact ? { ruleImpact } : {}), hostile };
+  return simulateRules ? withSurfaceImpact(state, unit, action, plan, origin) : plan;
 }
 
 function maneuverContest(state, actor, target, maneuver) {
@@ -1625,7 +1671,7 @@ function resolveCheck(state, actor, profile, event = {}) {
   return { hit: effectiveHit, critical, rating, roll: selected, total, intent, saved: false };
 }
 
-function coverDamage(state, actor, cover, amount, details) {
+export function coverDamage(state, actor, cover, amount, details) {
   const before = cover.hp;
   cover.hp = Math.max(0, before - Math.max(0, amount - (cover.armor ?? 0)));
   record(state, actor, 'cover_damage', `${cover.name}受到${before - cover.hp}点伤害`,
@@ -1833,7 +1879,7 @@ function movementDirection(from, to, previous) {
   return dy < 0 ? 'N' : 'S';
 }
 
-function continueMovement(state, actor, type, plan, progress, host) {
+function continueMovement(state, actor, type, plan, progress, host, frame) {
   if (type === 'sprint' && !progress.sprintCharged) {
     actor.moveBonusPermille = (actor.moveBonusPermille ?? 0) + movementBudget(state, actor).stepPermille;
     progress.sprintCharged = true;
@@ -1861,19 +1907,24 @@ function continueMovement(state, actor, type, plan, progress, host) {
       host.opportunity(state, unit, center, profile, weapon);
       return false;
     }
-    if (canStep(state, actor, to)) {
-      actor.facing = signFacing(actor, to);
-      Object.assign(actor, pos(to.x, to.y));
-      refreshFollowingZones(state, vmHost);
-      path.push(pointAt(state, actor));
-      delete progress.reactors;
-      return false;
+    const stepCost = cellStepCost(state, actor, to) * 1000;
+    const actualCost = progress.costPermille ?? path.length * 1000;
+    if (canStep(state, actor, to) && actualCost + stepCost <= movementBudget(state, actor).remainingPermille) {
+      if (!applyMediumEntry(state, host, frame, actor, to)) {
+        actor.facing = signFacing(actor, to);
+        Object.assign(actor, pos(to.x, to.y));
+        refreshFollowingZones(state, vmHost);
+        path.push(pointAt(state, actor));
+        if (actualCost + stepCost !== path.length * 1000) progress.costPermille = actualCost + stepCost;
+        delete progress.reactors;
+        return false;
+      }
     }
   }
   const landing = pointAt(state, actor), interrupted = path.length !== plan.path.length;
   const budget = movementBudget(state, actor);
   const banking = plan.bankedProgress != null && path.length === 0;
-  const consumed = banking ? budget.remainingPermille : Math.min(budget.remainingPermille, path.length * 1000);
+  const consumed = banking ? budget.remainingPermille : progress.costPermille ?? path.length * 1000;
   actor.moveSpentPermille = (actor.moveSpentPermille ?? 0) + consumed;
   if (banking || path.length) actor.moveCarryPermille = banking ? budget.remainingPermille % 1000 : (budget.remainingPermille - consumed) % 1000;
   if (banking) actor.moveBanked = true;
@@ -2003,7 +2054,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
   if (isMovement(type)) {
     const progress = frame.nativeProgress;
     if (progress.movementSettled) return true;
-    if (!continueMovement(state, actor, type, plan, progress, host)) return false;
+    if (!continueMovement(state, actor, type, plan, progress, host, frame)) return false;
     progress.movementSettled = true;
     if (!progress.moveEvent) return true;
     dispatchVMHook(state, 'after_move', progress.moveEvent);

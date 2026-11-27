@@ -18,6 +18,22 @@ function targetingPolicy(state, actor) {
   return { isAlly, isEnemy };
 }
 
+function surfaceTactics(state, plan, isEnemy, protocol = false) {
+  const damageByUnit = new Map();
+  for (const { id, expectedDamage } of plan.surfaceImpact?.secondaryTargets ?? []) {
+    if (expectedDamage > 0 && state.units[id]?.hp > 0 && !state.units[id].fled) {
+      damageByUnit.set(id, (damageByUnit.get(id) ?? 0) + expectedDamage);
+    }
+  }
+  let score = 0;
+  for (const [id, damage] of damageByUnit) {
+    const target = state.units[id];
+    const value = Math.min(target.hp, damage) * (protocol ? 20 / target.maxHp : 1);
+    score += (isEnemy(target) ? 1 : -1.5) * (value + (damage >= target.hp ? 6 : 0));
+  }
+  return score;
+}
+
 export function tactics(state, actor, action, plan, { isEnemy } = targetingPolicy(state, actor)) {
   if (!plan?.ok) return -Infinity;
   if (action.type === 'interact' && plan.kind === 'altar') return 4 + Math.min(8, healthGap(actor)) * .95 + Math.min(5, actor.maxMp - actor.mp) * .55;
@@ -75,6 +91,7 @@ export function tactics(state, actor, action, plan, { isEnemy } = targetingPolic
   if (programs.some(op => op.op === 'spawn' && ['zone', 'terrain', 'cover'].includes(op.entityKind))) {
     score += Object.values(state.units).some(unit => isEnemy(unit) && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
+  score += surfaceTactics(state, plan, isEnemy);
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
 }
 
@@ -119,6 +136,8 @@ function protocolTactics(state, actor, plan, { isEnemy }) {
   }
   const fraction = (cost, pool) => (cost ?? 0) / Math.max(1, pool ?? 0);
   const cost = 12 * fraction(plan.hp, actor.hp) + 5 * (fraction(plan.mp, actor.mp) + fraction(plan.sp, actor.sp));
+  // A simulated action already includes the chain in its HP deltas.
+  if (!impact) score += surfaceTactics(state, plan, isEnemy, true);
   return score / (plan.ap === 2 ? 1.35 : 1) - cost;
 }
 
@@ -153,7 +172,8 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     || (plan.ruleImpact?.units ?? []).some(effect => {
       const target = state.units[effect.id];
       return isEnemy(target) && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
-    });
+    }) || (plan.surfaceImpact?.secondaryTargets ?? []).some(({ id, expectedDamage }) =>
+      expectedDamage > 0 && isEnemy(state.units[id]));
   function consider(action, plan = preview(state, action, { actingUnit: actor })) {
     const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
     if (plan.ok && !(isOffensiveAreaSkill(skill) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
@@ -214,16 +234,21 @@ export function aimedOptions(state, actor, attacksOnly = false) {
 function approach(state, actor, enemies, suppress = false) {
   const range = weaponInfo(state, actor).template.range ?? 0;
   const spots = [{ x: actor.x, y: actor.y, steps: 0 }, ...reachable(state, 'move', actor, Infinity)];
-  const clearAttackCell = probe => enemies.some(target => {
-    const d = distance3D(state, probe, target);
-    if (suppress) return d <= 1 && hasLOS(state,probe,target);
-    if (d > range + 1) return false;
+  const clearAttackCell = probe => {
     const u = { ...actor, x: probe.x, y: probe.y, ap: Math.max(1, actor.ap), used: { ...actor.used, attack: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
-    const attack = preview(s, { type: 'attack', targetId: target.id, x: target.x, y: target.y }, { actingUnit: s.units[actor.id] });
-    if (attack.ok || attack.error === '弹仓已空，请装填' && d <= range && hasLOS(state, probe, target)) return true;
-    return false;
-  });
+    const clearSight = target => {
+      const ignoreObscure = aggregateModifiers(s, u.id, { actorId: u.id, targetId: target.id }).flags.trueSight === true;
+      return hasLOS(s, u, target, { ignoreObscure });
+    };
+    return enemies.some(target => {
+      const d = distance3D(s, u, target);
+      if (suppress) return d <= 1 && clearSight(target);
+      if (d > range + 1) return false;
+      const attack = preview(s, { type: 'attack', targetId: target.id, x: target.x, y: target.y }, { actingUnit: u });
+      return attack.ok || attack.error === '弹仓已空，请装填' && d <= range && clearSight(target);
+    });
+  };
   const pathToAttack = spots.find(clearAttackCell);
   if (pathToAttack?.steps > 0) return pathToAttack.path;
   if (pathToAttack?.steps === 0) return [];

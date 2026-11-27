@@ -132,6 +132,22 @@ body { margin: 0; background: var(--ink-2); }
 .battle-axis .tactical-cell.is-in-range.is-reachable { border-color: #86cdab; }
 .battle-axis .tactical-cell.is-in-range.is-reachable::after { content: ''; pointer-events: none; position: absolute; inset: auto 4px 3px auto; width: 7px; height: 7px; border-radius: 50%; background: #7dbbfe; }
 .battle-axis .tactical-cell.is-path { border-color: #aeedd3; box-shadow: inset 0 0 0 1px #aeedd3; }
+.battle-axis .tactical-cell.is-surface-impact { border-color: #f4b65d; box-shadow: inset 0 0 0 2px #f4b65d, inset 0 0 10px #f4b65d55; }
+.ft-medium-mark {
+  padding-inline: 2px; border: 1px solid var(--medium-color); border-radius: 3px;
+  font-size: 9px; line-height: 1; color: var(--medium-color); background: #171522;
+  white-space: nowrap; pointer-events: none;
+}
+.ft-medium-mark[data-medium="water"] { --medium-color: #83c0fb; }
+.ft-medium-mark[data-medium="ice"] { --medium-color: #b6edff; }
+.ft-medium-mark[data-medium="oil"] { --medium-color: #e6c14f; }
+.ft-medium-mark[data-medium="fire"] { --medium-color: #ffb280; }
+.ft-medium-mark[data-medium="acid"] { --medium-color: #d4df82; }
+.ft-medium-mark[data-medium="electrified_water"] { --medium-color: #77f1e5; }
+.ft-medium-mark[data-medium="steam"] { --medium-color: #e3e7ee; }
+.ft-medium-mark[data-medium="smoke"] { --medium-color: #b7afc9; }
+.ft-medium-mark[data-medium="poison_cloud"] { --medium-color: #a3e6a4; }
+.ft-medium-mark[data-medium="electrified_steam"] { --medium-color: #cbb4ff; }
 .battle-axis .tactical-cell.is-hovered, .battle-axis .tactical-cell.is-selected { outline: 2px solid var(--gold); outline-offset: -2px; }
 .battle-axis .tactical-cell.is-invalid { outline-color: #ed9b8f; }
 .battle-axis .tactical-cell.is-opportunity { outline: 2px solid #e5a35e; outline-offset: -3px; }
@@ -378,7 +394,7 @@ body { margin: 0; background: var(--ink-2); }
 .preview-line b { color: var(--accent-text); }
 .preview-line[data-damage-type] { color: var(--damage-type-color, var(--text-soft)); }
 .fated-char-chip[data-damage-type] { border-color: rgb(var(--gold-rgb) / .4); color: var(--accent-text); }
-.preview-line.is-warning { color: #f3c58c; }
+.preview-line.is-warning, .preview-line.is-surface-impact { color: #f3c58c; }
 .ft-odds { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .ft-odds-bar { flex: 1; height: 6px; border-radius: 3px; background: rgb(0 0 0 / .5); overflow: hidden; }
 .ft-odds-bar > i { display: block; height: 100%; width: calc(100% * var(--p)); background: linear-gradient(90deg, #b48a3c, var(--gold-bright)); }

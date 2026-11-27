@@ -5,6 +5,7 @@ import { distance3D } from './spatial.js';
 import { resolveEffectiveTier } from './combat_protocol.js';
 import { pointElevation, selectVM, zoneContains } from './vm-select.js';
 import { getPool } from './vm-pools.js';
+import { isMedium, physicsEnabled } from './element-media.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const entries = table => Object.keys(table ?? {}).sort().map(key => [key, table[key]]);
@@ -57,7 +58,7 @@ function carriers(state) {
     }
   }
   for (const [id, entity] of entries(state.zones)) {
-    if (!entity.area) continue;
+    if (!entity.area || !physicsEnabled(state) && isMedium(entity)) continue;
     const anchorId = entity.area.anchorUnitId;
     if (!active(entity) || (entity.follow && anchorId && !alive(own(state.units, anchorId)))) continue;
     result.push({ entity, carrier: { type: 'zone', id }, nativeOwnerId: anchorId ?? entity.sourceId });

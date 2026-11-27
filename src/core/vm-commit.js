@@ -3,7 +3,9 @@ import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { evaluateExpr } from './formula.js';
 import { removeStatus } from './vm-rules.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
-import { movementBudget } from './combat-actions.js';
+import { emitSpatialImpulse, makeActionImpulse, movementBudget } from './combat-actions.js';
+import { elementTraits } from './elements.js';
+import { carrierEffectiveTier } from './vm-carriers.js';
 import { cleanupSourceBoundEntities, hasActiveConcentration } from './vm-lifecycle.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
@@ -86,6 +88,41 @@ export const commitOps = {
     host.log(state, context.self, 'pool_link', `${context.self.name}${op.mode === 'link' ? '连接' : '拆分'}了资源池`);
   },
 };
+
+function emitDamageImpulse(state, host, frame, source, target, event) {
+  const { data } = frame;
+  if (state.elementalPhysics === 'off' || data.direct === false || data.reactionChain === true || data.shared) return;
+  const carrier = frame.carrier ?? (data.instanceId ? { type: 'item', id: data.instanceId, ownerId: data.sourceId }
+    : data.skillId ? { type: 'skill', id: data.skillId, ownerId: data.sourceId } : null);
+  const tags = carrier?.type === 'item' ? entry(state.equipment, entry(state.items, carrier.id)?.templateId)?.tags
+    : carrier?.type === 'skill' ? entry(state.skills, carrier.id)?.tags
+      : carrier?.type === 'status' ? entry(entry(state.units, carrier.ownerId)?.statuses, carrier.id)?.tags
+        : carrier?.type === 'zone' ? entry(state.zones, carrier.id)?.tags : undefined;
+  const traits = elementTraits(event.damageType, state.customElements, tags);
+  const strike = data.resultEventRef && state.vm.stack.findLast(parent =>
+    parent.native === 'strike' && parent.awaitEvent === data.resultEventRef);
+  const action = strike && state.vm.stack.findLast(parent => parent.native === 'action' && parent.eventRef === strike.eventRef);
+  if (action && !strike.followup && source) {
+    const origin = entry(state.vm.events, action.eventRef)?.origin ?? source;
+    const planned = makeActionImpulse(state, source, action.data.action, action.plan, origin);
+    if (planned) {
+      if (traits.includes('shock') || planned.traits.includes('shock') && event.damageType === data.damageType) {
+        const targets = action.impulseDirectTargets ??= [];
+        if (!targets.includes(target.id)) targets.push(target.id);
+      }
+      // The action footprint supplies the native strike's traits once after all hits.
+      // A before_commit type rewrite can introduce different traits at the actual hit cell.
+      const insideFootprint = planned.cells.some(at => at.x === target.x && at.y === target.y);
+      if (insideFootprint && (event.damageType === data.damageType || traits.every(trait => planned.traits.includes(trait)))) return;
+    }
+  }
+  if (!traits.length) return;
+  const center = { x: target.x, y: target.y };
+  const origin = source ? { x: source.x, y: source.y } : center;
+  emitSpatialImpulse(state, host, frame, { traits, cells: [center], origin, center, sourceId: data.sourceId,
+    tier: carrierEffectiveTier(state, carrier, source), rank: authorityFor(state, carrier, data.sourceId).authorityRank,
+    directTargetIds: [target.id] });
+}
 
 export function continueCommit({ state, frame, host, options }) {
   const { data } = frame;
@@ -256,6 +293,7 @@ export function continueCommit({ state, frame, host, options }) {
     frame.pc++;
     const hook = op === 'damage' ? 'after_damage' : op === 'heal' ? 'after_heal' : null;
     if (hook) scheduleHooks(state, frame, hook, frame.eventRef, host);
+    if (op === 'damage') emitDamageImpulse(state, host, frame, source, target, event);
     return;
   }
   if (frame.sharedDamage) {
