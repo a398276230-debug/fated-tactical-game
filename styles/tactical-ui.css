@@ -256,6 +256,11 @@ body { margin: 0; background: var(--ink-2); }
 .ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
 
 .ft-linked-squad:not([hidden]) { display: flex; flex-wrap: wrap; gap: 4px; }
+.ft-linked-squad .game-button.is-ended { opacity: .4; filter: grayscale(1); }
+.ft-chip[data-status-id="downed"] { border-color: #d06a72; box-shadow: 0 0 10px rgb(208 106 114 / .45); animation: ft-downed-pulse 1.6s ease-in-out infinite; }
+@keyframes ft-downed-pulse { 50% { box-shadow: 0 0 2px rgb(208 106 114 / .15); } }
+[data-reaction-policy] { display: inline-flex; align-items: center; width: fit-content; padding: 4px 8px; border: 1px solid var(--line-mid); border-radius: 999px; background: var(--raised-b); color: var(--text-soft); cursor: pointer; user-select: none; }
+[data-reaction-policy]:hover, [data-reaction-policy]:focus-visible { border-color: var(--gold); color: var(--accent-text); }
 .ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
 .ft-ask { width: min(100%, 28rem); padding: 8px 10px; border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); }
 .ft-ask p { margin: 0 0 6px; color: var(--accent-text); overflow-wrap: anywhere; }

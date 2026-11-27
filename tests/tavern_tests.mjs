@@ -91,6 +91,20 @@ const charTag = record => `<char_info>${JSON.stringify(record)}</char_info>`;
 const battleTag = raw => `<battle_init>${raw}</battle_init>`;
 const floor = (message_id, content) => ({ message_id, content });
 
+test('濒死救援按双蓝方角色自动门控，显式关闭保留关闭状态', () => {
+  const source = { charInfo: [{ name: '主角', stats: { str: 5 }, resources: { hp: 20 } }, { name: '队友', stats: { str: 5 }, resources: { hp: 20 } }], battleInit: {
+    battle: 'battle|1|gate|门控|flat', units: [
+      { id: 'p', name: '主角', faction: 'blue', source: 'char_info', x: 1, y: 1 },
+      { id: 'a', name: '队友', faction: 'blue', source: 'char_info', x: 2, y: 1 },
+      { id: 'e', name: '敌人', faction: 'red', source: 'char_info', x: 5, y: 1 },
+    ], heroicDowned: false,
+  } };
+  const automatic = hydrateFromSources({ ...source, battleInit: { ...source.battleInit, heroicDowned: undefined } }, { throwOnValidation: true }).state;
+  assert.equal(automatic.heroicDowned, true);
+  const disabled = hydrateFromSources(source, { throwOnValidation: true }).state;
+  assert.equal(disabled.heroicDowned, undefined);
+});
+
 test('char_info 追溯使用 DOM 楼层 ID 对齐 API 索引，缺失或晚于入口时从头追溯', async () => {
   const messages = [floor(2, charTag({name:'旧楼'})), floor(14, charTag({name:'窗口首楼'})),
     floor(30, battleTag(openingDescriptor)), floor(43, charTag({name:'战后'}))];

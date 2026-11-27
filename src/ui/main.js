@@ -58,9 +58,9 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   const active = (s = state) => s?.units[s.order[s.turn]];
   const mayActManually = (s, unit = active(s)) => Boolean(unit && !s.outcome
     && !isAiControlled(s, active(s)) && !isAiControlled(s, unit));
-  const routed = command => actorId && !['answer', 'end'].includes(command.type) ? { ...command, actorId } : command;
+  const routed = command => actorId && command.actorId === undefined && !['answer', 'end'].includes(command.type) ? { ...command, actorId } : command;
   const previewSelected = command => game.previewAction(routed(command));
-  const TARGETED = new Set(['attack', 'skill', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
+  const TARGETED = new Set(['attack', 'skill', 'lock_on', 'free_ally', 'help', 'suppress', 'grapple', 'disarm', 'trip', 'push', 'shield_bash']);
   let snapshotSaveFailed = false;
   const error = value => {
     const node = $('action-error');
@@ -577,7 +577,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
           add('jump');
           if (sprint || !move.ok) add('sprint');
         }
-        for (const t of ['disengage', 'attack', 'shield_bash', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
+        for (const t of ['disengage', 'attack', 'shield_bash', 'lock_on', 'free_ally', 'help', 'suppress', 'grapple', 'disarm', 'trip', 'push']) add(t);
       }
       if (self && actor.stance === 'greatsword') {
         const defensive = actor.greatswordMode !== 'defensive';
@@ -722,6 +722,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
 
   const on = (id, event, fn) => $(id)?.addEventListener(event, fn, { signal });
+  const reactionNext = policy => policy === 'auto' ? 'ask' : policy === 'ask' ? 'hold' : 'auto';
 
   function selectActor(id) {
     if (pendingAsk() || busy || !mayActManually(state, state.units[id])) return;
@@ -732,6 +733,12 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
   }
 
   function bindControls() {
+    on('unit-card', 'click', event => {
+      const control = event.target.closest('[data-reaction-policy]');
+      if (!control || !live?.units[control.dataset.actorId]) return;
+      const unit = live.units[control.dataset.actorId];
+      execute({ type: 'reaction_policy', actorId: unit.id, policy: reactionNext(unit.reactionPolicy ?? 'auto') });
+    });
     on('linked-squad', 'click', event => {
       const button = event.target.closest('[data-actor-id]');
       if (button) selectActor(button.dataset.actorId);

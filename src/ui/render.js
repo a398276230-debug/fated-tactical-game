@@ -3,7 +3,7 @@ import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
 import { preview as rulesPreview, corpses, unitStandingStats, movementBudget, isAiControlled } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
-import { linkedUnitsOf } from '../core/turn-routing.js';
+import { linkedUnitsOf, sharedSquadUnits } from '../core/turn-routing.js';
 import { zoneContains } from '../core/vm-select.js';
 import { bodySizeLabel, moraleLabels, moraleTypes, stanceLabel } from '../core/combat_protocol.js';
 import { narrateAll, STAT_NAMES } from './narrate.js';
@@ -19,10 +19,11 @@ const MEDIUM_MARKS = Object.freeze({
 const STATUS_ICON = { buff: '↑', debuff: '↓', control: '⊘', dot: '✹', hot: '✚', shield: '⬡' };
 const SHAPES = { circle: '圆形范围', ring: '环形范围', cone: '锥形范围', fan: '扇形范围', line: '直线范围' };
 const ARROWS = { '-1,-1': '↙', '0,-1': '↓', '1,-1': '↘', '-1,0': '←', '1,0': '→', '-1,1': '↖', '0,1': '↑', '1,1': '↗' };
-export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', jump: '纵跃', dip: '武器蘸取', overwatch: '守望', attack: '普攻', interact: '互动', brace: '架势防御',
+export const ACTION_LABELS = { use_item: '使用道具', move: '移动', sprint: '疾跑', disengage: '撤离', jump: '纵跃', dip: '武器蘸取', overwatch: '守望', help: '急救拉起', reaction_policy: '反应策略', attack: '普攻', interact: '互动', brace: '架势防御',
   free_ally: '解除压制', suppress: '压制', block: '格挡', shield_bash: '盾击', charge: '蓄力', lock_on: '锁定', scan: '探察', grapple: '擒抱', disarm: '缴械', trip: '绊摔', push: '推撞',
   flee: '逃跑', reload: '装填', end: '结束回合' };
 export const ACTION_HINTS = { move: '自由走位（0 AP，消耗移动力）', sprint: '充能疾跑，耗 1 AP（动作槽）', disengage: '安全撤离，耗 1 AP（免借机）', attack: '用武器攻击', interact: '使用场景设施',
+  jump: '跨越中间格并在落点结算媒介', dip: '从相邻媒介附着两回合', overwatch: '等待敌人进入射程后反应射击', help: '拉起相邻倒地队友', reaction_policy: '切换自动、询问或保留',
   free_ally: '用攻击槽直接解救相邻队友', suppress: '一格内命中后进行力量对抗，不造成伤害', brace: '本回合减伤', block: '举盾格挡', charge: '为下一击蓄力', scan: '侦察周围', lock_on: '下次攻击更准', grapple: '对抗检定，擒住对方',
   disarm: '对抗检定，打落武器', trip: '对抗检定，绊倒对方', push: '对抗检定，推开对方', flee: '尝试脱离战斗', use_item: '使用副手道具',
   reload: '补充弹药', end: '保留剩余 AP' };
@@ -126,7 +127,12 @@ export function createRenderer(root, portraitFor = () => []) {
     }
     node.append(bars);
     const marks = values(unit.statuses);
-    if (marks.length) node.append(el('span', 'token-statuses', marks.length > 1 ? `◆${marks.length}` : STATUS_ICON[marks[0].category] ?? '◆'));
+    if (marks.length) {
+      const mark = marks.length > 1 ? `◆${marks.length}` : marks[0].id === 'downed' ? `🆘${marks[0].remainingTurns}` : marks[0].id === 'overwatch' ? '⌖' : marks[0].id === 'dipped' ? '✦' : STATUS_ICON[marks[0].category] ?? '◆';
+      const badge = el('span', 'token-statuses', mark);
+      badge.dataset.statusId = marks[0].id;
+      node.append(badge);
+    }
     return node;
   }
 
@@ -275,23 +281,28 @@ export function createRenderer(root, portraitFor = () => []) {
 
   function renderSquad(state, owner, actor, ui) {
     const node = $('linked-squad');
-    const linked = owner && !state.outcome && !isAiControlled(state, owner)
-      ? linkedUnitsOf(state, owner.id).filter(unit => unit.team === owner.team && !isAiControlled(state, unit)) : [];
-    node.hidden = $('linked-collaborate').hidden = !linked.length;
+    const members = owner && !state.outcome && !isAiControlled(state, owner)
+      ? sharedSquadUnits(state).filter(unit => unit.team === owner.team && !isAiControlled(state, unit)) : [];
+    node.hidden = members.length < 2;
+    $('linked-collaborate').hidden = !members.some(unit => unit.turnAnchorId === owner?.id && unit.summoned);
     node.inert = !!ui.busy || !!ui.askLocked;
     const collaborate = $('linked-collaborate');
     collaborate.disabled = node.inert;
     collaborate.setAttribute('aria-pressed', String(!!ui.autoCollaborate));
     const previous = new Map([...node.children].map(button => [button.dataset.actorId, button]));
-    const members = linked.length ? [owner, ...linked] : [];
     const buttons = members.map(unit => {
       const button = previous.get(unit.id) ?? Object.assign(el('button', 'game-button'), { type: 'button' });
       button.dataset.actorId = unit.id;
       button.setAttribute('aria-pressed', String(unit.id === actor?.id));
-      const move = rulesPreview(state, { type: 'move', actorId: unit.id }).ok;
-      const attack = unit.ap > 0 && !unit.used.attack;
-      const action = unit.ap > 0 && !unit.used.action;
-      button.textContent = `${unit.name} · 移${move ? '●' : '○'} 攻${attack ? '●' : '○'} 动${action ? '●' : '○'}`;
+      const move = rulesPreview(state, { type: 'move', actorId: unit.id });
+      const anchorId = unit.turnAnchorId ?? unit.id;
+      const ended = state.vm?.sharedTurn?.ended?.includes(anchorId) ?? false;
+      const unstarted = anchorId !== owner.id && !state.vm?.sharedTurn?.started?.includes(anchorId);
+      const ap = ended ? 0 : unstarted ? unit.apMax ?? 2 : unit.ap;
+      const remaining = !ended && move.ok ? move.moveRemaining ?? 0 : 0;
+      button.disabled = ended || unit.hp <= 0 || unit.fled;
+      button.className = `game-button${ended ? ' is-ended' : ''}`;
+      button.replaceChildren(el('span', 'chip-face', Array.from(unit.name)[0]), el('span', '', `${unit.name} · ${ap} AP · 移 ${remaining} 格`));
       return button;
     });
     if (buttons.length !== node.children.length || buttons.some((button, i) => button !== node.children[i])) node.replaceChildren(...buttons);
@@ -372,8 +383,12 @@ export function createRenderer(root, portraitFor = () => []) {
     if (!gear.children.length) gear.append(el('li', 'muted', '徒手'));
     const permanentZone = z => z.persistent || z.durationType === 'persistent' || z.durationType === 'until_removed';
     const zones = values(state.zones).filter(z => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
-    const reaction = el('p', 'muted', `反应：${u.reactionPolicy === 'ask' ? '询问' : u.reactionPolicy === 'hold' ? '保留' : '自动'}`);
-    reaction.dataset.reactionPolicy = u.reactionPolicy ?? 'auto';
+    const policy = u.reactionPolicy ?? 'auto';
+    const reaction = el('button', 'game-button ft-reaction-policy', `反应：${{ auto: '自动', ask: '询问', hold: '保留' }[policy]}`);
+    reaction.type = 'button';
+    reaction.dataset.reactionPolicy = policy;
+    reaction.dataset.actorId = u.id;
+    reaction.disabled = !rulesPreview(state, { type: 'reaction_policy', actorId: u.id, policy }).ok;
     const parts = [wrap, bars, stats, facts, reaction, el('h3', 'ft-section', '状态'), statusList, el('h3', 'ft-section', '装备'), gear];
     if (zones.length) parts.push(el('h3', 'ft-section', '所处区域'), el('p', '',
       zones.map(z => `${z.name}${permanentZone(z) ? '（常驻）' : `（剩余 ${z.remainingTurns} 轮）`}`).join('；')));
@@ -503,7 +518,7 @@ export function createRenderer(root, portraitFor = () => []) {
       baseline = { move: cells(run({ type: ui.sprint ? 'sprint' : 'move' })), attack: cells(run({ type: 'attack' })), interact: cells(run({ type: 'interact' })) };
     }
     const range = action ? run({ type: action.type, ...(action.skillId ? { skillId: action.skillId } : {}) }) : null;
-    const aimed = ['move', 'sprint', 'disengage', 'jump', 'attack', 'skill', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push', 'shield_bash'].includes(action?.type);
+    const aimed = ['move', 'sprint', 'disengage', 'jump', 'help', 'attack', 'skill', 'interact', 'lock_on', 'grapple', 'disarm', 'trip', 'push', 'shield_bash'].includes(action?.type);
     const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
     if (fresh) {
       const battleKind = Object.keys(moraleTypes).find(k => moraleTypes[k] === state.battleType);

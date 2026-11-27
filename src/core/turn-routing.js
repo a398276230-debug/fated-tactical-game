@@ -46,13 +46,19 @@ export function manualSharedWindowIndices(state) {
 
 export function sharedSquadUnits(state) {
   const indices = manualSharedWindowIndices(state);
-  if (indices.length < 2) return [];
   const ended = new Set(state.vm?.sharedTurn?.ended ?? []);
-  return indices.flatMap(index => {
+  const shared = indices.length >= 2 ? indices.flatMap(index => {
     const owner = state.units[state.order[index]];
     if (ended.has(owner.id)) return [];
     return [owner, ...linkedUnitsOf(state, owner.id)];
-  });
+  }) : [];
+  const owner = state.units?.[state.order?.[state.turn]];
+  const linked = owner && !isAiControlledUnit(owner) ? [owner, ...linkedUnitsOf(state, owner.id)] : [];
+  return [...new Map([...shared, ...linked].map(unit => [unit.id, unit])).values()];
+}
+
+function isAiControlledUnit(unit) {
+  return unit?.team === 'red' || unit?.controlPolicy?.mindControl;
 }
 
 export function canRouteActor(state, actorId) {
