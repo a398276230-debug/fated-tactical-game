@@ -1,7 +1,8 @@
-import { applyAction, equippedActiveSkills, isPassiveSkill, movementBudget, preview, skillAvailability, switchableWeapons } from './combat.js';
+import { applyAction, equippedActiveSkills, isAiControlled, isPassiveSkill, movementBudget, preview, skillAvailability, switchableWeapons } from './combat.js';
 import { elevation, atBattleEdge } from './spatial.js';
 import { canRouteActor, linkedUnitsOf } from './turn-routing.js';
 import { chooseAction } from './ai.js';
+import { aggregateModifiers } from './vm-carriers.js';
 const RULES = `你是命定战术沙盘的敌方陪玩 AI。你的身份是 user 一方的对手，只控制当前连续行动的敌方角色，不替玩家做决定。
 行动：每回合每个角色有 2 点 AP（1个攻击槽和1个动作槽）以及独立的移动力预算。常规移动（move）消耗移动力预算、0 AP、不占槽位，在移动力耗尽前可分多次在行动前后自由走位；疾跑（sprint，追加一倍基础移动力并移动）、撤离（disengage，本次移动免借机且无视阻挡）、装填、互动、背包换装、架势和逃跑消耗 1 AP 并使用动作槽；普通攻击、技能攻击、压制和解除压制使用攻击槽；重型技能同时使用两槽（2 AP）。动作、技能和背包物品的实际 ap、slot、资源、次数与冷却以输入数据为准。
 移动与蓄步：每个单位包含 moveRemaining（本回合剩余可走格数）、moveMax（本回合移动格上限）与 moveCarryPercent（跨区蓄步百分比）；movementCarry 按单位列出亚格状态下的当前百分比及原地 move（本回合限1次，0 AP）或 sprint（1 AP，动作槽）后可达到的百分比。
@@ -65,8 +66,12 @@ export function battleAiPayload(state) {
   for (let i = 0; i < state.order.length; i++) {
     const unit = state.units[state.order[(start + i) % state.order.length]];
     if (!unit || unit.hp <= 0 || unit.fled) continue;
-    if (actors.length && unit.team === 'blue') break;
-    if (unit.team === 'red') actors.push(...[unit, ...linkedUnitsOf(state, unit.id).filter(member => member.team === unit.team)].map(member => unitView(state, member)));
+    if (!usesExternalAI(state, unit)) {
+      if (actors.length || isAiControlled(state, unit)) break;
+      continue;
+    }
+    actors.push(...[unit, ...linkedUnitsOf(state, unit.id).filter(member => member.team === unit.team
+      && usesExternalAI(state, member))].map(member => unitView(state, member)));
   }
   const grid = state.grid.map(row => row.map(cell => cell.kind === 'wall' ? '#' : cell.kind === 'slope' ? `^${cell.z ?? 0}` : cell.kind === 'floor' ? String(cell.z ?? 0) : `${cell.kind}:${cell.z ?? 0}`).join(' '));
   const movement = {}, movementCarry = {};
@@ -83,8 +88,8 @@ export function battleAiPayload(state) {
       ...(move && { movePercent: move.bankedProgress / 10 }), ...(sprint && { sprintPercent: sprint.bankedProgress / 10 }) };
   }
   const zones = Object.keys(state.zones ?? {}).length ? Object.values(state.zones).map(zone => ({
-    id: zone.id, name: zone.name ?? zone.templateId ?? zone.id, ownerId: zone.ownerId ?? null,
-    ownerTeam: state.units?.[zone.ownerId]?.team ?? null, remainingTurns: zone.remainingTurns ?? null,
+    id: zone.id, name: zone.name ?? zone.templateId ?? zone.id, ownerId: zone.sourceId ?? null,
+    ownerTeam: zone.team ?? state.units?.[zone.sourceId]?.team ?? null, remainingTurns: zone.remainingTurns ?? null,
     area: zone.area, effectsSummary: { mods: (zone.mods ?? []).map(mod => ({ stat: mod.stat, locks: mod.locks, flags: mod.flags })),
       rules: (zone.rules ?? []).map(rule => ({ hook: rule.hook, ops: (rule.program ?? []).map(op => op.op) })) },
   })) : undefined;
@@ -99,7 +104,12 @@ function parse(text) {
   if (!Array.isArray(data.actions) || data.actions.length > 64) throw new Error('战斗 AI 必须返回 actions 数组');
   return data.actions;
 }
+// Temporary targeting rules are enforced deterministically by the local planner.
+const usesExternalAI = (state, unit) => isAiControlled(state, unit)
+  && !aggregateModifiers(state, unit.id).controlPolicy.mindControl;
+
 export async function requestBattleAi(state, request, { signal } = {}) {
+  if (!usesExternalAI(state, state.units[state.order[state.turn]])) return [];
   const payload = battleAiPayload(state);
   if (!payload.actorIds.length) return [];
   let messages = [{ role:'system', content: RULES }, { role:'user', content: JSON.stringify(payload) }];
@@ -112,7 +122,7 @@ export async function requestBattleAi(state, request, { signal } = {}) {
       for (const entry of actions) {
         if (!entry || typeof entry.unitId !== 'string' || !entry.action || typeof entry.action.type !== 'string') throw new Error('动作缺少 unitId 或 action.type');
         const actor = shadow.units[entry.unitId];
-        if (!actor || actor.team !== 'red') throw new Error(`不能控制单位 ${entry.unitId}`);
+        if (!usesExternalAI(shadow, actor)) throw new Error(`不能控制单位 ${entry.unitId}`);
         if (!canRouteActor(shadow, entry.unitId)) throw new Error(`行动顺序错误，应轮到 ${shadow.order[shadow.turn]}`);
         if (actor.moraleState === 'routed' && !['move','flee','end'].includes(entry.action.type)) throw new Error('溃逃单位只能撤向边界或逃跑');
         const action = Object.fromEntries(Object.entries(entry.action).filter(([, value]) => value !== null));
@@ -125,7 +135,7 @@ export async function requestBattleAi(state, request, { signal } = {}) {
         applyAction(shadow, action);
         valid.push({ ...entry, action });
         const next = shadow.units[shadow.order[shadow.turn]];
-        if (!next || next.team !== 'red') break;
+        if (!usesExternalAI(shadow, next)) break;
       }
       if (!valid.length) throw new Error('actions 为空');
       return valid;

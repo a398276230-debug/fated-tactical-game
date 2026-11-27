@@ -12,7 +12,8 @@ import { zoneContains } from './vm-select.js';
 import { aggregateModifiers, applyStatMod, collectRules, itemRules, incomingDistanceOffset, carrierScope, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
-import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMAnchorTurn, advanceVMRound } from './vm-runtime.js';
+import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMAnchorTurn, advanceVMRound, vmHost } from './vm-runtime.js';
+import { refreshFollowingZones } from './vm-spatial-ops.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
@@ -42,6 +43,9 @@ const clamp = (number, min, max) => Math.max(min, Math.min(max, number));
 const vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
 const statusOf = (unit, id) => Object.hasOwn(unit.statuses ?? {}, id) ? unit.statuses[id] : undefined;
 export const currentUnit = state => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : undefined;
+export function isAiControlled(state, unit) {
+  return Boolean(unit && (unit.team === 'red' || aggregateModifiers(state, unit.id).controlPolicy.mindControl));
+}
 
 function record(state, unit, type, text, detail = {}) {
   const actor = typeof unit === 'string' ? unit : unit?.id ?? null;
@@ -836,8 +840,13 @@ function validReach(state, actor, at, template, ammo) {
   return ground(state, at) && geometry.distance <= geometry.range + 1e-9 && clearSight(state, actor, at);
 }
 
+export function visibleUnit(state, actor, target) {
+  return !vmFlag(state, target, 'hidden', { attacker: actor }) || vmFlag(state, actor, 'trueSight', { target })
+    || (near(actor, target) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target)) <= 1);
+}
+
 export function visibleEnemy(state, actor, target) {
-  return target.team !== actor.team && (!vmFlag(state, target, 'hidden', { attacker: actor }) || (near(actor, target) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target)) <= 1));
+  return target.team !== actor.team && visibleUnit(state, actor, target);
 }
 
 function tauntFor(state, actor, template, ammo) {
@@ -891,13 +900,13 @@ function area(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, de
   });
 }
 
-function selectionAllows(state, template, actor, unit, allowFriendlyTarget = false) {
+function selectionAllows(state, template, actor, unit, { allowFriendlyTarget, allyTeam = actor.team } = {}) {
   if (!unit) return false;
   if ((template.shape ?? 'single') === 'single' && unit.team !== actor.team &&
     aggregateModifiers(state, unit.id, modifierEvent(unit, { attacker: actor, target: unit })).flags.untargetableSingle) return false;
   switch (template.target ?? 'enemy') {
     case 'enemy': return allowFriendlyTarget || actor.team !== unit.team;
-    case 'ally': return actor.team === unit.team;
+    case 'ally': return actor.id === unit.id || allyTeam === unit.team;
     case 'self': return actor.id === unit.id;
     case 'cell': return false;
     default: return true;
@@ -1123,33 +1132,32 @@ function nearbyCovers(state, at) {
   return values(state.covers).filter(c => c.hp > 0 && inInteractionRange(state, at, c)).sort(byId);
 }
 
-function shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget) {
+function shapeSelectionAllows(state, template, actor, unit, targeting) {
   const areaDamage = (template.shape ?? 'single') !== 'single' && hasStrikeDamage(template);
-  const targeting = areaDamage && template.target == null ? { ...template, target: 'any' } : template;
-  return selectionAllows(state, targeting, actor, unit, !areaDamage && allowFriendlyTarget);
+  const areaTargeting = areaDamage ? { ...targeting, allowFriendlyTarget: targeting.mindControlled && unit.id !== actor.id } : targeting;
+  return selectionAllows(state, areaDamage && template.target == null ? { ...template, target: 'any' } : template, actor, unit, areaTargeting);
 }
 
-function needsAimDirection(state, actor, origin, center, template, range, allowFriendlyTarget) {
+function needsAimDirection(state, actor, origin, center, template, range, targeting) {
   return range > 0 && ['fan', 'cone', 'line'].includes(template.shape) && sameCell(origin, center)
     && !living(state).some(unit => unit.id !== actor.id && sameCell(unit, center)
-      && shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget));
+      && shapeSelectionAllows(state, template, actor, unit, targeting));
 }
 
-function usableTiles(state, actor, template, weapon) {
-  const allowFriendlyTarget = aggregateModifiers(state, actor.id).controlPolicy.allowFriendlyTarget === true;
+function usableTiles(state, actor, template, weapon, targeting) {
   return allCells(state).filter(at => {
     const aim = template.target === 'cell' || (template.shape ?? 'single') !== 'single' ? at
-      : locateUnit(state, at, null, u => selectionAllows(state, template, actor, u, allowFriendlyTarget)) ?? at;
+      : locateUnit(state, at, null, u => selectionAllows(state, template, actor, u, targeting)) ?? at;
     if (sameCell(actor, at) && needsAimDirection(state, actor, actor, at, template,
-      reaches(state, actor, aim, template, weapon?.ammo).range, allowFriendlyTarget)) return false;
+      reaches(state, actor, aim, template, weapon?.ammo).range, targeting)) return false;
     return validReach(state, actor, aim, template, weapon?.ammo);
   });
 }
-function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, allowFriendlyTarget, targetId) {
+function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRange, ignoreLOS, targeting, targetId) {
   const keys = new Set(cells.map(at => key(at.x, at.y)));
   if (template.target === 'cell') return [];
   return living(state).filter(unit => {
-    if (!shapeSelectionAllows(state, template, actor, unit, allowFriendlyTarget)) return false;
+    if (!shapeSelectionAllows(state, template, actor, unit, targeting)) return false;
     if ((template.shape ?? 'single') === 'single') return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === 'circle' || template.shape === 'ring') {
       const distanceFromCenter = distance(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: 'attack' });
@@ -1272,6 +1280,11 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
 
   if (type === 'flee') return { ...common, name: '逃跑', maneuver: 'flee' };
+  const { controlPolicy, forbiddenTargetIds, charmTeam } = aggregateModifiers(state, unit.id);
+  const targeting = { allowFriendlyTarget: Boolean(controlPolicy.allowFriendlyTarget || controlPolicy.mindControl),
+    mindControlled: Boolean(controlPolicy.mindControl), allyTeam: controlPolicy.mindControl === 'charm' ? charmTeam ?? unit.team : unit.team };
+  const forbidden = target => alive(target) && !target.fled && forbiddenTargetIds.has(target.id);
+  const forbiddenTargetError = '受魅惑影响，无法攻击施术者';
   if (type === 'lock_on') {
     const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
     if (!target || target.team === unit.team || !sameCell(target, center)) return fail('定位必须指定敌方单位');
@@ -1286,16 +1299,20 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   }
   if (type === 'suppress') {
     if (state.battleType !== 'suppress' || unit.team !== state.suppressingTeam) return fail('仅压制方可以使用压制');
-    const available = living(state).filter(t => t.team !== unit.team && t.statuses.suppressed?.vars?.holdTotal == null && distance(state,unit,t)<=1 && visibleEnemy(state,unit,t) && clearSight(state,unit,t));
-    if (!center) return {...common,cells:available.map(t=>pos(t.x,t.y))};
+    const available = living(state).filter(t => t.id !== unit.id && (targeting.allowFriendlyTarget || t.team !== unit.team)
+      && t.statuses.suppressed?.vars?.holdTotal == null && distance(state,unit,t)<=1 && visibleUnit(state,unit,t) && clearSight(state,unit,t));
+    if (!center) return {...common,cells:available.filter(t => !forbidden(t)).map(t=>pos(t.x,t.y))};
     const target = available.find(t=>t.id === action.targetId && sameCell(t,center)) ?? available.find(t=>sameCell(t,center));
     if (!target) return fail('压制需要一格内可见且未被压制的敌人');
+    if (forbidden(target)) return fail(forbiddenTargetError);
     const profile = targetProfile(state,unit,target,target,normalAttack);
     return {...common,name:'压制',targetId:target.id,targets:[{...profile,damage:null,expectedDamage:0}]};
   }
   if (['grapple','disarm','trip','push'].includes(type)) {
-    const target = locateUnit(state, center, action.targetId, u => u.team !== unit.team);
-    if (!target || target.team === unit.team || !sameCell(target, center)) return fail('战术对抗必须指定敌方单位');
+    const allowed = t => t.id !== unit.id && (targeting.allowFriendlyTarget || t.team !== unit.team);
+    const target = locateUnit(state, center, action.targetId, allowed);
+    if (target && sameCell(target, center) && forbidden(target)) return fail(forbiddenTargetError);
+    if (!target || !allowed(target) || !sameCell(target, center)) return fail('战术对抗必须指定敌方单位');
     if (type === 'disarm' && !(target.mainHand ?? target.weapon)) return fail('目标没有可缴械的主手武器');
     if (near(unit, target) > 1 || !clearSight(state, unit, target)) return fail('战术对抗需要贴身且视线畅通');
     return { ...common, name: ({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[type], maneuver: type, targetId: target.id };
@@ -1334,6 +1351,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
         return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y,
           damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
       });
+    if (detonate && targets.some(profile => forbidden(state.units[profile.id]) || forbidden(state.units[profile.recipientId]))) return fail(forbiddenTargetError);
     return { ...common, ...(detonate ? { ...reaches(state, unit, item, weapon.template, weapon.ammo), ammo: weapon.ammoCount } : {}),
       name: `${detonate ? '引爆' : '激活'}${item.name}`, interactiveId: item.id, kind: item.kind, cells, targets, center };
   }
@@ -1351,18 +1369,19 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     return { ...common, ...tuning, cells: corpses(state).filter(c => validReach(state, unit, c, template)).map(c => pos(c.x, c.y)) };
   }
   if (unplaced) {
-    return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, action.nonLethal ?? unit.nonLethal) };
+    return { ...common, ...tuning, cells: usableTiles(state, unit, template, attack && !shieldBash ? weapon : null, targeting) };
   }
-  const allowFriendlyTarget = aggregateModifiers(state, unit.id).controlPolicy.allowFriendlyTarget === true;
   const aoe = (template.shape ?? 'single') !== 'single';
-  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? u => selectionAllows(state, template, unit, u, allowFriendlyTarget) : null);
+  const hostile = attack || template.target === 'enemy' || (hasStrikeDamage(template) && template.target !== 'ally' && template.target !== 'self');
+  const aimedUnit = locateUnit(state, center, action.targetId, !aoe ? u => selectionAllows(state, template, unit, u, targeting) : null);
+  if (hostile && (!aoe || action.targetId) && aimedUnit && sameCell(aimedUnit, center) && forbidden(aimedUnit)) return fail(forbiddenTargetError);
   if (action.targetId && (!aimedUnit || !sameCell(aimedUnit, center))) return fail('目标单位不在指定格');
   const aim = template.target === 'cell' || aoe ? center : aimedUnit ?? center;
   const origin = actionOrigin ? { ...unit, x: actionOrigin.x, y: actionOrigin.y,
     altitude: actionOrigin.altitude ?? (actionOrigin.z === undefined ? 0 : actionOrigin.z - elevation(state, actionOrigin)) } : unit;
   const ammo = attack && !shieldBash ? weapon.ammo : null;
   const geometry = reaches(state, origin, aim, template, ammo);
-  if (needsAimDirection(state, unit, origin, center, template, geometry.range, allowFriendlyTarget)) {
+  if (needsAimDirection(state, unit, origin, center, template, geometry.range, targeting)) {
     return fail('有向技能需要选择方向', { ...geometry, originSensitive: true });
   }
   if (!ground(state, center)) return fail('墙体无法指定', geometry);
@@ -1380,20 +1399,21 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   const cells = area(state, origin, aim, template, ammo, { ignoreRange, ignoreLOS, deferGeometry });
   if (!cells.length && !deferGeometry) return fail('请选择一个方向', { ...geometry, originSensitive: true });
   if (!aoe) {
-    if (!selectionAllows(state, template, unit, aimedUnit, allowFriendlyTarget) && !coverTarget && template.target !== 'cell') {
+    if (!selectionAllows(state, template, unit, aimedUnit, targeting) && !coverTarget && template.target !== 'cell') {
       return fail('该格没有合适的目标', geometry);
     }
-    if (!deferGeometry && aimedUnit && aimedUnit.team !== unit.team && !visibleEnemy(state, origin, aimedUnit)) return fail('目标正在隐身', { ...geometry, originSensitive: true });
+    if (!deferGeometry && aimedUnit && (aimedUnit.team !== unit.team || hostile && aimedUnit.id !== unit.id)
+      && !visibleUnit(state, origin, aimedUnit)) return fail('目标正在隐身', { ...geometry, originSensitive: true });
   }
-  const hostile = attack || template.target === 'enemy' || (hasStrikeDamage(template) && template.target !== 'ally' && template.target !== 'self');
   const taunter = hostile && !deferGeometry ? tauntFor(state, origin, template, ammo) : null;
   if (taunter && (!aimedUnit || aimedUnit.id !== taunter.id)) return fail(`受嘲讽，必须指定${taunter.name}`, { ...geometry, originSensitive: true });
   const templateForHit = template;
   const targetUnits = shapeTargets(state, unit, cells, template, aim, origin, ammo,
-    ignoreRange || deferGeometry, ignoreLOS || deferGeometry, allowFriendlyTarget, action.targetId ?? (!aoe ? aimedUnit?.id : undefined));
+    ignoreRange || deferGeometry, ignoreLOS || deferGeometry, targeting, action.targetId ?? (!aoe ? aimedUnit?.id : undefined));
+  if (hostile && targetUnits.some(forbidden)) return fail(forbiddenTargetError);
   const areaAttack = (template.shape ?? 'single') !== 'single';
   const declaredIntent = action.intent ?? unit.intent ?? 'normal';
-  const intentLock = aggregateModifiers(state, unit.id).controlPolicy.intentLock;
+  const intentLock = controlPolicy.intentLock;
   const resolvedIntent = areaAttack || !hostile ? 'normal' : intentLock ?? declaredIntent;
   const targets = targetUnits.map(t => ({ ...targetProfile(state, unit, t, t, templateForHit, { weapon: attack && !shieldBash ? weapon : null, origin, intent: resolvedIntent, skillId: action.skillId }),
     bonusDice: action.bonusDice ?? 0, intent: resolvedIntent, nonLethal: action.nonLethal ?? unit.nonLethal ?? false }));
@@ -1617,6 +1637,7 @@ function knockback(state, actor, target, effect) {
   const [dx, dy] = signFacing(actor, target);
   if (!dx && !dy) return;
   const from = pointAt(state, target);
+  const traversedCells = [];
   for (let i = 0; i < (effect.distance ?? 1); i++) {
     const at = pos(target.x + dx, target.y + dy);
     if (!canStep(state, target, at)) {
@@ -1625,8 +1646,17 @@ function knockback(state, actor, target, effect) {
       break;
     }
     Object.assign(target, at);
+    traversedCells.push(pointAt(state, target));
   }
-  record(state, actor, 'knockback', `${target.name}遭到击退`, { targetId: target.id, from, to: pointAt(state, target) });
+  const to = pointAt(state, target), steps = traversedCells.length;
+  if (steps > 0) {
+    refreshFollowingZones(state, vmHost);
+    target.moved = steps;
+    target.lastMoveDir = movementDirection(from, to, target.lastMoveDir);
+    dispatchVMHook(state, 'after_move', { actorId: target.id, targetId: target.id,
+      fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, steps, moveKind: 'push', traversedCells });
+  }
+  record(state, actor, 'knockback', `${target.name}遭到击退`, { targetId: target.id, from, to });
 }
 
 export function retargetStrike(state, actor, action, target, plan, previous = {}) {
@@ -1834,7 +1864,8 @@ function continueMovement(state, actor, type, plan, progress, host) {
     if (canStep(state, actor, to)) {
       actor.facing = signFacing(actor, to);
       Object.assign(actor, pos(to.x, to.y));
-      path.push(to);
+      refreshFollowingZones(state, vmHost);
+      path.push(pointAt(state, actor));
       delete progress.reactors;
       return false;
     }
@@ -1854,7 +1885,7 @@ function continueMovement(state, actor, type, plan, progress, host) {
     actor.lastMoveDir = movementDirection(progress.from, landing, actor.lastMoveDir);
     progress.moveEvent = { actorId: actor.id, targetId: actor.id,
       fromX: progress.from.x, fromY: progress.from.y, toX: landing.x, toY: landing.y,
-      steps: movedCells, moveKind: type };
+      steps: movedCells, moveKind: type, traversedCells: path };
   }
   record(state, actor, type, carryText ?? `${actor.name}${movementNames[type]}${interrupted ? '受阻，停在' : '至'} (${landing.x}, ${landing.y}, z=${landing.z})`,
     { from: progress.from, to: landing, path, steps: path.length, interrupted, ...(actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }), ...(carryText ? { moveM: budget.effectiveMoveM, progressPermille: budget.remainingPermille } : {}) });
@@ -2046,6 +2077,8 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       break;
     }
     case 'grapple': case 'disarm': case 'trip': case 'push': {
+      if (frame.nativeProgress.contestResolved) return true;
+      frame.nativeProgress.contestResolved = true;
       const target = state.units[plan.targetId];
       if (target && maneuverContest(state, actor, target, type)) {
         if (type === 'grapple') grantStatus(state, target, actionStatuses.grapple, { sourceId: actor.id });
@@ -2056,7 +2089,10 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
           target.stance = loadoutStance(state, target);
         }
         if (type === 'trip') grantStatus(state, target, actionStatuses.trip, { sourceId: actor.id });
-        if (type === 'push') knockback(state, actor, target, { distance: 1, collisionDamage: 3 });
+        if (type === 'push') {
+          knockback(state, actor, target, { distance: 1, collisionDamage: 3 });
+          return false;
+        }
       }
       break;
     }

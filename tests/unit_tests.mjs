@@ -50,6 +50,8 @@ import './arena_handoff_tests.mjs';
 import './vm_pools_tests.mjs';
 import './unit_pools_runtime_tests.mjs';
 import './orthogonal_action_tests.mjs';
+import './orthogonal_reactions_tests.mjs';
+import './orthogonal_control_spatial_tests.mjs';
 import './vm_carriers_tests.mjs';
 import './vm_spatial_tests.mjs';
 import './vm_corpus_tests.mjs';

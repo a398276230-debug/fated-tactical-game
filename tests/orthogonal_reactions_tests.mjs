@@ -165,13 +165,13 @@ test('a third-party board listener suspends a cast for the blue player and pays 
   }
 });
 
-test('a board listener can use the aim coordinates of a ground cast without a target', () => {
+test('a board listener can use the aim coordinates of a ground cast without a unit target in the command', () => {
   const state = buildScenario('ruins');
   const actor = currentUnit(state), observer = state.units.oracle;
   const aim = { x: actor.x, y: actor.y };
   addSkill(state, actor, 'ground-cast', { range: 0, target: 'cell' });
   observer.rules = [{ id: 'ground-listener', hook: 'before_action', listenScope: 'board',
-    filter: `event.skillId == 'ground-cast' && target.id == null && event.centerX == ${aim.x} && event.centerY == ${aim.y}`,
+    filter: `event.skillId == 'ground-cast' && target.id == '${actor.id}' && event.centerX == ${aim.x} && event.centerY == ${aim.y}`,
     program: [ownerVar('ground', true)] }];
   assert.ok(validVmRule(observer.rules[0]));
   resolveVMAction(state, aimed('skill', 'ground-cast', aim));

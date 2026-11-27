@@ -1,4 +1,4 @@
-import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, visibleEnemy } from './combat.js';
+import { weaponInfo, actionSkill, currentUnit, equippedActiveSkills, getStatusTemplate, isPassiveSkill, preview, reachable, shieldTotal, visibleUnit } from './combat.js';
 import { aggregateModifiers, unitSkipped } from './vm-carriers.js';
 import { zoneContains } from './vm-select.js';
 import { atBattleEdge, coverBetween, distance3D, elevation, facingToward, hasLOS } from './spatial.js';
@@ -9,7 +9,16 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const healthGap = unit => unit.maxHp - unit.hp;
 const samePosition = (a, b) => a.x === b.x && a.y === b.y;
 
-export function tactics(state, actor, action, plan) {
+function targetingPolicy(state, actor) {
+  const { controlPolicy, forbiddenTargetIds, charmTeam } = aggregateModifiers(state, actor.id);
+  const allyTeam = controlPolicy.mindControl === 'charm' ? charmTeam : actor.team;
+  const indiscriminate = controlPolicy.mindControl !== 'charm' && (controlPolicy.mindControl === 'berserk' || controlPolicy.allowFriendlyTarget);
+  const isAlly = unit => unit.id === actor.id || unit.team === allyTeam;
+  const isEnemy = unit => unit && unit.id !== actor.id && (indiscriminate || !isAlly(unit)) && !forbiddenTargetIds.has(unit.id);
+  return { isAlly, isEnemy };
+}
+
+export function tactics(state, actor, action, plan, { isEnemy } = targetingPolicy(state, actor)) {
   if (!plan?.ok) return -Infinity;
   if (action.type === 'interact' && plan.kind === 'altar') return 4 + Math.min(8, healthGap(actor)) * .95 + Math.min(5, actor.maxMp - actor.mp) * .55;
   let score = 0;
@@ -22,7 +31,7 @@ export function tactics(state, actor, action, plan) {
     }
     const target = state.units[profile.recipientId ?? profile.id];
     if (!target) continue;
-    const enemy = target.team !== actor.team;
+    const enemy = isEnemy(target);
     const sign = enemy ? 1 : (target === actor ? -1.5 : -1.15);
     const damage = profile.expectedDamage ?? 0;
     const kill = profile.damageMax >= target.hp ? Math.min(profile.hitChance ?? 1, damage / target.hp) : 0;
@@ -39,7 +48,7 @@ export function tactics(state, actor, action, plan) {
   for (const { id, heal, shieldGain } of plan.support ?? []) {
     const target = state.units[id];
     if (!target) continue;
-    const sign = target.team === actor.team ? 1 : -1;
+    const sign = isEnemy(target) ? -1 : 1;
     score += sign * (heal * .9 + Math.min(shieldGain, target.maxHp) * .5);
   }
   const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
@@ -53,7 +62,7 @@ export function tactics(state, actor, action, plan) {
     if (!targets.length && targetAtAction) targets.push(targetAtAction);
     if (op.op === 'spawn') score += op.entityKind === 'unit' ? 4 : 2;
     for (const target of targets) {
-      const enemy = target.team !== actor.team;
+      const enemy = isEnemy(target);
       const status = getStatusTemplate(state, op.statusId);
       const control = op.op === 'apply_status' && status?.category === 'control';
       const profile = (plan.targets ?? []).find(row => (row.recipientId ?? row.id) === target.id);
@@ -64,12 +73,12 @@ export function tactics(state, actor, action, plan) {
     }
   }
   if (programs.some(op => op.op === 'spawn' && ['zone', 'terrain', 'cover'].includes(op.entityKind))) {
-    score += Object.values(state.units).some(unit => unit.team !== actor.team && unit.hp > 0 && !unit.fled) ? 2 : 0;
+    score += Object.values(state.units).some(unit => isEnemy(unit) && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * .35 - plan.sp * .25;
 }
 
-function protocolTactics(state, actor, plan) {
+function protocolTactics(state, actor, plan, { isEnemy }) {
   const impact = plan.ruleImpact;
   const nativeRecipients = new Set();
   let score = 0;
@@ -83,7 +92,7 @@ function protocolTactics(state, actor, plan) {
     const target = state.units[profile.recipientId ?? profile.id];
     if (!target) continue;
     nativeRecipients.add(target.id);
-    const enemy = target.team !== actor.team;
+    const enemy = isEnemy(target);
     const hit = profile.hitChance ?? 1;
     const damage = Math.min(target.hp * hit, profile.expectedDamage ?? 0);
     const defeat = (profile.damageMin ?? 0) >= target.hp ? hit : 0;
@@ -96,7 +105,7 @@ function protocolTactics(state, actor, plan) {
   const confidence = impact?.conditional ? .8 : 1;
   for (const effect of impact?.units ?? []) {
     const target = state.units[effect.id];
-    const direction = target.team === actor.team ? 1 : -1;
+    const direction = isEnemy(target) ? -1 : 1;
     const hp = effect.hp + (target === actor ? plan.hp ?? 0 : 0)
       + (nativeRecipients.has(effect.id) ? effect.strikeDamage : 0);
     const survived = target.hp + effect.hp > 0;
@@ -105,7 +114,7 @@ function protocolTactics(state, actor, plan) {
   }
   if (impact?.summons) {
     const defeated = new Set(impact.units.filter(effect => state.units[effect.id].hp + effect.hp <= 0).map(effect => effect.id));
-    const remainingEnemy = Object.values(state.units).some(unit => unit.team !== actor.team && unit.hp > 0 && !unit.fled && !defeated.has(unit.id));
+    const remainingEnemy = Object.values(state.units).some(unit => isEnemy(unit) && unit.hp > 0 && !unit.fled && !defeated.has(unit.id));
     if (remainingEnemy) score += confidence * Math.min(12, 4 * impact.summons);
   }
   const fraction = (cost, pool) => (cost ?? 0) / Math.max(1, pool ?? 0);
@@ -119,7 +128,9 @@ export function aimedOptions(state, actor, attacksOnly = false) {
   const choices = [];
   const protocol = state.ruleset === 'protocol';
   const vmAimBudget = attacksOnly ? 2 : 6;
-  const score = (action, plan) => protocol && plan.kind !== 'altar' ? protocolTactics(state, actor, plan) : tactics(state, actor, action, plan);
+  const policy = targetingPolicy(state, actor);
+  const { isAlly, isEnemy } = policy;
+  const score = (action, plan) => protocol && plan.kind !== 'altar' ? protocolTactics(state, actor, plan, policy) : tactics(state, actor, action, plan, policy);
   const offensiveProgram = program => (program ?? []).some(op => {
     if (op.enabled === false) return false;
     if (op.op === 'damage' || op.op === 'resource' && ['sub', 'sub_max'].includes(op.mode) && op.pool === 'hp') return true;
@@ -138,16 +149,16 @@ export function aimedOptions(state, actor, attacksOnly = false) {
       .some(rule => offensiveProgram(rule.program));
   };
   const hitsEnemy = plan => (plan.targets ?? []).some(target => target.kind !== 'cover'
-    && state.units[target.recipientId ?? target.id]?.team !== actor.team)
+    && isEnemy(state.units[target.recipientId ?? target.id]))
     || (plan.ruleImpact?.units ?? []).some(effect => {
       const target = state.units[effect.id];
-      return target?.team !== actor.team && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
+      return isEnemy(target) && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
     });
   function consider(action, plan = preview(state, action, { actingUnit: actor })) {
     const skill = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
     if (plan.ok && !(isOffensiveAreaSkill(skill) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
   }
-  const enemies = units.filter(u => visibleEnemy(state, actor, u));
+  const enemies = units.filter(u => isEnemy(u) && visibleUnit(state, actor, u));
   for (const target of [...enemies, ...(attacksOnly ? [] : covers)]) consider({ type: 'attack', x: target.x, y: target.y, ...(target.id ? { targetId: target.id } : {}) });
   const items = Object.entries(actor.inventory ?? {}).filter(([id, count]) => count > 0 && state.skills[id]?.backpackItem);
   const templates = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...items.map(([id]) => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
@@ -167,7 +178,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     if (skill.target === 'cell' || skill.target === 'corpse') {
       candidates = query.cells;
     } else if (skill.shape === 'single') {
-      candidates = skill.target === 'enemy' ? enemies : skill.target === 'self' ? [actor] : units.filter(u => skill.target === 'any' || u.team === actor.team);
+      candidates = skill.target === 'enemy' ? enemies : skill.target === 'self' ? [actor] : units.filter(u => skill.target === 'any' || isAlly(u));
     } else if (attacksOnly) {
       candidates = enemies;
     } else {
@@ -226,8 +237,8 @@ function approach(state, actor, enemies, suppress = false) {
 }
 
 function zoneOperationScore(state, zone, unit) {
-  const owner = state.units?.[zone.ownerId];
-  const hostile = owner?.team != null && owner.team !== unit.team;
+  const zoneTeam = zone.team ?? state.units?.[zone.sourceId]?.team ?? null;
+  const hostile = zoneTeam ? zoneTeam !== unit.team : false;
   const text = rule => typeof rule.filter === 'string' && /target\\.team\\s*!=\\s*source\\.team/.test(rule.filter);
   const walk = (program, multiplier = 1) => (program ?? []).reduce((score, op) => {
     let value = 0;
@@ -274,7 +285,8 @@ export function chooseAction(state, actor = currentUnit(state)) {
   if (!actor || !actor.hp) return { ...END };
   const plan = action => preview(state, action, { actingUnit: actor });
   if (!actor.ap && !plan({ type: 'move' }).ok) return { ...END };
-  const enemies = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && u.team !== actor.team).sort(byId);
+  const { isEnemy } = targetingPolicy(state, actor);
+  const enemies = Object.values(state.units).filter(u => u.hp > 0 && !u.fled && isEnemy(u)).sort(byId);
   if (!enemies.length) return { ...END };
   const bankStep = move => move.cells?.find(cell => cell.bankedProgress > (actor.moveCarryPermille ?? 0));
   if (actor.moraleState === 'routed') {
@@ -305,7 +317,7 @@ export function chooseAction(state, actor = currentUnit(state)) {
       const action={type:'suppress',targetId:enemy.id,x:enemy.x,y:enemy.y};
       if (plan(action).ok) return action;
     }
-    const targets=enemies.filter(t=>!t.statuses.suppressed && visibleEnemy(state,actor,t));
+    const targets=enemies.filter(t=>!t.statuses.suppressed && visibleUnit(state,actor,t));
     const path=targets.length && approach(state,actor,targets,true);
     if (path?.length) {
       const move=plan({type:'move'});
@@ -314,7 +326,7 @@ export function chooseAction(state, actor = currentUnit(state)) {
     }
     return {...END};
   }
-  const visible = enemies.filter(u => visibleEnemy(state, actor, u));
+  const visible = enemies.filter(u => visibleUnit(state, actor, u));
   const objectives = visible.length ? visible : enemies;
   let best = { action: END, score: .6 };
   const attackChoices = [];

@@ -105,7 +105,8 @@ function opcode(op, properties, required, ...conditions) {
 }
 
 const intentEnum = enumOf('normal', 'function', 'core', 'kill', 'concept');
-const controlPolicy = { ...object({ intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady') }), minProperties: 1 };
+const controlPolicy = { ...object({ intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady'),
+  mindControl: enumOf('berserk', 'charm'), forbidTargetSource: bool }), minProperties: 1 };
 export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
   'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult', 'costFlat',
   'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'shatter', 'power', 'hits', 'attackDistanceOffset']);
@@ -116,7 +117,7 @@ export const zoneAreaShapes = Object.freeze(['single', 'circle', 'ring', 'rect',
 export const skillTargets = Object.freeze(['enemy', 'ally', 'self', 'any', 'corpse', 'cell']);
 export const lockSlots = Object.freeze(['attack', 'action', 'move', 'cast', 'reaction', 'fly', 'teleport']);
 export const carrierFlags = Object.freeze(['undispellable', 'concept_immune']);
-export const statModFlags = Object.freeze(['preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo']);
+export const statModFlags = Object.freeze(['preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo', 'trueSight']);
 export const stackModes = Object.freeze(['refresh', 'stack', 'replace', 'extend']);
 export const durationTypes = Object.freeze(['battle_turns', 'until_removed', 'persistent']);
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
@@ -126,7 +127,7 @@ const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageM
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
   stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: { ...text, not: literal('dodge') }, statusId: id,
-  locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo'), 1),
+  locks: list(slot, 1), flags: list(enumOf(...statModFlags), 1),
   controlPolicy, when: booleanExpr, pool: id, forbidAction: literal(true), forbidReason: { ...text, minLength: 1, maxLength: 120 },
   costRedirect: object({ from: id, to: id, ratio: { type: 'number', exclusiveMinimum: 0, maximum: 100 } }, ['from', 'to']),
 }), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy'), needs('forbidAction'), needs('costRedirect')),

@@ -199,7 +199,7 @@ function continueMove({ state, frame, host, context }) {
     unit.moved = (unit.moved ?? 0) + path.length;
     host.hooks?.(state, frame, 'after_move', newEvent(state, { actorId: unit.id, targetId: unit.id,
       fromX: from.x, fromY: from.y, toX: unit.x, toY: unit.y, steps: path.length,
-      moveKind: op.mode }));
+      moveKind: op.mode, ...(path.length && { traversedCells: path.map(pt => at(state, { ...pt, altitude: unit.altitude })) }) }));
   }
   logMove(state, host, unit, op.mode, from, path, collision);
   if (!collision) return;

@@ -145,14 +145,16 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
   };
 }
 
-function recipients(state, row, unitIds, event, queries) {
+function recipients(state, row, unitIds, event, queries, hook) {
   const { entity, carrier, nativeOwnerId } = row;
   const shared = entity.shareRulesTo ? new Set(selectVM(state, entity.shareRulesTo,
     carrierScope(state, row, nativeOwnerId, event, queries), { pure: true })) : null;
   return unitIds.filter(id => {
     const unit = own(state.units, id);
-    return carrier.type === 'zone' ? zoneContains(state, entity, unit) || shared?.has(unit)
-      : id === nativeOwnerId || shared?.has(unit);
+    return carrier.type === 'zone' ? zoneContains(state, entity, unit)
+      || (hook === 'after_move' && id === event.actorId && Array.isArray(event.traversedCells)
+        && event.traversedCells.some(pt => zoneContains(state, entity, pt)))
+      || shared?.has(unit) : id === nativeOwnerId || shared?.has(unit);
   });
 }
 
@@ -212,8 +214,8 @@ export function collectRules(state, hook, event = {}, queries = {}) {
     let participantRecipients, boardRecipients;
     for (const rule of rules) {
       const owners = rule.listenScope === 'board'
-        ? (boardRecipients ??= recipients(state, row, boardOwners(), event, queries))
-        : (participantRecipients ??= unitIds.length ? recipients(state, row, unitIds, event, queries) : []);
+        ? (boardRecipients ??= recipients(state, row, boardOwners(), event, queries, hook))
+        : (participantRecipients ??= unitIds.length ? recipients(state, row, unitIds, event, queries, hook) : []);
       for (const ownerId of owners) {
         const dedupeKey = rule.dedupeKey ?? `${carrierDedupePrefix(row, ownerId, pooled)}:${rule.id}`;
         const useKey = JSON.stringify([ownerId, dedupeKey]);
@@ -245,6 +247,7 @@ function matchesModifier(mod, event) {
  * entry has flat, mult and additivePercent totals. A missing entry is neutral.
  * Mod identity is template + declaration index. First applicable declaration
  * wins. Lock/flag grants union together and the first explicit policy field wins.
+ * Target prohibitions union across applicable sources; charmTeam is the first charm's source team.
  * The optional queries object supplies selectors by name and isImmune(state, unit, key).
  */
 export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
@@ -256,6 +259,8 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
   let forbid = false;
   let forbidReason = null;
   let pooledCostFlat = 0;
+  const forbiddenTargetIds = new Set();
+  let charmTeam = null, foundCharm = false;
   const seen = new Set();
   if (own(state.units, unitId)) {
     for (const row of carriers(state)) {
@@ -293,12 +298,21 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
         for (const [field, value] of Object.entries(mod.controlPolicy ?? {})) {
           if (!policy.has(field)) policy.set(field, Array.isArray(value) ? [...value] : value);
         }
+        const charm = mod.controlPolicy?.mindControl === 'charm';
+        if (charm || mod.controlPolicy?.forbidTargetSource === true) {
+          const sourceId = sourceIdOf(row, unitId, event);
+          if (sourceId != null) forbiddenTargetIds.add(sourceId);
+          if (charm && !foundCharm) {
+            foundCharm = true;
+            charmTeam = context.source?.team ?? null;
+          }
+        }
       }
     }
   }
   return {
     stats: Object.fromEntries(stats), locks, flags: Object.fromEntries([...flags].map(flag => [flag, true])),
-    controlPolicy: Object.fromEntries(policy), forbid, forbidReason, costRedirects, pooledCostFlat,
+    controlPolicy: Object.fromEntries(policy), forbiddenTargetIds, charmTeam, forbid, forbidReason, costRedirects, pooledCostFlat,
   };
 }
 

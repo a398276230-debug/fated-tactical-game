@@ -1,7 +1,7 @@
 // 静态呈现：棋盘、HUD、抽屉内容。动画演出在 animation.js，文字叙述在 narrate.js。
 import { resourceLabel } from '../core/resource_names.js';
 const effectLabel = rule => rule.label ?? rule.id;
-import { preview as rulesPreview, corpses, unitStandingStats, movementBudget } from '../core/combat.js';
+import { preview as rulesPreview, corpses, unitStandingStats, movementBudget, isAiControlled } from '../core/combat.js';
 import { elevation } from '../core/spatial.js';
 import { linkedUnitsOf } from '../core/turn-routing.js';
 import { zoneContains } from '../core/vm-select.js';
@@ -253,7 +253,8 @@ export function createRenderer(root, portraitFor = () => []) {
 
   function renderSquad(state, owner, actor, ui) {
     const node = $('linked-squad');
-    const linked = owner?.team === 'blue' && !state.outcome ? linkedUnitsOf(state, owner.id).filter(unit => unit.team === owner.team) : [];
+    const linked = owner && !state.outcome && !isAiControlled(state, owner)
+      ? linkedUnitsOf(state, owner.id).filter(unit => unit.team === owner.team && !isAiControlled(state, unit)) : [];
     node.hidden = $('linked-collaborate').hidden = !linked.length;
     node.inert = !!ui.busy || !!ui.askLocked;
     const collaborate = $('linked-collaborate');
@@ -460,8 +461,9 @@ export function createRenderer(root, portraitFor = () => []) {
     const current = get(state.units, state.order[state.turn]);
     const selected = ui.selectedId ?? current?.id;
     const action = ui.action ?? null, hover = ui.hover ?? null;
-    const canAct = !ui.busy && !ui.askLocked && current?.team === 'blue' && !state.outcome;
     const actor = get(state.units, ui.actorId) ?? current;
+    const canAct = !ui.busy && !ui.askLocked && current && !state.outcome
+      && !isAiControlled(state, current) && !isAiControlled(state, actor);
     const run = cmd => canAct ? rulesPreview(state, { ...cmd, actorId: actor.id }) : null;
     const fresh = last?.state !== state;
     const actorChanged = last?.actorId !== actor?.id;
@@ -504,8 +506,9 @@ export function createRenderer(root, portraitFor = () => []) {
     $('turn-controls').hidden = askLocked;
     $('turn-order').inert = askLocked;
     for (const button of root.querySelectorAll('[data-open-drawer]')) button.disabled = askLocked;
-    $('end-turn').disabled = askLocked || !(current?.team === 'blue' && !state.outcome);
-    $('ai-step').disabled = askLocked || !!state.outcome || current?.team !== 'red';
+    const aiControlled = isAiControlled(state, current);
+    $('end-turn').disabled = askLocked || !current || !!state.outcome || aiControlled;
+    $('ai-step').disabled = askLocked || !!state.outcome || !aiControlled;
   }
 
   return { render, renderControls, renderLog };

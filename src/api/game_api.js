@@ -3,7 +3,7 @@ import { buildScenario } from '../presets/scenarios.js';
 import { STANCES } from '../core/combat_protocol.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
-import { applyAction, currentUnit, loadoutStance, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, stealthCheck, syncEquipmentEffects } from '../core/combat.js';
+import { applyAction, currentUnit, loadoutStance, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, stealthCheck, syncEquipmentEffects, isAiControlled } from '../core/combat.js';
 import { chooseUnitStep } from '../core/battle-ai.js';
 import { linkedUnitsOf } from '../core/turn-routing.js';
 import { applyCommand } from './commands.js';
@@ -284,18 +284,18 @@ export function createGameAPI() {
     },
     stepEnemy() {
       const s = current();
-      if (s.outcome || s.units[s.order[s.turn]]?.team !== 'red') return { ok: false };
-      const owner = s.units[s.order[s.turn]];
-      const actors = [owner, ...linkedUnitsOf(s, owner.id).filter(unit => unit.team === owner.team)];
+      const owner = currentUnit(s);
+      if (s.outcome || s.vm?.pendingAsk || !isAiControlled(s, owner)) return { ok: false };
+      const actors = [owner, ...linkedUnitsOf(s, owner.id).filter(unit => unit.team === owner.team && isAiControlled(s, unit))];
       const step = actors.map(unit => unit.id).map(id => chooseUnitStep(s, id)).find(Boolean);
       return api.playAction(step ?? { type: 'end' });
     },
     stepLinked() {
       const s = current();
       const owner = s.units[s.order[s.turn]];
-      if (s.outcome || s.vm?.pendingAsk || owner?.team !== 'blue') return { ok: false };
+      if (s.outcome || s.vm?.pendingAsk || !owner || isAiControlled(s, owner)) return { ok: false };
       for (const unit of linkedUnitsOf(s, owner.id)) {
-        if (unit.team !== owner.team) continue;
+        if (unit.team !== owner.team || isAiControlled(s, unit)) continue;
         const action = chooseUnitStep(s, unit.id);
         if (action) return api.playAction(action);
       }

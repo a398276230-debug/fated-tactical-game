@@ -50,7 +50,7 @@ export function zoneContains(state, zone, at, { ignoreZ = false } = {}) {
   if (!coordinate(origin)) return false;
   if (shape === 'single') return origin.x === at.x && origin.y === at.y;
   // ignoreZ skips only the explicit altitude bounds, not the existing 3D radius.
-  const distance = distance3D(state, origin, at);
+  const distance = Math.hypot(at.x - origin.x, at.y - origin.y, pointElevation(state, at) - pointElevation(state, origin));
   return distance <= radius && (shape === 'circle' || (shape === 'ring' && distance >= (innerRadius ?? 0)));
 }
 
