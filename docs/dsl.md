@@ -24,6 +24,8 @@
 
 hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` 可改检定，`before_commit` 可改最终值或取消，`before_status` 可阻止状态，致命结算使用 `on_lethal_p1/p2` 两阶段。
 
+`before_action` / `after_action` 不限于打击，也覆盖移动、装填、互动等动作；结束回合、结束战斗与回答挂起选择仍走独立路径。规则缺省监听参与者（`listenScope: "participants"`）；第三方反制可用 `listenScope: "board"`、`usesPerRound: 1`，并用 `resource` 从 `reaction` 伪池扣 1（`requireFull: true` 时没有反应则中止当前规则）。
+
 ## 3. Opcodes（17）
 
 | opcode | 用途 |
@@ -59,7 +61,10 @@ hook 的可写事件字段由 schema 针对每个 hook 限定。`before_check` �
 - multiplier stats：`incomingDamageMult`、`damageMult`、`finalDamageMult`、`healingMult`、`incomingHealMult`、`costMult`。
 - 控制锁：`attack`、`action`、`move`、`cast`、`reaction`、`fly`、`teleport`。
 - `movement` 在单位自身层级的基础移动值上结算，再换算为战场格数。`resource(self, 'move')` 读取本回合剩余整格，与寻路预览共用预算。`resource` 节点对 `pool: 'move'` 使用整数 `add`、`sub` 或 `set`。例如在 `turn_start` 中使用 `add` 追加当回合移动格。
-- flags：`preserveLife`、`blockRevive`、`blockResourceRestore`、`untargetableSingle`、`harmless`、`guaranteed_hit`、`guaranteed_crit`、`hidden`、`intercept`、`taunted`、`infiniteAmmo`。
+- flags：`preserveLife`、`blockRevive`、`blockResourceRestore`、`untargetableSingle`、`harmless`、`guaranteed_hit`、`guaranteed_crit`、`hidden`、`intercept`、`taunted`、`infiniteAmmo`、`trueSight`（无视目标隐身）。
+- 动作准入：`forbidAction: true` 可配 `when` 与 `forbidReason`（1…120 字符），在扣费前拦截动作并给出理由。例如 `when: "event.mpCost > 0"` 拦截最终仍需法力的动作，`when: "event.isRanged"` 禁远程，`when: "has_tag(event, 'fire')"` 禁火系。
+- 资源消耗：`pool` 按 ID 限定修饰作用的资源池，`costFlat` 先加减，`costMult` 再乘算，结果向下取整且最低为 0。基础消耗为 0 时，只有明确指定该池的 `costFlat` 能增加费用。`costRedirect: {from, to, ratio}` 在逐池缩放后按原账单单跳代扣；同一来源池取首个生效项，`ratio` 缺省为 1，改扣额向上取整，转扣 HP 至少保留 1 HP。
+- 控场：`controlPolicy.mindControl` 取 `berserk`（狂乱无差别）或 `charm`（魅惑倒戈），由 AI 代打且不修改持久阵营；`controlPolicy.forbidTargetSource: true` 禁止敌对行动命中施术者，魅惑自带该限制。
 
 `aggregateModifiers()` 汇总每个单位在事件上下文中的 stats、locks、flags、controlPolicy。表达式型 `flat`/`mult`/`additivePercent` 在 carrier scope 中求值；同一载体声明按模板和索引去重。
 
@@ -141,6 +146,8 @@ selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`�
 - `attackDistanceOffset` 与受击侧 `incomingDistanceOffset` 相加后修正攻击距离，距离下限为 0。`power` 修饰器只改变威力项，属性基数和武器攻击分别结算。技能模板的 `power` 和技能或武器模板的 `hits` 支持数值与公式。`hits` 默认 1，加上修饰后限制在 1 至 20。同一目标只检定一次，每段分别提交伤害并触发命中事件，有一方阵亡就结束后续段数。
 
 状态引用使用 `statusId`、`status.vars.<key>`、`status.stacks` 和 `status.remainingTurns`。所有入口生成同一种 VM 状态实例；状态效果不再使用原生修饰对象。
+
+持续技能、状态、区域与召唤可用 `bindToSource: true` 随来源死亡或离场清理；`concentration: true` 还会在切换至另一批专注、施术者失能或受创豁免失败时解除。同次施法产生的专注实体属于同一批。技能模板上的标记默认传给主动规则生成的状态、区域和召唤；指令可显式写 `false` 覆盖该默认值。
 
 ## 6. 安全表达式
 

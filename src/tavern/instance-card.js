@@ -64,13 +64,14 @@ const modLabels = {
   damageFlat:'输出固定伤害', damageMult:'全伤害倍率', finalDamageMult:'最终伤害倍率',
   power:'威力', hits:'打击段数', attackDistanceOffset:'攻击距离修正',
   damageReductionFlat:'受击固定减伤', damageReduction:'受击伤害减免', dr:'受击伤害减免',
-  healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率',
+  healingMult:'施疗倍率', incomingHealMult:'受疗倍率', costMult:'技能消耗倍率', costFlat:'消耗加值',
   checkBonus:'检定加值', dcBonus:'检定难度', resistBonus:'豁免加值', advantage:'检定优势', initiativeFlat:'先攻', incomingAccuracy:'被命中修正', intentBonus:'意图加值', intentDifficulty:'意图难度', shatter:'碎裂增伤',
 };
 const ratioStats = new Set(['armorPiercePercent','damageReduction','dr']);
 const percent = new Intl.NumberFormat('zh-CN',{style:'percent',maximumFractionDigits:10});
 const slots = {action:'动作',attack:'攻击',move:'移动',cast:'施法',reaction:'反应',fly:'升空',teleport:'瞬移'};
-const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害',guaranteed_hit:'必定命中',guaranteed_crit:'必定暴击',hidden:'隐身',intercept:'可拦截攻击',taunted:'被嘲讽',infiniteAmmo:'弹药不限'};
+const flags = {preserveLife:'保留生命',blockRevive:'禁止复活',blockResourceRestore:'禁止资源恢复',untargetableSingle:'不可被单体选中',harmless:'无害',guaranteed_hit:'必定命中',guaranteed_crit:'必定暴击',hidden:'隐身',intercept:'可拦截攻击',taunted:'被嘲讽',infiniteAmmo:'弹药不限',trueSight:'真视反隐'};
+const mindControlLabels = {berserk:'狂乱无差别',charm:'魅惑倒戈'};
 const checks = {attack:'攻击',save:'豁免',contest:'对抗',d20:'普通',chance:'概率'};
 const signed = (n, asPercent) => typeof n === 'number' ? `${n>=0?'+':''}${asPercent?percent.format(n):n}` : `按公式 ${n}`;
 function modSummary(mod, customElements = {}) {
@@ -83,12 +84,19 @@ function modSummary(mod, customElements = {}) {
   }
   if(mod.locks?.length) parts.push(`禁止${mod.locks.map(slot=>slots[slot]).join('、')}`);
   if(mod.flags?.length) parts.push(...mod.flags.map(flag=>flags[flag]));
+  if(mod.forbidAction) parts.push(mod.forbidReason ?? '禁止对应行动');
+  if(mod.costRedirect) {
+    const { from, to, ratio } = mod.costRedirect;
+    parts.push(`${from}消耗按${ratio ?? 1}倍改扣${to}`);
+  }
   const policy = mod.controlPolicy;
   if(policy?.allowFriendlyTarget != null) parts.push(policy.allowFriendlyTarget?'可选友方为目标':'不可选友方为目标');
   if(policy?.intentLock) parts.push(`锁定意图：${INTENTS[policy.intentLock]?.name ?? policy.intentLock}`);
   if(policy?.moraleLock==='steady') parts.push('士气恒定坚守');
+  if(policy?.mindControl) parts.push(mindControlLabels[policy.mindControl]);
+  if(policy?.forbidTargetSource) parts.push('不可攻击施术者');
   const scope = [mod.damageType?`${elementLabel(mod.damageType, customElements)}伤害`:null,mod.checkKind?`${checks[mod.checkKind]??mod.checkKind}检定`:null].filter(Boolean);
-  return `${parts.filter(Boolean).join('；')||'修饰'}${scope.length?`（${scope.join('、')}）`:''}${mod.when!=null?` · 条件：${mod.when===true?'始终':mod.when===false?'从不':mod.when}`:''}`;
+  return `${mod.pool?`[${mod.pool}] `:''}${parts.filter(Boolean).join('；')||'修饰'}${scope.length?`（${scope.join('、')}）`:''}${mod.when!=null?` · 条件：${mod.when===true?'始终':mod.when===false?'从不':mod.when}`:''}`;
 }
 const RESOURCES = [['hp','HP','maxHp'],['mp','MP','maxMp'],['sp','SP','maxSp']];
 const TEAMS = {blue:'我方',red:'敌方'};

@@ -10,15 +10,15 @@ const statNames = {
 };
 const modifierNames = {
   ...statNames, movement: '移动距离', apMax: '行动点上限', incomingDistanceOffset: '表观距离',
-  checkBonus: '检定加值', initiativeFlat: '先攻', dcBonus: '豁免难度', resistBonus: '豁免加值',
-  damageFlat: '固定增伤', damageMult: '增伤', finalDamageMult: '最终伤害', incomingDamageMult: '易伤',
-  healingMult: '治疗', incomingHealMult: '受治疗', costMult: '消耗',
+  checkBonus: '检定加值', initiativeFlat: '先攻', dcBonus: '豁免难度', resistBonus: '豁免加值', advantage: '检定优势',
+  damageFlat: '固定增伤', damageMult: '增伤', finalDamageMult: '最终伤害', incomingDamageMult: '易伤', critDamageBonus: '暴击伤害',
+  healingMult: '治疗', incomingHealMult: '受治疗', costMult: '消耗', costFlat: '消耗加值',
   damageReduction: '减伤', dr: '最终减伤', armorPiercePercent: '穿甲比例',
   power: '威力', hits: '打击段数', attackDistanceOffset: '攻击距离修正',
 };
 const ratios = new Set(['damageReduction', 'dr', 'armorPiercePercent', 'shatter']);
 const flagModifiers = {
-  taunted: '被嘲讽', intercept: '可拦截攻击', hidden: '隐身', infiniteAmmo: '弹药不限',
+  taunted: '被嘲讽', intercept: '可拦截攻击', hidden: '隐身', infiniteAmmo: '弹药不限', trueSight: '真视反隐',
   guaranteed_hit: '必定命中', guaranteed_crit: '必定暴击', untargetableSingle: '不可被单体选中',
   blockResourceRestore: '禁止资源恢复', preserveLife: '保留至少 1 HP', blockRevive: '禁止复活',
   harmless: '无害', undispellable: '不可驱散', concept_immune: '概念免疫',
