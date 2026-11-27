@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createGameAPI } from '../src/api/game_api.js';
 import { applyAction, currentUnit, preview, reachable } from '../src/core/combat.js';
-import { defaultMoveFromAgi, boardMoveCellsFromMoveM } from '../src/core/combat_protocol.js';
+import { defaultMoveFromAgi, boardMoveCellsFromMoveM, TIER_CELL_M } from '../src/core/combat_protocol.js';
 import { initializeVMWorld, vmHost } from '../src/core/vm-runtime.js';
 import { buildScenario } from '../src/presets/scenarios.js';
 import { hydrateFromSources } from '../src/tavern/converter.js';
@@ -23,9 +23,84 @@ function fixture() {
 const move = (x, y = 2) => ({ type: 'move', x, y });
 const remaining = (state, actor) => vmHost.resource(state, actor, 'move');
 
-test('敏捷五档的默认移动力', () => {
-  assert.deepEqual([undefined, 0, 1, 4, 5, 8, 9, 12, 13, 16, 17, 20, 25].map(defaultMoveFromAgi),
-    [3, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6]);
+test('七阶敏捷曲线按四分之一格取整，缺省敏捷仍为三格', () => {
+  const agility = [-1, 0, 2, 5, 8, 12, 15, 18, 20, 25];
+  const anchors = [
+    [2,    2,    2,    3,    4,    4.5, 4.5,  4.5,  4.5,  4.5],
+    [2.5,  2.5,  2.5,  3.75, 5,    5.5, 5.5,  5.5,  5.5,  5.5],
+    [2.25, 2.25, 2.25, 2.25, 3,    4,   4.75, 5,    5,    5],
+    [2,    2,    2,    2,    2,    3,   3.75, 4.5,  5,    5],
+    [2,    2,    2,    2,    2,    2.5, 3.25, 4,    4.5,  4.5],
+    [2,    2,    2,    2,    2,    2,   2.75, 3.5,  4,    4],
+    [2,    2,    2,    2,    2,    2,   2.5,  3.25, 3.75, 3.75],
+  ];
+  for (const [i, expected] of anchors.entries()) {
+    const tier = i + 1;
+    for (const agi of [null, undefined, NaN, Infinity, -Infinity, '无效']) {
+      assert.equal(defaultMoveFromAgi(agi, tier), 3, `T${tier} agi=${agi}`);
+    }
+    for (const [j, agi] of agility.entries()) {
+      assert.equal(defaultMoveFromAgi(agi, tier), expected[j], `T${tier} agi=${agi}`);
+    }
+  }
+  assert.equal(defaultMoveFromAgi(undefined), 3);
+  assert.equal(defaultMoveFromAgi(3), 2.25);
+  assert.equal(defaultMoveFromAgi('5', '2.9'), 3.75);
+  assert.equal(defaultMoveFromAgi(15, -1), 4.5);
+  assert.equal(defaultMoveFromAgi(15, 8), 2.5);
+});
+
+test('同阶增敏不降速，同敏升阶米数不减，升阶兼增敏米数严格增加', () => {
+  const meters = (agi, tier) => defaultMoveFromAgi(agi, tier) * TIER_CELL_M[tier];
+  for (let tier = 1; tier <= 7; tier++) {
+    for (let agi = 0; agi <= 20; agi++) {
+      const raw = defaultMoveFromAgi(agi, tier);
+      const label = `T${tier} agi=${agi}`;
+      assert.ok(Number.isInteger(raw * 4), `四分之一格: ${label}`);
+      assert.ok(defaultMoveFromAgi(agi + 1, tier) >= raw, `同阶: ${label}`);
+      if (tier < 7) {
+        assert.ok(meters(agi, tier + 1) >= meters(agi, tier), `同敏升阶: ${label}`);
+        assert.ok(meters(agi + 1, tier + 1) > meters(agi, tier), `升阶增敏: ${label}`);
+      }
+    }
+  }
+});
+
+function fractionalBattle() {
+  return hydrateFromSources({
+    battleInit: 'battle|1|steps|平地|flat|42\nunit|p1|blue|char_info|甲|1,2\nunit|e1|red|char_info|乙|9,9',
+    charInfo: [{ name: '甲', tier: 4, stats: { agi: 15 } }, { name: '乙', tier: 4, stats: { agi: 1 } }],
+  }, { throwOnValidation: true }).state;
+}
+
+test('同阶 3.75 格移动可走三格，余下 750‰ 随真实回合交接兑现', () => {
+  const state = fractionalBattle();
+  const actor = state.units.p1;
+  assert.equal(currentUnit(state).id, actor.id);
+  assert.equal(state.scale.cellM, 15);
+  assert.deepEqual([actor.rawMove, actor.moveM, actor.move], [3.75, 56.25, 3]);
+  assert.equal(remaining(state, actor), 3);
+  assert.equal(preview(state, move(5)).ok, false);
+  applyAction(state, move(4));
+  assert.deepEqual([actor.x, remaining(state, actor), actor.moveCarryPermille], [4, 0, 750]);
+  applyAction(state, { type: 'end' });
+  assert.equal(currentUnit(state).id, 'e1');
+  applyAction(state, { type: 'end' });
+  assert.equal(currentUnit(state).id, actor.id);
+  assert.equal(remaining(state, actor), 4);
+  applyAction(state, move(8));
+  assert.deepEqual([actor.x, remaining(state, actor), actor.moveCarryPermille], [8, 0, 500]);
+});
+
+test('同阶 3.75 格首回合直接疾跑七格，保留 500‰', () => {
+  const state = fractionalBattle();
+  const actor = state.units.p1;
+  assert.equal(preview(state, { type: 'sprint', x: 9, y: 2 }).ok, false);
+  applyAction(state, { type: 'sprint', x: 8, y: 2 });
+  assert.deepEqual([actor.x, remaining(state, actor), actor.moveCarryPermille], [8, 0, 500]);
+});
+
+test('显式移动力覆盖敏捷曲线', () => {
   const { state } = hydrateFromSources({
     battleInit: 'battle|1|move-override|移动测试|flat\nunit|p1|blue|char_info|甲|1,1',
     charInfo: [{ name: '甲', stats: { agi: 20 }, 移动: 4 }],

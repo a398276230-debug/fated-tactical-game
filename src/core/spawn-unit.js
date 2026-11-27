@@ -4,7 +4,7 @@ import { sizeClassFor, defaultMoveFromAgi } from './combat_protocol.js';
 const attrs = ['str','agi','con','int','spi'];
 const tierCaps = [8,10,12,14,16,18,20];
 function budget(actor, spec) {
-  const tier = Math.min(actor.tier ?? 1, spec.tier ?? 7);
+  const tier = Math.max(1, Math.min(7, Math.trunc(Math.min(actor.tier ?? 1, spec.tier ?? 7)) || 1));
   const a = spec.attribute ? actor.stats[spec.attribute] : Math.max(actor.stats.int, actor.stats.spi);
   return {tier, sum:Math.max(tier * 5, a * 5 - 30), cap:Math.min(a, tierCaps[tier-1])};
 }
@@ -39,7 +39,7 @@ export function spawnPanel(actor, spec) {
   if (bodyLengthM < 0.01 || bodyLengthM > 1e9) return null;
   const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, mc: spec.mc, summonCount: spec.count ?? 1 });
   const rawMove = spec.move != null && Number.isFinite(Number(spec.move))
-    ? Math.max(0, Number(spec.move)) : defaultMoveFromAgi(stats.agi);
+    ? Math.max(0, Number(spec.move)) : defaultMoveFromAgi(stats.agi, tier);
   return {stats,tier,bodyLengthM,mc,size:spec.size ?? sizeClassFor(bodyLengthM),armor:spec.armor ?? 0,rawMove,move:Math.round(rawMove),
     maxHp:spec.maxHp ?? resources.hp.max,maxMp:spec.maxMp ?? resources.mp.max,maxSp:spec.maxSp ?? resources.sp.max};
 }

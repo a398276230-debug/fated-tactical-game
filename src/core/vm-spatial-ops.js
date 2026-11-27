@@ -297,15 +297,16 @@ function unitPlan(state, context, spec, original) {
     const contributor = pool?.contributors.find(entry => entry.ownerKind === 'unit' && entry.ownerId === panel.id);
     return [field, contributor?.maxBase ?? panel[field]];
   }));
-  const tier = spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier;
+  const resolvedTier = spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier : panel.tier;
+  const tier = Math.max(1, Math.min(7, Math.trunc(Number(resolvedTier) || 1)));
   const rawMove = spec.move != null ? Math.max(0, Number(spec.move))
     : panel.rawMove ?? (spec.copyOf && panel.moveM != null
-      ? panel.moveM / TIER_CELL_M[Math.max(1, Math.min(7, tier ?? 1))]
-      : panelSpec ? defaultMoveFromAgi(stats.agi) : panel.move ?? defaultMoveFromAgi(stats.agi));
+      ? panel.moveM / TIER_CELL_M[tier]
+      : panel.move ?? defaultMoveFromAgi(stats.agi, tier));
   return { count, gear, panel: { stats, ...maxima, bodyLengthM, size: panel.size ?? sizeClassFor(bodyLengthM),
     mc: panel.mc ?? sizeMultiplier(bodyLengthM), armor: panel.armor ?? 0, rawMove, move: Math.round(rawMove),
     skills: [...(loads.skills ?? [])], team: actor.team, facing: [...(actor.facing ?? [1, 0])],
-    level: (spec.templateId && original?.level) || actor.level || actor.tier || 1, tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier } };
+    level: (spec.templateId && original?.level) || actor.level || actor.tier || 1, tier } };
 }
 
 function removeSummon(state, unit, host) {

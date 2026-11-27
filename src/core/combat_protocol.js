@@ -15,11 +15,24 @@ export const RATING_TABLE = Object.freeze([
   { min: null, name: '失手', multiplier: 0 },
 ]);
 export const TIER_CELL_M = Object.freeze([null, 2, 2, 5, 15, 50, 250, 1000]);
-export function defaultMoveFromAgi(agi) {
+// Native-tier cells per turn: [base, agility threshold, slope, maximum].
+const MOVE_CURVES = [
+  null,
+  [2, 2, 1 / 3, 4.5],
+  [2.5, 2, 0.40, 5.5],
+  [2.25, 5, 0.25, 5],
+  [2, 8, 0.25, 5],
+  [2, 10, 0.25, 4.5],
+  [2, 12, 0.25, 4],
+  [2, 13, 0.25, 3.75],
+];
+export function defaultMoveFromAgi(agi, tier = 1) {
   if (agi == null) return 3;
   const value = Number(agi);
   if (!Number.isFinite(value)) return 3;
-  return Math.max(2, Math.min(6, 1 + Math.ceil(value / 4)));
+  const [base, zero, slope, max] = MOVE_CURVES[clampTier(tier)];
+  const raw = base + Math.max(0, value - zero) * slope;
+  return Math.max(base, Math.min(max, Math.round(raw * 4) / 4));
 }
 export function boardMoveCellsFromMoveM(moveM, scale) {
   const cellM = Math.max(1e-9, Number(scale?.cellM) || 2);
