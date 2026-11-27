@@ -18,6 +18,24 @@ const definitions = [
 ];
 
 export const BUILTIN_DAMAGE_TYPES = Object.freeze(definitions.map(([id]) => id));
+export const PHYSICAL_TRAITS = Object.freeze(['heat', 'ignite', 'cold', 'wet', 'shock', 'corrode', 'flammable', 'gust']);
+const physicalDefaults = { fire: ['heat', 'ignite'], cold: ['cold'], lightning: ['shock'], thunder: ['gust'], acid: ['corrode'] };
+export const BUILTIN_ELEMENT_TRAITS = Object.freeze(Object.fromEntries(BUILTIN_DAMAGE_TYPES.map(id => [id, Object.freeze(physicalDefaults[id] ?? [])])));
+
+export function elementTraits(type, customElements = {}, carrierTags = []) {
+  const base = Object.hasOwn(BUILTIN_ELEMENT_TRAITS, type) ? BUILTIN_ELEMENT_TRAITS[type] : customElements?.[type]?.traits ?? [];
+  return PHYSICAL_TRAITS.filter(trait => base.includes(trait) || carrierTags.includes(trait));
+}
+
+export function inferElementTraits(name, aliases = []) {
+  const text = [name, ...aliases].join(' ');
+  const flame = /[火炎焰灼焚熔]/u.test(text), steam = /[汽蒸]/u.test(text);
+  const matches = { heat: flame || steam || /[阳日耀]/u.test(text), ignite: flame,
+    cold: /[冰寒霜冻凛雪]/u.test(text), wet: steam || (/[水汐浪潮雨露泉液]/u.test(text) && !/[酸毒油血]/u.test(text)),
+    shock: /[雷电霆磁]/u.test(text), corrode: /[酸锈溶]|蚀(?!月)/u.test(text),
+    flammable: /[油脂沥瘴]|瓦斯/u.test(text), gust: /[风岚飙气浪飓]/u.test(text) };
+  return PHYSICAL_TRAITS.filter(trait => matches[trait]).slice(0, 4);
+}
 export const ELEMENT_DEFINITIONS = Object.freeze(Object.fromEntries(definitions.map(([id, name, category, aliases]) => [id,
   Object.freeze({ id, name, category, aliases: Object.freeze(aliases) })])));
 const aliases = new Map(definitions.flatMap(([id, , , names]) => names.map(name => [name.toLocaleLowerCase(), id])));
@@ -52,6 +70,7 @@ export function validateCustomElements(value) {
     if (reserved.has(key) || !/^[a-z][a-z0-9_-]{0,31}$/.test(key) || BUILTIN_DAMAGE_TYPES.includes(key)) throw new Error(`自定义元素 ID 无效：${key}`);
     if (!entry || Object.getPrototypeOf(entry) !== Object.prototype || entry.id !== key || typeof entry.name !== 'string' || entry.name.length < 1 || entry.name.length > 24) throw new Error(`自定义元素定义无效：${key}`);
     if (entry.aliases !== undefined && (!Array.isArray(entry.aliases) || entry.aliases.length > 8 || entry.aliases.some(alias => typeof alias !== 'string' || alias.length < 1 || alias.length > 24))) throw new Error(`自定义元素别名无效：${key}`);
+    if (entry.traits !== undefined && (!Array.isArray(entry.traits) || entry.traits.length > 4 || !entry.traits.length || new Set(entry.traits).size !== entry.traits.length || !Array.from(entry.traits).every(trait => PHYSICAL_TRAITS.includes(trait)))) throw new Error(`自定义元素特质无效：${key}`);
     if (entry.category !== undefined && !['energy', 'physical', 'mental'].includes(entry.category)) throw new Error(`自定义元素归类无效：${key}`);
   }
 }

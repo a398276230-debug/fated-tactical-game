@@ -11,7 +11,7 @@ import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
 import { parseAreaTags, tagEntries } from './area-tags.js';
 import { attrNames, blockBody, bound, clone, describe, deterministicId, finite, hash, narrativeEntries, object, own, qualityOf, rawTagValues, statAliases, text, warningSink, asObject } from './converter-parse.js';
-import { ELEMENT_DEFINITIONS, resolveElementAlias } from '../core/elements.js';
+import { ELEMENT_DEFINITIONS, inferElementTraits, resolveElementAlias } from '../core/elements.js';
 
 /*
  * The tavern boundary is intentionally boring and deterministic.  It accepts
@@ -76,7 +76,8 @@ export function resolveDamageType(value, customElements = {}, register = false) 
   const id = known ? CUSTOM_ELEMENT_IDS[raw] : `elem_${hash(raw).toString(36)}`;
   if (Object.hasOwn(customElements, id)) return known ? id : null;
   if (Object.keys(customElements).length >= 64) return null;
-  customElements[id] = { id, name: raw, category: 'energy' };
+  const traits = inferElementTraits(raw);
+  customElements[id] = { id, name: raw, category: 'energy', ...(traits.length ? { traits } : {}) };
   return id;
 }
 function explicitElementName(tag) {

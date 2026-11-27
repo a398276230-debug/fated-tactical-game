@@ -237,7 +237,7 @@ function armorOf(state, unit, damageType, pierce = 0, context = {}) {
   const flat = typeof pierce === 'object' ? (pierce.flat ?? 0) : pierce;
   const percent = typeof pierce === 'object' ? clamp(pierce.percent ?? 0, -1, 1) : 0;
   const effective = Math.max(0, armor * (1 - percent) - flat);
-  return typedArmor(damageType, effective);
+  return typedArmor(damageType, effective, state.customElements);
 }
 
 function damageTarget(state, target, sourceId, amount, damageType, label, options = {}) {

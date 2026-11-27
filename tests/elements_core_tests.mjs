@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BUILTIN_DAMAGE_TYPES, elementMitigationCategory, resolveElementAlias } from '../src/core/elements.js';
+import { BUILTIN_DAMAGE_TYPES, elementTraits, inferElementTraits, validateCustomElements, elementMitigationCategory, resolveElementAlias } from '../src/core/elements.js';
 import { DAMAGE_TYPES, damageAttributeReduction, typedArmor } from '../src/core/combat_protocol.js';
 import { validateState } from '../src/api/validation.js';
 import { validVmRule } from '../src/core/vm-schema.js';
@@ -50,6 +50,35 @@ test('before_commit 改写 damageType 后立即按新元素重算', () => {
   const log = state.logs.find(entry => entry.type === 'damage' && entry.detail.targetId === target.id);
   assert.equal(log.detail.damageType, 'fire');
   assert.equal(before - target.hp, 80);
+});
+
+import { mitigation } from '../src/core/combat-actions.js';
+import { resolveDamageType } from '../src/tavern/converter-effects.js';
+
+test('元素物理轴按固定顺序合并载体标签，自定义元素只写非空特质', () => {
+  const defaults = { fire: ['heat','ignite'], cold: ['cold'], lightning: ['shock'], thunder: ['gust'], acid: ['corrode'] };
+  for (const type of BUILTIN_DAMAGE_TYPES) assert.deepEqual(elementTraits(type), defaults[type] ?? []);
+  assert.deepEqual(elementTraits('fire', {}, ['gust','heat','wet','other']), ['heat','ignite','wet','gust']);
+  const registry = {};
+  for (const [name, traits] of Object.entries({ 苍蓝雷霆:['shock'], 永冻幽霜:['cold'], 黑油魔焰:['heat','ignite','flammable'], 流水:['wet'], 蒸汽:['heat','wet'], 风暴:['gust'] })) {
+    const id = resolveDamageType(name, registry, true);
+    assert.deepEqual(registry[id].traits, traits);
+    assert.deepEqual(elementTraits(id, registry), traits);
+  }
+  for (const name of '虚空 星界 混沌 鲜血 大地 自然 蚀月 时空 重力 梦魇 晶石'.split(' ')) assert.deepEqual(inferElementTraits(name), []);
+  resolveDamageType('虚空', registry, true);
+  assert.deepEqual(registry.void, { id:'void', name:'虚空', category:'energy' });
+  validateCustomElements(registry);
+  for (const traits of ['wet', ['fake'], ['wet','wet'], ['heat','ignite','wet','cold','shock']]) assert.throws(() => validateCustomElements({ void:{ ...registry.void, traits } }), /特质无效/);
+});
+
+test('实际减伤管线按自定义归类折算护甲', () => {
+  const state = buildScenario({ scenarioId:'ruins', ruleset:'sandbox' }), target = state.units.gunner;
+  target.armor = 200;
+  for (const [type, category] of [['rock','physical'], ['dream','mental']]) {
+    state.customElements = { [type]:{ id:type, name:type, category } };
+    assert.equal(mitigation(state, target, type).armor, mitigation(state, target, category).armor);
+  }
 });
 
 test('跨战档案保留自定义元素', () => {
