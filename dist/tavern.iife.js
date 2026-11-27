@@ -80,6 +80,23 @@ var FatedTacticalTavern = (() => {
     if (!dx || !dy) return true;
     return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every((at3) => vacant(at3) && passable(at3) && passableEdge(state, at3, to));
   }
+  function canDisplaceStep(state, from, to, { ignoreUnitId = from.id } = {}) {
+    if (Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y)) !== 1 || !isGround(state, to)) return false;
+    const mover = state.units?.[ignoreUnitId] ?? from;
+    return canOccupy(state, to.x, to.y, mover, ignoreUnitId) && (elevation(state, to) <= elevation(state, from) || passableEdge(state, from, to));
+  }
+  function displacementDrop(state, from, to) {
+    if ((from.altitude ?? 0) !== 0) return 0;
+    const slope = [from, to].some((at3) => cellAt(state, at3.x, at3.y)?.kind === "slope");
+    const drop = elevation(state, from) - elevation(state, to);
+    return drop > (slope ? 2 : 1) ? drop : 0;
+  }
+  function displacementBlocker(state, unit, at3) {
+    if (!isGround(state, at3)) return {};
+    const cover = (state.scale?.cellM ?? 2) < 10 ? coverAt(state, at3.x, at3.y) : null;
+    if (cover) return { cover };
+    return cellCapacity(state, at3.x, at3.y, unit.id) + unitCellCost(state, unit) > MAX_CELL_CAPACITY ? { unit: unitsAt(state, at3.x, at3.y, unit.id)[0] } : {};
+  }
   function zoneContains(state, zone, at3, { ignoreZ = false } = {}) {
     const coordinate3 = (pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y);
     if (!zone?.area || !coordinate3(at3)) return false;
@@ -636,13 +653,13 @@ var FatedTacticalTavern = (() => {
     water: ["\u6D45\u6C34\u6D3C", 3, ["water", "wet"], { rules: exposure("water", [clear("burning", "oiled"), apply("wet")], ground, true) }],
     ice: ["\u51B0\u9762", 3, ["ice", "cold"], { moveCost: 2 }],
     oil: ["\u6CB9\u6C61", 3, ["oil", "flammable"], { moveCost: 2, rules: exposure("oil", [apply("oiled")], ground, true) }],
-    fire: ["\u706B\u6D77", 2, ["fire", "heat"], { rules: exposure("fire", [damage("fire", 5, 0.05), apply("burning")]) }],
-    acid: ["\u5F3A\u9178\u6C60", 2, ["acid", "corrode"], { mods: [{ stat: "armor", additivePercent: -0.25, when: ground }], rules: exposure("acid", [damage("acid", 4, 0.04)]) }],
-    electrified_water: ["\u5E26\u7535\u6C34\u4F53", 1, ["water", "lightning", "shock"], { rules: exposure("electrified_water", [damage("lightning", 5, 0.05)]) }],
+    fire: ["\u706B\u6D77", 2, ["fire", "heat"], { rules: exposure("fire", [damage("fire", 5, 0.05), apply("burning")], ground, true) }],
+    acid: ["\u5F3A\u9178\u6C60", 2, ["acid", "corrode"], { mods: [{ stat: "armor", additivePercent: -0.25, when: ground }], rules: exposure("acid", [damage("acid", 4, 0.04)], ground, true) }],
+    electrified_water: ["\u5E26\u7535\u6C34\u4F53", 1, ["water", "lightning", "shock"], { rules: exposure("electrified_water", [damage("lightning", 5, 0.05)], ground, true) }],
     steam: ["\u84B8\u6C7D\u4E91", 2, ["steam", "wet", "obscure"], { rules: exposure("steam", [clear("burning"), apply("wet")], null, true) }],
     smoke: ["\u6D53\u70DF", 2, ["smoke", "obscure"], {}],
-    poison_cloud: ["\u53EF\u71C3\u6BD2\u96FE", 3, ["poison", "flammable", "obscure"], { rules: exposure("poison_cloud", [damage("poison", 4, 0.04)], null) }],
-    electrified_steam: ["\u96F7\u66B4\u84B8\u6C7D", 1, ["steam", "lightning", "shock", "obscure"], { rules: exposure("electrified_steam", [damage("lightning", 5, 0.05)], null) }]
+    poison_cloud: ["\u53EF\u71C3\u6BD2\u96FE", 3, ["poison", "flammable", "obscure"], { rules: exposure("poison_cloud", [damage("poison", 4, 0.04)], null, true) }],
+    electrified_steam: ["\u96F7\u66B4\u84B8\u6C7D", 1, ["steam", "lightning", "shock", "obscure"], { rules: exposure("electrified_steam", [damage("lightning", 5, 0.05)], null, true) }]
   };
   function mediumZone(medium) {
     const layer = zoneMediumLayer(medium);
@@ -1005,6 +1022,10 @@ var FatedTacticalTavern = (() => {
   query("clamp", ["value", "value", "value"], "clamp(value, lo, hi)", "\u5C06\u6570\u503C\u94B3\u5236\u5728\u4E0A\u4E0B\u9650\u4E4B\u95F4", ([value, lo, hi]) => numeric((x, min, max) => Math.min(max, Math.max(min, x)), value, lo, hi));
   query("distance", ["unit", "unit"], "distance() / distance(unitA, unitB)", "\u8BFB\u53D6\u4E24\u5355\u4F4D\u7684\u4E09\u7EF4\u8DDD\u79BB\uFF0C\u65E0\u53C2\u65F6\u9ED8\u8BA4 self \u5230 target", ([a, b], context) => readDistance(context, a, b));
   query("facing_arc", ["entity", "entity"], "facing_arc(observer, point)", "\u8BFB\u53D6 point \u76F8\u5BF9 observer \u671D\u5411\u7684\u6247\u533A\uFF1Afront\u3001side \u6216 back", ([observer, point4]) => observer && point4 && Number.isFinite(observer.x) && Number.isFinite(observer.y) && Number.isFinite(point4.x) && Number.isFinite(point4.y) ? facingArc(observer, point4) : null);
+  query("has_los", ["entity", "entity"], "has_los(observer, point)", "\u68C0\u67E5\u4E24\u4E2A\u5B9E\u4F53\u6216\u5750\u6807\u95F4\u89C6\u7EBF\u662F\u5426\u901A\u7545", ([observer, point4], context) => {
+    const result = callback(context, "hasLOS", observer, point4);
+    return typeof result === "boolean" ? result : Boolean(context?.state?.grid && observer && point4 && hasLOS(context.state, observer, point4));
+  });
   var booleanQuery = (value) => typeof value === "boolean" ? value : null;
   var statusPresent = (context, entity, id3) => booleanQuery(callback(context, "hasStatus", entity, id3) ?? statusOf(entity, id3) != null);
   function tagged(entity, tag2) {
@@ -1419,7 +1440,7 @@ var FatedTacticalTavern = (() => {
   function getStatusTemplate(state, statusId3) {
     if (typeof statusId3 !== "string") return void 0;
     const templates2 = state?.statusTemplates;
-    return (Object.hasOwn(templates2 ?? {}, statusId3) ? templates2[statusId3] : void 0) ?? (Object.hasOwn(STATUSES, statusId3) ? STATUSES[statusId3] : void 0) ?? (Object.hasOwn(PHYSICAL_STATUSES, statusId3) ? PHYSICAL_STATUSES[statusId3] : void 0);
+    return (Object.hasOwn(templates2 ?? {}, statusId3) ? templates2[statusId3] : void 0) ?? (Object.hasOwn(STATUSES, statusId3) ? STATUSES[statusId3] : void 0) ?? (Object.hasOwn(PHYSICAL_STATUSES, statusId3) ? PHYSICAL_STATUSES[statusId3] : void 0) ?? (Object.hasOwn(TACTICAL_STATUSES, statusId3) ? TACTICAL_STATUSES[statusId3] : void 0);
   }
   var actionStatuses = Object.freeze({
     brace: "guarded",
@@ -1487,6 +1508,12 @@ var FatedTacticalTavern = (() => {
     prone: def("prone", "\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", {
       mods: [{ locks: ["move"] }, { stat: "incomingAccuracy", flat: "2 * status.stacks" }]
     })
+  });
+  var TACTICAL_STATUSES = Object.freeze({
+    dipped: def("dipped", "\u8638\u53D6", "\u2726", "buff", 2, "\u6B66\u5668\u9644\u7740\u5A92\u4ECB\u5C5E\u6027\uFF0C\u4E0B\u4E00\u6B21\u6253\u51FB\u8FFD\u52A0\u8638\u53D6\u9644\u4F24\u3002"),
+    overwatch: def("overwatch", "\u5B88\u671B", "\u2316", "buff", 1, "\u7B49\u5F85\u654C\u65B9\u79FB\u52A8\u540E\u53D1\u52A8\u4E00\u6B21\u8B66\u6212\u653B\u51FB\u3002", { tags: ["reaction"] }),
+    downed: def("downed", "\u91CD\u4F24\u5012\u5730", "\u{1F198}", "control", 3, "\u91CD\u4F24\u5012\u5730\uFF0C\u7B49\u5F85\u6551\u63F4\u3002", { mods: [{ locks: ["attack", "action", "move", "cast", "reaction"] }, { stat: "dodge", flat: -4 }] }),
+    wounded: def("wounded", "\u91CD\u4F24\u865A\u5F31", "\u{1FA79}", "debuff", 100, "\u672C\u6218\u66FE\u7ECF\u91CD\u4F24\u5012\u5730\u3002", { durationType: "until_removed" })
   });
   var PHYSICAL_STATUSES = Object.freeze({
     wet: def("wet", "\u6F6E\u6E7F", "\u{1F4A7}", "debuff", 2, "\u706B\u7130\u4F24\u5BB3\u51CF\u514D 25%\uFF0C\u53D7\u5230\u51B0\u971C\u4E0E\u96F7\u7535\u4F24\u5BB3\u63D0\u9AD8 25%\uFF1B\u9047\u70ED\u84B8\u5E72\uFF0C\u9047\u5BD2\u7ED3\u971C\u3002", {
@@ -1998,7 +2025,10 @@ var FatedTacticalTavern = (() => {
       cellM: state.scale?.cellM ?? 2,
       boardW: state.grid?.[0]?.length,
       boardH: state.grid?.length,
-      ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
+      ...state.grid && {
+        distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null,
+        hasLOS: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? hasLOS(state, a, b) : false
+      },
       elevation: (entity) => pointElevation(state, entity),
       resource: (unit, key5) => key5 === "move" ? unit ? movementBudget(state, unit).remainingCells : 0 : key5 === "attack" || key5 === "action" ? Math.max(0, 1 - (unit?.used?.[key5] ?? 0)) : key5 === "reaction" && unit ? unit.reactionAvailable === false ? 0 : 1 : getPool(state, unit?.id, key5, "unit")?.current ?? own4(unit, key5),
       itemResource: (item, key5) => getPool(state, item?.id, key5, "item")?.current ?? 0,
@@ -2155,10 +2185,12 @@ var FatedTacticalTavern = (() => {
     };
   }
   function unitSkipped(state, unit) {
+    if (unit?.surprised && state.round === 1) return true;
     const { locks } = aggregateModifiers(state, unit.id);
     return locks.attack && locks.action && locks.move && locks.cast;
   }
   function reactionBlocked(state, unit) {
+    if (unit?.surprised && state.round === 1) return true;
     const { locks } = aggregateModifiers(state, unit.id);
     return locks.reaction || locks.attack;
   }
@@ -2245,6 +2277,7 @@ var FatedTacticalTavern = (() => {
     const carrier4 = resolveEntity(state, frame.carrier);
     const itemTemplate = frame.carrier?.type === "item" ? own5(state.equipment, carrier4?.templateId) : void 0;
     return {
+      state,
       self,
       source,
       target: target2,
@@ -2275,6 +2308,7 @@ var FatedTacticalTavern = (() => {
       boardW: state.grid?.[0]?.length,
       boardH: state.grid?.length,
       distance: (a = self, b = target2) => coordinate2(a) && coordinate2(b) ? distance3D(state, a, b) : null,
+      hasLOS: (a = self, b = target2) => coordinate2(a) && coordinate2(b) ? hasLOS(state, a, b) : false,
       elevation: (entity) => pointElevation(state, entity),
       resource: (entity, key5) => host.resource?.(state, entity, key5) ?? own5(entity, key5),
       itemResource: (item, key5) => getPool(state, item?.id, key5, "item")?.current ?? 0,
@@ -2395,6 +2429,17 @@ var FatedTacticalTavern = (() => {
       const value = automaticChoice(state, ask);
       writeChoice(state, frame, ask, value, host, true);
     } else state.vm.pendingAsk = ask;
+  }
+  function askReaction(state, unit, outVar, prompt2, id3, label) {
+    state.vm.pendingAsk = {
+      askId: nextId2(state.vm, "ask"),
+      chooserId: unit.id,
+      kind: "option",
+      outVar,
+      prompt: prompt2,
+      options: [{ id: id3, label }, { id: "hold", label: "\u4FDD\u7559\u53CD\u5E94" }],
+      aiPolicy: "first"
+    };
   }
   function answerVM(state, action, host) {
     const ask = state.vm?.pendingAsk;
@@ -3138,7 +3183,7 @@ var FatedTacticalTavern = (() => {
     if (schema.type === "string") {
       if (typeof value !== "string" || schema.minLength !== void 0 && value.length < schema.minLength || schema.maxLength !== void 0 && value.length > schema.maxLength || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
       if (schema.format === "tactical-expr") return validExpr(value);
-      if (schema.format === "tactical-status-id") return Object.hasOwn(context.statusTemplates ?? {}, value) || (context.declaredStatusTemplatesOnly ? value === "suppressed" : Object.hasOwn(STATUSES, value) || Object.hasOwn(PHYSICAL_STATUSES, value));
+      if (schema.format === "tactical-status-id") return Object.hasOwn(context.statusTemplates ?? {}, value) || (context.declaredStatusTemplatesOnly ? value === "suppressed" : Object.hasOwn(STATUSES, value) || Object.hasOwn(PHYSICAL_STATUSES, value) || Object.hasOwn(TACTICAL_STATUSES, value));
       if (schema.format === "tactical-damage-type") return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
       return true;
     }
@@ -3591,7 +3636,7 @@ var FatedTacticalTavern = (() => {
     const scope = { ...context, target: unit };
     const from = at(state, unit);
     const path2 = [];
-    let collision;
+    let collision, cliffDrop = 0;
     if (op.mode === "altitude") {
       const delta2 = op.deltaZ === void 0 ? 3 : evaluateExpr(op.deltaZ, scope);
       if (!op.land && !Number.isFinite(delta2)) return;
@@ -3620,12 +3665,15 @@ var FatedTacticalTavern = (() => {
         const [dx, dy] = op.mode === "push" ? away : facingToward(unit, origin);
         if (!dx && !dy) break;
         const next = { x: unit.x + dx, y: unit.y + dy, altitude: unit.altitude ?? 0 };
-        if (!canStep(state, unit, next)) {
+        const allowed = forced ? canDisplaceStep(state, unit, next) : canStep(state, unit, next);
+        if (!allowed) {
           collision = xy(next);
           break;
         }
+        cliffDrop += displacementDrop(state, unit, next);
         Object.assign(unit, xy(next));
         path2.push(at(state, unit));
+        if (forced && applyMediumEntry(state, host, frame, unit, next)) break;
       }
       if (!path2.length && !collision) return;
     }
@@ -3647,6 +3695,20 @@ var FatedTacticalTavern = (() => {
       }));
     }
     logMove(state, host, unit, op.mode, from, path2, collision);
+    const sourceId2 = context.self?.id ?? frame.sourceId;
+    if (cliffDrop >= 2) {
+      host.grantStatus(state, unit, "prone", { sourceId: sourceId2, remainingTurns: 1 });
+      scheduleCommit(state, frame, {
+        op: "damage",
+        pool: "hp",
+        damageType: "true",
+        direct: false,
+        amount: Math.max(4, cliffDrop * 5),
+        targetId: unit.id,
+        sourceId: sourceId2,
+        label: "\u5760\u843D"
+      });
+    }
     if (!collision) return;
     const target2 = { type: "unit", id: unit.id };
     const inherited = inherit(frame);
@@ -3656,17 +3718,31 @@ var FatedTacticalTavern = (() => {
       scope: { ...inherited.scope, target: target2 },
       program: op.onCollide
     });
-    const amount = evaluateExpr(op.collisionDamage, scope);
-    if (Number.isFinite(amount) && amount > 0) scheduleCommit(state, frame, {
-      op: "damage",
-      pool: "hp",
-      damageType: "true",
-      direct: false,
-      amount,
-      targetId: unit.id,
-      sourceId: context.self?.id ?? frame.sourceId,
-      label: op.label ?? "\u649E\u51FB"
-    });
+    const amount = op.collisionDamage === void 0 ? 3 : evaluateExpr(op.collisionDamage, scope);
+    if (Number.isFinite(amount) && amount > 0) {
+      const blocker = displacementBlocker(state, unit, collision);
+      if (blocker.cover) host.coverDamage?.(state, state.units?.[sourceId2], blocker.cover, amount, { label: "\u649E\u51FB" });
+      if (blocker.unit) scheduleCommit(state, frame, {
+        op: "damage",
+        pool: "hp",
+        damageType: "true",
+        direct: false,
+        amount,
+        targetId: blocker.unit.id,
+        sourceId: sourceId2,
+        label: "\u8FDE\u73AF\u649E\u51FB"
+      });
+      scheduleCommit(state, frame, {
+        op: "damage",
+        pool: "hp",
+        damageType: "true",
+        direct: false,
+        amount,
+        targetId: unit.id,
+        sourceId: sourceId2,
+        label: op.label ?? "\u649E\u51FB"
+      });
+    }
   }
   function carrier3(spec, sourceId2, id3, templateId, context, { allowUnitPools = false } = {}) {
     const vars = Object.fromEntries(Object.entries(spec.vars ?? {}).flatMap(([key5, expression]) => {
@@ -5055,11 +5131,11 @@ var FatedTacticalTavern = (() => {
         rawAmount: data.amount,
         finalAmount: amount,
         ...op === "damage" && { shared: data.shared === true, sharedFromId: data.sharedFromId ?? null },
+        direct: data.direct ?? true,
         isSingle: data.isSingle ?? null,
         isArea: data.isArea ?? null,
         isRanged: data.isRanged ?? null,
         sourceRuleId: frame.ruleId,
-        direct: data.direct ?? true,
         preserveLife: data.lethal === false || Boolean(target2.nonLethal || host.flag?.(state, target2, "preserveLife") || host.preserveLife?.(state, source)),
         actionType: data.actionType ?? null,
         skillId: data.skillId ?? null,
@@ -5139,6 +5215,10 @@ var FatedTacticalTavern = (() => {
         if (blockRestore) event.finalAmount = 0;
         else updatePoolCurrent(state, pool.id, "add", Math.max(0, Math.floor(event.finalAmount)));
         event.healing = target2.hp - before;
+        if (event.healing > 0 && target2.statuses?.downed) {
+          removeStatus(state, target2, target2.statuses.downed, "healed", source, host, frame);
+          host.log(state, source, "revived", `${target2.name}\u6062\u590D\u610F\u8BC6`, { targetId: target2.id });
+        }
         host.log(state, source, "heal", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}\u6062\u590D${event.healing}\u70B9\u751F\u547D`, { ...data.details, targetId: target2.id, amount: event.healing, hpBefore: before, hpAfter: target2.hp });
       } else {
         let applied = true;
@@ -5231,6 +5311,10 @@ var FatedTacticalTavern = (() => {
           poolId: depleted.id,
           damageType: event.damageType,
           targetId: target2.id,
+          direct: event.direct,
+          isSingle: event.isSingle,
+          isArea: event.isArea,
+          bleedOut: data.bleedOut === true,
           rawAmount: event.rawAmount ?? 0,
           finalAmount: event.finalAmount ?? 0,
           dealt: event.dealt ?? 0,
@@ -5287,9 +5371,29 @@ var FatedTacticalTavern = (() => {
         updatePoolCurrent(state, pool.id, "set", 1);
         return;
       }
+      const downed = event.units.map((id3) => entry(state.units, id3)).find((unit) => unit && state.heroicDowned && unit.team === "blue" && !unit.summoned && !unit.statuses?.downed && !unit.statuses?.wounded && !["spar", "arena", "suppress"].includes(state.battleType) && Object.values(state.units).some((other) => other.id !== unit.id && other.team === "blue" && alive3(other) && !other.fled && !other.statuses?.downed));
+      if (downed) {
+        updatePoolCurrent(state, pool.id, "set", 1);
+        host.grantStatus(state, downed, "downed", { sourceId: frame.sourceId, remainingTurns: 3 });
+        host.grantStatus(state, downed, "wounded", { sourceId: frame.sourceId, remainingTurns: 100 });
+        host.log(state, downed, "downed", `${downed.name}\u91CD\u4F24\u5012\u5730\uFF083\u8F6E\u5185\u9700\u6551\u63F4\uFF09`, { targetId: downed.id });
+        return;
+      }
       for (const unitId of event.units) {
         const unit = entry(state.units, unitId);
         if (!unit || unit.pools?.hp !== pool.id) continue;
+        const injury = unit.statuses?.downed;
+        if (injury) {
+          const source = entry(state.units, frame.sourceId);
+          const finishingHit = source && source.team !== unit.team && event.direct && event.isSingle !== false && !event.isArea;
+          if (!event.bleedOut && !finishingHit && injury.remainingTurns > 1) {
+            injury.remainingTurns--;
+            updatePoolCurrent(state, pool.id, "set", 1);
+            host.log(state, source, "downed", `${unit.name}\u4F24\u52BF\u6076\u5316`, { targetId: unit.id, remainingTurns: injury.remainingTurns });
+            return;
+          }
+          removeStatus(state, unit, injury, "expired", source, host, frame);
+        }
         unit.diedAt = { round: state.round, turn: state.turn };
         unit.corpseOf ??= unit.id;
         host.log(state, entry(state.units, frame.sourceId), "defeat", `${unit.name}\u5012\u4E0B`, { targetId: unit.id });
@@ -5891,7 +5995,7 @@ var FatedTacticalTavern = (() => {
       return;
     }
     if (frame.pc === 5) {
-      if (continueNativeAction({ state, frame, actor, plan, event, overrides: overrides2, host })) frame.pc = 3;
+      if (continueNativeAction({ state, frame, actor, plan, event, overrides: overrides2, host, options })) frame.pc = 3;
       return;
     }
     if (record3 && isTapeAction(action.type)) {
@@ -5995,11 +6099,50 @@ var FatedTacticalTavern = (() => {
   function linkedGroupKey(unit) {
     return unit?.turnMode === "linked_group" && unit.summonGroup && unit.turnAnchorId ? `${unit.turnAnchorId}:${unit.summonGroup}` : null;
   }
+  function independentManualUnit(unit) {
+    return unit && !unit.summoned && unit.team === "blue" && unit.hp > 0 && !unit.fled;
+  }
+  function manualSharedWindowIndices(state) {
+    const order = state.order ?? [];
+    const anchor = state.units?.[order[state.turn]];
+    if (!anchor || !independentManualUnit(anchor)) return [];
+    const shared = state.vm?.sharedTurn;
+    const start = shared?.start ?? state.turn;
+    const end = shared?.end ?? (() => {
+      let last = state.turn;
+      for (let index = state.turn + 1; index < order.length; index++) {
+        const unit = state.units?.[order[index]];
+        if (!unit || unit.hp <= 0 || unit.fled) continue;
+        if (!independentManualUnit(unit) || unit.team !== anchor.team) break;
+        last = index;
+      }
+      return last;
+    })();
+    const indices = [];
+    for (let index = start; index <= end; index++) {
+      const unit = state.units?.[order[index]];
+      if (!unit || unit.hp <= 0 || unit.fled) continue;
+      if (!independentManualUnit(unit) || unit.team !== anchor.team) break;
+      indices.push(index);
+    }
+    return indices;
+  }
+  function sharedSquadUnits(state) {
+    const indices = manualSharedWindowIndices(state);
+    if (indices.length < 2) return [];
+    const ended = new Set(state.vm?.sharedTurn?.ended ?? []);
+    return indices.flatMap((index) => {
+      const owner = state.units[state.order[index]];
+      if (ended.has(owner.id)) return [];
+      return [owner, ...linkedUnitsOf(state, owner.id)];
+    });
+  }
   function canRouteActor(state, actorId) {
     const anchor = state.units?.[state.order?.[state.turn]];
     const actor = state.units?.[actorId];
     if (!anchor || !actor || actor.hp <= 0 || actor.fled) return false;
-    return actor.id === anchor.id || isLinkedMode(actor) && actor.turnAnchorId === anchor.id && actor.team === anchor.team;
+    if (actor.id === anchor.id || isLinkedMode(actor) && actor.turnAnchorId === anchor.id && actor.team === anchor.team) return true;
+    return sharedSquadUnits(state).some((unit) => unit.id === actor.id);
   }
   function actionActor(state, action) {
     const actorId = action?.actorId ?? state.order?.[state.turn];
@@ -6408,6 +6551,8 @@ var FatedTacticalTavern = (() => {
     if (!plain2(vm) || !Array.isArray(vm.stack) || vm.stack.length > 64 || !plain2(vm.events) || !Number.isSafeInteger(vm.serial) || vm.serial < 0 || !Number.isInteger(vm.stepsRemaining) || Boolean(vm.stack.length) !== Boolean(vm.pendingAsk) || !plain2(pools)) return false;
     if (vm.startingTurn !== void 0 && (!vm.pendingAsk || vm.endingTurn !== void 0 || vm.startingTurn !== state.order?.[state.turn] || !own13(state.units, vm.startingTurn))) return false;
     if (vm.endingTurn !== void 0 && (!vm.pendingAsk || typeof vm.endingTurn !== "string" || vm.endingTurn !== state.order?.[state.turn] || !own13(state.units, vm.endingTurn))) return false;
+    const sharedTurn = vm.sharedTurn;
+    if (sharedTurn !== void 0 && (!plain2(sharedTurn) || !Number.isInteger(sharedTurn.start) || !Number.isInteger(sharedTurn.end) || sharedTurn.start < 0 || sharedTurn.end < sharedTurn.start || sharedTurn.end >= (state.order?.length ?? 0) || !Array.isArray(sharedTurn.started) || !Array.isArray(sharedTurn.ended) || !sharedTurn.started.every((id3) => typeof id3 === "string") || !sharedTurn.ended.every((id3) => typeof id3 === "string"))) return false;
     const remaining = vm.endingStatuses;
     if (remaining !== void 0 && (!vm.endingTurn || !Array.isArray(remaining) || !remaining.every((id3) => typeof id3 === "string"))) return false;
     for (const record3 of [...vm.stack, ...Object.values(vm.events)]) {
@@ -6590,7 +6735,7 @@ var FatedTacticalTavern = (() => {
     if (state.battleConclusion) return state.outcome;
     if (["spar", "arena"].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
     let blue = false, red = false;
-    for (const unit of values3(state.units)) if (alive5(unit) && !unit.fled) {
+    for (const unit of values3(state.units)) if (alive5(unit) && !unit.fled && !unit.statuses?.downed) {
       blue ||= unit.team === "blue";
       red ||= unit.team === "red";
     }
@@ -6718,8 +6863,22 @@ var FatedTacticalTavern = (() => {
       armorMultiplier
     };
   }
-  function guardFor(state, target2) {
-    return living(state).find((u) => u !== target2 && u.team === target2.team && vmFlag(state, u, "intercept", { target: target2 }) && u.reactionAvailable !== false && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && clearSight(state, u, target2));
+  var reactionPolicy = (state, unit) => unit.reactionPolicy && !isAiControlled(state, unit) ? unit.reactionPolicy : "auto";
+  function guardsFor(state, target2) {
+    return living(state).filter((u) => reactionPolicy(state, u) !== "hold" && u !== target2 && u.team === target2.team && vmFlag(state, u, "intercept", { target: target2 }) && u.reactionAvailable !== false && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && clearSight(state, u, target2));
+  }
+  var guardFor = (state, target2) => guardsFor(state, target2)[0];
+  function reactionDecision(state, unit, frame, options, key5, id3, label) {
+    const policy = reactionPolicy(state, unit);
+    if (policy === "hold") return false;
+    if (policy === "auto" || options?.dryRun) return true;
+    if (frame.vars[key5] === void 0) {
+      askReaction(state, unit, key5, label, id3, label);
+      return null;
+    }
+    const accepted = frame.vars[key5] === id3;
+    delete frame.vars[key5];
+    return accepted;
   }
   function resetUnitTurn(state, unit) {
     delete unit.followupUsed;
@@ -6748,7 +6907,10 @@ var FatedTacticalTavern = (() => {
     initializeVMWorld(state);
     delete state.vm.activePhaseId;
     const members = [...linkedUnitsOf(state, unit.id), unit];
-    for (const member of members) member.ap = 0;
+    for (const member of members) {
+      member.ap = 0;
+      if (member.surprised) delete member.surprised;
+    }
     for (const key5 of Object.keys(state.vm.linkedGroupUsed ?? {})) {
       if (key5.startsWith(`${unit.id}:`)) delete state.vm.linkedGroupUsed[key5];
     }
@@ -6789,7 +6951,19 @@ var FatedTacticalTavern = (() => {
       if (status.durationType !== "battle_turns") continue;
       if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
       if (--status.remainingTurns > 0) continue;
-      removeVMStatus(state, unit, status, "expired", unit);
+      if (id3 === "downed" && state.heroicDowned && alive5(unit)) {
+        commitVMEffect(state, {
+          op: "damage",
+          targetId: unit.id,
+          sourceId: status.sourceId ?? unit.id,
+          damageType: "true",
+          amount: unit.hp,
+          direct: false,
+          lethal: true,
+          bleedOut: true,
+          label: "\u91CD\u4F24\u5230\u671F"
+        });
+      } else removeVMStatus(state, unit, status, "expired", unit);
       if (state.vm.pendingAsk) {
         state.vm.endingPhase.statuses = remaining.slice(index + 1);
         return;
@@ -6829,7 +7003,7 @@ var FatedTacticalTavern = (() => {
           continue;
         }
         if (alive5(unit) && !unitSkipped(state, unit)) return;
-        if (alive5(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
+        if (alive5(unit)) record(state, unit, "skip", `${unit.name}${unit.surprised && state.round === 1 ? "\u56E0\u53D7\u60CA" : "\u56E0\u63A7\u5236"}\u8DF3\u8FC7\u884C\u52A8`);
         endTurn(state, unit);
         if (state.vm?.pendingAsk || refreshOutcome(state)) return;
       }
@@ -6941,6 +7115,7 @@ var FatedTacticalTavern = (() => {
         record(state, null, "initiative_order", "\u5148\u653B\u4FEE\u6B63\u7ED3\u675F", { order, modified: false });
       }
     }
+    for (const unit of Object.values(state.units)) if (unit.surprised) delete unit.surprised;
     resetFacing(state);
     moraleCheck(state);
     if (!refreshOutcome(state)) host.hooks(state, frame, "round_start", host.event(state, { round: state.round }));
@@ -7319,9 +7494,23 @@ var FatedTacticalTavern = (() => {
     return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !reactionBlocked(state, unit)).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon: weapon2 }) => !weapon2.ammo && isMelee(weapon2.template) && weapon2.template.damage != null);
   }
   function canReact(state, { unit, weapon: weapon2 }, mover) {
-    if (!alive5(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit)) return false;
+    if (!alive5(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit) || reactionPolicy(state, unit) === "hold") return false;
     const taunter = tauntFor(state, unit, weapon2.template);
     return !taunter || taunter.id === mover.id;
+  }
+  function resolveOverwatch(state, mover, host) {
+    for (const unit of living(state)) {
+      const status = unit.statuses?.overwatch;
+      if (!status || unit.team === mover.team || unit.reactionAvailable === false || reactionBlocked(state, unit) || gridDistance(unit, mover) > (status.vars?.watchRange ?? 0) || !clearSight(state, unit, mover)) continue;
+      const weapon2 = weaponInfo(state, unit);
+      if (!weapon2.template) continue;
+      unit.reactionAvailable = false;
+      removeVMStatus(state, unit, status, "triggered", mover);
+      record(state, unit, "overwatch", `${unit.name}\u5BF9${mover.name}\u53D1\u52A8\u5B88\u671B\u5C04\u51FB`, { targetId: mover.id });
+      host.opportunity(state, unit, pos(unit.x, unit.y), targetProfile(state, unit, mover, mover, weapon2.template, { weapon: weapon2 }), weapon2);
+      return true;
+    }
+    return false;
   }
   function threatens(state, source, mover, at3) {
     const template = source.weapon.template;
@@ -7441,7 +7630,7 @@ var FatedTacticalTavern = (() => {
     const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags2.guaranteed_crit);
     const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags2.guaranteed_hit);
     const execution = !cover && target2?.team !== actor.team && ["shaken", "routed"].includes(target2?.moraleState) && ["kill", "concept"].includes(context.intent) && hasStrikeDamage(template);
-    const dodge = execution || cover || !target2 ? 0 : modStat(state, target2, "dodge", 0, { ...strike, attacker: actor });
+    const dodge = execution || cover || !target2 ? 0 : modStat(state, target2, "dodge", 0, { ...strike, attacker: actor }) - (target2?.surprised && state.round === 1 ? 2 : 0);
     const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
     const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
     const flanked = target2 && !cover ? isFlanked(state, origin, target2) : false;
@@ -7643,7 +7832,12 @@ var FatedTacticalTavern = (() => {
     block: { ap: 1, slot: "action" },
     shield_bash: { ap: 1, slot: "attack", sp: 2 },
     use_item: { ap: 0, slot: null },
+    jump: { ap: 1, slot: "action" },
+    dip: { ap: 1, slot: "action" },
     charge: { ap: 1, slot: "action" },
+    help: { ap: 1, slot: "action" },
+    reaction_policy: { ap: 0, slot: null },
+    overwatch: { ap: 1, slot: "action" },
     lock_on: { ap: 1, slot: "action" },
     scan: { ap: 1, slot: "action" },
     free_ally: { ap: 1, slot: "attack" },
@@ -7660,6 +7854,31 @@ var FatedTacticalTavern = (() => {
   var isMovement = (type) => Object.hasOwn(movementNames, type);
   var isTapeAction = (type) => type === "skill" || Object.hasOwn(ACTIONS, type) && type !== "end" && type !== "end_encounter";
   var isStrikeAction = (action, plan) => ["attack", "skill", "shield_bash"].includes(action.type) && !plan.interactiveId;
+  var DIP_SOURCES = {
+    fire: ["fire", "\u70C8\u7130", 4],
+    acid: ["acid", "\u5F3A\u9178", 4],
+    poison_cloud: ["poison", "\u6BD2\u7634", 4, "flammable"],
+    electrified_water: ["lightning", "\u96F7\u7535", 4],
+    electrified_steam: ["lightning", "\u96F7\u7535", 4],
+    oil: ["physical", "\u706B\u6CB9", 2, "flammable"],
+    ice: ["cold", "\u5BD2\u971C", 3],
+    barrel: ["fire", "\u4F59\u70EC\u706B\u6CB9", 4]
+  };
+  function dipSource(state, unit, center) {
+    const zones = values3(state.zones).filter(isMedium).sort((a, b) => mediumRank(b) - mediumRank(a) || byId3(a, b));
+    const cells2 = center ? [center] : state.grid.flatMap((row, y) => row.map((_, x) => pos(x, y))).sort((a, b) => gridDistance(unit, a) - gridDistance(unit, b));
+    for (const at3 of cells2) {
+      if (gridDistance(unit, at3) > 1 || Math.abs(elevation(state, unit) - elevation(state, at3)) > 1) continue;
+      const zone = zones.find((zone2) => DIP_SOURCES[zone2.medium] && zoneContains(state, zone2, at3));
+      const barrel = values3(state.interactives).some((item) => item.kind === "barrel" && !item.spent && sameCell(item, at3));
+      const source = zone ? DIP_SOURCES[zone.medium] : barrel ? DIP_SOURCES.barrel : null;
+      if (source) {
+        const [dipType, label, dipBonus, dipTrait] = source;
+        return { label, dipType, dipBonus, ...dipTrait && { dipTrait } };
+      }
+    }
+    return null;
+  }
   function makeActionImpulse(state, actor, action, plan, origin, targetIds = []) {
     if (state.elementalPhysics === "off" || !plan.cells?.length) return null;
     const barrel = plan.kind === "barrel";
@@ -7673,9 +7892,31 @@ var FatedTacticalTavern = (() => {
       state.customElements,
       plan.actionContext?.tags ?? []
     );
-    if (!traits.length) return null;
+    const extra = new Set(traits);
+    const dip = weapon2?.instance && actor.statuses?.dipped?.vars;
+    if (dip) for (const trait of elementTraits(dip.dipType, state.customElements, dip.dipTrait ? [dip.dipTrait] : [])) extra.add(trait);
+    if (weapon2 && (isRangedMain(weapon2.template) || weapon2.ammo) && origin && plan.center) {
+      const fromZ = elevation(state, origin), toZ = elevation(state, plan.center);
+      const zones = values3(state.zones).filter(isMedium);
+      for (const at3 of supercoverLine(origin, plan.center).slice(1)) {
+        const progress = gridDistance(origin, at3) / Math.max(1, gridDistance(origin, plan.center));
+        const lineZ = fromZ + (toZ - fromZ) * progress;
+        for (const zone of zones) {
+          if (!zoneContains(state, zone, { ...at3, altitude: lineZ - elevation(state, at3) }, { ignoreZ: zone.medium === "fire" })) continue;
+          if (zone.layer === "cloud") {
+            if (zone.medium === "electrified_steam") extra.add("shock");
+            if (zone.medium === "poison_cloud") extra.add("flammable");
+            if (zone.medium === "steam") extra.add("wet");
+          } else if (zone.medium === "fire" && Math.abs(lineZ - elevation(state, at3)) <= 1) {
+            extra.add("heat");
+            extra.add("ignite");
+          }
+        }
+      }
+    }
+    if (!extra.size) return null;
     return {
-      traits,
+      traits: [...extra],
       cells: plan.cells,
       origin: barrel ? plan.center : origin,
       center: plan.center,
@@ -7704,7 +7945,7 @@ var FatedTacticalTavern = (() => {
   function emitSpatialImpulse(state, host, frame, impulse) {
     if (impulse) resolveSpatialImpulse(state, host, frame, impulse);
   }
-  var needsTarget = (type) => isMovement(type) || ["attack", "skill", "shield_bash", "interact", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"].includes(type);
+  var needsTarget = (type) => isMovement(type) || ["jump", "help", "attack", "skill", "shield_bash", "interact", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"].includes(type);
   var fail2 = (error2, extra = {}) => ({ ok: false, error: error2, ...extra });
   var healMultiplier = (state, actor) => modStat(state, actor, "healing", 1, { actionType: "skill" });
   function inInteractionRange(state, actor, at3) {
@@ -7752,6 +7993,15 @@ var FatedTacticalTavern = (() => {
     });
   }
   function preview(state, action, options = {}) {
+    const index = action?.actorId === void 0 ? void 0 : manualSharedWindowIndices(state).find((value) => state.order[value] === action.actorId);
+    const peer = index === void 0 ? void 0 : state.units?.[action.actorId];
+    if (peer && index !== state.turn && !state.vm?.sharedTurn?.started?.includes(peer.id)) {
+      const working = structuredClone(state);
+      working.turn = index;
+      resetUnitTurn(working, working.units[peer.id]);
+      for (const member of linkedUnitsOf(working, peer.id)) resetUnitTurn(working, member);
+      return preview(working, action, options);
+    }
     const plan = previewAction(state, action, options);
     if (!plan.ok || options.simulateRules === false || !plan.actionContext || isStrikeAction(action, plan) || needsTarget(action.type) && action.x === void 0 || state.vm?.stack.length) return plan;
     const context = { ...plan.actionContext, targetId: plan.targetId ?? plan.actionContext.targetId };
@@ -7766,7 +8016,7 @@ var FatedTacticalTavern = (() => {
     if (!action || typeof action !== "object" || Array.isArray(action)) return fail2("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
     const { type, skillId } = action;
     let { x, y } = action;
-    if (!Object.keys(action).every((field2) => type === "switch_weapon" && field2 === "itemId" || ["type", "x", "y", "targetId", "skillId", "actorId", "bonusDice", "intent", "nonLethal", "maneuver"].includes(field2))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
+    if (!Object.keys(action).every((field2) => type === "switch_weapon" && field2 === "itemId" || ["type", "x", "y", "targetId", "skillId", "actorId", "bonusDice", "intent", "nonLethal", "maneuver", "policy"].includes(field2))) return fail2("\u52A8\u4F5C\u542B\u672A\u77E5\u5B57\u6BB5");
     if (action.bonusDice !== void 0 && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail2("\u5956\u52B1\u9AB0\u50A8\u5907\u4E0D\u8DB3");
     if (action.intent !== void 0 && !["normal", "function", "core", "kill", "concept"].includes(action.intent)) return fail2("\u610F\u56FE\u7C7B\u578B\u65E0\u6548");
     const equipmentSkill = type === "skill" ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
@@ -7785,7 +8035,7 @@ var FatedTacticalTavern = (() => {
     if (!cost) return fail2("\u672A\u77E5\u52A8\u4F5C");
     const aimed = needsTarget(type);
     const unplaced = x === void 0 && y === void 0;
-    if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
+    if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed && type !== "dip" && type !== "reaction_policy") return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
     if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
     if (type === "interact" && unplaced) {
       const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }, { actingUnit: unit }).ok).sort(byId3).map((v) => pos(v.x, v.y));
@@ -7858,6 +8108,41 @@ var FatedTacticalTavern = (() => {
         return rule2.program.length && usesLeft > 0 && !cooldownRemaining;
       })) return fail2("\u526F\u624B\u9053\u5177\u6CA1\u6709\u53EF\u6267\u884C\u7684\u4E3B\u52A8\u6548\u679C");
       return { ...common, name: `\u4F7F\u7528${item2.template.name}`, maneuver: "use_item", itemId: unit.offHand, rules };
+    }
+    if (type === "dip") {
+      if (!weapon2.instance || state.elementalPhysics === "off") return fail2("\u5F53\u524D\u6B66\u5668\u65E0\u6CD5\u8638\u53D6");
+      const source = dipSource(state, unit, action.x === void 0 ? null : pos(action.x, action.y));
+      return source ? { ...common, name: `\u8638\u53D6${source.label}`, dip: source } : fail2("\u9644\u8FD1\u6CA1\u6709\u53EF\u8638\u53D6\u7684\u5143\u7D20\u5A92\u4ECB");
+    }
+    if (type === "jump") {
+      if (aggregateModifiers(state, unit.id).locks.move) return fail2("\u5F53\u524D\u4E0D\u80FD\u7EB5\u8DC3");
+      const range2 = clamp4(2 + Math.floor(Math.max(effectiveStat(state, unit, "str"), effectiveStat(state, unit, "agi")) / 6), 2, 6);
+      const eligible = (to) => {
+        const dz = elevation(state, to) - elevation(state, unit);
+        return !sameCell(unit, to) && gridDistance(unit, to) <= range2 && dz >= -3 && dz <= 2 && canOccupy(state, to.x, to.y, unit) && supercoverLine(unit, to).slice(1, -1).every((at3) => cellAt(state, at3.x, at3.y)?.kind !== "wall");
+      };
+      const cells3 = state.grid.flatMap((row, y2) => row.map((_, x2) => pos(x2, y2))).filter(eligible);
+      if (center && !eligible(center)) return fail2("\u65E0\u6CD5\u7EB5\u8DC3\u81F3\u8BE5\u843D\u70B9", { cells: cells3 });
+      if (!cells3.length) return fail2("\u6CA1\u6709\u53EF\u7528\u7EB5\u8DC3\u843D\u70B9");
+      const opportunities = opportunitySources(state, unit).filter((source) => canReact(state, source, unit) && threatens(state, source, unit, unit)).map(({ unit: reactor }) => opportunityDetail(reactor, unit, center ?? unit));
+      return { ...common, name: "\u7EB5\u8DC3", cells: cells3, opportunities, ...center && { center, steps: gridDistance(unit, center), path: [center] } };
+    }
+    if (type === "help") {
+      const allies = living(state).filter((candidate) => candidate.id !== unit.id && candidate.team === unit.team && candidate.statuses?.downed && gridDistance(unit, candidate) <= 1 && clearSight(state, unit, candidate));
+      if (!center) return allies.length ? { ...common, name: "\u6025\u6551\u62C9\u8D77", cells: allies.map((ally) => pos(ally.x, ally.y)) } : fail2("\u9644\u8FD1\u6CA1\u6709\u5012\u5730\u961F\u53CB");
+      const target2 = allies.find((candidate) => sameCell(candidate, center) && (!action.targetId || candidate.id === action.targetId));
+      if (!target2) return fail2("\u9700\u8981\u8D34\u8EAB\u4E14\u53EF\u89C1\u7684\u5012\u5730\u961F\u53CB");
+      return { ...common, name: "\u6025\u6551\u62C9\u8D77", targetId: target2.id };
+    }
+    if (type === "overwatch") {
+      if (!weapon2.instance || weapon2.ammo && !weapon2.infiniteAmmo && weapon2.ammoCount <= 0) return fail2("\u5F53\u524D\u6B66\u5668\u65E0\u6CD5\u5B88\u671B");
+      const watchRange = weapon2.template.range ?? weapon2.template.rawRange ?? 1;
+      return { ...common, name: "\u5B88\u671B", watchRange };
+    }
+    if (type === "reaction_policy") {
+      if (!["auto", "ask", "hold"].includes(action.policy)) return fail2("\u53CD\u5E94\u7B56\u7565\u65E0\u6548");
+      if (action.policy === "auto") return { ...common, name: "\u6062\u590D\u81EA\u52A8\u53CD\u5E94", policy: action.policy };
+      return { ...common, name: action.policy === "ask" ? "\u53CD\u5E94\u6539\u4E3A\u8BE2\u95EE" : "\u53CD\u5E94\u6539\u4E3A\u4FDD\u7559", policy: action.policy };
     }
     if (type === "charge") return { ...common, name: "\u84C4\u529B", maneuver: "charge" };
     if (type === "scan") return { ...common, name: "\u63A2\u5BDF", maneuver: "scan" };
@@ -8142,13 +8427,18 @@ var FatedTacticalTavern = (() => {
     };
     return simulateRules ? withSurfaceImpact(state, unit, action, plan, origin) : plan;
   }
+  var martialSize = (unit) => Number.isFinite(unit.bodyLengthM) ? sizeFor(unit.bodyLengthM) : BL_SIZE_TABLE.find((entry2) => entry2.id === (unit.sizeId ?? unit.size)) ?? BL_SIZE_TABLE[2];
   function maneuverContest(state, actor, target2, maneuver) {
     const attackStat = maneuver === "grapple" ? "str" : "agi";
     const defenseStat = maneuver === "trip" ? "agi" : "str";
     const attackerRoll = randomDie(state, 20), defenderRoll = randomDie(state, 20);
-    const attackerTotal = effectiveStat(state, actor, attackStat) + attackerRoll;
-    const defenderTotal = effectiveStat(state, target2, defenseStat) + defenderRoll;
-    const success = attackerTotal >= defenderTotal;
+    const attackerSize = martialSize(actor);
+    const targetSize = martialSize(target2);
+    const attackerTotal = effectiveStat(state, actor, attackStat) + attackerSize.martial + attackerRoll;
+    const defenderTotal = effectiveStat(state, target2, defenseStat) + targetSize.martial + defenderRoll;
+    const sizeDelta = attackerSize.martial - targetSize.martial;
+    const sizeBlocked = ["push", "grapple", "trip"].includes(maneuver) && sizeDelta <= -8;
+    const success = !sizeBlocked && attackerTotal >= defenderTotal;
     record(state, actor, "contest", `${actor.name}${success ? "\u6210\u529F" : "\u672A\u80FD"}${{ grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" }[maneuver]}`, {
       maneuver,
       targetId: target2.id,
@@ -8156,6 +8446,8 @@ var FatedTacticalTavern = (() => {
       defenderRoll,
       attackerTotal,
       defenderTotal,
+      sizeDelta,
+      sizeBlocked,
       success
     });
     return success;
@@ -8369,15 +8661,25 @@ var FatedTacticalTavern = (() => {
     if (!dx && !dy) return;
     const from = pointAt(state, target2);
     const traversedCells = [];
+    let cliffDrop = 0;
     for (let i = 0; i < (effect.distance ?? 1); i++) {
       const at3 = pos(target2.x + dx, target2.y + dy);
-      if (!canStep(state, target2, at3)) {
+      if (!canDisplaceStep(state, target2, at3)) {
         damageTarget(state, target2, actor.id, effect.collisionDamage ?? 5, "true", "\u649E\u51FB");
         if (alive5(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
+        const blocker = displacementBlocker(state, target2, at3);
+        if (blocker.cover) coverDamage(state, actor, blocker.cover, effect.collisionDamage ?? 5, { label: "\u649E\u51FB" });
+        if (blocker.unit) damageTarget(state, blocker.unit, actor.id, effect.collisionDamage ?? 5, "true", "\u8FDE\u73AF\u649E\u51FB");
         break;
       }
+      cliffDrop += displacementDrop(state, target2, at3);
       Object.assign(target2, at3);
       traversedCells.push(pointAt(state, target2));
+      if (applyMediumEntry(state, vmHost, null, target2, at3)) break;
+    }
+    if (cliffDrop >= 2 && alive5(target2)) {
+      damageTarget(state, target2, actor.id, Math.max(4, cliffDrop * 5), "true", "\u5760\u843D");
+      if (alive5(target2)) grantStatus(state, target2, "prone", { sourceId: actor.id, remainingTurns: 1 });
     }
     const to = pointAt(state, target2), steps = traversedCells.length;
     if (steps > 0) {
@@ -8408,7 +8710,7 @@ var FatedTacticalTavern = (() => {
       nonLethal: previous.nonLethal ?? action.nonLethal ?? actor.nonLethal ?? false
     };
   }
-  function continueStrike({ state, frame, host }) {
+  function continueStrike({ state, frame, host, options }) {
     const { data: action, plan } = frame;
     const actor = tableEntry(state.units, frame.ownerId);
     const actionEvent = state.vm.events[frame.eventRef];
@@ -8469,7 +8771,7 @@ var FatedTacticalTavern = (() => {
         const result = resolveCheck(state, actor, profile);
         frame.intentOutcome = result.intent;
         frame.awaitEvent = host.event(state, { ...detail, ...result, intent: result.intent?.success === false ? "normal" : detail.intent, passed: result.hit });
-        frame.phase = "damage";
+        frame.phase = "guard";
         return;
       }
       frame.phase = "check";
@@ -8529,9 +8831,26 @@ var FatedTacticalTavern = (() => {
       if (event.forceOutcome === "fail") result.saved = false;
       frame.intentOutcome = result.intent;
       Object.assign(event, { ...result, intent: result.intent?.success === false ? "normal" : detail.intent, passed: profile.saveStat ? result.saved : result.hit });
-      frame.phase = "damage";
+      frame.phase = "guard";
       host.hooks(state, frame, "after_check", frame.awaitEvent);
       return;
+    }
+    if (frame.phase === "guard") {
+      if (event.hit && alive5(target2) && !target2.fled && profile.kind !== "cover" && profile.dice) {
+        frame.guardCandidates ??= guardsFor(state, target2).map((unit) => unit.id);
+        while (frame.guardCandidates.length) {
+          const guard = state.units[frame.guardCandidates[0]];
+          const decision = reactionDecision(state, guard, frame, options, "__guardDecision", "guard", "\u63F4\u62A4\u66FF\u4F24");
+          if (decision === null) return;
+          frame.guardCandidates.shift();
+          if (decision) {
+            frame.guardId = guard.id;
+            break;
+          }
+        }
+        delete frame.guardCandidates;
+      }
+      frame.phase = "damage";
     }
     if (frame.phase === "damage") {
       if (!event.hit || !alive5(target2) || target2.fled) {
@@ -8541,7 +8860,7 @@ var FatedTacticalTavern = (() => {
       delete event.dealt;
       delete event.absorbed;
       event.targetId = target2.id;
-      frame.phase = "heal";
+      frame.phase = "dip_damage";
       const { critical, rating, saved } = event;
       const intent = frame.intentOutcome;
       if (!profile.dice) return;
@@ -8572,7 +8891,8 @@ var FatedTacticalTavern = (() => {
         frame.phase = "next_hit";
         return;
       }
-      const recipient = guardFor(state, target2) ?? target2;
+      const recipient = state.units[frame.guardId] ?? target2;
+      delete frame.guardId;
       if (recipient !== target2) recipient.reactionAvailable = false;
       event.targetId = recipient.id;
       host.commit(state, frame, {
@@ -8594,6 +8914,27 @@ var FatedTacticalTavern = (() => {
         lethal: !(profile.nonLethal || recipient.nonLethal || vmFlag(state, recipient, "preserveLife") || encounterNonlethal(state, actor))
       });
       return;
+    }
+    if (frame.phase === "dip_damage") {
+      frame.phase = "heal";
+      const dipped = action.type === "attack" && weapon2?.instance && actor.statuses?.dipped;
+      const recipient = tableEntry(state.units, event.targetId);
+      if (dipped && alive5(recipient) && state.elementalPhysics !== "off") {
+        const { dipType, dipBonus } = dipped.vars ?? {};
+        removeVMStatus(state, actor, dipped, "consumed", actor);
+        if (dipType && dipBonus > 0) host.commit(state, frame, {
+          op: "damage",
+          pool: "hp",
+          targetId: recipient.id,
+          sourceId: actor.id,
+          amount: dipBonus,
+          damageType: dipType,
+          direct: false,
+          reactionChain: true,
+          label: "\u8638\u53D6\u9644\u4F24"
+        });
+        return;
+      }
     }
     if (frame.phase === "heal") {
       frame.phase = "after_hit";
@@ -8621,7 +8962,7 @@ var FatedTacticalTavern = (() => {
     if (frame.phase === "next_hit") {
       if (frame.hitIndex + 1 < (profile.hits ?? 1) && alive5(target2) && !target2.fled) {
         frame.hitIndex++;
-        frame.phase = "damage";
+        frame.phase = "guard";
         return;
       }
       if (profile.kind === "cover") {
@@ -8655,7 +8996,7 @@ var FatedTacticalTavern = (() => {
     if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? "W" : "E";
     return dy < 0 ? "N" : "S";
   }
-  function continueMovement(state, actor, type, plan, progress, host, frame) {
+  function continueMovement(state, actor, type, plan, progress, host, frame, options) {
     if (type === "sprint" && !progress.sprintCharged) {
       actor.moveBonusPermille = (actor.moveBonusPermille ?? 0) + movementBudget(state, actor).stepPermille;
       progress.sprintCharged = true;
@@ -8669,22 +9010,22 @@ var FatedTacticalTavern = (() => {
     if (to && alive5(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move) {
       progress.reactors ??= type === "disengage" ? [] : opportunitySources(state, actor).map(({ unit }) => unit.id);
       while (progress.reactors.length) {
-        const unit = tableEntry(state.units, progress.reactors.shift());
-        if (!alive5(unit)) continue;
+        const unit = tableEntry(state.units, progress.reactors[0]);
+        if (!alive5(unit)) {
+          progress.reactors.shift();
+          continue;
+        }
         const weapon2 = weaponInfo(state, unit);
         const source = { unit, weapon: weapon2 };
-        if (!canReact(state, source, actor) || !threatens(state, source, actor, actor) || !sameCell(actor, unit) && threatens(state, source, actor, to)) continue;
-        unit.reactionAvailable = false;
-        const center = pos(actor.x, actor.y);
-        record(
-          state,
-          unit,
-          "opportunity",
-          `${unit.name}\u5BF9${actor.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB\uFF08${weapon2.template.name}\uFF09`,
-          { ...opportunityDetail(unit, center, to), targetId: actor.id }
-        );
-        const profile = targetProfile(state, unit, actor, actor, weapon2.template, { weapon: weapon2 });
-        host.opportunity(state, unit, center, profile, weapon2);
+        if (!canReact(state, source, actor) || !threatens(state, source, actor, actor) || !sameCell(actor, unit) && threatens(state, source, actor, to)) {
+          progress.reactors.shift();
+          continue;
+        }
+        const decision = reactionDecision(state, unit, frame, options, "__oaDecision", "react", "\u53D1\u52A8\u501F\u673A\u653B\u51FB");
+        if (decision === null) return false;
+        progress.reactors.shift();
+        if (!decision) continue;
+        launchOpportunity(state, source, actor, to, host);
         return false;
       }
       const stepCost = cellStepCost(state, actor, to) * 1e3;
@@ -8740,6 +9081,70 @@ var FatedTacticalTavern = (() => {
     }
     return true;
   }
+  function continueJump(state, actor, plan, progress, host, frame, options) {
+    if (progress.movementSettled) return true;
+    const to = plan.center;
+    progress.reactors ??= plan.opportunities.map((source) => source.unitId);
+    while (alive5(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move && progress.reactors.length) {
+      const unit = tableEntry(state.units, progress.reactors[0]);
+      if (!alive5(unit)) {
+        progress.reactors.shift();
+        continue;
+      }
+      const weapon2 = weaponInfo(state, unit);
+      const source = { unit, weapon: weapon2 };
+      if (!canReact(state, source, actor) || !threatens(state, source, actor, actor)) {
+        progress.reactors.shift();
+        continue;
+      }
+      const decision = reactionDecision(state, unit, frame, options, "__oaDecision", "react", "\u53D1\u52A8\u501F\u673A\u653B\u51FB");
+      if (decision === null) return false;
+      progress.reactors.shift();
+      if (!decision) continue;
+      launchOpportunity(state, source, actor, to, host);
+      return false;
+    }
+    progress.movementSettled = true;
+    if (!alive5(actor) || actor.fled || aggregateModifiers(state, actor.id).locks.move || !canOccupy(state, to.x, to.y, actor)) return true;
+    const from = pointAt(state, actor);
+    actor.facing = facingToward(actor, to);
+    actor.lastMoveDir = movementDirection(from, to, actor.lastMoveDir);
+    Object.assign(actor, pos(to.x, to.y));
+    refreshFollowingZones(state, vmHost);
+    const landing = pointAt(state, actor);
+    applyMediumEntry(state, host, frame, actor, landing);
+    record(
+      state,
+      actor,
+      "jump",
+      `${actor.name}\u7EB5\u8DC3\u81F3 (${landing.x}, ${landing.y}, z=${landing.z})`,
+      { from, to: landing, path: [landing], steps: plan.steps }
+    );
+    dispatchVMHook(state, "after_move", {
+      actorId: actor.id,
+      targetId: actor.id,
+      fromX: from.x,
+      fromY: from.y,
+      toX: landing.x,
+      toY: landing.y,
+      moveKind: "jump",
+      steps: plan.steps,
+      traversedCells: [landing]
+    });
+    return false;
+  }
+  function launchOpportunity(state, { unit, weapon: weapon2 }, mover, to, host) {
+    unit.reactionAvailable = false;
+    const center = pos(mover.x, mover.y);
+    record(
+      state,
+      unit,
+      "opportunity",
+      `${unit.name}\u5BF9${mover.name}\u53D1\u52A8\u501F\u673A\u653B\u51FB\uFF08${weapon2.template.name}\uFF09`,
+      { ...opportunityDetail(unit, center, to), targetId: mover.id }
+    );
+    host.opportunity(state, unit, center, targetProfile(state, unit, mover, mover, weapon2.template, { weapon: weapon2 }), weapon2);
+  }
   function continueInteraction(state, actor, plan, progress, ammoBefore) {
     const item = state.interactives[plan.interactiveId];
     const effect = item.effect ?? (item.kind === "barrel" ? "explode" : null);
@@ -8781,6 +9186,21 @@ var FatedTacticalTavern = (() => {
   }
   function applyAction(state, action) {
     if (action?.type !== "answer" && action?.actorId !== void 0 && !canRouteActor(state, action.actorId)) throw new Error("\u8BE5\u5355\u4F4D\u4E0D\u80FD\u5728\u5F53\u524D\u9636\u6BB5\u884C\u52A8");
+    if (action?.type !== "answer" && action?.actorId !== void 0) {
+      const indices = manualSharedWindowIndices(state);
+      const index = indices.find((value) => state.order[value] === action.actorId);
+      if (index !== void 0 && index !== state.turn && !state.units[action.actorId].summoned) {
+        state.vm ??= {};
+        state.vm.sharedTurn ??= { start: indices[0], end: indices.at(-1), started: [state.order[state.turn]], ended: [] };
+        state.turn = index;
+        state.vm.activePhaseId = action.actorId;
+        if (!state.vm.sharedTurn.started.includes(action.actorId)) {
+          state.vm.sharedTurn.started.push(action.actorId);
+          beginUnitTurn(state, state.units[action.actorId]);
+          if (state.vm.pendingAsk) return state.logs.slice(-1);
+        }
+      }
+    }
     if (action?.type === "answer" || state.vm?.pendingAsk || action?.type && !["end", "end_encounter"].includes(action.type)) {
       if (state.vm?.pendingAsk && action.type === "end_encounter") {
         const concession = preview(state, action);
@@ -8836,7 +9256,7 @@ var FatedTacticalTavern = (() => {
     finishAction(state, actor, action.type);
     return state.logs.slice(before);
   }
-  function continueNativeAction({ state, frame, actor, plan, event, overrides: overrides2, host }) {
+  function continueNativeAction({ state, frame, actor, plan, event, overrides: overrides2, host, options }) {
     const { action } = frame.data;
     const { type, x, y } = action;
     if (!frame.nativeProgress) {
@@ -8860,17 +9280,37 @@ var FatedTacticalTavern = (() => {
         }
       );
     }
+    if (type === "jump") return continueJump(state, actor, plan, frame.nativeProgress, host, frame, options);
     if (isMovement(type)) {
       const progress = frame.nativeProgress;
       if (progress.movementSettled) return true;
-      if (!continueMovement(state, actor, type, plan, progress, host, frame)) return false;
+      if (!continueMovement(state, actor, type, plan, progress, host, frame, options)) return false;
       progress.movementSettled = true;
       if (!progress.moveEvent) return true;
       dispatchVMHook(state, "after_move", progress.moveEvent);
+      resolveOverwatch(state, actor, host);
       return false;
     }
     if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress, frame.ammoBefore);
     switch (type) {
+      case "help": {
+        const target2 = state.units[plan.targetId];
+        if (target2?.statuses?.downed) {
+          removeVMStatus(state, target2, target2.statuses.downed, "helped", actor, { targetId: target2.id });
+          updatePoolCurrent(state, target2.pools.hp, "add", Math.max(1, Math.floor(target2.maxHp * 0.1)));
+          record(state, actor, "help", `${actor.name}\u62C9\u8D77${target2.name}`, { targetId: target2.id });
+        }
+        break;
+      }
+      case "overwatch":
+        grantStatus(state, actor, "overwatch", { sourceId: actor.id, remainingTurns: 1, vars: { watchRange: plan.watchRange } });
+        record(state, actor, "overwatch", `${actor.name}\u8FDB\u5165\u5B88\u671B`, { watchRange: plan.watchRange });
+        break;
+      case "reaction_policy":
+        if (plan.policy === "auto") delete actor.reactionPolicy;
+        else actor.reactionPolicy = plan.policy;
+        record(state, actor, "reaction_policy", `${actor.name}\u53CD\u5E94\u7B56\u7565\u6539\u4E3A${plan.policy === "auto" ? "\u81EA\u52A8" : plan.policy === "ask" ? "\u8BE2\u95EE" : "\u4FDD\u7559"}`, { policy: plan.policy });
+        break;
       case "stance_mode":
         actor.greatswordMode = action.maneuver;
         break;
@@ -8893,6 +9333,11 @@ var FatedTacticalTavern = (() => {
         Object.assign(event, { targetId: actor.id, targets: [actor.id], itemId: plan.itemId, rules: plan.rules });
         host.hooks(state, frame, "active", frame.eventRef);
         return false;
+      }
+      case "dip": {
+        const { label, ...vars } = plan.dip;
+        grantStatus(state, actor, "dipped", { sourceId: actor.id, remainingTurns: 2, vars });
+        break;
       }
       case "charge":
         grantStatus(state, actor, actionStatuses.charge, { sourceId: actor.id });
@@ -9003,6 +9448,37 @@ var FatedTacticalTavern = (() => {
   }
   function finishAction(state, actor, type) {
     if (state.vm?.pendingAsk) return;
+    if (type === "reaction_policy") return;
+    const shared = state.vm?.sharedTurn;
+    if (shared && actor && shared.started.includes(actor.id)) {
+      const canAct = (actor2) => alive5(actor2) && !actor2.fled && !unitSkipped(state, actor2) && (actor2.ap > 0 || preview(state, { type: "move" }, { actingUnit: actor2 }).ok || preview(state, { type: "use_item" }, { actingUnit: actor2 }).ok);
+      if (type === "end" || !canAct(actor)) {
+        endTurn(state, actor);
+        shared.ended.push(actor.id);
+        const next = manualSharedWindowIndices(state).find((index) => {
+          const unit = state.units[state.order[index]];
+          return unit && !shared.ended.includes(unit.id) && alive5(unit) && !isAiControlled(state, unit);
+        });
+        if (next === void 0) {
+          const end = shared.end;
+          delete state.vm.sharedTurn;
+          state.turn = end;
+          if (!state.vm.pendingAsk && !refreshOutcome(state)) {
+            advanceCursor(state);
+            settleTurn(state);
+          }
+        } else {
+          state.turn = next;
+          const nextUnit = state.units[state.order[next]];
+          state.vm.activePhaseId = nextUnit.id;
+          if (!shared.started.includes(nextUnit.id)) {
+            shared.started.push(nextUnit.id);
+            beginUnitTurn(state, nextUnit);
+          }
+        }
+      }
+      return;
+    }
     if (refreshOutcome(state)) {
       if (actor) actor.ap = 0;
       return;
@@ -9598,7 +10074,7 @@ var FatedTacticalTavern = (() => {
   var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
   var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound"];
   function unitValue(v, key5, state) {
-    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "moveCarryInPermille", "moveSpentPermille", "moveBonusPermille", "moveBanked", "lastMoveDir", "remainingTurns", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned", "turnMode", "turnAnchorId", "durationUnit", "durationAnchorId", ...lifecycleInstanceFields]);
+    fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "moveCarryInPermille", "moveSpentPermille", "moveBonusPermille", "moveBanked", "lastMoveDir", "remainingTurns", "reactionAvailable", ...protocolUnitKeys, "surprised", "reactionPolicy", "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned", "turnMode", "turnAnchorId", "durationUnit", "durationAnchorId", ...lifecycleInstanceFields]);
     validateLifecycle(v, true);
     carrierFieldsValue(v, state, true);
     if (own14(v, "pools")) poolBindings(v.pools);
@@ -9630,6 +10106,8 @@ var FatedTacticalTavern = (() => {
     checkOptional(v, "creatureType", (x) => text2(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every((t) => text2(t)));
     for (const k of ["resources", "inventory"]) if (own14(v, k)) table2(v[k], (x) => requireThat(int(x, 0, 1e9), k));
     checkOptional(v, "reactionAvailable", (x) => typeof x === "boolean");
+    checkOptional(v, "surprised", (x) => typeof x === "boolean");
+    checkOptional(v, "reactionPolicy", (x) => ["ask", "hold"].includes(x));
     requireThat(v.id === key5 && text2(v.name) && team(v.team) && inGrid(state, v.x, v.y), "\u68CB\u5B50");
     list2(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
     requireThat(v.facing.length === 2 && v.facing.some(Boolean), "\u671D\u5411");
@@ -9662,7 +10140,7 @@ var FatedTacticalTavern = (() => {
     if (own14(v, "bagWeapons")) list2(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
     list2(v.gear, 12, id2, "gear");
     list2(v.skills, 32, id2, "skills");
-    table2(v.statuses, (status, statusId3) => statusValue(status, statusId3, state, key5), maxStatusTemplates + Object.keys(STATUSES).length + Object.keys(PHYSICAL_STATUSES).length);
+    table2(v.statuses, (status, statusId3) => statusValue(status, statusId3, state, key5), maxStatusTemplates + Object.keys(STATUSES).length + Object.keys(PHYSICAL_STATUSES).length + Object.keys(TACTICAL_STATUSES).length);
   }
   function jsonTree(v, depth = 0) {
     if (depth > 12) return false;
@@ -9827,8 +10305,9 @@ var FatedTacticalTavern = (() => {
     validateSummonLoadout(spawnPanel2, state);
   }
   function validateState(s) {
-    fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape", "scale", "customElements", "elementalPhysics"]);
+    fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "heroicDowned", "suppressingTeam", "vm", "pools", "tape", "scale", "customElements", "elementalPhysics"]);
     checkOptional(s, "elementalPhysics", (value) => ["off", "standard"].includes(value));
+    checkOptional(s, "heroicDowned", (value) => typeof value === "boolean");
     if (own14(s, "customElements")) validateCustomElements(s.customElements);
     requireThat(s.battleType === "suppress" ? ["blue", "red"].includes(s.suppressingTeam) : s.suppressingTeam === void 0, "\u538B\u5236\u65B9");
     checkOptional(s, "battleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
@@ -11668,7 +12147,7 @@ var FatedTacticalTavern = (() => {
       },
       listStatusTemplates() {
         const s = current();
-        return copy2({ ...PHYSICAL_STATUSES, ...STATUSES, ...s.statusTemplates });
+        return copy2({ ...TACTICAL_STATUSES, ...PHYSICAL_STATUSES, ...STATUSES, ...s.statusTemplates });
       },
       checkStealth(unitId, d20, dc) {
         const s = current();
@@ -12467,6 +12946,9 @@ var FatedTacticalTavern = (() => {
     move: "\u79FB\u52A8",
     sprint: "\u75BE\u8DD1",
     disengage: "\u64A4\u79BB",
+    jump: "\u7EB5\u8DC3",
+    dip: "\u6B66\u5668\u8638\u53D6",
+    overwatch: "\u5B88\u671B",
     attack: "\u666E\u653B",
     interact: "\u4E92\u52A8",
     brace: "\u67B6\u52BF\u9632\u5FA1",
@@ -12642,7 +13124,7 @@ var FatedTacticalTavern = (() => {
     }
     function renderBoard(state, { selected: selected2, action, hover, preview: preview2, current, askLocked, askCells, entityChoices }) {
       initBoard(state);
-      const moving = ["move", "sprint", "disengage"].includes(action?.type);
+      const moving = ["move", "sprint", "disengage", "jump"].includes(action?.type);
       const unitsAt2 = group(values4(state.units).filter((u) => u.hp > 0 && !u.fled));
       const bodiesAt = group(corpses(state)), coversAt = group(values4(state.covers)), itemsAt = group(values4(state.interactives));
       const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key4(p.x, p.y)));
@@ -12815,7 +13297,10 @@ var FatedTacticalTavern = (() => {
       meta.append(crystals);
       if (u.moraleState && u.moraleState !== "steady") meta.append(el2("span", "ft-chip", `\u6218\u610F${moraleLabels[u.moraleState]}`));
       meta.append(el2("span", "ft-chip", `\u52A8\u4F5C${u.used?.action ? "\u5DF2\u7528" : "\u53EF\u7528"} \xB7 \u653B\u51FB${u.used?.attack ? "\u5DF2\u7528" : "\u53EF\u7528"}`));
-      for (const s of values4(u.statuses)) meta.append(el2("span", "ft-chip", statusText(s)));
+      for (const s of values4(u.statuses)) {
+        const chip = el2("span", "ft-chip", `${s.id === "downed" ? `\u{1F198}${s.remainingTurns}` : s.id === "overwatch" ? "\u2316" : s.id === "dipped" ? "\u2726" : ""}${statusText(s)}`);
+        meta.append(chip);
+      }
       node.replaceChildren(el2("span", "ft-actor-face", Array.from(u.name)[0]), name, bars, meta);
     }
     function renderUnitCard(state, u, inspected) {
@@ -12890,7 +13375,9 @@ var FatedTacticalTavern = (() => {
       if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
       const permanentZone = (z) => z.persistent || z.durationType === "persistent" || z.durationType === "until_removed";
       const zones = values4(state.zones).filter((z) => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
-      const parts = [wrap, bars, stats, facts, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
+      const reaction = el2("p", "muted", `\u53CD\u5E94\uFF1A${u.reactionPolicy === "ask" ? "\u8BE2\u95EE" : u.reactionPolicy === "hold" ? "\u4FDD\u7559" : "\u81EA\u52A8"}`);
+      reaction.dataset.reactionPolicy = u.reactionPolicy ?? "auto";
+      const parts = [wrap, bars, stats, facts, reaction, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
       if (zones.length) parts.push(el2("h3", "ft-section", "\u6240\u5904\u533A\u57DF"), el2(
         "p",
         "",
@@ -13041,7 +13528,7 @@ var FatedTacticalTavern = (() => {
         baseline = { move: cells3(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells3(run({ type: "attack" })), interact: cells3(run({ type: "interact" })) };
       }
       const range2 = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
-      const aimed = ["move", "sprint", "disengage", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
+      const aimed = ["move", "sprint", "disengage", "jump", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
       const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
       if (fresh) {
         const battleKind = Object.keys(moraleTypes).find((k) => moraleTypes[k] === state.battleType);
@@ -13407,6 +13894,7 @@ var FatedTacticalTavern = (() => {
         case "move":
         case "sprint":
         case "disengage":
+        case "jump":
           caption(entry2);
           await walk(state, log.actor, d.path ?? (d.to ? [d.to] : []));
           return;
@@ -13584,7 +14072,7 @@ var FatedTacticalTavern = (() => {
 
   // src/ui/main.js
   var THEMES = ["amethyst", "night-gold", "frost-silver"];
-  var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "reload", "end"];
+  var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "reload", "dip", "overwatch", "end"];
   var PATH_NAMES = { units: "\u5355\u4F4D", items: "\u7269\u54C1", grid: "\u5730\u5F62", statuses: "\u72B6\u6001", counters: "\u8BA1\u6570", statusTemplates: "\u72B6\u6001\u6A21\u677F", covers: "\u63A9\u4F53", interactives: "\u4E92\u52A8\u70B9" };
   function describeProposal(result) {
     if (!result?.ok) return `\u2716 \u65E0\u6CD5\u6267\u884C\uFF1A${result?.error ?? "\u672A\u77E5\u9519\u8BEF"}`;
@@ -14223,11 +14711,12 @@ ${height2}\uFF0C${sight}`;
           add("move");
           add("sprint");
         }
-        if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload"]) add(t);
+        if (self) for (const t of ["brace", "block", "charge", "scan", "flee", "use_item", "reload", "dip", "overwatch"]) add(t);
         else {
           if (!onActorCell) {
             const move2 = previewSelected({ type: "move", x: at3.x, y: at3.y });
             add("move");
+            add("jump");
             if (sprint || !move2.ok) add("sprint");
           }
           for (const t of ["disengage", "attack", "shield_bash", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
@@ -16355,13 +16844,19 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const moraleType = typeValue && moraleTypeFor(typeValue.slice("\u6218\u6597\u7C7B\u578B=".length));
     if (typeValue && !moraleType) fail4("\u672A\u77E5\u6218\u6597\u7C7B\u578B\uFF0C\u53EF\u9009\uFF1A\u6807\u51C6\u3001\u5207\u78CB\u3001\u7ADE\u6280\u3001\u538B\u5236\u3001\u6B7B\u6597\u3001\u5B88\u536B");
     if (sideValue && !sideToken || moraleType === "suppress" !== !!sideToken) fail4("\u538B\u5236\u6218\u5FC5\u987B\u5728\u6218\u6597\u7C7B\u578B\u540E\u58F0\u660E |\u538B\u5236\u65B9=blue \u6216 |\u538B\u5236\u65B9=red\uFF1B\u5176\u4ED6\u7C7B\u578B\u4E0D\u586B\u538B\u5236\u65B9");
+    const surprisedValue = options.find((value) => /^受惊\s*=/u.test(value));
+    const surprisedToken = surprisedValue?.match(/^受惊\s*=\s*(红方|蓝方|red|blue)$/iu);
+    if (surprisedValue && !surprisedToken) fail4("\u53D7\u60CA\u5FC5\u987B\u662F \u7EA2\u65B9\u3001\u84DD\u65B9\u3001red \u6216 blue");
+    const rescueTokens = options.filter((value) => /^濒死救援\s*=/u.test(value));
+    const rescueToken = rescueTokens[0];
+    if (rescueTokens.length > 1 || rescueToken && !/^濒死救援\s*=\s*[开关]$/u.test(rescueToken)) fail4("\u6FD2\u6B7B\u6551\u63F4\u53EA\u80FD\u58F0\u660E\u4E00\u6B21\uFF0C\u503C\u4E3A\u5F00\u6216\u5173");
     const physicsTokens = options.filter((value) => /^元素交互\s*=|^法则\s*=\s*无元素涌现$/u.test(value));
     if (physicsTokens.length > 1) fail4("\u5143\u7D20\u4EA4\u4E92\u53EA\u80FD\u58F0\u660E\u4E00\u6B21");
     const physicsToken = physicsTokens[0];
     if (physicsToken && !/^(?:元素交互\s*=\s*[开关]|法则\s*=\s*无元素涌现)$/u.test(physicsToken)) fail4("\u5143\u7D20\u4EA4\u4E92\u5FC5\u987B\u662F \u5F00 \u6216 \u5173");
     const physicsOff = /^(?:元素交互\s*=\s*关|法则\s*=\s*无元素涌现)$/u.test(physicsToken ?? "");
     const remainingOptions = options.slice();
-    for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, physicsToken]) {
+    for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, surprisedValue, physicsToken, rescueToken]) {
       if (token !== void 0) remainingOptions.splice(remainingOptions.indexOf(token), 1);
     }
     const [seedText, ...extra] = remainingOptions;
@@ -16381,6 +16876,8 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       ...physicsOff && { elementalPhysics: "off" },
       ...moraleType && { moraleType },
       ...sideToken && { suppressingTeam: sideToken[1] },
+      ...rescueToken && { heroicDowned: rescueToken.endsWith("\u5F00") },
+      ...surprisedToken && { surprisedTeam: /^蓝方|blue$/iu.test(surprisedToken[1]) ? "blue" : "red" },
       ...seedText === void 0 ? {} : { seed: Number(seedText) }
     };
   }
@@ -16508,15 +17005,17 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
         claimId(id3, label);
         effects.push(parseEffect(parts, label, battle));
       } else if (kind === "unit") {
-        if (parts.length !== 6) fail4(`${row}\u9700\u8981 6 \u6BB5\u5B57\u6BB5\uFF08unit|ID|\u9635\u8425|\u6765\u6E90|\u663E\u793A\u540D|\u5750\u6807\uFF0C\u5F53\u524D\u4E3A ${parts.length} \u6BB5\uFF09`);
+        if (parts.length < 6 || parts.length > 7) fail4(`${row}\u9700\u8981 6 \u6BB5\u5B57\u6BB5\uFF08\u53EF\u9009\u7B2C 7 \u6BB5\u53D7\u60CA\uFF0C\u5F53\u524D\u4E3A ${parts.length} \u6BB5\uFF09`);
         claimId(id3, row);
-        const [, , team2, source, name, point4] = parts;
+        const [, , team2, source, name, point4, surprise] = parts;
         if (!["blue", "red"].includes(team2)) fail4(`${row}\u7684\u9635\u8425\u300C${team2}\u300D\u65E0\u6548\uFF0C\u5FC5\u987B\u4E3A blue \u6216 red`);
         checkSource(source, row);
         if (!name || name.length > 100) fail4(`${row}\u7684\u663E\u793A\u540D\u4E0D\u80FD\u4E3A\u7A7A\u4E14\u4E0D\u8D85\u8FC7 100 \u5B57`);
         const position = parsePoint(point4, row, battle, true);
         claimPosition(position, row, true);
-        units.push({ id: id3, team: team2, source, name, ...position });
+        const surprised = surprise === "\u53D7\u60CA";
+        if (surprise !== void 0 && !surprised) fail4(`${row}\u7684\u5C3E\u90E8\u6807\u8BB0\u53EA\u80FD\u5199\u53D7\u60CA`);
+        units.push({ id: id3, team: team2, source, name, ...position, ...surprised && { surprised: true } });
       } else if (kind === "summon") {
         if (parts.length < 5) fail4(`${row}\u9700\u8981 summon|ID|\u5F52\u5C5E\u5355\u4F4DID|\u6765\u6E90|\u663E\u793A\u540D`);
         if (summons.length >= 24) fail4("\u6700\u591A 24 \u6761 summon \u8BB0\u5F55");
@@ -18267,7 +18766,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
     const defaultMove = defaultMoveFromAgi(stats.agi, tier);
-    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...Object.keys(unitPools2).length ? { unitPools: unitPools2 } : {}, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.round(Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
+    const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...Object.keys(unitPools2).length ? { unitPools: unitPools2 } : {}, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.round(Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, ...p.surprised && { surprised: true }, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
       const bagWeapons = [];
@@ -18533,7 +19032,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
       const origin = record3.__sourceKind?.toLowerCase() ?? "battle_init";
       if (index < participants.length && !resolved[index] && participant.source) sink(id3, "battle_init", "state").push(`\u672A\u627E\u5230\u53C2\u6218\u6765\u6E90\uFF1A${participant.source}\uFF08${participant.name ?? participant.id}\uFF09`);
       const merged = mergeBattleParticipant(record3, participant, battle);
-      const placement = { moraleType: battle.moraleType, ...participant, ...persona, id: id3 };
+      const placement = { moraleType: battle.moraleType, ...battle.surprisedTeam && { surprised: battle.surprisedTeam === participant.team }, ...participant, ...persona, id: id3 };
       const startWarnings = warnings.length;
       const made = unitFrom(merged, placement, index, equipment, skills, items, (scope, path2) => sink(id3, origin, scope, path2), record3 === protagonist, battle, record3, customElements);
       if (origin === "char_info") {
@@ -18682,7 +19181,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
     const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
     const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
-    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...battle.heroicDowned === true && { heroicDowned: true }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
     if (battle.elementalPhysics === "off" || battle.elementalPhysics === "standard") state.elementalPhysics = battle.elementalPhysics;
     initializeVMWorld(state);
     for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
