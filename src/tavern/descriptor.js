@@ -39,8 +39,13 @@ function parseHeader(line) {
   const moraleType = typeValue && moraleTypeFor(typeValue.slice('战斗类型='.length));
   if (typeValue && !moraleType) fail('未知战斗类型，可选：标准、切磋、竞技、压制、死斗、守卫');
   if ((sideValue && !sideToken) || (moraleType === 'suppress') !== !!sideToken) fail('压制战必须在战斗类型后声明 |压制方=blue 或 |压制方=red；其他类型不填压制方');
+  const physicsTokens = options.filter(value => /^元素交互\s*=|^法则\s*=\s*无元素涌现$/u.test(value));
+  if (physicsTokens.length > 1) fail('元素交互只能声明一次');
+  const physicsToken = physicsTokens[0];
+  if (physicsToken && !/^(?:元素交互\s*=\s*[开关]|法则\s*=\s*无元素涌现)$/u.test(physicsToken)) fail('元素交互必须是 开 或 关');
+  const physicsOff = /^(?:元素交互\s*=\s*关|法则\s*=\s*无元素涌现)$/u.test(physicsToken ?? '');
   const remainingOptions = options.slice();
-  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue]) {
+  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, physicsToken]) {
     if (token !== undefined) remainingOptions.splice(remainingOptions.indexOf(token), 1);
   }
   const [seedText, ...extra] = remainingOptions;
@@ -49,7 +54,7 @@ function parseHeader(line) {
   const scaleExplicit = cellM != null || tierMatch != null;
   return { version: 1, battleId, sceneTitle, terrainMode, width, height,
     ...(cellM != null && { cellM }), ...(tierMatch && { scaleTier: Number(tierMatch[1]) }),
-    ...(scaleExplicit && { explicitScale: true }),
+    ...(scaleExplicit && { explicitScale: true }), ...(physicsOff && { elementalPhysics: 'off' }),
     ...(moraleType && { moraleType }), ...(sideToken && { suppressingTeam: sideToken[1] }),
     ...(seedText === undefined ? {} : { seed: Number(seedText) }) };
 }

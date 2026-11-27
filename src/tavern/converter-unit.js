@@ -7,7 +7,8 @@ import { getPool, updatePoolCurrent, updatePoolMax } from '../core/vm-pools.js';
 import { beginBattle, STATUSES } from '../core/combat.js';
 import { fitSpawnStats, spawnBudgetIssue } from '../core/spawn-unit.js';
 import { sizeMultiplier } from '../core/prebattle_resources.js';
-import { canOccupy, elevation } from '../core/spatial.js';
+import { canOccupy, elevation, zoneContains } from '../core/spatial.js';
+import { mediaCells, mediumZone, putMedium } from '../core/element-media.js';
 import { parseBattleDescriptor } from './descriptor.js';
 import { createBattleGrid } from './terrain.js';
 import { parseBattleTime } from '../core/battle_time.js';
@@ -572,6 +573,26 @@ function normalizeSceneArea(raw, grid) {
   return area;
 }
 
+const sceneMedia = new Map([
+  ['浅水洼', 'water'], ['水洼', 'water'], ['积水', 'water'], ['浅滩', 'water'],
+  ['冰面', 'ice'], ['薄冰', 'ice'], ['冻土冰面', 'ice'],
+  ['油污', 'oil'], ['火油', 'oil'], ['油脂地面', 'oil'],
+  ['火海', 'fire'], ['地面余火', 'fire'], ['烈焰地面', 'fire'],
+  ['强酸池', 'acid'], ['酸液池', 'acid'], ['酸沼', 'acid'],
+  ['蒸汽云', 'steam'], ['水汽云', 'steam'],
+  ['浓烟', 'smoke'], ['黑烟', 'smoke'], ['烟幕', 'smoke'],
+  ['可燃毒雾', 'poison_cloud'], ['毒瘴云', 'poison_cloud'], ['沼气毒雾', 'poison_cloud'],
+]);
+
+// Opening declarations define the initial board and do not produce combat log entries.
+const sceneZoneHost = { log() {} };
+function sceneMediumArea(state, area, layer) {
+  const zone = { area };
+  const cells = mediaCells(state, zone).filter(at => layer === 'cloud' || zoneContains(state, zone, at));
+  const { z1, z2 } = area;
+  return { shape: 'cells', cells, ...(z1 !== undefined && { z1 }), ...(z2 !== undefined && { z2 }) };
+}
+
 function sceneZonesState(battle, state, warnings) {
   const zoneEntries = {};
   if (!Array.isArray(battle.effects)) return zoneEntries;
@@ -597,11 +618,22 @@ function sceneZonesState(battle, state, warnings) {
     }
     used.add(id.toLowerCase());
     const name = (nameText || id).slice(0, 100);
-    const description = ((typeof raw.description === 'string' && raw.description.trim()) || name).slice(0, 500);
+    const rawDescription = typeof raw.description === 'string' ? raw.description.trim() : '';
+    const description = (rawDescription || name).slice(0, 500);
     const targetTeam = ['blue', 'red'].includes(raw.targetTeam) ? raw.targetTeam : null;
+    const medium = raw.targetTeam === null && (!rawDescription || rawDescription === nameText) ? sceneMedia.get(nameText) : undefined;
+    zoneEntries[id] = { id, name, targetTeam, description, area: clone(area) };
+    if (medium) {
+      const blueprint = mediumZone(medium);
+      const mediumArea = sceneMediumArea(state, area, blueprint.layer);
+      putMedium(state, sceneZoneHost, { ...blueprint, id, name, area: mediumArea, sourceId: null, team: null,
+        persistent: raw.persistent === true,
+        remainingTurns: raw.remainingTurns ?? blueprint.remainingTurns,
+        ...(raw.tier !== undefined && { tier: raw.tier }) });
+      continue;
+    }
     state.zones[id] = { id, name, area, follow: false, persistent: true, remainingTurns: 1,
       sourceId: null, team: null, tags: ['scene_effect'], mods: [], rules: [] };
-    zoneEntries[id] = { id, name, targetTeam, description, area: clone(area) };
     const teamLabel = targetTeam === null ? '全体' : `仅${targetTeam === 'blue' ? '蓝' : '红'}方(self.team == '${targetTeam}')`;
     const zText = own(area, 'z1') || own(area, 'z2') ? `(${area.z1 ?? -4}-${area.z2 ?? 20})` : '';
     const horizontal = area.shape === 'board' ? '全场' : `(${area.rect.x1}-${area.rect.x2})(${area.rect.y1}-${area.rect.y2})`;
@@ -837,6 +869,7 @@ export function hydrateFromSources(input = {}, options = {}) {
   const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
   const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
   const state = { ...(battle.suppressingTeam && {suppressingTeam:battle.suppressingTeam}), ...(Object.keys(customElements).length ? { customElements } : {}), battleType:moraleTypeFor(battle.moraleType) ?? 'standard', scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, 'battle'), title, mode: 'split', ruleset: ['protocol','sandbox'].includes(options.ruleset) ? options.ruleset : 'protocol', scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id, templateId }) => [id, { id, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+  if (battle.elementalPhysics === 'off' || battle.elementalPhysics === 'standard') state.elementalPhysics = battle.elementalPhysics;
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap(mapping => mapping.counterBindings ?? [])) {
     if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;

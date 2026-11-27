@@ -6,6 +6,15 @@ const types = Object.create(null);
 const shapes = {single:'单体',circle:'圆形',ring:'环形',cone:'锥形',fan:'扇形',line:'直线'};
 const when = { active: '主动', after_hit: '命中时', before_action: '行动前', after_damage: '伤害结算后', after_heal: '治疗后', turn_start: '回合开始', turn_end: '回合结束', on_kill: '击倒时', on_death: '倒下时' };
 
+const traitLabels = {
+  heat: '高温', ignite: '引燃', cold: '寒霜', wet: '浸润', shock: '导电', corrode: '腐蚀', flammable: '可燃', gust: '气浪',
+};
+function cardElementLabel(type, customElements) {
+  const label = elementLabel(type, customElements);
+  const traits = (customElements?.[type]?.traits ?? []).map(trait => traitLabels[trait]).filter(Boolean);
+  return traits.length ? `${label}（${traits.join('、')}）` : label;
+}
+
 const displayNumber = value => typeof value === 'number' ? String(value) : typeof value === 'string' ? `按公式 ${value}` : null;
 function diceLabel(dice) {
   if (!dice) return null;
@@ -28,7 +37,7 @@ export function skillDisplay(template = {}, skillInfo = {}, customElements = {})
   const add = (type, amount, formatted = false) => {
     if (!type) return;
     const suffix = amount == null ? null : formatted ? amount : displayNumber(amount);
-    const text = `${elementLabel(type, customElements)}${suffix ? ` ${suffix}` : ''}`;
+    const text = `${cardElementLabel(type, customElements)}${suffix ? ` ${suffix}` : ''}`;
     if (!components.includes(text)) components.push(text);
   };
   if (template.damage) add(template.damage.type ?? template.damageType, diceLabel(template.damage), true);
@@ -55,7 +64,7 @@ export function ruleSummary(rule, state) {
   const describe = op => {
     const prefix = op.enabled === false ? '已关闭：' : '';
     if (op.op === 'apply_status') return `${prefix}施加 ${statusName(op.statusId)}${typeof op.turns === 'number' ? ` ${op.turns} 回合` : ''}`;
-    return [prefix + (verbs[op.op] ?? '效果'), op.damageType ? elementLabel(op.damageType, state?.customElements) : null, typeof op.amount === 'number' ? op.amount : null].filter(value => value != null).join(' ');
+    return [prefix + (verbs[op.op] ?? '效果'), op.damageType ? cardElementLabel(op.damageType, state?.customElements) : null, typeof op.amount === 'number' ? op.amount : null].filter(value => value != null).join(' ');
   };
   return `${rule.enabled === false ? '已关闭：' : ''}${when[rule.hook] ?? '触发'} → ${rule.program.map(describe).join('；')}`;
 }
@@ -95,7 +104,7 @@ function modSummary(mod, customElements = {}) {
   if(policy?.moraleLock==='steady') parts.push('士气恒定坚守');
   if(policy?.mindControl) parts.push(mindControlLabels[policy.mindControl]);
   if(policy?.forbidTargetSource) parts.push('不可攻击施术者');
-  const scope = [mod.damageType?`${elementLabel(mod.damageType, customElements)}伤害`:null,mod.checkKind?`${checks[mod.checkKind]??mod.checkKind}检定`:null].filter(Boolean);
+  const scope = [mod.damageType?`${cardElementLabel(mod.damageType, customElements)}伤害`:null,mod.checkKind?`${checks[mod.checkKind]??mod.checkKind}检定`:null].filter(Boolean);
   return `${mod.pool?`[${mod.pool}] `:''}${parts.filter(Boolean).join('；')||'修饰'}${scope.length?`（${scope.join('、')}）`:''}${mod.when!=null?` · 条件：${mod.when===true?'始终':mod.when===false?'从不':mod.when}`:''}`;
 }
 const RESOURCES = [['hp','HP','maxHp'],['mp','MP','maxMp'],['sp','SP','maxSp']];
@@ -188,7 +197,7 @@ export function fillInstance(box,make,unit,state,raw,select,{collapsed=false,onT
     if(!id||shownItems.has(id)) continue;
     shownItems.add(id);
     const item=state?.items?.[id],t=state?.equipment?.[item?.templateId]??unit.equipment?.find(e=>e.id===id)?.template;const d=t?.damage;
-    const dice=d?`${d.count}d${d.sides}${d.bonus?` ${d.bonus>0?'+':''}${d.bonus}`:''}${d.stat?` + ${attributes[d.stat]??d.stat}`:''} ${d.type ? elementLabel(d.type, state?.customElements) : ''}`.trim():null;
+    const dice=d?`${d.count}d${d.sides}${d.bonus?` ${d.bonus>0?'+':''}${d.bonus}`:''}${d.stat?` + ${attributes[d.stat]??d.stat}`:''} ${d.type ? cardElementLabel(d.type, state?.customElements) : ''}`.trim():null;
     gear.push({label:`[${slot}] ${t?.name??id}`,path:item?.templateId ? `/equipment/${item.templateId}` : null,meta:[t?.attack!=null?`攻击 ${t.attack}`:null,t?.defense?`防御 ${t.defense}`:null,t?.accuracy?`命中 ${signed(t.accuracy)}`:null,t?.range!=null?`距离 ${t.range}`:null,dice].filter(Boolean),template:t,item});
   }
   section('装备',gear);

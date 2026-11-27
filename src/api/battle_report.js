@@ -318,7 +318,8 @@ export function formatBattleReportText(report, unitNames = {}) {
             const destination = `(${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
             if (!text.includes(`至 ${destination}`)) label += `，至 ${destination}`;
           }
-          add(label.replace(/ ×1$/, ''));
+          const reactionCells = (type === 'zone' || type === 'terrain') && detail.reaction && detail.cells?.length;
+          add(label.replace(/ ×1$/, '') + (reactionCells ? notes([`波及 ${reactionCells} 格`]) : ''));
         }
       }
     }

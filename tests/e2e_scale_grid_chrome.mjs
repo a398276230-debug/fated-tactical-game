@@ -31,10 +31,18 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   socket = new WebSocket(tabs.find(tab => tab.type === 'page').webSocketDebuggerUrl);
   await new Promise((resolveSocket, reject) => { socket.addEventListener('open', resolveSocket, { once: true }); socket.addEventListener('error', reject, { once: true }); });
-  let serial = 0; const responses = new Map();
-  socket.addEventListener('message', ({ data }) => { const message = JSON.parse(data); if (!message.id) return; const pending = responses.get(message.id); responses.delete(message.id); message.error ? pending.reject(new Error(message.error.message)) : pending.resolve(message.result); });
+  let serial = 0; const responses = new Map(), pageErrors = [], consoleErrors = [];
+  socket.addEventListener('message', ({ data }) => {
+    const message = JSON.parse(data);
+    if (message.id) {
+      const pending = responses.get(message.id); responses.delete(message.id);
+      message.error ? pending.reject(new Error(message.error.message)) : pending.resolve(message.result);
+    } else if (message.method === 'Runtime.exceptionThrown') pageErrors.push(message.params.exceptionDetails);
+    else if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') consoleErrors.push(message.params.args);
+    else if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') consoleErrors.push(message.params.entry.text);
+  });
   const send = (method, params = {}) => new Promise((resolveCall, reject) => { const id = ++serial; responses.set(id, { resolve: resolveCall, reject }); socket.send(JSON.stringify({ id, method, params })); });
-  await send('Runtime.enable'); await send('Page.enable');
+  await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
   await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/` });
   const run = async expression => { for (let i = 0; i < 100; i++) { const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text); if (result.result?.value !== undefined) return result.result.value; await pause(50); } throw new Error(`timeout: ${expression}`); };
   for (let i = 0; i < 100 && !(await run('document.readyState === "complete" && !!window.FatedTacticalGame')); i++) await pause(30);
@@ -206,4 +214,6 @@ test('Chrome UI: dynamic rectangle, scale badge, stacked units, exact target pic
   })()`);
   await waitFor('Object.values(window.FatedTacticalGame.getBattleState().units).some(unit => unit.moveCarryPermille === 600)');
   assert.match(await run('window.FatedTacticalGame.exportBattleReportText()'), /疾跑推进.*约 60%/);
+  assert.deepEqual({ pageErrors, consoleErrors }, { pageErrors: [], consoleErrors: [] });
+  t.diagnostic('0 pageerror / 0 console.error');
 });
