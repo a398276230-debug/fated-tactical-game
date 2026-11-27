@@ -21995,7 +21995,7 @@ function parseJSON2(value, fallback = null) {
     return fallback;
   }
 }
-var TAVERN_VERSION = "0.5.3";
+var TAVERN_VERSION = "0.5.4";
 var LARGE_CONFIG_KEYS = ["charSnapshots", "normalizationBatches", "narrativeExemptions", "unresolvedNotes"];
 var separateConfigKey = (key4, field2) => `${key4}/${field2}`;
 var DEFAULT_CONFIG = {
