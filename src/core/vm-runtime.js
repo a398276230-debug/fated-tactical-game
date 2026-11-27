@@ -160,11 +160,12 @@ export const vmHost = {
   },
   enterRule(state, frame, key) {
     const { rule } = frame;
-    const { usesLeft, cooldownRemaining, sameTurn, stamp } = ruleAvailability(state, rule, key);
+    const { usesLeft, cooldownRemaining, sameTurn, roundUsed, stamp } = ruleAvailability(state, rule, key);
     if (usesLeft <= 0 || cooldownRemaining > 0) return false;
     if (rule.usesPerBattle !== undefined) (state.vm.uses ??= {})[key] = (own(state.vm.uses, key) ?? 0) + 1;
-    if (rule.usesPerTurn !== undefined || rule.cooldownTurns !== undefined) {
-      (state.vm.ruleTurns ??= {})[key] = { round: state.round, turn: state.turn, count: sameTurn ? stamp.count + 1 : 1 };
+    if (rule.usesPerTurn !== undefined || rule.usesPerRound !== undefined || rule.cooldownTurns !== undefined) {
+      (state.vm.ruleTurns ??= {})[key] = { round: state.round, turn: state.turn, count: sameTurn ? stamp.count + 1 : 1,
+        ...(rule.usesPerRound !== undefined && { roundCount: roundUsed + 1 }) };
     }
     return true;
   },
@@ -177,6 +178,7 @@ export const vmHost = {
     if (!unit) return undefined;
     if (key === 'move') return movementBudget(state, unit).remainingCells;
     if (key === 'attack' || key === 'action') return Math.max(0, 1 - (unit.used?.[key] ?? 0));
+    if (key === 'reaction') return unit.reactionAvailable === false ? 0 : 1;
     return getPool(state, unit.id, key)?.current;
   },
   statusTemplate: getStatusTemplate,

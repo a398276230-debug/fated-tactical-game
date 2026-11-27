@@ -270,7 +270,7 @@ export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
 
 function guardFor(state, target) {
   return living(state).find(u => u !== target && u.team === target.team && vmFlag(state, u, 'intercept', { target }) &&
-    !reactionBlocked(state, u) && near(u, target) <= 1 && Math.abs(elevation(state, u) - elevation(state, target)) <= 1 &&
+    u.reactionAvailable !== false && !reactionBlocked(state, u) && near(u, target) <= 1 && Math.abs(elevation(state, u) - elevation(state, target)) <= 1 &&
     clearSight(state, u, target));
 }
 
@@ -1742,6 +1742,7 @@ export function continueStrike({ state, frame, host }) {
       return;
     }
     const recipient = guardFor(state, target) ?? target;
+    if (recipient !== target) recipient.reactionAvailable = false;
     event.targetId = recipient.id;
     host.commit(state, frame, { ...detail, intent: event.intent, op: 'damage', pool: 'hp', targetId: recipient.id, sourceId: actor.id,
       amount, label: template.name, direct: true, intercepted: recipient !== target, armorPierce: profile.armorPierce,

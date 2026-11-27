@@ -7,9 +7,10 @@ import { movementBudget } from './combat-actions.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
 const entry = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
-const pseudoPool = new Set(['attack', 'action', 'move']);
+const pseudoPool = new Set(['attack', 'action', 'move', 'reaction']);
 function pseudoState(state, unit, key) {
   if (key === 'move') { const b = movementBudget(state, unit); return { current: b.remainingCells, max: b.maxBoardSteps }; }
+  if (key === 'reaction') return { current: unit.reactionAvailable === false ? 0 : 1, max: 1 };
   return { current: Math.max(0, 1 - (unit.used?.[key] ?? 0)), max: 1 };
 }
 function applyPseudo(state, unit, key, mode, amount) {
@@ -29,6 +30,8 @@ function applyPseudo(state, unit, key, mode, amount) {
       if (!unit.moveSpentPermille) delete unit.moveSpentPermille;
       if (!unit.moveBonusPermille) delete unit.moveBonusPermille;
     }
+  } else if (key === 'reaction') {
+    unit.reactionAvailable = current > 0;
   } else {
     unit.used[key] = 1 - current;
     // `ap` is the aggregate remaining split-slot budget. Keep it in sync
@@ -87,13 +90,14 @@ export function continueCommit({ state, frame, host, options }) {
   const { data } = frame;
   const { op, pool: key } = data;
   const target = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
+  if (!target) { state.vm.stack.pop(); return; }
   const localOwner = data.local && frame.data.carrierId;
   const pseudo = !localOwner && pseudoPool.has(key);
   const pool = pseudo ? pseudoState(state, target, key) : getPool(state, localOwner || data.targetId, key, localOwner ? 'item' : 'unit');
   const other = op === 'resource' && data.mode === 'swap'
     ? getPool(state, localOwner || data.targetId, data.otherPool, localOwner ? 'item' : 'unit') : null;
   const otherBefore = other?.current ?? 0;
-  if ((!pool && !pseudo) || !target) { state.vm.stack.pop(); return; }
+  if (!pool) { state.vm.stack.pop(); return; }
   let event = entry(state.vm.events, frame.eventRef);
   if (frame.pc === 0) {
     const dying = state.vm.stack.some(parent => parent.native === 'lethal' && parent.data.poolId === target.pools?.hp);
@@ -168,8 +172,11 @@ export function continueCommit({ state, frame, host, options }) {
       event.healing = target.hp - before;
       host.log(state, source, 'heal', `${target.name}${data.label ? `因${data.label}` : ''}恢复${event.healing}点生命`, { ...data.details, targetId: target.id, amount: event.healing, hpBefore: before, hpAfter: target.hp });
     } else {
+      let applied = true;
       if (pseudo) {
-        if (!applyPseudo(state, target, key, data.mode, Math.floor(event.finalAmount))) { state.vm.stack.pop(); return; }
+        const amount = event.finalAmount;
+        if (data.mode === 'sub' && data.requireFull && before < amount) applied = false;
+        else if (!applyPseudo(state, target, key, data.mode, Math.floor(amount))) { state.vm.stack.pop(); return; }
       } else if (data.mode === 'swap') {
         if (other) {
           if (!blockRestore) swapPoolCurrents(state, pool.id, other.id);
@@ -201,17 +208,23 @@ export function continueCommit({ state, frame, host, options }) {
         const changed = ['add_max', 'sub_max', 'set_max'].includes(data.mode)
           ? updatePoolMax(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain) })
           : updatePoolCurrent(state, pool.id, data.mode, amount, { minRemain: Math.max(0, data.minRemain), requireFull: data.requireFull });
-        if (!changed.applied) {
-          const caller = state.vm.stack.find(parent => parent.frameId === frame.callerId);
-          if (caller) caller.pc = caller.program.length;
-          state.vm.stack.pop();
-          return;
+        applied = changed.applied;
+      }
+      if (!applied) {
+        const caller = state.vm.stack.find(parent => parent.frameId === frame.callerId);
+        if (caller) caller.pc = caller.program.length;
+        // Branches share their rule's registers. A failed pseudo-pool payment
+        // must also stop the active branch, e.g. a counter after an ask.
+        if (pseudo) for (const branch of state.vm.stack) {
+          if (branch.localsRef === frame.callerId) branch.pc = branch.items?.length ?? branch.program.length;
         }
+        state.vm.stack.pop();
+        return;
       }
       const after = pseudo ? pseudoState(state, target, key).current : entry(state.pools, pool.id).current;
       const maxChange = data.mode.endsWith('_max');
       const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
-      const label = ({attack:'攻击槽',action:'动作槽',move:'剩余移动格'})[key] ?? key.toUpperCase();
+      const label = ({attack:'攻击槽',action:'动作槽',move:'剩余移动格',reaction:'反应'})[key] ?? key.toUpperCase();
       const field = label + (maxChange ? '上限' : '');
       event.change = to - from;
       host.log(state, source, 'resource', `${target.name}${data.label ? `因${data.label}` : ''}${maxChange ? (to >= from ? '提高' : '降低') : (to >= from ? '恢复' : '消耗')}${Math.abs(event.change)}点 ${field}`, { targetId: target.id, resource: key, resourceLabel: field, before: from, after: to });

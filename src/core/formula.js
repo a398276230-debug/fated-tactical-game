@@ -185,7 +185,7 @@ for (const [name, description] of Object.entries({
   apCost: '本次行动消耗的行动点', slot: '本次行动占用的行动槽，无则为 null',
   hpCost: '本次行动的生命消耗', mpCost: '本次行动的法力消耗', spCost: '本次行动的体力消耗',
   poolCost: '本次行动的自定义池或物品池消耗', poolCostId: '本次消耗的自定义池或物品池 ID，无则为 null',
-  itemId: '本次行动关联的物品实例 ID', centerX: '本次行动落点的横坐标', centerY: '本次行动落点的纵坐标',
+  itemId: '本次行动关联的物品实例 ID',
   category: '事件状态的类别', tier: '事件状态的层级', roll: '检定使用的骰面', total: '检定计入加值后的总值',
   intent: '敌对打击意图（normal/function/core/kill/concept）：检定前为声明值，受击分支检定失败后为 normal，非打击事件无此字段',
   infiniteAmmo: '本次攻击声明时是否免耗弹药', weaponId: '本次使用的武器实例 ID',
@@ -201,6 +201,8 @@ for (const [name, description] of Object.entries({
   passed: '检定是否通过（true/false）', hit: '攻击检定是否命中（true/false）', critical: '是否暴击（true/false）', saved: '豁免是否通过（true/false）',
   baseDC: 'VM 检定初始 DC', finalDC: 'VM 检定完成时计入修饰后的 DC'
 })) register(`event.${name}`, description, context => path(context, 'event', name));
+register('event.centerX', '本次行动落点的横坐标', context => path(context, 'event', 'centerX') ?? path(context, 'event', 'center', 'x'));
+register('event.centerY', '本次行动落点的纵坐标', context => path(context, 'event', 'centerY') ?? path(context, 'event', 'center', 'y'));
 register('event.rating', '命中或检定评级（攻击检定为 超暴击/强暴击/平暴击/有效/勉强/擦伤/失手；VM check 为 hit/miss/crit）', context => {
   const rating = path(context, 'event', 'rating');
   return typeof rating === 'string' ? rating : own(rating, 'name');

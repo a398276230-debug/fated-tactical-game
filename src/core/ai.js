@@ -157,7 +157,7 @@ export function aimedOptions(state, actor, attacksOnly = false) {
     // The greedy planner cannot guarantee progress on a free skill unless it
     // exhausts a budget. Filters could skip consumption, so do not rely on them.
     if (skill.ap === 0 && !skill.backpackItem && !skill.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false
-      && (rule.filter === undefined || rule.filter === true) && (rule.usesPerTurn || rule.usesPerBattle || rule.cooldownTurns))) continue;
+      && (rule.filter === undefined || rule.filter === true) && (rule.usesPerTurn || rule.usesPerRound || rule.usesPerBattle || rule.cooldownTurns))) continue;
     const query = preview(state, { type: 'skill', skillId }, { actingUnit: actor });
     if (!query.ok) continue;
     const effectiveSkill = actionSkill(state, actor, skillId) ?? skill;

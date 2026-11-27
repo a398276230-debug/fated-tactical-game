@@ -87,7 +87,7 @@ export const opNotes = Object.freeze({
   ask: '向 chooser 请求选择，玩家可挂起结算，AI 或预览按 aiPolicy 自动选择：first 保留候选顺序，数值 max/min 取端点；进攻格/安全格分别靠近/远离最近存活敌人；highest_threat 优先存活敌人，同类按最高进攻属性排序；多选取排序前 maxSelect 个。选格和选实体用 select，选项用 options，数值用 min/max。entity 的 maxSelect 开启多选，将 ID 数组写入 out，for_each 以 {from:"vars.<名称>"} 遍历。out 写裸名称，单选实体可用 vars.<名称> 作目标。',
   damage: '走完整伤害和致死管线（instantDeath:true 绕过护甲与减伤直接扣光目标生命并正常结算击杀），out 记录实际扣血量，写裸名称、读 vars.<名称>。裸扣资源使用 resource。',
   heal: '直接治疗存活或仍在 on_lethal_p1/p2 结算中的单位（已落盘恢复生命，勿再叠加 resource 改 hp），经过治疗倍率与落盘拦截。恢复其他池使用 resource。',
-  resource: '直接改资源池并经过落盘拦截。pool 与 otherPool 支持池 ID 或 vars.<名称>，pool 也可用引用数组；数值表达式用 resource(self, vars.<名称>) 读取动态余额。内置池 hp/mp/sp 或伪池 attack/action/move：前两者表示本回合未用槽位，move 表示本回合剩余可移动格数（与真实移动共享同一预算，turn_start 用 add 可追加当回合移动格）；mode 用 add/sub/set。add_max/sub_max/set_max 改 HP/MP/SP 上限并同步镜像，minRemain 可限制最低上限；swap 使用单个 pool 和 otherPool。',
+  resource: '直接改资源池并经过落盘拦截。pool 与 otherPool 支持池 ID 或 vars.<名称>，pool 也可用引用数组；数值表达式用 resource(self, vars.<名称>) 读取动态余额。内置池 hp/mp/sp 或伪池 attack/action/move/reaction：attack/action 为本回合未用槽位，move 为本回合剩余移动格（与实际移动共享预算，turn_start 用 add 可追加），reaction 与借机攻击、援护共用 0/1 反应预算。伪池用 add/sub/set；sub 配 requireFull:true 时，余额不足则不扣减并中止调用帧后续指令。add_max/sub_max/set_max 改 HP/MP/SP 上限并同步镜像，minRemain 可限制最低上限；swap 使用单个 pool 和 otherPool。',
   link_pool: '用 units 选择单位，将指定的 HP/MP/SP 池合并共享或拆回独立池。',
   apply_status: '施加已注册的状态模板，vars 求值后存入状态。ignoreImmunity:true 明确激活免疫穿透，并按载体位格、角色层级、同层 contest 裁定；否则 before_status 免疫始终生效。',
   remove_status: '在目标持有的状态中用 where 筛选可移除项。durationType:"persistent" 常驻状态与 undispellable 状态均受保护，移除或消耗它们（含自身消耗常驻计数层数）必须显式填 force:true（自身移除自身常驻状态填 force:true 直接成功，对他人生效按来源位格裁定）；outCount 写裸名称。',
@@ -262,7 +262,8 @@ const defs = {
   opcode: variants(...opcodeSchemas),
   program: list(ref('opcode')),
   rule: withRules(object({ id, hook, program, label: text, enabled: { ...bool, default: true },
-    priority: { type: 'integer' }, dedupeKey: text, usesPerBattle: integer(1), usesPerTurn: integer(1), cooldownTurns: integer(1, 100), filter: booleanExpr }, ['id', 'hook', 'program']),
+    priority: { type: 'integer' }, dedupeKey: text, usesPerBattle: integer(1), usesPerTurn: integer(1), usesPerRound: integer(1),
+    cooldownTurns: integer(1, 100), listenScope: enumOf('participants', 'board'), filter: booleanExpr }, ['id', 'hook', 'program']),
   ...Object.keys(patchSchemas).map(name => when('hook', literal(name), { properties: { program: guardedProgram(name) } })),
   when('hook', { not: enumOf(...Object.keys(patchSchemas)) }, { properties: { program: guardedProgram('readOnly') } })),
 };

@@ -134,6 +134,7 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
     elevation: entity => pointElevation(state, entity),
     resource: (unit, key) => key === 'move' ? (unit ? movementBudget(state, unit).remainingCells : 0)
       : key === 'attack' || key === 'action' ? Math.max(0, 1 - (unit?.used?.[key] ?? 0))
+      : key === 'reaction' && unit ? (unit.reactionAvailable === false ? 0 : 1)
       : getPool(state, unit?.id, key, 'unit')?.current ?? own(unit, key),
     itemResource: (item, key) => getPool(state, item?.id, key, 'item')?.current ?? 0,
     inZone: (unit, key) => entries(state.zones).some(([, zone]) => active(zone)
@@ -182,7 +183,8 @@ function carrierDedupePrefix({ entity, carrier, nativeOwnerId }, ownerId, pooled
 
 /**
  * Tactical VM host.rules callback. Event participants use unit IDs (actorId,
- * sourceId, targetId, targets). ownerIds explicitly selects hook recipients.
+ * sourceId, targetId, targets). ownerIds explicitly selects participants;
+ * board rules instead consider all living units as potential recipients.
  * Lethal hooks use units or the HP binding poolId and dedupe across that group.
  * The first rule in priority/carrier/ID order represents each dedupe key.
  * Filters and battle-use counters are evaluated by the VM on frame entry.
@@ -190,7 +192,8 @@ function carrierDedupePrefix({ entity, carrier, nativeOwnerId }, ownerId, pooled
 export function collectRules(state, hook, event = {}, queries = {}) {
   if (hook === 'active') return [];
   const unitIds = eventOwners(state, hook, event);
-  if (!unitIds.length) return [];
+  let boardUnitIds;
+  const boardOwners = () => boardUnitIds ??= entries(state.units).filter(([, unit]) => alive(unit)).map(([id]) => id);
   const candidates = [];
   const pooled = hook === 'on_lethal_p1' || hook === 'on_lethal_p2';
   const carrierRows = carriers(state);
@@ -206,8 +209,12 @@ export function collectRules(state, hook, event = {}, queries = {}) {
       && !alive(own(state.units, row.nativeOwnerId))) continue;
     const rules = row.entity.rules?.filter(rule => rule.enabled !== false && rule.hook === hook);
     if (!rules?.length) continue;
-    for (const ownerId of recipients(state, row, unitIds, event, queries)) {
-      for (const rule of rules) {
+    let participantRecipients, boardRecipients;
+    for (const rule of rules) {
+      const owners = rule.listenScope === 'board'
+        ? (boardRecipients ??= recipients(state, row, boardOwners(), event, queries))
+        : (participantRecipients ??= unitIds.length ? recipients(state, row, unitIds, event, queries) : []);
+      for (const ownerId of owners) {
         const dedupeKey = rule.dedupeKey ?? `${carrierDedupePrefix(row, ownerId, pooled)}:${rule.id}`;
         const useKey = JSON.stringify([ownerId, dedupeKey]);
         candidates.push({ dedupeKey, entry: { rule, carrierOrder, ownerId, sourceId: sourceIdOf(row, ownerId, event), carrier: row.carrier, useKey } });
