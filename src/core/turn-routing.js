@@ -14,11 +14,53 @@ export function linkedGroupKey(unit) {
     ? `${unit.turnAnchorId}:${unit.summonGroup}` : null;
 }
 
+function independentManualUnit(unit) {
+  return unit && !unit.summoned && unit.team === 'blue' && unit.hp > 0 && !unit.fled;
+}
+
+export function manualSharedWindowIndices(state) {
+  const order = state.order ?? [];
+  const anchor = state.units?.[order[state.turn]];
+  if (!anchor || !independentManualUnit(anchor)) return [];
+  const shared = state.vm?.sharedTurn;
+  const start = shared?.start ?? state.turn;
+  const end = shared?.end ?? (() => {
+    let last = state.turn;
+    for (let index = state.turn + 1; index < order.length; index++) {
+      const unit = state.units?.[order[index]];
+      if (!unit || unit.hp <= 0 || unit.fled) continue;
+      if (!independentManualUnit(unit) || unit.team !== anchor.team) break;
+      last = index;
+    }
+    return last;
+  })();
+  const indices = [];
+  for (let index = start; index <= end; index++) {
+    const unit = state.units?.[order[index]];
+    if (!unit || unit.hp <= 0 || unit.fled) continue;
+    if (!independentManualUnit(unit) || unit.team !== anchor.team) break;
+    indices.push(index);
+  }
+  return indices;
+}
+
+export function sharedSquadUnits(state) {
+  const indices = manualSharedWindowIndices(state);
+  if (indices.length < 2) return [];
+  const ended = new Set(state.vm?.sharedTurn?.ended ?? []);
+  return indices.flatMap(index => {
+    const owner = state.units[state.order[index]];
+    if (ended.has(owner.id)) return [];
+    return [owner, ...linkedUnitsOf(state, owner.id)];
+  });
+}
+
 export function canRouteActor(state, actorId) {
   const anchor = state.units?.[state.order?.[state.turn]];
   const actor = state.units?.[actorId];
   if (!anchor || !actor || actor.hp <= 0 || actor.fled) return false;
-  return actor.id === anchor.id || (isLinkedMode(actor) && actor.turnAnchorId === anchor.id && actor.team === anchor.team);
+  if (actor.id === anchor.id || (isLinkedMode(actor) && actor.turnAnchorId === anchor.id && actor.team === anchor.team)) return true;
+  return sharedSquadUnits(state).some(unit => unit.id === actor.id);
 }
 
 export function actionActor(state, action) {

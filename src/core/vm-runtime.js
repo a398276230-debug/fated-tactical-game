@@ -330,6 +330,12 @@ export function validVmState(state) {
       || vm.startingTurn !== state.order?.[state.turn] || !own(state.units, vm.startingTurn))) return false;
   if (vm.endingTurn !== undefined && (!vm.pendingAsk || typeof vm.endingTurn !== 'string'
       || vm.endingTurn !== state.order?.[state.turn] || !own(state.units, vm.endingTurn))) return false;
+  const sharedTurn = vm.sharedTurn;
+  if (sharedTurn !== undefined && (!plain(sharedTurn) || !Number.isInteger(sharedTurn.start)
+      || !Number.isInteger(sharedTurn.end) || sharedTurn.start < 0 || sharedTurn.end < sharedTurn.start
+      || sharedTurn.end >= (state.order?.length ?? 0) || !Array.isArray(sharedTurn.started)
+      || !Array.isArray(sharedTurn.ended) || !sharedTurn.started.every(id => typeof id === 'string')
+      || !sharedTurn.ended.every(id => typeof id === 'string'))) return false;
   const remaining = vm.endingStatuses;
   if (remaining !== undefined && (!vm.endingTurn || !Array.isArray(remaining)
       || !remaining.every(id => typeof id === 'string'))) return false;

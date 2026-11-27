@@ -21,7 +21,7 @@ import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 import { resolveStatusApplication } from './status-application.js';
 import { cleanupSourceBoundEntities } from './vm-lifecycle.js';
-import { actionActor, canRouteActor, isLinkedMode, linkedGroupKey, linkedUnitsOf as routedLinkedUnitsOf } from './turn-routing.js';
+import { actionActor, canRouteActor, isLinkedMode, linkedGroupKey, linkedUnitsOf as routedLinkedUnitsOf, manualSharedWindowIndices } from './turn-routing.js';
 export { getStatusTemplate, STATUSES };
 export const corpses = state => Object.values(state.units).filter(unit => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
 
@@ -1219,6 +1219,16 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
 
 /** With no x/y, queries highlighting. With both coordinates, validates one executable action. */
 export function preview(state, action, options = {}) {
+  const index = action?.actorId === undefined ? undefined : manualSharedWindowIndices(state)
+    .find(value => state.order[value] === action.actorId);
+  const peer = index === undefined ? undefined : state.units?.[action.actorId];
+  if (peer && index !== state.turn && !state.vm?.sharedTurn?.started?.includes(peer.id)) {
+    const working = structuredClone(state);
+    working.turn = index;
+    resetUnitTurn(working, working.units[peer.id]);
+    for (const member of routedLinkedUnitsOf(working, peer.id)) resetUnitTurn(working, member);
+    return preview(working, action, options);
+  }
   const plan = previewAction(state, action, options);
   if (!plan.ok || options.simulateRules === false || !plan.actionContext || isStrikeAction(action, plan)
     || (needsTarget(action.type) && action.x === undefined) || state.vm?.stack.length) return plan;
@@ -2022,6 +2032,21 @@ function continueInteraction(state, actor, plan, progress, ammoBefore) {
 
 export function applyAction(state, action) {
   if (action?.type !== 'answer' && action?.actorId !== undefined && !canRouteActor(state, action.actorId)) throw new Error('该单位不能在当前阶段行动');
+  if (action?.type !== 'answer' && action?.actorId !== undefined) {
+    const indices = manualSharedWindowIndices(state);
+    const index = indices.find(value => state.order[value] === action.actorId);
+    if (index !== undefined && index !== state.turn && !state.units[action.actorId].summoned) {
+      state.vm ??= {};
+      state.vm.sharedTurn ??= { start: indices[0], end: indices.at(-1), started: [state.order[state.turn]], ended: [] };
+      state.turn = index;
+      state.vm.activePhaseId = action.actorId;
+      if (!state.vm.sharedTurn.started.includes(action.actorId)) {
+        state.vm.sharedTurn.started.push(action.actorId);
+        beginUnitTurn(state, state.units[action.actorId]);
+        if (state.vm.pendingAsk) return state.logs.slice(-1);
+      }
+    }
+  }
   if (action?.type === 'answer' || state.vm?.pendingAsk || action?.type && !['end', 'end_encounter'].includes(action.type)) {
     if (state.vm?.pendingAsk && action.type === 'end_encounter') {
       const concession = preview(state, action);
@@ -2202,6 +2227,35 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
 
 function finishAction(state, actor, type) {
   if (state.vm?.pendingAsk) return;
+  const shared = state.vm?.sharedTurn;
+  if (shared && actor && shared.started.includes(actor.id)) {
+    const canAct = actor => alive(actor) && !actor.fled && !unitSkipped(state, actor)
+      && (actor.ap > 0 || preview(state, { type: 'move' }, { actingUnit: actor }).ok
+        || preview(state, { type: 'use_item' }, { actingUnit: actor }).ok);
+    if (type === 'end' || !canAct(actor)) {
+      endTurn(state, actor);
+      shared.ended.push(actor.id);
+      const next = manualSharedWindowIndices(state).find(index => {
+        const unit = state.units[state.order[index]];
+        return unit && !shared.ended.includes(unit.id) && alive(unit) && !isAiControlled(state, unit);
+      });
+      if (next === undefined) {
+        const end = shared.end;
+        delete state.vm.sharedTurn;
+        state.turn = end;
+        if (!state.vm.pendingAsk && !refreshOutcome(state)) { advanceCursor(state); settleTurn(state); }
+      } else {
+        state.turn = next;
+        const nextUnit = state.units[state.order[next]];
+        state.vm.activePhaseId = nextUnit.id;
+        if (!shared.started.includes(nextUnit.id)) {
+          shared.started.push(nextUnit.id);
+          beginUnitTurn(state, nextUnit);
+        }
+      }
+    }
+    return;
+  }
   if (refreshOutcome(state)) { if (actor) actor.ap = 0; return; }
   const turnOwner = currentUnit(state) ?? actor;
   if (!turnOwner) return;
