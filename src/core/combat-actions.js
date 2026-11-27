@@ -318,7 +318,10 @@ function endTurn(state, unit) {
   initializeVMWorld(state);
   delete state.vm.activePhaseId;
   const members = [...routedLinkedUnitsOf(state, unit.id), unit];
-  for (const member of members) member.ap = 0;
+  for (const member of members) {
+    member.ap = 0;
+    if (member.surprised) delete member.surprised;
+  }
   for (const key of Object.keys(state.vm.linkedGroupUsed ?? {})) {
     if (key.startsWith(`${unit.id}:`)) delete state.vm.linkedGroupUsed[key];
   }
@@ -985,7 +988,8 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const guaranteeCrit = hasStrikeDamage(template) && Boolean(flags.guaranteed_crit);
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags.guaranteed_hit);
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
-  const dodge = execution || cover || !target ? 0 : modStat(state, target, 'dodge', 0, { ...strike, attacker: actor });
+  const dodge = execution || cover || !target ? 0 : modStat(state, target, 'dodge', 0, { ...strike, attacker: actor })
+    + (target?.surprised && state.round === 1 ? 2 : 0);
   const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;

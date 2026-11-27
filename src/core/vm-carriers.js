@@ -318,11 +318,13 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
 }
 
 export function unitSkipped(state, unit) {
+  if (unit?.surprised && state.round === 1) return true;
   const { locks } = aggregateModifiers(state, unit.id);
   return locks.attack && locks.action && locks.move && locks.cast;
 }
 
 export function reactionBlocked(state, unit) {
+  if (unit?.surprised && state.round === 1) return true;
   const { locks } = aggregateModifiers(state, unit.id);
   return locks.reaction || locks.attack;
 }

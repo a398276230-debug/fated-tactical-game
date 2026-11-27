@@ -39,13 +39,16 @@ function parseHeader(line) {
   const moraleType = typeValue && moraleTypeFor(typeValue.slice('战斗类型='.length));
   if (typeValue && !moraleType) fail('未知战斗类型，可选：标准、切磋、竞技、压制、死斗、守卫');
   if ((sideValue && !sideToken) || (moraleType === 'suppress') !== !!sideToken) fail('压制战必须在战斗类型后声明 |压制方=blue 或 |压制方=red；其他类型不填压制方');
+  const surprisedValue = options.find(value => /^受惊\s*=/u.test(value));
+  const surprisedToken = surprisedValue?.match(/^受惊\s*=\s*(红方|蓝方|red|blue)$/iu);
+  if (surprisedValue && !surprisedToken) fail('受惊必须是 红方、蓝方、red 或 blue');
   const physicsTokens = options.filter(value => /^元素交互\s*=|^法则\s*=\s*无元素涌现$/u.test(value));
   if (physicsTokens.length > 1) fail('元素交互只能声明一次');
   const physicsToken = physicsTokens[0];
   if (physicsToken && !/^(?:元素交互\s*=\s*[开关]|法则\s*=\s*无元素涌现)$/u.test(physicsToken)) fail('元素交互必须是 开 或 关');
   const physicsOff = /^(?:元素交互\s*=\s*关|法则\s*=\s*无元素涌现)$/u.test(physicsToken ?? '');
   const remainingOptions = options.slice();
-  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, physicsToken]) {
+  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, surprisedValue, physicsToken]) {
     if (token !== undefined) remainingOptions.splice(remainingOptions.indexOf(token), 1);
   }
   const [seedText, ...extra] = remainingOptions;
@@ -56,6 +59,7 @@ function parseHeader(line) {
     ...(cellM != null && { cellM }), ...(tierMatch && { scaleTier: Number(tierMatch[1]) }),
     ...(scaleExplicit && { explicitScale: true }), ...(physicsOff && { elementalPhysics: 'off' }),
     ...(moraleType && { moraleType }), ...(sideToken && { suppressingTeam: sideToken[1] }),
+    ...(surprisedToken && { surprisedTeam: /^蓝方|blue$/iu.test(surprisedToken[1]) ? 'blue' : 'red' }),
     ...(seedText === undefined ? {} : { seed: Number(seedText) }) };
 }
 
@@ -191,15 +195,17 @@ export function parseBattleDescriptor(value) {
       claimId(id, label);
       effects.push(parseEffect(parts, label, battle));
     } else if (kind === 'unit') {
-      if (parts.length !== 6) fail(`${row}需要 6 段字段（unit|ID|阵营|来源|显示名|坐标，当前为 ${parts.length} 段）`);
+      if (parts.length < 6 || parts.length > 7) fail(`${row}需要 6 段字段（可选第 7 段受惊，当前为 ${parts.length} 段）`);
       claimId(id, row);
-      const [, , team, source, name, point] = parts;
+      const [, , team, source, name, point, surprise] = parts;
       if (!['blue', 'red'].includes(team)) fail(`${row}的阵营「${team}」无效，必须为 blue 或 red`);
       checkSource(source, row);
       if (!name || name.length > 100) fail(`${row}的显示名不能为空且不超过 100 字`);
       const position = parsePoint(point, row, battle, true);
       claimPosition(position, row, true);
-      units.push({ id, team, source, name, ...position });
+      const surprised = surprise === '受惊';
+      if (surprise !== undefined && !surprised) fail(`${row}的尾部标记只能写受惊`);
+      units.push({ id, team, source, name, ...position, ...(surprised && { surprised: true }) });
     } else if (kind === 'summon') {
       if (parts.length < 5) fail(`${row}需要 summon|ID|归属单位ID|来源|显示名`);
       if (summons.length >= 24) fail('最多 24 条 summon 记录');
