@@ -15,7 +15,7 @@ import { chatPatch, fingerprintAt } from '../src/tavern/overlay-patch.js';
 import { applyPatch, extractJsonBlocks, parseAIResponse, stripReasoningBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
 import { PHYSICAL_TRAITS } from '../src/core/elements.js';
 import { ZONE_MEDIA } from '../src/core/element-media.js';
-import { PHYSICAL_STATUSES } from '../src/presets/status-defaults.js';
+import { PHYSICAL_STATUSES, TACTICAL_STATUSES } from '../src/presets/status-defaults.js';
 import { battleAiPayload } from '../src/core/battle-ai.js';
 
 test('首次登记的元素先于引用校验，重放复用已全局登记的同一定义', () => {
@@ -653,7 +653,8 @@ test('元素物理特质、媒介区域、物理附着四态与陪玩提示词�
   for (const trait of PHYSICAL_TRAITS) assert.ok(joined.includes(trait), `提示词漏披露物理特质：${trait}`);
   for (const medium of ZONE_MEDIA) assert.ok(joined.includes(medium), `提示词漏披露物理媒介：${medium}`);
   for (const statusId of Object.keys(PHYSICAL_STATUSES)) assert.ok(joined.includes(statusId), `提示词漏披露物理附着态：${statusId}`);
-  for (const token of ['layer', 'blocksLOS', 'moveCost', '.altitude', '切勿在每个技能里手写冗长的环境检测指令']) {
+  for (const statusId of Object.keys(TACTICAL_STATUSES)) assert.ok(joined.includes(statusId), `提示词漏披露内置战术态：${statusId}`);
+  for (const token of ['layer', 'blocksLOS', 'moveCost', '.altitude', 'has_los', 'surprised', 'heroicDowned', '切勿在每个技能里手写冗长的环境检测指令']) {
     assert.ok(joined.includes(token), `提示词漏披露关键契约：${token}`);
   }
 
@@ -671,6 +672,9 @@ test('元素物理特质、媒介区域、物理附着四态与陪玩提示词�
 
   const aiPayload = battleAiPayload(buildScenario('ruins'));
   assert.match(aiPayload.rules, /水洼导电.*油污与毒雾引爆.*蒸汽与浓烟遮挡远程视线/);
+  for (const token of ['jump', 'dip', 'overwatch', 'help', 'push', 'surprised', 'downed']) {
+    assert.ok(aiPayload.rules.includes(token), `陪玩 AI RULES 漏披露：${token}`);
+  }
 });
 
 

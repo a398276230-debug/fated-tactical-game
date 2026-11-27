@@ -92,7 +92,7 @@ MVU 角色原本存在并被转换器绑定的单位池带有 `mvuBound` 语义�
 
 持久自定义元素登记在 `customElements`，键必须是合法 ASCII ID，值至少包含同名 `id` 与展示用 `name`，可选 `aliases`、`category`（`physical`、`energy` 或 `mental`）与 `traits`（1 至 4 项不重复物理特质，枚举：`heat`、`ignite`、`cold`、`wet`、`shock`、`corrode`、`flammable`、`gust`）。自定义元素仍使用 `damageType`，例如 `{ "damageType": "void" }`，不增加平行的 `element` 字段。`before_commit` 支持写入 `damageType`，引擎会按新的类型重新计算尚未显式覆盖的最终伤害。
 
-内置元素默认带物理特质（`fire` 为 `heat`+`ignite`、`cold` 为 `cold`、`lightning` 为 `shock`、`thunder` 为 `gust`、`acid` 为 `corrode`），装备与技能的 `tags` 也可附带上述特质名；转换器自动注册自定义元素时会按中文词根推断默认 `traits`。当 `state.elementalPhysics !== "off"`（`battle_init` 首行可写 `|元素交互=关` 关闭）时，动作落点、直接伤害与新生成的媒介区域会自动结算物理相变、四连通水体导电与油面/毒瘴燃爆，并按需维护 `PHYSICAL_STATUSES` 四项基础物理附着态（`wet` 潮湿、`oiled` 覆油、`burning` 灼烧、`chilled` 霜滞；查找优先级低于 `state.statusTemplates` 与 9 个内核状态 `STATUSES`，可被同名用户状态模板覆写）。
+内置元素默认带物理特质（`fire` 为 `heat`+`ignite`、`cold` 为 `cold`、`lightning` 为 `shock`、`thunder` 为 `gust`、`acid` 为 `corrode`），装备与技能的 `tags` 也可附带上述特质名；转换器自动注册自定义元素时会按中文词根推断默认 `traits`。当 `state.elementalPhysics !== "off"`（`battle_init` 首行可写 `|元素交互=关` 关闭）时，动作落点、直接伤害与新生成的媒介区域会自动结算物理相变、四连通水体导电与油面/毒瘴燃爆，并按需维护 `PHYSICAL_STATUSES` 四项基础物理附着态（`wet` 潮湿、`oiled` 覆油、`burning` 灼烧、`chilled` 霜滞）。此外，原生战术动作维护 `TACTICAL_STATUSES` 四项内置战术状态（`dipped` 武器蘸取附魔、`overwatch` 警戒守望、`downed` 重伤倒地、`wounded` 重伤虚弱）。`getStatusTemplate` 按 `state.statusTemplates → STATUSES（9 个内核状态）→ PHYSICAL_STATUSES → TACTICAL_STATUSES` 顺序解析，允许用户状态模板同名覆写物理与战术状态。
 
 ```json
 {
@@ -158,9 +158,9 @@ selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`�
 
 `src/core/formula.js` 的 `validExpr`、`compileExpr`、`evaluateExpr` 只接受解析器支持的表达式，不执行任意 JavaScript。当前查询函数包括：
 
-`min`、`max`、`floor`、`ceil`、`abs`、`cells_m`、`scale_cells`、`clamp`、`distance`、`facing_arc`、`resource`、`has_status`、`has_tag`、`in_zone`、`is_immune`、`any_unit_has_status`、`count_units`、`count`、`sum`。
+`min`、`max`、`floor`、`ceil`、`abs`、`cells_m`、`scale_cells`、`clamp`、`distance`、`facing_arc`、`has_los`、`resource`、`has_status`、`has_tag`、`in_zone`、`is_immune`、`any_unit_has_status`、`count_units`、`count`、`sum`。
 
-公式上下文提供 `self`、`attacker`、`target`、`source`、`candidate`、`status`、`zone`、`skill`、`item`、`event`、`vars`、`round`、`turn`、`timeOfDay`、`cellM`、棋盘尺寸和资源/层数/变量引用。单位作用域公开 `altitude`、`sourceId`、`summonGroup`、`sourceSkillId`、`level` 和 `reactionAvailable`，可用 `count_units("candidate.alive && candidate.summonGroup != null && candidate.summonGroup == self.summonGroup")` 统计存活同组成员。
+其中 `has_los(observer, point)` 检查两个实体或坐标间视线是否通畅（计入地形墙体、`blocksLOS` 云雾区域及观察者 `trueSight`）。公式上下文提供 `self`、`attacker`、`target`、`source`、`candidate`、`status`、`zone`、`skill`、`item`、`event`、`vars`、`round`、`turn`、`timeOfDay`、`cellM`、棋盘尺寸和资源/层数/变量引用。单位作用域公开 `altitude`、`sourceId`、`summonGroup`、`sourceSkillId`、`level` 和 `reactionAvailable`，可用 `count_units("candidate.alive && candidate.summonGroup != null && candidate.summonGroup == self.summonGroup")` 统计存活同组成员。
 
 ## 7. 校验与执行
 
