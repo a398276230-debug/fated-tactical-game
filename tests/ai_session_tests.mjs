@@ -632,3 +632,16 @@ Step 4: Coverage: PASS | Schema: PASS
   assert.equal(parsed.patch[0].path, '/equipment/e1/mods');
 });
 
+test('正交六域能力在协议与任务槽完整披露且清理过期绕法注记', () => {
+  const joined = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(m => m.content).join('\n\n');
+  for (const token of [
+    'forbidAction:true', 'forbidReason', 'event.mpCost > 0', 'event.isRanged', "has_tag(event, 'fire')", "event.actionType == 'move'",
+    'costFlat', 'costMult', 'costRedirect', 'listenScope:"board"', 'usesPerRound:1', 'requireFull:true',
+    'bindToSource', 'concentration', 'trueSight', 'blockResourceRestore',
+    'mindControl', 'berserk', 'charm', 'forbidTargetSource:true',
+    'weapon.attack', 'item.resource.',
+  ]) assert.ok(joined.includes(token), `提示词漏披露正交原语：${token}`);
+  assert.doesNotMatch(joined, /无 \.sourceId 字段|封锁特定恢复技能或资源回复请用 before_action|全场任何敌友濒死都会误触发/);
+});
+
+
