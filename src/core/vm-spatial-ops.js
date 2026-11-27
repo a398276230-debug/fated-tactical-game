@@ -8,6 +8,7 @@ import { scheduleCommit } from './vm-commit.js';
 import { createPool, initializeUnitPools, syncUnitPools, unlinkPools } from './vm-pools.js';
 import { resolvePoint, selectVM } from './vm-select.js';
 import { aggregateModifiers } from './vm-carriers.js';
+import { canPlaceBoundEffect, cleanupSourceBoundEntities, effectLifecycle, switchConcentration } from './vm-lifecycle.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const values = table => Object.values(table ?? {});
@@ -309,8 +310,11 @@ function unitPlan(state, context, spec, original) {
     level: (spec.templateId && original?.level) || actor.level || actor.tier || 1, tier } };
 }
 
-function removeSummon(state, unit, host) {
+export function removeSummon(state, unit, host, frame, reason, seen = new Set()) {
+  if (seen.has(unit.id) || own(state.units, unit.id) !== unit) return;
+  cleanupSourceBoundEntities(state, unit.id, '来源离场', host, frame, seen);
   for (const zone of values(state.zones)) if (zone.area?.anchorUnitId === unit.id) removeZone(state, host, zone.id, '锚点离场');
+  if (reason) host.log(state, unit, 'despawn', `${unit.name}因${reason}离场`, { unitId: unit.id, summoned: true, reason });
   const shared = ['hp', 'mp', 'sp'].filter(key => own(state.pools, own(unit.pools, key))?.contributors.length > 1);
   if (shared.length) unlinkPools(state, [unit.id], shared);
   const ownedItems = values(state.items).filter(item => item.ownerId === unit.id);
@@ -323,6 +327,7 @@ function removeSummon(state, unit, host) {
   if (index !== -1) {
     state.order.splice(index, 1);
     if (index < state.turn) state.turn--;
+    if (reason && state.turn >= state.order.length) state.turn = Math.max(0, state.order.length - 1);
   }
 }
 
@@ -384,7 +389,7 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
   if (state.vm.stack.some(entry => entry.native === 'spatialSpawn' && entry.data.group === group)) return fail('reentrant_group');
   const groupUnits = values(state.units).filter(unit => unit.summoned && unit.summonGroup === group && unit.id !== actor.id);
   for (const old of groupUnits) {
-    if (!live(old) && !aggregateModifiers(state, old.id).flags.blockRevive) removeSummon(state, old, host);
+    if (!live(old) && !aggregateModifiers(state, old.id).flags.blockRevive) removeSummon(state, old, host, frame);
   }
   const serial = unit => Number(unit.id.match(/^summon-(\d+)$/)?.[1] ?? Number.MAX_SAFE_INTEGER);
   const livingGroup = groupUnits.filter(live).sort((a, b) => serial(a) - serial(b));
@@ -402,6 +407,8 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
     unitPools: original?.unitPools || spec.unitPools ? { ...original?.unitPools, ...spec.unitPools } : undefined,
   }, actor.id, '', templateId, context, { allowUnitPools: true });
   if (spec.copyOf) fields.vars = { ...(original.vars ?? {}), ...fields.vars };
+  Object.assign(fields, effectLifecycle(state, frame, context.event, requested, requested.templateId ? original : null));
+  if (!canPlaceBoundEffect(state, fields)) return;
   const explicitAt = op.at !== undefined;
   const z = explicitAt ? center.z : undefined;
   const data = { plan, center: { ...xy(center), ...(Number.isFinite(z) && { z }) }, explicitAt,
@@ -426,16 +433,19 @@ function continueSpawn({ state, frame, host, context }) {
     const old = own(state.units, data.pendingId);
     if (old) {
       host.log(state, old, 'spawn', `${old.name}结束召唤并离场`, { unitId: old.id, evicted: true });
-      removeSummon(state, old, host);
+      removeSummon(state, old, host, frame);
     }
     data.pendingId = null;
     delete frame.awaitEvent;
+    if (state.vm.stack.at(-1) !== frame) return;
   }
+  if (!actor || !canPlaceBoundEffect(state, data.fields)) { state.vm.stack.pop(); return; }
   while (frame.pc < data.evictIds.length) {
     const old = own(state.units, data.evictIds[frame.pc++]);
     if (!old || old.summonGroup !== data.group) continue;
     if (!live(old)) {
-      removeSummon(state, old, host);
+      removeSummon(state, old, host, frame);
+      if (state.vm.stack.at(-1) !== frame) return;
       continue;
     }
     data.pendingId = old.id;
@@ -456,6 +466,11 @@ function continueSpawn({ state, frame, host, context }) {
     const reason = equipmentId ? 'missing_equipment' : [...items.values()].some(item => !item) ? 'invalid_panel' : 'capacity';
     logSpawnFailure(state, host, actor, data.fields.name, reason, equipmentId ? { equipmentId } : {});
     state.vm.stack.pop();
+    return;
+  }
+  if (data.fields.concentration && !frame.switchedConcentration) {
+    frame.switchedConcentration = true;
+    switchConcentration(state, data.fields, host, frame);
     return;
   }
   let first;
@@ -508,8 +523,14 @@ function spawnZone({ state, frame, host, context, op }, center) {
   if (origin) area.center = xy(origin);
   if (spec.follow) area.anchorUnitId = anchor.id;
   else delete area.anchorUnitId;
+  const sourceId = context.self?.id ?? frame.sourceId;
+  const lifecycle = effectLifecycle(state, frame, context.event, spec);
+  const effect = { sourceId, ...lifecycle };
+  if (!canPlaceBoundEffect(state, effect)) return;
+  switchConcentration(state, effect, host, frame);
+  if (spec.follow && own(state.units, anchor.id) !== anchor) return;
   const id = nextId(state, state.zones ??= {}, 'zone');
-  const zone = { ...carrier(spec, context.self?.id ?? frame.sourceId, id, spec.templateId ?? id, context), team: context.self?.team ?? null,
+  const zone = { ...carrier(spec, sourceId, id, spec.templateId ?? id, context), ...lifecycle, team: context.self?.team ?? null,
     area, follow: spec.follow === true, persistent: spec.persistent === true, remainingTurns: spec.remainingTurns ?? 1,
     ...(spec.follow ? { anchorPosition: xy(anchor) } : {}) };
   state.zones[id] = zone;
@@ -517,12 +538,12 @@ function spawnZone({ state, frame, host, context, op }, center) {
   host.log(state, context.self, 'zone', `展开${zone.name}`, { zoneId: id });
 }
 
-export function removeZone(state, host, zoneId, reason = '解除') {
+export function removeZone(state, host, zoneId, reason = '解除', detail = {}) {
   const zone = own(state.zones, zoneId);
   if (!zone) return false;
   delete state.zones[zoneId];
   for (const poolId of values(zone.pools)) delete state.pools[poolId];
-  host.log(state, own(state.units, zone.sourceId), 'zone', `${zone.name}${reason}后消散`, { zoneId, expired: true });
+  host.log(state, own(state.units, zone.sourceId), 'zone', `${zone.name}${reason}后消散`, { zoneId, expired: true, ...detail });
   return true;
 }
 
@@ -686,6 +707,11 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
 export function expireSpatialEffects(state, host, { advance = false, anchorUnitId = null, parent = state.vm?.stack.at(-1) } = {}) {
   refreshFollowingZones(state, host);
   if (!advance) return;
+  for (const id of Object.keys(state.units).sort()) {
+    const unit = own(state.units, id);
+    if (unit?.summoned && unit.durationUnit === 'anchor_turns' && (unit.bindToSource || unit.concentration)
+        && !live(own(state.units, unit.durationAnchorId))) removeSummon(state, unit, host, parent, '锚点离场');
+  }
   const expiring = values(state.units).filter(unit => unit.summoned && unit.remainingTurns != null
     && (anchorUnitId === null ? (unit.durationUnit ?? 'rounds') === 'rounds'
       || !live(own(state.units, unit.durationAnchorId)) : unit.durationUnit === 'anchor_turns' && unit.durationAnchorId === anchorUnitId)
@@ -719,8 +745,9 @@ function despawn({ state, frame, host, context, op, select }) {
     const layers = [...targets].filter(layer => own(state.spatialTerrain, layer.id) === layer && layer.cells.length);
     removeTerrainLayers(state, host, frame, new Set(layers.map(layer => layer.id)), '解除后');
   } else if (op.entityKind === 'unit') {
-    for (const unit of [...targets].filter(unit => own(state.units, unit.id) === unit && unit.summoned === true)) {
-      removeSummon(state, unit, host);
+    for (const unit of targets) {
+      if (own(state.units, unit.id) !== unit || unit.summoned !== true) continue;
+      removeSummon(state, unit, host, frame);
       host.log(state, context.self, 'despawn', `${unit.name}被移除`, { unitId: unit.id, summoned: true });
     }
   }
@@ -757,8 +784,10 @@ function continueExpireSummon({ state, frame, host }) {
   }
   if (unit) {
     host.log(state, unit, 'despawn', `${unit.name}召唤期限结束`, { unitId: unit.id, summoned: true, expired: true });
-    removeSummon(state, unit, host);
+    state.vm.stack.pop();
+    removeSummon(state, unit, host, frame);
     if (state.turn >= state.order.length) state.turn = 0;
+    return;
   }
   state.vm.stack.pop();
 }

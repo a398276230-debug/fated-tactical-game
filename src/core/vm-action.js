@@ -1,5 +1,5 @@
 import { evaluateExpr } from './formula.js';
-import { isTapeAction, isStrikeAction, continueNativeAction } from './combat.js';
+import { actionSkill, isTapeAction, isStrikeAction, continueNativeAction } from './combat.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
 import { resolvePoint } from './vm-select.js';
 import { aggregateModifiers } from './vm-carriers.js';
@@ -81,9 +81,13 @@ export function continueAction({ state, frame, host, options }) {
     const strike = isStrikeAction(action, plan);
     const hostileStrike = strike && plan.hostile === true;
     frame.initialIntentLock = aggregateIntentLock(state, actor.id);
+    const lifecycle = action.type === 'skill' ? actionSkill(state, actor, action.skillId) : null;
     if (plan.kind === 'barrel') frame.ammoBefore = plan.ammo ?? null;
     frame.eventRef = newEvent(state, { ...plan.actionContext,
-      targetId: plan.targetIds[0] ?? plan.targetId ?? plan.actionContext.targetId, center: plan.center,
+      actorId: actor.id, actionType: action.type, skillId: action.skillId ?? null,
+      ...(lifecycle?.bindToSource === true && { bindToSource: true }),
+      ...(lifecycle?.concentration === true && { concentration: true }),
+      targetId: plan.targetIds[0] ?? plan.targetId ?? plan.actionContext?.targetId ?? null, center: plan.center,
       origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
       ...(hostileStrike ? { intent: plan.intent ?? 'normal' } : {}),
       power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,

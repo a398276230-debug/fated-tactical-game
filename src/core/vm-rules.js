@@ -6,6 +6,8 @@ import { resolvePoint } from './vm-select.js';
 import { deleteOwnedPools, getPool, updatePoolCurrent } from './vm-pools.js';
 import { authorityContest, authorityFor, compareAuthority, authorityProse } from './vm-authority.js';
 import { resolveStatusApplication } from './status-application.js';
+import { unitSkipped } from './vm-carriers.js';
+import { breakConcentration, canPlaceBoundEffect, effectLifecycle, hasActiveConcentration, switchConcentration } from './vm-lifecycle.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
 const CHECK_TIERS = ['miss', 'hit', 'crit'];
@@ -111,6 +113,7 @@ export const ruleOps = {
 
 export function continueCheck({ state, frame, host, context }) {
   const { data: op } = frame;
+  if (frame.concentrationSave && (!context.self || !live(context.target))) { state.vm.stack.pop(); return; }
   if (frame.pc === 0) {
     const dc = evaluate(op.dc, context, op.kind === 'chance' ? undefined : 10);
     if (op.kind === 'chance' && !Number.isFinite(dc)) host.log(state, context.self, 'warning', '概率判定缺少有效 dc，忽略该检定');
@@ -205,6 +208,9 @@ export function continueCheck({ state, frame, host, context }) {
   output(state, frame, op.out, event.passed);
   const program = event.passed ? op.onPass : op.onFail;
   state.vm.stack.pop();
+  if (frame.concentrationSave && !event.passed) {
+    breakConcentration(state, context.target.id, '受创豁免失败，专注中断', host, frame);
+  }
   if (program?.length) {
     const parent = state.vm.stack.find(entry => entry.frameId === frame.branchFrameId);
     pushFrame(state, { kind: parent.kind === 'loop' ? 'action' : parent.kind, hook: parent.hook ?? null, carrier: parent.carrier ?? null,
@@ -249,23 +255,39 @@ export function continueApplyStatus({ state, frame, host, context, options }) {
     }
     if (!live(target)) return;
     const evaluatedVars = Object.fromEntries(Object.entries(op.vars ?? {}).map(([key, value]) => [key, typeof value === 'string' && !validExpr(value) ? value : evaluateExpr(value, context)]).filter(([, value]) => value !== null));
+    const lifecycle = effectLifecycle(state, frame, context.event, op, template);
+    const sourceId = lifecycle.bindToSource || lifecycle.concentration ? frame.ownerId : context.self?.id;
     const result = resolveStatusApplication(state, target, op.statusId, {
-      ...op, vars: evaluatedVars, contextVars: context.vars, sourceId: context.self?.id ?? null, sourceCarrier: frame.carrier ?? null,
+      ...op, ...lifecycle, vars: evaluatedVars, contextVars: context.vars, sourceId: sourceId ?? null, sourceCarrier: frame.carrier ?? null,
       effectiveTier: context.effectiveTier,
     }, { strict: false });
-    if (!result) return;
+    if (!result || !canPlaceBoundEffect(state, result.nextStatus)) return;
     if (result.replacePrevious) removeStatus(state, target, result.previous, 'replaced', context.self, host, frame);
     frame.appliedStatus = result.nextStatus;
     return;
   }
   if (frame.pc === 2 && frame.appliedStatus) {
+    if (!live(target) || !canPlaceBoundEffect(state, frame.appliedStatus)) { state.vm.stack.pop(); return; }
+    if (frame.appliedStatus.concentration && !frame.switchedConcentration) {
+      frame.switchedConcentration = true;
+      switchConcentration(state, frame.appliedStatus, host, frame);
+      return;
+    }
     frame.pc++;
-    if (!live(target)) return;
     const status = frame.appliedStatus;
     const displaced = own(target.statuses, op.statusId);
     if (displaced?.pools) status.pools = displaced.pools;
+    else delete status.pools;
     target.statuses[op.statusId] = status;
     host.log(state, context.self, 'status', `${target.name}获得${status.name}（${status.stacks}层）`, host.statusLogDetail(target, status));
+    if (hasActiveConcentration(state, target.id) && unitSkipped(state, target)) {
+      frame.notifyAfterConcentrationBreak = true;
+      breakConcentration(state, target.id, '陷入失能，专注中断', host, frame);
+    } else scheduleHooks(state, frame, 'after_status_applied', frame.awaitEvent, host);
+    return;
+  }
+  if (frame.notifyAfterConcentrationBreak) {
+    delete frame.notifyAfterConcentrationBreak;
     scheduleHooks(state, frame, 'after_status_applied', frame.awaitEvent, host);
     return;
   }

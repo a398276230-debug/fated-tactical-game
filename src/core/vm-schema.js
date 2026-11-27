@@ -163,6 +163,7 @@ const carrier = { ...baseCarrier, unitPools };
 export const carrierFields = Object.freeze(Object.keys(carrier).filter(key => key !== 'name'));
 export const statusPatchFields = Object.freeze(['remainingTurns', 'durationType', 'stackMode', 'stacks', 'expireOn', ...carrierFields]);
 export const validCarrierScalar = value => Number.isFinite(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= scalarOrExpr.anyOf[2].maxLength);
+const lifecycleFlags = { bindToSource: bool, concentration: bool };
 const summonDuration = enumOf('rounds', 'anchor_turns');
 const spawnPanelFields = {
   attribute, tier: spawnTier,
@@ -175,12 +176,12 @@ const spawnPanelFields = {
 export const summonTemplatePanelFields = Object.freeze(Object.keys(spawnPanelFields));
 const spawnSpecs = {
   unit: withRules(object({
-    ...carrier, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula), remainingTurns: spawnTurns,
+    ...carrier, ...lifecycleFlags, tier: spawnTier, templateId: id, copyOf: target, count: either(integer(1, 10), formula), remainingTurns: spawnTurns,
     group: id, stackPolicy: enumOf('replace', 'fifo', 'cap'), maxActive: either(integer(1, 50), formula), summoner: target,
     durationUnit: summonDuration, durationAnchor: target, spawnPanel: object(spawnPanelFields),
     turnMode: enumOf('independent', 'linked_group', 'linked_each', 'none'), turnAnchor: target,
   }), when('copyOf', {}, { not: either(needs('templateId'), needs('spawnPanel')) })),
-  zone: object({ ...baseCarrier, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
+  zone: object({ ...baseCarrier, ...lifecycleFlags, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
   terrain: withRules(object({ kind: enumOf('floor', 'wall', 'slope'), height: number, mode: enumOf('set', 'raise', 'lower'), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs('kind'), needs('height')), when('mode', {}, needs('height'))),
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
   item: object({ templateId: id, count: either(integer(1), formula) }, ['templateId']),
@@ -214,7 +215,7 @@ const opcodeSchemas = [
   when('mode', enumOf('add', 'sub', 'set', 'add_max', 'sub_max', 'set_max'), { ...needs('amount'), not: needs('otherPool') })),
   opcode('link_pool', { units: selector, pools: list(enumOf('hp', 'mp', 'sp'), 1), mode: enumOf('link', 'unlink') }, ['units', 'pools', 'mode']),
   opcode('apply_status', { target, statusId: dynamicStatusId, ignoreImmunity: bool, turns: numericExpr, stacks: numericExpr, stackMode: enumOf('refresh', 'stack', 'replace', 'extend'),
-    extendTurns: numericExpr, vars: carrier.vars, expireOn: ref('expiry') }, ['target', 'statusId']),
+    extendTurns: numericExpr, vars: carrier.vars, expireOn: ref('expiry'), ...lifecycleFlags }, ['target', 'statusId']),
   opcode('remove_status', { target, where: booleanExpr, force: bool, reason: enumOf('dispelled', 'cleansed', 'expired'), outCount: id }, ['target', 'where']),
   opcode('mutate_event', { patch: either(...Object.keys(patchSchemas).map(name => ref(`patch_${name}`))) }, ['patch']),
   opcode('move', { target, mode: enumOf('teleport', 'step', 'push', 'pull', 'altitude'),

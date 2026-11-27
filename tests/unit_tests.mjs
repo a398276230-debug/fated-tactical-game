@@ -65,6 +65,7 @@ import './bellica_spatial_tests.mjs';
 import './doc_and_arch_contract_tests.mjs';
 import './vm_natural_roll_tests.mjs';
 import './vm_stage4_batch_a_tests.mjs';
+import './vm_lifecycle_tests.mjs';
 import './animation_tests.mjs';
 import './elements_core_tests.mjs';
 

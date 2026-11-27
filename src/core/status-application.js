@@ -1,6 +1,7 @@
 import { evaluateExpr, validExpr } from './formula.js';
 import { validVmExpiry } from './vm-schema.js';
 import { authorityFor } from './vm-authority.js';
+import { lifecycleFields } from './vm-lifecycle.js';
 import { getStatusTemplate } from '../presets/status-defaults.js';
 
 const own = (record, key) => record != null && Object.hasOwn(record, key) ? record[key] : undefined;
@@ -46,8 +47,10 @@ export function resolveStatusApplication(state, target, statusId, input = {}, { 
   for (const [key, value] of Object.entries(input.vars ?? {})) if (value !== null) vars[key] = structuredClone(value);
   const sourceCarrier = replace ? input.sourceCarrier ?? null : input.sourceCarrier ?? previous?.sourceCarrier ?? null;
   const authority = authorityFor(state, sourceCarrier, sourceId ?? target.id);
+  const { bindToSource, concentration, ...definition } = structuredClone(template);
   const status = {
-    ...structuredClone(template), id: statusId, templateId: statusId, ownerId: target.id,
+    ...definition, ...lifecycleFields(input, { bindToSource, concentration }, null, input.concentrationRef),
+    id: statusId, templateId: statusId, ownerId: target.id,
     stackMode: requestedMode, maxStacks,
     stacks: bounded(requestedMode === 'stack' && previous ? previous.stacks + stacks : stacks, 1, maxStacks), vars,
     durationType: input.durationType ?? (replace ? template.durationType : previous?.durationType ?? template.durationType) ?? 'battle_turns',

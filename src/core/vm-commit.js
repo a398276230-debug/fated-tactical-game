@@ -4,6 +4,7 @@ import { evaluateExpr } from './formula.js';
 import { removeStatus } from './vm-rules.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 import { movementBudget } from './combat-actions.js';
+import { cleanupSourceBoundEntities, hasActiveConcentration } from './vm-lifecycle.js';
 
 const alive = unit => unit?.hp > 0 && !unit.fled;
 const entry = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
@@ -238,6 +239,12 @@ export function continueCommit({ state, frame, host, options }) {
     const depletion = Object.values(state.pools).filter(candidate => candidate.kind === 'hp' && candidate.current === 0 &&
       (candidate.id === pool.id && before > 0 || other && candidate.id === other.id && otherBefore > 0) &&
       !state.vm.stack.some(parent => parent.native === 'lethal' && parent.data.poolId === candidate.id));
+    if (op === 'damage' && event.dealt > 0 && alive(target) && hasActiveConcentration(state, target.id)) {
+      const dc = Math.min(30, 10 + Math.floor(event.dealt / Math.max(1, target.maxHp) * 20));
+      pushFrame(state, { native: 'check', ownerId: source?.id ?? target.id, sourceId: source?.id ?? target.id,
+        scope: { target: { type: 'unit', id: target.id } }, concentrationSave: true,
+        data: { kind: 'save', stat: ['con', 'spi'], mode: 'any', dc, tags: ['concentration'] } });
+    }
     for (const depleted of depletion.reverse()) pushFrame(state, { native: 'lethal', ownerId: target.id, sourceId: data.sourceId,
       data: { poolId: depleted.id, damageType: event.damageType, targetId: target.id,
         rawAmount: event.rawAmount ?? 0, finalAmount: event.finalAmount ?? 0, dealt: event.dealt ?? 0, absorbed: absorbed ?? 0,
@@ -289,6 +296,7 @@ export function continueLethal({ state, frame, host }) {
       host.log(state, entry(state.units, frame.sourceId), 'defeat', `${unit.name}倒下`, { targetId: unit.id });
     }
     data.victims = event.units.filter(id => entry(state.units, id)?.pools?.hp === pool.id);
+    for (const id of data.victims) cleanupSourceBoundEntities(state, id, '来源离场', host, frame);
     scheduleHooks(state, frame, 'on_death', frame.eventRef, host);
     return;
   }

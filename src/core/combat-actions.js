@@ -17,6 +17,7 @@ import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
 import { authorityContest, authorityFor, authorityProse, protectionCarrier } from './vm-authority.js';
 import { resolveStatusApplication } from './status-application.js';
+import { cleanupSourceBoundEntities } from './vm-lifecycle.js';
 import { actionActor, canRouteActor, isLinkedMode, linkedGroupKey, linkedUnitsOf as routedLinkedUnitsOf } from './turn-routing.js';
 export { getStatusTemplate, STATUSES };
 export const corpses = state => Object.values(state.units).filter(unit => unit.hp <= 0 && !unit.fled && !unit.corpseConsumed);
@@ -2004,6 +2005,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     case 'lock_on': actor.lockedTargetId = plan.targetId; grantStatus(state, actor, actionStatuses.lock_on, { sourceId: actor.id, vars: { targetId: plan.targetId } }); record(state, actor, 'maneuver', `${actor.name}锁定${state.units[plan.targetId].name}`, { targetId: plan.targetId }); break;
     case 'scan': grantStatus(state, actor, actionStatuses.scan, { sourceId: actor.id, stacks: 3 }); break;
     case 'flee': {
+      if (actor.fled) break;
       const enemies = living(state).filter(u => u.team !== actor.team).sort((a,b) => effectiveStat(state, b, 'agi') - effectiveStat(state, a, 'agi') || byId(a,b));
       const target = enemies[0];
       const actorCheck = { checkKind: 'flee', stat: 'agi' };
@@ -2017,7 +2019,12 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
       record(state, actor, 'flee', `${actor.name}${success ? '逃跑成功' : '逃跑失败'}`, {
         targetId: target?.id ?? null, attackerRoll: attackerRoll.value, defenderRoll: defenderRoll.value,
         attackerRolls: attackerRoll.rolls, defenderRolls: defenderRoll.rolls ?? [], success });
-      if (success) { actor.fled = true; actor.ap = 0; }
+      if (success) {
+        actor.fled = true;
+        actor.ap = 0;
+        cleanupSourceBoundEntities(state, actor.id, '来源离场', host, frame);
+        if (state.vm.stack.at(-1) !== frame) return false;
+      }
       break;
     }
     case 'free_ally': {

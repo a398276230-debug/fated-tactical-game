@@ -94,8 +94,16 @@ function poolBindings(value) {
 const validStackCap = value => int(value, 1, maxStatusStacks) || typeof value === 'string' && validExpr(value);
 const stackCapLimit = template => typeof template.maxStacks === 'string' ? maxStatusStacks : template.maxStacks ?? 1;
 
+const lifecycleFlags = ['bindToSource', 'concentration'];
+const lifecycleInstanceFields = [...lifecycleFlags, 'concentrationRef'];
+function validateLifecycle(value, instance = false) {
+  for (const key of lifecycleFlags) checkOptional(value, key, flag => typeof flag === 'boolean');
+  if (instance) checkOptional(value, 'concentrationRef', ref => text(ref, 128));
+}
+
 export function statusTemplate(value, key = value?.id, state) {
-  fields(value, ['id', 'name'], ['icon', 'category', 'description', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'expireOn', ...carrierFields]);
+  fields(value, ['id', 'name'], ['icon', 'category', 'description', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'expireOn', ...carrierFields, ...lifecycleFlags]);
+  validateLifecycle(value);
   requireThat(!own(value, 'unitPools'), '状态模板不能声明单位池');
   requireThat(id(key) && key === value.id && text(value.name), 'VM 状态 ID/名称');
   checkOptional(value, 'icon', icon => text(icon, 24));
@@ -170,7 +178,8 @@ export function equipmentTemplate(v, state) {
   if (own(v, 'pools')) poolDefinitions(v.pools);
 }
 export function skillTemplate(v, state) {
-  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','hits','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', 'passive', ...rawDistanceFields, ...carrierFields, 'pools']);
+  fields(v, ['name', 'ap', 'slot', 'range', 'shape', 'target'], ['quality','power','hits','mp', 'sp', 'radius', 'innerRadius', 'width', 'angle', 'accuracy', 'save', 'saveDC', 'damage', 'heal', 'resourceCost', 'school', 'damageType','backpackItem', 'initiativeBonus', 'passive', ...rawDistanceFields, ...carrierFields, 'pools', ...lifecycleFlags]);
+  validateLifecycle(v);
   carrierFieldsValue(v, state);
   if (own(v, 'pools')) poolDefinitions(v.pools);
   checkOptional(v, 'backpackItem', flag => flag === true && v.ap === 1 && v.slot === 'action');
@@ -192,7 +201,8 @@ export function skillTemplate(v, state) {
 }
 export function statusValue(v, key, state, ownerId) {
   if (own(v ?? {}, 'templateId')) {
-    const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, ...rest } = v;
+    const { templateId, ownerId: owner, sourceId, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, concentrationRef, ...rest } = v;
+    validateLifecycle(v, true);
     const template = getStatusTemplate(state, key);
     const { vars, ...definition } = rest;
     if (sourceCarrier != null) {
@@ -215,7 +225,8 @@ export function statusValue(v, key, state, ownerId) {
   }
   const t = getStatusTemplate(state, key);
   requireThat(id(key) && t, '状态 ID');
-  fields(v, ['id', 'templateId', 'ownerId', 'name', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'stacks'], ['icon', 'category', 'description', 'sourceId', 'sourceCarrier', 'authorityRank', 'sourceTier', 'effectiveTier', 'appliedRound', 'appliedTurn', 'expireOn', ...carrierFields]);
+  fields(v, ['id', 'templateId', 'ownerId', 'name', 'remainingTurns', 'durationType', 'stackMode', 'maxStacks', 'stacks'], ['icon', 'category', 'description', 'sourceId', 'sourceCarrier', 'authorityRank', 'sourceTier', 'effectiveTier', 'appliedRound', 'appliedTurn', 'expireOn', ...carrierFields, ...lifecycleInstanceFields]);
+  validateLifecycle(v, true);
   carrierFieldsValue(v, state, true);
   checkOptional(v, 'expireOn', x => x === null || validVmExpiry(x));
   requireThat(v.id === key && v.templateId === key && v.name === t.name && int(v.maxStacks, 1, stackCapLimit(t))
@@ -231,7 +242,8 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','attunementCharges','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','moveCarryInPermille','moveSpentPermille','moveBonusPermille','moveBanked','lastMoveDir','remainingTurns','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId']);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','moveCarryInPermille','moveSpentPermille','moveBonusPermille','moveBanked','lastMoveDir','remainingTurns','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId', ...lifecycleInstanceFields]);
+  validateLifecycle(v, true);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
   for (const k of ['templateId', 'sourceId']) checkOptional(v, k, id);
@@ -298,7 +310,8 @@ function pointValue(state, value) {
   return plain(value) && Object.keys(value).length === 2 && inGrid(state, value.x, value.y);
 }
 export function zoneValue(value, key, state) {
-  fields(value, ['id', 'name', 'area', 'follow', 'persistent', 'remainingTurns'], ['templateId', 'sourceId', 'team', 'anchorPosition', 'pools', ...carrierFields]);
+  fields(value, ['id', 'name', 'area', 'follow', 'persistent', 'remainingTurns'], ['templateId', 'sourceId', 'team', 'anchorPosition', 'pools', ...carrierFields, ...lifecycleInstanceFields]);
+  validateLifecycle(value, true);
   checkOptional(value, 'team', value => value === null || team(value));
   requireThat(id(key) && value.id === key && text(value.name), 'VM 区域 ID/名称');
   checkOptional(value, 'templateId', id);
@@ -431,7 +444,8 @@ function validateSummonReferences(node, state) {
 }
 
 function summonTemplateValue(v, state) {
-  fields(v, ['name'], [...new Set([...carrierFields, ...summonTemplatePanelFields]), 'ownerId', 'level', 'group', 'maxActive', 'stackPolicy', 'turnMode', 'durationUnit', 'remainingTurns']);
+  fields(v, ['name'], [...new Set([...carrierFields, ...summonTemplatePanelFields]), 'ownerId', 'level', 'group', 'maxActive', 'stackPolicy', 'turnMode', 'durationUnit', 'remainingTurns', ...lifecycleInstanceFields]);
+  validateLifecycle(v, true);
   requireThat(text(v.name), '召唤模板名称');
   checkOptional(v, 'ownerId', owner => id(owner) && has(state.units, owner));
   checkOptional(v, 'level', x => int(x, 1, 100));
