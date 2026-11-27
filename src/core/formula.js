@@ -65,7 +65,7 @@ function unitField(context, unit, field) {
     if (field === 'fled') return Boolean(value);
   }
   if (field === 'level' && unit != null) return value ?? own(unit, 'tier') ?? 1;
-  if (field === 'moved' && unit != null) return value ?? 0;
+  if ((field === 'moved' || field === 'altitude') && unit != null) return value ?? 0;
   if (field === 'facing' && Array.isArray(value)) {
     const [x, y] = value;
     return Math.abs(x) >= Math.abs(y) && x ? (x > 0 ? 'E' : 'W') : y ? (y > 0 ? 'S' : 'N') : null;

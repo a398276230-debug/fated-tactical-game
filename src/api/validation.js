@@ -1,6 +1,7 @@
 import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
-import { actionStatuses, STATUSES } from '../presets/status-defaults.js';
+import { actionStatuses, STATUSES, PHYSICAL_STATUSES } from '../presets/status-defaults.js';
+import { ZONE_LAYERS, zoneMediumFields, zoneMediumLayer } from '../core/element-media.js';
 import { carrierFlags, damageTypes, durationTypes, skillShapes, skillTargets, stackModes as vmStackModes, zoneAreaShapes, summonTemplatePanelFields } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
 import { validateCustomElements } from '../core/elements.js';
@@ -298,7 +299,7 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'attunementCharges', x => int(x, 0, 2));
   if (own(v,'bagWeapons')) list(v.bagWeapons, 200, id, '背包武器');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
-  table(v.statuses, (status, statusId) => statusValue(status, statusId, state, key), maxStatusTemplates + Object.keys(STATUSES).length);
+  table(v.statuses, (status, statusId) => statusValue(status, statusId, state, key), maxStatusTemplates + Object.keys(STATUSES).length + Object.keys(PHYSICAL_STATUSES).length);
 }
 function jsonTree(v, depth = 0) {
   if (depth > 12) return false;
@@ -310,8 +311,12 @@ function pointValue(state, value) {
   return plain(value) && Object.keys(value).length === 2 && inGrid(state, value.x, value.y);
 }
 export function zoneValue(value, key, state) {
-  fields(value, ['id', 'name', 'area', 'follow', 'persistent', 'remainingTurns'], ['templateId', 'sourceId', 'team', 'anchorPosition', 'pools', ...carrierFields, ...lifecycleInstanceFields]);
+  fields(value, ['id', 'name', 'area', 'follow', 'persistent', 'remainingTurns'], ['templateId', 'sourceId', 'team', 'anchorPosition', 'pools', ...zoneMediumFields, ...carrierFields, ...lifecycleInstanceFields]);
   validateLifecycle(value, true);
+  checkOptional(value, 'layer', layer => ZONE_LAYERS.includes(layer));
+  checkOptional(value, 'medium', medium => zoneMediumLayer(medium) !== undefined && zoneMediumLayer(medium) === value.layer);
+  checkOptional(value, 'blocksLOS', blocks => typeof blocks === 'boolean');
+  checkOptional(value, 'moveCost', cost => int(cost, 1, 4));
   checkOptional(value, 'team', value => value === null || team(value));
   requireThat(id(key) && value.id === key && text(value.name), 'VM 区域 ID/名称');
   checkOptional(value, 'templateId', id);
@@ -324,7 +329,8 @@ export function zoneValue(value, key, state) {
   checkOptional(area, 'z1', z => int(z, -4, 20));
   checkOptional(area, 'z2', z => int(z, -4, 20));
   if (own(area, 'z1') && own(area, 'z2')) requireThat(area.z1 <= area.z2, 'VM 区域高度区间');
-  requireThat(validVmOpcode({ op: 'spawn', entityKind: 'zone', spec: { area, follow, persistent, remainingTurns } }), 'VM 区域');
+  requireThat(validVmOpcode({ op: 'spawn', entityKind: 'zone', spec: { area, follow, persistent, remainingTurns,
+    ...Object.fromEntries(zoneMediumFields.filter(key => own(value, key)).map(key => [key, value[key]])) } }), 'VM 区域');
   requireThat(int(remainingTurns, 1, 100), 'VM 区域持续回合');
   const validPoint = point => pointValue(state, point);
   if (['single', 'circle', 'ring'].includes(area.shape)) requireThat(validPoint(area.center), 'VM 区域中心');
@@ -461,7 +467,8 @@ function summonTemplateValue(v, state) {
   validateSummonLoadout(spawnPanel, state);
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','suppressingTeam','vm','pools','tape','scale','customElements']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','suppressingTeam','vm','pools','tape','scale','customElements','elementalPhysics']);
+  checkOptional(s, 'elementalPhysics', value => ['off', 'standard'].includes(value));
   if (own(s, 'customElements')) validateCustomElements(s.customElements);
   requireThat(s.battleType === 'suppress' ? ['blue','red'].includes(s.suppressingTeam) : s.suppressingTeam === undefined, '压制方');
   checkOptional(s,'battleType',x=>typeof x==='string' && Object.hasOwn(MORALE,x));

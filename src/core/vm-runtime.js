@@ -1,4 +1,4 @@
-import { movementBudget, actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget, isAiControlled } from './combat.js';
+import { grantStatus, movementBudget, actionSkill, continueStrike, continueRound, initializeSummonTurn, getStatusTemplate, statusLogDetail, preview, retargetStrike, mitigation, damageAfterFlatReduction, encounterNonlethal, insufficientHP, paySkillEquipmentCost, needsTarget, isAiControlled } from './combat.js';
 import { answerVM, newEvent, newVM, pushFrame, scheduleHooks, stepVM } from './tactical-vm.js';
 import { aggregateModifiers, applyStatMod, collectRules, carrierScope, eventOwners } from './vm-carriers.js';
 import { isStatusImmune } from './vm-immunity.js';
@@ -115,6 +115,7 @@ export function commitVMEffect(state, data) {
 }
 
 export const vmHost = {
+  grantStatus,
   ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
   log: recordVM,
   isAI: isAiControlled,

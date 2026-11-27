@@ -2,7 +2,8 @@ export function getStatusTemplate(state, statusId) {
   if (typeof statusId !== 'string') return undefined;
   const templates = state?.statusTemplates;
   return (Object.hasOwn(templates ?? {}, statusId) ? templates[statusId] : undefined)
-    ?? (Object.hasOwn(STATUSES, statusId) ? STATUSES[statusId] : undefined);
+    ?? (Object.hasOwn(STATUSES, statusId) ? STATUSES[statusId] : undefined)
+    ?? (Object.hasOwn(PHYSICAL_STATUSES, statusId) ? PHYSICAL_STATUSES[statusId] : undefined);
 }
 
 // Default status bindings for engine actions. Only suppressed is a reserved ID.
@@ -45,5 +46,28 @@ export const STATUSES = Object.freeze({
   }),
   prone: def('prone', '倒地', '▽', 'debuff', 1, '无法移动，闪避降低。', {
     mods: [{ locks: ['move'] }, { stat: 'incomingAccuracy', flat: '2 * status.stacks' }],
+  }),
+});
+
+export const PHYSICAL_STATUSES = Object.freeze({
+  wet: def('wet', '潮湿', '💧', 'debuff', 2, '火焰伤害减免 25%，受到冰霜与雷电伤害提高 25%；遇热蒸干，遇寒结霜。', {
+    tags: ['wet', 'elemental_state'],
+    mods: [
+      { stat: 'damageReduction', flat: 0.25, damageType: 'fire' },
+      { stat: 'incomingDamageMult', mult: 1.25, damageType: 'cold' },
+      { stat: 'incomingDamageMult', mult: 1.25, damageType: 'lightning' },
+    ],
+  }),
+  oiled: def('oiled', '覆油', '🛢️', 'debuff', 2, '移动距离减少 1；遇明火引燃，遇浸润冲刷清除。', {
+    tags: ['oiled', 'flammable', 'elemental_state'], mods: [{ stat: 'movement', flat: -1 }],
+  }),
+  burning: def('burning', '灼烧', '🔥', 'dot', 2, '每回合开始受到火焰伤害；水体、浸润和寒霜可熄灭。', {
+    tags: ['burning', 'fire', 'elemental_state'],
+    rules: [{ id: 'burning_tick', hook: 'turn_start', program: [
+      { op: 'damage', target: 'self', amount: 'max(4, floor(self.maxHp * 0.04))', damageType: 'fire', direct: false },
+    ] }],
+  }),
+  chilled: def('chilled', '霜滞', '❄️', 'debuff', 1, '移动距离和闪避各减少 2；遇高温消解。', {
+    tags: ['chilled', 'cold', 'elemental_state'], mods: [{ stat: 'movement', flat: -2 }, { stat: 'dodge', flat: -2 }],
   }),
 });

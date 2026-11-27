@@ -1,5 +1,5 @@
 import { bodySizeLabel, INTENTS } from '../core/combat_protocol.js';
-import { equippedActiveSkills, STATUSES } from '../core/combat.js';
+import { equippedActiveSkills, getStatusTemplate } from '../core/combat.js';
 import { elementLabel } from '../core/elements.js';
 const attributes = {str:'力量',agi:'敏捷',con:'体质',int:'智力',spi:'精神'};
 const types = Object.create(null);
@@ -51,7 +51,7 @@ export function skillDisplay(template = {}, skillInfo = {}, customElements = {})
 }
 const verbs = { let: '记录数值', if: '条件分支', for_each: '逐个结算', check: '检定', ask: '等待选择', mutate_event: '调整结算', damage: '伤害', heal: '治疗', resource: '调整资源', apply_status: '施加状态', remove_status: '移除状态', move: '位移', spawn: '生成', despawn: '移除', revive: '复活', perform: '执行行动', link_pool: '调整共享资源' };
 export function ruleSummary(rule, state) {
-  const statusName = id => state?.statusTemplates?.[id]?.name ?? STATUSES[id]?.name ?? id;
+  const statusName = id => getStatusTemplate(state, id)?.name ?? id;
   const describe = op => {
     const prefix = op.enabled === false ? '已关闭：' : '';
     if (op.op === 'apply_status') return `${prefix}施加 ${statusName(op.statusId)}${typeof op.turns === 'number' ? ` ${op.turns} 回合` : ''}`;

@@ -1,6 +1,7 @@
 import { evaluateExpr } from './formula.js';
 import { nextRng } from './rng.js';
-import { aoeCells, distance3D, elevation } from './spatial.js';
+import { aoeCells, distance3D, elevation, zoneContains } from './spatial.js';
+export { zoneContains } from './spatial.js';
 
 const coordinate = value => Number.isFinite(value?.x) && Number.isFinite(value?.y);
 export const pointElevation = (state, point) => coordinate(point)
@@ -29,29 +30,6 @@ export function resolvePoint(value, context) {
   if (![x, y].every(Number.isFinite) || (z !== undefined && !Number.isFinite(z))) return null;
   const col = Math.round(x), row = Math.round(y);
   return inside(col, row) ? { x: col, y: row, ...(z === undefined ? {} : { z }) } : null;
-}
-
-export function zoneContains(state, zone, at, { ignoreZ = false } = {}) {
-  if (!zone?.area || !coordinate(at)) return false;
-  const { shape, anchorUnitId, center, radius, innerRadius, rect, cells, z1, z2 } = zone.area;
-  const anchor = anchorUnitId && Object.hasOwn(state.units, anchorUnitId) ? state.units[anchorUnitId] : null;
-  if (zone.follow && anchorUnitId && (!anchor || anchor.hp <= 0 || anchor.fled)) return false;
-  if (!ignoreZ && (Number.isFinite(z1) || Number.isFinite(z2))) {
-    const z = pointElevation(state, at);
-    const low = Number.isFinite(z1) && Number.isFinite(z2) ? Math.min(z1, z2) : z1;
-    const high = Number.isFinite(z1) && Number.isFinite(z2) ? Math.max(z1, z2) : z2;
-    if ((Number.isFinite(low) && z < low) || (Number.isFinite(high) && z > high)) return false;
-  }
-  const origin = zone.follow ? anchor ?? center : center ?? anchor;
-  if (shape === 'board') return state.grid[at.y]?.[at.x] != null;
-  if (shape === 'cells') return cells?.some(cell => cell.x === at.x && cell.y === at.y) ?? false;
-  if (shape === 'rect') return Boolean(rect && at.x >= Math.min(rect.x1, rect.x2) && at.x <= Math.max(rect.x1, rect.x2)
-    && at.y >= Math.min(rect.y1, rect.y2) && at.y <= Math.max(rect.y1, rect.y2));
-  if (!coordinate(origin)) return false;
-  if (shape === 'single') return origin.x === at.x && origin.y === at.y;
-  // ignoreZ skips only the explicit altitude bounds, not the existing 3D radius.
-  const distance = Math.hypot(at.x - origin.x, at.y - origin.y, pointElevation(state, at) - pointElevation(state, origin));
-  return distance <= radius && (shape === 'circle' || (shape === 'ring' && distance >= (innerRadius ?? 0)));
 }
 
 export function selectorOwner(selector, context) {

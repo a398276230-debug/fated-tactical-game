@@ -1,4 +1,5 @@
-import { STATUSES } from '../presets/status-defaults.js';
+import { STATUSES, PHYSICAL_STATUSES } from '../presets/status-defaults.js';
+import { ZONE_LAYERS, ZONE_MEDIA, SURFACE_MEDIA, CLOUD_MEDIA } from './element-media.js';
 import { compileExpr, validExpr } from './formula.js';
 
 const enumOf = (...values) => ({ enum: values });
@@ -182,7 +183,11 @@ const spawnSpecs = {
     durationUnit: summonDuration, durationAnchor: target, spawnPanel: object(spawnPanelFields),
     turnMode: enumOf('independent', 'linked_group', 'linked_each', 'none'), turnAnchor: target,
   }), when('copyOf', {}, { not: either(needs('templateId'), needs('spawnPanel')) })),
-  zone: object({ ...baseCarrier, ...lifecycleFlags, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ['area']),
+  zone: withRules(object({ ...baseCarrier, ...lifecycleFlags, tier: spawnTier, templateId: id, area: zoneArea, follow: bool,
+    remainingTurns: spawnTurns, persistent: bool, layer: enumOf(...ZONE_LAYERS), medium: enumOf(...ZONE_MEDIA), blocksLOS: bool,
+    moveCost: integer(1, 4) }, ['area']),
+  when('medium', enumOf(...SURFACE_MEDIA), { ...needs('layer'), properties: { layer: literal('surface') } }),
+  when('medium', enumOf(...CLOUD_MEDIA), { ...needs('layer'), properties: { layer: literal('cloud') } })),
   terrain: withRules(object({ kind: enumOf('floor', 'wall', 'slope'), height: number, mode: enumOf('set', 'raise', 'lower'), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs('kind'), needs('height')), when('mode', {}, needs('height'))),
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
   item: object({ templateId: id, count: either(integer(1), formula) }, ['templateId']),
@@ -301,7 +306,7 @@ function matches(value, schema, context, depth = 0) {
       || (schema.pattern && !new RegExp(schema.pattern, 'u').test(value))) return false;
     if (schema.format === 'tactical-expr') return validExpr(value);
     if (schema.format === 'tactical-status-id') return Object.hasOwn(context.statusTemplates ?? {}, value)
-      || (context.declaredStatusTemplatesOnly ? value === 'suppressed' : Object.hasOwn(STATUSES, value));
+      || (context.declaredStatusTemplatesOnly ? value === 'suppressed' : Object.hasOwn(STATUSES, value) || Object.hasOwn(PHYSICAL_STATUSES, value));
     if (schema.format === 'tactical-damage-type') return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
     return true;
   }

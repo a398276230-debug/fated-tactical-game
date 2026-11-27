@@ -63,13 +63,50 @@ export function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = tr
     vacant(at) && passable(at) && passableEdge(state, at, to));
 }
 
+export function zoneContains(state, zone, at, { ignoreZ = false } = {}) {
+  const coordinate = pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y);
+  if (!zone?.area || !coordinate(at)) return false;
+  const { shape, anchorUnitId, center, radius, innerRadius, rect, cells, z1, z2 } = zone.area;
+  const anchor = anchorUnitId && Object.hasOwn(state.units, anchorUnitId) ? state.units[anchorUnitId] : null;
+  if (zone.follow && anchorUnitId && (!anchor || anchor.hp <= 0 || anchor.fled)) return false;
+  const height = pt => Number.isFinite(pt.z) ? pt.z : elevation(state, pt);
+  if (!ignoreZ && (Number.isFinite(z1) || Number.isFinite(z2))) {
+    const z = height(at);
+    const both = Number.isFinite(z1) && Number.isFinite(z2);
+    const low = both ? Math.min(z1, z2) : z1;
+    const high = both ? Math.max(z1, z2) : z2;
+    if ((Number.isFinite(low) && z < low) || (Number.isFinite(high) && z > high)) return false;
+  }
+  const origin = zone.follow ? anchor ?? center : center ?? anchor;
+  if (shape === 'board') return state.grid[at.y]?.[at.x] != null;
+  if (shape === 'cells') return cells?.some(cell => same(cell, at)) ?? false;
+  if (shape === 'rect') return Boolean(rect && at.x >= Math.min(rect.x1, rect.x2) && at.x <= Math.max(rect.x1, rect.x2)
+    && at.y >= Math.min(rect.y1, rect.y2) && at.y <= Math.max(rect.y1, rect.y2));
+  if (!coordinate(origin)) return false;
+  if (shape === 'single') return same(origin, at);
+  const distance = Math.hypot(at.x - origin.x, at.y - origin.y, height(at) - height(origin));
+  return distance <= radius && (shape === 'circle' || (shape === 'ring' && distance >= (innerRadius ?? 0)));
+}
+
+const activeZone = zone => zone.persistent || !(zone.remainingTurns <= 0);
+const movementZones = state => state.elementalPhysics === 'off' ? [] : table(state.zones)
+  .filter(zone => activeZone(zone) && Number.isFinite(zone.moveCost) && zone.moveCost > 1);
+
+export function cellStepCost(state, mover, to, zones = movementZones(state)) {
+  if ((mover?.altitude ?? 0) > 0) return 1;
+  const at = { x: to.x, y: to.y, altitude: 0 };
+  return zones.reduce((cost, zone) => zoneContains(state, zone, at) ? Math.max(cost, Math.min(zone.moveCost, 4)) : cost, 1);
+}
+
 function search(state, unit, limit, options, target) {
   if (!isGround(state, unit) || !(limit >= 0)) return [];
   const start = { x: unit.x, y: unit.y, altitude:unit.altitude, z: elevation(state, unit), cost: 0, previous: null };
-  const visited = new Set([key(start)]), queue = [start];
+  const zones = unit.altitude > 0 ? [] : movementZones(state);
+  const distances = new Map([[key(start), 0]]), buckets = [[start]], reached = [];
   const stepOptions = { ignoreUnitId: unit.id, ...options };
-  for (let i = 0; i < queue.length; i++) {
-    const from = queue[i];
+  for (let cost = 0; cost < buckets.length; cost++) for (const from of buckets[cost] ?? []) {
+    if (distances.get(key(from)) !== cost) continue;
+    if (from !== start) reached.push(from);
     if (target && same(from, target)) return [from];
     if (from.cost + 1 > limit) continue;
     // Ground movement may enter an enemy-occupied cell, but that cell is a
@@ -80,13 +117,14 @@ function search(state, unit, limit, options, target) {
     for (const [dx, dy] of stepOptions.diagonal === false ? CARDINAL : NEIGHBORS) {
       const to = { x: from.x + dx, y: from.y + dy, altitude:unit.altitude };
       const id = key(to);
-      if (visited.has(id) || !canStep(state, from, to, stepOptions) ||
+      const nextCost = cost + cellStepCost(state, unit, to, zones);
+      if (nextCost > limit || nextCost >= (distances.get(id) ?? Infinity) || !canStep(state, from, to, stepOptions) ||
         (options?.allowsStep && !options.allowsStep(from, to))) continue;
-      visited.add(id);
-      queue.push({ ...to, z: elevation(state, to), cost: from.cost + 1, previous: from });
+      distances.set(id, nextCost);
+      (buckets[nextCost] ??= []).push({ ...to, z: elevation(state, to), cost: nextCost, previous: from });
     }
   }
-  return target ? [] : queue.slice(1);
+  return target ? [] : reached;
 }
 
 const coords = ({ x, y, z }) => ({ x, y, z });
@@ -140,9 +178,19 @@ export function supercoverLine(from, to) {
 }
 
 /** Walls are opaque regardless of elevation; cover is handled separately. */
-export function hasLOS(state, from, to) {
+export function hasLOS(state, from, to, { ignoreObscure = false } = {}) {
   if (!isGround(state, from) || !isGround(state, to)) return false;
-  return supercoverLine(from, to).every(at => isGround(state, at));
+  const line = supercoverLine(from, to);
+  if (!line.every(at => isGround(state, at))) return false;
+  if (ignoreObscure || state.elementalPhysics === 'off' || same(from, to)) return true;
+  const clouds = table(state.zones).filter(zone => zone.blocksLOS === true && activeZone(zone));
+  if (!clouds.length) return true;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const z0 = elevation(state, from), dz = elevation(state, to) - z0;
+  return !line.slice(1).some(at => {
+    const t = ((at.x - from.x) * dx + (at.y - from.y) * dy) / (dx * dx + dy * dy);
+    return clouds.some(zone => zoneContains(state, zone, { ...at, z: z0 + t * dz }));
+  });
 }
 
 /** Row-major masks. Circles spread from impact; directed shapes spread from
@@ -151,10 +199,10 @@ export function hasLOS(state, from, to) {
  */
 export function aoeCells(state, origin, target, options = {}) {
   const { shape = 'single', radius = 1.5, width = .6, angle,
-    innerRadius = 0, facing = origin.facing, range = distance3D(state, origin, target), ignoreLOS = false, ignoreAimRange = false } = options;
+    innerRadius = 0, facing = origin.facing, range = distance3D(state, origin, target), ignoreLOS = false, ignoreObscure = false, ignoreAimRange = false } = options;
   const limitAt = typeof range === 'function' ? range : () => range;
   const inRange = at => distance3D(state, origin, at) <= limitAt(at) + EPSILON;
-  const canSee = (from, to) => ignoreLOS ? isGround(state, to) : hasLOS(state, from, to);
+  const canSee = (from, to) => ignoreLOS ? isGround(state, to) : hasLOS(state, from, to, { ignoreObscure });
   if (!canSee(origin, target) || (!ignoreAimRange && !inRange(target))) return [];
   if (shape === 'single' || radius < .5) return [{ x: target.x, y: target.y, z: elevation(state, target) }];
   const [dx, dy] = same(origin, target) ? (facing ?? [1, 0]) : [target.x - origin.x, target.y - origin.y];
@@ -187,8 +235,8 @@ export function aoeCells(state, origin, target, options = {}) {
 /** Intact cover can shield a clear ray or stand near the defender on the
  * incoming side. A shooter >=2 elevations above the cover sees over it.
  */
-export function coverBetween(state, from, to) {
-  if (same(from, to) || !hasLOS(state, from, to)) return null;
+export function coverBetween(state, from, to, options) {
+  if (same(from, to) || !hasLOS(state, from, to, options)) return null;
   const ray = new Set(supercoverLine(from, to).slice(1, -1).map(key));
   const targetZ = elevation(state, to), sourceZ = elevation(state, from);
   const dx = from.x - to.x, dy = from.y - to.y, squaredLength = dx * dx + dy * dy;
@@ -209,7 +257,7 @@ export function coverBetween(state, from, to) {
     if (sourceZ - z >= 2 || targetZ - z >= 2 || targetZ + (sourceZ - targetZ) * fraction - z >= 2) return false;
     const adjacentIncoming = gridDistance(cover, to) === 1 &&
       (!cx || Math.sign(cx) === Math.sign(dx)) && (!cy || Math.sign(cy) === Math.sign(dy));
-    return ray.has(key(cover)) || (adjacentIncoming && hasLOS(state, cover, to));
+    return ray.has(key(cover)) || (adjacentIncoming && hasLOS(state, cover, to, options));
   });
   return covers.sort((a, b) => b.cover - a.cover || distance3D(state, a, to) - distance3D(state, b, to) || byId(a, b))[0] ?? null;
 }
@@ -235,9 +283,9 @@ export function flankPosition(attacker, defender) {
 }
 
 /** A living ally on an opposing side of an adjacent, visible defender. */
-export function isFlanked(state, attacker, defender) {
+export function isFlanked(state, attacker, defender, options) {
   const adjacent = unit => !same(unit, defender) && gridDistance(unit, defender) === 1 &&
-    Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender);
+    Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender, unit === attacker ? options : undefined);
   if (!adjacent(attacker)) return false;
   const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
   return table(state.units).some(ally => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team &&

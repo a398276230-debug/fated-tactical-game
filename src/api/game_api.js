@@ -3,6 +3,7 @@ import { buildScenario } from '../presets/scenarios.js';
 import { STANCES } from '../core/combat_protocol.js';
 import { calculatePrebattleResources, protocolDistance } from '../core/prebattle_resources.js';
 export { calculatePrebattleResources, protocolDistance };
+import { PHYSICAL_STATUSES } from '../presets/status-defaults.js';
 import { applyAction, currentUnit, loadoutStance, equippedActiveSkills, preview, refreshOutcome, settleTurn, skillAvailability, STATUSES, stealthCheck, syncEquipmentEffects, isAiControlled } from '../core/combat.js';
 import { chooseUnitStep } from '../core/battle-ai.js';
 import { linkedUnitsOf } from '../core/turn-routing.js';
@@ -214,7 +215,7 @@ export function createGameAPI() {
     },
     listStatusTemplates() {
       const s = current();
-      return copy({ ...STATUSES, ...s.statusTemplates });
+      return copy({ ...PHYSICAL_STATUSES, ...STATUSES, ...s.statusTemplates });
     },
     checkStealth(unitId, d20, dc) {
       const s = current();

@@ -1,5 +1,7 @@
 import { resolveEffectiveTier, scaledMoveCells, sizeClassFor, stanceFor, stanceRules, TIER_CELL_M, defaultMoveFromAgi, boardMoveCellsFromMoveM } from './combat_protocol.js';
 import { evaluateExpr } from './formula.js';
+import { applyMediumEntry, mediumZone, putMedium, removeZone, zoneMediumFields } from './element-media.js';
+export { removeZone } from './element-media.js';
 import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
 import { spawnPanel, spawnBudgetIssue } from './spawn-unit.js';
 import { sizeMultiplier } from './prebattle_resources.js';
@@ -174,8 +176,12 @@ function continueMove({ state, frame, host, context }) {
     if (!point(to) || !Number.isFinite(distance)) return;
     const steps = findPath(state, unit, to, Math.floor(distance));
     if (!steps?.length) return;
-    path.push(...steps);
-    Object.assign(unit, xy(to));
+    for (const step of steps) {
+      if (applyMediumEntry(state, host, frame, unit, step)) break;
+      Object.assign(unit, xy(step));
+      path.push(step);
+    }
+    if (!path.length) return;
   } else {
     const origin = op.to === undefined ? context.self ?? context.source : resolvePoint(op.to, scope);
     const distance = moveDistance(state, frame, scope, op);
@@ -529,22 +535,19 @@ function spawnZone({ state, frame, host, context, op }, center) {
   if (!canPlaceBoundEffect(state, effect)) return;
   switchConcentration(state, effect, host, frame);
   if (spec.follow && own(state.units, anchor.id) !== anchor) return;
+  const defaults = spec.medium ? mediumZone(spec.medium) : undefined;
   const id = nextId(state, state.zones ??= {}, 'zone');
-  const zone = { ...carrier(spec, sourceId, id, spec.templateId ?? id, context), ...lifecycle, team: context.self?.team ?? null,
-    area, follow: spec.follow === true, persistent: spec.persistent === true, remainingTurns: spec.remainingTurns ?? 1,
+  const zone = { ...carrier({ ...defaults, ...spec }, sourceId, id, spec.templateId ?? id, context), ...lifecycle, team: context.self?.team ?? null,
+    area, follow: spec.follow === true, persistent: spec.persistent === true, remainingTurns: spec.remainingTurns ?? defaults?.remainingTurns ?? 1,
+    ...Object.fromEntries(zoneMediumFields.flatMap(key => {
+      const value = spec[key] ?? defaults?.[key];
+      return value === undefined ? [] : [[key, value]];
+    })),
     ...(spec.follow ? { anchorPosition: xy(anchor) } : {}) };
-  state.zones[id] = zone;
+  const placed = defaults ? putMedium(state, host, zone) : (state.zones[id] = zone);
+  if (!placed) return;
   publishOut(state, frame, op.out, id);
   host.log(state, context.self, 'zone', `展开${zone.name}`, { zoneId: id });
-}
-
-export function removeZone(state, host, zoneId, reason = '解除', detail = {}) {
-  const zone = own(state.zones, zoneId);
-  if (!zone) return false;
-  delete state.zones[zoneId];
-  for (const poolId of values(zone.pools)) delete state.pools[poolId];
-  host.log(state, own(state.units, zone.sourceId), 'zone', `${zone.name}${reason}后消散`, { zoneId, expired: true, ...detail });
-  return true;
 }
 
 export function refreshFollowingZones(state, host) {

@@ -70,6 +70,7 @@ import './vm_stage4_batch_a_tests.mjs';
 import './vm_lifecycle_tests.mjs';
 import './animation_tests.mjs';
 import './elements_core_tests.mjs';
+import './element_media_tests.mjs';
 
 
 const boot = (request = 'ruins') => { const a = createGameAPI(); a.createBattle(typeof request === 'string' ? {scenarioId:request, ruleset:'sandbox'} : {...request, ruleset:'sandbox'}); return a; };

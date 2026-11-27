@@ -4,7 +4,7 @@
 //   { kind:'d20', label, dice, kept, mode, modifier, total, verdict, tone, note? }
 //   { kind:'versus', label, left:{name,dice,bonus,total}, right:{...}, verdict, tone }
 //   { kind:'chance', label, chance, rolled, verdict, tone }
-import { STATUSES } from '../core/combat.js';
+import { getStatusTemplate } from '../core/combat.js';
 import { ratingFor } from '../core/combat_protocol.js';
 import { BUILTIN_DAMAGE_TYPES, elementLabel } from '../core/elements.js';
 
@@ -34,7 +34,7 @@ export function nameOf(state, id) {
 export function teamOf(state, id) { return table(state?.units, id)?.team ?? null; }
 
 export function statusInfo(state, id) {
-  return table(state?.statusTemplates, id) ?? table(STATUSES, id) ?? { name: id };
+  return getStatusTemplate(state, id) ?? { name: id };
 }
 
 /** 判断一组 d20 的取法。 */
