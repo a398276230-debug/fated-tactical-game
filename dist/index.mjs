@@ -51,25 +51,58 @@ function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = true } = 
   if (!dx || !dy) return true;
   return diagonal && [{ x: from.x, y: to.y }, { x: to.x, y: from.y }].every((at3) => vacant(at3) && passable(at3) && passableEdge(state, at3, to));
 }
+function zoneContains(state, zone, at3, { ignoreZ = false } = {}) {
+  const coordinate3 = (pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y);
+  if (!zone?.area || !coordinate3(at3)) return false;
+  const { shape: shape2, anchorUnitId, center, radius, innerRadius, rect, cells: cells2, z1, z2 } = zone.area;
+  const anchor = anchorUnitId && Object.hasOwn(state.units, anchorUnitId) ? state.units[anchorUnitId] : null;
+  if (zone.follow && anchorUnitId && (!anchor || anchor.hp <= 0 || anchor.fled)) return false;
+  const height2 = (pt) => Number.isFinite(pt.z) ? pt.z : elevation(state, pt);
+  if (!ignoreZ && (Number.isFinite(z1) || Number.isFinite(z2))) {
+    const z = height2(at3);
+    const both = Number.isFinite(z1) && Number.isFinite(z2);
+    const low = both ? Math.min(z1, z2) : z1;
+    const high = both ? Math.max(z1, z2) : z2;
+    if (Number.isFinite(low) && z < low || Number.isFinite(high) && z > high) return false;
+  }
+  const origin = zone.follow ? anchor ?? center : center ?? anchor;
+  if (shape2 === "board") return state.grid[at3.y]?.[at3.x] != null;
+  if (shape2 === "cells") return cells2?.some((cell) => same(cell, at3)) ?? false;
+  if (shape2 === "rect") return Boolean(rect && at3.x >= Math.min(rect.x1, rect.x2) && at3.x <= Math.max(rect.x1, rect.x2) && at3.y >= Math.min(rect.y1, rect.y2) && at3.y <= Math.max(rect.y1, rect.y2));
+  if (!coordinate3(origin)) return false;
+  if (shape2 === "single") return same(origin, at3);
+  const distance2 = Math.hypot(at3.x - origin.x, at3.y - origin.y, height2(at3) - height2(origin));
+  return distance2 <= radius && (shape2 === "circle" || shape2 === "ring" && distance2 >= (innerRadius ?? 0));
+}
+var activeZone = (zone) => zone.persistent || !(zone.remainingTurns <= 0);
+var movementZones = (state) => state.elementalPhysics === "off" ? [] : table(state.zones).filter((zone) => activeZone(zone) && Number.isFinite(zone.moveCost) && zone.moveCost > 1);
+function cellStepCost(state, mover, to, zones = movementZones(state)) {
+  if ((mover?.altitude ?? 0) > 0) return 1;
+  const at3 = { x: to.x, y: to.y, altitude: 0 };
+  return zones.reduce((cost, zone) => zoneContains(state, zone, at3) ? Math.max(cost, Math.min(zone.moveCost, 4)) : cost, 1);
+}
 function search(state, unit, limit, options, target2) {
   if (!isGround(state, unit) || !(limit >= 0)) return [];
   const start = { x: unit.x, y: unit.y, altitude: unit.altitude, z: elevation(state, unit), cost: 0, previous: null };
-  const visited = /* @__PURE__ */ new Set([key(start)]), queue = [start];
+  const zones = unit.altitude > 0 ? [] : movementZones(state);
+  const distances = /* @__PURE__ */ new Map([[key(start), 0]]), buckets = [[start]], reached = [];
   const stepOptions = { ignoreUnitId: unit.id, ...options };
-  for (let i = 0; i < queue.length; i++) {
-    const from = queue[i];
+  for (let cost = 0; cost < buckets.length; cost++) for (const from of buckets[cost] ?? []) {
+    if (distances.get(key(from)) !== cost) continue;
+    if (from !== start) reached.push(from);
     if (target2 && same(from, target2)) return [from];
     if (from.cost + 1 > limit) continue;
     if (from.cost > 0 && !options?.ignoreZoc && unitsAt(state, from.x, from.y, unit.id).some((other) => other.team !== unit.team && Math.abs(elevation(state, other) - elevation(state, from)) < 2)) continue;
     for (const [dx, dy] of stepOptions.diagonal === false ? CARDINAL : NEIGHBORS) {
       const to = { x: from.x + dx, y: from.y + dy, altitude: unit.altitude };
       const id3 = key(to);
-      if (visited.has(id3) || !canStep(state, from, to, stepOptions) || options?.allowsStep && !options.allowsStep(from, to)) continue;
-      visited.add(id3);
-      queue.push({ ...to, z: elevation(state, to), cost: from.cost + 1, previous: from });
+      const nextCost = cost + cellStepCost(state, unit, to, zones);
+      if (nextCost > limit || nextCost >= (distances.get(id3) ?? Infinity) || !canStep(state, from, to, stepOptions) || options?.allowsStep && !options.allowsStep(from, to)) continue;
+      distances.set(id3, nextCost);
+      (buckets[nextCost] ??= []).push({ ...to, z: elevation(state, to), cost: nextCost, previous: from });
     }
   }
-  return target2 ? [] : queue.slice(1);
+  return target2 ? [] : reached;
 }
 var coords = ({ x, y, z }) => ({ x, y, z });
 function unwind(last) {
@@ -109,9 +142,19 @@ function supercoverLine(from, to) {
   }
   return cells2;
 }
-function hasLOS(state, from, to) {
+function hasLOS(state, from, to, { ignoreObscure = false } = {}) {
   if (!isGround(state, from) || !isGround(state, to)) return false;
-  return supercoverLine(from, to).every((at3) => isGround(state, at3));
+  const line = supercoverLine(from, to);
+  if (!line.every((at3) => isGround(state, at3))) return false;
+  if (ignoreObscure || state.elementalPhysics === "off" || same(from, to)) return true;
+  const clouds = table(state.zones).filter((zone) => zone.blocksLOS === true && activeZone(zone));
+  if (!clouds.length) return true;
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const z0 = elevation(state, from), dz = elevation(state, to) - z0;
+  return !line.slice(1).some((at3) => {
+    const t = ((at3.x - from.x) * dx + (at3.y - from.y) * dy) / (dx * dx + dy * dy);
+    return clouds.some((zone) => zoneContains(state, zone, { ...at3, z: z0 + t * dz }));
+  });
 }
 function aoeCells(state, origin, target2, options = {}) {
   const {
@@ -123,11 +166,12 @@ function aoeCells(state, origin, target2, options = {}) {
     facing = origin.facing,
     range: range2 = distance3D(state, origin, target2),
     ignoreLOS = false,
+    ignoreObscure = false,
     ignoreAimRange = false
   } = options;
   const limitAt = typeof range2 === "function" ? range2 : () => range2;
   const inRange = (at3) => distance3D(state, origin, at3) <= limitAt(at3) + EPSILON;
-  const canSee = (from, to) => ignoreLOS ? isGround(state, to) : hasLOS(state, from, to);
+  const canSee = (from, to) => ignoreLOS ? isGround(state, to) : hasLOS(state, from, to, { ignoreObscure });
   if (!canSee(origin, target2) || !ignoreAimRange && !inRange(target2)) return [];
   if (shape2 === "single" || radius < 0.5) return [{ x: target2.x, y: target2.y, z: elevation(state, target2) }];
   const [dx, dy] = same(origin, target2) ? facing ?? [1, 0] : [target2.x - origin.x, target2.y - origin.y];
@@ -154,8 +198,8 @@ function aoeCells(state, origin, target2, options = {}) {
   }));
   return result;
 }
-function coverBetween(state, from, to) {
-  if (same(from, to) || !hasLOS(state, from, to)) return null;
+function coverBetween(state, from, to, options) {
+  if (same(from, to) || !hasLOS(state, from, to, options)) return null;
   const ray = new Set(supercoverLine(from, to).slice(1, -1).map(key));
   const targetZ = elevation(state, to), sourceZ = elevation(state, from);
   const dx = from.x - to.x, dy = from.y - to.y, squaredLength = dx * dx + dy * dy;
@@ -173,7 +217,7 @@ function coverBetween(state, from, to) {
     const z = elevation(state, cover);
     if (sourceZ - z >= 2 || targetZ - z >= 2 || targetZ + (sourceZ - targetZ) * fraction - z >= 2) return false;
     const adjacentIncoming = gridDistance(cover, to) === 1 && (!cx || Math.sign(cx) === Math.sign(dx)) && (!cy || Math.sign(cy) === Math.sign(dy));
-    return ray.has(key(cover)) || adjacentIncoming && hasLOS(state, cover, to);
+    return ray.has(key(cover)) || adjacentIncoming && hasLOS(state, cover, to, options);
   });
   return covers.sort((a, b) => b.cover - a.cover || distance3D(state, a, to) - distance3D(state, b, to) || byId(a, b))[0] ?? null;
 }
@@ -189,8 +233,8 @@ function facingArc(defender, attacker) {
   const cosine = (dx * fx + dy * fy) / length;
   return cosine < -0.5 ? "back" : cosine < 0.5 ? "side" : "front";
 }
-function isFlanked(state, attacker, defender) {
-  const adjacent = (unit) => !same(unit, defender) && gridDistance(unit, defender) === 1 && Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender);
+function isFlanked(state, attacker, defender, options) {
+  const adjacent = (unit) => !same(unit, defender) && gridDistance(unit, defender) === 1 && Math.abs(elevation(state, unit) - elevation(state, defender)) <= 1 && hasLOS(state, unit, defender, unit === attacker ? options : void 0);
   if (!adjacent(attacker)) return false;
   const dx = attacker.x - defender.x, dy = attacker.y - defender.y;
   return table(state.units).some((ally) => ally.hp > 0 && !ally.fled && ally.id !== attacker.id && ally.team === attacker.team && adjacent(ally) && dx * (ally.x - defender.x) + dy * (ally.y - defender.y) < 0);
@@ -215,6 +259,28 @@ var definitions = [
   ["psychic", "\u5FC3\u7075", "mental", ["\u5FC3\u7075", "\u5FC3\u667A", "\u5FF5\u529B", "\u5FF5\u80FD", "\u5E7B\u8C61", "\u5FC3\u7075\u5C5E\u6027", "psychic"]]
 ];
 var BUILTIN_DAMAGE_TYPES = Object.freeze(definitions.map(([id3]) => id3));
+var PHYSICAL_TRAITS = Object.freeze(["heat", "ignite", "cold", "wet", "shock", "corrode", "flammable", "gust"]);
+var physicalDefaults = { fire: ["heat", "ignite"], cold: ["cold"], lightning: ["shock"], thunder: ["gust"], acid: ["corrode"] };
+var BUILTIN_ELEMENT_TRAITS = Object.freeze(Object.fromEntries(BUILTIN_DAMAGE_TYPES.map((id3) => [id3, Object.freeze(physicalDefaults[id3] ?? [])])));
+function elementTraits(type, customElements = {}, carrierTags = []) {
+  const base = Object.hasOwn(BUILTIN_ELEMENT_TRAITS, type) ? BUILTIN_ELEMENT_TRAITS[type] : customElements?.[type]?.traits ?? [];
+  return PHYSICAL_TRAITS.filter((trait) => base.includes(trait) || carrierTags.includes(trait));
+}
+function inferElementTraits(name, aliases3 = []) {
+  const text8 = [name, ...aliases3].join(" ");
+  const flame = /[火炎焰灼焚熔]/u.test(text8), steam = /[汽蒸]/u.test(text8);
+  const matches2 = {
+    heat: flame || steam || /[阳日耀]/u.test(text8),
+    ignite: flame,
+    cold: /[冰寒霜冻凛雪]/u.test(text8),
+    wet: steam || /[水汐浪潮雨露泉液]/u.test(text8) && !/[酸毒油血]/u.test(text8),
+    shock: /[雷电霆磁]/u.test(text8),
+    corrode: /[酸锈溶]|蚀(?!月)/u.test(text8),
+    flammable: /[油脂沥瘴]|瓦斯/u.test(text8),
+    gust: /[风岚飙气浪飓]/u.test(text8)
+  };
+  return PHYSICAL_TRAITS.filter((trait) => matches2[trait]).slice(0, 4);
+}
 var ELEMENT_DEFINITIONS = Object.freeze(Object.fromEntries(definitions.map(([id3, name, category, aliases3]) => [
   id3,
   Object.freeze({ id: id3, name, category, aliases: Object.freeze(aliases3) })
@@ -246,11 +312,12 @@ function validateCustomElements(value) {
   if (value === null || typeof value !== "object" || Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).length > 64) {
     throw new Error("\u81EA\u5B9A\u4E49\u5143\u7D20\u8868\u65E0\u6548");
   }
-  for (const [key4, entry2] of Object.entries(value)) {
-    if (reserved.has(key4) || !/^[a-z][a-z0-9_-]{0,31}$/.test(key4) || BUILTIN_DAMAGE_TYPES.includes(key4)) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20 ID \u65E0\u6548\uFF1A${key4}`);
-    if (!entry2 || Object.getPrototypeOf(entry2) !== Object.prototype || entry2.id !== key4 || typeof entry2.name !== "string" || entry2.name.length < 1 || entry2.name.length > 24) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u5B9A\u4E49\u65E0\u6548\uFF1A${key4}`);
-    if (entry2.aliases !== void 0 && (!Array.isArray(entry2.aliases) || entry2.aliases.length > 8 || entry2.aliases.some((alias) => typeof alias !== "string" || alias.length < 1 || alias.length > 24))) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u522B\u540D\u65E0\u6548\uFF1A${key4}`);
-    if (entry2.category !== void 0 && !["energy", "physical", "mental"].includes(entry2.category)) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u5F52\u7C7B\u65E0\u6548\uFF1A${key4}`);
+  for (const [key5, entry2] of Object.entries(value)) {
+    if (reserved.has(key5) || !/^[a-z][a-z0-9_-]{0,31}$/.test(key5) || BUILTIN_DAMAGE_TYPES.includes(key5)) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20 ID \u65E0\u6548\uFF1A${key5}`);
+    if (!entry2 || Object.getPrototypeOf(entry2) !== Object.prototype || entry2.id !== key5 || typeof entry2.name !== "string" || entry2.name.length < 1 || entry2.name.length > 24) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u5B9A\u4E49\u65E0\u6548\uFF1A${key5}`);
+    if (entry2.aliases !== void 0 && (!Array.isArray(entry2.aliases) || entry2.aliases.length > 8 || entry2.aliases.some((alias) => typeof alias !== "string" || alias.length < 1 || alias.length > 24))) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u522B\u540D\u65E0\u6548\uFF1A${key5}`);
+    if (entry2.traits !== void 0 && (!Array.isArray(entry2.traits) || entry2.traits.length > 4 || !entry2.traits.length || new Set(entry2.traits).size !== entry2.traits.length || !Array.from(entry2.traits).every((trait) => PHYSICAL_TRAITS.includes(trait)))) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u7279\u8D28\u65E0\u6548\uFF1A${key5}`);
+    if (entry2.category !== void 0 && !["energy", "physical", "mental"].includes(entry2.category)) throw new Error(`\u81EA\u5B9A\u4E49\u5143\u7D20\u5F52\u7C7B\u65E0\u6548\uFF1A${key5}`);
   }
 }
 
@@ -339,8 +406,8 @@ function scaledTemplate(state, unit, template, kind) {
   else if (template.rawRange != null) result.range = scaledCells(template.rawRange, tier, cellM, { max: 64, floor: true });
   const ratio3 = scaleRatio(tier, cellM);
   const radiusMax = ratio3 > 1 ? Math.max(template.rawRadius ?? 0, Math.ceil(Math.min(state.scale?.width ?? 10, state.scale?.height ?? 10) * 0.6)) : 30;
-  for (const [rawKey, key4] of [["rawRadius", "radius"], ["rawInnerRadius", "innerRadius"], ["rawWidth", "width"]]) {
-    if (template[rawKey] != null) result[key4] = scaledCells(template[rawKey], tier, cellM, { max: key4 === "radius" ? radiusMax : 30 });
+  for (const [rawKey, key5] of [["rawRadius", "radius"], ["rawInnerRadius", "innerRadius"], ["rawWidth", "width"]]) {
+    if (template[rawKey] != null) result[key5] = scaledCells(template[rawKey], tier, cellM, { max: key5 === "radius" ? radiusMax : 30 });
   }
   return result;
 }
@@ -514,83 +581,118 @@ function saveChance(target2, modifier = 0, advantage = 0, disadvantage = 0) {
   return probability(Math.max(0, Math.min(20, 21 - needed)), advantage, disadvantage);
 }
 
-// src/presets/status-defaults.js
-function getStatusTemplate(state, statusId3) {
-  if (typeof statusId3 !== "string") return void 0;
-  const templates = state?.statusTemplates;
-  return (Object.hasOwn(templates ?? {}, statusId3) ? templates[statusId3] : void 0) ?? (Object.hasOwn(STATUSES, statusId3) ? STATUSES[statusId3] : void 0);
+// src/core/element-media.js
+var ZONE_LAYERS = Object.freeze(["surface", "cloud"]);
+var SURFACE_MEDIA = Object.freeze(["water", "ice", "oil", "fire", "acid", "electrified_water"]);
+var CLOUD_MEDIA = Object.freeze(["steam", "smoke", "poison_cloud", "electrified_steam"]);
+var ZONE_MEDIA = Object.freeze([...SURFACE_MEDIA, ...CLOUD_MEDIA]);
+var physicsEnabled = (state) => state?.elementalPhysics !== "off";
+var zoneMediumLayer = (medium) => SURFACE_MEDIA.includes(medium) ? "surface" : CLOUD_MEDIA.includes(medium) ? "cloud" : void 0;
+var zoneMediumFields = ["layer", "medium", "blocksLOS", "moveCost"];
+var ground = "self.altitude == 0";
+var clear = (...ids) => ({ op: "remove_status", target: "self", where: ids.map((id3) => `status.id == "${id3}"`).join(" || ") });
+var apply = (statusId3) => ({ op: "apply_status", target: "self", statusId: statusId3, turns: 2 });
+var damage = (damageType2, minimum, percent3) => ({
+  op: "damage",
+  target: "self",
+  damageType: damageType2,
+  direct: false,
+  amount: `max(${minimum}, floor(self.maxHp * ${percent3}))`
+});
+var exposure = (id3, program2, filter = ground, onEntry = false) => [
+  { id: `${id3}_turn`, hook: "turn_start", priority: 10, ...filter && { filter }, program: program2 },
+  ...onEntry ? [{ id: `${id3}_entry`, hook: "after_move", filter: [filter, "self.id == event.actorId"].filter(Boolean).join(" && "), program: program2 }] : []
+];
+var templates = {
+  water: ["\u6D45\u6C34\u6D3C", 3, ["water", "wet"], { rules: exposure("water", [clear("burning", "oiled"), apply("wet")], ground, true) }],
+  ice: ["\u51B0\u9762", 3, ["ice", "cold"], { moveCost: 2 }],
+  oil: ["\u6CB9\u6C61", 3, ["oil", "flammable"], { moveCost: 2, rules: exposure("oil", [apply("oiled")], ground, true) }],
+  fire: ["\u706B\u6D77", 2, ["fire", "heat"], { rules: exposure("fire", [damage("fire", 5, 0.05), apply("burning")]) }],
+  acid: ["\u5F3A\u9178\u6C60", 2, ["acid", "corrode"], { mods: [{ stat: "armor", additivePercent: -0.25, when: ground }], rules: exposure("acid", [damage("acid", 4, 0.04)]) }],
+  electrified_water: ["\u5E26\u7535\u6C34\u4F53", 1, ["water", "lightning", "shock"], { rules: exposure("electrified_water", [damage("lightning", 5, 0.05)]) }],
+  steam: ["\u84B8\u6C7D\u4E91", 2, ["steam", "wet", "obscure"], { rules: exposure("steam", [clear("burning"), apply("wet")], null, true) }],
+  smoke: ["\u6D53\u70DF", 2, ["smoke", "obscure"], {}],
+  poison_cloud: ["\u53EF\u71C3\u6BD2\u96FE", 3, ["poison", "flammable", "obscure"], { rules: exposure("poison_cloud", [damage("poison", 4, 0.04)], null) }],
+  electrified_steam: ["\u96F7\u66B4\u84B8\u6C7D", 1, ["steam", "lightning", "shock", "obscure"], { rules: exposure("electrified_steam", [damage("lightning", 5, 0.05)], null) }]
+};
+function mediumZone(medium) {
+  const layer = zoneMediumLayer(medium);
+  if (!layer) return void 0;
+  const [name, remainingTurns, tags, fields3] = templates[medium];
+  return {
+    layer,
+    medium,
+    name,
+    remainingTurns,
+    tags: [...tags, "elemental_medium"],
+    ...layer === "cloud" && { blocksLOS: true },
+    ...structuredClone(fields3)
+  };
 }
-var actionStatuses = Object.freeze({
-  brace: "guarded",
-  block: "guarded",
-  charge: "charge",
-  lock_on: "lock_on",
-  scan: "weakness",
-  grapple: "grappled",
-  trip: "prone",
-  shield: "shield",
-  collision: "stun",
-  shield_bash: "stun"
-});
-var allSlots = ["attack", "action", "move", "cast", "reaction", "fly", "teleport"];
-var def = (id3, name, icon, category, remainingTurns, description, options = {}) => Object.freeze({
-  id: id3,
-  name,
-  icon,
-  category,
-  description,
-  remainingTurns,
-  durationType: "battle_turns",
-  stackMode: "refresh",
-  maxStacks: 1,
-  tier: 1,
-  tags: Object.freeze([]),
-  vars: Object.freeze({}),
-  mods: Object.freeze([]),
-  rules: Object.freeze([]),
-  ...options
-});
-var STATUSES = Object.freeze({
-  suppressed: def("suppressed", "\u88AB\u538B\u5236", "\u26D3\uFE0F", "control", 1, "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002", {
-    durationType: "until_removed",
-    tags: ["control"],
-    vars: { holdTotal: 0 },
-    mods: [{ locks: allSlots }]
-  }),
-  shield: def("shield", "\u62A4\u76FE", "\u{1F6E1}\uFE0F", "shield", 2, "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002", {
-    stackMode: "replace"
-  }),
-  guarded: def("guarded", "\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", {
-    vars: { reduction: 0.35 },
-    mods: [{ stat: "damageReduction", flat: "status.vars.reduction" }]
-  }),
-  stun: def("stun", "\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", {
-    tags: ["control"],
-    mods: [{ locks: allSlots }]
-  }),
-  charge: def("charge", "\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", {
-    mods: [{ stat: "damageMult", additivePercent: "0.15 * status.stacks", when: 'event.actionType == "attack"' }]
-  }),
-  lock_on: def("lock_on", "\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", {
-    mods: [{ stat: "checkBonus", checkKind: "attack", flat: "1 * status.stacks", when: "event.targetId == status.vars.targetId" }]
-  }),
-  weakness: def("weakness", "\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4E3A\u63A2\u5BDF\u8005\u7684\u610F\u56FE\u68C0\u5B9A\u52A0 2\u3002", {
-    stackMode: "stack",
-    maxStacks: 3,
-    mods: [{ stat: "intentBonus", flat: "2 * status.stacks" }]
-  }),
-  grappled: def("grappled", "\u64D2\u62B1", "\u26D3", "control", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002", {
-    tags: ["control"],
-    mods: [{ locks: ["move"] }]
-  }),
-  prone: def("prone", "\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", {
-    mods: [{ locks: ["move"] }, { stat: "incomingAccuracy", flat: "2 * status.stacks" }]
-  })
-});
+var isMedium = (zone) => !!zone?.layer && zoneMediumLayer(zone.medium) === zone.layer && (zone.persistent || !(zone.remainingTurns <= 0));
+var mediumRank = (zone) => zone.flags?.includes("concept_immune") ? 8 : zone.flags?.includes("undispellable") ? Math.max(7, zone.tier ?? 1) : zone.tier ?? 1;
+var cellKey = ({ x, y }) => `${x},${y}`;
+function mediaCells(state, zone) {
+  return state.grid.flatMap((row, y) => row.flatMap((_, x) => {
+    const at3 = { x, y };
+    return isGround(state, at3) && zoneContains(state, zone, at3, { ignoreZ: true }) ? [at3] : [];
+  }));
+}
+function removeZone(state, host, zoneId, reason = "\u89E3\u9664", detail = {}) {
+  const zone = Object.hasOwn(state.zones ?? {}, zoneId) ? state.zones[zoneId] : void 0;
+  if (!zone) return false;
+  delete state.zones[zoneId];
+  for (const poolId of Object.values(zone.pools ?? {})) delete state.pools[poolId];
+  host.log(state, state.units?.[zone.sourceId], "zone", `${zone.name}${reason}\u540E\u6D88\u6563`, { zoneId, expired: true, ...detail });
+  return true;
+}
+function setCells(zone, cells2) {
+  const { z1, z2, anchorUnitId } = zone.area;
+  zone.area = { shape: "cells", cells: cells2, ...z1 !== void 0 && { z1 }, ...z2 !== void 0 && { z2 }, ...anchorUnitId && { anchorUnitId } };
+}
+function removeMediumCells(state, host, zone, cells2) {
+  const removed = new Set(cells2.map(cellKey));
+  const remaining = mediaCells(state, zone).filter((at3) => !removed.has(cellKey(at3)));
+  if (remaining.length) setCells(zone, remaining);
+  else removeZone(state, host, zone.id, "\u76F8\u53D8");
+}
+function putMedium(state, host, zone, rank = mediumRank(zone)) {
+  const incoming = { follow: false, persistent: false, ...mediumZone(zone.medium), ...zone };
+  if (!isMedium(incoming)) return void 0;
+  const overlaps = Object.values(state.zones ?? {}).filter((old) => old !== zone && isMedium(old) && old.layer === incoming.layer).map((old) => ({ old, cells: mediaCells(state, old) }));
+  const protectedCells = new Set(overlaps.filter(({ old }) => mediumRank(old) > rank).flatMap(({ cells: cells2 }) => cells2.map(cellKey)));
+  const incomingCells = mediaCells(state, incoming).filter((at3) => !protectedCells.has(cellKey(at3)));
+  if (!incomingCells.length) return void 0;
+  const keys = new Set(incomingCells.map(cellKey));
+  const clipped = overlaps.map(({ old, cells: cells2 }) => ({ old, cells: cells2.filter((at3) => keys.has(cellKey(at3))), size: cells2.length }));
+  const canReplace = clipped.some(({ cells: cells2, size }) => size > 0 && cells2.length === size);
+  if (!canReplace && Object.keys(state.zones ?? {}).length >= 200) return void 0;
+  for (const { old, cells: cells2 } of clipped) if (cells2.length) removeMediumCells(state, host, old, cells2);
+  setCells(incoming, incomingCells);
+  const zones = state.zones ??= {};
+  if (!incoming.id) {
+    const serials = state.spatialSerial ??= {};
+    const used = Object.keys(zones).map((id3) => Number(/^zone-(\d+)$/.exec(id3)?.[1]) || 0);
+    serials.zone = Math.max(serials.zone ?? 0, ...used) + 1;
+    incoming.id = `zone-${serials.zone}`;
+  }
+  zones[incoming.id] = incoming;
+  return incoming;
+}
+function applyMediumEntry(state, host, frame, unit, to) {
+  if (!physicsEnabled(state) || unit.altitude > 0 || !Object.values(state.zones ?? {}).some((zone) => isMedium(zone) && zone.medium === "ice" && zoneContains(state, zone, { x: to.x, y: to.y }))) return false;
+  const roll = rollDie(state.rng, 20);
+  state.rng = roll.rng;
+  const total2 = roll.value + Math.floor((unit.stats?.agi ?? 0) / 2);
+  if (total2 >= 12) return false;
+  host.grantStatus(state, unit, "prone", { remainingTurns: 1 });
+  host.log(state, unit, "terrain", `${unit.name}\u5728\u51B0\u9762\u6ED1\u5012`, { targetId: unit.id, x: to.x, y: to.y, roll: roll.value, total: total2 });
+  return true;
+}
 
 // src/core/util.js
-var own = (record3, key4) => record3 != null && Object.hasOwn(record3, key4) ? record3[key4] : void 0;
-var ownDataValue = (record3, key4) => record3 == null ? void 0 : Object.getOwnPropertyDescriptor(record3, key4)?.value;
+var own = (record3, key5) => record3 != null && Object.hasOwn(record3, key5) ? record3[key5] : void 0;
+var ownDataValue = (record3, key5) => record3 == null ? void 0 : Object.getOwnPropertyDescriptor(record3, key5)?.value;
 var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 // src/core/formula.js
@@ -605,9 +707,9 @@ var path = (record3, ...keys) => keys.reduce(own2, record3);
 var scalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" ? value : null;
 var idPattern = "[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}";
 var blockedKeys = /* @__PURE__ */ new Set(["__proto__", "prototype", "constructor"]);
-var safeKey = (key4) => !blockedKeys.has(key4);
-var callback = (context, key4, ...args) => {
-  const read2 = own2(context, key4);
+var safeKey = (key5) => !blockedKeys.has(key5);
+var callback = (context, key5, ...args) => {
+  const read2 = own2(context, key5);
   return typeof read2 === "function" ? read2(...args, context) : void 0;
 };
 var unitFields = {
@@ -691,7 +793,7 @@ function unitField(context, unit, field2) {
     if (field2 === "fled") return Boolean(value);
   }
   if (field2 === "level" && unit != null) return value ?? own2(unit, "tier") ?? 1;
-  if (field2 === "moved" && unit != null) return value ?? 0;
+  if ((field2 === "moved" || field2 === "altitude") && unit != null) return value ?? 0;
   if (field2 === "facing" && Array.isArray(value)) {
     const [x, y] = value;
     return Math.abs(x) >= Math.abs(y) && x ? x > 0 ? "E" : "W" : y ? y > 0 ? "S" : "N" : null;
@@ -700,7 +802,7 @@ function unitField(context, unit, field2) {
   return path(unit, "stats", field2) ?? value;
 }
 function* records(collection) {
-  for (const key4 of Object.keys(collection ?? {})) yield own2(collection, key4);
+  for (const key5 of Object.keys(collection ?? {})) yield own2(collection, key5);
 }
 function statusOf(unit, id3) {
   const statuses = own2(unit, "statuses");
@@ -749,9 +851,9 @@ for (const [field2, meaning] of Object.entries(frameEntityFields)) {
   });
 }
 for (const [field2, [meaning, read2]] of Object.entries(entityFamilies)) {
-  family(`vars.<id>.${field2}.<id>`, new RegExp(`^vars\\.(${idPattern})\\.${field2}\\.(${idPattern})$`), `\u5C40\u90E8\u5B9E\u4F53\u7684${meaning}`, (context, id3, key4) => {
+  family(`vars.<id>.${field2}.<id>`, new RegExp(`^vars\\.(${idPattern})\\.${field2}\\.(${idPattern})$`), `\u5C40\u90E8\u5B9E\u4F53\u7684${meaning}`, (context, id3, key5) => {
     const entity = frameEntity(context, id3);
-    return entity == null ? void 0 : read2(context, entity, key4);
+    return entity == null ? void 0 : read2(context, entity, key5);
   });
 }
 for (const [scope, label] of Object.entries({ status: "\u72B6\u6001", zone: "\u533A\u57DF", skill: "\u6301\u6709\u6280\u80FD", item: "\u88C5\u5907" })) {
@@ -852,7 +954,7 @@ register("event.authorityRank", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u8F7
 register("event.naturalRoll", "\u672A\u7ECF\u66FF\u6362\u7684\u81EA\u7136\u9AB0\u9762\uFF0C\u9002\u7528\u4E8E after_natural_roll", (context) => path(context, "event", "naturalRoll"));
 register("event.sourceTier", "\u63D0\u4EA4\u6548\u679C\u7684\u6765\u6E90\u89D2\u8272\u5C42\u7EA7", (context) => path(context, "event", "sourceTier"));
 register("event.sourceSkillId", "\u4EC5\u9650 on_summon_evict \u4E2D\u65E7\u53EC\u5524\u7269\u7684\u6765\u6E90\u6280\u80FD ID\uFF08\u666E\u901A\u4F24\u5BB3\uFF0F\u547D\u4E2D\u4E8B\u4EF6\u4E0D\u7528\u6B64\u5B57\u6BB5\uFF0C\u7528 event.skillId\uFF09", (context) => path(context, "event", "sourceSkillId"));
-family("event.<field>", /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, "\u6D3B\u8DC3\u4E8B\u4EF6\u7684\u81EA\u6709\u6807\u91CF\u5B57\u6BB5", (context, key4) => path(context, "event", key4));
+family("event.<field>", /^event\.([A-Za-z_][A-Za-z0-9_]{0,63})$/, "\u6D3B\u8DC3\u4E8B\u4EF6\u7684\u81EA\u6709\u6807\u91CF\u5B57\u6BB5", (context, key5) => path(context, "event", key5));
 function readDistance(context, from, to) {
   if (typeof own2(context, "distance") === "function") return callback(context, "distance", from, to);
   if (from == null || to == null) return null;
@@ -904,14 +1006,14 @@ query("count_units", ["predicate"], "count_units(predicate)", "\u6309 candidate 
   const units = own2(context, "units");
   return units == null ? null : aggregate(units, expr2, context, runtime, false);
 });
-query("count", ["value"], "count('selector')", "\u8BFB\u53D6\u7EAF\u9009\u62E9\u5668\u56DE\u8C03\u8FD4\u56DE\u7684\u5B9E\u4F53\u6570\u91CF", ([key4], context) => selected(context, key4)?.length);
-query("sum", ["value", "expr"], "sum('selector', expr)", "\u9010\u4E2A\u7ED1\u5B9A candidate \u5E76\u6C42\u548C\uFF0C\u5982 sum('selector', candidate.hp)", ([key4, expr2], context, runtime) => {
-  const candidates = selected(context, key4);
+query("count", ["value"], "count('selector')", "\u8BFB\u53D6\u7EAF\u9009\u62E9\u5668\u56DE\u8C03\u8FD4\u56DE\u7684\u5B9E\u4F53\u6570\u91CF", ([key5], context) => selected(context, key5)?.length);
+query("sum", ["value", "expr"], "sum('selector', expr)", "\u9010\u4E2A\u7ED1\u5B9A candidate \u5E76\u6C42\u548C\uFF0C\u5982 sum('selector', candidate.hp)", ([key5, expr2], context, runtime) => {
+  const candidates = selected(context, key5);
   return candidates == null ? null : aggregate(candidates, expr2, context, runtime, true);
 });
-function selected(context, key4) {
-  if (typeof key4 !== "string" || !safeKey(key4)) return null;
-  const candidates = callback(context, "select", key4);
+function selected(context, key5) {
+  if (typeof key5 !== "string" || !safeKey(key5)) return null;
+  const candidates = callback(context, "select", key5);
   return Array.isArray(candidates) ? candidates : null;
 }
 function aggregate(collection, expr2, context, runtime, sum) {
@@ -1156,6 +1258,1244 @@ function evaluateExpr(value, context) {
   return compiled ? evaluate(compiled.tree, context) : null;
 }
 
+// src/core/vm-select.js
+var coordinate = (value) => Number.isFinite(value?.x) && Number.isFinite(value?.y);
+var pointElevation = (state, point4) => coordinate(point4) ? Number.isFinite(point4.z) ? point4.z : elevation(state, point4) : void 0;
+var sortedValues = (table4) => Object.keys(table4 ?? {}).sort().map((key5) => table4[key5]);
+var cellKey2 = ({ x, y }) => `${x},${y}`;
+var readRegister = (context, key5) => Object.hasOwn(context.vars ?? {}, key5) ? context.vars[key5] : void 0;
+var resolveRegister = (context, key5) => {
+  const value = readRegister(context, key5);
+  return context.resolveEntity ? context.resolveEntity(value) : value;
+};
+function resolvePoint(value, context) {
+  const point4 = typeof value !== "string" ? value : value.startsWith("vars.") ? resolveRegister(context, value.slice(5)) : context[value];
+  if (!point4 || typeof point4 !== "object") return null;
+  const inside = (x2, y2) => {
+    if (x2 >= 0 && x2 < (context.boardW ?? Infinity) && y2 >= 0 && y2 < (context.boardH ?? Infinity)) return true;
+    context.warn?.(`\u5750\u6807 (${x2},${y2}) \u8D8A\u754C\uFF0C\u5FFD\u7565\u8BE5\u843D\u70B9`);
+    return false;
+  };
+  if (typeof value === "string") return coordinate(point4) && inside(point4.x, point4.y) ? point4 : null;
+  const x = evaluateExpr(point4.x, context), y = evaluateExpr(point4.y, context);
+  const z = point4.z === void 0 ? void 0 : evaluateExpr(point4.z, context);
+  if (![x, y].every(Number.isFinite) || z !== void 0 && !Number.isFinite(z)) return null;
+  const col = Math.round(x), row = Math.round(y);
+  return inside(col, row) ? { x: col, y: row, ...z === void 0 ? {} : { z } } : null;
+}
+function selectorOwner(selector2, context) {
+  const of = selector2.of ?? "target";
+  return of.startsWith("vars.") ? resolveRegister(context, of.slice(5)) : context[of];
+}
+function rows(state, selector2, context) {
+  if (selector2.options) return [...new Set(selector2.options)];
+  switch (selector2.from) {
+    case "units":
+      return sortedValues(state.units);
+    case "action_targets":
+      return (context.event?.targets ?? []).map((id3) => state.units[id3]).filter(Boolean);
+    case "zones":
+      return sortedValues(state.zones);
+    case "covers":
+      return sortedValues(state.covers);
+    case "terrain":
+      return sortedValues(state.spatialTerrain);
+    case "tape":
+      return state.tape ?? [];
+    case "statuses":
+      return sortedValues(selectorOwner(selector2, context)?.statuses);
+    case "cells":
+      return state.grid.flatMap((row, y) => row.map(({ z, kind }, x) => ({ x, y, z, kind })));
+    case "self":
+    case "source":
+    case "target":
+    case "attacker":
+      return [context[selector2.from]].filter(Boolean);
+    default: {
+      if (!selector2.from.startsWith("vars.")) return [];
+      const register2 = readRegister(context, selector2.from.slice(5));
+      const refs = Array.isArray(register2) ? register2 : [register2];
+      return refs.map((ref2) => context.resolveEntity ? context.resolveEntity(ref2) : ref2).filter((entity) => entity && typeof entity === "object");
+    }
+  }
+}
+function selectVM(state, selector2, context, { pure = false } = {}) {
+  if (typeof selector2 === "string") {
+    if (selector2.startsWith("vars.")) {
+      const value = readRegister(context, selector2.slice(5));
+      const refs = Array.isArray(value) ? value : [value];
+      return refs.map((ref2) => context.resolveEntity ? context.resolveEntity(ref2) : ref2).filter((entity) => entity && typeof entity === "object");
+    }
+    selector2 = { from: selector2 };
+  }
+  if (!selector2) return [];
+  let candidates = rows(state, selector2, context);
+  if (selector2.area) {
+    const { origin: from = selector2.area.center ?? "self", shape: shape2, radius, innerRadius, width, angle } = selector2.area;
+    const origin = resolvePoint(from, context);
+    if (!coordinate(origin)) return [];
+    const aim = ["line", "fan", "cone"].includes(shape2) && coordinate(context.target) ? context.target : origin;
+    const attacker = context.attacker ?? context.self;
+    const facing = aim === context.target && aim.x === origin.x && aim.y === origin.y && coordinate(attacker) && (attacker.x !== aim.x || attacker.y !== aim.y) ? [aim.x - attacker.x, aim.y - attacker.y] : origin.facing;
+    const resolvedRadius = typeof radius === "string" ? evaluateExpr(radius, context) : radius;
+    const resolvedInnerRadius = typeof innerRadius === "string" ? evaluateExpr(innerRadius, context) : innerRadius;
+    const resolvedWidth = typeof width === "string" ? evaluateExpr(width, context) : width;
+    const resolvedAngle = typeof angle === "string" ? evaluateExpr(angle, context) : angle;
+    const cells2 = new Set(selector2.from === "terrain" && shape2 === "single" && coordinate(origin) ? [cellKey2(origin)] : aoeCells(state, origin, aim, {
+      shape: shape2,
+      radius: resolvedRadius,
+      innerRadius: resolvedInnerRadius,
+      width: resolvedWidth,
+      angle: resolvedAngle,
+      facing,
+      range: Infinity,
+      ignoreLOS: selector2.from === "terrain"
+    }).map(cellKey2));
+    const withinArea = (candidate) => {
+      const points = selector2.from === "terrain" ? candidate.cells ?? [] : selector2.from === "zones" ? state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y }))).filter((point4) => zoneContains(state, candidate, point4, { ignoreZ: true })) : [candidate];
+      return points.some((point4) => coordinate(point4) && cells2.has(cellKey2(point4)) && (!context.hostileAreaDistance || !["circle", "ring", "single"].includes(shape2) || (context.hostileAreaDistance(origin, point4) ?? 0) <= (shape2 === "single" ? 0 : resolvedRadius ?? 1.5) + 1e-9));
+    };
+    candidates = candidates.filter(withinArea);
+  }
+  if (selector2.where !== void 0) {
+    candidates = candidates.filter((candidate) => {
+      const scope = { ...context, candidate };
+      if (selector2.from === "statuses") scope.status = candidate;
+      if (selector2.from === "zones") scope.zone = candidate;
+      if (selector2.from === "covers") scope.cover = candidate;
+      if (selector2.from === "terrain") scope.terrain = candidate;
+      if (selector2.from === "tape") scope.tape = candidate;
+      return evaluateExpr(selector2.where, scope) === true;
+    });
+  }
+  const { pick } = selector2;
+  if (!pick || pick === "all") return candidates;
+  if (pick.first !== void 0) return candidates.slice(0, pick.first);
+  if (pick.nearest !== void 0 && coordinate(context.self)) {
+    return candidates.filter(coordinate).sort((a, b) => distance3D(state, context.self, a) - distance3D(state, context.self, b)).slice(0, pick.nearest);
+  }
+  if (pick.random !== void 0 && !pure) {
+    const remaining = [...candidates], selected2 = [];
+    while (remaining.length && selected2.length < pick.random) {
+      const sample = nextRng(state.rng);
+      state.rng = sample.rng;
+      selected2.push(...remaining.splice(Math.floor(sample.value * remaining.length), 1));
+    }
+    return selected2;
+  }
+  return [];
+}
+
+// src/presets/status-defaults.js
+function getStatusTemplate(state, statusId3) {
+  if (typeof statusId3 !== "string") return void 0;
+  const templates2 = state?.statusTemplates;
+  return (Object.hasOwn(templates2 ?? {}, statusId3) ? templates2[statusId3] : void 0) ?? (Object.hasOwn(STATUSES, statusId3) ? STATUSES[statusId3] : void 0) ?? (Object.hasOwn(PHYSICAL_STATUSES, statusId3) ? PHYSICAL_STATUSES[statusId3] : void 0);
+}
+var actionStatuses = Object.freeze({
+  brace: "guarded",
+  block: "guarded",
+  charge: "charge",
+  lock_on: "lock_on",
+  scan: "weakness",
+  grapple: "grappled",
+  trip: "prone",
+  shield: "shield",
+  collision: "stun",
+  shield_bash: "stun"
+});
+var allSlots = ["attack", "action", "move", "cast", "reaction", "fly", "teleport"];
+var def = (id3, name, icon, category, remainingTurns, description, options = {}) => Object.freeze({
+  id: id3,
+  name,
+  icon,
+  category,
+  description,
+  remainingTurns,
+  durationType: "battle_turns",
+  stackMode: "refresh",
+  maxStacks: 1,
+  tier: 1,
+  tags: Object.freeze([]),
+  vars: Object.freeze({}),
+  mods: Object.freeze([]),
+  rules: Object.freeze([]),
+  ...options
+});
+var STATUSES = Object.freeze({
+  suppressed: def("suppressed", "\u88AB\u538B\u5236", "\u26D3\uFE0F", "control", 1, "\u65E0\u6CD5\u884C\u52A8\uFF0C\u81EA\u5DF1\u7684\u56DE\u5408\u5F00\u59CB\u65F6\u5C1D\u8BD5\u6323\u8131\u3002", {
+    durationType: "until_removed",
+    tags: ["control"],
+    vars: { holdTotal: 0 },
+    mods: [{ locks: allSlots }]
+  }),
+  shield: def("shield", "\u62A4\u76FE", "\u{1F6E1}\uFE0F", "shield", 2, "\u72EC\u7ACB\u5438\u6536\u4F24\u5BB3\uFF1B\u8017\u5C3D\u65F6\u7834\u88C2\u3002", {
+    stackMode: "replace"
+  }),
+  guarded: def("guarded", "\u575A\u58C1", "\u{1F9F1}", "buff", 1, "\u53D7\u5230\u7684\u4F24\u5BB3\u51CF\u5C11 35%\u3002", {
+    vars: { reduction: 0.35 },
+    mods: [{ stat: "damageReduction", flat: "status.vars.reduction" }]
+  }),
+  stun: def("stun", "\u7729\u6655", "\u{1F4AB}", "control", 1, "\u8DF3\u8FC7\u884C\u52A8\u3002", {
+    tags: ["control"],
+    mods: [{ locks: allSlots }]
+  }),
+  charge: def("charge", "\u84C4\u529B", "\u26A1", "buff", 1, "\u672C\u56DE\u5408\u4E0B\u4E00\u6B21\u653B\u51FB\u589E\u4F24\u3002", {
+    mods: [{ stat: "damageMult", additivePercent: "0.15 * status.stacks", when: 'event.actionType == "attack"' }]
+  }),
+  lock_on: def("lock_on", "\u5B9A\u4F4D", "\u2316", "buff", 1, "\u672C\u56DE\u5408\u5BF9\u9501\u5B9A\u76EE\u6807\u547D\u4E2D\u63D0\u9AD8\u3002", {
+    mods: [{ stat: "checkBonus", checkKind: "attack", flat: "1 * status.stacks", when: "event.targetId == status.vars.targetId" }]
+  }),
+  weakness: def("weakness", "\u5F31\u70B9\u8BC6\u522B", "\u25C9", "buff", 3, "\u6BCF\u5C42\u4E3A\u63A2\u5BDF\u8005\u7684\u610F\u56FE\u68C0\u5B9A\u52A0 2\u3002", {
+    stackMode: "stack",
+    maxStacks: 3,
+    mods: [{ stat: "intentBonus", flat: "2 * status.stacks" }]
+  }),
+  grappled: def("grappled", "\u64D2\u62B1", "\u26D3", "control", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u4ECD\u53EF\u8FDB\u884C\u8FD1\u8EAB\u653B\u51FB\u3002", {
+    tags: ["control"],
+    mods: [{ locks: ["move"] }]
+  }),
+  prone: def("prone", "\u5012\u5730", "\u25BD", "debuff", 1, "\u65E0\u6CD5\u79FB\u52A8\uFF0C\u95EA\u907F\u964D\u4F4E\u3002", {
+    mods: [{ locks: ["move"] }, { stat: "incomingAccuracy", flat: "2 * status.stacks" }]
+  })
+});
+var PHYSICAL_STATUSES = Object.freeze({
+  wet: def("wet", "\u6F6E\u6E7F", "\u{1F4A7}", "debuff", 2, "\u706B\u7130\u4F24\u5BB3\u51CF\u514D 25%\uFF0C\u53D7\u5230\u51B0\u971C\u4E0E\u96F7\u7535\u4F24\u5BB3\u63D0\u9AD8 25%\uFF1B\u9047\u70ED\u84B8\u5E72\uFF0C\u9047\u5BD2\u7ED3\u971C\u3002", {
+    tags: ["wet", "elemental_state"],
+    mods: [
+      { stat: "damageReduction", flat: 0.25, damageType: "fire" },
+      { stat: "incomingDamageMult", mult: 1.25, damageType: "cold" },
+      { stat: "incomingDamageMult", mult: 1.25, damageType: "lightning" }
+    ]
+  }),
+  oiled: def("oiled", "\u8986\u6CB9", "\u{1F6E2}\uFE0F", "debuff", 2, "\u79FB\u52A8\u8DDD\u79BB\u51CF\u5C11 1\uFF1B\u9047\u660E\u706B\u5F15\u71C3\uFF0C\u9047\u6D78\u6DA6\u51B2\u5237\u6E05\u9664\u3002", {
+    tags: ["oiled", "flammable", "elemental_state"],
+    mods: [{ stat: "movement", flat: -1 }]
+  }),
+  burning: def("burning", "\u707C\u70E7", "\u{1F525}", "dot", 2, "\u6BCF\u56DE\u5408\u5F00\u59CB\u53D7\u5230\u706B\u7130\u4F24\u5BB3\uFF1B\u6C34\u4F53\u3001\u6D78\u6DA6\u548C\u5BD2\u971C\u53EF\u7184\u706D\u3002", {
+    tags: ["burning", "fire", "elemental_state"],
+    rules: [{ id: "burning_tick", hook: "turn_start", program: [
+      { op: "damage", target: "self", amount: "max(4, floor(self.maxHp * 0.04))", damageType: "fire", direct: false }
+    ] }]
+  }),
+  chilled: def("chilled", "\u971C\u6EDE", "\u2744\uFE0F", "debuff", 1, "\u79FB\u52A8\u8DDD\u79BB\u548C\u95EA\u907F\u5404\u51CF\u5C11 2\uFF1B\u9047\u9AD8\u6E29\u6D88\u89E3\u3002", {
+    tags: ["chilled", "cold", "elemental_state"],
+    mods: [{ stat: "movement", flat: -2 }, { stat: "dodge", flat: -2 }]
+  })
+});
+
+// src/core/vm-rule-limits.js
+function ruleAvailability(state, rule2, key5) {
+  const vm = state.vm;
+  const stamp = vm?.ruleTurns?.[key5];
+  const sameRound = Boolean(stamp && stamp.round === state.round);
+  const sameTurn = sameRound && stamp.turn === state.turn;
+  const roundUsed = sameRound ? stamp.roundCount ?? stamp.count ?? 0 : 0;
+  const usesLeft = Math.min(
+    rule2.usesPerBattle === void 0 ? Infinity : Math.max(0, rule2.usesPerBattle - (vm?.uses?.[key5] ?? 0)),
+    rule2.usesPerTurn === void 0 ? Infinity : Math.max(0, rule2.usesPerTurn - (sameTurn ? stamp.count : 0)),
+    rule2.usesPerRound === void 0 ? Infinity : Math.max(0, rule2.usesPerRound - roundUsed)
+  );
+  const cooldownRemaining = rule2.cooldownTurns === void 0 || !stamp ? 0 : Math.max(0, stamp.round + rule2.cooldownTurns - state.round);
+  return { usesLeft, cooldownRemaining, sameTurn, roundUsed, stamp };
+}
+
+// src/core/vm-immunity.js
+var own3 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
+function carrierEntity(state, carrier4) {
+  if (!carrier4) return void 0;
+  if (carrier4.type === "status") return own3(own3(state.units, carrier4.ownerId)?.statuses, carrier4.id);
+  if (carrier4.type === "skill") return own3(state.skills, carrier4.id);
+  if (carrier4.type === "item") {
+    const item = own3(state.items, carrier4.id);
+    const template = own3(state.equipment, item?.templateId);
+    return { ...template, ...item, vars: { ...template?.vars, ...item?.vars } };
+  }
+  if (carrier4.type === "zone") return own3(state.zones, carrier4.id);
+  if (carrier4.type === "unit") return own3(state.units, carrier4.id);
+}
+function ruleContext(state, entry2, event, carrierScope2) {
+  const entity = carrierEntity(state, entry2.carrier);
+  const row = { entity: entity ?? {}, carrier: entry2.carrier ?? { type: "unit", id: entry2.ownerId }, nativeOwnerId: entry2.ownerId };
+  return carrierScope2(state, row, entry2.ownerId, event, {
+    // Immunity checks are deliberately non-recursive. A before_status rule may
+    // ask about the candidate status, but cannot trigger another immunity walk.
+    isImmune: () => null
+  });
+}
+function cancelProgram(program2, context) {
+  for (const op of program2 ?? []) {
+    if (op.op === "if") {
+      const condition = evaluateExpr(op.cond, context);
+      if (typeof condition !== "boolean") return false;
+      if (!cancelProgram(condition ? op.then : op.else, context)) return false;
+    } else if (op.op === "mutate_event" && Object.keys(op.patch).every((key5) => key5 === "cancel")) {
+      const cancel = evaluateExpr(op.patch.cancel, context);
+      if (typeof cancel !== "boolean") return false;
+      context.event.cancel = cancel;
+    } else return false;
+  }
+  return true;
+}
+function isStatusImmune(state, target2, statusId3, source = null, dependencies2 = {}) {
+  if (!target2?.id || typeof statusId3 !== "string") return null;
+  const event = {
+    actorId: source?.id ?? null,
+    sourceId: source?.id ?? null,
+    targetId: target2.id,
+    statusId: statusId3,
+    tags: getStatusTemplate(state, statusId3)?.tags ?? []
+  };
+  const { collectRules: collectRules2, carrierScope: carrierScope2 } = dependencies2;
+  if (typeof collectRules2 !== "function" || typeof carrierScope2 !== "function") return null;
+  const entries3 = collectRules2(state, "before_status", event, { isImmune: () => null });
+  for (const entry2 of entries3) {
+    const { usesLeft, cooldownRemaining } = ruleAvailability(state, entry2.rule, entry2.useKey);
+    if (!usesLeft || cooldownRemaining) continue;
+    const context = ruleContext(state, entry2, event, carrierScope2);
+    if (entry2.rule.filter !== void 0 && evaluateExpr(entry2.rule.filter, context) !== true) continue;
+    if (cancelProgram(entry2.rule.program, context)) {
+      event.cancel = context.event.cancel;
+      if (event.cancel === true) {
+        event.immunityCarrier = entry2.carrier ?? { type: "unit", id: entry2.ownerId };
+        event.immunityOwnerId = entry2.ownerId;
+      }
+    } else event.cancel = void 0;
+  }
+  return event.cancel === true;
+}
+
+// src/core/vm-pools.js
+var mirrors = { hp: "maxHp", mp: "maxMp", sp: "maxSp" };
+var initialMirrors = { hp: "initialMaxHp", mp: "initialMaxMp", sp: "initialMaxSp" };
+var carrierTables = { unit: "units", item: "items", status: "statuses", zone: "zones" };
+function carrier(state, ownerKind, ownerId) {
+  const table4 = own(carrierTables, ownerKind);
+  const owner = table4 && own(state[table4], ownerId);
+  if (!owner) throw new RangeError(`Unknown ${ownerKind} pool owner: ${ownerId}`);
+  return owner;
+}
+function requirePool(state, poolId) {
+  const pool = own(state.pools, poolId);
+  if (!pool) throw new RangeError(`Unknown pool: ${poolId}`);
+  return pool;
+}
+function nonnegative(value, name) {
+  if (!Number.isFinite(value) || value < 0) throw new RangeError(`${name} must be finite and nonnegative`);
+  return value;
+}
+function nextId(state, reserved3, base) {
+  let id3 = base;
+  for (let suffix = 2; own(state.pools, id3) || reserved3.has(id3); suffix++) id3 = `${base}_${suffix}`;
+  reserved3.add(id3);
+  return id3;
+}
+function syncMirrors(state, pool) {
+  const maxField = own(mirrors, pool.kind);
+  if (!maxField) return;
+  const initialField = own(initialMirrors, pool.kind);
+  for (const { ownerKind, ownerId } of pool.contributors) {
+    const unit = ownerKind === "unit" && own(state.units, ownerId);
+    if (unit && own(unit.pools, pool.kind) === pool.id) {
+      unit[pool.kind] = pool.current;
+      unit[maxField] = pool.max;
+      if (initialField) {
+        const contributor = pool.contributors.find((row) => row.ownerKind === "unit" && row.ownerId === ownerId);
+        unit[initialField] = contributor?.initialMaxBase ?? pool.initialMax ?? unit[initialField] ?? pool.max;
+      }
+    }
+  }
+}
+function publish(state, pools, bindings = [], removed = []) {
+  if (pools.length === 0) return;
+  state.pools ??= {};
+  for (const pool of pools) state.pools[pool.id] = pool;
+  for (const { owner, key: key5, poolId } of bindings) owner.pools = { ...owner.pools, [key5]: poolId };
+  for (const poolId of removed) delete state.pools[poolId];
+  for (const pool of pools) syncMirrors(state, pool);
+}
+function getPool(state, ownerId, key5, ownerKind = "unit") {
+  const table4 = own(carrierTables, ownerKind);
+  const owner = table4 && own(state[table4], ownerId);
+  return own(state.pools, own(owner?.pools, key5));
+}
+function deleteOwnedPools(state, owner) {
+  for (const poolId of Object.values(owner?.pools ?? {})) delete state.pools[poolId];
+  if (owner?.pools) owner.pools = {};
+}
+function planPool(state, reserved3, { ownerKind = "unit", ownerId, key: key5, max, current = max, initialMax = max, reloadable = false }) {
+  const owner = carrier(state, ownerKind, ownerId);
+  if (typeof key5 !== "string" || key5.length === 0) throw new TypeError("Pool key must be a nonempty string");
+  if (own(owner.pools, key5) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key5}`);
+  nonnegative(max, "Pool max");
+  nonnegative(initialMax, "Pool initial max");
+  if (!Number.isFinite(current)) throw new RangeError("Pool current must be finite");
+  if (typeof reloadable !== "boolean") throw new TypeError("Pool reloadable must be boolean");
+  const id3 = nextId(state, reserved3, `pool_${ownerKind === "unit" ? "" : `${ownerKind}_`}${ownerId}_${key5}`);
+  const kind = ownerKind === "unit" && Object.hasOwn(mirrors, key5) ? key5 : "custom";
+  const pool = {
+    id: id3,
+    kind,
+    contributors: [{ ownerKind, ownerId, maxBase: max, initialMaxBase: initialMax }],
+    current: clamp(current, 0, max),
+    max,
+    initialMax,
+    reloadable
+  };
+  return { pool, binding: { owner, key: key5, poolId: id3 } };
+}
+function createPool(state, spec) {
+  const { pool, binding } = planPool(state, /* @__PURE__ */ new Set(), spec);
+  publish(state, [pool], [binding]);
+  return pool.id;
+}
+function initializeUnitPools(state, unitId, resources) {
+  const unit = carrier(state, "unit", unitId);
+  const reserved3 = /* @__PURE__ */ new Set();
+  const plans = Object.entries(mirrors).map(([key5, maxField]) => planPool(state, reserved3, {
+    max: resources ? own(resources, key5)?.max : unit[maxField],
+    initialMax: resources ? own(resources, key5)?.initialMax ?? own(resources, key5)?.max : unit[initialMirrors[key5]] ?? unit[maxField],
+    current: resources ? own(resources, key5)?.current : unit[key5],
+    ownerId: unitId,
+    key: key5
+  }));
+  publish(state, plans.map((p) => p.pool), plans.map((p) => p.binding));
+  return Object.fromEntries(plans.map(({ pool }) => [pool.kind, pool.id]));
+}
+function poolNumber(expr2, context) {
+  const number3 = evaluateExpr(expr2, context);
+  return Number.isFinite(number3) ? Math.max(0, number3) : 0;
+}
+function syncUnitPools(state, unit) {
+  if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
+  const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []].map((id3) => own(state.items, id3)).filter(Boolean).map((item) => own(state.equipment, item.templateId));
+  const skills = [.../* @__PURE__ */ new Set([...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})])].map((id3) => own(state.skills, id3));
+  const definitions2 = /* @__PURE__ */ new Map();
+  const context = { state, self: unit };
+  for (const declaration of [unit, ...skills, ...equipment]) {
+    for (const [key5, definition] of Object.entries(declaration?.unitPools ?? {})) {
+      if (Object.hasOwn(mirrors, key5)) continue;
+      const previous = definitions2.get(key5);
+      definitions2.set(key5, {
+        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
+        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context))
+      });
+    }
+  }
+  for (const [key5, { max, current }] of definitions2) {
+    const pool = getPool(state, unit.id, key5);
+    if (!pool) {
+      createPool(state, { ownerId: unit.id, key: key5, max, current: Math.min(max, current) });
+    } else if (max > pool.initialMax) {
+      if (max > pool.max) updatePoolMax(state, pool.id, "set_max", max);
+      const updated = getPool(state, unit.id, key5);
+      updated.initialMax = max;
+      updated.contributors[0].initialMaxBase = max;
+    }
+  }
+}
+function maxFor(state, contributor, effectiveMax) {
+  return nonnegative(effectiveMax ? effectiveMax(contributor, state) : contributor.maxBase, "Contributor max");
+}
+function total(values5, name) {
+  return nonnegative(values5.reduce((sum, value) => sum + value, 0), name);
+}
+function unitBindings(state, pool) {
+  return pool.contributors.map((contributor) => {
+    const { ownerKind, ownerId } = contributor;
+    const owner = carrier(state, ownerKind, ownerId);
+    if (ownerKind !== "unit" || getPool(state, ownerId, pool.kind) !== pool) {
+      throw new RangeError(`Invalid contributor binding: ${pool.id}/${ownerId}`);
+    }
+    return { contributor, owner };
+  });
+}
+function selectedPools(state, unitIds, kind) {
+  const ids = unitIds.map((id3) => {
+    const pool = getPool(state, id3, kind);
+    if (!pool || pool.kind !== kind) throw new RangeError(`Missing ${kind} pool for unit: ${id3}`);
+    return pool.id;
+  });
+  return [...new Set(ids)].sort().map((id3) => requirePool(state, id3));
+}
+function topology(state, unitIds, kinds, plan, effectiveMax) {
+  const units = [...new Set(unitIds)].sort();
+  const reserved3 = /* @__PURE__ */ new Set();
+  const pools = [], bindings = [], removed = [];
+  for (const kind of [...new Set(kinds)].sort()) {
+    if (!Object.hasOwn(mirrors, kind)) throw new RangeError(`Pool cannot be linked or unlinked: ${kind}`);
+    plan(state, selectedPools(state, units, kind), new Set(units), effectiveMax, {
+      reserved: reserved3,
+      pools,
+      bindings,
+      removed
+    });
+  }
+  publish(state, pools, bindings, removed);
+  return pools.map((pool) => pool.id);
+}
+function linkPools(state, unitIds, kinds, { effectiveMax } = {}) {
+  return topology(state, unitIds, kinds, (state2, sources, _, effectiveMax2, plan) => {
+    if (sources.length < 2) return;
+    const kind = sources[0].kind;
+    const members = sources.flatMap((pool) => unitBindings(state2, pool));
+    members.sort((a, b) => a.contributor.ownerId < b.contributor.ownerId ? -1 : a.contributor.ownerId > b.contributor.ownerId ? 1 : 0);
+    const contributors = members.map((member) => member.contributor);
+    const max = total(contributors.map((c) => maxFor(state2, c, effectiveMax2)), "Shared pool max");
+    const initialMax = total(contributors.map((c) => c.initialMaxBase ?? c.maxBase), "Shared pool initial max");
+    const current = clamp(total(sources.map((pool) => pool.current), "Shared pool current"), 0, max);
+    const id3 = nextId(state2, plan.reserved, `pool_shared_${kind}`);
+    plan.pools.push({ id: id3, kind, contributors, current, max, initialMax, reloadable: sources.every((pool) => pool.reloadable) });
+    for (const { owner } of members) plan.bindings.push({ owner, key: kind, poolId: id3 });
+    for (const pool of sources) plan.removed.push(pool.id);
+  }, effectiveMax);
+}
+function unlinkPools(state, unitIds, kinds, { effectiveMax } = {}) {
+  return topology(state, unitIds, kinds, (state2, sources, selected2, effectiveMax2, plan) => {
+    for (const pool of sources) {
+      if (pool.contributors.length < 2) continue;
+      const groups = [], remaining = [];
+      for (const member of unitBindings(state2, pool)) {
+        if (selected2.has(member.contributor.ownerId)) groups.push([member]);
+        else remaining.push(member);
+      }
+      if (remaining.length) groups.push(remaining);
+      const capacities = groups.map((group) => total(group.map(({ contributor }) => maxFor(state2, contributor, effectiveMax2)), "Unlinked pool max"));
+      const maxTotal = total(capacities, "Unlinked total max");
+      const currentTotal = clamp(pool.current, 0, maxTotal);
+      const full = currentTotal === maxTotal;
+      const ratio3 = full ? 1 : currentTotal / maxTotal;
+      let currentLeft = currentTotal;
+      for (const [index, members] of groups.entries()) {
+        const max = capacities[index];
+        const share = index === groups.length - 1 ? currentLeft : max * ratio3;
+        const current = full ? max : Math.min(currentLeft, clamp(share, 0, max));
+        currentLeft -= current;
+        const keepId = members === remaining;
+        const id3 = keepId ? pool.id : nextId(state2, plan.reserved, `pool_${members[0].contributor.ownerId}_${pool.kind}`);
+        const initialMax = total(members.map(({ contributor }) => contributor.initialMaxBase ?? contributor.maxBase), "Unlinked pool initial max");
+        plan.pools.push({ ...pool, id: id3, contributors: members.map((member) => member.contributor), current, max, initialMax });
+        if (!keepId) plan.bindings.push({ owner: members[0].owner, key: pool.kind, poolId: id3 });
+      }
+      if (!remaining.length) plan.removed.push(pool.id);
+    }
+  }, effectiveMax);
+}
+function change(pool, before, applied = true) {
+  const lethal = pool.kind === "hp" && before > 0 && pool.current === 0 ? { poolId: pool.id, units: pool.contributors.map((c) => c.ownerId) } : null;
+  return { poolId: pool.id, before, after: pool.current, applied, lethal };
+}
+function updatePoolMax(state, poolId, mode, amount, { minRemain = 0 } = {}) {
+  const pool = requirePool(state, poolId);
+  if (!Number.isFinite(amount)) throw new RangeError("Pool max amount must be finite");
+  const before = pool.max;
+  if (!Number.isFinite(amount) || amount < 0) throw new RangeError("Pool max amount must be nonnegative");
+  const floor = Math.max(pool.kind === "hp" ? 1 : 0, Number(minRemain) || 0);
+  const max = mode === "add_max" ? before + amount : mode === "sub_max" ? Math.max(floor, before - amount) : mode === "set_max" ? Math.max(floor, amount) : NaN;
+  if (!Number.isFinite(max)) throw new RangeError(`Unknown pool max update mode: ${mode}`);
+  const members = pool.contributors;
+  const totalBase = members.reduce((sum, c) => sum + c.maxBase, 0);
+  let remaining = max;
+  const nextBase = members.map((c, index) => {
+    const share = index === members.length - 1 ? remaining : Math.min(remaining, totalBase > 0 ? c.maxBase / totalBase * max : max / members.length);
+    remaining -= share;
+    return { ...c, initialMaxBase: c.initialMaxBase ?? c.maxBase, maxBase: share };
+  });
+  const next = { ...pool, initialMax: pool.initialMax ?? before, contributors: nextBase, max, current: clamp(pool.current, 0, max) };
+  publish(state, [next]);
+  return { ...change(next, pool.current), beforeMax: before, afterMax: max };
+}
+function updatePoolCurrent(state, poolId, mode, amount, { minRemain = 0, requireFull = false } = {}) {
+  const pool = requirePool(state, poolId);
+  if (!Number.isFinite(amount)) throw new RangeError("Pool amount must be finite");
+  const before = pool.current;
+  let current;
+  switch (mode) {
+    case "set":
+      current = amount;
+      break;
+    case "add":
+      current = before + amount;
+      break;
+    case "sub": {
+      nonnegative(amount, "Pool subtraction");
+      nonnegative(minRemain, "Minimum pool remainder");
+      const available = Math.max(0, before - minRemain);
+      if (requireFull && amount > available) return change(pool, before, false);
+      current = before - Math.min(available, amount);
+      break;
+    }
+    default:
+      throw new RangeError(`Unknown pool update mode: ${mode}`);
+  }
+  if (!Number.isFinite(current)) throw new RangeError("Pool update must produce a finite current");
+  const next = { ...pool, current: clamp(current, 0, pool.max) };
+  publish(state, [next]);
+  return change(next, before);
+}
+function swapPoolCurrents(state, firstId, secondId) {
+  const first = requirePool(state, firstId);
+  const second = requirePool(state, secondId);
+  if (firstId === secondId) return [];
+  const nextFirst = { ...first, current: clamp(second.current, 0, first.max) };
+  const nextSecond = { ...second, current: clamp(first.current, 0, second.max) };
+  publish(state, [nextFirst, nextSecond]);
+  return [change(nextFirst, first.current), change(nextSecond, second.current)];
+}
+
+// src/core/vm-carriers.js
+var own4 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
+var entries = (table4) => Object.keys(table4 ?? {}).sort().map((key5) => [key5, table4[key5]]);
+var compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+var alive = (unit) => Boolean(unit && !unit.fled && (unit.alive ?? unit.hp > 0));
+var active = (entity) => entity.persistent || entity.durationType === "persistent" || entity.durationType === "until_removed" || !(entity.remainingTurns <= 0);
+var idOf = (ref2) => typeof ref2 === "string" ? ref2 : ref2?.id;
+var slots = ["attack", "action", "move", "cast", "reaction", "fly", "teleport"];
+function itemRules(template, item) {
+  return [...new Map([...template?.rules ?? [], ...item?.rules ?? []].map((rule2) => [rule2.id, rule2])).values()];
+}
+function skillCarrierVars(state, { id: id3, ownerId }) {
+  return { ...own4(state.skills, id3)?.vars, ...own4(state.vm?.skillVars, JSON.stringify([ownerId, id3])) };
+}
+function carriers(state) {
+  const units = entries(state.units);
+  const equippedBy = /* @__PURE__ */ new Map();
+  const result = [];
+  for (const [id3, unit] of units) {
+    result.push({ entity: unit, carrier: { type: "unit", id: id3 }, nativeOwnerId: id3 });
+    for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...unit.gear ?? [], ...unit.bagWeapons ?? []]) {
+      if (itemId != null && !equippedBy.has(itemId)) equippedBy.set(itemId, id3);
+    }
+  }
+  for (const [ownerId, unit] of units) {
+    for (const [id3, entity] of entries(unit.statuses)) {
+      if (active(entity)) result.push({ entity, carrier: { type: "status", id: id3, ownerId }, nativeOwnerId: ownerId });
+    }
+  }
+  for (const [ownerId, unit] of units) {
+    if (unit.fled) continue;
+    for (const id3 of [...new Set(unit.skills ?? [])].sort()) {
+      const skill2 = own4(state.skills, id3);
+      if (!skill2) continue;
+      const carrier4 = { type: "skill", id: id3, ownerId };
+      result.push({ entity: { ...skill2, id: id3, vars: skillCarrierVars(state, carrier4) }, carrier: carrier4, nativeOwnerId: ownerId });
+    }
+  }
+  for (const [id3, entity] of entries(state.items)) {
+    const nativeOwnerId = equippedBy.get(id3) ?? entity.ownerId;
+    const template = own4(state.equipment, entity.templateId);
+    if (own4(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
+      result.push({ entity: { ...template, ...entity, id: id3, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: "item", id: id3 }, nativeOwnerId });
+    }
+  }
+  for (const [id3, entity] of entries(state.zones)) {
+    if (!entity.area || !physicsEnabled(state) && isMedium(entity)) continue;
+    const anchorId = entity.area.anchorUnitId;
+    if (!active(entity) || entity.follow && anchorId && !alive(own4(state.units, anchorId))) continue;
+    result.push({ entity, carrier: { type: "zone", id: id3 }, nativeOwnerId: anchorId ?? entity.sourceId });
+  }
+  return result;
+}
+function incomingDistanceOffset(state, actor, target2, event = {}) {
+  if (!actor?.team || !target2?.team || actor.team === target2.team || !own4(state.units, target2.id)) return 0;
+  return Math.max(0, applyStatMod(0, aggregateModifiers(state, target2.id, {
+    ...event,
+    actorId: actor.id,
+    targetId: target2.id
+  }).stats.incomingDistanceOffset));
+}
+function carrierEffectiveTier(state, ref2, owner) {
+  const nativeOwner = own4(state.units, ref2?.ownerId) ?? owner;
+  if (ref2?.type === "status") {
+    const status = own4(nativeOwner?.statuses, ref2.id);
+    return status?.effectiveTier ?? resolveEffectiveTier("unit", null, status?.sourceTier ?? nativeOwner?.tier);
+  }
+  if (ref2?.type === "skill") {
+    const skill2 = own4(state.skills, ref2.id);
+    return resolveEffectiveTier(skill2?.backpackItem ? "item" : "skill", skill2?.quality, nativeOwner?.tier);
+  }
+  if (ref2?.type === "item") {
+    const item = own4(state.items, ref2.id);
+    return resolveEffectiveTier("item", own4(state.equipment, item?.templateId)?.quality, nativeOwner?.tier);
+  }
+  if (ref2?.type === "zone") return own4(state.zones, ref2.id)?.effectiveTier ?? resolveEffectiveTier("unit", null, nativeOwner?.tier);
+  return resolveEffectiveTier("unit", null, nativeOwner?.tier);
+}
+function eventUnit(state, ref2) {
+  return own4(state.units, idOf(ref2));
+}
+function sourceIdOf(row, ownerId, event) {
+  return row.entity.sourceId ?? row.nativeOwnerId ?? event.sourceId ?? idOf(event.source) ?? ownerId;
+}
+function eventWeapon(state, event, item, unit) {
+  const weapon2 = own4(state.equipment, event.weaponTemplateId) ?? own4(state.equipment, own4(state.items, event.weaponId)?.templateId);
+  if (weapon2) return weapon2;
+  const carried = own4(state.equipment, item?.templateId);
+  if (carried?.kind === "weapon" && carried.attack !== void 0) return carried;
+  const main = own4(state.items, unit?.mainHand ?? unit?.weapon);
+  const template = own4(state.equipment, main?.templateId);
+  return !template?.boundTo || template.boundTo === unit?.id ? template : null;
+}
+function carrierScope(state, row, ownerId, event, queries2 = {}) {
+  const self = own4(state.units, ownerId);
+  const immunity = queries2.isImmune ?? ((currentState, unit, key5, context) => isStatusImmune(
+    currentState,
+    unit,
+    key5,
+    context?.source ?? own4(currentState.units, event.sourceId ?? event.actorId),
+    { collectRules, carrierScope }
+  ));
+  const source = eventUnit(state, sourceIdOf(row, ownerId, event));
+  const target2 = eventUnit(state, event.targetId ?? event.target);
+  const attacker = eventUnit(state, event.actorId ?? event.actor ?? event.attackerId ?? event.attacker ?? event.sourceId ?? event.source ?? event.killerId ?? event.killer) ?? source;
+  return {
+    self,
+    source,
+    target: target2,
+    attacker,
+    event: { ...event, actor: attacker, source, target: target2 },
+    vars: row.entity.vars,
+    status: row.carrier.type === "status" ? row.entity : void 0,
+    zone: row.carrier.type === "zone" ? row.entity : void 0,
+    skill: row.carrier.type === "skill" ? row.entity : void 0,
+    item: row.carrier.type === "item" ? row.entity : void 0,
+    center: event.center,
+    round: state.round,
+    turn: state.turn,
+    timeOfDay: state.time?.timeOfDay,
+    units: state.units,
+    zones: state.zones,
+    effectiveTier: carrierEffectiveTier(state, row.carrier, own4(state.units, row.nativeOwnerId) ?? self),
+    cellM: state.scale?.cellM ?? 2,
+    boardW: state.grid?.[0]?.length,
+    boardH: state.grid?.length,
+    ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
+    elevation: (entity) => pointElevation(state, entity),
+    resource: (unit, key5) => key5 === "move" ? unit ? movementBudget(state, unit).remainingCells : 0 : key5 === "attack" || key5 === "action" ? Math.max(0, 1 - (unit?.used?.[key5] ?? 0)) : key5 === "reaction" && unit ? unit.reactionAvailable === false ? 0 : 1 : getPool(state, unit?.id, key5, "unit")?.current ?? own4(unit, key5),
+    itemResource: (item, key5) => getPool(state, item?.id, key5, "item")?.current ?? 0,
+    inZone: (unit, key5) => entries(state.zones).some(([, zone]) => active(zone) && (zone.id === key5 || zone.templateId === key5 || zone.tags?.includes(key5)) && zoneContains(state, zone, unit)),
+    isImmune: (unit, key5, context) => immunity(state, unit, key5, context ?? { source }),
+    weapon: () => eventWeapon(state, event, row.carrier.type === "item" ? row.entity : void 0, attacker ?? self),
+    select: (key5, context) => selectVM(state, own4(queries2.selectors, key5) ?? key5, context, { pure: true })
+  };
+}
+function recipients(state, row, unitIds, event, queries2, hook2) {
+  const { entity, carrier: carrier4, nativeOwnerId } = row;
+  const shared = entity.shareRulesTo ? new Set(selectVM(
+    state,
+    entity.shareRulesTo,
+    carrierScope(state, row, nativeOwnerId, event, queries2),
+    { pure: true }
+  )) : null;
+  return unitIds.filter((id3) => {
+    const unit = own4(state.units, id3);
+    return carrier4.type === "zone" ? zoneContains(state, entity, unit) || hook2 === "after_move" && id3 === event.actorId && Array.isArray(event.traversedCells) && event.traversedCells.some((pt) => zoneContains(state, entity, pt)) || shared?.has(unit) : id3 === nativeOwnerId || shared?.has(unit);
+  });
+}
+function eventOwners(state, hook2, event) {
+  const actor = event.actorId ?? event.actor ?? event.sourceId ?? event.source;
+  const target2 = event.targetId ?? event.target;
+  const killer = event.killerId ?? event.killer ?? actor;
+  const dead = event.deadId ?? event.killedId ?? (typeof event.killed === "boolean" ? void 0 : event.killed) ?? target2;
+  let refs;
+  if (event.ownerIds) refs = event.ownerIds;
+  else if (hook2 === "after_move" || hook2 === "round_start" || hook2 === "round_end") refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
+  else if (hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2") {
+    refs = event.units ?? entries(state.units).filter(([, unit]) => event.poolId != null && unit.pools?.hp === event.poolId).map(([id3]) => id3);
+  } else if (hook2 === "on_ally_death") {
+    const ally = eventUnit(state, dead);
+    refs = ally ? entries(state.units).filter(([id3, unit]) => id3 !== ally.id && unit.team === ally.team && alive(unit)).map(([id3]) => id3) : [];
+  } else if (hook2 === "on_death") refs = event.units ?? [dead];
+  else if (hook2 === "on_kill") refs = [killer];
+  else if (hook2 === "turn_start" || hook2 === "turn_end") refs = [event.unitId ?? event.unit ?? actor ?? target2];
+  else refs = [actor, event.sourceId ?? event.source, target2, ...event.targets ?? []];
+  return [...new Set(refs.map(idOf).filter((id3) => id3 != null && own4(state.units, id3)))].sort();
+}
+function carrierDedupePrefix({ entity, carrier: carrier4, nativeOwnerId }, ownerId, pooled = false) {
+  if (!pooled && ownerId === nativeOwnerId && carrier4.type === "item") return `item:${carrier4.id}`;
+  return entity.templateId ?? JSON.stringify([carrier4.type, carrier4.ownerId, carrier4.id]);
+}
+function collectRules(state, hook2, event = {}, queries2 = {}) {
+  if (hook2 === "active") return [];
+  const unitIds = eventOwners(state, hook2, event);
+  let boardUnitIds;
+  const boardOwners = () => boardUnitIds ??= entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
+  const candidates = [];
+  const pooled = hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2";
+  const carrierRows = carriers(state);
+  if (hook2 === "after_status_removed" && event.removedStatus?.rules?.length) {
+    const removed = event.removedStatus;
+    carrierRows.push({ entity: removed, carrier: { type: "status", id: removed.id, ownerId: event.targetId }, nativeOwnerId: event.targetId });
+  }
+  for (const [carrierOrder, row] of carrierRows.entries()) {
+    if (hook2 === "after_move" && row.nativeOwnerId && !alive(own4(state.units, row.nativeOwnerId))) continue;
+    if (row.carrier.type === "skill" && !["on_lethal_p1", "on_lethal_p2", "on_death"].includes(hook2) && !alive(own4(state.units, row.nativeOwnerId))) continue;
+    const rules = row.entity.rules?.filter((rule2) => rule2.enabled !== false && rule2.hook === hook2);
+    if (!rules?.length) continue;
+    let participantRecipients, boardRecipients;
+    for (const rule2 of rules) {
+      const owners = rule2.listenScope === "board" ? boardRecipients ??= recipients(state, row, boardOwners(), event, queries2, hook2) : participantRecipients ??= unitIds.length ? recipients(state, row, unitIds, event, queries2, hook2) : [];
+      for (const ownerId of owners) {
+        const dedupeKey = rule2.dedupeKey ?? `${carrierDedupePrefix(row, ownerId, pooled)}:${rule2.id}`;
+        const useKey = JSON.stringify([ownerId, dedupeKey]);
+        candidates.push({ dedupeKey, entry: { rule: rule2, carrierOrder, ownerId, sourceId: sourceIdOf(row, ownerId, event), carrier: row.carrier, useKey } });
+      }
+    }
+  }
+  candidates.sort(({ entry: a }, { entry: b }) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compare(a.rule.id, b.rule.id) || compare(a.ownerId, b.ownerId));
+  const seen = /* @__PURE__ */ new Set();
+  return candidates.flatMap(({ dedupeKey, entry: entry2 }) => {
+    const key5 = pooled ? dedupeKey : entry2.useKey;
+    if (seen.has(key5)) return [];
+    seen.add(key5);
+    return [entry2];
+  });
+}
+function matchesModifier(mod2, event) {
+  return (mod2.damageType === void 0 || mod2.damageType === event.damageType) && (mod2.statusId === void 0 || mod2.statusId === event.statusId) && (mod2.pool === void 0 || mod2.pool === event.pool) && (mod2.checkKind === void 0 || mod2.checkKind === event.checkKind || mod2.checkKind === event.statusId || event.tags?.includes(mod2.checkKind));
+}
+function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
+  const stats = /* @__PURE__ */ new Map();
+  const locks = Object.fromEntries(slots.map((slot2) => [slot2, false]));
+  const flags2 = /* @__PURE__ */ new Set();
+  const policy = /* @__PURE__ */ new Map();
+  const costRedirects = [];
+  let forbid = false;
+  let forbidReason = null;
+  let pooledCostFlat = 0;
+  const forbiddenTargetIds = /* @__PURE__ */ new Set();
+  let charmTeam = null, foundCharm = false;
+  const seen = /* @__PURE__ */ new Set();
+  if (own4(state.units, unitId)) {
+    for (const row of carriers(state)) {
+      if (row.carrier.type === "skill" && !alive(own4(state.units, row.nativeOwnerId))) continue;
+      if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries2).length) continue;
+      const context = carrierScope(state, row, unitId, event, queries2);
+      for (const [index, mod2] of row.entity.mods.entries()) {
+        const key5 = JSON.stringify([carrierDedupePrefix(row, unitId), index]);
+        if (seen.has(key5) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
+        const values5 = {};
+        for (const field2 of ["flat", "mult", "additivePercent"]) {
+          if (mod2[field2] === void 0) continue;
+          const value = evaluateExpr(mod2[field2], context);
+          if (Number.isFinite(value)) values5[field2] = value;
+        }
+        if (!Object.keys(values5).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length && mod2.forbidAction !== true && !mod2.costRedirect) continue;
+        seen.add(key5);
+        if (mod2.forbidAction === true && !forbid) {
+          forbid = true;
+          forbidReason = mod2.forbidReason || (row.entity.name ? `\u53D7\u3010${row.entity.name}\u3011\u9650\u5236\uFF0C\u65E0\u6CD5\u6267\u884C\u8BE5\u884C\u52A8` : "\u5F53\u524D\u89C4\u5219\u7981\u6B62\u6267\u884C\u8BE5\u884C\u52A8");
+        }
+        if (mod2.costRedirect) costRedirects.push(mod2.costRedirect);
+        if (mod2.stat === "costFlat" && mod2.pool !== void 0) pooledCostFlat += values5.flat ?? 0;
+        if (mod2.stat && Object.keys(values5).length) {
+          const total2 = stats.get(mod2.stat) ?? { flat: 0, mult: 1, additivePercent: 0 };
+          total2.flat += values5.flat ?? 0;
+          total2.mult *= values5.mult ?? 1;
+          total2.additivePercent += values5.additivePercent ?? 0;
+          stats.set(mod2.stat, total2);
+        }
+        for (const lock of mod2.locks ?? []) if (Object.hasOwn(locks, lock)) locks[lock] = true;
+        for (const flag of mod2.flags ?? []) flags2.add(flag);
+        for (const [field2, value] of Object.entries(mod2.controlPolicy ?? {})) {
+          if (!policy.has(field2)) policy.set(field2, Array.isArray(value) ? [...value] : value);
+        }
+        const charm = mod2.controlPolicy?.mindControl === "charm";
+        if (charm || mod2.controlPolicy?.forbidTargetSource === true) {
+          const sourceId2 = sourceIdOf(row, unitId, event);
+          if (sourceId2 != null) forbiddenTargetIds.add(sourceId2);
+          if (charm && !foundCharm) {
+            foundCharm = true;
+            charmTeam = context.source?.team ?? null;
+          }
+        }
+      }
+    }
+  }
+  return {
+    stats: Object.fromEntries(stats),
+    locks,
+    flags: Object.fromEntries([...flags2].map((flag) => [flag, true])),
+    controlPolicy: Object.fromEntries(policy),
+    forbiddenTargetIds,
+    charmTeam,
+    forbid,
+    forbidReason,
+    costRedirects,
+    pooledCostFlat
+  };
+}
+function unitSkipped(state, unit) {
+  const { locks } = aggregateModifiers(state, unit.id);
+  return locks.attack && locks.action && locks.move && locks.cast;
+}
+function reactionBlocked(state, unit) {
+  const { locks } = aggregateModifiers(state, unit.id);
+  return locks.reaction || locks.attack;
+}
+function applyStatMod(base, { flat = 0, mult = 1, additivePercent = 0 } = {}) {
+  return (base + flat) * (1 + additivePercent) * mult;
+}
+
+// src/core/tactical-vm.js
+var maxSteps = 2e3;
+var maxDepth = 64;
+var own5 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
+var readRegister2 = (context, key5) => own5(context.vars, key5);
+var compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+var coordinate2 = (value) => Number.isInteger(value?.x) && Number.isInteger(value?.y);
+var samePoint = (a, b) => a.x === b.x && a.y === b.y;
+var newVM = () => ({ stack: [], events: {}, pendingAsk: null, stepsRemaining: maxSteps, serial: 0 });
+var nextId2 = (vm, prefix) => `${prefix}_${++vm.serial}`;
+function resolveEntity(state, ref2) {
+  if (!ref2) return void 0;
+  return ref2.type === "status" ? own5(own5(state.units, ref2.ownerId)?.statuses, ref2.id) : ref2.type === "unit" ? own5(state.units, ref2.id) : ref2.type === "zone" ? own5(state.zones, ref2.id) : ref2.type === "item" ? own5(state.items, ref2.id) : ref2.value;
+}
+function entityRef(state, value, from, owner, context) {
+  if (from.startsWith("vars.")) {
+    const register2 = own5(context.vars, from.slice(5));
+    const refs = Array.isArray(register2) ? register2 : [register2];
+    const ref2 = refs.find((entry2) => entry2 && typeof entry2 === "object" && resolveEntity(state, entry2) === value);
+    if (ref2) return ref2;
+    if (own5(state.zones, value.id) === value) return { type: "zone", id: value.id };
+    if (own5(state.items, value.id) === value) return { type: "item", id: value.id };
+  }
+  if (from === "statuses") return { type: "status", ownerId: owner.id, id: Object.keys(owner.statuses).find((key5) => owner.statuses[key5] === value) };
+  if (from === "tape" || from === "cells") return { type: "literal", value };
+  if (from === "zones") return { type: "zone", id: value.id };
+  if (own5(state.units, value.id) === value) return { type: "unit", id: value.id };
+  return { type: "literal", value };
+}
+function makeFrame(vm, spec) {
+  return {
+    frameId: nextId2(vm, "f"),
+    kind: "action",
+    ownerId: null,
+    sourceId: null,
+    ruleId: null,
+    program: [],
+    pc: 0,
+    vars: {},
+    eventRef: null,
+    ...spec
+  };
+}
+function pushFrame(state, spec) {
+  const frame = makeFrame(state.vm, spec);
+  state.vm.stack.push(frame);
+  return frame;
+}
+function childFrame(state, frame, patch) {
+  return pushFrame(state, {
+    kind: frame.kind,
+    ownerId: frame.ownerId,
+    sourceId: frame.sourceId,
+    ruleId: frame.ruleId,
+    eventRef: frame.eventRef,
+    carrier: frame.carrier ?? null,
+    attribution: frame.attribution ?? null,
+    scope: frame.scope ?? null,
+    hook: frame.hook ?? null,
+    localsRef: frame.localsRef ?? frame.frameId,
+    ...frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId },
+    ...patch
+  });
+}
+function registers(state, frame) {
+  return (state.vm.stack.find((entry2) => entry2.frameId === frame.localsRef) ?? frame).vars;
+}
+function contextFor(state, frame, host) {
+  const event = own5(state.vm.events, frame.eventRef) ?? {};
+  const self = own5(state.units, frame.ownerId);
+  const source = own5(state.units, frame.sourceId);
+  const target2 = resolveEntity(state, frame.scope?.target) ?? own5(state.units, event.targetId);
+  const attacker = own5(state.units, event.actorId) ?? source;
+  const vars = { ...registers(state, frame) };
+  const bound2 = resolveEntity(state, frame.scope?.bound);
+  Object.assign(vars, frame.scope?.bindings);
+  const carrier4 = resolveEntity(state, frame.carrier);
+  const itemTemplate = frame.carrier?.type === "item" ? own5(state.equipment, carrier4?.templateId) : void 0;
+  return {
+    self,
+    source,
+    target: target2,
+    attacker,
+    candidate: bound2,
+    vars,
+    event: { ...event, actor: attacker, source, target: target2 },
+    resolveEntity: (value, kind) => {
+      const entity = typeof value === "string" ? own5(state.units, value) ?? own5(state.zones, value) ?? own5(state.items, value) : value?.type && (value.type === "literal" ? Object.hasOwn(value, "value") : Object.hasOwn(value, "id")) ? resolveEntity(state, value) : value;
+      return kind === "unit" && own5(state.units, entity?.id) !== entity ? void 0 : entity;
+    },
+    status: resolveEntity(state, frame.scope?.status) ?? event.removedStatus ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
+    zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === "zone" ? carrier4 : void 0),
+    skill: frame.carrier?.type === "skill" ? { ...own5(state.skills, frame.carrier.id), id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : void 0,
+    item: frame.carrier?.type === "item" ? { ...itemTemplate, ...carrier4, id: frame.carrier.id, tags: carrier4?.tags ?? itemTemplate?.tags, vars: { ...itemTemplate?.vars, ...carrier4?.vars } } : void 0,
+    tape: resolveEntity(state, frame.scope?.tape),
+    center: event.center,
+    pool: frame.scope?.pool,
+    round: state.round,
+    turn: state.turn,
+    timeOfDay: state.time?.timeOfDay,
+    units: Object.values(state.units),
+    zones: state.zones,
+    effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
+    hostileAreaDistance: (origin, unit) => distance3D(state, origin, unit) + incomingDistanceOffset(state, self ?? source, unit, event),
+    warn: (message) => host.log?.(state, self, "warning", message, { ruleId: frame.ruleId }),
+    cellM: state.scale?.cellM ?? 2,
+    boardW: state.grid?.[0]?.length,
+    boardH: state.grid?.length,
+    distance: (a = self, b = target2) => coordinate2(a) && coordinate2(b) ? distance3D(state, a, b) : null,
+    elevation: (entity) => pointElevation(state, entity),
+    resource: (entity, key5) => host.resource?.(state, entity, key5) ?? own5(entity, key5),
+    itemResource: (item, key5) => getPool(state, item?.id, key5, "item")?.current ?? 0,
+    weapon: () => eventWeapon(state, event, frame.carrier?.type === "item" ? carrier4 : void 0, attacker ?? self),
+    inZone: (entity, key5) => Object.values(state.zones ?? {}).some((zone) => (zone.id === key5 || zone.templateId === key5 || zone.tags?.includes(key5)) && zoneContains(state, zone, entity)),
+    isImmune: (unit, key5) => host.isImmune?.(state, unit, key5, frame) ?? false,
+    select: (selector2) => selectVM(state, selector2, contextFor(state, frame, host), { pure: true })
+  };
+}
+function newEvent(state, initial) {
+  const eventRef = nextId2(state.vm, "ev");
+  state.vm.events[eventRef] = structuredClone(initial);
+  return eventRef;
+}
+function scheduleHooks(state, parent, hook2, eventRef, host) {
+  const event = own5(state.vm.events, eventRef);
+  host.expireMatchingStatuses?.(state, hook2, event);
+  const entries3 = host.rules?.(state, hook2, event) ?? [];
+  const ordered2 = entries3.filter(({ rule: rule2 }) => rule2.enabled !== false).sort((a, b) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compareId(a.rule.id, b.rule.id));
+  for (const entry2 of ordered2.reverse()) pushFrame(state, {
+    kind: "hook",
+    hook: hook2,
+    eventRef,
+    ownerId: entry2.ownerId,
+    sourceId: entry2.sourceId ?? parent.sourceId,
+    ruleId: entry2.rule.id,
+    carrier: entry2.carrier ?? null,
+    ...parent.data && { data: parent.data },
+    ...entry2.sourceSkillId && { sourceSkillId: entry2.sourceSkillId },
+    rule: entry2.rule,
+    useKey: entry2.useKey ?? `${entry2.ownerId}:${entry2.rule.dedupeKey ?? entry2.rule.id}`,
+    program: entry2.rule.program
+  });
+}
+function pruneEvents(vm) {
+  for (const id3 of Object.keys(vm.events)) {
+    if (!vm.stack.some((frame) => frame.eventRef === id3 || frame.awaitEvent === id3)) delete vm.events[id3];
+  }
+}
+function writeChoice(state, frame, ask, value, host, automatic = false) {
+  const multi = ask.maxSelect !== void 0;
+  const choiceRef = ask.kind === "entity" ? own5(frame.choiceRefs, value) : void 0;
+  registers(state, frame)[ask.outVar] = multi ? value.map((id3) => own5(frame.choiceRefs, id3)) : choiceRef ?? value;
+  delete frame.choiceRefs;
+  const action = state.vm.stack.findLast((entry2) => entry2.native === "action");
+  if (action) action.answers.push(value);
+  const unit = own5(state.units, ask.chooserId);
+  const labelFor = (id3) => ask.options.find((option) => option.id === id3)?.label ?? id3;
+  const label = multi ? value.map(labelFor).join("\u3001") : coordinate2(value) ? `(${value.x}, ${value.y})` : Array.isArray(ask.options) ? labelFor(value) : value;
+  const event = own5(state.vm.events, frame.eventRef);
+  const commit = event?.commitKind ? {
+    kind: event.commitKind,
+    targetId: event.targetId,
+    pool: event.pool,
+    ...Number.isFinite(event.finalAmount) ? { amount: event.finalAmount } : {}
+  } : null;
+  host.log(state, unit, "choice", `${unit.name}${automatic ? "\u81EA\u52A8\u9009\u62E9" : "\u9009\u62E9"}\u300C${ask.prompt}\u300D\uFF1A${label}`, {
+    choice: {
+      kind: ask.kind,
+      prompt: ask.prompt,
+      value,
+      label,
+      automatic,
+      ...ask.kind === "number" ? { min: ask.options.min, max: ask.options.max } : {},
+      ...commit ? { commit } : {}
+    }
+  });
+}
+function automaticChoice(state, ask) {
+  if (ask.kind === "number") return ask.aiPolicy === "max" ? ask.options.max : ask.options.min;
+  const chooser = state.units[ask.chooserId];
+  const enemies = Object.values(state.units).filter((unit) => unit.team !== chooser.team && unit.hp > 0 && !unit.fled);
+  let ranked = ask.options;
+  if (ask.kind === "cell" && enemies.length && ["best_offensive_cell", "safest_cell"].includes(ask.aiPolicy)) {
+    const sign3 = ask.aiPolicy === "safest_cell" ? -1 : 1;
+    ranked = ranked.map((cell) => ({ cell, distance: Math.min(...enemies.map((enemy) => distance3D(state, cell, enemy))) })).sort((a, b) => sign3 * (a.distance - b.distance)).map((row) => row.cell);
+  } else if (ask.kind === "entity" && ask.aiPolicy === "highest_threat") {
+    const threat = (option) => {
+      const unit = state.units[option.id];
+      return enemies.includes(unit) ? Math.max(0, ...["str", "agi", "int", "spi"].map((stat3) => unit.stats?.[stat3] ?? 0)) : -1;
+    };
+    ranked = [...ranked].sort((a, b) => threat(b) - threat(a));
+  }
+  if (ask.maxSelect !== void 0) return ranked.slice(0, ask.maxSelect).map((option) => option.id);
+  return ask.kind === "cell" ? ranked[0] : ranked[0].id;
+}
+function askInstruction(state, frame, op, context, host, options) {
+  const chooser = selectVM(state, op.chooser, context)[0];
+  if (!chooser) return;
+  let choices;
+  if (op.kind === "number") {
+    const min = evaluateExpr(op.min, context), max = evaluateExpr(op.max, context);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return;
+    choices = { min, max, step: Number.isInteger(min) && Number.isInteger(max) ? 1 : "any" };
+  } else if (op.kind === "option") choices = op.options;
+  else if (op.kind === "entity") {
+    const { from } = op.select;
+    const entities2 = /* @__PURE__ */ new Map();
+    for (const entity of selectVM(state, op.select, context)) {
+      if (typeof entity.id === "string" && !entities2.has(entity.id)) entities2.set(entity.id, entity);
+    }
+    choices = [...entities2.values()].map(({ id: id3, name }) => ({ id: id3, label: name ?? id3 }));
+    if (choices.length) frame.choiceRefs = Object.fromEntries([...entities2].map(([id3, entity]) => [id3, entityRef(state, entity, from, selectorOwner(op.select, context), context)]));
+  } else choices = selectVM(state, op.select, context).filter((cell) => coordinate2(cell) && !unitAt(state, cell.x, cell.y, chooser.id)).map(({ x, y }) => ({ x, y }));
+  if (!choices || choices.length === 0) return;
+  const ask = {
+    askId: nextId2(state.vm, "ask"),
+    chooserId: chooser.id,
+    prompt: op.prompt,
+    kind: op.kind,
+    options: choices,
+    outVar: op.out,
+    aiPolicy: op.aiPolicy,
+    ...op.maxSelect === void 0 ? {} : { maxSelect: op.maxSelect }
+  };
+  if (options.dryRun || (host.isAI?.(state, chooser) ?? chooser.team === "red")) {
+    if (options.dryRun) options.conditional = true;
+    const value = automaticChoice(state, ask);
+    writeChoice(state, frame, ask, value, host, true);
+  } else state.vm.pendingAsk = ask;
+}
+function answerVM(state, action, host) {
+  const ask = state.vm?.pendingAsk;
+  const frame = state.vm?.stack.at(-1);
+  if (!ask || !frame || action.askId !== ask.askId) throw new Error("\u8BE5\u6218\u6597\u9009\u62E9\u5DF2\u5931\u6548");
+  if (Object.keys(action).some((key5) => !["type", "askId", "value", "x", "y"].includes(key5))) throw new Error("\u56DE\u7B54\u542B\u672A\u77E5\u5B57\u6BB5");
+  let value;
+  if (ask.kind === "cell") {
+    if (Object.hasOwn(action, "value") || !coordinate2(action) || !ask.options.some((cell) => samePoint(cell, action))) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u683C\u5B50");
+    value = { x: action.x, y: action.y };
+  } else {
+    if (Object.hasOwn(action, "x") || Object.hasOwn(action, "y")) throw new Error("\u56DE\u7B54\u7C7B\u578B\u4E0D\u5339\u914D");
+    value = action.value;
+    if (ask.kind === "number") {
+      const { min, max, step } = ask.options;
+      if (!Number.isFinite(value) || value < min || value > max || step === 1 && !Number.isInteger(value)) throw new Error("\u6570\u503C\u8D85\u51FA\u9009\u62E9\u8303\u56F4");
+    } else if (ask.maxSelect !== void 0) {
+      if (!Array.isArray(value) || value.length < 1 || value.length > ask.maxSelect) throw new Error(`\u8BF7\u9009\u62E9 1\u2013${ask.maxSelect} \u4E2A\u5B9E\u4F53`);
+      const requested = new Set(value);
+      const ordered2 = ask.options.filter((option) => requested.has(option.id));
+      if (ordered2.length !== value.length) throw new Error("\u8BF7\u9009\u62E9\u4E0D\u540C\u7684\u6709\u6548\u5B9E\u4F53");
+      value = ordered2.map((option) => option.id);
+    } else if (!ask.options.some((option) => option.id === value)) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u9009\u9879");
+  }
+  writeChoice(state, frame, ask, value, host);
+  state.vm.pendingAsk = null;
+}
+function stepLoop(state, frame) {
+  const ref2 = frame.items[frame.pc++];
+  const entity = resolveEntity(state, ref2);
+  if (entity === void 0 || entity === null) return;
+  const scope = { ...frame.scope, bound: ref2 };
+  if (ref2.type === "status") scope.status = ref2;
+  if (ref2.type === "literal") scope.literal = ref2;
+  if (ref2.type === "zone") scope.zone = ref2;
+  if (frame.from === "tape") scope.tape = ref2;
+  if (frame.bind) scope.bindings = { ...scope.bindings, [frame.bind]: ref2 };
+  else if (ref2.type === "unit") scope.target = ref2;
+  childFrame(state, frame, { kind: frame.hook ? "hook" : "action", scope, program: frame.program });
+}
+function execute(state, frame, op, host, options) {
+  const context = contextFor(state, frame, host);
+  const evaluate3 = (value) => evaluateExpr(value, context);
+  const vars = registers(state, frame);
+  switch (op.op) {
+    case "let": {
+      const owner = frame.carrier ? resolveEntity(state, frame.carrier) : context.self;
+      const skill2 = frame.carrier?.type === "skill" ? frame.carrier : null;
+      if (op.scope === "owner" && !owner && !skill2) return;
+      const entityName = ["self", "source", "target", "attacker"].includes(op.value) ? op.value : null;
+      const entity = entityName ? context[entityName] : typeof op.value === "string" && op.value.startsWith("vars.") ? context.resolveEntity(readRegister2(context, op.value.slice(5))) : null;
+      const value = entity ? entityRef(state, entity, entityName ?? op.value, context.self, context) : evaluate3(op.value);
+      if (value !== null && value !== void 0 && (typeof value === "object" || ["number", "string", "boolean"].includes(typeof value))) {
+        const record3 = op.scope !== "owner" ? vars : skill2 ? (state.vm.skillVars ??= {})[JSON.stringify([skill2.ownerId, skill2.id])] ??= skillCarrierVars(state, skill2) : owner.vars ??= {};
+        Object.defineProperty(record3, op.name, { value: op.scope === "owner" && value?.id ? value.id : value, writable: true, enumerable: true, configurable: true });
+      }
+      return;
+    }
+    case "if": {
+      const program2 = evaluate3(op.cond) === true ? op.then : op.else;
+      if (program2?.length) childFrame(state, frame, { program: program2 });
+      return;
+    }
+    case "for_each": {
+      const entities2 = selectVM(state, op.select, context);
+      if (!entities2.length) return;
+      const { from = "options" } = op.select;
+      const items = entities2.map((entity) => typeof entity === "object" ? entityRef(state, entity, from, selectorOwner(op.select, context), context) : { type: "literal", value: entity });
+      childFrame(state, frame, { kind: "loop", from, bind: op.bind ?? null, items, program: op.body });
+      return;
+    }
+    case "ask":
+      askInstruction(state, frame, op, context, host, options);
+      return;
+    default: {
+      if (!Object.hasOwn(host.ops, op.op)) throw new Error(`\u672A\u77E5 Opcode ${op.op}`);
+      const runtimeOp = ["apply_status", "check"].includes(op.op) && op.statusId?.startsWith?.("vars.") ? { ...op, statusId: context.vars[op.statusId.slice(5)]?.type === "literal" ? context.vars[op.statusId.slice(5)].value : context.vars[op.statusId.slice(5)]?.id ?? context.vars[op.statusId.slice(5)] } : op;
+      host.ops[op.op]({
+        state,
+        frame,
+        op: runtimeOp,
+        context,
+        evaluate: evaluate3,
+        vars,
+        options,
+        host,
+        select: (selector2) => selectVM(state, selector2, context),
+        push: (spec) => pushFrame(state, spec),
+        branch: (program2) => childFrame(state, frame, { program: program2 })
+      });
+    }
+  }
+}
+function stepVM(state, host, options = {}) {
+  const vm = state.vm;
+  while (vm.stack.length && !vm.pendingAsk) {
+    const frame = vm.stack.at(-1);
+    if (vm.stepsRemaining-- <= 0 || vm.stack.length > maxDepth) {
+      host.log(state, own5(state.units, frame.ownerId), "vm_halt", "\u7ED3\u7B97\u8D85\u8FC7\u6307\u4EE4\u6B65\u6570\u6216\u6808\u6DF1\u9650\u5236\uFF0C\u5DF2\u4E2D\u6B62\u672C\u6B21\u7ED3\u7B97");
+      vm.stack.length = 0;
+      break;
+    }
+    if (frame.rule && !frame.entered) {
+      frame.entered = true;
+      const { rule: rule2, useKey } = frame;
+      if (rule2.filter !== void 0 && evaluateExpr(rule2.filter, contextFor(state, frame, host)) !== true || host.enterRule?.(state, frame, useKey) === false) {
+        vm.stack.pop();
+        continue;
+      }
+    }
+    if (frame.native) {
+      host.continue({ state, frame, host, options, context: contextFor(state, frame, host) });
+      continue;
+    }
+    if (frame.kind === "loop") {
+      if (frame.pc >= frame.items.length) vm.stack.pop();
+      else stepLoop(state, frame);
+      continue;
+    }
+    if (frame.pc >= frame.program.length) {
+      vm.stack.pop();
+      continue;
+    }
+    const op = frame.program[frame.pc++];
+    if (op.enabled !== false) execute(state, frame, op, host, options);
+  }
+  pruneEvents(vm);
+  return { pendingAsk: vm.pendingAsk, conditional: options.conditional === true };
+}
+
 // src/core/vm-schema.js
 var enumOf = (...values5) => ({ enum: values5 });
 var ref = (name) => ({ $ref: `#/$defs/${name}` });
@@ -1175,7 +2515,7 @@ var reserved2 = [...Object.getOwnPropertyNames(Object.prototype), "prototype"];
 var idPattern2 = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
 var id = { type: "string", pattern: `^${idPattern2}$`, not: enumOf(...reserved2) };
 var sourceSkillId = either(id, { type: "string", pattern: `^equip:${idPattern2}:${idPattern2}$` });
-var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved2.map((key4) => `vars.${key4}`)) };
+var variable = { type: "string", pattern: `^vars\\.${idPattern2}$`, not: enumOf(...reserved2.map((key5) => `vars.${key5}`)) };
 var tag = { type: "string", pattern: "^[a-z0-9][a-z0-9_-]{0,31}$" };
 var statusId = { ...id, format: "tactical-status-id" };
 var dynamicStatusId = either(statusId, variable);
@@ -1315,7 +2655,7 @@ var selector = ref("selector");
 var target = ref("targetRef");
 var program = ref("program");
 var chooseOptions = list(object({ id, label: text }, ["id", "label"]), 1);
-var mapOf = (key4, value) => ({ type: "object", propertyNames: key4, additionalProperties: value });
+var mapOf = (key5, value) => ({ type: "object", propertyNames: key5, additionalProperties: value });
 var eventPatchFields = {
   before_action: { cancel: booleanExpr, consumeCostOnCancel: booleanExpr, costScale: numericExpr, origin: pointRef, ignoreLOS: booleanExpr },
   before_target: { cancel: booleanExpr, redirectTarget: redirectRef, replaceTarget: object({ from: redirectRef, to: redirectRef }, ["from", "to"]), damageScale: numericExpr },
@@ -1521,8 +2861,8 @@ var scalarOrExpr = either(number, bool, { type: "string", maxLength: 1024 });
 var poolDefinition = object({ name: text, cap: numericExpr, initial: numericExpr }, ["cap"]);
 var unitPools = mapOf(id, poolDefinition);
 var baseCarrier = { name: text, tags: list(tag), tier: integer(1, 7), vars: mapOf(id, scalarOrExpr), flags: list(enumOf("undispellable", "concept_immune"), 1), mods: list(ref("statMod")), rules: list(ref("rule")), shareRulesTo: ref("pureSelector") };
-var carrier = { ...baseCarrier, unitPools };
-var carrierFields = Object.freeze(Object.keys(carrier).filter((key4) => key4 !== "name"));
+var carrier2 = { ...baseCarrier, unitPools };
+var carrierFields = Object.freeze(Object.keys(carrier2).filter((key5) => key5 !== "name"));
 var statusPatchFields = Object.freeze(["remainingTurns", "durationType", "stackMode", "stacks", "expireOn", ...carrierFields]);
 var validCarrierScalar = (value) => Number.isFinite(value) || typeof value === "boolean" || typeof value === "string" && value.length <= scalarOrExpr.anyOf[2].maxLength;
 var lifecycleFlags = { bindToSource: bool, concentration: bool };
@@ -1548,7 +2888,7 @@ var spawnPanelFields = {
 var summonTemplatePanelFields = Object.freeze(Object.keys(spawnPanelFields));
 var spawnSpecs = {
   unit: withRules(object({
-    ...carrier,
+    ...carrier2,
     ...lifecycleFlags,
     tier: spawnTier,
     templateId: id,
@@ -1565,7 +2905,24 @@ var spawnSpecs = {
     turnMode: enumOf("independent", "linked_group", "linked_each", "none"),
     turnAnchor: target
   }), when("copyOf", {}, { not: either(needs("templateId"), needs("spawnPanel")) })),
-  zone: object({ ...baseCarrier, ...lifecycleFlags, tier: spawnTier, templateId: id, area: zoneArea, follow: bool, remainingTurns: spawnTurns, persistent: bool }, ["area"]),
+  zone: withRules(
+    object({
+      ...baseCarrier,
+      ...lifecycleFlags,
+      tier: spawnTier,
+      templateId: id,
+      area: zoneArea,
+      follow: bool,
+      remainingTurns: spawnTurns,
+      persistent: bool,
+      layer: enumOf(...ZONE_LAYERS),
+      medium: enumOf(...ZONE_MEDIA),
+      blocksLOS: bool,
+      moveCost: integer(1, 4)
+    }, ["area"]),
+    when("medium", enumOf(...SURFACE_MEDIA), { ...needs("layer"), properties: { layer: literal("surface") } }),
+    when("medium", enumOf(...CLOUD_MEDIA), { ...needs("layer"), properties: { layer: literal("cloud") } })
+  ),
   terrain: withRules(object({ kind: enumOf("floor", "wall", "slope"), height: number, mode: enumOf("set", "raise", "lower"), area: spawnArea, remainingTurns: spawnTurns, persistent: bool }), either(needs("kind"), needs("height")), when("mode", {}, needs("height"))),
   cover: object({ name: text, hp: integer(1), cover: integer(0, 12), material: text, area: spawnArea, remainingTurns: spawnTurns, persistent: bool }),
   item: object({ templateId: id, count: either(integer(1), formula) }, ["templateId"])
@@ -1642,7 +2999,7 @@ var opcodeSchemas = [
     stacks: numericExpr,
     stackMode: enumOf("refresh", "stack", "replace", "extend"),
     extendTurns: numericExpr,
-    vars: carrier.vars,
+    vars: carrier2.vars,
     expireOn: ref("expiry"),
     ...lifecycleFlags
   }, ["target", "statusId"]),
@@ -1688,7 +3045,7 @@ var selectorSpec = (picks) => withRules(object({
   of: either(enumOf(...scopes), variable),
   area,
   where: booleanExpr,
-  pick: variants(literal("all"), ...picks.map((key4) => object({ [key4]: integer(1) }, [key4])))
+  pick: variants(literal("all"), ...picks.map((key5) => object({ [key5]: integer(1) }, [key5])))
 }), either(needs("from"), needs("options")), when("of", {}, { properties: { from: literal("statuses") } }));
 var defs = {
   expr: either(number, bool, formula),
@@ -1752,7 +3109,7 @@ function matches(value, schema, context, depth = 0) {
   if (schema.type === "string") {
     if (typeof value !== "string" || schema.minLength !== void 0 && value.length < schema.minLength || schema.maxLength !== void 0 && value.length > schema.maxLength || schema.pattern && !new RegExp(schema.pattern, "u").test(value)) return false;
     if (schema.format === "tactical-expr") return validExpr(value);
-    if (schema.format === "tactical-status-id") return Object.hasOwn(context.statusTemplates ?? {}, value) || (context.declaredStatusTemplatesOnly ? value === "suppressed" : Object.hasOwn(STATUSES, value));
+    if (schema.format === "tactical-status-id") return Object.hasOwn(context.statusTemplates ?? {}, value) || (context.declaredStatusTemplatesOnly ? value === "suppressed" : Object.hasOwn(STATUSES, value) || Object.hasOwn(PHYSICAL_STATUSES, value));
     if (schema.format === "tactical-damage-type") return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
     return true;
   }
@@ -1762,12 +3119,12 @@ function matches(value, schema, context, depth = 0) {
   const plainObject = value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
   if (schema.type === "object" && !plainObject) return false;
   if (plainObject) {
-    if (schema.required?.some((key4) => !Object.hasOwn(value, key4))) return false;
+    if (schema.required?.some((key5) => !Object.hasOwn(value, key5))) return false;
     const entries3 = Object.entries(value);
     if (entries3.length < (schema.minProperties ?? 0)) return false;
-    return entries3.every(([key4, item]) => {
-      if (schema.propertyNames && !next(key4, schema.propertyNames)) return false;
-      if (Object.hasOwn(schema.properties ?? {}, key4)) return next(item, schema.properties[key4]);
+    return entries3.every(([key5, item]) => {
+      if (schema.propertyNames && !next(key5, schema.propertyNames)) return false;
+      if (Object.hasOwn(schema.properties ?? {}, key5)) return next(item, schema.properties[key5]);
       if (schema.additionalProperties === false) return false;
       return !schema.additionalProperties || next(item, schema.additionalProperties);
     });
@@ -1791,7 +3148,7 @@ var validVmProgram = (value, options = {}) => valid(value, "program", options) &
 var validVmRule = (value, options = {}) => valid(value, "rule", options);
 function vmRuleError(rule2, options = {}) {
   if (validVmRule(rule2, options)) return void 0;
-  const unknownEvent = typeof rule2 === "object" && rule2 ? [...JSON.stringify(rule2).matchAll(/\bevent\.([A-Za-z_][A-Za-z0-9_]*)/g)].find(([, key4]) => !EVENT_SCALAR_KEYS.includes(key4) && !(options.extraEventKeys ?? []).includes(key4)) : null;
+  const unknownEvent = typeof rule2 === "object" && rule2 ? [...JSON.stringify(rule2).matchAll(/\bevent\.([A-Za-z_][A-Za-z0-9_]*)/g)].find(([, key5]) => !EVENT_SCALAR_KEYS.includes(key5) && !(options.extraEventKeys ?? []).includes(key5)) : null;
   if (unknownEvent) return `\u672A\u77E5\u4E8B\u4EF6\u5B57\u6BB5 event.${unknownEvent[1]}`;
   const settings = { ...options, hook: rule2?.hook };
   function invalidInstruction(program2, path2, depth = 0) {
@@ -1838,15 +3195,15 @@ function vmStatModError(mod2, options = {}) {
     return `VM \u4FEE\u9970 ${mod2.stat} \u53EA\u63A5\u53D7 flat \u52A0\u503C`;
   }
   if (!mod2 || typeof mod2 !== "object" || Array.isArray(mod2)) return "VM \u4FEE\u9970\u5FC5\u987B\u662F\u5BF9\u8C61";
-  for (const [key4, value] of Object.entries(mod2)) {
-    if (!Object.hasOwn(statMod.properties, key4)) return `VM \u4FEE\u9970 ${key4}\uFF1A\u672A\u77E5\u5B57\u6BB5`;
-    const field2 = statMod.properties[key4];
+  for (const [key5, value] of Object.entries(mod2)) {
+    if (!Object.hasOwn(statMod.properties, key5)) return `VM \u4FEE\u9970 ${key5}\uFF1A\u672A\u77E5\u5B57\u6BB5`;
+    const field2 = statMod.properties[key5];
     if (!matches(value, field2, options) || !exprCheck(value, options)) {
       const choices = field2.enum ?? field2.items?.enum;
-      return `VM \u4FEE\u9970 ${key4}=${JSON.stringify(value)} \u65E0\u6548\uFF1B${choices ? `\u53EF\u9009\u503C\uFF1A${choices.join("\u3001")}` : "\u8BF7\u68C0\u67E5\u5B57\u6BB5\u7C7B\u578B\u3001\u7ED3\u6784\u6216\u8868\u8FBE\u5F0F"}`;
+      return `VM \u4FEE\u9970 ${key5}=${JSON.stringify(value)} \u65E0\u6548\uFF1B${choices ? `\u53EF\u9009\u503C\uFF1A${choices.join("\u3001")}` : "\u8BF7\u68C0\u67E5\u5B57\u6BB5\u7C7B\u578B\u3001\u7ED3\u6784\u6216\u8868\u8FBE\u5F0F"}`;
     }
   }
-  const numeric2 = ["flat", "mult", "additivePercent"].find((key4) => Object.hasOwn(mod2, key4));
+  const numeric2 = ["flat", "mult", "additivePercent"].find((key5) => Object.hasOwn(mod2, key5));
   if (numeric2 && !Object.hasOwn(mod2, "stat")) return `VM \u4FEE\u9970 ${numeric2} \u7F3A\u5C11 stat`;
   if (mod2.forbidReason !== void 0 && mod2.forbidAction !== true) return "forbidReason \u9700\u8981\u914D\u5408 forbidAction: true";
   if (mod2.costRedirect && mod2.costRedirect.from === mod2.costRedirect.to) return "costRedirect \u7684 from \u4E0E to \u4E0D\u80FD\u76F8\u540C";
@@ -1855,1168 +3212,8 @@ function vmStatModError(mod2, options = {}) {
 var validVmTag = (value) => valid(value, "tag", {});
 var validVmSourceSkillId = (value) => matches(value, sourceSkillId, {});
 
-// src/core/vm-select.js
-var coordinate = (value) => Number.isFinite(value?.x) && Number.isFinite(value?.y);
-var pointElevation = (state, point4) => coordinate(point4) ? Number.isFinite(point4.z) ? point4.z : elevation(state, point4) : void 0;
-var sortedValues = (table4) => Object.keys(table4 ?? {}).sort().map((key4) => table4[key4]);
-var cellKey = ({ x, y }) => `${x},${y}`;
-var readRegister = (context, key4) => Object.hasOwn(context.vars ?? {}, key4) ? context.vars[key4] : void 0;
-var resolveRegister = (context, key4) => {
-  const value = readRegister(context, key4);
-  return context.resolveEntity ? context.resolveEntity(value) : value;
-};
-function resolvePoint(value, context) {
-  const point4 = typeof value !== "string" ? value : value.startsWith("vars.") ? resolveRegister(context, value.slice(5)) : context[value];
-  if (!point4 || typeof point4 !== "object") return null;
-  const inside = (x2, y2) => {
-    if (x2 >= 0 && x2 < (context.boardW ?? Infinity) && y2 >= 0 && y2 < (context.boardH ?? Infinity)) return true;
-    context.warn?.(`\u5750\u6807 (${x2},${y2}) \u8D8A\u754C\uFF0C\u5FFD\u7565\u8BE5\u843D\u70B9`);
-    return false;
-  };
-  if (typeof value === "string") return coordinate(point4) && inside(point4.x, point4.y) ? point4 : null;
-  const x = evaluateExpr(point4.x, context), y = evaluateExpr(point4.y, context);
-  const z = point4.z === void 0 ? void 0 : evaluateExpr(point4.z, context);
-  if (![x, y].every(Number.isFinite) || z !== void 0 && !Number.isFinite(z)) return null;
-  const col = Math.round(x), row = Math.round(y);
-  return inside(col, row) ? { x: col, y: row, ...z === void 0 ? {} : { z } } : null;
-}
-function zoneContains(state, zone, at3, { ignoreZ = false } = {}) {
-  if (!zone?.area || !coordinate(at3)) return false;
-  const { shape: shape2, anchorUnitId, center, radius, innerRadius, rect, cells: cells2, z1, z2 } = zone.area;
-  const anchor = anchorUnitId && Object.hasOwn(state.units, anchorUnitId) ? state.units[anchorUnitId] : null;
-  if (zone.follow && anchorUnitId && (!anchor || anchor.hp <= 0 || anchor.fled)) return false;
-  if (!ignoreZ && (Number.isFinite(z1) || Number.isFinite(z2))) {
-    const z = pointElevation(state, at3);
-    const low = Number.isFinite(z1) && Number.isFinite(z2) ? Math.min(z1, z2) : z1;
-    const high = Number.isFinite(z1) && Number.isFinite(z2) ? Math.max(z1, z2) : z2;
-    if (Number.isFinite(low) && z < low || Number.isFinite(high) && z > high) return false;
-  }
-  const origin = zone.follow ? anchor ?? center : center ?? anchor;
-  if (shape2 === "board") return state.grid[at3.y]?.[at3.x] != null;
-  if (shape2 === "cells") return cells2?.some((cell) => cell.x === at3.x && cell.y === at3.y) ?? false;
-  if (shape2 === "rect") return Boolean(rect && at3.x >= Math.min(rect.x1, rect.x2) && at3.x <= Math.max(rect.x1, rect.x2) && at3.y >= Math.min(rect.y1, rect.y2) && at3.y <= Math.max(rect.y1, rect.y2));
-  if (!coordinate(origin)) return false;
-  if (shape2 === "single") return origin.x === at3.x && origin.y === at3.y;
-  const distance2 = Math.hypot(at3.x - origin.x, at3.y - origin.y, pointElevation(state, at3) - pointElevation(state, origin));
-  return distance2 <= radius && (shape2 === "circle" || shape2 === "ring" && distance2 >= (innerRadius ?? 0));
-}
-function selectorOwner(selector2, context) {
-  const of = selector2.of ?? "target";
-  return of.startsWith("vars.") ? resolveRegister(context, of.slice(5)) : context[of];
-}
-function rows(state, selector2, context) {
-  if (selector2.options) return [...new Set(selector2.options)];
-  switch (selector2.from) {
-    case "units":
-      return sortedValues(state.units);
-    case "action_targets":
-      return (context.event?.targets ?? []).map((id3) => state.units[id3]).filter(Boolean);
-    case "zones":
-      return sortedValues(state.zones);
-    case "covers":
-      return sortedValues(state.covers);
-    case "terrain":
-      return sortedValues(state.spatialTerrain);
-    case "tape":
-      return state.tape ?? [];
-    case "statuses":
-      return sortedValues(selectorOwner(selector2, context)?.statuses);
-    case "cells":
-      return state.grid.flatMap((row, y) => row.map(({ z, kind }, x) => ({ x, y, z, kind })));
-    case "self":
-    case "source":
-    case "target":
-    case "attacker":
-      return [context[selector2.from]].filter(Boolean);
-    default: {
-      if (!selector2.from.startsWith("vars.")) return [];
-      const register2 = readRegister(context, selector2.from.slice(5));
-      const refs = Array.isArray(register2) ? register2 : [register2];
-      return refs.map((ref2) => context.resolveEntity ? context.resolveEntity(ref2) : ref2).filter((entity) => entity && typeof entity === "object");
-    }
-  }
-}
-function selectVM(state, selector2, context, { pure = false } = {}) {
-  if (typeof selector2 === "string") {
-    if (selector2.startsWith("vars.")) {
-      const value = readRegister(context, selector2.slice(5));
-      const refs = Array.isArray(value) ? value : [value];
-      return refs.map((ref2) => context.resolveEntity ? context.resolveEntity(ref2) : ref2).filter((entity) => entity && typeof entity === "object");
-    }
-    selector2 = { from: selector2 };
-  }
-  if (!selector2) return [];
-  let candidates = rows(state, selector2, context);
-  if (selector2.area) {
-    const { origin: from = selector2.area.center ?? "self", shape: shape2, radius, innerRadius, width, angle } = selector2.area;
-    const origin = resolvePoint(from, context);
-    if (!coordinate(origin)) return [];
-    const aim = ["line", "fan", "cone"].includes(shape2) && coordinate(context.target) ? context.target : origin;
-    const attacker = context.attacker ?? context.self;
-    const facing = aim === context.target && aim.x === origin.x && aim.y === origin.y && coordinate(attacker) && (attacker.x !== aim.x || attacker.y !== aim.y) ? [aim.x - attacker.x, aim.y - attacker.y] : origin.facing;
-    const resolvedRadius = typeof radius === "string" ? evaluateExpr(radius, context) : radius;
-    const resolvedInnerRadius = typeof innerRadius === "string" ? evaluateExpr(innerRadius, context) : innerRadius;
-    const resolvedWidth = typeof width === "string" ? evaluateExpr(width, context) : width;
-    const resolvedAngle = typeof angle === "string" ? evaluateExpr(angle, context) : angle;
-    const cells2 = new Set(selector2.from === "terrain" && shape2 === "single" && coordinate(origin) ? [cellKey(origin)] : aoeCells(state, origin, aim, {
-      shape: shape2,
-      radius: resolvedRadius,
-      innerRadius: resolvedInnerRadius,
-      width: resolvedWidth,
-      angle: resolvedAngle,
-      facing,
-      range: Infinity,
-      ignoreLOS: selector2.from === "terrain"
-    }).map(cellKey));
-    const withinArea = (candidate) => {
-      const points = selector2.from === "terrain" ? candidate.cells ?? [] : selector2.from === "zones" ? state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y }))).filter((point4) => zoneContains(state, candidate, point4, { ignoreZ: true })) : [candidate];
-      return points.some((point4) => coordinate(point4) && cells2.has(cellKey(point4)) && (!context.hostileAreaDistance || !["circle", "ring", "single"].includes(shape2) || (context.hostileAreaDistance(origin, point4) ?? 0) <= (shape2 === "single" ? 0 : resolvedRadius ?? 1.5) + 1e-9));
-    };
-    candidates = candidates.filter(withinArea);
-  }
-  if (selector2.where !== void 0) {
-    candidates = candidates.filter((candidate) => {
-      const scope = { ...context, candidate };
-      if (selector2.from === "statuses") scope.status = candidate;
-      if (selector2.from === "zones") scope.zone = candidate;
-      if (selector2.from === "covers") scope.cover = candidate;
-      if (selector2.from === "terrain") scope.terrain = candidate;
-      if (selector2.from === "tape") scope.tape = candidate;
-      return evaluateExpr(selector2.where, scope) === true;
-    });
-  }
-  const { pick } = selector2;
-  if (!pick || pick === "all") return candidates;
-  if (pick.first !== void 0) return candidates.slice(0, pick.first);
-  if (pick.nearest !== void 0 && coordinate(context.self)) {
-    return candidates.filter(coordinate).sort((a, b) => distance3D(state, context.self, a) - distance3D(state, context.self, b)).slice(0, pick.nearest);
-  }
-  if (pick.random !== void 0 && !pure) {
-    const remaining = [...candidates], selected2 = [];
-    while (remaining.length && selected2.length < pick.random) {
-      const sample = nextRng(state.rng);
-      state.rng = sample.rng;
-      selected2.push(...remaining.splice(Math.floor(sample.value * remaining.length), 1));
-    }
-    return selected2;
-  }
-  return [];
-}
-
-// src/core/vm-rule-limits.js
-function ruleAvailability(state, rule2, key4) {
-  const vm = state.vm;
-  const stamp = vm?.ruleTurns?.[key4];
-  const sameRound = Boolean(stamp && stamp.round === state.round);
-  const sameTurn = sameRound && stamp.turn === state.turn;
-  const roundUsed = sameRound ? stamp.roundCount ?? stamp.count ?? 0 : 0;
-  const usesLeft = Math.min(
-    rule2.usesPerBattle === void 0 ? Infinity : Math.max(0, rule2.usesPerBattle - (vm?.uses?.[key4] ?? 0)),
-    rule2.usesPerTurn === void 0 ? Infinity : Math.max(0, rule2.usesPerTurn - (sameTurn ? stamp.count : 0)),
-    rule2.usesPerRound === void 0 ? Infinity : Math.max(0, rule2.usesPerRound - roundUsed)
-  );
-  const cooldownRemaining = rule2.cooldownTurns === void 0 || !stamp ? 0 : Math.max(0, stamp.round + rule2.cooldownTurns - state.round);
-  return { usesLeft, cooldownRemaining, sameTurn, roundUsed, stamp };
-}
-
-// src/core/vm-immunity.js
-var own3 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-function carrierEntity(state, carrier4) {
-  if (!carrier4) return void 0;
-  if (carrier4.type === "status") return own3(own3(state.units, carrier4.ownerId)?.statuses, carrier4.id);
-  if (carrier4.type === "skill") return own3(state.skills, carrier4.id);
-  if (carrier4.type === "item") {
-    const item = own3(state.items, carrier4.id);
-    const template = own3(state.equipment, item?.templateId);
-    return { ...template, ...item, vars: { ...template?.vars, ...item?.vars } };
-  }
-  if (carrier4.type === "zone") return own3(state.zones, carrier4.id);
-  if (carrier4.type === "unit") return own3(state.units, carrier4.id);
-}
-function ruleContext(state, entry2, event, carrierScope2) {
-  const entity = carrierEntity(state, entry2.carrier);
-  const row = { entity: entity ?? {}, carrier: entry2.carrier ?? { type: "unit", id: entry2.ownerId }, nativeOwnerId: entry2.ownerId };
-  return carrierScope2(state, row, entry2.ownerId, event, {
-    // Immunity checks are deliberately non-recursive. A before_status rule may
-    // ask about the candidate status, but cannot trigger another immunity walk.
-    isImmune: () => null
-  });
-}
-function cancelProgram(program2, context) {
-  for (const op of program2 ?? []) {
-    if (op.op === "if") {
-      const condition = evaluateExpr(op.cond, context);
-      if (typeof condition !== "boolean") return false;
-      if (!cancelProgram(condition ? op.then : op.else, context)) return false;
-    } else if (op.op === "mutate_event" && Object.keys(op.patch).every((key4) => key4 === "cancel")) {
-      const cancel = evaluateExpr(op.patch.cancel, context);
-      if (typeof cancel !== "boolean") return false;
-      context.event.cancel = cancel;
-    } else return false;
-  }
-  return true;
-}
-function isStatusImmune(state, target2, statusId3, source = null, dependencies2 = {}) {
-  if (!target2?.id || typeof statusId3 !== "string") return null;
-  const event = {
-    actorId: source?.id ?? null,
-    sourceId: source?.id ?? null,
-    targetId: target2.id,
-    statusId: statusId3,
-    tags: getStatusTemplate(state, statusId3)?.tags ?? []
-  };
-  const { collectRules: collectRules2, carrierScope: carrierScope2 } = dependencies2;
-  if (typeof collectRules2 !== "function" || typeof carrierScope2 !== "function") return null;
-  const entries3 = collectRules2(state, "before_status", event, { isImmune: () => null });
-  for (const entry2 of entries3) {
-    const { usesLeft, cooldownRemaining } = ruleAvailability(state, entry2.rule, entry2.useKey);
-    if (!usesLeft || cooldownRemaining) continue;
-    const context = ruleContext(state, entry2, event, carrierScope2);
-    if (entry2.rule.filter !== void 0 && evaluateExpr(entry2.rule.filter, context) !== true) continue;
-    if (cancelProgram(entry2.rule.program, context)) {
-      event.cancel = context.event.cancel;
-      if (event.cancel === true) {
-        event.immunityCarrier = entry2.carrier ?? { type: "unit", id: entry2.ownerId };
-        event.immunityOwnerId = entry2.ownerId;
-      }
-    } else event.cancel = void 0;
-  }
-  return event.cancel === true;
-}
-
-// src/core/vm-pools.js
-var mirrors = { hp: "maxHp", mp: "maxMp", sp: "maxSp" };
-var initialMirrors = { hp: "initialMaxHp", mp: "initialMaxMp", sp: "initialMaxSp" };
-var carrierTables = { unit: "units", item: "items", status: "statuses", zone: "zones" };
-function carrier2(state, ownerKind, ownerId) {
-  const table4 = own(carrierTables, ownerKind);
-  const owner = table4 && own(state[table4], ownerId);
-  if (!owner) throw new RangeError(`Unknown ${ownerKind} pool owner: ${ownerId}`);
-  return owner;
-}
-function requirePool(state, poolId) {
-  const pool = own(state.pools, poolId);
-  if (!pool) throw new RangeError(`Unknown pool: ${poolId}`);
-  return pool;
-}
-function nonnegative(value, name) {
-  if (!Number.isFinite(value) || value < 0) throw new RangeError(`${name} must be finite and nonnegative`);
-  return value;
-}
-function nextId(state, reserved3, base) {
-  let id3 = base;
-  for (let suffix = 2; own(state.pools, id3) || reserved3.has(id3); suffix++) id3 = `${base}_${suffix}`;
-  reserved3.add(id3);
-  return id3;
-}
-function syncMirrors(state, pool) {
-  const maxField = own(mirrors, pool.kind);
-  if (!maxField) return;
-  const initialField = own(initialMirrors, pool.kind);
-  for (const { ownerKind, ownerId } of pool.contributors) {
-    const unit = ownerKind === "unit" && own(state.units, ownerId);
-    if (unit && own(unit.pools, pool.kind) === pool.id) {
-      unit[pool.kind] = pool.current;
-      unit[maxField] = pool.max;
-      if (initialField) {
-        const contributor = pool.contributors.find((row) => row.ownerKind === "unit" && row.ownerId === ownerId);
-        unit[initialField] = contributor?.initialMaxBase ?? pool.initialMax ?? unit[initialField] ?? pool.max;
-      }
-    }
-  }
-}
-function publish(state, pools, bindings = [], removed = []) {
-  if (pools.length === 0) return;
-  state.pools ??= {};
-  for (const pool of pools) state.pools[pool.id] = pool;
-  for (const { owner, key: key4, poolId } of bindings) owner.pools = { ...owner.pools, [key4]: poolId };
-  for (const poolId of removed) delete state.pools[poolId];
-  for (const pool of pools) syncMirrors(state, pool);
-}
-function getPool(state, ownerId, key4, ownerKind = "unit") {
-  const table4 = own(carrierTables, ownerKind);
-  const owner = table4 && own(state[table4], ownerId);
-  return own(state.pools, own(owner?.pools, key4));
-}
-function deleteOwnedPools(state, owner) {
-  for (const poolId of Object.values(owner?.pools ?? {})) delete state.pools[poolId];
-  if (owner?.pools) owner.pools = {};
-}
-function planPool(state, reserved3, { ownerKind = "unit", ownerId, key: key4, max, current = max, initialMax = max, reloadable = false }) {
-  const owner = carrier2(state, ownerKind, ownerId);
-  if (typeof key4 !== "string" || key4.length === 0) throw new TypeError("Pool key must be a nonempty string");
-  if (own(owner.pools, key4) !== void 0) throw new RangeError(`Pool already bound: ${ownerId}.${key4}`);
-  nonnegative(max, "Pool max");
-  nonnegative(initialMax, "Pool initial max");
-  if (!Number.isFinite(current)) throw new RangeError("Pool current must be finite");
-  if (typeof reloadable !== "boolean") throw new TypeError("Pool reloadable must be boolean");
-  const id3 = nextId(state, reserved3, `pool_${ownerKind === "unit" ? "" : `${ownerKind}_`}${ownerId}_${key4}`);
-  const kind = ownerKind === "unit" && Object.hasOwn(mirrors, key4) ? key4 : "custom";
-  const pool = {
-    id: id3,
-    kind,
-    contributors: [{ ownerKind, ownerId, maxBase: max, initialMaxBase: initialMax }],
-    current: clamp(current, 0, max),
-    max,
-    initialMax,
-    reloadable
-  };
-  return { pool, binding: { owner, key: key4, poolId: id3 } };
-}
-function createPool(state, spec) {
-  const { pool, binding } = planPool(state, /* @__PURE__ */ new Set(), spec);
-  publish(state, [pool], [binding]);
-  return pool.id;
-}
-function initializeUnitPools(state, unitId, resources) {
-  const unit = carrier2(state, "unit", unitId);
-  const reserved3 = /* @__PURE__ */ new Set();
-  const plans = Object.entries(mirrors).map(([key4, maxField]) => planPool(state, reserved3, {
-    max: resources ? own(resources, key4)?.max : unit[maxField],
-    initialMax: resources ? own(resources, key4)?.initialMax ?? own(resources, key4)?.max : unit[initialMirrors[key4]] ?? unit[maxField],
-    current: resources ? own(resources, key4)?.current : unit[key4],
-    ownerId: unitId,
-    key: key4
-  }));
-  publish(state, plans.map((p) => p.pool), plans.map((p) => p.binding));
-  return Object.fromEntries(plans.map(({ pool }) => [pool.kind, pool.id]));
-}
-function poolNumber(expr2, context) {
-  const number3 = evaluateExpr(expr2, context);
-  return Number.isFinite(number3) ? Math.max(0, number3) : 0;
-}
-function syncUnitPools(state, unit) {
-  if (!unit.pools?.hp) initializeUnitPools(state, unit.id);
-  const equipment = [unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? [], ...unit.bagWeapons ?? []].map((id3) => own(state.items, id3)).filter(Boolean).map((item) => own(state.equipment, item.templateId));
-  const skills = [.../* @__PURE__ */ new Set([...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})])].map((id3) => own(state.skills, id3));
-  const definitions2 = /* @__PURE__ */ new Map();
-  const context = { state, self: unit };
-  for (const declaration of [unit, ...skills, ...equipment]) {
-    for (const [key4, definition] of Object.entries(declaration?.unitPools ?? {})) {
-      if (Object.hasOwn(mirrors, key4)) continue;
-      const previous = definitions2.get(key4);
-      definitions2.set(key4, {
-        max: Math.max(previous?.max ?? 0, poolNumber(definition.cap, context)),
-        current: Math.max(previous?.current ?? 0, poolNumber(definition.initial, context))
-      });
-    }
-  }
-  for (const [key4, { max, current }] of definitions2) {
-    const pool = getPool(state, unit.id, key4);
-    if (!pool) {
-      createPool(state, { ownerId: unit.id, key: key4, max, current: Math.min(max, current) });
-    } else if (max > pool.initialMax) {
-      if (max > pool.max) updatePoolMax(state, pool.id, "set_max", max);
-      const updated = getPool(state, unit.id, key4);
-      updated.initialMax = max;
-      updated.contributors[0].initialMaxBase = max;
-    }
-  }
-}
-function maxFor(state, contributor, effectiveMax) {
-  return nonnegative(effectiveMax ? effectiveMax(contributor, state) : contributor.maxBase, "Contributor max");
-}
-function total(values5, name) {
-  return nonnegative(values5.reduce((sum, value) => sum + value, 0), name);
-}
-function unitBindings(state, pool) {
-  return pool.contributors.map((contributor) => {
-    const { ownerKind, ownerId } = contributor;
-    const owner = carrier2(state, ownerKind, ownerId);
-    if (ownerKind !== "unit" || getPool(state, ownerId, pool.kind) !== pool) {
-      throw new RangeError(`Invalid contributor binding: ${pool.id}/${ownerId}`);
-    }
-    return { contributor, owner };
-  });
-}
-function selectedPools(state, unitIds, kind) {
-  const ids = unitIds.map((id3) => {
-    const pool = getPool(state, id3, kind);
-    if (!pool || pool.kind !== kind) throw new RangeError(`Missing ${kind} pool for unit: ${id3}`);
-    return pool.id;
-  });
-  return [...new Set(ids)].sort().map((id3) => requirePool(state, id3));
-}
-function topology(state, unitIds, kinds, plan, effectiveMax) {
-  const units = [...new Set(unitIds)].sort();
-  const reserved3 = /* @__PURE__ */ new Set();
-  const pools = [], bindings = [], removed = [];
-  for (const kind of [...new Set(kinds)].sort()) {
-    if (!Object.hasOwn(mirrors, kind)) throw new RangeError(`Pool cannot be linked or unlinked: ${kind}`);
-    plan(state, selectedPools(state, units, kind), new Set(units), effectiveMax, {
-      reserved: reserved3,
-      pools,
-      bindings,
-      removed
-    });
-  }
-  publish(state, pools, bindings, removed);
-  return pools.map((pool) => pool.id);
-}
-function linkPools(state, unitIds, kinds, { effectiveMax } = {}) {
-  return topology(state, unitIds, kinds, (state2, sources, _, effectiveMax2, plan) => {
-    if (sources.length < 2) return;
-    const kind = sources[0].kind;
-    const members = sources.flatMap((pool) => unitBindings(state2, pool));
-    members.sort((a, b) => a.contributor.ownerId < b.contributor.ownerId ? -1 : a.contributor.ownerId > b.contributor.ownerId ? 1 : 0);
-    const contributors = members.map((member) => member.contributor);
-    const max = total(contributors.map((c) => maxFor(state2, c, effectiveMax2)), "Shared pool max");
-    const initialMax = total(contributors.map((c) => c.initialMaxBase ?? c.maxBase), "Shared pool initial max");
-    const current = clamp(total(sources.map((pool) => pool.current), "Shared pool current"), 0, max);
-    const id3 = nextId(state2, plan.reserved, `pool_shared_${kind}`);
-    plan.pools.push({ id: id3, kind, contributors, current, max, initialMax, reloadable: sources.every((pool) => pool.reloadable) });
-    for (const { owner } of members) plan.bindings.push({ owner, key: kind, poolId: id3 });
-    for (const pool of sources) plan.removed.push(pool.id);
-  }, effectiveMax);
-}
-function unlinkPools(state, unitIds, kinds, { effectiveMax } = {}) {
-  return topology(state, unitIds, kinds, (state2, sources, selected2, effectiveMax2, plan) => {
-    for (const pool of sources) {
-      if (pool.contributors.length < 2) continue;
-      const groups = [], remaining = [];
-      for (const member of unitBindings(state2, pool)) {
-        if (selected2.has(member.contributor.ownerId)) groups.push([member]);
-        else remaining.push(member);
-      }
-      if (remaining.length) groups.push(remaining);
-      const capacities = groups.map((group) => total(group.map(({ contributor }) => maxFor(state2, contributor, effectiveMax2)), "Unlinked pool max"));
-      const maxTotal = total(capacities, "Unlinked total max");
-      const currentTotal = clamp(pool.current, 0, maxTotal);
-      const full = currentTotal === maxTotal;
-      const ratio3 = full ? 1 : currentTotal / maxTotal;
-      let currentLeft = currentTotal;
-      for (const [index, members] of groups.entries()) {
-        const max = capacities[index];
-        const share = index === groups.length - 1 ? currentLeft : max * ratio3;
-        const current = full ? max : Math.min(currentLeft, clamp(share, 0, max));
-        currentLeft -= current;
-        const keepId = members === remaining;
-        const id3 = keepId ? pool.id : nextId(state2, plan.reserved, `pool_${members[0].contributor.ownerId}_${pool.kind}`);
-        const initialMax = total(members.map(({ contributor }) => contributor.initialMaxBase ?? contributor.maxBase), "Unlinked pool initial max");
-        plan.pools.push({ ...pool, id: id3, contributors: members.map((member) => member.contributor), current, max, initialMax });
-        if (!keepId) plan.bindings.push({ owner: members[0].owner, key: pool.kind, poolId: id3 });
-      }
-      if (!remaining.length) plan.removed.push(pool.id);
-    }
-  }, effectiveMax);
-}
-function change(pool, before, applied = true) {
-  const lethal = pool.kind === "hp" && before > 0 && pool.current === 0 ? { poolId: pool.id, units: pool.contributors.map((c) => c.ownerId) } : null;
-  return { poolId: pool.id, before, after: pool.current, applied, lethal };
-}
-function updatePoolMax(state, poolId, mode, amount, { minRemain = 0 } = {}) {
-  const pool = requirePool(state, poolId);
-  if (!Number.isFinite(amount)) throw new RangeError("Pool max amount must be finite");
-  const before = pool.max;
-  if (!Number.isFinite(amount) || amount < 0) throw new RangeError("Pool max amount must be nonnegative");
-  const floor = Math.max(pool.kind === "hp" ? 1 : 0, Number(minRemain) || 0);
-  const max = mode === "add_max" ? before + amount : mode === "sub_max" ? Math.max(floor, before - amount) : mode === "set_max" ? Math.max(floor, amount) : NaN;
-  if (!Number.isFinite(max)) throw new RangeError(`Unknown pool max update mode: ${mode}`);
-  const members = pool.contributors;
-  const totalBase = members.reduce((sum, c) => sum + c.maxBase, 0);
-  let remaining = max;
-  const nextBase = members.map((c, index) => {
-    const share = index === members.length - 1 ? remaining : Math.min(remaining, totalBase > 0 ? c.maxBase / totalBase * max : max / members.length);
-    remaining -= share;
-    return { ...c, initialMaxBase: c.initialMaxBase ?? c.maxBase, maxBase: share };
-  });
-  const next = { ...pool, initialMax: pool.initialMax ?? before, contributors: nextBase, max, current: clamp(pool.current, 0, max) };
-  publish(state, [next]);
-  return { ...change(next, pool.current), beforeMax: before, afterMax: max };
-}
-function updatePoolCurrent(state, poolId, mode, amount, { minRemain = 0, requireFull = false } = {}) {
-  const pool = requirePool(state, poolId);
-  if (!Number.isFinite(amount)) throw new RangeError("Pool amount must be finite");
-  const before = pool.current;
-  let current;
-  switch (mode) {
-    case "set":
-      current = amount;
-      break;
-    case "add":
-      current = before + amount;
-      break;
-    case "sub": {
-      nonnegative(amount, "Pool subtraction");
-      nonnegative(minRemain, "Minimum pool remainder");
-      const available = Math.max(0, before - minRemain);
-      if (requireFull && amount > available) return change(pool, before, false);
-      current = before - Math.min(available, amount);
-      break;
-    }
-    default:
-      throw new RangeError(`Unknown pool update mode: ${mode}`);
-  }
-  if (!Number.isFinite(current)) throw new RangeError("Pool update must produce a finite current");
-  const next = { ...pool, current: clamp(current, 0, pool.max) };
-  publish(state, [next]);
-  return change(next, before);
-}
-function swapPoolCurrents(state, firstId, secondId) {
-  const first = requirePool(state, firstId);
-  const second = requirePool(state, secondId);
-  if (firstId === secondId) return [];
-  const nextFirst = { ...first, current: clamp(second.current, 0, first.max) };
-  const nextSecond = { ...second, current: clamp(first.current, 0, second.max) };
-  publish(state, [nextFirst, nextSecond]);
-  return [change(nextFirst, first.current), change(nextSecond, second.current)];
-}
-
-// src/core/vm-carriers.js
-var own4 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-var entries = (table4) => Object.keys(table4 ?? {}).sort().map((key4) => [key4, table4[key4]]);
-var compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-var alive = (unit) => Boolean(unit && !unit.fled && (unit.alive ?? unit.hp > 0));
-var active = (entity) => entity.persistent || entity.durationType === "persistent" || entity.durationType === "until_removed" || !(entity.remainingTurns <= 0);
-var idOf = (ref2) => typeof ref2 === "string" ? ref2 : ref2?.id;
-var slots = ["attack", "action", "move", "cast", "reaction", "fly", "teleport"];
-function itemRules(template, item) {
-  return [...new Map([...template?.rules ?? [], ...item?.rules ?? []].map((rule2) => [rule2.id, rule2])).values()];
-}
-function skillCarrierVars(state, { id: id3, ownerId }) {
-  return { ...own4(state.skills, id3)?.vars, ...own4(state.vm?.skillVars, JSON.stringify([ownerId, id3])) };
-}
-function carriers(state) {
-  const units = entries(state.units);
-  const equippedBy = /* @__PURE__ */ new Map();
-  const result = [];
-  for (const [id3, unit] of units) {
-    result.push({ entity: unit, carrier: { type: "unit", id: id3 }, nativeOwnerId: id3 });
-    for (const itemId of [unit.mainHand, unit.offHand, unit.shield, unit.weapon, ...unit.gear ?? [], ...unit.bagWeapons ?? []]) {
-      if (itemId != null && !equippedBy.has(itemId)) equippedBy.set(itemId, id3);
-    }
-  }
-  for (const [ownerId, unit] of units) {
-    for (const [id3, entity] of entries(unit.statuses)) {
-      if (active(entity)) result.push({ entity, carrier: { type: "status", id: id3, ownerId }, nativeOwnerId: ownerId });
-    }
-  }
-  for (const [ownerId, unit] of units) {
-    if (unit.fled) continue;
-    for (const id3 of [...new Set(unit.skills ?? [])].sort()) {
-      const skill2 = own4(state.skills, id3);
-      if (!skill2) continue;
-      const carrier4 = { type: "skill", id: id3, ownerId };
-      result.push({ entity: { ...skill2, id: id3, vars: skillCarrierVars(state, carrier4) }, carrier: carrier4, nativeOwnerId: ownerId });
-    }
-  }
-  for (const [id3, entity] of entries(state.items)) {
-    const nativeOwnerId = equippedBy.get(id3) ?? entity.ownerId;
-    const template = own4(state.equipment, entity.templateId);
-    if (own4(state.units, nativeOwnerId) && (!template?.boundTo || template.boundTo === nativeOwnerId)) {
-      result.push({ entity: { ...template, ...entity, id: id3, vars: { ...template?.vars, ...entity.vars } }, carrier: { type: "item", id: id3 }, nativeOwnerId });
-    }
-  }
-  for (const [id3, entity] of entries(state.zones)) {
-    if (!entity.area) continue;
-    const anchorId = entity.area.anchorUnitId;
-    if (!active(entity) || entity.follow && anchorId && !alive(own4(state.units, anchorId))) continue;
-    result.push({ entity, carrier: { type: "zone", id: id3 }, nativeOwnerId: anchorId ?? entity.sourceId });
-  }
-  return result;
-}
-function incomingDistanceOffset(state, actor, target2, event = {}) {
-  if (!actor?.team || !target2?.team || actor.team === target2.team || !own4(state.units, target2.id)) return 0;
-  return Math.max(0, applyStatMod(0, aggregateModifiers(state, target2.id, {
-    ...event,
-    actorId: actor.id,
-    targetId: target2.id
-  }).stats.incomingDistanceOffset));
-}
-function carrierEffectiveTier(state, ref2, owner) {
-  const nativeOwner = own4(state.units, ref2?.ownerId) ?? owner;
-  if (ref2?.type === "status") {
-    const status = own4(nativeOwner?.statuses, ref2.id);
-    return status?.effectiveTier ?? resolveEffectiveTier("unit", null, status?.sourceTier ?? nativeOwner?.tier);
-  }
-  if (ref2?.type === "skill") {
-    const skill2 = own4(state.skills, ref2.id);
-    return resolveEffectiveTier(skill2?.backpackItem ? "item" : "skill", skill2?.quality, nativeOwner?.tier);
-  }
-  if (ref2?.type === "item") {
-    const item = own4(state.items, ref2.id);
-    return resolveEffectiveTier("item", own4(state.equipment, item?.templateId)?.quality, nativeOwner?.tier);
-  }
-  if (ref2?.type === "zone") return own4(state.zones, ref2.id)?.effectiveTier ?? resolveEffectiveTier("unit", null, nativeOwner?.tier);
-  return resolveEffectiveTier("unit", null, nativeOwner?.tier);
-}
-function eventUnit(state, ref2) {
-  return own4(state.units, idOf(ref2));
-}
-function sourceIdOf(row, ownerId, event) {
-  return row.entity.sourceId ?? row.nativeOwnerId ?? event.sourceId ?? idOf(event.source) ?? ownerId;
-}
-function eventWeapon(state, event, item, unit) {
-  const weapon2 = own4(state.equipment, event.weaponTemplateId) ?? own4(state.equipment, own4(state.items, event.weaponId)?.templateId);
-  if (weapon2) return weapon2;
-  const carried = own4(state.equipment, item?.templateId);
-  if (carried?.kind === "weapon" && carried.attack !== void 0) return carried;
-  const main = own4(state.items, unit?.mainHand ?? unit?.weapon);
-  const template = own4(state.equipment, main?.templateId);
-  return !template?.boundTo || template.boundTo === unit?.id ? template : null;
-}
-function carrierScope(state, row, ownerId, event, queries2 = {}) {
-  const self = own4(state.units, ownerId);
-  const immunity = queries2.isImmune ?? ((currentState, unit, key4, context) => isStatusImmune(
-    currentState,
-    unit,
-    key4,
-    context?.source ?? own4(currentState.units, event.sourceId ?? event.actorId),
-    { collectRules, carrierScope }
-  ));
-  const source = eventUnit(state, sourceIdOf(row, ownerId, event));
-  const target2 = eventUnit(state, event.targetId ?? event.target);
-  const attacker = eventUnit(state, event.actorId ?? event.actor ?? event.attackerId ?? event.attacker ?? event.sourceId ?? event.source ?? event.killerId ?? event.killer) ?? source;
-  return {
-    self,
-    source,
-    target: target2,
-    attacker,
-    event: { ...event, actor: attacker, source, target: target2 },
-    vars: row.entity.vars,
-    status: row.carrier.type === "status" ? row.entity : void 0,
-    zone: row.carrier.type === "zone" ? row.entity : void 0,
-    skill: row.carrier.type === "skill" ? row.entity : void 0,
-    item: row.carrier.type === "item" ? row.entity : void 0,
-    center: event.center,
-    round: state.round,
-    turn: state.turn,
-    timeOfDay: state.time?.timeOfDay,
-    units: state.units,
-    zones: state.zones,
-    effectiveTier: carrierEffectiveTier(state, row.carrier, own4(state.units, row.nativeOwnerId) ?? self),
-    cellM: state.scale?.cellM ?? 2,
-    boardW: state.grid?.[0]?.length,
-    boardH: state.grid?.length,
-    ...state.grid && { distance: (a = self, b = target2) => Number.isFinite(a?.x) && Number.isFinite(a?.y) && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null },
-    elevation: (entity) => pointElevation(state, entity),
-    resource: (unit, key4) => key4 === "move" ? unit ? movementBudget(state, unit).remainingCells : 0 : key4 === "attack" || key4 === "action" ? Math.max(0, 1 - (unit?.used?.[key4] ?? 0)) : key4 === "reaction" && unit ? unit.reactionAvailable === false ? 0 : 1 : getPool(state, unit?.id, key4, "unit")?.current ?? own4(unit, key4),
-    itemResource: (item, key4) => getPool(state, item?.id, key4, "item")?.current ?? 0,
-    inZone: (unit, key4) => entries(state.zones).some(([, zone]) => active(zone) && (zone.id === key4 || zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, unit)),
-    isImmune: (unit, key4, context) => immunity(state, unit, key4, context ?? { source }),
-    weapon: () => eventWeapon(state, event, row.carrier.type === "item" ? row.entity : void 0, attacker ?? self),
-    select: (key4, context) => selectVM(state, own4(queries2.selectors, key4) ?? key4, context, { pure: true })
-  };
-}
-function recipients(state, row, unitIds, event, queries2, hook2) {
-  const { entity, carrier: carrier4, nativeOwnerId } = row;
-  const shared = entity.shareRulesTo ? new Set(selectVM(
-    state,
-    entity.shareRulesTo,
-    carrierScope(state, row, nativeOwnerId, event, queries2),
-    { pure: true }
-  )) : null;
-  return unitIds.filter((id3) => {
-    const unit = own4(state.units, id3);
-    return carrier4.type === "zone" ? zoneContains(state, entity, unit) || hook2 === "after_move" && id3 === event.actorId && Array.isArray(event.traversedCells) && event.traversedCells.some((pt) => zoneContains(state, entity, pt)) || shared?.has(unit) : id3 === nativeOwnerId || shared?.has(unit);
-  });
-}
-function eventOwners(state, hook2, event) {
-  const actor = event.actorId ?? event.actor ?? event.sourceId ?? event.source;
-  const target2 = event.targetId ?? event.target;
-  const killer = event.killerId ?? event.killer ?? actor;
-  const dead = event.deadId ?? event.killedId ?? (typeof event.killed === "boolean" ? void 0 : event.killed) ?? target2;
-  let refs;
-  if (event.ownerIds) refs = event.ownerIds;
-  else if (hook2 === "after_move" || hook2 === "round_start" || hook2 === "round_end") refs = entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
-  else if (hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2") {
-    refs = event.units ?? entries(state.units).filter(([, unit]) => event.poolId != null && unit.pools?.hp === event.poolId).map(([id3]) => id3);
-  } else if (hook2 === "on_ally_death") {
-    const ally = eventUnit(state, dead);
-    refs = ally ? entries(state.units).filter(([id3, unit]) => id3 !== ally.id && unit.team === ally.team && alive(unit)).map(([id3]) => id3) : [];
-  } else if (hook2 === "on_death") refs = event.units ?? [dead];
-  else if (hook2 === "on_kill") refs = [killer];
-  else if (hook2 === "turn_start" || hook2 === "turn_end") refs = [event.unitId ?? event.unit ?? actor ?? target2];
-  else refs = [actor, event.sourceId ?? event.source, target2, ...event.targets ?? []];
-  return [...new Set(refs.map(idOf).filter((id3) => id3 != null && own4(state.units, id3)))].sort();
-}
-function carrierDedupePrefix({ entity, carrier: carrier4, nativeOwnerId }, ownerId, pooled = false) {
-  if (!pooled && ownerId === nativeOwnerId && carrier4.type === "item") return `item:${carrier4.id}`;
-  return entity.templateId ?? JSON.stringify([carrier4.type, carrier4.ownerId, carrier4.id]);
-}
-function collectRules(state, hook2, event = {}, queries2 = {}) {
-  if (hook2 === "active") return [];
-  const unitIds = eventOwners(state, hook2, event);
-  let boardUnitIds;
-  const boardOwners = () => boardUnitIds ??= entries(state.units).filter(([, unit]) => alive(unit)).map(([id3]) => id3);
-  const candidates = [];
-  const pooled = hook2 === "on_lethal_p1" || hook2 === "on_lethal_p2";
-  const carrierRows = carriers(state);
-  if (hook2 === "after_status_removed" && event.removedStatus?.rules?.length) {
-    const removed = event.removedStatus;
-    carrierRows.push({ entity: removed, carrier: { type: "status", id: removed.id, ownerId: event.targetId }, nativeOwnerId: event.targetId });
-  }
-  for (const [carrierOrder, row] of carrierRows.entries()) {
-    if (hook2 === "after_move" && row.nativeOwnerId && !alive(own4(state.units, row.nativeOwnerId))) continue;
-    if (row.carrier.type === "skill" && !["on_lethal_p1", "on_lethal_p2", "on_death"].includes(hook2) && !alive(own4(state.units, row.nativeOwnerId))) continue;
-    const rules = row.entity.rules?.filter((rule2) => rule2.enabled !== false && rule2.hook === hook2);
-    if (!rules?.length) continue;
-    let participantRecipients, boardRecipients;
-    for (const rule2 of rules) {
-      const owners = rule2.listenScope === "board" ? boardRecipients ??= recipients(state, row, boardOwners(), event, queries2, hook2) : participantRecipients ??= unitIds.length ? recipients(state, row, unitIds, event, queries2, hook2) : [];
-      for (const ownerId of owners) {
-        const dedupeKey = rule2.dedupeKey ?? `${carrierDedupePrefix(row, ownerId, pooled)}:${rule2.id}`;
-        const useKey = JSON.stringify([ownerId, dedupeKey]);
-        candidates.push({ dedupeKey, entry: { rule: rule2, carrierOrder, ownerId, sourceId: sourceIdOf(row, ownerId, event), carrier: row.carrier, useKey } });
-      }
-    }
-  }
-  candidates.sort(({ entry: a }, { entry: b }) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compare(a.rule.id, b.rule.id) || compare(a.ownerId, b.ownerId));
-  const seen = /* @__PURE__ */ new Set();
-  return candidates.flatMap(({ dedupeKey, entry: entry2 }) => {
-    const key4 = pooled ? dedupeKey : entry2.useKey;
-    if (seen.has(key4)) return [];
-    seen.add(key4);
-    return [entry2];
-  });
-}
-function matchesModifier(mod2, event) {
-  return (mod2.damageType === void 0 || mod2.damageType === event.damageType) && (mod2.statusId === void 0 || mod2.statusId === event.statusId) && (mod2.pool === void 0 || mod2.pool === event.pool) && (mod2.checkKind === void 0 || mod2.checkKind === event.checkKind || mod2.checkKind === event.statusId || event.tags?.includes(mod2.checkKind));
-}
-function aggregateModifiers(state, unitId, event = {}, queries2 = {}) {
-  const stats = /* @__PURE__ */ new Map();
-  const locks = Object.fromEntries(slots.map((slot2) => [slot2, false]));
-  const flags2 = /* @__PURE__ */ new Set();
-  const policy = /* @__PURE__ */ new Map();
-  const costRedirects = [];
-  let forbid = false;
-  let forbidReason = null;
-  let pooledCostFlat = 0;
-  const forbiddenTargetIds = /* @__PURE__ */ new Set();
-  let charmTeam = null, foundCharm = false;
-  const seen = /* @__PURE__ */ new Set();
-  if (own4(state.units, unitId)) {
-    for (const row of carriers(state)) {
-      if (row.carrier.type === "skill" && !alive(own4(state.units, row.nativeOwnerId))) continue;
-      if (!row.entity.mods?.length || !recipients(state, row, [unitId], event, queries2).length) continue;
-      const context = carrierScope(state, row, unitId, event, queries2);
-      for (const [index, mod2] of row.entity.mods.entries()) {
-        const key4 = JSON.stringify([carrierDedupePrefix(row, unitId), index]);
-        if (seen.has(key4) || !matchesModifier(mod2, event) || mod2.when !== void 0 && evaluateExpr(mod2.when, context) !== true) continue;
-        const values5 = {};
-        for (const field2 of ["flat", "mult", "additivePercent"]) {
-          if (mod2[field2] === void 0) continue;
-          const value = evaluateExpr(mod2[field2], context);
-          if (Number.isFinite(value)) values5[field2] = value;
-        }
-        if (!Object.keys(values5).length && !mod2.locks?.length && !mod2.flags?.length && !Object.keys(mod2.controlPolicy ?? {}).length && mod2.forbidAction !== true && !mod2.costRedirect) continue;
-        seen.add(key4);
-        if (mod2.forbidAction === true && !forbid) {
-          forbid = true;
-          forbidReason = mod2.forbidReason || (row.entity.name ? `\u53D7\u3010${row.entity.name}\u3011\u9650\u5236\uFF0C\u65E0\u6CD5\u6267\u884C\u8BE5\u884C\u52A8` : "\u5F53\u524D\u89C4\u5219\u7981\u6B62\u6267\u884C\u8BE5\u884C\u52A8");
-        }
-        if (mod2.costRedirect) costRedirects.push(mod2.costRedirect);
-        if (mod2.stat === "costFlat" && mod2.pool !== void 0) pooledCostFlat += values5.flat ?? 0;
-        if (mod2.stat && Object.keys(values5).length) {
-          const total2 = stats.get(mod2.stat) ?? { flat: 0, mult: 1, additivePercent: 0 };
-          total2.flat += values5.flat ?? 0;
-          total2.mult *= values5.mult ?? 1;
-          total2.additivePercent += values5.additivePercent ?? 0;
-          stats.set(mod2.stat, total2);
-        }
-        for (const lock of mod2.locks ?? []) if (Object.hasOwn(locks, lock)) locks[lock] = true;
-        for (const flag of mod2.flags ?? []) flags2.add(flag);
-        for (const [field2, value] of Object.entries(mod2.controlPolicy ?? {})) {
-          if (!policy.has(field2)) policy.set(field2, Array.isArray(value) ? [...value] : value);
-        }
-        const charm = mod2.controlPolicy?.mindControl === "charm";
-        if (charm || mod2.controlPolicy?.forbidTargetSource === true) {
-          const sourceId2 = sourceIdOf(row, unitId, event);
-          if (sourceId2 != null) forbiddenTargetIds.add(sourceId2);
-          if (charm && !foundCharm) {
-            foundCharm = true;
-            charmTeam = context.source?.team ?? null;
-          }
-        }
-      }
-    }
-  }
-  return {
-    stats: Object.fromEntries(stats),
-    locks,
-    flags: Object.fromEntries([...flags2].map((flag) => [flag, true])),
-    controlPolicy: Object.fromEntries(policy),
-    forbiddenTargetIds,
-    charmTeam,
-    forbid,
-    forbidReason,
-    costRedirects,
-    pooledCostFlat
-  };
-}
-function unitSkipped(state, unit) {
-  const { locks } = aggregateModifiers(state, unit.id);
-  return locks.attack && locks.action && locks.move && locks.cast;
-}
-function reactionBlocked(state, unit) {
-  const { locks } = aggregateModifiers(state, unit.id);
-  return locks.reaction || locks.attack;
-}
-function applyStatMod(base, { flat = 0, mult = 1, additivePercent = 0 } = {}) {
-  return (base + flat) * (1 + additivePercent) * mult;
-}
-
-// src/core/tactical-vm.js
-var maxSteps = 2e3;
-var maxDepth = 64;
-var own5 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
-var readRegister2 = (context, key4) => own5(context.vars, key4);
-var compareId = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-var coordinate2 = (value) => Number.isInteger(value?.x) && Number.isInteger(value?.y);
-var samePoint = (a, b) => a.x === b.x && a.y === b.y;
-var newVM = () => ({ stack: [], events: {}, pendingAsk: null, stepsRemaining: maxSteps, serial: 0 });
-var nextId2 = (vm, prefix) => `${prefix}_${++vm.serial}`;
-function resolveEntity(state, ref2) {
-  if (!ref2) return void 0;
-  return ref2.type === "status" ? own5(own5(state.units, ref2.ownerId)?.statuses, ref2.id) : ref2.type === "unit" ? own5(state.units, ref2.id) : ref2.type === "zone" ? own5(state.zones, ref2.id) : ref2.type === "item" ? own5(state.items, ref2.id) : ref2.value;
-}
-function entityRef(state, value, from, owner, context) {
-  if (from.startsWith("vars.")) {
-    const register2 = own5(context.vars, from.slice(5));
-    const refs = Array.isArray(register2) ? register2 : [register2];
-    const ref2 = refs.find((entry2) => entry2 && typeof entry2 === "object" && resolveEntity(state, entry2) === value);
-    if (ref2) return ref2;
-    if (own5(state.zones, value.id) === value) return { type: "zone", id: value.id };
-    if (own5(state.items, value.id) === value) return { type: "item", id: value.id };
-  }
-  if (from === "statuses") return { type: "status", ownerId: owner.id, id: Object.keys(owner.statuses).find((key4) => owner.statuses[key4] === value) };
-  if (from === "tape" || from === "cells") return { type: "literal", value };
-  if (from === "zones") return { type: "zone", id: value.id };
-  if (own5(state.units, value.id) === value) return { type: "unit", id: value.id };
-  return { type: "literal", value };
-}
-function makeFrame(vm, spec) {
-  return {
-    frameId: nextId2(vm, "f"),
-    kind: "action",
-    ownerId: null,
-    sourceId: null,
-    ruleId: null,
-    program: [],
-    pc: 0,
-    vars: {},
-    eventRef: null,
-    ...spec
-  };
-}
-function pushFrame(state, spec) {
-  const frame = makeFrame(state.vm, spec);
-  state.vm.stack.push(frame);
-  return frame;
-}
-function childFrame(state, frame, patch) {
-  return pushFrame(state, {
-    kind: frame.kind,
-    ownerId: frame.ownerId,
-    sourceId: frame.sourceId,
-    ruleId: frame.ruleId,
-    eventRef: frame.eventRef,
-    carrier: frame.carrier ?? null,
-    attribution: frame.attribution ?? null,
-    scope: frame.scope ?? null,
-    hook: frame.hook ?? null,
-    localsRef: frame.localsRef ?? frame.frameId,
-    ...frame.sourceSkillId && { sourceSkillId: frame.sourceSkillId },
-    ...patch
-  });
-}
-function registers(state, frame) {
-  return (state.vm.stack.find((entry2) => entry2.frameId === frame.localsRef) ?? frame).vars;
-}
-function contextFor(state, frame, host) {
-  const event = own5(state.vm.events, frame.eventRef) ?? {};
-  const self = own5(state.units, frame.ownerId);
-  const source = own5(state.units, frame.sourceId);
-  const target2 = resolveEntity(state, frame.scope?.target) ?? own5(state.units, event.targetId);
-  const attacker = own5(state.units, event.actorId) ?? source;
-  const vars = { ...registers(state, frame) };
-  const bound2 = resolveEntity(state, frame.scope?.bound);
-  Object.assign(vars, frame.scope?.bindings);
-  const carrier4 = resolveEntity(state, frame.carrier);
-  const itemTemplate = frame.carrier?.type === "item" ? own5(state.equipment, carrier4?.templateId) : void 0;
-  return {
-    self,
-    source,
-    target: target2,
-    attacker,
-    candidate: bound2,
-    vars,
-    event: { ...event, actor: attacker, source, target: target2 },
-    resolveEntity: (value, kind) => {
-      const entity = typeof value === "string" ? own5(state.units, value) ?? own5(state.zones, value) ?? own5(state.items, value) : value?.type && (value.type === "literal" ? Object.hasOwn(value, "value") : Object.hasOwn(value, "id")) ? resolveEntity(state, value) : value;
-      return kind === "unit" && own5(state.units, entity?.id) !== entity ? void 0 : entity;
-    },
-    status: resolveEntity(state, frame.scope?.status) ?? event.removedStatus ?? (frame.carrier?.type === "status" ? carrier4 : void 0),
-    zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === "zone" ? carrier4 : void 0),
-    skill: frame.carrier?.type === "skill" ? { ...own5(state.skills, frame.carrier.id), id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : void 0,
-    item: frame.carrier?.type === "item" ? { ...itemTemplate, ...carrier4, id: frame.carrier.id, tags: carrier4?.tags ?? itemTemplate?.tags, vars: { ...itemTemplate?.vars, ...carrier4?.vars } } : void 0,
-    tape: resolveEntity(state, frame.scope?.tape),
-    center: event.center,
-    pool: frame.scope?.pool,
-    round: state.round,
-    turn: state.turn,
-    timeOfDay: state.time?.timeOfDay,
-    units: Object.values(state.units),
-    zones: state.zones,
-    effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
-    hostileAreaDistance: (origin, unit) => distance3D(state, origin, unit) + incomingDistanceOffset(state, self ?? source, unit, event),
-    warn: (message) => host.log?.(state, self, "warning", message, { ruleId: frame.ruleId }),
-    cellM: state.scale?.cellM ?? 2,
-    boardW: state.grid?.[0]?.length,
-    boardH: state.grid?.length,
-    distance: (a = self, b = target2) => coordinate2(a) && coordinate2(b) ? distance3D(state, a, b) : null,
-    elevation: (entity) => pointElevation(state, entity),
-    resource: (entity, key4) => host.resource?.(state, entity, key4) ?? own5(entity, key4),
-    itemResource: (item, key4) => getPool(state, item?.id, key4, "item")?.current ?? 0,
-    weapon: () => eventWeapon(state, event, frame.carrier?.type === "item" ? carrier4 : void 0, attacker ?? self),
-    inZone: (entity, key4) => Object.values(state.zones ?? {}).some((zone) => (zone.id === key4 || zone.templateId === key4 || zone.tags?.includes(key4)) && zoneContains(state, zone, entity)),
-    isImmune: (unit, key4) => host.isImmune?.(state, unit, key4, frame) ?? false,
-    select: (selector2) => selectVM(state, selector2, contextFor(state, frame, host), { pure: true })
-  };
-}
-function newEvent(state, initial) {
-  const eventRef = nextId2(state.vm, "ev");
-  state.vm.events[eventRef] = structuredClone(initial);
-  return eventRef;
-}
-function scheduleHooks(state, parent, hook2, eventRef, host) {
-  const event = own5(state.vm.events, eventRef);
-  host.expireMatchingStatuses?.(state, hook2, event);
-  const entries3 = host.rules?.(state, hook2, event) ?? [];
-  const ordered2 = entries3.filter(({ rule: rule2 }) => rule2.enabled !== false).sort((a, b) => (b.rule.priority ?? 0) - (a.rule.priority ?? 0) || a.carrierOrder - b.carrierOrder || compareId(a.rule.id, b.rule.id));
-  for (const entry2 of ordered2.reverse()) pushFrame(state, {
-    kind: "hook",
-    hook: hook2,
-    eventRef,
-    ownerId: entry2.ownerId,
-    sourceId: entry2.sourceId ?? parent.sourceId,
-    ruleId: entry2.rule.id,
-    carrier: entry2.carrier ?? null,
-    ...parent.data && { data: parent.data },
-    ...entry2.sourceSkillId && { sourceSkillId: entry2.sourceSkillId },
-    rule: entry2.rule,
-    useKey: entry2.useKey ?? `${entry2.ownerId}:${entry2.rule.dedupeKey ?? entry2.rule.id}`,
-    program: entry2.rule.program
-  });
-}
-function pruneEvents(vm) {
-  for (const id3 of Object.keys(vm.events)) {
-    if (!vm.stack.some((frame) => frame.eventRef === id3 || frame.awaitEvent === id3)) delete vm.events[id3];
-  }
-}
-function writeChoice(state, frame, ask, value, host, automatic = false) {
-  const multi = ask.maxSelect !== void 0;
-  const choiceRef = ask.kind === "entity" ? own5(frame.choiceRefs, value) : void 0;
-  registers(state, frame)[ask.outVar] = multi ? value.map((id3) => own5(frame.choiceRefs, id3)) : choiceRef ?? value;
-  delete frame.choiceRefs;
-  const action = state.vm.stack.findLast((entry2) => entry2.native === "action");
-  if (action) action.answers.push(value);
-  const unit = own5(state.units, ask.chooserId);
-  const labelFor = (id3) => ask.options.find((option) => option.id === id3)?.label ?? id3;
-  const label = multi ? value.map(labelFor).join("\u3001") : coordinate2(value) ? `(${value.x}, ${value.y})` : Array.isArray(ask.options) ? labelFor(value) : value;
-  const event = own5(state.vm.events, frame.eventRef);
-  const commit = event?.commitKind ? {
-    kind: event.commitKind,
-    targetId: event.targetId,
-    pool: event.pool,
-    ...Number.isFinite(event.finalAmount) ? { amount: event.finalAmount } : {}
-  } : null;
-  host.log(state, unit, "choice", `${unit.name}${automatic ? "\u81EA\u52A8\u9009\u62E9" : "\u9009\u62E9"}\u300C${ask.prompt}\u300D\uFF1A${label}`, {
-    choice: {
-      kind: ask.kind,
-      prompt: ask.prompt,
-      value,
-      label,
-      automatic,
-      ...ask.kind === "number" ? { min: ask.options.min, max: ask.options.max } : {},
-      ...commit ? { commit } : {}
-    }
-  });
-}
-function automaticChoice(state, ask) {
-  if (ask.kind === "number") return ask.aiPolicy === "max" ? ask.options.max : ask.options.min;
-  const chooser = state.units[ask.chooserId];
-  const enemies = Object.values(state.units).filter((unit) => unit.team !== chooser.team && unit.hp > 0 && !unit.fled);
-  let ranked = ask.options;
-  if (ask.kind === "cell" && enemies.length && ["best_offensive_cell", "safest_cell"].includes(ask.aiPolicy)) {
-    const sign3 = ask.aiPolicy === "safest_cell" ? -1 : 1;
-    ranked = ranked.map((cell) => ({ cell, distance: Math.min(...enemies.map((enemy) => distance3D(state, cell, enemy))) })).sort((a, b) => sign3 * (a.distance - b.distance)).map((row) => row.cell);
-  } else if (ask.kind === "entity" && ask.aiPolicy === "highest_threat") {
-    const threat = (option) => {
-      const unit = state.units[option.id];
-      return enemies.includes(unit) ? Math.max(0, ...["str", "agi", "int", "spi"].map((stat3) => unit.stats?.[stat3] ?? 0)) : -1;
-    };
-    ranked = [...ranked].sort((a, b) => threat(b) - threat(a));
-  }
-  if (ask.maxSelect !== void 0) return ranked.slice(0, ask.maxSelect).map((option) => option.id);
-  return ask.kind === "cell" ? ranked[0] : ranked[0].id;
-}
-function askInstruction(state, frame, op, context, host, options) {
-  const chooser = selectVM(state, op.chooser, context)[0];
-  if (!chooser) return;
-  let choices;
-  if (op.kind === "number") {
-    const min = evaluateExpr(op.min, context), max = evaluateExpr(op.max, context);
-    if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return;
-    choices = { min, max, step: Number.isInteger(min) && Number.isInteger(max) ? 1 : "any" };
-  } else if (op.kind === "option") choices = op.options;
-  else if (op.kind === "entity") {
-    const { from } = op.select;
-    const entities2 = /* @__PURE__ */ new Map();
-    for (const entity of selectVM(state, op.select, context)) {
-      if (typeof entity.id === "string" && !entities2.has(entity.id)) entities2.set(entity.id, entity);
-    }
-    choices = [...entities2.values()].map(({ id: id3, name }) => ({ id: id3, label: name ?? id3 }));
-    if (choices.length) frame.choiceRefs = Object.fromEntries([...entities2].map(([id3, entity]) => [id3, entityRef(state, entity, from, selectorOwner(op.select, context), context)]));
-  } else choices = selectVM(state, op.select, context).filter((cell) => coordinate2(cell) && !unitAt(state, cell.x, cell.y, chooser.id)).map(({ x, y }) => ({ x, y }));
-  if (!choices || choices.length === 0) return;
-  const ask = {
-    askId: nextId2(state.vm, "ask"),
-    chooserId: chooser.id,
-    prompt: op.prompt,
-    kind: op.kind,
-    options: choices,
-    outVar: op.out,
-    aiPolicy: op.aiPolicy,
-    ...op.maxSelect === void 0 ? {} : { maxSelect: op.maxSelect }
-  };
-  if (options.dryRun || (host.isAI?.(state, chooser) ?? chooser.team === "red")) {
-    if (options.dryRun) options.conditional = true;
-    const value = automaticChoice(state, ask);
-    writeChoice(state, frame, ask, value, host, true);
-  } else state.vm.pendingAsk = ask;
-}
-function answerVM(state, action, host) {
-  const ask = state.vm?.pendingAsk;
-  const frame = state.vm?.stack.at(-1);
-  if (!ask || !frame || action.askId !== ask.askId) throw new Error("\u8BE5\u6218\u6597\u9009\u62E9\u5DF2\u5931\u6548");
-  if (Object.keys(action).some((key4) => !["type", "askId", "value", "x", "y"].includes(key4))) throw new Error("\u56DE\u7B54\u542B\u672A\u77E5\u5B57\u6BB5");
-  let value;
-  if (ask.kind === "cell") {
-    if (Object.hasOwn(action, "value") || !coordinate2(action) || !ask.options.some((cell) => samePoint(cell, action))) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u683C\u5B50");
-    value = { x: action.x, y: action.y };
-  } else {
-    if (Object.hasOwn(action, "x") || Object.hasOwn(action, "y")) throw new Error("\u56DE\u7B54\u7C7B\u578B\u4E0D\u5339\u914D");
-    value = action.value;
-    if (ask.kind === "number") {
-      const { min, max, step } = ask.options;
-      if (!Number.isFinite(value) || value < min || value > max || step === 1 && !Number.isInteger(value)) throw new Error("\u6570\u503C\u8D85\u51FA\u9009\u62E9\u8303\u56F4");
-    } else if (ask.maxSelect !== void 0) {
-      if (!Array.isArray(value) || value.length < 1 || value.length > ask.maxSelect) throw new Error(`\u8BF7\u9009\u62E9 1\u2013${ask.maxSelect} \u4E2A\u5B9E\u4F53`);
-      const requested = new Set(value);
-      const ordered2 = ask.options.filter((option) => requested.has(option.id));
-      if (ordered2.length !== value.length) throw new Error("\u8BF7\u9009\u62E9\u4E0D\u540C\u7684\u6709\u6548\u5B9E\u4F53");
-      value = ordered2.map((option) => option.id);
-    } else if (!ask.options.some((option) => option.id === value)) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u9009\u9879");
-  }
-  writeChoice(state, frame, ask, value, host);
-  state.vm.pendingAsk = null;
-}
-function stepLoop(state, frame) {
-  const ref2 = frame.items[frame.pc++];
-  const entity = resolveEntity(state, ref2);
-  if (entity === void 0 || entity === null) return;
-  const scope = { ...frame.scope, bound: ref2 };
-  if (ref2.type === "status") scope.status = ref2;
-  if (ref2.type === "literal") scope.literal = ref2;
-  if (ref2.type === "zone") scope.zone = ref2;
-  if (frame.from === "tape") scope.tape = ref2;
-  if (frame.bind) scope.bindings = { ...scope.bindings, [frame.bind]: ref2 };
-  else if (ref2.type === "unit") scope.target = ref2;
-  childFrame(state, frame, { kind: frame.hook ? "hook" : "action", scope, program: frame.program });
-}
-function execute(state, frame, op, host, options) {
-  const context = contextFor(state, frame, host);
-  const evaluate3 = (value) => evaluateExpr(value, context);
-  const vars = registers(state, frame);
-  switch (op.op) {
-    case "let": {
-      const owner = frame.carrier ? resolveEntity(state, frame.carrier) : context.self;
-      const skill2 = frame.carrier?.type === "skill" ? frame.carrier : null;
-      if (op.scope === "owner" && !owner && !skill2) return;
-      const entityName = ["self", "source", "target", "attacker"].includes(op.value) ? op.value : null;
-      const entity = entityName ? context[entityName] : typeof op.value === "string" && op.value.startsWith("vars.") ? context.resolveEntity(readRegister2(context, op.value.slice(5))) : null;
-      const value = entity ? entityRef(state, entity, entityName ?? op.value, context.self, context) : evaluate3(op.value);
-      if (value !== null && value !== void 0 && (typeof value === "object" || ["number", "string", "boolean"].includes(typeof value))) {
-        const record3 = op.scope !== "owner" ? vars : skill2 ? (state.vm.skillVars ??= {})[JSON.stringify([skill2.ownerId, skill2.id])] ??= skillCarrierVars(state, skill2) : owner.vars ??= {};
-        Object.defineProperty(record3, op.name, { value: op.scope === "owner" && value?.id ? value.id : value, writable: true, enumerable: true, configurable: true });
-      }
-      return;
-    }
-    case "if": {
-      const program2 = evaluate3(op.cond) === true ? op.then : op.else;
-      if (program2?.length) childFrame(state, frame, { program: program2 });
-      return;
-    }
-    case "for_each": {
-      const entities2 = selectVM(state, op.select, context);
-      if (!entities2.length) return;
-      const { from = "options" } = op.select;
-      const items = entities2.map((entity) => typeof entity === "object" ? entityRef(state, entity, from, selectorOwner(op.select, context), context) : { type: "literal", value: entity });
-      childFrame(state, frame, { kind: "loop", from, bind: op.bind ?? null, items, program: op.body });
-      return;
-    }
-    case "ask":
-      askInstruction(state, frame, op, context, host, options);
-      return;
-    default: {
-      if (!Object.hasOwn(host.ops, op.op)) throw new Error(`\u672A\u77E5 Opcode ${op.op}`);
-      const runtimeOp = ["apply_status", "check"].includes(op.op) && op.statusId?.startsWith?.("vars.") ? { ...op, statusId: context.vars[op.statusId.slice(5)]?.type === "literal" ? context.vars[op.statusId.slice(5)].value : context.vars[op.statusId.slice(5)]?.id ?? context.vars[op.statusId.slice(5)] } : op;
-      host.ops[op.op]({
-        state,
-        frame,
-        op: runtimeOp,
-        context,
-        evaluate: evaluate3,
-        vars,
-        options,
-        host,
-        select: (selector2) => selectVM(state, selector2, context),
-        push: (spec) => pushFrame(state, spec),
-        branch: (program2) => childFrame(state, frame, { program: program2 })
-      });
-    }
-  }
-}
-function stepVM(state, host, options = {}) {
-  const vm = state.vm;
-  while (vm.stack.length && !vm.pendingAsk) {
-    const frame = vm.stack.at(-1);
-    if (vm.stepsRemaining-- <= 0 || vm.stack.length > maxDepth) {
-      host.log(state, own5(state.units, frame.ownerId), "vm_halt", "\u7ED3\u7B97\u8D85\u8FC7\u6307\u4EE4\u6B65\u6570\u6216\u6808\u6DF1\u9650\u5236\uFF0C\u5DF2\u4E2D\u6B62\u672C\u6B21\u7ED3\u7B97");
-      vm.stack.length = 0;
-      break;
-    }
-    if (frame.rule && !frame.entered) {
-      frame.entered = true;
-      const { rule: rule2, useKey } = frame;
-      if (rule2.filter !== void 0 && evaluateExpr(rule2.filter, contextFor(state, frame, host)) !== true || host.enterRule?.(state, frame, useKey) === false) {
-        vm.stack.pop();
-        continue;
-      }
-    }
-    if (frame.native) {
-      host.continue({ state, frame, host, options, context: contextFor(state, frame, host) });
-      continue;
-    }
-    if (frame.kind === "loop") {
-      if (frame.pc >= frame.items.length) vm.stack.pop();
-      else stepLoop(state, frame);
-      continue;
-    }
-    if (frame.pc >= frame.program.length) {
-      vm.stack.pop();
-      continue;
-    }
-    const op = frame.program[frame.pc++];
-    if (op.enabled !== false) execute(state, frame, op, host, options);
-  }
-  pruneEvents(vm);
-  return { pendingAsk: vm.pendingAsk, conditional: options.conditional === true };
-}
-
 // src/core/vm-authority.js
-var own6 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own6 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 function authorityProse(contest) {
   if (contest.contested && contest.attack && contest.defense) {
     const { attack: a, defense: d } = contest;
@@ -3086,7 +3283,7 @@ function authorityContest(state, attacker, defender, { dryRun = false, preview: 
   if (!roll) state.rng = ar.rng;
   const dr = roll ? { value: roll(20) } : rollDie(state.rng, 20);
   if (!roll) state.rng = dr.rng;
-  const statValue = (unit, key4) => Array.isArray(key4) ? Math.max(...key4.map((name) => unit?.stats?.[name] ?? 0)) : unit?.stats?.[key4] ?? 0;
+  const statValue = (unit, key5) => Array.isArray(key5) ? Math.max(...key5.map((name) => unit?.stats?.[name] ?? 0)) : unit?.stats?.[key5] ?? 0;
   const ab = statValue(a, attackStat), db = statValue(d, defenseStat);
   const aCheckBonus = checkBonus?.(a, "attacker") ?? a?.checkBonus ?? 0;
   const dCheckBonus = checkBonus?.(d, "defender") ?? d?.checkBonus ?? 0;
@@ -3133,13 +3330,13 @@ function calculatePrebattleResources(input = {}) {
     sp: (str + agi) * 50 * baseMultipliers.sp
   };
   const resources = {};
-  for (const [key4, total2] of Object.entries(batch)) {
+  for (const [key5, total2] of Object.entries(batch)) {
     const value = total2 / summonCount * count;
-    const old = previous[key4];
-    if (Object.hasOwn(previous, key4) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail(`\u65E7 ${key4.toUpperCase()} `);
+    const old = previous[key5];
+    if (Object.hasOwn(previous, key5) && (!old || !finite(old.max, 0, Number.MAX_SAFE_INTEGER) || !finite(old.current, 0, old.max))) fail(`\u65E7 ${key5.toUpperCase()} `);
     const ratio3 = old ? old.max ? old.current / old.max : 0 : 1;
-    const max = key4 === "hp" ? Math.max(1, Math.round(value)) : Math.round(value);
-    resources[key4] = { rawMax: value, max, current: ratio3 === 1 ? max : Math.round(value * ratio3), ratio: ratio3 };
+    const max = key5 === "hp" ? Math.max(1, Math.round(value)) : Math.round(value);
+    resources[key5] = { rawMax: value, max, current: ratio3 === 1 ? max : Math.round(value * ratio3), ratio: ratio3 };
   }
   return { tier, statSum, mc, count, summonCount, baseMultipliers, multipliers: { hp, mp, sp: mp }, resources };
 }
@@ -3157,7 +3354,7 @@ function budget(actor, spec) {
 }
 function fitSpawnStats(actor, spec) {
   const { cap, sum } = budget(actor, spec);
-  const values5 = attrs.map((key4) => Math.max(0, Math.min(cap, spec.stats[key4])));
+  const values5 = attrs.map((key5) => Math.max(0, Math.min(cap, spec.stats[key5])));
   const total2 = values5.reduce((a, b) => a + b, 0);
   const scaled = values5.map((value) => total2 > sum ? value * sum / total2 : value);
   const rounded = scaled.map(Math.floor);
@@ -3168,14 +3365,14 @@ function fitSpawnStats(actor, spec) {
       spare--;
     }
   }
-  return Object.fromEntries(attrs.map((key4, i) => [key4, rounded[i]]));
+  return Object.fromEntries(attrs.map((key5, i) => [key5, rounded[i]]));
 }
 function spawnBudgetIssue(actor, spec) {
   if (!spec.stats) return null;
   const { cap, sum } = budget(actor, spec);
   const { stats } = spec;
-  const actualSum = attrs.reduce((total2, key4) => total2 + stats[key4], 0);
-  return attrs.every((key4) => Number.isSafeInteger(stats[key4]) && stats[key4] >= 0 && stats[key4] <= cap) && actualSum <= sum ? null : { cap, sum, actualSum, stats };
+  const actualSum = attrs.reduce((total2, key5) => total2 + stats[key5], 0);
+  return attrs.every((key5) => Number.isSafeInteger(stats[key5]) && stats[key5] >= 0 && stats[key5] <= cap) && actualSum <= sum ? null : { cap, sum, actualSum, stats };
 }
 var spawnStatsAllowed = (actor, spec) => !spawnBudgetIssue(actor, spec);
 function spawnPanel(actor, spec) {
@@ -3203,19 +3400,19 @@ function spawnPanel(actor, spec) {
 }
 
 // src/core/vm-spatial-ops.js
-var own7 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own7 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 var values = (table4) => Object.values(table4 ?? {});
 var live = (unit) => unit && unit.hp > 0 && !unit.fled;
 var point3 = (value) => Number.isSafeInteger(value?.x) && Number.isSafeInteger(value?.y);
 var xy = ({ x, y }) => ({ x, y });
 var same2 = (a, b) => a.x === b.x && a.y === b.y;
-var cellKey2 = ({ x, y }) => `${x},${y}`;
+var cellKey3 = ({ x, y }) => `${x},${y}`;
 var at = (state, entity) => ({ ...xy(entity), z: elevation(state, entity) });
 var cells = (state) => state.grid.flatMap((row, y) => row.map((_, x) => ({ x, y })));
 var blocked = (state, p, ignored = /* @__PURE__ */ new Set(), occupants = []) => !isGround(state, p) || (state.scale?.cellM ?? 2) < 10 && coverAt(state, p.x, p.y) || occupants.some((unit) => !canOccupy(state, p.x, p.y, unit, ignored.has(unit.id) ? unit.id : void 0)) || !occupants.length && unitsAt(state, p.x, p.y).some((unit) => live(unit) && !ignored.has(unit.id));
 var fixture = (state, p) => values(state.interactives).some((item) => same2(item, p));
 var clamp2 = (value, min, max) => Math.max(min, Math.min(value, max));
-var capitalize = (key4) => key4[0].toUpperCase() + key4.slice(1);
+var capitalize = (key5) => key5[0].toUpperCase() + key5.slice(1);
 function nextId3(state, table4, prefix) {
   state.spatialSerial ??= {};
   let serial = state.spatialSerial[prefix] ?? 0;
@@ -3235,36 +3432,36 @@ function spawnNumber(expression, context, min, max = Infinity, integer4 = true) 
 function resolveSpawnSpec(spec, context, kind) {
   const resolved = { ...spec };
   const bounds = { tier: [1, 7], count: [1, kind === "unit" ? 10 : Infinity], maxActive: [1, kind === "unit" ? 50 : Infinity], remainingTurns: [1, 100] };
-  for (const [key4, [min, max]] of Object.entries(bounds)) {
-    if (spec[key4] === void 0) continue;
-    resolved[key4] = spawnNumber(spec[key4], context, min, max);
-    if (resolved[key4] === void 0) return;
+  for (const [key5, [min, max]] of Object.entries(bounds)) {
+    if (spec[key5] === void 0) continue;
+    resolved[key5] = spawnNumber(spec[key5], context, min, max);
+    if (resolved[key5] === void 0) return;
   }
   if (spec.spawnPanel) {
     resolved.spawnPanel = { ...spec.spawnPanel };
     if (spec.spawnPanel.stats) {
       resolved.spawnPanel.stats = {};
-      for (const [key4, expr2] of Object.entries(spec.spawnPanel.stats)) {
+      for (const [key5, expr2] of Object.entries(spec.spawnPanel.stats)) {
         const value = evaluateExpr(expr2, context);
         if (!Number.isFinite(value) || !Number.isSafeInteger(Math.floor(value))) return;
-        resolved.spawnPanel.stats[key4] = Math.floor(value);
+        resolved.spawnPanel.stats[key5] = Math.floor(value);
       }
     }
-    for (const key4 of ["tier", "maxHp", "maxMp", "maxSp", "armor", "move"]) {
-      if (spec.spawnPanel[key4] === void 0) continue;
-      const value = evaluateExpr(spec.spawnPanel[key4], context);
-      const max = ["armor", "move"].includes(key4) ? 1e6 : 1e9;
-      if (!Number.isFinite(value) || key4 !== "tier" && (value < 0 || value > max)) return;
-      resolved.spawnPanel[key4] = key4 === "tier" ? clamp2(Math.floor(value), 1, 7) : Math.floor(value);
+    for (const key5 of ["tier", "maxHp", "maxMp", "maxSp", "armor", "move"]) {
+      if (spec.spawnPanel[key5] === void 0) continue;
+      const value = evaluateExpr(spec.spawnPanel[key5], context);
+      const max = ["armor", "move"].includes(key5) ? 1e6 : 1e9;
+      if (!Number.isFinite(value) || key5 !== "tier" && (value < 0 || value > max)) return;
+      resolved.spawnPanel[key5] = key5 === "tier" ? clamp2(Math.floor(value), 1, 7) : Math.floor(value);
     }
   }
   if (spec.area) {
     resolved.area = { ...spec.area };
-    for (const key4 of ["radius", "innerRadius", "width"]) {
-      if (spec.area[key4] === void 0) continue;
-      const value = spawnNumber(spec.area[key4], context, 0, Infinity, false);
+    for (const key5 of ["radius", "innerRadius", "width"]) {
+      if (spec.area[key5] === void 0) continue;
+      const value = spawnNumber(spec.area[key5], context, 0, Infinity, false);
       if (value === void 0) return;
-      resolved.area[key4] = value;
+      resolved.area[key5] = value;
     }
   }
   return resolved;
@@ -3318,11 +3515,11 @@ function teleport({ state, frame, host, context, op }, targets2) {
       if (!Number.isFinite(limit) || distance3D(state, unit, { ...unit, ...to }) > limit + 1e-9) return;
     }
     if (!isGround(state, to) || (state.scale?.cellM ?? 2) < 10 && coverAt(state, to.x, to.y)) return;
-    const key4 = cellKey2(to);
+    const key5 = cellKey3(to);
     const residentCost = () => unitsAt(state, to.x, to.y).filter((other) => !ignored.has(other.id)).reduce((sum, other) => sum + unitCellCost(state, other), 0);
-    const cost = (arrivals.get(key4) ?? residentCost()) + unitCellCost(state, unit);
+    const cost = (arrivals.get(key5) ?? residentCost()) + unitCellCost(state, unit);
     if (cost > MAX_CELL_CAPACITY) return;
-    arrivals.set(key4, cost);
+    arrivals.set(key5, cost);
   }
   for (const { unit, to } of landings) Object.assign(unit, to);
   refreshFollowingZones(state, host);
@@ -3367,9 +3564,9 @@ function continueMove({ state, frame, host, context }) {
   const path2 = [];
   let collision;
   if (op.mode === "altitude") {
-    const delta = op.deltaZ === void 0 ? 3 : evaluateExpr(op.deltaZ, scope);
-    if (!op.land && !Number.isFinite(delta)) return;
-    const altitude = op.land ? 0 : clamp2((unit.altitude ?? 0) + Math.trunc(delta), 0, 12);
+    const delta2 = op.deltaZ === void 0 ? 3 : evaluateExpr(op.deltaZ, scope);
+    if (!op.land && !Number.isFinite(delta2)) return;
+    const altitude = op.land ? 0 : clamp2((unit.altitude ?? 0) + Math.trunc(delta2), 0, 12);
     if (altitude === (unit.altitude ?? 0) || altitude > (unit.altitude ?? 0) && aggregateModifiers(state, unit.id).locks.fly) return;
     unit.altitude = altitude;
   } else if (op.mode === "step") {
@@ -3378,8 +3575,12 @@ function continueMove({ state, frame, host, context }) {
     if (!point3(to) || !Number.isFinite(distance2)) return;
     const steps = findPath(state, unit, to, Math.floor(distance2));
     if (!steps?.length) return;
-    path2.push(...steps);
-    Object.assign(unit, xy(to));
+    for (const step of steps) {
+      if (applyMediumEntry(state, host, frame, unit, step)) break;
+      Object.assign(unit, xy(step));
+      path2.push(step);
+    }
+    if (!path2.length) return;
   } else {
     const origin = op.to === void 0 ? context.self ?? context.source : resolvePoint(op.to, scope);
     const distance2 = moveDistance(state, frame, scope, op);
@@ -3439,9 +3640,9 @@ function continueMove({ state, frame, host, context }) {
   });
 }
 function carrier3(spec, sourceId2, id3, templateId, context, { allowUnitPools = false } = {}) {
-  const vars = Object.fromEntries(Object.entries(spec.vars ?? {}).flatMap(([key4, expression]) => {
+  const vars = Object.fromEntries(Object.entries(spec.vars ?? {}).flatMap(([key5, expression]) => {
     const value = evaluateExpr(expression, context);
-    return value === null ? [] : [[key4, value]];
+    return value === null ? [] : [[key5, value]];
   }));
   return {
     id: id3,
@@ -3466,10 +3667,10 @@ function publishOut(state, frame, out, id3) {
 function itemPlan(state, templateId, context) {
   const template = own7(state.equipment, templateId);
   if (!template) return void 0;
-  const pools = Object.entries(template.pools ?? {}).map(([key4, definition]) => {
+  const pools = Object.entries(template.pools ?? {}).map(([key5, definition]) => {
     const max = evaluateExpr(definition.cap, context);
     const current = definition.initial === void 0 ? max : evaluateExpr(definition.initial, context);
-    return { key: key4, max, current, reloadable: definition.reloadable === true };
+    return { key: key5, max, current, reloadable: definition.reloadable === true };
   });
   if (pools.some(({ max, current }) => !Number.isFinite(max) || max < 0 || !Number.isFinite(current))) return void 0;
   return { template, templateId, pools };
@@ -3520,9 +3721,9 @@ function unitPlan(state, context, spec, original) {
   if (items.some((id3) => !itemPlan(state, id3, context))) return void 0;
   const bodyLengthM = panel.bodyLengthM ?? 1.7;
   const stats = { ...panel.stats };
-  const maxima = Object.fromEntries(["hp", "mp", "sp"].map((key4) => {
-    const pool = own7(state.pools, own7(panel.pools, key4));
-    const field2 = `max${capitalize(key4)}`;
+  const maxima = Object.fromEntries(["hp", "mp", "sp"].map((key5) => {
+    const pool = own7(state.pools, own7(panel.pools, key5));
+    const field2 = `max${capitalize(key5)}`;
     const contributor = pool?.contributors.find((entry2) => entry2.ownerKind === "unit" && entry2.ownerId === panel.id);
     return [field2, contributor?.maxBase ?? panel[field2]];
   }));
@@ -3550,7 +3751,7 @@ function removeSummon(state, unit, host, frame, reason, seen = /* @__PURE__ */ n
   cleanupSourceBoundEntities(state, unit.id, "\u6765\u6E90\u79BB\u573A", host, frame, seen);
   for (const zone of values(state.zones)) if (zone.area?.anchorUnitId === unit.id) removeZone(state, host, zone.id, "\u951A\u70B9\u79BB\u573A");
   if (reason) host.log(state, unit, "despawn", `${unit.name}\u56E0${reason}\u79BB\u573A`, { unitId: unit.id, summoned: true, reason });
-  const shared = ["hp", "mp", "sp"].filter((key4) => own7(state.pools, own7(unit.pools, key4))?.contributors.length > 1);
+  const shared = ["hp", "mp", "sp"].filter((key5) => own7(state.pools, own7(unit.pools, key5))?.contributors.length > 1);
   if (shared.length) unlinkPools(state, [unit.id], shared);
   const ownedItems = values(state.items).filter((item) => item.ownerId === unit.id);
   for (const carrier4 of [unit, ...ownedItems, ...values(unit.statuses)]) {
@@ -3598,8 +3799,8 @@ function spawnUnits({ state, frame, host, context, op, select, push }, center) {
   if (!actor || !point3(center) || requested.copyOf && !original) return fail5("invalid_panel");
   const form = requested.copyOf ? "copy" : requested.spawnPanel ? "panel" : requested.templateId ? "template" : "panel";
   const defaults = {};
-  if (requested.templateId) for (const key4 of ["group", "maxActive", "stackPolicy", "remainingTurns"]) {
-    if (original[key4] !== void 0) defaults[key4] = original[key4];
+  if (requested.templateId) for (const key5 of ["group", "maxActive", "stackPolicy", "remainingTurns"]) {
+    if (original[key5] !== void 0) defaults[key5] = original[key5];
   }
   const spec = resolveSpawnSpec({ ...defaults, ...requested, ...requested.copyOf ? {} : { spawnPanel: { ...original, ...requested.spawnPanel } } }, context, "unit");
   if (!spec) return fail5("invalid_panel");
@@ -3783,28 +3984,39 @@ function spawnZone({ state, frame, host, context, op }, center) {
   if (!canPlaceBoundEffect(state, effect)) return;
   switchConcentration(state, effect, host, frame);
   if (spec.follow && own7(state.units, anchor.id) !== anchor) return;
+  const defaults = spec.medium ? mediumZone(spec.medium) : void 0;
   const id3 = nextId3(state, state.zones ??= {}, "zone");
   const zone = {
-    ...carrier3(spec, sourceId2, id3, spec.templateId ?? id3, context),
+    ...carrier3({ ...defaults, ...spec }, sourceId2, id3, spec.templateId ?? id3, context),
     ...lifecycle,
     team: context.self?.team ?? null,
     area: area3,
     follow: spec.follow === true,
     persistent: spec.persistent === true,
-    remainingTurns: spec.remainingTurns ?? 1,
+    remainingTurns: spec.remainingTurns ?? defaults?.remainingTurns ?? 1,
+    ...Object.fromEntries(zoneMediumFields.flatMap((key5) => {
+      const value = spec[key5] ?? defaults?.[key5];
+      return value === void 0 ? [] : [[key5, value]];
+    })),
     ...spec.follow ? { anchorPosition: xy(anchor) } : {}
   };
-  state.zones[id3] = zone;
+  const placed = defaults ? putMedium(state, host, zone) : state.zones[id3] = zone;
+  if (!placed) return;
   publishOut(state, frame, op.out, id3);
   host.log(state, context.self, "zone", `\u5C55\u5F00${zone.name}`, { zoneId: id3 });
-}
-function removeZone(state, host, zoneId, reason = "\u89E3\u9664", detail = {}) {
-  const zone = own7(state.zones, zoneId);
-  if (!zone) return false;
-  delete state.zones[zoneId];
-  for (const poolId of values(zone.pools)) delete state.pools[poolId];
-  host.log(state, own7(state.units, zone.sourceId), "zone", `${zone.name}${reason}\u540E\u6D88\u6563`, { zoneId, expired: true, ...detail });
-  return true;
+  const traits = defaults && physicsEnabled(state) ? elementTraits(void 0, state.customElements, spec.tags) : [];
+  if (traits.length) {
+    const impact = origin ?? center;
+    resolveSpatialImpulse(state, host, frame, {
+      traits,
+      cells: mediaCells(state, placed),
+      origin: context.self ?? impact,
+      center: impact,
+      sourceId: sourceId2,
+      tier: placed.tier,
+      rank: mediumRank(placed)
+    });
+  }
 }
 function refreshFollowingZones(state, host) {
   for (const zone of values(state.zones)) {
@@ -3927,10 +4139,10 @@ function removeCovers(state, ids) {
   }
 }
 function settleRestoredWalls(state, host, walls, parent) {
-  const wallKeys = new Set(walls.map(cellKey2));
-  removeCovers(state, new Set(values(state.covers).filter((cover) => wallKeys.has(cellKey2(cover))).map((cover) => cover.id)));
+  const wallKeys = new Set(walls.map(cellKey3));
+  removeCovers(state, new Set(values(state.covers).filter((cover) => wallKeys.has(cellKey3(cover))).map((cover) => cover.id)));
   for (const item of values(state.interactives)) {
-    if (wallKeys.has(cellKey2(item))) delete state.interactives[item.id];
+    if (wallKeys.has(cellKey3(item))) delete state.interactives[item.id];
   }
   for (const p of walls) {
     const unit = unitAt(state, p.x, p.y);
@@ -3958,16 +4170,16 @@ function removeTerrainLayers(state, host, parent, ids, reason) {
   if (!ids.size) return;
   const layers = values(state.spatialTerrain);
   const removed = layers.filter((layer) => ids.has(layer.id));
-  const affected = new Set(removed.flatMap((layer) => layer.cells.map(cellKey2)));
+  const affected = new Set(removed.flatMap((layer) => layer.cells.map(cellKey3)));
   const changes = /* @__PURE__ */ new Map();
   for (const layer of layers) {
     for (const patch of layer.cells) {
-      const key4 = cellKey2(patch);
-      if (!affected.has(key4)) continue;
-      let change2 = changes.get(key4);
+      const key5 = cellKey3(patch);
+      if (!affected.has(key5)) continue;
+      let change2 = changes.get(key5);
       if (!change2) {
         change2 = { ...xy(patch), before: state.grid[patch.y][patch.x], after: patch.before };
-        changes.set(key4, change2);
+        changes.set(key5, change2);
       }
       if (!ids.has(layer.id)) {
         if (!change2.firstSurvivor) {
@@ -4085,7 +4297,7 @@ var spatialContinuations = Object.freeze({ spatialMove: continueMove, spatialSpa
 
 // src/core/vm-lifecycle.js
 var alive2 = (unit) => unit?.hp > 0 && !unit.fled;
-var own8 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own8 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 var sourceBound = (entity) => entity.bindToSource === true || entity.concentration === true;
 function lifecycleFields(declaration, template, event, ref2 = "init") {
   return {
@@ -4147,7 +4359,7 @@ function switchConcentration(state, effect, host, frame) {
 }
 
 // src/core/status-application.js
-var own9 = (record3, key4) => record3 != null && Object.hasOwn(record3, key4) ? record3[key4] : void 0;
+var own9 = (record3, key5) => record3 != null && Object.hasOwn(record3, key5) ? record3[key5] : void 0;
 var bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
 var sourceValue = (raw, context) => {
   if (typeof raw === "string" && !validExpr(raw)) return raw;
@@ -4188,11 +4400,11 @@ function resolveStatusApplication(state, target2, statusId3, input = {}, { stric
   const extension = finite2(extensionValue, NaN, strict, "\u5EF6\u957F\u56DE\u5408");
   if (!Number.isFinite(duration2) || !Number.isFinite(extension)) return null;
   const vars = {};
-  for (const [key4, raw] of Object.entries(template.vars ?? {})) {
+  for (const [key5, raw] of Object.entries(template.vars ?? {})) {
     const value = sourceValue(raw, context);
-    if (value !== null && value !== void 0) vars[key4] = value;
+    if (value !== null && value !== void 0) vars[key5] = value;
   }
-  for (const [key4, value] of Object.entries(input.vars ?? {})) if (value !== null) vars[key4] = structuredClone(value);
+  for (const [key5, value] of Object.entries(input.vars ?? {})) if (value !== null) vars[key5] = structuredClone(value);
   const sourceCarrier = replace ? input.sourceCarrier ?? null : input.sourceCarrier ?? previous?.sourceCarrier ?? null;
   const authority = authorityFor(state, sourceCarrier, sourceId2 ?? target2.id);
   const { bindToSource, concentration, ...definition } = structuredClone(template);
@@ -4239,7 +4451,7 @@ function resolveStatusApplication(state, target2, statusId3, input = {}, { stric
 }
 
 // src/core/vm-rules.js
-var own10 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own10 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 var CHECK_TIERS = ["miss", "hit", "crit"];
 var ratingFloor = /* @__PURE__ */ new Map([["miss", 0], ["\u5931\u624B", 0], ["hit", 1], ["\u64E6\u4F24", 1], ["\u52C9\u5F3A", 1], ["\u6709\u6548", 1], ["crit", 2], ["\u5E73\u66B4\u51FB", 2], ["\u5F3A\u66B4\u51FB", 2], ["\u8D85\u66B4\u51FB", 2]]);
 var bounded2 = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
@@ -4265,10 +4477,10 @@ function operation({ state, frame, op, context, select }, native, selector2) {
     });
   }
 }
-function output(state, frame, key4, value) {
-  if (key4 === void 0) return;
+function output(state, frame, key5, value) {
+  if (key5 === void 0) return;
   const caller = state.vm.stack.find((entry2) => entry2.frameId === frame.callerId);
-  if (caller) caller.vars[key4] = value;
+  if (caller) caller.vars[key5] = value;
 }
 function dice(state, sides) {
   const result = rollDie(state.rng, sides);
@@ -4290,10 +4502,10 @@ var ruleOps = {
       const hp = getPool(state, target2.id, "hp");
       if (!hp || live2(target2) || target2.fled || target2.corpseConsumed || host.flag?.(state, target2, "blockRevive")) continue;
       if (hp.contributors.length !== 1) continue;
-      const values5 = ["hp", "mp", "sp"].map((key4) => {
-        const pool = getPool(state, target2.id, key4);
-        const fraction = evaluate2(op[`${key4}Percent`], { ...context, target: target2 }, key4 === "hp" ? 1 : 0);
-        const flat = key4 === "hp" && op.hpFlat !== void 0 ? evaluateExpr(op.hpFlat, { ...context, target: target2 }) : fraction * pool.max;
+      const values5 = ["hp", "mp", "sp"].map((key5) => {
+        const pool = getPool(state, target2.id, key5);
+        const fraction = evaluate2(op[`${key5}Percent`], { ...context, target: target2 }, key5 === "hp" ? 1 : 0);
+        const flat = key5 === "hp" && op.hpFlat !== void 0 ? evaluateExpr(op.hpFlat, { ...context, target: target2 }) : fraction * pool.max;
         return { pool, flat };
       });
       if (values5.some(({ flat }) => !Number.isFinite(flat))) continue;
@@ -4306,7 +4518,7 @@ var ruleOps = {
   mutate_event({ state, frame, op, context, host }) {
     const event = own10(state.vm.events, frame.eventRef);
     if (!event || !frame.hook || !validVmOpcode(op, { hook: frame.hook })) throw new Error("\u4E8B\u4EF6\u6539\u5199\u4E0D\u7B26\u5408\u5F53\u524D\u62E6\u622A\u94A9\u5B50");
-    for (const [key4, expression] of Object.entries(op.patch)) {
+    for (const [key5, expression] of Object.entries(op.patch)) {
       const resolveId = (id3) => {
         if (["self", "source", "target", "attacker"].includes(id3)) return context[id3]?.id;
         if (id3.startsWith("vars.")) {
@@ -4316,25 +4528,25 @@ var ruleOps = {
         return own10(state.units, id3)?.id ?? evaluateExpr(id3, context);
       };
       let value;
-      if (key4 === "redirectTarget" || key4 === "shareTo") value = resolveId(expression);
-      else if (key4 === "replaceTarget") value = { from: resolveId(expression.from), to: resolveId(expression.to) };
-      else if (key4 === "origin") {
+      if (key5 === "redirectTarget" || key5 === "shareTo") value = resolveId(expression);
+      else if (key5 === "replaceTarget") value = { from: resolveId(expression.from), to: resolveId(expression.to) };
+      else if (key5 === "origin") {
         const point4 = resolvePoint(expression, context);
         if (point4) value = { x: point4.x, y: point4.y, ...Number.isFinite(point4.z) && { z: point4.z } };
-      } else if (typeof expression === "object" || ["minRating", "forceOutcome", "damageType"].includes(key4)) value = expression;
+      } else if (typeof expression === "object" || ["minRating", "forceOutcome", "damageType"].includes(key5)) value = expression;
       else value = evaluateExpr(expression, context);
-      if (value == null || key4 === "replaceTarget" && (!value.from || !value.to)) continue;
-      event[key4] = value;
-      if (key4 === "cancel" && ["before_action", "before_target"].includes(frame.hook)) {
+      if (value == null || key5 === "replaceTarget" && (!value.from || !value.to)) continue;
+      event[key5] = value;
+      if (key5 === "cancel" && ["before_action", "before_target"].includes(frame.hook)) {
         if (value) event.cancelReason = `${context.self.name}\u62E6\u622A\u4E86\u672C\u6B21\u7ED3\u7B97`;
         else delete event.cancelReason;
       }
-      if (frame.hook === "before_commit" && key4 === "damageType" && event.commitKind === "damage" && !Object.hasOwn(op.patch, "finalAmount") && typeof host.prepareDamage === "function") {
+      if (frame.hook === "before_commit" && key5 === "damageType" && event.commitKind === "damage" && !Object.hasOwn(op.patch, "finalAmount") && typeof host.prepareDamage === "function") {
         const target2 = state.units?.[event.targetId];
         const source = state.units?.[event.actorId];
         if (source && target2) event.finalAmount = host.prepareDamage(state, source, target2, { ...frame.data, damageType: value });
       }
-      if (frame.hook === "before_status" && key4 === "cancel") {
+      if (frame.hook === "before_status" && key5 === "cancel") {
         if (!value) {
           delete event.immunityCarrier;
           delete event.immunityOwnerId;
@@ -4349,8 +4561,8 @@ var ruleOps = {
           }
         }
       }
-      if (key4 === "redirectTarget") host.log(state, context.self, "redirect", `${context.self.name}\u91CD\u5B9A\u5411\u4E86\u76EE\u6807`, { targetId: value });
-      else if (key4 === "cancel" && value) host.log(state, context.self, "intercept", `${context.self.name}\u62E6\u622A\u4E86\u672C\u6B21\u7ED3\u7B97`, { targetId: event.targetId });
+      if (key5 === "redirectTarget") host.log(state, context.self, "redirect", `${context.self.name}\u91CD\u5B9A\u5411\u4E86\u76EE\u6807`, { targetId: value });
+      else if (key5 === "cancel" && value) host.log(state, context.self, "intercept", `${context.self.name}\u62E6\u622A\u4E86\u672C\u6B21\u7ED3\u7B97`, { targetId: event.targetId });
     }
   }
 };
@@ -4396,22 +4608,22 @@ function continueCheck({ state, frame, host, context }) {
       frame.pc++;
       return;
     }
-    const key4 = stats[outcomes.length];
+    const key5 = stats[outcomes.length];
     const sides = op.kind === "chance" ? 100 : 20;
-    const rollWith = (delta) => {
+    const rollWith = (delta2) => {
       const first = dice(state, sides);
-      return delta > 0 ? Math.max(first, dice(state, sides)) : delta < 0 ? Math.min(first, dice(state, sides)) : first;
+      return delta2 > 0 ? Math.max(first, dice(state, sides)) : delta2 < 0 ? Math.min(first, dice(state, sides)) : first;
     };
     const subject2 = op.kind === "save" ? context.target : context.self;
-    const checkEvent = { ...event, stat: key4 ?? null };
-    const defenderEvent = { ...event, stat: op.defenderStat ?? key4 ?? null };
-    event.stat = key4 ?? null;
+    const checkEvent = { ...event, stat: key5 ?? null };
+    const defenderEvent = { ...event, stat: op.defenderStat ?? key5 ?? null };
+    event.stat = key5 ?? null;
     const roll = rollWith((event.advantageDelta ?? 0) + (sides === 20 ? host.advantage?.(state, subject2, checkEvent) ?? 0 : 0));
     const defenderRoll = op.kind === "contest" ? rollWith(host.advantage?.(state, context.target, defenderEvent) ?? 0) : null;
     event.naturalRoll = roll;
-    if (op.rawNatural || sides !== 20) outcomes.push({ key: key4, roll, defenderRoll });
+    if (op.rawNatural || sides !== 20) outcomes.push({ key: key5, roll, defenderRoll });
     else {
-      frame.pendingNatural = { key: key4, defenderRoll };
+      frame.pendingNatural = { key: key5, defenderRoll };
       scheduleHooks(state, frame, "after_natural_roll", frame.eventRef, host);
     }
     return;
@@ -4420,14 +4632,14 @@ function continueCheck({ state, frame, host, context }) {
     frame.pc++;
     const kind = op.kind;
     const subject2 = kind === "save" ? context.target : context.self;
-    const stat3 = (unit, key4) => host.stat?.(state, unit, key4) ?? unit.stats?.[key4] ?? 0;
+    const stat3 = (unit, key5) => host.stat?.(state, unit, key5) ?? unit.stats?.[key5] ?? 0;
     const stats = [op.stat ?? null].flat();
-    const outcomes = frame.naturalOutcomes.map(({ key: key4, roll: roll2, defenderRoll }) => {
-      const checkEvent = { ...event, stat: key4 ?? null };
-      const defenderStat = op.defenderStat ?? key4;
+    const outcomes = frame.naturalOutcomes.map(({ key: key5, roll: roll2, defenderRoll }) => {
+      const checkEvent = { ...event, stat: key5 ?? null };
+      const defenderStat = op.defenderStat ?? key5;
       const defenderEvent = { ...event, stat: defenderStat ?? null };
       const checkBonus = host.checkBonus?.(state, subject2, checkEvent) ?? 0;
-      const total3 = roll2 + (key4 ? stat3(subject2, key4) : 0) + checkBonus + (event.bonusDelta ?? 0);
+      const total3 = roll2 + (key5 ? stat3(subject2, key5) : 0) + checkBonus + (event.bonusDelta ?? 0);
       const difficulty = kind === "contest" ? defenderRoll + stat3(context.target, defenderStat) + (host.checkBonus?.(state, context.target, defenderEvent) ?? 0) + (host.resistBonus?.(state, context.target, defenderEvent) ?? 0) - (host.dcBonus?.(state, context.self, checkEvent) ?? 0) : event.dc + (event.dcDelta ?? 0) + (host.dcBonus?.(state, context.self, checkEvent) ?? 0);
       const passed2 = kind === "chance" ? roll2 <= difficulty : total3 >= difficulty;
       return { roll: roll2, total: total3, difficulty, passed: passed2 };
@@ -4532,7 +4744,7 @@ function continueApplyStatus({ state, frame, host, context, options }) {
       return;
     }
     if (!live2(target2)) return;
-    const evaluatedVars = Object.fromEntries(Object.entries(op.vars ?? {}).map(([key4, value]) => [key4, typeof value === "string" && !validExpr(value) ? value : evaluateExpr(value, context)]).filter(([, value]) => value !== null));
+    const evaluatedVars = Object.fromEntries(Object.entries(op.vars ?? {}).map(([key5, value]) => [key5, typeof value === "string" && !validExpr(value) ? value : evaluateExpr(value, context)]).filter(([, value]) => value !== null));
     const lifecycle = effectLifecycle(state, frame, context.event, op, template);
     const sourceId2 = lifecycle.bindToSource || lifecycle.concentration ? frame.ownerId : context.self?.id;
     const result = resolveStatusApplication(state, target2, op.statusId, {
@@ -4648,37 +4860,37 @@ function continueRemoveStatus({ state, frame, host, context, options }) {
 
 // src/core/vm-commit.js
 var alive3 = (unit) => unit?.hp > 0 && !unit.fled;
-var entry = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var entry = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 var pseudoPool = /* @__PURE__ */ new Set(["attack", "action", "move", "reaction"]);
-function pseudoState(state, unit, key4) {
-  if (key4 === "move") {
+function pseudoState(state, unit, key5) {
+  if (key5 === "move") {
     const b = movementBudget(state, unit);
     return { current: b.remainingCells, max: b.maxBoardSteps };
   }
-  if (key4 === "reaction") return { current: unit.reactionAvailable === false ? 0 : 1, max: 1 };
-  return { current: Math.max(0, 1 - (unit.used?.[key4] ?? 0)), max: 1 };
+  if (key5 === "reaction") return { current: unit.reactionAvailable === false ? 0 : 1, max: 1 };
+  return { current: Math.max(0, 1 - (unit.used?.[key5] ?? 0)), max: 1 };
 }
-function applyPseudo(state, unit, key4, mode, amount) {
+function applyPseudo(state, unit, key5, mode, amount) {
   if (!Number.isInteger(amount)) return false;
-  const before = pseudoState(state, unit, key4).current;
+  const before = pseudoState(state, unit, key5).current;
   let current = mode === "set" ? amount : mode === "add" ? before + amount : mode === "sub" ? before - amount : NaN;
   if (mode === "add_max" || mode === "sub_max" || mode === "set_max") return false;
   if (!Number.isFinite(current)) return false;
-  current = Math.max(0, Math.min(pseudoState(state, unit, key4).max, current));
-  if (key4 === "move") {
-    const delta = (current - before) * 1e3;
-    if (delta < 0) unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - delta;
-    else if (delta > 0) {
-      const refund = Math.min(unit.moveSpentPermille ?? 0, delta);
+  current = Math.max(0, Math.min(pseudoState(state, unit, key5).max, current));
+  if (key5 === "move") {
+    const delta2 = (current - before) * 1e3;
+    if (delta2 < 0) unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - delta2;
+    else if (delta2 > 0) {
+      const refund = Math.min(unit.moveSpentPermille ?? 0, delta2);
       unit.moveSpentPermille = (unit.moveSpentPermille ?? 0) - refund;
-      unit.moveBonusPermille = (unit.moveBonusPermille ?? 0) + delta - refund;
+      unit.moveBonusPermille = (unit.moveBonusPermille ?? 0) + delta2 - refund;
       if (!unit.moveSpentPermille) delete unit.moveSpentPermille;
       if (!unit.moveBonusPermille) delete unit.moveBonusPermille;
     }
-  } else if (key4 === "reaction") {
+  } else if (key5 === "reaction") {
     unit.reactionAvailable = current > 0;
   } else {
-    unit.used[key4] = 1 - current;
+    unit.used[key5] = 1 - current;
     unit.ap = Math.max(0, Math.min(unit.apMax ?? 2, unit.ap + current - before));
   }
   return true;
@@ -4700,7 +4912,7 @@ function commitOp(env) {
   const targets2 = select(op.target).filter((unit) => entry(state.units, unit.id) === unit);
   const sourceId2 = context.self?.id ?? frame.sourceId;
   const poolId = (ref2) => ref2?.startsWith("vars.") ? entry(context.vars, ref2.slice(5)) : ref2;
-  const validPoolId2 = (key4) => typeof key4 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(key4);
+  const validPoolId2 = (key5) => typeof key5 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(key5);
   const pools = op.op === "resource" ? [op.pool].flat().map(poolId).reverse() : ["hp"];
   const otherPool = poolId(op.otherPool);
   if (op.mode === "swap" && !validPoolId2(otherPool)) return;
@@ -4741,17 +4953,51 @@ var commitOps = {
     host.log(state, context.self, "pool_link", `${context.self.name}${op.mode === "link" ? "\u8FDE\u63A5" : "\u62C6\u5206"}\u4E86\u8D44\u6E90\u6C60`);
   }
 };
+function emitDamageImpulse(state, host, frame, source, target2, event) {
+  const { data } = frame;
+  if (state.elementalPhysics === "off" || data.direct === false || data.reactionChain === true || data.shared) return;
+  const carrier4 = frame.carrier ?? (data.instanceId ? { type: "item", id: data.instanceId, ownerId: data.sourceId } : data.skillId ? { type: "skill", id: data.skillId, ownerId: data.sourceId } : null);
+  const tags = carrier4?.type === "item" ? entry(state.equipment, entry(state.items, carrier4.id)?.templateId)?.tags : carrier4?.type === "skill" ? entry(state.skills, carrier4.id)?.tags : carrier4?.type === "status" ? entry(entry(state.units, carrier4.ownerId)?.statuses, carrier4.id)?.tags : carrier4?.type === "zone" ? entry(state.zones, carrier4.id)?.tags : void 0;
+  const traits = elementTraits(event.damageType, state.customElements, tags);
+  const strike = data.resultEventRef && state.vm.stack.findLast((parent) => parent.native === "strike" && parent.awaitEvent === data.resultEventRef);
+  const action = strike && state.vm.stack.findLast((parent) => parent.native === "action" && parent.eventRef === strike.eventRef);
+  if (action && !strike.followup && source) {
+    const origin2 = entry(state.vm.events, action.eventRef)?.origin ?? source;
+    const planned = makeActionImpulse(state, source, action.data.action, action.plan, origin2);
+    if (planned) {
+      if (traits.includes("shock") || planned.traits.includes("shock") && event.damageType === data.damageType) {
+        const targets2 = action.impulseDirectTargets ??= [];
+        if (!targets2.includes(target2.id)) targets2.push(target2.id);
+      }
+      const insideFootprint = planned.cells.some((at3) => at3.x === target2.x && at3.y === target2.y);
+      if (insideFootprint && (event.damageType === data.damageType || traits.every((trait) => planned.traits.includes(trait)))) return;
+    }
+  }
+  if (!traits.length) return;
+  const center = { x: target2.x, y: target2.y };
+  const origin = source ? { x: source.x, y: source.y } : center;
+  emitSpatialImpulse(state, host, frame, {
+    traits,
+    cells: [center],
+    origin,
+    center,
+    sourceId: data.sourceId,
+    tier: carrierEffectiveTier(state, carrier4, source),
+    rank: authorityFor(state, carrier4, data.sourceId).authorityRank,
+    directTargetIds: [target2.id]
+  });
+}
 function continueCommit({ state, frame, host, options }) {
   const { data } = frame;
-  const { op, pool: key4 } = data;
+  const { op, pool: key5 } = data;
   const target2 = entry(state.units, data.targetId), source = entry(state.units, data.sourceId);
   if (!target2) {
     state.vm.stack.pop();
     return;
   }
   const localOwner = data.local && frame.data.carrierId;
-  const pseudo = !localOwner && pseudoPool.has(key4);
-  const pool = pseudo ? pseudoState(state, target2, key4) : getPool(state, localOwner || data.targetId, key4, localOwner ? "item" : "unit");
+  const pseudo = !localOwner && pseudoPool.has(key5);
+  const pool = pseudo ? pseudoState(state, target2, key5) : getPool(state, localOwner || data.targetId, key5, localOwner ? "item" : "unit");
   const other = op === "resource" && data.mode === "swap" ? getPool(state, localOwner || data.targetId, data.otherPool, localOwner ? "item" : "unit") : null;
   const otherBefore = other?.current ?? 0;
   if (!pool) {
@@ -4771,7 +5017,7 @@ function continueCommit({ state, frame, host, options }) {
       commitKind: op,
       actorId: data.sourceId,
       targetId: target2.id,
-      pool: key4,
+      pool: key5,
       authorityRank: authority.authorityRank,
       sourceTier: authority.unitTier,
       ...data.instantDeath === true && { instantDeath: true },
@@ -4857,7 +5103,7 @@ function continueCommit({ state, frame, host, options }) {
         if (!status.vars.shieldAmount) removeStatus(state, target2, status, "shield_depleted", source, host, frame);
       }
       updatePoolCurrent(state, pool.id, "sub", pending, { minRemain: event.preserveLife ? 1 : 0 });
-      event.dealt = before - getPool(state, target2.id, key4).current;
+      event.dealt = before - getPool(state, target2.id, key5).current;
       event.absorbed = absorbed;
       host.log(state, source, "damage", `${target2.name}\u53D7\u5230${event.dealt}\u70B9${data.label ?? ""}\u4F24\u5BB3`, { ...data.details, targetId: target2.id, damageType: event.damageType, amount: event.dealt, absorbed, hpBefore: before, hpAfter: target2.hp });
     } else if (op === "heal") {
@@ -4870,7 +5116,7 @@ function continueCommit({ state, frame, host, options }) {
       if (pseudo) {
         const amount = event.finalAmount;
         if (data.mode === "sub" && data.requireFull && before < amount) applied = false;
-        else if (!applyPseudo(state, target2, key4, data.mode, Math.floor(amount))) {
+        else if (!applyPseudo(state, target2, key5, data.mode, Math.floor(amount))) {
           state.vm.stack.pop();
           return;
         }
@@ -4881,7 +5127,7 @@ function continueCommit({ state, frame, host, options }) {
           else if (before < otherBefore) updatePoolCurrent(state, other.id, "set", before);
         }
       } else {
-        if (["add_max", "sub_max", "set_max"].includes(data.mode) && !["hp", "mp", "sp"].includes(key4)) {
+        if (["add_max", "sub_max", "set_max"].includes(data.mode) && !["hp", "mp", "sp"].includes(key5)) {
           state.vm.stack.pop();
           return;
         }
@@ -4920,17 +5166,17 @@ function continueCommit({ state, frame, host, options }) {
         state.vm.stack.pop();
         return;
       }
-      const after = pseudo ? pseudoState(state, target2, key4).current : entry(state.pools, pool.id).current;
+      const after = pseudo ? pseudoState(state, target2, key5).current : entry(state.pools, pool.id).current;
       const maxChange = data.mode.endsWith("_max");
       const from = maxChange ? beforeMax : before, to = maxChange ? entry(state.pools, pool.id).max : after;
-      const label = { attack: "\u653B\u51FB\u69FD", action: "\u52A8\u4F5C\u69FD", move: "\u5269\u4F59\u79FB\u52A8\u683C", reaction: "\u53CD\u5E94" }[key4] ?? key4.toUpperCase();
+      const label = { attack: "\u653B\u51FB\u69FD", action: "\u52A8\u4F5C\u69FD", move: "\u5269\u4F59\u79FB\u52A8\u683C", reaction: "\u53CD\u5E94" }[key5] ?? key5.toUpperCase();
       const field2 = label + (maxChange ? "\u4E0A\u9650" : "");
       event.change = to - from;
-      host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${maxChange ? to >= from ? "\u63D0\u9AD8" : "\u964D\u4F4E" : to >= from ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(event.change)}\u70B9 ${field2}`, { targetId: target2.id, resource: key4, resourceLabel: field2, before: from, after: to });
+      host.log(state, source, "resource", `${target2.name}${data.label ? `\u56E0${data.label}` : ""}${maxChange ? to >= from ? "\u63D0\u9AD8" : "\u964D\u4F4E" : to >= from ? "\u6062\u590D" : "\u6D88\u8017"}${Math.abs(event.change)}\u70B9 ${field2}`, { targetId: target2.id, resource: key5, resourceLabel: field2, before: from, after: to });
     }
     const result = entry(state.vm.events, data.resultEventRef);
     if (result) {
-      for (const key5 of ["dealt", "absorbed", "healing"]) if (event[key5] !== void 0) result[key5] = event[key5];
+      for (const key6 of ["dealt", "absorbed", "healing"]) if (event[key6] !== void 0) result[key6] = event[key6];
     }
     if (data.out) {
       const caller = state.vm.stack.find((parent) => parent.frameId === frame.callerId);
@@ -4970,6 +5216,7 @@ function continueCommit({ state, frame, host, options }) {
     frame.pc++;
     const hook2 = op === "damage" ? "after_damage" : op === "heal" ? "after_heal" : null;
     if (hook2) scheduleHooks(state, frame, hook2, frame.eventRef, host);
+    if (op === "damage") emitDamageImpulse(state, host, frame, source, target2, event);
     return;
   }
   if (frame.sharedDamage) {
@@ -5035,8 +5282,399 @@ function continueLethal({ state, frame, host }) {
   }
 }
 
+// src/core/element-impulse.js
+var CARDINAL2 = [[0, -1], [-1, 0], [1, 0], [0, 1]];
+var MAX_FLOOD = 24;
+var MAX_DEPTH = 3;
+var byCell = (a, b) => a.y - b.y || a.x - b.x;
+var byId2 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+var key2 = ({ x, y }) => `${x},${y}`;
+var xy2 = ({ x, y }) => ({ x, y });
+var alive4 = (unit) => unit?.hp > 0 && !unit.fled;
+var ground2 = (unit) => (unit.altitude ?? 0) === 0;
+var get = (table4, id3) => Object.hasOwn(table4 ?? {}, id3) ? table4[id3] : void 0;
+var neighbors = ({ x, y }) => CARDINAL2.map(([dx, dy]) => ({ x: x + dx, y: y + dy }));
+var delta = (at3, dx, dy) => ({ x: at3.x + dx, y: at3.y + dy });
+var sortedCells = (cells2) => [...new Map(cells2.map((at3) => [key2(at3), xy2(at3)])).values()].sort(byCell);
+var water = (medium) => medium === "water" || medium === "electrified_water";
+function groupByCell(values5) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const entity of values5.sort(byId2)) {
+    const id3 = key2(entity);
+    if (!groups.has(id3)) groups.set(id3, []);
+    groups.get(id3).push(entity);
+  }
+  return groups;
+}
+function mediumView(state) {
+  const original = { surface: /* @__PURE__ */ new Map(), cloud: /* @__PURE__ */ new Map() };
+  const changes = { surface: /* @__PURE__ */ new Map(), cloud: /* @__PURE__ */ new Map() };
+  for (const zone of Object.values(state.zones ?? {}).filter(isMedium).sort(byId2)) {
+    const rank = mediumRank(zone);
+    const map = original[zone.layer];
+    for (const at3 of mediaCells(state, zone)) {
+      const id3 = key2(at3);
+      if (!map.has(id3) || map.get(id3).rank <= rank) map.set(id3, { zone, rank });
+    }
+  }
+  return {
+    changes,
+    original,
+    read(layer, at3) {
+      const id3 = key2(at3);
+      return changes[layer].has(id3) ? changes[layer].get(id3).record : original[layer].get(id3);
+    },
+    set(layer, at3, record3) {
+      changes[layer].set(key2(at3), { at: at3, record: record3 });
+    }
+  };
+}
+function planImpulse(state, impulse, seen = []) {
+  const reactions = [], secondaryTargets = [], effects = [];
+  if (!physicsEnabled(state) || !impulse.traits?.length || !impulse.cells?.length) return { reactions, secondaryTargets, effects };
+  const visited = new Set(seen);
+  const view = mediumView(state);
+  const units = groupByCell(Object.values(state.units ?? {}).filter(alive4));
+  const covers = groupByCell(Object.values(state.covers ?? {}).filter((cover) => cover.hp > 0));
+  const barrels = groupByCell(Object.values(state.interactives ?? {}).filter((item) => !item.spent && item.kind === "barrel"));
+  const spent = /* @__PURE__ */ new Set(), dried = /* @__PURE__ */ new Set(), statuses = /* @__PURE__ */ new Map(), coverHp = /* @__PURE__ */ new Map();
+  const direct = new Set(impulse.directTargetIds);
+  const sourceId2 = impulse.sourceId ?? null;
+  const tier = impulse.tier ?? 1, rank = impulse.rank ?? tier;
+  const team2 = get(state.units, sourceId2)?.team ?? null;
+  const queue = [{ ...impulse, depth: 0 }];
+  const claim = (at3, kind) => {
+    const id3 = `${key2(at3)}:${kind}`;
+    if (visited.has(id3)) return false;
+    visited.add(id3);
+    return true;
+  };
+  const reaction = (kind, label, cells2) => reactions.push({ kind, label, cells: sortedCells(cells2) });
+  const draft = (medium, remainingTurns, inherited) => {
+    const blueprint = mediumZone(medium);
+    return { rank: inherited?.rank ?? rank, zone: {
+      ...blueprint,
+      medium,
+      remainingTurns: remainingTurns ?? blueprint.remainingTurns,
+      tier: inherited?.zone.tier ?? tier,
+      team: inherited ? inherited.zone.team ?? null : team2,
+      sourceId: inherited ? inherited.zone.sourceId ?? null : sourceId2,
+      ...inherited?.zone.flags && { flags: inherited.zone.flags }
+    } };
+  };
+  const changeStatus = (unit, statusId3, turns) => {
+    if (!statuses.has(unit.id)) statuses.set(unit.id, /* @__PURE__ */ new Map());
+    statuses.get(unit.id).set(statusId3, turns > 0);
+    effects.push({ op: "status", targetId: unit.id, statusId: statusId3, turns });
+  };
+  const hasStatus = (unit, id3) => statuses.get(unit.id)?.get(id3) ?? Boolean(get(unit.statuses, id3));
+  const damage2 = (unit, kind, amount, damageType2, label, details) => {
+    secondaryTargets.push({ id: unit.id, kind, expectedDamage: amount });
+    effects.push({ op: "damage", pool: "hp", targetId: unit.id, sourceId: sourceId2, amount, damageType: damageType2, direct: false, reactionChain: true, label, ...details && { details } });
+  };
+  const hitCover = (cover, amount, details) => {
+    const before = coverHp.get(cover.id) ?? cover.hp;
+    if (before <= 0) return false;
+    coverHp.set(cover.id, before - Math.max(0, amount - (cover.armor ?? 0)));
+    effects.push({ op: "cover", coverId: cover.id, amount, details });
+    return true;
+  };
+  const checkShock = (unit, inWater) => effects.push({ op: "shock", targetId: unit.id, inWater });
+  for (const wave of queue) {
+    const traits = new Set(wave.traits);
+    const heat = traits.has("heat"), ignite = traits.has("ignite"), cold = traits.has("cold");
+    const wet = traits.has("wet"), shock = traits.has("shock"), gust = traits.has("gust");
+    const wetDeposit = wet && !heat && !ignite, oilDeposit = traits.has("flammable") && !ignite;
+    const cells2 = sortedCells(wave.cells.filter((at3) => isGround(state, at3)));
+    const stepX = wave.origin && wave.center ? Math.sign(wave.center.x - wave.origin.x) : 0;
+    const stepY = wave.origin && wave.center ? Math.sign(wave.center.y - wave.origin.y) : 0;
+    const directional = Boolean(stepX || stepY);
+    const put = (at3, record3) => {
+      const layer = record3.zone.layer;
+      if (!isGround(state, at3) || (view.read(layer, at3)?.rank ?? 0) > record3.rank) return false;
+      view.set(layer, at3, record3);
+      return true;
+    };
+    const enqueue = (cells3, traits2, center) => {
+      if (wave.depth + 1 < MAX_DEPTH && cells3.length) queue.push({ cells: cells3, traits: traits2, origin: center, center, depth: wave.depth + 1 });
+    };
+    const phaseDrafts = /* @__PURE__ */ new Map();
+    const phaseMedium = (medium, turns) => {
+      const id3 = `${medium}:${turns ?? ""}`;
+      if (!phaseDrafts.has(id3)) phaseDrafts.set(id3, draft(medium, turns));
+      return phaseDrafts.get(id3);
+    };
+    const marks = /* @__PURE__ */ new Map();
+    const mark = (kind, label, at3) => {
+      if (!marks.has(label)) marks.set(label, { kind, cells: [] });
+      marks.get(label).cells.push(at3);
+    };
+    const burn = (unit) => {
+      if (!dried.has(unit.id)) changeStatus(unit, "burning", 2);
+    };
+    const shockOnce = (unit, inWater = false) => {
+      if ((inWater || hasStatus(unit, "wet")) && claim(unit, `shock_${unit.id}`)) checkShock(unit, inWater);
+    };
+    const floodCounts = /* @__PURE__ */ new Map();
+    for (const at3 of cells2) {
+      for (const unit of units.get(key2(at3)) ?? []) {
+        const wasWet = hasStatus(unit, "wet");
+        const dryOff = wasWet && (heat || ignite) && claim(at3, `dry_${unit.id}`);
+        if (dryOff) {
+          dried.add(unit.id);
+          changeStatus(unit, "wet", 0);
+        } else if (wasWet && cold && claim(at3, `freeze_${unit.id}`)) {
+          changeStatus(unit, "wet", 0);
+          changeStatus(unit, "chilled", 1);
+        } else if (shock) {
+          shockOnce(unit);
+        }
+        if (hasStatus(unit, "oiled") && ignite && claim(at3, `ignite_${unit.id}`)) {
+          changeStatus(unit, "oiled", 0);
+          burn(unit);
+          damage2(unit, "attachment", Math.max(6, Math.floor(unit.maxHp * 0.05)), "fire", "\u8986\u6CB9\u7206\u71C3");
+          mark("attachment", "\u8986\u6CB9\u7206\u71C3", at3);
+        }
+        if ((wet || cold) && hasStatus(unit, "burning") && claim(at3, `quench_${unit.id}`)) changeStatus(unit, "burning", 0);
+        if (!(wasWet && cold) && (wet || heat || ignite) && hasStatus(unit, "chilled") && claim(at3, `thaw_${unit.id}`)) changeStatus(unit, "chilled", 0);
+        if (wetDeposit && ground2(unit) && claim(at3, `wet_${unit.id}`)) {
+          if (hasStatus(unit, "oiled")) changeStatus(unit, "oiled", 0);
+          if (!wasWet || !cold) changeStatus(unit, "wet", 2);
+        }
+        if (oilDeposit && ground2(unit) && claim(at3, `oil_${unit.id}`)) changeStatus(unit, "oiled", 2);
+      }
+    }
+    const moveCloud = [], spreadFire = [];
+    for (const at3 of cells2) {
+      const surface = view.read("surface", at3);
+      const cloud = view.read("cloud", at3);
+      const surfaceMedium = surface?.zone.medium;
+      const cloudMedium = cloud?.zone.medium;
+      const flood = (layer, matches2, kind) => {
+        const found = [], pending = [];
+        const add = (cell) => {
+          const count = floodCounts.get(kind) ?? 0;
+          if (count >= MAX_FLOOD) return;
+          const record3 = view.read(layer, cell);
+          if (record3 && record3.rank <= rank && matches2(record3.zone.medium) && claim(cell, kind)) {
+            pending.push(cell);
+            floodCounts.set(kind, count + 1);
+          }
+        };
+        add(at3);
+        for (const cell of pending) {
+          found.push(cell);
+          for (const next of neighbors(cell)) add(next);
+        }
+        return found.sort(byCell);
+      };
+      const combust = (layer, medium, label, min, ratio3, altitude, turns) => {
+        const found = flood(layer, (candidate) => candidate === medium, `combust_${layer}`);
+        if (!found.length) return;
+        for (const cell of found) {
+          if (layer === "cloud") view.set(layer, cell, void 0);
+          put(cell, phaseMedium("fire", turns));
+          for (const unit of units.get(key2(cell)) ?? []) {
+            if ((unit.altitude ?? 0) > altitude) continue;
+            if (layer === "surface") burn(unit);
+            damage2(unit, "combust", Math.max(min, Math.floor(unit.maxHp * ratio3)), "fire", label);
+          }
+        }
+        reaction("combust", label, found);
+        const inside = new Set(found.map(key2));
+        enqueue(
+          sortedCells(found.flatMap(neighbors).filter((cell) => !inside.has(key2(cell)))),
+          layer === "cloud" ? ["heat", "ignite", "gust"] : ["heat", "ignite"]
+        );
+      };
+      const phase = (label, medium, extra) => {
+        if (!claim(at3, "phase")) return;
+        if (medium) put(at3, phaseMedium(medium));
+        else view.set("surface", at3, void 0);
+        if (extra) put(at3, phaseMedium(extra));
+        mark("phase", label, at3);
+      };
+      if (surface && surface.rank <= rank) {
+        if (surfaceMedium === "oil" && ignite) combust("surface", "oil", "\u5F15\u71C3\u6CB9\u9762", 8, 0.06, 0, 2);
+        else if (water(surfaceMedium) && shock) {
+          const found = flood("surface", water, "conduct");
+          if (found.length) {
+            for (const cell of found) {
+              put(cell, phaseMedium("electrified_water"));
+              for (const unit of units.get(key2(cell)) ?? []) {
+                if (!ground2(unit)) continue;
+                shockOnce(unit, true);
+                if (!direct.has(unit.id)) damage2(unit, "conduct", Math.max(6, Math.floor(unit.maxHp * 0.05)), "lightning", "\u6C34\u4F53\u5BFC\u7535");
+              }
+            }
+            reaction("conduct", "\u6C34\u4F53\u5BFC\u7535", found);
+          }
+        } else if (surfaceMedium === "water" && cold) phase("\u6C34\u9762\u51BB\u7ED3", "ice");
+        else if (surfaceMedium === "water" && heat) phase("\u6C34\u9762\u6C7D\u5316", null, "steam");
+        else if (surfaceMedium === "ice" && (heat || ignite)) phase("\u51B0\u9762\u878D\u5316", "water");
+        else if (surfaceMedium === "ice" && gust) phase("\u51B0\u9762\u788E\u88C2", null);
+        else if (surfaceMedium === "fire" && wet) phase("\u706B\u6D77\u7184\u706D", null, "steam");
+        else if (surfaceMedium === "fire" && cold) phase("\u706B\u6D77\u51BB\u706D", null);
+        else if (surfaceMedium === "fire" && gust && directional) spreadFire.push(at3);
+      } else if (!surface && (tier > 2 || (state.scale?.cellM ?? 2) < 50) && (wetDeposit || oilDeposit)) {
+        if (claim(at3, "phase")) {
+          put(at3, phaseMedium(wetDeposit ? "water" : "oil", 2));
+          mark("phase", wetDeposit ? "\u843D\u5730\u79EF\u6C34" : "\u843D\u5730\u8986\u6CB9", at3);
+        }
+      }
+      if (cloud && cloud.rank <= rank && view.read("cloud", at3) === cloud) {
+        if (cloudMedium === "poison_cloud" && ignite) combust("cloud", "poison_cloud", "\u5F15\u7206\u6BD2\u7634", 10, 0.08, 1, 1);
+        else if (cloudMedium === "steam" && shock) {
+          if (claim(at3, "cloud_conduct")) {
+            put(at3, phaseMedium("electrified_steam"));
+            mark("conduct", "\u84B8\u6C7D\u5E26\u7535", at3);
+          }
+        } else if (gust) moveCloud.push({ at: at3, cloud });
+      }
+      if (ignite || shock) {
+        for (const item of barrels.get(key2(at3)) ?? []) {
+          if (spent.has(item.id) || !claim(at3, "barrel")) break;
+          spent.add(item.id);
+          const radius = item.radius ?? 2, amount = item.damage ?? 12;
+          const blast = aoeCells(state, item, item, { shape: "circle", radius, ignoreObscure: true });
+          const details = { interactiveId: item.id };
+          effects.push({ op: "barrel", id: item.id });
+          for (const cell of blast) {
+            for (const unit of units.get(key2(cell)) ?? []) {
+              if (distance3D(state, item, unit) <= radius + 1e-9) damage2(unit, "barrel", amount, "fire", item.name, details);
+            }
+            for (const cover of covers.get(key2(cell)) ?? []) hitCover(cover, amount, details);
+          }
+          reaction("barrel", `\u5F15\u7206${item.name}`, blast);
+          enqueue(blast, ["heat", "ignite", "gust"], item);
+        }
+      }
+      for (const cover of covers.get(key2(at3)) ?? []) {
+        const material = `${cover.material ?? ""}${cover.name ?? ""}`;
+        const corrode = traits.has("corrode");
+        if (!corrode && !(ignite && /木|藤|草|竹|布|栅/u.test(material)) && !(heat && /冰|霜|雪/u.test(material))) continue;
+        if (!claim(at3, `cover_${cover.id}`)) continue;
+        if (hitCover(cover, Math.max(4, Math.ceil(cover.maxHp * 0.35)), { damageType: corrode ? "acid" : "fire" })) {
+          mark("cover", "\u7ED3\u6784\u7834\u574F", at3);
+        }
+      }
+    }
+    const movedDrafts = /* @__PURE__ */ new Map();
+    const lifted = moveCloud.filter(({ at: at3, cloud }) => view.read("cloud", at3) === cloud && claim(at3, "cloud_gust"));
+    for (const { at: at3 } of lifted) view.set("cloud", at3, void 0);
+    for (const { at: at3, cloud } of lifted) {
+      const to = delta(at3, stepX, stepY);
+      const medium = cloud.zone.medium;
+      const id3 = cloud.zone;
+      if (!movedDrafts.has(id3)) movedDrafts.set(id3, draft(medium, cloud.zone.remainingTurns, cloud));
+      if (directional && put(to, movedDrafts.get(id3))) {
+        mark("gust", "\u4E91\u96FE\u5439\u79FB", at3);
+        mark("gust", "\u4E91\u96FE\u5439\u79FB", to);
+      } else mark("gust", "\u4E91\u96FE\u5439\u6563", at3);
+    }
+    for (const at3 of spreadFire) {
+      const to = delta(at3, stepX, stepY);
+      if (!view.read("surface", to) && isGround(state, to) && claim(at3, "surface_gust")) {
+        put(to, phaseMedium("fire"));
+        mark("gust", "\u706B\u52BF\u8513\u5EF6", to);
+      }
+    }
+    for (const [label, { kind, cells: cells3 }] of marks) reaction(kind, label, cells3);
+  }
+  return { reactions, secondaryTargets, effects, view, visited };
+}
+function previewSpatialImpulse(state, impulse) {
+  const { reactions, secondaryTargets } = planImpulse(state, impulse);
+  return { reactions, secondaryTargets };
+}
+function applyMedia(state, host, view) {
+  const removed = /* @__PURE__ */ new Map(), inserted = /* @__PURE__ */ new Map();
+  const add = (table4, id3, at3) => {
+    if (!table4.has(id3)) table4.set(id3, []);
+    table4.get(id3).push(at3);
+  };
+  for (const layer of ["surface", "cloud"]) {
+    for (const [id3, { at: at3, record: record3 }] of view.changes[layer]) {
+      const before = view.original[layer].get(id3)?.zone;
+      if (before) add(removed, before, at3);
+      if (record3) add(inserted, record3, at3);
+    }
+  }
+  for (const [zone, cells2] of removed) removeMediumCells(state, host, zone, sortedCells(cells2));
+  for (const [{ zone, rank }, cells2] of inserted) {
+    putMedium(state, host, { ...zone, area: { shape: "cells", cells: sortedCells(cells2) } }, rank);
+  }
+}
+function resolveSpatialImpulse(state, host, frame, impulse) {
+  const root2 = state.vm?.stack[0] ?? frame;
+  const { reactions, secondaryTargets, effects, view, visited } = planImpulse(state, impulse, root2.impulseVisited);
+  if (!effects.length && !reactions.length) return { reactions, secondaryTargets };
+  root2.impulseVisited = [...visited];
+  const actor = get(state.units, impulse.sourceId);
+  applyMedia(state, host, view);
+  for (const { kind, label, cells: cells2 } of reactions) {
+    if (kind !== "barrel" && kind !== "attachment" && kind !== "cover") host.log(state, actor, "zone", label, { reaction: kind, cells: cells2 });
+  }
+  if (effects.length) pushFrame(state, {
+    native: "spatial_impulse",
+    ownerId: frame.ownerId,
+    sourceId: impulse.sourceId ?? null,
+    ruleId: frame.ruleId,
+    attribution: frame.attribution ?? null,
+    carrier: frame.carrier ?? null,
+    data: { effects }
+  });
+  return { reactions, secondaryTargets };
+}
+function continueSpatialImpulse({ state, host, frame }) {
+  const effect = frame.data.effects[frame.pc++];
+  if (!effect) {
+    state.vm.stack.pop();
+    return;
+  }
+  const actor = get(state.units, frame.sourceId);
+  if (effect.op === "barrel") {
+    const item = get(state.interactives, effect.id);
+    if (item && !item.spent) {
+      item.spent = true;
+      host.log(state, actor, "interact", `\u5F15\u7206${item.name}`, { interactiveId: item.id });
+    }
+    return;
+  }
+  if (effect.op === "cover") {
+    const cover = get(state.covers, effect.coverId);
+    if (cover?.hp > 0) host.coverDamage(state, actor, cover, effect.amount, effect.details);
+    return;
+  }
+  const target2 = get(state.units, effect.targetId);
+  if (!alive4(target2)) return;
+  if (effect.op === "damage") scheduleCommit(state, frame, effect);
+  else if (effect.op === "status") {
+    if (effect.turns > 0) host.grantStatus(state, target2, effect.statusId, { sourceId: frame.sourceId, remainingTurns: effect.turns });
+    else {
+      const status = get(target2.statuses, effect.statusId);
+      if (status) removeStatus(state, target2, status, "elemental_reaction", actor, host, frame);
+    }
+  } else if (effect.op === "shock" && (effect.inWater || get(target2.statuses, "wet"))) {
+    const roll = rollDie(state.rng, 20);
+    state.rng = roll.rng;
+    const bonus = Math.floor((target2.stats?.con ?? 0) / 2);
+    const total2 = roll.value + bonus, success = total2 >= 12;
+    host.log(state, actor, "save", `${target2.name}${success ? "\u62B5\u6297\u4E86" : "\u672A\u62B5\u6297"}\u9EBB\u75F9`, {
+      targetId: target2.id,
+      saveStat: "con",
+      saveRoll: roll.value,
+      saveBonus: bonus,
+      saveTotal: total2,
+      saveDC: 12,
+      saved: success
+    });
+    if (!success) host.grantStatus(state, target2, "stun", { sourceId: frame.sourceId, remainingTurns: 1 });
+  }
+}
+
 // src/core/vm-action.js
-var own11 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own11 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 var MAX_ACTION_CHAIN_DEPTH = 3;
 var clamp3 = (value, min, max) => Math.max(min, Math.min(max, value));
 var aggregateIntentLock = (state, unitId) => aggregateModifiers(state, unitId).controlPolicy.intentLock;
@@ -5211,6 +5849,14 @@ function continueAction({ state, frame, host, options }) {
     return;
   }
   if (frame.pc === 3) {
+    if (!frame.impulseEmitted) {
+      const impulse = makeActionImpulse(state, actor, action, plan, event.origin, frame.impulseDirectTargets ?? []);
+      if (impulse) {
+        frame.impulseEmitted = true;
+        emitSpatialImpulse(state, host, frame, impulse);
+        return;
+      }
+    }
     frame.pc++;
     if (actor.hp > 0) scheduleHooks(state, frame, "after_action", frame.eventRef, host);
     return;
@@ -5220,7 +5866,7 @@ function continueAction({ state, frame, host, options }) {
     return;
   }
   if (record3 && isTapeAction(action.type)) {
-    const parameters = Object.fromEntries(["itemId", "maneuver", "intent", "nonLethal", "bonusDice"].filter((key4) => Object.hasOwn(action, key4)).map((key4) => [key4, action[key4]]));
+    const parameters = Object.fromEntries(["itemId", "maneuver", "intent", "nonLethal", "bonusDice"].filter((key5) => Object.hasOwn(action, key5)).map((key5) => [key5, action[key5]]));
     state.tape ??= [];
     state.tape.push({
       seq: (state.tape.at(-1)?.seq ?? 0) + 1,
@@ -5241,7 +5887,7 @@ function continueAction({ state, frame, host, options }) {
 }
 
 // src/core/log-attribution.js
-var own12 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own12 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 function movementProgressText(progressPermille) {
   const approximate = Math.round(progressPermille / 100) * 10;
   return approximate === 0 ? "\u4E0D\u5230 10%" : approximate === 100 ? "\u63A5\u8FD1 100%" : `\u7EA6 ${approximate}%`;
@@ -5331,14 +5977,14 @@ function actionActor(state, action) {
   return canRouteActor(state, actorId) ? state.units[actorId] : void 0;
 }
 function syncLinkedGroupSlots(state, actor, slot2, used) {
-  const key4 = linkedGroupKey(actor);
-  if (!key4 || !["attack", "action"].includes(slot2)) return;
+  const key5 = linkedGroupKey(actor);
+  if (!key5 || !["attack", "action"].includes(slot2)) return;
   state.vm ??= {};
   state.vm.linkedGroupUsed ??= {};
-  state.vm.linkedGroupUsed[key4] ??= { attack: 0, action: 0 };
-  state.vm.linkedGroupUsed[key4][slot2] = used;
+  state.vm.linkedGroupUsed[key5] ??= { attack: 0, action: 0 };
+  state.vm.linkedGroupUsed[key5][slot2] = used;
   for (const unit of linkedUnitsOf(state, actor.turnAnchorId)) {
-    if (linkedGroupKey(unit) !== key4) continue;
+    if (linkedGroupKey(unit) !== key5) continue;
     unit.used ??= { attack: 0, action: 0 };
     unit.used[slot2] = used;
     unit.ap = Math.max(0, (unit.apMax ?? 2) - (unit.used.attack ?? 0) - (unit.used.action ?? 0));
@@ -5346,7 +5992,7 @@ function syncLinkedGroupSlots(state, actor, slot2, used) {
 }
 
 // src/core/vm-runtime.js
-var own13 = (table4, key4) => table4 && Object.hasOwn(table4, key4) ? table4[key4] : void 0;
+var own13 = (table4, key5) => table4 && Object.hasOwn(table4, key5) ? table4[key5] : void 0;
 var values2 = (table4) => Object.values(table4 ?? {});
 var lookUp = (state, event, ownerId, name) => aggregateModifiers(state, ownerId, event).stats[name];
 var mod = (state, event, ownerId, name, base) => applyStatMod(base, lookUp(state, event, ownerId, name));
@@ -5364,6 +6010,7 @@ var handlers = {
   apply_status: continueApplyStatus,
   remove_status: continueRemoveStatus,
   ...spatialContinuations,
+  spatial_impulse: continueSpatialImpulse,
   strike: continueStrike,
   round: continueRound
 };
@@ -5382,11 +6029,11 @@ function initializeVMWorld(state) {
   }
   for (const item of values2(state.items)) {
     const context = { state, self: holders.get(item.id) ?? own13(state.units, item.ownerId), item };
-    for (const [key4, definition] of Object.entries(own13(state.equipment, item.templateId)?.pools ?? {})) {
-      if (!getPool(state, item.id, key4, "item")) createPool(state, {
+    for (const [key5, definition] of Object.entries(own13(state.equipment, item.templateId)?.pools ?? {})) {
+      if (!getPool(state, item.id, key5, "item")) createPool(state, {
         ownerKind: "item",
         ownerId: item.id,
-        key: key4,
+        key: key5,
         max: poolNumber(definition.cap, context),
         current: poolNumber(definition.initial, context),
         reloadable: definition.reloadable ?? false
@@ -5444,6 +6091,8 @@ function commitVMEffect(state, data) {
   if (idle) stepVM(state, vmHost);
 }
 var vmHost = {
+  grantStatus,
+  coverDamage,
   ops: { ...ruleOps, ...commitOps, ...spatialOps, perform },
   log: recordVM,
   isAI: isAiControlled,
@@ -5510,13 +6159,13 @@ var vmHost = {
       useKey: JSON.stringify([event.actorId, usedItem ?? event.skillId, rule2.id])
     }))];
   },
-  enterRule(state, frame, key4) {
+  enterRule(state, frame, key5) {
     const { rule: rule2 } = frame;
-    const { usesLeft, cooldownRemaining, sameTurn, roundUsed, stamp } = ruleAvailability(state, rule2, key4);
+    const { usesLeft, cooldownRemaining, sameTurn, roundUsed, stamp } = ruleAvailability(state, rule2, key5);
     if (usesLeft <= 0 || cooldownRemaining > 0) return false;
-    if (rule2.usesPerBattle !== void 0) (state.vm.uses ??= {})[key4] = (own13(state.vm.uses, key4) ?? 0) + 1;
+    if (rule2.usesPerBattle !== void 0) (state.vm.uses ??= {})[key5] = (own13(state.vm.uses, key5) ?? 0) + 1;
     if (rule2.usesPerTurn !== void 0 || rule2.usesPerRound !== void 0 || rule2.cooldownTurns !== void 0) {
-      (state.vm.ruleTurns ??= {})[key4] = {
+      (state.vm.ruleTurns ??= {})[key5] = {
         round: state.round,
         turn: state.turn,
         count: sameTurn ? stamp.count + 1 : 1,
@@ -5530,25 +6179,25 @@ var vmHost = {
     if (!handler) throw new Error(`\u672A\u77E5\u7ED3\u7B97\u9636\u6BB5 ${env.frame.native}`);
     handler(env);
   },
-  resource: (state, unit, key4) => {
+  resource: (state, unit, key5) => {
     if (!unit) return void 0;
-    if (key4 === "move") return movementBudget(state, unit).remainingCells;
-    if (key4 === "attack" || key4 === "action") return Math.max(0, 1 - (unit.used?.[key4] ?? 0));
-    if (key4 === "reaction") return unit.reactionAvailable === false ? 0 : 1;
-    return getPool(state, unit.id, key4)?.current;
+    if (key5 === "move") return movementBudget(state, unit).remainingCells;
+    if (key5 === "attack" || key5 === "action") return Math.max(0, 1 - (unit.used?.[key5] ?? 0));
+    if (key5 === "reaction") return unit.reactionAvailable === false ? 0 : 1;
+    return getPool(state, unit.id, key5)?.current;
   },
   statusTemplate: getStatusTemplate,
   statusLogDetail,
   flag: (state, unit, flag) => aggregateModifiers(state, unit.id).flags[flag] === true,
-  stat: (state, unit, key4) => mod(state, {}, unit.id, key4, unit.stats?.[key4] ?? 0),
+  stat: (state, unit, key5) => mod(state, {}, unit.id, key5, unit.stats?.[key5] ?? 0),
   checkBonus: (state, unit, event) => mod(state, event, unit.id, "checkBonus", 0) + (event.checkKind === "save" ? mod(state, event, unit.id, "resistBonus", 0) : 0),
   advantage: (state, unit, event) => mod(state, event, unit.id, "advantage", 0),
   resistBonus: (state, unit, event) => mod(state, event, unit.id, "resistBonus", 0),
   dcBonus: (state, unit, event) => mod(state, event, unit.id, "dcBonus", 0),
-  isImmune: (state, unit, key4, frame) => {
+  isImmune: (state, unit, key5, frame) => {
     const event = frame?.eventRef ? state.vm?.events?.[frame.eventRef] : void 0;
     const source = own13(state.units, event?.actorId ?? event?.sourceId ?? frame?.sourceId);
-    return isStatusImmune(state, unit, key4, source, { collectRules, carrierScope });
+    return isStatusImmune(state, unit, key5, source, { collectRules, carrierScope });
   },
   prepareDamage(state, source, target2, data) {
     const { damageType: damageType2 } = data;
@@ -5666,17 +6315,17 @@ var vmHost = {
         { targetId: actor.id, resource: resource2, amount: before - after, before, after }
       );
     }
-    for (const key4 of ["hp", "mp", "sp"]) {
-      const cost = Math.max(0, Math.floor((event[`${key4}Cost`] ?? 0) * (event.costScale ?? 1)));
+    for (const key5 of ["hp", "mp", "sp"]) {
+      const cost = Math.max(0, Math.floor((event[`${key5}Cost`] ?? 0) * (event.costScale ?? 1)));
       if (!cost) continue;
-      const pool = getPool(state, actor.id, key4);
-      const { before, after } = updatePoolCurrent(state, pool.id, "sub", cost, { minRemain: key4 === "hp" ? 1 : 0 });
+      const pool = getPool(state, actor.id, key5);
+      const { before, after } = updatePoolCurrent(state, pool.id, "sub", cost, { minRemain: key5 === "hp" ? 1 : 0 });
       recordVM(
         state,
         actor,
         "resource",
-        `${actor.name}\u56E0${plan.name}\u6D88\u8017${before - after}\u70B9 ${key4.toUpperCase()}`,
-        { targetId: actor.id, resource: key4, amount: before - after, before, after }
+        `${actor.name}\u56E0${plan.name}\u6D88\u8017${before - after}\u70B9 ${key5.toUpperCase()}`,
+        { targetId: actor.id, resource: key5, amount: before - after, before, after }
       );
     }
   },
@@ -5736,9 +6385,9 @@ function validVmState(state) {
     if (!plain2(record3) || Object.hasOwn(record3, "sourceSkillId") && !validVmSourceSkillId(record3.sourceSkillId)) return false;
   }
   for (const unit of Object.values(state.units ?? {})) {
-    for (const [key4, maximum] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
-      const pool = own13(pools, own13(unit.pools, key4));
-      if (!pool || pool.kind !== key4 || pool.current !== unit[key4] || pool.max !== unit[maximum] || !Array.isArray(pool.contributors) || !pool.contributors.some((c) => c.ownerKind === "unit" && c.ownerId === unit.id)) return false;
+    for (const [key5, maximum] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) {
+      const pool = own13(pools, own13(unit.pools, key5));
+      if (!pool || pool.kind !== key5 || pool.current !== unit[key5] || pool.max !== unit[maximum] || !Array.isArray(pool.contributors) || !pool.contributors.some((c) => c.ownerKind === "unit" && c.ownerId === unit.id)) return false;
     }
   }
   return state.tape === void 0 || Array.isArray(state.tape);
@@ -5778,16 +6427,20 @@ function randomDie(state, sides) {
   return value;
 }
 var values3 = (object4) => Object.values(object4 ?? {});
-var alive4 = (unit) => unit && unit.hp > 0;
-var byId2 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-var living = (state) => values3(state.units).filter((unit) => alive4(unit) && !unit.fled).sort(byId2);
+var alive5 = (unit) => unit && unit.hp > 0;
+var byId3 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+var living = (state) => values3(state.units).filter((unit) => alive5(unit) && !unit.fled).sort(byId3);
 var sameCell = (a, b) => a.x === b.x && a.y === b.y;
 var pos = (x, y) => ({ x, y });
 var pointAt = (state, at3) => ({ x: at3.x, y: at3.y, z: elevation(state, at3) });
-var key2 = (x, y) => `${x},${y}`;
+var key3 = (x, y) => `${x},${y}`;
 var stat2 = (unit, id3) => Number(unit.stats?.[id3] ?? 0);
 var clamp4 = (number3, min, max) => Math.max(min, Math.min(max, number3));
 var vmFlag = (state, unit, name, context = {}) => aggregateModifiers(state, unit.id, modifierEvent(unit, context)).flags[name] === true;
+var sightOptions = (state, observer, target2) => ({
+  ignoreObscure: Boolean(observer?.id && state.elementalPhysics !== "off" && values3(state.zones).some((zone) => zone.blocksLOS === true) && vmFlag(state, observer, "trueSight", { target: target2 }))
+});
+var clearSight = (state, from, to, observer = from) => hasLOS(state, from, to, sightOptions(state, observer, to));
 var statusOf2 = (unit, id3) => Object.hasOwn(unit.statuses ?? {}, id3) ? unit.statuses[id3] : void 0;
 var currentUnit = (state) => Object.hasOwn(state.units, state.order[state.turn]) ? state.units[state.order[state.turn]] : void 0;
 function isAiControlled(state, unit) {
@@ -5830,7 +6483,7 @@ function switchableWeapons(state, unit) {
   });
 }
 var equipped = (state, unit) => [...new Set([unit.mainHand ?? unit.weapon, unit.offHand, unit.shield, ...gearFor(state, unit).map((g) => g.instance?.id)].filter(Boolean))].map((id3) => equipmentFor(state, id3)).filter(({ template }) => !template?.boundTo || template.boundTo === unit.id);
-var effectiveStat = (state, unit, key4) => modStat(state, unit, key4, stat2(unit, key4));
+var effectiveStat = (state, unit, key5) => modStat(state, unit, key5, stat2(unit, key5));
 var resolveDC = (state, actor, dc) => evaluateExpr(dc, { self: actor, source: actor, round: state.round, turn: state.turn }) ?? 12;
 var resourcePool = (state, unit, resource2, instance) => {
   for (const item of equipped(state, unit)) {
@@ -5849,7 +6502,7 @@ var shieldTotal = (unit) => values3(unit.statuses).reduce((total2, status) => to
 function grantStatus(state, unit, statusId3, options = {}) {
   const template = getStatusTemplate(state, statusId3);
   if (!unit || !template) throw new Error(`\u672A\u77E5\u72B6\u6001\uFF1A${statusId3}`);
-  if (!alive4(unit) || unit.fled) return null;
+  if (!alive5(unit) || unit.fled) return null;
   unit.statuses ??= {};
   const result = resolveStatusApplication({ ...state, statusTemplates: { ...state.statusTemplates, [statusId3]: template } }, unit, statusId3, options, { strict: true });
   if (!result) return null;
@@ -5908,15 +6561,15 @@ function refreshOutcome(state) {
   if (state.battleConclusion) return state.outcome;
   if (["spar", "arena"].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
   let blue = false, red = false;
-  for (const unit of values3(state.units)) if (alive4(unit) && !unit.fled) {
+  for (const unit of values3(state.units)) if (alive5(unit) && !unit.fled) {
     blue ||= unit.team === "blue";
     red ||= unit.team === "red";
   }
   if (state.battleType === "suppress") {
     const side2 = state.suppressingTeam, label = side2 === "blue" ? "\u84DD\u65B9" : "\u7EA2\u65B9";
     const defenders = values3(state.units).filter((u) => u.team !== side2);
-    const present2 = defenders.filter((u) => alive4(u) && !u.fled);
-    const dead = defenders.filter((u) => !alive4(u));
+    const present2 = defenders.filter((u) => alive5(u) && !u.fled);
+    const dead = defenders.filter((u) => !alive5(u));
     if (!present2.length && defenders.length) return concludeObjective(
       state,
       side2 === "blue" ? "red" : "blue",
@@ -5956,10 +6609,10 @@ function moraleCheck(state) {
 function restoreHP(state, target2, amount, sourceId2, label, details = {}) {
   commitVMEffect(state, { op: "heal", targetId: target2.id, amount, sourceId: sourceId2, label, details });
 }
-function writePoolMirror(state, target2, key4, current) {
-  const pool = target2.pools && getPool(state, target2.id, key4);
+function writePoolMirror(state, target2, key5, current) {
+  const pool = target2.pools && getPool(state, target2.id, key5);
   if (pool) updatePoolCurrent(state, pool.id, "set", current);
-  else target2[key4] = current;
+  else target2[key5] = current;
 }
 function setResourceTotal(state, target2, resource2, after, sourceUnitId, label) {
   const before = target2[resource2];
@@ -5991,7 +6644,7 @@ function armorOf(state, unit, damageType2, pierce = 0, context = {}) {
   const flat = typeof pierce === "object" ? pierce.flat ?? 0 : pierce;
   const percent3 = typeof pierce === "object" ? clamp4(pierce.percent ?? 0, -1, 1) : 0;
   const effective = Math.max(0, armor * (1 - percent3) - flat);
-  return typedArmor(damageType2, effective);
+  return typedArmor(damageType2, effective, state.customElements);
 }
 function damageTarget(state, target2, sourceId2, amount, damageType2, label, options = {}) {
   const source = tableEntry(state.units, sourceId2);
@@ -6023,7 +6676,7 @@ function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   const category = elementMitigationCategory(type, state.customElements);
   const defense = ctx.ignoreArmor || category === "true" || category === "mental" ? 0 : armorOf(state, unit, type, pierce, ctx);
   const armorMultiplier = 2e3 / (defense + 2e3);
-  const attributeReduction = state.ruleset === "protocol" && type !== "true" ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map((key4) => [key4, effectiveStat(state, unit, key4)])), state.customElements) : 0;
+  const attributeReduction = state.ruleset === "protocol" && type !== "true" ? damageAttributeReduction(type, Object.fromEntries(Object.keys(unit.stats ?? {}).map((key5) => [key5, effectiveStat(state, unit, key5)])), state.customElements) : 0;
   return {
     shatter,
     vulnerability,
@@ -6037,7 +6690,7 @@ function mitigation(state, unit, type, hit, pierce, ctx = {}) {
   };
 }
 function guardFor(state, target2) {
-  return living(state).find((u) => u !== target2 && u.team === target2.team && vmFlag(state, u, "intercept", { target: target2 }) && u.reactionAvailable !== false && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && hasLOS(state, u, target2));
+  return living(state).find((u) => u !== target2 && u.team === target2.team && vmFlag(state, u, "intercept", { target: target2 }) && u.reactionAvailable !== false && !reactionBlocked(state, u) && gridDistance(u, target2) <= 1 && Math.abs(elevation(state, u) - elevation(state, target2)) <= 1 && clearSight(state, u, target2));
 }
 function resetUnitTurn(state, unit) {
   delete unit.followupUsed;
@@ -6067,8 +6720,8 @@ function endTurn(state, unit) {
   delete state.vm.activePhaseId;
   const members = [...linkedUnitsOf(state, unit.id), unit];
   for (const member of members) member.ap = 0;
-  for (const key4 of Object.keys(state.vm.linkedGroupUsed ?? {})) {
-    if (key4.startsWith(`${unit.id}:`)) delete state.vm.linkedGroupUsed[key4];
+  for (const key5 of Object.keys(state.vm.linkedGroupUsed ?? {})) {
+    if (key5.startsWith(`${unit.id}:`)) delete state.vm.linkedGroupUsed[key5];
   }
   state.vm.endingTurn = unit.id;
   state.vm.endingPhase = { members: members.map((member) => member.id), stage: 0 };
@@ -6124,7 +6777,7 @@ function settleTurn(state) {
   for (let checked = 0; checked < state.order.length; checked++) {
     const unit = currentUnit(state);
     if (state.outcome) return;
-    if (unit && (state.vm?.startingTurn === unit.id || alive4(unit) && !unit.fled)) {
+    if (unit && (state.vm?.startingTurn === unit.id || alive5(unit) && !unit.fled)) {
       if (state.vm?.startingTurn !== unit.id) {
         beginUnitTurn(state, unit);
         if (state.vm.pendingAsk) {
@@ -6146,8 +6799,8 @@ function settleTurn(state) {
         }
         continue;
       }
-      if (alive4(unit) && !unitSkipped(state, unit)) return;
-      if (alive4(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
+      if (alive5(unit) && !unitSkipped(state, unit)) return;
+      if (alive5(unit)) record(state, unit, "skip", `${unit.name}\u56E0\u63A7\u5236\u8DF3\u8FC7\u884C\u52A8`);
       endTurn(state, unit);
       if (state.vm?.pendingAsk || refreshOutcome(state)) return;
     }
@@ -6175,7 +6828,7 @@ function continueUnitTurnStart(state) {
   while (state.vm.startingMembers.length && !state.vm.pendingAsk) {
     const id3 = state.vm.startingMembers[0];
     const unit = tableEntry(state.units, id3);
-    if (!alive4(unit) || unit.fled) {
+    if (!alive5(unit) || unit.fled) {
       state.vm.startingMembers.shift();
       continue;
     }
@@ -6214,7 +6867,7 @@ function turnAP(state, unit) {
 function resetFacing(state) {
   for (const unit of living(state)) {
     const target2 = unit.statuses[actionStatuses.lock_on] ? state.units[unit.lockedTargetId] : null;
-    if (target2 && alive4(target2)) unit.facing = facingToward(unit, target2);
+    if (target2 && alive5(target2)) unit.facing = facingToward(unit, target2);
   }
 }
 function advanceCursor(state) {
@@ -6247,8 +6900,8 @@ function continueRound({ state, frame, host }) {
   if (openingRows.length && (hasModifier || lastChange?.detail.modified)) {
     const ranked = openingRows.map((row, index) => {
       const unit = state.units[row.unitId];
-      const delta = modStat(state, unit, "initiative", row.flatInit, {}, true) - row.flatInit;
-      return { id: row.unitId, total: row.total + delta, index };
+      const delta2 = modStat(state, unit, "initiative", row.flatInit, {}, true) - row.flatInit;
+      return { id: row.unitId, total: row.total + delta2, index };
     }).sort((a, b) => b.total - a.total || a.index - b.index).map((row) => row.id);
     const included = new Set(ranked);
     const order = [...ranked, ...state.order.filter((id3) => !included.has(id3))];
@@ -6394,7 +7047,7 @@ function equippedActiveSkills(state, unit) {
         target: "self",
         rules: [rule2],
         itemId: id3,
-        ...Object.fromEntries(["usesPerBattle", "usesPerTurn", "cooldownTurns"].filter((key4) => rule2[key4] !== void 0).map((key4) => [key4, rule2[key4]]))
+        ...Object.fromEntries(["usesPerBattle", "usesPerTurn", "cooldownTurns"].filter((key5) => rule2[key5] !== void 0).map((key5) => [key5, rule2[key5]]))
       });
     }
   }
@@ -6445,7 +7098,7 @@ function movementBudget(state, unit, { prospectiveSprint = false } = {}) {
   };
 }
 function reachable(state, type = "move", unit = currentUnit(state), distanceLimit = void 0) {
-  if (!alive4(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
+  if (!alive5(unit) || aggregateModifiers(state, unit.id).locks.move) return [];
   const budget2 = movementBudget(state, unit, { prospectiveSprint: type === "sprint" });
   const limit = distanceLimit ?? budget2.remainingCells;
   const routes = movementOptions(state, unit, limit, { ignoreZoc: type === "disengage" });
@@ -6453,20 +7106,25 @@ function reachable(state, type = "move", unit = currentUnit(state), distanceLimi
     return [{ x: unit.x, y: unit.y, z: elevation(state, unit), steps: 0, path: [], opportunities: [], bankedProgress: budget2.bankedProgress }];
   }
   const sources = type === "disengage" ? [] : opportunitySources(state, unit).filter((source) => canReact(state, source, unit));
-  const routeCell = ({ cost, ...cell }, opportunities = []) => ({ ...cell, steps: cost, opportunities });
+  const routeCell = ({ cost, ...cell }, opportunities = []) => ({
+    ...cell,
+    steps: cell.path.length,
+    ...cost !== cell.path.length && { costPermille: cost * 1e3 },
+    opportunities
+  });
   if (!sources.length || !routes.length) return routes.map((route) => routeCell(route));
   const threatCache = /* @__PURE__ */ new Map();
   const threatAt = (at3) => {
-    const id3 = key2(at3.x, at3.y);
+    const id3 = key3(at3.x, at3.y);
     if (!threatCache.has(id3)) threatCache.set(id3, sources.filter((source) => threatens(state, source, unit, at3)));
     return threatCache.get(id3);
   };
   const exits = (from, to) => threatAt(from).filter((source) => sameCell(from, source.unit) || !threatAt(to).includes(source));
   const safe = new Map(movementOptions(state, unit, limit, {
     allowsStep: (from, to) => !exits(from, to).length
-  }).map((route) => [key2(route.x, route.y), route]));
+  }).map((route) => [key3(route.x, route.y), route]));
   return routes.map((route) => {
-    const alternate = safe.get(key2(route.x, route.y));
+    const alternate = safe.get(key3(route.x, route.y));
     if (alternate) return routeCell(alternate);
     const spent = /* @__PURE__ */ new Set(), opportunities = [];
     let from = unit;
@@ -6520,13 +7178,13 @@ function buildActionContext(state, unit, action, { skill: skill2, weapon: weapon
   };
 }
 function actorCost(state, unit, base, context) {
-  const scale = (key4, amount) => {
-    const { stats, pooledCostFlat } = aggregateModifiers(state, unit.id, modifierEvent(unit, { ...context, pool: key4 }));
+  const scale = (key5, amount) => {
+    const { stats, pooledCostFlat } = aggregateModifiers(state, unit.id, modifierEvent(unit, { ...context, pool: key5 }));
     const flat = amount > 0 ? stats.costFlat?.flat ?? 0 : pooledCostFlat;
     return Math.max(0, Math.floor((amount + flat) * Math.max(0, applyStatMod(1, stats.costMult))));
   };
   const { poolCostId } = base;
-  const bills = new Map(vitalPools.map((key4) => [key4, scale(key4, base[key4])]));
+  const bills = new Map(vitalPools.map((key5) => [key5, scale(key5, base[key5])]));
   const poolCost = poolCostId ? scale(poolCostId, base.poolCost) : 0;
   if (poolCostId) bills.set(poolCostId, (bills.get(poolCostId) ?? 0) + poolCost);
   const snapshot = new Map(bills);
@@ -6542,7 +7200,7 @@ function actorCost(state, unit, base, context) {
     bills.set(from, bills.get(from) - amount);
     bills.set(to, (bills.get(to) ?? 0) + Math.ceil(amount * ratio3));
   }
-  const extraPoolCosts = [...bills].filter(([key4, amount]) => amount > 0 && key4 !== poolCostId && !vitalPools.includes(key4));
+  const extraPoolCosts = [...bills].filter(([key5, amount]) => amount > 0 && key5 !== poolCostId && !vitalPools.includes(key5));
   return {
     hp: bills.get("hp"),
     mp: bills.get("mp"),
@@ -6569,7 +7227,7 @@ function paymentError(state, unit, ap, slot2, template, { hp, mp, sp, poolCost, 
     const pool = !item && !template.itemInstance && getPool(state, unit.id, poolCostId);
     if ((item?.amount ?? pool?.current ?? 0) < poolCost) return item || template.itemInstance ? "\u88C5\u5907\u8D44\u6E90\u4E0D\u8DB3" : "\u81EA\u5B9A\u4E49\u8D44\u6E90\u4E0D\u8DB3";
   }
-  for (const [key4, amount] of extraPoolCosts ?? []) if ((getPool(state, unit.id, key4)?.current ?? 0) < amount) return "\u81EA\u5B9A\u4E49\u8D44\u6E90\u4E0D\u8DB3";
+  for (const [key5, amount] of extraPoolCosts ?? []) if ((getPool(state, unit.id, key5)?.current ?? 0) < amount) return "\u81EA\u5B9A\u4E49\u8D44\u6E90\u4E0D\u8DB3";
   return null;
 }
 var normalAttack = Object.freeze({ name: "\u5F92\u624B", range: 1.5, rawRange: 1.5, accuracy: 0, damage: { count: 1, sides: 4, stat: "str", type: "physical" } });
@@ -6613,7 +7271,7 @@ function reaches(state, actor, at3, template, ammo) {
 }
 function validReach(state, actor, at3, template, ammo) {
   const geometry = reaches(state, actor, at3, template, ammo);
-  return isGround(state, at3) && geometry.distance <= geometry.range + 1e-9 && hasLOS(state, actor, at3);
+  return isGround(state, at3) && geometry.distance <= geometry.range + 1e-9 && clearSight(state, actor, at3);
 }
 function visibleUnit(state, actor, target2) {
   return !vmFlag(state, target2, "hidden", { attacker: actor }) || vmFlag(state, actor, "trueSight", { target: target2 }) || gridDistance(actor, target2) <= 1 && Math.abs(elevation(state, actor) - elevation(state, target2)) <= 1;
@@ -6622,9 +7280,9 @@ function visibleEnemy(state, actor, target2) {
   return target2.team !== actor.team && visibleUnit(state, actor, target2);
 }
 function tauntFor(state, actor, template, ammo) {
-  for (const status of values3(actor.statuses).filter((status2) => status2.mods?.some((mod2) => mod2.flags?.includes("taunted"))).sort(byId2)) {
+  for (const status of values3(actor.statuses).filter((status2) => status2.mods?.some((mod2) => mod2.flags?.includes("taunted"))).sort(byId3)) {
     const source = tableEntry(state.units, status.sourceId);
-    if (alive4(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo)) return source;
+    if (alive5(source) && !source.fled && visibleEnemy(state, actor, source) && validReach(state, actor, source, template, ammo)) return source;
   }
   return null;
 }
@@ -6632,7 +7290,7 @@ function opportunitySources(state, mover) {
   return living(state).filter((unit) => unit.team !== mover.team && unit.reactionAvailable !== false && !reactionBlocked(state, unit)).map((unit) => ({ unit, weapon: weaponInfo(state, unit) })).filter(({ weapon: weapon2 }) => !weapon2.ammo && isMelee(weapon2.template) && weapon2.template.damage != null);
 }
 function canReact(state, { unit, weapon: weapon2 }, mover) {
-  if (!alive4(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit)) return false;
+  if (!alive5(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit)) return false;
   const taunter = tauntFor(state, unit, weapon2.template);
   return !taunter || taunter.id === mover.id;
 }
@@ -6661,7 +7319,8 @@ function area2(state, actor, center, template, ammo, { ignoreRange, ignoreLOS, d
     // preview has already checked the aim using effective distance. The
     // range callback supplies the equivalent geometric limit for ray cells.
     ignoreAimRange: true,
-    ignoreLOS: ignoreLOS || deferGeometry
+    ignoreLOS: ignoreLOS || deferGeometry,
+    ...sightOptions(state, actor, center)
   });
 }
 function selectionAllows(state, template, actor, unit, { allowFriendlyTarget, allyTeam = actor.team } = {}) {
@@ -6692,8 +7351,8 @@ function diceBounds(dice4, critical = false) {
 var oddsCache = /* @__PURE__ */ new Map();
 function diceAverage(dice4, map, critical = false) {
   const count = critical ? dice4.count * 2 : dice4.count;
-  const key4 = `${count}d${dice4.sides}`;
-  let probabilities = oddsCache.get(key4);
+  const key5 = `${count}d${dice4.sides}`;
+  let probabilities = oddsCache.get(key5);
   if (!probabilities) {
     probabilities = [1];
     for (let die = 0; die < count; die++) {
@@ -6706,7 +7365,7 @@ function diceAverage(dice4, map, critical = false) {
       probabilities = next;
     }
     if (oddsCache.size >= 64) oddsCache.delete(oddsCache.keys().next().value);
-    oddsCache.set(key4, probabilities);
+    oddsCache.set(key5, probabilities);
   }
   return probabilities.reduce((sum, probability2, raw) => sum + probability2 * map(Math.max(0, raw + dice4.bonus)), 0);
 }
@@ -6757,7 +7416,7 @@ function targetProfile(state, actor, target2, at3, template, context = {}) {
   const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
   const flanked = target2 && !cover ? isFlanked(state, origin, target2) : false;
-  const protectedBy = target2 && !cover && !geometry.melee ? coverBetween(state, origin, target2) : null;
+  const protectedBy = target2 && !cover && !geometry.melee ? coverBetween(state, origin, target2, sightOptions(state, actor, target2)) : null;
   const penalty = protectedBy?.cover ?? 0;
   const size = cover ? 0 : typeof target2?.size === "number" ? Math.max(0, target2.size - 1) : target2?.size === "large" ? 2 : target2?.size === "small" ? -1 : 0;
   const sizeModifier = cover || !target2 ? 0 : sizeHitModifier(actor, target2);
@@ -6782,9 +7441,9 @@ function targetProfile(state, actor, target2, at3, template, context = {}) {
   const accuracy = attackAccuracy - dodge;
   const equipmentDefense = gearFor(state, target2).reduce((d, g) => d + (g.template?.defense ?? 0), 0) + (target2.shield ? equipmentFor(state, target2.shield).template?.defense ?? 0 : 0);
   const defense = cover ? 8 : state.ruleset === "sandbox" ? 10 + Math.floor(effectiveStat(state, target2, "agi") / 2) + equipmentDefense : 4;
-  const delta = modStat(state, actor, "advantage", 0, strike);
-  const advantages = Math.max(0, delta) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
-  const disadvantages = Math.max(0, -delta) + (template.disadvantage ?? 0);
+  const delta2 = modStat(state, actor, "advantage", 0, strike);
+  const advantages = Math.max(0, delta2) + Number(Boolean(teleport2)) + (template.advantage ?? 0);
+  const disadvantages = Math.max(0, -delta2) + (template.disadvantage ?? 0);
   const advantage = Math.sign(advantages - disadvantages);
   const saveStat = !cover && target2 ? template.save : null;
   const saveDC = saveStat ? resolveDC(state, actor, template.saveDC ?? 12 + Math.floor(effectiveStat(state, actor, "int") / 2)) + modStat(state, actor, "dcBonus", 0, { target: target2, checkKind: "save", stat: saveStat }) : null;
@@ -6855,7 +7514,7 @@ function targetProfile(state, actor, target2, at3, template, context = {}) {
   const bounds = (critical = false, factor = 1) => (flat ? [protocolInitial, protocolInitial] : diceBounds(dice4, critical)).map((n) => shown(n, factor));
   const average = (critical = false, factor = 1) => flat ? shown(protocolInitial, factor) : diceAverage(dice4, (n) => shown(n, factor), critical);
   const minFactor = execution ? 1.3 : 1;
-  const damage = dice4 ? protocolInitial == null ? bounds(false, minFactor) : [shown(protocolInitial, minFactor), shown(protocolInitial, minFactor)] : [0, 0];
+  const damage2 = dice4 ? protocolInitial == null ? bounds(false, minFactor) : [shown(protocolInitial, minFactor), shown(protocolInitial, minFactor)] : [0, 0];
   const criticalDamage = dice4 && critChance2 > 0 ? bounds(true) : null;
   const savedDamage = dice4 && saveStat ? bounds(false, 0.5) : null;
   const expectedDamage = !dice4 ? 0 : Math.max(0, hitChance - critChance2 - saveChance2) * average() + (criticalDamage ? critChance2 * average(true) : 0) + (savedDamage ? saveChance2 * average(false, 0.5) : 0);
@@ -6932,9 +7591,9 @@ function targetProfile(state, actor, target2, at3, template, context = {}) {
     armor: reduction.armor,
     damagePipeline: reduction.armorMultiplier,
     shield: absorb,
-    damage,
-    damageMin: damage[0],
-    damageMax: damage[1],
+    damage: damage2,
+    damageMin: damage2[0],
+    damageMax: damage2[1],
     fixedDamage: false,
     criticalDamage,
     savedDamage,
@@ -6972,14 +7631,58 @@ var movementNames = Object.freeze({ move: "\u79FB\u52A8", sprint: "\u75BE\u8DD1"
 var isMovement = (type) => Object.hasOwn(movementNames, type);
 var isTapeAction = (type) => type === "skill" || Object.hasOwn(ACTIONS, type) && type !== "end" && type !== "end_encounter";
 var isStrikeAction = (action, plan) => ["attack", "skill", "shield_bash"].includes(action.type) && !plan.interactiveId;
+function makeActionImpulse(state, actor, action, plan, origin, targetIds = []) {
+  if (state.elementalPhysics === "off" || !plan.cells?.length) return null;
+  const barrel = plan.kind === "barrel";
+  if (!barrel && !isStrikeAction(action, plan)) return null;
+  const weapon2 = !barrel && action.type === "attack" ? weaponInfo(state, actor) : null;
+  const skill2 = action.type === "skill" ? actionSkill(state, actor, action.skillId) : null;
+  const itemId = weapon2?.instance?.id ?? skill2?.itemId ?? skill2?.itemInstance?.id;
+  const carrier4 = itemId ? { type: "item", id: itemId, ownerId: actor.id } : skill2 ? { type: "skill", id: action.skillId, ownerId: actor.id } : null;
+  const traits = barrel ? ["heat", "ignite", "gust"] : elementTraits(
+    plan.damageType ?? plan.actionContext?.damageType,
+    state.customElements,
+    plan.actionContext?.tags ?? []
+  );
+  if (!traits.length) return null;
+  return {
+    traits,
+    cells: plan.cells,
+    origin: barrel ? plan.center : origin,
+    center: plan.center,
+    sourceId: actor.id,
+    tier: carrierEffectiveTier(state, carrier4, actor),
+    rank: authorityFor(state, carrier4, actor.id).authorityRank,
+    directTargetIds: targetIds,
+    ...barrel && { ambient: true }
+  };
+}
+function withSurfaceImpact(state, actor, action, plan, origin) {
+  const impulse = makeActionImpulse(
+    state,
+    actor,
+    action,
+    plan,
+    origin,
+    (plan.targets ?? []).filter((target2) => target2.kind !== "cover").map((target2) => target2.id)
+  );
+  if (!impulse) return plan;
+  const barrel = impulse.ambient && tableEntry(state.interactives, plan.interactiveId);
+  const view = barrel ? { ...state, interactives: { ...state.interactives, [barrel.id]: { ...barrel, spent: true } } } : state;
+  const surfaceImpact = previewSpatialImpulse(view, impulse);
+  return surfaceImpact.reactions.length ? { ...plan, surfaceImpact } : plan;
+}
+function emitSpatialImpulse(state, host, frame, impulse) {
+  if (impulse) resolveSpatialImpulse(state, host, frame, impulse);
+}
 var needsTarget = (type) => isMovement(type) || ["attack", "skill", "shield_bash", "interact", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"].includes(type);
 var fail2 = (error2, extra = {}) => ({ ok: false, error: error2, ...extra });
 var healMultiplier = (state, actor) => modStat(state, actor, "healing", 1, { actionType: "skill" });
 function inInteractionRange(state, actor, at3) {
-  return gridDistance(actor, at3) <= 1 && Math.abs(elevation(state, actor) - elevation(state, at3)) <= 1 && hasLOS(state, actor, at3);
+  return gridDistance(actor, at3) <= 1 && Math.abs(elevation(state, actor) - elevation(state, at3)) <= 1 && clearSight(state, actor, at3);
 }
 function nearbyCovers(state, at3) {
-  return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at3, c)).sort(byId2);
+  return values3(state.covers).filter((c) => c.hp > 0 && inInteractionRange(state, at3, c)).sort(byId3);
 }
 function shapeSelectionAllows(state, template, actor, unit, targeting) {
   const areaDamage = (template.shape ?? "single") !== "single" && hasStrikeDamage(template);
@@ -7005,18 +7708,18 @@ function usableTiles(state, actor, template, weapon2, targeting) {
   });
 }
 function shapeTargets(state, actor, cells2, template, aim, origin, ammo, ignoreRange, ignoreLOS, targeting, targetId) {
-  const keys = new Set(cells2.map((at3) => key2(at3.x, at3.y)));
+  const keys = new Set(cells2.map((at3) => key3(at3.x, at3.y)));
   if (template.target === "cell") return [];
   return living(state).filter((unit) => {
     if (!shapeSelectionAllows(state, template, actor, unit, targeting)) return false;
     if ((template.shape ?? "single") === "single") return targetId ? unit.id === targetId : sameCell(unit, aim);
     if (template.shape === "circle" || template.shape === "ring") {
       const distanceFromCenter = distance3D(state, aim, unit) + incomingDistanceOffset(state, actor, unit, { checkKind: "attack" });
-      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || hasLOS(state, aim, unit)) && (template.shape !== "ring" || !sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9);
+      return distanceFromCenter <= (template.radius ?? 1.5) + 1e-9 && (ignoreLOS || clearSight(state, aim, unit, actor)) && (template.shape !== "ring" || !sameCell(unit, aim) && distanceFromCenter >= (template.innerRadius ?? 0) - 1e-9);
     }
     const radius = template.radius ?? (template.range === 0 ? 1.5 : null);
     const geometry = reaches(state, origin, unit, template, ammo);
-    return keys.has(key2(unit.x, unit.y)) && (ignoreLOS || hasLOS(state, origin, unit)) && (radius == null ? ignoreRange || geometry.distance <= geometry.range + 1e-9 : geometry.distance <= radius + 1e-9);
+    return keys.has(key3(unit.x, unit.y)) && (ignoreLOS || clearSight(state, origin, unit)) && (radius == null ? ignoreRange || geometry.distance <= geometry.range + 1e-9 : geometry.distance <= radius + 1e-9);
   });
 }
 function preview(state, action, options = {}) {
@@ -7030,7 +7733,7 @@ function preview(state, action, options = {}) {
 function previewAction(state, action, { simulateRules = true, actionOrigin, actingUnit, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
   if (state.outcome) return fail2("\u6218\u6597\u5DF2\u7ECF\u7ED3\u675F");
   const unit = actingUnit ?? actionActor(state, action);
-  if (!alive4(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
+  if (!alive5(unit) && action?.type !== "end") return fail2("\u5F53\u524D\u5355\u4F4D\u4E0D\u80FD\u884C\u52A8");
   if (!action || typeof action !== "object" || Array.isArray(action)) return fail2("\u52A8\u4F5C\u683C\u5F0F\u9519\u8BEF");
   const { type, skillId } = action;
   let { x, y } = action;
@@ -7056,7 +7759,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   if (type !== "skill" && skillId !== void 0 || !unplaced && !aimed) return fail2("\u52A8\u4F5C\u5E26\u6709\u4E0D\u9002\u7528\u7684\u53C2\u6570");
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !cellAt(state, x, y))) return fail2("\u76EE\u6807\u5750\u6807\u8D85\u51FA\u68CB\u76D8");
   if (type === "interact" && unplaced) {
-    const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }, { actingUnit: unit }).ok).sort(byId2).map((v) => pos(v.x, v.y));
+    const cells3 = values3(state.interactives).filter((v) => !v.spent && preview(state, { type, x: v.x, y: v.y }, { actingUnit: unit }).ok).sort(byId3).map((v) => pos(v.x, v.y));
     return cells3.length ? { ok: true, ap: 1, cost: 1, cells: cells3 } : fail2("\u6CA1\u6709\u53EF\u7528\u7684\u4E92\u52A8\u70B9", { cells: cells3 });
   }
   const item = !unplaced && (type === "interact" || type === "attack") ? values3(state.interactives).find((v) => !v.spent && v.x === x && v.y === y) : null;
@@ -7136,7 +7839,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     mindControlled: Boolean(controlPolicy2.mindControl),
     allyTeam: controlPolicy2.mindControl === "charm" ? charmTeam ?? unit.team : unit.team
   };
-  const forbidden = (target2) => alive4(target2) && !target2.fled && forbiddenTargetIds.has(target2.id);
+  const forbidden = (target2) => alive5(target2) && !target2.fled && forbiddenTargetIds.has(target2.id);
   const forbiddenTargetError = "\u53D7\u9B45\u60D1\u5F71\u54CD\uFF0C\u65E0\u6CD5\u653B\u51FB\u65BD\u672F\u8005";
   if (type === "lock_on") {
     const target2 = locateUnit(state, center, action.targetId, (u) => u.team !== unit.team);
@@ -7145,14 +7848,14 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   }
   if (type === "free_ally") {
     if (state.battleType !== "suppress" || unit.team === state.suppressingTeam || unit.statuses.suppressed || unit.fled) return fail2("\u4EC5\u672A\u88AB\u538B\u5236\u7684\u62B5\u6297\u65B9\u53EF\u4EE5\u6551\u63F4");
-    const allies = living(state).filter((t) => t !== unit && t.team === unit.team && t.statuses.suppressed && distance3D(state, unit, t) <= 1 && hasLOS(state, unit, t));
+    const allies = living(state).filter((t) => t !== unit && t.team === unit.team && t.statuses.suppressed && distance3D(state, unit, t) <= 1 && clearSight(state, unit, t));
     if (!center) return { ...common, cells: allies.map((t) => pos(t.x, t.y)) };
     const ally = allies.find((t) => t.id === action.targetId && sameCell(t, center)) ?? allies.find((t) => sameCell(t, center));
     return ally ? { ...common, name: "\u89E3\u9664\u538B\u5236", targetId: ally.id } : fail2("\u9700\u8981\u8D34\u8FD1\u4E00\u683C\u5185\u88AB\u538B\u5236\u7684\u961F\u53CB");
   }
   if (type === "suppress") {
     if (state.battleType !== "suppress" || unit.team !== state.suppressingTeam) return fail2("\u4EC5\u538B\u5236\u65B9\u53EF\u4EE5\u4F7F\u7528\u538B\u5236");
-    const available = living(state).filter((t) => t.id !== unit.id && (targeting.allowFriendlyTarget || t.team !== unit.team) && t.statuses.suppressed?.vars?.holdTotal == null && distance3D(state, unit, t) <= 1 && visibleUnit(state, unit, t) && hasLOS(state, unit, t));
+    const available = living(state).filter((t) => t.id !== unit.id && (targeting.allowFriendlyTarget || t.team !== unit.team) && t.statuses.suppressed?.vars?.holdTotal == null && distance3D(state, unit, t) <= 1 && visibleUnit(state, unit, t) && clearSight(state, unit, t));
     if (!center) return { ...common, cells: available.filter((t) => !forbidden(t)).map((t) => pos(t.x, t.y)) };
     const target2 = available.find((t) => t.id === action.targetId && sameCell(t, center)) ?? available.find((t) => sameCell(t, center));
     if (!target2) return fail2("\u538B\u5236\u9700\u8981\u4E00\u683C\u5185\u53EF\u89C1\u4E14\u672A\u88AB\u538B\u5236\u7684\u654C\u4EBA");
@@ -7166,7 +7869,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     if (target2 && sameCell(target2, center) && forbidden(target2)) return fail2(forbiddenTargetError);
     if (!target2 || !allowed(target2) || !sameCell(target2, center)) return fail2("\u6218\u672F\u5BF9\u6297\u5FC5\u987B\u6307\u5B9A\u654C\u65B9\u5355\u4F4D");
     if (type === "disarm" && !(target2.mainHand ?? target2.weapon)) return fail2("\u76EE\u6807\u6CA1\u6709\u53EF\u7F34\u68B0\u7684\u4E3B\u624B\u6B66\u5668");
-    if (gridDistance(unit, target2) > 1 || !hasLOS(state, unit, target2)) return fail2("\u6218\u672F\u5BF9\u6297\u9700\u8981\u8D34\u8EAB\u4E14\u89C6\u7EBF\u7545\u901A");
+    if (gridDistance(unit, target2) > 1 || !clearSight(state, unit, target2)) return fail2("\u6218\u672F\u5BF9\u6297\u9700\u8981\u8D34\u8EAB\u4E14\u89C6\u7EBF\u7545\u901A");
     return { ...common, name: { grapple: "\u64D2\u62B1", disarm: "\u7F34\u68B0", trip: "\u7ECA\u6454", push: "\u63A8\u649E" }[type], maneuver: type, targetId: target2.id };
   }
   if (isMovement(type)) {
@@ -7182,9 +7885,13 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
       path: choice.path,
       steps: choice.steps,
       opportunities: choice.opportunities,
+      ...choice.costPermille !== void 0 && { costPermille: choice.costPermille },
       moveRemaining: budget2.remainingCells,
       moveMax: budget2.maxCells,
-      remainingCellsAfter: choice.bankedProgress != null ? 0 : Math.max(0, Math.min(budget2.maxBoardSteps, Math.floor((budget2.remainingPermille - choice.steps * 1e3) / 1e3))),
+      remainingCellsAfter: choice.bankedProgress != null ? 0 : Math.max(0, Math.min(
+        budget2.maxBoardSteps,
+        Math.floor((budget2.remainingPermille - (choice.costPermille ?? choice.steps * 1e3)) / 1e3)
+      )),
       ...choice.bankedProgress != null && { bankedProgress: choice.bankedProgress },
       dz: elevation(state, center) - elevation(state, unit)
     };
@@ -7194,9 +7901,13 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     if (detonate) {
       if (weapon2.ammo && !weapon2.infiniteAmmo && weapon2.ammoCount <= 0) return fail2(emptyAmmoMessage(weapon2.ammo));
       if (!validReach(state, unit, item, weapon2.template, weapon2.ammo)) return fail2("\u7206\u6876\u8D85\u51FA\u6B66\u5668\u5C04\u7A0B\u6216\u88AB\u5899\u4F53\u963B\u6321");
-    } else if (distance3D(state, unit, item) > 1.5 || !hasLOS(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
-    const cells3 = detonate ? aoeCells(state, center, center, { shape: "circle", radius: item.radius ?? 1.5 }) : [center];
-    const keyset = new Set(cells3.map((at3) => key2(at3.x, at3.y)));
+    } else if (distance3D(state, unit, item) > 1.5 || !clearSight(state, unit, item)) return fail2("\u9700\u8981\u9760\u8FD1\u4E92\u52A8\u70B9");
+    const cells3 = detonate ? aoeCells(state, center, center, {
+      shape: "circle",
+      radius: item.radius ?? 1.5,
+      ...sightOptions(state, unit, item)
+    }) : [center];
+    const keyset = new Set(cells3.map((at3) => key3(at3.x, at3.y)));
     const targets3 = item.kind === "altar" ? [{
       id: unit.id,
       targetId: unit.id,
@@ -7204,12 +7915,12 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
       x: unit.x,
       y: unit.y,
       heal: item.effect === "shield" && item.healAmount ? [item.healAmount, item.healAmount] : [0, 0]
-    }] : living(state).filter((u) => keyset.has(key2(u.x, u.y)) && distance3D(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: "attack" }) <= (item.radius ?? 1.5) + 1e-9).map((u) => {
+    }] : living(state).filter((u) => keyset.has(key3(u.x, u.y)) && distance3D(state, center, u) + incomingDistanceOffset(state, unit, u, { checkKind: "attack" }) <= (item.radius ?? 1.5) + 1e-9).map((u) => {
       const guard = guardFor(state, u) ?? u;
       const context = { attacker: unit, targetId: guard.id, damageType: "energy", intercepting: guard !== u };
       const formula2 = mitigation(state, guard, "energy", true, 0, context);
       const modified = Math.floor((item.damage ?? 12) * formula2.multiplier * formula2.armorMultiplier * (1 - formula2.attributeReduction) * modStat(state, unit, "finalDamageMult", 1, { target: guard, damageType: "energy" }));
-      const damage = Math.max(0, Math.floor(damageAfterFlatReduction(state, guard, modified, context) * (1 - formula2.dr)) - shieldTotal(guard));
+      const damage2 = Math.max(0, Math.floor(damageAfterFlatReduction(state, guard, modified, context) * (1 - formula2.dr)) - shieldTotal(guard));
       return {
         id: u.id,
         targetId: u.id,
@@ -7217,15 +7928,15 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
         name: u.name,
         x: u.x,
         y: u.y,
-        damage: [damage, damage],
-        expectedDamage: damage,
-        damageMax: damage,
+        damage: [damage2, damage2],
+        expectedDamage: damage2,
+        damageMax: damage2,
         hitChance: 1,
         automatic: true
       };
     });
     if (detonate && targets3.some((profile) => forbidden(state.units[profile.id]) || forbidden(state.units[profile.recipientId]))) return fail2(forbiddenTargetError);
-    return {
+    const plan2 = {
       ...common,
       ...detonate ? { ...reaches(state, unit, item, weapon2.template, weapon2.ammo), ammo: weapon2.ammoCount } : {},
       name: `${detonate ? "\u5F15\u7206" : "\u6FC0\u6D3B"}${item.name}`,
@@ -7235,6 +7946,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
       targets: targets3,
       center
     };
+    return simulateRules ? withSurfaceImpact(state, unit, action, plan2, unit) : plan2;
   }
   const attack = type === "attack" || type === "shield_bash";
   const shieldBash = type === "shield_bash";
@@ -7281,7 +7993,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   if (!deferGeometry) {
     if (!isGround(state, origin)) return fail2("\u52A8\u4F5C\u8D77\u70B9\u65E0\u6548", { ...geometry, originSensitive: true });
     if (!ignoreRange && geometry.distance > geometry.range + 1e-9) return fail2("\u76EE\u6807\u8D85\u51FA\u5C04\u7A0B", { ...geometry, originSensitive: true });
-    if (!ignoreLOS && !hasLOS(state, origin, center)) return fail2("\u5899\u4F53\u963B\u65AD\u89C6\u7EBF", { ...geometry, originSensitive: true });
+    if (!ignoreLOS && !clearSight(state, origin, center)) return fail2("\u5899\u4F53\u963B\u65AD\u89C6\u7EBF", { ...geometry, originSensitive: true });
   }
   if (corpseSkill) {
     const corpse = corpses(state).find((c) => sameCell(c, center));
@@ -7325,7 +8037,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     nonLethal: action.nonLethal ?? unit.nonLethal ?? false
   }));
   if (template.target !== "cell" && hasStrikeDamage(template)) {
-    for (const c of values3(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at3) => sameCell(at3, c2))).sort(byId2)) {
+    for (const c of values3(state.covers).filter((c2) => c2.hp > 0 && cells2.some((at3) => sameCell(at3, c2))).sort(byId3)) {
       targets2.push({ ...targetProfile(state, unit, c, c, templateForHit, { weapon: attack && !shieldBash ? weapon2 : null, origin, cover: true, intent: resolvedIntent }), kind: "cover" });
     }
   }
@@ -7357,12 +8069,12 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     for (const [id3, before] of Object.entries(state.units)) {
       const after = result.state.units[id3];
       if (!after) continue;
-      const control = Object.entries(after.statuses ?? {}).filter(([key4, status]) => !before.statuses?.[key4] && (status.category === "control" || getStatusTemplate(state, key4)?.category === "control")).length;
-      const cleared = Object.entries(before.statuses ?? {}).filter(([key4, status]) => !after.statuses?.[key4] && ["control", "debuff", "dot"].includes(status.category ?? getStatusTemplate(state, key4)?.category)).length;
+      const control = Object.entries(after.statuses ?? {}).filter(([key5, status]) => !before.statuses?.[key5] && (status.category === "control" || getStatusTemplate(state, key5)?.category === "control")).length;
+      const cleared = Object.entries(before.statuses ?? {}).filter(([key5, status]) => !after.statuses?.[key5] && ["control", "debuff", "dot"].includes(status.category ?? getStatusTemplate(state, key5)?.category)).length;
       const hp = after.hp - before.hp, shield = shieldTotal(after) - shieldTotal(before);
       if (hp || shield || control || cleared) ruleImpact.units.push({ id: id3, hp, strikeDamage: strikeDamage.get(id3) ?? 0, shield, control, cleared });
     }
-    ruleImpact.summons = Object.values(result.state.units).filter((other) => !Object.hasOwn(state.units, other.id) && other.team === unit.team && alive4(other)).length;
+    ruleImpact.summons = Object.values(result.state.units).filter((other) => !Object.hasOwn(state.units, other.id) && other.team === unit.team && alive5(other)).length;
     const heals = /* @__PURE__ */ new Map();
     for (const log of logs) {
       const { targetId, amount } = log.detail;
@@ -7382,7 +8094,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     }
   }
   const first = targets2.find((t) => sameCell(t, center)) ?? targets2[0];
-  return {
+  const plan = {
     ...first,
     ...common,
     ...geometry,
@@ -7399,6 +8111,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     ...ruleImpact ? { ruleImpact } : {},
     hostile
   };
+  return simulateRules ? withSurfaceImpact(state, unit, action, plan, origin) : plan;
 }
 function maneuverContest(state, actor, target2, maneuver) {
   const attackStat = maneuver === "grapple" ? "str" : "agi";
@@ -7455,8 +8168,8 @@ function spendAmmo(state, actor, weapon2, ammo) {
   if (pool && pool.current > 0) changeCounter(state, actor, weapon2, ammo, ammo.resource, pool.current - 1);
 }
 function adjustedRating(base, event) {
-  const delta = Number.isFinite(event.ratingDelta) ? Math.trunc(event.ratingDelta) : 0;
-  const rating = RATING_TABLE[clamp4(RATING_TABLE.indexOf(base) - delta, 0, RATING_TABLE.length - 1)];
+  const delta2 = Number.isFinite(event.ratingDelta) ? Math.trunc(event.ratingDelta) : 0;
+  const rating = RATING_TABLE[clamp4(RATING_TABLE.indexOf(base) - delta2, 0, RATING_TABLE.length - 1)];
   const floor = event.minRating && RATING_TABLE.find((row) => row.name === event.minRating);
   return floor && floor.multiplier > rating.multiplier ? floor : rating;
 }
@@ -7631,7 +8344,7 @@ function knockback(state, actor, target2, effect) {
     const at3 = pos(target2.x + dx, target2.y + dy);
     if (!canStep(state, target2, at3)) {
       damageTarget(state, target2, actor.id, effect.collisionDamage ?? 5, "true", "\u649E\u51FB");
-      if (alive4(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
+      if (alive5(target2)) grantStatus(state, target2, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
       break;
     }
     Object.assign(target2, at3);
@@ -7672,7 +8385,7 @@ function continueStrike({ state, frame, host }) {
   const actionEvent = state.vm.events[frame.eventRef];
   const weapon2 = frame.weapon ?? (action.type === "attack" ? weaponInfo(state, actor) : null);
   const template = action.type === "shield_bash" ? shieldBashTemplate : weapon2 ? weapon2.template : actionSkill(state, actor, action.skillId);
-  if (!alive4(actor) || !template) {
+  if (!alive5(actor) || !template) {
     state.vm.stack.pop();
     return;
   }
@@ -7718,7 +8431,7 @@ function continueStrike({ state, frame, host }) {
     isRanged: profile.arrow || !profile.melee
   };
   if (!frame.phase) {
-    if (!alive4(target2) || target2.fled) {
+    if (!alive5(target2) || target2.fled) {
       next();
       return;
     }
@@ -7792,7 +8505,7 @@ function continueStrike({ state, frame, host }) {
     return;
   }
   if (frame.phase === "damage") {
-    if (!event.hit || !alive4(target2) || target2.fled) {
+    if (!event.hit || !alive5(target2) || target2.fled) {
       next();
       return;
     }
@@ -7856,7 +8569,7 @@ function continueStrike({ state, frame, host }) {
   if (frame.phase === "heal") {
     frame.phase = "after_hit";
     const recipient = tableEntry(state.units, event.targetId);
-    if (frame.hitIndex === 0 && template.heal != null && alive4(recipient)) host.commit(state, frame, {
+    if (frame.hitIndex === 0 && template.heal != null && alive5(recipient)) host.commit(state, frame, {
       ...detail,
       intent: event.intent,
       op: "heal",
@@ -7877,7 +8590,7 @@ function continueStrike({ state, frame, host }) {
     return;
   }
   if (frame.phase === "next_hit") {
-    if (frame.hitIndex + 1 < (profile.hits ?? 1) && alive4(target2) && !target2.fled) {
+    if (frame.hitIndex + 1 < (profile.hits ?? 1) && alive5(target2) && !target2.fled) {
       frame.hitIndex++;
       frame.phase = "damage";
       return;
@@ -7894,7 +8607,7 @@ function continueStrike({ state, frame, host }) {
     const ammo = weaponAmmo(off?.template);
     const level = actor.level ?? actor.tier ?? 1;
     const cost = level * 10;
-    if (alive4(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === "off_hand" && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
+    if (alive5(recipient) && recipient.team !== actor.team && off?.template?.damage && off.template.hand === "off_hand" && actor.sp >= cost && (event.rating?.multiplier ?? 0) >= 0.8 && validReach(state, actor, recipient, off.template, ammo) && (!ammo || weapon2.infiniteAmmo || resourcePool(state, actor, ammo.resource, off.instance)?.amount > 0)) {
       actor.followupUsed = true;
       const followWeapon = { ...off, template: { ...off.template, power: off.template.power ?? level * 15 }, ammo, stance: "dual_wield" };
       const follow = targetProfile(state, actor, recipient, recipient, followWeapon.template, { weapon: followWeapon });
@@ -7913,7 +8626,7 @@ function movementDirection(from, to, previous) {
   if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? "W" : "E";
   return dy < 0 ? "N" : "S";
 }
-function continueMovement(state, actor, type, plan, progress, host) {
+function continueMovement(state, actor, type, plan, progress, host, frame) {
   if (type === "sprint" && !progress.sprintCharged) {
     actor.moveBonusPermille = (actor.moveBonusPermille ?? 0) + movementBudget(state, actor).stepPermille;
     progress.sprintCharged = true;
@@ -7924,11 +8637,11 @@ function continueMovement(state, actor, type, plan, progress, host) {
   progress.initialCover ??= nearbyCovers(state, actor).map((c) => c.id);
   const path2 = progress.path;
   const to = plan.path[path2.length];
-  if (to && alive4(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move) {
+  if (to && alive5(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move) {
     progress.reactors ??= type === "disengage" ? [] : opportunitySources(state, actor).map(({ unit }) => unit.id);
     while (progress.reactors.length) {
       const unit = tableEntry(state.units, progress.reactors.shift());
-      if (!alive4(unit)) continue;
+      if (!alive5(unit)) continue;
       const weapon2 = weaponInfo(state, unit);
       const source = { unit, weapon: weapon2 };
       if (!canReact(state, source, actor) || !threatens(state, source, actor, actor) || !sameCell(actor, unit) && threatens(state, source, actor, to)) continue;
@@ -7945,19 +8658,24 @@ function continueMovement(state, actor, type, plan, progress, host) {
       host.opportunity(state, unit, center, profile, weapon2);
       return false;
     }
-    if (canStep(state, actor, to)) {
-      actor.facing = facingToward(actor, to);
-      Object.assign(actor, pos(to.x, to.y));
-      refreshFollowingZones(state, vmHost);
-      path2.push(pointAt(state, actor));
-      delete progress.reactors;
-      return false;
+    const stepCost = cellStepCost(state, actor, to) * 1e3;
+    const actualCost = progress.costPermille ?? path2.length * 1e3;
+    if (canStep(state, actor, to) && actualCost + stepCost <= movementBudget(state, actor).remainingPermille) {
+      if (!applyMediumEntry(state, host, frame, actor, to)) {
+        actor.facing = facingToward(actor, to);
+        Object.assign(actor, pos(to.x, to.y));
+        refreshFollowingZones(state, vmHost);
+        path2.push(pointAt(state, actor));
+        if (actualCost + stepCost !== path2.length * 1e3) progress.costPermille = actualCost + stepCost;
+        delete progress.reactors;
+        return false;
+      }
     }
   }
   const landing = pointAt(state, actor), interrupted = path2.length !== plan.path.length;
   const budget2 = movementBudget(state, actor);
   const banking = plan.bankedProgress != null && path2.length === 0;
-  const consumed = banking ? budget2.remainingPermille : Math.min(budget2.remainingPermille, path2.length * 1e3);
+  const consumed = banking ? budget2.remainingPermille : progress.costPermille ?? path2.length * 1e3;
   actor.moveSpentPermille = (actor.moveSpentPermille ?? 0) + consumed;
   if (banking || path2.length) actor.moveCarryPermille = banking ? budget2.remainingPermille % 1e3 : (budget2.remainingPermille - consumed) % 1e3;
   if (banking) actor.moveBanked = true;
@@ -7986,7 +8704,7 @@ function continueMovement(state, actor, type, plan, progress, host) {
     carryText ?? `${actor.name}${movementNames[type]}${interrupted ? "\u53D7\u963B\uFF0C\u505C\u5728" : "\u81F3"} (${landing.x}, ${landing.y}, z=${landing.z})`,
     { from: progress.from, to: landing, path: path2, steps: path2.length, interrupted, ...actor.moveCarryPermille != null && { moveCarryPermille: actor.moveCarryPermille }, ...carryText ? { moveM: budget2.effectiveMoveM, progressPermille: budget2.remainingPermille } : {} }
   );
-  if (alive4(actor)) {
+  if (alive5(actor)) {
     if (type === "move" && movedBefore === 0 && movedCells > 0 && actor.stance === "light_blade") actor.bonusDice = Math.min(2, (actor.bonusDice ?? 0) + 1);
     const coverIds = nearbyCovers(state, actor).filter((c) => !progress.initialCover.includes(c.id)).map((c) => c.id);
     if (coverIds.length) record(state, actor, "cover_approach", `${actor.name}\u79FB\u81F3\u63A9\u4F53 ${coverIds.join("\u3001")} \u65C1`, { coverIds });
@@ -8014,11 +8732,11 @@ function continueInteraction(state, actor, plan, progress, ammoBefore) {
   if (effect === "explode") {
     while (progress.targets.length) {
       const target2 = state.units[progress.targets.shift()];
-      if (!alive4(target2)) continue;
+      if (!alive5(target2)) continue;
       damageTarget(state, target2, actor.id, item.damage ?? 12, "energy", item.name, { direct: false });
       return false;
     }
-    for (const cover of values3(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at3) => sameCell(at3, c))).sort(byId2)) {
+    for (const cover of values3(state.covers).filter((c) => c.hp > 0 && plan.cells.some((at3) => sameCell(at3, c))).sort(byId3)) {
       coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
   } else if (effect === "restore" && !vmFlag(state, actor, "blockResourceRestore")) {
@@ -8116,7 +8834,7 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
   if (isMovement(type)) {
     const progress = frame.nativeProgress;
     if (progress.movementSettled) return true;
-    if (!continueMovement(state, actor, type, plan, progress, host)) return false;
+    if (!continueMovement(state, actor, type, plan, progress, host, frame)) return false;
     progress.movementSettled = true;
     if (!progress.moveEvent) return true;
     dispatchVMHook(state, "after_move", progress.moveEvent);
@@ -8160,7 +8878,7 @@ function continueNativeAction({ state, frame, actor, plan, event, overrides: ove
       break;
     case "flee": {
       if (actor.fled) break;
-      const enemies = living(state).filter((u) => u.team !== actor.team).sort((a, b) => effectiveStat(state, b, "agi") - effectiveStat(state, a, "agi") || byId2(a, b));
+      const enemies = living(state).filter((u) => u.team !== actor.team).sort((a, b) => effectiveStat(state, b, "agi") - effectiveStat(state, a, "agi") || byId3(a, b));
       const target2 = enemies[0];
       const actorCheck = { checkKind: "flee", stat: "agi" };
       const chaseCheck = { checkKind: "flee_chase", stat: "agi" };
@@ -8264,14 +8982,14 @@ function finishAction(state, actor, type) {
   if (!turnOwner) return;
   const linked = linkedUnitsOf(state, turnOwner.id).filter((member) => member.team === turnOwner.team);
   const canStillAct = (member) => {
-    if (!alive4(member) || member.fled || unitSkipped(state, member)) return false;
+    if (!alive5(member) || member.fled || unitSkipped(state, member)) return false;
     if (member.ap > 0) return true;
     if (preview(state, { type: "move" }, { actingUnit: member }).ok) return true;
     if (preview(state, { type: "use_item" }, { actingUnit: member }).ok) return true;
     const skills = [...member.skills ?? [], ...equippedActiveSkills(state, member).map(([id3]) => id3)];
     return skills.some((skillId) => actionSkill(state, member, skillId)?.ap === 0 && preview(state, { type: "skill", skillId }, { actingUnit: member }).ok);
   };
-  if (type === "end" || !alive4(turnOwner) || turnOwner.fled || ![turnOwner, ...linked].some(canStillAct)) {
+  if (type === "end" || !alive5(turnOwner) || turnOwner.fled || ![turnOwner, ...linked].some(canStillAct)) {
     if (!turnOwner.fled || linked.length) endTurn(state, turnOwner);
     if (!state.vm?.pendingAsk && !refreshOutcome(state)) {
       advanceCursor(state);
@@ -8283,7 +9001,7 @@ function finishAction(state, actor, type) {
 // src/presets/catalog.js
 var dice2 = (count, sides, stat3, type, bonus = 0) => ({ count, sides, stat: stat3, type, bonus });
 var rule = (id3, hook2, program2, filter) => ({ id: id3, hook: hook2, program: program2, ...filter === void 0 ? {} : { filter } });
-var apply = (statusId3, target2 = "target", options = {}) => ({ op: "apply_status", target: target2, statusId: statusId3, ...options });
+var apply2 = (statusId3, target2 = "target", options = {}) => ({ op: "apply_status", target: target2, statusId: statusId3, ...options });
 var onHit = (id3, program2) => rule(id3, "after_hit", program2, "event.actorId == self.id && event.saved != true");
 var skill = (name, range2, target2, specs = {}) => ({
   name,
@@ -8340,7 +9058,7 @@ var EQUIPMENT = {
     rules: [rule("frostplate-retaliate", "after_damage", [
       { op: "damage", target: "attacker", amount: 3, damageType: "physical", direct: false, label: "\u971C\u7EB9\u8346\u68D8" },
       { op: "for_each", select: { from: "attacker" }, body: [
-        { op: "check", kind: "chance", dc: 40, onPass: [apply("chill", "target")] }
+        { op: "check", kind: "chance", dc: 40, onPass: [apply2("chill", "target")] }
       ] }
     ], meleeRetaliation)]
   },
@@ -8360,7 +9078,7 @@ var EQUIPMENT = {
       { stat: "advantage", flat: 1, checkKind: "attack", when: weapon("bloodfang", "event.backstab == true") }
     ],
     rules: [rule("bloodfang-combo", "after_hit", [
-      apply("bleed", "target", { stacks: 2 }),
+      apply2("bleed", "target", { stacks: 2 }),
       { op: "damage", target: "target", amount: 4, damageType: "physical", direct: false, label: "\u53CC\u751F\u8840\u7259\u8FDE\u51FB" }
     ], weapon("bloodfang", "event.backstab == true || event.critical == true"))]
   },
@@ -8402,11 +9120,11 @@ var EQUIPMENT = {
       { op: "for_each", select: { from: "statuses", of: "target", where: "status.id == 'shield'" }, body: [
         { op: "let", name: "existingShield", value: "status.vars.shieldAmount" }
       ] },
-      apply("shield", "target", { vars: { shieldAmount: "vars.existingShield + floor(event.healing / 2)" } })
+      apply2("shield", "target", { vars: { shieldAmount: "vars.existingShield + floor(event.healing / 2)" } })
     ], "event.actorId == self.id && event.actionType == 'skill' && event.healing >= 2")]
   },
   shortblade: { name: "\u526F\u624B\u77ED\u5203", kind: "weapon", weaponClass: "light_blade", hand: "off_hand", rangeType: "melee", attack: 50, defense: 0, range: 1, accuracy: 1, damage: dice2(1, 4, "agi", "physical") },
-  potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand", rules: [rule("potion-haste", "active", [apply("haste", "self")])] },
+  potion: { name: "\u8C03\u548C\u836F\u5242", kind: "consumable", weaponClass: "auxiliary", hand: "off_hand", rules: [rule("potion-haste", "active", [apply2("haste", "self")])] },
   greatsword: { name: "\u7384\u94C1\u91CD\u5251", kind: "weapon", weaponClass: "greatsword", hand: "two_handed", heavy: true, twoHanded: true, attack: 260, defense: 0, rangeType: "melee", range: 1, accuracy: 1, damage: dice2(2, 8, "str", "physical") },
   towerShield: { name: "\u5854\u76FE", kind: "shield", weaponClass: "shield", hand: "off_hand", shield: true, defense: 8 },
   pike: {
@@ -8422,12 +9140,12 @@ var EQUIPMENT = {
     range: 2,
     accuracy: 2,
     damage: dice2(1, 8, "str", "physical"),
-    rules: [rule("pike-root", "after_hit", [apply("root", "target", { turns: 1 })], weapon("pike", "event.opportunityAttack == true"))]
+    rules: [rule("pike-root", "after_hit", [apply2("root", "target", { turns: 1 })], weapon("pike", "event.opportunityAttack == true"))]
   },
   staff: { name: "\u7075\u7EB9\u6CD5\u6756", kind: "weapon", weaponClass: "staff", hand: "one_handed", attack: 90, defense: 0, rangeType: "ranged", range: 4, accuracy: 2, damage: dice2(1, 6, "int", "energy") }
 };
 var skillPresets = {
-  brand: skill("\u7130\u5370", 4, "enemy", { damage: dice2(1, 4, "int", "energy"), rules: [onHit("brand-status", [apply("burn"), apply("mark")])] }),
+  brand: skill("\u7130\u5370", 4, "enemy", { damage: dice2(1, 4, "int", "energy"), rules: [onHit("brand-status", [apply2("burn"), apply2("mark")])] }),
   surge: skill("\u65AD\u5CB3\u91CD\u65A9", 1, "enemy", {
     ap: 2,
     mp: 0,
@@ -8441,13 +9159,13 @@ var skillPresets = {
         mode: "push",
         distance: 2,
         collisionDamage: 7,
-        onCollide: [apply("stun", "target", { turns: 1 })]
+        onCollide: [apply2("stun", "target", { turns: 1 })]
       }], "event.actorId == self.id"),
-      onHit("surge-sunder", [apply("sunder")])
+      onHit("surge-sunder", [apply2("sunder")])
     ]
   }),
-  ward: skill("\u5B88\u9635", 2, "ally", { rules: [onHit("ward-status", [apply("guard"), apply("guarded")])] }),
-  challenge: skill("\u6311\u8845", 4, "enemy", { rules: [onHit("challenge-taunt", [apply("taunt")])] }),
+  ward: skill("\u5B88\u9635", 2, "ally", { rules: [onHit("ward-status", [apply2("guard"), apply2("guarded")])] }),
+  challenge: skill("\u6311\u8845", 4, "enemy", { rules: [onHit("challenge-taunt", [apply2("taunt")])] }),
   frost: skill("\u788E\u971C\u65B0\u661F", 5, "enemy", {
     ap: 2,
     mp: 5,
@@ -8456,16 +9174,16 @@ var skillPresets = {
     save: "con",
     saveDC: 14,
     damage: dice2(2, 6, "int", "energy"),
-    rules: [onHit("frost-freeze", [apply("freeze")])]
+    rules: [onHit("frost-freeze", [apply2("freeze")])]
   }),
-  fan: skill("\u8840\u7259\u6247\u65A9", 3, "enemy", { shape: "fan", width: 1, damage: dice2(1, 6, "agi", "physical"), rules: [onHit("fan-bleed", [apply("bleed")])] }),
+  fan: skill("\u8840\u7259\u6247\u65A9", 3, "enemy", { shape: "fan", width: 1, damage: dice2(1, 6, "agi", "physical"), rules: [onHit("fan-bleed", [apply2("bleed")])] }),
   toxin: skill("\u6BD2\u96FE\u9525", 4, "enemy", {
     shape: "cone",
     width: 1,
     save: "con",
     saveDC: 13,
     damage: dice2(1, 4, "int", "mental"),
-    rules: [onHit("toxin-status", [apply("poison"), apply("blind")])]
+    rules: [onHit("toxin-status", [apply2("poison"), apply2("blind")])]
   }),
   beam: skill("\u8D2F\u661F\u76F4\u7EBF", 6, "enemy", {
     ap: 2,
@@ -8473,7 +9191,7 @@ var skillPresets = {
     shape: "line",
     width: 0,
     damage: dice2(2, 8, "int", "energy"),
-    rules: [onHit("beam-root", [apply("root")])]
+    rules: [onHit("beam-root", [apply2("root")])]
   }),
   blink: skill("\u5F71\u6B65\u80CC\u523A", 5, "enemy", {
     damage: dice2(2, 6, "agi", "physical"),
@@ -8487,7 +9205,7 @@ var skillPresets = {
         ] }
       ]),
       rule("blink-advantage", "before_check", [{ op: "mutate_event", patch: { advantageDelta: 1 } }], "event.actorId == self.id && event.checkKind == 'attack'"),
-      onHit("blink-status", [apply("bleed"), apply("stealth", "self")])
+      onHit("blink-status", [apply2("bleed"), apply2("stealth", "self")])
     ]
   }),
   hymn: skill("\u7FA4\u661F\u5723\u548F", 4, "ally", {
@@ -8496,7 +9214,7 @@ var skillPresets = {
     shape: "circle",
     radius: 2,
     heal: dice2(2, 4, "spi", "true"),
-    rules: [onHit("hymn-regen", [apply("regen")])]
+    rules: [onHit("hymn-regen", [apply2("regen")])]
   }),
   cleanse: skill("\u51C0\u5316\u7977\u8A00", 4, "ally", {
     heal: dice2(1, 4, "spi", "true"),
@@ -8504,17 +9222,17 @@ var skillPresets = {
       { op: "remove_status", target: "target", where: "status.category == 'debuff' || status.category == 'control' || status.category == 'dot'", reason: "cleansed" }
     ])]
   }),
-  shift: skill("\u8FC5\u5F71", 0, "ally", { rules: [onHit("shift-status", [apply("haste"), apply("stealth")])] }),
+  shift: skill("\u8FC5\u5F71", 0, "ally", { rules: [onHit("shift-status", [apply2("haste"), apply2("stealth")])] }),
   armor: skill("\u8346\u58C1\u836F\u5242", 0, "ally", {
     mp: 0,
     sp: 3,
-    rules: [onHit("armor-status", [apply("thorns"), apply("shield", "target", { vars: { shieldAmount: 6 } })])]
+    rules: [onHit("armor-status", [apply2("thorns"), apply2("shield", "target", { vars: { shieldAmount: 6 } })])]
   }),
   curse: skill("\u8680\u5FC3\u5492", 4, "enemy", {
     save: "spi",
     saveDC: 13,
     damage: dice2(1, 6, "spi", "mental"),
-    rules: [onHit("curse-vulnerable", [apply("vulnerable")])]
+    rules: [onHit("curse-vulnerable", [apply2("vulnerable")])]
   })
 };
 var SKILLS = Object.fromEntries(Object.entries(skillPresets).map(([id3, template]) => [id3, onCast(id3, template)]));
@@ -8651,16 +9369,16 @@ var attrs2 = UNIT_STATS;
 var statusDurations = durationTypes;
 var maxStatusStacks = 999999;
 var maxStatusTemplates = 64;
-var has = (record3, key4) => id2(key4) && own14(record3 ?? {}, key4);
+var has = (record3, key5) => id2(key5) && own14(record3 ?? {}, key5);
 function fields(v, required, optional = [], entityLabel = "\u5BF9\u8C61") {
   requireThat(plain(v), entityLabel);
-  const missing = required.filter((key4) => !own14(v, key4));
-  const unsupported = Object.keys(v).filter((key4) => !required.includes(key4) && !optional.includes(key4));
+  const missing = required.filter((key5) => !own14(v, key5));
+  const unsupported = Object.keys(v).filter((key5) => !required.includes(key5) && !optional.includes(key5));
   if (missing.length) error(`${entityLabel}\u7F3A\u5C11\u5FC5\u586B\u5B57\u6BB5\uFF1A${missing.join("\u3001")}`);
   if (unsupported.length) error(`${entityLabel}\u5305\u542B\u4E0D\u652F\u6301\u7684\u5B57\u6BB5\uFF1A${unsupported.join("\u3001")}`);
 }
-function checkOptional(o, key4, check) {
-  if (own14(o, key4)) requireThat(check(o[key4]), key4);
+function checkOptional(o, key5, check) {
+  if (own14(o, key5)) requireThat(check(o[key5]), key5);
 }
 function table2(v, test, max = 200) {
   requireThat(plain(v) && Object.keys(v).length <= max, "\u5B9E\u4F53\u8868");
@@ -8669,8 +9387,8 @@ function table2(v, test, max = 200) {
     test(value, k);
   }
 }
-function list2(v, max, check, key4) {
-  requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key4);
+function list2(v, max, check, key5) {
+  requireThat(Array.isArray(v) && v.length <= max && Array.from(v).every(check), key5);
 }
 function dice3(v, state) {
   fields(v, ["count", "sides"], ["bonus", "stat", "multiplier", "type"]);
@@ -8717,14 +9435,14 @@ var stackCapLimit = (template) => typeof template.maxStacks === "string" ? maxSt
 var lifecycleFlags2 = ["bindToSource", "concentration"];
 var lifecycleInstanceFields = [...lifecycleFlags2, "concentrationRef"];
 function validateLifecycle(value, instance = false) {
-  for (const key4 of lifecycleFlags2) checkOptional(value, key4, (flag) => typeof flag === "boolean");
+  for (const key5 of lifecycleFlags2) checkOptional(value, key5, (flag) => typeof flag === "boolean");
   if (instance) checkOptional(value, "concentrationRef", (ref2) => text2(ref2, 128));
 }
-function statusTemplate(value, key4 = value?.id, state) {
+function statusTemplate(value, key5 = value?.id, state) {
   fields(value, ["id", "name"], ["icon", "category", "description", "remainingTurns", "durationType", "stackMode", "maxStacks", "expireOn", ...carrierFields, ...lifecycleFlags2]);
   validateLifecycle(value);
   requireThat(!own14(value, "unitPools"), "\u72B6\u6001\u6A21\u677F\u4E0D\u80FD\u58F0\u660E\u5355\u4F4D\u6C60");
-  requireThat(id2(key4) && key4 === value.id && text2(value.name), "VM \u72B6\u6001 ID/\u540D\u79F0");
+  requireThat(id2(key5) && key5 === value.id && text2(value.name), "VM \u72B6\u6001 ID/\u540D\u79F0");
   checkOptional(value, "icon", (icon) => text2(icon, 24));
   checkOptional(value, "description", (description) => text2(description, 300));
   checkOptional(value, "category", (category) => text2(category, 32));
@@ -8737,29 +9455,29 @@ function statusTemplate(value, key4 = value?.id, state) {
 }
 function statusTemplateTable(v, options = {}) {
   const state = { ...options, statusTemplates: v };
-  table2(v, (template, key4) => {
-    requireThat(key4 !== "suppressed", "\u4FDD\u7559\u72B6\u6001 ID\uFF1Asuppressed");
-    statusTemplate(template, key4, state);
+  table2(v, (template, key5) => {
+    requireThat(key5 !== "suppressed", "\u4FDD\u7559\u72B6\u6001 ID\uFF1Asuppressed");
+    statusTemplate(template, key5, state);
   }, maxStatusTemplates);
 }
-function defineStatus(state, key4, template) {
-  requireThat(plain(template) && (!own14(template, "id") || template.id === key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
-  const definition = { ...template, id: key4 };
-  statusTemplate(definition, key4, { statusTemplates: { ...state.statusTemplates, [key4]: definition } });
-  requireThat(key4 !== "suppressed" && !own14(state.statusTemplates ?? {}, key4), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
+function defineStatus(state, key5, template) {
+  requireThat(plain(template) && (!own14(template, "id") || template.id === key5), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID");
+  const definition = { ...template, id: key5 };
+  statusTemplate(definition, key5, { statusTemplates: { ...state.statusTemplates, [key5]: definition } });
+  requireThat(key5 !== "suppressed" && !own14(state.statusTemplates ?? {}, key5), "\u81EA\u5B9A\u4E49\u72B6\u6001 ID \u5DF2\u5B58\u5728");
   requireThat(Object.keys(state.statusTemplates ?? {}).length < maxStatusTemplates, "\u81EA\u5B9A\u4E49\u72B6\u6001\u6A21\u677F\u6570\u91CF");
-  (state.statusTemplates ??= {})[key4] = structuredClone(definition);
+  (state.statusTemplates ??= {})[key5] = structuredClone(definition);
   return structuredClone(definition);
 }
-var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key4, amount]) => ["hp", "mp", "sp"].includes(key4) && int(amount, 0, 25e3)));
+var resourceCost = (x) => plain(x) && (Object.keys(x).length === 2 && id2(x.resource) && int(x.amount, 1, 1e6) || Object.keys(x).length > 0 && Object.entries(x).every(([key5, amount]) => ["hp", "mp", "sp"].includes(key5) && int(amount, 0, 25e3)));
 function validSaveDC(value) {
   if (int(value, 1, 50)) return true;
-  return plain(value) && own14(value, "base") && own14(value, "scaleBy") && Object.keys(value).every((key4) => ["base", "scaleBy", "min", "max"].includes(key4)) && num(value.base, -1e9, 1e9) && plain(value.scaleBy) && Object.keys(value.scaleBy).length === 2 && own14(value.scaleBy, "stat") && own14(value.scaleBy, "perUnit") && attrs2.includes(value.scaleBy.stat) && num(value.scaleBy.perUnit, -1e9, 1e9) && (!own14(value, "min") || num(value.min, 1, 1e9)) && (!own14(value, "max") || num(value.max, 1, 1e9)) && (value.min ?? 1) <= (value.max ?? 50);
+  return plain(value) && own14(value, "base") && own14(value, "scaleBy") && Object.keys(value).every((key5) => ["base", "scaleBy", "min", "max"].includes(key5)) && num(value.base, -1e9, 1e9) && plain(value.scaleBy) && Object.keys(value.scaleBy).length === 2 && own14(value.scaleBy, "stat") && own14(value.scaleBy, "perUnit") && attrs2.includes(value.scaleBy.stat) && num(value.scaleBy.perUnit, -1e9, 1e9) && (!own14(value, "min") || num(value.min, 1, 1e9)) && (!own14(value, "max") || num(value.max, 1, 1e9)) && (value.min ?? 1) <= (value.max ?? 50);
 }
 var rawDistanceFields = ["rawRange", "rawRadius", "rawInnerRadius", "rawWidth", "rawMoveDistance"];
 function validateAreaDimensions(v) {
-  for (const key4 of rawDistanceFields) checkOptional(v, key4, (x) => num(x, 0, 1e6));
-  for (const key4 of ["radius", "innerRadius", "width"]) checkOptional(v, key4, (x) => Number.isFinite(x) && x >= 0 && x <= 30);
+  for (const key5 of rawDistanceFields) checkOptional(v, key5, (x) => num(x, 0, 1e6));
+  for (const key5 of ["radius", "innerRadius", "width"]) checkOptional(v, key5, (x) => Number.isFinite(x) && x >= 0 && x <= 30);
   checkOptional(v, "angle", (x) => int(x, 1, 360));
 }
 function equipmentTemplate(v, state) {
@@ -8814,11 +9532,11 @@ function skillTemplate(v, state) {
   requireThat(own14(v, "save") === own14(v, "saveDC"), "save/saveDC");
   for (const k of ["damage", "heal"]) if (own14(v, k)) dice3(v[k], state);
 }
-function statusValue(v, key4, state, ownerId) {
+function statusValue(v, key5, state, ownerId) {
   if (own14(v ?? {}, "templateId")) {
     const { templateId, ownerId: owner, sourceId: sourceId2, sourceCarrier, authorityRank, sourceTier, effectiveTier, stacks, pools, appliedRound, appliedTurn, concentrationRef, ...rest } = v;
     validateLifecycle(v, true);
-    const template = getStatusTemplate(state, key4);
+    const template = getStatusTemplate(state, key5);
     const { vars, ...definition } = rest;
     if (sourceCarrier != null) {
       fields(sourceCarrier, ["type", "id"], ["ownerId"]);
@@ -8828,20 +9546,20 @@ function statusValue(v, key4, state, ownerId) {
     if (appliedRound !== void 0 || appliedTurn !== void 0) requireThat(int(appliedRound, 1, 1e6) && int(appliedTurn, 0, 199), "\u72B6\u6001\u65BD\u52A0\u56DE\u5408");
     checkOptional(v, "effectiveTier", (x) => int(x, 1, 7));
     if (own14(v, "authorityRank") || own14(v, "sourceTier")) requireThat(int(authorityRank, 1, 8) && int(sourceTier, 1, 7), "\u72B6\u6001\u6765\u6E90\u4F4D\u683C");
-    statusTemplate(definition, key4, state);
+    statusTemplate(definition, key5, state);
     const maxStacks = v.maxStacks ?? template?.maxStacks ?? 1;
-    requireThat(templateId === key4 && template && id2(owner) && (ownerId === void 0 || owner === ownerId) && (sourceId2 === null || id2(sourceId2)) && int(maxStacks, 1, stackCapLimit(template)) && int(stacks, 1, maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes2.includes(v.stackMode), "VM \u72B6\u6001\u5B9E\u4F8B");
+    requireThat(templateId === key5 && template && id2(owner) && (ownerId === void 0 || owner === ownerId) && (sourceId2 === null || id2(sourceId2)) && int(maxStacks, 1, stackCapLimit(template)) && int(stacks, 1, maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes2.includes(v.stackMode), "VM \u72B6\u6001\u5B9E\u4F8B");
     if (own14(v, "vars")) table2(vars, (entry2) => requireThat(jsonTree(entry2), "VM \u72B6\u6001\u53D8\u91CF"));
     if (own14(v, "pools")) poolBindings(pools);
     return;
   }
-  const t = getStatusTemplate(state, key4);
-  requireThat(id2(key4) && t, "\u72B6\u6001 ID");
+  const t = getStatusTemplate(state, key5);
+  requireThat(id2(key5) && t, "\u72B6\u6001 ID");
   fields(v, ["id", "templateId", "ownerId", "name", "remainingTurns", "durationType", "stackMode", "maxStacks", "stacks"], ["icon", "category", "description", "sourceId", "sourceCarrier", "authorityRank", "sourceTier", "effectiveTier", "appliedRound", "appliedTurn", "expireOn", ...carrierFields, ...lifecycleInstanceFields]);
   validateLifecycle(v, true);
   carrierFieldsValue(v, state, true);
   checkOptional(v, "expireOn", (x) => x === null || validVmExpiry(x));
-  requireThat(v.id === key4 && v.templateId === key4 && v.name === t.name && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes2.includes(v.stackMode) && id2(v.ownerId) && (ownerId === void 0 || v.ownerId === ownerId) && (v.sourceId === null || v.sourceId === void 0 || id2(v.sourceId)), "VM \u72B6\u6001\u5B9E\u4F8B");
+  requireThat(v.id === key5 && v.templateId === key5 && v.name === t.name && int(v.maxStacks, 1, stackCapLimit(t)) && int(v.stacks, 1, v.maxStacks) && int(v.remainingTurns, 1, 100) && statusDurations.includes(v.durationType) && stackModes2.includes(v.stackMode) && id2(v.ownerId) && (ownerId === void 0 || v.ownerId === ownerId) && (v.sourceId === null || v.sourceId === void 0 || id2(v.sourceId)), "VM \u72B6\u6001\u5B9E\u4F8B");
   if (own14(v, "vars")) table2(v.vars, (entry2) => requireThat(jsonTree(entry2), "VM \u72B6\u6001\u53D8\u91CF"));
 }
 function validateCell(v) {
@@ -8850,7 +9568,7 @@ function validateCell(v) {
 }
 var unitKeys = ["id", "name", "team", "x", "y", "facing", "hp", "maxHp", "mp", "maxMp", "sp", "maxSp", "ap", "used", "stats", "armor", "size", "move", "weapon", "gear", "skills", "statuses"];
 var protocolUnitKeys = ["followupUsed", "level", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "nonLethal", "intent", "bonusDice", "penaltyDice", "stance", "protagonist", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "initiativePercent", "attackInit", "actionInit", "flatInitiative", "lockedTargetId", "moraleCheckedRound"];
-function unitValue(v, key4, state) {
+function unitValue(v, key5, state) {
   fields(v, unitKeys, ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax", "moved", "rawMove", "moveM", "moveCarryPermille", "moveCarryInPermille", "moveSpentPermille", "moveBonusPermille", "moveBanked", "lastMoveDir", "remainingTurns", "reactionAvailable", ...protocolUnitKeys, "fled", "diedAt", "corpseOf", "corpseConsumed", "creatureType", "resources", "inventory", "bagWeapons", "altitude", ...carrierFields, "pools", "templateId", "sourceId", "sourceSkillId", "summonGroup", "summoned", "turnMode", "turnAnchorId", "durationUnit", "durationAnchorId", ...lifecycleInstanceFields]);
   validateLifecycle(v, true);
   carrierFieldsValue(v, state, true);
@@ -8864,7 +9582,7 @@ function unitValue(v, key4, state) {
   checkOptional(v, "durationAnchorId", id2);
   if (own14(v, "altitude")) requireThat(int(v.altitude, 0, 12), "\u79BB\u5730\u9AD8\u5EA6");
   checkOptional(v, "summoned", (x) => x === true);
-  for (const key5 of ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax"]) checkOptional(v, key5, (x) => int(x, 0, 1e9));
+  for (const key6 of ["initialMaxHp", "initialMaxMp", "initialMaxSp", "apMax"]) checkOptional(v, key6, (x) => int(x, 0, 1e9));
   checkOptional(v, "moved", (x) => int(x, 0, 1e9));
   checkOptional(v, "rawMove", (x) => num(x, 0, 1e3));
   checkOptional(v, "moveM", (x) => num(x, 0, 1e6));
@@ -8883,7 +9601,7 @@ function unitValue(v, key4, state) {
   checkOptional(v, "creatureType", (x) => text2(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every((t) => text2(t)));
   for (const k of ["resources", "inventory"]) if (own14(v, k)) table2(v[k], (x) => requireThat(int(x, 0, 1e9), k));
   checkOptional(v, "reactionAvailable", (x) => typeof x === "boolean");
-  requireThat(v.id === key4 && text2(v.name) && team(v.team) && inGrid(state, v.x, v.y), "\u68CB\u5B50");
+  requireThat(v.id === key5 && text2(v.name) && team(v.team) && inGrid(state, v.x, v.y), "\u68CB\u5B50");
   list2(v.facing, 2, (x) => int(x, -1, 1), "\u671D\u5411");
   requireThat(v.facing.length === 2 && v.facing.some(Boolean), "\u671D\u5411");
   for (const [r, max] of [["hp", "maxHp"], ["mp", "maxMp"], ["sp", "maxSp"]]) requireThat((v.pools ? num : int)(v[max], r === "hp" ? 1 : 0, 1e9) && (v.pools ? num : int)(v[r], 0, v[max]), r);
@@ -8915,22 +9633,26 @@ function unitValue(v, key4, state) {
   if (own14(v, "bagWeapons")) list2(v.bagWeapons, 200, id2, "\u80CC\u5305\u6B66\u5668");
   list2(v.gear, 12, id2, "gear");
   list2(v.skills, 32, id2, "skills");
-  table2(v.statuses, (status, statusId3) => statusValue(status, statusId3, state, key4), maxStatusTemplates + Object.keys(STATUSES).length);
+  table2(v.statuses, (status, statusId3) => statusValue(status, statusId3, state, key5), maxStatusTemplates + Object.keys(STATUSES).length + Object.keys(PHYSICAL_STATUSES).length);
 }
 function jsonTree(v, depth = 0) {
   if (depth > 12) return false;
   if (v === null || ["string", "boolean"].includes(typeof v) || Number.isFinite(v)) return true;
   if (Array.isArray(v)) return v.length <= 500 && Array.from(v).every((x) => jsonTree(x, depth + 1));
-  return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key4, x]) => !own14(Object.prototype, key4) && jsonTree(x, depth + 1));
+  return plain(v) && Object.keys(v).length <= 250 && Object.entries(v).every(([key5, x]) => !own14(Object.prototype, key5) && jsonTree(x, depth + 1));
 }
 function pointValue(state, value) {
   return plain(value) && Object.keys(value).length === 2 && inGrid(state, value.x, value.y);
 }
-function zoneValue(value, key4, state) {
-  fields(value, ["id", "name", "area", "follow", "persistent", "remainingTurns"], ["templateId", "sourceId", "team", "anchorPosition", "pools", ...carrierFields, ...lifecycleInstanceFields]);
+function zoneValue(value, key5, state) {
+  fields(value, ["id", "name", "area", "follow", "persistent", "remainingTurns"], ["templateId", "sourceId", "team", "anchorPosition", "pools", ...zoneMediumFields, ...carrierFields, ...lifecycleInstanceFields]);
   validateLifecycle(value, true);
+  checkOptional(value, "layer", (layer) => ZONE_LAYERS.includes(layer));
+  checkOptional(value, "medium", (medium) => zoneMediumLayer(medium) !== void 0 && zoneMediumLayer(medium) === value.layer);
+  checkOptional(value, "blocksLOS", (blocks) => typeof blocks === "boolean");
+  checkOptional(value, "moveCost", (cost) => int(cost, 1, 4));
   checkOptional(value, "team", (value2) => value2 === null || team(value2));
-  requireThat(id2(key4) && value.id === key4 && text2(value.name), "VM \u533A\u57DF ID/\u540D\u79F0");
+  requireThat(id2(key5) && value.id === key5 && text2(value.name), "VM \u533A\u57DF ID/\u540D\u79F0");
   checkOptional(value, "templateId", id2);
   checkOptional(value, "sourceId", (source) => source === null || id2(source));
   requireThat(!own14(value, "unitPools"), "\u533A\u57DF\u4E0D\u80FD\u58F0\u660E\u5355\u4F4D\u6C60");
@@ -8941,7 +9663,13 @@ function zoneValue(value, key4, state) {
   checkOptional(area3, "z1", (z) => int(z, -4, 20));
   checkOptional(area3, "z2", (z) => int(z, -4, 20));
   if (own14(area3, "z1") && own14(area3, "z2")) requireThat(area3.z1 <= area3.z2, "VM \u533A\u57DF\u9AD8\u5EA6\u533A\u95F4");
-  requireThat(validVmOpcode({ op: "spawn", entityKind: "zone", spec: { area: area3, follow, persistent, remainingTurns } }), "VM \u533A\u57DF");
+  requireThat(validVmOpcode({ op: "spawn", entityKind: "zone", spec: {
+    area: area3,
+    follow,
+    persistent,
+    remainingTurns,
+    ...Object.fromEntries(zoneMediumFields.filter((key6) => own14(value, key6)).map((key6) => [key6, value[key6]]))
+  } }), "VM \u533A\u57DF");
   requireThat(int(remainingTurns, 1, 100), "VM \u533A\u57DF\u6301\u7EED\u56DE\u5408");
   const validPoint = (point4) => pointValue(state, point4);
   if (["single", "circle", "ring"].includes(area3.shape)) requireThat(validPoint(area3.center), "VM \u533A\u57DF\u4E2D\u5FC3");
@@ -8987,8 +9715,8 @@ function tapeValue(tape, state) {
 function validatePools(state) {
   const bindings = /* @__PURE__ */ new Map();
   const add = (ownerKind, owner) => {
-    for (const [key4, poolId] of Object.entries(owner.pools ?? {})) {
-      const kind = ownerKind === "unit" && ["hp", "mp", "sp"].includes(key4) ? key4 : "custom";
+    for (const [key5, poolId] of Object.entries(owner.pools ?? {})) {
+      const kind = ownerKind === "unit" && ["hp", "mp", "sp"].includes(key5) ? key5 : "custom";
       const owners = bindings.get(poolId) ?? /* @__PURE__ */ new Map();
       const ownerKey = `${ownerKind}/${owner.id}`;
       requireThat(!owners.has(ownerKey), "\u8D44\u6E90\u6C60\u91CD\u590D\u7ED1\u5B9A");
@@ -9005,25 +9733,25 @@ function validatePools(state) {
   }
   const pools = own14(state, "pools") ? state.pools : {};
   requireThat(plain(pools) && Object.keys(pools).length <= 1e4, "\u8D44\u6E90\u6C60\u8868");
-  for (const [key4, pool] of Object.entries(pools)) {
+  for (const [key5, pool] of Object.entries(pools)) {
     fields(pool, ["id", "kind", "contributors", "current", "max", "reloadable"], ["initialMax"]);
-    requireThat(validPoolId(key4) && pool.id === key4 && ["hp", "mp", "sp", "custom"].includes(pool.kind) && num(pool.max, 0, Number.MAX_VALUE) && (!own14(pool, "initialMax") || num(pool.initialMax, 0, Number.MAX_VALUE)) && num(pool.current, 0, pool.max) && typeof pool.reloadable === "boolean", "\u8D44\u6E90\u6C60");
-    const owners = bindings.get(key4);
-    if (!owners?.size) error(`\u8D44\u6E90\u6C60 ${key4} \u662F\u65E0\u4EBA\u5F15\u7528\u7684\u5B64\u513F\u6C60`);
+    requireThat(validPoolId(key5) && pool.id === key5 && ["hp", "mp", "sp", "custom"].includes(pool.kind) && num(pool.max, 0, Number.MAX_VALUE) && (!own14(pool, "initialMax") || num(pool.initialMax, 0, Number.MAX_VALUE)) && num(pool.current, 0, pool.max) && typeof pool.reloadable === "boolean", "\u8D44\u6E90\u6C60");
+    const owners = bindings.get(key5);
+    if (!owners?.size) error(`\u8D44\u6E90\u6C60 ${key5} \u662F\u65E0\u4EBA\u5F15\u7528\u7684\u5B64\u513F\u6C60`);
     if (pool.kind === "custom" && owners.size > 1) {
-      error(`\u81EA\u5B9A\u4E49\u8D44\u6E90\u6C60 ${key4} \u88AB\u591A\u4E2A\u5B9E\u4F53\u91CD\u590D\u7ED1\u5B9A\uFF08${[...owners.keys()].join("\u3001")}\uFF09\u3002\u8BF7\u5728\u6A21\u677F /equipment/<id>/pools \u6216 /skills/<id>/pools \u58F0\u660E\u81EA\u5B9A\u4E49\u6C60\uFF0C\u5B9E\u4F8B /units/.../pools \u6216 /items/.../pools \u53EA\u4FDD\u5B58\u7ED1\u5B9A\u3002`);
+      error(`\u81EA\u5B9A\u4E49\u8D44\u6E90\u6C60 ${key5} \u88AB\u591A\u4E2A\u5B9E\u4F53\u91CD\u590D\u7ED1\u5B9A\uFF08${[...owners.keys()].join("\u3001")}\uFF09\u3002\u8BF7\u5728\u6A21\u677F /equipment/<id>/pools \u6216 /skills/<id>/pools \u58F0\u660E\u81EA\u5B9A\u4E49\u6C60\uFF0C\u5B9E\u4F8B /units/.../pools \u6216 /items/.../pools \u53EA\u4FDD\u5B58\u7ED1\u5B9A\u3002`);
     }
     list2(pool.contributors, 200, (contribution) => {
       fields(contribution, ["ownerKind", "ownerId", "maxBase"], ["initialMaxBase"]);
       const ownerKey = `${contribution.ownerKind}/${contribution.ownerId}`;
       return id2(contribution.ownerId) && owners.get(ownerKey) === pool.kind && num(contribution.maxBase, 0, Number.MAX_VALUE) && (!own14(contribution, "initialMaxBase") || num(contribution.initialMaxBase, 0, Number.MAX_VALUE)) && owners.delete(ownerKey);
     }, "\u8D44\u6E90\u6C60\u8D21\u732E\u8005");
-    if (owners.size) error(`\u8D44\u6E90\u6C60 ${key4} \u7684\u8D21\u732E\u8005\u672A\u5B8C\u6574\u5339\u914D\uFF1A${[...owners.keys()].join("\u3001")}`);
+    if (owners.size) error(`\u8D44\u6E90\u6C60 ${key5} \u7684\u8D21\u732E\u8005\u672A\u5B8C\u6574\u5339\u914D\uFF1A${[...owners.keys()].join("\u3001")}`);
     if (own14(pool, "initialMax")) {
       const initialTotal = pool.contributors.reduce((sum, contribution) => sum + (contribution.initialMaxBase ?? contribution.maxBase), 0);
       requireThat(pool.initialMax === initialTotal, "\u8D44\u6E90\u6C60\u521D\u59CB\u4E0A\u9650");
     }
-    bindings.delete(key4);
+    bindings.delete(key5);
   }
   if (bindings.size) error(`\u8D44\u6E90\u6C60\u5F15\u7528\u9519\u8BEF\uFF1A${[...bindings.keys()].join("\u3001")} \u672A\u5728\u8D44\u6E90\u6C60\u8868\u4E2D\u58F0\u660E\uFF08\u6216\u5B58\u5728\u65E0\u6548 poolId\uFF09`);
   for (const unit of Object.values(state.units)) {
@@ -9062,7 +9790,7 @@ function summonTemplateValue(v, state) {
   checkOptional(v, "maxActive", (x) => int(x, 1, 50));
   checkOptional(v, "stackPolicy", (x) => ["replace", "fifo", "cap"].includes(x));
   checkOptional(v, "remainingTurns", (x) => int(x, 1, 100));
-  const spawnPanel2 = Object.fromEntries(summonTemplatePanelFields.filter((key4) => own14(v, key4)).map((key4) => [key4, v[key4]]));
+  const spawnPanel2 = Object.fromEntries(summonTemplatePanelFields.filter((key5) => own14(v, key5)).map((key5) => [key5, v[key5]]));
   requireThat(validVmOpcode({ op: "spawn", entityKind: "unit", spec: { spawnPanel: spawnPanel2 } }), "\u53EC\u5524\u6A21\u677F\u9762\u677F");
   carrierFieldsValue(v, state);
   checkOptional(v, "turnMode", (x) => ["independent", "linked_group", "linked_each", "none"].includes(x));
@@ -9070,7 +9798,8 @@ function summonTemplateValue(v, state) {
   validateSummonLoadout(spawnPanel2, state);
 }
 function validateState(s) {
-  fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape", "scale", "customElements"]);
+  fields(s, ["scenarioId", "title", "mode", "ruleset", "round", "turn", "order", "units", "items", "equipment", "skills", "grid", "covers", "interactives", "rng", "logs", "outcome"], ["statusTemplates", "zones", "time", "summonTemplates", "spatialTerrain", "spatialSerial", "battleType", "battleConclusion", "suppressingTeam", "vm", "pools", "tape", "scale", "customElements", "elementalPhysics"]);
+  checkOptional(s, "elementalPhysics", (value) => ["off", "standard"].includes(value));
   if (own14(s, "customElements")) validateCustomElements(s.customElements);
   requireThat(s.battleType === "suppress" ? ["blue", "red"].includes(s.suppressingTeam) : s.suppressingTeam === void 0, "\u538B\u5236\u65B9");
   checkOptional(s, "battleType", (x) => typeof x === "string" && Object.hasOwn(MORALE, x));
@@ -9173,7 +9902,7 @@ var SCENARIOS = Object.freeze({
   altar: { title: "\u9AD8\u53F0\u796D\u575B\u593A\u53D6\u6218", description: "\u5761\u9053\u662F\u4E0A\u53F0\u7684\u6377\u5F84\uFF1B\u6FC0\u6D3B\u796D\u575B\u53EF\u83B7\u5F97\u62A4\u76FE\u4E0E\u75BE\u8D70\uFF0C\u9AD8\u53F0\u8FDC\u5C04\u6709\u989D\u5916\u5C04\u7A0B\u3002", seed: 43 },
   boss: { title: "BOSS \u4E0E\u6742\u5175\u6DF7\u7F16\u6218", description: "\u5B88\u95E8\u5DE8\u50CF\u62A4\u7532\u539A\u3001\u4F53\u578B\u5927\u3002\u5148\u62C6\u63F4\u519B\uFF0C\u518D\u7528\u51C0\u5316\u3001\u7A7F\u7532\u548C\u51FB\u9000\u5206\u644A\u538B\u529B\u3002", seed: 83 }
 });
-var own15 = (obj, key4) => Object.hasOwn(obj, key4);
+var own15 = (obj, key5) => Object.hasOwn(obj, key5);
 var object2 = (value) => value && Object.getPrototypeOf(value) === Object.prototype;
 var safeId = (id3) => typeof id3 === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(id3) && !own15(Object.prototype, id3) && id3 !== "prototype";
 var entries2 = (record3) => {
@@ -9206,8 +9935,8 @@ function equipItem(state, id3, templateId, sourceId2, carriedAmounts = {}) {
   for (const poolId of Object.values(state.items[id3]?.pools ?? {})) delete state.pools[poolId];
   const { name, tags = [], tier = 1, vars = {}, mods = [], rules = [], pools = {} } = state.equipment[templateId];
   state.items[id3] = { id: id3, templateId, sourceId: sourceId2, ...structuredClone({ name, tags, tier, vars, mods, rules }), pools: {} };
-  for (const [key4, { cap, initial = cap, reloadable = false }] of Object.entries(pools)) {
-    createPool(state, { key: key4, ownerKind: "item", ownerId: id3, max: cap, current: carriedAmounts[key4] ?? initial, reloadable });
+  for (const [key5, { cap, initial = cap, reloadable = false }] of Object.entries(pools)) {
+    createPool(state, { key: key5, ownerKind: "item", ownerId: id3, max: cap, current: carriedAmounts[key5] ?? initial, reloadable });
   }
   return id3;
 }
@@ -9228,20 +9957,20 @@ function importCarry(state, value) {
     if (!object2(item) || item.id !== id3 || !own15(state.equipment, item.templateId)) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u88C5\u5907\uFF1A${id3}`);
     if (own15(state.items, id3) && state.items[id3].templateId !== item.templateId) throw new Error(`\u8DE8\u6218\u88C5\u5907\u6A21\u677F\u51B2\u7A81\uFF1A${id3}`);
     const amounts = { ...item.counters };
-    for (const [key4, poolId] of Object.entries(item.pools ?? {})) {
+    for (const [key5, poolId] of Object.entries(item.pools ?? {})) {
       const amount = carry.pools?.[poolId]?.current;
-      if (Number.isFinite(amount)) amounts[key4] = amount;
+      if (Number.isFinite(amount)) amounts[key5] = amount;
     }
     equipItem(state, id3, item.templateId, item.sourceId ?? null, amounts);
   }
   const assigned = /* @__PURE__ */ new Set();
   const imported = [];
   for (const [id3, unit] of entries2(carry.units)) {
-    if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot2) => own15(unit, slot2)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key4) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key4))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
-    const statuses = Object.fromEntries(entries2(unit.statuses).map(([key4, status]) => {
-      if (!object2(status) || status.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key4}`);
-      statusValue(status, key4, state);
-      return [key4, status];
+    if (!object2(unit) || !["weapon", "gear", "statuses"].every((slot2) => own15(unit, slot2)) || !Array.isArray(unit.gear) || Object.keys(unit).some((key5) => !["weapon", "gear", "statuses", "mainHand", "offHand", "shield"].includes(key5))) throw new Error(`\u65E0\u6548\u7684\u8DE8\u6218\u5355\u4F4D\uFF1A${id3}`);
+    const statuses = Object.fromEntries(entries2(unit.statuses).map(([key5, status]) => {
+      if (!object2(status) || status.durationType !== "persistent") throw new Error(`\u8DE8\u6218\u72B6\u6001\u5FC5\u987B\u5E38\u9A7B\uFF1A${key5}`);
+      statusValue(status, key5, state);
+      return [key5, status];
     }));
     const mainHand = unit.mainHand ?? unit.weapon;
     const slots3 = [
@@ -9269,7 +9998,7 @@ function importCarry(state, value) {
 function buildScenario(request = "ruins") {
   if (request?.kind === "custom_state" && object2(request.state)) return structuredClone(request.state);
   if (typeof request === "string") request = { scenarioId: request };
-  if (!object2(request) || !Object.keys(request).every((key4) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key4))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
+  if (!object2(request) || !Object.keys(request).every((key5) => ["scenarioId", "seed", "mode", "ruleset", "persistentSnapshot"].includes(key5))) throw new Error("\u65E0\u6548\u7684\u5F00\u5C40\u53C2\u6570");
   const { scenarioId = "ruins", ruleset = "protocol", persistentSnapshot } = request;
   if (typeof scenarioId !== "string" || !own15(SCENARIOS, scenarioId)) throw new Error("\u672A\u77E5\u9884\u8BBE\u5173\u5361");
   const { title, seed: defaultSeed } = SCENARIOS[scenarioId];
@@ -9484,7 +10213,7 @@ function buildScenario(request = "ruins") {
 
 // src/core/ai.js
 var END = Object.freeze({ type: "end" });
-var byId3 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+var byId4 = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 var dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 var healthGap = (unit) => unit.maxHp - unit.hp;
 var samePosition = (a, b) => a.x === b.x && a.y === b.y;
@@ -9495,6 +10224,21 @@ function targetingPolicy(state, actor) {
   const isAlly = (unit) => unit.id === actor.id || unit.team === allyTeam;
   const isEnemy = (unit) => unit && unit.id !== actor.id && (indiscriminate || !isAlly(unit)) && !forbiddenTargetIds.has(unit.id);
   return { isAlly, isEnemy };
+}
+function surfaceTactics(state, plan, isEnemy, protocol2 = false) {
+  const damageByUnit = /* @__PURE__ */ new Map();
+  for (const { id: id3, expectedDamage } of plan.surfaceImpact?.secondaryTargets ?? []) {
+    if (expectedDamage > 0 && state.units[id3]?.hp > 0 && !state.units[id3].fled) {
+      damageByUnit.set(id3, (damageByUnit.get(id3) ?? 0) + expectedDamage);
+    }
+  }
+  let score = 0;
+  for (const [id3, damage2] of damageByUnit) {
+    const target2 = state.units[id3];
+    const value = Math.min(target2.hp, damage2) * (protocol2 ? 20 / target2.maxHp : 1);
+    score += (isEnemy(target2) ? 1 : -1.5) * (value + (damage2 >= target2.hp ? 6 : 0));
+  }
+  return score;
 }
 function tactics(state, actor, action, plan, { isEnemy } = targetingPolicy(state, actor)) {
   if (!plan?.ok) return -Infinity;
@@ -9510,12 +10254,12 @@ function tactics(state, actor, action, plan, { isEnemy } = targetingPolicy(state
     if (!target2) continue;
     const enemy = isEnemy(target2);
     const sign3 = enemy ? 1 : target2 === actor ? -1.5 : -1.15;
-    const damage = profile.expectedDamage ?? 0;
-    const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage / target2.hp) : 0;
+    const damage2 = profile.expectedDamage ?? 0;
+    const kill = profile.damageMax >= target2.hp ? Math.min(profile.hitChance ?? 1, damage2 / target2.hp) : 0;
     const locks = aggregateModifiers(state, target2.id).locks;
     const controlled = unitSkipped(state, target2) || Object.values(locks).some(Boolean);
     const statusValue3 = (controlled ? enemy ? 8 : -8 : 0) + Object.values(target2.statuses ?? {}).filter((status) => status.durationType === "battle_turns").length;
-    score += sign3 * (Math.min(target2.hp, damage) + kill * 6 + statusValue3);
+    score += sign3 * (Math.min(target2.hp, damage2) + kill * 6 + statusValue3);
     if (profile.heal) {
       const healing = (profile.heal[0] + profile.heal[1]) / 2;
       score -= sign3 * (Math.min(healthGap(target2), healing) * 0.9 + (profile.healingShield?.[0] ?? 0) * (shieldTotal(target2) ? 0.14 : 0.34));
@@ -9548,6 +10292,7 @@ function tactics(state, actor, action, plan, { isEnemy } = targetingPolicy(state
   if (programs.some((op) => op.op === "spawn" && ["zone", "terrain", "cover"].includes(op.entityKind))) {
     score += Object.values(state.units).some((unit) => isEnemy(unit) && unit.hp > 0 && !unit.fled) ? 2 : 0;
   }
+  score += surfaceTactics(state, plan, isEnemy);
   return score / (plan.ap === 2 ? 1.35 : 1) - plan.mp * 0.35 - plan.sp * 0.25;
 }
 function protocolTactics(state, actor, plan, { isEnemy }) {
@@ -9566,9 +10311,9 @@ function protocolTactics(state, actor, plan, { isEnemy }) {
     nativeRecipients.add(target2.id);
     const enemy = isEnemy(target2);
     const hit = profile.hitChance ?? 1;
-    const damage = Math.min(target2.hp * hit, profile.expectedDamage ?? 0);
+    const damage2 = Math.min(target2.hp * hit, profile.expectedDamage ?? 0);
     const defeat = (profile.damageMin ?? 0) >= target2.hp ? hit : 0;
-    score += (enemy ? 1 : -1.5) * (20 * damage / target2.maxHp + 6 * defeat);
+    score += (enemy ? 1 : -1.5) * (20 * damage2 / target2.maxHp + 6 * defeat);
     if (!impact && profile.heal) {
       const healing = Math.min(healthGap(target2), (profile.heal[0] + profile.heal[1]) / 2);
       score += (enemy ? -1 : 1) * 28 * healing / target2.maxHp;
@@ -9589,11 +10334,12 @@ function protocolTactics(state, actor, plan, { isEnemy }) {
   }
   const fraction = (cost2, pool) => (cost2 ?? 0) / Math.max(1, pool ?? 0);
   const cost = 12 * fraction(plan.hp, actor.hp) + 5 * (fraction(plan.mp, actor.mp) + fraction(plan.sp, actor.sp));
+  if (!impact) score += surfaceTactics(state, plan, isEnemy, true);
   return score / (plan.ap === 2 ? 1.35 : 1) - cost;
 }
 function aimedOptions(state, actor, attacksOnly = false) {
-  const units = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled).sort(byId3);
-  const covers = Object.values(state.covers).filter((c) => c.hp > 0).sort(byId3);
+  const units = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled).sort(byId4);
+  const covers = Object.values(state.covers).filter((c) => c.hp > 0).sort(byId4);
   const choices = [];
   const protocol2 = state.ruleset === "protocol";
   const vmAimBudget = attacksOnly ? 2 : 6;
@@ -9617,7 +10363,7 @@ function aimedOptions(state, actor, attacksOnly = false) {
   const hitsEnemy = (plan) => (plan.targets ?? []).some((target2) => target2.kind !== "cover" && isEnemy(state.units[target2.recipientId ?? target2.id])) || (plan.ruleImpact?.units ?? []).some((effect) => {
     const target2 = state.units[effect.id];
     return isEnemy(target2) && (effect.hp < 0 || effect.control > 0 || effect.cleared > 0);
-  });
+  }) || (plan.surfaceImpact?.secondaryTargets ?? []).some(({ id: id3, expectedDamage }) => expectedDamage > 0 && isEnemy(state.units[id3]));
   function consider(action, plan = preview(state, action, { actingUnit: actor })) {
     const skill2 = action.type === "skill" ? actionSkill(state, actor, action.skillId) : null;
     if (plan.ok && !(isOffensiveAreaSkill(skill2) && !hitsEnemy(plan))) choices.push({ action, score: score(action, plan) });
@@ -9625,9 +10371,9 @@ function aimedOptions(state, actor, attacksOnly = false) {
   const enemies = units.filter((u) => isEnemy(u) && visibleUnit(state, actor, u));
   for (const target2 of [...enemies, ...attacksOnly ? [] : covers]) consider({ type: "attack", x: target2.x, y: target2.y, ...target2.id ? { targetId: target2.id } : {} });
   const items = Object.entries(actor.inventory ?? {}).filter(([id3, count]) => count > 0 && state.skills[id3]?.backpackItem);
-  const templates = new Map([...actor.skills.map((id3) => [id3, state.skills[id3]]), ...items.map(([id3]) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, actor)]);
-  for (const skillId of [...templates.keys()].sort()) {
-    const skill2 = templates.get(skillId);
+  const templates2 = new Map([...actor.skills.map((id3) => [id3, state.skills[id3]]), ...items.map(([id3]) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, actor)]);
+  for (const skillId of [...templates2.keys()].sort()) {
+    const skill2 = templates2.get(skillId);
     if (!skill2 || isPassiveSkill(skill2) || attacksOnly && skill2.slot !== "attack") continue;
     if (skill2.ap === 0 && !skill2.backpackItem && !skill2.rules?.some((rule2) => rule2.hook === "active" && rule2.enabled !== false && (rule2.filter === void 0 || rule2.filter === true) && (rule2.usesPerTurn || rule2.usesPerRound || rule2.usesPerBattle || rule2.cooldownTurns))) continue;
     const query2 = preview(state, { type: "skill", skillId }, { actingUnit: actor });
@@ -9659,7 +10405,7 @@ function aimedOptions(state, actor, attacksOnly = false) {
     }
     for (const candidate of candidates) consider(actionAt(candidate));
   }
-  for (const { x, y, kind, spent } of Object.values(state.interactives).sort(byId3)) {
+  for (const { x, y, kind, spent } of Object.values(state.interactives).sort(byId4)) {
     if (spent) continue;
     if (kind === "barrel") consider({ type: "attack", x, y });
     else if (!attacksOnly) consider({ type: "interact", x, y });
@@ -9669,16 +10415,21 @@ function aimedOptions(state, actor, attacksOnly = false) {
 function approach(state, actor, enemies, suppress = false) {
   const range2 = weaponInfo(state, actor).template.range ?? 0;
   const spots = [{ x: actor.x, y: actor.y, steps: 0 }, ...reachable(state, "move", actor, Infinity)];
-  const clearAttackCell = (probe) => enemies.some((target2) => {
-    const d = distance3D(state, probe, target2);
-    if (suppress) return d <= 1 && hasLOS(state, probe, target2);
-    if (d > range2 + 1) return false;
+  const clearAttackCell = (probe) => {
     const u = { ...actor, x: probe.x, y: probe.y, ap: Math.max(1, actor.ap), used: { ...actor.used, attack: 0 } };
     const s = { ...state, units: { ...state.units, [actor.id]: u } };
-    const attack = preview(s, { type: "attack", targetId: target2.id, x: target2.x, y: target2.y }, { actingUnit: s.units[actor.id] });
-    if (attack.ok || attack.error === "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" && d <= range2 && hasLOS(state, probe, target2)) return true;
-    return false;
-  });
+    const clearSight2 = (target2) => {
+      const ignoreObscure = aggregateModifiers(s, u.id, { actorId: u.id, targetId: target2.id }).flags.trueSight === true;
+      return hasLOS(s, u, target2, { ignoreObscure });
+    };
+    return enemies.some((target2) => {
+      const d = distance3D(s, u, target2);
+      if (suppress) return d <= 1 && clearSight2(target2);
+      if (d > range2 + 1) return false;
+      const attack = preview(s, { type: "attack", targetId: target2.id, x: target2.x, y: target2.y }, { actingUnit: u });
+      return attack.ok || attack.error === "\u5F39\u4ED3\u5DF2\u7A7A\uFF0C\u8BF7\u88C5\u586B" && d <= range2 && clearSight2(target2);
+    });
+  };
   const pathToAttack = spots.find(clearAttackCell);
   if (pathToAttack?.steps > 0) return pathToAttack.path;
   if (pathToAttack?.steps === 0) return [];
@@ -9737,7 +10488,7 @@ function chooseAction(state, actor = currentUnit(state)) {
   const plan = (action) => preview(state, action, { actingUnit: actor });
   if (!actor.ap && !plan({ type: "move" }).ok) return { ...END };
   const { isEnemy } = targetingPolicy(state, actor);
-  const enemies = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled && isEnemy(u)).sort(byId3);
+  const enemies = Object.values(state.units).filter((u) => u.hp > 0 && !u.fled && isEnemy(u)).sort(byId4);
   if (!enemies.length) return { ...END };
   const bankStep = (move2) => move2.cells?.find((cell) => cell.bankedProgress > (actor.moveCarryPermille ?? 0));
   if (actor.moraleState === "routed") {
@@ -9749,7 +10500,7 @@ function chooseAction(state, actor = currentUnit(state)) {
     return dest ? { type: "move", x: dest.x, y: dest.y } : { ...END };
   }
   if (state.battleType === "suppress" && state.suppressingTeam !== actor.team && !actor.used.attack && !actor.statuses.suppressed) {
-    const held = Object.values(state.units).filter((t) => t.team === actor.team && t.hp > 0 && !t.fled && t.statuses.suppressed).sort(byId3);
+    const held = Object.values(state.units).filter((t) => t.team === actor.team && t.hp > 0 && !t.fled && t.statuses.suppressed).sort(byId4);
     for (const ally of held) {
       const rescue = { type: "free_ally", targetId: ally.id, x: ally.x, y: ally.y };
       if (plan(rescue).ok) return rescue;
@@ -9887,8 +10638,8 @@ function compactSkill(state, unit, id3, s) {
 }
 function unitView(state, unit) {
   const ids = [...unit.skills ?? [], ...Object.keys(unit.inventory ?? {}), ...Object.keys(state.skills).filter((id3) => state.skills[id3]?.backpackItem)];
-  const templates = new Map([...ids.map((id3) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, unit)]);
-  const skills = [...templates].map(([id3, template]) => compactSkill(state, unit, id3, template)).filter(Boolean);
+  const templates2 = new Map([...ids.map((id3) => [id3, state.skills[id3]]), ...equippedActiveSkills(state, unit)]);
+  const skills = [...templates2].map(([id3, template]) => compactSkill(state, unit, id3, template)).filter(Boolean);
   const equipment = {};
   for (const instanceId of [...new Set([unit.mainHand, unit.weapon, unit.offHand, unit.shield, ...unit.gear ?? []].filter(Boolean))]) {
     const instance = state.items[instanceId];
@@ -10051,16 +10802,16 @@ async function requestBattleAi(state, request, { signal } = {}) {
 }
 
 // src/api/commands.js
-var get = (table4, key4, label) => {
-  requireThat(has(table4, key4), label);
-  return table4[key4];
+var get2 = (table4, key5, label) => {
+  requireThat(has(table4, key5), label);
+  return table4[key5];
 };
 var nonempty = (patch) => requireThat(plain(patch) && Object.keys(patch).length > 0, "patch");
 var builtins = ["hp", "mp", "sp"];
 var commands = {
   set_unit_stat(s, c) {
     fields(c, ["type", "unitId", "patch"]);
-    const u = get(s.units, c.unitId, "unitId");
+    const u = get2(s.units, c.unitId, "unitId");
     nonempty(c.patch);
     const keys = ["hp", "mp", "sp", "ap", "x", "y", "team", "weapon", "mainHand", "offHand", "shield", "bodyLengthM", "tier", "mc", "bonusDice", "penaltyDice", "intent", "nonLethal", "stance", "moraleType", "moraleState", "greatswordMode", "attunementCharges", "deathrattle"];
     fields(c.patch, [], [...keys, "stats"]);
@@ -10075,7 +10826,7 @@ var commands = {
     if (own14(c.patch, "bonusDice")) u.bonusDice = Math.min(2, Math.max(0, c.patch.bonusDice));
     if (own14(c.patch, "penaltyDice")) u.penaltyDice = Math.min(1, Math.max(0, c.patch.penaltyDice));
     unitValue(u, u.id, s);
-    for (const key4 of builtins) if (own14(c.patch, key4) && u.pools?.[key4]) updatePoolCurrent(s, u.pools[key4], "set", u[key4]);
+    for (const key5 of builtins) if (own14(c.patch, key5) && u.pools?.[key5]) updatePoolCurrent(s, u.pools[key5], "set", u[key5]);
   },
   define_status_template(s, c) {
     fields(c, ["type", "template"]);
@@ -10083,8 +10834,8 @@ var commands = {
   },
   patch_status(s, c) {
     fields(c, ["type", "unitId", "statusId", "patch"]);
-    const unit = get(s.units, c.unitId, "unitId");
-    const status = get(unit.statuses, c.statusId, "statusId");
+    const unit = get2(s.units, c.unitId, "unitId");
+    const status = get2(unit.statuses, c.statusId, "statusId");
     nonempty(c.patch);
     fields(c.patch, [], statusPatchFields);
     const next = { ...status, ...c.patch };
@@ -10098,7 +10849,7 @@ var commands = {
   },
   upsert_status(s, c) {
     fields(c, ["type", "unitId", "statusId"], ["options"]);
-    const u = get(s.units, c.unitId, "unitId"), status = getStatusTemplate(s, c.statusId);
+    const u = get2(s.units, c.unitId, "unitId"), status = getStatusTemplate(s, c.statusId);
     requireThat(status, "statusId");
     const options = own14(c, "options") ? c.options : {};
     fields(options, [], [...statusPatchFields, "sourceId", "extendTurns", "amount", "turns"]);
@@ -10117,7 +10868,7 @@ var commands = {
   remove_status(s, c) {
     fields(c, ["type", "unitId", "statusId"]);
     requireThat(getStatusTemplate(s, c.statusId), "statusId");
-    const unit = get(s.units, c.unitId, "unitId");
+    const unit = get2(s.units, c.unitId, "unitId");
     const status = unit.statuses[c.statusId];
     requireThat(!status?.flags?.includes("undispellable"), "\u8BE5\u72B6\u6001\u4E0D\u53EF\u9A71\u6563");
     if (status) removeVMStatus(s, unit, status, "dispelled", unit);
@@ -10132,7 +10883,7 @@ var commands = {
   },
   patch_equipment_template(s, c) {
     fields(c, ["type", "templateId", "patch"]);
-    const old = get(s.equipment, c.templateId, "templateId");
+    const old = get2(s.equipment, c.templateId, "templateId");
     nonempty(c.patch);
     const next = { ...old, ...c.patch };
     equipmentTemplate(next, s);
@@ -10141,13 +10892,13 @@ var commands = {
     if (instances.length) requireThat(sameSlot && !own14(c.patch, "pools"), "\u4E0D\u80FD\u70ED\u6539\u5DF2\u5B9E\u4F8B\u5316\u88C5\u5907\u7684\u69FD\u7C7B\u578B\u6216\u8D44\u6E90\u6C60\u5B9A\u4E49");
     s.equipment[c.templateId] = next;
     for (const item of instances) {
-      for (const key4 of ["name", "tags", "tier", "rules", "mods"]) if (own14(c.patch, key4) && own14(item, key4)) item[key4] = structuredClone(next[key4]);
+      for (const key5 of ["name", "tags", "tier", "rules", "mods"]) if (own14(c.patch, key5) && own14(item, key5)) item[key5] = structuredClone(next[key5]);
     }
   },
   patch_skill_template(s, c) {
     fields(c, ["type", "templateId", "patch"]);
     nonempty(c.patch);
-    const next = { ...get(s.skills, c.templateId, "templateId"), ...c.patch };
+    const next = { ...get2(s.skills, c.templateId, "templateId"), ...c.patch };
     skillTemplate(next, s);
     s.skills[c.templateId] = next;
   },
@@ -10167,8 +10918,8 @@ var commands = {
   },
   remove_unit(s, c) {
     fields(c, ["type", "unitId"]);
-    const unit = get(s.units, c.unitId, "unitId");
-    const linked = builtins.filter((key4) => (getPool(s, unit.id, key4)?.contributors.length ?? 0) > 1);
+    const unit = get2(s.units, c.unitId, "unitId");
+    const linked = builtins.filter((key5) => (getPool(s, unit.id, key5)?.contributors.length ?? 0) > 1);
     if (linked.length) unlinkPools(s, [unit.id], linked);
     deleteOwnedPools(s, unit);
     for (const status of Object.values(unit.statuses)) deleteOwnedPools(s, status);
@@ -10190,8 +10941,8 @@ var commands = {
   },
   equip_item(s, c) {
     fields(c, ["type", "instanceId", "unitId"], ["slot"]);
-    const instance = get(s.items, c.instanceId, "instanceId");
-    const u = c.unitId === null ? null : get(s.units, c.unitId, "unitId");
+    const instance = get2(s.items, c.instanceId, "instanceId");
+    const u = c.unitId === null ? null : get2(s.units, c.unitId, "unitId");
     const template = s.equipment[instance.templateId];
     const slot2 = c.slot ?? (template.kind === "shield" ? "shield" : template.hand === "off_hand" ? "offHand" : template.damage ? "mainHand" : "gear");
     requireThat(slot2 === "shield" ? template.kind === "shield" : slot2 === "offHand" ? !template.twoHanded && template.hand !== "two_handed" && !!(template.damage || template.kind === "consumable") : slot2 === "mainHand" ? !!template.damage : slot2 === "gear", "\u88C5\u5907\u4E0D\u9002\u7528\u6B64\u69FD\u4F4D");
@@ -10228,7 +10979,7 @@ var commands = {
   },
   remove_zone(s, c) {
     fields(c, ["type", "zoneId"]);
-    const zone = get(s.zones ?? {}, c.zoneId, "\u533A\u57DF ID");
+    const zone = get2(s.zones ?? {}, c.zoneId, "\u533A\u57DF ID");
     deleteOwnedPools(s, zone);
     delete s.zones[c.zoneId];
   },
@@ -10244,13 +10995,13 @@ var commands = {
     fields(c, ["type", "id"], ["spent", "hp"]);
     if (own14(s.covers, c.id)) {
       fields(c, ["type", "id", "hp"]);
-      const cover = get(s.covers, c.id, "\u63A9\u4F53 ID");
+      const cover = get2(s.covers, c.id, "\u63A9\u4F53 ID");
       requireThat(int(c.hp, 0, cover.maxHp), "\u63A9\u4F53 HP");
       cover.hp = c.hp;
     } else {
       fields(c, ["type", "id", "spent"]);
       requireThat(typeof c.spent === "boolean", "spent");
-      get(s.interactives, c.id, "\u4E92\u52A8\u70B9 ID").spent = c.spent;
+      get2(s.interactives, c.id, "\u4E92\u52A8\u70B9 ID").spent = c.spent;
     }
   }
 };
@@ -10647,7 +11398,8 @@ function formatBattleReportText(report, unitNames = {}) {
             const destination = `(${detail.to.x}, ${detail.to.y}, z=${detail.to.z})`;
             if (!text8.includes(`\u81F3 ${destination}`)) label += `\uFF0C\u81F3 ${destination}`;
           }
-          add(label.replace(/ ×1$/, ""));
+          const reactionCells = (type === "zone" || type === "terrain") && detail.reaction && detail.cells?.length;
+          add(label.replace(/ ×1$/, "") + (reactionCells ? notes([`\u6CE2\u53CA ${reactionCells} \u683C`]) : ""));
         }
       }
     }
@@ -10678,16 +11430,16 @@ var version = 1;
 var battleVersion = 11;
 var maxHistory = 2e3;
 var maxBatch = 32;
-var own16 = (obj, key4) => Object.hasOwn(obj, key4);
-var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key4) => own16(value, key4));
+var own16 = (obj, key5) => Object.hasOwn(obj, key5);
+var shape = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype && Object.keys(value).length === keys.length && keys.every((key5) => own16(value, key5));
 function diff(before, after, path2 = [], changes = []) {
   if (before === after) return changes;
   if (before && after && typeof before === "object" && typeof after === "object" && Array.isArray(before) === Array.isArray(after) && (!Array.isArray(before) || before.length === after.length)) {
-    for (const key4 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
+    for (const key5 of /* @__PURE__ */ new Set([...Object.keys(before), ...Object.keys(after)])) {
       diff(
-        own16(before, key4) ? before[key4] : void 0,
-        own16(after, key4) ? after[key4] : void 0,
-        [...path2, Array.isArray(before) ? Number(key4) : key4],
+        own16(before, key5) ? before[key5] : void 0,
+        own16(after, key5) ? after[key5] : void 0,
+        [...path2, Array.isArray(before) ? Number(key5) : key5],
         changes
       );
     }
@@ -10733,7 +11485,7 @@ function simulate(base, transaction) {
   const next = copy2(base);
   if (transaction.kind === "actions") {
     for (const action of transaction.entries) {
-      if (!action || Object.getPrototypeOf(action) !== Object.prototype || Object.entries(action).some(([key4, value]) => typeof value !== "string" && typeof value !== "boolean" && !(action.type === "answer" && key4 === "value" ? Number.isFinite(value) || Array.isArray(value) && value.length <= 200 && [...value].every((id3) => typeof id3 === "string") : Number.isInteger(value)))) fail3("\u52A8\u4F5C\u5FC5\u987B\u7531 JSON \u5B57\u6BB5\u7EC4\u6210");
+      if (!action || Object.getPrototypeOf(action) !== Object.prototype || Object.entries(action).some(([key5, value]) => typeof value !== "string" && typeof value !== "boolean" && !(action.type === "answer" && key5 === "value" ? Number.isFinite(value) || Array.isArray(value) && value.length <= 200 && [...value].every((id3) => typeof id3 === "string") : Number.isInteger(value)))) fail3("\u52A8\u4F5C\u5FC5\u987B\u7531 JSON \u5B57\u6BB5\u7EC4\u6210");
       applyAction(next, action);
     }
   } else if (transaction.kind === "commands") {
@@ -10887,7 +11639,7 @@ function createGameAPI() {
     },
     listStatusTemplates() {
       const s = current();
-      return copy2({ ...STATUSES, ...s.statusTemplates });
+      return copy2({ ...PHYSICAL_STATUSES, ...STATUSES, ...s.statusTemplates });
     },
     checkStealth(unitId, d20, dc) {
       const s = current();
@@ -10954,8 +11706,8 @@ function createGameAPI() {
       const unit = s.units[unitId];
       const skills = [...unit.skills, ...Object.keys(unit.inventory ?? {}).filter((id3) => s.skills[id3]?.backpackItem)];
       const equippedSkills = equippedActiveSkills(s, unit).map(([id3, template]) => ({ id: id3, ...template }));
-      const templates = [...skills.map((id3) => [id3, s.skills[id3]]), ...equippedSkills.map((template) => [template.id, template])];
-      const skillUsage = Object.fromEntries(templates.filter(([, template]) => template).map(([id3, template]) => [id3, skillAvailability(s, unit, template, id3)]));
+      const templates2 = [...skills.map((id3) => [id3, s.skills[id3]]), ...equippedSkills.map((template) => [template.id, template])];
+      const skillUsage = Object.fromEntries(templates2.filter(([, template]) => template).map(([id3, template]) => [id3, skillAvailability(s, unit, template, id3)]));
       return copy2({ ...unit, equippedSkills, skillUsage, equipment: [unit.weapon, unit.mainHand, unit.offHand, unit.shield, ...unit.gear].filter(Boolean).filter((id3, i, all) => all.indexOf(id3) === i).map((id3) => ({
         ...s.items[id3],
         template: s.equipment[s.items[id3].templateId]
@@ -11235,7 +11987,7 @@ function nameOf(state, id3) {
   return table3(state?.covers, id3)?.name ?? table3(state?.interactives, id3)?.name ?? String(id3);
 }
 function statusInfo(state, id3) {
-  return table3(state?.statusTemplates, id3) ?? table3(STATUSES, id3) ?? { name: id3 };
+  return getStatusTemplate(state, id3) ?? { name: id3 };
 }
 function diceMode(dice4, kept, { advantages = 0, disadvantages = 0, bonusDice = 0 } = {}) {
   if (!Array.isArray(dice4) || dice4.length <= 1) return "normal";
@@ -11620,8 +12372,64 @@ function narrateAll(logs, state) {
   return (logs ?? []).map((log, index) => ({ index, round: log.round, ...narrate(log, state) }));
 }
 
+// src/ui/target_card.js
+function surfaceReactionLines(surfaceImpact) {
+  return (surfaceImpact?.reactions ?? []).map(({ label, cells: cells2 }) => `${label}\uFF08${cells2.length} \u683C\uFF09`);
+}
+function placeTargetCard(card, anchor, viewport = window.visualViewport) {
+  const gutter = 8, gap = 6;
+  const left = (viewport?.offsetLeft ?? 0) + gutter;
+  const top = (viewport?.offsetTop ?? 0) + gutter;
+  const right = left + (viewport?.width ?? document.documentElement.clientWidth) - 2 * gutter;
+  const bottom = top + (viewport?.height ?? window.innerHeight) - 2 * gutter;
+  card.style.maxWidth = `${Math.max(0, right - left)}px`;
+  const viewportHeight = Math.max(0, bottom - top);
+  const a = anchor.getBoundingClientRect();
+  const { width, height: renderedHeight } = card.getBoundingClientRect();
+  const list4 = card.dataset.submenu ? card.querySelector("#action-toolbar") : null;
+  const listOverflow = list4 ? Math.max(0, list4.scrollHeight - list4.clientHeight) : 0;
+  const height2 = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight + listOverflow);
+  let maxHeight = viewportHeight;
+  const room = {
+    right: right - a.right - gap,
+    left: a.left - left - gap,
+    below: bottom - a.bottom - gap,
+    above: a.top - top - gap
+  };
+  const clamp5 = (v, min, max) => Math.max(min, Math.min(v, max));
+  let x, y;
+  if (room.right >= width || room.left >= width) {
+    x = room.right >= width ? a.right + gap : a.left - gap - width;
+    y = a.top + (a.height - height2) / 2;
+  } else {
+    const below = room.below >= height2 || room.above < height2 && room.below >= room.above;
+    x = a.left + (a.width - width) / 2;
+    y = below ? a.bottom + gap : a.top - gap - height2;
+    const available = below ? room.below : room.above;
+    if (available < height2 && available >= 80) {
+      maxHeight = available;
+      if (!below) y = a.top - gap - available;
+    }
+  }
+  card.style.maxHeight = `${maxHeight}px`;
+  card.style.left = `${clamp5(x, left, right - width)}px`;
+  card.style.top = `${clamp5(y, top, bottom - card.getBoundingClientRect().height)}px`;
+}
+
 // src/ui/render.js
 var effectLabel = (rule2) => rule2.label ?? rule2.id;
+var MEDIUM_MARKS = Object.freeze({
+  water: "\u6C34",
+  ice: "\u51B0",
+  oil: "\u6CB9",
+  fire: "\u706B",
+  acid: "\u9178",
+  electrified_water: "\u7535\u6C34",
+  steam: "\u6C7D",
+  smoke: "\u70DF",
+  poison_cloud: "\u6BD2\u96FE",
+  electrified_steam: "\u96F7\u96FE"
+});
 var STATUS_ICON = { buff: "\u2191", debuff: "\u2193", control: "\u2298", dot: "\u2739", hot: "\u271A", shield: "\u2B21" };
 var SHAPES = { circle: "\u5706\u5F62\u8303\u56F4", ring: "\u73AF\u5F62\u8303\u56F4", cone: "\u9525\u5F62\u8303\u56F4", fan: "\u6247\u5F62\u8303\u56F4", line: "\u76F4\u7EBF\u8303\u56F4" };
 var ARROWS = { "-1,-1": "\u2199", "0,-1": "\u2193", "1,-1": "\u2198", "-1,0": "\u2190", "1,0": "\u2192", "-1,1": "\u2196", "0,1": "\u2191", "1,1": "\u2197" };
@@ -11676,9 +12484,9 @@ var interval = (pair) => pair?.length === 2 ? pair[0] === pair[1] ? `${pair[0]}`
 var side = (team2) => team2 === "blue" ? "\u6211\u65B9" : "\u654C\u65B9";
 var ratio = (v, max) => max > 0 ? Math.min(1, Math.max(0, v / max)) : 0;
 var has2 = (table4, id3) => table4 && id3 != null && Object.hasOwn(table4, id3);
-var get2 = (table4, id3) => has2(table4, id3) ? table4[id3] : void 0;
+var get3 = (table4, id3) => has2(table4, id3) ? table4[id3] : void 0;
 var values4 = (table4) => Object.values(table4 ?? {});
-var key3 = (x, y) => `${x},${y}`;
+var key4 = (x, y) => `${x},${y}`;
 var statusText = (s) => `${STATUS_ICON[s.category] ?? "\u25C6"} ${s.name ?? s.id}${s.stacks > 1 ? ` \xD7${s.stacks}` : ""}`;
 var duration = (s) => Number.isInteger(s.remainingTurns) ? `\u5269 ${s.remainingTurns} \u56DE\u5408` : s.durationType === "persistent" ? "\u5E38\u9A7B" : "";
 var terrainLabel = (t) => t.kind === "wall" ? "\u5899\u4F53\uFF0C\u6321\u4F4F\u79FB\u52A8\u548C\u89C6\u7EBF" : t.kind === "slope" ? "\u5761\u9053" : t.z > 0 ? `\u9AD8\u53F0\uFF08\u9AD8 ${t.z}\uFF09` : t.z < 0 ? `\u4F4E\u5730\uFF08${t.z}\uFF09` : "\u5E73\u5730";
@@ -11710,8 +12518,8 @@ function createRenderer(root2, portraitFor = () => []) {
   let dims = "", last = null, baseline = { move: /* @__PURE__ */ new Set(), attack: /* @__PURE__ */ new Set(), interact: /* @__PURE__ */ new Set() }, logCount = -1;
   function initBoard(state) {
     const h = state.grid.length, w = state.grid[0].length;
-    if (dims === key3(w, h)) return;
-    dims = key3(w, h);
+    if (dims === key4(w, h)) return;
+    dims = key4(w, h);
     const board = $("board"), frame = $("board-frame");
     frame.style.setProperty("--cols", w);
     frame.style.setProperty("--rows", h);
@@ -11721,10 +12529,10 @@ function createRenderer(root2, portraitFor = () => []) {
       const cell = el2("button", "tactical-cell");
       cell.type = "button";
       Object.assign(cell.dataset, { x, y });
-      const coord = el2("span", "tactical-cell-coord", key3(x, y)), z = el2("span", "tactical-cell-tz");
+      const coord = el2("span", "tactical-cell-coord", key4(x, y)), z = el2("span", "tactical-cell-tz");
       const units = el2("span", "tactical-cell-units"), features = el2("span", "tactical-cell-features");
       cell.append(coord, z, units, features);
-      cells2.set(key3(x, y), { cell, z, units, features });
+      cells2.set(key4(x, y), { cell, z, units, features });
       board.append(cell);
     }
   }
@@ -11797,7 +12605,7 @@ function createRenderer(root2, portraitFor = () => []) {
   function group(list4) {
     const map = /* @__PURE__ */ new Map();
     for (const item of list4) {
-      const k = key3(item.x, item.y);
+      const k = key4(item.x, item.y);
       if (!map.has(k)) map.set(k, []);
       map.get(k).push(item);
     }
@@ -11808,22 +12616,27 @@ function createRenderer(root2, portraitFor = () => []) {
     const moving = ["move", "sprint", "disengage"].includes(action?.type);
     const unitsAt2 = group(values4(state.units).filter((u) => u.hp > 0 && !u.fled));
     const bodiesAt = group(corpses(state)), coversAt = group(values4(state.covers)), itemsAt = group(values4(state.interactives));
-    const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key3(p.x, p.y)));
-    const path2 = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key3(p.x, p.y)));
-    const risks = new Set((moving && preview2?.opportunities || []).map((o) => key3(o.from.x, o.from.y)));
-    const hoverKey = hover ? key3(hover.x, hover.y) : null;
+    const affected = new Set((!moving && preview2?.ok && preview2.cells || []).map((p) => key4(p.x, p.y)));
+    const reactions = preview2?.ok ? preview2.surfaceImpact?.reactions ?? [] : [];
+    const reactionsAt = group(reactions.flatMap(({ label, cells: cells3 }) => cells3.map((cell) => ({ ...cell, label }))));
+    const mediaAt = group(values4(state.zones).filter(isMedium).flatMap((zone) => mediaCells(state, zone).map((at3) => ({ ...at3, medium: zone.medium, name: zone.name }))));
+    const path2 = new Set((moving && preview2?.ok && preview2.path || []).map((p) => key4(p.x, p.y)));
+    const risks = new Set((moving && preview2?.opportunities || []).map((o) => key4(o.from.x, o.from.y)));
+    const hoverKey = hover ? key4(hover.x, hover.y) : null;
     const origin = state.units[selected2] ?? current;
     const originZ = origin ? elevation(state, origin) : 0;
     let inspection = "";
-    for (const [xy3, slot2] of cells2) {
+    for (const [xy4, slot2] of cells2) {
       const { cell } = slot2;
       const x = Number(cell.dataset.x), y = Number(cell.dataset.y), tile = state.grid[y][x];
-      const stack = unitsAt2.get(xy3) ?? [], unit = stack[0], cover = coversAt.get(xy3)?.[0], item = itemsAt.get(xy3)?.[0];
-      const chosen = stack.some((u) => selected2 === u.id || action?.targetId === u.id), isHover = hoverKey === xy3, edges = cliffs(state, x, y, tile);
-      const reach = baseline.move.has(xy3);
+      const stack = unitsAt2.get(xy4) ?? [], unit = stack[0], cover = coversAt.get(xy4)?.[0], item = itemsAt.get(xy4)?.[0];
+      const media = mediaAt.get(xy4) ?? [];
+      const reactionNames = [...new Set((reactionsAt.get(xy4) ?? []).map((reaction) => reaction.label))];
+      const chosen = stack.some((u) => selected2 === u.id || action?.targetId === u.id), isHover = hoverKey === xy4, edges = cliffs(state, x, y, tile);
+      const reach = baseline.move.has(xy4);
       const entityOption = stack.some((u) => entityChoices?.eligible.has(u.id));
       const entitySelected = stack.some((u) => entityChoices?.selected.has(u.id));
-      const answerable = askCells?.has(xy3) || entityOption;
+      const answerable = askCells?.has(xy4) || entityOption;
       cell.disabled = askLocked && (!answerable || entityOption && !entitySelected && entityChoices.selected.size >= entityChoices.limit);
       cell.className = [
         "tactical-cell",
@@ -11833,11 +12646,12 @@ function createRenderer(root2, portraitFor = () => []) {
         isHover ? "is-hovered" : "",
         isHover && preview2?.ok === false ? "is-invalid" : "",
         reach ? "is-reachable" : "",
-        (action?.type === "interact" ? baseline.interact : baseline.attack).has(xy3) || item && baseline.interact.has(xy3) ? "is-in-range" : "",
+        (action?.type === "interact" ? baseline.interact : baseline.attack).has(xy4) || item && baseline.interact.has(xy4) ? "is-in-range" : "",
         reach && (tile.kind === "slope" || tile.z !== originZ) ? "is-elevated-reach" : "",
-        affected.has(xy3) ? "axis-covered" : "",
-        path2.has(xy3) ? "is-path" : "",
-        risks.has(xy3) ? "is-opportunity" : "",
+        affected.has(xy4) ? "axis-covered" : "",
+        reactionNames.length ? "is-surface-impact" : "",
+        path2.has(xy4) ? "is-path" : "",
+        risks.has(xy4) ? "is-opportunity" : "",
         answerable ? "is-ask-option" : "",
         entitySelected ? "is-ask-selected" : ""
       ].filter(Boolean).join(" ");
@@ -11850,11 +12664,13 @@ function createRenderer(root2, portraitFor = () => []) {
       }
       cell.setAttribute("aria-pressed", String(entityChoices ? !!entitySelected : chosen));
       const label = [
-        `(${xy3}) ${terrainLabel(tile)}`,
+        `(${xy4}) ${terrainLabel(tile)}`,
         edges.length ? "\u9661\u5D16\u8FB9" : "",
         stack.length ? stack.map((u) => `${side(u.team)}${u.name}\uFF0C\u751F\u547D ${u.hp}/${u.maxHp}`).join("\uFF1B") : "",
         cover ? coverText(cover) : "",
         item ? interactiveText(item) : "",
+        ...media.map((zone) => zone.name),
+        ...reactionNames,
         reach ? "\u53EF\u4EE5\u8D70\u5230\u8FD9\u91CC" : "",
         answerable ? "\u53EF\u9009\u62E9\u6B64\u683C" : ""
       ].filter(Boolean).join(" \xB7 ");
@@ -11862,8 +12678,8 @@ function createRenderer(root2, portraitFor = () => []) {
       if (answerable) cell.setAttribute("aria-describedby", "pending-ask-prompt");
       else cell.removeAttribute("aria-describedby");
       if (isHover) inspection = label;
-      const bodies = bodiesAt.get(xy3) ?? [];
-      const signature = JSON.stringify([tile, stack, cover, item, chosen, action?.targetId, stack.some((u) => u.id === current?.id), bodies.map((b) => b.id), stack.map((u) => [u.id, portraitFor(u.id)])]);
+      const bodies = bodiesAt.get(xy4) ?? [];
+      const signature = JSON.stringify([tile, stack, cover, item, chosen, action?.targetId, stack.some((u) => u.id === current?.id), bodies.map((b) => b.id), stack.map((u) => [u.id, portraitFor(u.id)]), media.map((zone) => [zone.medium, zone.name])]);
       if (slot2.signature === signature) continue;
       slot2.signature = signature;
       slot2.z.textContent = tile.kind !== "wall" && tile.z ? `z${sign2(tile.z)}` : "";
@@ -11880,7 +12696,14 @@ function createRenderer(root2, portraitFor = () => []) {
         ...stack.map((u) => unitToken(state, u, tile.z, action ? action.targetId === u.id : selected2 === u.id, u.id === current?.id)),
         ...[cover && featureToken(cover, tile.z, true), item && featureToken(item, tile.z, false)].filter(Boolean)
       );
-      slot2.features.replaceChildren(...tile.kind !== "floor" ? [el2("span", "tactical-cell-tag", tile.kind === "wall" ? "#" : "\u5761")] : []);
+      const marks = media.map((zone) => {
+        const mark = el2("span", "ft-medium-mark", MEDIUM_MARKS[zone.medium]);
+        mark.dataset.medium = zone.medium;
+        mark.title = zone.name;
+        mark.setAttribute("aria-hidden", "true");
+        return mark;
+      });
+      slot2.features.replaceChildren(...marks, ...tile.kind !== "floor" ? [el2("span", "tactical-cell-tag", tile.kind === "wall" ? "#" : "\u5761")] : []);
     }
     $("terrain-inspector").textContent = inspection;
   }
@@ -11903,7 +12726,7 @@ function createRenderer(root2, portraitFor = () => []) {
     const node = $("turn-order");
     const old = new Map([...node.children].map((b) => [b.dataset.unitId, b]));
     const chips = state.order.map((id3) => {
-      const u = get2(state.units, id3);
+      const u = get3(state.units, id3);
       if (!u) return null;
       const chip = old.get(id3) ?? Object.assign(el2("button"), { type: "button" });
       chip.className = `turn-chip${u.hp <= 0 ? " is-defeated" : ""}`;
@@ -11996,10 +12819,10 @@ function createRenderer(root2, portraitFor = () => []) {
       s.prepend(el2("b", "", u.stats[id3]));
       stats.append(s);
     }
-    const template = get2(state.equipment, get2(state.items, u.weapon)?.templateId);
+    const template = get3(state.equipment, get3(state.items, u.weapon)?.templateId);
     const melee = (template?.range ?? 1.5) <= 2 && !Object.values(template?.pools ?? {}).some((pool) => pool.reloadable);
     const standing = unitStandingStats(state, u);
-    const weaponTemplate = get2(state.equipment, get2(state.items, u.mainHand ?? u.weapon)?.templateId);
+    const weaponTemplate = get3(state.equipment, get3(state.items, u.mainHand ?? u.weapon)?.templateId);
     const weaponType = weaponTemplate?.damage?.type ?? weaponTemplate?.damageType;
     const defenseTypes = typedDefenseText(u, state.customElements);
     const facts = el2("p", "muted", [
@@ -12025,7 +12848,7 @@ function createRenderer(root2, portraitFor = () => []) {
     if (!statusList.children.length) statusList.append(el2("li", "muted", "\u6CA1\u6709\u72B6\u6001"));
     const gear = el2("ul", "ft-list");
     for (const id3 of [.../* @__PURE__ */ new Set([u.mainHand, u.offHand, u.shield, u.weapon, ...u.gear ?? []])].filter(Boolean)) {
-      const inst = get2(state.items, id3), tpl = get2(state.equipment, inst?.templateId);
+      const inst = get3(state.items, id3), tpl = get3(state.equipment, inst?.templateId);
       const li = el2("li");
       li.dataset.instanceId = id3;
       li.append(el2("b", "", tpl?.name ?? id3));
@@ -12111,7 +12934,7 @@ function createRenderer(root2, portraitFor = () => []) {
     line(head);
     if (p?.kind === "barrel") line(`\u7206\u70B8\u6CE2\u53CA ${p.cells.length} \u683C\uFF0C\u53EF\u80FD\u4F24\u53CA\u53CB\u65B9\u3002`);
     if (range2?.rules?.length) line(`\u6548\u679C\uFF1A${range2.rules.map(effectLabel).join("\uFF1B")}`);
-    if (action.type === "brace" && range2?.ok) line(`${range2.coverId ? `\u501F\u52A9${get2(state.covers, range2.coverId)?.name ?? "\u63A9\u4F53"}` : "\u539F\u5730"}\u9632\u5FA1\uFF1A\u53D7\u5230\u4F24\u5BB3\u51CF\u5C11 ${pct2(range2.reduction)}\uFF0C\u6301\u7EED ${range2.turns} \u56DE\u5408`);
+    if (action.type === "brace" && range2?.ok) line(`${range2.coverId ? `\u501F\u52A9${get3(state.covers, range2.coverId)?.name ?? "\u63A9\u4F53"}` : "\u539F\u5730"}\u9632\u5FA1\uFF1A\u53D7\u5230\u4F24\u5BB3\u51CF\u5C11 ${pct2(range2.reduction)}\uFF0C\u6301\u7EED ${range2.turns} \u56DE\u5408`);
     if (range2?.ammo != null) line(`\u5F39\u836F ${range2.ammo}${range2.capacity ? ` / ${range2.capacity}` : ""}`);
     if (p?.ok === false) line(`\u2716 ${p.error}`, "is-warning");
     else if (range2?.ok === false) line(`\u2716 ${range2.error}`, "is-warning");
@@ -12123,6 +12946,10 @@ function createRenderer(root2, portraitFor = () => []) {
       if (p.dz) geo.push(p.dz > 0 ? `\u76EE\u6807\u9AD8\u51FA ${p.dz}` : `\u76EE\u6807\u4F4E ${-p.dz}`);
       if (p.teleport) geo.push(`\u77AC\u79FB\u5230 (${p.teleport.x}, ${p.teleport.y})`);
       if (geo.length) line(geo.join("\uFF0C"));
+      if (p.ok) {
+        const reactions = surfaceReactionLines(p.surfaceImpact);
+        if (reactions.length) line(`\u73AF\u5883\u8FDE\u9501\uFF1A${reactions.join("\u3001")}`, "is-surface-impact");
+      }
       if (p.opportunities?.length) line(`\u26A0 \u501F\u673A\u98CE\u9669\uFF1A${p.opportunities.map((o) => `${o.name}\uFF08\u4F60\u79BB\u5F00 ${o.from.x},${o.from.y} \u65F6\u51FA\u624B\uFF09`).join("\u3001")}\u3002\u6539\u7528\u300C\u64A4\u79BB\u300D\u53EF\u4EE5\u907F\u514D\u3002`, "is-warning");
       if (p.ok && action.type === "disengage") line("\u64A4\u79BB\uFF1A\u8FD9\u6B21\u79FB\u52A8\u4E0D\u4F1A\u5F15\u53D1\u501F\u673A\u653B\u51FB\u3002");
       for (const t of p.targets ?? []) {
@@ -12146,11 +12973,11 @@ function createRenderer(root2, portraitFor = () => []) {
           if (t.accuracySources) bits.push(`\u547D\u4E2D\u4E2D\u7684\u4F53\u578B\u4FEE\u6B63 ${sign2(t.accuracySources.size)}`);
         }
         const mods = [
-          t.coverId ? `\u88AB${get2(state.covers, t.coverId)?.name ?? "\u63A9\u4F53"}\u906E\u6321 \u2212${t.cover}` : "",
+          t.coverId ? `\u88AB${get3(state.covers, t.coverId)?.name ?? "\u63A9\u4F53"}\u906E\u6321 \u2212${t.cover}` : "",
           t.highGround ? t.highGround > 0 ? `\u5C45\u9AD8\u4E34\u4E0B ${sign2(t.highGround)}` : `\u4EF0\u653B ${t.highGround}` : "",
           t.flanked ? "\u5939\u51FB" : "",
           t.backstab ? "\u80CC\u523A" : "",
-          t.recipientId && t.recipientId !== t.id ? `${get2(state.units, t.recipientId)?.name ?? t.recipientId}\u4F1A\u66FF\u5B83\u6321\u4E0B` : "",
+          t.recipientId && t.recipientId !== t.id ? `${get3(state.units, t.recipientId)?.name ?? t.recipientId}\u4F1A\u66FF\u5B83\u6321\u4E0B` : "",
           t.shield ? `\u5BF9\u65B9\u6709 ${t.shield} \u70B9\u62A4\u76FE` : ""
         ].filter(Boolean);
         if (mods.length) bits.push(mods.join("\uFF0C"));
@@ -12172,16 +12999,16 @@ function createRenderer(root2, portraitFor = () => []) {
     node.replaceChildren(...lines);
   }
   function render(state, ui = {}) {
-    const current = get2(state.units, state.order[state.turn]);
+    const current = get3(state.units, state.order[state.turn]);
     const selected2 = ui.selectedId ?? current?.id;
     const action = ui.action ?? null, hover = ui.hover ?? null;
-    const actor = get2(state.units, ui.actorId) ?? current;
+    const actor = get3(state.units, ui.actorId) ?? current;
     const canAct = !ui.busy && !ui.askLocked && current && !state.outcome && !isAiControlled(state, current) && !isAiControlled(state, actor);
     const run = (cmd) => canAct ? preview(state, { ...cmd, actorId: actor.id }) : null;
     const fresh = last?.state !== state;
     const actorChanged = last?.actorId !== actor?.id;
     if (fresh || actorChanged || last?.sprint !== ui.sprint || last?.canAct !== canAct) {
-      const cells3 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key3(c.x, c.y)));
+      const cells3 = (p) => new Set((p?.ok ? p.cells : []).map((c) => key4(c.x, c.y)));
       baseline = { move: cells3(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells3(run({ type: "attack" })), interact: cells3(run({ type: "interact" })) };
     }
     const range2 = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
@@ -12203,14 +13030,14 @@ function createRenderer(root2, portraitFor = () => []) {
     renderBoard(state, { selected: selected2, action, hover, preview: result, current, askLocked: ui.askLocked, askCells: ui.askCells, entityChoices: ui.entityChoices });
     if (ui.target) renderPreview(state, action, hover, range2, result, actor);
     if (fresh || last?.selected !== selected2 || last?.inspectedId !== ui.inspectedId) {
-      const feature = get2(state.covers, ui.inspectedId) ?? get2(state.interactives, ui.inspectedId);
-      renderUnitCard(state, feature ? null : get2(state.units, selected2), feature);
+      const feature = get3(state.covers, ui.inspectedId) ?? get3(state.interactives, ui.inspectedId);
+      renderUnitCard(state, feature ? null : get3(state.units, selected2), feature);
     }
     $("battle-status").textContent = state.outcome ? state.outcome === "draw" ? "\u6218\u6597\u7ED3\u675F\uFF1A\u5E73\u5C40" : `\u6218\u6597\u7ED3\u675F\uFF1A${state.outcome === "blue" ? "\u6211\u65B9\u80DC\u5229" : "\u654C\u65B9\u80DC\u5229"}` : ui.askLocked ? "" : canAct ? "\u70B9\u51FB\u683C\u5B50\u9009\u62E9\u76EE\u6807\uFF0C\u518D\u9009\u8981\u505A\u7684\u4E8B" : current ? `${current.name} \u6B63\u5728\u884C\u52A8\u2026\u2026` : "";
     last = { state, canAct, selected: selected2, actorId: actor?.id, autoCollaborate: ui.autoCollaborate, inspectedId: ui.inspectedId, sprint: ui.sprint };
   }
   function renderControls(state) {
-    const current = get2(state.units, state.order[state.turn]);
+    const current = get3(state.units, state.order[state.turn]);
     const askLocked = !!state.vm?.pendingAsk;
     $("turn-controls").hidden = askLocked;
     $("turn-order").inert = askLocked;
@@ -12726,47 +13553,6 @@ function createPlayback(root2, { show, onIdle } = {}) {
   };
 }
 
-// src/ui/target_card.js
-function placeTargetCard(card, anchor, viewport = window.visualViewport) {
-  const gutter = 8, gap = 6;
-  const left = (viewport?.offsetLeft ?? 0) + gutter;
-  const top = (viewport?.offsetTop ?? 0) + gutter;
-  const right = left + (viewport?.width ?? document.documentElement.clientWidth) - 2 * gutter;
-  const bottom = top + (viewport?.height ?? window.innerHeight) - 2 * gutter;
-  card.style.maxWidth = `${Math.max(0, right - left)}px`;
-  const viewportHeight = Math.max(0, bottom - top);
-  const a = anchor.getBoundingClientRect();
-  const { width, height: renderedHeight } = card.getBoundingClientRect();
-  const list4 = card.dataset.submenu ? card.querySelector("#action-toolbar") : null;
-  const listOverflow = list4 ? Math.max(0, list4.scrollHeight - list4.clientHeight) : 0;
-  const height2 = Math.min(viewportHeight, card.scrollHeight + renderedHeight - card.clientHeight + listOverflow);
-  let maxHeight = viewportHeight;
-  const room = {
-    right: right - a.right - gap,
-    left: a.left - left - gap,
-    below: bottom - a.bottom - gap,
-    above: a.top - top - gap
-  };
-  const clamp5 = (v, min, max) => Math.max(min, Math.min(v, max));
-  let x, y;
-  if (room.right >= width || room.left >= width) {
-    x = room.right >= width ? a.right + gap : a.left - gap - width;
-    y = a.top + (a.height - height2) / 2;
-  } else {
-    const below = room.below >= height2 || room.above < height2 && room.below >= room.above;
-    x = a.left + (a.width - width) / 2;
-    y = below ? a.bottom + gap : a.top - gap - height2;
-    const available = below ? room.below : room.above;
-    if (available < height2 && available >= 80) {
-      maxHeight = available;
-      if (!below) y = a.top - gap - available;
-    }
-  }
-  card.style.maxHeight = `${maxHeight}px`;
-  card.style.left = `${clamp5(x, left, right - width)}px`;
-  card.style.top = `${clamp5(y, top, bottom - card.getBoundingClientRect().height)}px`;
-}
-
 // src/ui/main.js
 var THEMES = ["amethyst", "night-gold", "frost-silver"];
 var TARGETLESS = ["end_encounter", "switch_weapon", "stance_mode", "brace", "block", "charge", "scan", "flee", "use_item", "reload", "end"];
@@ -12796,24 +13582,24 @@ function initializeUI(root2, { game = createGameAPI(), storageKey = "fated-tacti
   const view = createRenderer(root2, (id3) => Object.hasOwn(portraits, id3) ? portraits[id3] : []);
   const scenario = $("scenario-select"), seed = $("seed-input");
   const storage = {
-    getItem: (key4) => {
+    getItem: (key5) => {
       try {
-        return rawStorage?.getItem(key4) ?? null;
+        return rawStorage?.getItem(key5) ?? null;
       } catch {
         return null;
       }
     },
-    setItem: (key4, value) => {
+    setItem: (key5, value) => {
       try {
         if (!rawStorage) throw new Error("\u6D4F\u89C8\u5668\u5B58\u50A8\u4E0D\u53EF\u7528");
-        rawStorage.setItem(key4, value);
+        rawStorage.setItem(key5, value);
       } catch (error3) {
-        if (key4 === storageKey || key4 === crossedKey) throw error3;
+        if (key5 === storageKey || key5 === crossedKey) throw error3;
       }
     },
-    removeItem: (key4) => {
+    removeItem: (key5) => {
       try {
-        rawStorage?.removeItem(key4);
+        rawStorage?.removeItem(key5);
       } catch {
       }
     }
@@ -12901,8 +13687,8 @@ function initializeUI(root2, { game = createGameAPI(), storageKey = "fated-tacti
     on("zoom-reset", "click", () => setZoom(1));
     scroller.addEventListener("wheel", (e) => {
       e.preventDefault();
-      const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-      setZoom(zoom * Math.exp(-delta * (e.ctrlKey ? 0.01 : 15e-4)), { x: e.clientX, y: e.clientY });
+      const delta2 = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      setZoom(zoom * Math.exp(-delta2 * (e.ctrlKey ? 0.01 : 15e-4)), { x: e.clientX, y: e.clientY });
     }, { passive: false, signal });
     let pan = null, dragged = false;
     scroller.addEventListener("pointerdown", (e) => {
@@ -13731,13 +14517,13 @@ ${height2}\uFF0C${sight}`;
         status: () => {
           const [registeredId] = Object.keys(game.getBattleState().statusTemplates ?? {});
           const statusId3 = registeredId ?? "sandbox_buff";
-          const apply2 = { type: "upsert_status", unitId, statusId: statusId3, options: { durationType: "persistent" } };
-          if (registeredId) return apply2;
-          return [{ type: "define_status_template", template: { id: statusId3, name: "\u6C99\u76D2\u589E\u76CA", category: "buff" } }, apply2];
+          const apply3 = { type: "upsert_status", unitId, statusId: statusId3, options: { durationType: "persistent" } };
+          if (registeredId) return apply3;
+          return [{ type: "define_status_template", template: { id: statusId3, name: "\u6C99\u76D2\u589E\u76CA", category: "buff" } }, apply3];
         },
         "custom-status": () => {
-          const id3 = "bone_frost", apply2 = { type: "upsert_status", unitId, statusId: id3 };
-          if (Object.hasOwn(game.listStatusTemplates(), id3)) return [apply2];
+          const id3 = "bone_frost", apply3 = { type: "upsert_status", unitId, statusId: id3 };
+          if (Object.hasOwn(game.listStatusTemplates(), id3)) return [apply3];
           return [{ type: "define_status_template", template: {
             id: id3,
             name: "\u8680\u9AA8\u5BD2\u971C",
@@ -13749,7 +14535,7 @@ ${height2}\uFF0C${sight}`;
             stackMode: "refresh",
             maxStacks: 1,
             rules: [{ id: "bone-frost-tick", hook: "turn_start", program: [{ op: "damage", target: "self", amount: 3, damageType: "energy", direct: false }] }]
-          } }, apply2];
+          } }, apply3];
         },
         terrain: () => ({ type: "set_terrain_cell", x: 0, y: 0, patch: { kind: "slope", z: 1 } })
       };
@@ -13904,8 +14690,8 @@ ${height2}\uFF0C${sight}`;
     root2.dataset.dlcTheme = theme;
     $("theme-select").value = theme;
   } else if (THEMES.includes(root2.dataset.dlcTheme)) $("theme-select").value = root2.dataset.dlcTheme;
-  for (const [id3, key4] of [["anim-speed", "fated-tactical/anim"], ["ai-speed", "fated-tactical/ai-speed"]]) {
-    const value = storage.getItem(key4);
+  for (const [id3, key5] of [["anim-speed", "fated-tactical/anim"], ["ai-speed", "fated-tactical/ai-speed"]]) {
+    const value = storage.getItem(key5);
     if (value != null && [...$(id3).options].some((o) => o.value === value)) $(id3).value = value;
   }
   playback.setSpeed(Number($("anim-speed").value));
@@ -14982,6 +15768,22 @@ body { margin: 0; background: var(--ink-2); }
 .battle-axis .tactical-cell.is-in-range.is-reachable { border-color: #86cdab; }
 .battle-axis .tactical-cell.is-in-range.is-reachable::after { content: ''; pointer-events: none; position: absolute; inset: auto 4px 3px auto; width: 7px; height: 7px; border-radius: 50%; background: #7dbbfe; }
 .battle-axis .tactical-cell.is-path { border-color: #aeedd3; box-shadow: inset 0 0 0 1px #aeedd3; }
+.battle-axis .tactical-cell.is-surface-impact { border-color: #f4b65d; box-shadow: inset 0 0 0 2px #f4b65d, inset 0 0 10px #f4b65d55; }
+.ft-medium-mark {
+  padding-inline: 2px; border: 1px solid var(--medium-color); border-radius: 3px;
+  font-size: 9px; line-height: 1; color: var(--medium-color); background: #171522;
+  white-space: nowrap; pointer-events: none;
+}
+.ft-medium-mark[data-medium="water"] { --medium-color: #83c0fb; }
+.ft-medium-mark[data-medium="ice"] { --medium-color: #b6edff; }
+.ft-medium-mark[data-medium="oil"] { --medium-color: #e6c14f; }
+.ft-medium-mark[data-medium="fire"] { --medium-color: #ffb280; }
+.ft-medium-mark[data-medium="acid"] { --medium-color: #d4df82; }
+.ft-medium-mark[data-medium="electrified_water"] { --medium-color: #77f1e5; }
+.ft-medium-mark[data-medium="steam"] { --medium-color: #e3e7ee; }
+.ft-medium-mark[data-medium="smoke"] { --medium-color: #b7afc9; }
+.ft-medium-mark[data-medium="poison_cloud"] { --medium-color: #a3e6a4; }
+.ft-medium-mark[data-medium="electrified_steam"] { --medium-color: #cbb4ff; }
 .battle-axis .tactical-cell.is-hovered, .battle-axis .tactical-cell.is-selected { outline: 2px solid var(--gold); outline-offset: -2px; }
 .battle-axis .tactical-cell.is-invalid { outline-color: #ed9b8f; }
 .battle-axis .tactical-cell.is-opportunity { outline: 2px solid #e5a35e; outline-offset: -3px; }
@@ -15228,7 +16030,7 @@ body { margin: 0; background: var(--ink-2); }
 .preview-line b { color: var(--accent-text); }
 .preview-line[data-damage-type] { color: var(--damage-type-color, var(--text-soft)); }
 .fated-char-chip[data-damage-type] { border-color: rgb(var(--gold-rgb) / .4); color: var(--accent-text); }
-.preview-line.is-warning { color: #f3c58c; }
+.preview-line.is-warning, .preview-line.is-surface-impact { color: #f3c58c; }
 .ft-odds { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
 .ft-odds-bar { flex: 1; height: 6px; border-radius: 3px; background: rgb(0 0 0 / .5); overflow: hidden; }
 .ft-odds-bar > i { display: block; height: 100%; width: calc(100% * var(--p)); background: linear-gradient(90deg, #b48a3c, var(--gold-bright)); }
@@ -15394,16 +16196,16 @@ function resolveContainer(container) {
   if (typeof container === "string") return document.querySelector(container);
   return container;
 }
-var GLOBAL_UI_PREF_KEYS = new Set(["zoom", "theme", "anim", "auto", "llm-enemy-ai", "ai-speed"].map((key4) => `fated-tactical/${key4}`));
+var GLOBAL_UI_PREF_KEYS = new Set(["zoom", "theme", "anim", "auto", "llm-enemy-ai", "ai-speed"].map((key5) => `fated-tactical/${key5}`));
 function storageAdapter(source, prefix, onQuotaExceeded) {
-  const resolveKey = (key4) => GLOBAL_UI_PREF_KEYS.has(key4) ? key4 : `${prefix}/${key4}`;
+  const resolveKey = (key5) => GLOBAL_UI_PREF_KEYS.has(key5) ? key5 : `${prefix}/${key5}`;
   return {
-    getItem(key4) {
-      return source?.getItem(resolveKey(key4)) ?? null;
+    getItem(key5) {
+      return source?.getItem(resolveKey(key5)) ?? null;
     },
-    setItem(key4, value) {
+    setItem(key5, value) {
       if (!source) throw new Error("\u6D4F\u89C8\u5668\u5B58\u50A8\u4E0D\u53EF\u7528");
-      const resolvedKey = resolveKey(key4);
+      const resolvedKey = resolveKey(key5);
       try {
         source.setItem(resolvedKey, value);
       } catch (error2) {
@@ -15411,8 +16213,8 @@ function storageAdapter(source, prefix, onQuotaExceeded) {
         source.setItem(resolvedKey, value);
       }
     },
-    removeItem(key4) {
-      source?.removeItem(resolveKey(key4));
+    removeItem(key5) {
+      source?.removeItem(resolveKey(key5));
     }
   };
 }
@@ -15481,13 +16283,13 @@ function mountStyles(document2 = globalThis.document) {
 
 // src/tavern/descriptor.js
 var identifier2 = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
-var unsafeKey = (key4) => Object.hasOwn(Object.prototype, key4) || key4 === "prototype";
+var unsafeKey = (key5) => Object.hasOwn(Object.prototype, key5) || key5 === "prototype";
 var fail4 = (message) => {
   throw new Error(`battle_init \u63CF\u8FF0\u7B26\uFF1A${message}`);
 };
 var groundHeight = /^-?\d+$/;
 var airborneHeight = /^(?:飞行|悬浮)\s*=\s*(-?\d+)$/u;
-var xy2 = /^\d{1,2}$/;
+var xy3 = /^\d{1,2}$/;
 var fieldTeams = /* @__PURE__ */ new Map([
   ["\u5168\u4F53", null],
   ["\u5168\u90E8", null],
@@ -15527,8 +16329,13 @@ function parseHeader(line) {
   const moraleType = typeValue && moraleTypeFor(typeValue.slice("\u6218\u6597\u7C7B\u578B=".length));
   if (typeValue && !moraleType) fail4("\u672A\u77E5\u6218\u6597\u7C7B\u578B\uFF0C\u53EF\u9009\uFF1A\u6807\u51C6\u3001\u5207\u78CB\u3001\u7ADE\u6280\u3001\u538B\u5236\u3001\u6B7B\u6597\u3001\u5B88\u536B");
   if (sideValue && !sideToken || moraleType === "suppress" !== !!sideToken) fail4("\u538B\u5236\u6218\u5FC5\u987B\u5728\u6218\u6597\u7C7B\u578B\u540E\u58F0\u660E |\u538B\u5236\u65B9=blue \u6216 |\u538B\u5236\u65B9=red\uFF1B\u5176\u4ED6\u7C7B\u578B\u4E0D\u586B\u538B\u5236\u65B9");
+  const physicsTokens = options.filter((value) => /^元素交互\s*=|^法则\s*=\s*无元素涌现$/u.test(value));
+  if (physicsTokens.length > 1) fail4("\u5143\u7D20\u4EA4\u4E92\u53EA\u80FD\u58F0\u660E\u4E00\u6B21");
+  const physicsToken = physicsTokens[0];
+  if (physicsToken && !/^(?:元素交互\s*=\s*[开关]|法则\s*=\s*无元素涌现)$/u.test(physicsToken)) fail4("\u5143\u7D20\u4EA4\u4E92\u5FC5\u987B\u662F \u5F00 \u6216 \u5173");
+  const physicsOff = /^(?:元素交互\s*=\s*关|法则\s*=\s*无元素涌现)$/u.test(physicsToken ?? "");
   const remainingOptions = options.slice();
-  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue]) {
+  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, physicsToken]) {
     if (token !== void 0) remainingOptions.splice(remainingOptions.indexOf(token), 1);
   }
   const [seedText, ...extra] = remainingOptions;
@@ -15545,6 +16352,7 @@ function parseHeader(line) {
     ...cellM != null && { cellM },
     ...tierMatch && { scaleTier: Number(tierMatch[1]) },
     ...scaleExplicit && { explicitScale: true },
+    ...physicsOff && { elementalPhysics: "off" },
     ...moraleType && { moraleType },
     ...sideToken && { suppressingTeam: sideToken[1] },
     ...seedText === void 0 ? {} : { seed: Number(seedText) }
@@ -15553,7 +16361,7 @@ function parseHeader(line) {
 function parsePoint(point4, row, { width, height: height2 }, unit = false) {
   const coords2 = (point4 ?? "").split(",").map((x2) => x2.trim());
   const [rawX, rawY, third, fourth] = coords2;
-  if ((unit ? coords2.length < 2 || coords2.length > 4 : coords2.length !== 3 || !groundHeight.test(third)) || !xy2.test(rawX) || !xy2.test(rawY ?? "")) {
+  if ((unit ? coords2.length < 2 || coords2.length > 4 : coords2.length !== 3 || !groundHeight.test(third)) || !xy3.test(rawX) || !xy3.test(rawY ?? "")) {
     const syntax = unit ? "\u652F\u6301 x,y\u3001x,y,z\u3001x,y,\u98DE\u884C=N \u6216 x,y,z,\u98DE\u884C=N" : "\u5E94\u4E3A x,y,z";
     fail4(`${row}\u7684\u5750\u6807\u300C${point4 ?? ""}\u300D\u683C\u5F0F\u65E0\u6548\uFF0C${syntax}`);
   }
@@ -15613,7 +16421,7 @@ function parseEffect(parts, row, battle) {
 function checkSource(source, row, allowMvu = false) {
   const path2 = source.startsWith("mvu:") ? source.slice(4).split("/") : [];
   if (source === "char_info" || allowMvu && source === "mvu") return;
-  if (!path2.length || path2.some((key4) => !key4 || key4 !== key4.trim() || unsafeKey(key4) || key4 === "." || key4 === "..")) {
+  if (!path2.length || path2.some((key5) => !key5 || key5 !== key5.trim() || unsafeKey(key5) || key5 === "." || key5 === "..")) {
     fail4(`${row}\u7684\u6765\u6E90\u300C${source}\u300D\u65E0\u6548\uFF0C\u5E94\u4E3A char_info \u6216 mvu:\u7CBE\u786E/\u8DEF\u5F84`);
   }
 }
@@ -15627,15 +16435,15 @@ function parseSummon(parts, row, battle) {
   const summon = { id: id3, ownerId, source, name, group: id3 };
   const seen = /* @__PURE__ */ new Set();
   for (const option of options) {
-    const [, key4, value] = option.match(/^([^=]+?)\s*=\s*(.+)$/u) ?? [];
-    if (!key4 || seen.has(key4)) fail4(`${row}\u542B\u65E0\u6548\u6216\u91CD\u590D\u9009\u9879\u300C${option}\u300D`);
-    seen.add(key4);
-    if (key4 === "\u5206\u7EC4" && identifier2.test(value) && !unsafeKey(value)) summon.group = value;
-    else if (key4 === "\u6A21\u5F0F" && Object.values(summonModes).includes(summonModes[value] ?? value)) summon.turnMode = summonModes[value] ?? value;
-    else if (key4 === "\u7B56\u7565" && Object.values(summonPolicies).includes(summonPolicies[value] ?? value)) summon.stackPolicy = summonPolicies[value] ?? value;
-    else if (key4 === "\u4E0A\u9650" && /^(?:[1-9]|1\d|20)$/.test(value)) summon.maxActive = Number(value);
-    else if (key4 === "\u7C7B\u578B" && value.length <= 100) summon.archetypeHint = value;
-    else if (key4 === "\u5F00\u573A") summon.opening = value === "\u968F\u4E3B" ? "owner" : parsePoint(value, row, battle, true);
+    const [, key5, value] = option.match(/^([^=]+?)\s*=\s*(.+)$/u) ?? [];
+    if (!key5 || seen.has(key5)) fail4(`${row}\u542B\u65E0\u6548\u6216\u91CD\u590D\u9009\u9879\u300C${option}\u300D`);
+    seen.add(key5);
+    if (key5 === "\u5206\u7EC4" && identifier2.test(value) && !unsafeKey(value)) summon.group = value;
+    else if (key5 === "\u6A21\u5F0F" && Object.values(summonModes).includes(summonModes[value] ?? value)) summon.turnMode = summonModes[value] ?? value;
+    else if (key5 === "\u7B56\u7565" && Object.values(summonPolicies).includes(summonPolicies[value] ?? value)) summon.stackPolicy = summonPolicies[value] ?? value;
+    else if (key5 === "\u4E0A\u9650" && /^(?:[1-9]|1\d|20)$/.test(value)) summon.maxActive = Number(value);
+    else if (key5 === "\u7C7B\u578B" && value.length <= 100) summon.archetypeHint = value;
+    else if (key5 === "\u5F00\u573A") summon.opening = value === "\u968F\u4E3B" ? "owner" : parsePoint(value, row, battle, true);
     else fail4(`${row}\u542B\u65E0\u6548\u9009\u9879\u300C${option}\u300D`);
   }
   return summon;
@@ -15649,19 +16457,19 @@ function parseBattleDescriptor(value) {
   const units = [], covers = [], interactives = [], effects = [], summons = [];
   const claimId = (id3, row) => {
     if (!identifier2.test(id3 ?? "") || unsafeKey(id3)) fail4(`${row}\u7684 ID\u300C${id3 ?? ""}\u300D\u683C\u5F0F\u65E0\u6548\uFF08\u987B\u4EE5\u5B57\u6BCD\u6216\u6570\u5B57\u5F00\u5934\uFF0C\u4EC5\u542B ASCII \u5B57\u6BCD\u3001\u6570\u5B57\u3001_\u3001-\uFF0C\u957F\u5EA6 \u226464\uFF09`);
-    const key4 = id3.toLowerCase();
-    if (ids.has(key4)) fail4(`${row}\u9700\u8981\u552F\u4E00 ID\uFF08\u300C${id3}\u300D\u4E0E\u524D\u5E8F\u8BB0\u5F55\u91CD\u590D\uFF09`);
-    ids.add(key4);
+    const key5 = id3.toLowerCase();
+    if (ids.has(key5)) fail4(`${row}\u9700\u8981\u552F\u4E00 ID\uFF08\u300C${id3}\u300D\u4E0E\u524D\u5E8F\u8BB0\u5F55\u91CD\u590D\uFF09`);
+    ids.add(key5);
   };
   const claimPosition = ({ x, y }, row, unit = false) => {
-    const key4 = `${x},${y}`;
-    if (!unit && occupied.has(key4)) fail4(`${row}\u7684\u4F4D\u7F6E\u91CD\u590D`);
+    const key5 = `${x},${y}`;
+    if (!unit && occupied.has(key5)) fail4(`${row}\u7684\u4F4D\u7F6E\u91CD\u590D`);
     if (unit) {
-      const count = unitCounts.get(key4) ?? 0;
+      const count = unitCounts.get(key5) ?? 0;
       if (count >= 4) fail4(`${row}\u7684\u540C\u683C\u5355\u4F4D\u8D85\u8FC7\u5BB9\u91CF 4`);
-      unitCounts.set(key4, count + 1);
+      unitCounts.set(key5, count + 1);
     }
-    occupied.add(key4);
+    occupied.add(key5);
   };
   for (const [i, line] of lines.slice(1).entries()) {
     const parts = line.split("|").map((x) => x.trim());
@@ -15701,16 +16509,16 @@ function parseBattleDescriptor(value) {
       if (parts.length !== 8) fail4(`${row}\u9700\u8981 8 \u6BB5\u5B57\u6BB5\uFF08interact|ID|\u7C7B\u578B|\u6548\u679C|\u534A\u5F84|\u6570\u503C|\u540D\u79F0|\u5750\u6807\uFF0C\u5F53\u524D\u4E3A ${parts.length} \u6BB5\uFF09`);
       claimId(id3, row);
       const [, , type, effect, radiusText, damageText, name, point4] = parts;
-      const radius = Number(radiusText), damage = Number(damageText);
+      const radius = Number(radiusText), damage2 = Number(damageText);
       if (!["altar", "barrel"].includes(type)) fail4(`${row}\u7684\u4E92\u52A8\u7C7B\u578B\u300C${type}\u300D\u65E0\u6548\uFF0C\u5FC5\u987B\u4E3A altar \u6216 barrel`);
       if (!["explode", "heal", "shield", "restore"].includes(effect)) fail4(`${row}\u7684\u4E92\u52A8\u6548\u679C\u300C${effect}\u300D\u65E0\u6548\uFF0C\u5FC5\u987B\u4E3A explode\u3001heal\u3001shield \u6216 restore`);
       if (!radiusText || !Number.isInteger(radius) || radius < 0 || radius > 10) fail4(`${row}\u7684\u534A\u5F84\u5FC5\u987B\u662F 0\u201310 \u7684\u6574\u6570`);
-      if (!damageText || !Number.isInteger(damage) || damage < 0 || damage > 1e5) fail4(`${row}\u7684\u6570\u503C\u5FC5\u987B\u662F 0\u2013100000 \u7684\u6574\u6570`);
+      if (!damageText || !Number.isInteger(damage2) || damage2 < 0 || damage2 > 1e5) fail4(`${row}\u7684\u6570\u503C\u5FC5\u987B\u662F 0\u2013100000 \u7684\u6574\u6570`);
       if (!name) fail4(`${row}\u7684\u4E92\u52A8\u540D\u79F0\u4E0D\u80FD\u4E3A\u7A7A`);
       const position = parsePoint(point4, row, battle);
       claimPosition(position, row);
       if (interactives.length === 2) fail4("\u6700\u591A\u4E24\u6761 interact \u8BB0\u5F55");
-      interactives.push({ id: id3, name, ...position, kind: type, effect, radius, damage });
+      interactives.push({ id: id3, name, ...position, kind: type, effect, radius, damage: damage2 });
     } else fail4(`\u7B2C ${rowNo} \u6761\u8BB0\u5F55\u672A\u77E5\u884C\u7C7B\u578B\u300C${kind}\u300D\uFF0C\u5141\u8BB8\u524D\u7F00\uFF1Aunit\u3001summon\u3001cover\u3001interact\u3001\u6548\u679C`);
   }
   if (!units.length) fail4("\u81F3\u5C11\u9700\u8981\u4E00\u6761 unit \u8BB0\u5F55");
@@ -15885,7 +16693,7 @@ function qualityOf(raw) {
     const value = /^品质\s*(?:\([^()]*\)|（[^（）]*）)?\s*[:：]\s*(.+)$/u.exec(tag2)?.[1];
     if (!value) continue;
     if (QUALITY_NAMES.has(value)) return value;
-    const quality = Object.keys(QUALITY_TIER).find((key4) => String(QUALITY_TIER[key4]) === value);
+    const quality = Object.keys(QUALITY_TIER).find((key5) => String(QUALITY_TIER[key5]) === value);
     if (quality) return quality;
   }
 }
@@ -15912,52 +16720,52 @@ function staticProjection(value, context = {}) {
   }
   if (!object3(value)) return value;
   const result = {};
-  for (const [key4, child] of Object.entries(value)) {
-    if (context.resource && (typeof child === "number" || typeof child === "string") && !["\u4E0A\u9650", "max", "maximum"].includes(key4)) {
-      result[key4] = "<DYNAMIC>";
+  for (const [key5, child] of Object.entries(value)) {
+    if (context.resource && (typeof child === "number" || typeof child === "string") && !["\u4E0A\u9650", "max", "maximum"].includes(key5)) {
+      result[key5] = "<DYNAMIC>";
       continue;
     }
-    if (DYNAMIC_FIELD_KEYS.has(key4)) {
-      result[key4] = "<DYNAMIC>";
+    if (DYNAMIC_FIELD_KEYS.has(key5)) {
+      result[key5] = "<DYNAMIC>";
       continue;
     }
-    if (context.pool && ["initial", "current", "\u5F53\u524D", "now", "value"].includes(key4)) {
-      result[key4] = "<DYNAMIC>";
+    if (context.pool && ["initial", "current", "\u5F53\u524D", "now", "value"].includes(key5)) {
+      result[key5] = "<DYNAMIC>";
       continue;
     }
-    if (context.resource && ["current", "\u5F53\u524D", "now", "value"].includes(key4)) {
-      result[key4] = "<DYNAMIC>";
+    if (context.resource && ["current", "\u5F53\u524D", "now", "value"].includes(key5)) {
+      result[key5] = "<DYNAMIC>";
       continue;
     }
-    if (context.status && RUNTIME_STATUS_KEYS.has(key4)) continue;
-    if (key4 === "\u6807\u7B7E" || key4 === "tags") {
-      result[key4] = [].concat(child).map((item) => dynamicTag(item)?.normalized ?? item);
+    if (context.status && RUNTIME_STATUS_KEYS.has(key5)) continue;
+    if (key5 === "\u6807\u7B7E" || key5 === "tags") {
+      result[key5] = [].concat(child).map((item) => dynamicTag(item)?.normalized ?? item);
       continue;
     }
-    if (key4 === "pools" || key4 === "unitPools" || key4 === "\u8D44\u6E90\u6C60") {
-      result[key4] = Object.fromEntries(Object.entries(asObject(child)).map(([poolKey, pool]) => [
+    if (key5 === "pools" || key5 === "unitPools" || key5 === "\u8D44\u6E90\u6C60") {
+      result[key5] = Object.fromEntries(Object.entries(asObject(child)).map(([poolKey, pool]) => [
         poolKey,
         staticProjection(pool, { pool: true })
       ]));
       continue;
     }
-    if (key4 === "resources" || key4 === "resource" || key4 === "\u8D44\u6E90" || key4 === "\u8BA1\u6570\u5668" || key4 === "counters") {
-      result[key4] = staticProjection(child, { resource: true });
+    if (key5 === "resources" || key5 === "resource" || key5 === "\u8D44\u6E90" || key5 === "\u8BA1\u6570\u5668" || key5 === "counters") {
+      result[key5] = staticProjection(child, { resource: true });
       continue;
     }
-    if (UNIT_COUNTER_KEY_RE.test(key4) && !STATIC_UNIT_COUNTER_KEYS.has(key4) || key4 === "\u5F53\u524D") {
-      result[key4] = typeof child === "number" || typeof child === "string" ? "<DYNAMIC>" : staticProjection(child, context);
+    if (UNIT_COUNTER_KEY_RE.test(key5) && !STATIC_UNIT_COUNTER_KEYS.has(key5) || key5 === "\u5F53\u524D") {
+      result[key5] = typeof child === "number" || typeof child === "string" ? "<DYNAMIC>" : staticProjection(child, context);
       continue;
     }
-    if (["\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "hp", "mp", "sp"].includes(key4)) {
-      result[key4] = object3(child) ? staticProjection(child, { resource: true }) : "<DYNAMIC>";
+    if (["\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "hp", "mp", "sp"].includes(key5)) {
+      result[key5] = object3(child) ? staticProjection(child, { resource: true }) : "<DYNAMIC>";
       continue;
     }
-    if (key4 === "\u72B6\u6001\u6548\u679C" || key4 === "statuses" || key4 === "\u72B6\u6001") {
-      result[key4] = staticProjection(child, { status: true });
+    if (key5 === "\u72B6\u6001\u6548\u679C" || key5 === "statuses" || key5 === "\u72B6\u6001") {
+      result[key5] = staticProjection(child, { status: true });
       continue;
     }
-    result[key4] = staticProjection(child, context);
+    result[key5] = staticProjection(child, context);
   }
   return result;
 }
@@ -16000,24 +16808,24 @@ function poolEntry(rawKey, label, current, explicitMax, subPath, format = { kind
   };
 }
 function resourceEntry(rawKey, label, value, subPath) {
-  const currentKey = CURRENT_KEYS.find((key4) => own17(value, key4));
+  const currentKey = CURRENT_KEYS.find((key5) => own17(value, key5));
   const current = object3(value) ? value[currentKey] : value;
-  const maxRaw = object3(value) ? MAX_KEYS.find((key4) => own17(value, key4)) && value[MAX_KEYS.find((key4) => own17(value, key4))] : void 0;
+  const maxRaw = object3(value) ? MAX_KEYS.find((key5) => own17(value, key5)) && value[MAX_KEYS.find((key5) => own17(value, key5))] : void 0;
   const explicitMax = object3(maxRaw) ? finiteCounter(number2(maxRaw._\u57FA\u7840, 0) + number2(maxRaw.\u989D\u5916, 0)) : finiteCounter(maxRaw);
   return poolEntry(rawKey, label, current, explicitMax, [...subPath, ...currentKey ? [currentKey] : []]);
 }
 function extractUnitPoolEntries(record3) {
   const source = asObject(record3), entries3 = [], seen = /* @__PURE__ */ new Set();
   const add = (entry2) => {
-    const key4 = JSON.stringify(entry2.subPath);
-    if (!seen.has(key4)) {
-      seen.add(key4);
+    const key5 = JSON.stringify(entry2.subPath);
+    if (!seen.has(key5)) {
+      seen.add(key5);
       entries3.push(entry2);
     }
   };
   for (const [rawKey, value] of Object.entries(asObject(source.unitPools ?? source.\u8D44\u6E90\u6C60))) {
     if (!object3(value)) continue;
-    const currentKey = CURRENT_KEYS.find((key4) => own17(value, key4));
+    const currentKey = CURRENT_KEYS.find((key5) => own17(value, key5));
     add(poolEntry(
       rawKey,
       value.name ?? value.\u540D\u79F0 ?? rawKey,
@@ -16032,18 +16840,18 @@ function extractUnitPoolEntries(record3) {
     for (const [rawKey, value] of Object.entries(asObject(source[containerKey]))) {
       if (RESOURCE_ALIASES.hp.includes(rawKey) || RESOURCE_ALIASES.mp.includes(rawKey) || RESOURCE_ALIASES.sp.includes(rawKey) || RESOURCE_MAX_ALIASES.hp.includes(rawKey) || RESOURCE_MAX_ALIASES.mp.includes(rawKey) || RESOURCE_MAX_ALIASES.sp.includes(rawKey)) continue;
       const sibling = asObject(source[containerKey]);
-      const maxKey = [`${rawKey}\u4E0A\u9650`, `${rawKey}Max`].find((key4) => own17(sibling, key4));
+      const maxKey = [`${rawKey}\u4E0A\u9650`, `${rawKey}Max`].find((key5) => own17(sibling, key5));
       add(resourceEntry(rawKey, rawKey, object3(value) ? value : { current: value, ...maxKey ? { max: sibling[maxKey] } : {} }, [containerKey, rawKey]));
     }
   }
   for (const [rawKey, value] of Object.entries(source)) {
     if (RESERVED_UNIT_KEYS.has(rawKey)) continue;
-    if (object3(value) && CURRENT_KEYS.some((key4) => own17(value, key4)) && !["\u6548\u679C", "\u7C7B\u578B", "\u54C1\u8D28", "\u5C42\u6570", "stacks", "\u5269\u4F59\u56DE\u5408", "remainingTurns", "\u5269\u4F59\u65F6\u95F4"].some((key4) => own17(value, key4))) {
+    if (object3(value) && CURRENT_KEYS.some((key5) => own17(value, key5)) && !["\u6548\u679C", "\u7C7B\u578B", "\u54C1\u8D28", "\u5C42\u6570", "stacks", "\u5269\u4F59\u56DE\u5408", "remainingTurns", "\u5269\u4F59\u65F6\u95F4"].some((key5) => own17(value, key5))) {
       add(resourceEntry(rawKey, rawKey, value, [rawKey]));
       continue;
     }
     if (finiteCounter(value) != null && (DYNAMIC_FIELD_KEYS.has(rawKey) || UNIT_COUNTER_KEY_RE.test(rawKey)) && !STATIC_UNIT_COUNTER_KEYS.has(rawKey)) {
-      const maxKey = [`${rawKey}\u4E0A\u9650`, `${rawKey}Max`].find((key4) => own17(source, key4));
+      const maxKey = [`${rawKey}\u4E0A\u9650`, `${rawKey}Max`].find((key5) => own17(source, key5));
       add(poolEntry(rawKey, rawKey, value, maxKey ? source[maxKey] : null, [rawKey]));
     }
   }
@@ -16148,7 +16956,7 @@ function parseSimpleYaml(input) {
     }
     const colon = line.value.search(/[:：]/);
     if (colon < 1 || !object3(parent)) continue;
-    const key4 = line.value.slice(0, colon).trim();
+    const key5 = line.value.slice(0, colon).trim();
     const tail = line.value.slice(colon + 1).trim();
     if (blockHeaders.has(tail)) {
       const chunks = [];
@@ -16156,16 +16964,16 @@ function parseSimpleYaml(input) {
         chunks.push(lines[j].value);
         i = j;
       }
-      parent[key4] = chunks.join(tail.startsWith(">") ? " " : "\n");
+      parent[key5] = chunks.join(tail.startsWith(">") ? " " : "\n");
       continue;
     }
     if (tail) {
-      parent[key4] = scalar2(tail);
+      parent[key5] = scalar2(tail);
       continue;
     }
     const next = lines[i + 1];
     const child = next && next.indent > line.indent && next.value.startsWith("- ") ? [] : {};
-    parent[key4] = child;
+    parent[key5] = child;
     stack.push({ indent: line.indent, value: child });
   }
   return root2;
@@ -16241,9 +17049,9 @@ function findValue(record3, names, fallback) {
 function statsOf(record3) {
   const r = asObject(record3), nested = asObject(r.stats && Object.keys(r.stats).length ? r.stats : r.attributes && Object.keys(r.attributes).length ? r.attributes : r.\u5C5E\u6027);
   const result = {};
-  for (const key4 of attrNames) {
-    const aliases3 = [key4, ...Object.entries(statAliases).filter(([, v]) => v === key4).map(([k]) => k)];
-    result[key4] = Math.max(-20, Math.min(50, integer3(
+  for (const key5 of attrNames) {
+    const aliases3 = [key5, ...Object.entries(statAliases).filter(([, v]) => v === key5).map(([k]) => k)];
+    result[key5] = Math.max(-20, Math.min(50, integer3(
       aliases3.find((alias) => own17(nested, alias)) !== void 0 ? nested[aliases3.find((alias) => own17(nested, alias))] : findValue(r, aliases3, 0),
       0
     )));
@@ -16260,20 +17068,20 @@ var RESOURCE_MAX_ALIASES = Object.freeze({
   mp: ["maxMp", "mpMax", "\u6CD5\u529B\u503C\u4E0A\u9650"],
   sp: ["maxSp", "spMax", "\u4F53\u529B\u503C\u4E0A\u9650"]
 });
-function resourceValue(record3, key4) {
+function resourceValue(record3, key5) {
   const r = asObject(record3), nested = asObject(r.resources ?? r.resource ?? r.\u8D44\u6E90);
-  const aliases3 = RESOURCE_ALIASES[key4] ?? [];
+  const aliases3 = RESOURCE_ALIASES[key5] ?? [];
   for (const name of aliases3) if (own17(r, name)) return { value: r[name], key: name };
   for (const name of aliases3) if (own17(nested, name)) return { value: nested[name], key: name };
   return { value: void 0, key: null };
 }
-function resource(record3, key4, fallback, warnings) {
-  const r = asObject(record3), aliases3 = RESOURCE_ALIASES[key4] ?? [], { value } = resourceValue(r, key4);
+function resource(record3, key5, fallback, warnings) {
+  const r = asObject(record3), aliases3 = RESOURCE_ALIASES[key5] ?? [], { value } = resourceValue(r, key5);
   const numeric2 = (raw) => {
     const parsed = number2(raw, NaN);
     return Number.isFinite(parsed) ? Math.round(parsed) : null;
   };
-  const warn = (kind, raw) => warnings?.push(`${aliases3[2]}${kind}${raw === void 0 ? "\u7F3A\u5931" : `\u300C${text3(raw)}\u300D\u65E0\u6CD5\u89E3\u6790`}\uFF0C\u5DF2\u6309\u4E94\u7EF4\u516C\u5F0F\u515C\u5E95`, { kind: "unmapped_field", field: `${key4}.${kind}` });
+  const warn = (kind, raw) => warnings?.push(`${aliases3[2]}${kind}${raw === void 0 ? "\u7F3A\u5931" : `\u300C${text3(raw)}\u300D\u65E0\u6CD5\u89E3\u6790`}\uFF0C\u5DF2\u6309\u4E94\u7EF4\u516C\u5F0F\u515C\u5E95`, { kind: "unmapped_field", field: `${key5}.${kind}` });
   if (object3(value)) {
     const currentKey = ["current", "\u5F53\u524D", "now", "value"].find((name) => own17(value, name));
     const currentRaw = currentKey === void 0 ? void 0 : value[currentKey];
@@ -16282,7 +17090,7 @@ function resource(record3, key4, fallback, warnings) {
     const current2 = currentValue2 ?? fallback;
     const upperKey = ["max", "maximum", "\u4E0A\u9650"].find((name) => own17(value, name));
     if (upperKey === void 0) {
-      const outerMaxKey = (RESOURCE_MAX_ALIASES[key4] ?? []).find((name) => own17(r, name));
+      const outerMaxKey = (RESOURCE_MAX_ALIASES[key5] ?? []).find((name) => own17(r, name));
       if (outerMaxKey !== void 0) {
         const outerMax = numeric2(r[outerMaxKey]);
         if (outerMax !== null) return { current: current2, max: outerMax };
@@ -16310,31 +17118,31 @@ function resource(record3, key4, fallback, warnings) {
   const currentValue = value === void 0 ? null : numeric2(value);
   if (value !== void 0 && currentValue === null) warn("\u5F53\u524D", value);
   const current = currentValue ?? fallback;
-  const maxName = (RESOURCE_MAX_ALIASES[key4] ?? []).find((name) => own17(r, name));
+  const maxName = (RESOURCE_MAX_ALIASES[key5] ?? []).find((name) => own17(r, name));
   const maxRaw = maxName === void 0 ? void 0 : r[maxName];
   const maxValue = maxName === void 0 ? current : numeric2(maxRaw);
   if (maxName !== void 0 && maxValue === null) warn("\u4E0A\u9650", maxRaw);
   return { current, max: maxValue ?? current };
 }
-function safeResource(pair, key4, warnings) {
-  let max = Math.max(key4 === "hp" ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));
+function safeResource(pair, key5, warnings) {
+  let max = Math.max(key5 === "hp" ? 1 : 0, pair.max), current = Math.max(0, Math.min(max, pair.current));
   if (max > 1e9 || pair.current > 1e9) {
-    warnings.push(`${key4} \u8D85\u51FA\u5F15\u64CE\u4E0A\u9650\uFF0C\u5DF2\u622A\u5230 1e9`, { kind: "auto_adjusted" });
+    warnings.push(`${key5} \u8D85\u51FA\u5F15\u64CE\u4E0A\u9650\uFF0C\u5DF2\u622A\u5230 1e9`, { kind: "auto_adjusted" });
     max = Math.min(max, 1e9);
     current = Math.min(current, max);
   }
   return { current, max };
 }
-function sourceName(record3, key4 = "") {
-  return text3(findValue(record3, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key4));
+function sourceName(record3, key5 = "") {
+  return text3(findValue(record3, ["name", "displayName", "characterName", "\u89D2\u8272\u540D", "\u59D3\u540D", "\u540D\u79F0"], key5));
 }
 function tierNumber(value, fallback = 1) {
   if (Number.isFinite(Number(value))) return Number(value);
   const match = text3(value).match(/[一二三四五六七]层级?/);
   return match ? "\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03".indexOf(match[0][0]) + 1 : fallback;
 }
-function sourceId(record3, key4 = "") {
-  return text3(findValue(record3, ["id", "uid", "characterId", "instanceId", "ID"], key4));
+function sourceId(record3, key5 = "") {
+  return text3(findValue(record3, ["id", "uid", "characterId", "instanceId", "ID"], key5));
 }
 var protagonistAliases = ["\u4E3B\u89D2", "\u73A9\u5BB6", "\u4E3B\u63A7", "protagonist", "player", "mvu_protagonist"];
 var charSources = ["char_info", "narrative_char_info"];
@@ -16356,12 +17164,12 @@ var panelAliases = [
 ];
 var present = (value) => !emptyEntry(value) && (!Array.isArray(value) || value.length > 0);
 function mergePanelFields(base, newer, groups = []) {
-  for (const [key4, value] of Object.entries(newer)) {
-    if (!present(value) || ["__proto__", "constructor", "prototype"].includes(key4)) continue;
-    for (const alias of groups.find((group) => group.includes(key4)) ?? []) {
-      if (alias !== key4) delete base[alias];
+  for (const [key5, value] of Object.entries(newer)) {
+    if (!present(value) || ["__proto__", "constructor", "prototype"].includes(key5)) continue;
+    for (const alias of groups.find((group) => group.includes(key5)) ?? []) {
+      if (alias !== key5) delete base[alias];
     }
-    base[key4] = value;
+    base[key5] = value;
   }
   return base;
 }
@@ -16378,16 +17186,16 @@ function resolveCharPanel(chars, matches2, useRecord) {
   records2.forEach((record3) => useRecord?.(record3));
   if (records2.length === 1) return anchor;
   const merged = {}, stats = {}, resources = {};
-  const statKeys = attrNames.map((key4) => [key4, ...Object.keys(statAliases).filter((alias) => statAliases[alias] === key4)]);
+  const statKeys = attrNames.map((key5) => [key5, ...Object.keys(statAliases).filter((alias) => statAliases[alias] === key5)]);
   const resourceKeys = Object.values(RESOURCE_ALIASES);
   const scalarAliases = [...panelAliases, ...Object.values(RESOURCE_MAX_ALIASES)];
   for (const record3 of records2.toReversed()) {
     const flat = { ...record3 };
     const mergeGroup = (target2, containers, keys, flatWins) => {
-      const nested = asObject(containers.map((key4) => flat[key4]).find(present));
-      const direct = Object.fromEntries(keys.flat().filter((key4) => own17(flat, key4)).map((key4) => [key4, flat[key4]]));
+      const nested = asObject(containers.map((key5) => flat[key5]).find(present));
+      const direct = Object.fromEntries(keys.flat().filter((key5) => own17(flat, key5)).map((key5) => [key5, flat[key5]]));
       for (const fields3 of flatWins ? [nested, direct] : [direct, nested]) mergePanelFields(target2, fields3, keys);
-      for (const key4 of [...containers, ...keys.flat()]) delete flat[key4];
+      for (const key5 of [...containers, ...keys.flat()]) delete flat[key5];
     };
     mergeGroup(stats, statContainers, statKeys, false);
     mergeGroup(resources, resourceContainers, resourceKeys, true);
@@ -16409,11 +17217,11 @@ function resolveParticipant(participant, mvuRecords, chars, protagonist, useReco
     return id3 && resolveCharPanel(chars, (record3) => sourceId(record3) === id3, useRecord) || resolveCharPanel(chars, (record3) => name && sourceName(record3) === name, useRecord);
   };
   if (charSources.includes(source.toLowerCase())) return char();
-  const matches2 = (record3, key4) => [sourceId(record3), sourceName(record3), record3.__sourceKey].includes(key4);
+  const matches2 = (record3, key5) => [sourceId(record3), sourceName(record3), record3.__sourceKey].includes(key5);
   if (source) return mvuRecords.find((record3) => matches2(record3, source)) ?? resolveCharPanel(chars, (record3) => matches2(record3, source), useRecord);
   const exact = [text3(participant.id ?? participant.uid), name].filter(Boolean);
-  for (const key4 of exact) {
-    const record3 = mvuRecords.find((record4) => matches2(record4, key4));
+  for (const key5 of exact) {
+    const record3 = mvuRecords.find((record4) => matches2(record4, key5));
     if (record3) return record3;
   }
   return char();
@@ -16443,18 +17251,18 @@ function collectMvu(value) {
   const summons = asObject(root2.\u4E8B\u4EF6?.\u6218\u672F\u6269\u5C55?.\u53EC\u5524\u7269);
   const companionSummons = asObject(summons.\u4F19\u4F34);
   const found = [];
-  const visit = (node, key4 = "", path2 = []) => {
+  const visit = (node, key5 = "", path2 = []) => {
     if (Array.isArray(node)) return node.forEach((v, i) => visit(v, String(i), [...path2, i]));
     if (!object3(node)) return;
-    const name = sourceName(node, key4), hasStats = node.stats || node.attributes || node.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own17(node, k));
+    const name = sourceName(node, key5), hasStats = node.stats || node.attributes || node.\u5C5E\u6027 || ["\u529B\u91CF", "\u654F\u6377", "\u4F53\u8D28", "\u667A\u529B", "\u7CBE\u795E"].some((k) => own17(node, k));
     const hasResource = ["hp", "maxHp", "mp", "sp", "tier", "level", "equipment", "skills", "\u751F\u547D\u503C", "\u6CD5\u529B\u503C", "\u4F53\u529B\u503C", "\u88C5\u5907", "\u6280\u80FD", "\u8D44\u6E90"].some((k) => own17(node, k));
     if (name && (hasStats || hasResource)) {
-      const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own17(companionLengths, key4) ? companionLengths[key4] : void 0;
+      const length = path2.length === 1 && protagonistAliases.includes(path2[0]) ? lengths.\u4E3B\u89D2 : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" && own17(companionLengths, key5) ? companionLengths[key5] : void 0;
       const record3 = clone(node);
-      const notes2 = path2.length === 1 && protagonistAliases.includes(path2[0]) ? own17(summons, "\u4E3B\u89D2") : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" ? own17(companionSummons, key4) : void 0;
+      const notes2 = path2.length === 1 && protagonistAliases.includes(path2[0]) ? own17(summons, "\u4E3B\u89D2") : path2.length === 2 && path2[0] === "\u5173\u7CFB\u5217\u8868" ? own17(companionSummons, key5) : void 0;
       if (object3(notes2)) record3.tacticalSummons = clone(notes2);
       if (Number.isFinite(length) && length > 0) record3.bodyLengthM = length;
-      found.push({ ...record3, __sourceKey: key4, __sourcePath: path2, __sourceKind: "MVU" });
+      found.push({ ...record3, __sourceKey: key5, __sourcePath: path2, __sourceKind: "MVU" });
     }
     for (const [k, v] of Object.entries(node)) if (!["stats", "attributes", "\u5C5E\u6027", "resources", "\u8D44\u6E90", "equipment", "\u88C5\u5907", "skills", "\u6280\u80FD", "statuses", "\u72B6\u6001\u6548\u679C", "\u6218\u672F\u6269\u5C55", "tacticalSummons"].includes(k)) visit(v, k, [...path2, k]);
   };
@@ -16469,8 +17277,8 @@ function collectMvu(value) {
   return found;
 }
 function statusId2(value) {
-  const key4 = text3(value);
-  return key4 === "suppressed" || key4 === STATUSES.suppressed.name ? "suppressed" : null;
+  const key5 = text3(value);
+  return key5 === "suppressed" || key5 === STATUSES.suppressed.name ? "suppressed" : null;
 }
 var bound = (value, min, max, fallback = min) => Math.max(min, Math.min(max, integer3(value, fallback)));
 function statusTurns(value, fallback) {
@@ -16499,7 +17307,7 @@ function narrativeEntries(value) {
     }
     return emptyEntry(body) ? [] : [["", body]];
   }
-  if (object3(value) && Object.values(value).every((entry2) => typeof entry2 === "string" || object3(entry2) || emptyEntry(entry2)) && !["id", "hook", "program", "op", "target", "effects"].some((key4) => own17(value, key4))) {
+  if (object3(value) && Object.values(value).every((entry2) => typeof entry2 === "string" || object3(entry2) || emptyEntry(entry2)) && !["id", "hook", "program", "op", "target", "effects"].some((key5) => own17(value, key5))) {
     return Object.entries(value).filter(([, entry2]) => !emptyEntry(entry2));
   }
   return [["", value]];
@@ -16568,7 +17376,8 @@ function resolveDamageType(value, customElements = {}, register2 = false) {
   const id3 = known ? CUSTOM_ELEMENT_IDS[raw] : `elem_${hash(raw).toString(36)}`;
   if (Object.hasOwn(customElements, id3)) return known ? id3 : null;
   if (Object.keys(customElements).length >= 64) return null;
-  customElements[id3] = { id: id3, name: raw, category: "energy" };
+  const traits = inferElementTraits(raw);
+  customElements[id3] = { id: id3, name: raw, category: "energy", ...traits.length ? { traits } : {} };
   return id3;
 }
 function explicitElementName(tag2) {
@@ -16617,9 +17426,9 @@ function readCombatTags(raw, kind, name, warnings, { customElements = {} } = {})
   for (const tag2 of entries3) {
     const match = combatTag.exec(tag2) ?? /^(先手)\s*([+-]?\d.*)$/u.exec(tag2);
     if (!match) continue;
-    const key4 = canonicalKey[match[1]] ?? match[1];
-    if (!groups.has(key4)) groups.set(key4, []);
-    groups.get(key4).push({ tag: tag2, value: match[2] });
+    const key5 = canonicalKey[match[1]] ?? match[1];
+    if (!groups.has(key5)) groups.set(key5, []);
+    groups.get(key5).push({ tag: tag2, value: match[2] });
   }
   let powerType;
   const equipmentPower = [], activeAttack = [];
@@ -16630,34 +17439,34 @@ function readCombatTags(raw, kind, name, warnings, { customElements = {} } = {})
     if (mods.length === 200) break;
     if (!mods.some((mod2) => mod2.stat === modifier.stat && mod2.damageType === modifier.damageType && mod2.when === void 0 && mod2.checkKind === void 0 && mod2.statusId === void 0)) mods.push(modifier);
   }
-  for (const [key4, group] of groups) {
+  for (const [key5, group] of groups) {
     const values5 = [];
     for (const { tag: tag2, value } of group) {
-      if (key4 === "\u66B4\u51FB") {
+      if (key5 === "\u66B4\u51FB") {
         warn(tag2, "\u533A\u5206\u66B4\u51FB\u6863\u4F4D\u4E0E\u66B4\u51FB\u4F24\u5BB3");
         continue;
       }
-      if (key4 === "\u5A01\u529B" && !active3) {
+      if (key5 === "\u5A01\u529B" && !active3) {
         if (passive) warn(tag2, "\u7EAF\u88AB\u52A8\u6280\u80FD\u4E0D\u7ED3\u7B97\u4E3B\u51FB\u5A01\u529B");
         else equipmentPower.push(tag2);
         continue;
       }
-      if (key4 === "\u653B\u51FB" && active3) {
+      if (key5 === "\u653B\u51FB" && active3) {
         activeAttack.push(tag2);
         continue;
       }
-      if (key4 === "\u653B\u51FB" && !weapon2) {
+      if (key5 === "\u653B\u51FB" && !weapon2) {
         warn(tag2, "\u8BF7\u7ED3\u5408\u63CF\u8FF0\u88C1\u5B9A\u4F24\u5BB3\u52A0\u503C\u6216\u89E6\u53D1\u6548\u679C");
         continue;
       }
-      if (active3 && (key4 === "\u9632\u5FA1" || key4 === "\u95EA\u907F")) {
+      if (active3 && (key5 === "\u9632\u5FA1" || key5 === "\u95EA\u907F")) {
         warn(tag2, "\u4E3B\u52A8\u6280\u80FD\u4E0D\u80FD\u76F4\u63A5\u63D0\u4F9B\u5E38\u9A7B\u52A0\u6210\uFF0C\u8BF7\u88C1\u5B9A\u662F\u5426\u65BD\u52A0\u72B6\u6001");
         continue;
       }
-      const power = key4 === "\u5A01\u529B" ? powerTag.exec(value) : null;
+      const power = key5 === "\u5A01\u529B" ? powerTag.exec(value) : null;
       const type = resolveDamageType(power?.[2], customElements);
       const n = power && (!power[2] || type) ? Number(power[1]) : numberTag.test(value) ? Number(value) : NaN;
-      if (!Number.isSafeInteger(n) || key4 === "\u5A01\u529B" && n < 0) {
+      if (!Number.isSafeInteger(n) || key5 === "\u5A01\u529B" && n < 0) {
         warn(tag2);
         continue;
       }
@@ -16666,23 +17475,23 @@ function readCombatTags(raw, kind, name, warnings, { customElements = {} } = {})
     }
     if (!values5.length) continue;
     const total2 = values5.reduce((sum, n) => sum + n, 0);
-    const field2 = key4 === "\u653B\u51FB" ? "attack" : key4 === "\u9632\u5FA1" && !weapon2 && !passive ? "defense" : key4 === "\u547D\u4E2D" && (weapon2 || active3) ? "accuracy" : key4 === "\u5148\u624B" && active3 ? "initiativeBonus" : key4 === "\u5A01\u529B" ? "power" : null;
+    const field2 = key5 === "\u653B\u51FB" ? "attack" : key5 === "\u9632\u5FA1" && !weapon2 && !passive ? "defense" : key5 === "\u547D\u4E2D" && (weapon2 || active3) ? "accuracy" : key5 === "\u5148\u624B" && active3 ? "initiativeBonus" : key5 === "\u5A01\u529B" ? "power" : null;
     if (field2) {
-      if ((raw[field2] ?? raw[key4]) != null) continue;
+      if ((raw[field2] ?? raw[key5]) != null) continue;
       const n = field2 === "power" ? values5[0] : total2;
       const panel = field2 === "attack" || field2 === "power" ? bound(n, 0, 1e9) : field2 === "defense" ? bound(n, 0, 1e6) : bound(n, -100, 100);
       fields3[field2] = panel;
-      summary.push([key4, panel]);
+      summary.push([key5, panel]);
     } else {
-      const stat3 = { \u9632\u5FA1: "armor", \u547D\u4E2D: "checkBonus", \u95EA\u907F: "dodge", \u5148\u624B: "initiativeFlat" }[key4];
-      const checkKind = key4 === "\u547D\u4E2D" ? "attack" : void 0;
+      const stat3 = { \u9632\u5FA1: "armor", \u547D\u4E2D: "checkBonus", \u95EA\u907F: "dodge", \u5148\u624B: "initiativeFlat" }[key5];
+      const checkKind = key5 === "\u547D\u4E2D" ? "attack" : void 0;
       if (!total2 || weapon2 && stat3 === "armor" && total2 < 0 || mods.some((mod2) => mod2.stat === stat3 && mod2.checkKind === checkKind && mod2.when === void 0 && mod2.damageType === void 0 && mod2.statusId === void 0)) continue;
       if (mods.length >= 200 || !Number.isSafeInteger(total2)) {
         for (const { tag: tag2 } of group) warn(tag2, "\u5408\u8BA1\u6570\u503C\u6216 mods \u6570\u91CF\u8D85\u9650");
         continue;
       }
       mods.push({ stat: stat3, flat: total2, ...checkKind && { checkKind } });
-      summary.push([key4, total2]);
+      summary.push([key5, total2]);
     }
   }
   const suffix = summary.length ? `\u3002\u5DF2\u7531\u9759\u6001\u6807\u7B7E\u89E3\u6790\u843D\u76D8\uFF1A${summary.map(([label, n]) => `${label} ${n >= 0 ? "+" : ""}${n}`).join("\u3001")}\uFF1B\u8865\u4E01\u6539\u5199 mods \u65F6\u987B\u4FDD\u7559\u65E2\u6709\u9879\uFF08\u6216\u7528 /mods/- \u8FFD\u52A0\uFF09\u4E14\u5207\u52FF\u91CD\u590D\u53E0\u52A0\u540C\u4E00\u6570\u503C\uFF1B\u82E5\u672C\u6761\u4EC5\u91CD\u7533\u8BE5\u9759\u6001\u52A0\u6210\u800C\u65E0\u989D\u5916\u5C40\u5185\u673A\u5236\uFF0C\u76F4\u63A5\u5F52\u5165 narrative \u8BF4\u660E\u5373\u53EF\u3002` : "";
@@ -16694,11 +17503,11 @@ function readPools(value, warnings) {
     warnings.push("pools \u5FC5\u987B\u662F\u8D44\u6E90\u6C60\u58F0\u660E\u5BF9\u8C61");
     return {};
   }
-  return Object.fromEntries(Object.entries(value).filter(([key4, pool]) => {
-    const allowed = id2(key4) && object3(pool) && Object.keys(pool).every((k) => ["cap", "initial", "reloadable"].includes(k)) && Number.isInteger(pool.cap) && pool.cap >= 0 && pool.cap <= 1e9 && (!own17(pool, "initial") || Number.isInteger(pool.initial) && pool.initial >= 0 && pool.initial <= pool.cap) && (!own17(pool, "reloadable") || typeof pool.reloadable === "boolean");
-    if (!allowed) warnings.push(`pools.${key4} \u9700\u8981\u6709\u6548\u7684\u8D44\u6E90 ID\u3001\u6574\u6570 cap (0 \u5230 1e9)\u3001\u53EF\u9009\u6574\u6570 initial (0 \u5230 cap) \u548C\u53EF\u9009\u5E03\u5C14 reloadable`);
+  return Object.fromEntries(Object.entries(value).filter(([key5, pool]) => {
+    const allowed = id2(key5) && object3(pool) && Object.keys(pool).every((k) => ["cap", "initial", "reloadable"].includes(k)) && Number.isInteger(pool.cap) && pool.cap >= 0 && pool.cap <= 1e9 && (!own17(pool, "initial") || Number.isInteger(pool.initial) && pool.initial >= 0 && pool.initial <= pool.cap) && (!own17(pool, "reloadable") || typeof pool.reloadable === "boolean");
+    if (!allowed) warnings.push(`pools.${key5} \u9700\u8981\u6709\u6548\u7684\u8D44\u6E90 ID\u3001\u6574\u6570 cap (0 \u5230 1e9)\u3001\u53EF\u9009\u6574\u6570 initial (0 \u5230 cap) \u548C\u53EF\u9009\u5E03\u5C14 reloadable`);
     return allowed;
-  }).map(([key4, pool]) => [key4, { initial: pool.cap, ...pool }]));
+  }).map(([key5, pool]) => [key5, { initial: pool.cap, ...pool }]));
 }
 function mapEffects(effects, context = "skill", warnings = [], prefix = "imported") {
   const sink = warningSink(warnings, null, null, "effect");
@@ -16738,7 +17547,7 @@ function skillCosts(value) {
   const cost = object3(value) ? Object.entries(value).map(([k, v]) => `${k}: ${v}`).join(" ") : text3(value);
   const slots3 = [...cost.matchAll(/(攻击|动作)\s*[:：]\s*(\d+)/g)];
   const resources = {};
-  for (const [, n, key4] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key4.toLowerCase()] = Number(n);
+  for (const [, n, key5] of cost.matchAll(/(\d+)\s*(SP|MP|HP)\b/gi)) resources[key5.toLowerCase()] = Number(n);
   return { ...resources, slot: slots3[0]?.[1] === "\u52A8\u4F5C" ? "action" : "attack", ap: /^(?:消耗\s*[:：]\s*)?(?:无|无消耗|none|0)$/i.test(cost.trim()) ? 0 : new Set(slots3.map((s) => s[1])).size === 2 ? 2 : 1 };
 }
 var damageOp = (damageType2, amount) => ({ op: "damage", target: "target", damageType: damageType2, amount });
@@ -16818,21 +17627,21 @@ function areaFields(raw, warnings, name) {
 var isAreaDamage = (area3) => area3.shape != null && area3.shape !== "single" || area3.target === "cell";
 function geometryFields(area3) {
   const result = {};
-  for (const key4 of ["shape", "target"]) if (area3[key4] != null) result[key4] = area3[key4];
-  for (const key4 of ["radius", "innerRadius", "width", "angle"]) {
-    if (area3[key4] != null && Number.isFinite(Number(area3[key4]))) {
-      result[key4] = key4 === "angle" ? bound(area3[key4], 1, 360) : Math.max(0, Math.min(30, Number(area3[key4])));
-      if (key4 !== "angle") result[`raw${key4[0].toUpperCase()}${key4.slice(1)}`] = Math.max(0, Number(area3[key4]));
+  for (const key5 of ["shape", "target"]) if (area3[key5] != null) result[key5] = area3[key5];
+  for (const key5 of ["radius", "innerRadius", "width", "angle"]) {
+    if (area3[key5] != null && Number.isFinite(Number(area3[key5]))) {
+      result[key5] = key5 === "angle" ? bound(area3[key5], 1, 360) : Math.max(0, Math.min(30, Number(area3[key5])));
+      if (key5 !== "angle") result[`raw${key5[0].toUpperCase()}${key5.slice(1)}`] = Math.max(0, Number(area3[key5]));
     }
   }
   if (area3.moveDistance != null) result.rawMoveDistance = area3.moveDistance;
   return result;
 }
 function ammoCounter(raw) {
-  const field2 = ["currentAmmo", "\u5F53\u524D\u5F39\u836F"].find((key5) => Number.isInteger(raw[key5]) && raw[key5] >= 0);
+  const field2 = ["currentAmmo", "\u5F53\u524D\u5F39\u836F"].find((key6) => Number.isInteger(raw[key6]) && raw[key6] >= 0);
   if (field2) return { current: bound(raw[field2], 0, 1e9), initialRawValue: raw[field2], path: [field2], format: { kind: "field_number" } };
-  const key4 = raw.tags != null ? "tags" : "\u6807\u7B7E";
-  const tags = raw[key4];
+  const key5 = raw.tags != null ? "tags" : "\u6807\u7B7E";
+  const tags = raw[key5];
   for (const [index, value] of [].concat(tags ?? []).entries()) {
     const rawTag = text3(value);
     const match = /(?<prefix>(?:^|[\[【])\s*)弹药(?<sep>\s*[:：]\s*)(?<current>\d+)(?:(?<slash>\s*[/／]\s*)(?<max>\d+))?(?=\s*(?:[\]】]|$))/u.exec(rawTag);
@@ -16843,7 +17652,7 @@ function ammoCounter(raw) {
       max: max == null ? null : bound(max, 0, 1e9),
       rawLabel: "\u5F39\u836F",
       initialRawValue: rawTag,
-      path: Array.isArray(tags) ? [key4, index] : [key4],
+      path: Array.isArray(tags) ? [key5, index] : [key5],
       format: {
         kind: max == null ? "tag_single" : "tag_slash",
         sep,
@@ -16865,8 +17674,8 @@ function* instructions(program2) {
   for (const instruction of program2) {
     if (instruction.enabled === false) continue;
     yield instruction;
-    for (const key4 of ["then", "else", "body", "onPass", "onFail", "onCollide"]) {
-      if (instruction[key4]) yield* instructions(instruction[key4]);
+    for (const key5 of ["then", "else", "body", "onPass", "onFail", "onCollide"]) {
+      if (instruction[key5]) yield* instructions(instruction[key5]);
     }
   }
 }
@@ -16874,7 +17683,7 @@ function finalizeEquipment(item, warnings) {
   const { template, templateId } = item;
   const localOperations = template.rules.filter((rule2) => rule2.enabled !== false).flatMap((rule2) => [...instructions(rule2.program)].filter((op) => op.op === "resource" && op.local).map((op) => ({ rule: rule2, op })));
   for (const { rule: rule2, op } of localOperations) {
-    const missing = [...new Set([].concat(op.pool, op.otherPool ?? []))].filter((key4) => !own17(template.pools, key4));
+    const missing = [...new Set([].concat(op.pool, op.otherPool ?? []))].filter((key5) => !own17(template.pools, key5));
     if (missing.length) warnings.push(`\u89C4\u5219\u300C${rule2.id}\u300D\u5F15\u7528\u672A\u58F0\u660E\u7684\u88C5\u5907\u8D44\u6E90\u6C60\uFF1A${missing.join("\u3001")}\u3002\u8BF7\u5728 pools \u4E2D\u58F0\u660E`);
   }
   if (template.kind !== "weapon" || !template.ranged || !template.pools.ammo) return;
@@ -16886,15 +17695,15 @@ function finalizeEquipment(item, warnings) {
     program: [{ op: "resource", target: "self", pool: "ammo", mode: "sub", amount: 1, local: true, requireFull: true }]
   }], warnings);
 }
-function normalizeEquipment(raw, slot2, owner, key4, sink, customElements = {}) {
-  const r = asObject(raw), name = text3(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot2 || "\u88C5\u5907"}${key4}`;
+function normalizeEquipment(raw, slot2, owner, key5, sink, customElements = {}) {
+  const r = asObject(raw), name = text3(r.name ?? r.\u540D\u79F0 ?? r.itemName) || `${slot2 || "\u88C5\u5907"}${key5}`;
   const isShield = slot2 === "shield" || r.kind === "shield" || r.shield === true || r.weaponClass === "shield" || /盾/.test(name);
   const labels = Array.isArray(r.tags ?? r.\u6807\u7B7E) ? (r.tags ?? r.\u6807\u7B7E).join(" ") : text3(r.tags ?? r.\u6807\u7B7E);
   const kindAliases = /* @__PURE__ */ new Map([["\u6B66\u5668", "weapon"], ["\u9632\u5177", "armor"], ["\u9970\u54C1", "accessory"], ["\u5F39\u836F\u5BB9\u5668", "accessory"], ["\u6D88\u8017\u54C1", "consumable"]]);
   const declaredKind = ["weapon", "armor", "accessory", "consumable"].includes(r.kind) ? r.kind : kindAliases.get(r.\u7C7B\u578B);
   const kind = isShield ? "shield" : declaredKind || (["mainHand", "offHand", "twoHands"].includes(slot2) || r.damage || r.attack != null || r.weaponClass || /攻击|双手|巨剑|长戟|弓|弩|火枪|投掷武器/.test(`${name} ${labels}`) ? "weapon" : "accessory");
   const isWeapon2 = kind === "weapon";
-  const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${key4}`;
+  const idBase = `item-${owner.length}-${owner.slice(0, 31)}-${hash(owner).toString(36)}-${key5}`;
   const templateId = `template-${idBase}`;
   const warnings = sink("effect", `/equipment/${templateId}`);
   const parsed = readCombatTags(r, kind, name, warnings, { customElements });
@@ -16967,13 +17776,13 @@ function dynamicPoolKey(item, label) {
 }
 function sourceEquipment(value, path2) {
   const slots3 = new Map(Object.entries({ mainHand: "mainHand", main: "mainHand", weapon: "mainHand", \u4E3B\u624B: "mainHand", \u53CC\u624B: "twoHands", \u53CC\u624B\u6B66\u5668: "twoHands", offHand: "offHand", off: "offHand", \u526F\u624B: "offHand", shield: "shield", \u76FE\u724C: "shield" }));
-  const entries3 = Array.isArray(value) ? value.map((v, i) => ["", v, i]) : Object.entries(asObject(value)).map(([key4, item]) => [key4, item, key4]);
-  return entries3.filter(([, item]) => object3(item)).map(([key4, item, sourceKey], i) => {
+  const entries3 = Array.isArray(value) ? value.map((v, i) => ["", v, i]) : Object.entries(asObject(value)).map(([key5, item]) => [key5, item, key5]);
+  return entries3.filter(([, item]) => object3(item)).map(([key5, item, sourceKey], i) => {
     const position = [item.slot, item.position, item.\u4F4D\u7F6E].map(text3).find(Boolean);
     const tags = [].concat(item.tags ?? item.\u6807\u7B7E ?? []).map(text3).join(",");
     const hand = tags.match(/(?:^|[\s,，、;；\[\]【】])(?:位置\s*[:：]\s*)?(主手|副手|双手(?:武器)?|盾牌)(?=$|[\s,，、;；\[\]【】])/u)?.[1];
-    const rawSlot = position || (slots3.has(key4) ? key4 : hand || key4);
-    const name = item.name ?? item.\u540D\u79F0 ?? (slots3.has(key4) ? "" : key4);
+    const rawSlot = position || (slots3.has(key5) ? key5 : hand || key5);
+    const name = item.name ?? item.\u540D\u79F0 ?? (slots3.has(key5) ? "" : key5);
     return [slots3.get(rawSlot) ?? rawSlot, { ...item, name }, item.id ?? item.ID ?? (name || `unnamed-${i}`), path2 ? [...path2, sourceKey] : null];
   });
 }
@@ -17014,9 +17823,9 @@ function meters(match) {
   return Number.isFinite(n) && n > 0 ? Math.max(0.01, Math.min(1e9, n)) : null;
 }
 function readBodyLength(record3, warnings) {
-  const keys = lengthKeys.filter((key4) => own17(record3, key4));
-  for (const key4 of keys) {
-    const raw = record3[key4];
+  const keys = lengthKeys.filter((key5) => own17(record3, key5));
+  for (const key5 of keys) {
+    const raw = record3[key5];
     const length = typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.max(0.01, Math.min(1e9, raw)) : typeof raw === "string" ? meters(explicitLength.exec(raw.replace(/\([^()]*\)|（[^（）]*）/g, "").trim())) : null;
     if (length !== null) return length;
   }
@@ -17049,8 +17858,8 @@ function mergeBattleParticipant(record3, participant, battle) {
   for (const [field2, aliases3] of Object.entries(fields3)) {
     if (inline[field2] != null && !aliases3.some((alias) => own17(merged, alias))) merged[field2] = clone(inline[field2]);
   }
-  const resourceSource = (recordValue, key4) => {
-    const aliases3 = RESOURCE_ALIASES[key4] ?? [];
+  const resourceSource = (recordValue, key5) => {
+    const aliases3 = RESOURCE_ALIASES[key5] ?? [];
     const direct = aliases3.find((name) => own17(recordValue, name));
     if (direct) return { container: null, key: direct, value: recordValue[direct] };
     const container = ["resources", "resource", "\u8D44\u6E90"].find((name) => object3(recordValue?.[name]) && aliases3.some((alias) => own17(recordValue[name], alias)));
@@ -17058,9 +17867,9 @@ function mergeBattleParticipant(record3, participant, battle) {
     const nestedKey = aliases3.find((name) => own17(recordValue[container], name));
     return { container, key: nestedKey, value: recordValue[container][nestedKey] };
   };
-  for (const key4 of ["hp", "mp", "sp"]) {
-    const source = resourceSource(inline, key4);
-    if (!source || resourceValue(merged, key4).value !== void 0) continue;
+  for (const key5 of ["hp", "mp", "sp"]) {
+    const source = resourceSource(inline, key5);
+    if (!source || resourceValue(merged, key5).value !== void 0) continue;
     if (source.container) merged[source.container] = { ...asObject(merged[source.container]), [source.key]: clone(source.value) };
     else merged[source.key] = clone(source.value);
   }
@@ -17069,17 +17878,17 @@ function mergeBattleParticipant(record3, participant, battle) {
     mp: ["maxMp", "mpMax", "\u6CD5\u529B\u503C\u4E0A\u9650"],
     sp: ["maxSp", "spMax", "\u4F53\u529B\u503C\u4E0A\u9650"]
   };
-  const hasResourceMax = (recordValue, key4) => {
+  const hasResourceMax = (recordValue, key5) => {
     const source = asObject(recordValue), nested = asObject(source.resources ?? source.resource ?? source.\u8D44\u6E90);
-    return resourceMaxAliases[key4].some((alias) => own17(source, alias) || own17(nested, alias));
+    return resourceMaxAliases[key5].some((alias) => own17(source, alias) || own17(nested, alias));
   };
-  for (const [field2, key4] of [["maxHp", "hp"], ["maxMp", "mp"], ["maxSp", "sp"]]) {
-    if (inline[field2] != null && !hasResourceMax(merged, key4)) merged[field2] = clone(inline[field2]);
+  for (const [field2, key5] of [["maxHp", "hp"], ["maxMp", "mp"], ["maxSp", "sp"]]) {
+    if (inline[field2] != null && !hasResourceMax(merged, key5)) merged[field2] = clone(inline[field2]);
   }
   return merged;
 }
-function sourceResourcePath(record3, key4) {
-  const aliases3 = RESOURCE_ALIASES[key4] ?? [];
+function sourceResourcePath(record3, key5) {
+  const aliases3 = RESOURCE_ALIASES[key5] ?? [];
   const direct = aliases3.find((name) => own17(record3, name));
   const containerKey = ["resources", "resource", "\u8D44\u6E90"].find((name) => object3(record3?.[name]) && aliases3.some((alias) => own17(record3[name], alias)));
   const owner = direct ? record3[direct] : containerKey ? record3[containerKey] : void 0;
@@ -17103,7 +17912,7 @@ function sourceSkills(record3) {
   const ladder = record3.\u767B\u795E\u957F\u9636;
   if (ladder && ladder.\u662F\u5426\u5F00\u542F !== false) for (const group of ["\u8981\u7D20", "\u6743\u80FD", "\u6CD5\u5219"]) {
     for (const [name, entry2] of Object.entries(asObject(ladder[group]))) {
-      const effects = object3(entry2) ? Object.fromEntries(Object.entries(entry2).filter(([key4]) => !["\u63CF\u8FF0", "\u540D\u79F0", "\u54C1\u8D28"].includes(key4))) : entry2;
+      const effects = object3(entry2) ? Object.fromEntries(Object.entries(entry2).filter(([key5]) => !["\u63CF\u8FF0", "\u540D\u79F0", "\u54C1\u8D28"].includes(key5))) : entry2;
       if (!narrativeEntries(effects).length) continue;
       list4.push({ id: `ascension:${group}:${name}`, name, \u63CF\u8FF0: entry2?.\u63CF\u8FF0, effects, passive: !Object.keys(asObject(effects)).some((label) => label.startsWith("\u4E3B\u52A8")) });
     }
@@ -17117,9 +17926,9 @@ function participantList(battle) {
   return list4.filter((participant, index) => {
     if (!object3(participant)) return false;
     const source = text3(participant.source);
-    const key4 = text3(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text3(participant?.name) || index}|${index}`);
-    if (seen.has(key4)) return false;
-    seen.add(key4);
+    const key5 = text3(participant?.id || participant?.uid) || (source && !charSources.includes(source.toLowerCase()) ? source : `${source}|${text3(participant?.name) || index}|${index}`);
+    if (seen.has(key5)) return false;
+    seen.add(key5);
     return true;
   });
 }
@@ -17188,7 +17997,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   const mc = Math.max(1, Math.min(64, integer3(findValue(record3, ["mc", "MC", "massClass"], bodyLengthM >= 10 ? 2 : 1), 1)));
   const resources = { hp: safeResource(resource(record3, "hp", Math.max(1, stats.con * 100), resourcesSink), "hp", resourcesSink), mp: safeResource(resource(record3, "mp", Math.max(0, (stats.int + stats.spi) * 10), resourcesSink), "mp", resourcesSink), sp: safeResource(resource(record3, "sp", Math.max(0, (stats.str + stats.agi) * 10), resourcesSink), "sp", resourcesSink) };
   const sourcePath = Array.isArray(record3.__sourcePath) ? record3.__sourcePath : null;
-  const equipmentKey = ["equipment", "equipments", "items", "\u88C5\u5907"].find((key4) => record3[key4] != null);
+  const equipmentKey = ["equipment", "equipments", "items", "\u88C5\u5907"].find((key5) => record3[key5] != null);
   const equipmentPath = sourcePath && sourceRecord[equipmentKey] != null ? [...sourcePath, equipmentKey] : null;
   const sourceEntries = sourceEquipment(record3[equipmentKey], equipmentPath);
   const bagEntries = sourceEquipment(record3.\u80CC\u5305, sourcePath ? [...sourcePath, "\u80CC\u5305"] : null);
@@ -17240,10 +18049,10 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
   };
   const weaponAmmoBindings = /* @__PURE__ */ new Map();
   const equipmentEntry = ([slot2, raw, identity, path2]) => {
-    const key4 = hash(String(identity)).toString(36);
-    const occurrence = equipmentKeys.get(key4) ?? 0;
-    equipmentKeys.set(key4, occurrence + 1);
-    const item = normalizeEquipment(raw, slot2, id3, occurrence ? `${key4}-${occurrence}` : key4, sink, customElements);
+    const key5 = hash(String(identity)).toString(36);
+    const occurrence = equipmentKeys.get(key5) ?? 0;
+    equipmentKeys.set(key5, occurrence + 1);
+    const item = normalizeEquipment(raw, slot2, id3, occurrence ? `${key5}-${occurrence}` : key5, sink, customElements);
     const { slot: _slot, position: _position, \u4F4D\u7F6E: _placement, count: _count, \u6570\u91CF: _quantity, ...definition } = raw;
     entrySources[`equipment:${item.templateId}`] = staticProjection(definition);
     const ammo = ammoCounter(raw);
@@ -17312,10 +18121,10 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
     const input = asObject(raw);
     const r = input.damage == null && object3(input.\u4F24\u5BB3) ? { ...input, damage: input.\u4F24\u5BB3 } : input;
     const skillName = text3(r.name ?? r.\u540D\u79F0).slice(0, 100) || `\u6280\u80FD${i + 1}`;
-    const key4 = hash(String(r.id ?? r.ID ?? skillName)).toString(36);
-    const occurrence = skillKeys.get(key4) ?? 0;
-    skillKeys.set(key4, occurrence + 1);
-    const sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${key4}${occurrence ? `-${occurrence}` : ""}`;
+    const key5 = hash(String(r.id ?? r.ID ?? skillName)).toString(36);
+    const occurrence = skillKeys.get(key5) ?? 0;
+    skillKeys.set(key5, occurrence + 1);
+    const sid = `skill-${id3.slice(0, 31)}-${hash(id3).toString(36)}-${key5}${occurrence ? `-${occurrence}` : ""}`;
     entrySources[`skills:${sid}`] = staticProjection(input);
     const notes2 = sink("effect", `/skills/${sid}`);
     const area3 = areaFields(r, notes2, skillName);
@@ -17392,7 +18201,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
       pools: readPools(r.pools, notes2)
     };
     if (damageType2) skills[sid].damageType = damageType2;
-    for (const key5 of ["mp", "sp"]) if ((r[key5] ?? costs[key5]) != null) skills[sid][key5] = bound(r[key5] ?? costs[key5], 0, 25e3);
+    for (const key6 of ["mp", "sp"]) if ((r[key6] ?? costs[key6]) != null) skills[sid][key6] = bound(r[key6] ?? costs[key6], 0, 25e3);
     const accuracy = r.accuracy ?? (passive ? void 0 : r.\u547D\u4E2D ?? parsed.fields.accuracy);
     if (accuracy != null) skills[sid].accuracy = bound(accuracy, -100, 100);
     if (initiative2 != null) skills[sid].initiativeBonus = bound(initiative2, -100, 100);
@@ -17407,7 +18216,7 @@ function unitFrom(record3, participant, index, equipment, skills, items, sink, i
     }
     if (object3(r.resourceCost)) skills[sid].resourceCost = clone(r.resourceCost);
     if (costs.hp != null) skills[sid].resourceCost = { hp: bound(costs.hp, 0, 25e3), ...skills[sid].resourceCost };
-    for (const key5 of ["damage", "heal"]) if (!passive && object3(r[key5])) skills[sid][key5] = normalizeDice(r[key5], customElements, key5 === "damage" ? damageType2 : void 0);
+    for (const key6 of ["damage", "heal"]) if (!passive && object3(r[key6])) skills[sid][key6] = normalizeDice(r[key6], customElements, key6 === "damage" ? damageType2 : void 0);
     return sid;
   });
   const pos2 = xyzOf(p.xyz ?? p, board, sink("state"));
@@ -17512,13 +18321,47 @@ function normalizeSceneArea(raw, grid) {
     if (![x1, y1, x2, y2].every(Number.isInteger) || x1 < 0 || y1 < 0 || x1 > x2 || y1 > y2 || y2 >= grid.length || x2 >= (grid[y2]?.length ?? 0)) return null;
     area3.rect = { x1, y1, x2, y2 };
   }
-  for (const key4 of ["z1", "z2"]) {
-    if (!own17(raw, key4)) continue;
-    if (!Number.isInteger(raw[key4]) || raw[key4] < -4 || raw[key4] > 20) return null;
-    area3[key4] = raw[key4];
+  for (const key5 of ["z1", "z2"]) {
+    if (!own17(raw, key5)) continue;
+    if (!Number.isInteger(raw[key5]) || raw[key5] < -4 || raw[key5] > 20) return null;
+    area3[key5] = raw[key5];
   }
   if (area3.z1 > area3.z2) return null;
   return area3;
+}
+var sceneMedia = /* @__PURE__ */ new Map([
+  ["\u6D45\u6C34\u6D3C", "water"],
+  ["\u6C34\u6D3C", "water"],
+  ["\u79EF\u6C34", "water"],
+  ["\u6D45\u6EE9", "water"],
+  ["\u51B0\u9762", "ice"],
+  ["\u8584\u51B0", "ice"],
+  ["\u51BB\u571F\u51B0\u9762", "ice"],
+  ["\u6CB9\u6C61", "oil"],
+  ["\u706B\u6CB9", "oil"],
+  ["\u6CB9\u8102\u5730\u9762", "oil"],
+  ["\u706B\u6D77", "fire"],
+  ["\u5730\u9762\u4F59\u706B", "fire"],
+  ["\u70C8\u7130\u5730\u9762", "fire"],
+  ["\u5F3A\u9178\u6C60", "acid"],
+  ["\u9178\u6DB2\u6C60", "acid"],
+  ["\u9178\u6CBC", "acid"],
+  ["\u84B8\u6C7D\u4E91", "steam"],
+  ["\u6C34\u6C7D\u4E91", "steam"],
+  ["\u6D53\u70DF", "smoke"],
+  ["\u9ED1\u70DF", "smoke"],
+  ["\u70DF\u5E55", "smoke"],
+  ["\u53EF\u71C3\u6BD2\u96FE", "poison_cloud"],
+  ["\u6BD2\u7634\u4E91", "poison_cloud"],
+  ["\u6CBC\u6C14\u6BD2\u96FE", "poison_cloud"]
+]);
+var sceneZoneHost = { log() {
+} };
+function sceneMediumArea(state, area3, layer) {
+  const zone = { area: area3 };
+  const cells2 = mediaCells(state, zone).filter((at3) => layer === "cloud" || zoneContains(state, zone, at3));
+  const { z1, z2 } = area3;
+  return { shape: "cells", cells: cells2, ...z1 !== void 0 && { z1 }, ...z2 !== void 0 && { z2 } };
 }
 function sceneZonesState(battle, state, warnings) {
   const zoneEntries = {};
@@ -17545,8 +18388,27 @@ function sceneZonesState(battle, state, warnings) {
     }
     used.add(id3.toLowerCase());
     const name = (nameText || id3).slice(0, 100);
-    const description = (typeof raw.description === "string" && raw.description.trim() || name).slice(0, 500);
+    const rawDescription = typeof raw.description === "string" ? raw.description.trim() : "";
+    const description = (rawDescription || name).slice(0, 500);
     const targetTeam = ["blue", "red"].includes(raw.targetTeam) ? raw.targetTeam : null;
+    const medium = raw.targetTeam === null && (!rawDescription || rawDescription === nameText) ? sceneMedia.get(nameText) : void 0;
+    zoneEntries[id3] = { id: id3, name, targetTeam, description, area: clone(area3) };
+    if (medium) {
+      const blueprint = mediumZone(medium);
+      const mediumArea = sceneMediumArea(state, area3, blueprint.layer);
+      putMedium(state, sceneZoneHost, {
+        ...blueprint,
+        id: id3,
+        name,
+        area: mediumArea,
+        sourceId: null,
+        team: null,
+        persistent: raw.persistent === true,
+        remainingTurns: raw.remainingTurns ?? blueprint.remainingTurns,
+        ...raw.tier !== void 0 && { tier: raw.tier }
+      });
+      continue;
+    }
     state.zones[id3] = {
       id: id3,
       name,
@@ -17560,7 +18422,6 @@ function sceneZonesState(battle, state, warnings) {
       mods: [],
       rules: []
     };
-    zoneEntries[id3] = { id: id3, name, targetTeam, description, area: clone(area3) };
     const teamLabel = targetTeam === null ? "\u5168\u4F53" : `\u4EC5${targetTeam === "blue" ? "\u84DD" : "\u7EA2"}\u65B9(self.team == '${targetTeam}')`;
     const zText = own17(area3, "z1") || own17(area3, "z2") ? `(${area3.z1 ?? -4}-${area3.z2 ?? 20})` : "";
     const horizontal = area3.shape === "board" ? "\u5168\u573A" : `(${area3.rect.x1}-${area3.rect.x2})(${area3.rect.y1}-${area3.rect.y2})`;
@@ -17666,9 +18527,9 @@ function hydrateFromSources(input = {}, options = {}) {
     entrySources[id3] = made.entrySources;
     sourceMap[id3] = {
       path: record3?.__sourcePath,
-      resourcePaths: Object.fromEntries(["hp", "mp", "sp"].map((key4) => [key4, sourceResourcePath(record3, key4)]).filter(([, path2]) => path2)),
-      statusesPath: ["statuses", "\u72B6\u6001\u6548\u679C", "\u72B6\u6001", "effects"].find((key4) => own17(record3, key4)) ? [
-        ["statuses", "\u72B6\u6001\u6548\u679C", "\u72B6\u6001", "effects"].find((key4) => own17(record3, key4))
+      resourcePaths: Object.fromEntries(["hp", "mp", "sp"].map((key5) => [key5, sourceResourcePath(record3, key5)]).filter(([, path2]) => path2)),
+      statusesPath: ["statuses", "\u72B6\u6001\u6548\u679C", "\u72B6\u6001", "effects"].find((key5) => own17(record3, key5)) ? [
+        ["statuses", "\u72B6\u6001\u6548\u679C", "\u72B6\u6001", "effects"].find((key5) => own17(record3, key5))
       ] : void 0,
       counterBindings: made.counterBindings,
       inventoryPaths: made.inventoryPaths,
@@ -17801,6 +18662,7 @@ function hydrateFromSources(input = {}, options = {}) {
   const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
   const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
   const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+  if (battle.elementalPhysics === "off" || battle.elementalPhysics === "standard") state.elementalPhysics = battle.elementalPhysics;
   initializeVMWorld(state);
   for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
     if (binding.poolKey == null || binding.current == null || binding.sliceCap != null) continue;
@@ -17863,15 +18725,15 @@ var buildState = (input, options) => hydrateFromSources(input, options).state;
 function pointer(path2) {
   return "/" + path2.map((x) => String(x).replace(/~/g, "~0").replace(/\//g, "~1")).join("/");
 }
-var own18 = (value, key4) => value != null && Object.prototype.hasOwnProperty.call(value, key4);
+var own18 = (value, key5) => value != null && Object.prototype.hasOwnProperty.call(value, key5);
 var numberValue = (value) => Number.isFinite(Number(value)) ? Number(value) : null;
-function initialResource(mapping, key4, unit) {
+function initialResource(mapping, key5, unit) {
   const values5 = mapping.initialResources ?? mapping.resourceInitials ?? mapping.initial ?? {};
-  const value = values5[key4] ?? mapping[`initial${key4[0].toUpperCase()}${key4.slice(1)}`];
+  const value = values5[key5] ?? mapping[`initial${key5[0].toUpperCase()}${key5.slice(1)}`];
   return value == null ? null : numberValue(value);
 }
-function finalResource(unit, key4) {
-  const value = numberValue(unit?.[key4]);
+function finalResource(unit, key5) {
+  const value = numberValue(unit?.[key5]);
   return value == null ? null : Math.max(0, Math.round(value));
 }
 function asBindings(value) {
@@ -17939,10 +18801,10 @@ function battleReportToMvuPatch(report, sourceMap = {}, options = {}) {
     if (!Array.isArray(mapping.path) || mapping.path.length === 0) continue;
     const path2 = mapping.path;
     const resourcePaths = mapping.resourcePaths ?? {};
-    for (const key4 of ["hp", "mp", "sp"]) {
-      const value = finalResource(unit, key4), initial = initialResource(mapping, key4, unit);
+    for (const key5 of ["hp", "mp", "sp"]) {
+      const value = finalResource(unit, key5), initial = initialResource(mapping, key5, unit);
       if (value == null || initial != null && value === initial) continue;
-      const mapped = Array.isArray(resourcePaths[key4]) ? resourcePaths[key4] : aliases3[key4];
+      const mapped = Array.isArray(resourcePaths[key5]) ? resourcePaths[key5] : aliases3[key5];
       ops.push({ op: "replace", path: pointer([root2, ...path2, ...mapped]), value });
     }
     for (const [, binding] of asBindings(mapping.counterBindings)) {
@@ -18040,8 +18902,8 @@ function mergeExemptionRecords(records2 = []) {
   }, null));
 }
 function activeRecordFor(warning, records2, sourceFor) {
-  const key4 = semanticExemptionKey(warning);
-  const candidates = records2.filter((record3) => record3.semanticKey === key4);
+  const key5 = semanticExemptionKey(warning);
+  const candidates = records2.filter((record3) => record3.semanticKey === key5);
   if (!candidates.length) {
     const legacy = records2.find((record3) => record3.unitId === warning.unitId && record3.key === JSON.stringify([
       record3.source,
@@ -18158,10 +19020,10 @@ function classifyWarnings(warnings, { notes: notes2 = {}, exemptions = [], sourc
       groups.autoAdjusted.push(warning);
       continue;
     }
-    const key4 = warningKey(warning);
+    const key5 = warningKey(warning);
     const source = sourceFor(warning.unitId, warningEntryKey(warning));
     const exempt = activeWarningExemption(warning, exemptions, () => source);
-    const note = notes2[warning.unitId ?? ""]?.[key4];
+    const note = notes2[warning.unitId ?? ""]?.[key5];
     if (exempt) groups.nonCombat.push({ ...exempt, warning });
     else if (source && note?.source === source && note.reason && !note.evidence?.length) groups.needsAttention.push({ ...note, warning });
     else if (source && note?.source === source && note.reason && note.evidence?.some(([path2, value]) => fingerprint(path2) === value)) {
@@ -18213,9 +19075,9 @@ function resolvedDiagnostics(sent, records2, patch, notes2 = [], { narrative = [
 }
 function activeWarningReceipts(batches) {
   const receipts = /* @__PURE__ */ new Map();
-  for (const batch of batches) for (const { unitId, key: key4 } of batch.receipts ?? []) {
+  for (const batch of batches) for (const { unitId, key: key5 } of batch.receipts ?? []) {
     if (!receipts.has(unitId)) receipts.set(unitId, /* @__PURE__ */ new Set());
-    receipts.get(unitId).add(key4);
+    receipts.get(unitId).add(key5);
   }
   return receipts;
 }
@@ -18229,7 +19091,7 @@ function changedEntryKeys(snapshot, current) {
   if (!snapshot || !current) return /* @__PURE__ */ new Set(["unit"]);
   const previous = snapshot.entryHashes ?? {};
   const next = current.entryHashes ?? {};
-  return new Set([...Object.keys(previous), ...Object.keys(next)].filter((key4) => previous[key4] !== next[key4]));
+  return new Set([...Object.keys(previous), ...Object.keys(next)].filter((key5) => previous[key5] !== next[key5]));
 }
 function normalizationCandidates(characters, snapshots, warnings) {
   const pending = new Set(warnings.filter((w) => w.kind !== "auto_adjusted" && !isSceneZoneWarning(w)).map((w) => w.unitId));
@@ -18239,15 +19101,15 @@ function remainingDiagnostics(warnings, snapshots, characters, batches = []) {
   const receipts = activeWarningReceipts(batches);
   return warnings.filter((w) => {
     const snapshot = snapshots[w.unitId];
-    const key4 = warningKey(w);
+    const key5 = warningKey(w);
     const current = characters[w.unitId];
     const entryChanged = snapshot && !snapshot.entryHashes ? snapshot.hash !== current?.hash : changedEntryKeys(snapshot, current).has(warningEntryKey(w));
-    return !receipts.get(w.unitId)?.has(key4) && (!snapshot || entryChanged || !snapshot.resolvedWarnings?.includes(key4));
+    return !receipts.get(w.unitId)?.has(key5) && (!snapshot || entryChanged || !snapshot.resolvedWarnings?.includes(key5));
   });
 }
 
 // src/tavern/normalization-batches.js
-var normalizationPath = /^\/(?:equipment|skills|summonTemplates|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)(?:\/|$)/;
+var normalizationPath = /^\/(?:equipment|skills|summonTemplates|customElements)\/|^\/statusTemplates\/[^/]+(?:\/(?!unitPools(?:\/|$)).+)?$|^\/items\/[^/]+(?:\/(?!pools(?:\/|$)).+)?$|^\/units\/[^/]+\/(?:(?:statuses|armor|unitPools)(?:\/|$)|skills$)|^\/zones\/[^/]+\/(?:rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns|layer|medium|blocksLOS|moveCost)(?:\/|$)/;
 var SCENE_LANE = "__scene__";
 var warningReference = ({ unitId, originPath, message }) => ({ unitId, originPath: originPath ?? null, message });
 var targetPath = (path2) => path2?.split("/").slice(0, 3).join("/");
@@ -18312,9 +19174,9 @@ function mechanismTerms(text8) {
   return terms;
 }
 var mechanismKeywords = (value) => mechanismTerms(typeof value === "string" ? value : JSON.stringify(value ?? ""));
-function normalizationLimit(config, key4) {
-  const { fallback, max } = normalizationLimits[key4];
-  const value = config[key4];
+function normalizationLimit(config, key5) {
+  const { fallback, max } = normalizationLimits[key5];
+  const value = config[key5];
   return Number.isInteger(value) && value >= 1 && value <= max ? value : fallback;
 }
 function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = normalizationLimits.normalizationWarningsPerBatch.fallback, maxUnits = 1, rawSources = {}, includeScene = true } = {}) {
@@ -18340,11 +19202,11 @@ function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = norm
       shared.get(path2).push(warning);
       continue;
     }
-    const key4 = `${unitId}|${path2}`;
-    const carrier4 = carriers2.get(key4) ?? { unitId, path: path2, keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), passive: false };
+    const key5 = `${unitId}|${path2}`;
+    const carrier4 = carriers2.get(key5) ?? { unitId, path: path2, keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), passive: false };
     for (const dependency of dependencies(state, warning)) carrier4.keys.add(dependency);
     carrier4.warnings.push(warning);
-    carriers2.set(key4, carrier4);
+    carriers2.set(key5, carrier4);
   }
   const sceneDependencies = new Set([...carriers2.values()].filter((c) => c.unitId === SCENE_LANE).flatMap((c) => [...c.keys]));
   const grouped = /* @__PURE__ */ new Map();
@@ -18357,7 +19219,7 @@ function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = norm
       ...mechanismKeywords(source ?? template)
     ]) carrier4.terms.add(term);
     carrier4.passive = template?.passive === true;
-    const lane = [...carrier4.keys].some((key4) => sceneDependencies.has(key4)) ? SCENE_LANE : carrier4.unitId;
+    const lane = [...carrier4.keys].some((key5) => sceneDependencies.has(key5)) ? SCENE_LANE : carrier4.unitId;
     const list4 = grouped.get(lane) ?? [];
     list4.push(carrier4);
     grouped.set(lane, list4);
@@ -18365,11 +19227,11 @@ function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = norm
   for (const [unitId, list4] of grouped) {
     const clusters = [];
     for (const carrier4 of list4) {
-      const joined = clusters.filter((cluster2) => [...carrier4.keys].some((key4) => cluster2.keys.has(key4)));
+      const joined = clusters.filter((cluster2) => [...carrier4.keys].some((key5) => cluster2.keys.has(key5)));
       const cluster = joined.shift() ?? { path: carrier4.path, keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), members: [], passive: false, coreScore: 0 };
       cluster.path = [cluster.path, carrier4.path].filter(Boolean).sort()[0];
       for (const other of joined) {
-        for (const key4 of other.keys) cluster.keys.add(key4);
+        for (const key5 of other.keys) cluster.keys.add(key5);
         cluster.warnings.push(...other.warnings);
         cluster.members.push(...other.members);
         for (const term of other.terms) cluster.terms.add(term);
@@ -18377,7 +19239,7 @@ function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = norm
         cluster.path = [cluster.path, other.path].filter(Boolean).sort()[0];
         clusters.splice(clusters.indexOf(other), 1);
       }
-      for (const key4 of carrier4.keys) cluster.keys.add(key4);
+      for (const key5 of carrier4.keys) cluster.keys.add(key5);
       cluster.warnings.push(...carrier4.warnings);
       cluster.members.push(carrier4);
       for (const term of carrier4.terms) cluster.terms.add(term);
@@ -18394,7 +19256,7 @@ function planNormalizationBatches(unitIds, warnings, state, { maxWarnings = norm
           parts.push(part);
           part = { path: "", keys: /* @__PURE__ */ new Set(), warnings: [], terms: /* @__PURE__ */ new Set(), members: [], passive: false, coreScore: 0 };
         }
-        for (const key4 of member.keys) part.keys.add(key4);
+        for (const key5 of member.keys) part.keys.add(key5);
         part.warnings.push(...member.warnings);
         part.members.push(member);
         for (const term of member.terms) part.terms.add(term);
@@ -18658,7 +19520,7 @@ function statData(variables2) {
   const data = variables2?.stat_data ?? variables2?.statData ?? variables2?.message?.stat_data;
   return data && typeof data === "object" && !Array.isArray(data) ? data : null;
 }
-var own19 = (value, key4) => value != null && Object.prototype.hasOwnProperty.call(value, key4);
+var own19 = (value, key5) => value != null && Object.prototype.hasOwnProperty.call(value, key5);
 var clone2 = (value) => {
   try {
     return structuredClone(value);
@@ -18670,7 +19532,7 @@ var clone2 = (value) => {
     }
   }
 };
-var safeKey2 = (key4) => key4 !== "__proto__" && key4 !== "prototype" && key4 !== "constructor";
+var safeKey2 = (key5) => key5 !== "__proto__" && key5 !== "prototype" && key5 !== "constructor";
 var pathParts = (path2) => {
   if (path2 === "") return [];
   if (typeof path2 !== "string" || !path2.startsWith("/")) throw new Error(`\u65E0\u6548\u7684 JSON Pointer\uFF1A${path2}`);
@@ -18683,7 +19545,7 @@ function deepEqual(left, right) {
   if (Array.isArray(left) !== Array.isArray(right)) return false;
   if (Array.isArray(left)) return left.length === right.length && left.every((value, i) => deepEqual(value, right[i]));
   const a = Object.keys(left), b = Object.keys(right);
-  return a.length === b.length && a.every((key4) => own19(right, key4) && deepEqual(left[key4], right[key4]));
+  return a.length === b.length && a.every((key5) => own19(right, key5) && deepEqual(left[key5], right[key5]));
 }
 function applyRfc6902(target2, patch) {
   if (!Array.isArray(patch)) throw new TypeError("MVU \u5199\u56DE\u8865\u4E01\u5FC5\u987B\u662F RFC 6902 \u6570\u7EC4");
@@ -18711,9 +19573,9 @@ function applyRfc6902(target2, patch) {
     }
     const last = parts.pop();
     let parent = result;
-    for (const key4 of parts) {
-      if (parent == null || typeof parent !== "object" || !own19(parent, key4)) fail5(`MVU \u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
-      parent = parent[key4];
+    for (const key5 of parts) {
+      if (parent == null || typeof parent !== "object" || !own19(parent, key5)) fail5(`MVU \u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${operation2.path}`);
+      parent = parent[key5];
     }
     if (parent == null || typeof parent !== "object") fail5(`MVU \u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${operation2.path}`);
     const array = Array.isArray(parent);
@@ -19318,14 +20180,14 @@ function describe2(schema) {
   return [schema.type, range(schema)].filter(Boolean).join(" ");
 }
 function fields2(schema, omit = []) {
-  return Object.entries(schema.properties).filter(([key4]) => !omit.includes(key4)).map(([key4, value]) => `${key4}${schema.required?.includes(key4) ? "" : "?"}: ${describe2(value)}`).join("\uFF0C");
+  return Object.entries(schema.properties).filter(([key5]) => !omit.includes(key5)).map(([key5, value]) => `${key5}${schema.required?.includes(key5) ? "" : "?"}: ${describe2(value)}`).join("\uFF0C");
 }
 var instructions2 = defs2.opcode.oneOf.map((schema) => {
   const op = schema.properties.op.const;
   return `\u2022 ${op}\uFF1A${opNotes[op]} {${fields2(schema, ["op", "enabled", "label"])}}`;
 });
-var eventPatches = Object.entries(defs2).filter(([key4]) => key4.startsWith("patch_")).map(([key4, schema]) => `\u2022 ${key4.slice("patch_".length)}\uFF1A{${fields2(schema)}}`);
-var spawnSpecs2 = Object.entries(defs2).filter(([key4]) => key4.startsWith("spawn_")).map(([key4, schema]) => `\u2022 ${key4.slice("spawn_".length)}\uFF1A{${fields2(schema)}}`);
+var eventPatches = Object.entries(defs2).filter(([key5]) => key5.startsWith("patch_")).map(([key5, schema]) => `\u2022 ${key5.slice("patch_".length)}\uFF1A{${fields2(schema)}}`);
+var spawnSpecs2 = Object.entries(defs2).filter(([key5]) => key5.startsWith("spawn_")).map(([key5, schema]) => `\u2022 ${key5.slice("spawn_".length)}\uFF1A{${fields2(schema)}}`);
 var VM_EFFECT_PROTOCOL = `\u3010\u6218\u672F VM \u6548\u679C\u534F\u8BAE\u3011
 rules \u662F\u89C4\u5219\u6570\u7EC4\u3002\u89C4\u5219\uFF1A{${fields2(defs2.rule, ["hook"])}\uFF0Chook: \u4EE5\u4E0B\u679A\u4E3E}\u3002
 \u5141\u8BB8 hook \u679A\u4E3E\uFF1A${vmHooks.join(" / ")}\u3002
@@ -19521,7 +20383,7 @@ function describeSlots(saved) {
   if (!Array.isArray(saved)) return DEFAULT_SLOTS.map((slot2) => ({ ...slot2 }));
   const defaults = new Map(DEFAULT_SLOTS.map((slot2) => [slot2.id, slot2]));
   const entries3 = saved.filter((slot2) => typeof slot2?.id === "string");
-  const legacy = entries3.length > 0 && entries3.every((slot2) => defaults.has(slot2.id) && Object.keys(slot2).every((key4) => key4 === "id" || key4 === "enabled"));
+  const legacy = entries3.length > 0 && entries3.every((slot2) => defaults.has(slot2.id) && Object.keys(slot2).every((key5) => key5 === "id" || key5 === "enabled"));
   if (legacy) {
     const overrides2 = new Map(entries3.map((slot2) => [slot2.id, slot2]));
     return DEFAULT_SLOTS.map((slot2) => ({ ...slot2, ...overrides2.get(slot2.id) }));
@@ -19560,14 +20422,14 @@ function rawText(ctx) {
   for (const id3 of ids) {
     const row = Object.hasOwn(raw, id3) ? raw[id3] : null;
     if (!row) continue;
-    const fields3 = RAW_FIELDS.filter((key4) => {
-      const value = row[key4];
+    const fields3 = RAW_FIELDS.filter((key5) => {
+      const value = row[key5];
       if (value == null) return false;
       if (typeof value === "string") return Boolean(value.trim());
       return typeof value !== "object" || Object.keys(value).length > 0;
     });
     if (!fields3.length) continue;
-    const payload = json(Object.fromEntries(fields3.map((key4) => [key4, row[key4]])));
+    const payload = json(Object.fromEntries(fields3.map((key5) => [key5, row[key5]])));
     const body = payload.length <= RAW_PER_UNIT_LIMIT ? payload : payload.slice(0, RAW_PER_UNIT_LIMIT - unitNotice.length) + unitNotice;
     const block = `
 
@@ -19616,10 +20478,10 @@ function scopedRoster(ctx, state, warnings) {
   const rawCarriers = Object.assign({}, ...unitIds.map((id3) => entryTables[id3]));
   const siblings = [];
   for (const [table4, carriers2] of Object.entries({ skills, equipment })) for (const [id3, c] of Object.entries(carriers2)) {
-    const key4 = `${table4}:${id3}`;
-    if (targets2.has(key4)) continue;
+    const key5 = `${table4}:${id3}`;
+    if (targets2.has(key5)) continue;
     const type = table4 === "equipment" ? "\u88C5\u5907" : c.passive ? "\u88AB\u52A8\u6280\u80FD" : "\u4E3B\u52A8\u6280\u80FD";
-    const terms = [...mechanismTerms(JSON.stringify(rawCarriers[key4] ?? c))].slice(0, 4);
+    const terms = [...mechanismTerms(JSON.stringify(rawCarriers[key5] ?? c))].slice(0, 4);
     const count = c.rules?.length ?? 0, mods = c.mods?.length ?? 0;
     siblings.push(`[${type}]${id3} ${c.name ?? ""}|${terms.join("/")}|${count || mods ? `${count}\u89C4\u5219${mods ? `/${mods}\u4FEE\u9970` : ""}` : "\u5F85\u540E\u6279"}`);
   }
@@ -19717,15 +20579,15 @@ function resolveSlotContent(slot2, ctx = {}) {
     mvu_data: () => json(sources.mvuData ?? {}),
     latest_floor: () => sources.latestFloor || ""
   };
-  const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key4) => Object.hasOwn(variables2, key4) ? variables2[key4]() : "");
+  const expand = (template) => String(template).replace(/\{\{(\w+)\}\}/g, (_, key5) => Object.hasOwn(variables2, key5) ? variables2[key5]() : "");
   function rosterText() {
     if (ctx.onlyUnitIds && state) return scopedRoster(ctx, state, warnings);
     if (ctx.rosterText != null) return ctx.rosterText;
     if (!state) return sources.roster || "";
-    const templates = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
+    const templates2 = new Set(Object.values(state.items ?? {}).map((item) => item.templateId));
     const skillIds = new Set(Object.values(state.units ?? {}).flatMap((unit) => [...unit.skills ?? [], ...Object.keys(unit.inventory ?? {})]));
     const used = (table4, ids) => Object.fromEntries(Object.entries(table4 ?? {}).filter(([id3]) => ids.has(id3)));
-    const equipment = used(state.equipment, templates);
+    const equipment = used(state.equipment, templates2);
     for (const e of Object.values(equipment)) for (const id3 of e.skills ?? []) skillIds.add(id3);
     const skills = used(state.skills, skillIds);
     const payload = { roster: ctx.roster ?? sources.roster, units: state.units, equipment, skills, items: state.items, statusTemplates: state.statusTemplates };
@@ -19790,11 +20652,11 @@ function assembleMessages(slots3 = DEFAULT_SLOTS, ctx = {}) {
 }
 
 // src/tavern/api.js
-function lookup(host, localWin, key4) {
+function lookup(host, localWin, key5) {
   for (const scope of [localWin, host, localWin?.parent, localWin?.top, globalThis]) {
     try {
       for (const owner of [scope, scope?.TavernHelper]) {
-        const value = owner?.[key4];
+        const value = owner?.[key5];
         if (value != null) return typeof value === "function" ? value.bind(owner) : value;
       }
     } catch {
@@ -19802,8 +20664,8 @@ function lookup(host, localWin, key4) {
   }
 }
 function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
-  const get3 = (key4) => lookup(host, localWin, key4);
-  const on = get3("eventOn"), remove = get3("eventRemoveListener");
+  const get4 = (key5) => lookup(host, localWin, key5);
+  const on = get4("eventOn"), remove = get4("eventRemoveListener");
   const cleanups = [];
   const stop = () => {
     for (const fn of cleanups.splice(0)) {
@@ -19816,8 +20678,8 @@ function bindTavernStreamEvents(host, localWin, genId, onStreamChunk) {
   if (typeof on !== "function") return stop;
   try {
     for (const name of /* @__PURE__ */ new Set([
-      get3("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
-      get3("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
+      get4("iframe_events")?.STREAM_TOKEN_RECEIVED_FULLY || "js_stream_token_received_fully",
+      get4("tavern_events")?.STREAM_TOKEN_RECEIVED || "stream_token_received"
     ])) {
       const handler = (text8, id3) => {
         if (typeof text8 === "string" && text8 && (!id3 || id3 === genId)) onStreamChunk?.(text8, false);
@@ -19936,8 +20798,8 @@ async function readSseStream(readableStream, extractDelta, onStreamChunk, trace 
   }
 }
 function connection(settings, needModel) {
-  const base = settings.baseUrl?.trim().replace(/\/+$/, ""), key4 = settings.apiKey?.trim(), model = settings.model?.trim();
-  if (!base || !key4 || needModel && !model) throw new Error(`\u8BF7\u5728 API \u8BBE\u7F6E\u4E2D\u586B\u5199${!base ? "\u63A5\u53E3\u5730\u5740\uFF08baseUrl\uFF09" : !key4 ? "\u5BC6\u94A5\uFF08apiKey\uFF09" : "\u6A21\u578B\uFF08model\uFF09"}`);
+  const base = settings.baseUrl?.trim().replace(/\/+$/, ""), key5 = settings.apiKey?.trim(), model = settings.model?.trim();
+  if (!base || !key5 || needModel && !model) throw new Error(`\u8BF7\u5728 API \u8BBE\u7F6E\u4E2D\u586B\u5199${!base ? "\u63A5\u53E3\u5730\u5740\uFF08baseUrl\uFF09" : !key5 ? "\u5BC6\u94A5\uFF08apiKey\uFF09" : "\u6A21\u578B\uFF08model\uFF09"}`);
   if (settings.apiTransport !== "tavern" && globalThis.location?.protocol === "https:" && /^http:/i.test(base)) {
     throw new Error(diagnoseApiError("Mixed Content"));
   }
@@ -19947,12 +20809,12 @@ function connection(settings, needModel) {
   if (source === "gemini") root2 = base.replace(/\/v1beta(?:\/.*)?$/i, "") + "/v1beta";
   else if (source === "claude") {
     root2 = base.replace(/\/messages$/i, "").replace(/\/v1$/i, "") + "/v1";
-    Object.assign(headers, { "x-api-key": key4, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
+    Object.assign(headers, { "x-api-key": key5, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" });
   } else if (source === "openai") {
     root2 = base.replace(/\/chat\/completions$/i, "");
-    headers.Authorization = `Bearer ${key4}`;
+    headers.Authorization = `Bearer ${key5}`;
   } else throw new Error(`\u672A\u77E5 API \u7C7B\u578B\uFF1A${source}`);
-  return { root: root2, source, headers, model, key: encodeURIComponent(key4) };
+  return { root: root2, source, headers, model, key: encodeURIComponent(key5) };
 }
 async function send(url, init, { fetchImpl = globalThis.fetch, signal }) {
   const res = await fetchImpl(url, { ...init, signal });
@@ -20005,9 +20867,9 @@ function normalizationApiConfig(settings) {
 }
 async function fetchModels(settings, options = {}) {
   const conn = connection(settings, false);
-  const { root: root2, source, key: key4, headers } = conn;
+  const { root: root2, source, key: key5, headers } = conn;
   const viaTavern = settings.apiTransport === "tavern";
-  const res = viaTavern ? await sendViaTavernBackend("status", conn, {}, options) : await send(`${root2}/models${source === "gemini" ? `?key=${key4}` : ""}`, { method: "GET", headers }, options);
+  const res = viaTavern ? await sendViaTavernBackend("status", conn, {}, options) : await send(`${root2}/models${source === "gemini" ? `?key=${key5}` : ""}`, { method: "GET", headers }, options);
   const data = await json2(res);
   if (viaTavern && data.error) throw new Error("\u9152\u9986\u540E\u7AEF\u62C9\u53D6\u6A21\u578B\u5931\u8D25\uFF0C\u8BF7\u68C0\u67E5 API \u5730\u5740\u3001\u5BC6\u94A5\u548C\u9152\u9986\u540E\u7AEF\u7F51\u7EDC");
   return (source === "gemini" ? data.models : data.data)?.map((m) => source === "gemini" ? m.name?.replace(/^models\//, "") : m.id).filter((id3) => typeof id3 === "string" && id3) || [];
@@ -20027,7 +20889,7 @@ function deltas(source, event) {
 }
 async function requestViaCustomApi(settings, messages, options = {}) {
   const conn = connection(settings, true);
-  const { root: root2, source, model, key: key4, headers } = conn;
+  const { root: root2, source, model, key: key5, headers } = conn;
   const stream = settings.stream ?? true, temperature = Number(settings.temperature ?? 0.8), max_tokens = Number(settings.max_tokens || 32e3);
   const wireMessages = messages.map(({ role, content }) => ({ role, content }));
   let url, body;
@@ -20042,7 +20904,7 @@ async function requestViaCustomApi(settings, messages, options = {}) {
       url = `${root2}/messages`;
       body = { model, system, messages: chat, temperature, max_tokens, stream };
     } else {
-      url = `${root2}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key4}`;
+      url = `${root2}/models/${encodeURIComponent(model.replace(/^models\//, ""))}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${key5}`;
       body = {
         ...system ? { systemInstruction: { parts: [{ text: system }] } } : {},
         contents: chat.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
@@ -20366,18 +21228,18 @@ function renderApiTab(page, ctx) {
     root2.append(section);
     return grid;
   }
-  function field2(grid, key4, title, input2, fallback, disabled = false, wide = false) {
+  function field2(grid, key5, title, input2, fallback, disabled = false, wide = false) {
     const wrap = make("div", wide ? "field wide" : "field");
     const label = make("label", "", title);
-    input2.name = key4;
+    input2.name = key5;
     input2.disabled = disabled;
     const checkbox = input2.type === "checkbox";
-    if (checkbox) input2.checked = settings[key4] ?? fallback;
-    else input2.value = settings[key4] ?? fallback;
+    if (checkbox) input2.checked = settings[key5] ?? fallback;
+    else input2.value = settings[key5] ?? fallback;
     input2.onchange = () => {
       if (input2.type === "number" && (!input2.reportValidity() || !Number.isFinite(input2.valueAsNumber))) return;
-      ctx.save({ [key4]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
-      if (["apiMode", "apiTransport", "normalizationAiMode", "normalizationAiApiTransport", "battleAiMode"].includes(key4)) renderApiTab(page, ctx);
+      ctx.save({ [key5]: checkbox ? input2.checked : input2.type === "number" ? input2.valueAsNumber : input2.value });
+      if (["apiMode", "apiTransport", "normalizationAiMode", "normalizationAiApiTransport", "battleAiMode"].includes(key5)) renderApiTab(page, ctx);
     };
     label.append(input2);
     wrap.append(label);
@@ -20490,9 +21352,9 @@ function renderApiTab(page, ctx) {
   const sampling = card("\u2699 \u91C7\u6837\u53C2\u6570");
   field2(sampling, "temperature", "\u6E29\u5EA6 (temperature)", input("number", { step: "any", required: true }), 0.8);
   field2(sampling, "max_tokens", "\u6700\u5927\u8F93\u51FA\u957F\u5EA6 (max_tokens)", input("number", { min: "1", step: "1", required: true }), 32e3);
-  for (const [key4, label] of [["normalizationConcurrency", "\u6807\u51C6\u5316\u6700\u5927\u5E76\u53D1\u8BF7\u6C42\u6570"], ["normalizationWarningsPerBatch", "\u6807\u51C6\u5316\u6BCF\u6279\u8B66\u544A\u6570"]]) {
-    const { fallback, max } = normalizationLimits[key4];
-    field2(sampling, key4, label, input("number", { min: "1", max: String(max), step: "1", required: true }), fallback);
+  for (const [key5, label] of [["normalizationConcurrency", "\u6807\u51C6\u5316\u6700\u5927\u5E76\u53D1\u8BF7\u6C42\u6570"], ["normalizationWarningsPerBatch", "\u6807\u51C6\u5316\u6BCF\u6279\u8B66\u544A\u6570"]]) {
+    const { fallback, max } = normalizationLimits[key5];
+    field2(sampling, key5, label, input("number", { min: "1", max: String(max), step: "1", required: true }), fallback);
   }
   const streamField = make("div", "field switch-field");
   const streamSwitch = make("label", "switch");
@@ -20512,24 +21374,24 @@ function renderApiTab(page, ctx) {
   timeoutField.append(timeoutLabel);
   sampling.append(timeoutField);
 }
-function renderSettings(page, key4, ctx) {
-  if (key4 === "prompt") return renderPromptTab(page, ctx);
-  if (key4 === "api") return renderApiTab(page, ctx);
+function renderSettings(page, key5, ctx) {
+  if (key5 === "prompt") return renderPromptTab(page, ctx);
+  if (key5 === "api") return renderApiTab(page, ctx);
 }
 
 // src/tavern/ai-sessions.js
 var roles = /* @__PURE__ */ new Set(["user", "assistant", "system", "tool"]);
 function createAiSessions(saved, persist, now = Date.now) {
   const data = { sessions: Array.isArray(saved?.sessions) ? structuredClone(saved.sessions) : [], activeId: saved?.activeId };
-  const get3 = (id3) => data.sessions.find((session) => session.id === id3);
-  const active3 = () => get3(data.activeId);
+  const get4 = (id3) => data.sessions.find((session) => session.id === id3);
+  const active3 = () => get4(data.activeId);
   const save = () => persist(data);
   let lastId = 0;
   function create(title = "\u65B0\u5EFA\u4F1A\u8BDD") {
     const ts = now();
     do {
       lastId = Math.max(ts, lastId + 1);
-    } while (get3(`sess_${lastId}`));
+    } while (get4(`sess_${lastId}`));
     const session = { id: `sess_${lastId}`, title, createdAt: ts, updatedAt: ts, messages: [] };
     data.sessions.push(session);
     data.activeId = session.id;
@@ -20551,20 +21413,20 @@ function createAiSessions(saved, persist, now = Date.now) {
   return {
     data,
     active: active3,
-    get: get3,
+    get: get4,
     create() {
       const session = create();
       save();
       return session;
     },
     select(id3) {
-      if (get3(id3)) {
+      if (get4(id3)) {
         data.activeId = id3;
         save();
       }
     },
     rename(id3, title) {
-      const session = get3(id3);
+      const session = get4(id3);
       if (!session || !title.trim()) return;
       session.title = title.trim();
       change2(session);
@@ -20577,13 +21439,13 @@ function createAiSessions(saved, persist, now = Date.now) {
       save();
     },
     clear(id3) {
-      const session = get3(id3);
+      const session = get4(id3);
       if (!session) return;
       session.messages.length = 0;
       change2(session);
     },
     append(id3, ...messages) {
-      const session = get3(id3);
+      const session = get4(id3);
       if (!session) return [];
       const entries3 = messages.map((message) => {
         if (!roles.has(message.role)) throw new TypeError(`\u672A\u77E5\u6D88\u606F\u89D2\u8272\uFF1A${message.role}`);
@@ -20594,13 +21456,13 @@ function createAiSessions(saved, persist, now = Date.now) {
       return entries3;
     },
     update(id3, message, fields3) {
-      const session = get3(id3);
+      const session = get4(id3);
       if (!session?.messages.includes(message)) return;
       Object.assign(message, fields3);
       change2(session);
     },
     prepareReroll(id3, targetAssistantMessage) {
-      const session = get3(id3);
+      const session = get4(id3);
       const idx = session?.messages.indexOf(targetAssistantMessage) ?? -1;
       if (idx < 0 || targetAssistantMessage.role !== "assistant") return null;
       let userIdx = -1;
@@ -20622,7 +21484,7 @@ function createAiSessions(saved, persist, now = Date.now) {
       return { userMessage: session.messages[userIdx], assistantMessage, historyBeforeUser };
     },
     selectVersion(id3, message, index) {
-      const session = get3(id3);
+      const session = get4(id3);
       const slot2 = session?.messages.indexOf(message) ?? -1;
       if (slot2 < 0 || !message.versions?.[index] || message.versionIndex === index) return;
       const versions = [...message.versions];
@@ -20633,7 +21495,7 @@ function createAiSessions(saved, persist, now = Date.now) {
       change2(session);
     },
     prepareEdit(id3, message, input) {
-      const session = get3(id3);
+      const session = get4(id3);
       const index = session?.messages.findLastIndex((entry2) => entry2.role === "user") ?? -1;
       const content = input.trim();
       if (index < 0 || session.messages[index] !== message || !content) return null;
@@ -20652,7 +21514,7 @@ function createAiSessions(saved, persist, now = Date.now) {
 
 // src/tavern/char-snapshots.js
 var transient = /* @__PURE__ */ new Set(["x", "y", "z", "xyz", "position", "pos", "coordinates", "facing", "ap", "used", "round", "turn", "initiativeRoll", "reactionAvailable", "moved", "moveCarryPermille", "moveCarryInPermille", "moveSpentPermille", "moveBonusPermille", "moveBanked", "\u4F4D\u7F6E", "\u5750\u6807", "\u884C\u52A8\u70B9", "\u56DE\u5408", "\u671D\u5411"]);
-var clean = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([key4]) => !transient.has(key4) && !key4.startsWith("__source")));
+var clean = (record3) => Object.fromEntries(Object.entries(record3 ?? {}).filter(([key5]) => !transient.has(key5) && !key5.startsWith("__source")));
 var ordered = (v) => Array.isArray(v) ? v.map(ordered) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, ordered(v[k])])) : v;
 var stableSourceJson = (value) => JSON.stringify(ordered(value));
 var aliases2 = (r) => [r?.id, r?.uid, r?.characterId, r?.instanceId, r?.ID, r?.name, r?.displayName, r?.characterName, r?.\u540D\u79F0, r?.\u59D3\u540D, r?.\u89D2\u8272\u540D, r?.__sourceKey].filter(Boolean);
@@ -20683,7 +21545,7 @@ async function characterRecords(sources, hydrated) {
       equipment: defs3(battle.equipment, [p?.mainHand, p?.offHand, p?.shield, ...Array.isArray(p?.gear) ? p.gear : []]),
       skills: defs3(battle.skills, Array.isArray(p?.skills) ? p.skills : [])
     };
-    const stripEntries = (source) => Object.fromEntries(Object.entries(source ?? {}).filter(([key4]) => !["equipment", "equipments", "items", "\u88C5\u5907", "skills", "abilities", "\u6280\u80FD", "\u80CC\u5305", "mainHand", "offHand", "shield", "gear"].includes(key4)));
+    const stripEntries = (source) => Object.fromEntries(Object.entries(source ?? {}).filter(([key5]) => !["equipment", "equipments", "items", "\u88C5\u5907", "skills", "abilities", "\u6280\u80FD", "\u80CC\u5305", "mainHand", "offHand", "shield", "gear"].includes(key5)));
     const entryValues = {
       unit: [stripEntries(raw.mvu), stripEntries(raw.char_info), stripEntries(raw.battle_init)],
       ...hydrated?.entrySources?.[unit.id] ?? {}
@@ -20755,8 +21617,8 @@ function normalizationTransactions({ patch, solved, verified, records: records2,
         if (groups.has(zone)) join(root2, zone);
       }
     } else if (value && typeof value === "object") {
-      for (const [key4, child] of Object.entries(value)) {
-        visit(key4, root2);
+      for (const [key5, child] of Object.entries(value)) {
+        visit(key5, root2);
         visit(child, root2);
       }
     }
@@ -20764,9 +21626,9 @@ function normalizationTransactions({ patch, solved, verified, records: records2,
   for (const op of patch) visit(op.value, entryRoot(op.path));
   return [...new Set(groups.values())].map(({ roots, guards, warnings }) => {
     const refs = /* @__PURE__ */ new Map();
-    const addRef = (id3, key4) => {
-      const hash2 = records2[id3]?.entryHashes?.[key4];
-      if (hash2) refs.set(JSON.stringify([id3, key4]), [id3, key4, hash2]);
+    const addRef = (id3, key5) => {
+      const hash2 = records2[id3]?.entryHashes?.[key5];
+      if (hash2) refs.set(JSON.stringify([id3, key5]), [id3, key5, hash2]);
     };
     for (const root2 of roots) {
       if (root2.startsWith("/units/")) addRef(root2.split("/")[2], "unit");
@@ -20783,11 +21645,11 @@ function normalizationTransactions({ patch, solved, verified, records: records2,
     };
   });
 }
-function replayNormalization(state, batches, records2, warnings, { apply: apply2, validate, fingerprint }) {
+function replayNormalization(state, batches, records2, warnings, { apply: apply3, validate, fingerprint }) {
   const kept = [];
   const diagnosticKeys = new Set(warnings.map((w) => JSON.stringify([w.unitId, warningKey(w)])));
   for (const batch of batches) {
-    const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key: key4 }) => diagnosticKeys.has(JSON.stringify([unitId, key4])));
+    const sameDiagnostics = batch.receipts?.length && batch.receipts.every(({ unitId, key: key5 }) => diagnosticKeys.has(JSON.stringify([unitId, key5])));
     if (batch.entries) {
       if (!batch.entries.every(([id3, entry2, hash2]) => records2[id3]?.entryHashes?.[entry2] === hash2)) continue;
       if (batch.receipts?.length && !sameDiagnostics) continue;
@@ -20798,7 +21660,7 @@ function replayNormalization(state, batches, records2, warnings, { apply: apply2
     const alreadyRegistered = new Set((batch.patch ?? []).filter((op) => op.op === "add" && /^\/customElements\/[^/]+$/.test(op.path) && fingerprint(state, op.path) === JSON.stringify(op.value)).map((op) => op.path));
     if (batch.guards?.some(([path2, value]) => (fingerprint(state, path2) ?? null) !== value && !alreadyRegistered.has(path2))) continue;
     try {
-      const next = apply2(state, batch.patch, true);
+      const next = apply3(state, batch.patch, true);
       validate(next);
       state = next;
       kept.push(batch);
@@ -20812,9 +21674,9 @@ function replayNormalization(state, batches, records2, warnings, { apply: apply2
 function instanceGroups(instances) {
   const groups = /* @__PURE__ */ new Map();
   for (const [id3, unit] of Object.entries(instances)) {
-    const key4 = unit.archetypeId ?? id3;
-    if (!groups.has(key4)) groups.set(key4, []);
-    groups.get(key4).push(id3);
+    const key5 = unit.archetypeId ?? id3;
+    if (!groups.has(key5)) groups.set(key5, []);
+    groups.get(key5).push(id3);
   }
   return [...groups.values()];
 }
@@ -20846,11 +21708,11 @@ function duplicateMappings(roster, state) {
 function replaceReferences(value, ids) {
   if (typeof value === "string") return ids.get(value) ?? value.replace(/(['"])([^'"\n]+)\1/g, (match, quote, id3) => ids.has(id3) ? `${quote}${ids.get(id3)}${quote}` : match);
   if (Array.isArray(value)) return value.map((entry2) => replaceReferences(entry2, ids));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key4, entry2]) => [ids.get(key4) ?? key4, replaceReferences(entry2, ids)]));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key5, entry2]) => [ids.get(key5) ?? key5, replaceReferences(entry2, ids)]));
   return value;
 }
 function duplicateOperations(operation2, mappings) {
-  const root2 = [...mappings.keys()].filter((key4) => operation2.path === key4 || operation2.path.startsWith(`${key4}/`)).sort((a, b) => b.length - a.length)[0];
+  const root2 = [...mappings.keys()].filter((key5) => operation2.path === key5 || operation2.path.startsWith(`${key5}/`)).sort((a, b) => b.length - a.length)[0];
   if (!root2) return [];
   return (mappings.get(root2) ?? []).map(({ path: path2, ids }) => ({
     op: operation2.op,
@@ -20863,6 +21725,21 @@ function duplicateOperations(operation2, mappings) {
 var attributes2 = { str: "\u529B\u91CF", agi: "\u654F\u6377", con: "\u4F53\u8D28", int: "\u667A\u529B", spi: "\u7CBE\u795E" };
 var shapes2 = { single: "\u5355\u4F53", circle: "\u5706\u5F62", ring: "\u73AF\u5F62", cone: "\u9525\u5F62", fan: "\u6247\u5F62", line: "\u76F4\u7EBF" };
 var when2 = { active: "\u4E3B\u52A8", after_hit: "\u547D\u4E2D\u65F6", before_action: "\u884C\u52A8\u524D", after_damage: "\u4F24\u5BB3\u7ED3\u7B97\u540E", after_heal: "\u6CBB\u7597\u540E", turn_start: "\u56DE\u5408\u5F00\u59CB", turn_end: "\u56DE\u5408\u7ED3\u675F", on_kill: "\u51FB\u5012\u65F6", on_death: "\u5012\u4E0B\u65F6" };
+var traitLabels = {
+  heat: "\u9AD8\u6E29",
+  ignite: "\u5F15\u71C3",
+  cold: "\u5BD2\u971C",
+  wet: "\u6D78\u6DA6",
+  shock: "\u5BFC\u7535",
+  corrode: "\u8150\u8680",
+  flammable: "\u53EF\u71C3",
+  gust: "\u6C14\u6D6A"
+};
+function cardElementLabel(type, customElements) {
+  const label = elementLabel(type, customElements);
+  const traits = (customElements?.[type]?.traits ?? []).map((trait) => traitLabels[trait]).filter(Boolean);
+  return traits.length ? `${label}\uFF08${traits.join("\u3001")}\uFF09` : label;
+}
 var displayNumber = (value) => typeof value === "number" ? String(value) : typeof value === "string" ? `\u6309\u516C\u5F0F ${value}` : null;
 function diceLabel(dice4) {
   if (!dice4) return null;
@@ -20878,7 +21755,7 @@ function collectDamageOps(value, result = []) {
     return result;
   }
   if (value.op === "damage") result.push(value);
-  for (const [key4, child] of Object.entries(value)) if (key4 !== "damage") collectDamageOps(child, result);
+  for (const [key5, child] of Object.entries(value)) if (key5 !== "damage") collectDamageOps(child, result);
   return result;
 }
 function skillDisplay(template = {}, skillInfo = {}, customElements = {}) {
@@ -20886,7 +21763,7 @@ function skillDisplay(template = {}, skillInfo = {}, customElements = {}) {
   const add = (type, amount, formatted = false) => {
     if (!type) return;
     const suffix = amount == null ? null : formatted ? amount : displayNumber(amount);
-    const text8 = `${elementLabel(type, customElements)}${suffix ? ` ${suffix}` : ""}`;
+    const text8 = `${cardElementLabel(type, customElements)}${suffix ? ` ${suffix}` : ""}`;
     if (!components.includes(text8)) components.push(text8);
   };
   if (template.damage) add(template.damage.type ?? template.damageType, diceLabel(template.damage), true);
@@ -20895,7 +21772,7 @@ function skillDisplay(template = {}, skillInfo = {}, customElements = {}) {
     if (rule2.enabled !== false && rule2.hook === "active") for (const op of collectDamageOps(rule2.program)) add(op.damageType, op.amount);
   }
   if (!components.length && skillInfo.damageType) add(skillInfo.damageType);
-  const costs = [["sp", "SP"], ["mp", "MP"], ["hp", "HP"]].map(([key4, label]) => [label, template.resourceCost?.[key4] ?? template[key4]]).filter(([, value]) => value !== void 0 && value !== null && value !== 0 && value !== "0").map(([label, value]) => `${displayNumber(value) ?? value} ${label}`);
+  const costs = [["sp", "SP"], ["mp", "MP"], ["hp", "HP"]].map(([key5, label]) => [label, template.resourceCost?.[key5] ?? template[key5]]).filter(([, value]) => value !== void 0 && value !== null && value !== 0 && value !== "0").map(([label, value]) => `${displayNumber(value) ?? value} ${label}`);
   const area3 = [];
   if (template.shape && template.shape !== "single") area3.push(shapes2[template.shape] ?? template.shape);
   if (template.radius != null) area3.push(`\u534A\u5F84 ${template.radius}`);
@@ -20906,11 +21783,11 @@ function skillDisplay(template = {}, skillInfo = {}, customElements = {}) {
 }
 var verbs = { let: "\u8BB0\u5F55\u6570\u503C", if: "\u6761\u4EF6\u5206\u652F", for_each: "\u9010\u4E2A\u7ED3\u7B97", check: "\u68C0\u5B9A", ask: "\u7B49\u5F85\u9009\u62E9", mutate_event: "\u8C03\u6574\u7ED3\u7B97", damage: "\u4F24\u5BB3", heal: "\u6CBB\u7597", resource: "\u8C03\u6574\u8D44\u6E90", apply_status: "\u65BD\u52A0\u72B6\u6001", remove_status: "\u79FB\u9664\u72B6\u6001", move: "\u4F4D\u79FB", spawn: "\u751F\u6210", despawn: "\u79FB\u9664", revive: "\u590D\u6D3B", perform: "\u6267\u884C\u884C\u52A8", link_pool: "\u8C03\u6574\u5171\u4EAB\u8D44\u6E90" };
 function ruleSummary(rule2, state) {
-  const statusName = (id3) => state?.statusTemplates?.[id3]?.name ?? STATUSES[id3]?.name ?? id3;
+  const statusName = (id3) => getStatusTemplate(state, id3)?.name ?? id3;
   const describe3 = (op) => {
     const prefix = op.enabled === false ? "\u5DF2\u5173\u95ED\uFF1A" : "";
     if (op.op === "apply_status") return `${prefix}\u65BD\u52A0 ${statusName(op.statusId)}${typeof op.turns === "number" ? ` ${op.turns} \u56DE\u5408` : ""}`;
-    return [prefix + (verbs[op.op] ?? "\u6548\u679C"), op.damageType ? elementLabel(op.damageType, state?.customElements) : null, typeof op.amount === "number" ? op.amount : null].filter((value) => value != null).join(" ");
+    return [prefix + (verbs[op.op] ?? "\u6548\u679C"), op.damageType ? cardElementLabel(op.damageType, state?.customElements) : null, typeof op.amount === "number" ? op.amount : null].filter((value) => value != null).join(" ");
   };
   return `${rule2.enabled === false ? "\u5DF2\u5173\u95ED\uFF1A" : ""}${when2[rule2.hook] ?? "\u89E6\u53D1"} \u2192 ${rule2.program.map(describe3).join("\uFF1B")}`;
 }
@@ -20978,7 +21855,7 @@ function modSummary(mod2, customElements = {}) {
   if (policy?.moraleLock === "steady") parts.push("\u58EB\u6C14\u6052\u5B9A\u575A\u5B88");
   if (policy?.mindControl) parts.push(mindControlLabels[policy.mindControl]);
   if (policy?.forbidTargetSource) parts.push("\u4E0D\u53EF\u653B\u51FB\u65BD\u672F\u8005");
-  const scope = [mod2.damageType ? `${elementLabel(mod2.damageType, customElements)}\u4F24\u5BB3` : null, mod2.checkKind ? `${checks[mod2.checkKind] ?? mod2.checkKind}\u68C0\u5B9A` : null].filter(Boolean);
+  const scope = [mod2.damageType ? `${cardElementLabel(mod2.damageType, customElements)}\u4F24\u5BB3` : null, mod2.checkKind ? `${checks[mod2.checkKind] ?? mod2.checkKind}\u68C0\u5B9A` : null].filter(Boolean);
   return `${mod2.pool ? `[${mod2.pool}] ` : ""}${parts.filter(Boolean).join("\uFF1B") || "\u4FEE\u9970"}${scope.length ? `\uFF08${scope.join("\u3001")}\uFF09` : ""}${mod2.when != null ? ` \xB7 \u6761\u4EF6\uFF1A${mod2.when === true ? "\u59CB\u7EC8" : mod2.when === false ? "\u4ECE\u4E0D" : mod2.when}` : ""}`;
 }
 var RESOURCES = [["hp", "HP", "maxHp"], ["mp", "MP", "maxMp"], ["sp", "SP", "maxSp"]];
@@ -21001,9 +21878,9 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
   for (const text8 of [TEAMS[unit.team], unit.tier ? `\u7B2C ${unit.tier} \u5C42\u7EA7` : null, `\u4F53\u578B ${bodySizeLabel(unit)}`, unit.source ?? "AI \u7F16\u8F91"]) if (text8) tags.append(line("span", "fated-char-tag", text8));
   title.append(nameRow, tags);
   const mini = line("div", "fated-char-mini");
-  for (const [key4, label, maxKey] of RESOURCES) {
-    const bar = make("span", { class: `fated-char-mini-bar is-${key4}`, title: `${label} ${unit[key4] ?? "\u2014"} / ${unit[maxKey] ?? "\u2014"}` });
-    bar.style.setProperty("--ratio", ratio2(unit[key4], unit[maxKey]));
+  for (const [key5, label, maxKey] of RESOURCES) {
+    const bar = make("span", { class: `fated-char-mini-bar is-${key5}`, title: `${label} ${unit[key5] ?? "\u2014"} / ${unit[maxKey] ?? "\u2014"}` });
+    bar.style.setProperty("--ratio", ratio2(unit[key5], unit[maxKey]));
     mini.append(bar);
   }
   const toggle = make("button", { type: "button", class: "fated-char-toggle", "aria-expanded": String(!collapsed), "aria-label": `${collapsed ? "\u5C55\u5F00" : "\u6298\u53E0"} ${name}`, title: collapsed ? "\u5C55\u5F00" : "\u6298\u53E0" }, "");
@@ -21025,9 +21902,9 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
     if (e.target === header || e.target === avatar || title.contains(e.target) || mini.contains(e.target)) setCollapsed(!body.hidden);
   });
   const resources = line("div", "fated-char-resources");
-  for (const [key4, label, maxKey] of RESOURCES) {
-    const max = unit[maxKey], v = unit[key4];
-    const bar = line("div", `fated-char-bar is-${key4}`);
+  for (const [key5, label, maxKey] of RESOURCES) {
+    const max = unit[maxKey], v = unit[key5];
+    const bar = line("div", `fated-char-bar is-${key5}`);
     bar.style.setProperty("--ratio", ratio2(v, max));
     bar.style.setProperty("--fill", `${Math.round(ratio2(v, max) * 100)}%`);
     bar.append(make("i"), line("b", "", label), line("span", "", `${v ?? "\u2014"} / ${max ?? "\u2014"}`));
@@ -21035,9 +21912,9 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
   }
   body.append(resources);
   const stats = line("dl", "fated-char-stats");
-  for (const [key4, label] of Object.entries(attributes2)) {
+  for (const [key5, label] of Object.entries(attributes2)) {
     const pair = make("div");
-    pair.append(make("dt", {}, label), make("dd", {}, unit.stats?.[key4] ?? "\u2014"));
+    pair.append(make("dt", {}, label), make("dd", {}, unit.stats?.[key5] ?? "\u2014"));
     stats.append(pair);
   }
   body.append(stats);
@@ -21081,7 +21958,7 @@ function fillInstance(box, make, unit, state, raw, select, { collapsed = false, 
     shownItems.add(id3);
     const item = state?.items?.[id3], t = state?.equipment?.[item?.templateId] ?? unit.equipment?.find((e) => e.id === id3)?.template;
     const d = t?.damage;
-    const dice4 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${d.type ? elementLabel(d.type, state?.customElements) : ""}`.trim() : null;
+    const dice4 = d ? `${d.count}d${d.sides}${d.bonus ? ` ${d.bonus > 0 ? "+" : ""}${d.bonus}` : ""}${d.stat ? ` + ${attributes2[d.stat] ?? d.stat}` : ""} ${d.type ? cardElementLabel(d.type, state?.customElements) : ""}`.trim() : null;
     gear.push({ label: `[${slot2}] ${t?.name ?? id3}`, path: item?.templateId ? `/equipment/${item.templateId}` : null, meta: [t?.attack != null ? `\u653B\u51FB ${t.attack}` : null, t?.defense ? `\u9632\u5FA1 ${t.defense}` : null, t?.accuracy ? `\u547D\u4E2D ${signed2(t.accuracy)}` : null, t?.range != null ? `\u8DDD\u79BB ${t.range}` : null, dice4].filter(Boolean), template: t, item });
   }
   section("\u88C5\u5907", gear);
@@ -21129,8 +22006,8 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
   const button = (label) => make("button", { type: "button" }, label);
   const toolbar = make("div", { class: "fated-actions" });
   const select = make("select", { "aria-label": "\u5207\u6362\u4F1A\u8BDD" });
-  const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove = button("\u5220\u9664"), clear = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
-  toolbar.append(select, create, rename, remove, clear);
+  const create = button("\u65B0\u5EFA"), rename = button("\u91CD\u547D\u540D"), remove = button("\u5220\u9664"), clear2 = button("\u6E05\u7A7A\u5F53\u524D\u4F1A\u8BDD");
+  toolbar.append(select, create, rename, remove, clear2);
   const edit = make("form", { class: "fated-actions", hidden: "" });
   const title = make("input", { "aria-label": "\u4F1A\u8BDD\u540D\u79F0", maxlength: "80", required: "" });
   const cancel = button("\u53D6\u6D88");
@@ -21275,7 +22152,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
     }
     info.textContent = `${session.messages.length} \u6761\u6D88\u606F \xB7 \u521B\u5EFA\u4E8E ${formatTime(session.createdAt)}`;
     submit.disabled = busy || !input.value.trim() || editing;
-    remove.disabled = clear.disabled = busy;
+    remove.disabled = clear2.disabled = busy;
     abort.hidden = !busy;
     status.textContent = busy ? "AI \u6B63\u5728\u56DE\u590D\u2026" : "";
     scrollToEnd();
@@ -21322,7 +22199,7 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
     sessions.remove(shownId);
     render();
   });
-  on(clear, "click", () => {
+  on(clear2, "click", () => {
     sessions.clear(shownId);
     render();
   });
@@ -21366,25 +22243,25 @@ function mountAiPage(page, { make, on, sessions, send: send2, stop, reroll, edit
 }
 
 // src/tavern/ai-patch-undo.js
-var own20 = (object4, key4) => object4 != null && Object.hasOwn(object4, key4);
+var own20 = (object4, key5) => object4 != null && Object.hasOwn(object4, key5);
 var record2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var pointer2 = (key4) => key4.replaceAll("~", "~0").replaceAll("/", "~1");
+var pointer2 = (key5) => key5.replaceAll("~", "~0").replaceAll("/", "~1");
 function equal(a, b) {
   if (a === b) return true;
   if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((value, i) => equal(value, b[i]));
   if (!record2(a) || !record2(b)) return false;
   const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every((key4) => own20(b, key4) && equal(a[key4], b[key4]));
+  return keys.length === Object.keys(b).length && keys.every((key5) => own20(b, key5) && equal(a[key5], b[key5]));
 }
 function chatUndoChanges(before, after) {
   const changes = [];
   function visit(a, b, path2) {
-    for (const key4 of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
-      const next = `${path2}/${pointer2(key4)}`;
-      const had = own20(a, key4), has3 = own20(b, key4);
-      if (had && has3 && record2(a[key4]) && record2(b[key4])) visit(a[key4], b[key4], next);
-      else if (had !== has3 || !equal(a[key4], b[key4])) {
-        changes.push({ path: next, has: has3, ...has3 ? { expected: b[key4] } : {}, inverse: had ? { op: has3 ? "replace" : "add", path: next, value: a[key4] } : { op: "remove", path: next } });
+    for (const key5 of /* @__PURE__ */ new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const next = `${path2}/${pointer2(key5)}`;
+      const had = own20(a, key5), has3 = own20(b, key5);
+      if (had && has3 && record2(a[key5]) && record2(b[key5])) visit(a[key5], b[key5], next);
+      else if (had !== has3 || !equal(a[key5], b[key5])) {
+        changes.push({ path: next, has: has3, ...has3 ? { expected: b[key5] } : {}, inverse: had ? { op: has3 ? "replace" : "add", path: next, value: a[key5] } : { op: "remove", path: next } });
       }
     }
   }
@@ -21393,11 +22270,11 @@ function chatUndoChanges(before, after) {
 }
 function chatInversePatch(state, changes) {
   return changes.map(({ path: path2, has: has3, expected, inverse }) => {
-    const keys = path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~"));
-    const key4 = keys.pop();
+    const keys = path2.slice(1).split("/").map((key6) => key6.replaceAll("~1", "/").replaceAll("~0", "~"));
+    const key5 = keys.pop();
     let parent = state;
     for (const part of keys) parent = own20(parent, part) ? parent[part] : void 0;
-    if (!record2(parent) || own20(parent, key4) !== has3 || has3 && !equal(parent[key4], expected)) {
+    if (!record2(parent) || own20(parent, key5) !== has3 || has3 && !equal(parent[key5], expected)) {
       throw new Error(`\u5B57\u6BB5\u5DF2\u88AB\u540E\u7EED\u64CD\u4F5C\u4FEE\u6539\uFF1A${path2}`);
     }
     return inverse;
@@ -21406,7 +22283,7 @@ function chatInversePatch(state, changes) {
 
 // src/tavern/overlay-ai.js
 var isObject2 = (v) => v && typeof v === "object" && !Array.isArray(v);
-var safeProperty = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
+var safeProperty = (key5) => !["__proto__", "prototype", "constructor"].includes(key5);
 var clone3 = (value) => {
   try {
     return structuredClone(value);
@@ -21463,10 +22340,10 @@ function findBattleJSON(source) {
 function deepMerge(base, extra) {
   const result = isObject2(base) ? clone3(base) : {};
   if (!isObject2(extra)) return result;
-  for (const [key4, value] of Object.entries(extra)) {
-    if (!safeProperty(key4)) continue;
-    if (isObject2(value) && isObject2(result[key4])) result[key4] = deepMerge(result[key4], value);
-    else result[key4] = clone3(value);
+  for (const [key5, value] of Object.entries(extra)) {
+    if (!safeProperty(key5)) continue;
+    if (isObject2(value) && isObject2(result[key5])) result[key5] = deepMerge(result[key5], value);
+    else result[key5] = clone3(value);
   }
   return result;
 }
@@ -21579,7 +22456,7 @@ function parseLooseYaml(value) {
     if (!line.trim() || /^\s*#/.test(line)) continue;
     const match = line.match(/^(\s*)([-\w\u4e00-\u9fff]+)\s*:\s*(.*)$/);
     if (!match) continue;
-    const indent = match[1].length, key4 = match[2], raw = match[3].trim();
+    const indent = match[1].length, key5 = match[2], raw = match[3].trim();
     while (stack.length > 1 && indent <= stack.at(-1).indent) stack.pop();
     let valueOut = raw;
     if (!raw) {
@@ -21588,7 +22465,7 @@ function parseLooseYaml(value) {
     } else if (/^(true|false)$/i.test(raw)) valueOut = raw.toLowerCase() === "true";
     else if (/^-?\d+(?:\.\d+)?$/.test(raw)) valueOut = Number(raw);
     else valueOut = parseJSON(raw, raw.replace(/^['"]|['"]$/g, ""));
-    stack.at(-1).object[key4] = valueOut;
+    stack.at(-1).object[key5] = valueOut;
     if (isObject2(valueOut)) stack.push({ indent, object: valueOut });
   }
   return output2;
@@ -21651,8 +22528,8 @@ var preferredJson = (source) => extractJsonBlocks(source).sort((a, b) => jsonPri
 function jsonPriority(value) {
   if (Array.isArray(value)) return value.every((item) => item && typeof item.op === "string" && typeof item.path === "string") ? 4 : 1;
   if (!isObject2(value)) return -1;
-  if (["patch", "patches", "jsonPatch", "battle_patch", "unit_patch"].some((key4) => key4 in value) || value.op && value.path) return 4;
-  if (["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"].some((key4) => key4 in value)) return 3;
+  if (["patch", "patches", "jsonPatch", "battle_patch", "unit_patch"].some((key5) => key5 in value) || value.op && value.path) return 4;
+  if (["units", "skills", "equipment", "items", "statusTemplates", "covers", "interactives", "zones"].some((key5) => key5 in value)) return 3;
   return 1;
 }
 function parseAIResponse(value) {
@@ -21671,10 +22548,10 @@ function parseAIResponse(value) {
       const intact = blocks.length && blocks.every(({ parsed: block, index, end }) => {
         const gap = batchText.slice(cursor, index);
         cursor = end;
-        return !/[{}\[\]`]/.test(gap) && isObject2(block) && Object.entries(block).every(([key4, val]) => keys.includes(key4) && Array.isArray(val));
+        return !/[{}\[\]`]/.test(gap) && isObject2(block) && Object.entries(block).every(([key5, val]) => keys.includes(key5) && Array.isArray(val));
       }) && !/[{}\[\]`]/.test(batchText.slice(cursor));
       if (!intact) return { data: null, patch: null, text: source, parseError: `\u6700\u7EC8 JSON \u65E0\u6548\uFF1A${error2.message}` };
-      parsed = Object.fromEntries(keys.filter((key4) => blocks.some((b) => Object.hasOwn(b.parsed, key4))).map((key4) => [key4, blocks.flatMap((b) => b.parsed[key4] ?? [])]));
+      parsed = Object.fromEntries(keys.filter((key5) => blocks.some((b) => Object.hasOwn(b.parsed, key5))).map((key5) => [key5, blocks.flatMap((b) => b.parsed[key5] ?? [])]));
     }
   } else parsed = preferredJson(source) ?? null;
   const patch = parsed?.battle_patch || parsed?.unit_patch || parsed?.patch || (parsed && (parsed.op || parsed.path || parsed.value) ? parsed : null);
@@ -21686,9 +22563,9 @@ function requestTavernAI(host, config, messages, fetchImpl, signal, onStreamChun
 }
 
 // src/tavern/mvu-utils.js
-var own21 = (value, key4) => value != null && Object.hasOwn(value, key4);
+var own21 = (value, key5) => value != null && Object.hasOwn(value, key5);
 var isObject3 = (value) => value && typeof value === "object" && !Array.isArray(value);
-var safeProperty2 = (key4) => !["__proto__", "prototype", "constructor"].includes(key4);
+var safeProperty2 = (key5) => !["__proto__", "prototype", "constructor"].includes(key5);
 function deepClone(value) {
   try {
     return structuredClone(value);
@@ -21703,16 +22580,16 @@ function deepClone(value) {
 function deepMerge2(base, extra) {
   const result = isObject3(base) ? deepClone(base) : {};
   if (!isObject3(extra)) return result;
-  for (const [key4, value] of Object.entries(extra)) {
-    if (!safeProperty2(key4)) continue;
-    result[key4] = isObject3(value) && isObject3(result[key4]) ? deepMerge2(result[key4], value) : deepClone(value);
+  for (const [key5, value] of Object.entries(extra)) {
+    if (!safeProperty2(key5)) continue;
+    result[key5] = isObject3(value) && isObject3(result[key5]) ? deepMerge2(result[key5], value) : deepClone(value);
   }
   return result;
 }
 function normalizePath(path2) {
-  return typeof path2 === "string" && path2.startsWith("/") ? path2.slice(1).split("/").map((key4) => key4.replaceAll("~1", "/").replaceAll("~0", "~")) : [];
+  return typeof path2 === "string" && path2.startsWith("/") ? path2.slice(1).split("/").map((key5) => key5.replaceAll("~1", "/").replaceAll("~0", "~")) : [];
 }
-var arrayIndex = (key4) => /^(0|[1-9]\d*)$/.test(key4);
+var arrayIndex = (key5) => /^(0|[1-9]\d*)$/.test(key5);
 function applyJsonPatch(document2, patch, { strict = false } = {}) {
   const result = deepClone(document2);
   for (const operation2 of patch) {
@@ -21722,18 +22599,18 @@ function applyJsonPatch(document2, patch, { strict = false } = {}) {
     if (!keys.length || !keys.every(safeProperty2)) throw new Error("AI \u8FD4\u56DE\u4E86\u4E0D\u652F\u6301\u7684\u8865\u4E01\u8DEF\u5F84");
     const last = keys.pop();
     let parent = result;
-    for (const key4 of keys) {
+    for (const key5 of keys) {
       if (!parent || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${path2}`);
-      if (Array.isArray(parent) && (!arrayIndex(key4) || Number(key4) >= parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${path2}`);
-      if (!own21(parent, key4) || !strict && (!parent[key4] || typeof parent[key4] !== "object")) {
+      if (Array.isArray(parent) && (!arrayIndex(key5) || Number(key5) >= parent.length)) throw new Error(`\u6570\u7EC4\u7D22\u5F15\u65E0\u6548\uFF1A${path2}`);
+      if (!own21(parent, key5) || !strict && (!parent[key5] || typeof parent[key5] !== "object")) {
         if (strict) throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u5B58\u5728\uFF1A${path2}`);
         if (op === "remove") {
           parent = null;
           break;
         }
-        parent[key4] = {};
+        parent[key5] = {};
       }
-      parent = parent[key4];
+      parent = parent[key5];
     }
     if (!strict && parent === null && op === "remove") continue;
     if (!parent || typeof parent !== "object") throw new Error(`\u8865\u4E01\u8DEF\u5F84\u4E0D\u53EF\u5199\uFF1A${path2}`);
@@ -21774,14 +22651,14 @@ function fingerprintAt(state, path2) {
   const keys = normalizePath(path2);
   if (!keys.length) return void 0;
   let value = state;
-  for (const key4 of keys) {
-    if (value == null || !own21(value, key4)) return void 0;
-    value = value[key4];
+  for (const key5 of keys) {
+    if (value == null || !own21(value, key5)) return void 0;
+    value = value[key5];
   }
   return JSON.stringify(value);
 }
 function partitionNormalizationPatch({ liveState, baselineState, existingOps = [], rawPatch = [], conflictingDefinitions = [], validate = () => {
-}, apply: apply2 = applyPatch, normalize = (state) => state, allowedUnitIds, expand = (operation2) => [operation2] }) {
+}, apply: apply3 = applyPatch, normalize = (state) => state, allowedUnitIds, expand = (operation2) => [operation2] }) {
   const candidates = [], rejected = [];
   for (const [index, operation2] of (Array.isArray(rawPatch) ? rawPatch : []).entries()) {
     const unitId = typeof operation2?.path === "string" ? operation2.path.match(/^\/units\/([^/]+)/)?.[1] : void 0;
@@ -21823,15 +22700,15 @@ function partitionNormalizationPatch({ liveState, baselineState, existingOps = [
   };
   const trial = (live3, base, items) => {
     const operations2 = items.flatMap((item) => expand(strip(item)));
-    const nextLive = apply2(deepClone(live3), operations2, true);
-    const nextBase = apply2(deepClone(base), operations2, true);
+    const nextLive = apply3(deepClone(live3), operations2, true);
+    const nextBase = apply3(deepClone(base), operations2, true);
     for (const state of [nextLive, nextBase]) {
       normalize(state);
       validate(state);
     }
     return { nextLive, nextBase };
   };
-  let workLive = deepClone(liveState), workBase = apply2(deepClone(baselineState), existingOps, true);
+  let workLive = deepClone(liveState), workBase = apply3(deepClone(baselineState), existingOps, true);
   try {
     const { nextLive, nextBase } = trial(workLive, workBase, candidates);
     return { accepted: candidates, rejected, workLive: nextLive, workBase: nextBase };
@@ -21896,22 +22773,22 @@ function patchValue(value, table4) {
       normalized.maxHp ??= normalized.hp ?? 1;
       normalized.hp ??= normalized.maxHp;
       normalized.cover ??= normalized.shielding ?? 2;
-      for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key5)) delete normalized[key5];
+      for (const key6 of Object.keys(normalized)) if (!["id", "name", "x", "y", "material", "hp", "maxHp", "cover"].includes(key6)) delete normalized[key6];
     }
     if (table4 === "interactives") {
       normalized.name ??= "\u4E92\u52A8\u70B9";
       normalized.kind ??= "barrel";
       normalized.spent ??= false;
-      for (const key5 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key5)) delete normalized[key5];
+      for (const key6 of Object.keys(normalized)) if (!["id", "name", "x", "y", "kind", "spent"].includes(key6)) delete normalized[key6];
     }
-    const key4 = String(normalized.id || normalized.name || index);
-    return [key4, normalized];
+    const key5 = String(normalized.id || normalized.name || index);
+    return [key5, normalized];
   }));
 }
 function normalizeSemanticPatch(patch) {
   if (!isObject3(patch)) return patch;
   const result = deepClone(patch);
-  for (const key4 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills", "summonTemplates", "customElements"]) if (Array.isArray(result[key4])) result[key4] = patchValue(result[key4], key4);
+  for (const key5 of ["units", "covers", "interactives", "zones", "items", "equipment", "skills", "summonTemplates", "customElements"]) if (Array.isArray(result[key5])) result[key5] = patchValue(result[key5], key5);
   if (isObject3(result.unit_patch)) {
     const unitPatch = result.unit_patch;
     const id3 = unitPatch.unitId || unitPatch.id;
@@ -21951,7 +22828,7 @@ function chatPatch(state, payload) {
     return list4;
   }
   if (!isObject3(semantic)) throw unrecognized();
-  const slice = Object.fromEntries(chatTables.filter((key4) => own21(semantic, key4)).map((key4) => [key4, semantic[key4]]));
+  const slice = Object.fromEntries(chatTables.filter((key5) => own21(semantic, key5)).map((key5) => [key5, semantic[key5]]));
   if (isObject3(semantic.unit_patch)) {
     const { unitId, id: id4 = unitId, patch } = semantic.unit_patch;
     if (!id4 || !safeProperty2(id4) || !own21(state.units, id4) || !isObject3(patch)) throw unrecognized();
@@ -22007,7 +22884,7 @@ function parseJSON2(value, fallback = null) {
 }
 var TAVERN_VERSION = "0.5.4";
 var LARGE_CONFIG_KEYS = ["charSnapshots", "normalizationBatches", "narrativeExemptions", "unresolvedNotes"];
-var separateConfigKey = (key4, field2) => `${key4}/${field2}`;
+var separateConfigKey = (key5, field2) => `${key5}/${field2}`;
 var DEFAULT_CONFIG = {
   apiMode: "tavern",
   baseUrl: "",
@@ -22040,7 +22917,7 @@ var DEFAULT_CONFIG = {
   normalizationBatches: {},
   narrativeExemptions: {},
   unresolvedNotes: {},
-  ...Object.fromEntries(Object.entries(normalizationLimits).map(([key4, { fallback }]) => [key4, fallback])),
+  ...Object.fromEntries(Object.entries(normalizationLimits).map(([key5, { fallback }]) => [key5, fallback])),
   slots: describeSlots(),
   extraText: "",
   aiSessions: { sessions: [], activeId: null },
@@ -22049,13 +22926,13 @@ var DEFAULT_CONFIG = {
   stream: true,
   timeoutMs: 24e4
 };
-function configFor(storage, key4) {
+function configFor(storage, key5) {
   try {
-    const saved = parseJSON2(storage?.getItem(key4), {});
+    const saved = parseJSON2(storage?.getItem(key5), {});
     const settings = Object.fromEntries(Object.entries(saved ?? {}).filter(([field2]) => field2 !== "instances" && field2 !== "aiSessions" && field2 !== "nonCombatPersistenceScope" && !LARGE_CONFIG_KEYS.includes(field2)));
-    const separateSessions = parseJSON2(storage?.getItem(`${key4}/ai-sessions`), null);
+    const separateSessions = parseJSON2(storage?.getItem(`${key5}/ai-sessions`), null);
     const separateLarge = Object.fromEntries(LARGE_CONFIG_KEYS.flatMap((field2) => {
-      const value = parseJSON2(storage?.getItem(separateConfigKey(key4, field2)), null);
+      const value = parseJSON2(storage?.getItem(separateConfigKey(key5, field2)), null);
       return value == null ? [] : [[field2, value]];
     }));
     const mode = saved?.apiMode ?? (saved?.baseUrl ? "direct" : "tavern");
@@ -22073,10 +22950,10 @@ function configFor(storage, key4) {
 function isQuotaExceededError(error2) {
   return error2?.name === "QuotaExceededError" || error2?.name === "NS_ERROR_DOM_QUOTA_REACHED" || error2?.code === 22 || error2?.code === 1014;
 }
-function putConfig(storage, key4, value, onError) {
+function putConfig(storage, key5, value, onError) {
   try {
     if (!storage) return false;
-    storage.setItem(key4, JSON.stringify(value));
+    storage.setItem(key5, JSON.stringify(value));
     return true;
   } catch (error2) {
     onError?.(error2);
@@ -22119,7 +22996,7 @@ function tavernIdentity(host) {
   return "";
 }
 var floorNodes = (doc) => [...doc?.querySelectorAll?.(".mes, .chat-msg, [data-message-id], [data-mesid]") ?? []];
-var floorId = (node) => ["mesid", "data-message-id", "data-mesid"].map((key4) => node.getAttribute(key4)).map((id3) => text6(id3).trim()).find(Boolean);
+var floorId = (node) => ["mesid", "data-message-id", "data-mesid"].map((key5) => node.getAttribute(key5)).map((id3) => text6(id3).trim()).find(Boolean);
 async function tavernMessages(host) {
   const messages = await readChatMessages(host);
   if (messages.length) return messages;
@@ -22230,21 +23107,21 @@ var DIAGNOSTIC_GROUPS = Object.freeze([
 ]);
 
 // src/tavern/mvu-writeback.js
-var field = (key4, suffix) => `fated-tactical/${key4}/mvu-${suffix}`;
+var field = (key5, suffix) => `fated-tactical/${key5}/mvu-${suffix}`;
 var branch = (id3) => id3 != null && /^\d+$/.test(String(id3)) ? Number(id3) : NaN;
 var equal2 = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function at2(root2, path2) {
   if (!path2.startsWith("/stat_data/")) throw new Error("\u6218\u679C\u8DEF\u5F84\u4E0D\u5728 stat_data \u5185");
   let value = root2;
   for (const part of path2.slice(1).split("/")) {
-    const key4 = part.replace(/~1/g, "/").replace(/~0/g, "~");
-    if (!value || typeof value !== "object" || !Object.hasOwn(value, key4)) return { exists: false };
-    value = value[key4];
+    const key5 = part.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (!value || typeof value !== "object" || !Object.hasOwn(value, key5)) return { exists: false };
+    value = value[key5];
   }
   return { exists: true, value };
 }
-function read(storage, key4) {
-  return JSON.parse(storage.getItem(key4) || "null");
+function read(storage, key5) {
+  return JSON.parse(storage.getItem(key5) || "null");
 }
 async function outcomeDigest(patch) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(patch)));
@@ -22269,22 +23146,22 @@ function difference(path2, before, after) {
   return equal2(before, after) ? [] : [after.exists ? { op: before.exists ? "replace" : "add", path: path2, value: after.value } : { op: "remove", path: path2 }];
 }
 var active2 = /* @__PURE__ */ new Map();
-async function exclusive(key4, callback2) {
-  if (active2.has(key4)) throw new Error("\u672C\u573A MVU \u540C\u6B65\u6B63\u5728\u8FDB\u884C");
-  active2.set(key4, true);
+async function exclusive(key5, callback2) {
+  if (active2.has(key5)) throw new Error("\u672C\u573A MVU \u540C\u6B65\u6B63\u5728\u8FDB\u884C");
+  active2.set(key5, true);
   try {
-    return await (globalThis.navigator?.locks ? navigator.locks.request(`fated-mvu:${key4}`, callback2) : callback2());
+    return await (globalThis.navigator?.locks ? navigator.locks.request(`fated-mvu:${key5}`, callback2) : callback2());
   } finally {
-    active2.delete(key4);
+    active2.delete(key5);
   }
 }
-function writebackReceipt(storage, key4) {
-  return read(storage, field(key4, "writeback-receipt"));
+function writebackReceipt(storage, key5) {
+  return read(storage, field(key5, "writeback-receipt"));
 }
-function rollbackBattleOutcome({ storage, host, key: key4, lastMessageId, assertContext = () => {
+function rollbackBattleOutcome({ storage, host, key: key5, lastMessageId, assertContext = () => {
 } }) {
-  return exclusive(key4, async () => {
-    const journalKey = field(key4, "pre-writeback"), journal = read(storage, journalKey);
+  return exclusive(key5, async () => {
+    const journalKey = field(key5, "pre-writeback"), journal = read(storage, journalKey);
     if (!journal || Number(lastMessageId) > journal.targetMessageId) return false;
     const { statData: statData2, swipeId } = await readWritebackTarget(host, journal.targetMessageId);
     if (branch(swipeId) !== branch(journal.targetSwipeId)) throw new Error("SWIPE_MISMATCH\uFF1A\u65E0\u6CD5\u56DE\u6EDA\u5176\u4ED6 Swipe");
@@ -22296,7 +23173,7 @@ function rollbackBattleOutcome({ storage, host, key: key4, lastMessageId, assert
     }
     assertContext();
     if (patch.length) await guardedWrite(host, journal, patch, statData2);
-    storage.removeItem(field(key4, "writeback-receipt"));
+    storage.removeItem(field(key5, "writeback-receipt"));
     storage.removeItem(journalKey);
     return true;
   });
@@ -22305,16 +23182,16 @@ async function guardedWrite(host, target2, patch, expectedStatData) {
   const result = await writeBattleVariables(host, { messageId: target2.targetMessageId, expectedSwipeId: target2.targetSwipeId, patch, expectedStatData });
   if (!result?.ok) throw new Error(`${result?.code ?? "MVU_WRITE_FAILED"}\uFF1A${result?.message ?? "\u672A\u5199\u5165"}`);
 }
-function writeBattleOutcome({ storage, host, key: key4, battleId, opening, patch, source, targetMessageId, targetSwipeId, force = false, assertContext = () => {
+function writeBattleOutcome({ storage, host, key: key5, battleId, opening, patch, source, targetMessageId, targetSwipeId, force = false, assertContext = () => {
 } }) {
-  return exclusive(key4, async () => {
+  return exclusive(key5, async () => {
     const origin = await readWritebackTarget(host, Number(source.messageId));
     if (branch(origin.swipeId) !== branch(source.swipeId)) throw new Error("SWIPE_MISMATCH\uFF1A\u89E6\u53D1\u6218\u6597\u7684\u697C\u5C42\u5DF2\u5207\u6362 Swipe");
     const sameFloor = Number(source.messageId) === targetMessageId;
     const target2 = sameFloor ? origin : await readWritebackTarget(host, targetMessageId);
     if (branch(target2.swipeId) !== branch(targetSwipeId)) throw new Error("SWIPE_MISMATCH\uFF1A\u76EE\u6807\u697C\u5C42\u5DF2\u5207\u6362 Swipe");
-    const digest = await outcomeDigest(patch), receipt = writebackReceipt(storage, key4);
-    const journalKey = field(key4, "pre-writeback");
+    const digest = await outcomeDigest(patch), receipt = writebackReceipt(storage, key5);
+    const journalKey = field(key5, "pre-writeback");
     const prior = read(storage, journalKey);
     if (prior && (prior.targetMessageId !== targetMessageId || String(prior.targetSwipeId) !== String(targetSwipeId))) throw new Error("\u672C\u573A\u5DF2\u7ED1\u5B9A\u5176\u4ED6\u5199\u56DE\u697C\u5C42\u6216 Swipe\uFF0C\u8BF7\u5148\u56DE\u6EDA");
     if (!force && receipt?.outcomeDigest === digest && prior && receipt.targetMessageId === targetMessageId && String(receipt.targetSwipeId) === String(targetSwipeId)) return receipt;
@@ -22349,8 +23226,8 @@ function writeBattleOutcome({ storage, host, key: key4, battleId, opening, patch
         throw error2;
       }
     }
-    const next = { battleKey: key4, battleId, outcomeDigest: digest, targetMessageId, targetSwipeId, writtenAt: Date.now() };
-    storage.setItem(field(key4, "writeback-receipt"), JSON.stringify(next));
+    const next = { battleKey: key5, battleId, outcomeDigest: digest, targetMessageId, targetSwipeId, writtenAt: Date.now() };
+    storage.setItem(field(key5, "writeback-receipt"), JSON.stringify(next));
     return next;
   });
 }
@@ -22364,9 +23241,9 @@ function repairWarnings(accepted = {}) {
   const output2 = [];
   const seen = /* @__PURE__ */ new Set();
   for (const warning of [...accepted.repairWarnings ?? [], ...accepted.missingWarnings ?? accepted.missing ?? []]) {
-    const key4 = JSON.stringify([warning?.unitId ?? null, warning?.originPath ?? null, warning?.message ?? ""]);
-    if (!seen.has(key4)) {
-      seen.add(key4);
+    const key5 = JSON.stringify([warning?.unitId ?? null, warning?.originPath ?? null, warning?.message ?? ""]);
+    if (!seen.has(key5)) {
+      seen.add(key5);
       output2.push(warning);
     }
   }
@@ -22399,7 +23276,7 @@ function acceptNormalizationResponse({
   records: records2 = {},
   sourceFor = () => void 0,
   duplicateOperations: duplicateOperations2 = (operation2) => [],
-  apply: apply2 = applyPatch,
+  apply: apply3 = applyPatch,
   validate = () => {
   },
   normalize = (state) => state,
@@ -22440,7 +23317,7 @@ function acceptNormalizationResponse({
       conflictingDefinitions: conflicts.filter((item) => item.op.op === "add" && /^\/(?:customElements|skills|statusTemplates)\/[^/]+$/.test(item.path)).map((item) => item.path),
       allowedUnitIds: unitIds,
       expand,
-      apply: apply2,
+      apply: apply3,
       validate,
       normalize
     });
@@ -22458,7 +23335,7 @@ function acceptNormalizationResponse({
       const parentPath = operation2.path.slice(0, operation2.path.lastIndexOf("/"));
       const path2 = operation2.op === "replace" || !fingerprintAt(next, parentPath)?.startsWith("[") ? operation2.path : parentPath;
       const before2 = fingerprintAt(next, path2);
-      next = apply2(next, expand(operation2), true);
+      next = apply3(next, expand(operation2), true);
       const after = fingerprintAt(next, path2);
       if (after !== before2) changedAtApply.set(operation2, { path: path2, after });
     }
@@ -22498,7 +23375,7 @@ function acceptNormalizationResponse({
       throw new Error("\u6A21\u578B\u8FD4\u56DE\u7684\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u6218\u5C40");
     }
     let before;
-    if (patch.length || data.existing?.length) before = apply2(baseline, existingOps, true);
+    if (patch.length || data.existing?.length) before = apply3(baseline, existingOps, true);
     const verified = (Array.isArray(data.existing) ? data.existing : []).flatMap((receipt, index) => {
       try {
         const [entry2] = existingEffectReceipts([receipt], sent, baseline, before, current, fingerprintAt);
@@ -22621,15 +23498,15 @@ async function runNormalizationRepair({ batch, index, result, commit, request, o
 // src/tavern/overlay-storage.js
 var PREFIX = "fated-tactical/";
 var CUSTOM_ELEMENTS_KEY = `${PREFIX}custom-elements`;
-var GLOBAL_STATE_KEYS = new Set(["battle-v1", "battle-v1/seed", "carry-v1", "reset-probe"].map((key4) => PREFIX + key4).concat(CUSTOM_ELEMENTS_KEY));
+var GLOBAL_STATE_KEYS = new Set(["battle-v1", "battle-v1/seed", "carry-v1", "reset-probe"].map((key5) => PREFIX + key5).concat(CUSTOM_ELEMENTS_KEY));
 var BATTLE_SNAPSHOT = `${PREFIX}battle-v1`;
 var TAVERN_PREFIX = `${PREFIX}tavern/`;
 var INSTANCES_PREFIX = `${PREFIX}instances/`;
 var MAX_RETAINED_BATCH_BATTLES = 2;
-function parseStoredBattleKey(key4) {
-  if (!key4?.startsWith(PREFIX) || key4.startsWith(TAVERN_PREFIX) || key4.startsWith(INSTANCES_PREFIX) || GLOBAL_STATE_KEYS.has(key4)) return null;
-  const slash = key4.indexOf("/", PREFIX.length);
-  return slash > PREFIX.length ? key4.slice(PREFIX.length, slash) : null;
+function parseStoredBattleKey(key5) {
+  if (!key5?.startsWith(PREFIX) || key5.startsWith(TAVERN_PREFIX) || key5.startsWith(INSTANCES_PREFIX) || GLOBAL_STATE_KEYS.has(key5)) return null;
+  const slash = key5.indexOf("/", PREFIX.length);
+  return slash > PREFIX.length ? key5.slice(PREFIX.length, slash) : null;
 }
 function loadCustomElements(storage) {
   try {
@@ -22640,7 +23517,7 @@ function loadCustomElements(storage) {
     return {};
   }
 }
-function mergeCustomElements(storage, elements = {}, write = (key4, value) => storage?.setItem(key4, JSON.stringify(value))) {
+function mergeCustomElements(storage, elements = {}, write = (key5, value) => storage?.setItem(key5, JSON.stringify(value))) {
   const current = loadCustomElements(storage);
   const merged = { ...current, ...elements };
   validateCustomElements(merged);
@@ -22651,12 +23528,12 @@ function pruneBattleStorageExcept(storage, keepKey) {
   let removedKeys = 0, freedBytes = 0;
   try {
     const keys = Array.from({ length: storage?.length ?? 0 }, (_, i) => storage.key(i));
-    for (const key4 of keys) {
-      const battle = parseStoredBattleKey(key4);
-      if (!battle || battle === keepKey && !GLOBAL_UI_PREF_KEYS.has(key4.slice(PREFIX.length + battle.length + 1))) continue;
+    for (const key5 of keys) {
+      const battle = parseStoredBattleKey(key5);
+      if (!battle || battle === keepKey && !GLOBAL_UI_PREF_KEYS.has(key5.slice(PREFIX.length + battle.length + 1))) continue;
       try {
-        const bytes = (key4.length + (storage.getItem(key4)?.length ?? 0)) * 2;
-        storage.removeItem(key4);
+        const bytes = (key5.length + (storage.getItem(key5)?.length ?? 0)) * 2;
+        storage.removeItem(key5);
         removedKeys += 1;
         freedBytes += bytes;
       } catch {
@@ -22669,7 +23546,7 @@ function pruneBattleStorageExcept(storage, keepKey) {
 function pruneBattleScopedMap(record3, activeKey, maxBattles = MAX_RETAINED_BATCH_BATTLES) {
   if (!record3 || typeof record3 !== "object" || Array.isArray(record3) || maxBattles < 1) return {};
   const hasActive = activeKey && Object.hasOwn(record3, activeKey);
-  const others = Object.entries(record3).filter(([key4, value]) => key4 !== activeKey && value && typeof value === "object" && Object.keys(value).length > 0);
+  const others = Object.entries(record3).filter(([key5, value]) => key5 !== activeKey && value && typeof value === "object" && Object.keys(value).length > 0);
   const limit = maxBattles - Number(Boolean(activeKey));
   const result = Object.fromEntries(limit > 0 ? others.slice(-limit) : []);
   if (hasActive) result[activeKey] = record3[activeKey];
@@ -22682,17 +23559,17 @@ function toPersistedOpeningSource({ mvuData, latestFloor, battleInit, battleRaw,
   const relatedCharInfo = openingCharInfo(battleInit, mvuData, charInfo, protagonistName);
   return structuredClone({ mvuData, latestFloor, battleInit, battleRaw, charInfo: relatedCharInfo, protagonistName, battleKey, source });
 }
-function storageCategory(key4) {
-  if (key4 === CUSTOM_ELEMENTS_KEY) return "otherFatedBytes";
-  if (key4.startsWith(INSTANCES_PREFIX)) return "instancesBytes";
-  if (key4.startsWith(TAVERN_PREFIX)) {
-    const match = key4.slice(TAVERN_PREFIX.length).match(/\/(ai-sessions|charSnapshots|normalizationBatches|narrativeExemptions|unresolvedNotes)$/);
+function storageCategory(key5) {
+  if (key5 === CUSTOM_ELEMENTS_KEY) return "otherFatedBytes";
+  if (key5.startsWith(INSTANCES_PREFIX)) return "instancesBytes";
+  if (key5.startsWith(TAVERN_PREFIX)) {
+    const match = key5.slice(TAVERN_PREFIX.length).match(/\/(ai-sessions|charSnapshots|normalizationBatches|narrativeExemptions|unresolvedNotes)$/);
     if (match?.[1] === "ai-sessions") return "aiSessionsBytes";
     if (match?.[1] === "charSnapshots") return "charSnapshotsBytes";
     return match ? "normalizationBatchesBytes" : "chatConfigBytes";
   }
-  const battle = parseStoredBattleKey(key4);
-  const field2 = battle ? key4.slice(PREFIX.length + battle.length + 1) : key4;
+  const battle = parseStoredBattleKey(key5);
+  const field2 = battle ? key5.slice(PREFIX.length + battle.length + 1) : key5;
   if (field2 === BATTLE_SNAPSHOT || field2 === `${BATTLE_SNAPSHOT}/seed`) return "battleSnapshotBytes";
   if (field2 === "opening-source" || field2 === "chat-opening-patches") return "openingSourceBytes";
   if (field2.startsWith("mvu-")) return "mvuWritebackBytes";
@@ -22713,12 +23590,12 @@ function computeStorageDiagnostics(storage, activeBattleKey) {
   const summary = { totalBytes: 0, keyCount: 0, activeBattleKey: activeBattleKey ?? null, categories };
   try {
     for (let i = 0; i < (storage?.length ?? 0); i += 1) {
-      const key4 = storage.key(i);
-      if (!key4?.startsWith(PREFIX)) continue;
-      const bytes = (key4.length + (storage.getItem(key4)?.length ?? 0)) * 2;
+      const key5 = storage.key(i);
+      if (!key5?.startsWith(PREFIX)) continue;
+      const bytes = (key5.length + (storage.getItem(key5)?.length ?? 0)) * 2;
       summary.totalBytes += bytes;
       summary.keyCount += 1;
-      categories[storageCategory(key4)] += bytes;
+      categories[storageCategory(key5)] += bytes;
     }
   } catch {
   }
@@ -22774,11 +23651,11 @@ function text7(value) {
 }
 function el(doc, tag2, attrs3, content) {
   const n = doc.createElement(tag2);
-  for (const [key4, value] of Object.entries(attrs3 || {})) {
-    if (key4 === "class") n.className = value;
-    else if (key4 === "style") n.style.cssText = value;
-    else if (key4 === "text") n.textContent = value;
-    else if (value != null) n.setAttribute(key4, value);
+  for (const [key5, value] of Object.entries(attrs3 || {})) {
+    if (key5 === "class") n.className = value;
+    else if (key5 === "style") n.style.cssText = value;
+    else if (key5 === "text") n.textContent = value;
+    else if (value != null) n.setAttribute(key5, value);
   }
   if (content != null) n.textContent = content;
   return n;
@@ -22814,9 +23691,9 @@ function mountTavernOverlay(options = {}) {
   let characters = {}, scanStatus = "", duplicatePaths = /* @__PURE__ */ new Map();
   const groupId = (id4) => config.instances[id4]?.archetypeId ?? characters[id4]?.archetypeId ?? id4;
   const openingSources = /* @__PURE__ */ new Map();
-  const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter((key4) => own22(config.instances, key4)).map(groupId))];
-  const batches = (key4) => config.normalizationBatches?.[key4] ?? [];
-  const operations2 = (key4) => batches(key4).flatMap((batch) => batch.patch);
+  const selectedIds = () => [...new Set((config.rosterSelection ?? Object.keys(config.instances)).filter((key5) => own22(config.instances, key5)).map(groupId))];
+  const batches = (key5) => config.normalizationBatches?.[key5] ?? [];
+  const operations2 = (key5) => batches(key5).flatMap((batch) => batch.patch);
   let battleObserver = null, diagnostics = { phase: "created" };
   const listeners = [], controller = typeof AbortController === "function" ? new AbortController() : null;
   const on = (node, event, fn, opts = {}) => {
@@ -22832,10 +23709,10 @@ function mountTavernOverlay(options = {}) {
     const customElements = loadCustomElements(storage);
     const hydratedInput = { ...input, customElements };
     if (custom) return custom(hydratedInput, { seed, throwOnValidation: true }).state;
-    const key4 = JSON.stringify([hydratedInput, seed ?? null]);
-    if (baselineCache.key === key4 && baselineCache.state) return structuredClone(baselineCache.state);
+    const key5 = JSON.stringify([hydratedInput, seed ?? null]);
+    if (baselineCache.key === key5 && baselineCache.state) return structuredClone(baselineCache.state);
     const state = hydrateFromSources(hydratedInput, { seed, throwOnValidation: true }).state;
-    baselineCache.key = key4;
+    baselineCache.key = key5;
     baselineCache.state = structuredClone(state);
     return structuredClone(state);
   }
@@ -22851,19 +23728,19 @@ function mountTavernOverlay(options = {}) {
   const tabs = el(doc, "nav", { class: "fated-tavern-tabs", role: "tablist" });
   const content = el(doc, "div", { class: "fated-tavern-content" });
   const pages = {};
-  for (const [key4, label] of [["instances", "\u{1F4E6} \u5B9E\u4F8B\u7EF4\u62A4"], ["prompt", "\u{1F9E9} \u63D0\u793A\u8BCD\u7EC4\u88C5"], ["api", "\u{1F50C} API \u8BBE\u7F6E"], ["ai", "\u{1F916} \u8F85\u52A9 AI"], ["sandbox", "\u2694\uFE0F \u6C99\u76D8"]]) {
-    const button = el(doc, "button", { type: "button", role: "tab", "aria-selected": key4 === "instances" ? "true" : "false", "data-tab": key4 }, label);
-    const page = el(doc, "div", { class: `fated-tab ${key4 === "instances" ? "active" : ""}`, "data-page": key4 });
+  for (const [key5, label] of [["instances", "\u{1F4E6} \u5B9E\u4F8B\u7EF4\u62A4"], ["prompt", "\u{1F9E9} \u63D0\u793A\u8BCD\u7EC4\u88C5"], ["api", "\u{1F50C} API \u8BBE\u7F6E"], ["ai", "\u{1F916} \u8F85\u52A9 AI"], ["sandbox", "\u2694\uFE0F \u6C99\u76D8"]]) {
+    const button = el(doc, "button", { type: "button", role: "tab", "aria-selected": key5 === "instances" ? "true" : "false", "data-tab": key5 }, label);
+    const page = el(doc, "div", { class: `fated-tab ${key5 === "instances" ? "active" : ""}`, "data-page": key5 });
     tabs.append(button);
     content.append(page);
-    pages[key4] = page;
+    pages[key5] = page;
     on(button, "click", () => {
       Object.entries(pages).forEach(([name, node]) => {
-        node.classList.toggle("active", name === key4);
+        node.classList.toggle("active", name === key5);
       });
       [...tabs.children].forEach((x) => x.setAttribute("aria-selected", String(x === button)));
-      if (key4 === "prompt" || key4 === "api") renderSettings(page, key4, settingsContext());
-      if (key4 === "ai") aiPage?.show();
+      if (key5 === "prompt" || key5 === "api") renderSettings(page, key5, settingsContext());
+      if (key5 === "ai") aiPage?.show();
     });
   }
   const toast = el(doc, "aside", { class: "fated-toast", hidden: "", role: "status", "aria-live": "polite" });
@@ -22883,11 +23760,11 @@ function mountTavernOverlay(options = {}) {
     toast.hidden = true;
   });
   const warningDisplay = (warning) => warning.userSummary || diagnosticText(warning.message);
-  function exemptionRecords(key4, warnings = []) {
-    const local = config.narrativeExemptions[key4] ?? [];
-    if (!key4 || !warnings.some(isSceneZoneWarning)) return local;
+  function exemptionRecords(key5, warnings = []) {
+    const local = config.narrativeExemptions[key5] ?? [];
+    if (!key5 || !warnings.some(isSceneZoneWarning)) return local;
     const prefix = `${safeKey3(chatId(host))}__`;
-    return [...local, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key4 && other.startsWith(prefix)).flatMap(([, receipts]) => receipts.filter(isSceneZoneWarning))];
+    return [...local, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key5 && other.startsWith(prefix)).flatMap(([, receipts]) => receipts.filter(isSceneZoneWarning))];
   }
   function warningGroups(warnings = sources.warnings ?? []) {
     const live3 = liveState();
@@ -22902,15 +23779,15 @@ function mountTavernOverlay(options = {}) {
     if (!activeBattleKey || aiController) return;
     syncSettings();
     const battle = activeBattleKey;
-    const key4 = warningKey(warning), { unitId } = warning;
+    const key5 = warningKey(warning), { unitId } = warning;
     const scene = isSceneZoneWarning(warning);
     if (unitId === null && !scene) return;
     const semanticKey = scene ? semanticExemptionKey(warning) : void 0;
-    const receipts = (config.narrativeExemptions[battle] ?? []).filter((entry2) => (entry2.key !== key4 || entry2.unitId !== unitId) && (!scene || entry2.semanticKey !== semanticKey));
+    const receipts = (config.narrativeExemptions[battle] ?? []).filter((entry2) => (entry2.key !== key5 || entry2.unitId !== unitId) && (!scene || entry2.semanticKey !== semanticKey));
     const notes2 = { ...config.unresolvedNotes[battle] };
     const bucket = unitId ?? "";
     notes2[bucket] = { ...notes2[bucket] };
-    delete notes2[bucket][key4];
+    delete notes2[bucket][key5];
     if (!Object.keys(notes2[bucket]).length) delete notes2[bucket];
     if (ignore || scene) {
       const source = narrativeSourceFor(characters)(unitId, warningEntryKey(warning));
@@ -22918,7 +23795,7 @@ function mountTavernOverlay(options = {}) {
       const reason = ignore ? "\u73A9\u5BB6\u5DF2\u8BBE\u4E3A\u975E\u6218\u6597\u5FFD\u7565" : "\u73A9\u5BB6\u5DF2\u6062\u590D\u4E3A\u5F85\u7F16\u8BD1";
       receipts.push(scene ? {
         unitId,
-        key: key4,
+        key: key5,
         source,
         reason,
         semanticKey,
@@ -22926,7 +23803,7 @@ function mountTavernOverlay(options = {}) {
         origin: "manual",
         status: ignore ? "active" : "revoked",
         updatedAt: Date.now()
-      } : { unitId, key: key4, source, reason, dismissed: true });
+      } : { unitId, key: key5, source, reason, dismissed: true });
     }
     persistSettings({
       narrativeExemptions: { ...config.narrativeExemptions, [battle]: receipts },
@@ -23024,22 +23901,22 @@ function mountTavernOverlay(options = {}) {
     }
   })();
   config.instances = isObject5(instances) ? instances : {};
-  function pruneBattleStorageExcept2(key4) {
-    for (const cachedKey of openingSources.keys()) if (cachedKey !== key4) openingSources.delete(cachedKey);
-    return pruneBattleStorageExcept(storage, key4);
+  function pruneBattleStorageExcept2(key5) {
+    for (const cachedKey of openingSources.keys()) if (cachedKey !== key5) openingSources.delete(cachedKey);
+    return pruneBattleStorageExcept(storage, key5);
   }
-  function writeWithEvictionRetry(key4, value) {
+  function writeWithEvictionRetry(key5, value) {
     let quotaExceeded = false;
-    if (putConfig(storage, key4, value, (error2) => {
+    if (putConfig(storage, key5, value, (error2) => {
       quotaExceeded = isQuotaExceededError(error2);
     })) return true;
-    return quotaExceeded && !!activeBattleKey && pruneBattleStorageExcept2(activeBattleKey).removedKeys > 0 && putConfig(storage, key4, value);
+    return quotaExceeded && !!activeBattleKey && pruneBattleStorageExcept2(activeBattleKey).removedKeys > 0 && putConfig(storage, key5, value);
   }
-  function retainedUnresolvedNotes(key4, notes2) {
+  function retainedUnresolvedNotes(key5, notes2) {
     const nextMap = { ...config.unresolvedNotes };
-    if (notes2 && Object.keys(notes2).length) nextMap[key4] = notes2;
-    else delete nextMap[key4];
-    return pruneBattleScopedMap(nextMap, key4);
+    if (notes2 && Object.keys(notes2).length) nextMap[key5] = notes2;
+    else delete nextMap[key5];
+    return pruneBattleScopedMap(nextMap, key5);
   }
   const notifyStorageFailure = () => notify("\u6570\u636E\u4EC5\u5728\u672C\u7A97\u53E3\u751F\u6548", "\u65E0\u6CD5\u5199\u5165\u6D4F\u89C8\u5668\u5B58\u50A8\u3002\u8BF7\u5148\u4E0B\u8F7D\u6218\u5C40\u5907\u4EFD\uFF1B\u5982\u9700\u5F7B\u5E95\u521D\u59CB\u5316\uFF0C\u53EF\u5728\u5B9E\u4F8B\u7EF4\u62A4\u70B9\u300C\u6E05\u7406\u811A\u672C\u7F13\u5B58\u300D\u3002");
   function save() {
@@ -23047,8 +23924,8 @@ function mountTavernOverlay(options = {}) {
   }
   function persistCustomElements(state) {
     if (!state?.customElements) return;
-    mergeCustomElements(storage, state.customElements, (key4, value) => {
-      if (!writeWithEvictionRetry(key4, value)) notifyStorageFailure();
+    mergeCustomElements(storage, state.customElements, (key5, value) => {
+      if (!writeWithEvictionRetry(key5, value)) notifyStorageFailure();
     });
   }
   const unsavedSettings = /* @__PURE__ */ new Set();
@@ -23069,21 +23946,21 @@ function mountTavernOverlay(options = {}) {
     }
     Object.assign(config, patch);
     const { instances: _instances, aiSessions: aiSessions2, ...settingsWithLarge } = config;
-    const settings = Object.fromEntries(Object.entries(settingsWithLarge).filter(([key4]) => !LARGE_CONFIG_KEYS.includes(key4)));
+    const settings = Object.fromEntries(Object.entries(settingsWithLarge).filter(([key5]) => !LARGE_CONFIG_KEYS.includes(key5)));
     const fields3 = [
       ["aiSessions", `${configKey}/ai-sessions`, aiSessions2],
       ...LARGE_CONFIG_KEYS.map((field2) => [field2, separateConfigKey(configKey, field2), config[field2]])
     ];
     let failed = false;
-    const write = (field2, key4, value) => {
-      if (writeWithEvictionRetry(key4, value)) unsavedSettings.delete(field2);
+    const write = (field2, key5, value) => {
+      if (writeWithEvictionRetry(key5, value)) unsavedSettings.delete(field2);
       else {
         unsavedSettings.add(field2);
         failed = true;
       }
     };
-    for (const [field2, key4, value] of fields3) {
-      if (Object.hasOwn(patch, field2)) write(field2, key4, value);
+    for (const [field2, key5, value] of fields3) {
+      if (Object.hasOwn(patch, field2)) write(field2, key5, value);
     }
     const hasMainSettings = (() => {
       try {
@@ -23442,7 +24319,7 @@ ${tag2.textContent || ""}
       if (!host.confirm("\u5F7B\u5E95\u521D\u59CB\u5316\u672C\u6D4F\u89C8\u5668\u5F53\u524D\u7AD9\u70B9\u7684\u547D\u5B9A\u6218\u672F\u811A\u672C\uFF1F\u5C06\u5220\u9664\u6240\u6709\u804A\u5929\u7684\u6C99\u76D8\u6218\u5C40\uFF08\u542B\u5F53\u524D\u8FDB\u5EA6\uFF09\u3001\u5B9E\u4F8B\u3001\u6807\u51C6\u5316\u7ED3\u679C\u3001\u8F85\u52A9 AI \u4F1A\u8BDD\u4E0E\u8865\u4E01\u3001API \u5BC6\u94A5\u548C\u8BBE\u7F6E\u3002\u4E0D\u4F1A\u5220\u9664\u9152\u9986\u804A\u5929\u3001MVU\u3001\u4E16\u754C\u4E66\u6216\u5176\u4ED6\u811A\u672C\u6570\u636E\u3002\u6B64\u64CD\u4F5C\u4E0D\u53EF\u64A4\u9500\uFF0C\u5EFA\u8BAE\u5148\u4E0B\u8F7D\u5FEB\u7167\u3002")) return;
       try {
         const keys = Array.from({ length: storage.length }, (_, i) => storage.key(i)).filter((k) => k?.startsWith("fated-tactical/"));
-        for (const key4 of keys) storage.removeItem(key4);
+        for (const key5 of keys) storage.removeItem(key5);
       } catch {
         notify("\u672A\u5B8C\u6210\u521D\u59CB\u5316", "\u6D4F\u89C8\u5668\u62D2\u7EDD\u6E05\u7406\u5B58\u50A8\uFF1B\u672A\u91CD\u65B0\u52A0\u8F7D\u3002");
         return;
@@ -23481,29 +24358,29 @@ ${tag2.textContent || ""}
     const entries3 = instanceGroups(config.instances);
     if (!entries3.length) list4.append(el(doc, "p", { class: "fated-mini" }, "\u6682\u65E0\u5B9E\u4F8B\u3002\u6253\u5F00\u6C99\u76D8\u4F1A\u81EA\u52A8\u8BFB\u53D6\u5F53\u524D MVU\u3001char_info \u548C battle_init\u3002"));
     for (const members of entries3) {
-      const [key4] = members;
-      const instance = config.instances[key4];
+      const [key5] = members;
+      const instance = config.instances[key5];
       const box = el(doc, "article", { class: "fated-instance" });
-      box.dataset.unitId = key4;
-      const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key4}` });
-      select.checked = selectedIds().includes(key4);
-      on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key4])] : selectedIds().filter((k) => k !== key4)));
-      const groups = warningGroups(warningsForUnit(sources.warnings, [key4], false));
+      box.dataset.unitId = key5;
+      const select = el(doc, "input", { type: "checkbox", "aria-label": `\u9009\u62E9 ${instance.name || key5}` });
+      select.checked = selectedIds().includes(key5);
+      on(select, "change", () => choose(select.checked ? [.../* @__PURE__ */ new Set([...selectedIds(), key5])] : selectedIds().filter((k) => k !== key5)));
+      const groups = warningGroups(warningsForUnit(sources.warnings, [key5], false));
       const { body } = fillInstance(
         box,
         (tag2, attrs3, value) => el(doc, tag2, attrs3, value),
         instance,
         liveState(),
-        characters[key4]?.raw,
+        characters[key5]?.raw,
         select,
         {
-          collapsed: Boolean(collapsed()[key4]),
+          collapsed: Boolean(collapsed()[key5]),
           warnings: groups.pending.length,
           attention: groups.needsAttention.length,
           count: members.length,
           canDiscardEntry: (path2) => operations2(activeBattleKey).some((operation2) => operation2.path === path2 || operation2.path.startsWith(`${path2}/`)) || groups.approximated.some(({ warning }) => warning.originPath === path2),
-          onDiscardEntry: (ref2) => discardStandardizedEntry(activeBattleKey, { ...ref2, unitId: key4 }),
-          onToggle: (value) => setFolded([key4], value)
+          onDiscardEntry: (ref2) => discardStandardizedEntry(activeBattleKey, { ...ref2, unitId: key5 }),
+          onToggle: (value) => setFolded([key5], value)
         }
       );
       appendWarningGroups(body, groups, true);
@@ -23553,7 +24430,7 @@ ${tag2.textContent || ""}
         const value = prompt("\u7F16\u8F91\u5B9E\u4F8B JSON", JSON.stringify(instance, null, 2));
         const parsed = parseJSON3(value, null);
         if (isObject5(parsed)) {
-          config.instances[key4] = { ...parsed, id: key4, source: "AI \u7F16\u8F91" };
+          config.instances[key5] = { ...parsed, id: key5, source: "AI \u7F16\u8F91" };
           save();
           renderInstances();
         }
@@ -23564,8 +24441,8 @@ ${tag2.textContent || ""}
       void scan({ rehydrate: true });
     });
   }
-  function switchTab(key4) {
-    const button = tabs.querySelector(`[data-tab="${key4}"]`);
+  function switchTab(key5) {
+    const button = tabs.querySelector(`[data-tab="${key5}"]`);
     button?.click();
   }
   let previewSink, lastSent = null;
@@ -23612,7 +24489,7 @@ ${tag2.textContent || ""}
   async function runNormalize(unitIds = Object.keys(characters), { includeScene = true } = {}) {
     if (aiController || !activeBattleKey || !liveState()) return;
     syncSettings();
-    const key4 = activeBattleKey;
+    const key5 = activeBattleKey;
     const requestConfig = normalizationApiConfig(config);
     const pending = warningGroups().pending;
     const ids = [...new Set(unitIds.map(groupId))].filter((id4) => own22(characters, id4));
@@ -23672,8 +24549,8 @@ ${tag2.textContent || ""}
             result: result.value,
             commit: (repairBatch, payload, options2 = {}) => {
               controller2.signal.throwIfAborted();
-              if (key4 !== activeBattleKey) throw new Error("\u6218\u573A\u5DF2\u5207\u6362\uFF0C\u4E0D\u5E94\u7528\u65E7\u6218\u573A\u8865\u4E01");
-              return commitNormalization(key4, repairBatch, payload, createdTemplates, options2);
+              if (key5 !== activeBattleKey) throw new Error("\u6218\u573A\u5DF2\u5207\u6362\uFF0C\u4E0D\u5E94\u7528\u65E7\u6218\u573A\u8865\u4E01");
+              return commitNormalization(key5, repairBatch, payload, createdTemplates, options2);
             },
             request,
             onRepair: ({ kind }) => progress(`\u7B2C ${index + 1} \u6279\u6B63\u5728${kind === "initial" ? "\u4FEE\u6B63\u8F93\u51FA" : "\u4FEE\u590D\u62D2\u6536\u9879"}`)
@@ -23718,8 +24595,8 @@ ${tag2.textContent || ""}
       const partial = applied > 0 && (rejectedItems.length || failure || groups.pending.length);
       const title2 = aborted ? "\u6807\u51C6\u5316\u5DF2\u4E2D\u6B62" : partial && rejectedItems.length ? `\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210\uFF08\u5DF2\u751F\u6548 ${applied} \u9879\uFF0C${rejectedItems.length} \u9879\u62A5\u9519\u672A\u5E94\u7528\uFF09` : partial || !failure && groups.pending.length ? "\u6807\u51C6\u5316\u90E8\u5206\u5B8C\u6210" : failure ? "\u6807\u51C6\u5316\u5931\u8D25" : followUp ? `\u6807\u51C6\u5316\u5DF2\u5B8C\u6210\uFF08${followUp} \u9879\u9700\u786E\u8BA4\u6216\u5DF2\u8DF3\u8FC7\uFF09` : "\u6807\u51C6\u5316\u5B8C\u6210";
       const detail = failure ? diagnosticText(failure.message ?? failure, "\u8BF7\u6C42\u6216\u8865\u4E01\u6821\u9A8C\u5931\u8D25\uFF0C\u672A\u8FD4\u56DE\u53EF\u8BFB\u7684\u9519\u8BEF\u8BF4\u660E") : "";
-      if (!disposed && key4 === activeBattleKey) {
-        const retry2 = () => key4 === activeBattleKey && runNormalize(ids, { includeScene });
+      if (!disposed && key5 === activeBattleKey) {
+        const retry2 = () => key5 === activeBattleKey && runNormalize(ids, { includeScene });
         notify(
           title2,
           detail,
@@ -23736,10 +24613,10 @@ ${tag2.textContent || ""}
       finish();
     }
   }
-  const battleStorageKey = (key4, field2) => `fated-tactical/${key4}/${field2}`;
-  function readBattleStorage(key4, field2) {
+  const battleStorageKey = (key5, field2) => `fated-tactical/${key5}/${field2}`;
+  function readBattleStorage(key5, field2) {
     try {
-      return parseJSON3(storage?.getItem(battleStorageKey(key4, field2)));
+      return parseJSON3(storage?.getItem(battleStorageKey(key5, field2)));
     } catch {
       return null;
     }
@@ -23748,17 +24625,17 @@ ${tag2.textContent || ""}
     return snapshot?.kind === "battle" && (snapshot.journal?.length > 0 || snapshot.state?.logs?.length > 0);
   }
   async function hydrate(epoch, candidate, rehydrate, refreshSource = false, snapshot = null) {
-    const key4 = candidate.battleKey;
-    const preserveOpening = battleHasProgress(snapshot) || battleHasProgress(readBattleStorage(key4, "fated-tactical/battle-v1"));
-    const protectedOpening = key4 && readBattleStorage(key4, "mvu-pre-writeback");
-    const opening = (protectedOpening || !rehydrate && (!refreshSource || preserveOpening)) && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
+    const key5 = candidate.battleKey;
+    const preserveOpening = battleHasProgress(snapshot) || battleHasProgress(readBattleStorage(key5, "fated-tactical/battle-v1"));
+    const protectedOpening = key5 && readBattleStorage(key5, "mvu-pre-writeback");
+    const opening = (protectedOpening || !rehydrate && (!refreshSource || preserveOpening)) && key5 && (openingSources.get(key5) ?? readBattleStorage(key5, "opening-source"));
     const nextSources = opening ? clone4(opening) : candidate;
-    if (key4 && !opening) {
+    if (key5 && !opening) {
       nextSources.mvuData = clone4(await readBattleVariables(host, Number(candidate.source?.messageId)));
       nextSources.protagonistName = tavernIdentity(host);
     }
     if (epoch !== scanEpoch || disposed) return null;
-    const openingSource = !opening && key4 ? toPersistedOpeningSource(nextSources) : null;
+    const openingSource = !opening && key5 ? toPersistedOpeningSource(nextSources) : null;
     if (openingSource) nextSources.charInfo = openingSource.charInfo;
     if (!nextSources.battleInit) {
       sources = nextSources;
@@ -23800,8 +24677,8 @@ ${tag2.textContent || ""}
     const roster = hydrated?.roster || hydrated?.instances || hydrated?.units || (sources.charInfo ? [sources.charInfo] : []);
     const nextInstances = {};
     for (const item of Array.isArray(roster) ? roster : Object.values(roster || {})) {
-      const key5 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
-      nextInstances[key5] = { ...clone4(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
+      const key6 = item.id || item.uid || item.name || `unit-${Object.keys(nextInstances).length + 1}`;
+      nextInstances[key6] = { ...clone4(item), source: item.source || (sources.mvuData && Object.keys(sources.mvuData).length ? "MVU \u4E3B\u89D2" : "\u6B63\u6587 <char_info>") };
     }
     config.instances = nextInstances;
     diagnostics = {
@@ -23935,8 +24812,8 @@ ${tag2.textContent || ""}
     diagnostics.warnings = warnings;
     diagnostics.narrativeExemptions = exempt.map(({ warning, receipt }) => ({ ...warningReference(warning), reason: receipt.reason }));
   }
-  function reconcileUnresolvedNotes(key4, records2, warnings, additions = [], { reset = false } = {}) {
-    const previous = config.unresolvedNotes[key4] ?? {};
+  function reconcileUnresolvedNotes(key5, records2, warnings, additions = [], { reset = false } = {}) {
+    const previous = config.unresolvedNotes[key5] ?? {};
     const next = {};
     const sourceFor = narrativeSourceFor(records2);
     for (const warning of warnings) {
@@ -23958,7 +24835,7 @@ ${tag2.textContent || ""}
       if (note) (next[unitId] ??= {})[id4] = note;
     }
     if (JSON.stringify(previous) === JSON.stringify(next)) return;
-    persistSettings({ unresolvedNotes: retainedUnresolvedNotes(key4, next) });
+    persistSettings({ unresolvedNotes: retainedUnresolvedNotes(key5, next) });
   }
   function liveState() {
     return gameMount?.getState?.() ?? currentState;
@@ -23966,7 +24843,7 @@ ${tag2.textContent || ""}
   function pathUnder(path2, root3) {
     return path2 === root3 || path2?.startsWith(`${root3}/`);
   }
-  function discardStandardizedEntry(key4, ref2) {
+  function discardStandardizedEntry(key5, ref2) {
     const source = ref2.path;
     if (!source || !/^\/(?:equipment|skills|items|statusTemplates|zones)\/[^/]+$/.test(source)) return;
     const [, table4, id4] = source.split("/");
@@ -23982,7 +24859,7 @@ ${tag2.textContent || ""}
     const matchesTarget = (path2) => targets2.some((target2) => pathUnder(path2, target2));
     const matchedKeys = new Set(rawWarnings.filter((warning) => matchesTarget(warning.originPath)).map(warningKey));
     const retained = [];
-    for (const batch of batches(key4)) {
+    for (const batch of batches(key5)) {
       const patch = (batch.patch ?? []).filter((operation2) => !matchesTarget(operation2.path));
       const guards = (batch.guards ?? []).filter(([path2]) => !matchesTarget(path2));
       const receipts = (batch.receipts ?? []).filter((receipt) => !matchedKeys.has(receipt.key));
@@ -24012,27 +24889,27 @@ ${tag2.textContent || ""}
       status: "revoked",
       updatedAt: Date.now()
     }));
-    const exemptions = [...(config.narrativeExemptions[key4] ?? []).filter((receipt) => !matchedKeys.has(receipt.key) && !sceneResets.some((reset) => reset.semanticKey === receipt.semanticKey)), ...sceneResets];
-    const notes2 = clone4(config.unresolvedNotes[key4] ?? {});
+    const exemptions = [...(config.narrativeExemptions[key5] ?? []).filter((receipt) => !matchedKeys.has(receipt.key) && !sceneResets.some((reset) => reset.semanticKey === receipt.semanticKey)), ...sceneResets];
+    const notes2 = clone4(config.unresolvedNotes[key5] ?? {});
     for (const [unitId, entries3] of Object.entries(notes2)) {
       for (const warningId of Object.keys(entries3)) if (matchedKeys.has(warningId)) delete entries3[warningId];
       if (!Object.keys(entries3).length) delete notes2[unitId];
     }
     const snapshots = clone4(config.charSnapshots);
-    for (const snapshot of Object.values(snapshots[key4] ?? {})) {
+    for (const snapshot of Object.values(snapshots[key5] ?? {})) {
       if (snapshot.resolvedWarnings) snapshot.resolvedWarnings = snapshot.resolvedWarnings.filter((item) => !matchedKeys.has(item.key ?? item));
     }
     const nextWarnings = [...rawWarnings];
     sources.warnings = nextWarnings;
     diagnostics.warnings = nextWarnings;
     persistSettings({
-      normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: retained }, key4),
-      narrativeExemptions: { ...config.narrativeExemptions, [key4]: exemptions },
-      unresolvedNotes: retainedUnresolvedNotes(key4, notes2),
+      normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key5]: retained }, key5),
+      narrativeExemptions: { ...config.narrativeExemptions, [key5]: exemptions },
+      unresolvedNotes: retainedUnresolvedNotes(key5, notes2),
       charSnapshots: snapshots
     });
-    filterResolved(snapshots[key4] ?? {}, characters, retained);
-    reconcileUnresolvedNotes(key4, characters, sources.warnings, [], { reset: false });
+    filterResolved(snapshots[key5] ?? {}, characters, retained);
+    reconcileUnresolvedNotes(key5, characters, sources.warnings, [], { reset: false });
     renderInstances();
   }
   function applyNormalization(state, patch) {
@@ -24052,8 +24929,8 @@ ${tag2.textContent || ""}
     }
     return state;
   }
-  function chatOpeningPatches(key4) {
-    const stored = readBattleStorage(key4, "chat-opening-patches");
+  function chatOpeningPatches(key5) {
+    const stored = readBattleStorage(key5, "chat-opening-patches");
     return Array.isArray(stored) ? stored : [];
   }
   function replayChatPatches(state, entries3, onConflict) {
@@ -24074,9 +24951,9 @@ ${tag2.textContent || ""}
     if (applied) refreshOpeningInitiative(state);
     return state;
   }
-  function restoreChatOpening(state, key4) {
+  function restoreChatOpening(state, key5) {
     const conflicts = [];
-    const next = replayChatPatches(state, chatOpeningPatches(key4), (error2) => conflicts.push(error2.message));
+    const next = replayChatPatches(state, chatOpeningPatches(key5), (error2) => conflicts.push(error2.message));
     if (conflicts.length) notify("\u90E8\u5206\u8F85\u52A9 AI \u8865\u4E01\u672A\u80FD\u91CD\u653E", "", null, false, { tone: "warning", unresolved: conflicts });
     return replayOpeningBattle(next);
   }
@@ -24094,9 +24971,9 @@ ${tag2.textContent || ""}
         if (entryIndex >= 0) entryId = messageMeta(messages[entryIndex], entryIndex).messageId;
       }
       const candidate = sourceBundle({}, messages, chat, entryId, { document: doc });
-      const key4 = candidate.battleKey;
+      const key5 = candidate.battleKey;
       foldBattleEntries();
-      if (!rehydrate && !refreshSource && key4 && activeBattleKey === key4 && gameMount) {
+      if (!rehydrate && !refreshSource && key5 && activeBattleKey === key5 && gameMount) {
         refreshPortraits(currentState, epoch);
         diagnostics.storage = computeStorageDiagnostics(storage, activeBattleKey);
         const diagnosticNode = pages.instances.querySelector("[data-diagnostics]");
@@ -24104,35 +24981,35 @@ ${tag2.textContent || ""}
         if (node) node.textContent = `\u5DF2\u7EED\u63A5\u5F53\u524D\u6218\u5C40 \xB7 ${scanStatus}`;
         return;
       }
-      if ((rehydrate || activeBattleKey !== key4) && aiController) {
+      if ((rehydrate || activeBattleKey !== key5) && aiController) {
         const finished = aiFinished;
         aiController.abort();
         await finished;
         if (epoch !== scanEpoch || disposed) return;
       }
-      const snapshot = key4 && readBattleStorage(key4, "fated-tactical/battle-v1");
+      const snapshot = key5 && readBattleStorage(key5, "fated-tactical/battle-v1");
       const savedBattle = snapshot?.kind === "battle";
-      const previousOpening = rehydrate && key4 && (openingSources.get(key4) ?? readBattleStorage(key4, "opening-source"));
+      const previousOpening = rehydrate && key5 && (openingSources.get(key5) ?? readBattleStorage(key5, "opening-source"));
       const { hydrated, openingSource } = await hydrate(epoch, candidate, rehydrate, refreshSource, snapshot) ?? {};
-      const latestOpening = openingSource ?? (key4 && openingSources.get(key4));
+      const latestOpening = openingSource ?? (key5 && openingSources.get(key5));
       const openingInput = (opening) => [opening.battleInit, opening.mvuData, opening.charInfo, opening.protagonistName];
       const unchangedOpening = previousOpening && latestOpening && stableSourceJson(openingInput(previousOpening)) === stableSourceJson(openingInput(latestOpening));
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       const nextState = hydrated?.state ?? null;
-      const fresh = key4 ? await characterRecords(sources, hydrated) : {};
+      const fresh = key5 ? await characterRecords(sources, hydrated) : {};
       if (epoch !== scanEpoch || disposed || chat !== chatId(host)) return;
       syncSettings();
-      const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key4] ?? {} };
+      const ids = Object.keys(fresh), stored = { ...config.charSnapshots[key5] ?? {} };
       const removed = Object.keys(stored).filter((id4) => !fresh[id4]);
       diagnostics.removedCharacters = removed;
       for (const id4 of removed) delete stored[id4];
       const rawWarnings = sources.warnings ?? [];
       diagnostics.inputWarnings = [...rawWarnings];
-      const resetDeleted = Boolean(config.pendingInstanceResets?.[key4]);
-      const firstEntry = !resetDeleted && !rehydrate && nextState && key4 && !savedBattle && !own22(config.normalizationBatches, key4);
+      const resetDeleted = Boolean(config.pendingInstanceResets?.[key5]);
+      const firstEntry = !resetDeleted && !rehydrate && nextState && key5 && !savedBattle && !own22(config.normalizationBatches, key5);
       const chatPrefix = `${safeKey3(chat)}__`;
-      const ownBatches = batches(key4);
-      const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, transactions]) => transactions.filter((batch) => batch.entries?.length && !batch.receipts?.some((receipt) => receipt.unitId === null) && !batch.patch?.some((operation2) => pathUnder(operation2.path, "/zones")))) : ownBatches;
+      const ownBatches = batches(key5);
+      const candidates = firstEntry && !ownBatches.length ? Object.entries(config.normalizationBatches).filter(([other]) => other !== key5 && other.startsWith(chatPrefix)).reverse().flatMap(([, transactions]) => transactions.filter((batch) => batch.entries?.length && !batch.receipts?.some((receipt) => receipt.unitId === null) && !batch.patch?.some((operation2) => pathUnder(operation2.path, "/zones")))) : ownBatches;
       const { kept } = nextState ? replayNormalization(nextState, candidates, fresh, rawWarnings, {
         apply: applyPatch,
         validate: options.validateState || validateState,
@@ -24140,40 +25017,40 @@ ${tag2.textContent || ""}
       }) : { kept: [] };
       const imported = candidates !== ownBatches;
       const invalid = ownBatches.length !== kept.length || imported || kept.some((batch, i) => batch !== ownBatches[i]);
-      const ownExemptions = config.narrativeExemptions[key4] ?? [];
-      const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key4 && other.startsWith(chatPrefix)).reverse().flatMap(([, receipts]) => receipts.filter((receipt) => receipt.unitId != null && !receipt.dismissed))] : ownExemptions;
+      const ownExemptions = config.narrativeExemptions[key5] ?? [];
+      const exemptionCandidates = imported ? [...ownExemptions, ...Object.entries(config.narrativeExemptions).filter(([other]) => other !== key5 && other.startsWith(chatPrefix)).reverse().flatMap(([, receipts]) => receipts.filter((receipt) => receipt.unitId != null && !receipt.dismissed))] : ownExemptions;
       const activeExemptions = activeNarrativeExemptions(rawWarnings, exemptionCandidates, narrativeSourceFor(fresh));
       if (imported && activeExemptions.length) persistSettings({ narrativeExemptions: {
         ...config.narrativeExemptions,
-        [key4]: [...ownExemptions, ...activeExemptions.map(({ receipt }) => receipt).filter((receipt) => !ownExemptions.some((local) => local.unitId === receipt.unitId && local.key === receipt.key))]
+        [key5]: [...ownExemptions, ...activeExemptions.map(({ receipt }) => receipt).filter((receipt) => !ownExemptions.some((local) => local.unitId === receipt.unitId && local.key === receipt.key))]
       } });
       const remaining = remainingDiagnostics(rawWarnings, stored, fresh, kept);
       toast.hidden = true;
       currentState = nextState ? applyNormalization(nextState, kept.flatMap((batch) => batch.patch)) : null;
-      if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key4);
+      if (currentState && (resetDeleted || rehydrate || !savedBattle)) currentState = restoreChatOpening(currentState, key5);
       if (currentState && hydrated?.sourceMap) currentState = calibrateOpeningPools(currentState, hydrated.sourceMap);
       const restoreSaved = !resetDeleted && battleHasProgress(snapshot) && (!rehydrate || unchangedOpening && !invalid && stableSourceJson(snapshot.origin?.skills) === stableSourceJson(currentState?.skills));
       characters = fresh;
       mountState(currentState, restoreSaved);
-      activeBattleKey = currentState ? key4 : null;
+      activeBattleKey = currentState ? key5 : null;
       persistCustomElements(liveState());
       refreshPortraits(currentState, epoch);
       if (activeBattleKey) {
-        pruneBattleStorageExcept2(key4);
+        pruneBattleStorageExcept2(key5);
         if (openingSource) {
-          openingSources.set(key4, openingSource);
-          if (!writeWithEvictionRetry(battleStorageKey(key4, "opening-source"), openingSource)) notifyStorageFailure();
+          openingSources.set(key5, openingSource);
+          if (!writeWithEvictionRetry(battleStorageKey(key5, "opening-source"), openingSource)) notifyStorageFailure();
         }
         const nextSettings = {
-          normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: kept }, key4),
-          unresolvedNotes: retainedUnresolvedNotes(key4, config.unresolvedNotes[key4]),
+          normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key5]: kept }, key5),
+          unresolvedNotes: retainedUnresolvedNotes(key5, config.unresolvedNotes[key5]),
           pendingInstanceResets: {}
         };
         for (const id4 of ids) {
           const previous = stored[id4];
           stored[id4] = toStoredCharSnapshot(fresh[id4], rawWarnings.filter((w) => w.unitId === id4 && previous?.resolvedWarnings?.includes(warningKey(w)) && !remainingDiagnostics([w], { [id4]: previous }, fresh).length).map(warningKey));
         }
-        nextSettings.charSnapshots = { [key4]: stored };
+        nextSettings.charSnapshots = { [key5]: stored };
         const patch = Object.fromEntries(Object.entries(nextSettings).filter(([field2, value]) => JSON.stringify(value) !== JSON.stringify(config[field2] ?? {})));
         if (Object.keys(patch).length) persistSettings(patch);
       }
@@ -24182,7 +25059,7 @@ ${tag2.textContent || ""}
       const sceneNeedsNorm = hasPendingSceneWarnings(pending);
       if ((rehydrate || config.rosterSelection === null) && ids.length) persistSettings({ rosterSelection: ids });
       filterResolved(stored, fresh, kept);
-      if (key4) reconcileUnresolvedNotes(key4, fresh, sources.warnings, [], { reset: false });
+      if (key5) reconcileUnresolvedNotes(key5, fresh, sources.warnings, [], { reset: false });
       const live3 = liveState();
       if (live3) updateChatInstances(live3, nextState);
       scanStatus = firstEntry && (changed.length || sceneNeedsNorm) ? `\u5F85\u6807\u51C6\u5316 ${changed.length} \u4E2A\u89D2\u8272${sceneNeedsNorm ? "\u53CA\u6218\u573A\u6548\u679C" : ""}` : "\u53EF\u624B\u52A8\u6807\u51C6\u5316\u5F85\u7F16\u8BD1\u8BCD\u6761";
@@ -24206,8 +25083,8 @@ ${tag2.textContent || ""}
       notify("\u6218\u5C40\u52A0\u8F7D\u5931\u8D25", e.message, () => scan({ rehydrate }));
     }
   }
-  function checkWriteContext(key4) {
-    if (disposed || key4 !== activeBattleKey || chatId(host) !== sources.source?.chatId) throw new Error("\u6218\u573A\u6216\u804A\u5929\u5DF2\u5207\u6362\uFF0C\u672A\u5199\u5165");
+  function checkWriteContext(key5) {
+    if (disposed || key5 !== activeBattleKey || chatId(host) !== sources.source?.chatId) throw new Error("\u6218\u573A\u6216\u804A\u5929\u5DF2\u5207\u6362\uFF0C\u672A\u5199\u5165");
   }
   async function currentFloor() {
     const rows2 = await tavernMessages(host);
@@ -24226,14 +25103,14 @@ ${tag2.textContent || ""}
       if (!automatic || config.autoDeliverBattleReport !== false) await deliverBattleReport();
       return;
     }
-    const key4 = activeBattleKey, source = sources.source;
+    const key5 = activeBattleKey, source = sources.source;
     const patch = battleReportToMvuPatch(state, sources.sourceMap);
-    if (!patch.length && !readBattleStorage(key4, "mvu-pre-writeback")) {
+    if (!patch.length && !readBattleStorage(key5, "mvu-pre-writeback")) {
       if (!automatic || config.autoDeliverBattleReport !== false) await deliverBattleReport();
       return;
     }
     const last = await currentFloor(), digest = await outcomeDigest(patch);
-    checkWriteContext(key4);
+    checkWriteContext(key5);
     const historical = last.messageId > Number(source.messageId);
     const selector2 = bar.querySelector("[data-mvu-target]");
     selector2.replaceChildren();
@@ -24244,7 +25121,7 @@ ${tag2.textContent || ""}
     const target2 = () => selector2.value === "latestFloor" ? last : { messageId: Number(source.messageId), swipeId: source.swipeId };
     const force = bar.querySelector("[data-mvu-refresh]");
     const update = () => {
-      const receipt = writebackReceipt(storage, key4), t = target2();
+      const receipt = writebackReceipt(storage, key5), t = target2();
       button.disabled = receipt?.outcomeDigest === digest && receipt.targetMessageId === t.messageId && String(receipt.targetSwipeId) === String(t.swipeId);
       force.hidden = !button.disabled;
       button.textContent = button.disabled ? "\u5DF2\u5199\u56DE MVU \u2713" : "\u540C\u6B65\u81F3 MVU \u5E76\u4EA4\u4ED8\u6218\u62A5";
@@ -24260,24 +25137,24 @@ ${tag2.textContent || ""}
       if (button.disabled && !forceRefresh || force.disabled) return;
       button.disabled = force.disabled = true;
       try {
-        checkWriteContext(key4);
+        checkWriteContext(key5);
         if (!liveState()?.outcome || await outcomeDigest(battleReportToMvuPatch(liveState(), sources.sourceMap)) !== digest) throw new Error("\u6218\u679C\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u786E\u8BA4");
         const t = target2(), latest = await currentFloor();
         if (latest.messageId !== last.messageId) throw new Error("\u6700\u65B0\u697C\u5C42\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u786E\u8BA4\u5199\u56DE\u76EE\u6807");
         await writeBattleOutcome({
           storage,
           host,
-          key: key4,
-          battleId: state.battleId ?? key4,
+          key: key5,
+          battleId: state.battleId ?? key5,
           source,
           opening: sources.mvuData,
           patch,
           targetMessageId: t.messageId,
           targetSwipeId: t.swipeId,
           force: forceRefresh,
-          assertContext: () => checkWriteContext(key4)
+          assertContext: () => checkWriteContext(key5)
         });
-        checkWriteContext(key4);
+        checkWriteContext(key5);
         update();
         await deliverBattleReport();
       } catch (error2) {
@@ -24365,7 +25242,7 @@ ${tag2.textContent || ""}
     on(plain2, "click", deliverBattleReport);
     on(report, "click", () => prepareDelivery().catch(showError));
   }
-  function commitNormalization(key4, { unitIds, sceneZoneIds = [] }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
+  function commitNormalization(key5, { unitIds, sceneZoneIds = [] }, { snapshot, sent, reply }, createdTemplates, { acceptPartial = false } = {}) {
     const current = liveState();
     const records2 = Object.fromEntries(unitIds.map((id4) => [id4, characters[id4]]));
     const accepted = acceptNormalizationResponse({
@@ -24375,7 +25252,7 @@ ${tag2.textContent || ""}
       unitIds,
       current,
       baseline: hydrateBaseline(sources.input),
-      existingOps: operations2(key4),
+      existingOps: operations2(key5),
       createdTemplates,
       records: records2,
       sourceFor: narrativeSourceFor(records2),
@@ -24410,7 +25287,7 @@ ${tag2.textContent || ""}
     if (patch.length || verified.length) {
       const validate = options.validateState || validateState;
       validate(next);
-      validate(applyNormalization(baseline, [...operations2(key4), ...patch]));
+      validate(applyNormalization(baseline, [...operations2(key5), ...patch]));
       additions.push(...normalizationTransactions({
         patch,
         solved,
@@ -24433,18 +25310,18 @@ ${tag2.textContent || ""}
         save();
       }
     }
-    const stored = { ...config.charSnapshots[key4] };
+    const stored = { ...config.charSnapshots[key5] };
     for (const [id4, record3] of Object.entries(records2)) {
       const previous = stored[id4]?.hash === record3.hash ? stored[id4].resolvedWarnings : void 0;
       stored[id4] = toStoredCharSnapshot(record3, previous);
     }
     syncSettings();
     const receipts = narrative.map(({ warning, receipt }) => isSceneZoneWarning(warning) ? { ...receipt, originPath: warning.originPath, updatedAt: Date.now() } : receipt);
-    const previousExemptions = config.narrativeExemptions[key4] ?? [];
+    const previousExemptions = config.narrativeExemptions[key5] ?? [];
     persistSettings({
-      charSnapshots: { [key4]: stored },
-      normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key4]: [...batches(key4), ...additions] }, key4),
-      narrativeExemptions: { ...config.narrativeExemptions, [key4]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
+      charSnapshots: { [key5]: stored },
+      normalizationBatches: pruneBattleScopedMap({ ...config.normalizationBatches, [key5]: [...batches(key5), ...additions] }, key5),
+      narrativeExemptions: { ...config.narrativeExemptions, [key5]: [...previousExemptions.filter((previous) => !receipts.some((receipt) => receipt.unitId === previous.unitId && receipt.key === previous.key)), ...receipts] }
     });
     for (const operation2 of effective) {
       if (operation2.op === "add" && /^\/(?:customElements|statusTemplates|skills)\/[^/]+$/.test(operation2.path) && fingerprintAt(current, operation2.path) === void 0) {
@@ -24453,7 +25330,7 @@ ${tag2.textContent || ""}
       }
     }
     filterResolved(stored, characters);
-    reconcileUnresolvedNotes(key4, characters, sources.warnings, notes2);
+    reconcileUnresolvedNotes(key5, characters, sources.warnings, notes2);
     scanStatus = `\u5DF2\u6807\u51C6\u5316 ${unitIds.length} \u4E2A\u89D2\u8272${sceneZoneIds.length ? `\u3001${sceneZoneIds.length} \u9879\u6218\u573A\u6548\u679C` : ""}`;
     renderInstances();
     return { applied: effective.length, data, unmatchedNotes, rejected, missing, repairWarnings: rejectedWarnings, repairError };
@@ -24462,7 +25339,7 @@ ${tag2.textContent || ""}
     for (const id4 of Object.keys(previous?.units ?? {})) if (!own22(next.units, id4)) delete config.instances[id4];
     for (const unit of Object.values(next.units)) {
       const metadata = { ...config.instances[unit.id] };
-      for (const key4 of Object.keys(previous?.units?.[unit.id] ?? {})) delete metadata[key4];
+      for (const key5 of Object.keys(previous?.units?.[unit.id] ?? {})) delete metadata[key5];
       config.instances[unit.id] = { ...metadata, ...clone4(unit) };
     }
     save();
@@ -24483,16 +25360,16 @@ ${tag2.textContent || ""}
         if (!chatUndoChanges(current, next).length) throw new Error("\u6B64\u8865\u4E01\u6CA1\u6709\u6539\u53D8\u5F53\u524D\u6218\u5C40");
       }
       (options.validateState || validateState)(next);
-      const key4 = activeBattleKey;
-      const entries3 = chatOpeningPatches(key4);
+      const key5 = activeBattleKey;
+      const entries3 = chatOpeningPatches(key5);
       let nextEntries = entries3;
       let openingId = null;
       let openingError;
       const validateOpening = (records2) => {
-        const savedSeed = storage?.getItem(battleStorageKey(key4, "fated-tactical/battle-v1/seed"));
+        const savedSeed = storage?.getItem(battleStorageKey(key5, "fated-tactical/battle-v1/seed"));
         const seed = savedSeed != null && /^\d+$/.test(savedSeed) ? Number(savedSeed) : sources.seed;
         const source = hydrateBaseline(sources.input, { seed });
-        return replayChatPatches(applyNormalization(source, operations2(key4)), records2);
+        return replayChatPatches(applyNormalization(source, operations2(key5)), records2);
       };
       if (undo && message.undoReceipt.openingId) {
         nextEntries = entries3.filter((entry2) => entry2.id !== message.undoReceipt.openingId);
@@ -24508,7 +25385,7 @@ ${tag2.textContent || ""}
           openingError = error2.message;
         }
       }
-      const storageKey = battleStorageKey(key4, "chat-opening-patches");
+      const storageKey = battleStorageKey(key5, "chat-opening-patches");
       const persisted = nextEntries === entries3 || writeWithEvictionRetry(storageKey, nextEntries);
       if (undo && !persisted) throw new Error("\u65E0\u6CD5\u66F4\u65B0\u6D4F\u89C8\u5668\u4E2D\u7684\u5F00\u573A\u8865\u4E01\uFF0C\u672A\u64A4\u9500");
       try {
@@ -24522,7 +25399,7 @@ ${tag2.textContent || ""}
       updateChatInstances(currentState, current);
       renderInstances();
       prepareMessages();
-      const undoReceipt = undo ? null : { battleKey: key4, changes: chatUndoChanges(current, currentState), openingId };
+      const undoReceipt = undo ? null : { battleKey: key5, changes: chatUndoChanges(current, currentState), openingId };
       const applyNotice = undo ? "\u2713 \u5DF2\u64A4\u9500" : openingError ? `\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u91CD\u7F6E\uFF08${openingError}\uFF09` : persisted ? "\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u91CD\u5F00\u65F6\u4FDD\u7559" : "\u2713 \u5DF2\u5E94\u7528\u81F3\u5F53\u524D\u6218\u5C40\uFF0C\u4F46\u6D4F\u89C8\u5668\u5B58\u50A8\u5931\u8D25\uFF0C\u91CD\u8F7D\u6216\u91CD\u5F00\u540E\u53EF\u80FD\u4E22\u5931";
       aiSessions.update(sessionId, message, { undoReceipt, applyError: null, applyNotice });
     } catch (error2) {
@@ -24576,7 +25453,7 @@ ${tag2.textContent || ""}
       aiPage?.feed(session.id, assistant);
     };
     aiPage?.feed(session.id, ...entries3);
-    const key4 = activeBattleKey;
+    const key5 = activeBattleKey;
     const controller2 = new AbortController();
     aiController = controller2;
     let finish;
@@ -24593,10 +25470,10 @@ ${tag2.textContent || ""}
       publishMessages(prompts, "chat");
       const cancelled = new Promise((_, reject) => controller2.signal.addEventListener("abort", () => reject(controller2.signal.reason), { once: true }));
       const reply = await Promise.race([requestTavernAI(host, config, prompts, options.fetch, controller2.signal, (snapshot) => {
-        if (snapshot && !disposed && !controller2.signal.aborted && activeBattleKey === key4) update({ content: snapshot }, false);
+        if (snapshot && !disposed && !controller2.signal.aborted && activeBattleKey === key5) update({ content: snapshot }, false);
       }), cancelled]);
       controller2.signal.throwIfAborted();
-      if (!disposed && activeBattleKey === key4) update({ content: reply, status: "ok" }, true);
+      if (!disposed && activeBattleKey === key5) update({ content: reply, status: "ok" }, true);
     } catch (error2) {
       const aborted = error2?.name === "AbortError";
       if (!disposed) update({ status: aborted ? "aborted" : "error", content: aborted ? assistant.content : [assistant.content, `\u9519\u8BEF\uFF1A${diagnosticText(error2?.message ?? error2, "\u8BF7\u6C42\u5931\u8D25")}`].filter(Boolean).join("\n\n") }, true);
