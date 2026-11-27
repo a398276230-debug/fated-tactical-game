@@ -4,7 +4,7 @@ import { applyMediumEntry, mediaCells, mediumRank, mediumZone, physicsEnabled, p
 import { elementTraits } from './elements.js';
 import { resolveSpatialImpulse } from './element-impulse.js';
 export { removeZone } from './element-media.js';
-import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
+import { MAX_CELL_CAPACITY, unitCellCost, canOccupy, cellAt, canDisplaceStep, canStep, coverAt, distance3D, elevation, facingToward, findPath, isGround, unitAt, unitsAt } from './spatial.js';
 import { spawnPanel, spawnBudgetIssue } from './spawn-unit.js';
 import { sizeMultiplier } from './prebattle_resources.js';
 import { newEvent, pushFrame, scheduleHooks } from './tactical-vm.js';
@@ -194,9 +194,11 @@ function continueMove({ state, frame, host, context }) {
       const [dx, dy] = op.mode === 'push' ? away : facingToward(unit, origin);
       if (!dx && !dy) break;
       const next = { x: unit.x + dx, y: unit.y + dy, altitude: unit.altitude ?? 0 };
-      if (!canStep(state, unit, next)) { collision = xy(next); break; }
+      const allowed = forced ? canDisplaceStep(state, unit, next) : canStep(state, unit, next);
+      if (!allowed) { collision = xy(next); break; }
       Object.assign(unit, xy(next));
       path.push(at(state, unit));
+      if (forced && applyMediumEntry(state, host, frame, unit, next)) break;
     }
     if (!path.length && !collision) return;
   }

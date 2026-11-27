@@ -1,9 +1,9 @@
 import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, cellStepCost, coverAt, coverBetween, distance3D as distance,
-  elevation, facingArc, facingToward as signFacing, gridDistance as near, hasLOS,
+  elevation, canDisplaceStep, facingArc, facingToward as signFacing, gridDistance as near, hasLOS,
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate } from './combat_protocol.js';
+import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate, sizeFor } from './combat_protocol.js';
 
 import { elementMitigationCategory, elementTraits } from './elements.js';
 import { applyMediumEntry } from './element-media.js';
@@ -1537,7 +1537,11 @@ function maneuverContest(state, actor, target, maneuver) {
   const attackerRoll = randomDie(state, 20), defenderRoll = randomDie(state, 20);
   const attackerTotal = effectiveStat(state, actor, attackStat) + attackerRoll;
   const defenderTotal = effectiveStat(state, target, defenseStat) + defenderRoll;
-  const success = attackerTotal >= defenderTotal;
+  const attackerSize = sizeFor(actor.bodyLengthM);
+  const targetSize = sizeFor(target.bodyLengthM);
+  const sizeDelta = attackerSize.martial - targetSize.martial;
+  const sizeBlocked = ['push', 'grapple', 'trip'].includes(maneuver) && sizeDelta <= -8;
+  const success = !sizeBlocked && attackerTotal >= defenderTotal;
   record(state, actor, 'contest', `${actor.name}${success ? '成功' : '未能'}${({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[maneuver]}`, {
     maneuver, targetId: target.id, attackerRoll, defenderRoll, attackerTotal, defenderTotal, success });
   return success;
@@ -1684,15 +1688,24 @@ function knockback(state, actor, target, effect) {
   if (!dx && !dy) return;
   const from = pointAt(state, target);
   const traversedCells = [];
+  let fall = 0;
   for (let i = 0; i < (effect.distance ?? 1); i++) {
     const at = pos(target.x + dx, target.y + dy);
-    if (!canStep(state, target, at)) {
+    if (!canDisplaceStep(state, target, at)) {
       damageTarget(state, target, actor.id, effect.collisionDamage ?? 5, 'true', '撞击');
       if (alive(target)) grantStatus(state, target, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
       break;
     }
+    const beforeZ = elevation(state, target);
     Object.assign(target, at);
+    const afterZ = elevation(state, target);
+    fall = Math.max(fall, beforeZ - afterZ);
     traversedCells.push(pointAt(state, target));
+    if (applyMediumEntry(state, vmHost, null, target, at)) break;
+  }
+  if (fall > 0 && alive(target)) {
+    damageTarget(state, target, actor.id, fall * fall, 'true', '坠落');
+    if (alive(target)) grantStatus(state, target, 'prone', { sourceId: actor.id, remainingTurns: 1 });
   }
   const to = pointAt(state, target), steps = traversedCells.length;
   if (steps > 0) {

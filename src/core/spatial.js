@@ -63,6 +63,15 @@ export function canStep(state, from, to, { ignoreUnitId = from.id, diagonal = tr
     vacant(at) && passable(at) && passableEdge(state, at, to));
 }
 
+// Forced displacement may leave a ledge. It can descend any height, while
+// ascending and ordinary cliff traversal still require a normal passable edge.
+export function canDisplaceStep(state, from, to, { ignoreUnitId = from.id } = {}) {
+  if (Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y)) !== 1 || !isGround(state, to)) return false;
+  const mover = state.units?.[ignoreUnitId] ?? from;
+  return canOccupy(state, to.x, to.y, mover, ignoreUnitId)
+    && (elevation(state, to) <= elevation(state, from) || passableEdge(state, from, to));
+}
+
 export function zoneContains(state, zone, at, { ignoreZ = false } = {}) {
   const coordinate = pt => Number.isFinite(pt?.x) && Number.isFinite(pt?.y);
   if (!zone?.area || !coordinate(at)) return false;

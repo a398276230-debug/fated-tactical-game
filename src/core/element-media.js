@@ -23,13 +23,13 @@ const templates = {
   water: ['浅水洼', 3, ['water', 'wet'], { rules: exposure('water', [clear('burning', 'oiled'), apply('wet')], ground, true) }],
   ice: ['冰面', 3, ['ice', 'cold'], { moveCost: 2 }],
   oil: ['油污', 3, ['oil', 'flammable'], { moveCost: 2, rules: exposure('oil', [apply('oiled')], ground, true) }],
-  fire: ['火海', 2, ['fire', 'heat'], { rules: exposure('fire', [damage('fire', 5, 0.05), apply('burning')]) }],
-  acid: ['强酸池', 2, ['acid', 'corrode'], { mods: [{ stat: 'armor', additivePercent: -0.25, when: ground }], rules: exposure('acid', [damage('acid', 4, 0.04)]) }],
-  electrified_water: ['带电水体', 1, ['water', 'lightning', 'shock'], { rules: exposure('electrified_water', [damage('lightning', 5, 0.05)]) }],
+  fire: ['火海', 2, ['fire', 'heat'], { rules: exposure('fire', [damage('fire', 5, 0.05), apply('burning')], ground, true) }],
+  acid: ['强酸池', 2, ['acid', 'corrode'], { mods: [{ stat: 'armor', additivePercent: -0.25, when: ground }], rules: exposure('acid', [damage('acid', 4, 0.04)], ground, true) }],
+  electrified_water: ['带电水体', 1, ['water', 'lightning', 'shock'], { rules: exposure('electrified_water', [damage('lightning', 5, 0.05)], ground, true) }],
   steam: ['蒸汽云', 2, ['steam', 'wet', 'obscure'], { rules: exposure('steam', [clear('burning'), apply('wet')], null, true) }],
   smoke: ['浓烟', 2, ['smoke', 'obscure'], {}],
-  poison_cloud: ['可燃毒雾', 3, ['poison', 'flammable', 'obscure'], { rules: exposure('poison_cloud', [damage('poison', 4, 0.04)], null) }],
-  electrified_steam: ['雷暴蒸汽', 1, ['steam', 'lightning', 'shock', 'obscure'], { rules: exposure('electrified_steam', [damage('lightning', 5, 0.05)], null) }],
+  poison_cloud: ['可燃毒雾', 3, ['poison', 'flammable', 'obscure'], { rules: exposure('poison_cloud', [damage('poison', 4, 0.04)], null, true) }],
+  electrified_steam: ['雷暴蒸汽', 1, ['steam', 'lightning', 'shock', 'obscure'], { rules: exposure('electrified_steam', [damage('lightning', 5, 0.05)], null, true) }],
 };
 
 export function mediumZone(medium) {
