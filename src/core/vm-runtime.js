@@ -254,9 +254,10 @@ export const vmHost = {
     const basePower = evaluateExpr(skill?.power, { self: actor, source: actor, attacker: actor, units: state.units });
     const power = skill?.power == null ? 0 : primary?.power ?? (Number.isFinite(basePower) ? basePower : 0);
     return { ...planned, center: planned.center ?? { x: action.x ?? actor.x, y: action.y ?? actor.y }, targetIds: planned.corpseId ? [planned.corpseId] : (planned.targets ?? []).filter(row => row.kind !== 'cover').map(row => row.id),
-      power, initiativeBonus: skill?.initiativeBonus ?? 0, isSingle: planned.shape == null || planned.shape === 'single', isRanged: (skill?.range ?? planned.range ?? 1) > 2,
-      damageType: skill?.damageType ?? skill?.damage?.type ?? planned.damageType ?? null,
-      weaponTemplateId: action.type === 'attack' ? state.items[actor.mainHand ?? actor.weapon]?.templateId ?? null : null };
+      costTemplate: skill ?? (planned.poolCostId ? { resourceCost: { resource: planned.poolCostId } } : null),
+      power, initiativeBonus: skill?.initiativeBonus ?? 0, isSingle: planned.shape == null || planned.shape === 'single',
+      isRanged: planned.actionContext.isRanged, damageType: planned.actionContext.damageType,
+      weaponTemplateId: planned.actionContext.weaponTemplateId };
   },
   payAction(state, actor, plan, event, overrides) {
     if (!overrides.ignoreSlots && plan.ap > 0) {
@@ -267,7 +268,16 @@ export const vmHost = {
       }
     }
     if (overrides.free) return;
-    paySkillEquipmentCost(state, actor, actionSkill(state, actor, event.skillId));
+    const scaledPoolCost = amount => Math.max(0, Math.floor(amount * (event.costScale ?? 1)));
+    paySkillEquipmentCost(state, actor, plan.costTemplate, scaledPoolCost(event.poolCost ?? 0));
+    for (const [resource, amount] of plan.extraPoolCosts ?? []) {
+      const cost = scaledPoolCost(amount);
+      const pool = getPool(state, actor.id, resource);
+      if (!cost || !pool) continue;
+      const { before, after } = updatePoolCurrent(state, pool.id, 'sub', cost);
+      recordVM(state, actor, 'resource', `${actor.name} · ${resource} ${before} → ${after}`,
+        { targetId: actor.id, resource, amount: before - after, before, after });
+    }
     for (const key of ['hp', 'mp', 'sp']) {
       const cost = Math.max(0, Math.floor((event[`${key}Cost`] ?? 0) * (event.costScale ?? 1)));
       if (!cost) continue;
@@ -343,7 +353,12 @@ export function resolveVMAction(state, action, { actor = actionActor(state, acti
     state.vm.stepsRemaining = 2000;
     queueVMAction(state, { actorId: actor.id, action, record: true });
   }
-  const result = stepVM(state, vmHost, { dryRun });
+  const runOptions = { dryRun, onCancel(event) {
+    this.canceled = true;
+    this.cancelReason = event.cancelReason || '行动被规则拦截';
+  } };
+  const result = stepVM(state, vmHost, runOptions);
   refreshFollowingZones(state, vmHost);
-  return dryRun ? { ...result, state } : result;
+  return { ...result, canceled: Boolean(runOptions.canceled), cancelReason: runOptions.cancelReason ?? null,
+    ...(dryRun && { state }) };
 }

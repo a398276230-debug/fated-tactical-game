@@ -61,10 +61,10 @@ export function perform({ state, context, select, op }) {
   }
 }
 
-export function continueAction({ state, frame, host }) {
+export function continueAction({ state, frame, host, options }) {
   const actor = own(state.units, frame.ownerId);
   const { action, overrides, record } = frame.data;
-  if (!actor || (frame.pc !== 5 && (actor.hp <= 0 || actor.fled))) { state.vm.stack.pop(); return; }
+  if (!actor || (frame.pc < 3 && (actor.hp <= 0 || actor.fled))) { state.vm.stack.pop(); return; }
   if (frame.pc === 0) {
     let plan = host.planAction(state, actor, action, overrides);
     if (!plan?.ok && plan?.originSensitive) {
@@ -81,17 +81,13 @@ export function continueAction({ state, frame, host }) {
     const strike = isStrikeAction(action, plan);
     const hostileStrike = strike && plan.hostile === true;
     frame.initialIntentLock = aggregateIntentLock(state, actor.id);
-    frame.eventRef = newEvent(state, { actorId: actor.id, actionType: action.type, skillId: action.skillId ?? null,
-      targetId: plan.targetIds[0] ?? plan.targetId ?? null, center: plan.center, origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
+    if (plan.kind === 'barrel') frame.ammoBefore = plan.ammo ?? null;
+    frame.eventRef = newEvent(state, { ...plan.actionContext,
+      targetId: plan.targetIds[0] ?? plan.targetId ?? plan.actionContext.targetId, center: plan.center,
+      origin: frame.originalOrigin, ignoreLOS: overrides.ignoreLOS === true,
       ...(hostileStrike ? { intent: plan.intent ?? 'normal' } : {}),
-      mpCost: plan.mp ?? 0, spCost: plan.sp ?? 0, hpCost: plan.hp ?? 0, power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,
-      ...(plan.instanceId && { weaponId: plan.instanceId, infiniteAmmo: plan.infiniteAmmo === true }),
-      weaponTemplateId: plan.weaponTemplateId ?? null, instanceId: plan.instanceId ?? null, chainDepth: frame.chainDepth ?? 0,
-      triggered: (frame.chainDepth ?? 0) > 0 });
-    if (!strike) {
-      frame.pc = 5;
-      return;
-    }
+      power: plan.power ?? 0, initiativeBonus: plan.initiativeBonus ?? 0, hostile: plan.hostile ?? false,
+      instanceId: plan.instanceId ?? null, chainDepth: frame.chainDepth ?? 0, triggered: (frame.chainDepth ?? 0) > 0 });
     frame.pc++;
     scheduleHooks(state, frame, 'before_action', frame.eventRef, host);
     return;
@@ -101,10 +97,12 @@ export function continueAction({ state, frame, host }) {
   if (frame.pc === 1) {
     frame.pc++;
     if (event.cancel) {
+      if (frame.chainDepth === 0) options?.onCancel?.(event);
       if (event.consumeCostOnCancel) host.payAction(state, actor, plan, event, overrides);
       state.vm.stack.pop();
       return;
     }
+    if (!isStrikeAction(action, plan)) { frame.pc = 5; return; }
     const originalOrigin = frame.originalOrigin ?? overrides.origin ?? actor;
     const intentLock = aggregateIntentLock(state, actor.id);
     if (plan.provisional || event.origin.x !== originalOrigin.x || event.origin.y !== originalOrigin.y
@@ -118,6 +116,7 @@ export function continueAction({ state, frame, host }) {
         return;
       }
       frame.plan = plan = replanned;
+      Object.assign(event, plan.actionContext);
       frame.initialIntentLock = intentLock;
     }
     if (isStrikeAction(action, plan) && plan.hostile === true) event.intent = plan.intent ?? 'normal';
@@ -135,7 +134,11 @@ export function continueAction({ state, frame, host }) {
   }
   if (frame.pc === 2) {
     frame.pc++;
-    if (event.cancel) { state.vm.stack.pop(); return; }
+    if (event.cancel) {
+      if (frame.chainDepth === 0) options?.onCancel?.(event);
+      state.vm.stack.pop();
+      return;
+    }
     if (event.redirectTarget) event.targets = [event.redirectTarget];
     if (event.replaceTarget) event.targets = event.targets.map(id => id === event.replaceTarget.from ? event.replaceTarget.to : id);
     event.targets = [...new Set(event.targets)].filter(id => own(state.units, id));
@@ -145,17 +148,20 @@ export function continueAction({ state, frame, host }) {
   }
   if (frame.pc === 3) {
     frame.pc++;
-    scheduleHooks(state, frame, 'after_action', frame.eventRef, host);
+    if (actor.hp > 0) scheduleHooks(state, frame, 'after_action', frame.eventRef, host);
     return;
   }
-  if (frame.pc === 5 && !continueNativeAction({ state, frame, actor, plan, event, overrides, host })) return;
+  if (frame.pc === 5) {
+    if (continueNativeAction({ state, frame, actor, plan, event, overrides, host })) frame.pc = 3;
+    return;
+  }
   if (record && isTapeAction(action.type)) {
     const parameters = Object.fromEntries(['itemId', 'maneuver', 'intent', 'nonLethal', 'bonusDice']
       .filter(key => Object.hasOwn(action, key)).map(key => [key, action[key]]));
     state.tape ??= [];
     state.tape.push({ seq: (state.tape.at(-1)?.seq ?? 0) + 1, round: state.round, turn: state.turn,
       actorId: actor.id, team: actor.team, actionType: action.type, skillId: action.skillId ?? null,
-      targetSpec: { ...event.center, targetId: event.targetId, answers: frame.answers },
+      targetSpec: { ...event.center, targetId: isStrikeAction(action, plan) ? event.targetId : plan.targetIds[0] ?? plan.targetId ?? null, answers: frame.answers },
       origin: { x: event.origin.x, y: event.origin.y },
       ...(action.x === undefined && !isStrikeAction(action, plan) && { aimed: false }),
       ...(plan.interactiveId && { interactiveId: plan.interactiveId }),

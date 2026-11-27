@@ -107,7 +107,7 @@ function opcode(op, properties, required, ...conditions) {
 const intentEnum = enumOf('normal', 'function', 'core', 'kill', 'concept');
 const controlPolicy = { ...object({ intentLock: intentEnum, allowFriendlyTarget: bool, moraleLock: literal('steady') }), minProperties: 1 };
 export const statNames = Object.freeze([...attribute.enum, 'movement', 'incomingDistanceOffset', 'armor', 'armorPierce', 'armorPiercePercent', 'damageMult', 'finalDamageMult',
-  'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult',
+  'incomingDamageMult', 'damageFlat', 'damageReduction', 'damageReductionFlat', 'dr', 'healingMult', 'incomingHealMult', 'costMult', 'costFlat',
   'checkBonus', 'dcBonus', 'resistBonus', 'dodge', 'advantage', 'initiativeFlat', 'critDamageBonus', 'apMax', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'shatter', 'power', 'hits', 'attackDistanceOffset']);
 const stat = enumOf(...statNames);
 export const skillShapes = Object.freeze(['single', 'circle', 'ring', 'fan', 'cone', 'line']);
@@ -120,15 +120,17 @@ export const statModFlags = Object.freeze(['preserveLife', 'blockRevive', 'block
 export const stackModes = Object.freeze(['refresh', 'stack', 'replace', 'extend']);
 export const durationTypes = Object.freeze(['battle_turns', 'until_removed', 'persistent']);
 const ratioStats = enumOf('damageReduction', 'dr', 'armorPiercePercent', 'shatter');
-export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat',
+export const flatOnlyStats = Object.freeze(['incomingDistanceOffset', 'armorPierce', 'damageFlat', 'damageReductionFlat', 'costFlat',
   'dcBonus', 'resistBonus', 'advantage', 'dodge', 'checkBonus', 'initiativeFlat', 'critDamageBonus', 'incomingAccuracy', 'intentBonus', 'intentDifficulty', 'hits', 'attackDistanceOffset']);
 const multiplierStats = enumOf('incomingDamageMult', 'damageMult', 'finalDamageMult', 'healingMult', 'incomingHealMult', 'costMult');
 const ratioFlat = either({ ...number, minimum: -1, maximum: 1 }, formula);
 const statMod = withRules(object({
   stat, flat: numericExpr, mult: numericExpr, additivePercent: numericExpr, damageType, checkKind: { ...text, not: literal('dodge') }, statusId: id,
   locks: list(slot, 1), flags: list(enumOf('preserveLife', 'blockRevive', 'blockResourceRestore', 'untargetableSingle', 'harmless', 'guaranteed_hit', 'guaranteed_crit', 'hidden', 'intercept', 'taunted', 'infiniteAmmo'), 1),
-  controlPolicy, when: booleanExpr,
-}), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy')),
+  controlPolicy, when: booleanExpr, pool: id, forbidAction: literal(true), forbidReason: { ...text, minLength: 1, maxLength: 120 },
+  costRedirect: object({ from: id, to: id, ratio: { type: 'number', exclusiveMinimum: 0, maximum: 100 } }, ['from', 'to']),
+}), either(needs('stat'), needs('locks'), needs('flags'), needs('controlPolicy'), needs('forbidAction'), needs('costRedirect')),
+when('forbidReason', {}, needs('forbidAction')),
 when('flat', {}, needs('stat')), when('mult', {}, needs('stat')), when('additivePercent', {}, needs('stat')),
 when('stat', ratioStats, { properties: { flat: ratioFlat }, not: needs('additivePercent') }),
 when('stat', multiplierStats, { not: needs('flat') }),
@@ -373,7 +375,8 @@ export function vmRuleError(rule, options = {}) {
 export const validVmExpiry = (value, options = {}) => valid(value, 'expiry', options);
 export const validVmPureSelector = (value, options = {}) => valid(value, 'pureSelector', options);
 export const validVmSelector = (value, options = {}) => valid(value, 'selector', options);
-export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options);
+export const validVmStatMod = (value, options = {}) => valid(value, 'statMod', options) &&
+  (!value.costRedirect || value.costRedirect.from !== value.costRedirect.to);
 export function vmStatModError(mod, options = {}) {
   if (validVmStatMod(mod, options)) return undefined;
   if (mod?.checkKind === 'dodge') return 'VM 修饰不支持 checkKind:"dodge"（引擎不存在独立闪避检定）；受击闪避加减值请直接写 {stat:"dodge", flat:...} 并省略 checkKind';
@@ -398,7 +401,9 @@ export function vmStatModError(mod, options = {}) {
   }
   const numeric = ['flat', 'mult', 'additivePercent'].find(key => Object.hasOwn(mod, key));
   if (numeric && !Object.hasOwn(mod, 'stat')) return `VM 修饰 ${numeric} 缺少 stat`;
-  return 'VM 修饰至少需要 stat、locks、flags 或 controlPolicy 之一';
+  if (mod.forbidReason !== undefined && mod.forbidAction !== true) return 'forbidReason 需要配合 forbidAction: true';
+  if (mod.costRedirect && mod.costRedirect.from === mod.costRedirect.to) return 'costRedirect 的 from 与 to 不能相同';
+  return 'VM 修饰至少需要 stat、locks、flags、controlPolicy、forbidAction 或 costRedirect 之一';
 }
 export const validVmTargetRef = (value, options = {}) => valid(value, 'targetRef', options);
 export const validVmTag = value => valid(value, 'tag', {});

@@ -9,7 +9,7 @@ import { elementMitigationCategory } from './elements.js';
 import { validVmExpiry as validExpiry } from './vm-schema.js';
 import { evaluateExpr } from './formula.js';
 import { zoneContains } from './vm-select.js';
-import { aggregateModifiers, applyStatMod, itemRules, incomingDistanceOffset, carrierScope, unitSkipped, reactionBlocked } from './vm-carriers.js';
+import { aggregateModifiers, applyStatMod, collectRules, itemRules, incomingDistanceOffset, carrierScope, unitSkipped, reactionBlocked } from './vm-carriers.js';
 import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMAnchorTurn, advanceVMRound } from './vm-runtime.js';
@@ -712,18 +712,65 @@ export function skillAvailability(state, actor, skill, id) {
   }
   return { usesLeft: Number.isFinite(usesLeft) ? usesLeft : null, cooldownRemaining };
 }
-function actorCost(state, unit, template, skillId) {
-  const cost = template.resourceCost;
-  const mult = skillId === undefined ? 1 : Math.max(0, modStat(state, unit, 'costMult', 1, { actionType: 'skill', skillId }));
-  const scaled = amount => Math.floor(amount * mult);
-  return { hp: scaled(cost?.hp ?? 0), mp: scaled(cost?.mp ?? template.mp ?? 0), sp: scaled(cost?.sp ?? template.sp ?? 0) };
+const vitalPools = ['hp', 'mp', 'sp'];
+const costFields = ({ hp, mp, sp, poolCost, poolCostId }) => ({ hpCost: hp, mpCost: mp, spCost: sp, poolCost, poolCostId });
+
+function buildActionContext(state, unit, action, { skill, weapon, ap, slot, detonate, costs }) {
+  const type = action.type;
+  const usesWeapon = type === 'attack' || type === 'reload';
+  const itemId = skill?.itemId ?? skill?.itemInstance?.id ?? (type === 'shield_bash' ? unit.shield
+    : type === 'use_item' ? unit.offHand : type === 'switch_weapon' ? action.itemId : null) ?? null;
+  const itemTemplate = usesWeapon ? weapon.template : equipmentFor(state, itemId).template;
+  const range = skill?.rawRange ?? skill?.range ?? 0;
+  return {
+    actionType: type, actorId: unit.id, targetId: action.targetId ?? unit.id, skillId: type === 'skill' ? action.skillId : null,
+    itemId, weaponId: usesWeapon ? weapon.instance?.id ?? null : null,
+    weaponTemplateId: usesWeapon ? weapon.instance?.templateId ?? null : null,
+    slot, apCost: ap, ...costFields(costs), centerX: action.x ?? null, centerY: action.y ?? null,
+    damageType: skill ? skill.damage?.type ?? skill.damageType ?? null
+      : type === 'attack' ? (detonate ? 'energy' : weapon.template.damage?.type ?? weapon.template.damageType ?? 'physical')
+        : type === 'shield_bash' ? 'physical' : null,
+    melee: type === 'attack' ? isMelee(weapon.template) && !weapon.ammo
+      : skill ? Boolean((skill.damage || skill.target === 'enemy') && isMelee(skill) && range > 0)
+        : ['shield_bash', 'grapple', 'disarm', 'trip', 'push', 'suppress'].includes(type),
+    isRanged: usesWeapon ? Boolean(weapon.ammo) || !isMelee(weapon.template) : Boolean(skill && !isMelee(skill) && range > 0),
+    school: skill?.school ?? null, tags: [...new Set([...(skill?.tags ?? []), ...(itemTemplate?.tags ?? [])])],
+    ...(usesWeapon && weapon.instance && { infiniteAmmo: weapon.infiniteAmmo }),
+  };
+}
+
+function actorCost(state, unit, base, context) {
+  const scale = (key, amount) => {
+    const { stats, pooledCostFlat } = aggregateModifiers(state, unit.id, modifierEvent(unit, { ...context, pool: key }));
+    const flat = amount > 0 ? stats.costFlat?.flat ?? 0 : pooledCostFlat;
+    return Math.max(0, Math.floor((amount + flat) * Math.max(0, applyStatMod(1, stats.costMult))));
+  };
+  const { poolCostId } = base;
+  const bills = new Map(vitalPools.map(key => [key, scale(key, base[key])]));
+  const poolCost = poolCostId ? scale(poolCostId, base.poolCost) : 0;
+  if (poolCostId) bills.set(poolCostId, (bills.get(poolCostId) ?? 0) + poolCost);
+  const snapshot = new Map(bills);
+  const { costRedirects } = aggregateModifiers(state, unit.id, modifierEvent(unit, { ...context,
+    ...costFields({ ...Object.fromEntries(bills), poolCost, poolCostId }) }));
+  const redirected = new Set();
+  for (const { from, to, ratio = 1 } of costRedirects) {
+    const amount = snapshot.get(from) ?? 0;
+    if (!amount || from === to || redirected.has(from) || (!bills.has(to) && !getPool(state, unit.id, to))) continue;
+    redirected.add(from);
+    bills.set(from, bills.get(from) - amount);
+    bills.set(to, (bills.get(to) ?? 0) + Math.ceil(amount * ratio));
+  }
+  const extraPoolCosts = [...bills].filter(([key, amount]) => amount > 0 && key !== poolCostId && !vitalPools.includes(key));
+  return { hp: bills.get('hp'), mp: bills.get('mp'), sp: bills.get('sp'), poolCostId,
+    poolCost: poolCostId && !vitalPools.includes(poolCostId) ? bills.get(poolCostId) : 0, ...(extraPoolCosts.length && { extraPoolCosts }) };
 }
 export const insufficientHP = 'HP 不足，无法施放';
 
 // Split mode assigns an AP to each slot. Two-AP actions occupy both slots.
-function paymentError(state, unit, ap, slot, template, { hp, mp, sp }, skill = false) {
-  const { locks } = aggregateModifiers(state, unit.id);
-  if ((ap === 2 && (locks.attack || locks.action)) || locks[slot] || (skill && (locks.cast || (ap === 0 && locks.action)))) return '对应行动槽已锁定';
+function paymentError(state, unit, ap, slot, template, { hp, mp, sp, poolCost, poolCostId, extraPoolCosts }, skill, actionContext) {
+  const { locks, forbid, forbidReason } = aggregateModifiers(state, unit.id, modifierEvent(unit, actionContext));
+  if (forbid) return { error: forbidReason, forbidden: true };
+  if ((ap === 2 && (locks.attack || locks.action)) || locks[slot] || (skill && (locks.cast || (ap === 0 && locks.action)))) return { error: '对应行动槽已锁定', forbidden: skill };
   if (ap > 0 && unit.ap < ap) return `需要 ${ap} AP`;
   if (ap > 0 && (ap === 2 ? unit.used.attack || unit.used.action : unit.used[slot])) {
     return '本回合对应的行动槽已使用';
@@ -731,12 +778,12 @@ function paymentError(state, unit, ap, slot, template, { hp, mp, sp }, skill = f
   if (hp > 0 && hp >= unit.hp) return insufficientHP;
   if (unit.mp < mp) return '魔力不足';
   if (unit.sp < sp) return '体力不足';
-  const { resource, amount } = template.resourceCost ?? {};
-  if (resource) {
-    const item = resourcePool(state, unit, resource, template.itemInstance);
-    const pool = !item && !template.itemInstance && getPool(state, unit.id, resource);
-    if ((item?.amount ?? pool?.current ?? 0) < amount) return item || template.itemInstance ? '装备资源不足' : '自定义资源不足';
+  if (poolCost > 0) {
+    const item = resourcePool(state, unit, poolCostId, template.itemInstance);
+    const pool = !item && !template.itemInstance && getPool(state, unit.id, poolCostId);
+    if ((item?.amount ?? pool?.current ?? 0) < poolCost) return item || template.itemInstance ? '装备资源不足' : '自定义资源不足';
   }
+  for (const [key, amount] of extraPoolCosts ?? []) if ((getPool(state, unit.id, key)?.current ?? 0) < amount) return '自定义资源不足';
   return null;
 }
 
@@ -1116,7 +1163,17 @@ function shapeTargets(state, actor, cells, template, aim, origin, ammo, ignoreRa
 }
 
 /** With no x/y, queries highlighting. With both coordinates, validates one executable action. */
-export function preview(state, action, { simulateRules = true, actionOrigin, actingUnit, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
+export function preview(state, action, options = {}) {
+  const plan = previewAction(state, action, options);
+  if (!plan.ok || options.simulateRules === false || !plan.actionContext || isStrikeAction(action, plan)
+    || (needsTarget(action.type) && action.x === undefined) || state.vm?.stack.length) return plan;
+  const context = { ...plan.actionContext, targetId: plan.targetId ?? plan.actionContext.targetId };
+  if (!collectRules(state, 'before_action', context).length) return plan;
+  const result = resolveVMAction(state, action, { dryRun: true, actor: options.actingUnit ?? actionActor(state, action) });
+  return result.canceled && !result.conditional ? { ...plan, ...fail(result.cancelReason, { forbidden: true }) } : plan;
+}
+
+function previewAction(state, action, { simulateRules = true, actionOrigin, actingUnit, ignoreRange = false, ignoreLOS = false, deferGeometry = false, limitClock = state } = {}) {
   if (state.outcome) return fail('战斗已经结束');
   const unit = actingUnit ?? actionActor(state, action);
   if (!alive(unit) && action?.type !== 'end') return fail('当前单位不能行动');
@@ -1153,16 +1210,26 @@ export function preview(state, action, { simulateRules = true, actionOrigin, act
   const drawFromBag = type === 'switch_weapon' && unit.bagWeapons?.includes(action.itemId);
   const ap = drawFromBag ? 1 : cost.ap;
   const slot = ap === 0 ? null : drawFromBag ? 'action' : detonate ? 'attack' : cost.slot;
-  const resourceCosts = actorCost(state, unit, cost, type === 'skill' ? skillId : undefined);
-  const common = { ok: true, ap, cost: ap, slot, ...resourceCosts, ...availability };
-  if (type === 'end') return common;
+  const opening = { ok: true, ap, cost: ap, slot, ...availability };
+  if (type === 'end') return { ...opening, hp: 0, mp: 0, sp: 0 };
   if (type === 'end_encounter') return ['spar','arena'].includes(state.battleType)
-    ? {...common,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
+    ? {...opening,hp:0,mp:0,sp:0,name:state.battleType === 'spar' ? '叫停切磋（平局）' : '全队认输'} : fail('本场不能直接叫停或认输');
   if (unitSkipped(state, unit)) return fail('当前单位受控制，只能结束回合');
-  const cannotPay = paymentError(state, unit, ap, slot, cost, resourceCosts, type === 'skill');
-  if (cannotPay) return fail(cannotPay, { ap, ...availability });
   const center = unplaced ? undefined : pos(x, y);
   const weapon = weaponInfo(state, unit);
+  const rc = cost.resourceCost;
+  const base = { hp: rc?.hp ?? 0, mp: rc?.mp ?? cost.mp ?? 0, sp: rc?.sp ?? cost.sp ?? 0,
+    poolCostId: rc?.resource ?? null, poolCost: rc?.amount ?? 0 };
+  const targetAtCell = center && type !== 'interact' && !isMovement(type) && !detonate
+    ? (skill?.target === 'self' ? unit : locateUnit(state, center, action.targetId, skill ? u => selectionAllows(state, skill, unit, u) : u => u.team !== unit.team))
+    : undefined;
+  const baseContext = buildActionContext(state, unit, { ...action, x, y, targetId: action.targetId ?? targetAtCell?.id }, { skill, weapon, ap, slot, detonate, costs: base });
+  const resourceCosts = actorCost(state, unit, base, baseContext);
+  const actionContext = { ...baseContext, ...costFields(resourceCosts) };
+  const common = { ...opening, ...resourceCosts, actionContext };
+  const cannotPay = paymentError(state, unit, ap, slot, cost, resourceCosts, type === 'skill', actionContext);
+  if (cannotPay) return typeof cannotPay === 'string' ? fail(cannotPay, { ap, ...availability })
+    : { ...common, ...cannotPay, ok: false };
   if (type === 'switch_weapon') {
     if (!switchableWeapons(state, unit).includes(action.itemId)) return fail('没有可切换的武器');
     return { ...common, itemId: action.itemId, name: `${unit.bagWeapons?.includes(action.itemId) ? '从背包换装' : '切换武器'}：${equipmentFor(state, action.itemId).template.name}` };
@@ -1266,7 +1333,7 @@ export function preview(state, action, { simulateRules = true, actionOrigin, act
         return { id: u.id, targetId: u.id, recipientId: guard.id, name: u.name, x: u.x, y: u.y,
           damage:[damage, damage], expectedDamage:damage, damageMax:damage, hitChance:1, automatic:true };
       });
-    return { ...common, ...(detonate ? reaches(state, unit, item, weapon.template, weapon.ammo) : {}),
+    return { ...common, ...(detonate ? { ...reaches(state, unit, item, weapon.template, weapon.ammo), ammo: weapon.ammoCount } : {}),
       name: `${detonate ? '引爆' : '激活'}${item.name}`, interactiveId: item.id, kind: item.kind, cells, targets, center };
   }
   const attack = type === 'attack' || type === 'shield_bash';
@@ -1345,8 +1412,10 @@ export function preview(state, action, { simulateRules = true, actionOrigin, act
     }
   }
   let support, ruleImpact;
-  if (simulateRules && type === 'skill' && template.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false)) {
+  const activeRules = type === 'skill' && template.rules?.some(rule => rule.hook === 'active' && rule.enabled !== false);
+  if (simulateRules && !state.vm?.stack.length && (activeRules || collectRules(state, 'before_action', actionContext).length)) {
     const result = resolveVMAction(state, action, { dryRun: true, actor: unit });
+    if (result.canceled && !result.conditional) return { ...common, ...fail(result.cancelReason, { forbidden: true }) };
     const logs = result.state.logs.slice(state.logs.length);
     // Report actual recipients too: an active VM program may select units outside
     // the native template footprint, including when the target is an empty cell.
@@ -1415,13 +1484,13 @@ function changeCounter(state, actor, weapon, effect, resource, after) {
     { instanceId: weapon.instance.id, counterKey: resource, before, after });
 }
 
-export function paySkillEquipmentCost(state, actor, skill) {
-  const { resource, amount: cost } = skill?.resourceCost ?? {};
+export function paySkillEquipmentCost(state, actor, template, cost) {
+  const resource = template?.resourceCost?.resource;
   if (!resource || !cost) return;
-  const item = resourcePool(state, actor, resource, skill.itemInstance);
+  const item = resourcePool(state, actor, resource, template.itemInstance);
   if (item) {
     changeCounter(state, actor, item.item, item.effect, resource, item.amount - cost);
-  } else if (!skill.itemInstance) {
+  } else if (!template.itemInstance) {
     const pool = getPool(state, actor.id, resource);
     if (!pool) return;
     const { before, after } = updatePoolCurrent(state, pool.id, 'sub', cost);
@@ -1795,7 +1864,7 @@ function continueMovement(state, actor, type, plan, progress, host) {
   return true;
 }
 
-function continueInteraction(state, actor, plan, progress) {
+function continueInteraction(state, actor, plan, progress, ammoBefore) {
   const item = state.interactives[plan.interactiveId];
   const effect = item.effect ?? (item.kind === 'barrel' ? 'explode' : null);
   if (!progress.started) {
@@ -1805,7 +1874,7 @@ function continueInteraction(state, actor, plan, progress) {
     record(state, actor, 'interact', `${actor.name}${item.kind === 'barrel' ? '引爆' : '激活'}${item.name}`, { interactiveId: item.id });
     if (effect === 'explode') {
       const weapon = weaponInfo(state, actor);
-      if (weapon.ammo && !weapon.infiniteAmmo) spendAmmo(state, actor, weapon, weapon.ammo);
+      if (weapon.ammo && !weapon.infiniteAmmo && (ammoBefore == null || weapon.ammoCount === ammoBefore)) spendAmmo(state, actor, weapon, weapon.ammo);
       progress.targets = plan.targets.map(profile => profile.id);
     } else if (effect !== 'shield') {
       if (effect) restoreHP(state, actor, item.damage ?? 8, actor.id, item.name);
@@ -1896,7 +1965,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     record(state, actor, 'action', `${actor.name}：${label}`,
       { action: { type, ...(x === undefined ? {} : { x, y }), ...(action.targetId ? { targetId: action.targetId } : {}) }, intent: 'normal',
         targetId: action.targetId ?? plan.targets?.find(target => target.kind !== 'cover')?.id ?? null,
-        ap: plan.ap, mp: plan.mp, sp: plan.sp, remainingAP: actor.ap });
+        ap: plan.ap, mp: plan.mp, sp: plan.sp, ...(plan.hp > 0 && { hp: plan.hp }), remainingAP: actor.ap });
   }
   if (isMovement(type)) {
     const progress = frame.nativeProgress;
@@ -1907,7 +1976,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
     dispatchVMHook(state, 'after_move', progress.moveEvent);
     return false;
   }
-  if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress);
+  if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress, frame.ammoBefore);
   switch (type) {
     case 'stance_mode': actor.greatswordMode = action.maneuver; break;
     case 'switch_weapon': {

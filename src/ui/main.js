@@ -3,6 +3,7 @@ import { SCENARIOS } from '../presets/scenarios.js';
 import { createRenderer, ACTION_LABELS, ACTION_HINTS } from './render.js';
 import { createPlayback } from './animation.js';
 import { equippedActiveSkills, isPassiveSkill, switchableWeapons } from '../core/combat.js';
+import { visibleEnemy } from '../core/combat-actions.js';
 import { placeTargetCard } from './target_card.js';
 import { coverBetween, distance3D, elevation, hasLOS } from '../core/spatial.js';
 import { requestBattleAi } from '../core/battle-ai.js';
@@ -537,14 +538,28 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     const bonus = $('bonus-dice-select');
     bonus.value = String(Math.min(Number(bonus.value), actor?.bonusDice ?? 0));
     const options = [], bagChoices = [];
-    const add = (type, skill, itemId, skillName, maneuver) => {
+    const relevantForbidden = (type, template) => {
+      if (type === 'skill') {
+        if (template?.target === 'self' || template?.target === 'none') return self;
+        if (template?.target === 'ally') return units.some(u => u.team === actor.team);
+        if (template?.target === 'enemy') return !self && (units.some(u => visibleEnemy(state, actor, u)) || (template.shape ?? 'single') !== 'single');
+        if (template?.target === 'corpse') return Object.values(state.units).some(u => u.hp <= 0 && !u.fled && u.x === at.x && u.y === at.y);
+        return true;
+      }
+      if (['move', 'sprint', 'disengage'].includes(type)) return !onActorCell && Math.max(Math.abs(actor.x - at.x), Math.abs(actor.y - at.y)) <= 3;
+      if (type === 'interact') return Boolean(feature && state.interactives[feature.id] && !feature.spent);
+      if (TARGETLESS.includes(type)) return self;
+      return units.some(u => u.id !== actor.id);
+    };
+    const add = (type, skill, itemId, skillName, maneuver, template) => {
       const command = { type, ...(maneuver && { maneuver }), ...(TARGETLESS.includes(type) ? {} : { x: at.x, y: at.y }), ...(skill ? { skillId: skill } : {}), ...(itemId ? { itemId } : {}),
         ...(chosenTargetId && !self && TARGETED.has(type) ? { targetId: chosenTargetId } : {}),
         ...(type === 'attack' || type === 'skill' ? { intent: $('intent-select').value || 'normal', nonLethal: $('nonlethal-toggle').checked, bonusDice: Number(bonus.value) } : {}) };
       const plan = previewSelected(command);
       if (onActorCell && ['move', 'sprint'].includes(type) && !(plan.bankedProgress > (actor.moveCarryPermille ?? 0))) return;
       const limited = plan.usesLeft === 0 || plan.cooldownRemaining > 0;
-      if ((plan.ok || limited || (type === 'flee' && plan.error?.includes('边界'))) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) {
+      const showDisabled = limited || (plan.forbidden && relevantForbidden(type, template)) || (type === 'flee' && plan.error?.includes('边界'));
+      if ((plan.ok || showDisabled) && !(plan.interactiveId && options.some(o => o.plan.interactiveId === plan.interactiveId))) {
         const label = plan.bankedProgress != null ? (type === 'sprint' ? '疾跑推进' : '蓄步推进')
           : skillName ?? (skill || itemId || plan.interactiveId || type === 'end_encounter' ? plan.name : ACTION_LABELS[type]);
         options.push({ command, plan, label });
@@ -571,7 +586,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       const skills = new Map([...actor.skills.map(id => [id, state.skills[id]]), ...equippedActiveSkills(state, actor)]);
       for (const [skill, template] of skills) {
         if (!template || isPassiveSkill(template) || (template.itemId && !self)) continue;
-        add('skill', skill, undefined, template.name);
+        add('skill', skill, undefined, template.name, undefined, template);
       }
       if (self) {
         for (const [skillId, count] of Object.entries(actor.inventory ?? {})) {
@@ -627,7 +642,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
       button.type = 'button'; button.className = 'game-button'; button.dataset.action = command.type;
       if (command.skillId) button.dataset.skillId = command.skillId;
       const ap = plan.ap ?? choice.item?.ap, mp = plan.mp ?? choice.item?.mp, sp = plan.sp ?? choice.item?.sp;
-      const cost = [ap ? `${ap} AP` : '', mp ? `${mp} MP` : '', sp ? `${sp} SP` : ''].filter(Boolean).join(' · ');
+      const cost = [ap ? `${ap} AP` : '', plan.hp ? `${plan.hp} HP` : '', mp ? `${mp} MP` : '', sp ? `${sp} SP` : ''].filter(Boolean).join(' · ');
       const odds = plan.targets?.[0]?.hitChance;
       const bagNote = choice.bag ? [cost, choice.item.target === 'self' || choice.item.range === 0 ? '自身' : `射程 ${plan.range ?? choice.item.range}`, choice.ruleHint || '选择目标格施放'].filter(Boolean).join(' · ') : '';
       const note = choice.bagMenuEntry ? choice.summary : choice.bag ? bagNote
@@ -655,7 +670,7 @@ export function initializeUI(root, { game = createGameAPI(), storageKey = 'fated
     card.scrollTop = 0;
     toolbar.scrollTop = 0;
     $('confirm-action').hidden = true;
-    action = inBagSubmenu ? null : options.find(o => !o.bagMenuEntry)?.command ?? null;
+    action = inBagSubmenu ? null : options.find(o => !o.bagMenuEntry && o.plan.ok)?.command ?? null;
     draw();
     layoutTargetCard();
     if (input.focusSubmenu) (toolbar.querySelector('button:not(:disabled)') || $('bag-submenu-back') || $('close-target'))?.focus({ preventScroll: true });

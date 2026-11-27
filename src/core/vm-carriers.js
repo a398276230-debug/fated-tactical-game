@@ -228,6 +228,7 @@ export function collectRules(state, hook, event = {}, queries = {}) {
 function matchesModifier(mod, event) {
   return (mod.damageType === undefined || mod.damageType === event.damageType)
     && (mod.statusId === undefined || mod.statusId === event.statusId)
+    && (mod.pool === undefined || mod.pool === event.pool)
     && (mod.checkKind === undefined || mod.checkKind === event.checkKind
       || mod.checkKind === event.statusId || event.tags?.includes(mod.checkKind));
 }
@@ -244,6 +245,10 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
   const locks = Object.fromEntries(slots.map(slot => [slot, false]));
   const flags = new Set();
   const policy = new Map();
+  const costRedirects = [];
+  let forbid = false;
+  let forbidReason = null;
+  let pooledCostFlat = 0;
   const seen = new Set();
   if (own(state.units, unitId)) {
     for (const row of carriers(state)) {
@@ -260,8 +265,15 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
           const value = evaluateExpr(mod[field], context);
           if (Number.isFinite(value)) values[field] = value;
         }
-        if (!Object.keys(values).length && !mod.locks?.length && !mod.flags?.length && !Object.keys(mod.controlPolicy ?? {}).length) continue;
+        if (!Object.keys(values).length && !mod.locks?.length && !mod.flags?.length && !Object.keys(mod.controlPolicy ?? {}).length
+          && mod.forbidAction !== true && !mod.costRedirect) continue;
         seen.add(key);
+        if (mod.forbidAction === true && !forbid) {
+          forbid = true;
+          forbidReason = mod.forbidReason || (row.entity.name ? `受【${row.entity.name}】限制，无法执行该行动` : '当前规则禁止执行该行动');
+        }
+        if (mod.costRedirect) costRedirects.push(mod.costRedirect);
+        if (mod.stat === 'costFlat' && mod.pool !== undefined) pooledCostFlat += values.flat ?? 0;
         if (mod.stat && Object.keys(values).length) {
           const total = stats.get(mod.stat) ?? { flat: 0, mult: 1, additivePercent: 0 };
           total.flat += values.flat ?? 0;
@@ -279,7 +291,7 @@ export function aggregateModifiers(state, unitId, event = {}, queries = {}) {
   }
   return {
     stats: Object.fromEntries(stats), locks, flags: Object.fromEntries([...flags].map(flag => [flag, true])),
-    controlPolicy: Object.fromEntries(policy),
+    controlPolicy: Object.fromEntries(policy), forbid, forbidReason, costRedirects, pooledCostFlat,
   };
 }
 

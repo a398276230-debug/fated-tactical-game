@@ -82,6 +82,10 @@ export const ruleOps = {
       else value = evaluateExpr(expression, context);
       if (value == null || (key === 'replaceTarget' && (!value.from || !value.to))) continue;
       event[key] = value;
+      if (key === 'cancel' && ['before_action', 'before_target'].includes(frame.hook)) {
+        if (value) event.cancelReason = `${context.self.name}拦截了本次结算`;
+        else delete event.cancelReason;
+      }
       if (frame.hook === 'before_commit' && key === 'damageType' && event.commitKind === 'damage'
         && !Object.hasOwn(op.patch, 'finalAmount') && typeof host.prepareDamage === 'function') {
         const target = state.units?.[event.targetId];

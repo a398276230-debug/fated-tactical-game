@@ -562,7 +562,8 @@ test('perform resolves an entity choice used as the action origin', () => {
   const origins = [];
   const actionHost = {
     ...host, rules: () => [], ops: { perform }, continue: continueAction,
-    planAction: () => ({ ok: true, targetIds: [], center: { x: 2, y: 2 } }),
+    planAction: (_, actor, action) => ({ ok: true, targetIds: [], center: { x: 2, y: 2 },
+      actionContext: { actorId: actor.id, targetId: actor.id, actionType: action.type } }),
     payAction() {}, runAction: ({ event }) => origins.push(event.origin),
   };
   startVM(state, { ownerId: 'actor', sourceId: 'actor', program: [
@@ -598,7 +599,8 @@ test('perform replay unwraps a bound tape record and falls back only for a missi
     ...host, rules: () => [], ops: { perform }, continue: continueAction,
     planAction: (_, actor, action) => {
       actions.push(action);
-      return { ok: true, targetIds: [], center: { x: action.x, y: action.y } };
+      return { ok: true, targetIds: [], center: { x: action.x, y: action.y },
+        actionContext: { actorId: actor.id, targetId: actor.id, actionType: action.type } };
     },
     payAction() {}, runAction() {},
   };
@@ -621,7 +623,8 @@ test('before_action resolves origin in the hook scope and records the point on t
     rules: (_, hook) => hook === 'before_action' ? [{ ownerId: 'other', carrierOrder: 0, rule: {
       id: 'origin-override', hook, program: [{ op: 'mutate_event', patch: { origin: 'self' } }],
     } }] : [],
-    planAction: () => ({ ok: true, targetIds: [], center: { x: 2, y: 2 } }),
+    planAction: (_, actor, action) => ({ ok: true, targetIds: [], center: { x: 2, y: 2 },
+      actionContext: { actorId: actor.id, targetId: actor.id, actionType: action.type } }),
     payAction() {}, runAction: ({ event }) => origins.push(event.origin),
   };
   startVM(state, { ownerId: 'actor', sourceId: 'actor' });
