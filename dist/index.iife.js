@@ -6154,13 +6154,18 @@ var FatedTactical = (() => {
   }
   function sharedSquadUnits(state) {
     const indices = manualSharedWindowIndices(state);
-    if (indices.length < 2) return [];
     const ended = new Set(state.vm?.sharedTurn?.ended ?? []);
-    return indices.flatMap((index) => {
-      const owner = state.units[state.order[index]];
-      if (ended.has(owner.id)) return [];
-      return [owner, ...linkedUnitsOf(state, owner.id)];
-    });
+    const shared = indices.length >= 2 ? indices.flatMap((index) => {
+      const owner2 = state.units[state.order[index]];
+      if (ended.has(owner2.id)) return [];
+      return [owner2, ...linkedUnitsOf(state, owner2.id)];
+    }) : [];
+    const owner = state.units?.[state.order?.[state.turn]];
+    const linked = owner && !isAiControlledUnit(owner) ? [owner, ...linkedUnitsOf(state, owner.id)] : [];
+    return [...new Map([...shared, ...linked].map((unit) => [unit.id, unit])).values()];
+  }
+  function isAiControlledUnit(unit) {
+    return unit?.team === "red" || unit?.controlPolicy?.mindControl;
   }
   function canRouteActor(state, actorId) {
     const anchor = state.units?.[state.order?.[state.turn]];
@@ -12974,6 +12979,8 @@ var FatedTactical = (() => {
     jump: "\u7EB5\u8DC3",
     dip: "\u6B66\u5668\u8638\u53D6",
     overwatch: "\u5B88\u671B",
+    help: "\u6025\u6551\u62C9\u8D77",
+    reaction_policy: "\u53CD\u5E94\u7B56\u7565",
     attack: "\u666E\u653B",
     interact: "\u4E92\u52A8",
     brace: "\u67B6\u52BF\u9632\u5FA1",
@@ -12998,6 +13005,11 @@ var FatedTactical = (() => {
     disengage: "\u5B89\u5168\u64A4\u79BB\uFF0C\u8017 1 AP\uFF08\u514D\u501F\u673A\uFF09",
     attack: "\u7528\u6B66\u5668\u653B\u51FB",
     interact: "\u4F7F\u7528\u573A\u666F\u8BBE\u65BD",
+    jump: "\u8DE8\u8D8A\u4E2D\u95F4\u683C\u5E76\u5728\u843D\u70B9\u7ED3\u7B97\u5A92\u4ECB",
+    dip: "\u4ECE\u76F8\u90BB\u5A92\u4ECB\u9644\u7740\u4E24\u56DE\u5408",
+    overwatch: "\u7B49\u5F85\u654C\u4EBA\u8FDB\u5165\u5C04\u7A0B\u540E\u53CD\u5E94\u5C04\u51FB",
+    help: "\u62C9\u8D77\u76F8\u90BB\u5012\u5730\u961F\u53CB",
+    reaction_policy: "\u5207\u6362\u81EA\u52A8\u3001\u8BE2\u95EE\u6216\u4FDD\u7559",
     free_ally: "\u7528\u653B\u51FB\u69FD\u76F4\u63A5\u89E3\u6551\u76F8\u90BB\u961F\u53CB",
     suppress: "\u4E00\u683C\u5185\u547D\u4E2D\u540E\u8FDB\u884C\u529B\u91CF\u5BF9\u6297\uFF0C\u4E0D\u9020\u6210\u4F24\u5BB3",
     brace: "\u672C\u56DE\u5408\u51CF\u4F24",
@@ -13114,7 +13126,12 @@ var FatedTactical = (() => {
       }
       node.append(bars);
       const marks = values4(unit.statuses);
-      if (marks.length) node.append(el2("span", "token-statuses", marks.length > 1 ? `\u25C6${marks.length}` : STATUS_ICON[marks[0].category] ?? "\u25C6"));
+      if (marks.length) {
+        const mark = marks.length > 1 ? `\u25C6${marks.length}` : marks[0].id === "downed" ? `\u{1F198}${marks[0].remainingTurns}` : marks[0].id === "overwatch" ? "\u2316" : marks[0].id === "dipped" ? "\u2726" : STATUS_ICON[marks[0].category] ?? "\u25C6";
+        const badge = el2("span", "token-statuses", mark);
+        badge.dataset.statusId = marks[0].id;
+        node.append(badge);
+      }
       return node;
     }
     function featureToken(f, z, isCover) {
@@ -13281,22 +13298,27 @@ var FatedTactical = (() => {
     }
     function renderSquad(state, owner, actor, ui) {
       const node = $("linked-squad");
-      const linked = owner && !state.outcome && !isAiControlled(state, owner) ? linkedUnitsOf(state, owner.id).filter((unit) => unit.team === owner.team && !isAiControlled(state, unit)) : [];
-      node.hidden = $("linked-collaborate").hidden = !linked.length;
+      const members = owner && !state.outcome && !isAiControlled(state, owner) ? sharedSquadUnits(state).filter((unit) => unit.team === owner.team && !isAiControlled(state, unit)) : [];
+      node.hidden = members.length < 2;
+      $("linked-collaborate").hidden = !members.some((unit) => unit.turnAnchorId === owner?.id && unit.summoned);
       node.inert = !!ui.busy || !!ui.askLocked;
       const collaborate = $("linked-collaborate");
       collaborate.disabled = node.inert;
       collaborate.setAttribute("aria-pressed", String(!!ui.autoCollaborate));
       const previous = new Map([...node.children].map((button) => [button.dataset.actorId, button]));
-      const members = linked.length ? [owner, ...linked] : [];
       const buttons = members.map((unit) => {
         const button = previous.get(unit.id) ?? Object.assign(el2("button", "game-button"), { type: "button" });
         button.dataset.actorId = unit.id;
         button.setAttribute("aria-pressed", String(unit.id === actor?.id));
-        const move2 = preview(state, { type: "move", actorId: unit.id }).ok;
-        const attack = unit.ap > 0 && !unit.used.attack;
-        const action = unit.ap > 0 && !unit.used.action;
-        button.textContent = `${unit.name} \xB7 \u79FB${move2 ? "\u25CF" : "\u25CB"} \u653B${attack ? "\u25CF" : "\u25CB"} \u52A8${action ? "\u25CF" : "\u25CB"}`;
+        const move2 = preview(state, { type: "move", actorId: unit.id });
+        const anchorId = unit.turnAnchorId ?? unit.id;
+        const ended = state.vm?.sharedTurn?.ended?.includes(anchorId) ?? false;
+        const unstarted = anchorId !== owner.id && !state.vm?.sharedTurn?.started?.includes(anchorId);
+        const ap = ended ? 0 : unstarted ? unit.apMax ?? 2 : unit.ap;
+        const remaining = !ended && move2.ok ? move2.moveRemaining ?? 0 : 0;
+        button.disabled = ended || unit.hp <= 0 || unit.fled;
+        button.className = `game-button${ended ? " is-ended" : ""}`;
+        button.replaceChildren(el2("span", "chip-face", Array.from(unit.name)[0]), el2("span", "", `${unit.name} \xB7 ${ap} AP \xB7 \u79FB ${remaining} \u683C`));
         return button;
       });
       if (buttons.length !== node.children.length || buttons.some((button, i) => button !== node.children[i])) node.replaceChildren(...buttons);
@@ -13400,8 +13422,12 @@ var FatedTactical = (() => {
       if (!gear.children.length) gear.append(el2("li", "muted", "\u5F92\u624B"));
       const permanentZone = (z) => z.persistent || z.durationType === "persistent" || z.durationType === "until_removed";
       const zones = values4(state.zones).filter((z) => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
-      const reaction = el2("p", "muted", `\u53CD\u5E94\uFF1A${u.reactionPolicy === "ask" ? "\u8BE2\u95EE" : u.reactionPolicy === "hold" ? "\u4FDD\u7559" : "\u81EA\u52A8"}`);
-      reaction.dataset.reactionPolicy = u.reactionPolicy ?? "auto";
+      const policy = u.reactionPolicy ?? "auto";
+      const reaction = el2("button", "game-button ft-reaction-policy", `\u53CD\u5E94\uFF1A${{ auto: "\u81EA\u52A8", ask: "\u8BE2\u95EE", hold: "\u4FDD\u7559" }[policy]}`);
+      reaction.type = "button";
+      reaction.dataset.reactionPolicy = policy;
+      reaction.dataset.actorId = u.id;
+      reaction.disabled = !preview(state, { type: "reaction_policy", actorId: u.id, policy }).ok;
       const parts = [wrap, bars, stats, facts, reaction, el2("h3", "ft-section", "\u72B6\u6001"), statusList, el2("h3", "ft-section", "\u88C5\u5907"), gear];
       if (zones.length) parts.push(el2("h3", "ft-section", "\u6240\u5904\u533A\u57DF"), el2(
         "p",
@@ -13553,7 +13579,7 @@ var FatedTactical = (() => {
         baseline = { move: cells3(run({ type: ui.sprint ? "sprint" : "move" })), attack: cells3(run({ type: "attack" })), interact: cells3(run({ type: "interact" })) };
       }
       const range2 = action ? run({ type: action.type, ...action.skillId ? { skillId: action.skillId } : {} }) : null;
-      const aimed = ["move", "sprint", "disengage", "jump", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
+      const aimed = ["move", "sprint", "disengage", "jump", "help", "attack", "skill", "interact", "lock_on", "grapple", "disarm", "trip", "push", "shield_bash"].includes(action?.type);
       const result = aimed && hover ? run({ ...action, x: hover.x, y: hover.y }) : null;
       if (fresh) {
         const battleKind = Object.keys(moraleTypes).find((k) => moraleTypes[k] === state.battleType);
@@ -14155,9 +14181,9 @@ var FatedTactical = (() => {
     const pendingAsk = () => live3?.vm?.pendingAsk;
     const active3 = (s = state) => s?.units[s.order[s.turn]];
     const mayActManually = (s, unit = active3(s)) => Boolean(unit && !s.outcome && !isAiControlled(s, active3(s)) && !isAiControlled(s, unit));
-    const routed = (command) => actorId && !["answer", "end"].includes(command.type) ? { ...command, actorId } : command;
+    const routed = (command) => actorId && command.actorId === void 0 && !["answer", "end"].includes(command.type) ? { ...command, actorId } : command;
     const previewSelected = (command) => game.previewAction(routed(command));
-    const TARGETED = /* @__PURE__ */ new Set(["attack", "skill", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push", "shield_bash"]);
+    const TARGETED = /* @__PURE__ */ new Set(["attack", "skill", "lock_on", "free_ally", "help", "suppress", "grapple", "disarm", "trip", "push", "shield_bash"]);
     let snapshotSaveFailed = false;
     const error2 = (value) => {
       const node = $("action-error");
@@ -14744,7 +14770,7 @@ ${height2}\uFF0C${sight}`;
             add("jump");
             if (sprint || !move2.ok) add("sprint");
           }
-          for (const t of ["disengage", "attack", "shield_bash", "lock_on", "free_ally", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
+          for (const t of ["disengage", "attack", "shield_bash", "lock_on", "free_ally", "help", "suppress", "grapple", "disarm", "trip", "push"]) add(t);
         }
         if (self && actor.stance === "greatsword") {
           const defensive = actor.greatswordMode !== "defensive";
@@ -14896,6 +14922,7 @@ ${height2}\uFF0C${sight}`;
       window2.setTimeout(() => window2.URL.revokeObjectURL(url), 1e3);
     }
     const on = (id3, event, fn) => $(id3)?.addEventListener(event, fn, { signal });
+    const reactionNext = (policy) => policy === "auto" ? "ask" : policy === "ask" ? "hold" : "auto";
     function selectActor(id3) {
       if (pendingAsk() || busy || !mayActManually(state, state.units[id3])) return;
       actorId = id3 === active3()?.id ? void 0 : id3;
@@ -14904,6 +14931,12 @@ ${height2}\uFF0C${sight}`;
       draw();
     }
     function bindControls() {
+      on("unit-card", "click", (event) => {
+        const control = event.target.closest("[data-reaction-policy]");
+        if (!control || !live3?.units[control.dataset.actorId]) return;
+        const unit = live3.units[control.dataset.actorId];
+        execute2({ type: "reaction_policy", actorId: unit.id, policy: reactionNext(unit.reactionPolicy ?? "auto") });
+      });
       on("linked-squad", "click", (event) => {
         const button = event.target.closest("[data-actor-id]");
         if (button) selectActor(button.dataset.actorId);
@@ -16435,6 +16468,11 @@ body { margin: 0; background: var(--ink-2); }
 .ap-crystal.is-used { color: var(--gold-dim); text-shadow: none; }
 
 .ft-linked-squad:not([hidden]) { display: flex; flex-wrap: wrap; gap: 4px; }
+.ft-linked-squad .game-button.is-ended { opacity: .4; filter: grayscale(1); }
+.ft-chip[data-status-id="downed"] { border-color: #d06a72; box-shadow: 0 0 10px rgb(208 106 114 / .45); animation: ft-downed-pulse 1.6s ease-in-out infinite; }
+@keyframes ft-downed-pulse { 50% { box-shadow: 0 0 2px rgb(208 106 114 / .15); } }
+[data-reaction-policy] { display: inline-flex; align-items: center; width: fit-content; padding: 4px 8px; border: 1px solid var(--line-mid); border-radius: 999px; background: var(--raised-b); color: var(--text-soft); cursor: pointer; user-select: none; }
+[data-reaction-policy]:hover, [data-reaction-policy]:focus-visible { border-color: var(--gold); color: var(--accent-text); }
 .ft-dock-actions { display: grid; flex: 1; justify-items: end; gap: 4px; min-width: 0; }
 .ft-ask { width: min(100%, 28rem); padding: 8px 10px; border: 1px solid var(--line-mid); border-radius: 10px; background: var(--panel-bg); }
 .ft-ask p { margin: 0 0 6px; color: var(--accent-text); overflow-wrap: anywhere; }
@@ -19214,7 +19252,10 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const defaultTier = unitTiers.length ? Math.max(1, Math.min(...unitTiers)) : 1;
     const anchorTier = tierValue ?? (hasDeclaredCellM ? tierFromCellM(battle.cellM) : defaultTier);
     const cellM = hasDeclaredCellM ? battle.cellM : TIER_CELL_M[anchorTier];
-    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...battle.heroicDowned === true && { heroicDowned: true }, ...Object.keys(customElements).length ? { customElements } : {}, battleType: moraleTypeFor(battle.moraleType) ?? "standard", scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
+    const battleType = moraleTypeFor(battle.moraleType) ?? "standard";
+    const blueCharacters = Object.values(units).filter((unit) => unit.team === "blue" && !unit.summoned).length;
+    const heroicDowned = battle.heroicDowned === true || battle.heroicDowned !== false && !["spar", "arena", "suppress"].includes(battleType) && blueCharacters >= 2;
+    const state = { ...battle.suppressingTeam && { suppressingTeam: battle.suppressingTeam }, ...heroicDowned && { heroicDowned: true }, ...Object.keys(customElements).length ? { customElements } : {}, battleType, scenarioId: descriptor ? battle.battleId : deterministicId(battle.battleId ?? title, "battle"), title, mode: "split", ruleset: ["protocol", "sandbox"].includes(options.ruleset) ? options.ruleset : "protocol", scale: { cellM, width: battle.width ?? 10, height: battle.height ?? 10, anchorTier, explicit: explicitScale }, round: 1, turn: 0, order: Object.keys(units), units, summonTemplates, items: Object.fromEntries(items.map(({ id: id3, templateId }) => [id3, { id: id3, templateId }])), equipment, skills, statusTemplates: {}, grid: [], covers: {}, interactives: {}, zones: {}, rng: seed, logs: [], outcome: null, tape: [] };
     if (battle.elementalPhysics === "off" || battle.elementalPhysics === "standard") state.elementalPhysics = battle.elementalPhysics;
     initializeVMWorld(state);
     for (const binding of Object.values(sourceMap).flatMap((mapping) => mapping.counterBindings ?? [])) {
