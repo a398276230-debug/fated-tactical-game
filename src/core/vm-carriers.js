@@ -1,7 +1,7 @@
 import { evaluateExpr } from './formula.js';
 import { movementBudget } from './combat-actions.js';
 import { isStatusImmune } from './vm-immunity.js';
-import { distance3D } from './spatial.js';
+import { distance3D, hasLOS } from './spatial.js';
 import { resolveEffectiveTier } from './combat_protocol.js';
 import { pointElevation, selectVM, zoneContains } from './vm-select.js';
 import { getPool } from './vm-pools.js';
@@ -131,7 +131,9 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
     effectiveTier: carrierEffectiveTier(state, row.carrier, own(state.units, row.nativeOwnerId) ?? self),
     cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     ...(state.grid && { distance: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
-      && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null }),
+      && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? distance3D(state, a, b) : null,
+      hasLOS: (a = self, b = target) => Number.isFinite(a?.x) && Number.isFinite(a?.y)
+        && Number.isFinite(b?.x) && Number.isFinite(b?.y) ? hasLOS(state, a, b) : false }),
     elevation: entity => pointElevation(state, entity),
     resource: (unit, key) => key === 'move' ? (unit ? movementBudget(state, unit).remainingCells : 0)
       : key === 'attack' || key === 'action' ? Math.max(0, 1 - (unit?.used?.[key] ?? 0))

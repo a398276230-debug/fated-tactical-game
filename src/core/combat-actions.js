@@ -15,6 +15,7 @@ import { aggregateModifiers, applyStatMod, collectRules, itemRules, incomingDist
 import { actionStatuses, getStatusTemplate, STATUSES } from '../presets/status-defaults.js';
 import { ruleAvailability } from './vm-rule-limits.js';
 import { resolveVMAction, dispatchVMHook, initializeVMWorld, removeVMStatus, commitVMEffect, advanceVMSpatial, advanceVMAnchorTurn, advanceVMRound, vmHost } from './vm-runtime.js';
+import { askReaction } from './tactical-vm.js';
 import { refreshFollowingZones } from './vm-spatial-ops.js';
 import { getPool, updatePoolCurrent } from './vm-pools.js';
 import { movementProgressText } from './log-attribution.js';
@@ -281,10 +282,28 @@ export function mitigation(state, unit, type, hit, pierce, ctx = {}) {
     armor: defense, armorMultiplier };
 }
 
-function guardFor(state, target) {
-  return living(state).find(u => u !== target && u.team === target.team && vmFlag(state, u, 'intercept', { target }) &&
+const reactionPolicy = (state, unit) => unit.reactionPolicy && !isAiControlled(state, unit) ? unit.reactionPolicy : 'auto';
+
+function guardsFor(state, target) {
+  return living(state).filter(u => reactionPolicy(state, u) !== 'hold' && u !== target && u.team === target.team && vmFlag(state, u, 'intercept', { target }) &&
     u.reactionAvailable !== false && !reactionBlocked(state, u) && near(u, target) <= 1 && Math.abs(elevation(state, u) - elevation(state, target)) <= 1 &&
     clearSight(state, u, target));
+}
+
+const guardFor = (state, target) => guardsFor(state, target)[0];
+
+// A null result suspends the current native frame until the same candidate is resumed.
+function reactionDecision(state, unit, frame, options, key, id, label) {
+  const policy = reactionPolicy(state, unit);
+  if (policy === 'hold') return false;
+  if (policy === 'auto' || options?.dryRun) return true;
+  if (frame.vars[key] === undefined) {
+    askReaction(state, unit, key, label, id, label);
+    return null;
+  }
+  const accepted = frame.vars[key] === id;
+  delete frame.vars[key];
+  return accepted;
 }
 
 export const linkedUnitsOf = routedLinkedUnitsOf;
@@ -880,9 +899,25 @@ function opportunitySources(state, mover) {
 }
 
 function canReact(state, { unit, weapon }, mover) {
-  if (!alive(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit)) return false;
+  if (!alive(unit) || unit.reactionAvailable === false || reactionBlocked(state, unit) || reactionPolicy(state, unit) === 'hold') return false;
   const taunter = tauntFor(state, unit, weapon.template);
   return !taunter || taunter.id === mover.id;
+}
+
+function resolveOverwatch(state, mover, host) {
+  for (const unit of living(state)) {
+    const status = unit.statuses?.overwatch;
+    if (!status || unit.team === mover.team || unit.reactionAvailable === false || reactionBlocked(state, unit)
+      || near(unit, mover) > (status.vars?.watchRange ?? 0) || !clearSight(state, unit, mover)) continue;
+    const weapon = weaponInfo(state, unit);
+    if (!weapon.template) continue;
+    unit.reactionAvailable = false;
+    removeVMStatus(state, unit, status, 'triggered', mover);
+    record(state, unit, 'overwatch', `${unit.name}对${mover.name}发动守望射击`, { targetId: mover.id });
+    host.opportunity(state, unit, pos(unit.x, unit.y), targetProfile(state, unit, mover, mover, weapon.template, { weapon }), weapon);
+    return true;
+  }
+  return false;
 }
 
 function threatens(state, source, mover, at) {
@@ -1130,7 +1165,7 @@ const ACTIONS = Object.freeze({
   end_encounter: {ap:0,slot:null}, switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   stance_mode: { ap: 0, slot: null }, brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   jump: { ap: 1, slot: 'action' }, dip: { ap: 1, slot: 'action' },
-  charge: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
+  charge: { ap: 1, slot: 'action' }, reaction_policy: { ap: 0, slot: null }, overwatch: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   free_ally: { ap: 1, slot: 'attack' }, suppress: { ap: 1, slot: 'attack' }, grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
   flee: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
 });
@@ -1291,7 +1326,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   if (!action || typeof action !== 'object' || Array.isArray(action)) return fail('动作格式错误');
   const { type, skillId } = action;
   let { x, y } = action;
-  if (!Object.keys(action).every(field => (type === 'switch_weapon' && field === 'itemId') || ['type', 'x', 'y', 'targetId', 'skillId', 'actorId', 'bonusDice', 'intent', 'nonLethal', 'maneuver'].includes(field))) return fail('动作含未知字段');
+  if (!Object.keys(action).every(field => (type === 'switch_weapon' && field === 'itemId') || ['type', 'x', 'y', 'targetId', 'skillId', 'actorId', 'bonusDice', 'intent', 'nonLethal', 'maneuver', 'policy'].includes(field))) return fail('动作含未知字段');
   if (action.bonusDice !== undefined && (!Number.isInteger(action.bonusDice) || action.bonusDice < 0 || action.bonusDice > Math.min(2, unit?.bonusDice ?? 0))) return fail('奖励骰储备不足');
   if (action.intent !== undefined && !['normal','function','core','kill','concept'].includes(action.intent)) return fail('意图类型无效');
   const equipmentSkill = type === 'skill' ? new Map(equippedActiveSkills(state, unit)).get(skillId) : null;
@@ -1310,7 +1345,7 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   if (!cost) return fail('未知动作');
   const aimed = needsTarget(type);
   const unplaced = x === undefined && y === undefined;
-  if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed && type !== 'dip')) return fail('动作带有不适用的参数');
+  if (type !== 'skill' && skillId !== undefined || (!unplaced && !aimed && type !== 'dip' && type !== 'reaction_policy')) return fail('动作带有不适用的参数');
   if (!unplaced && (!Number.isInteger(x) || !Number.isInteger(y) || !tileAt(state, x, y))) return fail('目标坐标超出棋盘');
   if (type === 'interact' && unplaced) {
     const cells = values(state.interactives).filter(v => !v.spent && preview(state, {type, x:v.x, y:v.y}, { actingUnit: unit }).ok).sort(byId).map(v => pos(v.x,v.y));
@@ -1395,9 +1430,19 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     const cells = state.grid.flatMap((row, y) => row.map((_, x) => pos(x, y))).filter(eligible);
     if (center && !eligible(center)) return fail('无法纵跃至该落点', { cells });
     if (!cells.length) return fail('没有可用纵跃落点');
-    const opportunities = opportunitySources(state, unit).filter(source => threatens(state, source, unit, unit))
+    const opportunities = opportunitySources(state, unit).filter(source => canReact(state, source, unit) && threatens(state, source, unit, unit))
       .map(({ unit: reactor }) => opportunityDetail(reactor, unit, center ?? unit));
     return { ...common, name: '纵跃', cells, opportunities, ...(center && { center, steps: near(unit, center), path: [center] }) };
+  }
+  if (type === 'overwatch') {
+    if (!weapon.instance || weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail('当前武器无法守望');
+    const watchRange = weapon.template.range ?? weapon.template.rawRange ?? 1;
+    return { ...common, name: '守望', watchRange };
+  }
+  if (type === 'reaction_policy') {
+    if (!['auto', 'ask', 'hold'].includes(action.policy)) return fail('反应策略无效');
+    if (action.policy === 'auto') return { ...common, name: '恢复自动反应', policy: action.policy };
+    return { ...common, name: action.policy === 'ask' ? '反应改为询问' : '反应改为保留', policy: action.policy };
   }
   if (type === 'charge') return { ...common, name: '蓄力', maneuver: 'charge' };
   if (type === 'scan') return { ...common, name: '探察', maneuver: 'scan' };
@@ -1812,7 +1857,7 @@ export function retargetStrike(state, actor, action, target, plan, previous = {}
     bonusDice: previous.bonusDice ?? action.bonusDice ?? 0, nonLethal: previous.nonLethal ?? action.nonLethal ?? actor.nonLethal ?? false };
 }
 
-export function continueStrike({ state, frame, host }) {
+export function continueStrike({ state, frame, host, options }) {
   const { data: action, plan } = frame;
   const actor = tableEntry(state.units, frame.ownerId);
   const actionEvent = state.vm.events[frame.eventRef];
@@ -1845,7 +1890,7 @@ export function continueStrike({ state, frame, host }) {
       const result = resolveCheck(state, actor, profile);
       frame.intentOutcome = result.intent;
       frame.awaitEvent = host.event(state, { ...detail, ...result, intent: result.intent?.success === false ? 'normal' : detail.intent, passed: result.hit });
-      frame.phase = 'damage';
+      frame.phase = 'guard';
       return;
     }
     frame.phase = 'check';
@@ -1888,9 +1933,23 @@ export function continueStrike({ state, frame, host }) {
     if (event.forceOutcome === 'fail') result.saved = false;
     frame.intentOutcome = result.intent;
     Object.assign(event, { ...result, intent: result.intent?.success === false ? 'normal' : detail.intent, passed: profile.saveStat ? result.saved : result.hit });
-    frame.phase = 'damage';
+    frame.phase = 'guard';
     host.hooks(state, frame, 'after_check', frame.awaitEvent);
     return;
+  }
+  if (frame.phase === 'guard') {
+    if (event.hit && alive(target) && !target.fled && profile.kind !== 'cover' && profile.dice) {
+      frame.guardCandidates ??= guardsFor(state, target).map(unit => unit.id);
+      while (frame.guardCandidates.length) {
+        const guard = state.units[frame.guardCandidates[0]];
+        const decision = reactionDecision(state, guard, frame, options, '__guardDecision', 'guard', '援护替伤');
+        if (decision === null) return;
+        frame.guardCandidates.shift();
+        if (decision) { frame.guardId = guard.id; break; }
+      }
+      delete frame.guardCandidates;
+    }
+    frame.phase = 'damage';
   }
   if (frame.phase === 'damage') {
     if (!event.hit || !alive(target) || target.fled) { next(); return; }
@@ -1918,7 +1977,8 @@ export function continueStrike({ state, frame, host }) {
       frame.phase = 'next_hit';
       return;
     }
-    const recipient = guardFor(state, target) ?? target;
+    const recipient = state.units[frame.guardId] ?? target;
+    delete frame.guardId;
     if (recipient !== target) recipient.reactionAvailable = false;
     event.targetId = recipient.id;
     host.commit(state, frame, { ...detail, intent: event.intent, op: 'damage', pool: 'hp', targetId: recipient.id, sourceId: actor.id,
@@ -1956,7 +2016,7 @@ export function continueStrike({ state, frame, host }) {
   if (frame.phase === 'next_hit') {
     if (frame.hitIndex + 1 < (profile.hits ?? 1) && alive(target) && !target.fled) {
       frame.hitIndex++;
-      frame.phase = 'damage';
+      frame.phase = 'guard';
       return;
     }
     if (profile.kind === 'cover') { next(); return; }
@@ -1991,7 +2051,7 @@ function movementDirection(from, to, previous) {
   return dy < 0 ? 'N' : 'S';
 }
 
-function continueMovement(state, actor, type, plan, progress, host, frame) {
+function continueMovement(state, actor, type, plan, progress, host, frame, options) {
   if (type === 'sprint' && !progress.sprintCharged) {
     actor.moveBonusPermille = (actor.moveBonusPermille ?? 0) + movementBudget(state, actor).stepPermille;
     progress.sprintCharged = true;
@@ -2005,12 +2065,16 @@ function continueMovement(state, actor, type, plan, progress, host, frame) {
   if (to && alive(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move) {
     progress.reactors ??= type === 'disengage' ? [] : opportunitySources(state, actor).map(({ unit }) => unit.id);
     while (progress.reactors.length) {
-      const unit = tableEntry(state.units, progress.reactors.shift());
-      if (!alive(unit)) continue;
+      const unit = tableEntry(state.units, progress.reactors[0]);
+      if (!alive(unit)) { progress.reactors.shift(); continue; }
       const weapon = weaponInfo(state, unit);
       const source = { unit, weapon };
       if (!canReact(state, source, actor) || !threatens(state, source, actor, actor)
-        || (!sameCell(actor, unit) && threatens(state, source, actor, to))) continue;
+        || (!sameCell(actor, unit) && threatens(state, source, actor, to))) { progress.reactors.shift(); continue; }
+      const decision = reactionDecision(state, unit, frame, options, '__oaDecision', 'react', '发动借机攻击');
+      if (decision === null) return false;
+      progress.reactors.shift();
+      if (!decision) continue;
       launchOpportunity(state, source, actor, to, host);
       return false;
     }
@@ -2055,16 +2119,20 @@ function continueMovement(state, actor, type, plan, progress, host, frame) {
   return true;
 }
 
-function continueJump(state, actor, plan, progress, host, frame) {
+function continueJump(state, actor, plan, progress, host, frame, options) {
   if (progress.movementSettled) return true;
   const to = plan.center;
   progress.reactors ??= plan.opportunities.map(source => source.unitId);
   while (alive(actor) && !actor.fled && !aggregateModifiers(state, actor.id).locks.move && progress.reactors.length) {
-    const unit = tableEntry(state.units, progress.reactors.shift());
-    if (!alive(unit)) continue;
+    const unit = tableEntry(state.units, progress.reactors[0]);
+    if (!alive(unit)) { progress.reactors.shift(); continue; }
     const weapon = weaponInfo(state, unit);
     const source = { unit, weapon };
-    if (!canReact(state, source, actor) || !threatens(state, source, actor, actor)) continue;
+    if (!canReact(state, source, actor) || !threatens(state, source, actor, actor)) { progress.reactors.shift(); continue; }
+    const decision = reactionDecision(state, unit, frame, options, '__oaDecision', 'react', '发动借机攻击');
+    if (decision === null) return false;
+    progress.reactors.shift();
+    if (!decision) continue;
     launchOpportunity(state, source, actor, to, host);
     return false;
   }
@@ -2198,7 +2266,7 @@ export function applyAction(state, action) {
   return state.logs.slice(before);
 }
 
-export function continueNativeAction({ state, frame, actor, plan, event, overrides, host }) {
+export function continueNativeAction({ state, frame, actor, plan, event, overrides, host, options }) {
   const { action } = frame.data;
   const { type, x, y } = action;
   if (!frame.nativeProgress) {
@@ -2210,18 +2278,28 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
         targetId: action.targetId ?? plan.targets?.find(target => target.kind !== 'cover')?.id ?? null,
         ap: plan.ap, mp: plan.mp, sp: plan.sp, ...(plan.hp > 0 && { hp: plan.hp }), remainingAP: actor.ap });
   }
-  if (type === 'jump') return continueJump(state, actor, plan, frame.nativeProgress, host, frame);
+  if (type === 'jump') return continueJump(state, actor, plan, frame.nativeProgress, host, frame, options);
   if (isMovement(type)) {
     const progress = frame.nativeProgress;
     if (progress.movementSettled) return true;
-    if (!continueMovement(state, actor, type, plan, progress, host, frame)) return false;
+    if (!continueMovement(state, actor, type, plan, progress, host, frame, options)) return false;
     progress.movementSettled = true;
     if (!progress.moveEvent) return true;
     dispatchVMHook(state, 'after_move', progress.moveEvent);
+    resolveOverwatch(state, actor, host);
     return false;
   }
   if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress, frame.ammoBefore);
   switch (type) {
+    case 'overwatch':
+      grantStatus(state, actor, 'overwatch', { sourceId: actor.id, remainingTurns: 1, vars: { watchRange: plan.watchRange } });
+      record(state, actor, 'overwatch', `${actor.name}进入守望`, { watchRange: plan.watchRange });
+      break;
+    case 'reaction_policy':
+      if (plan.policy === 'auto') delete actor.reactionPolicy;
+      else actor.reactionPolicy = plan.policy;
+      record(state, actor, 'reaction_policy', `${actor.name}反应策略改为${plan.policy === 'auto' ? '自动' : plan.policy === 'ask' ? '询问' : '保留'}`, { policy: plan.policy });
+      break;
     case 'stance_mode': actor.greatswordMode = action.maneuver; break;
     case 'switch_weapon': {
       const old = actor.mainHand ?? actor.weapon;
@@ -2335,6 +2413,7 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
 
 function finishAction(state, actor, type) {
   if (state.vm?.pendingAsk) return;
+  if (type === 'reaction_policy') return;
   const shared = state.vm?.sharedTurn;
   if (shared && actor && shared.started.includes(actor.id)) {
     const canAct = actor => alive(actor) && !actor.fled && !unitSkipped(state, actor)

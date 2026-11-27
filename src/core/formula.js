@@ -1,7 +1,7 @@
 // Expression identifiers and queries expose a bounded, read-only combat context.
 import { resolveEffectiveTier, scaleRatio } from './combat_protocol.js';
 import { ownDataValue } from './util.js';
-import { facingArc } from './spatial.js';
+import { facingArc, hasLOS } from './spatial.js';
 
 const variables = new Map();
 const families = [];
@@ -243,6 +243,10 @@ query('distance', ['unit', 'unit'], 'distance() / distance(unitA, unitB)', '读�
 query('facing_arc', ['entity', 'entity'], 'facing_arc(observer, point)', '读取 point 相对 observer 朝向的扇区：front、side 或 back', ([observer, point]) =>
   observer && point && Number.isFinite(observer.x) && Number.isFinite(observer.y)
     && Number.isFinite(point.x) && Number.isFinite(point.y) ? facingArc(observer, point) : null);
+query('has_los', ['entity', 'entity'], 'has_los(observer, point)', '检查两个实体或坐标间视线是否通畅', ([observer, point], context) => {
+  const result = callback(context, 'hasLOS', observer, point);
+  return typeof result === 'boolean' ? result : Boolean(context?.state?.grid && observer && point && hasLOS(context.state, observer, point));
+});
 
 const booleanQuery = value => typeof value === 'boolean' ? value : null;
 const statusPresent = (context, entity, id) => booleanQuery(callback(context, 'hasStatus', entity, id) ?? (statusOf(entity, id) != null));

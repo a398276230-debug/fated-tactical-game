@@ -1,5 +1,5 @@
 import { evaluateExpr } from './formula.js';
-import { distance3D, unitAt } from './spatial.js';
+import { distance3D, hasLOS, unitAt } from './spatial.js';
 import { pointElevation, selectVM, selectorOwner, zoneContains } from './vm-select.js';
 import { carrierEffectiveTier, eventWeapon, skillCarrierVars, incomingDistanceOffset } from './vm-carriers.js';
 import { getPool } from './vm-pools.js';
@@ -80,7 +80,7 @@ function contextFor(state, frame, host) {
   const carrier = resolveEntity(state, frame.carrier);
   const itemTemplate = frame.carrier?.type === 'item' ? own(state.equipment, carrier?.templateId) : undefined;
   return {
-    self, source, target, attacker, candidate: bound, vars, event: { ...event, actor: attacker, source, target },
+    state, self, source, target, attacker, candidate: bound, vars, event: { ...event, actor: attacker, source, target },
     resolveEntity: (value, kind) => {
       const entity = typeof value === 'string' ? own(state.units, value) ?? own(state.zones, value) ?? own(state.items, value)
         : value?.type && (value.type === 'literal' ? Object.hasOwn(value, 'value') : Object.hasOwn(value, 'id'))
@@ -99,6 +99,7 @@ function contextFor(state, frame, host) {
     warn: message => host.log?.(state, self, 'warning', message, { ruleId: frame.ruleId }),
     cellM: state.scale?.cellM ?? 2, boardW: state.grid?.[0]?.length, boardH: state.grid?.length,
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
+    hasLOS: (a = self, b = target) => coordinate(a) && coordinate(b) ? hasLOS(state, a, b) : false,
     elevation: entity => pointElevation(state, entity),
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),
     itemResource: (item, key) => getPool(state, item?.id, key, 'item')?.current ?? 0,
@@ -208,6 +209,11 @@ function askInstruction(state, frame, op, context, host, options) {
     const value = automaticChoice(state, ask);
     writeChoice(state, frame, ask, value, host, true);
   } else state.vm.pendingAsk = ask;
+}
+
+export function askReaction(state, unit, outVar, prompt, id, label) {
+  state.vm.pendingAsk = { askId: nextId(state.vm, 'ask'), chooserId: unit.id, kind: 'option', outVar, prompt,
+    options: [{ id, label }, { id: 'hold', label: '保留反应' }], aiPolicy: 'first' };
 }
 
 export function answerVM(state, action, host) {

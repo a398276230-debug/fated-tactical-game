@@ -165,7 +165,7 @@ export function continueAction({ state, frame, host, options }) {
     return;
   }
   if (frame.pc === 5) {
-    if (continueNativeAction({ state, frame, actor, plan, event, overrides, host })) frame.pc = 3;
+    if (continueNativeAction({ state, frame, actor, plan, event, overrides, host, options })) frame.pc = 3;
     return;
   }
   if (record && isTapeAction(action.type)) {
