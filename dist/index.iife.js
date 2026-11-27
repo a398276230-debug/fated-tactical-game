@@ -327,11 +327,23 @@ var FatedTactical = (() => {
     { min: null, name: "\u5931\u624B", multiplier: 0 }
   ]);
   var TIER_CELL_M = Object.freeze([null, 2, 2, 5, 15, 50, 250, 1e3]);
-  function defaultMoveFromAgi(agi) {
+  var MOVE_CURVES = [
+    null,
+    [2, 2, 1 / 3, 4.5],
+    [2.5, 2, 0.4, 5.5],
+    [2.25, 5, 0.25, 5],
+    [2, 8, 0.25, 5],
+    [2, 10, 0.25, 4.5],
+    [2, 12, 0.25, 4],
+    [2, 13, 0.25, 3.75]
+  ];
+  function defaultMoveFromAgi(agi, tier = 1) {
     if (agi == null) return 3;
     const value = Number(agi);
     if (!Number.isFinite(value)) return 3;
-    return Math.max(2, Math.min(6, 1 + Math.ceil(value / 4)));
+    const [base, zero, slope, max] = MOVE_CURVES[clampTier(tier)];
+    const raw = base + Math.max(0, value - zero) * slope;
+    return Math.max(base, Math.min(max, Math.round(raw * 4) / 4));
   }
   function boardMoveCellsFromMoveM(moveM, scale) {
     const cellM = Math.max(1e-9, Number(scale?.cellM) || 2);
@@ -4082,7 +4094,7 @@ var FatedTactical = (() => {
   var attrs = ["str", "agi", "con", "int", "spi"];
   var tierCaps = [8, 10, 12, 14, 16, 18, 20];
   function budget(actor, spec) {
-    const tier = Math.min(actor.tier ?? 1, spec.tier ?? 7);
+    const tier = Math.max(1, Math.min(7, Math.trunc(Math.min(actor.tier ?? 1, spec.tier ?? 7)) || 1));
     const a = spec.attribute ? actor.stats[spec.attribute] : Math.max(actor.stats.int, actor.stats.spi);
     return { tier, sum: Math.max(tier * 5, a * 5 - 30), cap: Math.min(a, tierCaps[tier - 1]) };
   }
@@ -4117,7 +4129,7 @@ var FatedTactical = (() => {
     const bodyLengthM = spec.bodyLengthM ?? (spec.mc >= 2 ? 10 * 2 ** (spec.mc - 2) : 1.7);
     if (bodyLengthM < 0.01 || bodyLengthM > 1e9) return null;
     const { resources, mc } = calculatePrebattleResources({ stats, tier, bodyLengthM, mc: spec.mc, summonCount: spec.count ?? 1 });
-    const rawMove = spec.move != null && Number.isFinite(Number(spec.move)) ? Math.max(0, Number(spec.move)) : defaultMoveFromAgi(stats.agi);
+    const rawMove = spec.move != null && Number.isFinite(Number(spec.move)) ? Math.max(0, Number(spec.move)) : defaultMoveFromAgi(stats.agi, tier);
     return {
       stats,
       tier,
@@ -4456,8 +4468,9 @@ var FatedTactical = (() => {
       const contributor = pool?.contributors.find((entry2) => entry2.ownerKind === "unit" && entry2.ownerId === panel.id);
       return [field2, contributor?.maxBase ?? panel[field2]];
     }));
-    const tier = spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier;
-    const rawMove = spec.move != null ? Math.max(0, Number(spec.move)) : panel.rawMove ?? (spec.copyOf && panel.moveM != null ? panel.moveM / TIER_CELL_M[Math.max(1, Math.min(7, tier ?? 1))] : panelSpec ? defaultMoveFromAgi(stats.agi) : panel.move ?? defaultMoveFromAgi(stats.agi));
+    const resolvedTier = spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier : panel.tier;
+    const tier = Math.max(1, Math.min(7, Math.trunc(Number(resolvedTier) || 1)));
+    const rawMove = spec.move != null ? Math.max(0, Number(spec.move)) : panel.rawMove ?? (spec.copyOf && panel.moveM != null ? panel.moveM / TIER_CELL_M[tier] : panel.move ?? defaultMoveFromAgi(stats.agi, tier));
     return { count, gear, panel: {
       stats,
       ...maxima,
@@ -4471,7 +4484,7 @@ var FatedTactical = (() => {
       team: actor.team,
       facing: [...actor.facing ?? [1, 0]],
       level: spec.templateId && original?.level || actor.level || actor.tier || 1,
-      tier: spec.copyOf ? spec.tier ?? panel.tier ?? actor.tier ?? 1 : panel.tier
+      tier
     } };
   }
   function removeSummon(state, unit, host) {
@@ -16968,7 +16981,7 @@ ${tacticalUI}`.replace(/(^|\})\s*:root(?:\[data-dlc-theme="([^"]+)"\])?/g, (_, l
     const facing = rawFacing.slice(0, 2).map((n) => Math.sign(integer3(n)));
     if (facing.length !== 2 || !facing.some(Boolean)) facing.splice(0, 2, team2 === "blue" ? 1 : -1, 0);
     const rawMove = number2(findValue(record3, ["move", "movement", "\u79FB\u52A8"], null), NaN);
-    const defaultMove = defaultMoveFromAgi(stats.agi);
+    const defaultMove = defaultMoveFromAgi(stats.agi, tier);
     const unit = { rawMove: Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove, id: id3, name, team: team2, x: pos2.x, y: pos2.y, facing, ...Number.isInteger(p.altitude) && p.altitude > 0 ? { altitude: p.altitude } : {}, hp: resources.hp.current, maxHp: resources.hp.max, mp: resources.mp.current, maxMp: resources.mp.max, sp: resources.sp.current, maxSp: resources.sp.max, ...Object.keys(unitPools2).length ? { unitPools: unitPools2 } : {}, ap: 0, used: { action: 0, attack: 0 }, stats, armor: Math.max(0, Math.min(1e6, integer3(findValue(record3, ["armor", "defense", "\u62A4\u7532"], 0), 0))), size, move: Math.round(Number.isFinite(rawMove) ? Math.max(0, rawMove) : defaultMove), weapon: mainId, mainHand: mainId, offHand: offId, shield: shieldId, gear: gear.slice(0, 12).map((item) => item.id), skills: normalizedSkills, statuses, level, tier, bodyLengthM, mc, stance, greatswordMode: "offensive", attunementCharges: stanceRules("attunement").itemCharges, bonusDice: 0, penaltyDice: 0, intent: "normal", nonLethal: p.nonLethal === true, moraleType: moraleTypeFor(p.moraleType) ?? "standard", ...isProtagonist && { protagonist: true } };
     if (p.moraleType && !moraleTypeFor(p.moraleType)) sink("state").push(`\u672A\u77E5\u6218\u6597\u7C7B\u578B\u300C${p.moraleType}\u300D\uFF0C\u6309\u6807\u51C6\u5904\u7406`);
     if (isProtagonist) {
