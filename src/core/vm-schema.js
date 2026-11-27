@@ -1,4 +1,4 @@
-import { STATUSES, PHYSICAL_STATUSES } from '../presets/status-defaults.js';
+import { STATUSES, PHYSICAL_STATUSES, TACTICAL_STATUSES } from '../presets/status-defaults.js';
 import { ZONE_LAYERS, ZONE_MEDIA, SURFACE_MEDIA, CLOUD_MEDIA } from './element-media.js';
 import { compileExpr, validExpr } from './formula.js';
 
@@ -306,7 +306,7 @@ function matches(value, schema, context, depth = 0) {
       || (schema.pattern && !new RegExp(schema.pattern, 'u').test(value))) return false;
     if (schema.format === 'tactical-expr') return validExpr(value);
     if (schema.format === 'tactical-status-id') return Object.hasOwn(context.statusTemplates ?? {}, value)
-      || (context.declaredStatusTemplatesOnly ? value === 'suppressed' : Object.hasOwn(STATUSES, value) || Object.hasOwn(PHYSICAL_STATUSES, value));
+      || (context.declaredStatusTemplatesOnly ? value === 'suppressed' : Object.hasOwn(STATUSES, value) || Object.hasOwn(PHYSICAL_STATUSES, value) || Object.hasOwn(TACTICAL_STATUSES, value));
     if (schema.format === 'tactical-damage-type') return damageTypes.includes(value) || Object.hasOwn(context.customElements ?? {}, value);
     return true;
   }

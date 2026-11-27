@@ -1,6 +1,6 @@
 import { getStatusTemplate, isTapeAction } from '../core/combat.js';
 import { canOccupy } from '../core/spatial.js';
-import { actionStatuses, STATUSES, PHYSICAL_STATUSES } from '../presets/status-defaults.js';
+import { actionStatuses, STATUSES, PHYSICAL_STATUSES, TACTICAL_STATUSES } from '../presets/status-defaults.js';
 import { ZONE_LAYERS, zoneMediumFields, zoneMediumLayer } from '../core/element-media.js';
 import { carrierFlags, damageTypes, durationTypes, skillShapes, skillTargets, stackModes as vmStackModes, zoneAreaShapes, summonTemplatePanelFields } from '../core/vm-schema.js';
 import { validExpr } from '../core/formula.js';
@@ -243,7 +243,7 @@ export function validateCell(v) {
 const unitKeys = ['id','name','team','x','y','facing','hp','maxHp','mp','maxMp','sp','maxSp','ap','used','stats','armor','size','move','weapon','gear','skills','statuses'];
 const protocolUnitKeys = ['followupUsed','level','mainHand','offHand','shield','bodyLengthM','tier','mc','nonLethal','intent','bonusDice','penaltyDice','stance','protagonist','moraleType','moraleState','greatswordMode','attunementCharges','initiativePercent','attackInit','actionInit','flatInitiative','lockedTargetId','moraleCheckedRound'];
 export function unitValue(v, key, state) {
-  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','moveCarryInPermille','moveSpentPermille','moveBonusPermille','moveBanked','lastMoveDir','remainingTurns','reactionAvailable', ...protocolUnitKeys, 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId', ...lifecycleInstanceFields]);
+  fields(v, unitKeys, ['initialMaxHp','initialMaxMp','initialMaxSp','apMax','moved','rawMove','moveM','moveCarryPermille','moveCarryInPermille','moveSpentPermille','moveBonusPermille','moveBanked','lastMoveDir','remainingTurns','reactionAvailable', ...protocolUnitKeys, 'surprised', 'reactionPolicy', 'fled', 'diedAt', 'corpseOf', 'corpseConsumed', 'creatureType', 'resources', 'inventory', 'bagWeapons', 'altitude', ...carrierFields, 'pools', 'templateId', 'sourceId', 'sourceSkillId', 'summonGroup', 'summoned', 'turnMode', 'turnAnchorId', 'durationUnit', 'durationAnchorId', ...lifecycleInstanceFields]);
   validateLifecycle(v, true);
   carrierFieldsValue(v, state, true);
   if (own(v, 'pools')) poolBindings(v.pools);
@@ -276,6 +276,8 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'creatureType', x => text(x) || Array.isArray(x) && x.length <= 12 && Array.from(x).every(t => text(t)));
   for (const k of ['resources','inventory']) if (own(v, k)) table(v[k], x => requireThat(int(x, 0, 1e9), k));
   checkOptional(v, 'reactionAvailable', x => typeof x === 'boolean');
+  checkOptional(v, 'surprised', x => typeof x === 'boolean');
+  checkOptional(v, 'reactionPolicy', x => ['ask', 'hold'].includes(x));
   requireThat(v.id === key && text(v.name) && team(v.team) && inGrid(state, v.x, v.y), '棋子');
   list(v.facing, 2, x => int(x, -1, 1), '朝向');
   requireThat(v.facing.length === 2 && v.facing.some(Boolean), '朝向');
@@ -299,7 +301,7 @@ export function unitValue(v, key, state) {
   checkOptional(v, 'greatswordMode', x => ['offensive','defensive'].includes(x)); checkOptional(v, 'attunementCharges', x => int(x, 0, 2));
   if (own(v,'bagWeapons')) list(v.bagWeapons, 200, id, '背包武器');
   list(v.gear, 12, id, 'gear'); list(v.skills, 32, id, 'skills');
-  table(v.statuses, (status, statusId) => statusValue(status, statusId, state, key), maxStatusTemplates + Object.keys(STATUSES).length + Object.keys(PHYSICAL_STATUSES).length);
+  table(v.statuses, (status, statusId) => statusValue(status, statusId, state, key), maxStatusTemplates + Object.keys(STATUSES).length + Object.keys(PHYSICAL_STATUSES).length + Object.keys(TACTICAL_STATUSES).length);
 }
 function jsonTree(v, depth = 0) {
   if (depth > 12) return false;

@@ -3,7 +3,8 @@ export function getStatusTemplate(state, statusId) {
   const templates = state?.statusTemplates;
   return (Object.hasOwn(templates ?? {}, statusId) ? templates[statusId] : undefined)
     ?? (Object.hasOwn(STATUSES, statusId) ? STATUSES[statusId] : undefined)
-    ?? (Object.hasOwn(PHYSICAL_STATUSES, statusId) ? PHYSICAL_STATUSES[statusId] : undefined);
+    ?? (Object.hasOwn(PHYSICAL_STATUSES, statusId) ? PHYSICAL_STATUSES[statusId] : undefined)
+    ?? (Object.hasOwn(TACTICAL_STATUSES, statusId) ? TACTICAL_STATUSES[statusId] : undefined);
 }
 
 // Default status bindings for engine actions. Only suppressed is a reserved ID.
@@ -47,6 +48,13 @@ export const STATUSES = Object.freeze({
   prone: def('prone', '倒地', '▽', 'debuff', 1, '无法移动，闪避降低。', {
     mods: [{ locks: ['move'] }, { stat: 'incomingAccuracy', flat: '2 * status.stacks' }],
   }),
+});
+
+export const TACTICAL_STATUSES = Object.freeze({
+  dipped: def('dipped', '蘸取', '✦', 'buff', 2, '武器附着媒介属性，下一次打击追加蘸取附伤。'),
+  overwatch: def('overwatch', '守望', '⌖', 'buff', 1, '等待敌方移动后发动一次警戒攻击。', { tags: ['reaction'] }),
+  downed: def('downed', '重伤倒地', '🆘', 'control', 3, '重伤倒地，等待救援。', { mods: [{ locks: ['attack', 'action', 'move', 'cast', 'reaction'] }, { stat: 'dodge', flat: -4 }] }),
+  wounded: def('wounded', '重伤虚弱', '🩹', 'debuff', 100, '本战曾经重伤倒地。', { durationType: 'until_removed' }),
 });
 
 export const PHYSICAL_STATUSES = Object.freeze({

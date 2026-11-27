@@ -3,7 +3,7 @@ import { atBattleEdge, aoeCells, canStep, cellAt as tileAt, cellStepCost, coverA
   isFlanked as flank, isGround as ground, movementOptions, unitAt, unitsAt } from './spatial.js';
 import { critChance as criticalOdds, rollD20, rollProtocolD20, rollDice, rollDie,
   saveChance as saveOdds } from './rng.js';
-import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate, sizeFor } from './combat_protocol.js';
+import { isRangedMain, stanceFor, stanceLabel, stanceRules, distanceTier, ratingFor, sizeHitModifier, meleeMultiplier, intentCheck, INTENTS, RATING_TABLE, MORALE, moraleModifiers, moraleLabels, moraleResult, initiative as protocolInitiative, typedArmor, damageAttributeReduction, TIER_CELL_M, scaledCells, scaledTemplate, sizeFor, BL_SIZE_TABLE } from './combat_protocol.js';
 
 import { elementMitigationCategory, elementTraits } from './elements.js';
 import { applyMediumEntry } from './element-media.js';
@@ -393,7 +393,7 @@ export function settleTurn(state) {
       if (refreshOutcome(state)) { unit.ap = 0; return; }
       if (unit.fled) { advanceCursor(state); if (state.vm?.pendingAsk) { state.vm.settlingTurn = true; return; } continue; }
       if (alive(unit) && !unitSkipped(state, unit)) return;
-      if (alive(unit)) record(state, unit, 'skip', `${unit.name}因控制跳过行动`);
+      if (alive(unit)) record(state, unit, 'skip', `${unit.name}${unit.surprised && state.round === 1 ? '因受惊' : '因控制'}跳过行动`);
       endTurn(state, unit);
       if (state.vm?.pendingAsk || refreshOutcome(state)) return;
     }
@@ -495,6 +495,7 @@ export function continueRound({ state, frame, host }) {
       record(state, null, 'initiative_order', '先攻修正结束', { order, modified: false });
     }
   }
+  for (const unit of Object.values(state.units)) if (unit.surprised) delete unit.surprised;
   resetFacing(state);
   moraleCheck(state);
   if (!refreshOutcome(state)) host.hooks(state, frame, 'round_start', host.event(state, { round: state.round }));
@@ -989,7 +990,7 @@ function targetProfile(state, actor, target, at, template, context = {}) {
   const guaranteeHit = hasStrikeDamage(template) && Boolean(guaranteeCrit || flags.guaranteed_hit);
   const execution = !cover && target?.team !== actor.team && ['shaken','routed'].includes(target?.moraleState) && ['kill','concept'].includes(context.intent) && hasStrikeDamage(template);
   const dodge = execution || cover || !target ? 0 : modStat(state, target, 'dodge', 0, { ...strike, attacker: actor })
-    + (target?.surprised && state.round === 1 ? 2 : 0);
+    - (target?.surprised && state.round === 1 ? 2 : 0);
   const highGroundBonus = equipmentFor(state, strike.weaponId ?? actor.mainHand ?? actor.weapon).template?.vars?.highGroundAccuracy ?? 0;
   const high = Math.sign(geometry.dz) * 2 + (geometry.dz > 0 ? highGroundBonus : 0);
   const flanked = target && !cover ? flank(state, origin, target) : false;
@@ -1535,19 +1536,23 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
   return simulateRules ? withSurfaceImpact(state, unit, action, plan, origin) : plan;
 }
 
+const martialSize = unit => Number.isFinite(unit.bodyLengthM)
+  ? sizeFor(unit.bodyLengthM)
+  : BL_SIZE_TABLE.find(entry => entry.id === (unit.sizeId ?? unit.size)) ?? BL_SIZE_TABLE[2];
+
 function maneuverContest(state, actor, target, maneuver) {
   const attackStat = maneuver === 'grapple' ? 'str' : 'agi';
   const defenseStat = maneuver === 'trip' ? 'agi' : 'str';
   const attackerRoll = randomDie(state, 20), defenderRoll = randomDie(state, 20);
-  const attackerTotal = effectiveStat(state, actor, attackStat) + attackerRoll;
-  const defenderTotal = effectiveStat(state, target, defenseStat) + defenderRoll;
-  const attackerSize = sizeFor(actor.bodyLengthM);
-  const targetSize = sizeFor(target.bodyLengthM);
+  const attackerSize = martialSize(actor);
+  const targetSize = martialSize(target);
+  const attackerTotal = effectiveStat(state, actor, attackStat) + attackerSize.martial + attackerRoll;
+  const defenderTotal = effectiveStat(state, target, defenseStat) + targetSize.martial + defenderRoll;
   const sizeDelta = attackerSize.martial - targetSize.martial;
   const sizeBlocked = ['push', 'grapple', 'trip'].includes(maneuver) && sizeDelta <= -8;
   const success = !sizeBlocked && attackerTotal >= defenderTotal;
   record(state, actor, 'contest', `${actor.name}${success ? '成功' : '未能'}${({ grapple:'擒抱', disarm:'缴械', trip:'绊摔', push:'推撞' })[maneuver]}`, {
-    maneuver, targetId: target.id, attackerRoll, defenderRoll, attackerTotal, defenderTotal, success });
+    maneuver, targetId: target.id, attackerRoll, defenderRoll, attackerTotal, defenderTotal, sizeDelta, sizeBlocked, success });
   return success;
 }
 function changeCounter(state, actor, weapon, effect, resource, after) {
@@ -1692,23 +1697,33 @@ function knockback(state, actor, target, effect) {
   if (!dx && !dy) return;
   const from = pointAt(state, target);
   const traversedCells = [];
-  let fall = 0;
+  let cliffDrop = 0;
   for (let i = 0; i < (effect.distance ?? 1); i++) {
     const at = pos(target.x + dx, target.y + dy);
     if (!canDisplaceStep(state, target, at)) {
       damageTarget(state, target, actor.id, effect.collisionDamage ?? 5, 'true', '撞击');
       if (alive(target)) grantStatus(state, target, effect.statusId ?? actionStatuses.collision, { sourceId: actor.id });
+      const cellM = state.scale?.cellM ?? 2;
+      if (cellM < 10) {
+        const cover = coverAt(state, at.x, at.y);
+        if (cover) coverDamage(state, actor, cover, effect.collisionDamage ?? 5, { label: '撞击' });
+      } else {
+        const blocker = unitsAt(state, at.x, at.y).find(unit => alive(unit) && unit.id !== target.id);
+        if (blocker) damageTarget(state, blocker, actor.id, effect.collisionDamage ?? 3, 'true', '连环撞击');
+      }
       break;
     }
     const beforeZ = elevation(state, target);
     Object.assign(target, at);
     const afterZ = elevation(state, target);
-    fall = Math.max(fall, beforeZ - afterZ);
+    const stepDrop = beforeZ - afterZ;
+    const slope = tileAt(state, target.x, target.y)?.kind === 'slope' || tileAt(state, at.x, at.y)?.kind === 'slope';
+    if ((target.altitude ?? 0) === 0 && stepDrop > (slope ? 2 : 1)) cliffDrop += stepDrop;
     traversedCells.push(pointAt(state, target));
     if (applyMediumEntry(state, vmHost, null, target, at)) break;
   }
-  if (fall > 0 && alive(target)) {
-    damageTarget(state, target, actor.id, fall * fall, 'true', '坠落');
+  if (cliffDrop >= 2 && alive(target)) {
+    damageTarget(state, target, actor.id, Math.max(4, cliffDrop * 5), 'true', '坠落');
     if (alive(target)) grantStatus(state, target, 'prone', { sourceId: actor.id, remainingTurns: 1 });
   }
   const to = pointAt(state, target), steps = traversedCells.length;
