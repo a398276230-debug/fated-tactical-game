@@ -77,7 +77,7 @@ export const PATCH_RULES = String.raw`<output_contract>
 </compilation_invariants>
 
 【宿主模板闭合字段与枚举全表】
-• 伤害类型：${damageTypeList} 或已登记 customElements ID。physical 计全额护甲，energy 与能量类元素计半额护甲及灵智减伤，mental / psychic 无视护甲并计精神减伤，true 无视护甲及减伤。已有自定义元素直接复用 customElementsLedger 的 ID。确需新增时，先 add /customElements/<id>，再在本批引用。定义含 id（与键相同，匹配 ^[a-z][a-z0-9_-]{0,31}$）、name（1…24 字符），可选 aliases（至多 8 项，每项 1…24 字符）与 category（energy / physical / mental，缺省 energy）。
+• 伤害类型：${damageTypeList} 或已登记 customElements ID。physical 计全额护甲，energy 与能量类元素计半额护甲及灵智减伤，mental / psychic 无视护甲并计精神减伤，true 无视护甲及减伤。已有自定义元素直接复用 customElementsLedger 的 ID。确需新增时，先 add /customElements/<id>，再在本批引用。定义含 id（与键相同，匹配 ^[a-z][a-z0-9_-]{0,31}$）、name（1…24 字符），可选 aliases（至多 8 项，每项 1…24 字符）、category（energy / physical / mental，缺省 energy）与 traits（不重复物理特质数组，1…4 项，枚举：heat / ignite / cold / wet / shock / corrode / flammable / gust；无对应物理相变性质时省略，常规元素联动由引擎自动结算）。
 • 骰子对象 dice（用于 damage / heal）：必填 count（整数 0…1000000）、sides（count>0 时整数 ≥1）；可选 bonus（整数）、stat（枚举：str / agi / con / int / spi）、multiplier（数值 0…8）、type（伤害类型，见上表）。协议规则下常规主击由模板 power、关联属性 stat 与伤害类型 type 驱动，但 damage 对象必须存在（如 {"count":1,"sides":4,"stat":"str","type":"physical"}）。
 • 额外消耗对象 resourceCost：{"hp"?:0…25000, "mp"?:0…25000, "sp"?:0…25000}（至少一项），或自定义池 {"resource":"<池ID>", "amount":1…1000000}（装备实例池或单位共享池）。
 • 自定义池表 pools：{"<池ID>": {"cap": 非负数或数值Expr, "initial"?: 非负数或数值Expr（≤cap）, "reloadable"?: boolean}}，仅 equipment 声明本装备实例池（如 ammo）；装备规则用 item.resource.<池ID> 读取（缺省 0，其他载体禁用），local:true 写入。
@@ -92,8 +92,8 @@ export const PATCH_RULES = String.raw`<output_contract>
   - 可选数值与布尔：attack（整数 0…1000000000）、accuracy（整数 -20…30）、armor（整数 0…1000000）、defense（整数 0…1000000）、ranged / closeQuarters / heavy / twoHanded / shield（boolean）、boundTo（单位 ID）、weaponType（文本）、skills（技能 ID 数组，去重）、radius / innerRadius / width / angle / raw* 距离字段及通用载体字段。装备可用 unitPools 声明挂在持有者身上的共享池，pools 仅声明本装备实例池。流派联动：双手占槽设 twoHanded:true，重型设 heavy:true（近战主手任一激活重剑：攻势 1.5×、沉势 1.2× 且减免 15% 非真伤，无内置弹反结算，招架反击须写受击规则）；纯远程主手单持激活射击姿态（中远距衰减缓和 2，封顶 0；同格默认 -4 命中，贴身免罚设 closeQuarters:true）；双持普攻触发副手追击要求副手武器 hand:"off_hand" 且带 damage；有主手无盾且副手为 kind:"consumable" 时激活同调（0 AP 不占槽对 self 执行副手 hook:"active"，每战共 2 次）；持盾激活剑盾格挡与盾击。
 
 • 召唤模板 /summonTemplates/<id>：优先复用 sharedSummonLedger 中既有蓝图；新增时必填 name，可选 stats、mc、skills、mainHand/offHand/shield、gear、turnMode 及 bindToSource / concentration（boolean），由 spawn(entityKind:"unit") 的 templateId 引用。绑定实体随来源离场清理，专注实体还受专注互斥、全锁失能与受创豁免约束。
-• 战场环境区域 /zones/<id>（对应 unitId:null、originPath:"/zones/<id>" 的战场效果警告）：
-  - 身份与几何字段（id / name / area / follow / sourceId / team）只读锁定，禁整块 replace /zones/<id> 或改写 area/id/name/pools/description，仅写子路径 /zones/<id>/(rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns)。默认 persistent:true, remainingTurns:1；仅原文明写持续 N 轮时同时 replace persistent:false 与 remainingTurns:N（1…100）。
+• 战场环境区域 /zones/<id>（对应 unitId:null、originPath:"/zones/<id>" 的战场效果警告；浅水洼/冰面/油污/火海/强酸池/蒸汽云/浓烟/可燃毒雾等无附加规则的全体标准环境已由转换器自动实例化，不会进警告）：
+  - 身份与几何字段（id / name / area / follow / sourceId / team）只读锁定，禁整块 replace /zones/<id> 或改写 area/id/name/pools/description，仅写子路径 /zones/<id>/(rules|mods|tags|vars|flags|tier|shareRulesTo|persistent|remainingTurns|layer|medium|blocksLOS|moveCost)。默认 persistent:true, remainingTurns:1；仅原文明写持续 N 轮时同时 replace persistent:false 与 remainingTurns:N（1…100）；带自定义机制的元素地形可补 layer（surface / cloud）、对应 medium、blocksLOS（boolean）或 moveCost（1…4）。
   - 阵营与触发主体：初始区域 sourceId 为 null，严禁写 source.team！限定蓝方写 self.team == 'blue'（红方 'red'，全体不限）；区域 rules 监听进攻钩子须并入 attacker.id == self.id，受击/拦截钩子须并入 target.id == self.id；禁飞/禁瞬移/属性修正直接写区域 mods（如 {locks:["fly"]}）；纯环境风味归 narrative（unitId:null）。
 
 <std_audit_workflow>
@@ -113,7 +113,7 @@ Step 4 [闭合 Schema 与括号配平门控]：检查 hook 枚举、op 闭合字
 整批仅 unresolved / narrative 时提交 "patch":[]；引用前批成果时附 "existing":[...]。保持扁平规则结构并配平 } 与 ]，</std_audit> 后立即以 { 输出纯 JSON，根 } 闭合后立即结束（禁代码围栏、多余标签或分段 JSON）。
 现在立即从 <std_audit> 开始执行审校并输出最终 JSON：
 </tail_anchor>`;
-export const CHAT_TASK_RULES = `【辅助 AI 对话】玩家咨询时直接用文字回答。原始资料（MVU / char_info 原文）仅供只读参考，当前战局生效数据以 state 为准。玩家明确要求修改已加载战局时，只输出 JSON 补丁信封：优先复用 sharedStatusLedger、sharedPoolLedger、sharedSummonLedger 中既有 ID，并用正交原语（forbidAction 禁招、costRedirect 代付、listenScope:"board" 旁观反应、bindToSource/concentration 绑定与专注、controlPolicy 控场）直接表达。unitPools 只能声明在 units、equipment、skills，运行时 pools 只由引擎维护；带 MVU写回 的池沿用原池由宿主自动写回净变化，未标记的池仅本场生效，禁止修改 sourceMap 或构造 MVU 写回路径。damageType 使用 14 个内置元素 ID 或 customElementsLedger 中已登记 ID；确需新增元素时先在同一补丁数组中 add /customElements/<id> 再引用。`;
+export const CHAT_TASK_RULES = `【辅助 AI 对话】玩家咨询时直接用文字回答。原始资料（MVU / char_info 原文）仅供只读参考，当前战局生效数据以 state 为准。玩家明确要求修改已加载战局时，只输出 JSON 补丁信封：优先复用 sharedStatusLedger、sharedPoolLedger、sharedSummonLedger 中既有 ID，并用正交原语（forbidAction 禁招、costRedirect 代付、listenScope:"board" 旁观反应、bindToSource/concentration 绑定与专注、controlPolicy 控场）直接表达。unitPools 只能声明在 units、equipment、skills，运行时 pools 只由引擎维护；带 MVU写回 的池沿用原池由宿主自动写回净变化，未标记的池仅本场生效，禁止修改 sourceMap 或构造 MVU 写回路径。damageType 使用 14 个内置元素 ID 或 customElementsLedger 中已登记 ID；确需新增元素时先在同一补丁数组中 add /customElements/<id>（可按物理性质附 traits）再引用。`;
 
 const json = value => JSON.stringify(value, null, 2);
 
@@ -273,8 +273,10 @@ function sharedSummonLedger(state) {
   return `sharedSummonLedger：templateId|名|归属|tier/mc|五维(str/agi/con/int/spi)|主手|副手|盾牌|技能|默认行动模式；优先复用既有 templateId，不重复捏造面板。\n${lines.join('\n')}`;
 }
 function customElementLedger(state) {
-  const lines = Object.entries(state.customElements ?? {}).map(([id, entry]) => [id, entry.name, entry.category ?? 'energy'].join('|'));
-  return lines.length ? `\ncustomElementsLedger：elementId|名|减伤归类；已全局持久化，直接引用，勿重复 add。\n${lines.join('\n')}` : '';
+  const lines = Object.entries(state.customElements ?? {}).map(([id, entry]) => [
+    id, entry.name, entry.category ?? 'energy', ...(entry.traits?.length ? [entry.traits.join(',')] : []),
+  ].join('|'));
+  return lines.length ? `\ncustomElementsLedger：elementId|名|减伤归类(|traits)；已全局持久化，直接引用，勿重复 add。\n${lines.join('\n')}` : '';
 }
 
 export function resolveSlotContent(slot, ctx = {}) {

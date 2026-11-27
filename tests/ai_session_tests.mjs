@@ -13,6 +13,10 @@ import { buildScenario } from '../src/presets/scenarios.js';
 import { normalizationTransactions, replayNormalization } from '../src/tavern/normalization-replay.js';
 import { chatPatch, fingerprintAt } from '../src/tavern/overlay-patch.js';
 import { applyPatch, extractJsonBlocks, parseAIResponse, stripReasoningBlocks, partitionNormalizationPatch, formatRejectedItem } from '../src/tavern/overlay.js';
+import { PHYSICAL_TRAITS } from '../src/core/elements.js';
+import { ZONE_MEDIA } from '../src/core/element-media.js';
+import { PHYSICAL_STATUSES } from '../src/presets/status-defaults.js';
+import { battleAiPayload } from '../src/core/battle-ai.js';
 
 test('首次登记的元素先于引用校验，重放复用已全局登记的同一定义', () => {
   const state = buildScenario('ruins');
@@ -643,5 +647,31 @@ test('正交六域能力在协议与任务槽完整披露且清理过期绕法�
   ]) assert.ok(joined.includes(token), `提示词漏披露正交原语：${token}`);
   assert.doesNotMatch(joined, /无 \.sourceId 字段|封锁特定恢复技能或资源回复请用 before_action|全场任何敌友濒死都会误触发/);
 });
+
+test('元素物理特质、媒介区域、物理附着四态与陪玩提示词完整对齐源码枚举', () => {
+  const joined = assembleMessages(DEFAULT_SLOTS, { kind: 'validate' }).map(m => m.content).join('\n\n');
+  for (const trait of PHYSICAL_TRAITS) assert.ok(joined.includes(trait), `提示词漏披露物理特质：${trait}`);
+  for (const medium of ZONE_MEDIA) assert.ok(joined.includes(medium), `提示词漏披露物理媒介：${medium}`);
+  for (const statusId of Object.keys(PHYSICAL_STATUSES)) assert.ok(joined.includes(statusId), `提示词漏披露物理附着态：${statusId}`);
+  for (const token of ['layer', 'blocksLOS', 'moveCost', '.altitude', '切勿在每个技能里手写冗长的环境检测指令']) {
+    assert.ok(joined.includes(token), `提示词漏披露关键契约：${token}`);
+  }
+
+  const state = {
+    units: { p1: { id: 'p1' } },
+    customElements: {
+      void: { id: 'void', name: '虚空', category: 'energy' },
+      azure_bolt: { id: 'azure_bolt', name: '苍蓝雷霆', category: 'energy', traits: ['shock', 'gust'] },
+    },
+    statusTemplates: {},
+  };
+  const [, index] = resolveSlotContent({ id: 'roster' }, { state, kind: 'chat' }).split('\n<role_readonly_index DO_NOT_PATCH="true">');
+  assert.match(index, /\nvoid\|虚空\|energy\n/);
+  assert.match(index, /\nazure_bolt\|苍蓝雷霆\|energy\|shock,gust(?:\n|$)/);
+
+  const aiPayload = battleAiPayload(buildScenario('ruins'));
+  assert.match(aiPayload.rules, /水洼导电.*油污与毒雾引爆.*蒸汽与浓烟遮挡远程视线/);
+});
+
 
 

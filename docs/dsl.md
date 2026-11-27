@@ -90,12 +90,15 @@ MVU 角色原本存在并被转换器绑定的单位池带有 `mvuBound` 语义�
 
 `damageType` 统一表示内置和自定义伤害类型。14 种内置类型为 `physical`（物理）、`energy`（能量）、`mental`（精神）、`true`（真实）、`fire`（火焰）、`cold`（冰霜）、`lightning`（雷电）、`thunder`（雷鸣）、`acid`（酸蚀）、`poison`（毒素）、`necrotic`（暗蚀）、`radiant`（光耀）、`force`（力场）和 `psychic`（心灵）。`fire`、`cold`、`lightning`、`thunder`、`acid`、`poison`、`necrotic`、`radiant`、`force` 默认按能量类减伤，`psychic` 按精神类减伤。
 
-持久自定义元素登记在 `customElements`，键必须是合法 ASCII ID，值至少包含同名 `id` 与展示用 `name`，可选 `aliases` 和 `category`（`physical`、`energy` 或 `mental`）。自定义元素仍使用 `damageType`，例如 `{ "damageType": "void" }`，不增加平行的 `element` 字段。`before_commit` 支持写入 `damageType`，引擎会按新的类型重新计算尚未显式覆盖的最终伤害。
+持久自定义元素登记在 `customElements`，键必须是合法 ASCII ID，值至少包含同名 `id` 与展示用 `name`，可选 `aliases`、`category`（`physical`、`energy` 或 `mental`）与 `traits`（1 至 4 项不重复物理特质，枚举：`heat`、`ignite`、`cold`、`wet`、`shock`、`corrode`、`flammable`、`gust`）。自定义元素仍使用 `damageType`，例如 `{ "damageType": "void" }`，不增加平行的 `element` 字段。`before_commit` 支持写入 `damageType`，引擎会按新的类型重新计算尚未显式覆盖的最终伤害。
+
+内置元素默认带物理特质（`fire` 为 `heat`+`ignite`、`cold` 为 `cold`、`lightning` 为 `shock`、`thunder` 为 `gust`、`acid` 为 `corrode`），装备与技能的 `tags` 也可附带上述特质名；转换器自动注册自定义元素时会按中文词根推断默认 `traits`。当 `state.elementalPhysics !== "off"`（`battle_init` 首行可写 `|元素交互=关` 关闭）时，动作落点、直接伤害与新生成的媒介区域会自动结算物理相变、四连通水体导电与油面/毒瘴燃爆，并按需维护 `PHYSICAL_STATUSES` 四项基础物理附着态（`wet` 潮湿、`oiled` 覆油、`burning` 灼烧、`chilled` 霜滞；查找优先级低于 `state.statusTemplates` 与 9 个内核状态 `STATUSES`，可被同名用户状态模板覆写）。
 
 ```json
 {
   "customElements": {
-    "void": { "id": "void", "name": "虚空", "category": "energy" }
+    "void": { "id": "void", "name": "虚空", "category": "energy" },
+    "azure_bolt": { "id": "azure_bolt", "name": "苍蓝雷霆", "category": "energy", "traits": ["shock"] }
   },
   "damageType": "void"
 }
@@ -104,6 +107,8 @@ MVU 角色原本存在并被转换器绑定的单位池带有 `mvuBound` 语义�
 ## 5. Selector、spawn 和状态引用
 
 selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`、`origin`、`sort` 等 schema 字段；纯 selector 才能用于载体共享规则。`event.<field>` 只允许 `vm-schema.js` 导出的 `EVENT_SCALAR_KEYS` 闭合白名单，未知字段在 schema 阶段拒绝；表达式运行时仍对缺失字段返回 `null`。`spawn` 的 `entityKind` 决定 spec：unit 支持 `templateId/copyOf/spawnPanel/count`，zone/terrain/cover 使用区域和剩余回合，item 支持模板与数量。生成 ID 由已用数字后缀确定性递增。
+
+区域 `zone` 除通用载体字段外，还支持可选物理媒介字段：`layer`（`"surface"` 地表层或 `"cloud"` 云雾层）、`medium`（地表层：`water`、`ice`、`oil`、`fire`、`acid`、`electrified_water`；云雾层：`steam`、`smoke`、`poison_cloud`、`electrified_steam`；声明 `medium` 时必须匹配对应 `layer`）、`blocksLOS`（布尔值，阻断非 `trueSight` 单位的视线）和 `moveCost`（`1..4` 整数，增加 `altitude == 0` 地面移动的每步消耗，飞行单位无视）。同层同格写入新媒介时自动裁剪旧媒介格点，高 `tier` 或带 `undispellable` / `concept_immune` 的高位格媒介区域不受低位格冲量覆盖；未声明 `layer` 的普通法术区域互不裁剪。
 
 ### 召唤单位
 
@@ -153,9 +158,9 @@ selector 使用 `from`、`options`、`of`、`area`、`where`、`pick`、`flags`�
 
 `src/core/formula.js` 的 `validExpr`、`compileExpr`、`evaluateExpr` 只接受解析器支持的表达式，不执行任意 JavaScript。当前查询函数包括：
 
-`min`、`max`、`floor`、`ceil`、`abs`、`cells_m`、`scale_cells`、`clamp`、`distance`、`resource`、`has_status`、`has_tag`、`in_zone`、`is_immune`、`any_unit_has_status`、`count_units`、`count`、`sum`。
+`min`、`max`、`floor`、`ceil`、`abs`、`cells_m`、`scale_cells`、`clamp`、`distance`、`facing_arc`、`resource`、`has_status`、`has_tag`、`in_zone`、`is_immune`、`any_unit_has_status`、`count_units`、`count`、`sum`。
 
-公式上下文提供 `self`、`attacker`、`target`、`source`、`candidate`、`status`、`zone`、`skill`、`item`、`event`、`vars`、`round`、`turn`、`timeOfDay`、`cellM`、棋盘尺寸和资源/层数/变量引用。单位作用域公开 `sourceId`、`summonGroup` 和 `level`，可用 `count_units("candidate.alive && candidate.summonGroup != null && candidate.summonGroup == self.summonGroup")` 统计存活同组成员。
+公式上下文提供 `self`、`attacker`、`target`、`source`、`candidate`、`status`、`zone`、`skill`、`item`、`event`、`vars`、`round`、`turn`、`timeOfDay`、`cellM`、棋盘尺寸和资源/层数/变量引用。单位作用域公开 `altitude`、`sourceId`、`summonGroup`、`sourceSkillId`、`level` 和 `reactionAvailable`，可用 `count_units("candidate.alive && candidate.summonGroup != null && candidate.summonGroup == self.summonGroup")` 统计存活同组成员。
 
 ## 7. 校验与执行
 
