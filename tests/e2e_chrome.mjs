@@ -1028,6 +1028,18 @@ test('真实 Chrome：开局、移动、击杀、祭坛、技能、AI、沙盒�
     assert.equal(s.units.swordsman.y, 2);
   });
   await click('#reset-button');
+  await t.test('角色卡反应策略按钮写入 journal 并循环三态', async () => {
+    const activeUnit = await actor();
+    await click(`${cell(activeUnit.x, activeUnit.y)} [data-unit-id="${activeUnit.id}"]`);
+    await click('[data-reaction-policy]');
+    assert.equal((await state()).units[activeUnit.id].reactionPolicy, 'ask');
+    await click('[data-reaction-policy]');
+    assert.equal((await state()).units[activeUnit.id].reactionPolicy, 'hold');
+    await click('[data-reaction-policy]');
+    assert.equal(Object.hasOwn((await state()).units[activeUnit.id], 'reactionPolicy'), false);
+    assert.ok((await run('window.FatedTacticalGame.exportBattleSnapshot().journal')).some(entry =>
+      entry.kind === 'actions' && entry.entries?.some(action => action.type === 'reaction_policy')));
+  });
   const actions = type => `#action-toolbar [data-action="${type}"]`;
   await run(`(() => {
     const game = window.FatedTacticalGame;
