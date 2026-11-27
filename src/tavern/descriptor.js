@@ -42,13 +42,16 @@ function parseHeader(line) {
   const surprisedValue = options.find(value => /^受惊\s*=/u.test(value));
   const surprisedToken = surprisedValue?.match(/^受惊\s*=\s*(红方|蓝方|red|blue)$/iu);
   if (surprisedValue && !surprisedToken) fail('受惊必须是 红方、蓝方、red 或 blue');
+  const rescueTokens = options.filter(value => /^濒死救援\s*=/u.test(value));
+  const rescueToken = rescueTokens[0];
+  if (rescueTokens.length > 1 || rescueToken && !/^濒死救援\s*=\s*[开关]$/u.test(rescueToken)) fail('濒死救援只能声明一次，值为开或关');
   const physicsTokens = options.filter(value => /^元素交互\s*=|^法则\s*=\s*无元素涌现$/u.test(value));
   if (physicsTokens.length > 1) fail('元素交互只能声明一次');
   const physicsToken = physicsTokens[0];
   if (physicsToken && !/^(?:元素交互\s*=\s*[开关]|法则\s*=\s*无元素涌现)$/u.test(physicsToken)) fail('元素交互必须是 开 或 关');
   const physicsOff = /^(?:元素交互\s*=\s*关|法则\s*=\s*无元素涌现)$/u.test(physicsToken ?? '');
   const remainingOptions = options.slice();
-  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, surprisedValue, physicsToken]) {
+  for (const token of [sizeToken, scaleToken, tierToken, sideValue, typeValue, surprisedValue, physicsToken, rescueToken]) {
     if (token !== undefined) remainingOptions.splice(remainingOptions.indexOf(token), 1);
   }
   const [seedText, ...extra] = remainingOptions;
@@ -59,6 +62,7 @@ function parseHeader(line) {
     ...(cellM != null && { cellM }), ...(tierMatch && { scaleTier: Number(tierMatch[1]) }),
     ...(scaleExplicit && { explicitScale: true }), ...(physicsOff && { elementalPhysics: 'off' }),
     ...(moraleType && { moraleType }), ...(sideToken && { suppressingTeam: sideToken[1] }),
+    ...(rescueToken && { heroicDowned: rescueToken.endsWith('开') }),
     ...(surprisedToken && { surprisedTeam: /^蓝方|blue$/iu.test(surprisedToken[1]) ? 'blue' : 'red' }),
     ...(seedText === undefined ? {} : { seed: Number(seedText) }) };
 }

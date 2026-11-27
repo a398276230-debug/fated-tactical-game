@@ -314,7 +314,10 @@ export function createRenderer(root, portraitFor = () => []) {
     meta.append(crystals);
     if (u.moraleState && u.moraleState !== 'steady') meta.append(el('span','ft-chip',`战意${moraleLabels[u.moraleState]}`));
     meta.append(el('span', 'ft-chip', `动作${u.used?.action ? '已用' : '可用'} · 攻击${u.used?.attack ? '已用' : '可用'}`));
-    for (const s of values(u.statuses)) meta.append(el('span', 'ft-chip', statusText(s)));
+    for (const s of values(u.statuses)) {
+      const chip = el('span', 'ft-chip', `${s.id === 'downed' ? `🆘${s.remainingTurns}` : s.id === 'overwatch' ? '⌖' : s.id === 'dipped' ? '✦' : ''}${statusText(s)}`);
+      meta.append(chip);
+    }
     node.replaceChildren(el('span', 'ft-actor-face', Array.from(u.name)[0]), name, bars, meta);
   }
 
@@ -369,7 +372,9 @@ export function createRenderer(root, portraitFor = () => []) {
     if (!gear.children.length) gear.append(el('li', 'muted', '徒手'));
     const permanentZone = z => z.persistent || z.durationType === 'persistent' || z.durationType === 'until_removed';
     const zones = values(state.zones).filter(z => (permanentZone(z) || !(z.remainingTurns <= 0)) && zoneContains(state, z, u));
-    const parts = [wrap, bars, stats, facts, el('h3', 'ft-section', '状态'), statusList, el('h3', 'ft-section', '装备'), gear];
+    const reaction = el('p', 'muted', `反应：${u.reactionPolicy === 'ask' ? '询问' : u.reactionPolicy === 'hold' ? '保留' : '自动'}`);
+    reaction.dataset.reactionPolicy = u.reactionPolicy ?? 'auto';
+    const parts = [wrap, bars, stats, facts, reaction, el('h3', 'ft-section', '状态'), statusList, el('h3', 'ft-section', '装备'), gear];
     if (zones.length) parts.push(el('h3', 'ft-section', '所处区域'), el('p', '',
       zones.map(z => `${z.name}${permanentZone(z) ? '（常驻）' : `（剩余 ${z.remainingTurns} 轮）`}`).join('；')));
     node.replaceChildren(...parts);

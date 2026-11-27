@@ -147,7 +147,7 @@ export function continueCommit({ state, frame, host, options }) {
       authorityRank: authority.authorityRank, sourceTier: authority.unitTier,
       ...(data.instantDeath === true && { instantDeath: true }), poolId: pool.id, damageType: data.damageType ?? null, rawAmount: data.amount, finalAmount: amount,
       ...(op === 'damage' && { shared: data.shared === true, sharedFromId: data.sharedFromId ?? null }),
-      isSingle: data.isSingle ?? null, isArea: data.isArea ?? null, isRanged: data.isRanged ?? null,
+      direct: data.direct ?? true, isSingle: data.isSingle ?? null, isArea: data.isArea ?? null, isRanged: data.isRanged ?? null,
       sourceRuleId: frame.ruleId, direct: data.direct ?? true, preserveLife: data.lethal === false || Boolean(target.nonLethal || host.flag?.(state, target, 'preserveLife') || host.preserveLife?.(state, source)),
       actionType: data.actionType ?? null, skillId: data.skillId ?? null, weaponTemplateId: data.weaponTemplateId ?? null,
       melee: data.melee ?? false, backstab: data.backstab ?? false,
@@ -208,6 +208,10 @@ export function continueCommit({ state, frame, host, options }) {
       if (blockRestore) event.finalAmount = 0;
       else updatePoolCurrent(state, pool.id, 'add', Math.max(0, Math.floor(event.finalAmount)));
       event.healing = target.hp - before;
+      if (event.healing > 0 && target.statuses?.downed) {
+        removeStatus(state, target, target.statuses.downed, 'healed', source, host, frame);
+        host.log(state, source, 'revived', `${target.name}恢复意识`, { targetId: target.id });
+      }
       host.log(state, source, 'heal', `${target.name}${data.label ? `因${data.label}` : ''}恢复${event.healing}点生命`, { ...data.details, targetId: target.id, amount: event.healing, hpBefore: before, hpAfter: target.hp });
     } else {
       let applied = true;
@@ -284,6 +288,7 @@ export function continueCommit({ state, frame, host, options }) {
     }
     for (const depleted of depletion.reverse()) pushFrame(state, { native: 'lethal', ownerId: target.id, sourceId: data.sourceId,
       data: { poolId: depleted.id, damageType: event.damageType, targetId: target.id,
+        direct: event.direct, isSingle: event.isSingle, isArea: event.isArea, bleedOut: data.bleedOut === true,
         rawAmount: event.rawAmount ?? 0, finalAmount: event.finalAmount ?? 0, dealt: event.dealt ?? 0, absorbed: absorbed ?? 0,
         overkill: Math.max(0, (event.finalAmount ?? 0) - (absorbed ?? 0) - before),
         ...(typeof event.intent === 'string' && { intent: event.intent }) } });
@@ -326,9 +331,32 @@ export function continueLethal({ state, frame, host }) {
     const event = state.vm.events[frame.eventRef];
     if (pool.current > 0) return;
     if (event.preventDeath) { updatePoolCurrent(state, pool.id, 'set', 1); return; }
+    const downed = event.units.map(id => entry(state.units, id)).find(unit => unit && state.heroicDowned
+      && unit.team === 'blue' && !unit.summoned && !unit.statuses?.downed && !unit.statuses?.wounded
+      && !['spar', 'arena', 'suppress'].includes(state.battleType)
+      && Object.values(state.units).some(other => other.id !== unit.id && other.team === 'blue' && alive(other) && !other.fled && !other.statuses?.downed));
+    if (downed) {
+      updatePoolCurrent(state, pool.id, 'set', 1);
+      host.grantStatus(state, downed, 'downed', { sourceId: frame.sourceId, remainingTurns: 3 });
+      host.grantStatus(state, downed, 'wounded', { sourceId: frame.sourceId, remainingTurns: 100 });
+      host.log(state, downed, 'downed', `${downed.name}重伤倒地（3轮内需救援）`, { targetId: downed.id });
+      return;
+    }
     for (const unitId of event.units) {
       const unit = entry(state.units, unitId);
       if (!unit || unit.pools?.hp !== pool.id) continue;
+      const injury = unit.statuses?.downed;
+      if (injury) {
+        const source = entry(state.units, frame.sourceId);
+        const finishingHit = source && source.team !== unit.team && event.direct && event.isSingle !== false && !event.isArea;
+        if (!event.bleedOut && !finishingHit && injury.remainingTurns > 1) {
+          injury.remainingTurns--;
+          updatePoolCurrent(state, pool.id, 'set', 1);
+          host.log(state, source, 'downed', `${unit.name}伤势恶化`, { targetId: unit.id, remainingTurns: injury.remainingTurns });
+          return;
+        }
+        removeStatus(state, unit, injury, 'expired', source, host, frame);
+      }
       unit.diedAt = { round: state.round, turn: state.turn };
       unit.corpseOf ??= unit.id;
       host.log(state, entry(state.units, frame.sourceId), 'defeat', `${unit.name}倒下`, { targetId: unit.id });

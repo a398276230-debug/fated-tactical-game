@@ -469,8 +469,9 @@ function summonTemplateValue(v, state) {
   validateSummonLoadout(spawnPanel, state);
 }
 export function validateState(s) {
-  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','suppressingTeam','vm','pools','tape','scale','customElements','elementalPhysics']);
+  fields(s, ['scenarioId','title','mode','ruleset','round','turn','order','units','items','equipment','skills','grid','covers','interactives','rng','logs','outcome'], ['statusTemplates','zones','time','summonTemplates','spatialTerrain','spatialSerial','battleType','battleConclusion','heroicDowned','suppressingTeam','vm','pools','tape','scale','customElements','elementalPhysics']);
   checkOptional(s, 'elementalPhysics', value => ['off', 'standard'].includes(value));
+  checkOptional(s, 'heroicDowned', value => typeof value === 'boolean');
   if (own(s, 'customElements')) validateCustomElements(s.customElements);
   requireThat(s.battleType === 'suppress' ? ['blue','red'].includes(s.suppressingTeam) : s.suppressingTeam === undefined, '压制方');
   checkOptional(s,'battleType',x=>typeof x==='string' && Object.hasOwn(MORALE,x));

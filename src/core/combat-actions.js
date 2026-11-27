@@ -164,7 +164,7 @@ export function refreshOutcome(state) {
   if (state.battleConclusion) return state.outcome;
   if (['spar','arena'].includes(state.battleType)) for (const unit of living(state)) retireFromContest(state, unit);
   let blue = false, red = false;
-  for (const unit of values(state.units)) if (alive(unit) && !unit.fled) {
+  for (const unit of values(state.units)) if (alive(unit) && !unit.fled && !unit.statuses?.downed) {
     blue ||= unit.team === 'blue';
     red ||= unit.team === 'red';
   }
@@ -383,7 +383,10 @@ function completeTurnEnd(state, unit, remaining = Object.keys(unit.statuses)) {
     if (status.durationType !== 'battle_turns') continue;
     if (status.appliedRound === state.round && status.appliedTurn === state.turn) continue;
     if (--status.remainingTurns > 0) continue;
-    removeVMStatus(state, unit, status, 'expired', unit);
+    if (id === 'downed' && state.heroicDowned && alive(unit)) {
+      commitVMEffect(state, { op: 'damage', targetId: unit.id, sourceId: status.sourceId ?? unit.id,
+        damageType: 'true', amount: unit.hp, direct: false, lethal: true, bleedOut: true, label: '重伤到期' });
+    } else removeVMStatus(state, unit, status, 'expired', unit);
     if (state.vm.pendingAsk) {
       state.vm.endingPhase.statuses = remaining.slice(index + 1);
       return;
@@ -1165,7 +1168,7 @@ const ACTIONS = Object.freeze({
   end_encounter: {ap:0,slot:null}, switch_weapon: { ap: 0, slot: null }, attack: { ap: 1, slot: 'attack' }, reload: { ap: 1, slot: 'action' },
   stance_mode: { ap: 0, slot: null }, brace: { ap: 1, slot: 'action' }, block: { ap: 1, slot: 'action' }, shield_bash: { ap: 1, slot: 'attack', sp: 2 }, use_item: { ap: 0, slot: null },
   jump: { ap: 1, slot: 'action' }, dip: { ap: 1, slot: 'action' },
-  charge: { ap: 1, slot: 'action' }, reaction_policy: { ap: 0, slot: null }, overwatch: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
+  charge: { ap: 1, slot: 'action' }, help: { ap: 1, slot: 'action' }, reaction_policy: { ap: 0, slot: null }, overwatch: { ap: 1, slot: 'action' }, lock_on: { ap: 1, slot: 'action' }, scan: { ap: 1, slot: 'action' },
   free_ally: { ap: 1, slot: 'attack' }, suppress: { ap: 1, slot: 'attack' }, grapple: { ap: 1, slot: 'attack' }, disarm: { ap: 1, slot: 'attack' }, trip: { ap: 1, slot: 'attack' }, push: { ap: 1, slot: 'attack' },
   flee: { ap: 1, slot: 'action' }, interact: { ap: 1, slot: 'action' }, end: { ap: 0, slot: null },
 });
@@ -1249,7 +1252,7 @@ function withSurfaceImpact(state, actor, action, plan, origin) {
 export function emitSpatialImpulse(state, host, frame, impulse) {
   if (impulse) resolveSpatialImpulse(state, host, frame, impulse);
 }
-export const needsTarget = type => isMovement(type) || ['jump', 'attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
+export const needsTarget = type => isMovement(type) || ['jump', 'help', 'attack', 'skill', 'shield_bash', 'interact', 'lock_on', 'free_ally', 'suppress', 'grapple', 'disarm', 'trip', 'push'].includes(type);
 const fail = (error, extra = {}) => ({ ok: false, error, ...extra });
 const healMultiplier = (state, actor) => modStat(state, actor, 'healing', 1, { actionType: 'skill' });
 function inInteractionRange(state, actor, at) {
@@ -1433,6 +1436,14 @@ function previewAction(state, action, { simulateRules = true, actionOrigin, acti
     const opportunities = opportunitySources(state, unit).filter(source => canReact(state, source, unit) && threatens(state, source, unit, unit))
       .map(({ unit: reactor }) => opportunityDetail(reactor, unit, center ?? unit));
     return { ...common, name: '纵跃', cells, opportunities, ...(center && { center, steps: near(unit, center), path: [center] }) };
+  }
+  if (type === 'help') {
+    const allies = living(state).filter(candidate => candidate.id !== unit.id && candidate.team === unit.team
+      && candidate.statuses?.downed && near(unit, candidate) <= 1 && clearSight(state, unit, candidate));
+    if (!center) return allies.length ? { ...common, name: '急救拉起', cells: allies.map(ally => pos(ally.x, ally.y)) } : fail('附近没有倒地队友');
+    const target = allies.find(candidate => sameCell(candidate, center) && (!action.targetId || candidate.id === action.targetId));
+    if (!target) return fail('需要贴身且可见的倒地队友');
+    return { ...common, name: '急救拉起', targetId: target.id };
   }
   if (type === 'overwatch') {
     if (!weapon.instance || weapon.ammo && !weapon.infiniteAmmo && weapon.ammoCount <= 0) return fail('当前武器无法守望');
@@ -2291,6 +2302,15 @@ export function continueNativeAction({ state, frame, actor, plan, event, overrid
   }
   if (plan.interactiveId) return continueInteraction(state, actor, plan, frame.nativeProgress, frame.ammoBefore);
   switch (type) {
+    case 'help': {
+      const target = state.units[plan.targetId];
+      if (target?.statuses?.downed) {
+        removeVMStatus(state, target, target.statuses.downed, 'helped', actor, { targetId: target.id });
+        updatePoolCurrent(state, target.pools.hp, 'add', Math.max(1, Math.floor(target.maxHp * .1)));
+        record(state, actor, 'help', `${actor.name}拉起${target.name}`, { targetId: target.id });
+      }
+      break;
+    }
     case 'overwatch':
       grantStatus(state, actor, 'overwatch', { sourceId: actor.id, remainingTurns: 1, vars: { watchRange: plan.watchRange } });
       record(state, actor, 'overwatch', `${actor.name}进入守望`, { watchRange: plan.watchRange });
