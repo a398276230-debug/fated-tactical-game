@@ -140,6 +140,10 @@ export function continueCommit({ state, frame, host, options }) {
       event.finalAmount = Math.floor(event.finalAmount * (1 - ratio));
     }
     const before = pool.current, beforeMax = pool.max;
+    event.previous = before;
+    const canRestore = op === 'heal' || (op === 'resource' && !localOwner && !pseudo &&
+      (data.mode === 'add' || data.mode === 'set' || data.mode === 'swap'));
+    const blockRestore = canRestore && host.flag?.(state, target, 'blockResourceRestore') === true;
     let absorbed = 0;
     if (op === 'damage') {
       let pending = Math.max(0, Math.floor(event.finalAmount));
@@ -159,18 +163,26 @@ export function continueCommit({ state, frame, host, options }) {
       event.absorbed = absorbed;
       host.log(state, source, 'damage', `${target.name}受到${event.dealt}点${data.label ?? ''}伤害`, { ...data.details, targetId: target.id, damageType: event.damageType, amount: event.dealt, absorbed, hpBefore: before, hpAfter: target.hp });
     } else if (op === 'heal') {
-      updatePoolCurrent(state, pool.id, 'add', Math.max(0, Math.floor(event.finalAmount)));
+      if (blockRestore) event.finalAmount = 0;
+      else updatePoolCurrent(state, pool.id, 'add', Math.max(0, Math.floor(event.finalAmount)));
       event.healing = target.hp - before;
       host.log(state, source, 'heal', `${target.name}${data.label ? `因${data.label}` : ''}恢复${event.healing}点生命`, { ...data.details, targetId: target.id, amount: event.healing, hpBefore: before, hpAfter: target.hp });
     } else {
       if (pseudo) {
         if (!applyPseudo(state, target, key, data.mode, Math.floor(event.finalAmount))) { state.vm.stack.pop(); return; }
       } else if (data.mode === 'swap') {
-        if (other) swapPoolCurrents(state, pool.id, other.id);
+        if (other) {
+          if (!blockRestore) swapPoolCurrents(state, pool.id, other.id);
+          // Both sides belong to the target. Only the side that would fall can change.
+          else if (otherBefore < before) updatePoolCurrent(state, pool.id, 'set', otherBefore);
+          else if (before < otherBefore) updatePoolCurrent(state, other.id, 'set', before);
+        }
       } else {
         if (['add_max', 'sub_max', 'set_max'].includes(data.mode) && !['hp', 'mp', 'sp'].includes(key)) {
           state.vm.stack.pop(); return;
         }
+        if (blockRestore && data.mode === 'add') event.finalAmount = Math.min(0, event.finalAmount);
+        if (blockRestore && data.mode === 'set') event.finalAmount = Math.min(before, event.finalAmount);
         const amount = data.mode === 'sub' ? Math.max(0, event.finalAmount) : event.finalAmount;
         const reducesMax = data.mode === 'sub_max' && amount > 0 || data.mode === 'set_max' && amount < pool.max;
         const protection = reducesMax ? protectionCarrier(state, target) : null;

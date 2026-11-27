@@ -1454,7 +1454,7 @@ function resolveCheck(state, actor, profile, event = {}) {
     const saved = saveTotal >= profile.saveDC;
     record(state, actor, 'save', `${profile.name}${saved ? '通过' : '未通过'}豁免 (${saveTotal}/${profile.saveDC})`,
       { targetId: profile.id, ...cover, saveStat: profile.saveStat, saveRoll, saveBonus: profile.saveBonus, saveTotal, saveDC: profile.saveDC, saved });
-    return { hit: true, critical: false, saved };
+    return { hit: true, critical: false, saved, roll: saveRoll, total: saveTotal };
   }
   if (profile.automatic) {
     const rating = adjustedRating(ratingFor(profile.guaranteeCrit || profile.execution ? 20 : 11), event);
@@ -1496,7 +1496,7 @@ function resolveCheck(state, actor, profile, event = {}) {
         });
       record(state, actor, 'authority', `${defender.name}的概念保护${contest.result < 0 ? '拦截了意图' : '被意图穿透'}${authorityProse(contest)}`, { targetId: defender.id, contest });
       if (contest.result < 0) {
-        return { hit, critical, rating, intent: { required: false, success: false, multiplier: 1 }, saved: false };
+        return { hit, critical, rating, roll: selected, total, intent: { required: false, success: false, multiplier: 1 }, saved: false };
       }
     }
     const defenderD20 = randomDie(state, 20);
@@ -1532,7 +1532,7 @@ function resolveCheck(state, actor, profile, event = {}) {
     intent,
   });
   if (intent.required) record(state, actor, 'intent', `${profile.name}${intent.success ? '意图成立' : '意图受阻'}`, intentDetail);
-  return { hit: effectiveHit, critical, rating, intent, saved: false };
+  return { hit: effectiveHit, critical, rating, roll: selected, total, intent, saved: false };
 }
 
 function coverDamage(state, actor, cover, amount, details) {
@@ -1823,7 +1823,7 @@ function continueInteraction(state, actor, plan, progress) {
     for (const cover of values(state.covers).filter(c => c.hp > 0 && plan.cells.some(at => sameCell(at, c))).sort(byId)) {
       coverDamage(state, actor, cover, item.damage ?? 12, { interactiveId: item.id });
     }
-  } else if (effect === 'restore') {
+  } else if (effect === 'restore' && !vmFlag(state, actor, 'blockResourceRestore')) {
     const amount = item.damage ?? 8;
     setResourceTotal(state, actor, 'mp', Math.min(actor.maxMp, actor.mp + amount), actor.id, item.name);
     setResourceTotal(state, actor, 'sp', Math.min(actor.maxSp, actor.sp + amount), actor.id, item.name);

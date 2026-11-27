@@ -1,7 +1,8 @@
 import { evaluateExpr } from './formula.js';
 import { distance3D, unitAt } from './spatial.js';
 import { pointElevation, selectVM, selectorOwner, zoneContains } from './vm-select.js';
-import { carrierEffectiveTier, skillCarrierVars, incomingDistanceOffset } from './vm-carriers.js';
+import { carrierEffectiveTier, eventWeapon, skillCarrierVars, incomingDistanceOffset } from './vm-carriers.js';
+import { getPool } from './vm-pools.js';
 
 const maxSteps = 2000;
 const maxDepth = 64;
@@ -77,6 +78,7 @@ function contextFor(state, frame, host) {
   const bound = resolveEntity(state, frame.scope?.bound);
   Object.assign(vars, frame.scope?.bindings);
   const carrier = resolveEntity(state, frame.carrier);
+  const itemTemplate = frame.carrier?.type === 'item' ? own(state.equipment, carrier?.templateId) : undefined;
   return {
     self, source, target, attacker, candidate: bound, vars, event: { ...event, actor: attacker, source, target },
     resolveEntity: (value, kind) => {
@@ -88,8 +90,8 @@ function contextFor(state, frame, host) {
     status: resolveEntity(state, frame.scope?.status) ?? event.removedStatus
       ?? (frame.carrier?.type === 'status' ? carrier : undefined),
     zone: resolveEntity(state, frame.scope?.zone) ?? (frame.carrier?.type === 'zone' ? carrier : undefined),
-    skill: frame.carrier?.type === 'skill' ? { id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : undefined,
-    item: frame.carrier?.type === 'item' ? { id: frame.carrier.id, templateId: carrier?.templateId, vars: { ...own(state.equipment, carrier?.templateId)?.vars, ...carrier?.vars } } : undefined,
+    skill: frame.carrier?.type === 'skill' ? { ...own(state.skills, frame.carrier.id), id: frame.carrier.id, vars: skillCarrierVars(state, frame.carrier) } : undefined,
+    item: frame.carrier?.type === 'item' ? { ...itemTemplate, ...carrier, id: frame.carrier.id, tags: carrier?.tags ?? itemTemplate?.tags, vars: { ...itemTemplate?.vars, ...carrier?.vars } } : undefined,
     tape: resolveEntity(state, frame.scope?.tape), center: event.center, pool: frame.scope?.pool,
     round: state.round, turn: state.turn, timeOfDay: state.time?.timeOfDay, units: Object.values(state.units), zones: state.zones,
     effectiveTier: carrierEffectiveTier(state, frame.carrier, source ?? self),
@@ -99,6 +101,8 @@ function contextFor(state, frame, host) {
     distance: (a = self, b = target) => coordinate(a) && coordinate(b) ? distance3D(state, a, b) : null,
     elevation: entity => pointElevation(state, entity),
     resource: (entity, key) => host.resource?.(state, entity, key) ?? own(entity, key),
+    itemResource: (item, key) => getPool(state, item?.id, key, 'item')?.current ?? 0,
+    weapon: () => eventWeapon(state, event, frame.carrier?.type === 'item' ? carrier : undefined, attacker ?? self),
     inZone: (entity, key) => Object.values(state.zones ?? {}).some(zone => (zone.id === key || zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, entity)),
     isImmune: (unit, key) => host.isImmune?.(state, unit, key, frame) ?? false,
     select: selector => selectVM(state, selector, contextFor(state, frame, host), { pure: true }),

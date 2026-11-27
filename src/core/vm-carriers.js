@@ -98,6 +98,17 @@ function sourceIdOf(row, ownerId, event) {
   return row.entity.sourceId ?? row.nativeOwnerId ?? event.sourceId ?? idOf(event.source) ?? ownerId;
 }
 
+export function eventWeapon(state, event, item, unit) {
+  const weapon = own(state.equipment, event.weaponTemplateId)
+    ?? own(state.equipment, own(state.items, event.weaponId)?.templateId);
+  if (weapon) return weapon;
+  const carried = own(state.equipment, item?.templateId);
+  if (carried?.kind === 'weapon' && carried.attack !== undefined) return carried;
+  const main = own(state.items, unit?.mainHand ?? unit?.weapon);
+  const template = own(state.equipment, main?.templateId);
+  return !template?.boundTo || template.boundTo === unit?.id ? template : null;
+}
+
 export function carrierScope(state, row, ownerId, event, queries = {}) {
   const self = own(state.units, ownerId);
   const immunity = queries.isImmune ?? ((currentState, unit, key, context) => isStatusImmune(
@@ -128,7 +139,8 @@ export function carrierScope(state, row, ownerId, event, queries = {}) {
     inZone: (unit, key) => entries(state.zones).some(([, zone]) => active(zone)
       && (zone.id === key || zone.templateId === key || zone.tags?.includes(key)) && zoneContains(state, zone, unit)),
     isImmune: (unit, key, context) => immunity(state, unit, key, context ?? { source }),
-    select: (key, context) => selectVM(state, own(queries.selectors, key), context, { pure: true }),
+    weapon: () => eventWeapon(state, event, row.carrier.type === 'item' ? row.entity : undefined, attacker ?? self),
+    select: (key, context) => selectVM(state, own(queries.selectors, key) ?? key, context, { pure: true }),
   };
 }
 

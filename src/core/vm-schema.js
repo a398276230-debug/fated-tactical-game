@@ -39,6 +39,8 @@ export const EVENT_SCALAR_KEYS = Object.freeze([
   'reason', 'redirectTarget', 'replaceNaturalRoll', 'replaceTarget', 'round', 'saved', 'skillId', 'sourceId',
   'sourceRuleId', 'sourceSkillId', 'sourceTier', 'statusId', 'shareTo', 'shareRatio', 'targetId', 'toX', 'toY', 'triggered', 'turns', 'type',
   'unitId', 'weaponId', 'infiniteAmmo', 'weaponTemplateId', 'instanceId', 'eventRef',
+  'apCost', 'hpCost', 'mpCost', 'spCost', 'slot', 'poolCost', 'poolCostId', 'itemId', 'centerX', 'centerY',
+  'category', 'tier', 'roll', 'total', 'previous',
 ]);
 import { BUILTIN_DAMAGE_TYPES } from './elements.js';
 

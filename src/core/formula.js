@@ -29,12 +29,15 @@ const vmUnitFields = {
   sourceId: '召唤者或候选实体创建者 ID', summonGroup: '召唤分组键', level: '等级（缺省取层级或 1）',
   sourceSkillId: '生成该召唤物的技能 ID（无记录时为 null）',
   name: '单位名称', templateId: '模板 ID', moved: '本回合累计位移格数',
-  moraleState: '士气状态（steady/shaken/routed）',
+  ap: '当前剩余行动点', apMax: '本回合行动点上限（缺省 2）', reactionAvailable: '本回合反应是否可用',
+  stance: '当前架势，无架势时为 null', fled: '是否已逃离战场', moraleState: '士气状态（steady/shaken/routed）',
   facing: '当前朝向 N/S/E/W', lastMoveDir: '最近一次水平位移主方向 N/S/E/W，无记录时为 null'
 };
 const unitScopes = { self: '效果主体', attacker: '事件攻击者', target: '当前目标', source: '效果来源', candidate: '当前筛选实体' };
 const entityScopes = new Set([...Object.keys(unitScopes), 'status', 'zone']);
-const statusFields = { id: '状态 ID', category: '状态类别', tier: '状态层级', stacks: '状态层数', remainingTurns: '剩余回合' };
+const tagScopes = new Set([...entityScopes, 'skill', 'item', 'event']);
+const statusFields = { id: '状态 ID', category: '状态类别', tier: '状态层级', stacks: '状态层数', remainingTurns: '剩余回合',
+  sourceId: '状态来源单位 ID', durationType: '状态持续类型' };
 const tapeFields = { round: '记录轮数', turn: '记录时的行动者索引', actorId: '行动者 ID', team: '行动者阵营', actionType: '行动类型', skillId: '技能 ID' };
 const refTypes = new Set(['unit', 'status', 'zone', 'item']);
 const isObject = value => value != null && typeof value === 'object' && !Array.isArray(value);
@@ -55,6 +58,11 @@ function unitField(context, unit, field) {
   if (field === 'alive') {
     const hp = own(unit, 'hp');
     return value ?? (Number.isFinite(hp) ? hp > 0 && !own(unit, 'fled') : undefined);
+  }
+  if (unit != null) {
+    if (field === 'apMax') return value ?? 2;
+    if (field === 'reactionAvailable') return value !== false;
+    if (field === 'fled') return Boolean(value);
   }
   if (field === 'level' && unit != null) return value ?? own(unit, 'tier') ?? 1;
   if (field === 'moved' && unit != null) return value ?? 0;
@@ -133,12 +141,20 @@ for (const [scope, label] of Object.entries({ status: '状态', zone: '区域', 
   dynamicFamily(`${scope}.vars`, `${label}实例的变量`, (context, id) => path(context, scope, 'vars', id));
 }
 register('skill.id', '当前规则所属技能的 ID（非技能载体时为 null；限定本技能触发写 event.skillId == skill.id）', context => path(context, 'skill', 'id'));
+for (const [field, description] of Object.entries({ ap: '基础行动点消耗', mp: '基础法力消耗', sp: '基础体力消耗', range: '基础射程', tier: '层级，未声明时为 null' })) {
+  register(`skill.${field}`, `当前规则所属技能的${description}`, context => path(context, 'skill', field));
+}
+register('candidate.terrain', '当前候选格的地形种类', context => path(context, 'candidate', 'kind'));
+register('candidate.cover', '当前候选掩体的减免值或类型', context => path(context, 'candidate', 'cover'));
+register('candidate.material', '当前候选掩体的材质', context => path(context, 'candidate', 'material'));
 register('item.id', '当前规则所属装备实例的 ID（非装备载体时为 null）', context => path(context, 'item', 'id'));
 register('item.templateId', '当前规则所属装备模板的 ID（非装备载体时为 null）', context => path(context, 'item', 'templateId'));
 register('zone.x', '区域中心横坐标', context => path(context, 'zone', 'area', 'center', 'x'));
 register('zone.y', '区域中心纵坐标', context => path(context, 'zone', 'area', 'center', 'y'));
 register('event.triggered', '动作是否由 perform 触发', context => path(context, 'event', 'triggered'));
 register('event.chainDepth', 'perform 动作嵌套层数', context => path(context, 'event', 'chainDepth'));
+register('zone.remainingTurns', '区域剩余回合', context => path(context, 'zone', 'remainingTurns'));
+register('zone.persistent', '区域是否常驻', context => path(context, 'zone', 'persistent'));
 register('zone.team', '区域创建时的阵营；无阵营时为 null', context => path(context, 'zone', 'team'));
 register('zone.sourceId', '区域创建者 ID', context => path(context, 'zone', 'sourceId'));
 for (const [scope, fields] of Object.entries({ status: statusFields, tape: tapeFields })) {
@@ -166,6 +182,11 @@ register('weapon.range', '事件武器模板的基础射程', context => own(cal
 for (const [name, description] of Object.entries({
   skillId: '本次行动施放的技能 ID（普攻或非技能事件为 null；限定本技能触发写 event.skillId == skill.id）',
   actionType: '本次行动类型（attack/skill/move/sprint/disengage/interact/brace/block/charge/scan/flee/reload/switch_weapon/use_item）',
+  apCost: '本次行动消耗的行动点', slot: '本次行动占用的行动槽，无则为 null',
+  hpCost: '本次行动的生命消耗', mpCost: '本次行动的法力消耗', spCost: '本次行动的体力消耗',
+  poolCost: '本次行动的自定义池或物品池消耗', poolCostId: '本次消耗的自定义池或物品池 ID，无则为 null',
+  itemId: '本次行动关联的物品实例 ID', centerX: '本次行动落点的横坐标', centerY: '本次行动落点的纵坐标',
+  category: '事件状态的类别', tier: '事件状态的层级', roll: '检定使用的骰面', total: '检定计入加值后的总值',
   intent: '敌对打击意图（normal/function/core/kill/concept）：检定前为声明值，受击分支检定失败后为 normal，非打击事件无此字段',
   infiniteAmmo: '本次攻击声明时是否免耗弹药', weaponId: '本次使用的武器实例 ID',
   actorId: '本次事件的发起单位 ID', targetId: '本次事件的主目标单位 ID',
@@ -175,7 +196,7 @@ for (const [name, description] of Object.entries({
   rawAmount: '本次提交减免前的原始数值', finalAmount: '本次提交的最终数值',
   sourceRuleId: '产生本笔提交的 VM 规则 ID（不是技能 ID）',
   power: '技能威力', dealt: '本次实际扣除的 HP', absorbed: '本次被护盾吸收的伤害',
-  previous: '当前效果链上一步实际数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID',
+  previous: '本次提交变更前的数值', healing: '本次治疗量', statusId: '触发本次检定或事件的状态 ID',
   checkKind: '检定类型（attack/save/contest/skill/chance/d20/authority/flee/flee_chase）',
   passed: '检定是否通过（true/false）', hit: '攻击检定是否命中（true/false）', critical: '是否暴击（true/false）', saved: '豁免是否通过（true/false）',
   baseDC: 'VM 检定初始 DC', finalDC: 'VM 检定完成时计入修饰后的 DC'
@@ -233,7 +254,7 @@ const withId = read => ([entity, id], context) => typeof id === 'string' && safe
 query('resource', ['unit', 'value'], 'resource(unit, poolId)', '读资源池当前余额，池 ID 可为字符串或 vars.<名称>', ([entity, id], context) =>
   typeof id === 'string' && safeKey(id) ? entityFamilies.resource[1](context, entity, id) : null);
 query('has_status', ['unit', 'value'], "has_status(unit, 'statusId')", '查询单位是否持有状态', withId(statusPresent));
-query('has_tag', ['entity', 'value'], "has_tag(entity, 'tag')", '查询实体是否带有标签', withId((context, entity, tag) => callback(context, 'hasTag', entity, tag) ?? tagged(entity, tag)));
+query('has_tag', ['tagEntity', 'value'], "has_tag(entity, 'tag')", '查询单位、状态、区域、技能、装备或事件是否带有标签', withId((context, entity, tag) => callback(context, 'hasTag', entity, tag) ?? tagged(entity, tag)));
 query('in_zone', ['unit', 'value'], "in_zone(unit, 'tagOrTemplateId')", '查询单位是否在指定区域内', withId((context, entity, id) => callback(context, 'inZone', entity, id)));
 query('is_immune', ['unit', 'value'], "is_immune(unit, 'statusIdOrTag')", '只读干跑免疫拦截', withId((context, entity, id) => {
   const read = own(context, 'isImmune');
@@ -338,7 +359,7 @@ function parse(text, dependencies) {
     } else {
       for (const [i, kind] of entry.args.entries()) {
         if (i > 0) expect(',');
-        if (kind === 'entity' || kind === 'unit') {
+        if (kind === 'entity' || kind === 'unit' || kind === 'tagEntity') {
           args.push(readScope(tokens[index++], kind));
           continue;
         }
@@ -359,9 +380,9 @@ function parse(text, dependencies) {
     const frameId = frameVariable.exec(scope)?.[1];
     if (frameId && safeKey(frameId)) {
       dependencies.add(scope);
-      return ['frameScope', frameId, kind];
+      return ['frameScope', frameId, kind === 'tagEntity' ? 'entity' : kind];
     }
-    const allowed = kind === 'unit' ? Object.hasOwn(unitScopes, scope) : entityScopes.has(scope);
+    const allowed = kind === 'unit' ? Object.hasOwn(unitScopes, scope) : (kind === 'tagEntity' ? tagScopes : entityScopes).has(scope);
     if (!allowed) throw new SyntaxError(`Expected ${kind} scope`);
     dependencies.add(scope);
     return ['scope', scope];

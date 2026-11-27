@@ -8,6 +8,8 @@ import { authorityContest, authorityFor, compareAuthority, authorityProse } from
 import { resolveStatusApplication } from './status-application.js';
 
 const own = (table, key) => table && Object.hasOwn(table, key) ? table[key] : undefined;
+const CHECK_TIERS = ['miss', 'hit', 'crit'];
+const ratingFloor = new Map([['miss',0],['失手',0],['hit',1],['擦伤',1],['勉强',1],['有效',1],['crit',2],['平暴击',2],['强暴击',2],['超暴击',2]]);
 const bounded = (value, min, max) => Math.min(max, Math.max(min, Math.floor(value)));
 const evaluate = (expression, context, fallback) => expression === undefined ? fallback : evaluateExpr(expression, context);
 const live = unit => unit?.hp > 0 && !unit.fled;
@@ -167,10 +169,16 @@ export function continueCheck({ state, frame, host, context }) {
       return { roll, total, difficulty, passed };
     });
     const { roll, total } = outcomes[0];
-    const passed = ['pass', 'hit', 'crit'].includes(event.forceOutcome) ? true : ['fail', 'miss'].includes(event.forceOutcome) ? false
+    const forcedFailure = ['fail', 'miss'].includes(event.forceOutcome);
+    let passed = ['pass', 'hit', 'crit'].includes(event.forceOutcome) ? true : forcedFailure ? false
       : op.mode === 'any' ? outcomes.some(outcome => outcome.passed) : outcomes.every(outcome => outcome.passed);
     const dc = outcomes[0].difficulty;
-    Object.assign(event, { stat: stats[0] ?? null, roll, total, dc, finalDC: dc, passed, rating: event.forceOutcome === 'crit' ? 'crit' : event.minRating ?? (passed ? 'hit' : 'miss') });
+    let idx = event.forceOutcome === 'crit' ? 2 : Number(passed);
+    const naturalFailure = kind !== 'chance' && !passed && !event.forceOutcome && outcomes.every(o => o.roll === 1);
+    if (!forcedFailure && !naturalFailure) idx = bounded(idx + (Number.isFinite(event.ratingDelta) ? Math.trunc(event.ratingDelta) : 0), 0, 2);
+    if (!forcedFailure) idx = Math.max(idx, ratingFloor.get(event.minRating) ?? 0);
+    passed = idx >= 1;
+    Object.assign(event, { stat: stats[0] ?? null, roll, total, dc, finalDC: dc, passed, rating: CHECK_TIERS[idx] });
     const verdict = passed ? '成功' : '失败';
     const label = { save: '豁免', chance: '概率判定', d20: '检定', contest: '对抗检定', attack: '攻击检定' }[kind];
     const text = `${subject.name}${label}${verdict}（${outcomes.map(outcome => kind === 'chance'

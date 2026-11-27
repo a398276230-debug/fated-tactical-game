@@ -69,7 +69,7 @@ function rows(state, selector, context) {
     case 'terrain': return sortedValues(state.spatialTerrain);
     case 'tape': return state.tape ?? [];
     case 'statuses': return sortedValues(selectorOwner(selector, context)?.statuses);
-    case 'cells': return state.grid.flatMap((row, y) => row.map(({z}, x) => ({x, y, z})));
+    case 'cells': return state.grid.flatMap((row, y) => row.map(({z, kind}, x) => ({x, y, z, kind})));
     case 'self': case 'source': case 'target': case 'attacker': return [context[selector.from]].filter(Boolean);
     default: {
       if (!selector.from.startsWith('vars.')) return [];
