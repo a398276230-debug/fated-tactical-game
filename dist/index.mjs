@@ -23427,7 +23427,7 @@ function parseJSON2(value, fallback = null) {
     return fallback;
   }
 }
-var TAVERN_VERSION = "0.5.4";
+var TAVERN_VERSION = "0.5.5";
 var LARGE_CONFIG_KEYS = ["charSnapshots", "normalizationBatches", "narrativeExemptions", "unresolvedNotes"];
 var separateConfigKey = (key5, field2) => `${key5}/${field2}`;
 var DEFAULT_CONFIG = {
